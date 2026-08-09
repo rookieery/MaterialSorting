@@ -1,0 +1,190 @@
+[
+  {
+    "branchName": "ralph/react-ts-frontend",
+    "stories": [
+      {
+        "id": "US-001",
+        "title": "Vite+React+TS 脚手架与 dev/prod 联通",
+        "description": "As a developer, I want to scaffold a Vite+React+TS project under materialSorting-web/ that builds into static/ so that FastAPI serves it with zero backend changes.",
+        "files": [
+          "materialSorting-web/package.json",
+          "materialSorting-web/vite.config.ts",
+          "materialSorting-web/tsconfig.json",
+          "materialSorting-web/tsconfig.node.json",
+          "materialSorting-web/index.html",
+          "materialSorting-web/src/main.tsx",
+          "materialSorting-web/src/App.tsx",
+          "materialSorting-web/legacy/index.html",
+          "materialSorting-web/legacy/app.js",
+          "materialSorting-web/legacy/style.css"
+        ],
+        "acceptanceCriteria": [
+          "materialSorting-web/legacy/ 包含原 3 个 vanilla 文件（index.html/app.js/style.css）；materialSorting-web/static/ 已清空，无残留手写文件",
+          "vite.config.ts 中 base 在 build 时为 /static/、dev 时为 /；build.outDir 为 static，build.emptyOutDir 为 true",
+          "server.proxy 配置 /export 与 /ws（含 ws:true）转发到 http://127.0.0.1:8000",
+          "npm run dev 启动 :5173，浏览器访问 / 显示 App.tsx 内容，DevTools Network 显示 WS 升级请求被代理到后端 :8000",
+          "npm run build 产出 materialSorting-web/static/index.html 与 static/assets/index-[hash].{js,css}，index.html 内引用 URL 形如 /static/assets/...",
+          "ms-web 启动后访问 http://127.0.0.1:8000/ 看到 React 页面，asset 返回 200",
+          "npx tsc --noEmit 0 error"
+        ],
+        "passes": true
+      },
+      {
+        "id": "US-002",
+        "title": "WS 类型 + RunRegistry + useSolveRun hook",
+        "description": "As a developer, I want typed WS message contracts and a reusable useSolveRun hook so that subsequent UI components can consume solve progress safely.",
+        "files": [
+          "materialSorting-web/src/types/ws.ts",
+          "materialSorting-web/src/types/piece.ts",
+          "materialSorting-web/src/types/v03.ts",
+          "materialSorting-web/src/lib/ws.ts",
+          "materialSorting-web/src/store/runRegistry.ts",
+          "materialSorting-web/src/hooks/useSolveRun.ts"
+        ],
+        "acceptanceCriteria": [
+          "ServerMsg 是 ManifestMsg | FrameMsg | FinalMsg | ErrorMsg 判别联合，字段名与后端 server.py 完全一致（含 density/density_sparrow 双口径）",
+          "StartPayload 含 action:start、sizes、time、seed、params、per_type?；per_type 为可选，空时序列化为 null",
+          "RunRegistry 持有每个 run 的 frames: FrameMsg[]（mutable，不进 React state）",
+          "useSolveRun 在 start() 显式 new WebSocket（不在 effect 自动连），React StrictMode 双 mount 不会触发两次连接（单测验证）",
+          "WS URL 用相对路径 ${proto}://${location.host}/ws/solve（dev/prod 自适配）",
+          "onclose / onerror 均触发 onDone；不做自动重连",
+          "单测覆盖：mock WS 推 manifest+frame+final，hook 正确分发；StrictMode 不双连"
+        ],
+        "passes": true
+      },
+      {
+        "id": "US-003",
+        "title": "NestSVG 命令式渲染 + 节流闸（单 seed 可视化）",
+        "description": "As a user, I want to see a single-seed solve animate in real-time at ~10fps so that I can watch the solver converge.",
+        "files": [
+          "materialSorting-web/src/components/nests/NestSVG.tsx",
+          "materialSorting-web/src/components/nests/NestCard.tsx",
+          "materialSorting-web/src/components/nests/NestLabel.tsx",
+          "materialSorting-web/src/lib/geometry.ts",
+          "materialSorting-web/src/store/appStore.ts",
+          "materialSorting-web/src/hooks/useRafThrottle.ts"
+        ],
+        "acceptanceCriteria": [
+          "NestSVG 用 useRef 持有 svg/flipRef/bgRef/fabRef 与 Map<id,{el,piece}>；React 只渲染空骨架一次",
+          "manifest 到达时翻转组 <g> transform = translate(0 ${gate_mm}) scale(1 -1)（用 setAttribute 而非 JSX prop，避免 React 覆盖）",
+          "每个 piece 创建 <polygon>，fill/color/data-* 与旧 app.js 一致，初始 display:none",
+          "useRafThrottle 以 100ms 间隔自增 renderTick，订阅 renderTick 的 effect 遍历 lastFrame.placed_items setAttribute points + display；未 placed 的 display:none",
+          "pointsStr(poly, rot, [tx,ty]) 输出与旧 app.js 字节级一致（单测对比同输入）",
+          "坐标系正立（与旧版截图对比）；viewBox 0 0 ${viewBoxMaxW} ${gate} 动态扩展",
+          "用硬编码参数（如 sizes=[30,32], time=30, seed=0）启动单 seed，frame 实时刷新可见，final 后停止"
+        ],
+        "passes": true
+      },
+      {
+        "id": "US-004",
+        "title": "v0.3 参数面板（ControlPanel）",
+        "description": "As a user, I want to configure sizes/time/seed/erode/tolerance/per-type overrides so that I can drive the solver with v0.3 process constraints.",
+        "files": [
+          "materialSorting-web/src/constants/sizes.ts",
+          "materialSorting-web/src/constants/colors.ts",
+          "materialSorting-web/src/constants/v03.ts",
+          "materialSorting-web/src/components/ControlPanel/ControlPanel.tsx",
+          "materialSorting-web/src/components/ControlPanel/SizePicker.tsx",
+          "materialSorting-web/src/components/ControlPanel/ParamForm.tsx",
+          "materialSorting-web/src/components/ControlPanel/ErodeInputs.tsx",
+          "materialSorting-web/src/components/ControlPanel/ToleranceInputs.tsx",
+          "materialSorting-web/src/components/ControlPanel/PresetButtons.tsx",
+          "materialSorting-web/src/components/ControlPanel/PerTypeOverrides.tsx",
+          "materialSorting-web/src/components/ControlPanel/StartButton.tsx",
+          "materialSorting-web/src/components/ControlPanel/StatusLine.tsx",
+          "materialSorting-web/src/lib/params.ts"
+        ],
+        "acceptanceCriteria": [
+          "SizePicker 渲染 SIZES=[28,29,30,31,33,34,35,36] 8 个 chip 复选，默认全选",
+          "ErodeInputs（d_ext/d_int，step 0.5）、ToleranceInputs（tol_ext/tol_int，max 45）默认值与旧 index.html 一致",
+          "PresetButtons 一键填 120 / 600",
+          "PerTypeOverrides 渲染 V03_TABLE 10 行，内部片标内标记；空 input 不写入 per_type",
+          "StartPayload 序列化结果与旧 app.js collectParams 同输入逐字段相等（单测）",
+          "点击开始按钮触发 useSolveRun.start，WS 发送首条消息 DevTools 可见",
+          "至少选 1 个码号，否则 StatusLine 报错且不启动"
+        ],
+        "passes": true
+      },
+      {
+        "id": "US-005",
+        "title": "多 seed 并排 + 收敛曲线",
+        "description": "As a user, I want side-by-side multi-seed comparison and a convergence curve so that I can pick the best seed.",
+        "files": [
+          "materialSorting-web/src/components/nests/NestsGrid.tsx",
+          "materialSorting-web/src/components/curve/ConvergenceCurve.tsx",
+          "materialSorting-web/src/constants/colors.ts"
+        ],
+        "acceptanceCriteria": [
+          "multi_seed 开关 + seed_count（2-6）→ NestsGrid 渲染 N 个 NestCard，各自独立 WS",
+          "seed 取 base+i（i=0..N-1），与旧 app.js 一致",
+          "单 seed 时 ConvergenceCurve 散点按 PHASE_COLORS 着色；多 seed 时按 SEED_COLORS[runIndex] 着色 + 末点 circle + seed 标签",
+          "始终绘制 90% 生死线（虚线 + 90% 生死线文字）",
+          "多 seed 显示图例（seed N 各一色块）；单 seed 显示 phase 图例",
+          "帧数 > 400 时按 step = max(1, floor(n/400)) 采样，末帧强制纳入（同旧 app.js）",
+          "ConvergenceCurve 用命令式 DOM（订阅 renderTick），不参与 React 每帧 diff"
+        ],
+        "passes": true
+      },
+      {
+        "id": "US-006",
+        "title": "回放 seekbar + 片 hover tooltip",
+        "description": "As a user, I want to scrub through recorded frames and hover pieces for info so that I can review the solve.",
+        "files": [
+          "materialSorting-web/src/components/playback/PlaybackBar.tsx",
+          "materialSorting-web/src/components/playback/Seekbar.tsx",
+          "materialSorting-web/src/components/playback/SeekReadout.tsx",
+          "materialSorting-web/src/lib/seek.ts",
+          "materialSorting-web/src/components/Tooltip.tsx",
+          "materialSorting-web/src/store/appStore.ts"
+        ],
+        "acceptanceCriteria": [
+          "全部 run 完成后 seekbar 启用，max = ceil(maxElapsed)，value 默认到末尾",
+          "拖动 seekbar 时 setSeekTime(t)，所有 NestSVG 切到 frameAtTime(run, t)（二分，单测对比旧 app.js）",
+          "SeekReadout 显示 t=Xs | s0 yy.yy% | s1 zz.zz%",
+          "NestSVG 在 flipGroup 上事件委托 mousemove，e.target.closest(polygon) + dataset.ptype → Tooltip 显示片型/码/面积(cm²)",
+          "Tooltip 用 React Portal 到 body，fixed 定位，鼠标 +14/+14 偏移",
+          "mouseleave 隐藏；切换 hover polygon 时旧的高亮 class 移除"
+        ],
+        "passes": true
+      },
+      {
+        "id": "US-007",
+        "title": "导出 PNG/DXF",
+        "description": "As a user, I want to export the best run's final layout as PNG or R12-DXF so that I can deliver it to the cutting room.",
+        "files": [
+          "materialSorting-web/src/hooks/useExport.ts",
+          "materialSorting-web/src/components/ControlPanel/ExportButtons.tsx",
+          "materialSorting-web/src/lib/download.ts"
+        ],
+        "acceptanceCriteria": [
+          "bestRun 选择：lastFrame 存在且 finalDensity 最高的 run",
+          "ExportPayload = {fmt, sizes: selectedSizes(), seed: run.seed, gate_mm, width_mm: lastFrame.width_mm, density: run.finalDensity, placed: lastFrame.placed_items}（与旧 app.js 逐字段一致）",
+          "fetch /export（相对 URL），响应 blob",
+          "Content-Disposition filename*=UTF-8''xxx → decodeURIComponent；fallback filename=xxx 或 nesting.<fmt>",
+          "下载文件名形如 排料_码28-30-32_88.42%_seed0.png（中文正确，无乱码）",
+          "求解未完成或无 lastFrame 时按钮 disabled；导出中按钮 disabled + StatusLine 显示 正在生成 PNG...",
+          "同 seed 同参数导出的 DXF，用 ezdxf 读回 polygon 点集与旧版导出几何一致（回归测试）"
+        ],
+        "passes": true
+      },
+      {
+        "id": "US-008",
+        "title": "清理 legacy + 更新文档 + CI",
+        "description": "As a maintainer, I want the legacy vanilla files removed and docs updated so that the React app is the single source of truth.",
+        "files": [
+          "materialSorting-web/legacy/",
+          "CLAUDE.md",
+          "README.md"
+        ],
+        "acceptanceCriteria": [
+          "materialSorting-web/legacy/ 已删除；repo 内 grep app.js / getElementById 0 命中（排除 legacy 归档后）",
+          "README 启动顺序明确：dev = npm run dev（需 ms-web 在 :8000 跑）；prod = npm run build 后 ms-web",
+          "CLAUDE.md 启动顺序约束段落更新：materialSorting-web/static/ 现为构建产物，prod 前需 npm run build",
+          "materialSorting-web/static/ 加入 .gitignore（产物不入库）",
+          "npx tsc --noEmit 与 npx vitest run 全绿"
+        ],
+        "passes": true
+      }
+    ]
+  }
+]

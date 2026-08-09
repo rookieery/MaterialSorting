@@ -1,23 +1,4 @@
 {
   "branchName": "ralph/react-ts-frontend",
-  "stories": [
-    {
-      "id": "US-008",
-      "title": "清理 legacy + 更新文档 + CI",
-      "description": "As a maintainer, I want the legacy vanilla files removed and docs updated so that the React app is the single source of truth.",
-      "files": [
-        "materialSorting-web/legacy/",
-        "CLAUDE.md",
-        "README.md"
-      ],
-      "acceptanceCriteria": [
-        "materialSorting-web/legacy/ 已删除；repo 内 grep app.js / getElementById 0 命中（排除 legacy 归档后）",
-        "README 启动顺序明确：dev = npm run dev（需 ms-web 在 :8000 跑）；prod = npm run build 后 ms-web",
-        "CLAUDE.md 启动顺序约束段落更新：materialSorting-web/static/ 现为构建产物，prod 前需 npm run build",
-        "materialSorting-web/static/ 加入 .gitignore（产物不入库）",
-        "npx tsc --noEmit 与 npx vitest run 全绿"
-      ],
-      "passes": true
-    }
-  ]
+  "stories": []
 }

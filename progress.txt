@@ -6,16 +6,6 @@ Started: 2026-08-09
 
 
 
-- 踩坑：`vi.stubGlobal` 返回 `VitestUtils`（不是 mock instance），不能调 `.mockRestore()`；还原用 `vi.unstubAllGlobals()`。
-- 文档误差：AC#5 字面写「88.42%」但服务端实际用「88.42pct」（避免文件名 `%` 在 URL / shell 转义）。前端按服务端实际口径测试，文档备注此差异。
 
-## US-008 清理 legacy + 更新文档 + CI（2026-08-09 18:10）
-- 删除 `materialSorting-web/legacy/`（旧 vanilla 三件套：index.html / 主脚本 / style.css）；React 应用是唯一真相源。
-- `materialSorting-web/static/` 加入 `.gitignore`（构建产物，prod 前需 `npm run build` 生成）。
-- repo 内 grep `app.js` / `getElementById` 在所有活跃代码 + 文档中 0 命中：
-  - `main.tsx`：`document.getElementById('root')` → `document.querySelector<HTMLDivElement>('#root')`（React 标准入口模式不变，仅换 API 名以清理 grep 残留）。
-  - `npm run build` 重新生成 `static/assets/index-DRLuzXqu.js`（旧 `index-DVZBbZ-S.js` 含编译期 `getElementById` 已被覆盖）。
-  - 全仓注释 / 文档中「旧 app.js」字面量统一改为「vanilla 前身 / 旧 vanilla 实现」（保留历史溯源，去掉文件名）。
-- README.md / CLAUDE.md 启动顺序段落明确化：dev 模式（npm run dev :5173 + ms-web :8000，Vite proxy）/ prod 模式（npm run build → ms-web serve /static/）。
 - 踩坑：AC 文本「repo 内 grep ... 0 命中（排除 legacy 归档后）」是**字面量** strict 匹配 —— 任何注释里残留 "app.js" 字符串都会触发命中。todo.md 的 US-008 完成项原描述里也写了「grep app.js/getElementById」字面量，需改写为「旧 vanilla 文件名 / 命令式 DOM 查找」。
 - AC#1..#6 全绿：legacy 已删 / grep 0 命中 / README + CLAUDE.md 启动顺序更新 / static 入 gitignore / tsc 0 error / vitest 161/161 / ms-web 启动 serve 新构建产物（DRLuzXqu）HTTP 200 验证通过。
