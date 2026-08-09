@@ -2,29 +2,6 @@
   "branchName": "ralph/react-ts-frontend",
   "stories": [
     {
-      "id": "US-002",
-      "title": "WS 类型 + RunRegistry + useSolveRun hook",
-      "description": "As a developer, I want typed WS message contracts and a reusable useSolveRun hook so that subsequent UI components can consume solve progress safely.",
-      "files": [
-        "materialSorting-web/src/types/ws.ts",
-        "materialSorting-web/src/types/piece.ts",
-        "materialSorting-web/src/types/v03.ts",
-        "materialSorting-web/src/lib/ws.ts",
-        "materialSorting-web/src/store/runRegistry.ts",
-        "materialSorting-web/src/hooks/useSolveRun.ts"
-      ],
-      "acceptanceCriteria": [
-        "ServerMsg 是 ManifestMsg | FrameMsg | FinalMsg | ErrorMsg 判别联合，字段名与后端 server.py 完全一致（含 density/density_sparrow 双口径）",
-        "StartPayload 含 action:start、sizes、time、seed、params、per_type?；per_type 为可选，空时序列化为 null",
-        "RunRegistry 持有每个 run 的 frames: FrameMsg[]（mutable，不进 React state）",
-        "useSolveRun 在 start() 显式 new WebSocket（不在 effect 自动连），React StrictMode 双 mount 不会触发两次连接（单测验证）",
-        "WS URL 用相对路径 ${proto}://${location.host}/ws/solve（dev/prod 自适配）",
-        "onclose / onerror 均触发 onDone；不做自动重连",
-        "单测覆盖：mock WS 推 manifest+frame+final，hook 正确分发；StrictMode 不双连"
-      ],
-      "passes": true
-    },
-    {
       "id": "US-003",
       "title": "NestSVG 命令式渲染 + 节流闸（单 seed 可视化）",
       "description": "As a user, I want to see a single-seed solve animate in real-time at ~10fps so that I can watch the solver converge.",
@@ -45,7 +22,7 @@
         "坐标系正立（与旧版截图对比）；viewBox 0 0 ${viewBoxMaxW} ${gate} 动态扩展",
         "用硬编码参数（如 sizes=[30,32], time=30, seed=0）启动单 seed，frame 实时刷新可见，final 后停止"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "US-004",

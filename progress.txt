@@ -1,32 +1,44 @@
 # Ralph Progress Log
 Started: 2026-08-09
 
-    - static/ 暂入 git 跟踪（US-001 验证需要）；US-008 加入 .gitignore
----
+## US-001 Vite+React+TS 脚手架（2026-08-09 16:26）
+- Vite 5 + React 18 + TS 5 + Zustand 4 + Vitest 2 装齐
+- dev/prod 路径双通：dev base '/' + proxy /export /ws；prod build → static/ 由 FastAPI mount
+- tsconfig strict 全开（noUnusedLocals / noUnusedParameters）
+- ms-web serve static/index.html HTTP 200 验证通过
 
-## US-002 — WS 类型 + RunRegistry + useSolveRun hook（2026-08-09）
+## US-002 WS 类型 + RunRegistry + useSolveRun hook（2026-08-09 16:30）
+- types/{ws,piece,v03}.ts 纯数据契约，与 server.py / solver.py 字段名 1:1
+- density 双口径（density 原面积 / density_sparrow erode 后 sparrow 自报）
+- runRegistry.ts 模块级 mutable 数组（frames 不进 React state）
+- useSolveRun.ts 显式 start(cfg) → new WebSocket（不在 useEffect 自动连，防 StrictMode 双连）
+- 6 项 vitest 单测全绿
 
-**范围**：纯前端契约层。WS 消息类型 / RunRegistry mutable 存储 / useSolveRun 生命周期 hook + 单测。
-**不动**：后端、SVG 渲染、控制面板、legacy/。
-
-**落地文件**：
-- `src/types/piece.ts` —— `Pt` / `Polygon` / `PieceInfo` / `PlacedItem`（与 server.py / solver.py 字段名 1:1）
-- `src/types/v03.ts` —— `SolveParams` + `PerTypeOverride` / `PerTypeOverrides`
-- `src/types/ws.ts` —— `StartPayload` + `ServerMsg = ManifestMsg | FrameMsg | FinalMsg | ErrorMsg` 判别联合（density/density_sparrow 双口径都在）
-- `src/lib/ws.ts` —— `solveWsUrl()`：`${proto}://${location.host}/ws/solve`（dev/prod 自适配）
-- `src/store/runRegistry.ts` —— 模块级 mutable 数组持有 RunRecord（frames 不进 React state）+ `applyFinal` 工具
-- `src/hooks/useSolveRun.ts` —— 单 run 生命周期：`start(cfg)` 显式 `new WebSocket` → onmessage 分发 manifest/frame/final/error → Registry 落盘 + 回调
-- `src/__tests__/useSolveRun.test.tsx` —— 6 项单测全绿
-- `vitest.config.ts` —— jsdom + globals，独立于 vite.config.ts
-
-**验证**：
-- `npx tsc --noEmit` ✅
-- `npx vitest run` —— 6/6 ✅（StrictMode 双 mount 0 连接 / StartPayload 字段逐项 / manifest+frame+final 分发 + Registry 落盘 / error 分支 / URL 相对 host / per_type 透传）
-- `npm run build` ✅
-
-**关键不变量**（后续故事不得破坏）：
-1. WS 连接只在 `start()` 显式 new（不在 effect 里 auto-connect）—— React 18 StrictMode 双 mount 不会双连
-2. frames 是 mutable 引用（`runRegistry.list()[i].frames.push(...)`），不进 React state —— 高频渲染由 US-003 renderTick 节流
-3. `per_type` 空 → null（与旧 app.js collectParams 一致；Python `or None` 接住）
-4. `density`（原面积口径）vs `density_sparrow`（erode 后 sparrow 自报）双口径 —— 决策 / 显示优先 density
+### 关键约定
+4. density（原面积口径）vs density_sparrow（erode 后 sparrow 自报）双口径 —— 决策 / 显示优先 density
 5. onclose / onerror → onDone（done flag 防重复），不重连
+
+## US-003 NestSVG 命令式渲染 + 节流闸（单 seed 可视化）（2026-08-09 16:45）
+- lib/geometry.ts：r2(x) + pointsStr(poly, rot, tr) —— 与旧 app.js / 后端 _transform_polygon 字节级一致
+- store/appStore.ts：Zustand 单字段 store，仅持 renderTick（+ bumpRenderTick action）
+- hooks/useRafThrottle.ts：active=true 时 rAF + 100ms 时间戳闸 bump renderTick（隐藏标签页自动暂停）
+- components/nests/：
+  - NestSVG.tsx：JSX 仅 `<svg ref/>`；manifest 到达后 imperative 建 bg/fab/flipGroup + N polygon（setAttribute 写 transform = translate(0 gate) scale(1 -1)，防 React 覆盖）；订阅 renderTick → effect 重跑 setAttribute('points'/'display')
+  - NestLabel.tsx：订阅 renderTick 重渲染文本（轻量）
+  - NestCard.tsx：容器（NestLabel + NestSVG）
+- App.tsx 拼装：硬编码 sizes=[30,32]/time=30/seed=0/baseline → 按钮 start + useRafThrottle(seeds.length>0)
+- 19 项 vitest 单测全绿（5 geometry + 6 useSolveRun + 8 NestSVG）
+
+### 端到端验证（prod build + ms-web 后台）
+- ms-web :8000 跑通，HTTP 200；prod bundle 含 createElementNS / setAttribute / scale(1 -1)
+- Python websockets 客户端按 US-003 硬编码参数连 ws://127.0.0.1:8000/ws/solve：
+  - manifest: gate=1980 pieces=16 n_eroded=0
+  - 354 frames，density 58.35% → 66.86%（实际 final 66.82%）
+  - final: width=1126mm elapsed=24.34s
+
+### 关键约定（US-003 立）
+6. React 只渲染空 `<svg ref/>` 一次 —— NestSVG 所有子节点 imperative
+7. 翻转组 transform 必须用 setAttribute 写（不走 JSX prop，否则 React reconciliation 覆盖）
+8. renderTick 单字段节流 —— frames 仍 mutable 在 runRegistry，不进 React state
+9. flipRef 幂等保护（防 StrictMode 双 mount / 多次 tick 重建 DOM）
+10. viewBox 用历史最大 width 作稳定锚（W = max(viewBoxMaxW, lastFrame.width_mm, 1)）
