@@ -115,7 +115,7 @@ describe("useExport (US-007)", () => {
     expect(body.density).toBeCloseTo(0.85, 5);
   });
 
-  it("AC#2 ExportPayload fields match legacy app.js", async () => {
+  it("AC#2 ExportPayload fields match vanilla 前身", async () => {
     const placed = [
       { id: "p1", rotation: 90, translation: [100, 200] as [number, number] },
       { id: "p2", rotation: 0, translation: [0, 0] as [number, number] },

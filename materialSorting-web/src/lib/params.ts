@@ -1,6 +1,6 @@
 // ControlPanel 表单状态 + collectParams 纯函数。
 //
-// 与旧 app.js collectParams() 字段级一致：
+// 与旧 vanilla 实现 collectParams() 字段级一致：
 //   1. params 四档（d_ext/d_int/tol_ext/tol_int）空串 → 0 默认；非空 → parseFloat。
 //   2. per_type 仅在 input.trim() !== '' 时写入；空 → 整个 per_type 序列化为 null。
 //
@@ -56,7 +56,7 @@ export const DEFAULT_FORM: FormState = {
 };
 
 /**
- * 解析数字字符串：parseFloat 失败（NaN / 空白）→ def。与旧 app.js `num(id, def)` 一致。
+ * 解析数字字符串：parseFloat 失败（NaN / 空白）→ def。与旧 vanilla 实现 `num(id, def)` 一致。
  * 注：parseFloat('') === NaN；parseFloat('  ') === NaN；parseFloat('1abc') === 1（与旧版同行为）。
  */
 function num(s: string, def: number): number {
@@ -64,21 +64,21 @@ function num(s: string, def: number): number {
   return Number.isNaN(v) ? def : v;
 }
 
-/** collectParams 输出（与旧 app.js collectParams 返回值结构一致）。 */
+/** collectParams 输出（与旧 vanilla 实现 collectParams 返回值结构一致）。 */
 export interface CollectedParams {
   params: SolveParams;
-  /** 空 → null（与旧 app.js Object.keys(per_type).length ? per_type : null 一致）。 */
+  /** 空 → null（与旧 vanilla 实现 Object.keys(per_type).length ? per_type : null 一致）。 */
   per_type: PerTypeOverrides | null;
 }
 
 /**
- * 把 FormState 解析为 { params, per_type }（与旧 app.js collectParams 字段级一致）。
+ * 把 FormState 解析为 { params, per_type }（与旧 vanilla 实现 collectParams 字段级一致）。
  *
  * 不变量：
- *   - params.d_ext/d_int/tol_ext/tol_int：空 → 0（与旧 app.js num(id, 0) 一致）。
+ *   - params.d_ext/d_int/tol_ext/tol_int：空 → 0（与旧 vanilla 实现 num(id, 0) 一致）。
  *   - per_type：仅当某 ptype 的 d 或 tol 至少一档非空时才创建 entry；
  *     d / tol 各自仅当 trim() !== '' 时写入；最终若 per_type 整体为空 → null。
- *   - 整体 trim 在 d/tol 单字段层做（与旧 app.js inp.value.trim() !== '' 一致）。
+ *   - 整体 trim 在 d/tol 单字段层做（与旧 vanilla 实现 inp.value.trim() !== '' 一致）。
  */
 export function collectParams(form: FormState): CollectedParams {
   const params: SolveParams = {
@@ -107,20 +107,20 @@ export function collectParams(form: FormState): CollectedParams {
   };
 }
 
-/** 解析 base seed（旧 app.js `parseInt($('seed').value, 10) || 0`）：失败/空 → 0。 */
+/** 解析 base seed（旧 vanilla 实现 `parseInt($('seed').value, 10) || 0`）：失败/空 → 0。 */
 export function parseSeed(form: FormState): number {
   const v = parseInt(form.seed, 10);
   return Number.isNaN(v) ? 0 : v;
 }
 
-/** 解析时长秒数（旧 app.js `parseInt($('time').value, 10) || 120`）：失败/空 → 120。 */
+/** 解析时长秒数（旧 vanilla 实现 `parseInt($('time').value, 10) || 120`）：失败/空 → 120。 */
 export function parseTime(form: FormState): number {
   const v = parseInt(form.time, 10);
   return Number.isNaN(v) ? 120 : v;
 }
 
 /**
- * 解析需要并行启动的 seed 数量（旧 app.js startSolve 内：
+ * 解析需要并行启动的 seed 数量（旧 vanilla 实现 startSolve 内：
  *   `multi ? Math.min(Math.max(parseInt($('seed_count').value, 10) || 3, 2), 6) : 1`）。
  *
  * 不变量：

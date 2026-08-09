@@ -1,14 +1,14 @@
-// 纯几何算子（与后端 _transform_polygon / 旧 app.js pointsStr 一致）。
+// 纯几何算子（与后端 _transform_polygon / 旧 vanilla 实现 pointsStr 一致）。
 //
 // 坐标系约定（CLAUDE.md）：
 //   sparrow 世界坐标 X=用布长度(0..width)，Y=门幅(0..gate)，Y 向上；
 //   SVG 用 scale(1,-1) 翻转后与 PNG / R12-DXF 导出口径一致。
 //
-// pointsStr 输出与旧 legacy/app.js 字节级一致（单测对比同输入）；任何修改需同步后端 _transform_polygon。
+// pointsStr 输出与旧 vanilla 前身 字节级一致（单测对比同输入）；任何修改需同步后端 _transform_polygon。
 
 import type { Polygon, Pt } from '../types/piece';
 
-/** 四舍五入到 2 位小数（与旧 app.js `r2` 一致）。 */
+/** 四舍五入到 2 位小数（与旧 vanilla 实现 `r2` 一致）。 */
 export function r2(x: number): number {
   return Math.round(x * 100) / 100;
 }
@@ -16,7 +16,7 @@ export function r2(x: number): number {
 /**
  * 将裁片 base 多边形按 rotation(°) + translation[tx,ty] 变换为 SVG `points` 字符串。
  *
- * 与旧 app.js / 后端 _transform_polygon 字节级一致：
+ * 与旧 vanilla 实现 / 后端 _transform_polygon 字节级一致：
  *   rad = rot * π/180; c = cos(rad); s = sin(rad)
  *   x' = x*c − y*s + tx
  *   y' = x*s + y*c + ty

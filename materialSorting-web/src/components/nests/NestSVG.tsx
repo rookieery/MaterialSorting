@@ -1,6 +1,6 @@
 // NestSVG —— 排料图 SVG（命令式渲染，逃逸 React reconciliation）。
 //
-// 与旧 app.js `onManifest` + `renderFrame` + `setupHover` 等价。React 只渲染一次空骨架 `<svg ref/>`，
+// 与旧 vanilla 实现 `onManifest` + `renderFrame` + `setupHover` 等价。React 只渲染一次空骨架 `<svg ref/>`，
 // 之后所有更新（翻转组 transform / polygon points / viewBox / 用布矩形 / 背景矩形）都走
 // `setAttribute` —— 即使 100ms bump 一次 renderTick，也只触发 imperative DOM 写入，
 // 不触发 React diff。
@@ -9,8 +9,8 @@
 //   1. 翻转组 transform = `translate(0 ${gate_mm}) scale(1 -1)` —— sparrow Y 向上 → SVG Y 向下。
 //      用 setAttribute 写，不走 JSX prop（否则 React reconciliation 会按 vdom 覆盖回旧值）。
 //   2. manifest 到达后建一次 DOM（bg / fab / flipGroup + N 个 polygon）；后续只改 points/display。
-//   3. pointsStr(poly, rot, tr) 输出与旧 app.js 字节级一致（lib/geometry.ts 单测覆盖）。
-//   4. 未 placed 的 polygon display:none；placed 的 display:''（与旧 app.js 一致）。
+//   3. pointsStr(poly, rot, tr) 输出与旧 vanilla 实现 字节级一致（lib/geometry.ts 单测覆盖）。
+//   4. 未 placed 的 polygon display:none；placed 的 display:''（与旧 vanilla 实现 一致）。
 //
 // US-006 增量：
 //   5. 回放感知：seekTime >= 0 时改用 frameAtTime(run, seekTime)（二分，lib/seek.ts）；
@@ -99,7 +99,7 @@ export function NestSVG({ run }: NestSVGProps) {
       }
 
       // US-006 AC#4..#6：flipGroup 上事件委托 mousemove + mouseleave。
-      // 与旧 app.js setupHover 等价（旧版绑 svg，AC 要求 flipGroup；多边形均在 flipGroup 内，
+      // 与旧 vanilla 实现 setupHover 等价（旧版绑 svg，AC 要求 flipGroup；多边形均在 flipGroup 内，
       // 行为一致：mousemove 落在 polygon → 显 tooltip + 高亮；其他 / mouseleave → 隐 + 移除高亮）。
       g.addEventListener('mousemove', handleHover);
       g.addEventListener('mouseleave', handleHoverEnd);
@@ -117,7 +117,7 @@ export function NestSVG({ run }: NestSVGProps) {
     if (!f) return;
 
     const gate = run.manifest.gate_mm;
-    // viewBox 用历史最大 width 作稳定锚（避免收缩抖动），与旧 app.js 一致。
+    // viewBox 用历史最大 width 作稳定锚（避免收缩抖动），与旧 vanilla 实现 一致。
     const W = Math.max(run.viewBoxMaxW, f.width_mm, 1);
 
     svg.setAttribute('viewBox', `0 0 ${W} ${gate}`);
@@ -151,12 +151,12 @@ export function NestSVG({ run }: NestSVGProps) {
 /**
  * mousemove 事件委托处理器（绑在 flipGroup 上）。
  *
- * 与旧 app.js setupHover 内 mousemove 一致：
+ * 与旧 vanilla 实现 setupHover 内 mousemove 一致：
  *   - poly = e.target.closest('polygon')（事件委托，e.target 可能是 polygon 本身或其子节点）
  *   - poly && poly.dataset.ptype → setHovered + showTooltip（片型/码/面积 cm²）
  *   - 否则 → clearHovered + hideTooltip
  *
- * 面积换算：dataset.area 单位 mm²，÷100 → cm²（与旧 app.js `parseFloat/100` 一致）。
+ * 面积换算：dataset.area 单位 mm²，÷100 → cm²（与旧 vanilla 实现 `parseFloat/100` 一致）。
  */
 function handleHover(e: MouseEvent): void {
   const target = e.target as Element | null;
@@ -175,7 +175,7 @@ function handleHover(e: MouseEvent): void {
   }
 }
 
-/** mouseleave 处理器：移除高亮 + 隐 tooltip（与旧 app.js setupHover mouseleave 一致）。 */
+/** mouseleave 处理器：移除高亮 + 隐 tooltip（与旧 vanilla 实现 setupHover mouseleave 一致）。 */
 function handleHoverEnd(): void {
   clearHovered();
   hideTooltip();

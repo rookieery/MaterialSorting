@@ -1,4 +1,4 @@
-// v0.3 工艺约束常量（与后端 constraints.py MAX_OVERLAP / ROTATION_TOL 一致；旧 app.js V03）。
+// v0.3 工艺约束常量（与后端 constraints.py MAX_OVERLAP / ROTATION_TOL 一致；旧 vanilla 实现 V03）。
 //
 // 字段说明：
 //   d         —— 该片型允许的最大重合深度 mm（erode 上限，对应 MAX_OVERLAP[ptype]）。
@@ -18,7 +18,7 @@ export interface V03Entry {
   internal: boolean;
 }
 
-/** v0.3 全部 10 片型的工艺上限（顺序固定，旧 app.js V03 字面量 1:1）。 */
+/** v0.3 全部 10 片型的工艺上限（顺序固定，旧 vanilla 实现 V03 字面量 1:1）。 */
 export const V03_TABLE: Record<string, V03Entry> = {
   前片: { d: 2, tol: 1, internal: false },
   后片: { d: 2, tol: 1, internal: false },

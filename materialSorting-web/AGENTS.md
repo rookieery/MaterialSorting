@@ -23,18 +23,18 @@ npm run test               # vitest run（US-002 起会有用例）
 
 ## 关键约束（CLAUDE.md 引用）
 
-1. **不引入 CSS 框架**：style.css 由 legacy 迁入，沿用命令式 + 类名约定。
+1. **不引入 CSS 框架**：`style.css` 由 vanilla 前身迁入，沿用命令式 + 类名约定。
 2. **坐标系 `scale(1,-1)`**：sparrow Y 向上 → SVG Y 向下，flipGroup 用 setAttribute 写 transform（避免 React reconciliation 覆盖）。US-003 落地。
 3. **命令式 polygon 更新**：每帧 setAttribute('points' / 'display')，由 Zustand renderTick 单字段 ~10fps 节流，**逃逸 React reconciliation**。US-003 落地。
-4. **legacy/ 勿改**：仅作迁移参考。US-008 删除。
+4. **`static/` 是构建产物**（US-008 起入库 gitignore）：`npm run build` 生成，**不要手改**；旧 vanilla 三件套（`legacy/`）已删除，React 应用是唯一真相源。
 
-## 文件分工（US-005 落地，US-006+ 待填）
+## 文件分工（US-001~US-007 全部落地；US-008 收尾清理）
 
 ```
 src/
 ├── main.tsx               # US-001：createRoot + StrictMode
 ├── App.tsx                # US-005：ControlPanel + NestsGrid + ConvergenceCurve + useRafThrottle；多 seed start
-├── style.css              # legacy 1:1 副本（US-008 清理）
+├── style.css              # 由 vanilla 前身 1:1 迁入（US-008 起为唯一真相源）
 ├── vite-env.d.ts          # vite/client 类型
 ├── types/                 # US-002 ✅：ws.ts / piece.ts / v03.ts（纯数据契约）
 ├── lib/                   # US-002 ✅ ws.ts；US-003 ✅ geometry.ts；US-004 ✅ params.ts；US-006 ✅ seek.ts；US-007 ✅ download.ts
@@ -52,8 +52,8 @@ src/
 
 ## US-007 关键约定（导出 PNG/DXF 调用方必读）
 
-- **useExport 挂在 ControlPanel 内**：因为 sizes 在 ControlPanel form 里（与旧 app.js `sizes: selectedSizes()` 同源）。App 不持有 useExport；onStatus 由 useExport → ControlPanel props.onStatus → App.setStatus → StatusLine 透传。
-- **ExportPayload 七字段与旧 app.js 字节级一致**：`{ fmt, sizes, seed, gate_mm, width_mm, density, placed }`。其中 `width_mm = run.lastFrame.width_mm`、`density = run.finalDensity`、`placed = run.lastFrame.placed_items`、`gate_mm = run.manifest.gate_mm`。改任一字段必须同步 `__tests__/useExport.test.tsx` AC#2 用例。
+- **useExport 挂在 ControlPanel 内**：因为 sizes 在 ControlPanel form 里（与旧 vanilla 实现 `sizes: selectedSizes()` 同源）。App 不持有 useExport；onStatus 由 useExport → ControlPanel props.onStatus → App.setStatus → StatusLine 透传。
+- **ExportPayload 七字段与旧 vanilla 实现 字节级一致**：`{ fmt, sizes, seed, gate_mm, width_mm, density, placed }`。其中 `width_mm = run.lastFrame.width_mm`、`density = run.finalDensity`、`placed = run.lastFrame.placed_items`、`gate_mm = run.manifest.gate_mm`。改任一字段必须同步 `__tests__/useExport.test.tsx` AC#2 用例。
 - **bestRun = runRegistry.bestRun()**：已封装「lastFrame 存在且 finalDensity 最高」逻辑（并列取首个）。ExportButtons 的 disabled 用更宽条件 `some(r => r.lastFrame)`，不用 bestRun（bestRun 留给 useExport 内做最终选择）。
 - **parseContentDisposition 优先级**：`filename*=UTF-8''xxx` > `filename="xxx"`/`filename=xxx` > `nesting.<fmt>`。decodeURIComponent 抛 URIError → 落下一级（不让导出整体失败）。改顺序同步 `download.test.ts`。
 - **防连击用 ref + state 双重防护**：`exportingRef.current` 立即生效；`exporting` state 触发 UI disabled。仅 state 有 race（连击第二次在 setExporting 调度前进入 async body）。
@@ -65,12 +65,12 @@ src/
 ## US-006 关键约定（回放 seek / Tooltip 调用方必读）
 
 - **`seekTime = -1` 是 live 标志**：appStore.seekTime 默认 -1 表示「跟随 lastFrame」；`>=0` 才走 frameAtTime 分支。NestSVG / SeekReadout 都按此分支。改默认值需同步 9 项 PlaybackBar + 11 项 NestSVG.seek 单测。
-- **App.onDone 全完成时 setSeekTime(me)**：`me = Math.ceil(maxElapsed(runRegistry.list()))`，与旧 app.js `$('seek').value = me` 一致 —— 默认拖到末尾。handleStart 内必须 setSeekTime(-1) + clearHovered + hideTooltip（防 DOM 残留）。
+- **App.onDone 全完成时 setSeekTime(me)**：`me = Math.ceil(maxElapsed(runRegistry.list()))`，与旧 vanilla 实现 `$('seek').value = me` 一致 —— 默认拖到末尾。handleStart 内必须 setSeekTime(-1) + clearHovered + hideTooltip（防 DOM 残留）。
 - **Tooltip 是模块级单例**：Tooltip.tsx 用模块顶层 `let _el / let _hovered`；App 内**只能挂一个 `<Tooltip/>`**（多挂互相 clobber）。NestSVG mousemove 处理器调 `showTooltip / hideTooltip / setHovered / clearHovered` —— 高频 mousemove 不进 React state，直接 mutate style/innerHTML/classList。
 - **Tooltip style 只能由 imperative 写**：Tooltip 组件 JSX **不带 style prop**（仅 className），否则 React reconciliation 重渲染时会把 display 重置为初始值，覆盖 showTooltip 写的 'block'。初始 display:none 在 useEffect 内通过 `el.style.display = 'none'` 设。
-- **frameAtTime 二分与旧 app.js 字节级一致**：`lo=0, hi=n-1, ans=0; while (lo<=hi) { mid=(lo+hi)>>1; if (frames[mid].elapsed<=t) {ans=mid; lo=mid+1} else hi=mid-1 }`；返回 frames[ans]。改算法必须同步 `lib/__tests__/seek.test.ts` 9 个 frameAtTime 用例（含 1000 帧 stress 等价线性参考）。
-- **flipGroup 上事件委托 mousemove + mouseleave（不是 svg）**：AC#4 明确要求；多边形均在 flipGroup 内，行为与旧 app.js setupHover(svg) 等价。listener 在 `if (run.manifest && !flipRef.current)` 块内 attach —— 幂等保护防 StrictMode 双 mount / 多次 bump tick 双注册。
-- **面积换算 mm² → cm² 用 `÷100`**：`parseFloat(dataset.area)/100` 与旧 app.js 一致；`.toFixed(1)`。改单位 / 精度需同步 `NestSVG.seek.test.tsx` 的 4 项 innerHTML 断言。
+- **frameAtTime 二分与旧 vanilla 实现 字节级一致**：`lo=0, hi=n-1, ans=0; while (lo<=hi) { mid=(lo+hi)>>1; if (frames[mid].elapsed<=t) {ans=mid; lo=mid+1} else hi=mid-1 }`；返回 frames[ans]。改算法必须同步 `lib/__tests__/seek.test.ts` 9 个 frameAtTime 用例（含 1000 帧 stress 等价线性参考）。
+- **flipGroup 上事件委托 mousemove + mouseleave（不是 svg）**：AC#4 明确要求；多边形均在 flipGroup 内，行为与旧 vanilla 实现 setupHover(svg) 等价。listener 在 `if (run.manifest && !flipRef.current)` 块内 attach —— 幂等保护防 StrictMode 双 mount / 多次 bump tick 双注册。
+- **面积换算 mm² → cm² 用 `÷100`**：`parseFloat(dataset.area)/100` 与旧 vanilla 实现 一致；`.toFixed(1)`。改单位 / 精度需同步 `NestSVG.seek.test.tsx` 的 4 项 innerHTML 断言。
 - **PlaybackBar 节流订阅**：PlaybackBar / SeekReadout 都订阅 renderTick（不是 seekTime 单独）—— frame push 后通过 tick 重算 allDone/max/readout。Seekbar 额外订阅 seekTime（受控 value 跟随）。
 
 ## US-005 关键约定（多 seed / 收敛曲线 调用方必读）
@@ -78,15 +78,15 @@ src/
 - **`ControlPanelStartPayload.seed_count` 是已 clamp 的最终值**：`parseSeedCount(form)` 返回 1（multi_seed=false）或 clamp(parseInt||3, 2, 6)。App.handleStart 直接 `for (let i=0; i<seed_count; i++) start({...cfg, seed: base+i})`，不再做边界检查。
 - **App all-done 检测用 ref 不用 state**：`doneCountRef.current += 1; if (< totalSeedsRef.current) return;` —— 闭包陈旧风险靠 ref 规避。每次 handleStart 重置 `doneCountRef.current = 0` + `totalSeedsRef.current = cfg.seed_count`。
 - **ConvergenceCurve 命令式 innerHTML**：React 仅 `<svg ref/>`；子节点（line/text/circle/path/g.legend）通过 `svg.innerHTML = out` 一次性写入，**不要改成 JSX**（每帧 diff 开销爆炸）。`sampleFrames` / `renderCurveInto` 导出便于纯函数测试。
-- **采样算法与旧 app.js drawCurve 字节级一致**：`step = max(1, floor(n/400))`；`pts = frames[0::step]`；`if (pts[last] !== frames[last]) pts.push(frames[last])`（末帧强制纳入）。改算法必须同步 `__tests__/ConvergenceCurve.test.tsx` 4 个采样用例。
+- **采样算法与旧 vanilla 实现 drawCurve 字节级一致**：`step = max(1, floor(n/400))`；`pts = frames[0::step]`；`if (pts[last] !== frames[last]) pts.push(frames[last])`（末帧强制纳入）。改算法必须同步 `__tests__/ConvergenceCurve.test.tsx` 4 个采样用例。
 - **配色：单 seed 走 PHASE_COLORS[phase]（散点）+ 默认蓝 `#1f77b4`（折线 / 末点）；多 seed 走 SEED_COLORS[ri]（折线 / 末点 / 标签 / 图例）**。`multi = runs.length > 1`（不是 multi_seed 表单值）。
 - **useRafThrottle(seeds.length>0) 不在 solving=false 时停**：求解结束后曲线 / NestLabel 仍需 bump 重绘最终态；下次 start() 才会 runRegistry.clear + setSeeds([]) 间接停掉。
 - **NestsGrid 只在 seeds 变化时挂载/卸载**：`<NestCard key={seed} run={rec}/>` 稳定 key；NestSVG 内部已订阅 renderTick 自更新，不需要 NestsGrid 介入高频重绘。
 
 ## US-004 关键约定（ControlPanel 调用方 / 改动方必读）
 
-- **表单字段全字符串存储**：`FormState`（lib/params.ts）的 number 字段（time/seed/d_*/tol_*）+ per_type[pt].d/tol 都按 input.value 字符串持有。理由：per_type 必须「空串 = 继承两档」与「"0" = 显式 0」可区分（旧 app.js inp.value.trim() !== '' 同口径）。
-- **collectParams(form) 纯函数与旧 app.js 字段级一致**：params 四档空 → 0 默认；per_type 仅 trim() !== '' 写入；整体空 → null。任何修改必须同步 `lib/__tests__/params.test.ts` 11 组对比 + AC#2 默认值断言。
+- **表单字段全字符串存储**：`FormState`（lib/params.ts）的 number 字段（time/seed/d_*/tol_*）+ per_type[pt].d/tol 都按 input.value 字符串持有。理由：per_type 必须「空串 = 继承两档」与「"0" = 显式 0」可区分（旧 vanilla 实现 inp.value.trim() !== '' 同口径）。
+- **collectParams(form) 纯函数与旧 vanilla 实现 字段级一致**：params 四档空 → 0 默认；per_type 仅 trim() !== '' 写入；整体空 → null。任何修改必须同步 `lib/__tests__/params.test.ts` 11 组对比 + AC#2 默认值断言。
 - **DEFAULT_FORM 与旧 index.html 默认 1:1**：d_int="10"、其余 0；time="60"、seed="0"；sizes 全选；per_type 全空。改默认值需同步 AC#2 + params.test.ts。
 - **ControlPanel 不调 useSolveRun**：仅 onStart(cfg) 透传到 App，App 决定是否调 useSolveRun.start（解耦多 seed / 重连 / clear 时机）。
 - **DOM id / className 沿用 legacy**：`id="start" / id="status" / id="d_ext" / id="time" / id="seed"` 等保留（CSS 选择器依赖）；`.sizes / .per_type / .pt-row / .chip / .preset / .pt-name i` 等 className 1:1。US-008 清理 CSS 时再统一去 id。
@@ -97,7 +97,7 @@ src/
 
 - **WS 连接只在 `start(cfg)` 显式 new**：不要在 useEffect 里 auto-connect，React 18 StrictMode 双 mount 会双连。
 - **frames 是 mutable 引用**：`runRegistry.list()` 返回的 RunRecord 本身可被 push，**不进 React state**；高频重绘由 US-003 renderTick 单字段节流。
-- **per_type 空 → 序列化为 null**（与旧 app.js collectParams 一致；Python `or None` 接住）。
+- **per_type 空 → 序列化为 null**（与旧 vanilla 实现 collectParams 一致；Python `or None` 接住）。
 - **density 双口径**：`FrameMsg.density` 是原面积口径（90% 生死线以此为准），`density_sparrow` 是 erode 后 sparrow 自报（参考）。任何决策 / 显示优先 density。
 - **不重连**：onclose / onerror 触发 `onDone`（done flag 防重复），交由调用层决定是否重启。
 - **测试**：`npx vitest run`，需 `(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;` 才能 avoid act warning；Mock WebSocket 用 ctor 返回 mock 实例的方式（`new WebSocket(url)` 直接拿到 mock）。
@@ -107,7 +107,7 @@ src/
 - **React 只渲染空骨架一次**：`NestSVG` JSX 仅返回 `<svg ref={svgRef}/>`；所有子节点（bg / 用布矩形 / 翻换组 `<g>` / N 个 `<polygon>`）全部 imperative 创建，由 `useRef` 持有。
 - **翻转组 transform 必须用 setAttribute 写**：`translate(0 ${gate_mm}) scale(1 -1)`，**不走 JSX prop**，否则 React reconciliation 会用 vdom 覆盖回旧值。
 - **renderTick 单字段节流**：`useAppStore` 只持 `renderTick` 一个字段；`useRafThrottle(active)` 在 active=true 时每 100ms bump 一次；NestSVG / NestLabel 通过 `useAppStore(s => s.renderTick)` 订阅 → useEffect 重跑 → setAttribute imperative 更新。frames 仍 mutable push 到 runRegistry。
-- **pointsStr(poly, rot, tr) 字节级对齐旧 app.js**：rad=rot*π/180，c=cos, s=sin，`x'=x*c−y*s+tx`，`y'=x*s+y*c+ty`，每点 `r2(x),r2(y)`，空格分隔。改这个函数必须同步后端 `_transform_polygon` 和 `lib/__tests__/geometry.test.ts`。
+- **pointsStr(poly, rot, tr) 字节级对齐旧 vanilla 实现**：rad=rot*π/180，c=cos, s=sin，`x'=x*c−y*s+tx`，`y'=x*s+y*c+ty`，每点 `r2(x),r2(y)`，空格分隔。改这个函数必须同步后端 `_transform_polygon` 和 `lib/__tests__/geometry.test.ts`。
 - **flipRef 幂等保护**：建 DOM 的 effect 用 `if (run.manifest && !flipRef.current)` 防御 React 18 StrictMode 双 mount / 多次 bump tick 重复建。清空只在 unmount 时发生（React 自动 GC svg 子树）。
 - **viewBox 用历史最大 width 作稳定锚**：`W = max(run.viewBoxMaxW, lastFrame.width_mm, 1)`，避免收缩抖动；用布矩形按当前帧 `width_mm` 收缩（直观看到省布过程）。
 - **manifest 到达后 DOM 才建**：mount 早于 manifest 时 effect 早 return；manifest 到达后下一次 renderTick bump 才建。后到 manifest 测试覆盖此路径。

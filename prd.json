@@ -2,26 +2,6 @@
   "branchName": "ralph/react-ts-frontend",
   "stories": [
     {
-      "id": "US-007",
-      "title": "导出 PNG/DXF",
-      "description": "As a user, I want to export the best run's final layout as PNG or R12-DXF so that I can deliver it to the cutting room.",
-      "files": [
-        "materialSorting-web/src/hooks/useExport.ts",
-        "materialSorting-web/src/components/ControlPanel/ExportButtons.tsx",
-        "materialSorting-web/src/lib/download.ts"
-      ],
-      "acceptanceCriteria": [
-        "bestRun 选择：lastFrame 存在且 finalDensity 最高的 run",
-        "ExportPayload = {fmt, sizes: selectedSizes(), seed: run.seed, gate_mm, width_mm: lastFrame.width_mm, density: run.finalDensity, placed: lastFrame.placed_items}（与旧 app.js 逐字段一致）",
-        "fetch /export（相对 URL），响应 blob",
-        "Content-Disposition filename*=UTF-8''xxx → decodeURIComponent；fallback filename=xxx 或 nesting.<fmt>",
-        "下载文件名形如 排料_码28-30-32_88.42%_seed0.png（中文正确，无乱码）",
-        "求解未完成或无 lastFrame 时按钮 disabled；导出中按钮 disabled + StatusLine 显示 正在生成 PNG...",
-        "同 seed 同参数导出的 DXF，用 ezdxf 读回 polygon 点集与旧版导出几何一致（回归测试）"
-      ],
-      "passes": true
-    },
-    {
       "id": "US-008",
       "title": "清理 legacy + 更新文档 + CI",
       "description": "As a maintainer, I want the legacy vanilla files removed and docs updated so that the React app is the single source of truth.",
@@ -37,7 +17,7 @@
         "materialSorting-web/static/ 加入 .gitignore（产物不入库）",
         "npx tsc --noEmit 与 npx vitest run 全绿"
       ],
-      "passes": false
+      "passes": true
     }
   ]
 }

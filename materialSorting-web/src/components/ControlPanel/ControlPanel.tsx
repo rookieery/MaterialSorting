@@ -9,7 +9,7 @@
 //
 // solving / status 来自 App：solving=true 禁用 StartButton；status 由 StatusLine 直接渲染。
 // US-005 落地 multi_seed 开关 + seed_count；US-007 接管 ExportButtons（useExport 也住这里，
-// 因为 sizes 在本组件 form 里 —— 旧 app.js exportAs 内 `sizes: selectedSizes()` 同源）。
+// 因为 sizes 在本组件 form 里 —— 旧 vanilla 实现 exportAs 内 `sizes: selectedSizes()` 同源）。
 
 import { useState } from 'react';
 import { useExport } from '../../hooks/useExport';
@@ -86,7 +86,7 @@ export function ControlPanel({ onStart, solving, status, onStatus }: ControlPane
     });
   }
 
-  /** 导出按钮回调 —— 透传 form.sizes 给 useExport.exportAs（与旧 app.js `sizes: selectedSizes()` 一致）。 */
+  /** 导出按钮回调 —— 透传 form.sizes 给 useExport.exportAs（与旧 vanilla 实现 `sizes: selectedSizes()` 一致）。 */
   function handleExport(fmt: ExportFmt): void {
     void exportAs(fmt, form.sizes);
   }

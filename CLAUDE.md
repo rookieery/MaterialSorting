@@ -22,9 +22,10 @@ web  →  nesting_engine  →  nesting_bounds  →  dxf_parser
 
 ## 启动顺序约束
 
-`ms-web` 的 `server.py` 在**模块顶层**调用 `load_pieces()` 读 `out/sparrow_baseline/pieces_intermediate.json`，并 `app.mount('/static', ...)` 指向 `materialSorting-web/static`。因此：
+`ms-web` 的 `server.py` 在**模块顶层**调用 `load_pieces()` 读 `out/sparrow_baseline/pieces_intermediate.json`，并 `app.mount('/static', ...)` 指向 `materialSorting-web/static`（前端构建产物）。因此：
 1. 首次启动 `ms-web` 前**必须**先 `ms-pieces-export` 生成 intermediate；
-2. `materialSorting-web/static/` 必须存在（前端 3 件套）。
+2. **prod 模式**：`materialSorting-web/static/` 必须先 `cd materialSorting-web && npm run build` 生成（产物已 gitignore，不入库；旧版 vanilla 三件套已删除）。
+3. **dev 模式**：`npm run dev` 启 Vite dev server (:5173)，经 Vite proxy 转发 `/export` 与 `/ws` 到后端 :8000；**不需要 build 产物**（但仍建议先跑一次 `npm run build` 让 `static/` 存在，避免 FastAPI mount 空目录报错）。
 
 ## 关键技术决策
 
@@ -32,6 +33,7 @@ web  →  nesting_engine  →  nesting_bounds  →  dxf_parser
 - **sparrow 不改源码**：作为 pip 包（spyrrow）引用，v0.3 服装约束（重合/旋转/布纹线）在外层 `constraints.py` + `solver.build_instance` 包装实现。
 - **坐标系**：spyrrow 世界坐标 X=用布长度(0..width)，Y=门幅(0..gate)，Y 向上；前端 SVG `scale(1,-1)` 翻转后与 PNG 一致。
 - **密度口径**：版师/90% 生死线用**原面积**口径 `real_density = total_area/(width*gate)`，erode 后 sparrow 自报密度仅作参考（density_sparrow）。
+- **前端已迁移到 React 18 + TypeScript 5 + Vite 5**（US-001~US-008 落地）。源码在 `materialSorting-web/src/`（Zustand 状态管理 + 命令式 SVG 渲染逃逸 React reconciliation），`npm run build` 产出到 `static/`（gitignore，prod 模式前必须先 build）。旧 vanilla 三件套（index.html + 主脚本 + style.css，原 `legacy/` 归档）已删除，React 应用是唯一真相源。**不引入 CSS 框架**（沿用迁移自旧版的 `style.css`）；**坐标系翻转 `scale(1,-1)` 必须保留**，与 PNG / R12-DXF 导出口径一致。
 
 ## 数据流主线
 

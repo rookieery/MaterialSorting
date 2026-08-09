@@ -1,8 +1,8 @@
 // US-004 collectParams 单测：
 //   1) 默认表单 → d_int=10，其余三档 0；per_type = null（全空）。
-//   2) 与旧 app.js collectParams 字段级一致（多组对比，含全空 / 部分填 / 全填 / 空白 / 非法字符）。
+//   2) 与旧 vanilla 实现 collectParams 字段级一致（多组对比，含全空 / 部分填 / 全填 / 空白 / 非法字符）。
 //   3) per_type 空 → null；任一档非空 → 创建 entry（仅写非空档）。
-//   4) parseTime / parseSeed 与旧 app.js `parseInt(...) || fallback` 一致。
+//   4) parseTime / parseSeed 与旧 vanilla 实现 `parseInt(...) || fallback` 一致。
 
 import { describe, expect, it } from 'vitest';
 import {
@@ -15,13 +15,13 @@ import {
 } from '../params';
 import type { PerTypeOverrides, SolveParams } from '../../types/v03';
 
-// 旧 app.js num(id, def) —— 模拟从 input.value 字符串解析。
+// 旧 vanilla 实现 num(id, def) —— 模拟从 input.value 字符串解析。
 function legacyNum(s: string, def: number): number {
   const v = parseFloat(s);
   return Number.isNaN(v) ? def : v;
 }
 
-// 旧 app.js collectParams 的参考实现（按 FormState 输入重写，行为字节级一致）。
+// 旧 vanilla 实现 collectParams 的参考实现（按 FormState 输入重写，行为字节级一致）。
 function legacyCollectParams(form: FormState): { params: SolveParams; per_type: PerTypeOverrides | null } {
   const params: SolveParams = {
     d_ext: legacyNum(form.d_ext, 0),
@@ -30,7 +30,7 @@ function legacyCollectParams(form: FormState): { params: SolveParams; per_type: 
     tol_int: legacyNum(form.tol_int, 0),
   };
   const per_type: PerTypeOverrides = {};
-  // 旧 app.js 遍历所有 input（10 ptype × 2 key），此处等价展开。
+  // 旧 vanilla 实现 遍历所有 input（10 ptype × 2 key），此处等价展开。
   for (const [pt, vals] of Object.entries(form.per_type)) {
     if (vals.d.trim() !== '') {
       (per_type[pt] = per_type[pt] || {}).d = parseFloat(vals.d);
@@ -62,7 +62,7 @@ describe('collectParams (US-004)', () => {
     expect(out.per_type).toBeNull();
   });
 
-  it('与旧 app.js collectParams 字段级一致（多组对比）', () => {
+  it('与旧 vanilla 实现 collectParams 字段级一致（多组对比）', () => {
     const cases: FormState[] = [
       // 1. 全空 per_type + 默认档
       makeForm(),
@@ -132,7 +132,7 @@ describe('collectParams (US-004)', () => {
     });
   });
 
-  it('per_type d 与 tol 都空白 → 不创建 entry（与旧 app.js inp.value.trim() 一致）', () => {
+  it('per_type d 与 tol 都空白 → 不创建 entry（与旧 vanilla 实现 inp.value.trim() 一致）', () => {
     const form = makeForm({
       per_type: { ...DEFAULT_FORM.per_type, 腰: { d: '   ', tol: '' } },
     });
@@ -171,7 +171,7 @@ describe('parseTime / parseSeed (US-004)', () => {
 });
 
 describe('parseSeedCount (US-005)', () => {
-  // 旧 app.js startSolve 内：multi ? clamp(count||3, 2, 6) : 1
+  // 旧 vanilla 实现 startSolve 内：multi ? clamp(count||3, 2, 6) : 1
   it('multi_seed=false → 1（无论 seed_count 填什么）', () => {
     expect(parseSeedCount(DEFAULT_FORM)).toBe(1);
     expect(parseSeedCount(makeForm({ multi_seed: false, seed_count: '5' }))).toBe(1);

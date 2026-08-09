@@ -1,7 +1,7 @@
 // Seekbar —— 回放时间滑块（US-006 AC#1..#3）。
 //
-// 与旧 legacy/app.js `#seek` 等价（受控 range input）。
-//   - 求解中 / 未启动：disabled，max=0，value=0（与旧 app.js startSolve 重置一致）
+// 与旧 vanilla 前身 `#seek` 等价（受控 range input）。
+//   - 求解中 / 未启动：disabled，max=0，value=0（与旧 vanilla 实现 startSolve 重置一致）
 //   - 全部 run 完成：max = ceil(maxElapsed)（至少 1，避免 max<min），value 默认到末尾
 //   - 用户拖动：onInput → setSeekTime(t)，NestSVG / SeekReadout 切到 frameAtTime(run, t)
 //
@@ -25,7 +25,7 @@ export function Seekbar({ max, disabled }: SeekbarProps): React.JSX.Element {
   const seekTime = useAppStore((s) => s.seekTime);
   const setSeekTime = useAppStore((s) => s.setSeekTime);
 
-  // disabled 时 max=0 value=0（与旧 app.js `$('seek').max=0; $('seek').value=0` 一致）。
+  // disabled 时 max=0 value=0（与旧 vanilla 实现 `$('seek').max=0; $('seek').value=0` 一致）。
   // 启用时 effectiveMax 至少 1（避免 max<min，浏览器会 clamp 但语义上 1 更稳）。
   const effectiveMax = disabled ? 0 : Math.max(max, 1);
   const value = disabled ? 0 : seekTime >= 0 ? Math.min(seekTime, effectiveMax) : effectiveMax;

@@ -1,6 +1,6 @@
-// NestsGrid —— 排料卡片网格容器（旧 app.js `#nests` 容器 + makeRun 创建 .nest-card 序列）。
+// NestsGrid —— 排料卡片网格容器（旧 vanilla 实现 `#nests` 容器 + makeRun 创建 .nest-card 序列）。
 //
-// 与旧 app.js startSolve 内 `for (let i=0; i<n; i++) runs.push(makeRun(baseSeed+i))` 等价：
+// 与旧 vanilla 实现 startSolve 内 `for (let i=0; i<n; i++) runs.push(makeRun(baseSeed+i))` 等价：
 //   App 持有 seeds 列表（base+i 序列），NestsGrid 根据 seeds 在 runRegistry 里查 RunRecord，
 //   找到则挂载 NestCard（key=seed，稳定）。挂载/卸载只发生在 seeds 列表变化时；
 //   NestSVG 内部已通过订阅 renderTick 做命令式更新，无需 NestsGrid 介入。

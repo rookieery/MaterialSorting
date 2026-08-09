@@ -1,6 +1,6 @@
 // NestLabel —— 排料卡片顶部标签（seed N · X.XX% / 错误 / 等待）。
 //
-// 与旧 app.js `run.label.textContent` 等价。订阅 renderTick，每次 bump 重读 mutable run 状态。
+// 与旧 vanilla 实现 `run.label.textContent` 等价。订阅 renderTick，每次 bump 重读 mutable run 状态。
 // 不直接订阅 run.frames / run.lastFrame —— 那是 mutable 引用，React 检测不到变化。
 //
 // 注：NestLabel 本身仍走 React reconciliation，但因为只是文本节点、且 ~10fps 重渲染，开销可忽略。

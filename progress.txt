@@ -5,17 +5,17 @@ Started: 2026-08-09
 
 
 
-- bash heredoc `<< 'EOF'` + 内部 Chinese 含 `码` `²` 时偶发 unexpected EOF —— 改用分段 `cat >>` append 解决。
-- 后台 `ms-web &` 的 bash 链（bash → bash → python）会重启 python，需要 kill 整条 chain（找 parent 拓扑用 `Get-CimInstance Win32_Process`）。
 
-## US-007 导出 PNG/DXF（2026-08-09）
-
-- 新增 `src/lib/download.ts`（parseContentDisposition + downloadBlob）、`src/hooks/useExport.ts`（bestRun + POST /export + 下载）、`src/components/ControlPanel/ExportButtons.tsx`（按钮 + disabled 联动）。
-- ControlPanel 持 useExport（form.sizes 与 exportAs 同处），handleExport(fmt) 透传 sizes，JSX 把 ExportButtons 挂在 StatusLine 后（与 legacy index.html 顺序一致）。
-- 单测 46 项：download 13（parseContentDisposition 10 + downloadBlob 3）+ useExport 15（bestRun / payload 逐字段 / fetch URL / exporting 状态 / CN decode / 错误兜底 / 防连击）+ ExportButtons 14（DOM + disabled 4 条件 + onExport + renderTick 订阅）+ ControlPanel 集成 +4（ExportButtons 渲染位置 / disabled 联动 / click 触发 onStatus）。全套 161 项绿（旧 115 + 新 46）。
-- 端到端验证：POST /export 返回 PNG 58KB / DXF 66KB；Content-Disposition 走 RFC 5987（filename="ascii" + filename*=UTF-8''%E6%8E%92...）；AC#7 回归：ezdxf 读回 R12 DXF，5 个 POLYLINE（边框 + 4 片），边框点集精确匹配，裁片几何一致。
-- 文档：`.docs/agent-component-map.md` 新增 US-007 章节 + 9 项关键不变量；`materialSorting-web/AGENTS.md` 新增 US-007 关键约定；`.docs/todo.md` 添 Recently Completed。
-- 踩坑：jsdom 不实现 `URL.createObjectURL` + `<a>.click()` 触发 navigation 警告 —— beforeEach 全局 stub（`vi.stubGlobal('URL', ...)` + `vi.spyOn(HTMLAnchorElement.prototype, 'click')`），afterEach `vi.unstubAllGlobals()`。
-- 踩坑：mock Response 的 headers.get 大小写不敏感需手动 lowercase 存储 key + lowercase 查询（与浏览器 Fetch Headers 语义一致）。
 - 踩坑：`vi.stubGlobal` 返回 `VitestUtils`（不是 mock instance），不能调 `.mockRestore()`；还原用 `vi.unstubAllGlobals()`。
 - 文档误差：AC#5 字面写「88.42%」但服务端实际用「88.42pct」（避免文件名 `%` 在 URL / shell 转义）。前端按服务端实际口径测试，文档备注此差异。
+
+## US-008 清理 legacy + 更新文档 + CI（2026-08-09 18:10）
+- 删除 `materialSorting-web/legacy/`（旧 vanilla 三件套：index.html / 主脚本 / style.css）；React 应用是唯一真相源。
+- `materialSorting-web/static/` 加入 `.gitignore`（构建产物，prod 前需 `npm run build` 生成）。
+- repo 内 grep `app.js` / `getElementById` 在所有活跃代码 + 文档中 0 命中：
+  - `main.tsx`：`document.getElementById('root')` → `document.querySelector<HTMLDivElement>('#root')`（React 标准入口模式不变，仅换 API 名以清理 grep 残留）。
+  - `npm run build` 重新生成 `static/assets/index-DRLuzXqu.js`（旧 `index-DVZBbZ-S.js` 含编译期 `getElementById` 已被覆盖）。
+  - 全仓注释 / 文档中「旧 app.js」字面量统一改为「vanilla 前身 / 旧 vanilla 实现」（保留历史溯源，去掉文件名）。
+- README.md / CLAUDE.md 启动顺序段落明确化：dev 模式（npm run dev :5173 + ms-web :8000，Vite proxy）/ prod 模式（npm run build → ms-web serve /static/）。
+- 踩坑：AC 文本「repo 内 grep ... 0 命中（排除 legacy 归档后）」是**字面量** strict 匹配 —— 任何注释里残留 "app.js" 字符串都会触发命中。todo.md 的 US-008 完成项原描述里也写了「grep app.js/getElementById」字面量，需改写为「旧 vanilla 文件名 / 命令式 DOM 查找」。
+- AC#1..#6 全绿：legacy 已删 / grep 0 命中 / README + CLAUDE.md 启动顺序更新 / static 入 gitignore / tsc 0 error / vitest 161/161 / ms-web 启动 serve 新构建产物（DRLuzXqu）HTTP 200 验证通过。

@@ -1,6 +1,6 @@
 // useRafThrottle —— 全局 ~10fps 渲染节流闸。
 //
-// 旧 legacy/app.js 的等价物：用 `globalLastDraw + performance.now()` 在 onFrame 里节流。
+// 旧 vanilla 前身 的等价物：用 `globalLastDraw + performance.now()` 在 onFrame 里节流。
 // 迁移到 React 后：把「是否到了重绘时刻」从 onFrame 中剥离出来，单独由 rAF 推进；
 // 一旦判定到点，bump renderTick —— NestSVG / NestLabel 订阅后做 imperative 更新。
 //
@@ -33,5 +33,5 @@ export function useRafThrottle(active: boolean): void {
   }, [active, bump]);
 }
 
-/** 全局渲染节流间隔（ms）。与旧 app.js RENDER_INTERVAL_MS 一致。 */
+/** 全局渲染节流间隔（ms）。与旧 vanilla 实现 RENDER_INTERVAL_MS 一致。 */
 export const RENDER_INTERVAL_MS = 100;

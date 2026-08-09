@@ -19,8 +19,9 @@ MaterialSorting/
 │       ├── nesting_bounds/    裁片加载
 │       ├── nesting_engine/    sparrow 排料 + v0.3 约束
 │       └── web/               FastAPI + WebSocket 工作台
-└── materialSorting-web/       前端静态资源
-    └── static/                index.html / app.js / style.css
+└── materialSorting-web/       前端 React + TypeScript + Vite（src/ → npm run build → static/）
+    ├── src/                   源码（React 18 + TS 5 + Zustand）
+    └── static/                构建产物（npm run build 生成，gitignore，由 ms-web serve）
 ```
 
 ## 环境要求
@@ -44,9 +45,31 @@ pip install -e ".[web]"
 ```bash
 # 1. 生成 128 片中间数据（从 data/m1787_直筒/ 读取）
 ms-pieces-export
+```
 
-# 2. 启动可视化工作台
-ms-web          # → http://127.0.0.1:8000
+前端有 **dev / prod 两种模式**（二选一）：
+
+### dev 模式（Vite dev server，热重载，调试用）
+```bash
+# 终端 A：后端在 :8000
+ms-web
+
+# 终端 B：前端 Vite dev server 在 :5173（Vite proxy 转发 /export 与 /ws 到 :8000）
+cd materialSorting-web
+npm install        # 首次装依赖
+npm run dev        # → http://localhost:5173
+```
+
+### prod 模式（FastAPI 单服务 serve 构建产物，部署 / 验收用）
+```bash
+# 1. 构建前端到 materialSorting-web/static/（gitignore，本地生成）
+cd materialSorting-web
+npm install
+npm run build      # tsc --noEmit && vite build → static/
+
+# 2. 后端 serve 构建产物（静态资源挂载在 /static，根路径 / 返回 static/index.html）
+cd ..
+ms-web             # → http://127.0.0.1:8000
 ```
 
 ## 数据流
@@ -78,7 +101,7 @@ out/sparrow_baseline/pieces_intermediate.json   ← 全流程事实源
 
 ## 路径覆盖
 
-`materialsorting/paths.py` 的数据/产物/前端目录均可通过环境变量覆盖：`MS_DATA_DIR`、`MS_OUT_DIR`、`MS_STATIC_DIR`。
+`materialsorting/paths.py` 的数据/产物/前端目录均可通过环境变量覆盖：`MS_DATA_DIR`、`MS_OUT_DIR`、`MS_STATIC_DIR`（默认指向 `materialSorting-web/static/`，dev 模式下无需 override，前端由 Vite 直接 serve）。
 
 ## 架构与约定
 

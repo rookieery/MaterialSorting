@@ -1,9 +1,9 @@
 // ExportButtons —— 导出 PNG / DXF 按钮组（US-007 AC#6）。
 //
-// 与旧 legacy/index.html `<div class="export-group">` + 旧 app.js updateExportButtons 等价：
+// 与旧 legacy/index.html `<div class="export-group">` + 旧 vanilla 实现 updateExportButtons 等价：
 //   - 求解中（solving=true）→ disabled
 //   - registry 无 lastFrame run（未求解 / 求解未完成）→ disabled
-//   - 导出中（exporting=true）→ disabled（双按钮同步禁用，与旧 app.js 同时设 export_png/dxf 一致）
+//   - 导出中（exporting=true）→ disabled（双按钮同步禁用，与旧 vanilla 实现 同时设 export_png/dxf 一致）
 //
 // AC#6 字面：求解未完成或无 lastFrame 时按钮 disabled；导出中按钮 disabled + StatusLine
 // 显示 正在生成 PNG/DXF…（StatusLine 文案由 useExport 写 onStatus）。
@@ -33,7 +33,7 @@ export function ExportButtons({ solving, exporting, onExport }: ExportButtonsPro
   const renderTick = useAppStore((s) => s.renderTick);
   void renderTick;
 
-  // hasLastFrame = registry 至少有一个 run 推过 frame（与旧 app.js updateExportButtons
+  // hasLastFrame = registry 至少有一个 run 推过 frame（与旧 vanilla 实现 updateExportButtons
   // `runs.some(r => r.lastFrame)` 一致）。bestRun() 也按 lastFrame 过滤，但这里用 some() 显式
   // 表达「只要存在 lastFrame 即可点」（与旧版同语义；bestRun 留给 useExport 内做最终选择）。
   const hasLastFrame = runRegistry.list().some((r) => r.lastFrame !== null);

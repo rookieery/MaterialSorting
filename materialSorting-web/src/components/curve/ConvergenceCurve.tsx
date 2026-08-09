@@ -1,13 +1,13 @@
 // ConvergenceCurve —— 多 run 叠加收敛曲线（命令式 DOM，逃逸 React reconciliation）。
 //
-// 与旧 app.js drawCurve() 等价：
+// 与旧 vanilla 实现 drawCurve() 等价：
 //   1. 始终绘制 90% 生死线（虚线 + 「90% 生死线」文字）。
 //   2. 单 seed（runs.length === 1）：散点按 PHASE_COLORS[phase] 着色 + cumulative-best 折线（默认蓝）。
 //   3. 多 seed（runs.length > 1）：每 run 一条 SEED_COLORS[i] 折线 + 末点 circle + seed 标签。
 //   4. 图例：多 seed → seed 列表（每行一个色块 + 「seed N」）；单 seed → phase 列表（exploring/compressing/final）。
-//   5. 帧数 > 400 时按 step = max(1, floor(n/400)) 采样，末帧强制纳入（与旧 app.js 一致）。
+//   5. 帧数 > 400 时按 step = max(1, floor(n/400)) 采样，末帧强制纳入（与旧 vanilla 实现 一致）。
 //
-// 命令式：React 仅渲染空骨架 `<svg ref/>`；子节点通过 svg.innerHTML = ... 写入（与旧 app.js 一致），
+// 命令式：React 仅渲染空骨架 `<svg ref/>`；子节点通过 svg.innerHTML = ... 写入（与旧 vanilla 实现 一致），
 // 不参与 React 每帧 diff。节流：订阅 renderTick —— bump 时 effect 重跑 → 重读 runRegistry → 重写 innerHTML。
 
 import { useEffect, useRef } from 'react';
@@ -19,9 +19,9 @@ import type { FrameMsg } from '../../types/ws';
 
 /** 90% 生死线（行业 / 版师口径，原面积密度）。 */
 const DEATH_LINE_PCT = 90;
-/** 单 run 采样上限（与旧 app.js drawCurve 字面量一致）。 */
+/** 单 run 采样上限（与旧 vanilla 实现 drawCurve 字面量一致）。 */
 const MAX_POINTS = 400;
-/** 收敛曲线画布尺寸 / 内边距（与旧 app.js drawCurve 字面量一致）。 */
+/** 收敛曲线画布尺寸 / 内边距（与旧 vanilla 实现 drawCurve 字面量一致）。 */
 const W = 1000;
 const H = 220;
 const PAD_L = 46;
@@ -30,7 +30,7 @@ const PAD_T = 12;
 const PAD_B = 26;
 
 /**
- * 帧采样（旧 app.js drawCurve 内部逻辑）：
+ * 帧采样（旧 vanilla 实现 drawCurve 内部逻辑）：
  *   step = max(1, floor(n/400))；i=0,step,2*step,...；末帧强制纳入。
  */
 export function sampleFrames(frames: readonly FrameMsg[]): FrameMsg[] {
@@ -43,15 +43,15 @@ export function sampleFrames(frames: readonly FrameMsg[]): FrameMsg[] {
   return pts;
 }
 
-/** 按 phase 取色（PHASE_COLORS 缺失 → 灰色兜底，与旧 app.js `|| '#888'` 一致）。 */
+/** 按 phase 取色（PHASE_COLORS 缺失 → 灰色兜底，与旧 vanilla 实现 `|| '#888'` 一致）。 */
 function phaseColor(phase: string): string {
   return PHASE_COLORS[phase as keyof typeof PHASE_COLORS] || '#888';
 }
 
 /**
- * 渲染收敛曲线到 svg（命令式 innerHTML；与旧 app.js drawCurve 输出字节级一致）。
+ * 渲染收敛曲线到 svg（命令式 innerHTML；与旧 vanilla 实现 drawCurve 输出字节级一致）。
  *
- * 早返回：runs 为空 / 全部无帧时不绘制（保留 svg 现有内容；旧 app.js 同行为）。
+ * 早返回：runs 为空 / 全部无帧时不绘制（保留 svg 现有内容；旧 vanilla 实现 同行为）。
  */
 export function renderCurveInto(svg: SVGSVGElement): void {
   const runs = runRegistry.list();

@@ -1,6 +1,6 @@
 // US-003 NestSVG 单测：
 //   1) manifest 到达 → 翻转组 transform（setAttribute，非 JSX）
-//   2) 每个 piece 创建 polygon，fill / data-* 与旧 app.js 一致；初始 display:none
+//   2) 每个 piece 创建 polygon，fill / data-* 与旧 vanilla 实现 一致；初始 display:none
 //   3) lastFrame 到达 + renderTick bump → placed polygon setAttribute points + display；
 //      未 placed 的 display:none
 //   4) viewBox 用历史最大 width（稳定锚）；React 只渲染空骨架

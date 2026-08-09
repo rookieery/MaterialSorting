@@ -9,7 +9,7 @@
 import type { PieceInfo, PlacedItem } from './piece';
 import type { PerTypeOverrides, SolveParams } from './v03';
 
-/** client → server 唯一消息。per_type 空时序列化为 null（同旧 app.js collectParams）。 */
+/** client → server 唯一消息。per_type 空时序列化为 null（同旧 vanilla 实现 collectParams）。 */
 export interface StartPayload {
   action: 'start';
   sizes: number[];
@@ -19,7 +19,7 @@ export interface StartPayload {
   per_type: PerTypeOverrides | null;
 }
 
-/** sparrow 求解阶段（与 rtype.phase_name() 对应；旧 app.js PHASE_COLORS keys）。 */
+/** sparrow 求解阶段（与 rtype.phase_name() 对应；旧 vanilla 实现 PHASE_COLORS keys）。 */
 export type Phase = 'exploring' | 'compressing' | 'final';
 
 /** manifest：base 几何（erode 后）+ 颜色，每个 run 仅推一次。 */

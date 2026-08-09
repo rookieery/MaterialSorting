@@ -1,6 +1,6 @@
 // Tooltip —— 片信息浮层（US-006 AC#4..#6）。
 //
-// 与旧 legacy/app.js `tooltipEl` 等价：单一 DOM 节点，高频 mousemove 直接 mutate
+// 与旧 vanilla 前身 `tooltipEl` 等价：单一 DOM 节点，高频 mousemove 直接 mutate
 // style.left/top/display + innerHTML，**不进 React state**（避免 reconciliation 风暴）。
 //
 // 关键设计：
@@ -9,7 +9,7 @@
 //      NestSVG mousemove 处理器调 showTooltip / hideTooltip 操作 DOM，不持有 React 引用。
 //   3. style 由 imperative 唯一写入（JSX 不带 style prop），避免 React reconciliation 覆盖。
 //
-// AC#5：fixed 定位，鼠标 +14/+14 偏移（与旧 app.js `e.clientX + 14` 字面量一致）。
+// AC#5：fixed 定位，鼠标 +14/+14 偏移（与旧 vanilla 实现 `e.clientX + 14` 字面量一致）。
 // AC#6：mouseleave 隐藏；切换 hover polygon 时 setHovered 自动移除旧 class。
 
 import { useEffect, useRef } from 'react';
@@ -24,7 +24,7 @@ function registerTooltipEl(el: HTMLDivElement | null): void {
 }
 
 /**
- * 设置当前 hover 的 polygon（class 切换；与旧 app.js `hoveredEl` 一致）。
+ * 设置当前 hover 的 polygon（class 切换；与旧 vanilla 实现 `hoveredEl` 一致）。
  * 新旧相同 → no-op；新旧不同 → 移除旧 class、加新 class。
  * poly=null → 仅清除旧 class。
  */

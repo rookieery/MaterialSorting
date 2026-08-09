@@ -189,7 +189,7 @@ describe('PlaybackBar (US-006)', () => {
     expect(parseInt(seek.value, 10)).toBe(10); // 回退到 max
   });
 
-  it('AC#1 disabled seekbar max=0 value=0（与旧 app.js reset 一致）', () => {
+  it('AC#1 disabled seekbar max=0 value=0（与旧 vanilla 实现 reset 一致）', () => {
     renderWith(<Seekbar max={0} disabled={true} />);
     const seek = container!.querySelector<HTMLInputElement>('#seek')!;
     expect(seek.disabled).toBe(true);

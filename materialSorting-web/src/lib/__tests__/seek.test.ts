@@ -1,6 +1,6 @@
 // US-006 seek.ts 单测：
 //   - maxElapsed: 空 / 单 run / 多 run 取 max
-//   - frameAtTime: 空 / 边界 / 二分查找 与 旧 app.js 线性参考等价
+//   - frameAtTime: 空 / 边界 / 二分查找 与 旧 vanilla 实现 线性参考等价
 //
 // AC#2: frameAtTime 必须做二分（O(log n)），单测与线性参考逐 t 对比（含 1000 帧 stress）。
 
@@ -73,7 +73,7 @@ describe('frameAtTime (US-006 AC#2)', () => {
   });
 
   it('binary search matches linear reference (1000 frames, stress)', () => {
-    // 与旧 app.js 字节级一致 —— 1000 帧（典型 final n_frames 量级），随机 t 验证二分正确性。
+    // 与旧 vanilla 实现 字节级一致 —— 1000 帧（典型 final n_frames 量级），随机 t 验证二分正确性。
     const frames: FrameMsg[] = [];
     for (let i = 0; i < 1000; i++) frames.push(makeFrame(i * 0.05, i * 0.0005));
     const c: FrameContainer = { frames };

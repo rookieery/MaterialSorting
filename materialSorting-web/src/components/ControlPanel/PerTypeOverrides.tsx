@@ -1,6 +1,6 @@
 // PerTypeOverrides —— 高级「每片型覆盖」面板（与旧 index.html `<details><div id="per_type">` 等价）。
 //
-// 与旧 app.js renderPerType 一致：
+// 与旧 vanilla 实现 renderPerType 一致：
 //   1. 渲染 V03_PTYPES 10 行，每行：片型名（内片标 `<i>内</i>` 徽章）+ d 输入 + tol 输入。
 //   2. placeholder 提示 d≤ / t≤ 上限（取自 V03_TABLE）。
 //   3. 内部片（internal=true）用 d_int/tol_int 档，标 `<i>内</i>`；外部片用 d_ext/tol_ext 档。

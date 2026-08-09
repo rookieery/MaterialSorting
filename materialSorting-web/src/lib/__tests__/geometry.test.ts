@@ -1,5 +1,5 @@
 // US-003 pointsStr 单测：
-//   1) 与旧 legacy/app.js pointsStr 字节级一致（多组随机输入对比）
+//   1) 与旧 vanilla 前身 pointsStr 字节级一致（多组随机输入对比）
 //   2) 旋转 0° + 平移 0 = 原多边形（仅做 r2 截断）
 //   3) 旋转 90° 后再平移、绕原点旋转的可视化 sanity check
 //   4) 单点 / 三点 / 多点 边界
@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 import { pointsStr, r2 } from '../geometry';
 import type { Polygon, Pt } from '../../types/piece';
 
-// 旧 app.js pointsStr 副本（参考实现，用于字节级对比）。
+// 旧 vanilla 实现 pointsStr 副本（参考实现，用于字节级对比）。
 function legacyPointsStr(poly: number[][], rot: number, tr: number[]): string {
   const legacyR2 = (x: number) => Math.round(x * 100) / 100;
   const r = (rot * Math.PI) / 180;
@@ -26,7 +26,7 @@ function legacyPointsStr(poly: number[][], rot: number, tr: number[]): string {
 }
 
 describe('r2', () => {
-  it('四舍五入到 2 位小数（与旧 app.js 一致）', () => {
+  it('四舍五入到 2 位小数（与旧 vanilla 实现 一致）', () => {
     expect(r2(0)).toBe(0);
     expect(r2(1.234)).toBe(1.23);
     expect(r2(1.235)).toBe(1.24); // Math.round(123.5)/100 = 124/100 = 1.24
@@ -37,7 +37,7 @@ describe('r2', () => {
 });
 
 describe('pointsStr', () => {
-  it('与旧 app.js 字节级一致（多组对比）', () => {
+  it('与旧 vanilla 实现 字节级一致（多组对比）', () => {
     const cases: Array<{ poly: number[][]; rot: number; tr: [number, number] }> = [
       // 单位正方形，无变换
       { poly: [[0, 0], [10, 0], [10, 10], [0, 10]], rot: 0, tr: [0, 0] },

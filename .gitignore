@@ -11,8 +11,11 @@ out/
 .venv/
 venv/
 
-# Node（前端依赖，本地装；产物 static/ 由 US-008 决定是否入库）
+# Node（前端依赖，本地装）
 node_modules/
+
+# 前端构建产物（npm run build 输出；由 materialSorting-web/src/ 编译生成，不入库）
+materialSorting-web/static/
 
 # Ralph 自动循环产物（运行时生成，勿入库）
 .all_done

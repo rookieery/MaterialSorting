@@ -1,11 +1,11 @@
 // useExport —— 导出最优排料 PNG / DXF 的生命周期 hook（US-007）。
 //
-// 与旧 legacy/app.js exportAs(fmt) 字节级等价：
+// 与旧 vanilla 前身 exportAs(fmt) 字节级等价：
 //   1. bestRun = lastFrame 存在且 finalDensity 最高的 run（runRegistry.bestRun() 已封装；
 //      AC#1）。
 //   2. ExportPayload = { fmt, sizes: selectedSizes(), seed: run.seed, gate_mm,
 //      width_mm: lastFrame.width_mm, density: run.finalDensity, placed: lastFrame.placed_items }
-//      （AC#2，逐字段与旧 app.js 一致）。
+//      （AC#2，逐字段与旧 vanilla 实现 一致）。
 //   3. fetch /export（相对 URL；dev 由 Vite proxy 转 :8000，prod 同源），响应 blob（AC#3）。
 //   4. Content-Disposition filename*=UTF-8''xxx → decodeURIComponent；fallback filename=xxx
 //      / nesting.<fmt>（AC#4，由 lib/download.ts parseContentDisposition 处理）。
@@ -65,8 +65,8 @@ export function useExport(cb: UseExportCallbacks = {}): UseExportResult {
     // 防连击：导出中再次触发 → 忽略
     if (exportingRef.current) return;
 
-    // 2) ExportPayload（AC#2，逐字段与旧 app.js 一致）
-    //    gate_mm 来自 manifest（与旧 app.js `gateH = m.gate_mm` 同源；所有 run 共享）。
+    // 2) ExportPayload（AC#2，逐字段与旧 vanilla 实现 一致）
+    //    gate_mm 来自 manifest（与旧 vanilla 实现 `gateH = m.gate_mm` 同源；所有 run 共享）。
     const gate_mm = run.manifest?.gate_mm ?? 0;
     const payload = {
       fmt,
@@ -109,7 +109,7 @@ export function useExport(cb: UseExportCallbacks = {}): UseExportResult {
       downloadBlob(blob, name);
       cbRef.current.onStatus?.(`已导出 ${name}`);
     } catch (e) {
-      // 网络错 / blob 读错 / 其他 —— 显式 message，与旧 app.js `导出失败：${e}` 一致
+      // 网络错 / blob 读错 / 其他 —— 显式 message，与旧 vanilla 实现 `导出失败：${e}` 一致
       const msg = e instanceof Error ? e.message : String(e);
       cbRef.current.onStatus?.(`导出失败：${msg}`);
     } finally {

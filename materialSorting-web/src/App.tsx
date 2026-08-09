@@ -11,7 +11,7 @@
 //   6. handleStart 内 setSeekTime(-1) —— 重置回 live；同时 clearHovered + hideTooltip 防残留。
 //   7. 顶层挂一个 <Tooltip/>（portal 到 body，整 App 生命周期单例）。
 //
-// 数据流（与旧 app.js startSolve / connectRun / checkAllDone 等价）：
+// 数据流（与旧 vanilla 实现 startSolve / connectRun / checkAllDone 等价）：
 //   ControlPanel collectParams → onStart(cfg) → useSolveRun.start × N → 各 WS
 //   → onmessage 推 manifest/frame/final → useRafThrottle bump renderTick
 //   → NestSVG / ConvergenceCurve / NestLabel 订阅后 imperative 重绘。
@@ -83,18 +83,18 @@ export function App() {
 
   function handleStart(cfg: ControlPanelStartPayload) {
     if (solving) return;
-    // 清旧 run（关 WS + 清数组）—— 与旧 app.js startSolve 内 runs=[] 等价
+    // 清旧 run（关 WS + 清数组）—— 与旧 vanilla 实现 startSolve 内 runs=[] 等价
     runRegistry.clear();
     doneCountRef.current = 0;
     totalSeedsRef.current = cfg.seed_count;
 
     // US-006：重置回 live（NestSVG 显示 lastFrame）；同时清 tooltip / hover 残留。
-    // 与旧 app.js startSolve 内 `$('seek').disabled=true; max=0; value=0; hoveredEl=null; tooltipEl.style.display='none'` 等价。
+    // 与旧 vanilla 实现 startSolve 内 `$('seek').disabled=true; max=0; value=0; hoveredEl=null; tooltipEl.style.display='none'` 等价。
     useAppStore.getState().setSeekTime(-1);
     clearHovered();
     hideTooltip();
 
-    // seed 列表 = base + i (i=0..N-1)（与旧 app.js `for i: makeRun(baseSeed+i)` 一致）
+    // seed 列表 = base + i (i=0..N-1)（与旧 vanilla 实现 `for i: makeRun(baseSeed+i)` 一致）
     const newSeeds: number[] = [];
     for (let i = 0; i < cfg.seed_count; i++) newSeeds.push(cfg.seed + i);
     setSeeds(newSeeds);

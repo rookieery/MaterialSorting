@@ -1,6 +1,6 @@
 // SizePicker —— 码号多选 chip 复选（与旧 index.html `<div id="sizes">` 等价）。
 //
-// 与旧 app.js renderSizePicker 一致：SIZES 全量 chip，默认全选；点击 chip 切换勾选。
+// 与旧 vanilla 实现 renderSizePicker 一致：SIZES 全量 chip，默认全选；点击 chip 切换勾选。
 // 受控：父级持有 sizes 数组，toggle 时回调。
 //
 // DOM 沿用旧 style.css `.sizes` / `.chip` / `.chip input` 类（US-008 前 CSS 不动）。

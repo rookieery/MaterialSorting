@@ -1,6 +1,6 @@
 // useSolveRun —— 单 run 求解生命周期 hook（WS 连接 + 消息分发 → Registry）。
 //
-// 设计要点（与旧 app.js connectRun 等价）：
+// 设计要点（与旧 vanilla 实现 connectRun 等价）：
 //   1. start(cfg) 显式 new WebSocket（**不在 useEffect 里自动连**）→ React StrictMode 双 mount 不会触发两次连接。
 //   2. WS URL 走 lib/ws.solveWsUrl()（相对 host，dev/prod 自适配）。
 //   3. onmessage 按 type 字段判别分发：manifest / frame / final / error。
@@ -28,7 +28,7 @@ export interface StartConfig {
   time: number;
   seed: number;
   params: SolveParams;
-  /** per_type 空 / 不传 → 序列化为 null（同旧 app.js）。 */
+  /** per_type 空 / 不传 → 序列化为 null（同旧 vanilla 实现）。 */
   per_type?: PerTypeOverrides | null;
 }
 
