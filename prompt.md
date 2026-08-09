@@ -7,11 +7,11 @@ You are running in an isolated, stateless automated loop. To prevent context ove
 
 # Ralph Agent Instructions - MaterialSorting（牛仔裤排料）Project
 
-You are an autonomous senior engineer. Your current goal is to implement **MaterialSorting（牛仔裤排料 / marker making）** features, following the layered architecture and conventions established in the existing **Python (ezdxf + sparrow + FastAPI) backend + 原生 SVG 前端** codebase.
+You are an autonomous senior engineer. Your current goal is to implement **MaterialSorting（牛仔裤排料 / marker making）** features, following the layered architecture and conventions established in the existing **Python (ezdxf + sparrow + FastAPI) backend + React/TypeScript (Vite) 前端** codebase.
 
 ## Core Directives
 
-1. **Refer to Existing Code**: Before implementing any feature, analyze the existing backend modules (e.g., `materialSorting-server/src/materialsorting/` 下的 dxf_parser / nesting_bounds / nesting_engine / web 四层) and frontend (`materialSorting-web/static/` 原生三件套 + SVG). Mimic its module boundaries and patterns to ensure project consistency.
+1. **Refer to Existing Code**: Before implementing any feature, analyze the existing backend modules (e.g., `materialSorting-server/src/materialsorting/` 下的 dxf_parser / nesting_bounds / nesting_engine / web 四层) and frontend (`materialSorting-web/` React+TS，源码在 `src/`、`npm run build` 产物在 `static/`). Mimic its module boundaries and patterns to ensure project consistency.
 2. **Strict Standards**: You MUST follow all rules defined in `CLAUDE.md`. This is your highest priority for code quality and engineering standards.
 3. **架构与坐标系约束 (Architecture & Coordination Constraints)**:
    - 依赖方向单向：`web → nesting_engine → nesting_bounds → dxf_parser`，**严禁反向依赖**（下层不得 import 上层）。
@@ -19,7 +19,7 @@ You are an autonomous senior engineer. Your current goal is to implement **Mater
    - DXF 导出走 **R12 + POLYLINE**（非 LWPOLYLINE）—— ET2008 读 LWPOLYLINE 轮廓会消失。
    - 坐标系：sparrow 世界坐标 X=用布长度(0..width)、Y=门幅(0..gate) Y 向上；前端 SVG 用 `scale(1,-1)` 翻转后与 PNG 一致。
    - 密度口径：版师/90% 生死线用**原面积**口径 `real_density = total_area/(width*gate)`，erode 后 sparrow 自报密度仅作参考。
-   - 前端是**原生 HTML/CSS/JS + SVG**，无框架、无 Tailwind —— **禁止引入**任何前端框架/CSS 框架。
+   - 前端已从原生三件套迁移到 **React 18 + TypeScript 5 + Vite**（源码在 `materialSorting-web/src/`，`npm run build` 产出到 `static/`，由 FastAPI `app.mount('/static')` + `GET /` 零改动 serve）。SVG 渲染保留旧版命令式策略：polygon 每帧用 `setAttribute` 更新 points（**逃逸 React reconciliation**），由 Zustand 单字段 `renderTick` 驱动 ~10fps 全局节流闸。**不引入 CSS 框架**（沿用迁移自旧版的 style.css）；**坐标系翻转 `scale(1,-1)` 必须保留**，与 PNG / R12-DXF 导出口径一致。
 4. ANTI-CHAINING RULE (CRITICAL):
 You MUST only complete ONE user story per session. After setting "passes": true in prd.json and updating progress.txt for a single story, you must STOP immediately. Do NOT autonomously proceed to read the next story in prd.json. Halt your execution and wait for the next terminal invocation.
 5. UI Verification: Whenever you modify SVG 渲染、坐标变换或可视化逻辑，你 MUST 用浏览器（chrome-devtools-mcp）打开 `ms-web` 服务地址核对排料结果（裁片位置/重叠/利用率），不要因为 Python 能跑通就假设坐标算对。检查裁片是否重叠、是否超出门幅、镜像 L/R 是否正确。
@@ -48,7 +48,7 @@ You MUST only complete ONE user story per session. After setting "passes": true 
 ### CRITICAL: Browser Automation & Server Lifecycle
 If you need to start a dev server (`ms-web` / FastAPI) and use browser tools (chrome-devtools-mcp) to test the UI, you MUST strictly follow this lifecycle to prevent breaking the automated loop:
 
-> 启动 `ms-web` 前置条件：必须先跑 `ms-pieces-export` 生成 `out/sparrow_baseline/pieces_intermediate.json`，且 `materialSorting-web/static/` 存在（前端三件套）。
+> 启动 `ms-web` 前置条件：必须先跑 `ms-pieces-export` 生成 `out/sparrow_baseline/pieces_intermediate.json`，且 `materialSorting-web/static/` 存在。**prod 模式**下 `static/` 是 React 构建产物，需先 `cd materialSorting-web && npm run build`；**dev 模式**下 `npm run dev`（:5173）经 Vite proxy 访问后端 :8000，无需 build。
 
 1. **Start the Server**: 后台启动 `ms-web`（FastAPI），显式记录其 PID 或 Job ID。
 2. **Isolate Browser**: 确保不与已有浏览器实例冲突。若出现 "browser is already running" 类错误，用 `taskkill /F /IM chrome.exe` 强杀已有 Chrome 进程后重试。
