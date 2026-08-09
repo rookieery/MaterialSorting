@@ -26,7 +26,7 @@
         "ms-web 启动后访问 http://127.0.0.1:8000/ 看到 React 页面，asset 返回 200",
         "npx tsc --noEmit 0 error"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "US-002",

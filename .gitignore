@@ -11,6 +11,9 @@ out/
 .venv/
 venv/
 
+# Node（前端依赖，本地装；产物 static/ 由 US-008 决定是否入库）
+node_modules/
+
 # Ralph 自动循环产物（运行时生成，勿入库）
 .all_done
 .last-branch

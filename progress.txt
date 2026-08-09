@@ -1,3 +1,31 @@
 # Ralph Progress Log
 Started: 2026-08-09
 ---
+[2026-08-09] US-001 — Vite+React+TS 脚手架与 dev/prod 联通
+  环境: Windows / Node v24.15.0 / npm 11.12.1 / Python 3.11.6
+  改动:
+    - legacy/: 原 vanilla 三件套 (index.html/app.js/style.css) 整体迁移归档
+    - 新增 Vite+React+TS 脚手架: package.json / vite.config.ts / tsconfig{,.node}.json / index.html
+    - src/main.tsx (StrictMode + createRoot) + src/App.tsx (US-001 占位壳) + src/style.css (legacy 迁入) + src/vite-env.d.ts
+    - static/: 清空原手写 3 件套 → 改为 npm run build 产物 (index.html + assets/index-[hash].{js,css})
+    - .gitignore: 新增 node_modules/
+    - .docs/: 首次同步，新建 README.md (索引) + agent-component-map.md (前端模块地图)
+  关键决策:
+    - vite.config.ts base 用 command === 'build' ? '/static/' : '/' 切换；勿改成静态值
+    - server.proxy['/ws'] 必须 ws:true，否则 WS 升级 404
+    - server.strictPort = true 锁死 :5173
+    - tsconfig.json 用 references + composite 引 tsconfig.node.json；@types/node 已加入 devDependencies
+    - 依赖加入 zustand@4 / vitest@2 / jsdom@25，为 US-002..007 预备（US-001 只验 tsc --noEmit 0 error）
+  验证:
+    - npx tsc --noEmit → 0 error ✓
+    - npm run build → static/index.html + assets/index-[hash].{js,css}，index.html 引用 /static/assets/... ✓
+    - ms-web :8000 → / 返回 React HTML，/static/assets/*.js|.css 均 200 (143KB JS / 4.3KB CSS) ✓
+    - npm run dev :5173 → / 返回 React HTML（含 /src/main.tsx + @react-refresh + @vite/client）
+    - Vite dev proxy /export → 后端 JSON 400 返回（成功转发） ✓
+    - Python websockets 连 ws://localhost:5173/ws/solve → manifest 收到 (gate_mm=1980.0) ✓
+    - 启停清理：vite (PID 39012) 与 ms-web (PID 61244) 均已 taskkill，无遗留进程
+  遗留 / 下一故事:
+    - src/App.tsx 是占位壳；US-002 起接入 WS 类型 + useSolveRun + RunRegistry
+    - src/style.css 暂为 legacy 1:1 副本，留待 US-008 清理
+    - static/ 暂入 git 跟踪（US-001 验证需要）；US-008 加入 .gitignore
+---
