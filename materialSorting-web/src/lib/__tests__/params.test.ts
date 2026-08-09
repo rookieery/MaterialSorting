@@ -9,6 +9,7 @@ import {
   collectParams,
   DEFAULT_FORM,
   parseSeed,
+  parseSeedCount,
   parseTime,
   type FormState,
 } from '../params';
@@ -166,5 +167,39 @@ describe('parseTime / parseSeed (US-004)', () => {
     expect(parseSeed(makeForm({ seed: '' }))).toBe(0);
     expect(parseSeed(makeForm({ seed: 'abc' }))).toBe(0);
     expect(parseSeed(makeForm({ seed: '7' }))).toBe(7);
+  });
+});
+
+describe('parseSeedCount (US-005)', () => {
+  // 旧 app.js startSolve 内：multi ? clamp(count||3, 2, 6) : 1
+  it('multi_seed=false → 1（无论 seed_count 填什么）', () => {
+    expect(parseSeedCount(DEFAULT_FORM)).toBe(1);
+    expect(parseSeedCount(makeForm({ multi_seed: false, seed_count: '5' }))).toBe(1);
+    expect(parseSeedCount(makeForm({ multi_seed: false, seed_count: '' }))).toBe(1);
+  });
+
+  it('multi_seed=true + count=3（默认）→ 3', () => {
+    expect(parseSeedCount(makeForm({ multi_seed: true, seed_count: '3' }))).toBe(3);
+  });
+
+  it('multi_seed=true + count=2 → 2（下界）', () => {
+    expect(parseSeedCount(makeForm({ multi_seed: true, seed_count: '2' }))).toBe(2);
+  });
+
+  it('multi_seed=true + count=6 → 6（上界）', () => {
+    expect(parseSeedCount(makeForm({ multi_seed: true, seed_count: '6' }))).toBe(6);
+  });
+
+  it('multi_seed=true + count=1 → clamp 到 2（下界保护）', () => {
+    expect(parseSeedCount(makeForm({ multi_seed: true, seed_count: '1' }))).toBe(2);
+  });
+
+  it('multi_seed=true + count=10 → clamp 到 6（上界保护）', () => {
+    expect(parseSeedCount(makeForm({ multi_seed: true, seed_count: '10' }))).toBe(6);
+  });
+
+  it('multi_seed=true + count 空 / 非法 → fallback 3', () => {
+    expect(parseSeedCount(makeForm({ multi_seed: true, seed_count: '' }))).toBe(3);
+    expect(parseSeedCount(makeForm({ multi_seed: true, seed_count: 'abc' }))).toBe(3);
   });
 });

@@ -25,6 +25,10 @@ export interface FormState {
   time: string;
   /** base seed 字符串。 */
   seed: string;
+  /** 多 seed 对比开关（旧 index.html `#multi_seed` checkbox）。 */
+  multi_seed: boolean;
+  /** 多 seed 数量字符串（旧 index.html `#seed_count`，默认 "3"，clamp [2,6]）。 */
+  seed_count: string;
   /** 外片重合 mm。 */
   d_ext: string;
   /** 内片重合 mm。 */
@@ -37,11 +41,13 @@ export interface FormState {
   per_type: Record<string, PerTypeFormValue>;
 }
 
-/** 旧 index.html 默认值 1:1（d_int=10，其余 0；time=60，seed=0；sizes 全选）。 */
+/** 旧 index.html 默认值 1:1（d_int=10，其余 0；time=60，seed=0；sizes 全选；multi_seed 关闭，seed_count=3）。 */
 export const DEFAULT_FORM: FormState = {
   sizes: [...SIZES],
   time: '60',
   seed: '0',
+  multi_seed: false,
+  seed_count: '3',
   d_ext: '0',
   d_int: '10',
   tol_ext: '0',
@@ -111,4 +117,19 @@ export function parseSeed(form: FormState): number {
 export function parseTime(form: FormState): number {
   const v = parseInt(form.time, 10);
   return Number.isNaN(v) ? 120 : v;
+}
+
+/**
+ * 解析需要并行启动的 seed 数量（旧 app.js startSolve 内：
+ *   `multi ? Math.min(Math.max(parseInt($('seed_count').value, 10) || 3, 2), 6) : 1`）。
+ *
+ * 不变量：
+ *   - multi_seed=false → 1（单 seed 模式）。
+ *   - multi_seed=true → clamp(parseInt(seed_count) || 3, 2, 6)。
+ */
+export function parseSeedCount(form: FormState): number {
+  if (!form.multi_seed) return 1;
+  const v = parseInt(form.seed_count, 10);
+  const n = Number.isNaN(v) ? 3 : v;
+  return Math.min(Math.max(n, 2), 6);
 }

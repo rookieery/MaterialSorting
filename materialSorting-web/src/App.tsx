@@ -1,68 +1,94 @@
 // App —— 顶层三段（panel + main + bottom）。
 //
-// US-004：ControlPanel 接管参数输入。App 负责：
-//   1. 持有 solving / status（同步 useSolveRun 各回调）。
-//   2. 持有已 start 的 seed 列表（仅触发首次挂载 NestCard）。
-//   3. useRafThrottle(seeds.length > 0) 跑节流闸。
-//   4. ControlPanel.onStart(cfg) → runRegistry.clear + setSeeds([seed]) + start(cfg)。
+// US-005：ControlPanel 接管参数输入（含 multi_seed 开关 + seed_count）；App 负责：
+//   1. 持有 solving / status / seeds（base+i, i=0..N-1）。
+//   2. useRafThrottle(seeds.length > 0) 跑节流闸（结束求解后仍持续 bump，NestSVG/ConvergenceCurve 重绘）。
+//   3. ControlPanel.onStart(cfg) → runRegistry.clear + setSeeds([base..base+N-1]) + 启动 N 个 useSolveRun.start。
+//   4. 多 run 收尾：doneCountRef/totalSeedsRef 追踪完成数量；全部完成时 setStatus 汇总。
 //
-// 数据流（与旧 app.js startSolve / connectRun 等价）：
-//   ControlPanel collectParams → onStart(cfg) → useSolveRun.start → runRegistry.create + WS
-//   → onmessage 推 manifest/frame/final → useRafThrottle bump renderTick → NestSVG 重绘。
+// 数据流（与旧 app.js startSolve / connectRun / checkAllDone 等价）：
+//   ControlPanel collectParams → onStart(cfg) → useSolveRun.start × N → 各 WS
+//   → onmessage 推 manifest/frame/final → useRafThrottle bump renderTick
+//   → NestSVG / ConvergenceCurve / NestLabel 订阅后 imperative 重绘。
 
-import { useState } from 'react';
-import { ControlPanel } from './components/ControlPanel/ControlPanel';
-import { NestCard } from './components/nests/NestCard';
+import { useRef, useState } from 'react';
+import { ConvergenceCurve } from './components/curve/ConvergenceCurve';
+import { ControlPanel, type ControlPanelStartPayload } from './components/ControlPanel/ControlPanel';
+import { NestsGrid } from './components/nests/NestsGrid';
 import { useRafThrottle } from './hooks/useRafThrottle';
 import { useSolveRun } from './hooks/useSolveRun';
 import { runRegistry } from './store/runRegistry';
 
 export function App() {
-  /** 已 start 的 seed 列表（仅用于触发首次挂载 NestCard）。 */
+  /** 已 start 的 seed 列表（base+i, i=0..N-1）。仅用于触发首次挂载 NestsGrid 内 NestCard。 */
   const [seeds, setSeeds] = useState<number[]>([]);
   /** 求解中 flag —— 驱动 useRafThrottle + 禁用 StartButton。 */
   const [solving, setSolving] = useState(false);
   /** 状态行文案（ControlPanel / useSolveRun 回调都能写）。 */
   const [status, setStatus] = useState('就绪');
 
+  /** 已 done 的 run 计数（ref 避免闭包陈旧；与 totalSeedsRef 配合判定 all-done）。 */
+  const doneCountRef = useRef(0);
+  /** 本次 start 期望的 run 总数（同 seeds.length，但在 cb 闭包里读 ref 才拿得到当前值）。 */
+  const totalSeedsRef = useRef(0);
+
   const { start } = useSolveRun({
-    onDone: (rec) => {
-      // 单 seed 模式（US-005 起多 seed 会汇总在 checkAllDone）
+    onDone: () => {
+      doneCountRef.current += 1;
+      if (doneCountRef.current < totalSeedsRef.current) return;
+      // 全部完成 → 汇总状态行
       setSolving(false);
-      if (rec.error) {
-        setStatus(`seed ${rec.seed} 错误：${rec.error}`);
-      } else if (rec.finalDensity > 0) {
-        const pct = (rec.finalDensity * 100).toFixed(2);
-        setStatus(`完成：seed ${rec.seed} · ${pct}%`);
-      } else {
-        setStatus(`seed ${rec.seed} 已结束`);
+      const runs = runRegistry.list();
+      if (runs.length === 0) return;
+      const summary = runs
+        .map((r) => `s${r.seed} ${(r.finalDensity * 100).toFixed(2)}%`)
+        .join(' / ');
+      if (runs.length === 1) {
+        const rec = runs[0];
+        if (rec.error) {
+          setStatus(`seed ${rec.seed} 错误：${rec.error}`);
+        } else if (rec.finalDensity > 0) {
+          setStatus(`完成：seed ${rec.seed} · ${(rec.finalDensity * 100).toFixed(2)}%`);
+        } else {
+          setStatus(`seed ${rec.seed} 已结束`);
+        }
+        return;
       }
+      // 多 seed：汇总 + best
+      const best = runs.reduce((a, r) => (r.finalDensity > a.finalDensity ? r : a), runs[0]);
+      setStatus(`完成 ${runs.length} seed：${summary} | best = s${best.seed} ${(best.finalDensity * 100).toFixed(2)}%`);
     },
   });
 
-  // 全局 ~10fps 节流闸 —— 求解中持续 bump renderTick，NestSVG 订阅后 imperative 重绘。
+  // 全局 ~10fps 节流闸 —— seeds.length > 0 期间持续 bump renderTick，
+  // NestSVG / NestLabel / ConvergenceCurve 订阅后 imperative 重绘。
+  // 注：求解结束后仍持续 bump（seeds 不清空），让曲线 / NestLabel 显示最终态。
   useRafThrottle(seeds.length > 0);
 
-  function handleStart(cfg: {
-    sizes: number[];
-    time: number;
-    seed: number;
-    params: import('./types/v03').SolveParams;
-    per_type: import('./types/v03').PerTypeOverrides | null;
-  }) {
+  function handleStart(cfg: ControlPanelStartPayload) {
     if (solving) return;
-    // 清旧 run（关 WS + 清数组）—— 与旧 app.js startSolve 等价
+    // 清旧 run（关 WS + 清数组）—— 与旧 app.js startSolve 内 runs=[] 等价
     runRegistry.clear();
-    setSeeds([cfg.seed]);
+    doneCountRef.current = 0;
+    totalSeedsRef.current = cfg.seed_count;
+
+    // seed 列表 = base + i (i=0..N-1)（与旧 app.js `for i: makeRun(baseSeed+i)` 一致）
+    const newSeeds: number[] = [];
+    for (let i = 0; i < cfg.seed_count; i++) newSeeds.push(cfg.seed + i);
+    setSeeds(newSeeds);
     setSolving(true);
-    setStatus('连接中…');
-    start({
-      sizes: cfg.sizes,
-      time: cfg.time,
-      seed: cfg.seed,
-      params: cfg.params,
-      per_type: cfg.per_type,
-    });
+    setStatus(cfg.seed_count > 1 ? `启动 ${cfg.seed_count} 个 seed 对比…` : '连接中…');
+
+    // 顺序 start N 个 run（每个独立 WS；useSolveRun.start 内 runRegistry.create + new WebSocket）。
+    for (let i = 0; i < cfg.seed_count; i++) {
+      start({
+        sizes: cfg.sizes,
+        time: cfg.time,
+        seed: cfg.seed + i,
+        params: cfg.params,
+        per_type: cfg.per_type,
+      });
+    }
   }
 
   return (
@@ -71,18 +97,12 @@ export function App() {
 
       <main className="main">
         <div className="nest-wrap">
-          <div id="nests" className="nests">
-            {seeds.map((seed) => {
-              // runRegistry.list() 不订阅，但 seeds 变化触发的重渲染会重新读；renderTick 也驱动 NestLabel 重渲染。
-              const rec = runRegistry.list().find((r) => r.seed === seed);
-              return rec ? <NestCard key={seed} run={rec} /> : null;
-            })}
-          </div>
+          <NestsGrid seeds={seeds} />
         </div>
 
         <div className="bottom">
           <div className="curve-wrap">
-            <svg id="curve" xmlns="http://www.w3.org/2000/svg" />
+            <ConvergenceCurve />
           </div>
           <div className="playback">
             <div className="field-label">回放</div>

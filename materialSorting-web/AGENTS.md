@@ -28,12 +28,12 @@ npm run test               # vitest run（US-002 起会有用例）
 3. **命令式 polygon 更新**：每帧 setAttribute('points' / 'display')，由 Zustand renderTick 单字段 ~10fps 节流，**逃逸 React reconciliation**。US-003 落地。
 4. **legacy/ 勿改**：仅作迁移参考。US-008 删除。
 
-## 文件分工（US-004 落地，US-005+ 待填）
+## 文件分工（US-005 落地，US-006+ 待填）
 
 ```
 src/
 ├── main.tsx               # US-001：createRoot + StrictMode
-├── App.tsx                # US-004：拼装 ControlPanel + NestCard + useRafThrottle（无硬编码参数）
+├── App.tsx                # US-005：ControlPanel + NestsGrid + ConvergenceCurve + useRafThrottle；多 seed start
 ├── style.css              # legacy 1:1 副本（US-008 清理）
 ├── vite-env.d.ts          # vite/client 类型
 ├── types/                 # US-002 ✅：ws.ts / piece.ts / v03.ts（纯数据契约）
@@ -43,12 +43,22 @@ src/
 ├── constants/             # US-004 ✅：sizes.ts / colors.ts / v03.ts
 ├── __tests__/             # US-002 ✅ useSolveRun；US-003 ✅ 各模块单测
 └── components/
-    ├── nests/             # US-003 ✅：NestSVG / NestCard / NestLabel；US-005 NestsGrid 待加
-    ├── ControlPanel/      # US-004 ✅：ControlPanel + 8 子组件；US-007 ExportButtons 待加
-    ├── curve/             # US-005：ConvergenceCurve
+    ├── nests/             # US-003 ✅ NestSVG / NestCard / NestLabel；US-005 ✅ NestsGrid
+    ├── ControlPanel/      # US-004 ✅ 8 子组件；US-005 ✅ MultiSeedControls；US-007 ExportButtons 待加
+    ├── curve/             # US-005 ✅ ConvergenceCurve
     ├── playback/          # US-006：PlaybackBar / Seekbar / SeekReadout
     └── Tooltip.tsx        # US-006
 ```
+
+## US-005 关键约定（多 seed / 收敛曲线 调用方必读）
+
+- **`ControlPanelStartPayload.seed_count` 是已 clamp 的最终值**：`parseSeedCount(form)` 返回 1（multi_seed=false）或 clamp(parseInt||3, 2, 6)。App.handleStart 直接 `for (let i=0; i<seed_count; i++) start({...cfg, seed: base+i})`，不再做边界检查。
+- **App all-done 检测用 ref 不用 state**：`doneCountRef.current += 1; if (< totalSeedsRef.current) return;` —— 闭包陈旧风险靠 ref 规避。每次 handleStart 重置 `doneCountRef.current = 0` + `totalSeedsRef.current = cfg.seed_count`。
+- **ConvergenceCurve 命令式 innerHTML**：React 仅 `<svg ref/>`；子节点（line/text/circle/path/g.legend）通过 `svg.innerHTML = out` 一次性写入，**不要改成 JSX**（每帧 diff 开销爆炸）。`sampleFrames` / `renderCurveInto` 导出便于纯函数测试。
+- **采样算法与旧 app.js drawCurve 字节级一致**：`step = max(1, floor(n/400))`；`pts = frames[0::step]`；`if (pts[last] !== frames[last]) pts.push(frames[last])`（末帧强制纳入）。改算法必须同步 `__tests__/ConvergenceCurve.test.tsx` 4 个采样用例。
+- **配色：单 seed 走 PHASE_COLORS[phase]（散点）+ 默认蓝 `#1f77b4`（折线 / 末点）；多 seed 走 SEED_COLORS[ri]（折线 / 末点 / 标签 / 图例）**。`multi = runs.length > 1`（不是 multi_seed 表单值）。
+- **useRafThrottle(seeds.length>0) 不在 solving=false 时停**：求解结束后曲线 / NestLabel 仍需 bump 重绘最终态；下次 start() 才会 runRegistry.clear + setSeeds([]) 间接停掉。
+- **NestsGrid 只在 seeds 变化时挂载/卸载**：`<NestCard key={seed} run={rec}/>` 稳定 key；NestSVG 内部已订阅 renderTick 自更新，不需要 NestsGrid 介入高频重绘。
 
 ## US-004 关键约定（ControlPanel 调用方 / 改动方必读）
 
@@ -87,4 +97,5 @@ src/
 - 修改 `vite.config.ts` 后必须重启 `npm run dev`（Vite 自身配置不热重载）。
 - `static/` 是构建产物 —— **不要手改**，改了也会被下次 `npm run build` 覆盖。
 - **不要在 useEffect dep 里直接列 mutable run**：run 引用不变（registry 持有），effect 实际靠 renderTick 触发；写 `[renderTick, run]` 即可（run 只是稳定引用）。
-- **写文件含 Chinese 字符 + bash heredoc 易踩坑**：用 `cat << 'EOF' > file` 单引号 heredoc 时，bash 仍可能因内部 `''`/`\'` 解析失败；安全做法是分多段 append，或用 Python heredoc 套外层（注意 `r'''...'''` 与 bash 单引号的冲突）。
+- **写文件含 Chinese 字符 + bash heredoc 易踩坑**：用 `cat << 'EOF' > file` 单引号 heredoc 时，bash 仍可能因内部 `''`/`\'` 解析失败；安全做法是分多段 append（`cat >> file <<'TESTEND'` 多次），或用 Python heredoc 套外层（注意 `r'''...'''` 与 bash 单引号的冲突）。
+- **多 seed all-done 检测不能用 `useState(doneCount)`**：每次 start 闭包值不同，onDone 内读到的是旧值；改用 `useRef` + 手动重置（US-005 落地）。

@@ -3,14 +3,16 @@
 // 表单状态由本组件持有（DEFAULT_FORM 初值），各子组件受控。
 // 点击 StartButton 时：
 //   1. 校验 sizes 非空 —— 空 → onStatus('请至少选一个码号') + 不启动（AC#7）。
-//   2. collectParams → { params, per_type }；parseTime / parseSeed 解析。
-//   3. onStart({ sizes, time, seed, params, per_type }) 透传到 App（AC#6 触发 useSolveRun.start）。
+//   2. collectParams → { params, per_type }；parseTime / parseSeed / parseSeedCount 解析。
+//   3. onStart({ sizes, time, seed, seed_count, params, per_type }) 透传到 App
+//      （AC#6 触发 useSolveRun.start × N，N = seed_count）。
 //
 // solving / status 来自 App：solving=true 禁用 StartButton；status 由 StatusLine 直接渲染。
-// US-005 起会扩展（multi_seed 开关 + seed_count），US-007 接管 ExportButtons。
+// US-005 落地 multi_seed 开关 + seed_count；US-007 接管 ExportButtons。
 
 import { useState } from 'react';
 import { ErodeInputs } from './ErodeInputs';
+import { MultiSeedControls } from './MultiSeedControls';
 import { ParamForm } from './ParamForm';
 import { PerTypeOverrides } from './PerTypeOverrides';
 import { PresetButtons } from './PresetButtons';
@@ -18,14 +20,24 @@ import { SizePicker } from './SizePicker';
 import { StartButton } from './StartButton';
 import { StatusLine } from './StatusLine';
 import { ToleranceInputs } from './ToleranceInputs';
-import { collectParams, DEFAULT_FORM, parseSeed, parseTime, type FormState } from '../../lib/params';
+import {
+  collectParams,
+  DEFAULT_FORM,
+  parseSeed,
+  parseSeedCount,
+  parseTime,
+  type FormState,
+} from '../../lib/params';
 import type { PerTypeOverrides as PerTypeOverridesValue, SolveParams } from '../../types/v03';
 
 /** onStart 透传给 App 的载荷（直接喂给 useSolveRun.start 的 StartConfig 子集）。 */
 export interface ControlPanelStartPayload {
   sizes: number[];
   time: number;
+  /** base seed（seed = base+i, i=0..N-1）。 */
   seed: number;
+  /** 实际并行启动的 seed 数量（multi_seed=false → 1；true → clamp(seed_count,2,6)）。 */
+  seed_count: number;
   params: SolveParams;
   per_type: PerTypeOverridesValue | null;
 }
@@ -60,6 +72,7 @@ export function ControlPanel({ onStart, solving, status, onStatus }: ControlPane
       sizes: form.sizes,
       time: parseTime(form),
       seed: parseSeed(form),
+      seed_count: parseSeedCount(form),
       params,
       per_type,
     });
@@ -70,6 +83,12 @@ export function ControlPanel({ onStart, solving, status, onStatus }: ControlPane
       <h2>求解控制</h2>
       <SizePicker selected={form.sizes} onChange={(sizes) => patch({ sizes })} />
       <ParamForm time={form.time} seed={form.seed} onTime={(time) => patch({ time })} onSeed={(seed) => patch({ seed })} />
+      <MultiSeedControls
+        multi_seed={form.multi_seed}
+        seed_count={form.seed_count}
+        onMulti={(multi_seed) => patch({ multi_seed })}
+        onCount={(seed_count) => patch({ seed_count })}
+      />
       <ErodeInputs
         d_ext={form.d_ext}
         d_int={form.d_int}

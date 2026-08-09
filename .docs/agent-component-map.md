@@ -1,6 +1,6 @@
 # 前端组件 / 模块地图（materialSorting-web/）
 
-> 由 `/sync-docs` 维护。改前端先看这里。当前覆盖 US-001 脚手架 + US-002 WS 契约 + US-003 NestSVG + US-004 ControlPanel；US-005..007 落地后逐节补全。
+> 由 `/sync-docs` 维护。改前端先看这里。当前覆盖 US-001 脚手架 + US-002 WS 契约 + US-003 NestSVG + US-004 ControlPanel + US-005 多 seed/收敛曲线；US-006..007 落地后逐节补全。
 
 ## 顶层结构
 
@@ -15,7 +15,7 @@ materialSorting-web/
 ├── legacy/                 # 旧 vanilla 三件套归档（index.html/app.js/style.css，仅参考）
 ├── src/                    # 源码
 │   ├── main.tsx            # createRoot(<StrictMode><App/></StrictMode>)
-│   ├── App.tsx             # US-004：拼装 ControlPanel + NestCard + useRafThrottle（panel/main/bottom）
+│   ├── App.tsx             # US-005：拼装 ControlPanel + NestsGrid + ConvergenceCurve + useRafThrottle；多 seed start × N
 │   ├── style.css           # 由 legacy/style.css 迁入，暂未拆模块
 │   ├── vite-env.d.ts        # vite/client 类型引用
 │   ├── types/              # US-002：纯数据契约（与 server.py 字段名 1:1）
@@ -24,8 +24,9 @@ materialSorting-web/
 │   ├── store/              # US-002 起：RunRegistry（mutable，不进 React state）+ US-003 appStore
 │   ├── hooks/              # US-002 起：useSolveRun / useRafThrottle
 │   ├── components/
-│   │   ├── nests/          # US-003：NestSVG / NestCard / NestLabel
-│   │   └── ControlPanel/   # US-004：ControlPanel + 8 子组件
+│   │   ├── nests/          # US-003 NestSVG/NestCard/NestLabel + US-005 NestsGrid
+│   │   ├── ControlPanel/   # US-004 8 子组件 + US-005 MultiSeedControls
+│   │   └── curve/          # US-005 ConvergenceCurve（命令式 innerHTML）
 │   └── __tests__/          # US-002 起：vitest 单测
 └── static/                 # npm run build 产物（被 FastAPI mount 到 /static）
     ├── index.html
@@ -85,26 +86,42 @@ materialSorting-web/
 | `src/constants/sizes.ts` | `SIZES = [28,29,30,31,33,34,35,36]`（M1787 8 码跳 32；与后端 `nesting_bounds.DEFAULT_SIZES` 一致） |
 | `src/constants/colors.ts` | `PHASE_COLORS`（exploring/compressing/final）+ `SEED_COLORS`（6 seed；US-005 ConvergenceCurve 消费） |
 | `src/constants/v03.ts` | `V03_TABLE` 全 10 片型工艺上限（d / tol / internal；与后端 `constraints.py MAX_OVERLAP / ROTATION_TOL` 1:1）+ `V03_PTYPES` 顺序 |
-| `src/lib/params.ts` | `FormState` + `DEFAULT_FORM`（旧 index.html 默认 1:1）+ `collectParams(form)` 纯函数（与旧 app.js 字段级一致）+ `parseSeed / parseTime` |
-| `src/components/ControlPanel/ControlPanel.tsx` | 顶层面板：持 form state；StartButton 触发校验 + collectParams + onStart(cfg) 透传到 App |
+| `src/lib/params.ts` | `FormState`（含 multi_seed/seed_count）+ `DEFAULT_FORM`（旧 index.html 默认 1:1）+ `collectParams(form)` 纯函数（与旧 app.js 字段级一致）+ `parseSeed / parseTime / parseSeedCount` |
+| `src/components/ControlPanel/ControlPanel.tsx` | 顶层面板：持 form state；StartButton 触发校验 + collectParams + onStart(cfg) 透传到 App（cfg 含 seed_count） |
 | `src/components/ControlPanel/SizePicker.tsx` | 8 码 chip 复选，受控；toggle 单码号 |
 | `src/components/ControlPanel/ParamForm.tsx` | 时长 / base seed 输入（min/max 与旧 index.html 一致） |
+| `src/components/ControlPanel/MultiSeedControls.tsx` | US-005：多 seed 对比 checkbox `#multi_seed` + 数量 input `#seed_count`（min=2 max=6 default 3） |
 | `src/components/ControlPanel/ErodeInputs.tsx` | d_ext / d_int（step 0.5，min 0） |
 | `src/components/ControlPanel/ToleranceInputs.tsx` | tol_ext / tol_int（max 45，min 0） |
 | `src/components/ControlPanel/PresetButtons.tsx` | 预览 120s / 精排 600s 一键填 |
 | `src/components/ControlPanel/PerTypeOverrides.tsx` | 渲染 V03_PTYPES 10 行；internal=true 加 `<i>内</i>` 徽章；placeholder 提示 d≤/t≤ 上限 |
 | `src/components/ControlPanel/StartButton.tsx` | 启动按钮（id="start"，沿用 legacy CSS 选择器） |
 | `src/components/ControlPanel/StatusLine.tsx` | 状态行（id="status"，沿用 legacy CSS） |
-| `src/lib/__tests__/params.test.ts` | 7 项：默认 d_int=10 + per_type=null / 与 legacy collectParams 11 组对比 / per_type 单档非空 entry / 全空白 → null / 显式 "0" 区分空 |
-| `src/components/ControlPanel/__tests__/ControlPanel.test.tsx` | 10 项：AC#1..#7 集成（chip 数 + 默认值 + 预设 + 内片徽章 + placeholder + 默认 payload + 0 码号报错 + 改码号 + per_type 填值 + solving disabled） |
+| `src/components/nests/NestsGrid.tsx` | US-005：seeds → runRegistry.list().find(seed) → NestCard 列表；key=seed 稳定 |
+| `src/components/curve/ConvergenceCurve.tsx` | US-005：命令式 SVG（React 仅 `<svg ref/>`；子节点 innerHTML 写入）。订阅 renderTick；导出 sampleFrames / renderCurveInto 纯函数 |
+| `src/App.tsx` | US-005：handleStart 启 N 个 WS（seed=base+i）；doneCountRef/totalSeedsRef all-done 检测；多 seed setStatus summary+best |
+| `src/lib/__tests__/params.test.ts` | 14 项：默认 d_int=10 + per_type=null / 与 legacy collectParams 11 组对比 / per_type 单档非空 entry / 全空白 → null / 显式 "0" 区分空 / parseSeedCount 7 组（单 seed → 1 / multi + 默认 3 / clamp 2,6 / fallback 3） |
+| `src/components/ControlPanel/__tests__/ControlPanel.test.tsx` | 15 项：AC#1..#7 集成 + US-005 multi_seed/seed_count 5 项（默认值 / toggle / clamp / fallback / 不开 multi 时 seed_count 忽略） |
+| `src/components/nests/__tests__/NestsGrid.test.tsx` | US-005 6 项：空容器 / N 卡渲染 / registry 缺失跳过 / 顺序与 seeds 一致 / seeds 不变不重复挂载 / seeds 增减跟着变 |
+| `src/components/curve/__tests__/ConvergenceCurve.test.tsx` | US-005 14 项：sampleFrames 4（空 / ≤400 / >400 / 整除）+ 渲染 10（90% 线 / 单 seed 散点+折线+末点 / 多 seed 折线+标签 / 单/多 seed 图例 / renderTick 订阅 / 多次 bump 不重建 / renderCurveInto 纯函数） |
+
+### 关键不变量（US-005 立，后续故事不得破坏）
+
+1. **`ControlPanelStartPayload.seed_count` 是已 clamp 的最终值** —— `parseSeedCount(form)` 返回 1（multi_seed=false）或 clamp(parseInt||3, 2, 6)；App.handleStart 直接 `for (let i=0; i<seed_count; i++) start({...cfg, seed: base+i})`，不做边界检查。修改默认 / clamp 边界需同步 `params.test.ts` 7 个 parseSeedCount 用例 + `ControlPanel.test.tsx` 5 个 multi-seed 用例。
+2. **ConvergenceCurve 命令式 innerHTML** —— React 仅渲染 `<svg ref/>`；子节点（line/text/circle/path/g.legend）通过 `svg.innerHTML = out` 一次性写入。**不要改成 JSX**（每帧 diff 开销爆炸）。采样 / 配色 / 字面量与旧 app.js drawCurve 字节级一致；`sampleFrames` / `renderCurveInto` 导出便于纯函数测试。
+3. **采样算法** —— `step = max(1, floor(n/400))`；`pts = frames[0::step]`；`if (pts[last] !== frames[last]) pts.push(frames[last])`（末帧强制纳入）。改算法必须同步 `__tests__/ConvergenceCurve.test.tsx` 4 个采样用例。
+4. **App all-done 检测用 ref 不用 state** —— `doneCountRef.current += 1; if (< totalSeedsRef.current) return;`；每次 handleStart 重置两个 ref。多 seed 收尾 setStatus 含 summary + best（`runs.reduce((a,r) => r.finalDensity > a.finalDensity ? r : a)`）。
+5. **配色：单 seed 走 PHASE_COLORS[phase]（散点）+ 默认蓝 `#1f77b4`（折线/末点）；多 seed 走 SEED_COLORS[ri]（折线/末点/标签/图例）**。`multi = runs.length > 1`（不是 multi_seed 表单值）。
+6. **useRafThrottle(seeds.length>0) 不在 solving=false 时停** —— 求解结束后曲线 / NestLabel 仍需 bump 重绘最终态；下次 start() 才会 `runRegistry.clear + setSeeds([])` 间接停掉。
+7. **NestsGrid 只在 seeds 变化时挂载/卸载** —— `<NestCard key={seed} run={rec}/>` 稳定 key；NestSVG 内部已订阅 renderTick 自更新，NestsGrid 不参与高频重绘。
 
 ### 关键不变量（US-004 立，后续故事不得破坏）
 
-1. **表单字段全字符串存储** —— `FormState` 所有 number 字段（time/seed/d_*/tol_*）以及 `per_type[pt].d/tol` 都按 `input.value` 字符串持有；`collectParams / parseTime / parseSeed` 做解析。理由：per_type 必须「空串 = 继承」与「"0" = 显式 0」可区分。
+1. **表单字段全字符串存储** —— `FormState` 所有 number 字段（time/seed/d_*/tol_*）以及 `per_type[pt].d/tol` 都按 `input.value` 字符串持有；`collectParams / parseTime / parseSeed` 做解析。理由：per_type 必须「空串 = 继承」与「"0" = 显式 0」可区分。（US-005 加 multi_seed: boolean / seed_count: string 同样按字符串存。）
 2. **collectParams 与旧 app.js 字段级一致** —— params 四档空 → 0 默认（`num(s, 0)`）；per_type 仅在 `trim() !== ''` 时写入；最终 per_type 整体空 → null（Python 侧 `or None` 接住）。修改必须同步 `lib/__tests__/params.test.ts` 的 11 组对比用例。
-3. **DEFAULT_FORM 与旧 index.html 默认值 1:1** —— d_int="10"、其余 0；time="60"、seed="0"；sizes 全选；per_type 全空。修改任一字段需同步更新 AC#2。
+3. **DEFAULT_FORM 与旧 index.html 默认值 1:1** —— d_int="10"、其余 0；time="60"、seed="0"；sizes 全选；per_type 全空。（US-005 补：multi_seed=false / seed_count="3"。）修改任一字段需同步更新 AC#2。
 4. **ControlPanel 不调 useSolveRun** —— 仅通过 `onStart(cfg)` 把载荷交给 App（解耦：未来多 seed / 重连逻辑由 App 决定）。`onStatus` 用于码号校验失败回写状态行。
-5. **DOM id / className 沿用 legacy** —— `id="start" / id="status" / id="d_ext" / id="time" / id="seed"` 等保留（CSS 选择器依赖）；`.sizes / .per_type / .pt-row / .chip / .preset / .pt-name i` 等 className 1:1。US-008 清理 CSS 时再统一去 id。
+5. **DOM id / className 沿用 legacy** —— `id="start" / id="status" / id="d_ext" / id="time" / id="seed"` 等保留（CSS 选择器依赖）；`.sizes / .per_type / .pt-row / .chip / .preset / .pt-name i` 等 className 1:1。US-005 新增 `id="multi_seed" / id="seed_count"` + `.cb / .seed-count` 同样沿用 legacy。US-008 清理 CSS 时再统一去 id。
 6. **PerTypeOverrides 行序 = V03_PTYPES 顺序** —— 不可重排（影响测试 placeholder / 徽章断言）；`<i>内</i>` 仅 internal=true 的 4 片型（单排/双排/火机袋/裤耳）。
 
 ### 关键不变量（US-003 立，后续故事不得破坏）
@@ -133,15 +150,17 @@ materialSorting-web/
 | `makeRun`/`renderFrame`/`pointsStr` 命令式 SVG | `src/components/nests/NestSVG.tsx` + `src/lib/geometry.ts` + `src/components/nests/NestCard.tsx` + `src/components/nests/NestLabel.tsx` | US-003 | **已落地** |
 | 全局节流闸（`globalLastDraw` + `RENDER_INTERVAL_MS`） | `src/store/appStore.ts`（renderTick 单字段）+ `src/hooks/useRafThrottle.ts` | US-003 | **已落地** |
 | `collectParams` + `per_type` 面板 | `src/lib/params.ts` + `src/components/ControlPanel/*` | US-004 | **已落地** |
-| `drawCurve` 收敛曲线 | `src/components/curve/ConvergenceCurve.tsx` | US-005 | TODO |
+| `multi_seed` / `seed_count` + makeRun 多 seed | `src/components/ControlPanel/MultiSeedControls.tsx` + `src/lib/params.ts parseSeedCount` + `src/App.tsx handleStart` | US-005 | **已落地** |
+| `drawCurve` 收敛曲线 | `src/components/curve/ConvergenceCurve.tsx` | US-005 | **已落地** |
+| `#nests` 多 seed 容器 | `src/components/nests/NestsGrid.tsx` | US-005 | **已落地** |
 | `seek` `frameAtTime` 回放 | `src/components/playback/*` + `src/lib/seek.ts` | US-006 | TODO |
 | `exportAs(fmt)` | `src/hooks/useExport.ts` + `src/components/ControlPanel/ExportButtons.tsx` | US-007 | TODO |
 | run 状态（frames 数组 / lastFrame / finalDensity） | `src/store/runRegistry.ts` | US-002 | **已落地** |
 
 ## 已知差异（脚手架阶段）
 
-- `src/App.tsx` US-004 起改用 ControlPanel，硬编码参数已移除；solving/status/seeds 状态留在 App。
+- `src/App.tsx` US-005 起支持多 seed（multi_seed 开关 + seed_count）；solving/status/seeds 状态 + doneCountRef/totalSeedsRef 留在 App。
 - `src/style.css` 是 `legacy/style.css` 的 1:1 副本，未做 React 化拆分（US-008 收尾时清理）。
 - `static/` 当前在 git 跟踪中（US-001 验证需要）；US-008 计划加入 `.gitignore`。
-- 单 seed 仅：多 seed 对比 + 收敛曲线（US-005）/ 回放 seekbar（US-006）/ 导出（US-007）尚未拼装，`<div className="bottom">` 仍为占位。
-- ControlPanel DOM 沿用 legacy id（`start / status / d_ext / time / seed` 等）以复用 CSS；US-008 清理时再换 className。
+- 回放 seekbar（US-006）/ 导出（US-007）尚未拼装，`<div className="bottom">` 内 seek 仍为占位。
+- ControlPanel DOM 沿用 legacy id（`start / status / d_ext / time / seed / multi_seed / seed_count` 等）以复用 CSS；US-008 清理时再换 className。

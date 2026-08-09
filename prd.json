@@ -2,36 +2,6 @@
   "branchName": "ralph/react-ts-frontend",
   "stories": [
     {
-      "id": "US-004",
-      "title": "v0.3 参数面板（ControlPanel）",
-      "description": "As a user, I want to configure sizes/time/seed/erode/tolerance/per-type overrides so that I can drive the solver with v0.3 process constraints.",
-      "files": [
-        "materialSorting-web/src/constants/sizes.ts",
-        "materialSorting-web/src/constants/colors.ts",
-        "materialSorting-web/src/constants/v03.ts",
-        "materialSorting-web/src/components/ControlPanel/ControlPanel.tsx",
-        "materialSorting-web/src/components/ControlPanel/SizePicker.tsx",
-        "materialSorting-web/src/components/ControlPanel/ParamForm.tsx",
-        "materialSorting-web/src/components/ControlPanel/ErodeInputs.tsx",
-        "materialSorting-web/src/components/ControlPanel/ToleranceInputs.tsx",
-        "materialSorting-web/src/components/ControlPanel/PresetButtons.tsx",
-        "materialSorting-web/src/components/ControlPanel/PerTypeOverrides.tsx",
-        "materialSorting-web/src/components/ControlPanel/StartButton.tsx",
-        "materialSorting-web/src/components/ControlPanel/StatusLine.tsx",
-        "materialSorting-web/src/lib/params.ts"
-      ],
-      "acceptanceCriteria": [
-        "SizePicker 渲染 SIZES=[28,29,30,31,33,34,35,36] 8 个 chip 复选，默认全选",
-        "ErodeInputs（d_ext/d_int，step 0.5）、ToleranceInputs（tol_ext/tol_int，max 45）默认值与旧 index.html 一致",
-        "PresetButtons 一键填 120 / 600",
-        "PerTypeOverrides 渲染 V03_TABLE 10 行，内部片标内标记；空 input 不写入 per_type",
-        "StartPayload 序列化结果与旧 app.js collectParams 同输入逐字段相等（单测）",
-        "点击开始按钮触发 useSolveRun.start，WS 发送首条消息 DevTools 可见",
-        "至少选 1 个码号，否则 StatusLine 报错且不启动"
-      ],
-      "passes": true
-    },
-    {
       "id": "US-005",
       "title": "多 seed 并排 + 收敛曲线",
       "description": "As a user, I want side-by-side multi-seed comparison and a convergence curve so that I can pick the best seed.",
@@ -49,7 +19,7 @@
         "帧数 > 400 时按 step = max(1, floor(n/400)) 采样，末帧强制纳入（同旧 app.js）",
         "ConvergenceCurve 用命令式 DOM（订阅 renderTick），不参与 React 每帧 diff"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "US-006",

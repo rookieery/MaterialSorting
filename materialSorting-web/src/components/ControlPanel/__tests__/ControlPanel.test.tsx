@@ -1,10 +1,14 @@
 // US-004 ControlPanel integration tests:
 //   AC#1 SizePicker renders 8 size chips, all default-checked
-//   AC#2 defaults match legacy index.html (d_int=10, others 0; time=60, seed=0)
+//   AC#2 defaults match legacy index.html (d_int=10, others 0; time=60, seed=0; multi_seed=false, seed_count=3)
 //   AC#3 PresetButtons one-click fill 120 / 600
 //   AC#4 PerTypeOverrides renders V03_TABLE 10 rows, internal ptypes badged
 //   AC#6 click Start -> onStart fires; payload fields match collectParams
 //   AC#7 0 sizes -> onStatus error + onStart NOT called
+//
+// US-005 additions:
+//   AC#1 multi_seed checkbox + seed_count input render with legacy defaults
+//   AC#1 toggle multi_seed + edit seed_count -> onStart.seed_count matches parseSeedCount
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { StrictMode } from "react";
@@ -66,7 +70,7 @@ describe("ControlPanel (US-004)", () => {
     for (const c of checkboxes) expect(c.checked).toBe(true);
   });
 
-  it("AC#2 defaults match legacy index.html (d_int=10, others 0; time=60; seed=0)", () => {
+  it("AC#2 defaults match legacy index.html (d_int=10, others 0; time=60; seed=0; multi_seed=false; seed_count=3)", () => {
     renderPanel();
     const get = (id: string) => container!.querySelector<HTMLInputElement>("#" + id)!;
     expect(get("d_ext").value).toBe("0");
@@ -75,6 +79,9 @@ describe("ControlPanel (US-004)", () => {
     expect(get("tol_int").value).toBe("0");
     expect(get("time").value).toBe("60");
     expect(get("seed").value).toBe("0");
+    // US-005: multi_seed / seed_count defaults
+    expect(get("multi_seed").checked).toBe(false);
+    expect(get("seed_count").value).toBe("3");
   });
 
   it("AC#3 PresetButtons one-click fill 120 / 600", () => {
@@ -136,6 +143,7 @@ describe("ControlPanel start flow (US-004)", () => {
     expect(cfg.sizes).toEqual([...SIZES]);
     expect(cfg.time).toBe(60);
     expect(cfg.seed).toBe(0);
+    expect(cfg.seed_count).toBe(1); // multi_seed 默认 false → 1
     expect(cfg.params).toEqual({ d_ext: 0, d_int: 10, tol_ext: 0, tol_int: 0 });
     expect(cfg.per_type).toBeNull();
   });
@@ -204,5 +212,81 @@ describe("ControlPanel start flow (US-004)", () => {
     renderPanel(() => {}, { solving: true });
     const btn = container!.querySelector<HTMLButtonElement>("#start")!;
     expect(btn.disabled).toBe(true);
+  });
+});
+
+describe("ControlPanel multi-seed (US-005)", () => {
+  it("AC#1 renders #multi_seed checkbox + #seed_count input (legacy defaults)", () => {
+    renderPanel();
+    const multi = container!.querySelector<HTMLInputElement>("#multi_seed")!;
+    const count = container!.querySelector<HTMLInputElement>("#seed_count")!;
+    expect(multi.type).toBe("checkbox");
+    expect(multi.checked).toBe(false);
+    expect(count.type).toBe("number");
+    expect(count.value).toBe("3");
+    expect(parseInt(count.min, 10)).toBe(2);
+    expect(parseInt(count.max, 10)).toBe(6);
+  });
+
+  it("AC#1 toggle multi_seed + Start -> onStart.seed_count follows parseSeedCount", () => {
+    const onStart = vi.fn();
+    renderPanel(onStart);
+    const multi = container!.querySelector<HTMLInputElement>("#multi_seed")!;
+    act(() => multi.click());
+    const btn = container!.querySelector<HTMLButtonElement>("#start")!;
+    act(() => btn.click());
+    const cfg = onStart.mock.calls[0][0] as ControlPanelStartPayload;
+    // multi=true, count=default "3" → 3
+    expect(cfg.seed_count).toBe(3);
+  });
+
+  it("AC#1 multi_seed=true + seed_count='10' -> clamp to 6", () => {
+    const onStart = vi.fn();
+    renderPanel(onStart);
+    const multi = container!.querySelector<HTMLInputElement>("#multi_seed")!;
+    const count = container!.querySelector<HTMLInputElement>("#seed_count")!;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    act(() => {
+      setter.call(count, "10");
+      count.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    act(() => multi.click());
+    const btn = container!.querySelector<HTMLButtonElement>("#start")!;
+    act(() => btn.click());
+    const cfg = onStart.mock.calls[0][0] as ControlPanelStartPayload;
+    expect(cfg.seed_count).toBe(6);
+  });
+
+  it("AC#1 multi_seed=true + seed_count empty -> fallback 3", () => {
+    const onStart = vi.fn();
+    renderPanel(onStart);
+    const multi = container!.querySelector<HTMLInputElement>("#multi_seed")!;
+    const count = container!.querySelector<HTMLInputElement>("#seed_count")!;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    act(() => {
+      setter.call(count, "");
+      count.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    act(() => multi.click());
+    const btn = container!.querySelector<HTMLButtonElement>("#start")!;
+    act(() => btn.click());
+    const cfg = onStart.mock.calls[0][0] as ControlPanelStartPayload;
+    expect(cfg.seed_count).toBe(3);
+  });
+
+  it("AC#1 multi_seed stays false -> seed_count changes ignored (returns 1)", () => {
+    const onStart = vi.fn();
+    renderPanel(onStart);
+    const count = container!.querySelector<HTMLInputElement>("#seed_count")!;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    act(() => {
+      setter.call(count, "5");
+      count.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    // multi_seed NOT toggled → still false
+    const btn = container!.querySelector<HTMLButtonElement>("#start")!;
+    act(() => btn.click());
+    const cfg = onStart.mock.calls[0][0] as ControlPanelStartPayload;
+    expect(cfg.seed_count).toBe(1);
   });
 });
