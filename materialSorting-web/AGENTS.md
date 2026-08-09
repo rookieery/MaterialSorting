@@ -28,7 +28,7 @@ npm run test               # vitest run（US-002 起会有用例）
 3. **命令式 polygon 更新**：每帧 setAttribute('points' / 'display')，由 Zustand renderTick 单字段 ~10fps 节流，**逃逸 React reconciliation**。US-003 落地。
 4. **legacy/ 勿改**：仅作迁移参考。US-008 删除。
 
-## 文件分工（US-002 起填入）
+## 文件分工（US-002 落地，US-003+ 待填）
 
 ```
 src/
@@ -36,11 +36,12 @@ src/
 ├── App.tsx                # US-001 占位壳 → 后续故事拼装 ControlPanel + NestsGrid + Curve + Playback
 ├── style.css              # legacy 1:1 副本（US-008 清理）
 ├── vite-env.d.ts          # vite/client 类型
-├── types/                 # US-002：ws.ts / piece.ts / v03.ts
-├── lib/                   # US-002..007：ws.ts / geometry.ts / params.ts / seek.ts / download.ts
-├── store/                 # US-002..006：runRegistry.ts / appStore.ts
-├── hooks/                 # US-002..007：useSolveRun.ts / useRafThrottle.ts / useExport.ts
+├── types/                 # US-002 ✅：ws.ts / piece.ts / v03.ts（纯数据契约）
+├── lib/                   # US-002 ✅ ws.ts；US-003+ geometry/params/seek/download 待加
+├── store/                 # US-002 ✅ runRegistry.ts；US-003+ appStore 待加
+├── hooks/                 # US-002 ✅ useSolveRun.ts；US-003+ useRafThrottle/useExport 待加
 ├── constants/             # US-004..005：sizes.ts / colors.ts / v03.ts
+├── __tests__/             # US-002 ✅ useSolveRun.test.tsx
 └── components/
     ├── nests/             # US-003..005：NestSVG / NestCard / NestLabel / NestsGrid
     ├── ControlPanel/      # US-004, US-007
@@ -48,6 +49,15 @@ src/
     ├── playback/          # US-006：PlaybackBar / Seekbar / SeekReadout
     └── Tooltip.tsx        # US-006
 ```
+
+## US-002 关键约定（hook / Registry 调用方必读）
+
+- **WS 连接只在 `start(cfg)` 显式 new**：不要在 useEffect 里 auto-connect，React 18 StrictMode 双 mount 会双连。
+- **frames 是 mutable 引用**：`runRegistry.list()` 返回的 RunRecord 本身可被 push，**不进 React state**；高频重绘由 US-003 renderTick 单字段节流。
+- **per_type 空 → 序列化为 null**（与旧 app.js collectParams 一致；Python `or None` 接住）。
+- **density 双口径**：`FrameMsg.density` 是原面积口径（90% 生死线以此为准），`density_sparrow` 是 erode 后 sparrow 自报（参考）。任何决策 / 显示优先 density。
+- **不重连**：onclose / onerror 触发 `onDone`（done flag 防重复），交由调用层决定是否重启。
+- **测试**：`npx vitest run`，需 `(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;` 才能 avoid act warning；Mock WebSocket 用 ctor 返回 mock 实例的方式（`new WebSocket(url)` 直接拿到 mock）。
 
 ## 已踩坑 / 注意事项
 

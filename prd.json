@@ -2,33 +2,6 @@
   "branchName": "ralph/react-ts-frontend",
   "stories": [
     {
-      "id": "US-001",
-      "title": "Vite+React+TS 脚手架与 dev/prod 联通",
-      "description": "As a developer, I want to scaffold a Vite+React+TS project under materialSorting-web/ that builds into static/ so that FastAPI serves it with zero backend changes.",
-      "files": [
-        "materialSorting-web/package.json",
-        "materialSorting-web/vite.config.ts",
-        "materialSorting-web/tsconfig.json",
-        "materialSorting-web/tsconfig.node.json",
-        "materialSorting-web/index.html",
-        "materialSorting-web/src/main.tsx",
-        "materialSorting-web/src/App.tsx",
-        "materialSorting-web/legacy/index.html",
-        "materialSorting-web/legacy/app.js",
-        "materialSorting-web/legacy/style.css"
-      ],
-      "acceptanceCriteria": [
-        "materialSorting-web/legacy/ 包含原 3 个 vanilla 文件（index.html/app.js/style.css）；materialSorting-web/static/ 已清空，无残留手写文件",
-        "vite.config.ts 中 base 在 build 时为 /static/、dev 时为 /；build.outDir 为 static，build.emptyOutDir 为 true",
-        "server.proxy 配置 /export 与 /ws（含 ws:true）转发到 http://127.0.0.1:8000",
-        "npm run dev 启动 :5173，浏览器访问 / 显示 App.tsx 内容，DevTools Network 显示 WS 升级请求被代理到后端 :8000",
-        "npm run build 产出 materialSorting-web/static/index.html 与 static/assets/index-[hash].{js,css}，index.html 内引用 URL 形如 /static/assets/...",
-        "ms-web 启动后访问 http://127.0.0.1:8000/ 看到 React 页面，asset 返回 200",
-        "npx tsc --noEmit 0 error"
-      ],
-      "passes": true
-    },
-    {
       "id": "US-002",
       "title": "WS 类型 + RunRegistry + useSolveRun hook",
       "description": "As a developer, I want typed WS message contracts and a reusable useSolveRun hook so that subsequent UI components can consume solve progress safely.",
@@ -49,7 +22,7 @@
         "onclose / onerror 均触发 onDone；不做自动重连",
         "单测覆盖：mock WS 推 manifest+frame+final，hook 正确分发；StrictMode 不双连"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "US-003",
