@@ -4,13 +4,16 @@
 
 ## technical/（技术文档）
 > 代码地图、待办追踪 —— "改 X 找哪里"的速查与工程清单。
+- [technical/agent-file-map.md](technical/agent-file-map.md) — 后端 Python 包逐文件索引（dxf_parser / nesting_bounds / nesting_engine / web）
 - [technical/agent-component-map.md](technical/agent-component-map.md) — 前端（materialSorting-web/）组件/模块地图
+- [technical/agent-api-reference.md](technical/agent-api-reference.md) — HTTP 路由 + WS `/ws/solve` 协议 + 导出契约
 - [technical/todo.md](technical/todo.md) — `/todo` skill 维护
-- technical/agent-file-map.md — 解析层 / 排料引擎结构（待建：未触达 server 端时为空）
-- technical/agent-api-reference.md — server.py / solver.py / export.py 路由与 WS 协议（待建）
 
 ## business/（业务文档）
 > 排料规则、各阶段方案、版师反馈 —— 工艺与算法的权威原文。
+
+### 概览
+- [business/business-overview.md](business/business-overview.md) — 产品概述 / 当前状态 / 核心实体 / 数据流 / 90% 目标（业务一页速览）
 
 ### 规则与方案（权威原文）
 - [business/排料规则_详细版.md](business/排料规则_详细版.md) — v0.3 工艺约束（**权威 spec**）

@@ -9,10 +9,10 @@ allowed-tools: Read, Write, Glob, Grep
 ## 上下文
 - 项目规范：@CLAUDE.md
 - 排料规则（权威约束）：@.docs/business/排料规则_详细版.md
-- 架构速查：@.docs/technical/agent-file-map.md（待生成）
-- 组件速查：@.docs/technical/agent-component-map.md（已生成）
-- API 速查：@.docs/technical/agent-api-reference.md（待生成）
-- 业务概览：@.docs/business/business-overview.md（待生成）
+- 架构速查：@.docs/technical/agent-file-map.md
+- 组件速查：@.docs/technical/agent-component-map.md
+- API 速查：@.docs/technical/agent-api-reference.md
+- 业务概览：@.docs/business/business-overview.md
 
 ## 触发场景
 
@@ -41,9 +41,10 @@ allowed-tools: Read, Write, Glob, Grep
 
 在生成 PRD 前，必须查阅以下项目文件以确保 Story 的可行性：
 1. 读取 `.docs/business/排料规则_详细版.md` —— 了解权威约束 spec
-2. 读取 `.docs/technical/agent-file-map.md` —— 了解现有文件结构（若已生成）
-3. 读取 `.docs/technical/agent-api-reference.md` —— 了解现有 API/WS 端点（若已生成）
-4. 根据功能范围，选择性读取 `materialSorting-server/src/materialsorting/` 下相关源码以确认现有模式
+2. 读取 `.docs/business/business-overview.md` —— 了解产品概述、核心实体、当前状态与 90% 目标
+3. 读取 `.docs/technical/agent-file-map.md` —— 了解现有文件结构
+4. 读取 `.docs/technical/agent-api-reference.md` —— 了解现有 API/WS 端点
+5. 根据功能范围，选择性读取 `materialSorting-server/src/materialsorting/` 下相关源码以确认现有模式
 
 ### 阶段 3：生成结构化 PRD
 
