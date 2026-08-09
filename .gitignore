@@ -10,3 +10,8 @@ out/
 # 虚拟环境
 .venv/
 venv/
+
+# Ralph 自动循环产物（运行时生成，勿入库）
+.all_done
+.last-branch
+archive/

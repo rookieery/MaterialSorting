@@ -1,0 +1,12 @@
+{
+  "baseUrl": "http://localhost:8000/api",
+  "healthEndpoint": "http://localhost:8000/api/health",
+  "healthTimeout": 3000,
+  "requestTimeout": 5000,
+  "filePatterns": {
+    "frontend": ["materialSorting-web/static/", "/api/", "apiService", "api/", "fetch("],
+    "backend": ["web/server.py", "web/solver.py", "web/export.py", "routers/", "_router.py", "/api/"]
+  },
+  "routePrefixMap": {},
+  "authToken": ""
+}
