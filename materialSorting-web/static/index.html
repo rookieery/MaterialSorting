@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <title>排料可视化工作台</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="app">
+  <aside class="panel">
+    <h2>求解控制</h2>
+
+    <div class="field">
+      <div class="field-label">码号（多选）</div>
+      <div id="sizes" class="sizes"></div>
+    </div>
+
+    <div class="field row">
+      <label>时长(秒)</label>
+      <input id="time" type="number" value="60" min="5" max="3600">
+    </div>
+
+    <div class="field row">
+      <label>seed</label>
+      <input id="seed" type="number" value="0">
+    </div>
+
+    <div class="field row">
+      <label class="cb"><input id="multi_seed" type="checkbox"> 多 seed 对比</label>
+      <label class="cb seed-count">数量 <input id="seed_count" type="number" value="3" min="2" max="6"></label>
+    </div>
+
+    <div class="field">
+      <div class="field-label">重合 erode (mm) <span class="dim">内/外两档</span></div>
+      <div class="grid2">
+        <label>外部 d_ext<input id="d_ext" type="number" value="0" min="0" step="0.5"></label>
+        <label>内部 d_int<input id="d_int" type="number" value="10" min="0" step="0.5"></label>
+      </div>
+    </div>
+
+    <div class="field">
+      <div class="field-label">旋转公差 (°) <span class="dim">布纹线 ±N</span></div>
+      <div class="grid2">
+        <label>外部 tol_ext<input id="tol_ext" type="number" value="0" min="0" max="45"></label>
+        <label>内部 tol_int<input id="tol_int" type="number" value="0" min="0" max="45"></label>
+      </div>
+    </div>
+
+    <div class="field row presets">
+      <button type="button" id="preset_preview" class="preset">预览 120s</button>
+      <button type="button" id="preset_exact" class="preset">精排 600s</button>
+    </div>
+
+    <details class="advanced">
+      <summary>高级：每片型覆盖</summary>
+      <div id="per_type" class="per_type"></div>
+      <div class="dim small">空 = 继承两档；填值 = 覆盖该维度。受 v0.3 单片上限约束。</div>
+    </details>
+
+    <button id="start">开始求解</button>
+
+    <div id="status" class="status">就绪</div>
+    <div id="stats" class="stats"></div>
+
+    <div class="export-group">
+      <div class="field-label">导出最优方案</div>
+      <div class="export-btns">
+        <button type="button" id="export_png" class="export" disabled>导出 PNG</button>
+        <button type="button" id="export_dxf" class="export" disabled>导出 DXF</button>
+      </div>
+      <div class="dim small">默认导出利用率最高的 seed 的最终方案。</div>
+    </div>
+
+    <div class="hint">
+      density = 原面积口径（与 90% 生死线一致）；sparrow 口径见状态行。<br>
+      内部片 = 单排/双排/火机袋/裤耳；erode/旋转受 v0.3 每片型上限约束。<br>
+      实时图 ~10fps 重绘，全量中间帧存档，结束后可拖回放。
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="nest-wrap">
+      <div id="nests" class="nests"></div>
+    </div>
+    <div class="bottom">
+      <div class="curve-wrap">
+        <svg id="curve" xmlns="http://www.w3.org/2000/svg"></svg>
+      </div>
+      <div class="playback">
+        <div class="field-label">回放</div>
+        <input id="seek" type="range" min="0" max="0" value="0" disabled>
+        <div id="seek-readout">—</div>
+      </div>
+    </div>
+  </main>
+</div>
+<script src="/static/app.js"></script>
+</body>
+</html>

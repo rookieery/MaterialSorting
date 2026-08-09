@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "materialsorting"
+version = "0.1.0"
+description = "牛仔裤排料（marker making）引擎与可视化工作台"
+requires-python = ">=3.10"
+dependencies = [
+    "ezdxf>=1.1",     # DXF 读写（R12 POLYLINE，ET 兼容）
+    "numpy",          # 约束层位图腐蚀
+    "shapely",        # 裁片向内腐蚀（erode）
+    "spyrrow",        # 排料求解器主体（pip 包，不改源码；非 PyPI 主流，装不上需手动处理）
+]
+
+[project.optional-dependencies]
+web = ["fastapi", "uvicorn", "matplotlib"]   # 工作台服务 + PNG 导出
+dev = ["pytest>=7.4"]
+
+[project.scripts]
+ms-explore = "materialsorting.dxf_parser.explore:main"
+ms-export-dxf = "materialsorting.dxf_parser.export_dxf:main"
+ms-pieces-export = "materialsorting.nesting_engine.pieces_export:main"
+ms-sparrow-baseline = "materialsorting.nesting_engine.sparrow_baseline:main"
+ms-sparrow-exp = "materialsorting.nesting_engine.sparrow_experiments:main"
+ms-web = "materialsorting.web.server:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

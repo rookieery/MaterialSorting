@@ -1,0 +1,173 @@
+"""排料可视化工作台 · 求解封装 —— 把 sparrow 求解过程回调出来（含完整 placed_items）。
+
+阶段 A：复用 sparrow_baseline 的「子线程 solve + 主线程 drain」骨架，每个中间解回调完整 placement。
+阶段 B：build_instance 参数化 v0.3 约束（重合 erode 内/外两档 + 旋转公差离散化 + 每片型高级覆盖）。
+
+不改动 sparrow 源码、不改动既有引擎代码，仅 sys.path 引用：
+  _clean_polygon / PTYPE_COLORS  (sparrow_baseline)
+  erode_polygon / INTERNAL_TYPES (sparrow_experiments)
+  MAX_OVERLAP / ROTATION_TOL     (constraints，v0.3 常量表)
+"""
+from __future__ import annotations
+
+import json
+import os
+import sys
+import threading
+import time
+
+from .. import paths
+from ..nesting_engine.sparrow_baseline import _clean_polygon, PTYPE_COLORS
+from ..nesting_engine.sparrow_experiments import erode_polygon, INTERNAL_TYPES
+from ..nesting_engine.constraints import MAX_OVERLAP, ROTATION_TOL
+
+DEFAULT_INTERMEDIATE = paths.INTERMEDIATE
+
+
+def load_pieces(intermediate_path: str = DEFAULT_INTERMEDIATE):
+    """读 pieces_intermediate.json。返回 (doc, gate_mm, pieces)。"""
+    with open(intermediate_path, encoding='utf-8') as f:
+        doc = json.load(f)
+    return doc, float(doc['gate_mm']), doc['pieces']
+
+
+def discretize_orientations(tol: float):
+    """v0.3 旋转公差 tol(度) → spyrrow 离散角度集。
+
+    spyrrow 的 allowed_orientations 只接受离散列表或 None（不支持连续公差，见 .pyi）；
+    故 v0.3 的「±N° 连续公差」离散化为角度集合。
+
+    tol=0 → [0,180]（严格布纹线，= 阶段 A baseline）。
+    tol>0 → 在 0°/180° 附近 ±tol 内按自适应步进离散：tol≤5 用 1°、否则 5°。
+      例 tol=2 → [0,1,2,178,179,180,181,182,358,359]（10 个，外部片几乎锁布纹线）
+      例 tol=45 → 0/180 附近 ±45°/步进5° ≈ 38 个（接近自由）
+    返回 sorted list[float]，归一化到 [0,360)。实测 spyrrow 对大角度集不敏感（72 角度不报错/不降速）。
+    """
+    if tol <= 0:
+        return [0.0, 180.0]
+    step = 1.0 if tol <= 5 else 5.0
+    angs = set()
+    for base in (0.0, 180.0):
+        k = 0
+        while k * step <= tol + 1e-9:
+            for off in (k * step, -k * step):
+                angs.add(round((base + off) % 360.0, 2))
+            k += 1
+    return sorted(angs)
+
+
+def build_instance(pieces, gate_mm, *, time_budget: int, seed: int,
+                   sizes=None, params=None, per_type=None):
+    """按码号 + v0.3 参数构造 (instance, config, pid_meta, total_area, n_eroded)。
+
+    params = {d_ext, d_int, tol_ext, tol_int}（内/外两档；默认全 0 = 阶段A baseline）
+    per_type = {ptype: {d?, tol?}}（每片型高级覆盖；缺的维度回退两档）
+
+    每片实际 erode = min(申请值, MAX_OVERLAP[ptype])（v0.3 工艺上限兜底）
+    每片实际 tol  = min(申请值, ROTATION_TOL[ptype])
+    内部片 = 单排/双排/火机袋/裤耳；外部片 = 其余。
+    """
+    import spyrrow
+    pdef = {'d_ext': 0.0, 'd_int': 0.0, 'tol_ext': 0.0, 'tol_int': 0.0}
+    if params:
+        pdef.update(params)
+
+    if sizes:
+        want = {int(s) for s in sizes}
+        pieces = [p for p in pieces if p['size'] in want]
+
+    pid_meta = {}
+    items = []
+    n_eroded = 0
+    for p in pieces:
+        ptype = p['ptype']
+        internal = ptype in INTERNAL_TYPES
+        base_d = float(pdef['d_int'] if internal else pdef['d_ext'])
+        base_tol = float(pdef['tol_int'] if internal else pdef['tol_ext'])
+
+        if per_type and ptype in per_type:
+            d = float(per_type[ptype].get('d', base_d))
+            tol = float(per_type[ptype].get('tol', base_tol))
+        else:
+            d, tol = base_d, base_tol
+
+        d = min(d, float(MAX_OVERLAP.get(ptype, 0.0)))       # v0.3 重合上限
+        tol = min(tol, float(ROTATION_TOL.get(ptype, 0.0)))  # v0.3 旋转上限
+
+        poly = p['polygon']
+        if d > 0:
+            poly = erode_polygon(poly, d)
+            n_eroded += 1
+        poly = _clean_polygon(poly)
+        if len(poly) < 3:
+            continue
+
+        orientations = discretize_orientations(tol)
+        pid_meta[p['pid']] = {
+            'ptype': ptype,
+            'size': p['size'],
+            'color': PTYPE_COLORS.get(ptype, '#bbbbbb'),
+            'polygon': poly,                 # erode 后 base 多边形（与 placement 一致）
+            'area_mm2': p['area_mm2'],
+        }
+        items.append(spyrrow.Item(
+            id=p['pid'],
+            shape=[(float(x), float(y)) for x, y in poly],
+            demand=1,
+            allowed_orientations=orientations,
+        ))
+    instance = spyrrow.StripPackingInstance(
+        name='workbench', strip_height=gate_mm, items=items)
+    config = spyrrow.StripPackingConfig(
+        total_computation_time=time_budget, seed=seed, num_workers=4)
+    total_area = sum(p['area_mm2'] for p in pieces)
+    return instance, config, pid_meta, total_area, n_eroded
+
+
+def solve_with_callback(instance, config, on_report, *, drain_interval: float = 0.2):
+    """子线程跑 instance.solve，主线程 drain；每个中间解同步调 on_report(report)。
+
+    report = {type:frame, elapsed, phase, density, width_mm, placed_items}
+    （density/width_mm 为 spyrrow 口径；原面积口径 real_density 由 server 侧按 total_area 重算）
+
+    返回 (final_sol, elapsed_sec, err)。
+    """
+    import spyrrow
+    queue = spyrrow.ProgressQueue()
+    holder: dict = {}
+    t0 = time.time()
+
+    def _solve():
+        try:
+            holder['sol'] = instance.solve(config, progress=queue)
+        except Exception as e:
+            holder['err'] = e
+
+    def _emit(rtype, sol):
+        placed = []
+        for pi in sol.placed_items:
+            tx, ty = pi.translation
+            placed.append({
+                'id': pi.id,
+                'rotation': float(pi.rotation),
+                'translation': [float(tx), float(ty)],
+            })
+        on_report({
+            'type': 'frame',
+            'elapsed': round(time.time() - t0, 3),
+            'phase': rtype.phase_name(),
+            'density': float(sol.density),     # spyrrow 口径（erode 后面积）
+            'width_mm': float(sol.width),
+            'placed_items': placed,
+        })
+
+    th = threading.Thread(target=_solve, daemon=True)
+    th.start()
+    while th.is_alive():
+        for rtype, sol in queue.drain():
+            _emit(rtype, sol)
+        time.sleep(drain_interval)
+    th.join()
+    for rtype, sol in queue.drain():
+        _emit(rtype, sol)
+    return holder.get('sol'), time.time() - t0, holder.get('err')

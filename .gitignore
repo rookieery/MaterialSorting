@@ -1,0 +1,12 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# 运行产物（排料结果 intermediate / SVG / PNG / 曲线）
+out/
+
+# 虚拟环境
+.venv/
+venv/
