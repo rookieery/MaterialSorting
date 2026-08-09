@@ -37,18 +37,30 @@ src/
 ├── style.css              # legacy 1:1 副本（US-008 清理）
 ├── vite-env.d.ts          # vite/client 类型
 ├── types/                 # US-002 ✅：ws.ts / piece.ts / v03.ts（纯数据契约）
-├── lib/                   # US-002 ✅ ws.ts；US-003 ✅ geometry.ts；US-004 ✅ params.ts；US-006 ✅ seek.ts；US-007 download 待加
+├── lib/                   # US-002 ✅ ws.ts；US-003 ✅ geometry.ts；US-004 ✅ params.ts；US-006 ✅ seek.ts；US-007 ✅ download.ts
 ├── store/                 # US-002 ✅ runRegistry.ts；US-003 ✅ appStore.ts（renderTick + US-006 seekTime）
-├── hooks/                 # US-002 ✅ useSolveRun.ts；US-003 ✅ useRafThrottle.ts；US-007 useExport 待加
+├── hooks/                 # US-002 ✅ useSolveRun.ts；US-003 ✅ useRafThrottle.ts；US-007 ✅ useExport.ts
 ├── constants/             # US-004 ✅：sizes.ts / colors.ts / v03.ts
-├── __tests__/             # US-002 ✅ useSolveRun；US-003 ✅ 各模块单测
+├── __tests__/             # US-002 ✅ useSolveRun；US-003 ✅ 各模块单测；US-007 ✅ useExport
 └── components/
     ├── nests/             # US-003 ✅ NestSVG / NestCard / NestLabel；US-005 ✅ NestsGrid；US-006 ✅ NestSVG seek+hover
-    ├── ControlPanel/      # US-004 ✅ 8 子组件；US-005 ✅ MultiSeedControls；US-007 ExportButtons 待加
+    ├── ControlPanel/      # US-004 ✅ 8 子组件；US-005 ✅ MultiSeedControls；US-007 ✅ ExportButtons
     ├── curve/             # US-005 ✅ ConvergenceCurve
     ├── playback/          # US-006 ✅ PlaybackBar / Seekbar / SeekReadout
     └── Tooltip.tsx        # US-006 ✅ Portal 单例 + showTooltip/hideTooltip/setHovered/clearHovered
 ```
+
+## US-007 关键约定（导出 PNG/DXF 调用方必读）
+
+- **useExport 挂在 ControlPanel 内**：因为 sizes 在 ControlPanel form 里（与旧 app.js `sizes: selectedSizes()` 同源）。App 不持有 useExport；onStatus 由 useExport → ControlPanel props.onStatus → App.setStatus → StatusLine 透传。
+- **ExportPayload 七字段与旧 app.js 字节级一致**：`{ fmt, sizes, seed, gate_mm, width_mm, density, placed }`。其中 `width_mm = run.lastFrame.width_mm`、`density = run.finalDensity`、`placed = run.lastFrame.placed_items`、`gate_mm = run.manifest.gate_mm`。改任一字段必须同步 `__tests__/useExport.test.tsx` AC#2 用例。
+- **bestRun = runRegistry.bestRun()**：已封装「lastFrame 存在且 finalDensity 最高」逻辑（并列取首个）。ExportButtons 的 disabled 用更宽条件 `some(r => r.lastFrame)`，不用 bestRun（bestRun 留给 useExport 内做最终选择）。
+- **parseContentDisposition 优先级**：`filename*=UTF-8''xxx` > `filename="xxx"`/`filename=xxx` > `nesting.<fmt>`。decodeURIComponent 抛 URIError → 落下一级（不让导出整体失败）。改顺序同步 `download.test.ts`。
+- **防连击用 ref + state 双重防护**：`exportingRef.current` 立即生效；`exporting` state 触发 UI disabled。仅 state 有 race（连击第二次在 setExporting 调度前进入 async body）。
+- **ExportButtons 订阅 renderTick**：lastFrame 是 mutable push 不进 React state；通过 `useAppStore(s => s.renderTick)` + `void renderTick` 触发 reconciliation 后重算 hasLastFrame。改订阅源会破坏 final 后启用联动。
+- **DOM id `export_png`/`export_dxf` 沿用 legacy CSS 选择器**：保留便于测试 + US-008 清理时一并去除。改 id 同步 `ExportButtons.test.tsx` + `ControlPanel.test.tsx` US-007 用例。
+- **服务端文件名 `pct` 而非 `%`**：`server.py export` 拼 `排料_码{sizes_str}_{pct:.2f}pct_seed{seed}.{ext}`（不是 `88.42%`）。AC#5 字面写 `%` 是文档误差；实际下载 `排料_码28-30-32_88.42pct_seed0.png`。改格式需同步 server.py + useExport.test.tsx CN decode 用例。
+- **jsdom 测试需 stub URL.createObjectURL + <a>.click()**：jsdom 不实现 `URL.createObjectURL`、`<a>.click()` 触发 navigation 警告。在 beforeEach 全局 stub，afterEach 调 `vi.unstubAllGlobals()` 还原（见 `__tests__/useExport.test.tsx`）。
 
 ## US-006 关键约定（回放 seek / Tooltip 调用方必读）
 

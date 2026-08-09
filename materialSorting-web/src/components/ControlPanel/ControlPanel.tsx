@@ -8,10 +8,14 @@
 //      （AC#6 触发 useSolveRun.start × N，N = seed_count）。
 //
 // solving / status 来自 App：solving=true 禁用 StartButton；status 由 StatusLine 直接渲染。
-// US-005 落地 multi_seed 开关 + seed_count；US-007 接管 ExportButtons。
+// US-005 落地 multi_seed 开关 + seed_count；US-007 接管 ExportButtons（useExport 也住这里，
+// 因为 sizes 在本组件 form 里 —— 旧 app.js exportAs 内 `sizes: selectedSizes()` 同源）。
 
 import { useState } from 'react';
+import { useExport } from '../../hooks/useExport';
+import type { ExportFmt } from '../../lib/download';
 import { ErodeInputs } from './ErodeInputs';
+import { ExportButtons } from './ExportButtons';
 import { MultiSeedControls } from './MultiSeedControls';
 import { ParamForm } from './ParamForm';
 import { PerTypeOverrides } from './PerTypeOverrides';
@@ -56,6 +60,10 @@ export interface ControlPanelProps {
 export function ControlPanel({ onStart, solving, status, onStatus }: ControlPanelProps) {
   const [form, setForm] = useState<FormState>(DEFAULT_FORM);
 
+  // US-007：useExport 挂在 ControlPanel 内（form.sizes 与 exportAs 同处）。
+  // onStatus 透传到 App.setStatus → StatusLine（导出中 / 完成 / 失败文案由 useExport 写）。
+  const { exportAs, exporting } = useExport({ onStatus });
+
   /** 通用 patch 更新（部分字段）。 */
   function patch(p: Partial<FormState>) {
     setForm((prev) => ({ ...prev, ...p }));
@@ -76,6 +84,11 @@ export function ControlPanel({ onStart, solving, status, onStatus }: ControlPane
       params,
       per_type,
     });
+  }
+
+  /** 导出按钮回调 —— 透传 form.sizes 给 useExport.exportAs（与旧 app.js `sizes: selectedSizes()` 一致）。 */
+  function handleExport(fmt: ExportFmt): void {
+    void exportAs(fmt, form.sizes);
   }
 
   return (
@@ -105,6 +118,7 @@ export function ControlPanel({ onStart, solving, status, onStatus }: ControlPane
       <PerTypeOverrides values={form.per_type} onChange={(per_type) => patch({ per_type })} />
       <StartButton solving={solving} onClick={handleStart} />
       <StatusLine text={status} />
+      <ExportButtons solving={solving} exporting={exporting} onExport={handleExport} />
       <div className="hint">
         density = 原面积口径（与 90% 生死线一致）；sparrow 口径见状态行。
         <br />

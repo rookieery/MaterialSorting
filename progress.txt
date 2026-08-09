@@ -4,33 +4,18 @@ Started: 2026-08-09
 
 
 
-  改用分段 `cat >> file <<'TESTEND'` 多次 append 写大文件更稳。
-- 多 seed App 不能用 `useState(doneCount)` —— 闭包陈旧（每次 start 闭包值不同）；用 useRef。
 
-## 2026-08-09 17:35 · US-006 回放 seekbar + 片 hover tooltip
-
-**Story**: US-006 回放 seekbar + 片 hover tooltip（6 项 AC）。
-
-**改动**:
-- 新增 `lib/seek.ts`（maxElapsed + frameAtTime 二分，与旧 app.js 字节级一致；FrameContainer 最小接口解耦 RunRecord）
-- 修改 `store/appStore.ts`：加 `seekTime: number`（默认 -1 = live）+ `setSeekTime(t)`
-- 新增 `components/Tooltip.tsx`：React Portal 到 body 单例；模块级 `_el / _hovered`；命令式 API `showTooltip / hideTooltip / setHovered / clearHovered`（高频 mousemove 不进 React state）
-- 新增 `components/playback/Seekbar.tsx`：受控 range input；disabled 时 max=0 value=0；启用时 max=ceil(maxElapsed)
-- 新增 `components/playback/SeekReadout.tsx`：`t=X.Xs | sN yy.yy% | ...` 文本；未全完成显 "—"
-- 新增 `components/playback/PlaybackBar.tsx`：`.playback` 容器（订阅 renderTick 算 allDone/max）
-- 修改 `components/nests/NestSVG.tsx`：useEffect 加 `seekTime` dep（`f = seekTime>=0 ? frameAtTime(run,seekTime) : run.lastFrame`）+ flipGroup 上事件委托 mousemove+mouseleave（AC#4..#6）
-- 修改 `App.tsx`：全完成时 setSeekTime(me)；handleStart 内 setSeekTime(-1)+clearHovered+hideTooltip；挂一个 `<Tooltip/>`
-
-**测试**: 47 项新增（lib/seek 16 + Tooltip 11 + PlaybackBar 9 + NestSVG.seek 11）；总 115/115 全绿；typecheck 0 error；vite build OK。
-
-**端到端验证**: WS 启 sizes=[30,32]/time=5/seed=0，收 220 帧 / final.density=66.81% / maxElapsed=5.26s；用 Python 复现 maxElapsed + frameAtTime 与线性参考逐 t 等价（含 1000 帧 stress）。
-
-**关键决策**:
-- Tooltip 用模块级单例而非 React Context —— 高频 mousemove 调用 showTooltip 直接 mutate style/innerHTML，0 React reconciliation。
-- Tooltip JSX 不带 style prop（仅 className），避免 React 重渲染覆盖 imperative 写入。
-- seekTime=-1 用作 live 标志而非 0（避免与「seek 到 0s」语义冲突）。
-- 翻转组 flipGroup 上事件委托（AC#4 要求），与旧 app.js setupHover(svg) 行为等价。
-
-**踩坑**:
 - bash heredoc `<< 'EOF'` + 内部 Chinese 含 `码` `²` 时偶发 unexpected EOF —— 改用分段 `cat >>` append 解决。
 - 后台 `ms-web &` 的 bash 链（bash → bash → python）会重启 python，需要 kill 整条 chain（找 parent 拓扑用 `Get-CimInstance Win32_Process`）。
+
+## US-007 导出 PNG/DXF（2026-08-09）
+
+- 新增 `src/lib/download.ts`（parseContentDisposition + downloadBlob）、`src/hooks/useExport.ts`（bestRun + POST /export + 下载）、`src/components/ControlPanel/ExportButtons.tsx`（按钮 + disabled 联动）。
+- ControlPanel 持 useExport（form.sizes 与 exportAs 同处），handleExport(fmt) 透传 sizes，JSX 把 ExportButtons 挂在 StatusLine 后（与 legacy index.html 顺序一致）。
+- 单测 46 项：download 13（parseContentDisposition 10 + downloadBlob 3）+ useExport 15（bestRun / payload 逐字段 / fetch URL / exporting 状态 / CN decode / 错误兜底 / 防连击）+ ExportButtons 14（DOM + disabled 4 条件 + onExport + renderTick 订阅）+ ControlPanel 集成 +4（ExportButtons 渲染位置 / disabled 联动 / click 触发 onStatus）。全套 161 项绿（旧 115 + 新 46）。
+- 端到端验证：POST /export 返回 PNG 58KB / DXF 66KB；Content-Disposition 走 RFC 5987（filename="ascii" + filename*=UTF-8''%E6%8E%92...）；AC#7 回归：ezdxf 读回 R12 DXF，5 个 POLYLINE（边框 + 4 片），边框点集精确匹配，裁片几何一致。
+- 文档：`.docs/agent-component-map.md` 新增 US-007 章节 + 9 项关键不变量；`materialSorting-web/AGENTS.md` 新增 US-007 关键约定；`.docs/todo.md` 添 Recently Completed。
+- 踩坑：jsdom 不实现 `URL.createObjectURL` + `<a>.click()` 触发 navigation 警告 —— beforeEach 全局 stub（`vi.stubGlobal('URL', ...)` + `vi.spyOn(HTMLAnchorElement.prototype, 'click')`），afterEach `vi.unstubAllGlobals()`。
+- 踩坑：mock Response 的 headers.get 大小写不敏感需手动 lowercase 存储 key + lowercase 查询（与浏览器 Fetch Headers 语义一致）。
+- 踩坑：`vi.stubGlobal` 返回 `VitestUtils`（不是 mock instance），不能调 `.mockRestore()`；还原用 `vi.unstubAllGlobals()`。
+- 文档误差：AC#5 字面写「88.42%」但服务端实际用「88.42pct」（避免文件名 `%` 在 URL / shell 转义）。前端按服务端实际口径测试，文档备注此差异。

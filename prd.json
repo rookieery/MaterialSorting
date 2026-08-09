@@ -2,28 +2,6 @@
   "branchName": "ralph/react-ts-frontend",
   "stories": [
     {
-      "id": "US-006",
-      "title": "回放 seekbar + 片 hover tooltip",
-      "description": "As a user, I want to scrub through recorded frames and hover pieces for info so that I can review the solve.",
-      "files": [
-        "materialSorting-web/src/components/playback/PlaybackBar.tsx",
-        "materialSorting-web/src/components/playback/Seekbar.tsx",
-        "materialSorting-web/src/components/playback/SeekReadout.tsx",
-        "materialSorting-web/src/lib/seek.ts",
-        "materialSorting-web/src/components/Tooltip.tsx",
-        "materialSorting-web/src/store/appStore.ts"
-      ],
-      "acceptanceCriteria": [
-        "全部 run 完成后 seekbar 启用，max = ceil(maxElapsed)，value 默认到末尾",
-        "拖动 seekbar 时 setSeekTime(t)，所有 NestSVG 切到 frameAtTime(run, t)（二分，单测对比旧 app.js）",
-        "SeekReadout 显示 t=Xs | s0 yy.yy% | s1 zz.zz%",
-        "NestSVG 在 flipGroup 上事件委托 mousemove，e.target.closest(polygon) + dataset.ptype → Tooltip 显示片型/码/面积(cm²)",
-        "Tooltip 用 React Portal 到 body，fixed 定位，鼠标 +14/+14 偏移",
-        "mouseleave 隐藏；切换 hover polygon 时旧的高亮 class 移除"
-      ],
-      "passes": true
-    },
-    {
       "id": "US-007",
       "title": "导出 PNG/DXF",
       "description": "As a user, I want to export the best run's final layout as PNG or R12-DXF so that I can deliver it to the cutting room.",
@@ -41,7 +19,7 @@
         "求解未完成或无 lastFrame 时按钮 disabled；导出中按钮 disabled + StatusLine 显示 正在生成 PNG...",
         "同 seed 同参数导出的 DXF，用 ezdxf 读回 polygon 点集与旧版导出几何一致（回归测试）"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "US-008",

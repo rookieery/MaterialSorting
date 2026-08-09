@@ -290,3 +290,74 @@ describe("ControlPanel multi-seed (US-005)", () => {
     expect(cfg.seed_count).toBe(1);
   });
 });
+
+describe("ControlPanel export wiring (US-007)", () => {
+  it("renders ExportButtons group inside panel (after StatusLine)", () => {
+    renderPanel();
+    const group = container!.querySelector(".export-group");
+    expect(group).not.toBeNull();
+    // 顺序：StatusLine 在前，ExportButtons 后（同 legacy index.html）
+    const status = container!.querySelector("#status")!;
+    expect(status.compareDocumentPosition(group!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
+  });
+
+  it("no run / no lastFrame -> export buttons disabled", () => {
+    renderPanel();
+    expect(container!.querySelector<HTMLInputElement>("#export_png")!.disabled).toBe(true);
+    expect(container!.querySelector<HTMLInputElement>("#export_dxf")!.disabled).toBe(true);
+  });
+
+  it("solving=true -> export buttons disabled (传透 props.solving)", () => {
+    renderPanel(() => {}, { solving: true });
+    expect(container!.querySelector<HTMLInputElement>("#export_png")!.disabled).toBe(true);
+    expect(container!.querySelector<HTMLInputElement>("#export_dxf")!.disabled).toBe(true);
+  });
+
+  it("click 导出 PNG → onStatus 收到「正在生成 PNG …」（hook 调用）", async () => {
+    // 准备：一个已 done 的 run + fetch mock
+    const { runRegistry } = await import("../../../store/runRegistry");
+    const { useAppStore } = await import("../../../store/appStore");
+    useAppStore.setState({ renderTick: 0, seekTime: -1 });
+    const rec = runRegistry.create(0);
+    rec.manifest = {
+      type: "manifest", gate_mm: 1980, total_area_mm2: 100000, n_eroded: 0, pieces: [],
+    };
+    rec.frames.push({
+      type: "frame", index: 0, elapsed: 1, phase: "final",
+      density: 0.5, density_sparrow: 0.5, width_mm: 1000, placed_items: [],
+    });
+    rec.lastFrame = rec.frames[0];
+    rec.finalDensity = 0.5;
+    rec.done = true;
+
+    const onStatus = vi.fn();
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(new Blob([new Uint8Array([1])], { type: "image/png" }), {
+        status: 200, headers: { "Content-Disposition": 'attachment; filename="x.png"' },
+      }),
+    );
+    vi.stubGlobal("URL", {
+      ...(globalThis.URL as object),
+      createObjectURL: vi.fn(() => "blob:fake://1"),
+      revokeObjectURL: vi.fn(),
+    });
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+
+    renderPanel(() => {}, { onStatus });
+    // bump tick → buttons enabled
+    act(() => useAppStore.getState().bumpRenderTick());
+    expect(container!.querySelector<HTMLInputElement>("#export_png")!.disabled).toBe(false);
+
+    await act(async () => {
+      container!.querySelector<HTMLButtonElement>("#export_png")!.click();
+      // 让 fetch + microtasks 跑完
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(onStatus).toHaveBeenCalledWith("正在生成 PNG …");
+    expect(fetchSpy).toHaveBeenCalled();
+    fetchSpy.mockRestore();
+    vi.unstubAllGlobals();
+    runRegistry.clear();
+  });
+});
