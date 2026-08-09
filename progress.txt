@@ -1,44 +1,23 @@
 # Ralph Progress Log
 Started: 2026-08-09
 
-## US-001 Vite+React+TS 脚手架（2026-08-09 16:26）
-- Vite 5 + React 18 + TS 5 + Zustand 4 + Vitest 2 装齐
-- dev/prod 路径双通：dev base '/' + proxy /export /ws；prod build → static/ 由 FastAPI mount
-- tsconfig strict 全开（noUnusedLocals / noUnusedParameters）
-- ms-web serve static/index.html HTTP 200 验证通过
 
-## US-002 WS 类型 + RunRegistry + useSolveRun hook（2026-08-09 16:30）
-- types/{ws,piece,v03}.ts 纯数据契约，与 server.py / solver.py 字段名 1:1
-- density 双口径（density 原面积 / density_sparrow erode 后 sparrow 自报）
-- runRegistry.ts 模块级 mutable 数组（frames 不进 React state）
-- useSolveRun.ts 显式 start(cfg) → new WebSocket（不在 useEffect 自动连，防 StrictMode 双连）
-- 6 项 vitest 单测全绿
-
-### 关键约定
-4. density（原面积口径）vs density_sparrow（erode 后 sparrow 自报）双口径 —— 决策 / 显示优先 density
-5. onclose / onerror → onDone（done flag 防重复），不重连
-
-## US-003 NestSVG 命令式渲染 + 节流闸（单 seed 可视化）（2026-08-09 16:45）
-- lib/geometry.ts：r2(x) + pointsStr(poly, rot, tr) —— 与旧 app.js / 后端 _transform_polygon 字节级一致
-- store/appStore.ts：Zustand 单字段 store，仅持 renderTick（+ bumpRenderTick action）
-- hooks/useRafThrottle.ts：active=true 时 rAF + 100ms 时间戳闸 bump renderTick（隐藏标签页自动暂停）
-- components/nests/：
-  - NestSVG.tsx：JSX 仅 `<svg ref/>`；manifest 到达后 imperative 建 bg/fab/flipGroup + N polygon（setAttribute 写 transform = translate(0 gate) scale(1 -1)，防 React 覆盖）；订阅 renderTick → effect 重跑 setAttribute('points'/'display')
-  - NestLabel.tsx：订阅 renderTick 重渲染文本（轻量）
-  - NestCard.tsx：容器（NestLabel + NestSVG）
-- App.tsx 拼装：硬编码 sizes=[30,32]/time=30/seed=0/baseline → 按钮 start + useRafThrottle(seeds.length>0)
-- 19 项 vitest 单测全绿（5 geometry + 6 useSolveRun + 8 NestSVG）
-
-### 端到端验证（prod build + ms-web 后台）
-- ms-web :8000 跑通，HTTP 200；prod bundle 含 createElementNS / setAttribute / scale(1 -1)
-- Python websockets 客户端按 US-003 硬编码参数连 ws://127.0.0.1:8000/ws/solve：
-  - manifest: gate=1980 pieces=16 n_eroded=0
-  - 354 frames，density 58.35% → 66.86%（实际 final 66.82%）
-  - final: width=1126mm elapsed=24.34s
-
-### 关键约定（US-003 立）
-6. React 只渲染空 `<svg ref/>` 一次 —— NestSVG 所有子节点 imperative
-7. 翻转组 transform 必须用 setAttribute 写（不走 JSX prop，否则 React reconciliation 覆盖）
-8. renderTick 单字段节流 —— frames 仍 mutable 在 runRegistry，不进 React state
 9. flipRef 幂等保护（防 StrictMode 双 mount / 多次 tick 重建 DOM）
 10. viewBox 用历史最大 width 作稳定锚（W = max(viewBoxMaxW, lastFrame.width_mm, 1)）
+--- US-004 (2026-08-09 17:05) ---
+v0.3 参数面板 ControlPanel 落地（13 个新文件 + 1 个改动）：
+- 新建 src/constants/{sizes,colors,v03}.ts —— SIZES / PHASE_COLORS / SEED_COLORS / V03_TABLE（与 constraints.py / 旧 app.js 1:1）
+- 新建 src/lib/params.ts —— FormState + DEFAULT_FORM + collectParams 纯函数 + parseSeed/parseTime
+  关键：字段全字符串存储，per_type 空 vs "0" 可区分；collectParams 与旧 app.js 字段级一致
+- 新建 src/components/ControlPanel/ 8 子组件：ControlPanel / SizePicker / ParamForm / ErodeInputs /
+  ToleranceInputs / PresetButtons / PerTypeOverrides / StartButton / StatusLine
+- 改 src/App.tsx：移除 HARDCODED_*，改用 ControlPanel（onStart 透传 cfg → useSolveRun.start）
+- 单测：lib/__tests__/params.test.ts（7 项：默认值 / 11 组与 legacy 对比 / 单档非空 entry / 空白→null / 显式"0" 区分）
+- 集成：components/ControlPanel/__tests__/ControlPanel.test.tsx（10 项覆盖 AC#1..#7）
+- 全绿：tsc 0 error / vitest 36 通过 / npm run build OK / ms-web HTTP smoke 200
+
+踩坑记录：
+- bash heredoc + Chinese 字符 + 内嵌单引号 → 写文件失败；改用 Python heredoc 或 /tmp + cp。
+- React 18 + jsdom 模拟 number input：必须用 Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set
+  native setter 设值再 dispatch input event，否则 React value tracker 检测不到变化。
+- SIZES = [28,29,30,31,33,34,35,36]（跳 32），写测试时不能拿 32 当 fixture。

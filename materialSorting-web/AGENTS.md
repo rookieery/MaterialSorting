@@ -28,27 +28,37 @@ npm run test               # vitest run（US-002 起会有用例）
 3. **命令式 polygon 更新**：每帧 setAttribute('points' / 'display')，由 Zustand renderTick 单字段 ~10fps 节流，**逃逸 React reconciliation**。US-003 落地。
 4. **legacy/ 勿改**：仅作迁移参考。US-008 删除。
 
-## 文件分工（US-003 落地，US-004+ 待填）
+## 文件分工（US-004 落地，US-005+ 待填）
 
 ```
 src/
 ├── main.tsx               # US-001：createRoot + StrictMode
-├── App.tsx                # US-003：拼装 NestCard + useRafThrottle（硬编码 sizes=[30,32]/time=30/seed=0）
+├── App.tsx                # US-004：拼装 ControlPanel + NestCard + useRafThrottle（无硬编码参数）
 ├── style.css              # legacy 1:1 副本（US-008 清理）
 ├── vite-env.d.ts          # vite/client 类型
 ├── types/                 # US-002 ✅：ws.ts / piece.ts / v03.ts（纯数据契约）
-├── lib/                   # US-002 ✅ ws.ts；US-003 ✅ geometry.ts；US-004+ params/seek/download 待加
+├── lib/                   # US-002 ✅ ws.ts；US-003 ✅ geometry.ts；US-004 ✅ params.ts；US-006 seek / US-007 download 待加
 ├── store/                 # US-002 ✅ runRegistry.ts；US-003 ✅ appStore.ts（renderTick 单字段）
 ├── hooks/                 # US-002 ✅ useSolveRun.ts；US-003 ✅ useRafThrottle.ts；US-007 useExport 待加
-├── constants/             # US-004..005：sizes.ts / colors.ts / v03.ts
+├── constants/             # US-004 ✅：sizes.ts / colors.ts / v03.ts
 ├── __tests__/             # US-002 ✅ useSolveRun；US-003 ✅ 各模块单测
 └── components/
     ├── nests/             # US-003 ✅：NestSVG / NestCard / NestLabel；US-005 NestsGrid 待加
-    ├── ControlPanel/      # US-004, US-007
+    ├── ControlPanel/      # US-004 ✅：ControlPanel + 8 子组件；US-007 ExportButtons 待加
     ├── curve/             # US-005：ConvergenceCurve
     ├── playback/          # US-006：PlaybackBar / Seekbar / SeekReadout
     └── Tooltip.tsx        # US-006
 ```
+
+## US-004 关键约定（ControlPanel 调用方 / 改动方必读）
+
+- **表单字段全字符串存储**：`FormState`（lib/params.ts）的 number 字段（time/seed/d_*/tol_*）+ per_type[pt].d/tol 都按 input.value 字符串持有。理由：per_type 必须「空串 = 继承两档」与「"0" = 显式 0」可区分（旧 app.js inp.value.trim() !== '' 同口径）。
+- **collectParams(form) 纯函数与旧 app.js 字段级一致**：params 四档空 → 0 默认；per_type 仅 trim() !== '' 写入；整体空 → null。任何修改必须同步 `lib/__tests__/params.test.ts` 11 组对比 + AC#2 默认值断言。
+- **DEFAULT_FORM 与旧 index.html 默认 1:1**：d_int="10"、其余 0；time="60"、seed="0"；sizes 全选；per_type 全空。改默认值需同步 AC#2 + params.test.ts。
+- **ControlPanel 不调 useSolveRun**：仅 onStart(cfg) 透传到 App，App 决定是否调 useSolveRun.start（解耦多 seed / 重连 / clear 时机）。
+- **DOM id / className 沿用 legacy**：`id="start" / id="status" / id="d_ext" / id="time" / id="seed"` 等保留（CSS 选择器依赖）；`.sizes / .per_type / .pt-row / .chip / .preset / .pt-name i` 等 className 1:1。US-008 清理 CSS 时再统一去 id。
+- **PerTypeOverrides 行序 = V03_PTYPES 顺序**：不可重排（影响测试 placeholder / 徽章断言）；`<i>内</i>` 仅 internal=true 的 4 片型（单排/双排/火机袋/裤耳）。
+- **React 18 + jsdom 单测输入模拟**：number input 必须用 `Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set` native setter 设值后再 dispatch `input` event，否则 React 的 value tracker 检测不到变化（见 ControlPanel.test.tsx AC#6 fill per_type 用例）。
 
 ## US-002 关键约定（hook / Registry 调用方必读）
 
