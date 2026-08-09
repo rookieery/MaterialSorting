@@ -50,4 +50,4 @@ web  →  nesting_engine  →  nesting_bounds  →  dxf_parser
 
 ## 规则与方案文档
 
-排料 v0.3 规则、各阶段（0/1/1c/2）规划、DXF 解析架构、工作台实现/导出方案均在 [.docs/](.docs/)。权威约束 spec 是 `.docs/排料规则_详细版.md`。
+排料 v0.3 规则、各阶段（0/1/1c/2）规划、DXF 解析架构、工作台实现/导出方案均在 [.docs/](.docs/)（技术速查/代码地图在 `technical/`、业务规则/方案/反馈在 `business/`）。权威约束 spec 是 `.docs/business/排料规则_详细版.md`。

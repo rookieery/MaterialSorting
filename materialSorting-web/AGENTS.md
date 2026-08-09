@@ -1,6 +1,6 @@
 # materialSorting-web — Agent 速查
 
-> React 18 + TypeScript 5 + Vite 5 前端。改这里之前先看 `.docs/agent-component-map.md`。
+> React 18 + TypeScript 5 + Vite 5 前端。改这里之前先看 `.docs/technical/agent-component-map.md`。
 
 ## 启动 / 构建 / 校验
 

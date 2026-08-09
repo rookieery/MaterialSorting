@@ -6,7 +6,7 @@
 
 ```
 MaterialSorting/
-├── .docs/                     排料规划/规则/方案文档（14 篇）
+├── .docs/                     排料文档（technical/ 代码地图·todo + business/ 规则·方案·反馈，README.md 为索引）
 ├── data/                      原始数据
 │   ├── M1787#直筒...(1)(2).dxf  母版 DXF（dxf_parser 输入）
 │   └── m1787_直筒/             110 个单裁片 DXF（排料输入，{类型}_{码号}.dxf）

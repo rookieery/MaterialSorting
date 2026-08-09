@@ -1,6 +1,6 @@
 // AppState —— Zustand 单字段（+ seek） store。
 //
-// 设计原则（与 AGENTS.md / .docs/agent-component-map.md 关键不变量 #2 一致）：
+// 设计原则（与 AGENTS.md / .docs/technical/agent-component-map.md 关键不变量 #2 一致）：
 //   高频渲染数据（frames / lastFrame）落在 runRegistry 的 mutable 引用里，**不进 React state**。
 //   此 store 只持有：
 //     1. `renderTick` —— useRafThrottle 每 ~100ms 自增一次，NestSVG / NestLabel / ConvergenceCurve

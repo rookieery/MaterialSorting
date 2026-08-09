@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# add-todo.sh — Append a structured entry to .docs/todo.md
+# add-todo.sh — Append a structured entry to .docs/technical/todo.md
 # Usage:
 #   ./scripts/add-todo.sh issue "API endpoint returns wrong status code" "backend"
 #   ./scripts/add-todo.sh task "Add E2E tests for match creation" "testing"
@@ -8,7 +8,7 @@
 
 set -euo pipefail
 
-TODO_FILE=".docs/todo.md"
+TODO_FILE=".docs/technical/todo.md"
 
 if [ $# -lt 2 ]; then
   echo "Usage: $0 <type> <description> [context]"
