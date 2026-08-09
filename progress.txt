@@ -3,54 +3,34 @@ Started: 2026-08-09
 
 
 
-  native setter 设值再 dispatch input event，否则 React value tracker 检测不到变化。
-- SIZES = [28,29,30,31,33,34,35,36]（跳 32），写测试时不能拿 32 当 fixture。
 
-## US-005 多 seed 并排 + 收敛曲线（2026-08-09）
-
-**Scope**：ControlPanel 加 multi_seed 开关 + seed_count 输入；App 启 N 个并行 WS；
-NestsGrid 渲染 N 个 NestCard；ConvergenceCurve 命令式画 90% 生死线 + cumulative-best
-折线 + 多/单 seed 图例。
-
-**变更**：
-- `src/lib/params.ts`：FormState 加 `multi_seed: boolean` / `seed_count: string`；DEFAULT_FORM
-  默认 `multi_seed=false` / `seed_count='3'`（旧 index.html 1:1）；新增 `parseSeedCount(form)`
-  实现 `multi ? clamp(parseInt||3, 2, 6) : 1`，与旧 app.js startSolve 字面量一致。
-- `src/components/ControlPanel/MultiSeedControls.tsx`（新）：`#multi_seed` checkbox + `#seed_count`
-  number input，DOM className 沿用 legacy `.cb` / `.seed-count`。
-- `src/components/ControlPanel/ControlPanel.tsx`：渲染 MultiSeedControls；ControlPanelStartPayload
-  加 `seed_count: number`（解析后），handleStart 内 `parseSeedCount(form)` 透传。
-- `src/components/nests/NestsGrid.tsx`（新）：seeds → runRegistry.list().find(seed) → NestCard
-  列表；key=seed 稳定。挂载/卸载只在 seeds 变化时；NestSVG 内部已订阅 renderTick 自更新。
-- `src/components/curve/ConvergenceCurve.tsx`（新）：命令式 SVG（React 仅渲染空骨架 `<svg ref/>`，
-  子节点通过 `svg.innerHTML = out` 写入，与旧 app.js drawCurve 字节级一致）。订阅 renderTick；
-  导出 `sampleFrames` / `renderCurveInto` 便于纯函数测试。常量 W/H/PAD/MAX_POINTS 与旧版同字面量。
-- `src/App.tsx`：handleStart 内顺序 `start({...cfg, seed: base+i})` 启 N 个 WS；
-  doneCountRef/totalSeedsRef 追踪 all-done；多 seed 收尾 setStatus 含 summary + best。
-  useRafThrottle(seeds.length>0) —— 求解结束后仍 bump（曲线 / NestLabel 显示最终态）。
-
-**关键不变量（US-005 立，后续故事不得破坏）**：
-1. **ControlPanelStartPayload.seed_count 是已 clamp 的最终值**（1 或 [2,6]）—— App 直接
-   `for i<seed_count` 启 N 个 WS，不再做边界检查。
-2. **ConvergenceCurve 命令式 innerHTML** —— React 仅渲染 `<svg ref/>`；所有子节点（line/text/
-   circle/path/g.legend）通过 `svg.innerHTML = out` 一次性写入。**不要改成 JSX**，否则每帧 diff
-   开销爆炸。采样、配色、字面量与旧 app.js drawCurve 字节级一致（单测逐字段对比）。
-3. **sampleFrames 末帧强制纳入** —— `pts[last] !== frames[last]` 则 push。step = floor(n/400)，
-   n<=400 时 step=1 全量。改这个算法必须同步 `__tests__/ConvergenceCurve.test.tsx` 4 个采样用例。
-4. **App.all-done 检测用 ref，不用 state** —— `doneCountRef.current += 1; if (< totalSeedsRef) return;`
-   闭包陈旧风险靠 ref 规避；setStatus 汇总含 best（runs.reduce 比 finalDensity）。
-5. **useRafThrottle(seeds.length>0) 不在 solving=false 时停** —— 求解结束后曲线 / NestLabel 仍
-   需要重绘最终态；下次 start() 才会 runRegistry.clear + setSeeds([]) 间接停掉。
-
-**测试**（32 新增，全量 68 通过）：
-- `params.test.ts` +7：parseSeedCount 单 seed → 1 / multi + 默认 3 / clamp 2,6 / fallback 3。
-- `ControlPanel.test.tsx` +5：默认值含 multi_seed/seed_count / 多 seed 填值 + clamp / 空串 fallback。
-- `NestsGrid.test.tsx`（新）+6：空容器 / N 卡渲染 / registry 缺失跳过 / 顺序与 seeds 一致 /
-  seeds 不变不重复挂载 / seeds 增减跟着变。
-- `ConvergenceCurve.test.tsx`（新）+14：sampleFrames 4 + 渲染 10（90% 线 / 单 seed 散点+折线+末点 /
-  多 seed 折线+标签 / 单/多 seed 图例 / renderTick 订阅 / 多次 bump 不重建 / renderCurveInto 纯函数）。
-
-**踩坑**：
-- bash heredoc `<< 'EOF'` 与 Python `r'''...'''` + 内含 `''` / `${...}` 字符串混合易解析失败；
   改用分段 `cat >> file <<'TESTEND'` 多次 append 写大文件更稳。
 - 多 seed App 不能用 `useState(doneCount)` —— 闭包陈旧（每次 start 闭包值不同）；用 useRef。
+
+## 2026-08-09 17:35 · US-006 回放 seekbar + 片 hover tooltip
+
+**Story**: US-006 回放 seekbar + 片 hover tooltip（6 项 AC）。
+
+**改动**:
+- 新增 `lib/seek.ts`（maxElapsed + frameAtTime 二分，与旧 app.js 字节级一致；FrameContainer 最小接口解耦 RunRecord）
+- 修改 `store/appStore.ts`：加 `seekTime: number`（默认 -1 = live）+ `setSeekTime(t)`
+- 新增 `components/Tooltip.tsx`：React Portal 到 body 单例；模块级 `_el / _hovered`；命令式 API `showTooltip / hideTooltip / setHovered / clearHovered`（高频 mousemove 不进 React state）
+- 新增 `components/playback/Seekbar.tsx`：受控 range input；disabled 时 max=0 value=0；启用时 max=ceil(maxElapsed)
+- 新增 `components/playback/SeekReadout.tsx`：`t=X.Xs | sN yy.yy% | ...` 文本；未全完成显 "—"
+- 新增 `components/playback/PlaybackBar.tsx`：`.playback` 容器（订阅 renderTick 算 allDone/max）
+- 修改 `components/nests/NestSVG.tsx`：useEffect 加 `seekTime` dep（`f = seekTime>=0 ? frameAtTime(run,seekTime) : run.lastFrame`）+ flipGroup 上事件委托 mousemove+mouseleave（AC#4..#6）
+- 修改 `App.tsx`：全完成时 setSeekTime(me)；handleStart 内 setSeekTime(-1)+clearHovered+hideTooltip；挂一个 `<Tooltip/>`
+
+**测试**: 47 项新增（lib/seek 16 + Tooltip 11 + PlaybackBar 9 + NestSVG.seek 11）；总 115/115 全绿；typecheck 0 error；vite build OK。
+
+**端到端验证**: WS 启 sizes=[30,32]/time=5/seed=0，收 220 帧 / final.density=66.81% / maxElapsed=5.26s；用 Python 复现 maxElapsed + frameAtTime 与线性参考逐 t 等价（含 1000 帧 stress）。
+
+**关键决策**:
+- Tooltip 用模块级单例而非 React Context —— 高频 mousemove 调用 showTooltip 直接 mutate style/innerHTML，0 React reconciliation。
+- Tooltip JSX 不带 style prop（仅 className），避免 React 重渲染覆盖 imperative 写入。
+- seekTime=-1 用作 live 标志而非 0（避免与「seek 到 0s」语义冲突）。
+- 翻转组 flipGroup 上事件委托（AC#4 要求），与旧 app.js setupHover(svg) 行为等价。
+
+**踩坑**:
+- bash heredoc `<< 'EOF'` + 内部 Chinese 含 `码` `²` 时偶发 unexpected EOF —— 改用分段 `cat >>` append 解决。
+- 后台 `ms-web &` 的 bash 链（bash → bash → python）会重启 python，需要 kill 整条 chain（找 parent 拓扑用 `Get-CimInstance Win32_Process`）。

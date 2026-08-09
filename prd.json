@@ -2,26 +2,6 @@
   "branchName": "ralph/react-ts-frontend",
   "stories": [
     {
-      "id": "US-005",
-      "title": "多 seed 并排 + 收敛曲线",
-      "description": "As a user, I want side-by-side multi-seed comparison and a convergence curve so that I can pick the best seed.",
-      "files": [
-        "materialSorting-web/src/components/nests/NestsGrid.tsx",
-        "materialSorting-web/src/components/curve/ConvergenceCurve.tsx",
-        "materialSorting-web/src/constants/colors.ts"
-      ],
-      "acceptanceCriteria": [
-        "multi_seed 开关 + seed_count（2-6）→ NestsGrid 渲染 N 个 NestCard，各自独立 WS",
-        "seed 取 base+i（i=0..N-1），与旧 app.js 一致",
-        "单 seed 时 ConvergenceCurve 散点按 PHASE_COLORS 着色；多 seed 时按 SEED_COLORS[runIndex] 着色 + 末点 circle + seed 标签",
-        "始终绘制 90% 生死线（虚线 + 90% 生死线文字）",
-        "多 seed 显示图例（seed N 各一色块）；单 seed 显示 phase 图例",
-        "帧数 > 400 时按 step = max(1, floor(n/400)) 采样，末帧强制纳入（同旧 app.js）",
-        "ConvergenceCurve 用命令式 DOM（订阅 renderTick），不参与 React 每帧 diff"
-      ],
-      "passes": true
-    },
-    {
       "id": "US-006",
       "title": "回放 seekbar + 片 hover tooltip",
       "description": "As a user, I want to scrub through recorded frames and hover pieces for info so that I can review the solve.",
@@ -41,7 +21,7 @@
         "Tooltip 用 React Portal 到 body，fixed 定位，鼠标 +14/+14 偏移",
         "mouseleave 隐藏；切换 hover polygon 时旧的高亮 class 移除"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "US-007",
