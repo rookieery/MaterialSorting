@@ -356,3 +356,36 @@ NestsGrid 渲染 N 个 NestCard；ConvergenceCurve 命令式画 90% 生死线 + 
 - 后端 e2e：`ms-web` :8000 启动 → `curl POST /api/parse-dxf` 上传 M1787 母版 → 200 返回 `{doc_id, filename, sizes:[{size:30, pieces:[10 items]}]}`，每片含 label/name/polygon/internal_lines/notches/net_polygon/grain_line（与 US-004 契约一致）。
 - 静态服务：`curl GET /` 返回引用新 build hash 的 index.html；`curl HEAD /static/assets/index-D_7rjQsf.js` 200 OK（FastAPI mount 正常 serve）。
 - chrome-devtools-mcp 在本会话不可用（tool 未挂载）；改用 vitest jsdom + StrictMode（与 production 渲染同路径）+ DOM 断言覆盖 AC#1-#5，并由后端 curl e2e 验证管线通畅。
+**清理**：ms-web (PID 39396) 已 PowerShell Stop-Process -Force 杀掉，netstat :8000 LISTENING 无残留。
+**下一步**: US-010（后端 Path A /api/commit-to-nesting：复用 export_dxf + load_nest_pieces 全管线把上传母版转 intermediate）。
+## US-010 完成 (2026-08-10) — 后端 Path A /api/commit-to-nesting（上传母版 → intermediate 全管线）
+**改动**：
+- `materialSorting-server/src/materialsorting/web/server.py`：新增 `POST /api/commit-to-nesting` 路由 + `_commit_to_nesting_sync(doc_id, src_dxf, source_name)` 同步管线 helper（跑在 `_executor` 里）。
+  - 顶部 imports 加 `json` / `re` / `shutil` / `dxf_parser.explore` / `dxf_parser.export_dxf`（assign_group_no, GROUP_NAMES, write_piece_dxf）/ `nesting_bounds.load_pieces`（load_nest_pieces, GATE_MM as NEST_GATE_MM，**别名避免与顶层 `_DOC, GATE_MM, PIECES = load_pieces()` 的 GATE_MM shadow**）。
+  - 加 `_DOC_ID_RE = re.compile(r'^[0-9A-Za-z]{1,128}$')`（防路径逃逸；`uuid.uuid4().hex` 自然命中）。
+- 管线实现（Path A）：`explore.collect_pieces` → `assign_group_no` + `GROUP_NAMES` 定 ptype → `write_piece_dxf` 切单裁片到 `uploads/<doc_id>_pieces/`（每次 commit 先 `shutil.rmtree` 再重写，**idempotent**）→ `load_nest_pieces(pieces_dir, sizes=母版全码)` → 写回 `paths.INTERMEDIATE`。
+- 备份：写回前 `shutil.copy2(paths.INTERMEDIATE, paths.INTERMEDIATE.with_suffix('.bak'))`；首次 commit 无原文件则跳过；`.bak` 只保留一份（再 commit 覆盖）。
+- schema 与 `ms-pieces-export`（`pieces_export.py`）完全一致：`{source, gate_mm=1980, n_pieces, total_area_mm2, pieces[]}`；pieces 字段 `{pid, ptype, size, side, polygon, bbox, area_mm2, n_verts, allowed_angles=[0,180]}`。
+- 路由签名：`payload={doc_id, filename?}`，`doc_id` 必填 + regex 校验；`filename` 可选（缺省 `<doc_id>.dxf`），作为新 intermediate 的 `source` 字段。CPU 密集管线走 `loop.run_in_executor(_executor, ...)` 复用 6-worker 线程池。
+- 错误码：请求体非 JSON / 缺 doc_id / 类型错 / `_DOC_ID_RE` 不中 → 400；`uploads/<doc_id>.dxf` 不存在 → 404；管线异常（collect 空 / write 全跳过 / load_nest_pieces 空 / 写盘失败）→ 422。全部 JSONResponse。
+- 响应字段：`{doc_id, source, sizes, n_pieces, total_area_mm2, n_written_dxf, n_skipped, skipped[≤10], bak}`。
+- 文档：更新 `.docs/technical/agent-api-reference.md`（routes 表 + 新增 "POST /api/commit-to-nesting" section 含请求/响应/错误/副作用/不变量 6 条）+ `.docs/technical/agent-file-map.md`（文件树 + 行数 + 数据流链路 + 关键不变量）+ `web/AGENTS.md`（新增 "US-010 /api/commit-to-nesting 关键约定" section 8 条 + 文件分工 + 已踩坑更新）。
+**关键设计决策**：
+- **Path A 全复用**：服务端直接跑 `export_dxf` 切单裁片 + `load_nest_pieces` 全码加载，而非另写「上传母版 → NestPiece 直转」。理由：`ptype` 来自单裁片文件名（`{ptype}_{size}.dxf`），由 `assign_group_no` + `GROUP_NAMES` 在导出时赋值，跳过 `write_piece_dxf` 会丢失 ptype 映射。复用全管线零风险。
+- **全码 sizes 来自母版实测**：`sorted({p.size for p in pieces if p.size is not None})`，M1787 实测 [28-38] 11 码（vs `DEFAULT_SIZES` 8 码跳 32）。**不沿用 `DEFAULT_SIZES`**。
+- **GATE_MM 别名导入**：`from ..nesting_bounds.load_pieces import GATE_MM as NEST_GATE_MM`。`server.py` 顶层已有 `_DOC, GATE_MM, PIECES = load_pieces()` 从既有 intermediate 读 GATE_MM（1980.0）；写回新 intermediate 时用 `NEST_GATE_MM`（load_pieces 模块的源常量 1980.0），而非既有 intermediate 的值——避免「写回时把既有 intermediate 的可能脏值扩散」。
+- **`filename` 可选不强制**：AC1 说入参 `{doc_id}`，但 source 字段需要「上传文件名」。折中：payload `{doc_id, filename?}`，filename 缺省用 `<doc_id>.dxf`。前端 commit 按钮（TODO）会有 uploadStore.filename 直接传；curl 测试可显式传 filename 覆盖。**不改 US-004 parse-dxf 添加 sidecar**——保留 US-004 行为不变。
+- **idempotent 临时目录**：每次 commit 先 `rmtree` 再 `mkdir`，避免旧文件残留污染（M1787 假设一码一片型唯一；新款若违反，文档化为 open question）。
+- **`.bak` 单份**：再 commit 会覆盖 `.bak`——保留最近一次写回前快照足够回滚。多版本备份非 v1 目标。
+- **不 auto-reload PIECES**：`server.py` 顶层 `PIECES = load_pieces()` 是 import 时一次性加载；commit 后 intermediate 文件已更新但内存 `PIECES` 不变。**v1 TODO 随排料页改造补 reload 端点或重启策略**（AC6 明确 deferred）。
+**验证**：
+- 导入冒烟：`python -c "from materialsorting.web.server import app"` 通过；路由表含 `POST /api/commit-to-nesting`。
+- 分层校验：`web → nesting_bounds → dxf_parser` 单向；`nesting_bounds.load_pieces` 不 import web；`dxf_parser.explore` 不 import 兄弟包。
+- 回归等价（核心 AC#7）：Path A 产物 vs 「全码 CLI 管线」`load_nest_pieces(paths.PIECES_DIR, sizes=[28..38])`：
+  - Path A：176 NestPiece / total_area=17650482.2 mm² / 11 码 [28-38]
+  - CLI baseline：176 NestPiece / total_area=17650482.2 mm² / 11 码 [28-38]
+  - **PID 集合完全相同**；**零面积 diff（>0.5mm²）**。等价性证实。
+- 端到端 curl：`ms-web` :8000 启动 → `POST /api/commit-to-nesting {doc_id, filename}` → 200 返回 `{n_pieces:176, sizes:[28-38], total_area_mm2:17650482.2, bak:...}`。
+- 错误路径 curl：缺 doc_id → 400；`doc_id="../../../etc/passwd"` → 400（regex 拒绝）；不存在 doc_id → 404；请求体非 JSON → 400。
+- 副作用：`pieces_intermediate.bak` 277118 bytes（原 8 码 128 片）；新 intermediate 385154 bytes（11 码 176 片）；schema 字段完全一致。
+- **未做 UI 浏览器验证**：本 story 纯后端（AC6 明确 v1 仅 curl 可测，前端 commit 按钮随排料页改造补 TODO）；无 SVG/坐标变换改动，按规则不需 chrome-devtools-mcp。

@@ -1,11 +1,4 @@
 {
   "branchName": "ralph/dxf-upload-preview",
-  "stories": [
-    {
-      "id": "US-010",
-      "title": "预览结果→intermediate 转换(后端 Path A)",
-      "description": "As a 系统，I want 后端端点把上传母版转成排料 intermediate（复用 export_dxf+load_pieces 全管线，全码），so that 上传母版产物可被排料消费替代手动 CLI。前端 commit 入口随排料页改造补（见 TODO）。\n\n详见 tasks/prd-dxf-upload-preview.md US-010。\n\n具体任务（Path A）：\n1. web/server.py 新增 POST /api/commit-to-nesting 入参 {doc_id}（引用 US-004 落盘 uploads/{uuid}.dxf）。\n2. 服务端跑 explore.collect_pieces→export_dxf.assign_group_no+GROUP_NAMES 定片型→write_piece_dxf 切单裁片到 paths.OUT_DIR/uploads/{uuid}_pieces/→load_nest_pieces(pieces_dir, sizes=母版全码)→写回 paths.INTERMEDIATE。\n3. 写回前备份原 intermediate 为 .bak；source 字段改写为上传文件名；schema 与 ms-pieces-export 一致。\n4. load_nest_pieces sizes 传母版全码（覆盖 DEFAULT_SIZES 8 码）；export_dxf 本身不过滤码（已核实源码）。\n\n验收标准：\n- NestPiece 仅含 polygon（毛版 layer1），grain/internal/notch 不进 intermediate；L/R 镜像由 PAIR_TYPES 处理。\n- TODO（v1 不做）：排料页自动 reload（PIECES 为 server.py 顶层常量）+ 前端 commit 按钮；v1 仅 curl 可测。\n- 回归：对 M1787，Path A 产物裁片数/码数与全码 CLI 管线（ms-export-dxf+ms-pieces-export sizes=全码）等价（非当前 8 码 intermediate）。\n- python -c \"from materialsorting.web.server import app\" 导入通过、分层未反向；curl POST /api/commit-to-nesting 成功写回+生成 .bak。",
-      "passes": true
-    }
-  ]
+  "stories": []
 }
