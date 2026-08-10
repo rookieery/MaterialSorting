@@ -2,16 +2,10 @@
   "branchName": "ralph/dxf-upload-preview",
   "stories": [
     {
-      "id": "US-001",
-      "title": "Tab 框架 + NestingPage 外提",
-      "description": "As a 版师，I want 顶部 Tab 在排料/上传预览间切换且切回排料页求解/WS 不中断，so that 边排料边上传预览不丢状态。\n\n详见 tasks/prd-dxf-upload-preview.md US-001。\n\n具体任务：\n1. 新建 materialSorting-web/src/components/TabBar.tsx 渲染两 Tab（排料/上传预览），激活项高亮。\n2. 新建 store/uiStore.ts（Zustand）持 activeTab:'nesting'|'preview' 及 setTab()。\n3. 将 App.tsx 现有排料逻辑（ControlPanel+NestsGrid+PlaybackBar）外提到 components/NestingPage.tsx，App 仅留 TabBar+两页面容器。\n4. 两页面 display:none 切换不卸载，切回时求解/WS/播放进度保留。\n\n验收标准：\n- 沿用 style.css 不引入 CSS 框架；TabBar 视觉与 ControlPanel 一致。\n- 浏览器验证：排料页发起求解→切预览→切回，求解进度/WS 未中断（控制台无断连）。\n- npm run build 通过、npm run dev 两 Tab 可切换。",
-      "passes": true
-    },
-    {
       "id": "US-005",
       "title": "前端类型 + uploadStore + useParseDxf",
       "description": "As a 前端，I want ParsedPiece 类型、上传状态 store 与防连击请求 hook，so that 上传与预览组件有统一数据源。\n\n详见 tasks/prd-dxf-upload-preview.md US-005。\n\n具体任务：\n1. 新建 types/parsed.ts：ParsedPiece、ParsedSize、ParsedDoc（与 US-004 响应结构一致）。\n2. 新建 store/uploadStore.ts（Zustand）：status:'idle'|'uploading'|'done'|'error'、doc、activeSize、error、actions reset()/setSize()。\n3. 新建 hooks/useParseDxf.ts：fetch('/api/parse-dxf',{method,body:FormData}) 更新 store；防连击（上传中重复触发忽略）；相对路径（dev 经 Vite proxy，prod 同源）。\n\n验收标准：\n- 不引入新依赖（仅 React+Zustand+fetch）。\n- npm run build 通过；tsc --noEmit 无类型错误。",
-      "passes": false
+      "passes": true
     },
     {
       "id": "US-006",

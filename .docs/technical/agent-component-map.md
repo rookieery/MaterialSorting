@@ -1,6 +1,6 @@
 # 前端组件 / 模块地图（materialSorting-web/）
 
-> 由 `/sync-docs` 维护。改前端先看这里。当前覆盖 US-001 Tab 框架 + US-002 WS 契约 + US-003 NestSVG + US-004 ControlPanel + US-005 多 seed/收敛曲线 + US-006 回放 seekbar + 片 hover tooltip + US-007 导出 PNG/DXF + DXF 上传预览 US-001 Tab 骨架。
+> 由 `/sync-docs` 维护。改前端先看这里。当前覆盖 US-001 Tab 框架 + US-002 WS 契约 + US-003 NestSVG + US-004 ControlPanel + US-005 多 seed/收敛曲线 + US-006 回放 seekbar + 片 hover tooltip + US-007 导出 PNG/DXF + DXF 上传预览 US-001 Tab 骨架 + 上传预览 US-005 类型/store/hook。
 
 ## 顶层结构
 
@@ -17,11 +17,11 @@ materialSorting-web/
 │   ├── App.tsx             # US-001 Tab 骨架：TabBar + 双 .page 容器（display:none 切换）+ Tooltip 单例
 │   ├── style.css           # 由 vanilla 前身 1:1 迁入；US-001 加 .tabbar/.tab/.page/.hidden/.preview-empty
 │   ├── vite-env.d.ts        # vite/client 类型引用
-│   ├── types/              # US-002：纯数据契约（与 server.py 字段名 1:1）
+│   ├── types/              # US-002：纯数据契约（与 server.py 字段名 1:1）；上传预览 US-005：parsed.ts
 │   ├── constants/          # US-004：SIZES / PHASE_COLORS / SEED_COLORS / V03_TABLE
 │   ├── lib/                # US-002 起：纯函数工具（ws / geometry / params）；US-007 download
-│   ├── store/              # US-002 RunRegistry + US-003 appStore + US-001 uiStore（Tab 切换）
-│   ├── hooks/              # US-002 起：useSolveRun / useRafThrottle；US-007 useExport
+│   ├── store/              # US-002 RunRegistry + US-003 appStore + US-001 uiStore；上传预览 US-005 uploadStore
+│   ├── hooks/              # US-002 起：useSolveRun / useRafThrottle；US-007 useExport；上传预览 US-005 useParseDxf
 │   ├── components/
 │   │   ├── TabBar.tsx       # US-001 顶部 Tab（排料/上传预览）；订阅 uiStore.activeTab
 │   │   ├── NestingPage.tsx  # US-001 排料页（原 App.tsx 业务逻辑外提；持 solving/seeds/useSolveRun）
@@ -83,6 +83,28 @@ materialSorting-web/
 5. **Tab 顺序固定：排料在前** —— 是默认入口（`uiStore.activeTab` 默认 `'nesting'`），TABS 数组顺序不可改。
 6. **TabBar 视觉沿用 style.css** —— 不引入 CSS 框架；`.tabbar/.tab` 暗色（`#26282e`）与 ControlPanel 同色系；active 项用绿色 `#2ea06c` border-bottom 强调（与 StartButton `#2ea06c` 同色）。
 7. **NestingPage 用 Fragment** —— 直接把 ControlPanel + main 作为 `.page` flex 子元素，不再包一层 `.app`（避免冗余 DOM + flex 嵌套层）。
+
+## 上传预览 US-005 落地：ParsedDoc 类型 + uploadStore + useParseDxf hook
+
+| 文件 | 角色 |
+| --- | --- |
+| `src/types/parsed.ts` | 上传解析响应契约：`ParsedDoc` / `ParsedSize` / `ParsedPiece` + `ParsedPt` / `ParsedNotch` / `ParsedGrainLine`。与 `web/server.py _build_parse_payload()` 字段名严格一致：`{doc_id, filename, sizes:[{size, pieces:[{label, name, polygon, internal_lines, notches, net_polygon, grain_line}]}]}` |
+| `src/store/uploadStore.ts` | Zustand store：`status: 'idle'\|'uploading'\|'done'\|'error'`、`doc: ParsedDoc\|null`、`activeSize: number\|null`、`error: string\|null` + actions `reset()` / `setSize(s)`。状态过渡（uploading→done\|error）由 hook 直接 `useUploadStore.setState({...})` 写入，不暴露成公开 action |
+| `src/hooks/useParseDxf.ts` | 上传 hook：`upload(file)` → POST `/api/parse-dxf` (multipart FormData) → 写 uploadStore。**防连击**：uploadingRef + status==='uploading' 双重防护；成功后默认 activeSize = `doc.sizes[0]?.size ?? null`；不抛错（错误统一进 store.error） |
+| `src/store/__tests__/uploadStore.test.ts` | 7 项单测：默认 idle / reset() 从 done+error 回 idle / setSize(number\|null) / 订阅者收到 status & activeSize 变化 |
+| `src/hooks/__tests__/useParseDxf.test.tsx` | 15 项单测：AC#1 fetch URL=相对+POST+FormData(file)+不手设 Content-Type；AC#2 200→done+doc+activeSize=sizes[0].size / 空 sizes / null 码组；AC#3 400/413/422→error+CN msg / 非 JSON→statusText / 网络错→Error.message / 非 Error→String(e)；AC#4 防连击 fetch 仅一次 / 成功+失败后 uploadingRef 复位 / 进入 uploading 清旧 error |
+
+### 关键不变量（上传预览 US-005 立，后续故事不得破坏）
+
+1. **状态机：idle → uploading → done \| error** —— status 是 UploadPanel 渲染分支的唯一驱动。改状态名 / 增状态需同步 uploadStore.test.ts 7 项 + useParseDxf.test.tsx 15 项。
+2. **uploadStore 是单一真相源** —— 与 runRegistry（高频 mutable，不进 state）相反，uploadStore 把 doc/activeSize/error 全部进 React state。解析结果低频，进 store 触发 reconciliation 反而便于 UI 同步。新增字段需在 uploadStore + reset() + useParseDxf setState 三处同步。
+3. **状态过渡由 useParseDxf 直接 `useUploadStore.setState({...})`**，不暴露成 store 公开 action。store 公开 API 只含调用方语义动作（reset / setSize），避免业务组件误触发状态跳变。
+4. **防连击：uploadingRef + status==='uploading' 双重防护** —— ref 立即生效（async 函数体同步段执行），setState 异步生效，第二次连击会在 setState 调度前进 hook body。两者任一为 uploading 即忽略。改单重防护会回归「连击两次同时 fetch → 后写入者覆盖前者 doc」问题。
+5. **FormData 不手设 Content-Type** —— fetch 自动加 `multipart/form-data; boundary=...`；手设会丢 boundary → 后端 python-multipart 解析失败。useParseDxf.test.tsx AC#1 有断言。
+6. **响应契约字段名严格与 server.py `_build_parse_payload` 一致** —— 改任一字段需同步后端 server.py + types/parsed.ts + useParseDxf.test.tsx AC#2。
+7. **activeSize 默认 = `doc.sizes[0].size ?? null`** —— 后端按数值升序、null 殿后，sizes[0] 是最小码。空 sizes 兜底 null。改默认需同步 useParseDxf.test.tsx 3 项 activeSize 用例。
+8. **错误不抛、不 rethrow** —— useParseDxf 内 try/catch 兜底，所有错误（网络错 / JSON 解析错 / 4xx/5xx）统一进 uploadStore.error，UI 自取。返回 Promise\<void\> 仅为调用方可选 await。
+9. **doc / activeSize 在失败时不主动清** —— uploading 时清 error 但保留 doc/activeSize（避免切 uploading 时 UI 闪烁）；error 时也只写 status/error。reset() 才彻底清零。
 
 ## US-002 落地：WS 契约 + RunRegistry + useSolveRun
 

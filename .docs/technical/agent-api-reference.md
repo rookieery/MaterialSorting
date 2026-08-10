@@ -141,6 +141,7 @@ key = (-centroid_y, centroid_x, -area_mm2, block_name, piece_index)
 3. **`polygon` 是原始毛版几何**（未归一化 / 未对齐布纹 / 未镜像），与 intermediate 的 NestPiece polygon（归一化 + 镜像后）不同；US-007 `PiecePreviewSVG` 直接渲染此字段。
 4. **`grain_line` 与原始 DXF 同坐标系**（Y 向上），前端 SVG `scale(1,-1)` 翻转后与 PNG/R12 导出一致。
 5. **响应大小 ≤ 20MB 解析后压缩**：实测 M1787 ~680KB JSON，前端 `useParseDxf` 一次拿到全码缓存到 Zustand。
+6. **上传预览 US-005 前端契约**：响应字段名（`doc_id` / `filename` / `sizes[].size` / `sizes[].pieces[].{label,name,polygon,internal_lines,notches,net_polygon,grain_line}`）被 `materialSorting-web/src/types/parsed.ts` 严格镜像；改任一字段需同步 `types/parsed.ts` + `useParseDxf.test.tsx` AC#2。前端 hook `useParseDxf` 用 `FormData('file', file)` 发请求，**不手设 Content-Type**（让浏览器自动加 boundary）；成功后默认选中 `sizes[0].size`（最小码）。错误（400/413/422/网络错）统一进 `uploadStore.error`，UI 自取渲染。
 
 ## WebSocket /ws/solve — 求解流
 

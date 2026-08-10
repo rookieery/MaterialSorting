@@ -28,7 +28,7 @@ npm run test               # vitest run（US-002 起会有用例）
 3. **命令式 polygon 更新**：每帧 setAttribute('points' / 'display')，由 Zustand renderTick 单字段 ~10fps 节流，**逃逸 React reconciliation**。US-003 落地。
 4. **`static/` 是构建产物**（US-008 起入库 gitignore）：`npm run build` 生成，**不要手改**；旧 vanilla 三件套（`legacy/`）已删除，React 应用是唯一真相源。
 
-## 文件分工（US-001 Tab 框架 + US-002~US-007 全部落地；US-008 收尾清理）
+## 文件分工（US-001 Tab 框架 + US-002~US-007 全部落地；US-005 上传预览状态层；US-008 收尾清理）
 
 ```
 src/
@@ -36,10 +36,10 @@ src/
 ├── App.tsx                # US-001 ✅ Tab 骨架：TabBar + 双 .page 容器（display:none 切换）+ Tooltip 单例
 ├── style.css              # 由 vanilla 前身 1:1 迁入；US-001 加 .tabbar/.tab/.page/.hidden/.preview-empty
 ├── vite-env.d.ts          # vite/client 类型
-├── types/                 # US-002 ✅：ws.ts / piece.ts / v03.ts（纯数据契约）
+├── types/                 # US-002 ✅：ws.ts / piece.ts / v03.ts；US-005 ✅ parsed.ts（US-004 响应契约）
 ├── lib/                   # US-002 ✅ ws.ts；US-003 ✅ geometry.ts；US-004 ✅ params.ts；US-006 ✅ seek.ts；US-007 ✅ download.ts
-├── store/                 # US-002 ✅ runRegistry.ts；US-003 ✅ appStore.ts；US-001 ✅ uiStore.ts（Tab 切换）
-├── hooks/                 # US-002 ✅ useSolveRun.ts；US-003 ✅ useRafThrottle.ts；US-007 ✅ useExport.ts
+├── store/                 # US-002 ✅ runRegistry.ts；US-003 ✅ appStore.ts；US-001 ✅ uiStore.ts；US-005 ✅ uploadStore.ts
+├── hooks/                 # US-002 ✅ useSolveRun.ts；US-003 ✅ useRafThrottle.ts；US-007 ✅ useExport.ts；US-005 ✅ useParseDxf.ts
 ├── constants/             # US-004 ✅：sizes.ts / colors.ts / v03.ts
 ├── __tests__/             # US-002 ✅ useSolveRun；US-003 ✅ 各模块单测；US-007 ✅ useExport；US-001 ✅ App 集成 smoke
 └── components/
@@ -53,6 +53,19 @@ src/
     ├── playback/          # US-006 ✅ PlaybackBar / Seekbar / SeekReadout
     └── Tooltip.tsx        # US-006 ✅ Portal 单例 + showTooltip/hideTooltip/setHovered/clearHovered
 ```
+
+## US-005 关键约定（上传预览状态层 调用方必读）
+
+- **状态机：idle → uploading → done | error（任一终态可 reset 回 idle）**。status 是 UploadPanel 渲染分支的唯一驱动：uploading 显示加载态、error 显示红字、done 显示文件名 + 码数概览。改状态名 / 增状态需同步 uploadStore.test.ts 7 项 + useParseDxf.test.tsx 15 项。
+- **uploadStore 是单一真相源**：与 runRegistry（高频 mutable，不进 state）相反，uploadStore 把 doc/activeSize/error 全部进 React state —— 解析结果低频，进 store 触发 reconciliation 反而便于 UI 同步。新增字段需在 uploadStore + reset() + useParseDxf setState 三处同步。
+- **状态过渡（uploading → done | error）由 useParseDxf 直接 `useUploadStore.setState({...})` 写入，不暴露成 store 公开 action**。store 公开 API 只含调用方语义动作（reset / setSize），避免业务组件误触发状态跳变。
+- **防连击：uploadingRef + status==='uploading' 双重防护**。ref 立即生效（async 函数体同步段执行）；setState 异步生效，第二次连击会在 setState 调度前进 hook body。两者任一为 uploading 即忽略。改单重防护会回归「连击两次同时 fetch → 后写入者覆盖前者 doc」问题。
+- **FormData 不手设 Content-Type**：fetch 自动加 `multipart/form-data; boundary=...`，手设会丢 boundary → 后端 python-multipart 解析失败。useParseDxf.test.tsx AC#1 有断言。
+- **响应契约字段名严格与 server.py `_build_parse_payload` 一致**：`{doc_id, filename, sizes:[{size, pieces:[{label, name, polygon, internal_lines, notches, net_polygon, grain_line}]}]}`。改任一字段需同步后端 server.py + types/parsed.ts + useParseDxf.test.tsx AC#2。
+- **activeSize 默认 = doc.sizes[0].size ?? null**：后端按数值升序、null 殿后，sizes[0] 是最小码。空 sizes 兜底 null，UI 自然显示空态。改默认需同步 useParseDxf.test.tsx 3 项 activeSize 用例。
+- **错误不抛、不 rethrow**：useParseDxf 内 try/catch 兜底，所有错误（网络错 / JSON 解析错 / 4xx/5xx）统一进 uploadStore.error，UI 自取。返回 Promise<void> 仅为调用方可选 await（如「上传完成后再切 Tab」）。
+- **doc / activeSize 在失败时不主动清**：uploading 时清 error 但保留 doc/activeSize（避免切 uploading 时 UI 闪烁）；error 时也只写 status/error，让用户能看到上一次成功的预览（可选 UX，由 UI 决定是否隐藏）。reset() 才彻底清零。
+- **fetch URL 是相对路径 `/api/parse-dxf`**：dev 由 Vite proxy 转 :8000，prod 同源；与 useExport fetch('/export') 同口径，前端代码 dev/prod 完全一致。
 
 ## US-001 关键约定（Tab 框架调用方必读）
 

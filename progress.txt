@@ -2,23 +2,40 @@
 Started: 2026-08-09
 
 
-- layer3 文档勘误 = US-009 范围（本 story 仅在 AGENTS.md 标注「US-009 待修」，不动 `.docs/business/排料DXF解析架构_方案.md` 第 2 节）。
-- PiecePreviewSVG 渲染 = US-007 范围（notch 8mm 长度待版师确认）。
 
-## 2026-08-10 US-001 Tab 框架 + NestingPage 外提 ✅
-- 新增 `src/store/uiStore.ts`：Zustand 单字段（`activeTab: 'nesting' | 'preview'`，默认 `'nesting'`）+ `setTab()`。
-- 新增 `src/components/TabBar.tsx`：`<nav class="tabbar">` + 两 `<button class="tab">`（排料/上传预览）；active 项加 `.active` + `aria-pressed=true`；点击 setTab；视觉与 ControlPanel 同色系（暗背景 #26282e + 绿色 #2ea06c border-bottom 强调，与 StartButton 同色）。
-- 新增 `src/components/NestingPage.tsx`：原 App.tsx 业务逻辑字节级外提（持 seeds/solving/status/doneCountRef/totalSeedsRef + useSolveRun + useRafThrottle + handleStart）；用 Fragment 直接挂 ControlPanel + main 作 `.page` flex 子元素；不挂 Tooltip（Tooltip 由父 App 渲染）。
-- 新增 `src/components/preview/PreviewPage.tsx`：US-001 占位（提示卡片「US-006~US-008 落地」）；US-008 替换为 UploadPanel + SizeTabs + ParsedPiecesView。
-- 重写 `src/App.tsx`：仅留 `<TabBar>` + `<div class="tab-content">` 双 `.page` 容器（display:none 切换）+ `<Tooltip>`（单例，Portal body）。
-- `src/style.css`：`.app` 改 `flex-direction: column`；新增 `.tabbar/.tab/.tab.active/.tab-content/.page/.page.hidden/.preview-empty/.preview-empty-card`。
-- 新增测试：`src/store/__tests__/uiStore.test.ts`（4 项）+ `src/components/__tests__/TabBar.test.tsx`（5 项）+ `src/__tests__/App.test.tsx`（6 项集成 smoke：默认 nesting 页可见含 ControlPanel+main / 切 preview nesting 加 .hidden 但 DOM 仍在 / 切回对称 / Tooltip 单例仍 Portal body / 点击端到端）。
-- 验收：176 测试全 pass（161 既有 + 15 新增）；`npm run build` 通过；dev server (:5173) HTTP 200 + Vite 转译 App.tsx/main.tsx 无错。无法用 chrome-devtools-mcp（agent 工具集未含），改用 jsdom 集成 smoke 测覆盖 DOM 切换断言。
-- 关键不变量（写入 .docs/technical/agent-component-map.md + materialSorting-web/AGENTS.md）：
-  1. 双页面常驻 DOM，display:none 切换（非条件渲染）—— 切回排料页时 useState/useRef/runRegistry 全部保真，进行中求解/WS/seek 不中断。
-  2. uiStore 单字段（仅 activeTab），不混业务状态。
-  3. TabBar 只切 store，App 订阅后切 .hidden class。
-  4. Tab 顺序固定：排料在前（默认入口）。
-  5. NestingPage 用 Fragment（ControlPanel+main 直挂 .page flex，无冗余 .app 层）。
   6. Tooltip 仍由 App 渲染（US-006 关键约定 #3 不破）。
 - 后端零改动（前端 only story）。
+
+---
+
+## 2026-08-10 — 上传预览 US-005 落地：前端类型 + uploadStore + useParseDxf hook
+
+**Story**: US-005（新 PRD `prd-dxf-upload-preview.md`）— 前端类型 + uploadStore + useParseDxf
+
+**改动文件**:
+- 新增 `materialSorting-web/src/types/parsed.ts` — ParsedDoc/ParsedSize/ParsedPiece 契约（与 server.py `_build_parse_payload` 字段严格一致）
+- 新增 `materialSorting-web/src/store/uploadStore.ts` — Zustand store：status/idle|uploading|done|error、doc、activeSize、error、reset()/setSize()
+- 新增 `materialSorting-web/src/hooks/useParseDxf.ts` — fetch('/api/parse-dxf') multipart hook；防连击 ref+state 双重防护；不抛错
+- 新增 `materialSorting-web/src/store/__tests__/uploadStore.test.ts` — 7 项单测
+- 新增 `materialSorting-web/src/hooks/__tests__/useParseDxf.test.tsx` — 15 项单测（AC#1..#4 全覆盖）
+- 同步 `materialSorting-web/AGENTS.md`（文件分工表加 US-005 入口 + 新增「上传预览 US-005 关键约定」节）
+- 同步 `.docs/technical/agent-component-map.md`（顶部覆盖说明 + 文件分工 + 新增「上传预览 US-005 落地」节 + 9 条关键不变量）
+- 同步 `.docs/technical/agent-api-reference.md`（US-005 前端契约不变量 #6）
+
+**关键决策**:
+1. **uploadStore 是单一真相源**（与 runRegistry 高频 mutable 相反）—— 解析结果低频，doc/activeSize/error 全部进 React state，UI 订阅触发 reconciliation 同步。
+2. **状态过渡由 hook 直接 `useUploadStore.setState({...})` 写入，不暴露成 store 公开 action** —— store 公开 API 仅 reset/setSize，避免业务组件误触发跳变。
+3. **防连击双重防护**：uploadingRef（立即生效）+ status==='uploading'（store 状态）。ref 必需 —— setState 异步，第二次连击会在 setState 调度前进 hook body。
+4. **FormData 不手设 Content-Type** —— 浏览器需自动加 boundary，手设会丢导致后端 python-multipart 解析失败。useParseDxf.test.tsx AC#1 有断言。
+5. **activeSize 默认 = `doc.sizes[0].size ?? null`**（后端按数值升序、null 殿后，sizes[0] 是最小码）。
+6. **错误不抛、不 rethrow** —— useParseDxf try/catch 兜底，所有错误（网络错/JSON 错/4xx/5xx）统一进 uploadStore.error，UI 自取。
+7. **doc/activeSize 在失败时不主动清** —— uploading 时清 error 但保留 doc/activeSize 避免切 uploading 时 UI 闪烁；reset() 才彻底清零。
+
+**质量校验**:
+- `npm run typecheck`（tsc --noEmit）0 error 通过
+- `npm run build` 通过（81 modules → static/index.html + assets/index-*.js 166.43 kB）
+- `npx vitest run` **198/198 全绿**（前 176 + 新增 22：uploadStore 7 + useParseDxf 15）
+- 浏览器验证：本 story 纯数据层 / hook，无 UI 改动；UI 验证留给 US-006 UploadPanel + US-008 PreviewPage 集成
+- 后端零改动（前端 only story，US-004 已落地契约足够）
+
+**下一步**: US-006（UploadPanel 点击+拖拽）—— 消费 uploadStore 的 status/error/doc 渲染加载态/红字/码数概览；客户端预校验 .dxf 后缀 + 单文件 + 大小上限；调用 useParseDxf.upload(file)。
