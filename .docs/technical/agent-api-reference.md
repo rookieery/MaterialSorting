@@ -5,7 +5,7 @@
 
 ## 状态
 
-单页工作台后端，3 个 HTTP 端点 + 1 条 WS。求解用 `ThreadPoolExecutor(max_workers=6)` 把同步 sparrow 子线程桥到 asyncio 事件循环（多 seed 最多 6 路并发，seed 间同等 CPU 竞争 → 排名仍公平）。**`server.py` 在模块顶层 `load_pieces()` 读 intermediate**，故 `ms-web` 首次启动前**必须**先 `ms-pieces-export` 生成 `pieces_intermediate.json`。
+单页工作台后端，4 个 HTTP 端点 + 1 条 WS。求解用 `ThreadPoolExecutor(max_workers=6)` 把同步 sparrow 子线程桥到 asyncio 事件循环（多 seed 最多 6 路并发，seed 间同等 CPU 竞争 → 排名仍公平）。**`server.py` 在模块顶层 `load_pieces()` 读 intermediate**，故 `ms-web` 首次启动前**必须**先 `ms-pieces-export` 生成 `pieces_intermediate.json`。US-004 起 `/api/parse-dxf` 上传解析也复用这个 6-worker 线程池跑 CPU 密集的 DXF 深度解析（`collect_pieces_with_details`）。
 
 ## 启动约束（重要）
 
@@ -13,6 +13,7 @@
 2. `app.mount('/static', ...)` 指向 `materialSorting-web/static/`（前端构建产物）。
    - **prod**：先 `cd materialSorting-web && npm run build` 生成 `static/`；
    - **dev**：`npm run dev` 起 Vite :5173，经 proxy 打 :8000（仍建议先 build 一次让 `static/` 存在，避免 mount 空目录报错）。
+3. US-004 上传依赖 `python-multipart`（已在 `[web]` extra），落盘目录 `paths.OUT_DIR/uploads/`（启动时按需 `mkdir`）。
 
 ## HTTP 路由
 
@@ -21,9 +22,10 @@
 | GET | `/` | 返回 `static/index.html`（prod 入口） | `server.index` → `FileResponse` |
 | mount | `/static/*` | 前端构建产物（JS/CSS/资源） | `StaticFiles(directory=paths.STATIC_DIR)` |
 | POST | `/export` | 导出最优 run → PNG / R12-DXF 附件下载 | `server.export` |
+| POST | `/api/parse-dxf` | US-004：multipart 上传母版 DXF → 深度解析 + A/B/C 标注 JSON | `server.parse_dxf` |
 | WS | `/ws/solve` | 排料求解流（manifest → frames → final） | `server.ws_solve` |
 
-> 无 `/docs` OpenAPI（未显式启用），路由全在上表。
+> FastAPI 自动暴露 `/docs` `/openapi.json` 等 OpenAPI 路由；业务路由全在上表。
 
 ## POST /export — 导出
 
@@ -65,6 +67,80 @@
 | `write_marker_dxf` | `(world_pieces, *, width_mm, gate_mm, title) → bytes` | ezdxf R12 + 闭合 POLYLINE（首尾补点），ACI 色号见 `TYPE_ACI`，ASCII 标题；**不用 LWPOLYLINE**（ET2008 轮廓消失坑） |
 
 `TYPE_ACI`：前片=1 / 后片=2 / 腰=3 / 前袋=4 / 后袋=5 / 机头=6 / 单排=7 / 双排=8 / 火机袋=9 / 裤耳=10。
+
+## POST /api/parse-dxf — US-004 母版上传解析
+
+`multipart/form-data` 上传单个 `.dxf` 母版 → 服务端落盘 + 调 `dxf_parser.collect.collect_pieces_with_details` 深度解析 → 按码号分组 + 几何稳定排序 + A/B/C 标注的 JSON。CPU 密集解析走 `loop.run_in_executor(_executor, ...)` 复用 6-worker 线程池（与 `/ws/solve` 同池，防阻塞 WS 事件循环）。前端 US-005 `useParseDxf` 经相对路径 fetch（dev 走 Vite proxy `/api`，prod 同源）。
+
+### 请求
+
+`multipart/form-data` 单字段 `file`（`UploadFile`），文件名扩展名必须 `.dxf`（不区分大小写）。`Content-Length` 不强制（服务端 `await file.read()` 后用 `UPLOAD_MAX_BYTES=20MB` 判定）。
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/parse-dxf \
+  -F "file=@data/M1787#....dxf"
+```
+
+### 响应（200）
+
+```jsonc
+{
+  "doc_id": "d484858d185a4936a1108fbb8951b6f2",   // uuid4 hex，落盘文件名（无扩展名）；供 US-010 /api/commit-to-nesting 引用
+  "filename": "M1787#....dxf",                    // 客户端上传的原文件名
+  "sizes": [
+    {
+      "size": 28,                                 // 块名尾码号；解析失败为 null
+      "pieces": [
+        {
+          "label": "A",                           // 0→A, 1→B, ..., 25→Z, 26→AA ...
+          "name": "noname..28",                   // 解码后的 block_name（GBK→UTF-8）
+          "polygon": [[x, y], ...],               // layer1 毛版外轮廓
+          "internal_lines": [[[x, y], ...], ...], // layer8 POLYLINE 内部线（多条）
+          "notches": [[x, y, nx, ny], ...],       // layer4 POINT 刀口：点 + 单位外法线（沿法线画 8mm 短线段）
+          "net_polygon": [[x, y], ...],           // layer14 POLYLINE 净版轮廓；无则 []
+          "grain_line": [x1, y1, x2, y2]          // layer7 LINE 布纹线；无则 null
+        },
+        // ...B/C/.../J（每码 10 片）
+      ]
+    },
+    // ...29-38 共 11 码
+  ]
+}
+```
+
+**全码一次返回**（M1787 实测 ~680KB JSON / 110 片 / 11 码，远低于 1-3MB 上限）；前端按 `activeSize` 本地切片，不做按码懒加载。
+
+### 排序 + 标注
+
+每码内裁片按以下键稳定排序后赋 A/B/C...：
+
+```
+key = (-centroid_y, centroid_x, -area_mm2, block_name, piece_index)
+```
+
+→ DXXF 数学系（Y 向上）下质心 Y 大者（视觉上方）优先、X 小者（视觉左）优先、面积大者优先；同质心/面积按 `block_name` 字典序 + `piece_index` 兜底。码号分组排序：`size` 升序，`null` 殿后。
+
+### 错误响应
+
+| HTTP | 触发 | body |
+|------|------|------|
+| 400 | 文件名扩展名非 `.dxf`（大小写不敏感） | `{"error":"仅支持 .dxf 文件"}` |
+| 413 | 字节数 > `UPLOAD_MAX_BYTES`（20MB） | `{"error":"文件大小超过上限 20MB"}` |
+| 422 | ezdxf/collect 解析抛任何异常（损坏 / 非 DXF 内容 / R12 recover 失败） | `{"error":"DXF 解析失败：<异常>"}` |
+
+### 落盘
+
+- 路径：`paths.OUT_DIR/uploads/<doc_id>.dxf`（`doc_id = uuid.uuid4().hex`，32 字符无横杠）。`uploads/` 目录首调按需 `mkdir(parents=True, exist_ok=True)`。
+- 文件名是 server 生成的 uuid，**不**沿用客户端原文件名（避免中文/路径注入）；客户端原文件名仅在响应 `filename` 字段回显。
+- 解析失败（422）时落盘文件**保留**（用于排查），不自动清理；目录在 `out/`（已 gitignore）。
+
+### 关键不变量
+
+1. **doc_id 是 US-010 commit 入参**：`POST /api/commit-to-nesting {doc_id}` 会读 `uploads/<doc_id>.dxf`，故 doc_id 必须可定位文件。
+2. **A/B/C 在每码内独立编号**：码 A 与码 B 各自从 A 起算（不跨码续编）。
+3. **`polygon` 是原始毛版几何**（未归一化 / 未对齐布纹 / 未镜像），与 intermediate 的 NestPiece polygon（归一化 + 镜像后）不同；US-007 `PiecePreviewSVG` 直接渲染此字段。
+4. **`grain_line` 与原始 DXF 同坐标系**（Y 向上），前端 SVG `scale(1,-1)` 翻转后与 PNG/R12 导出一致。
+5. **响应大小 ≤ 20MB 解析后压缩**：实测 M1787 ~680KB JSON，前端 `useParseDxf` 一次拿到全码缓存到 Zustand。
 
 ## WebSocket /ws/solve — 求解流
 

@@ -4,36 +4,20 @@ Started: 2026-08-09
 
 
 
+- [US-004] POST /api/parse-dxf 上传解析端点（2026-08-10）。
+  - web/server.py：新增 `POST /api/parse-dxf`（multipart 单文件），不动现有 `/`、`/static`、`/export`、`/ws/solve`。
+  - 落盘 `paths.OUT_DIR/uploads/<uuid>.dxf`（doc_id = uuid4.hex）；`UPLOAD_MAX_BYTES=20MB`、`UPLOADS_DIR` 模块级常量。
+  - CPU 解析走 `loop.run_in_executor(_executor, _parse_dxf_sync, str(dest))` 复用 6-worker ThreadPoolExecutor（与 `/ws/solve` 同池），调 `dxf_parser.collect.collect_pieces_with_details`。
+  - 响应 `{doc_id, filename, sizes:[{size, pieces:[{label,name,polygon,internal_lines,notches,net_polygon,grain_line}]}]}`，全码一次返回（M1787 实测 ~680KB / 110 片 / 11 码）。
+  - 排序键 `(-centroid_y, centroid_x, -area_mm2, block_name, piece_index)` → 上方/左/大片优先；A/B/C 每码内独立编号，`_label_for` 支持 26+ 自动 AA/AB。
+  - 错误码：非 .dxf→400；超 20MB→413；ezdxf/collect 异常→422（中文错误）。全走 JSONResponse。
+  - 依赖：`python-multipart` 加进 `[web]` extra（pyproject.toml）。
+  - 验证：① `python -c "from materialsorting.web.server import app"` 通过；② dxf_parser 不 import web/nesting_engine/nesting_bounds（分层单向）；③ curl -F 上传 M1787 → 200 / 11 码 / 每码 10 片 / 含刀口(64)+internal(26)+net(10)；④ 非 .dxf→400、>20MB→413、损坏 .dxf→422 实测全通过；⑤ ms-web 启动/请求/kill 生命周期闭环。
+  - 文档：`.docs/technical/agent-api-reference.md`（新增 `/api/parse-dxf` 章节）+ `.docs/technical/agent-file-map.md`（server.py 行数/职责、web→dxf_parser 跨层依赖、数据流加一行）+ 新建 `web/AGENTS.md`（US-004 关键约定/已踩坑）。
 
 
 
 
-  - `net_polygon` = list[(x,y)]，单片单一净版；layer14 POLYLINE 抽取。
-  - layer 映射集中在 US-003 的 `LAYER_MAPPING` 常量（毛版=1/净版=14/内部线=8/布纹线=7/刀口=4），layer 2/3/13 不提取。
 
-## US-003 (2026-08-10) — 母版深度解析 collect_pieces_with_details ✓
-
-**改动**：
-- 新建 `materialsorting/dxf_parser/collect.py`（294 行）：`collect_pieces_with_details(path)` + `LAYER_MAPPING` 常量 + `_signed_area`/`_nearest_edge_with_normal`/`_centroid`/`_assign_notch` 几何算子 + CLI `main()`。
-- 复用 `explore.collect_pieces` 拿 layer1 毛版 + layer7 布纹线；二次扫描 layer14/layer8/layer4 实体后按几何归属到 outline。
-- 新建 `materialsorting/dxf_parser/AGENTS.md`：layer 映射速查 + US-003 关键约定 + 已踩坑。
-- 文档同步：`.docs/technical/agent-file-map.md`（dxf_parser 文件树加 collect.py + 新章节 + 数据流表新增「深度 IR」hop + CLI 表）+ `.docs/business/排料DXF解析架构_方案.md`（决策 1 更新为「layer14/8/4 仅服务预览」+ 新增决策 7 LAYER_MAPPING）。
-
-**关键决策**：
-- **layer14 净版 / layer8 内部线归属**：顶点质心 `point_in_polygon` 命中即归属。M1787/5156 实测 100% 命中（centroid-in: layer14=110/110, layer8=286/286 M1787 / 297/297 5156）。
-- **layer4 刀口归属两步走**：Pass 1 严格 `point_in_polygon`（545/704 命中），Pass 2 兜底最近边（159/704 边界点，最近边距离=0）。所有刀口可归属，无丢弃。
-- **法线方向**：CCW 多边形外法线 = `(dy, -dx)/len`；CW 取反；退化边返回 `(0,0)`。渲染画 8mm 短线段（待版师确认）。
-- **`net_polygon` 字段类型**：`list[(x,y)]` 平铺顶点（单片单一净版，1:1，无则空 list）。
-- **不依赖 `paths` 模块**：`collect.py` 接受 `str | Path` 参数，比 explore/export_dxf 更解耦，便于 US-004 web 层从 uploads 路径调用。
-
-**验证（全部通过）**：
-- M1787: collect=110 vs with_details=110，顺序/key/polygon/grain 字节级一致；internal=66/110、notch=77/110、net=110/110、grain=110/110 非空。
-- 5156: 同上分布完全一致（款型一致性确认）。
-- CLI: `python -m materialsorting.dxf_parser.collect <dxf>` 打印每码片数+计数表（M1787 11 码 × 10 片 = 110）。
-- 分层：`grep "from \.\.nesting_bounds\|from \.\.nesting_engine\|from \.\.web"` collect.py 无命中，仅依赖 `.explore/.geometry/.reader/.model` + 标准库。
-- 全包 import 无回归：dxf_parser/nesting_bounds/nesting_engine 均正常 import。
-
-**未做（按 PRD 范围排除）**：
-- 5156 块名 `-NN` 码号解析失败（既有 `_SIZE_RE = [._](\d+)$` 不匹配 `-`）：collect_pieces 既有行为，US-003 不修（AC 要求「片数与 collect_pieces 一致」而非码号解析成功）。
 - layer3 文档勘误 = US-009 范围（本 story 仅在 AGENTS.md 标注「US-009 待修」，不动 `.docs/business/排料DXF解析架构_方案.md` 第 2 节）。
 - PiecePreviewSVG 渲染 = US-007 范围（notch 8mm 长度待版师确认）。

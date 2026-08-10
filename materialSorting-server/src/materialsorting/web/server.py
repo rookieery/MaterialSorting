@@ -17,14 +17,17 @@ from __future__ import annotations
 import asyncio
 import os
 import sys
+import uuid
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
 
-from fastapi import FastAPI, Request, WebSocket
+from fastapi import FastAPI, Request, UploadFile, File, WebSocket
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from urllib.parse import quote
 
 from .. import paths
+from ..dxf_parser.collect import collect_pieces_with_details
 
 STATIC_DIR = paths.STATIC_DIR
 from .solver import build_instance, load_pieces, solve_with_callback
@@ -38,6 +41,123 @@ app = FastAPI(title='排料可视化工作台')
 app.mount('/static', StaticFiles(directory=STATIC_DIR), name='static')
 _executor = ThreadPoolExecutor(max_workers=6)   # 多 seed 对比最多 6 个并发求解（seed 间同等 CPU 竞争 → 排名仍公平）
 _SENTINEL = object()
+
+# US-004：上传解析配置
+UPLOAD_MAX_BYTES = 20 * 1024 * 1024   # 20MB 上限（实测生产母版 ~3MB，留足余量）
+UPLOADS_DIR = Path(paths.OUT_DIR) / 'uploads'
+
+
+# ---------------------------------------------------------------- US-004 上传解析
+
+def _label_for(idx: int) -> str:
+    """0→A, 1→B, ..., 25→Z, 26→AA, 27→AB ...（每码裁片数实测 ≤10，AA+ 仅兜底）。"""
+    s = ''
+    n = idx + 1
+    while n > 0:
+        n, rem = divmod(n - 1, 26)
+        s = chr(ord('A') + rem) + s
+    return s
+
+
+def _centroid(poly: list[tuple[float, float]]) -> tuple[float, float]:
+    """顶点算术质心（用于稳定排序键）。"""
+    if not poly:
+        return (0.0, 0.0)
+    sx = sum(x for x, _ in poly)
+    sy = sum(y for _, y in poly)
+    return (sx / len(poly), sy / len(poly))
+
+
+def _size_sort_key(size: int | None) -> tuple[int, int]:
+    """码号排序键：None 殿后，其余按数值升序。"""
+    return (1, 0) if size is None else (0, size)
+
+
+def _build_parse_payload(doc_id: str, filename: str, pieces) -> dict:
+    """把 collect_pieces_with_details 结果按码号分组 + 质心/面积稳定排序 + 赋 A/B/C 标签。
+
+    响应结构与 US-005 前端契约一致：每片含 label/name/polygon/internal_lines/notches/
+    net_polygon/grain_line。polygon / net_polygon = [[x,y], ...]；internal_lines =
+    [[[x,y], ...], ...]；notches = [[x,y,nx,ny], ...]；grain_line = [x1,y1,x2,y2] 或 null。
+    """
+    by_size: dict[int | None, list] = {}
+    for p in pieces:
+        by_size.setdefault(p.size, []).append(p)
+
+    sizes_out = []
+    for size in sorted(by_size.keys(), key=_size_sort_key):
+        members = by_size[size]
+        # 稳定排序：DXF 数学系下质心 Y 大者（视觉上方）优先 → X 小者（视觉左）优先 → 面积大者优先
+        members_sorted = sorted(
+            members,
+            key=lambda p: (
+                -_centroid(p.polygon_mm)[1],
+                _centroid(p.polygon_mm)[0],
+                -p.area_mm2,
+                p.block_name,
+                p.piece_index,
+            ),
+        )
+        pieces_out = []
+        for idx, p in enumerate(members_sorted):
+            pieces_out.append({
+                'label': _label_for(idx),
+                'name': p.block_name,
+                'polygon': [[float(x), float(y)] for x, y in p.polygon_mm],
+                'internal_lines': [
+                    [[float(x), float(y)] for x, y in line]
+                    for line in p.internal_lines
+                ],
+                'notches': [
+                    [float(x), float(y), float(nx), float(ny)]
+                    for x, y, nx, ny in p.notches
+                ],
+                'net_polygon': [[float(x), float(y)] for x, y in p.net_polygon],
+                'grain_line': (
+                    [float(v) for v in p.grain_line] if p.grain_line is not None else None
+                ),
+            })
+        sizes_out.append({'size': size, 'pieces': pieces_out})
+
+    return {'doc_id': doc_id, 'filename': filename, 'sizes': sizes_out}
+
+
+def _parse_dxf_sync(path: str):
+    """同步包装：在 executor 里调用 collect_pieces_with_details。"""
+    return collect_pieces_with_details(path)
+
+
+@app.post('/api/parse-dxf')
+async def parse_dxf(file: UploadFile = File(...)):
+    """US-004：接收 DXF 母版上传 → 落盘 → 深度解析 → 返回按码分组 + A/B/C 标注的 JSON。
+
+    - 非 .dxf → 400；超 20MB → 413；ezdxf 解析异常 → 422（中文错误）。
+    - doc_id = 落盘 uuid（无扩展名），供 US-010 /api/commit-to-nesting 引用。
+    - CPU 密集解析走 loop.run_in_executor(_executor,...) 复用现有线程池防阻塞 WS。
+    """
+    fname = file.filename or ''
+    if not fname.lower().endswith('.dxf'):
+        return JSONResponse({'error': '仅支持 .dxf 文件'}, status_code=400)
+
+    data = await file.read()
+    if len(data) > UPLOAD_MAX_BYTES:
+        return JSONResponse(
+            {'error': f'文件大小超过上限 {UPLOAD_MAX_BYTES // (1024 * 1024)}MB'},
+            status_code=413,
+        )
+
+    doc_id = uuid.uuid4().hex
+    UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+    dest = UPLOADS_DIR / f'{doc_id}.dxf'
+    dest.write_bytes(data)
+
+    loop = asyncio.get_running_loop()
+    try:
+        pieces = await loop.run_in_executor(_executor, _parse_dxf_sync, str(dest))
+    except Exception as e:
+        return JSONResponse({'error': f'DXF 解析失败：{e}'}, status_code=422)
+
+    return _build_parse_payload(doc_id, fname, pieces)
 
 
 @app.get('/')

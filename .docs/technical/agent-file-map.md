@@ -16,7 +16,7 @@ web  →  nesting_engine  →  nesting_bounds  →  dxf_parser
 
 ```
 materialSorting-server/
-├── pyproject.toml                     包定义 + 6 个 ms-* console_scripts + [web] 可选依赖
+├── pyproject.toml                     包定义 + 6 个 ms-* console_scripts + [web] 可选依赖（fastapi/uvicorn/matplotlib/python-multipart）
 └── src/materialsorting/
     ├── paths.py                       集中路径常量（优先环境变量，禁止硬编码 ..）
     ├── dxf_parser/                    底层 DXF 读写（仅 stdlib + ezdxf）
@@ -34,7 +34,7 @@ materialSorting-server/
     │   ├── sparrow_experiments.py     旋转/重合公差实验
     │   └── pieces_export.py           NestPiece → intermediate JSON（事实源）
     └── web/                           FastAPI + WS 工作台（详见 agent-api-reference.md）
-        ├── server.py                  app + 路由 + 求解线程桥（顶层 load_pieces）
+        ├── server.py                  app + 路由（GET /、/static、POST /export、POST /api/parse-dxf、WS /ws/solve）+ 求解线程桥（顶层 load_pieces）+ US-004 上传解析
         ├── solver.py                  build_instance + solve_with_callback
         └── export.py                  PNG(matplotlib) + R12-DXF marker 导出
 ```
@@ -283,9 +283,11 @@ DEFAULT_COLOR = '#bbbbbb'
 
 | 文件 | 行 | 职责 |
 |------|----|------|
-| `server.py` | 180 | FastAPI app；**模块顶层 `load_pieces()`**；路由 GET `/`、mount `/static`、POST `/export`、WS `/ws/solve`；`ThreadPoolExecutor(max_workers=6)` 桥求解子线程 ↔ asyncio |
+| `server.py` | 300 | FastAPI app；**模块顶层 `load_pieces()`**；路由 GET `/`、mount `/static`、POST `/export`、POST `/api/parse-dxf`（US-004 上传解析）、WS `/ws/solve`；`ThreadPoolExecutor(max_workers=6)` 桥求解子线程 ↔ asyncio（US-004 解析也复用此池）；上传常量 `UPLOAD_MAX_BYTES=20MB` / `UPLOADS_DIR=paths.OUT_DIR/uploads`；`_build_parse_payload` 按码分组 + 质心/面积稳定排序 + A/B/C 标注 |
 | `solver.py` | 173 | `load_pieces` / `discretize_orientations` / `build_instance`（erode=min(申,max)，tol=min(申,max)）/ `solve_with_callback`（spyrrow ProgressQueue + threading，0.2s drain） |
 | `export.py` | 160 | `apply_transform` / `placed_to_world`（用**原始**非 eroded 轮廓）/ `render_png`（matplotlib Agg）/ `write_marker_dxf`（R12 POLYLINE + ACI 色 + ASCII 标题） |
+
+US-004 起 `web/server.py` 直接 import `dxf_parser.collect.collect_pieces_with_details`（web → dxf_parser 跨层依赖，合规：web 是上层）。上传 multipart 依赖 `python-multipart`（已在 `[web]` extra）。
 
 ## 数据流主线
 
@@ -311,6 +313,7 @@ out/sparrow_baseline/pieces_intermediate.json   ← 全流程事实源
 |-----|------------|-----------|
 | 母版 → IR 列表 | `explore.collect_pieces` | `Path` → `list[PieceOutline]`（layer1 毛版 + layer7 布纹线） |
 | 母版 → 深度 IR 列表 | `collect.collect_pieces_with_details`（US-003） | `str\|Path` → `list[PieceOutline]`（layer1+7+14 净版+8 内部线+4 刀口，按 `LAYER_MAPPING`） |
+| 上传母版 → 解析 JSON | `web/server.parse_dxf`（US-004） | `multipart file` → 落盘 `uploads/<uuid>.dxf` + `collect_pieces_with_details` → 按码分组 + A/B/C 标注 JSON（`doc_id` 供 US-010 commit 引用） |
 | IR → 单裁片 DXF | `export_dxf.write_piece_dxf` + `main` | `PieceOutline` → `<PIECES_DIR>/<类型>_<码号>.dxf` |
 | IR → 探索产物 | `explore.write_outputs` | `list[PieceOutline]` → 分组目录 + CSV + 总览 SVG |
 | 单裁片 DXF → NestPiece | `load_pieces.load_nest_pieces` | `PIECES_DIR` → `list[NestPiece]`（L+R 展开） |
@@ -330,7 +333,7 @@ out/sparrow_baseline/pieces_intermediate.json   ← 全流程事实源
 | `ms-sparrow-exp` | `nesting_engine.sparrow_experiments:main` | 旋转/重合公差/组合实验 |
 | `ms-web` | `web.server:main` | 可视化工作台（uvicorn :8000） |
 
-也可 `python -m materialsorting.<sub>.<module>`。`spyrrow` 非 PyPI 主流包，装不上需手动处理；`[web]` extra 拉 `fastapi`/`uvicorn`/`matplotlib`。
+也可 `python -m materialsorting.<sub>.<module>`。`spyrrow` 非 PyPI 主流包，装不上需手动处理；`[web]` extra 拉 `fastapi`/`uvicorn`/`matplotlib`/`python-multipart`（US-004 上传解析需要 multipart）。
 
 ## 关键不变量（改后端勿破坏）
 
