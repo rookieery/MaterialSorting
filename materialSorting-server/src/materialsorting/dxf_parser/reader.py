@@ -68,3 +68,31 @@ def is_polyline_closed(entity) -> bool:
         return bool(entity.dxf.flags & 1)  # POLYLINE_CLOSED = 1
     except Exception:
         return False
+
+
+def iter_block_entities(block, layers: set[str] | None = None):
+    """按可选 layer 白名单迭代 block 内实体。
+
+    US-002：为母版深度解析（US-003 collect_pieces_with_details）提供
+    统一的实体提取入口。`layers` 为 None 时返回全部实体（与原
+    `for e in block` 等价）；指定白名单时仅 yield `str(e.dxf.layer)`
+    命中的实体。layer 字符串比较与现有 collect_pieces 的
+    `str(e.dxf.layer) == "1"` 同口径。
+
+    Args:
+        block: ezdxf Block 对象（可迭代 yield 实体）。
+        layers: 可选 layer 名白名单（如 {"1", "7", "8", "14"}）。
+
+    Yields:
+        block 内命中的实体（POLYLINE/LINE/POINT/...）。
+    """
+    for e in block:
+        if layers is None:
+            yield e
+            continue
+        try:
+            layer = str(e.dxf.layer)
+        except Exception:
+            layer = ""
+        if layer in layers:
+            yield e

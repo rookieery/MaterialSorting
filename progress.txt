@@ -9,3 +9,23 @@ Started: 2026-08-09
 
 - 踩坑：AC 文本「repo 内 grep ... 0 命中（排除 legacy 归档后）」是**字面量** strict 匹配 —— 任何注释里残留 "app.js" 字符串都会触发命中。todo.md 的 US-008 完成项原描述里也写了「grep app.js/getElementById」字面量，需改写为「旧 vanilla 文件名 / 命令式 DOM 查找」。
 - AC#1..#6 全绿：legacy 已删 / grep 0 命中 / README + CLAUDE.md 启动顺序更新 / static 入 gitignore / tsc 0 error / vitest 161/161 / ms-web 启动 serve 新构建产物（DRLuzXqu）HTTP 200 验证通过。
+
+## 2026-08-10 — US-002 PieceOutline 扩字段 + reader iter_block_entities
+
+- 范围：仅 dxf_parser 基础设施，零依赖前端/web。为 US-003 深度解析做 IR + 提取入口准备。
+- 改动：
+  - `dxf_parser/model.py`：PieceOutline 新增 `internal_lines` / `notches` / `net_polygon` 三字段，均 `field(default_factory=list)`，置于 `grain_orientation` 之后；`to_dict()` 继续 `asdict(self)` 自动序列化。
+  - `dxf_parser/reader.py`：新增 `iter_block_entities(block, layers: set[str] | None = None)` 生成器，按 layer 白名单过滤；不指定 layer 与原 `for e in block` 等价。
+  - `.docs/technical/agent-file-map.md`：reader 表格新增 iter_block_entities 行；model 字段表新增三字段（标注 US-002/US-003 来源）；dxf_parser 目录树 model.py 注释补「US-002 扩 internal/notches/net_polygon」。
+- AC 验收：
+  1. AC#1 三字段在 fields() 中且 default_factory is list ✅
+  2. AC#2 既有 collect_pieces 调用（kw 构造）零改动；to_dict() 序列化出新字段为空 list ✅
+  3. AC#3 iter_block_entities 签名 `(block, layers: set[str] | None = None)`，默认 None 时返全部；layer 白名单命中口径 `str(e.dxf.layer) in layers`（与 collect_pieces 同口径）✅
+  4. AC#4 dxf_parser 5 文件 AST 扫描无 nesting_bounds/nesting_engine/web import，分层未反向 ✅
+  5. AC#5 `python -c "from materialsorting.dxf_parser.model import PieceOutline; from materialsorting.dxf_parser.reader import iter_block_entities"` 通过 ✅
+- 回归：ms-explore 对 M1787(10片) 与 5156(110片) 母版均跑通，pieces.json 含新字段（空 list）；pieces_export / sparrow_baseline / export_dxf 三 console_scripts 顶层 import 通过。
+- 关键约定（写 US-003 时必读）：
+  - `internal_lines` = list of polylines，每条 polyline = list[(x,y)]；layer8 POLYLINE 抽取。
+  - `notches` = list of `(x, y, nx, ny)`（点 + 单位法向量），US-007 渲染时按 8mm 沿法线画短线段；layer4 POINT 抽取 + nearest-edge 法向量计算。
+  - `net_polygon` = list[(x,y)]，单片单一净版；layer14 POLYLINE 抽取。
+  - layer 映射集中在 US-003 的 `LAYER_MAPPING` 常量（毛版=1/净版=14/内部线=8/布纹线=7/刀口=4），layer 2/3/13 不提取。

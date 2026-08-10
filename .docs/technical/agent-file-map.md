@@ -22,7 +22,7 @@ materialSorting-server/
     ├── dxf_parser/                    底层 DXF 读写（仅 stdlib + ezdxf）
     │   ├── reader.py                  ezdxf recover + GBK 块名 + R12 POLYLINE 读取
     │   ├── geometry.py                纯几何算子（无 ezdxf，可单测）
-    │   ├── model.py                   PieceOutline dataclass（解析期唯一 IR）
+    │   ├── model.py                   PieceOutline dataclass（解析期唯一 IR；US-002 扩 internal/notches/net_polygon）
     │   ├── explore.py                 母版全裁片探索 CLI（SVG/JSON/CSV）
     │   └── export_dxf.py              PieceOutline → 单裁片 R12 DXF
     ├── nesting_bounds/
@@ -68,6 +68,7 @@ materialSorting-server/
 | `strip_size` | `(block_name: str) → str` | 去码号 → "类型"部分（分组键） |
 | `polyline_points` | `(entity) → list[(x,y)] \| None` | R12 POLYLINE 顶点；非 POLYLINE 返 None；不做抽稀 |
 | `is_polyline_closed` | `(entity) → bool` | POLYLINE 闭合标志（优先属性，回退 `flags & 1`） |
+| `iter_block_entities` | `(block, layers: set[str] \| None = None) → iterator` | US-002：按可选 layer 白名单迭代 block 内实体（不指定 layer 返全部）；供 US-003 深度解析统一提取入口 |
 
 私有：`_SIZE_RE = re.compile(r"[._](\d+)$")` —— 只匹块名**尾**的 `.<数字>` 或 `_<数字>`，避免误匹 `M1787#28-32小33-38大码`。
 
@@ -104,8 +105,11 @@ materialSorting-server/
 | `grain_line` | `(x1,y1,x2,y2)\|None` | 匹配的布纹线 |
 | `grain_angle_deg` | `float\|None` | 布纹线对水平角 |
 | `grain_orientation` | `str` | `'horizontal'\|'vertical'\|'unknown'`（排料侧旋向依据） |
+| `internal_lines` | `list`（默认 `[]`） | US-002：layer8 POLYLINE 内部线 `[[ (x,y), ...], ...]`，由 US-003 填充 |
+| `notches` | `list`（默认 `[]`） | US-002：layer4 POINT 刀口 `[(x,y,nx,ny), ...]`（点 + 单位法向量），由 US-003 填充 |
+| `net_polygon` | `list`（默认 `[]`） | US-002：layer14 POLYLINE 净版轮廓 `[(x,y), ...]`，由 US-003 填充 |
 
-方法：`to_dict()` → `asdict(self)`。
+方法：`to_dict()` → `asdict(self)`（新字段自动序列化；既有调用方 `pieces_export`/`sparrow_baseline`/`explore.collect_pieces` 默认空 list 零改动可用）。
 
 ### `export_dxf.py`（100 行）— 单裁片 R12 DXF 导出
 
