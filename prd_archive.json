@@ -186,5 +186,16 @@
         "passes": true
       }
     ]
+  },
+  {
+    "branchName": "ralph/dxf-upload-preview",
+    "stories": [
+      {
+        "id": "US-002",
+        "title": "PieceOutline 扩字段 + layer 过滤",
+        "description": "As a 解析引擎，I want PieceOutline 承载裁片全部细节（内部线/刀口/净版）并在 reader 提供 layer 过滤工具，so that 深度解析有统一 IR 与提取手段。\n\n详见 tasks/prd-dxf-upload-preview.md US-002。\n\n具体任务：\n1. dxf_parser/model.py — PieceOutline 新增三字段（均 field(default_factory=list) 向后兼容）：internal_lines、notches、net_polygon；to_dict 继续用 asdict(self)。\n2. dxf_parser/reader.py — 新增 iter_block_entities(block, layers: set|None=None) 按可选 layer 白名单迭代 block 内实体。\n\n验收标准：\n- 既有调用方（pieces_export、sparrow_baseline）零改动可用（默认空 list）。\n- dxf_parser 仅依赖标准库+ezdxf，不 import 兄弟包（分层依赖未反向）。\n- python -c \"from materialsorting.dxf_parser.model import PieceOutline; from materialsorting.dxf_parser.reader import iter_block_entities\" 导入通过。",
+        "passes": true
+      }
+    ]
   }
 ]

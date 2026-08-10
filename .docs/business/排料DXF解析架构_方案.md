@@ -146,12 +146,13 @@ _output/
 ## 9. 已确认决策 + 剩余风险
 
 **已确认决策**：
-1. 裁片定义：layer1（毛版）闭合多边形 = 一个裁片；不提取 layer14 净版。
+1. 裁片定义：layer1（毛版）闭合多边形 = 一个裁片；排料管线仅消费 layer1（layer14 净版/layer8 内部线/layer4 刀口仅服务**预览**，由 US-003 `collect.collect_pieces_with_details` 还原，不进 intermediate）。
 2. 款型范围：第一阶段只 M1787 一个母版。
 3. 布纹线配对：按"中点落在哪片多边形内"配对到片。
 4. 几何保真：顶点完全原样保留，不合并重合点。
 5. 输出分组：按 group_key（去码号 block 名 + layer1 序号）分组到文件夹，跨码同类归一起。
 6. 布纹线方向：如实提取 layer7 布纹线角度，`grain_orientation` 标准化（horizontal/vertical）；机头/腰=vertical，排料时旋转 90° 统一水平。
+7. **US-003 layer 映射**（版师 2026-08-10 确认；5156 与 M1787 一致）：毛版=layer1 / 净版=layer14 / 内部线=layer8 / 布纹线=layer7 / 刀口=layer4（POINT）。映射集中在 `dxf_parser/collect.py:LAYER_MAPPING`。layer 2/3/13 不提取（语义未定/非刀口）。刀口按 `(x, y, nx, ny)`（点 + 所属轮廓边的单位外法线）模型，渲染时画定长（暂定 8mm）线段。
 
 **剩余风险（跨款型时复核）**：
 - 其它款型（`5015#...`、`GSP07A...`、`松紧直筒...`）block 名规律、layer 分布可能不同 → reader 的 block 遍历通用，"码号正则/布纹线图层/分组键"做成可配置常量，第一阶段硬编码 M1787 实测值。

@@ -20,6 +20,7 @@ materialSorting-server/
 └── src/materialsorting/
     ├── paths.py                       集中路径常量（优先环境变量，禁止硬编码 ..）
     ├── dxf_parser/                    底层 DXF 读写（仅 stdlib + ezdxf）
+    │   ├── collect.py                 US-003 母版深度解析（collect_pieces_with_details + LAYER_MAPPING）
     │   ├── reader.py                  ezdxf recover + GBK 块名 + R12 POLYLINE 读取
     │   ├── geometry.py                纯几何算子（无 ezdxf，可单测）
     │   ├── model.py                   PieceOutline dataclass（解析期唯一 IR；US-002 扩 internal/notches/net_polygon）
@@ -110,6 +111,38 @@ materialSorting-server/
 | `net_polygon` | `list`（默认 `[]`） | US-002：layer14 POLYLINE 净版轮廓 `[(x,y), ...]`，由 US-003 填充 |
 
 方法：`to_dict()` → `asdict(self)`（新字段自动序列化；既有调用方 `pieces_export`/`sparrow_baseline`/`explore.collect_pieces` 默认空 list 零改动可用）。
+
+### `collect.py`（294 行）— US-003 母版深度解析
+
+`collect_pieces_with_details(path)` 还原单片全部信息：复用 `explore.collect_pieces` 拿 layer1 毛版外轮廓 + layer7 布纹线（`match_grain`），二次扫描 layer14/layer8/layer4 实体后按几何归属到 outline。
+
+**layer 映射集中在 `LAYER_MAPPING`** 常量（版师 2026-08-10 确认；5156 与 M1787 一致）：
+
+| 语义 | layer | 实体 | 字段 |
+|------|-------|------|------|
+| 毛版 outline | `"1"` | POLYLINE | `polygon_mm` |
+| 净版 net | `"14"` | POLYLINE | `net_polygon` `[(x,y),...]` |
+| 内部线 internal | `"8"` | POLYLINE | `internal_lines` `[[(x,y),...], ...]` |
+| 布纹线 grain | `"7"` | LINE | `grain_line` `(x1,y1,x2,y2)` |
+| 刀口 notch | `"4"` | POINT | `notches` `[(x,y,nx,ny), ...]` |
+
+> layer 2/3/13 不提取（参考点 / 轮廓密点 / 未定语义，**非刀口**）。
+
+| 函数 | 签名 | 说明 |
+|------|------|------|
+| `collect_pieces_with_details` | `(path: str\|Path) → list[PieceOutline]` | 主流程：先调 `explore.collect_pieces` 拿 outline+grain，再二次扫描每 block 的 layer14/8/4，按质心/最近边几何归属到 outline |
+| `_signed_area` | `(poly) → float` | Shoelace 带符号面积（>0 = CCW） |
+| `_nearest_edge_with_normal` | `(pt, poly, signed_area) → (idx, dist, nx, ny)` | 找最近边 + 单位外法线（CCW 取 `(dy,-dx)/len`，CW 取反） |
+| `_centroid` | `(pts) → (x, y)` | 顶点算术质心（net/internal POLYLINE 归属用） |
+| `_assign_notch` | `(pt, outlines) → (pi, nx, ny)\|None` | Pass 1 严格 point-in-polygon；Pass 2 回退所有 outline 最近边 |
+| `main()` | — | CLI 冒烟：`python -m materialsorting.dxf_parser.collect <dxf> [-v]` 打印每码片数 + internal/notch/net 计数 |
+
+**归属策略**：
+- layer14 净版：质心 `point_in_polygon` 命中即归属；1:1，每片最多 1 条（多条取首条）。
+- layer8 内部线：质心命中归属；多线/片。
+- layer4 刀口：先严格 `point_in_polygon`，全部 outline 都不包含则取最近边所属片（边界 / 外贴边点兜底）。
+
+**实测分布（M1787 与 5156 一致）**：110 outline = 110 net = 110 grain（1:1:1）；286/297 internal、704 notch（545 严格 in-polygon + 159 边界点回退最近边）。
 
 ### `export_dxf.py`（100 行）— 单裁片 R12 DXF 导出
 
@@ -276,7 +309,8 @@ out/sparrow_baseline/pieces_intermediate.json   ← 全流程事实源
 
 | hop | 函数（文件） | 输入 → 输出 |
 |-----|------------|-----------|
-| 母版 → IR 列表 | `explore.collect_pieces` | `Path` → `list[PieceOutline]` |
+| 母版 → IR 列表 | `explore.collect_pieces` | `Path` → `list[PieceOutline]`（layer1 毛版 + layer7 布纹线） |
+| 母版 → 深度 IR 列表 | `collect.collect_pieces_with_details`（US-003） | `str\|Path` → `list[PieceOutline]`（layer1+7+14 净版+8 内部线+4 刀口，按 `LAYER_MAPPING`） |
 | IR → 单裁片 DXF | `export_dxf.write_piece_dxf` + `main` | `PieceOutline` → `<PIECES_DIR>/<类型>_<码号>.dxf` |
 | IR → 探索产物 | `explore.write_outputs` | `list[PieceOutline]` → 分组目录 + CSV + 总览 SVG |
 | 单裁片 DXF → NestPiece | `load_pieces.load_nest_pieces` | `PIECES_DIR` → `list[NestPiece]`（L+R 展开） |
@@ -289,6 +323,7 @@ out/sparrow_baseline/pieces_intermediate.json   ← 全流程事实源
 | 命令 | 模块 | 作用 |
 |------|------|------|
 | `ms-explore` | `dxf_parser.explore:main` | 母版全裁片探索（分组 SVG/JSON + CSV + 总览） |
+| `python -m materialsorting.dxf_parser.collect` | `dxf_parser.collect:main`（US-003） | 母版深度解析 CLI 冒烟（每码片数 + internal/notch/net 计数） |
 | `ms-export-dxf` | `dxf_parser.export_dxf:main` | 母版 → 110 单裁片 DXF |
 | `ms-pieces-export` | `nesting_engine.pieces_export:main` | 110 裁片 → `pieces_intermediate.json`（排料前必跑） |
 | `ms-sparrow-baseline` | `nesting_engine.sparrow_baseline:main` | sparrow 基线求解（`{0,180}`，无 erode） |
