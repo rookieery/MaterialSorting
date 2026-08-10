@@ -389,3 +389,32 @@ NestsGrid 渲染 N 个 NestCard；ConvergenceCurve 命令式画 90% 生死线 + 
 - 错误路径 curl：缺 doc_id → 400；`doc_id="../../../etc/passwd"` → 400（regex 拒绝）；不存在 doc_id → 404；请求体非 JSON → 400。
 - 副作用：`pieces_intermediate.bak` 277118 bytes（原 8 码 128 片）；新 intermediate 385154 bytes（11 码 176 片）；schema 字段完全一致。
 - **未做 UI 浏览器验证**：本 story 纯后端（AC6 明确 v1 仅 curl 可测，前端 commit 按钮随排料页改造补 TODO）；无 SVG/坐标变换改动，按规则不需 chrome-devtools-mcp。
+**清理**：ms-web (PID 50884) 已 `Stop-Process -Force` 杀掉，`Get-NetTCPConnection -LocalPort 8000` count=0。原 intermediate 已从 /tmp 备份还原，`.bak` + 临时 `<doc_id>_pieces/` 已清掉，dev 环境回到 8 码 128 片基线。
+**下一步**：v1 dxr-upload-preview PRD 全 10 个 story 已完成（US-001~US-010）。后续：（1）排料页 commit 按钮 + `setTab('nesting')` UX + commit 后 PIECES reload 机制（AC6 TODO）；（2）新款母版（非 M1787 结构款）需版师确认 `GROUP_NAMES` g00-g09 → ptype 映射；（3）`uploads/<uuid>_pieces/` 临时目录清理策略（v1 open question）。
+---
+## US-011 数量状态 store(qtyStore)+类型+selector (2026-08-10)
+**分支**: `ralph/dxf-upload-preview`
+**新增文件**:
+- `materialSorting-web/src/types/qty.ts` — PieceQuantity / PieceQuantityMap / QtyMode 类型契约
+- `materialSorting-web/src/store/qtyStore.ts` — Zustand store（quantities + 3 actions）+ 纯函数 clampQty + 纯函数 selector getPieceDisplay
+- `materialSorting-web/src/store/__tests__/qtyStore.test.ts` — 24 项单测（clampQty 6 + getPieceDisplay 9 + setPiecePerSize 4 + setPieceGlobal 2 + resetQuantities 1 + store 独立性 2）
+**实现要点**:
+- qtyStore 与 uploadStore 完全解耦（字段不重叠），双向 reset 互不影响
+- label（A/B/C）跨码匹配同一片型，依赖后端几何排序稳定
+- getPieceDisplay 四分支：未配置 / per-size / global+source / global+非source（reason 含 sizeLabel(source)）
+- clampQty 公式 `Math.max(0, Math.min(99, Math.trunc(Number(v)||0)))`，setPiecePerSize/setPieceGlobal 内部统一调用
+- 从 global 切回 per-size 时 globalValue 继承到 perSize[sizeKey(globalSource)]，globalSource=null 时 sizeKey='null' 兜底
+- null 码双口径：sizeKey='null'（perSize key 空间）/ sizeLabel='通用'（人读文案，与 SizeTabs NULL_SIZE_LABEL 同语义）
+**验证**:
+- `npm run typecheck` ✅
+- `npm run test -- qtyStore` ✅ 24/24 passed
+- `npm run test`（全量）✅ 305/305 passed（24 新增 + 281 既有，无回归）
+- `npm run build` ✅ static/ 产出无报错
+**踩坑**: Git Bash 单引号 heredoc 在 ~200 行 + 含中文 + 三引号嵌套时会失效（`unexpected EOF`），改用分块 `cat <<'CHUNK'` 多次 append 解决。
+## 2026-08-10 US-012 数量编辑弹窗 PieceQtyDialog+Switch
+- 扩 `materialSorting-web/src/store/uploadStore.ts`：新增 `qtyDialog: {label, size}|null` + `openQtyDialog(label,size)` / `closeQtyDialog()`；`reset()` 同步清；store 公开 API 扩到 4 个。
+- 新增 `materialSorting-web/src/components/preview/Switch.tsx`：受控 toggle（`role="switch"` + `aria-checked`）；CSS `.switch`/`.switch-track`/`.switch-label-off/on`/`.switch-thumb` 自绘滑块，沿用暗底 `#34363d` + 绿 active `#2ea06c`；`disabled` 走原生 button disabled 兜底。
+- 新增 `materialSorting-web/src/components/preview/PieceQtyDialog.tsx`：草稿 + 确定模式（draftQty/draftGlobal 用 useState，仅确定才写 qtyStore；取消/遮罩/ESC 丢弃）；Portal 到 document.body；ESC 用 `useEffect` 挂 window.keydown、Inner unmount 自动卸载 listener；target 切换时用 `key=${label}-${size}` 强制重建 Inner 重新读初值；初值严格走 `getPieceDisplay` selector。
+- `style.css` 加 `.piece-qty-dialog-overlay/.piece-qty-dialog-modal/.qty-input-group/.qty-step/.qty-input/.switch*/.qty-btn/.qty-confirm` 暗色样式。
+- 单测：uploadStore.test.ts +6 项（共 13 项）；Switch.test.tsx 5 项；PieceQtyDialog.test.tsx 15 项。`npm run test` 全 331 项绿、`npm run typecheck` 通过、`npm run build` 无报错。
+- `.docs/technical/agent-component-map.md` 与 `materialSorting-web/AGENTS.md` 同步：新增「上传预览 US-012 落地」section + 关键不变量 11 条；文件树加 Switch/PieceQtyDialog。

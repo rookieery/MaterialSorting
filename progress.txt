@@ -8,32 +8,29 @@ Started: 2026-08-09
 
 
 
-**清理**：ms-web (PID 50884) 已 `Stop-Process -Force` 杀掉，`Get-NetTCPConnection -LocalPort 8000` count=0。原 intermediate 已从 /tmp 备份还原，`.bak` + 临时 `<doc_id>_pieces/` 已清掉，dev 环境回到 8 码 128 片基线。
-**下一步**：v1 dxr-upload-preview PRD 全 10 个 story 已完成（US-001~US-010）。后续：（1）排料页 commit 按钮 + `setTab('nesting')` UX + commit 后 PIECES reload 机制（AC6 TODO）；（2）新款母版（非 M1787 结构款）需版师确认 `GROUP_NAMES` g00-g09 → ptype 映射；（3）`uploads/<uuid>_pieces/` 临时目录清理策略（v1 open question）。
 
 
----
+- 不集成到 PreviewPage（留 US-014）：本故事仅弹窗 + Switch 组件 + 单测；不进 commit / 排料；uploadStore.reset 联动 qtyStore.resetQuantities 留到 US-014 集成。
+- **未做浏览器验证**：本故事无 SVG/坐标变换改动（仅 DOM 弹窗），AC 仅要求 typecheck + 单测，故跳过 chrome-devtools-mcp；US-013 PieceZoomModal / US-014 集成时再统一浏览器回归（含弹窗显隐 / Switch 视觉）。
 
-## US-011 数量状态 store(qtyStore)+类型+selector (2026-08-10)
+## US-013 放大预览模态 PieceZoomModal（2026-08-10）
 
-**分支**: `ralph/dxf-upload-preview`
-**新增文件**:
-- `materialSorting-web/src/types/qty.ts` — PieceQuantity / PieceQuantityMap / QtyMode 类型契约
-- `materialSorting-web/src/store/qtyStore.ts` — Zustand store（quantities + 3 actions）+ 纯函数 clampQty + 纯函数 selector getPieceDisplay
-- `materialSorting-web/src/store/__tests__/qtyStore.test.ts` — 24 项单测（clampQty 6 + getPieceDisplay 9 + setPiecePerSize 4 + setPieceGlobal 2 + resetQuantities 1 + store 独立性 2）
+### 落地范围
+- `materialSorting-web/src/store/uploadStore.ts`：扩 `zoom: {label:string; size:number|null} | null`（默认 null）+ `openZoom(label, size)` / `closeZoom()` actions；`reset()` 同步清 `zoom=null`；store 公开 API 扩到 6 个。
+- `materialSorting-web/src/components/preview/PieceZoomModal.tsx`（新增）：声明式受控 Portal；订阅 `uploadStore.zoom + doc`；zoom/doc 任一为 null 时 return null；打开时调 `locatePiece(doc, label, size)` 定位 ParsedPiece + seq(findIndex+1)，防御性兜底（找不到渲染 null）；ESC 监听在 zoom!==null 时挂 window.keydown、关闭自动卸载；✕/遮罩（e.target===e.currentTarget）/ESC 三方式关闭；modal onClick stopPropagation 双重防冒泡；头部 `[label徽章] 序号(qty) · 码 {sizeLabel(size)} · {name}`，qty 从 qtyStore `getPieceDisplay` 读；body 复用 `<PiecePreviewSVG piece={p} pad={20}/>`；Portal 到 document.body。
+- `materialSorting-web/src/style.css`：新增 `.piece-zoom-overlay`（fixed inset:0 + rgba(0,0,0,0.6) + flex 居中 + z-index:1000 与 .piece-qty-dialog-overlay 同层）+ `.piece-zoom-modal`（`#2a2c32` 暗底 + radius 8 + max-width/height 90vw/90vh + overflow:auto + 相对定位承载关闭按钮 + flex-col gap 12）+ `.piece-zoom-head`（flex + padding-right 28 给 ✕ 留位）+ `.piece-zoom-seq`（monospace + 600）+ `.piece-zoom-meta`（`#9aa`）+ `.piece-zoom-name`（`#cdd` + word-break）+ `.piece-zoom-close`（absolute top:8 right:10 + 28×28 + transparent + hover `#3f424a` bg + `#2ea06c` 字 + focus-visible outline）+ `.piece-zoom-body`（flex 1 + min-height 320 + min-width 0）。
+- `materialSorting-web/src/store/__tests__/uploadStore.test.ts`：新增 7 项 zoom 用例（默认 null / openZoom 写入 number / openZoom 写入 null 码 / closeZoom 清回 / reset 同步清 / 订阅者通知 / zoom 与 qtyDialog 字段独立），原 13 项不变 → 共 20 项。
+- `materialSorting-web/src/components/preview/__tests__/PieceZoomModal.test.tsx`（新增）：14 项集成测试，覆盖 AC 全部要点（含 Portal body / 防御性兜底）。
 
-**实现要点**:
-- qtyStore 与 uploadStore 完全解耦（字段不重叠），双向 reset 互不影响
-- label（A/B/C）跨码匹配同一片型，依赖后端几何排序稳定
-- getPieceDisplay 四分支：未配置 / per-size / global+source / global+非source（reason 含 sizeLabel(source)）
-- clampQty 公式 `Math.max(0, Math.min(99, Math.trunc(Number(v)||0)))`，setPiecePerSize/setPieceGlobal 内部统一调用
-- 从 global 切回 per-size 时 globalValue 继承到 perSize[sizeKey(globalSource)]，globalSource=null 时 sizeKey='null' 兜底
-- null 码双口径：sizeKey='null'（perSize key 空间）/ sizeLabel='通用'（人读文案，与 SizeTabs NULL_SIZE_LABEL 同语义）
+### 关键决策
+- **ESC 监听挂在主组件 useEffect（不在 Inner 子组件）**：与 PieceQtyDialog 不同，本模态无可编辑草稿故无 Inner 子组件；直接在主组件 useEffect dep `[zoom, closeZoom]`，zoom!==null 时挂 listener、cleanup 自动卸载。hook 无条件调，zoom!==null 判定在 effect 内部（避免条件 hook 警告）。
+- **遮罩 onClick（不是 mousedown）+ modal stopPropagation 双重防御**：与 PieceQtyDialog 用 mousedown 不同（数量弹窗有可拖选文本场景）；本模态无可拖选文本，click 语义更直观；modal onClick stopPropagation 兜底即使冒泡到 overlay 也已被 stop。
+- **头部同时显示 label 徽章 + 序号(数量)**：序号 = pieces 数组 index+1（与 label 字母次序一致，依赖后端 `_label_for` 几何排序）；详情模态追求信息完整（与卡片头追求简洁互补）；D1 决策信息冗余但语义一致。US-014 集成时卡片头序号同口径（届时可考虑提取公用 `findPieceIndex` 函数；本故事先内联在 locatePiece）。
+- **PiecePreviewSVG pad=20（比卡片默认 pad=14 加大留白）**：放大显示更多内边距视觉更舒适；pad 经 PiecePreviewSVG 内 `safePad = Math.max(MIN_PAD=4, pad)` clamp，20 安全。
+- **不集成到 PreviewPage（留 US-014）**：本故事仅模态组件 + store 字段 + 单测；PreviewPage 顶层挂 `<PieceZoomModal/>` 单例 + uploadStore.reset 联动 qtyStore.resetQuantities + ParsedPiecesView 卡片图形区点击 openZoom 都由 US-014 集成。
+- **未做浏览器验证**：本故事无 SVG/坐标变换改动（仅复用 PiecePreviewSVG 加大 pad + DOM 弹窗外壳），AC 仅要求 typecheck + 单测，故跳过 chrome-devtools-mcp；US-014 集成时再统一浏览器回归（含放大模态显隐 / ✕/遮罩/ESC / 头部信息）。
 
-**验证**:
-- `npm run typecheck` ✅
-- `npm run test -- qtyStore` ✅ 24/24 passed
-- `npm run test`（全量）✅ 305/305 passed（24 新增 + 281 既有，无回归）
-- `npm run build` ✅ static/ 产出无报错
-
-**踩坑**: Git Bash 单引号 heredoc 在 ~200 行 + 含中文 + 三引号嵌套时会失效（`unexpected EOF`），改用分块 `cat <<'CHUNK'` 多次 append 解决。
+### 验证
+- `npm run typecheck`：通过（0 errors）。
+- `npm run test -- PieceZoomModal`：14/14 通过（含 zoom=null 不渲染 / doc=null 不渲染 / 渲染 overlay+modal+aria-label / 头部 label+seq(qty)+size+name / qty 从 qtyStore / null 码「通用」/ body svg.piece-preview-svg / ✕ closeZoom / 遮罩 closeZoom / modal 内不冒泡 / ESC closeZoom / Portal body / label 不存在兜底 / size 不存在兜底）。
+- `npm run test`（全量）：352/352 通过（含 uploadStore 20 / PieceZoomModal 14；既有 333 项无回归）。

@@ -372,3 +372,274 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
   font-size: 13px;
   color: #888;
 }
+
+/* ---- US-012 PieceQtyDialog + Switch（暗底 + #2ea06c 同色系，不引入 CSS 框架） ---- */
+/* overlay：fixed 全屏 + 半透明遮罩；flex 居中 modal；z-index 高于 .tooltip (999) */
+.piece-qty-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+/* modal：暗背景 + 圆角 + 垂直布局；最小宽高保证内容不挤 */
+.piece-qty-dialog-modal {
+  background: #26282e;
+  border: 1px solid #34363d;
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  padding: 18px 20px;
+  min-width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  font-size: 13px;
+  color: #e6e6e6;
+}
+.piece-qty-dialog-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #e6e6e6;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #34363d;
+}
+
+/* 数量输入组：[-] input [+] 水平 */
+.qty-input-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.qty-step {
+  width: 32px;
+  height: 32px;
+  background: #34363d;
+  color: #cdd;
+  border: 1px solid #45484f;
+  border-radius: 4px;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.qty-step:hover:not(:disabled) {
+  background: #3f424a;
+  color: #e6e6e6;
+  border-color: #2ea06c;
+}
+.qty-step:disabled {
+  color: #555;
+  cursor: not-allowed;
+}
+.qty-input {
+  width: 64px;
+  height: 32px;
+  text-align: center;
+  background: #1c1d22;
+  color: #e6e6e6;
+  border: 1px solid #3a3d45;
+  border-radius: 4px;
+  font-size: 14px;
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  /* 隐藏 number input 的上下箭头（Chrome / Firefox 不同前缀） */
+  -moz-appearance: textfield;
+}
+.qty-input::-webkit-outer-spin-button,
+.qty-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.qty-input:focus {
+  outline: none;
+  border-color: #2ea06c;
+}
+
+/* Switch 容器 */
+.qty-switch {
+  display: flex;
+  align-items: center;
+}
+
+/* Switch：role=switch + aria-checked；暗底滑块 + 绿色 active */
+.switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+}
+.switch.disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+.switch-track {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  width: 180px;
+  height: 28px;
+  background: #34363d;
+  border: 1px solid #45484f;
+  border-radius: 14px;
+  overflow: hidden;
+}
+.switch-label-off,
+.switch-label-on {
+  flex: 1;
+  text-align: center;
+  font-size: 11px;
+  color: #9aa;
+  z-index: 1;
+  pointer-events: none;
+  transition: color 0.15s;
+}
+.switch.on .switch-label-on {
+  color: #fff;
+}
+.switch:not(.on) .switch-label-off {
+  color: #fff;
+}
+.switch-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 86px;
+  height: 22px;
+  background: #2ea06c;
+  border-radius: 11px;
+  transition: transform 0.18s ease;
+}
+.switch.on .switch-thumb {
+  transform: translateX(90px);
+}
+
+/* 底部按钮组 */
+.piece-qty-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 4px;
+}
+.qty-btn {
+  padding: 7px 18px;
+  font-size: 13px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  border: 1px solid #45484f;
+  background: #34363d;
+  color: #cdd;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.qty-btn:hover {
+  background: #3f424a;
+  color: #e6e6e6;
+}
+.qty-confirm {
+  background: #2ea06c;
+  color: #fff;
+  border-color: #2ea06c;
+  font-weight: 600;
+}
+.qty-confirm:hover {
+  background: #36b47a;
+  border-color: #36b47a;
+  color: #fff;
+}
+
+/* ---- US-013 PieceZoomModal（放大预览模态；暗底 + #2ea06c 同色系，不引入 CSS 框架） ---- */
+/* overlay：fixed 全屏 + 半透明遮罩；flex 居中 modal；z-index 高于 .tooltip (100) 与 .piece-qty-dialog-overlay (1000) 同层 */
+.piece-zoom-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+/* modal：暗背景 + 圆角 + 相对定位承载关闭按钮；max-width/height 90vw/90vh 防超出视口 */
+.piece-zoom-modal {
+  position: relative;
+  background: #2a2c32;
+  border: 1px solid #34363d;
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  padding: 18px 20px 16px;
+  max-width: 90vw;
+  max-height: 90vh;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  font-size: 13px;
+  color: #e6e6e6;
+}
+/* 头部行：[label徽章] + 序号(数量) · 码 {sizeLabel} · {name}；与卡片头同色系 */
+.piece-zoom-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-right: 28px; /* 给绝对定位的 ✕ 按钮留位 */
+  font-size: 13px;
+  color: #cdd;
+  flex-shrink: 0;
+}
+.piece-zoom-seq {
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  color: #e6e6e6;
+  font-weight: 600;
+}
+.piece-zoom-meta {
+  color: #9aa;
+}
+.piece-zoom-name {
+  color: #cdd;
+  word-break: break-all;
+}
+/* 关闭按钮：绝对定位右上角；暗底亮字 + hover 高亮 */
+.piece-zoom-close {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: #cdd;
+  border: 0;
+  border-radius: 4px;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s, color 0.15s;
+}
+.piece-zoom-close:hover {
+  background: #3f424a;
+  color: #2ea06c;
+}
+.piece-zoom-close:focus-visible {
+  outline: 2px solid #2ea06c;
+  outline-offset: 1px;
+}
+/* body：SVG 容器，宽高自适应；min-width/height 保证放大后视觉清晰 */
+.piece-zoom-body {
+  flex: 1;
+  min-height: 320px;
+  min-width: 0;
+  display: flex;
+}
+.piece-zoom-body svg {
+  flex: 1;
+  min-height: 320px;
+}

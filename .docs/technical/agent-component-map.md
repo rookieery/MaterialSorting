@@ -1,6 +1,6 @@
 # 前端组件 / 模块地图（materialSorting-web/）
 
-> 由 `/sync-docs` 维护。改前端先看这里。当前覆盖 US-001 Tab 框架 + US-002 WS 契约 + US-003 NestSVG + US-004 ControlPanel + US-005 多 seed/收敛曲线 + US-006 回放 seekbar + 片 hover tooltip + US-007 导出 PNG/DXF + DXF 上传预览 US-001 Tab 骨架 + 上传预览 US-005 类型/store/hook + 上传预览 US-006 UploadPanel 组件 + 上传预览 US-007 PiecePreviewSVG 命令式渲染 + 上传预览 US-008 SizeTabs/ParsedPiecesView/PreviewPage 容器集成 + 上传预览 US-011 qtyStore 数量状态（per-size/global 双模式）。
+> 由 `/sync-docs` 维护。改前端先看这里。当前覆盖 US-001 Tab 框架 + US-002 WS 契约 + US-003 NestSVG + US-004 ControlPanel + US-005 多 seed/收敛曲线 + US-006 回放 seekbar + 片 hover tooltip + US-007 导出 PNG/DXF + DXF 上传预览 US-001 Tab 骨架 + 上传预览 US-005 类型/store/hook + 上传预览 US-006 UploadPanel 组件 + 上传预览 US-007 PiecePreviewSVG 命令式渲染 + 上传预览 US-008 SizeTabs/ParsedPiecesView/PreviewPage 容器集成 + 上传预览 US-011 qtyStore 数量状态（per-size/global 双模式）+ 上传预览 US-012 PieceQtyDialog/Switch（数量编辑弹窗 + 受控开关）+ 上传预览 US-013 PieceZoomModal（放大预览模态）。
 
 ## 顶层结构
 
@@ -31,12 +31,18 @@ materialSorting-web/
 │   │   │   ├── SizeTabs.tsx  # US-008 尺码切换条：读 uploadStore.doc/activeSize/setSize；chip 行 + active 高亮；null 码→「通用」
 │   │   │   ├── ParsedPiecesView.tsx # US-008 当前 activeSize 下裁片 grid：每片卡片（PiecePreviewSVG+A/B/C 徽章+裁片名）；grid auto-fill minmax(220px,1fr)
 │   │   │   ├── PiecePreviewSVG.tsx  # US-007 单片（或多片）母版预览 SVG（命令式渲染 + scale(1,-1) 翻转 + 5 层分层 + A/B/C 标注翻转组外）
+│   │   │   ├── Switch.tsx  # US-012 受控开关（role=switch + aria-checked；PieceQtyDialog 内「仅当前尺码/全部尺码」用）
+│   │   │   ├── PieceQtyDialog.tsx  # US-012 数量编辑弹窗（草稿+确定模式；Portal 到 body；ESC/遮罩/取消丢弃草稿；确定调 setPieceGlobal/setPiecePerSize）
+│   │   │   ├── PieceZoomModal.tsx  # US-013 放大预览模态（声明式受控 Portal；订阅 uploadStore.zoom+doc；✕/遮罩/ESC 关闭；复用 PiecePreviewSVG pad=20）
 │   │   │   └── __tests__/
 │   │   │       ├── UploadPanel.test.tsx      # US-006 集成测试（25 项）
 │   │   │       ├── PiecePreviewSVG.test.tsx  # US-007 单测（33 项：bbox 5 + 命令式 2 + 5 层 11 + 翻转/标注 9 + 单片/多片/空片 4 + 切片重建 3）
 │   │   │       ├── SizeTabs.test.tsx         # US-008 单测（8 项：chip 列表 + null→通用 + role=tablist + active 高亮 + 点击 setSize + null 码 + activeSize=null 防御）
 │   │   │       ├── ParsedPiecesView.test.tsx # US-008 单测（8 项：grid 渲染 + 每片含 A/B/C+名+svg + key label-name + 切码刷新 + activeSize 不在 doc + 空码空态）
-│   │   │       └── PreviewPage.test.tsx      # US-008 集成（9 项：左 panel+右 main 布局 + 4 空态分支 + 已解析挂主体 + SizeTabs 列码 + 切码刷新 grid + 端到端 chip 点击）
+│   │   │       ├── PreviewPage.test.tsx      # US-008 集成（9 项：左 panel+右 main 布局 + 4 空态分支 + 已解析挂主体 + SizeTabs 列码 + 切码刷新 grid + 端到端 chip 点击）
+│   │   │       ├── Switch.test.tsx           # US-012 单测（5 项：role+aria-checked / 点击 onChange true/false / labelOn/labelOff 文案 / disabled 不触发 / .on class）
+│   │   │       ├── PieceQtyDialog.test.tsx   # US-012 集成（15 项：null 不渲染 / 标题含 label+size / 初值 per-size/global / [+][-] 改 draftQty / Switch 切 / 确定 per-size/global / 取消 / 遮罩 / ESC / modal 不冒泡 / blur clamp）
+│   │   │       └── PieceZoomModal.test.tsx   # US-013 集成（14 项：zoom=null 不渲染 / doc=null 不渲染 / 渲染 overlay+modal+aria / 头部 label+seq(qty)+size+name / qty 从 qtyStore / null 码「通用」/ body svg.piece-preview-svg / ✕ closeZoom / 遮罩 closeZoom / modal 内不冒泡 / ESC closeZoom / Portal body / label 不存在兜底 / size 不存在兜底）
 │   │   ├── nests/          # US-003 NestSVG/NestCard/NestLabel + US-005 NestsGrid；US-006 NestSVG 加 seek+hover
 │   │   ├── ControlPanel/   # US-004 8 子组件 + US-005 MultiSeedControls；US-007 ExportButtons
 │   │   ├── curve/          # US-005 ConvergenceCurve（命令式 innerHTML）
@@ -99,9 +105,9 @@ materialSorting-web/
 | 文件 | 角色 |
 | --- | --- |
 | `src/types/parsed.ts` | 上传解析响应契约：`ParsedDoc` / `ParsedSize` / `ParsedPiece` + `ParsedPt` / `ParsedNotch` / `ParsedGrainLine`。与 `web/server.py _build_parse_payload()` 字段名严格一致：`{doc_id, filename, sizes:[{size, pieces:[{label, name, polygon, internal_lines, notches, net_polygon, grain_line}]}]}` |
-| `src/store/uploadStore.ts` | Zustand store：`status: 'idle'\|'uploading'\|'done'\|'error'`、`doc: ParsedDoc\|null`、`activeSize: number\|null`、`error: string\|null` + actions `reset()` / `setSize(s)`。状态过渡（uploading→done\|error）由 hook 直接 `useUploadStore.setState({...})` 写入，不暴露成公开 action |
+| `src/store/uploadStore.ts` | Zustand store：`status: 'idle'\|'uploading'\|'done'\|'error'`、`doc: ParsedDoc\|null`、`activeSize: number\|null`、`error: string\|null`、`qtyDialog: {label,size}\|null`（US-012）、`zoom: {label,size}\|null`（US-013）+ actions `reset()` / `setSize(s)` / `openQtyDialog(label,size)`（US-012）/ `closeQtyDialog()`（US-012）/ `openZoom(label,size)`（US-013）/ `closeZoom()`（US-013）。状态过渡（uploading→done\|error）由 hook 直接 `useUploadStore.setState({...})` 写入，不暴露成公开 action |
 | `src/hooks/useParseDxf.ts` | 上传 hook：`upload(file)` → POST `/api/parse-dxf` (multipart FormData) → 写 uploadStore。**防连击**：uploadingRef + status==='uploading' 双重防护；成功后默认 activeSize = `doc.sizes[0]?.size ?? null`；不抛错（错误统一进 store.error） |
-| `src/store/__tests__/uploadStore.test.ts` | 7 项单测：默认 idle / reset() 从 done+error 回 idle / setSize(number\|null) / 订阅者收到 status & activeSize 变化 |
+| `src/store/__tests__/uploadStore.test.ts` | 20 项单测：US-005 基础 7（默认 idle / reset() 从 done+error 回 idle / setSize(number\|null) / 订阅者收到 status & activeSize 变化）+ US-012 qtyDialog 6（默认 null / open 写入 / open null 码 / close 清回 / reset 同步清 / 订阅者通知）+ US-013 zoom 7（默认 null / open 写入 number / open null 码 / close 清回 / reset 同步清 / 订阅者通知 / zoom 与 qtyDialog 字段独立） |
 | `src/hooks/__tests__/useParseDxf.test.tsx` | 15 项单测：AC#1 fetch URL=相对+POST+FormData(file)+不手设 Content-Type；AC#2 200→done+doc+activeSize=sizes[0].size / 空 sizes / null 码组；AC#3 400/413/422→error+CN msg / 非 JSON→statusText / 网络错→Error.message / 非 Error→String(e)；AC#4 防连击 fetch 仅一次 / 成功+失败后 uploadingRef 复位 / 进入 uploading 清旧 error |
 
 ### 关键不变量（上传预览 US-005 立，后续故事不得破坏）
@@ -203,6 +209,56 @@ materialSorting-web/
 7. **`getPieceDisplay` 是 UI 消费的唯一入口** —— 卡片头（US-014 ParsedPiecesView）、数量弹窗（US-012 PieceQtyDialog）、放大模态（US-013 PieceZoomModal）都调 `getPieceDisplay(quantities, label, size)`，不直接读 quantities[label]。改 selector 签名需同步 US-012/013/014 调用方。
 8. **qtyStore reset 不影响 uploadStore，反之亦然** —— 双向独立性由 store 模块级隔离保证。改 reset 行为需同步 qtyStore.test.ts「store 独立性」2 项用例。
 9. **不进 commit / 排料** —— US-011 仅前端 UI，数量存 store 不序列化到 intermediate。后端接环（数量→每片复制份数）是后续 Story，不在本故事范围。
+
+## 上传预览 US-012 落地：PieceQtyDialog 数量编辑弹窗 + Switch 受控开关（草稿 + 确定模式）
+
+| 文件 | 角色 |
+| --- | --- |
+| `src/store/uploadStore.ts` | 增量：新增 `qtyDialog: { label: string; size: number \| null } \| null`（默认 null）+ actions `openQtyDialog(label, size)` / `closeQtyDialog()`；`reset()` 同步清 `qtyDialog=null`。store 公开 API 扩到 4 个（reset/setSize/openQtyDialog/closeQtyDialog）；hook useParseDxf 的 setState 流程**不写 qtyDialog**（弹窗显隐仅由 UI 触发，与上传解析无关） |
+| `src/components/preview/Switch.tsx` | 受控 toggle。props `{ checked: boolean; onChange: (v:boolean)=>void; labelOn: string; labelOff: string; disabled?: boolean; 'data-testid'?: string }`；`<button role="switch" aria-checked={checked}>` + CSS `.switch-track`/`.switch-label-off`/`.switch-label-on`/`.switch-thumb`（暗底 `#34363d` + 绿 active `#2ea06c`，与 size-chip.active 同色系）；点击 -> `onChange(!checked)`；`disabled=true` 走原生 button disabled（不响应点击 + 不参与 tab 序列） |
+| `src/components/preview/PieceQtyDialog.tsx` | 数量编辑弹窗。订阅 uploadStore.qtyDialog；`null` 时 `return null`（不挂 DOM）。打开时渲染 `PieceQtyDialogInner`（key=`${label}-${size??'null'}` 强制 target 切换时重建，从 store 重新读初值）。Inner：useState 草稿（draftQty/draftGlobal）从 `getPieceDisplay(quantities, label, size)` 读初值（draftQty=qty、draftGlobal = mode==='global' && globalSource===size）；`useEffect` 挂 ESC `window.keydown`（关闭时卸载，无残留）。结构：`.piece-qty-dialog-overlay`（fixed 全屏 + 遮罩 + flex 居中，onMouseDown 落在 overlay 自身才关）+ `.piece-qty-dialog-modal`（role=dialog + aria-modal）+ `.piece-qty-dialog-title`（裁片 {label} · 码 {sizeLabel(size)}）+ `.qty-input-group`（[-] input [+]；input 实时 onChange + blur clamp）+ `.qty-switch`（Switch labelOff=仅当前尺码 / labelOn=全部尺码）+ `.piece-qty-dialog-actions`（取消/确定）。确定逻辑：`draftGlobal=true -> setPieceGlobal(label,size,draftQty)` / `false -> setPiecePerSize(label,size,draftQty)` 后 `closeQtyDialog()`。**Portal 到 document.body**（与 Tooltip 同口径）。 |
+| `src/style.css` | 加 `.piece-qty-dialog-overlay`（fixed inset:0 + rgba(0,0,0,0.6) + flex 居中 + z-index:1000 高于 .tooltip）+ `.piece-qty-dialog-modal`（`#26282e` 暗底 + radius 8 + min-width 320 + flex-col gap 16）+ `.piece-qty-dialog-title`（14px 600 + bottom-border）+ `.qty-input-group`（flex + gap 8）+ `.qty-step`（32×32 + `#34363d` + hover `#2ea06c` border + disabled `#555`）+ `.qty-input`（64×32 + center + monospace + 隐藏 number spinner）+ `.switch`（inline-flex + relative）+ `.switch-track`（180×28 + `#34363d` + radius 14 + overflow hidden）+ `.switch-label-off/on`（flex:1 + center + pointer-events:none）+ `.switch-thumb`（86×22 absolute + `#2ea06c` + transition transform 0.18s；.on 时 translateX(90px)）+ `.piece-qty-dialog-actions`（flex + right + gap 10）+ `.qty-btn`/`.qty-confirm`（暗底 / 绿底 `#2ea06c` 600） |
+| `src/store/__tests__/uploadStore.test.ts` | 增量：新增 6 项 qtyDialog 用例（默认 null / open 写入 / open null 码 / close 清回 / reset 同步清 / 订阅者通知）。原 7 项 uploadStore 用例不变 |
+| `src/components/preview/__tests__/Switch.test.tsx` | 5 项单测：role=switch + aria-checked 跟随 checked / 点击 onChange(true)/(false) / labelOn/labelOff 文案 / disabled 不触发 / `.on` class 跟随 checked（CSS 滑块平移依赖） |
+| `src/components/preview/__tests__/PieceQtyDialog.test.tsx` | 15 项集成：qtyDialog=null 不渲染 DOM / 标题含 label+通用文案 / 标题含数字码 / 初值 per-size draftQty / 初值 global source draftQty+draftGlobal / [+][-] 改 draftQty + [-]@0 disabled / input 实时跟 + 非数字兜底 0 / Switch 切 draftGlobal / 确定 per-size 调 setPiecePerSize + close / 确定 global 调 setPieceGlobal + close / 取消不写 store / 遮罩点击关闭不写 store / ESC 关闭不写 store / modal 内 mousedown 不冒泡关闭 / blur clamp 兜底 |
+
+### 关键不变量（上传预览 US-012 立，后续故事不得破坏）
+
+1. **草稿 + 确定模式（非即时生效）** —— PieceQtyDialogInner 用 useState 持 `draftQty`/`draftGlobal`；用户编辑仅改草稿；点确定才写 qtyStore；点取消 / 遮罩 / ESC 仅 `closeQtyDialog()`，草稿丢弃。**目的**：切 global 瞬间会把其它码同 label 置灰（editable=false），草稿模式让用户在确定前可以回滚（避免误操作锁定其它码）。改即时生效会破坏此体验。
+2. **key 强制重建 PieceQtyDialogInner** —— `key={`${label}-${size ?? 'null'}`}`；target 切换时（点卡片头切到另一片）Inner 重建，useState 重新从 store 读初值，避免 StrictMode 双 mount / 同 label 二次 open 时草稿残留。改 key 拼合需同步 5 项「初值」用例。
+3. **`PieceQtyDialog` 默认 return null** —— `qtyDialog === null` 时返回 `null`（不挂 DOM）；打开时 Portal 到 document.body（与 Tooltip 同口径）。改 Portal 目标（如挂到 .tab-content 内）会破坏 z-index 与定位（被父级 transform / overflow 影响）。US-013 PieceZoomModal、US-014 集成也用 Portal 同口径。
+4. **初值严格走 `getPieceDisplay` selector** —— draftQty 初值 = `getPieceDisplay(quantities, label, size).qty`；draftGlobal 初值 = `quantities[label]?.mode === 'global' && quantities[label]?.globalSource === size`（不能仅靠 `getPieceDisplay.editable`，因为 label 未配置时 editable=true 但 draftGlobal 必须 false）。改初值口径需同步「初值 per-size / 初值 global source」2 项用例。
+5. **ESC 监听在 Inner 组件挂/卸载** —— Inner 用 `useEffect` 在 mount 时 `window.addEventListener('keydown', onKey)`、unmount 时 `removeEventListener`。dialog 关闭（target 切 null）时 Inner 卸载 → listener 自动清理，无残留。改监听位置（如挂到 uploadStore subscription）会破坏生命周期同步。
+6. **遮罩 mousedown 用 `e.target === e.currentTarget`** —— 只在 mousedown 落在 overlay 自身（不是冒泡上来的子元素）时 onClose；modal 内任何点击不关闭。改判定需同步「modal 内 mousedown 不冒泡关闭」用例。用 mousedown（不是 click）防止用户在 modal 内拖选文本时误关。
+7. **input blur 时 clamp 兜底** —— `handleInputBlur` 调 `clampQty(e.target.value)`；type=number input 上下箭头 / 字符串粘贴可能写入超 99 / 非数字值，blur 时统一规整到 [0,99] 整数。改兜底需同步「blur clamp 兜底（超 99）」用例。
+8. **`[-]` 在 draftQty <= 0 时 disabled** —— 原生 button disabled（不响应点击 + 不参与 tab 序列），与 qtyQty clampQty 下界 0 一致；`[+]` 不 disabled（clampQty 兜底 99）。改判定需同步「`[+]`/`[-]` 改 draftQty；`[-]`@0 disabled」用例。
+9. **Switch 用原生 `<button disabled>` 兜底** —— Switch props.disabled=true 时 button 自带 `disabled` 属性（不响应点击 + 不参与 tab 序列），`handleClick` 内 `if (disabled) return` 是双重防御；改任一层需同步 Switch.test.tsx「disabled 不触发 onChange」用例。
+10. **不引入 CSS 框架** —— `.piece-qty-dialog-*` / `.qty-input-group` / `.qty-step` / `.qty-input` / `.switch` / `.switch-track` / `.switch-label-*` / `.switch-thumb` / `.qty-btn` / `.qty-confirm` 全部沿用 style.css 命令式 className，与 ControlPanel / SizeTabs / piece-card 暗背景 `#26282e/#34363d` + 绿色 `#2ea06c` 强调同色系。改 className 需同步组件 + 测试。
+11. **uploadStore.reset 联动 qtyStore.resetQuantities 留到 US-014** —— 本故事只扩 uploadStore.reset 清 qtyDialog（同 store 内）；qtyStore 独立 store 的 resetQuantities 联动（重传清零数量）由 US-014 ParsedPiecesView 集成时挂入。本故事范围仅弹窗 + Switch 组件 + 单测，不集成到 PreviewPage。
+
+## 上传预览 US-013 落地：PieceZoomModal 放大预览模态（声明式受控 Portal + ✕/遮罩/ESC 关闭）
+
+| 文件 | 角色 |
+| --- | --- |
+| `src/store/uploadStore.ts` | 增量：新增 `zoom: { label: string; size: number \| null } \| null`（默认 null）+ actions `openZoom(label, size)` / `closeZoom()`；`reset()` 同步清 `zoom=null`。store 公开 API 扩到 6 个（reset/setSize/openQtyDialog/closeQtyDialog/openZoom/closeZoom）；hook useParseDxf 的 setState 流程**不写 zoom**（模态显隐仅由 UI 触发，与上传解析无关） |
+| `src/components/preview/PieceZoomModal.tsx` | 放大预览模态。订阅 uploadStore `zoom` + `doc`；`zoom===null \|\| doc===null` 时 `return null`（不挂 DOM）。打开时调 `locatePiece(doc, label, size)` 定位 ParsedPiece + 序号（pieces.findIndex+1）；**防御性兜底**：找不到码 / 找不到 label → 渲染 null（理论不会发生，因 openZoom 由 ParsedPiecesView 在已挂载卡片上调）。`useEffect` 在 `zoom!==null` 时挂 ESC `window.keydown`（关闭时 effect cleanup 自动卸载，无残留）。结构：`.piece-zoom-overlay`（fixed 全屏 + 遮罩 + flex 居中，onClick 落在 overlay 自身才关）+ `.piece-zoom-modal`（role=dialog + aria-modal + aria-label；onClick stopPropagation 防 modal 内点击冒泡）+ `.piece-zoom-close`（右上角绝对定位，✕；aria-label=关闭）+ `.piece-zoom-head`（label 徽章 + `序号(qty)` + ` · 码 {sizeLabel(size)} · ` + name；qty 从 `getPieceDisplay(quantities, label, size).qty` 读，seq 从 `locatePiece` 读）+ `.piece-zoom-body`（`<PiecePreviewSVG piece={p} pad={20}/>`，pad 加大留白；5 层渲染 + A/B/C 标注全部复用）。**Portal 到 document.body**（与 Tooltip / PieceQtyDialog 同口径） |
+| `src/style.css` | 加 `.piece-zoom-overlay`（fixed inset:0 + rgba(0,0,0,0.6) + flex 居中 + z-index:1000 与 .piece-qty-dialog-overlay 同层，高于 .tooltip 100）+ `.piece-zoom-modal`（`#2a2c32` 暗底 + radius 8 + max-width/height 90vw/90vh + overflow:auto + 相对定位承载关闭按钮 + flex-col gap 12）+ `.piece-zoom-head`（flex + gap 6 + padding-right 28 留位 ✕ + flex-shrink 0）+ `.piece-zoom-seq`（monospace + 600）+ `.piece-zoom-meta`（`#9aa`）+ `.piece-zoom-name`（`#cdd` + word-break）+ `.piece-zoom-close`（absolute top 8 right 10 + 28×28 + transparent bg + `#cdd` 字 + hover bg `#3f424a` + `#2ea06c` 字 + focus-visible outline）+ `.piece-zoom-body`（flex 1 + min-height 320 + min-width 0 + flex）+ `.piece-zoom-body svg`（flex 1 + min-height 320） |
+| `src/store/__tests__/uploadStore.test.ts` | 增量：新增 7 项 zoom 用例（默认 null / open 写入 number / open null 码 / close 清回 / reset 同步清 / 订阅者通知 / zoom 与 qtyDialog 字段独立）。原 13 项（US-005 基础 7 + US-012 qtyDialog 6）不变 |
+| `src/components/preview/__tests__/PieceZoomModal.test.tsx` | 14 项集成：zoom=null 不渲染 / doc=null 不渲染 / 渲染 overlay+modal+aria-label / 头部含 label 徽章+seq(qty)+size+name / 头部 qty 从 qtyStore per-size 读 / null 码 sizeLabel「通用」/ body svg.piece-preview-svg / ✕ closeZoom / 遮罩 closeZoom / modal 内不冒泡 / ESC closeZoom / Portal body（根不在 container 内）/ label 不存在兜底不渲染 / size 不存在兜底不渲染 |
+
+### 关键不变量（上传预览 US-013 立，后续故事不得破坏）
+
+1. **声明式受控 Portal（区别于 Tooltip 命令式单例）** —— PieceZoomModal 订阅 `uploadStore.zoom + doc`；`zoom===null \|\| doc===null` 时 `return null`（不挂 DOM）；打开时 Portal 到 document.body（与 PieceQtyDialog / Tooltip 同 Portal 目标）。改 Portal 目标（如挂到 .tab-content 内）会破坏 z-index 与定位（被父级 transform / overflow 影响）。**区别于排料页 Tooltip 的命令式单例**（Tooltip 用模块顶层 `_el/_hovered` + showTooltip/hideTooltip 命令式 API；模态低频声明式更合适）。
+2. **ESC 监听在 zoom 切换时挂/卸载** —— `useEffect` dep `[zoom, closeZoom]`；`zoom===null` 时 effect 早 return（不挂 listener）；`zoom!==null` 时挂 window.keydown，cleanup 函数卸载 listener。zoom 切 null（关闭）时 effect 重跑 → cleanup → 自动卸载，无残留。改监听位置（如挂在 modal 自身）会破坏「ESC 全局触发」语义。**hook 必须无条件调（不能在条件分支里）**，故 zoom!==null 判定在 effect 内部。
+3. **遮罩 onClick 用 `e.target === e.currentTarget`** —— 只在 click 落在 overlay 自身（不是冒泡上来的子元素）时 closeZoom；modal 用 `onClick stopPropagation` 双重防御（即使冒泡到 overlay 也已被 stop）。用 click（不是 mousedown）—— 与 PieceQtyDialog 用 mousedown 不同；本模态无可拖选文本场景，click 语义更直观。改判定需同步「遮罩 closeZoom / modal 内不冒泡」2 项用例。
+4. **`locatePiece` 防御性兜底渲染 null** —— `doc.sizes.find(s=>s.size===size)` 找不到 → null；`pieces.findIndex(p=>p.label===label) < 0` → null。理论不会发生（openZoom 由 ParsedPiecesView 在已挂载卡片上调，必然能定位），但兜底防御 doc 切换 race / 异常 store state。改兜底需同步「label 不存在 / size 不存在」2 项用例。
+5. **序号 = pieces 数组 index+1（与卡片头序号同口径，US-014 集成时复用）** —— `locatePiece` 返回 `{piece, seq: idx+1}`；与 label 字母次序一致（A=1, B=2, ...，依赖后端 `_label_for` 几何排序 `(-centroid_y, ...)`）。**详情模态头部同时显示 label 徽章 + 序号(数量)**：徽章给版师字母习惯，序号给数量定位（D1 决策信息冗余但语义一致）。改 seq 口径需同步 US-014 ParsedPiecesView 卡片头 seq（届时可考虑提取公用 `findPieceIndex` 函数；本故事先内联）。
+6. **数量从 `getPieceDisplay` 读（与卡片头/PieceQtyDialog 同 selector）** —— 头部 `seq(display.qty)` 中 `display = getPieceDisplay(quantities, label, size)`，**不直接读 `quantities[label]`**（区分 per-size / global-source / global-非source 四分支）。改 selector 来源会破坏「global 模式非 source 码显示全局值」语义（US-014 集成时卡片头置灰联动也复用此 selector）。
+7. **PiecePreviewSVG pad=20（比卡片默认 pad=14 加大留白）** —— 放大显示更多内边距视觉更舒适；pad 经 PiecePreviewSVG 内 `safePad = Math.max(MIN_PAD=4, pad)` clamp，20 安全。改 pad 需视觉回归核对（M1787 每片放大模态显示宽度 ≈ 90vw，pad 影响 SVG 内容缩放比）。
+8. **复用 PiecePreviewSVG 5 层渲染 + scale(1,-1) + A/B/C 标注** —— 本模态只换 pad 与外壳，不动 PiecePreviewSVG 内部；US-007 关键约定（flip transform / viewBox / 5 层配色 / 标注屏幕坐标）全部保留。改 PiecePreviewSVG 需同步本模态视觉回归（放大显示更容易暴露配色 / 标注问题）。
+9. **头部 padding-right 28 给 ✕ 按钮留位** —— ✕ 按钮绝对定位 `top:8 right:10 + 28×28`；头部 `padding-right: 28` 防长 name 被按钮遮挡。改 ✕ 位置 / 头部 padding 需同步视觉回归。
+10. **uploadStore.reset 联动 zoom 清零** —— 本故事只扩 uploadStore.reset 同步清 `zoom=null`（同 store 内）；qtyStore 独立 store 的 resetQuantities 联动（重传清零数量）仍由 US-014 集成时挂入。本故事范围仅模态组件 + store 字段 + 单测，**不集成到 PreviewPage**（PreviewPage 顶层挂 PieceZoomModal 单例是 US-014 任务）。
+11. **不引入 CSS 框架** —— `.piece-zoom-overlay` / `.piece-zoom-modal` / `.piece-zoom-head` / `.piece-zoom-seq` / `.piece-zoom-meta` / `.piece-zoom-name` / `.piece-zoom-close` / `.piece-zoom-body` 全部沿用 style.css 命令式 className，与 piece-card / piece-qty-dialog 暗背景 `#2a2c32/#26282e` + 绿色 `#2ea06c` 强调同色系。改 className 需同步组件 + 测试。
 
 ## US-002 落地：WS 契约 + RunRegistry + useSolveRun
 
