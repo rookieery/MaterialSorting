@@ -2,16 +2,10 @@
   "branchName": "ralph/dxf-upload-preview",
   "stories": [
     {
-      "id": "US-005",
-      "title": "前端类型 + uploadStore + useParseDxf",
-      "description": "As a 前端，I want ParsedPiece 类型、上传状态 store 与防连击请求 hook，so that 上传与预览组件有统一数据源。\n\n详见 tasks/prd-dxf-upload-preview.md US-005。\n\n具体任务：\n1. 新建 types/parsed.ts：ParsedPiece、ParsedSize、ParsedDoc（与 US-004 响应结构一致）。\n2. 新建 store/uploadStore.ts（Zustand）：status:'idle'|'uploading'|'done'|'error'、doc、activeSize、error、actions reset()/setSize()。\n3. 新建 hooks/useParseDxf.ts：fetch('/api/parse-dxf',{method,body:FormData}) 更新 store；防连击（上传中重复触发忽略）；相对路径（dev 经 Vite proxy，prod 同源）。\n\n验收标准：\n- 不引入新依赖（仅 React+Zustand+fetch）。\n- npm run build 通过；tsc --noEmit 无类型错误。",
-      "passes": true
-    },
-    {
       "id": "US-006",
       "title": "UploadPanel 点击+拖拽上传",
       "description": "As a 版师，I want 点击或拖拽上传 DXF 并看到状态/错误反馈，so that 上传直观可靠。\n\n详见 tasks/prd-dxf-upload-preview.md US-006。\n\n具体任务：\n1. 新建 components/preview/UploadPanel.tsx：点击按钮（隐藏 input[type=file accept=.dxf]）+ 拖拽落区（dragover/drop）。\n2. 从 uploadStore 读 status/error：uploading 加载态、error 红字、done 显示文件名+码数概览（如已解析 8 码/110 裁片）。\n3. 左侧固定宽度，沿用 style.css 与 ControlPanel 风格一致。\n\n验收标准：\n- 仅 .dxf（后缀+MIME 容错），非 .dxf 提示不发请求；单文件，拖入多文件拒绝提示。\n- 浏览器验证：点击与拖拽分别上传 M1787 见加载→完成；拖入 .txt 见拒绝。\n- npm run build 通过。",
-      "passes": false
+      "passes": true
     },
     {
       "id": "US-007",

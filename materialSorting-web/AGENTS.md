@@ -28,25 +28,27 @@ npm run test               # vitest run（US-002 起会有用例）
 3. **命令式 polygon 更新**：每帧 setAttribute('points' / 'display')，由 Zustand renderTick 单字段 ~10fps 节流，**逃逸 React reconciliation**。US-003 落地。
 4. **`static/` 是构建产物**（US-008 起入库 gitignore）：`npm run build` 生成，**不要手改**；旧 vanilla 三件套（`legacy/`）已删除，React 应用是唯一真相源。
 
-## 文件分工（US-001 Tab 框架 + US-002~US-007 全部落地；US-005 上传预览状态层；US-008 收尾清理）
+## 文件分工（US-001 Tab 框架 + US-002~US-007 全部落地；上传预览 US-005 状态层 + US-006 UploadPanel；US-008 收尾清理）
 
 ```
 src/
 ├── main.tsx               # US-001：createRoot + StrictMode
 ├── App.tsx                # US-001 ✅ Tab 骨架：TabBar + 双 .page 容器（display:none 切换）+ Tooltip 单例
-├── style.css              # 由 vanilla 前身 1:1 迁入；US-001 加 .tabbar/.tab/.page/.hidden/.preview-empty
+├── style.css              # 由 vanilla 前身 1:1 迁入；US-001 加 .tabbar/.tab/.page/.hidden/.preview-empty；上传预览 US-006 加 .upload-panel/.drop-zone/.upload-btn/.upload-status
 ├── vite-env.d.ts          # vite/client 类型
-├── types/                 # US-002 ✅：ws.ts / piece.ts / v03.ts；US-005 ✅ parsed.ts（US-004 响应契约）
+├── types/                 # US-002 ✅：ws.ts / piece.ts / v03.ts；上传预览 US-005 ✅ parsed.ts（US-004 响应契约）
 ├── lib/                   # US-002 ✅ ws.ts；US-003 ✅ geometry.ts；US-004 ✅ params.ts；US-006 ✅ seek.ts；US-007 ✅ download.ts
-├── store/                 # US-002 ✅ runRegistry.ts；US-003 ✅ appStore.ts；US-001 ✅ uiStore.ts；US-005 ✅ uploadStore.ts
-├── hooks/                 # US-002 ✅ useSolveRun.ts；US-003 ✅ useRafThrottle.ts；US-007 ✅ useExport.ts；US-005 ✅ useParseDxf.ts
+├── store/                 # US-002 ✅ runRegistry.ts；US-003 ✅ appStore.ts；US-001 ✅ uiStore.ts；上传预览 US-005 ✅ uploadStore.ts
+├── hooks/                 # US-002 ✅ useSolveRun.ts；US-003 ✅ useRafThrottle.ts；US-007 ✅ useExport.ts；上传预览 US-005 ✅ useParseDxf.ts
 ├── constants/             # US-004 ✅：sizes.ts / colors.ts / v03.ts
 ├── __tests__/             # US-002 ✅ useSolveRun；US-003 ✅ 各模块单测；US-007 ✅ useExport；US-001 ✅ App 集成 smoke
 └── components/
     ├── TabBar.tsx         # US-001 ✅ 顶部 Tab（排料/上传预览），订阅 uiStore.activeTab
     ├── NestingPage.tsx    # US-001 ✅ 排料页（原 App 业务逻辑外提；持 solving/seeds/useSolveRun）
     ├── preview/           # US-001 起：上传预览页
-    │   └── PreviewPage.tsx # US-001 占位（US-008 替换为 UploadPanel+SizeTabs+ParsedPiecesView）
+    │   ├── PreviewPage.tsx # US-001 占位（US-008 替换为左 UploadPanel + 右 SizeTabs+ParsedPiecesView）
+    │   ├── UploadPanel.tsx # 上传预览 US-006 ✅ 左侧上传面板（点击+拖拽+客户端预校验+status 反馈）
+    │   └── __tests__/UploadPanel.test.tsx # 上传预览 US-006 ✅ 25 项集成测试
     ├── nests/             # US-003 ✅ NestSVG / NestCard / NestLabel；US-005 ✅ NestsGrid；US-006 ✅ NestSVG seek+hover
     ├── ControlPanel/      # US-004 ✅ 8 子组件；US-005 ✅ MultiSeedControls；US-007 ✅ ExportButtons
     ├── curve/             # US-005 ✅ ConvergenceCurve
@@ -66,6 +68,18 @@ src/
 - **错误不抛、不 rethrow**：useParseDxf 内 try/catch 兜底，所有错误（网络错 / JSON 解析错 / 4xx/5xx）统一进 uploadStore.error，UI 自取。返回 Promise<void> 仅为调用方可选 await（如「上传完成后再切 Tab」）。
 - **doc / activeSize 在失败时不主动清**：uploading 时清 error 但保留 doc/activeSize（避免切 uploading 时 UI 闪烁）；error 时也只写 status/error，让用户能看到上一次成功的预览（可选 UX，由 UI 决定是否隐藏）。reset() 才彻底清零。
 - **fetch URL 是相对路径 `/api/parse-dxf`**：dev 由 Vite proxy 转 :8000，prod 同源；与 useExport fetch('/export') 同口径，前端代码 dev/prod 完全一致。
+
+## 上传预览 US-006 关键约定（UploadPanel 调用方必读）
+
+- **整个 `<aside>` 是拖拽落区，点击触发限定在 drop-zone / button 上**：dragenter/dragover/dragleave/drop 挂在根元素（用户可落在 panel 任何子元素上松手），但点击触发文件选择只绑 drop-zone 和 upload-btn（避免点状态文本误触）。改挂载点会破坏 panel-wide DnD 语义。
+- **dragCounter 防子元素 dragleave 抖动**：浏览器在 panel 子元素间移动会反复触发 dragenter/dragleave，用 ref 计数器保证只在真正离开 panel（counter=0）时清 `.dragover`。直接 toggle boolean 会因抖动出现 `.dragover` 闪烁。改实现需同步 UploadPanel.test.tsx 4 项 DnD 用例。
+- **客户端预校验三件套：.dxf 后缀（MIME 容错）+ 单文件 + 20MB**：后缀判定用 `name.toLowerCase().endsWith('.dxf')`（不看 file.type，Windows 下 MIME 五花八门）；多文件 / 超大直接拦不发请求；20MB 与后端 `server.py UPLOAD_MAX_BYTES` 一致（前端先拦 + 后端兜底）。改任一项需同步 UploadPanel.test.tsx 4 项 reject / 通过用例。
+- **`localError` 与 `store.error` 互斥展示（本地优先）**：客户端校验失败消息进本组件 `useState`，不污染 uploadStore 状态机（hook 仅在 HTTP 流程内切 status）；UI 渲染分支 `displayError = localError ?? (status==='error' ? store.error : null)`。改优先级会破坏错误展示口径。
+- **`e.target.value = ''` 重置 input value**：否则选同一文件不触发 change（input value 去重机制），用户重试同一文件会哑火。UploadPanel.test.tsx AC#2 有断言。
+- **状态驱动 UI 分支**：uploading 显示 `.upload-status.loading` + 按钮文案切「重新上传」+ disabled；done 显示文件名 + 「已解析 N 码 / M 裁片」（N=doc.sizes.length，M=sum(pieces.length)）；error 显示红字（来自 store.error 或 localError）；idle 不渲染 status 块。改分支需同步 UploadPanel.test.tsx AC#3 9 项用例。
+- **drop-zone + upload-btn 双入口触发同一 handlePickClick**：不直接绑到 input.change，而是 click → inputRef.click() → input.change，便于 DnD 与点击共享校验/上传路径（drop 直接进 handleFiles 跳过 input click）。改单一入口会破坏双交互模式。
+- **不引入 CSS 框架**：`.upload-panel` / `.drop-zone` / `.upload-btn` / `.upload-status` 全部沿用 style.css 命令式 className，与 ControlPanel 暗背景 `#26282e` + 绿色 `#2ea06c` 强调同色系；新增 `.drop-zone.dragover` 用绿色边框高亮。
+- **jsdom 缺 DragEvent / DataTransfer，需手动 polyfill**：见 UploadPanel.test.tsx 的 `makeDropEvent` / `makeDragEvent` helper —— 构造原生 Event 并 `Object.defineProperty(ev, 'dataTransfer', ...)` 挂上 stub。jsdom 后续若支持可去掉。
 
 ## US-001 关键约定（Tab 框架调用方必读）
 

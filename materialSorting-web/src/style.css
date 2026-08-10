@@ -189,3 +189,62 @@ button.export {
 }
 button.export:hover:not(:disabled) { background: #3470ac; }
 button.export:disabled { background: #444; color: #888; cursor: default; }
+
+/* ---- US-006 UploadPanel（DXF 上传预览左侧，沿用 .panel 同色系） ---- */
+.upload-panel { display: flex; flex-direction: column; gap: 12px; }
+.upload-panel h2 + .hint { margin-top: 0; }
+.upload-input-hidden { display: none; }
+
+/* 拖拽落区：暗底 + 虚线边，hover/dragover 用绿色 #2ea06c 强调（与 StartButton / active Tab 同色） */
+.drop-zone {
+  padding: 22px 12px;
+  border: 2px dashed #3a3d45;
+  border-radius: 6px;
+  text-align: center;
+  cursor: pointer;
+  background: #1c1d22;
+  transition: border-color 0.15s, background 0.15s, color 0.15s;
+}
+.drop-zone:hover { border-color: #2ea06c; background: #212228; }
+.drop-zone:focus-visible { outline: 2px solid #2ea06c; outline-offset: 2px; }
+.drop-zone.dragover { border-color: #2ea06c; background: #1c2a25; }
+.drop-zone-text { font-size: 13px; color: #cdd; }
+.drop-zone-hint { font-size: 11px; color: #888; margin-top: 4px; }
+.drop-zone.dragover .drop-zone-text { color: #2ea06c; }
+
+/* 点击按钮：与 button#start 同尺寸 + 蓝色（区别于 StartButton 绿色） */
+button.upload-btn {
+  width: 100%;
+  padding: 9px;
+  font-size: 13px;
+  font-weight: 600;
+  background: #2c5d8f;
+  color: #fff;
+  border: 0;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: inherit;
+}
+button.upload-btn:hover:not(:disabled) { background: #3470ac; }
+button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
+
+/* 状态反馈块：loading / done / error 三态，分别用绿底 / 边框 / 红底区分 */
+.upload-status {
+  padding: 8px 10px;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.upload-status.loading { background: #1c1d22; color: #9fd1b8; }
+.upload-status.done {
+  background: #1c2a25;
+  color: #cfcfcf;
+  border: 1px solid rgba(46, 160, 108, 0.4);
+}
+.upload-status.error {
+  background: #2a1c1c;
+  color: #ff8888;
+  border: 1px solid rgba(255, 68, 68, 0.25);
+}
+.upload-filename { font-weight: 600; color: #e6e6e6; word-break: break-all; }
+.upload-summary { font-size: 11px; color: #aab; margin-top: 4px; }

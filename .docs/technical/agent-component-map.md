@@ -1,6 +1,6 @@
 # 前端组件 / 模块地图（materialSorting-web/）
 
-> 由 `/sync-docs` 维护。改前端先看这里。当前覆盖 US-001 Tab 框架 + US-002 WS 契约 + US-003 NestSVG + US-004 ControlPanel + US-005 多 seed/收敛曲线 + US-006 回放 seekbar + 片 hover tooltip + US-007 导出 PNG/DXF + DXF 上传预览 US-001 Tab 骨架 + 上传预览 US-005 类型/store/hook。
+> 由 `/sync-docs` 维护。改前端先看这里。当前覆盖 US-001 Tab 框架 + US-002 WS 契约 + US-003 NestSVG + US-004 ControlPanel + US-005 多 seed/收敛曲线 + US-006 回放 seekbar + 片 hover tooltip + US-007 导出 PNG/DXF + DXF 上传预览 US-001 Tab 骨架 + 上传预览 US-005 类型/store/hook + 上传预览 US-006 UploadPanel 组件。
 
 ## 顶层结构
 
@@ -25,8 +25,10 @@ materialSorting-web/
 │   ├── components/
 │   │   ├── TabBar.tsx       # US-001 顶部 Tab（排料/上传预览）；订阅 uiStore.activeTab
 │   │   ├── NestingPage.tsx  # US-001 排料页（原 App.tsx 业务逻辑外提；持 solving/seeds/useSolveRun）
-│   │   ├── preview/         # US-001 起：上传预览页（US-008 落地 UploadPanel/SizeTabs/PiecePreviewSVG）
-│   │   │   └── PreviewPage.tsx  # US-001 占位（待 US-008 替换为左 UploadPanel + 右 SizeTabs+ParsedPiecesView）
+│   │   ├── preview/         # US-001 起：上传预览页（US-006 UploadPanel；US-008 落地 SizeTabs/PiecePreviewSVG 容器）
+│   │   │   ├── PreviewPage.tsx  # US-001 占位（待 US-008 替换为左 UploadPanel + 右 SizeTabs+ParsedPiecesView）
+│   │   │   ├── UploadPanel.tsx  # US-006 左侧上传面板（点击+拖拽+客户端预校验+status 反馈）
+│   │   │   └── __tests__/UploadPanel.test.tsx  # US-006 集成测试（25 项）
 │   │   ├── nests/          # US-003 NestSVG/NestCard/NestLabel + US-005 NestsGrid；US-006 NestSVG 加 seek+hover
 │   │   ├── ControlPanel/   # US-004 8 子组件 + US-005 MultiSeedControls；US-007 ExportButtons
 │   │   ├── curve/          # US-005 ConvergenceCurve（命令式 innerHTML）
@@ -105,6 +107,24 @@ materialSorting-web/
 7. **activeSize 默认 = `doc.sizes[0].size ?? null`** —— 后端按数值升序、null 殿后，sizes[0] 是最小码。空 sizes 兜底 null。改默认需同步 useParseDxf.test.tsx 3 项 activeSize 用例。
 8. **错误不抛、不 rethrow** —— useParseDxf 内 try/catch 兜底，所有错误（网络错 / JSON 解析错 / 4xx/5xx）统一进 uploadStore.error，UI 自取。返回 Promise\<void\> 仅为调用方可选 await。
 9. **doc / activeSize 在失败时不主动清** —— uploading 时清 error 但保留 doc/activeSize（避免切 uploading 时 UI 闪烁）；error 时也只写 status/error。reset() 才彻底清零。
+
+## 上传预览 US-006 落地：UploadPanel 组件（点击 + 拖拽 + 客户端预校验）
+
+| 文件 | 角色 |
+| --- | --- |
+| `src/components/preview/UploadPanel.tsx` | 左侧上传面板（`.panel.upload-panel`，沿用 ControlPanel 同色系，width:248px）：渲染拖拽落区（`.drop-zone`，全 panel DnD，dragCounter 防抖）+ 隐藏 `<input type=file accept=".dxf">` + 显式按钮（`.upload-btn`）+ 状态反馈块（`.upload-status.{loading,done,error}`）。订阅 uploadStore.status/doc/error；本地 `localError` 持有客户端校验失败消息（与 store.error 互斥展示，本地优先） |
+| `src/components/preview/__tests__/UploadPanel.test.tsx` | 25 项集成测试：DOM 结构 / AC#1 点击 drop-zone + upload-btn + Enter/Space 键盘触发 input.click() / uploading 时禁点击；AC#2 非 .dxf / 多文件 / 超 20MB 三种客户端拒绝 + .DXF 大写后缀通过 / 单文件触发 fetch POST /api/parse-dxf / 校验通过清旧 localError / input.value 重置；AC#1 DnD dragenter/dragleave counter / .dragover 切换 / drop 后清除 / 文案切换；AC#3 status 三态 UI + localError 优先 + 端到端成功/失败路径 |
+
+### 关键不变量（上传预览 US-006 立，后续故事不得破坏）
+
+1. **整个 `<aside>` 是拖拽落区，点击触发限定在 drop-zone / button 上** —— dragenter/dragover/dragleave/drop 挂在根元素（用户可落在 panel 任何子元素上松手），但点击触发文件选择只绑定 drop-zone 和 upload-btn（避免点状态文本误触）。改挂载点会破坏 AC#1 panel-wide DnD 语义。
+2. **dragCounter 防子元素 dragleave 抖动** —— 浏览器在 panel 子元素间移动会反复触发 dragenter/dragleave，用 ref 计数器保证只在真正离开 panel（counter=0）时清 `.dragover`。直接 toggle boolean 会因抖动出现 `.dragover` 闪烁。
+3. **客户端预校验三件套：.dxf 后缀（MIME 容错）+ 单文件 + 20MB** —— 后缀判定用 `name.toLowerCase().endsWith('.dxf')`（不看 file.type，因 Windows 下 MIME 五花八门）；多文件 / 超大直接拦不发请求；20MB 与后端 `server.py UPLOAD_MAX_BYTES` 一致（双校验，前端先拦 + 后端兜底）。改任一项需同步 UploadPanel.test.tsx 3 项 reject 用例。
+4. **`localError` 与 `store.error` 互斥展示（本地优先）** —— 客户端校验失败消息进本组件 `useState`，不污染 uploadStore 状态机（hook 仅在 HTTP 流程内切 status）；UI 渲染分支 `displayError = localError ?? (status==='error' ? store.error : null)`。改优先级会破坏 AC#3 错误展示口径。
+5. **`e.target.value = ''` 重置 input value** —— 否则选同一文件不触发 change（input value 去重机制），用户重试同一文件会哑火。UploadPanel.test.tsx AC#2 有断言。
+6. **状态驱动 UI 分支：status 是唯一驱动** —— uploading 显示 `.upload-status.loading` + 按钮文案 "重新上传" 变 "选择 DXF 文件" + disabled；done 显示文件名 + "已解析 N 码 / M 裁片"（N=doc.sizes.length，M=sum(pieces.length)）；error 显示红字（来自 store.error 或 localError）；idle 不渲染 status 块。改分支需同步 UploadPanel.test.tsx AC#3 9 项用例。
+7. **drop-zone + upload-btn 双入口触发同一 handlePickClick** —— 不直接绑到 input.change，而是 click → inputRef.click() → input.change，便于 DnD 与点击共享校验/上传路径（drop 直接进 handleFiles 跳过 input click）。改单一入口会破坏 AC#1 双交互模式。
+8. **不引入 CSS 框架** —— `.upload-panel` / `.drop-zone` / `.upload-btn` / `.upload-status` 全部沿用 style.css 命令式 className，与 ControlPanel 暗背景 `#26282e` + 绿色 `#2ea06c` 强调同色系；新增 `.drop-zone.dragover` 用绿色边框高亮，与 StartButton 同色。
 
 ## US-002 落地：WS 契约 + RunRegistry + useSolveRun
 
