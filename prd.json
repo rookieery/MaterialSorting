@@ -2,16 +2,10 @@
   "branchName": "ralph/dxf-upload-preview",
   "stories": [
     {
-      "id": "US-004",
-      "title": "POST /api/parse-dxf 上传解析端点",
-      "description": "As a 前端，I want 上传端点接收 DXF 返回按尺码分组、A/B/C 标注的解析结果，so that 用户上传后即可预览。\n\n详见 tasks/prd-dxf-upload-preview.md US-004。\n\n具体任务：\n1. web/server.py 新增 POST /api/parse-dxf，multipart 接收单文件，不动现有 /、/static、/export、/ws/solve。\n2. 落盘到 paths.OUT_DIR/uploads/{uuid}.dxf（from .. import paths，不硬编码）；CPU 密集解析走 loop.run_in_executor(_executor,...) 复用现有 ThreadPoolExecutor。\n3. 调用 US-003 collect_pieces_with_details()；响应 {doc_id,filename,sizes:[{size,pieces:[{label,name,polygon,internal_lines,notches,net_polygon,grain_line}]}]}，全码一次返回（~1-3MB 可接受），裁片按质心/面积稳定排序赋 A/B/C。\n\n验收标准：\n- 非 .dxf→400；ezdxf 异常→422（中文错误）；超 20MB→413；成功→200。\n- curl -F file=@<dxf> http://127.0.0.1:8000/api/parse-dxf 对 M1787 返回各码裁片数>0、含刀口/internal。\n- python -c \"from materialsorting.web.server import app\" 导入通过、分层依赖未反向。",
-      "passes": true
-    },
-    {
       "id": "US-009",
       "title": "Vite proxy /api + layer3 文档勘误",
       "description": "As a 开发者，I want dev 下 /api 经 Vite proxy 转发且旧文档 layer3 错误描述修正，so that 前后端联调通畅、文档与实测一致。\n\n详见 tasks/prd-dxf-upload-preview.md US-009。\n\n具体任务：\n1. materialSorting-web/vite.config.ts 的 server.proxy 新增 /api→http://127.0.0.1:8000（changeOrigin:true），与现有 /export、/ws 并列。\n2. 修正 .docs/business/排料DXF解析架构_方案.md 第2节：删除/更正 layer3=剪口，改为 layer4=刀口(POINT+#N,版师2026-08-10确认)、layer3=轮廓密点(非刀口)、layer2=未定参考点、layer8=内部线、layer14=净版，指向 LAYER_MAPPING。\n\n验收标准：\n- npm run dev + 后端 :8000 同启，fetch('/api/parse-dxf') 命中后端（proxy 转发）。\n- 文档全文搜索无 layer3=剪口 残留。\n- npm run build 通过。",
-      "passes": false
+      "passes": true
     },
     {
       "id": "US-001",

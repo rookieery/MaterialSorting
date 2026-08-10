@@ -1,22 +1,11 @@
 # Ralph Progress Log
 Started: 2026-08-09
 
-
-
-
-- [US-004] POST /api/parse-dxf 上传解析端点（2026-08-10）。
-  - web/server.py：新增 `POST /api/parse-dxf`（multipart 单文件），不动现有 `/`、`/static`、`/export`、`/ws/solve`。
-  - 落盘 `paths.OUT_DIR/uploads/<uuid>.dxf`（doc_id = uuid4.hex）；`UPLOAD_MAX_BYTES=20MB`、`UPLOADS_DIR` 模块级常量。
-  - CPU 解析走 `loop.run_in_executor(_executor, _parse_dxf_sync, str(dest))` 复用 6-worker ThreadPoolExecutor（与 `/ws/solve` 同池），调 `dxf_parser.collect.collect_pieces_with_details`。
-  - 响应 `{doc_id, filename, sizes:[{size, pieces:[{label,name,polygon,internal_lines,notches,net_polygon,grain_line}]}]}`，全码一次返回（M1787 实测 ~680KB / 110 片 / 11 码）。
-  - 排序键 `(-centroid_y, centroid_x, -area_mm2, block_name, piece_index)` → 上方/左/大片优先；A/B/C 每码内独立编号，`_label_for` 支持 26+ 自动 AA/AB。
-  - 错误码：非 .dxf→400；超 20MB→413；ezdxf/collect 异常→422（中文错误）。全走 JSONResponse。
-  - 依赖：`python-multipart` 加进 `[web]` extra（pyproject.toml）。
-  - 验证：① `python -c "from materialsorting.web.server import app"` 通过；② dxf_parser 不 import web/nesting_engine/nesting_bounds（分层单向）；③ curl -F 上传 M1787 → 200 / 11 码 / 每码 10 片 / 含刀口(64)+internal(26)+net(10)；④ 非 .dxf→400、>20MB→413、损坏 .dxf→422 实测全通过；⑤ ms-web 启动/请求/kill 生命周期闭环。
-  - 文档：`.docs/technical/agent-api-reference.md`（新增 `/api/parse-dxf` 章节）+ `.docs/technical/agent-file-map.md`（server.py 行数/职责、web→dxf_parser 跨层依赖、数据流加一行）+ 新建 `web/AGENTS.md`（US-004 关键约定/已踩坑）。
-
-
-
+## 2026-08-10 US-009 — Vite proxy /api + layer3 文档勘误 ✅
+- `materialSorting-web/vite.config.ts` `server.proxy` 新增 `/api → http://127.0.0.1:8000`（changeOrigin:true），与既有 `/export`、`/ws` 并列；build 通过、proxy 实测：GET /api/parse-dxf → 405、POST + M1787 multipart → 200（后端日志可见转发）。
+- `.docs/business/排料DXF解析架构_方案.md` 第 2 节 layer 语义更正：删除 `3=剪口(POINT)`，改为 `1=毛版/14=净版/7=布纹线/4=刀口(POINT+#N)/8=内部线/3=轮廓密点(非刀口)/2=未定参考点`，指向 `dxf_parser/collect.py:LAYER_MAPPING`。
+- 同步更新 `materialSorting-web/AGENTS.md`（dev/prod 后端调用表加 `/api/*`）、`.docs/technical/agent-component-map.md`（顶层结构 + dev/prod 表 + vite 关键点）、删除 `dxf_parser/AGENTS.md` 的 `US-009 待修` 占位。
+- 全文搜索 `layer3.*剪口|3=剪口` 无残留；后台 ms-web (:8000) 与 vite (:5173) 已 taskkill 清理。
 
 
 - layer3 文档勘误 = US-009 范围（本 story 仅在 AGENTS.md 标注「US-009 待修」，不动 `.docs/business/排料DXF解析架构_方案.md` 第 2 节）。

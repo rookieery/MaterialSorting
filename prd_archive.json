@@ -195,6 +195,18 @@
         "title": "PieceOutline 扩字段 + layer 过滤",
         "description": "As a 解析引擎，I want PieceOutline 承载裁片全部细节（内部线/刀口/净版）并在 reader 提供 layer 过滤工具，so that 深度解析有统一 IR 与提取手段。\n\n详见 tasks/prd-dxf-upload-preview.md US-002。\n\n具体任务：\n1. dxf_parser/model.py — PieceOutline 新增三字段（均 field(default_factory=list) 向后兼容）：internal_lines、notches、net_polygon；to_dict 继续用 asdict(self)。\n2. dxf_parser/reader.py — 新增 iter_block_entities(block, layers: set|None=None) 按可选 layer 白名单迭代 block 内实体。\n\n验收标准：\n- 既有调用方（pieces_export、sparrow_baseline）零改动可用（默认空 list）。\n- dxf_parser 仅依赖标准库+ezdxf，不 import 兄弟包（分层依赖未反向）。\n- python -c \"from materialsorting.dxf_parser.model import PieceOutline; from materialsorting.dxf_parser.reader import iter_block_entities\" 导入通过。",
         "passes": true
+      },
+      {
+        "id": "US-003",
+        "title": "母版深度解析 collect_pieces_with_details",
+        "description": "As a 解析引擎，I want collect_pieces_with_details() 从母版还原每片毛版/净版/内部线/刀口/布纹线，so that 预览与 intermediate 转换有完整数据。\n\n详见 tasks/prd-dxf-upload-preview.md US-003。\n\n具体任务：\n1. dxf_parser/explore.py（或新建 dxf_parser/collect.py）新增 collect_pieces_with_details(path)->list[PieceOutline]。\n2. 复用 collect_pieces() 提取 layer1 毛版外轮廓+layer7 布纹线（match_grain）；二次扫描 layer14 POLYLINE→net_polygon、layer8 POLYLINE→internal_lines、layer4 POINT→notches。\n3. notches 存为 [(x,y,nx,ny)]（点+单位法向量），按 point-in-polygon+最近轮廓边归属到 outline。\n4. layer 映射集中常量 LAYER_MAPPING（毛版=1/净版=14/内部线=8/布纹线=7/刀口=4），layer 2/3/13 不提取。\n\n验收标准：\n- 对 data/ 下 5156 与 M1787 跑通，每码裁片数与 collect_pieces() outline 数一致，internal/notch/net 非空。\n- python -m materialsorting.dxf_parser.collect <dxf> 可打印每码裁片数+各字段计数。\n- 模块可 python -m 跑通、dxf_parser 不 import 兄弟包。",
+        "passes": true
+      },
+      {
+        "id": "US-004",
+        "title": "POST /api/parse-dxf 上传解析端点",
+        "description": "As a 前端，I want 上传端点接收 DXF 返回按尺码分组、A/B/C 标注的解析结果，so that 用户上传后即可预览。\n\n详见 tasks/prd-dxf-upload-preview.md US-004。\n\n具体任务：\n1. web/server.py 新增 POST /api/parse-dxf，multipart 接收单文件，不动现有 /、/static、/export、/ws/solve。\n2. 落盘到 paths.OUT_DIR/uploads/{uuid}.dxf（from .. import paths，不硬编码）；CPU 密集解析走 loop.run_in_executor(_executor,...) 复用现有 ThreadPoolExecutor。\n3. 调用 US-003 collect_pieces_with_details()；响应 {doc_id,filename,sizes:[{size,pieces:[{label,name,polygon,internal_lines,notches,net_polygon,grain_line}]}]}，全码一次返回（~1-3MB 可接受），裁片按质心/面积稳定排序赋 A/B/C。\n\n验收标准：\n- 非 .dxf→400；ezdxf 异常→422（中文错误）；超 20MB→413；成功→200。\n- curl -F file=@<dxf> http://127.0.0.1:8000/api/parse-dxf 对 M1787 返回各码裁片数>0、含刀口/internal。\n- python -c \"from materialsorting.web.server import app\" 导入通过、分层依赖未反向。",
+        "passes": true
       }
     ]
   }

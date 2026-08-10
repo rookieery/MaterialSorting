@@ -35,8 +35,6 @@ python -m materialsorting.dxf_parser.export_dxf --dxf "../data/M1787#....dxf"  #
 
 **不提取**：layer 2/3/13（参考点 / 轮廓密点 / 未定语义，**非刀口**；版师 2026-08-10 确认）。
 
-> US-009 待修：`.docs/business/排料DXF解析架构_方案.md` 第 2 节历史描述里 `layer3=剪口` 是过时错误（layer3 是轮廓密点，非刀口；刀口实际在 layer4）。
-
 ## US-003 关键约定（collect_pieces_with_details 调用方必读）
 
 - **复用 explore.collect_pieces**：layer1 毛版外轮廓 + layer7 布纹线（`match_grain` 中点配对）。`collect_pieces_with_details` 返回顺序与 `collect_pieces` 一致，新字段写回原 `PieceOutline` 实例（不创建新对象，旧调用方零改动）。

@@ -18,7 +18,7 @@ npm run test               # vitest run（US-002 起会有用例）
 | --- | --- | --- |
 | 入口 URL | http://localhost:5173/ | http://127.0.0.1:8000/ |
 | base | `/` | `/static/` |
-| 后端调用 | 相对路径 `/export`、`ws://${location.host}/ws/solve` → Vite proxy → :8000 | 同源直连 :8000 |
+| 后端调用 | 相对路径 `/export`、`/api/*`、`ws://${location.host}/ws/solve` → Vite proxy → :8000 | 同源直连 :8000 |
 | 触发 WS 升级 | Vite proxy `ws: true`（**必填**） | 浏览器原生 |
 
 ## 关键约束（CLAUDE.md 引用）

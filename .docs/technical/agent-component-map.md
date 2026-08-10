@@ -8,7 +8,7 @@
 materialSorting-web/
 ├── index.html              # Vite 入口（dev: /, prod: 被 build 覆写到 static/index.html）
 ├── package.json            # scripts: dev / build / preview / typecheck / test
-├── vite.config.ts          # base 切换（dev '/' / build '/static/'）+ proxy /export /ws
+├── vite.config.ts          # base 切换（dev '/' / build '/static/'）+ proxy /export /api /ws（US-009 加 /api）
 ├── vitest.config.ts        # US-002 起：jsdom + globals，独立于 vite.config.ts
 ├── tsconfig.json           # src/ strict TS（target ES2020, jsx react-jsx）
 ├── tsconfig.node.json      # vite.config.ts 单独编译（composite）
@@ -40,7 +40,7 @@ materialSorting-web/
 | --- | --- | --- |
 | 入口 | `npm run dev` → `localhost:5173` | `npm run build` 后由 `ms-web` (:8000) serve |
 | base | `/`（Vite 默认） | `/static/`（FastAPI mount 路径） |
-| 前端如何打后端 | 相对路径 `/export` `/ws/solve`，由 Vite proxy → `127.0.0.1:8000` | 同源 `127.0.0.1:8000/export` `/ws/solve`（无需 proxy） |
+| 前端如何打后端 | 相对路径 `/export` `/api/*` `/ws/solve`，由 Vite proxy → `127.0.0.1:8000` | 同源 `127.0.0.1:8000/export` `/api/*` `/ws/solve`（无需 proxy） |
 | 验证命令 | `curl localhost:5173/`、Python websockets 连 `ws://localhost:5173/ws/solve` | `curl 127.0.0.1:8000/`、`curl -I 127.0.0.1:8000/static/assets/index-*.js` |
 
 ## vite.config.ts 关键点
@@ -48,6 +48,7 @@ materialSorting-web/
 - `base` 由 `command` 决定：`build` → `/static/`，否则 `/`。**勿改成静态值**，否则 dev 或 prod 之一会断。
 - `build.outDir = 'static'`、`emptyOutDir = true` —— 每次构建清空 `static/` 后重写。
 - `server.proxy['/ws'] = { target, ws: true, changeOrigin: true }` —— **`ws: true` 必填**，否则 WS 升级请求会被 Vite 当普通 HTTP 处理返回 404。
+- `server.proxy['/api'] = { target, changeOrigin: true }`（US-009）—— dev 下转发 `/api/parse-dxf` 等到后端 :8000；prod 同源无需 proxy。
 - `server.strictPort = true` —— 锁死 :5173，便于后端 / 文档稳定引用。
 
 ## tsconfig 两文件分工
