@@ -11,21 +11,6 @@ Started: 2026-08-09
 
 
 
-- `npm run test -- PieceZoomModal`：14/14 通过（含 zoom=null 不渲染 / doc=null 不渲染 / 渲染 overlay+modal+aria-label / 头部 label+seq(qty)+size+name / qty 从 qtyStore / null 码「通用」/ body svg.piece-preview-svg / ✕ closeZoom / 遮罩 closeZoom / modal 内不冒泡 / ESC closeZoom / Portal body / label 不存在兜底 / size 不存在兜底）。
-- `npm run test`（全量）：352/352 通过（含 uploadStore 20 / PieceZoomModal 14；既有 333 项无回归）。
 
-## US-014 ParsedPiecesView 卡片头改造 + 双模态集成（2026-08-10）
-
-- ParsedPiecesView.tsx 改造：卡片头由 [.piece-card-label]+[.piece-card-name] → [.piece-card-label]+[.piece-card-qty]。
-  - 序号 = pieces 数组 index+1（A=1, B=2, ...，与 PieceZoomModal locatePiece.seq 同口径）。
-  - 数量 + 可编辑性 从 qtyStore getPieceDisplay(quantities, label, activeSize) 读：editable=true → <button onClick=openQtyDialog+stopPropagation>{seq}({qty})</button>；editable=false（global 非 source） → <span class="disabled" title={reason}>{seq}({qty})</span>（native title 提供 hover 提示）。
-  - .piece-card-body 包裹层加 onClick→openZoom + role=button + tabIndex=0 + aria-label + onKeyDown(Enter/Space)。key 保留 `${label}-${name}` 跨码安全。
-- PreviewPage.tsx 集成：顶层挂 <PieceQtyDialog/> + <PieceZoomModal/> 单例（与 SizeTabs/ParsedPiecesView 同级；Portal 到 body）。重传清零：useEffect 内 useUploadStore.subscribe 监听 state，对比 prev/next doc?.doc_id，不同则调 useQtyStore.getState().resetQuantities()。覆盖三路径（首次上传 no-op / 重传清零 / reset 清零）；切 activeSize 不触发（数量保留）。
-- style.css：删 .piece-card-name；加 .piece-card-qty（透明底 + monospace + 600 + cursor:pointer + hover #2ea06c + focus-visible outline）+ .piece-card-qty.disabled（#666 灰字 + cursor:not-allowed + hover 不高亮）；.piece-card-body 加 cursor:zoom-in + :focus-visible outline。
-- ParsedPiecesView.test.tsx：原 8 项改造（「每片含 A/B/C+名+svg」→「每片含 label 徽章+序号(数量)+svg，无裁片名残留」；切码刷新断 1(0) 序号）+ 新增 11 项（序号 index+1 / qty 默认 0 / qty 从 qtyStore per-size 5 / editable button openQtyDialog / global非source span.disabled+title 含 30 / global source 仍为 button 可编辑 / body onClick openZoom / body role+tabIndex / Enter / Space / qty stopPropagation 不冒泡）。
-- PreviewPage.test.tsx：原 9 项改造（切码 30 names→qtyTexts 断 1(0)/2(0)）+ 新增 7 项（默认模态不渲染 / qtyDialog 自显隐 / zoom 自显隐 / reset 联动清 quantities / 重传 doc_id 变化清 / 切 activeSize 保留 / 端到端：切码→点 qty→切 global+确定→切回原码→span.disabled+title 含 30）。
-- `npm run typecheck` 通过；`npm run build` 通过（static/ 产物刷新 hash：index-DUdlKAyF.js / index-DMHAOuCp.css）。
-- `npm run test -- ParsedPiecesView`：19/19 通过（8 项基础改造 + 11 项新增）。
-- `npm run test -- PreviewPage`：16/16 通过（9 项基础改造 + 7 项新增）。
 - `npm run test`（全量）：370/370 通过（含 ParsedPiecesView 19 / PreviewPage 16；既有 335 项无回归）。
 - 未做浏览器验证：本故事无 SVG/坐标变换（仅 DOM 结构 + 点击处理 + CSS），AC 仅要求 typecheck + 单测 + build；浏览器验证留作整体回归。ms-web :8000 已可启（PID 2304 旧进程占用），最新 build 已 serve（hash 一致）。
