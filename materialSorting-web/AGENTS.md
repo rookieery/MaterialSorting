@@ -28,13 +28,13 @@ npm run test               # vitest run（US-002 起会有用例）
 3. **命令式 polygon 更新**：每帧 setAttribute('points' / 'display')，由 Zustand renderTick 单字段 ~10fps 节流，**逃逸 React reconciliation**。US-003 落地。
 4. **`static/` 是构建产物**（US-008 起入库 gitignore）：`npm run build` 生成，**不要手改**；旧 vanilla 三件套（`legacy/`）已删除，React 应用是唯一真相源。
 
-## 文件分工（US-001 Tab 框架 + US-002~US-008 全部落地；上传预览 US-005 状态层 + US-006 UploadPanel + US-007 PiecePreviewSVG + US-008 SizeTabs/ParsedPiecesView/PreviewPage 容器集成 + 上传预览 US-011 qtyStore 数量状态 + 上传预览 US-012 PieceQtyDialog/Switch 数量弹窗 + 上传预览 US-013 PieceZoomModal 放大预览模态）
+## 文件分工（US-001 Tab 框架 + US-002~US-008 全部落地；上传预览 US-005 状态层 + US-006 UploadPanel + US-007 PiecePreviewSVG + US-008 SizeTabs/ParsedPiecesView/PreviewPage 容器集成 + 上传预览 US-011 qtyStore 数量状态 + 上传预览 US-012 PieceQtyDialog/Switch 数量弹窗 + 上传预览 US-013 PieceZoomModal 放大预览模态 + 上传预览 US-014 ParsedPiecesView 卡片头改造+双模态集成）
 
 ```
 src/
 ├── main.tsx               # US-001：createRoot + StrictMode
 ├── App.tsx                # US-001 ✅ Tab 骨架：TabBar + 双 .page 容器（display:none 切换）+ Tooltip 单例
-├── style.css              # 由 vanilla 前身 1:1 迁入；US-001 加 .tabbar/.tab/.page/.hidden/.preview-empty；上传预览 US-006 加 .upload-panel/.drop-zone/.upload-btn/.upload-status；US-007 加 .piece-preview-svg；US-008 加 .preview-page/.preview-main/.size-tabs/.size-chip/.parsed-pieces-view/.piece-grid/.piece-card*；上传预览 US-012 加 .piece-qty-dialog-overlay/.piece-qty-dialog-modal/.qty-input-group/.qty-step/.qty-input/.switch/.switch-track/.switch-label-*/.switch-thumb/.qty-btn/.qty-confirm；上传预览 US-013 加 .piece-zoom-overlay/.piece-zoom-modal/.piece-zoom-head/.piece-zoom-seq/.piece-zoom-meta/.piece-zoom-name/.piece-zoom-close/.piece-zoom-body
+├── style.css              # 由 vanilla 前身 1:1 迁入；US-001 加 .tabbar/.tab/.page/.hidden/.preview-empty；上传预览 US-006 加 .upload-panel/.drop-zone/.upload-btn/.upload-status；US-007 加 .piece-preview-svg；US-008 加 .preview-page/.preview-main/.size-tabs/.size-chip/.parsed-pieces-view/.piece-grid/.piece-card*；上传预览 US-012 加 .piece-qty-dialog-overlay/.piece-qty-dialog-modal/.qty-input-group/.qty-step/.qty-input/.switch/.switch-track/.switch-label-*/.switch-thumb/.qty-btn/.qty-confirm；上传预览 US-013 加 .piece-zoom-overlay/.piece-zoom-modal/.piece-zoom-head/.piece-zoom-seq/.piece-zoom-meta/.piece-zoom-name/.piece-zoom-close/.piece-zoom-body；上传预览 US-014 改 .piece-card-name→.piece-card-qty(+.disabled) + .piece-card-body 加 cursor:zoom-in
 ├── vite-env.d.ts          # vite/client 类型
 ├── types/                 # US-002 ✅：ws.ts / piece.ts / v03.ts；上传预览 US-005 ✅ parsed.ts（US-004 响应契约）；上传预览 US-011 ✅ qty.ts（PieceQuantity/PieceQuantityMap）
 ├── lib/                   # US-002 ✅ ws.ts；US-003 ✅ geometry.ts；US-004 ✅ params.ts；US-006 ✅ seek.ts；US-007 ✅ download.ts
@@ -46,10 +46,10 @@ src/
     ├── TabBar.tsx         # US-001 ✅ 顶部 Tab（排料/上传预览），订阅 uiStore.activeTab
     ├── NestingPage.tsx    # US-001 ✅ 排料页（原 App 业务逻辑外提；持 solving/seeds/useSolveRun）
     ├── preview/           # US-001 起：上传预览页
-    │   ├── PreviewPage.tsx # US-008 ✅ 容器（左 UploadPanel + 右 SizeTabs+ParsedPiecesView；未解析空态）
+    │   ├── PreviewPage.tsx # US-008 ✅ 容器（左 UploadPanel + 右 SizeTabs+ParsedPiecesView；未解析空态）；US-014 ✅ 顶层挂 PieceQtyDialog+PieceZoomModal 单例 + useEffect subscribe 联动 qtyStore.resetQuantities（重传清零）
     │   ├── UploadPanel.tsx # 上传预览 US-006 ✅ 左侧上传面板（点击+拖拽+客户端预校验+status 反馈）
     │   ├── SizeTabs.tsx    # 上传预览 US-008 ✅ 尺码切换条（订阅 uploadStore.doc/activeSize；点击 setSize）
-    │   ├── ParsedPiecesView.tsx # 上传预览 US-008 ✅ 当前 activeSize 下裁片 grid（每片卡片：PiecePreviewSVG+A/B/C+名）
+    │   ├── ParsedPiecesView.tsx # 上传预览 US-008 ✅ 当前 activeSize 下裁片 grid；US-014 ✅ 卡片头改造为 [A徽章]+序号(数量)（editable=button→openQtyDialog / global非source=span.disabled+title）+ .piece-card-body onClick→openZoom + role=button+tabIndex+Enter/Space
     │   ├── PiecePreviewSVG.tsx # 上传预览 US-007 ✅ 单片（或多片）母版预览 SVG（命令式渲染 + scale(1,-1) 翻转）
     │   ├── Switch.tsx          # 上传预览 US-012 ✅ 受控开关（role=switch + aria-checked；PieceQtyDialog 内「仅当前尺码/全部尺码」用）
     │   ├── PieceQtyDialog.tsx  # 上传预览 US-012 ✅ 数量编辑弹窗（草稿+确定；Portal 到 body；ESC/遮罩/取消丢弃草稿）
@@ -58,8 +58,8 @@ src/
     │       ├── UploadPanel.test.tsx      # 上传预览 US-006 ✅ 25 项集成测试
     │       ├── PiecePreviewSVG.test.tsx  # 上传预览 US-007 ✅ 33 项单测（bbox 纯函数 + 5 层渲染 + 翻转 + 标注 + 切片重建）
     │       ├── SizeTabs.test.tsx         # 上传预览 US-008 ✅ 8 项单测（chip 列表 + active 高亮 + 点击 setSize + null 通用码）
-    │       ├── ParsedPiecesView.test.tsx # 上传预览 US-008 ✅ 8 项单测（grid 渲染 + 切码刷新 + 空态）
-    │       ├── PreviewPage.test.tsx      # 上传预览 US-008 ✅ 9 项集成（左 panel+右 main 布局 + 已解析/未解析分支 + 端到端切码）
+    │       ├── ParsedPiecesView.test.tsx # 上传预览 US-008 ✅ 8 项基础 + US-014 ✅ 11 项新增（序号 index+1 / qty 默认 0 / editable button openQtyDialog / global非source span.disabled+title / body onClick openZoom / Enter/Space / qty stopPropagation）
+    │       ├── PreviewPage.test.tsx      # 上传预览 US-008 ✅ 9 项基础 + US-014 ✅ 7 项新增（默认模态不渲染 / qtyDialog+zoom 自显隐 / reset 联动清 / 重传清 / 切码保留 / 端到端切码→qty→global→置灰 title）
     │       ├── Switch.test.tsx           # 上传预览 US-012 ✅ 5 项单测（role+aria-checked / onChange / label 文案 / disabled / .on class）
     │       ├── PieceQtyDialog.test.tsx   # 上传预览 US-012 ✅ 15 项集成（null 不渲染 / 标题 / 初值 per-size+global / [+][-] / Switch / 确定 per-size+global / 取消 / 遮罩 / ESC / blur clamp）
     │       └── PieceZoomModal.test.tsx   # 上传预览 US-013 ✅ 14 项集成（null 不渲染 / doc=null 不渲染 / overlay+modal+aria / 头部 label+seq(qty)+size+name / qty 从 qtyStore / null 码「通用」/ body svg.piece-preview-svg / ✕ closeZoom / 遮罩 closeZoom / modal 不冒泡 / ESC closeZoom / Portal body / label 不存在兜底 / size 不存在兜底）
@@ -109,6 +109,19 @@ src/
 - **uploadStore.reset 联动 zoom 清零（不联动 qtyStore.resetQuantities）**：本故事只扩 uploadStore.reset 同步清 `zoom=null`（同 store 内）；qtyStore 独立 store 的 resetQuantities 联动（重传清零数量）仍由 US-014 集成时挂入。本故事范围仅模态组件 + store 字段 + 单测，**不集成到 PreviewPage**（PreviewPage 顶层挂 PieceZoomModal 单例是 US-014 任务）。
 - **不引入 CSS 框架**：`.piece-zoom-overlay` / `.piece-zoom-modal` / `.piece-zoom-head` / `.piece-zoom-seq` / `.piece-zoom-meta` / `.piece-zoom-name` / `.piece-zoom-close` / `.piece-zoom-body` 全部沿用 style.css 命令式 className，与 piece-card / piece-qty-dialog 暗背景 `#2a2c32/#26282e` + 绿色 `#2ea06c` 强调同色系。
 - **未做浏览器验证**：本故事无 SVG/坐标变换改动（仅复用 PiecePreviewSVG 加大 pad，DOM 弹窗外壳），AC 仅要求 typecheck + 单测，故跳过 chrome-devtools-mcp；US-014 集成时再统一浏览器回归（含放大模态显隐 / ✕/遮罩/ESC / 头部信息）。
+
+## 上传预览 US-014 关键约定（ParsedPiecesView 卡片头改造 + 双模态集成 调用方必读）
+
+- **卡片头双模态入口严格分离**：`.piece-card-qty`（在 head）点击 → openQtyDialog；`.piece-card-body`（SVG 包裹层）点击 → openZoom。两个交互入口由位置分离（head vs body 平级）+ stopPropagation 双重防御（qty button onClick 调 `e.stopPropagation()`，即使未来 qty 移到 body 内也不会冒泡触发 zoom）。改分离逻辑需同步 ParsedPiecesView.test.tsx「qty 不冒泡到 body」用例。
+- **.piece-card-qty 双形态渲染**：editable=true（label 未配置 / per-size 模式 / global source 码）渲染 `<button class="piece-card-qty">`，点击 openQtyDialog；editable=false（global 非 source 码）渲染 `<span class="piece-card-qty disabled">`，不可点击 + native title 提供 hover 提示文案（reason=`'该数值已在「<sizeLabel(globalSource)>」处使用全局数量'`）。qty=0 正常显示 `序号(0)`（默认态）。改双形态分支需同步「editable button / global非source span.disabled / global source button」3 项用例。
+- **序号 = pieces 数组 index+1（与 PieceZoomModal locatePiece.seq 同口径）**：ParsedPiecesView 用 `pieces.map((p, idx) => seq = idx+1)`；PieceZoomModal 用 `locatePiece` 内 `pieces.findIndex+1`。两者口径一致（A=1, B=2, ...），依赖后端 `_label_for` 几何排序在码间稳定。改 seq 口径需同步两个组件 + ParsedPiecesView 11 项用例 + PieceZoomModal 14 项用例。
+- **.piece-card-body a11y 完整**：role=button + tabIndex=0 + aria-label=`放大预览裁片 ${label}` + onKeyDown(Enter/Space→openZoom)。与 UploadPanel drop-zone 同模式（键盘用户可用 Tab 聚焦 + Enter/Space 触发）。改 a11y 属性需同步「role+tabIndex / Enter / Space」3 项用例。
+- **重传清零用 useUploadStore.subscribe（非 useEffect+ref 对比）**：PreviewPage useEffect 内 `let prevDocId = getState().doc?.doc_id` + `subscribe((state) => { if (state.doc?.doc_id !== prevDocId) { prevDocId = ...; resetQuantities(); } })`。**subscribe 捕获所有 state 变化**（包括不触发 re-render 的 setState），比 useEffect+ref 对比 doc 更可靠。subscribe 在 unmount 时 unsub（无残留）。改实现需同步「reset 联动 / 重传清 / 切码保留」3 项用例。
+- **qtyStore 与 uploadStore 解耦（reset 联动在 PreviewPage 集成层）**：uploadStore 不知道 qtyStore 存在（reset 仅清自身字段 qtyDialog/zoom 等）；qtyStore 不知道 uploadStore 存在（resetQuantities 是独立 action）。**PreviewPage 作为集成层**用 subscribe 绑定两者。改耦合（如把 resetQuantities 调用挪到 uploadStore.reset 内）会破坏 store 解耦原则。
+- **三路径区分**：reset（doc→null）+ 重传（doc_id 变化）触发 resetQuantities；切 activeSize（doc_id 不变）**不触发**（保留数量）。改分支需同步「reset 联动 / 重传清 / 切码保留」3 项用例。
+- **顶层模态单例（声明式受控 Portal）**：PreviewPage 顶层挂 `<PieceQtyDialog/>` + `<PieceZoomModal/>` 各一个；两者默认 return null（qtyDialog=null / zoom=null），store 写入目标时自显隐。改挂载位置（如挪到 ParsedPiecesView 内）会破坏「单例」语义（每片卡片各挂一个会多实例 clobber）。Portal 到 document.body，DOM 位置与 React 树位置无关。
+- **不引入 CSS 框架**：`.piece-card-qty`（透明底 + monospace + hover `#2ea06c`）+ `.piece-card-qty.disabled`（`#666` 灰字 + cursor:not-allowed）+ `.piece-card-body cursor:zoom-in` 全部沿用 style.css 命令式 className。`.piece-card-name` 已删除（不再使用）。改 className 需同步组件 + 测试。
+- **未做浏览器验证（无 SVG/坐标变换）**：本故事无 SVG 渲染、坐标变换、可视化逻辑改动（仅卡片头 DOM 结构 + 模态挂载 + 点击处理 + CSS），AC 仅要求 typecheck + 单测 + build；浏览器验证留作整体回归。
 
 ## US-005 关键约定（上传预览状态层 调用方必读）
 

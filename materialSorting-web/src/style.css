@@ -351,16 +351,47 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
   font-size: 11px;
   font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
 }
-.piece-card-name {
+/* US-014 卡片头序号(数量)：editable 时为 button，global 非 source 时为 span.disabled */
+.piece-card-qty {
+  /* button 默认带 border / bg，先重置成透明以继承 head 配色 */
+  background: transparent;
+  border: 0;
+  padding: 0 2px;
   color: #cdd;
-  word-break: break-all;
-  line-height: 1.3;
+  font-size: 12px;
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+.piece-card-qty:hover {
+  color: #2ea06c;
+}
+.piece-card-qty:focus-visible {
+  outline: 2px solid #2ea06c;
+  outline-offset: 1px;
+  border-radius: 3px;
+}
+/* global 非 source 置灰：不可点击，hover 不高亮，native title 提供 hover 提示 */
+.piece-card-qty.disabled {
+  color: #666;
+  cursor: not-allowed;
+  font-weight: 600;
+}
+.piece-card-qty.disabled:hover {
+  color: #666;
 }
 .piece-card-body {
   flex: 1;
   min-height: 0;
   padding: 6px;
   display: flex;
+  /* US-014 卡片图形区可点击放大预览：zoom-in 提示用户可点击 */
+  cursor: zoom-in;
+}
+.piece-card-body:focus-visible {
+  outline: 2px solid #2ea06c;
+  outline-offset: -2px;
 }
 .piece-card-body svg {
   flex: 1;
