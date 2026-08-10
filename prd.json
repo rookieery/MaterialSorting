@@ -2,16 +2,10 @@
   "branchName": "ralph/dxf-upload-preview",
   "stories": [
     {
-      "id": "US-006",
-      "title": "UploadPanel 点击+拖拽上传",
-      "description": "As a 版师，I want 点击或拖拽上传 DXF 并看到状态/错误反馈，so that 上传直观可靠。\n\n详见 tasks/prd-dxf-upload-preview.md US-006。\n\n具体任务：\n1. 新建 components/preview/UploadPanel.tsx：点击按钮（隐藏 input[type=file accept=.dxf]）+ 拖拽落区（dragover/drop）。\n2. 从 uploadStore 读 status/error：uploading 加载态、error 红字、done 显示文件名+码数概览（如已解析 8 码/110 裁片）。\n3. 左侧固定宽度，沿用 style.css 与 ControlPanel 风格一致。\n\n验收标准：\n- 仅 .dxf（后缀+MIME 容错），非 .dxf 提示不发请求；单文件，拖入多文件拒绝提示。\n- 浏览器验证：点击与拖拽分别上传 M1787 见加载→完成；拖入 .txt 见拒绝。\n- npm run build 通过。",
-      "passes": true
-    },
-    {
       "id": "US-007",
       "title": "PiecePreviewSVG 命令式渲染",
       "description": "As a 版师，I want 右侧看到单片完整还原（毛版实心+净版绿虚+内部线橙+刀口短线段+布纹线红虚+A/B/C 标注），so that 核对母版信息正确解析。\n\n详见 tasks/prd-dxf-upload-preview.md US-007。\n\n具体任务：\n1. 新建 components/preview/PiecePreviewSVG.tsx：参考 NestSVG.tsx 命令式范式（useRef+useEffect 直绘 path/circle/text，逃逸 reconciliation）。\n2. 渲染分层：layer1 毛版=半透明蓝实心+实线边；layer14 净版=绿虚线；layer8 内部线=橙实线；刀口=沿法线短线段（notch 模型，长度暂定 8mm 待版师确认）；layer7 布纹线=红虚线。\n3. 坐标系 scale(1,-1) 翻转必须保留（与 PNG/R12-DXF 一致）；A/B/C 文字标注放在翻转组 <g> 之外（避免镜像），屏幕坐标计算。\n\n验收标准：\n- 浏览器验证：上传 M1787→选码→某片，肉眼核对毛版/净版/内部线/刀口短线段/布纹线/A/B/C 全可见且文字未镜像。\n- npm run build 通过。",
-      "passes": false
+      "passes": true
     },
     {
       "id": "US-008",

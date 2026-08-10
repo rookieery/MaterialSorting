@@ -28,13 +28,13 @@ npm run test               # vitest run（US-002 起会有用例）
 3. **命令式 polygon 更新**：每帧 setAttribute('points' / 'display')，由 Zustand renderTick 单字段 ~10fps 节流，**逃逸 React reconciliation**。US-003 落地。
 4. **`static/` 是构建产物**（US-008 起入库 gitignore）：`npm run build` 生成，**不要手改**；旧 vanilla 三件套（`legacy/`）已删除，React 应用是唯一真相源。
 
-## 文件分工（US-001 Tab 框架 + US-002~US-007 全部落地；上传预览 US-005 状态层 + US-006 UploadPanel；US-008 收尾清理）
+## 文件分工（US-001 Tab 框架 + US-002~US-007 全部落地；上传预览 US-005 状态层 + US-006 UploadPanel + US-007 PiecePreviewSVG；US-008 收尾清理）
 
 ```
 src/
 ├── main.tsx               # US-001：createRoot + StrictMode
 ├── App.tsx                # US-001 ✅ Tab 骨架：TabBar + 双 .page 容器（display:none 切换）+ Tooltip 单例
-├── style.css              # 由 vanilla 前身 1:1 迁入；US-001 加 .tabbar/.tab/.page/.hidden/.preview-empty；上传预览 US-006 加 .upload-panel/.drop-zone/.upload-btn/.upload-status
+├── style.css              # 由 vanilla 前身 1:1 迁入；US-001 加 .tabbar/.tab/.page/.hidden/.preview-empty；上传预览 US-006 加 .upload-panel/.drop-zone/.upload-btn/.upload-status；US-007 加 .piece-preview-svg
 ├── vite-env.d.ts          # vite/client 类型
 ├── types/                 # US-002 ✅：ws.ts / piece.ts / v03.ts；上传预览 US-005 ✅ parsed.ts（US-004 响应契约）
 ├── lib/                   # US-002 ✅ ws.ts；US-003 ✅ geometry.ts；US-004 ✅ params.ts；US-006 ✅ seek.ts；US-007 ✅ download.ts
@@ -48,7 +48,10 @@ src/
     ├── preview/           # US-001 起：上传预览页
     │   ├── PreviewPage.tsx # US-001 占位（US-008 替换为左 UploadPanel + 右 SizeTabs+ParsedPiecesView）
     │   ├── UploadPanel.tsx # 上传预览 US-006 ✅ 左侧上传面板（点击+拖拽+客户端预校验+status 反馈）
-    │   └── __tests__/UploadPanel.test.tsx # 上传预览 US-006 ✅ 25 项集成测试
+    │   ├── PiecePreviewSVG.tsx # 上传预览 US-007 ✅ 单片（或多片）母版预览 SVG（命令式渲染 + scale(1,-1) 翻转）
+    │   └── __tests__/
+    │       ├── UploadPanel.test.tsx      # 上传预览 US-006 ✅ 25 项集成测试
+    │       └── PiecePreviewSVG.test.tsx  # 上传预览 US-007 ✅ 33 项单测（bbox 纯函数 + 5 层渲染 + 翻转 + 标注 + 切片重建）
     ├── nests/             # US-003 ✅ NestSVG / NestCard / NestLabel；US-005 ✅ NestsGrid；US-006 ✅ NestSVG seek+hover
     ├── ControlPanel/      # US-004 ✅ 8 子组件；US-005 ✅ MultiSeedControls；US-007 ✅ ExportButtons
     ├── curve/             # US-005 ✅ ConvergenceCurve
@@ -80,6 +83,21 @@ src/
 - **drop-zone + upload-btn 双入口触发同一 handlePickClick**：不直接绑到 input.change，而是 click → inputRef.click() → input.change，便于 DnD 与点击共享校验/上传路径（drop 直接进 handleFiles 跳过 input click）。改单一入口会破坏双交互模式。
 - **不引入 CSS 框架**：`.upload-panel` / `.drop-zone` / `.upload-btn` / `.upload-status` 全部沿用 style.css 命令式 className，与 ControlPanel 暗背景 `#26282e` + 绿色 `#2ea06c` 强调同色系；新增 `.drop-zone.dragover` 用绿色边框高亮。
 - **jsdom 缺 DragEvent / DataTransfer，需手动 polyfill**：见 UploadPanel.test.tsx 的 `makeDropEvent` / `makeDragEvent` helper —— 构造原生 Event 并 `Object.defineProperty(ev, 'dataTransfer', ...)` 挂上 stub。jsdom 后续若支持可去掉。
+
+## 上传预览 US-007 关键约定（PiecePreviewSVG 调用方必读）
+
+- **命令式渲染范式（参考 NestSVG.tsx）**：React 仅渲染 `<svg ref/>` 空骨架；useEffect 内 imperative 建 flipGroup `<g>` + 各层节点（polygon / polyline / line / text），用 `setAttribute` 写 transform / points / stroke / ...，**逃逸 React reconciliation**。改任何 attr 走 JSX prop 会被 React 用 vdom 覆盖回旧值（同 NestSVG 关键约定 #2）。
+- **翻转组 transform = `translate(0 ${minY+maxY}) scale(1 -1)`**：sparrow Y-up → SVG Y-down（与 PNG / R12-DXF / NestSVG 一致）。`minY+maxY` 是 bbox 的 Y 对称轴，翻转后 bbox 内几何视觉与 sparrow 视图一致（不上下颠倒）。NestSVG 是其特例（minY=0, maxY=gate → `translate(0 gate) scale(1 -1)`）。改字面量需同步 PiecePreviewSVG.test.tsx AC#3 用例。
+- **A/B/C 文字标注放在翻转组 `<g>` 之外**（AC#3 不镜像）：用屏幕坐标（SVG Y-down）直接定位 —— 锚点 = piece bbox 左上角上方 `LABEL_Y_OFFSET=3`（baseline 在 `minY - 3`），`font-size=11` / `dominant-baseline=alphabetic`。改位置 / 字号需同步 PiecePreviewSVG.test.tsx 「A/B/C 标注用屏幕坐标」用例。
+- **viewBox = bbox + pad**（默认 `DEFAULT_PAD=14`，最小 `MIN_PAD=4` clamp）：pad 容纳 8mm 刀口半段（4mm）+ 标注文本（~10mm cap 高度）。改 pad 默认需同步「viewBox = bbox + pad」用例（默认 + 自定义 + clamp 三组）。
+- **5 层渲染分层（颜色 / 线型严格固定，改需同步测试 + 版师确认）**：layer1 毛版半透明蓝实心 `rgba(80,140,200,0.22)` + `#3f7fbf` 实线边（闭合 polygon）；layer14 净版绿虚线 `#33cc33` `stroke-dasharray=6 3`（闭合 polygon，fill=none）；layer8 内部线橙实线 `#ff8c1a`（polyline 不闭合，line.length<2 跳过）；layer4 刀口黄短线段 `#ffd700`（line，端点 `P ± 4*unit_normal`，长度 `NOTCH_LEN_MM=8`，**待版师确认**）；layer7 布纹线红虚线 `#e53e3e` `stroke-dasharray=5 3`（line，grain_line=null 跳过）。
+- **刀口端点 = `P ± 4 * unit_normal`**（unit_normal 来自后端 `notch[2..3]`）：法线为单位向量，half=4，端点 `(x∓4nx, y∓4ny)`，r2 截断。法线为零向量（退化边）→ 0 长度线段（点）兜底。改 NOTCH_LEN_MM 需同步 PiecePreviewSVG.test.tsx 2 项刀口用例 + 版师确认。
+- **piece(s) 切换整组重建（不同于 NestSVG flipRef 幂等）**：useEffect 头部 `while (svg.firstChild) svg.removeChild(svg.firstChild)` 清空旧内容后重建。NestSVG 同 run 内 N 帧复用 DOM（高频），PiecePreviewSVG 切片是低频 UI 操作，重建简洁且开销可接受。StrictMode 双 mount 同样安全（清空再建）。
+- **AC#4 多片同框**：prop 接受 `ParsedPiece | ParsedPiece[]`，归一化为数组；多片时合并 bbox 计算 viewBox（`piecesBBox`），每片独立渲染 5 层 + 各自 A/B/C 标注。US-008 ParsedPiecesView 用单片卡片，多片能力留作未来扩展（不刻意避免重叠，由调用方决定）。
+- **空片容错（polygon=[] 或全无数据）**：`piecesBBox` 返回 null → svg 清空后啥都不画（无 viewBox / 无 flipGroup / 无标注），不留残影。polygon.length<3 跳过 rough 层；其他层照常渲染。改兜底需同步「空片」「polygon<3 跳过 rough」用例。
+- **pad prop 最小 4 clamp**：`safePad = Math.max(MIN_PAD, pad)`，防 8mm 刀口半段被裁。负数 / NaN（NaN 经 max 比较返回另一侧）兜底为 4。
+- **导出辅助 `pieceBBox` / `piecesBBox` / `BBox` 便于测试**：纯函数 / 类型导出，单测直接调；不改 React 渲染。PiecePreviewSVG.test.tsx 5 项 bbox 用例覆盖（合并所有层顶点 / 空片 null / 无 grain 跳过 / 多片合并 / 全空片 null）。
+- **不引入 CSS 框架**：`.piece-preview-svg`（display:block + width:100% + height:100% + bg `#eef0f3`，与排料图同色）由 imperative setAttribute('class', ...) 写入，沿用 style.css；与 `.nest-card svg` 同口径。
 
 ## US-001 关键约定（Tab 框架调用方必读）
 

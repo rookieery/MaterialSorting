@@ -248,3 +248,13 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
 }
 .upload-filename { font-weight: 600; color: #e6e6e6; word-break: break-all; }
 .upload-summary { font-size: 11px; color: #aab; margin-top: 4px; }
+
+/* ---- US-007 PiecePreviewSVG（单片母版预览；class 由组件 imperative setAttribute 写入） ---- */
+/* 沿用 .nest-card svg 同口径：fill 父容器（US-008 ParsedPiecesView 卡片），背景与排料图同色 */
+.piece-preview-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  background: #eef0f3;
+}
