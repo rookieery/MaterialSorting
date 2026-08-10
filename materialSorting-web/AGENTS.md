@@ -28,13 +28,13 @@ npm run test               # vitest run（US-002 起会有用例）
 3. **命令式 polygon 更新**：每帧 setAttribute('points' / 'display')，由 Zustand renderTick 单字段 ~10fps 节流，**逃逸 React reconciliation**。US-003 落地。
 4. **`static/` 是构建产物**（US-008 起入库 gitignore）：`npm run build` 生成，**不要手改**；旧 vanilla 三件套（`legacy/`）已删除，React 应用是唯一真相源。
 
-## 文件分工（US-001 Tab 框架 + US-002~US-007 全部落地；上传预览 US-005 状态层 + US-006 UploadPanel + US-007 PiecePreviewSVG；US-008 收尾清理）
+## 文件分工（US-001 Tab 框架 + US-002~US-008 全部落地；上传预览 US-005 状态层 + US-006 UploadPanel + US-007 PiecePreviewSVG + US-008 SizeTabs/ParsedPiecesView/PreviewPage 容器集成）
 
 ```
 src/
 ├── main.tsx               # US-001：createRoot + StrictMode
 ├── App.tsx                # US-001 ✅ Tab 骨架：TabBar + 双 .page 容器（display:none 切换）+ Tooltip 单例
-├── style.css              # 由 vanilla 前身 1:1 迁入；US-001 加 .tabbar/.tab/.page/.hidden/.preview-empty；上传预览 US-006 加 .upload-panel/.drop-zone/.upload-btn/.upload-status；US-007 加 .piece-preview-svg
+├── style.css              # 由 vanilla 前身 1:1 迁入；US-001 加 .tabbar/.tab/.page/.hidden/.preview-empty；上传预览 US-006 加 .upload-panel/.drop-zone/.upload-btn/.upload-status；US-007 加 .piece-preview-svg；US-008 加 .preview-page/.preview-main/.size-tabs/.size-chip/.parsed-pieces-view/.piece-grid/.piece-card*
 ├── vite-env.d.ts          # vite/client 类型
 ├── types/                 # US-002 ✅：ws.ts / piece.ts / v03.ts；上传预览 US-005 ✅ parsed.ts（US-004 响应契约）
 ├── lib/                   # US-002 ✅ ws.ts；US-003 ✅ geometry.ts；US-004 ✅ params.ts；US-006 ✅ seek.ts；US-007 ✅ download.ts
@@ -46,12 +46,17 @@ src/
     ├── TabBar.tsx         # US-001 ✅ 顶部 Tab（排料/上传预览），订阅 uiStore.activeTab
     ├── NestingPage.tsx    # US-001 ✅ 排料页（原 App 业务逻辑外提；持 solving/seeds/useSolveRun）
     ├── preview/           # US-001 起：上传预览页
-    │   ├── PreviewPage.tsx # US-001 占位（US-008 替换为左 UploadPanel + 右 SizeTabs+ParsedPiecesView）
+    │   ├── PreviewPage.tsx # US-008 ✅ 容器（左 UploadPanel + 右 SizeTabs+ParsedPiecesView；未解析空态）
     │   ├── UploadPanel.tsx # 上传预览 US-006 ✅ 左侧上传面板（点击+拖拽+客户端预校验+status 反馈）
+    │   ├── SizeTabs.tsx    # 上传预览 US-008 ✅ 尺码切换条（订阅 uploadStore.doc/activeSize；点击 setSize）
+    │   ├── ParsedPiecesView.tsx # 上传预览 US-008 ✅ 当前 activeSize 下裁片 grid（每片卡片：PiecePreviewSVG+A/B/C+名）
     │   ├── PiecePreviewSVG.tsx # 上传预览 US-007 ✅ 单片（或多片）母版预览 SVG（命令式渲染 + scale(1,-1) 翻转）
     │   └── __tests__/
     │       ├── UploadPanel.test.tsx      # 上传预览 US-006 ✅ 25 项集成测试
-    │       └── PiecePreviewSVG.test.tsx  # 上传预览 US-007 ✅ 33 项单测（bbox 纯函数 + 5 层渲染 + 翻转 + 标注 + 切片重建）
+    │       ├── PiecePreviewSVG.test.tsx  # 上传预览 US-007 ✅ 33 项单测（bbox 纯函数 + 5 层渲染 + 翻转 + 标注 + 切片重建）
+    │       ├── SizeTabs.test.tsx         # 上传预览 US-008 ✅ 8 项单测（chip 列表 + active 高亮 + 点击 setSize + null 通用码）
+    │       ├── ParsedPiecesView.test.tsx # 上传预览 US-008 ✅ 8 项单测（grid 渲染 + 切码刷新 + 空态）
+    │       └── PreviewPage.test.tsx      # 上传预览 US-008 ✅ 9 项集成（左 panel+右 main 布局 + 已解析/未解析分支 + 端到端切码）
     ├── nests/             # US-003 ✅ NestSVG / NestCard / NestLabel；US-005 ✅ NestsGrid；US-006 ✅ NestSVG seek+hover
     ├── ControlPanel/      # US-004 ✅ 8 子组件；US-005 ✅ MultiSeedControls；US-007 ✅ ExportButtons
     ├── curve/             # US-005 ✅ ConvergenceCurve
@@ -98,6 +103,22 @@ src/
 - **pad prop 最小 4 clamp**：`safePad = Math.max(MIN_PAD, pad)`，防 8mm 刀口半段被裁。负数 / NaN（NaN 经 max 比较返回另一侧）兜底为 4。
 - **导出辅助 `pieceBBox` / `piecesBBox` / `BBox` 便于测试**：纯函数 / 类型导出，单测直接调；不改 React 渲染。PiecePreviewSVG.test.tsx 5 项 bbox 用例覆盖（合并所有层顶点 / 空片 null / 无 grain 跳过 / 多片合并 / 全空片 null）。
 - **不引入 CSS 框架**：`.piece-preview-svg`（display:block + width:100% + height:100% + bg `#eef0f3`，与排料图同色）由 imperative setAttribute('class', ...) 写入，沿用 style.css；与 `.nest-card svg` 同口径。
+
+## 上传预览 US-008 关键约定（SizeTabs / ParsedPiecesView / PreviewPage 调用方必读）
+
+- **三个新组件都从 uploadStore 读、不持本地状态**：SizeTabs 读 `doc`/`activeSize`/`setSize`；ParsedPiecesView 读 `doc`/`activeSize`；PreviewPage 读 `status`/`doc`。store 是单一真相源（US-005 关键约定），切 Tab 后状态保留 = store 是模块级 + display:none 不卸载（AC#5 由 store 持久性保证，组件本身无需任何持久化逻辑）。
+- **PreviewPage 空态分支用 `hasParsed = status === 'done' && doc !== null`**：双重条件防御（done 理论必有 doc，但 TS 类型上 doc nullable）。uploading / error 时仍显示空态卡片（不显示「上传中…」之类的状态行 —— 那是 UploadPanel 的事），保持右侧稳定布局。改分支需同步 PreviewPage.test.tsx 4 项空态用例。
+- **SizeTabs 的 chip 顺序 = doc.sizes 顺序**（后端按数值升序、null 殿后），**前端不二次排序**：保证 UI 顺序与后端语义一致。改排序需同步后端 `_build_parse_payload` + SizeTabs.test.tsx「渲染 doc.sizes 全部」用例。
+- **null 码 chip 显示「通用」**（`NULL_SIZE_LABEL`）：母版里极少出现的「不分码」片（统计上代表通用码），用人读文案代替空字符串/「null」。改文案需同步 SizeTabs.test.tsx 「null 码渲染为通用」用例。
+- **SizeTabs doc=null 时返回空 Fragment**（`return <></>`）：双重防御（PreviewPage 在 doc=null 时不挂载 SizeTabs，但组件本身也兜底）。改返回值需同步 SizeTabs.test.tsx 「doc=null」用例。
+- **ParsedPiecesView 用 `doc.sizes.find(s => s.size === activeSize)` 过滤当前码**：理论必命中（SizeTabs 只能切到 doc.sizes 里的码），防御性兜底 `matched=undefined` → pieces=[] → 显示「该尺码无裁片」空态。改过滤逻辑需同步 ParsedPiecesView.test.tsx 「activeSize 不在 doc.sizes」用例。
+- **piece key 用 `${label}-${name}`**：label 在码内唯一（A/B/C/...，后端 _label_for 已保证），name 是母版 block 名（GBK 解码后中文），两者拼合跨码安全。同码内可能多片同名（label 不同）或同 label 不同名 —— key 拼合兜底所有场景。改 key 需同步 ParsedPiecesView.test.tsx 「key 用 label-name」用例。
+- **每片卡片用 PiecePreviewSVG 单片模式**（不传数组，US-007 AC#4 多片能力留作未来扩展）：grid 是「每片独立预览」语义，单片卡片视觉清晰。改多片模式需先与版师确认 grid 单卡承载多片的 UX 必要性。
+- **piece-card 视觉沿用 .nest-card 同口径**：暗背景 `#2a2c32` + 圆角 + 上方 `.piece-card-head`（label 徽章 + 裁片名）+ 下方 `.piece-card-body`（SVG 自适应）；与排料页 NestCard 视觉一致。label 徽章用 `.piece-card-label`（绿色 `#2ea06c` 圆形 + 白字，与 StartButton / TabBar active / size-chip active 同色系）。
+- **grid 用 CSS Grid `auto-fill + minmax(220px, 1fr)`**：浏览器宽度自适应列数（窗口缩小时单卡不被压扁，最小 220px 保证 SVG 不退化成窄条）。改 minmax 需视觉回归核对（M1787 每码 ~10 片 × ~180px 高度 ≈ 一屏）。
+- **不引入 CSS 框架**：`.preview-page` / `.preview-main` / `.size-tabs` / `.size-chip` / `.parsed-pieces-view` / `.piece-grid` / `.piece-card*` 全部沿用 style.css 命令式 className，与 ControlPanel / NestCard 暗背景 `#26282e/#2a2c32` + 绿色 `#2ea06c` 强调同色系。
+- **AC#5 切 Tab 后状态保留**：uploadStore 是模块级单例 + App 用 display:none 切页（不卸载），切回时 activeSize/doc 全部保真。**PreviewPage 不持任何本地状态**（不需要 useState 缓存 activeSize 之类的反模式），改状态来源会破坏 AC#5。
+- **空态分支组件结构**：未解析时 PreviewPage 渲染 `<div class="preview-empty"><div class="preview-empty-card">…</div></div>`（沿用 US-001 占位的 className，CSS 已存在无需新增）；已解析时渲染 `<SizeTabs/> + <ParsedPiecesView/>`。改结构需同步 App.test.tsx 第 101 行的 `.preview-empty` 断言（切到 preview Tab + doc=null 时仍要找到 `.preview-empty`）。
 
 ## US-001 关键约定（Tab 框架调用方必读）
 

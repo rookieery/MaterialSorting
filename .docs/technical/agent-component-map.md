@@ -1,6 +1,6 @@
 # 前端组件 / 模块地图（materialSorting-web/）
 
-> 由 `/sync-docs` 维护。改前端先看这里。当前覆盖 US-001 Tab 框架 + US-002 WS 契约 + US-003 NestSVG + US-004 ControlPanel + US-005 多 seed/收敛曲线 + US-006 回放 seekbar + 片 hover tooltip + US-007 导出 PNG/DXF + DXF 上传预览 US-001 Tab 骨架 + 上传预览 US-005 类型/store/hook + 上传预览 US-006 UploadPanel 组件 + 上传预览 US-007 PiecePreviewSVG 命令式渲染。
+> 由 `/sync-docs` 维护。改前端先看这里。当前覆盖 US-001 Tab 框架 + US-002 WS 契约 + US-003 NestSVG + US-004 ControlPanel + US-005 多 seed/收敛曲线 + US-006 回放 seekbar + 片 hover tooltip + US-007 导出 PNG/DXF + DXF 上传预览 US-001 Tab 骨架 + 上传预览 US-005 类型/store/hook + 上传预览 US-006 UploadPanel 组件 + 上传预览 US-007 PiecePreviewSVG 命令式渲染 + 上传预览 US-008 SizeTabs/ParsedPiecesView/PreviewPage 容器集成。
 
 ## 顶层结构
 
@@ -15,7 +15,7 @@ materialSorting-web/
 ├── src/                    # 源码（US-008 起：legacy/ 已删除，src/ 是唯一真相源）
 │   ├── main.tsx            # createRoot(<StrictMode><App/></StrictMode>)
 │   ├── App.tsx             # US-001 Tab 骨架：TabBar + 双 .page 容器（display:none 切换）+ Tooltip 单例
-│   ├── style.css           # 由 vanilla 前身 1:1 迁入；US-001 加 .tabbar/.tab/.page/.hidden/.preview-empty；US-006 加 .upload-panel/.drop-zone/.upload-status；US-007 加 .piece-preview-svg
+│   ├── style.css           # 由 vanilla 前身 1:1 迁入；US-001 加 .tabbar/.tab/.page/.hidden/.preview-empty；US-006 加 .upload-panel/.drop-zone/.upload-status；US-007 加 .piece-preview-svg；US-008 加 .preview-page/.preview-main/.size-tabs/.size-chip/.parsed-pieces-view/.piece-grid/.piece-card*
 │   ├── vite-env.d.ts        # vite/client 类型引用
 │   ├── types/              # US-002：纯数据契约（与 server.py 字段名 1:1）；上传预览 US-005：parsed.ts
 │   ├── constants/          # US-004：SIZES / PHASE_COLORS / SEED_COLORS / V03_TABLE
@@ -25,13 +25,18 @@ materialSorting-web/
 │   ├── components/
 │   │   ├── TabBar.tsx       # US-001 顶部 Tab（排料/上传预览）；订阅 uiStore.activeTab
 │   │   ├── NestingPage.tsx  # US-001 排料页（原 App.tsx 业务逻辑外提；持 solving/seeds/useSolveRun）
-│   │   ├── preview/         # US-001 起：上传预览页（US-006 UploadPanel；US-007 PiecePreviewSVG；US-008 落地 SizeTabs/ParsedPiecesView 容器）
-│   │   │   ├── PreviewPage.tsx  # US-001 占位（待 US-008 替换为左 UploadPanel + 右 SizeTabs+ParsedPiecesView）
+│   │   ├── preview/         # US-001 起：上传预览页（US-006 UploadPanel；US-007 PiecePreviewSVG；US-008 落地 SizeTabs/ParsedPiecesView/PreviewPage 容器集成）
+│   │   │   ├── PreviewPage.tsx  # US-008 容器：左 UploadPanel + 右（SizeTabs+ParsedPiecesView）；status=done+doc 时挂主体，否则 .preview-empty 空态
 │   │   │   ├── UploadPanel.tsx  # US-006 左侧上传面板（点击+拖拽+客户端预校验+status 反馈）
+│   │   │   ├── SizeTabs.tsx  # US-008 尺码切换条：读 uploadStore.doc/activeSize/setSize；chip 行 + active 高亮；null 码→「通用」
+│   │   │   ├── ParsedPiecesView.tsx # US-008 当前 activeSize 下裁片 grid：每片卡片（PiecePreviewSVG+A/B/C 徽章+裁片名）；grid auto-fill minmax(220px,1fr)
 │   │   │   ├── PiecePreviewSVG.tsx  # US-007 单片（或多片）母版预览 SVG（命令式渲染 + scale(1,-1) 翻转 + 5 层分层 + A/B/C 标注翻转组外）
 │   │   │   └── __tests__/
 │   │   │       ├── UploadPanel.test.tsx      # US-006 集成测试（25 项）
-│   │   │       └── PiecePreviewSVG.test.tsx  # US-007 单测（33 项：bbox 5 + 命令式 2 + 5 层 11 + 翻转/标注 9 + 单片/多片/空片 4 + 切片重建 3）
+│   │   │       ├── PiecePreviewSVG.test.tsx  # US-007 单测（33 项：bbox 5 + 命令式 2 + 5 层 11 + 翻转/标注 9 + 单片/多片/空片 4 + 切片重建 3）
+│   │   │       ├── SizeTabs.test.tsx         # US-008 单测（8 项：chip 列表 + null→通用 + role=tablist + active 高亮 + 点击 setSize + null 码 + activeSize=null 防御）
+│   │   │       ├── ParsedPiecesView.test.tsx # US-008 单测（8 项：grid 渲染 + 每片含 A/B/C+名+svg + key label-name + 切码刷新 + activeSize 不在 doc + 空码空态）
+│   │   │       └── PreviewPage.test.tsx      # US-008 集成（9 项：左 panel+右 main 布局 + 4 空态分支 + 已解析挂主体 + SizeTabs 列码 + 切码刷新 grid + 端到端 chip 点击）
 │   │   ├── nests/          # US-003 NestSVG/NestCard/NestLabel + US-005 NestsGrid；US-006 NestSVG 加 seek+hover
 │   │   ├── ControlPanel/   # US-004 8 子组件 + US-005 MultiSeedControls；US-007 ExportButtons
 │   │   ├── curve/          # US-005 ConvergenceCurve（命令式 innerHTML）
@@ -72,7 +77,7 @@ materialSorting-web/
 | `src/store/uiStore.ts` | Zustand 单字段 store：`activeTab: 'nesting' \| 'preview'`（默认 `'nesting'`）+ `setTab(tab)`。仅此一字段，求解/WS/seek 等业务状态仍在各 page 内 |
 | `src/components/TabBar.tsx` | 顶部 Tab 切换：`<nav class="tabbar">` + 两 `<button class="tab">`（排料 / 上传预览）；点击 setTab；active 项加 `.active` class + `aria-pressed=true` |
 | `src/components/NestingPage.tsx` | 排料工作台页（原 App.tsx 业务逻辑外提）：持 `seeds/solving/status/doneCountRef/totalSeedsRef` + `useSolveRun({onDone})` + `useRafThrottle(seeds.length>0)`；渲染 `<ControlPanel>` + `<main class="main">`；不挂 Tooltip（Tooltip 由父 App 渲染） |
-| `src/components/preview/PreviewPage.tsx` | 上传预览页（US-001 占位）：渲染 `.preview-empty` 卡片提示「US-006~US-008 落地」；US-008 将替换为左 UploadPanel + 右 SizeTabs + ParsedPiecesView |
+| `src/components/preview/PreviewPage.tsx` | 上传预览页（**US-008 落地**）：左 UploadPanel + 右（SizeTabs+ParsedPiecesView）双栏；`hasParsed = status==='done' && doc!==null` 决定挂主体 or `.preview-empty` 空态 |
 | `src/App.tsx` | 顶层骨架：渲染 `<TabBar>` + `<div class="tab-content">` 双 `.page` 容器（display:none 切换）+ `<Tooltip>`（单例，Portal 到 body） |
 | `src/style.css` | 增 `.app{flex-direction:column}` + `.tabbar/.tab/.tab.active` + `.tab-content/.page/.page.hidden` + `.preview-empty/.preview-empty-card`（暗色与 ControlPanel 同色系） |
 | `src/store/__tests__/uiStore.test.ts` | 4 项单测：默认 nesting / setTab 切换 / 切回 / 订阅者通知 |
@@ -151,6 +156,33 @@ materialSorting-web/
 10. **pad prop 最小 4 clamp** —— `safePad = Math.max(MIN_PAD, pad)`，防 8mm 刀口半段被裁。负数 / NaN（NaN 经 max 比较返回另一侧）兜底为 4。
 11. **导出 `pieceBBox` / `piecesBBox` / `BBox` 便于测试** —— 纯函数 / 类型导出，单测直接调；不改 React 渲染。5 项 bbox 用例覆盖（合并所有层顶点 / 空片 null / 无 grain 跳过 / 多片合并 / 全空片 null）。
 12. **不引入 CSS 框架** —— `.piece-preview-svg`（display:block + width:100% + height:100% + bg `#eef0f3`，与排料图同色）由 imperative `setAttribute('class', ...)` 写入，沿用 style.css；与 `.nest-card svg` 同口径。改 CSS 需同步 `.piece-preview-svg` 规则（US-008 ParsedPiecesView 卡片复用）。
+
+## 上传预览 US-008 落地：SizeTabs + ParsedPiecesView + PreviewPage 容器集成（Tab 打通）
+
+| 文件 | 角色 |
+| --- | --- |
+| `src/components/preview/SizeTabs.tsx` | 尺码切换条。订阅 uploadStore `doc`/`activeSize`/`setSize`；渲染 `<div class="size-tabs" role="tablist">` + 每 chip `<button class="size-chip" role="tab" aria-selected>`；chip 顺序 = doc.sizes 顺序（后端按数值升序、null 殿后）；**null 码 → 「通用」文案**（`NULL_SIZE_LABEL`）；activeSize 匹配项加 `.active`；点击 → `setSize(s.size)`；**doc=null 时返回空 Fragment**（PreviewPage 兜底，双重防御） |
+| `src/components/preview/ParsedPiecesView.tsx` | 当前 activeSize 下裁片 grid。订阅 uploadStore `doc`/`activeSize`；`doc.sizes.find(s => s.size === activeSize)` 过滤当前码（防御性兜底找不到 → pieces=[]）；grid 用 CSS Grid `auto-fill + minmax(220px, 1fr)`；每片 `<div class="piece-card">` 含 `.piece-card-head`（label 徽章 + name）+ `.piece-card-body`（PiecePreviewSVG 单片模式）；`key=${label}-${name}` 跨码安全；pieces=[] 时 `.parsed-pieces-empty` 「该尺码无裁片」 |
+| `src/components/preview/PreviewPage.tsx` | 容器组件。订阅 uploadStore `status`/`doc`；**`hasParsed = status === 'done' && doc !== null`** 决定分支：true → `<SizeTabs/> + <ParsedPiecesView/>`；false → `.preview-empty` 空态卡片（沿用 US-001 className）；布局 `<div class="preview-page"><UploadPanel/><section class="preview-main">…</section></div>`（左 panel 固定 248px + 右 main flex:1） |
+| `src/style.css` | 加 `.preview-page{flex;display}` + `.preview-main{flex-col;overflow:auto}` + `.size-tabs{flex-wrap;gap 6}` + `.size-chip{border-radius:14; #34363d bg}` + `.size-chip.active{#2ea06c bg #fff}` + `.parsed-pieces-view{padding 12;overflow:auto}` + `.piece-grid{grid auto-fill minmax(220px,1fr) gap 10}` + `.piece-card{#2a2c32 bg;radius 4;min-height 180}` + `.piece-card-head{#1c1d22 bg}` + `.piece-card-label{#2ea06c 徽章 18×18 radius 9 #fff 600}` + `.piece-card-name{#cdd word-break}` + `.piece-card-body{flex padding 6}` + `.parsed-pieces-empty{center 32 #888}` |
+| `src/components/preview/__tests__/SizeTabs.test.tsx` | 8 项单测：AC#1 渲染 doc.sizes 全部 chip（按后端顺序）+ null→「通用」+ role=tablist/tab + activeSize=null 防御；AC#1 active 高亮 + aria-selected + 点击 setSize(number\|null) 切换 + .active 转移 |
+| `src/components/preview/__tests__/ParsedPiecesView.test.tsx` | 8 项单测：AC#2 doc=null 空 + 渲染当前码 pieces + 每片含 label+name+svg + .piece-grid 容器 + key label-name 安全；切 activeSize grid 刷新 + activeSize 不在 doc 防御 + 空码空态 |
+| `src/components/preview/__tests__/PreviewPage.test.tsx` | 9 项集成：AC#3 左 panel+右 main 结构 + 4 空态分支（idle/uploading/error/默认）；AC#3 done+doc 挂主体 + SizeTabs 列码 + ParsedPiecesView 当前码片数 + 切 activeSize→刷新 + 端到端 chip 点击切 grid |
+
+### 关键不变量（上传预览 US-008 立，后续故事不得破坏）
+
+1. **三个新组件都从 uploadStore 读、不持本地状态** —— SizeTabs 读 `doc`/`activeSize`/`setSize`；ParsedPiecesView 读 `doc`/`activeSize`；PreviewPage 读 `status`/`doc`。store 是单一真相源（US-005 关键约定），**切 Tab 后状态保留 = store 模块级单例 + App display:none 不卸载**（AC#5 由 store 持久性保证，组件本身无需任何持久化逻辑）。改状态来源会破坏 AC#5。
+2. **PreviewPage 空态分支用 `hasParsed = status === 'done' && doc !== null`** —— 双重条件防御（done 理论必有 doc，但 TS 类型上 doc nullable）。uploading/error 时仍显示空态卡片（不显示「上传中…」之类的状态行 —— 那是 UploadPanel 的事），保持右侧稳定布局。改分支需同步 PreviewPage.test.tsx 4 项空态用例。
+3. **SizeTabs chip 顺序 = doc.sizes 顺序**（后端按数值升序、null 殿后，`_size_sort_key`）—— **前端不二次排序**，保证 UI 顺序与后端语义一致。改排序需同步后端 `_build_parse_payload` + SizeTabs.test.tsx 「渲染 doc.sizes 全部」用例。
+4. **null 码 chip 显示「通用」**（`NULL_SIZE_LABEL`）—— 母版里极少出现的「不分码」片（统计上代表通用码），用人读文案代替空字符串/「null」。改文案需同步 SizeTabs.test.tsx 「null 码渲染为通用」用例。
+5. **SizeTabs doc=null 时返回空 Fragment**（`return <></>`）—— 双重防御（PreviewPage 在 doc=null 时不挂载 SizeTabs，组件本身也兜底）。改返回值需同步 SizeTabs.test.tsx 「doc=null」用例。
+6. **ParsedPiecesView 用 `doc.sizes.find(s => s.size === activeSize)` 过滤当前码** —— 理论必命中（SizeTabs 只能切到 doc.sizes 里的码），防御性兜底 `matched=undefined` → pieces=[] → 显示「该尺码无裁片」空态。改过滤逻辑需同步 ParsedPiecesView.test.tsx 「activeSize 不在 doc.sizes」用例。
+7. **piece key 用 `${label}-${name}`** —— label 在码内唯一（A/B/C/...，后端 `_label_for` 已保证），name 是母版 block 名（GBK 解码后中文），两者拼合跨码安全。同码内可能多片同名（label 不同）或同 label 不同名 —— key 拼合兜底所有场景。改 key 需同步 ParsedPiecesView.test.tsx 「key 用 label-name」用例。
+8. **每片卡片用 PiecePreviewSVG 单片模式**（不传数组，US-007 AC#4 多片能力留作未来扩展）—— grid 是「每片独立预览」语义，单片卡片视觉清晰。改多片模式需先与版师确认 grid 单卡承载多片的 UX 必要性。
+9. **piece-card 视觉沿用 .nest-card 同口径** —— 暗背景 `#2a2c32` + 圆角 + 上方 `.piece-card-head`（label 徽章 + 裁片名）+ 下方 `.piece-card-body`（SVG 自适应）；与排料页 NestCard 视觉一致。label 徽章 `.piece-card-label` 用绿色 `#2ea06c` 圆形 + 白字，与 StartButton / TabBar active / size-chip active 同色系。
+10. **grid 用 CSS Grid `auto-fill + minmax(220px, 1fr)`** —— 浏览器宽度自适应列数（窗口缩小时单卡不被压扁，最小 220px 保证 SVG 不退化成窄条）。改 minmax 需视觉回归核对（M1787 每码 ~10 片 × ~180px 高度 ≈ 一屏）。
+11. **不引入 CSS 框架** —— `.preview-page` / `.preview-main` / `.size-tabs` / `.size-chip` / `.parsed-pieces-view` / `.piece-grid` / `.piece-card*` 全部沿用 style.css 命令式 className，与 ControlPanel / NestCard 暗背景 `#26282e/#2a2c32` + 绿色 `#2ea06c` 强调同色系。
+12. **AC#5 切 Tab 后状态保留验证（App.test.tsx）** —— App.test.tsx 切到 preview Tab 后断言 `.preview-empty` 仍在（doc=null 默认状态走空态分支，与 US-001 占位的 className 一致 —— 复用 `.preview-empty`/`.preview-empty-card`，不破坏 US-001 App 集成 smoke 测试）。改 PreviewPage 空态 className 需同步 App.test.tsx 第 101 行断言。
 
 ## US-002 落地：WS 契约 + RunRegistry + useSolveRun
 

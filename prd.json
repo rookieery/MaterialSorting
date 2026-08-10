@@ -2,16 +2,10 @@
   "branchName": "ralph/dxf-upload-preview",
   "stories": [
     {
-      "id": "US-007",
-      "title": "PiecePreviewSVG 命令式渲染",
-      "description": "As a 版师，I want 右侧看到单片完整还原（毛版实心+净版绿虚+内部线橙+刀口短线段+布纹线红虚+A/B/C 标注），so that 核对母版信息正确解析。\n\n详见 tasks/prd-dxf-upload-preview.md US-007。\n\n具体任务：\n1. 新建 components/preview/PiecePreviewSVG.tsx：参考 NestSVG.tsx 命令式范式（useRef+useEffect 直绘 path/circle/text，逃逸 reconciliation）。\n2. 渲染分层：layer1 毛版=半透明蓝实心+实线边；layer14 净版=绿虚线；layer8 内部线=橙实线；刀口=沿法线短线段（notch 模型，长度暂定 8mm 待版师确认）；layer7 布纹线=红虚线。\n3. 坐标系 scale(1,-1) 翻转必须保留（与 PNG/R12-DXF 一致）；A/B/C 文字标注放在翻转组 <g> 之外（避免镜像），屏幕坐标计算。\n\n验收标准：\n- 浏览器验证：上传 M1787→选码→某片，肉眼核对毛版/净版/内部线/刀口短线段/布纹线/A/B/C 全可见且文字未镜像。\n- npm run build 通过。",
-      "passes": true
-    },
-    {
       "id": "US-008",
       "title": "SizeTabs + PreviewPage + Tab 打通",
       "description": "As a 版师，I want 预览页按尺码切换查看该码所有裁片（A/B/C）并与排料 Tab 打通，so that 逐码核对母版。\n\n详见 tasks/prd-dxf-upload-preview.md US-008。\n\n具体任务：\n1. 新建 components/preview/SizeTabs.tsx：从 uploadStore.doc 读码数列表（28-38），点击切 activeSize。\n2. 新建 components/preview/ParsedPiecesView.tsx：展示 activeSize 下所有裁片（grid，每片 PiecePreviewSVG+A/B/C+裁片名）。\n3. 新建 components/preview/PreviewPage.tsx：左 UploadPanel+右(SizeTabs+ParsedPiecesView)，订阅 uploadStore，未上传右侧空态提示。\n4. App.tsx 把 PreviewPage 接入 US-001 Tab 容器，与 NestingPage 经 display:none 共存。\n\n验收标准：\n- 浏览器验证：上传→SizeTabs 列各码→切码右侧裁片组刷新→每片 A/B/C 与 5 类信息可见；切排料 Tab 再切回预览状态（已选码）保留。\n- npm run build 通过；vitest 全 pass。",
-      "passes": false
+      "passes": true
     },
     {
       "id": "US-010",

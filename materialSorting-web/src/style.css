@@ -258,3 +258,117 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
   min-height: 0;
   background: #eef0f3;
 }
+
+/* ---- US-008 PreviewPage / SizeTabs / ParsedPiecesView ---- */
+/* 三层 flex：.preview-page 横向（左 UploadPanel + 右 main），.preview-main 纵向（tabs + grid） */
+.preview-page {
+  flex: 1;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
+.preview-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+/* SizeTabs：横向 chip 行，与 TabBar 视觉同色系（暗背景 + 绿色 active） */
+.size-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 12px;
+  background: #26282e;
+  border-bottom: 1px solid #34363d;
+  flex-shrink: 0;
+}
+.size-chip {
+  padding: 5px 14px;
+  font-size: 12px;
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  color: #cdd;
+  background: #34363d;
+  border: 1px solid #45484f;
+  border-radius: 14px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.size-chip:hover {
+  background: #3f424a;
+  color: #e6e6e6;
+}
+.size-chip.active {
+  background: #2ea06c;
+  color: #fff;
+  border-color: #2ea06c;
+  font-weight: 600;
+}
+
+/* ParsedPiecesView：自适应 grid（每片一张卡片），与 .nest-card 视觉同色系 */
+.parsed-pieces-view {
+  flex: 1;
+  padding: 12px;
+  overflow: auto;
+  min-height: 0;
+}
+.piece-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+}
+.piece-card {
+  display: flex;
+  flex-direction: column;
+  background: #2a2c32;
+  border-radius: 4px;
+  overflow: hidden;
+  min-height: 180px;
+}
+.piece-card-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  background: #1c1d22;
+  border-bottom: 1px solid #34363d;
+  font-size: 12px;
+}
+.piece-card-label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  background: #2ea06c;
+  color: #fff;
+  border-radius: 9px;
+  font-weight: 600;
+  font-size: 11px;
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+}
+.piece-card-name {
+  color: #cdd;
+  word-break: break-all;
+  line-height: 1.3;
+}
+.piece-card-body {
+  flex: 1;
+  min-height: 0;
+  padding: 6px;
+  display: flex;
+}
+.piece-card-body svg {
+  flex: 1;
+  min-height: 140px;
+}
+.parsed-pieces-empty {
+  padding: 32px;
+  text-align: center;
+  font-size: 13px;
+  color: #888;
+}
