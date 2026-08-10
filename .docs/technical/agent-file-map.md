@@ -34,7 +34,7 @@ materialSorting-server/
     │   ├── sparrow_experiments.py     旋转/重合公差实验
     │   └── pieces_export.py           NestPiece → intermediate JSON（事实源）
     └── web/                           FastAPI + WS 工作台（详见 agent-api-reference.md）
-        ├── server.py                  app + 路由（GET /、/static、POST /export、POST /api/parse-dxf、WS /ws/solve）+ 求解线程桥（顶层 load_pieces）+ US-004 上传解析
+        ├── server.py                  app + 路由（GET /、/static、POST /export、POST /api/parse-dxf、POST /api/commit-to-nesting、WS /ws/solve）+ 求解线程桥（顶层 load_pieces）+ US-004 上传解析 + US-010 commit-to-intermediate
         ├── solver.py                  build_instance + solve_with_callback
         └── export.py                  PNG(matplotlib) + R12-DXF marker 导出
 ```
@@ -283,11 +283,11 @@ DEFAULT_COLOR = '#bbbbbb'
 
 | 文件 | 行 | 职责 |
 |------|----|------|
-| `server.py` | 300 | FastAPI app；**模块顶层 `load_pieces()`**；路由 GET `/`、mount `/static`、POST `/export`、POST `/api/parse-dxf`（US-004 上传解析）、WS `/ws/solve`；`ThreadPoolExecutor(max_workers=6)` 桥求解子线程 ↔ asyncio（US-004 解析也复用此池）；上传常量 `UPLOAD_MAX_BYTES=20MB` / `UPLOADS_DIR=paths.OUT_DIR/uploads`；`_build_parse_payload` 按码分组 + 质心/面积稳定排序 + A/B/C 标注 |
+| `server.py` | 432 | FastAPI app；**模块顶层 `load_pieces()`**；路由 GET `/`、mount `/static`、POST `/export`、POST `/api/parse-dxf`（US-004 上传解析）、POST `/api/commit-to-nesting`（US-010 commit-to-intermediate）、WS `/ws/solve`；`ThreadPoolExecutor(max_workers=6)` 桥求解子线程 ↔ asyncio（US-004 解析 / US-010 commit 也复用此池）；上传常量 `UPLOAD_MAX_BYTES=20MB` / `UPLOADS_DIR=paths.OUT_DIR/uploads` / `_DOC_ID_RE`；`_build_parse_payload` 按码分组 + 质心/面积稳定排序 + A/B/C 标注；`_commit_to_nesting_sync` Path A 全管线（collect→write_piece_dxf→load_nest_pieces→写回 intermediate + .bak） |
 | `solver.py` | 173 | `load_pieces` / `discretize_orientations` / `build_instance`（erode=min(申,max)，tol=min(申,max)）/ `solve_with_callback`（spyrrow ProgressQueue + threading，0.2s drain） |
 | `export.py` | 160 | `apply_transform` / `placed_to_world`（用**原始**非 eroded 轮廓）/ `render_png`（matplotlib Agg）/ `write_marker_dxf`（R12 POLYLINE + ACI 色 + ASCII 标题） |
 
-US-004 起 `web/server.py` 直接 import `dxf_parser.collect.collect_pieces_with_details`（web → dxf_parser 跨层依赖，合规：web 是上层）。上传 multipart 依赖 `python-multipart`（已在 `[web]` extra）。
+US-004 起 `web/server.py` 直接 import `dxf_parser.collect.collect_pieces_with_details`（web → dxf_parser 跨层依赖，合规：web 是上层）。US-010 起新增 import `dxf_parser.explore` / `dxf_parser.export_dxf` / `nesting_bounds.load_pieces`（web → nesting_bounds → dxf_parser 单向，合规）。上传 multipart 依赖 `python-multipart`（已在 `[web]` extra）。
 
 ## 数据流主线
 
@@ -314,10 +314,11 @@ out/sparrow_baseline/pieces_intermediate.json   ← 全流程事实源
 | 母版 → IR 列表 | `explore.collect_pieces` | `Path` → `list[PieceOutline]`（layer1 毛版 + layer7 布纹线） |
 | 母版 → 深度 IR 列表 | `collect.collect_pieces_with_details`（US-003） | `str\|Path` → `list[PieceOutline]`（layer1+7+14 净版+8 内部线+4 刀口，按 `LAYER_MAPPING`） |
 | 上传母版 → 解析 JSON | `web/server.parse_dxf`（US-004） | `multipart file` → 落盘 `uploads/<uuid>.dxf` + `collect_pieces_with_details` → 按码分组 + A/B/C 标注 JSON（`doc_id` 供 US-010 commit 引用） |
+| 上传母版 → intermediate | `web/server.commit_to_nesting` + `_commit_to_nesting_sync`（US-010 Path A） | `{doc_id, filename?}` → `uploads/<doc_id>_pieces/` + `load_nest_pieces(sizes=母版全码)` → 覆盖 `INTERMEDIATE`（先备份 `.bak`） |
 | IR → 单裁片 DXF | `export_dxf.write_piece_dxf` + `main` | `PieceOutline` → `<PIECES_DIR>/<类型>_<码号>.dxf` |
 | IR → 探索产物 | `explore.write_outputs` | `list[PieceOutline]` → 分组目录 + CSV + 总览 SVG |
 | 单裁片 DXF → NestPiece | `load_pieces.load_nest_pieces` | `PIECES_DIR` → `list[NestPiece]`（L+R 展开） |
-| NestPiece → intermediate | `pieces_export.main` | → `INTERMEDIATE`（`{source,gate_mm,n_pieces,total_area_mm2,pieces:[…]}`） |
+| NestPiece → intermediate | `pieces_export.main` / `web/server._commit_to_nesting_sync`（US-010） | → `INTERMEDIATE`（`{source,gate_mm,n_pieces,total_area_mm2,pieces:[…]}`；US-010 commit 写回前 `shutil.copy2(.json, .bak)`） |
 | intermediate → baseline 解 | `sparrow_baseline.main` | → `result_{tag}_t{T}.json`/`svg`/`curve.json`/`curve.png` |
 | intermediate → 实验解 | `sparrow_experiments.main` | → `result_exp_{tag}_t{T}_s{seed}.*` + 汇总 |
 

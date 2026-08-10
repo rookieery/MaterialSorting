@@ -18,7 +18,7 @@ curl -X POST http://127.0.0.1:8000/api/parse-dxf -F "file=@<dxf>"      # US-004 
 
 | 文件 | 角色 |
 | --- | --- |
-| `server.py` | FastAPI app；路由 `GET /`、`mount /static`、`POST /export`、`POST /api/parse-dxf`（US-004）、`WS /ws/solve`；`ThreadPoolExecutor(max_workers=6)` 求解桥 + 上传解析复用 |
+| `server.py` | FastAPI app；路由 `GET /`、`mount /static`、`POST /export`、`POST /api/parse-dxf`（US-004）、`POST /api/commit-to-nesting`（US-010）、`WS /ws/solve`；`ThreadPoolExecutor(max_workers=6)` 求解桥 + 上传解析/commit 复用 |
 | `solver.py` | `load_pieces` / `discretize_orientations` / `build_instance`（v0.3 erode+tol 包装）/ `solve_with_callback`（spyrrow ProgressQueue + threading，0.2s drain） |
 | `export.py` | `apply_transform` / `placed_to_world`（用**原始**非 eroded 轮廓）/ `render_png`（matplotlib Agg）/ `write_marker_dxf`（R12 POLYLINE + ACI 色 + ASCII 标题） |
 
@@ -30,12 +30,24 @@ curl -X POST http://127.0.0.1:8000/api/parse-dxf -F "file=@<dxf>"      # US-004 
 - **错误码口径**：扩展名非 `.dxf`→400；超 `UPLOAD_MAX_BYTES=20MB`→413；ezdxf/collect 异常→422（中文错误信息）。**200 / 400 / 413 / 422 全部走 JSONResponse**（与 `/export` 一致），不抛 `HTTPException`。
 - **响应字段**（US-005 前端契约，不能改）：`{doc_id, filename, sizes:[{size, pieces:[{label,name,polygon,internal_lines,notches,net_polygon,grain_line}]}]}`。polygon=`[[x,y],...]`；internal_lines=`[[[x,y],...],...]`；notches=`[[x,y,nx,ny],...]`；net_polygon=`[[x,y],...]`；grain_line=`[x1,y1,x2,y2]` 或 `null`。
 - **A/B/C 标注口径**：每码内独立编号（不跨码续编）。排序键 `(-centroid_y, centroid_x, -area_mm2, block_name, piece_index)` → 上方/左/大片优先。码号分组排序：数值升序，`null` 殿后。`_label_for` 支持 26+ 自动 AA/AB（实测每码 ≤10 片，AA+ 仅兜底）。
-- **doc_id 是 US-010 入参**：`POST /api/commit-to-nesting {doc_id}`（待 US-010 实现）会读 `uploads/<doc_id>.dxf`。**doc_id 必须可定位落盘文件**，故成功响应才返回 doc_id（422 时文件保留但响应不带 doc_id）。
+- **doc_id 是 US-010 入参**：`POST /api/commit-to-nesting {doc_id}` 会读 `uploads/<doc_id>.dxf`。**doc_id 必须可定位落盘文件**，故成功响应才返回 doc_id（422 时文件保留但响应不带 doc_id）。
+
+## US-010 /api/commit-to-nesting 关键约定（Path A 全管线）
+
+- **请求体**：JSON `{doc_id, filename?}`。`doc_id` 必填，仅匹配 `_DOC_ID_RE = ^[0-9A-Za-z]{1,128}$`（防路径逃逸，`uuid.uuid4().hex` 自然命中）；`filename` 可选，缺省用 `<doc_id>.dxf`，作为新 intermediate 的 `source` 字段。
+- **管线（`_commit_to_nesting_sync` 跑在 executor）**：`explore.collect_pieces` → `assign_group_no` + `GROUP_NAMES` 定 ptype → `write_piece_dxf` 切单裁片到 `uploads/<doc_id>_pieces/` → `load_nest_pieces(pieces_dir, sizes=母版全码)` → 写回 `paths.INTERMEDIATE`。schema 与 `ms-pieces-export` 一致。
+- **全码**：sizes 取母版实际全码 `sorted({p.size for p in pieces if p.size is not None})`，**不沿用 `DEFAULT_SIZES`** 8 码。M1787 实测 11 码 [28-38] → 176 NestPiece。
+- **临时单裁片目录**：`UPLOADS_DIR / f'{doc_id}_pieces'`。每次 commit 先 `shutil.rmtree` 再重写（**idempotent**）。v1 不自动清理（open question），同 doc_id 重跑覆盖。
+- **备份**：写回前 `shutil.copy2(paths.INTERMEDIATE, paths.INTERMEDIATE.with_suffix('.bak'))`（首次 commit 无原文件则跳过）。`.bak` 只保留一份（再 commit 覆盖）。
+- **错误码**：请求体非 JSON / 缺 doc_id / 类型错 / `_DOC_ID_RE` 不中 → **400**；`uploads/<doc_id>.dxf` 不存在 → **404**；管线异常（collect 空 / write 全跳过 / load_nest_pieces 空 / 写盘失败）→ **422**。全部 JSONResponse。
+- **`GATE_MM` 别名导入**：`from ..nesting_bounds.load_pieces import GATE_MM as NEST_GATE_MM`，避免与 `server.py` 顶层 `_DOC, GATE_MM, PIECES = load_pieces()` 的 `GATE_MM`（来自既有 intermediate 的值）shadow。新 intermediate 用 `NEST_GATE_MM=1980`（load_pieces 模块的源常量），而非既有 intermediate 的值。
+- **不自动 reload 排料页**：`server.py` 顶层 `PIECES = load_pieces()` 是 import 时一次性加载的内存常量；commit 后 intermediate 文件已更新但内存 `PIECES` 不变（须重启 `ms-web` 或后续 reload 端点，**v1 TODO 随排料页改造补**）。
+- **回归等价**：对 M1787，Path A 产物的 `pid` 集合 / `total_area_mm2` 与「全码 CLI 管线」（`load_nest_pieces(paths.PIECES_DIR, sizes=[28..38])`）完全等价（实测 176/176 片、PID 集合相同、零面积 diff）。
 
 ## 已踩坑 / 注意事项
 
 - **顶层 `load_pieces()` 在 import 时执行**：intermediate 缺失 → `import materialsorting.web.server` 直接崩。改启动顺序（如延迟加载）需同步更新 `.docs/technical/agent-file-map.md` 关键不变量 #8。
-- **`_executor` 是全局共享池**：求解（`/ws/solve`）+ 上传解析（`/api/parse-dxf`）共 6 worker。解析快（~1-2s）+ 求解长（120s+），实测不互相阻塞；如需隔离请改两池。
+- **`_executor` 是全局共享池**：求解（`/ws/solve`）+ 上传解析（`/api/parse-dxf`）+ commit（`/api/commit-to-nesting`）共 6 worker。解析/commit 快（~1-2s）+ 求解长（120s+），实测不互相阻塞；如需隔离请改两池。
 - **UploadFile 读取**：`await file.read()` 一次性读全到内存（20MB 上限内可接受）。流式校验需自写 chunk loop，当前实现选简单。
 - **响应 filename 字段**：透传客户端 `file.filename`（中文文件名浏览器走 UTF-8 正常；curl 命令行可能用本地 codepage → 终端显示乱码，但 JSON 内部仍是原 bytes）。前端 US-006 显示文件名用此字段。
 - **frontend dev proxy `/api`**：US-009 待加 `vite.config.ts` 的 `server.proxy`，目前 dev 模式直连 :8000 才能命中 `/api/parse-dxf`。`/export`、`/ws` 已有 proxy，`/api` 与之并列。

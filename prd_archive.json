@@ -207,6 +207,42 @@
         "title": "POST /api/parse-dxf 上传解析端点",
         "description": "As a 前端，I want 上传端点接收 DXF 返回按尺码分组、A/B/C 标注的解析结果，so that 用户上传后即可预览。\n\n详见 tasks/prd-dxf-upload-preview.md US-004。\n\n具体任务：\n1. web/server.py 新增 POST /api/parse-dxf，multipart 接收单文件，不动现有 /、/static、/export、/ws/solve。\n2. 落盘到 paths.OUT_DIR/uploads/{uuid}.dxf（from .. import paths，不硬编码）；CPU 密集解析走 loop.run_in_executor(_executor,...) 复用现有 ThreadPoolExecutor。\n3. 调用 US-003 collect_pieces_with_details()；响应 {doc_id,filename,sizes:[{size,pieces:[{label,name,polygon,internal_lines,notches,net_polygon,grain_line}]}]}，全码一次返回（~1-3MB 可接受），裁片按质心/面积稳定排序赋 A/B/C。\n\n验收标准：\n- 非 .dxf→400；ezdxf 异常→422（中文错误）；超 20MB→413；成功→200。\n- curl -F file=@<dxf> http://127.0.0.1:8000/api/parse-dxf 对 M1787 返回各码裁片数>0、含刀口/internal。\n- python -c \"from materialsorting.web.server import app\" 导入通过、分层依赖未反向。",
         "passes": true
+      },
+      {
+        "id": "US-009",
+        "title": "Vite proxy /api + layer3 文档勘误",
+        "description": "As a 开发者，I want dev 下 /api 经 Vite proxy 转发且旧文档 layer3 错误描述修正，so that 前后端联调通畅、文档与实测一致。\n\n详见 tasks/prd-dxf-upload-preview.md US-009。\n\n具体任务：\n1. materialSorting-web/vite.config.ts 的 server.proxy 新增 /api→http://127.0.0.1:8000（changeOrigin:true），与现有 /export、/ws 并列。\n2. 修正 .docs/business/排料DXF解析架构_方案.md 第2节：删除/更正 layer3=剪口，改为 layer4=刀口(POINT+#N,版师2026-08-10确认)、layer3=轮廓密点(非刀口)、layer2=未定参考点、layer8=内部线、layer14=净版，指向 LAYER_MAPPING。\n\n验收标准：\n- npm run dev + 后端 :8000 同启，fetch('/api/parse-dxf') 命中后端（proxy 转发）。\n- 文档全文搜索无 layer3=剪口 残留。\n- npm run build 通过。",
+        "passes": true
+      },
+      {
+        "id": "US-001",
+        "title": "Tab 框架 + NestingPage 外提",
+        "description": "As a 版师，I want 顶部 Tab 在排料/上传预览间切换且切回排料页求解/WS 不中断，so that 边排料边上传预览不丢状态。\n\n详见 tasks/prd-dxf-upload-preview.md US-001。\n\n具体任务：\n1. 新建 materialSorting-web/src/components/TabBar.tsx 渲染两 Tab（排料/上传预览），激活项高亮。\n2. 新建 store/uiStore.ts（Zustand）持 activeTab:'nesting'|'preview' 及 setTab()。\n3. 将 App.tsx 现有排料逻辑（ControlPanel+NestsGrid+PlaybackBar）外提到 components/NestingPage.tsx，App 仅留 TabBar+两页面容器。\n4. 两页面 display:none 切换不卸载，切回时求解/WS/播放进度保留。\n\n验收标准：\n- 沿用 style.css 不引入 CSS 框架；TabBar 视觉与 ControlPanel 一致。\n- 浏览器验证：排料页发起求解→切预览→切回，求解进度/WS 未中断（控制台无断连）。\n- npm run build 通过、npm run dev 两 Tab 可切换。",
+        "passes": true
+      },
+      {
+        "id": "US-005",
+        "title": "前端类型 + uploadStore + useParseDxf",
+        "description": "As a 前端，I want ParsedPiece 类型、上传状态 store 与防连击请求 hook，so that 上传与预览组件有统一数据源。\n\n详见 tasks/prd-dxf-upload-preview.md US-005。\n\n具体任务：\n1. 新建 types/parsed.ts：ParsedPiece、ParsedSize、ParsedDoc（与 US-004 响应结构一致）。\n2. 新建 store/uploadStore.ts（Zustand）：status:'idle'|'uploading'|'done'|'error'、doc、activeSize、error、actions reset()/setSize()。\n3. 新建 hooks/useParseDxf.ts：fetch('/api/parse-dxf',{method,body:FormData}) 更新 store；防连击（上传中重复触发忽略）；相对路径（dev 经 Vite proxy，prod 同源）。\n\n验收标准：\n- 不引入新依赖（仅 React+Zustand+fetch）。\n- npm run build 通过；tsc --noEmit 无类型错误。",
+        "passes": true
+      },
+      {
+        "id": "US-006",
+        "title": "UploadPanel 点击+拖拽上传",
+        "description": "As a 版师，I want 点击或拖拽上传 DXF 并看到状态/错误反馈，so that 上传直观可靠。\n\n详见 tasks/prd-dxf-upload-preview.md US-006。\n\n具体任务：\n1. 新建 components/preview/UploadPanel.tsx：点击按钮（隐藏 input[type=file accept=.dxf]）+ 拖拽落区（dragover/drop）。\n2. 从 uploadStore 读 status/error：uploading 加载态、error 红字、done 显示文件名+码数概览（如已解析 8 码/110 裁片）。\n3. 左侧固定宽度，沿用 style.css 与 ControlPanel 风格一致。\n\n验收标准：\n- 仅 .dxf（后缀+MIME 容错），非 .dxf 提示不发请求；单文件，拖入多文件拒绝提示。\n- 浏览器验证：点击与拖拽分别上传 M1787 见加载→完成；拖入 .txt 见拒绝。\n- npm run build 通过。",
+        "passes": true
+      },
+      {
+        "id": "US-007",
+        "title": "PiecePreviewSVG 命令式渲染",
+        "description": "As a 版师，I want 右侧看到单片完整还原（毛版实心+净版绿虚+内部线橙+刀口短线段+布纹线红虚+A/B/C 标注），so that 核对母版信息正确解析。\n\n详见 tasks/prd-dxf-upload-preview.md US-007。\n\n具体任务：\n1. 新建 components/preview/PiecePreviewSVG.tsx：参考 NestSVG.tsx 命令式范式（useRef+useEffect 直绘 path/circle/text，逃逸 reconciliation）。\n2. 渲染分层：layer1 毛版=半透明蓝实心+实线边；layer14 净版=绿虚线；layer8 内部线=橙实线；刀口=沿法线短线段（notch 模型，长度暂定 8mm 待版师确认）；layer7 布纹线=红虚线。\n3. 坐标系 scale(1,-1) 翻转必须保留（与 PNG/R12-DXF 一致）；A/B/C 文字标注放在翻转组 <g> 之外（避免镜像），屏幕坐标计算。\n\n验收标准：\n- 浏览器验证：上传 M1787→选码→某片，肉眼核对毛版/净版/内部线/刀口短线段/布纹线/A/B/C 全可见且文字未镜像。\n- npm run build 通过。",
+        "passes": true
+      },
+      {
+        "id": "US-008",
+        "title": "SizeTabs + PreviewPage + Tab 打通",
+        "description": "As a 版师，I want 预览页按尺码切换查看该码所有裁片（A/B/C）并与排料 Tab 打通，so that 逐码核对母版。\n\n详见 tasks/prd-dxf-upload-preview.md US-008。\n\n具体任务：\n1. 新建 components/preview/SizeTabs.tsx：从 uploadStore.doc 读码数列表（28-38），点击切 activeSize。\n2. 新建 components/preview/ParsedPiecesView.tsx：展示 activeSize 下所有裁片（grid，每片 PiecePreviewSVG+A/B/C+裁片名）。\n3. 新建 components/preview/PreviewPage.tsx：左 UploadPanel+右(SizeTabs+ParsedPiecesView)，订阅 uploadStore，未上传右侧空态提示。\n4. App.tsx 把 PreviewPage 接入 US-001 Tab 容器，与 NestingPage 经 display:none 共存。\n\n验收标准：\n- 浏览器验证：上传→SizeTabs 列各码→切码右侧裁片组刷新→每片 A/B/C 与 5 类信息可见；切排料 Tab 再切回预览状态（已选码）保留。\n- npm run build 通过；vitest 全 pass。",
+        "passes": true
       }
     ]
   }

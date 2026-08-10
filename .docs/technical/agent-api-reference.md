@@ -23,6 +23,7 @@
 | mount | `/static/*` | 前端构建产物（JS/CSS/资源） | `StaticFiles(directory=paths.STATIC_DIR)` |
 | POST | `/export` | 导出最优 run → PNG / R12-DXF 附件下载 | `server.export` |
 | POST | `/api/parse-dxf` | US-004：multipart 上传母版 DXF → 深度解析 + A/B/C 标注 JSON | `server.parse_dxf` |
+| POST | `/api/commit-to-nesting` | US-010：把上传母版转排料 intermediate（Path A 全管线，覆盖写回 + .bak） | `server.commit_to_nesting` |
 | WS | `/ws/solve` | 排料求解流（manifest → frames → final） | `server.ws_solve` |
 
 > FastAPI 自动暴露 `/docs` `/openapi.json` 等 OpenAPI 路由；业务路由全在上表。
@@ -142,6 +143,69 @@ key = (-centroid_y, centroid_x, -area_mm2, block_name, piece_index)
 4. **`grain_line` 与原始 DXF 同坐标系**（Y 向上），前端 SVG `scale(1,-1)` 翻转后与 PNG/R12 导出一致。
 5. **响应大小 ≤ 20MB 解析后压缩**：实测 M1787 ~680KB JSON，前端 `useParseDxf` 一次拿到全码缓存到 Zustand。
 6. **上传预览 US-005 前端契约**：响应字段名（`doc_id` / `filename` / `sizes[].size` / `sizes[].pieces[].{label,name,polygon,internal_lines,notches,net_polygon,grain_line}`）被 `materialSorting-web/src/types/parsed.ts` 严格镜像；改任一字段需同步 `types/parsed.ts` + `useParseDxf.test.tsx` AC#2。前端 hook `useParseDxf` 用 `FormData('file', file)` 发请求，**不手设 Content-Type**（让浏览器自动加 boundary）；成功后默认选中 `sizes[0].size`（最小码）。错误（400/413/422/网络错）统一进 `uploadStore.error`，UI 自取渲染。
+
+## POST /api/commit-to-nesting — US-010 上传母版转 intermediate（Path A）
+
+把 US-004 落盘的母版 DXF 转成排料 intermediate（覆盖 `pieces_intermediate.json`），复用 `export_dxf` + `load_nest_pieces` 全管线。**Path A 实现**：服务端跑 `explore.collect_pieces` → `export_dxf.assign_group_no` + `GROUP_NAMES` 定片型 → `write_piece_dxf` 切单裁片到 `paths.OUT_DIR/uploads/<doc_id>_pieces/` → `load_nest_pieces(pieces_dir, sizes=母版全码)` → 写回 `paths.INTERMEDIATE`。CPU 密集管线跑在 `loop.run_in_executor(_executor, ...)` 复用 6-worker 线程池（与 `/ws/solve`、`/api/parse-dxf` 同池，防阻塞 WS）。
+
+### 请求
+
+`application/json`：
+
+```jsonc
+{
+  "doc_id": "02a4d4e4f40e423196f026d291a94ea2",  // 必填，US-004 落盘的 uuid（无扩展名）
+  "filename": "M1787(1)(2).dxf"                  // 可选，覆盖 intermediate source 字段；缺省用 <doc_id>.dxf
+}
+```
+
+`doc_id` 仅允许 `[0-9A-Za-z]{1,128}`（regex `_DOC_ID_RE`），防路径逃逸；`uuid.uuid4().hex`（32 位 hex）自然命中。
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/commit-to-nesting \
+  -H "Content-Type: application/json" \
+  -d '{"doc_id":"02a4d4e4f40e423196f026d291a94ea2","filename":"M1787(1)(2).dxf"}'
+```
+
+### 响应（200）
+
+```jsonc
+{
+  "doc_id": "02a4d4e4f40e423196f026d291a94ea2",
+  "source": "M1787(1)(2).dxf",         // 写入 intermediate 的 source 字段
+  "sizes": [28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38],  // 母版实际全码（非 DEFAULT_SIZES 8 码）
+  "n_pieces": 176,                      // NestPiece 总数（含 L/R 镜像展开）
+  "total_area_mm2": 17650482.2,         // 所有 NestPiece 面积之和（mm²）
+  "n_written_dxf": 110,                 // 切出的单裁片 DXF 数（写入 uploads/<doc_id>_pieces/）
+  "n_skipped": 0,                       // 未切出的裁片数（GROUP_NAMES 映射缺失 / size=None）
+  "skipped": [],                        // 截断的前 10 条跳过原因（排查用）
+  "bak": "D:\\code\\...\\pieces_intermediate.bak"  // 原 intermediate 备份路径
+}
+```
+
+### 错误响应
+
+| HTTP | 触发 | body |
+|------|------|------|
+| 400 | 请求体非 JSON / 缺 `doc_id` / 类型错 / `doc_id` 不匹配 `_DOC_ID_RE` | `{"error":"请求体须为 JSON"}` / `{"error":"缺少 doc_id 或类型错误"}` / `{"error":"doc_id 非法（仅允许字母数字，1-128 字符）"}` |
+| 404 | `uploads/<doc_id>.dxf` 不存在 | `{"error":"未找到上传文件: <doc_id>"}` |
+| 422 | 全管线抛异常（collect_pieces 空 / write_piece_dxf 全跳过 / load_nest_pieces 空 / JSON 写盘失败） | `{"error":"commit 失败：<异常>"}` |
+
+### 副作用 + 写盘
+
+1. **临时单裁片目录**：`paths.OUT_DIR/uploads/<doc_id>_pieces/`（~110 个 DXF，每次 commit 先 `shutil.rmtree` 再重写，**idempotent**）。v1 不自动清理（open question），同 `doc_id` 重跑会覆盖。
+2. **intermediate 备份**：写回前 `shutil.copy2(paths.INTERMEDIATE, paths.INTERMEDIATE.with_suffix('.bak'))`。`pieces_intermediate.bak` 是上一次写回前的快照（首次 commit 无原文件则跳过备份）。**只保留一份**（再 commit 会覆盖 `.bak`）。
+3. **intermediate schema 与 `ms-pieces-export` 一致**：`{source, gate_mm, n_pieces, total_area_mm2, pieces[]}`；pieces 字段 `{pid, ptype, size, side, polygon, bbox, area_mm2, n_verts, allowed_angles}`。`gate_mm=1980`（`nesting_bounds.load_pieces.GATE_MM`）、`allowed_angles=[0,180]`（v0.3 布纹线）。
+4. **不自动 reload 排料页**：`server.py` 顶层 `PIECES = load_pieces()` 是 import 时一次性加载的内存常量；commit 后 intermediate 文件已更新但内存 PIECES 不变（须重启 `ms-web` 或后续 reload 端点，**v1 TODO**）。
+
+### 关键不变量
+
+1. **全码**：`load_nest_pieces` 的 sizes 取自母版实际全码（`sorted({p.size for p in pieces if p.size is not None})`），**不沿用 `DEFAULT_SIZES`**（8 码跳 32）。M1787 实测 11 码 [28-38] → 176 NestPiece（vs 8 码 128 片）。
+2. **片型映射复用 `export_dxf.GROUP_NAMES`**（g00→后片 … g09→腰，M1787 结构款 SVG 人工确认）。新款母版须版师重新确认 group→ptype 映射。
+3. **NestPiece 仅含 polygon（毛版 layer1）**：grain/internal/notch 不进 intermediate（排料只需 polygon）；L/R 镜像由 `load_nest_pieces` 的 `PAIR_TYPES` 处理。
+4. **回归等价**：对 M1787，Path A 产物的 `pid` 集合 / `total_area_mm2` 与「全码 CLI 管线」（`load_nest_pieces(paths.PIECES_DIR, sizes=[28..38])`）等价（实测 176/176 片、PID 集合相同、零面积 diff）。
+5. **路径一律走 `paths`**：`paths.OUT_DIR/uploads/`、`paths.INTERMEDIATE`、`paths.INTERMEDIATE.with_suffix('.bak')`；不硬编码 `..` 上溯。
+6. **TODO（v1 不做，随排料页改造补）**：① 排料页 commit 后自动 reload（PIECES 顶层常量问题）；② 前端 commit 按钮 + `setTab('nesting')` 跳转 UX。
 
 ## WebSocket /ws/solve — 求解流
 

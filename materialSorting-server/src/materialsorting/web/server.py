@@ -15,7 +15,10 @@ WS 协议（详见 README / 实现计划）：
 from __future__ import annotations
 
 import asyncio
+import json
 import os
+import re
+import shutil
 import sys
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -27,7 +30,10 @@ from fastapi.staticfiles import StaticFiles
 from urllib.parse import quote
 
 from .. import paths
+from ..dxf_parser import explore
 from ..dxf_parser.collect import collect_pieces_with_details
+from ..dxf_parser.export_dxf import assign_group_no, GROUP_NAMES, write_piece_dxf
+from ..nesting_bounds.load_pieces import load_nest_pieces, GATE_MM as NEST_GATE_MM
 
 STATIC_DIR = paths.STATIC_DIR
 from .solver import build_instance, load_pieces, solve_with_callback
@@ -45,6 +51,8 @@ _SENTINEL = object()
 # US-004：上传解析配置
 UPLOAD_MAX_BYTES = 20 * 1024 * 1024   # 20MB 上限（实测生产母版 ~3MB，留足余量）
 UPLOADS_DIR = Path(paths.OUT_DIR) / 'uploads'
+# US-010：doc_id 合法字符集（仅允许字母数字，防路径逃逸；uuid.uuid4().hex 自然命中）
+_DOC_ID_RE = re.compile(r'^[0-9A-Za-z]{1,128}$')
 
 
 # ---------------------------------------------------------------- US-004 上传解析
@@ -158,6 +166,139 @@ async def parse_dxf(file: UploadFile = File(...)):
         return JSONResponse({'error': f'DXF 解析失败：{e}'}, status_code=422)
 
     return _build_parse_payload(doc_id, fname, pieces)
+
+
+# ---------------------------------------------------------------- US-010 commit-to-nesting
+
+def _commit_to_nesting_sync(doc_id: str, src_dxf: str, source_name: str) -> dict:
+    """US-010 Path A 全管线（同步，跑在 executor 里）：
+
+    1. ``explore.collect_pieces`` 取母版全部 layer1 毛版外轮廓；
+    2. ``export_dxf.assign_group_no`` + ``GROUP_NAMES`` 定片型；
+    3. ``write_piece_dxf`` 切单裁片到 ``paths.OUT_DIR/uploads/<doc_id>_pieces/``；
+    4. ``load_nest_pieces(pieces_dir, sizes=母版全码)`` 对齐布纹线 + 归一化 + L/R 镜像；
+    5. 备份原 intermediate 为 ``.bak`` 后覆盖写回（schema 与 ``ms-pieces-export`` 一致）。
+
+    返回新 intermediate 摘要 dict（码数/裁片数/总面积/备份路径）。
+    """
+    pieces = explore.collect_pieces(Path(src_dxf))
+    if not pieces:
+        raise RuntimeError('母版未提取到任何裁片（layer1 POLYLINE 为空）')
+
+    gmap = assign_group_no(pieces)
+
+    # 切单裁片（idempotent：每次 commit 先清空再重写，避免残留旧文件污染）
+    pieces_dir = UPLOADS_DIR / f'{doc_id}_pieces'
+    if pieces_dir.exists():
+        shutil.rmtree(pieces_dir)
+    pieces_dir.mkdir(parents=True, exist_ok=True)
+
+    written = 0
+    skipped: list[str] = []
+    for p in pieces:
+        gno = gmap[p.group_key]
+        ptype = GROUP_NAMES.get(gno)
+        if ptype is None:
+            skipped.append(f'{p.block_name}#{p.piece_index}(gno={gno} 无 GROUP_NAMES 映射)')
+            continue
+        if p.size is None:
+            skipped.append(f'{p.block_name}#{p.piece_index}(size 解析为 None)')
+            continue
+        write_piece_dxf(p, pieces_dir / f'{ptype}_{p.size}.dxf')
+        written += 1
+
+    if written == 0:
+        raise RuntimeError('未写出任何单裁片（请检查 GROUP_NAMES 映射或母版 layer1 结构）')
+
+    # 母版实际全码（覆盖 DEFAULT_SIZES 8 码）
+    all_sizes = sorted({p.size for p in pieces if p.size is not None})
+    nest_pieces = load_nest_pieces(str(pieces_dir), sizes=all_sizes)
+    if not nest_pieces:
+        raise RuntimeError('load_nest_pieces 未返回裁片（单裁片文件名/片型与 ALL_TYPES 不匹配）')
+
+    # intermediate schema 与 ms-pieces-export（pieces_export.py）完全一致
+    doc = {
+        'source': source_name,
+        'gate_mm': NEST_GATE_MM,
+        'n_pieces': len(nest_pieces),
+        'total_area_mm2': round(sum(p.area_mm2 for p in nest_pieces), 1),
+        'pieces': [
+            {
+                'pid': p.pid,
+                'ptype': p.ptype,
+                'size': p.size,
+                'side': p.side,
+                'polygon': [[round(x, 3), round(y, 3)] for x, y in p.polygon],
+                'bbox': [round(v, 2) for v in p.bbox],
+                'area_mm2': round(p.area_mm2, 1),
+                'n_verts': len(p.polygon),
+                'allowed_angles': [0, 180],   # v0.3 布纹线约束
+            }
+            for p in nest_pieces
+        ],
+    }
+
+    # 备份原 intermediate 为 .bak（首次写回时无原文件 → 不备份）
+    intermediate = Path(paths.INTERMEDIATE)
+    bak_path = intermediate.with_suffix('.bak')
+    intermediate.parent.mkdir(parents=True, exist_ok=True)
+    if intermediate.exists():
+        shutil.copy2(intermediate, bak_path)
+    with open(intermediate, 'w', encoding='utf-8') as f:
+        json.dump(doc, f, ensure_ascii=False)
+
+    return {
+        'doc_id': doc_id,
+        'source': source_name,
+        'sizes': all_sizes,
+        'n_pieces': len(nest_pieces),
+        'total_area_mm2': doc['total_area_mm2'],
+        'n_written_dxf': written,
+        'n_skipped': len(skipped),
+        'skipped': skipped[:10],   # 截断，避免响应过大
+        'bak': str(bak_path),
+    }
+
+
+@app.post('/api/commit-to-nesting')
+async def commit_to_nesting(req: Request):
+    """US-010 Path A：上传母版 → 单裁片切分 → NestPiece 全码 → 覆盖 intermediate。
+
+    payload: ``{doc_id, filename?}``
+      - ``doc_id``：US-004 落盘的 uuid（无扩展名），定位 ``uploads/<doc_id>.dxf``；
+      - ``filename``：可选，覆盖 intermediate ``source`` 字段；缺省用 ``<doc_id>.dxf``。
+
+    CPU 密集管线跑在 ``_executor`` 里防阻塞 WS。写回前备份原 intermediate 为
+    ``paths.INTERMEDIATE.with_suffix('.bak')``；返回新 intermediate 摘要。
+
+    **TODO（v1 不做，随排料页改造补）**：commit 后排料页自动 reload（当前
+    ``PIECES`` 是 server.py 顶层 ``load_pieces()`` 内存常量）+ 前端 commit 按钮。
+    """
+    try:
+        payload = await req.json()
+    except Exception:
+        return JSONResponse({'error': '请求体须为 JSON'}, status_code=400)
+
+    doc_id = payload.get('doc_id') if isinstance(payload, dict) else None
+    if not doc_id or not isinstance(doc_id, str):
+        return JSONResponse({'error': '缺少 doc_id 或类型错误'}, status_code=400)
+    if not _DOC_ID_RE.match(doc_id):
+        return JSONResponse({'error': 'doc_id 非法（仅允许字母数字，1-128 字符）'}, status_code=400)
+
+    src = UPLOADS_DIR / f'{doc_id}.dxf'
+    if not src.exists():
+        return JSONResponse({'error': f'未找到上传文件: {doc_id}'}, status_code=404)
+
+    source_name = payload.get('filename') or src.name
+    loop = asyncio.get_running_loop()
+    try:
+        result = await loop.run_in_executor(
+            _executor, _commit_to_nesting_sync, doc_id, str(src), source_name
+        )
+    except Exception as e:
+        return JSONResponse({'error': f'commit 失败：{e}'}, status_code=422)
+
+    return result
 
 
 @app.get('/')
