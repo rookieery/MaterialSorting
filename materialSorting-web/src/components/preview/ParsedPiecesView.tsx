@@ -2,19 +2,18 @@
 //
 // 职责：
 //   1. 从 uploadStore 读 doc + activeSize，过滤出当前码的全部 pieces。
-//   2. 渲染响应式 grid（每片一张卡片：PiecePreviewSVG + A/B/C 徽章 + 序号(数量)）。
-//   3. 卡片图形区点击 → 放大预览（US-013 PieceZoomModal）；序号(数量) 点击 → 数量弹窗
+//   2. 渲染响应式 grid（每片一张卡片：PiecePreviewSVG + A/B/C 徽章 + 数量(片)）。
+//   3. 卡片图形区点击 → 放大预览（US-013 PieceZoomModal）；数量(片) 点击 → 数量弹窗
 //      （US-012 PieceQtyDialog）。两个交互入口严格区分（详见点击区域分离约定）。
 //   4. 空态：当前码无 pieces（极少见，但兜底：后端返回某码 pieces=[]）→ 显示「该码无裁片」。
 //
-// 卡片头改造（US-014）：
-//   - 旧：[.piece-card-label] + [.piece-card-name]（label 徽章 + 中文母版名）
-//   - 新：[.piece-card-label] + [.piece-card-qty]（label 徽章 + 序号(数量) 按钮）
-//   - 序号 = piece 在当前码 pieces 数组的 index+1（与 label 字母次序一致：A=1, B=2, ...）
+// 卡片头（US-014；后去掉序号前缀，直接显示「数量+片」单位，文案 = {qty}片）：
+//   - [.piece-card-label] + [.piece-card-qty]（label 徽章 + 数量按钮/标签）
 //   - 数量 + 可编辑性 从 qtyStore getPieceDisplay(quantities, label, activeSize) 读：
-//     * editable=true  → <button class="piece-card-qty" onClick=openQtyDialog>{seq}({qty})</button>
-//     * editable=false → <span class="piece-card-qty disabled" title={reason}>{seq}({qty})</span>
-//       （global 非 source 时置灰，native title 提供 hover 提示文案）
+//     * editable=true  → <button class="piece-card-qty" onClick=openQtyDialog>{qty}片</button>
+//     * editable=false → <span class="piece-card-qty disabled" title={reason}>{qty}片</span>
+//       （global 非 source 时置灰，native title 提供 hover 提示文案
+//        「该数值已在「<src>」尺码处使用全局数量」）
 //
 // 点击区域分离（US-014 关键约定）：
 //   - .piece-card-qty（button）onClick → openQtyDialog + e.stopPropagation（防冒泡）
@@ -76,8 +75,7 @@ export function ParsedPiecesView(): JSX.Element {
         <div className="parsed-pieces-empty">该尺码无裁片</div>
       ) : (
         <div className="piece-grid">
-          {pieces.map((p, idx) => {
-            const seq = idx + 1;
+          {pieces.map((p) => {
             const display = getPieceDisplay(quantities, p.label, activeSize);
             return (
               <div key={`${p.label}-${p.name}`} className="piece-card">
@@ -93,14 +91,14 @@ export function ParsedPiecesView(): JSX.Element {
                         openQtyDialog(p.label, activeSize);
                       }}
                     >
-                      {seq}({display.qty})
+                      {display.qty}片
                     </button>
                   ) : (
                     <span
                       className="piece-card-qty disabled"
                       title={display.reason ?? undefined}
                     >
-                      {seq}({display.qty})
+                      {display.qty}片
                     </span>
                   )}
                 </div>

@@ -24,7 +24,7 @@
 //   reset()              回到 idle，清空 doc / activeSize / error / qtyDialog / zoom ——
 //                         用户主动重传时调（重传成功后 US-014 集成 qtyStore.resetQuantities）
 //   setSize(s)           切 activeSize（SizeTabs 点击时调；s = number | null）
-//   openQtyDialog(l, s)  打开数量编辑弹窗（点卡片头 序号(数量) button 时调）
+//   openQtyDialog(l, s)  打开数量编辑弹窗（点卡片头 数量(片) button 时调）
 //   closeQtyDialog()     关闭数量编辑弹窗（取消 / 遮罩 / ESC / 确定后调）
 //   openZoom(l, s)       打开放大预览模态（点卡片图形区 body 时调）
 //   closeZoom()          关闭放大预览模态（✕ / 遮罩 / ESC 时调）
@@ -72,7 +72,7 @@ export interface UploadState {
   reset: () => void;
   /** 切换当前查看的码号（SizeTabs 调用）。 */
   setSize: (size: number | null) => void;
-  /** 打开数量编辑弹窗（点卡片头 序号(数量) button 时调）。 */
+  /** 打开数量编辑弹窗（点卡片头 数量(片) button 时调）。 */
   openQtyDialog: (label: string, size: number | null) => void;
   /** 关闭数量编辑弹窗（取消 / 遮罩 / ESC / 确定后调）。 */
   closeQtyDialog: () => void;

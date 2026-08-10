@@ -5,7 +5,7 @@
 // 草稿丢弃。这避免切 global 瞬间把其它码同 label 置灰后无法回滚的体验问题。
 //
 // 状态来源拆分：
-//   - 显隐目标（label + size）→ uploadStore.qtyDialog（点卡片头 序号(数量) 时写入）
+//   - 显隐目标（label + size）→ uploadStore.qtyDialog（点卡片头 数量(片) 时写入）
 //   - 初值草稿（draftQty / draftGlobal）→ 本组件 useState，open 时初始化、close 时丢弃
 //   - 写入 → qtyStore.setPieceGlobal / setPiecePerSize（确定时调）
 //

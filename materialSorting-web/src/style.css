@@ -351,7 +351,7 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
   font-size: 11px;
   font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
 }
-/* US-014 卡片头序号(数量)：editable 时为 button，global 非 source 时为 span.disabled */
+/* US-014 卡片头数量(片)：editable 时为 button，global 非 source 时为 span.disabled */
 .piece-card-qty {
   /* button 默认带 border / bg，先重置成透明以继承 head 配色 */
   background: transparent;
@@ -613,7 +613,7 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
   font-size: 13px;
   color: #e6e6e6;
 }
-/* 头部行：[label徽章] + 序号(数量) · 码 {sizeLabel} · {name}；与卡片头同色系 */
+/* 头部行：[label徽章] + 数量(片) · 码 {sizeLabel} · {name}；与卡片头同色系 */
 .piece-zoom-head {
   display: flex;
   align-items: center;
@@ -623,7 +623,7 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
   color: #cdd;
   flex-shrink: 0;
 }
-.piece-zoom-seq {
+.piece-zoom-qty {
   font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
   color: #e6e6e6;
   font-weight: 600;

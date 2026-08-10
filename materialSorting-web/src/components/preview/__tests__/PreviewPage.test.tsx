@@ -6,7 +6,7 @@
 // US-014 新增：
 //   - 顶层挂 <PieceQtyDialog/> + <PieceZoomModal/>（默认 store null 不渲染 DOM）
 //   - reset / 重传（doc_id 变化）联动 qtyStore.resetQuantities
-//   - 端到端：切码 → 点序号数量 → 切全局 + 确定 → 切回原码 → 置灰 title 含来源码
+//   - 端到端：切码 → 点数量(片) → 切全局 + 确定 → 切回原码 → 置灰 title 含来源码
 //
 // 测试模式参考 UploadPanel.test.tsx + App.test.tsx：渲染入 container，
 // 通过 uploadStore.setState 驱动分支，断言 DOM 结构。
@@ -164,7 +164,7 @@ describe('PreviewPage (US-008) AC#3 已解析挂载主体', () => {
     expect(el.querySelectorAll('.piece-card').length).toBe(1);
   });
 
-  it('切 activeSize 到 30 → ParsedPiecesView 刷新到 2 片（序号 1(0)/2(0)）', () => {
+  it('切 activeSize 到 30 → ParsedPiecesView 刷新到 2 片（数量 0片）', () => {
     useUploadStore.setState({
       status: 'done',
       doc: makeDoc(),
@@ -178,8 +178,8 @@ describe('PreviewPage (US-008) AC#3 已解析挂载主体', () => {
     });
     expect(el.querySelectorAll('.piece-card').length).toBe(2);
     const qtyTexts = Array.from(el.querySelectorAll('.piece-card-qty')).map((n) => n.textContent);
-    expect(qtyTexts).toContain('1(0)');
-    expect(qtyTexts).toContain('2(0)');
+    expect(qtyTexts.length).toBe(2);
+    expect(qtyTexts).toContain('0片');
   });
 
   it('点击 SizeTabs chip 端到端切换 activeSize + grid 刷新', () => {
@@ -300,18 +300,18 @@ describe('PreviewPage (US-014) reset 联动 qtyStore', () => {
 });
 
 describe('PreviewPage (US-014) 端到端', () => {
-  it('解析成功 → 切码 → 点序号数量 → 切全局+确定 → 切另一码 → 对应片置灰 title 含来源码', () => {
+  it('解析成功 → 切码 → 点数量(片) → 切全局+确定 → 切另一码 → 对应片置灰 title 含来源码', () => {
     useUploadStore.setState({
       status: 'done',
       doc: makeDoc(),
       activeSize: 28,
     });
     const el = renderPage();
-    // 切到 30 码（label A 在 30 码 pieces[0]，序号 1）
+    // 切到 30 码（label A 在 30 码 pieces[0]）
     act(() => {
       useUploadStore.getState().setSize(30);
     });
-    // 点 A 片序号(数量) 按钮 → 弹数量弹窗
+    // 点 A 片数量(片) 按钮 → 弹数量弹窗
     const qtyButton = el.querySelector('.piece-card .piece-card-qty') as HTMLButtonElement;
     expect(qtyButton.tagName).toBe('BUTTON');
     act(() => {

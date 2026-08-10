@@ -42,7 +42,7 @@ export interface PieceDisplay {
  *   1. label 未配置       -> { qty:0, editable:true, reason:null }
  *   2. mode per-size      -> { qty: perSize[sizeKey] ?? 0, editable:true, reason:null }
  *   3. mode global + source -> { qty: globalValue, editable:true, reason:null }
- *   4. mode global + 非 source -> { qty: globalValue, editable:false, reason:'该数值已在「<src>」处使用全局数量' }
+ *   4. mode global + 非 source -> { qty: globalValue, editable:false, reason:'该数值已在「<src>」尺码处使用全局数量' }
  */
 export function getPieceDisplay(
   map: PieceQuantityMap,
@@ -61,7 +61,7 @@ export function getPieceDisplay(
   return {
     qty: q.globalValue,
     editable: false,
-    reason: '该数值已在「' + sizeLabel(q.globalSource) + '」处使用全局数量',
+    reason: '该数值已在「' + sizeLabel(q.globalSource) + '」尺码处使用全局数量',
   };
 }
 

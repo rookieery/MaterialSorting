@@ -13,10 +13,9 @@
 // 数量从 qtyStore getPieceDisplay 读（与卡片头同 selector）。
 //
 // 头部信息（详情模态追求信息完整，与卡片头追求简洁互补）：
-//   [label徽章] 序号(数量) · 码 {sizeLabel(size)} · {name}
-//   - 序号 = 该 piece 在当前码 pieces 数组的 index+1（与卡片头序号同口径，
-//     与 label 字母次序一致：A=1,B=2,...）
-//   - 数量从 qtyStore getPieceDisplay(quantities, label, size).qty 读
+//   [label徽章] {qty}片 · 码 {sizeLabel(size)} · {name}
+//   - 数量(片) 与卡片头同口径：qtyStore getPieceDisplay(quantities, label, size).qty
+//     （label 徽章已标识片型 A/B/C，无需再用 pieces 数组序号；故去掉序号前缀，直接显示「数量+片」）
 //   - name 是母版 block 名（中文），详情模态显示便于版师识别
 //
 // 关键约束：
@@ -42,20 +41,20 @@ function sizeLabel(size: number | null): string {
 }
 
 /**
- * 从 doc + zoom 目标定位 ParsedPiece 及其在码内的序号（1-based）。
+ * 从 doc + zoom 目标定位 ParsedPiece。
  * 防御性兜底：找不到码 / 找不到 label → 返回 null（组件渲染 null）。
  */
 function locatePiece(
   doc: { sizes: { size: number | null; pieces: ParsedPiece[] }[] } | null,
   label: string,
   size: number | null,
-): { piece: ParsedPiece; seq: number } | null {
+): { piece: ParsedPiece } | null {
   if (!doc) return null;
   const matched = doc.sizes.find((s) => s.size === size);
   if (!matched) return null;
-  const idx = matched.pieces.findIndex((p) => p.label === label);
-  if (idx < 0) return null;
-  return { piece: matched.pieces[idx], seq: idx + 1 };
+  const piece = matched.pieces.find((p) => p.label === label);
+  if (!piece) return null;
+  return { piece };
 }
 
 export function PieceZoomModal(): JSX.Element | null {
@@ -83,7 +82,7 @@ export function PieceZoomModal(): JSX.Element | null {
   // 防御性兜底：找不到码 / 找不到 label → 不渲染（理论不会发生，因 openZoom 由已挂载卡片触发）
   const located = locatePiece(doc, zoom.label, zoom.size);
   if (!located) return null;
-  const { piece, seq } = located;
+  const { piece } = located;
   const display = getPieceDisplay(quantities, zoom.label, zoom.size);
 
   function handleOverlayClick(e: React.MouseEvent): void {
@@ -120,9 +119,7 @@ export function PieceZoomModal(): JSX.Element | null {
         </button>
         <div className="piece-zoom-head">
           <span className="piece-card-label">{piece.label}</span>
-          <span className="piece-zoom-seq">
-            {seq}({display.qty})
-          </span>
+          <span className="piece-zoom-qty">{display.qty}片</span>
           <span className="piece-zoom-meta"> · 码 {sizeLabel(zoom.size)} · </span>
           <span className="piece-zoom-name">{piece.name}</span>
         </div>

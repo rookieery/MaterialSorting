@@ -1,12 +1,11 @@
-// US-008 ParsedPiecesView 集成测试（US-014 改造：卡片头 [label徽章]+序号(数量)+svg）：
-//   AC#2 渲染当前 activeSize 下的全部 pieces（grid，每片卡片含 PiecePreviewSVG + A/B/C + 序号(数量)）
+// US-008 ParsedPiecesView 集成测试（卡片头 [label徽章]+数量(片)+svg）：
+//   AC#2 渲染当前 activeSize 下的全部 pieces（grid，每片卡片含 PiecePreviewSVG + A/B/C + {qty}片）
 //   AC#2 切换 activeSize 后 grid 内容跟着刷新
 //   AC#2 当前码 pieces=[] 时显示「该尺码无裁片」空态
 //   doc=null 时组件渲染为空（空态由 PreviewPage 兜底）
 //
-// US-014 新增：
-//   - 序号 = pieces 数组 index+1（A=1, B=2, ...）
-//   - 数量默认 0 渲染 序号(0)
+// 数量展示（卡片头 .piece-card-qty 文案 = {qty}片）：
+//   - 数量默认 0 渲染 0片
 //   - editable 时 .piece-card-qty 为 <button>，点击 openQtyDialog
 //   - global 非 source 时 .piece-card-qty.disabled 为 <span>，title 含来源码
 //   - .piece-card-body 点击 openZoom；role=button + tabIndex + Enter/Space
@@ -110,7 +109,7 @@ describe('ParsedPiecesView (US-008) AC#2 渲染结构', () => {
     expect(cards.length).toBe(3);
   });
 
-  it('每片卡片含 label 徽章 + 序号(数量) + PiecePreviewSVG（无裁片名残留）', () => {
+  it('每片卡片含 label 徽章 + 数量(片) + PiecePreviewSVG（无裁片名残留）', () => {
     const pieces = [
       makePiece({ label: 'A', name: '前片' }),
       makePiece({ label: 'B', name: '后片' }),
@@ -123,17 +122,17 @@ describe('ParsedPiecesView (US-008) AC#2 渲染结构', () => {
     const el = renderView();
     const cards = el.querySelectorAll('.piece-card');
     expect(cards.length).toBe(2);
-    // 第一张卡片：A + 序号(数量) 默认 1(0) + svg
+    // 第一张卡片：A + 数量默认 0片 + svg
     const card0 = cards[0];
     expect(card0.querySelector('.piece-card-label')!.textContent).toBe('A');
-    expect(card0.querySelector('.piece-card-qty')!.textContent).toBe('1(0)');
+    expect(card0.querySelector('.piece-card-qty')!.textContent).toBe('0片');
     expect(card0.querySelector('svg')).not.toBeNull();
     // .piece-card-name 已废弃，不应存在
     expect(card0.querySelector('.piece-card-name')).toBeNull();
-    // 第二张卡片：B + 2(0) + svg
+    // 第二张卡片：B + 0片 + svg
     const card1 = cards[1];
     expect(card1.querySelector('.piece-card-label')!.textContent).toBe('B');
-    expect(card1.querySelector('.piece-card-qty')!.textContent).toBe('2(0)');
+    expect(card1.querySelector('.piece-card-qty')!.textContent).toBe('0片');
   });
 
   it('grid 容器含 .piece-grid class', () => {
@@ -176,12 +175,12 @@ describe('ParsedPiecesView (US-008) AC#2 切码刷新', () => {
     const el = renderView();
     expect(el.querySelectorAll('.piece-card').length).toBe(2);
 
-    // 切到 30 码：序号重置为 1（30 码 pieces 数组 index+1）
+    // 切到 30 码：grid 刷新为该码裁片
     act(() => {
       useUploadStore.getState().setSize(30);
     });
     expect(el.querySelectorAll('.piece-card').length).toBe(1);
-    expect(el.querySelector('.piece-card-qty')!.textContent).toBe('1(0)');
+    expect(el.querySelector('.piece-card-qty')!.textContent).toBe('0片');
   });
 
   it('activeSize 不在 doc.sizes 里（防御）→ 显示空态', () => {
@@ -209,9 +208,9 @@ describe('ParsedPiecesView (US-008) AC#2 切码刷新', () => {
   });
 });
 
-// US-014 卡片头序号(数量) + 双模态集成
-describe('ParsedPiecesView (US-014) 序号(数量) 渲染', () => {
-  it('序号 = pieces 数组 index+1（A=1, B=2, C=3）', () => {
+// US-014 卡片头数量(片) + 双模态集成
+describe('ParsedPiecesView (US-014) 数量(片) 渲染', () => {
+  it('每片数量默认 0 渲染 0片（A/B/C 三片均未配置 quantities）', () => {
     const pieces = [
       makePiece({ label: 'A', name: '前片' }),
       makePiece({ label: 'B', name: '后片' }),
@@ -225,12 +224,12 @@ describe('ParsedPiecesView (US-014) 序号(数量) 渲染', () => {
     const el = renderView();
     const qtyEls = el.querySelectorAll('.piece-card-qty');
     expect(qtyEls.length).toBe(3);
-    expect(qtyEls[0].textContent).toBe('1(0)');
-    expect(qtyEls[1].textContent).toBe('2(0)');
-    expect(qtyEls[2].textContent).toBe('3(0)');
+    expect(qtyEls[0].textContent).toBe('0片');
+    expect(qtyEls[1].textContent).toBe('0片');
+    expect(qtyEls[2].textContent).toBe('0片');
   });
 
-  it('qty 默认 0 渲染 序号(0)（label 未配置 quantities）', () => {
+  it('qty 默认 0 渲染 0片（label 未配置 quantities）', () => {
     useUploadStore.setState({
       status: 'done',
       doc: makeDoc([{ size: 28, pieces: [makePiece({ label: 'A', name: '前片' })] }]),
@@ -238,7 +237,7 @@ describe('ParsedPiecesView (US-014) 序号(数量) 渲染', () => {
     });
     const el = renderView();
     const qty = el.querySelector('.piece-card-qty')!;
-    expect(qty.textContent).toBe('1(0)');
+    expect(qty.textContent).toBe('0片');
   });
 
   it('qty 从 qtyStore getPieceDisplay 读（per-size 模式显示对应码数量）', () => {
@@ -249,7 +248,7 @@ describe('ParsedPiecesView (US-014) 序号(数量) 渲染', () => {
       activeSize: 28,
     });
     const el = renderView();
-    expect(el.querySelector('.piece-card-qty')!.textContent).toBe('1(5)');
+    expect(el.querySelector('.piece-card-qty')!.textContent).toBe('5片');
   });
 
   it('editable 时 .piece-card-qty 为 <button>，点击 openQtyDialog', () => {
@@ -289,7 +288,7 @@ describe('ParsedPiecesView (US-014) 序号(数量) 渲染', () => {
     // title 含来源码 30
     expect(qty.getAttribute('title')).toContain('30');
     // 显示全局值 7
-    expect(qty.textContent).toBe('1(7)');
+    expect(qty.textContent).toBe('7片');
   });
 
   it('global source 码自身仍为 <button>（source 可编辑）', () => {
@@ -306,7 +305,7 @@ describe('ParsedPiecesView (US-014) 序号(数量) 渲染', () => {
     const qty = el.querySelector('.piece-card-qty')!;
     expect(qty.tagName).toBe('BUTTON');
     expect(qty.classList.contains('disabled')).toBe(false);
-    expect(qty.textContent).toBe('1(7)');
+    expect(qty.textContent).toBe('7片');
   });
 });
 
