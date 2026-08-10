@@ -1,6 +1,6 @@
 # 前端组件 / 模块地图（materialSorting-web/）
 
-> 由 `/sync-docs` 维护。改前端先看这里。当前覆盖 US-001 Tab 框架 + US-002 WS 契约 + US-003 NestSVG + US-004 ControlPanel + US-005 多 seed/收敛曲线 + US-006 回放 seekbar + 片 hover tooltip + US-007 导出 PNG/DXF + DXF 上传预览 US-001 Tab 骨架 + 上传预览 US-005 类型/store/hook + 上传预览 US-006 UploadPanel 组件 + 上传预览 US-007 PiecePreviewSVG 命令式渲染 + 上传预览 US-008 SizeTabs/ParsedPiecesView/PreviewPage 容器集成。
+> 由 `/sync-docs` 维护。改前端先看这里。当前覆盖 US-001 Tab 框架 + US-002 WS 契约 + US-003 NestSVG + US-004 ControlPanel + US-005 多 seed/收敛曲线 + US-006 回放 seekbar + 片 hover tooltip + US-007 导出 PNG/DXF + DXF 上传预览 US-001 Tab 骨架 + 上传预览 US-005 类型/store/hook + 上传预览 US-006 UploadPanel 组件 + 上传预览 US-007 PiecePreviewSVG 命令式渲染 + 上传预览 US-008 SizeTabs/ParsedPiecesView/PreviewPage 容器集成 + 上传预览 US-011 qtyStore 数量状态（per-size/global 双模式）。
 
 ## 顶层结构
 
@@ -17,10 +17,10 @@ materialSorting-web/
 │   ├── App.tsx             # US-001 Tab 骨架：TabBar + 双 .page 容器（display:none 切换）+ Tooltip 单例
 │   ├── style.css           # 由 vanilla 前身 1:1 迁入；US-001 加 .tabbar/.tab/.page/.hidden/.preview-empty；US-006 加 .upload-panel/.drop-zone/.upload-status；US-007 加 .piece-preview-svg；US-008 加 .preview-page/.preview-main/.size-tabs/.size-chip/.parsed-pieces-view/.piece-grid/.piece-card*
 │   ├── vite-env.d.ts        # vite/client 类型引用
-│   ├── types/              # US-002：纯数据契约（与 server.py 字段名 1:1）；上传预览 US-005：parsed.ts
+│   ├── types/              # US-002：纯数据契约（与 server.py 字段名 1:1）；上传预览 US-005：parsed.ts；上传预览 US-011：qty.ts
 │   ├── constants/          # US-004：SIZES / PHASE_COLORS / SEED_COLORS / V03_TABLE
 │   ├── lib/                # US-002 起：纯函数工具（ws / geometry / params）；US-007 download
-│   ├── store/              # US-002 RunRegistry + US-003 appStore + US-001 uiStore；上传预览 US-005 uploadStore
+│   ├── store/              # US-002 RunRegistry + US-003 appStore + US-001 uiStore；上传预览 US-005 uploadStore；上传预览 US-011 qtyStore（+clampQty+getPieceDisplay 纯函数）
 │   ├── hooks/              # US-002 起：useSolveRun / useRafThrottle；US-007 useExport；上传预览 US-005 useParseDxf
 │   ├── components/
 │   │   ├── TabBar.tsx       # US-001 顶部 Tab（排料/上传预览）；订阅 uiStore.activeTab
@@ -183,6 +183,26 @@ materialSorting-web/
 10. **grid 用 CSS Grid `auto-fill + minmax(220px, 1fr)`** —— 浏览器宽度自适应列数（窗口缩小时单卡不被压扁，最小 220px 保证 SVG 不退化成窄条）。改 minmax 需视觉回归核对（M1787 每码 ~10 片 × ~180px 高度 ≈ 一屏）。
 11. **不引入 CSS 框架** —— `.preview-page` / `.preview-main` / `.size-tabs` / `.size-chip` / `.parsed-pieces-view` / `.piece-grid` / `.piece-card*` 全部沿用 style.css 命令式 className，与 ControlPanel / NestCard 暗背景 `#26282e/#2a2c32` + 绿色 `#2ea06c` 强调同色系。
 12. **AC#5 切 Tab 后状态保留验证（App.test.tsx）** —— App.test.tsx 切到 preview Tab 后断言 `.preview-empty` 仍在（doc=null 默认状态走空态分支，与 US-001 占位的 className 一致 —— 复用 `.preview-empty`/`.preview-empty-card`，不破坏 US-001 App 集成 smoke 测试）。改 PreviewPage 空态 className 需同步 App.test.tsx 第 101 行断言。
+
+## 上传预览 US-011 落地：qtyStore 数量状态（per-size/global 双模式 + 跨码联动置灰）
+
+| 文件 | 角色 |
+| --- | --- |
+| `src/types/qty.ts` | 数量类型契约：`QtyMode = 'per-size' \| 'global'`；`PieceQuantity { mode; perSize: Record<string,number>; globalValue: number; globalSource: number\|null }`；`PieceQuantityMap = Record<string /*label*/, PieceQuantity>`。**label 跨码匹配同一片型**（A/B/C 次序在码间稳定，依赖后端几何排序），与 uploadStore 完全解耦 |
+| `src/store/qtyStore.ts` | Zustand store + 2 个纯函数导出。state `quantities: PieceQuantityMap`（默认 `{}`）；actions：`setPiecePerSize(label, size, value)`（per-size 写入；若当前 global 则先切回 per-size：globalValue 继承到 `perSize[sizeKey(globalSource)]`、清空 global 字段、再写新值）、`setPieceGlobal(label, sourceSize, value)`（切 global：mode/globalValue/globalSource 三字段写）、`resetQuantities()`（清 `{}`）。**导出纯函数 `clampQty(v)=Math.max(0,Math.min(99,Math.trunc(Number(v)\|\|0)))`**（整数 [0,99]）+ **纯函数 selector `getPieceDisplay(map,label,size) -> {qty,editable,reason}`**（四分支：未配置 / per-size / global+source / global+非source）。`sizeKey(number)=String(size)` / `sizeKey(null)='null'`；`sizeLabel(null)='通用'` 否则 `String(size)`（与 SizeTabs `NULL_SIZE_LABEL` 同语义），均 store 内私有 |
+| `src/store/__tests__/qtyStore.test.ts` | 24 项单测：clampQty 6（负数/小数/NaN/超99/字符串/正常）；getPieceDisplay 9（label 未配置 / per-size / per-size 未设 / global+source / global+非source reason 含来源码 / null 码 sizeKey per-size / null 码 sizeLabel global-source=28 / source=null 访问 null editable / source=null 访问 number reason 含「通用」）；setPiecePerSize 4（写入值 / 从 global 切回继承 / 跨码独立 / clampQty）；setPieceGlobal 2（切模式非 source editable=false / 二次切覆盖）；resetQuantities 1；store 独立性 2（与 uploadStore 字段不重叠 / 双向 reset 互不影响） |
+
+### 关键不变量（上传预览 US-011 立，后续故事不得破坏）
+
+1. **qtyStore 与 uploadStore 完全解耦** —— qtyStore 只持 `quantities` + 3 actions（setPiecePerSize/setPieceGlobal/resetQuantities），不读 doc/activeSize；uploadStore 不持 quantities。改字段需同步 qtyStore.test.ts 「store 独立性」2 项用例。US-014 集成时 uploadStore.reset 联动 `resetQuantities()`（重传清零）。
+2. **label 跨码匹配同一片型** —— 数量 map 以 label（A/B/C）为 key，跨码语义同片型。依赖后端 `_label_for` 的几何排序 `(-centroid_y, centroid_x, -area_mm2, ...)` 在码间稳定（M1787 结构款成立；新款母版需版师确认）。改 key 口径需同步 US-014 ParsedPiecesView 集成。
+3. **`getPieceDisplay` 四分支严格固定** —— （a）label 未在 map → `{qty:0, editable:true, reason:null}`；（b）mode per-size → qty=`perSize[sizeKey(size)] ?? 0`、editable=true；（c）mode global 且 `globalSource===size` → qty=globalValue、editable=true；（d）mode global 且 `globalSource!==size` → qty=globalValue、editable=false、reason=`'该数值已在「<sizeLabel(globalSource)>」处使用全局数量'`。改任一分支需同步 qtyStore.test.ts 9 项 getPieceDisplay 用例。
+4. **`clampQty` 是数量值唯一规整入口** —— `Math.max(0, Math.min(99, Math.trunc(Number(v) || 0)))`：负数/NaN/非数字→0；小数→截断（非四舍五入）；>99→99；字符串数字→对应整数。setPiecePerSize / setPieceGlobal 内部统一走 clampQty，调用方传入原值即可。改公式需同步 qtyStore.test.ts 6 项 clampQty 用例 + 4 项 setPiecePerSize「value 经 clampQty」用例。
+5. **从 global 切回 per-size 时 globalValue 继承到 source 码** —— `setPiecePerSize(label, size, value)` 内部检测 `prev.mode==='global'`，先把 `prev.globalValue` 写到 `perSize[sizeKey(prev.globalSource)]`（globalSource=null 时 sizeKey='null' 兜底），再写新值到 `perSize[sizeKey(size)]`，最后 mode='per-size' + 清 globalValue/globalSource。改继承逻辑需同步 qtyStore.test.ts「从 global 切回时 globalValue 继承到 source 码」用例。
+6. **null 码 sizeKey/sizeLabel 双口径** —— `sizeKey(null)='null'`（perSize key 空间，与 number 区分）；`sizeLabel(null)='通用'`（人读文案，与 SizeTabs NULL_SIZE_LABEL 同语义）。globalSource=null 表示用户在「通用」码切 global，访问 null 码 editable=true（source 匹配），访问 number 码 reason 含「通用」。改文案需同步 qtyStore.test.ts null 码 3 项用例 + SizeTabs.test.ts「null 码渲染为通用」用例（同语义）。
+7. **`getPieceDisplay` 是 UI 消费的唯一入口** —— 卡片头（US-014 ParsedPiecesView）、数量弹窗（US-012 PieceQtyDialog）、放大模态（US-013 PieceZoomModal）都调 `getPieceDisplay(quantities, label, size)`，不直接读 quantities[label]。改 selector 签名需同步 US-012/013/014 调用方。
+8. **qtyStore reset 不影响 uploadStore，反之亦然** —— 双向独立性由 store 模块级隔离保证。改 reset 行为需同步 qtyStore.test.ts「store 独立性」2 项用例。
+9. **不进 commit / 排料** —— US-011 仅前端 UI，数量存 store 不序列化到 intermediate。后端接环（数量→每片复制份数）是后续 Story，不在本故事范围。
 
 ## US-002 落地：WS 契约 + RunRegistry + useSolveRun
 
