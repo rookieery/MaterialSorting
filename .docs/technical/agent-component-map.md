@@ -1,6 +1,6 @@
 # 前端组件 / 模块地图（materialSorting-web/）
 
-> 由 `/sync-docs` 维护。改前端先看这里。当前覆盖 US-001 脚手架 + US-002 WS 契约 + US-003 NestSVG + US-004 ControlPanel + US-005 多 seed/收敛曲线 + US-006 回放 seekbar + 片 hover tooltip + US-007 导出 PNG/DXF。
+> 由 `/sync-docs` 维护。改前端先看这里。当前覆盖 US-001 Tab 框架 + US-002 WS 契约 + US-003 NestSVG + US-004 ControlPanel + US-005 多 seed/收敛曲线 + US-006 回放 seekbar + 片 hover tooltip + US-007 导出 PNG/DXF + DXF 上传预览 US-001 Tab 骨架。
 
 ## 顶层结构
 
@@ -14,21 +14,25 @@ materialSorting-web/
 ├── tsconfig.node.json      # vite.config.ts 单独编译（composite）
 ├── src/                    # 源码（US-008 起：legacy/ 已删除，src/ 是唯一真相源）
 │   ├── main.tsx            # createRoot(<StrictMode><App/></StrictMode>)
-│   ├── App.tsx             # US-005：拼装 ControlPanel + NestsGrid + ConvergenceCurve + useRafThrottle；多 seed start × N
-│   ├── style.css           # 由 vanilla 前身 1:1 迁入，暂未拆模块
+│   ├── App.tsx             # US-001 Tab 骨架：TabBar + 双 .page 容器（display:none 切换）+ Tooltip 单例
+│   ├── style.css           # 由 vanilla 前身 1:1 迁入；US-001 加 .tabbar/.tab/.page/.hidden/.preview-empty
 │   ├── vite-env.d.ts        # vite/client 类型引用
 │   ├── types/              # US-002：纯数据契约（与 server.py 字段名 1:1）
 │   ├── constants/          # US-004：SIZES / PHASE_COLORS / SEED_COLORS / V03_TABLE
 │   ├── lib/                # US-002 起：纯函数工具（ws / geometry / params）；US-007 download
-│   ├── store/              # US-002 起：RunRegistry（mutable，不进 React state）+ US-003 appStore
+│   ├── store/              # US-002 RunRegistry + US-003 appStore + US-001 uiStore（Tab 切换）
 │   ├── hooks/              # US-002 起：useSolveRun / useRafThrottle；US-007 useExport
 │   ├── components/
+│   │   ├── TabBar.tsx       # US-001 顶部 Tab（排料/上传预览）；订阅 uiStore.activeTab
+│   │   ├── NestingPage.tsx  # US-001 排料页（原 App.tsx 业务逻辑外提；持 solving/seeds/useSolveRun）
+│   │   ├── preview/         # US-001 起：上传预览页（US-008 落地 UploadPanel/SizeTabs/PiecePreviewSVG）
+│   │   │   └── PreviewPage.tsx  # US-001 占位（待 US-008 替换为左 UploadPanel + 右 SizeTabs+ParsedPiecesView）
 │   │   ├── nests/          # US-003 NestSVG/NestCard/NestLabel + US-005 NestsGrid；US-006 NestSVG 加 seek+hover
 │   │   ├── ControlPanel/   # US-004 8 子组件 + US-005 MultiSeedControls；US-007 ExportButtons
 │   │   ├── curve/          # US-005 ConvergenceCurve（命令式 innerHTML）
 │   │   ├── playback/       # US-006 PlaybackBar/Seekbar/SeekReadout
 │   │   └── Tooltip.tsx     # US-006 片 hover tooltip（Portal 到 body）
-│   └── __tests__/          # US-002 起：vitest 单测
+│   └── __tests__/          # US-002 起：vitest 单测；US-001 加 App 集成 smoke + TabBar/uiStore 单测
 └── static/                 # npm run build 产物（US-008 起 gitignore；被 FastAPI mount 到 /static）
     ├── index.html
     └── assets/index-[hash].{js,css}
@@ -55,6 +59,30 @@ materialSorting-web/
 
 - `tsconfig.json`（include `src`）：app 代码 strict 模式，`noEmit` + `moduleResolution: bundler`，`jsx: react-jsx`（不需要 `import React`）。**`noUnusedLocals` / `noUnusedParameters` 都开**，未用的 import / 形参会直接报错 —— 测试文件同样受此约束。
 - `tsconfig.node.json`（include `vite.config.ts`，`composite: true`）：被 `tsconfig.json` 通过 `references` 引用，独立检查配置文件。
+
+## US-001 落地：顶部 Tab 框架 + NestingPage 外提
+
+| 文件 | 角色 |
+| --- | --- |
+| `src/store/uiStore.ts` | Zustand 单字段 store：`activeTab: 'nesting' \| 'preview'`（默认 `'nesting'`）+ `setTab(tab)`。仅此一字段，求解/WS/seek 等业务状态仍在各 page 内 |
+| `src/components/TabBar.tsx` | 顶部 Tab 切换：`<nav class="tabbar">` + 两 `<button class="tab">`（排料 / 上传预览）；点击 setTab；active 项加 `.active` class + `aria-pressed=true` |
+| `src/components/NestingPage.tsx` | 排料工作台页（原 App.tsx 业务逻辑外提）：持 `seeds/solving/status/doneCountRef/totalSeedsRef` + `useSolveRun({onDone})` + `useRafThrottle(seeds.length>0)`；渲染 `<ControlPanel>` + `<main class="main">`；不挂 Tooltip（Tooltip 由父 App 渲染） |
+| `src/components/preview/PreviewPage.tsx` | 上传预览页（US-001 占位）：渲染 `.preview-empty` 卡片提示「US-006~US-008 落地」；US-008 将替换为左 UploadPanel + 右 SizeTabs + ParsedPiecesView |
+| `src/App.tsx` | 顶层骨架：渲染 `<TabBar>` + `<div class="tab-content">` 双 `.page` 容器（display:none 切换）+ `<Tooltip>`（单例，Portal 到 body） |
+| `src/style.css` | 增 `.app{flex-direction:column}` + `.tabbar/.tab/.tab.active` + `.tab-content/.page/.page.hidden` + `.preview-empty/.preview-empty-card`（暗色与 ControlPanel 同色系） |
+| `src/store/__tests__/uiStore.test.ts` | 4 项单测：默认 nesting / setTab 切换 / 切回 / 订阅者通知 |
+| `src/components/__tests__/TabBar.test.tsx` | 5 项单测：DOM 结构（nav+2button）/ 默认 active / 点击切 store / 切回 / 顺序固定 |
+| `src/__tests__/App.test.tsx` | 6 项集成 smoke：tabbar+2tab / 默认 nesting 页可见含 ControlPanel+main / 切 preview nesting 加 .hidden 但 DOM 仍在（不卸载）/ 切回对称 / Tooltip 单例仍 Portal body / 点击 tab 端到端 |
+
+### 关键不变量（US-001 立，后续故事不得破坏）
+
+1. **双页面常驻 DOM，display:none 切换** —— `.page.hidden { display: none }` 而非条件渲染 / 路由卸载。切回排料页时 NestingPage 内 `useState/useRef/runRegistry` 全部保真，进行中的求解 / WS 连接 / 播放 seek 不中断。改 `display:none` 策略为「条件渲染」会破坏此保证。
+2. **uiStore 单字段** —— 仅持 `activeTab`；不混入 solving/seeds/seek 等业务状态（业务状态由 NestingPage 自治）。改 store 形状需同步 4 项 uiStore.test.ts。
+3. **TabBar 只切 store，不直接切 DOM** —— `<button onClick=setTab>`；显隐由 App 订阅 `activeTab` 后切 `.hidden` class。解耦：未来加 URL hash 同步只需改 App 一处。
+4. **Tooltip 单例仍挂 App** —— US-006 关键约定 #3 不破：Tooltip 是模块级单例，App 内只能挂一个；NestingPage 不挂 Tooltip。
+5. **Tab 顺序固定：排料在前** —— 是默认入口（`uiStore.activeTab` 默认 `'nesting'`），TABS 数组顺序不可改。
+6. **TabBar 视觉沿用 style.css** —— 不引入 CSS 框架；`.tabbar/.tab` 暗色（`#26282e`）与 ControlPanel 同色系；active 项用绿色 `#2ea06c` border-bottom 强调（与 StartButton `#2ea06c` 同色）。
+7. **NestingPage 用 Fragment** —— 直接把 ControlPanel + main 作为 `.page` flex 子元素，不再包一层 `.app`（避免冗余 DOM + flex 嵌套层）。
 
 ## US-002 落地：WS 契约 + RunRegistry + useSolveRun
 
@@ -212,8 +240,9 @@ materialSorting-web/
 
 ## 已知差异（脚手架阶段）
 
-- `src/App.tsx` US-005 起支持多 seed（multi_seed 开关 + seed_count）；solving/status/seeds 状态 + doneCountRef/totalSeedsRef 留在 App。US-006 加 setSeekTime（全完成时到末尾 / 新 start 重置 -1）+ clearHovered/hideTooltip。
-- `src/style.css` 由 vanilla 前身 1:1 迁入，未做 React 化拆分（沿用命令式 + 类名约定，CSS 框架不引入）。
+- `src/App.tsx` US-001 起只保留 Tab 骨架（TabBar + 双 `.page` 容器 + Tooltip 单例）；原 US-005 多 seed / US-006 seek 状态机全部下移到 `src/components/NestingPage.tsx`（行为字节级保留，仅容器由 `<div className="app">` 改为 Fragment 直挂 `.page` flex）。
+- `src/style.css` 由 vanilla 前身 1:1 迁入，未做 React 化拆分（沿用命令式 + 类名约定，CSS 框架不引入）。US-001 加 `.tabbar/.tab/.tab-content/.page/.page.hidden/.preview-empty` 暗色样式（与 ControlPanel 同色系）。
 - `static/` US-008 起已加入 `.gitignore`（构建产物不入库）；prod 模式前必须 `npm run build` 生成。
 - 导出（US-007）已落地：ControlPanel 持 useExport，ExportButtons 渲染 PNG/DXF 按钮（disabled 联动 solving/exporting/无 lastFrame）。详见 US-007 章节。
 - ControlPanel DOM 沿用 vanilla 前身 id（`start / status / d_ext / time / seed / multi_seed / seed_count / export_png / export_dxf` 等）以复用 CSS。
+- 上传预览页（PreviewPage）US-001 仅占位（提示卡片），待 US-006~US-008 落地 UploadPanel + SizeTabs + ParsedPiecesView + PiecePreviewSVG。

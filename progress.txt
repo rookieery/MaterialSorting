@@ -1,12 +1,24 @@
 # Ralph Progress Log
 Started: 2026-08-09
 
-## 2026-08-10 US-009 — Vite proxy /api + layer3 文档勘误 ✅
-- `materialSorting-web/vite.config.ts` `server.proxy` 新增 `/api → http://127.0.0.1:8000`（changeOrigin:true），与既有 `/export`、`/ws` 并列；build 通过、proxy 实测：GET /api/parse-dxf → 405、POST + M1787 multipart → 200（后端日志可见转发）。
-- `.docs/business/排料DXF解析架构_方案.md` 第 2 节 layer 语义更正：删除 `3=剪口(POINT)`，改为 `1=毛版/14=净版/7=布纹线/4=刀口(POINT+#N)/8=内部线/3=轮廓密点(非刀口)/2=未定参考点`，指向 `dxf_parser/collect.py:LAYER_MAPPING`。
-- 同步更新 `materialSorting-web/AGENTS.md`（dev/prod 后端调用表加 `/api/*`）、`.docs/technical/agent-component-map.md`（顶层结构 + dev/prod 表 + vite 关键点）、删除 `dxf_parser/AGENTS.md` 的 `US-009 待修` 占位。
-- 全文搜索 `layer3.*剪口|3=剪口` 无残留；后台 ms-web (:8000) 与 vite (:5173) 已 taskkill 清理。
-
 
 - layer3 文档勘误 = US-009 范围（本 story 仅在 AGENTS.md 标注「US-009 待修」，不动 `.docs/business/排料DXF解析架构_方案.md` 第 2 节）。
 - PiecePreviewSVG 渲染 = US-007 范围（notch 8mm 长度待版师确认）。
+
+## 2026-08-10 US-001 Tab 框架 + NestingPage 外提 ✅
+- 新增 `src/store/uiStore.ts`：Zustand 单字段（`activeTab: 'nesting' | 'preview'`，默认 `'nesting'`）+ `setTab()`。
+- 新增 `src/components/TabBar.tsx`：`<nav class="tabbar">` + 两 `<button class="tab">`（排料/上传预览）；active 项加 `.active` + `aria-pressed=true`；点击 setTab；视觉与 ControlPanel 同色系（暗背景 #26282e + 绿色 #2ea06c border-bottom 强调，与 StartButton 同色）。
+- 新增 `src/components/NestingPage.tsx`：原 App.tsx 业务逻辑字节级外提（持 seeds/solving/status/doneCountRef/totalSeedsRef + useSolveRun + useRafThrottle + handleStart）；用 Fragment 直接挂 ControlPanel + main 作 `.page` flex 子元素；不挂 Tooltip（Tooltip 由父 App 渲染）。
+- 新增 `src/components/preview/PreviewPage.tsx`：US-001 占位（提示卡片「US-006~US-008 落地」）；US-008 替换为 UploadPanel + SizeTabs + ParsedPiecesView。
+- 重写 `src/App.tsx`：仅留 `<TabBar>` + `<div class="tab-content">` 双 `.page` 容器（display:none 切换）+ `<Tooltip>`（单例，Portal body）。
+- `src/style.css`：`.app` 改 `flex-direction: column`；新增 `.tabbar/.tab/.tab.active/.tab-content/.page/.page.hidden/.preview-empty/.preview-empty-card`。
+- 新增测试：`src/store/__tests__/uiStore.test.ts`（4 项）+ `src/components/__tests__/TabBar.test.tsx`（5 项）+ `src/__tests__/App.test.tsx`（6 项集成 smoke：默认 nesting 页可见含 ControlPanel+main / 切 preview nesting 加 .hidden 但 DOM 仍在 / 切回对称 / Tooltip 单例仍 Portal body / 点击端到端）。
+- 验收：176 测试全 pass（161 既有 + 15 新增）；`npm run build` 通过；dev server (:5173) HTTP 200 + Vite 转译 App.tsx/main.tsx 无错。无法用 chrome-devtools-mcp（agent 工具集未含），改用 jsdom 集成 smoke 测覆盖 DOM 切换断言。
+- 关键不变量（写入 .docs/technical/agent-component-map.md + materialSorting-web/AGENTS.md）：
+  1. 双页面常驻 DOM，display:none 切换（非条件渲染）—— 切回排料页时 useState/useRef/runRegistry 全部保真，进行中求解/WS/seek 不中断。
+  2. uiStore 单字段（仅 activeTab），不混业务状态。
+  3. TabBar 只切 store，App 订阅后切 .hidden class。
+  4. Tab 顺序固定：排料在前（默认入口）。
+  5. NestingPage 用 Fragment（ControlPanel+main 直挂 .page flex，无冗余 .app 层）。
+  6. Tooltip 仍由 App 渲染（US-006 关键约定 #3 不破）。
+- 后端零改动（前端 only story）。

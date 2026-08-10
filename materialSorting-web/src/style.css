@@ -7,7 +7,53 @@ body {
   color: #e6e6e6;
 }
 
-.app { display: flex; height: 100vh; }
+/* ---- 顶部 Tab 切换（US-001） ---- */
+.app { display: flex; flex-direction: column; height: 100vh; }
+.tabbar {
+  display: flex;
+  flex-shrink: 0;
+  padding: 0 12px;
+  background: #26282e;
+  border-bottom: 1px solid #34363d;
+}
+.tab {
+  padding: 10px 18px;
+  font-size: 13px;
+  color: #9aa;
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  font-family: inherit;
+}
+.tab:hover { color: #cdd; }
+.tab.active {
+  color: #e6e6e6;
+  border-bottom-color: #2ea06c;
+}
+.tab-content { flex: 1; display: flex; min-height: 0; }
+/* .page 是 Tab 容器：水平 flex（与原 .app 同结构），.hidden 切 display:none 不卸载 */
+.page { flex: 1; display: flex; min-width: 0; min-height: 0; }
+.page.hidden { display: none; }
+
+/* ---- 预览页占位（US-001；US-008 替换为实体组件） ---- */
+.preview-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+}
+.preview-empty-card {
+  max-width: 520px;
+  padding: 24px 28px;
+  background: #26282e;
+  border: 1px solid #34363d;
+  border-radius: 8px;
+}
+.preview-empty-card h2 { margin: 0 0 12px; font-size: 16px; }
+.preview-empty-card p { margin: 6px 0; font-size: 13px; color: #cfcfcf; line-height: 1.6; }
+.preview-empty-card p.dim { color: #888; font-size: 12px; }
 
 /* ---- 左：控制面板 ---- */
 .panel {

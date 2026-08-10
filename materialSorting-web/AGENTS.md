@@ -28,27 +28,41 @@ npm run test               # vitest run（US-002 起会有用例）
 3. **命令式 polygon 更新**：每帧 setAttribute('points' / 'display')，由 Zustand renderTick 单字段 ~10fps 节流，**逃逸 React reconciliation**。US-003 落地。
 4. **`static/` 是构建产物**（US-008 起入库 gitignore）：`npm run build` 生成，**不要手改**；旧 vanilla 三件套（`legacy/`）已删除，React 应用是唯一真相源。
 
-## 文件分工（US-001~US-007 全部落地；US-008 收尾清理）
+## 文件分工（US-001 Tab 框架 + US-002~US-007 全部落地；US-008 收尾清理）
 
 ```
 src/
 ├── main.tsx               # US-001：createRoot + StrictMode
-├── App.tsx                # US-005：ControlPanel + NestsGrid + ConvergenceCurve + useRafThrottle；多 seed start
-├── style.css              # 由 vanilla 前身 1:1 迁入（US-008 起为唯一真相源）
+├── App.tsx                # US-001 ✅ Tab 骨架：TabBar + 双 .page 容器（display:none 切换）+ Tooltip 单例
+├── style.css              # 由 vanilla 前身 1:1 迁入；US-001 加 .tabbar/.tab/.page/.hidden/.preview-empty
 ├── vite-env.d.ts          # vite/client 类型
 ├── types/                 # US-002 ✅：ws.ts / piece.ts / v03.ts（纯数据契约）
 ├── lib/                   # US-002 ✅ ws.ts；US-003 ✅ geometry.ts；US-004 ✅ params.ts；US-006 ✅ seek.ts；US-007 ✅ download.ts
-├── store/                 # US-002 ✅ runRegistry.ts；US-003 ✅ appStore.ts（renderTick + US-006 seekTime）
+├── store/                 # US-002 ✅ runRegistry.ts；US-003 ✅ appStore.ts；US-001 ✅ uiStore.ts（Tab 切换）
 ├── hooks/                 # US-002 ✅ useSolveRun.ts；US-003 ✅ useRafThrottle.ts；US-007 ✅ useExport.ts
 ├── constants/             # US-004 ✅：sizes.ts / colors.ts / v03.ts
-├── __tests__/             # US-002 ✅ useSolveRun；US-003 ✅ 各模块单测；US-007 ✅ useExport
+├── __tests__/             # US-002 ✅ useSolveRun；US-003 ✅ 各模块单测；US-007 ✅ useExport；US-001 ✅ App 集成 smoke
 └── components/
+    ├── TabBar.tsx         # US-001 ✅ 顶部 Tab（排料/上传预览），订阅 uiStore.activeTab
+    ├── NestingPage.tsx    # US-001 ✅ 排料页（原 App 业务逻辑外提；持 solving/seeds/useSolveRun）
+    ├── preview/           # US-001 起：上传预览页
+    │   └── PreviewPage.tsx # US-001 占位（US-008 替换为 UploadPanel+SizeTabs+ParsedPiecesView）
     ├── nests/             # US-003 ✅ NestSVG / NestCard / NestLabel；US-005 ✅ NestsGrid；US-006 ✅ NestSVG seek+hover
     ├── ControlPanel/      # US-004 ✅ 8 子组件；US-005 ✅ MultiSeedControls；US-007 ✅ ExportButtons
     ├── curve/             # US-005 ✅ ConvergenceCurve
     ├── playback/          # US-006 ✅ PlaybackBar / Seekbar / SeekReadout
     └── Tooltip.tsx        # US-006 ✅ Portal 单例 + showTooltip/hideTooltip/setHovered/clearHovered
 ```
+
+## US-001 关键约定（Tab 框架调用方必读）
+
+- **双页面常驻 DOM，display:none 切换**：`.page.hidden { display: none }`（不是条件渲染）。切回排料页时 NestingPage 内 useState/useRef/runRegistry 全部保真，进行中求解 / WS / seek 不中断。改策略需同步 6 项 App.test.tsx。
+- **uiStore 单字段**：仅 `activeTab: 'nesting' | 'preview'`（默认 `'nesting'`）。求解/WS/seek 等业务状态由 NestingPage 自治，不混入 uiStore。
+- **TabBar 只切 store**：`<button onClick=setTab>`；显隐由 App 订阅 activeTab 后切 `.hidden` class（解耦：未来 URL hash 同步只需改 App）。
+- **Tab 顺序固定**：排料在前（默认入口）；TABS 数组顺序不可改。
+- **TabBar 视觉沿用 style.css**：暗色 `#26282e` 与 ControlPanel 同色系；active 用绿色 `#2ea06c` border-bottom（与 StartButton 同色）。不引入 CSS 框架。
+- **NestingPage 用 Fragment**：ControlPanel + main 直接作为 `.page` flex 子元素，不再包 `.app`（避免冗余 DOM + flex 嵌套层）。
+- **Tooltip 仍由 App 渲染**：US-006 关键约定 #3（模块级单例）不破；NestingPage 不挂 Tooltip。
 
 ## US-007 关键约定（导出 PNG/DXF 调用方必读）
 

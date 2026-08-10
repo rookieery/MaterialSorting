@@ -2,16 +2,10 @@
   "branchName": "ralph/dxf-upload-preview",
   "stories": [
     {
-      "id": "US-009",
-      "title": "Vite proxy /api + layer3 文档勘误",
-      "description": "As a 开发者，I want dev 下 /api 经 Vite proxy 转发且旧文档 layer3 错误描述修正，so that 前后端联调通畅、文档与实测一致。\n\n详见 tasks/prd-dxf-upload-preview.md US-009。\n\n具体任务：\n1. materialSorting-web/vite.config.ts 的 server.proxy 新增 /api→http://127.0.0.1:8000（changeOrigin:true），与现有 /export、/ws 并列。\n2. 修正 .docs/business/排料DXF解析架构_方案.md 第2节：删除/更正 layer3=剪口，改为 layer4=刀口(POINT+#N,版师2026-08-10确认)、layer3=轮廓密点(非刀口)、layer2=未定参考点、layer8=内部线、layer14=净版，指向 LAYER_MAPPING。\n\n验收标准：\n- npm run dev + 后端 :8000 同启，fetch('/api/parse-dxf') 命中后端（proxy 转发）。\n- 文档全文搜索无 layer3=剪口 残留。\n- npm run build 通过。",
-      "passes": true
-    },
-    {
       "id": "US-001",
       "title": "Tab 框架 + NestingPage 外提",
       "description": "As a 版师，I want 顶部 Tab 在排料/上传预览间切换且切回排料页求解/WS 不中断，so that 边排料边上传预览不丢状态。\n\n详见 tasks/prd-dxf-upload-preview.md US-001。\n\n具体任务：\n1. 新建 materialSorting-web/src/components/TabBar.tsx 渲染两 Tab（排料/上传预览），激活项高亮。\n2. 新建 store/uiStore.ts（Zustand）持 activeTab:'nesting'|'preview' 及 setTab()。\n3. 将 App.tsx 现有排料逻辑（ControlPanel+NestsGrid+PlaybackBar）外提到 components/NestingPage.tsx，App 仅留 TabBar+两页面容器。\n4. 两页面 display:none 切换不卸载，切回时求解/WS/播放进度保留。\n\n验收标准：\n- 沿用 style.css 不引入 CSS 框架；TabBar 视觉与 ControlPanel 一致。\n- 浏览器验证：排料页发起求解→切预览→切回，求解进度/WS 未中断（控制台无断连）。\n- npm run build 通过、npm run dev 两 Tab 可切换。",
-      "passes": false
+      "passes": true
     },
     {
       "id": "US-005",
