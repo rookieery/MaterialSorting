@@ -1,0 +1,459 @@
+============================================================ 
+HEADER
+ ============================================================
+dxfversion: AC1009
+$DWGCODEPAGE: None  $INSUNITS: None
+$EXTMIN: None  $EXTMAX: None
+
+APPID: ['ACAD']
+
+LAYERS: ['0', 'Defpoints']
+
+ ============================================================ 
+全文档实体 (space, layer, type) -> count
+ ============================================================
+  -28                  layer=1          POLYLINE     6
+  -28                  layer=1          TEXT         30
+  -28                  layer=13         POINT        2
+  -28                  layer=14         POLYLINE     6
+  -28                  layer=2          POINT        96
+  -28                  layer=3          POINT        1302
+  -28                  layer=4          POINT        42
+  -28                  layer=7          LINE         6
+  -28                  layer=8          POLYLINE     13
+  -29                  layer=1          POLYLINE     6
+  -29                  layer=1          TEXT         30
+  -29                  layer=13         POINT        2
+  -29                  layer=14         POLYLINE     6
+  -29                  layer=2          POINT        96
+  -29                  layer=3          POINT        1317
+  -29                  layer=4          POINT        42
+  -29                  layer=7          LINE         6
+  -29                  layer=8          POLYLINE     13
+  -30                  layer=1          POLYLINE     6
+  -30                  layer=1          TEXT         30
+  -30                  layer=13         POINT        2
+  -30                  layer=13         TEXT         2
+  -30                  layer=14         POLYLINE     6
+  -30                  layer=2          POINT        96
+  -30                  layer=2          TEXT         96
+  -30                  layer=3          POINT        1324
+  -30                  layer=4          POINT        42
+  -30                  layer=4          TEXT         42
+  -30                  layer=7          LINE         6
+  -30                  layer=8          POLYLINE     13
+  -31                  layer=1          POLYLINE     6
+  -31                  layer=1          TEXT         30
+  -31                  layer=13         POINT        2
+  -31                  layer=14         POLYLINE     6
+  -31                  layer=2          POINT        96
+  -31                  layer=3          POINT        1339
+  -31                  layer=4          POINT        42
+  -31                  layer=7          LINE         6
+  -31                  layer=8          POLYLINE     13
+  -32                  layer=1          POLYLINE     6
+  -32                  layer=1          TEXT         30
+  -32                  layer=13         POINT        2
+  -32                  layer=14         POLYLINE     6
+  -32                  layer=2          POINT        96
+  -32                  layer=3          POINT        1356
+  -32                  layer=4          POINT        42
+  -32                  layer=7          LINE         6
+  -32                  layer=8          POLYLINE     13
+  -33                  layer=1          POLYLINE     6
+  -33                  layer=1          TEXT         30
+  -33                  layer=13         POINT        2
+  -33                  layer=14         POLYLINE     6
+  -33                  layer=2          POINT        96
+  -33                  layer=3          POINT        1382
+  -33                  layer=4          POINT        42
+  -33                  layer=7          LINE         6
+  -33                  layer=8          POLYLINE     13
+  -34                  layer=1          POLYLINE     6
+  -34                  layer=1          TEXT         30
+  -34                  layer=13         POINT        2
+  -34                  layer=14         POLYLINE     6
+  -34                  layer=2          POINT        96
+  -34                  layer=3          POINT        1407
+  -34                  layer=4          POINT        42
+  -34                  layer=7          LINE         6
+  -34                  layer=8          POLYLINE     13
+  -35                  layer=1          POLYLINE     6
+  -35                  layer=1          TEXT         30
+  -35                  layer=13         POINT        2
+  -35                  layer=14         POLYLINE     6
+  -35                  layer=2          POINT        96
+  -35                  layer=3          POINT        1418
+  -35                  layer=4          POINT        42
+  -35                  layer=7          LINE         6
+  -35                  layer=8          POLYLINE     13
+  -36                  layer=1          POLYLINE     6
+  -36                  layer=1          TEXT         30
+  -36                  layer=13         POINT        2
+  -36                  layer=14         POLYLINE     6
+  -36                  layer=2          POINT        96
+  -36                  layer=3          POINT        1431
+  -36                  layer=4          POINT        42
+  -36                  layer=7          LINE         6
+  -36                  layer=8          POLYLINE     13
+  -37                  layer=1          POLYLINE     6
+  -37                  layer=1          TEXT         30
+  -37                  layer=13         POINT        2
+  -37                  layer=14         POLYLINE     6
+  -37                  layer=2          POINT        96
+  -37                  layer=3          POINT        1442
+  -37                  layer=4          POINT        42
+  -37                  layer=7          LINE         6
+  -37                  layer=8          POLYLINE     13
+  -38                  layer=1          POLYLINE     6
+  -38                  layer=1          TEXT         30
+  -38                  layer=13         POINT        2
+  -38                  layer=14         POLYLINE     6
+  -38                  layer=2          POINT        96
+  -38                  layer=3          POINT        1454
+  -38                  layer=4          POINT        42
+  -38                  layer=7          LINE         6
+  -38                  layer=8          POLYLINE     13
+  5156#28-32Ð¡33-38´óÂ layer=1          POLYLINE     11
+  5156#28-32Ð¡33-38´óÂ layer=1          TEXT         55
+  5156#28-32Ð¡33-38´óÂ layer=14         POLYLINE     11
+  5156#28-32Ð¡33-38´óÂ layer=2          POINT        352
+  5156#28-32Ð¡33-38´óÂ layer=2          TEXT         32
+  5156#28-32Ð¡33-38´óÂ layer=3          POINT        1840
+  5156#28-32Ð¡33-38´óÂ layer=4          POINT        88
+  5156#28-32Ð¡33-38´óÂ layer=4          TEXT         8
+  5156#28-32Ð¡33-38´óÂ layer=7          LINE         11
+  5156#28-32Ð¡33-38´óÂ layer=8          POLYLINE     110
+  MS                   layer=1          INSERT       110
+  MS                   layer=1          TEXT         6
+  µ¥-28                layer=1          POLYLINE     1
+  µ¥-28                layer=1          TEXT         5
+  µ¥-28                layer=14         POLYLINE     1
+  µ¥-28                layer=2          POINT        8
+  µ¥-28                layer=3          POINT        57
+  µ¥-28                layer=7          LINE         1
+  µ¥-29                layer=1          POLYLINE     1
+  µ¥-29                layer=1          TEXT         5
+  µ¥-29                layer=14         POLYLINE     1
+  µ¥-29                layer=2          POINT        8
+  µ¥-29                layer=3          POINT        57
+  µ¥-29                layer=7          LINE         1
+  µ¥-30                layer=1          POLYLINE     1
+  µ¥-30                layer=1          TEXT         5
+  µ¥-30                layer=14         POLYLINE     1
+  µ¥-30                layer=2          POINT        8
+  µ¥-30                layer=2          TEXT         8
+  µ¥-30                layer=3          POINT        57
+  µ¥-30                layer=7          LINE         1
+  µ¥-31                layer=1          POLYLINE     1
+  µ¥-31                layer=1          TEXT         5
+  µ¥-31                layer=14         POLYLINE     1
+  µ¥-31                layer=2          POINT        8
+  µ¥-31                layer=3          POINT        57
+  µ¥-31                layer=7          LINE         1
+  µ¥-32                layer=1          POLYLINE     1
+  µ¥-32                layer=1          TEXT         5
+  µ¥-32                layer=14         POLYLINE     1
+  µ¥-32                layer=2          POINT        8
+  µ¥-32                layer=3          POINT        57
+  µ¥-32                layer=7          LINE         1
+  µ¥-33                layer=1          POLYLINE     1
+  µ¥-33                layer=1          TEXT         5
+  µ¥-33                layer=14         POLYLINE     1
+  µ¥-33                layer=2          POINT        8
+  µ¥-33                layer=3          POINT        57
+  µ¥-33                layer=7          LINE         1
+  µ¥-34                layer=1          POLYLINE     1
+  µ¥-34                layer=1          TEXT         5
+  µ¥-34                layer=14         POLYLINE     1
+  µ¥-34                layer=2          POINT        8
+  µ¥-34                layer=3          POINT        57
+  µ¥-34                layer=7          LINE         1
+  µ¥-35                layer=1          POLYLINE     1
+  µ¥-35                layer=1          TEXT         5
+  µ¥-35                layer=14         POLYLINE     1
+  µ¥-35                layer=2          POINT        8
+  µ¥-35                layer=3          POINT        57
+  µ¥-35                layer=7          LINE         1
+  µ¥-36                layer=1          POLYLINE     1
+  µ¥-36                layer=1          TEXT         5
+  µ¥-36                layer=14         POLYLINE     1
+  µ¥-36                layer=2          POINT        8
+  µ¥-36                layer=3          POINT        57
+  µ¥-36                layer=7          LINE         1
+  µ¥-37                layer=1          POLYLINE     1
+  µ¥-37                layer=1          TEXT         5
+  µ¥-37                layer=14         POLYLINE     1
+  µ¥-37                layer=2          POINT        8
+  µ¥-37                layer=3          POINT        57
+  µ¥-37                layer=7          LINE         1
+  µ¥-38                layer=1          POLYLINE     1
+  µ¥-38                layer=1          TEXT         5
+  µ¥-38                layer=14         POLYLINE     1
+  µ¥-38                layer=2          POINT        8
+  µ¥-38                layer=3          POINT        57
+  µ¥-38                layer=7          LINE         1
+  Ë«-28                layer=1          POLYLINE     1
+  Ë«-28                layer=1          TEXT         5
+  Ë«-28                layer=14         POLYLINE     1
+  Ë«-28                layer=2          POINT        18
+  Ë«-28                layer=3          POINT        87
+  Ë«-28                layer=7          LINE         1
+  Ë«-28                layer=8          POLYLINE     3
+  Ë«-29                layer=1          POLYLINE     1
+  Ë«-29                layer=1          TEXT         5
+  Ë«-29                layer=14         POLYLINE     1
+  Ë«-29                layer=2          POINT        18
+  Ë«-29                layer=3          POINT        87
+  Ë«-29                layer=7          LINE         1
+  Ë«-29                layer=8          POLYLINE     3
+  Ë«-30                layer=1          POLYLINE     1
+  Ë«-30                layer=1          TEXT         5
+  Ë«-30                layer=14         POLYLINE     1
+  Ë«-30                layer=2          POINT        18
+  Ë«-30                layer=2          TEXT         18
+  Ë«-30                layer=3          POINT        87
+  Ë«-30                layer=7          LINE         1
+  Ë«-30                layer=8          POLYLINE     3
+  Ë«-31                layer=1          POLYLINE     1
+  Ë«-31                layer=1          TEXT         5
+  Ë«-31                layer=14         POLYLINE     1
+  Ë«-31                layer=2          POINT        18
+  Ë«-31                layer=3          POINT        87
+  Ë«-31                layer=7          LINE         1
+  Ë«-31                layer=8          POLYLINE     3
+  Ë«-32                layer=1          POLYLINE     1
+  Ë«-32                layer=1          TEXT         5
+  Ë«-32                layer=14         POLYLINE     1
+  Ë«-32                layer=2          POINT        18
+  Ë«-32                layer=3          POINT        87
+  Ë«-32                layer=7          LINE         1
+  Ë«-32                layer=8          POLYLINE     3
+  Ë«-33                layer=1          POLYLINE     1
+  Ë«-33                layer=1          TEXT         5
+  Ë«-33                layer=14         POLYLINE     1
+  Ë«-33                layer=2          POINT        18
+  Ë«-33                layer=3          POINT        87
+  Ë«-33                layer=7          LINE         1
+  Ë«-33                layer=8          POLYLINE     3
+  Ë«-34                layer=1          POLYLINE     1
+  Ë«-34                layer=1          TEXT         5
+  Ë«-34                layer=14         POLYLINE     1
+  Ë«-34                layer=2          POINT        18
+  Ë«-34                layer=3          POINT        87
+  Ë«-34                layer=7          LINE         1
+  Ë«-34                layer=8          POLYLINE     3
+  Ë«-35                layer=1          POLYLINE     1
+  Ë«-35                layer=1          TEXT         5
+  Ë«-35                layer=14         POLYLINE     1
+  Ë«-35                layer=2          POINT        18
+  Ë«-35                layer=3          POINT        87
+  Ë«-35                layer=7          LINE         1
+  Ë«-35                layer=8          POLYLINE     3
+  Ë«-36                layer=1          POLYLINE     1
+  Ë«-36                layer=1          TEXT         5
+  Ë«-36                layer=14         POLYLINE     1
+  Ë«-36                layer=2          POINT        18
+  Ë«-36                layer=3          POINT        87
+  Ë«-36                layer=7          LINE         1
+  Ë«-36                layer=8          POLYLINE     3
+  Ë«-37                layer=1          POLYLINE     1
+  Ë«-37                layer=1          TEXT         5
+  Ë«-37                layer=14         POLYLINE     1
+  Ë«-37                layer=2          POINT        18
+  Ë«-37                layer=3          POINT        87
+  Ë«-37                layer=7          LINE         1
+  Ë«-37                layer=8          POLYLINE     3
+  Ë«-38                layer=1          POLYLINE     1
+  Ë«-38                layer=1          TEXT         5
+  Ë«-38                layer=14         POLYLINE     1
+  Ë«-38                layer=2          POINT        18
+  Ë«-38                layer=3          POINT        87
+  Ë«-38                layer=7          LINE         1
+  Ë«-38                layer=8          POLYLINE     3
+  Ñü-28                layer=1          POLYLINE     1
+  Ñü-28                layer=1          TEXT         5
+  Ñü-28                layer=14         POLYLINE     1
+  Ñü-28                layer=2          POINT        14
+  Ñü-28                layer=3          POINT        262
+  Ñü-28                layer=4          POINT        14
+  Ñü-28                layer=7          LINE         1
+  Ñü-28                layer=8          POLYLINE     1
+  Ñü-29                layer=1          POLYLINE     1
+  Ñü-29                layer=1          TEXT         5
+  Ñü-29                layer=14         POLYLINE     1
+  Ñü-29                layer=2          POINT        14
+  Ñü-29                layer=3          POINT        268
+  Ñü-29                layer=4          POINT        14
+  Ñü-29                layer=7          LINE         1
+  Ñü-29                layer=8          POLYLINE     1
+  Ñü-30                layer=1          POLYLINE     1
+  Ñü-30                layer=1          TEXT         5
+  Ñü-30                layer=14         POLYLINE     1
+  Ñü-30                layer=2          POINT        14
+  Ñü-30                layer=2          TEXT         14
+  Ñü-30                layer=3          POINT        276
+  Ñü-30                layer=4          POINT        14
+  Ñü-30                layer=4          TEXT         14
+  Ñü-30                layer=7          LINE         1
+  Ñü-30                layer=8          POLYLINE     1
+  Ñü-31                layer=1          POLYLINE     1
+  Ñü-31                layer=1          TEXT         5
+  Ñü-31                layer=14         POLYLINE     1
+  Ñü-31                layer=2          POINT        14
+  Ñü-31                layer=3          POINT        282
+  Ñü-31                layer=4          POINT        14
+  Ñü-31                layer=7          LINE         1
+  Ñü-31                layer=8          POLYLINE     1
+  Ñü-32                layer=1          POLYLINE     1
+  Ñü-32                layer=1          TEXT         5
+  Ñü-32                layer=14         POLYLINE     1
+  Ñü-32                layer=2          POINT        14
+  Ñü-32                layer=3          POINT        288
+  Ñü-32                layer=4          POINT        14
+  Ñü-32                layer=7          LINE         1
+  Ñü-32                layer=8          POLYLINE     1
+  Ñü-33                layer=1          POLYLINE     1
+  Ñü-33                layer=1          TEXT         5
+  Ñü-33                layer=14         POLYLINE     1
+  Ñü-33                layer=2          POINT        14
+  Ñü-33                layer=3          POINT        297
+  Ñü-33                layer=4          POINT        14
+  Ñü-33                layer=7          LINE         1
+  Ñü-33                layer=8          POLYLINE     1
+  Ñü-34                layer=1          POLYLINE     1
+  Ñü-34                layer=1          TEXT         5
+  Ñü-34                layer=14         POLYLINE     1
+  Ñü-34                layer=2          POINT        14
+  Ñü-34                layer=3          POINT        302
+  Ñü-34                layer=4          POINT        14
+  Ñü-34                layer=7          LINE         1
+  Ñü-34                layer=8          POLYLINE     1
+  Ñü-35                layer=1          POLYLINE     1
+  Ñü-35                layer=1          TEXT         5
+  Ñü-35                layer=14         POLYLINE     1
+  Ñü-35                layer=2          POINT        14
+  Ñü-35                layer=3          POINT        309
+  Ñü-35                layer=4          POINT        14
+  Ñü-35                layer=7          LINE         1
+  Ñü-35                layer=8          POLYLINE     1
+  Ñü-36                layer=1          POLYLINE     1
+  Ñü-36                layer=1          TEXT         5
+  Ñü-36                layer=14         POLYLINE     1
+  Ñü-36                layer=2          POINT        14
+  Ñü-36                layer=3          POINT        316
+  Ñü-36                layer=4          POINT        14
+  Ñü-36                layer=7          LINE         1
+  Ñü-36                layer=8          POLYLINE     1
+  Ñü-37                layer=1          POLYLINE     1
+  Ñü-37                layer=1          TEXT         5
+  Ñü-37                layer=14         POLYLINE     1
+  Ñü-37                layer=2          POINT        14
+  Ñü-37                layer=3          POINT        325
+  Ñü-37                layer=4          POINT        14
+  Ñü-37                layer=7          LINE         1
+  Ñü-37                layer=8          POLYLINE     1
+  Ñü-38                layer=1          POLYLINE     1
+  Ñü-38                layer=1          TEXT         5
+  Ñü-38                layer=14         POLYLINE     1
+  Ñü-38                layer=2          POINT        14
+  Ñü-38                layer=3          POINT        332
+  Ñü-38                layer=4          POINT        14
+  Ñü-38                layer=7          LINE         1
+  Ñü-38                layer=8          POLYLINE     1
+
+ ============================================================ 
+命名 BLOCK 结构
+ ============================================================
+命名 BLOCK 数: 55
+  -28                                        | 1/POLYLINE=6, 1/TEXT=30, 13/POINT=2, 14/POLYLINE=6, 2/POINT=96, 3/POINT=1302, 4/POINT=42, 7/LINE=6, 8/POLYLINE=13
+  Ñü-28                                      | 1/POLYLINE=1, 1/TEXT=5, 14/POLYLINE=1, 2/POINT=14, 3/POINT=262, 4/POINT=14, 7/LINE=1, 8/POLYLINE=1
+  5156#28-32Ð¡33-38´óÂë-28                   | 1/POLYLINE=1, 1/TEXT=5, 14/POLYLINE=1, 2/POINT=32, 3/POINT=164, 4/POINT=8, 7/LINE=1, 8/POLYLINE=10
+  Ë«-28                                      | 1/POLYLINE=1, 1/TEXT=5, 14/POLYLINE=1, 2/POINT=18, 3/POINT=87, 7/LINE=1, 8/POLYLINE=3
+  µ¥-28                                      | 1/POLYLINE=1, 1/TEXT=5, 14/POLYLINE=1, 2/POINT=8, 3/POINT=57, 7/LINE=1
+  -29                                        | 1/POLYLINE=6, 1/TEXT=30, 13/POINT=2, 14/POLYLINE=6, 2/POINT=96, 3/POINT=1317, 4/POINT=42, 7/LINE=6, 8/POLYLINE=13
+  Ñü-29                                      | 1/POLYLINE=1, 1/TEXT=5, 14/POLYLINE=1, 2/POINT=14, 3/POINT=268, 4/POINT=14, 7/LINE=1, 8/POLYLINE=1
+  5156#28-32Ð¡33-38´óÂë-29                   | 1/POLYLINE=1, 1/TEXT=5, 14/POLYLINE=1, 2/POINT=32, 3/POINT=164, 4/POINT=8, 7/LINE=1, 8/POLYLINE=10
+  Ë«-29                                      | 1/POLYLINE=1, 1/TEXT=5, 14/POLYLINE=1, 2/POINT=18, 3/POINT=87, 7/LINE=1, 8/POLYLINE=3
+  µ¥-29                                      | 1/POLYLINE=1, 1/TEXT=5, 14/POLYLINE=1, 2/POINT=8, 3/POINT=57, 7/LINE=1
+  -30                                        | 1/POLYLINE=6, 1/TEXT=30, 13/POINT=2, 13/TEXT=2, 14/POLYLINE=6, 2/POINT=96, 2/TEXT=96, 3/POINT=1324, 4/POINT=42, 4/TEXT=42, 7/LINE=6, 8/POLYLINE=13
+  Ñü-30                                      | 1/POLYLINE=1, 1/TEXT=5, 14/POLYLINE=1, 2/POINT=14, 2/TEXT=14, 3/POINT=276, 4/POINT=14, 4/TEXT=14, 7/LINE=1, 8/POLYLINE=1
+  5156#28-32Ð¡33-38´óÂë-30                   | 1/POLYLINE=1, 1/TEXT=5, 14/POLYLINE=1, 2/POINT=32, 2/TEXT=32, 3/POINT=164, 4/POINT=8, 4/TEXT=8, 7/LINE=1, 8/POLYLINE=10
+  Ë«-30                                      | 1/POLYLINE=1, 1/TEXT=5, 14/POLYLINE=1, 2/POINT=18, 2/TEXT=18, 3/POINT=87, 7/LINE=1, 8/POLYLINE=3
+  µ¥-30                                      | 1/POLYLINE=1, 1/TEXT=5, 14/POLYLINE=1, 2/POINT=8, 2/TEXT=8, 3/POINT=57, 7/LINE=1
+  -31                                        | 1/POLYLINE=6, 1/TEXT=30, 13/POINT=2, 14/POLYLINE=6, 2/POINT=96, 3/POINT=1339, 4/POINT=42, 7/LINE=6, 8/POLYLINE=13
+  Ñü-31                                      | 1/POLYLINE=1, 1/TEXT=5, 14/POLYLINE=1, 2/POINT=14, 3/POINT=282, 4/POINT=14, 7/LINE=1, 8/POLYLINE=1
+  5156#28-32Ð¡33-38´óÂë-31                   | 1/POLYLINE=1, 1/TEXT=5, 14/POLYLINE=1, 2/POINT=32, 3/POINT=164, 4/POINT=8, 7/LINE=1, 8/POLYLINE=10
+  Ë«-31                                      | 1/POLYLINE=1, 1/TEXT=5, 14/POLYLINE=1, 2/POINT=18, 3/POINT=87, 7/LINE=1, 8/POLYLINE=3
+  µ¥-31                                      | 1/POLYLINE=1, 1/TEXT=5, 14/POLYLINE=1, 2/POINT=8, 3/POINT=57, 7/LINE=1
+  -32                                        | 1/POLYLINE=6, 1/TEXT=30, 13/POINT=2, 14/POLYLINE=6, 2/POINT=96, 3/POINT=1356, 4/POINT=42, 7/LINE=6, 8/POLYLINE=13
+  Ñü-32                                      | 1/POLYLINE=1, 1/TEXT=5, 14/POLYLINE=1, 2/POINT=14, 3/POINT=288, 4/POINT=14, 7/LINE=1, 8/POLYLINE=1
+  5156#28-32Ð¡33-38´óÂë-32                   | 1/POLYLINE=1, 1/TEXT=5, 14/POLYLINE=1, 2/POINT=32, 3/POINT=164, 4/POINT=8, 7/LINE=1, 8/POLYLINE=10
+  Ë«-32                                      | 1/POLYLINE=1, 1/TEXT=5, 14/POLYLINE=1, 2/POINT=18, 3/POINT=87, 7/LINE=1, 8/POLYLINE=3
+  µ¥-32                                      | 1/POLYLINE=1, 1/TEXT=5, 14/POLYLINE=1, 2/POINT=8, 3/POINT=57, 7/LINE=1
+
+ ============================================================ 
+POINT (刀口候选)
+ ============================================================
+POINT 总数: 24427  按 layer: {'2': 1848, '3': 21853, '4': 704, '13': 22}
+   ('-28', '2', -2960.4, -1143.5)
+   ('-28', '2', -3431.6, -1117.2)
+   ('-28', '2', -3430.7, -876.9)
+   ('-28', '2', -2960.4, -840.9)
+   ('-28', '2', -2632.9, -761.0)
+   ('-28', '2', -2530.8, -865.0)
+   ('-28', '2', -2385.7, -901.6)
+   ('-28', '2', -2395.0, -1155.4)
+   ('-28', '3', -2960.4, -1143.5)
+   ('-28', '3', -2973.4, -1143.1)
+   ('-28', '3', -2989.3, -1142.6)
+   ('-28', '3', -3004.0, -1142.1)
+   ('-28', '3', -3021.2, -1141.4)
+   ('-28', '3', -3036.6, -1140.9)
+   ('-28', '3', -3053.2, -1140.2)
+   ('-28', '3', -3071.0, -1139.5)
+   ('-28', '3', -3089.8, -1138.7)
+   ('-28', '3', -3109.4, -1137.8)
+   ('-28', '3', -3124.7, -1137.1)
+   ('-28', '3', -3140.3, -1136.4)
+   ('-28', '3', -3156.2, -1135.6)
+   ('-28', '3', -3172.3, -1134.8)
+   ('-28', '3', -3188.7, -1133.9)
+   ('-28', '3', -3205.1, -1133.0)
+   ('-28', '3', -3227.2, -1131.7)
+
+ ============================================================ 
+LINE (布纹线/刀口刻线)
+ ============================================================
+LINE 总数: 110  按 layer: {'7': 110}
+长度: min=35.9 max=686.2 中位=123.4
+长度桶: {'5-50mm': 14, '50-200mm': 63, '>200mm': 33}
+长线(>100mm)方向: {-90: 11, 0: 55}
+
+ ============================================================ 
+POLYLINE (轮廓)
+ ============================================================
+按 layer: {'14': 110, '8': 297, '1': 110}  闭合: {'closed': 220, 'open': 297}
+顶点数分布(前15):
+  2顶点: 66条
+  4顶点: 11条
+  6顶点: 22条
+  7顶点: 11条
+  8顶点: 11条
+  9顶点: 11条
+  11顶点: 38条
+  12顶点: 17条
+  13顶点: 16条
+  14顶点: 39条
+  16顶点: 4条
+  17顶点: 2条
+  18顶点: 3条
+  19顶点: 2条
+  20顶点: 5条
+
+ ============================================================ 
+TEXT (尺码/片名)
+ ============================================================
+TEXT 总数: 790
+Size 值: ['28', '29', '30', '31', '32', '33', '34', '35', '36', '37', '38']
+Piece Name 值: ['5156#28-32Ð¡33-38´óÂë', 'noname', 'µ¥', 'Ë«', 'Ñü']

@@ -1,0 +1,139 @@
+============================================================ 
+HEADER
+ ============================================================
+dxfversion: AC1009
+$DWGCODEPAGE: None  $INSUNITS: None
+$EXTMIN: None  $EXTMAX: None
+
+APPID: ['ACAD']
+
+LAYERS: ['0', 'Defpoints']
+
+ ============================================================ 
+全文档实体 (space, layer, type) -> count
+ ============================================================
+  MS                   layer=1          INSERT       10
+  MS                   layer=1          TEXT         6
+  noname..30           layer=1          POLYLINE     6
+  noname..30           layer=1          TEXT         30
+  noname..30           layer=13         POINT        2
+  noname..30           layer=13         TEXT         2
+  noname..30           layer=14         POLYLINE     6
+  noname..30           layer=2          POINT        95
+  noname..30           layer=2          TEXT         95
+  noname..30           layer=3          POINT        1274
+  noname..30           layer=4          POINT        42
+  noname..30           layer=4          TEXT         42
+  noname..30           layer=7          LINE         6
+  noname..30           layer=8          POLYLINE     12
+  noname.M1787#28-32Ð¡ layer=1          POLYLINE     1
+  noname.M1787#28-32Ð¡ layer=1          TEXT         5
+  noname.M1787#28-32Ð¡ layer=14         POLYLINE     1
+  noname.M1787#28-32Ð¡ layer=2          POINT        32
+  noname.M1787#28-32Ð¡ layer=2          TEXT         32
+  noname.M1787#28-32Ð¡ layer=3          POINT        164
+  noname.M1787#28-32Ð¡ layer=4          POINT        8
+  noname.M1787#28-32Ð¡ layer=4          TEXT         8
+  noname.M1787#28-32Ð¡ layer=7          LINE         1
+  noname.M1787#28-32Ð¡ layer=8          POLYLINE     10
+  noname.µ¥.30         layer=1          POLYLINE     1
+  noname.µ¥.30         layer=1          TEXT         5
+  noname.µ¥.30         layer=14         POLYLINE     1
+  noname.µ¥.30         layer=2          POINT        8
+  noname.µ¥.30         layer=2          TEXT         8
+  noname.µ¥.30         layer=3          POINT        57
+  noname.µ¥.30         layer=7          LINE         1
+  noname.Ë«.30         layer=1          POLYLINE     1
+  noname.Ë«.30         layer=1          TEXT         5
+  noname.Ë«.30         layer=14         POLYLINE     1
+  noname.Ë«.30         layer=2          POINT        18
+  noname.Ë«.30         layer=2          TEXT         18
+  noname.Ë«.30         layer=3          POINT        87
+  noname.Ë«.30         layer=7          LINE         1
+  noname.Ë«.30         layer=8          POLYLINE     3
+  noname.Ñü.30         layer=1          POLYLINE     1
+  noname.Ñü.30         layer=1          TEXT         5
+  noname.Ñü.30         layer=14         POLYLINE     1
+  noname.Ñü.30         layer=2          POINT        14
+  noname.Ñü.30         layer=2          TEXT         14
+  noname.Ñü.30         layer=3          POINT        276
+  noname.Ñü.30         layer=4          POINT        14
+  noname.Ñü.30         layer=4          TEXT         14
+  noname.Ñü.30         layer=7          LINE         1
+  noname.Ñü.30         layer=8          POLYLINE     1
+
+ ============================================================ 
+命名 BLOCK 结构
+ ============================================================
+命名 BLOCK 数: 5
+  noname..30                                 | 1/POLYLINE=6, 1/TEXT=30, 13/POINT=2, 13/TEXT=2, 14/POLYLINE=6, 2/POINT=95, 2/TEXT=95, 3/POINT=1274, 4/POINT=42, 4/TEXT=42, 7/LINE=6, 8/POLYLINE=12
+  noname.Ñü.30                               | 1/POLYLINE=1, 1/TEXT=5, 14/POLYLINE=1, 2/POINT=14, 2/TEXT=14, 3/POINT=276, 4/POINT=14, 4/TEXT=14, 7/LINE=1, 8/POLYLINE=1
+  noname.M1787#28-32Ð¡33-38´óÂë.30           | 1/POLYLINE=1, 1/TEXT=5, 14/POLYLINE=1, 2/POINT=32, 2/TEXT=32, 3/POINT=164, 4/POINT=8, 4/TEXT=8, 7/LINE=1, 8/POLYLINE=10
+  noname.Ë«.30                               | 1/POLYLINE=1, 1/TEXT=5, 14/POLYLINE=1, 2/POINT=18, 2/TEXT=18, 3/POINT=87, 7/LINE=1, 8/POLYLINE=3
+  noname.µ¥.30                               | 1/POLYLINE=1, 1/TEXT=5, 14/POLYLINE=1, 2/POINT=8, 2/TEXT=8, 3/POINT=57, 7/LINE=1
+
+ ============================================================ 
+POINT (刀口候选)
+ ============================================================
+POINT 总数: 2091  按 layer: {'2': 167, '3': 1858, '4': 64, '13': 2}
+   ('noname..30', '2', -3009.4, -1235.5)
+   ('noname..30', '2', -3488.2, -1213.4)
+   ('noname..30', '2', -3487.3, -965.0)
+   ('noname..30', '2', -3010.0, -940.3)
+   ('noname..30', '2', -2696.9, -864.8)
+   ('noname..30', '2', -2689.9, -868.8)
+   ('noname..30', '2', -2602.6, -954.7)
+   ('noname..30', '2', -2451.5, -992.1)
+   ('noname..30', '2', -2464.0, -1246.6)
+   ('noname..30', '3', -3009.3, -1235.5)
+   ('noname..30', '3', -3016.1, -1235.3)
+   ('noname..30', '3', -3031.2, -1234.8)
+   ('noname..30', '3', -3046.4, -1234.2)
+   ('noname..30', '3', -3061.6, -1233.7)
+   ('noname..30', '3', -3076.9, -1233.1)
+   ('noname..30', '3', -3092.0, -1232.6)
+   ('noname..30', '3', -3107.2, -1232.0)
+   ('noname..30', '3', -3122.4, -1231.4)
+   ('noname..30', '3', -3137.6, -1230.8)
+   ('noname..30', '3', -3152.7, -1230.3)
+   ('noname..30', '3', -3168.0, -1229.6)
+   ('noname..30', '3', -3183.3, -1229.0)
+   ('noname..30', '3', -3198.6, -1228.4)
+   ('noname..30', '3', -3214.0, -1227.7)
+   ('noname..30', '3', -3229.3, -1227.0)
+
+ ============================================================ 
+LINE (布纹线/刀口刻线)
+ ============================================================
+LINE 总数: 10  按 layer: {'7': 10}
+长度: min=62.1 max=894.6 中位=125.3
+长度桶: {'50-200mm': 7, '>200mm': 3}
+长线(>100mm)方向: {-90: 1, 0: 6}
+
+ ============================================================ 
+POLYLINE (轮廓)
+ ============================================================
+按 layer: {'1': 10, '14': 10, '8': 26}  闭合: {'closed': 20, 'open': 26}
+顶点数分布(前15):
+  2顶点: 5条
+  4顶点: 1条
+  6顶点: 2条
+  7顶点: 1条
+  8顶点: 2条
+  11顶点: 5条
+  13顶点: 2条
+  14顶点: 4条
+  18顶点: 1条
+  23顶点: 1条
+  30顶点: 1条
+  31顶点: 3条
+  32顶点: 1条
+  34顶点: 1条
+  44顶点: 1条
+
+ ============================================================ 
+TEXT (尺码/片名)
+ ============================================================
+TEXT 总数: 289
+Size 值: ['30']
+Piece Name 值: ['noname..30', 'noname.M1787#28-32Ð¡33-38´óÂë.30', 'noname.µ¥.30', 'noname.Ë«.30', 'noname.Ñü.30']
