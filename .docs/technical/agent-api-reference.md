@@ -197,7 +197,7 @@ curl -X POST http://127.0.0.1:8000/api/commit-to-nesting \
 
 1. **临时单裁片目录**：`paths.OUT_DIR/uploads/<doc_id>_pieces/`（~110 个 DXF，每次 commit 先 `shutil.rmtree` 再重写，**idempotent**）。v1 不自动清理（open question），同 `doc_id` 重跑会覆盖。
 2. **intermediate 备份**：写回前 `shutil.copy2(paths.INTERMEDIATE, paths.INTERMEDIATE.with_suffix('.bak'))`。`pieces_intermediate.bak` 是上一次写回前的快照（首次 commit 无原文件则跳过备份）。**只保留一份**（再 commit 会覆盖 `.bak`）。
-3. **intermediate schema 与 `ms-pieces-export` 一致**：`{source, gate_mm, n_pieces, total_area_mm2, pieces[]}`；pieces 字段 `{pid, ptype, size, side, polygon, bbox, area_mm2, n_verts, allowed_angles}`。`gate_mm=1980`（`nesting_bounds.load_pieces.GATE_MM`）、`allowed_angles=[0,180]`（v0.3 布纹线）。
+3. **intermediate schema 与 `ms-pieces-export` 一致**：`{source, gate_mm, n_pieces, total_area_mm2, pieces[]}`；pieces 字段 `{pid, ptype, size, side, label(US-022), polygon, bbox, area_mm2, n_verts, allowed_angles}`。`gate_mm=1980`（`nesting_bounds.load_pieces.GATE_MM`）、`allowed_angles=[0,180]`（v0.3 布纹线）。`label` 由 `compute_size_ptype_labels` 按 parse 同排序同标注生成，L/R 同 ptype 共享 label（AC#5 关键不变量）。
 4. **commit 后 reload（US-020）**：`_commit_to_nesting_sync` 成功 → 立即调 `_reload_pieces_state()` 重读 intermediate 填入 `_PIECES_STATE`（threading.Lock 保护，原子替换）。下一次 `/ws/solve` / `/export` / `/api/ptypes` 即看到新裁片，**前端无需重启 ms-web**。reload 异常（罕见 I/O 竞态）降级为 `reloaded: false` + `reload_error` 字段，保留旧 state 不半切。
 
 ### 关键不变量
@@ -266,11 +266,12 @@ curl http://127.0.0.1:8000/api/ptypes
   "time": 120,                    // 求解时间预算（秒），默认 120
   "seed": 0,                      // sparrow 随机种子，默认 0
   "params": {"d_ext":0, "d_int":0, "tol_ext":0, "tol_int":0},  // US-019 起前端永远传全 0；主面板内外两档输入已删，d/tol 覆盖全交 per_type
-  "per_type": {"单排": {"d": 8, "tol": 15}}   // 可选，每片型高级覆盖；缺维度回退两档
+  "per_type": {"单排": {"d": 8, "tol": 15}},  // 可选，每片型高级覆盖；缺维度回退两档
+  "quantities": {"A": {"28": 2, "30": 0}, "B": {"28": 1}}  // US-022 可选，label→sizeKey→demand；0=该 piece 该码不排；缺省=null→全片 demand=1
 }
 ```
 
-`params` / `per_type` 缺省 = baseline（无 erode、严格布纹线 `{0°,180°}`）。
+`params` / `per_type` 缺省 = baseline（无 erode、严格布纹线 `{0°,180°}`）。`quantities` 缺省 / `null` = 全片 `demand=1`（向后兼容旧前端 / 旧 intermediate 无 label）。US-022 起 `build_instance` 按 `(piece.label, str(piece.size))` 查 `quantities` → `spyrrow.Item(demand=N)`；demand=0 跳过（D2）；piece 缺 label 回退 demand=1。
 
 ### 2. server → manifest（**一次**，握手后立即发）
 
@@ -337,7 +338,7 @@ curl http://127.0.0.1:8000/api/ptypes
 |------|------|------|
 | `load_pieces` | `(intermediate_path=paths.INTERMEDIATE) → (doc, gate_mm, pieces)` | 读 `pieces_intermediate.json` |
 | `discretize_orientations` | `(tol: float) → list[float]` | v0.3 连续旋转公差 → spyrrow 离散角度集。`tol=0→[0,180]`；`tol≤5` 步进 1°；否则 5°。归一化到 [0,360) |
-| `build_instance` | `(pieces, gate_mm, *, time_budget, seed, sizes=None, params=None, per_type=None) → (instance, config, pid_meta, total_area, n_eroded)` | 按 sizes 过滤 → 每片 `erode=min(申请d, MAX_OVERLAP[ptype])`、`tol=min(申请tol, ROTATION_TOL[ptype])` → erode+clean → 构造 `spyrrow.Item` + `StripPackingInstance` + `StripPackingConfig` |
+| `build_instance` | `(pieces, gate_mm, *, time_budget, seed, sizes=None, params=None, per_type=None, quantities=None) → (instance, config, pid_meta, total_area, n_eroded)` | 按 sizes 过滤 → US-022 按 `(label, sizeKey)` 查 quantities 定 demand（0 跳过；缺 label → 1） → 每片 `erode=min(申请d, MAX_OVERLAP[ptype])`、`tol=min(申请tol, ROTATION_TOL[ptype])` → erode+clean → 构造 `spyrrow.Item` + `StripPackingInstance` + `StripPackingConfig` |
 | `solve_with_callback` | `(instance, config, on_report, *, drain_interval=0.2) → (final_sol, elapsed_sec, err)` | 子线程 `instance.solve(config, progress=queue)`，主线程 `queue.drain()` 每 0.2s 取中间解 → `on_report({type:frame,...})` |
 
 ### 求解线程 ↔ 事件循环桥（`server.ws_solve`）

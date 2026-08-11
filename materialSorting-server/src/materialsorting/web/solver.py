@@ -57,11 +57,15 @@ def discretize_orientations(tol: float):
 
 
 def build_instance(pieces, gate_mm, *, time_budget: int, seed: int,
-                   sizes=None, params=None, per_type=None):
+                   sizes=None, params=None, per_type=None, quantities=None):
     """按码号 + v0.3 参数构造 (instance, config, pid_meta, total_area, n_eroded)。
 
     params = {d_ext, d_int, tol_ext, tol_int}（内/外两档；默认全 0 = 阶段A baseline）
     per_type = {ptype: {d?, tol?}}（每片型高级覆盖；缺的维度回退两档）
+    quantities = {label: {sizeKey(str): N}} | None（US-022 per-size demand）。
+        - 按 (piece.label, str(piece.size)) 查 N → ``spyrrow.Item(demand=N)``；
+        - **demand=0 跳过该 piece（D2）**（该码该 ptype 不参与排料）；
+        - piece 缺 label 或 quantities=None → demand=1（向后兼容旧 intermediate / 旧前端）。
 
     每片实际 erode = min(申请值, MAX_OVERLAP[ptype])（v0.3 工艺上限兜底）
     每片实际 tol  = min(申请值, ROTATION_TOL[ptype])
@@ -80,6 +84,21 @@ def build_instance(pieces, gate_mm, *, time_budget: int, seed: int,
     items = []
     n_eroded = 0
     for p in pieces:
+        # US-022：先定 demand（demand=0 跳过该 piece，不进 sparrow 实例）。
+        # sizeKey 口径与前端 qtyStore 一致：number->String(number)；null->'null'。
+        # 旧 intermediate 无 label 或 quantities=None → demand=1（向后兼容）。
+        label = p.get('label')
+        if quantities and label is not None and label in quantities:
+            size_map = quantities[label]
+            if not isinstance(size_map, dict):
+                size_map = {}
+            sk = 'null' if p['size'] is None else str(p['size'])
+            demand = int(size_map.get(sk, 0))
+        else:
+            demand = 1
+        if demand <= 0:
+            continue   # D2：该 piece 该码 demand=0 → 不排
+
         ptype = p['ptype']
         internal = ptype in INTERNAL_TYPES
         base_d = float(pdef['d_int'] if internal else pdef['d_ext'])
@@ -113,7 +132,7 @@ def build_instance(pieces, gate_mm, *, time_budget: int, seed: int,
         items.append(spyrrow.Item(
             id=p['pid'],
             shape=[(float(x), float(y)) for x, y in poly],
-            demand=1,
+            demand=demand,
             allowed_orientations=orientations,
         ))
     instance = spyrrow.StripPackingInstance(

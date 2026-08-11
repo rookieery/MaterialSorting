@@ -17,6 +17,12 @@ export interface StartPayload {
   seed: number;
   params: SolveParams;
   per_type: PerTypeOverrides | null;
+  /**
+   * US-022 per-size demand：label → sizeKey → 数量。
+   * sizeKey 口径与 qtyStore 一致（String(size) 或 'null'）；demand=0 → 该 piece 该码不排。
+   * 缺省 / null → 后端全片 demand=1（向后兼容旧前端）。
+   */
+  quantities: Record<string, Record<string, number>> | null;
 }
 
 /** sparrow 求解阶段（与 rtype.phase_name() 对应；旧 vanilla 实现 PHASE_COLORS keys）。 */

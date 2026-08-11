@@ -11,6 +11,7 @@
 
 import { V03_PTYPES } from '../constants/v03';
 import type { PerTypeOverrides, PerTypeOverride, SolveParams } from '../types/v03';
+import type { PieceQuantityMap } from '../types/qty';
 
 /** 单片型的两条高级覆盖输入（d / tol 各一字符串，空串 = 继承 v0.3 默认）。 */
 export interface PerTypeFormValue {
@@ -122,4 +123,63 @@ export function parseSeedCount(form: FormState): number {
   const v = parseInt(form.seed_count, 10);
   const n = Number.isNaN(v) ? 3 : v;
   return Math.min(Math.max(n, 2), 6);
+}
+
+// ---------------------------------------------------------------- US-022 quantities 序列化
+
+/** sizeKey 口径与 qtyStore 一致：number->String(number)；null->'null'。 */
+function sizeKey(size: number | null): string {
+  return size === null ? 'null' : String(size);
+}
+
+/**
+ * US-022：把 ``qtyStore.quantities`` 扁平化为 WS payload 的 quantities 结构。
+ *
+ * 输出：``Record<label, Record<sizeKey, number>>``。
+ *   - per-size 模式：直接取 perSize（已是 sizeKey→number）。
+ *   - global 模式：把 globalValue 展开到 sizes 参数列出的全部 sizeKey（globalSource
+ *     也覆盖；全码共享一值）。
+ *   - 数量 0 保留在输出里（后端 build_instance 见 0 跳过该 piece；前端不抹零以保持
+ *     「显式 0 = 排除」语义可追溯）。
+ *   - quantities 为空 {} / sizes 为空 [] → 返回 null（后端回退全片 demand=1）。
+ *
+ * sizes 入参：当前勾选参与排料的码号列表（已过滤 null → number[]）。global 模式展开
+ * 依赖它来枚举 sizeKey；per-size 模式不依赖 sizes（perSize 自带 key 空间）。
+ */
+export function serializeQuantities(
+  quantities: PieceQuantityMap,
+  sizes: number[],
+): Record<string, Record<string, number>> | null {
+  const labels = Object.keys(quantities);
+  if (labels.length === 0) return null;
+
+  const sizeKeys = sizes.map((s) => sizeKey(s));
+  const out: Record<string, Record<string, number>> = {};
+  for (const label of labels) {
+    const q = quantities[label];
+    if (!q) continue;
+    if (q.mode === 'per-size') {
+      // perSize 已是 sizeKey → number（可能含用户未编辑的码，值为 1 来自 hydrateDefault）。
+      // 只保留当前选中码（用户取消勾选某码 → 该码 demand 不发，后端自然不排该码）。
+      // 兜底保留 'null' sizeKey（通用码；M1787 无此场景，但含 null 母版需要）。
+      const flat: Record<string, number> = { ...q.perSize };
+      const filtered: Record<string, number> = {};
+      for (const sk of sizeKeys) {
+        if (sk in flat) filtered[sk] = flat[sk];
+      }
+      if ('null' in flat && !('null' in filtered)) {
+        filtered['null'] = flat['null'];
+      }
+      if (Object.keys(filtered).length > 0) out[label] = filtered;
+    } else {
+      // global 模式：globalValue 展开到全部选中码 sizeKey（全码共享）。
+      const flat: Record<string, number> = {};
+      for (const sk of sizeKeys) flat[sk] = q.globalValue;
+      // globalSource 若为 null（通用码），sizeKey='null' 也应覆盖到。
+      const gsk = sizeKey(q.globalSource);
+      if (!(gsk in flat)) flat[gsk] = q.globalValue;
+      if (Object.keys(flat).length > 0) out[label] = flat;
+    }
+  }
+  return Object.keys(out).length > 0 ? out : null;
 }

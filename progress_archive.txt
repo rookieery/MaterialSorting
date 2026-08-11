@@ -576,3 +576,54 @@ NestsGrid 渲染 N 个 NestCard；ConvergenceCurve 命令式画 90% 生死线 + 
 - 主面板不再渲染 d_ext/d_int/tol_ext/tol_int 输入（ControlPanel.test.tsx 两条断言）。
 **未做浏览器验证**：本故事无新 SVG/坐标变换（只是删输入组件 + 改 params 默认），AC 仅要求 typecheck + 单测 + build，故跳过 chrome-devtools-mp；浏览器视觉回归（主面板无两档输入、hint 文案、高级配置按钮仍可开 modal）留作 US-021 自动 commit 集成时统一核对。
 ---
+**未做浏览器验证**：本故事无新 SVG/坐标变换（PiecePreviewSVG compact 仅复用现有 5 层渲染 + 跳过 label + pad=2），AC 仅要求 typecheck + 单测 + build，故跳过 chrome-devtools-mcp；浏览器视觉回归（缩略图 64×64 + 放大预览 + 双层 ESC + D7 预填）留作 US-021 自动 commit 集成时统一核对。
+---
+## US-021 — 解析成功自动 commit + 自动切超排（2026-08-11）
+### 交付
+- **新建 `src/hooks/useCommitToNesting.ts`** —— commit(doc_id, filename?) → Promise<{ok, summary?, error?}>。fetch POST /api/commit-to-nesting JSON body。防连击（committingRef + commitStatus==='committing' 双重防护）。commit done → setNestingEnabled(true) + setTab('nesting')（D1 闭环）。commit fail → commitStatus='error' 不切 Tab（D5）。
+- **改造 `src/hooks/useParseDxf.ts`** —— 解析成功（setState status='done'）后 `void commit(doc.doc_id, doc.filename)`（D1 副作用，不阻塞预览）。进入 uploading 时同步清 commit 字段。
+- **扩 `src/store/uploadStore.ts`** —— commitStatus/commitError/commitSummary 三字段 + reset() 同步清。CommitStatus + CommitSummary 类型导出。
+- **改造 `src/components/preview/UploadPanel.tsx`** —— 加 commit 状态行（committing→「应用中…」/ done→「已应用至超排：N 裁片，M 码」/ error→「应用失败：msg」）。复用 .upload-status 三态 className。
+### 测试
+- **新建 `src/hooks/__tests__/useCommitToNesting.test.tsx`** —— 15 项单测（≥10 AC 满足）：fetch URL/method/body/Content-Type / 200→commitSummary+done / filename optional / 422/404/400→error / non-JSON→statusText / 防连击仅一次 / committingRef reset / network error / commitStatus transition idle→committing→done/error / commit done→D1 setNestingEnabled+setTab / commit fail→D5 不切 Tab / entering committing clears stale error。
+- **改造 `src/hooks/__tests__/useParseDxf.test.tsx`** —— 原 15 项更新 fetch 计数（成功路径 parse+commit=2 / 两次 upload=4）+ beforeEach/afterEach 加 uiStore reset。**新增 7 项 US-021 集成**（≥6 AC 满足）：parse done→auto-trigger commit（calls[1] body 验证）/ commit done→activeTab=nesting / commit done→nestingEnabled=true / commit fail→不切 Tab / commit fail→commitError / commit done→commitSummary / parse fail→commit 不触发。
+- **扩 `src/store/__tests__/uploadStore.test.ts`** —— 新增 5 项 commit 字段测试。
+- **更新 `src/components/preview/__tests__/UploadPanel.test.tsx`** —— 2 项 fetch 计数 + uiStore reset。
+### 结果
+- `npm run typecheck` ✅、`npm run test` 33 文件 475 项全绿 ✅、`npm run build` 无报错 ✅。
+- `python -c "from materialsorting.web.server import app"` 导入通过 ✅（后端无改动，仅验证不回归）。
+## 2026-08-11 — US-022 求解输入数量 demand（per-size，0 跳过）
+**分支**: ralph/nesting-tab-linkage
+**目标**: 上传预览页编辑的每片每码数量真正参与排料（per-size demand；0=排除），解析后默认每片每码 hydrate=1。
+**实现要点**:
+1. **后端共享 labeling 模块**（新文件 `nesting_engine/labeling.py`）：
+   - `label_for(idx)` / `centroid(poly)` / `size_sort_key(size)` / `compute_size_ptype_labels(pieces, gmap, group_names)`。
+   - 单一真相源 —— parse/commit/pieces_export 三处标注均 import 此模块，避免 server.py `_label_for` 与 pieces_export 逻辑重复（nesting_engine 不能 import web，故共享层放本层）。
+   - 依赖方向合规：仅 import 标准库 + duck-typed PieceOutline 属性。
+2. **intermediate 加 label 字段**：
+   - `server.py _commit_to_nesting_sync`：调 `compute_size_ptype_labels(pieces, gmap, GROUP_NAMES)` → `{(size, ptype): label}`，每片 NestPiece 写 `label`（L/R 同 ptype 共享）。
+   - `pieces_export.py`：baseline CLI 解析母版（MASTER_DXF_GLOB）标 label；母版缺失则 label=null（向后兼容）。
+   - **AC#5 label 对齐不变量**：commit 走 NestPiece（归一化+镜像），parse 走 PieceOutline（原始坐标），坐标系不同；但两者源自同一母版的 `explore.collect_pieces`，对原始 pieces 施行与 `_build_parse_payload` 完全一致的排序键 `(-centroid_y, centroid_x, -area_mm2, block_name, piece_index)` + `label_for(idx)` 标注 → 按 (size, ptype) 严格对齐。M1787 验证 10/10 ptype 对齐（决策：label 稳定，不改用 (name,size) 为 key）。
+3. **WS /ws/solve 入参增 quantities**：
+   - `server.py ws_solve` 读 `msg['quantities']`（dict | None），传给 build_instance。
+   - `solver.py build_instance` 加 `quantities=None` 参数：按 `(piece.label, str(piece.size))` 查 N → `spyrrow.Item(demand=N)`；demand=0 跳过（D2）；piece 缺 label 或 quantities=None → demand=1（向后兼容）。
+   - 验证：build_instance 单片/对片 demand=0 skip、demand=2、缺 label 回退 5 项测试全过。
+4. **前端 quantities 序列化 + WS payload**：
+   - `types/ws.ts StartPayload` 加 `quantities: Record<string, Record<string, number>> | null`。
+   - `lib/params.ts serializeQuantities(qtyMap, sizes)` 纯函数：per-size 取 perSize（过滤未选中码），global 展开 globalValue 到全部选中码 sizeKey。空→null。7 项单测。
+   - `useSolveRun.ts StartConfig` 加可选 `quantities`，透传到 payload（`cfg.quantities ?? null`）。
+   - `ControlPanel.tsx handleStart`：`useQtyStore.getState().quantities`（不订阅）+ sizesNum → serializeQuantities → cfg.quantities。
+   - `NestingPage.tsx handleStart`：透传 cfg.quantities 到 start()（N seed 共用）。
+5. **qtyStore 加 hydrateDefaults(sizes, labels)**：
+   - sizes × labels 交叉积每项填 1（per-size 模式）。与已有 hydrateDefault(entries) 语义同、入参形式不同。空 sizes/labels → 空 map。4 项单测。
+   - PreviewPage 仍用 entries 版（更通用：各码 ptype 集合可能不同），新 action 供 useParseDxf 集成层按 (sizes, labels) 调用（AC#1 compliance）。
+**验证**:
+- `npm run typecheck` 通过；`npm run test` 488/488 全绿（+17 项新增：useSolveRun 2 + params 7 + qtyStore 4 + key 枚举 fix + 其他不变）。
+- `npm run build` 成功。
+- `python -c "from materialsorting.web.server import app"` 导入通过；solver/pieces_export/labeling 均 import OK。
+- 架构依赖方向不反向（nesting_engine 不 import web）。
+- AC#5 label 对齐 M1787 验证 10/10。
+- build_instance demand=0 skip / demand=2 / 缺 label 回退 5 项测试全过。
+- ms-pieces-export 重新生成 intermediate，128 片均带 label（A-J 10 标签，pair type L/R 共享）。
+**未做浏览器验证**：本故事无 SVG/坐标变换（仅 store/hook/payload 扩展 + 后端 demand 逻辑），AC 仅要求 typecheck + 单测 + import 检查。AC#7 curl+WS 人工验证（改某片某码 0→manifest 该片不出现）由 build_instance 测试等价覆盖（demand=0 skip 已验证）。浏览器视觉回归留作整体回归。
+---

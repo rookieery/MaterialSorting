@@ -101,6 +101,8 @@ export function NestingPage(): React.JSX.Element {
         seed: cfg.seed + i,
         params: cfg.params,
         per_type: cfg.per_type,
+        // US-022：per-size demand 透传（N 个 seed 共用同一份 quantities）。
+        quantities: cfg.quantities,
       });
     }
   }

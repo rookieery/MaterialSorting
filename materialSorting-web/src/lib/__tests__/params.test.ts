@@ -10,9 +10,11 @@ import {
   parseSeed,
   parseSeedCount,
   parseTime,
+  serializeQuantities,
   type FormState,
 } from '../params';
 import type { PerTypeOverrides, SolveParams } from '../../types/v03';
+import type { PieceQuantityMap } from '../../types/qty';
 
 function makeForm(overrides: Partial<FormState> = {}): FormState {
   return {
@@ -210,5 +212,65 @@ describe('parseSeedCount (US-005)', () => {
   it('multi_seed=true + count 空 / 非法 → fallback 3', () => {
     expect(parseSeedCount(makeForm({ multi_seed: true, seed_count: '' }))).toBe(3);
     expect(parseSeedCount(makeForm({ multi_seed: true, seed_count: 'abc' }))).toBe(3);
+  });
+});
+
+describe('serializeQuantities (US-022)', () => {
+  function makePerSizeMap(
+    label: string,
+    perSize: Record<string, number>,
+  ): PieceQuantityMap {
+    return { [label]: { mode: 'per-size', perSize, globalValue: 0, globalSource: null } };
+  }
+
+  it('空 quantities → null（后端回退全片 demand=1）', () => {
+    expect(serializeQuantities({}, [28, 30])).toBeNull();
+  });
+
+  it('per-size 模式：perSize 原样透传（含 0，不抹零）', () => {
+    const map = makePerSizeMap('A', { '28': 2, '30': 0 });
+    const out = serializeQuantities(map, [28, 30]);
+    expect(out).toEqual({ A: { '28': 2, '30': 0 } });
+  });
+
+  it('per-size 模式：未选中码被过滤（用户取消勾选 → 不参与排料）', () => {
+    const map = makePerSizeMap('A', { '28': 1, '30': 1, '32': 1 });
+    // 只选了 28 / 30，32 被过滤
+    const out = serializeQuantities(map, [28, 30]);
+    expect(out).toEqual({ A: { '28': 1, '30': 1 } });
+  });
+
+  it('global 模式：globalValue 展开到全部选中码 sizeKey', () => {
+    const map: PieceQuantityMap = {
+      A: { mode: 'global', perSize: {}, globalValue: 3, globalSource: 28 },
+    };
+    const out = serializeQuantities(map, [28, 30, 32]);
+    expect(out).toEqual({ A: { '28': 3, '30': 3, '32': 3 } });
+  });
+
+  it('global 模式 globalSource=null（通用码）→ null sizeKey 也覆盖', () => {
+    const map: PieceQuantityMap = {
+      A: { mode: 'global', perSize: {}, globalValue: 2, globalSource: null },
+    };
+    const out = serializeQuantities(map, [28]);
+    expect(out).toEqual({ A: { '28': 2, null: 2 } });
+  });
+
+  it('多 label 混合 per-size / global 模式', () => {
+    const map: PieceQuantityMap = {
+      A: { mode: 'per-size', perSize: { '28': 2 }, globalValue: 0, globalSource: null },
+      B: { mode: 'global', perSize: {}, globalValue: 1, globalSource: 28 },
+    };
+    const out = serializeQuantities(map, [28, 30]);
+    expect(out).toEqual({
+      A: { '28': 2 },
+      B: { '28': 1, '30': 1 },
+    });
+  });
+
+  it('空 sizes → null（无选中码，不发 demand；ControlPanel.handleStart 已前置校验）', () => {
+    const map = makePerSizeMap('A', { '28': 1 });
+    const out = serializeQuantities(map, []);
+    expect(out).toBeNull();
   });
 });

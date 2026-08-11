@@ -34,9 +34,11 @@ import {
   parseSeed,
   parseSeedCount,
   parseTime,
+  serializeQuantities,
   type FormState,
 } from '../../lib/params';
 import type { PerTypeOverrides as PerTypeOverridesValue, SolveParams } from '../../types/v03';
+import { useQtyStore } from '../../store/qtyStore';
 
 /** onStart 透传给 App 的载荷（直接喂给 useSolveRun.start 的 StartConfig 子集）。 */
 export interface ControlPanelStartPayload {
@@ -48,6 +50,11 @@ export interface ControlPanelStartPayload {
   seed_count: number;
   params: SolveParams;
   per_type: PerTypeOverridesValue | null;
+  /**
+   * US-022 per-size demand：label → sizeKey → 数量（null → 后端 demand=1 向后兼容）。
+   * ControlPanel.handleStart 内经 serializeQuantities(qtyStore.quantities, sizes) 序列化。
+   */
+  quantities: Record<string, Record<string, number>> | null;
 }
 
 export interface ControlPanelProps {
@@ -87,6 +94,13 @@ export function ControlPanel({ onStart, solving, status, onStatus }: ControlPane
     const sizesNum: number[] = form.sizes.filter(
       (s: number | null): s is number => s !== null,
     );
+    // US-022：从 qtyStore.quantities 序列化扁平化为 label→sizeKey→demand。
+    //   - getState() 读快照（不订阅，避免 ControlPanel 因数量编辑频繁重渲染）。
+    //   - sizesNum 已过滤 null；global 模式展开依赖此列表枚举 sizeKey。
+    const quantities = serializeQuantities(
+      useQtyStore.getState().quantities,
+      sizesNum,
+    );
     onStart({
       sizes: sizesNum,
       time: parseTime(form),
@@ -94,6 +108,7 @@ export function ControlPanel({ onStart, solving, status, onStatus }: ControlPane
       seed_count: parseSeedCount(form),
       params,
       per_type,
+      quantities,
     });
   }
 

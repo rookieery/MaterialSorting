@@ -90,6 +90,14 @@ export interface QtyState {
    * 故本 store 仍不依赖 parsed 类型，与 uploadStore 完全解耦。
    */
   hydrateDefault: (entries: ReadonlyArray<{ label: string; size: number | null }>) => void;
+  /**
+   * US-022：按 sizes × labels 交叉积批量初始化默认数量（per-size 模式，每 (label,size)=1）。
+   * 全量重建 quantities（与 hydrateDefault 同语义，入参形式不同：本 action 取分离的
+   * sizes / labels 列表，适合 labels 跨码一致的场景；M1787 各码 ptype 集合相同故适用）。
+   * 缺省值 1 来自 D3：解析后默认每片每码排 1 份，用户改 0 才排除。
+   * 供 useParseDxf 解析成功（doc 到达，已知 sizes + labels）时调用。
+   */
+  hydrateDefaults: (sizes: ReadonlyArray<number | null>, labels: ReadonlyArray<string>) => void;
 }
 
 export const useQtyStore = create<QtyState>((set) => ({
@@ -139,6 +147,26 @@ export const useQtyStore = create<QtyState>((set) => ({
         const q =
           map[label] ?? { mode: 'per-size', perSize: {}, globalValue: 0, globalSource: null };
         q.perSize[sizeKey(size)] = 1;
+        map[label] = q;
+      }
+      return { quantities: map };
+    }),
+  hydrateDefaults: (sizes, labels) =>
+    set(() => {
+      const map: PieceQuantityMap = {};
+      if (sizes.length === 0 || labels.length === 0) {
+        return { quantities: map };   // 空 sizes / labels → 空 map
+      }
+      for (const label of labels) {
+        const q: PieceQuantity = {
+          mode: 'per-size',
+          perSize: {},
+          globalValue: 0,
+          globalSource: null,
+        };
+        for (const size of sizes) {
+          q.perSize[sizeKey(size)] = 1;
+        }
         map[label] = q;
       }
       return { quantities: map };

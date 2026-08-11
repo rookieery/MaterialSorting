@@ -15,6 +15,9 @@ from collections import Counter
 
 from .. import paths
 from ..nesting_bounds.load_pieces import load_nest_pieces, GATE_MM
+from ..dxf_parser import explore
+from ..dxf_parser.export_dxf import assign_group_no, GROUP_NAMES
+from .labeling import compute_size_ptype_labels
 
 
 def main():
@@ -26,6 +29,19 @@ def main():
     os.makedirs(paths.SPARROW_DIR, exist_ok=True)
 
     pieces = load_nest_pieces(paths.PIECES_DIR)
+
+    # US-022：为每片 NestPiece 标注 label（与 parse-dxf 响应同排序同标注）。
+    # baseline CLI 解析母版 → 走与 _commit_to_nesting_sync 完全一致的 labeling 管线：
+    # explore.collect_pieces → assign_group_no + GROUP_NAMES → compute_size_ptype_labels。
+    # 母版缺失（paths.MASTER_DXF_GLOB 找不到）→ label 字段为 None，build_instance 回退
+    # demand=1（向后兼容；dev 环境可能只有单裁片目录无母版）。
+    size_ptype_label: dict[tuple[int | None, str], str] = {}
+    master_path = explore.resolve_dxf(paths.MASTER_DXF_GLOB)
+    if master_path is not None and master_path.exists():
+        master_pieces = explore.collect_pieces(master_path)
+        gmap = assign_group_no(master_pieces)
+        size_ptype_label = compute_size_ptype_labels(master_pieces, gmap, GROUP_NAMES)
+
     doc = {
         'source': 'M1787 直筒款 8 码套排',
         'gate_mm': GATE_MM,
@@ -37,6 +53,7 @@ def main():
                 'ptype': p.ptype,
                 'size': p.size,
                 'side': p.side,
+                'label': size_ptype_label.get((p.size, p.ptype)),
                 'polygon': [[round(x, 3), round(y, 3)] for x, y in p.polygon],
                 'bbox': [round(v, 2) for v in p.bbox],
                 'area_mm2': round(p.area_mm2, 1),

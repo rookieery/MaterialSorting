@@ -38,8 +38,8 @@ src/
 ├── vite-env.d.ts          # vite/client 类型
 ├── types/                 # US-002 ✅：ws.ts / piece.ts / v03.ts；上传预览 US-005 ✅ parsed.ts（US-004 响应契约）；上传预览 US-011 ✅ qty.ts（PieceQuantity/PieceQuantityMap）
 ├── lib/                   # US-002 ✅ ws.ts；US-003 ✅ geometry.ts；US-004 ✅ params.ts；US-006 ✅ seek.ts；US-007 ✅ download.ts
-├── store/                 # US-002 ✅ runRegistry.ts；US-003 ✅ appStore.ts；US-001 ✅ uiStore.ts（US-015 ✅ 扩 nestingEnabled + setNestingEnabled + setTab guard）；上传预览 US-005 ✅ uploadStore.ts（US-012 扩 qtyDialog + open/close；US-013 扩 zoom + open/close；US-021 扩 commitStatus/commitError/commitSummary + reset 同步清）；上传预览 US-011 ✅ qtyStore.ts（+clampQty+getPieceDisplay 纯函数）
-├── hooks/                 # US-002 ✅ useSolveRun.ts；US-003 ✅ useRafThrottle.ts；US-007 ✅ useExport.ts；上传预览 US-005 ✅ useParseDxf.ts（US-021 ✅ 解析成功自动 void commit）；上传预览 US-021 ✅ useCommitToNesting.ts（POST /api/commit-to-nesting + D1 闭环 setNestingEnabled+setTab）
+├── store/                 # US-002 ✅ runRegistry.ts；US-003 ✅ appStore.ts；US-001 ✅ uiStore.ts（US-015 ✅ 扩 nestingEnabled + setNestingEnabled + setTab guard）；上传预览 US-005 ✅ uploadStore.ts（US-012 扩 qtyDialog + open/close；US-013 扩 zoom + open/close；US-021 扩 commitStatus/commitError/commitSummary + reset 同步清）；上传预览 US-011 ✅ qtyStore.ts（+clampQty+getPieceDisplay 纯函数；US-022 ✅ 加 hydrateDefaults 交叉积版）
+├── hooks/                 # US-002 ✅ useSolveRun.ts（US-022 ✅ StartConfig 加 quantities 透传）；US-003 ✅ useRafThrottle.ts；US-007 ✅ useExport.ts；上传预览 US-005 ✅ useParseDxf.ts（US-021 ✅ 解析成功自动 void commit）；上传预览 US-021 ✅ useCommitToNesting.ts（POST /api/commit-to-nesting + D1 闭环 setNestingEnabled+setTab）
 ├── constants/             # US-004 ✅：sizes.ts / colors.ts / v03.ts
 ├── __tests__/             # US-002 ✅ useSolveRun；US-003 ✅ 各模块单测；US-007 ✅ useExport；US-001 ✅ App 集成 smoke（US-015 beforeEach 加 setNestingEnabled(true) 兜底 store guard）
 └── components/
@@ -226,6 +226,16 @@ src/
 - **测试隔离：useParseDxf.test.tsx / UploadPanel.test.tsx beforeEach/afterEach 加 uiStore reset**：commit D1 副作用调 setTab/setNestingEnabled，不 reset 会跨测试污染（前一个测试的 commit resolve 把 activeTab 切到 nesting，影响下一个测试初始态）。useCommitToNesting.test.tsx 也同步 reset。
 - **mockImplementation 路由 fetch（非 mockResolvedValue）**：US-021 集成测试中 parse-dxf 和 commit-to-nesting 两个 endpoint 共享同一 fetch spy，需 `mockImplementation` 按 URL 路由返回不同 Response（parse→ParsedDoc、commit→commit summary）。mockResolvedValue 共享同一 Response 对象会导致 `.json()` 二次消费 body 报错（与 US-018 PerTypeOverridesModal fetch mock 同模式）。
 - **未做浏览器验证**：本故事无 SVG/坐标变换（仅 store 字段扩展 + hook + UploadPanel 状态行 DOM），AC 仅要求 typecheck + 单测 + build。浏览器视觉回归（「应用中…」loading + 「已应用至超排」摘要 + 自动切 Tab + commit fail 红字）留作整体回归。
+
+## US-022 关键约定（求解输入数量 demand per-size 调用方必读）
+
+- **qtyStore 加 `hydrateDefaults(sizes, labels)` action**：per-size 模式下为 sizes × labels 交叉积每项填 1（D3）。与已有 `hydrateDefault(entries)`（按 `{label,size}[]` 列表）语义同、入参形式不同 —— 交叉积版适合「各码 ptype 集合一致」（M1787）场景，entries 版适合「各码 ptype 集合不同」一般场景。两个 action 并存，PreviewPage 仍用 entries 版（更通用）。
+- **WS StartPayload 加 `quantities` 字段**：`Record<label, Record<sizeKey, number>> | null`（label→sizeKey→demand）。`types/ws.ts` 扩字段；`useSolveRun.ts` StartConfig 加可选 `quantities`，hook 内 `cfg.quantities ?? null` 填进 payload。缺省=null → 后端全片 demand=1（向后兼容旧前端）。
+- **`serializeQuantities(qtyMap, sizes)` 纯函数（`lib/params.ts`）**：把 qtyStore.quantities 扁平化。per-size 模式取 perSize（只保留选中码 sizeKey）；global 模式取 globalValue 展开到全部选中码 sizeKey。空 map / 空 sizes → null。sizeKey 口径：number→String(number)、null→'null'（与 qtyStore 一致）。单测在 `lib/__tests__/params.test.ts`（7 项）。
+- **ControlPanel.handleStart 调 serializeQuantities**：读 `useQtyStore.getState().quantities`（不订阅，避免数量编辑频繁重渲染 ControlPanel）+ 过滤 null 后的 sizesNum，序列化后填进 `ControlPanelStartPayload.quantities`。NestingPage 透传到 `useSolveRun.start({quantities})`，N 个 seed 共用同一份。
+- **label 对齐由后端保证**：intermediate 每片加 `label` 字段（后端 `_commit_to_nesting_sync` + `pieces_export` 用 `compute_size_ptype_labels` 标注，与 parse-dxf 响应同排序同标注）。前端 qtyStore 以 label 为 key，后端 build_instance 按 `(piece.label, str(piece.size))` 查 quantities → demand。M1787 验证 10/10 ptype 对齐。
+- **demand=0 语义（D2）**：用户改某片某码为 0 → 后端 build_instance 见 0 跳过该 piece（不进 sparrow 实例）。配合 D3（hydrateDefaults 填 1）保证开箱即用 + 用户可显式排除。
+- **无 SVG/坐标变换改动**：本故事仅 store/hook/payload 扩展，AC 仅要求 typecheck + 单测 + `python -c "from materialsorting.web.server import app"` 导入通过。浏览器视觉回归（改某片某码 0 → 求解结果该片不出现）留作整体回归。
 
 ## US-018 关键约定（PerTypeOverridesModal/PtypePreviewModal 高级配置弹窗 调用方必读）
 

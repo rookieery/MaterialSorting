@@ -35,6 +35,12 @@ from ..dxf_parser import explore
 from ..dxf_parser.collect import collect_pieces_with_details
 from ..dxf_parser.export_dxf import assign_group_no, GROUP_NAMES, write_piece_dxf
 from ..nesting_bounds.load_pieces import load_nest_pieces, GATE_MM as NEST_GATE_MM
+from ..nesting_engine.labeling import (
+    label_for,
+    centroid as _centroid_pts,
+    size_sort_key,
+    compute_size_ptype_labels,
+)
 
 STATIC_DIR = paths.STATIC_DIR
 from .solver import build_instance, load_pieces, solve_with_callback
@@ -109,27 +115,18 @@ _DOC_ID_RE = re.compile(r'^[0-9A-Za-z]{1,128}$')
 # ---------------------------------------------------------------- US-004 上传解析
 
 def _label_for(idx: int) -> str:
-    """0→A, 1→B, ..., 25→Z, 26→AA, 27→AB ...（每码裁片数实测 ≤10，AA+ 仅兜底）。"""
-    s = ''
-    n = idx + 1
-    while n > 0:
-        n, rem = divmod(n - 1, 26)
-        s = chr(ord('A') + rem) + s
-    return s
+    """0→A, 1→B, ..., 25→Z, 26→AA, 27→AB ...（转发 ``nesting_engine.labeling``）。"""
+    return label_for(idx)
 
 
 def _centroid(poly: list[tuple[float, float]]) -> tuple[float, float]:
-    """顶点算术质心（用于稳定排序键）。"""
-    if not poly:
-        return (0.0, 0.0)
-    sx = sum(x for x, _ in poly)
-    sy = sum(y for _, y in poly)
-    return (sx / len(poly), sy / len(poly))
+    """顶点算术质心（转发 ``nesting_engine.labeling``，用于稳定排序键）。"""
+    return _centroid_pts(poly)
 
 
 def _size_sort_key(size: int | None) -> tuple[int, int]:
-    """码号排序键：None 殿后，其余按数值升序。"""
-    return (1, 0) if size is None else (0, size)
+    """码号排序键：None 殿后，其余按数值升序（转发 ``nesting_engine.labeling``）。"""
+    return size_sort_key(size)
 
 
 def _build_parse_payload(doc_id: str, filename: str, pieces) -> dict:
@@ -267,6 +264,14 @@ def _commit_to_nesting_sync(doc_id: str, src_dxf: str, source_name: str) -> dict
     if not nest_pieces:
         raise RuntimeError('load_nest_pieces 未返回裁片（单裁片文件名/片型与 ALL_TYPES 不匹配）')
 
+    # US-022：计算 (size, ptype) → label 映射（与 parse-dxf 响应同排序同标注）。
+    # commit 走 NestPiece（归一化+镜像），parse 走 PieceOutline（原始坐标），两者坐标
+    # 系不同不能直接排序对齐；但两者均源自同一母版的 ``explore.collect_pieces``，故对
+    # 原始 pieces 施行与 _build_parse_payload 完全一致的排序 + _label_for 标注，再经
+    # gmap/GROUP_NAMES 链路把 label 关联到 ptype，即得与 parse 响应按 (size, ptype)
+    # 严格对齐的 label 字典（关键不变量 AC#5）。
+    size_ptype_label = compute_size_ptype_labels(pieces, gmap, GROUP_NAMES)
+
     # intermediate schema 与 ms-pieces-export（pieces_export.py）完全一致
     doc = {
         'source': source_name,
@@ -279,6 +284,9 @@ def _commit_to_nesting_sync(doc_id: str, src_dxf: str, source_name: str) -> dict
                 'ptype': p.ptype,
                 'size': p.size,
                 'side': p.side,
+                # US-022：label 供前端 qtyStore（按 label 编辑数量）与 build_instance
+                # （按 (label, sizeKey) 查 demand）对齐配对。L/R 同 ptype 共享 label。
+                'label': size_ptype_label.get((p.size, p.ptype)),
                 'polygon': [[round(x, 3), round(y, 3)] for x, y in p.polygon],
                 'bbox': [round(v, 2) for v in p.bbox],
                 'area_mm2': round(p.area_mm2, 1),
@@ -472,11 +480,16 @@ async def ws_solve(ws: WebSocket):
     seed = int(msg.get('seed', 0))
     params = msg.get('params') or None
     per_type = msg.get('per_type') or None
+    # US-022：quantities = {label: {sizeKey: N}}（per-size demand；0=该 piece 该码不排）。
+    # 缺省/None → 全片 demand=1（向后兼容旧前端 / 旧 intermediate 无 label）。
+    quantities = msg.get('quantities')
+    if not isinstance(quantities, dict):
+        quantities = None
 
     try:
         instance, config, pid_meta, total_area, n_eroded = build_instance(
             pieces, gate_mm, time_budget=time_budget, seed=seed,
-            sizes=sizes, params=params, per_type=per_type)
+            sizes=sizes, params=params, per_type=per_type, quantities=quantities)
     except Exception as e:
         await ws.send_json({'type': 'error', 'message': f'构造实例失败: {e}'})
         return

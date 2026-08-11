@@ -259,12 +259,53 @@ describe('hydrateDefault (解析后默认数量)', () => {
   });
 });
 
+describe('hydrateDefaults (US-022 sizes×labels 交叉积)', () => {
+  it('sizes × labels 交叉积全填 1（per-size 模式）', () => {
+    useQtyStore.getState().hydrateDefaults([28, 30], ['A', 'B']);
+    const map = useQtyStore.getState().quantities;
+    expect(map.A).toEqual({
+      mode: 'per-size',
+      perSize: { '28': 1, '30': 1 },
+      globalValue: 0,
+      globalSource: null,
+    });
+    expect(map.B).toEqual({
+      mode: 'per-size',
+      perSize: { '28': 1, '30': 1 },
+      globalValue: 0,
+      globalSource: null,
+    });
+  });
+
+  it('null 码用 sizeKey null 作 key', () => {
+    useQtyStore.getState().hydrateDefaults([null], ['A']);
+    const map = useQtyStore.getState().quantities;
+    expect(map.A.perSize).toEqual({ null: 1 });
+  });
+
+  it('全量重建：旧数量被新默认覆盖', () => {
+    useQtyStore.getState().setPiecePerSize('A', 28, 9);
+    useQtyStore.getState().hydrateDefaults([28, 30], ['A', 'B']);
+    const map = useQtyStore.getState().quantities;
+    expect(Object.keys(map).sort()).toEqual(['A', 'B']);
+    expect(map.A.perSize).toEqual({ '28': 1, '30': 1 });
+  });
+
+  it('空 sizes / 空 labels → 空 map（后续 serializeQuantities 返 null）', () => {
+    useQtyStore.getState().hydrateDefaults([], ['A']);
+    expect(useQtyStore.getState().quantities).toEqual({});
+    useQtyStore.getState().hydrateDefaults([28], []);
+    expect(useQtyStore.getState().quantities).toEqual({});
+  });
+});
+
 describe('store independence (US-011)', () => {
   it('qtyStore and uploadStore fields do not overlap', () => {
-    // qtyStore only holds quantities + 4 actions
+    // qtyStore only holds quantities + 5 actions（US-022 加 hydrateDefaults 复数版）
     const qKeys = Object.keys(useQtyStore.getState()).filter((k) => k !== 'quantities');
     expect(qKeys.sort()).toEqual([
       'hydrateDefault',
+      'hydrateDefaults',
       'resetQuantities',
       'setPieceGlobal',
       'setPiecePerSize',

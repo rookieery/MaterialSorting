@@ -30,6 +30,11 @@ export interface StartConfig {
   params: SolveParams;
   /** per_type 空 / 不传 → 序列化为 null（同旧 vanilla 实现）。 */
   per_type?: PerTypeOverrides | null;
+  /**
+   * US-022 per-size demand：label → sizeKey → 数量（null → 后端 demand=1 向后兼容）。
+   * 由调用方（NestingPage）经 serializeQuantities(qtyStore.quantities, sizes) 序列化。
+   */
+  quantities?: Record<string, Record<string, number>> | null;
 }
 
 /** 各类消息的可选回调（订阅层按需注册；不抛错，无返回）。 */
@@ -72,6 +77,8 @@ export function useSolveRun(cb: UseSolveRunCallbacks = {}): {
       seed: cfg.seed,
       params: cfg.params,
       per_type: cfg.per_type ?? null,
+      // US-022：quantities 缺省 → null（后端 build_instance 回退全片 demand=1）。
+      quantities: cfg.quantities ?? null,
     };
     ws.onopen = () => {
       ws.send(JSON.stringify(payload));

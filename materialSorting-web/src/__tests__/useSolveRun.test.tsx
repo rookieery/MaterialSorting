@@ -137,6 +137,8 @@ describe('useSolveRun', () => {
       seed: 0,
       params: { d_ext: 0, d_int: 0, tol_ext: 0, tol_int: 0 },
       per_type: null,
+      // US-022：quantities 缺省 → null（后端回退全片 demand=1）。
+      quantities: null,
     });
   });
 
@@ -274,5 +276,42 @@ describe('useSolveRun', () => {
     act(() => ws.onopen?.());
     const parsed: StartPayload = JSON.parse(ws.sent[0]);
     expect(parsed.per_type).toEqual({ 前片: { d: 1, tol: 1 } });
+  });
+
+  it('US-022 quantities 非空时透传到 StartPayload（label→sizeKey→demand）', () => {
+    const startRef = mountHook({});
+    const quantities = {
+      A: { '30': 2, '32': 0 },
+      B: { '30': 1, '32': 1 },
+    };
+    act(() =>
+      startRef.current({
+        sizes: [30, 32],
+        time: 1,
+        seed: 0,
+        params: { d_ext: 0, d_int: 0, tol_ext: 0, tol_int: 0 },
+        quantities,
+      }),
+    );
+    const ws = mockInstances[0];
+    act(() => ws.onopen?.());
+    const parsed: StartPayload = JSON.parse(ws.sent[0]);
+    expect(parsed.quantities).toEqual(quantities);
+  });
+
+  it('US-022 quantities 缺省 → null（后端回退全片 demand=1）', () => {
+    const startRef = mountHook({});
+    act(() =>
+      startRef.current({
+        sizes: [30],
+        time: 1,
+        seed: 0,
+        params: { d_ext: 0, d_int: 0, tol_ext: 0, tol_int: 0 },
+      }),
+    );
+    const ws = mockInstances[0];
+    act(() => ws.onopen?.());
+    const parsed: StartPayload = JSON.parse(ws.sent[0]);
+    expect(parsed.quantities).toBeNull();
   });
 });

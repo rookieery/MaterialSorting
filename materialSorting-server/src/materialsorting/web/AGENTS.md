@@ -55,6 +55,14 @@ curl http://127.0.0.1:8000/api/ptypes                                  # US-020 
 - **GET /api/ptypes（D10）**：从 `_PIECES_STATE.pieces` 按 ptype 分组、各取首个 piece 作代表；返回 `{representatives: Record<ptype, {polygon, net_polygon?, internal_lines?, notches?, grain_line?}>}`。字段白名单 `_PTYPE_REPRESENTATIVE_FIELDS` 透传 intermediate 已有字段 —— **layer-aware（D11）**：v1 仅 polygon，US-024 扩 intermediate 为 5 层后自动带 net/internal/notches/grain，前端代码无需改。空 state 返 `{representatives: {}}`。
 - **curl 验证 M1787**：commit 后 `/api/ptypes` 返 10 ptype 代表裁片（前片/后片/腰/前袋/后袋/机头/单排/双排/火机袋/裤耳），每个仅 `polygon` 字段。
 
+## US-022 关键约定（求解输入数量 demand per-size）
+
+- **intermediate 加 label 字段**：`_commit_to_nesting_sync` + `pieces_export.main` 均调 `nesting_engine.labeling.compute_size_ptype_labels(pieces, gmap, GROUP_NAMES)` → `{(size, ptype): label}` 写入每片的 `label`。L/R 同 ptype 共享 label。
+- **label 对齐不变量（AC#5）**：commit 走 NestPiece（归一化+镜像），parse 走 PieceOutline（原始坐标），坐标系不同不能直接排序对齐；但两者均源自同一母版的 `explore.collect_pieces`，对原始 pieces 施行与 `_build_parse_payload` 完全一致的排序键 `(-centroid_y, centroid_x, -area_mm2, block_name, piece_index)` + `label_for(idx)` 标注，再经 gmap/GROUP_NAMES 关联 ptype → label 按 (size, ptype) 严格对齐（M1787 验证 10/10 对齐）。
+- **共享 labeling 模块**：`nesting_engine/labeling.py` 是 parse/commit/pieces_export 三处标注的单一真相源；`server.py._label_for/_centroid/_size_sort_key` 转发到此。依赖方向合规（web → nesting_engine，nesting_engine 内部自引用）。
+- **WS /ws/solve 入参增 quantities**：`{label: {sizeKey(str): N}}` | None。`build_instance` 按 `(piece.label, str(piece.size))` 查 N → `spyrrow.Item(demand=N)`；**demand=0 跳过该 piece（D2）**；piece 缺 label 或 quantities=None → demand=1（向后兼容旧 intermediate / 旧前端）。
+- **sizeKey 口径**：`str(size)`（number→String）；`null`→`'null'`（与前端 qtyStore `sizeKey` 一致）。
+
 ## 已踩坑 / 注意事项
 
 - **顶层 `_reload_pieces_state()` 在 import 时执行（allow-empty）**：intermediate 缺失 → `_PIECES_STATE={}` 但 import 不崩。改启动顺序需同步更新 `.docs/technical/agent-file-map.md` 关键不变量 #8。
