@@ -10,10 +10,14 @@
 // solving / status 来自 App：solving=true 禁用 StartButton；status 由 StatusLine 直接渲染。
 // US-005 落地 multi_seed 开关 + seed_count；US-007 接管 ExportButtons（useExport 也住这里，
 // 因为 sizes 在本组件 form 里 —— 旧 vanilla 实现 exportAs 内 `sizes: selectedSizes()` 同源）。
+// US-017 起 SizePicker 从 uploadStore.doc 动态读码号（doc=null fallback SIZES），
+// DEFAULT_FORM.sizes 改空数组强制用户选；form.sizes 可能含 null（通用码），handleStart /
+// handleExport 过滤 null 保持下游 WS/export 契约；doc=null 时 StatusLine 增「请先在上传预览页解析母版」提示。
 
 import { useState } from 'react';
 import { useExport } from '../../hooks/useExport';
 import type { ExportFmt } from '../../lib/download';
+import { useUploadStore } from '../../store/uploadStore';
 import { ErodeInputs } from './ErodeInputs';
 import { ExportButtons } from './ExportButtons';
 import { MultiSeedControls } from './MultiSeedControls';
@@ -59,6 +63,8 @@ export interface ControlPanelProps {
 
 export function ControlPanel({ onStart, solving, status, onStatus }: ControlPanelProps) {
   const [form, setForm] = useState<FormState>(DEFAULT_FORM);
+  // US-017：订阅 uploadStore.doc 判断是否已解析母版（doc=null → StatusLine 增提示）。
+  const doc = useUploadStore((s) => s.doc);
 
   // US-007：useExport 挂在 ControlPanel 内（form.sizes 与 exportAs 同处）。
   // onStatus 透传到 App.setStatus → StatusLine（导出中 / 完成 / 失败文案由 useExport 写）。
@@ -76,8 +82,13 @@ export function ControlPanel({ onStart, solving, status, onStatus }: ControlPane
       return;
     }
     const { params, per_type } = collectParams(form);
+    // US-017：form.sizes 可能含 null（通用码），下游 WS / export 契约仍是 number[]，
+    // 此处过滤 null（M1787 实际母版无 null 码；含 null 母版的完整支持见 US-022）。
+    const sizesNum: number[] = form.sizes.filter(
+      (s: number | null): s is number => s !== null,
+    );
     onStart({
-      sizes: form.sizes,
+      sizes: sizesNum,
       time: parseTime(form),
       seed: parseSeed(form),
       seed_count: parseSeedCount(form),
@@ -86,10 +97,17 @@ export function ControlPanel({ onStart, solving, status, onStatus }: ControlPane
     });
   }
 
-  /** 导出按钮回调 —— 透传 form.sizes 给 useExport.exportAs（与旧 vanilla 实现 `sizes: selectedSizes()` 一致）。 */
+  /** 导出按钮回调 —— 透传 form.sizes（过滤 null）给 useExport.exportAs（与旧 vanilla 实现 `sizes: selectedSizes()` 一致）。 */
   function handleExport(fmt: ExportFmt): void {
-    void exportAs(fmt, form.sizes);
+    const sizesNum: number[] = form.sizes.filter(
+      (s: number | null): s is number => s !== null,
+    );
+    void exportAs(fmt, sizesNum);
   }
+
+  // US-017：doc=null 时 StatusLine 增提示「请先在上传预览页解析母版」（AC#3）。
+  const visibleStatus =
+    doc === null ? `${status} — 请先在上传预览页解析母版` : status;
 
   return (
     <aside className="panel">
@@ -117,7 +135,7 @@ export function ControlPanel({ onStart, solving, status, onStatus }: ControlPane
       <PresetButtons onPreset={(seconds) => patch({ time: String(seconds) })} />
       <PerTypeOverrides values={form.per_type} onChange={(per_type) => patch({ per_type })} />
       <StartButton solving={solving} onClick={handleStart} />
-      <StatusLine text={status} />
+      <StatusLine text={visibleStatus} />
       <ExportButtons solving={solving} exporting={exporting} onExport={handleExport} />
       <div className="hint">
         density = 原面积口径（与 90% 生死线一致）；sparrow 口径见状态行。

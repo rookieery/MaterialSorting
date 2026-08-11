@@ -28,7 +28,7 @@ npm run test               # vitest run（US-002 起会有用例）
 3. **命令式 polygon 更新**：每帧 setAttribute('points' / 'display')，由 Zustand renderTick 单字段 ~10fps 节流，**逃逸 React reconciliation**。US-003 落地。
 4. **`static/` 是构建产物**（US-008 起入库 gitignore）：`npm run build` 生成，**不要手改**；旧 vanilla 三件套（`legacy/`）已删除，React 应用是唯一真相源。
 
-## 文件分工（US-001 Tab 框架 + US-002~US-008 全部落地；上传预览 US-005 状态层 + US-006 UploadPanel + US-007 PiecePreviewSVG + US-008 SizeTabs/ParsedPiecesView/PreviewPage 容器集成 + 上传预览 US-011 qtyStore 数量状态 + 上传预览 US-012 PieceQtyDialog/Switch 数量弹窗 + 上传预览 US-013 PieceZoomModal 放大预览模态 + 上传预览 US-014 ParsedPiecesView 卡片头改造+双模态集成 + US-015 uiStore 扩 nestingEnabled + TabBar 置灰 + US-016 PreviewPage 联动 setNestingEnabled）
+## 文件分工（US-001 Tab 框架 + US-002~US-008 全部落地；上传预览 US-005 状态层 + US-006 UploadPanel + US-007 PiecePreviewSVG + US-008 SizeTabs/ParsedPiecesView/PreviewPage 容器集成 + 上传预览 US-011 qtyStore 数量状态 + 上传预览 US-012 PieceQtyDialog/Switch 数量弹窗 + 上传预览 US-013 PieceZoomModal 放大预览模态 + 上传预览 US-014 ParsedPiecesView 卡片头改造+双模态集成 + US-015 uiStore 扩 nestingEnabled + TabBar 置灰 + US-016 PreviewPage 联动 setNestingEnabled + US-017 SizePicker 动态读码号 + DEFAULT_FORM.sizes=[]）
 
 ```
 src/
@@ -200,6 +200,18 @@ src/
 - **PreviewPage 现有两份 useEffect（qtyStore 联动 + uiStore 联动）独立**：US-014 qtyStore 联动 effect 监听 `doc?.doc_id` 变化；US-016 uiStore 联动 effect 监听 `status + doc` 变化。两 effect 各自独立闭包、互不干扰，挂载/卸载时各自挂载/清理 subscribe。改 effect 结构（如合并）需同步两套用例（US-014 7 项 + US-016 8 项）。
 - **未做浏览器验证**：本故事无 SVG/坐标变换（仅 store 联动 + setState），AC 仅要求 typecheck + 单测，故跳过 chrome-devtools-mcp；浏览器视觉回归（disabled 灰字 + cursor:not-allowed 随 status 切换）留作 US-021 自动 commit 集成时统一核对（届时 done→commit→切 nesting 端到端联调）。
 
+## US-017 关键约定（SizePicker 动态读码号 + DEFAULT_FORM.sizes=[] 调用方必读）
+
+- **SizePicker 订阅 uploadStore.doc，不再硬编码 SIZES**：`doc !== null` → chip 列表 = `doc.sizes.map(s=>s.size)`（后端已按 `_size_sort_key` 排序，**前端不二次排序**）；`doc === null` → fallback `constants/sizes.ts:SIZES`（保后端开发模式下排料页可用）。改订阅源会破坏「切款母版 → 码号区自动同步」语义。
+- **DEFAULT_FORM.sizes = [] 强制用户选**（旧 `[...SIZES]` 全选废除）：用户必须主动勾选码号；ControlPanel「请至少选一个码号」校验保留兜底。改默认值需同步 `params.test.ts` 「DEFAULT_FORM.sizes 默认空数组」用例 + `ControlPanel.test.tsx` AC#1 / AC#7 默认态断言。
+- **FormState.sizes 类型扩 `(number|null)[]`**：doc.sizes 可能含 null（通用码），selected/onChange 也扩为 `(number|null)[]`。null 用 Set 的 `===` 比较自然去重 / 命中。
+- **null 码 chip 文案「通用」**（与 SizeTabs NULL_SIZE_LABEL 同语义）：`sizeLabel(null)='通用'`、`sizeKey(null)='null'`（DOM id `sz_null` / value `'null'`）。改文案需同步 SizePicker.test.tsx 「null 码 chip 显示通用」+ ControlPanel.test.tsx US-017 StatusLine hint 用例。
+- **下游 WS / export 契约仍是 `number[]`**：ControlPanel.handleStart / handleExport 用类型守卫 `(s): s is number => s !== null` 过滤 null 后再透传（StartConfig.sizes / useExport.exportAs 签名不变）。M1787 实际母版无 null 码；含 null 母版的完整端到端支持留给 US-022（数量 demand 按 (label, sizeKey) 查表，sizeKey 已支持 null）。
+- **ControlPanel 订阅 uploadStore.doc 用于 StatusLine 提示**：doc=null 时 `visibleStatus = ${status} — 请先在上传预览页解析母版`；doc 非空时 `visibleStatus = status`（无后缀）。StatusLine 组件本身不动（仅渲染 text）。改提示文案需同步 ControlPanel.test.tsx US-017 「doc=null StatusLine 增提示 / doc 非空无提示」2 项。
+- **不引入 CSS 框架**：`.sizes` / `.chip` / `.chip input` / `.field-label` 全部沿用 style.css（与旧 vanilla SizePicker 同 className）。新增 `sz_null` DOM id（与 `sz_28` 等同形）。
+- **测试隔离：ControlPanel.test.tsx beforeEach/afterEach 必须 reset uploadStore**：uploadStore 是模块级单例，US-017 起 ControlPanel subscribe doc；不 reset 会让前一个测试残留的 doc 影响后续测试的 SizePicker 渲染。改 beforeEach 需同步 ControlPanel.test.tsx 23 项用例。
+- **未做浏览器验证**：本故事无 SVG/坐标变换（仅 chip 渲染 + StatusLine 文案），AC 仅要求 typecheck + 单测 + build，故跳过 chrome-devtools-mcp；浏览器视觉回归（chip 渲染 / 通用 文案 / doc 切换重渲染）留作 US-021 自动 commit 集成时统一核对（届时 done→commit→切 nesting 端到端联调）。
+
 ## US-001 关键约定（Tab 框架调用方必读，US-015 已扩）
 
 - **双页面常驻 DOM，display:none 切换**：`.page.hidden { display: none }`（不是条件渲染）。切回排料页时 NestingPage 内 useState/useRef/runRegistry 全部保真，进行中求解 / WS / seek 不中断。改策略需同步 6 项 App.test.tsx。
@@ -247,7 +259,7 @@ src/
 
 - **表单字段全字符串存储**：`FormState`（lib/params.ts）的 number 字段（time/seed/d_*/tol_*）+ per_type[pt].d/tol 都按 input.value 字符串持有。理由：per_type 必须「空串 = 继承两档」与「"0" = 显式 0」可区分（旧 vanilla 实现 inp.value.trim() !== '' 同口径）。
 - **collectParams(form) 纯函数与旧 vanilla 实现 字段级一致**：params 四档空 → 0 默认；per_type 仅 trim() !== '' 写入；整体空 → null。任何修改必须同步 `lib/__tests__/params.test.ts` 11 组对比 + AC#2 默认值断言。
-- **DEFAULT_FORM 与旧 index.html 默认 1:1**：d_int="10"、其余 0；time="60"、seed="0"；sizes 全选；per_type 全空。改默认值需同步 AC#2 + params.test.ts。
+- **DEFAULT_FORM 与旧 index.html 默认 1:1**：d_int="10"、其余 0；time="60"、seed="0"；per_type 全空。**US-017 起 sizes 默认 `[]`（不再是 `[...SIZES]` 全选）**，强制用户选；SizePicker chip 列表来自 uploadStore.doc 动态渲染。改默认值需同步 AC#2 + params.test.ts + SizePicker.test.tsx。
 - **ControlPanel 不调 useSolveRun**：仅 onStart(cfg) 透传到 App，App 决定是否调 useSolveRun.start（解耦多 seed / 重连 / clear 时机）。
 - **DOM id / className 沿用 legacy**：`id="start" / id="status" / id="d_ext" / id="time" / id="seed"` 等保留（CSS 选择器依赖）；`.sizes / .per_type / .pt-row / .chip / .preset / .pt-name i` 等 className 1:1。US-008 清理 CSS 时再统一去 id。
 - **PerTypeOverrides 行序 = V03_PTYPES 顺序**：不可重排（影响测试 placeholder / 徽章断言）；`<i>内</i>` 仅 internal=true 的 4 片型（单排/双排/火机袋/裤耳）。

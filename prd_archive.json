@@ -290,6 +290,12 @@
         "title": "PreviewPage 联动 setNestingEnabled",
         "description": "PreviewPage 监听 uploadStore.status，解析成功解锁超排 Tab，reset/error/重传重锁。详见 tasks/prd-nesting-tab-linkage.md US-016。\n\n具体任务：\n1. materialSorting-web/src/components/preview/PreviewPage.tsx — 新增 useEffect subscribe useUploadStore，按 status==='done' && doc!==null 调 useUiStore.getState().setNestingEnabled(...)；mount 时立即对齐初值（idle→false）。\n2. setNestingEnabled(false) 路径覆盖：uploadStore.reset()、重传 doc_id 变化时短暂 false 直到新 doc done、status==='error'。\n\n验收标准：\n- 关键不变量：setNestingEnabled 仅控 Tab「能否进入」，不强制切 Tab——用户已在 nesting Tab 时 reset 不强制切回 preview（避免丢失求解状态）。\n- PreviewPage 新增 ≥5 项单测：默认 false / done 切 true / error 切 false / reset 切 false / 重传 doc_id 变化短暂 false 后 true。\n- cd materialSorting-web && npm run typecheck / npm run test 全绿。\n- 依赖 US-015。",
         "passes": true
+      },
+      {
+        "id": "US-020",
+        "title": "后端 PIECES reload 机制 + GET /api/ptypes",
+        "description": "commit 成功后 PIECES 模块常量即时更新，前端无需重启 ms-web 即可排料；新增 GET /api/ptypes 供高级配置弹窗取片型代表裁片（缩略图数据源）。⚠️ 已提前到 US-016 之后（reload 是 US-021/022/024 共同瓶颈）。详见 tasks/prd-nesting-tab-linkage.md US-020。\n\n具体任务：\n1. materialSorting-server/src/materialsorting/web/server.py — 新增模块级 _state_lock=threading.Lock() + 全局 _PIECES_STATE:dict（持有 {doc,gate_mm,pieces,pieces_by_id}）；首次 load_pieces() 结果填入，替换现有顶层 PIECES/GATE_MM/PIECES_BY_ID。\n2. server.py — 新增 _reload_pieces_state()（锁内重读 paths.INTERMEDIATE 更新 state）与 _get_pieces_state()（锁内返回只读快照）；/ws/solve 与 /export 路由所有 PIECES/GATE_MM/PIECES_BY_ID 引用改走 helper。\n3. server.py — commit_to_nesting 路由在 _commit_to_nesting_sync 成功后调 _reload_pieces_state()；返回 payload 加 reloaded:true；删除现有「TODO: PIECES 不会 reload」注释。\n4. server.py — 新增 GET /api/ptypes：从 _PIECES_STATE 按 ptype 分组各取一个代表裁片（首个出现），返回 {representatives: Record<ptype,{polygon,net_polygon?,internal_lines?,notches?,grain_line?}>}；v1 仅 polygon，US-024 后带 5 层；空 state 返回 {representatives:{}}。\n\n验收标准：\n- 线程安全不变量：锁内读-写原子；/ws/solve accept 阶段调 _get_pieces_state() 拿快照，一次 ws 连接内 pieces 不变（避免求解中途数据切）。\n- 集成验证：curl -F file=@<M1787> /api/parse-dxf → POST /api/commit-to-nesting → 立即 ws/solve 收到 manifest（pid 数=新 intermediate n_pieces），不需重启 ms-web。\n- curl /api/ptypes 对 M1787 返回 10 个 ptype 代表裁片（v1 仅 polygon 字段）。\n- python -c \"from materialsorting.web.server import app\" 导入通过、分层依赖未反向。",
+        "passes": true
       }
     ]
   }

@@ -17,6 +17,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { ControlPanel, type ControlPanelStartPayload } from "../ControlPanel";
 import { SIZES } from "../../../constants/sizes";
 import { V03_PTYPES, V03_TABLE } from "../../../constants/v03";
+import { useUploadStore } from "../../../store/uploadStore";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -27,6 +28,9 @@ beforeEach(() => {
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);
+  // US-017：uploadStore 是模块级单例，ControlPanel 现在 subscribe doc；
+  // beforeEach 重置到默认 idle/doc=null 保证各用例隔离。
+  useUploadStore.getState().reset();
 });
 
 afterEach(() => {
@@ -39,6 +43,7 @@ afterEach(() => {
   }
   container?.remove();
   container = null;
+  useUploadStore.getState().reset();
 });
 
 function renderPanel(
@@ -61,13 +66,14 @@ function renderPanel(
 }
 
 describe("ControlPanel (US-004)", () => {
-  it("AC#1 SizePicker renders 8 size chips, all default-checked", () => {
+  it("AC#1 SizePicker renders 8 fallback chips (doc=null → SIZES); US-017 default NONE checked", () => {
     renderPanel();
     const checkboxes = container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]");
     expect(checkboxes).toHaveLength(SIZES.length);
     const values = Array.from(checkboxes).map((c) => parseInt(c.value, 10));
     expect(values).toEqual([...SIZES]);
-    for (const c of checkboxes) expect(c.checked).toBe(true);
+    // US-017：DEFAULT_FORM.sizes = [] → 默认全未勾选
+    for (const c of checkboxes) expect(c.checked).toBe(false);
   });
 
   it("AC#2 defaults match legacy index.html (d_int=10, others 0; time=60; seed=0; multi_seed=false; seed_count=3)", () => {
@@ -133,9 +139,14 @@ describe("ControlPanel per_type (US-004)", () => {
 });
 
 describe("ControlPanel start flow (US-004)", () => {
-  it("AC#6 default form click Start -> onStart fires; payload matches collectParams", () => {
+  it("AC#6 select-all-sizes + default form click Start -> onStart fires; payload matches collectParams", () => {
     const onStart = vi.fn();
     renderPanel(onStart);
+    // US-017：DEFAULT_FORM.sizes = [] → 先全选 fallback SIZES chips
+    const checkboxes = container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]");
+    act(() => {
+      for (const c of checkboxes) c.click();
+    });
     const btn = container!.querySelector<HTMLButtonElement>("#start")!;
     act(() => btn.click());
     expect(onStart).toHaveBeenCalledTimes(1);
@@ -148,16 +159,12 @@ describe("ControlPanel start flow (US-004)", () => {
     expect(cfg.per_type).toBeNull();
   });
 
-  it("AC#7 0 sizes -> onStatus error + onStart NOT called", () => {
+  it("AC#7 0 sizes (US-017 default) -> onStatus error + onStart NOT called", () => {
     const onStart = vi.fn();
     const onStatus = vi.fn();
     renderPanel(onStart, { onStatus });
 
-    const checkboxes = container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]");
-    act(() => {
-      for (const c of checkboxes) c.click();
-    });
-
+    // US-017：默认 sizes=[]，无需取消勾选
     const btn = container!.querySelector<HTMLButtonElement>("#start")!;
     act(() => btn.click());
 
@@ -165,15 +172,15 @@ describe("ControlPanel start flow (US-004)", () => {
     expect(onStatus).toHaveBeenCalled();
   });
 
-  it("AC#6 toggle sizes then Start -> sizes matches checked (numeric ascending)", () => {
+  it("AC#6 select 30+31 then Start -> sizes matches checked order (US-017: no re-sort)", () => {
     const onStart = vi.fn();
     renderPanel(onStart);
     const checkboxes = container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]");
-    // Keep only 30 and 31 (32 is not in SIZES — M1787 skips 32 between 31 and 33)
+    // US-017：默认未勾选 → 仅勾选 30 和 31（32 is not in SIZES — M1787 skips 32）
     act(() => {
       for (const c of checkboxes) {
         const v = parseInt(c.value, 10);
-        if (v !== 30 && v !== 31) c.click();
+        if (v === 30 || v === 31) c.click();
       }
     });
     const btn = container!.querySelector<HTMLButtonElement>("#start")!;
@@ -185,6 +192,9 @@ describe("ControlPanel start flow (US-004)", () => {
   it("AC#6 fill per_type input -> payload.per_type non-null with the edited entry", () => {
     const onStart = vi.fn();
     renderPanel(onStart);
+    // US-017：先勾选至少一个码号，否则 Start 校验失败
+    const checkboxes = container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]");
+    act(() => checkboxes[0].click());
     const rowEls = container!.querySelectorAll<HTMLDivElement>(".per_type .pt-row");
     const frontRow = rowEls[0]; // V03_PTYPES[0]
     const inputs = frontRow.querySelectorAll<HTMLInputElement>("input[type=number]");
@@ -231,6 +241,9 @@ describe("ControlPanel multi-seed (US-005)", () => {
   it("AC#1 toggle multi_seed + Start -> onStart.seed_count follows parseSeedCount", () => {
     const onStart = vi.fn();
     renderPanel(onStart);
+    // US-017：先勾选一个码号让 Start 校验通过
+    const checkboxes = container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]");
+    act(() => checkboxes[0].click());
     const multi = container!.querySelector<HTMLInputElement>("#multi_seed")!;
     act(() => multi.click());
     const btn = container!.querySelector<HTMLButtonElement>("#start")!;
@@ -243,6 +256,9 @@ describe("ControlPanel multi-seed (US-005)", () => {
   it("AC#1 multi_seed=true + seed_count='10' -> clamp to 6", () => {
     const onStart = vi.fn();
     renderPanel(onStart);
+    // US-017：先勾选一个码号
+    const checkboxes = container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]");
+    act(() => checkboxes[0].click());
     const multi = container!.querySelector<HTMLInputElement>("#multi_seed")!;
     const count = container!.querySelector<HTMLInputElement>("#seed_count")!;
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
@@ -260,6 +276,9 @@ describe("ControlPanel multi-seed (US-005)", () => {
   it("AC#1 multi_seed=true + seed_count empty -> fallback 3", () => {
     const onStart = vi.fn();
     renderPanel(onStart);
+    // US-017：先勾选一个码号
+    const checkboxes = container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]");
+    act(() => checkboxes[0].click());
     const multi = container!.querySelector<HTMLInputElement>("#multi_seed")!;
     const count = container!.querySelector<HTMLInputElement>("#seed_count")!;
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
@@ -277,6 +296,9 @@ describe("ControlPanel multi-seed (US-005)", () => {
   it("AC#1 multi_seed stays false -> seed_count changes ignored (returns 1)", () => {
     const onStart = vi.fn();
     renderPanel(onStart);
+    // US-017：先勾选一个码号
+    const checkboxes = container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]");
+    act(() => checkboxes[0].click());
     const count = container!.querySelector<HTMLInputElement>("#seed_count")!;
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
     act(() => {
@@ -359,5 +381,62 @@ describe("ControlPanel export wiring (US-007)", () => {
     fetchSpy.mockRestore();
     vi.unstubAllGlobals();
     runRegistry.clear();
+  });
+});
+
+describe("ControlPanel StatusLine hint (US-017)", () => {
+  it("AC#3 doc=null → StatusLine 增提示「请先在上传预览页解析母版」", () => {
+    renderPanel(() => {}, { status: "READY" });
+    const status = container!.querySelector("#status")!;
+    expect(status.textContent).toContain("请先在上传预览页解析母版");
+    expect(status.textContent).toContain("READY");
+  });
+
+  it("AC#3 doc 非空 → StatusLine 不带提示（仅原始 status）", () => {
+    // 构造 doc 非空状态
+    useUploadStore.setState({
+      status: "done",
+      doc: {
+        doc_id: "hint-test",
+        filename: "M1787.dxf",
+        sizes: [{ size: 28, pieces: [] }],
+      },
+    });
+    renderPanel(() => {}, { status: "READY" });
+    const status = container!.querySelector("#status")!;
+    expect(status.textContent).toBe("READY");
+    expect(status.textContent).not.toContain("请先在上传预览页解析母版");
+  });
+
+  it("AC#3 doc=null → SizePicker 渲染 fallback SIZES（不是 doc.sizes）", () => {
+    renderPanel();
+    const chips = container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]");
+    expect(chips).toHaveLength(SIZES.length);
+  });
+
+  it("AC#3 doc 非空 → SizePicker 渲染 doc.sizes（不是 fallback SIZES）", () => {
+    useUploadStore.setState({
+      status: "done",
+      doc: {
+        doc_id: "dynamic-test",
+        filename: "M1787.dxf",
+        sizes: [
+          { size: 28, pieces: [] },
+          { size: 30, pieces: [] },
+          { size: null, pieces: [] },
+        ],
+      },
+    });
+    renderPanel();
+    const chips = container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]");
+    // doc.sizes 长度=3（不是 SIZES 的 8）
+    expect(chips).toHaveLength(3);
+    // null 码 chip 存在
+    expect(container!.querySelector("#sz_null")).not.toBeNull();
+    // 通用 文案在末尾
+    const labels = Array.from(container!.querySelectorAll<HTMLLabelElement>(".sizes .chip label")).map(
+      (l) => l.textContent ?? "",
+    );
+    expect(labels[labels.length - 1]).toBe("通用");
   });
 });

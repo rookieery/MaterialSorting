@@ -355,9 +355,9 @@ materialSorting-web/
 | `src/constants/sizes.ts` | `SIZES = [28,29,30,31,33,34,35,36]`（M1787 8 码跳 32；与后端 `nesting_bounds.DEFAULT_SIZES` 一致） |
 | `src/constants/colors.ts` | `PHASE_COLORS`（exploring/compressing/final）+ `SEED_COLORS`（6 seed；US-005 ConvergenceCurve 消费） |
 | `src/constants/v03.ts` | `V03_TABLE` 全 10 片型工艺上限（d / tol / internal；与后端 `constraints.py MAX_OVERLAP / ROTATION_TOL` 1:1）+ `V03_PTYPES` 顺序 |
-| `src/lib/params.ts` | `FormState`（含 multi_seed/seed_count）+ `DEFAULT_FORM`（旧 index.html 默认 1:1）+ `collectParams(form)` 纯函数（与旧 vanilla 实现 字段级一致）+ `parseSeed / parseTime / parseSeedCount` |
-| `src/components/ControlPanel/ControlPanel.tsx` | 顶层面板：持 form state；StartButton 触发校验 + collectParams + onStart(cfg) 透传到 App（cfg 含 seed_count） |
-| `src/components/ControlPanel/SizePicker.tsx` | 8 码 chip 复选，受控；toggle 单码号 |
+| `src/lib/params.ts` | `FormState`（含 multi_seed/seed_count；US-017 起 `sizes: (number\|null)[]`、`DEFAULT_FORM.sizes=[]` 强制用户选）+ `DEFAULT_FORM` + `collectParams(form)` 纯函数（与旧 vanilla 实现 字段级一致）+ `parseSeed / parseTime / parseSeedCount` |
+| `src/components/ControlPanel/ControlPanel.tsx` | 顶层面板：持 form state；StartButton 触发校验 + collectParams + onStart(cfg) 透传到 App（cfg 含 seed_count）；US-017 订阅 uploadStore.doc，doc=null 时 StatusLine 增「请先在上传预览页解析母版」提示，handleStart/handleExport 过滤 form.sizes 中的 null（保持下游 WS/export 的 number[] 契约） |
+| `src/components/ControlPanel/SizePicker.tsx` | US-017：码号 chip 复选（受控）。订阅 `useUploadStore(s=>s.doc)` 动态读码号：doc 非空 → `doc.sizes.map(s=>s.size)`（不二次排序）；doc=null → fallback `constants/sizes.ts:SIZES`。null 码 chip 显示「通用」（与 SizeTabs NULL_SIZE_LABEL 同语义）；selected/onChange 类型 `(number\|null)[]` |
 | `src/components/ControlPanel/ParamForm.tsx` | 时长 / base seed 输入（min/max 与旧 index.html 一致） |
 | `src/components/ControlPanel/MultiSeedControls.tsx` | US-005：多 seed 对比 checkbox `#multi_seed` + 数量 input `#seed_count`（min=2 max=6 default 3） |
 | `src/components/ControlPanel/ErodeInputs.tsx` | d_ext / d_int（step 0.5，min 0） |
@@ -370,7 +370,8 @@ materialSorting-web/
 | `src/components/curve/ConvergenceCurve.tsx` | US-005：命令式 SVG（React 仅 `<svg ref/>`；子节点 innerHTML 写入）。订阅 renderTick；导出 sampleFrames / renderCurveInto 纯函数 |
 | `src/App.tsx` | US-005：handleStart 启 N 个 WS（seed=base+i）；doneCountRef/totalSeedsRef all-done 检测；多 seed setStatus summary+best |
 | `src/lib/__tests__/params.test.ts` | 14 项：默认 d_int=10 + per_type=null / 与 legacy collectParams 11 组对比 / per_type 单档非空 entry / 全空白 → null / 显式 "0" 区分空 / parseSeedCount 7 组（单 seed → 1 / multi + 默认 3 / clamp 2,6 / fallback 3） |
-| `src/components/ControlPanel/__tests__/ControlPanel.test.tsx` | 15 项：AC#1..#7 集成 + US-005 multi_seed/seed_count 5 项（默认值 / toggle / clamp / fallback / 不开 multi 时 seed_count 忽略） |
+| `src/components/ControlPanel/__tests__/ControlPanel.test.tsx` | 23 项：AC#1..#7 集成（US-017 起默认 sizes=[] 全未勾选）+ US-005 multi_seed/seed_count 5 项 + US-007 export wiring 4 项 + US-017 StatusLine hint 4 项（doc=null 增提示 / doc 非空无提示 / fallback SIZES / doc.sizes 渲染） |
+| `src/components/ControlPanel/__tests__/SizePicker.test.tsx` | US-017 8 项：doc=null fallback SIZES / doc 11 码渲染全 11 / null 通用码 / 切 doc 自动重渲染 / toggle 数字 chip / toggle null chip / selected 含 null / key-id 唯一 |
 | `src/components/nests/__tests__/NestsGrid.test.tsx` | US-005 6 项：空容器 / N 卡渲染 / registry 缺失跳过 / 顺序与 seeds 一致 / seeds 不变不重复挂载 / seeds 增减跟着变 |
 | `src/components/curve/__tests__/ConvergenceCurve.test.tsx` | US-005 14 项：sampleFrames 4（空 / ≤400 / >400 / 整除）+ 渲染 10（90% 线 / 单 seed 散点+折线+末点 / 多 seed 折线+标签 / 单/多 seed 图例 / renderTick 订阅 / 多次 bump 不重建 / renderCurveInto 纯函数） |
 
@@ -475,6 +476,7 @@ materialSorting-web/
 | `#nests` 多 seed 容器 | `src/components/nests/NestsGrid.tsx` | US-005 | **已落地** |
 | `seek` `frameAtTime` 回放 + tooltip | `src/components/playback/*` + `src/lib/seek.ts` + `src/components/Tooltip.tsx` + `src/components/nests/NestSVG.tsx`（seek+hover） | US-006 | **已落地** |
 | `exportAs(fmt)` | `src/hooks/useExport.ts` + `src/components/ControlPanel/ExportButtons.tsx` + `src/lib/download.ts` | US-007 | **已落地** |
+| SizePicker 动态读码号 + DEFAULT_FORM.sizes=[] | `src/components/ControlPanel/SizePicker.tsx`（subscribe uploadStore.doc）+ `src/lib/params.ts`（FormState.sizes `(number\|null)[]` / DEFAULT_FORM.sizes=[]）+ `src/components/ControlPanel/ControlPanel.tsx`（doc=null hint + filter null） | US-017 | **已落地** |
 | run 状态（frames 数组 / lastFrame / finalDensity） | `src/store/runRegistry.ts` | US-002 | **已落地** |
 
 ## 已知差异（脚手架阶段）

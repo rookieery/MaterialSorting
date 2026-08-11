@@ -62,6 +62,10 @@ describe('collectParams (US-004)', () => {
     expect(out.per_type).toBeNull();
   });
 
+  it('US-017: DEFAULT_FORM.sizes 默认空数组（强制用户选）', () => {
+    expect(DEFAULT_FORM.sizes).toEqual([]);
+  });
+
   it('与旧 vanilla 实现 collectParams 字段级一致（多组对比）', () => {
     const cases: FormState[] = [
       // 1. 全空 per_type + 默认档

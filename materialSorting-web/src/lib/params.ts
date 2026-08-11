@@ -7,7 +7,6 @@
 // 字段都按字符串存储（对应 input.value），collectParams 做解析；这样「空串 vs "0"」可区分
 // （per_type 必须：空 = 继承，"0" = 显式 0）。
 
-import { SIZES } from '../constants/sizes';
 import { V03_PTYPES } from '../constants/v03';
 import type { PerTypeOverrides, PerTypeOverride, SolveParams } from '../types/v03';
 
@@ -19,8 +18,11 @@ export interface PerTypeFormValue {
 
 /** ControlPanel 表单全量状态（字段都按 input.value 字符串存）。 */
 export interface FormState {
-  /** 已勾选码号（SIZES 子集）。 */
-  sizes: number[];
+  /**
+   * 已勾选码号（US-017：动态来自 uploadStore.doc.sizes 或 SIZES fallback，可能含 null）。
+   * 默认 `[]`（强制用户选；AC#3 校验「请至少选一个码号」）。
+   */
+  sizes: (number | null)[];
   /** 时长（秒）字符串。 */
   time: string;
   /** base seed 字符串。 */
@@ -41,9 +43,12 @@ export interface FormState {
   per_type: Record<string, PerTypeFormValue>;
 }
 
-/** 旧 index.html 默认值 1:1（d_int=10，其余 0；time=60，seed=0；sizes 全选；multi_seed 关闭，seed_count=3）。 */
+/**
+ * 默认值（US-017 起 sizes 默认空数组，强制用户勾选；其余字段沿用旧 index.html：
+ * d_int=10，其余 0；time=60，seed=0；multi_seed 关闭，seed_count=3）。
+ */
 export const DEFAULT_FORM: FormState = {
-  sizes: [...SIZES],
+  sizes: [],
   time: '60',
   seed: '0',
   multi_seed: false,
