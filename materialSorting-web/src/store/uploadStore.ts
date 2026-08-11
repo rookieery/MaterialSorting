@@ -4,6 +4,15 @@
 // doc / activeSize / error 全部进 React state（与 runRegistry 那种高频 mutable 不同 ——
 // 解析结果低频，进 store 触发 reconciliation 反而便于 UI 同步）。
 //
+// US-021 自动 commit 副作用状态机（独立于 parse status）：
+//   commitStatus    'idle'（默认） / 'committing'（commit fetch 进行中） /
+//                   'done'（commit 成功，commitSummary 已写入） /
+//                   'error'（commit 失败，commitError 填消息）。
+//                   与 status 分离：parse done 触发 commit，commit 后台跑不阻塞预览。
+//   commitError     error 状态下的中文消息（HTTP 422 / 网络错）。
+//   commitSummary   done 时后端返回的摘要（码数 / 裁片数 / 总面积），UploadPanel 展示
+//                   「已应用至超排：N 裁片，M 码」。
+//
 // 字段口径：
 //   status     'idle'（默认） / 'uploading'（fetch 进行中） / 'done'（200，doc 已写入） /
 //              'error'（网络错或非 200，error 字段填中文消息）
@@ -21,7 +30,8 @@
 //             ParsedPiecesView 卡片图形区点击 / ✕ / 遮罩 / ESC 的统一入口。
 //
 // actions：
-//   reset()              回到 idle，清空 doc / activeSize / error / qtyDialog / zoom ——
+//   reset()              回到 idle，清空 doc / activeSize / error / qtyDialog / zoom /
+//                         commitStatus / commitError / commitSummary ——
 //                         用户主动重传时调（重传成功后 US-014 集成 qtyStore.resetQuantities）
 //   setSize(s)           切 activeSize（SizeTabs 点击时调；s = number | null）
 //   openQtyDialog(l, s)  打开数量编辑弹窗（点卡片头 数量(片) button 时调）
@@ -32,12 +42,26 @@
 // hook 内部的状态过渡（uploading → done | error）由 useParseDxf 直接
 // `useUploadStore.setState({...})` 写入，不暴露成 store 公开 action，避免业务组件
 // 误触发状态跳变。store 公开 API 只含调用方语义动作（reset / setSize /
-// openQtyDialog / closeQtyDialog / openZoom / closeZoom）。
+// openQtyDialog / closeQtyDialog / openZoom / closeZoom）。commit 状态过渡
+//（idle → committing → done | error）同样由 useCommitToNesting 直接 setState 写入。
 
 import { create } from 'zustand';
 import type { ParsedDoc } from '../types/parsed';
 
 export type UploadStatus = 'idle' | 'uploading' | 'done' | 'error';
+
+/** US-021 自动 commit 副作用状态机（与 parse status 分离，独立字段）。 */
+export type CommitStatus = 'idle' | 'committing' | 'done' | 'error';
+
+/** US-021 commit 成功摘要（后端 commit-to-nesting 响应切片）。UploadPanel 展示用。 */
+export interface CommitSummary {
+  /** 后端返回的 sizes 数组（码号列表，number[]）。 */
+  sizes: number[];
+  /** 后端返回的 n_pieces（intermediate 裁片总数，含 L/R 镜像）。 */
+  n_pieces: number;
+  /** 后端返回的 total_area_mm2（裁片原面积总和，mm²）。 */
+  total_area_mm2: number;
+}
 
 /** 数量编辑弹窗目标（label + size；US-012 PieceQtyDialog 订阅此字段自显隐）。 */
 export interface QtyDialogTarget {
@@ -68,7 +92,13 @@ export interface UploadState {
   qtyDialog: QtyDialogTarget | null;
   /** 放大预览模态目标（label + size）；null 表示模态关闭。 */
   zoom: ZoomTarget | null;
-  /** 重置到 idle，清空 doc / activeSize / error / qtyDialog / zoom。 */
+  /** US-021 自动 commit 副作用状态机（与 parse status 分离）。 */
+  commitStatus: CommitStatus;
+  /** US-021 commit 失败消息（commitStatus='error' 时有效）。 */
+  commitError: string | null;
+  /** US-021 commit 成功摘要（commitStatus='done' 时有效）。 */
+  commitSummary: CommitSummary | null;
+  /** 重置到 idle，清空 doc / activeSize / error / qtyDialog / zoom / commit*。 */
   reset: () => void;
   /** 切换当前查看的码号（SizeTabs 调用）。 */
   setSize: (size: number | null) => void;
@@ -89,8 +119,21 @@ export const useUploadStore = create<UploadState>((set) => ({
   error: null,
   qtyDialog: null,
   zoom: null,
+  commitStatus: 'idle',
+  commitError: null,
+  commitSummary: null,
   reset: () =>
-    set({ status: 'idle', doc: null, activeSize: null, error: null, qtyDialog: null, zoom: null }),
+    set({
+      status: 'idle',
+      doc: null,
+      activeSize: null,
+      error: null,
+      qtyDialog: null,
+      zoom: null,
+      commitStatus: 'idle',
+      commitError: null,
+      commitSummary: null,
+    }),
   setSize: (size) => set({ activeSize: size }),
   openQtyDialog: (label, size) => set({ qtyDialog: { label, size } }),
   closeQtyDialog: () => set({ qtyDialog: null }),

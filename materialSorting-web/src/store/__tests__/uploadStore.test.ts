@@ -173,3 +173,53 @@ describe('uploadStore zoom (US-013)', () => {
     expect(useUploadStore.getState().zoom).toBeNull();
   });
 });
+
+// US-021 commit 状态字段（commitStatus / commitError / commitSummary）
+describe('uploadStore commit (US-021)', () => {
+  it('默认 commitStatus=idle / commitError=null / commitSummary=null', () => {
+    const s = useUploadStore.getState();
+    expect(s.commitStatus).toBe('idle');
+    expect(s.commitError).toBeNull();
+    expect(s.commitSummary).toBeNull();
+  });
+
+  it('reset() 把 commit done 态清回 idle（commitStatus/commitError/commitSummary 全清）', () => {
+    useUploadStore.setState({
+      commitStatus: 'done',
+      commitError: null,
+      commitSummary: { sizes: [28, 30], n_pieces: 64, total_area_mm2: 9999.9 },
+    });
+    useUploadStore.getState().reset();
+    const s = useUploadStore.getState();
+    expect(s.commitStatus).toBe('idle');
+    expect(s.commitError).toBeNull();
+    expect(s.commitSummary).toBeNull();
+  });
+
+  it('reset() 把 commit error 态清回 idle', () => {
+    useUploadStore.setState({ commitStatus: 'error', commitError: 'commit 失败' });
+    useUploadStore.getState().reset();
+    const s = useUploadStore.getState();
+    expect(s.commitStatus).toBe('idle');
+    expect(s.commitError).toBeNull();
+  });
+
+  it('订阅者收到 commitStatus 变化（committing → done → reset）', () => {
+    const seen: string[] = [];
+    const unsub = useUploadStore.subscribe((s) => seen.push(s.commitStatus));
+    useUploadStore.setState({ commitStatus: 'committing' });
+    useUploadStore.setState({ commitStatus: 'done' });
+    useUploadStore.getState().reset();
+    unsub();
+    expect(seen).toEqual(['committing', 'done', 'idle']);
+  });
+
+  it('commitStatus 与 status 字段独立（互不干扰）', () => {
+    useUploadStore.setState({ status: 'done', commitStatus: 'committing' });
+    expect(useUploadStore.getState().status).toBe('done');
+    expect(useUploadStore.getState().commitStatus).toBe('committing');
+    useUploadStore.setState({ commitStatus: 'done' });
+    expect(useUploadStore.getState().status).toBe('done');
+    expect(useUploadStore.getState().commitStatus).toBe('done');
+  });
+});

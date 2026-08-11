@@ -28,7 +28,7 @@ npm run test               # vitest run（US-002 起会有用例）
 3. **命令式 polygon 更新**：每帧 setAttribute('points' / 'display')，由 Zustand renderTick 单字段 ~10fps 节流，**逃逸 React reconciliation**。US-003 落地。
 4. **`static/` 是构建产物**（US-008 起入库 gitignore）：`npm run build` 生成，**不要手改**；旧 vanilla 三件套（`legacy/`）已删除，React 应用是唯一真相源。
 
-## 文件分工（US-001 Tab 框架 + US-002~US-008 全部落地；上传预览 US-005 状态层 + US-006 UploadPanel + US-007 PiecePreviewSVG + US-008 SizeTabs/ParsedPiecesView/PreviewPage 容器集成 + 上传预览 US-011 qtyStore 数量状态 + 上传预览 US-012 PieceQtyDialog/Switch 数量弹窗 + 上传预览 US-013 PieceZoomModal 放大预览模态 + 上传预览 US-014 ParsedPiecesView 卡片头改造+双模态集成 + US-015 uiStore 扩 nestingEnabled + TabBar 置灰 + US-016 PreviewPage 联动 setNestingEnabled + US-017 SizePicker 动态读码号 + DEFAULT_FORM.sizes=[] + US-018 PerTypeOverridesModal/PtypePreviewModal 高级配置弹窗+片型缩略图+放大预览）
+## 文件分工（US-001 Tab 框架 + US-002~US-008 全部落地；上传预览 US-005 状态层 + US-006 UploadPanel + US-007 PiecePreviewSVG + US-008 SizeTabs/ParsedPiecesView/PreviewPage 容器集成 + 上传预览 US-011 qtyStore 数量状态 + 上传预览 US-012 PieceQtyDialog/Switch 数量弹窗 + 上传预览 US-013 PieceZoomModal 放大预览模态 + 上传预览 US-014 ParsedPiecesView 卡片头改造+双模态集成 + US-015 uiStore 扩 nestingEnabled + TabBar 置灰 + US-016 PreviewPage 联动 setNestingEnabled + US-017 SizePicker 动态读码号 + DEFAULT_FORM.sizes=[] + US-018 PerTypeOverridesModal/PtypePreviewModal 高级配置弹窗+片型缩略图+放大预览 + US-021 useCommitToNesting 解析成功自动 commit+D1 闭环）
 
 ```
 src/
@@ -38,8 +38,8 @@ src/
 ├── vite-env.d.ts          # vite/client 类型
 ├── types/                 # US-002 ✅：ws.ts / piece.ts / v03.ts；上传预览 US-005 ✅ parsed.ts（US-004 响应契约）；上传预览 US-011 ✅ qty.ts（PieceQuantity/PieceQuantityMap）
 ├── lib/                   # US-002 ✅ ws.ts；US-003 ✅ geometry.ts；US-004 ✅ params.ts；US-006 ✅ seek.ts；US-007 ✅ download.ts
-├── store/                 # US-002 ✅ runRegistry.ts；US-003 ✅ appStore.ts；US-001 ✅ uiStore.ts（US-015 ✅ 扩 nestingEnabled + setNestingEnabled + setTab guard）；上传预览 US-005 ✅ uploadStore.ts（US-012 扩 qtyDialog + open/close；US-013 扩 zoom + open/close）；上传预览 US-011 ✅ qtyStore.ts（+clampQty+getPieceDisplay 纯函数）
-├── hooks/                 # US-002 ✅ useSolveRun.ts；US-003 ✅ useRafThrottle.ts；US-007 ✅ useExport.ts；上传预览 US-005 ✅ useParseDxf.ts
+├── store/                 # US-002 ✅ runRegistry.ts；US-003 ✅ appStore.ts；US-001 ✅ uiStore.ts（US-015 ✅ 扩 nestingEnabled + setNestingEnabled + setTab guard）；上传预览 US-005 ✅ uploadStore.ts（US-012 扩 qtyDialog + open/close；US-013 扩 zoom + open/close；US-021 扩 commitStatus/commitError/commitSummary + reset 同步清）；上传预览 US-011 ✅ qtyStore.ts（+clampQty+getPieceDisplay 纯函数）
+├── hooks/                 # US-002 ✅ useSolveRun.ts；US-003 ✅ useRafThrottle.ts；US-007 ✅ useExport.ts；上传预览 US-005 ✅ useParseDxf.ts（US-021 ✅ 解析成功自动 void commit）；上传预览 US-021 ✅ useCommitToNesting.ts（POST /api/commit-to-nesting + D1 闭环 setNestingEnabled+setTab）
 ├── constants/             # US-004 ✅：sizes.ts / colors.ts / v03.ts
 ├── __tests__/             # US-002 ✅ useSolveRun；US-003 ✅ 各模块单测；US-007 ✅ useExport；US-001 ✅ App 集成 smoke（US-015 beforeEach 加 setNestingEnabled(true) 兜底 store guard）
 └── components/
@@ -47,7 +47,7 @@ src/
     ├── NestingPage.tsx    # US-001 ✅ 排料页（原 App 业务逻辑外提；持 solving/seeds/useSolveRun）
     ├── preview/           # US-001 起：上传预览页
     │   ├── PreviewPage.tsx # US-008 ✅ 容器（左 UploadPanel + 右 SizeTabs+ParsedPiecesView；未解析空态）；US-014 ✅ 顶层挂 PieceQtyDialog+PieceZoomModal 单例 + useEffect subscribe 联动 qtyStore.resetQuantities（重传清零）；US-016 ✅ 加 useEffect subscribe uploadStore.status 联动 uiStore.setNestingEnabled（`status==='done' && doc!==null` → true，否则 false；mount 即对齐）
-    │   ├── UploadPanel.tsx # 上传预览 US-006 ✅ 左侧上传面板（点击+拖拽+客户端预校验+status 反馈）
+    │   ├── UploadPanel.tsx # 上传预览 US-006 ✅ 左侧上传面板（点击+拖拽+客户端预校验+status 反馈）；US-021 ✅ 加 commit 状态行（committing→应用中… / done→已应用至超排：N 裁片 M 码 / error→应用失败：msg）
     │   ├── SizeTabs.tsx    # 上传预览 US-008 ✅ 尺码切换条（订阅 uploadStore.doc/activeSize；点击 setSize）
     │   ├── ParsedPiecesView.tsx # 上传预览 US-008 ✅ 当前 activeSize 下裁片 grid；US-014 ✅ 卡片头改造为 [A徽章]+序号(数量)（editable=button→openQtyDialog / global非source=span.disabled+title）+ .piece-card-body onClick→openZoom + role=button+tabIndex+Enter/Space
     │   ├── PiecePreviewSVG.tsx # 上传预览 US-007 ✅ 单片（或多片）母版预览 SVG（命令式渲染 + scale(1,-1) 翻转）
@@ -55,7 +55,7 @@ src/
     │   ├── PieceQtyDialog.tsx  # 上传预览 US-012 ✅ 数量编辑弹窗（草稿+确定；Portal 到 body；ESC/遮罩/取消丢弃草稿）
     │   ├── PieceZoomModal.tsx  # 上传预览 US-013 ✅ 放大预览模态（声明式受控 Portal；订阅 uploadStore.zoom+doc；✕/遮罩/ESC 关闭；复用 PiecePreviewSVG pad=20）
     │   └── __tests__/
-    │       ├── UploadPanel.test.tsx      # 上传预览 US-006 ✅ 25 项集成测试
+    │       ├── UploadPanel.test.tsx      # 上传预览 US-006 ✅ 25 项集成测试（US-021 更新 2 项 fetch 计数 + beforeEach/afterEach 加 uiStore reset）
     │       ├── PiecePreviewSVG.test.tsx  # 上传预览 US-007 ✅ 33 项单测（bbox 纯函数 + 5 层渲染 + 翻转 + 标注 + 切片重建）
     │       ├── SizeTabs.test.tsx         # 上传预览 US-008 ✅ 8 项单测（chip 列表 + active 高亮 + 点击 setSize + null 通用码）
     │       ├── ParsedPiecesView.test.tsx # 上传预览 US-008 ✅ 8 项基础 + US-014 ✅ 11 项新增（序号 index+1 / qty 默认 0 / editable button openQtyDialog / global非source span.disabled+title / body onClick openZoom / Enter/Space / qty stopPropagation）
@@ -211,6 +211,21 @@ src/
 - **不引入 CSS 框架**：`.sizes` / `.chip` / `.chip input` / `.field-label` 全部沿用 style.css（与旧 vanilla SizePicker 同 className）。新增 `sz_null` DOM id（与 `sz_28` 等同形）。
 - **测试隔离：ControlPanel.test.tsx beforeEach/afterEach 必须 reset uploadStore**：uploadStore 是模块级单例，US-017 起 ControlPanel subscribe doc；不 reset 会让前一个测试残留的 doc 影响后续测试的 SizePicker 渲染。改 beforeEach 需同步 ControlPanel.test.tsx 23 项用例。
 - **未做浏览器验证**：本故事无 SVG/坐标变换（仅 chip 渲染 + StatusLine 文案），AC 仅要求 typecheck + 单测 + build，故跳过 chrome-devtools-mcp；浏览器视觉回归（chip 渲染 / 通用 文案 / doc 切换重渲染）留作 US-021 自动 commit 集成时统一核对（届时 done→commit→切 nesting 端到端联调）。
+
+## US-021 关键约定（useCommitToNesting 自动 commit + D1 闭环 调用方必读）
+
+- **自动 commit 是解析成功的副作用（void commit），不阻塞预览渲染**：useParseDxf 在 `setState({status:'done', doc})` 后用 `void commit(doc.doc_id, doc.filename)`（不 await），让 doc/status 先进 store、UI 先渲染预览，commit 后台跑更新 commitStatus。改 `await commit(...)` 会阻塞 upload 返回、延迟预览上屏（破坏 AC#6 关键不变量）。
+- **commitStatus 与 parse status 分离（独立字段）**：uploadStore 持两套状态机 —— `status`（parse: idle→uploading→done|error）+ `commitStatus`（commit: idle→committing→done|error），互不干扰。parse done 可以无 commit（parse fail 时 commit 不触发）；commit done 必在 parse done 之后。改合并状态会破坏「commit fail 不影响 parse done 预览可用」语义（D5 基础）。
+- **D1 闭环：commit done → setNestingEnabled(true) + setTab('nesting')**：useCommitToNesting 在 commit 成功后显式调 `useUiStore.getState().setNestingEnabled(true)`（与 PreviewPage subscribe parse done 重复但幂等，显式调保证 commit 链路自闭环）+ `useUiStore.getState().setTab('nesting')`（自动切入超排页）。**顺序不能反**：setTab('nesting') 在 nestingEnabled===false 时静默不切（US-015 store guard），故必须先 setNestingEnabled(true) 再 setTab。commit fail 不调 setTab（D5）。
+- **D5：commit fail 不切 Tab（Tab 仍解锁，用户可重试或用旧数据）**：commit fail 时 commitStatus='error' + commitError 显示，但 activeTab 不被切到 nesting（用户留在 preview 看到错误）。nestingEnabled 仍为 true（parse done 已解锁），用户可手动点超排 Tab 用旧 intermediate 数据进入。
+- **防连击：committingRef + commitStatus==='committing' 双重防护**：ref 立即生效（async 函数体同步段执行）；setState 异步生效，第二次连击会在 setState 调度前进 hook body。两者任一为 committing 即忽略（返回 `{ok:false, error:'commit already in progress'}`，不抛错）。与 useParseDxf uploadingRef 同模式。
+- **fetch 用 JSON body（非 FormData）+ 手设 Content-Type**：与 useParseDxf（FormData + 不手设 Content-Type）不同 —— commit 传 doc_id/filename 引用（无文件数据），用 `JSON.stringify({doc_id, filename})` + `headers: {'Content-Type':'application/json'}`。改 body 格式需同步后端 `server.py commit_to_nesting` + useCommitToNesting.test.tsx AC#7 URL+method+body 用例。
+- **uploadStore reset 同步清 commit 字段**：`reset()` 把 `commitStatus='idle'/commitError=null/commitSummary=null`（与 status/doc/error/qtyDialog/zoom 同步清）。useParseDxf 进入 uploading 时也清 commit 字段（重传时旧 commit 摘要不再适用，UI 不残留误导）。
+- **commitSummary 防御性构造**：后端 commit 响应字段缺失时用空数组/0 兜底（`Array.isArray(data.sizes) ? data.sizes : []`、`typeof data.n_pieces === 'number' ? data.n_pieces : 0`），不阻塞 commit done 状态切换。改兜底逻辑需同步 useCommitToNesting.test.tsx commitSummary 断言。
+- **UploadPanel commit 状态行独立于 parse status 行**：两行可同时显示（parse done 行 + commit committing/done/error 行）。commit 行复用 `.upload-status.loading/.done/.error` 同三套 className（暗绿底/暗绿底/红字），`data-testid="commit-status"` 区分（parse 行 data-testid="upload-status"）。不新增 CSS 类。
+- **测试隔离：useParseDxf.test.tsx / UploadPanel.test.tsx beforeEach/afterEach 加 uiStore reset**：commit D1 副作用调 setTab/setNestingEnabled，不 reset 会跨测试污染（前一个测试的 commit resolve 把 activeTab 切到 nesting，影响下一个测试初始态）。useCommitToNesting.test.tsx 也同步 reset。
+- **mockImplementation 路由 fetch（非 mockResolvedValue）**：US-021 集成测试中 parse-dxf 和 commit-to-nesting 两个 endpoint 共享同一 fetch spy，需 `mockImplementation` 按 URL 路由返回不同 Response（parse→ParsedDoc、commit→commit summary）。mockResolvedValue 共享同一 Response 对象会导致 `.json()` 二次消费 body 报错（与 US-018 PerTypeOverridesModal fetch mock 同模式）。
+- **未做浏览器验证**：本故事无 SVG/坐标变换（仅 store 字段扩展 + hook + UploadPanel 状态行 DOM），AC 仅要求 typecheck + 单测 + build。浏览器视觉回归（「应用中…」loading + 「已应用至超排」摘要 + 自动切 Tab + commit fail 红字）留作整体回归。
 
 ## US-018 关键约定（PerTypeOverridesModal/PtypePreviewModal 高级配置弹窗 调用方必读）
 

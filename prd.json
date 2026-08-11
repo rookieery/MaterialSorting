@@ -2,16 +2,10 @@
   "branchName": "ralph/nesting-tab-linkage",
   "stories": [
     {
-      "id": "US-019",
-      "title": "ControlPanel 主面板精简（删内外两档+片名）",
-      "description": "删除主面板内外两档全局重合/旋转输入 + 裁片名 + 内部/外部区分，全交高级配置弹窗。详见 tasks/prd-nesting-tab-linkage.md US-019。\n\n具体任务：\n1. materialSorting-web/src/components/ControlPanel/ControlPanel.tsx — 删除 <ErodeInputs> + <ToleranceInputs> 渲染；保留 <PerTypeOverrides>（US-018 改造为按钮）+ <ParamForm> + <MultiSeedControls> + <SizePicker> + <PresetButtons> + <StartButton> + <StatusLine> + <ExportButtons>。\n2. materialSorting-web/src/lib/params.ts — collectParams 改为 params={d_ext:0,d_int:0,tol_ext:0,tol_int:0}（默认全 0，不再从 form 读两档）；FormState 删 d_ext/d_int/tol_ext/tol_int；DEFAULT_FORM 同步删；per_type 解析逻辑保留不变。\n3. 删除 materialSorting-web/src/components/ControlPanel/ErodeInputs.tsx + ToleranceInputs.tsx（含 __tests__）；CSS 规则保留不删（向后兼容）。\n4. 同步 params.test.ts（params 永远全 0 / per_type 不变）与 ControlPanel.test.tsx（删两档用例、新增「不再渲染 d_ext/d_int」断言）。\n\n验收标准：\n- 关键不变量：后端 build_instance 入参契约不变（params 仍传全 0、per_type 仍传），后端无需改动。\n- 主面板不再渲染 d_ext/d_int/tol_ext/tol_int 输入。\n- cd materialSorting-web && npm run typecheck / npm run test 全绿 / npm run build 无报错。\n- 依赖 US-018。",
-      "passes": true
-    },
-    {
       "id": "US-021",
       "title": "解析成功自动 commit + 自动切超排",
       "description": "上传解析成功后系统自动把母版应用到超排（commit+reload）并切入超排页，无需手动点「应用」（D1 一条龙）。详见 tasks/prd-nesting-tab-linkage.md US-021。\n\n具体任务：\n1. 新建 materialSorting-web/src/hooks/useCommitToNesting.ts — commit(doc_id,filename?)→Promise<{ok,summary?,error?}>；fetch POST /api/commit-to-nesting JSON body {doc_id,filename}；防连击（committingRef+store flag）；错误进 store 不抛。\n2. materialSorting-web/src/store/uploadStore.ts — 扩字段 commitStatus:'idle'|'committing'|'done'|'error'、commitError:string|null、commitSummary:{sizes,n_pieces,total_area_mm2}|null；reset() 同步清。\n3. materialSorting-web/src/hooks/useParseDxf.ts — 解析成功（setState status=done）后自动触发 commit（D1 副作用）；commit 中 commitStatus='committing' 显示「应用中…」loading。\n4. commit done → setNestingEnabled(true)（US-015/016）+ useUiStore.setTab('nesting') 自动切入超排 + 显示 commitSummary（如「已应用至超排：{n_pieces} 裁片，{sizes.length} 码」）；commit fail → commitStatus='error'+commitError 显示，不切 Tab（D5：Tab 仍解锁，可重试或用旧数据）。\n\n验收标准：\n- 关键不变量：自动 commit 是解析成功的副作用，不阻塞解析预览（预览页先渲染、commit 后台跑）。\n- useCommitToNesting ≥10 项单测（fetch URL/method/body、200→done、422→error、防连击仅一次、doc_id 缺省兜底）+ useParseDxf/PreviewPage 自动 commit 集成 ≥6 项（解析 done 自动触发 commit、done 切 nesting Tab、done setNestingEnabled(true)、失败不切 Tab、失败显示 error、摘要渲染）。\n- cd materialSorting-web && npm run typecheck / npm run test 全绿 / npm run build 无报错。\n- 依赖 US-015 + US-016 + US-020。",
-      "passes": false
+      "passes": true
     },
     {
       "id": "US-022",

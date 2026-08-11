@@ -6,6 +6,9 @@
 //      失败 → 红字提示，**不发请求**（AC#2）。
 //   3. 从 uploadStore 读 status/error：uploading 显示加载态、done 显示文件名 + 码数概览、
 //      error 显示后端返回的红字消息（AC#3）；客户端校验失败显示本地红字（与 store.error 互斥展示）。
+//   4. US-021：从 uploadStore 读 commitStatus/commitError/commitSummary —— 解析成功后
+//      自动 commit（D1 副作用），commit 中显示「应用中…」、done 显示「已应用至超排：N 裁片，M 码」、
+//      error 显示红字。commit 状态独立于 parse status，两行互不干扰（parse done 行 + commit 行）。
 //
 // 设计原则（CLAUDE.md / AGENTS.md US-005 关键约定）：
 //   - 沿用 style.css，与 ControlPanel 视觉同色系（暗背景 #26282e + 绿色 #2ea06c 强调）；
@@ -19,6 +22,9 @@
 //
 // 状态来源拆分：
 //   - HTTP 流程状态（uploading / done / error + doc）→ uploadStore（US-005 单一真相源）。
+//   - US-021 commit 状态（committing / done / error + summary）→ uploadStore（独立字段，
+//     与 parse status 分离）。commit 由 useParseDxf 在 parse done 后自动触发（D1 副作用），
+//     UploadPanel 只读不触发。
 //   - 客户端校验失败消息（localError）→ 本组件 useState：不污染 store 状态机（hook 仅在 HTTP 流程内
 //     切 status），同时让用户重试时清掉旧 reject 提示。
 
@@ -63,6 +69,10 @@ export function UploadPanel(): JSX.Element {
   const status = useUploadStore((s) => s.status);
   const doc = useUploadStore((s) => s.doc);
   const storeError = useUploadStore((s) => s.error);
+  // US-021：commit 状态独立订阅（与 parse status 分离），驱动 commit 行渲染。
+  const commitStatus = useUploadStore((s) => s.commitStatus);
+  const commitError = useUploadStore((s) => s.commitError);
+  const commitSummary = useUploadStore((s) => s.commitSummary);
 
   const { upload } = useParseDxf();
 
@@ -159,6 +169,27 @@ export function UploadPanel(): JSX.Element {
       {displayError && (
         <div className="upload-status error" data-testid="upload-status">
           {displayError}
+        </div>
+      )}
+
+      {/* US-021 commit 状态行：独立于 parse status，只在 commitStatus!==idle 时渲染。
+          commit 由 useParseDxf 在 parse done 后自动触发（D1 副作用），此区域只读不触发。
+          - committing → 「应用中…」loading（复用 .upload-status.loading 暗绿底）。
+          - done + commitSummary → 「已应用至超排：N 裁片，M 码」暗绿底（复用 .upload-status.done）。
+          - error + commitError → 红字「应用失败：<msg>」（复用 .upload-status.error）。 */}
+      {commitStatus === 'committing' && (
+        <div className="upload-status loading" data-testid="commit-status">
+          应用中…
+        </div>
+      )}
+      {commitStatus === 'done' && commitSummary && (
+        <div className="upload-status done" data-testid="commit-status">
+          已应用至超排：{commitSummary.n_pieces} 裁片，{commitSummary.sizes.length} 码
+        </div>
+      )}
+      {commitStatus === 'error' && commitError && (
+        <div className="upload-status error" data-testid="commit-status">
+          应用失败：{commitError}
         </div>
       )}
 

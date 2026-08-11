@@ -558,3 +558,21 @@ NestsGrid 渲染 N 个 NestCard；ConvergenceCurve 命令式画 90% 生死线 + 
 - D7 预填用 INTERNAL_PTYPES Set（不读 v03.ts INTERNAL 标记），保持 store/types 解耦。
 - mockImplementation vs mockResolvedValue：StrictMode dev 双 mount 调 2 次 fetch，mockResolvedValue 共享同一 Response body 会被首次 .json() 消费完，第二次报 "body stream already read"。
 - z-index 三层：tooltip(100) < piece-qty/zoom(1000) < per-type(1100) < ptype-preview(1200)。
+**US-019 — ControlPanel 主面板精简（删内外两档+片名）** — 2026-08-11
+分支：ralph/nesting-tab-linkage
+改动：
+- `materialSorting-web/src/lib/params.ts` —— FormState 删 d_ext/d_int/tol_ext/tol_int 字段；DEFAULT_FORM 同步删；collectParams 改为 params 永远全 0（不再从 form 读两档）；删 unused `num()` helper；per_type 解析逻辑保留不变；头部注释 + 不变量文档更新（US-019 修订）。
+- `materialSorting-web/src/components/ControlPanel/ControlPanel.tsx` —— 删 ErodeInputs/ToleranceInputs import + JSX 渲染；hint 文案去掉「内部片 = 单排/双排/...」改为「重合 erode / 旋转公差按每片型 v0.3 上限覆盖 —— 见『高级配置』弹窗」（删除内部/外部区分）。
+- 删除 `materialSorting-web/src/components/ControlPanel/ErodeInputs.tsx` + `ToleranceInputs.tsx`（无独立 __tests__，CSS 规则保留向后兼容）。
+- `materialSorting-web/src/lib/__tests__/params.test.ts` —— 重写：删 `legacyCollectParams`/`legacyNum` 参考实现 + 11 组对比；新增「FormState 无 d_ext 等字段」+「params 永远全 0（4 组 form 对比）」+「全 10 ptype 填」用例；per_type 单档/双档/空白/显式 0 用例保留并补充覆盖；总数 19 项。
+- `materialSorting-web/src/components/ControlPanel/__tests__/ControlPanel.test.tsx` —— AC#2 用例删 d_ext/d_int/tol_ext/tol_int 默认值断言 + 加「主面板不再渲染」is-null 断言；新增独立「US-019 AC#6 主面板不再渲染内外两档输入」用例（断言 #d_ext/#d_int/#tol_ext/#tol_int 均 null + 不含「内/外两档」文案 + PerTypeOverrides 按钮仍在）；AC#6 cfg.params 期望从 `{d_int:10,...}` 改为全 0；总数 24 项。
+- `.docs/technical/agent-component-map.md` —— US-004 表删 ErodeInputs/ToleranceInputs 行；params.ts / ControlPanel.tsx / params.test.ts / ControlPanel.test.tsx 行描述同步 US-019；US-004 关键不变量 #1/#2/#3/#5 修订（删除「四档」表述、删 d_int=10 默认、删 `id=d_ext` legacy id 列举）；末尾 vanilla-id 列举同步。
+- `.docs/technical/agent-api-reference.md` —— /ws/solve start payload 示例 params 改为全 0 + 注释说明 US-019 起前端永远传全 0。
+验收：
+- typecheck 通过（tsc --noEmit 无错）。
+- npm run test 全绿：32 文件 / 448 项通过（params.test.ts 19 项、ControlPanel.test.tsx 24 项均绿）。
+- npm run build 无报错（92 modules、产物 185.59 kB）。
+- 关键不变量：后端 build_instance 入参契约不变（params 仍传，只是全 0；per_type 仍传），后端无改动。
+- 主面板不再渲染 d_ext/d_int/tol_ext/tol_int 输入（ControlPanel.test.tsx 两条断言）。
+**未做浏览器验证**：本故事无新 SVG/坐标变换（只是删输入组件 + 改 params 默认），AC 仅要求 typecheck + 单测 + build，故跳过 chrome-devtools-mp；浏览器视觉回归（主面板无两档输入、hint 文案、高级配置按钮仍可开 modal）留作 US-021 自动 commit 集成时统一核对。
+---

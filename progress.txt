@@ -4,26 +4,27 @@ Started: 2026-08-09
 
 
 
-**US-019 — ControlPanel 主面板精简（删内外两档+片名）** — 2026-08-11
-分支：ralph/nesting-tab-linkage
 
-改动：
-- `materialSorting-web/src/lib/params.ts` —— FormState 删 d_ext/d_int/tol_ext/tol_int 字段；DEFAULT_FORM 同步删；collectParams 改为 params 永远全 0（不再从 form 读两档）；删 unused `num()` helper；per_type 解析逻辑保留不变；头部注释 + 不变量文档更新（US-019 修订）。
-- `materialSorting-web/src/components/ControlPanel/ControlPanel.tsx` —— 删 ErodeInputs/ToleranceInputs import + JSX 渲染；hint 文案去掉「内部片 = 单排/双排/...」改为「重合 erode / 旋转公差按每片型 v0.3 上限覆盖 —— 见『高级配置』弹窗」（删除内部/外部区分）。
-- 删除 `materialSorting-web/src/components/ControlPanel/ErodeInputs.tsx` + `ToleranceInputs.tsx`（无独立 __tests__，CSS 规则保留向后兼容）。
-- `materialSorting-web/src/lib/__tests__/params.test.ts` —— 重写：删 `legacyCollectParams`/`legacyNum` 参考实现 + 11 组对比；新增「FormState 无 d_ext 等字段」+「params 永远全 0（4 组 form 对比）」+「全 10 ptype 填」用例；per_type 单档/双档/空白/显式 0 用例保留并补充覆盖；总数 19 项。
-- `materialSorting-web/src/components/ControlPanel/__tests__/ControlPanel.test.tsx` —— AC#2 用例删 d_ext/d_int/tol_ext/tol_int 默认值断言 + 加「主面板不再渲染」is-null 断言；新增独立「US-019 AC#6 主面板不再渲染内外两档输入」用例（断言 #d_ext/#d_int/#tol_ext/#tol_int 均 null + 不含「内/外两档」文案 + PerTypeOverrides 按钮仍在）；AC#6 cfg.params 期望从 `{d_int:10,...}` 改为全 0；总数 24 项。
-- `.docs/technical/agent-component-map.md` —— US-004 表删 ErodeInputs/ToleranceInputs 行；params.ts / ControlPanel.tsx / params.test.ts / ControlPanel.test.tsx 行描述同步 US-019；US-004 关键不变量 #1/#2/#3/#5 修订（删除「四档」表述、删 d_int=10 默认、删 `id=d_ext` legacy id 列举）；末尾 vanilla-id 列举同步。
-- `.docs/technical/agent-api-reference.md` —— /ws/solve start payload 示例 params 改为全 0 + 注释说明 US-019 起前端永远传全 0。
-
-验收：
-- typecheck 通过（tsc --noEmit 无错）。
-- npm run test 全绿：32 文件 / 448 项通过（params.test.ts 19 项、ControlPanel.test.tsx 24 项均绿）。
-- npm run build 无报错（92 modules、产物 185.59 kB）。
-- 关键不变量：后端 build_instance 入参契约不变（params 仍传，只是全 0；per_type 仍传），后端无改动。
-- 主面板不再渲染 d_ext/d_int/tol_ext/tol_int 输入（ControlPanel.test.tsx 两条断言）。
-
-**未做浏览器验证**：本故事无新 SVG/坐标变换（只是删输入组件 + 改 params 默认），AC 仅要求 typecheck + 单测 + build，故跳过 chrome-devtools-mp；浏览器视觉回归（主面板无两档输入、hint 文案、高级配置按钮仍可开 modal）留作 US-021 自动 commit 集成时统一核对。
----
 **未做浏览器验证**：本故事无新 SVG/坐标变换（PiecePreviewSVG compact 仅复用现有 5 层渲染 + 跳过 label + pad=2），AC 仅要求 typecheck + 单测 + build，故跳过 chrome-devtools-mcp；浏览器视觉回归（缩略图 64×64 + 放大预览 + 双层 ESC + D7 预填）留作 US-021 自动 commit 集成时统一核对。
 ---
+
+## US-021 — 解析成功自动 commit + 自动切超排（2026-08-11）
+
+### 交付
+- **新建 `src/hooks/useCommitToNesting.ts`** —— commit(doc_id, filename?) → Promise<{ok, summary?, error?}>。fetch POST /api/commit-to-nesting JSON body。防连击（committingRef + commitStatus==='committing' 双重防护）。commit done → setNestingEnabled(true) + setTab('nesting')（D1 闭环）。commit fail → commitStatus='error' 不切 Tab（D5）。
+- **改造 `src/hooks/useParseDxf.ts`** —— 解析成功（setState status='done'）后 `void commit(doc.doc_id, doc.filename)`（D1 副作用，不阻塞预览）。进入 uploading 时同步清 commit 字段。
+- **扩 `src/store/uploadStore.ts`** —— commitStatus/commitError/commitSummary 三字段 + reset() 同步清。CommitStatus + CommitSummary 类型导出。
+- **改造 `src/components/preview/UploadPanel.tsx`** —— 加 commit 状态行（committing→「应用中…」/ done→「已应用至超排：N 裁片，M 码」/ error→「应用失败：msg」）。复用 .upload-status 三态 className。
+
+### 测试
+- **新建 `src/hooks/__tests__/useCommitToNesting.test.tsx`** —— 15 项单测（≥10 AC 满足）：fetch URL/method/body/Content-Type / 200→commitSummary+done / filename optional / 422/404/400→error / non-JSON→statusText / 防连击仅一次 / committingRef reset / network error / commitStatus transition idle→committing→done/error / commit done→D1 setNestingEnabled+setTab / commit fail→D5 不切 Tab / entering committing clears stale error。
+- **改造 `src/hooks/__tests__/useParseDxf.test.tsx`** —— 原 15 项更新 fetch 计数（成功路径 parse+commit=2 / 两次 upload=4）+ beforeEach/afterEach 加 uiStore reset。**新增 7 项 US-021 集成**（≥6 AC 满足）：parse done→auto-trigger commit（calls[1] body 验证）/ commit done→activeTab=nesting / commit done→nestingEnabled=true / commit fail→不切 Tab / commit fail→commitError / commit done→commitSummary / parse fail→commit 不触发。
+- **扩 `src/store/__tests__/uploadStore.test.ts`** —— 新增 5 项 commit 字段测试。
+- **更新 `src/components/preview/__tests__/UploadPanel.test.tsx`** —— 2 项 fetch 计数 + uiStore reset。
+
+### 结果
+- `npm run typecheck` ✅、`npm run test` 33 文件 475 项全绿 ✅、`npm run build` 无报错 ✅。
+- `python -c "from materialsorting.web.server import app"` 导入通过 ✅（后端无改动，仅验证不回归）。
+- **未做浏览器验证**：本故事无 SVG/坐标变换（仅 store 字段扩展 + hook + UploadPanel 状态行 DOM），AC 仅要求 typecheck + 单测 + build。浏览器视觉回归（「应用中…」loading + 「已应用至超排」摘要 + 自动切 Tab + commit fail 红字）留作后续整体回归。
+---
+

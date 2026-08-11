@@ -8,6 +8,10 @@
 // AC#3 non-JSON error -> statusText fallback ; network error -> Error.message
 // AC#4 anti-double-click: 2nd upload() during uploading silently ignored
 // AC#4 uploadingRef resets after success/failure (next upload works)
+//
+// US-021：解析成功自动触发 commit（void commit(doc_id, filename)），成功路径的 fetch
+// 调用次数翻倍（parse + commit），且 commit 会写 uiStore（setNestingEnabled+setTab）。
+// beforeEach/afterEach 加 uiStore reset 防 commit 副作用跨测试污染；fetch 计数断言同步更新。
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { StrictMode } from "react";
@@ -15,6 +19,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { useParseDxf } from "../useParseDxf";
 import { useUploadStore } from "../../store/uploadStore";
+import { useUiStore } from "../../store/uiStore";
 import type { ParsedDoc } from "../../types/parsed";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -30,6 +35,9 @@ let root: Root | null = null;
 
 beforeEach(() => {
   useUploadStore.getState().reset();
+  // US-021：commit 副作用会写 uiStore（setNestingEnabled+setTab），reset 防跨测试污染。
+  useUiStore.getState().setNestingEnabled(false);
+  useUiStore.getState().setTab("preview");
   captured = null;
   container = document.createElement("div");
   document.body.appendChild(container);
@@ -45,6 +53,9 @@ afterEach(() => {
   container?.remove();
   container = null;
   useUploadStore.getState().reset();
+  // US-021：commit 异步 resolve 可能在 afterEach 触发 setTab，reset 防下一个测试污染。
+  useUiStore.getState().setNestingEnabled(false);
+  useUiStore.getState().setTab("preview");
   vi.restoreAllMocks();
 });
 
@@ -94,7 +105,8 @@ describe("useParseDxf (US-005)", () => {
     await act(async () => {
       await captured!.upload(makeFile());
     });
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    // US-021：解析成功后自动 commit 触发第二次 fetch（POST /api/commit-to-nesting）。
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
     expect(fetchSpy.mock.calls[0][0]).toBe("/api/parse-dxf");
     const init = fetchSpy.mock.calls[0][1] as RequestInit;
     expect(init.method).toBe("POST");
@@ -278,7 +290,8 @@ describe("useParseDxf (US-005)", () => {
     await act(async () => {
       await captured!.upload(makeFile());
     });
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    // US-021：每次成功 upload 触发 parse + commit 两次 fetch，两次 upload 共 4 次。
+    expect(fetchSpy).toHaveBeenCalledTimes(4);
   });
 
   it("AC#4 uploadingRef reset after failure (next upload works)", async () => {
@@ -326,5 +339,178 @@ describe("useParseDxf (US-005)", () => {
       resolveRes(makeResponse());
       await Promise.resolve();
     });
+  });
+});
+
+// US-021：解析成功自动 commit 集成测试（useParseDxf done -> useCommitToNesting -> D1 闭环）。
+// 验证 AC#8 ≥6 项：解析 done 自动触发 commit / commit done 切 nesting Tab /
+// commit done setNestingEnabled(true) / commit 失败不切 Tab / commit 失败显示 error / 摘要渲染。
+//
+// fetch mock 用 mockImplementation 路由：parse-dxf 返回 ParsedDoc、commit-to-nesting 返回
+// commit summary（或 error），避免 mockResolvedValue 共享 Response 导致 .json() 二次消费问题。
+describe("useParseDxf (US-021) auto-commit integration", () => {
+  /** 路由 fetch：parse-dxf 返回 ParsedDoc，commit-to-nesting 按 commitInit 返回。 */
+  function mockParseAndCommit(
+    doc: ParsedDoc = makeDoc(),
+    commitInit: { ok?: boolean; status?: number; json?: unknown } = {},
+  ): ReturnType<typeof vi.spyOn> {
+    const commitJson = commitInit.json ?? {
+      doc_id: "deadbeef",
+      source: "M1787.dxf",
+      sizes: [28, 30, 32],
+      n_pieces: 128,
+      total_area_mm2: 12345.6,
+      reloaded: true,
+    };
+    return vi.spyOn(globalThis, "fetch").mockImplementation(async (url: URL | string | Request) => {
+      const u = typeof url === "string" ? url : url.toString();
+      if (u.includes("/api/parse-dxf")) {
+        return makeResponse({ json: doc });
+      }
+      if (u.includes("/api/commit-to-nesting")) {
+        return makeResponse(commitInit);
+      }
+      return makeResponse({ json: commitJson });
+    }) as unknown as ReturnType<typeof vi.spyOn>;
+  }
+
+  it("AC#8 parse done -> auto-triggers commit with doc.doc_id + doc.filename", async () => {
+    const doc = makeDoc([
+      { size: 28, pieces: [] },
+      { size: 30, pieces: [] },
+    ]);
+    const fetchSpy = mockParseAndCommit(doc);
+    renderProbe();
+    await act(async () => {
+      await captured!.upload(makeFile());
+    });
+    // Wait for auto-commit to resolve (void commit runs async after parse done)
+    await act(async () => {
+      await Promise.resolve();
+    });
+    // 2 fetches: parse-dxf + commit-to-nesting
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(fetchSpy.mock.calls[1][0]).toBe("/api/commit-to-nesting");
+    const commitInit = fetchSpy.mock.calls[1][1] as RequestInit;
+    const body = JSON.parse(commitInit.body as string) as { doc_id: string; filename: string };
+    // doc_id + filename from parsed doc
+    expect(body.doc_id).toBe(doc.doc_id);
+    expect(body.filename).toBe(doc.filename);
+  });
+
+  it("AC#8 commit done -> setTab(nesting) auto-switch to nesting tab (D1)", async () => {
+    mockParseAndCommit();
+    renderProbe();
+    expect(useUiStore.getState().activeTab).toBe("preview");
+    await act(async () => {
+      await captured!.upload(makeFile());
+    });
+    // Flush auto-commit async resolution
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(useUploadStore.getState().status).toBe("done");
+    expect(useUploadStore.getState().commitStatus).toBe("done");
+    // D1: commit done -> auto-switch to nesting tab
+    expect(useUiStore.getState().activeTab).toBe("nesting");
+  });
+
+  it("AC#8 commit done -> setNestingEnabled(true)", async () => {
+    mockParseAndCommit();
+    renderProbe();
+    expect(useUiStore.getState().nestingEnabled).toBe(false);
+    await act(async () => {
+      await captured!.upload(makeFile());
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(useUiStore.getState().nestingEnabled).toBe(true);
+  });
+
+  it("AC#8 commit fail -> does NOT switch tab (user sees error on preview)", async () => {
+    mockParseAndCommit(makeDoc(), {
+      ok: false,
+      status: 422,
+      json: { error: "commit failed: no pieces" },
+    });
+    renderProbe();
+    await act(async () => {
+      await captured!.upload(makeFile());
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    // Parse succeeded (status=done) but commit failed
+    expect(useUploadStore.getState().status).toBe("done");
+    expect(useUploadStore.getState().commitStatus).toBe("error");
+    // D5: Tab NOT switched (user stays on preview to see commit error)
+    expect(useUiStore.getState().activeTab).toBe("preview");
+    // nestingEnabled stays true (parse done unlocked it via PreviewPage subscribe;
+    // in test without PreviewPage, commit fail path doesn't set it, but D5 says Tab
+    // stays unlocked so user can retry or use old data)
+  });
+
+  it("AC#8 commit fail -> commitError displayed in store", async () => {
+    mockParseAndCommit(makeDoc(), {
+      ok: false,
+      status: 422,
+      json: { error: "commit failed: no pieces" },
+    });
+    renderProbe();
+    await act(async () => {
+      await captured!.upload(makeFile());
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(useUploadStore.getState().commitStatus).toBe("error");
+    expect(useUploadStore.getState().commitError).toBe("commit failed: no pieces");
+  });
+
+  it("AC#8 commit done -> commitSummary rendered in store (n_pieces + sizes.length)", async () => {
+    mockParseAndCommit(makeDoc(), {
+      json: {
+        doc_id: "deadbeef",
+        source: "M1787.dxf",
+        sizes: [28, 30],
+        n_pieces: 64,
+        total_area_mm2: 9999.9,
+        reloaded: true,
+      },
+    });
+    renderProbe();
+    await act(async () => {
+      await captured!.upload(makeFile());
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const summary = useUploadStore.getState().commitSummary;
+    expect(summary).not.toBeNull();
+    expect(summary!.n_pieces).toBe(64);
+    expect(summary!.sizes.length).toBe(2);
+    expect(summary!.total_area_mm2).toBe(9999.9);
+  });
+
+  it("AC#8 parse fail -> commit NOT triggered (fetch only once for parse-dxf)", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (url: URL | string | Request) => {
+      const u = typeof url === "string" ? url : url.toString();
+      if (u.includes("/api/parse-dxf")) {
+        return makeResponse({ ok: false, status: 422, json: { error: "parse fail" } });
+      }
+      return makeResponse();
+    });
+    renderProbe();
+    await act(async () => {
+      await captured!.upload(makeFile());
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    // Parse failed: only 1 fetch (parse-dxf), no commit triggered
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(useUploadStore.getState().status).toBe("error");
+    expect(useUploadStore.getState().commitStatus).toBe("idle");
   });
 });

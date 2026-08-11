@@ -13,6 +13,9 @@
 //      网络错 message）。
 //   5. 成功后默认 activeSize = doc.sizes[0]?.size ?? null（后端按数值升序、null 殿后；
 //      sizes[0] 是最小码；空 sizes 兜底 null，UI 自然显示空态）。
+//   6. US-021 D1：解析成功后自动触发 commit（后台副作用，不阻塞预览渲染）。
+//      doc/status 先进 store（UI 立即渲染预览），commit 再后台跑（commitStatus 独立字段）。
+//      commit 失败不影响 parse done（预览已可用）；commit 成功自动切超排 Tab。
 //
 // 调用方约定：
 //   const { upload } = useParseDxf();
@@ -26,6 +29,7 @@
 
 import { useCallback, useRef } from 'react';
 import { useUploadStore } from '../store/uploadStore';
+import { useCommitToNesting } from './useCommitToNesting';
 import type { ParsedDoc } from '../types/parsed';
 
 /** 解析端点（dev 由 Vite proxy 转 :8000；prod 同源）。 */
@@ -39,6 +43,9 @@ export interface UseParseDxfResult {
 export function useParseDxf(): UseParseDxfResult {
   // 防连击：ref 立即生效（setState 异步，第二次连击会在 setState 调度前进 hook body）。
   const uploadingRef = useRef(false);
+  // US-021 D1：解析成功后自动 commit（后台副作用）。useCommitToNesting 内部同样有
+  // committingRef + commitStatus 双重防连击，此处仅持引用供 upload 回调内调用。
+  const { commit } = useCommitToNesting();
 
   const upload = useCallback(async (file: File): Promise<void> => {
     // 双重防护：ref + store status（任一为 uploading 即忽略，防止意外覆盖正在进行的请求）
@@ -46,8 +53,15 @@ export function useParseDxf(): UseParseDxfResult {
     if (useUploadStore.getState().status === 'uploading') return;
 
     uploadingRef.current = true;
-    // 进入 uploading 时清掉旧的 error（避免 UI 残留上次失败的红字），doc/activeSize 保留
-    useUploadStore.setState({ status: 'uploading', error: null });
+    // 进入 uploading 时清掉旧的 error（避免 UI 残留上次失败的红字），doc/activeSize 保留。
+    // 同步清 commit 字段（US-021）：重传时旧 commit 摘要 / 错误不再适用，避免 UI 误导。
+    useUploadStore.setState({
+      status: 'uploading',
+      error: null,
+      commitStatus: 'idle',
+      commitError: null,
+      commitSummary: null,
+    });
 
     try {
       const fd = new FormData();
@@ -80,6 +94,13 @@ export function useParseDxf(): UseParseDxfResult {
         activeSize: initialSize,
         error: null,
       });
+
+      // US-021 D1：解析成功 → 自动触发 commit（后台副作用，不阻塞预览）。
+      //   - doc/status 已进 store（上一行 setState 同步生效），UI 立即渲染预览；
+      //   - commit 用 void 不 await：parse 预览先上屏，commit 后台跑更新 commitStatus；
+      //   - commit done 时 useCommitToNesting 内部自动 setNestingEnabled(true) + setTab('nesting')；
+      //   - commit fail 时 commitStatus='error' 显示，不切 Tab（D5：Tab 仍解锁，可重试或用旧数据）。
+      void commit(doc.doc_id, doc.filename);
     } catch (e) {
       // 网络错 / JSON 解析错 —— 统一进 error 状态（不抛、不 rethrow）
       const msg = e instanceof Error ? e.message : String(e);
@@ -87,7 +108,7 @@ export function useParseDxf(): UseParseDxfResult {
     } finally {
       uploadingRef.current = false;
     }
-  }, []);
+  }, [commit]);
 
   return { upload };
 }

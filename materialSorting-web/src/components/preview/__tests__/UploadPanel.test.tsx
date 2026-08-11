@@ -17,6 +17,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { UploadPanel } from '../UploadPanel';
 import { useUploadStore } from '../../../store/uploadStore';
+import { useUiStore } from '../../../store/uiStore';
 import type { ParsedDoc } from '../../../types/parsed';
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -26,6 +27,9 @@ let root: Root | null = null;
 
 beforeEach(() => {
   useUploadStore.getState().reset();
+  // US-021：commit 副作用会写 uiStore（setNestingEnabled+setTab），reset 防跨测试污染。
+  useUiStore.getState().setNestingEnabled(false);
+  useUiStore.getState().setTab('preview');
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -42,6 +46,9 @@ afterEach(() => {
   container?.remove();
   container = null;
   useUploadStore.getState().reset();
+  // US-021：commit 异步 resolve 可能在此触发 setTab，reset 防下一个测试污染。
+  useUiStore.getState().setNestingEnabled(false);
+  useUiStore.getState().setTab('preview');
   vi.restoreAllMocks();
 });
 
@@ -207,7 +214,8 @@ describe('UploadPanel (US-006) AC#2 client-side validation', () => {
     await act(async () => {
       input.dispatchEvent(new Event('change', { bubbles: true }));
     });
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    // US-021：解析成功后自动 commit 触发第二次 fetch（POST /api/commit-to-nesting）。
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 
   it('AC#2 drop multiple files -> reject msg, no fetch', async () => {
@@ -247,7 +255,8 @@ describe('UploadPanel (US-006) AC#2 client-side validation', () => {
         makeDropEvent('drop', [makeFile('M1787.dxf', 100)]),
       );
     });
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    // US-021：解析成功后自动 commit 触发第二次 fetch（POST /api/commit-to-nesting）。
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
     expect(fetchSpy.mock.calls[0][0]).toBe('/api/parse-dxf');
   });
 
