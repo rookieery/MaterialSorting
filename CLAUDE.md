@@ -45,7 +45,6 @@ web  →  nesting_engine  →  nesting_bounds  →  dxf_parser
 
 ## 已知问题（待清理，勿在迁移中扩大改动）
 
-- `sparrow_baseline.py` 顶部 `PTYPE_COLORS` 含遗留片型（门头/门里/拉链/表袋/双袋/侧袋），与 v0.3 实际片型（机头/单排/双排/火机袋/裤耳）不一致。当前屏幕灰色即此残留，迁移未修。
 - `sparrow_baseline.py` 职责混合（既是 CLI 入口又是共享层），未拆分 `engine_core.py`。
 
 ## 规则与方案文档

@@ -2,22 +2,10 @@
   "branchName": "ralph/nesting-tab-linkage",
   "stories": [
     {
-      "id": "US-021",
-      "title": "解析成功自动 commit + 自动切超排",
-      "description": "上传解析成功后系统自动把母版应用到超排（commit+reload）并切入超排页，无需手动点「应用」（D1 一条龙）。详见 tasks/prd-nesting-tab-linkage.md US-021。\n\n具体任务：\n1. 新建 materialSorting-web/src/hooks/useCommitToNesting.ts — commit(doc_id,filename?)→Promise<{ok,summary?,error?}>；fetch POST /api/commit-to-nesting JSON body {doc_id,filename}；防连击（committingRef+store flag）；错误进 store 不抛。\n2. materialSorting-web/src/store/uploadStore.ts — 扩字段 commitStatus:'idle'|'committing'|'done'|'error'、commitError:string|null、commitSummary:{sizes,n_pieces,total_area_mm2}|null；reset() 同步清。\n3. materialSorting-web/src/hooks/useParseDxf.ts — 解析成功（setState status=done）后自动触发 commit（D1 副作用）；commit 中 commitStatus='committing' 显示「应用中…」loading。\n4. commit done → setNestingEnabled(true)（US-015/016）+ useUiStore.setTab('nesting') 自动切入超排 + 显示 commitSummary（如「已应用至超排：{n_pieces} 裁片，{sizes.length} 码」）；commit fail → commitStatus='error'+commitError 显示，不切 Tab（D5：Tab 仍解锁，可重试或用旧数据）。\n\n验收标准：\n- 关键不变量：自动 commit 是解析成功的副作用，不阻塞解析预览（预览页先渲染、commit 后台跑）。\n- useCommitToNesting ≥10 项单测（fetch URL/method/body、200→done、422→error、防连击仅一次、doc_id 缺省兜底）+ useParseDxf/PreviewPage 自动 commit 集成 ≥6 项（解析 done 自动触发 commit、done 切 nesting Tab、done setNestingEnabled(true)、失败不切 Tab、失败显示 error、摘要渲染）。\n- cd materialSorting-web && npm run typecheck / npm run test 全绿 / npm run build 无报错。\n- 依赖 US-015 + US-016 + US-020。",
-      "passes": true
-    },
-    {
-      "id": "US-022",
-      "title": "求解输入数量 demand（per-size，0 跳过）",
-      "description": "上传预览页编辑的每片每码数量真正参与排料（Item.demand=N 复制 N 份，0 则该码排除）；解析后默认每片每码填 1。详见 tasks/prd-nesting-tab-linkage.md US-022（D2/D3）。\n\n具体任务：\n1. materialSorting-web/src/store/qtyStore.ts — 新增 hydrateDefaults(sizes:(number|null)[],labels:string[]) action（per-size 模式下每个 (label,sizeKey)=1，D3）；在 useParseDxf 解析成功（doc 到达，已知 sizes+labels）时调用，替代全 0 默认；resetQuantities() 仍清空。\n2. materialSorting-web/src/hooks/useSolveRun.ts 或 lib/ws.ts — WS start payload 新增 quantities:Record<label,Record<sizeKey,number>>（从 qtyStore.quantities 序列化扁平化，per-size 取 perSize、global 取 globalValue 展开到所有码）；StartPayload 类型扩。\n3. materialSorting-server/src/materialsorting/web/server.py _commit_to_nesting_sync + nesting_engine/pieces_export.py — intermediate 每 piece 加 label 字段（沿用 _label_for(idx)，与 ParsedDoc 同排序同标注）。\n4. server.py /ws/solve 入参增 quantities:dict|None；materialSorting-server/src/materialsorting/web/solver.py build_instance 在 sizes 过滤+per-piece 迭代时按 (label,sizeKey) 查 quantities → spyrrow.Item(demand=N)；demand=0 跳过该 piece（D2）；缺 label 字段回退 demand=1（向后兼容）。\n\n验收标准：\n- 关键不变量/已知风险：label→pid 映射稳定性——commit 流程走 NestPiece（已归一化+镜像）、parse 流程走 PieceOutline（原始坐标），两者排序键 (-centroid_y,centroid_x,-area_mm2,...) 必须一致，否则 label 错位导致数量配错片型；对 M1787 验证 commit 后 intermediate 的 label 与 parse-dxf 响应 label 按 (name,size) 对齐一致，若不一致则 qtyStore 改用 (name,size) 为 key（Story 内决策）。\n- 缺 quantities 入参=全片 demand=1（向后兼容）。\n- curl+WS 验证：上传→hydrateDefaults 填 1→改某片某码 0→commit→ws/solve→manifest 该片该码 pid 不出现。\n- cd materialSorting-web && npm run typecheck 通过；python -c \"from materialsorting.web.server import app\" 导入通过。\n- 依赖 US-020 + US-021。",
-      "passes": false
-    },
-    {
       "id": "US-023",
       "title": "PTYPE_COLORS 清理遗留 6 片型",
       "description": "裁片颜色正确反映 v0.3 实际 10 片型，消除超排页/导出的屏幕灰色。详见 tasks/prd-nesting-tab-linkage.md US-023。\n\n具体任务：\n1. materialSorting-server/src/materialsorting/nesting_engine/sparrow_baseline.py PTYPE_COLORS — 删 门头/门里/拉链/表袋/双袋/侧袋，加 单排/双排/火机袋/裤耳；4 个新片型色值用与前片/后片同饱和度的协调色（参考 d3 category10：单排=#e377c2、双排=#ff1493、火机袋=#8c564b、裤耳=#17becf，待版师屏幕定色）。\n2. CLAUDE.md「已知问题」段第 1 条（PTYPE_COLORS 遗留）删除；.docs/technical/agent-file-map.md 同步更新 PTYPE_COLORS 内容描述。\n\n验收标准：\n- 关键不变量：PTYPE_COLORS 调用方（web/solver.py、web/export.py、sparrow_baseline.py 内部）签名不变；DEFAULT_COLOR='#bbbbbb' 兜底保留。\n- 人工验证：ms-web→上传 M1787→commit→求解→屏幕所有 v0.3 片型彩色正确（无灰色 fallback）。\n- python -c \"from materialsorting.web.server import app\" 导入通过。\n- 可与 v2 并行。",
-      "passes": false
+      "passes": true
     },
     {
       "id": "US-024",

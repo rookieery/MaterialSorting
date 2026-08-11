@@ -32,10 +32,11 @@ materialSorting-server/
     │   ├── constraints.py             v0.3 约束常量 + 位图腐蚀 + 合法性校验
     │   ├── sparrow_baseline.py        基线求解 + ★共享层（被 experiments/export/solver 复用）
     │   ├── sparrow_experiments.py     旋转/重合公差实验
-    │   └── pieces_export.py           NestPiece → intermediate JSON（事实源）
+    │   ├── labeling.py                US-022 共享 A/B/C 标注 + (size,ptype)→label 映射
+    │   └── pieces_export.py           NestPiece → intermediate JSON（事实源，US-022 加 label）
     └── web/                           FastAPI + WS 工作台（详见 agent-api-reference.md）
-        ├── server.py                  app + 路由（GET /、/static、POST /export、POST /api/parse-dxf、POST /api/commit-to-nesting、GET /api/ptypes、WS /ws/solve）+ 求解线程桥 + US-020 _PIECES_STATE 可 reload（threading.Lock immutable snapshot）+ US-004 上传解析 + US-010 commit-to-intermediate（commit 后 reload）
-        ├── solver.py                  build_instance + solve_with_callback
+        ├── server.py                  app + 路由（GET /、/static、POST /export、POST /api/parse-dxf、POST /api/commit-to-nesting、GET /api/ptypes、WS /ws/solve）+ 求解线程桥 + US-020 _PIECES_STATE 可 reload（threading.Lock immutable snapshot）+ US-004 上传解析 + US-010 commit-to-intermediate（commit 后 reload）+ US-022 intermediate 加 label + WS quantities 入参
+        ├── solver.py                  build_instance（US-022 quantities→demand，0 跳过）+ solve_with_callback
         └── export.py                  PNG(matplotlib) + R12-DXF marker 导出
 ```
 
@@ -240,8 +241,8 @@ Stage 2 §6：把 128 片喂给 spyrrow（无服装约束的纯几何）求几�
 
 ```
 PTYPE_COLORS  = {'前片':'#1f77b4','后片':'#d62728','腰':'#2ca02c','前袋':'#ff7f0e',
-                 '后袋':'#9467bd','门头':'#8c564b','门里':'#c49c94','拉链':'#e377c2',
-                 '表袋':'#17becf','双袋':'#bcbd22','侧袋':'#7f7f7f'}   # ⚠️ 见已知问题
+                 '后袋':'#9467bd','机头':'#bcbd22','单排':'#e377c2','双排':'#ff1493',
+                 '火机袋':'#8c564b','裤耳':'#17becf'}   # v0.3 实际 10 片型（US-023 清理）
 DEFAULT_COLOR = '#bbbbbb'
 ```
 
@@ -273,9 +274,20 @@ DEFAULT_COLOR = '#bbbbbb'
 
 把 128 NestPiece dump 成 spyrrow 格式无关的 intermediate JSON —— 全流程**事实源**。sparrow 输入映射是后续独立步骤（当前 baseline 内联做了）。
 
-- `main()` —— `load_nest_pieces(paths.PIECES_DIR)` → 写 `paths.INTERMEDIATE`。
+- `main()` —— `load_nest_pieces(paths.PIECES_DIR)` → 写 `paths.INTERMEDIATE`；US-022 起解析母版（`paths.MASTER_DXF_GLOB`）经 `compute_size_ptype_labels` 标注 label（母版缺失则 label=null，向后兼容）。
 - 顶层字段：`source, gate_mm, n_pieces, total_area_mm2, pieces`。
-- 每片字段：`pid, ptype, size, side, polygon([[x,y]...]), bbox([minx,miny,maxx,maxy]), area_mm2, n_verts, allowed_angles([0,180])`。
+- 每片字段：`pid, ptype, size, side, label(US-022, 与 parse-dxf 同排序同标注), polygon([[x,y]...]), bbox([minx,miny,maxx,maxy]), area_mm2, n_verts, allowed_angles([0,180])`。
+
+### `labeling.py`（US-022 共享 A/B/C 标注）
+
+parse-dxf 响应（`web/server.py._build_parse_payload`）与 intermediate（`web/server.py._commit_to_nesting_sync` + `nesting_engine/pieces_export.py`）的**单一真相源** —— 保证两条管线对同一母版产出的 label 按 (size, ptype) 严格对齐（否则 qtyStore 按 label 编辑的数量会配错片型）。
+
+| 函数 | 说明 |
+|------|------|
+| `label_for(idx)` | 0→A, 1→B, ..., 25→Z, 26→AA（与 server.py `_label_for` 同实现，转发） |
+| `centroid(poly)` | 顶点算术质心（稳定排序键用） |
+| `size_sort_key(size)` | 码号排序：None 殿后，其余升序 |
+| `compute_size_ptype_labels(pieces, gmap, group_names)` | 对 `explore.collect_pieces` 结果按 parse 同排序键 `(-centroid_y, centroid_x, -area_mm2, block_name, piece_index)` 排序 + `label_for` 标注 → `{(size, ptype): label}`；L/R 同 ptype 共享 label |
 
 ## web/ — FastAPI + WebSocket 工作台
 
@@ -283,8 +295,8 @@ DEFAULT_COLOR = '#bbbbbb'
 
 | 文件 | 行 | 职责 |
 |------|----|------|
-| `server.py` | 549 | FastAPI app；**启动期 `_reload_pieces_state()`**（US-020 替代旧顶层 `load_pieces()`，allow-empty 不再让 import 崩）；路由 GET `/`、mount `/static`、POST `/export`、POST `/api/parse-dxf`（US-004 上传解析）、POST `/api/commit-to-nesting`（US-010 + US-020 commit 后 reload `_PIECES_STATE`）、GET `/api/ptypes`（US-020 片型代表裁片 D10/D11）、WS `/ws/solve`（accept 阶段 `_get_pieces_state()` 快照）；`_state_lock=threading.Lock()` 保护 immutable snapshot；`ThreadPoolExecutor(max_workers=6)` 桥求解子线程 ↔ asyncio（US-004 解析 / US-010 commit 也复用此池）；上传常量 `UPLOAD_MAX_BYTES=20MB` / `UPLOADS_DIR=paths.OUT_DIR/uploads` / `_DOC_ID_RE`；`_build_parse_payload` 按码分组 + 质心/面积稳定排序 + A/B/C 标注；`_commit_to_nesting_sync` Path A 全管线（collect→write_piece_dxf→load_nest_pieces→写回 intermediate + .bak）；`_PTYPE_REPRESENTATIVE_FIELDS` 透传白名单（v1 仅 polygon，US-024 后自动带 5 层） |
-| `solver.py` | 173 | `load_pieces` / `discretize_orientations` / `build_instance`（erode=min(申,max)，tol=min(申,max)）/ `solve_with_callback`（spyrrow ProgressQueue + threading，0.2s drain） |
+| `server.py` | 549 | FastAPI app；**启动期 `_reload_pieces_state()`**（US-020 替代旧顶层 `load_pieces()`，allow-empty 不再让 import 崩）；路由 GET `/`、mount `/static`、POST `/export`、POST `/api/parse-dxf`（US-004 上传解析）、POST `/api/commit-to-nesting`（US-010 + US-020 commit 后 reload `_PIECES_STATE` + US-022 intermediate 加 label）、GET `/api/ptypes`（US-020 片型代表裁片 D10/D11）、WS `/ws/solve`（accept 阶段 `_get_pieces_state()` 快照 + US-022 quantities 入参）；`_state_lock=threading.Lock()` 保护 immutable snapshot；`ThreadPoolExecutor(max_workers=6)` 桥求解子线程 ↔ asyncio（US-004 解析 / US-010 commit 也复用此池）；上传常量 `UPLOAD_MAX_BYTES=20MB` / `UPLOADS_DIR=paths.OUT_DIR/uploads` / `_DOC_ID_RE`；`_build_parse_payload` 按码分组 + 质心/面积稳定排序 + A/B/C 标注；`_commit_to_nesting_sync` Path A 全管线（collect→write_piece_dxf→load_nest_pieces→compute_size_ptype_labels→写回 intermediate + .bak）；`_PTYPE_REPRESENTATIVE_FIELDS` 透传白名单（v1 仅 polygon，US-024 后自动带 5 层） |
+| `solver.py` | 173 | `load_pieces` / `discretize_orientations` / `build_instance`（erode=min(申,max)，tol=min(申,max)，US-022 quantities→demand，0 跳过）/ `solve_with_callback`（spyrrow ProgressQueue + threading，0.2s drain） |
 | `export.py` | 160 | `apply_transform` / `placed_to_world`（用**原始**非 eroded 轮廓）/ `render_png`（matplotlib Agg）/ `write_marker_dxf`（R12 POLYLINE + ACI 色 + ASCII 标题） |
 
 US-004 起 `web/server.py` 直接 import `dxf_parser.collect.collect_pieces_with_details`（web → dxf_parser 跨层依赖，合规：web 是上层）。US-010 起新增 import `dxf_parser.explore` / `dxf_parser.export_dxf` / `nesting_bounds.load_pieces`（web → nesting_bounds → dxf_parser 单向，合规）。上传 multipart 依赖 `python-multipart`（已在 `[web]` extra）。
@@ -349,9 +361,8 @@ out/sparrow_baseline/pieces_intermediate.json   ← 全流程事实源
 
 ## 已知问题（迁移中未修，勿在文档/迁移中扩大）
 
-1. **`PTYPE_COLORS` 残留片型**：键含 `门头/门里/拉链/表袋/双袋/侧袋`（6 个遗留），与 v0.3 实际 10 片型 `机头/单排/双排/火机袋/裤耳`（新增 5 个）不匹配 → 实验/基线 SVG 中这 5 类静默回退 `DEFAULT_COLOR`，旧 6 类永不触发。当前屏幕灰色即此残留。
-2. **`sparrow_baseline.py` 职责混合**：既是 CLI 入口又是共享层（导出 4 个 `_` 前缀私有名给 experiments），未拆 `engine_core.py`。
-3. **跨 module 用 `_` 前缀名**：`sparrow_experiments` import `sparrow_baseline` 的 `_clean_polygon` 等 4 个下划线名，违反 Python 约定（应提为公共 API 或合并模块）。
-4. **旋转公差未主动实施**：`constraints.ROTATION_TOL` 仅"声明 + 校验"，baseline solver 仍 `{0,180}`；多姿态搜索是后续利用率提升点。
-5. **`sparrow_baseline.py:110-112` 占位死代码**：`<text>` 元素 append 后过滤，"占位，避免 linter"。
-6. **`pieces_export` 的 sparrow 映射内联在 baseline**：原计划独立模块，当前未拆。
+1. **`sparrow_baseline.py` 职责混合**：既是 CLI 入口又是共享层（导出 4 个 `_` 前缀私有名给 experiments），未拆 `engine_core.py`。
+2. **跨 module 用 `_` 前缀名**：`sparrow_experiments` import `sparrow_baseline` 的 `_clean_polygon` 等 4 个下划线名，违反 Python 约定（应提为公共 API 或合并模块）。
+3. **旋转公差未主动实施**：`constraints.ROTATION_TOL` 仅"声明 + 校验"，baseline solver 仍 `{0,180}`；多姿态搜索是后续利用率提升点。
+4. **`sparrow_baseline.py:110-112` 占位死代码**：`<text>` 元素 append 后过滤，"占位，避免 linter"。
+5. **`pieces_export` 的 sparrow 映射内联在 baseline**：原计划独立模块，当前未拆。

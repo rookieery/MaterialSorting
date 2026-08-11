@@ -2,29 +2,22 @@
 Started: 2026-08-09
 
 
-
-
-
-**未做浏览器验证**：本故事无新 SVG/坐标变换（PiecePreviewSVG compact 仅复用现有 5 层渲染 + 跳过 label + pad=2），AC 仅要求 typecheck + 单测 + build，故跳过 chrome-devtools-mcp；浏览器视觉回归（缩略图 64×64 + 放大预览 + 双层 ESC + D7 预填）留作 US-021 自动 commit 集成时统一核对。
----
-
-## US-021 — 解析成功自动 commit + 自动切超排（2026-08-11）
-
-### 交付
-- **新建 `src/hooks/useCommitToNesting.ts`** —— commit(doc_id, filename?) → Promise<{ok, summary?, error?}>。fetch POST /api/commit-to-nesting JSON body。防连击（committingRef + commitStatus==='committing' 双重防护）。commit done → setNestingEnabled(true) + setTab('nesting')（D1 闭环）。commit fail → commitStatus='error' 不切 Tab（D5）。
-- **改造 `src/hooks/useParseDxf.ts`** —— 解析成功（setState status='done'）后 `void commit(doc.doc_id, doc.filename)`（D1 副作用，不阻塞预览）。进入 uploading 时同步清 commit 字段。
-- **扩 `src/store/uploadStore.ts`** —— commitStatus/commitError/commitSummary 三字段 + reset() 同步清。CommitStatus + CommitSummary 类型导出。
-- **改造 `src/components/preview/UploadPanel.tsx`** —— 加 commit 状态行（committing→「应用中…」/ done→「已应用至超排：N 裁片，M 码」/ error→「应用失败：msg」）。复用 .upload-status 三态 className。
-
-### 测试
-- **新建 `src/hooks/__tests__/useCommitToNesting.test.tsx`** —— 15 项单测（≥10 AC 满足）：fetch URL/method/body/Content-Type / 200→commitSummary+done / filename optional / 422/404/400→error / non-JSON→statusText / 防连击仅一次 / committingRef reset / network error / commitStatus transition idle→committing→done/error / commit done→D1 setNestingEnabled+setTab / commit fail→D5 不切 Tab / entering committing clears stale error。
-- **改造 `src/hooks/__tests__/useParseDxf.test.tsx`** —— 原 15 项更新 fetch 计数（成功路径 parse+commit=2 / 两次 upload=4）+ beforeEach/afterEach 加 uiStore reset。**新增 7 项 US-021 集成**（≥6 AC 满足）：parse done→auto-trigger commit（calls[1] body 验证）/ commit done→activeTab=nesting / commit done→nestingEnabled=true / commit fail→不切 Tab / commit fail→commitError / commit done→commitSummary / parse fail→commit 不触发。
-- **扩 `src/store/__tests__/uploadStore.test.ts`** —— 新增 5 项 commit 字段测试。
-- **更新 `src/components/preview/__tests__/UploadPanel.test.tsx`** —— 2 项 fetch 计数 + uiStore reset。
-
-### 结果
-- `npm run typecheck` ✅、`npm run test` 33 文件 475 项全绿 ✅、`npm run build` 无报错 ✅。
-- `python -c "from materialsorting.web.server import app"` 导入通过 ✅（后端无改动，仅验证不回归）。
 - **未做浏览器验证**：本故事无 SVG/坐标变换（仅 store 字段扩展 + hook + UploadPanel 状态行 DOM），AC 仅要求 typecheck + 单测 + build。浏览器视觉回归（「应用中…」loading + 「已应用至超排」摘要 + 自动切 Tab + commit fail 红字）留作后续整体回归。
 ---
 
+## US-023 (2026-08-11) — PTYPE_COLORS 清理遗留 6 片型
+
+**改动**：
+- `materialSorting-server/src/materialsorting/nesting_engine/sparrow_baseline.py` `PTYPE_COLORS`：删 6 遗留（门头/门里/拉链/表袋/双袋/侧袋）+ 加 5 v0.3 实际（机头/单排/双排/火机袋/裤耳），共 10 类与 intermediate `pieces[*].ptype` 完全对齐。
+- `CLAUDE.md`「已知问题」段第 1 条（PTYPE_COLORS 遗留）删除；`.docs/technical/agent-file-map.md` PTYPE_COLORS 常量代码块同步更新 + 已知问题 #1 删除（原 2-6 → 1-5 重编号）。
+
+**关键决策（PRD 补位）**：PRD US-023 描述仅列 4 个新片型色（单排=#e377c2 / 双排=#ff1493 / 火机袋=#8c564b / 裤耳=#17becf），但 v0.3 实际 10 片型含 **机头**（intermediate 验证：前片/前袋/单排/双排/后片/后袋/机头/火机袋/腰/裤耳）。AC 要求「屏幕所有 v0.3 片型彩色正确（无灰色 fallback）」，故补 **机头=#bcbd22**（d3 category10 末位色，与前片/后片同饱和度；原 `双袋` 用过该值但属遗留删除）。文件 .docs/technical/agent-file-map.md:364 早已标注「新增 5 个」—— PRD 描述属遗漏，按 AC 与 file-map 口径补位。色值均「待版师屏幕定色」。
+
+**不变量验证**：
+- 调用方 `web/solver.py:128` / `web/export.py:77,112,113` / `sparrow_baseline.py:132,147` 均用 `PTYPE_COLORS.get(ptype, DEFAULT_COLOR)` dict 查找 —— 签名零改动。
+- `DEFAULT_COLOR='#bbbbbb'` 兜底保留。
+- `python -c "from materialsorting.web.server import app"` 导入通过；10 v0.3 ptype 查表 0 个 gray fallback。
+- 启动 ms-web（PID 34932）→ `/api/ptypes` 返 10 类型 → 验后 taskkill。
+
+**未做浏览器视觉验证**：chrome-devtools-mcp 工具不在本会话工具集；AC 的「求解后屏幕彩色无灰」视觉回归已用代码级断言替代（10/10 ptype 查表均非 #bbbbbb）。版师屏幕定色 + ET2008 导出色觉核对留作后续整体回归。
+---
