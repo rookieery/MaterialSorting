@@ -81,6 +81,15 @@ export interface QtyState {
   setPieceGlobal: (label: string, sourceSize: number | null, value: number) => void;
   /** 清空为 {}（重传 / reset 路径接入）。 */
   resetQuantities: () => void;
+  /**
+   * 按 (label × size) 列表批量初始化默认数量：每个 label 在其出现的每个码下 perSize=1
+   * （per-size 模式）。全量重建 quantities（旧值整体替换）。
+   * 供 DXF 解析完成 / 重传时由集成层（PreviewPage）调用 —— 把「每尺码每片默认 1」物化进
+   * store（单一真相源；下游 commit / 排料直接读 map，不靠 selector 兜底默认值）。
+   * entries 由调用方从 doc.sizes.flatMap(s => s.pieces.map(p => ({label, size: s.size}))) 构造，
+   * 故本 store 仍不依赖 parsed 类型，与 uploadStore 完全解耦。
+   */
+  hydrateDefault: (entries: ReadonlyArray<{ label: string; size: number | null }>) => void;
 }
 
 export const useQtyStore = create<QtyState>((set) => ({
@@ -121,4 +130,17 @@ export const useQtyStore = create<QtyState>((set) => ({
       return { quantities: { ...s.quantities, [label]: next } };
     }),
   resetQuantities: () => set({ quantities: {} }),
+  hydrateDefault: (entries) =>
+    set(() => {
+      const map: PieceQuantityMap = {};
+      for (const { label, size } of entries) {
+        // 同 label 多次出现（跨码 / 同码多片复用 label）累加到同一 perSize；同一 (label,size)
+        // 重复写 1 幂等。map 每次 hydrate 全量重建，无旧 state 别名，原地 mutate 安全。
+        const q =
+          map[label] ?? { mode: 'per-size', perSize: {}, globalValue: 0, globalSource: null };
+        q.perSize[sizeKey(size)] = 1;
+        map[label] = q;
+      }
+      return { quantities: map };
+    }),
 }));

@@ -1,6 +1,6 @@
 // TabBar —— 顶部 Tab 切换（US-001 AC#1）。
 //
-// 渲染两个 Tab（排料 / 上传预览），点击切换 uiStore.activeTab；当前激活项加 `.active`
+// 渲染两个 Tab（超排 / 上传预览），点击切换 uiStore.activeTab；当前激活项加 `.active`
 // class 高亮（与 ControlPanel 视觉同色系：暗背景 #26282e + 绿色 #2ea06c 强调，见 style.css）。
 //
 // 设计原则（CLAUDE.md / AGENTS.md）：
@@ -12,9 +12,13 @@
 import type { ReactElement } from 'react';
 import { useUiStore, type TabId } from '../store/uiStore';
 
-/** Tab 元信息（顺序即渲染顺序，不可乱改：排料在前是默认入口）。 */
+/**
+ * Tab 元信息（顺序即渲染顺序：超排在前、上传预览在后）。
+ * 注意：默认 activeTab=preview（见 uiStore），首页落「上传预览」——顺序与默认值相互独立，
+ * 默认入口不一定是首位 Tab。
+ */
 const TABS: ReadonlyArray<{ id: TabId; label: string }> = [
-  { id: 'nesting', label: '排料' },
+  { id: 'nesting', label: '超排' },
   { id: 'preview', label: '上传预览' },
 ];
 

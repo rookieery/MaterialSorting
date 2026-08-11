@@ -1,5 +1,5 @@
 // US-011 qtyStore 单测：clampQty 6 + getPieceDisplay 9 + setPiecePerSize 4 + setPieceGlobal 2
-// + resetQuantities 1 + store 独立性 2 = 24 项。
+// + resetQuantities 1 + hydrateDefault 3 + store 独立性 2 = 27 项。
 //
 // 验收：
 //   - clampQty 处理负数 / 小数 / NaN / 超 99 / 字符串 / 正常值
@@ -7,6 +7,7 @@
 //   - setPiecePerSize 写入值 + 从 global 切回时 globalValue 继承到 source 码
 //   - setPieceGlobal 切模式后, 非 source 码 editable=false 且 reason 含来源码
 //   - resetQuantities 清空为 {}
+//   - hydrateDefault 按 (label×size) 初始化每片默认 1（per-size）
 //   - store 与 uploadStore 字段不重叠
 
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -215,11 +216,59 @@ describe('resetQuantities (US-011)', () => {
   });
 });
 
+describe('hydrateDefault (解析后默认数量)', () => {
+  it('按 (label×size) 初始化每个码下默认 1（per-size 模式）', () => {
+    // 模拟 doc：28 码 A/B，30 码 A（同 label 跨码）
+    useQtyStore.getState().hydrateDefault([
+      { label: 'A', size: 28 },
+      { label: 'B', size: 28 },
+      { label: 'A', size: 30 },
+    ]);
+    const map = useQtyStore.getState().quantities;
+    expect(map.A).toEqual({
+      mode: 'per-size',
+      perSize: { '28': 1, '30': 1 },
+      globalValue: 0,
+      globalSource: null,
+    });
+    expect(map.B).toEqual({
+      mode: 'per-size',
+      perSize: { '28': 1 },
+      globalValue: 0,
+      globalSource: null,
+    });
+  });
+
+  it('null 码（通用）用 sizeKey null 作 key', () => {
+    useQtyStore.getState().hydrateDefault([{ label: 'A', size: null }]);
+    const map = useQtyStore.getState().quantities;
+    expect(map.A.perSize).toEqual({ null: 1 });
+    expect(getPieceDisplay(map, 'A', null).qty).toBe(1);
+  });
+
+  it('全量重建：旧数量被新 doc 默认覆盖（重传场景）', () => {
+    // 先填一些旧数量
+    useQtyStore.getState().setPiecePerSize('A', 28, 9);
+    useQtyStore.getState().setPieceGlobal('B', 30, 7);
+    expect(Object.keys(useQtyStore.getState().quantities).length).toBe(2);
+    // 重传：新 doc 只有 28 码 A 片 → hydrate 全量重建，旧 B / 旧值 9 被清
+    useQtyStore.getState().hydrateDefault([{ label: 'A', size: 28 }]);
+    const map = useQtyStore.getState().quantities;
+    expect(Object.keys(map).sort()).toEqual(['A']);
+    expect(map.A.perSize).toEqual({ '28': 1 });
+  });
+});
+
 describe('store independence (US-011)', () => {
   it('qtyStore and uploadStore fields do not overlap', () => {
-    // qtyStore only holds quantities + 3 actions
+    // qtyStore only holds quantities + 4 actions
     const qKeys = Object.keys(useQtyStore.getState()).filter((k) => k !== 'quantities');
-    expect(qKeys.sort()).toEqual(['resetQuantities', 'setPieceGlobal', 'setPiecePerSize']);
+    expect(qKeys.sort()).toEqual([
+      'hydrateDefault',
+      'resetQuantities',
+      'setPieceGlobal',
+      'setPiecePerSize',
+    ]);
     // uploadStore does not hold quantities
     expect(useUploadStore.getState()).not.toHaveProperty('quantities');
   });

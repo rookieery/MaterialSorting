@@ -5,7 +5,8 @@
 //
 // US-014 新增：
 //   - 顶层挂 <PieceQtyDialog/> + <PieceZoomModal/>（默认 store null 不渲染 DOM）
-//   - reset / 重传（doc_id 变化）联动 qtyStore.resetQuantities
+//   - 解析完成 / 重传（doc_id 变化）联动 qtyStore.hydrateDefault（每片默认 1）；
+//     reset（doc→null）联动 qtyStore.resetQuantities
 //   - 端到端：切码 → 点数量(片) → 切全局 + 确定 → 切回原码 → 置灰 title 含来源码
 //
 // 测试模式参考 UploadPanel.test.tsx + App.test.tsx：渲染入 container，
@@ -164,7 +165,7 @@ describe('PreviewPage (US-008) AC#3 已解析挂载主体', () => {
     expect(el.querySelectorAll('.piece-card').length).toBe(1);
   });
 
-  it('切 activeSize 到 30 → ParsedPiecesView 刷新到 2 片（数量 0片）', () => {
+  it('切 activeSize 到 30 → ParsedPiecesView 刷新到 2 片（解析后默认 1片）', () => {
     useUploadStore.setState({
       status: 'done',
       doc: makeDoc(),
@@ -179,7 +180,8 @@ describe('PreviewPage (US-008) AC#3 已解析挂载主体', () => {
     expect(el.querySelectorAll('.piece-card').length).toBe(2);
     const qtyTexts = Array.from(el.querySelectorAll('.piece-card-qty')).map((n) => n.textContent);
     expect(qtyTexts.length).toBe(2);
-    expect(qtyTexts).toContain('0片');
+    // 解析完成后每片默认数量 1（PreviewPage mount 时 hydrateDefault）
+    expect(qtyTexts).toContain('1片');
   });
 
   it('点击 SizeTabs chip 端到端切换 activeSize + grid 刷新', () => {
@@ -239,7 +241,20 @@ describe('PreviewPage (US-014) 模态挂载', () => {
   });
 });
 
-describe('PreviewPage (US-014) reset 联动 qtyStore', () => {
+describe('PreviewPage (US-014) qtyStore 联动（hydrate 默认 1 / reset 清空）', () => {
+  it('解析完成（首次上传 / 已有 doc 挂载）→ 每码每片默认数量 1', () => {
+    useUploadStore.setState({
+      status: 'done',
+      doc: makeDoc(),
+      activeSize: 28,
+    });
+    renderPage();
+    const map = useQtyStore.getState().quantities;
+    // makeDoc：28 码 A，30 码 A+B
+    expect(map.A.perSize).toEqual({ '28': 1, '30': 1 });
+    expect(map.B.perSize).toEqual({ '30': 1 });
+  });
+
   it('uploadStore.reset() 联动 qtyStore.resetQuantities（doc→null 触发）', () => {
     useUploadStore.setState({
       status: 'done',
@@ -259,7 +274,7 @@ describe('PreviewPage (US-014) reset 联动 qtyStore', () => {
     expect(useQtyStore.getState().quantities).toEqual({});
   });
 
-  it('重传（doc_id 变化）联动 qtyStore.resetQuantities', () => {
+  it('重传（doc_id 变化）重新 hydrate 默认 1，旧编辑被覆盖', () => {
     useUploadStore.setState({
       status: 'done',
       doc: makeDoc(),
@@ -269,8 +284,8 @@ describe('PreviewPage (US-014) reset 联动 qtyStore', () => {
     act(() => {
       useQtyStore.getState().setPiecePerSize('A', 28, 5);
     });
-    expect(Object.keys(useQtyStore.getState().quantities).length).toBeGreaterThan(0);
-    // 模拟重传：doc_id 变化
+    expect(useQtyStore.getState().quantities.A.perSize['28']).toBe(5);
+    // 模拟重传：doc_id 变化（同 sizes）→ 重新 hydrate，旧编辑 5 被默认 1 覆盖
     act(() => {
       useUploadStore.setState({
         status: 'done',
@@ -278,10 +293,12 @@ describe('PreviewPage (US-014) reset 联动 qtyStore', () => {
         activeSize: 28,
       });
     });
-    expect(useQtyStore.getState().quantities).toEqual({});
+    const map = useQtyStore.getState().quantities;
+    expect(map.A.perSize).toEqual({ '28': 1, '30': 1 });
+    expect(map.B.perSize).toEqual({ '30': 1 });
   });
 
-  it('切 activeSize 不触发 reset（doc_id 不变，数量保留）', () => {
+  it('切 activeSize 不触发 hydrate/reset（doc_id 不变，数量保留）', () => {
     useUploadStore.setState({
       status: 'done',
       doc: makeDoc(),

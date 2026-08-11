@@ -1,8 +1,9 @@
 // US-001 App 集成 smoke 测试：
 //   AC#1 顶部 <nav class="tabbar"> + 两 Tab
-//   AC#3 排料页 ControlPanel（id="start"）+ main 默认可见
+//   AC#3 超排页 ControlPanel（id="start"）+ main 在 activeTab=nesting 时可见
 //   AC#4 切 preview 后 nesting .page 加 .hidden（不卸载，DOM 仍在）
 //   AC#4 切回 nesting 后 preview .page 加 .hidden，nesting 取消 .hidden
+//   默认 activeTab=preview（首页落上传预览）
 //   Tooltip 单例仍挂载在 body（US-006 不变量 #3 不破）
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -67,11 +68,11 @@ describe('App Tab 集成（US-001）', () => {
     expect(el.querySelector('nav.tabbar')).not.toBeNull();
     const tabs = el.querySelectorAll('button.tab');
     expect(tabs.length).toBe(2);
-    expect(tabs[0].textContent).toBe('排料');
+    expect(tabs[0].textContent).toBe('超排');
     expect(tabs[1].textContent).toBe('上传预览');
   });
 
-  it('默认 nesting 页可见（无 .hidden），含 ControlPanel + main', () => {
+  it('activeTab=nesting：超排页可见（无 .hidden），含 ControlPanel + main', () => {
     const el = renderApp();
     const pages = el.querySelectorAll('.page');
     expect(pages.length).toBe(2);
@@ -84,6 +85,20 @@ describe('App Tab 集成（US-001）', () => {
     expect(nestingPage.querySelector('main.main')).not.toBeNull();
     // preview page 有 .hidden
     expect(pages[1].classList.contains('hidden')).toBe(true);
+  });
+
+  it('默认 activeTab=preview：首页展示上传预览页，超排页 .hidden', () => {
+    // 还原到 store 默认值（beforeEach 显式设了 nesting），验证 App 对默认值的渲染
+    act(() => {
+      useUiStore.getState().setTab('preview');
+    });
+    const el = renderApp();
+    const pages = el.querySelectorAll('.page');
+    // preview page 可见、nesting page 隐藏
+    expect(pages[0].classList.contains('hidden')).toBe(true);
+    expect(pages[1].classList.contains('hidden')).toBe(false);
+    // 上传预览空态卡片可见（未上传）
+    expect(pages[1].querySelector('.preview-empty')).not.toBeNull();
   });
 
   it('切到 preview：nesting 加 .hidden（DOM 不卸载，ControlPanel 仍在），preview 取消 .hidden', () => {

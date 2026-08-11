@@ -5,8 +5,9 @@
 //   2. 从 uploadStore 读 status + doc：未上传时右侧显示整体空态提示（与 US-001 占位文案一致风格），
 //      已解析时挂载 SizeTabs + ParsedPiecesView。
 //   3. 顶层挂 <PieceQtyDialog/> + <PieceZoomModal/> 单例（订阅 store 自显隐；US-014 集成）。
-//   4. uploadStore.doc.doc_id 变化（首次上传 / 重传 / reset）→ 联动 qtyStore.resetQuantities()
-//      （US-014 重传清零：避免旧母版数量残留到新母版）。
+//   4. uploadStore.doc.doc_id 变化（首次上传 / 重传 / reset）→ 联动 qtyStore：
+//      有 doc 时 hydrateDefault（每码每片默认 1），doc→null 时 resetQuantities。
+//      （US-014 重传清零的演进：旧母版数量不残留，新母版每片默认 1。）
 //   5. 不持有任何本地状态（store 是单一真相源；切 Tab 后状态保留：display:none 不卸载 + store 持久）。
 //
 // 设计原则（CLAUDE.md / AGENTS.md US-001 关键约定）：
@@ -16,14 +17,15 @@
 //   - 左 UploadPanel 固定宽（.panel width: 248px），右侧自适应（与 NestingPage ControlPanel+main 同结构）。
 //   - 切回 Tab 后状态保留：uploadStore 不被销毁，doc / activeSize 全部保真（AC#5 通过 store 保证）。
 //
-// 重传清零（US-014 关键约定）：
-//   - 用 useUploadStore.subscribe 监听 state 变化，对比 prev/next doc.doc_id；不同则调
-//     useQtyStore.getState().resetQuantities()。覆盖三路径：首次上传（no-op）、重传（核心场景）、
-//     reset() 清空（doc→null）。subscribe 在 useEffect 内挂载，卸载时 unsub（无残留）。
+// 数量联动（US-014 关键约定，演进：清零 → 默认 1）：
+//   - 用 useUploadStore.subscribe 监听 state 变化，对比 prev/next doc.doc_id；不同则按新 doc
+//     初始化数量。覆盖三路径：首次上传（hydrate 默认 1）、重传（核心场景，重新 hydrate 默认 1、
+//     旧编辑被新母版默认覆盖）、reset() 清空（doc→null，resetQuantities 回 {}）。subscribe 在
+//     useEffect 内挂载，卸载时 unsub（无残留）。
+//   - 额外挂载即对齐：mount 时若已有 doc 立即 hydrate（迟到挂载 / 刷新恢复兜底）。
 //   - 不在 uploadStore.reset 内直接调 qtyStore —— 两 store 解耦，由 PreviewPage 作为集成层
 //     绑定（与 qtyStore / uploadStore 完全解耦的设计原则一致）。
-//   - prevDocId 在 subscribe 闭包内 mutable（不依赖 React state），捕获 mount 时初始 doc_id；
-//     subscribe 只对未来 state 变化触发，初始挂载不触发 reset。
+//   - prevDocId 在 subscribe 闭包内 mutable（不依赖 React state），捕获 mount 时初始 doc_id。
 //
 // 空态分支：
 //   - status === 'done' 且 doc 非空 → 挂载 SizeTabs + ParsedPiecesView
@@ -40,6 +42,7 @@ import { useEffect } from 'react';
 import type { JSX } from 'react';
 import { useUploadStore } from '../../store/uploadStore';
 import { useQtyStore } from '../../store/qtyStore';
+import type { ParsedDoc } from '../../types/parsed';
 import { ParsedPiecesView } from './ParsedPiecesView';
 import { PieceQtyDialog } from './PieceQtyDialog';
 import { PieceZoomModal } from './PieceZoomModal';
@@ -50,15 +53,34 @@ export function PreviewPage(): JSX.Element {
   const status = useUploadStore((s) => s.status);
   const doc = useUploadStore((s) => s.doc);
 
-  // 重传清零：监听 uploadStore.doc.doc_id 变化 → qtyStore.resetQuantities()
-  // subscribe 在 mount 时注册，unmount 时 unsub；prevDocId 闭包内 mutable。
+  // 解析完成 / 重传 / reset 联动 qtyStore：
+  //   - 有 doc（doc_id 变化或挂载时已有 doc）→ 按 doc 全码全片初始化默认数量 1（per-size）。
+  //     把「每尺码每片默认 1」物化进 store（下游 commit / 排料直接读 map，不靠 selector 兜底）。
+  //   - doc→null（reset）→ 清空数量。
+  // 集成层职责：qtyStore / uploadStore 完全解耦，由 PreviewPage 把 doc.pieces 翻译成
+  // {label,size} 列表喂给 qtyStore.hydrateDefault（store 不依赖 parsed 类型）。
   useEffect(() => {
+    const syncQty = (doc: ParsedDoc | null): void => {
+      if (doc) {
+        const entries = doc.sizes.flatMap((s) =>
+          s.pieces.map((p) => ({ label: p.label, size: s.size })),
+        );
+        useQtyStore.getState().hydrateDefault(entries);
+      } else {
+        useQtyStore.getState().resetQuantities();
+      }
+    };
+
+    // 挂载即对齐：迟到挂载 / 刷新恢复时若已有 doc，立即初始化默认数量（生产中 App 常驻、
+    // mount 时 doc=null，此处理论 no-op；主要为测试与未来路由恢复场景的健壮性兜底）。
     let prevDocId: string | undefined = useUploadStore.getState().doc?.doc_id;
+    syncQty(useUploadStore.getState().doc);
+
     const unsub = useUploadStore.subscribe((state) => {
       const nextDocId = state.doc?.doc_id;
       if (nextDocId !== prevDocId) {
         prevDocId = nextDocId;
-        useQtyStore.getState().resetQuantities();
+        syncQty(state.doc);
       }
     });
     return unsub;
