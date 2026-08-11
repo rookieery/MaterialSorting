@@ -122,12 +122,19 @@ def build_instance(pieces, gate_mm, *, time_budget: int, seed: int,
             continue
 
         orientations = discretize_orientations(tol)
+        # US-024：5 层细节（net_polygon/internal_lines/notches/grain_line）从 intermediate 透传
+        # 到 pid_meta → manifest → 前端 NestSVG + 导出。**不参与 sparrow NFP 碰撞**（碰撞只用
+        # 上面 erode 后的 ``poly``）。使用 .get() 兜底，旧 intermediate 无这些字段时各层空/None。
         pid_meta[p['pid']] = {
             'ptype': ptype,
             'size': p['size'],
             'color': PTYPE_COLORS.get(ptype, '#bbbbbb'),
             'polygon': poly,                 # erode 后 base 多边形（与 placement 一致）
             'area_mm2': p['area_mm2'],
+            'net_polygon': p.get('net_polygon', []),
+            'internal_lines': p.get('internal_lines', []),
+            'notches': p.get('notches', []),
+            'grain_line': p.get('grain_line'),
         }
         items.append(spyrrow.Item(
             id=p['pid'],

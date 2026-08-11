@@ -627,3 +627,38 @@ NestsGrid 渲染 N 个 NestCard；ConvergenceCurve 命令式画 90% 生死线 + 
 - ms-pieces-export 重新生成 intermediate，128 片均带 label（A-J 10 标签，pair type L/R 共享）。
 **未做浏览器验证**：本故事无 SVG/坐标变换（仅 store/hook/payload 扩展 + 后端 demand 逻辑），AC 仅要求 typecheck + 单测 + import 检查。AC#7 curl+WS 人工验证（改某片某码 0→manifest 该片不出现）由 build_instance 测试等价覆盖（demand=0 skip 已验证）。浏览器视觉回归留作整体回归。
 ---
+- **未做浏览器验证**：本故事无 SVG/坐标变换（仅 store 字段扩展 + hook + UploadPanel 状态行 DOM），AC 仅要求 typecheck + 单测 + build。浏览器视觉回归（「应用中…」loading + 「已应用至超排」摘要 + 自动切 Tab + commit fail 红字）留作后续整体回归。
+---
+## US-023 (2026-08-11) — PTYPE_COLORS 清理遗留 6 片型
+**改动**：
+- `materialSorting-server/src/materialsorting/nesting_engine/sparrow_baseline.py` `PTYPE_COLORS`：删 6 遗留（门头/门里/拉链/表袋/双袋/侧袋）+ 加 5 v0.3 实际（机头/单排/双排/火机袋/裤耳），共 10 类与 intermediate `pieces[*].ptype` 完全对齐。
+- `CLAUDE.md`「已知问题」段第 1 条（PTYPE_COLORS 遗留）删除；`.docs/technical/agent-file-map.md` PTYPE_COLORS 常量代码块同步更新 + 已知问题 #1 删除（原 2-6 → 1-5 重编号）。
+**关键决策（PRD 补位）**：PRD US-023 描述仅列 4 个新片型色（单排=#e377c2 / 双排=#ff1493 / 火机袋=#8c564b / 裤耳=#17becf），但 v0.3 实际 10 片型含 **机头**（intermediate 验证：前片/前袋/单排/双排/后片/后袋/机头/火机袋/腰/裤耳）。AC 要求「屏幕所有 v0.3 片型彩色正确（无灰色 fallback）」，故补 **机头=#bcbd22**（d3 category10 末位色，与前片/后片同饱和度；原 `双袋` 用过该值但属遗留删除）。文件 .docs/technical/agent-file-map.md:364 早已标注「新增 5 个」—— PRD 描述属遗漏，按 AC 与 file-map 口径补位。色值均「待版师屏幕定色」。
+**不变量验证**：
+- 调用方 `web/solver.py:128` / `web/export.py:77,112,113` / `sparrow_baseline.py:132,147` 均用 `PTYPE_COLORS.get(ptype, DEFAULT_COLOR)` dict 查找 —— 签名零改动。
+- `DEFAULT_COLOR='#bbbbbb'` 兜底保留。
+- `python -c "from materialsorting.web.server import app"` 导入通过；10 v0.3 ptype 查表 0 个 gray fallback。
+- 启动 ms-web（PID 34932）→ `/api/ptypes` 返 10 类型 → 验后 taskkill。
+---
+## US-024 (2026-08-11) — 展示+导出切新版裁片（5 层）
+**目标**：超排页 NestSVG + 最终导出（PNG/R12-DXF）每片裁片均展示毛版+净版+内部线+刺口+布纹线 5 层（与上传预览页同口径）；求解仍用外轮廓做碰撞。
+**改动**：
+- `materialSorting-server/src/materialsorting/dxf_parser/export_dxf.py`：`write_piece_dxf` 写 5 层（layer1 毛版闭合 POLYLINE / layer14 净版闭合 POLYLINE / layer8 内部线多条 POLYLINE / layer4 刺口 POINT / layer7 布纹线 LINE）；notch 仅存 POINT 位置法线丢弃；`main()` 改用 `collect_pieces_with_details`。
+- `materialSorting-server/src/materialsorting/nesting_bounds/load_pieces.py`：扩 NestPiece 加 4 字段（net_polygon/internal_lines/notches/grain_line default_factory 向后兼容）；新增 `_read_piece_full` 读 5 层 + notch 法线按 outline 最近边重算；新增 `_rotate_normal / _grain_rotation_deg / _apply_layer_transforms` 共享 transform 链；`load_nest_pieces` L 与 R 共享 transform。
+- `materialSorting-server/src/materialsorting/nesting_engine/pieces_export.py` + `web/server.py _commit_to_nesting_sync`：intermediate 每片加 4 字段透传。
+- `materialSorting-server/src/materialsorting/web/solver.py`：build_instance pid_meta 加 4 字段（`.get()` 兼容）。
+- `materialSorting-server/src/materialsorting/web/server.py ws_solve`：manifest pieces[] 加 4 字段。
+- `materialSorting-server/src/materialsorting/web/export.py`：`LAYER5_COLOR_*` 字面量与前端 LAYER5_COLORS 同色；`_transform_normal` 法线随片旋转；`placed_to_world` 扩 5 层变换；`render_png` 5 层叠加；`write_marker_dxf` 多 layer 各自独立 POLYLINE/POINT/LINE entity。
+- `materialSorting-web/src/types/piece.ts`：PieceInfo 加可选 4 字段；新增 Notch / GrainLine 类型。
+- `materialSorting-web/src/constants/colors.ts`：新增 `LAYER5_COLORS` 共享常量 + 导出 `NOTCH_LEN_MM = 8`。
+- `materialSorting-web/src/components/preview/PiecePreviewSVG.tsx`：5 层颜色改 import LAYER5_COLORS（行为不变）。
+- `materialSorting-web/src/components/nests/NestSVG.tsx`：PieceEntry 增 netEl/internalEls/notchEls/grainEl；manifest 到达时按数据有无创建（pointerEvents='none'）；frame 切换 setAttribute points/x1y1x2y2/display；新增 `transformPt` 单点辅助。
+- `materialSorting-web/src/components/nests/__tests__/NestSVG.test.tsx`：+8 项 5 层渲染单测。
+- `materialSorting-web/src/__tests__/useSolveRun.test.tsx`：+1 项 manifest 5 层保真测试。
+**验证**：
+- `cd materialSorting-web && npm run typecheck` 通过；`npm run test` 33 文件 497/497 全绿（+9 项新增）。
+- `python -c "from materialsorting.web.server import app"` 导入通过。
+- 后端 e2e smoke 176 片全链路 5 层：master→collect→write_piece_dxf→_read_piece_full（notch 法线重算）→load_nest_pieces（共享 transform L+R）→intermediate.json（net=128/internal=88/notch=104/grain=128）→manifest→export PNG 5 层 + R12-DXF layer id 集 {0,1,4,7,8,14} 全齐。
+- `/api/ptypes` 10 ptype 代表裁片带 5 层（D11 副作用：US-018 缩略图自动升级 5 层无需改代码）。
+- 5 层中 4 层仅渲染/导出透传不参与 sparrow NFP 碰撞（关键不变量 AC#1）；5 层节点只在 manifest 到达时建一次 frame 切换只 setAttribute 不重建 DOM（AC#2 性能保护）。
+**未做浏览器视觉验证**：chrome-devtools-mcp 工具不在本会话工具集；NestSVG 5 层渲染（绿 dashed 净版 + 橙内部线 + 黄刺口 + 红 dashed 布纹线）已用 8 项 NestSVG 单测 + e2e smoke 验证 5 层节点存在 + setAttribute 写入 + display 切换 + rotation transform 正确；导出 PNG/DXF 5 层已用 ezdxf 回读 layer id 集 + render_png 调用栈验证。版师屏幕视觉回归 + ET2008 真机读 R12-DXF（D4 硬验收）留作后续整体回归。

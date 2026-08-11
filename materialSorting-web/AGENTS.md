@@ -28,7 +28,7 @@ npm run test               # vitest run（US-002 起会有用例）
 3. **命令式 polygon 更新**：每帧 setAttribute('points' / 'display')，由 Zustand renderTick 单字段 ~10fps 节流，**逃逸 React reconciliation**。US-003 落地。
 4. **`static/` 是构建产物**（US-008 起入库 gitignore）：`npm run build` 生成，**不要手改**；旧 vanilla 三件套（`legacy/`）已删除，React 应用是唯一真相源。
 
-## 文件分工（US-001 Tab 框架 + US-002~US-008 全部落地；上传预览 US-005 状态层 + US-006 UploadPanel + US-007 PiecePreviewSVG + US-008 SizeTabs/ParsedPiecesView/PreviewPage 容器集成 + 上传预览 US-011 qtyStore 数量状态 + 上传预览 US-012 PieceQtyDialog/Switch 数量弹窗 + 上传预览 US-013 PieceZoomModal 放大预览模态 + 上传预览 US-014 ParsedPiecesView 卡片头改造+双模态集成 + US-015 uiStore 扩 nestingEnabled + TabBar 置灰 + US-016 PreviewPage 联动 setNestingEnabled + US-017 SizePicker 动态读码号 + DEFAULT_FORM.sizes=[] + US-018 PerTypeOverridesModal/PtypePreviewModal 高级配置弹窗+片型缩略图+放大预览 + US-021 useCommitToNesting 解析成功自动 commit+D1 闭环）
+## 文件分工（US-001 Tab 框架 + US-002~US-008 全部落地；上传预览 US-005 状态层 + US-006 UploadPanel + US-007 PiecePreviewSVG + US-008 SizeTabs/ParsedPiecesView/PreviewPage 容器集成 + 上传预览 US-011 qtyStore 数量状态 + 上传预览 US-012 PieceQtyDialog/Switch 数量弹窗 + 上传预览 US-013 PieceZoomModal 放大预览模态 + 上传预览 US-014 ParsedPiecesView 卡片头改造+双模态集成 + US-015 uiStore 扩 nestingEnabled + TabBar 置灰 + US-016 PreviewPage 联动 setNestingEnabled + US-017 SizePicker 动态读码号 + DEFAULT_FORM.sizes=[] + US-018 PerTypeOverridesModal/PtypePreviewModal 高级配置弹窗+片型缩略图+放大预览 + US-021 useCommitToNesting 解析成功自动 commit+D1 闭环 + US-022 求解输入数量 demand per-size + US-024 NestSVG 5 层渲染+共享 LAYER5_COLORS）
 
 ```
 src/
@@ -236,6 +236,18 @@ src/
 - **label 对齐由后端保证**：intermediate 每片加 `label` 字段（后端 `_commit_to_nesting_sync` + `pieces_export` 用 `compute_size_ptype_labels` 标注，与 parse-dxf 响应同排序同标注）。前端 qtyStore 以 label 为 key，后端 build_instance 按 `(piece.label, str(piece.size))` 查 quantities → demand。M1787 验证 10/10 ptype 对齐。
 - **demand=0 语义（D2）**：用户改某片某码为 0 → 后端 build_instance 见 0 跳过该 piece（不进 sparrow 实例）。配合 D3（hydrateDefaults 填 1）保证开箱即用 + 用户可显式排除。
 - **无 SVG/坐标变换改动**：本故事仅 store/hook/payload 扩展，AC 仅要求 typecheck + 单测 + `python -c "from materialsorting.web.server import app"` 导入通过。浏览器视觉回归（改某片某码 0 → 求解结果该片不出现）留作整体回归。
+
+## US-024 关键约定（NestSVG 5 层渲染 + 共享 LAYER5_COLORS 调用方必读）
+
+- **5 层中 4 层仅渲染透传不参与碰撞**：`polygon`（layer1 毛版外轮廓，erode 后）是唯一参与 sparrow NFP 碰撞的几何；`net_polygon` / `internal_lines` / `notches` / `grain_line` 4 层仅渲染/导出透传，不影响求解结果或利用率。改任一层语义需同步后端 collect.LAYER_MAPPING + export_dxf + load_pieces + pieces_export + solver.pid_meta + web/export.py + 本组件。
+- **5 层节点只在 manifest 到达时建一次（性能保护 AC#5）**：NestSVG effect 内 `if (run.manifest && !flipRef.current)` 块创建毛版 polygon + 4 层工艺节点；frame 切换只 setAttribute('points'/'x1'/'y1'/'x2'/'y2'/'display')，**不重建 DOM**；128 片 × 5 节点 ~10fps 可承受。改创建时机（如每帧重建）会破坏性能保护。
+- **4 层节点 pointerEvents='none'**：事件委托只触发于毛版 polygon（dataset.ptype 必有）；4 层工艺节点不参与 mousemove tooltip 联动（US-006 hover 语义不变）。
+- **5 层都在翻转组内（scale(1,-1)）**：共用 `<g transform="translate(0 gate) scale(1 -1)">`，与 US-003 关键约定 #1 一致。改其中一层挪出翻转组会破坏视觉一致性（上下颠倒）。
+- **notch 端点变换：点按 point 变换 + 法线按 vector 旋转**：notch 数据模型 `(x, y, nx, ny)`，端点 = `(x ± NOTCH_LEN_MM/2 * nx, y ± NOTCH_LEN_MM/2 * ny)` 各按 rot+tr 变换（`transformPt` 与 `lib/geometry pointsStr` 同公式单点版）。half = 4。法线为零向量（退化边）→ 0 长度线段兜底。
+- **LAYER5_COLORS 是 NestSVG + PiecePreviewSVG 视觉一致的单一真相源**：`constants/colors.ts LAYER5_COLORS`（ROUGH_FILL rgba(80,140,200,0.22) / ROUGH_STROKE #3f7fbf / NET #33cc33 / INTERNAL #ff8c1a / NOTCH #ffd700 / GRAIN #e53e3e）+ `NOTCH_LEN_MM = 8`。后端 `web/export.py LAYER5_COLOR_*` 字面量需与此同步。改任一层配色需同步两处。
+- **layer-aware 缺字段跳过**：旧 intermediate（无 5 层字段）的 piece → netEl/internalEls/notchEls/grainEl 为 null/空，渲染时跳过；新 intermediate（含 5 层）自动多画 4 层。前后端均用 `.get()` / `?? []` / `if (p.net_polygon && len>=3)` 兜底，向后兼容。
+- **transformPt 单点辅助**：与 `lib/geometry.ts pointsStr` 同公式（rad=rot*π/180, c=cos, s=sin, `x'=x*c−y*s+tx`, `y'=x*s+y*c+ty`, r2 截断），输出 `[x, y]`。用于刺口 line 端点 / 布纹线端点（line 元素的 x1/y1/x2/y2 独立属性写入，不能用 pointsStr 整段字符串）。
+- **未做浏览器视觉验证**：chrome-devtools-mcp 工具不在本会话工具集；5 层渲染已用 8 项 NestSVG 单测 + e2e smoke 验证 5 层节点存在 + setAttribute 写入 + display 切换 + rotation transform 正确。版师屏幕视觉回归 + ET2008 真机读 R12-DXF（D4 硬验收）留作后续整体回归。
 
 ## US-018 关键约定（PerTypeOverridesModal/PtypePreviewModal 高级配置弹窗 调用方必读）
 

@@ -314,4 +314,71 @@ describe('useSolveRun', () => {
     const parsed: StartPayload = JSON.parse(ws.sent[0]);
     expect(parsed.quantities).toBeNull();
   });
+
+  // ============================================================
+  // US-024 manifest 5 层字段分发（net_polygon/internal_lines/notches/grain_line）
+  // 后端扩 manifest 后，hook onmessage 按 type='manifest' 落 runRegistry，无字段丢失。
+  // ============================================================
+  it('US-024 manifest 含 5 层字段 → Registry 落盘保真（net/internal/notches/grain）', () => {
+    const onManifest = vi.fn();
+    const startRef = mountHook({ onManifest });
+    act(() =>
+      startRef.current({
+        sizes: [30],
+        time: 1,
+        seed: 0,
+        params: { d_ext: 0, d_int: 0, tol_ext: 0, tol_int: 0 },
+      }),
+    );
+    const ws = mockInstances[0];
+
+    const manifest: ServerMsg = {
+      type: 'manifest',
+      gate_mm: 1980,
+      total_area_mm2: 100000,
+      n_eroded: 0,
+      pieces: [
+        {
+          id: 'p1',
+          ptype: 'Front',
+          size: 30,
+          color: '#ff0000',
+          area_mm2: 12345,
+          polygon: [[0, 0], [10, 0], [10, 10], [0, 10]],
+          // US-024 5 层字段
+          net_polygon: [[1, 1], [9, 1], [9, 9], [1, 9]],
+          internal_lines: [[[2, 2], [8, 8]]],
+          notches: [[5, 0, 0, -1]],
+          grain_line: [3, 5, 7, 5],
+        },
+        {
+          id: 'p2',
+          ptype: 'Back',
+          size: 32,
+          color: '#00ff00',
+          area_mm2: 23456,
+          polygon: [[0, 0], [20, 0], [20, 20], [0, 20]],
+          // p2 不带 5 层字段（向后兼容验证）
+        },
+      ],
+    };
+    act(() => ws.onmessage?.({ data: JSON.stringify(manifest) }));
+
+    expect(onManifest).toHaveBeenCalledTimes(1);
+    const rec = runRegistry.list()[0];
+    expect(rec.manifest).not.toBeNull();
+    expect(rec.manifest!.pieces).toHaveLength(2);
+    // p1 5 层字段保真
+    const p1 = rec.manifest!.pieces[0];
+    expect(p1.net_polygon).toEqual([[1, 1], [9, 1], [9, 9], [1, 9]]);
+    expect(p1.internal_lines).toEqual([[[2, 2], [8, 8]]]);
+    expect(p1.notches).toEqual([[5, 0, 0, -1]]);
+    expect(p1.grain_line).toEqual([3, 5, 7, 5]);
+    // p2 缺字段 → undefined（layer-aware 渲染层跳过）
+    const p2 = rec.manifest!.pieces[1];
+    expect(p2.net_polygon).toBeUndefined();
+    expect(p2.internal_lines).toBeUndefined();
+    expect(p2.notches).toBeUndefined();
+    expect(p2.grain_line).toBeUndefined();
+  });
 });

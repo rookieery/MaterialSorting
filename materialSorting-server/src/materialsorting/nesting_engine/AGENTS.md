@@ -18,7 +18,7 @@ python -m materialsorting.nesting_engine.pieces_export    # 生成 intermediate 
 | `sparrow_baseline.py` | 基线求解 CLI + ★共享层（`PTYPE_COLORS` / `_clean_polygon` / `solve_with_progress`，被 experiments/export/solver 复用） |
 | `sparrow_experiments.py` | 旋转/重合公差实验 CLI；`erode_polygon` + `INTERNAL_TYPES` 被 solver 复用 |
 | `labeling.py` | US-022 共享 A/B/C 标注：`label_for(idx)` / `centroid(poly)` / `size_sort_key(size)` / `compute_size_ptype_labels(pieces, gmap, group_names)` |
-| `pieces_export.py` | NestPiece → `pieces_intermediate.json`（事实源）；US-022 起解析母版标 label |
+| `pieces_export.py` | NestPiece → `pieces_intermediate.json`（事实源）；US-022 起解析母版标 label；US-024 起每片加 `net_polygon`/`internal_lines`/`notches`/`grain_line` 4 字段（与 NestPiece 同名透传，旧 intermediate 无字段时 `.get()` 默认空/None 向后兼容） |
 
 ## US-022 关键约定（labeling）
 

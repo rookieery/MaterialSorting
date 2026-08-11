@@ -59,6 +59,21 @@ def main():
                 'area_mm2': round(p.area_mm2, 1),
                 'n_verts': len(p.polygon),
                 'allowed_angles': [0, 180],   # v0.3 布纹线约束
+                # US-024：5 层渲染/导出透传字段（与 web/server._commit_to_nesting_sync 同 schema）。
+                # data/m1787_直筒/*.dxf 由 ms-export-dxf 重新生成后含 layer14/8/4；旧 DXF 5 层为
+                # 空/None，向后兼容（前端 layer-aware 渲染）。
+                'net_polygon': [[round(x, 3), round(y, 3)] for x, y in p.net_polygon],
+                'internal_lines': [
+                    [[round(x, 3), round(y, 3)] for x, y in line]
+                    for line in p.internal_lines
+                ],
+                'notches': [
+                    [round(x, 3), round(y, 3), round(nx, 4), round(ny, 4)]
+                    for x, y, nx, ny in p.notches
+                ],
+                'grain_line': (
+                    [round(v, 3) for v in p.grain_line] if p.grain_line is not None else None
+                ),
             }
             for p in pieces
         ],

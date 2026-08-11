@@ -145,15 +145,15 @@ materialSorting-server/
 
 **实测分布（M1787 与 5156 一致）**：110 outline = 110 net = 110 grain（1:1:1）；286/297 internal、704 notch（545 严格 in-polygon + 159 边界点回退最近边）。
 
-### `export_dxf.py`（100 行）— 单裁片 R12 DXF 导出
+### `export_dxf.py`（144 行）— 单裁片 R12 DXF 导出（5 层，US-024）
 
-每个裁片导出为 `<类型>_<码号>.dxf`：layer 1 = 轮廓（闭合 POLYLINE），layer 7 = 布纹线（LINE）。Richway/ET 兼容。
+每个裁片导出为 `<类型>_<码号>.dxf`：layer 1 = 毛版轮廓（闭合 POLYLINE），layer 14 = 净版（闭合 POLYLINE），layer 8 = 内部线（多条 POLYLINE），layer 4 = 刺口（POINT 位置，法线不存盘），layer 7 = 布纹线（LINE）。Richway/ET 兼容。
 
 - **import 时副作用**：`logging.getLogger("ezdxf").setLevel(ERROR)` —— 静默 R12 `$INSUNITS` warning（R12 规范不导出单位变量，单位 mm 隐式）。
 - `GROUP_NAMES = {"g00":"后片","g01":"前片","g02":"机头","g03":"裤耳","g04":"前袋","g05":"火机袋","g06":"后袋","g07":"单排","g08":"双排","g09":"腰"}` —— 用户经 SVG 确认的 group→类型映射。
 - `assign_group_no(pieces)` —— 复用 `explore.group_sort_key` 把每个 `group_key` 映到 `g00..g09`。
-- `write_piece_dxf(piece, out_path)` —— 写单裁片 DXF。
-- `main()` —— CLI，默认 `--dxf paths.MASTER_DXF_GLOB`，`--out paths.PIECES_DIR`。
+- `write_piece_dxf(piece, out_path)` —— 写单裁片 5 层 DXF。US-024：若 PieceOutline 携带 `net_polygon` / `internal_lines` / `notches`（来自 `collect_pieces_with_details`），同时写 layer14/8/4；notch 仅存 POINT 位置，法线 (nx, ny) 丢弃（读时由 `load_pieces._read_piece_full` 按 outline 最近边重算）。
+- `main()` —— CLI，默认 `--dxf paths.MASTER_DXF_GLOB`、`--out paths.PIECES_DIR`。US-024 起用 `collect_pieces_with_details(src)` 取代 `explore.collect_pieces`，让 `write_piece_dxf` 拿到全 5 层 PieceOutline。
 
 ### `explore.py`（335 行）— 母版全裁片探索
 
@@ -176,9 +176,9 @@ materialSorting-server/
 
 ## nesting_bounds/ — 裁片加载
 
-### `load_pieces.py`（136 行）— 单裁片 → NestPiece
+### `load_pieces.py`（280 行）— 单裁片 → NestPiece（5 层透传，US-024）
 
-读单裁片 DXF → 布纹对齐到水平 → 归一化到原点 → 成对镜像展开 L/R。**Stage 0 刻意不强制 v0.3 全局约束**：成对片独立放置（不强制对称），布纹仅用于读取期水平对齐，之后无旋转约束。
+读单裁片 DXF → 布纹对齐到水平 → 归一化到原点 → 成对镜像展开 L/R。**Stage 0 刻意不强制 v0.3 全局约束**：成对片独立放置（不强制对称），布纹仅用于读取期水平对齐，之后无旋转约束。US-024 起 `_read_piece_full` 读 5 层（layer1+layer14+layer8+layer4+layer7），notch 法线按 outline 最近边重算（与 `collect._nearest_edge_with_normal` 同算法）；5 层经 `_apply_layer_transforms` 与 polygon 共享 rotate→mirror→normalize transform 链。
 
 **模块级常量：**
 
@@ -189,7 +189,7 @@ materialSorting-server/
 | `ALL_TYPES` | `['前片','后片','腰','前袋','后袋','机头','单排','双排','火机袋','裤耳']`（10 类规范序） |
 | `DEFAULT_SIZES` | `[28,29,30,31,33,34,35,36]`（8 码，**跳 32**） |
 
-**`NestPiece` dataclass：**
+**`NestPiece` dataclass（US-024 扩 5 层字段）：**
 
 | 字段 | 类型 | 含义 |
 |------|------|------|
@@ -197,16 +197,20 @@ materialSorting-server/
 | `ptype` | `str` | 片型 |
 | `size` | `int` | 码号 |
 | `side` | `str` | `'L'/'R'/'M'`（M = 单片/不成对） |
-| `polygon` | `list[(x,y)]` | 顶点，bbox 左下归一到原点 |
+| `polygon` | `list[(x,y)]` | 毛版顶点，bbox 左下归一到原点 |
 | `bbox` | `(minx,miny,maxx,maxy)` | 外接框 |
 | `area_mm2` | `float` | 多边形面积 |
 | `source` | `str` | 源 DXF 文件名 |
+| `net_polygon` | `list[(x,y)]`（默认 `[]`） | US-024 净版（layer14） |
+| `internal_lines` | `list[list[(x,y)]]`（默认 `[]`） | US-024 内部线（layer8） |
+| `notches` | `list[(x,y,nx,ny)]`（默认 `[]`） | US-024 刺口（layer4；法线按 outline 最近边重算） |
+| `grain_line` | `(x1,y1,x2,y2) \| None`（默认 `None`） | US-024 布纹线（layer7） |
 
 属性：`width = bbox[2]-bbox[0]`，`height = bbox[3]-bbox[1]`。
 
-私有：`_rotate`（绕原点旋）、`_mirror_x`（Y 轴镜像 `x→-x`，造右片）、`_normalize`（bbox 左下平移到原点）、`_read_piece`（读单片 → polygon + 布纹角）、`_align_grain_horizontal`（竖布纹 ±90° → 水平；水平不变）。
+私有：`_rotate`（绕原点旋）、`_mirror_x`（Y 轴镜像 `x→-x`，造右片）、`_normalize`（bbox 左下平移到原点）、`_read_piece`（旧版读 layer1+layer7 → polygon + 布纹角，保留向后兼容）、`_read_piece_full`（**US-024** 读全 5 层 → `(polygon, grain_deg, net, internal, notches, grain_line)`）、`_align_grain_horizontal`（竖布纹 ±90° → 水平；水平不变）、`_rotate_normal(nx, ny, deg)`（US-024 法线随片旋转）、`_grain_rotation_deg(grain_deg)`（US-024 把 grain_deg 映到 transform 旋角，与 `_align_grain_horizontal` 同语义）、`_apply_layer_transforms(...)`（US-024 把 5 层原始数据按 rotate→mirror→normalize 链统一变换）。
 
-入口：`load_nest_pieces(data_dir, sizes=None, types=None) → list[NestPiece]`（PAIR_TYPES → 两个，否则一个 `side='M'`）。
+入口：`load_nest_pieces(data_dir, sizes=None, types=None) → list[NestPiece]`（PAIR_TYPES → 两个，否则一个 `side='M'`；US-024 起 L 与 R 共享同一 transform 链，5 层字段一并变换）。
 
 ## nesting_engine/ — sparrow 求解 + v0.3 约束
 
@@ -270,13 +274,13 @@ DEFAULT_COLOR = '#bbbbbb'
 | `run_one` | `(doc, gate, exp, erode_d, time_budget, seed)` | 跑一次；同时报 `real_density`（原面积分母）+ `sparrow_density`（erode 后自报）；写 `result_{stem}.json`/`{stem}_curve.json`/`{stem}.svg`/`{stem}_curve.png`，stem = `exp_{tag}_t{T}_s{seed}` |
 | `main()` | — | CLI：`--exp {free_rot\|v0_rot\|erode\|erode_rot\|all}`(默认 all)/`--d`(5)/`--time`(600)/`--seed`(0)/`--seeds`(csv→多种子方差汇总)；写 `experiments_summary_t{T}.json` 或 `multiseed_{exp}_d{d}_t{T}.json` |
 
-### `pieces_export.py`（72 行）— intermediate JSON 导出
+### `pieces_export.py`（88 行）— intermediate JSON 导出（5 层透传，US-024）
 
-把 128 NestPiece dump 成 spyrrow 格式无关的 intermediate JSON —— 全流程**事实源**。sparrow 输入映射是后续独立步骤（当前 baseline 内联做了）。
+把 128 NestPiece dump 成 spyrrow 格式无关的 intermediate JSON —— 全流程**事实源**。sparrow 输入映射是后续独立步骤（当前 baseline 内联做了）。US-024 起每片增加 `net_polygon` / `internal_lines` / `notches` / `grain_line` 4 字段（与 `NestPiece` 同名透传），旧 intermediate 无字段时 `.get()` 默认空 / None 向后兼容。
 
 - `main()` —— `load_nest_pieces(paths.PIECES_DIR)` → 写 `paths.INTERMEDIATE`；US-022 起解析母版（`paths.MASTER_DXF_GLOB`）经 `compute_size_ptype_labels` 标注 label（母版缺失则 label=null，向后兼容）。
 - 顶层字段：`source, gate_mm, n_pieces, total_area_mm2, pieces`。
-- 每片字段：`pid, ptype, size, side, label(US-022, 与 parse-dxf 同排序同标注), polygon([[x,y]...]), bbox([minx,miny,maxx,maxy]), area_mm2, n_verts, allowed_angles([0,180])`。
+- 每片字段：`pid, ptype, size, side, label(US-022), polygon, bbox, area_mm2, n_verts, allowed_angles, net_polygon(US-024), internal_lines(US-024), notches(US-024), grain_line(US-024)`。
 
 ### `labeling.py`（US-022 共享 A/B/C 标注）
 
@@ -296,8 +300,8 @@ parse-dxf 响应（`web/server.py._build_parse_payload`）与 intermediate（`we
 | 文件 | 行 | 职责 |
 |------|----|------|
 | `server.py` | 549 | FastAPI app；**启动期 `_reload_pieces_state()`**（US-020 替代旧顶层 `load_pieces()`，allow-empty 不再让 import 崩）；路由 GET `/`、mount `/static`、POST `/export`、POST `/api/parse-dxf`（US-004 上传解析）、POST `/api/commit-to-nesting`（US-010 + US-020 commit 后 reload `_PIECES_STATE` + US-022 intermediate 加 label）、GET `/api/ptypes`（US-020 片型代表裁片 D10/D11）、WS `/ws/solve`（accept 阶段 `_get_pieces_state()` 快照 + US-022 quantities 入参）；`_state_lock=threading.Lock()` 保护 immutable snapshot；`ThreadPoolExecutor(max_workers=6)` 桥求解子线程 ↔ asyncio（US-004 解析 / US-010 commit 也复用此池）；上传常量 `UPLOAD_MAX_BYTES=20MB` / `UPLOADS_DIR=paths.OUT_DIR/uploads` / `_DOC_ID_RE`；`_build_parse_payload` 按码分组 + 质心/面积稳定排序 + A/B/C 标注；`_commit_to_nesting_sync` Path A 全管线（collect→write_piece_dxf→load_nest_pieces→compute_size_ptype_labels→写回 intermediate + .bak）；`_PTYPE_REPRESENTATIVE_FIELDS` 透传白名单（v1 仅 polygon，US-024 后自动带 5 层） |
-| `solver.py` | 173 | `load_pieces` / `discretize_orientations` / `build_instance`（erode=min(申,max)，tol=min(申,max)，US-022 quantities→demand，0 跳过）/ `solve_with_callback`（spyrrow ProgressQueue + threading，0.2s drain） |
-| `export.py` | 160 | `apply_transform` / `placed_to_world`（用**原始**非 eroded 轮廓）/ `render_png`（matplotlib Agg）/ `write_marker_dxf`（R12 POLYLINE + ACI 色 + ASCII 标题） |
+| `solver.py` | 182 | `load_pieces` / `discretize_orientations` / `build_instance`（erode=min(申,max)，tol=min(申,max)，US-022 quantities→demand，0 跳过；US-024 pid_meta 加 5 层字段 `.get()` 向后兼容）/ `solve_with_callback`（spyrrow ProgressQueue + threading，0.2s drain） |
+| `export.py` | 245 | `apply_transform` / `placed_to_world`（用**原始**非 eroded 轮廓；US-024 起 5 层一并变换，notch 点按点变换 + 法线按向量旋转）/ `render_png`（matplotlib Agg；US-024 起 5 层叠加：net 绿虚线 / internal 橙 / notch 黄短线段 / grain 红虚线）/ `write_marker_dxf`（R12 POLYLINE + ACI 色 + ASCII 标题；US-024 起多 layer：outline layer1 / net layer14 / internal layer8 / notch layer4 POINT / grain layer7 LINE，各自独立 entity） |
 
 US-004 起 `web/server.py` 直接 import `dxf_parser.collect.collect_pieces_with_details`（web → dxf_parser 跨层依赖，合规：web 是上层）。US-010 起新增 import `dxf_parser.explore` / `dxf_parser.export_dxf` / `nesting_bounds.load_pieces`（web → nesting_bounds → dxf_parser 单向，合规）。上传 multipart 依赖 `python-multipart`（已在 `[web]` extra）。
 
@@ -305,18 +309,18 @@ US-004 起 `web/server.py` 直接 import `dxf_parser.collect.collect_pieces_with
 
 ```
 data/M1787#...(2).dxf 母版
-  │ explore.collect_pieces / export_dxf.main
+  │ collect.collect_pieces_with_details（5 层 IR） / export_dxf.main（5 层单裁片 DXF）
   ▼
-data/m1787_直筒/{类型}_{码号}.dxf（110 片）
-  │ load_pieces.load_nest_pieces（布纹对齐 + 归一化 + L/R 镜像）
+data/m1787_直筒/{类型}_{码号}.dxf（110 片，每片 layer1+14+8+4+7 五层）
+  │ load_pieces.load_nest_pieces（_read_piece_full 读 5 层 + notch 法线按最近边重算 + _apply_layer_transforms 共享 transform 链 + 布纹对齐 + 归一化 + L/R 镜像）
   ▼
-128 NestPiece
+128 NestPiece（每片持 polygon + net_polygon + internal_lines + notches + grain_line 5 层）
   │ pieces_export.main
   ▼
-out/sparrow_baseline/pieces_intermediate.json   ← 全流程事实源
+out/sparrow_baseline/pieces_intermediate.json   ← 全流程事实源（每片 5 层字段）
   │
-  ├─ sparrow_baseline.main / sparrow_experiments.main（求解 → result/svg/curve）
-  └─ web（server 启动期 _PIECES_STATE 读取 + commit 后 reload + 可视化 + 导出 PNG/R12-DXF，US-020）
+  ├─ sparrow_baseline.main / sparrow_experiments.main（求解 → result/svg/curve；仅 polygon 参与 NFP，4 层忽略）
+  └─ web（server 启动期 _PIECES_STATE 读取 + commit 后 reload + 可视化 + 导出 PNG/R12-DXF 5 层，US-020 + US-024）
 ```
 
 逐跳函数链：
@@ -358,6 +362,8 @@ out/sparrow_baseline/pieces_intermediate.json   ← 全流程事实源
 6. **坐标系**：spyrrow X=用布长度(0..width)，Y=门幅(0..gate)，Y 向上；前端 SVG `scale(1,-1)` 翻转后与 PNG / R12-DXF 一致。
 7. **导出用原始轮廓非 eroded**：`_PIECES_STATE['pieces_by_id']`（US-020 替代旧 `PIECES_BY_ID`）持原始 polygon，`placed_to_world` 用它变换；eroded 仅用于求解/屏幕。
 8. **`server.py` 启动期 `_reload_pieces_state()`**（US-020）：import 时读 intermediate 填 `_PIECES_STATE`；allow-empty 不再让 import 崩；commit 成功后立即 reload，前端无需重启 ms-web。`_state_lock=threading.Lock()` 保护 immutable snapshot 模式（整体替换 dict 内容）。
+9. **5 层中 4 层仅渲染透传（US-024）**：`polygon`（layer1 毛版外轮廓，erode 后）是唯一参与 sparrow NFP 碰撞的几何；`net_polygon` / `internal_lines` / `notches` / `grain_line` 4 层仅渲染与 PNG/DXF 导出透传，不影响求解结果或利用率。改任一层定义需同步 collect.LAYER_MAPPING + export_dxf.write_piece_dxf + load_pieces._read_piece_full + pieces_export + solver.pid_meta + web/export.py + NestSVG。
+10. **notch 法线读时重算（US-024）**：DXF POINT 仅存位置，无法线字段；`_read_piece_full` 读时调 `_collect._nearest_edge_with_normal` 按 outline 最近边重算（与 `collect._assign_notch` 同算法）。退化边（连续重复点）返 (0,0) 法线 → NestSVG / PNG 渲染为 0 长度线段兜底。
 
 ## 已知问题（迁移中未修，勿在文档/迁移中扩大）
 

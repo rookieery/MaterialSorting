@@ -38,21 +38,20 @@
 import { useEffect, useRef } from 'react';
 import type { JSX } from 'react';
 import type { ParsedPiece, ParsedPt } from '../../types/parsed';
+import { LAYER5_COLORS, NOTCH_LEN_MM } from '../../constants/colors';
 
 const SVGNS = 'http://www.w3.org/2000/svg';
 
-// ---- 颜色常量（与 scripts/preview/*.svg 已确认配色一致；改色需同步测试 + 版师确认） ----
-const COLOR_ROUGH_FILL = 'rgba(80, 140, 200, 0.22)'; // layer1 毛版半透明蓝实心
-const COLOR_ROUGH_STROKE = '#3f7fbf'; // layer1 毛版实线边
-const COLOR_NET = '#33cc33'; // layer14 净版绿虚线
-const COLOR_INTERNAL = '#ff8c1a'; // layer8 内部线橙实线
-const COLOR_NOTCH = '#ffd700'; // layer4 刀口黄短线段
-const COLOR_GRAIN = '#e53e3e'; // layer7 布纹线红虚线
+// ---- 颜色常量（US-024 起从 constants/colors.ts 共享；与 NestSVG / web/export.py 同口径） ----
+const COLOR_ROUGH_FILL = LAYER5_COLORS.ROUGH_FILL;
+const COLOR_ROUGH_STROKE = LAYER5_COLORS.ROUGH_STROKE;
+const COLOR_NET = LAYER5_COLORS.NET;
+const COLOR_INTERNAL = LAYER5_COLORS.INTERNAL;
+const COLOR_NOTCH = LAYER5_COLORS.NOTCH;
+const COLOR_GRAIN = LAYER5_COLORS.GRAIN;
 const COLOR_LABEL = '#e6e6e6'; // A/B/C 标注（暗底亮字，与 body color 同色）
 
 // ---- 几何常量 ----
-/** 刀口短线段长度（mm）。暂定 8mm，待版师在 US-007 预览时确认/调整。 */
-const NOTCH_LEN_MM = 8;
 /** viewBox 默认内边距（mm）。14 容纳 4mm 刀口半段 + ~10mm 标注文本。 */
 const DEFAULT_PAD = 14;
 /** compact 模式（缩略图）内边距（mm）。无标注文本 → 小 pad 让几何填满 cell。 */

@@ -221,15 +221,20 @@ async def parse_dxf(file: UploadFile = File(...)):
 def _commit_to_nesting_sync(doc_id: str, src_dxf: str, source_name: str) -> dict:
     """US-010 Path A 全管线（同步，跑在 executor 里）：
 
-    1. ``explore.collect_pieces`` 取母版全部 layer1 毛版外轮廓；
+    1. ``collect.collect_pieces_with_details`` 取母版全部 5 层（layer1/14/8/4/7，US-024）；
     2. ``export_dxf.assign_group_no`` + ``GROUP_NAMES`` 定片型；
-    3. ``write_piece_dxf`` 切单裁片到 ``paths.OUT_DIR/uploads/<doc_id>_pieces/``；
-    4. ``load_nest_pieces(pieces_dir, sizes=母版全码)`` 对齐布纹线 + 归一化 + L/R 镜像；
+    3. ``write_piece_dxf`` 切单裁片（5 层全写出）到 ``paths.OUT_DIR/uploads/<doc_id>_pieces/``；
+    4. ``load_nest_pieces(pieces_dir, sizes=母版全码)`` 对齐布纹线 + 归一化 + L/R 镜像
+       （5 层跟随同一变换链）；
     5. 备份原 intermediate 为 ``.bak`` 后覆盖写回（schema 与 ``ms-pieces-export`` 一致）。
 
     返回新 intermediate 摘要 dict（码数/裁片数/总面积/备份路径）。
     """
-    pieces = explore.collect_pieces(Path(src_dxf))
+    # US-024：用 collect_pieces_with_details 取代 explore.collect_pieces，让 write_piece_dxf
+    # 拿到 PieceOutline 全 5 层（layer1+layer7+layer14+layer8+layer4）。assign_group_no 与
+    # compute_size_ptype_labels 仅依赖 group_key / block_name 等基础字段，对深度解析结果
+    # 兼容（PieceOutline 字段是 additive 扩展）。
+    pieces = collect_pieces_with_details(Path(src_dxf))
     if not pieces:
         raise RuntimeError('母版未提取到任何裁片（layer1 POLYLINE 为空）')
 
@@ -292,6 +297,21 @@ def _commit_to_nesting_sync(doc_id: str, src_dxf: str, source_name: str) -> dict
                 'area_mm2': round(p.area_mm2, 1),
                 'n_verts': len(p.polygon),
                 'allowed_angles': [0, 180],   # v0.3 布纹线约束
+                # US-024：5 层渲染/导出透传字段（不参与 sparrow NFP 碰撞）。
+                # 与 parse-dxf 响应同 schema：net_polygon=[[x,y],...]、internal_lines=[[[x,y],...],...]、
+                # notches=[[x,y,nx,ny],...]、grain_line=[x1,y1,x2,y2]|null。
+                'net_polygon': [[round(x, 3), round(y, 3)] for x, y in p.net_polygon],
+                'internal_lines': [
+                    [[round(x, 3), round(y, 3)] for x, y in line]
+                    for line in p.internal_lines
+                ],
+                'notches': [
+                    [round(x, 3), round(y, 3), round(nx, 4), round(ny, 4)]
+                    for x, y, nx, ny in p.notches
+                ],
+                'grain_line': (
+                    [round(v, 3) for v in p.grain_line] if p.grain_line is not None else None
+                ),
             }
             for p in nest_pieces
         ],
@@ -494,7 +514,8 @@ async def ws_solve(ws: WebSocket):
         await ws.send_json({'type': 'error', 'message': f'构造实例失败: {e}'})
         return
 
-    # 1) manifest：base 几何（erode 后）+ 颜色
+    # 1) manifest：base 几何（erode 后）+ 颜色 + US-024 5 层（毛版 polygon 已在 eroded；
+    #    net/internal/notches/grain 是**原始未 erode**几何，仅渲染/导出透传，不参与碰撞）。
     await ws.send_json({
         'type': 'manifest',
         'gate_mm': gate_mm,
@@ -502,7 +523,13 @@ async def ws_solve(ws: WebSocket):
         'n_eroded': n_eroded,
         'pieces': [
             {'id': pid, 'ptype': m['ptype'], 'size': m['size'], 'color': m['color'],
-             'area_mm2': m['area_mm2'], 'polygon': m['polygon']}
+             'area_mm2': m['area_mm2'], 'polygon': m['polygon'],
+             # US-024：5 层透传字段（None-safe；缺字段时各层视为空/None，前端 layer-aware 渲染）。
+             'net_polygon': m.get('net_polygon', []),
+             'internal_lines': m.get('internal_lines', []),
+             'notches': m.get('notches', []),
+             'grain_line': m.get('grain_line'),
+             }
             for pid, m in pid_meta.items()
         ],
     })

@@ -20,8 +20,8 @@ curl http://127.0.0.1:8000/api/ptypes                                  # US-020 
 | 文件 | 角色 |
 | --- | --- |
 | `server.py` | FastAPI app；路由 `GET /`、`mount /static`、`POST /export`、`POST /api/parse-dxf`（US-004）、`POST /api/commit-to-nesting`（US-010）、`GET /api/ptypes`（US-020）、`WS /ws/solve`；US-020 可 reload `_PIECES_STATE`（threading.Lock 保护）；`ThreadPoolExecutor(max_workers=6)` 求解桥 + 上传解析/commit 复用 |
-| `solver.py` | `load_pieces` / `discretize_orientations` / `build_instance`（v0.3 erode+tol 包装）/ `solve_with_callback`（spyrrow ProgressQueue + threading，0.2s drain） |
-| `export.py` | `apply_transform` / `placed_to_world`（用**原始**非 eroded 轮廓）/ `render_png`（matplotlib Agg）/ `write_marker_dxf`（R12 POLYLINE + ACI 色 + ASCII 标题） |
+| `solver.py` | `load_pieces` / `discretize_orientations` / `build_instance`（v0.3 erode+tol 包装，US-024 pid_meta 加 5 层字段 `.get()` 兼容）/ `solve_with_callback`（spyrrow ProgressQueue + threading，0.2s drain） |
+| `export.py` | `apply_transform` / `placed_to_world`（用**原始**非 eroded 轮廓；US-024 起 5 层一并变换，notch 点按点变换 + 法线按向量旋转）/ `render_png`（matplotlib Agg；US-024 起 5 层叠加 net 绿虚线 / internal 橙 / notch 黄短线段 / grain 红虚线）/ `write_marker_dxf`（R12 POLYLINE + ACI 色；US-024 起多 layer outline1/14/8/4/7 各自独立 entity） |
 
 ## US-004 /api/parse-dxf 关键约定（实现方/调用方必读）
 

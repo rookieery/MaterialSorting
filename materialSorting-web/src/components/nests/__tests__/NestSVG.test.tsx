@@ -285,3 +285,304 @@ describe("NestSVG (US-003)", () => {
     expect(svg.querySelectorAll("polygon").length).toBe(2);
   });
 });
+
+// ============================================================
+// US-024 5 层渲染（毛版 polygon + 净版 net_polygon + 内部线 internal_lines +
+// 刺口 notches + 布纹线 grain_line）。AC#8：≥5 层渲染断言。
+// - manifest 含 net → 渲染 net polygon 节点；不含则不渲染
+// - dashed style 正确（net 6 3 / grain 5 3）
+// - 5 层节点数（每片 1 毛版 + 1 净版 + N 内部 + M 刺口 + 1 布纹）
+// - frame 切换时 5 层 setAttribute 都更新（不重建 DOM）
+// - 未 placed 的 5 层都 display:none
+// ============================================================
+
+/** 构造含全 5 层的 manifest（US-024 测试用）。 */
+function makeManifest5Layers(): ManifestMsg {
+  return {
+    type: "manifest",
+    gate_mm: 1980,
+    total_area_mm2: 100000,
+    n_eroded: 0,
+    pieces: [
+      {
+        id: "p1",
+        ptype: "Front",
+        size: 30,
+        color: "#ff0000",
+        area_mm2: 12345,
+        polygon: [
+          [0, 0], [10, 0], [10, 10], [0, 10],
+        ],
+        net_polygon: [
+          [1, 1], [9, 1], [9, 9], [1, 9],
+        ],
+        internal_lines: [
+          [[2, 2], [8, 8]],
+          [[2, 8], [8, 2]],
+        ],
+        notches: [
+          [5, 0, 0, -1],
+          [0, 5, -1, 0],
+        ],
+        grain_line: [3, 5, 7, 5],
+      },
+      // p2 仅毛版 polygon（验证无 5 层字段时不渲染额外节点）
+      {
+        id: "p2",
+        ptype: "Back",
+        size: 32,
+        color: "#00ff00",
+        area_mm2: 23456,
+        polygon: [
+          [0, 0], [20, 0], [20, 20], [0, 20],
+        ],
+      },
+    ],
+  };
+}
+
+describe("NestSVG US-024 (5 层渲染)", () => {
+  it("manifest 含 net_polygon → 渲染 net polygon 节点（绿 dashed）；不含则不渲染", () => {
+    const run = runRegistry.create(0);
+    run.manifest = makeManifest5Layers();
+    const ref = mountNestSVG(run);
+    const svg = ref.current!;
+    const g = svg.childNodes[2] as SVGGElement;
+
+    // p1（含 5 层）的子节点：1 毛版 + 1 net + 2 internal + 2 notch + 1 grain = 7
+    // p2（仅 polygon）的子节点：1 毛版 = 1
+    // 但 g 的 childNodes 是扁平的全部节点。改用 querySelectorAll 计数。
+    const allPolygons = g.querySelectorAll("polygon");
+    // 毛版 2 个 + net 1 个（p2 无 net） = 3
+    expect(allPolygons.length).toBe(3);
+
+    // net polygon 配色与 dashed style（与 PiecePreviewSVG LAYER5_COLORS.NET 一致）
+    const netPoly = Array.from(allPolygons).find(
+      (p) => p.getAttribute("stroke") === "#33cc33",
+    ) as SVGPolygonElement | undefined;
+    expect(netPoly).toBeDefined();
+    expect(netPoly!.getAttribute("fill")).toBe("none");
+    expect(netPoly!.getAttribute("stroke-dasharray")).toBe("6 3");
+    expect(netPoly!.getAttribute("stroke-linejoin")).toBe("round");
+    expect(netPoly!.style.display).toBe("none"); // 初始未 placed
+    expect(netPoly!.style.pointerEvents).toBe("none");
+  });
+
+  it("manifest 含 internal_lines → 渲染对应数量的橙色 polyline", () => {
+    const run = runRegistry.create(0);
+    run.manifest = makeManifest5Layers();
+    const ref = mountNestSVG(run);
+    const g = ref.current!.childNodes[2] as SVGGElement;
+    const polylines = Array.from(g.querySelectorAll("polyline"));
+    // p1 有 2 条 internal_lines → 2 polyline；p2 无 → 0
+    expect(polylines.length).toBe(2);
+    for (const pl of polylines) {
+      expect(pl.getAttribute("stroke")).toBe("#ff8c1a");
+      expect(pl.getAttribute("fill")).toBe("none");
+      expect(pl.getAttribute("stroke-linejoin")).toBe("round");
+      expect(pl.getAttribute("stroke-linecap")).toBe("round");
+      expect(pl.style.display).toBe("none"); // 初始未 placed
+      expect(pl.style.pointerEvents).toBe("none");
+    }
+  });
+
+  it("manifest 含 notches → 渲染对应数量的黄色 line 短线段", () => {
+    const run = runRegistry.create(0);
+    run.manifest = makeManifest5Layers();
+    const ref = mountNestSVG(run);
+    const g = ref.current!.childNodes[2] as SVGGElement;
+    // 选择 g 下所有 line —— SVGLineElement tagName === 'line'
+    const lines = Array.from(g.querySelectorAll("line"));
+    // p1 有 2 个 notches → 2 notch line；1 个 grain → 1 grain line；合计 3
+    expect(lines.length).toBe(3);
+    const notchLines = lines.filter((l) => l.getAttribute("stroke") === "#ffd700");
+    expect(notchLines.length).toBe(2);
+    for (const nl of notchLines) {
+      expect(nl.getAttribute("stroke-width")).toBe("1.4");
+      expect(nl.getAttribute("stroke-linecap")).toBe("round");
+      expect(nl.style.display).toBe("none");
+      expect(nl.style.pointerEvents).toBe("none");
+    }
+  });
+
+  it("manifest 含 grain_line → 渲染红 dashed line；不含则不渲染", () => {
+    const run = runRegistry.create(0);
+    run.manifest = makeManifest5Layers();
+    const ref = mountNestSVG(run);
+    const g = ref.current!.childNodes[2] as SVGGElement;
+    const lines = Array.from(g.querySelectorAll("line"));
+    const grainLines = lines.filter((l) => l.getAttribute("stroke") === "#e53e3e");
+    // p1 有 grain → 1；p2 无 → 0
+    expect(grainLines.length).toBe(1);
+    const gl = grainLines[0];
+    expect(gl.getAttribute("stroke-dasharray")).toBe("5 3");
+    expect(gl.getAttribute("stroke-width")).toBe("1.2");
+    expect(gl.style.display).toBe("none");
+    expect(gl.style.pointerEvents).toBe("none");
+  });
+
+  it("5 层节点数：每片按数据条数渲染（p1=1+1+2+2+1=7，p2=1+0+0+0+0=1）", () => {
+    const run = runRegistry.create(0);
+    run.manifest = makeManifest5Layers();
+    const ref = mountNestSVG(run);
+    const g = ref.current!.childNodes[2] as SVGGElement;
+    // g.childNodes 包含所有裁片的所有层节点（毛版+net+internal+notch+grain）
+    // p1: 1 polygon(rough) + 1 polygon(net) + 2 polyline(internal) + 2 line(notch) + 1 line(grain) = 7
+    // p2: 1 polygon(rough) = 1
+    // 共 8 个子节点（不包含 g 自己）
+    expect(g.childNodes.length).toBe(8);
+  });
+
+  it("frame 切换：5 层 setAttribute 都更新（points / x1y1x2y2 / display）；不重建 DOM", () => {
+    const run = runRegistry.create(0);
+    run.manifest = makeManifest5Layers();
+    const ref = mountNestSVG(run);
+    const g = ref.current!.childNodes[2] as SVGGElement;
+
+    const polyNodesBefore = g.querySelectorAll("polygon").length;
+    const polylineNodesBefore = g.querySelectorAll("polyline").length;
+    const lineNodesBefore = g.querySelectorAll("line").length;
+
+    // 第 1 帧：仅 p1 placed（rotation 0、translation 0,0）
+    const f1: FrameMsg = {
+      type: "frame",
+      index: 0,
+      elapsed: 0.1,
+      phase: "exploring",
+      density: 0.4,
+      density_sparrow: 0.45,
+      width_mm: 800,
+      placed_items: [{ id: "p1", rotation: 0, translation: [0, 0] }],
+    };
+    run.frames.push(f1);
+    run.lastFrame = f1;
+    act(() => useAppStore.getState().bumpRenderTick());
+
+    // 节点数不变（不重建 DOM）
+    expect(g.querySelectorAll("polygon").length).toBe(polyNodesBefore);
+    expect(g.querySelectorAll("polyline").length).toBe(polylineNodesBefore);
+    expect(g.querySelectorAll("line").length).toBe(lineNodesBefore);
+
+    // p1 毛版 polygon 写了 points 且 display=''
+    const roughP1 = g.childNodes[0] as SVGPolygonElement; // p1 毛版（首先 append）
+    expect(roughP1.style.display).toBe("");
+    expect(roughP1.getAttribute("points")).not.toBe("");
+
+    // p1 net polygon 写了 points 且 display=''
+    const netP1 = g.childNodes[1] as SVGPolygonElement;
+    expect(netP1.style.display).toBe("");
+    expect(netP1.getAttribute("points")).not.toBe("");
+    // rotation=0, translation=0,0 → points = 原始 net 坐标 r2
+    // net_polygon = [[1,1],[9,1],[9,9],[1,9]] → "1,1 9,1 9,9 1,9"
+    expect(netP1.getAttribute("points")).toBe("1,1 9,1 9,9 1,9");
+
+    // p1 internal polyline（2 条）写了 points
+    const internal1 = g.childNodes[2] as SVGPolylineElement;
+    const internal2 = g.childNodes[3] as SVGPolylineElement;
+    expect(internal1.style.display).toBe("");
+    expect(internal1.getAttribute("points")).toBe("2,2 8,8");
+    expect(internal2.style.display).toBe("");
+    expect(internal2.getAttribute("points")).toBe("2,8 8,2");
+
+    // p1 notch line（2 条）写了 x1/y1/x2/y2；沿法线 ±4 (NOTCH_LEN_MM/2=4)
+    // notch[0] = (5, 0, 0, -1) → 端点 (5, 0-(-1)*4=4) 与 (5, 0+(-1)*4=-4)
+    const notch1 = g.childNodes[4] as SVGLineElement;
+    const notch2 = g.childNodes[5] as SVGLineElement;
+    expect(notch1.style.display).toBe("");
+    expect(notch1.getAttribute("x1")).toBe("5");
+    expect(notch1.getAttribute("y1")).toBe("4");
+    expect(notch1.getAttribute("x2")).toBe("5");
+    expect(notch1.getAttribute("y2")).toBe("-4");
+    // notch[1] = (0, 5, -1, 0) → 端点 (0-(-1)*4=4, 5) 与 (0+(-1)*4=-4, 5)
+    expect(notch2.getAttribute("x1")).toBe("4");
+    expect(notch2.getAttribute("y1")).toBe("5");
+    expect(notch2.getAttribute("x2")).toBe("-4");
+    expect(notch2.getAttribute("y2")).toBe("5");
+
+    // p1 grain line 写了 x1/y1/x2/y2
+    // grain_line = [3, 5, 7, 5]，rotation=0, tr=0,0 → 端点不变
+    const grain = g.childNodes[6] as SVGLineElement;
+    expect(grain.style.display).toBe("");
+    expect(grain.getAttribute("x1")).toBe("3");
+    expect(grain.getAttribute("y1")).toBe("5");
+    expect(grain.getAttribute("x2")).toBe("7");
+    expect(grain.getAttribute("y2")).toBe("5");
+
+    // p2 毛版仍 display='none'（未 placed）
+    const roughP2 = g.childNodes[7] as SVGPolygonElement;
+    expect(roughP2.style.display).toBe("none");
+  });
+
+  it("frame 切换：未 placed 的全部 5 层都 display='none'", () => {
+    const run = runRegistry.create(0);
+    run.manifest = makeManifest5Layers();
+    const ref = mountNestSVG(run);
+    const g = ref.current!.childNodes[2] as SVGGElement;
+
+    // 仅 p2 placed（p1 未 placed）
+    const f1: FrameMsg = {
+      type: "frame",
+      index: 0,
+      elapsed: 0.1,
+      phase: "exploring",
+      density: 0.4,
+      density_sparrow: 0.45,
+      width_mm: 800,
+      placed_items: [{ id: "p2", rotation: 0, translation: [0, 0] }],
+    };
+    run.frames.push(f1);
+    run.lastFrame = f1;
+    act(() => useAppStore.getState().bumpRenderTick());
+
+    // p1 所有 7 个节点都 display='none'
+    for (let i = 0; i < 7; i++) {
+      const node = g.childNodes[i] as Element;
+      expect((node as HTMLElement & { style: CSSStyleDeclaration }).style.display).toBe("none");
+    }
+    // p2 唯一节点（毛版 polygon）display=''
+    const roughP2 = g.childNodes[7] as SVGPolygonElement;
+    expect(roughP2.style.display).toBe("");
+  });
+
+  it("frame 切换：rotation≠0 + translation≠0 时 5 层都正确变换", () => {
+    const run = runRegistry.create(0);
+    run.manifest = makeManifest5Layers();
+    const ref = mountNestSVG(run);
+    const g = ref.current!.childNodes[2] as SVGGElement;
+
+    // rotation 90° + translation (50, 70)
+    const f1: FrameMsg = {
+      type: "frame",
+      index: 0,
+      elapsed: 0.1,
+      phase: "exploring",
+      density: 0.4,
+      density_sparrow: 0.45,
+      width_mm: 1000,
+      placed_items: [{ id: "p1", rotation: 90, translation: [50, 70] }],
+    };
+    run.frames.push(f1);
+    run.lastFrame = f1;
+    act(() => useAppStore.getState().bumpRenderTick());
+
+    // 毛版 polygon 旋转 90° + 平移 (50, 70)（与 lib/geometry pointsStr 一致）
+    const roughP1 = g.childNodes[0] as SVGPolygonElement;
+    // (0,0)→(0,0)+(50,70)=(50,70); (10,0)→(0,10)+(50,70)=(50,80);
+    // (10,10)→(-10,10)+(50,70)=(40,80); (0,10)→(-10,0)+(50,70)=(40,70)
+    expect(roughP1.getAttribute("points")).toBe("50,70 50,80 40,80 40,70");
+
+    // net polygon = [[1,1],[9,1],[9,9],[1,9]] 旋转 90° + (50,70)
+    // (1,1)→(-1,1)+(50,70)=(49,71); (9,1)→(-1,9)+(50,70)=(49,79);
+    // (9,9)→(-9,9)+(50,70)=(41,79); (1,9)→(-9,1)+(50,70)=(41,71)
+    const netP1 = g.childNodes[1] as SVGPolygonElement;
+    expect(netP1.getAttribute("points")).toBe("49,71 49,79 41,79 41,71");
+
+    // grain line [3,5,7,5] 旋转 90° + (50,70)
+    // (3,5)→(-5,3)+(50,70)=(45,73); (7,5)→(-5,7)+(50,70)=(45,77)
+    const grain = g.childNodes[6] as SVGLineElement;
+    expect(grain.getAttribute("x1")).toBe("45");
+    expect(grain.getAttribute("y1")).toBe("73");
+    expect(grain.getAttribute("x2")).toBe("45");
+    expect(grain.getAttribute("y2")).toBe("77");
+  });
+});

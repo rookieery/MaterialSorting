@@ -1,6 +1,6 @@
 # 前端组件 / 模块地图（materialSorting-web/）
 
-> 由 `/sync-docs` 维护。改前端先看这里。当前覆盖 US-001 Tab 框架 + US-002 WS 契约 + US-003 NestSVG + US-004 ControlPanel + US-005 多 seed/收敛曲线 + US-006 回放 seekbar + 片 hover tooltip + US-007 导出 PNG/DXF + DXF 上传预览 US-001 Tab 骨架 + 上传预览 US-005 类型/store/hook + 上传预览 US-006 UploadPanel 组件 + 上传预览 US-007 PiecePreviewSVG 命令式渲染 + 上传预览 US-008 SizeTabs/ParsedPiecesView/PreviewPage 容器集成 + 上传预览 US-011 qtyStore 数量状态（per-size/global 双模式）+ 上传预览 US-012 PieceQtyDialog/Switch（数量编辑弹窗 + 受控开关）+ 上传预览 US-013 PieceZoomModal（放大预览模态）+ 上传预览 US-014 ParsedPiecesView 卡片头改造 + 双模态集成（seq(qty) 替裁片名 + qty/zoom 双入口 + reset 联动）+ US-015 uiStore 扩 nestingEnabled + TabBar 置灰（超排 Tab 解锁闸）+ US-016 PreviewPage 联动 setNestingEnabled（subscribe uploadStore → uiStore 解锁/锁定超排 Tab）+ US-018 PerTypeOverridesModal/PtypePreviewModal（高级配置弹窗 + 片型缩略图 + 放大预览，双层独立 ESC）+ US-021 useCommitToNesting（解析成功自动 commit + D1 闭环 setNestingEnabled+setTab）+ US-022 求解输入数量 demand per-size（qtyStore.hydrateDefaults + serializeQuantities + StartPayload.quantities）。
+> 由 `/sync-docs` 维护。改前端先看这里。当前覆盖 US-001 Tab 框架 + US-002 WS 契约 + US-003 NestSVG + US-004 ControlPanel + US-005 多 seed/收敛曲线 + US-006 回放 seekbar + 片 hover tooltip + US-007 导出 PNG/DXF + DXF 上传预览 US-001 Tab 骨架 + 上传预览 US-005 类型/store/hook + 上传预览 US-006 UploadPanel 组件 + 上传预览 US-007 PiecePreviewSVG 命令式渲染 + 上传预览 US-008 SizeTabs/ParsedPiecesView/PreviewPage 容器集成 + 上传预览 US-011 qtyStore 数量状态（per-size/global 双模式）+ 上传预览 US-012 PieceQtyDialog/Switch（数量编辑弹窗 + 受控开关）+ 上传预览 US-013 PieceZoomModal（放大预览模态）+ 上传预览 US-014 ParsedPiecesView 卡片头改造 + 双模态集成（seq(qty) 替裁片名 + qty/zoom 双入口 + reset 联动）+ US-015 uiStore 扩 nestingEnabled + TabBar 置灰（超排 Tab 解锁闸）+ US-016 PreviewPage 联动 setNestingEnabled（subscribe uploadStore → uiStore 解锁/锁定超排 Tab）+ US-018 PerTypeOverridesModal/PtypePreviewModal（高级配置弹窗 + 片型缩略图 + 放大预览，双层独立 ESC）+ US-021 useCommitToNesting（解析成功自动 commit + D1 闭环 setNestingEnabled+setTab）+ US-022 求解输入数量 demand per-size（qtyStore.hydrateDefaults + serializeQuantities + StartPayload.quantities）+ US-024 NestSVG 5 层渲染 + 共享 LAYER5_COLORS（毛版+净版+内部线+刺口+布纹线，仅渲染透传不参与 NFP 碰撞）。
 
 ## 顶层结构
 
@@ -217,7 +217,7 @@ materialSorting-web/
 
 | 文件 | 角色 |
 | --- | --- |
-| `src/components/preview/PiecePreviewSVG.tsx` | 单片（或多片，AC#4）母版预览 SVG。命令式渲染范式（参考 NestSVG）：React 仅渲染 `<svg ref/>`；useEffect 内 imperative 建翻转组 `<g>` + 各层节点（polygon / polyline / line / text）。**5 层分层**：layer1 毛版半透明蓝实心 + `#3f7fbf` 实线边（闭合 polygon）；layer14 净版绿虚线 `#33cc33` `dasharray=6 3`（闭合 polygon，fill=none）；layer8 内部线橙实线 `#ff8c1a`（polyline 不闭合，line.length<2 跳过）；layer4 刀口黄短线段 `#ffd700`（line，端点 `P ± 4*unit_normal`，`NOTCH_LEN_MM=8` 待版师确认）；layer7 布纹线红虚线 `#e53e3e` `dasharray=5 3`（line，grain_line=null 跳过）。**翻转组 transform = `translate(0 minY+maxY) scale(1 -1)`**（NestSVG `translate(0 gate)` 是 minY=0/maxY=gate 的特例）；**A/B/C 文字标注在翻转组外**（屏幕坐标，避免镜像），锚点 = bbox 左上角上方 LABEL_Y_OFFSET=3（baseline 在 minY - 3），font-size=11。**viewBox = bbox + pad**（默认 14，最小 4 clamp）。**piece(s) 切换整组重建**（useEffect 头部 `while removeChild` 清空）。导出 `pieceBBox` / `piecesBBox` / `BBox` 便于单测 |
+| `src/components/preview/PiecePreviewSVG.tsx` | 单片（或多片，AC#4）母版预览 SVG。命令式渲染范式（参考 NestSVG）：React 仅渲染 `<svg ref/>`；useEffect 内 imperative 建翻转组 `<g>` + 各层节点（polygon / polyline / line / text）。**5 层分层**：layer1 毛版半透明蓝实心 + `#3f7fbf` 实线边（闭合 polygon）；layer14 净版绿虚线 `#33cc33` `dasharray=6 3`（闭合 polygon，fill=none）；layer8 内部线橙实线 `#ff8c1a`（polyline 不闭合，line.length<2 跳过）；layer4 刀口黄短线段 `#ffd700`（line，端点 `P ± 4*unit_normal`，`NOTCH_LEN_MM=8`）；layer7 布纹线红虚线 `#e53e3e` `dasharray=5 3`（line，grain_line=null 跳过）。**US-024 起 5 层配色 + NOTCH_LEN_MM 改从 `constants/colors.ts LAYER5_COLORS / NOTCH_LEN_MM` import**（与 NestSVG 共享单一真相源）。**翻转组 transform = `translate(0 minY+maxY) scale(1 -1)`**（NestSVG `translate(0 gate)` 是 minY=0/maxY=gate 的特例）；**A/B/C 文字标注在翻转组外**（屏幕坐标，避免镜像），锚点 = bbox 左上角上方 LABEL_Y_OFFSET=3（baseline 在 minY - 3），font-size=11。**viewBox = bbox + pad**（默认 14，最小 4 clamp）。**piece(s) 切换整组重建**（useEffect 头部 `while removeChild` 清空）。导出 `pieceBBox` / `piecesBBox` / `BBox` 便于单测 |
 | `src/components/preview/__tests__/PiecePreviewSVG.test.tsx` | 33 项单测：bbox 纯函数 5（合并所有层顶点 / 空片 null / 无 grain 跳过 / 多片合并 / 全空片 null）；AC#1 命令式 2（React 仅 `<svg ref/>` + 子节点 imperative / StrictMode 双 mount 不残留）；AC#2 渲染分层 11（5 层颜色/线型/数据 + layer1 points 字符串 + internal line<2 跳过 + 刀口端点 P±4*normal 横/斜向 + grain null 跳过 + 全 5 层同框节点数）；AC#3 翻转+标注 9（flip transform 单片/多片合并 bbox / viewBox 默认+自定义+clamp / 标注在翻转组外 / 标注屏幕坐标 / label 空串跳过 / 多片各自标注）；AC#4 单片/多片/空片容错 4（单片 1 rough 1 label / 多片 rough=label=pieces.length / 空片啥都不画 / polygon<3 跳过 rough）；AC#5 切片重建 3（切 piece 清旧 + viewBox 重算 / 切到空片清空 / pad 变化触发 viewBox 重算 dep） |
 | `src/style.css` | 加 `.piece-preview-svg { display:block; width:100%; height:100%; min-height:0; background:#eef0f3 }`（与 `.nest-card svg` 同口径，背景与排料图同色） |
 
@@ -384,6 +384,33 @@ materialSorting-web/
 7. **uploadStore reset 同步清 commit 字段** —— `reset()` 把 commitStatus='idle'/commitError=null/commitSummary=null（与 status/doc/error/qtyDialog/zoom 同步清）。useParseDxf 进入 uploading 时也清 commit 字段（重传时旧 commit 摘要不再适用）。改 reset 需同步 uploadStore.test.ts 25 项用例。
 8. **不引入 CSS 框架** —— commit 状态行复用 `.upload-status.loading/.done/.error` 同三套 className（暗绿底/暗绿底/红字），与 parse status 行视觉一致；不新增 CSS 类。data-testid="commit-status" 区分 commit 行（parse 行 data-testid="upload-status"）。
 9. **未做浏览器验证** —— 本故事无 SVG/坐标变换（仅 store 字段扩展 + hook + UploadPanel 状态行 DOM），AC 仅要求 typecheck + 单测 + build。浏览器视觉回归（「应用中…」loading + 「已应用至超排」摘要 + 自动切 Tab + commit fail 红字）留作整体回归。
+
+## US-024 落地：NestSVG 5 层渲染 + 共享 LAYER5_COLORS（毛版 + 净版 + 内部线 + 刺口 + 布纹线）
+
+NestSVG 在毛版 polygon（layer1）之上叠加 4 层工艺节点：净版（layer14 绿 dashed polygon）+ 内部线（layer8 橙 polyline 列表）+ 刺口（layer4 黄 line 短线段沿法线 NOTCH_LEN_MM）+ 布纹线（layer7 红 dashed line）。所有 5 层都在翻转组内（scale(1,-1)），共用 placement transform（rotation + translation）。求解碰撞仍只用毛版 polygon（sparrow NFP，已 erode），4 层仅渲染透传。PiecePreviewSVG 5 层配色提取到 `constants/colors.ts LAYER5_COLORS` 共享，与 NestSVG 视觉一致；导出 PNG/DXF 在后端 `web/export.py` 用相同配色（`LAYER5_COLOR_*` 字面量）。
+
+### 新增 / 改造文件
+
+| 文件 | 角色 |
+| --- | --- |
+| `src/types/piece.ts` | **扩 PieceInfo**：增可选 `net_polygon?: Polygon` / `internal_lines?: Polygon[]` / `notches?: Notch[]` / `grain_line?: GrainLine \| null`。**新增** `Notch = [number, number, number, number]`（x, y, nx, ny）+ `GrainLine = [number, number, number, number]`（x1, y1, x2, y2）类型。4 字段均可选 → 旧 manifest（无 5 层）仍类型兼容 |
+| `src/constants/colors.ts` | **新增** `LAYER5_COLORS` 共享常量（`ROUGH_FILL: 'rgba(80,140,200,0.22)'` / `ROUGH_STROKE: '#3f7fbf'` / `NET: '#33cc33'` / `INTERNAL: '#ff8c1a'` / `NOTCH: '#ffd700'` / `GRAIN: '#e53e3e'`）+ 导出 `NOTCH_LEN_MM = 8`。被 PiecePreviewSVG + NestSVG 共用（视觉一致） |
+| `src/components/preview/PiecePreviewSVG.tsx` | **改造**：5 层颜色字面量（`rgba(80,140,200,0.22)` / `#3f7fbf` / `#33cc33` / `#ff8c1a` / `#ffd700` / `#e53e3e`）→ `LAYER5_COLORS.*` import；`NOTCH_LEN_MM = 8` 字面量 → import。行为不变（仅配色来源统一） |
+| `src/components/nests/NestSVG.tsx` | **扩 5 层渲染**：PieceEntry 增 `netEl: SVGPolygonElement \| null` / `internalEls: SVGPolylineElement[]` / `notchEls: SVGLineElement[]` / `grainEl: SVGLineElement \| null`。manifest 到达时按数据有无创建对应节点（pointerEvents='none'，不干扰毛版 polygon mousemove tooltip）。frame 渲染：placed → 5 层 setAttribute('points'/'x1'/'y1'/'x2'/'y2') + display=''；unplaced → 5 层 display='none'。notch 端点 = `P ± NOTCH_LEN_MM/2 * unit_normal` 各按 transformPt 变换；grain 端点按 transformPt 变换。新增 `transformPt(pt, rot, tr)` 辅助（与 lib/geometry pointsStr 同公式，单点版本） |
+| `src/components/nests/__tests__/NestSVG.test.tsx` | **新增 8 项**：net polygon 渲染绿 dashed / internal 多条 polyline 渲染 / notch line 短线段渲染 / grain line 渲染 / 节点数 = 毛版 + 5 层总和 / frame setAttribute 写入 5 层 / unplaced 5 层 display:none / rotation≠0 时 transform 正确（transformPt 与 pointsStr 一致） |
+| `src/__tests__/useSolveRun.test.tsx` | **新增 1 项**：manifest 含 5 层字段 → runRegistry 落盘保真（net_polygon/internal_lines/notches/grain_line 字段不丢失；p2 缺字段 → undefined 兼容） |
+
+### 关键不变量（US-024 立，后续故事不得破坏）
+
+1. **求解碰撞仅用毛版 polygon** —— `polygon` 是 erode 后的 base 多边形，与 sparrow NFP 一致；`net_polygon` / `internal_lines` / `notches` / `grain_line` 4 层**仅渲染/导出透传**，不影响求解结果或利用率。改任一层语义需同步 collect.LAYER_MAPPING + export_dxf + load_pieces + pieces_export + solver.pid_meta + web/export.py + NestSVG。
+2. **5 层节点只在 manifest 到达时建一次** —— frame 切换只 setAttribute（points/x1y1x2y2/display），不重建 DOM；128 片 × 5 节点 ~10fps 可承受。改创建时机（如每帧重建）会破坏性能保护（AC#5）。
+3. **4 层节点 pointerEvents='none'** —— 事件委托只触发于毛版 polygon（dataset.ptype 必有）；4 层工艺节点不参与 mousemove tooltip 联动。改 pointerEvents 会破坏 US-006 hover 语义。
+4. **5 层都在翻转组内（scale(1,-1)）** —— 共用 `<g transform="translate(0 gate) scale(1 -1)">`，与 US-003 关键约定 #1 一致。改其中一层挪出翻转组会破坏视觉一致性（上下颠倒）。
+5. **notch 端点变换：点按 point 变换 + 法线按 vector 旋转** —— notch 数据模型 `(x, y, nx, ny)`，端点 = `(x ± half*nx, y ± half*ny)` 各按 rot+tr 变换（同 pointsStr 公式，单点版本 transformPt）。half = NOTCH_LEN_MM/2 = 4。法线为零向量（退化边）→ 0 长度线段兜底，不渲染异常。
+6. **LAYER5_COLORS 是 NestSVG + PiecePreviewSVG 视觉一致的单一真相源** —— 后端 `web/export.py LAYER5_COLOR_*` 字面量需与此同步（绿 `#33cc33` / 橙 `#ff8c1a` / 黄 `#ffd700` / 红 `#e53e3e`）。改任一层配色需同步两处。
+7. **layer-aware 缺字段跳过** —— 旧 intermediate（无 5 层字段）的 piece → netEl/internalEls/notchEls/grainEl 为 null/空，渲染时跳过；新 intermediate（含 5 层）自动多画 4 层。前后端均用 `.get()` / `?? []` / `if (p.net_polygon && len>=3)` 兜底，向后兼容。
+8. **manifest 字段保真（runRegistry 落盘无丢失）** —— useSolveRun onManifest 把 ServerMsg 直接写 runRegistry；TS 类型 `ManifestMsg.pieces: PieceInfo[]` 已扩 5 层字段，JSON.stringify 保真。
+9. **ET2008 兼容性硬验收（D4）** —— marker DXF 多 layer（outline layer1 + net layer14 + internal layer8 + notch layer4 + grain layer7）各自独立 POLYLINE/POINT/LINE entity（R12 + POLYLINE 非 LWPOLYLINE）。若 ET2008 误读则回退为 "DXF 仅外轮廓、PNG 含 5 层"（D4 应急回退）。改 entity 类型需同步 ET2008 兼容性测试。
 
 ## US-002 落地：WS 契约 + RunRegistry + useSolveRun
 

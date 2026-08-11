@@ -21,7 +21,7 @@ python -m materialsorting.dxf_parser.export_dxf --dxf "../data/M1787#....dxf"  #
 | `model.py` | `PieceOutline` dataclass（解析期唯一 IR；US-002 扩 `internal_lines`/`notches`/`net_polygon` 默认空 list 向后兼容） |
 | `explore.py` | 母版全裁片探索 CLI：`collect_pieces(path) → list[PieceOutline]`（layer1 毛版 + layer7 布纹线）+ SVG/CSV/JSON 输出 |
 | `collect.py` | **US-003 母版深度解析**：`collect_pieces_with_details(path)` 还原 layer14 净版 + layer8 内部线 + layer4 刀口 + layer7 布纹线 |
-| `export_dxf.py` | `PieceOutline` → 单裁片 R12 DXF（layer1 轮廓 + layer7 布纹线；ET2008 兼容） |
+| `export_dxf.py` | `PieceOutline` → 单裁片 R12 DXF（**5 层**：layer1 毛版 + layer14 净版 + layer8 内部线 + layer4 刺口 POINT + layer7 布纹线；US-024 起用 `collect_pieces_with_details` 拿全 5 层 IR；ET2008 兼容） |
 
 ## layer 映射（`collect.py:LAYER_MAPPING`，版师 2026-08-10 确认；5156 与 M1787 一致）
 
@@ -45,7 +45,7 @@ python -m materialsorting.dxf_parser.export_dxf --dxf "../data/M1787#....dxf"  #
   2. **Pass 2 最近边兜底**：剩余 159/704 是边界 / 外贴边点（`point_in_polygon` 严格返回 False，但最近边距离=0），取所有 outline 中最近边所属片。
 - **法线方向**：CCW 多边形（`_signed_area > 0`）外法线 = `(dy, -dx)/len`；CW 取反。退化边（零长度）返回 `(0, 0)` 法线。渲染时画 8mm 短线段（长度待版师确认）。
 - **刀口存储 `[(x, y, nx, ny)]`**：`(x, y)` 是原始 POINT 坐标，`(nx, ny)` 是所属 outline 最近边的**单位外法线**；前端 `PiecePreviewSVG`（US-007）从 `(x, y)` 沿 `(nx, ny)` 画定长线段。
-- **不进 intermediate**：`net_polygon` / `internal_lines` / `notches` 仅服务预览（US-007 `PiecePreviewSVG`）；`nesting_bounds.load_pieces` 只读 layer1 毛版 polygon（US-010 Path A 转换时这些细节丢弃）。
+- **不进 intermediate**：`net_polygon` / `internal_lines` / `notches` 仅服务预览（US-007 `PiecePreviewSVG`）；`nesting_bounds.load_pieces` 只读 layer1 毛版 polygon（US-010 Path A 转换时这些细节丢弃）。**US-024 起此条作废**：`_read_piece_full` 读 5 层 + notch 法线按 outline 最近边重算，与 polygon 共享 transform 链后透传到 intermediate / manifest / NestSVG / 导出 PNG+R12-DXF；4 层仅渲染/导出透传，仍不参与 sparrow NFP 碰撞（求解仅用 polygon）。
 
 ## 已踩坑 / 注意事项
 

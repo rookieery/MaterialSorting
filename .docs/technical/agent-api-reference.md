@@ -197,7 +197,7 @@ curl -X POST http://127.0.0.1:8000/api/commit-to-nesting \
 
 1. **临时单裁片目录**：`paths.OUT_DIR/uploads/<doc_id>_pieces/`（~110 个 DXF，每次 commit 先 `shutil.rmtree` 再重写，**idempotent**）。v1 不自动清理（open question），同 `doc_id` 重跑会覆盖。
 2. **intermediate 备份**：写回前 `shutil.copy2(paths.INTERMEDIATE, paths.INTERMEDIATE.with_suffix('.bak'))`。`pieces_intermediate.bak` 是上一次写回前的快照（首次 commit 无原文件则跳过备份）。**只保留一份**（再 commit 会覆盖 `.bak`）。
-3. **intermediate schema 与 `ms-pieces-export` 一致**：`{source, gate_mm, n_pieces, total_area_mm2, pieces[]}`；pieces 字段 `{pid, ptype, size, side, label(US-022), polygon, bbox, area_mm2, n_verts, allowed_angles}`。`gate_mm=1980`（`nesting_bounds.load_pieces.GATE_MM`）、`allowed_angles=[0,180]`（v0.3 布纹线）。`label` 由 `compute_size_ptype_labels` 按 parse 同排序同标注生成，L/R 同 ptype 共享 label（AC#5 关键不变量）。
+3. **intermediate schema 与 `ms-pieces-export` 一致**：`{source, gate_mm, n_pieces, total_area_mm2, pieces[]}`；pieces 字段 `{pid, ptype, size, side, label(US-022), polygon, bbox, area_mm2, n_verts, allowed_angles, net_polygon(US-024), internal_lines(US-024), notches(US-024), grain_line(US-024)}`。`gate_mm=1980`（`nesting_bounds.load_pieces.GATE_MM`）、`allowed_angles=[0,180]`（v0.3 布纹线）。`label` 由 `compute_size_ptype_labels` 按 parse 同排序同标注生成，L/R 同 ptype 共享 label（AC#5 关键不变量）。US-024 起每片多 4 个 5 层字段（default_factory=[] / None 向后兼容旧 intermediate），由 `load_pieces.load_nest_pieces` 经 `_read_piece_full` + `_apply_layer_transforms` 与 polygon 共享 rotate→mirror→normalize transform 链后透传。
 4. **commit 后 reload（US-020）**：`_commit_to_nesting_sync` 成功 → 立即调 `_reload_pieces_state()` 重读 intermediate 填入 `_PIECES_STATE`（threading.Lock 保护，原子替换）。下一次 `/ws/solve` / `/export` / `/api/ptypes` 即看到新裁片，**前端无需重启 ms-web**。reload 异常（罕见 I/O 竞态）降级为 `reloaded: false` + `reload_error` 字段，保留旧 state 不半切。
 
 ### 关键不变量
@@ -282,13 +282,20 @@ curl http://127.0.0.1:8000/api/ptypes
   "total_area_mm2": <原面积之和，含缝份>,
   "n_eroded": <被 erode 的片数>,
   "pieces": [
-    {"id": "<pid>", "ptype": "前片", "size": 30, "color": "#...", "area_mm2": <int>, "polygon": [[x,y]...]},
+    {
+      "id": "<pid>", "ptype": "前片", "size": 30, "color": "#...", "area_mm2": <int>,
+      "polygon": [[x,y]...],          // 毛版外轮廓（erode 后，参与 sparrow NFP 碰撞）
+      "net_polygon": [[x,y]...],      // US-024 净版（仅渲染透传，不参与碰撞；缺省 []）
+      "internal_lines": [[[x,y],...]],// US-024 内部线多条（缺省 []）
+      "notches": [[x,y,nx,ny],...],   // US-024 刺口点 + 单位法线（缺省 []）
+      "grain_line": [x1,y1,x2,y2]     // US-024 布纹线（缺省 null）
+    },
     ...
   ]
 }
 ```
 
-`polygon` 是 **erode 后**的 base 多边形（与后续 placement 一致）。前端据此一次性建 SVG 骨架 + N 个 `<polygon>`。
+`polygon` 是 **erode 后**的 base 多边形（与后续 placement 一致，**唯一参与 sparrow NFP 碰撞**）。前端据此一次性建 SVG 骨架 + N 个 `<polygon>`。US-024 新增 4 层（net_polygon/internal_lines/notches/grain_line）**仅渲染/导出透传**，不进碰撞；后端 pid_meta / intermediate / manifest 同字段名透传，前端 layer-aware 渲染（缺字段跳过该层，向后兼容旧 intermediate）。
 
 ### 3. server → frame（**每个中间解**，~5fps 由 `drain_interval=0.2` 决定）
 
@@ -338,7 +345,7 @@ curl http://127.0.0.1:8000/api/ptypes
 |------|------|------|
 | `load_pieces` | `(intermediate_path=paths.INTERMEDIATE) → (doc, gate_mm, pieces)` | 读 `pieces_intermediate.json` |
 | `discretize_orientations` | `(tol: float) → list[float]` | v0.3 连续旋转公差 → spyrrow 离散角度集。`tol=0→[0,180]`；`tol≤5` 步进 1°；否则 5°。归一化到 [0,360) |
-| `build_instance` | `(pieces, gate_mm, *, time_budget, seed, sizes=None, params=None, per_type=None, quantities=None) → (instance, config, pid_meta, total_area, n_eroded)` | 按 sizes 过滤 → US-022 按 `(label, sizeKey)` 查 quantities 定 demand（0 跳过；缺 label → 1） → 每片 `erode=min(申请d, MAX_OVERLAP[ptype])`、`tol=min(申请tol, ROTATION_TOL[ptype])` → erode+clean → 构造 `spyrrow.Item` + `StripPackingInstance` + `StripPackingConfig` |
+| `build_instance` | `(pieces, gate_mm, *, time_budget, seed, sizes=None, params=None, per_type=None, quantities=None) → (instance, config, pid_meta, total_area, n_eroded)` | 按 sizes 过滤 → US-022 按 `(label, sizeKey)` 查 quantities 定 demand（0 跳过；缺 label → 1） → 每片 `erode=min(申请d, MAX_OVERLAP[ptype])`、`tol=min(申请tol, ROTATION_TOL[ptype])` → erode+clean → 构造 `spyrrow.Item` + `StripPackingInstance` + `StripPackingConfig`；pid_meta 含 US-024 5 层字段（`.get()` 向后兼容） |
 | `solve_with_callback` | `(instance, config, on_report, *, drain_interval=0.2) → (final_sol, elapsed_sec, err)` | 子线程 `instance.solve(config, progress=queue)`，主线程 `queue.drain()` 每 0.2s 取中间解 → `on_report({type:frame,...})` |
 
 ### 求解线程 ↔ 事件循环桥（`server.ws_solve`）
