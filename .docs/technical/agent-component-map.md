@@ -1,6 +1,6 @@
 # 前端组件 / 模块地图（materialSorting-web/）
 
-> 由 `/sync-docs` 维护。改前端先看这里。当前覆盖 US-001 Tab 框架 + US-002 WS 契约 + US-003 NestSVG + US-004 ControlPanel + US-005 多 seed/收敛曲线 + US-006 回放 seekbar + 片 hover tooltip + US-007 导出 PNG/DXF + DXF 上传预览 US-001 Tab 骨架 + 上传预览 US-005 类型/store/hook + 上传预览 US-006 UploadPanel 组件 + 上传预览 US-007 PiecePreviewSVG 命令式渲染 + 上传预览 US-008 SizeTabs/ParsedPiecesView/PreviewPage 容器集成 + 上传预览 US-011 qtyStore 数量状态（per-size/global 双模式）+ 上传预览 US-012 PieceQtyDialog/Switch（数量编辑弹窗 + 受控开关）+ 上传预览 US-013 PieceZoomModal（放大预览模态）+ 上传预览 US-014 ParsedPiecesView 卡片头改造 + 双模态集成（seq(qty) 替裁片名 + qty/zoom 双入口 + reset 联动）+ US-015 uiStore 扩 nestingEnabled + TabBar 置灰（超排 Tab 解锁闸）。
+> 由 `/sync-docs` 维护。改前端先看这里。当前覆盖 US-001 Tab 框架 + US-002 WS 契约 + US-003 NestSVG + US-004 ControlPanel + US-005 多 seed/收敛曲线 + US-006 回放 seekbar + 片 hover tooltip + US-007 导出 PNG/DXF + DXF 上传预览 US-001 Tab 骨架 + 上传预览 US-005 类型/store/hook + 上传预览 US-006 UploadPanel 组件 + 上传预览 US-007 PiecePreviewSVG 命令式渲染 + 上传预览 US-008 SizeTabs/ParsedPiecesView/PreviewPage 容器集成 + 上传预览 US-011 qtyStore 数量状态（per-size/global 双模式）+ 上传预览 US-012 PieceQtyDialog/Switch（数量编辑弹窗 + 受控开关）+ 上传预览 US-013 PieceZoomModal（放大预览模态）+ 上传预览 US-014 ParsedPiecesView 卡片头改造 + 双模态集成（seq(qty) 替裁片名 + qty/zoom 双入口 + reset 联动）+ US-015 uiStore 扩 nestingEnabled + TabBar 置灰（超排 Tab 解锁闸）+ US-016 PreviewPage 联动 setNestingEnabled（subscribe uploadStore → uiStore 解锁/锁定超排 Tab）。
 
 ## 顶层结构
 
@@ -26,7 +26,7 @@ materialSorting-web/
 │   │   ├── TabBar.tsx       # US-001 顶部 Tab（排料/上传预览）；订阅 uiStore.activeTab；US-015 超排 button 在 nestingEnabled===false 时 disabled+.disabled class + aria-disabled
 │   │   ├── NestingPage.tsx  # US-001 排料页（原 App.tsx 业务逻辑外提；持 solving/seeds/useSolveRun）
 │   │   ├── preview/         # US-001 起：上传预览页（US-006 UploadPanel；US-007 PiecePreviewSVG；US-008 落地 SizeTabs/ParsedPiecesView/PreviewPage 容器集成）
-│   │   │   ├── PreviewPage.tsx  # US-008 容器：左 UploadPanel + 右（SizeTabs+ParsedPiecesView）；status=done+doc 时挂主体，否则 .preview-empty 空态；US-014 顶层挂 PieceQtyDialog+PieceZoomModal 单例 + useEffect subscribe 监听 doc_id 变化联动 qtyStore.resetQuantities（重传清零）
+│   │   │   ├── PreviewPage.tsx  # US-008 容器：左 UploadPanel + 右（SizeTabs+ParsedPiecesView）；status=done+doc 时挂主体，否则 .preview-empty 空态；US-014 顶层挂 PieceQtyDialog+PieceZoomModal 单例 + useEffect subscribe 监听 doc_id 变化联动 qtyStore.resetQuantities（重传清零）；US-016 加 useEffect subscribe uploadStore.status 按 `status==='done' && doc!==null` 联动 uiStore.setNestingEnabled（Tab 解锁闸，mount 即对齐）
 │   │   │   ├── UploadPanel.tsx  # US-006 左侧上传面板（点击+拖拽+客户端预校验+status 反馈）
 │   │   │   ├── SizeTabs.tsx  # US-008 尺码切换条：读 uploadStore.doc/activeSize/setSize；chip 行 + active 高亮；null 码→「通用」
 │   │   │   ├── ParsedPiecesView.tsx # US-008 当前 activeSize 下裁片 grid；US-014 改造卡片头为 [A徽章]+序号(数量)（editable=button→openQtyDialog / global非source=span.disabled+title）；.piece-card-body onClick→openZoom + role=button + tabIndex + Enter/Space；序号=pieces index+1；数量从 qtyStore.getPieceDisplay 读
@@ -39,7 +39,7 @@ materialSorting-web/
 │   │   │       ├── PiecePreviewSVG.test.tsx  # US-007 单测（33 项：bbox 5 + 命令式 2 + 5 层 11 + 翻转/标注 9 + 单片/多片/空片 4 + 切片重建 3）
 │   │   │       ├── SizeTabs.test.tsx         # US-008 单测（8 项：chip 列表 + null→通用 + role=tablist + active 高亮 + 点击 setSize + null 码 + activeSize=null 防御）
 │   │   │       ├── ParsedPiecesView.test.tsx # US-008 单测（8 项基础：grid 渲染 + 每片含 A/B/C+序号(数量)+svg + key label-name + 切码刷新 + activeSize 不在 doc + 空码空态）+ US-014 增 11 项（序号 index+1 / qty 默认 0 / qty 从 qtyStore / editable button openQtyDialog / global非source span.disabled+title / global source 仍 button / body onClick openZoom / role+tabIndex / Enter / Space / qty stopPropagation）
-│   │   │       ├── PreviewPage.test.tsx      # US-008 集成（9 项基础：左 panel+右 main 布局 + 4 空态分支 + 已解析挂主体 + SizeTabs 列码 + 切码刷新 grid + 端到端 chip 点击）+ US-014 增 7 项（默认模态不渲染 / qtyDialog 自显隐 / zoom 自显隐 / reset 联动清 / 重传清 / 切码保留 / 端到端切码→qty→global→切回→置灰 title）
+│   │   │       ├── PreviewPage.test.tsx      # US-008 集成（9 项基础：左 panel+右 main 布局 + 4 空态分支 + 已解析挂主体 + SizeTabs 列码 + 切码刷新 grid + 端到端 chip 点击）+ US-014 增 7 项（默认模态不渲染 / qtyDialog 自显隐 / zoom 自显隐 / reset 联动清 / 重传清 / 切码保留 / 端到端切码→qty→global→切回→置灰 title）+ US-016 增 8 项（mount idle→false / done→true / error→false / reset→false / 重传 doc_id 变化短暂 false 后 true / 关键不变量 setNestingEnabled(false) 不强制切 Tab / uploading→false / 状态机循环 done→uploading→error→done）
 │   │   │       ├── Switch.test.tsx           # US-012 单测（5 项：role+aria-checked / 点击 onChange true/false / labelOn/labelOff 文案 / disabled 不触发 / .on class）
 │   │   │       ├── PieceQtyDialog.test.tsx   # US-012 集成（15 项：null 不渲染 / 标题含 label+size / 初值 per-size/global / [+][-] 改 draftQty / Switch 切 / 确定 per-size/global / 取消 / 遮罩 / ESC / modal 不冒泡 / blur clamp）
 │   │   │       └── PieceZoomModal.test.tsx   # US-013 集成（14 项：zoom=null 不渲染 / doc=null 不渲染 / 渲染 overlay+modal+aria / 头部 label+seq(qty)+size+name / qty 从 qtyStore / null 码「通用」/ body svg.piece-preview-svg / ✕ closeZoom / 遮罩 closeZoom / modal 内不冒泡 / ESC closeZoom / Portal body / label 不存在兜底 / size 不存在兜底）
@@ -88,18 +88,18 @@ materialSorting-web/
 | `src/style.css` | 增 `.app{flex-direction:column}` + `.tabbar/.tab/.tab.active` + `.tab-content/.page/.page.hidden` + `.preview-empty/.preview-empty-card`（暗色与 ControlPanel 同色系）；**US-015** 加 `.tab.disabled` + `.tab.disabled:hover`（#555 灰字 + not-allowed） |
 | `src/store/__tests__/uiStore.test.ts` | 9 项单测：US-001 基础 4（默认 preview / setTab 切换 / 切回 / 订阅者通知）+ US-015 新增 5（默认 nestingEnabled=false / setNestingEnabled 切换 / 订阅者通知 / **setTab('nesting') 在 false 时静默不切**（关键不变量）/ setTab('preview') 在 false 时仍可切） |
 | `src/components/__tests__/TabBar.test.tsx` | 9 项单测：US-001 基础 5（DOM 结构 nav+2button / 默认 active / 点击切 store / 切回 / 顺序固定）+ US-015 新增 4（disabled 点击不调 setTab / disabled 视觉 .disabled+aria-disabled+native disabled / 启用后正常切换 / nestingEnabled 切换时 TabBar 重渲染） |
-| `src/__tests__/App.test.tsx` | 7 项集成 smoke：tabbar+2tab / 默认 nesting 页可见含 ControlPanel+main / 切 preview nesting 加 .hidden 但 DOM 仍在（不卸载）/ 切回对称 / Tooltip 单例仍 Portal body / 点击 tab 端到端；US-015 beforeEach 加 `setNestingEnabled(true)` 兜底 store guard |
+| `src/__tests__/App.test.tsx` | 7 项集成 smoke：tabbar+2tab / 默认 nesting 页可见含 ControlPanel+main / 切 preview nesting 加 .hidden 但 DOM 仍在（不卸载）/ 切回对称 / Tooltip 单例仍 Portal body / 点击 tab 端到端；US-015 beforeEach 加 `setNestingEnabled(true)` 兜底 store guard；**US-016** beforeEach 加 `useUploadStore.setState({status:'done', doc:makeParsedDoc()})` 让 PreviewPage mount 时的 US-016 联动 effect 把 nestingEnabled 对齐到 true（否则 PreviewPage 一 mount 就会 idle→false 把 beforeEach 的解锁覆盖回 false），afterEach 同步 reset uploadStore + uiStore；「默认 preview」测试用例显式 reset uploadStore 到 idle 验证 `.preview-empty`，「切到 preview」测试用例把断言从 `.preview-empty` 改为 `.preview-page`（已上传状态下不再走空态分支） |
 
-### 关键不变量（US-001 立，后续故事不得破坏；US-015 扩 #2 #5）
+### 关键不变量（US-001 立，后续故事不得破坏；US-015 扩 #2 #5；US-016 扩 #2 #5 #8）
 
 1. **双页面常驻 DOM，display:none 切换** —— `.page.hidden { display: none }` 而非条件渲染 / 路由卸载。切回排料页时 NestingPage 内 `useState/useRef/runRegistry` 全部保真，进行中的求解 / WS 连接 / 播放 seek 不中断。改 `display:none` 策略为「条件渲染」会破坏此保证。
-2. **uiStore 双字段（US-015 扩）** —— `activeTab: 'nesting' \| 'preview'`（默认 `'preview'`）+ `nestingEnabled: boolean`（默认 `false`）；不混入 solving/seeds/seek 等业务状态（业务状态由 NestingPage 自治）。改 store 形状需同步 9 项 uiStore.test.ts。**关键不变量（US-015）**：`setTab('nesting')` 在 `nestingEnabled===false` 时**静默不切**（store 层兜底）；`setTab('preview')` 永远允许（用户随时可回上传预览页）。
+2. **uiStore 双字段（US-015 扩）** —— `activeTab: 'nesting' \| 'preview'`（默认 `'preview'`）+ `nestingEnabled: boolean`（默认 `false`，**US-016 由 PreviewPage subscribe uploadStore 联动**：`status==='done' && doc!==null` → true，其它 → false）；不混入 solving/seeds/seek 等业务状态（业务状态由 NestingPage 自治）。改 store 形状需同步 9 项 uiStore.test.ts。**关键不变量（US-015）**：`setTab('nesting')` 在 `nestingEnabled===false` 时**静默不切**（store 层兜底）；`setTab('preview')` 永远允许（用户随时可回上传预览页）。
 3. **TabBar 只切 store，不直接切 DOM** —— `<button onClick=setTab>`；显隐由 App 订阅 `activeTab` 后切 `.hidden` class。解耦：未来加 URL hash 同步只需改 App 一处。
 4. **Tooltip 单例仍挂 App** —— US-006 关键约定 #3 不破：Tooltip 是模块级单例，App 内只能挂一个；NestingPage 不挂 Tooltip。
-5. **Tab 顺序固定：超排在前、上传预览在后**（默认入口是 `'preview'`，US-015 前提下未解锁时无法点入超排），TABS 数组顺序不可改。
+5. **Tab 顺序固定：超排在前、上传预览在后**（默认入口是 `'preview'`，US-015/016 前提下未上传解析时无法点入超排），TABS 数组顺序不可改。
 6. **TabBar 视觉沿用 style.css** —— 不引入 CSS 框架；`.tabbar/.tab` 暗色（`#26282e`）与 ControlPanel 同色系；active 项用绿色 `#2ea06c` border-bottom 强调（与 StartButton `#2ea06c` 同色）。**US-015**：`.tab.disabled` 用 `#555` 灰字 + `cursor:not-allowed`（含 `:hover` 同色防 hover 提亮）。
 7. **NestingPage 用 Fragment** —— 直接把 ControlPanel + main 作为 `.page` flex 子元素，不再包一层 `.app`（避免冗余 DOM + flex 嵌套层）。
-8. **超排 Tab 解锁闸双重防御（US-015）** —— TabBar `disabled` 属性（native）兜底 a11y / 键盘 tab 序列；运行时 `if (disabled) return`（JS）兜底合成事件 / devtools 旁路；store `setTab` guard 第三层兜底直调 store 的 JS 旁路。三层任一生效即可保证不可点。
+8. **超排 Tab 解锁闸双重防御（US-015）** —— TabBar `disabled` 属性（native）兜底 a11y / 键盘 tab 序列；运行时 `if (disabled) return`（JS）兜底合成事件 / devtools 旁路；store `setTab` guard 第三层兜底直调 store 的 JS 旁路。三层任一生效即可保证不可点。**US-016 加业务层联动**：PreviewPage subscribe uploadStore.status → setNestingEnabled(`done && doc`)，让「未上传母版」时超排 Tab 自然锁定（业务语义闸）。四层共同保证「未上传不可点 + 已上传自动解锁」。
 
 ## US-015 落地：uiStore 扩 nestingEnabled + TabBar disabled 态（超排 Tab 解锁闸）
 
@@ -110,7 +110,7 @@ materialSorting-web/
 | `src/style.css` | 加 `.tab.disabled { color:#555; cursor:not-allowed; }` + `.tab.disabled:hover { color:#555; }`（暗色系 #555 灰字，与 ControlPanel 同色系不冲突；防 hover 提亮） |
 | `src/store/__tests__/uiStore.test.ts` | 新增 5 项：默认 nestingEnabled=false / setNestingEnabled(true/false) 切换 / 订阅者收到 nestingEnabled 变化 / **setTab('nesting') 在 false 时静默不切**（关键不变量，含「解锁后才生效」分支）/ setTab('preview') 在 false 时仍可切（不锁定退出） |
 | `src/components/__tests__/TabBar.test.tsx` | 新增 4 项：disabled 点击不调 setTab（关键不变量）/ disabled 视觉有 `.disabled` + `aria-disabled=true` + native `disabled=true` / 启用后正常切换（点击切 activeTab=nesting）/ nestingEnabled 切换时 TabBar 重渲染（false→true 移除 disabled，true→false 加回） |
-| `src/__tests__/App.test.tsx` | beforeEach 加 `setNestingEnabled(true)` 后再 `setTab('nesting')`（绕过 store guard 保持原测试意图） |
+| `src/__tests__/App.test.tsx` | beforeEach 加 `setNestingEnabled(true)` 后再 `setTab('nesting')`（绕过 store guard 保持原测试意图）。**US-016 后**：beforeEach 还需 `useUploadStore.setState({status:'done', doc})` 让 PreviewPage mount 时的联动 effect 不把 nestingEnabled 对齐回 false（详见 US-016 段） |
 
 ### 关键不变量（US-015 立，后续故事不得破坏）
 
@@ -120,6 +120,25 @@ materialSorting-web/
 4. **上传预览 Tab 永远可点** —— 用户随时可回上传预览页（reset / 重传 / 切码），不被锁定。TabBar 渲染时 `disabled = t.id === 'nesting' && !nestingEnabled`（preview 永远 false）。
 5. **`aria-disabled` + native `disabled` 同步** —— 屏幕阅读器 + 键盘序列双重 a11y。改其中一项需同步另一项（避免分裂）。
 6. **不引入 CSS 框架** —— `.tab.disabled` / `.tab.disabled:hover` 沿用 style.css 命令式 className；与 ControlPanel / TabBar active 同色系（暗背景 `#26282e` + `#555` 灰字），不引入 CSS 框架。
+
+## US-016 落地：PreviewPage 联动 setNestingEnabled（subscribe uploadStore → uiStore 解锁闸）
+
+| 文件 | 角色 |
+| --- | --- |
+| `src/components/preview/PreviewPage.tsx` | **新增 useEffect**：subscribe `useUploadStore`，按 `status==='done' && doc!==null` 调 `useUiStore.getState().setNestingEnabled(next)`；mount 时立即对齐初值（idle → false）。覆盖路径：idle/uploading（false）/ done+doc（true）/ error（false）/ reset（doc→null false）/ 重传（status=uploading 短暂 false，done 后切回 true）。调用前先判 `get().nestingEnabled !== next` 避免无谓 setState。与 US-014 qtyStore 联动 effect 同模式（subscribe + mount 即对齐 + 卸载 unsub），两 effect 独立、互不干扰 |
+| `src/components/preview/__tests__/PreviewPage.test.tsx` | **新增 8 项**：mount idle→false（污染 true 验证对齐）/ done+doc→true / error（done 后切 error）→false / uploadStore.reset()→false / 重传 doc_id 变化（done→uploading→done with new doc_id）短暂 false 后 true / 关键不变量：setNestingEnabled(false) 不强制切 Tab（用户在 nesting Tab 时 reset，activeTab 仍是 nesting）/ uploading→false（mount 即对齐）/ 状态机循环 done→uploading→error→done。beforeEach 加 `useUiStore.setNestingEnabled(false) + setTab('preview')`，afterEach 同步重置（避免残留） |
+| `src/__tests__/App.test.tsx` | **beforeEach 改造**：除原 `setNestingEnabled(true) + setTab('nesting')` 外，加 `useUploadStore.setState({status:'done', doc:makeParsedDoc()})` 让 PreviewPage mount 时的 US-016 联动 effect 不把 nestingEnabled 对齐回 false（否则 beforeEach 设的 true 会被 PreviewPage mount 立即覆盖回 false，导致 `setTab('nesting')` 失效）。**afterEach 新增**：reset uploadStore + setNestingEnabled(false) + setTab('preview') 兜底无残留。「默认 activeTab=preview」测试用例显式 reset uploadStore 到 idle 验证 `.preview-empty`；「切到 preview」测试用例把 `.preview-empty` 断言改为 `.preview-page`（已上传状态下不再走空态分支） |
+
+### 关键不变量（US-016 立，后续故事不得破坏）
+
+1. **联动公式 `next = status==='done' && doc!==null`** —— 严格反映「有可用解析数据」语义。idle/uploading/error/reset 都返回 false，只有 done 且 doc 非空才解锁。改公式需同步 PreviewPage.test.tsx 8 项 US-016 用例。
+2. **mount 即对齐** —— PreviewPage mount 时立即按当前 uploadStore.status 计算 next 调 setNestingEnabled（迟到挂载 / 刷新恢复兜底；App.test.tsx beforeEach 必须 set uploadStore done+doc 同步，否则 PreviewPage mount 会把 beforeEach 设的 true 覆盖回 false）。
+3. **关键不变量（AC#3）：setNestingEnabled 仅控 Tab「能否进入」，不强制切 Tab** —— `uiStore.setNestingEnabled(b)` 实现仅 `set({ nestingEnabled: b })`，不触碰 activeTab。故用户已在 nesting Tab 时 reset（doc→null → setNestingEnabled(false)），activeTab 仍是 nesting，preview Tab 仍可点回（preview 永远可点）但**不强制切回**，避免丢失求解状态。改 setNestingEnabled 副作用（如加 setTab('preview')）会破坏此不变量。
+4. **uiStore 与 uploadStore 解耦（与 qtyStore 同设计原则）** —— uploadStore 不知道 uiStore 存在；uiStore 不知道 uploadStore 存在。PreviewPage 作为集成层用 subscribe 绑定（与 US-014 qtyStore 联动同模式）。改耦合（如把 setNestingEnabled 调用挪到 uploadStore 内）会破坏 store 解耦原则。
+5. **subscribe + mount 即对齐 + 卸载 unsub（与 US-014 qtyStore 联动 effect 同模式）** —— subscribe 捕获所有 state 变化（包括不触发 re-render 的 setState）；mount 时立即读 getState() 对齐初值；unmount 时 unsub 无残留。PreviewPage 现有两份 useEffect（qtyStore 联动 / uiStore 联动）独立、互不干扰。改 effect 结构需同步 PreviewPage.test.tsx。
+6. **调用前先判 `get().nestingEnabled !== next`** —— 避免无变化时无谓 setState 触发订阅者通知（zustand 内部 Object.is 也会兜底，但显式判断更省一次 set 调度）。改判断逻辑需同步 8 项 US-016 用例（不直接断言 call count，但通过「关键不变量」用例间接验证）。
+7. **App.test.tsx beforeEach 必须 set uploadStore done+doc** —— App mount 会触发 PreviewPage mount，PreviewPage 的 US-016 effect 会按当前 uploadStore.status 对齐 nestingEnabled。若 uploadStore=idle，beforeEach 设的 nestingEnabled=true 会被覆盖回 false，导致 `setTab('nesting')` 失效。改 beforeEach 需同步 App.test.tsx 7 项集成用例。
+8. **未做浏览器验证** —— 本故事无 SVG/坐标变换（仅 store 联动 + setState），AC 仅要求 typecheck + 单测，故跳过 chrome-devtools-mcp；浏览器视觉回归（disabled 灰字 + cursor:not-allowed 随 status 切换）留作 US-021 自动 commit 集成时统一核对（届时 done→commit→切 nesting 端到端联调）。
 
 ## 上传预览 US-005 落地：ParsedDoc 类型 + uploadStore + useParseDxf hook
 

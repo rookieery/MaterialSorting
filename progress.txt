@@ -1,6 +1,28 @@
 # Ralph Progress Log
 Started: 2026-08-09
 
+## 2026-08-11 — US-016 PreviewPage 联动 setNestingEnabled（branch: ralph/nesting-tab-linkage）
+
+**Goal**: PreviewPage 监听 uploadStore.status，按 `status==='done' && doc!==null` 调 `useUiStore.getState().setNestingEnabled(...)`；mount 时立即对齐初值（idle→false）。覆盖路径：done+doc→true / idle/uploading/error/reset→false / 重传 doc_id 变化短暂 false（uploading）后 true（done）。
+
+**Files changed**:
+- `materialSorting-web/src/components/preview/PreviewPage.tsx` —— 新增 useEffect subscribe uploadStore.status 联动 uiStore.setNestingEnabled（与 US-014 qtyStore 联动 effect 同模式：subscribe + mount 即对齐 + 卸载 unsub）；调用前先判 `get().nestingEnabled !== next` 避免无谓 setState。
+- `materialSorting-web/src/components/preview/__tests__/PreviewPage.test.tsx` —— 新增 8 项 US-016 用例（mount idle→false / done→true / error→false / reset→false / 重传短暂 false 后 true / **关键不变量 setNestingEnabled(false) 不强制切 Tab** / uploading→false / 状态机循环）；beforeEach 加 setNestingEnabled(false)+setTab('preview')，afterEach 同步重置。
+- `materialSorting-web/src/__tests__/App.test.tsx` —— beforeEach 加 `useUploadStore.setState({status:'done', doc:makeParsedDoc()})` 让 PreviewPage mount 时的 US-016 effect 不把 nestingEnabled 覆盖回 false（否则 beforeEach 设的 true 会被立即覆盖）；afterEach 加 reset uploadStore + uiStore；「默认 preview」用例显式 reset uploadStore 验 .preview-empty；「切到 preview」用例把 `.preview-empty` 断言改 `.preview-page`（已上传状态下不再走空态）。
+- `materialSorting-web/AGENTS.md` —— 文件分工注释加 US-016 落地段；新增「US-016 关键约定」段（联动公式 / PreviewPage 集成层模式 / 关键不变量 AC#3 / App.test.tsx beforeEach 适配 / 两 effect 独立 / 浏览器验证留作 US-021）。
+- `.docs/technical/agent-component-map.md` —— 顶头 coverage 加 US-016；PreviewPage.tsx 描述加 US-016 effect；PreviewPage.test.tsx 描述加 8 项新增；App.test.tsx 描述加 US-016 beforeEach 适配；新增「US-016 落地」段 + 8 项关键不变量；US-001 关键约定 #2/#5/#8 扩 US-016 联动。
+
+**Key invariants**:
+- **联动公式严格固定** `next = status==='done' && doc!==null` —— 仅 done+doc 才 true，其它均 false。
+- **关键不变量（AC#3）**：setNestingEnabled 仅控 Tab「能否进入」，不强制切 Tab —— `uiStore.setNestingEnabled(b)` 仅 set nestingEnabled，不触碰 activeTab。用户在 nesting Tab 时 reset（doc→null→false），activeTab 仍是 nesting，preview 仍可点回但不强制切回（避免丢失求解状态）。
+- **uiStore / uploadStore 解耦**（与 qtyStore 同设计原则）：PreviewPage 作为集成层用 subscribe 绑定。
+- **App.test.tsx beforeEach 必须 set uploadStore done+doc**：App mount 触发 PreviewPage mount → US-016 effect 按当前 uploadStore.status 对齐 nestingEnabled；若 idle 会把 beforeEach 设的 true 覆盖回 false。
+
+**Test results**: `npm run typecheck` 通过；`npm run test` 全绿（392 项，其中 PreviewPage.test.tsx 25 项含 US-016 8 项；App.test.tsx 7 项全绿）；`npm run build` 无报错。
+
+**未做浏览器验证**：本故事无 SVG/坐标变换（仅 store 联动 + setState），AC 仅要求 typecheck + 单测，故跳过 chrome-devtools-mcp；浏览器视觉回归（disabled 灰字 + cursor:not-allowed 随 status 切换）留作 US-021 自动 commit 集成时统一核对（届时 done→commit→切 nesting 端到端联调）。
+
+---
 
 
 
@@ -11,15 +33,5 @@ Started: 2026-08-09
 
 
 
-
-- `npm run test`（全量）：370/370 通过（含 ParsedPiecesView 19 / PreviewPage 16；既有 335 项无回归）。
-- 未做浏览器验证：本故事无 SVG/坐标变换（仅 DOM 结构 + 点击处理 + CSS），AC 仅要求 typecheck + 单测 + build；浏览器验证留作整体回归。ms-web :8000 已可启（PID 2304 旧进程占用），最新 build 已 serve（hash 一致）。
-
-## [US-015] uiStore 扩 nestingEnabled + TabBar 置灰（2026-08-11）
-
-- **改动文件**：materialSorting-web/src/store/uiStore.ts（+ nestingEnabled 字段 / + setNestingEnabled action / setTab 加 guard 用 get().nestingEnabled）；TabBar.tsx（超排 button disabled 闸三层双重防御）；style.css（+ .tab.disabled / .tab.disabled:hover #555 灰字）；uiStore.test.ts（+5 项测试，原 4 项 beforeEach 加 setNestingEnabled(false)、test 2/3/4 加 setNestingEnabled(true) 兜底 guard）；TabBar.test.tsx（+4 项测试，原 5 项 beforeEach 加 reset、test 3/4 加 setNestingEnabled(true)）；App.test.tsx（beforeEach 加 setNestingEnabled(true) 兜底 store guard 测原 nesting 渲染）；AGENTS.md + .docs/technical/agent-component-map.md 同步 US-015 关键约定 / 文件分工。
-- **关键不变量**：`setTab('nesting')` 在 `nestingEnabled===false` 时**静默不切**（store 层 guard 兜底）；`setTab('preview')` 永远允许（用户随时可回上传预览页）。三层双重防御：native `disabled` 属性（a11y / 键盘 tab 序列）→ TabBar `onClick` 内 `if (disabled) return`（合成事件 / devtools 旁路）→ store `setTab` guard（JS 旁路）。
-- **测试新增**：uiStore +5（默认 false / setNestingEnabled 切换 / 订阅者通知 / **setTab(nesting) false 时静默不切**（关键不变量）+ 解锁后生效 / setTab(preview) false 时仍可切）；TabBar +4（disabled 点击不调 setTab / disabled 视觉 .disabled+aria-disabled+native disabled / 启用后正常切换 / nestingEnabled 切换时 TabBar 重渲染）。
-- **测试结果**：`npm run typecheck` 通过；`npm run test`（全量）384/384 通过（uiStore 4→9 / TabBar 5→9 / App 6→7 修 beforeEach +1 setNestingEnabled 调整；既有 369 项无回归，新增 14 项含 5 项 store + 4 项 TabBar + 修正 App beforeEach 行为）；`npm run build` 无报错（static/ 产物更新 index-CmCu3NQx.js / index-D5o_SGFf.css）。
 - **未做浏览器验证**：本故事无 SVG/坐标变换（仅 button disabled 态 + CSS），AC 仅要求 typecheck + 单测 + build，故跳过 chrome-devtools-mcp；浏览器视觉回归（disabled 灰字 + cursor:not-allowed）留作 US-016 集成时统一核对。
 - **AGENTS.md / .docs 同步**：US-015 关键约定段已加（三层双重防御 / nestingEnabled 默认 false 由 PreviewPage 解锁 / 上传预览 Tab 永远可点 / 测试 beforeEach 必须重置）；agent-component-map.md US-001 关键不变量 #2/#5/#6 已扩、新增 US-015 落地段；文件分工注释 US-015 标记。

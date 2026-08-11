@@ -1,4 +1,5 @@
-// PreviewPage —— DXF 上传预览页容器（US-008 落地；US-014 集成模态 + 重传清零）。
+// PreviewPage —— DXF 上传预览页容器（US-008 落地；US-014 集成模态 + 重传清零；
+// US-016 联动 uiStore.nestingEnabled 解锁/锁定超排 Tab）。
 //
 // 职责：
 //   1. 左侧 UploadPanel（US-006）+ 右侧（SizeTabs + ParsedPiecesView）的双栏布局。
@@ -8,7 +9,9 @@
 //   4. uploadStore.doc.doc_id 变化（首次上传 / 重传 / reset）→ 联动 qtyStore：
 //      有 doc 时 hydrateDefault（每码每片默认 1），doc→null 时 resetQuantities。
 //      （US-014 重传清零的演进：旧母版数量不残留，新母版每片默认 1。）
-//   5. 不持有任何本地状态（store 是单一真相源；切 Tab 后状态保留：display:none 不卸载 + store 持久）。
+//   5. 联动 uiStore.setNestingEnabled（US-016）：subscribe uploadStore，按
+//      `status==='done' && doc!==null` 切 nestingEnabled；mount 时立即对齐初值。
+//   6. 不持有任何本地状态（store 是单一真相源；切 Tab 后状态保留：display:none 不卸载 + store 持久）。
 //
 // 设计原则（CLAUDE.md / AGENTS.md US-001 关键约定）：
 //   - 双页面常驻 DOM，display:none 切换 —— 本组件本身不挂 .hidden（由父 App 控制 .page.hidden）；
@@ -27,6 +30,18 @@
 //     绑定（与 qtyStore / uploadStore 完全解耦的设计原则一致）。
 //   - prevDocId 在 subscribe 闭包内 mutable（不依赖 React state），捕获 mount 时初始 doc_id。
 //
+// Tab 解锁联动（US-016 关键约定）：
+//   - subscribe uploadStore，按 `status==='done' && doc!==null` 切 setNestingEnabled；
+//     覆盖四路径：idle（默认 false）/ done+doc（true）/ error（false）/ reset（doc→null false）/
+//     重传（status 切 uploading 短暂 false，done 后切回 true）。
+//   - mount 时立即对齐初值（idle → false），避免迟到挂载 / 刷新恢复时残留旧解锁态。
+//   - **关键不变量（AC#3）**：setNestingEnabled 仅控 Tab「能否进入」，不强制切 Tab ——
+//     uiStore.setNestingEnabled 实现仅 `set({ nestingEnabled: b })`，不触碰 activeTab；
+//     若用户已在 nesting Tab 时 reset，Tab 仍可点回 preview（preview 永远可点）但不强制切回，
+//     避免丢失求解状态。
+//   - uiStore 与 uploadStore 解耦（与 qtyStore 同设计原则）：uploadStore 不知道 uiStore 存在，
+//     PreviewPage 作为集成层用 subscribe 绑定。
+//
 // 空态分支：
 //   - status === 'done' 且 doc 非空 → 挂载 SizeTabs + ParsedPiecesView
 //   - 其它（idle / uploading / error / done 但 doc=null 兜底）→ 显示空态提示卡片
@@ -40,8 +55,9 @@
 
 import { useEffect } from 'react';
 import type { JSX } from 'react';
-import { useUploadStore } from '../../store/uploadStore';
+import { useUploadStore, type UploadStatus } from '../../store/uploadStore';
 import { useQtyStore } from '../../store/qtyStore';
+import { useUiStore } from '../../store/uiStore';
 import type { ParsedDoc } from '../../types/parsed';
 import { ParsedPiecesView } from './ParsedPiecesView';
 import { PieceQtyDialog } from './PieceQtyDialog';
@@ -82,6 +98,37 @@ export function PreviewPage(): JSX.Element {
         prevDocId = nextDocId;
         syncQty(state.doc);
       }
+    });
+    return unsub;
+  }, []);
+
+  // Tab 解锁联动（US-016）：subscribe uploadStore，按 `status==='done' && doc!==null`
+  // 切 uiStore.setNestingEnabled；mount 时立即对齐初值（idle → false）。
+  //   - 覆盖路径：idle/uploading（false）/ done+doc（true）/ error（false）/
+  //     reset（doc→null false）/ 重传（uploading 短暂 false，done 切回 true）。
+  //   - 关键不变量（AC#3）：setNestingEnabled 仅控 Tab「能否进入」，不强制切 Tab ——
+  //     uiStore.setNestingEnabled 实现不触碰 activeTab，故用户在 nesting Tab 时 reset
+  //     不会被强制切回 preview（避免丢失求解状态）。
+  //   - 与 qtyStore 联动同模式：subscribe + mount 即对齐 + 卸载时 unsub。
+  //   - 调用 setNestingEnabled 前先判 next !== prev（get().nestingEnabled），避免无变化
+  //     时无谓 setState 触发订阅者通知（zustand 内部 Object.is 也会兜底，但显式判断
+  //     更省一次 set 调度）。
+  useEffect(() => {
+    const syncTab = (status: UploadStatus, doc: ParsedDoc | null): void => {
+      const next = status === 'done' && doc !== null;
+      if (useUiStore.getState().nestingEnabled !== next) {
+        useUiStore.getState().setNestingEnabled(next);
+      }
+    };
+
+    // 挂载即对齐：迟到挂载 / 刷新恢复时按当前 status 立即对齐（默认 idle → false）。
+    {
+      const s = useUploadStore.getState();
+      syncTab(s.status, s.doc);
+    }
+
+    const unsub = useUploadStore.subscribe((state) => {
+      syncTab(state.status, state.doc);
     });
     return unsub;
   }, []);

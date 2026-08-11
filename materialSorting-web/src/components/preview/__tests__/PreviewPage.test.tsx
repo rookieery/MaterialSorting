@@ -9,6 +9,14 @@
 //     reset（doc→null）联动 qtyStore.resetQuantities
 //   - 端到端：切码 → 点数量(片) → 切全局 + 确定 → 切回原码 → 置灰 title 含来源码
 //
+// US-016 新增（Tab 解锁联动）：
+//   - mount idle 时 setNestingEnabled(false)
+//   - done + doc → setNestingEnabled(true)
+//   - error → setNestingEnabled(false)
+//   - reset → setNestingEnabled(false)
+//   - 重传（doc_id 变化）短暂 false（uploading）后 true（done）
+//   - 关键不变量：setNestingEnabled(false) 不强制切 Tab（用户在 nesting Tab 时 reset 不切回）
+//
 // 测试模式参考 UploadPanel.test.tsx + App.test.tsx：渲染入 container，
 // 通过 uploadStore.setState 驱动分支，断言 DOM 结构。
 
@@ -19,6 +27,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { PreviewPage } from '../PreviewPage';
 import { useUploadStore } from '../../../store/uploadStore';
 import { useQtyStore } from '../../../store/qtyStore';
+import { useUiStore } from '../../../store/uiStore';
 import type { ParsedDoc, ParsedPiece } from '../../../types/parsed';
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -32,6 +41,9 @@ let root: Root | null = null;
 beforeEach(() => {
   useUploadStore.getState().reset();
   useQtyStore.getState().resetQuantities();
+  // US-016：重置 nestingEnabled 到默认 false（避免前一个测试 setNestingEnabled(true) 残留）
+  useUiStore.getState().setNestingEnabled(false);
+  useUiStore.getState().setTab('preview');
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -50,6 +62,8 @@ afterEach(() => {
   document.body.innerHTML = '';
   useUploadStore.getState().reset();
   useQtyStore.getState().resetQuantities();
+  useUiStore.getState().setNestingEnabled(false);
+  useUiStore.getState().setTab('preview');
   vi.restoreAllMocks();
 });
 
@@ -362,5 +376,139 @@ describe('PreviewPage (US-014) 端到端', () => {
     expect(disabledQty.tagName).toBe('SPAN');
     expect(disabledQty.classList.contains('disabled')).toBe(true);
     expect(disabledQty.getAttribute('title')).toContain('30');
+  });
+});
+
+// US-016 Tab 解锁联动（PreviewPage subscribe uploadStore → uiStore.setNestingEnabled）
+describe('PreviewPage (US-016) Tab 解锁联动', () => {
+  it('mount 时 status=idle → setNestingEnabled(false)（默认锁定）', () => {
+    // mount 前先污染 nestingEnabled=true，验证 mount 时会被对齐回 false
+    useUiStore.getState().setNestingEnabled(true);
+    expect(useUiStore.getState().nestingEnabled).toBe(true);
+    renderPage();
+    expect(useUiStore.getState().nestingEnabled).toBe(false);
+  });
+
+  it('status=done + doc 非 null → setNestingEnabled(true)', () => {
+    useUploadStore.setState({
+      status: 'done',
+      doc: makeDoc(),
+      activeSize: 28,
+    });
+    renderPage();
+    expect(useUiStore.getState().nestingEnabled).toBe(true);
+  });
+
+  it('status=error → setNestingEnabled(false)', () => {
+    useUploadStore.setState({
+      status: 'done',
+      doc: makeDoc(),
+      activeSize: 28,
+    });
+    renderPage();
+    expect(useUiStore.getState().nestingEnabled).toBe(true);
+    // 切 error → 锁回
+    act(() => {
+      useUploadStore.setState({ status: 'error', error: '解析失败' });
+    });
+    expect(useUiStore.getState().nestingEnabled).toBe(false);
+  });
+
+  it('uploadStore.reset() → setNestingEnabled(false)（doc→null 触发）', () => {
+    useUploadStore.setState({
+      status: 'done',
+      doc: makeDoc(),
+      activeSize: 28,
+    });
+    renderPage();
+    expect(useUiStore.getState().nestingEnabled).toBe(true);
+    act(() => {
+      useUploadStore.getState().reset();
+    });
+    expect(useUiStore.getState().nestingEnabled).toBe(false);
+  });
+
+  it('重传（doc_id 变化）短暂 false（uploading）后 true（done）', () => {
+    // 首次解析：done + doc1 → true
+    useUploadStore.setState({
+      status: 'done',
+      doc: makeDoc(),
+      activeSize: 28,
+    });
+    renderPage();
+    expect(useUiStore.getState().nestingEnabled).toBe(true);
+    // 用户重传：status 切 uploading（doc_id 仍旧，但 status 不再 done）→ false
+    act(() => {
+      useUploadStore.setState({ status: 'uploading', error: null });
+    });
+    expect(useUiStore.getState().nestingEnabled).toBe(false);
+    // 新解析完成：doc_id 变化，status=done → true
+    act(() => {
+      useUploadStore.setState({
+        status: 'done',
+        doc: { doc_id: 'newid', filename: 'M9999.dxf', sizes: makeDoc().sizes },
+        activeSize: 28,
+        error: null,
+      });
+    });
+    expect(useUiStore.getState().nestingEnabled).toBe(true);
+  });
+
+  it('关键不变量：setNestingEnabled(false) 不强制切 Tab（用户在 nesting Tab 时 reset 不切回）', () => {
+    // 模拟用户已成功上传并切到 nesting Tab
+    useUploadStore.setState({
+      status: 'done',
+      doc: makeDoc(),
+      activeSize: 28,
+    });
+    renderPage();
+    useUiStore.getState().setNestingEnabled(true);
+    useUiStore.getState().setTab('nesting');
+    expect(useUiStore.getState().activeTab).toBe('nesting');
+    // 用户在 nesting Tab 点 reset（如重传）→ setNestingEnabled(false) 但 activeTab 不被强制切回
+    act(() => {
+      useUploadStore.getState().reset();
+    });
+    expect(useUiStore.getState().nestingEnabled).toBe(false);
+    // 关键不变量：activeTab 仍是 nesting（setNestingEnabled 仅控「能否进入」，不强制切出）
+    expect(useUiStore.getState().activeTab).toBe('nesting');
+  });
+
+  it('uploading 中 → setNestingEnabled(false)（mount 即对齐）', () => {
+    // mount 时 status=uploading → false（无可用解析数据）
+    useUploadStore.setState({ status: 'uploading' });
+    useUiStore.getState().setNestingEnabled(true); // 污染
+    renderPage();
+    expect(useUiStore.getState().nestingEnabled).toBe(false);
+  });
+
+  it('已 done 后切 uploading（重传）→ false，再切 done → true（状态机循环）', () => {
+    useUploadStore.setState({
+      status: 'done',
+      doc: makeDoc(),
+      activeSize: 28,
+    });
+    renderPage();
+    expect(useUiStore.getState().nestingEnabled).toBe(true);
+    // 重传 uploading
+    act(() => {
+      useUploadStore.setState({ status: 'uploading', error: null });
+    });
+    expect(useUiStore.getState().nestingEnabled).toBe(false);
+    // 失败
+    act(() => {
+      useUploadStore.setState({ status: 'error', error: '网络错' });
+    });
+    expect(useUiStore.getState().nestingEnabled).toBe(false);
+    // 重试成功
+    act(() => {
+      useUploadStore.setState({
+        status: 'done',
+        doc: { doc_id: 'retry', filename: 'M1787.dxf', sizes: makeDoc().sizes },
+        activeSize: 28,
+        error: null,
+      });
+    });
+    expect(useUiStore.getState().nestingEnabled).toBe(true);
   });
 });
