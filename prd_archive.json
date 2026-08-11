@@ -338,6 +338,12 @@
         "title": "展示+导出切新版裁片（5 层）",
         "description": "超排页 NestSVG 与最终导出（PNG/R12-DXF）的每片裁片均展示毛版+净版+内部线+刺口+布纹线 5 层（与上传预览页同口径）；求解仍用外轮廓做碰撞。PNG 与 DXF 都含 5 层（D4）。详见 tasks/prd-nesting-tab-linkage.md US-024。",
         "passes": true
+      },
+      {
+        "id": "US-024",
+        "title": "展示+导出切新版裁片（5 层）",
+        "description": "超排页 NestSVG 与最终导出（PNG/R12-DXF）的每片裁片均展示毛版+净版+内部线+刺口+布纹线 5 层（与上传预览页同口径）；求解仍用外轮廓做碰撞。PNG 与 DXF 都含 5 层（D4）。详见 tasks/prd-nesting-tab-linkage.md US-024。\n\n具体任务：\n1. materialSorting-server/src/materialsorting/web/server.py _commit_to_nesting_sync + nesting_engine/pieces_export.py — intermediate 每 piece 加 net_polygon/internal_lines/notches/grain_line（从 PieceOutline 透传，US-003 已解析）。副作用（D11）：GET /api/ptypes 代表裁片随之带 5 层字段 → US-018 缩略图与放大预览自动从 v1 外轮廓升级为 5 层，US-018 代码无需改动。\n2. materialSorting-server/src/materialsorting/web/solver.py build_instance pid_meta[pid] 加这 4 字段；/ws/solve manifest 每 piece 加；materialSorting-web/src/types/ws.ts ManifestMsg.pieces 同步扩。\n3. materialSorting-web/src/components/nests/NestSVG.tsx — 每片按 manifest 增加净版（绿 dashed）+内部线（橙）+刺口短线段（黄）+布纹线（红 dashed）；复用 PiecePreviewSVG 5 层配色提取到 constants/colors.ts 共享；翻转组 scale(1,-1)+translate(0 gate) 不变；5 层均在翻转组内。\n4. materialSorting-server/src/materialsorting/web/export.py — PNG 叠加 5 层（与 NestSVG 视觉一致）；R12-DXF 多 layer（外轮廓+净版 layer14+内部线 layer8+刺口 layer4+布纹线 layer7，各自独立 POLYLINE/POINT entity）。\n\n验收标准：\n- 关键不变量：求解用 polygon（毛版外轮廓，已 erode）不变；net/internal/notches/grain 仅渲染/导出透传，不参与 sparrow NFP 碰撞。\n- 性能保护：5 层只在 manifest 到达时建一次，frame 切换只 setAttribute('display'/'points'/'transform') 不重建 DOM；128 片×5 节点 ~10fps 可承受。\n- ET2008 兼容性硬验收（D4）：实装后用 ET2008 真机读 R12-DXF，确认附加 layer 不被误读为裁切轮廓（裁床只切外轮廓 layer1）；若误读则回退为「DXF 仅外轮廓、PNG 含 5 层」并升级用户决策。\n- NestSVG ≥5 层渲染断言（manifest 含 net→渲染 net 节点 / 不含则不渲染 / dashed style 正确 / 5 层节点数）+ useSolveRun.test.tsx manifest 分发同步。\n- 浏览器验证：超排页 NestSVG 每片含 5 层（与 PreviewPage PiecePreviewSVG 视觉一致）；导出 PNG 含 5 层、DXF 多 layer。\n- cd materialSorting-web && npm run typecheck / npm run test 全绿；python -c \"from materialsorting.web.server import app\" 导入通过。\n- 依赖 US-020 + US-022。",
+        "passes": true
       }
     ]
   }

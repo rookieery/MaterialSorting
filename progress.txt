@@ -3,33 +3,6 @@ Started: 2026-08-09
 
 
 
-**未做浏览器视觉验证**：chrome-devtools-mcp 工具不在本会话工具集；AC 的「求解后屏幕彩色无灰」视觉回归已用代码级断言替代（10/10 ptype 查表均非 #bbbbbb）。版师屏幕定色 + ET2008 导出色觉核对留作后续整体回归。
----
-## US-024 (2026-08-11) — 展示+导出切新版裁片（5 层）
-**目标**：超排页 NestSVG + 最终导出（PNG/R12-DXF）每片裁片均展示毛版+净版+内部线+刺口+布纹线 5 层（与上传预览页同口径）；求解仍用外轮廓做碰撞。
-**实现要点**:
-1. **后端 5 层管线全链路打通**：
-   - `dxf_parser/export_dxf.py`：`write_piece_dxf` 写 5 层（layer1 毛版闭合 POLYLINE / layer14 净版闭合 POLYLINE / layer8 内部线多条 POLYLINE / layer4 刺口 POINT / layer7 布纹线 LINE）。notch 仅存 POINT 位置，法线丢弃。`main()` 改用 `collect_pieces_with_details` 取代 `explore.collect_pieces`。
-   - `nesting_bounds/load_pieces.py`：扩 `NestPiece` 加 4 字段（net_polygon / internal_lines / notches / grain_line，default_factory 向后兼容）；新增 `_read_piece_full(dxf_path)` 读 5 层 + notch 法线按 outline 最近边重算（与 collect._nearest_edge_with_normal 同算法）；新增 `_rotate_normal / _grain_rotation_deg / _apply_layer_transforms` 把 5 层原始数据按 rotate→mirror→normalize 链统一变换；`load_nest_pieces` L 与 R 共享 transform 链。
-   - `nesting_engine/pieces_export.py` + `web/server.py _commit_to_nesting_sync`：intermediate 每片加 4 字段（与 NestPiece 同名透传，`.get()` 默认空/None 兼容旧 intermediate）。
-   - `web/solver.py build_instance`：pid_meta 加 4 字段（`.get()` 兼容）。
-   - `web/server.py ws_solve`：manifest pieces[] 加 4 字段。
-2. **前端 NestSVG 5 层渲染（命令式 setAttribute）**：
-   - `types/piece.ts`：PieceInfo 加可选 `net_polygon? / internal_lines? / notches? / grain_line?`；新增 `Notch = [number, number, number, number]`（x,y,nx,ny）+ `GrainLine = [number, number, number, number]` 类型。
-   - `constants/colors.ts`：新增 `LAYER5_COLORS`（ROUGH_FILL/ROUGH_STROKE/NET/INTERNAL/NOTCH/GRAIN）+ 导出 `NOTCH_LEN_MM = 8`，被 PiecePreviewSVG + NestSVG 共用（视觉一致）。
-   - `components/preview/PiecePreviewSVG.tsx`：5 层颜色字面量改 import LAYER5_COLORS（行为不变）。
-   - `components/nests/NestSVG.tsx`：PieceEntry 增 netEl/internalEls/notchEls/grainEl。manifest 到达时按数据有无创建对应节点（pointerEvents='none'，不干扰毛版 mousemove tooltip）；frame 渲染 placed→5 层 setAttribute('points'/'x1'/'y1'/'x2'/'y2')+display=''，unplaced→display='none'。notch 端点 = `P ± NOTCH_LEN_MM/2 * unit_normal` 各按 transformPt 变换（与 lib/geometry pointsStr 同公式单点版）；grain 端点按 transformPt 变换。
-3. **导出 PNG + R12-DXF 5 层（web/export.py）**：
-   - `LAYER5_COLOR_NET/INTERNAL/NOTCH/GRAIN` 字面量与前端 LAYER5_COLORS 同色（绿 #33cc33 / 橙 #ff8c1a / 黄 #ffd700 / 红 #e53e3e）。
-   - `_transform_normal(nx, ny, rot)` 法线随片旋转。
-   - `placed_to_world` 扩 5 层变换（notch 点按点变换 + 法线按向量旋转）。
-   - `render_png` 5 层叠加（毛版半透明蓝 + 净版绿虚线 + 内部线橙 + 刺口黄短线段 NOTCH_LEN_MM=8 + 布纹线红虚线）。
-   - `write_marker_dxf` 多 layer（outline layer1 + net layer14 + internal layer8 + notch layer4 POINT + grain layer7 LINE），各自独立 POLYLINE/POINT/LINE entity（R12 + POLYLINE 非 LWPOLYLINE，ET2008 兼容）。
-**验证**:
-- `cd materialSorting-web && npm run typecheck` ✅；`npm run test` 33 文件 497/497 全绿 ✅（NestSVG.test.tsx +8 项 5 层渲染 + useSolveRun.test.tsx +1 项 manifest 分发保真）。
-- `python -c "from materialsorting.web.server import app"` 导入通过 ✅。
-- 后端 e2e smoke 176 片全链路：master → collect（layer1+14+8+4+7 五层 IR）→ write_piece_dxf（5 层单裁片 DXF）→ _read_piece_full（5 层读 + notch 法线重算）→ load_nest_pieces（共享 transform 链 L+R 镜像）→ intermediate.json 5 层字段（前片_30：net=179pts/internal=4/notches=8/grain 有；分布 net=128/128 internal=88/128 notches=104/128 grain=128/128）→ manifest 5 层 → export PNG 5 层叠加 + R12-DXF layer id 集 {0,1,4,7,8,14} 全齐。
-- `/api/ptypes` 10 ptype 代表裁片带 5 层（US-018 缩略图自动从 v1 外轮廓升级为 5 层，US-018 代码无需改动 —— D11 副作用验证）。
-- 5 层中 4 层仅渲染/导出透传不参与 sparrow NFP 碰撞（关键不变量 AC#1）；5 层节点只在 manifest 到达时建一次 frame 切换只 setAttribute 不重建 DOM（AC#2 性能保护）。
+
 **未做浏览器视觉验证**：chrome-devtools-mcp 工具不在本会话工具集；NestSVG 5 层渲染（绿 dashed 净版 + 橙内部线 + 黄刺口 + 红 dashed 布纹线）已用 8 项 NestSVG 单测 + e2e smoke 验证 5 层节点存在 + setAttribute 写入 + display 切换 + rotation transform 正确；导出 PNG/DXF 5 层已用 ezdxf 回读 layer id 集 + render_png 调用栈验证。版师屏幕视觉回归 + ET2008 真机读 R12-DXF（D4 硬验收）留作后续整体回归。
 ---
