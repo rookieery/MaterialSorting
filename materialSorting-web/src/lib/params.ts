@@ -1,8 +1,10 @@
 // ControlPanel 表单状态 + collectParams 纯函数。
 //
-// 与旧 vanilla 实现 collectParams() 字段级一致：
-//   1. params 四档（d_ext/d_int/tol_ext/tol_int）空串 → 0 默认；非空 → parseFloat。
-//   2. per_type 仅在 input.trim() !== '' 时写入；空 → 整个 per_type 序列化为 null。
+// US-019（主面板精简）：删除 d_ext/d_int/tol_ext/tol_int 四档主面板输入，全交高级配置弹窗
+// （per_type 显式覆盖 + constraints.MAX_OVERLAP/ROTATION_TOL 兜底）。collectParams 现在 params
+// 永远返回全 0，per_type 解析逻辑保留不变（与旧 vanilla 实现 inp.value.trim() !== '' 一致）。
+//
+// 不变量：后端 build_instance 入参契约不变（params 仍传，只是全 0；per_type 仍传）。
 //
 // 字段都按字符串存储（对应 input.value），collectParams 做解析；这样「空串 vs "0"」可区分
 // （per_type 必须：空 = 继承，"0" = 显式 0）。
@@ -10,7 +12,7 @@
 import { V03_PTYPES } from '../constants/v03';
 import type { PerTypeOverrides, PerTypeOverride, SolveParams } from '../types/v03';
 
-/** 单片型的两条高级覆盖输入（d / tol 各一字符串，空串 = 继承两档）。 */
+/** 单片型的两条高级覆盖输入（d / tol 各一字符串，空串 = 继承 v0.3 默认）。 */
 export interface PerTypeFormValue {
   d: string;
   tol: string;
@@ -31,21 +33,16 @@ export interface FormState {
   multi_seed: boolean;
   /** 多 seed 数量字符串（旧 index.html `#seed_count`，默认 "3"，clamp [2,6]）。 */
   seed_count: string;
-  /** 外片重合 mm。 */
-  d_ext: string;
-  /** 内片重合 mm。 */
-  d_int: string;
-  /** 外片旋转公差 °。 */
-  tol_ext: string;
-  /** 内片旋转公差 °。 */
-  tol_int: string;
-  /** 每片型高级覆盖（V03_PTYPES 全量 key，d/tol 各一字符串）。 */
+  /**
+   * 每片型高级覆盖（V03_PTYPES 全量 key，d/tol 各一字符串）。
+   * US-019 起：内外两档全局输入删除，per_type 是唯一的 d/tol 覆盖入口（高级配置弹窗）。
+   */
   per_type: Record<string, PerTypeFormValue>;
 }
 
 /**
- * 默认值（US-017 起 sizes 默认空数组，强制用户勾选；其余字段沿用旧 index.html：
- * d_int=10，其余 0；time=60，seed=0；multi_seed 关闭，seed_count=3）。
+ * 默认值（US-017 起 sizes 默认空数组，强制用户勾选；time=60，seed=0；
+ * multi_seed 关闭，seed_count=3；per_type 全空 = 继承 v0.3 默认）。
  */
 export const DEFAULT_FORM: FormState = {
   sizes: [],
@@ -53,21 +50,8 @@ export const DEFAULT_FORM: FormState = {
   seed: '0',
   multi_seed: false,
   seed_count: '3',
-  d_ext: '0',
-  d_int: '10',
-  tol_ext: '0',
-  tol_int: '0',
   per_type: Object.fromEntries(V03_PTYPES.map((pt) => [pt, { d: '', tol: '' }])),
 };
-
-/**
- * 解析数字字符串：parseFloat 失败（NaN / 空白）→ def。与旧 vanilla 实现 `num(id, def)` 一致。
- * 注：parseFloat('') === NaN；parseFloat('  ') === NaN；parseFloat('1abc') === 1（与旧版同行为）。
- */
-function num(s: string, def: number): number {
-  const v = parseFloat(s);
-  return Number.isNaN(v) ? def : v;
-}
 
 /** collectParams 输出（与旧 vanilla 实现 collectParams 返回值结构一致）。 */
 export interface CollectedParams {
@@ -77,20 +61,21 @@ export interface CollectedParams {
 }
 
 /**
- * 把 FormState 解析为 { params, per_type }（与旧 vanilla 实现 collectParams 字段级一致）。
+ * 把 FormState 解析为 { params, per_type }。
  *
  * 不变量：
- *   - params.d_ext/d_int/tol_ext/tol_int：空 → 0（与旧 vanilla 实现 num(id, 0) 一致）。
+ *   - params：US-019 起永远返回全 0（主面板内外两档输入删除，v0.3 上限交给 per_type 显式
+ *     覆盖 + constraints.MAX_OVERLAP/ROTATION_TOL 兜底）。
  *   - per_type：仅当某 ptype 的 d 或 tol 至少一档非空时才创建 entry；
  *     d / tol 各自仅当 trim() !== '' 时写入；最终若 per_type 整体为空 → null。
  *   - 整体 trim 在 d/tol 单字段层做（与旧 vanilla 实现 inp.value.trim() !== '' 一致）。
  */
 export function collectParams(form: FormState): CollectedParams {
   const params: SolveParams = {
-    d_ext: num(form.d_ext, 0),
-    d_int: num(form.d_int, 0),
-    tol_ext: num(form.tol_ext, 0),
-    tol_int: num(form.tol_int, 0),
+    d_ext: 0,
+    d_int: 0,
+    tol_ext: 0,
+    tol_int: 0,
   };
 
   const per_type: PerTypeOverrides = {};

@@ -1,0 +1,39 @@
+{
+  "permissions": {
+    "allow": [],
+    "additionalDirectories": []
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/verify-api.mjs",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash .claude/hooks/check-refactor-threshold.sh",
+            "timeout": 30
+          }
+        ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": ">&2 echo '📋 [Todo Check] 请检查本次任务是否有未完成项、遇到的问题或改进建议需要记录到 .docs/todo.md'"
+          }
+        ]
+      }
+    ]
+  }
+}

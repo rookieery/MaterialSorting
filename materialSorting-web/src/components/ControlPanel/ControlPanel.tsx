@@ -13,12 +13,13 @@
 // US-017 起 SizePicker 从 uploadStore.doc 动态读码号（doc=null fallback SIZES），
 // DEFAULT_FORM.sizes 改空数组强制用户选；form.sizes 可能含 null（通用码），handleStart /
 // handleExport 过滤 null 保持下游 WS/export 契约；doc=null 时 StatusLine 增「请先在上传预览页解析母版」提示。
+// US-019 删除主面板内外两档全局重合/旋转输入（d_ext/d_int/tol_ext/tol_int），全交高级配置弹窗
+// （PerTypeOverrides 按钮 → PerTypeOverridesModal）；collectParams params 永远全 0。
 
 import { useState } from 'react';
 import { useExport } from '../../hooks/useExport';
 import type { ExportFmt } from '../../lib/download';
 import { useUploadStore } from '../../store/uploadStore';
-import { ErodeInputs } from './ErodeInputs';
 import { ExportButtons } from './ExportButtons';
 import { MultiSeedControls } from './MultiSeedControls';
 import { ParamForm } from './ParamForm';
@@ -27,7 +28,6 @@ import { PresetButtons } from './PresetButtons';
 import { SizePicker } from './SizePicker';
 import { StartButton } from './StartButton';
 import { StatusLine } from './StatusLine';
-import { ToleranceInputs } from './ToleranceInputs';
 import {
   collectParams,
   DEFAULT_FORM,
@@ -120,18 +120,6 @@ export function ControlPanel({ onStart, solving, status, onStatus }: ControlPane
         onMulti={(multi_seed) => patch({ multi_seed })}
         onCount={(seed_count) => patch({ seed_count })}
       />
-      <ErodeInputs
-        d_ext={form.d_ext}
-        d_int={form.d_int}
-        onDExt={(d_ext) => patch({ d_ext })}
-        onDInt={(d_int) => patch({ d_int })}
-      />
-      <ToleranceInputs
-        tol_ext={form.tol_ext}
-        tol_int={form.tol_int}
-        onTolExt={(tol_ext) => patch({ tol_ext })}
-        onTolInt={(tol_int) => patch({ tol_int })}
-      />
       <PresetButtons onPreset={(seconds) => patch({ time: String(seconds) })} />
       <PerTypeOverrides values={form.per_type} onChange={(per_type) => patch({ per_type })} />
       <StartButton solving={solving} onClick={handleStart} />
@@ -140,7 +128,7 @@ export function ControlPanel({ onStart, solving, status, onStatus }: ControlPane
       <div className="hint">
         density = 原面积口径（与 90% 生死线一致）；sparrow 口径见状态行。
         <br />
-        内部片 = 单排/双排/火机袋/裤耳；erode/旋转受 v0.3 每片型上限约束。
+        重合 erode / 旋转公差按每片型 v0.3 上限覆盖 —— 见「高级配置」弹窗。
         <br />
         实时图 ~10fps 重绘，全量中间帧存档，结束后可拖回放。
       </div>

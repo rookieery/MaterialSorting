@@ -1,6 +1,6 @@
 // US-004 ControlPanel integration tests:
 //   AC#1 SizePicker renders 8 size chips, all default-checked
-//   AC#2 defaults match legacy index.html (d_int=10, others 0; time=60, seed=0; multi_seed=false, seed_count=3)
+//   AC#2 defaults match legacy index.html (time=60, seed=0; multi_seed=false, seed_count=3)
 //   AC#3 PresetButtons one-click fill 120 / 600
 //   AC#4 PerTypeOverrides renders V03_TABLE 10 rows, internal ptypes badged
 //   AC#6 click Start -> onStart fires; payload fields match collectParams
@@ -9,6 +9,10 @@
 // US-005 additions:
 //   AC#1 multi_seed checkbox + seed_count input render with legacy defaults
 //   AC#1 toggle multi_seed + edit seed_count -> onStart.seed_count matches parseSeedCount
+//
+// US-019 additions:
+//   - 主面板不再渲染 d_ext/d_int/tol_ext/tol_int 输入（内外两档全交高级配置弹窗）。
+//   - cfg.params 永远全 0（collectParams 主面板输入删除后兜底）。
 
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import { StrictMode } from "react";
@@ -90,18 +94,32 @@ describe("ControlPanel (US-004)", () => {
     for (const c of checkboxes) expect(c.checked).toBe(false);
   });
 
-  it("AC#2 defaults match legacy index.html (d_int=10, others 0; time=60; seed=0; multi_seed=false; seed_count=3)", () => {
+  it("AC#2 defaults match legacy index.html (time=60; seed=0; multi_seed=false; seed_count=3)", () => {
     renderPanel();
     const get = (id: string) => container!.querySelector<HTMLInputElement>("#" + id)!;
-    expect(get("d_ext").value).toBe("0");
-    expect(get("d_int").value).toBe("10");
-    expect(get("tol_ext").value).toBe("0");
-    expect(get("tol_int").value).toBe("0");
+    // US-019：d_ext/d_int/tol_ext/tol_int 主面板输入已删除，不应在 DOM 中
+    expect(container!.querySelector("#d_ext")).toBeNull();
+    expect(container!.querySelector("#d_int")).toBeNull();
+    expect(container!.querySelector("#tol_ext")).toBeNull();
+    expect(container!.querySelector("#tol_int")).toBeNull();
     expect(get("time").value).toBe("60");
     expect(get("seed").value).toBe("0");
     // US-005: multi_seed / seed_count defaults
     expect(get("multi_seed").checked).toBe(false);
     expect(get("seed_count").value).toBe("3");
+  });
+
+  it("US-019 AC#6 主面板不再渲染内外两档输入（d_ext/d_int/tol_ext/tol_int）", () => {
+    renderPanel();
+    // 主面板精简：内外两档全局重合/旋转输入删除，全交高级配置弹窗
+    expect(container!.querySelector("#d_ext")).toBeNull();
+    expect(container!.querySelector("#d_int")).toBeNull();
+    expect(container!.querySelector("#tol_ext")).toBeNull();
+    expect(container!.querySelector("#tol_int")).toBeNull();
+    // 也不再渲染 ErodeInputs / ToleranceInputs 的字段（label 文案「重合 erode」「旋转公差」）
+    expect(container!.textContent).not.toContain("内/外两档");
+    // PerTypeOverrides 按钮仍在（高级配置入口）
+    expect(container!.querySelector(".per-type-btn")).not.toBeNull();
   });
 
   it("AC#3 PresetButtons one-click fill 120 / 600", () => {
@@ -158,7 +176,7 @@ describe("ControlPanel start flow (US-004)", () => {
     expect(cfg.time).toBe(60);
     expect(cfg.seed).toBe(0);
     expect(cfg.seed_count).toBe(1); // multi_seed 默认 false → 1
-    expect(cfg.params).toEqual({ d_ext: 0, d_int: 10, tol_ext: 0, tol_int: 0 });
+    expect(cfg.params).toEqual({ d_ext: 0, d_int: 0, tol_ext: 0, tol_int: 0 });
     expect(cfg.per_type).toBeNull();
   });
 

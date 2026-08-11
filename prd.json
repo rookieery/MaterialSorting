@@ -2,16 +2,10 @@
   "branchName": "ralph/nesting-tab-linkage",
   "stories": [
     {
-      "id": "US-018",
-      "title": "高级配置弹窗（按钮→table+片型缩略图+放大预览）",
-      "description": "把现有 <details> 折叠的「每片型覆盖」改成「按钮→弹窗 table」，表头列=片型缩略图（点击放大预览）+片型名、两行=重合/旋转。详见 tasks/prd-nesting-tab-linkage.md US-018（D10/D11）。\n\n具体任务：\n1. 新建 materialSorting-web/src/components/ControlPanel/PerTypeOverridesModal.tsx — 声明式受控 Portal（参考 PieceQtyDialog/PieceZoomModal），订阅 controlPanelStore.modal:'per_type'|null（controlPanelStore 或 uiStore 加字段+open/close）。\n2. 新建 materialSorting-web/src/components/ControlPanel/PtypePreviewModal.tsx — 点击表头缩略图触发（controlPanelStore 加 previewPtype:ptype|null + openPreviewPtype/closePreviewPtype）；ptype-keyed 无尺码维度，复用 PiecePreviewSVG 全量渲染（layer-aware）；✕/遮罩/ESC 关闭；叠在高级配置弹窗之上（z-index 更高，关闭时仅关自身、底层草稿保留）。\n3. materialSorting-web/src/components/ControlPanel/PerTypeOverrides.tsx — 改造为按钮触发器 <button class=per-type-btn onClick={openModal('per_type')}>高级配置：每片型覆盖</button>；不再渲染 <details>；保留 values/onChange 契约。\n4. materialSorting-web/src/components/preview/PiecePreviewSVG.tsx — 加 compact?:boolean prop（compact 时仅按数据画轮廓 layer-aware、关 A/B/C 标注、小尺寸 fit-to-cell）；非 compact 行为不变（向后兼容 PieceZoomModal 调用）。\n5. PerTypeOverridesModal 挂载时 fetch GET /api/ptypes（US-020）取 representatives 存本地 state 渲染表头缩略图；loading 占位、fetch 失败降级为片型名文字（不阻塞配置）。\n6. materialSorting-web/src/style.css — 加 .per-type-overlay/.per-type-modal/.per-type-table/.per-type-btn/.ptype-thumb/.ptype-preview-overlay/.ptype-preview-modal 全套样式（暗背景 #26282e + #2ea06c，与 PieceQtyDialog 同色系）；表格 overflow-x:auto；缩略图 cell 固定 64×64 居中、cursor:zoom-in。\n7. 表格布局：thead 列=V03_PTYPES 10 片型（每列缩略图+片型名，不含内外徽章）；tbody 行=2 行（重合 input + 旋转 input），空 placeholder 提示 v0.3 上限（d≤V03_TABLE[pt].d, t≤V03_TABLE[pt].tol）。\n8. 草稿+确定模式：从 form.per_type 读初值（D7 预填：INTERNAL_TYPES 重合=10/旋转 0，其余 0/0）；确定回写 form.per_type+关闭，取消/遮罩/ESC 丢弃。两层 modal 各自独立 ESC（放大预览打开时 ESC 只关放大预览）。\n\n验收标准：\n- 缩略图/放大 layer-aware（D11）：v1 仅外轮廓（representative 只有 polygon），US-024 后数据带 5 层则画 5 层，代码无需改。\n- 点击表头缩略图打开 PtypePreviewModal；fetch /api/ptypes 失败降级不阻塞重合/旋转配置。\n- PerTypeOverridesModal ≥14 项单测（含挂载 fetch /api/ptypes、fetch 失败降级、点击缩略图开 PtypePreviewModal）+ PtypePreviewModal ≥6 项单测。\n- cd materialSorting-web && npm run typecheck / npm run test 全绿 / npm run build 无报错。\n- 依赖 US-020（GET /api/ptypes 提供代表裁片数据）。",
-      "passes": true
-    },
-    {
       "id": "US-019",
       "title": "ControlPanel 主面板精简（删内外两档+片名）",
       "description": "删除主面板内外两档全局重合/旋转输入 + 裁片名 + 内部/外部区分，全交高级配置弹窗。详见 tasks/prd-nesting-tab-linkage.md US-019。\n\n具体任务：\n1. materialSorting-web/src/components/ControlPanel/ControlPanel.tsx — 删除 <ErodeInputs> + <ToleranceInputs> 渲染；保留 <PerTypeOverrides>（US-018 改造为按钮）+ <ParamForm> + <MultiSeedControls> + <SizePicker> + <PresetButtons> + <StartButton> + <StatusLine> + <ExportButtons>。\n2. materialSorting-web/src/lib/params.ts — collectParams 改为 params={d_ext:0,d_int:0,tol_ext:0,tol_int:0}（默认全 0，不再从 form 读两档）；FormState 删 d_ext/d_int/tol_ext/tol_int；DEFAULT_FORM 同步删；per_type 解析逻辑保留不变。\n3. 删除 materialSorting-web/src/components/ControlPanel/ErodeInputs.tsx + ToleranceInputs.tsx（含 __tests__）；CSS 规则保留不删（向后兼容）。\n4. 同步 params.test.ts（params 永远全 0 / per_type 不变）与 ControlPanel.test.tsx（删两档用例、新增「不再渲染 d_ext/d_int」断言）。\n\n验收标准：\n- 关键不变量：后端 build_instance 入参契约不变（params 仍传全 0、per_type 仍传），后端无需改动。\n- 主面板不再渲染 d_ext/d_int/tol_ext/tol_int 输入。\n- cd materialSorting-web && npm run typecheck / npm run test 全绿 / npm run build 无报错。\n- 依赖 US-018。",
-      "passes": false
+      "passes": true
     },
     {
       "id": "US-021",

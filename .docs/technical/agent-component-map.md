@@ -388,13 +388,11 @@ materialSorting-web/
 | `src/constants/sizes.ts` | `SIZES = [28,29,30,31,33,34,35,36]`（M1787 8 码跳 32；与后端 `nesting_bounds.DEFAULT_SIZES` 一致） |
 | `src/constants/colors.ts` | `PHASE_COLORS`（exploring/compressing/final）+ `SEED_COLORS`（6 seed；US-005 ConvergenceCurve 消费） |
 | `src/constants/v03.ts` | `V03_TABLE` 全 10 片型工艺上限（d / tol / internal；与后端 `constraints.py MAX_OVERLAP / ROTATION_TOL` 1:1）+ `V03_PTYPES` 顺序 |
-| `src/lib/params.ts` | `FormState`（含 multi_seed/seed_count；US-017 起 `sizes: (number\|null)[]`、`DEFAULT_FORM.sizes=[]` 强制用户选）+ `DEFAULT_FORM` + `collectParams(form)` 纯函数（与旧 vanilla 实现 字段级一致）+ `parseSeed / parseTime / parseSeedCount` |
-| `src/components/ControlPanel/ControlPanel.tsx` | 顶层面板：持 form state；StartButton 触发校验 + collectParams + onStart(cfg) 透传到 App（cfg 含 seed_count）；US-017 订阅 uploadStore.doc，doc=null 时 StatusLine 增「请先在上传预览页解析母版」提示，handleStart/handleExport 过滤 form.sizes 中的 null（保持下游 WS/export 的 number[] 契约） |
+| `src/lib/params.ts` | `FormState`（US-019 起：删 d_ext/d_int/tol_ext/tol_int 字段，per_type 是唯一 d/tol 入口）+ `DEFAULT_FORM` + `collectParams(form)` 纯函数（US-019 起 params 永远全 0，per_type 解析逻辑保留）+ `parseSeed / parseTime / parseSeedCount` |
+| `src/components/ControlPanel/ControlPanel.tsx` | 顶层面板：持 form state；StartButton 触发校验 + collectParams + onStart(cfg) 透传到 App（cfg 含 seed_count）；US-017 订阅 uploadStore.doc，doc=null 时 StatusLine 增「请先在上传预览页解析母版」提示，handleStart/handleExport 过滤 form.sizes 中的 null（保持下游 WS/export 的 number[] 契约）；US-019 删除 ErodeInputs/ToleranceInputs 渲染，主面板不再有内外两档输入 |
 | `src/components/ControlPanel/SizePicker.tsx` | US-017：码号 chip 复选（受控）。订阅 `useUploadStore(s=>s.doc)` 动态读码号：doc 非空 → `doc.sizes.map(s=>s.size)`（不二次排序）；doc=null → fallback `constants/sizes.ts:SIZES`。null 码 chip 显示「通用」（与 SizeTabs NULL_SIZE_LABEL 同语义）；selected/onChange 类型 `(number\|null)[]` |
 | `src/components/ControlPanel/ParamForm.tsx` | 时长 / base seed 输入（min/max 与旧 index.html 一致） |
 | `src/components/ControlPanel/MultiSeedControls.tsx` | US-005：多 seed 对比 checkbox `#multi_seed` + 数量 input `#seed_count`（min=2 max=6 default 3） |
-| `src/components/ControlPanel/ErodeInputs.tsx` | d_ext / d_int（step 0.5，min 0） |
-| `src/components/ControlPanel/ToleranceInputs.tsx` | tol_ext / tol_int（max 45，min 0） |
 | `src/components/ControlPanel/PresetButtons.tsx` | 预览 120s / 精排 600s 一键填 |
 | `src/components/ControlPanel/PerTypeOverrides.tsx` | 渲染 V03_PTYPES 10 行；internal=true 加 `<i>内</i>` 徽章；placeholder 提示 d≤/t≤ 上限 |
 | `src/components/ControlPanel/StartButton.tsx` | 启动按钮（id="start"，沿用 legacy CSS 选择器） |
@@ -402,8 +400,8 @@ materialSorting-web/
 | `src/components/nests/NestsGrid.tsx` | US-005：seeds → runRegistry.list().find(seed) → NestCard 列表；key=seed 稳定 |
 | `src/components/curve/ConvergenceCurve.tsx` | US-005：命令式 SVG（React 仅 `<svg ref/>`；子节点 innerHTML 写入）。订阅 renderTick；导出 sampleFrames / renderCurveInto 纯函数 |
 | `src/App.tsx` | US-005：handleStart 启 N 个 WS（seed=base+i）；doneCountRef/totalSeedsRef all-done 检测；多 seed setStatus summary+best |
-| `src/lib/__tests__/params.test.ts` | 14 项：默认 d_int=10 + per_type=null / 与 legacy collectParams 11 组对比 / per_type 单档非空 entry / 全空白 → null / 显式 "0" 区分空 / parseSeedCount 7 组（单 seed → 1 / multi + 默认 3 / clamp 2,6 / fallback 3） |
-| `src/components/ControlPanel/__tests__/ControlPanel.test.tsx` | 23 项：AC#1..#7 集成（US-017 起默认 sizes=[] 全未勾选）+ US-005 multi_seed/seed_count 5 项 + US-007 export wiring 4 项 + US-017 StatusLine hint 4 项（doc=null 增提示 / doc 非空无提示 / fallback SIZES / doc.sizes 渲染） |
+| `src/lib/__tests__/params.test.ts` | US-019 重写：默认 params 全 0 + per_type=null / params 永远全 0（4 组 form 对比）/ FormState 无 d_ext/d_int/tol_ext/tol_int 字段断言 / per_type 单档非空 entry / 全空白 → null / 多片型混合 / 显式 "0" 区分空 / 全 10 ptype 填 / parseSeedCount 7 组（单 seed → 1 / multi + 默认 3 / clamp 2,6 / fallback 3） |
+| `src/components/ControlPanel/__tests__/ControlPanel.test.tsx` | 24 项：AC#1..#7 集成（US-017 起默认 sizes=[] 全未勾选；US-019 起主面板不再渲染 d_ext/d_int/tol_ext/tol_int 输入 + 新增「不再渲染两档」断言）+ US-005 multi_seed/seed_count 5 项 + US-007 export wiring 4 项 + US-017 StatusLine hint 4 项 |
 | `src/components/ControlPanel/__tests__/SizePicker.test.tsx` | US-017 8 项：doc=null fallback SIZES / doc 11 码渲染全 11 / null 通用码 / 切 doc 自动重渲染 / toggle 数字 chip / toggle null chip / selected 含 null / key-id 唯一 |
 | `src/components/nests/__tests__/NestsGrid.test.tsx` | US-005 6 项：空容器 / N 卡渲染 / registry 缺失跳过 / 顺序与 seeds 一致 / seeds 不变不重复挂载 / seeds 增减跟着变 |
 | `src/components/curve/__tests__/ConvergenceCurve.test.tsx` | US-005 14 项：sampleFrames 4（空 / ≤400 / >400 / 整除）+ 渲染 10（90% 线 / 单 seed 散点+折线+末点 / 多 seed 折线+标签 / 单/多 seed 图例 / renderTick 订阅 / 多次 bump 不重建 / renderCurveInto 纯函数） |
@@ -471,11 +469,11 @@ materialSorting-web/
 
 ### 关键不变量（US-004 立，后续故事不得破坏）
 
-1. **表单字段全字符串存储** —— `FormState` 所有 number 字段（time/seed/d_*/tol_*）以及 `per_type[pt].d/tol` 都按 `input.value` 字符串持有；`collectParams / parseTime / parseSeed` 做解析。理由：per_type 必须「空串 = 继承」与「"0" = 显式 0」可区分。（US-005 加 multi_seed: boolean / seed_count: string 同样按字符串存。）
-2. **collectParams 与旧 vanilla 实现 字段级一致** —— params 四档空 → 0 默认（`num(s, 0)`）；per_type 仅在 `trim() !== ''` 时写入；最终 per_type 整体空 → null（Python 侧 `or None` 接住）。修改必须同步 `lib/__tests__/params.test.ts` 的 11 组对比用例。
-3. **DEFAULT_FORM 与旧 index.html 默认值 1:1** —— d_int="10"、其余 0；time="60"、seed="0"；sizes 全选；per_type 全空。（US-005 补：multi_seed=false / seed_count="3"。）修改任一字段需同步更新 AC#2。
+1. **表单字段全字符串存储** —— `FormState` 所有 number 字段（time/seed/seed_count）以及 `per_type[pt].d/tol` 都按 `input.value` 字符串持有；`collectParams / parseTime / parseSeed` 做解析。理由：per_type 必须「空串 = 继承」与「"0" = 显式 0」可区分。（US-005 加 multi_seed: boolean / seed_count: string 同样按字符串存。）US-019 删 d_ext/d_int/tol_ext/tol_int 字段后，主面板只有 time/seed 字段是 number 字符串；d/tol 全交 per_type。
+2. **collectParams 不变量（US-019 修订）** —— params 永远全 0（主面板内外两档输入已删，v0.3 上限交给 per_type 显式覆盖 + constraints.MAX_OVERLAP/ROTATION_TOL 兜底）；per_type 解析逻辑保留：仅 `trim() !== ''` 时写入；最终 per_type 整体空 → null（Python 侧 `or None` 接住）。修改必须同步 `lib/__tests__/params.test.ts`。
+3. **DEFAULT_FORM（US-019 修订）** —— time="60"、seed="0"；multi_seed=false / seed_count="3"；sizes=[]（US-017 强制用户选）；per_type 全空 = 继承 v0.3 默认。修改任一字段需同步更新 AC#2。
 4. **ControlPanel 不调 useSolveRun** —— 仅通过 `onStart(cfg)` 把载荷交给 App（解耦：未来多 seed / 重连逻辑由 App 决定）。`onStatus` 用于码号校验失败回写状态行。
-5. **DOM id / className 沿用 legacy** —— `id="start" / id="status" / id="d_ext" / id="time" / id="seed"` 等保留（CSS 选择器依赖）；`.sizes / .per_type / .pt-row / .chip / .preset / .pt-name i` 等 className 1:1。US-005 新增 `id="multi_seed" / id="seed_count"` + `.cb / .seed-count` 同样沿用 legacy。US-008 清理 CSS 时再统一去 id。
+5. **DOM id / className 沿用 legacy** —— `id="start" / id="status" / id="time" / id="seed"` 等保留（CSS 选择器依赖）；`.sizes / .per_type / .pt-row / .chip / .preset / .pt-name i` 等 className 1:1。US-005 新增 `id="multi_seed" / id="seed_count"` + `.cb / .seed-count` 同样沿用 legacy。US-019 删除 `id="d_ext" / id="d_int" / id="tol_ext" / id="tol_int"`（旧 ErodeInputs/ToleranceInputs 文件移除；CSS 规则保留向后兼容）。US-008 清理 CSS 时再统一去 id。
 6. **PerTypeOverrides 行序 = V03_PTYPES 顺序** —— 不可重排（影响测试 placeholder / 徽章断言）；`<i>内</i>` 仅 internal=true 的 4 片型（单排/双排/火机袋/裤耳）。
 
 ### 关键不变量（US-003 立，后续故事不得破坏）
@@ -518,5 +516,5 @@ materialSorting-web/
 - `src/style.css` 由 vanilla 前身 1:1 迁入，未做 React 化拆分（沿用命令式 + 类名约定，CSS 框架不引入）。US-001 加 `.tabbar/.tab/.tab-content/.page/.page.hidden/.preview-empty` 暗色样式（与 ControlPanel 同色系）。
 - `static/` US-008 起已加入 `.gitignore`（构建产物不入库）；prod 模式前必须 `npm run build` 生成。
 - 导出（US-007）已落地：ControlPanel 持 useExport，ExportButtons 渲染 PNG/DXF 按钮（disabled 联动 solving/exporting/无 lastFrame）。详见 US-007 章节。
-- ControlPanel DOM 沿用 vanilla 前身 id（`start / status / d_ext / time / seed / multi_seed / seed_count / export_png / export_dxf` 等）以复用 CSS。
+- ControlPanel DOM 沿用 vanilla 前身 id（`start / status / time / seed / multi_seed / seed_count / export_png / export_dxf` 等）以复用 CSS。US-019 删除 `id="d_ext" / id="d_int" / id="tol_ext" / id="tol_int"`（主面板内外两档输入移除）。
 - 上传预览页（PreviewPage）US-001 仅占位（提示卡片），待 US-008 落地 SizeTabs + ParsedPiecesView + 容器布局（左 UploadPanel + 右切码 + 裁片 grid）。US-006 UploadPanel + US-007 PiecePreviewSVG 已落地，等 US-008 拼装。

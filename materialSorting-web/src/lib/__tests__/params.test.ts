@@ -1,8 +1,7 @@
-// US-004 collectParams 单测：
-//   1) 默认表单 → d_int=10，其余三档 0；per_type = null（全空）。
-//   2) 与旧 vanilla 实现 collectParams 字段级一致（多组对比，含全空 / 部分填 / 全填 / 空白 / 非法字符）。
-//   3) per_type 空 → null；任一档非空 → 创建 entry（仅写非空档）。
-//   4) parseTime / parseSeed 与旧 vanilla 实现 `parseInt(...) || fallback` 一致。
+// US-019 collectParams 单测（主面板精简后）：
+//   1) params 永远全 0（d_ext/d_int/tol_ext/tol_int 主面板输入已删，全交高级配置弹窗 per_type）。
+//   2) per_type 解析逻辑保留不变：仅 trim()!=='' 写入；空 → null；任一档非空 → 创建 entry。
+//   3) parseTime / parseSeed / parseSeedCount 与旧 vanilla 实现 `parseInt(...) || fallback` 一致。
 
 import { describe, expect, it } from 'vitest';
 import {
@@ -15,33 +14,6 @@ import {
 } from '../params';
 import type { PerTypeOverrides, SolveParams } from '../../types/v03';
 
-// 旧 vanilla 实现 num(id, def) —— 模拟从 input.value 字符串解析。
-function legacyNum(s: string, def: number): number {
-  const v = parseFloat(s);
-  return Number.isNaN(v) ? def : v;
-}
-
-// 旧 vanilla 实现 collectParams 的参考实现（按 FormState 输入重写，行为字节级一致）。
-function legacyCollectParams(form: FormState): { params: SolveParams; per_type: PerTypeOverrides | null } {
-  const params: SolveParams = {
-    d_ext: legacyNum(form.d_ext, 0),
-    d_int: legacyNum(form.d_int, 0),
-    tol_ext: legacyNum(form.tol_ext, 0),
-    tol_int: legacyNum(form.tol_int, 0),
-  };
-  const per_type: PerTypeOverrides = {};
-  // 旧 vanilla 实现 遍历所有 input（10 ptype × 2 key），此处等价展开。
-  for (const [pt, vals] of Object.entries(form.per_type)) {
-    if (vals.d.trim() !== '') {
-      (per_type[pt] = per_type[pt] || {}).d = parseFloat(vals.d);
-    }
-    if (vals.tol.trim() !== '') {
-      (per_type[pt] = per_type[pt] || {}).tol = parseFloat(vals.tol);
-    }
-  }
-  return { params, per_type: Object.keys(per_type).length ? per_type : null };
-}
-
 function makeForm(overrides: Partial<FormState> = {}): FormState {
   return {
     ...DEFAULT_FORM,
@@ -50,12 +22,12 @@ function makeForm(overrides: Partial<FormState> = {}): FormState {
   };
 }
 
-describe('collectParams (US-004)', () => {
-  it('默认表单：d_int=10，其余三档 0；per_type = null（全空）', () => {
+describe('collectParams (US-019)', () => {
+  it('默认表单：params 全 0；per_type = null（全空）', () => {
     const out = collectParams(DEFAULT_FORM);
     expect(out.params).toEqual<SolveParams>({
       d_ext: 0,
-      d_int: 10,
+      d_int: 0,
       tol_ext: 0,
       tol_int: 0,
     });
@@ -66,31 +38,22 @@ describe('collectParams (US-004)', () => {
     expect(DEFAULT_FORM.sizes).toEqual([]);
   });
 
-  it('与旧 vanilla 实现 collectParams 字段级一致（多组对比）', () => {
-    const cases: FormState[] = [
-      // 1. 全空 per_type + 默认档
+  it('US-019: FormState 不再含 d_ext/d_int/tol_ext/tol_int 字段（已迁至高级配置弹窗）', () => {
+    // 类型层断言：FormState 不应包含已删字段（编译期保护，运行时 noop）。
+    const form: FormState = DEFAULT_FORM;
+    expect(form).not.toHaveProperty('d_ext');
+    expect(form).not.toHaveProperty('d_int');
+    expect(form).not.toHaveProperty('tol_ext');
+    expect(form).not.toHaveProperty('tol_int');
+  });
+
+  it('US-019: params 永远全 0，无论 form 怎样构造（per_type 是唯一 d/tol 入口）', () => {
+    // 各种 per_type 填法的 form，params 都应保持全 0
+    const forms: FormState[] = [
       makeForm(),
-      // 2. 仅 d_ext=2
-      makeForm({ d_ext: '2' }),
-      // 3. d_int 空串（parseFloat → NaN → 默认 0）
-      makeForm({ d_int: '' }),
-      // 4. 全档都填
-      makeForm({ d_ext: '1.5', d_int: '10', tol_ext: '5', tol_int: '20' }),
-      // 5. 含空白串（trim 后空）
-      makeForm({ d_ext: '   ', d_int: '10' }),
-      // 6. per_type 部分填：前片 d=1
       makeForm({
         per_type: { ...DEFAULT_FORM.per_type, 前片: { d: '1', tol: '' } },
       }),
-      // 7. per_type 部分填：单排 tol=15
-      makeForm({
-        per_type: { ...DEFAULT_FORM.per_type, 单排: { d: '', tol: '15' } },
-      }),
-      // 8. per_type 部分填：火机袋 d=5 + tol=8
-      makeForm({
-        per_type: { ...DEFAULT_FORM.per_type, 火机袋: { d: '5', tol: '8' } },
-      }),
-      // 9. per_type 多片型混合（前片 d+tol，裤耳 仅 tol）
       makeForm({
         per_type: {
           ...DEFAULT_FORM.per_type,
@@ -98,7 +61,6 @@ describe('collectParams (US-004)', () => {
           裤耳: { d: '', tol: '45' },
         },
       }),
-      // 10. 全 ptype 全填（V03_TABLE 上限值）
       makeForm({
         per_type: {
           前片: { d: '2', tol: '1' },
@@ -113,16 +75,14 @@ describe('collectParams (US-004)', () => {
           裤耳: { d: '10', tol: '45' },
         },
       }),
-      // 11. per_type 含空白（trim 后空 → 不写入）
-      makeForm({
-        per_type: { ...DEFAULT_FORM.per_type, 前片: { d: '  ', tol: ' 1 ' } },
-      }),
     ];
-
-    for (const form of cases) {
-      const mine = collectParams(form);
-      const ref = legacyCollectParams(form);
-      expect(mine).toEqual(ref);
+    for (const form of forms) {
+      expect(collectParams(form).params).toEqual<SolveParams>({
+        d_ext: 0,
+        d_int: 0,
+        tol_ext: 0,
+        tol_int: 0,
+      });
     }
   });
 
@@ -143,17 +103,62 @@ describe('collectParams (US-004)', () => {
     expect(collectParams(form).per_type).toBeNull();
   });
 
-  it('所有档显式 "0" → params 全 0；per_type 中 d=0 也写入（区分空 vs "0"）', () => {
+  it('per_type 多片型混合（前片 d+tol，裤耳 仅 tol）正确聚合', () => {
     const form = makeForm({
-      d_ext: '0',
-      d_int: '0',
-      tol_ext: '0',
-      tol_int: '0',
+      per_type: {
+        ...DEFAULT_FORM.per_type,
+        前片: { d: '2', tol: '1' },
+        裤耳: { d: '', tol: '45' },
+      },
+    });
+    expect(collectParams(form).per_type).toEqual<PerTypeOverrides>({
+      前片: { d: 2, tol: 1 },
+      裤耳: { tol: 45 },
+    });
+  });
+
+  it('per_type 含空白（trim 后空 → 不写入；只非空档写）', () => {
+    const form = makeForm({
+      per_type: { ...DEFAULT_FORM.per_type, 前片: { d: '  ', tol: ' 1 ' } },
+    });
+    expect(collectParams(form).per_type).toEqual<PerTypeOverrides>({
+      前片: { tol: 1 },
+    });
+  });
+
+  it('per_type 显式 "0" 也写入（区分空 vs "0"，与旧 vanilla 实现一致）', () => {
+    const form = makeForm({
       per_type: { ...DEFAULT_FORM.per_type, 机头: { d: '0', tol: '0' } },
     });
+    expect(collectParams(form).per_type).toEqual<PerTypeOverrides>({
+      机头: { d: 0, tol: 0 },
+    });
+  });
+
+  it('全 ptype 全填（V03_TABLE 上限值）→ 所有 10 个 entry 写入', () => {
+    const form = makeForm({
+      per_type: {
+        前片: { d: '2', tol: '1' },
+        后片: { d: '2', tol: '1' },
+        腰: { d: '0.4', tol: '3' },
+        前袋: { d: '0.4', tol: '30' },
+        后袋: { d: '0.4', tol: '1' },
+        机头: { d: '0.4', tol: '3' },
+        单排: { d: '10', tol: '15' },
+        双排: { d: '10', tol: '15' },
+        火机袋: { d: '5', tol: '8' },
+        裤耳: { d: '10', tol: '45' },
+      },
+    });
     const out = collectParams(form);
-    expect(out.params).toEqual<SolveParams>({ d_ext: 0, d_int: 0, tol_ext: 0, tol_int: 0 });
-    expect(out.per_type).toEqual<PerTypeOverrides>({ 机头: { d: 0, tol: 0 } });
+    expect(Object.keys(out.per_type!)).toHaveLength(10);
+    // params 仍然全 0
+    expect(out.params).toEqual<SolveParams>({
+      d_ext: 0,
+      d_int: 0,
+      tol_ext: 0,
+      tol_int: 0,
+    });
   });
 });
 

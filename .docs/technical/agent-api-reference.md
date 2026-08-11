@@ -265,7 +265,7 @@ curl http://127.0.0.1:8000/api/ptypes
   "sizes": [28, 29, 30, 31, 33, 34, 35, 36],  // 码号；空 = 全部 128 片
   "time": 120,                    // 求解时间预算（秒），默认 120
   "seed": 0,                      // sparrow 随机种子，默认 0
-  "params": {"d_ext":0, "d_int":10, "tol_ext":0, "tol_int":0},  // 内/外两档；全 0 = baseline
+  "params": {"d_ext":0, "d_int":0, "tol_ext":0, "tol_int":0},  // US-019 起前端永远传全 0；主面板内外两档输入已删，d/tol 覆盖全交 per_type
   "per_type": {"单排": {"d": 8, "tol": 15}}   // 可选，每片型高级覆盖；缺维度回退两档
 }
 ```
