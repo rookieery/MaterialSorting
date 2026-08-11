@@ -1,62 +1,47 @@
-// PerTypeOverrides —— 高级「每片型覆盖」面板（与旧 index.html `<details><div id="per_type">` 等价）。
+// PerTypeOverrides —— 高级「每片型覆盖」入口（US-018 改造为按钮触发器）。
 //
-// 与旧 vanilla 实现 renderPerType 一致：
-//   1. 渲染 V03_PTYPES 10 行，每行：片型名（内片标 `<i>内</i>` 徽章）+ d 输入 + tol 输入。
-//   2. placeholder 提示 d≤ / t≤ 上限（取自 V03_TABLE）。
-//   3. 内部片（internal=true）用 d_int/tol_int 档，标 `<i>内</i>`；外部片用 d_ext/tol_ext 档。
+// 旧版（US-004）：`<details>` 折叠面板，内嵌 10 行 d/tol 输入。
+// US-018：改为 `<button class="per-type-btn">` 触发 → PerTypeOverridesModal 弹窗 table。
 //
-// 字段按字符串持有（空 = 继承两档；非空 = 覆盖），collectParams 做解析（空 → 不写入 per_type）。
+// 保留 values/onChange 契约（ControlPanel 仍 `<PerTypeOverrides values={form.per_type}
+// onChange={(per_type) => patch({ per_type })} />`）；本组件作为入口把 values/onChange
+// 透传给 PerTypeOverridesModal（在按钮旁边挂载）。Modal 草稿 + 确定时调 onChange 回写。
+//
+// 关键不变量（AC#6）：与 ControlPanel 的 values/onChange 契约不变，ControlPanel 无需改动；
+// PerTypeOverridesModal 订阅 controlPanelStore.modal 自显隐（声明式受控 Portal）。
+//
+// 不变量：PtypePreviewModal 叠在 PerTypeOverridesModal 之上（z-index 更高）；
+// PerTypeOverridesModal 内部表头缩略图点击触发 openPreviewPtype(ptype)。
 
-import { V03_PTYPES, V03_TABLE } from '../../constants/v03';
+import type { JSX } from 'react';
+import { useControlPanelStore } from '../../store/controlPanelStore';
 import type { PerTypeFormValue } from '../../lib/params';
+import { PerTypeOverridesModal } from './PerTypeOverridesModal';
+import { PtypePreviewModal } from './PtypePreviewModal';
 
 export interface PerTypeOverridesProps {
   /** 每片型的 d/tol 输入字符串（key 全量 = V03_PTYPES）。 */
   values: Record<string, PerTypeFormValue>;
-  /** 任一 input 变化时回写（key + 'd' | 'tol' + 新字符串）。 */
+  /** Modal 确定时回写（key + 'd' | 'tol' + 新字符串）。 */
   onChange: (next: Record<string, PerTypeFormValue>) => void;
 }
 
-export function PerTypeOverrides({ values, onChange }: PerTypeOverridesProps) {
-  function update(pt: string, key: 'd' | 'tol', v: string) {
-    const prev = values[pt] ?? { d: '', tol: '' };
-    onChange({ ...values, [pt]: { ...prev, [key]: v } });
-  }
+export function PerTypeOverrides({ values, onChange }: PerTypeOverridesProps): JSX.Element {
+  const openModal = useControlPanelStore((s) => s.openModal);
 
   return (
-    <details className="advanced">
-      <summary>高级：每片型覆盖</summary>
-      <div className="per_type">
-        {V03_PTYPES.map((pt) => {
-          const entry = V03_TABLE[pt];
-          const v = values[pt] ?? { d: '', tol: '' };
-          return (
-            <div className="pt-row" key={pt}>
-              <span className="pt-name">
-                {pt}
-                {entry.internal && <i>内</i>}
-              </span>
-              <input
-                type="number"
-                min={0}
-                step={0.5}
-                placeholder={`d≤${entry.d}`}
-                value={v.d}
-                onChange={(e) => update(pt, 'd', e.target.value)}
-              />
-              <input
-                type="number"
-                min={0}
-                step={1}
-                placeholder={`t≤${entry.tol}`}
-                value={v.tol}
-                onChange={(e) => update(pt, 'tol', e.target.value)}
-              />
-            </div>
-          );
-        })}
-      </div>
-      <div className="dim small">空 = 继承两档；填值 = 覆盖该维度。受 v0.3 单片上限约束。</div>
-    </details>
+    <div className="per-type-wrapper">
+      <button
+        type="button"
+        className="per-type-btn"
+        onClick={() => openModal('per_type')}
+        data-testid="per-type-btn"
+      >
+        高级配置：每片型覆盖
+      </button>
+      {/* 模态单例：订阅 controlPanelStore 自显隐；Portal 到 document.body */}
+      <PerTypeOverridesModal values={values} onChange={onChange} />
+      <PtypePreviewModal />
+    </div>
   );
 }

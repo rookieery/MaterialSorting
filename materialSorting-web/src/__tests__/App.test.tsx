@@ -6,7 +6,7 @@
 //   默认 activeTab=preview（首页落上传预览）
 //   Tooltip 单例仍挂载在 body（US-006 不变量 #3 不破）
 
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { StrictMode } from 'react';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -44,6 +44,9 @@ function makeParsedDoc(): ParsedDoc {
 
 let container: HTMLDivElement | null = null;
 let root: Root | null = null;
+// US-018：App → ControlPanel → PerTypeOverridesModal + PtypePreviewModal 都会 fetch /api/ptypes；
+// stub 防止 act warning + 真实网络调用。
+let fetchSpy: MockInstance<(...args: unknown[]) => Promise<Response>> | null = null;
 
 beforeEach(() => {
   MockWS.instances = [];
@@ -56,6 +59,14 @@ beforeEach(() => {
   useUploadStore.setState({ status: 'done', doc: makeParsedDoc() });
   useUiStore.getState().setNestingEnabled(true);
   useUiStore.getState().setTab('nesting');
+  fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((_input: unknown) =>
+    Promise.resolve(
+      new Response(JSON.stringify({ representatives: {} }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    ),
+  ) as unknown as MockInstance<(...args: unknown[]) => Promise<Response>>;
 });
 
 afterEach(() => {
@@ -71,6 +82,10 @@ afterEach(() => {
   useUploadStore.getState().reset();
   useUiStore.getState().setNestingEnabled(false);
   useUiStore.getState().setTab('preview');
+  if (fetchSpy) {
+    fetchSpy.mockRestore();
+    fetchSpy = null;
+  }
 });
 
 function renderApp(): HTMLElement {

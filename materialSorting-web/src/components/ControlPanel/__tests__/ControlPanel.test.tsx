@@ -10,19 +10,21 @@
 //   AC#1 multi_seed checkbox + seed_count input render with legacy defaults
 //   AC#1 toggle multi_seed + edit seed_count -> onStart.seed_count matches parseSeedCount
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import { StrictMode } from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { ControlPanel, type ControlPanelStartPayload } from "../ControlPanel";
 import { SIZES } from "../../../constants/sizes";
-import { V03_PTYPES, V03_TABLE } from "../../../constants/v03";
+import { V03_PTYPES } from "../../../constants/v03";
 import { useUploadStore } from "../../../store/uploadStore";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 let container: HTMLDivElement | null = null;
 let root: Root | null = null;
+// US-018：ControlPanel 内 PtypePreviewModal 会 fetch /api/ptypes；stub 防止 act warning。
+let fetchSpy: MockInstance<(...args: unknown[]) => Promise<Response>> | null = null;
 
 beforeEach(() => {
   container = document.createElement("div");
@@ -31,6 +33,14 @@ beforeEach(() => {
   // US-017：uploadStore 是模块级单例，ControlPanel 现在 subscribe doc；
   // beforeEach 重置到默认 idle/doc=null 保证各用例隔离。
   useUploadStore.getState().reset();
+  fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation((_input: unknown) =>
+    Promise.resolve(
+      new Response(JSON.stringify({ representatives: {} }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    ),
+  ) as unknown as MockInstance<(...args: unknown[]) => Promise<Response>>;
 });
 
 afterEach(() => {
@@ -44,6 +54,10 @@ afterEach(() => {
   container?.remove();
   container = null;
   useUploadStore.getState().reset();
+  if (fetchSpy) {
+    fetchSpy.mockRestore();
+    fetchSpy = null;
+  }
 });
 
 function renderPanel(
@@ -101,40 +115,29 @@ describe("ControlPanel (US-004)", () => {
   });
 });
 
-describe("ControlPanel per_type (US-004)", () => {
-  it("AC#4 renders V03_TABLE 10 rows; internal ptypes badged", () => {
+describe("ControlPanel per_type (US-018 button trigger)", () => {
+  it("AC#4 renders 高级配置 button (replaces old <details>); no .per_type .pt-row rows", () => {
     renderPanel();
-    const rowEls = container!.querySelectorAll<HTMLDivElement>(".per_type .pt-row");
-    expect(rowEls).toHaveLength(V03_PTYPES.length);
-
-    // ptype names order matches V03_PTYPES (badge text excluded)
-    const names = Array.from(rowEls).map((r) => {
-      const node = r.querySelector(".pt-name")!;
-      const clone = node.cloneNode(true) as HTMLElement;
-      const i = clone.querySelector("i");
-      if (i) i.remove();
-      return clone.textContent!;
-    });
-    expect(names).toEqual(V03_PTYPES);
-
-    // Each ptype internal flag matches <i> presence
-    for (const pt of V03_PTYPES) {
-      const row = rowEls[V03_PTYPES.indexOf(pt)];
-      const hasBadge = !!row.querySelector(".pt-name i");
-      expect(hasBadge).toBe(V03_TABLE[pt].internal);
-    }
+    const btn = container!.querySelector<HTMLButtonElement>(".per-type-btn");
+    expect(btn).not.toBeNull();
+    expect(btn!.textContent).toContain("高级配置");
+    // US-018：不再渲染旧 details 折叠 + 10 行 pt-row
+    expect(container!.querySelectorAll(".per_type .pt-row")).toHaveLength(0);
+    expect(container!.querySelector("details.advanced")).toBeNull();
   });
 
-  it("AC#4 placeholders hint d<=X / t<=Y from V03_TABLE", () => {
+  it("AC#4 click button opens PerTypeOverridesModal (overlay+modal rendered)", () => {
     renderPanel();
-    const rowEls = container!.querySelectorAll<HTMLDivElement>(".per_type .pt-row");
-    const LE = String.fromCharCode(0x2264);
-    for (const pt of V03_PTYPES) {
-      const row = rowEls[V03_PTYPES.indexOf(pt)];
-      const inputs = row.querySelectorAll<HTMLInputElement>("input[type=number]");
-      expect(inputs[0].placeholder).toBe("d" + LE + V03_TABLE[pt].d);
-      expect(inputs[1].placeholder).toBe("t" + LE + V03_TABLE[pt].tol);
-    }
+    const btn = container!.querySelector<HTMLButtonElement>(".per-type-btn")!;
+    act(() => btn.click());
+    const overlay = document.body.querySelector(".per-type-overlay");
+    expect(overlay).not.toBeNull();
+    // 表头 10 列 + 1 行头列
+    const heads = overlay!.querySelectorAll("thead .ptype-col");
+    expect(heads).toHaveLength(V03_PTYPES.length);
+    // tbody 2 行（重合 + 旋转）
+    const rows = overlay!.querySelectorAll("tbody tr");
+    expect(rows).toHaveLength(2);
   });
 });
 
@@ -189,33 +192,43 @@ describe("ControlPanel start flow (US-004)", () => {
     expect(cfg.sizes).toEqual([30, 31]);
   });
 
-  it("AC#6 fill per_type input -> payload.per_type non-null with the edited entry", () => {
+  it("AC#6 fill per_type via modal -> payload.per_type non-null with the edited entry", () => {
     const onStart = vi.fn();
     renderPanel(onStart);
     // US-017：先勾选至少一个码号，否则 Start 校验失败
     const checkboxes = container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]");
     act(() => checkboxes[0].click());
-    const rowEls = container!.querySelectorAll<HTMLDivElement>(".per_type .pt-row");
-    const frontRow = rowEls[0]; // V03_PTYPES[0]
-    const inputs = frontRow.querySelectorAll<HTMLInputElement>("input[type=number]");
-    // React 18 + jsdom: must use native value setter (from HTMLInputElement.prototype)
-    // so React's internal value tracker detects the change before dispatching 'input'.
+    // US-018：点击「高级配置」按钮打开 modal
+    const perTypeBtn = container!.querySelector<HTMLButtonElement>(".per-type-btn")!;
+    act(() => perTypeBtn.click());
+    // 在 modal 内修改第一列（V03_PTYPES[0]）的两个 input
+    const overlay = document.body.querySelector(".per-type-overlay")!;
+    const ptype = V03_PTYPES[0];
+    const dInput = overlay.querySelector<HTMLInputElement>(
+      `[data-testid="d-${ptype}"]`,
+    )!;
+    const tolInput = overlay.querySelector<HTMLInputElement>(
+      `[data-testid="tol-${ptype}"]`,
+    )!;
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
     act(() => {
-      setter.call(inputs[0], "1");
-      inputs[0].dispatchEvent(new Event("input", { bubbles: true }));
+      setter.call(dInput, "1");
+      dInput.dispatchEvent(new Event("input", { bubbles: true }));
     });
     act(() => {
-      setter.call(inputs[1], "1");
-      inputs[1].dispatchEvent(new Event("input", { bubbles: true }));
+      setter.call(tolInput, "1");
+      tolInput.dispatchEvent(new Event("input", { bubbles: true }));
     });
+    // 点确定 -> 写回 form.per_type + 关闭 modal
+    const confirm = overlay.querySelector<HTMLButtonElement>(".per-type-btn-confirm")!;
+    act(() => confirm.click());
+    expect(document.body.querySelector(".per-type-overlay")).toBeNull();
+    // Start -> per_type 含该片型的 {d:1, tol:1}
     const btn = container!.querySelector<HTMLButtonElement>("#start")!;
     act(() => btn.click());
     const cfg = onStart.mock.calls[0][0] as ControlPanelStartPayload;
     expect(cfg.per_type).not.toBeNull();
-    const keys = Object.keys(cfg.per_type!);
-    expect(keys.length).toBe(1);
-    expect(cfg.per_type![keys[0]]).toEqual({ d: 1, tol: 1 });
+    expect(cfg.per_type![ptype]).toEqual({ d: 1, tol: 1 });
   });
 
   it("AC#6 solving=true -> Start disabled", () => {

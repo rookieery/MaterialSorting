@@ -30,6 +30,10 @@
 //   6. **AC#4 多片同框**：prop 接受单 piece 或 piece[]；多片时合并 bbox 计算 viewBox，
 //      每片独立渲染 5 层 + 各自 A/B/C 标注。同框不刻意避免重叠（多片本身可能共享边界，
 //      由调用方决定是否同框 —— US-008 ParsedPiecesView 用单片卡片，多片能力留作未来扩展）。
+//   7. **compact 模式（US-018 AC#9）**：prop `compact?: boolean` 关 A/B/C 标注 +
+//      小 pad（COMPACT_PAD=2，fit-to-cell）；非 compact 行为不变（向后兼容 PieceZoomModal）。
+//      用于 PerTypeOverridesModal 表头缩略图 / PtypePreviewModal 放大预览（layer-aware，
+//      v1 仅外轮廓，US-024 后数据带 5 层则画 5 层，本组件无需改动）。
 
 import { useEffect, useRef } from 'react';
 import type { JSX } from 'react';
@@ -51,7 +55,9 @@ const COLOR_LABEL = '#e6e6e6'; // A/B/C 标注（暗底亮字，与 body color �
 const NOTCH_LEN_MM = 8;
 /** viewBox 默认内边距（mm）。14 容纳 4mm 刀口半段 + ~10mm 标注文本。 */
 const DEFAULT_PAD = 14;
-/** pad 最小值（防刀口短线段被裁）。 */
+/** compact 模式（缩略图）内边距（mm）。无标注文本 → 小 pad 让几何填满 cell。 */
+const COMPACT_PAD = 2;
+/** pad 最小值（防刀口短线段被裁）。compact 模式不受此 clamp（缩略图刻意贴近边缘）。 */
 const MIN_PAD = 4;
 /** A/B/C 标注字体大小（用户单位 = mm）。 */
 const LABEL_FONT_SIZE = 11;
@@ -246,6 +252,11 @@ export interface PiecePreviewSVGProps {
   piece: ParsedPiece | ParsedPiece[];
   /** viewBox 内边距（mm），默认 14（容纳 8mm 刀口 + 标注文本）；最小 4。 */
   pad?: number;
+  /**
+   * US-018 AC#9 compact 模式：关 A/B/C 标注 + 用 COMPACT_PAD(2) 默认 pad（fit-to-cell）。
+   * 用于 PerTypeOverridesModal 表头缩略图（64×64 cell）。非 compact 行为不变（向后兼容）。
+   */
+  compact?: boolean;
 }
 
 /**
@@ -253,8 +264,15 @@ export interface PiecePreviewSVGProps {
  *
  * 命令式渲染：React 仅渲染 `<svg ref/>`；useEffect 内 imperative 建 flipGroup +
  * 各层节点 + 标注 text。piece 切换时整组重建（清空 svg 子节点后重画）。
+ *
+ * compact 模式（US-018）：跳过 renderLabel + 用 COMPACT_PAD；layer-aware 渲染不变
+ * （数据有几层就画几层，v1 仅 polygon，US-024 后 5 层）。
  */
-export function PiecePreviewSVG({ piece, pad = DEFAULT_PAD }: PiecePreviewSVGProps): JSX.Element {
+export function PiecePreviewSVG({
+  piece,
+  pad,
+  compact = false,
+}: PiecePreviewSVGProps): JSX.Element {
   const svgRef = useRef<SVGSVGElement>(null);
 
   useEffect(() => {
@@ -262,7 +280,10 @@ export function PiecePreviewSVG({ piece, pad = DEFAULT_PAD }: PiecePreviewSVGPro
     if (!svg) return;
 
     const pieces: ParsedPiece[] = Array.isArray(piece) ? piece : [piece];
-    const safePad = Math.max(MIN_PAD, pad);
+    // compact 模式 pad 默认 COMPACT_PAD（2），非 compact 默认 DEFAULT_PAD（14）。
+    // 显式传入 pad 仍生效（PieceZoomModal 用 pad=20）；compact 下显式 pad 亦受 MIN_PAD 保护。
+    const effectivePad = pad ?? (compact ? COMPACT_PAD : DEFAULT_PAD);
+    const safePad = compact ? effectivePad : Math.max(MIN_PAD, effectivePad);
 
     // 清空旧内容（piece 切换 / StrictMode 双 mount 都安全）
     while (svg.firstChild) svg.removeChild(svg.firstChild);
@@ -285,9 +306,11 @@ export function PiecePreviewSVG({ piece, pad = DEFAULT_PAD }: PiecePreviewSVGPro
     svg.appendChild(flip);
     for (const p of pieces) renderPieceLayers(flip, p);
 
-    // 2) A/B/C 文字标注（屏幕坐标，翻转组外）
-    for (const p of pieces) renderLabel(svg, p);
-  }, [piece, pad]);
+    // 2) A/B/C 文字标注（屏幕坐标，翻转组外）—— compact 模式跳过（缩略图无标注）
+    if (!compact) {
+      for (const p of pieces) renderLabel(svg, p);
+    }
+  }, [piece, pad, compact]);
 
   return <svg ref={svgRef} xmlns={SVGNS} />;
 }

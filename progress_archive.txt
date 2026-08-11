@@ -498,3 +498,27 @@ NestsGrid 渲染 N 个 NestCard；ConvergenceCurve 命令式画 90% 生死线 + 
 - AC#6 ✅ 端到端 curl+WS：ms-web :8000 启动 → POST /api/parse-dxf 上传 M1787（doc_id+sizes=[30]+10 片）→ POST /api/commit-to-nesting（n_pieces=16, reloaded=True）→ 立即 WS /ws/solve 收到 manifest（pid 数=16，匹配 commit 结果）→ final density=66.82%（正常求解）。**不需重启 ms-web**。
 - AC#7 ✅ `python -c "from materialsorting.web.server import app"` 导入通过；分层依赖扫描 9 文件无反向 import。
 - AC#8 ✅ `curl /api/ptypes` 对 M1787 返回 10 ptype 代表裁片（前片/后片/腰/前袋/后袋/机头/单排/双排/火机袋/裤耳），每个仅 polygon 字段。
+**未做浏览器验证**：本故事纯后端（无 SVG/坐标变换/可视化改动），按规则不需 chrome-devtools-mcp；改用 Python 直接调函数 + curl+WS 端到端 + 线程安全烟雾测试联合覆盖 AC。
+**清理**：ms-web (PID 28940) 已 `Stop-Process -Force` 杀掉，netstat :8000 LISTENING 0；测试期覆盖的 intermediate 已从 .bak 还原到 176 片基线；uploads/ 测试文件清理（部分 Windows 锁留待下次 GC）。
+## 2026-08-11 — US-017 SizePicker 从上传 doc 动态读码号（branch: ralph/nesting-tab-linkage）
+**Goal**: 超排页码号区从 uploadStore.doc 动态读码号（不锁死 M1787 的 8 码）；null 码 chip 显示「通用」；doc=null 时 StatusLine 增提示「请先在上传预览页解析母版」；DEFAULT_FORM.sizes=[] 强制用户选。
+**Files changed**（纯前端，无后端）：
+- `materialSorting-web/src/components/ControlPanel/SizePicker.tsx` —— 重写。新增 `useUploadStore(s=>s.doc)` 订阅；chip 列表 = `doc ? doc.sizes.map(s=>s.size) : [...SIZES]`（doc=null fallback SIZES，前端不二次排序）；`NULL_SIZE_LABEL='通用'`（与 SizeTabs 同语义）+ `sizeKey(s)`（null→'null'，number→String(n)）+ `sizeLabel(s)`（null→「通用」）两个纯函数；`SizePickerProps.selected/onChange` 类型从 `number[]` 扩为 `(number|null)[]`；chip id 改 `sz_${sizeKey}`（null → `sz_null`）；onChange 不再 sort（旧版 `selected.sort((a,b)=>a-b)` 移除）。
+- `materialSorting-web/src/lib/params.ts` —— `FormState.sizes: (number|null)[]`（从 `number[]` 扩）；`DEFAULT_FORM.sizes = []`（从 `[...SIZES]` 改为空数组，强制用户选）；删 `import { SIZES }`（params.ts 内不再用 SIZES）。
+- `materialSorting-web/src/components/ControlPanel/ControlPanel.tsx` —— 新增 `useUploadStore(s=>s.doc)` 订阅；`handleStart` / `handleExport` 用类型守卫 `(s): s is number => s !== null` 过滤 null（保持下游 StartConfig.sizes / useExport.exportAs 的 `number[]` 契约不变）；`visibleStatus = doc===null ? ${status} — 请先在上传预览页解析母版 : status`；StatusLine 接 visibleStatus。
+- `materialSorting-web/src/components/ControlPanel/__tests__/SizePicker.test.tsx` —— 新建。8 项单测：doc=null fallback SIZES / doc 11 码（含 null）渲染全 11 / null 码显示「通用」+ id `sz_null` / 切 doc 自动重渲染（订阅 uploadStore.doc） / toggle 数字 chip 不二次排序 / toggle null chip onChange 收到 [null] / selected 含 null → checked / key-id 唯一无冲突。覆盖 AC#1 + AC#3 + 切 doc 重渲染 + 边界（含 PassThrough+useState 模拟父级累积）。
+- `materialSorting-web/src/components/ControlPanel/__tests__/ControlPanel.test.tsx` —— beforeEach/afterEach 加 `useUploadStore.getState().reset()`（模块级单例隔离）；AC#1 改为「8 fallback chips, NONE default-checked」（旧版全选废除）；AC#6 default-Start 改为「先全选再 Start」（默认 sizes=[] 校验会失败）；AC#7 简化为「默认空 + Start → onStatus error」（旧版需先点掉全选）；AC#6 toggle-sizes 改为「默认空 + 勾 30/31」（旧版从全选取消）；AC#6 fill per_type 加「先勾一个码号」；4 个 multi_seed Start 用例均加「先勾一个码号」；新增 US-017 StatusLine hint describe block 4 项（doc=null 增提示 / doc 非空无提示 / fallback SIZES / doc.sizes 渲染含 null 通用）。
+- `materialSorting-web/src/lib/__tests__/params.test.ts` —— 新增「US-017: DEFAULT_FORM.sizes 默认空数组」回归断言。
+- `.docs/technical/agent-component-map.md` —— `src/lib/params.ts` / `ControlPanel.tsx` / `SizePicker.tsx` 3 行描述加 US-017 改动；`ControlPanel.test.tsx` 行项数从 15 → 23；新增 `SizePicker.test.tsx` 行；落地段表新增 US-017 一行。
+- `materialSorting-web/AGENTS.md` —— 文件分工注释加「US-017 SizePicker 动态读码号 + DEFAULT_FORM.sizes=[]」；新增「US-017 关键约定」段 8 条（订阅 uploadStore.doc / DEFAULT_FORM.sizes=[] / FormState.sizes (number|null)[] / null 通用文案 / 下游 WS+export 过滤 null 保 number[] 契约 / StatusLine 提示 / 测试隔离 reset uploadStore / 未做浏览器验证）；US-004 DEFAULT_FORM 关键约定加 US-017 交叉引用（sizes 默认 []）。
+**Key invariants**:
+- **SizePicker 订阅 uploadStore.doc（不硬编码 SIZES）**：doc 非空 → `doc.sizes.map(s=>s.size)`；doc=null → fallback SIZES。改订阅源会破坏「切款母版→码号区自动同步」语义。
+- **DEFAULT_FORM.sizes = []（不再是 [...SIZES] 全选）**：用户必须主动勾选；ControlPanel「请至少选一个码号」校验保留兜底。后端 build_instance 入参契约不变（ControlPanel.handleStart 过滤 null 后透传 number[]）。
+- **下游 WS / export 契约不变（仍是 number[]）**：ControlPanel.handleStart / handleExport 用类型守卫过滤 null；StartConfig / StartPayload / useExport.exportAs 签名不改。M1787 实际母版无 null 码；含 null 母版的完整端到端支持留给 US-022（按 (label, sizeKey) 查 quantities，sizeKey 已支持 null）。
+- **null 码 chip 文案 / key / id 三件套**：`sizeLabel(null)='通用'` / `sizeKey(null)='null'` / `id='sz_null'`。改任一项需同步 SizePicker.test.tsx + ControlPanel.test.tsx US-017 用例。
+**验证（5 个 AC 全部通过）**：
+- AC#1 ✅ SizePicker 订阅 useUploadStore(s=>s.doc)；doc 非空 → doc.sizes.map(s=>s.size)；doc=null → fallback SIZES（SizePicker.test.tsx 2 项 + ControlPanel.test.tsx US-017 2 项）。
+- AC#2 ✅ DEFAULT_FORM.sizes=[]（params.test.tsx 新增断言；ControlPanel.test.tsx AC#1 改为 NONE checked）。
+- AC#3 ✅ null 码 chip 显示「通用」+ ControlPanel 校验保留 + doc=null 时 StatusLine 增「请先在上传预览页解析母版」（SizePicker.test.tsx 2 项 + ControlPanel.test.tsx US-017 StatusLine hint 4 项）。
+- AC#4 ✅ ≥4 项单测：doc=null fallback SIZES / doc 11 码渲染全 11 / null 码显示「通用」/ 切 doc 自动重渲染（SizePicker.test.tsx 4 项核心 + 4 项补充 = 8 项）。
+- AC#5 ✅ `npm run typecheck` 通过；`npm run test` 全绿（29 文件 / 405 项，含新增 SizePicker.test.tsx 8 项 + ControlPanel.test.tsx +4 项 US-017 StatusLine hint + params.test.ts +1 项）；`npm run build` 无报错（static/assets/index-*.js 182KB）。

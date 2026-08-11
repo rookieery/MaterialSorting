@@ -677,3 +677,328 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
   flex: 1;
   min-height: 320px;
 }
+
+/* ---- US-018 PerTypeOverridesModal + PtypePreviewModal（暗底 + #2ea06c 同色系） ---- */
+/* PerTypeOverrides 触发按钮：替换旧 <details> 折叠面板；主面板一行按钮 */
+.per-type-wrapper {
+  margin: 8px 0;
+}
+.per-type-btn {
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  background: #2c5d8f;
+  color: #fff;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s;
+}
+.per-type-btn:hover {
+  background: #3470ac;
+}
+.per-type-btn:focus-visible {
+  outline: 2px solid #2ea06c;
+  outline-offset: 2px;
+}
+
+/* overlay：fixed 全屏 + 半透明遮罩；flex 居中 modal；z-index 1100（高于 PieceQtyDialog 1000） */
+.per-type-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1100;
+}
+
+/* modal：暗背景 + 圆角 + 相对定位（承载绝对定位 ✕）；max-width/height 适配 10 列宽表 */
+.per-type-modal {
+  position: relative;
+  background: #26282e;
+  border: 1px solid #34363d;
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  padding: 18px 20px 16px;
+  max-width: 92vw;
+  max-height: 92vh;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  font-size: 13px;
+  color: #e6e6e6;
+}
+
+/* 头部：标题 + ✕ 按钮（绝对定位右上角，与 PieceZoomModal 同模式） */
+.per-type-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-right: 28px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #e6e6e6;
+  flex-shrink: 0;
+}
+.per-type-title {
+  flex: 1;
+}
+.per-type-close {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: #cdd;
+  border: 0;
+  border-radius: 4px;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s, color 0.15s;
+}
+.per-type-close:hover {
+  background: #3f424a;
+  color: #2ea06c;
+}
+.per-type-close:focus-visible {
+  outline: 2px solid #2ea06c;
+  outline-offset: 1px;
+}
+
+/* 表格容器：overflow-x:auto 容纳 10 列窄屏溢出 */
+.per-type-table-wrap {
+  overflow-x: auto;
+  border: 1px solid #34363d;
+  border-radius: 4px;
+}
+
+/* 表格：固定布局（列等宽，缩略图 80px 固定）；首列片型行头粘性 sticky 便于横滚定位 */
+.per-type-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  font-size: 12px;
+}
+.per-type-table th,
+.per-type-table td {
+  border: 1px solid #34363d;
+  padding: 6px 4px;
+  text-align: center;
+  vertical-align: middle;
+}
+.per-type-rowhead {
+  width: 48px;
+  background: #1c1d22;
+  color: #9aa;
+  font-weight: 500;
+  position: sticky;
+  left: 0;
+  z-index: 1;
+}
+.per-type-table th.ptype-col {
+  width: 80px;
+  background: #23252b;
+}
+
+/* 表头缩略图：64x64 cell 内 PiecePreviewSVG compact 渲染；button 包装触发放大预览 */
+.ptype-thumb {
+  width: 64px;
+  height: 64px;
+  margin: 0 auto 4px;
+  padding: 0;
+  background: #1c1d22;
+  border: 1px solid #3a3d45;
+  border-radius: 4px;
+  cursor: zoom-in;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #888;
+  font-size: 11px;
+  transition: border-color 0.15s, background 0.15s;
+}
+.ptype-thumb:hover:not(:disabled) {
+  border-color: #2ea06c;
+  background: #212228;
+}
+.ptype-thumb:disabled {
+  cursor: default;
+  color: #666;
+}
+.ptype-thumb svg {
+  width: 60px;
+  height: 60px;
+  display: block;
+}
+.ptype-thumb-placeholder {
+  font-size: 16px;
+  font-weight: 600;
+  color: #666;
+}
+.ptype-name {
+  display: block;
+  color: #cdd;
+  font-size: 11px;
+  word-break: keep-all;
+}
+
+/* 重合/旋转输入：紧凑等宽填充 cell */
+.per-type-table input[type='number'] {
+  width: 100%;
+  max-width: 70px;
+  padding: 4px 6px;
+  background: #1c1d22;
+  color: #e6e6e6;
+  border: 1px solid #3a3d45;
+  border-radius: 3px;
+  font-size: 12px;
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  text-align: center;
+}
+.per-type-table input[type='number']:focus {
+  outline: none;
+  border-color: #2ea06c;
+}
+.per-type-table input[type='number']::-webkit-outer-spin-button,
+.per-type-table input[type='number']::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.per-type-table input[type='number'] {
+  -moz-appearance: textfield;
+}
+
+/* 提示 + 操作区 */
+.per-type-hint {
+  color: #888;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.per-type-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 4px;
+  flex-shrink: 0;
+}
+.per-type-btn-cancel,
+.per-type-btn-confirm {
+  padding: 7px 18px;
+  font-size: 13px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  border: 1px solid #45484f;
+  background: #34363d;
+  color: #cdd;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.per-type-btn-cancel:hover {
+  background: #3f424a;
+  color: #e6e6e6;
+}
+.per-type-btn-confirm {
+  background: #2ea06c;
+  color: #fff;
+  border-color: #2ea06c;
+  font-weight: 600;
+}
+.per-type-btn-confirm:hover {
+  background: #36b47a;
+  border-color: #36b47a;
+  color: #fff;
+}
+
+/* PtypePreviewModal：z-index 1200（高于 PerTypeOverridesModal 1100，叠在其上） */
+.ptype-preview-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1200;
+}
+.ptype-preview-modal {
+  position: relative;
+  background: #2a2c32;
+  border: 1px solid #34363d;
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  padding: 18px 20px 16px;
+  max-width: 90vw;
+  max-height: 90vh;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  font-size: 13px;
+  color: #e6e6e6;
+}
+.ptype-preview-head {
+  display: flex;
+  align-items: center;
+  padding-right: 28px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #e6e6e6;
+  flex-shrink: 0;
+}
+.ptype-preview-name {
+  color: #2ea06c;
+}
+.ptype-preview-close {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: #cdd;
+  border: 0;
+  border-radius: 4px;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s, color 0.15s;
+}
+.ptype-preview-close:hover {
+  background: #3f424a;
+  color: #2ea06c;
+}
+.ptype-preview-close:focus-visible {
+  outline: 2px solid #2ea06c;
+  outline-offset: 1px;
+}
+.ptype-preview-body {
+  flex: 1;
+  min-height: 320px;
+  min-width: 0;
+  display: flex;
+}
+.ptype-preview-body svg {
+  flex: 1;
+  min-height: 320px;
+}
+.ptype-preview-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #888;
+  font-size: 13px;
+}

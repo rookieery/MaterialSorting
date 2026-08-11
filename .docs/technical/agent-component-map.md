@@ -1,6 +1,6 @@
 # 前端组件 / 模块地图（materialSorting-web/）
 
-> 由 `/sync-docs` 维护。改前端先看这里。当前覆盖 US-001 Tab 框架 + US-002 WS 契约 + US-003 NestSVG + US-004 ControlPanel + US-005 多 seed/收敛曲线 + US-006 回放 seekbar + 片 hover tooltip + US-007 导出 PNG/DXF + DXF 上传预览 US-001 Tab 骨架 + 上传预览 US-005 类型/store/hook + 上传预览 US-006 UploadPanel 组件 + 上传预览 US-007 PiecePreviewSVG 命令式渲染 + 上传预览 US-008 SizeTabs/ParsedPiecesView/PreviewPage 容器集成 + 上传预览 US-011 qtyStore 数量状态（per-size/global 双模式）+ 上传预览 US-012 PieceQtyDialog/Switch（数量编辑弹窗 + 受控开关）+ 上传预览 US-013 PieceZoomModal（放大预览模态）+ 上传预览 US-014 ParsedPiecesView 卡片头改造 + 双模态集成（seq(qty) 替裁片名 + qty/zoom 双入口 + reset 联动）+ US-015 uiStore 扩 nestingEnabled + TabBar 置灰（超排 Tab 解锁闸）+ US-016 PreviewPage 联动 setNestingEnabled（subscribe uploadStore → uiStore 解锁/锁定超排 Tab）。
+> 由 `/sync-docs` 维护。改前端先看这里。当前覆盖 US-001 Tab 框架 + US-002 WS 契约 + US-003 NestSVG + US-004 ControlPanel + US-005 多 seed/收敛曲线 + US-006 回放 seekbar + 片 hover tooltip + US-007 导出 PNG/DXF + DXF 上传预览 US-001 Tab 骨架 + 上传预览 US-005 类型/store/hook + 上传预览 US-006 UploadPanel 组件 + 上传预览 US-007 PiecePreviewSVG 命令式渲染 + 上传预览 US-008 SizeTabs/ParsedPiecesView/PreviewPage 容器集成 + 上传预览 US-011 qtyStore 数量状态（per-size/global 双模式）+ 上传预览 US-012 PieceQtyDialog/Switch（数量编辑弹窗 + 受控开关）+ 上传预览 US-013 PieceZoomModal（放大预览模态）+ 上传预览 US-014 ParsedPiecesView 卡片头改造 + 双模态集成（seq(qty) 替裁片名 + qty/zoom 双入口 + reset 联动）+ US-015 uiStore 扩 nestingEnabled + TabBar 置灰（超排 Tab 解锁闸）+ US-016 PreviewPage 联动 setNestingEnabled（subscribe uploadStore → uiStore 解锁/锁定超排 Tab）+ US-018 PerTypeOverridesModal/PtypePreviewModal（高级配置弹窗 + 片型缩略图 + 放大预览，双层独立 ESC）。
 
 ## 顶层结构
 
@@ -15,12 +15,12 @@ materialSorting-web/
 ├── src/                    # 源码（US-008 起：legacy/ 已删除，src/ 是唯一真相源）
 │   ├── main.tsx            # createRoot(<StrictMode><App/></StrictMode>)
 │   ├── App.tsx             # US-001 Tab 骨架：TabBar + 双 .page 容器（display:none 切换）+ Tooltip 单例
-│   ├── style.css           # 由 vanilla 前身 1:1 迁入；US-001 加 .tabbar/.tab/.page/.hidden/.preview-empty；US-006 加 .upload-panel/.drop-zone/.upload-status；US-007 加 .piece-preview-svg；US-008 加 .preview-page/.preview-main/.size-tabs/.size-chip/.parsed-pieces-view/.piece-grid/.piece-card*；上传预览 US-012 加 .piece-qty-dialog-overlay/.piece-qty-dialog-modal/.qty-input-group/.qty-step/.qty-input/.switch/.switch-track/.switch-label-*/.switch-thumb/.qty-btn/.qty-confirm；上传预览 US-013 加 .piece-zoom-overlay/.piece-zoom-modal/.piece-zoom-head/.piece-zoom-seq/.piece-zoom-meta/.piece-zoom-name/.piece-zoom-close/.piece-zoom-body；上传预览 US-014 改 .piece-card-name→.piece-card-qty(+.disabled) + .piece-card-body 加 cursor:zoom-in
+│   ├── style.css           # 由 vanilla 前身 1:1 迁入；US-001 加 .tabbar/.tab/.page/.hidden/.preview-empty；US-006 加 .upload-panel/.drop-zone/.upload-status；US-007 加 .piece-preview-svg；US-008 加 .preview-page/.preview-main/.size-tabs/.size-chip/.parsed-pieces-view/.piece-grid/.piece-card*；上传预览 US-012 加 .piece-qty-dialog-overlay/.piece-qty-dialog-modal/.qty-input-group/.qty-step/.qty-input/.switch/.switch-track/.switch-label-*/.switch-thumb/.qty-btn/.qty-confirm；上传预览 US-013 加 .piece-zoom-overlay/.piece-zoom-modal/.piece-zoom-head/.piece-zoom-seq/.piece-zoom-meta/.piece-zoom-name/.piece-zoom-close/.piece-zoom-body；上传预览 US-014 改 .piece-card-name→.piece-card-qty(+.disabled) + .piece-card-body 加 cursor:zoom-in；US-018 加 .per-type-wrapper/.per-type-btn/.per-type-overlay(z=1100)/.per-type-modal/.per-type-head/.per-type-close/.per-type-table-wrap/.per-type-table/.per-type-rowhead(sticky)/.ptype-col/.ptype-thumb(64×64 zoom-in)/.ptype-name/.per-type-hint/.per-type-actions/.per-type-btn-cancel/.per-type-btn-confirm + .ptype-preview-overlay(z=1200)/.ptype-preview-modal/.ptype-preview-head/.ptype-preview-name/.ptype-preview-close/.ptype-preview-body/.ptype-preview-empty
 │   ├── vite-env.d.ts        # vite/client 类型引用
-│   ├── types/              # US-002：纯数据契约（与 server.py 字段名 1:1）；上传预览 US-005：parsed.ts；上传预览 US-011：qty.ts
+│   ├── types/              # US-002：纯数据契约（与 server.py 字段名 1:1）；上传预览 US-005：parsed.ts；上传预览 US-011：qty.ts；US-018：ptype.ts（PtypeRepresentative + PtypesResponse，GET /api/ptypes 契约）
 │   ├── constants/          # US-004：SIZES / PHASE_COLORS / SEED_COLORS / V03_TABLE
 │   ├── lib/                # US-002 起：纯函数工具（ws / geometry / params）；US-007 download
-│   ├── store/              # US-002 RunRegistry + US-003 appStore + US-001 uiStore（US-015 扩 nestingEnabled + setNestingEnabled + setTab guard）；上传预览 US-005 uploadStore；上传预览 US-011 qtyStore（+clampQty+getPieceDisplay 纯函数）
+│   ├── store/              # US-002 RunRegistry + US-003 appStore + US-001 uiStore（US-015 扩 nestingEnabled + setNestingEnabled + setTab guard）；上传预览 US-005 uploadStore；上传预览 US-011 qtyStore（+clampQty+getPieceDisplay 纯函数）；US-018 controlPanelStore（modal + previewPtype 双显隐字段，两层独立）
 │   ├── hooks/              # US-002 起：useSolveRun / useRafThrottle；US-007 useExport；上传预览 US-005 useParseDxf
 │   ├── components/
 │   │   ├── TabBar.tsx       # US-001 顶部 Tab（排料/上传预览）；订阅 uiStore.activeTab；US-015 超排 button 在 nestingEnabled===false 时 disabled+.disabled class + aria-disabled
@@ -44,7 +44,7 @@ materialSorting-web/
 │   │   │       ├── PieceQtyDialog.test.tsx   # US-012 集成（15 项：null 不渲染 / 标题含 label+size / 初值 per-size/global / [+][-] 改 draftQty / Switch 切 / 确定 per-size/global / 取消 / 遮罩 / ESC / modal 不冒泡 / blur clamp）
 │   │   │       └── PieceZoomModal.test.tsx   # US-013 集成（14 项：zoom=null 不渲染 / doc=null 不渲染 / 渲染 overlay+modal+aria / 头部 label+seq(qty)+size+name / qty 从 qtyStore / null 码「通用」/ body svg.piece-preview-svg / ✕ closeZoom / 遮罩 closeZoom / modal 内不冒泡 / ESC closeZoom / Portal body / label 不存在兜底 / size 不存在兜底）
 │   │   ├── nests/          # US-003 NestSVG/NestCard/NestLabel + US-005 NestsGrid；US-006 NestSVG 加 seek+hover
-│   │   ├── ControlPanel/   # US-004 8 子组件 + US-005 MultiSeedControls；US-007 ExportButtons
+│   │   ├── ControlPanel/   # US-004 8 子组件 + US-005 MultiSeedControls；US-007 ExportButtons；US-018 PerTypeOverrides 改按钮 + PerTypeOverridesModal/PtypePreviewModal（高级配置弹窗 + 片型缩略图 + 放大预览）
 │   │   ├── curve/          # US-005 ConvergenceCurve（命令式 innerHTML）
 │   │   ├── playback/       # US-006 PlaybackBar/Seekbar/SeekReadout
 │   │   └── Tooltip.tsx     # US-006 片 hover tooltip（Portal 到 body）
@@ -139,6 +139,39 @@ materialSorting-web/
 6. **调用前先判 `get().nestingEnabled !== next`** —— 避免无变化时无谓 setState 触发订阅者通知（zustand 内部 Object.is 也会兜底，但显式判断更省一次 set 调度）。改判断逻辑需同步 8 项 US-016 用例（不直接断言 call count，但通过「关键不变量」用例间接验证）。
 7. **App.test.tsx beforeEach 必须 set uploadStore done+doc** —— App mount 会触发 PreviewPage mount，PreviewPage 的 US-016 effect 会按当前 uploadStore.status 对齐 nestingEnabled。若 uploadStore=idle，beforeEach 设的 nestingEnabled=true 会被覆盖回 false，导致 `setTab('nesting')` 失效。改 beforeEach 需同步 App.test.tsx 7 项集成用例。
 8. **未做浏览器验证** —— 本故事无 SVG/坐标变换（仅 store 联动 + setState），AC 仅要求 typecheck + 单测，故跳过 chrome-devtools-mcp；浏览器视觉回归（disabled 灰字 + cursor:not-allowed 随 status 切换）留作 US-021 自动 commit 集成时统一核对（届时 done→commit→切 nesting 端到端联调）。
+
+## US-018 落地：PerTypeOverridesModal + PtypePreviewModal（高级配置弹窗 + 片型缩略图 + 放大预览）
+
+把旧版 PerTypeOverrides 的 `<details>` 折叠面板（10 行 d/tol input + 内/外徽章）改造为「按钮 → 弹窗 table + 片型缩略图 + 放大预览」两层模态。表头列=片型缩略图（compact 渲染）+ 片型名（不含内外徽章 —— US-019 移除内外区分），两行=重合/旋转；缩略图点击触发放大预览（PtypePreviewModal 叠在 PerTypeOverridesModal 之上）。缩略图数据源 = `GET /api/ptypes`（US-020），fetch 失败降级为片型名文字（不阻塞配置）。
+
+### 新增 / 改造文件
+
+| 文件 | 角色 |
+| --- | --- |
+| `src/store/controlPanelStore.ts` | **新建** Zustand store：`modal: 'per_type' \| null` + `previewPtype: string \| null` + actions（openModal/closeModal/openPreviewPtype/closePreviewPtype）。两层 state 独立（closeModal 不影响 previewPtype / closePreviewPtype 不影响 modal）；订阅 modal/previewPtype 自显隐 |
+| `src/types/ptype.ts` | **新建** `PtypeRepresentative` + `PtypesResponse` 类型（与后端 `_PTYPE_REPRESENTATIVE_FIELDS` 字段一致）。v1 仅 polygon 字段必填；US-024 后 intermediate 扩 5 层 → representatives 自动带 net_polygon/internal_lines/notches/grain_line（前端 layer-aware 渲染） |
+| `src/components/ControlPanel/PerTypeOverrides.tsx` | **改造**：旧 `<details>` 折叠 10 行 d/tol input → 单行 `<button class="per-type-btn">` 触发器。保留 values/onChange 契约（透传给 PerTypeOverridesModal）；内部挂 PerTypeOverridesModal + PtypePreviewModal（声明式受控 Portal 订阅 controlPanelStore） |
+| `src/components/ControlPanel/PerTypeOverridesModal.tsx` | **新建** 高级配置弹窗（声明式受控 Portal → document.body；订阅 controlPanelStore.modal）。结构：head(标题+✕) + table-wrap(overflow-x:auto) + actions(取消/确定)。表格 thead 10 列（缩略图 64×64 + 片型名）+ tbody 2 行（重合 input + 旋转 input）。挂载时 fetch GET /api/ptypes（mockImplementation 模式，StrictMode 双 mount 安全）。草稿+确定（D7 预填：INTERNAL_TYPES=10/0，其余 0/0）。缩略图点击 openPreviewPtype(ptype)。双层 ESC 独立（previewPtype!==null 时本组件 ESC 不关） |
+| `src/components/ControlPanel/PtypePreviewModal.tsx` | **新建** 片型放大预览模态（订阅 controlPanelStore.previewPtype）。常驻 ControlPanel 顶层，fetch /api/ptypes 一次缓存。previewPtype !== null 时显示 overlay+modal（aria-modal）； PiecePreviewSVG pad=20 全量渲染（layer-aware）；ESC 始终只关 previewPtype（独立于 PerTypeOverridesModal）；representative 缺失渲染降级空态 |
+| `src/components/preview/PiecePreviewSVG.tsx` | **新增 `compact?: boolean` prop**：compact=true 时跳过 renderLabel（A/B/C 标注）+ 默认 pad 改为 COMPACT_PAD(2)（fit-to-cell）；显式 pad 仍优先。layer-aware 渲染不变（数据带几层画几层）；非 compact 行为不变（向后兼容 PieceZoomModal pad=20） |
+| `src/style.css` | **新增样式段**：`.per-type-wrapper/.per-type-btn`(蓝色按钮 #2c5d8f) + `.per-type-overlay/.per-type-modal/.per-type-head/.per-type-close/.per-type-table-wrap/.per-type-table/.per-type-rowhead(sticky)/.ptype-col/.ptype-thumb(64×64 zoom-in)/.ptype-thumb-placeholder/.ptype-name/.per-type-table input/.per-type-hint/.per-type-actions/.per-type-btn-cancel/.per-type-btn-confirm` + `.ptype-preview-overlay/.ptype-preview-modal/.per-type-preview-head/.ptype-preview-name/.ptype-preview-close/.ptype-preview-body/.ptype-preview-empty`（z-index 1100 per-type / 1200 ptype-preview，暗背景 #26282e + #2ea06c 同色系，与 PieceQtyDialog/PieceZoomModal 一致） |
+| `src/store/__tests__/controlPanelStore.test.ts` | **新建** 7 项单测：默认 null / openModal-closeModal / openPreviewPtype-closePreviewPtype / 订阅者收到 modal 变化 / 订阅者收到 previewPtype 变化 / 两层 state 独立（closeModal 不影响 previewPtype）/ 两层 state 独立（closePreviewPtype 不影响 modal） |
+| `src/components/ControlPanel/__tests__/PerTypeOverridesModal.test.tsx` | **新建** 19 项集成测试：modal=null 不渲染 / modal=per_type 渲染 overlay+modal+aria-label / thead 10 列片型名（无内外徽章）/ tbody 2 行（重合+旋转）/ 挂载 fetch /api/ptypes / fetch 失败降级片型名 / fetch 成功渲染 2 个 compact svg（前片+后片）/ 初值 D7 预填（单排=10/0，前片=0/0）/ 初值保留 form.per_type 非空值 / 编辑 draft 不立即回写 / 确定回写+关闭 / 取消丢弃 / 遮罩关闭 / ESC 关闭（previewPtype=null 时）/ ESC 不双层关闭（previewPtype!==null 时只关预览，底层 modal 保留）/ ✕ 关闭 / 点击缩略图 openPreviewPtype / placeholder 提示 d≤X/t≤Y / modal 内 mousedown 不冒泡 |
+| `src/components/ControlPanel/__tests__/PtypePreviewModal.test.tsx` | **新建** 7 项集成测试：previewPtype=null 不渲染 / previewPtype + fetch 成功渲染 overlay+modal+svg / ✕ 关闭 / 遮罩关闭 / ESC 关闭（独立于底层 modal）/ 叠层场景（与 PerTypeOverridesModal 同挂）ESC 只关预览 + 底层 modal+草稿保留 / representative 缺失渲染降级空态 |
+| `src/components/preview/__tests__/PiecePreviewSVG.test.tsx` | **新增「compact 模式」5 项**：compact=true 跳过 A/B/C 标注 / compact=true pad=COMPACT_PAD(2) viewBox 紧贴 / compact=true layer-aware 渲染不变（数据带 5 层仍渲染 5 层）/ 默认（compact=false）A/B/C 标注正常（向后兼容）/ compact=true + 显式 pad 优先 |
+| `src/components/ControlPanel/__tests__/ControlPanel.test.tsx` | **改造**：原 US-004 「`.per_type .pt-row` 10 行 + 内外徽章」用例 → US-018 「`.per-type-btn` 按钮 + 点开 modal 表头 10 列无徽章」用例；原「fill per_type input」用例 → 「open modal + 编辑 input + 确定 + Start」端到端；beforeEach/afterEach 加 fetch /api/ptypes stub（防 PtypePreviewModal mount 时 act 警告） |
+
+### 关键不变量（US-018 立，后续故事不得破坏）
+
+1. **PerTypeOverrides values/onChange 契约不变** —— ControlPanel 仍 `<PerTypeOverrides values={form.per_type} onChange={(per_type)=>patch({per_type})} />`；US-018 仅把渲染从 `<details>` 改为按钮 + 弹窗，ControlPanel.tsx 无需改动。
+2. **PerTypeOverridesModal 草稿 + 确定（与 PieceQtyDialog 同模式）** —— 打开时从 form.per_type + D7 预填初始化 draft（key 强制每次 open 重建）；编辑仅改 draft；确定调 onChange + 关闭；取消/遮罩/ESC 仅关闭、draft 丢弃。改即时回写会破坏 AC#5 草稿语义。
+3. **D7 预填：INTERNAL_TYPES 重合=10、旋转=0；其余 0/0** —— 与旧版 DEFAULT_FORM.d_int='10' 行为一致（v1 兜底）；US-019 删两档后 per_type 是唯一源，D7 预填保证开箱密度不暴跌。
+4. **缩略图 layer-aware 渲染（D11）** —— v1 representatives 仅 polygon → 缩略图只画外轮廓；US-024 intermediate 扩 5 层后 representatives 自动带 5 层字段，缩略图自动画 5 层（PiecePreviewSVG compact 模式按数据有无渲染，无需改动本组件）。
+5. **fetch /api/ptypes 失败降级** —— 表头仍渲染 10 列片型名文字，缩略图按钮 disabled；不阻塞重合/旋转配置。改降级为「整体弹窗关闭」会破坏 AC#4「fetch 失败不阻塞」语义。
+6. **两层 modal ESC 独立（AC#10）** —— PerTypeOverridesModal listener 内判 `useControlPanelStore.getState().previewPtype === null` 才关；PtypePreviewModal listener 始终只关 previewPtype。改双层同时关会破坏「放大预览打开时 ESC 只关预览」语义。
+7. **z-index 层级：tooltip(100) < piece-qty/piece-zoom(1000) < per-type(1100) < ptype-preview(1200)** —— PtypePreviewModal 叠在 PerTypeOverridesModal 之上；改层级会破坏叠层视觉。
+8. **fetch mockImplementation 而非 mockResolvedValue** —— StrictMode 双 mount 会调 2 次 fetch；mockResolvedValue 共享同一 Response 会被首次 .json() 消费完，第二次报 "body stream already read"。测试用 `vi.spyOn(globalThis, 'fetch').mockImplementation(...)` 每次创建新 Response。改 mockResolvedValue 会触发 StrictMode 假失败。
+9. **PiecePreviewSVG compact 模式不影响非 compact 调用方** —— PieceZoomModal 仍传 pad=20 默认 compact=false（5 层 + A/B/C 标注正常渲染）；PerTypeOverridesModal 传 compact（无标注、pad 默认 2）；PtypePreviewModal 传 pad=20 默认 compact=false（5 层渲染但无 A/B/C 标注，因 representative 无 label 字段，renderLabel 内 `if (!piece.label) return` 兜底）。改 compact 默认值或副作用会破坏向后兼容。
 
 ## 上传预览 US-005 落地：ParsedDoc 类型 + uploadStore + useParseDxf hook
 

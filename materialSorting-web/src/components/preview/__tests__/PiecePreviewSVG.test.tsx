@@ -602,3 +602,115 @@ describe('PiecePreviewSVG (US-007) AC#5 切 piece 整组重建', () => {
     expect(ref.current!.getAttribute('viewBox')).toBe('-10 0 140 120');
   });
 });
+
+describe('PiecePreviewSVG (US-018) compact 模式', () => {
+  it('compact=true：不渲染 A/B/C label text（即使 piece.label 非空）', () => {
+    let svg: SVGSVGElement | null = null;
+    act(() => {
+      root!.render(
+        <div
+          ref={(el) => {
+            svg = el?.querySelector('svg') ?? null;
+          }}
+        >
+          <PiecePreviewSVG piece={makePiece({ label: 'A' })} compact />
+        </div>,
+      );
+    });
+    expect(svg).not.toBeNull();
+    expect(svg!.querySelector('polygon[data-role="rough"]')).not.toBeNull();
+    // 关 A/B/C 标注（即使 label='A'）
+    expect(svg!.querySelector('text[data-role="label"]')).toBeNull();
+  });
+
+  it('compact=true：pad 默认 COMPACT_PAD(2)，viewBox 紧贴几何', () => {
+    // bbox (10,20)-(110,100)，compact pad=2：viewBox=(8,18) w=104 h=84
+    let svg: SVGSVGElement | null = null;
+    act(() => {
+      root!.render(
+        <div
+          ref={(el) => {
+            svg = el?.querySelector('svg') ?? null;
+          }}
+        >
+          <PiecePreviewSVG piece={makePiece()} compact />
+        </div>,
+      );
+    });
+    expect(svg!.getAttribute('viewBox')).toBe('8 18 104 84');
+  });
+
+  it('compact=true：layer-aware 渲染不变（数据带 net/internal/notch/grain 仍渲染）', () => {
+    const piece = makePiece({
+      net_polygon: [
+        [20, 30],
+        [100, 30],
+        [100, 90],
+        [20, 90],
+      ],
+      internal_lines: [
+        [
+          [50, 30],
+          [50, 90],
+        ],
+      ],
+      notches: [[110, 60, 1, 0]],
+      grain_line: [10, 60, 110, 60],
+    });
+    let svg: SVGSVGElement | null = null;
+    act(() => {
+      root!.render(
+        <div
+          ref={(el) => {
+            svg = el?.querySelector('svg') ?? null;
+          }}
+        >
+          <PiecePreviewSVG piece={piece} compact />
+        </div>,
+      );
+    });
+    const flip = svg!.querySelector('g[data-role="flip"]')!;
+    expect(flip.querySelectorAll('polygon[data-role="rough"]').length).toBe(1);
+    expect(flip.querySelectorAll('polygon[data-role="net"]').length).toBe(1);
+    expect(flip.querySelectorAll('polyline[data-role="internal"]').length).toBe(1);
+    expect(flip.querySelectorAll('line[data-role="notch"]').length).toBe(1);
+    expect(flip.querySelectorAll('line[data-role="grain"]').length).toBe(1);
+    // compact 模式仍不渲染 label
+    expect(svg!.querySelectorAll('text[data-role="label"]').length).toBe(0);
+  });
+
+  it('compact=false（默认）：A/B/C 标注正常渲染（向后兼容）', () => {
+    let svg: SVGSVGElement | null = null;
+    act(() => {
+      root!.render(
+        <div
+          ref={(el) => {
+            svg = el?.querySelector('svg') ?? null;
+          }}
+        >
+          <PiecePreviewSVG piece={makePiece({ label: 'A' })} />
+        </div>,
+      );
+    });
+    expect(svg!.querySelector('text[data-role="label"]')).not.toBeNull();
+    expect(svg!.querySelector('text[data-role="label"]')!.textContent).toBe('A');
+  });
+
+  it('compact=true + 显式 pad：使用显式 pad（COMPACT_PAD 仅作未指定时默认）', () => {
+    // 显式 pad=5 优先于 compact COMPACT_PAD(2)
+    let svg: SVGSVGElement | null = null;
+    act(() => {
+      root!.render(
+        <div
+          ref={(el) => {
+            svg = el?.querySelector('svg') ?? null;
+          }}
+        >
+          <PiecePreviewSVG piece={makePiece()} compact pad={5} />
+        </div>,
+      );
+    });
+    // bbox (10,20)-(110,100)，pad=5：viewBox=(5,15) w=110 h=90
+    expect(svg!.getAttribute('viewBox')).toBe('5 15 110 90');
+  });
+});

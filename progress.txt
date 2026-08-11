@@ -3,30 +3,49 @@ Started: 2026-08-09
 
 
 
-**未做浏览器验证**：本故事纯后端（无 SVG/坐标变换/可视化改动），按规则不需 chrome-devtools-mcp；改用 Python 直接调函数 + curl+WS 端到端 + 线程安全烟雾测试联合覆盖 AC。
-**清理**：ms-web (PID 28940) 已 `Stop-Process -Force` 杀掉，netstat :8000 LISTENING 0；测试期覆盖的 intermediate 已从 .bak 还原到 176 片基线；uploads/ 测试文件清理（部分 Windows 锁留待下次 GC）。
 
-## 2026-08-11 — US-017 SizePicker 从上传 doc 动态读码号（branch: ralph/nesting-tab-linkage）
-**Goal**: 超排页码号区从 uploadStore.doc 动态读码号（不锁死 M1787 的 8 码）；null 码 chip 显示「通用」；doc=null 时 StatusLine 增提示「请先在上传预览页解析母版」；DEFAULT_FORM.sizes=[] 强制用户选。
-**Files changed**（纯前端，无后端）：
-- `materialSorting-web/src/components/ControlPanel/SizePicker.tsx` —— 重写。新增 `useUploadStore(s=>s.doc)` 订阅；chip 列表 = `doc ? doc.sizes.map(s=>s.size) : [...SIZES]`（doc=null fallback SIZES，前端不二次排序）；`NULL_SIZE_LABEL='通用'`（与 SizeTabs 同语义）+ `sizeKey(s)`（null→'null'，number→String(n)）+ `sizeLabel(s)`（null→「通用」）两个纯函数；`SizePickerProps.selected/onChange` 类型从 `number[]` 扩为 `(number|null)[]`；chip id 改 `sz_${sizeKey}`（null → `sz_null`）；onChange 不再 sort（旧版 `selected.sort((a,b)=>a-b)` 移除）。
-- `materialSorting-web/src/lib/params.ts` —— `FormState.sizes: (number|null)[]`（从 `number[]` 扩）；`DEFAULT_FORM.sizes = []`（从 `[...SIZES]` 改为空数组，强制用户选）；删 `import { SIZES }`（params.ts 内不再用 SIZES）。
-- `materialSorting-web/src/components/ControlPanel/ControlPanel.tsx` —— 新增 `useUploadStore(s=>s.doc)` 订阅；`handleStart` / `handleExport` 用类型守卫 `(s): s is number => s !== null` 过滤 null（保持下游 StartConfig.sizes / useExport.exportAs 的 `number[]` 契约不变）；`visibleStatus = doc===null ? ${status} — 请先在上传预览页解析母版 : status`；StatusLine 接 visibleStatus。
-- `materialSorting-web/src/components/ControlPanel/__tests__/SizePicker.test.tsx` —— 新建。8 项单测：doc=null fallback SIZES / doc 11 码（含 null）渲染全 11 / null 码显示「通用」+ id `sz_null` / 切 doc 自动重渲染（订阅 uploadStore.doc） / toggle 数字 chip 不二次排序 / toggle null chip onChange 收到 [null] / selected 含 null → checked / key-id 唯一无冲突。覆盖 AC#1 + AC#3 + 切 doc 重渲染 + 边界（含 PassThrough+useState 模拟父级累积）。
-- `materialSorting-web/src/components/ControlPanel/__tests__/ControlPanel.test.tsx` —— beforeEach/afterEach 加 `useUploadStore.getState().reset()`（模块级单例隔离）；AC#1 改为「8 fallback chips, NONE default-checked」（旧版全选废除）；AC#6 default-Start 改为「先全选再 Start」（默认 sizes=[] 校验会失败）；AC#7 简化为「默认空 + Start → onStatus error」（旧版需先点掉全选）；AC#6 toggle-sizes 改为「默认空 + 勾 30/31」（旧版从全选取消）；AC#6 fill per_type 加「先勾一个码号」；4 个 multi_seed Start 用例均加「先勾一个码号」；新增 US-017 StatusLine hint describe block 4 项（doc=null 增提示 / doc 非空无提示 / fallback SIZES / doc.sizes 渲染含 null 通用）。
-- `materialSorting-web/src/lib/__tests__/params.test.ts` —— 新增「US-017: DEFAULT_FORM.sizes 默认空数组」回归断言。
-- `.docs/technical/agent-component-map.md` —— `src/lib/params.ts` / `ControlPanel.tsx` / `SizePicker.tsx` 3 行描述加 US-017 改动；`ControlPanel.test.tsx` 行项数从 15 → 23；新增 `SizePicker.test.tsx` 行；落地段表新增 US-017 一行。
-- `materialSorting-web/AGENTS.md` —— 文件分工注释加「US-017 SizePicker 动态读码号 + DEFAULT_FORM.sizes=[]」；新增「US-017 关键约定」段 8 条（订阅 uploadStore.doc / DEFAULT_FORM.sizes=[] / FormState.sizes (number|null)[] / null 通用文案 / 下游 WS+export 过滤 null 保 number[] 契约 / StatusLine 提示 / 测试隔离 reset uploadStore / 未做浏览器验证）；US-004 DEFAULT_FORM 关键约定加 US-017 交叉引用（sizes 默认 []）。
-**Key invariants**:
-- **SizePicker 订阅 uploadStore.doc（不硬编码 SIZES）**：doc 非空 → `doc.sizes.map(s=>s.size)`；doc=null → fallback SIZES。改订阅源会破坏「切款母版→码号区自动同步」语义。
-- **DEFAULT_FORM.sizes = []（不再是 [...SIZES] 全选）**：用户必须主动勾选；ControlPanel「请至少选一个码号」校验保留兜底。后端 build_instance 入参契约不变（ControlPanel.handleStart 过滤 null 后透传 number[]）。
-- **下游 WS / export 契约不变（仍是 number[]）**：ControlPanel.handleStart / handleExport 用类型守卫过滤 null；StartConfig / StartPayload / useExport.exportAs 签名不改。M1787 实际母版无 null 码；含 null 母版的完整端到端支持留给 US-022（按 (label, sizeKey) 查 quantities，sizeKey 已支持 null）。
-- **null 码 chip 文案 / key / id 三件套**：`sizeLabel(null)='通用'` / `sizeKey(null)='null'` / `id='sz_null'`。改任一项需同步 SizePicker.test.tsx + ControlPanel.test.tsx US-017 用例。
-**验证（5 个 AC 全部通过）**：
-- AC#1 ✅ SizePicker 订阅 useUploadStore(s=>s.doc)；doc 非空 → doc.sizes.map(s=>s.size)；doc=null → fallback SIZES（SizePicker.test.tsx 2 项 + ControlPanel.test.tsx US-017 2 项）。
-- AC#2 ✅ DEFAULT_FORM.sizes=[]（params.test.tsx 新增断言；ControlPanel.test.tsx AC#1 改为 NONE checked）。
-- AC#3 ✅ null 码 chip 显示「通用」+ ControlPanel 校验保留 + doc=null 时 StatusLine 增「请先在上传预览页解析母版」（SizePicker.test.tsx 2 项 + ControlPanel.test.tsx US-017 StatusLine hint 4 项）。
-- AC#4 ✅ ≥4 项单测：doc=null fallback SIZES / doc 11 码渲染全 11 / null 码显示「通用」/ 切 doc 自动重渲染（SizePicker.test.tsx 4 项核心 + 4 项补充 = 8 项）。
-- AC#5 ✅ `npm run typecheck` 通过；`npm run test` 全绿（29 文件 / 405 项，含新增 SizePicker.test.tsx 8 项 + ControlPanel.test.tsx +4 项 US-017 StatusLine hint + params.test.ts +1 项）；`npm run build` 无报错（static/assets/index-*.js 182KB）。
 **未做浏览器验证**：本故事无 SVG/坐标变换（仅 chip 渲染 + StatusLine 文案），AC 仅要求 typecheck + 单测 + build，故跳过 chrome-devtools-mcp；浏览器视觉回归（chip 渲染 / 通用 文案 / doc 切换重渲染）留作 US-021 自动 commit 集成时统一核对（届时 done→commit→切 nesting 端到端联调）。
+---
+
+## US-018 高级配置弹窗（按钮→table+片型缩略图+放大预览）— 2026-08-11
+
+**Story**：把现有 `<details>` 折叠的「每片型覆盖」改成「按钮→弹窗 table」，表头列=片型缩略图（点击放大预览）+片型名，tbody 2 行=重合/旋转。两层独立 ESC，草稿+确定模式，D7 预填。
+
+**新增文件**：
+- `materialSorting-web/src/types/ptype.ts`（39 行）— GET /api/ptypes 响应契约类型 `PtypesResponse.representatives[ptype]: PtypeRepresentative`，layer-aware 字段（polygon/net_polygon/internal_lines/notches/grain_line），无 label/name。
+- `materialSorting-web/src/store/controlPanelStore.ts`（45 行）— Zustand store：`modal:'per_type'|null` + `previewPtype:string|null` 两个独立字段 + 4 actions（openModal/closeModal/openPreviewPtype/closePreviewPtype）。
+- `materialSorting-web/src/components/ControlPanel/PerTypeOverridesModal.tsx`（326 行）— 高级配置弹窗。订阅 `modal==='per_type'` 显隐；Inner 用 `key="per-type-modal"` 强制重建；mount 时 fetch /api/ptypes（cancelled flag 防 StrictMode 双 mount race）；D7 预填 INTERNAL_PTYPES={'单排','双排','火机袋','裤耳'} d=10/tol=0，其它 0/0；草稿+确定；ESC listener 判 previewPtype!==null 时 return（让放大预览优先）。
+- `materialSorting-web/src/components/ControlPanel/PtypePreviewModal.tsx`（133 行）— 放大预览模态。订阅 previewPtype 显隐；一次 mount fetch /api/ptypes 缓存；ESC 仅 previewPtype!==null 时生效，总关 previewPtype；rep 缺失渲染 .ptype-preview-empty 降级空态。
+- `materialSorting-web/src/store/__tests__/controlPanelStore.test.ts`（7 tests）
+- `materialSorting-web/src/components/ControlPanel/__tests__/PerTypeOverridesModal.test.tsx`（19 tests）— 含 mount triggers fetch / fetch failure degrades / fetch success renders compact svg / D7 prefill / 双层独立 ESC / 点击缩略图开 PtypePreviewModal / placeholder hint d≤X/t≤Y from V03_TABLE 等。
+- `materialSorting-web/src/components/ControlPanel/__tests__/PtypePreviewModal.test.tsx`（7 tests）— 含 null 不渲染 / fetch success 渲染 SVG / ✕ 关 / 遮罩关 / ESC 关 / stacked close preview keeps 底层 / fetch 失败降级空态。
+
+**修改文件**：
+- `materialSorting-web/src/components/preview/PiecePreviewSVG.tsx` — 加 `compact?:boolean` prop：compact=true 时 pad 默认 COMPACT_PAD=2（不是 DEFAULT_PAD=14）、跳过 renderLabel（不渲染 A/B/C 文本）、5 层 layer-aware 渲染不变。useEffect deps `[piece, pad, compact]`。
+- `materialSorting-web/src/components/ControlPanel/PerTypeOverrides.tsx`（47 行，重写）— 旧 10 行 `<details>` 折叠 → 单按钮触发器 `.per-type-btn`；内挂 PerTypeOverridesModal + PtypePreviewModal；保留 values/onChange 契约。
+- `materialSorting-web/src/style.css` — 加 `.per-type-wrapper/.per-type-btn`（#2c5d8f 蓝）、`.per-type-overlay`(z-1100)/.per-type-modal`(#26282e)、`.per-type-head/.per-type-title/.per-type-close`、`.per-type-table-wrap`(overflow-x:auto)/.per-type-table`(table-layout:fixed)/.per-type-rowhead`(sticky left)、`.ptype-col`(80px)/.ptype-thumb`(64×64 zoom-in)/.ptype-name`、`.per-type-table input[type='number']`、`.per-type-hint/.per-type-actions/.per-type-btn-cancel/.per-type-btn-confirm`(#2ea06c)、`.ptype-preview-overlay`(z-1200)/.ptype-preview-modal/.ptype-preview-head/.ptype-preview-name/.ptype-preview-close/.ptype-preview-body/.ptype-preview-empty`。
+- `materialSorting-web/src/components/preview/__tests__/PiecePreviewSVG.test.tsx` — 加 5 项 compact 测试。
+- `materialSorting-web/src/components/ControlPanel/__tests__/ControlPanel.test.tsx` — 删 V03_TABLE import / firstHeadButton；beforeEach 加 fetchSpy stub；旧 per_type tests 改为 button+modal tests（AC#4 渲染 .per-type-btn / 点击打开 modal）。
+- `materialSorting-web/src/__tests__/App.test.tsx` — beforeEach/afterEach 加 fetchSpy stub（防 App mount 触发 PtypePreviewModal fetch 的 act warning）。
+- `.docs/technical/agent-component-map.md` — 加 US-018 章节（new/modified files table + 9 key invariants），更新 store/ / types/ / ControlPanel/ / style.css 行描述。
+- `materialSorting-web/AGENTS.md` — 加 US-018 关键约定（按钮触发替代折叠 / controlPanelStore 两字段 / 双层独立 ESC / D7 预填 / 草稿+确定 / 缩略图 fetch / compact prop / z-index / mockImplementation 必要性 等 14 条），更新文件分工行 + style.css + ControlPanel/ 行描述。
+
+**验收**：
+- `npm run typecheck` ✅ 无错
+- `npm run test` ✅ 32 test files / 443 tests pass / 0 warning
+- `npm run build` ✅ 187.01 KB JS / 17.53 KB CSS
+- PerTypeOverridesModal 19 项（≥14）+ PtypePreviewModal 7 项（≥6）+ controlPanelStore 7 项 + PiecePreviewSVG compact 5 项 + ControlPanel button 改造 ✅
+- 双层独立 ESC（AC#10）：放大预览打开时 ESC 只关放大预览，底层 modal + 草稿保真 ✅
+- D7 预填（INTERNAL_PTYPES d=10/tol=0，其它 0/0；非空值保留）✅
+- fetch /api/ptypes 失败降级（thumbnail disabled + ptype name 兜底，不阻塞 d/tol input）✅
+- 缩略图 64×64 + cursor:zoom-in + 点击 openPreviewPtype ✅
+- layer-aware：v1 仅外轮廓（rep 只有 polygon），US-024 数据带 5 层后代码无需改 ✅
+
+**关键决策**：
+- D5 按钮触发替代 `<details>`：母版 10 片型 20 input 常驻 ControlPanel 视觉噪声过大，收进 modal 更简洁。
+- D7 预填用 INTERNAL_PTYPES Set（不读 v03.ts INTERNAL 标记），保持 store/types 解耦。
+- mockImplementation vs mockResolvedValue：StrictMode dev 双 mount 调 2 次 fetch，mockResolvedValue 共享同一 Response body 会被首次 .json() 消费完，第二次报 "body stream already read"。
+- z-index 三层：tooltip(100) < piece-qty/zoom(1000) < per-type(1100) < ptype-preview(1200)。
+
+**未做浏览器验证**：本故事无新 SVG/坐标变换（PiecePreviewSVG compact 仅复用现有 5 层渲染 + 跳过 label + pad=2），AC 仅要求 typecheck + 单测 + build，故跳过 chrome-devtools-mcp；浏览器视觉回归（缩略图 64×64 + 放大预览 + 双层 ESC + D7 预填）留作 US-021 自动 commit 集成时统一核对。
 ---
