@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-web = ["fastapi", "uvicorn", "matplotlib", "python-multipart"]   # 工作台服务 + PNG 导出 + 上传解析(US-004 multipart)
+web = ["fastapi", "uvicorn[standard]", "matplotlib", "python-multipart"]   # 工作台服务 + PNG 导出 + 上传解析(US-004 multipart)
 dev = ["pytest>=7.4"]
 
 [project.scripts]

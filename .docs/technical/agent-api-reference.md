@@ -5,11 +5,11 @@
 
 ## 状态
 
-单页工作台后端，4 个 HTTP 端点 + 1 条 WS。求解用 `ThreadPoolExecutor(max_workers=6)` 把同步 sparrow 子线程桥到 asyncio 事件循环（多 seed 最多 6 路并发，seed 间同等 CPU 竞争 → 排名仍公平）。**`server.py` 在模块顶层 `load_pieces()` 读 intermediate**，故 `ms-web` 首次启动前**必须**先 `ms-pieces-export` 生成 `pieces_intermediate.json`。US-004 起 `/api/parse-dxf` 上传解析也复用这个 6-worker 线程池跑 CPU 密集的 DXF 深度解析（`collect_pieces_with_details`）。
+单页工作台后端，5 个 HTTP 端点 + 1 条 WS。求解用 `ThreadPoolExecutor(max_workers=6)` 把同步 sparrow 子线程桥到 asyncio 事件循环（多 seed 最多 6 路并发，seed 间同等 CPU 竞争 → 排名仍公平）。**`server.py` 启动期 `_reload_pieces_state()` 读 intermediate 填入 `_PIECES_STATE`**（US-020：commit 后可 reload，allow-empty 不再让 import 崩）。US-004 起 `/api/parse-dxf` 上传解析也复用这个 6-worker 线程池跑 CPU 密集的 DXF 深度解析（`collect_pieces_with_details`）。
 
 ## 启动约束（重要）
 
-1. `server.py` 顶层执行 `_DOC, GATE_MM, PIECES = load_pieces()` —— import 时就读 intermediate。文件缺失 → import 即崩。
+1. `server.py` 顶层执行 `_reload_pieces_state()` —— import 时读 intermediate 填入 `_PIECES_STATE`（US-020）。intermediate 缺失**不再让 import 崩**：`_PIECES_STATE={}` 时 `/api/ptypes` 返 `{representatives:{}}`、`/ws/solve` 报「排料数据为空」、`/export` 报「placed 的 pid 均未匹配」。生产仍建议先 `ms-pieces-export` 让首次启动有数据。
 2. `app.mount('/static', ...)` 指向 `materialSorting-web/static/`（前端构建产物）。
    - **prod**：先 `cd materialSorting-web && npm run build` 生成 `static/`；
    - **dev**：`npm run dev` 起 Vite :5173，经 proxy 打 :8000（仍建议先 build 一次让 `static/` 存在，避免 mount 空目录报错）。
@@ -23,7 +23,8 @@
 | mount | `/static/*` | 前端构建产物（JS/CSS/资源） | `StaticFiles(directory=paths.STATIC_DIR)` |
 | POST | `/export` | 导出最优 run → PNG / R12-DXF 附件下载 | `server.export` |
 | POST | `/api/parse-dxf` | US-004：multipart 上传母版 DXF → 深度解析 + A/B/C 标注 JSON | `server.parse_dxf` |
-| POST | `/api/commit-to-nesting` | US-010：把上传母版转排料 intermediate（Path A 全管线，覆盖写回 + .bak） | `server.commit_to_nesting` |
+| POST | `/api/commit-to-nesting` | US-010：把上传母版转排料 intermediate（Path A 全管线，覆盖写回 + .bak）+ US-020 commit 后 reload `_PIECES_STATE` | `server.commit_to_nesting` |
+| GET | `/api/ptypes` | US-020 D10：返回当前 `_PIECES_STATE` 下每个 ptype 的代表裁片（首个出现），供前端高级配置弹窗缩略图/放大预览（D11 layer-aware，v1 仅 polygon） | `server.get_ptypes` |
 | WS | `/ws/solve` | 排料求解流（manifest → frames → final） | `server.ws_solve` |
 
 > FastAPI 自动暴露 `/docs` `/openapi.json` 等 OpenAPI 路由；业务路由全在上表。
@@ -63,7 +64,7 @@
 | 函数 | 签名 | 说明 |
 |------|------|------|
 | `apply_transform` | `(polygon, rotation_deg: float, translation) → [(x,y)...]` | `world = R(θ)·(x,y)+(tx,ty)`，与前端 `pointsStr` 同公式 |
-| `placed_to_world` | `(placed, pieces_by_id) → [{pid,ptype,size,polygon,color,area_mm2}]` | pid 查 `PIECES_BY_ID` 取**原始** polygon → 世界坐标；查不到的跳过并 warning |
+| `placed_to_world` | `(placed, pieces_by_id) → [{pid,ptype,size,polygon,color,area_mm2}]` | pid 查 `_get_pieces_state()['pieces_by_id']`（US-020）取**原始** polygon → 世界坐标；查不到的跳过并 warning |
 | `render_png` | `(world_pieces, *, width_mm, gate_mm, title) → bytes` | matplotlib Agg，dpi=200，类型配色复用 `PTYPE_COLORS`，图例仅画出现过的片型 |
 | `write_marker_dxf` | `(world_pieces, *, width_mm, gate_mm, title) → bytes` | ezdxf R12 + 闭合 POLYLINE（首尾补点），ACI 色号见 `TYPE_ACI`，ASCII 标题；**不用 LWPOLYLINE**（ET2008 轮廓消失坑） |
 
@@ -179,7 +180,8 @@ curl -X POST http://127.0.0.1:8000/api/commit-to-nesting \
   "n_written_dxf": 110,                 // 切出的单裁片 DXF 数（写入 uploads/<doc_id>_pieces/）
   "n_skipped": 0,                       // 未切出的裁片数（GROUP_NAMES 映射缺失 / size=None）
   "skipped": [],                        // 截断的前 10 条跳过原因（排查用）
-  "bak": "D:\\code\\...\\pieces_intermediate.bak"  // 原 intermediate 备份路径
+  "bak": "D:\\code\\...\\pieces_intermediate.bak",  // 原 intermediate 备份路径
+  "reloaded": true                      // US-020：commit 后 _reload_pieces_state() 是否成功（罕见 I/O 竞态时 false + reload_error 字段）
 }
 ```
 
@@ -196,7 +198,7 @@ curl -X POST http://127.0.0.1:8000/api/commit-to-nesting \
 1. **临时单裁片目录**：`paths.OUT_DIR/uploads/<doc_id>_pieces/`（~110 个 DXF，每次 commit 先 `shutil.rmtree` 再重写，**idempotent**）。v1 不自动清理（open question），同 `doc_id` 重跑会覆盖。
 2. **intermediate 备份**：写回前 `shutil.copy2(paths.INTERMEDIATE, paths.INTERMEDIATE.with_suffix('.bak'))`。`pieces_intermediate.bak` 是上一次写回前的快照（首次 commit 无原文件则跳过备份）。**只保留一份**（再 commit 会覆盖 `.bak`）。
 3. **intermediate schema 与 `ms-pieces-export` 一致**：`{source, gate_mm, n_pieces, total_area_mm2, pieces[]}`；pieces 字段 `{pid, ptype, size, side, polygon, bbox, area_mm2, n_verts, allowed_angles}`。`gate_mm=1980`（`nesting_bounds.load_pieces.GATE_MM`）、`allowed_angles=[0,180]`（v0.3 布纹线）。
-4. **不自动 reload 排料页**：`server.py` 顶层 `PIECES = load_pieces()` 是 import 时一次性加载的内存常量；commit 后 intermediate 文件已更新但内存 PIECES 不变（须重启 `ms-web` 或后续 reload 端点，**v1 TODO**）。
+4. **commit 后 reload（US-020）**：`_commit_to_nesting_sync` 成功 → 立即调 `_reload_pieces_state()` 重读 intermediate 填入 `_PIECES_STATE`（threading.Lock 保护，原子替换）。下一次 `/ws/solve` / `/export` / `/api/ptypes` 即看到新裁片，**前端无需重启 ms-web**。reload 异常（罕见 I/O 竞态）降级为 `reloaded: false` + `reload_error` 字段，保留旧 state 不半切。
 
 ### 关键不变量
 
@@ -205,11 +207,55 @@ curl -X POST http://127.0.0.1:8000/api/commit-to-nesting \
 3. **NestPiece 仅含 polygon（毛版 layer1）**：grain/internal/notch 不进 intermediate（排料只需 polygon）；L/R 镜像由 `load_nest_pieces` 的 `PAIR_TYPES` 处理。
 4. **回归等价**：对 M1787，Path A 产物的 `pid` 集合 / `total_area_mm2` 与「全码 CLI 管线」（`load_nest_pieces(paths.PIECES_DIR, sizes=[28..38])`）等价（实测 176/176 片、PID 集合相同、零面积 diff）。
 5. **路径一律走 `paths`**：`paths.OUT_DIR/uploads/`、`paths.INTERMEDIATE`、`paths.INTERMEDIATE.with_suffix('.bak')`；不硬编码 `..` 上溯。
-6. **TODO（v1 不做，随排料页改造补）**：① 排料页 commit 后自动 reload（PIECES 顶层常量问题）；② 前端 commit 按钮 + `setTab('nesting')` 跳转 UX。
+
+## GET /api/ptypes — US-020 片型代表裁片（D10/D11）
+
+返回当前 `_PIECES_STATE` 下每个 ptype 的代表裁片（首个出现），供前端高级配置弹窗表头缩略图 + 点击放大预览（US-018）。
+
+### 请求
+
+无入参，GET。响应直接读 `_get_pieces_state()` 内存常量，**不走文件 I/O**（μs 级响应）。
+
+```bash
+curl http://127.0.0.1:8000/api/ptypes
+```
+
+### 响应（200）
+
+```jsonc
+{
+  "representatives": {
+    "前片":   {"polygon": [[x,y], ...]},     // v1 仅 polygon 字段
+    "后片":   {"polygon": [[x,y], ...]},
+    "腰":     {"polygon": [[x,y], ...]},
+    "前袋":   {"polygon": [[x,y], ...]},
+    "后袋":   {"polygon": [[x,y], ...]},
+    "机头":   {"polygon": [[x,y], ...]},
+    "单排":   {"polygon": [[x,y], ...]},
+    "双排":   {"polygon": [[x,y], ...]},
+    "火机袋": {"polygon": [[x,y], ...]},
+    "裤耳":   {"polygon": [[x,y], ...]}
+    // US-024 后每个代表裁片自动带 net_polygon / internal_lines / notches / grain_line（前端 layer-aware 渲染，本端点无需改）
+  }
+}
+```
+
+### 字段透传白名单（`_PTYPE_REPRESENTATIVE_FIELDS`）
+
+`('polygon', 'net_polygon', 'internal_lines', 'notches', 'grain_line')` —— **layer-aware（D11）**：v1 intermediate 只有 polygon → 仅返 polygon；US-024 intermediate 扩 5 层后自动带后 4 个字段，**本端点代码无需改**，前端按数据有无自适应渲染。
+
+### 关键不变量
+
+1. **空 state（首次启动未 commit / intermediate 缺失）**：返回 `{representatives: {}}`，不阻塞前端配置弹窗降级为片型名文字。
+2. **ptype 首个出现作代表**：按 `_PIECES_STATE.pieces` 数组顺序遍历，每个 ptype 第一次出现时记录；不区分 L/R、不区分码号（同 ptype 几何归一化后等价）。
+3. **M1787 验证**：commit 后返 10 个 ptype（前片/后片/腰/前袋/后袋/机头/单排/双排/火机袋/裤耳）。
+4. **响应字段不含 pid / size / area**：仅几何数据；片型名是 key。前端只需 polygon 画缩略图。
 
 ## WebSocket /ws/solve — 求解流
 
 单条长连接，生命周期：**client 发 start → server 推 1×manifest → N×frame → 1×final（或 error）**。
+
+> US-020：accept 阶段 `state = _get_pieces_state()` 拿一次快照，整连接内 `pieces / gate_mm` 不变（避免求解中途 reload 切数据）。state 空时（首次启动未 commit / intermediate 缺失）直接发 error「排料数据为空」并关闭。
 
 ### 1. 握手（client → server，**首条且仅一条**）
 
@@ -322,12 +368,13 @@ async 协程: while (item=await queue.get()) ≠ SENTINEL: ws.send_json(item)
 ## 关键不变量（改后端勿破坏）
 
 1. **density 双口径**：frame/final 的 `density` 必须是原面积口径（`total_area/(width*gate)`），`density_sparrow` 才是 spyrrow 自报。前端 90% 生死线判定用 `density`。
-2. **导出用原始轮廓非 eroded**：`PIECES_BY_ID` 持有原始 polygon；`placed_to_world` 用它变换。eroded 多边形只用于求解/屏幕。
+2. **导出用原始轮廓非 eroded**：`_PIECES_STATE['pieces_by_id']`（US-020 替代旧 `PIECES_BY_ID`）持有原始 polygon；`placed_to_world` 用它变换。eroded 多边形只用于求解/屏幕。
 3. **DXF 走 R12 + POLYLINE**（非 LWPOLYLINE）：ET2008 读 LWPOLYLINE 轮廓消失。单裁片与 marker 导出均如此。
-4. **`server.py` 顶层 `load_pieces()`**：import 时读 intermediate。改启动顺序须保证 intermediate 已生成。
-5. **WS 首条必须是 `{action:'start'}`**：否则 error 并关闭。
+4. **`server.py` 启动期 `_reload_pieces_state()`**（US-020）：import 时读 intermediate 填 `_PIECES_STATE`；缺失不再让 import 崩（allow-empty）。改启动顺序需保证调用顺序在 `app` 定义前。
+5. **WS 首条必须是 `{action:'start'}`**：否则 error 并关闭。accept 阶段 `_get_pieces_state()` 快照一次，整连接 pieces 不变（US-020 关键不变量 AC#5）。
 6. **导出文件名 `pct` 而非 `%`**：`排料_码28-30-32_88.42pct_seed0.png`。改格式需同步前端 `useExport.test.tsx` CN decode 用例。
 7. **多 seed 并发靠 ThreadPoolExecutor(6)**：seed 间同等 CPU 竞争，排名公平。改 worker 数影响多 seed 对比语义。
+8. **`_PIECES_STATE` 改写只能走 `_reload_pieces_state()`**：threading.Lock 保护，immutable snapshot 模式（整体 `clear()+update()`）。任何路由读 pieces 都走 `_get_pieces_state()`，**不再直接引用旧顶层常量 `PIECES / GATE_MM / PIECES_BY_ID`**（已删除）。
 
 ## 入口（`pyproject.toml` `[project.scripts]`）
 

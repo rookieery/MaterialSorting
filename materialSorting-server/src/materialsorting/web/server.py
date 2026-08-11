@@ -20,6 +20,7 @@ import os
 import re
 import shutil
 import sys
+import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -39,9 +40,59 @@ STATIC_DIR = paths.STATIC_DIR
 from .solver import build_instance, load_pieces, solve_with_callback
 from .export import placed_to_world, render_png, write_marker_dxf
 
-# 启动时读一次中间数据（128 片几何），缓存复用
-_DOC, GATE_MM, PIECES = load_pieces()
-PIECES_BY_ID = {p['pid']: p for p in PIECES}   # pid → 原始轮廓+ptype，导出用
+# US-020：可 reload 的排料裁片状态。
+# `_PIECES_STATE` 是一个 immutable snapshot dict —— `_reload_pieces_state()` 走「在外
+# 构建新 dict → 锁内整体替换引用」模式，读者始终拿到一个完整一致的快照（不会读到
+# 半状态）。`/ws/solve` 在 accept 阶段拿一次快照，整个 ws 连接内 pieces 不变（避免
+# 求解中途数据切）；`/export` 路由同样走 `_get_pieces_state()`。commit 成功后立即调
+# `_reload_pieces_state()` 让下一次请求吃到新 intermediate（前端无需重启 ms-web）。
+_state_lock = threading.Lock()
+_PIECES_STATE: dict = {}
+
+
+def _build_pieces_state(intermediate_path: str = paths.INTERMEDIATE) -> dict:
+    """从 intermediate JSON 构建 pieces state 快照（不在锁内调用，可重入）。
+
+    返回 {doc, gate_mm, pieces, pieces_by_id}；pieces_by_id = {pid: piece_dict}。
+    intermediate 缺失或解析异常时返回空 state（{n:0,...}）—— 启动期 allow-empty 由
+    `_init_pieces_state()` 决定，本函数纯粹做读取 + 索引。
+    """
+    doc, gate_mm, pieces = load_pieces(intermediate_path)
+    return {
+        'doc': doc,
+        'gate_mm': gate_mm,
+        'pieces': pieces,
+        'pieces_by_id': {p['pid']: p for p in pieces},
+    }
+
+
+def _reload_pieces_state(intermediate_path: str = paths.INTERMEDIATE) -> dict:
+    """重读 intermediate → 原子替换 `_PIECES_STATE` 引用 → 返回新快照。
+
+    在锁内构建新 dict（load_pieces 是文件 I/O + JSON 解析；commit 频率远低于 ws 读
+    取，且锁粒度对 6-worker 池可忽略），保证读者不会看到半状态。返回的 dict 同时被
+    `_PIECES_STATE` 引用，调用方可以放心返回给前端 / 后续路由使用。
+    """
+    with _state_lock:
+        new_state = _build_pieces_state(intermediate_path)
+        _PIECES_STATE.clear()
+        _PIECES_STATE.update(new_state)
+        return new_state
+
+
+def _get_pieces_state() -> dict:
+    """锁内返回当前 `_PIECES_STATE` 只读快照（调用方拿到后整连接复用，不再切）。"""
+    with _state_lock:
+        return _PIECES_STATE
+
+
+# 启动时读一次中间数据（事实源：paths.INTERMEDIATE）→ 填入 _PIECES_STATE。
+# 若 intermediate 不存在（首次启动未跑 ms-pieces-export），_PIECES_STATE 保持空 dict；
+# 后续 GET /api/ptypes / /ws/solve 会降级返回空数据，commit 成功后 _reload 才真正填入。
+try:
+    _reload_pieces_state()
+except Exception as e:
+    print(f'[server] 启动期 load_pieces 失败，_PIECES_STATE 暂为空：{e}', file=sys.stderr)
 
 app = FastAPI(title='排料可视化工作台')
 app.mount('/static', StaticFiles(directory=STATIC_DIR), name='static')
@@ -271,8 +322,9 @@ async def commit_to_nesting(req: Request):
     CPU 密集管线跑在 ``_executor`` 里防阻塞 WS。写回前备份原 intermediate 为
     ``paths.INTERMEDIATE.with_suffix('.bak')``；返回新 intermediate 摘要。
 
-    **TODO（v1 不做，随排料页改造补）**：commit 后排料页自动 reload（当前
-    ``PIECES`` 是 server.py 顶层 ``load_pieces()`` 内存常量）+ 前端 commit 按钮。
+    US-020：commit 成功后立即 ``_reload_pieces_state()`` —— 下一次 ``/ws/solve`` /
+    ``/export`` 路由调用 ``_get_pieces_state()`` 即拿到新 intermediate（前端无需重启
+    ``ms-web``）。返回 payload 加 ``reloaded: true`` 标记 reload 已生效。
     """
     try:
         payload = await req.json()
@@ -298,12 +350,54 @@ async def commit_to_nesting(req: Request):
     except Exception as e:
         return JSONResponse({'error': f'commit 失败：{e}'}, status_code=422)
 
+    # US-020：intermediate 已写盘 → 锁内原子重读，下次 /ws/solve 拿到新裁片。
+    # 防御：commit_sync 写盘已成功，正常路径 reload 必成功；若 reload 因罕见的 I/O
+    # 竞态（如并发外部进程改 intermediate）失败，记录日志、保持旧 state、标记
+    # reloaded=false —— 前端 US-021 看到 reloaded=false 可降级提示「需重启 ms-web」。
+    try:
+        _reload_pieces_state()
+        result['reloaded'] = True
+    except Exception as e:
+        print(f'[server] commit 后 reload 失败（保留旧 state）：{e}', file=sys.stderr)
+        result['reloaded'] = False
+        result['reload_error'] = str(e)
     return result
 
 
 @app.get('/')
 def index():
     return FileResponse(os.path.join(STATIC_DIR, 'index.html'))
+
+
+# ---------------------------------------------------------------- US-020 GET /api/ptypes
+
+# intermediate piece → ptype 代表裁片字段白名单（v1 仅 polygon；US-024 后 intermediate
+# 扩 5 层后自动带 net_polygon/internal_lines/notches/grain_line，前端 layer-aware 渲染）。
+_PTYPE_REPRESENTATIVE_FIELDS = (
+    'polygon', 'net_polygon', 'internal_lines', 'notches', 'grain_line',
+)
+
+
+@app.get('/api/ptypes')
+def get_ptypes():
+    """US-020 D10：返回当前 ``_PIECES_STATE`` 下每个 ptype 的代表裁片（首个出现）。
+
+    响应：``{representatives: Record<ptype, {polygon, net_polygon?, internal_lines?,
+    notches?, grain_line?}>}``。v1 intermediate 只有 polygon → 仅返 polygon 字段；
+    US-024 intermediate 扩 5 层后自动带 net_polygon/internal_lines/notches/grain_line
+    （前端 layer-aware 渲染，无需改本端点）。空 state（首次启动未 commit、intermediate
+    解析失败）返回 ``{representatives: {}}``，不阻塞前端配置弹窗降级为片型名文字。
+    """
+    state = _get_pieces_state()
+    pieces = state.get('pieces') or []
+    representatives: dict[str, dict] = {}
+    for p in pieces:
+        ptype = p.get('ptype')
+        if ptype is None or ptype in representatives:
+            continue
+        rep = {k: p[k] for k in _PTYPE_REPRESENTATIVE_FIELDS if k in p}
+        representatives[ptype] = rep
+    return {'representatives': representatives}
 
 
 @app.post('/export')
@@ -314,6 +408,10 @@ async def export(req: Request):
                placed:[{id,rotation,translation},...]}
     返回文件字节流（Content-Disposition 附件下载，中文文件名走 RFC5987）。
     """
+    state = _get_pieces_state()
+    pieces_by_id = state.get('pieces_by_id') or {}
+    gate_mm = state.get('gate_mm') or 0.0
+
     payload = await req.json()
     fmt = payload.get('fmt')
     placed = payload.get('placed') or []
@@ -325,7 +423,7 @@ async def export(req: Request):
     if width_mm <= 0 or not placed:
         return JSONResponse({'error': '无可导出的方案（width=0 或无裁片）'}, status_code=400)
 
-    world = placed_to_world(placed, PIECES_BY_ID)
+    world = placed_to_world(placed, pieces_by_id)
     if not world:
         return JSONResponse({'error': '导出失败：placed 的 pid 均未匹配到原始轮廓'}, status_code=400)
 
@@ -334,12 +432,12 @@ async def export(req: Request):
 
     if fmt == 'png':
         title = (f'M1787 直筒 | 码 {sizes_str} | 利用率 {pct:.2f}% | '
-                 f'用布 {width_mm / 1000:.2f} m | 门幅 {int(GATE_MM)} mm | seed {seed}')
-        data = render_png(world, width_mm=width_mm, gate_mm=GATE_MM, title=title)
+                 f'用布 {width_mm / 1000:.2f} m | 门幅 {int(gate_mm)} mm | seed {seed}')
+        data = render_png(world, width_mm=width_mm, gate_mm=gate_mm, title=title)
         media, ext = 'image/png', 'png'
     elif fmt == 'dxf':
-        title = f'M1787 util={pct:.2f}% L={width_mm / 10:.1f}cm gate={int(GATE_MM)} seed={seed}'
-        data = write_marker_dxf(world, width_mm=width_mm, gate_mm=GATE_MM, title=title)
+        title = f'M1787 util={pct:.2f}% L={width_mm / 10:.1f}cm gate={int(gate_mm)} seed={seed}'
+        data = write_marker_dxf(world, width_mm=width_mm, gate_mm=gate_mm, title=title)
         media, ext = 'application/dxf', 'dxf'
     else:
         return JSONResponse({'error': f'未知格式 {fmt}'}, status_code=400)
@@ -359,6 +457,16 @@ async def ws_solve(ws: WebSocket):
         await ws.send_json({'type': 'error', 'message': '首条消息须为 {action:start}'})
         return
 
+    # US-020：accept 阶段拿一次 state 快照，整连接内 pieces/gate_mm 不变（避免求解
+    # 中途 reload 切数据）。state 空时（首次启动未 commit / intermediate 缺失）→ 报错。
+    state = _get_pieces_state()
+    pieces = state.get('pieces') or []
+    gate_mm = state.get('gate_mm') or 0.0
+    if not pieces or gate_mm <= 0:
+        await ws.send_json({'type': 'error',
+                            'message': '排料数据为空（请先上传解析母版并 commit）'})
+        return
+
     sizes = msg.get('sizes') or []
     time_budget = int(msg.get('time', 120))
     seed = int(msg.get('seed', 0))
@@ -367,7 +475,7 @@ async def ws_solve(ws: WebSocket):
 
     try:
         instance, config, pid_meta, total_area, n_eroded = build_instance(
-            PIECES, GATE_MM, time_budget=time_budget, seed=seed,
+            pieces, gate_mm, time_budget=time_budget, seed=seed,
             sizes=sizes, params=params, per_type=per_type)
     except Exception as e:
         await ws.send_json({'type': 'error', 'message': f'构造实例失败: {e}'})
@@ -376,7 +484,7 @@ async def ws_solve(ws: WebSocket):
     # 1) manifest：base 几何（erode 后）+ 颜色
     await ws.send_json({
         'type': 'manifest',
-        'gate_mm': GATE_MM,
+        'gate_mm': gate_mm,
         'total_area_mm2': total_area,
         'n_eroded': n_eroded,
         'pieces': [
@@ -397,7 +505,7 @@ async def ws_solve(ws: WebSocket):
         # density 口径换算：sparrow 自报(erode后面积) → 原面积口径（与 90% 生死线一致）
         w = report['width_mm']
         report['density_sparrow'] = report['density']
-        report['density'] = (total_area / (w * GATE_MM)) if w > 0 else 0.0
+        report['density'] = (total_area / (w * gate_mm)) if w > 0 else 0.0
         loop.call_soon_threadsafe(queue.put_nowait, report)
 
     def run_solve():
@@ -406,7 +514,7 @@ async def ws_solve(ws: WebSocket):
             final = {'type': 'error', 'message': f'求解失败: {err}'}
         else:
             sw = float(sol.width) if sol else 0.0
-            real = (total_area / (sw * GATE_MM)) if sw > 0 else 0.0
+            real = (total_area / (sw * gate_mm)) if sw > 0 else 0.0
             final = {
                 'type': 'final',
                 'density': real,

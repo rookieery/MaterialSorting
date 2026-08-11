@@ -1,37 +1,32 @@
 # Ralph Progress Log
 Started: 2026-08-09
 
-## 2026-08-11 — US-016 PreviewPage 联动 setNestingEnabled（branch: ralph/nesting-tab-linkage）
-
-**Goal**: PreviewPage 监听 uploadStore.status，按 `status==='done' && doc!==null` 调 `useUiStore.getState().setNestingEnabled(...)`；mount 时立即对齐初值（idle→false）。覆盖路径：done+doc→true / idle/uploading/error/reset→false / 重传 doc_id 变化短暂 false（uploading）后 true（done）。
-
-**Files changed**:
-- `materialSorting-web/src/components/preview/PreviewPage.tsx` —— 新增 useEffect subscribe uploadStore.status 联动 uiStore.setNestingEnabled（与 US-014 qtyStore 联动 effect 同模式：subscribe + mount 即对齐 + 卸载 unsub）；调用前先判 `get().nestingEnabled !== next` 避免无谓 setState。
-- `materialSorting-web/src/components/preview/__tests__/PreviewPage.test.tsx` —— 新增 8 项 US-016 用例（mount idle→false / done→true / error→false / reset→false / 重传短暂 false 后 true / **关键不变量 setNestingEnabled(false) 不强制切 Tab** / uploading→false / 状态机循环）；beforeEach 加 setNestingEnabled(false)+setTab('preview')，afterEach 同步重置。
-- `materialSorting-web/src/__tests__/App.test.tsx` —— beforeEach 加 `useUploadStore.setState({status:'done', doc:makeParsedDoc()})` 让 PreviewPage mount 时的 US-016 effect 不把 nestingEnabled 覆盖回 false（否则 beforeEach 设的 true 会被立即覆盖）；afterEach 加 reset uploadStore + uiStore；「默认 preview」用例显式 reset uploadStore 验 .preview-empty；「切到 preview」用例把 `.preview-empty` 断言改 `.preview-page`（已上传状态下不再走空态）。
-- `materialSorting-web/AGENTS.md` —— 文件分工注释加 US-016 落地段；新增「US-016 关键约定」段（联动公式 / PreviewPage 集成层模式 / 关键不变量 AC#3 / App.test.tsx beforeEach 适配 / 两 effect 独立 / 浏览器验证留作 US-021）。
-- `.docs/technical/agent-component-map.md` —— 顶头 coverage 加 US-016；PreviewPage.tsx 描述加 US-016 effect；PreviewPage.test.tsx 描述加 8 项新增；App.test.tsx 描述加 US-016 beforeEach 适配；新增「US-016 落地」段 + 8 项关键不变量；US-001 关键约定 #2/#5/#8 扩 US-016 联动。
-
-**Key invariants**:
-- **联动公式严格固定** `next = status==='done' && doc!==null` —— 仅 done+doc 才 true，其它均 false。
-- **关键不变量（AC#3）**：setNestingEnabled 仅控 Tab「能否进入」，不强制切 Tab —— `uiStore.setNestingEnabled(b)` 仅 set nestingEnabled，不触碰 activeTab。用户在 nesting Tab 时 reset（doc→null→false），activeTab 仍是 nesting，preview 仍可点回但不强制切回（避免丢失求解状态）。
-- **uiStore / uploadStore 解耦**（与 qtyStore 同设计原则）：PreviewPage 作为集成层用 subscribe 绑定。
-- **App.test.tsx beforeEach 必须 set uploadStore done+doc**：App mount 触发 PreviewPage mount → US-016 effect 按当前 uploadStore.status 对齐 nestingEnabled；若 idle 会把 beforeEach 设的 true 覆盖回 false。
-
-**Test results**: `npm run typecheck` 通过；`npm run test` 全绿（392 项，其中 PreviewPage.test.tsx 25 项含 US-016 8 项；App.test.tsx 7 项全绿）；`npm run build` 无报错。
-
-**未做浏览器验证**：本故事无 SVG/坐标变换（仅 store 联动 + setState），AC 仅要求 typecheck + 单测，故跳过 chrome-devtools-mcp；浏览器视觉回归（disabled 灰字 + cursor:not-allowed 随 status 切换）留作 US-021 自动 commit 集成时统一核对（届时 done→commit→切 nesting 端到端联调）。
-
----
-
-
-
-
-
-
-
-
-
 
 - **未做浏览器验证**：本故事无 SVG/坐标变换（仅 button disabled 态 + CSS），AC 仅要求 typecheck + 单测 + build，故跳过 chrome-devtools-mcp；浏览器视觉回归（disabled 灰字 + cursor:not-allowed）留作 US-016 集成时统一核对。
 - **AGENTS.md / .docs 同步**：US-015 关键约定段已加（三层双重防御 / nestingEnabled 默认 false 由 PreviewPage 解锁 / 上传预览 Tab 永远可点 / 测试 beforeEach 必须重置）；agent-component-map.md US-001 关键不变量 #2/#5/#6 已扩、新增 US-015 落地段；文件分工注释 US-015 标记。
+
+## 2026-08-11 — US-020 后端 PIECES reload 机制 + GET /api/ptypes（branch: ralph/nesting-tab-linkage）
+**Goal**: commit 成功后 `_PIECES_STATE` 即时更新（替代旧顶层 PIECES/GATE_MM/PIECES_BY_ID 三个 import 时常量），前端无需重启 ms-web 即可排料；新增 GET /api/ptypes 供高级配置弹窗取片型代表裁片（v1 仅 polygon，layer-aware 待 US-024）。
+**Files changed**（仅后端，无前端）：
+- `materialSorting-server/src/materialsorting/web/server.py` —— 顶层 imports 加 `threading`；新增模块级 `_state_lock = threading.Lock()` + `_PIECES_STATE: dict = {}`；新增三个 helper：`_build_pieces_state(intermediate_path)`（load_pieces + pieces_by_id 索引）、`_reload_pieces_state(intermediate_path)`（锁内整体 clear()+update() 原子替换 immutable snapshot）、`_get_pieces_state()`（锁内返回当前引用）。启动期 `try: _reload_pieces_state() except: pass`（allow-empty：intermediate 缺失不再让 import 崩）。`/ws/solve` accept 阶段 `_get_pieces_state()` 取一次快照，整连接内 pieces/gate_mm 不变（AC#5 关键不变量）。`/export` 路由同样改走快照。`commit_to_nesting` 在 `_commit_to_nesting_sync` 成功后调 `_reload_pieces_state()`；返回 payload 加 `reloaded: true`（异常时 `reloaded: false` + `reload_error`）。新增 `GET /api/ptypes`（D10）：按 ptype 分组取首个 piece，按 `_PTYPE_REPRESENTATIVE_FIELDS = ('polygon','net_polygon','internal_lines','notches','grain_line')` 透传白名单（v1 仅 polygon 在 intermediate 中，自动 layer-aware）。空 state 返 `{representatives: {}}`。
+- `materialSorting-server/pyproject.toml` —— `[web]` extra 的 `uvicorn` → `uvicorn[standard]`（含 websockets 等）。
+- `.docs/technical/agent-api-reference.md` —— 顶部「5 个 HTTP 端点 + 1 条 WS」；启动约束改为「allow-empty」；路由表加 `/api/ptypes`；`placed_to_world` 引用改为 `_get_pieces_state()['pieces_by_id']`；commit-to-nesting 响应字段加 `reloaded: true` + 副作用改为「commit 后 reload」；新增 `GET /api/ptypes` 完整章节（请求/响应/字段白名单/4 条关键不变量）；`/ws/solve` 加「accept 阶段快照口径」提示；关键不变量 #2/#4/#5/#8 + 新增 #8 改写只能走 `_reload_pieces_state()`。
+- `.docs/technical/agent-file-map.md` —— 文件树 server.py 描述加 US-020；行数表 432→549；关键不变量 #7（pieces_by_id 来源）/ #8（启动期 _reload_pieces_state + 可 reload）同步。
+- `materialSorting-server/src/materialsorting/web/AGENTS.md` —— 启动校验段加 `curl /api/ptypes`；「首次启动前必须」段补 allow-empty 降级行为；文件分工表 server.py 描述加 US-020；US-010 关键约定段「不自动 reload」改为「commit 后 reload（US-020）」；新增「US-020 关键约定」段 7 条（可 reload 状态 / immutable snapshot / 启动期 allow-empty / ws/solve 快照口径 / export 快照口径 / GET /api/ptypes / M1787 curl 验证 10 ptype）；「已踩坑」首条改为 allow-empty。
+**Key invariants**:
+- **immutable snapshot 模式**：`_reload_pieces_state()` 在锁内 `clear()+update()` 整体替换；读者始终拿完整一致 state，不会读到半状态。
+- **AC#5（ws/solve 快照口径）**：accept 阶段 `state = _get_pieces_state()` 取一次快照，整连接内 pieces/gate_mm 不变（避免求解中途 reload 切数据）。`build_instance` 用快照 pieces，density 换算用快照 gate_mm。
+- **启动期 allow-empty**：intermediate 缺失不再让 import 崩；`_PIECES_STATE={}` 时 `/api/ptypes` 返空 representatives、`/ws/solve` 报「排料数据为空」、`/export` 报「placed 的 pid 均未匹配」。commit 成功后自动填入。
+- **GET /api/ptypes 字段白名单 layer-aware（D11）**：v1 intermediate 只有 polygon → 仅返 polygon；US-024 扩 intermediate 为 5 层后自动带 net_polygon/internal_lines/notches/grain_line，**本端点代码无需改**，前端按数据有无自适应。
+- **commit 后 reload 异常降级**：罕见 I/O 竞态时 `reloaded: false` + `reload_error` 字段，保留旧 state 不半切；前端 US-021 看到 `reloaded=false` 可降级提示「需重启 ms-web」。
+**验证（8 个 AC 全部通过）**：
+- AC#1 ✅ `_state_lock = threading.Lock()`（type=lock）+ `_PIECES_STATE: dict`（keys = {doc, gate_mm, pieces, pieces_by_id}）。
+- AC#2 ✅ `_reload_pieces_state()` 读 `paths.INTERMEDIATE` → 返回完整 state（n_pieces=176 / pieces_by_id size=176）。
+- AC#3 ✅ `_get_pieces_state()` 返回当前引用（snap is _PIECES_STATE）；`/ws/solve`（line 462）+ `/export`（line 411）均走 helper。
+- AC#4 ✅ `commit_to_nesting` 在 `_commit_to_nesting_sync` 成功后调 `_reload_pieces_state()`，返回 payload 加 `reloaded: true`；现有「TODO: PIECES 不会 reload」注释已删（替换为 US-020 reload 注释）。
+- AC#5 ✅ 线程安全烟雾测试：4 reader + 2 writer 并发 200/20 次读写，0 异常（每次读到的 state 都包含 4 个完整 keys，无半状态）。
+- AC#6 ✅ 端到端 curl+WS：ms-web :8000 启动 → POST /api/parse-dxf 上传 M1787（doc_id+sizes=[30]+10 片）→ POST /api/commit-to-nesting（n_pieces=16, reloaded=True）→ 立即 WS /ws/solve 收到 manifest（pid 数=16，匹配 commit 结果）→ final density=66.82%（正常求解）。**不需重启 ms-web**。
+- AC#7 ✅ `python -c "from materialsorting.web.server import app"` 导入通过；分层依赖扫描 9 文件无反向 import。
+- AC#8 ✅ `curl /api/ptypes` 对 M1787 返回 10 ptype 代表裁片（前片/后片/腰/前袋/后袋/机头/单排/双排/火机袋/裤耳），每个仅 polygon 字段。
+**未做浏览器验证**：本故事纯后端（无 SVG/坐标变换/可视化改动），按规则不需 chrome-devtools-mcp；改用 Python 直接调函数 + curl+WS 端到端 + 线程安全烟雾测试联合覆盖 AC。
+**清理**：ms-web (PID 28940) 已 `Stop-Process -Force` 杀掉，netstat :8000 LISTENING 0；测试期覆盖的 intermediate 已从 .bak 还原到 176 片基线；uploads/ 测试文件清理（部分 Windows 锁留待下次 GC）。

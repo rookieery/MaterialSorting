@@ -34,7 +34,7 @@ materialSorting-server/
     │   ├── sparrow_experiments.py     旋转/重合公差实验
     │   └── pieces_export.py           NestPiece → intermediate JSON（事实源）
     └── web/                           FastAPI + WS 工作台（详见 agent-api-reference.md）
-        ├── server.py                  app + 路由（GET /、/static、POST /export、POST /api/parse-dxf、POST /api/commit-to-nesting、WS /ws/solve）+ 求解线程桥（顶层 load_pieces）+ US-004 上传解析 + US-010 commit-to-intermediate
+        ├── server.py                  app + 路由（GET /、/static、POST /export、POST /api/parse-dxf、POST /api/commit-to-nesting、GET /api/ptypes、WS /ws/solve）+ 求解线程桥 + US-020 _PIECES_STATE 可 reload（threading.Lock immutable snapshot）+ US-004 上传解析 + US-010 commit-to-intermediate（commit 后 reload）
         ├── solver.py                  build_instance + solve_with_callback
         └── export.py                  PNG(matplotlib) + R12-DXF marker 导出
 ```
@@ -283,7 +283,7 @@ DEFAULT_COLOR = '#bbbbbb'
 
 | 文件 | 行 | 职责 |
 |------|----|------|
-| `server.py` | 432 | FastAPI app；**模块顶层 `load_pieces()`**；路由 GET `/`、mount `/static`、POST `/export`、POST `/api/parse-dxf`（US-004 上传解析）、POST `/api/commit-to-nesting`（US-010 commit-to-intermediate）、WS `/ws/solve`；`ThreadPoolExecutor(max_workers=6)` 桥求解子线程 ↔ asyncio（US-004 解析 / US-010 commit 也复用此池）；上传常量 `UPLOAD_MAX_BYTES=20MB` / `UPLOADS_DIR=paths.OUT_DIR/uploads` / `_DOC_ID_RE`；`_build_parse_payload` 按码分组 + 质心/面积稳定排序 + A/B/C 标注；`_commit_to_nesting_sync` Path A 全管线（collect→write_piece_dxf→load_nest_pieces→写回 intermediate + .bak） |
+| `server.py` | 549 | FastAPI app；**启动期 `_reload_pieces_state()`**（US-020 替代旧顶层 `load_pieces()`，allow-empty 不再让 import 崩）；路由 GET `/`、mount `/static`、POST `/export`、POST `/api/parse-dxf`（US-004 上传解析）、POST `/api/commit-to-nesting`（US-010 + US-020 commit 后 reload `_PIECES_STATE`）、GET `/api/ptypes`（US-020 片型代表裁片 D10/D11）、WS `/ws/solve`（accept 阶段 `_get_pieces_state()` 快照）；`_state_lock=threading.Lock()` 保护 immutable snapshot；`ThreadPoolExecutor(max_workers=6)` 桥求解子线程 ↔ asyncio（US-004 解析 / US-010 commit 也复用此池）；上传常量 `UPLOAD_MAX_BYTES=20MB` / `UPLOADS_DIR=paths.OUT_DIR/uploads` / `_DOC_ID_RE`；`_build_parse_payload` 按码分组 + 质心/面积稳定排序 + A/B/C 标注；`_commit_to_nesting_sync` Path A 全管线（collect→write_piece_dxf→load_nest_pieces→写回 intermediate + .bak）；`_PTYPE_REPRESENTATIVE_FIELDS` 透传白名单（v1 仅 polygon，US-024 后自动带 5 层） |
 | `solver.py` | 173 | `load_pieces` / `discretize_orientations` / `build_instance`（erode=min(申,max)，tol=min(申,max)）/ `solve_with_callback`（spyrrow ProgressQueue + threading，0.2s drain） |
 | `export.py` | 160 | `apply_transform` / `placed_to_world`（用**原始**非 eroded 轮廓）/ `render_png`（matplotlib Agg）/ `write_marker_dxf`（R12 POLYLINE + ACI 色 + ASCII 标题） |
 
@@ -304,7 +304,7 @@ data/m1787_直筒/{类型}_{码号}.dxf（110 片）
 out/sparrow_baseline/pieces_intermediate.json   ← 全流程事实源
   │
   ├─ sparrow_baseline.main / sparrow_experiments.main（求解 → result/svg/curve）
-  └─ web（server 顶层读取 + 可视化 + 导出 PNG/R12-DXF）
+  └─ web（server 启动期 _PIECES_STATE 读取 + commit 后 reload + 可视化 + 导出 PNG/R12-DXF，US-020）
 ```
 
 逐跳函数链：
@@ -344,8 +344,8 @@ out/sparrow_baseline/pieces_intermediate.json   ← 全流程事实源
 4. **sparrow 不改源码**：作为 `spyrrow` pip 包引用，v0.3 约束在外层 `constraints.py` + `solver.build_instance` 包装实现。
 5. **density 双口径**：`real_density = total_area/(width*gate)`（90% 生死线口径，导出为 `density`）；`density_sparrow`（erode 后 sparrow 自报，仅参考）。
 6. **坐标系**：spyrrow X=用布长度(0..width)，Y=门幅(0..gate)，Y 向上；前端 SVG `scale(1,-1)` 翻转后与 PNG / R12-DXF 一致。
-7. **导出用原始轮廓非 eroded**：`PIECES_BY_ID` 持原始 polygon，`placed_to_world` 用它变换；eroded 仅用于求解/屏幕。
-8. **`server.py` 顶层 `load_pieces()`**：import 时读 intermediate；改启动顺序须保证 intermediate 已生成。
+7. **导出用原始轮廓非 eroded**：`_PIECES_STATE['pieces_by_id']`（US-020 替代旧 `PIECES_BY_ID`）持原始 polygon，`placed_to_world` 用它变换；eroded 仅用于求解/屏幕。
+8. **`server.py` 启动期 `_reload_pieces_state()`**（US-020）：import 时读 intermediate 填 `_PIECES_STATE`；allow-empty 不再让 import 崩；commit 成功后立即 reload，前端无需重启 ms-web。`_state_lock=threading.Lock()` 保护 immutable snapshot 模式（整体替换 dict 内容）。
 
 ## 已知问题（迁移中未修，勿在文档/迁移中扩大）
 
