@@ -1,6 +1,6 @@
 # 前端组件 / 模块地图（materialSorting-web/）
 
-> 由 `/sync-docs` 维护。改前端先看这里。当前覆盖 US-001 Tab 框架 + US-002 WS 契约 + US-003 NestSVG + US-004 ControlPanel + US-005 多 seed/收敛曲线 + US-006 回放 seekbar + 片 hover tooltip + US-007 导出 PNG/DXF + DXF 上传预览 US-001 Tab 骨架 + 上传预览 US-005 类型/store/hook + 上传预览 US-006 UploadPanel 组件 + 上传预览 US-007 PiecePreviewSVG 命令式渲染 + 上传预览 US-008 SizeTabs/ParsedPiecesView/PreviewPage 容器集成 + 上传预览 US-011 qtyStore 数量状态（per-size/global 双模式）+ 上传预览 US-012 PieceQtyDialog/Switch（数量编辑弹窗 + 受控开关）+ 上传预览 US-013 PieceZoomModal（放大预览模态）+ 上传预览 US-014 ParsedPiecesView 卡片头改造 + 双模态集成（seq(qty) 替裁片名 + qty/zoom 双入口 + reset 联动）。
+> 由 `/sync-docs` 维护。改前端先看这里。当前覆盖 US-001 Tab 框架 + US-002 WS 契约 + US-003 NestSVG + US-004 ControlPanel + US-005 多 seed/收敛曲线 + US-006 回放 seekbar + 片 hover tooltip + US-007 导出 PNG/DXF + DXF 上传预览 US-001 Tab 骨架 + 上传预览 US-005 类型/store/hook + 上传预览 US-006 UploadPanel 组件 + 上传预览 US-007 PiecePreviewSVG 命令式渲染 + 上传预览 US-008 SizeTabs/ParsedPiecesView/PreviewPage 容器集成 + 上传预览 US-011 qtyStore 数量状态（per-size/global 双模式）+ 上传预览 US-012 PieceQtyDialog/Switch（数量编辑弹窗 + 受控开关）+ 上传预览 US-013 PieceZoomModal（放大预览模态）+ 上传预览 US-014 ParsedPiecesView 卡片头改造 + 双模态集成（seq(qty) 替裁片名 + qty/zoom 双入口 + reset 联动）+ US-015 uiStore 扩 nestingEnabled + TabBar 置灰（超排 Tab 解锁闸）。
 
 ## 顶层结构
 
@@ -20,10 +20,10 @@ materialSorting-web/
 │   ├── types/              # US-002：纯数据契约（与 server.py 字段名 1:1）；上传预览 US-005：parsed.ts；上传预览 US-011：qty.ts
 │   ├── constants/          # US-004：SIZES / PHASE_COLORS / SEED_COLORS / V03_TABLE
 │   ├── lib/                # US-002 起：纯函数工具（ws / geometry / params）；US-007 download
-│   ├── store/              # US-002 RunRegistry + US-003 appStore + US-001 uiStore；上传预览 US-005 uploadStore；上传预览 US-011 qtyStore（+clampQty+getPieceDisplay 纯函数）
+│   ├── store/              # US-002 RunRegistry + US-003 appStore + US-001 uiStore（US-015 扩 nestingEnabled + setNestingEnabled + setTab guard）；上传预览 US-005 uploadStore；上传预览 US-011 qtyStore（+clampQty+getPieceDisplay 纯函数）
 │   ├── hooks/              # US-002 起：useSolveRun / useRafThrottle；US-007 useExport；上传预览 US-005 useParseDxf
 │   ├── components/
-│   │   ├── TabBar.tsx       # US-001 顶部 Tab（排料/上传预览）；订阅 uiStore.activeTab
+│   │   ├── TabBar.tsx       # US-001 顶部 Tab（排料/上传预览）；订阅 uiStore.activeTab；US-015 超排 button 在 nestingEnabled===false 时 disabled+.disabled class + aria-disabled
 │   │   ├── NestingPage.tsx  # US-001 排料页（原 App.tsx 业务逻辑外提；持 solving/seeds/useSolveRun）
 │   │   ├── preview/         # US-001 起：上传预览页（US-006 UploadPanel；US-007 PiecePreviewSVG；US-008 落地 SizeTabs/ParsedPiecesView/PreviewPage 容器集成）
 │   │   │   ├── PreviewPage.tsx  # US-008 容器：左 UploadPanel + 右（SizeTabs+ParsedPiecesView）；status=done+doc 时挂主体，否则 .preview-empty 空态；US-014 顶层挂 PieceQtyDialog+PieceZoomModal 单例 + useEffect subscribe 监听 doc_id 变化联动 qtyStore.resetQuantities（重传清零）
@@ -80,25 +80,46 @@ materialSorting-web/
 
 | 文件 | 角色 |
 | --- | --- |
-| `src/store/uiStore.ts` | Zustand 单字段 store：`activeTab: 'nesting' \| 'preview'`（默认 `'nesting'`）+ `setTab(tab)`。仅此一字段，求解/WS/seek 等业务状态仍在各 page 内 |
-| `src/components/TabBar.tsx` | 顶部 Tab 切换：`<nav class="tabbar">` + 两 `<button class="tab">`（排料 / 上传预览）；点击 setTab；active 项加 `.active` class + `aria-pressed=true` |
+| `src/store/uiStore.ts` | Zustand 双字段 store：`activeTab: 'nesting' \| 'preview'`（默认 `'preview'`）+ `nestingEnabled: boolean`（默认 `false`，US-015）；actions `setTab(tab)`（**nestingEnabled===false 时 setTab('nesting') 静默不切**）+ `setNestingEnabled(b)`。求解/WS/seek 等业务状态仍在各 page 内 |
+| `src/components/TabBar.tsx` | 顶部 Tab 切换：`<nav class="tabbar">` + 两 `<button class="tab">`（超排 / 上传预览）；点击 setTab；active 项加 `.active` class + `aria-pressed=true`。**US-015**：超排 button 在 `nestingEnabled===false` 时 native `disabled` + `.disabled` class + `aria-disabled=true`；onClick 运行时再判一次（双重防御） |
 | `src/components/NestingPage.tsx` | 排料工作台页（原 App.tsx 业务逻辑外提）：持 `seeds/solving/status/doneCountRef/totalSeedsRef` + `useSolveRun({onDone})` + `useRafThrottle(seeds.length>0)`；渲染 `<ControlPanel>` + `<main class="main">`；不挂 Tooltip（Tooltip 由父 App 渲染） |
 | `src/components/preview/PreviewPage.tsx` | 上传预览页（**US-008 落地**）：左 UploadPanel + 右（SizeTabs+ParsedPiecesView）双栏；`hasParsed = status==='done' && doc!==null` 决定挂主体 or `.preview-empty` 空态 |
 | `src/App.tsx` | 顶层骨架：渲染 `<TabBar>` + `<div class="tab-content">` 双 `.page` 容器（display:none 切换）+ `<Tooltip>`（单例，Portal 到 body） |
-| `src/style.css` | 增 `.app{flex-direction:column}` + `.tabbar/.tab/.tab.active` + `.tab-content/.page/.page.hidden` + `.preview-empty/.preview-empty-card`（暗色与 ControlPanel 同色系） |
-| `src/store/__tests__/uiStore.test.ts` | 4 项单测：默认 nesting / setTab 切换 / 切回 / 订阅者通知 |
-| `src/components/__tests__/TabBar.test.tsx` | 5 项单测：DOM 结构（nav+2button）/ 默认 active / 点击切 store / 切回 / 顺序固定 |
-| `src/__tests__/App.test.tsx` | 6 项集成 smoke：tabbar+2tab / 默认 nesting 页可见含 ControlPanel+main / 切 preview nesting 加 .hidden 但 DOM 仍在（不卸载）/ 切回对称 / Tooltip 单例仍 Portal body / 点击 tab 端到端 |
+| `src/style.css` | 增 `.app{flex-direction:column}` + `.tabbar/.tab/.tab.active` + `.tab-content/.page/.page.hidden` + `.preview-empty/.preview-empty-card`（暗色与 ControlPanel 同色系）；**US-015** 加 `.tab.disabled` + `.tab.disabled:hover`（#555 灰字 + not-allowed） |
+| `src/store/__tests__/uiStore.test.ts` | 9 项单测：US-001 基础 4（默认 preview / setTab 切换 / 切回 / 订阅者通知）+ US-015 新增 5（默认 nestingEnabled=false / setNestingEnabled 切换 / 订阅者通知 / **setTab('nesting') 在 false 时静默不切**（关键不变量）/ setTab('preview') 在 false 时仍可切） |
+| `src/components/__tests__/TabBar.test.tsx` | 9 项单测：US-001 基础 5（DOM 结构 nav+2button / 默认 active / 点击切 store / 切回 / 顺序固定）+ US-015 新增 4（disabled 点击不调 setTab / disabled 视觉 .disabled+aria-disabled+native disabled / 启用后正常切换 / nestingEnabled 切换时 TabBar 重渲染） |
+| `src/__tests__/App.test.tsx` | 7 项集成 smoke：tabbar+2tab / 默认 nesting 页可见含 ControlPanel+main / 切 preview nesting 加 .hidden 但 DOM 仍在（不卸载）/ 切回对称 / Tooltip 单例仍 Portal body / 点击 tab 端到端；US-015 beforeEach 加 `setNestingEnabled(true)` 兜底 store guard |
 
-### 关键不变量（US-001 立，后续故事不得破坏）
+### 关键不变量（US-001 立，后续故事不得破坏；US-015 扩 #2 #5）
 
 1. **双页面常驻 DOM，display:none 切换** —— `.page.hidden { display: none }` 而非条件渲染 / 路由卸载。切回排料页时 NestingPage 内 `useState/useRef/runRegistry` 全部保真，进行中的求解 / WS 连接 / 播放 seek 不中断。改 `display:none` 策略为「条件渲染」会破坏此保证。
-2. **uiStore 单字段** —— 仅持 `activeTab`；不混入 solving/seeds/seek 等业务状态（业务状态由 NestingPage 自治）。改 store 形状需同步 4 项 uiStore.test.ts。
+2. **uiStore 双字段（US-015 扩）** —— `activeTab: 'nesting' \| 'preview'`（默认 `'preview'`）+ `nestingEnabled: boolean`（默认 `false`）；不混入 solving/seeds/seek 等业务状态（业务状态由 NestingPage 自治）。改 store 形状需同步 9 项 uiStore.test.ts。**关键不变量（US-015）**：`setTab('nesting')` 在 `nestingEnabled===false` 时**静默不切**（store 层兜底）；`setTab('preview')` 永远允许（用户随时可回上传预览页）。
 3. **TabBar 只切 store，不直接切 DOM** —— `<button onClick=setTab>`；显隐由 App 订阅 `activeTab` 后切 `.hidden` class。解耦：未来加 URL hash 同步只需改 App 一处。
 4. **Tooltip 单例仍挂 App** —— US-006 关键约定 #3 不破：Tooltip 是模块级单例，App 内只能挂一个；NestingPage 不挂 Tooltip。
-5. **Tab 顺序固定：排料在前** —— 是默认入口（`uiStore.activeTab` 默认 `'nesting'`），TABS 数组顺序不可改。
-6. **TabBar 视觉沿用 style.css** —— 不引入 CSS 框架；`.tabbar/.tab` 暗色（`#26282e`）与 ControlPanel 同色系；active 项用绿色 `#2ea06c` border-bottom 强调（与 StartButton `#2ea06c` 同色）。
+5. **Tab 顺序固定：超排在前、上传预览在后**（默认入口是 `'preview'`，US-015 前提下未解锁时无法点入超排），TABS 数组顺序不可改。
+6. **TabBar 视觉沿用 style.css** —— 不引入 CSS 框架；`.tabbar/.tab` 暗色（`#26282e`）与 ControlPanel 同色系；active 项用绿色 `#2ea06c` border-bottom 强调（与 StartButton `#2ea06c` 同色）。**US-015**：`.tab.disabled` 用 `#555` 灰字 + `cursor:not-allowed`（含 `:hover` 同色防 hover 提亮）。
 7. **NestingPage 用 Fragment** —— 直接把 ControlPanel + main 作为 `.page` flex 子元素，不再包一层 `.app`（避免冗余 DOM + flex 嵌套层）。
+8. **超排 Tab 解锁闸双重防御（US-015）** —— TabBar `disabled` 属性（native）兜底 a11y / 键盘 tab 序列；运行时 `if (disabled) return`（JS）兜底合成事件 / devtools 旁路；store `setTab` guard 第三层兜底直调 store 的 JS 旁路。三层任一生效即可保证不可点。
+
+## US-015 落地：uiStore 扩 nestingEnabled + TabBar disabled 态（超排 Tab 解锁闸）
+
+| 文件 | 角色 |
+| --- | --- |
+| `src/store/uiStore.ts` | **扩字段** `nestingEnabled: boolean`（默认 `false`）+ action `setNestingEnabled(b)`；`setTab` 内加 guard：`tab==='nesting' && !get().nestingEnabled` 时 `return`（静默不切）。`create<UiState>((set, get) => ({...}))` 引入 `get` 读 nestingEnabled |
+| `src/components/TabBar.tsx` | 超排 button 在 `nestingEnabled===false` 时：`className` 加 `disabled` + native `disabled={true}` + `aria-disabled={true`；onClick 内 `if (disabled) return`（双重防御）。上传预览 button 不受影响（永远可点） |
+| `src/style.css` | 加 `.tab.disabled { color:#555; cursor:not-allowed; }` + `.tab.disabled:hover { color:#555; }`（暗色系 #555 灰字，与 ControlPanel 同色系不冲突；防 hover 提亮） |
+| `src/store/__tests__/uiStore.test.ts` | 新增 5 项：默认 nestingEnabled=false / setNestingEnabled(true/false) 切换 / 订阅者收到 nestingEnabled 变化 / **setTab('nesting') 在 false 时静默不切**（关键不变量，含「解锁后才生效」分支）/ setTab('preview') 在 false 时仍可切（不锁定退出） |
+| `src/components/__tests__/TabBar.test.tsx` | 新增 4 项：disabled 点击不调 setTab（关键不变量）/ disabled 视觉有 `.disabled` + `aria-disabled=true` + native `disabled=true` / 启用后正常切换（点击切 activeTab=nesting）/ nestingEnabled 切换时 TabBar 重渲染（false→true 移除 disabled，true→false 加回） |
+| `src/__tests__/App.test.tsx` | beforeEach 加 `setNestingEnabled(true)` 后再 `setTab('nesting')`（绕过 store guard 保持原测试意图） |
+
+### 关键不变量（US-015 立，后续故事不得破坏）
+
+1. **`setTab('nesting')` 在 `nestingEnabled===false` 时静默不切（关键不变量）** —— store 层 guard 兜底所有 JS 调用方（TabBar / PreviewPage 集成 / 未来 URL hash 同步）。`setTab('preview')` 永远允许（用户随时可回上传预览页，不强制留在 nesting）。改 guard 需同步 uiStore.test.ts 「setTab(nesting) 在 false 时静默不切」+「setTab(preview) 在 false 时仍可切」两项。
+2. **三层双重防御**：TabBar `disabled` 属性（native，a11y / 键盘 tab 序列）→ TabBar `onClick` 内 `if (disabled) return`（合成事件 / devtools 旁路）→ store `setTab` guard（直调 store 的 JS 旁路）。任一层失效不影响整体不可点保证。
+3. **`nestingEnabled` 默认 `false`，由 PreviewPage 联动 setNestingEnabled(true)（US-016）** —— store 默认锁定，业务层（PreviewPage useEffect subscribe uploadStore.status）负责解锁。改默认值会破坏「未上传母版时超排 Tab 不可点」语义。
+4. **上传预览 Tab 永远可点** —— 用户随时可回上传预览页（reset / 重传 / 切码），不被锁定。TabBar 渲染时 `disabled = t.id === 'nesting' && !nestingEnabled`（preview 永远 false）。
+5. **`aria-disabled` + native `disabled` 同步** —— 屏幕阅读器 + 键盘序列双重 a11y。改其中一项需同步另一项（避免分裂）。
+6. **不引入 CSS 框架** —— `.tab.disabled` / `.tab.disabled:hover` 沿用 style.css 命令式 className；与 ControlPanel / TabBar active 同色系（暗背景 `#26282e` + `#555` 灰字），不引入 CSS 框架。
 
 ## 上传预览 US-005 落地：ParsedDoc 类型 + uploadStore + useParseDxf hook
 

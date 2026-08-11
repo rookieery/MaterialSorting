@@ -28,22 +28,22 @@ npm run test               # vitest run（US-002 起会有用例）
 3. **命令式 polygon 更新**：每帧 setAttribute('points' / 'display')，由 Zustand renderTick 单字段 ~10fps 节流，**逃逸 React reconciliation**。US-003 落地。
 4. **`static/` 是构建产物**（US-008 起入库 gitignore）：`npm run build` 生成，**不要手改**；旧 vanilla 三件套（`legacy/`）已删除，React 应用是唯一真相源。
 
-## 文件分工（US-001 Tab 框架 + US-002~US-008 全部落地；上传预览 US-005 状态层 + US-006 UploadPanel + US-007 PiecePreviewSVG + US-008 SizeTabs/ParsedPiecesView/PreviewPage 容器集成 + 上传预览 US-011 qtyStore 数量状态 + 上传预览 US-012 PieceQtyDialog/Switch 数量弹窗 + 上传预览 US-013 PieceZoomModal 放大预览模态 + 上传预览 US-014 ParsedPiecesView 卡片头改造+双模态集成）
+## 文件分工（US-001 Tab 框架 + US-002~US-008 全部落地；上传预览 US-005 状态层 + US-006 UploadPanel + US-007 PiecePreviewSVG + US-008 SizeTabs/ParsedPiecesView/PreviewPage 容器集成 + 上传预览 US-011 qtyStore 数量状态 + 上传预览 US-012 PieceQtyDialog/Switch 数量弹窗 + 上传预览 US-013 PieceZoomModal 放大预览模态 + 上传预览 US-014 ParsedPiecesView 卡片头改造+双模态集成 + US-015 uiStore 扩 nestingEnabled + TabBar 置灰）
 
 ```
 src/
 ├── main.tsx               # US-001：createRoot + StrictMode
 ├── App.tsx                # US-001 ✅ Tab 骨架：TabBar + 双 .page 容器（display:none 切换）+ Tooltip 单例
-├── style.css              # 由 vanilla 前身 1:1 迁入；US-001 加 .tabbar/.tab/.page/.hidden/.preview-empty；上传预览 US-006 加 .upload-panel/.drop-zone/.upload-btn/.upload-status；US-007 加 .piece-preview-svg；US-008 加 .preview-page/.preview-main/.size-tabs/.size-chip/.parsed-pieces-view/.piece-grid/.piece-card*；上传预览 US-012 加 .piece-qty-dialog-overlay/.piece-qty-dialog-modal/.qty-input-group/.qty-step/.qty-input/.switch/.switch-track/.switch-label-*/.switch-thumb/.qty-btn/.qty-confirm；上传预览 US-013 加 .piece-zoom-overlay/.piece-zoom-modal/.piece-zoom-head/.piece-zoom-seq/.piece-zoom-meta/.piece-zoom-name/.piece-zoom-close/.piece-zoom-body；上传预览 US-014 改 .piece-card-name→.piece-card-qty(+.disabled) + .piece-card-body 加 cursor:zoom-in
+├── style.css              # 由 vanilla 前身 1:1 迁入；US-001 加 .tabbar/.tab/.page/.hidden/.preview-empty；上传预览 US-006 加 .upload-panel/.drop-zone/.upload-btn/.upload-status；US-007 加 .piece-preview-svg；US-008 加 .preview-page/.preview-main/.size-tabs/.size-chip/.parsed-pieces-view/.piece-grid/.piece-card*；上传预览 US-012 加 .piece-qty-dialog-overlay/.piece-qty-dialog-modal/.qty-input-group/.qty-step/.qty-input/.switch/.switch-track/.switch-label-*/.switch-thumb/.qty-btn/.qty-confirm；上传预览 US-013 加 .piece-zoom-overlay/.piece-zoom-modal/.piece-zoom-head/.piece-zoom-seq/.piece-zoom-meta/.piece-zoom-name/.piece-zoom-close/.piece-zoom-body；上传预览 US-014 改 .piece-card-name→.piece-card-qty(+.disabled) + .piece-card-body 加 cursor:zoom-in；US-015 加 .tab.disabled(+hover)（#555 灰字 + not-allowed）
 ├── vite-env.d.ts          # vite/client 类型
 ├── types/                 # US-002 ✅：ws.ts / piece.ts / v03.ts；上传预览 US-005 ✅ parsed.ts（US-004 响应契约）；上传预览 US-011 ✅ qty.ts（PieceQuantity/PieceQuantityMap）
 ├── lib/                   # US-002 ✅ ws.ts；US-003 ✅ geometry.ts；US-004 ✅ params.ts；US-006 ✅ seek.ts；US-007 ✅ download.ts
-├── store/                 # US-002 ✅ runRegistry.ts；US-003 ✅ appStore.ts；US-001 ✅ uiStore.ts；上传预览 US-005 ✅ uploadStore.ts（US-012 扩 qtyDialog + open/close；US-013 扩 zoom + open/close）；上传预览 US-011 ✅ qtyStore.ts（+clampQty+getPieceDisplay 纯函数）
+├── store/                 # US-002 ✅ runRegistry.ts；US-003 ✅ appStore.ts；US-001 ✅ uiStore.ts（US-015 ✅ 扩 nestingEnabled + setNestingEnabled + setTab guard）；上传预览 US-005 ✅ uploadStore.ts（US-012 扩 qtyDialog + open/close；US-013 扩 zoom + open/close）；上传预览 US-011 ✅ qtyStore.ts（+clampQty+getPieceDisplay 纯函数）
 ├── hooks/                 # US-002 ✅ useSolveRun.ts；US-003 ✅ useRafThrottle.ts；US-007 ✅ useExport.ts；上传预览 US-005 ✅ useParseDxf.ts
 ├── constants/             # US-004 ✅：sizes.ts / colors.ts / v03.ts
-├── __tests__/             # US-002 ✅ useSolveRun；US-003 ✅ 各模块单测；US-007 ✅ useExport；US-001 ✅ App 集成 smoke
+├── __tests__/             # US-002 ✅ useSolveRun；US-003 ✅ 各模块单测；US-007 ✅ useExport；US-001 ✅ App 集成 smoke（US-015 beforeEach 加 setNestingEnabled(true) 兜底 store guard）
 └── components/
-    ├── TabBar.tsx         # US-001 ✅ 顶部 Tab（排料/上传预览），订阅 uiStore.activeTab
+    ├── TabBar.tsx         # US-001 ✅ 顶部 Tab（超排/上传预览），订阅 uiStore.activeTab；US-015 ✅ 超排 button disabled 闸（nestingEnabled===false 时 native disabled + .disabled class + aria-disabled + onClick 运行时判）
     ├── NestingPage.tsx    # US-001 ✅ 排料页（原 App 业务逻辑外提；持 solving/seeds/useSolveRun）
     ├── preview/           # US-001 起：上传预览页
     │   ├── PreviewPage.tsx # US-008 ✅ 容器（左 UploadPanel + 右 SizeTabs+ParsedPiecesView；未解析空态）；US-014 ✅ 顶层挂 PieceQtyDialog+PieceZoomModal 单例 + useEffect subscribe 联动 qtyStore.resetQuantities（重传清零）
@@ -179,13 +179,24 @@ src/
 - **AC#5 切 Tab 后状态保留**：uploadStore 是模块级单例 + App 用 display:none 切页（不卸载），切回时 activeSize/doc 全部保真。**PreviewPage 不持任何本地状态**（不需要 useState 缓存 activeSize 之类的反模式），改状态来源会破坏 AC#5。
 - **空态分支组件结构**：未解析时 PreviewPage 渲染 `<div class="preview-empty"><div class="preview-empty-card">…</div></div>`（沿用 US-001 占位的 className，CSS 已存在无需新增）；已解析时渲染 `<SizeTabs/> + <ParsedPiecesView/>`。改结构需同步 App.test.tsx 第 101 行的 `.preview-empty` 断言（切到 preview Tab + doc=null 时仍要找到 `.preview-empty`）。
 
-## US-001 关键约定（Tab 框架调用方必读）
+## US-015 关键约定（uiStore 扩 nestingEnabled + TabBar 置灰 调用方必读）
+
+- **`setTab('nesting')` 在 `nestingEnabled===false` 时静默不切（关键不变量）**：store 层 guard 兜底所有 JS 调用方（TabBar / PreviewPage / 未来 URL hash 同步）。`setTab('preview')` 永远允许（用户随时可回上传预览页，不强制留在 nesting）。改 guard 需同步 uiStore.test.ts「setTab(nesting) 在 false 时静默不切」+「setTab(preview) 在 false 时仍可切」两项。
+- **三层双重防御**：TabBar `disabled` 属性（native，a11y / 键盘 tab 序列不响应）→ TabBar `onClick` 内 `if (disabled) return`（合成事件 / devtools 旁路）→ store `setTab` guard（直调 store 的 JS 旁路）。任一层失效不影响整体不可点保证。
+- **`nestingEnabled` 默认 `false`，由 PreviewPage 联动 setNestingEnabled(true)（US-016）**：store 默认锁定，业务层负责解锁。改默认值会破坏「未上传母版时超排 Tab 不可点」语义。
+- **上传预览 Tab 永远可点**：用户随时可回上传预览页（reset / 重传 / 切码），不被锁定。TabBar 渲染时 `disabled = t.id === 'nesting' && !nestingEnabled`（preview 永远 false）。
+- **`aria-disabled` + native `disabled` 同步**：屏幕阅读器 + 键盘序列双重 a11y。`aria-disabled={disabled}`（false 时 React 渲染为 `aria-disabled="false"` 字符串，与 `aria-pressed` 同口径）。改其中一项需同步另一项。
+- **不引入 CSS 框架**：`.tab.disabled` + `.tab.disabled:hover` 沿用 style.css 命令式 className；`#555` 灰字 + `cursor:not-allowed`（含 `:hover` 同色防 hover 提亮）；与 ControlPanel / TabBar active 同色系。
+- **测试 beforeEach 必须重置 nestingEnabled**：`useUiStore.getState().setNestingEnabled(false)` 加到 beforeEach（与 `setTab('preview')` 同位），避免前一个测试 setNestingEnabled(true) 残留。需要切 nesting 的测试先调 setNestingEnabled(true)；App.test.tsx beforeEach 也加 setNestingEnabled(true) 绕过 store guard 测原有 nesting 渲染。
+- **未做浏览器验证**：本故事无 SVG/坐标变换（仅 button disabled 态 + CSS），AC 仅要求 typecheck + 单测 + build，故跳过 chrome-devtools-mcp；浏览器视觉回归留作 US-016 集成时统一核对（disabled 灰字 + cursor:not-allowed）。
+
+## US-001 关键约定（Tab 框架调用方必读，US-015 已扩）
 
 - **双页面常驻 DOM，display:none 切换**：`.page.hidden { display: none }`（不是条件渲染）。切回排料页时 NestingPage 内 useState/useRef/runRegistry 全部保真，进行中求解 / WS / seek 不中断。改策略需同步 6 项 App.test.tsx。
-- **uiStore 单字段**：仅 `activeTab: 'nesting' | 'preview'`（默认 `'nesting'`）。求解/WS/seek 等业务状态由 NestingPage 自治，不混入 uiStore。
-- **TabBar 只切 store**：`<button onClick=setTab>`；显隐由 App 订阅 activeTab 后切 `.hidden` class（解耦：未来 URL hash 同步只需改 App）。
-- **Tab 顺序固定**：排料在前（默认入口）；TABS 数组顺序不可改。
-- **TabBar 视觉沿用 style.css**：暗色 `#26282e` 与 ControlPanel 同色系；active 用绿色 `#2ea06c` border-bottom（与 StartButton 同色）。不引入 CSS 框架。
+- **uiStore 双字段（US-015 扩）**：`activeTab: 'nesting' | 'preview'`（默认 `'preview'`）+ `nestingEnabled: boolean`（默认 `false`）。求解/WS/seek 等业务状态由 NestingPage 自治，不混入 uiStore。**关键不变量**：`setTab('nesting')` 在 `nestingEnabled===false` 时静默不切（见 US-015 关键约定）。
+- **TabBar 只切 store**：`<button onClick=setTab>`；显隐由 App 订阅 activeTab 后切 `.hidden` class（解耦：未来 URL hash 同步只需改 App）。US-015 加 disabled 闸（超排 button native disabled + .disabled class + 运行时 onClick 判）。
+- **Tab 顺序固定**：超排在前、上传预览在后；TABS 数组顺序不可改。
+- **TabBar 视觉沿用 style.css**：暗色 `#26282e` 与 ControlPanel 同色系；active 用绿色 `#2ea06c` border-bottom（与 StartButton 同色）。US-015 加 `.tab.disabled`（`#555` 灰字 + not-allowed）。不引入 CSS 框架。
 - **NestingPage 用 Fragment**：ControlPanel + main 直接作为 `.page` flex 子元素，不再包 `.app`（避免冗余 DOM + flex 嵌套层）。
 - **Tooltip 仍由 App 渲染**：US-006 关键约定 #3（模块级单例）不破；NestingPage 不挂 Tooltip。
 

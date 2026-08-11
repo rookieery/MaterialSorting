@@ -31,6 +31,9 @@ body {
   color: #e6e6e6;
   border-bottom-color: #2ea06c;
 }
+/* US-015 超排 Tab 置灰：nestingEnabled===false 时不可点；暗色系 #555 灰字 + not-allowed */
+.tab.disabled { color: #555; cursor: not-allowed; }
+.tab.disabled:hover { color: #555; }
 .tab-content { flex: 1; display: flex; min-height: 0; }
 /* .page 是 Tab 容器：水平 flex（与原 .app 同结构），.hidden 切 display:none 不卸载 */
 .page { flex: 1; display: flex; min-width: 0; min-height: 0; }

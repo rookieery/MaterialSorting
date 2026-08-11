@@ -36,6 +36,8 @@ beforeEach(() => {
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
+  // US-015：setTab('nesting') 需先解锁（nestingEnabled===false 时静默不切）
+  useUiStore.getState().setNestingEnabled(true);
   useUiStore.getState().setTab('nesting');
 });
 
@@ -122,6 +124,7 @@ describe('App Tab 集成（US-001）', () => {
       useUiStore.getState().setTab('preview');
     });
     act(() => {
+      // nestingEnabled 在 beforeEach 已置 true，US-015 解锁闸不阻拦
       useUiStore.getState().setTab('nesting');
     });
     const pages = el.querySelectorAll('.page');

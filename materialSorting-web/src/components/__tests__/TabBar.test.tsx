@@ -3,6 +3,10 @@
 //   AC#1 active Tab 带 .active class + aria-pressed=true
 //   AC#4 点击切换 uiStore.activeTab（display:none 由 App 控制，TabBar 只切 store）
 //   视觉一致性：根 <nav class="tabbar"> + <button class="tab">
+// US-015 新增 3 项（nestingEnabled 解锁闸）：
+//   - disabled 时点击不调 setTab（关键不变量）
+//   - disabled 视觉有 .disabled class + aria-disabled + native disabled
+//   - 启用后正常切换
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { StrictMode } from 'react';
@@ -20,8 +24,9 @@ beforeEach(() => {
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
-  // 重置 store 状态到默认 preview
+  // 重置 store 状态到默认 preview + 锁定超排 Tab
   useUiStore.getState().setTab('preview');
+  useUiStore.getState().setNestingEnabled(false);
 });
 
 afterEach(() => {
@@ -68,6 +73,8 @@ describe('TabBar', () => {
   });
 
   it('点击 "超排" 切换 activeTab=nesting + .active 转移', () => {
+    // US-015：需先解锁超排 Tab，否则 disabled 不响应点击
+    useUiStore.getState().setNestingEnabled(true);
     const el = renderBar();
     const tabs = el.querySelectorAll('button.tab');
     act(() => {
@@ -81,6 +88,7 @@ describe('TabBar', () => {
   });
 
   it('点击 "上传预览" 从 nesting 切回 preview', () => {
+    useUiStore.getState().setNestingEnabled(true);
     useUiStore.getState().setTab('nesting');
     const el = renderBar();
     const tabs = el.querySelectorAll('button.tab');
@@ -95,5 +103,70 @@ describe('TabBar', () => {
     const tabs = el.querySelectorAll('button.tab');
     expect(tabs[0].textContent).toBe('超排');
     expect(tabs[1].textContent).toBe('上传预览');
+  });
+});
+
+describe('TabBar US-015 超排 Tab 解锁闸', () => {
+  it('disabled 时点击不调 setTab（关键不变量）', () => {
+    // 默认 nestingEnabled=false：超排 Tab disabled，点击不切
+    const el = renderBar();
+    const tabs = el.querySelectorAll('button.tab');
+    act(() => {
+      tabs[0].dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(useUiStore.getState().activeTab).toBe('preview');
+  });
+
+  it('disabled 视觉有 .disabled class + aria-disabled + native disabled', () => {
+    // 默认 nestingEnabled=false
+    const el = renderBar();
+    const tabs = el.querySelectorAll('button.tab');
+    // 超排 Tab（index 0）置灰
+    expect(tabs[0].classList.contains('disabled')).toBe(true);
+    expect(tabs[0].getAttribute('aria-disabled')).toBe('true');
+    expect((tabs[0] as HTMLButtonElement).disabled).toBe(true);
+    // 上传预览 Tab（index 1）不受影响
+    expect(tabs[1].classList.contains('disabled')).toBe(false);
+    expect(tabs[1].getAttribute('aria-disabled')).toBe('false');
+    expect((tabs[1] as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('启用后正常切换：setNestingEnabled(true) → 点击超排切 activeTab=nesting', () => {
+    useUiStore.getState().setNestingEnabled(true);
+    const el = renderBar();
+    const tabsBefore = el.querySelectorAll('button.tab');
+    // 启用后超排 Tab 不再 disabled
+    expect(tabsBefore[0].classList.contains('disabled')).toBe(false);
+    expect((tabsBefore[0] as HTMLButtonElement).disabled).toBe(false);
+    act(() => {
+      tabsBefore[0].dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(useUiStore.getState().activeTab).toBe('nesting');
+  });
+
+  it('nestingEnabled 切换时 TabBar 重渲染：false→true 移除 disabled，true→false 加回', () => {
+    const el = renderBar();
+    const readNesting = () => {
+      const t = el.querySelector('button.tab');
+      return {
+        disabledClass: t?.classList.contains('disabled') ?? false,
+        nativeDisabled: (t as HTMLButtonElement)?.disabled ?? false,
+      };
+    };
+    // 初始锁定
+    expect(readNesting().disabledClass).toBe(true);
+    expect(readNesting().nativeDisabled).toBe(true);
+    // 解锁
+    act(() => {
+      useUiStore.getState().setNestingEnabled(true);
+    });
+    expect(readNesting().disabledClass).toBe(false);
+    expect(readNesting().nativeDisabled).toBe(false);
+    // 重锁
+    act(() => {
+      useUiStore.getState().setNestingEnabled(false);
+    });
+    expect(readNesting().disabledClass).toBe(true);
+    expect(readNesting().nativeDisabled).toBe(true);
   });
 });

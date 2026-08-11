@@ -14,3 +14,12 @@ Started: 2026-08-09
 
 - `npm run test`（全量）：370/370 通过（含 ParsedPiecesView 19 / PreviewPage 16；既有 335 项无回归）。
 - 未做浏览器验证：本故事无 SVG/坐标变换（仅 DOM 结构 + 点击处理 + CSS），AC 仅要求 typecheck + 单测 + build；浏览器验证留作整体回归。ms-web :8000 已可启（PID 2304 旧进程占用），最新 build 已 serve（hash 一致）。
+
+## [US-015] uiStore 扩 nestingEnabled + TabBar 置灰（2026-08-11）
+
+- **改动文件**：materialSorting-web/src/store/uiStore.ts（+ nestingEnabled 字段 / + setNestingEnabled action / setTab 加 guard 用 get().nestingEnabled）；TabBar.tsx（超排 button disabled 闸三层双重防御）；style.css（+ .tab.disabled / .tab.disabled:hover #555 灰字）；uiStore.test.ts（+5 项测试，原 4 项 beforeEach 加 setNestingEnabled(false)、test 2/3/4 加 setNestingEnabled(true) 兜底 guard）；TabBar.test.tsx（+4 项测试，原 5 项 beforeEach 加 reset、test 3/4 加 setNestingEnabled(true)）；App.test.tsx（beforeEach 加 setNestingEnabled(true) 兜底 store guard 测原 nesting 渲染）；AGENTS.md + .docs/technical/agent-component-map.md 同步 US-015 关键约定 / 文件分工。
+- **关键不变量**：`setTab('nesting')` 在 `nestingEnabled===false` 时**静默不切**（store 层 guard 兜底）；`setTab('preview')` 永远允许（用户随时可回上传预览页）。三层双重防御：native `disabled` 属性（a11y / 键盘 tab 序列）→ TabBar `onClick` 内 `if (disabled) return`（合成事件 / devtools 旁路）→ store `setTab` guard（JS 旁路）。
+- **测试新增**：uiStore +5（默认 false / setNestingEnabled 切换 / 订阅者通知 / **setTab(nesting) false 时静默不切**（关键不变量）+ 解锁后生效 / setTab(preview) false 时仍可切）；TabBar +4（disabled 点击不调 setTab / disabled 视觉 .disabled+aria-disabled+native disabled / 启用后正常切换 / nestingEnabled 切换时 TabBar 重渲染）。
+- **测试结果**：`npm run typecheck` 通过；`npm run test`（全量）384/384 通过（uiStore 4→9 / TabBar 5→9 / App 6→7 修 beforeEach +1 setNestingEnabled 调整；既有 369 项无回归，新增 14 项含 5 项 store + 4 项 TabBar + 修正 App beforeEach 行为）；`npm run build` 无报错（static/ 产物更新 index-CmCu3NQx.js / index-D5o_SGFf.css）。
+- **未做浏览器验证**：本故事无 SVG/坐标变换（仅 button disabled 态 + CSS），AC 仅要求 typecheck + 单测 + build，故跳过 chrome-devtools-mcp；浏览器视觉回归（disabled 灰字 + cursor:not-allowed）留作 US-016 集成时统一核对。
+- **AGENTS.md / .docs 同步**：US-015 关键约定段已加（三层双重防御 / nestingEnabled 默认 false 由 PreviewPage 解锁 / 上传预览 Tab 永远可点 / 测试 beforeEach 必须重置）；agent-component-map.md US-001 关键不变量 #2/#5/#6 已扩、新增 US-015 落地段；文件分工注释 US-015 标记。
