@@ -84,6 +84,8 @@ body {
   font-size: 12px; cursor: pointer;
 }
 .chip input { width: auto; margin: 0; cursor: pointer; }
+.sizes-total { margin-top: 8px; font-size: 12px; color: #aab; }
+.sizes-total strong { color: #e6e6e6; font-weight: 600; }
 button#start {
   width: 100%; padding: 9px;
   font-size: 14px; font-weight: 600;

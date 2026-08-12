@@ -10,10 +10,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { StrictMode, useState } from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { SizePicker } from "../SizePicker";
+import { SizePicker, computeTotalCutPieces, effectiveDemand } from "../SizePicker";
 import { SIZES } from "../../../constants/sizes";
+import { useQtyStore } from "../../../store/qtyStore";
 import { useUploadStore } from "../../../store/uploadStore";
 import type { ParsedDoc } from "../../../types/parsed";
+import type { PieceQuantityMap } from "../../../types/qty";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -25,6 +27,7 @@ beforeEach(() => {
   document.body.appendChild(container);
   root = createRoot(container);
   useUploadStore.getState().reset();
+  useQtyStore.getState().resetQuantities();
 });
 
 afterEach(() => {
@@ -38,6 +41,7 @@ afterEach(() => {
   container?.remove();
   container = null;
   useUploadStore.getState().reset();
+  useQtyStore.getState().resetQuantities();
 });
 
 function renderPicker(selected: (number | null)[] = [], onChange: (n: (number | null)[]) => void = () => {}) {
@@ -71,6 +75,31 @@ function makeDoc11(): ParsedDoc {
   };
 }
 
+/**
+ * 构造 3 码母版（带不同裁片数，用于总裁片数量累加测试）：
+ * 28 → 2 片，29 → 3 片，30 → 1 片。pieces 内容仅需占位（总裁片数量只读 length）。
+ */
+function makeDocWithPieces(): ParsedDoc {
+  const piece = (label: string) => ({
+    label,
+    name: label,
+    polygon: [],
+    internal_lines: [],
+    notches: [],
+    net_polygon: [],
+    grain_line: null,
+  });
+  return {
+    doc_id: "doc-pieces",
+    filename: "M1787-pieces.dxf",
+    sizes: [
+      { size: 28, pieces: [piece("A"), piece("B")] },
+      { size: 29, pieces: [piece("A"), piece("B"), piece("C")] },
+      { size: 30, pieces: [piece("A")] },
+    ],
+  };
+}
+
 function getChips(): HTMLInputElement[] {
   return Array.from(container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]"));
 }
@@ -79,6 +108,12 @@ function getLabels(): string[] {
   return Array.from(container!.querySelectorAll<HTMLLabelElement>(".sizes .chip label")).map(
     (l) => l.textContent ?? "",
   );
+}
+
+/** 读 .sizes-total strong 的文案（总裁片数量展示）。 */
+function getTotalText(): string {
+  const el = container!.querySelector<HTMLElement>(".sizes-total strong");
+  return el?.textContent ?? "";
 }
 
 describe("SizePicker (US-017)", () => {
@@ -180,5 +215,135 @@ describe("SizePicker (US-017)", () => {
     expect(container!.querySelector("#sz_null")).not.toBeNull();
     // 28 chip id 存在
     expect(container!.querySelector("#sz_28")).not.toBeNull();
+  });
+
+  it("总裁片数量 = 所选码号裁片数之和（未配置 demand → 默认 1，实时随勾选变化）", () => {
+    useUploadStore.setState({ status: "done", doc: makeDocWithPieces() });
+    // quantities={}（未 hydrate）→ 未配置 demand 按 1 计，等价于裁片数之和
+    // 无勾选 → 0 片
+    renderPicker([]);
+    expect(getTotalText()).toBe("0 片");
+    // 勾 28(2 片) + 30(1 片) → 3 片
+    renderPicker([28, 30]);
+    expect(getTotalText()).toBe("3 片");
+    // 全选 28(2) + 29(3) + 30(1) → 6 片
+    renderPicker([28, 29, 30]);
+    expect(getTotalText()).toBe("6 片");
+    // 仅勾 29(3 片) → 3 片
+    renderPicker([29]);
+    expect(getTotalText()).toBe("3 片");
+  });
+
+  it("总裁片数量随勾选实时更新（toggle 驱动 selected → 重算）", () => {
+    useUploadStore.setState({ status: "done", doc: makeDocWithPieces() });
+    const onChange = vi.fn();
+    function PassThrough() {
+      const [selected, setSelected] = useState<(number | null)[]>([]);
+      const handleChange = (next: (number | null)[]) => {
+        onChange(next);
+        setSelected(next);
+      };
+      return <SizePicker selected={selected} onChange={handleChange} />;
+    }
+    act(() => {
+      root!.render(
+        <StrictMode>
+          <PassThrough />
+        </StrictMode>,
+      );
+    });
+    expect(getTotalText()).toBe("0 片");
+    // 勾 28（index=0，2 片）→ 2 片
+    act(() => getChips()[0].click());
+    expect(getTotalText()).toBe("2 片");
+    // 再勾 29（index=1，3 片）→ 5 片
+    act(() => getChips()[1].click());
+    expect(getTotalText()).toBe("5 片");
+  });
+
+  it("demand>1 → 总裁片数量按 demand 放大（每片 × demand）", () => {
+    useUploadStore.setState({ status: "done", doc: makeDocWithPieces() });
+    // 28 码 A 片 demand=3（其余未配置 → 1）：28 = A(3) + B(1) = 4；30 = A(1) = 1 → 合计 5
+    useQtyStore.getState().setPiecePerSize("A", 28, 3);
+    renderPicker([28, 30]);
+    expect(getTotalText()).toBe("5 片");
+  });
+
+  it("demand=0 → 该片不计入总裁片数量（显式排除）", () => {
+    useUploadStore.setState({ status: "done", doc: makeDocWithPieces() });
+    // 28 码 A 片 demand=0：28 = A(0) + B(1) = 1；30 = A(1) = 1 → 合计 2
+    useQtyStore.getState().setPiecePerSize("A", 28, 0);
+    renderPicker([28, 30]);
+    expect(getTotalText()).toBe("2 片");
+  });
+
+  it("global 模式 → 全码共享 globalValue，总裁片数量按该值累加", () => {
+    useUploadStore.setState({ status: "done", doc: makeDocWithPieces() });
+    // A 片 global=2（来源 28）：28=A(2)+B(1)=3，29=A(2)+B(1)+C(1)=4，30=A(2)=2 → 合计 9
+    useQtyStore.getState().setPieceGlobal("A", 28, 2);
+    renderPicker([28, 29, 30]);
+    expect(getTotalText()).toBe("9 片");
+  });
+
+  it("qtyStore 变化 → 总裁片数量实时重算（订阅 quantities）", () => {
+    useUploadStore.setState({ status: "done", doc: makeDocWithPieces() });
+    renderPicker([28]);
+    // 初始未配置 → 28 = A(1) + B(1) = 2 片
+    expect(getTotalText()).toBe("2 片");
+    // 改 A 片 28 码 demand=5 → 28 = A(5) + B(1) = 6 片（订阅触发重渲染）
+    act(() => useQtyStore.getState().setPiecePerSize("A", 28, 5));
+    expect(getTotalText()).toBe("6 片");
+  });
+
+  it("doc=null（fallback SIZES，无裁片数据）→ 总裁片数量显示「—」", () => {
+    renderPicker([28, 29]);
+    expect(getTotalText()).toBe("—");
+  });
+});
+
+// 纯函数单测：computeTotalCutPieces / effectiveDemand（不挂 React，直接验证口径）。
+describe("computeTotalCutPieces / effectiveDemand", () => {
+  const doc = makeDocWithPieces(); // 28:[A,B] 29:[A,B,C] 30:[A]
+
+  it("quantities={} → 未配置 demand=1，等价于裁片数之和", () => {
+    const q: PieceQuantityMap = {};
+    expect(computeTotalCutPieces(doc, [28, 30], q)).toBe(3); // (A+B) + A
+    expect(computeTotalCutPieces(doc, [28, 29, 30], q)).toBe(6);
+  });
+
+  it("doc=null → null（无裁片数据）", () => {
+    expect(computeTotalCutPieces(null, [28], {})).toBeNull();
+  });
+
+  it("selected 含 doc 没有的码 → 该码跳过（不计入）", () => {
+    expect(computeTotalCutPieces(doc, [999], {})).toBe(0);
+  });
+
+  it("per-size demand 按 (label,size) 精确生效", () => {
+    const q: PieceQuantityMap = {
+      A: { mode: "per-size", perSize: { "28": 3 }, globalValue: 0, globalSource: null },
+    };
+    // 28: A(3)+B(1未配置→1)=4
+    expect(computeTotalCutPieces(doc, [28], q)).toBe(4);
+    // 29: A(29 未配置→1)+B(1)+C(1)=3（A 的 28 码值不影响 29 码）
+    expect(computeTotalCutPieces(doc, [29], q)).toBe(3);
+  });
+
+  it("global demand 全码共享 globalValue", () => {
+    const q: PieceQuantityMap = {
+      A: { mode: "global", perSize: {}, globalValue: 2, globalSource: 28 },
+    };
+    // 28: A(2)+B(1)=3，29: A(2)+B(1)+C(1)=4，30: A(2)=2 → 9
+    expect(computeTotalCutPieces(doc, [28, 29, 30], q)).toBe(9);
+  });
+
+  it("effectiveDemand：未配置 label/per-size 缺省 → 1；显式 0 → 0", () => {
+    const q: PieceQuantityMap = {
+      A: { mode: "per-size", perSize: { "28": 0 }, globalValue: 0, globalSource: null },
+    };
+    expect(effectiveDemand({}, "A", 28)).toBe(1); // label 未配置
+    expect(effectiveDemand(q, "A", 28)).toBe(0); // 显式 0
+    expect(effectiveDemand(q, "A", 29)).toBe(1); // per-size 缺省该码
+    expect(effectiveDemand(q, "B", 28)).toBe(1); // B 未配置
   });
 });
