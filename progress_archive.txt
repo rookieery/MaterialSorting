@@ -732,3 +732,26 @@ NestsGrid 渲染 N 个 NestCard；ConvergenceCurve 命令式画 90% 生死线 + 
 - handleStop 不立即 setPhase：等后端回 {type:'stopped'} → onmessage → finish → onDone 统一切（与 final/error 路径一致，避免多 seed 部分 stopped 竞争）。
 - handleRestart 用 lastStartCfgRef（上次 start 参数）；用户改参数后走 ControlPanel.onStart → handleStart 新参数覆盖 ref（双路径自然保证）。
 - ControlPanel solving prop 保留（US-028 才改 phase）；onStop/onRestart/phase 可选 props 本 Story 不接线。
+验收：npm run typecheck 无报错；npm run test 520 passed（514 原 + 6 新）；npm run build 无报错。
+跳过浏览器验证：本 Story 无 SVG/坐标变换（仅状态机 + 输入 disabled），AC 仅要求 typecheck+单测+build；浏览器完整流程（idle→running→stopped→restart→done）验证留作 US-028（UI Story，SolveControls 接线后统一核对）。
+================================================================
+US-028 按钮组组件 SolveControls + ControlPanel 接线（删除 StartButton）
+================================================================
+实现：
+- 新建 SolveControls.tsx：按 phase 五态渲染按钮组（idle→#start「开始求解」绿 / running→#stop「停止」红 #b5462f / stopped|error→#restart「重新开始」绿 / done→#restart「再次求解」绿）。每按钮 type=button + aria-label（含「求解」语义）+ .solve-btn.<phase> 类名。
+- 删除 StartButton.tsx（确认无其它引用：6 处「StartButton」均为注释历史语境，preview/SizeTabs/Switch 仅同色系类比）。
+- ControlPanel.tsx：props solving:boolean → phase:SolvePhase（必传）+ onStop/onRestart 从可选改必传；内部 const solving = phase==='running' 派生透传 5 输入组件 disabled + ExportButtons solving prop；const partial = phase==='stopped'||phase==='error' 派生透传 ExportButtons；handleStart 守卫 if (solving) 语义不变。
+- ExportButtons.tsx：新增 partial?:boolean prop。partial=true 时 .dim.small.warn（橙黄 #d8a23a 600）显示「导出的是停止 / 出错时刻的中间方案，非最终最优解。」取代默认「最终方案」提示；文件名仍按当前 density 命名（不加 _partial 后缀，AC#3 仅 UI 提示区分）。
+- NestingPage.tsx：ControlPanel 调用去 solving={phase==='running'}，仅传 phase + onStop + onRestart（ControlPanel 内部派生）。
+- style.css：button#start 规则合并 button#start,button#restart（绿 #2ea06c 主操作语义）；新增 button#stop（红 #b5462f 警示 + hover #d05a40 + disabled #555）；新增 .dim.small.warn（橙黄 #d8a23a 600 中间方案导出提示）。
+- SolveControls.test.tsx 新建 7 项（5 phase × 渲染正确按钮 + aria-label + 点击调对应 handler + 误触防护 + a11y type=button/tabIndex=0 + 按钮总数恒为 1）。
+- ControlPanel.test.tsx 改造：renderPanel opts.solving→opts.phase（必传 onStop/onRestart 兜底）；solving=true 用例 → phase=running（#stop + 参数冻结）；新增 phase=stopped/done/error 各 1 用例。
+- useSolveRun.stop.test.tsx 改造：删除 startDisabled() helper（#start 在非 idle 态不存在）；3a/3b/3c 用例改查 #stop（running）+ #restart + textContent/aria-label（stopped「重新开始」/ done「再次求解」/ error「重新开始」）。
+验收：
+- npm run typecheck：无报错。
+- npm run test：530 passed（520 原 + 7 SolveControls 新 + 3 ControlPanel phase 新）；34 + 1 = 35 文件全绿。
+- npm run build：tsc --noEmit && vite build 成功，static/assets/index-B06il1iZ.js + index-koBqi37l.css。
+- 浏览器验证（Chrome CDP --remote-debugging-port=9222 + Python websockets 驱动 headless Chrome + ms-web :8000 跑最新构建产物）：
+  - idle：#start「开始求解」+ aria-label="开始求解" + class="solve-btn start" ✓
+  - 选码 + 点开始求解 → running：#stop「停止」+ aria-label="停止求解" + class="solve-btn stop"，#start 消失，SVG polygon 渲染（WS 真实连接 + 帧推送）✓
+  - 点停止 → stopped：#restart「重新开始」+ aria-label="重新开始求解"，status「已停止：seed 0（保留中间方案，可导出）」，partial warn「导出的是停止 / 出错时刻的中间方案，非最终最优解。」✓

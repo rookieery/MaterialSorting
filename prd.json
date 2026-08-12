@@ -1,11 +1,4 @@
 {
   "branchName": "ralph/nesting-tab-linkage",
-  "stories": [
-    {
-      "id": "US-028",
-      "title": "按钮组组件 SolveControls + ControlPanel 接线（删除 StartButton）",
-      "description": "用按 phase 渲染的按钮组 SolveControls 替代单一 StartButton，接线 ControlPanel，并处理中间方案导出的诚实提示。\n\n具体任务：\n1. 新建 materialSorting-web/src/components/ControlPanel/SolveControls.tsx，删除 StartButton.tsx（已确认：grep 确认无其它引用后删除；SolveControls 独立渲染按钮组，不复用 StartButton）。按 phase 渲染：\n   - idle → 「开始求解」（等价旧 StartButton，调 onStart）\n   - running → 「停止」（调 onStop）\n   - stopped → 「重新开始」+「导出」（registry 保留帧）\n   - done → 「再次求解」+「导出」\n   - error → 「重新开始」+（若有帧）「导出」\n2. 修改 materialSorting-web/src/components/ControlPanel/ControlPanel.tsx 接线：solving prop → phase prop；<StartButton> → <SolveControls onStart={...} onStop={...} onRestart={...} phase={phase} />；ExportButtons 的 solving prop 改为 phase==='running'（stopped/done/error 可导出）。\n3. 中间方案导出提示：stopped/error（有帧）态点导出，StatusLine 或导出按钮旁明确标注「导出的是停止/出错时刻的中间方案，非最终最优解」；导出文件名仍用当前 density（真实口径，反映该中间方案利用率），不加 _partial 等后缀，与正常导出命名规则一致（仅靠 UI 提示区分）。\n4. 视觉一致：沿用现有 style.css 暗色系按钮样式（不引入 CSS 框架）；按钮 disabled 态样式与现有 StartButton 一致；按钮组布局与 ControlPanel 现有节奏一致，不挤占参数区。\n5. a11y：按钮带 aria-label（如「停止求解」「重新开始求解」）；停止按钮可键盘触发。\n6. 新建 materialSorting-web/src/components/ControlPanel/__tests__/SolveControls.test.tsx — ≥5 项：5 个 phase 各自渲染正确按钮 + 点击调对应 handler + running 态无开始按钮 / idle 态无停止按钮。\n7. 通过浏览器验证（UI Story 必备）：npm run dev + ms-web 启动后，在超排页完整走一遍：idle 点开始→running 显示停止→点停止冻结画面且状态行提示→stopped 点重新开始清空重跑→正常完成 done→再次求解；多 seed 并行停止全部终止；反复 stop+restart 多次无异常。\n\n验收标准：\n- 新建 SolveControls.tsx 按 phase 渲染正确按钮组（idle/running/stopped/done/error 各自按钮见上）；删除 StartButton.tsx（确认无其它引用）\n- ControlPanel.tsx 用 SolveControls 替代 StartButton，透传 onStart/onStop/onRestart/phase；ExportButtons 的 solving prop 改为 phase==='running'\n- stopped/error（有帧）态导出可用，StatusLine 明确提示「中间方案」；文件名不加 _partial 后缀\n- 沿用 style.css 暗色系，不引入 CSS 框架；按钮带 aria-label、可键盘触发\n- 通过浏览器验证完整流程：idle→running→stopped→重新开始→done→再次求解；多 seed 停止全终止；反复 stop+restart 无异常\n- npm run typecheck 通过、npm run test 全绿、npm run build 无报错",
-      "passes": true
-    }
-  ]
+  "stories": []
 }
