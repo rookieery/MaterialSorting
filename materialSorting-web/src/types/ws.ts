@@ -1,6 +1,6 @@
 // WS 消息契约（与后端 server.py / solver.py 字段名严格一致）。
-// client → server: StartPayload
-// server → client: ServerMsg = ManifestMsg | FrameMsg | FinalMsg | ErrorMsg（判别联合，按 type 区分）
+// client → server: ClientMsg = StartPayload | StopPayload
+// server → client: ServerMsg = ManifestMsg | FrameMsg | FinalMsg | ErrorMsg | StoppedMsg（判别联合，按 type 区分）
 //
 // 密度双口径：
 //   density         —— 原面积口径（= total_area / (width*gate)），版师 / 90% 生死线以此为准
@@ -9,7 +9,10 @@
 import type { PieceInfo, PlacedItem } from './piece';
 import type { PerTypeOverrides, SolveParams } from './v03';
 
-/** client → server 唯一消息。per_type 空时序列化为 null（同旧 vanilla 实现 collectParams）。 */
+/**
+ * client → server：启动求解（首条消息，必须 action:'start'）。
+ * per_type 空时序列化为 null（同旧 vanilla 实现 collectParams）。
+ */
 export interface StartPayload {
   action: 'start';
   sizes: number[];
@@ -24,6 +27,17 @@ export interface StartPayload {
    */
   quantities: Record<string, Record<string, number>> | null;
 }
+
+/**
+ * US-026 client → server：停止求解（可在 start 后任意时刻发送）。
+ * 后端收到后 terminate 求解子进程 → 直发 {type:'stopped'} → 关闭 WS。
+ */
+export interface StopPayload {
+  action: 'stop';
+}
+
+/** client → server 判别联合（按 action 字段区分）。 */
+export type ClientMsg = StartPayload | StopPayload;
 
 /** sparrow 求解阶段（与 rtype.phase_name() 对应；旧 vanilla 实现 PHASE_COLORS keys）。 */
 export type Phase = 'exploring' | 'compressing' | 'final';
@@ -72,5 +86,14 @@ export interface ErrorMsg {
   message: string;
 }
 
+/**
+ * US-026 stopped：客户端发 {action:'stop'} 后，后端 terminate 子进程 → 直发此消息 → 关闭 WS。
+ * reason 目前固定 'user_requested'；未来可扩展（如超时等）。
+ */
+export interface StoppedMsg {
+  type: 'stopped';
+  reason: string;
+}
+
 /** server → client 判别联合（按 type 字段区分）。 */
-export type ServerMsg = ManifestMsg | FrameMsg | FinalMsg | ErrorMsg;
+export type ServerMsg = ManifestMsg | FrameMsg | FinalMsg | ErrorMsg | StoppedMsg;

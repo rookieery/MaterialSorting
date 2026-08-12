@@ -417,7 +417,7 @@ NestSVG 在毛版 polygon（layer1）之上叠加 4 层工艺节点：净版（l
 | 文件 | 角色 |
 | --- | --- |
 | `src/types/v03.ts` | `SolveParams`（d_ext/d_int/tol_ext/tol_int）+ `PerTypeOverride` / `PerTypeOverrides` |
-| `src/types/ws.ts` | `StartPayload`（US-022 扩 `quantities: Record<string, Record<string, number>> \| null`）+ `ServerMsg = ManifestMsg \| FrameMsg \| FinalMsg \| ErrorMsg` 判别联合（density/density_sparrow 双口径都在 FrameMsg/FinalMsg） |
+| `src/types/ws.ts` | `StartPayload`（US-022 扩 `quantities`）+ `StopPayload`（US-026 `{action:'stop'}`）+ `ClientMsg = StartPayload \| StopPayload` 判别联合 + `ServerMsg = ManifestMsg \| FrameMsg \| FinalMsg \| ErrorMsg \| StoppedMsg` 判别联合（density/density_sparrow 双口径都在 FrameMsg/FinalMsg；US-026 新增 StoppedMsg `{type:'stopped', reason:'user_requested'}`） |
 | `src/lib/ws.ts` | `solveWsUrl()` —— `${proto}://${location.host}/ws/solve`（dev/prod 自适配，**不要写死 :8000/:5173**） |
 | `src/store/runRegistry.ts` | 模块级 mutable 数组持有 RunRecord（frames/lastFrame 不进 React state）；提供 `create / clear / list / bestRun` |
 | `src/hooks/useSolveRun.ts` | 单 run 生命周期：`start(cfg)` 显式 `new WebSocket` → onmessage 分发 manifest/frame/final/error → Registry 落盘 + 回调；onclose/onerror → onDone（done flag 防重复），**不重连** |

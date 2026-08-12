@@ -227,7 +227,8 @@ _JOIN_TIMEOUT_SEC = 5.0
 
 
 def solve_with_callback_proc(pieces_snapshot, gate_mm, solve_params, *,
-                             on_manifest, on_report, drain_interval: float = 0.2):
+                             on_manifest, on_report, on_process=None,
+                             drain_interval: float = 0.2):
     """多进程版求解：spawn 子进程跑 ``build_instance + solve``，主进程 drain queue 分发。
 
     与旧 ``solve_with_callback``（threading 版）的关键区别：
@@ -254,6 +255,10 @@ def solve_with_callback_proc(pieces_snapshot, gate_mm, solve_params, *,
     on_report : callable(dict)
         收到 frame 消息时回调（参数：frame dict，已做 density 双口径换算 ——
         ``density`` 为原面积口径、``density_sparrow`` 为 sparrow 自报）。
+    on_process : callable(multiprocessing.Process) | None
+        **US-026**：子进程 ``start()`` 后立即回调一次，把 ``Process`` 句柄交给调用方，
+        让调用方可以在 solve 完成前调 ``terminate()``（WS stop / 客户端断开场景）。
+        缺省 None（向后兼容旧调用方）。
     drain_interval : float
         主进程 drain result_queue 的轮询间隔（秒，默认 0.2）。
 
@@ -281,6 +286,13 @@ def solve_with_callback_proc(pieces_snapshot, gate_mm, solve_params, *,
         name='solve_worker',
     )
     process.start()
+    # US-026：把 process 句柄交给调用方（WS 层需要在 solve 完成前能 terminate）。
+    if on_process is not None:
+        try:
+            on_process(process)
+        except Exception:
+            # on_process 回调失败不影响 solve（防御性，正常路径不触发）
+            pass
 
     final_data: dict | None = None
     err: str | None = None

@@ -5,7 +5,7 @@
 
 ## 状态
 
-单页工作台后端，5 个 HTTP 端点 + 1 条 WS。求解用 `ThreadPoolExecutor(max_workers=6)` 把同步 sparrow 子线程桥到 asyncio 事件循环（多 seed 最多 6 路并发，seed 间同等 CPU 竞争 → 排名仍公平）。**`server.py` 启动期 `_reload_pieces_state()` 读 intermediate 填入 `_PIECES_STATE`**（US-020：commit 后可 reload，allow-empty 不再让 import 崩）。US-004 起 `/api/parse-dxf` 上传解析也复用这个 6-worker 线程池跑 CPU 密集的 DXF 深度解析（`collect_pieces_with_details`）。
+单页工作台后端，5 个 HTTP 端点 + 1 条 WS。**US-026 起求解用 `solve_with_callback_proc`（多进程版）**：`ThreadPoolExecutor(max_workers=6)` 跑 `run_solve` → `solve_with_callback_proc` spawn 子进程执行 sparrow solve，主进程 drain `multiprocessing.Queue` 分发 manifest/frame/final（多 seed 最多 6 路并发，seed 间同等 CPU 竞争 → 排名仍公平）。WS 双向并发：write loop drain queue → `ws.send_json`；read loop 持续读客户端消息（`{action:'stop'}` → terminate 子进程 → 发 stopped → 关闭 WS）。**`server.py` 启动期 `_reload_pieces_state()` 读 intermediate 填入 `_PIECES_STATE`**（US-020：commit 后可 reload，allow-empty 不再让 import 崩）。US-004 起 `/api/parse-dxf` 上传解析也复用这个 6-worker 线程池跑 CPU 密集的 DXF 深度解析（`collect_pieces_with_details`）。
 
 ## 启动约束（重要）
 
@@ -253,13 +253,16 @@ curl http://127.0.0.1:8000/api/ptypes
 
 ## WebSocket /ws/solve — 求解流
 
-单条长连接，生命周期：**client 发 start → server 推 1×manifest → N×frame → 1×final（或 error）**。
+单条长连接，生命周期：**client 发 start（首条必须）→ server 推 1×manifest → N×frame → 1×final（或 error）；client 可在任意时刻发 stop → server 推 1×stopped → 关闭 WS**。
 
 > US-020：accept 阶段 `state = _get_pieces_state()` 拿一次快照，整连接内 `pieces / gate_mm` 不变（避免求解中途 reload 切数据）。state 空时（首次启动未 commit / intermediate 缺失）直接发 error「排料数据为空」并关闭。
+>
+> US-026：ws_solve 改为 `solve_with_callback_proc` 进程化求解（build_instance 移入子进程）。write loop 内联 drain asyncio queue → ws.send_json；read loop 后台 task 持续读客户端消息。收到 `{action:'stop'}` → `process.terminate()+join(timeout=5)` → 直发 `{type:'stopped'}` → 关闭 WS。客户端断开（WebSocketDisconnect）→ 同样 terminate+join 防孤儿进程（**修复旧 bug**：旧版 `except:pass` 静默忽略断开，求解线程跑满预算）。
 
-### 1. 握手（client → server，**首条且仅一条**）
+### 1. 握手（client → server，**首条必须 action:'start'**；后续可发 action:'stop'）
 
 ```jsonc
+// 首条消息 —— 启动求解
 {
   "action": "start",              // 必须为 "start"，否则 server 直接 error 并关闭
   "sizes": [28, 29, 30, 31, 33, 34, 35, 36],  // 码号；空 = 全部 128 片
@@ -269,6 +272,11 @@ curl http://127.0.0.1:8000/api/ptypes
   "per_type": {"单排": {"d": 8, "tol": 15}},  // 可选，每片型高级覆盖；缺维度回退两档
   "quantities": {"A": {"28": 2, "30": 0}, "B": {"28": 1}}  // US-022 可选，label→sizeKey→demand；0=该 piece 该码不排；缺省=null→全片 demand=1
 }
+```
+
+```jsonc
+// 后续消息（US-026，可选）—— 停止求解
+{"action": "stop"}
 ```
 
 `params` / `per_type` 缺省 = baseline（无 erode、严格布纹线 `{0°,180°}`）。`quantities` 缺省 / `null` = 全片 `demand=1`（向后兼容旧前端 / 旧 intermediate 无 label）。US-022 起 `build_instance` 按 `(piece.label, str(piece.size))` 查 `quantities` → `spyrrow.Item(demand=N)`；demand=0 跳过（D2）；piece 缺 label 回退 demand=1。
@@ -337,7 +345,17 @@ curl http://127.0.0.1:8000/api/ptypes
 {"type": "error", "message": "<原因>"}
 ```
 
-触发：首条非 start、`build_instance` 抛错、求解线程抛错。客户端中途断开被 server 静默忽略（求解线程仍跑完收尾）。
+触发：首条非 start、`build_instance` 抛错、求解进程抛错 / crash。**US-026 起：客户端断开不再静默忽略** —— read loop 捕获 `WebSocketDisconnect` → `process.terminate()+join(timeout=5)` 防孤儿进程。
+
+### 6. server → stopped（US-026，客户端发 stop 后）
+
+```jsonc
+{"type": "stopped", "reason": "user_requested"}
+```
+
+客户端发 `{action:'stop'}` 后，后端 read loop `process.terminate()+join(timeout=5)` → 直发此消息 → 关闭 WS。`stopped` 是客户端收到的最后一条消息（write loop 在 `stopped` 标志置 True 后丢弃残余 frame）。WS 关闭后客户端不再收 final / error。
+
+## 求解桥接（`web/solver.py` + `web/solve_worker.py`）
 
 ## 求解桥接（`web/solver.py` + `web/solve_worker.py`）
 
@@ -347,7 +365,7 @@ curl http://127.0.0.1:8000/api/ptypes
 | `discretize_orientations` | `(tol: float) → list[float]` | v0.3 连续旋转公差 → spyrrow 离散角度集。`tol=0→[0,180]`；`tol≤5` 步进 1°；否则 5°。归一化到 [0,360) |
 | `build_instance` | `(pieces, gate_mm, *, time_budget, seed, sizes=None, params=None, per_type=None, quantities=None) → (instance, config, pid_meta, total_area, n_eroded)` | 按 sizes 过滤 → US-022 按 `(label, sizeKey)` 查 quantities 定 demand（0 跳过；缺 label → 1） → 每片 `erode=min(申请d, MAX_OVERLAP[ptype])`、`tol=min(申请tol, ROTATION_TOL[ptype])` → erode+clean → 构造 `spyrrow.Item` + `StripPackingInstance` + `StripPackingConfig`；pid_meta 含 US-024 5 层字段（`.get()` 向后兼容） |
 | `solve_with_callback` | `(instance, config, on_report, *, drain_interval=0.2) → (final_sol, elapsed_sec, err)` | **旧 threading 版（保留）**。子线程 `instance.solve(config, progress=queue)`，主线程 `queue.drain()` 每 0.2s 取中间解 → `on_report({type:frame,...})`。US-026 起 `ws_solve` 切换到 `solve_with_callback_proc`，本函数不删（过渡期） |
-| `solve_with_callback_proc` | `(pieces_snapshot, gate_mm, solve_params, *, on_manifest, on_report, drain_interval=0.2) → (process, final_data, elapsed, err)` | **US-025 多进程版**。spawn 子进程跑 `solve_worker`（在子进程内 `build_instance + solve`，spyrrow 对象不可 pickle 故不跨进程），主进程 drain `multiprocessing.Queue` 分发：manifest → `on_manifest`、frame → `on_report`（density 双口径换算在主进程做）、final/error 记录。返回 `process` 句柄可 `terminate()`；terminate 后 `cancel_join_thread + 限时 drain(≤50ms) + join(timeout=5)` 防死锁；子进程 crash 未投 error 时 `err='worker process exited unexpectedly (code=<exitcode>)'` |
+| `solve_with_callback_proc` | `(pieces_snapshot, gate_mm, solve_params, *, on_manifest, on_report, on_process=None, drain_interval=0.2) → (process, final_data, elapsed, err)` | **US-025 多进程版**。spawn 子进程跑 `solve_worker`（在子进程内 `build_instance + solve`，spyrrow 对象不可 pickle 故不跨进程），主进程 drain `multiprocessing.Queue` 分发：manifest → `on_manifest`、frame → `on_report`（density 双口径换算在主进程做）、final/error 记录。**US-026 新增 `on_process` 回调**：子进程 `start()` 后立即回调一次，把 `Process` 句柄交给调用方供 WS stop / 断开时 `terminate()`。返回 `process` 句柄可 `terminate()`；terminate 后 `cancel_join_thread + 限时 drain(≤50ms) + join(timeout=5)` 防死锁；子进程 crash 未投 error 时 `err='worker process exited unexpectedly (code=<exitcode>)'` |
 
 ### `web/solve_worker.py`（US-025 新增）
 
@@ -355,25 +373,33 @@ curl http://127.0.0.1:8000/api/ptypes
 |------|------|------|
 | `solve_worker` | `(pieces_snapshot, gate_mm, solve_params, result_queue)` | **子进程入口（顶层函数，Windows spawn 可 pickle）**。子进程内 `build_instance(pieces_snapshot, gate_mm, **solve_params)` → 投递 `{kind:manifest, pid_meta, total_area, n_eroded, gate_mm}` → `instance.solve(config, progress=ProgressQueue)` → drain 出的中间解投递 `{kind:frame, report}` → 末尾投递 `{kind:final, final}` 或 `{kind:error, message}`。所有投递纯 JSON 可序列化，spyrrow 对象绝不跨进程 |
 
-### 求解线程 ↔ 事件循环桥（`server.ws_solve`）
+### 求解进程 ↔ 事件循环桥（`server.ws_solve`，US-026 进程化版）
 
 ```
-build_instance()                                    # 主线程，同步
+accept → receive_json() → {action:start}            # 主协程，读首条消息
   ↓
-manifest → ws.send_json                             # 主线程
+solve_with_callback_proc(pieces_snapshot, ...)       # executor 线程，阻塞跑
+  on_process(proc): state_box['process'] = proc      # 子进程 start 后回调，存句柄
+  on_manifest(m): → queue.put(manifest_msg)          # 子进程 → 主进程回调
+  on_report(r): r['index']=N; → queue.put(r)         # density 双口径已在 proc 版换算
+  → return (process, final_data, elapsed, err)
   ↓
-ThreadPoolExecutor(max_workers=6).submit(run_solve) # 求解进子线程
-  on_report(report):                                # 子线程回调
-    report['density_sparrow'] = report['density']
-    report['density'] = total_area/(w*gate)         # 重算原面积口径
-    loop.call_soon_threadsafe(queue.put_nowait, report)
-  ↓
-async 协程: while (item=await queue.get()) ≠ SENTINEL: ws.send_json(item)
+run_solve 末尾: queue.put(final|error) + queue.put(SENTINEL)
+
+write loop (内联主流程):                              # drain queue → ws.send_json
+  while (item=await queue.get()) ≠ SENTINEL:
+    if state_box['stopped']: continue               # stop 后丢弃残余 frame
+    ws.send_json(item)
+  break → finally: ws.close() + terminate process
+
+read loop (后台 task):                               # 持续读客户端消息
+  while True: cmsg = await ws.receive_json()
+    if cmsg.action == 'stop':
+      stopped=True → terminate+join → ws.send_json(stopped) → queue.put(SENTINEL) → return
+  except WebSocketDisconnect: stopped=True → terminate+join
 ```
 
-`SENTINEL` 对象由 `run_solve` 末尾投递，协程收到即结束循环。
-
-> **US-025 进程化桥（待 US-026 接线）**：`ws_solve` 将切到 `solve_with_callback_proc` —— 主进程改调它拿 `process` 句柄（`build_instance` 调用移入子进程的 `solve_worker`），density 双口径换算在主进程处理 frame 时执行（`total_area` 来自 manifest）；客户端断开 / stop 消息 → `process.terminate()` 真正终止 Rust 求解（旧 threading 版无此能力，WS 断开被静默忽略）。
+`SENTINEL` 由 `run_solve`（自然完成）或 `read_loop`（stop）投递，write loop 收到即 break → finally 显式 `ws.close()` + cancel read_task + terminate process 兜底。
 
 ## 坐标系（贯穿 PNG / DXF / 前端 SVG）
 
@@ -388,9 +414,9 @@ async 协程: while (item=await queue.get()) ≠ SENTINEL: ws.send_json(item)
 2. **导出用原始轮廓非 eroded**：`_PIECES_STATE['pieces_by_id']`（US-020 替代旧 `PIECES_BY_ID`）持有原始 polygon；`placed_to_world` 用它变换。eroded 多边形只用于求解/屏幕。
 3. **DXF 走 R12 + POLYLINE**（非 LWPOLYLINE）：ET2008 读 LWPOLYLINE 轮廓消失。单裁片与 marker 导出均如此。
 4. **`server.py` 启动期 `_reload_pieces_state()`**（US-020）：import 时读 intermediate 填 `_PIECES_STATE`；缺失不再让 import 崩（allow-empty）。改启动顺序需保证调用顺序在 `app` 定义前。
-5. **WS 首条必须是 `{action:'start'}`**：否则 error 并关闭。accept 阶段 `_get_pieces_state()` 快照一次，整连接 pieces 不变（US-020 关键不变量 AC#5）。
+5. **WS 首条必须是 `{action:'start'}`**：否则 error 并关闭。accept 阶段 `_get_pieces_state()` 快照一次，整连接 pieces 不变（US-020 关键不变量 AC#5）。**US-026：首条后续可发 `{action:'stop'}`** 终止求解 → server 发 `{type:'stopped'}` → 关闭 WS；客户端断开 → `process.terminate()+join` 防孤儿（不再静默忽略）。
 6. **导出文件名 `pct` 而非 `%`**：`排料_码28-30-32_88.42pct_seed0.png`。改格式需同步前端 `useExport.test.tsx` CN decode 用例。
-7. **多 seed 并发靠 ThreadPoolExecutor(6)**：seed 间同等 CPU 竞争，排名公平。改 worker 数影响多 seed 对比语义。
+7. **多 seed 并发靠 ThreadPoolExecutor(6)**：seed 间同等 CPU 竞争，排名公平。改 worker 数影响多 seed 对比语义。每个 seed 独立子进程（US-025 进程化），互不干扰。
 8. **`_PIECES_STATE` 改写只能走 `_reload_pieces_state()`**：threading.Lock 保护，immutable snapshot 模式（整体 `clear()+update()`）。任何路由读 pieces 都走 `_get_pieces_state()`，**不再直接引用旧顶层常量 `PIECES / GATE_MM / PIECES_BY_ID`**（已删除）。
 
 ## 入口（`pyproject.toml` `[project.scripts]`）

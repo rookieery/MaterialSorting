@@ -25,7 +25,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from fastapi import FastAPI, Request, UploadFile, File, WebSocket
+from fastapi import FastAPI, Request, UploadFile, File, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from urllib.parse import quote
@@ -43,7 +43,7 @@ from ..nesting_engine.labeling import (
 )
 
 STATIC_DIR = paths.STATIC_DIR
-from .solver import build_instance, load_pieces, solve_with_callback
+from .solver import build_instance, load_pieces, solve_with_callback, solve_with_callback_proc
 from .export import placed_to_world, render_png, write_marker_dxf
 
 # US-020：可 reload 的排料裁片状态。
@@ -477,8 +477,44 @@ async def export(req: Request):
                     headers={'Content-Disposition': cd})
 
 
+# US-026：process.terminate()+join(timeout=5) 封装 —— read_loop（stop/断开）、write_loop
+# （send 失败）、ws_solve finally 三处调用，确保任何路径下都不留孤儿进程。幂等安全：
+# process 已死时 terminate/join 是 no-op。state_box 缺 process 键（启动竞态）也无害。
+def _terminate_solve_process(state_box: dict) -> None:
+    """终止 solve 子进程（幂等）：alive → terminate → join(timeout=5) → kill 兜底。"""
+    proc = state_box.get('process')
+    if proc is None:
+        return
+    if proc.is_alive():
+        proc.terminate()
+        proc.join(timeout=5.0)
+        # terminate 后仍存活（极端情况：Rust 原生代码 ignore SIGTERM）→ kill 兜底。
+        if proc.is_alive():
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            proc.join(timeout=1.0)
+
+
 @app.websocket('/ws/solve')
 async def ws_solve(ws: WebSocket):
+    """排料求解 WebSocket 端点（US-026 进程化 + stop/断开清理）。
+
+    生命周期（双向并发：write loop 内联 + read loop 后台 task）：
+      1. accept → 读首条消息（必须 ``{action:'start'}``）→ accept 阶段拿 pieces 快照；
+      2. ``solve_with_callback_proc`` 在 executor 线程阻塞跑（spawn 子进程），通过
+         ``on_manifest`` / ``on_report`` 回调把消息经 ``call_soon_threadsafe`` 投入
+         asyncio queue；``on_process`` 把 Process 句柄交给本协程供 stop/断开时 terminate；
+      3. write loop（内联主流程）drain queue → ``ws.send_json``（manifest/frame/final/error）；
+      4. read loop（后台 task）持续 ``await ws.receive_json()``：收到 ``{action:'stop'}`` →
+         ``process.terminate()+join(timeout=5)`` → 直发 ``{type:stopped}`` → 投 SENTINEL；
+      5. 客户端断开（WebSocketDisconnect / 连接异常）→ terminate+join 防孤儿进程（修旧 bug）。
+
+    write loop 消费 SENTINEL（run_solve 或 read_loop 投）后 break → finally 显式 ``ws.close()``
+    + cancel read_task + terminate process 兜底。空 state（intermediate 缺失）行为不变：
+    发 error「排料数据为空」并关闭。
+    """
     await ws.accept()
     msg = await ws.receive_json()
     if msg.get('action') != 'start':
@@ -506,81 +542,155 @@ async def ws_solve(ws: WebSocket):
     if not isinstance(quantities, dict):
         quantities = None
 
-    try:
-        instance, config, pid_meta, total_area, n_eroded = build_instance(
-            pieces, gate_mm, time_budget=time_budget, seed=seed,
-            sizes=sizes, params=params, per_type=per_type, quantities=quantities)
-    except Exception as e:
-        await ws.send_json({'type': 'error', 'message': f'构造实例失败: {e}'})
-        return
+    # US-026：pieces_snapshot = 纯 dict 列表（deep copy 防连接内 mutate），连同 solve_params
+    # 传给 solve_with_callback_proc → solve_worker 子进程内 build_instance（spyrrow 对象
+    # 不可 pickle，主进程不构造 instance）。
+    pieces_snapshot = [dict(p) for p in pieces]
+    solve_params = {
+        'time_budget': time_budget,
+        'seed': seed,
+        'sizes': sizes,
+        'params': params,
+        'per_type': per_type,
+        'quantities': quantities,
+    }
 
-    # 1) manifest：base 几何（erode 后）+ 颜色 + US-024 5 层（毛版 polygon 已在 eroded；
-    #    net/internal/notches/grain 是**原始未 erode**几何，仅渲染/导出透传，不参与碰撞）。
-    await ws.send_json({
-        'type': 'manifest',
-        'gate_mm': gate_mm,
-        'total_area_mm2': total_area,
-        'n_eroded': n_eroded,
-        'pieces': [
-            {'id': pid, 'ptype': m['ptype'], 'size': m['size'], 'color': m['color'],
-             'area_mm2': m['area_mm2'], 'polygon': m['polygon'],
-             # demand：该 pid 的副本数（solver.build_instance 透传；缺省 1 = 单副本/旧兼容）。
-             # 前端 NestSVG 按 demand 建 N 个 polygon 副本，避免 demand>1 时同 id 多 placement 互相覆盖。
-             'demand': m.get('demand', 1),
-             # US-024：5 层透传字段（None-safe；缺字段时各层视为空/None，前端 layer-aware 渲染）。
-             'net_polygon': m.get('net_polygon', []),
-             'internal_lines': m.get('internal_lines', []),
-             'notches': m.get('notches', []),
-             'grain_line': m.get('grain_line'),
-             }
-            for pid, m in pid_meta.items()
-        ],
-    })
-
-    # 2) 同步求解线程 → 异步事件循环 桥接
     loop = asyncio.get_running_loop()
     queue: asyncio.Queue = asyncio.Queue()
-    counter = {'n': 0}
+    # 跨线程共享状态盒：process 句柄（on_process 填）、stopped 标志（read_loop 填）、
+    # 帧计数与 n_eroded（on_report/on_manifest 填，run_solve 读 → final 消息用）。
+    # 所有字段仅在 executor 单线程内 mutate（on_manifest/on_report/run_solve 同线程），
+    # stopped 标志由事件循环线程写 —— 两者用 bool 简单写读，GIL 下无撕裂风险。
+    state_box: dict = {'process': None, 'stopped': False, 'n_frames': 0, 'n_eroded': 0}
 
-    def on_report(report):
-        report['index'] = counter['n']
-        counter['n'] += 1
-        # density 口径换算：sparrow 自报(erode后面积) → 原面积口径（与 90% 生死线一致）
-        w = report['width_mm']
-        report['density_sparrow'] = report['density']
-        report['density'] = (total_area / (w * gate_mm)) if w > 0 else 0.0
-        loop.call_soon_threadsafe(queue.put_nowait, report)
+    def on_manifest(m):
+        """子进程 manifest → 组装前端契约消息 → 投 asyncio queue。"""
+        state_box['n_eroded'] = m.get('n_eroded', 0)
+        total_area = m.get('total_area', 0.0)
+        manifest_msg = {
+            'type': 'manifest',
+            'gate_mm': gate_mm,
+            'total_area_mm2': total_area,
+            'n_eroded': m.get('n_eroded', 0),
+            'pieces': [
+                {'id': pid, 'ptype': meta['ptype'], 'size': meta['size'], 'color': meta['color'],
+                 'area_mm2': meta['area_mm2'], 'polygon': meta['polygon'],
+                 # demand：该 pid 的副本数（build_instance 透传；缺省 1 = 单副本/旧兼容）。
+                 # 前端 NestSVG 按 demand 建 N 个 polygon 副本，避免 demand>1 时同 id 多 placement 互相覆盖。
+                 'demand': meta.get('demand', 1),
+                 # US-024：5 层透传字段（None-safe；缺字段时各层视为空/None，前端 layer-aware 渲染）。
+                 'net_polygon': meta.get('net_polygon', []),
+                 'internal_lines': meta.get('internal_lines', []),
+                 'notches': meta.get('notches', []),
+                 'grain_line': meta.get('grain_line'),
+                 }
+                for pid, meta in m['pid_meta'].items()
+            ],
+        }
+        loop.call_soon_threadsafe(queue.put_nowait, manifest_msg)
+
+    def on_report(r):
+        """子进程 frame（density 双口径已由 solve_with_callback_proc 换算）→ 加 index 投队列。"""
+        r['index'] = state_box['n_frames']
+        state_box['n_frames'] += 1
+        loop.call_soon_threadsafe(queue.put_nowait, r)
+
+    def on_process(proc):
+        """子进程 start 后立即回调，把 Process 句柄交给事件循环供 stop/断开 terminate。"""
+        state_box['process'] = proc
 
     def run_solve():
-        sol, dt, err = solve_with_callback(instance, config, on_report)
-        if err is not None:
-            final = {'type': 'error', 'message': f'求解失败: {err}'}
-        else:
-            sw = float(sol.width) if sol else 0.0
-            real = (total_area / (sw * gate_mm)) if sw > 0 else 0.0
-            final = {
-                'type': 'final',
-                'density': real,
-                'density_sparrow': float(sol.density) if sol else 0.0,
-                'width_mm': sw,
-                'elapsed': round(dt, 2),
-                'n_frames': counter['n'],
-                'n_eroded': n_eroded,
-            }
-        loop.call_soon_threadsafe(queue.put_nowait, final)
+        """executor 线程：阻塞跑 solve_with_callback_proc → 投 final/error/SENTINEL。"""
+        _, final_data, elapsed, err = solve_with_callback_proc(
+            pieces_snapshot, gate_mm, solve_params,
+            on_manifest=on_manifest, on_report=on_report, on_process=on_process,
+        )
+        # stopped 标志由 read_loop 在 stop/断开时置 True → 不再投 final/error（避免
+        # 与 stopped 消息冲突；客户端只收 stopped 或 final/error，不会同时收）。
+        if not state_box['stopped']:
+            if err is not None:
+                loop.call_soon_threadsafe(queue.put_nowait,
+                    {'type': 'error', 'message': f'求解失败: {err}'})
+            elif final_data is not None:
+                loop.call_soon_threadsafe(queue.put_nowait, {
+                    'type': 'final',
+                    'density': final_data['density'],
+                    'density_sparrow': final_data['density_sparrow'],
+                    'width_mm': final_data['width_mm'],
+                    'elapsed': round(elapsed, 2),
+                    'n_frames': state_box['n_frames'],
+                    'n_eroded': state_box['n_eroded'],
+                })
         loop.call_soon_threadsafe(queue.put_nowait, _SENTINEL)
 
     loop.run_in_executor(_executor, run_solve)
 
-    # 3) 协程侧消费队列 → 推 WS
+    # ---- 双向并发：write loop 内联 await（主流程）；read loop 后台 task 收 stop/断开 ----
+    # write loop 消费 SENTINEL 后自然 break → ws_solve 返回 → FastAPI 关闭 WS。read loop
+    # 被 cancel（仍在 receive_json 阻塞）或已自行 return（stop/断开）。任一路径 finally
+    # 都 terminate+join process，防孤儿。
+    async def read_loop():
+        """后台持续读客户端消息：{action:'stop'} → terminate + 直发 stopped + 投 SENTINEL；断开 → terminate。"""
+        try:
+            while True:
+                cmsg = await ws.receive_json()
+                if isinstance(cmsg, dict) and cmsg.get('action') == 'stop':
+                    state_box['stopped'] = True
+                    _terminate_solve_process(state_box)
+                    # stopped 消息由 read_loop 直发（不经 queue），确保是客户端收到的最后
+                    # 一条业务消息。先发 stopped 再投 SENTINEL：write loop 在 stopped 标志
+                    # 已置 True 时丢弃残余 frame（continue），收到 SENTINEL 后 break → WS 关闭。
+                    # 若先投 SENTINEL，write loop 会在 send_json(stopped) 的 await 期间 break
+                    # → finally cancel read_task → stopped 可能未发完。
+                    try:
+                        await ws.send_json({'type': 'stopped', 'reason': 'user_requested'})
+                    except Exception:
+                        pass   # send 失败（客户端已断开）—— 忽略，finally 兜底清理
+                    queue.put_nowait(_SENTINEL)
+                    return
+        except WebSocketDisconnect:
+            # 客户端主动断开 → 清理子进程（修旧 bug：旧版 except:pass 留孤儿进程跑满预算）。
+            state_box['stopped'] = True
+            _terminate_solve_process(state_box)
+        except (asyncio.CancelledError, SystemExit, GeneratorExit):
+            raise   # 不吞取消/退出类异常，让上层 finally 处理
+        except Exception:
+            # 其它连接异常（网络中断等）→ 同样清理。
+            state_box['stopped'] = True
+            _terminate_solve_process(state_box)
+
+    read_task = asyncio.create_task(read_loop())
     try:
+        # write loop 内联（主流程）：drain asyncio queue → ws.send_json；SENTINEL / stopped 收尾。
         while True:
             item = await queue.get()
             if item is _SENTINEL:
                 break
-            await ws.send_json(item)
-    except Exception:
-        pass   # 客户端中途断开等，忽略；求解线程会自行跑完收尾
+            if state_box['stopped']:
+                # stop 已触发：read_loop 已直发 stopped → 丢弃残余 frame，等 SENTINEL。
+                continue
+            try:
+                await ws.send_json(item)
+            except Exception:
+                # send 失败（客户端已断开）→ 标记 stopped + terminate，让 run_solve 跳过 final。
+                state_box['stopped'] = True
+                _terminate_solve_process(state_box)
+                break
+    finally:
+        # 兜底清理：无论正常收尾还是异常，确保 process 被终止 + read_task 被 cancel + WS 关闭。
+        _terminate_solve_process(state_box)
+        if not read_task.done():
+            read_task.cancel()
+            # 不 await read_task：TestClient（anyio portal）下 ws.receive_json() 阻塞在线程
+            # 安全部列上，task.cancel() 的 CancelledError 无法投递到阻塞中的 coroutine ——
+            # await read_task / wait_for(read_task) 会永久挂起。uvicorn 生产环境下 cancel
+            # 正常生效（receive_json 是真 async，可被中断）。
+        # 显式关闭 WS：ws_solve 返回后 FastAPI 自动关 WS，但 TestClient 需要显式 close
+        # 才能让 client 端 receive_json 抛 WebSocketDisconnect（Starlette 实现差异）。
+        try:
+            await ws.close()
+        except Exception:
+            pass
 
 
 def main():

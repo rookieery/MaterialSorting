@@ -102,7 +102,7 @@ out/sparrow_baseline/pieces_intermediate.json   ← 全流程事实源
 - **DXF 导出走 R12 + POLYLINE**（非 LWPOLYLINE）：ET2008 读 LWPOLYLINE 轮廓会消失。
 - **sparrow 不改源码**：作为 pip 包（`spyrrow`）引用，v0.3 服装约束（重合/旋转/布纹线）在外层 `constraints.py` + `solver.build_instance` 包装实现。
 - **坐标系**：spyrrow X=用布长度(0..width)，Y=门幅(0..gate)，Y 向上；前端 SVG `scale(1,-1)` 翻转后与 PNG / R12-DXF 一致。
-- **多 seed 并发公平性**：`ThreadPoolExecutor(max_workers=6)`，seed 间同等 CPU 竞争 → 排名公平。
+- **多 seed 并发公平性**：`ThreadPoolExecutor(max_workers=6)` 跑 `run_solve`，每 seed 独立子进程（US-025 进程化），seed 间同等 CPU 竞争 → 排名公平。WS stop / 客户端断开 → `Process.terminate()` 可靠终止 Rust 原生 solve（US-026）。
 - **前端 React 18 + TS 5 + Vite 5**：Zustand 状态 + 命令式 SVG 渲染（逃逸 React reconciliation 处理高频帧）。不引入 CSS 框架。坐标系 `scale(1,-1)` 必须保留。
 
 ## 验收标准（90% 目标的硬指标）
