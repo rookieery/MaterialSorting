@@ -12,9 +12,11 @@ export interface ParamFormProps {
   onTime: (v: string) => void;
   /** seed 输入变化时回调（传入 input.value 字符串）。 */
   onSeed: (v: string) => void;
+  /** US-027 求解中冻结时长 / seed 编辑（与 StartButton disabled 同套机制）。 */
+  disabled?: boolean;
 }
 
-export function ParamForm({ time, seed, onTime, onSeed }: ParamFormProps) {
+export function ParamForm({ time, seed, onTime, onSeed, disabled = false }: ParamFormProps) {
   return (
     <>
       <div className="field row">
@@ -25,6 +27,7 @@ export function ParamForm({ time, seed, onTime, onSeed }: ParamFormProps) {
           value={time}
           min={5}
           max={3600}
+          disabled={disabled}
           onChange={(e) => onTime(e.target.value)}
         />
       </div>
@@ -34,6 +37,7 @@ export function ParamForm({ time, seed, onTime, onSeed }: ParamFormProps) {
           id="seed"
           type="number"
           value={seed}
+          disabled={disabled}
           onChange={(e) => onSeed(e.target.value)}
         />
       </div>

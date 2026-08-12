@@ -38,6 +38,7 @@ import {
   type FormState,
 } from '../../lib/params';
 import type { PerTypeOverrides as PerTypeOverridesValue, SolveParams } from '../../types/v03';
+import type { SolvePhase } from '../../types/solvePhase';
 import { useQtyStore } from '../../store/qtyStore';
 
 /** onStart 透传给 App 的载荷（直接喂给 useSolveRun.start 的 StartConfig 子集）。 */
@@ -60,12 +61,18 @@ export interface ControlPanelStartPayload {
 export interface ControlPanelProps {
   /** 点击启动（已通过码号非空校验）。 */
   onStart: (cfg: ControlPanelStartPayload) => void;
-  /** 求解中（禁用 StartButton）。 */
+  /** 求解中（禁用 StartButton + 参数编辑控件）。US-028 起将由 phase 取代。 */
   solving: boolean;
   /** 状态行文案（来自 App；组装：就绪/连接中/完成/错误）。 */
   status: string;
   /** 写状态行（用于码号校验失败时把错误塞进 StatusLine）。 */
   onStatus: (text: string) => void;
+  /** US-027 停止求解回调（US-028 由 SolveControls 停止按钮接线；本 Story 不渲染按钮）。 */
+  onStop?: () => void;
+  /** US-027 重新开始回调（US-028 由 SolveControls 重新开始按钮接线；本 Story 不渲染按钮）。 */
+  onRestart?: () => void;
+  /** US-027 求解状态机五态（US-028 由 SolveControls 按钮组消费；本 Story 仅 solving 派生）。 */
+  phase?: SolvePhase;
 }
 
 export function ControlPanel({ onStart, solving, status, onStatus }: ControlPanelProps) {
@@ -127,16 +134,23 @@ export function ControlPanel({ onStart, solving, status, onStatus }: ControlPane
   return (
     <aside className="panel">
       <h2>求解控制</h2>
-      <SizePicker selected={form.sizes} onChange={(sizes) => patch({ sizes })} />
-      <ParamForm time={form.time} seed={form.seed} onTime={(time) => patch({ time })} onSeed={(seed) => patch({ seed })} />
+      <SizePicker selected={form.sizes} onChange={(sizes) => patch({ sizes })} disabled={solving} />
+      <ParamForm
+        time={form.time}
+        seed={form.seed}
+        onTime={(time) => patch({ time })}
+        onSeed={(seed) => patch({ seed })}
+        disabled={solving}
+      />
       <MultiSeedControls
         multi_seed={form.multi_seed}
         seed_count={form.seed_count}
         onMulti={(multi_seed) => patch({ multi_seed })}
         onCount={(seed_count) => patch({ seed_count })}
+        disabled={solving}
       />
-      <PresetButtons onPreset={(seconds) => patch({ time: String(seconds) })} />
-      <PerTypeOverrides values={form.per_type} onChange={(per_type) => patch({ per_type })} />
+      <PresetButtons onPreset={(seconds) => patch({ time: String(seconds) })} disabled={solving} />
+      <PerTypeOverrides values={form.per_type} onChange={(per_type) => patch({ per_type })} disabled={solving} />
       <StartButton solving={solving} onClick={handleStart} />
       <StatusLine text={visibleStatus} />
       <ExportButtons solving={solving} exporting={exporting} onExport={handleExport} />

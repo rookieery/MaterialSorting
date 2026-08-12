@@ -1,10 +1,15 @@
 // NestingPage —— 排料工作台页（US-001 把原 App.tsx 排料逻辑外提）。
 //
-// 职责：持有 solving / status / seeds 状态 + doneCountRef/totalSeedsRef，挂载
+// 职责：持有 phase / status / seeds 状态 + doneCountRef/totalSeedsRef，挂载
 //   ControlPanel + NestsGrid + ConvergenceCurve + PlaybackBar，跑 useRafThrottle 节流闸。
 // 与原 App.tsx（US-005 多 seed + US-006 seek/tooltip + US-007 导出）逻辑字节级一致，
 //   仅容器由 `<div className="app">` 改为 `<div className="page nesting-page">`，
 //   由父 App 据 uiStore.activeTab 切 display:none（AC#4 不卸载、求解/WS/seek 全保留）。
+//
+// US-027：solving:boolean → phase:SolvePhase 五态状态机（idle/running/stopped/done/error）。
+//   onDone 按 rec.stopped/rec.error 区分 phase；handleStop 调 useSolveRun.stop()；
+//   handleRestart = clear + 用上次参数（lastStartCfgRef）handleStart。
+//   ControlPanel 仍收 solving（= phase==='running'）保持 API 不变；US-028 改用 phase + SolveControls。
 //
 // Tooltip 仍由父 App 渲染（全局单例，不能多挂）；本页只渲染业务区，不挂 Tooltip。
 
@@ -19,12 +24,13 @@ import { useSolveRun } from '../hooks/useSolveRun';
 import { maxElapsed } from '../lib/seek';
 import { useAppStore } from '../store/appStore';
 import { runRegistry } from '../store/runRegistry';
+import type { SolvePhase } from '../types/solvePhase';
 
 export function NestingPage(): React.JSX.Element {
   /** 已 start 的 seed 列表（base+i, i=0..N-1）。仅用于触发首次挂载 NestsGrid 内 NestCard。 */
   const [seeds, setSeeds] = useState<number[]>([]);
-  /** 求解中 flag —— 驱动 useRafThrottle + 禁用 StartButton。 */
-  const [solving, setSolving] = useState(false);
+  /** US-027 求解状态机（idle/running/stopped/done/error）—— 驱动 useRafThrottle + 禁用参数编辑。 */
+  const [phase, setPhase] = useState<SolvePhase>('idle');
   /** 状态行文案（ControlPanel / useSolveRun 回调都能写）。 */
   const [status, setStatus] = useState('就绪');
 
@@ -32,15 +38,31 @@ export function NestingPage(): React.JSX.Element {
   const doneCountRef = useRef(0);
   /** 本次 start 期望的 run 总数（同 seeds.length，但在 cb 闭包里读 ref 才拿得到当前值）。 */
   const totalSeedsRef = useRef(0);
+  /** US-027 上次 start 参数 —— handleRestart 复用（用户改参数后走 handleStart 用新值）。 */
+  const lastStartCfgRef = useRef<ControlPanelStartPayload | null>(null);
 
-  const { start } = useSolveRun({
+  const { start, stop } = useSolveRun({
     onDone: () => {
       doneCountRef.current += 1;
       if (doneCountRef.current < totalSeedsRef.current) return;
-      // 全部完成 → 汇总状态行
-      setSolving(false);
+      // 全部 run 的 onDone 到齐 → 统一切 phase + 汇总状态行
       const runs = runRegistry.list();
-      if (runs.length === 0) return;
+      if (runs.length === 0) {
+        setPhase('done');
+        return;
+      }
+
+      // US-027 phase 区分（优先级：全 stopped→stopped；有 error→error；否则 done）。
+      // per-run stopped 与 error 互斥（useSolveRun case 分支不会同时置），故全 stopped 时无 error。
+      const hasError = runs.some((r) => r.error !== null);
+      const allStopped = runs.every((r) => r.stopped);
+      if (allStopped) {
+        setPhase('stopped');
+      } else if (hasError) {
+        setPhase('error');
+      } else {
+        setPhase('done');
+      }
 
       // US-006 AC#1：全部完成时 seekbar 启用，value 默认到末尾 = ceil(maxElapsed)。
       // setSeekTime(me) 后 NestSVG 切到 frameAtTime(run, me)（= 末帧，与 lastFrame 等价），
@@ -55,6 +77,8 @@ export function NestingPage(): React.JSX.Element {
         const rec = runs[0];
         if (rec.error) {
           setStatus(`seed ${rec.seed} 错误：${rec.error}`);
+        } else if (rec.stopped) {
+          setStatus(`已停止：seed ${rec.seed}（保留中间方案，可导出）`);
         } else if (rec.finalDensity > 0) {
           setStatus(`完成：seed ${rec.seed} · ${(rec.finalDensity * 100).toFixed(2)}%`);
         } else {
@@ -64,7 +88,13 @@ export function NestingPage(): React.JSX.Element {
       }
       // 多 seed：汇总 + best
       const best = runs.reduce((a, r) => (r.finalDensity > a.finalDensity ? r : a), runs[0]);
-      setStatus(`完成 ${runs.length} seed：${summary} | best = s${best.seed} ${(best.finalDensity * 100).toFixed(2)}%`);
+      if (allStopped) {
+        setStatus(`已停止 ${runs.length} seed：${summary} | best = s${best.seed} ${(best.finalDensity * 100).toFixed(2)}%`);
+      } else if (hasError) {
+        setStatus(`完成（含错误）${runs.length} seed：${summary} | best = s${best.seed} ${(best.finalDensity * 100).toFixed(2)}%`);
+      } else {
+        setStatus(`完成 ${runs.length} seed：${summary} | best = s${best.seed} ${(best.finalDensity * 100).toFixed(2)}%`);
+      }
     },
   });
 
@@ -74,7 +104,9 @@ export function NestingPage(): React.JSX.Element {
   useRafThrottle(seeds.length > 0);
 
   function handleStart(cfg: ControlPanelStartPayload) {
-    if (solving) return;
+    if (phase === 'running') return;
+    // US-027：保存本次 start 参数，供 handleRestart 复用。
+    lastStartCfgRef.current = cfg;
     // 清旧 run（关 WS + 清数组）—— 与旧 vanilla 实现 startSolve 内 runs=[] 等价
     runRegistry.clear();
     doneCountRef.current = 0;
@@ -90,7 +122,7 @@ export function NestingPage(): React.JSX.Element {
     const newSeeds: number[] = [];
     for (let i = 0; i < cfg.seed_count; i++) newSeeds.push(cfg.seed + i);
     setSeeds(newSeeds);
-    setSolving(true);
+    setPhase('running');
     setStatus(cfg.seed_count > 1 ? `启动 ${cfg.seed_count} 个 seed 对比…` : '连接中…');
 
     // 顺序 start N 个 run（每个独立 WS；useSolveRun.start 内 runRegistry.create + new WebSocket）。
@@ -107,9 +139,33 @@ export function NestingPage(): React.JSX.Element {
     }
   }
 
+  /** US-027 停止求解：对所有 open WS 发 {action:'stop'}，后端 terminate 后回 stopped → onDone 切 phase。 */
+  function handleStop() {
+    stop();
+    // 不立即 setPhase：等 server 回 {type:'stopped'} → onmessage case 'stopped' → finish → onDone 统一切。
+  }
+
+  /**
+   * US-027 重新开始：用上次 start 参数（lastStartCfgRef）走 handleStart（内含 clear + reset + start）。
+   * 用户在 stopped/error/done 态若改了参数 → ControlPanel 走 onStart → handleStart（新参数覆盖 ref）。
+   */
+  function handleRestart() {
+    const last = lastStartCfgRef.current;
+    if (!last) return;
+    handleStart(last);
+  }
+
   return (
     <>
-      <ControlPanel onStart={handleStart} solving={solving} status={status} onStatus={setStatus} />
+      <ControlPanel
+        onStart={handleStart}
+        onStop={handleStop}
+        onRestart={handleRestart}
+        phase={phase}
+        solving={phase === 'running'}
+        status={status}
+        onStatus={setStatus}
+      />
 
       <main className="main">
         <div className="nest-wrap">

@@ -91,9 +91,11 @@ export interface SizePickerProps {
   selected: (number | null)[];
   /** 切换某码号勾选状态时回调（顺序保留 chip 列表原顺序，不二次排序）。 */
   onChange: (next: (number | null)[]) => void;
+  /** US-027 求解中冻结码号编辑（与 StartButton disabled 同套机制）。 */
+  disabled?: boolean;
 }
 
-export function SizePicker({ selected, onChange }: SizePickerProps): JSX.Element {
+export function SizePicker({ selected, onChange, disabled = false }: SizePickerProps): JSX.Element {
   // US-017：动态从 uploadStore.doc 读码号列表；doc=null 时 fallback 到 SIZES。
   const doc = useUploadStore((s) => s.doc);
   // 订阅 quantities：demand 变化（预览页编辑）→ 总数实时重算。SizePicker 是排料页叶子组件，
@@ -122,6 +124,7 @@ export function SizePicker({ selected, onChange }: SizePickerProps): JSX.Element
                 type="checkbox"
                 value={key}
                 checked={checked}
+                disabled={disabled}
                 onChange={() => {
                   const next = checked
                     ? selected.filter((x) => x !== s)

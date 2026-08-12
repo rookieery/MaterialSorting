@@ -3,7 +3,7 @@
 // 设计要点（与旧 vanilla 实现 connectRun 等价）：
 //   1. start(cfg) 显式 new WebSocket（**不在 useEffect 里自动连**）→ React StrictMode 双 mount 不会触发两次连接。
 //   2. WS URL 走 lib/ws.solveWsUrl()（相对 host，dev/prod 自适配）。
-//   3. onmessage 按 type 字段判别分发：manifest / frame / final / error。
+//   3. onmessage 按 type 字段判别分发：manifest / frame / final / stopped / error。
 //   4. frames 直接 push 进 RunRecord（mutable，**不进 React state**），高频渲染由 US-003 renderTick 闸驱动。
 //   5. onclose / onerror → onDone（done flag 防重复）；不重连。
 //
@@ -49,10 +49,13 @@ export interface UseSolveRunCallbacks {
 
 /**
  * 单 run 求解 hook。
- * @returns start(cfg) 显式启动；isStarted 反映是否已至少 start 过一次。
+ * @returns start(cfg) 显式启动；stop() 对所有 open WS 发 {action:'stop'}；
+ *          isStarted 反映是否已至少 start 过一次。
  */
 export function useSolveRun(cb: UseSolveRunCallbacks = {}): {
   start: (cfg: StartConfig) => void;
+  /** US-027：对所有 readyState===OPEN 的 run WS 发 {action:'stop'}（后端 terminate 后回 stopped）。 */
+  stop: () => void;
   isStarted: boolean;
 } {
   // 用 ref 持有最新回调，避免 callback 闭包陈旧，又不必让 start 重新创建。
@@ -108,6 +111,12 @@ export function useSolveRun(cb: UseSolveRunCallbacks = {}): {
           cbRef.current.onFinal?.(msg, rec);
           finish();
           break;
+        case 'stopped':
+          // US-027：后端 terminate 子进程后直发 stopped → 标记 rec.stopped + finish（触发 onDone）。
+          // 不重算 finalDensity（无 final 消息）；lastFrame 保留停止时刻最新帧供导出中间方案。
+          rec.stopped = true;
+          finish();
+          break;
         case 'error':
           rec.error = msg.message;
           cbRef.current.onError?.(msg, rec);
@@ -132,5 +141,21 @@ export function useSolveRun(cb: UseSolveRunCallbacks = {}): {
     setStarted(true);
   }, []);
 
-  return { start, isStarted };
+  // US-027：stop() 遍历 registry，对每个 OPEN 的 WS 发 {action:'stop'}。
+  // 后端收到后 terminate 子进程 → 直发 {type:'stopped'} → onmessage case 'stopped' → finish → onDone。
+  // 对非 OPEN（connecting/closing/closed）的 WS 跳过（发也会 throw / 无意义）。
+  const stop = useCallback(() => {
+    for (const rec of runRegistry.list()) {
+      const ws = rec.ws;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        try {
+          ws.send(JSON.stringify({ action: 'stop' }));
+        } catch {
+          // send 异常（连接刚关闭等）—— 忽略；onclose 兜底触发 finish。
+        }
+      }
+    }
+  }, []);
+
+  return { start, stop, isStarted };
 }

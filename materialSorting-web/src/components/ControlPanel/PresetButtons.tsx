@@ -6,15 +6,17 @@
 export interface PresetButtonsProps {
   /** 预设时间秒数（120 / 600）。父级应将 time 字段更新为 String(seconds)。 */
   onPreset: (seconds: number) => void;
+  /** US-027 求解中冻结预设按钮（与 StartButton disabled 同套机制）。 */
+  disabled?: boolean;
 }
 
-export function PresetButtons({ onPreset }: PresetButtonsProps) {
+export function PresetButtons({ onPreset, disabled = false }: PresetButtonsProps) {
   return (
     <div className="field row presets">
-      <button type="button" className="preset" onClick={() => onPreset(120)}>
+      <button type="button" className="preset" disabled={disabled} onClick={() => onPreset(120)}>
         预览 120s
       </button>
-      <button type="button" className="preset" onClick={() => onPreset(600)}>
+      <button type="button" className="preset" disabled={disabled} onClick={() => onPreset(600)}>
         精排 600s
       </button>
     </div>

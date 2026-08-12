@@ -16,9 +16,11 @@ export interface MultiSeedControlsProps {
   onMulti: (v: boolean) => void;
   /** seed_count 输入变化回调（传入 input.value 字符串）。 */
   onCount: (v: string) => void;
+  /** US-027 求解中冻结多 seed 配置编辑（与 StartButton disabled 同套机制）。 */
+  disabled?: boolean;
 }
 
-export function MultiSeedControls({ multi_seed, seed_count, onMulti, onCount }: MultiSeedControlsProps) {
+export function MultiSeedControls({ multi_seed, seed_count, onMulti, onCount, disabled = false }: MultiSeedControlsProps) {
   return (
     <div className="field row">
       <label className="cb">
@@ -26,6 +28,7 @@ export function MultiSeedControls({ multi_seed, seed_count, onMulti, onCount }: 
           id="multi_seed"
           type="checkbox"
           checked={multi_seed}
+          disabled={disabled}
           onChange={(e) => onMulti(e.target.checked)}
         />
         多 seed 对比
@@ -38,6 +41,7 @@ export function MultiSeedControls({ multi_seed, seed_count, onMulti, onCount }: 
           value={seed_count}
           min={2}
           max={6}
+          disabled={disabled}
           onChange={(e) => onCount(e.target.value)}
         />
       </label>

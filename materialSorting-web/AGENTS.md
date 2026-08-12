@@ -28,7 +28,7 @@ npm run test               # vitest run（US-002 起会有用例）
 3. **命令式 polygon 更新**：每帧 setAttribute('points' / 'display')，由 Zustand renderTick 单字段 ~10fps 节流，**逃逸 React reconciliation**。US-003 落地。
 4. **`static/` 是构建产物**（US-008 起入库 gitignore）：`npm run build` 生成，**不要手改**；旧 vanilla 三件套（`legacy/`）已删除，React 应用是唯一真相源。
 
-## 文件分工（US-001 Tab 框架 + US-002~US-008 全部落地；上传预览 US-005 状态层 + US-006 UploadPanel + US-007 PiecePreviewSVG + US-008 SizeTabs/ParsedPiecesView/PreviewPage 容器集成 + 上传预览 US-011 qtyStore 数量状态 + 上传预览 US-012 PieceQtyDialog/Switch 数量弹窗 + 上传预览 US-013 PieceZoomModal 放大预览模态 + 上传预览 US-014 ParsedPiecesView 卡片头改造+双模态集成 + US-015 uiStore 扩 nestingEnabled + TabBar 置灰 + US-016 PreviewPage 联动 setNestingEnabled + US-017 SizePicker 动态读码号 + DEFAULT_FORM.sizes=[] + US-018 PerTypeOverridesModal/PtypePreviewModal 高级配置弹窗+片型缩略图+放大预览 + US-021 useCommitToNesting 解析成功自动 commit+D1 闭环 + US-022 求解输入数量 demand per-size + US-024 NestSVG 5 层渲染+共享 LAYER5_COLORS）
+## 文件分工（US-001 Tab 框架 + US-002~US-008 全部落地；上传预览 US-005 状态层 + US-006 UploadPanel + US-007 PiecePreviewSVG + US-008 SizeTabs/ParsedPiecesView/PreviewPage 容器集成 + 上传预览 US-011 qtyStore 数量状态 + 上传预览 US-012 PieceQtyDialog/Switch 数量弹窗 + 上传预览 US-013 PieceZoomModal 放大预览模态 + 上传预览 US-014 ParsedPiecesView 卡片头改造+双模态集成 + US-015 uiStore 扩 nestingEnabled + TabBar 置灰 + US-016 PreviewPage 联动 setNestingEnabled + US-017 SizePicker 动态读码号 + DEFAULT_FORM.sizes=[] + US-018 PerTypeOverridesModal/PtypePreviewModal 高级配置弹窗+片型缩略图+放大预览 + US-021 useCommitToNesting 解析成功自动 commit+D1 闭环 + US-022 求解输入数量 demand per-size + US-024 NestSVG 5 层渲染+共享 LAYER5_COLORS + US-027 NestingPage phase 状态机+useSolveRun.stop()+running 态冻结参数编辑）
 
 ```
 src/
@@ -36,15 +36,15 @@ src/
 ├── App.tsx                # US-001 ✅ Tab 骨架：TabBar + 双 .page 容器（display:none 切换）+ Tooltip 单例
 ├── style.css              # 由 vanilla 前身 1:1 迁入；US-001 加 .tabbar/.tab/.page/.hidden/.preview-empty；上传预览 US-006 加 .upload-panel/.drop-zone/.upload-btn/.upload-status；US-007 加 .piece-preview-svg；US-008 加 .preview-page/.preview-main/.size-tabs/.size-chip/.parsed-pieces-view/.piece-grid/.piece-card*；上传预览 US-012 加 .piece-qty-dialog-overlay/.piece-qty-dialog-modal/.qty-input-group/.qty-step/.qty-input/.switch/.switch-track/.switch-label-*/.switch-thumb/.qty-btn/.qty-confirm；上传预览 US-013 加 .piece-zoom-overlay/.piece-zoom-modal/.piece-zoom-head/.piece-zoom-seq/.piece-zoom-meta/.piece-zoom-name/.piece-zoom-close/.piece-zoom-body；上传预览 US-014 改 .piece-card-name→.piece-card-qty(+.disabled) + .piece-card-body 加 cursor:zoom-in；US-015 加 .tab.disabled(+hover)（#555 灰字 + not-allowed）；US-018 加 .per-type-wrapper/.per-type-btn/.per-type-overlay(z=1100)/.per-type-modal/.per-type-head/.per-type-close/.per-type-table-wrap/.per-type-table/.per-type-rowhead(sticky)/.ptype-col/.ptype-thumb(64×64 zoom-in)/.ptype-name/.per-type-hint/.per-type-actions/.per-type-btn-cancel/.per-type-btn-confirm + .ptype-preview-overlay(z=1200)/.ptype-preview-modal/.ptype-preview-head/.ptype-preview-name/.ptype-preview-close/.ptype-preview-body/.ptype-preview-empty
 ├── vite-env.d.ts          # vite/client 类型
-├── types/                 # US-002 ✅：ws.ts / piece.ts / v03.ts；上传预览 US-005 ✅ parsed.ts（US-004 响应契约）；上传预览 US-011 ✅ qty.ts（PieceQuantity/PieceQuantityMap）
+├── types/                 # US-002 ✅：ws.ts / piece.ts / v03.ts；上传预览 US-005 ✅ parsed.ts（US-004 响应契约）；上传预览 US-011 ✅ qty.ts（PieceQuantity/PieceQuantityMap）；US-027 ✅ solvePhase.ts（SolvePhase 五态）
 ├── lib/                   # US-002 ✅ ws.ts；US-003 ✅ geometry.ts；US-004 ✅ params.ts；US-006 ✅ seek.ts；US-007 ✅ download.ts
 ├── store/                 # US-002 ✅ runRegistry.ts；US-003 ✅ appStore.ts；US-001 ✅ uiStore.ts（US-015 ✅ 扩 nestingEnabled + setNestingEnabled + setTab guard）；上传预览 US-005 ✅ uploadStore.ts（US-012 扩 qtyDialog + open/close；US-013 扩 zoom + open/close；US-021 扩 commitStatus/commitError/commitSummary + reset 同步清）；上传预览 US-011 ✅ qtyStore.ts（+clampQty+getPieceDisplay 纯函数；US-022 ✅ 加 hydrateDefaults 交叉积版）
-├── hooks/                 # US-002 ✅ useSolveRun.ts（US-022 ✅ StartConfig 加 quantities 透传）；US-003 ✅ useRafThrottle.ts；US-007 ✅ useExport.ts；上传预览 US-005 ✅ useParseDxf.ts（US-021 ✅ 解析成功自动 void commit）；上传预览 US-021 ✅ useCommitToNesting.ts（POST /api/commit-to-nesting + D1 闭环 setNestingEnabled+setTab）
+├── hooks/                 # US-002 ✅ useSolveRun.ts（US-022 ✅ StartConfig 加 quantities 透传；US-027 ✅ 加 stop() + case stopped）；US-003 ✅ useRafThrottle.ts；US-007 ✅ useExport.ts；上传预览 US-005 ✅ useParseDxf.ts（US-021 ✅ 解析成功自动 void commit）；上传预览 US-021 ✅ useCommitToNesting.ts（POST /api/commit-to-nesting + D1 闭环 setNestingEnabled+setTab）
 ├── constants/             # US-004 ✅：sizes.ts / colors.ts / v03.ts
 ├── __tests__/             # US-002 ✅ useSolveRun；US-003 ✅ 各模块单测；US-007 ✅ useExport；US-001 ✅ App 集成 smoke（US-015 beforeEach 加 setNestingEnabled(true) 兜底 store guard）
 └── components/
     ├── TabBar.tsx         # US-001 ✅ 顶部 Tab（超排/上传预览），订阅 uiStore.activeTab；US-015 ✅ 超排 button disabled 闸（nestingEnabled===false 时 native disabled + .disabled class + aria-disabled + onClick 运行时判）
-    ├── NestingPage.tsx    # US-001 ✅ 排料页（原 App 业务逻辑外提；持 solving/seeds/useSolveRun）
+    ├── NestingPage.tsx    # US-001 ✅ 排料页（原 App 业务逻辑外提；持 phase/seeds/useSolveRun）；US-027 ✅ solving→phase 五态状态机 + handleStop/handleRestart + lastStartCfgRef + running 态冻结参数编辑
     ├── preview/           # US-001 起：上传预览页
     │   ├── PreviewPage.tsx # US-008 ✅ 容器（左 UploadPanel + 右 SizeTabs+ParsedPiecesView；未解析空态）；US-014 ✅ 顶层挂 PieceQtyDialog+PieceZoomModal 单例 + useEffect subscribe 联动 qtyStore.resetQuantities（重传清零）；US-016 ✅ 加 useEffect subscribe uploadStore.status 联动 uiStore.setNestingEnabled（`status==='done' && doc!==null` → true，否则 false；mount 即对齐）
     │   ├── UploadPanel.tsx # 上传预览 US-006 ✅ 左侧上传面板（点击+拖拽+客户端预校验+status 反馈）；US-021 ✅ 加 commit 状态行（committing→应用中… / done→已应用至超排：N 裁片 M 码 / error→应用失败：msg）
@@ -237,6 +237,19 @@ src/
 - **demand=0 语义（D2）**：用户改某片某码为 0 → 后端 build_instance 见 0 跳过该 piece（不进 sparrow 实例）。配合 D3（hydrateDefaults 填 1）保证开箱即用 + 用户可显式排除。
 - **无 SVG/坐标变换改动**：本故事仅 store/hook/payload 扩展，AC 仅要求 typecheck + 单测 + `python -c "from materialsorting.web.server import app"` 导入通过。浏览器视觉回归（改某片某码 0 → 求解结果该片不出现）留作整体回归。
 
+## US-027 关键约定（NestingPage phase 状态机 + useSolveRun.stop() 调用方必读）
+
+- **phase 五态由 NestingPage 持有，子组件纯受控**：`phase: SolvePhase`（idle/running/stopped/done/error）在 NestingPage useState；ControlPanel / 后续 US-028 SolveControls 都不自持 phase。phase 切换只发生在 NestingPage onDone 汇总线（全部 seed onDone 到齐后统一切）。改 phase 持有方会破坏「多 seed 所有 onDone 到齐后统一切 phase」语义。
+- **onDone phase 优先级「全 stopped→stopped、有 error→error、否则 done」**：per-run `stopped` 与 `error` 互斥（useSolveRun `case 'stopped'` 和 `case 'error'` 不同时置），故 `allStopped = runs.every(r=>r.stopped)` 蕴含无 error，检查顺序安全。改优先级需同步 useSolveRun.stop.test.tsx 3 项 NestingPage phase 转换用例。
+- **stop() 仅对 `readyState===WebSocket.OPEN` 的 WS 发 {action:'stop'}**：非 OPEN（CONNECTING/CLOSING/CLOSED）跳过（send 会 throw 或无意义）；`ws.send` 外包 try/catch 兜底连接刚关闭。**Mock WebSocket 必须定义静态常量 CONNECTING/OPEN/CLOSING/CLOSED**，否则 `WebSocket.OPEN` 为 undefined 导致 stop() 永远不发（测试踩坑修复：见 useSolveRun.stop.test.tsx MockWebSocketCtor）。
+- **`case 'stopped'` 不重算 finalDensity**：stopped 无 final 消息，finalDensity 保持默认 0；lastFrame 保留停止时刻帧（供导出中间方案，US-028 导出按钮用）。rec.stopped=true + finish() 触发 onDone（与 final/error 路径一致）。
+- **handleStop 不立即 setPhase**：等后端回 `{type:'stopped'}` → onmessage case 'stopped' → finish → onDone 统一切 phase。立即 setPhase 会与 onDone 的 phase 切换竞争（多 seed 部分 stopped 部分未停）。
+- **handleRestart 用 lastStartCfgRef（上次 start 参数）**：handleStart 内 `lastStartCfgRef.current = cfg` 每次更新；handleRestart 读 ref 调 handleStart（内含 clear+reset+start）。用户在 stopped/error/done 态改参数后走 ControlPanel.onStart → handleStart（新参数覆盖 ref），故「改参数用新值」由 onStart 路径自然保证，handleRestart 仅是「用上次参数一键重跑」。
+- **running 态冻结参数编辑（与 StartButton disabled 同套机制）**：ControlPanel 向 SizePicker/ParamForm/MultiSeedControls/PresetButtons/PerTypeOverrides 透传 `disabled={solving}`（= phase==='running'）；5 个输入组件各加 `disabled?: boolean` prop。stopped/done/error 态可编辑（用户可改参数后重新开始）。改 disabled 条件需同步 useSolveRun.stop.test.tsx 3d 用例。
+- **ControlPanel solving prop 保留（US-028 改 phase）**：本 Story 仅传 `solving={phase==='running'}` 保持 ControlPanel API 不变；`onStop`/`onRestart`/`phase` 可选 props 不在本 Story 接线（US-028 由 SolveControls 消费）。ControlPanel 函数不解构这三个可选 props（避免 noUnusedLocals）。
+- **SolvePhase 类型导出到 types/solvePhase.ts**：供 US-028 SolveControls 复用；不在 NestingPage 内联（跨组件共享类型必须入 types/）。
+- **未做浏览器验证**：本 Story 无 SVG/坐标变换（仅状态机 + 输入 disabled），AC 仅要求 typecheck + 单测 + build；浏览器完整流程（idle→running→stopped→restart→done）验证留作 US-028（UI Story，SolveControls 接线后统一核对）。
+
 ## US-024 关键约定（NestSVG 5 层渲染 + 共享 LAYER5_COLORS 调用方必读）
 
 - **5 层中 4 层仅渲染透传不参与碰撞**：`polygon`（layer1 毛版外轮廓，erode 后）是唯一参与 sparrow NFP 碰撞的几何；`net_polygon` / `internal_lines` / `notches` / `grain_line` 4 层仅渲染/导出透传，不影响求解结果或利用率。改任一层语义需同步后端 collect.LAYER_MAPPING + export_dxf + load_pieces + pieces_export + solver.pid_meta + web/export.py + 本组件。
@@ -349,3 +362,4 @@ src/
 - **不要在 useEffect dep 里直接列 mutable run**：run 引用不变（registry 持有），effect 实际靠 renderTick 触发；写 `[renderTick, run]` 即可（run 只是稳定引用）。
 - **写文件含 Chinese 字符 + bash heredoc 易踩坑**：用 `cat << 'EOF' > file` 单引号 heredoc 时，bash 仍可能因内部 `''`/`\'` 解析失败；安全做法是分多段 append（`cat >> file <<'TESTEND'` 多次），或用 Python heredoc 套外层（注意 `r'''...'''` 与 bash 单引号的冲突）。
 - **多 seed all-done 检测不能用 `useState(doneCount)`**：每次 start 闭包值不同，onDone 内读到的是旧值；改用 `useRef` + 手动重置（US-005 落地）。
+- **Mock WebSocket 必须定义静态常量 CONNECTING/OPEN/CLOSING/CLOSED**：`stop()` 内 `ws.readyState === WebSocket.OPEN` 判 OPEN；Mock 替换 `globalThis.WebSocket` 后，若 mock ctor 无静态常量则 `WebSocket.OPEN===undefined`，stop() 永远不发。见 useSolveRun.stop.test.tsx MockWebSocketCtor（US-027 踩坑修复）。

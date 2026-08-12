@@ -24,9 +24,11 @@ export interface PerTypeOverridesProps {
   values: Record<string, PerTypeFormValue>;
   /** Modal 确定时回写（key + 'd' | 'tol' + 新字符串）。 */
   onChange: (next: Record<string, PerTypeFormValue>) => void;
+  /** US-027 求解中冻结高级配置入口（与 StartButton disabled 同套机制）。 */
+  disabled?: boolean;
 }
 
-export function PerTypeOverrides({ values, onChange }: PerTypeOverridesProps): JSX.Element {
+export function PerTypeOverrides({ values, onChange, disabled = false }: PerTypeOverridesProps): JSX.Element {
   const openModal = useControlPanelStore((s) => s.openModal);
 
   return (
@@ -34,6 +36,7 @@ export function PerTypeOverrides({ values, onChange }: PerTypeOverridesProps): J
       <button
         type="button"
         className="per-type-btn"
+        disabled={disabled}
         onClick={() => openModal('per_type')}
         data-testid="per-type-btn"
       >

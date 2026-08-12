@@ -30,6 +30,8 @@ export interface RunRecord {
   error: string | null;
   /** 已观察到的最大 width_mm（用于 SVG viewBox 动态扩展）。 */
   viewBoxMaxW: number;
+  /** US-027：用户 stop 触发的结束（收到 {type:'stopped'} 置 true；用于 phase 状态机区分 stopped/done/error）。 */
+  stopped: boolean;
 }
 
 /** 模块级 mutable 数组 —— 跨 hook 实例共享。 */
@@ -49,6 +51,7 @@ export const runRegistry = {
       done: false,
       error: null,
       viewBoxMaxW: 0,
+      stopped: false,
     };
     _runs.push(rec);
     return rec;
