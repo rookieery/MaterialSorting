@@ -1,7 +1,6 @@
 // US-004 ControlPanel integration tests:
 //   AC#1 SizePicker renders 8 size chips, all default-checked
 //   AC#2 defaults match legacy index.html (time=60, seed=0; multi_seed=false, seed_count=3)
-//   AC#3 PresetButtons one-click fill 120 / 600
 //   AC#4 PerTypeOverrides renders V03_TABLE 10 rows, internal ptypes badged
 //   AC#6 click Start -> onStart fires; payload fields match collectParams
 //   AC#7 0 sizes -> onStatus error + onStart NOT called
@@ -97,7 +96,7 @@ describe("ControlPanel (US-004)", () => {
     for (const c of checkboxes) expect(c.checked).toBe(false);
   });
 
-  it("AC#2 defaults match legacy index.html (time=60; seed=0; multi_seed=false; seed_count=3)", () => {
+  it("AC#2 defaults match legacy index.html (time=120; seed=0; multi_seed=false; seed_count=3)", () => {
     renderPanel();
     const get = (id: string) => container!.querySelector<HTMLInputElement>("#" + id)!;
     // US-019：d_ext/d_int/tol_ext/tol_int 主面板输入已删除，不应在 DOM 中
@@ -105,7 +104,7 @@ describe("ControlPanel (US-004)", () => {
     expect(container!.querySelector("#d_int")).toBeNull();
     expect(container!.querySelector("#tol_ext")).toBeNull();
     expect(container!.querySelector("#tol_int")).toBeNull();
-    expect(get("time").value).toBe("60");
+    expect(get("time").value).toBe("120");
     expect(get("seed").value).toBe("0");
     // US-005: multi_seed / seed_count defaults
     expect(get("multi_seed").checked).toBe(false);
@@ -123,16 +122,6 @@ describe("ControlPanel (US-004)", () => {
     expect(container!.textContent).not.toContain("内/外两档");
     // PerTypeOverrides 按钮仍在（高级配置入口）
     expect(container!.querySelector(".per-type-btn")).not.toBeNull();
-  });
-
-  it("AC#3 PresetButtons one-click fill 120 / 600", () => {
-    renderPanel();
-    const buttons = container!.querySelectorAll<HTMLButtonElement>("button.preset");
-    expect(buttons).toHaveLength(2);
-    act(() => buttons[0].click());
-    expect(container!.querySelector<HTMLInputElement>("#time")!.value).toBe("120");
-    act(() => buttons[1].click());
-    expect(container!.querySelector<HTMLInputElement>("#time")!.value).toBe("600");
   });
 });
 
@@ -176,24 +165,30 @@ describe("ControlPanel start flow (US-004)", () => {
     expect(onStart).toHaveBeenCalledTimes(1);
     const cfg = onStart.mock.calls[0][0] as ControlPanelStartPayload;
     expect(cfg.sizes).toEqual([...SIZES]);
-    expect(cfg.time).toBe(60);
+    expect(cfg.time).toBe(120);
     expect(cfg.seed).toBe(0);
     expect(cfg.seed_count).toBe(1); // multi_seed 默认 false → 1
     expect(cfg.params).toEqual({ d_ext: 0, d_int: 0, tol_ext: 0, tol_int: 0 });
     expect(cfg.per_type).toBeNull();
   });
 
-  it("AC#7 0 sizes (US-017 default) -> onStatus error + onStart NOT called", () => {
+  it("AC#7 0 sizes (US-017 default) -> 「开始求解」按钮置灰（disabled）+ onStart NOT called", () => {
     const onStart = vi.fn();
-    const onStatus = vi.fn();
-    renderPanel(onStart, { onStatus });
-
-    // US-017：默认 sizes=[]，无需取消勾选
+    renderPanel(onStart);
+    // US-017：默认 sizes=[] → 开始求解按钮置灰（前置 UI 反馈，替代旧的点击后 onStatus 报错）
     const btn = container!.querySelector<HTMLButtonElement>("#start")!;
+    expect(btn.disabled).toBe(true);
     act(() => btn.click());
-
     expect(onStart).not.toHaveBeenCalled();
-    expect(onStatus).toHaveBeenCalled();
+  });
+
+  it("码号空 → #start disabled；勾选码号 → #start 解灰", () => {
+    renderPanel();
+    const btn = container!.querySelector<HTMLButtonElement>("#start")!;
+    expect(btn.disabled).toBe(true);
+    const checkbox = container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]")[0]!;
+    act(() => checkbox.click());
+    expect(btn.disabled).toBe(false);
   });
 
   it("AC#6 select 30+31 then Start -> sizes matches checked order (US-017: no re-sort)", () => {
@@ -266,15 +261,14 @@ describe("ControlPanel start flow (US-004)", () => {
     expect(container!.querySelector<HTMLInputElement>("#multi_seed")!.disabled).toBe(true);
     expect(container!.querySelector<HTMLInputElement>("#seed_count")!.disabled).toBe(true);
     expect(container!.querySelector<HTMLButtonElement>(".per-type-btn")!.disabled).toBe(true);
-    expect(container!.querySelectorAll<HTMLButtonElement>("button.preset")[0]!.disabled).toBe(true);
   });
 
-  it("US-028 phase=stopped -> 「重新开始」按钮（#restart）+ 中间方案导出提示", () => {
+  it("US-028 phase=stopped -> 「开始求解」按钮（#restart）+ 中间方案导出提示", () => {
     renderPanel(() => {}, { phase: "stopped" });
     const restartBtn = container!.querySelector<HTMLButtonElement>("#restart")!;
     expect(restartBtn).not.toBeNull();
-    expect(restartBtn.textContent).toBe("重新开始");
-    expect(restartBtn.getAttribute("aria-label")).toBe("重新开始求解");
+    expect(restartBtn.textContent).toBe("开始求解");
+    expect(restartBtn.getAttribute("aria-label")).toBe("开始求解");
     // #start / #stop 不存在
     expect(container!.querySelector("#start")).toBeNull();
     expect(container!.querySelector("#stop")).toBeNull();
@@ -282,19 +276,19 @@ describe("ControlPanel start flow (US-004)", () => {
     expect(container!.querySelector<HTMLInputElement>("#time")!.disabled).toBe(false);
   });
 
-  it("US-028 phase=done -> 「再次求解」按钮（#restart，文案区分 stopped）", () => {
+  it("US-028 phase=done -> 「开始求解」按钮（#restart，文案与 stopped 统一）", () => {
     renderPanel(() => {}, { phase: "done" });
     const restartBtn = container!.querySelector<HTMLButtonElement>("#restart")!;
     expect(restartBtn).not.toBeNull();
-    expect(restartBtn.textContent).toBe("再次求解");
-    expect(restartBtn.getAttribute("aria-label")).toBe("再次求解");
+    expect(restartBtn.textContent).toBe("开始求解");
+    expect(restartBtn.getAttribute("aria-label")).toBe("开始求解");
   });
 
-  it("US-028 phase=error -> 「重新开始」按钮（与 stopped 同文案）", () => {
+  it("US-028 phase=error -> 「开始求解」按钮（与 stopped 同文案）", () => {
     renderPanel(() => {}, { phase: "error" });
     const restartBtn = container!.querySelector<HTMLButtonElement>("#restart")!;
     expect(restartBtn).not.toBeNull();
-    expect(restartBtn.textContent).toBe("重新开始");
+    expect(restartBtn.textContent).toBe("开始求解");
   });
 });
 

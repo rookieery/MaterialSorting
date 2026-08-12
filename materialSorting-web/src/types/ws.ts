@@ -18,6 +18,11 @@ export interface StartPayload {
   sizes: number[];
   time: number;
   seed: number;
+  /**
+   * 幅宽（mm，= sparrow strip_height / 排料边框宽度）。前端 cm ×10 转 mm；
+   * 后端用此值覆盖 intermediate 的 gate_mm，未传/非法 → 后端回退 intermediate gate。
+   */
+  gate_mm: number;
   params: SolveParams;
   per_type: PerTypeOverrides | null;
   /**

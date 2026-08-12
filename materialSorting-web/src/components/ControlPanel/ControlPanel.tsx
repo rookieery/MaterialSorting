@@ -28,13 +28,13 @@ import { ExportButtons } from './ExportButtons';
 import { MultiSeedControls } from './MultiSeedControls';
 import { ParamForm } from './ParamForm';
 import { PerTypeOverrides } from './PerTypeOverrides';
-import { PresetButtons } from './PresetButtons';
 import { SizePicker } from './SizePicker';
 import { SolveControls } from './SolveControls';
 import { StatusLine } from './StatusLine';
 import {
   collectParams,
   DEFAULT_FORM,
+  parseGate,
   parseSeed,
   parseSeedCount,
   parseTime,
@@ -48,6 +48,8 @@ import type { SolvePhase } from '../../types/solvePhase';
 export interface ControlPanelStartPayload {
   sizes: number[];
   time: number;
+  /** 幅宽（mm）= parseGate(form)（cm×10）；透传 useSolveRun.start → WS StartPayload.gate_mm。 */
+  gate_mm: number;
   /** base seed（seed = base+i, i=0..N-1）。 */
   seed: number;
   /** 实际并行启动的 seed 数量（multi_seed=false → 1；true → clamp(seed_count,2,6)）。 */
@@ -115,6 +117,7 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onResta
     );
     onStart({
       sizes: sizesNum,
+      gate_mm: parseGate(form),
       time: parseTime(form),
       seed: parseSeed(form),
       seed_count: parseSeedCount(form),
@@ -141,13 +144,19 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onResta
   //   - error 可能在收到帧前发生（构造失败）→ 此时 ExportButtons 也 disabled，partial flag 仅作 UI 提示触发条件。
   const partial = phase === 'stopped' || phase === 'error';
 
+  // 码号未选时「开始求解」按钮置灰（与 handleStart 内 sizes 非空校验同源；前置 UI 反馈，AC#7）。
+  // SolveControls 把 startDisabled 应用到所有非 running 态的「开始求解」按钮。
+  const startDisabled = form.sizes.length === 0;
+
   return (
     <aside className="panel">
       <h2>求解控制</h2>
       <SizePicker selected={form.sizes} onChange={(sizes) => patch({ sizes })} disabled={solving} />
       <ParamForm
+        gate={form.gate}
         time={form.time}
         seed={form.seed}
+        onGate={(gate) => patch({ gate })}
         onTime={(time) => patch({ time })}
         onSeed={(seed) => patch({ seed })}
         disabled={solving}
@@ -159,9 +168,8 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onResta
         onCount={(seed_count) => patch({ seed_count })}
         disabled={solving}
       />
-      <PresetButtons onPreset={(seconds) => patch({ time: String(seconds) })} disabled={solving} />
       <PerTypeOverrides values={form.per_type} onChange={(per_type) => patch({ per_type })} disabled={solving} />
-      <SolveControls phase={phase} onStart={handleStart} onStop={onStop} onRestart={onRestart} />
+      <SolveControls phase={phase} onStart={handleStart} onStop={onStop} onRestart={onRestart} startDisabled={startDisabled} />
       <StatusLine text={visibleStatus} />
       <ExportButtons solving={solving} exporting={exporting} onExport={handleExport} partial={partial} />
       <div className="hint">

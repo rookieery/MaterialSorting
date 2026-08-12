@@ -1,24 +1,40 @@
-// ParamForm —— 时长 / base seed 输入（与旧 index.html `<div class="field row">` 等价）。
+// ParamForm —— 幅宽 / 时长 / base seed 输入（与旧 index.html `<div class="field row">` 等价）。
 //
-// 字段按字符串持有（与 input.value 一致），交由 collectParams / parseTime / parseSeed 解析。
+// 字段按字符串持有（与 input.value 一致），交由 collectParams / parseGate / parseTime / parseSeed 解析。
 // DOM 沿用旧 style.css `.field.row` / `label` / `input[type=number]`（US-008 前 CSS 不动）。
 
 export interface ParamFormProps {
+  /** 幅宽（cm）输入值字符串。 */
+  gate: string;
   /** 时长（秒）输入值字符串。 */
   time: string;
   /** base seed 输入值字符串。 */
   seed: string;
+  /** 幅宽输入变化时回调（传入 input.value 字符串）。 */
+  onGate: (v: string) => void;
   /** 时长输入变化时回调（传入 input.value 字符串）。 */
   onTime: (v: string) => void;
   /** seed 输入变化时回调（传入 input.value 字符串）。 */
   onSeed: (v: string) => void;
-  /** US-027 求解中冻结时长 / seed 编辑（与 StartButton disabled 同套机制）。 */
+  /** US-027 求解中冻结幅宽 / 时长 / seed 编辑（与 StartButton disabled 同套机制）。 */
   disabled?: boolean;
 }
 
-export function ParamForm({ time, seed, onTime, onSeed, disabled = false }: ParamFormProps) {
+export function ParamForm({ gate, time, seed, onGate, onTime, onSeed, disabled = false }: ParamFormProps) {
   return (
     <>
+      <div className="field row">
+        <label>幅宽(cm)</label>
+        <input
+          id="gate"
+          type="number"
+          value={gate}
+          min={50}
+          max={400}
+          disabled={disabled}
+          onChange={(e) => onGate(e.target.value)}
+        />
+      </div>
       <div className="field row">
         <label>时长(秒)</label>
         <input

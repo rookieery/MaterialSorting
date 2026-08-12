@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import {
   collectParams,
   DEFAULT_FORM,
+  parseGate,
   parseSeed,
   parseSeedCount,
   parseTime,
@@ -165,8 +166,8 @@ describe('collectParams (US-019)', () => {
 });
 
 describe('parseTime / parseSeed (US-004)', () => {
-  it('parseTime：默认 60 → 60；空串 → fallback 120；非法 → fallback 120', () => {
-    expect(parseTime(DEFAULT_FORM)).toBe(60);
+  it('parseTime：默认 120 → 120；空串 → fallback 120；非法 → fallback 120', () => {
+    expect(parseTime(DEFAULT_FORM)).toBe(120);
     expect(parseTime(makeForm({ time: '' }))).toBe(120);
     expect(parseTime(makeForm({ time: 'abc' }))).toBe(120);
     expect(parseTime(makeForm({ time: '120' }))).toBe(120);
@@ -212,6 +213,25 @@ describe('parseSeedCount (US-005)', () => {
   it('multi_seed=true + count 空 / 非法 → fallback 3', () => {
     expect(parseSeedCount(makeForm({ multi_seed: true, seed_count: '' }))).toBe(3);
     expect(parseSeedCount(makeForm({ multi_seed: true, seed_count: 'abc' }))).toBe(3);
+  });
+});
+
+describe('parseGate', () => {
+  // cm 字符串 ×10 → mm；空/非法/非正 → fallback 1980（=198cm，与 nesting_bounds.GATE_MM 一致）。
+  it('默认 198cm → 1980mm；正常值 ×10 换算', () => {
+    expect(parseGate(DEFAULT_FORM)).toBe(1980);
+    expect(parseGate(makeForm({ gate: '150' }))).toBe(1500);
+    expect(parseGate(makeForm({ gate: '180' }))).toBe(1800);
+  });
+
+  it('空串 / 非法 → fallback 1980', () => {
+    expect(parseGate(makeForm({ gate: '' }))).toBe(1980);
+    expect(parseGate(makeForm({ gate: 'abc' }))).toBe(1980);
+  });
+
+  it('0 / 负数 → fallback 1980（非正保护）', () => {
+    expect(parseGate(makeForm({ gate: '0' }))).toBe(1980);
+    expect(parseGate(makeForm({ gate: '-5' }))).toBe(1980);
   });
 });
 

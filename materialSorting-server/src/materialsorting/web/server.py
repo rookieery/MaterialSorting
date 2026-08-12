@@ -492,12 +492,14 @@ async def export(req: Request):
     """
     state = _get_pieces_state()
     pieces_by_id = state.get('pieces_by_id') or {}
-    gate_mm = state.get('gate_mm') or 0.0
 
     payload = await req.json()
     fmt = payload.get('fmt')
     placed = payload.get('placed') or []
     width_mm = float(payload.get('width_mm') or 0.0)
+    # 幅宽优先取求解时实际值（前端 ExportPayload.gate_mm = manifest.gate_mm，与求解/渲染口径一致）；
+    # 缺省/非法 → 回退 intermediate 的 gate_mm（旧行为）。
+    gate_mm = float(payload.get('gate_mm') or 0.0) or (state.get('gate_mm') or 0.0)
     density = float(payload.get('density') or 0.0)
     seed = payload.get('seed', 0)
     sizes = payload.get('sizes') or []
@@ -587,6 +589,15 @@ async def ws_solve(ws: WebSocket):
 
     sizes = msg.get('sizes') or []
     time_budget = int(msg.get('time', 120))
+    # 幅宽：前端 gate_mm（cm×10→mm）优先覆盖 intermediate 的默认门幅；未传/非正/非法 → 沿用 state。
+    req_gate = msg.get('gate_mm')
+    if req_gate:
+        try:
+            g = float(req_gate)
+            if g > 0:
+                gate_mm = g
+        except (TypeError, ValueError):
+            pass
     seed = int(msg.get('seed', 0))
     params = msg.get('params') or None
     per_type = msg.get('per_type') or None

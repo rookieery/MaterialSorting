@@ -121,6 +121,7 @@ describe('useSolveRun', () => {
       sizes: [30, 32],
       time: 120,
       seed: 0,
+      gate_mm: 1980,
       params: { d_ext: 0, d_int: 0, tol_ext: 0, tol_int: 0 },
     };
     act(() => startRef.current(cfg));
@@ -135,6 +136,7 @@ describe('useSolveRun', () => {
       sizes: [30, 32],
       time: 120,
       seed: 0,
+      gate_mm: 1980,
       params: { d_ext: 0, d_int: 0, tol_ext: 0, tol_int: 0 },
       per_type: null,
       // US-022：quantities 缺省 → null（后端回退全片 demand=1）。
@@ -154,6 +156,7 @@ describe('useSolveRun', () => {
         sizes: [30],
         time: 1,
         seed: 7,
+        gate_mm: 1980,
         params: { d_ext: 1, d_int: 0, tol_ext: 1, tol_int: 0 },
       }),
     );
@@ -227,6 +230,7 @@ describe('useSolveRun', () => {
         sizes: [30],
         time: 1,
         seed: 0,
+        gate_mm: 1980,
         params: { d_ext: 0, d_int: 0, tol_ext: 0, tol_int: 0 },
       }),
     );
@@ -253,6 +257,7 @@ describe('useSolveRun', () => {
         sizes: [],
         time: 1,
         seed: 0,
+        gate_mm: 1980,
         params: { d_ext: 0, d_int: 0, tol_ext: 0, tol_int: 0 },
       }),
     );
@@ -268,6 +273,7 @@ describe('useSolveRun', () => {
         sizes: [30],
         time: 1,
         seed: 0,
+        gate_mm: 1980,
         params: { d_ext: 0, d_int: 0, tol_ext: 0, tol_int: 0 },
         per_type: { 前片: { d: 1, tol: 1 } },
       }),
@@ -289,6 +295,7 @@ describe('useSolveRun', () => {
         sizes: [30, 32],
         time: 1,
         seed: 0,
+        gate_mm: 1980,
         params: { d_ext: 0, d_int: 0, tol_ext: 0, tol_int: 0 },
         quantities,
       }),
@@ -306,6 +313,7 @@ describe('useSolveRun', () => {
         sizes: [30],
         time: 1,
         seed: 0,
+        gate_mm: 1980,
         params: { d_ext: 0, d_int: 0, tol_ext: 0, tol_int: 0 },
       }),
     );
@@ -327,6 +335,7 @@ describe('useSolveRun', () => {
         sizes: [30],
         time: 1,
         seed: 0,
+        gate_mm: 1980,
         params: { d_ext: 0, d_int: 0, tol_ext: 0, tol_int: 0 },
       }),
     );

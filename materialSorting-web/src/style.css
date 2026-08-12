@@ -165,13 +165,6 @@ polygon.hover { fill-opacity: 0.9 !important; stroke: #fff !important; stroke-wi
 }
 .dim { color: #777; font-weight: normal; }
 .small { font-size: 11px; }
-.presets { gap: 8px; }
-.preset {
-  flex: 1; padding: 6px; font-size: 12px;
-  background: #34363d; color: #e6e6e6; border: 1px solid #45484f;
-  border-radius: 4px; cursor: pointer;
-}
-.preset:hover { background: #3f424a; }
 .advanced { margin: 10px 0; font-size: 12px; }
 .advanced summary { cursor: pointer; color: #9aa; padding: 4px 0; list-style: revert; }
 .advanced[open] summary { color: #cdd; }

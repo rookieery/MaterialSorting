@@ -27,6 +27,8 @@ export interface StartConfig {
   sizes: number[];
   time: number;
   seed: number;
+  /** 幅宽（mm）= sparrow strip_height / 排料边框宽度（前端 cm ×10；透传 WS StartPayload.gate_mm）。 */
+  gate_mm: number;
   params: SolveParams;
   /** per_type 空 / 不传 → 序列化为 null（同旧 vanilla 实现）。 */
   per_type?: PerTypeOverrides | null;
@@ -78,6 +80,7 @@ export function useSolveRun(cb: UseSolveRunCallbacks = {}): {
       sizes: cfg.sizes,
       time: cfg.time,
       seed: cfg.seed,
+      gate_mm: cfg.gate_mm,
       params: cfg.params,
       per_type: cfg.per_type ?? null,
       // US-022：quantities 缺省 → null（后端 build_instance 回退全片 demand=1）。

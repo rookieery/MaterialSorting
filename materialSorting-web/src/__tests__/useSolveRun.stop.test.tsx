@@ -2,7 +2,7 @@
 //   1) stop() 对每个 open WS 发 {action:"stop"}（非 OPEN 跳过）
 //   2) 收到 {type:"stopped"} 后 finish 触发、rec.stopped===true、onDone 调一次
 //   3) NestingPage phase 转换：running->(stop)->stopped / running->(error)->error / running->(final)->done
-//   4) running 态冻结参数编辑（SizePicker/ParamForm/MultiSeed/Preset/PerType 均 disabled）
+//   4) running 态冻结参数编辑（SizePicker/ParamForm/MultiSeed/PerType 均 disabled）
 //
 // 复用 useSolveRun.test.tsx 的 MockWS 模式，额外补 readyState 字段（stop() 仅对 OPEN 发）。
 
@@ -134,6 +134,7 @@ const BASE_CFG: StartConfig = {
   sizes: [30],
   time: 1,
   seed: 0,
+  gate_mm: 1980,
   params: { d_ext: 0, d_int: 0, tol_ext: 0, tol_int: 0 },
 };
 
@@ -230,11 +231,11 @@ describe('US-027 NestingPage phase 转换', () => {
     const stopped: ServerMsg = { type: 'stopped', reason: 'user_requested' };
     act(() => ws.onmessage?.({ data: JSON.stringify(stopped) }));
 
-    // stopped 态 SolveControls 渲染 #restart「重新开始」
+    // stopped 态 SolveControls 渲染 #restart「开始求解」（文案与 idle 统一）
     expect(container!.querySelector('#stop')).toBeNull();
     const restartBtn = container!.querySelector<HTMLButtonElement>('#restart')!;
     expect(restartBtn).not.toBeNull();
-    expect(restartBtn.textContent).toBe('重新开始');
+    expect(restartBtn.textContent).toBe('开始求解');
     expect(statusText()).toContain('已停止');
     expect(statusText()).toContain('中间方案');
   });
@@ -245,10 +246,10 @@ describe('US-027 NestingPage phase 转换', () => {
     act(() =>
       ws.onmessage?.({ data: JSON.stringify({ type: 'error', message: '构造失败' }) }),
     );
-    // error 态 SolveControls 渲染 #restart「重新开始」
+    // error 态 SolveControls 渲染 #restart「开始求解」
     const restartBtn = container!.querySelector<HTMLButtonElement>('#restart')!;
     expect(restartBtn).not.toBeNull();
-    expect(restartBtn.textContent).toBe('重新开始');
+    expect(restartBtn.textContent).toBe('开始求解');
     expect(statusText()).toContain('错误');
     expect(statusText()).toContain('构造失败');
   });
@@ -266,21 +267,20 @@ describe('US-027 NestingPage phase 转换', () => {
       n_eroded: 0,
     };
     act(() => ws.onmessage?.({ data: JSON.stringify(finalMsg) }));
-    // done 态 SolveControls 渲染 #restart「再次求解」（文案与 stopped/error 区分）
+    // done 态 SolveControls 渲染 #restart「开始求解」（文案统一）
     const restartBtn = container!.querySelector<HTMLButtonElement>('#restart')!;
     expect(restartBtn).not.toBeNull();
-    expect(restartBtn.textContent).toBe('再次求解');
+    expect(restartBtn.textContent).toBe('开始求解');
     expect(statusText()).toContain('完成');
     expect(statusText()).toContain('78.00%');
   });
 
-  it('3d) running 态冻结参数编辑（SizePicker/ParamForm/MultiSeed/Preset/PerType 均 disabled）', () => {
+  it('3d) running 态冻结参数编辑（SizePicker/ParamForm/MultiSeed/PerType 均 disabled）', () => {
     expect(container!.querySelector<HTMLInputElement>('#time')!.disabled).toBe(false);
     expect(container!.querySelector<HTMLInputElement>('#seed')!.disabled).toBe(false);
     expect(container!.querySelector<HTMLInputElement>('#multi_seed')!.disabled).toBe(false);
     expect(container!.querySelector<HTMLInputElement>('#seed_count')!.disabled).toBe(false);
     expect(container!.querySelector<HTMLButtonElement>('.per-type-btn')!.disabled).toBe(false);
-    expect(container!.querySelectorAll<HTMLButtonElement>('button.preset')[0]!.disabled).toBe(false);
     const sizeInput = container!.querySelectorAll<HTMLInputElement>('.sizes input[type=checkbox]')[0]!;
     expect(sizeInput.disabled).toBe(false);
 
@@ -291,7 +291,6 @@ describe('US-027 NestingPage phase 转换', () => {
     expect(container!.querySelector<HTMLInputElement>('#multi_seed')!.disabled).toBe(true);
     expect(container!.querySelector<HTMLInputElement>('#seed_count')!.disabled).toBe(true);
     expect(container!.querySelector<HTMLButtonElement>('.per-type-btn')!.disabled).toBe(true);
-    expect(container!.querySelectorAll<HTMLButtonElement>('button.preset')[0]!.disabled).toBe(true);
     const sizeInputRunning = container!.querySelectorAll<HTMLInputElement>('.sizes input[type=checkbox]')[0]!;
     expect(sizeInputRunning.disabled).toBe(true);
   });

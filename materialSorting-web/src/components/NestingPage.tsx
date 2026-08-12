@@ -131,6 +131,7 @@ export function NestingPage(): React.JSX.Element {
         sizes: cfg.sizes,
         time: cfg.time,
         seed: cfg.seed + i,
+        gate_mm: cfg.gate_mm,
         params: cfg.params,
         per_type: cfg.per_type,
         // US-022：per-size demand 透传（N 个 seed 共用同一份 quantities）。

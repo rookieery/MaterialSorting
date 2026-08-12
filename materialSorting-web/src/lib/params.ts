@@ -26,6 +26,11 @@ export interface FormState {
    * 默认 `[]`（强制用户选；AC#3 校验「请至少选一个码号」）。
    */
   sizes: (number | null)[];
+  /**
+   * 幅宽（cm）字符串。×10 转 mm 喂后端 gate_mm（= sparrow strip_height / 排料边框宽度）。
+   * 与 time 同样按字符串持有（对应 input.value），交由 parseGate 解析。
+   */
+  gate: string;
   /** 时长（秒）字符串。 */
   time: string;
   /** base seed 字符串。 */
@@ -42,12 +47,13 @@ export interface FormState {
 }
 
 /**
- * 默认值（US-017 起 sizes 默认空数组，强制用户勾选；time=60，seed=0；
- * multi_seed 关闭，seed_count=3；per_type 全空 = 继承 v0.3 默认）。
+ * 默认值（US-017 起 sizes 默认空数组，强制用户勾选；gate=198cm（=GATE_MM 1980mm），
+ * time=120，seed=0；multi_seed 关闭，seed_count=3；per_type 全空 = 继承 v0.3 默认）。
  */
 export const DEFAULT_FORM: FormState = {
   sizes: [],
-  time: '60',
+  gate: '198',
+  time: '120',
   seed: '0',
   multi_seed: false,
   seed_count: '3',
@@ -108,6 +114,15 @@ export function parseSeed(form: FormState): number {
 export function parseTime(form: FormState): number {
   const v = parseInt(form.time, 10);
   return Number.isNaN(v) ? 120 : v;
+}
+
+/**
+ * 解析幅宽 mm（cm 字符串 ×10）：失败/空/非正 → 1980（=198cm，与 nesting_bounds.GATE_MM 一致）。
+ * 输入框 cm 口径（版师习惯），后端 / sparrow 一律 mm，故此处统一换算。
+ */
+export function parseGate(form: FormState): number {
+  const v = parseInt(form.gate, 10);
+  return Number.isNaN(v) || v <= 0 ? 1980 : v * 10;
 }
 
 /**

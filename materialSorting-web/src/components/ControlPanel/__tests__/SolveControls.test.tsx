@@ -41,6 +41,7 @@ function renderControls(props: {
   onStart?: () => void;
   onStop?: () => void;
   onRestart?: () => void;
+  startDisabled?: boolean;
 }) {
   const onStart = props.onStart ?? vi.fn();
   const onStop = props.onStop ?? vi.fn();
@@ -53,6 +54,7 @@ function renderControls(props: {
           onStart={onStart}
           onStop={onStop}
           onRestart={onRestart}
+          startDisabled={props.startDisabled}
         />
       </StrictMode>,
     );
@@ -93,12 +95,12 @@ describe("SolveControls (US-028)", () => {
     expect(onRestart).not.toHaveBeenCalled();
   });
 
-  it("stopped → 渲染「重新开始」#restart 按钮 + aria-label + 点击调 onRestart", () => {
+  it("stopped → 渲染「开始求解」#restart 按钮 + aria-label + 点击调 onRestart", () => {
     const { onRestart, onStart, onStop } = renderControls({ phase: "stopped" });
     const btn = container!.querySelector<HTMLButtonElement>("#restart")!;
     expect(btn).not.toBeNull();
-    expect(btn.textContent).toBe("重新开始");
-    expect(btn.getAttribute("aria-label")).toBe("重新开始求解");
+    expect(btn.textContent).toBe("开始求解");
+    expect(btn.getAttribute("aria-label")).toBe("开始求解");
     expect(btn.className).toContain("restart");
     // 无 #start / #stop
     expect(container!.querySelector("#start")).toBeNull();
@@ -109,24 +111,24 @@ describe("SolveControls (US-028)", () => {
     expect(onStop).not.toHaveBeenCalled();
   });
 
-  it("done → 渲染「再次求解」#restart 按钮（与 stopped 文案区分）+ 点击调 onRestart", () => {
+  it("done → 渲染「开始求解」#restart 按钮（文案与 stopped 统一）+ 点击调 onRestart", () => {
     const { onRestart } = renderControls({ phase: "done" });
     const btn = container!.querySelector<HTMLButtonElement>("#restart")!;
     expect(btn).not.toBeNull();
-    // done 态文案是「再次求解」，与 stopped/error 的「重新开始」区分（用户可识别求解曾正常完成）
-    expect(btn.textContent).toBe("再次求解");
-    expect(btn.getAttribute("aria-label")).toBe("再次求解");
+    // 文案统一「开始求解」：发起求解语义一致，靠 phase 区分当前阶段（不再用文案区分 done / stopped）
+    expect(btn.textContent).toBe("开始求解");
+    expect(btn.getAttribute("aria-label")).toBe("开始求解");
     expect(btn.className).toContain("restart");
     act(() => btn.click());
     expect(onRestart).toHaveBeenCalledTimes(1);
   });
 
-  it("error → 渲染「重新开始」#restart 按钮（与 stopped 同文案）+ 点击调 onRestart", () => {
+  it("error → 渲染「开始求解」#restart 按钮（与 stopped 同文案）+ 点击调 onRestart", () => {
     const { onRestart } = renderControls({ phase: "error" });
     const btn = container!.querySelector<HTMLButtonElement>("#restart")!;
     expect(btn).not.toBeNull();
-    expect(btn.textContent).toBe("重新开始");
-    expect(btn.getAttribute("aria-label")).toBe("重新开始求解");
+    expect(btn.textContent).toBe("开始求解");
+    expect(btn.getAttribute("aria-label")).toBe("开始求解");
     act(() => btn.click());
     expect(onRestart).toHaveBeenCalledTimes(1);
   });
@@ -151,5 +153,29 @@ describe("SolveControls (US-028)", () => {
       const buttons = container!.querySelectorAll("button");
       expect(buttons.length).toBe(1);
     }
+  });
+
+  it("startDisabled=true → 非 running 态「开始求解」disabled；running 态「停止」不受影响", () => {
+    // idle + startDisabled → #start disabled
+    renderControls({ phase: "idle", onStart: vi.fn(), startDisabled: true });
+    const startBtn = container!.querySelector<HTMLButtonElement>("#start")!;
+    expect(startBtn.disabled).toBe(true);
+
+    // stopped/done/error + startDisabled → #restart disabled
+    for (const phase of ["stopped", "done", "error"] as SolvePhase[]) {
+      renderControls({ phase, onRestart: vi.fn(), startDisabled: true });
+      const btn = container!.querySelector<HTMLButtonElement>("#restart")!;
+      expect(btn.disabled).toBe(true);
+    }
+
+    // running + startDisabled → #stop 仍可点（停止不受码号空影响）
+    renderControls({ phase: "running", onStop: vi.fn(), startDisabled: true });
+    const stopBtn = container!.querySelector<HTMLButtonElement>("#stop")!;
+    expect(stopBtn.disabled).toBe(false);
+
+    // idle + startDisabled=false → #start 可点
+    renderControls({ phase: "idle", onStart: vi.fn(), startDisabled: false });
+    const enabledStart = container!.querySelector<HTMLButtonElement>("#start")!;
+    expect(enabledStart.disabled).toBe(false);
   });
 });
