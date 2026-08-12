@@ -6,3 +6,11 @@ Started: 2026-08-09
 
 **未做浏览器视觉验证**：chrome-devtools-mcp 工具不在本会话工具集；NestSVG 5 层渲染（绿 dashed 净版 + 橙内部线 + 黄刺口 + 红 dashed 布纹线）已用 8 项 NestSVG 单测 + e2e smoke 验证 5 层节点存在 + setAttribute 写入 + display 切换 + rotation transform 正确；导出 PNG/DXF 5 层已用 ezdxf 回读 layer id 集 + render_png 调用栈验证。版师屏幕视觉回归 + ET2008 真机读 R12-DXF（D4 硬验收）留作后续整体回归。
 ---
+
+**US-025（后端求解进程化 solve_worker + solve_with_callback_proc）— 完成**（2026-08-12）
+- 新增 `materialSorting-server/src/materialsorting/web/solve_worker.py`（141 行）：顶层函数 `solve_worker(pieces_snapshot, gate_mm, solve_params, result_queue)`，Windows spawn 可 pickle（无闭包、参数全 JSON）。子进程内 build_instance → 投 {kind:manifest}（pid_meta/total_area/n_eroded/gate_mm）→ instance.solve(ProgressQueue) + drain → 投 {kind:frame,report}* → 末尾投 {kind:final,final} 或 {kind:error,message}。spyrrow 对象绝不跨进程。
+- `solver.py` 新增 `solve_with_callback_proc(pieces_snapshot, gate_mm, solve_params, *, on_manifest, on_report, drain_interval=0.2) → (process, final_data, elapsed, err)`：spawn `multiprocessing.Process(target=solve_worker)` + Queue，主进程 drain 分发；manifest→on_manifest、frame→on_report（density 双口径换算在主进程做：density_sparrow←原值、density←total_area/(width*gate)）、final/error 记录。循环退出条件 `queue.Empty AND not alive`（drain 完残余防漏 final）。finally 块必 terminate→cancel_join_thread→限时 drain(≤50ms)→join(timeout=5)，绝不阻塞。子进程 crash 未投 error 时 err='worker process exited unexpectedly (code=<exitcode>)'。旧 `solve_with_callback` 保留不删。
+- 新建 `materialSorting-server/tests/`（US-025 首批测试）：conftest.py 注 sys.path + real_or_synthetic_pieces/synthetic_pieces fixture；test_solve_proc.py 5 项（①正常求解 + density 双口径正确 ②terminate 5s 内返回 ③build_instance 抛错 ④外部 kill 不 hang ⑤solve_worker 可 pickle）全绿（4s 跑完）。
+- 文档同步：.docs/technical/agent-api-reference.md 加 solve_with_callback_proc + solve_worker 函数表 + US-025 进程化桥说明；.docs/technical/agent-file-map.md 更新 solver.py 行数 + 新增 solve_worker.py 行 + 关键不变量 #11（求解进程化）；web/AGENTS.md 加 US-025 关键约定 + tests/AGENTS.md 新建。
+- 验收：python -c "from materialsorting.web.solve_worker import solve_worker; from materialsorting.web.solver import solve_with_callback_proc" 导入无异常；python -m pytest tests/ 全绿；分层依赖未反向（grep 验证）；旧 solve_with_callback 保留（server.py ws_solve 未切换，系统行为零变化）。
+- 跳过浏览器验证：本 Story 纯后端进程化，无 SVG/坐标变换/UI 改动（US-028 才是 UI Story）。

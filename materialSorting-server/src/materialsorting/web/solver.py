@@ -7,11 +7,18 @@
   _clean_polygon / PTYPE_COLORS  (sparrow_baseline)
   erode_polygon / INTERNAL_TYPES (sparrow_experiments)
   MAX_OVERLAP / ROTATION_TOL     (constraints，v0.3 常量表)
+
+US-025 新增 ``solve_with_callback_proc`` —— 把求解从 daemon 线程模型迁到
+``multiprocessing.Process`` 模型，让调用方持有进程句柄可 ``terminate()``（OS 级回收，
+唯一可靠终止 spyrrow Rust 原生 solve 的方式）。旧 ``solve_with_callback``（threading 版）
+**保留不删**，US-026 才切换 ``ws_solve`` 的调用方，保证本次提交系统行为零变化。
 """
 from __future__ import annotations
 
 import json
+import multiprocessing
 import os
+import queue as _queue_mod
 import sys
 import threading
 import time
@@ -207,3 +214,165 @@ def solve_with_callback(instance, config, on_report, *, drain_interval: float = 
     for rtype, sol in queue.drain():
         _emit(rtype, sol)
     return holder.get('sol'), time.time() - t0, holder.get('err')
+
+
+# --------------------------------------------------------------- US-025 进程版
+
+
+# 限时 drain 累计上限（秒）：terminate() 后父进程做 cancel_join_thread + 限时 drain，
+# 防止 multiprocessing.Queue 的 background feeder thread 阻塞 join（风险 R1）。
+_POST_TERMINATE_DRAIN_MAX_SEC = 0.05
+# process.join() 上限（秒）：spec 要求 terminate 后父进程 5s 内返回、无 hang。
+_JOIN_TIMEOUT_SEC = 5.0
+
+
+def solve_with_callback_proc(pieces_snapshot, gate_mm, solve_params, *,
+                             on_manifest, on_report, drain_interval: float = 0.2):
+    """多进程版求解：spawn 子进程跑 ``build_instance + solve``，主进程 drain queue 分发。
+
+    与旧 ``solve_with_callback``（threading 版）的关键区别：
+      - **可终止**：返回 ``(process, final_data, elapsed, err)``，调用方持有 ``process``
+        句柄可随时 ``terminate()``（OS 级回收，唯一可靠终止 spyrrow Rust solve 的方式）；
+      - **build_instance 移入子进程**：spyrrow 对象不可 pickle，故**不在主进程**构造
+        instance/config，子进程构造完后只把 JSON 可序列化的 manifest/frame/final/error
+        投回 result_queue；
+      - **density 双口径换算在主进程做**（关键不变量 #1）：``total_area`` 由 manifest
+        数据带入主进程，``on_report`` 收到 frame 时按 ``total_area/(width*gate_mm)``
+        换算；``density_sparrow`` 保留 sparrow 自报口径。
+
+    Parameters
+    ----------
+    pieces_snapshot : list[dict]
+        intermediate 的 pieces 字段（纯 JSON；尚未构造 spyrrow 对象）。
+    gate_mm : float
+        门幅（mm）。同时用于 ``solve_worker`` 入参与 density 换算分母。
+    solve_params : dict
+        拆给 ``build_instance`` 的关键字参数（time_budget/seed/sizes/params/per_type/quantities）。
+    on_manifest : callable(dict)
+        收到 manifest 消息时回调（参数：manifest dict，含 ``pid_meta`` / ``total_area``
+        / ``n_eroded`` / ``gate_mm``）。
+    on_report : callable(dict)
+        收到 frame 消息时回调（参数：frame dict，已做 density 双口径换算 ——
+        ``density`` 为原面积口径、``density_sparrow`` 为 sparrow 自报）。
+    drain_interval : float
+        主进程 drain result_queue 的轮询间隔（秒，默认 0.2）。
+
+    Returns
+    -------
+    (process, final_data, elapsed, err)
+        - ``process``：``multiprocessing.Process`` 句柄（已 join，但调用方仍可查
+          ``exitcode`` / 再次 ``terminate`` 兜底）；
+        - ``final_data``：末态 dict（含 ``density`` / ``density_sparrow`` / ``width_mm``
+          / ``elapsed`` / ``placed_items``）；异常或被终止时为 ``None``；
+        - ``elapsed``：主进程 wall-clock 秒；
+        - ``err``：错误消息字符串，无错误为 ``None``。子进程意外 crash（未投 error）
+          时记为 ``'worker process exited unexpectedly (code=<exitcode>)'``。
+
+    终止安全（防死锁）：finally 块必执行 —— 若子进程还活着则 ``terminate()``，然后
+    ``result_queue.cancel_join_thread()`` + 限时 drain（≤50ms）+ ``join(timeout=5)``，
+    绝不无限阻塞。
+    """
+    from .solve_worker import solve_worker   # 延迟 import：避免主进程 import solver 时强制拉 solve_worker
+
+    result_queue: multiprocessing.Queue = multiprocessing.Queue()
+    process = multiprocessing.Process(
+        target=solve_worker,
+        args=(pieces_snapshot, gate_mm, solve_params, result_queue),
+        name='solve_worker',
+    )
+    process.start()
+
+    final_data: dict | None = None
+    err: str | None = None
+    total_area = 0.0
+    gate = float(gate_mm)
+    t0 = time.time()
+
+    try:
+        # 循环不变量：进程死了但 queue 还有数据时继续 drain（避免漏 manifest/frame/final）。
+        # 仅当「进程死 AND queue 空」时退出。get(timeout=...) 在 timeout 到期且无数据时
+        # 抛 queue.Empty —— 此时若进程还活着继续轮询，否则退出。
+        while True:
+            alive = process.is_alive()
+            try:
+                msg = result_queue.get(timeout=drain_interval if alive else 0.05)
+            except _queue_mod.Empty:
+                if not alive:
+                    break
+                continue
+
+            kind = msg.get('kind')
+            if kind == 'manifest':
+                total_area = float(msg.get('total_area', 0.0))
+                # gate_mm 以 manifest 为准（与子进程口径一致；缺省回退入参 gate_mm）。
+                gate = float(msg.get('gate_mm', gate))
+                on_manifest(msg)
+            elif kind == 'frame':
+                report = msg['report']
+                _apply_density_dual(report, total_area, gate)
+                on_report(report)
+            elif kind == 'final':
+                final = msg['final']
+                _apply_density_dual(final, total_area, gate)
+                final_data = final
+                # final 后子进程会自然退出；继续 drain 残余 frame（如有）直到「进程死 + queue 空」。
+            elif kind == 'error':
+                err = msg.get('message', 'unknown error')
+                # error 后子进程会自然退出；继续 drain 残余 frame（如有）直到「进程死 + queue 空」。
+            # 未知 kind 忽略（前向兼容）
+    finally:
+        # 防死锁清理（spec AC#4）：terminate → cancel_join_thread → 限时 drain → join
+        # 无论正常退出还是异常（KeyboardInterrupt 等），必走此清理路径。
+        if process.is_alive():
+            process.terminate()
+        # cancel_join_thread 让 queue 的 background feeder thread 不再 join，否则
+        # 子进程被强杀时残留半写入数据可能让 join 永久阻塞。
+        try:
+            result_queue.cancel_join_thread()
+        except Exception:
+            pass
+        # 限时 drain 残余（≤50ms）：drain 完 break，drain 不完也 break（不阻塞）。
+        drain_t0 = time.time()
+        while time.time() - drain_t0 < _POST_TERMINATE_DRAIN_MAX_SEC:
+            try:
+                result_queue.get_nowait()
+            except _queue_mod.Empty:
+                break
+            except Exception:
+                break
+        # join 限时（spec：terminate 后 5s 内返回，无 hang）
+        process.join(timeout=_JOIN_TIMEOUT_SEC)
+        # 若 join 超时进程还活着 → 最后一次 kill 兜底（极端情况，正常路径不触发）。
+        if process.is_alive():
+            try:
+                process.kill()
+            except Exception:
+                pass
+            process.join(timeout=1.0)
+
+    elapsed = time.time() - t0
+
+    # 子进程意外 crash（未投 error 也没投 final）→ err 记录原因 + exitcode。
+    # process.exitcode==0 表示正常退出但没投 final（理论上不可达，防御性记 unknown）。
+    if err is None and final_data is None:
+        code = process.exitcode
+        if code is None:
+            err = 'worker process did not complete (still alive)'
+        elif code == 0:
+            err = 'worker process exited without final or error'
+        else:
+            err = f'worker process exited unexpectedly (code={code})'
+
+    return process, final_data, elapsed, err
+
+
+def _apply_density_dual(report, total_area, gate_mm):
+    """density 双口径换算（关键不变量 #1，主进程做，不在子进程做）。
+
+    输入 ``report`` 的 ``density`` 为 sparrow 自报（erode 后面积口径）；本函数：
+      - ``density_sparrow`` ← 原 sparrow 自报值；
+      - ``density`` ← 原面积口径 ``total_area/(width*gate_mm)``（90% 生死线口径）。
+    """
+    w = float(report.get('width_mm', 0.0))
+    report['density_sparrow'] = report['density']
+    report['density'] = (total_area / (w * gate_mm)) if w > 0 else 0.0

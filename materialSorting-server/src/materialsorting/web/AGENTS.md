@@ -20,7 +20,8 @@ curl http://127.0.0.1:8000/api/ptypes                                  # US-020 
 | 文件 | 角色 |
 | --- | --- |
 | `server.py` | FastAPI app；路由 `GET /`、`mount /static`、`POST /export`、`POST /api/parse-dxf`（US-004）、`POST /api/commit-to-nesting`（US-010）、`GET /api/ptypes`（US-020）、`WS /ws/solve`；US-020 可 reload `_PIECES_STATE`（threading.Lock 保护）；`ThreadPoolExecutor(max_workers=6)` 求解桥 + 上传解析/commit 复用 |
-| `solver.py` | `load_pieces` / `discretize_orientations` / `build_instance`（v0.3 erode+tol 包装，US-024 pid_meta 加 5 层字段 `.get()` 兼容）/ `solve_with_callback`（spyrrow ProgressQueue + threading，0.2s drain） |
+| `solver.py` | `load_pieces` / `discretize_orientations` / `build_instance`（v0.3 erode+tol 包装，US-024 pid_meta 加 5 层字段 `.get()` 兼容）/ `solve_with_callback`（**旧** threading 版 spyrrow ProgressQueue + 0.2s drain，US-025 起保留不删）/ `solve_with_callback_proc`（**US-025** multiprocessing 版，spawn 子进程跑 `solve_worker`，主进程 drain `multiprocessing.Queue`，返回 `process` 句柄可 `terminate()`；density 双口径换算在主进程处理 frame 时做）+ `_apply_density_dual` 私有 helper |
+| `solve_worker.py` | **US-025 新增**。顶层 `solve_worker(pieces_snapshot, gate_mm, solve_params, result_queue)` —— Windows spawn 可 pickle（无闭包、参数全 JSON）。子进程内 `build_instance(...) → 投 {kind:manifest}` → `instance.solve(config, progress=ProgressQueue)` → drain 出中间解投 `{kind:frame,report}` → 末尾投 `{kind:final,final}` 或 `{kind:error,message}`。所有投递纯 JSON，spyrrow 对象绝不跨进程 |
 | `export.py` | `apply_transform` / `placed_to_world`（用**原始**非 eroded 轮廓；US-024 起 5 层一并变换，notch 点按点变换 + 法线按向量旋转）/ `render_png`（matplotlib Agg；US-024 起 5 层叠加 net 绿虚线 / internal 橙 / notch 黄短线段 / grain 红虚线）/ `write_marker_dxf`（R12 POLYLINE + ACI 色；US-024 起多 layer outline1/14/8/4/7 各自独立 entity） |
 
 ## US-004 /api/parse-dxf 关键约定（实现方/调用方必读）
@@ -70,3 +71,15 @@ curl http://127.0.0.1:8000/api/ptypes                                  # US-020 
 - **UploadFile 读取**：`await file.read()` 一次性读全到内存（20MB 上限内可接受）。流式校验需自写 chunk loop，当前实现选简单。
 - **响应 filename 字段**：透传客户端 `file.filename`（中文文件名浏览器走 UTF-8 正常；curl 命令行可能用本地 codepage → 终端显示乱码，但 JSON 内部仍是原 bytes）。前端 US-006 显示文件名用此字段。
 - **frontend dev proxy `/api`**：`vite.config.ts` 已配 `server.proxy`（US-009），dev 模式经 Vite proxy 命中后端 :8000；`/export`、`/ws`、`/api` 同 proxy 配置。
+
+## US-025 关键约定（求解进程化 solve_worker + solve_with_callback_proc）
+
+- **背景**：sparrow 编译为 Rust `.pyd`，`instance.solve()` 是原生阻塞调用；全包 grep `cancel|abort|stop|pause|kill|terminate` = 0 匹配，`ProgressQueue` 仅只读 `drain()`，无任何中断 API；`threading.Thread` 无法安全终止原生代码线程；唯有 `Process.terminate()`（Windows 调 `TerminateProcess`）可靠。
+- **spyrrow 对象不可 pickle** → `build_instance` 必须在**子进程内**执行（`solve_worker` 顶层函数 + 参数全 JSON 可序列化），只把 pid_meta/frame/final/error 经 `multiprocessing.Queue` 传回主进程。
+- **`solve_worker` 必须 pickle-safe**：顶层函数、无闭包、参数全部 JSON（list/dict/float/int/str）。延迟 `from .solver import build_instance` 放函数内（避免主进程 `from .solve_worker import solve_worker` 时强制 import sparrow_baseline）。
+- **density 双口径换算位置**（关键不变量 #1）：**主进程**在收到 frame 时执行 `density_sparrow ← density; density ← total_area/(width*gate_mm)`；`total_area` 由 manifest 投递带入主进程。不在子进程做。换算逻辑与公式同旧 threading 版，仅执行位置迁。
+- **终止安全（防死锁，风险 R1）**：`process.terminate()` 后必走 `result_queue.cancel_join_thread()`（停 background feeder thread）+ 限时 drain（循环 `get_nowait()` 累计 ≤50ms 或 Empty 即 break）+ `process.join(timeout=5)`；join 超时再 `kill()` 兜底。**绝不**无限阻塞 join。
+- **循环退出条件**：`while True: get(timeout=drain_interval if alive else 0.05)`，`queue.Empty` 且 `not alive` 时才 break —— 子进程死后继续 drain 完 queue 残余（避免漏 final）。
+- **子进程异常 3 类**：①`build_instance` 抛错 → 子进程投 `{kind:error,message}` 后正常退出（exitcode=0），父进程收到 error 退出；②`solve` 崩溃 → 同理；③子进程被外部 kill / 崩溃未投 error → 父进程 `process.is_alive()=False` 后 drain 完 queue 退出，`err='worker process exited unexpectedly (code=<exitcode>)'`。
+- **旧 `solve_with_callback` 保留不删**（过渡期），US-026 才切换 `ws_solve` 调用方到 `solve_with_callback_proc`，保证本次提交系统行为零变化。
+- **测试**：`materialSorting-server/tests/test_solve_proc.py` ≥4 项（正常求解 / terminate 5s 内返回 / build_instance 抛错 / 外部 kill 不 hang + solve_worker 可 pickle）。Windows multiprocessing：测试不创建模块级 Process；conftest 加 sys.path 让 `from materialsorting...` 在未 `pip install -e .` 时也能跑。

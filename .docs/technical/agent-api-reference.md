@@ -339,14 +339,21 @@ curl http://127.0.0.1:8000/api/ptypes
 
 触发：首条非 start、`build_instance` 抛错、求解线程抛错。客户端中途断开被 server 静默忽略（求解线程仍跑完收尾）。
 
-## 求解桥接（`web/solver.py`）
+## 求解桥接（`web/solver.py` + `web/solve_worker.py`）
 
 | 函数 | 签名 | 说明 |
 |------|------|------|
 | `load_pieces` | `(intermediate_path=paths.INTERMEDIATE) → (doc, gate_mm, pieces)` | 读 `pieces_intermediate.json` |
 | `discretize_orientations` | `(tol: float) → list[float]` | v0.3 连续旋转公差 → spyrrow 离散角度集。`tol=0→[0,180]`；`tol≤5` 步进 1°；否则 5°。归一化到 [0,360) |
 | `build_instance` | `(pieces, gate_mm, *, time_budget, seed, sizes=None, params=None, per_type=None, quantities=None) → (instance, config, pid_meta, total_area, n_eroded)` | 按 sizes 过滤 → US-022 按 `(label, sizeKey)` 查 quantities 定 demand（0 跳过；缺 label → 1） → 每片 `erode=min(申请d, MAX_OVERLAP[ptype])`、`tol=min(申请tol, ROTATION_TOL[ptype])` → erode+clean → 构造 `spyrrow.Item` + `StripPackingInstance` + `StripPackingConfig`；pid_meta 含 US-024 5 层字段（`.get()` 向后兼容） |
-| `solve_with_callback` | `(instance, config, on_report, *, drain_interval=0.2) → (final_sol, elapsed_sec, err)` | 子线程 `instance.solve(config, progress=queue)`，主线程 `queue.drain()` 每 0.2s 取中间解 → `on_report({type:frame,...})` |
+| `solve_with_callback` | `(instance, config, on_report, *, drain_interval=0.2) → (final_sol, elapsed_sec, err)` | **旧 threading 版（保留）**。子线程 `instance.solve(config, progress=queue)`，主线程 `queue.drain()` 每 0.2s 取中间解 → `on_report({type:frame,...})`。US-026 起 `ws_solve` 切换到 `solve_with_callback_proc`，本函数不删（过渡期） |
+| `solve_with_callback_proc` | `(pieces_snapshot, gate_mm, solve_params, *, on_manifest, on_report, drain_interval=0.2) → (process, final_data, elapsed, err)` | **US-025 多进程版**。spawn 子进程跑 `solve_worker`（在子进程内 `build_instance + solve`，spyrrow 对象不可 pickle 故不跨进程），主进程 drain `multiprocessing.Queue` 分发：manifest → `on_manifest`、frame → `on_report`（density 双口径换算在主进程做）、final/error 记录。返回 `process` 句柄可 `terminate()`；terminate 后 `cancel_join_thread + 限时 drain(≤50ms) + join(timeout=5)` 防死锁；子进程 crash 未投 error 时 `err='worker process exited unexpectedly (code=<exitcode>)'` |
+
+### `web/solve_worker.py`（US-025 新增）
+
+| 函数 | 签名 | 说明 |
+|------|------|------|
+| `solve_worker` | `(pieces_snapshot, gate_mm, solve_params, result_queue)` | **子进程入口（顶层函数，Windows spawn 可 pickle）**。子进程内 `build_instance(pieces_snapshot, gate_mm, **solve_params)` → 投递 `{kind:manifest, pid_meta, total_area, n_eroded, gate_mm}` → `instance.solve(config, progress=ProgressQueue)` → drain 出的中间解投递 `{kind:frame, report}` → 末尾投递 `{kind:final, final}` 或 `{kind:error, message}`。所有投递纯 JSON 可序列化，spyrrow 对象绝不跨进程 |
 
 ### 求解线程 ↔ 事件循环桥（`server.ws_solve`）
 
@@ -365,6 +372,8 @@ async 协程: while (item=await queue.get()) ≠ SENTINEL: ws.send_json(item)
 ```
 
 `SENTINEL` 对象由 `run_solve` 末尾投递，协程收到即结束循环。
+
+> **US-025 进程化桥（待 US-026 接线）**：`ws_solve` 将切到 `solve_with_callback_proc` —— 主进程改调它拿 `process` 句柄（`build_instance` 调用移入子进程的 `solve_worker`），density 双口径换算在主进程处理 frame 时执行（`total_area` 来自 manifest）；客户端断开 / stop 消息 → `process.terminate()` 真正终止 Rust 求解（旧 threading 版无此能力，WS 断开被静默忽略）。
 
 ## 坐标系（贯穿 PNG / DXF / 前端 SVG）
 

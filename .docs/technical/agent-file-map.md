@@ -36,7 +36,8 @@ materialSorting-server/
     │   └── pieces_export.py           NestPiece → intermediate JSON（事实源，US-022 加 label）
     └── web/                           FastAPI + WS 工作台（详见 agent-api-reference.md）
         ├── server.py                  app + 路由（GET /、/static、POST /export、POST /api/parse-dxf、POST /api/commit-to-nesting、GET /api/ptypes、WS /ws/solve）+ 求解线程桥 + US-020 _PIECES_STATE 可 reload（threading.Lock immutable snapshot）+ US-004 上传解析 + US-010 commit-to-intermediate（commit 后 reload）+ US-022 intermediate 加 label + WS quantities 入参
-        ├── solver.py                  build_instance（US-022 quantities→demand，0 跳过）+ solve_with_callback
+        ├── solver.py                  build_instance（US-022 quantities→demand，0 跳过）+ solve_with_callback（threading 旧版，保留）+ solve_with_callback_proc（US-025 多进程版，返回 process 句柄可 terminate）
+        ├── solve_worker.py             US-025 子进程入口（顶层 solve_worker，spawn 可 pickle；子进程内 build_instance + solve，仅 JSON 数据跨进程）
         └── export.py                  PNG(matplotlib) + R12-DXF marker 导出
 ```
 
@@ -300,7 +301,8 @@ parse-dxf 响应（`web/server.py._build_parse_payload`）与 intermediate（`we
 | 文件 | 行 | 职责 |
 |------|----|------|
 | `server.py` | 549 | FastAPI app；**启动期 `_reload_pieces_state()`**（US-020 替代旧顶层 `load_pieces()`，allow-empty 不再让 import 崩）；路由 GET `/`、mount `/static`、POST `/export`、POST `/api/parse-dxf`（US-004 上传解析）、POST `/api/commit-to-nesting`（US-010 + US-020 commit 后 reload `_PIECES_STATE` + US-022 intermediate 加 label）、GET `/api/ptypes`（US-020 片型代表裁片 D10/D11）、WS `/ws/solve`（accept 阶段 `_get_pieces_state()` 快照 + US-022 quantities 入参）；`_state_lock=threading.Lock()` 保护 immutable snapshot；`ThreadPoolExecutor(max_workers=6)` 桥求解子线程 ↔ asyncio（US-004 解析 / US-010 commit 也复用此池）；上传常量 `UPLOAD_MAX_BYTES=20MB` / `UPLOADS_DIR=paths.OUT_DIR/uploads` / `_DOC_ID_RE`；`_build_parse_payload` 按码分组 + 质心/面积稳定排序 + A/B/C 标注；`_commit_to_nesting_sync` Path A 全管线（collect→write_piece_dxf→load_nest_pieces→compute_size_ptype_labels→写回 intermediate + .bak）；`_PTYPE_REPRESENTATIVE_FIELDS` 透传白名单（v1 仅 polygon，US-024 后自动带 5 层） |
-| `solver.py` | 182 | `load_pieces` / `discretize_orientations` / `build_instance`（erode=min(申,max)，tol=min(申,max)，US-022 quantities→demand，0 跳过；US-024 pid_meta 加 5 层字段 `.get()` 向后兼容）/ `solve_with_callback`（spyrrow ProgressQueue + threading，0.2s drain） |
+| `solver.py` | 378 | `load_pieces` / `discretize_orientations` / `build_instance`（erode=min(申,max)，tol=min(申,max)，US-022 quantities→demand，0 跳过；US-024 pid_meta 加 5 层字段 `.get()` 向后兼容）/ `solve_with_callback`（**旧** threading 版，spyrrow ProgressQueue + 0.2s drain，保留不删）/ `solve_with_callback_proc`（**US-025** multiprocessing 版，spawn 子进程跑 `solve_worker`，主进程 drain `multiprocessing.Queue`，返回 `process` 句柄可 `terminate()`；density 双口径换算在主进程处理 frame 时做，`total_area` 来自 manifest；terminate 后 `cancel_join_thread + 限时 drain(≤50ms) + join(timeout=5)` 防死锁；子进程 crash 未投 error 时记 `err='worker process exited unexpectedly (code=<exitcode>)'`）+ `_apply_density_dual` 私有换算helper |
+| `solve_worker.py` | 141 | US-025 **新增**。顶层 `solve_worker(pieces_snapshot, gate_mm, solve_params, result_queue)` —— Windows spawn 可 pickle（无闭包、参数全 JSON）。子进程内 `build_instance(...) → 投 {kind:manifest}` → `instance.solve(config, progress=ProgressQueue)` → drain 出中间解投 `{kind:frame,report}` → 末尾投 `{kind:final,final}` 或 `{kind:error,message}`。所有投递纯 JSON，spyrrow 对象绝不跨进程。延迟 import build_instance 避免主进程 `from solve_worker import` 时强制拉 sparrow_baseline |
 | `export.py` | 245 | `apply_transform` / `placed_to_world`（用**原始**非 eroded 轮廓；US-024 起 5 层一并变换，notch 点按点变换 + 法线按向量旋转）/ `render_png`（matplotlib Agg；US-024 起 5 层叠加：net 绿虚线 / internal 橙 / notch 黄短线段 / grain 红虚线）/ `write_marker_dxf`（R12 POLYLINE + ACI 色 + ASCII 标题；US-024 起多 layer：outline layer1 / net layer14 / internal layer8 / notch layer4 POINT / grain layer7 LINE，各自独立 entity） |
 
 US-004 起 `web/server.py` 直接 import `dxf_parser.collect.collect_pieces_with_details`（web → dxf_parser 跨层依赖，合规：web 是上层）。US-010 起新增 import `dxf_parser.explore` / `dxf_parser.export_dxf` / `nesting_bounds.load_pieces`（web → nesting_bounds → dxf_parser 单向，合规）。上传 multipart 依赖 `python-multipart`（已在 `[web]` extra）。
@@ -364,6 +366,7 @@ out/sparrow_baseline/pieces_intermediate.json   ← 全流程事实源（每片 
 8. **`server.py` 启动期 `_reload_pieces_state()`**（US-020）：import 时读 intermediate 填 `_PIECES_STATE`；allow-empty 不再让 import 崩；commit 成功后立即 reload，前端无需重启 ms-web。`_state_lock=threading.Lock()` 保护 immutable snapshot 模式（整体替换 dict 内容）。
 9. **5 层中 4 层仅渲染透传（US-024）**：`polygon`（layer1 毛版外轮廓，erode 后）是唯一参与 sparrow NFP 碰撞的几何；`net_polygon` / `internal_lines` / `notches` / `grain_line` 4 层仅渲染与 PNG/DXF 导出透传，不影响求解结果或利用率。改任一层定义需同步 collect.LAYER_MAPPING + export_dxf.write_piece_dxf + load_pieces._read_piece_full + pieces_export + solver.pid_meta + web/export.py + NestSVG。
 10. **notch 法线读时重算（US-024）**：DXF POINT 仅存位置，无法线字段；`_read_piece_full` 读时调 `_collect._nearest_edge_with_normal` 按 outline 最近边重算（与 `collect._assign_notch` 同算法）。退化边（连续重复点）返 (0,0) 法线 → NestSVG / PNG 渲染为 0 长度线段兜底。
+11. **求解进程化（US-025）**：`solve_with_callback_proc` 是 `solve_with_callback`（threading）的多进程替代 —— spyrrow Rust .pyd 无 cancel/abort/stop API，唯有 `Process.terminate()`（Windows 调 TerminateProcess）可可靠终止原生阻塞 solve；spyrrow 对象不可 pickle，故 `build_instance` 必须在子进程内执行（`solve_worker` 顶层函数 + 参数全 JSON 可序列化），只把 pid_meta/frame/final/error 经 `multiprocessing.Queue` 传回主进程。旧 `solve_with_callback` 保留不删，US-026 才切换 `ws_solve` 调用方，保证提交零行为变化。终止安全：`terminate() → cancel_join_thread() → 限时 drain(≤50ms) → join(timeout=5)`，绝不阻塞。
 
 ## 已知问题（迁移中未修，勿在文档/迁移中扩大）
 
