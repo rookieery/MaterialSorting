@@ -1,6 +1,6 @@
 // TabBar —— 顶部 Tab 切换（US-001 AC#1）+ 超排 Tab 解锁闸（US-015）。
 //
-// 渲染两个 Tab（超排 / 上传预览），点击切换 uiStore.activeTab；当前激活项加 `.active`
+// 渲染两个 Tab（上传预览 / 超排），点击切换 uiStore.activeTab；当前激活项加 `.active`
 // class 高亮（与 ControlPanel 视觉同色系：暗背景 #26282e + 绿色 #2ea06c 强调，见 style.css）。
 //
 // 超排 Tab 解锁闸（US-015）：
@@ -20,13 +20,12 @@ import type { ReactElement } from 'react';
 import { useUiStore, type TabId } from '../store/uiStore';
 
 /**
- * Tab 元信息（顺序即渲染顺序：超排在前、上传预览在后）。
- * 注意：默认 activeTab=preview（见 uiStore），首页落「上传预览」——顺序与默认值相互独立，
- * 默认入口不一定是首位 Tab。
+ * Tab 元信息（顺序即渲染顺序：上传预览在前、超排在后）。
+ * 注意：默认 activeTab=preview（见 uiStore），首页落「上传预览」——首位即默认入口。
  */
 const TABS: ReadonlyArray<{ id: TabId; label: string }> = [
-  { id: 'nesting', label: '超排' },
   { id: 'preview', label: '上传预览' },
+  { id: 'nesting', label: '超排' },
 ];
 
 export function TabBar(): ReactElement {

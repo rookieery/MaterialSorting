@@ -105,8 +105,8 @@ describe('App Tab 集成（US-001）', () => {
     expect(el.querySelector('nav.tabbar')).not.toBeNull();
     const tabs = el.querySelectorAll('button.tab');
     expect(tabs.length).toBe(2);
-    expect(tabs[0].textContent).toBe('超排');
-    expect(tabs[1].textContent).toBe('上传预览');
+    expect(tabs[0].textContent).toBe('上传预览');
+    expect(tabs[1].textContent).toBe('超排');
   });
 
   it('activeTab=nesting：超排页可见（无 .hidden），含 ControlPanel + main', () => {
@@ -183,7 +183,7 @@ describe('App Tab 集成（US-001）', () => {
     const el = renderApp();
     const tabs = el.querySelectorAll('button.tab');
     act(() => {
-      tabs[1].dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      tabs[0].dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
     expect(useUiStore.getState().activeTab).toBe('preview');
     const pages = el.querySelectorAll('.page');

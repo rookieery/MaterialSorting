@@ -59,17 +59,17 @@ describe('TabBar', () => {
     expect(nav).not.toBeNull();
     const tabs = el.querySelectorAll('button.tab');
     expect(tabs.length).toBe(2);
-    expect(tabs[0].textContent).toBe('超排');
-    expect(tabs[1].textContent).toBe('上传预览');
+    expect(tabs[0].textContent).toBe('上传预览');
+    expect(tabs[1].textContent).toBe('超排');
   });
 
   it('默认 preview Tab 带 .active + aria-pressed=true', () => {
     const el = renderBar();
     const tabs = el.querySelectorAll('button.tab');
-    expect(tabs[1].classList.contains('active')).toBe(true);
-    expect(tabs[1].getAttribute('aria-pressed')).toBe('true');
-    expect(tabs[0].classList.contains('active')).toBe(false);
-    expect(tabs[0].getAttribute('aria-pressed')).toBe('false');
+    expect(tabs[0].classList.contains('active')).toBe(true);
+    expect(tabs[0].getAttribute('aria-pressed')).toBe('true');
+    expect(tabs[1].classList.contains('active')).toBe(false);
+    expect(tabs[1].getAttribute('aria-pressed')).toBe('false');
   });
 
   it('点击 "超排" 切换 activeTab=nesting + .active 转移', () => {
@@ -78,13 +78,13 @@ describe('TabBar', () => {
     const el = renderBar();
     const tabs = el.querySelectorAll('button.tab');
     act(() => {
-      tabs[0].dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      tabs[1].dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
     expect(useUiStore.getState().activeTab).toBe('nesting');
     // 重读 DOM（act 后 React 重渲染）
     const tabsAfter = el.querySelectorAll('button.tab');
-    expect(tabsAfter[0].classList.contains('active')).toBe(true);
-    expect(tabsAfter[1].classList.contains('active')).toBe(false);
+    expect(tabsAfter[1].classList.contains('active')).toBe(true);
+    expect(tabsAfter[0].classList.contains('active')).toBe(false);
   });
 
   it('点击 "上传预览" 从 nesting 切回 preview', () => {
@@ -93,16 +93,16 @@ describe('TabBar', () => {
     const el = renderBar();
     const tabs = el.querySelectorAll('button.tab');
     act(() => {
-      tabs[1].dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      tabs[0].dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
     expect(useUiStore.getState().activeTab).toBe('preview');
   });
 
-  it('Tab 顺序固定：超排在前、上传预览在后', () => {
+  it('Tab 顺序固定：上传预览在前、超排在后', () => {
     const el = renderBar();
     const tabs = el.querySelectorAll('button.tab');
-    expect(tabs[0].textContent).toBe('超排');
-    expect(tabs[1].textContent).toBe('上传预览');
+    expect(tabs[0].textContent).toBe('上传预览');
+    expect(tabs[1].textContent).toBe('超排');
   });
 });
 
@@ -112,7 +112,7 @@ describe('TabBar US-015 超排 Tab 解锁闸', () => {
     const el = renderBar();
     const tabs = el.querySelectorAll('button.tab');
     act(() => {
-      tabs[0].dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      tabs[1].dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
     expect(useUiStore.getState().activeTab).toBe('preview');
   });
@@ -121,14 +121,14 @@ describe('TabBar US-015 超排 Tab 解锁闸', () => {
     // 默认 nestingEnabled=false
     const el = renderBar();
     const tabs = el.querySelectorAll('button.tab');
-    // 超排 Tab（index 0）置灰
-    expect(tabs[0].classList.contains('disabled')).toBe(true);
-    expect(tabs[0].getAttribute('aria-disabled')).toBe('true');
-    expect((tabs[0] as HTMLButtonElement).disabled).toBe(true);
-    // 上传预览 Tab（index 1）不受影响
-    expect(tabs[1].classList.contains('disabled')).toBe(false);
-    expect(tabs[1].getAttribute('aria-disabled')).toBe('false');
-    expect((tabs[1] as HTMLButtonElement).disabled).toBe(false);
+    // 超排 Tab（index 1）置灰
+    expect(tabs[1].classList.contains('disabled')).toBe(true);
+    expect(tabs[1].getAttribute('aria-disabled')).toBe('true');
+    expect((tabs[1] as HTMLButtonElement).disabled).toBe(true);
+    // 上传预览 Tab（index 0）不受影响
+    expect(tabs[0].classList.contains('disabled')).toBe(false);
+    expect(tabs[0].getAttribute('aria-disabled')).toBe('false');
+    expect((tabs[0] as HTMLButtonElement).disabled).toBe(false);
   });
 
   it('启用后正常切换：setNestingEnabled(true) → 点击超排切 activeTab=nesting', () => {
@@ -136,10 +136,10 @@ describe('TabBar US-015 超排 Tab 解锁闸', () => {
     const el = renderBar();
     const tabsBefore = el.querySelectorAll('button.tab');
     // 启用后超排 Tab 不再 disabled
-    expect(tabsBefore[0].classList.contains('disabled')).toBe(false);
-    expect((tabsBefore[0] as HTMLButtonElement).disabled).toBe(false);
+    expect(tabsBefore[1].classList.contains('disabled')).toBe(false);
+    expect((tabsBefore[1] as HTMLButtonElement).disabled).toBe(false);
     act(() => {
-      tabsBefore[0].dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      tabsBefore[1].dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
     expect(useUiStore.getState().activeTab).toBe('nesting');
   });
@@ -147,10 +147,13 @@ describe('TabBar US-015 超排 Tab 解锁闸', () => {
   it('nestingEnabled 切换时 TabBar 重渲染：false→true 移除 disabled，true→false 加回', () => {
     const el = renderBar();
     const readNesting = () => {
-      const t = el.querySelector('button.tab');
+      // 按文案定位超排 Tab（顺序变更后 querySelector 首个已非超排，文案定位更稳）
+      const t = Array.from(el.querySelectorAll('button.tab')).find(
+        (b) => b.textContent === '超排',
+      );
       return {
         disabledClass: t?.classList.contains('disabled') ?? false,
-        nativeDisabled: (t as HTMLButtonElement)?.disabled ?? false,
+        nativeDisabled: (t as HTMLButtonElement | undefined)?.disabled ?? false,
       };
     };
     // 初始锁定
