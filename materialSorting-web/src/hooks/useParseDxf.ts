@@ -15,7 +15,7 @@
 //      sizes[0] 是最小码；空 sizes 兜底 null，UI 自然显示空态）。
 //   6. US-021 D1：解析成功后自动触发 commit（后台副作用，不阻塞预览渲染）。
 //      doc/status 先进 store（UI 立即渲染预览），commit 再后台跑（commitStatus 独立字段）。
-//      commit 失败不影响 parse done（预览已可用）；commit 成功自动切超排 Tab。
+//      commit 失败不影响 parse done（预览已可用）；commit 成功仅解锁超排 Tab（不自动切入）。
 //
 // 调用方约定：
 //   const { upload } = useParseDxf();
@@ -98,7 +98,7 @@ export function useParseDxf(): UseParseDxfResult {
       // US-021 D1：解析成功 → 自动触发 commit（后台副作用，不阻塞预览）。
       //   - doc/status 已进 store（上一行 setState 同步生效），UI 立即渲染预览；
       //   - commit 用 void 不 await：parse 预览先上屏，commit 后台跑更新 commitStatus；
-      //   - commit done 时 useCommitToNesting 内部自动 setNestingEnabled(true) + setTab('nesting')；
+      //   - commit done 时 useCommitToNesting 内部 setNestingEnabled(true)（不自动切 Tab，由用户主动点击进入）；
       //   - commit fail 时 commitStatus='error' 显示，不切 Tab（D5：Tab 仍解锁，可重试或用旧数据）。
       void commit(doc.doc_id, doc.filename);
     } catch (e) {

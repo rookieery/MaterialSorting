@@ -10,7 +10,7 @@
 // AC#4 uploadingRef resets after success/failure (next upload works)
 //
 // US-021：解析成功自动触发 commit（void commit(doc_id, filename)），成功路径的 fetch
-// 调用次数翻倍（parse + commit），且 commit 会写 uiStore（setNestingEnabled+setTab）。
+// 调用次数翻倍（parse + commit），且 commit 会写 uiStore（setNestingEnabled，不自动切 Tab）。
 // beforeEach/afterEach 加 uiStore reset 防 commit 副作用跨测试污染；fetch 计数断言同步更新。
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -343,7 +343,7 @@ describe("useParseDxf (US-005)", () => {
 });
 
 // US-021：解析成功自动 commit 集成测试（useParseDxf done -> useCommitToNesting -> D1 闭环）。
-// 验证 AC#8 ≥6 项：解析 done 自动触发 commit / commit done 切 nesting Tab /
+// 验证 AC#8 ≥6 项：解析 done 自动触发 commit / commit done 解锁但不切 Tab /
 // commit done setNestingEnabled(true) / commit 失败不切 Tab / commit 失败显示 error / 摘要渲染。
 //
 // fetch mock 用 mockImplementation 路由：parse-dxf 返回 ParsedDoc、commit-to-nesting 返回
@@ -398,7 +398,7 @@ describe("useParseDxf (US-021) auto-commit integration", () => {
     expect(body.filename).toBe(doc.filename);
   });
 
-  it("AC#8 commit done -> setTab(nesting) auto-switch to nesting tab (D1)", async () => {
+  it("AC#8 commit done -> unlocks nesting tab but does NOT auto-switch (D1)", async () => {
     mockParseAndCommit();
     renderProbe();
     expect(useUiStore.getState().activeTab).toBe("preview");
@@ -411,8 +411,9 @@ describe("useParseDxf (US-021) auto-commit integration", () => {
     });
     expect(useUploadStore.getState().status).toBe("done");
     expect(useUploadStore.getState().commitStatus).toBe("done");
-    // D1: commit done -> auto-switch to nesting tab
-    expect(useUiStore.getState().activeTab).toBe("nesting");
+    // D1: commit done 解锁超排 Tab，但不自动切入（用户留在预览页主动点击进入）
+    expect(useUiStore.getState().nestingEnabled).toBe(true);
+    expect(useUiStore.getState().activeTab).toBe("preview");
   });
 
   it("AC#8 commit done -> setNestingEnabled(true)", async () => {

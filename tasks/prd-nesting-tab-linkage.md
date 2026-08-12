@@ -2,13 +2,13 @@
 
 ## 概述 (Overview)
 
-在已落地的 DXF 上传预览页（US-001~US-014）与排料工作台（US-001~US-008）基础上，把两个 Tab 打通成一条业务流水线：**上传解析 → 自动 commit 母版到 intermediate 并 reload → 解锁并切入超排 Tab → 超排页动态承接上传码号 → 重合/旋转配置改为「高级配置弹窗」按片型覆盖 → 求解输入切换为用户上传数据（尺码/数量/片型覆盖）→ 展示与导出均使用新版裁片（含缝线/刀口/净版/布纹线 5 层）**。
+在已落地的 DXF 上传预览页（US-001~US-014）与排料工作台（US-001~US-008）基础上，把两个 Tab 打通成一条业务流水线：**上传解析 → 自动 commit 母版到 intermediate 并 reload → 解锁超排 Tab（由用户点击进入）→ 超排页动态承接上传码号 → 重合/旋转配置改为「高级配置弹窗」按片型覆盖 → 求解输入切换为用户上传数据（尺码/数量/片型覆盖）→ 展示与导出均使用新版裁片（含缝线/刀口/净版/布纹线 5 层）**。
 
 本次为**前后端联动**改造（上一阶段 US-011~014 是纯前端），涉及：前端 Tab 状态机、ControlPanel 三件套重构、后端 `PIECES` 内存常量改可变状态、solver `build_instance` 输入维度扩展、export 多层输出。
 
 ## 目标 (Goals)
 
-- **Tab 联动**：默认「超排」Tab 置灰不可点；上传预览解析成功后自动把母版 commit 到 intermediate 并 reload，Tab 解锁、自动切入超排页，用户无感一条龙。
+- **Tab 联动**：默认「超排」Tab 置灰不可点；上传预览解析成功后自动把母版 commit 到 intermediate 并 reload，Tab 解锁（不自动切入，由用户点击进入超排页）。
 - **码号承接**：超排页码号区直接全量展示上传母版解析出的所有码号，不再锁死 M1787 的 8 码。
 - **配置重构**：删除主面板上的重合/旋转内外两档全局配置 + 裁片名称 + 内部/外部区分；改为一个「高级配置：每片型覆盖」按钮 → 弹窗 table（表头列=片型缩略图+片型名、点击缩略图放大预览，两行=重合/旋转）。
 - **数据切换**：求解输入使用用户上传的尺码、每片每码数量、片型覆盖；展示与导出的裁片几何切换为新版（毛版 + 净版 + 内部线 + 刺口 + 布纹线）。
@@ -18,7 +18,7 @@
 
 | # | 决策点 | 选定方案 |
 |---|---|---|
-| D1 | 解析成功后数据如何进超排 | **解析成功自动推送**：`useParseDxf` 解析完成（status=done）即自动调 `/api/commit-to-nesting` → 后端 reload intermediate → 前端 setNestingEnabled(true) + setTab('nesting')。无显式「应用」按钮，UX 一条龙。commit 期间显示「应用中…」态，失败不切 Tab 并报错。 |
+| D1 | 解析成功后数据如何进超排 | **解析成功自动推送**：`useParseDxf` 解析完成（status=done）即自动调 `/api/commit-to-nesting` → 后端 reload intermediate → 前端 setNestingEnabled(true)（解锁超排 Tab，**不自动切入**——由用户点击进入）。无显式「应用」按钮，commit 一条龙。commit 期间显示「应用中…」态，失败不切 Tab 并报错。 |
 | D2 | 数量缺省（用户未填）语义 | **per-size 粒度，缺省=0 跳过**：`quantities` 结构为 `Record<label, Record<sizeKey, number>>`；某片在某码数量为 0（含未填且未 hydrate 的情形）则该片在该码不参与排料（`demand=0` 跳过）。支持「某码只要部分裁片」场景。 |
 | D3 | 数量默认 hydrate 值 | **解析成功后默认每片每码 hydrate=1**：避免解析后全 0 导致啥都不排；用户改 0 才排除。hydrate 在 qtyStore 加 `hydrateDefaults(sizes, labels)` action，per-size 模式下每个 (label,size)=1。 |
 | D4 | 导出是否含缝线/刀口 | **PNG 与 R12-DXF 都含**：NestSVG 展示 5 层；`web/export.py` 的 PNG 叠加 5 层、R12-DXF 输出多 layer（外轮廓 + 净版 + 内部线 + 刺口，各自独立 POLYLINE entity）。**ET2008 兼容性为 US-024 硬验收项**（实装后真机/ET2008 验证附加 layer 不被误读为裁切轮廓）。 |
@@ -111,17 +111,17 @@
 - **Priority**: 6
 - **依赖**: US-018（PerTypeOverrides 已改造为按钮）
 
-### US-021: useParseDxf done 回调自动 commit + 自动切超排（D1）
-- **Description**: As a 版师, I want 上传解析成功后系统自动把母版应用到超排（commit + reload）并切入超排页, so that 上传→排料是一条无缝流水线，无需我手动点「应用」。
+### US-021: useParseDxf done 回调自动 commit（D1）
+- **Description**: As a 版师, I want 上传解析成功后系统自动把母版应用到超排（commit + reload）并解锁超排 Tab, so that 上传→排料是一条无缝流水线（用户点 Tab 进入超排），无需我手动点「应用」。
 - **Acceptance Criteria**:
   1. 新建 `materialSorting-web/src/hooks/useCommitToNesting.ts`：`commit(doc_id, filename?) → Promise<{ok, summary?, error?}>`；fetch POST `/api/commit-to-nesting` JSON body `{doc_id, filename}`；防连击（committingRef + store flag）；错误进 store 不抛。
   2. `materialSorting-web/src/store/uploadStore.ts` 扩字段：`commitStatus: 'idle'|'committing'|'done'|'error'`、`commitError: string|null`、`commitSummary: {sizes, n_pieces, total_area_mm2} | null`；`reset()` 同步清；hook 内部 `setState` 切 commitStatus（与 `status` 状态机分离，独立字段）。
   3. `materialSorting-web/src/hooks/useParseDxf.ts` 在解析成功（`setState({status:'done', doc, ...})`）后**自动触发** commit（D1）：调 `useCommitToNesting().commit(doc.doc_id, doc.filename)`；commit 期间 `commitStatus='committing'` 显示「应用中…」loading 遮罩/提示。
-  4. commit done → `_reload_pieces_state`（US-020）生效 → 前端 `setNestingEnabled(true)`（US-015/016）+ `useUiStore.setTab('nesting')` 自动切入超排页；commitSummary 显示在 UploadPanel（如「已应用至超排：{n_pieces} 裁片，{sizes.length} 码」）。
+  4. commit done → `_reload_pieces_state`（US-020）生效 → 前端 `setNestingEnabled(true)`（US-015/016，解锁超排 Tab，**不自动切入**——由用户点击进入）；commitSummary 显示在 UploadPanel（如「已应用至超排：{n_pieces} 裁片，{sizes.length} 码」）。
   5. commit fail → `commitStatus='error'` + `commitError` 显示；**不切 Tab**（让用户看到错误）；Tab 解锁状态遵循 D5（解析已成功 → Tab 仍解锁，用户可重试 commit 或用旧数据进入）。
   6. **关键不变量**：自动 commit 是解析成功的副作用，不阻塞解析预览（预览页先渲染，commit 后台跑）；commit 未完成时用户若手动点超排 Tab，进入后看到的是 US-020 快照机制保证的一致数据（可能旧 intermediate），可接受。
   7. `materialSorting-web/src/hooks/__tests__/useCommitToNesting.test.tsx` ≥10 项：fetch URL/method/body / 200→commitSummary+commitStatus=done / 422→commitError / 防连击仅一次 / doc_id 缺省兜底 / commitStatus 切换路径。
-  8. `materialSorting-web/src/components/preview/__tests__/PreviewPage.test.tsx` 或 useParseDxf 单测新增 ≥6 项：解析 done 自动触发 commit / commit done 切 nesting Tab / commit done setNestingEnabled(true) / commit 失败不切 Tab / commit 失败显示 error / 摘要渲染。
+  8. `materialSorting-web/src/components/preview/__tests__/PreviewPage.test.tsx` 或 useParseDxf 单测新增 ≥6 项：解析 done 自动触发 commit / commit done 解锁但不切 Tab / commit done setNestingEnabled(true) / commit 失败不切 Tab / commit 失败显示 error / 摘要渲染。
   9. `npm run typecheck` 通过、`npm run test` 全绿、`npm run build` 无报错。
 - **Priority**: 7
 - **依赖**: US-015 + US-016 + US-020
@@ -170,7 +170,7 @@
 ## 功能需求 (Functional Requirements)
 
 - **FR-1（Tab 联动）**：默认「超排」Tab 置灰不可点；解析成功（status=done）解锁；reset/error 重锁。
-- **FR-2（自动 commit）**：解析成功自动调 `/api/commit-to-nesting`，后端 reload intermediate，前端自动切入超排 Tab；commit 中显示「应用中…」，失败报错不切 Tab。
+- **FR-2（自动 commit）**：解析成功自动调 `/api/commit-to-nesting`，后端 reload intermediate，前端解锁超排 Tab（不自动切入）；commit 中显示「应用中…」，失败报错不切 Tab。
 - **FR-3（码号承接）**：超排页码号区 = 上传母版解析出的全部码号（含 null「通用」码）；doc=null 时 fallback 硬编码 SIZES。
 - **FR-4（高级配置弹窗）**：主面板「高级配置：每片型覆盖」按钮 → 弹窗 table（表头列=V03_PTYPES 10 片型缩略图+片型名，两行=重合/旋转）；草稿+确定；D7 预填保留旧默认。
 - **FR-8（片型缩略图+放大预览）**：弹窗表头缩略图来自 `GET /api/ptypes` 代表裁片（compact 外轮廓）；点击缩略图弹出该片型的放大预览（无尺码维度，复用 PiecePreviewSVG）；v1 仅外轮廓，v2（US-024）自动升级 5 层。
@@ -191,7 +191,7 @@
 
 ## 设计考虑 (Design Considerations)
 
-- **Tab 解锁 vs commit 完成（D1/D5）**：解锁信号是「解析成功」（D5，贴合用户原话），commit 是自动副作用。若 commit 失败，Tab 仍解锁（解析已成功），用户可重试或用旧数据——这比「commit 成功才解锁」更宽容，避免 commit 抖动锁死入口。自动切 Tab 才严格等 commit done。
+- **Tab 解锁 vs commit 完成（D1/D5）**：解锁信号是「解析成功」（D5，贴合用户原话），commit 是自动副作用。若 commit 失败，Tab 仍解锁（解析已成功），用户可重试或用旧数据——这比「commit 成功才解锁」更宽容，避免 commit 抖动锁死入口。Tab 解锁即等解析成功，进入超排由用户主动点击（不自动切），让用户留在预览页查看裁片 / 调数量。
 - **数量 per-size 粒度（D2）**：结构 `Record<label, Record<sizeKey, number>>` 而非扁平 `Record<label, number>`，因为存在「某码只要部分裁片」场景。0=排除是显式语义，用户改 0 才排除，配合 D3 默认填 1 保证开箱可用。
 - **高级配置预填（D7）**：弹窗预填内部片型重合=10（旧 d_int 默认），保留开箱密度行为；用户改 0 = 该片型不允许重合。避免「弹窗全空 → 全片 erode=0 → 密度暴跌」的陷阱。
 - **reload 用锁+快照（D8）**：避免进程重启（体验差）和每次重读文件（IO+缓存复杂）；ws/solve accept 拿快照保证一次连接内 pieces 不变。
@@ -225,7 +225,7 @@
    → 返回 {doc_id, sizes, n_pieces, reloaded:true}
         ↓
 [前端 commit done]
-   → setTab('nesting') 自动切入超排  ← [US-021]
+   → setNestingEnabled(true) 解锁超排 Tab（不自动切入）  ← [US-021]
 [超排页]
    → [US-017] SizePicker 读 doc.sizes 全量码号
    → [US-019] 主面板精简（无两档输入）
@@ -253,5 +253,5 @@
 
 ## v1 / v2 切分
 
-- **v1（主链路，~2 周）**：US-015 → US-016 → **US-020**（含 `/api/ptypes`）→ US-017 → US-018（弹窗 + 片型缩略图 + 放大预览，**外轮廓**）→ US-019 → US-021。打通「上传→解锁→码号承接→commit reload→自动切超排→高级配置弹窗（含缩略图/放大）」全链路；求解输入仍是外轮廓 + per_type 覆盖；缩略图/放大预览因 intermediate 仅 polygon 而只画外轮廓。
+- **v1（主链路，~2 周）**：US-015 → US-016 → **US-020**（含 `/api/ptypes`）→ US-017 → US-018（弹窗 + 片型缩略图 + 放大预览，**外轮廓**）→ US-019 → US-021。打通「上传→解锁→码号承接→commit reload→（用户点 Tab 进入）超排→高级配置弹窗（含缩略图/放大）」全链路；求解输入仍是外轮廓 + per_type 覆盖；缩略图/放大预览因 intermediate 仅 polygon 而只画外轮廓。
 - **v2（数据维度，~1-2 周）**：US-022（数量 demand）+ US-023（颜色清理）+ US-024（5 层展示+导出，**顺带把 US-018 缩略图/放大预览自动升级为 5 层**）。US-023 可与 v2 并行。

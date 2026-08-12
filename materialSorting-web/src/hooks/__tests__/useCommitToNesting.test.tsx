@@ -11,7 +11,7 @@
 //   - doc_id passed through to body; filename optional
 //   - commitStatus transition path: idle -> committing -> done
 //   - commitStatus transition path: idle -> committing -> error
-//   - commit done triggers setNestingEnabled(true) + setTab(nesting) (D1)
+//   - commit done triggers setNestingEnabled(true) only (no auto setTab) (D1)
 //   - network error -> commitStatus=error + commitError=Error.message
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -310,7 +310,7 @@ describe("useCommitToNesting (US-021)", () => {
     expect(useUploadStore.getState().commitStatus).toBe("error");
   });
 
-  it("AC#7 commit done -> setNestingEnabled(true) + setTab(nesting) (D1)", async () => {
+  it("AC#7 commit done -> setNestingEnabled(true) but does NOT auto-switch tab (D1)", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(makeCommitResponse());
     renderProbe();
     expect(useUiStore.getState().nestingEnabled).toBe(false);
@@ -318,8 +318,9 @@ describe("useCommitToNesting (US-021)", () => {
     await act(async () => {
       await captured!.commit("deadbeef");
     });
+    // commit done 解锁超排 Tab，但不自动切入（用户主动点击进入）
     expect(useUiStore.getState().nestingEnabled).toBe(true);
-    expect(useUiStore.getState().activeTab).toBe("nesting");
+    expect(useUiStore.getState().activeTab).toBe("preview");
   });
 
   it("AC#7 commit fail -> does NOT switch tab (D5: Tab stays, user sees error)", async () => {

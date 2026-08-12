@@ -11,9 +11,8 @@
 //   4. 错误不抛、不 rethrow（统一进 uploadStore.commitError，UI 自取）；返回
 //      Promise<CommitResult> 仅为调用方可选 await（如测试断言）。
 //   5. commit done → setNestingEnabled(true)（US-015/016 已在 PreviewPage subscribe
-//      parse done 时设过，这里重复设是显式 D1 闭环，幂等无副作用） +
-//      setTab('nesting') 自动切入超排页（uiStore guard：nestingEnabled=false 时静默不切，
-//      故必须先 setNestingEnabled(true) 再 setTab）。
+//      parse done 时设过，这里重复设是显式 D1 闭环，幂等无副作用）。
+//      **不自动切 Tab**：解析成功只解锁超排 Tab，由用户主动点击进入，避免劫持预览浏览。
 //   6. commit fail → commitStatus='error' + commitError 显示；**不切 Tab**（D5），
 //      让用户看到错误；Tab 解锁状态由 PreviewPage subscribe parse done 控制（已 true），
 //      用户可重试 commit 或用旧数据进入超排。
@@ -115,13 +114,12 @@ export function useCommitToNesting(): UseCommitToNestingResult {
           commitSummary: summary,
         });
 
-        // D1 闭环（US-021 AC#4）：commit done → 解锁超排 Tab + 自动切入。
+        // D1 闭环（US-021 AC#4）：commit done → 解锁超排 Tab（**不自动切入**）。
         //   - setNestingEnabled(true) 与 PreviewPage subscribe parse done 重复（幂等），
         //     显式调保证 commit 链路自闭环（不依赖 PreviewPage effect 时序）。
-        //   - setTab('nesting') 必须在 setNestingEnabled(true) 之后：uiStore guard
-        //     `nestingEnabled===false 时 setTab('nesting') 静默不切`。
+        //   - 不再 setTab('nesting')：解析成功只解锁超排 Tab，由用户主动点击进入，
+        //     避免劫持用户在上传预览页的浏览（查看裁片 / 调数量等）。
         useUiStore.getState().setNestingEnabled(true);
-        useUiStore.getState().setTab('nesting');
 
         return { ok: true, summary };
       } catch (e) {

@@ -586,3 +586,92 @@ describe("NestSVG US-024 (5 层渲染)", () => {
     expect(grain.getAttribute("y2")).toBe("77");
   });
 });
+
+// ============================================================
+// demand>1 多副本渲染（US-022 demand 系统）。
+// demand>1 时 solver 给同一 pid 发 N 条 placed_items（同 id、不同 translation）。
+// NestSVG 必须为该 pid 建 N 个 DOM 副本、各承一处 placement —— 否则 N 条共用同一 polygon、
+// 后覆盖前，只剩 1/N 可见（视觉稀疏，但密度数字仍正确：极隐蔽的 bug）。
+// ============================================================
+
+/** 单片 demand=2 的 manifest（多副本渲染测试用）。 */
+function makeManifestDemand(): ManifestMsg {
+  return {
+    type: "manifest",
+    gate_mm: 1980,
+    total_area_mm2: 100000,
+    n_eroded: 0,
+    pieces: [
+      {
+        id: "p1",
+        ptype: "Front",
+        size: 30,
+        color: "#ff0000",
+        area_mm2: 12345,
+        polygon: [[0, 0], [10, 0], [10, 10], [0, 10]],
+        demand: 2,
+      },
+    ],
+  };
+}
+
+describe("NestSVG demand>1 (多副本渲染)", () => {
+  it("manifest demand=2 → 该 pid 建 2 个毛版 polygon 副本（初始都 display:none）", () => {
+    const run = runRegistry.create(0);
+    run.manifest = makeManifestDemand();
+    const ref = mountNestSVG(run);
+    const svg = ref.current!;
+    expect(svg.childNodes.length).toBe(3);   // bg + fab + g
+
+    const g = svg.childNodes[2] as SVGGElement;
+    const polys = Array.from(g.querySelectorAll("polygon"));
+    expect(polys.length).toBe(2);            // demand=2 → 2 副本（修复前只有 1）
+    for (const p of polys) {
+      expect(p.getAttribute("fill")).toBe("#ff0000");
+      expect(p.dataset.ptype).toBe("Front");
+      expect(p.dataset.size).toBe("30");
+      expect(p.style.display).toBe("none");  // 初始未 placed
+    }
+  });
+
+  it("frame 含 2 条同 id placement → 2 副本各承一处（都可见、points 不同、不互相覆盖）", () => {
+    const run = runRegistry.create(0);
+    run.manifest = makeManifestDemand();
+    const ref = mountNestSVG(run);
+    const g = ref.current!.childNodes[2] as SVGGElement;
+    const polys = Array.from(g.querySelectorAll("polygon"));
+
+    const frame: FrameMsg = {
+      type: "frame",
+      index: 0,
+      elapsed: 0.5,
+      phase: "exploring",
+      density: 0.8,
+      density_sparrow: 0.82,
+      width_mm: 1000,
+      placed_items: [
+        { id: "p1", rotation: 0, translation: [0, 0] },
+        { id: "p1", rotation: 0, translation: [100, 200] },
+      ],
+    };
+    run.frames.push(frame);
+    run.lastFrame = frame;
+    act(() => useAppStore.getState().bumpRenderTick());
+
+    // 两个副本都可见（修复前：第 2 条覆盖第 1 条 → 只剩 1 个可见）
+    expect(polys[0].style.display).toBe("");
+    expect(polys[1].style.display).toBe("");
+    // 副本0 ← 第 1 处 placement（tr 0,0）：polygon 平移后不变
+    expect(polys[0].getAttribute("points")).toBe("0,0 10,0 10,10 0,10");
+    // 副本1 ← 第 2 处 placement（tr 100,200）：每点 +（100,200）
+    expect(polys[1].getAttribute("points")).toBe("100,200 110,200 110,210 100,210");
+  });
+
+  it("demand 缺省（旧 manifest 无此字段）→ 单副本（向后兼容）", () => {
+    const run = runRegistry.create(0);
+    run.manifest = makeManifest();   // 无 demand 字段
+    const ref = mountNestSVG(run);
+    const g = ref.current!.childNodes[2] as SVGGElement;
+    expect(g.querySelectorAll("polygon").length).toBe(2);   // 2 pieces × 1 副本
+  });
+});

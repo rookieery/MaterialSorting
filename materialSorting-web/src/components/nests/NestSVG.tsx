@@ -72,8 +72,13 @@ export function NestSVG({ run }: NestSVGProps) {
   const flipRef = useRef<SVGGElement | null>(null);
   const bgRef = useRef<SVGRectElement | null>(null);
   const fabRef = useRef<SVGRectElement | null>(null);
-  /** id → PieceEntry（毛版 polygon + 4 层工艺 DOM 节点），manifest 到达后填充。 */
-  const piecesRef = useRef<Map<string, PieceEntry>>(new Map());
+  /**
+   * id → 该 pid 的 DOM 副本数组（每副本 = 毛版 polygon + 4 层工艺节点），manifest 到达后填充。
+   * 长度 = piece.demand（缺省 1）。demand>1 时 solver 给同一 pid 发 N 条 placed_items（同 id、
+   * 不同 translation），必须 N 个独立 DOM 副本各承一处 placement —— 否则 N 条共用同一 polygon、
+   * 后覆盖前，只剩 1/N 可见（视觉稀疏但密度数字正确，极隐蔽）。
+   */
+  const piecesRef = useRef<Map<string, PieceEntry[]>>(new Map());
 
   // 订阅 renderTick —— bump 触发 effect 重跑（imperative 更新 DOM）。
   const renderTick = useAppStore((s) => s.renderTick);
@@ -111,85 +116,12 @@ export function NestSVG({ run }: NestSVGProps) {
       flipRef.current = g;
 
       for (const p of run.manifest.pieces) {
-        // layer1 毛版 polygon（ptype 配色）—— 与既有渲染一致（mouse 联动仅绑此层）
-        const poly = document.createElementNS(SVGNS, 'polygon');
-        poly.setAttribute('fill', p.color);
-        poly.setAttribute('fill-opacity', '0.55');
-        poly.setAttribute('stroke', p.color);
-        poly.setAttribute('stroke-width', '1.2');
-        poly.style.display = 'none';
-        poly.dataset.ptype = p.ptype;
-        poly.dataset.size = String(p.size);
-        poly.dataset.area = String(p.area_mm2);
-        g.appendChild(poly);
-
-        // US-024 layer14 净版（绿 dashed polygon，无填充）—— 数据缺失不渲染
-        let netEl: SVGPolygonElement | null = null;
-        if (p.net_polygon && p.net_polygon.length >= 3) {
-          netEl = document.createElementNS(SVGNS, 'polygon');
-          netEl.setAttribute('fill', 'none');
-          netEl.setAttribute('stroke', LAYER5_COLORS.NET);
-          netEl.setAttribute('stroke-width', '1.2');
-          netEl.setAttribute('stroke-dasharray', '6 3');
-          netEl.setAttribute('stroke-linejoin', 'round');
-          netEl.style.display = 'none';
-          netEl.style.pointerEvents = 'none';
-          g.appendChild(netEl);
-        }
-
-        // US-024 layer8 内部线（橙实线 polyline 列表，不闭合）—— 数据缺失空数组
-        const internalEls: SVGPolylineElement[] = [];
-        if (p.internal_lines) {
-          for (const line of p.internal_lines) {
-            if (line.length < 2) continue;
-            const el = document.createElementNS(SVGNS, 'polyline');
-            el.setAttribute('fill', 'none');
-            el.setAttribute('stroke', LAYER5_COLORS.INTERNAL);
-            el.setAttribute('stroke-width', '1');
-            el.setAttribute('stroke-linejoin', 'round');
-            el.setAttribute('stroke-linecap', 'round');
-            el.style.display = 'none';
-            el.style.pointerEvents = 'none';
-            g.appendChild(el);
-            internalEls.push(el);
-          }
-        }
-
-        // US-024 layer4 刺口（黄 line 短线段，沿法线 NOTCH_LEN_MM）—— 数据缺失空数组
-        const notchEls: SVGLineElement[] = [];
-        if (p.notches) {
-          for (const _n of p.notches) {
-            const el = document.createElementNS(SVGNS, 'line');
-            el.setAttribute('stroke', LAYER5_COLORS.NOTCH);
-            el.setAttribute('stroke-width', '1.4');
-            el.setAttribute('stroke-linecap', 'round');
-            el.style.display = 'none';
-            el.style.pointerEvents = 'none';
-            g.appendChild(el);
-            notchEls.push(el);
-          }
-        }
-
-        // US-024 layer7 布纹线（红 dashed line）—— 数据缺失/null 不渲染
-        let grainEl: SVGLineElement | null = null;
-        if (p.grain_line && p.grain_line.length === 4) {
-          grainEl = document.createElementNS(SVGNS, 'line');
-          grainEl.setAttribute('stroke', LAYER5_COLORS.GRAIN);
-          grainEl.setAttribute('stroke-width', '1.2');
-          grainEl.setAttribute('stroke-dasharray', '5 3');
-          grainEl.style.display = 'none';
-          grainEl.style.pointerEvents = 'none';
-          g.appendChild(grainEl);
-        }
-
-        piecesRef.current.set(p.id, {
-          el: poly,
-          netEl,
-          internalEls,
-          notchEls,
-          grainEl,
-          piece: p,
-        });
+        // demand 副本：demand>1 时 solver 给同一 pid 发 N 条 placement（同 id 不同 translation），
+        // 需 N 个独立 DOM 副本各承一处；缺省 demand=1（旧 manifest 无此字段 → 单副本，行为不变）。
+        const demand = Math.max(1, Math.floor(p.demand ?? 1));
+        const copies: PieceEntry[] = [];
+        for (let k = 0; k < demand; k++) copies.push(createPieceEntry(p, g));
+        piecesRef.current.set(p.id, copies);
       }
 
       // US-006 AC#4..#6：flipGroup 上事件委托 mousemove + mouseleave。
@@ -226,12 +158,18 @@ export function NestSVG({ run }: NestSVGProps) {
     fab.setAttribute('width', String(f.width_mm));
     fab.setAttribute('height', String(gate));
 
-    // placed → 显示 + 写 points；未 placed → display:none
-    const placed = new Set<string>();
+    // placed → 显示 + 写 points；未 placed → display:none。
+    // demand>1 时同一 pid 在 placed_items 出现 N 次（每副本一条）。piecesRef[pid] 是该 pid 的
+    // DOM 副本池（长度 = demand）；按「出现序」把第 k 次出现渲染到副本池第 k 个节点 ——
+    // 否则 N 条 placement 共用同一 polygon、后覆盖前，只剩 1/N 可见。
+    const reached = new Map<string, number>();   // pid → 本帧已渲染副本数
     for (const it of f.placed_items) {
-      const entry = piecesRef.current.get(it.id);
-      if (!entry) continue;
-      placed.add(it.id);
+      const copies = piecesRef.current.get(it.id);
+      if (!copies || copies.length === 0) continue;
+      const k = reached.get(it.id) ?? 0;
+      reached.set(it.id, k + 1);
+      if (k >= copies.length) continue;          // 防御：solver 放置数 > demand（不应发生）
+      const entry = copies[k];
       const rot = it.rotation;
       const tr = it.translation;
       // layer1 毛版 polygon
@@ -281,18 +219,103 @@ export function NestSVG({ run }: NestSVGProps) {
         entry.grainEl.style.display = '';
       }
     }
-    // 未 placed 的全部隐藏（毛版 + 4 层）
-    for (const [id, entry] of piecesRef.current) {
-      if (placed.has(id)) continue;
-      entry.el.style.display = 'none';
-      if (entry.netEl) entry.netEl.style.display = 'none';
-      for (const ie of entry.internalEls) ie.style.display = 'none';
-      for (const ne of entry.notchEls) ne.style.display = 'none';
-      if (entry.grainEl) entry.grainEl.style.display = 'none';
+    // 未 reached 的副本（整 pid 未 placed、或 demand 内仅部分出现）→ 隐藏全部 5 层。
+    for (const [id, copies] of piecesRef.current) {
+      const used = reached.get(id) ?? 0;
+      for (let k = used; k < copies.length; k++) {
+        const entry = copies[k];
+        entry.el.style.display = 'none';
+        if (entry.netEl) entry.netEl.style.display = 'none';
+        for (const ie of entry.internalEls) ie.style.display = 'none';
+        for (const ne of entry.notchEls) ne.style.display = 'none';
+        if (entry.grainEl) entry.grainEl.style.display = 'none';
+      }
     }
   }, [renderTick, seekTime, run]);
 
   return <svg ref={svgRef} xmlns={SVGNS} />;
+}
+
+/**
+ * 为单片 PieceInfo 创建一组 5 层 DOM 节点（毛版 polygon + net/internal/notch/grain）并 append 到 g。
+ * 返回 PieceEntry 持有这些节点引用。demand>1 时对本函数调用 N 次 → N 个独立副本（多副本渲染）。
+ *
+ * 与旧 vanilla 实现 onManifest 内单片建节点逻辑等价（layer1 ptype 配色 + US-024 4 层）。
+ * 所有节点初始 display:none（等 frame 到达再显）。纯提取，无行为变更。
+ */
+function createPieceEntry(p: PieceInfo, g: SVGGElement): PieceEntry {
+  // layer1 毛版 polygon（ptype 配色）—— 与既有渲染一致（mouse 联动仅绑此层）
+  const poly = document.createElementNS(SVGNS, 'polygon');
+  poly.setAttribute('fill', p.color);
+  poly.setAttribute('fill-opacity', '0.55');
+  poly.setAttribute('stroke', p.color);
+  poly.setAttribute('stroke-width', '1.2');
+  poly.style.display = 'none';
+  poly.dataset.ptype = p.ptype;
+  poly.dataset.size = String(p.size);
+  poly.dataset.area = String(p.area_mm2);
+  g.appendChild(poly);
+
+  // US-024 layer14 净版（绿 dashed polygon，无填充）—— 数据缺失不渲染
+  let netEl: SVGPolygonElement | null = null;
+  if (p.net_polygon && p.net_polygon.length >= 3) {
+    netEl = document.createElementNS(SVGNS, 'polygon');
+    netEl.setAttribute('fill', 'none');
+    netEl.setAttribute('stroke', LAYER5_COLORS.NET);
+    netEl.setAttribute('stroke-width', '1.2');
+    netEl.setAttribute('stroke-dasharray', '6 3');
+    netEl.setAttribute('stroke-linejoin', 'round');
+    netEl.style.display = 'none';
+    netEl.style.pointerEvents = 'none';
+    g.appendChild(netEl);
+  }
+
+  // US-024 layer8 内部线（橙实线 polyline 列表，不闭合）—— 数据缺失空数组
+  const internalEls: SVGPolylineElement[] = [];
+  if (p.internal_lines) {
+    for (const line of p.internal_lines) {
+      if (line.length < 2) continue;
+      const el = document.createElementNS(SVGNS, 'polyline');
+      el.setAttribute('fill', 'none');
+      el.setAttribute('stroke', LAYER5_COLORS.INTERNAL);
+      el.setAttribute('stroke-width', '1');
+      el.setAttribute('stroke-linejoin', 'round');
+      el.setAttribute('stroke-linecap', 'round');
+      el.style.display = 'none';
+      el.style.pointerEvents = 'none';
+      g.appendChild(el);
+      internalEls.push(el);
+    }
+  }
+
+  // US-024 layer4 刺口（黄 line 短线段，沿法线 NOTCH_LEN_MM）—— 数据缺失空数组
+  const notchEls: SVGLineElement[] = [];
+  if (p.notches) {
+    for (const _n of p.notches) {
+      const el = document.createElementNS(SVGNS, 'line');
+      el.setAttribute('stroke', LAYER5_COLORS.NOTCH);
+      el.setAttribute('stroke-width', '1.4');
+      el.setAttribute('stroke-linecap', 'round');
+      el.style.display = 'none';
+      el.style.pointerEvents = 'none';
+      g.appendChild(el);
+      notchEls.push(el);
+    }
+  }
+
+  // US-024 layer7 布纹线（红 dashed line）—— 数据缺失/null 不渲染
+  let grainEl: SVGLineElement | null = null;
+  if (p.grain_line && p.grain_line.length === 4) {
+    grainEl = document.createElementNS(SVGNS, 'line');
+    grainEl.setAttribute('stroke', LAYER5_COLORS.GRAIN);
+    grainEl.setAttribute('stroke-width', '1.2');
+    grainEl.setAttribute('stroke-dasharray', '5 3');
+    grainEl.style.display = 'none';
+    grainEl.style.pointerEvents = 'none';
+    g.appendChild(grainEl);
+  }
+
+  return { el: poly, netEl, internalEls, notchEls, grainEl, piece: p };
 }
 
 /**

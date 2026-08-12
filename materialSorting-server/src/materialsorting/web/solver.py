@@ -83,6 +83,11 @@ def build_instance(pieces, gate_mm, *, time_budget: int, seed: int,
     pid_meta = {}
     items = []
     n_eroded = 0
+    # total_area 必须按「实际排料面积」累加 = Σ(area × demand)，仅含真正进 sparrow 的片。
+    # 旧实现 ``sum(p['area_mm2'] for p in pieces)`` 有两处错：(1) 漏乘 demand —— demand>1
+    # 时求解器排 N 份、用布长度变 N 倍，但面积只算 1 份 → real_density 被 demand 整除
+    # （demand=2 时 84% 被错报成 ~42%）；(2) 把 demand=0 跳过的片也计入了面积。两者都修。
+    total_area = 0.0
     for p in pieces:
         # US-022：先定 demand（demand=0 跳过该 piece，不进 sparrow 实例）。
         # sizeKey 口径与前端 qtyStore 一致：number->String(number)；null->'null'。
@@ -97,7 +102,7 @@ def build_instance(pieces, gate_mm, *, time_budget: int, seed: int,
         else:
             demand = 1
         if demand <= 0:
-            continue   # D2：该 piece 该码 demand=0 → 不排
+            continue   # D2：该 piece 该码 demand=0 → 不排（也不计入 total_area）
 
         ptype = p['ptype']
         internal = ptype in INTERNAL_TYPES
@@ -131,6 +136,11 @@ def build_instance(pieces, gate_mm, *, time_budget: int, seed: int,
             'color': PTYPE_COLORS.get(ptype, '#bbbbbb'),
             'polygon': poly,                 # erode 后 base 多边形（与 placement 一致）
             'area_mm2': p['area_mm2'],
+            # demand：该 pid 进 sparrow 的副本数（= quantities[label][sizeKey]，缺省 1）。
+            # 透传到 manifest → 前端 NestSVG 按 demand 建 N 个 DOM 副本（见下「多副本渲染」）。
+            # **必须透传**：demand>1 时 solver 给同一 pid 发 N 条 placed_items（同 id 不同 translation），
+            # 若前端只建 1 个 polygon 会被后一条覆盖 → 只剩 1/N 副本可见（视觉稀疏，密度数却正确）。
+            'demand': demand,
             'net_polygon': p.get('net_polygon', []),
             'internal_lines': p.get('internal_lines', []),
             'notches': p.get('notches', []),
@@ -142,11 +152,11 @@ def build_instance(pieces, gate_mm, *, time_budget: int, seed: int,
             demand=demand,
             allowed_orientations=orientations,
         ))
+        total_area += float(p['area_mm2']) * demand
     instance = spyrrow.StripPackingInstance(
         name='workbench', strip_height=gate_mm, items=items)
     config = spyrrow.StripPackingConfig(
         total_computation_time=time_budget, seed=seed, num_workers=4)
-    total_area = sum(p['area_mm2'] for p in pieces)
     return instance, config, pid_meta, total_area, n_eroded
 
 

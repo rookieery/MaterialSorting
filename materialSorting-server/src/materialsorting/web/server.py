@@ -524,6 +524,9 @@ async def ws_solve(ws: WebSocket):
         'pieces': [
             {'id': pid, 'ptype': m['ptype'], 'size': m['size'], 'color': m['color'],
              'area_mm2': m['area_mm2'], 'polygon': m['polygon'],
+             # demand：该 pid 的副本数（solver.build_instance 透传；缺省 1 = 单副本/旧兼容）。
+             # 前端 NestSVG 按 demand 建 N 个 polygon 副本，避免 demand>1 时同 id 多 placement 互相覆盖。
+             'demand': m.get('demand', 1),
              # US-024：5 层透传字段（None-safe；缺字段时各层视为空/None，前端 layer-aware 渲染）。
              'net_polygon': m.get('net_polygon', []),
              'internal_lines': m.get('internal_lines', []),
