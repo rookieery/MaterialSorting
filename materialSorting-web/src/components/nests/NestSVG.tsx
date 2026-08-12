@@ -33,7 +33,7 @@ import { useEffect, useRef } from 'react';
 import { useAppStore } from '../../store/appStore';
 import type { RunRecord } from '../../store/runRegistry';
 import type { Notch, PieceInfo, Polygon } from '../../types/piece';
-import type { FrameMsg } from '../../types/ws';
+import type { FrameMsg, ManifestMsg } from '../../types/ws';
 import { pointsStr } from '../../lib/geometry';
 import { frameAtTime } from '../../lib/seek';
 import { clearHovered, hideTooltip, setHovered, showTooltip } from '../Tooltip';
@@ -79,6 +79,15 @@ export function NestSVG({ run }: NestSVGProps) {
    * 后覆盖前，只剩 1/N 可见（视觉稀疏但密度数字正确，极隐蔽）。
    */
   const piecesRef = useRef<Map<string, PieceEntry[]>>(new Map());
+  /**
+   * 当前已建骨架对应的 manifest 引用（重解检测）。run.manifest 引用变化 → 全量重建骨架 +
+   * 副本池；同一引用（含 React 18 StrictMode 双 mount）保持幂等不重建。
+   *
+   * 旧实现用 ``!flipRef.current`` 单次保护 —— 重解（同 seed 复用 NestSVG）时 run.manifest 已是
+   * 新对象，但 flipRef 仍指旧 DOM → copies 池不重建 → demand 变化后多副本 placement 被丢弃
+   * （只显 1/N，视觉缺片但密度数正确，极隐蔽）。改以 manifest 身份变化为重建信号根除之。
+   */
+  const manifestRef = useRef<ManifestMsg | null>(null);
 
   // 订阅 renderTick —— bump 触发 effect 重跑（imperative 更新 DOM）。
   const renderTick = useAppStore((s) => s.renderTick);
@@ -89,9 +98,23 @@ export function NestSVG({ run }: NestSVGProps) {
     const svg = svgRef.current;
     if (!svg) return;
 
-    // 1) manifest 到达 → 一次性建立骨架（bg + 用布矩形 + 翻转组 + N × 5 层 polygon/polyline/line）。
-    //    幂等保护：flipRef 已存在则跳过（防 React 18 StrictMode 双 mount 重建）。
-    if (run.manifest && !flipRef.current) {
+    // 1) manifest 到达 / 变化（新 run、重解）→ 建立（或重建）骨架（bg + 用布矩形 + 翻转组 +
+    //    N × 5 层 polygon/polyline/line）+ demand 副本池。
+    //    以 manifest 引用变化为重建信号（非旧 ``!flipRef.current`` 单次保护）：重解时 run.manifest
+    //    已是新对象，旧实现因 flipRef 仍指旧 DOM 而跳过重建 → copies 池停留旧 demand → 多副本
+    //    placement 被丢弃（只显 1/N，视觉缺片但密度数正确，极隐蔽）。
+    //    幂等：同一 manifest 引用（含 React 18 StrictMode 双 mount）不重建。
+    if (run.manifest && run.manifest !== manifestRef.current) {
+      // 重解（旧骨架仍在）→ 先拆除 bg/fab/flipGroup + 清空副本池，再重建，避免残留 / 副本数陈旧。
+      if (flipRef.current) {
+        bgRef.current?.remove();
+        fabRef.current?.remove();
+        flipRef.current.remove();
+        bgRef.current = null;
+        fabRef.current = null;
+        flipRef.current = null;
+        piecesRef.current.clear();
+      }
       const bg = document.createElementNS(SVGNS, 'rect');
       bg.setAttribute('fill', '#eef0f3');
 
@@ -130,6 +153,8 @@ export function NestSVG({ run }: NestSVGProps) {
       // US-024：4 层工艺节点 pointerEvents='none'，事件委托只触发于毛版 polygon（dataset.ptype 必有）。
       g.addEventListener('mousemove', handleHover);
       g.addEventListener('mouseleave', handleHoverEnd);
+
+      manifestRef.current = run.manifest;
     }
 
     // 2) 渲染当前帧（imperative setAttribute —— 不触发 React reconciliation）。

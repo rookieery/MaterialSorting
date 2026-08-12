@@ -674,4 +674,52 @@ describe("NestSVG demand>1 (多副本渲染)", () => {
     const g = ref.current!.childNodes[2] as SVGGElement;
     expect(g.querySelectorAll("polygon").length).toBe(2);   // 2 pieces × 1 副本
   });
+
+  it("重解（run.manifest 换新对象）→ 重建骨架 + 副本池，demand 变化正确反映", () => {
+    // 复刻真实 workflow：先以 demand=1 求解 → 改 demand=2 重解（同 seed 复用同一 NestSVG 实例，
+    // 因 NestsGrid 按 seed 稳定 key 挂载 NestCard）。旧实现 ``!flipRef.current`` 单次保护 →
+    // 重解时 flipRef 仍指旧 DOM → 副本池不重建、停留 demand=1 → demand=2 的第 2 条 placement
+    // 被丢弃（视觉缺片，密度数却正确）。改以 manifest 身份变化为重建信号根除之。
+    const run = runRegistry.create(0);
+    run.manifest = makeManifest();            // demand 缺省 = 1（p1 单副本）
+    const ref = mountNestSVG(run);
+    const svg = ref.current!;
+    let g = svg.childNodes[2] as SVGGElement;
+    expect(g.querySelectorAll("polygon").length).toBe(2);   // p1×1 + p2×1
+
+    const oldG = g;
+    // 重解：run.manifest 换成新对象（p1 demand=2）
+    run.manifest = makeManifestDemand();
+    act(() => useAppStore.getState().bumpRenderTick());
+
+    // 骨架重建：旧 flipGroup 已 remove、新 flipGroup 已 append（仍是 svg 的第 3 个子节点）
+    expect(svg.childNodes.length).toBe(3);
+    g = svg.childNodes[2] as SVGGElement;
+    expect(g).not.toBe(oldG);                // 新翻转组（非旧残留）
+    // 副本池重建：p1 demand=2 → 2 副本（旧实现此处仍为 1 → 陈旧 → bug）
+    expect(g.querySelectorAll("polygon").length).toBe(2);   // p1×2
+
+    // 第 2 条 placement 不再被丢弃：两条同 id placement 各承一处副本、都可见
+    const polys = Array.from(g.querySelectorAll("polygon"));
+    const frame: FrameMsg = {
+      type: "frame",
+      index: 0,
+      elapsed: 0.5,
+      phase: "exploring",
+      density: 0.8,
+      density_sparrow: 0.82,
+      width_mm: 1000,
+      placed_items: [
+        { id: "p1", rotation: 0, translation: [0, 0] },
+        { id: "p1", rotation: 0, translation: [100, 200] },
+      ],
+    };
+    run.frames.push(frame);
+    run.lastFrame = frame;
+    act(() => useAppStore.getState().bumpRenderTick());
+    expect(polys[0].style.display).toBe("");
+    expect(polys[1].style.display).toBe("");
+    expect(polys[0].getAttribute("points")).toBe("0,0 10,0 10,10 0,10");
+    expect(polys[1].getAttribute("points")).toBe("100,200 110,200 110,210 100,210");
+  });
 });
