@@ -51,7 +51,7 @@
 
 `DEFAULT_SIZES = [28, 29, 30, 31, 33, 34, 35, 36]` —— **8 码套排，刻意跳过 32**（版师要求）。8 码 × 配对展开 = 128 个排料单元（NestPiece）。
 
-> **双码号口径**：CLI 管线（`ms-pieces-export`）用 `DEFAULT_SIZES` 8 码 → 128 NestPiece；工作台上传母版经 `/api/commit-to-nesting`（US-010 Path A）则取**母版实际全码**（M1787 = 11 码 [28-38]）→ 176 NestPiece。前端 SizePicker（US-017）从上传 doc 动态读码号，demand（US-022）按码可设 0 跳过。
+> **码号口径**：工作台上传母版经 `/api/commit-to-nesting`（US-010）取**母版实际全码**（M1787 = 11 码 [28-38]）→ 176 NestPiece；`DEFAULT_SIZES`（8 码跳 32）仅作 `load_nest_pieces` 默认兜底。前端 SizePicker（US-017）从上传 doc 动态读码号，demand（US-022）按码可设 0 跳过。
 
 ### 门幅
 
@@ -69,13 +69,12 @@
 ## 数据流主线
 
 ```
-data/M1787#...(2).dxf 母版
-   ↓ ms-export-dxf（人工 group→类型映射，GROUP_NAMES）        ← Path B：CLI 离线管线
-   ↓ 或 /api/parse-dxf + /api/commit-to-nesting（US-004/010）  ← Path A：工作台在线管线
-data/m1787_直筒/{类型}_{码号}.dxf（110 片，每片 5 层 US-024）
+用户上传母版 DXF
+   ↓ /api/parse-dxf + /api/commit-to-nesting（US-004/010）
+out/uploads/<doc_id>_pieces/{类型}_{码号}.dxf（母版全码，每片 5 层 US-024）
    ↓ load_pieces（布纹对齐水平 + 归一化原点 + L/R 镜像展开 + 5 层共享 transform）
-NestPiece（8 码 128 / 母版全码 176）
-   ↓ ms-pieces-export  /  server._commit_to_nesting_sync
+NestPiece（母版全码 176）
+   ↓ server._commit_to_nesting_sync（GROUP_NAMES 定片型 + labeling 标 label）
 out/sparrow_baseline/pieces_intermediate.json   ← 全流程事实源（每片 polygon + 5 层 + label）
    ↓
    ├─ ms-sparrow-baseline / ms-sparrow-exp（sparrow 求解 → result/svg/curve）
@@ -90,7 +89,7 @@ out/sparrow_baseline/pieces_intermediate.json   ← 全流程事实源（每片 
 
 - **dxf_parser**：底层 DXF 读写。`reader`（ezdxf recover + GBK + R12 POLYLINE）、`geometry`（纯几何）、`model`（PieceOutline，US-002 扩 5 层字段）、`explore`（母版探索）、`collect`（US-003 母版深度解析 5 层 IR）、`export_dxf`（单裁片 5 层导出）。仅 stdlib + ezdxf。
 - **nesting_bounds**：`load_pieces` 把单裁片 → 布纹对齐 → 归一化 → L/R 镜像；US-024 起 `_read_piece_full` 读 5 层 + notch 法线按 outline 最近边重算。定义 `NestPiece`、`GATE_MM=1980`、`DEFAULT_SIZES`。
-- **nesting_engine**：sparrow 求解。`constraints`（v0.3 常量 + 位图腐蚀 + 校验）、`sparrow_baseline`（基线 + ★共享层）、`sparrow_experiments`（公差实验）、`labeling`（US-022 共享 A/B/C 标注）、`pieces_export`（生 intermediate，US-022 加 label / US-024 加 5 层）。
+- **nesting_engine**：sparrow 求解。`constraints`（v0.3 常量 + 位图腐蚀 + 校验）、`sparrow_baseline`（基线 + ★共享层）、`sparrow_experiments`（公差实验）、`labeling`（US-022 共享 A/B/C 标注）。intermediate 由 `web/server._commit_to_nesting_sync` 生成（US-022 label / US-024 5 层）。
 - **web**：`server`（FastAPI + WS + 启动期 `_PIECES_STATE` reload + parse/commit/ptypes 路由 + WS stop 协议）、`solver`（build_instance + demand + 旧 threading / **US-025 多进程** `solve_with_callback_proc`）、`solve_worker`（US-025 子进程入口）、`export`（PNG + R12-DXF marker，US-024 起 5 层叠加）。
 
 文件级细节见 [technical/agent-file-map.md](../technical/agent-file-map.md)；HTTP/WS 契约见 [technical/agent-api-reference.md](../technical/agent-api-reference.md)。
@@ -119,7 +118,7 @@ out/sparrow_baseline/pieces_intermediate.json   ← 全流程事实源（每片 
 ## 验收标准（90% 目标的硬指标）
 
 - ✅ `real_density = total_area/(width×gate)` 达到 90%（非 sparrow 自报密度）。
-- ✅ `ms-pieces-export` 生成的 intermediate 含 128 个 NestPiece。
+- ✅ commit-to-nesting 生成的 intermediate 含母版全码 NestPiece（M1787 = 176 片）。
 - ✅ 导出 DXF 可被 ET2008 正确读出轮廓（R12 + POLYLINE）。
 - ✅ 分层依赖未反向（`web→engine→bounds→parser`）。
 - ✅ Python 模块可通过 `python -m materialsorting.<sub>.<module>` 跑通。

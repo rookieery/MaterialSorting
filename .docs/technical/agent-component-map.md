@@ -402,7 +402,7 @@ NestSVG 在毛版 polygon（layer1）之上叠加 4 层工艺节点：净版（l
 
 ### 关键不变量（US-024 立，后续故事不得破坏）
 
-1. **求解碰撞仅用毛版 polygon** —— `polygon` 是 erode 后的 base 多边形，与 sparrow NFP 一致；`net_polygon` / `internal_lines` / `notches` / `grain_line` 4 层**仅渲染/导出透传**，不影响求解结果或利用率。改任一层语义需同步 collect.LAYER_MAPPING + export_dxf + load_pieces + pieces_export + solver.pid_meta + web/export.py + NestSVG。
+1. **求解碰撞仅用毛版 polygon** —— `polygon` 是 erode 后的 base 多边形，与 sparrow NFP 一致；`net_polygon` / `internal_lines` / `notches` / `grain_line` 4 层**仅渲染/导出透传**，不影响求解结果或利用率。改任一层语义需同步 collect.LAYER_MAPPING + export_dxf + load_pieces + web/server._commit_to_nesting_sync + solver.pid_meta + web/export.py + NestSVG。
 2. **5 层节点只在 manifest 到达时建一次** —— frame 切换只 setAttribute（points/x1y1x2y2/display），不重建 DOM；128 片 × 5 节点 ~10fps 可承受。改创建时机（如每帧重建）会破坏性能保护（AC#5）。
 3. **4 层节点 pointerEvents='none'** —— 事件委托只触发于毛版 polygon（dataset.ptype 必有）；4 层工艺节点不参与 mousemove tooltip 联动。改 pointerEvents 会破坏 US-006 hover 语义。
 4. **5 层都在翻转组内（scale(1,-1)）** —— 共用 `<g transform="translate(0 gate) scale(1 -1)">`，与 US-003 关键约定 #1 一致。改其中一层挪出翻转组会破坏视觉一致性（上下颠倒）。

@@ -13,7 +13,7 @@ web  →  nesting_engine  →  nesting_bounds  →  dxf_parser
 
 - `dxf_parser`：底层 DXF 读写。`reader.py`（ezdxf recover + GBK 块名 + R12 POLYLINE）、`geometry.py`（纯几何算子，无 ezdxf）、`model.py`（PieceOutline dataclass）。仅标准库 + ezdxf，不依赖任何兄弟包。
 - `nesting_bounds`：`load_pieces.py` 把单裁片 DXF → 布纹对齐水平 → 归一化到原点 → 成对镜像展开为 L/R。定义 `NestPiece`、`GATE_MM=1980`、`DEFAULT_SIZES`（8 码跳 32）。
-- `nesting_engine`：sparrow 求解。`constraints.py`（v0.3 约束常量 MAX_OVERLAP/ROTATION_TOL + 位图腐蚀 + 合法性校验）、`sparrow_baseline.py`（基线 + **共享层**：PTYPE_COLORS/_clean_polygon/solve_with_progress，被 solver/export/sparrow_experiments 复用）、`sparrow_experiments.py`（旋转/重合公差实验）、`pieces_export.py`（生成 intermediate）。
+- `nesting_engine`：sparrow 求解。`constraints.py`（v0.3 约束常量 MAX_OVERLAP/ROTATION_TOL + 位图腐蚀 + 合法性校验）、`sparrow_baseline.py`（基线 + **共享层**：PTYPE_COLORS/_clean_polygon/solve_with_progress，被 solver/export/sparrow_experiments 复用）、`sparrow_experiments.py`（旋转/重合公差实验）。
 - `web`：`server.py`（FastAPI + WS）、`solver.py`（build_instance + 子线程求解回调）、`export.py`（PNG + R12-DXF marker）。
 
 ## 路径约定
@@ -23,7 +23,7 @@ web  →  nesting_engine  →  nesting_bounds  →  dxf_parser
 ## 启动顺序约束
 
 `ms-web` 的 `server.py` 在**模块顶层**调用 `load_pieces()` 读 `out/sparrow_baseline/pieces_intermediate.json`，并 `app.mount('/static', ...)` 指向 `materialSorting-web/static`（前端构建产物）。因此：
-1. 首次启动 `ms-web` 前**必须**先 `ms-pieces-export` 生成 intermediate；
+1. intermediate 由 **Web 上传母版 → `/api/commit-to-nesting`** 生成；首次启动 `_PIECES_STATE` 为空属正常（不崩），前端上传母版 commit 后自动 reload；
 2. **prod 模式**：`materialSorting-web/static/` 必须先 `cd materialSorting-web && npm run build` 生成（产物已 gitignore，不入库；旧版 vanilla 三件套已删除）。
 3. **dev 模式**：`npm run dev` 启 Vite dev server (:5173)，经 Vite proxy 转发 `/export` 与 `/ws` 到后端 :8000；**不需要 build 产物**（但仍建议先跑一次 `npm run build` 让 `static/` 存在，避免 FastAPI mount 空目录报错）。
 
@@ -37,11 +37,11 @@ web  →  nesting_engine  →  nesting_bounds  →  dxf_parser
 
 ## 数据流主线
 
-母版 → `ms-export-dxf` → 110 裁片 → `load_pieces` → 128 NestPiece → `ms-pieces-export` → `pieces_intermediate.json`（事实源）→ `ms-sparrow-*` / `ms-web`。详见 [README.md](README.md)。
+上传母版 → `/api/parse-dxf`（解析预览）→ `/api/commit-to-nesting`（切单裁片到 `out/uploads/<doc_id>_pieces/` → `load_nest_pieces` 归一化+镜像 → 写 `pieces_intermediate.json` 事实源）→ `ms-sparrow-*` / `ms-web`。详见 [README.md](README.md)。
 
 ## 运行方式
 
-重构为正经包后，不能直接 `python file.py`（相对导入）。用 console_scripts（`ms-*`）或 `python -m materialsorting.<sub>.<module>`。6 个入口定义在 `pyproject.toml`。
+重构为正经包后，不能直接 `python file.py`（相对导入）。用 console_scripts（`ms-*`）或 `python -m materialsorting.<sub>.<module>`。4 个入口定义在 `pyproject.toml`。
 
 ## 已知问题（待清理，勿在迁移中扩大改动）
 

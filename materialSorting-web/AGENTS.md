@@ -233,7 +233,7 @@ src/
 - **WS StartPayload 加 `quantities` 字段**：`Record<label, Record<sizeKey, number>> | null`（label→sizeKey→demand）。`types/ws.ts` 扩字段；`useSolveRun.ts` StartConfig 加可选 `quantities`，hook 内 `cfg.quantities ?? null` 填进 payload。缺省=null → 后端全片 demand=1（向后兼容旧前端）。
 - **`serializeQuantities(qtyMap, sizes)` 纯函数（`lib/params.ts`）**：把 qtyStore.quantities 扁平化。per-size 模式取 perSize（只保留选中码 sizeKey）；global 模式取 globalValue 展开到全部选中码 sizeKey。空 map / 空 sizes → null。sizeKey 口径：number→String(number)、null→'null'（与 qtyStore 一致）。单测在 `lib/__tests__/params.test.ts`（7 项）。
 - **ControlPanel.handleStart 调 serializeQuantities**：读 `useQtyStore.getState().quantities`（不订阅，避免数量编辑频繁重渲染 ControlPanel）+ 过滤 null 后的 sizesNum，序列化后填进 `ControlPanelStartPayload.quantities`。NestingPage 透传到 `useSolveRun.start({quantities})`，N 个 seed 共用同一份。
-- **label 对齐由后端保证**：intermediate 每片加 `label` 字段（后端 `_commit_to_nesting_sync` + `pieces_export` 用 `compute_size_ptype_labels` 标注，与 parse-dxf 响应同排序同标注）。前端 qtyStore 以 label 为 key，后端 build_instance 按 `(piece.label, str(piece.size))` 查 quantities → demand。M1787 验证 10/10 ptype 对齐。
+- **label 对齐由后端保证**：intermediate 每片加 `label` 字段（后端 `_commit_to_nesting_sync` 用 `compute_size_ptype_labels` 标注，与 parse-dxf 响应同排序同标注）。前端 qtyStore 以 label 为 key，后端 build_instance 按 `(piece.label, str(piece.size))` 查 quantities → demand。M1787 验证 10/10 ptype 对齐。
 - **demand=0 语义（D2）**：用户改某片某码为 0 → 后端 build_instance 见 0 跳过该 piece（不进 sparrow 实例）。配合 D3（hydrateDefaults 填 1）保证开箱即用 + 用户可显式排除。
 - **无 SVG/坐标变换改动**：本故事仅 store/hook/payload 扩展，AC 仅要求 typecheck + 单测 + `python -c "from materialsorting.web.server import app"` 导入通过。浏览器视觉回归（改某片某码 0 → 求解结果该片不出现）留作整体回归。
 
@@ -252,7 +252,7 @@ src/
 
 ## US-024 关键约定（NestSVG 5 层渲染 + 共享 LAYER5_COLORS 调用方必读）
 
-- **5 层中 4 层仅渲染透传不参与碰撞**：`polygon`（layer1 毛版外轮廓，erode 后）是唯一参与 sparrow NFP 碰撞的几何；`net_polygon` / `internal_lines` / `notches` / `grain_line` 4 层仅渲染/导出透传，不影响求解结果或利用率。改任一层语义需同步后端 collect.LAYER_MAPPING + export_dxf + load_pieces + pieces_export + solver.pid_meta + web/export.py + 本组件。
+- **5 层中 4 层仅渲染透传不参与碰撞**：`polygon`（layer1 毛版外轮廓，erode 后）是唯一参与 sparrow NFP 碰撞的几何；`net_polygon` / `internal_lines` / `notches` / `grain_line` 4 层仅渲染/导出透传，不影响求解结果或利用率。改任一层语义需同步后端 collect.LAYER_MAPPING + export_dxf + load_pieces + web/server._commit_to_nesting_sync + solver.pid_meta + web/export.py + 本组件。
 - **5 层节点只在 manifest 到达时建一次（性能保护 AC#5）**：NestSVG effect 内 `if (run.manifest && !flipRef.current)` 块创建毛版 polygon + 4 层工艺节点；frame 切换只 setAttribute('points'/'x1'/'y1'/'x2'/'y2'/'display')，**不重建 DOM**；128 片 × 5 节点 ~10fps 可承受。改创建时机（如每帧重建）会破坏性能保护。
 - **4 层节点 pointerEvents='none'**：事件委托只触发于毛版 polygon（dataset.ptype 必有）；4 层工艺节点不参与 mousemove tooltip 联动（US-006 hover 语义不变）。
 - **5 层都在翻转组内（scale(1,-1)）**：共用 `<g transform="translate(0 gate) scale(1 -1)">`，与 US-003 关键约定 #1 一致。改其中一层挪出翻转组会破坏视觉一致性（上下颠倒）。

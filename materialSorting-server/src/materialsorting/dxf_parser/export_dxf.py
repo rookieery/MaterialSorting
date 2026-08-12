@@ -1,12 +1,16 @@
-"""把提取的裁片导出为 DXF（每类型×每码一个文件），供排料算法使用。
+"""把提取的裁片导出为单片 R12 DXF（富怡 ET 兼容），供排料管线消费。
 
-输出 R12 DXF（富怡 ET 兼容），每文件含一个裁片：
+每文件含一个裁片（5 层）：
   layer 1  = 毛版外轮廓(闭合 POLYLINE)
   layer 14 = 净版轮廓(闭合 POLYLINE，US-024)
   layer 8  = 内部线(多条 POLYLINE，US-024)
   layer 4  = 刺口(POINT，位置；法线读时按最近边重算，US-024)
   layer 7  = 布纹线(LINE，保留原始方向；排料时按方向旋转统一水平)
-命名：<类型>_<码号>.dxf，如 后片_30.dxf
+
+库函数（``write_piece_dxf`` / ``assign_group_no`` / ``GROUP_NAMES``）由
+``web/server._commit_to_nesting_sync`` 调用：上传母版 → 切单裁片到
+``out/uploads/<doc_id>_pieces/``。原 CLI ``ms-export-dxf`` 已移除（Web 上传取代），
+生成 intermediate 的唯一途径是「Web 上传母版 → commit-to-nesting」。
 
 US-024：layer14/8/4 仅当 PieceOutline 携带对应字段（来自 ``collect_pieces_with_details``）
 才写出；旧调用方（仅 layer1+layer7 的 PieceOutline）向后兼容 —— 字段缺省/default_factory=[])
@@ -14,10 +18,7 @@ US-024：layer14/8/4 仅当 PieceOutline 携带对应字段（来自 ``collect_p
 """
 from __future__ import annotations
 
-import argparse
 import logging
-import os
-import sys
 from pathlib import Path
 
 import ezdxf
@@ -26,9 +27,7 @@ from ezdxf.lldxf.const import POLYLINE_CLOSED
 # 抑制 ezdxf 的 R12 $INSUNITS 等已知无害警告（R12 规范不导出单位变量，单位 mm 隐式）
 logging.getLogger("ezdxf").setLevel(logging.ERROR)
 
-from .. import paths
 from . import explore
-from .collect import collect_pieces_with_details
 
 # group 编号 → 类型名（用户基于 SVG 人工识别确认）
 GROUP_NAMES = {
@@ -96,48 +95,3 @@ def write_piece_dxf(piece, out_path: Path) -> None:
         msp.add_line((float(gl[0]), float(gl[1])), (float(gl[2]), float(gl[3])),
                      dxfattribs={"layer": "7"})
     doc.saveas(str(out_path))
-
-
-def main():
-    try:
-        sys.stdout.reconfigure(encoding="utf-8")
-    except Exception:
-        pass
-    ap = argparse.ArgumentParser(description="导出裁片为 DXF（按类型命名）")
-    ap.add_argument("--dxf", default=paths.MASTER_DXF_GLOB)
-    ap.add_argument("--out", default=paths.PIECES_DIR)
-    args = ap.parse_args()
-
-    src = explore.resolve_dxf(args.dxf)
-    if src is None or not src.exists():
-        print(f"[ERROR] 找不到 DXF: {args.dxf}", file=sys.stderr)
-        sys.exit(1)
-    # US-024：用 collect_pieces_with_details 取代 explore.collect_pieces，让 write_piece_dxf
-    # 拿到 PieceOutline 全 5 层（layer1+layer7+layer14+layer8+layer4）。assign_group_no 与
-    # write_piece_dxf 兼容 PieceOutline additive 扩展（旧调用方零改动）。
-    pieces = collect_pieces_with_details(src)
-    gmap = assign_group_no(pieces)
-    outdir = Path(args.out)
-    outdir.mkdir(parents=True, exist_ok=True)
-
-    count = 0
-    by_type: dict[str, int] = {}
-    for p in pieces:
-        gno = gmap[p.group_key]
-        name = GROUP_NAMES.get(gno)
-        if name is None:
-            continue
-        write_piece_dxf(p, outdir / f"{name}_{p.size}.dxf")
-        by_type[name] = by_type.get(name, 0) + 1
-        count += 1
-
-    print(f"读取母版: {src}")
-    print(f"生成 DXF: {count} 个 → {outdir}")
-    print("按类型:")
-    for name in GROUP_NAMES.values():
-        if name in by_type:
-            print(f"  {name}: {by_type[name]} 码")
-
-
-if __name__ == "__main__":
-    main()

@@ -4,8 +4,7 @@
 不做语义类型识别（piece_type 故意不加，留给独立识别程序）。
 
 US-002 起新增三字段承载母版深度解析所需细节（内部线/刀口/净版），均
-`field(default_factory=list)` 默认空 list，既有调用方（pieces_export、
-sparrow_baseline、explore.collect_pieces）零改动可用；US-003
+`field(default_factory=list)` 默认空 list，既有调用方（sparrow_baseline、explore.collect_pieces）零改动可用；US-003
 `collect_pieces_with_details()` 负责填充。
 """
 from __future__ import annotations

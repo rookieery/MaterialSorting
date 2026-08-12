@@ -3,7 +3,7 @@
 把 128 片喂给 sparrow（开源 SOTA，无服装约束、纯几何），拿到 density，
 回答：90% 在 M1787 直筒款上到底可达吗。这决定 B 路径的现实目标排序。
 
-输入：_output/sparrow_baseline/pieces_intermediate.json（pieces_export.py 产出）
+输入：out/sparrow_baseline/pieces_intermediate.json（commit-to-nesting 产出）
 
 每次运行除 density 外，还产出（同名前缀）：
   result_*_t{T}.json   —— 结果 + 每片 placement（可离线重画）

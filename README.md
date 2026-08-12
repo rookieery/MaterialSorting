@@ -8,8 +8,7 @@
 MaterialSorting/
 ├── .docs/                     排料文档（technical/ 代码地图·todo + business/ 规则·方案·反馈，README.md 为索引）
 ├── data/                      原始数据
-│   ├── M1787#直筒...(1)(2).dxf  母版 DXF（dxf_parser 输入）
-│   └── m1787_直筒/             110 个单裁片 DXF（排料输入，{类型}_{码号}.dxf）
+│   └── M1787#直筒...(1)(2).dxf  母版 DXF（离线留档/回归参照；运行时由用户上传）
 ├── materialSorting-server/    后端：排料引擎 + FastAPI 服务
 │   ├── pyproject.toml
 │   ├── out/                   运行产物（运行时生成，已 gitignore）
@@ -36,16 +35,11 @@ cd D:\code\MaterialSorting\materialSorting-server
 pip install -e ".[web]"
 ```
 
-安装后注册 6 个命令行入口：`ms-explore` / `ms-export-dxf` / `ms-pieces-export` / `ms-sparrow-baseline` / `ms-sparrow-exp` / `ms-web`。
+安装后注册 4 个命令行入口：`ms-explore` / `ms-sparrow-baseline` / `ms-sparrow-exp` / `ms-web`。
 
 ## 启动顺序（重要）
 
-**首次启动 `ms-web` 前，必须先生成中间数据**，否则工作台 import 时找不到 `out/sparrow_baseline/pieces_intermediate.json`：
-
-```bash
-# 1. 生成 128 片中间数据（从 data/m1787_直筒/ 读取）
-ms-pieces-export
-```
+**intermediate 由 Web 上传母版生成**：`ms-web` import 时读 `out/sparrow_baseline/pieces_intermediate.json`，缺失则 `_PIECES_STATE` 为空（不崩，`/api/ptypes` 返空、`/ws/solve` 报「排料数据为空」）；前端上传母版触发 `/api/commit-to-nesting` 后自动 reload 填入。
 
 前端有 **dev / prod 两种模式**（二选一）：
 
@@ -75,13 +69,13 @@ ms-web             # → http://127.0.0.1:8000
 ## 数据流
 
 ```
-data/M1787#...(1)(2).dxf 母版
-   ↓ ms-export-dxf（人工 group→类型映射）
-data/m1787_直筒/{类型}_{码号}.dxf（110 片）
-   ↓ materialsorting.nesting_bounds.load_pieces（布纹对齐 + 归一化 + L/R 镜像展开）
-128 个 NestPiece
-   ↓ ms-pieces-export
-out/sparrow_baseline/pieces_intermediate.json   ← 全流程事实源
+用户上传母版 DXF
+   ↓ POST /api/parse-dxf（collect_pieces_with_details 取 5 层 → 预览）
+   ↓ POST /api/commit-to-nesting
+       ├─ assign_group_no + GROUP_NAMES 定片型
+       ├─ write_piece_dxf 切单裁片 → out/uploads/<doc_id>_pieces/
+       ├─ load_nest_pieces（布纹对齐 + 归一化 + L/R 镜像展开）
+       └─ 写回 out/sparrow_baseline/pieces_intermediate.json（事实源，.bak 备份）
    ↓ ms-sparrow-baseline / ms-sparrow-exp（sparrow 求解）
    ↓ ms-web（工作台读取 + 可视化 + 导出 PNG/R12-DXF）
 ```
@@ -90,9 +84,7 @@ out/sparrow_baseline/pieces_intermediate.json   ← 全流程事实源
 
 | 命令 | 作用 |
 |---|---|
-| `ms-export-dxf` | 母版 DXF → 110 个单裁片 DXF（数据流水线起点） |
 | `ms-explore` | 母版 DXF 全裁片探索（SVG/JSON/CSV） |
-| `ms-pieces-export` | 110 裁片 → `pieces_intermediate.json`（排料前必跑） |
 | `ms-sparrow-baseline` | sparrow 基线求解（{0,180}，无 erode） |
 | `ms-sparrow-exp` | 旋转公差 / 重合公差 / 组合实验 |
 | `ms-web` | 可视化工作台（http://127.0.0.1:8000） |

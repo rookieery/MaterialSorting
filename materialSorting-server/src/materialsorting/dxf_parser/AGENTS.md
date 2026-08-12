@@ -9,7 +9,6 @@
 python -c "from materialsorting.dxf_parser import collect, explore, reader, geometry, model, export_dxf"
 python -m materialsorting.dxf_parser.collect    "../data/M1787#....dxf"      # US-003 深度解析 CLI 冒烟
 python -m materialsorting.dxf_parser.explore    --dxf "../data/M1787#....dxf"  # 母版探索
-python -m materialsorting.dxf_parser.export_dxf --dxf "../data/M1787#....dxf"  # 切 110 单裁片
 ```
 
 ## 文件分工

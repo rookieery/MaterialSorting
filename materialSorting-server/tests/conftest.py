@@ -44,7 +44,7 @@ def _synthetic_pieces():
 
 @pytest.fixture
 def real_or_synthetic_pieces():
-    """优先读真实 intermediate；缺失（CI / 全新 checkout 未跑 ms-pieces-export）则合成。
+    """优先读真实 intermediate；缺失（CI / 全新 checkout 未上传母版 commit）则合成。
 
     返回 ``(pieces, gate_mm)``。合成数据 2 片、求解 <1s，适合多进程测试反复启动。
     """

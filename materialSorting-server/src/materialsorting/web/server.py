@@ -93,7 +93,7 @@ def _get_pieces_state() -> dict:
 
 
 # 启动时读一次中间数据（事实源：paths.INTERMEDIATE）→ 填入 _PIECES_STATE。
-# 若 intermediate 不存在（首次启动未跑 ms-pieces-export），_PIECES_STATE 保持空 dict；
+# 若 intermediate 不存在（首次启动未上传母版 commit），_PIECES_STATE 保持空 dict；
 # 后续 GET /api/ptypes / /ws/solve 会降级返回空数据，commit 成功后 _reload 才真正填入。
 try:
     _reload_pieces_state()
@@ -226,7 +226,7 @@ def _commit_to_nesting_sync(doc_id: str, src_dxf: str, source_name: str) -> dict
     3. ``write_piece_dxf`` 切单裁片（5 层全写出）到 ``paths.OUT_DIR/uploads/<doc_id>_pieces/``；
     4. ``load_nest_pieces(pieces_dir, sizes=母版全码)`` 对齐布纹线 + 归一化 + L/R 镜像
        （5 层跟随同一变换链）；
-    5. 备份原 intermediate 为 ``.bak`` 后覆盖写回（schema 与 ``ms-pieces-export`` 一致）。
+    5. 备份原 intermediate 为 ``.bak`` 后覆盖写回（schema 与历史 CLI 产物一致）。
 
     返回新 intermediate 摘要 dict（码数/裁片数/总面积/备份路径）。
     """
@@ -277,7 +277,7 @@ def _commit_to_nesting_sync(doc_id: str, src_dxf: str, source_name: str) -> dict
     # 严格对齐的 label 字典（关键不变量 AC#5）。
     size_ptype_label = compute_size_ptype_labels(pieces, gmap, GROUP_NAMES)
 
-    # intermediate schema 与 ms-pieces-export（pieces_export.py）完全一致
+    # intermediate schema 与历史 CLI 产物（pieces_export.py，已移除）完全一致
     doc = {
         'source': source_name,
         'gate_mm': NEST_GATE_MM,

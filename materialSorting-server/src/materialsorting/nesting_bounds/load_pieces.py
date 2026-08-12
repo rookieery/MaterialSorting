@@ -1,6 +1,6 @@
 """加载排料裁片：单裁片 DXF → 布纹线对齐水平 → 归一化到原点 → 成对镜像展开。
 
-输入：material sorting/data/m1787_直筒/{类型}_{码号}.dxf
+输入：单裁片 DXF 目录（Web 流程由 server.py 传 out/uploads/<doc_id>_pieces/）
 输出：list[NestPiece]，每片已归一化（bbox 左下角在原点）、布纹线已对齐水平。
 
 阶段 0 不上 v0.3 全约束：成对片镜像展开为 L/R 两片后**独立排**（不强制对称位置），
@@ -17,7 +17,6 @@ import math
 import os
 from dataclasses import dataclass, field
 
-from .. import paths
 from ..dxf_parser import reader, geometry, collect as _collect
 
 GATE_MM = 1980.0  # 门幅（有效排料宽度，不扣布边）
@@ -300,11 +299,3 @@ def load_nest_pieces(data_dir, sizes=None, types=None):
                     net_polygon=L_net, internal_lines=L_int, notches=L_notches, grain_line=L_grain,
                 ))
     return pieces
-
-
-if __name__ == '__main__':
-    ps = load_nest_pieces(paths.PIECES_DIR)
-    by_t = {}
-    for p in ps:
-        by_t[p.ptype] = by_t.get(p.ptype, 0) + 1
-    print(f'加载 {len(ps)} 片 | 各类型: {by_t} | 总面积 {sum(p.area_mm2 for p in ps)/1e6:.3f} m2')

@@ -1,7 +1,6 @@
 """US-022 共享：裁片 A/B/C 标注 + (size, ptype) → label 映射。
 
-供 ``web/server.py``（parse-dxf 响应 + commit-to-nesting intermediate）与
-``nesting_engine/pieces_export.py``（baseline intermediate）共用，保证两条管线对同一
+供 ``web/server.py`` 的 parse-dxf 响应与 commit-to-nesting intermediate 共用，保证两条管线对同一
 母版产出的 label 集合一致 —— 前端 ``qtyStore`` 以 label 为 key，后端 intermediate 的
 label 必须与 parse 响应的 label 按 (size, ptype) 严格对齐，否则 demand 数量配错片型。
 

@@ -27,11 +27,11 @@ netstat -ano | grep -E ":<PORT>[[:space:]]" | grep -i LISTENING | awk '{print $N
 ## 执行步骤
 
 ### 0. 前置检查
-- `pieces_intermediate.json` 必须存在（否则 server.py 顶层 `load_pieces()` 直接抛错）：
+- `pieces_intermediate.json` 建议存在（缺失时 server.py 启动 allow-empty，`_PIECES_STATE={}` 不崩，但 `/api/ptypes` 返空、`/ws/solve` 报「排料数据为空」）：
   ```bash
   test -f d:/code/MaterialSorting/materialSorting-server/out/sparrow_baseline/pieces_intermediate.json && echo OK || echo MISSING
   ```
-  MISSING → 提示用户先 `ms-pieces-export`，**不要继续启动后端**。
+  MISSING → 提示用户 intermediate 由 Web 上传母版 commit 生成（启动后在前端上传一次母版即可），**不阻塞后端启动**。
 - prod 模式且目标含 frontend：先 `cd d:/code/MaterialSorting/materialSorting-web && npm run build`。build 失败（tsc 报错）→ 报错给用户，**不启后端**。
 
 ### 1. 探测现状，决定是否先停

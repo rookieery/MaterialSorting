@@ -20,8 +20,6 @@ dev = ["pytest>=7.4", "httpx>=0.27"]   # httpx: starlette TestClient WS 测试�
 
 [project.scripts]
 ms-explore = "materialsorting.dxf_parser.explore:main"
-ms-export-dxf = "materialsorting.dxf_parser.export_dxf:main"
-ms-pieces-export = "materialsorting.nesting_engine.pieces_export:main"
 ms-sparrow-baseline = "materialsorting.nesting_engine.sparrow_baseline:main"
 ms-sparrow-exp = "materialsorting.nesting_engine.sparrow_experiments:main"
 ms-web = "materialsorting.web.server:main"

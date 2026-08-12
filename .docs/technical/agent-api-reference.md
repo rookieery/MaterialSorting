@@ -9,7 +9,7 @@
 
 ## 启动约束（重要）
 
-1. `server.py` 顶层执行 `_reload_pieces_state()` —— import 时读 intermediate 填入 `_PIECES_STATE`（US-020）。intermediate 缺失**不再让 import 崩**：`_PIECES_STATE={}` 时 `/api/ptypes` 返 `{representatives:{}}`、`/ws/solve` 报「排料数据为空」、`/export` 报「placed 的 pid 均未匹配」。生产仍建议先 `ms-pieces-export` 让首次启动有数据。
+1. `server.py` 顶层执行 `_reload_pieces_state()` —— import 时读 intermediate 填入 `_PIECES_STATE`（US-020）。intermediate 缺失**不再让 import 崩**：`_PIECES_STATE={}` 时 `/api/ptypes` 返 `{representatives:{}}`、`/ws/solve` 报「排料数据为空」、`/export` 报「placed 的 pid 均未匹配」。intermediate 由 Web commit（`/api/commit-to-nesting`）生成，首次启动空 state 正常，前端上传母版后自动 reload 填入。
 2. `app.mount('/static', ...)` 指向 `materialSorting-web/static/`（前端构建产物）。
    - **prod**：先 `cd materialSorting-web && npm run build` 生成 `static/`；
    - **dev**：`npm run dev` 起 Vite :5173，经 proxy 打 :8000（仍建议先 build 一次让 `static/` 存在，避免 mount 空目录报错）。
@@ -197,7 +197,7 @@ curl -X POST http://127.0.0.1:8000/api/commit-to-nesting \
 
 1. **临时单裁片目录**：`paths.OUT_DIR/uploads/<doc_id>_pieces/`（~110 个 DXF，每次 commit 先 `shutil.rmtree` 再重写，**idempotent**）。v1 不自动清理（open question），同 `doc_id` 重跑会覆盖。
 2. **intermediate 备份**：写回前 `shutil.copy2(paths.INTERMEDIATE, paths.INTERMEDIATE.with_suffix('.bak'))`。`pieces_intermediate.bak` 是上一次写回前的快照（首次 commit 无原文件则跳过备份）。**只保留一份**（再 commit 会覆盖 `.bak`）。
-3. **intermediate schema 与 `ms-pieces-export` 一致**：`{source, gate_mm, n_pieces, total_area_mm2, pieces[]}`；pieces 字段 `{pid, ptype, size, side, label(US-022), polygon, bbox, area_mm2, n_verts, allowed_angles, net_polygon(US-024), internal_lines(US-024), notches(US-024), grain_line(US-024)}`。`gate_mm=1980`（`nesting_bounds.load_pieces.GATE_MM`）、`allowed_angles=[0,180]`（v0.3 布纹线）。`label` 由 `compute_size_ptype_labels` 按 parse 同排序同标注生成，L/R 同 ptype 共享 label（AC#5 关键不变量）。US-024 起每片多 4 个 5 层字段（default_factory=[] / None 向后兼容旧 intermediate），由 `load_pieces.load_nest_pieces` 经 `_read_piece_full` + `_apply_layer_transforms` 与 polygon 共享 rotate→mirror→normalize transform 链后透传。
+3. **intermediate schema 与历史 CLI 产物一致**：`{source, gate_mm, n_pieces, total_area_mm2, pieces[]}`；pieces 字段 `{pid, ptype, size, side, label(US-022), polygon, bbox, area_mm2, n_verts, allowed_angles, net_polygon(US-024), internal_lines(US-024), notches(US-024), grain_line(US-024)}`。`gate_mm=1980`（`nesting_bounds.load_pieces.GATE_MM`）、`allowed_angles=[0,180]`（v0.3 布纹线）。`label` 由 `compute_size_ptype_labels` 按 parse 同排序同标注生成，L/R 同 ptype 共享 label（AC#5 关键不变量）。US-024 起每片多 4 个 5 层字段（default_factory=[] / None 向后兼容旧 intermediate），由 `load_pieces.load_nest_pieces` 经 `_read_piece_full` + `_apply_layer_transforms` 与 polygon 共享 rotate→mirror→normalize transform 链后透传。
 4. **commit 后 reload（US-020）**：`_commit_to_nesting_sync` 成功 → 立即调 `_reload_pieces_state()` 重读 intermediate 填入 `_PIECES_STATE`（threading.Lock 保护，原子替换）。下一次 `/ws/solve` / `/export` / `/api/ptypes` 即看到新裁片，**前端无需重启 ms-web**。reload 异常（罕见 I/O 竞态）降级为 `reloaded: false` + `reload_error` 字段，保留旧 state 不半切。
 
 ### 关键不变量
@@ -205,7 +205,7 @@ curl -X POST http://127.0.0.1:8000/api/commit-to-nesting \
 1. **全码**：`load_nest_pieces` 的 sizes 取自母版实际全码（`sorted({p.size for p in pieces if p.size is not None})`），**不沿用 `DEFAULT_SIZES`**（8 码跳 32）。M1787 实测 11 码 [28-38] → 176 NestPiece（vs 8 码 128 片）。
 2. **片型映射复用 `export_dxf.GROUP_NAMES`**（g00→后片 … g09→腰，M1787 结构款 SVG 人工确认）。新款母版须版师重新确认 group→ptype 映射。
 3. **NestPiece 仅含 polygon（毛版 layer1）**：grain/internal/notch 不进 intermediate（排料只需 polygon）；L/R 镜像由 `load_nest_pieces` 的 `PAIR_TYPES` 处理。
-4. **回归等价**：对 M1787，Path A 产物的 `pid` 集合 / `total_area_mm2` 与「全码 CLI 管线」（`load_nest_pieces(paths.PIECES_DIR, sizes=[28..38])`）等价（实测 176/176 片、PID 集合相同、零面积 diff）。
+4. **回归等价（历史口径）**：对 M1787，commit 产物的 `pid` 集合 / `total_area_mm2` 与历史「全码 CLI 管线」（`load_nest_pieces(<pieces_dir>, sizes=[28..38])`，CLI 已移除）等价（实测 176/176 片、PID 集合相同、零面积 diff）。
 5. **路径一律走 `paths`**：`paths.OUT_DIR/uploads/`、`paths.INTERMEDIATE`、`paths.INTERMEDIATE.with_suffix('.bak')`；不硬编码 `..` 上溯。
 
 ## GET /api/ptypes — US-020 片型代表裁片（D10/D11）

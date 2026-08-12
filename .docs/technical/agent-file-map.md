@@ -32,8 +32,7 @@ materialSorting-server/
     │   ├── constraints.py             v0.3 约束常量 + 位图腐蚀 + 合法性校验
     │   ├── sparrow_baseline.py        基线求解 + ★共享层（被 experiments/export/solver 复用）
     │   ├── sparrow_experiments.py     旋转/重合公差实验
-    │   ├── labeling.py                US-022 共享 A/B/C 标注 + (size,ptype)→label 映射
-    │   └── pieces_export.py           NestPiece → intermediate JSON（事实源，US-022 加 label）
+    │   └── labeling.py                US-022 共享 A/B/C 标注 + (size,ptype)→label 映射
     └── web/                           FastAPI + WS 工作台（详见 agent-api-reference.md）
         ├── server.py                  app + 路由（GET /、/static、POST /export、POST /api/parse-dxf、POST /api/commit-to-nesting、GET /api/ptypes、WS /ws/solve）+ 求解线程桥 + US-020 _PIECES_STATE 可 reload（threading.Lock immutable snapshot）+ US-004 上传解析 + US-010 commit-to-intermediate（commit 后 reload）+ US-022 intermediate 加 label + WS quantities 入参
         ├── solver.py                  build_instance（US-022 quantities→demand，0 跳过）+ solve_with_callback（threading 旧版，保留）+ solve_with_callback_proc（US-025 多进程版，返回 process 句柄可 terminate）
@@ -50,7 +49,6 @@ materialSorting-server/
 | `DATA_DIR` | `<repo>/data` | `MS_DATA_DIR` |
 | `OUT_DIR` | `<server>/out` | `MS_OUT_DIR` |
 | `SPARROW_DIR` | `OUT_DIR/sparrow_baseline` | — |
-| `PIECES_DIR` | `DATA_DIR/m1787_直筒` | — |
 | `INTERMEDIATE` | `SPARROW_DIR/pieces_intermediate.json` | — |
 | `MASTER_DXF_GLOB` | `DATA_DIR/M1787*(2).dxf` | — |
 | `STATIC_DIR` | `<repo>/materialSorting-web/static` | `MS_STATIC_DIR` |
@@ -112,7 +110,7 @@ materialSorting-server/
 | `notches` | `list`（默认 `[]`） | US-002：layer4 POINT 刀口 `[(x,y,nx,ny), ...]`（点 + 单位法向量），由 US-003 填充 |
 | `net_polygon` | `list`（默认 `[]`） | US-002：layer14 POLYLINE 净版轮廓 `[(x,y), ...]`，由 US-003 填充 |
 
-方法：`to_dict()` → `asdict(self)`（新字段自动序列化；既有调用方 `pieces_export`/`sparrow_baseline`/`explore.collect_pieces` 默认空 list 零改动可用）。
+方法：`to_dict()` → `asdict(self)`（新字段自动序列化；既有调用方 `sparrow_baseline`/`explore.collect_pieces` 默认空 list 零改动可用）。
 
 ### `collect.py`（294 行）— US-003 母版深度解析
 
@@ -153,8 +151,7 @@ materialSorting-server/
 - **import 时副作用**：`logging.getLogger("ezdxf").setLevel(ERROR)` —— 静默 R12 `$INSUNITS` warning（R12 规范不导出单位变量，单位 mm 隐式）。
 - `GROUP_NAMES = {"g00":"后片","g01":"前片","g02":"机头","g03":"裤耳","g04":"前袋","g05":"火机袋","g06":"后袋","g07":"单排","g08":"双排","g09":"腰"}` —— 用户经 SVG 确认的 group→类型映射。
 - `assign_group_no(pieces)` —— 复用 `explore.group_sort_key` 把每个 `group_key` 映到 `g00..g09`。
-- `write_piece_dxf(piece, out_path)` —— 写单裁片 5 层 DXF。US-024：若 PieceOutline 携带 `net_polygon` / `internal_lines` / `notches`（来自 `collect_pieces_with_details`），同时写 layer14/8/4；notch 仅存 POINT 位置，法线 (nx, ny) 丢弃（读时由 `load_pieces._read_piece_full` 按 outline 最近边重算）。
-- `main()` —— CLI，默认 `--dxf paths.MASTER_DXF_GLOB`、`--out paths.PIECES_DIR`。US-024 起用 `collect_pieces_with_details(src)` 取代 `explore.collect_pieces`，让 `write_piece_dxf` 拿到全 5 层 PieceOutline。
+- `write_piece_dxf(piece, out_path)` —— 写单裁片 5 层 DXF。US-024：若 PieceOutline 携带 `net_polygon` / `internal_lines` / `notches`（来自 `collect_pieces_with_details`），同时写 layer14/8/4；notch 仅存 POINT 位置，法线 (nx, ny) 丢弃（读时由 `load_pieces._read_piece_full` 按 outline 最近边重算）。库函数，由 `web/server._commit_to_nesting_sync` 调用切单裁片到 `out/uploads/<doc_id>_pieces/`（原 `ms-export-dxf` CLI 已移除）。
 
 ### `explore.py`（335 行）— 母版全裁片探索
 
@@ -275,17 +272,9 @@ DEFAULT_COLOR = '#bbbbbb'
 | `run_one` | `(doc, gate, exp, erode_d, time_budget, seed)` | 跑一次；同时报 `real_density`（原面积分母）+ `sparrow_density`（erode 后自报）；写 `result_{stem}.json`/`{stem}_curve.json`/`{stem}.svg`/`{stem}_curve.png`，stem = `exp_{tag}_t{T}_s{seed}` |
 | `main()` | — | CLI：`--exp {free_rot\|v0_rot\|erode\|erode_rot\|all}`(默认 all)/`--d`(5)/`--time`(600)/`--seed`(0)/`--seeds`(csv→多种子方差汇总)；写 `experiments_summary_t{T}.json` 或 `multiseed_{exp}_d{d}_t{T}.json` |
 
-### `pieces_export.py`（104 行）— intermediate JSON 导出（5 层透传，US-024）
-
-把 128 NestPiece dump 成 spyrrow 格式无关的 intermediate JSON —— 全流程**事实源**。sparrow 输入映射是后续独立步骤（当前 baseline 内联做了）。US-024 起每片增加 `net_polygon` / `internal_lines` / `notches` / `grain_line` 4 字段（与 `NestPiece` 同名透传），旧 intermediate 无字段时 `.get()` 默认空 / None 向后兼容。
-
-- `main()` —— `load_nest_pieces(paths.PIECES_DIR)` → 写 `paths.INTERMEDIATE`；US-022 起解析母版（`paths.MASTER_DXF_GLOB`）经 `compute_size_ptype_labels` 标注 label（母版缺失则 label=null，向后兼容）。
-- 顶层字段：`source, gate_mm, n_pieces, total_area_mm2, pieces`。
-- 每片字段：`pid, ptype, size, side, label(US-022), polygon, bbox, area_mm2, n_verts, allowed_angles, net_polygon(US-024), internal_lines(US-024), notches(US-024), grain_line(US-024)`。
-
 ### `labeling.py`（US-022 共享 A/B/C 标注）
 
-parse-dxf 响应（`web/server.py._build_parse_payload`）与 intermediate（`web/server.py._commit_to_nesting_sync` + `nesting_engine/pieces_export.py`）的**单一真相源** —— 保证两条管线对同一母版产出的 label 按 (size, ptype) 严格对齐（否则 qtyStore 按 label 编辑的数量会配错片型）。
+parse-dxf 响应（`web/server.py._build_parse_payload`）与 intermediate（`web/server.py._commit_to_nesting_sync`）的**单一真相源** —— 保证两条管线对同一母版产出的 label 按 (size, ptype) 严格对齐（否则 qtyStore 按 label 编辑的数量会配错片型）。
 
 | 函数 | 说明 |
 |------|------|
@@ -310,14 +299,14 @@ US-004 起 `web/server.py` 直接 import `dxf_parser.collect.collect_pieces_with
 ## 数据流主线
 
 ```
-data/M1787#...(2).dxf 母版
-  │ collect.collect_pieces_with_details（5 层 IR） / export_dxf.main（5 层单裁片 DXF）
-  ▼
-data/m1787_直筒/{类型}_{码号}.dxf（110 片，每片 layer1+14+8+4+7 五层）
+用户上传母版 DXF
+  │ collect.collect_pieces_with_details（5 层 IR）
+  ▼ /api/parse-dxf（预览）→ /api/commit-to-nesting
+out/uploads/<doc_id>_pieces/{类型}_{码号}.dxf（每片 layer1+14+8+4+7 五层，由 write_piece_dxf 切出）
   │ load_pieces.load_nest_pieces（_read_piece_full 读 5 层 + notch 法线按最近边重算 + _apply_layer_transforms 共享 transform 链 + 布纹对齐 + 归一化 + L/R 镜像）
   ▼
-128 NestPiece（每片持 polygon + net_polygon + internal_lines + notches + grain_line 5 层）
-  │ pieces_export.main
+NestPiece（母版全码，每片持 polygon + net_polygon + internal_lines + notches + grain_line 5 层）
+  │ _commit_to_nesting_sync（labeling.compute_size_ptype_labels 标 label）
   ▼
 out/sparrow_baseline/pieces_intermediate.json   ← 全流程事实源（每片 5 层字段）
   │
@@ -333,10 +322,10 @@ out/sparrow_baseline/pieces_intermediate.json   ← 全流程事实源（每片 
 | 母版 → 深度 IR 列表 | `collect.collect_pieces_with_details`（US-003） | `str\|Path` → `list[PieceOutline]`（layer1+7+14 净版+8 内部线+4 刀口，按 `LAYER_MAPPING`） |
 | 上传母版 → 解析 JSON | `web/server.parse_dxf`（US-004） | `multipart file` → 落盘 `uploads/<uuid>.dxf` + `collect_pieces_with_details` → 按码分组 + A/B/C 标注 JSON（`doc_id` 供 US-010 commit 引用） |
 | 上传母版 → intermediate | `web/server.commit_to_nesting` + `_commit_to_nesting_sync`（US-010 Path A） | `{doc_id, filename?}` → `uploads/<doc_id>_pieces/` + `load_nest_pieces(sizes=母版全码)` → 覆盖 `INTERMEDIATE`（先备份 `.bak`） |
-| IR → 单裁片 DXF | `export_dxf.write_piece_dxf` + `main` | `PieceOutline` → `<PIECES_DIR>/<类型>_<码号>.dxf` |
+| IR → 单裁片 DXF | `export_dxf.write_piece_dxf` | `PieceOutline` → `out/uploads/<doc_id>_pieces/<类型>_<码号>.dxf`（`_commit_to_nesting_sync` 调用） |
 | IR → 探索产物 | `explore.write_outputs` | `list[PieceOutline]` → 分组目录 + CSV + 总览 SVG |
-| 单裁片 DXF → NestPiece | `load_pieces.load_nest_pieces` | `PIECES_DIR` → `list[NestPiece]`（L+R 展开） |
-| NestPiece → intermediate | `pieces_export.main` / `web/server._commit_to_nesting_sync`（US-010） | → `INTERMEDIATE`（`{source,gate_mm,n_pieces,total_area_mm2,pieces:[…]}`；US-010 commit 写回前 `shutil.copy2(.json, .bak)`） |
+| 单裁片 DXF → NestPiece | `load_pieces.load_nest_pieces` | `uploads/<doc_id>_pieces/` → `list[NestPiece]`（L+R 展开） |
+| NestPiece → intermediate | `web/server._commit_to_nesting_sync`（US-010） | → `INTERMEDIATE`（`{source,gate_mm,n_pieces,total_area_mm2,pieces:[…]}`；写回前 `shutil.copy2(.json, .bak)`） |
 | intermediate → baseline 解 | `sparrow_baseline.main` | → `result_{tag}_t{T}.json`/`svg`/`curve.json`/`curve.png` |
 | intermediate → 实验解 | `sparrow_experiments.main` | → `result_exp_{tag}_t{T}_s{seed}.*` + 汇总 |
 
@@ -346,8 +335,6 @@ out/sparrow_baseline/pieces_intermediate.json   ← 全流程事实源（每片 
 |------|------|------|
 | `ms-explore` | `dxf_parser.explore:main` | 母版全裁片探索（分组 SVG/JSON + CSV + 总览） |
 | `python -m materialsorting.dxf_parser.collect` | `dxf_parser.collect:main`（US-003） | 母版深度解析 CLI 冒烟（每码片数 + internal/notch/net 计数） |
-| `ms-export-dxf` | `dxf_parser.export_dxf:main` | 母版 → 110 单裁片 DXF |
-| `ms-pieces-export` | `nesting_engine.pieces_export:main` | 110 裁片 → `pieces_intermediate.json`（排料前必跑） |
 | `ms-sparrow-baseline` | `nesting_engine.sparrow_baseline:main` | sparrow 基线求解（`{0,180}`，无 erode） |
 | `ms-sparrow-exp` | `nesting_engine.sparrow_experiments:main` | 旋转/重合公差/组合实验 |
 | `ms-web` | `web.server:main` | 可视化工作台（uvicorn :8000） |
@@ -364,7 +351,7 @@ out/sparrow_baseline/pieces_intermediate.json   ← 全流程事实源（每片 
 6. **坐标系**：spyrrow X=用布长度(0..width)，Y=门幅(0..gate)，Y 向上；前端 SVG `scale(1,-1)` 翻转后与 PNG / R12-DXF 一致。
 7. **导出用原始轮廓非 eroded**：`_PIECES_STATE['pieces_by_id']`（US-020 替代旧 `PIECES_BY_ID`）持原始 polygon，`placed_to_world` 用它变换；eroded 仅用于求解/屏幕。
 8. **`server.py` 启动期 `_reload_pieces_state()`**（US-020）：import 时读 intermediate 填 `_PIECES_STATE`；allow-empty 不再让 import 崩；commit 成功后立即 reload，前端无需重启 ms-web。`_state_lock=threading.Lock()` 保护 immutable snapshot 模式（整体替换 dict 内容）。
-9. **5 层中 4 层仅渲染透传（US-024）**：`polygon`（layer1 毛版外轮廓，erode 后）是唯一参与 sparrow NFP 碰撞的几何；`net_polygon` / `internal_lines` / `notches` / `grain_line` 4 层仅渲染与 PNG/DXF 导出透传，不影响求解结果或利用率。改任一层定义需同步 collect.LAYER_MAPPING + export_dxf.write_piece_dxf + load_pieces._read_piece_full + pieces_export + solver.pid_meta + web/export.py + NestSVG。
+9. **5 层中 4 层仅渲染透传（US-024）**：`polygon`（layer1 毛版外轮廓，erode 后）是唯一参与 sparrow NFP 碰撞的几何；`net_polygon` / `internal_lines` / `notches` / `grain_line` 4 层仅渲染与 PNG/DXF 导出透传，不影响求解结果或利用率。改任一层定义需同步 collect.LAYER_MAPPING + export_dxf.write_piece_dxf + load_pieces._read_piece_full + web/server._commit_to_nesting_sync + solver.pid_meta + web/export.py + NestSVG。
 10. **notch 法线读时重算（US-024）**：DXF POINT 仅存位置，无法线字段；`_read_piece_full` 读时调 `_collect._nearest_edge_with_normal` 按 outline 最近边重算（与 `collect._assign_notch` 同算法）。退化边（连续重复点）返 (0,0) 法线 → NestSVG / PNG 渲染为 0 长度线段兜底。
 11. **求解进程化（US-025 + US-026 接线）**：`solve_with_callback_proc` 是 `solve_with_callback`（threading）的多进程替代 —— spyrrow Rust .pyd 无 cancel/abort/stop API，唯有 `Process.terminate()`（Windows 调 TerminateProcess）可可靠终止原生阻塞 solve；spyrrow 对象不可 pickle，故 `build_instance` 必须在子进程内执行（`solve_worker` 顶层函数 + 参数全 JSON 可序列化），只把 pid_meta/frame/final/error 经 `multiprocessing.Queue` 传回主进程。**US-026 已切换 `ws_solve`**：write loop 内联 + read loop 后台 task 双向并发；`on_process` 回调把 Process 句柄交给 ws_solve；stop/断开 → terminate+join 防孤儿。旧 `solve_with_callback` 保留不删。终止安全：`terminate() → cancel_join_thread() → 限时 drain(≤50ms) → join(timeout=5)`，绝不阻塞。
 
@@ -374,4 +361,3 @@ out/sparrow_baseline/pieces_intermediate.json   ← 全流程事实源（每片 
 2. **跨 module 用 `_` 前缀名**：`sparrow_experiments` import `sparrow_baseline` 的 `_clean_polygon` 等 4 个下划线名，违反 Python 约定（应提为公共 API 或合并模块）。
 3. **旋转公差未主动实施**：`constraints.ROTATION_TOL` 仅"声明 + 校验"，baseline solver 仍 `{0,180}`；多姿态搜索是后续利用率提升点。
 4. **`sparrow_baseline.py:110-112` 占位死代码**：`<text>` 元素 append 后过滤，"占位，避免 linter"。
-5. **`pieces_export` 的 sparrow 映射内联在 baseline**：原计划独立模块，当前未拆。
