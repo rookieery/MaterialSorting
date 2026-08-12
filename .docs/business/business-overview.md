@@ -15,14 +15,17 @@
 
 | 模块 | 状态 | 说明 |
 |------|------|------|
-| DXF 解析（dxf_parser） | ✅ 稳定 | 抗住母版 3 怪癖（recover 元组 / GBK 块名 / `$INSUNITS` 不可信） |
-| 裁片加载（nesting_bounds） | ✅ 稳定 | 110 裁片 → 布纹对齐 → 归一化 → L/R 镜像 → 128 NestPiece |
-| intermediate 事实源 | ✅ 稳定 | `pieces_intermediate.json`（128 片，全流程事实源） |
+| DXF 解析（dxf_parser） | ✅ 稳定 | 抗住母版 3 怪癖；`collect.py`（US-003）深度解析 5 层 IR（毛版/净版/内部线/刺口/布纹线） |
+| 裁片加载（nesting_bounds） | ✅ 稳定 | 单裁片 → 布纹对齐 → 归一化 → L/R 镜像；**US-024 起 5 层透传**（notch 法线按 outline 最近边读时重算）。8 码 → 128 NestPiece / 母版全码 → 176 |
+| intermediate 事实源 | ✅ 稳定 | `pieces_intermediate.json`（每片含 polygon + 5 层字段，全流程事实源；US-022 起 label 字段供 demand 编辑） |
 | sparrow 基线求解 | ✅ 跑通 | 85.79%（600s `{0,180}` 无 erode） |
 | v0.3 约束层 | ⚠️ 部分 | `MAX_OVERLAP`/`ROTATION_TOL` 常量已定 + 校验已写；旋转公差 solver 侧未主动实施 |
 | 实验框架（experiments） | ✅ 跑通 | free_rot / v0_rot / erode / erode_rot 四模式 + 多种子方差 |
-| 可视化工作台（web） | ✅ 落地 | FastAPI + WS，React 18 + TS 5 + Vite 5 前端（US-001~US-008） |
-| 导出 PNG / R12-DXF | ✅ 落地 | 用原始母版轮廓，ET2008 兼容 |
+| 母版上传 → 解析 → commit | ✅ 落地 | `/api/parse-dxf`（US-004）+ `/api/commit-to-nesting`（US-010 Path A）+ `/api/ptypes`（US-020）；解析成功自动 commit + 解锁超排 Tab（US-021） |
+| 求解输入 demand | ✅ 落地 | US-022：per-size 数量编辑（qtyStore），0=该码跳过；前端 qtyStore → WS `quantities` |
+| 可视化工作台（web） | ✅ 落地 | FastAPI + WS，React 18 + TS 5 + Vite 5 前端（US-001~US-028：Tab 框架 + 上传预览 + 5 层渲染 + 求解停止/重启状态机） |
+| 求解停止 / 重启 | ✅ 落地 | US-025 进程化（`solve_with_callback_proc` + `solve_worker`）+ US-026 WS stop 协议 + US-027 phase 五态状态机 + US-028 SolveControls 按钮组 |
+| 导出 PNG / R12-DXF | ✅ 落地 | 用原始母版轮廓，**US-024 起 5 层叠加**（毛版+净版+内部线+刺口+布纹线），ET2008 兼容 |
 | 90% 利用率目标 | 🎯 进行中 | 距 90% 生死线约 4pp，主攻旋转公差 + 内片重合 |
 
 ## 核心业务实体
@@ -48,6 +51,8 @@
 
 `DEFAULT_SIZES = [28, 29, 30, 31, 33, 34, 35, 36]` —— **8 码套排，刻意跳过 32**（版师要求）。8 码 × 配对展开 = 128 个排料单元（NestPiece）。
 
+> **双码号口径**：CLI 管线（`ms-pieces-export`）用 `DEFAULT_SIZES` 8 码 → 128 NestPiece；工作台上传母版经 `/api/commit-to-nesting`（US-010 Path A）则取**母版实际全码**（M1787 = 11 码 [28-38]）→ 176 NestPiece。前端 SizePicker（US-017）从上传 doc 动态读码号，demand（US-022）按码可设 0 跳过。
+
 ### 门幅
 
 `GATE_MM = 1980`（1.98m）—— 布料有效排料宽，不减布边。spyrrow 世界的 Y 轴上限。
@@ -65,15 +70,16 @@
 
 ```
 data/M1787#...(2).dxf 母版
-   ↓ ms-export-dxf（人工 group→类型映射，GROUP_NAMES）
-data/m1787_直筒/{类型}_{码号}.dxf（110 片）
-   ↓ load_pieces（布纹对齐水平 + 归一化原点 + L/R 镜像展开）
-128 NestPiece
-   ↓ ms-pieces-export
-out/sparrow_baseline/pieces_intermediate.json   ← 全流程事实源
+   ↓ ms-export-dxf（人工 group→类型映射，GROUP_NAMES）        ← Path B：CLI 离线管线
+   ↓ 或 /api/parse-dxf + /api/commit-to-nesting（US-004/010）  ← Path A：工作台在线管线
+data/m1787_直筒/{类型}_{码号}.dxf（110 片，每片 5 层 US-024）
+   ↓ load_pieces（布纹对齐水平 + 归一化原点 + L/R 镜像展开 + 5 层共享 transform）
+NestPiece（8 码 128 / 母版全码 176）
+   ↓ ms-pieces-export  /  server._commit_to_nesting_sync
+out/sparrow_baseline/pieces_intermediate.json   ← 全流程事实源（每片 polygon + 5 层 + label）
    ↓
    ├─ ms-sparrow-baseline / ms-sparrow-exp（sparrow 求解 → result/svg/curve）
-   └─ ms-web（工作台读取 + 实时可视化 + 导出 PNG/R12-DXF）
+   └─ ms-web（启动期 _PIECES_STATE 读取 + commit 后 reload + 实时可视化 5 层 + 导出 PNG/R12-DXF 5 层）
 ```
 
 详细函数链见 [technical/agent-file-map.md](../technical/agent-file-map.md#数据流主线)。
@@ -82,20 +88,25 @@ out/sparrow_baseline/pieces_intermediate.json   ← 全流程事实源
 
 四层单向依赖（`web → nesting_engine → nesting_bounds → dxf_parser`），下层禁 import 上层：
 
-- **dxf_parser**：底层 DXF 读写。`reader`（ezdxf recover + GBK + R12 POLYLINE）、`geometry`（纯几何）、`model`（PieceOutline）、`explore`（母版探索）、`export_dxf`（单裁片导出）。仅 stdlib + ezdxf。
-- **nesting_bounds**：`load_pieces` 把单裁片 → 布纹对齐 → 归一化 → L/R 镜像。定义 `NestPiece`、`GATE_MM=1980`、`DEFAULT_SIZES`。
-- **nesting_engine**：sparrow 求解。`constraints`（v0.3 常量 + 位图腐蚀 + 校验）、`sparrow_baseline`（基线 + ★共享层）、`sparrow_experiments`（公差实验）、`pieces_export`（生 intermediate）。
-- **web**：`server`（FastAPI + WS）、`solver`（build_instance + 子线程求解回调）、`export`（PNG + R12-DXF marker）。
+- **dxf_parser**：底层 DXF 读写。`reader`（ezdxf recover + GBK + R12 POLYLINE）、`geometry`（纯几何）、`model`（PieceOutline，US-002 扩 5 层字段）、`explore`（母版探索）、`collect`（US-003 母版深度解析 5 层 IR）、`export_dxf`（单裁片 5 层导出）。仅 stdlib + ezdxf。
+- **nesting_bounds**：`load_pieces` 把单裁片 → 布纹对齐 → 归一化 → L/R 镜像；US-024 起 `_read_piece_full` 读 5 层 + notch 法线按 outline 最近边重算。定义 `NestPiece`、`GATE_MM=1980`、`DEFAULT_SIZES`。
+- **nesting_engine**：sparrow 求解。`constraints`（v0.3 常量 + 位图腐蚀 + 校验）、`sparrow_baseline`（基线 + ★共享层）、`sparrow_experiments`（公差实验）、`labeling`（US-022 共享 A/B/C 标注）、`pieces_export`（生 intermediate，US-022 加 label / US-024 加 5 层）。
+- **web**：`server`（FastAPI + WS + 启动期 `_PIECES_STATE` reload + parse/commit/ptypes 路由 + WS stop 协议）、`solver`（build_instance + demand + 旧 threading / **US-025 多进程** `solve_with_callback_proc`）、`solve_worker`（US-025 子进程入口）、`export`（PNG + R12-DXF marker，US-024 起 5 层叠加）。
 
 文件级细节见 [technical/agent-file-map.md](../technical/agent-file-map.md)；HTTP/WS 契约见 [technical/agent-api-reference.md](../technical/agent-api-reference.md)。
 
 ## 工作台交互（用户视角）
 
-1. 选码号集合（默认全 8 码）+ 时间预算 + 种子。
-2. 点"开始"→ WS 推 manifest（128 片骨架）→ 持续推 frame（每 ~0.2s 一个中间解，利用率实时爬升）→ final。
-3. 多 seed 并发对比（最多 6 路），自动保留最优 run。
-4. 回放：seekbar 拖动看任意时间点布局（US-006）。
-5. 导出最优 run → PNG（预览）/ R12-DXF（给 ET2008 刻绘），文件名含码号+利用率+种子。
+双 Tab：**上传预览**（默认入口）+ **超排**（未上传母版时锁定，US-015/016）。
+
+1. **上传母版**（上传预览 Tab）：拖拽/点击上传 `.dxf` → `/api/parse-dxf` 深度解析 → 按码分组 + A/B/C 标注 + 5 层（毛版/净版/内部线/刺口/布纹线）预览（US-004~008）。点卡片头编辑数量、点卡片体放大预览（US-012~014）。
+2. **编辑数量**（US-011/012/022）：每片 per-size 或 global 数量（qtyStore），0=该码不排；跨码联动置灰。
+3. **自动应用**（US-021）：解析成功后台自动 `/api/commit-to-nesting` 把母版转 intermediate（全码 176 片）+ reload 后端 + 解锁超排 Tab（不强制切，用户主动点入）。
+4. **求解配置**（超排 Tab）：SizePicker 从上传 doc 动态读码号（US-017）+ 总裁片数量实时显示；per-type 高级配置弹窗（重合/旋转，US-018）+ 片型缩略图/放大预览；时长/种子/多 seed（≤6）。
+5. **求解**（US-025~028）：点"开始求解"→ WS 推 manifest（5 层骨架）→ 持续推 frame（每 ~0.2s，利用率实时爬升）→ final。**可随时"停止"**（后端 terminate 子进程 → `{type:'stopped'}`）→ stopped 态保留中间方案可导出 → "重新开始"用上次参数一键重跑。phase 五态：idle/running/stopped/done/error。
+6. **多 seed 并发对比**（最多 6 路），自动保留最优 run。
+7. **回放**：seekbar 拖动看任意时间点布局（US-006）。
+8. **导出最优 run** → PNG（预览）/ R12-DXF（给 ET2008 刻绘，5 层叠加 US-024），文件名含码号+利用率+种子。
 
 ## 关键技术决策
 
