@@ -22,6 +22,7 @@ import { ControlPanel, type ControlPanelStartPayload } from "../ControlPanel";
 import { SIZES } from "../../../constants/sizes";
 import { V03_PTYPES } from "../../../constants/v03";
 import { useUploadStore } from "../../../store/uploadStore";
+import type { SolvePhase } from "../../../types/solvePhase";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -66,7 +67,7 @@ afterEach(() => {
 
 function renderPanel(
   onStart: (cfg: ControlPanelStartPayload) => void = () => {},
-  opts: { solving?: boolean; status?: string; onStatus?: (t: string) => void } = {},
+  opts: { phase?: SolvePhase; status?: string; onStatus?: (t: string) => void } = {},
 ) {
   const onStatus = opts.onStatus ?? (() => {});
   act(() => {
@@ -74,9 +75,11 @@ function renderPanel(
       <StrictMode>
         <ControlPanel
           onStart={onStart}
-          solving={opts.solving ?? false}
+          phase={opts.phase ?? "idle"}
           status={opts.status ?? "READY"}
           onStatus={onStatus}
+          onStop={() => {}}
+          onRestart={() => {}}
         />
       </StrictMode>,
     );
@@ -249,10 +252,49 @@ describe("ControlPanel start flow (US-004)", () => {
     expect(cfg.per_type![ptype]).toEqual({ d: 1, tol: 1 });
   });
 
-  it("AC#6 solving=true -> Start disabled", () => {
-    renderPanel(() => {}, { solving: true });
-    const btn = container!.querySelector<HTMLButtonElement>("#start")!;
-    expect(btn.disabled).toBe(true);
+  it("US-028 phase=running -> 无 #start 按钮（SolveControls 渲染 #stop）；参数编辑冻结", () => {
+    renderPanel(() => {}, { phase: "running" });
+    // running 态 SolveControls 渲染「停止」按钮（#stop），不渲染 #start
+    expect(container!.querySelector("#start")).toBeNull();
+    const stopBtn = container!.querySelector<HTMLButtonElement>("#stop")!;
+    expect(stopBtn).not.toBeNull();
+    expect(stopBtn.disabled).toBe(false);
+    expect(stopBtn.getAttribute("aria-label")).toBe("停止求解");
+    // 参数编辑控件全部 disabled（与原 StartButton disabled 同套机制）
+    expect(container!.querySelector<HTMLInputElement>("#time")!.disabled).toBe(true);
+    expect(container!.querySelector<HTMLInputElement>("#seed")!.disabled).toBe(true);
+    expect(container!.querySelector<HTMLInputElement>("#multi_seed")!.disabled).toBe(true);
+    expect(container!.querySelector<HTMLInputElement>("#seed_count")!.disabled).toBe(true);
+    expect(container!.querySelector<HTMLButtonElement>(".per-type-btn")!.disabled).toBe(true);
+    expect(container!.querySelectorAll<HTMLButtonElement>("button.preset")[0]!.disabled).toBe(true);
+  });
+
+  it("US-028 phase=stopped -> 「重新开始」按钮（#restart）+ 中间方案导出提示", () => {
+    renderPanel(() => {}, { phase: "stopped" });
+    const restartBtn = container!.querySelector<HTMLButtonElement>("#restart")!;
+    expect(restartBtn).not.toBeNull();
+    expect(restartBtn.textContent).toBe("重新开始");
+    expect(restartBtn.getAttribute("aria-label")).toBe("重新开始求解");
+    // #start / #stop 不存在
+    expect(container!.querySelector("#start")).toBeNull();
+    expect(container!.querySelector("#stop")).toBeNull();
+    // 参数编辑控件解冻（stopped 态可改参数后重新开始）
+    expect(container!.querySelector<HTMLInputElement>("#time")!.disabled).toBe(false);
+  });
+
+  it("US-028 phase=done -> 「再次求解」按钮（#restart，文案区分 stopped）", () => {
+    renderPanel(() => {}, { phase: "done" });
+    const restartBtn = container!.querySelector<HTMLButtonElement>("#restart")!;
+    expect(restartBtn).not.toBeNull();
+    expect(restartBtn.textContent).toBe("再次求解");
+    expect(restartBtn.getAttribute("aria-label")).toBe("再次求解");
+  });
+
+  it("US-028 phase=error -> 「重新开始」按钮（与 stopped 同文案）", () => {
+    renderPanel(() => {}, { phase: "error" });
+    const restartBtn = container!.querySelector<HTMLButtonElement>("#restart")!;
+    expect(restartBtn).not.toBeNull();
+    expect(restartBtn.textContent).toBe("重新开始");
   });
 });
 
@@ -360,8 +402,8 @@ describe("ControlPanel export wiring (US-007)", () => {
     expect(container!.querySelector<HTMLInputElement>("#export_dxf")!.disabled).toBe(true);
   });
 
-  it("solving=true -> export buttons disabled (传透 props.solving)", () => {
-    renderPanel(() => {}, { solving: true });
+  it("US-028 phase=running -> export buttons disabled (solving=phase==='running')", () => {
+    renderPanel(() => {}, { phase: "running" });
     expect(container!.querySelector<HTMLInputElement>("#export_png")!.disabled).toBe(true);
     expect(container!.querySelector<HTMLInputElement>("#export_dxf")!.disabled).toBe(true);
   });

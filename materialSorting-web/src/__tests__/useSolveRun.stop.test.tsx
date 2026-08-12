@@ -211,42 +211,49 @@ function statusText(): string {
   return container!.querySelector<HTMLElement>('#status')!.textContent ?? '';
 }
 
-function startDisabled(): boolean {
-  return container!.querySelector<HTMLButtonElement>('#start')!.disabled;
-}
-
 describe('US-027 NestingPage phase 转换', () => {
   beforeEach(() => {
     useUploadStore.getState().reset();
     mountNestingPage();
   });
 
-  it('3a) running->(stopped)->stopped：状态行含「已停止」+ StartButton 恢复可点', () => {
+  it('3a) running->(stopped)->stopped：状态行含「已停止」+ #stop 切 #restart（US-028 SolveControls）', () => {
     startSolveViaPanel();
     expect(mockInstances).toHaveLength(1);
-    expect(startDisabled()).toBe(true);
+    // US-028：running 态 SolveControls 渲染 #stop（不渲染 #start）
+    expect(container!.querySelector('#start')).toBeNull();
+    const stopBtn = container!.querySelector<HTMLButtonElement>('#stop')!;
+    expect(stopBtn).not.toBeNull();
+    expect(stopBtn.disabled).toBe(false);
 
     const ws = mockInstances[0];
     const stopped: ServerMsg = { type: 'stopped', reason: 'user_requested' };
     act(() => ws.onmessage?.({ data: JSON.stringify(stopped) }));
 
-    expect(startDisabled()).toBe(false);
+    // stopped 态 SolveControls 渲染 #restart「重新开始」
+    expect(container!.querySelector('#stop')).toBeNull();
+    const restartBtn = container!.querySelector<HTMLButtonElement>('#restart')!;
+    expect(restartBtn).not.toBeNull();
+    expect(restartBtn.textContent).toBe('重新开始');
     expect(statusText()).toContain('已停止');
     expect(statusText()).toContain('中间方案');
   });
 
-  it('3b) running->(error)->error：状态行含「错误」', () => {
+  it('3b) running->(error)->error：状态行含「错误」+ #restart 切「重新开始」', () => {
     startSolveViaPanel();
     const ws = mockInstances[0];
     act(() =>
       ws.onmessage?.({ data: JSON.stringify({ type: 'error', message: '构造失败' }) }),
     );
-    expect(startDisabled()).toBe(false);
+    // error 态 SolveControls 渲染 #restart「重新开始」
+    const restartBtn = container!.querySelector<HTMLButtonElement>('#restart')!;
+    expect(restartBtn).not.toBeNull();
+    expect(restartBtn.textContent).toBe('重新开始');
     expect(statusText()).toContain('错误');
     expect(statusText()).toContain('构造失败');
   });
 
-  it('3c) running->(final)->done：状态行含「完成」+ density', () => {
+  it('3c) running->(final)->done：状态行含「完成」+ density + #restart 切「再次求解」', () => {
     startSolveViaPanel();
     const ws = mockInstances[0];
     const finalMsg: ServerMsg = {
@@ -259,7 +266,10 @@ describe('US-027 NestingPage phase 转换', () => {
       n_eroded: 0,
     };
     act(() => ws.onmessage?.({ data: JSON.stringify(finalMsg) }));
-    expect(startDisabled()).toBe(false);
+    // done 态 SolveControls 渲染 #restart「再次求解」（文案与 stopped/error 区分）
+    const restartBtn = container!.querySelector<HTMLButtonElement>('#restart')!;
+    expect(restartBtn).not.toBeNull();
+    expect(restartBtn.textContent).toBe('再次求解');
     expect(statusText()).toContain('完成');
     expect(statusText()).toContain('78.00%');
   });

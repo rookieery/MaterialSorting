@@ -13,21 +13,27 @@
 //
 // 订阅 renderTick：lastFrame 是 mutable push 到 registry 不进 React state；求解 final 到达后
 // 靠 useRafThrottle bump renderTick 触发本组件 reconciliation，重算 hasLastFrame。
+//
+// US-028：新增 `partial` prop —— stopped/error（有帧）态导出时显示「中间方案」警示文案
+// （AC#3：明确告知用户导出的是停止/出错时刻的中间方案，非最终最优解）。
+// 文件名仍按当前 density 命名（真实口径，反映该中间方案利用率），不加 _partial 后缀。
 
 import { useAppStore } from '../../store/appStore';
 import { runRegistry } from '../../store/runRegistry';
 import type { ExportFmt } from '../../lib/download';
 
 export interface ExportButtonsProps {
-  /** 求解中（按钮 disabled）。来自 App.solving。 */
+  /** 求解中（按钮 disabled）。来自 ControlPanel phase==='running' 派生。 */
   solving: boolean;
   /** 导出中（按钮 disabled，双按钮同步）。来自 ControlPanel.useExport.exporting。 */
   exporting: boolean;
   /** 点击导出（父级 ControlPanel 已把 form.sizes 透传给 useExport.exportAs）。 */
   onExport: (fmt: ExportFmt) => void;
+  /** US-028 stopped/error（有帧）态：显示「中间方案」警示（取代默认「最优方案」提示）。 */
+  partial?: boolean;
 }
 
-export function ExportButtons({ solving, exporting, onExport }: ExportButtonsProps) {
+export function ExportButtons({ solving, exporting, onExport, partial = false }: ExportButtonsProps) {
   // 订阅 renderTick：求解结束 / final 到达后 bump → 重算 hasLastFrame（AC#6 disabled 联动）。
   // void 表达式显式标注「订阅仅为触发 reconciliation」，避免 noUnusedLocals 报错。
   const renderTick = useAppStore((s) => s.renderTick);
@@ -62,7 +68,13 @@ export function ExportButtons({ solving, exporting, onExport }: ExportButtonsPro
           导出 DXF
         </button>
       </div>
-      <div className="dim small">默认导出利用率最高的 seed 的最终方案。</div>
+      {partial ? (
+        <div className="dim small warn">
+          导出的是停止 / 出错时刻的中间方案，非最终最优解。
+        </div>
+      ) : (
+        <div className="dim small">默认导出利用率最高的 seed 的最终方案。</div>
+      )}
     </div>
   );
 }

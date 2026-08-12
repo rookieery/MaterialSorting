@@ -697,3 +697,38 @@ NestsGrid 渲染 N 个 NestCard；ConvergenceCurve 命令式画 90% 生死线 + 
 - `solver.py` 新增 `solve_with_callback_proc(pieces_snapshot, gate_mm, solve_params, *, on_manifest, on_report, drain_interval=0.2) → (process, final_data, elapsed, err)`：spawn `multiprocessing.Process(target=solve_worker)` + Queue，主进程 drain 分发；manifest→on_manifest、frame→on_report（density 双口径换算在主进程做：density_sparrow←原值、density←total_area/(width*gate)）、final/error 记录。循环退出条件 `queue.Empty AND not alive`（drain 完残余防漏 final）。finally 块必 terminate→cancel_join_thread→限时 drain(≤50ms)→join(timeout=5)，绝不阻塞。子进程 crash 未投 error 时 err='worker process exited unexpectedly (code=<exitcode>)'。旧 `solve_with_callback` 保留不删。
 - 新建 `materialSorting-server/tests/`（US-025 首批测试）：conftest.py 注 sys.path + real_or_synthetic_pieces/synthetic_pieces fixture；test_solve_proc.py 5 项（①正常求解 + density 双口径正确 ②terminate 5s 内返回 ③build_instance 抛错 ④外部 kill 不 hang ⑤solve_worker 可 pickle）全绿（4s 跑完）。
 - 文档同步：.docs/technical/agent-api-reference.md 加 solve_with_callback_proc + solve_worker 函数表 + US-025 进程化桥说明；.docs/technical/agent-file-map.md 更新 solver.py 行数 + 新增 solve_worker.py 行 + 关键不变量 #11（求解进程化）；web/AGENTS.md 加 US-025 关键约定 + tests/AGENTS.md 新建。
+- 验收：python -c "from materialsorting.web.solve_worker import solve_worker; from materialsorting.web.solver import solve_with_callback_proc" 导入无异常；python -m pytest tests/ 全绿；分层依赖未反向（grep 验证）；旧 solve_with_callback 保留（server.py ws_solve 未切换，系统行为零变化）。
+- 跳过浏览器验证：本 Story 纯后端进程化，无 SVG/坐标变换/UI 改动（US-028 才是 UI Story）。
+---
+## US-026 WS /ws/solve 支持 stop 消息（持续读 + 进程终止 + 协议扩展）— 2026-08-12
+**改动文件**：
+- `materialSorting-server/src/materialsorting/web/server.py`：ws_solve 从「只读一次 start」改为 write loop 内联 + read loop 后台 task 双向并发；build_instance 移入子进程（改调 solve_with_callback_proc）；stop → terminate+join → 直发 stopped → 投 SENTINEL；WebSocketDisconnect → terminate+join 防孤儿（修旧 bug）；_terminate_solve_process 幂等封装；finally 显式 ws.close()。
+- `materialSorting-server/src/materialsorting/web/solver.py`：solve_with_callback_proc 新增 on_process 回调（子进程 start 后立即回调交出 Process 句柄）。
+- `materialSorting-web/src/types/ws.ts`：新增 StopPayload / ClientMsg 联合 / StoppedMsg / ServerMsg 增 StoppedMsg。
+- `materialSorting-server/tests/test_ws_stop.py`：新增 3 项 WS 测试（stop+stopped / 断连清理 / 正常 final 回归）。
+- `materialSorting-server/pyproject.toml`：dev deps 加 httpx（TestClient WS 测试依赖）。
+- `.docs/technical/agent-api-reference.md` / `agent-file-map.md` / `agent-component-map.md`：WS 章节、solver 表、ws.ts 描述、关键不变量同步。
+- `web/AGENTS.md`：新增 US-026 关键约定段。
+**关键实现决策**：
+- write loop 内联（主流程）+ read loop 后台 task（非 asyncio.gather）：gather 在 write loop 先完成时 hang 等 read loop（TestClient receive_json 不响应 cancel），inline 方式让 write loop 收 SENTINEL 后直接 break → finally 兜底。
+- stopped 由 read loop 直发（不经 queue）：避免 stop 后残余 frame 在 queue 里排在 stopped 前面 → 客户端先收一堆 frame 再收 stopped。
+- finally 显式 `await ws.close()`：TestClient（anyio portal）下 endpoint 返回不会自动让 client 端 receive_json 抛 disconnect，必须显式 close。
+- 不 await read_task：TestClient 下 ws.receive_json() 阻塞在线程安全队列上，task.cancel() 的 CancelledError 无法投递，await 会永久挂起。
+- 验收：python -c "from materialsorting.web.server import app" 导入无异常；python -m pytest tests/ 8 passed（5 solve_proc + 3 ws_stop）；npm run typecheck + npm run build 无报错；npm run test 514 passed。
+- 跳过浏览器验证：本 Story 纯后端 WS + 前端类型扩展，无 SVG/坐标变换/UI 改动（US-028 才是 UI Story）。
+## US-027 前端 stop() + 求解状态机（phase: idle/running/stopped/done/error）
+改动文件：
+- types/solvePhase.ts（新建）：导出 SolvePhase 五态类型，供 US-028 SolveControls 复用。
+- store/runRegistry.ts：RunRecord 新增 stopped: boolean 字段（默认 false；收到 {type:'stopped'} 置 true；与 error 互斥）。
+- hooks/useSolveRun.ts：返回值 {start, isStarted} → {start, stop, isStarted}（向后兼容）。新增 stop()：遍历 runRegistry.list()，对每个 readyState===WebSocket.OPEN 的 rec.ws 发 {action:'stop'}（非 OPEN 跳过；send 异常 catch）。onmessage 新增 case 'stopped'：rec.stopped=true + finish() 触发 onDone（不重算 finalDensity，lastFrame 保留停止时刻帧）。
+- components/NestingPage.tsx：solving:boolean → phase:SolvePhase 状态机。handleStart setPhase('running') + lastStartCfgRef 保存参数。onDone 全部到齐后区分：allStopped→stopped / hasError→error / 否则 done。新增 handleStop（调 stop()，不立即 setPhase）+ handleRestart（handleStart(lastStartCfgRef.current)）。ControlPanel 收 solving={phase==='running'} + 可选 onStop/onRestart/phase（US-028 接线）。
+- ControlPanel/ControlPanel.tsx：props 加可选 onStop/onRestart/phase；向 5 个输入子组件透传 disabled={solving}（running 态冻结）。
+- ControlPanel/{SizePicker,ParamForm,MultiSeedControls,PresetButtons,PerTypeOverrides}.tsx：各加 disabled?: boolean prop，映射到原生 disabled。
+- __tests__/useSolveRun.stop.test.tsx（新建）：6 项测试（stop OPEN/CLOSED + stopped finish + 3 phase 转换 + running 冻结）。
+- .docs/technical/agent-component-map.md：加 US-027 落地段 + 9 条关键不变量；更新 header / NestingPage / useSolveRun 描述。
+关键决策：
+- onDone phase 优先级「全 stopped→stopped、有 error→error、否则 done」：per-run stopped 与 error 互斥（useSolveRun case 分支不并置），故 allStopped 蕴含无 error，检查顺序安全。
+- stop() 仅对 OPEN 发：Mock WebSocket 须定义静态常量 CONNECTING/OPEN/CLOSING/CLOSED，否则 WebSocket.OPEN===undefined 导致 stop 永远不发（测试踩坑修复）。
+- handleStop 不立即 setPhase：等后端回 {type:'stopped'} → onmessage → finish → onDone 统一切（与 final/error 路径一致，避免多 seed 部分 stopped 竞争）。
+- handleRestart 用 lastStartCfgRef（上次 start 参数）；用户改参数后走 ControlPanel.onStart → handleStart 新参数覆盖 ref（双路径自然保证）。
+- ControlPanel solving prop 保留（US-028 才改 phase）；onStop/onRestart/phase 可选 props 本 Story 不接线。

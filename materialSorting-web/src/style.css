@@ -86,14 +86,27 @@ body {
 .chip input { width: auto; margin: 0; cursor: pointer; }
 .sizes-total { margin-top: 8px; font-size: 12px; color: #aab; }
 .sizes-total strong { color: #e6e6e6; font-weight: 600; }
-button#start {
+/* US-028 SolveControls 按钮组：#start / #stop / #restart 三态共用 .solve-btn 基样式，
+   仅背景色差异（绿=主操作 / 红=警示 / 绿=主操作）。沿用暗色系，不引入 CSS 框架。 */
+button#start,
+button#restart {
   width: 100%; padding: 9px;
   font-size: 14px; font-weight: 600;
   background: #2ea06c; color: #fff;
   border: 0; border-radius: 6px; cursor: pointer;
 }
-button#start:hover { background: #36b47a; }
-button#start:disabled { background: #555; cursor: default; }
+button#start:hover,
+button#restart:hover { background: #36b47a; }
+button#start:disabled,
+button#restart:disabled { background: #555; cursor: default; }
+button#stop {
+  width: 100%; padding: 9px;
+  font-size: 14px; font-weight: 600;
+  background: #b5462f; color: #fff;
+  border: 0; border-radius: 6px; cursor: pointer;
+}
+button#stop:hover { background: #d05a40; }
+button#stop:disabled { background: #555; cursor: default; }
 .status { margin-top: 12px; font-size: 12px; color: #9fd1b8; min-height: 1.4em; }
 .stats {
   margin-top: 6px; font-size: 12px; color: #cfcfcf;
@@ -194,6 +207,8 @@ button.export {
 }
 button.export:hover:not(:disabled) { background: #3470ac; }
 button.export:disabled { background: #444; color: #888; cursor: default; }
+/* US-028 中间方案导出提示：stopped/error（有帧）态显示在导出按钮下方，警示橙黄色（区别于默认灰提示）。 */
+.dim.small.warn { color: #d8a23a; font-weight: 600; }
 
 /* ---- US-006 UploadPanel（DXF 上传预览左侧，沿用 .panel 同色系） ---- */
 .upload-panel { display: flex; flex-direction: column; gap: 12px; }

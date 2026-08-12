@@ -9,7 +9,7 @@
 // US-027：solving:boolean → phase:SolvePhase 五态状态机（idle/running/stopped/done/error）。
 //   onDone 按 rec.stopped/rec.error 区分 phase；handleStop 调 useSolveRun.stop()；
 //   handleRestart = clear + 用上次参数（lastStartCfgRef）handleStart。
-//   ControlPanel 仍收 solving（= phase==='running'）保持 API 不变；US-028 改用 phase + SolveControls。
+// US-028：ControlPanel 收 phase（替代 solving）+ onStop/onRestart 接线 SolveControls 按钮组。
 //
 // Tooltip 仍由父 App 渲染（全局单例，不能多挂）；本页只渲染业务区，不挂 Tooltip。
 
@@ -162,7 +162,6 @@ export function NestingPage(): React.JSX.Element {
         onStop={handleStop}
         onRestart={handleRestart}
         phase={phase}
-        solving={phase === 'running'}
         status={status}
         onStatus={setStatus}
       />

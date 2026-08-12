@@ -1,13 +1,14 @@
 // ControlPanel —— 左侧参数面板（与旧 index.html `<aside class="panel">` 等价）。
 //
 // 表单状态由本组件持有（DEFAULT_FORM 初值），各子组件受控。
-// 点击 StartButton 时：
+// 点击 SolveControls「开始求解」时（idle 态）：
 //   1. 校验 sizes 非空 —— 空 → onStatus('请至少选一个码号') + 不启动（AC#7）。
 //   2. collectParams → { params, per_type }；parseTime / parseSeed / parseSeedCount 解析。
-//   3. onStart({ sizes, time, seed, seed_count, params, per_type }) 透传到 App
+//   3. onStart({ sizes, time, seed, seed_count, params, per_type }) 透传到 NestingPage
 //      （AC#6 触发 useSolveRun.start × N，N = seed_count）。
 //
-// solving / status 来自 App：solving=true 禁用 StartButton；status 由 StatusLine 直接渲染。
+// phase / status 来自 NestingPage：phase 驱动 SolveControls 按钮组渲染；
+// phase==='running' 禁用参数编辑 + ExportButtons（ stopped/done/error 可导出）。
 // US-005 落地 multi_seed 开关 + seed_count；US-007 接管 ExportButtons（useExport 也住这里，
 // 因为 sizes 在本组件 form 里 —— 旧 vanilla 实现 exportAs 内 `sizes: selectedSizes()` 同源）。
 // US-017 起 SizePicker 从 uploadStore.doc 动态读码号（doc=null fallback SIZES），
@@ -15,18 +16,21 @@
 // handleExport 过滤 null 保持下游 WS/export 契约；doc=null 时 StatusLine 增「请先在上传预览页解析母版」提示。
 // US-019 删除主面板内外两档全局重合/旋转输入（d_ext/d_int/tol_ext/tol_int），全交高级配置弹窗
 // （PerTypeOverrides 按钮 → PerTypeOverridesModal）；collectParams params 永远全 0。
+// US-028：StartButton 删除，SolveControls 按 phase 渲染按钮组（idle/running/stopped/done/error）；
+//   ExportButtons 收 phase==='running' 禁用 + partial flag（stopped/error 有帧时标注中间方案提示）。
 
 import { useState } from 'react';
 import { useExport } from '../../hooks/useExport';
 import type { ExportFmt } from '../../lib/download';
 import { useUploadStore } from '../../store/uploadStore';
+import { useQtyStore } from '../../store/qtyStore';
 import { ExportButtons } from './ExportButtons';
 import { MultiSeedControls } from './MultiSeedControls';
 import { ParamForm } from './ParamForm';
 import { PerTypeOverrides } from './PerTypeOverrides';
 import { PresetButtons } from './PresetButtons';
 import { SizePicker } from './SizePicker';
-import { StartButton } from './StartButton';
+import { SolveControls } from './SolveControls';
 import { StatusLine } from './StatusLine';
 import {
   collectParams,
@@ -39,7 +43,6 @@ import {
 } from '../../lib/params';
 import type { PerTypeOverrides as PerTypeOverridesValue, SolveParams } from '../../types/v03';
 import type { SolvePhase } from '../../types/solvePhase';
-import { useQtyStore } from '../../store/qtyStore';
 
 /** onStart 透传给 App 的载荷（直接喂给 useSolveRun.start 的 StartConfig 子集）。 */
 export interface ControlPanelStartPayload {
@@ -61,27 +64,29 @@ export interface ControlPanelStartPayload {
 export interface ControlPanelProps {
   /** 点击启动（已通过码号非空校验）。 */
   onStart: (cfg: ControlPanelStartPayload) => void;
-  /** 求解中（禁用 StartButton + 参数编辑控件）。US-028 起将由 phase 取代。 */
-  solving: boolean;
-  /** 状态行文案（来自 App；组装：就绪/连接中/完成/错误）。 */
+  /** US-027/028 求解状态机五态（驱动 SolveControls 按钮组渲染 + running 态冻结参数编辑 + ExportButtons 禁用）。 */
+  phase: SolvePhase;
+  /** 状态行文案（来自 NestingPage；组装：就绪/连接中/完成/错误）。 */
   status: string;
   /** 写状态行（用于码号校验失败时把错误塞进 StatusLine）。 */
   onStatus: (text: string) => void;
-  /** US-027 停止求解回调（US-028 由 SolveControls 停止按钮接线；本 Story 不渲染按钮）。 */
-  onStop?: () => void;
-  /** US-027 重新开始回调（US-028 由 SolveControls 重新开始按钮接线；本 Story 不渲染按钮）。 */
-  onRestart?: () => void;
-  /** US-027 求解状态机五态（US-028 由 SolveControls 按钮组消费；本 Story 仅 solving 派生）。 */
-  phase?: SolvePhase;
+  /** US-027 停止求解回调（US-028 由 SolveControls 停止按钮接线）。 */
+  onStop: () => void;
+  /** US-027 重新开始回调（US-028 由 SolveControls 重新开始/再次求解按钮接线）。 */
+  onRestart: () => void;
 }
 
-export function ControlPanel({ onStart, solving, status, onStatus }: ControlPanelProps) {
+export function ControlPanel({ onStart, phase, status, onStatus, onStop, onRestart }: ControlPanelProps) {
   const [form, setForm] = useState<FormState>(DEFAULT_FORM);
   // US-017：订阅 uploadStore.doc 判断是否已解析母版（doc=null → StatusLine 增提示）。
   const doc = useUploadStore((s) => s.doc);
 
+  // US-028：从 phase 派生 solving（running 态冻结参数编辑 + 禁用 ExportButtons）。
+  // stopped/done/error 态可编辑参数（用户改参数后走 onStart → handleStart 用新值，覆盖 lastStartCfgRef）。
+  const solving = phase === 'running';
+
   // US-007：useExport 挂在 ControlPanel 内（form.sizes 与 exportAs 同处）。
-  // onStatus 透传到 App.setStatus → StatusLine（导出中 / 完成 / 失败文案由 useExport 写）。
+  // onStatus 透传到 NestingPage.setStatus → StatusLine（导出中 / 完成 / 失败文案由 useExport 写）。
   const { exportAs, exporting } = useExport({ onStatus });
 
   /** 通用 patch 更新（部分字段）。 */
@@ -131,6 +136,11 @@ export function ControlPanel({ onStart, solving, status, onStatus }: ControlPane
   const visibleStatus =
     doc === null ? `${status} — 请先在上传预览页解析母版` : status;
 
+  // US-028：stopped/error（有帧）态导出时明确标注「中间方案」（AC#3）。
+  //   - stopped 总是有帧（停止前至少推过一帧或收到过 manifest；若无帧 ExportButtons 自身 disabled 兜底）。
+  //   - error 可能在收到帧前发生（构造失败）→ 此时 ExportButtons 也 disabled，partial flag 仅作 UI 提示触发条件。
+  const partial = phase === 'stopped' || phase === 'error';
+
   return (
     <aside className="panel">
       <h2>求解控制</h2>
@@ -151,9 +161,9 @@ export function ControlPanel({ onStart, solving, status, onStatus }: ControlPane
       />
       <PresetButtons onPreset={(seconds) => patch({ time: String(seconds) })} disabled={solving} />
       <PerTypeOverrides values={form.per_type} onChange={(per_type) => patch({ per_type })} disabled={solving} />
-      <StartButton solving={solving} onClick={handleStart} />
+      <SolveControls phase={phase} onStart={handleStart} onStop={onStop} onRestart={onRestart} />
       <StatusLine text={visibleStatus} />
-      <ExportButtons solving={solving} exporting={exporting} onExport={handleExport} />
+      <ExportButtons solving={solving} exporting={exporting} onExport={handleExport} partial={partial} />
       <div className="hint">
         density = 原面积口径（与 90% 生死线一致）；sparrow 口径见状态行。
         <br />

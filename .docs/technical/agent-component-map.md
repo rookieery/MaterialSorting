@@ -1,6 +1,6 @@
 # 前端组件 / 模块地图（materialSorting-web/）
 
-> 由 `/sync-docs` 维护。改前端先看这里。当前覆盖 US-001 Tab 框架 + US-002 WS 契约 + US-003 NestSVG + US-004 ControlPanel + US-005 多 seed/收敛曲线 + US-006 回放 seekbar + 片 hover tooltip + US-007 导出 PNG/DXF + DXF 上传预览 US-001 Tab 骨架 + 上传预览 US-005 类型/store/hook + 上传预览 US-006 UploadPanel 组件 + 上传预览 US-007 PiecePreviewSVG 命令式渲染 + 上传预览 US-008 SizeTabs/ParsedPiecesView/PreviewPage 容器集成 + 上传预览 US-011 qtyStore 数量状态（per-size/global 双模式）+ 上传预览 US-012 PieceQtyDialog/Switch（数量编辑弹窗 + 受控开关）+ 上传预览 US-013 PieceZoomModal（放大预览模态）+ 上传预览 US-014 ParsedPiecesView 卡片头改造 + 双模态集成（seq(qty) 替裁片名 + qty/zoom 双入口 + reset 联动）+ US-015 uiStore 扩 nestingEnabled + TabBar 置灰（超排 Tab 解锁闸）+ US-016 PreviewPage 联动 setNestingEnabled（subscribe uploadStore → uiStore 解锁/锁定超排 Tab）+ US-018 PerTypeOverridesModal/PtypePreviewModal（高级配置弹窗 + 片型缩略图 + 放大预览，双层独立 ESC）+ US-021 useCommitToNesting（解析成功自动 commit + D1 闭环 setNestingEnabled+setTab）+ US-022 求解输入数量 demand per-size（qtyStore.hydrateDefaults + serializeQuantities + StartPayload.quantities）+ US-024 NestSVG 5 层渲染 + 共享 LAYER5_COLORS（毛版+净版+内部线+刺口+布纹线，仅渲染透传不参与 NFP 碰撞）+ US-027 NestingPage 求解状态机 phase（idle/running/stopped/done/error）+ useSolveRun.stop() + case stopped + running 态冻结参数编辑。
+> 由 `/sync-docs` 维护。改前端先看这里。当前覆盖 US-001 Tab 框架 + US-002 WS 契约 + US-003 NestSVG + US-004 ControlPanel + US-005 多 seed/收敛曲线 + US-006 回放 seekbar + 片 hover tooltip + US-007 导出 PNG/DXF + DXF 上传预览 US-001 Tab 骨架 + 上传预览 US-005 类型/store/hook + 上传预览 US-006 UploadPanel 组件 + 上传预览 US-007 PiecePreviewSVG 命令式渲染 + 上传预览 US-008 SizeTabs/ParsedPiecesView/PreviewPage 容器集成 + 上传预览 US-011 qtyStore 数量状态（per-size/global 双模式）+ 上传预览 US-012 PieceQtyDialog/Switch（数量编辑弹窗 + 受控开关）+ 上传预览 US-013 PieceZoomModal（放大预览模态）+ 上传预览 US-014 ParsedPiecesView 卡片头改造 + 双模态集成（seq(qty) 替裁片名 + qty/zoom 双入口 + reset 联动）+ US-015 uiStore 扩 nestingEnabled + TabBar 置灰（超排 Tab 解锁闸）+ US-016 PreviewPage 联动 setNestingEnabled（subscribe uploadStore → uiStore 解锁/锁定超排 Tab）+ US-018 PerTypeOverridesModal/PtypePreviewModal（高级配置弹窗 + 片型缩略图 + 放大预览，双层独立 ESC）+ US-021 useCommitToNesting（解析成功自动 commit + D1 闭环 setNestingEnabled+setTab）+ US-022 求解输入数量 demand per-size（qtyStore.hydrateDefaults + serializeQuantities + StartPayload.quantities）+ US-024 NestSVG 5 层渲染 + 共享 LAYER5_COLORS（毛版+净版+内部线+刺口+布纹线，仅渲染透传不参与 NFP 碰撞）+ US-027 NestingPage 求解状态机 phase（idle/running/stopped/done/error）+ useSolveRun.stop() + case stopped + running 态冻结参数编辑 + US-028 SolveControls 按 phase 渲染按钮组（替代 StartButton；idle/running/stopped/done/error 五态按钮 + a11y + 中间方案导出提示）。
 
 ## 顶层结构
 
@@ -24,7 +24,7 @@ materialSorting-web/
 │   ├── hooks/              # US-002 起：useSolveRun（US-022 StartConfig 加 quantities 透传；US-027 加 stop() + case stopped）/ useRafThrottle；US-007 useExport；上传预览 US-005 useParseDxf（US-021 解析成功自动 void commit）；上传预览 US-021 useCommitToNesting（POST /api/commit-to-nesting + D1 闭环 setNestingEnabled，不自动切 Tab）
 │   ├── components/
 │   │   ├── TabBar.tsx       # US-001 顶部 Tab（排料/上传预览）；订阅 uiStore.activeTab；US-015 超排 button 在 nestingEnabled===false 时 disabled+.disabled class + aria-disabled
-│   │   ├── NestingPage.tsx  # US-001 排料页（原 App.tsx 业务逻辑外提；持 phase/seeds/useSolveRun；US-027 solving→phase 五态状态机 + handleStop/handleRestart + lastStartCfgRef）
+│   │   ├── NestingPage.tsx  # US-001 排料页（原 App.tsx 业务逻辑外提；持 phase/seeds/useSolveRun；US-027 solving→phase 五态状态机 + handleStop/handleRestart + lastStartCfgRef；US-028 ControlPanel 改收 phase 不再收 solving）
 │   │   ├── preview/         # US-001 起：上传预览页（US-006 UploadPanel；US-007 PiecePreviewSVG；US-008 落地 SizeTabs/ParsedPiecesView/PreviewPage 容器集成）
 │   │   │   ├── PreviewPage.tsx  # US-008 容器：左 UploadPanel + 右（SizeTabs+ParsedPiecesView）；status=done+doc 时挂主体，否则 .preview-empty 空态；US-014 顶层挂 PieceQtyDialog+PieceZoomModal 单例 + useEffect subscribe 监听 doc_id 变化联动 qtyStore.resetQuantities（重传清零）；US-016 加 useEffect subscribe uploadStore.status 按 `status==='done' && doc!==null` 联动 uiStore.setNestingEnabled（Tab 解锁闸，mount 即对齐）
 │   │   │   ├── UploadPanel.tsx  # US-006 左侧上传面板（点击+拖拽+客户端预校验+status 反馈）；US-021 加 commit 状态行（committing→「应用中…」/ done→「已应用至超排：N 裁片，M 码」/ error→「应用失败：msg」）
@@ -44,7 +44,7 @@ materialSorting-web/
 │   │   │       ├── PieceQtyDialog.test.tsx   # US-012 集成（15 项：null 不渲染 / 标题含 label+size / 初值 per-size/global / [+][-] 改 draftQty / Switch 切 / 确定 per-size/global / 取消 / 遮罩 / ESC / modal 不冒泡 / blur clamp）
 │   │   │       └── PieceZoomModal.test.tsx   # US-013 集成（14 项：zoom=null 不渲染 / doc=null 不渲染 / 渲染 overlay+modal+aria / 头部 label+seq(qty)+size+name / qty 从 qtyStore / null 码「通用」/ body svg.piece-preview-svg / ✕ closeZoom / 遮罩 closeZoom / modal 内不冒泡 / ESC closeZoom / Portal body / label 不存在兜底 / size 不存在兜底）
 │   │   ├── nests/          # US-003 NestSVG/NestCard/NestLabel + US-005 NestsGrid；US-006 NestSVG 加 seek+hover
-│   │   ├── ControlPanel/   # US-004 8 子组件 + US-005 MultiSeedControls；US-007 ExportButtons；US-018 PerTypeOverrides 改按钮 + PerTypeOverridesModal/PtypePreviewModal（高级配置弹窗 + 片型缩略图 + 放大预览）
+│   │   ├── ControlPanel/   # US-004 8 子组件 + US-005 MultiSeedControls；US-007 ExportButtons；US-018 PerTypeOverrides 改按钮 + PerTypeOverridesModal/PtypePreviewModal（高级配置弹窗 + 片型缩略图 + 放大预览）；US-028 SolveControls 替代 StartButton（按 phase 渲染按钮组）+ ExportButtons 加 partial 提示
 │   │   ├── curve/          # US-005 ConvergenceCurve（命令式 innerHTML）
 │   │   ├── playback/       # US-006 PlaybackBar/Seekbar/SeekReadout
 │   │   └── Tooltip.tsx     # US-006 片 hover tooltip（Portal 到 body）
@@ -82,7 +82,7 @@ materialSorting-web/
 | --- | --- |
 | `src/store/uiStore.ts` | Zustand 双字段 store：`activeTab: 'nesting' \| 'preview'`（默认 `'preview'`）+ `nestingEnabled: boolean`（默认 `false`，US-015）；actions `setTab(tab)`（**nestingEnabled===false 时 setTab('nesting') 静默不切**）+ `setNestingEnabled(b)`。求解/WS/seek 等业务状态仍在各 page 内 |
 | `src/components/TabBar.tsx` | 顶部 Tab 切换：`<nav class="tabbar">` + 两 `<button class="tab">`（超排 / 上传预览）；点击 setTab；active 项加 `.active` class + `aria-pressed=true`。**US-015**：超排 button 在 `nestingEnabled===false` 时 native `disabled` + `.disabled` class + `aria-disabled=true`；onClick 运行时再判一次（双重防御） |
-| `src/components/NestingPage.tsx` | 排料工作台页（原 App.tsx 业务逻辑外提）：持 `seeds/phase/status/doneCountRef/totalSeedsRef` + `useSolveRun({onDone})` + `useRafThrottle(seeds.length>0)`；渲染 `<ControlPanel>` + `<main class="main">`；不挂 Tooltip（Tooltip 由父 App 渲染）；US-022 handleStart 透传 cfg.quantities 到 start()（N seed 共用）；**US-027** solving→phase 五态状态机（idle/running/stopped/done/error）+ handleStop（stop()）+ handleRestart（lastStartCfgRef）+ onDone 按 rec.stopped/error 区分 phase；ControlPanel 收 `solving={phase==='running'}` + 可选 onStop/onRestart/phase（US-028 接线） |
+| `src/components/NestingPage.tsx` | 排料工作台页（原 App.tsx 业务逻辑外提）：持 `seeds/phase/status/doneCountRef/totalSeedsRef` + `useSolveRun({onDone})` + `useRafThrottle(seeds.length>0)`；渲染 `<ControlPanel>` + `<main class="main">`；不挂 Tooltip（Tooltip 由父 App 渲染）；US-022 handleStart 透传 cfg.quantities 到 start()（N seed 共用）；**US-027** solving→phase 五态状态机（idle/running/stopped/done/error）+ handleStop（stop()）+ handleRestart（lastStartCfgRef）+ onDone 按 rec.stopped/error 区分 phase；**US-028** ControlPanel 改收 `phase` + 必传 `onStop/onRestart`（不再传 solving，由 ControlPanel 内部 phase==='running' 派生） |
 | `src/components/preview/PreviewPage.tsx` | 上传预览页（**US-008 落地**）：左 UploadPanel + 右（SizeTabs+ParsedPiecesView）双栏；`hasParsed = status==='done' && doc!==null` 决定挂主体 or `.preview-empty` 空态 |
 | `src/App.tsx` | 顶层骨架：渲染 `<TabBar>` + `<div class="tab-content">` 双 `.page` 容器（display:none 切换）+ `<Tooltip>`（单例，Portal 到 body） |
 | `src/style.css` | 增 `.app{flex-direction:column}` + `.tabbar/.tab/.tab.active` + `.tab-content/.page/.page.hidden` + `.preview-empty/.preview-empty-card`（暗色与 ControlPanel 同色系）；**US-015** 加 `.tab.disabled` + `.tab.disabled:hover`（#555 灰字 + not-allowed） |
@@ -439,6 +439,37 @@ NestingPage 把单一 `solving: boolean` 扩展为五态 `phase: SolvePhase`（i
 7. **running 态冻结参数编辑（与 StartButton disabled 同套机制）** —— ControlPanel 向 5 个输入组件透传 `disabled={solving}`（= phase==='running'）；stopped/done/error 态可编辑（用户可改参数后重新开始）。改 disabled 条件需同步「running 态冻结」用例。
 8. **ControlPanel solving prop 保留（US-028 改 phase）** —— 本 Story 仅传 `solving={phase==='running'}` 保持 ControlPanel API 不变；onStop/onRestart/phase 可选 props 不在本 Story 接线（US-028 由 SolveControls 消费）。改 ControlPanel props 需同步 24 项 ControlPanel.test.tsx。
 9. **未做浏览器验证** —— 本 Story 无 SVG/坐标变换（仅状态机 + 输入 disabled），AC 仅要求 typecheck + 单测 + build；浏览器完整流程（idle→running→stopped→restart→done）验证留作 US-028（UI Story，SolveControls 按钮组接线后统一核对）。
+
+## US-028 落地：SolveControls 按钮组 + ControlPanel phase 接线（删除 StartButton）
+
+`StartButton.tsx` 删除；新建 `SolveControls.tsx` 按 phase 渲染按钮组（idle→开始求解 / running→停止 / stopped/error→重新开始 / done→再次求解）。ControlPanel 外部 API 从 `solving: boolean` 改为 `phase: SolvePhase` + 必传 `onStop/onRestart`；内部派生 `solving = phase==='running'` 透传给 5 个输入组件 + ExportButtons。ExportButtons 新增 `partial?: boolean` prop：stopped/error（有帧）态显示「中间方案」警示文案（橙黄 `.dim.small.warn`），文件名仍按当前 density 命名（不加 _partial 后缀，仅靠 UI 提示区分）。a11y：每按钮带 aria-label（含「求解」语义），原生 button 默认可键盘触发（Enter/Space）。
+
+### 新增 / 改造文件
+
+| 文件 | 角色 |
+| --- | --- |
+| `src/components/ControlPanel/SolveControls.tsx` | **新建** 按 phase 渲染的按钮组。props `{phase, onStart, onStop, onRestart}`（全受控，不自持 phase）。渲染分支：idle→`#start`「开始求解」+ `aria-label="开始求解"` + `.solve-btn.start`（绿 #2ea06c，与旧 StartButton 同色，保留 #start id 复用 CSS）；running→`#stop`「停止」+ `aria-label="停止求解"` + `.solve-btn.stop`（红 #b5462f 警示色）；stopped/error→`#restart`「重新开始」+ `aria-label="重新开始求解"` + `.solve-btn.restart`（绿 #2ea06c，主操作语义）；done→`#restart`「再次求解」+ `aria-label="再次求解"`（与 stopped/error 文案区分，用户可识别求解曾正常完成）。每按钮 `type="button"` + 原生 button 默认 `tabIndex=0` 可键盘触发 |
+| `src/components/ControlPanel/ControlPanel.tsx` | **props 改造**：`solving: boolean` → `phase: SolvePhase`（必传）+ `onStop/onRestart` 从可选改必传（US-028 接线 SolveControls）。**内部派生** `const solving = phase === 'running'`（透传给 5 个输入组件 disabled + ExportButtons solving prop）。**partial 派生**：`const partial = phase === 'stopped' \|\| phase === 'error'`（透传 ExportButtons）。`handleStart` 内 `if (solving)` 守卫语义不变（= phase==='running' 时拒绝二次 start）。删除 `import { StartButton }` + `<StartButton>`，改 `<SolveControls phase onStart onStop onRestart />` |
+| `src/components/ControlPanel/ExportButtons.tsx` | **新增 `partial?: boolean` prop**（默认 false）。partial=true 时导出按钮下方 `.dim.small.warn` 显示「导出的是停止 / 出错时刻的中间方案，非最终最优解。」（橙黄 #d8a23a，与默认灰提示 `.dim.small` 区分）；partial=false 时保留原「默认导出利用率最高的 seed 的最终方案。」文案。文件名仍按当前 density 命名（不加 _partial 后缀，AC#3 仅靠 UI 提示区分） |
+| `src/components/ControlPanel/StartButton.tsx` | **删除**（确认无其它引用；6 处注释提及「StartButton」仅作历史语境，不构成引用；2 处 preview/SizeTabs.tsx + Switch.tsx 注释仅类比同色系） |
+| `src/components/NestingPage.tsx` | ControlPanel 调用去 `solving={phase === 'running'}`，保留 `phase={phase}` + `onStop={handleStop}` + `onRestart={handleRestart}`（ControlPanel 内部派生 solving） |
+| `src/style.css` | 加 `button#start, button#restart`（绿 #2ea06c，与旧 button#start 同色；主操作语义，restart 与 start 同色）+ `button#stop`（红 #b5462f 警示 + hover #d05a40 + disabled #555）+ `.dim.small.warn`（橙黄 #d8a23a 600，中间方案导出提示）。旧 `button#start` 单独规则合并到 `button#start, button#restart` 组合选择器 |
+| `src/components/ControlPanel/__tests__/SolveControls.test.tsx` | **新建** 7 项单测：idle「开始求解」#start + aria-label + 点击 onStart；running「停止」#stop + 无 #start + 点击 onStop（+ onStart/onRestart 不触发，误触防护）；stopped「重新开始」#restart + 点击 onRestart；done「再次求解」#restart（文案区分 stopped）；error「重新开始」#restart；a11y type=button + tabIndex=0（默认键盘可触发）；每 phase 渲染按钮总数恒为 1（导出按钮在 ExportButtons 不在此） |
+| `src/components/ControlPanel/__tests__/ControlPanel.test.tsx` | **renderPanel 改造**：`opts.solving?: boolean` → `opts.phase?: SolvePhase`；传入 `onStop={() => {}}` + `onRestart={() => {}}`（必传 prop 兜底）。**用例改造**：「solving=true → Start disabled」→ 「phase=running → 无 #start，渲染 #stop（aria-label=停止求解）+ 参数编辑冻结」；「solving=true → export disabled」→ 「phase=running → export disabled」。**新增 3 项**：phase=stopped → #restart「重新开始」+ 参数解冻；phase=done → #restart「再次求解」；phase=error → #restart「重新开始」 |
+| `src/__tests__/useSolveRun.stop.test.tsx` | **删除 startDisabled() helper**（#start 在 running/stopped/done/error 态均不存在）。用例 3a/3b/3c 改造：不再查 `#start.disabled`，改查 `#stop`（running 态）+ `#restart` + 其 textContent / aria-label（stopped「重新开始」/ done「再次求解」/ error「重新开始」）。startSolveViaPanel() 内 `#start` 点击保留（idle 态开始按钮仍是 #start） |
+
+### 关键不变量（US-028 立，后续故事不得破坏）
+
+1. **SolveControls 纯受控，不自持 phase** —— phase 全部由 NestingPage 持有（US-027 关键不变量 #1 延续）；SolveControls 只按 phase 渲染不同按钮 + 调对应 handler。改 phase 持有方会破坏「多 seed 所有 onDone 到齐后统一切 phase」语义。
+2. **每 phase 渲染唯一主操作按钮（导出按钮在 ExportButtons 不在 SolveControls）** —— 5 态各自只渲染 1 个 button（idle=#start / running=#stop / stopped|error|done=#restart）。AC#1 列「stopped → 重新开始+导出」中「导出」指 ExportButtons（始终挂载），不是 SolveControls 内嵌；SolveControls 仅渲染主操作。改按钮总数需同步 SolveControls.test.tsx「渲染按钮总数恒为 1」用例。
+3. **#start id 保留（CSS + App.test.tsx 复用）** —— idle 态「开始求解」仍带 `id="start"`（沿用 `button#start` CSS 规则 + App.test.tsx 「ControlPanel 内有 #start 按钮」断言）。running/stopped/done/error 态 #start 不存在（App.test.tsx 仅在 idle 默认态断言 #start，不受影响）。改 id 需同步 App.test.tsx + ControlPanel.test.tsx + useSolveRun.stop.test.tsx。
+4. **partial 文案仅 UI 提示，不影响文件名** —— stopped/error（有帧）态 ExportButtons 显示「中间方案」警示（橙黄 `.dim.small.warn`），但导出文件名仍按当前 density 命名（与正常导出规则一致，不加 _partial 后缀）。改文件名口径需与版师确认（导出的中间方案密度 = 真实口径，反映该时刻利用率）。
+5. **partial 显示条件 = phase==='stopped' \|\| phase==='error'** —— 不判 hasLastFrame（ExportButtons 自身 `disabled = solving \|\| exporting \|\| !hasLastFrame` 已兜底「无帧不可点」）；partial flag 仅控文案切换。error 态若无帧（构造失败），按钮 disabled，警示文案仍显示（用户可见但不可点，语义清晰）。改条件需同步 ExportButtons + ControlPanel 集成。
+6. **a11y：aria-label 含「求解」语义 + 原生 button type=button** —— 5 按钮 aria-label 分别为「开始求解 / 停止求解 / 重新开始求解 / 再次求解」（含「求解」便于屏幕阅读器识别语义）；`type="button"` 防止 form 提交；原生 button 默认 `tabIndex=0` 可键盘 tab 序列 + Enter/Space 触发 click（W3C HTML spec：button activation behavior）。改 a11y 需同步 SolveControls.test.tsx 7 项。
+7. **ControlPanel API 从 solving 改 phase（破坏性变更，已同步周边）** —— ControlPanel 不再收 `solving: boolean`，改收 `phase: SolvePhase`（必传）+ `onStop/onRestart` 必传。内部 `const solving = phase === 'running'` 派生（透传 5 个输入组件 disabled + ExportButtons）。NestingPage 不再传 `solving={phase==='running'}`，仅传 `phase`。改 props 需同步 ControlPanel.test.tsx renderPanel + useSolveRun.stop.test.tsx。
+8. **浏览器验证通过（AC#7）** —— 用 Chrome CDP（`--remote-debugging-port=9222`）+ Python websockets 驱动 headless Chrome 跑完整流程：idle 点开始求解 → running 渲染 #stop（frame 推送后停止可点）→ 点停止 → stopped 渲染 #restart「重新开始」+ status「已停止：seed 0（保留中间方案，可导出）」+ partial warn「导出的是停止 / 出错时刻的中间方案，非最终最优解。」→ 点重新开始 → 回 running（#stop 回归）。stopped/error 态参数编辑解冻（用户改参数后走 onStart 用新值，覆盖 lastStartCfgRef）。反复 stop+restart 多次无异常（CDP 脚本 v2 验证 restart 后 #stop 回归）。
+
+## US-002 落地：WS 契约 + RunRegistry + useSolveRun
 
 ## US-002 落地：WS 契约 + RunRegistry + useSolveRun
 
