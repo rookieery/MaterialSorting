@@ -178,6 +178,43 @@ def _build_parse_payload(doc_id: str, filename: str, pieces) -> dict:
     return {'doc_id': doc_id, 'filename': filename, 'sizes': sizes_out}
 
 
+def _build_ptype_representatives(pieces, gmap, group_names) -> dict:
+    """每片型 RAW 代表裁片（母版原始坐标，与 ``_build_parse_payload`` 上传预览同口径）。
+
+    供 GET /api/ptypes 渲染高级配置缩略图 / 放大预览。**刻意取原始坐标**（不走
+    ``load_nest_pieces`` 的布纹对齐旋转）—— 否则纵向布纹线裁片（如腰 992×166）被
+    旋转 ±90° 后在 64×64 方形缩略格里缩成 ~11px 细竖线，与上传预览不一致且不可辨认
+    （US-018 AC#9 缩略图用于片型识别，应与上传预览同朝向）。布纹对齐是**排料求解**
+    的需要（intermediate ``pieces`` 仍存变换后几何供 sparrow），与缩略图展示无关。
+
+    「首个出现的 piece」语义与现有 ``/api/ptypes`` 回退分支一致：遍历 ``pieces``
+    （PieceOutline，即 collect 原始顺序），每片型取首个有效片（ptype/size 均非 None，
+    与 ``write_piece_dxf`` 写出条件一致；跨尺码同片型形状一致，取哪个码均可）。
+    返回 ``{ptype: {polygon, net_polygon, internal_lines, notches, grain_line}}``。
+    """
+    reps: dict[str, dict] = {}
+    for p in pieces:
+        ptype = group_names.get(gmap[p.group_key])
+        if ptype is None or ptype in reps or p.size is None:
+            continue
+        reps[ptype] = {
+            'polygon': [[round(float(x), 3), round(float(y), 3)] for x, y in p.polygon_mm],
+            'net_polygon': [[round(float(x), 3), round(float(y), 3)] for x, y in p.net_polygon],
+            'internal_lines': [
+                [[round(float(x), 3), round(float(y), 3)] for x, y in line]
+                for line in p.internal_lines
+            ],
+            'notches': [
+                [round(float(x), 3), round(float(y), 3), round(float(nx), 4), round(float(ny), 4)]
+                for x, y, nx, ny in p.notches
+            ],
+            'grain_line': (
+                [round(float(v), 3) for v in p.grain_line] if p.grain_line is not None else None
+            ),
+        }
+    return reps
+
+
 def _parse_dxf_sync(path: str):
     """同步包装：在 executor 里调用 collect_pieces_with_details。"""
     return collect_pieces_with_details(path)
@@ -277,6 +314,9 @@ def _commit_to_nesting_sync(doc_id: str, src_dxf: str, source_name: str) -> dict
     # 严格对齐的 label 字典（关键不变量 AC#5）。
     size_ptype_label = compute_size_ptype_labels(pieces, gmap, GROUP_NAMES)
 
+    # 每片型 RAW 代表裁片（原始坐标，供 /api/ptypes 缩略图与上传预览同朝向）。
+    ptype_representatives = _build_ptype_representatives(pieces, gmap, GROUP_NAMES)
+
     # intermediate schema 与历史 CLI 产物（pieces_export.py，已移除）完全一致
     doc = {
         'source': source_name,
@@ -315,6 +355,8 @@ def _commit_to_nesting_sync(doc_id: str, src_dxf: str, source_name: str) -> dict
             }
             for p in nest_pieces
         ],
+        # 每片型 RAW 代表裁片（原始坐标，与上传预览同朝向；见 _build_ptype_representatives）。
+        'ptype_representatives': ptype_representatives,
     }
 
     # 备份原 intermediate 为 .bak（首次写回时无原文件 → 不备份）
@@ -415,8 +457,20 @@ def get_ptypes():
     US-024 intermediate 扩 5 层后自动带 net_polygon/internal_lines/notches/grain_line
     （前端 layer-aware 渲染，无需改本端点）。空 state（首次启动未 commit、intermediate
     解析失败）返回 ``{representatives: {}}``，不阻塞前端配置弹窗降级为片型名文字。
+
+    坐标口径（US-024fix）：优先返 intermediate ``ptype_representatives`` —— **RAW 母版
+    原始坐标**，与 ``/api/parse-dxf`` 上传预览同朝向（未走布纹对齐旋转），让缩略图与
+    上传预览一致、可辨认。旧 intermediate 无此字段时回退到 ``pieces`` 首个代表（变换后
+    坐标），re-commit 后自动切 RAW 口径。
     """
     state = _get_pieces_state()
+    # 优先用 intermediate 的 ptype_representatives（RAW 原始坐标，与上传预览同朝向）——
+    # 避免纵向布纹片被 load_nest_pieces 布纹对齐旋转让缩略图缩成不可辨认的细竖线。
+    # 旧 intermediate（commit 前生成、无此字段）回退到从 pieces 取首个代表（变换后坐标，
+    # 行为同前，向后兼容；re-commit 后自动切到 RAW 口径）。
+    reps = (state.get('doc') or {}).get('ptype_representatives')
+    if reps is not None:
+        return {'representatives': reps}
     pieces = state.get('pieces') or []
     representatives: dict[str, dict] = {}
     for p in pieces:
