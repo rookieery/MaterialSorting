@@ -793,3 +793,18 @@ US-028 按钮组组件 SolveControls + ControlPanel 接线（删除 StartButton�
     - TabBar.test.tsx +7：菜单默认不渲染+展开三项 / replay-preview→start('preview') / replay-nesting→start('nesting') / reset→resetSeen 不启动 tour / 点外部关闭 / ESC 关闭 / toggle。
     - useTour.test.tsx +2：skip markSeen+close / skip 从等待态清轮询+markSeen+close（fake timers 验证无残留定时器）。
     - tourStore.test.ts +3：markSeen 后版本号同步写 localStorage / bump TOUR_VERSION 后 init 强制清 seen / resetSeen 不影响 version key。
+  - 验收：typecheck clean / npm run test 581/581 全绿（+18 新）/ npm run build 无报错（static/ 产出）/ package.json 无新依赖 / py backend import OK。
+  - 浏览器验证：chrome-devtools-mcp 不在本会话工具集；核心逻辑用 18 项新单测覆盖（mock matchMedia / mock mousedown target/currentTarget / fake timers 验证 skip 无残留定时器）。浏览器端到端回归（重放 preview/nesting、重置后进 Tab 自动触发、ESC/遮罩/跳过关闭、reduced-motion）留作整体回归。无后台进程残留（本 Story 未启动 ms-web）。
+## [2026-08-13] US-033 后端 PLT/HPGL 导出生成器与路由（branch: ralph/plt-export）
+  - 背景：WT「高速绘图 V8.8 网络版」+ LIKE 绘图仪原生吃 PLT/HPGL，DXF 在该软件实测无法打印 → 新增 PLT 导出链路。
+  - 实现：
+    - `materialSorting-server/src/materialsorting/web/export.py` 新增 `write_marker_plt(world_pieces, *, width_mm, gate_mm, title) -> bytes` + HPGL 常量（`_PLT_SCALE=40`/`_PLT_VELOCITY=80`/`_PEN_OUTLINE=1`..`_PEN_BORDER=6`/`_ETX=chr(3)`）+ 辅助函数 `_plt_pt`（mm×40 round clamp 非负）+ `_plt_polyline(closed, points)`（PU 首点 + PD 其余点，closed=True 末尾追加首点物理闭合）。指令序列：`IN;`→`VS80;`→`SP6;`门幅框→逐片`SP1-SP5`5层→`LB<title>chr(3);` ASCII 标题；空层跳过；纯 ASCII bytes，无临时文件、无新 pip 依赖。docstring 显式约束「世界坐标 Y 向上，绝不带 SVG `scale(1,-1)` 翻转」。
+    - `materialSorting-server/src/materialsorting/web/server.py` 第 47 行 import 扩 `write_marker_plt`；`/export` 路由 `elif fmt == 'dxf':` 之后、`else:` 之前插 `elif fmt == 'plt':` 分支，title 复用 DXF 同款 ASCII（`M1787 util=<pct>% L=<L>cm gate=<gate> seed=<seed>`），`media, ext = 'application/plt', 'plt'`，文件名走现有 `ext` 变量自动命中。
+    - 新建 `materialSorting-server/tests/test_export_plt.py`（17 项单测，覆盖 spec AC#13 全部要点 + 防御边界）。
+  - 验收：`pytest tests/test_export_plt.py` 17/17 全绿；`pytest tests/` 全套 25/25 全绿（17 新 + 8 原有，零回归）；`py -m materialsorting.web.server` 入口可 import、相对导入无误；分层依赖未反向（web→engine→bounds→parser）；无新 pip 依赖；全 ASCII 输出，`.decode('ascii')` 不抛异常。
+  - 无浏览器验证：US-033 是纯后端 PLT 文本生成 + /export 路由分支，无 SVG/UI 改动（MVP 不做物理设备验收，现场 WT V8.8 + LIKE 绘图仪实测留给用户落地后反馈）。回归校验通过端到端单测（`placed_to_world` → `write_marker_plt`）覆盖：5 层笔号语义、闭合不变量、坐标 ×40 缩放、LB+ETX 终止、多片计数。
+  - 无后台进程残留（本 Story 未启动 ms-web；端口 8000 上的 python PID 15904 是会话开始前已存在的进程，非本 Story 引入）。
+## US-034 前端 PLT 导出格式选项与测试（2026-08-13）
+  - 改动范围：纯前端，仅 `materialSorting-web/src/lib/download.ts` 扩 ExportFmt 联合类型 `'png' | 'dxf' | 'plt'` + EXPORT_FORMATS 在 DXF 与 PNG 之间插 `{value:'plt', label:'PLT'}`（生产交付格式族相邻），DEFAULT_EXPORT_FMT 仍 'dxf'。
+  - 零代码改动验证点（US-007 数据驱动设计承诺兑现）：useExport.ts 的 `` 正在生成 ${fmt.toUpperCase()} … `` 模板对 'plt' → 'PLT' 自动命中；parseContentDisposition(cd, fmt) 兜底 nesting.${fmt} 自动产出 'nesting.plt'；ExportButtons.tsx 的 EXPORT_FORMATS.map 数据驱动渲染 <option>，PLT 自动出现。三个文件均零改动，仅通过类型透传 + 模板字符串 + 数据驱动下拉框三种机制吃下新格式。
+  - 测试更新（3 文件 +2 用例 +1 断言）：download.test.ts「空 CD 兜底」组加 expect(parseContentDisposition('', 'plt')).toBe('nesting.plt')；useExport.test.tsx 参照 DXF 用例新增 exportAs('plt', [28]) → onStatus('正在生成 PLT …')；ExportButtons.test.tsx「select 2 options」→「3 options (DXF/PLT/PNG)」+ 新增「切 PLT + 点导出 → onExport('plt')」。全量 npm test：593 passed（+2 新增）；npm run build：tsc --noEmit + vite build 无错。

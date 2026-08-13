@@ -1,11 +1,4 @@
 {
   "branchName": "ralph/plt-export",
-  "stories": [
-    {
-      "id": "US-034",
-      "title": "前端 PLT 导出格式选项与测试",
-      "description": "作为版师，我希望在导出格式下拉框选 \"PLT\" 并点导出能下载 .plt 文件，以便喂给 WT V8.8 / LIKE 绘图仪。\n\n具体任务：\n1. materialSorting-web/src/lib/download.ts — ExportFmt 联合类型扩为 'png' | 'dxf' | 'plt'；EXPORT_FORMATS 数组新增 {value:'plt', label:'PLT'}（DXF 保持第一项，DEFAULT_EXPORT_FMT 仍 'dxf'）。\n2. materialSorting-web/src/hooks/useExport.ts — 零代码改动（验证点）：fmt 参数类型 ExportFmt 随步骤1自动含 'plt'，状态行 `正在生成 ${fmt.toUpperCase()} …` 对 plt → '正在生成 PLT …' 自动命中。\n3. materialSorting-web/src/components/ControlPanel/ExportButtons.tsx — 零代码改动（验证点）：下拉框 options 由 EXPORT_FORMATS.map 数据驱动，扩容后 PLT 自动出现；useState<ExportFmt>(DEFAULT_EXPORT_FMT) 默认仍 DXF。\n4. materialSorting-web/src/lib/__tests__/download.test.ts — parseContentDisposition 兜底测试组加 expect(parseContentDisposition('', 'plt')).toBe('nesting.plt')。\n5. materialSorting-web/src/__tests__/useExport.test.tsx — 参照现有 DXF onStatus 用例，加一条 exportAs('plt', [...]) → onStatus 被调 '正在生成 PLT …'。\n6. materialSorting-web/src/components/ControlPanel/__tests__/ExportButtons.test.tsx — 原\"select 有 2 个选项 (DXF/PNG)\"断言改为 3 个(DXF/PLT/PNG)；加一条\"切到 PLT + 点导出 → onExport('plt')\"用例。\n\n验收标准：\n- download.ts 的 ExportFmt 含 'plt'；EXPORT_FORMATS 含 {value:'plt', label:'PLT'}，DXF 仍第一项，DEFAULT_EXPORT_FMT 仍 'dxf'。\n- useExport.ts 与 ExportButtons.tsx 零代码改动（数据驱动下拉框 + fmt 透传设计验证通过）。\n- 3 个测试文件断言更新后全绿：下拉框渲染 3 选项 DXF/PLT/PNG。\n- 选 PLT+点导出 → onExport('plt') 被调用；exportAs('plt', sizes) → onStatus('正在生成 PLT …')；parseContentDisposition('', 'plt') → 'nesting.plt'。\n- 前端 npm test 全部通过，npm run build 无 TypeScript 错误。",
-      "passes": true
-    }
-  ]
+  "stories": []
 }
