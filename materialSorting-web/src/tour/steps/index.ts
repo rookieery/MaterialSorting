@@ -1,4 +1,4 @@
-// Tour 步骤注册表 + 版本号（US-029 基础设施 / US-030 previewTour 落地）。
+// Tour 步骤注册表 + 版本号（US-029 基础设施 / US-030 previewTour / US-031 nestingTour）。
 //
 // 导出：
 //   TOUR_VERSION — tour 内容版本号。tourStore init 比对 localStorage 中 ms.tour.version；
@@ -12,12 +12,12 @@
 //   - 文案小改、微调 placement 不 bump（老用户无需重看）。
 //   bump 后 tourStore init 自动清 seen（US-029 已实现），用户下次进 Tab 自动触发新版。
 //
-// Partial 而非完整 Record<TabId, TourDef>：US-030 仅落地 previewTour；
-// US-031 补 nestingTour 后变完整。auto-trigger 对无指引的 Tab（TOURS[tab]===undefined）
-// 直接跳过，不报错。
+// Partial 而非完整 Record<TabId, TourDef>：保留未来新增 Tab 时不必同步补 tour 的灵活性；
+// auto-trigger 对无指引的 Tab（TOURS[tab]===undefined）直接跳过，不报错。
 
 import type { TabId } from '../../store/uiStore';
 import type { TourDef } from '../types';
+import { nestingTour } from './nestingTour';
 import { previewTour } from './previewTour';
 
 /** Tour 内容版本号。bump 触发条件：仅步骤内容重大变更时 bump（强制老用户重看）。 */
@@ -25,8 +25,10 @@ export const TOUR_VERSION = '1';
 
 /**
  * 按 TabId 注册的指引序列。
- * US-030：previewTour（5 步）。US-031 将补 nestingTour（5 步）。
+ * preview：5 步上传预览指引（US-030）。
+ * nesting：5 步超排指引（US-031，result/export 步用 runRegistry 帧快照联动推进）。
  */
 export const TOURS: Partial<Record<TabId, TourDef>> = {
   preview: previewTour,
+  nesting: nestingTour,
 };

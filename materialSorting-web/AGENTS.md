@@ -28,7 +28,7 @@ npm run test               # vitest run（US-002 起会有用例）
 3. **命令式 polygon 更新**：每帧 setAttribute('points' / 'display')，由 Zustand renderTick 单字段 ~10fps 节流，**逃逸 React reconciliation**。US-003 落地。
 4. **`static/` 是构建产物**（US-008 起入库 gitignore）：`npm run build` 生成，**不要手改**；旧 vanilla 三件套（`legacy/`）已删除，React 应用是唯一真相源。
 
-## 文件分工（US-001 Tab 框架 + US-002~US-008 全部落地；上传预览 US-005 状态层 + US-006 UploadPanel + US-007 PiecePreviewSVG + US-008 SizeTabs/ParsedPiecesView/PreviewPage 容器集成 + 上传预览 US-011 qtyStore 数量状态 + 上传预览 US-012 PieceQtyDialog/Switch 数量弹窗 + 上传预览 US-013 PieceZoomModal 放大预览模态 + 上传预览 US-014 ParsedPiecesView 卡片头改造+双模态集成 + US-015 uiStore 扩 nestingEnabled + TabBar 置灰 + US-016 PreviewPage 联动 setNestingEnabled + US-017 SizePicker 动态读码号 + DEFAULT_FORM.sizes=[] + US-018 PerTypeOverridesModal/PtypePreviewModal 高级配置弹窗+片型缩略图+放大预览 + US-021 useCommitToNesting 解析成功自动 commit+D1 闭环 + US-022 求解输入数量 demand per-size + US-024 NestSVG 5 层渲染+共享 LAYER5_COLORS + US-027 NestingPage phase 状态机+useSolveRun.stop()+running 态冻结参数编辑 + US-029 操作指引基础设施 tourStore+TourOverlay+useTour+TabBar 右上角入口）
+## 文件分工（US-001 Tab 框架 + US-002~US-008 全部落地；上传预览 US-005 状态层 + US-006 UploadPanel + US-007 PiecePreviewSVG + US-008 SizeTabs/ParsedPiecesView/PreviewPage 容器集成 + 上传预览 US-011 qtyStore 数量状态 + 上传预览 US-012 PieceQtyDialog/Switch 数量弹窗 + 上传预览 US-013 PieceZoomModal 放大预览模态 + 上传预览 US-014 ParsedPiecesView 卡片头改造+双模态集成 + US-015 uiStore 扩 nestingEnabled + TabBar 置灰 + US-016 PreviewPage 联动 setNestingEnabled + US-017 SizePicker 动态读码号 + DEFAULT_FORM.sizes=[] + US-018 PerTypeOverridesModal/PtypePreviewModal 高级配置弹窗+片型缩略图+放大预览 + US-021 useCommitToNesting 解析成功自动 commit+D1 闭环 + US-022 求解输入数量 demand per-size + US-024 NestSVG 5 层渲染+共享 LAYER5_COLORS + US-027 NestingPage phase 状态机+useSolveRun.stop()+running 态冻结参数编辑 + US-029 操作指引基础设施 tourStore+TourOverlay+useTour+TabBar 右上角入口 + US-030 previewTour 5 步+advance-on-ready+首次自动触发 + US-031 nestingTour 5 步+runRegistry 帧快照联动推进)
 
 ```
 src/
@@ -44,7 +44,7 @@ src/
 ├── __tests__/             # US-002 ✅ useSolveRun；US-003 ✅ 各模块单测；US-007 ✅ useExport；US-001 ✅ App 集成 smoke（US-015 beforeEach 加 setNestingEnabled(true) 兜底 store guard）
 └── components/
     ├── TabBar.tsx         # US-001 ✅ 顶部 Tab（超排/上传预览），订阅 uiStore.activeTab；US-015 ✅ 超排 button disabled 闸（nestingEnabled===false 时 native disabled + .disabled class + aria-disabled + onClick 运行时判）；US-029 ✅ 右上角操作指引入口（margin-left:auto .tour-entry + 下拉菜单「重置全部指引」=resetSeen+start('preview') 跑假 tour；点击外部/ESC 关闭）
-    ├── NestingPage.tsx    # US-001 ✅ 排料页（原 App 业务逻辑外提；持 phase/seeds/useSolveRun）；US-027 ✅ solving→phase 五态状态机 + handleStop/handleRestart + lastStartCfgRef + running 态冻结参数编辑
+    ├── NestingPage.tsx    # US-001 ✅ 排料页（原 App 业务逻辑外提；持 phase/seeds/useSolveRun）；US-027 ✅ solving→phase 五态状态机 + handleStop/handleRestart + lastStartCfgRef + running 态冻结参数编辑；US-031 ✅ .nest-wrap 加 data-tour="nest-wrap"（nestingTour step4 锚点）
     ├── preview/           # US-001 起：上传预览页
     │   ├── PreviewPage.tsx # US-008 ✅ 容器（左 UploadPanel + 右 SizeTabs+ParsedPiecesView；未解析空态）；US-014 ✅ 顶层挂 PieceQtyDialog+PieceZoomModal 单例 + useEffect subscribe 联动 qtyStore.resetQuantities（重传清零）；US-016 ✅ 加 useEffect subscribe uploadStore.status 联动 uiStore.setNestingEnabled（`status==='done' && doc!==null` → true，否则 false；mount 即对齐）
     │   ├── UploadPanel.tsx # 上传预览 US-006 ✅ 左侧上传面板（点击+拖拽+客户端预校验+status 反馈）；US-021 ✅ 加 commit 状态行（committing→应用中… / done→已应用至超排：N 裁片 M 码 / error→应用失败：msg）
@@ -64,18 +64,22 @@ src/
     │       ├── PieceQtyDialog.test.tsx   # 上传预览 US-012 ✅ 15 项集成（null 不渲染 / 标题 / 初值 per-size+global / [+][-] / Switch / 确定 per-size+global / 取消 / 遮罩 / ESC / blur clamp）
     │       └── PieceZoomModal.test.tsx   # 上传预览 US-013 ✅ 14 项集成（null 不渲染 / doc=null 不渲染 / overlay+modal+aria / 头部 label+seq(qty)+size+name / qty 从 qtyStore / null 码「通用」/ body svg.piece-preview-svg / ✕ closeZoom / 遮罩 closeZoom / modal 不冒泡 / ESC closeZoom / Portal body / label 不存在兜底 / size 不存在兜底）+ US-016 ✅ PreviewPage.test.tsx 增 8 项（mount idle→false / done→true / error→false / reset→false / 重传 doc_id 变化短暂 false 后 true / 关键不变量 setNestingEnabled(false) 不强制切 Tab / uploading→false / 状态机循环 done→uploading→error→done）
     ├── nests/             # US-003 ✅ NestSVG / NestCard / NestLabel；US-005 ✅ NestsGrid；US-006 ✅ NestSVG seek+hover
-    ├── ControlPanel/      # US-004 ✅ 8 子组件；US-005 ✅ MultiSeedControls；US-007 ✅ ExportButtons；US-018 ✅ PerTypeOverrides 改按钮触发 + PerTypeOverridesModal（高级配置弹窗 + 片型缩略图 + D7 预填 + 草稿确定）+ PtypePreviewModal（片型放大预览，双层独立 ESC）
+    ├── ControlPanel/      # US-004 ✅ 8 子组件；US-005 ✅ MultiSeedControls；US-007 ✅ ExportButtons；US-018 ✅ PerTypeOverrides 改按钮触发 + PerTypeOverridesModal（高级配置弹窗 + 片型缩略图 + D7 预填 + 草稿确定）+ PtypePreviewModal（片型放大预览，双层独立 ESC）；US-031 ✅ 加 data-tour 锚点（doc-banner / start-btn 父容器 / param-form 在 SizePicker / export-group 在 ExportButtons）
     ├── curve/             # US-005 ✅ ConvergenceCurve
     ├── playback/          # US-006 ✅ PlaybackBar / Seekbar / SeekReadout
     └── Tooltip.tsx        # US-006 ✅ Portal 单例 + showTooltip/hideTooltip/setHovered/clearHovered
-├── tour/                 # US-029 ✅ 操作指引（onboarding tour）基础设施
+├── tour/                 # US-029 ✅ 操作指引（onboarding tour）基础设施 + US-030 ✅ previewTour + US-031 ✅ nestingTour
 │   ├── types.ts          # US-029 ✅ Placement/TourStep/TourDef 类型（TabId 从 uiStore 复用）
 │   ├── TourOverlay.tsx   # US-029 ✅ 高亮引擎（Portal body z=2000；spotlight box-shadow 镂空 + bubble placement 定位 + 零尺寸居中兜底 + useLayoutEffect imperative 定位）
-│   ├── useTour.ts        # US-029 ✅ 控制器 hook（advance-on-ready 轮询骨架；next/prev/close + before + 等待态）
+│   ├── useTour.ts        # US-029 ✅ 控制器 hook + US-030 ✅ advance-on-ready 完整轮询 + useTourAutoTrigger（首次进 Tab 自动触发）
 │   ├── steps/
-│   │   └── index.ts      # US-029 ✅ TOUR_VERSION='1' + DEMO_PREVIEW_TOUR（2 步假 tour）；US-030 扩为 TOURS
+│   │   ├── index.ts      # US-029 ✅ TOUR_VERSION='1' + TOURS: Partial<Record<TabId,TourDef>>（US-030 注册 preview / US-031 注册 nesting）
+│   │   ├── previewTour.ts # US-030 ✅ 上传预览 5 步（upload/parsed/set-qty/committed/goto-nesting；联动步读 uploadStore/uiStore 快照）
+│   │   └── nestingTour.ts # US-031 ✅ 超排 5 步（doc-banner/params/solve/result/export；result/export 联动步读 runRegistry.list().some(r=>r.lastFrame!==null) 帧快照）
 │   └── __tests__/
-│       └── TourOverlay.test.tsx # US-029 ✅ 5 项（null 不渲染 / 激活渲染 / spotlight 贴 rect / 零尺寸居中 / 步骤切换跟随）
+│       ├── TourOverlay.test.tsx # US-029 ✅ 5 项基础 + US-030 ✅ 1 项等待态（advance-on-ready ready=false 时 readyHint + 下一步 disabled）
+│       ├── useTour.test.tsx     # US-030 ✅ 5 项（告知型推进 / 等待态 / 轮询推进 / before 副作用 / close 无残留定时器）
+│       └── nestingTour.test.tsx # US-031 ✅ 5 项（ready 无帧 false / 有帧 true / 5 锚点 query 到 / 5 步 id 序列 / 前 3 告知+后 2 联动）
 ```
 
 ## 上传预览 US-011 关键约定（qtyStore 数量状态 调用方必读）
@@ -373,7 +377,20 @@ src/
 - **viewBox 用历史最大 width 作稳定锚**：`W = max(run.viewBoxMaxW, lastFrame.width_mm, 1)`，避免收缩抖动；用布矩形按当前帧 `width_mm` 收缩（直观看到省布过程）。
 - **manifest 到达后 DOM 才建**：mount 早于 manifest 时 effect 早 return；manifest 到达后下一次 renderTick bump 才建。后到 manifest 测试覆盖此路径。
 
-## 已踩坑 / 注意事项
+## US-031 关键约定（nestingTour 5 步 + runRegistry 帧快照联动 调用方必读）
+
+- **5 步序列：doc-banner / params / solve / result / export**（与 PRD 字面一致）。前 3 步告知型（无 ready，点下一步直接推进）；后 2 步联动型（ready 读 runRegistry 帧快照，ready()===false 切等待态 + 200ms 轮询，true 时自动推进；最后一步 export 自动完成 = markSeen('nesting') + close）。收敛曲线并入 result 步气泡附带提及（不单独高亮 / 不单独锚点）；回放 PlaybackBar 非主流程不单独成步。
+- **ready 谓词读 runRegistry 模块级单例，不读局部 SolvePhase**：NestingPage 的 `phase: SolvePhase` 是 useState，tour 模块无法从外部读取（不是 React 组件，无 hook context）。`runRegistry` 是模块级 mutable 单例（`store/runRegistry.ts`），所有 useSolveRun 实例共享 —— start() 时 `create(seed)` push、WS 推 frame 时 `rec.lastFrame = msg`。故 `runRegistry.list().some(r => r.lastFrame !== null)` 等价于「用户已真实点开始求解并收到至少一帧」。**改 ready 口径需同步 nestingTour.test.tsx 测 1/2**。
+- **advance-on-ready 统一 200ms 轮询（已在 US-030 useTour 落地，nestingTour 复用）**：runRegistry 无 React 订阅能力（是纯 mutable 数组），advance-on-ready 不订阅 store 变化，而是 useTour 内 `setInterval(200ms)` 调 `ready()` 重读快照。ready 翻 true 后停轮询 + 自动推进。close / stepIndex 变化 / unmount 时 clearInterval（无泄漏，US-030 useTour.test.tsx 测 5 覆盖）。
+- **5 个 data-tour 锚点解耦 CSS 类名**：`[data-tour="doc-banner"]`（ControlPanel.tsx `.doc-banner`）/ `[data-tour="param-form"]`（SizePicker.tsx `.field` 根容器）/ `[data-tour="start-btn"]`（ControlPanel.tsx 内 SolveControls 父 `<div>` 包裹）/ `[data-tour="nest-wrap"]`（NestingPage.tsx `.nest-wrap`）/ `[data-tour="export-group"]`（ExportButtons.tsx `.export-group` 根）。querySelector 命中首个即可，与 CSS class 重构解耦。
+- **SolveControls 父容器包裹（不侵入 SolveControls 自身）**：ControlPanel.tsx 在 `<SolveControls/>` 外包 `<div data-tour="start-btn">`，SolveControls.tsx 仍返回单一 `<button>`（保持纯受控 + 测试 `button#start` 查询不破）。包裹 div 仅作 tour 锚点 + 不影响 CSS（`button#start` CSS 选择器与父容器无关）。running 态 SolveControls 渲染 `#stop`，父 div 的 `data-tour="start-btn"` 仍在 DOM 但 tour 不查询（仅 idle 态在 step3 时查询）。
+- **before 副作用 ensureNestingTab（5 步均调用）**：用户从 preview Tab 用菜单「重看超排指引」（US-032 落地）触发时需切回 nesting。幂等：`if (activeTab !== 'nesting') setTab('nesting')`。setTab 受 nestingEnabled guard 兜底（未解锁不切），与真实流程一致（commit 后才解锁 nesting Tab）。
+- **首次进 nesting Tab 自动触发**：US-030 useTourAutoTrigger 已读 `TOURS[tab]` 判断该 Tab 是否有指引；TOURS.nesting 注册后自动生效（!seen.nesting && 无 tour 运行 → 延迟 300ms start('nesting')）。seen.nesting 在 export 步自动完成时 markSeen 写入（localStorage 持久化，下次进 Tab 不再自动触发）。
+- **nestingTour.test.tsx 5 项单测覆盖**：测 1/2 直接调 `nestingTour.steps.find(s=>s.id==='result'/'export').ready!()`（纯 runRegistry 快照读，不挂 React）；测 3 挂 NestingPage（StrictMode + stub fetch /api/ptypes 防 act warning），5 个 data-tour 锚点全部 querySelector 命中；测 4/5 验 5 步 id 序列 + 前 3 告知型 / 后 2 联动型结构稳定性。**改 step id / ready / selector 需同步测 3/4/5**。
+- **不引入 CSS 框架**：nestingTour 复用 US-029 落地的 `.tour-overlay/.tour-spotlight/.tour-bubble/.tour-btn-*` 全套样式（暗背景 #26282e + #2ea06c 同色系）。无新 CSS。
+- **未做浏览器验证（chrome-devtools-mcp 不在本会话工具集）**：本 Story 无 SVG/坐标变换（仅加 DOM 锚点 + tour 步骤定义 + runRegistry 快照读），核心 advance-on-ready 逻辑用 US-030 useTour.test.tsx 5 项 + nestingTour.test.tsx 5 项 + TourOverlay 6 项覆盖（fake timers 验证轮询推进 + close 无残留 + ready 快照读取）。端到端浏览器回归（上传→commit→进超排→tour 自动起→开始求解→step4/5 自动推进→导出）留作 US-032 集成时统一核对。
+
+
 
 - `npm run dev` 启动后 Vite 监听 `localhost:5173`，**curl 必须用 `localhost`**（不是 `127.0.0.1`），Windows 下后者可能 connection refused。
 - `tsconfig.node.json` 必须 `composite: true`，否则 `tsconfig.json` 的 references 报错。

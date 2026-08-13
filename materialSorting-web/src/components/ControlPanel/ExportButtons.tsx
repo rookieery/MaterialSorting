@@ -54,7 +54,7 @@ export function ExportButtons({ solving, exporting, onExport, partial = false }:
   const disabled = solving || exporting || !hasLastFrame;
 
   return (
-    <div className="export-group">
+    <div className="export-group" data-tour="export-group">
       <div className="field-label">导出最优方案</div>
       <div className="export-btns">
         <select

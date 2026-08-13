@@ -168,7 +168,7 @@ export function NestingPage(): React.JSX.Element {
       />
 
       <main className="main">
-        <div className="nest-wrap">
+        <div className="nest-wrap" data-tour="nest-wrap">
           <NestsGrid seeds={seeds} />
         </div>
 

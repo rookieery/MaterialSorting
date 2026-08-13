@@ -110,7 +110,7 @@ export function SizePicker({ selected, onChange, disabled = false }: SizePickerP
   const totalPieces = computeTotalCutPieces(doc, selected, quantities);
 
   return (
-    <div className="field">
+    <div className="field" data-tour="param-form">
       <div className="field-label">码号（多选）</div>
       <div className="sizes">
         {chipSizes.map((s) => {

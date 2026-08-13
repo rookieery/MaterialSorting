@@ -29,4 +29,6 @@
 
 - [x] US-030 preview tour 全量 + advance-on-ready 完整 + 首次自动触发（5 步 previewTour：upload/parsed/set-qty/committed/goto-nesting；advance-on-ready 改检查当前步 ready 语义 + 200ms 轮询自动推进 + 最后一步自动完成；useTourAutoTrigger 独立 hook App 调用 subscribe activeTab 首次进入自动触发；data-tour 锚点 5 处；前端 558/558 全绿 typecheck clean build 无报错；useTour.test.tsx 5 项 + TourOverlay 等待态 1 项单测覆盖 advance-on-ready） — completed on 2026-08-13 12:12
 
+- [x] US-031 nesting tour 全量 + 求解状态联动（5 步 nestingTour：doc-banner/params/solve/result/export；result/export 联动步 ready 读 runRegistry.list().some(r=>r.lastFrame!==null) 帧快照绕开 NestingPage useState 外部不可读；前 3 步告知型；5 锚点 data-tour 落地 doc-banner/param-form/start-btn/nest-wrap/export-group；TOURS 注册 nesting 复用 US-030 自动触发；前端 563/563 全绿 typecheck clean build 无报错；nestingTour.test.tsx 5 项单测覆盖 ready 谓词 + 锚点 query + 步骤结构） — completed on 2026-08-13 12:25
+
 *(No completed items)*

@@ -9,15 +9,14 @@ Started: 2026-08-09
 
 
 
-  - 浏览器验证：ms-web 启动成功（:8000 HTTP 200）；chrome-devtools-mcp 不在本会话工具集，核心定位逻辑用 mockRect 单测覆盖（spotlight 贴目标 rect + 零尺寸回退 + 步骤切换）。视觉回归留作 US-030/032 集成。
-  - 清理：ms-web PID 31124 已 taskkill，端口 8000 确认 LISTENING 不再存在。
 
-## US-030 preview tour 全量 + advance-on-ready 完整 + 首次自动触发（2026-08-13）
-  - 新建 src/tour/steps/previewTour.ts — 5 步 previewTour（upload/parsed/set-qty/committed/goto-nesting）。ready 谓词：parsed 读 uploadStore.status==='done'&&doc!==null；committed 读 commitStatus==='done'；goto-nesting 读 uiStore.activeTab==='nesting'；upload/set-qty 告知型（无 ready）。goto-nesting 无 before（不强制切回 preview）。
-  - 改 src/tour/steps/index.ts — DEMO_PREVIEW_TOUR 删除 → TOURS:Partial<Record<TabId,TourDef>>={preview:previewTour}（US-031 补 nesting）。TOUR_VERSION='1' 不变。
-  - 改 src/tour/useTour.ts — advance-on-ready 完整模型：从 US-029「next() 检查目标步 ready」改为「step-change effect 检查当前步 ready」——进入 ready=false 联动步时切等待态+200ms 轮询，ready 翻 true 自动推进（最后一步=markSeen+close，非最后=storeNext）。新增 useTourAutoTrigger 独立 hook（subscribe activeTab + 300ms 延迟 + 三重 guard seen/activeTour/TOURS[tab]）。
-  - 改 App.tsx — 顶层调 useTourAutoTrigger()。
-  - 锚点：UploadPanel .drop-zone 加 data-tour="drop-zone"；SizeTabs 容器加 data-tour="size-tabs"；ParsedPiecesView .piece-card-head 加 data-tour="piece-card-head"；TabBar 超排 button 加 data-tour="tab-nesting"；commit 行已有 data-testid="commit-status"。
-  - 测试：新建 useTour.test.tsx 5 项（vi.mock 注入可控 tour + vi.hoisted spy + fake timers）——告知型直接推进 / 等待态 readyHint+disabled / 轮询 ready 翻 true 自动推进+停 / before 副作用 / close 无残留定时器。TourOverlay.test.tsx 改 previewTour 选择器 + 新增等待态 1 项（共 6 项）。
   - 验收：typecheck clean / npm run test 558/558 全绿 / npm run build 无报错（static/ 产出）。
   - 浏览器验证：chrome-devtools-mcp 不在本会话工具集；advance-on-ready 逻辑用 useTour.test.tsx 5 项 + TourOverlay 等待态 1 项单测覆盖（fake timers 验证轮询推进 + close 无残留）。端到端浏览器回归留作 US-031/032 集成。清理：stale server PID 21508 已 taskkill，端口 8000 确认 free。
+
+## US-031 nesting tour 全量 + 求解状态联动 (2026-08-13)
+  - 新建 src/tour/steps/nestingTour.ts：5 步 nestingTour（doc-banner/params/solve/result/export）。前 3 步告知型（无 ready，点下一步直接推进）；result/export 联动型（ready 读 runRegistry.list().some(r=>r.lastFrame!==null) 帧快照，绕开 NestingPage phase 是 useState 外部读不到的问题）。每步 before 调 ensureNestingTab（幂等）。result 步气泡附带提及收敛曲线（不单独高亮/锚点）；回放非主流程不单独成步。
+  - steps/index.ts：TOURS 注册 nesting: nestingTour（Partial<Record<TabId,TourDef>> 双 Tab 完整；US-030 useTourAutoTrigger 已读 TOURS[tab] 自动生效，!seen.nesting && 进 nesting Tab → 延迟 300ms start('nesting')）。
+  - 5 锚点 data-tour 落地：ControlPanel.tsx .doc-banner 加 data-tour="doc-banner"；SizePicker.tsx .field 根容器加 data-tour="param-form"；ControlPanel.tsx 在 <SolveControls> 外包 <div data-tour="start-btn">（不侵入 SolveControls 自身，保持 button#start 查询不破）；NestingPage.tsx .nest-wrap 加 data-tour="nest-wrap"；ExportButtons.tsx .export-group 加 data-tour="export-group"。
+  - 新建 src/tour/__tests__/nestingTour.test.tsx：5 项单测（ready 无帧 false / 有帧 true / 5 锚点 NestingPage 渲染后 query 全命中 / 5 步 id 序列 / 前 3 告知+后 2 联动结构）。测 3 stub fetch /api/ptypes 防 PtypePreviewModal act warning。
+  - 验收：typecheck clean / npm run test 563/563 全绿（+5 新）/ npm run build 无报错（static/ 产出）。
+  - 浏览器验证：chrome-devtools-mcp 不在本会话工具集；advance-on-ready 逻辑复用 US-030 useTour.test.tsx 5 项 + nestingTour.test.tsx 5 项 + TourOverlay 6 项覆盖（fake timers 验证轮询推进 + close 无残留 + runRegistry 帧快照 ready 谓词）。端到端浏览器回归（上传→commit→进超排→tour 自动起→开始求解→step4/5 自动推进→导出）留作 US-032 集成。无后台进程残留（本 Story 未启动 ms-web）。
