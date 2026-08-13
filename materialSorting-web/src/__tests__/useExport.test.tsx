@@ -169,6 +169,17 @@ describe("useExport (US-007)", () => {
     await act(async () => { await captured!.exportAs("dxf", [28]); });
     expect(onStatus).toHaveBeenCalledWith("正在生成 DXF …");
   });
+
+  it("AC#6 PLT fmt -> onStatus writing PLT (US-034)", async () => {
+    // 零代码改动验证点：useExport 不关心 fmt 具体值，``正在生成 ${fmt.toUpperCase()} …``
+    // 模板对 'plt' → 'PLT' 自动命中（toUpperCase 不受 EXPORT_FORMATS 扩容影响）。
+    makeDoneRun(0, 0.5);
+    const onStatus = vi.fn();
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(makeResponse());
+    renderProbe(onStatus);
+    await act(async () => { await captured!.exportAs("plt", [28]); });
+    expect(onStatus).toHaveBeenCalledWith("正在生成 PLT …");
+  });
   it("AC#4 CN filename decoded from Content-Disposition (AC#5)", async () => {
     makeDoneRun(0, 0.8842, 3200);
     const onStatus = vi.fn();

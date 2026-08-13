@@ -576,6 +576,25 @@ NestingPage 把单一 `solving: boolean` 扩展为五态 `phase: SolvePhase`（i
 8. **onStatus 由 useExport 透传到 ControlPanel → App.setStatus → StatusLine** —— 「正在生成 PNG/DXF…」「已导出 …」「导出失败：…」「无可导出的方案（请先求解）」四类文案由 useExport 写，ControlPanel 不参与组装。改文案需同步 `useExport.test.tsx` 4 个 onStatus 断言。
 9. **服务端文件名 `pct` 而非 `%`** —— `server.py export` 路由拼 `fname_cn = 排料_码{sizes_str}_{pct:.2f}pct_seed{seed}.{ext}`（不是 `88.42%`）。AC#5 字面写 `%` 是文档误差；实际下载文件名是 `排料_码28-30-32_88.42pct_seed0.png`。改文件名格式需同步后端 server.py + useExport.test.tsx 的 CN decode 用例。
 
+### US-034 扩展：导出格式下拉框加 PLT（数据驱动零改动验证）
+
+US-034 把 PLT 加进导出格式下拉框，**仅改 `src/lib/download.ts`**（扩 `ExportFmt` 联合类型 + `EXPORT_FORMATS` 数组），`useExport.ts` 与 `ExportButtons.tsx` 零代码改动——验证 US-007「数据驱动下拉框 + fmt 透传」设计成立。
+
+| 文件 | 改动 |
+| --- | --- |
+| `src/lib/download.ts` | `ExportFmt` 从 `'png' \| 'dxf'` 扩为 `'png' \| 'dxf' \| 'plt'`；`EXPORT_FORMATS` 在 DXF 与 PNG 之间插 `{ value: 'plt', label: 'PLT' }`（生产交付格式族相邻）；`DEFAULT_EXPORT_FMT` 仍 `'dxf'`（版师 / ET2008 主格式）。注释新增「顺序约定：DXF 永远第一项」 |
+| `src/hooks/useExport.ts` | **零代码改动**（验证点）：`` 正在生成 ${fmt.toUpperCase()} … `` 模板对 `'plt'` → `'PLT'` 自动命中；`parseContentDisposition(cd, fmt)` 兜底 `nesting.${fmt}` 自动产出 `nesting.plt`；`ExportPayload.fmt: ExportFmt` 随联合类型扩展自动含 `'plt'` |
+| `src/components/ControlPanel/ExportButtons.tsx` | **零代码改动**（验证点）：`EXPORT_FORMATS.map` 数据驱动渲染 `<option>`，PLT 自动出现；`useState<ExportFmt>(DEFAULT_EXPORT_FMT)` 默认仍 DXF |
+| `src/lib/__tests__/download.test.ts` | 「空 Content-Disposition 兜底」组加 `expect(parseContentDisposition('', 'plt')).toBe('nesting.plt')` |
+| `src/__tests__/useExport.test.tsx` | 参照 DXF onStatus 用例，新增 `exportAs('plt', [28]) → onStatus('正在生成 PLT …')` |
+| `src/components/ControlPanel/__tests__/ExportButtons.test.tsx` | 「select has 2 options」→「3 options (DXF/PLT/PNG)」；新增「切 PLT + 点导出 → onExport('plt')」 |
+
+**关键不变量（US-034 立，后续故事不得破坏）**：
+
+1. **DXF 永远是 `EXPORT_FORMATS[0]`** —— `DEFAULT_EXPORT_FMT='dxf'` + 下拉框默认选中第一项，改顺序会破坏「默认 DXF」语义。新增格式只能 append 或插中间，不能 unshift。
+2. **新增格式只需 3 步** —— (a) 扩 `ExportFmt` 联合类型；(b) `EXPORT_FORMATS` 加一项；(c) 后端 `/export` 路由加 `elif fmt == 'xxx'` 分支。`useExport.ts` / `ExportButtons.tsx` / `parseContentDisposition` 因数据驱动 + 模板透传无需改动——这是 US-007 留下的扩展性承诺，US-034 是首次验证。
+3. **onStatus 文案由 `fmt.toUpperCase()` 模板生成，禁止 switch/case** —— 任何新格式自动产出「正在生成 XXX …」，无需在 useExport 内加分支。改模板需同步 `useExport.test.tsx` DXF/PLT 两个 onStatus 用例。
+
 ### 关键不变量（US-006 立，后续故事不得破坏）
 
 1. **`seekTime = -1` 是 live 标志，不是合法时间** —— NestSVG / SeekReadout 必须先判 `seekTime >= 0` 再走 frameAtTime 分支；负值回退 lastFrame（live）。改默认值需同步 `PlaybackBar.test.tsx` + `NestSVG.seek.test.tsx`。

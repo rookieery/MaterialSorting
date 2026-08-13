@@ -7,14 +7,19 @@
 //   4. <a download> + URL.createObjectURL + 10s revoke（与旧 vanilla 实现 setTimeout 10000 一致）
 
 /** 导出格式（与后端 server.py export 路由的 fmt 字段对齐）。 */
-export type ExportFmt = 'png' | 'dxf';
+export type ExportFmt = 'png' | 'dxf' | 'plt';
 
 /**
  * 导出格式下拉框选项（与 ExportFmt 同源）。
  * 新增格式只需：往此数组加一项 + 扩 ExportFmt 联合类型 + 后端 /export 路由加分支。
+ *
+ * 顺序约定：DXF 永远第一项（版师 / ET2008 生产交付主格式，对应 DEFAULT_EXPORT_FMT='dxf'）；
+ * US-034 新增 PLT（WT V8.8 / LIKE 绘图仪原生链路），插在 DXF 与 PNG 之间——生产交付格式族
+ * （DXF/PLT）相邻，PNG 作为可视化预览格式排末位。
  */
 export const EXPORT_FORMATS: { value: ExportFmt; label: string }[] = [
   { value: 'dxf', label: 'DXF' },
+  { value: 'plt', label: 'PLT' },
   { value: 'png', label: 'PNG' },
 ];
 

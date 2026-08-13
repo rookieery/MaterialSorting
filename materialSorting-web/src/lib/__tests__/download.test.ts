@@ -54,6 +54,8 @@ describe('parseContentDisposition (US-007 AC#4)', () => {
   it('空 Content-Disposition → nesting.<fmt> 兜底', () => {
     expect(parseContentDisposition('', 'png')).toBe('nesting.png');
     expect(parseContentDisposition('', 'dxf')).toBe('nesting.dxf');
+    // US-034：PLT 兜底（与 png/dxf 同语义，喂 WT V8.8 / LIKE 绘图仪）
+    expect(parseContentDisposition('', 'plt')).toBe('nesting.plt');
   });
 
   it('无 filename 字段 → nesting.<fmt> 兜底', () => {

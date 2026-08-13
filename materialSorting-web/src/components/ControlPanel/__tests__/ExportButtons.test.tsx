@@ -98,11 +98,12 @@ describe("ExportButtons (US-007 下拉框 + 单按钮)", () => {
     expect(container!.querySelectorAll(".export-btns button.export").length).toBe(1);
   });
 
-  it("select has 2 options (DXF/PNG) and defaults to DXF", () => {
+  it("select has 3 options (DXF/PLT/PNG) and defaults to DXF (US-034)", () => {
+    // 数据驱动下拉框：EXPORT_FORMATS 扩容后 PLT 自动出现，ExportButtons 零代码改动。
     renderBtns();
     const select = container!.querySelector<HTMLSelectElement>(".export-btns select")!;
     const opts = Array.from(select.options).map((o) => o.value);
-    expect(opts).toEqual(["dxf", "png"]);
+    expect(opts).toEqual(["dxf", "plt", "png"]);
     expect(select.value).toBe("dxf");
   });
 
@@ -164,6 +165,18 @@ describe("ExportButtons (US-007 下拉框 + 单按钮)", () => {
     act(() => exportButton().click());
     expect(onExport).toHaveBeenCalledTimes(1);
     expect(onExport).toHaveBeenCalledWith("png");
+  });
+
+  it("switch select to PLT then click -> onExport(plt) (US-034)", () => {
+    // 数据驱动下拉框验证：切 PLT 后点导出，onExport 收到 'plt'（透传给 useExport.exportAs
+    // → POST /export {fmt:'plt'} → 后端 write_marker_plt，US-033 已就绪）。
+    makeRunWithFrame(0);
+    const onExport = vi.fn();
+    renderBtns({ onExport });
+    selectFmt("plt");
+    act(() => exportButton().click());
+    expect(onExport).toHaveBeenCalledTimes(1);
+    expect(onExport).toHaveBeenCalledWith("plt");
   });
 
   it("disabled 时点导出按钮不触发 onExport", () => {
