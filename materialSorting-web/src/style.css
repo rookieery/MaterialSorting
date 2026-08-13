@@ -194,6 +194,12 @@ polygon.hover { fill-opacity: 0.9 !important; stroke: #fff !important; stroke-wi
 /* ---- 导出最优方案 ---- */
 .export-group { margin-top: 14px; padding-top: 12px; border-top: 1px solid #34363d; }
 .export-btns { display: flex; gap: 8px; margin: 6px 0 4px; }
+/* US-007 导出格式下拉框：固定宽，深色系与 .field input 协调，padding/字号与 button.export 对齐。 */
+select.export-fmt {
+  width: 92px; padding: 8px 6px; font-size: 13px; font-weight: 600;
+  background: #1c1d22; color: #e6e6e6;
+  border: 1px solid #3a3d45; border-radius: 6px; cursor: pointer;
+}
 button.export {
   flex: 1; padding: 8px 6px; font-size: 13px; font-weight: 600;
   background: #2c5d8f; color: #fff; border: 0; border-radius: 6px; cursor: pointer;

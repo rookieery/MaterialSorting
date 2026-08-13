@@ -390,16 +390,14 @@ describe("ControlPanel export wiring (US-007)", () => {
     expect(status.compareDocumentPosition(group!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
   });
 
-  it("no run / no lastFrame -> export buttons disabled", () => {
+  it("no run / no lastFrame -> export button disabled", () => {
     renderPanel();
-    expect(container!.querySelector<HTMLInputElement>("#export_png")!.disabled).toBe(true);
-    expect(container!.querySelector<HTMLInputElement>("#export_dxf")!.disabled).toBe(true);
+    expect(container!.querySelector<HTMLButtonElement>(".export-btns button.export")!.disabled).toBe(true);
   });
 
-  it("US-028 phase=running -> export buttons disabled (solving=phase==='running')", () => {
+  it("US-028 phase=running -> export button disabled (solving=phase==='running')", () => {
     renderPanel(() => {}, { phase: "running" });
-    expect(container!.querySelector<HTMLInputElement>("#export_png")!.disabled).toBe(true);
-    expect(container!.querySelector<HTMLInputElement>("#export_dxf")!.disabled).toBe(true);
+    expect(container!.querySelector<HTMLButtonElement>(".export-btns button.export")!.disabled).toBe(true);
   });
 
   it("click 导出 PNG → onStatus 收到「正在生成 PNG …」（hook 调用）", async () => {
@@ -433,12 +431,19 @@ describe("ControlPanel export wiring (US-007)", () => {
     vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
 
     renderPanel(() => {}, { onStatus });
-    // bump tick → buttons enabled
+    // bump tick → export button enabled
     act(() => useAppStore.getState().bumpRenderTick());
-    expect(container!.querySelector<HTMLInputElement>("#export_png")!.disabled).toBe(false);
+    expect(container!.querySelector<HTMLButtonElement>(".export-btns button.export")!.disabled).toBe(false);
+
+    // 切下拉框到 PNG（默认 DXF）后点导出
+    const select = container!.querySelector<HTMLSelectElement>(".export-btns select")!;
+    act(() => {
+      select.value = "png";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
 
     await act(async () => {
-      container!.querySelector<HTMLButtonElement>("#export_png")!.click();
+      container!.querySelector<HTMLButtonElement>(".export-btns button.export")!.click();
       // 让 fetch + microtasks 跑完
       await Promise.resolve();
       await Promise.resolve();

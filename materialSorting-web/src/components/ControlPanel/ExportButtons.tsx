@@ -1,15 +1,19 @@
-// ExportButtons —— 导出 PNG / DXF 按钮组（US-007 AC#6）。
+// ExportButtons —— 导出格式下拉框 + 单导出按钮（原 US-007 双按钮重构）。
 //
-// 与旧 legacy/index.html `<div class="export-group">` + 旧 vanilla 实现 updateExportButtons 等价：
-//   - 求解中（solving=true）→ disabled
-//   - registry 无 lastFrame run（未求解 / 求解未完成）→ disabled
-//   - 导出中（exporting=true）→ disabled（双按钮同步禁用，与旧 vanilla 实现 同时设 export_png/dxf 一致）
+// 演进：旧版为「导出 PNG」「导出 DXF」两个并排按钮；现为「格式下拉框（默认 DXF）+ 单导出按钮」，
+// 格式可扩展（新增格式只需扩 download.ts 的 EXPORT_FORMATS + ExportFmt + 后端 /export 路由），
+// 导出按钮交互逻辑与旧双按钮完全一致。
 //
-// AC#6 字面：求解未完成或无 lastFrame 时按钮 disabled；导出中按钮 disabled + StatusLine
+// 与旧 legacy/index.html `<div class="export-group">` 语义对齐：
+//   - 求解中（solving=true）→ 导出按钮 disabled
+//   - registry 无 lastFrame run（未求解 / 求解未完成）→ 导出按钮 disabled
+//   - 导出中（exporting=true）→ 导出按钮 disabled（防连击）
+//   - 格式下拉框始终可选（求解中改选格式无害）
+//
+// AC#6 字面：求解未完成或无 lastFrame 时导出按钮 disabled；导出中 disabled + StatusLine
 // 显示 正在生成 PNG/DXF…（StatusLine 文案由 useExport 写 onStatus）。
 //
-// DOM 沿用旧 style.css `.export-group` / `.export-btns` / `button.export`（US-008 前 CSS 不动）；
-// id 保留 export_png / export_dxf（旧 CSS 选择器依赖；US-008 清理时去 id）。
+// DOM 沿用旧 style.css `.export-group` / `.export-btns` / `button.export`，新增 `select.export-fmt`。
 //
 // 订阅 renderTick：lastFrame 是 mutable push 到 registry 不进 React state；求解 final 到达后
 // 靠 useRafThrottle bump renderTick 触发本组件 reconciliation，重算 hasLastFrame。
@@ -18,14 +22,15 @@
 // （AC#3：明确告知用户导出的是停止/出错时刻的中间方案，非最终最优解）。
 // 文件名仍按当前 density 命名（真实口径，反映该中间方案利用率），不加 _partial 后缀。
 
+import { useState } from 'react';
 import { useAppStore } from '../../store/appStore';
 import { runRegistry } from '../../store/runRegistry';
-import type { ExportFmt } from '../../lib/download';
+import { EXPORT_FORMATS, DEFAULT_EXPORT_FMT, type ExportFmt } from '../../lib/download';
 
 export interface ExportButtonsProps {
-  /** 求解中（按钮 disabled）。来自 ControlPanel phase==='running' 派生。 */
+  /** 求解中（导出按钮 disabled）。来自 ControlPanel phase==='running' 派生。 */
   solving: boolean;
-  /** 导出中（按钮 disabled，双按钮同步）。来自 ControlPanel.useExport.exporting。 */
+  /** 导出中（导出按钮 disabled，防连击）。来自 ControlPanel.useExport.exporting。 */
   exporting: boolean;
   /** 点击导出（父级 ControlPanel 已把 form.sizes 透传给 useExport.exportAs）。 */
   onExport: (fmt: ExportFmt) => void;
@@ -39,6 +44,9 @@ export function ExportButtons({ solving, exporting, onExport, partial = false }:
   const renderTick = useAppStore((s) => s.renderTick);
   void renderTick;
 
+  // 当前选中的导出格式（组件内 state，默认 DXF）。与 exporting 同为组件内轻量 state，不上推 store。
+  const [fmt, setFmt] = useState<ExportFmt>(DEFAULT_EXPORT_FMT);
+
   // hasLastFrame = registry 至少有一个 run 推过 frame（与旧 vanilla 实现 updateExportButtons
   // `runs.some(r => r.lastFrame)` 一致）。bestRun() 也按 lastFrame 过滤，但这里用 some() 显式
   // 表达「只要存在 lastFrame 即可点」（与旧版同语义；bestRun 留给 useExport 内做最终选择）。
@@ -49,23 +57,20 @@ export function ExportButtons({ solving, exporting, onExport, partial = false }:
     <div className="export-group">
       <div className="field-label">导出最优方案</div>
       <div className="export-btns">
-        <button
-          id="export_png"
-          type="button"
-          className="export"
-          disabled={disabled}
-          onClick={() => onExport('png')}
+        <select
+          className="export-fmt"
+          value={fmt}
+          onChange={(e) => setFmt(e.target.value as ExportFmt)}
+          aria-label="导出格式"
         >
-          导出 PNG
-        </button>
-        <button
-          id="export_dxf"
-          type="button"
-          className="export"
-          disabled={disabled}
-          onClick={() => onExport('dxf')}
-        >
-          导出 DXF
+          {EXPORT_FORMATS.map((f) => (
+            <option key={f.value} value={f.value}>
+              {f.label}
+            </option>
+          ))}
+        </select>
+        <button type="button" className="export" disabled={disabled} onClick={() => onExport(fmt)}>
+          导出
         </button>
       </div>
       {partial ? (
