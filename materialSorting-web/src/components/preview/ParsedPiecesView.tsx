@@ -79,7 +79,7 @@ export function ParsedPiecesView(): JSX.Element {
             const display = getPieceDisplay(quantities, p.label, activeSize);
             return (
               <div key={`${p.label}-${p.name}`} className="piece-card">
-                <div className="piece-card-head">
+                <div className="piece-card-head" data-tour="piece-card-head">
                   <span className="piece-card-label">{p.label}</span>
                   {display.editable ? (
                     <button

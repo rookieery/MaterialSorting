@@ -37,7 +37,7 @@ export function SizeTabs(): JSX.Element {
   const sizes: ParsedSize[] = doc.sizes;
 
   return (
-    <div className="size-tabs" role="tablist" aria-label="尺码切换">
+    <div className="size-tabs" role="tablist" aria-label="尺码切换" data-tour="size-tabs">
       {sizes.map((s) => {
         const isActive = s.size === activeSize;
         const label = formatSize(s.size);

@@ -19,10 +19,13 @@ import { NestingPage } from './components/NestingPage';
 import { PreviewPage } from './components/preview/PreviewPage';
 import { TabBar } from './components/TabBar';
 import { TourOverlay } from './tour/TourOverlay';
+import { useTourAutoTrigger } from './tour/useTour';
 import { useUiStore } from './store/uiStore';
 
 export function App(): React.JSX.Element {
   const activeTab = useUiStore((s) => s.activeTab);
+  // US-030：首次进入 Tab 自动触发 tour（subscribe activeTab；独立 hook，App 调用一次）。
+  useTourAutoTrigger();
 
   return (
     <div className="app">

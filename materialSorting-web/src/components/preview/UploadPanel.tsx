@@ -196,6 +196,7 @@ export function UploadPanel(): JSX.Element {
       {/* 拖拽落区（也响应 click + 键盘 Enter/Space 触发文件选择，符合 a11y） */}
       <div
         className={`drop-zone${dragOver ? ' dragover' : ''}`}
+        data-tour="drop-zone"
         onClick={handlePickClick}
         role="button"
         tabIndex={0}

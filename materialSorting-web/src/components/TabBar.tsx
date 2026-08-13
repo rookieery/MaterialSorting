@@ -87,6 +87,7 @@ export function TabBar(): ReactElement {
             aria-pressed={isActive}
             aria-disabled={disabled}
             disabled={disabled}
+            data-tour={t.id === 'nesting' ? 'tab-nesting' : undefined}
             onClick={() => {
               // 双重防御：native disabled 兜底 a11y / 键盘序列；运行时判 disabled 兜底
               // JS 旁路调用（理论上 disabled button 不触发 click，但合成事件 / devtools 可绕过）。

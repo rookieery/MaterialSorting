@@ -27,4 +27,6 @@
 - [x] US-024 展示+导出切新版裁片 5 层（前端 497/497 全绿 typecheck clean；后端 e2e smoke 176 片 5 层全链路：master→collect→write_piece_dxf 5 层→_read_piece_full 5 层（notch 法线按最近边重算）→load_nest_pieces 共享 transform→intermediate.json net=128/internal=88/notch=104/grain=128→manifest→NestSVG 渲染 5 层；export.py PNG+R12-DXF 5 层独立 POLYLINE/POINT/LINE entity；DXF layer id 集 {0,1,4,7,8,14}；constants/colors.ts LAYER5_COLORS 共享；/api/ptypes 10 ptype 代表裁片带 5 层） — completed on 2026-08-11 22:40
 - [x] US-027 前端 stop() + 求解状态机 phase（idle/running/stopped/done/error）（前端 520/520 全绿 typecheck clean build 无报错；useSolveRun 新增 stop()+case stopped；RunRecord 加 stopped 字段；NestingPage solving→phase 五态 + handleStop/handleRestart + lastStartCfgRef；ControlPanel 5 个输入组件加 disabled prop running 态冻结；types/solvePhase.ts 导出供 US-028 复用；6 项新单测覆盖 stop OPEN/CLOSED + stopped finish + 3 phase 转换 + running 冻结） — completed on 2026-08-12 12:45
 
+- [x] US-030 preview tour 全量 + advance-on-ready 完整 + 首次自动触发（5 步 previewTour：upload/parsed/set-qty/committed/goto-nesting；advance-on-ready 改检查当前步 ready 语义 + 200ms 轮询自动推进 + 最后一步自动完成；useTourAutoTrigger 独立 hook App 调用 subscribe activeTab 首次进入自动触发；data-tour 锚点 5 处；前端 558/558 全绿 typecheck clean build 无报错；useTour.test.tsx 5 项 + TourOverlay 等待态 1 项单测覆盖 advance-on-ready） — completed on 2026-08-13 12:12
+
 *(No completed items)*
