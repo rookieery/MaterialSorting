@@ -1,9 +1,10 @@
-// US-030 useTour 单测（advance-on-ready 完整模型，检查当前步语义）：
+// US-030/US-032 useTour 单测（advance-on-ready 完整模型 + skip）：
 //   1. 告知型步点下一步直接推进
 //   2. advance-on-ready 等待态：ready=false 不推进 + 等待态文案 + 下一步 disabled
 //   3. 轮询检测 ready 翻 true 后自动推进 + 停轮询
 //   4. before 副作用执行
 //   5. close 后无残留定时器
+//   6. US-032 skip：markSeen(activeTour) + close（视为已读不再自动触发）
 //
 // 测试用 vi.mock 注入可控 tour（3 步：informational / ready-gated / informational），
 // 隔离 previewTour 的真实 store 耦合，专注验证 useTour 的 advance-on-ready 推进逻辑。
@@ -205,6 +206,62 @@ describe('useTour advance-on-ready (US-030)', () => {
     });
     expect(useTourStore.getState().stepIndex).toBe(stepBefore); // 无自动推进
     expect(useTourStore.getState().activeTour).toBeNull(); // 仍关闭
+
+    vi.useRealTimers();
+  });
+});
+
+describe('useTour US-032 skip', () => {
+  it('6. skip：markSeen(activeTour) + close', () => {
+    // seen 初始 false（确保 skip 能写 true）
+    useTourStore.setState({ seen: { preview: false, nesting: false } });
+    mountHarness();
+    act(() => {
+      useTourStore.getState().start('preview');
+    });
+    expect(useTourStore.getState().activeTour).toBe('preview');
+    expect(useTourStore.getState().seen.preview).toBe(false);
+
+    // skip → markSeen('preview') + close
+    act(() => {
+      returned!.skip();
+    });
+
+    // markSeen 持久化
+    expect(useTourStore.getState().seen.preview).toBe(true);
+    expect(localStorage.getItem('ms.tour.seen.preview')).toBe('1');
+    // close（activeTour=null）
+    expect(useTourStore.getState().activeTour).toBeNull();
+  });
+
+  it('7. skip 在等待态时清轮询 + markSeen + close（无残留定时器）', () => {
+    vi.useFakeTimers();
+    mocks.readySpy1.mockReturnValue(false);
+    mountHarness();
+    act(() => {
+      useTourStore.getState().start('preview');
+    });
+    // 推进到 step1（ready-gated，waiting=true，轮询启动）
+    act(() => {
+      returned!.next();
+    });
+    expect(returned!.waiting).toBe(true);
+
+    // skip 从等待态调用
+    act(() => {
+      returned!.skip();
+    });
+
+    expect(useTourStore.getState().activeTour).toBeNull();
+    expect(useTourStore.getState().seen.preview).toBe(true);
+
+    // 推进 1000ms：无残留定时器 → 无状态变化
+    const stepBefore = useTourStore.getState().stepIndex;
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(useTourStore.getState().stepIndex).toBe(stepBefore);
+    expect(useTourStore.getState().activeTour).toBeNull();
 
     vi.useRealTimers();
   });

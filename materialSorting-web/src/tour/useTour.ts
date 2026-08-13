@@ -1,4 +1,4 @@
-// useTour —— tour 控制器 hook（US-029 基础设施 / US-030 完整 advance-on-ready + 自动触发）。
+// useTour —— tour 控制器 hook（US-029 基础设施 / US-030 完整 advance-on-ready + 自动触发 / US-032 skip）。
 //
 // 职责（App 生命周期内 TourOverlay 单例调用一次）：
 //   1. 订阅 tourStore.activeTour/stepIndex，从 TOURS 读 currentStep（派生）。
@@ -12,6 +12,9 @@
 //   3. next()：最后一步 -> markSeen + close；否则 storeNext（新步的 ready 由 effect 处理）。
 //      waiting 时按钮 disabled（defensive guard：waiting 时 next() 直接 return）。
 //   4. prev() / close()：清轮询 + storePrev / storeClose。
+//   5. skip()（US-032）：markSeen(activeTour) + close —— 视为已读不再自动触发。
+//      区别于 close()：close 仅关闭（不 markSeen，下次进 Tab 可再自动触发）；
+//      skip 是用户显式「跳过」-> markSeen 持久化，不再自动触发。
 //
 // advance-on-ready 模型（US-030，检查当前步语义）：
 //   - 告知型步（无 ready）：用户读气泡 -> 点下一步直接推进（教学后用户自行操作）。
@@ -70,8 +73,10 @@ export interface UseTourReturn {
   next: () => void;
   /** 回退上一步（清等待态 + floor clamp）。 */
   prev: () => void;
-  /** 关闭 tour（清等待态 + 轮询 + activeTour=null）。 */
+  /** 关闭 tour（清等待态 + 轮询 + activeTour=null；不 markSeen，可再自动触发）。 */
   close: () => void;
+  /** 跳过 tour（markSeen + close；视为已读不再自动触发）。US-032。 */
+  skip: () => void;
   /** 启动 tour（转发 tourStore.start）。 */
   start: (tabId: TabId) => void;
 }
@@ -173,6 +178,16 @@ export function useTour(): UseTourReturn {
     storeClose();
   }, [clearPolling, storeClose]);
 
+  // skip（US-032）：markSeen + close —— 用户显式跳过，视为已读不再自动触发。
+  // markSeen 幂等（store 层已防重复写 localStorage）；close 清轮询 + activeTour=null。
+  const skip = useCallback(() => {
+    if (activeTour) {
+      markSeen(activeTour);
+    }
+    clearPolling();
+    storeClose();
+  }, [activeTour, markSeen, clearPolling, storeClose]);
+
   const start = useCallback(
     (tabId: TabId) => {
       startStore(tabId);
@@ -192,6 +207,7 @@ export function useTour(): UseTourReturn {
     next,
     prev,
     close,
+    skip,
     start,
   };
 }

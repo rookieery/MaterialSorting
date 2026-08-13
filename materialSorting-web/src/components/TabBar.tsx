@@ -1,4 +1,4 @@
-// TabBar —— 顶部 Tab 切换（US-001 AC#1）+ 超排 Tab 解锁闸（US-015）+ 右上角操作指引入口（US-029）。
+// TabBar —— 顶部 Tab 切换（US-001 AC#1）+ 超排 Tab 解锁闸（US-015）+ 右上角操作指引入口（US-029 / US-032 三项菜单）。
 //
 // 渲染两个 Tab（上传预览 / 超排），点击切换 uiStore.activeTab；当前激活项加 `.active`
 // class 高亮（与 ControlPanel 视觉同色系：暗背景 #26282e + 绿色 #2ea06c 强调，见 style.css）。
@@ -10,11 +10,13 @@
 //   - aria-disabled 同步给屏幕阅读器（与 aria-pressed 同 a11y 口径）。
 //   - 上传预览 Tab 永远可点（用户随时可回上传预览页）。
 //
-// 右上角操作指引入口（US-029）：
+// 右上角操作指引入口（US-029 基础设施 / US-032 补全三项菜单）：
 //   - margin-left:auto 推到 .tabbar 右侧；native button「操作指引」+ 下拉菜单。
-//   - 下拉菜单：US-029 仅「重置全部指引」一项（触发 resetSeen + start('preview') 跑 2 步假 tour）；
-//     US-032 补全三项（重看 preview / 重看 nesting / 重置全部）。
-//   - 点击外部 / ESC 关闭菜单（document click listener + keydown）。
+//   - 下拉菜单三项（US-032）：
+//     ①「重看上传预览指引」→ start('preview')（强制重放，不检查 seen）。
+//     ②「重看超排指引」→ start('nesting')（强制重放，不检查 seen）。
+//     ③「重置全部指引」→ resetSeen()（清 localStorage 全部 ms.tour.seen.*，下次进 Tab 自动触发）。
+//   - 点击外部 / ESC 关闭菜单（document mousedown listener + keydown）。
 //   - a11y：aria-haspopup="menu" + aria-expanded；按钮 class 用 .tour-entry（非 .tab，
 //     不干扰现有 TabBar.test.tsx 的 button.tab 断言）。
 //
@@ -66,10 +68,21 @@ export function TabBar(): ReactElement {
     };
   }, [menuOpen]);
 
-  /** 重置全部指引：清 localStorage seen + 启动 preview demo tour（US-029 假 tour 验证链路）。 */
+  /** 重看上传预览指引：强制重放 preview tour（不检查 seen）。US-032。 */
+  function handleReplayPreview(): void {
+    startTour('preview');
+    setMenuOpen(false);
+  }
+
+  /** 重看超排指引：强制重放 nesting tour（不检查 seen）。US-032。 */
+  function handleReplayNesting(): void {
+    startTour('nesting');
+    setMenuOpen(false);
+  }
+
+  /** 重置全部指引：清 localStorage seen，下次进 Tab 自动触发。US-032（不再启动 demo tour）。 */
   function handleResetAll(): void {
     resetSeen();
-    startTour('preview');
     setMenuOpen(false);
   }
 
@@ -113,7 +126,25 @@ export function TabBar(): ReactElement {
         </button>
         {menuOpen && (
           <div className="tour-menu" role="menu" data-testid="tour-menu">
-            {/* US-029 仅一项；US-032 补全三项（重看 preview / 重看 nesting / 重置全部） */}
+            {/* US-032 三项菜单：重看 preview / 重看 nesting / 重置全部 */}
+            <button
+              type="button"
+              className="tour-menu-item"
+              role="menuitem"
+              onClick={handleReplayPreview}
+              data-testid="tour-menu-replay-preview"
+            >
+              重看上传预览指引
+            </button>
+            <button
+              type="button"
+              className="tour-menu-item"
+              role="menuitem"
+              onClick={handleReplayNesting}
+              data-testid="tour-menu-replay-nesting"
+            >
+              重看超排指引
+            </button>
             <button
               type="button"
               className="tour-menu-item"

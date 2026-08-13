@@ -1090,6 +1090,12 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
   border-radius: 4px;
   padding: 6px 8px;
 }
+/* US-032 prefers-reduced-motion：禁用 spotlight/bubble 过渡动画（直接定位）。
+   覆盖 .tour-spotlight / .tour-bubble 的 transition: all 0.15s ease-out。 */
+.tour-reduced-motion .tour-spotlight,
+.tour-reduced-motion .tour-bubble {
+  transition: none !important;
+}
 .tour-buttons {
   display: flex;
   gap: 8px;

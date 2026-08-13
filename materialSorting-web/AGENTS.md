@@ -28,7 +28,20 @@ npm run test               # vitest run（US-002 起会有用例）
 3. **命令式 polygon 更新**：每帧 setAttribute('points' / 'display')，由 Zustand renderTick 单字段 ~10fps 节流，**逃逸 React reconciliation**。US-003 落地。
 4. **`static/` 是构建产物**（US-008 起入库 gitignore）：`npm run build` 生成，**不要手改**；旧 vanilla 三件套（`legacy/`）已删除，React 应用是唯一真相源。
 
-## 文件分工（US-001 Tab 框架 + US-002~US-008 全部落地；上传预览 US-005 状态层 + US-006 UploadPanel + US-007 PiecePreviewSVG + US-008 SizeTabs/ParsedPiecesView/PreviewPage 容器集成 + 上传预览 US-011 qtyStore 数量状态 + 上传预览 US-012 PieceQtyDialog/Switch 数量弹窗 + 上传预览 US-013 PieceZoomModal 放大预览模态 + 上传预览 US-014 ParsedPiecesView 卡片头改造+双模态集成 + US-015 uiStore 扩 nestingEnabled + TabBar 置灰 + US-016 PreviewPage 联动 setNestingEnabled + US-017 SizePicker 动态读码号 + DEFAULT_FORM.sizes=[] + US-018 PerTypeOverridesModal/PtypePreviewModal 高级配置弹窗+片型缩略图+放大预览 + US-021 useCommitToNesting 解析成功自动 commit+D1 闭环 + US-022 求解输入数量 demand per-size + US-024 NestSVG 5 层渲染+共享 LAYER5_COLORS + US-027 NestingPage phase 状态机+useSolveRun.stop()+running 态冻结参数编辑 + US-029 操作指引基础设施 tourStore+TourOverlay+useTour+TabBar 右上角入口 + US-030 previewTour 5 步+advance-on-ready+首次自动触发 + US-031 nestingTour 5 步+runRegistry 帧快照联动推进)
+## US-032 关键约定（手动入口完善 + 关闭交互打磨 + 完整单测 调用方必读）
+
+- **TabBar 下拉三项严格分离**：①「重看上传预览指引」→ `start('preview')`（强制重放，不检查 seen）；②「重看超排指引」→ `start('nesting')`；③「重置全部指引」→ `resetSeen()`（清 localStorage 全部 `ms.tour.seen.*`，**不启动 tour**；区别于旧 US-029 行为 resetSeen+start('preview') 跑假 tour）。reset 后下次进 Tab 由 `useTourAutoTrigger` 自动触发（seen=false + 300ms 延迟）。改任一 action 需同步 TabBar.test.tsx 3 项菜单用例。
+- **关闭交互三路径语义严格区分**：① ESC → `close()`（仅关闭，不 markSeen，下次进 Tab 可再自动触发）；② 遮罩 mousedown（`e.target===e.currentTarget`，参考 .piece-qty-dialog-overlay 模式）→ `close()`；③ 「跳过」按钮 → `skip()`（`markSeen(activeTour)+close`，视为已读不再自动触发）。改语义需同步 TourOverlay.test.tsx 4 项关闭用例。spotlight `pointer-events:none` 让点击穿透到 overlay → mousedown target=overlay=currentTarget → close；bubble `pointer-events:auto` 点击 target≠overlay → 不关闭。
+- **`skip` 与 `close` 的区别是 markSeen**：`close=clearPolling+storeClose`；`skip=markSeen(activeTour)+clearPolling+storeClose`。skip 用于用户显式「跳过」（视为已读不再自动触发）；close 用于 ESC/遮罩点击（意外关闭，可再触发）。useTour 暴露 `skip()` 方法（US-032 新增），TourOverlay 跳过按钮调 `tour.skip`。
+- **prefers-reduced-motion 用 matchMedia 检测**：`useEffect` 内 `window.matchMedia('(prefers-reduced-motion: reduce)')`，`matches=true` 时 overlay 加 `.tour-reduced-motion` class，CSS 禁用 spotlight/bubble `transition: all 0.15s ease-out`（直接定位，无动画）。matchMedia change listener 跟随系统设置实时切换。改检测逻辑需同步 TourOverlay.test.tsx 2 项 reduced-motion 用例（mock matchMedia）。
+- **scrollIntoView 在 readRect 前调**：useLayoutEffect 内先 `document.querySelector(selector)` → `el.scrollIntoView({block:'nearest'})` → 再 `readRect(el)` 读 post-scroll 的 getBoundingClientRect。避免目标在视口外时聚光灯贴到视口边缘外（目标 scrollIntoView 后 rect 在视口内）。`typeof el.scrollIntoView === 'function'` guard 防 jsdom 未实现。
+- **readRect 改为接收 element**：US-029 `readTargetRect(selector)` 改为 `readRect(el)`（US-032），避免 useLayoutEffect 内 querySelector 重复调用（scrollIntoView 和 readRect 共享同一 element 引用）。
+- **StrictMode 双 mount 幂等（参考 Tooltip.tsx registerTooltipEl 范式）**：所有 listener（resize/scroll capture / ESC keydown / matchMedia change）在 `useEffect cleanup` 中卸载；StrictMode 双 mount 下 add→cleanup→add 最终仅一套 listener（与 Tooltip.tsx 模块级单例 `_el` 同语义）。advance-on-ready effect 同理：polling interval 在 cleanup 中 clearInterval（US-030 useTour.test.tsx 测 5 覆盖 close 无残留）。before() 在 StrictMode 下调两次，需幂等（previewTour `ensurePreviewTab` / nestingTour `ensureNestingTab` 均 `if (activeTab!==target) setTab(target)` 幂等）。
+- **版本号策略（TOUR_VERSION）**：仅步骤内容重大变更（增删步骤 / 改 ready 语义 / 改锚点导致旧 seen 语义失效）时 bump；文案小改 / 微调 placement 不 bump。bump 后 hydrateSeen init 检测 storedVersion!==TOUR_VERSION → 清全部 seen（US-029 已实现，US-032 补 3 项单测验证）。markSeen 同步写 version key（防 localStorage 部分清除后 re-hydrate 误清）。
+- **不引入 CSS 框架**：`.tour-reduced-motion .tour-spotlight, .tour-reduced-motion .tour-bubble { transition: none !important; }` 沿用 style.css（与 .tour-spotlight/.tour-bubble 暗背景 #26282e + #2ea06c 同色系）。无其它新 CSS。
+- **未做浏览器验证（chrome-devtools-mcp 不在本会话工具集）**：本 Story 无 SVG/坐标变换（仅 DOM overlay 关闭交互 + matchMedia + scrollIntoView + CSS class），核心逻辑用 18 项新单测覆盖（TourOverlay 6 项：ESC/遮罩/bubble/skip/reduced-motion×2；TabBar 7 项：菜单展开/三项 action/点外关/ESC关/toggle；useTour 2 项：skip markSeen+close / skip 从等待态清轮询；tourStore 3 项：version 同步写/bump 清 seen/resetSeen 不影响 version）。浏览器端到端回归留作整体回归。
+
+## 文件分工（US-001 Tab 框架 + US-002~US-008 全部落地；上传预览 US-005 状态层 + US-006 UploadPanel + US-007 PiecePreviewSVG + US-008 SizeTabs/ParsedPiecesView/PreviewPage 容器集成 + 上传预览 US-011 qtyStore 数量状态 + 上传预览 US-012 PieceQtyDialog/Switch 数量弹窗 + 上传预览 US-013 PieceZoomModal 放大预览模态 + 上传预览 US-014 ParsedPiecesView 卡片头改造+双模态集成 + US-015 uiStore 扩 nestingEnabled + TabBar 置灰 + US-016 PreviewPage 联动 setNestingEnabled + US-017 SizePicker 动态读码号 + DEFAULT_FORM.sizes=[] + US-018 PerTypeOverridesModal/PtypePreviewModal 高级配置弹窗+片型缩略图+放大预览 + US-021 useCommitToNesting 解析成功自动 commit+D1 闭环 + US-022 求解输入数量 demand per-size + US-024 NestSVG 5 层渲染+共享 LAYER5_COLORS + US-027 NestingPage phase 状态机+useSolveRun.stop()+running 态冻结参数编辑 + US-029 操作指引基础设施 tourStore+TourOverlay+useTour+TabBar 右上角入口 + US-030 previewTour 5 步+advance-on-ready+首次自动触发 + US-031 nestingTour 5 步+runRegistry 帧快照联动推进 + US-032 手动入口完善+关闭交互打磨+reduced-motion+scrollIntoView+完整单测)
 
 ```
 src/
@@ -43,7 +56,7 @@ src/
 ├── constants/             # US-004 ✅：sizes.ts / colors.ts / v03.ts
 ├── __tests__/             # US-002 ✅ useSolveRun；US-003 ✅ 各模块单测；US-007 ✅ useExport；US-001 ✅ App 集成 smoke（US-015 beforeEach 加 setNestingEnabled(true) 兜底 store guard）
 └── components/
-    ├── TabBar.tsx         # US-001 ✅ 顶部 Tab（超排/上传预览），订阅 uiStore.activeTab；US-015 ✅ 超排 button disabled 闸（nestingEnabled===false 时 native disabled + .disabled class + aria-disabled + onClick 运行时判）；US-029 ✅ 右上角操作指引入口（margin-left:auto .tour-entry + 下拉菜单「重置全部指引」=resetSeen+start('preview') 跑假 tour；点击外部/ESC 关闭）
+    ├── TabBar.tsx         # US-001 ✅ 顶部 Tab（超排/上传预览），订阅 uiStore.activeTab；US-015 ✅ 超排 button disabled 闸（nestingEnabled===false 时 native disabled + .disabled class + aria-disabled + onClick 运行时判）；US-029 ✅ 右上角操作指引入口（margin-left:auto .tour-entry + 下拉菜单）；US-030 ✅ 超排 button 加 data-tour="tab-nesting"；US-032 ✅ 下拉菜单补全三项（replay-preview→start('preview') / replay-nesting→start('nesting') / reset→resetSeen() 不启动 tour）+ 点外部/ESC 关闭 + toggle
     ├── NestingPage.tsx    # US-001 ✅ 排料页（原 App 业务逻辑外提；持 phase/seeds/useSolveRun）；US-027 ✅ solving→phase 五态状态机 + handleStop/handleRestart + lastStartCfgRef + running 态冻结参数编辑；US-031 ✅ .nest-wrap 加 data-tour="nest-wrap"（nestingTour step4 锚点）
     ├── preview/           # US-001 起：上传预览页
     │   ├── PreviewPage.tsx # US-008 ✅ 容器（左 UploadPanel + 右 SizeTabs+ParsedPiecesView；未解析空态）；US-014 ✅ 顶层挂 PieceQtyDialog+PieceZoomModal 单例 + useEffect subscribe 联动 qtyStore.resetQuantities（重传清零）；US-016 ✅ 加 useEffect subscribe uploadStore.status 联动 uiStore.setNestingEnabled（`status==='done' && doc!==null` → true，否则 false；mount 即对齐）
@@ -68,17 +81,17 @@ src/
     ├── curve/             # US-005 ✅ ConvergenceCurve
     ├── playback/          # US-006 ✅ PlaybackBar / Seekbar / SeekReadout
     └── Tooltip.tsx        # US-006 ✅ Portal 单例 + showTooltip/hideTooltip/setHovered/clearHovered
-├── tour/                 # US-029 ✅ 操作指引（onboarding tour）基础设施 + US-030 ✅ previewTour + US-031 ✅ nestingTour
+├── tour/                 # US-029 ✅ 操作指引（onboarding tour）基础设施 + US-030 ✅ previewTour + US-031 ✅ nestingTour + US-032 ✅ 手动入口完善+关闭交互打磨
 │   ├── types.ts          # US-029 ✅ Placement/TourStep/TourDef 类型（TabId 从 uiStore 复用）
-│   ├── TourOverlay.tsx   # US-029 ✅ 高亮引擎（Portal body z=2000；spotlight box-shadow 镂空 + bubble placement 定位 + 零尺寸居中兜底 + useLayoutEffect imperative 定位）
-│   ├── useTour.ts        # US-029 ✅ 控制器 hook + US-030 ✅ advance-on-ready 完整轮询 + useTourAutoTrigger（首次进 Tab 自动触发）
+│   ├── TourOverlay.tsx   # US-029 ✅ 高亮引擎（Portal body z=2000；spotlight box-shadow 镂空 + bubble placement 定位 + 零尺寸居中兜底 + useLayoutEffect imperative 定位）+ US-032 ✅ ESC/遮罩/skip 关闭 + reduced-motion class + scrollIntoView
+│   ├── useTour.ts        # US-029 ✅ 控制器 hook + US-030 ✅ advance-on-ready 完整轮询 + useTourAutoTrigger（首次进 Tab 自动触发）+ US-032 ✅ skip()=markSeen+close
 │   ├── steps/
 │   │   ├── index.ts      # US-029 ✅ TOUR_VERSION='1' + TOURS: Partial<Record<TabId,TourDef>>（US-030 注册 preview / US-031 注册 nesting）
 │   │   ├── previewTour.ts # US-030 ✅ 上传预览 5 步（upload/parsed/set-qty/committed/goto-nesting；联动步读 uploadStore/uiStore 快照）
 │   │   └── nestingTour.ts # US-031 ✅ 超排 5 步（doc-banner/params/solve/result/export；result/export 联动步读 runRegistry.list().some(r=>r.lastFrame!==null) 帧快照）
 │   └── __tests__/
-│       ├── TourOverlay.test.tsx # US-029 ✅ 5 项基础 + US-030 ✅ 1 项等待态（advance-on-ready ready=false 时 readyHint + 下一步 disabled）
-│       ├── useTour.test.tsx     # US-030 ✅ 5 项（告知型推进 / 等待态 / 轮询推进 / before 副作用 / close 无残留定时器）
+│       ├── TourOverlay.test.tsx # US-029 ✅ 5 项基础 + US-030 ✅ 1 项等待态 + US-032 ✅ 6 项（ESC/遮罩/bubble/skip/reduced-motion×2）
+│       ├── useTour.test.tsx     # US-030 ✅ 5 项 + US-032 ✅ 2 项（skip markSeen+close / skip 从等待态清轮询）
 │       └── nestingTour.test.tsx # US-031 ✅ 5 项（ready 无帧 false / 有帧 true / 5 锚点 query 到 / 5 步 id 序列 / 前 3 告知+后 2 联动）
 ```
 

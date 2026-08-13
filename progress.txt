@@ -10,13 +10,21 @@ Started: 2026-08-09
 
 
 
-  - 验收：typecheck clean / npm run test 558/558 全绿 / npm run build 无报错（static/ 产出）。
-  - 浏览器验证：chrome-devtools-mcp 不在本会话工具集；advance-on-ready 逻辑用 useTour.test.tsx 5 项 + TourOverlay 等待态 1 项单测覆盖（fake timers 验证轮询推进 + close 无残留）。端到端浏览器回归留作 US-031/032 集成。清理：stale server PID 21508 已 taskkill，端口 8000 确认 free。
 
-## US-031 nesting tour 全量 + 求解状态联动 (2026-08-13)
-  - 新建 src/tour/steps/nestingTour.ts：5 步 nestingTour（doc-banner/params/solve/result/export）。前 3 步告知型（无 ready，点下一步直接推进）；result/export 联动型（ready 读 runRegistry.list().some(r=>r.lastFrame!==null) 帧快照，绕开 NestingPage phase 是 useState 外部读不到的问题）。每步 before 调 ensureNestingTab（幂等）。result 步气泡附带提及收敛曲线（不单独高亮/锚点）；回放非主流程不单独成步。
-  - steps/index.ts：TOURS 注册 nesting: nestingTour（Partial<Record<TabId,TourDef>> 双 Tab 完整；US-030 useTourAutoTrigger 已读 TOURS[tab] 自动生效，!seen.nesting && 进 nesting Tab → 延迟 300ms start('nesting')）。
-  - 5 锚点 data-tour 落地：ControlPanel.tsx .doc-banner 加 data-tour="doc-banner"；SizePicker.tsx .field 根容器加 data-tour="param-form"；ControlPanel.tsx 在 <SolveControls> 外包 <div data-tour="start-btn">（不侵入 SolveControls 自身，保持 button#start 查询不破）；NestingPage.tsx .nest-wrap 加 data-tour="nest-wrap"；ExportButtons.tsx .export-group 加 data-tour="export-group"。
-  - 新建 src/tour/__tests__/nestingTour.test.tsx：5 项单测（ready 无帧 false / 有帧 true / 5 锚点 NestingPage 渲染后 query 全命中 / 5 步 id 序列 / 前 3 告知+后 2 联动结构）。测 3 stub fetch /api/ptypes 防 PtypePreviewModal act warning。
   - 验收：typecheck clean / npm run test 563/563 全绿（+5 新）/ npm run build 无报错（static/ 产出）。
   - 浏览器验证：chrome-devtools-mcp 不在本会话工具集；advance-on-ready 逻辑复用 US-030 useTour.test.tsx 5 项 + nestingTour.test.tsx 5 项 + TourOverlay 6 项覆盖（fake timers 验证轮询推进 + close 无残留 + runRegistry 帧快照 ready 谓词）。端到端浏览器回归（上传→commit→进超排→tour 自动起→开始求解→step4/5 自动推进→导出）留作 US-032 集成。无后台进程残留（本 Story 未启动 ms-web）。
+## US-032 手动入口完善 + 关闭交互打磨 + 完整单测 (2026-08-13)
+  - TabBar.tsx 下拉菜单补全三项：①「重看上传预览指引」→ start('preview')（强制重放）；②「重看超排指引」→ start('nesting')；③「重置全部指引」→ resetSeen()（清 localStorage seen，不启动 tour；区别于旧 US-029 resetSeen+start 假 tour）。点外部/ESC 关闭 + toggle。
+  - TourOverlay.tsx 关闭交互完备：ESC 键 window keydown→close（仅 active 时挂 listener）；遮罩 mousedown e.target===e.currentTarget→close（spotlight pointer-events:none 穿透到 overlay，bubble pointer-events:auto 不关闭）；「跳过」按钮 tour.skip（markSeen+close，视为已读不再自动触发）。readTargetRect→readRect(el)（接收 element 避免 querySelector 重复）。
+  - TourOverlay.tsx prefers-reduced-motion：useEffect 内 window.matchMedia('(prefers-reduced-motion: reduce)')，matches=true 时 overlay 加 .tour-reduced-motion class；CSS .tour-reduced-motion .tour-spotlight/.tour-bubble { transition: none !important; } 禁用过渡动画。
+  - TourOverlay.tsx scrollIntoView：useLayoutEffect 内高亮前 el.scrollIntoView({block:'nearest'})（typeof guard 防 jsdom 未实现），避免目标在视口外时聚光灯贴视口边缘外。
+  - useTour.ts 加 skip() 方法：markSeen(activeTour)+clearPolling()+storeClose（区别于 close 仅 clearPolling+storeClose）；返回值加 skip。
+  - StrictMode 双 mount 幂等：所有 listener（resize/scroll capture / ESC keydown / matchMedia change）在 useEffect cleanup 中卸载；advance-on-ready polling 在 cleanup 中 clearInterval。before() 幂等（ensurePreviewTab/ensureNestingTab 均 if-check 后 setTab）。
+  - style.css 加 .tour-reduced-motion 规则（transition:none !important 覆盖 spotlight/bubble 0.15s ease-out）。
+  - 单测（+18 新，581 total 全绿）：
+    - TourOverlay.test.tsx +6：ESC 关闭 / 遮罩 mousedown 关闭（mock target=currentTarget=overlay）/ bubble 点击不关闭（mock target=bubble）/ skip markSeen+close / reduced-motion=true 加 class / reduced-motion=false 不加 class。
+    - TabBar.test.tsx +7：菜单默认不渲染+展开三项 / replay-preview→start('preview') / replay-nesting→start('nesting') / reset→resetSeen 不启动 tour / 点外部关闭 / ESC 关闭 / toggle。
+    - useTour.test.tsx +2：skip markSeen+close / skip 从等待态清轮询+markSeen+close（fake timers 验证无残留定时器）。
+    - tourStore.test.ts +3：markSeen 后版本号同步写 localStorage / bump TOUR_VERSION 后 init 强制清 seen / resetSeen 不影响 version key。
+  - 验收：typecheck clean / npm run test 581/581 全绿（+18 新）/ npm run build 无报错（static/ 产出）/ package.json 无新依赖 / py backend import OK。
+  - 浏览器验证：chrome-devtools-mcp 不在本会话工具集；核心逻辑用 18 项新单测覆盖（mock matchMedia / mock mousedown target/currentTarget / fake timers 验证 skip 无残留定时器）。浏览器端到端回归（重放 preview/nesting、重置后进 Tab 自动触发、ESC/遮罩/跳过关闭、reduced-motion）留作整体回归。无后台进程残留（本 Story 未启动 ms-web）。

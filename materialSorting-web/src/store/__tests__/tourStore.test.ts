@@ -1,4 +1,4 @@
-// US-029 tourStore 单测（≥6 项）：
+// US-029/US-032 tourStore 单测（≥6 项）：
 //   - 默认 activeTour=null
 //   - start 置 activeTour + stepIndex=0
 //   - next 递增 + prev 递减 floor 0（边界 clamp）
@@ -6,6 +6,7 @@
 //   - markSeen 写 localStorage + hydrate（重新加载后读回）
 //   - resetSeen 清 localStorage 全部 seen
 //   - TOUR_VERSION 不一致清 seen（强制重看）
+//   - US-032：版本号 bump 策略 — markSeen 后版本号同步写；bump 后 init 清 seen
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useTourStore } from '../tourStore';
@@ -140,5 +141,56 @@ describe('tourStore US-029 seen 持久化', () => {
     useTourStore.getState().markSeen('preview');
     expect(spy).not.toHaveBeenCalled();
     spy.mockRestore();
+  });
+});
+
+describe('tourStore US-032 版本号 bump 策略', () => {
+  it('markSeen 后版本号同步写入 localStorage（防部分清除后 re-hydrate 误清）', () => {
+    // markSeen 写 seen + 同步 version key
+    useTourStore.getState().markSeen('preview');
+    expect(localStorage.getItem('ms.tour.version')).toBe(TOUR_VERSION);
+    expect(localStorage.getItem('ms.tour.seen.preview')).toBe('1');
+
+    // 模拟 localStorage 部分清除：seen 保留但 version 被清
+    localStorage.removeItem('ms.tour.version');
+
+    // re-hydrate：version 不一致 → 清 seen（验证 version key 是防误清的关键）
+    vi.resetModules();
+    return import('../tourStore').then(({ useTourStore: freshStore }) => {
+      expect(freshStore.getState().seen.preview).toBe(false);
+    });
+  });
+
+  it('bump TOUR_VERSION 后 init 强制清 seen（老用户重看新版步骤）', async () => {
+    // 模拟老版本已 seen 状态
+    useTourStore.getState().markSeen('preview');
+    useTourStore.getState().markSeen('nesting');
+    expect(localStorage.getItem('ms.tour.seen.preview')).toBe('1');
+    expect(localStorage.getItem('ms.tour.seen.nesting')).toBe('1');
+    expect(localStorage.getItem('ms.tour.version')).toBe(TOUR_VERSION);
+
+    // 模拟版本 bump：覆写 version 为旧值
+    localStorage.setItem('ms.tour.version', '0');
+
+    // re-hydrate：检测版本不一致 → 清全部 seen + 写新版本
+    vi.resetModules();
+    const { useTourStore: freshStore } = await import('../tourStore');
+
+    expect(freshStore.getState().seen.preview).toBe(false);
+    expect(freshStore.getState().seen.nesting).toBe(false);
+    expect(localStorage.getItem('ms.tour.seen.preview')).toBeNull();
+    expect(localStorage.getItem('ms.tour.seen.nesting')).toBeNull();
+    expect(localStorage.getItem('ms.tour.version')).toBe(TOUR_VERSION);
+  });
+
+  it('resetSeen 不影响 version key（version 由 markSeen 或 init 管理）', () => {
+    useTourStore.getState().markSeen('preview');
+    expect(localStorage.getItem('ms.tour.version')).toBe(TOUR_VERSION);
+
+    useTourStore.getState().resetSeen();
+
+    // seen 清空但 version 保留（resetSeen 只清 seen.*，不清 version）
+    expect(localStorage.getItem('ms.tour.version')).toBe(TOUR_VERSION);
+    expect(localStorage.getItem('ms.tour.seen.preview')).toBeNull();
   });
 });

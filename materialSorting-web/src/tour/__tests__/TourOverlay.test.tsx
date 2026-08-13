@@ -1,11 +1,16 @@
-// US-029/US-030 TourOverlay 单测（≥5 项）：
+// US-029/US-030/US-032 TourOverlay 单测：
 //   - activeTour=null 不渲染
 //   - 激活渲染 overlay + spotlight + bubble
 //   - spotlight 贴目标 rect（left/top/width/height 匹配 getBoundingClientRect）
 //   - 零尺寸回退居中（spotlight display:none + bubble translate(-50%, -50%)）
 //   - US-030：等待态气泡渲染 readyHint + 下一步 disabled（advance-on-ready）
+//   - US-032：ESC 关闭 tour
+//   - US-032：遮罩点击关闭（e.target===e.currentTarget）
+//   - US-032：bubble 点击不关闭
+//   - US-032：skip 按钮 markSeen + close
+//   - US-032：reduced-motion 加 .tour-reduced-motion class
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { StrictMode } from 'react';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
@@ -225,5 +230,172 @@ describe('TourOverlay (US-029/US-030)', () => {
 
     dropZone.remove();
     sizeTabs.remove();
+  });
+});
+
+describe('TourOverlay US-032 关闭交互 + reduced-motion', () => {
+  it('ESC 关闭 tour（window keydown → activeTour=null）', () => {
+    const target = document.createElement('div');
+    target.setAttribute('data-tour', 'drop-zone');
+    mockRect(target, { left: 0, top: 0, width: 200, height: 100 });
+    document.body.appendChild(target);
+
+    act(() => {
+      useTourStore.getState().start('preview');
+    });
+    renderOverlay();
+
+    expect(document.body.querySelector('.tour-overlay')).not.toBeNull();
+
+    // 按 ESC
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    });
+
+    expect(useTourStore.getState().activeTour).toBeNull();
+    expect(document.body.querySelector('.tour-overlay')).toBeNull();
+
+    target.remove();
+  });
+
+  it('遮罩点击关闭（mousedown 落在 overlay 自身 e.target===e.currentTarget）', () => {
+    const target = document.createElement('div');
+    target.setAttribute('data-tour', 'drop-zone');
+    mockRect(target, { left: 0, top: 0, width: 200, height: 100 });
+    document.body.appendChild(target);
+
+    act(() => {
+      useTourStore.getState().start('preview');
+    });
+    renderOverlay();
+
+    const overlay = document.body.querySelector('.tour-overlay') as HTMLDivElement;
+    expect(overlay).not.toBeNull();
+
+    // 模拟点击 overlay 自身（mousedown target=currentTarget=overlay）
+    act(() => {
+      const ev = new MouseEvent('mousedown', { bubbles: true });
+      Object.defineProperty(ev, 'target', { value: overlay });
+      Object.defineProperty(ev, 'currentTarget', { value: overlay });
+      overlay.dispatchEvent(ev);
+    });
+
+    expect(useTourStore.getState().activeTour).toBeNull();
+
+    target.remove();
+  });
+
+  it('bubble 点击不关闭（mousedown target=bubble，≠ currentTarget=overlay）', () => {
+    const target = document.createElement('div');
+    target.setAttribute('data-tour', 'drop-zone');
+    mockRect(target, { left: 0, top: 0, width: 200, height: 100 });
+    document.body.appendChild(target);
+
+    act(() => {
+      useTourStore.getState().start('preview');
+    });
+    renderOverlay();
+
+    const bubble = document.body.querySelector('.tour-bubble') as HTMLDivElement;
+    expect(bubble).not.toBeNull();
+
+    // 点击 bubble 内部（mousedown target=bubble）— 不关闭
+    act(() => {
+      const ev = new MouseEvent('mousedown', { bubbles: true });
+      Object.defineProperty(ev, 'target', { value: bubble });
+      bubble.dispatchEvent(ev);
+    });
+
+    expect(useTourStore.getState().activeTour).toBe('preview'); // 仍激活
+
+    target.remove();
+  });
+
+  it('skip 按钮 markSeen(activeTour) + close', () => {
+    const target = document.createElement('div');
+    target.setAttribute('data-tour', 'drop-zone');
+    mockRect(target, { left: 0, top: 0, width: 200, height: 100 });
+    document.body.appendChild(target);
+
+    // 确保 seen=false（skip 应该 markSeen=true）
+    useTourStore.setState({ seen: { preview: false, nesting: false } });
+
+    act(() => {
+      useTourStore.getState().start('preview');
+    });
+    renderOverlay();
+
+    const skipBtn = document.body.querySelector('[data-testid="tour-skip"]') as HTMLButtonElement;
+    expect(skipBtn).not.toBeNull();
+
+    act(() => {
+      skipBtn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    // markSeen + close
+    expect(useTourStore.getState().seen.preview).toBe(true);
+    expect(localStorage.getItem('ms.tour.seen.preview')).toBe('1');
+    expect(useTourStore.getState().activeTour).toBeNull();
+
+    target.remove();
+  });
+
+  it('reduced-motion=true 时 overlay 加 .tour-reduced-motion class', () => {
+    // mock matchMedia 返回 prefers-reduced-motion: reduce
+    const matchMediaSpy = vi.spyOn(window, 'matchMedia').mockImplementation((query: string) => ({
+      matches: query === '(prefers-reduced-motion: reduce)',
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    }));
+
+    const target = document.createElement('div');
+    target.setAttribute('data-tour', 'drop-zone');
+    mockRect(target, { left: 0, top: 0, width: 200, height: 100 });
+    document.body.appendChild(target);
+
+    act(() => {
+      useTourStore.getState().start('preview');
+    });
+    renderOverlay();
+
+    const overlay = document.body.querySelector('.tour-overlay') as HTMLDivElement;
+    expect(overlay.classList.contains('tour-reduced-motion')).toBe(true);
+
+    target.remove();
+    matchMediaSpy.mockRestore();
+  });
+
+  it('reduced-motion=false 时 overlay 不加 .tour-reduced-motion class', () => {
+    const matchMediaSpy = vi.spyOn(window, 'matchMedia').mockImplementation((query: string) => ({
+      matches: false, // 不偏好 reduced-motion
+      media: query,
+      onchange: null,
+      addListener: () => {},
+      removeListener: () => {},
+      addEventListener: () => {},
+      removeEventListener: () => {},
+      dispatchEvent: () => false,
+    }));
+
+    const target = document.createElement('div');
+    target.setAttribute('data-tour', 'drop-zone');
+    mockRect(target, { left: 0, top: 0, width: 200, height: 100 });
+    document.body.appendChild(target);
+
+    act(() => {
+      useTourStore.getState().start('preview');
+    });
+    renderOverlay();
+
+    const overlay = document.body.querySelector('.tour-overlay') as HTMLDivElement;
+    expect(overlay.classList.contains('tour-reduced-motion')).toBe(false);
+
+    target.remove();
+    matchMediaSpy.mockRestore();
   });
 });

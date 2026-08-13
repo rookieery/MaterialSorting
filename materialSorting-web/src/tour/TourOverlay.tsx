@@ -1,4 +1,4 @@
-// TourOverlay —— tour 高亮引擎（US-029）。
+// TourOverlay —— tour 高亮引擎（US-029 基础设施 / US-032 关闭交互 + reduced-motion + scrollIntoView）。
 //
 // 订阅 tourStore（via useTour）：activeTour===null 时 return null；激活时 createPortal 到
 // document.body 渲染：
@@ -12,13 +12,24 @@
 // 重算时机（AC）：步骤切换、window resize、scroll（capture 全局）、advance-on-ready 状态变化时
 // 重新读 getBoundingClientRect。tick state（resize/scroll listener bump）触发 re-render。
 //
+// US-032 新增：
+//   - 关闭交互完备：ESC 关闭（window keydown）；遮罩点击关闭（onMouseDown e.target===e.currentTarget，
+//     参考 .piece-qty-dialog-overlay 模式，spotlight pointer-events:none 让点击穿透到 overlay）；
+//     「跳过」按钮 markSeen + close（视为已读不再自动触发）。
+//   - prefers-reduced-motion：检测 window.matchMedia，为真时 overlay 加 .tour-reduced-motion class，
+//     CSS 禁用 spotlight/bubble 过渡动画（直接定位）。
+//   - scrollIntoView：高亮前 element.scrollIntoView({block:'nearest'})，避免目标在视口外时聚光灯
+//     贴到视口边缘外。
+//   - StrictMode 双 mount 幂等：所有 listener 在 useEffect cleanup 中卸载，StrictMode 双 mount 下
+//     add → cleanup → add 最终仅一套 listener（参考 Tooltip.tsx registerTooltipEl 单例范式）。
+//
 // 关键设计（参考 Tooltip.tsx 命令式 Portal 单例范式）：
 //   - App 内只挂一个 TourOverlay（App.tsx 顶层单例）。
 //   - 定位用 useLayoutEffect imperative 写 style.left/top/width/height（不走 React state）。
 //   - bubble 宽度由 CSS max-width 决定（340px），高度由内容撑开；position 用 transform 微调。
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type { JSX } from 'react';
+import type { JSX, MouseEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { useTour } from './useTour';
 import type { Placement } from './types';
@@ -39,9 +50,8 @@ interface Rect {
   height: number;
 }
 
-/** 读目标元素的 viewport 坐标 rect；null 或零尺寸返回 null（回退居中）。 */
-function readTargetRect(selector: string): Rect | null {
-  const el = document.querySelector(selector);
+/** 读元素的 viewport 坐标 rect；null 或零尺寸返回 null（回退居中）。US-032 改为接收 element（避免 querySelector 重复调用）。 */
+function readRect(el: Element | null): Rect | null {
   if (!el) return null;
   const r = el.getBoundingClientRect();
   if (r.width === 0 && r.height === 0) return null;
@@ -125,8 +135,12 @@ export function TourOverlay(): JSX.Element | null {
   const bubbleRef = useRef<HTMLDivElement>(null);
   // tick 由 resize/scroll listener bump，触发 re-render → useLayoutEffect 重读 rect
   const [, setTick] = useState(0);
+  // US-032：prefers-reduced-motion 检测（matchMedia + change listener）
+  const [reducedMotion, setReducedMotion] = useState(false);
 
   const bump = useCallback(() => setTick((t) => t + 1), []);
+
+  const active = tour.activeTour !== null && tour.currentStep !== null;
 
   // resize / scroll(capture) listener：目标元素位置变 → 重算聚光灯
   useEffect(() => {
@@ -139,25 +153,64 @@ export function TourOverlay(): JSX.Element | null {
     };
   }, [bump]);
 
-  const active = tour.activeTour !== null && tour.currentStep !== null;
+  // US-032：prefers-reduced-motion 检测 + 变化监听
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+    const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
+    setReducedMotion(mq.matches);
+    const handler = (e: MediaQueryListEvent): void => setReducedMotion(e.matches);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, []);
+
+  // US-032：ESC 关闭 tour（仅 active 时挂 window keydown）
+  useEffect(() => {
+    if (!active) return;
+    function onKey(e: KeyboardEvent): void {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        tour.close();
+      }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [active, tour.close]);
+
+  // US-032：遮罩点击关闭（仅落在 overlay 自身，e.target===e.currentTarget；spotlight pointer-events:none
+  // 让点击穿透到 overlay；bubble pointer-events:auto 点击不冒泡到 overlay close 判定）
+  const handleOverlayMouseDown = useCallback(
+    (e: MouseEvent<HTMLDivElement>) => {
+      if (e.target === e.currentTarget) {
+        tour.close();
+      }
+    },
+    [tour.close],
+  );
 
   // useLayoutEffect：DOM 变更后、paint 前同步定位 spotlight + bubble（无闪烁）
   useLayoutEffect(() => {
     if (!active || !tour.currentStep) return;
     const step = tour.currentStep;
-    const rect = readTargetRect(step.selector);
+
+    // US-032：高亮前 scrollIntoView，避免目标在视口外时聚光灯贴到视口边缘外。
+    // typeof guard 防止 jsdom 等环境未实现 scrollIntoView（不阻塞定位逻辑）。
+    const el = document.querySelector(step.selector);
+    if (el && typeof el.scrollIntoView === 'function') {
+      el.scrollIntoView({ block: 'nearest' });
+    }
+    const rect = readRect(el);
     const isZero = rect === null;
 
     if (spotlightRef.current) {
-      const el = spotlightRef.current;
+      const spotlightEl = spotlightRef.current;
       if (isZero) {
-        el.style.display = 'none';
+        spotlightEl.style.display = 'none';
       } else {
-        el.style.display = 'block';
-        el.style.left = rect.left + 'px';
-        el.style.top = rect.top + 'px';
-        el.style.width = rect.width + 'px';
-        el.style.height = rect.height + 'px';
+        spotlightEl.style.display = 'block';
+        spotlightEl.style.left = rect.left + 'px';
+        spotlightEl.style.top = rect.top + 'px';
+        spotlightEl.style.width = rect.width + 'px';
+        spotlightEl.style.height = rect.height + 'px';
       }
     }
 
@@ -175,7 +228,11 @@ export function TourOverlay(): JSX.Element | null {
   if (!active || !step) return null;
 
   return createPortal(
-    <div className="tour-overlay" data-testid="tour-overlay">
+    <div
+      className={`tour-overlay${reducedMotion ? ' tour-reduced-motion' : ''}`}
+      onMouseDown={handleOverlayMouseDown}
+      data-testid="tour-overlay"
+    >
       <div className="tour-spotlight" ref={spotlightRef} data-testid="tour-spotlight" />
       <div
         className="tour-bubble"
@@ -214,7 +271,7 @@ export function TourOverlay(): JSX.Element | null {
           <button
             type="button"
             className="tour-btn tour-btn-skip"
-            onClick={tour.close}
+            onClick={tour.skip}
             data-testid="tour-skip"
           >
             跳过
