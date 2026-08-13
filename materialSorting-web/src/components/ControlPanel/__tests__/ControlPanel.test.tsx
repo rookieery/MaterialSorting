@@ -512,3 +512,43 @@ describe("ControlPanel StatusLine hint (US-017)", () => {
     expect(labels[labels.length - 1]).toBe("通用");
   });
 });
+
+describe("ControlPanel doc-banner (当前文件名展示)", () => {
+  it("doc=null → .doc-banner-name 灰字占位「尚未解析母版」+ .empty class", () => {
+    renderPanel();
+    const name = container!.querySelector(".doc-banner-name")!;
+    expect(name.textContent).toBe("尚未解析母版");
+    expect(name.classList.contains("empty")).toBe(true);
+    // title 为空（占位态不提供悬停全名）
+    expect(name.getAttribute("title")).toBe("");
+  });
+
+  it("doc 非空 → .doc-banner-name 渲染 doc.filename（含扩展名）+ title 兜底 + 无 .empty", () => {
+    useUploadStore.setState({
+      status: "done",
+      doc: {
+        doc_id: "banner-test",
+        filename: "M1787_直筒_母版.dxf",
+        sizes: [{ size: 30, pieces: [] }],
+      },
+    });
+    renderPanel();
+    const name = container!.querySelector(".doc-banner-name")!;
+    expect(name.textContent).toBe("M1787_直筒_母版.dxf");
+    expect(name.getAttribute("title")).toBe("M1787_直筒_母版.dxf");
+    expect(name.classList.contains("empty")).toBe(false);
+  });
+
+  it("「当前文件」上下文条 + 「求解控制」功能标题并存，且文件名条在 h2 之前", () => {
+    renderPanel();
+    // 「当前文件」label
+    const bannerLabel = container!.querySelector(".doc-banner .doc-banner-label")!;
+    expect(bannerLabel.textContent).toBe("当前文件");
+    // 「求解控制」h2 仍保留（功能标题不丢）
+    const h2 = container!.querySelector(".panel h2")!;
+    expect(h2.textContent).toBe("求解控制");
+    // 顺序：banner 在 h2 前（h2 相对 banner 处于 FOLLOWING 位）
+    const banner = container!.querySelector(".doc-banner")!;
+    expect(h2.compareDocumentPosition(banner)).toBe(Node.DOCUMENT_POSITION_PRECEDING);
+  });
+});

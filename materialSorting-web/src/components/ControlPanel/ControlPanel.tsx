@@ -150,6 +150,18 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onResta
 
   return (
     <aside className="panel">
+      {/* 当前排料文件名上下文条：doc?.filename 直接来自上传解析响应（与 SizePicker 同源订阅 uploadStore.doc）。
+          doc=null（未解析母版）时灰字占位「尚未解析母版」，与下方 StatusLine 的「请先解析母版」提示同源（US-017）。
+          文件名长时 ellipsis 截断，title 兜底悬停看全名；分隔线把文件名条与「求解控制」功能标题分层。 */}
+      <div className="doc-banner">
+        <span className="doc-banner-label">当前文件</span>
+        <span
+          className={`doc-banner-name${doc ? '' : ' empty'}`}
+          title={doc?.filename ?? ''}
+        >
+          {doc?.filename ?? '尚未解析母版'}
+        </span>
+      </div>
       <h2>求解控制</h2>
       <SizePicker selected={form.sizes} onChange={(sizes) => patch({ sizes })} disabled={solving} />
       <ParamForm

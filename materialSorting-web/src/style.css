@@ -68,6 +68,17 @@ body {
   overflow: auto;
 }
 .panel h2 { font-size: 15px; margin: 0 0 14px; }
+/* 当前排料文件名上下文条（求解控制标题上方）：显示 uploadStore.doc.filename，让用户
+   一眼看到当前在排哪个母版。文件名长 ellipsis + title 兜底；doc=null 时灰字占位。 */
+.doc-banner { margin: 0 0 12px; padding-bottom: 10px; border-bottom: 1px solid #34363d; }
+.doc-banner-label { display: block; font-size: 11px; color: #888; margin-bottom: 3px; }
+.doc-banner-name {
+  display: block;
+  font-size: 13px; font-weight: 600;
+  color: #2ea06c;                  /* 强调绿，与 .tab.active 同色系 */
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.doc-banner-name.empty { color: #666; font-weight: 400; }
 .field { margin-bottom: 14px; font-size: 13px; }
 .field.row { display: flex; align-items: center; gap: 8px; }
 .field.row label { width: 56px; }
