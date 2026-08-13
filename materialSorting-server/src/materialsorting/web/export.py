@@ -1,20 +1,24 @@
-"""排料可视化工作台 · 导出（PNG + ASTM/AAMA 风格 R12-DXF marker）。
+"""排料可视化工作台 · 导出（PNG + ASTM/AAMA 风格 R12-DXF marker + HPGL/PLT 文本）。
 
 服务端统一导出，用**真实母版轮廓**（pieces_intermediate.json 的原始 polygon，非 eroded）
-放到排料变换位，保证 PNG 与 DXF 几何一致、且可直接裁剪。
+放到排料变换位，保证 PNG / DXF / PLT 三格式几何一致、且可直接裁剪 / 绘图。
 
 - PNG：matplotlib（cairosvg 缺失且 Windows 有 native 库坑，故弃用）。配色复用
   sparrow_baseline.PTYPE_COLORS（与工作台屏幕同色）。
 - DXF：ezdxf R12 + POLYLINE（复刻 material sorting/nesting_bounds/export.py 已验证套路，
   坚决不用 LWPOLYLINE —— ET2008 轮廓消失坑）。每片按类型 ACI 上色 + 门幅边框 + ASCII 标题。
+- PLT：US-033 新增。HPGL/HP-GL 纯文本（``IN;``/``VS;``/``SP;``/``PU;``/``PD;``/``LB``），
+  喂 WT「高速绘图 V8.8」+ LIKE 绘图仪的原生 PLT 链路（DXF 在该软件实测无法打印）。
+  5 层笔号 SP1-SP5 + SP6 门幅框，与 DXF layer1/14/8/4/7 同语义；纯标准库，无新依赖。
 
 US-024：PNG 与 DXF 都含 5 层（毛版 polygon + 净版 net_polygon + 内部线 internal_lines +
 刺口 notches + 布纹线 grain_line）。毛版 layer1 是裁切轮廓（DXF ACI 按片型）；其余 4 层
 为工艺参考，DXF 各自独立 layer（14/8/4/7），PNG 用与 PiecePreviewSVG 同口径的配色
-（net 绿 / internal 橙 / notch 黄 / grain 红）。
+（net 绿 / internal 橙 / notch 黄 / grain 红）。US-033：PLT 同样含 5 层（SP1-SP5）。
 
 坐标系：spyrrow 世界坐标 X=用布长度(0..width)，Y=门幅(0..gate)，Y 向上
-（与前端 SVG `scale(1,-1)` 翻转后一致 → PNG 直接对应屏幕观感）。
+（与前端 SVG `scale(1,-1)` 翻转后一致 → PNG 直接对应屏幕观感；PLT 不带翻转，与绘图仪
+走纸 / 幅宽天然一致）。
 """
 from __future__ import annotations
 
@@ -288,3 +292,125 @@ def write_marker_dxf(world_pieces, *, width_mm: float, gate_mm: float, title: st
             os.unlink(tmp.name)
         except OSError:
             pass
+
+
+# ===================== PLT/HPGL（LIKE 绘图仪 / WT V8.8）=====================
+# US-033：排料 marker → HPGL/HP-GL 文本（纯 ASCII，application/plt）。
+# 现场实测：现有 DXF 导出在 WT「高速绘图 V8.8 网络版」+ LIKE 绘图仪上无法正常打印，
+# 该软件原生吃 PLT/HPGL（与 ET 排料软件同口径），故新增 PLT 链路。
+#
+# 1mm = 40 HPGL 绘图单位（plotter unit ≈ 0.025mm）；世界坐标 mm × 40 后 round 取整。
+# 笔号语义：SP1=毛版裁切轮廓 / SP2=净版 / SP3=内部线 / SP4=刺口 / SP5=布纹线 /
+# SP6=门幅框；WT V8.8 中可按笔号分配不同物理笔 / 切割刀（物理映射由设备端配置）。
+_PLT_SCALE = 40          # 1mm = 40 HPGL 绘图单位（0.025mm）
+_PLT_VELOCITY = 80       # VS80 = 80 cm/s（LIKE 绘图仪常用速度，飞墨/抖动可下调）
+_PEN_OUTLINE = 1         # 毛版裁切轮廓（DXF layer1）
+_PEN_NET = 2             # 净版（DXF layer14）
+_PEN_INTERNAL = 3        # 内部线（DXF layer8）
+_PEN_NOTCH = 4           # 刺口（DXF layer4）
+_PEN_GRAIN = 5           # 布纹线（DXF layer7）
+_PEN_BORDER = 6          # 门幅/用布边框
+# HPGL LB（Label）默认文字终止符 = ETX chr(3)；WT V8.8 字库对 ASCII 文字兼容。
+_ETX = chr(3)
+
+
+def _plt_pt(x: float, y: float) -> str:
+    """世界坐标 (mm) → HPGL 整数坐标字符串 ``"x,y"``（×40 round，clamp 非负）。
+
+    HPGL 坐标必须是非负整数；clamp 防御 placed_to_world 极端边界返回负值（实测 placed
+    全在门幅内 ≥0，但取整后 -0.0 / 极小负值 → 0 兜底）。
+    """
+    ix = max(0, round(float(x) * _PLT_SCALE))
+    iy = max(0, round(float(y) * _PLT_SCALE))
+    return f'{ix},{iy}'
+
+
+def _plt_polyline(closed: bool, points) -> str:
+    """多边形 → ``PU`` 首点 + ``PD`` 其余点（闭合则末点回到首点）。
+
+    points: list[(x, y)] 世界坐标 mm，至少 2 点。
+    closed: True → PD 末尾追加首点（物理闭合，与 DXF POLYLINE 闭合策略一致）；
+            False → 仅画到末点（线段 / 折线 / 内部线 / 布纹线）。
+
+    返回 ``PUx,y;PD...;``（PU/PD 同行，缩成最小指令对，HPGL 容忍无换行）。
+    """
+    if len(points) < 2:
+        return ''
+    rest = list(points[1:])
+    if closed:
+        rest.append(points[0])
+    coord_str = ','.join(_plt_pt(*p) for p in rest)
+    return f'PU{_plt_pt(*points[0])};PD{coord_str};'
+
+
+def write_marker_plt(world_pieces, *, width_mm: float, gate_mm: float, title: str) -> bytes:
+    """写排料 marker PLT/HPGL 文本（ASCII ``bytes``）。
+
+    生成 HPGL/HP-GL 指令序列：``IN;`` 初始化 → ``VS80;`` 速度 → ``SP6`` 门幅框 →
+    逐片 ``SP1..SP5`` 5 层（与 DXF layer1/14/8/4/7 同映射）→ ``LB<title>chr(3);``
+    ASCII 文字。笔号语义见模块常量 ``_PEN_*``。
+
+    坐标系：spyrrow 世界坐标 X=用布长度(0..width)、Y=门幅(0..gate) Y 向上（与绘图仪
+    走纸 / 幅宽天然一致），**绝不带前端 SVG 的 ``scale(1,-1)`` 翻转**（那只是屏幕显示
+    口径）；与 PNG / R12-DXF 三者几何口径完全一致（同 ``placed_to_world`` 输出）。
+
+    与 ``write_marker_dxf`` 对齐：同签名 + 同几何数据源 + 同闭合策略。仅输出格式不同：
+    PLT 是纯文本（``'\\n'.join(cmds).encode('ascii')``，**无需临时文件**），DXF 走
+    ezdxf 写盘读字节。空层跳过（``net_polygon`` 空则不输出 SP2，依此类推）。
+
+    返回 ``bytes``，全 ASCII，``.decode('ascii')`` 不抛异常（标题须为 ASCII，与 DXF
+    同款，避免中文编码风险；中文留给 WT V8.8 字库）。
+    """
+    cmds: list[str] = ['IN;', f'VS{_PLT_VELOCITY};']
+
+    # 门幅/用布边框（SP6）——闭合矩形 4 角
+    border = [(0.0, 0.0), (width_mm, 0.0), (width_mm, gate_mm), (0.0, gate_mm)]
+    cmds.append(f'SP{_PEN_BORDER};')
+    cmds.append(_plt_polyline(closed=True, points=border))
+
+    # 逐片 5 层（与 write_marker_dxf 顺序一致：outline → net → internal → notch → grain）
+    for pc in world_pieces:
+        # SP1 毛版裁切轮廓（闭合）
+        poly = pc.get('polygon') or []
+        if len(poly) >= 2:
+            cmds.append(f'SP{_PEN_OUTLINE};')
+            cmds.append(_plt_polyline(closed=True, points=poly))
+
+        # SP2 净版 net_polygon（闭合）
+        net = pc.get('net_polygon') or []
+        if len(net) >= 2:
+            cmds.append(f'SP{_PEN_NET};')
+            cmds.append(_plt_polyline(closed=True, points=net))
+
+        # SP3 内部线 internal_lines（逐条不闭合）
+        internal_lines = pc.get('internal_lines') or []
+        if internal_lines:
+            cmds.append(f'SP{_PEN_INTERNAL};')
+            for line in internal_lines:
+                if len(line) >= 2:
+                    cmds.append(_plt_polyline(closed=False, points=line))
+
+        # SP4 刺口 notches（沿法线 NOTCH_LEN_MM 短线段，与 PNG 同口径）
+        notches = pc.get('notches') or []
+        if notches:
+            cmds.append(f'SP{_PEN_NOTCH};')
+            half = NOTCH_LEN_MM / 2.0
+            for (x, y, nx, ny) in notches:
+                cmds.append(_plt_polyline(
+                    closed=False,
+                    points=[(x - nx * half, y - ny * half),
+                            (x + nx * half, y + ny * half)],
+                ))
+
+        # SP5 布纹线 grain_line（两端点直线）
+        gl = pc.get('grain_line')
+        if gl and len(gl) == 4:
+            cmds.append(f'SP{_PEN_GRAIN};')
+            cmds.append(_plt_polyline(
+                closed=False, points=[(gl[0], gl[1]), (gl[2], gl[3])]))
+
+    # LB 标题（ASCII，以 ETX chr(3) 终止；尾随 ';' 是 HPGL 指令分隔符）
+    if title:
+        cmds.append(f'LB{title}{_ETX};')
+
+    return '\n'.join(cmds).encode('ascii')

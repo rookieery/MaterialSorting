@@ -31,13 +31,13 @@
 
 ## POST /export — 导出
 
-前端把**最优 run 的最终帧 `placed_items`** 回传，服务端用**原始母版轮廓**（`pieces_intermediate.json` 的原始 polygon，**非 eroded**）放到排料变换位，保证 PNG 与 DXF 几何一致、可直接裁剪。
+前端把**最优 run 的最终帧 `placed_items`** 回传，服务端用**原始母版轮廓**（`pieces_intermediate.json` 的原始 polygon，**非 eroded**）放到排料变换位，保证 PNG / DXF / PLT 三格式几何一致、可直接裁剪 / 绘图。
 
 ### 请求 payload
 
 ```jsonc
 {
-  "fmt": "png" | "dxf",          // 必填
+  "fmt": "png" | "dxf" | "plt",  // 必填（US-033 新增 plt）
   "sizes": [28, 30, 32],          // 码号列表（文件名用，排序后 '-' 拼接；空 → "all"）
   "seed": 0,                      // 文件名标注用
   "gate_mm": 1980,                // run.manifest.gate_mm（多 run 共享）
@@ -57,6 +57,7 @@
   - 中文名：`排料_码<sizes>_<pct>.2fpct_seed<seed>.<ext>`（走 RFC 5987 `filename*=UTF-8''` + `urllib.parse.quote`；**文件名用 `pct` 不用 `%`**）
   - PNG：`media_type=image/png`，`render_png`（matplotlib Agg，标题 + 类型图例）
   - DXF：`media_type=application/dxf`，`write_marker_dxf`（R12 + POLYLINE，ACI 上色 + ASCII 标题）
+  - PLT：`media_type=application/plt`，`write_marker_plt`（US-033；HPGL/HP-GL 文本，5 层 SP1-SP5 笔号 + SP6 门幅框，ASCII LB 标题；喂 WT V8.8 + LIKE 绘图仪原生 PLT 链路）
 - 400：`width_mm<=0` 或 `placed` 空 → `{"error":"无可导出的方案（width=0 或无裁片）"}`；`placed` 的 pid 全匹配不到 → `{"error":"导出失败：placed 的 pid 均未匹配到原始轮廓"}`；未知 fmt → `{"error":"未知格式 <fmt>"}`。
 
 ### 导出关键函数（`web/export.py`）
@@ -67,6 +68,7 @@
 | `placed_to_world` | `(placed, pieces_by_id) → [{pid,ptype,size,polygon,color,area_mm2}]` | pid 查 `_get_pieces_state()['pieces_by_id']`（US-020）取**原始** polygon → 世界坐标；查不到的跳过并 warning |
 | `render_png` | `(world_pieces, *, width_mm, gate_mm, title) → bytes` | matplotlib Agg，dpi=200，类型配色复用 `PTYPE_COLORS`，图例仅画出现过的片型 |
 | `write_marker_dxf` | `(world_pieces, *, width_mm, gate_mm, title) → bytes` | ezdxf R12 + 闭合 POLYLINE（首尾补点），ACI 色号见 `TYPE_ACI`，ASCII 标题；**不用 LWPOLYLINE**（ET2008 轮廓消失坑） |
+| `write_marker_plt` | `(world_pieces, *, width_mm, gate_mm, title) → bytes` | US-033 HPGL/HP-GL 纯文本（`IN;`/`VS80;`/`SP1-6;`/`PU;`/`PD;`/`LB<chr(3)>`），坐标=mm×40 round 取整，5 层笔号 SP1=outline/SP2=net/SP3=internal/SP4=notch/SP5=grain/SP6=border；空层跳过；纯 ASCII bytes（无临时文件，无新 pip 依赖）；与 DXF 同闭合策略 + 同 ASCII title |
 
 `TYPE_ACI`：前片=1 / 后片=2 / 腰=3 / 前袋=4 / 后袋=5 / 机头=6 / 单排=7 / 双排=8 / 火机袋=9 / 裤耳=10。
 

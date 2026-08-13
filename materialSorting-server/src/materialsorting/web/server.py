@@ -44,7 +44,7 @@ from ..nesting_engine.labeling import (
 
 STATIC_DIR = paths.STATIC_DIR
 from .solver import build_instance, load_pieces, solve_with_callback, solve_with_callback_proc
-from .export import placed_to_world, render_png, write_marker_dxf
+from .export import placed_to_world, render_png, write_marker_dxf, write_marker_plt
 
 # US-020：可 reload 的排料裁片状态。
 # `_PIECES_STATE` 是一个 immutable snapshot dict —— `_reload_pieces_state()` 走「在外
@@ -523,6 +523,12 @@ async def export(req: Request):
         title = f'M1787 util={pct:.2f}% L={width_mm / 10:.1f}cm gate={int(gate_mm)} seed={seed}'
         data = write_marker_dxf(world, width_mm=width_mm, gate_mm=gate_mm, title=title)
         media, ext = 'application/dxf', 'dxf'
+    elif fmt == 'plt':
+        # US-033：PLT/HPGL 文本导出（LIKE 绘图仪 / WT V8.8 原生链路）；title 复用 DXF 同款
+        # ASCII（格式：M1787 util=<pct>% L=<L>cm gate=<gate> seed=<seed>），避免中文编码风险。
+        title = f'M1787 util={pct:.2f}% L={width_mm / 10:.1f}cm gate={int(gate_mm)} seed={seed}'
+        data = write_marker_plt(world, width_mm=width_mm, gate_mm=gate_mm, title=title)
+        media, ext = 'application/plt', 'plt'
     else:
         return JSONResponse({'error': f'未知格式 {fmt}'}, status_code=400)
 

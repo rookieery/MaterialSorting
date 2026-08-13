@@ -22,7 +22,7 @@ curl http://127.0.0.1:8000/api/ptypes                                  # US-020 
 | `server.py` | FastAPI app；路由 `GET /`、`mount /static`、`POST /export`、`POST /api/parse-dxf`（US-004）、`POST /api/commit-to-nesting`（US-010）、`GET /api/ptypes`（US-020）、`WS /ws/solve`；US-020 可 reload `_PIECES_STATE`（threading.Lock 保护）；`ThreadPoolExecutor(max_workers=6)` 求解桥 + 上传解析/commit 复用 |
 | `solver.py` | `load_pieces` / `discretize_orientations` / `build_instance`（v0.3 erode+tol 包装，US-024 pid_meta 加 5 层字段 `.get()` 兼容）/ `solve_with_callback`（**旧** threading 版 spyrrow ProgressQueue + 0.2s drain，US-025 起保留不删）/ `solve_with_callback_proc`（**US-025** multiprocessing 版，spawn 子进程跑 `solve_worker`，主进程 drain `multiprocessing.Queue`，返回 `process` 句柄可 `terminate()`；density 双口径换算在主进程处理 frame 时做）+ `_apply_density_dual` 私有 helper |
 | `solve_worker.py` | **US-025 新增**。顶层 `solve_worker(pieces_snapshot, gate_mm, solve_params, result_queue)` —— Windows spawn 可 pickle（无闭包、参数全 JSON）。子进程内 `build_instance(...) → 投 {kind:manifest}` → `instance.solve(config, progress=ProgressQueue)` → drain 出中间解投 `{kind:frame,report}` → 末尾投 `{kind:final,final}` 或 `{kind:error,message}`。所有投递纯 JSON，spyrrow 对象绝不跨进程 |
-| `export.py` | `apply_transform` / `placed_to_world`（用**原始**非 eroded 轮廓；US-024 起 5 层一并变换，notch 点按点变换 + 法线按向量旋转）/ `render_png`（matplotlib Agg；US-024 起 5 层叠加 net 绿虚线 / internal 橙 / notch 黄短线段 / grain 红虚线）/ `write_marker_dxf`（R12 POLYLINE + ACI 色；US-024 起多 layer outline1/14/8/4/7 各自独立 entity） |
+| `export.py` | `apply_transform` / `placed_to_world`（用**原始**非 eroded 轮廓；US-024 起 5 层一并变换，notch 点按点变换 + 法线按向量旋转）/ `render_png`（matplotlib Agg；US-024 起 5 层叠加 net 绿虚线 / internal 橙 / notch 黄短线段 / grain 红虚线）/ `write_marker_dxf`（R12 POLYLINE + ACI 色；US-024 起多 layer outline1/14/8/4/7 各自独立 entity）/ `write_marker_plt`（US-033 HPGL/HP-GL 文本，`IN;`+`VS80;`+`SP1-6;` PU/PD + `LB<chr(3)>;` ASCII；坐标=mm×40 round；5 层笔号与 DXF layer 同语义；空层跳过；纯 ASCII bytes，无临时文件、无新依赖） |
 
 ## US-004 /api/parse-dxf 关键约定（实现方/调用方必读）
 
@@ -95,3 +95,17 @@ curl http://127.0.0.1:8000/api/ptypes                                  # US-020 
 - **不 await read_task**：TestClient（anyio portal）下 `ws.receive_json()` 阻塞在线程安全队列上，`task.cancel()` 的 CancelledError 无法投递；`await read_task` / `wait_for(read_task)` 会永久挂起。uvicorn 生产环境 cancel 正常生效，ws_solve 返回后 FastAPI 关 WS 让 read_loop 自然退出。
 - **协议扩展（types/ws.ts）**：新增 `StopPayload={action:'stop'}`；`ClientMsg=StartPayload|StopPayload` 联合；新增 `StoppedMsg={type:'stopped',reason:'user_requested'}`；`ServerMsg` 联合增 `StoppedMsg`。向后兼容（旧前端不发 stop，后端不发 stopped）。
 - **测试**：`tests/test_ws_stop.py` 3 项（start→frame→stop→stopped+WS 关闭 / start 后直接断连→进程数回落 / 不发 stop 正常求解收 final）。用 `starlette.testclient.TestClient`（需 `pip install httpx`）。小问题（16 片）exploring 阶段每 ~3ms 吐帧 → 3s 预算积攒 ~800+ frame，测试用 deadline 循环非固定计数。
+
+## US-033 关键约定（PLT/HPGL 导出生成器 + /export plt 分支）
+
+- **背景**：现有 DXF 导出在 WT「高速绘图 V8.8 网络版」+ LIKE 绘图仪上**实测无法正常打印**；该软件原生吃 PLT/HPGL（与 ET 排料软件同口径），故新增 PLT 导出链路。MVP 不做物理设备验收（现场由用户落地后反馈）。
+- **`write_marker_plt(world_pieces, *, width_mm, gate_mm, title) -> bytes`**（`web/export.py`，签名与 `write_marker_dxf` 对齐）：
+  - HPGL 常量：`_PLT_SCALE=40`（1mm=40 plotter unit ≈ 0.025mm）、`_PLT_VELOCITY=80`、`_PEN_OUTLINE=1`/`_PEN_NET=2`/`_PEN_INTERNAL=3`/`_PEN_NOTCH=4`/`_PEN_GRAIN=5`/`_PEN_BORDER=6`、`_ETX=chr(3)`（LB 默认终止符）。
+  - 指令序列：`IN;` → `VS80;` → `SP6;` 门幅框（闭合 PU+PD 4 角）→ 逐片 `SP1-SP5` 5 层 → `LB<title>chr(3);` ASCII 标题。换行分隔，HPGL 容忍。
+  - 坐标：世界坐标(mm) × 40 `round` 取整 → 非负整数（`max(0, ...)` 兜底极小负值）。
+  - **闭合策略**：`_plt_polyline(closed=True)` 在 PD 末尾追加首点（物理闭合，与 `write_marker_dxf` POLYLINE 首尾补点策略一致）；内部线/布纹线/刺口 `closed=False`。
+  - **空层跳过**：`net_polygon`/`internal_lines`/`notches`/`grain_line` 空则对应 SPn 不输出（仅 SP1 outline + SP6 border 必出现）。
+  - **坐标系**：spyrrow 世界坐标 X=用布长度 Y=门幅 Y 向上，与绘图仪走纸/幅宽天然一致；**绝不带前端 SVG `scale(1,-1)` 翻转**（docstring 显式约束）。
+  - 纯标准库字符串拼接，`'\n'.join(cmds).encode('ascii')`；**无临时文件**（比 DXF 的 ezdxf 写盘读字节更简单）；**无新 pip 依赖**；全 ASCII，`.decode('ascii')` 不抛异常。
+- **`server.py /export` 路由**：`elif fmt == 'plt':` 分支插在 `dxf` 之后、`else` 之前；title 复用 DXF 同款 ASCII（`M1787 util=<pct>% L=<L>cm gate=<gate> seed=<seed>`）；`media, ext = 'application/plt', 'plt'`；文件名拼接走现有 `ext` 变量自动命中（`排料_码<sizes>_<pct>pct_seed<seed>.plt`）。PNG/DXF 行为零回归；未知 fmt 仍返 400 `{error:'未知格式 <fmt>'}`。
+- **测试**：`tests/test_export_plt.py` 17 项（首条 IN; / VS80; / bytes+ASCII / 坐标×40 / 整数取整 / SP1 outline 闭合不变量 / SP6 门幅框闭合 / 门幅框四角 / 6 个 SP 全出现 / 空层跳过 / 部分层 / 多片 N×SP1 / LB+ETX / 空 title 不出 LB / 5 层笔号语义 / IN→VS→SP 顺序 / 空 pieces 防御边界）。合成裁片（5 层全有 + 仅毛版）测试，不依赖 intermediate / sparrow 求解结果。
