@@ -10,3 +10,11 @@ Started: 2026-08-09
 
   - 点重新开始 → running：#stop 回归（反复 stop+restart 多次无异常）✓
   - 清理：Chrome + ms-web PID 25652 已 taskkill，端口 8000/9222 确认 LISTENING 不再存在。
+
+## US-029 Tour 基础设施：tourStore + 高亮引擎 + 右上角入口 (2026-08-13)
+  - 新建 src/tour/types.ts（Placement/TourStep/TourDef）、src/tour/steps/index.ts（TOUR_VERSION='1' + DEMO_PREVIEW_TOUR 2 步假 tour）、src/store/tourStore.ts（activeTour/stepIndex/seen + localStorage 持久化 + TOUR_VERSION 版本号强制重看；markSeen 同步写 version 防部分清除误清）、src/tour/useTour.ts（advance-on-ready 轮询骨架；200ms 轮询 + 等待态 + close/stepIndex 清定时器）、src/tour/TourOverlay.tsx（Portal body z=2000；spotlight box-shadow 镂空 + bubble placement 定位 + 零尺寸居中兜底 + useLayoutEffect imperative 定位 + resize/scroll capture listener）。
+  - 改 App.tsx（挂 TourOverlay 单例）、TabBar.tsx（右上角 .tour-entry + 下拉菜单「重置全部指引」=resetSeen+start('preview')；点击外部/ESC 关闭；aria-haspopup/aria-expanded a11y）、style.css（.tour-overlay/.tour-spotlight/.tour-bubble/.tour-title/.tour-body/.tour-waiting/.tour-btn-*/.tour-entry/.tour-menu*/.tour-menu-item 暗背景 #26282e + #2ea06c 同色系）。
+  - 单测：tourStore.test.ts 8 项（默认 null / start / next+prev floor clamp / close / markSeen hydrate / resetSeen / TOUR_VERSION 不一致清 seen / markSeen 幂等）+ TourOverlay.test.tsx 5 项（null 不渲染 / 激活渲染 / spotlight 贴 rect / 零尺寸居中 / 步骤切换跟随）= 13 新增，全绿（552 total）。
+  - typecheck ✓ / build ✓ / package.json 无新依赖 ✓。
+  - 浏览器验证：ms-web 启动成功（:8000 HTTP 200）；chrome-devtools-mcp 不在本会话工具集，核心定位逻辑用 mockRect 单测覆盖（spotlight 贴目标 rect + 零尺寸回退 + 步骤切换）。视觉回归留作 US-030/032 集成。
+  - 清理：ms-web PID 31124 已 taskkill，端口 8000 确认 LISTENING 不再存在。

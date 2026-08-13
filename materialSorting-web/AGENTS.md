@@ -28,22 +28,22 @@ npm run test               # vitest run（US-002 起会有用例）
 3. **命令式 polygon 更新**：每帧 setAttribute('points' / 'display')，由 Zustand renderTick 单字段 ~10fps 节流，**逃逸 React reconciliation**。US-003 落地。
 4. **`static/` 是构建产物**（US-008 起入库 gitignore）：`npm run build` 生成，**不要手改**；旧 vanilla 三件套（`legacy/`）已删除，React 应用是唯一真相源。
 
-## 文件分工（US-001 Tab 框架 + US-002~US-008 全部落地；上传预览 US-005 状态层 + US-006 UploadPanel + US-007 PiecePreviewSVG + US-008 SizeTabs/ParsedPiecesView/PreviewPage 容器集成 + 上传预览 US-011 qtyStore 数量状态 + 上传预览 US-012 PieceQtyDialog/Switch 数量弹窗 + 上传预览 US-013 PieceZoomModal 放大预览模态 + 上传预览 US-014 ParsedPiecesView 卡片头改造+双模态集成 + US-015 uiStore 扩 nestingEnabled + TabBar 置灰 + US-016 PreviewPage 联动 setNestingEnabled + US-017 SizePicker 动态读码号 + DEFAULT_FORM.sizes=[] + US-018 PerTypeOverridesModal/PtypePreviewModal 高级配置弹窗+片型缩略图+放大预览 + US-021 useCommitToNesting 解析成功自动 commit+D1 闭环 + US-022 求解输入数量 demand per-size + US-024 NestSVG 5 层渲染+共享 LAYER5_COLORS + US-027 NestingPage phase 状态机+useSolveRun.stop()+running 态冻结参数编辑）
+## 文件分工（US-001 Tab 框架 + US-002~US-008 全部落地；上传预览 US-005 状态层 + US-006 UploadPanel + US-007 PiecePreviewSVG + US-008 SizeTabs/ParsedPiecesView/PreviewPage 容器集成 + 上传预览 US-011 qtyStore 数量状态 + 上传预览 US-012 PieceQtyDialog/Switch 数量弹窗 + 上传预览 US-013 PieceZoomModal 放大预览模态 + 上传预览 US-014 ParsedPiecesView 卡片头改造+双模态集成 + US-015 uiStore 扩 nestingEnabled + TabBar 置灰 + US-016 PreviewPage 联动 setNestingEnabled + US-017 SizePicker 动态读码号 + DEFAULT_FORM.sizes=[] + US-018 PerTypeOverridesModal/PtypePreviewModal 高级配置弹窗+片型缩略图+放大预览 + US-021 useCommitToNesting 解析成功自动 commit+D1 闭环 + US-022 求解输入数量 demand per-size + US-024 NestSVG 5 层渲染+共享 LAYER5_COLORS + US-027 NestingPage phase 状态机+useSolveRun.stop()+running 态冻结参数编辑 + US-029 操作指引基础设施 tourStore+TourOverlay+useTour+TabBar 右上角入口）
 
 ```
 src/
 ├── main.tsx               # US-001：createRoot + StrictMode
-├── App.tsx                # US-001 ✅ Tab 骨架：TabBar + 双 .page 容器（display:none 切换）+ Tooltip 单例
+├── App.tsx                # US-001 ✅ Tab 骨架：TabBar + 双 .page 容器（display:none 切换）+ Tooltip 单例；US-029 ✅ 加 TourOverlay 单例
 ├── style.css              # 由 vanilla 前身 1:1 迁入；US-001 加 .tabbar/.tab/.page/.hidden/.preview-empty；上传预览 US-006 加 .upload-panel/.drop-zone/.upload-btn/.upload-status；US-007 加 .piece-preview-svg；US-008 加 .preview-page/.preview-main/.size-tabs/.size-chip/.parsed-pieces-view/.piece-grid/.piece-card*；上传预览 US-012 加 .piece-qty-dialog-overlay/.piece-qty-dialog-modal/.qty-input-group/.qty-step/.qty-input/.switch/.switch-track/.switch-label-*/.switch-thumb/.qty-btn/.qty-confirm；上传预览 US-013 加 .piece-zoom-overlay/.piece-zoom-modal/.piece-zoom-head/.piece-zoom-seq/.piece-zoom-meta/.piece-zoom-name/.piece-zoom-close/.piece-zoom-body；上传预览 US-014 改 .piece-card-name→.piece-card-qty(+.disabled) + .piece-card-body 加 cursor:zoom-in；US-015 加 .tab.disabled(+hover)（#555 灰字 + not-allowed）；US-018 加 .per-type-wrapper/.per-type-btn/.per-type-overlay(z=1100)/.per-type-modal/.per-type-head/.per-type-close/.per-type-table-wrap/.per-type-table/.per-type-rowhead(sticky)/.ptype-col/.ptype-thumb(64×64 zoom-in)/.ptype-name/.per-type-hint/.per-type-actions/.per-type-btn-cancel/.per-type-btn-confirm + .ptype-preview-overlay(z=1200)/.ptype-preview-modal/.ptype-preview-head/.ptype-preview-name/.ptype-preview-close/.ptype-preview-body/.ptype-preview-empty
 ├── vite-env.d.ts          # vite/client 类型
 ├── types/                 # US-002 ✅：ws.ts / piece.ts / v03.ts；上传预览 US-005 ✅ parsed.ts（US-004 响应契约）；上传预览 US-011 ✅ qty.ts（PieceQuantity/PieceQuantityMap）；US-027 ✅ solvePhase.ts（SolvePhase 五态）
 ├── lib/                   # US-002 ✅ ws.ts；US-003 ✅ geometry.ts；US-004 ✅ params.ts；US-006 ✅ seek.ts；US-007 ✅ download.ts
-├── store/                 # US-002 ✅ runRegistry.ts；US-003 ✅ appStore.ts；US-001 ✅ uiStore.ts（US-015 ✅ 扩 nestingEnabled + setNestingEnabled + setTab guard）；上传预览 US-005 ✅ uploadStore.ts（US-012 扩 qtyDialog + open/close；US-013 扩 zoom + open/close；US-021 扩 commitStatus/commitError/commitSummary + reset 同步清）；上传预览 US-011 ✅ qtyStore.ts（+clampQty+getPieceDisplay 纯函数；US-022 ✅ 加 hydrateDefaults 交叉积版）
+├── store/                 # US-002 ✅ runRegistry.ts；US-003 ✅ appStore.ts；US-001 ✅ uiStore.ts（US-015 ✅ 扩 nestingEnabled + setNestingEnabled + setTab guard）；上传预览 US-005 ✅ uploadStore.ts（US-012 扩 qtyDialog + open/close；US-013 扩 zoom + open/close；US-021 扩 commitStatus/commitError/commitSummary + reset 同步清）；上传预览 US-011 ✅ qtyStore.ts（+clampQty+getPieceDisplay 纯函数；US-022 ✅ 加 hydrateDefaults 交叉积版）；US-018 ✅ controlPanelStore.ts（modal + previewPtype 双显隐字段）；US-029 ✅ tourStore.ts（activeTour/stepIndex/seen + localStorage 持久化 + TOUR_VERSION 版本号强制重看）
 ├── hooks/                 # US-002 ✅ useSolveRun.ts（US-022 ✅ StartConfig 加 quantities 透传；US-027 ✅ 加 stop() + case stopped）；US-003 ✅ useRafThrottle.ts；US-007 ✅ useExport.ts；上传预览 US-005 ✅ useParseDxf.ts（US-021 ✅ 解析成功自动 void commit）；上传预览 US-021 ✅ useCommitToNesting.ts（POST /api/commit-to-nesting + D1 闭环 setNestingEnabled+setTab）
 ├── constants/             # US-004 ✅：sizes.ts / colors.ts / v03.ts
 ├── __tests__/             # US-002 ✅ useSolveRun；US-003 ✅ 各模块单测；US-007 ✅ useExport；US-001 ✅ App 集成 smoke（US-015 beforeEach 加 setNestingEnabled(true) 兜底 store guard）
 └── components/
-    ├── TabBar.tsx         # US-001 ✅ 顶部 Tab（超排/上传预览），订阅 uiStore.activeTab；US-015 ✅ 超排 button disabled 闸（nestingEnabled===false 时 native disabled + .disabled class + aria-disabled + onClick 运行时判）
+    ├── TabBar.tsx         # US-001 ✅ 顶部 Tab（超排/上传预览），订阅 uiStore.activeTab；US-015 ✅ 超排 button disabled 闸（nestingEnabled===false 时 native disabled + .disabled class + aria-disabled + onClick 运行时判）；US-029 ✅ 右上角操作指引入口（margin-left:auto .tour-entry + 下拉菜单「重置全部指引」=resetSeen+start('preview') 跑假 tour；点击外部/ESC 关闭）
     ├── NestingPage.tsx    # US-001 ✅ 排料页（原 App 业务逻辑外提；持 phase/seeds/useSolveRun）；US-027 ✅ solving→phase 五态状态机 + handleStop/handleRestart + lastStartCfgRef + running 态冻结参数编辑
     ├── preview/           # US-001 起：上传预览页
     │   ├── PreviewPage.tsx # US-008 ✅ 容器（左 UploadPanel + 右 SizeTabs+ParsedPiecesView；未解析空态）；US-014 ✅ 顶层挂 PieceQtyDialog+PieceZoomModal 单例 + useEffect subscribe 联动 qtyStore.resetQuantities（重传清零）；US-016 ✅ 加 useEffect subscribe uploadStore.status 联动 uiStore.setNestingEnabled（`status==='done' && doc!==null` → true，否则 false；mount 即对齐）
@@ -68,6 +68,14 @@ src/
     ├── curve/             # US-005 ✅ ConvergenceCurve
     ├── playback/          # US-006 ✅ PlaybackBar / Seekbar / SeekReadout
     └── Tooltip.tsx        # US-006 ✅ Portal 单例 + showTooltip/hideTooltip/setHovered/clearHovered
+├── tour/                 # US-029 ✅ 操作指引（onboarding tour）基础设施
+│   ├── types.ts          # US-029 ✅ Placement/TourStep/TourDef 类型（TabId 从 uiStore 复用）
+│   ├── TourOverlay.tsx   # US-029 ✅ 高亮引擎（Portal body z=2000；spotlight box-shadow 镂空 + bubble placement 定位 + 零尺寸居中兜底 + useLayoutEffect imperative 定位）
+│   ├── useTour.ts        # US-029 ✅ 控制器 hook（advance-on-ready 轮询骨架；next/prev/close + before + 等待态）
+│   ├── steps/
+│   │   └── index.ts      # US-029 ✅ TOUR_VERSION='1' + DEMO_PREVIEW_TOUR（2 步假 tour）；US-030 扩为 TOURS
+│   └── __tests__/
+│       └── TourOverlay.test.tsx # US-029 ✅ 5 项（null 不渲染 / 激活渲染 / spotlight 贴 rect / 零尺寸居中 / 步骤切换跟随）
 ```
 
 ## 上传预览 US-011 关键约定（qtyStore 数量状态 调用方必读）
@@ -289,6 +297,19 @@ src/
 - **TabBar 视觉沿用 style.css**：暗色 `#26282e` 与 ControlPanel 同色系；active 用绿色 `#2ea06c` border-bottom（与 StartButton 同色）。US-015 加 `.tab.disabled`（`#555` 灰字 + not-allowed）。不引入 CSS 框架。
 - **NestingPage 用 Fragment**：ControlPanel + main 直接作为 `.page` flex 子元素，不再包 `.app`（避免冗余 DOM + flex 嵌套层）。
 - **Tooltip 仍由 App 渲染**：US-006 关键约定 #3（模块级单例）不破；NestingPage 不挂 Tooltip。
+
+## US-029 关键约定（操作指引 tour 基础设施 调用方必读）
+
+- **tourStore 与 TourDef 解耦**：tourStore 是纯状态层（activeTour/stepIndex/seen），不知道 TourDef/steps（步骤定义在 `src/tour/steps/`）。useTour 作为集成层读步骤定义 + 控制 advance-on-ready。tourStore.next() 仅 floor clamp（stepIndex>=0）；ceiling clamp（最后一步 next→close+markSeen）由 useTour 知道 steps.length 后兜底。改耦合会破坏层分离。
+- **advance-on-ready 模型（US-029 骨架 / US-030 完整）**：告知型步（无 ready 谓词）→ 点下一步直接推进；联动型步（有 ready）→ ready()===false 切等待态+200ms 轮询+下一步 disabled，true 时自动推进。US-029 的 DEMO_PREVIEW_TOUR 两步均为告知型。轮询定时器用 useRef 持有，close/unmount/stepIndex 变化时 clearInterval（无泄漏）。
+- **spotlight 用 box-shadow 镂空**：.tour-overlay 透明背景（z-index 2000），.tour-spotlight 贴目标 rect + `box-shadow:0 0 0 9999px rgba(0,0,0,0.6)` 实现镂空遮罩。spotlight `pointer-events:none`（用户可点击高亮目标）；bubble `pointer-events:auto`（按钮可点）。
+- **零尺寸兜底**：querySelector 目标 display:none/全零 rect → readTargetRect 返回 null → spotlight display:none + bubble 居中（translate(-50%,-50%)）。对应 .hidden 页 display:none 场景。
+- **定位用 useLayoutEffect imperative**：与 Tooltip.tsx 同模式——JSX 不带 style prop，useLayoutEffect 读 getBoundingClientRect 后写 style.left/top/width/height。改 JSX style prop 会被 React reconciliation 覆盖。
+- **重算时机**：步骤切换（stepIndex 变）、resize/scroll（tick state bump → re-render）、advance-on-ready 状态变化（waiting 变）均触发 useLayoutEffect 重读 rect。scroll 用 capture=true 捕获子容器滚动。
+- **TOUR_VERSION 版本号策略**：仅步骤内容重大变更时 bump（小改不改版本）。bump 后 hydrateSeen init 检测 storedVersion!==TOUR_VERSION → 清全部 seen（强制重看）。markSeen 同步写 version（防 localStorage 部分清除后 re-hydrate 误清）。不引入 zustand persist 中间件。
+- **TabBar 右上角入口 class 用 .tour-entry（非 .tab）**：不干扰现有 TabBar.test.tsx 的 `button.tab` count===2 断言。下拉菜单 class 用 .tour-menu（z-index 1300）。
+- **不引入 CSS 框架**：.tour-overlay/.tour-spotlight/.tour-bubble/.tour-btn-*/.tour-entry*/.tour-menu* 全部沿用 style.css 暗背景 #26282e + #2ea06c 同色系。
+- **未做浏览器验证（chrome-devtools-mcp 不在本会话工具集）**：本 Story 无 SVG/坐标变换（仅 DOM overlay + CSS spotlight/bubble），核心定位逻辑用 5 项 TourOverlay 单测 + 8 项 tourStore 单测覆盖（含 mockRect 精确验证 spotlight 贴目标 rect + 零尺寸回退居中 + 步骤切换跟随）。AC 仅要求 typecheck + 单测 + build 全绿。浏览器视觉回归（resize/scroll 聚光灯跟随、ESC/跳过关闭、刷新 seen 保留）留作 US-030/032 集成时统一核对。
 
 ## US-007 关键约定（导出 PNG/DXF 调用方必读）
 

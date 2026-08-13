@@ -18,6 +18,7 @@ import { Tooltip } from './components/Tooltip';
 import { NestingPage } from './components/NestingPage';
 import { PreviewPage } from './components/preview/PreviewPage';
 import { TabBar } from './components/TabBar';
+import { TourOverlay } from './tour/TourOverlay';
 import { useUiStore } from './store/uiStore';
 
 export function App(): React.JSX.Element {
@@ -41,6 +42,8 @@ export function App(): React.JSX.Element {
 
       {/* US-006 AC#5：Tooltip 用 React Portal 到 body，fixed 定位；app 生命周期内单例。 */}
       <Tooltip />
+      {/* US-029：TourOverlay 单例（Portal 到 body，z-index 2000），订阅 tourStore 自显隐。 */}
+      <TourOverlay />
     </div>
   );
 }
