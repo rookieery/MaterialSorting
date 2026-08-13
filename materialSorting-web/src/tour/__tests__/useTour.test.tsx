@@ -266,3 +266,27 @@ describe('useTour US-032 skip', () => {
     vi.useRealTimers();
   });
 });
+
+describe('useTour close 即 markSeen (bug1)', () => {
+  it('8. close 也 markSeen：ESC/遮罩关闭后不再自动触发（与 skip 同语义）', () => {
+    // seen 初始 false（确保 close 能写 true）
+    useTourStore.setState({ seen: { preview: false, nesting: false } });
+    mountHarness();
+    act(() => {
+      useTourStore.getState().start('preview');
+    });
+    expect(useTourStore.getState().activeTour).toBe('preview');
+    expect(useTourStore.getState().seen.preview).toBe(false);
+
+    // close → markSeen('preview') + close
+    act(() => {
+      returned!.close();
+    });
+
+    // markSeen 持久化（bug1：任何关闭路径都视为已读）
+    expect(useTourStore.getState().seen.preview).toBe(true);
+    expect(localStorage.getItem('ms.tour.seen.preview')).toBe('1');
+    // close（activeTour=null）
+    expect(useTourStore.getState().activeTour).toBeNull();
+  });
+});

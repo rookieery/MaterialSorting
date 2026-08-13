@@ -62,24 +62,46 @@ function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
 }
 
-/** placement 翻向（溢出视口时）。 */
-function flipPlacement(placement: Placement, rect: Rect): Placement {
+/** placement 级联回退（目标贴近视口边缘 / 几乎铺满时）。
+ *
+ * 顺序：原方向 → 反向 → 交叉方向（水平放不下试垂直，垂直放不下试水平）→ center 兜底。
+ *
+ * bug3 根因：旧版只在「原方向 ↔ 反向」之间二选一，当目标几乎铺满视口（如 result 步的
+ * nest-wrap 占满右侧、左右两侧都放不下 340px 气泡）时回退原方向，computeBubblePos 的
+ * 'right' 分支把气泡 left 钳到 vw-8、translate(0,-50%) 让它向右溢出视口 —— 表现为
+ * 「只有聚光灯框选、没有介绍气泡」。现改为四方向都不满足时退到 center，保证气泡始终可见。 */
+export function flipPlacement(placement: Placement, rect: Rect): Placement {
   const vw = window.innerWidth;
   const vh = window.innerHeight;
   const bw = Math.min(BUBBLE_MAX_WIDTH_PX, vw - VIEWPORT_PADDING_PX * 2);
-  if (placement === 'bottom' && rect.top + rect.height + BUBBLE_GAP_PX + BUBBLE_EST_HEIGHT > vh - VIEWPORT_PADDING_PX) {
-    return rect.top - BUBBLE_GAP_PX - BUBBLE_EST_HEIGHT >= VIEWPORT_PADDING_PX ? 'top' : 'bottom';
+
+  // 各方向是否有空间放下气泡（水平按 bw，垂直按保守估算 BUBBLE_EST_HEIGHT）。
+  const fitsRight = rect.left + rect.width + BUBBLE_GAP_PX + bw <= vw - VIEWPORT_PADDING_PX;
+  const fitsLeft = rect.left - BUBBLE_GAP_PX - bw >= VIEWPORT_PADDING_PX;
+  const fitsBottom =
+    rect.top + rect.height + BUBBLE_GAP_PX + BUBBLE_EST_HEIGHT <= vh - VIEWPORT_PADDING_PX;
+  const fitsTop = rect.top - BUBBLE_GAP_PX - BUBBLE_EST_HEIGHT >= VIEWPORT_PADDING_PX;
+
+  // 级联顺序：首选原方向 → 反向 → 交叉方向；全不满足时函数末尾兜底 center。
+  const cascade: readonly Placement[] =
+    placement === 'right'
+      ? ['right', 'left', 'bottom', 'top']
+      : placement === 'left'
+        ? ['left', 'right', 'bottom', 'top']
+        : placement === 'bottom'
+          ? ['bottom', 'top', 'right', 'left']
+          : placement === 'top'
+            ? ['top', 'bottom', 'right', 'left']
+            : ['center'];
+
+  for (const p of cascade) {
+    if (p === 'center') return 'center';
+    if (p === 'right' && fitsRight) return 'right';
+    if (p === 'left' && fitsLeft) return 'left';
+    if (p === 'bottom' && fitsBottom) return 'bottom';
+    if (p === 'top' && fitsTop) return 'top';
   }
-  if (placement === 'top' && rect.top - BUBBLE_GAP_PX - BUBBLE_EST_HEIGHT < VIEWPORT_PADDING_PX) {
-    return rect.top + rect.height + BUBBLE_GAP_PX + BUBBLE_EST_HEIGHT <= vh - VIEWPORT_PADDING_PX ? 'bottom' : 'top';
-  }
-  if (placement === 'right' && rect.left + rect.width + BUBBLE_GAP_PX + bw > vw - VIEWPORT_PADDING_PX) {
-    return rect.left - BUBBLE_GAP_PX - bw >= VIEWPORT_PADDING_PX ? 'left' : 'right';
-  }
-  if (placement === 'left' && rect.left - BUBBLE_GAP_PX - bw < VIEWPORT_PADDING_PX) {
-    return rect.left + rect.width + BUBBLE_GAP_PX + bw <= vw - VIEWPORT_PADDING_PX ? 'right' : 'left';
-  }
-  return placement;
+  return 'center';
 }
 
 interface BubblePos {

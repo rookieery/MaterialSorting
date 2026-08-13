@@ -4,8 +4,8 @@
 //   - spotlight 贴目标 rect（left/top/width/height 匹配 getBoundingClientRect）
 //   - 零尺寸回退居中（spotlight display:none + bubble translate(-50%, -50%)）
 //   - US-030：等待态气泡渲染 readyHint + 下一步 disabled（advance-on-ready）
-//   - US-032：ESC 关闭 tour
-//   - US-032：遮罩点击关闭（e.target===e.currentTarget）
+//   - US-032：ESC 关闭 tour（bug1：close 即 markSeen，不再自动触发）
+//   - US-032：遮罩点击关闭（e.target===e.currentTarget；close 即 markSeen）
 //   - US-032：bubble 点击不关闭
 //   - US-032：skip 按钮 markSeen + close
 //   - US-032：reduced-motion 加 .tour-reduced-motion class
@@ -14,7 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { StrictMode } from 'react';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { TourOverlay } from '../TourOverlay';
+import { TourOverlay, flipPlacement } from '../TourOverlay';
 import { useTourStore } from '../../store/tourStore';
 import { useUploadStore } from '../../store/uploadStore';
 
@@ -234,11 +234,13 @@ describe('TourOverlay (US-029/US-030)', () => {
 });
 
 describe('TourOverlay US-032 关闭交互 + reduced-motion', () => {
-  it('ESC 关闭 tour（window keydown → activeTour=null）', () => {
+  it('ESC 关闭 tour（window keydown → activeTour=null）+ close 即 markSeen（bug1）', () => {
     const target = document.createElement('div');
     target.setAttribute('data-tour', 'drop-zone');
     mockRect(target, { left: 0, top: 0, width: 200, height: 100 });
     document.body.appendChild(target);
+    // bug1：从 seen=false 起步，验证 ESC 关闭后 markSeen（不再自动触发）
+    useTourStore.setState({ seen: { preview: false, nesting: false } });
 
     act(() => {
       useTourStore.getState().start('preview');
@@ -254,15 +256,19 @@ describe('TourOverlay US-032 关闭交互 + reduced-motion', () => {
 
     expect(useTourStore.getState().activeTour).toBeNull();
     expect(document.body.querySelector('.tour-overlay')).toBeNull();
+    // close 即 markSeen：ESC 关掉 = 已读，切回 Tab 不再自动触发
+    expect(useTourStore.getState().seen.preview).toBe(true);
+    expect(localStorage.getItem('ms.tour.seen.preview')).toBe('1');
 
     target.remove();
   });
 
-  it('遮罩点击关闭（mousedown 落在 overlay 自身 e.target===e.currentTarget）', () => {
+  it('遮罩点击关闭（mousedown 落在 overlay 自身 e.target===e.currentTarget）+ close 即 markSeen（bug1）', () => {
     const target = document.createElement('div');
     target.setAttribute('data-tour', 'drop-zone');
     mockRect(target, { left: 0, top: 0, width: 200, height: 100 });
     document.body.appendChild(target);
+    useTourStore.setState({ seen: { preview: false, nesting: false } });
 
     act(() => {
       useTourStore.getState().start('preview');
@@ -281,6 +287,8 @@ describe('TourOverlay US-032 关闭交互 + reduced-motion', () => {
     });
 
     expect(useTourStore.getState().activeTour).toBeNull();
+    // close 即 markSeen（bug1）
+    expect(useTourStore.getState().seen.preview).toBe(true);
 
     target.remove();
   });
@@ -397,5 +405,61 @@ describe('TourOverlay US-032 关闭交互 + reduced-motion', () => {
 
     target.remove();
     matchMediaSpy.mockRestore();
+  });
+});
+
+// bug3：flipPlacement 级联回退 —— 目标几乎铺满视口时气泡不能被定位到屏外。
+// jsdom 默认视口 1024×768；bw = min(340, 1024-16) = 340，BUBBLE_EST_HEIGHT = 220。
+describe('flipPlacement 级联回退 (bug3)', () => {
+  const origW = window.innerWidth;
+  const origH = window.innerHeight;
+
+  beforeEach(() => {
+    // 显式锁定视口，防其它用例 / 环境漂移影响「放得下 / 放不下」边界判断。
+    window.innerWidth = 1024;
+    window.innerHeight = 768;
+  });
+  afterEach(() => {
+    window.innerWidth = origW;
+    window.innerHeight = origH;
+  });
+
+  it('目标铺满视口 + right → center（result 步 nest-wrap 占满右侧，旧逻辑气泡出屏）', () => {
+    // nest-wrap 实测：左 panel 占 248px 后几乎横跨剩余宽度 + 占满高度。
+    const nestWrap = { left: 264, top: 0, width: 760, height: 768 };
+    expect(flipPlacement('right', nestWrap)).toBe('center');
+  });
+
+  it('目标铺满整个视口 + bottom → center（垂直方向也兜底）', () => {
+    const full = { left: 0, top: 0, width: 1024, height: 768 };
+    expect(flipPlacement('bottom', full)).toBe('center');
+  });
+
+  it('目标铺满整个视口 + right → center', () => {
+    const full = { left: 0, top: 0, width: 1024, height: 768 };
+    expect(flipPlacement('right', full)).toBe('center');
+  });
+
+  it('右侧有空间 + right → 不翻转', () => {
+    // 小目标靠左，右侧足够放下 340px 气泡（right + gap + 340 = 562 <= 1016）。
+    const small = { left: 10, top: 100, width: 200, height: 100 };
+    expect(flipPlacement('right', small)).toBe('right');
+  });
+
+  it('底部溢出但顶部有空间 + bottom → 翻转到 top（保留原 flip 行为）', () => {
+    // 目标贴近视口底部，下方放不下 220px 气泡，上方有空间。
+    const nearBottom = { left: 100, top: 600, width: 300, height: 100 };
+    expect(flipPlacement('bottom', nearBottom)).toBe('top');
+  });
+
+  it('底部溢出且顶部也放不下 + bottom → 交叉回退到 right/left，再不济 center', () => {
+    // 目标又高又宽（垂直放不下），右侧够放 → 退到 right。
+    const tallWide = { left: 10, top: 0, width: 200, height: 768 };
+    expect(flipPlacement('bottom', tallWide)).toBe('right');
+  });
+
+  it('placement center → center', () => {
+    const rect = { left: 100, top: 100, width: 200, height: 100 };
+    expect(flipPlacement('center', rect)).toBe('center');
   });
 });

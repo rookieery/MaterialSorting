@@ -21,7 +21,7 @@
 //   - committed    [data-testid="commit-status"] （UploadPanel.tsx commit 状态行）
 //   - goto-nesting [data-tour="tab-nesting"]     （TabBar.tsx 超排按钮）
 //
-// before 副作用：前 4 步确保 activeTab==='preview'（用户从超排 Tab 用菜单「重看上传预览指引」
+// before 副作用：前 4 步确保 activeTab==='preview'（用户从超排 Tab 用菜单「查看上传预览指引」
 // 触发时需切回 preview；defensive + 幂等）。第 5 步 goto-nesting 不切回（其语义就是等待用户
 // 离开 preview 进入 nesting），故无 before。
 

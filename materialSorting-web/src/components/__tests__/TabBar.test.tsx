@@ -7,9 +7,10 @@
 //   - disabled 时点击不调 setTab（关键不变量）
 //   - disabled 视觉有 .disabled class + aria-disabled + native disabled
 //   - 启用后正常切换
-// US-032 新增 7 项（下拉菜单三项 + 关闭交互）：
+// US-032（下拉菜单两项 + 关闭交互）：
 //   - 菜单默认不渲染，点击「操作指引」展开
-//   - 三项菜单各自触发正确 action（replay-preview / replay-nesting / reset）
+//   - 两项菜单各自触发正确 action（replay-preview / replay-nesting）
+//   - 每项仅在对应 Tab 可点，非当前 Tab 置灰禁用（.disabled + aria-disabled + native disabled）
 //   - 点外部关闭、ESC 关闭、aria-expanded 跟随
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -187,7 +188,7 @@ describe('TabBar US-015 超排 Tab 解锁闸', () => {
 });
 
 describe('TabBar US-032 操作指引下拉菜单', () => {
-  it('菜单默认不渲染；点击「操作指引」展开三项菜单', () => {
+  it('菜单默认不渲染；点击「操作指引」展开两项菜单', () => {
     const el = renderBar();
     // 初始无菜单
     expect(el.querySelector('[data-testid="tour-menu"]')).toBeNull();
@@ -202,16 +203,16 @@ describe('TabBar US-032 操作指引下拉菜单', () => {
 
     const menu = el.querySelector('[data-testid="tour-menu"]');
     expect(menu).not.toBeNull();
-    // 三项菜单
+    // 两项菜单
     expect(menu!.querySelector('[data-testid="tour-menu-replay-preview"]')).not.toBeNull();
     expect(menu!.querySelector('[data-testid="tour-menu-replay-nesting"]')).not.toBeNull();
-    expect(menu!.querySelector('[data-testid="tour-menu-reset"]')).not.toBeNull();
+    expect(menu!.querySelector('[data-testid="tour-menu-reset"]')).toBeNull();
     // aria-expanded=true
     const entryAfter = el.querySelector('button.tour-entry') as HTMLButtonElement;
     expect(entryAfter.getAttribute('aria-expanded')).toBe('true');
   });
 
-  it('点击「重看上传预览指引」→ start("preview")', () => {
+  it('点击「查看上传预览指引」→ start("preview")', () => {
     const el = renderBar();
     const entry = el.querySelector('button.tour-entry') as HTMLButtonElement;
     act(() => {
@@ -227,7 +228,10 @@ describe('TabBar US-032 操作指引下拉菜单', () => {
     expect(el.querySelector('[data-testid="tour-menu"]')).toBeNull();
   });
 
-  it('点击「重看超排指引」→ start("nesting")', () => {
+  it('点击「查看超排指引」→ start("nesting")', () => {
+    // 该项仅在 nesting Tab 可点（置灰规则），先切到 nesting Tab
+    useUiStore.getState().setNestingEnabled(true);
+    useUiStore.getState().setTab('nesting');
     const el = renderBar();
     const entry = el.querySelector('button.tour-entry') as HTMLButtonElement;
     act(() => {
@@ -239,31 +243,6 @@ describe('TabBar US-032 操作指引下拉菜单', () => {
     });
     expect(useTourStore.getState().activeTour).toBe('nesting');
     expect(useTourStore.getState().stepIndex).toBe(0);
-  });
-
-  it('点击「重置全部指引」→ resetSeen（清 localStorage seen，不启动 tour）', () => {
-    // 先 markSeen 写 localStorage（需 seen=false 才能 markSeen 写入）
-    useTourStore.setState({ seen: { preview: false, nesting: false } });
-    useTourStore.getState().markSeen('preview');
-    expect(localStorage.getItem('ms.tour.seen.preview')).toBe('1');
-
-    const el = renderBar();
-    const entry = el.querySelector('button.tour-entry') as HTMLButtonElement;
-    act(() => {
-      entry.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    });
-    const btn = el.querySelector('[data-testid="tour-menu-reset"]') as HTMLButtonElement;
-    act(() => {
-      btn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-    });
-
-    // seen 清空
-    expect(useTourStore.getState().seen.preview).toBe(false);
-    expect(useTourStore.getState().seen.nesting).toBe(false);
-    expect(localStorage.getItem('ms.tour.seen.preview')).toBeNull();
-    expect(localStorage.getItem('ms.tour.seen.nesting')).toBeNull();
-    // 不启动 tour（区别于旧 US-029 行为；下次进 Tab 由 auto-trigger 触发）
-    expect(useTourStore.getState().activeTour).toBeNull();
   });
 
   it('点击菜单外部关闭菜单', () => {
@@ -310,5 +289,65 @@ describe('TabBar US-032 操作指引下拉菜单', () => {
       entry.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
     expect(el.querySelector('[data-testid="tour-menu"]')).toBeNull();
+  });
+});
+
+describe('TabBar 操作指引菜单项置灰规则（仅当前 Tab 可点）', () => {
+  it('preview Tab 下：查看上传预览指引可点、查看超排指引置灰禁用', () => {
+    // beforeEach 默认 activeTab='preview' / nestingEnabled=false
+    const el = renderBar();
+    const entry = el.querySelector('button.tour-entry') as HTMLButtonElement;
+    act(() => {
+      entry.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    const preview = el.querySelector(
+      '[data-testid="tour-menu-replay-preview"]',
+    ) as HTMLButtonElement;
+    const nesting = el.querySelector(
+      '[data-testid="tour-menu-replay-nesting"]',
+    ) as HTMLButtonElement;
+    // preview 项可点
+    expect(preview.classList.contains('disabled')).toBe(false);
+    expect(preview.getAttribute('aria-disabled')).toBe('false');
+    expect(preview.disabled).toBe(false);
+    // nesting 项置灰禁用
+    expect(nesting.classList.contains('disabled')).toBe(true);
+    expect(nesting.getAttribute('aria-disabled')).toBe('true');
+    expect(nesting.disabled).toBe(true);
+  });
+
+  it('nesting Tab 下：查看超排指引可点、查看上传预览指引置灰禁用', () => {
+    useUiStore.getState().setNestingEnabled(true);
+    useUiStore.getState().setTab('nesting');
+    const el = renderBar();
+    const entry = el.querySelector('button.tour-entry') as HTMLButtonElement;
+    act(() => {
+      entry.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    const preview = el.querySelector(
+      '[data-testid="tour-menu-replay-preview"]',
+    ) as HTMLButtonElement;
+    const nesting = el.querySelector(
+      '[data-testid="tour-menu-replay-nesting"]',
+    ) as HTMLButtonElement;
+    expect(preview.classList.contains('disabled')).toBe(true);
+    expect(preview.disabled).toBe(true);
+    expect(nesting.classList.contains('disabled')).toBe(false);
+    expect(nesting.disabled).toBe(false);
+  });
+
+  it('preview Tab 下点击置灰的「查看超排指引」不启动 tour（handler 运行时兜底）', () => {
+    // beforeEach 默认 activeTab='preview'：nesting 项置灰
+    const el = renderBar();
+    const entry = el.querySelector('button.tour-entry') as HTMLButtonElement;
+    act(() => {
+      entry.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    const btn = el.querySelector('[data-testid="tour-menu-replay-nesting"]') as HTMLButtonElement;
+    // 合成 dispatchEvent 会绕过 native disabled（与超排 Tab 同款），由 handler 内 if 兜底
+    act(() => {
+      btn.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(useTourStore.getState().activeTour).toBeNull();
   });
 });

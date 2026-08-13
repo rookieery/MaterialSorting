@@ -11,10 +11,11 @@
 //      - 告知型步（无 ready）或 ready 已 true -> 不等待，下一步按钮可点。
 //   3. next()：最后一步 -> markSeen + close；否则 storeNext（新步的 ready 由 effect 处理）。
 //      waiting 时按钮 disabled（defensive guard：waiting 时 next() 直接 return）。
-//   4. prev() / close()：清轮询 + storePrev / storeClose。
-//   5. skip()（US-032）：markSeen(activeTour) + close —— 视为已读不再自动触发。
-//      区别于 close()：close 仅关闭（不 markSeen，下次进 Tab 可再自动触发）；
-//      skip 是用户显式「跳过」-> markSeen 持久化，不再自动触发。
+//   4. prev() / close()：清轮询 + storePrev / close（close 一并 markSeen，见下）。
+//   5. skip()（US-032）：markSeen(activeTour) + close —— 气泡内显式「跳过」入口。
+//      close 与 skip 现统一为 markSeen + 关闭：任何关闭路径（ESC / 遮罩点击 / 跳过按钮）
+//      都视为已读，不再自动触发（否则切走再切回该 Tab 会重复弹出，bug1）。
+//      用户想重看用右上角菜单「查看 XX 指引」（force start，不检查 seen）。
 //
 // advance-on-ready 模型（US-030，检查当前步语义）：
 //   - 告知型步（无 ready）：用户读气泡 -> 点下一步直接推进（教学后用户自行操作）。
@@ -73,9 +74,9 @@ export interface UseTourReturn {
   next: () => void;
   /** 回退上一步（清等待态 + floor clamp）。 */
   prev: () => void;
-  /** 关闭 tour（清等待态 + 轮询 + activeTour=null；不 markSeen，可再自动触发）。 */
+  /** 关闭 tour（markSeen + 清等待态 + 轮询 + activeTour=null；视为已读不再自动触发）。 */
   close: () => void;
-  /** 跳过 tour（markSeen + close；视为已读不再自动触发）。US-032。 */
+  /** 跳过 tour（markSeen + close；与 close 同语义，按钮显式可见入口）。US-032。 */
   skip: () => void;
   /** 启动 tour（转发 tourStore.start）。 */
   start: (tabId: TabId) => void;
@@ -174,12 +175,19 @@ export function useTour(): UseTourReturn {
   }, [clearPolling, storePrev]);
 
   const close = useCallback(() => {
+    // 关闭即 markSeen：ESC / 遮罩点击属用户「我不想看了」语义，应视为已读，
+    // 否则 seen[tab] 仍 false → 切走再切回该 Tab 会再次自动触发（bug1）。
+    // markSeen 幂等（store 层已防重复写 localStorage），完成 / skip 路径已 markSeen 再调无副作用。
+    if (activeTour) {
+      markSeen(activeTour);
+    }
     clearPolling();
     storeClose();
-  }, [clearPolling, storeClose]);
+  }, [activeTour, markSeen, clearPolling, storeClose]);
 
-  // skip（US-032）：markSeen + close —— 用户显式跳过，视为已读不再自动触发。
-  // markSeen 幂等（store 层已防重复写 localStorage）；close 清轮询 + activeTour=null。
+  // skip（US-032）：与 close 同语义（markSeen + close），作为气泡内显式可见的「跳过」入口。
+  // 历史上 close 不 markSeen、skip 才 markSeen；但 ESC/遮罩关闭不 markSeen 会导致切回 Tab 重复
+  // 触发（bug1），故统一为：任何关闭路径都 markSeen（用户想重看用右上角菜单「查看」）。
   const skip = useCallback(() => {
     if (activeTour) {
       markSeen(activeTour);

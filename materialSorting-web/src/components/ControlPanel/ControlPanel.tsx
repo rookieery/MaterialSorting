@@ -164,23 +164,27 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onResta
       </div>
       <h2>求解控制</h2>
       <SizePicker selected={form.sizes} onChange={(sizes) => patch({ sizes })} disabled={solving} />
-      <ParamForm
-        gate={form.gate}
-        time={form.time}
-        seed={form.seed}
-        onGate={(gate) => patch({ gate })}
-        onTime={(time) => patch({ time })}
-        onSeed={(seed) => patch({ seed })}
-        disabled={solving}
-      />
-      <MultiSeedControls
-        multi_seed={form.multi_seed}
-        seed_count={form.seed_count}
-        onMulti={(multi_seed) => patch({ multi_seed })}
-        onCount={(seed_count) => patch({ seed_count })}
-        disabled={solving}
-      />
-      <PerTypeOverrides values={form.per_type} onChange={(per_type) => patch({ per_type })} disabled={solving} />
+      {/* US-031 params 步锚点：包裹幅宽/时长/seed（ParamForm）+ multi_seed（MultiSeedControls）
+          + 高级配置（PerTypeOverrides）整个「求解参数」区。码号多选（SizePicker）在其上独立成区不纳入。 */}
+      <div data-tour="param-form">
+        <ParamForm
+          gate={form.gate}
+          time={form.time}
+          seed={form.seed}
+          onGate={(gate) => patch({ gate })}
+          onTime={(time) => patch({ time })}
+          onSeed={(seed) => patch({ seed })}
+          disabled={solving}
+        />
+        <MultiSeedControls
+          multi_seed={form.multi_seed}
+          seed_count={form.seed_count}
+          onMulti={(multi_seed) => patch({ multi_seed })}
+          onCount={(seed_count) => patch({ seed_count })}
+          disabled={solving}
+        />
+        <PerTypeOverrides values={form.per_type} onChange={(per_type) => patch({ per_type })} disabled={solving} />
+      </div>
       {/* US-031：data-tour="start-btn" 锚定 SolveControls 父容器（nestingTour step3 高亮目标）。 */}
       <div data-tour="start-btn">
         <SolveControls phase={phase} onStart={handleStart} onStop={onStop} onRestart={onRestart} startDisabled={startDisabled} />

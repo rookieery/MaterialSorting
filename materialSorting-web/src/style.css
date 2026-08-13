@@ -1199,3 +1199,10 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
   background: #34363d;
   color: #2ea06c;
 }
+/* 置灰禁用（非当前 Tab 不可点）：与 .tab.disabled 同 #555 色系，压制 hover 高亮 */
+.tour-menu-item.disabled,
+.tour-menu-item.disabled:hover {
+  color: #555;
+  background: transparent;
+  cursor: not-allowed;
+}

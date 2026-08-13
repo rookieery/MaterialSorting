@@ -1,4 +1,4 @@
-// TabBar —— 顶部 Tab 切换（US-001 AC#1）+ 超排 Tab 解锁闸（US-015）+ 右上角操作指引入口（US-029 / US-032 三项菜单）。
+// TabBar —— 顶部 Tab 切换（US-001 AC#1）+ 超排 Tab 解锁闸（US-015）+ 右上角操作指引入口（US-029 / US-032 两项菜单）。
 //
 // 渲染两个 Tab（上传预览 / 超排），点击切换 uiStore.activeTab；当前激活项加 `.active`
 // class 高亮（与 ControlPanel 视觉同色系：暗背景 #26282e + 绿色 #2ea06c 强调，见 style.css）。
@@ -12,10 +12,12 @@
 //
 // 右上角操作指引入口（US-029 基础设施 / US-032 补全三项菜单）：
 //   - margin-left:auto 推到 .tabbar 右侧；native button「操作指引」+ 下拉菜单。
-//   - 下拉菜单三项（US-032）：
-//     ①「重看上传预览指引」→ start('preview')（强制重放，不检查 seen）。
-//     ②「重看超排指引」→ start('nesting')（强制重放，不检查 seen）。
-//     ③「重置全部指引」→ resetSeen()（清 localStorage 全部 ms.tour.seen.*，下次进 Tab 自动触发）。
+//   - 下拉菜单两项（US-032；原「重置全部指引」已移除）：
+//     ①「查看上传预览指引」→ start('preview')（强制重放，不检查 seen）。
+//     ②「查看超排指引」→ start('nesting')（强制重放，不检查 seen）。
+//   - 每项仅在对应 Tab 可点：非当前 Tab 时置灰禁用（.disabled + aria-disabled +
+//     native disabled 兜底 a11y / 键盘序列；handler 运行时再判一次兜底合成事件/devtools 旁路，
+//     与超排 Tab 解锁闸同款双重防御）。
 //   - 点击外部 / ESC 关闭菜单（document mousedown listener + keydown）。
 //   - a11y：aria-haspopup="menu" + aria-expanded；按钮 class 用 .tour-entry（非 .tab，
 //     不干扰现有 TabBar.test.tsx 的 button.tab 断言）。
@@ -43,8 +45,11 @@ export function TabBar(): ReactElement {
   const activeTab = useUiStore((s) => s.activeTab);
   const setTab = useUiStore((s) => s.setTab);
   const nestingEnabled = useUiStore((s) => s.nestingEnabled);
-  const resetSeen = useTourStore((s) => s.resetSeen);
   const startTour = useTourStore((s) => s.start);
+
+  // 菜单项仅在对应 Tab 可点：非当前 Tab 置灰禁用（与 Tour Tab 同 .disabled 色系）。
+  const previewDisabled = activeTab !== 'preview';
+  const nestingDisabled = activeTab !== 'nesting';
 
   const [menuOpen, setMenuOpen] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -68,21 +73,18 @@ export function TabBar(): ReactElement {
     };
   }, [menuOpen]);
 
-  /** 重看上传预览指引：强制重放 preview tour（不检查 seen）。US-032。 */
+  /** 查看上传预览指引：强制重放 preview tour（不检查 seen）。仅在 preview Tab 可点。US-032。 */
   function handleReplayPreview(): void {
+    // 双重防御：native disabled 兜底真实用户点击；运行时再判一次兜底合成事件/devtools 旁路。
+    if (previewDisabled) return;
     startTour('preview');
     setMenuOpen(false);
   }
 
-  /** 重看超排指引：强制重放 nesting tour（不检查 seen）。US-032。 */
+  /** 查看超排指引：强制重放 nesting tour（不检查 seen）。仅在 nesting Tab 可点。US-032。 */
   function handleReplayNesting(): void {
+    if (nestingDisabled) return;
     startTour('nesting');
-    setMenuOpen(false);
-  }
-
-  /** 重置全部指引：清 localStorage seen，下次进 Tab 自动触发。US-032（不再启动 demo tour）。 */
-  function handleResetAll(): void {
-    resetSeen();
     setMenuOpen(false);
   }
 
@@ -126,33 +128,29 @@ export function TabBar(): ReactElement {
         </button>
         {menuOpen && (
           <div className="tour-menu" role="menu" data-testid="tour-menu">
-            {/* US-032 三项菜单：重看 preview / 重看 nesting / 重置全部 */}
+            {/* US-032 两项菜单：查看 preview / 查看 nesting（原「重置全部指引」已移除）。
+                每项仅在对应 Tab 可点，非当前 Tab 置灰禁用。 */}
             <button
               type="button"
-              className="tour-menu-item"
+              className={`tour-menu-item${previewDisabled ? ' disabled' : ''}`}
               role="menuitem"
+              aria-disabled={previewDisabled}
+              disabled={previewDisabled}
               onClick={handleReplayPreview}
               data-testid="tour-menu-replay-preview"
             >
-              重看上传预览指引
+              查看上传预览指引
             </button>
             <button
               type="button"
-              className="tour-menu-item"
+              className={`tour-menu-item${nestingDisabled ? ' disabled' : ''}`}
               role="menuitem"
+              aria-disabled={nestingDisabled}
+              disabled={nestingDisabled}
               onClick={handleReplayNesting}
               data-testid="tour-menu-replay-nesting"
             >
-              重看超排指引
-            </button>
-            <button
-              type="button"
-              className="tour-menu-item"
-              role="menuitem"
-              onClick={handleResetAll}
-              data-testid="tour-menu-reset"
-            >
-              重置全部指引
+              查看超排指引
             </button>
           </div>
         )}

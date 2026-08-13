@@ -133,14 +133,14 @@ describe('nestingTour 锚点 selector 渲染 (US-031)', () => {
     ]);
   });
 
-  it('5. 前 3 步告知型（无 ready）；后 2 步联动型（有 ready + readyHint）', () => {
+  it('5. 前 3 步告知型（无 ready）；result + export 联动型（有 ready + readyHint）', () => {
     const [s0, s1, s2, s3, s4] = nestingTour.steps;
-    expect(s0.ready).toBeUndefined();
-    expect(s1.ready).toBeUndefined();
-    expect(s2.ready).toBeUndefined();
-    expect(s3.ready).toBeDefined();
+    expect(s0.ready).toBeUndefined(); // doc-banner
+    expect(s1.ready).toBeUndefined(); // params
+    expect(s2.ready).toBeUndefined(); // solve
+    expect(s3.ready).toBeDefined(); // result（联动闸门，与 previewTour 的 parsed 步同构）
     expect(s3.readyHint).toBeDefined();
-    expect(s4.ready).toBeDefined();
+    expect(s4.ready).toBeDefined(); // export（收尾闸门）
     expect(s4.readyHint).toBeDefined();
   });
 });
