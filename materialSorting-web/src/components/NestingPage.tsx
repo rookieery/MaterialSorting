@@ -7,9 +7,10 @@
 //   由父 App 据 uiStore.activeTab 切 display:none（AC#4 不卸载、求解/WS/seek 全保留）。
 //
 // US-027：solving:boolean → phase:SolvePhase 五态状态机（idle/running/stopped/done/error）。
-//   onDone 按 rec.stopped/rec.error 区分 phase；handleStop 调 useSolveRun.stop()；
-//   handleRestart = clear + 用上次参数（lastStartCfgRef）handleStart。
-// US-028：ControlPanel 收 phase（替代 solving）+ onStop/onRestart 接线 SolveControls 按钮组。
+//   onDone 按 rec.stopped/rec.error 区分 phase；handleStop 调 useSolveRun.stop()。
+// US-028：ControlPanel 收 phase（替代 solving）+ onStop 接线 SolveControls 按钮组；
+//   所有非 running 态的「开始求解」都走 handleStart（读当前 form —— 曾有 lastStartCfgRef
+//   快照重放路径导致改参数不生效，已删除，见 SolveControls 注释）。
 //
 // Tooltip 仍由父 App 渲染（全局单例，不能多挂）；本页只渲染业务区，不挂 Tooltip。
 
@@ -38,8 +39,6 @@ export function NestingPage(): React.JSX.Element {
   const doneCountRef = useRef(0);
   /** 本次 start 期望的 run 总数（同 seeds.length，但在 cb 闭包里读 ref 才拿得到当前值）。 */
   const totalSeedsRef = useRef(0);
-  /** US-027 上次 start 参数 —— handleRestart 复用（用户改参数后走 handleStart 用新值）。 */
-  const lastStartCfgRef = useRef<ControlPanelStartPayload | null>(null);
 
   const { start, stop } = useSolveRun({
     onDone: () => {
@@ -105,8 +104,6 @@ export function NestingPage(): React.JSX.Element {
 
   function handleStart(cfg: ControlPanelStartPayload) {
     if (phase === 'running') return;
-    // US-027：保存本次 start 参数，供 handleRestart 复用。
-    lastStartCfgRef.current = cfg;
     // 清旧 run（关 WS + 清数组）—— 与旧 vanilla 实现 startSolve 内 runs=[] 等价
     runRegistry.clear();
     doneCountRef.current = 0;
@@ -146,22 +143,11 @@ export function NestingPage(): React.JSX.Element {
     // 不立即 setPhase：等 server 回 {type:'stopped'} → onmessage case 'stopped' → finish → onDone 统一切。
   }
 
-  /**
-   * US-027 重新开始：用上次 start 参数（lastStartCfgRef）走 handleStart（内含 clear + reset + start）。
-   * 用户在 stopped/error/done 态若改了参数 → ControlPanel 走 onStart → handleStart（新参数覆盖 ref）。
-   */
-  function handleRestart() {
-    const last = lastStartCfgRef.current;
-    if (!last) return;
-    handleStart(last);
-  }
-
   return (
     <>
       <ControlPanel
         onStart={handleStart}
         onStop={handleStop}
-        onRestart={handleRestart}
         phase={phase}
         status={status}
         onStatus={setStatus}

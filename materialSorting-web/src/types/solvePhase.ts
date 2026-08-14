@@ -4,7 +4,8 @@
 //   idle ──start──▶ running ──final────▶ done
 //                   running ──stopped──▶ stopped
 //                   running ──error────▶ error
-//   stopped/done/error ──restart──▶ running（经 handleRestart = clear + handleStart）
+//   stopped/done/error ──start──▶ running（再次求解与首次同路径：clear + handleStart，
+//   始终读 ControlPanel 当前 form —— 无参数快照重放）
 //
 // 关键不变量：phase 切换只发生在 NestingPage；子组件（ControlPanel / SolveControls）
 // 纯受控渲染，不自持 phase。多 seed 场景所有 onDone 到齐后才统一切 phase。

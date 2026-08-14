@@ -40,12 +40,10 @@ function renderControls(props: {
   phase: SolvePhase;
   onStart?: () => void;
   onStop?: () => void;
-  onRestart?: () => void;
   startDisabled?: boolean;
 }) {
   const onStart = props.onStart ?? vi.fn();
   const onStop = props.onStop ?? vi.fn();
-  const onRestart = props.onRestart ?? vi.fn();
   act(() => {
     root!.render(
       <StrictMode>
@@ -53,13 +51,12 @@ function renderControls(props: {
           phase={props.phase}
           onStart={onStart}
           onStop={onStop}
-          onRestart={onRestart}
           startDisabled={props.startDisabled}
         />
       </StrictMode>,
     );
   });
-  return { onStart, onStop, onRestart };
+  return { onStart, onStop };
 }
 
 describe("SolveControls (US-028)", () => {
@@ -78,7 +75,7 @@ describe("SolveControls (US-028)", () => {
   });
 
   it("running → 渲染「停止」#stop 按钮 + aria-label + 点击调 onStop；无 #start 按钮", () => {
-    const { onStop, onStart, onRestart } = renderControls({ phase: "running" });
+    const { onStop, onStart } = renderControls({ phase: "running" });
     const btn = container!.querySelector<HTMLButtonElement>("#stop")!;
     expect(btn).not.toBeNull();
     expect(btn.textContent).toBe("停止");
@@ -90,13 +87,12 @@ describe("SolveControls (US-028)", () => {
     expect(container!.querySelector("#restart")).toBeNull();
     act(() => btn.click());
     expect(onStop).toHaveBeenCalledTimes(1);
-    // 误触防护：running 态点击只能触发 onStop，不触发 onStart/onRestart
+    // 误触防护：running 态点击只能触发 onStop，不触发 onStart
     expect(onStart).not.toHaveBeenCalled();
-    expect(onRestart).not.toHaveBeenCalled();
   });
 
-  it("stopped → 渲染「开始求解」#restart 按钮 + aria-label + 点击调 onRestart", () => {
-    const { onRestart, onStart, onStop } = renderControls({ phase: "stopped" });
+  it("stopped → 渲染「开始求解」#restart 按钮 + aria-label + 点击调 onStart（读当前 form，非快照重放）", () => {
+    const { onStart, onStop } = renderControls({ phase: "stopped" });
     const btn = container!.querySelector<HTMLButtonElement>("#restart")!;
     expect(btn).not.toBeNull();
     expect(btn.textContent).toBe("开始求解");
@@ -106,13 +102,14 @@ describe("SolveControls (US-028)", () => {
     expect(container!.querySelector("#start")).toBeNull();
     expect(container!.querySelector("#stop")).toBeNull();
     act(() => btn.click());
-    expect(onRestart).toHaveBeenCalledTimes(1);
-    expect(onStart).not.toHaveBeenCalled();
+    // 修复回归点：stopped/done/error 态也必须走 onStart（ControlPanel 读当前 form），
+    // 不再走 onRestart（lastStartCfgRef 快照重放，曾冻结首次求解参数）
+    expect(onStart).toHaveBeenCalledTimes(1);
     expect(onStop).not.toHaveBeenCalled();
   });
 
-  it("done → 渲染「开始求解」#restart 按钮（文案与 stopped 统一）+ 点击调 onRestart", () => {
-    const { onRestart } = renderControls({ phase: "done" });
+  it("done → 渲染「开始求解」#restart 按钮（文案与 stopped 统一）+ 点击调 onStart", () => {
+    const { onStart } = renderControls({ phase: "done" });
     const btn = container!.querySelector<HTMLButtonElement>("#restart")!;
     expect(btn).not.toBeNull();
     // 文案统一「开始求解」：发起求解语义一致，靠 phase 区分当前阶段（不再用文案区分 done / stopped）
@@ -120,17 +117,17 @@ describe("SolveControls (US-028)", () => {
     expect(btn.getAttribute("aria-label")).toBe("开始求解");
     expect(btn.className).toContain("restart");
     act(() => btn.click());
-    expect(onRestart).toHaveBeenCalledTimes(1);
+    expect(onStart).toHaveBeenCalledTimes(1);
   });
 
-  it("error → 渲染「开始求解」#restart 按钮（与 stopped 同文案）+ 点击调 onRestart", () => {
-    const { onRestart } = renderControls({ phase: "error" });
+  it("error → 渲染「开始求解」#restart 按钮（与 stopped 同文案）+ 点击调 onStart", () => {
+    const { onStart } = renderControls({ phase: "error" });
     const btn = container!.querySelector<HTMLButtonElement>("#restart")!;
     expect(btn).not.toBeNull();
     expect(btn.textContent).toBe("开始求解");
     expect(btn.getAttribute("aria-label")).toBe("开始求解");
     act(() => btn.click());
-    expect(onRestart).toHaveBeenCalledTimes(1);
+    expect(onStart).toHaveBeenCalledTimes(1);
   });
 
   it("所有按钮 type=button + 原生 button 默认可键盘触发（Enter/Space 触发 click）", () => {
@@ -163,7 +160,7 @@ describe("SolveControls (US-028)", () => {
 
     // stopped/done/error + startDisabled → #restart disabled
     for (const phase of ["stopped", "done", "error"] as SolvePhase[]) {
-      renderControls({ phase, onRestart: vi.fn(), startDisabled: true });
+      renderControls({ phase, startDisabled: true });
       const btn = container!.querySelector<HTMLButtonElement>("#restart")!;
       expect(btn.disabled).toBe(true);
     }

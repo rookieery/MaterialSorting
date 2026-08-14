@@ -275,6 +275,39 @@ describe('US-027 NestingPage phase 转换', () => {
     expect(statusText()).toContain('78.00%');
   });
 
+  it('3e) done 后切换 multi_seed 再求解 → 读当前 form（回归：曾走 lastStartCfgRef 快照重放，改参数不生效）', () => {
+    // 首次：单 seed（multi_seed 默认 false）→ 1 个 WS
+    startSolveViaPanel();
+    expect(mockInstances).toHaveLength(1);
+    // 推 final → phase=done（此后 #start 不再渲染，按钮切 #restart）
+    const finalMsg: ServerMsg = {
+      type: 'final',
+      density: 0.7,
+      density_sparrow: 0.72,
+      width_mm: 900,
+      elapsed: 1,
+      n_frames: 2,
+      n_eroded: 0,
+    };
+    act(() => mockInstances[0].onmessage?.({ data: JSON.stringify(finalMsg) }));
+    expect(container!.querySelector('#restart')).not.toBeNull();
+
+    // done 态勾选 multi_seed（默认 seed_count=3）→ 点「开始求解」（#restart）
+    const multi = container!.querySelector<HTMLInputElement>('#multi_seed')!;
+    expect(multi.disabled).toBe(false); // 非 running 可编辑
+    act(() => multi.click());
+    const restartBtn = container!.querySelector<HTMLButtonElement>('#restart')!;
+    act(() => restartBtn.click());
+
+    // 修复后：新启动 3 个 WS（seed 0/1/2），StartPayload 反映当前 form；
+    // 修复前：走快照重放只开 1 个 WS（本用例失败 = 回归捕获）
+    expect(mockInstances).toHaveLength(4);
+    const newWs = mockInstances.slice(1);
+    for (const ws of newWs) act(() => ws.onopen?.()); // mock 不自动 onopen，手动触发 onopen 发 StartPayload
+    const seeds = newWs.map((ws) => JSON.parse(ws.sent[0]).seed);
+    expect(seeds).toEqual([0, 1, 2]);
+  });
+
   it('3d) running 态冻结参数编辑（SizePicker/ParamForm/MultiSeed/PerType 均 disabled）', () => {
     expect(container!.querySelector<HTMLInputElement>('#time')!.disabled).toBe(false);
     expect(container!.querySelector<HTMLInputElement>('#seed')!.disabled).toBe(false);

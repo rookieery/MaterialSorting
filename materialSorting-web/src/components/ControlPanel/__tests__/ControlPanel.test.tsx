@@ -78,7 +78,6 @@ function renderPanel(
           status={opts.status ?? "READY"}
           onStatus={onStatus}
           onStop={() => {}}
-          onRestart={() => {}}
         />
       </StrictMode>,
     );

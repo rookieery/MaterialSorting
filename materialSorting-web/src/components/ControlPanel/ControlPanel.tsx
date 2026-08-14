@@ -1,7 +1,7 @@
 // ControlPanel —— 左侧参数面板（与旧 index.html `<aside class="panel">` 等价）。
 //
 // 表单状态由本组件持有（DEFAULT_FORM 初值），各子组件受控。
-// 点击 SolveControls「开始求解」时（idle 态）：
+// 点击 SolveControls「开始求解」时（所有非 running 态；running 态按钮为「停止」不进此路径）：
 //   1. 校验 sizes 非空 —— 空 → onStatus('请至少选一个码号') + 不启动（AC#7）。
 //   2. collectParams → { params, per_type }；parseTime / parseSeed / parseSeedCount 解析。
 //   3. onStart({ sizes, time, seed, seed_count, params, per_type }) 透传到 NestingPage
@@ -18,6 +18,8 @@
 // （PerTypeOverrides 按钮 → PerTypeOverridesModal）；collectParams params 永远全 0。
 // US-028：StartButton 删除，SolveControls 按 phase 渲染按钮组（idle/running/stopped/done/error）；
 //   ExportButtons 收 phase==='running' 禁用 + partial flag（stopped/error 有帧时标注中间方案提示）。
+//   所有非 running 态「开始求解」统一走本组件 handleStart（读当前 form）—— 无参数快照重放路径
+//   （曾有的 onRestart/lastStartCfgRef 双路径会冻结首次参数，已删除）。
 
 import { useState } from 'react';
 import { useExport } from '../../hooks/useExport';
@@ -74,17 +76,15 @@ export interface ControlPanelProps {
   onStatus: (text: string) => void;
   /** US-027 停止求解回调（US-028 由 SolveControls 停止按钮接线）。 */
   onStop: () => void;
-  /** US-027 重新开始回调（US-028 由 SolveControls 重新开始/再次求解按钮接线）。 */
-  onRestart: () => void;
 }
 
-export function ControlPanel({ onStart, phase, status, onStatus, onStop, onRestart }: ControlPanelProps) {
+export function ControlPanel({ onStart, phase, status, onStatus, onStop }: ControlPanelProps) {
   const [form, setForm] = useState<FormState>(DEFAULT_FORM);
   // US-017：订阅 uploadStore.doc 判断是否已解析母版（doc=null → StatusLine 增提示）。
   const doc = useUploadStore((s) => s.doc);
 
   // US-028：从 phase 派生 solving（running 态冻结参数编辑 + 禁用 ExportButtons）。
-  // stopped/done/error 态可编辑参数（用户改参数后走 onStart → handleStart 用新值，覆盖 lastStartCfgRef）。
+  // stopped/done/error 态可编辑参数（用户改参数后点「开始求解」→ handleStart 即用新值）。
   const solving = phase === 'running';
 
   // US-007：useExport 挂在 ControlPanel 内（form.sizes 与 exportAs 同处）。
@@ -187,7 +187,7 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onResta
       </div>
       {/* US-031：data-tour="start-btn" 锚定 SolveControls 父容器（nestingTour step3 高亮目标）。 */}
       <div data-tour="start-btn">
-        <SolveControls phase={phase} onStart={handleStart} onStop={onStop} onRestart={onRestart} startDisabled={startDisabled} />
+        <SolveControls phase={phase} onStart={handleStart} onStop={onStop} startDisabled={startDisabled} />
       </div>
       <StatusLine text={visibleStatus} />
       <ExportButtons solving={solving} exporting={exporting} onExport={handleExport} partial={partial} />

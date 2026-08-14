@@ -5,9 +5,10 @@
 //   idle/stopped/done/   → 「开始求解」（文案统一，不再区分「重新开始 / 再次求解」——
 //     error                 发起求解的语义一致，靠 phase 切换即可识别当前阶段）
 //
-// 文案统一后 idle 调 onStart、stopped/done/error 调 onRestart（NestingPage 用 lastStartCfgRef
-// 走 handleStart，复用上次参数），但对用户呈现都是「开始求解」。id 保留 #start / #restart 区分
-// 作 CSS / 测试钩子（视觉同色：均为绿色主操作）。
+// 所有非 running 态统一调 onStart（读当前 form）。曾存在 idle→onStart、其余→onRestart
+// （重放 lastStartCfgRef 快照）的双路径：phase 一旦离开 idle 永不回归，导致首次求解后
+// 用户改任何参数（multi_seed / 码号 / 幅宽 / 数量等）都不生效 —— 已删除快照重放，收敛单一路径。
+// id 保留 #start / #restart 区分作 CSS / 测试钩子（视觉同色：均为绿色主操作）。
 //
 // startDisabled：码号未选时「开始求解」置灰（ControlPanel 据 form.sizes.length===0 计算）。
 //   running 态「停止」按钮不受影响（停止总是可用）。
@@ -23,17 +24,15 @@ import type { SolvePhase } from '../../types/solvePhase';
 export interface SolveControlsProps {
   /** 求解状态机五态（NestingPage 持有；本组件纯受控）。 */
   phase: SolvePhase;
-  /** idle 态点击「开始求解」（ControlPanel.handleStart 内含码号校验）。 */
+  /** 非 running 态点击「开始求解」（ControlPanel.handleStart 读当前 form，内含码号校验）。 */
   onStart: () => void;
   /** running 态点击「停止」（调 useSolveRun.stop → 后端 terminate → onDone 切 phase）。 */
   onStop: () => void;
-  /** stopped/done/error 态点击「开始求解」（用 lastStartCfgRef 走 handleStart 复用上次参数）。 */
-  onRestart: () => void;
   /** 码号未选时「开始求解」置灰（ControlPanel 据 form.sizes 计算）；默认 false。 */
   startDisabled?: boolean;
 }
 
-export function SolveControls({ phase, onStart, onStop, onRestart, startDisabled = false }: SolveControlsProps) {
+export function SolveControls({ phase, onStart, onStop, startDisabled = false }: SolveControlsProps) {
   if (phase === 'running') {
     return (
       <button
@@ -48,8 +47,7 @@ export function SolveControls({ phase, onStart, onStop, onRestart, startDisabled
     );
   }
 
-  // idle / stopped / done / error —— 统一「开始求解」文案。
-  // idle 调 onStart（读当前 form）；stopped/done/error 调 onRestart（复用 lastStartCfgRef）。
+  // idle / stopped / done / error —— 统一「开始求解」文案，统一走 onStart（读当前 form）。
   // id / className 保留区分（#start vs #restart）作 CSS 与测试钩子，视觉同色。
   const isIdle = phase === 'idle';
   return (
@@ -57,7 +55,7 @@ export function SolveControls({ phase, onStart, onStop, onRestart, startDisabled
       id={isIdle ? 'start' : 'restart'}
       type="button"
       className={`solve-btn ${isIdle ? 'start' : 'restart'}`}
-      onClick={isIdle ? onStart : onRestart}
+      onClick={onStart}
       disabled={startDisabled}
       aria-label="开始求解"
     >
