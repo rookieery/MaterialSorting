@@ -9,8 +9,8 @@
 //   3. fetch /export（相对 URL；dev 由 Vite proxy 转 :8000，prod 同源），响应 blob（AC#3）。
 //   4. Content-Disposition filename*=UTF-8''xxx → decodeURIComponent；fallback filename=xxx
 //      / nesting.<fmt>（AC#4，由 lib/download.ts parseContentDisposition 处理）。
-//   5. <a download> 触发文件下载，中文文件名形如 排料_码28-30-32_88.42%_seed0.png（AC#5，
-//      由后端 server.py 拼 filename* + 前端 decode）。
+//   5. <a download> 触发文件下载，中文文件名前缀取上传母版名（去 .dxf 扩展名），形如
+//      M1787_码28-30-32_88.42%_seed0.png（AC#5，由后端 server.py 拼 filename* + 前端 decode）。
 //   6. 求解未完成或无 lastFrame → 按钮 disabled（由 ExportButtons 自身根据 registry 状态判断）；
 //      导出中 exporting=true（按钮 disabled + StatusLine 显示 正在生成 PNG/DXF…）。
 //

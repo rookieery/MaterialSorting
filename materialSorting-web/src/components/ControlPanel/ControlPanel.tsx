@@ -191,13 +191,6 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onResta
       </div>
       <StatusLine text={visibleStatus} />
       <ExportButtons solving={solving} exporting={exporting} onExport={handleExport} partial={partial} />
-      <div className="hint">
-        density = 原面积口径（与 90% 生死线一致）；sparrow 口径见状态行。
-        <br />
-        重合 erode / 旋转公差按每片型 v0.3 上限覆盖 —— 见「高级配置」弹窗。
-        <br />
-        实时图 ~10fps 重绘，全量中间帧存档，结束后可拖回放。
-      </div>
     </aside>
   );
 }

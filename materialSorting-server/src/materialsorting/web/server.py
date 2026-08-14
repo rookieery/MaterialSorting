@@ -532,8 +532,17 @@ async def export(req: Request):
     else:
         return JSONResponse({'error': f'未知格式 {fmt}'}, status_code=400)
 
-    fname_ascii = f'nesting_{sizes_str}_{pct:.2f}pct_seed{seed}.{ext}'
-    fname_cn = f'排料_码{sizes_str}_{pct:.2f}pct_seed{seed}.{ext}'
+    # 文件名前缀优先用上传母版名（intermediate `source` = commit 时写入的用户上传文件名，
+    # 如 M1787.dxf），去 .dxf 扩展名；缺失（旧 CLI 产物 / 无 source）回退「排料」——
+    # 多个款号同时排料导出后凭前缀即可区分。
+    source = (state.get('source') or '').strip()
+    stem = source[:-4] if source.lower().endswith('.dxf') else source
+    prefix_cn = stem or '排料'
+    # ASCII fallback（filename="..."，老浏览器不支持 filename* 时显示）：文件名纯 ASCII 时
+    # 直接用，含中文则回退 nesting（避免 fallback 名出现未编码中文）。
+    prefix_ascii = stem if stem and stem.isascii() else 'nesting'
+    fname_ascii = f'{prefix_ascii}_{sizes_str}_{pct:.2f}pct_seed{seed}.{ext}'
+    fname_cn = f'{prefix_cn}_码{sizes_str}_{pct:.2f}pct_seed{seed}.{ext}'
     cd = f"attachment; filename=\"{fname_ascii}\"; filename*=UTF-8''{quote(fname_cn)}"
     return Response(content=data, media_type=media,
                     headers={'Content-Disposition': cd})
