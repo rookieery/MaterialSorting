@@ -302,16 +302,21 @@ def write_marker_dxf(world_pieces, *, width_mm: float, gate_mm: float, title: st
 # 1mm = 40 HPGL 绘图单位（plotter unit ≈ 0.025mm）；世界坐标 mm × 40 后 round 取整。
 # 笔号语义：SP1=毛版裁切轮廓 / SP2=净版 / SP3=内部线 / SP4=刺口 / SP5=布纹线 /
 # SP6=门幅框；WT V8.8 中可按笔号分配不同物理笔 / 切割刀（物理映射由设备端配置）。
+#
+# 封装口径对齐生产 PLT（data/PC-20250508NJIF*.plt，ET 排料软件实际产出）：
+#   - 头部 IN;PS<纸长>;SP1;PW0.08;  —— PS 声明整幅纸长（无 PS 时 WT 按默认 A0/A3
+#     页幅解释，7m+ 长的 marker 会被裁切/分页）；PW 统一 0.08mm 细线宽
+#   - 尾部 PU;PG;（PG 出纸结束页）
+#   - 行尾 CRLF（生产文件全 CRLF）
+#   - 不输出 VS 速度 / LB 文字指令（生产文件均无，LB 字库兼容性交给设备端）
 _PLT_SCALE = 40          # 1mm = 40 HPGL 绘图单位（0.025mm）
-_PLT_VELOCITY = 80       # VS80 = 80 cm/s（LIKE 绘图仪常用速度，飞墨/抖动可下调）
+_PLT_PEN_WIDTH_MM = 0.08 # PW 笔宽 mm（与生产 PLT 一致的细线宽）
 _PEN_OUTLINE = 1         # 毛版裁切轮廓（DXF layer1）
 _PEN_NET = 2             # 净版（DXF layer14）
 _PEN_INTERNAL = 3        # 内部线（DXF layer8）
 _PEN_NOTCH = 4           # 刺口（DXF layer4）
 _PEN_GRAIN = 5           # 布纹线（DXF layer7）
 _PEN_BORDER = 6          # 门幅/用布边框
-# HPGL LB（Label）默认文字终止符 = ETX chr(3)；WT V8.8 字库对 ASCII 文字兼容。
-_ETX = chr(3)
 
 
 def _plt_pt(x: float, y: float) -> str:
@@ -346,22 +351,32 @@ def _plt_polyline(closed: bool, points) -> str:
 def write_marker_plt(world_pieces, *, width_mm: float, gate_mm: float, title: str) -> bytes:
     """写排料 marker PLT/HPGL 文本（ASCII ``bytes``）。
 
-    生成 HPGL/HP-GL 指令序列：``IN;`` 初始化 → ``VS80;`` 速度 → ``SP6`` 门幅框 →
-    逐片 ``SP1..SP5`` 5 层（与 DXF layer1/14/8/4/7 同映射）→ ``LB<title>chr(3);``
-    ASCII 文字。笔号语义见模块常量 ``_PEN_*``。
+    生成 HPGL/HP-GL 指令序列（封装口径对齐生产 PLT，见模块注释）：
+    ``IN;PS<纸长>;SP1;PW0.08;`` 头部 → ``SP6`` 门幅框 → 逐片 ``SP1..SP5`` 5 层
+    （与 DXF layer1/14/8/4/7 同映射）→ ``PU;PG;`` 出纸收尾。笔号语义见模块常量
+    ``_PEN_*``。``title`` 参数仅为与 ``write_marker_dxf`` 同签名保留，**不再输出
+    LB 文字**（生产 PLT 无文字指令，字库兼容性交给设备端）。
 
     坐标系：spyrrow 世界坐标 X=用布长度(0..width)、Y=门幅(0..gate) Y 向上（与绘图仪
     走纸 / 幅宽天然一致），**绝不带前端 SVG 的 ``scale(1,-1)`` 翻转**（那只是屏幕显示
     口径）；与 PNG / R12-DXF 三者几何口径完全一致（同 ``placed_to_world`` 输出）。
 
     与 ``write_marker_dxf`` 对齐：同签名 + 同几何数据源 + 同闭合策略。仅输出格式不同：
-    PLT 是纯文本（``'\\n'.join(cmds).encode('ascii')``，**无需临时文件**），DXF 走
-    ezdxf 写盘读字节。空层跳过（``net_polygon`` 空则不输出 SP2，依此类推）。
-
-    返回 ``bytes``，全 ASCII，``.decode('ascii')`` 不抛异常（标题须为 ASCII，与 DXF
-    同款，避免中文编码风险；中文留给 WT V8.8 字库）。
+    PLT 是纯文本（``'\\r\\n'.join(cmds).encode('ascii')``，CRLF 行尾与生产文件一致，
+    **无需临时文件**），DXF 走 ezdxf 写盘读字节。空层跳过（``net_polygon`` 空则不输出
+    SP2，依此类推）。写盘前校验全部坐标在门幅框内，越界点记 warning（应为 0；
+    曾因 notch 旋转缺陷产生 600 越界点把 WT 预览拉变形）。
     """
-    cmds: list[str] = ['IN;', f'VS{_PLT_VELOCITY};']
+    # 越界校验（防御）+ 内容实际最大 X（刺口线沿法线 ±half 延伸，边缘片端点可超出
+    # 轮廓 bbox 几 mm）。PS 纸长取 max(用布长度, 内容最大 X)——生产文件 PS 值 ==
+    # 全文件最大 X 坐标，保证内容全部落在声明纸幅内。
+    n_out, max_x = _plt_frame_stats(world_pieces, width_mm=width_mm, gate_mm=gate_mm)
+    if n_out:
+        logging.warning('PLT 导出：%d 个几何点越出门幅框 %.0f×%.0fmm（检查 notch/'
+                        'grain 变换链路）', n_out, width_mm, gate_mm)
+    paper_len = int(round(max(width_mm, max_x) * _PLT_SCALE))
+    cmds: list[str] = [
+        'IN;', f'PS{paper_len};', f'SP{_PEN_OUTLINE};', f'PW{_PLT_PEN_WIDTH_MM};']
 
     # 门幅/用布边框（SP6）——闭合矩形 4 角
     border = [(0.0, 0.0), (width_mm, 0.0), (width_mm, gate_mm), (0.0, gate_mm)]
@@ -409,8 +424,45 @@ def write_marker_plt(world_pieces, *, width_mm: float, gate_mm: float, title: st
             cmds.append(_plt_polyline(
                 closed=False, points=[(gl[0], gl[1]), (gl[2], gl[3])]))
 
-    # LB 标题（ASCII，以 ETX chr(3) 终止；尾随 ';' 是 HPGL 指令分隔符）
-    if title:
-        cmds.append(f'LB{title}{_ETX};')
+    # 收尾：抬笔 + PG 出纸（生产 PLT 以 PU;PG; 结束，WT 据此结束本页）
+    cmds.append('PU;')
+    cmds.append('PG;')
 
-    return '\n'.join(cmds).encode('ascii')
+    return '\r\n'.join(cmds).encode('ascii')
+
+
+def _plt_frame_stats(world_pieces, *, width_mm: float, gate_mm: float):
+    """越界校验 + 内容实际最大 X（PS 纸长取值用）。
+
+    返回 ``(越界点数, 最大X_mm)``：
+
+    - 越界点数：polygon / net_polygon / internal_lines / grain_line 全层顶点 +
+      notch **点**（不含沿法线 ±half 的绘制延伸——边缘片刺口外伸门幅几 mm 是
+      工艺正常现象，生产 PLT 同样允许），容差 0.5mm（取整误差）。正常应为 0；
+      非 0 说明上游变换链路有缺陷（如 notch 未随片旋转）或求解结果越幅。
+    - 最大X：**绘制口径**（含 notch 端点延伸），PS 纸长据此取值保证内容不裁。
+    """
+    tol = 0.5
+    n = 0
+    max_x = 0.0
+
+    def _see(x: float, y: float, *, count: bool) -> bool:
+        nonlocal max_x
+        if x > max_x:
+            max_x = x
+        return count and (x < -tol or y < -tol or x > width_mm + tol or y > gate_mm + tol)
+
+    half = NOTCH_LEN_MM / 2.0
+    for pc in world_pieces:
+        for poly in [pc.get('polygon') or [], pc.get('net_polygon') or []]:
+            n += sum(1 for x, y in poly if _see(x, y, count=True))
+        for line in pc.get('internal_lines') or []:
+            n += sum(1 for x, y in line if _see(x, y, count=True))
+        for x, y, nx, ny in pc.get('notches') or []:
+            n += 1 if _see(x, y, count=True) else 0
+            _see(x + nx * half, y + ny * half, count=False)   # 绘制端点只计入 max_x
+            _see(x - nx * half, y - ny * half, count=False)
+        gl = pc.get('grain_line')
+        if gl and len(gl) == 4:
+            n += sum(1 for i in (0, 2) if _see(gl[i], gl[i + 1], count=True))
+    return n, max_x

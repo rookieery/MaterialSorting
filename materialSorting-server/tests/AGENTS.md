@@ -18,7 +18,8 @@ cd materialSorting-server
 | `conftest.py` | sys.path 注入 `src/`（未 `pip install -e .` 也能跑）；`real_or_synthetic_pieces` / `synthetic_pieces` fixture（优先读真实 intermediate，缺失则合成 2 片矩形） |
 | `test_solve_proc.py` | US-025 `solve_worker` + `solve_with_callback_proc`：①正常求解 + density 双口径 ②terminate 5s 内返回 ③build_instance 抛错 ④外部 kill 不 hang ⑤solve_worker 可 pickle |
 | `test_ws_stop.py` | US-026 WS `/ws/solve` stop 协议 + 客户端断开清理：①start→frame→stop→stopped+WS 关闭 ②直接断连→进程数回落 ③不发 stop 正常求解收 final（用 `starlette.testclient.TestClient`） |
-| `test_export_plt.py` | US-033 `write_marker_plt` HPGL 文本生成器：首条 IN;/VS80;、坐标×40 round 取整、闭合不变量（SP1 PU 首点=PD 末点、SP6 门幅框 4 角闭合）、6 个笔号各有数据时全出现、空层跳过、多片 N×SP1、LB+ETX 终止、bytes+全 ASCII、5 层笔号语义端到端、IN→VS→SP 顺序、空 pieces 防御边界（17 项，合成裁片，不依赖 intermediate） |
+| `test_export_plt.py` | US-033 `write_marker_plt` HPGL 文本生成器（封装对齐生产 PLT）：头部 `IN;PS<纸长>;SP1;PW0.08;`、CRLF 行尾、尾部 `PU;PG;`、无 VS/LB、坐标×40 round 取整、闭合不变量（SP1 PU 首点=PD 末点、SP6 门幅框 4 角闭合）、6 个笔号各有数据时全出现、空层跳过、多片 N×SP1、PS 覆盖刺口法线延伸、越界统计 `_plt_frame_stats`、5 层笔号语义端到端、空 pieces 防御边界（合成裁片，不依赖 intermediate） |
+| `test_load_pieces_notches.py` | `_apply_layer_transforms` 刺口变换回归：notch **点**随片旋转（旧实现只转法线导致竖直布纹片刺口飞出轮廓 3m+，腰/后袋 600 越界点污染 PLT/PNG/DXF）、法线旋转、镜像 x→-x/nx→-nx、rot=0 直通 |
 
 ## Windows multiprocessing 测试注意
 

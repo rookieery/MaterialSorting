@@ -133,7 +133,12 @@ def _apply_layer_transforms(
         polygon = _rotate(polygon, rotate_deg)
         net_polygon = _rotate(net_polygon, rotate_deg) if net_polygon else []
         internal_lines = [_rotate(line, rotate_deg) for line in internal_lines]
-        notches = [(x, y) + _rotate_normal(nx, ny, rotate_deg) for x, y, nx, ny in notches]
+        # notch 点必须随片旋转（旧实现只转法线不转点 → 竖直布纹片 rot=±90 时刺口
+        # 飞出轮廓 3m+，如 腰/后袋；PLT 导出 600 越界点、PNG/DXF 同源污染）
+        notches = [
+            _rotate([(x, y)], rotate_deg)[0] + _rotate_normal(nx, ny, rotate_deg)
+            for x, y, nx, ny in notches
+        ]
         if grain_line is not None:
             (rx1, ry1), (rx2, ry2) = _rotate(
                 [(grain_line[0], grain_line[1]), (grain_line[2], grain_line[3])], rotate_deg)

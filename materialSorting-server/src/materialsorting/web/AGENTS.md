@@ -99,13 +99,14 @@ curl http://127.0.0.1:8000/api/ptypes                                  # US-020 
 ## US-033 关键约定（PLT/HPGL 导出生成器 + /export plt 分支）
 
 - **背景**：现有 DXF 导出在 WT「高速绘图 V8.8 网络版」+ LIKE 绘图仪上**实测无法正常打印**；该软件原生吃 PLT/HPGL（与 ET 排料软件同口径），故新增 PLT 导出链路。MVP 不做物理设备验收（现场由用户落地后反馈）。
-- **`write_marker_plt(world_pieces, *, width_mm, gate_mm, title) -> bytes`**（`web/export.py`，签名与 `write_marker_dxf` 对齐）：
-  - HPGL 常量：`_PLT_SCALE=40`（1mm=40 plotter unit ≈ 0.025mm）、`_PLT_VELOCITY=80`、`_PEN_OUTLINE=1`/`_PEN_NET=2`/`_PEN_INTERNAL=3`/`_PEN_NOTCH=4`/`_PEN_GRAIN=5`/`_PEN_BORDER=6`、`_ETX=chr(3)`（LB 默认终止符）。
-  - 指令序列：`IN;` → `VS80;` → `SP6;` 门幅框（闭合 PU+PD 4 角）→ 逐片 `SP1-SP5` 5 层 → `LB<title>chr(3);` ASCII 标题。换行分隔，HPGL 容忍。
+- **`write_marker_plt(world_pieces, *, width_mm, gate_mm, title) -> bytes`**（`web/export.py`，签名与 `write_marker_dxf` 对齐；`title` 仅保签名，不输出）：
+  - HPGL 常量：`_PLT_SCALE=40`（1mm=40 plotter unit ≈ 0.025mm）、`_PLT_PEN_WIDTH_MM=0.08`、`_PEN_OUTLINE=1`/`_PEN_NET=2`/`_PEN_INTERNAL=3`/`_PEN_NOTCH=4`/`_PEN_GRAIN=5`/`_PEN_BORDER=6`。
+  - 指令序列（**封装口径对齐生产 PLT** `data/PC-20250508NJIF*.plt`）：`IN;` → `PS<纸长>;`（纸长 = max(用布长度, 内容最大X)×40，含刺口±4mm 延伸；无 PS 时 WT 按默认 A0/A3 页幅裁切 7m+ marker）→ `SP1;` → `PW0.08;` → `SP6;` 门幅框（闭合 PU+PD 4 角）→ 逐片 `SP1-SP5` 5 层 → `PU;` → `PG;`（出纸收尾）。**CRLF 行尾**；**无 VS/LB 指令**（生产文件均无）。
+  - **越界防御** `_plt_frame_stats`：全层顶点 + notch 点须在门幅框内（容差 0.5mm），非 0 记 warning（曾因 notch 未随片旋转产生 600 越界点把 WT 预览拉变形，见 `nesting_bounds/load_pieces.py` 修复）；notch 沿法线 ±4mm 端点外伸门幅属工艺正常，只计入 PS 取值不告警。
   - 坐标：世界坐标(mm) × 40 `round` 取整 → 非负整数（`max(0, ...)` 兜底极小负值）。
   - **闭合策略**：`_plt_polyline(closed=True)` 在 PD 末尾追加首点（物理闭合，与 `write_marker_dxf` POLYLINE 首尾补点策略一致）；内部线/布纹线/刺口 `closed=False`。
   - **空层跳过**：`net_polygon`/`internal_lines`/`notches`/`grain_line` 空则对应 SPn 不输出（仅 SP1 outline + SP6 border 必出现）。
   - **坐标系**：spyrrow 世界坐标 X=用布长度 Y=门幅 Y 向上，与绘图仪走纸/幅宽天然一致；**绝不带前端 SVG `scale(1,-1)` 翻转**（docstring 显式约束）。
-  - 纯标准库字符串拼接，`'\n'.join(cmds).encode('ascii')`；**无临时文件**（比 DXF 的 ezdxf 写盘读字节更简单）；**无新 pip 依赖**；全 ASCII，`.decode('ascii')` 不抛异常。
+  - 纯标准库字符串拼接，`'\r\n'.join(cmds).encode('ascii')`；**无临时文件**（比 DXF 的 ezdxf 写盘读字节更简单）；**无新 pip 依赖**；全 ASCII，`.decode('ascii')` 不抛异常。
 - **`server.py /export` 路由**：`elif fmt == 'plt':` 分支插在 `dxf` 之后、`else` 之前；title 复用 DXF 同款 ASCII（`M1787 util=<pct>% L=<L>cm gate=<gate> seed=<seed>`）；`media, ext = 'application/plt', 'plt'`；文件名拼接走现有 `ext` 变量自动命中（`排料_码<sizes>_<pct>pct_seed<seed>.plt`）。PNG/DXF 行为零回归；未知 fmt 仍返 400 `{error:'未知格式 <fmt>'}`。
-- **测试**：`tests/test_export_plt.py` 17 项（首条 IN; / VS80; / bytes+ASCII / 坐标×40 / 整数取整 / SP1 outline 闭合不变量 / SP6 门幅框闭合 / 门幅框四角 / 6 个 SP 全出现 / 空层跳过 / 部分层 / 多片 N×SP1 / LB+ETX / 空 title 不出 LB / 5 层笔号语义 / IN→VS→SP 顺序 / 空 pieces 防御边界）。合成裁片（5 层全有 + 仅毛版）测试，不依赖 intermediate / sparrow 求解结果。
+- **测试**：`tests/test_export_plt.py` + `tests/test_load_pieces_notches.py`（PLT 封装对齐生产口径：头部 IN;PS;SP1;PW0.08 / CRLF / 尾部 PU;PG / 无 VS/LB / PS 覆盖刺口延伸 / 越界统计 `_plt_frame_stats` / 原有结构断言；notch 随片旋转回归）。合成裁片（5 层全有 + 仅毛版）测试，不依赖 intermediate / sparrow 求解结果。
