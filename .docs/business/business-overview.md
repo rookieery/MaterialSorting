@@ -105,7 +105,7 @@ out/sparrow_baseline/pieces_intermediate.json   ← 全流程事实源（每片 
 5. **求解**（US-025~028）：点"开始求解"→ WS 推 manifest（5 层骨架）→ 持续推 frame（每 ~0.2s，利用率实时爬升）→ final。**可随时"停止"**（后端 terminate 子进程 → `{type:'stopped'}`）→ stopped 态保留中间方案可导出 → "重新开始"用上次参数一键重跑。phase 五态：idle/running/stopped/done/error。
 6. **多 seed 并发对比**（最多 6 路），自动保留最优 run。
 7. **回放**：seekbar 拖动看任意时间点布局（US-006）。
-8. **导出最优 run** → PNG（预览）/ R12-DXF（给 ET2008 刻绘，5 层叠加 US-024）/ PLT（US-033，给 WT V8.8 / LIKE 绘图仪），文件名含码号+利用率+种子。
+8. **导出最优 run** → PNG（预览）/ R12-DXF（给 ET2008 刻绘，5 层叠加 US-024）/ PLT（US-033，给 WT V8.8 / LIKE 绘图仪，封装口径对齐生产 PLT：PS 纸长 + PW0.08 + PU;PG 收尾 + CRLF），文件名 = 上传母版名前缀 + 码号 + 利用率 + 种子（多款号导出凭前缀区分）。
 
 ## 关键技术决策
 

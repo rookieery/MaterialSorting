@@ -46,18 +46,21 @@
   "placed": [                     // run.lastFrame.placed_items
     {"id": "...", "rotation": 0.0, "translation": [x, y]},
     ...
-  ]
+  ],
+  "filename": "M1787.dxf"         // 可选：上传母版名（uploadStore.doc.filename 前端透传），
+                                  //   作导出文件名前缀（去 .dxf）；缺省回退「排料」/nesting
 }
 ```
 
 ### 响应
 
 - 成功：文件字节流，`Content-Disposition: attachment; filename="<ascii>"; filename*=UTF-8''<quoted-cn>`
-  - ascii 名：`nesting_<sizes>_<pct>.2fpct_seed<seed>.<ext>`
-  - 中文名：`排料_码<sizes>_<pct>.2fpct_seed<seed>.<ext>`（走 RFC 5987 `filename*=UTF-8''` + `urllib.parse.quote`；**文件名用 `pct` 不用 `%`**）
+  - 文件名前缀 = payload `filename` 去扩展名（多个款号同时排料导出凭前缀区分）；缺省回退 `排料`（中文）/`nesting`（ascii）。ascii fallback 前缀仅在前缀纯 ASCII 时用，含中文回退 `nesting`
+  - ascii 名：`<prefix_ascii>_<sizes>_<pct>.2fpct_seed<seed>.<ext>`（前缀缺省 `nesting`）
+  - 中文名：`<prefix_cn>_码<sizes>_<pct>.2fpct_seed<seed>.<ext>`（前缀缺省 `排料`；走 RFC 5987 `filename*=UTF-8''` + `urllib.parse.quote`；**文件名用 `pct` 不用 `%`**）
   - PNG：`media_type=image/png`，`render_png`（matplotlib Agg，标题 + 类型图例）
   - DXF：`media_type=application/dxf`，`write_marker_dxf`（R12 + POLYLINE，ACI 上色 + ASCII 标题）
-  - PLT：`media_type=application/plt`，`write_marker_plt`（US-033；HPGL/HP-GL 文本，5 层 SP1-SP5 笔号 + SP6 门幅框，ASCII LB 标题；喂 WT V8.8 + LIKE 绘图仪原生 PLT 链路）
+  - PLT：`media_type=application/plt`，`write_marker_plt`（US-033；HPGL/HP-GL 文本，封装口径对齐生产 PLT `data/PC-20250508NJIF*.plt`：头部 `IN;PS<纸长>;SP1;PW0.08;` + 5 层 SP1-SP5 笔号 + SP6 门幅框 + 尾部 `PU;PG;`，CRLF 行尾，无 VS/LB；喂 WT V8.8 + LIKE 绘图仪原生 PLT 链路）
 - 400：`width_mm<=0` 或 `placed` 空 → `{"error":"无可导出的方案（width=0 或无裁片）"}`；`placed` 的 pid 全匹配不到 → `{"error":"导出失败：placed 的 pid 均未匹配到原始轮廓"}`；未知 fmt → `{"error":"未知格式 <fmt>"}`。
 
 ### 导出关键函数（`web/export.py`）
@@ -68,7 +71,8 @@
 | `placed_to_world` | `(placed, pieces_by_id) → [{pid,ptype,size,polygon,color,area_mm2}]` | pid 查 `_get_pieces_state()['pieces_by_id']`（US-020）取**原始** polygon → 世界坐标；查不到的跳过并 warning |
 | `render_png` | `(world_pieces, *, width_mm, gate_mm, title) → bytes` | matplotlib Agg，dpi=200，类型配色复用 `PTYPE_COLORS`，图例仅画出现过的片型 |
 | `write_marker_dxf` | `(world_pieces, *, width_mm, gate_mm, title) → bytes` | ezdxf R12 + 闭合 POLYLINE（首尾补点），ACI 色号见 `TYPE_ACI`，ASCII 标题；**不用 LWPOLYLINE**（ET2008 轮廓消失坑） |
-| `write_marker_plt` | `(world_pieces, *, width_mm, gate_mm, title) → bytes` | US-033 HPGL/HP-GL 纯文本（`IN;`/`VS80;`/`SP1-6;`/`PU;`/`PD;`/`LB<chr(3)>`），坐标=mm×40 round 取整，5 层笔号 SP1=outline/SP2=net/SP3=internal/SP4=notch/SP5=grain/SP6=border；空层跳过；纯 ASCII bytes（无临时文件，无新 pip 依赖）；与 DXF 同闭合策略 + 同 ASCII title |
+| `write_marker_plt` | `(world_pieces, *, width_mm, gate_mm, title) → bytes` | US-033 HPGL/HP-GL 纯文本，**封装口径对齐生产 PLT**（`data/PC-20250508NJIF*.plt`）：头部 `IN;PS<纸长>;SP1;PW0.08;`（PS 纸长 = max(用布长度, 内容最大X 含刺口延伸)×40，无 PS 时 WT 按默认 A0/A3 页幅裁切 7m+ marker）→ SP6 门幅框 → 逐片 SP1-SP5 → 尾部 `PU;PG;` 出纸；**CRLF 行尾**；**无 VS/LB 指令**（`title` 仅保签名不输出）；坐标=mm×40 round 取整，5 层笔号 SP1=outline/SP2=net/SP3=internal/SP4=notch/SP5=grain/SP6=border；空层跳过；纯 ASCII bytes（无临时文件，无新 pip 依赖）；与 DXF 同闭合策略 |
+| `_plt_frame_stats` | `(world_pieces, *, width_mm, gate_mm) → (n_out, max_x)` | 越界防御 + PS 纸长取值：全层顶点 + notch 点须在门幅框内（容差 0.5mm），非 0 记 warning（曾因 notch 未随片旋转产生 600 越界点把 WT 预览拉变形）；notch 沿法线 ±`NOTCH_LEN_MM/2` 端点外伸属工艺正常，只计入 max_x（PS 取值）不告警 |
 
 `TYPE_ACI`：前片=1 / 后片=2 / 腰=3 / 前袋=4 / 后袋=5 / 机头=6 / 单排=7 / 双排=8 / 火机袋=9 / 裤耳=10。
 

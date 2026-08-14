@@ -22,6 +22,8 @@
 - [business/排料工作台_导出功能_方案.md](business/排料工作台_导出功能_方案.md) — PNG / R12-DXF 导出
 - [business/排料DXF解析架构_方案.md](business/排料DXF解析架构_方案.md) — dxf_parser 三模块拆分
 - [business/排料引擎技术分析.md](business/排料引擎技术分析.md) — sparrow + 自研约束层
+- [business/排料利用率_扩展配置项_方案.md](business/排料利用率_扩展配置项_方案.md) — spyrrow 原生旋钮 + 建模层利用率杠杆盘点（2026-08-13，盘点阶段未立项）
+- [business/多seed并发与部署架构_分析.md](business/多seed并发与部署架构_分析.md) — 多 seed 并发承载能力 + 三种部署形态并发安全评估（2026-08-14，前瞻分析未实现）
 
 ### 阶段规划
 - [business/阶段0_利用率上界估算_规划.md](business/阶段0_利用率上界估算_规划.md)
