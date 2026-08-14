@@ -487,7 +487,8 @@ async def export(req: Request):
     """导出最优排料方案：前端 POST 最优 run 的最终帧 placed_items → 出 PNG / R12-DXF。
 
     payload = {fmt:'png'|'dxf', sizes:[..], seed, gate_mm, width_mm, density,
-               placed:[{id,rotation,translation},...]}
+               placed:[{id,rotation,translation},...], filename?}
+    filename 为上传母版名（用作导出文件名前缀，去 .dxf）；缺省回退「排料」。
     返回文件字节流（Content-Disposition 附件下载，中文文件名走 RFC5987）。
     """
     state = _get_pieces_state()
@@ -532,11 +533,11 @@ async def export(req: Request):
     else:
         return JSONResponse({'error': f'未知格式 {fmt}'}, status_code=400)
 
-    # 文件名前缀优先用上传母版名（intermediate `source` = commit 时写入的用户上传文件名，
-    # 如 M1787.dxf），去 .dxf 扩展名；缺失（旧 CLI 产物 / 无 source）回退「排料」——
-    # 多个款号同时排料导出后凭前缀即可区分。
-    source = (state.get('source') or '').strip()
-    stem = source[:-4] if source.lower().endswith('.dxf') else source
+    # 文件名前缀优先用前端透传的上传母版名（uploadStore.doc.filename，与界面「当前文件」
+    # 同源），去 .dxf 扩展名；前端未传（旧前端）回退「排料」——多个款号同时排料导出后凭前缀区分。
+    # 不读 intermediate `source`：_build_pieces_state 构建的 state 不含该字段（恒 None）。
+    upload_name = (payload.get('filename') or '').strip()
+    stem = upload_name[:-4] if upload_name.lower().endswith('.dxf') else upload_name
     prefix_cn = stem or '排料'
     # ASCII fallback（filename="..."，老浏览器不支持 filename* 时显示）：文件名纯 ASCII 时
     # 直接用，含中文则回退 nesting（避免 fallback 名出现未编码中文）。

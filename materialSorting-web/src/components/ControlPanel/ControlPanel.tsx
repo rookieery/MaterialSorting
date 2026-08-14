@@ -132,7 +132,7 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onResta
     const sizesNum: number[] = form.sizes.filter(
       (s: number | null): s is number => s !== null,
     );
-    void exportAs(fmt, sizesNum);
+    void exportAs(fmt, sizesNum, doc?.filename);
   }
 
   // US-017：doc=null 时 StatusLine 增提示「请先在上传预览页解析母版」（AC#3）。

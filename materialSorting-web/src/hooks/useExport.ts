@@ -4,8 +4,8 @@
 //   1. bestRun = lastFrame 存在且 finalDensity 最高的 run（runRegistry.bestRun() 已封装；
 //      AC#1）。
 //   2. ExportPayload = { fmt, sizes: selectedSizes(), seed: run.seed, gate_mm,
-//      width_mm: lastFrame.width_mm, density: run.finalDensity, placed: lastFrame.placed_items }
-//      （AC#2，逐字段与旧 vanilla 实现 一致）。
+//      width_mm: lastFrame.width_mm, density: run.finalDensity, placed: lastFrame.placed_items,
+//      filename: doc.filename }（AC#2 字段 + filename 透传作导出文件名前缀）。
 //   3. fetch /export（相对 URL；dev 由 Vite proxy 转 :8000，prod 同源），响应 blob（AC#3）。
 //   4. Content-Disposition filename*=UTF-8''xxx → decodeURIComponent；fallback filename=xxx
 //      / nesting.<fmt>（AC#4，由 lib/download.ts parseContentDisposition 处理）。
@@ -33,8 +33,9 @@ export interface UseExportCallbacks {
 }
 
 export interface UseExportResult {
-  /** 触发导出（取 bestRun → POST /export → blob 下载）。sizes = ControlPanel form.sizes。 */
-  exportAs: (fmt: ExportFmt, sizes: number[]) => Promise<void>;
+  /** 触发导出（取 bestRun → POST /export → blob 下载）。sizes = ControlPanel form.sizes；
+   *  filename = 上传母版名（透传作导出文件名前缀，与界面「当前文件」同源）。 */
+  exportAs: (fmt: ExportFmt, sizes: number[], filename?: string) => Promise<void>;
   /** 是否正在导出（按钮 disabled + 状态行 正在生成…）。 */
   exporting: boolean;
 }
@@ -55,7 +56,7 @@ export function useExport(cb: UseExportCallbacks = {}): UseExportResult {
   // ref 同步 state，async 流程内读到最新值（防连击：state 异步生效，ref 立即生效）。
   const exportingRef = useRef(false);
 
-  const exportAs = useCallback(async (fmt: ExportFmt, sizes: number[]): Promise<void> => {
+  const exportAs = useCallback(async (fmt: ExportFmt, sizes: number[], filename?: string): Promise<void> => {
     // 1) bestRun（AC#1）：lastFrame 存在且 finalDensity 最高的 run
     const run = runRegistry.bestRun();
     if (!run || !run.lastFrame) {
@@ -76,6 +77,7 @@ export function useExport(cb: UseExportCallbacks = {}): UseExportResult {
       width_mm: run.lastFrame.width_mm,
       density: run.finalDensity,
       placed: run.lastFrame.placed_items,
+      filename,
     };
 
     // 3) 状态行：正在生成 PNG/DXF…（AC#6）
