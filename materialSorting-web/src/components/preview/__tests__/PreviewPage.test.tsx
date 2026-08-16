@@ -154,35 +154,35 @@ describe('PreviewPage (US-008) AC#3 已解析挂载主体', () => {
     expect(main!.querySelector('.qty-matrix')).not.toBeNull();
   });
 
-  it('QtyMatrix 列头列出 doc 全码（28/30，当前码高亮）', () => {
+  it('QtyMatrix 行头列出 doc 全码（28/30，当前码高亮；转置后码在行头）', () => {
     useUploadStore.setState({
       status: 'done',
       doc: makeDoc(),
       activeSize: 28,
     });
     const el = renderPage();
-    const colHeads = el.querySelectorAll('button.qty-size-btn');
-    expect(colHeads.length).toBe(2);
-    expect(colHeads[0].textContent).toBe('28');
-    expect(colHeads[1].textContent).toBe('30');
-    // 当前 activeSize=28 列头高亮
-    expect(colHeads[0].classList.contains('active')).toBe(true);
-    expect(colHeads[1].classList.contains('active')).toBe(false);
+    const rowHeads = el.querySelectorAll('button.qty-size-btn');
+    expect(rowHeads.length).toBe(2);
+    expect(rowHeads[0].textContent).toBe('28');
+    expect(rowHeads[1].textContent).toBe('30');
+    // 当前 activeSize=28 行头高亮
+    expect(rowHeads[0].classList.contains('active')).toBe(true);
+    expect(rowHeads[1].classList.contains('active')).toBe(false);
   });
 
-  it('点击 QtyMatrix 列头端到端切换 activeSize + 列头高亮跟随', () => {
+  it('点击 QtyMatrix 行头端到端切换 activeSize + 行头高亮跟随', () => {
     useUploadStore.setState({
       status: 'done',
       doc: makeDoc(),
       activeSize: 28,
     });
     const el = renderPage();
-    const colHeads = el.querySelectorAll('button.qty-size-btn');
+    const rowHeads = el.querySelectorAll('button.qty-size-btn');
     act(() => {
-      colHeads[1].dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      rowHeads[1].dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
     expect(useUploadStore.getState().activeSize).toBe(30);
-    // 高亮切到 30 列头
+    // 高亮切到 30 行头
     const after = el.querySelectorAll('button.qty-size-btn');
     expect(after[1].classList.contains('active')).toBe(true);
     expect(after[0].classList.contains('active')).toBe(false);
@@ -325,8 +325,9 @@ describe('PreviewPage (US-003) 端到端：矩阵格子编辑数量', () => {
     const q = useQtyStore.getState().quantities.A;
     expect(q.perSize['30']).toBe(3);
     expect(q.perSize['28']).toBe(1);
-    // 行合计即时刷新：A 行 = 28 码 1 + 30 码 3 = 4（makePiece 无 paired → ×1 口径）
-    expect(el.querySelector('tbody .qty-rowtotal')!.textContent).toBe('4');
+    // A 列合计即时刷新（转置后每裁片合计在 tfoot）：A = 28 码 1 + 30 码 3 = 4
+    // （makePiece 无 paired → ×1 口径）
+    expect(el.querySelector('tfoot .qty-subtotal')!.textContent).toBe('4');
     // 工具条总片数 = A(4) + B(1) = 5
     expect(el.querySelector('[data-testid="qty-total"]')!.textContent).toBe('5');
   });

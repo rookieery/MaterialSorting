@@ -27,6 +27,10 @@
 //         缩略图右侧新增常驻「≡」整行设值 icon（title 悬浮提示，点击开居中弹层批量设
 //         整行统一值，特例 = 应用后单格改）；set-qty 步文案重新指引行级批量设值 ——
 //         被指引的交互变化，bump 强制老用户重看。
+//   '5' → '6'（数量矩阵行列转置）：行 = 尺码（行头码按钮切 activeSize）、列 = 裁片
+//         （列头缩略图 + ≡ 整列设值），对齐 PerTypeOverridesModal 高级配置弹窗「裁片
+//         作列」风格；parsed/set-qty 步文案改转置后方位（整行设值 → 整列设值）——
+//         被指引的布局重大变更，bump 强制老用户重看。
 //
 // Partial 而非完整 Record<TabId, TourDef>：保留未来新增 Tab 时不必同步补 tour 的灵活性；
 // auto-trigger 对无指引的 Tab（TOURS[tab]===undefined）直接跳过，不报错。
@@ -37,7 +41,7 @@ import { nestingTour } from './nestingTour';
 import { previewTour } from './previewTour';
 
 /** Tour 内容版本号。bump 触发条件：仅步骤内容重大变更时 bump（强制老用户重看）。版本历史见文件头注释。 */
-export const TOUR_VERSION = '5';
+export const TOUR_VERSION = '6';
 
 /**
  * 按 TabId 注册的指引序列。

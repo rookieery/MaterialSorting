@@ -1,14 +1,17 @@
-// 矩阵化重构 US-002 QtyMatrix 集成测试：
-//   - 行 = 全码 label 并集（保序，最小码 pieces 顺序优先）；行头 = 序号徽章 + 大缩略图
-//     + 常驻「≡」整行设值 icon（2026-08 行头简化后回归：裁片名走缩略图 title；
-//     名称 span / ×2 徽章 / 旧文字「填充」按钮不再回来）
-//   - 列 = doc.sizes 全码（null 殿后「通用」，无 null 不渲染该列）+ 合计列；列头点击 setSize + active 高亮
+// 矩阵化重构 US-002 QtyMatrix 集成测试（2026-08-16 转置回归：行 = 尺码，列 = 裁片，
+// 对齐 PerTypeOverridesModal 高级配置弹窗「裁片作列 + 列头缩略图」风格）：
+//   - 列 = 全码 label 并集（保序，最小码 pieces 顺序优先）；列头 = 大缩略图
+//     + 序号徽章 + 常驻「≡」整列设值 icon（裁片名走缩略图 title；名称 span / ×2 徽章 /
+//     旧文字「填充」按钮不再回来）
+//   - 行 = doc.sizes 全码（null 殿后「通用」，无 null 不渲染该行）+ 行尾小计列；
+//     行头点击 setSize + active 高亮
 //   - 格子 blur / Enter / Tab 提交走 clampQty 写 qtyStore；0 格子 .zero + title；缺片格 disabled「—」
-//   - 特例高亮 .override（≠baseValue 且整行非全同；整行同值不高亮）
-//   - 行级整行设值（icon → 居中弹层 → setRowAll 整行写；整表「重置为默认 1」按钮已拆）
-//   - 小计：每行合计列 + 每码小计行 + 工具条总片数 + 全 0 警示
+//   - 特例高亮 .override（≠baseValue 且整列非全同；整列同值不高亮）
+//   - 列级整列设值（icon → 居中弹层 → setRowAll 整列写；整表「重置为默认 1」按钮已拆）
+//   - 小计：行尾每码小计列 + 底部每裁片合计行 + 工具条总片数 + 全 0 警示
 //     （US-004 起物理片数口径 = Σ demand × (paired?2:1)；×2 徽章已拆，缺字段 ×1 兜底）
 //   - 缩略图点击 openZoom(label, rep.size)（所见即所放大；label 不在 activeSize 时回退码）
+//   - Enter/Tab 跳格 = 列优先平铺序（同裁片沿列向下跨码 → 下一裁片列顶；末格回卷）
 //
 // 测试模式（原参考已拆除的 ParsedPiecesView.test.tsx）：渲染入 container，store.setState
 // 驱动，断言 DOM 结构 + store 状态。React 受控 input 用 native setter + input event 模拟。
@@ -71,7 +74,7 @@ function makePiece(overrides: Partial<ParsedPiece> = {}): ParsedPiece {
 /**
  * 标准三码 doc：
  *   28: A + B；30: A + B + C；null: C。
- * 并集顺序 A,B,C；缺片格 = C@28、A@null、B@null。
+ * 转置后：行序 28,30,通用；列序 A,B,C；缺片格 = C@28、A@null、B@null。
  */
 function makeStdDoc(): ParsedDoc {
   return {
@@ -126,60 +129,63 @@ function cellInput(el: HTMLElement, label: string, size: number | null): HTMLInp
   )!;
 }
 
-describe('QtyMatrix (US-002) 行列结构', () => {
+describe('QtyMatrix (US-002 转置) 行列结构', () => {
   it('doc=null 时渲染为空（空态由 PreviewPage 兜底）', () => {
     const el = renderMatrix();
     expect(el.querySelector('.qty-matrix')).toBeNull();
   });
 
-  it('行 = 全码 label 并集（最小码 pieces 顺序优先），行头 = 序号徽章+缩略图+整行设值 icon', () => {
+  it('行 = doc.sizes 全码（null 殿后「通用」），行头 = 码按钮（当前码高亮）', () => {
     const doc = makeStdDoc();
     useUploadStore.setState({ status: 'done', doc, activeSize: 28 });
     const el = renderMatrix();
     const rows = el.querySelectorAll('tbody tr');
     expect(rows.length).toBe(3);
-    const first = rows[0];
-    expect(first.querySelector('.qty-label-badge')!.textContent).toBe('A');
-    expect(first.querySelector('.qty-thumb svg')).not.toBeNull();
-    // 裁片名不再占行头空间，走缩略图 title 悬浮显示
-    expect(first.querySelector('.qty-rowname')).toBeNull();
-    expect(first.querySelector<HTMLElement>('.qty-thumb')!.getAttribute('title')).toBe(
-      '前片28 · 放大预览',
-    );
-    // 整行设值 icon：缩略图右侧常驻（≡ 字符 + title 悬浮提示），点击开居中弹层
-    const fill = first.querySelector<HTMLButtonElement>('[data-testid="qty-rowfill-A"]');
-    expect(fill).not.toBeNull();
-    expect(fill!.textContent).toBe('≡');
-    expect(fill!.getAttribute('aria-label')).toBe('裁片 A 整行设值');
-    expect(fill!.getAttribute('title')).toBe('整行设值：批量设置该裁片全部尺码数量');
-    // 行头简化拆除项零残留（旧文字「填充」按钮 / ×2 徽章）
-    expect(first.querySelector('.qty-fill-btn')).toBeNull();
-    expect(first.querySelector('.qty-paired-badge')).toBeNull();
-    // C 只在 30 / null 码出现，排在 A、B 之后
-    expect(rows[2].querySelector('.qty-label-badge')!.textContent).toBe('C');
+    const btns = el.querySelectorAll<HTMLButtonElement>('tbody .qty-size-btn');
+    expect(Array.from(btns).map((b) => b.textContent)).toEqual(['28', '30', '通用']);
+    // activeSize=28 行头高亮（aria-pressed 表当前码）
+    expect(btns[0].classList.contains('active')).toBe(true);
+    expect(btns[0].getAttribute('aria-pressed')).toBe('true');
+    expect(btns[1].classList.contains('active')).toBe(false);
+    // 首个行头挂 tour 锚点（previewTour set-qty 步）
+    expect(rows[0].querySelector('[data-tour="qty-rowhead"]')).not.toBeNull();
   });
 
-  it('缩略图 rep 优先 activeSize 版本（切码后缩略图 title 跟随）', () => {
-    const doc = makeStdDoc();
-    useUploadStore.setState({ status: 'done', doc, activeSize: 30 });
-    const el = renderMatrix();
-    const rows = el.querySelectorAll('tbody tr');
-    expect(rows[0].querySelector<HTMLElement>('.qty-thumb')!.getAttribute('title')).toBe(
-      '前片30 · 放大预览',
-    );
-  });
-
-  it('列 = doc.sizes 全码（null 殿后「通用」）+ 合计列', () => {
+  it('列 = 全码 label 并集（最小码 pieces 顺序优先），列头 = 缩略图+徽章+整列设值 icon', () => {
     const doc = makeStdDoc();
     useUploadStore.setState({ status: 'done', doc, activeSize: 28 });
     const el = renderMatrix();
-    const btns = el.querySelectorAll('thead .qty-size-btn');
-    expect(Array.from(btns).map((b) => b.textContent)).toEqual(['28', '30', '通用']);
-    const lastHead = el.querySelectorAll('thead th');
-    expect(lastHead[lastHead.length - 1].textContent).toBe('合计');
+    const badges = el.querySelectorAll('thead .qty-label-badge');
+    expect(Array.from(badges).map((b) => b.textContent)).toEqual(['A', 'B', 'C']);
+    const heads = el.querySelectorAll('thead th');
+    expect(heads[0].textContent).toBe('尺码');
+    expect(heads[heads.length - 1].textContent).toBe('小计');
+    // 列头 A：缩略图（title 悬浮裁片名）+ ≡ icon（常驻，title 悬浮提示）
+    const colA = heads[1];
+    expect(colA.querySelector('.qty-thumb svg')).not.toBeNull();
+    expect(colA.querySelector<HTMLElement>('.qty-thumb')!.getAttribute('title')).toBe(
+      '前片28 · 放大预览',
+    );
+    const fill = colA.querySelector<HTMLButtonElement>('[data-testid="qty-rowfill-A"]');
+    expect(fill).not.toBeNull();
+    expect(fill!.textContent).toBe('≡');
+    expect(fill!.getAttribute('aria-label')).toBe('裁片 A 整列设值');
+    expect(fill!.getAttribute('title')).toBe('整列设值：批量设置该裁片全部尺码数量');
+    // 旧行头简化拆除项零残留（文字「填充」按钮 / ×2 徽章 / 裁片名 span）
+    expect(colA.querySelector('.qty-fill-btn')).toBeNull();
+    expect(colA.querySelector('.qty-paired-badge')).toBeNull();
+    expect(colA.querySelector('.qty-rowname')).toBeNull();
   });
 
-  it('无 null 码时不渲染「通用」列', () => {
+  it('缩略图 rep 优先 activeSize 版本（切码后列头缩略图 title 跟随）', () => {
+    const doc = makeStdDoc();
+    useUploadStore.setState({ status: 'done', doc, activeSize: 30 });
+    const el = renderMatrix();
+    const thumbs = el.querySelectorAll<HTMLElement>('thead .qty-thumb');
+    expect(thumbs[0].getAttribute('title')).toBe('前片30 · 放大预览');
+  });
+
+  it('无 null 码时不渲染「通用」行', () => {
     const doc: ParsedDoc = {
       doc_id: 'd2',
       filename: 'x.dxf',
@@ -190,48 +196,50 @@ describe('QtyMatrix (US-002) 行列结构', () => {
     };
     useUploadStore.setState({ status: 'done', doc, activeSize: 28 });
     const el = renderMatrix();
-    const btns = el.querySelectorAll('thead .qty-size-btn');
+    const btns = el.querySelectorAll('tbody .qty-size-btn');
     expect(Array.from(btns).map((b) => b.textContent)).toEqual(['28', '30']);
   });
 
-  it('缺片格渲染 disabled「—」（C@28 缺、A/B 无通用列）', () => {
+  it('缺片格渲染 disabled「—」（C@28 缺、A/B 无通用行）', () => {
     const doc = makeStdDoc();
     useUploadStore.setState({ status: 'done', doc, activeSize: 28 });
     const el = renderMatrix();
-    const rowC = el.querySelectorAll('tbody tr')[2];
-    const c28 = rowC.querySelector('.qty-cell.missing input')!;
-    // C 行第一格（28 码）是缺片格
-    expect(rowC.children[1].classList.contains('missing')).toBe(true);
+    const rows = el.querySelectorAll('tbody tr');
+    // 28 码行第三格（C 列）是缺片格
+    const row28 = rows[0];
+    expect(row28.children[3].classList.contains('missing')).toBe(true);
+    const c28 = row28.children[3].querySelector('.qty-cell.missing input')!;
     expect((c28 as HTMLInputElement).disabled).toBe(true);
     expect((c28 as HTMLInputElement).value).toBe('—');
-    // A 行（28/30 存在、null 缺）第三格 missing
-    const rowA = el.querySelectorAll('tbody tr')[0];
-    expect(rowA.children[3].classList.contains('missing')).toBe(true);
+    // 通行（第三行）A/B 列均缺片（C@通用 存在）
+    const rowNull = rows[2];
+    expect(rowNull.children[1].classList.contains('missing')).toBe(true);
+    expect(rowNull.children[2].classList.contains('missing')).toBe(true);
   });
 });
 
-describe('QtyMatrix (US-002) 列头切码（activeSize 切换，行缩略图跟随）', () => {
-  it('点击列头调 setSize(该码)，当前 activeSize 列头高亮', () => {
+describe('QtyMatrix (US-002 转置) 行头切码（activeSize 切换，列缩略图跟随）', () => {
+  it('点击行头调 setSize(该码)，当前 activeSize 行头高亮', () => {
     const doc = makeStdDoc();
     useUploadStore.setState({ status: 'done', doc, activeSize: 28 });
     const el = renderMatrix();
-    const btns = el.querySelectorAll<HTMLButtonElement>('thead .qty-size-btn');
+    const btns = el.querySelectorAll<HTMLButtonElement>('tbody .qty-size-btn');
     expect(btns[0].classList.contains('active')).toBe(true);
     expect(btns[1].getAttribute('aria-pressed')).toBe('false');
     act(() => {
       clickEl(btns[1]);
     });
     expect(useUploadStore.getState().activeSize).toBe(30);
-    const btnsAfter = el.querySelectorAll<HTMLButtonElement>('thead .qty-size-btn');
+    const btnsAfter = el.querySelectorAll<HTMLButtonElement>('tbody .qty-size-btn');
     expect(btnsAfter[1].classList.contains('active')).toBe(true);
     expect(btnsAfter[0].classList.contains('active')).toBe(false);
   });
 
-  it('点击 null 码列头调 setSize(null)', () => {
+  it('点击 null 码行头调 setSize(null)', () => {
     const doc = makeStdDoc();
     useUploadStore.setState({ status: 'done', doc, activeSize: 28 });
     const el = renderMatrix();
-    const btns = el.querySelectorAll<HTMLButtonElement>('thead .qty-size-btn');
+    const btns = el.querySelectorAll<HTMLButtonElement>('tbody .qty-size-btn');
     act(() => {
       clickEl(btns[2]);
     });
@@ -239,12 +247,12 @@ describe('QtyMatrix (US-002) 列头切码（activeSize 切换，行缩略图跟�
   });
 });
 
-describe('QtyMatrix (US-002) 缩略图 openZoom', () => {
+describe('QtyMatrix (US-002 转置) 列头缩略图 openZoom', () => {
   it('点击缩略图 openZoom(label, rep.size)：label 在 activeSize → 放大当前码版本', () => {
     const doc = makeStdDoc();
     useUploadStore.setState({ status: 'done', doc, activeSize: 28 });
     const el = renderMatrix();
-    const thumb = el.querySelectorAll('tbody tr')[0].querySelector<HTMLButtonElement>('.qty-thumb')!;
+    const thumb = el.querySelectorAll<HTMLButtonElement>('thead .qty-thumb')[0]!;
     act(() => {
       clickEl(thumb);
     });
@@ -255,8 +263,8 @@ describe('QtyMatrix (US-002) 缩略图 openZoom', () => {
     const doc = makeStdDoc();
     useUploadStore.setState({ status: 'done', doc, activeSize: 28 });
     const el = renderMatrix();
-    // 第三行 C：28 码缺片，rep 回退首个含它的码 30
-    const thumb = el.querySelectorAll('tbody tr')[2].querySelector<HTMLButtonElement>('.qty-thumb')!;
+    // C 列：28 码缺片，rep 回退首个含它的码 30
+    const thumb = el.querySelectorAll<HTMLButtonElement>('thead .qty-thumb')[2]!;
     act(() => {
       clickEl(thumb);
     });
@@ -320,7 +328,7 @@ describe('QtyMatrix (US-002) 格内编辑（clampQty + 提交路径）', () => {
     expect(useQtyStore.getState().quantities.A.perSize['30']).toBe(2);
   });
 
-  it('Enter 提交并移到下一格（平铺顺序下一格聚焦）', () => {
+  it('Enter 提交并移到下一格（列优先平铺序：A@28 → A@30 同裁片下一码）', () => {
     const doc = makeStdDoc();
     useUploadStore.setState({ status: 'done', doc, activeSize: 28 });
     hydrateDoc(doc);
@@ -338,13 +346,13 @@ describe('QtyMatrix (US-002) 格内编辑（clampQty + 提交路径）', () => {
     expect(document.activeElement).toBe(a30);
   });
 
-  it('Tab 提交并移到下一格（跳过缺片 disabled 格）', () => {
+  it('Tab 提交并移到下一格（跳过缺片 disabled 格：A@30 → B@28 跨到下一裁片列）', () => {
     const doc = makeStdDoc();
     useUploadStore.setState({ status: 'done', doc, activeSize: 28 });
     hydrateDoc(doc);
     const el = renderMatrix();
     const a30 = cellInput(el, 'A', 30);
-    // A 行 30 码之后是 null 码缺片格（disabled）→ 下一可编辑格 = B 行 28 码
+    // A 列 30 码之后是通用码缺片格（disabled）→ 下一可编辑格 = B 列 28 码
     const b28 = cellInput(el, 'B', 28);
     act(() => {
       a30.focus();
@@ -388,7 +396,7 @@ describe('QtyMatrix (US-002) 0 格子与特例高亮', () => {
     expect(cellInput(el, 'A', 28).disabled).toBe(false);
   });
 
-  it('hydrate 默认（全 1 + base 1）整行同值 → 无 .override', () => {
+  it('hydrate 默认（全 1 + base 1）整列同值 → 无 .override', () => {
     const doc = makeStdDoc();
     useUploadStore.setState({ status: 'done', doc, activeSize: 28 });
     hydrateDoc(doc);
@@ -396,7 +404,7 @@ describe('QtyMatrix (US-002) 0 格子与特例高亮', () => {
     expect(el.querySelectorAll('.qty-cell.override').length).toBe(0);
   });
 
-  it('个别格 ≠ baseValue 且整行非全同 → 仅该格 .override', () => {
+  it('个别格 ≠ baseValue 且整列非全同 → 仅该格 .override', () => {
     const doc = makeStdDoc();
     useUploadStore.setState({ status: 'done', doc, activeSize: 28 });
     hydrateDoc(doc);
@@ -410,7 +418,7 @@ describe('QtyMatrix (US-002) 0 格子与特例高亮', () => {
     expect(b28.classList.contains('override')).toBe(false);
   });
 
-  it('整行同值不高亮（逐格手改 B 行全 3，base 仍 1）', () => {
+  it('整列同值不高亮（逐格手改 B 列全 3，base 仍 1）', () => {
     const doc = makeStdDoc();
     useUploadStore.setState({ status: 'done', doc, activeSize: 28 });
     hydrateDoc(doc);
@@ -420,7 +428,7 @@ describe('QtyMatrix (US-002) 0 格子与特例高亮', () => {
     expect(el.querySelectorAll('.qty-cell.override').length).toBe(0);
   });
 
-  it('整行填充后改一格：仅特例格高亮（填充=base，特例=偏离）', () => {
+  it('整列填充后改一格：仅特例格高亮（填充=base，特例=偏离）', () => {
     const doc = makeStdDoc();
     useUploadStore.setState({ status: 'done', doc, activeSize: 28 });
     hydrateDoc(doc);
@@ -433,17 +441,17 @@ describe('QtyMatrix (US-002) 0 格子与特例高亮', () => {
 });
 
 describe('QtyMatrix (US-002) 小计与总片数（缺 paired 字段 → ×1 旧口径兼容）', () => {
-  it('每行合计列 + 每码小计行 + 工具条总片数', () => {
+  it('行尾每码小计列 + 底部每裁片合计行 + 工具条总片数', () => {
     const doc = makeStdDoc();
     useUploadStore.setState({ status: 'done', doc, activeSize: 28 });
     hydrateDoc(doc);
     const el = renderMatrix();
-    // 行合计：A=28+30=2，B=2，C=30+null=2
+    // 行尾小计（每码）：28 = A+B = 2，30 = A+B+C = 3，通用 = C = 1
     const rowTotals = Array.from(el.querySelectorAll('.qty-rowtotal')).map((td) => td.textContent);
-    expect(rowTotals).toEqual(['2', '2', '2']);
-    // 每码小计：28=2，30=3，通用=1；末格 = 总 6
+    expect(rowTotals).toEqual(['2', '3', '1']);
+    // 底部合计（每裁片）：A=28+30=2，B=2，C=30+通用=2；末格 = 总 6
     const subtotals = Array.from(el.querySelectorAll('tfoot .qty-subtotal')).map((td) => td.textContent);
-    expect(subtotals).toEqual(['2', '3', '1', '6']);
+    expect(subtotals).toEqual(['2', '2', '2', '6']);
     expect(el.querySelector('[data-testid="qty-total"]')!.textContent).toBe('6');
   });
 
@@ -453,10 +461,11 @@ describe('QtyMatrix (US-002) 小计与总片数（缺 paired 字段 → ×1 旧�
     hydrateDoc(doc);
     useQtyStore.getState().setPiecePerSize('A', 28, 4);
     const el = renderMatrix();
-    // A 行合计 = 4(28) + 1(30) = 5；缺片格（A@null）不计
+    // 28 码行尾小计 = 4(A) + 1(B) = 5；缺片格（C@28）不计
     expect(el.querySelectorAll('.qty-rowtotal')[0].textContent).toBe('5');
+    // A 列合计 = 4(28) + 1(30) = 5
     const subtotals = Array.from(el.querySelectorAll('tfoot .qty-subtotal')).map((td) => td.textContent);
-    expect(subtotals).toEqual(['5', '3', '1', '9']);
+    expect(subtotals).toEqual(['5', '2', '2', '9']);
     expect(el.querySelector('[data-testid="qty-total"]')!.textContent).toBe('9');
   });
 
@@ -466,7 +475,7 @@ describe('QtyMatrix (US-002) 小计与总片数（缺 paired 字段 → ×1 旧�
     hydrateDoc(doc);
     const el = renderMatrix();
     // 28 码小计 = A+B = 2（C 缺片不贡献）
-    expect(el.querySelectorAll('tfoot .qty-subtotal')[0].textContent).toBe('2');
+    expect(el.querySelectorAll('.qty-rowtotal')[0].textContent).toBe('2');
   });
 
   it('全 0 时红色警示显示；有量时隐藏', () => {
@@ -491,7 +500,7 @@ describe('QtyMatrix (US-002) 小计与总片数（缺 paired 字段 → ×1 旧�
 /**
  * US-004 物理片数口径 doc：三码两片型（含配对）。
  *   28: A 前片(paired) + B 单排(内片)；30: A + B；null: B。
- * 默认全 demand=1 → 物理片数：A 行 = 2 码 × 1 份 × 2 = 4；B 行 = 2+1 份 × 1 = 3。
+ * 默认全 demand=1 → 物理片数：A 列 = 2 码 × 1 份 × 2 = 4；B 列 = 2+1 份 × 1 = 3。
  */
 function makePairedDoc(): ParsedDoc {
   return {
@@ -517,12 +526,12 @@ function makePairedDoc(): ParsedDoc {
   };
 }
 
-describe('QtyMatrix (US-004) 物理片数口径（配对片 ×2；×2 徽章已随行头简化拆除）', () => {
-  it('配对片行头不再渲染「×2」徽章（口径说明收敛到总片数 title）', () => {
+describe('QtyMatrix (US-004) 物理片数口径（配对片 ×2；×2 徽章已随列头简化拆除）', () => {
+  it('配对片列头不再渲染「×2」徽章（口径说明收敛到总片数 title）', () => {
     useUploadStore.setState({ status: 'done', doc: makePairedDoc(), activeSize: 28 });
     const el = renderMatrix();
-    const rowA = el.querySelectorAll('tbody tr')[0];
-    expect(rowA.querySelector('.qty-paired-badge')).toBeNull();
+    const colA = el.querySelectorAll('thead th')[1];
+    expect(colA.querySelector('.qty-paired-badge')).toBeNull();
     expect(el.querySelector('[data-testid="qty-paired-A"]')).toBeNull();
     // 口径说明迁到工具条总片数 title
     expect(el.querySelector<HTMLElement>('.qty-total')!.getAttribute('title')).toContain(
@@ -530,20 +539,20 @@ describe('QtyMatrix (US-004) 物理片数口径（配对片 ×2；×2 徽章已�
     );
   });
 
-  it('每行合计 = Σ demand × (paired?2:1)：A(配对,2码×1份)=4，B(内片,3份)=3', () => {
-    useUploadStore.setState({ status: 'done', doc: makePairedDoc(), activeSize: 28 });
-    hydrateDoc(makePairedDoc());
-    const el = renderMatrix();
-    const rowTotals = Array.from(el.querySelectorAll('.qty-rowtotal')).map((td) => td.textContent);
-    expect(rowTotals).toEqual(['4', '3']);
-  });
-
-  it('每码小计 + 工具条总片数 = 物理片数：28=(1×2)+(1×1)=3，30=3，通用=1，总 7', () => {
+  it('底部每裁片合计 = Σ demand × (paired?2:1)：A(配对,2码×1份)=4，B(内片,3份)=3', () => {
     useUploadStore.setState({ status: 'done', doc: makePairedDoc(), activeSize: 28 });
     hydrateDoc(makePairedDoc());
     const el = renderMatrix();
     const subtotals = Array.from(el.querySelectorAll('tfoot .qty-subtotal')).map((td) => td.textContent);
-    expect(subtotals).toEqual(['3', '3', '1', '7']);
+    expect(subtotals).toEqual(['4', '3', '7']);
+  });
+
+  it('行尾每码小计 + 工具条总片数 = 物理片数：28=(1×2)+(1×1)=3，30=3，通用=1，总 7', () => {
+    useUploadStore.setState({ status: 'done', doc: makePairedDoc(), activeSize: 28 });
+    hydrateDoc(makePairedDoc());
+    const el = renderMatrix();
+    const rowTotals = Array.from(el.querySelectorAll('.qty-rowtotal')).map((td) => td.textContent);
+    expect(rowTotals).toEqual(['3', '3', '1']);
     expect(el.querySelector('[data-testid="qty-total"]')!.textContent).toBe('7');
   });
 
@@ -553,11 +562,12 @@ describe('QtyMatrix (US-004) 物理片数口径（配对片 ×2；×2 徽章已�
     hydrateDoc(doc);
     useQtyStore.getState().setPiecePerSize('A', 28, 2);
     const el = renderMatrix();
-    const subtotals = Array.from(el.querySelectorAll('tfoot .qty-subtotal')).map((td) => td.textContent);
+    const rowTotals = Array.from(el.querySelectorAll('.qty-rowtotal')).map((td) => td.textContent);
     // 28 = A(2份×2) + B(1) = 5；30 = 3；通用 = 1
-    expect(subtotals).toEqual(['5', '3', '1', '9']);
-    // A 行合计 = 2×2(28) + 1×2(30) = 6
-    expect(el.querySelectorAll('.qty-rowtotal')[0].textContent).toBe('6');
+    expect(rowTotals).toEqual(['5', '3', '1']);
+    // A 列合计 = 2×2(28) + 1×2(30) = 6；B 列 = 3；总 9
+    const subtotals = Array.from(el.querySelectorAll('tfoot .qty-subtotal')).map((td) => td.textContent);
+    expect(subtotals).toEqual(['6', '3', '9']);
   });
 
   it('同 label 跨码 paired 不一致时按格取值（防御：A@30 缺字段 → 该格 ×1）', () => {
@@ -572,10 +582,11 @@ describe('QtyMatrix (US-004) 物理片数口径（配对片 ×2；×2 徽章已�
     useUploadStore.setState({ status: 'done', doc, activeSize: 28 });
     hydrateDoc(doc);
     const el = renderMatrix();
-    // 行合计 = 1×2 + 1×1 = 3（按格乘数，不按行统一）
-    expect(el.querySelectorAll('.qty-rowtotal')[0].textContent).toBe('3');
+    // A 列合计 = 1×2 + 1×1 = 3（按格乘数，不按列统一）
+    const subtotals = Array.from(el.querySelectorAll('tfoot .qty-subtotal')).map((td) => td.textContent);
+    expect(subtotals).toEqual(['3', '3']);
     expect(el.querySelector('[data-testid="qty-total"]')!.textContent).toBe('3');
-    // ×2 徽章已拆：混合配对行也不渲染行级徽章
+    // ×2 徽章已拆：混合配对列也不渲染列级徽章
     expect(el.querySelector('[data-testid="qty-paired-A"]')).toBeNull();
   });
 
@@ -591,8 +602,8 @@ describe('QtyMatrix (US-004) 物理片数口径（配对片 ×2；×2 徽章已�
   });
 });
 
-describe('QtyMatrix (US-002) 行级整行设值（工具条整表重置已拆）', () => {
-  /** 打开 A 行弹层（点行头「≡」icon）；弹层 portal 到 document.body，一律从 document 查询。 */
+describe('QtyMatrix (US-002 转置) 列级整列设值（工具条整表重置已拆）', () => {
+  /** 打开 A 列弹层（点列头「≡」icon）；弹层 portal 到 document.body，一律从 document 查询。 */
   function openFillPopover(el: HTMLElement): HTMLInputElement {
     act(() => {
       clickEl(el.querySelector<HTMLButtonElement>('[data-testid="qty-rowfill-A"]')!);
@@ -600,7 +611,7 @@ describe('QtyMatrix (US-002) 行级整行设值（工具条整表重置已拆）
     return document.querySelector<HTMLInputElement>('[data-testid="qty-fill-input"]')!;
   }
 
-  it('工具条无整表重置按钮（整表回 1 改走逐行整行设值）', () => {
+  it('工具条无整表重置按钮（整表回 1 改走逐列整列设值）', () => {
     const doc = makeStdDoc();
     useUploadStore.setState({ status: 'done', doc, activeSize: 28 });
     hydrateDoc(doc);
@@ -608,17 +619,17 @@ describe('QtyMatrix (US-002) 行级整行设值（工具条整表重置已拆）
     expect(el.querySelector('.qty-reset-btn')).toBeNull();
   });
 
-  it('点 icon 开弹层：输入初值 = 当前行基准 baseValue', () => {
+  it('点 icon 开弹层：输入初值 = 当前列基准 baseValue', () => {
     const doc = makeStdDoc();
     useUploadStore.setState({ status: 'done', doc, activeSize: 28 });
     hydrateDoc(doc);
-    useQtyStore.getState().setRowAll('A', [28, 30], 2); // A 行基准 2
+    useQtyStore.getState().setRowAll('A', [28, 30], 2); // A 列基准 2
     const el = renderMatrix();
     const input = openFillPopover(el);
     expect(input.value).toBe('2');
   });
 
-  it('弹层 portal 到 body + fixed 居中：不在矩阵容器内（逃离 sticky 行头遮挡与滚动裁剪）', () => {
+  it('弹层 portal 到 body + fixed 居中：不在矩阵容器内（逃离 sticky 列头遮挡与滚动裁剪）', () => {
     const doc = makeStdDoc();
     useUploadStore.setState({ status: 'done', doc, activeSize: 28 });
     hydrateDoc(doc);
@@ -635,7 +646,18 @@ describe('QtyMatrix (US-002) 行级整行设值（工具条整表重置已拆）
     expect(popover.style.top).toBe('0px');
   });
 
-  it('应用：该行整行写 setRowAll(x, rowSizes, X) + 弹层关闭，其它行不动，小计联动', () => {
+  it('弹层标题与 aria 为「整列设值」口径（转置后批量对象 = 该裁片全部尺码）', () => {
+    const doc = makeStdDoc();
+    useUploadStore.setState({ status: 'done', doc, activeSize: 28 });
+    hydrateDoc(doc);
+    const el = renderMatrix();
+    openFillPopover(el);
+    const popover = document.querySelector<HTMLElement>('.qty-fill-popover')!;
+    expect(popover.getAttribute('aria-label')).toBe('裁片 A 整列设值');
+    expect(popover.querySelector('.qty-fill-title')!.textContent).toBe('裁片 A · 整列设值');
+  });
+
+  it('应用：该列整列写 setRowAll(x, labelSizes, X) + 弹层关闭，其它列不动，小计联动', () => {
     const doc = makeStdDoc();
     useUploadStore.setState({ status: 'done', doc, activeSize: 28 });
     hydrateDoc(doc);
@@ -646,14 +668,14 @@ describe('QtyMatrix (US-002) 行级整行设值（工具条整表重置已拆）
       clickEl(document.querySelector<HTMLButtonElement>('.qty-fill-apply')!);
     });
     const q = useQtyStore.getState().quantities;
-    // A 只写实际存在的码（28/30；null 缺片码不写），baseValue 同步
+    // A 只写实际存在的码（28/30；通用缺片码不写），baseValue 同步
     expect(q.A).toEqual({ perSize: { '28': 3, '30': 3 }, baseValue: 3 });
-    // 其它行不受影响
+    // 其它列不受影响
     expect(q.B).toEqual({ perSize: { '28': 1, '30': 1 }, baseValue: 1 });
     expect(q.C).toEqual({ perSize: { '30': 1, null: 1 }, baseValue: 1 });
     // 弹层关闭（backdrop + input 卸载）
     expect(document.querySelector('[data-testid="qty-fill-input"]')).toBeNull();
-    // 总片数联动：A 3+3 + B 1+1 + C 1+1 = 10；整行同值 → 无特例高亮
+    // 总片数联动：A 3+3 + B 1+1 + C 1+1 = 10；整列同值 → 无特例高亮
     expect(el.querySelector('[data-testid="qty-total"]')!.textContent).toBe('10');
     expect(el.querySelectorAll('.qty-cell.override').length).toBe(0);
   });
@@ -708,7 +730,7 @@ describe('QtyMatrix (US-002) 行级整行设值（工具条整表重置已拆）
     expect(useQtyStore.getState().quantities.A.perSize['28']).toBe(1);
   });
 
-  it('特例兼容（UI 路径）：整行设值后单格改 → 仅该格 .override 高亮', () => {
+  it('特例兼容（UI 路径）：整列设值后单格改 → 仅该格 .override 高亮', () => {
     const doc = makeStdDoc();
     useUploadStore.setState({ status: 'done', doc, activeSize: 28 });
     hydrateDoc(doc);
@@ -718,7 +740,7 @@ describe('QtyMatrix (US-002) 行级整行设值（工具条整表重置已拆）
       setInputValue(input, '2');
       clickEl(document.querySelector<HTMLButtonElement>('.qty-fill-apply')!);
     });
-    // A 行整行 2 后，单格 A@28 改 3（聚焦 → 输入 → blur 提交）→ 仅该格特例
+    // A 列整列 2 后，单格 A@28 改 3（聚焦 → 输入 → blur 提交）→ 仅该格特例
     const a28 = cellInput(el, 'A', 28);
     act(() => {
       a28.focus();

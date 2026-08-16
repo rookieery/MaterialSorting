@@ -920,8 +920,9 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
   cursor: not-allowed;
 }
 
-/* ---- 矩阵化重构 US-002 QtyMatrix（裁片 × 尺码数量矩阵；暗底 #26282e + #2ea06c 同色系） ---- */
-/* 工具条：总片数 + 全 0 警示（整表「重置为默认 1」按钮已拆，行级批量走行头「整行设值」icon） */
+/* ---- 矩阵化重构 US-002 QtyMatrix（尺码 × 裁片数量矩阵，2026-08-16 转置对齐高级配置
+   弹窗「裁片作列 + 列头缩略图」风格；暗底 #26282e + #2ea06c 同色系） ---- */
+/* 工具条：总片数 + 全 0 警示（整表「重置为默认 1」按钮已拆，列级批量走列头「整列设值」icon） */
 .qty-matrix {
   display: flex;
   flex-direction: column;
@@ -951,8 +952,9 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
 
 /* 矩阵滚动区：flex:1 填满 .qty-matrix 剩余高度（工具条之下），只在真实可用高度不够时
    纵向滚动 —— 旧的 max-height:65vh 是图形预览区时代的任意截断（内容 > 65vh 而页面仍有
-   剩余高度时会出现「假滚动条+页底空白」，80×80 缩略图加高行后必然触发，已拆除）；
-   窄屏（≤1366）横向滚动由表格 min-width floor（QtyMatrix inline 注入）超出容器自然触发 */
+   剩余高度时会出现「假滚动条+页底空白」，已拆除；转置后行数 = 码数、行高 ~34px，
+   纵向更不易滚）；窄屏（≤1366）横向滚动由表格 min-width floor（QtyMatrix inline 注入）
+   超出容器自然触发 */
 .qty-matrix-scroll {
   flex: 1 1 auto;
   min-height: 0;
@@ -964,8 +966,8 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
   border-spacing: 0;
   font-size: 12px;
   min-width: 100%;
-  /* fixed 布局：列宽只由首行 th 的 width 决定 —— 行头 148 / 合计 56 钉死不被撑宽，
-     尺码列 width:auto 均分全部富余（auto 布局下 min-width:100% 撑满面板时行头按首选
+  /* fixed 布局：列宽只由首行 th 的 width 决定 —— 行头 88 / 小计列 56 钉死不被撑宽，
+     裁片列 width:auto 均分全部富余（auto 布局下 min-width:100% 撑满面板时行头按首选
      宽度比例吃进最多空白；全列指定 width 时 Chrome 按比例分富余同样撑宽行头） */
   table-layout: fixed;
 }
@@ -987,18 +989,29 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
   z-index: 5 !important;
   text-align: left;
   padding: 4px 8px !important;
-  width: 148px; /* 与 .qty-rowhead 同宽（首列 sticky 对齐）；fixed 布局下首行 width 钉死列宽 */
+  width: 88px; /* 与 .qty-rowhead 同宽（首列 sticky 对齐）；fixed 布局下首行 width 钉死列宽 */
 }
-/* 尺码列不设 width（fixed 布局 auto 列**均分**剩余水平空间，规范行为跨浏览器一致）：
-   富余宽度全部平分给尺码列。若给全部列指定 width，表格被 min-width 撑宽后的富余分配
-   规范未定义（Chrome 按指定宽比例分 → 行头 148/716≈21% 份额吃进 ~250px，裁片列又变
-   ~390px 宽，即「空白不平分」的根因）。尺码列 64px 下限不在此处设 —— fixed 布局下
-   auto 列可缩到 0，下限由 QtyMatrix 在表格 inline min-width floor 保证（窄屏触发横向滚动） */
-.qty-colhead { width: auto; }
+/* 裁片列不设 width（fixed 布局 auto 列**均分**剩余水平空间，规范行为跨浏览器一致）：
+   富余宽度全部平分给裁片列。若给全部列指定 width，表格被 min-width 撑宽后的富余分配
+   规范未定义（Chrome 按指定宽比例分，定宽列被等比撑宽，即「空白不平分」的根因）。
+   裁片列 96px 下限不在此处设 —— fixed 布局下 auto 列可缩到 0，下限由 QtyMatrix 在表格
+   inline min-width floor 保证（窄屏触发横向滚动） */
+/* th 保持 table-cell：display:flex/block 会拆掉单元格语义、破坏整表布局（thead 列头
+   竖堆、表体错位），竖排交给内层 .qty-colhead-inner 承担（2026-08-16 转置实测修复） */
+.qty-colhead {
+  width: auto;
+  padding: 6px 4px 4px;
+}
+.qty-colhead-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
 .qty-total-col { width: 56px; }
 
-/* 列头码按钮：点击 setSize 切 activeSize（行头缩略图优先显示该码版本的裁片），
-   当前码绿色高亮（US-003 起取代旧 .size-chip） */
+/* 行头码按钮：点击 setSize 切 activeSize（列头缩略图优先显示该码版本的裁片），
+   当前码绿色高亮（US-003 起取代旧 .size-chip；2026-08-16 转置自列头移至行头） */
 .qty-size-btn {
   width: 100%;
   padding: 4px 0;
@@ -1020,19 +1033,15 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
 }
 .qty-size-btn:focus-visible { outline: 2px solid #2ea06c; outline-offset: 1px; }
 
-/* sticky 首列（行头，2026-08 简化）：序号徽章 + 大缩略图（名称 / ×2 徽章已拆，裁片名走
-   缩略图 title 悬浮与放大模态）+「≡」整行设值 icon（.qty-rowfill-btn）；
-   宽度 148px 定值（fixed 布局由首行 .qty-corner width 钉死，此处保持一致）：
-   padding 6×2 + 徽章 18 + 缩略图 80 + icon 24 + gap 6×2 = 146，2px 富余 */
+/* sticky 首列（行头，2026-08-16 转置后 = 码号行）：码按钮（点击 setSize 切 activeSize，
+   当前码绿色高亮）。宽度 88px 定值（fixed 布局由首行 .qty-corner width 钉死，此处保持
+   一致）；裁片缩略图 / 徽章 / ≡ 整列设值 icon 已随转置移至列头（.qty-colhead） */
 .qty-rowhead {
   position: sticky;
   left: 0;
   z-index: 2;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: 148px;
-  padding: 6px;
+  width: 88px;
+  padding: 3px 6px;
   text-align: left;
   background: #23252b;
   border-right: 1px solid #34363d;
@@ -1054,9 +1063,16 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
   font-size: 11px;
   font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
 }
+/* 列头元信息行：序号徽章 +「≡」整列设值 icon 横排（缩略图下方，2026-08-16 转置自
+   旧行头布局） */
+.qty-colhead-meta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
 /* 缩略图：PiecePreviewSVG compact 80×80（2026-08 自 64 放大，细长裁片 5 层线条更可辨；
    高级配置弹窗 .ptype-thumb 仍 64，两者观感不再对齐），点击 openZoom 放大预览；
-   行高随之加大 */
+   转置后列头集中一排（与高级配置弹窗表头同构），表头行随之加高 */
 .qty-thumb {
   flex-shrink: 0;
   width: 80px;
@@ -1075,8 +1091,8 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
 .qty-thumb:focus-visible { outline: 2px solid #2ea06c; outline-offset: 1px; }
 .qty-thumb svg { width: 100%; height: 100%; display: block; }
 
-/* 「≡」整行设值 icon：缩略图右侧常驻小按钮（title 悬浮提示「整行设值」，点击开
-   居中弹层；原悬浮角标方案已换 —— 常驻更可发现，也不再压住缩略图图形） */
+/* 「≡」整列设值 icon：列头缩略图下方常驻小按钮（title 悬浮提示「整列设值」，点击开
+   居中弹层；类名沿用转置前的 .qty-rowfill-btn —— 常驻更可发现，也不压住缩略图图形） */
 .qty-rowfill-btn {
   flex-shrink: 0;
   width: 24px;
@@ -1173,7 +1189,7 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
 .qty-fill-apply:hover { background: #36b47a; border-color: #36b47a; }
 
 /* 数据格：内联 number input；行分隔线自绘（border-separate 模式）。
-   行高随 80×80 缩略图加大 → td 垂直居中（默认 baseline 会让格子贴行底） */
+   td 垂直居中（默认 baseline 会让格子贴行底；转置后行高回归紧凑 ~34px） */
 .qty-matrix-table td { vertical-align: middle; }
 .qty-cell {
   border-bottom: 1px solid #2f3138;
@@ -1220,7 +1236,7 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
   cursor: not-allowed;
 }
 
-/* 行合计列 + 底部每码小计行（sticky bottom，与表头同背景） */
+/* 行尾每码小计列 + 底部每裁片合计行（sticky bottom，与表头同背景） */
 .qty-rowtotal {
   border-bottom: 1px solid #2f3138;
   border-left: 1px solid #34363d;

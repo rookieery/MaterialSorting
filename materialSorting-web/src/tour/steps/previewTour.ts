@@ -18,9 +18,10 @@
 //   - upload       [data-tour="drop-zone"]       （UploadPanel.tsx 拖拽落区）
 //   - parsed       [data-tour="qty-matrix"]      （QtyMatrix.tsx 矩阵根容器；矩阵化重构
 //                                                US-005 迁自旧 SizeTabs 锚点，指引矩阵浏览
-//                                                与行头缩略图放大；图形预览区已拆除）
-//   - set-qty      [data-tour="qty-rowhead"]     （QtyMatrix.tsx 首个行头；矩阵化重构 US-005
-//                                                迁自旧 piece-card-head 锚点，指引矩阵编辑）
+//                                                与列头缩略图放大；图形预览区已拆除）
+//   - set-qty      [data-tour="qty-rowhead"]     （QtyMatrix.tsx 首个码行头；转置后行 = 尺码，
+//                                                矩阵化重构 US-005 迁自旧 piece-card-head
+//                                                锚点，指引矩阵编辑）
 //   - committed    [data-testid="commit-status"] （UploadPanel.tsx commit 状态行）
 //   - goto-nesting [data-tour="tab-nesting"]     （TabBar.tsx 超排按钮）
 //
@@ -54,7 +55,7 @@ export const previewTour: TourDef = {
       id: 'parsed',
       selector: '[data-tour="qty-matrix"]',
       title: '查看解析结果',
-      body: '解析完成后出现「裁片 × 尺码」数量矩阵：每行一个裁片、每列一个尺码，全部码的数量分布一屏看全。点击行头缩略图可放大查看裁片图形（毛版 / 净版 / 内部线 / 刀口 / 布纹线），点击列头（码号）切换行缩略图显示的码。',
+      body: '解析完成后出现「尺码 × 裁片」数量矩阵：每列一个裁片（列头缩略图）、每行一个尺码，全部码的数量分布一屏看全。点击列头缩略图可放大查看裁片图形（毛版 / 净版 / 内部线 / 刀口 / 布纹线），点击行头（码号）切换列头缩略图显示的码。',
       placement: 'bottom',
       before: ensurePreviewTab,
       ready: () =>
@@ -66,7 +67,7 @@ export const previewTour: TourDef = {
       id: 'set-qty',
       selector: '[data-tour="qty-rowhead"]',
       title: '设置裁片数量',
-      body: '在矩阵格子内直接输入每码排料份数（demand，0 = 该码不排此片）；同一裁片要跨码统一数量时，点缩略图右侧的「≡」按钮（悬浮提示「整行设值」）批量填入。个别格子改不同的值会高亮为特例。配对片型 1 份 = 左右 2 物理片（小计按 ×2 计）。数量跨码匹配同一片型，这是求解前的必要一步。',
+      body: '在矩阵格子内直接输入每码排料份数（demand，0 = 该码不排此片）；同一裁片要跨码统一数量时，点列头缩略图下方的「≡」按钮（悬浮提示「整列设值」）批量填入。个别格子改不同的值会高亮为特例。配对片型 1 份 = 左右 2 物理片（小计按 ×2 计）。数量跨码匹配同一片型，这是求解前的必要一步。',
       placement: 'bottom',
       before: ensurePreviewTab,
     },
