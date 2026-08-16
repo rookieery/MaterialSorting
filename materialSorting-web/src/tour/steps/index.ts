@@ -12,6 +12,11 @@
 //   - 文案小改、微调 placement 不 bump（老用户无需重看）。
 //   bump 后 tourStore init 自动清 seen（US-029 已实现），用户下次进 Tab 自动触发新版。
 //
+// 版本历史：
+//   '1' → '2'（矩阵化重构 US-005）：previewTour parsed/set-qty 两步锚点从旧 SizeTabs/
+//         piece-card-head 迁到 QtyMatrix 矩阵（qty-matrix / qty-rowhead）+ 文案改矩阵
+//         操作描述 —— 锚点重大变更，老用户 seen 强制清空重看。
+//
 // Partial 而非完整 Record<TabId, TourDef>：保留未来新增 Tab 时不必同步补 tour 的灵活性；
 // auto-trigger 对无指引的 Tab（TOURS[tab]===undefined）直接跳过，不报错。
 
@@ -20,8 +25,8 @@ import type { TourDef } from '../types';
 import { nestingTour } from './nestingTour';
 import { previewTour } from './previewTour';
 
-/** Tour 内容版本号。bump 触发条件：仅步骤内容重大变更时 bump（强制老用户重看）。 */
-export const TOUR_VERSION = '1';
+/** Tour 内容版本号。bump 触发条件：仅步骤内容重大变更时 bump（强制老用户重看）。版本历史见文件头注释。 */
+export const TOUR_VERSION = '2';
 
 /**
  * 按 TabId 注册的指引序列。

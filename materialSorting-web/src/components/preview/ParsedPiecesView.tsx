@@ -88,7 +88,7 @@ export function ParsedPiecesView(): JSX.Element {
             const display = getPieceDisplay(quantities, p.label, activeSize);
             return (
               <div key={`${p.label}-${p.name}`} className="piece-card">
-                <div className="piece-card-head" data-tour="piece-card-head">
+                <div className="piece-card-head">
                   <span className="piece-card-label">{p.label}</span>
                   {/* 只读数量（单位「份」：配对片 1 份 = L+R 2 物理片）；编辑入口在 QtyMatrix */}
                   <span

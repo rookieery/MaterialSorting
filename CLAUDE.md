@@ -37,7 +37,7 @@ web  →  nesting_engine  →  nesting_bounds  →  dxf_parser
 
 ## 数据流主线
 
-上传母版 → `/api/parse-dxf`（解析预览）→ `/api/commit-to-nesting`（切单裁片到 `out/uploads/<doc_id>_pieces/` → `load_nest_pieces` 归一化+镜像 → 写 `pieces_intermediate.json` 事实源）→ `ms-sparrow-*` / `ms-web`。详见 [README.md](README.md)。
+上传母版 → `/api/parse-dxf`（解析预览 + 预览页「裁片 × 尺码」数量矩阵编辑 quantities，随求解 WS start 按码下发）→ `/api/commit-to-nesting`（切单裁片到 `out/uploads/<doc_id>_pieces/` → `load_nest_pieces` 归一化+镜像 → 写 `pieces_intermediate.json` 事实源）→ `ms-sparrow-*` / `ms-web`。详见 [README.md](README.md)。
 
 ## 运行方式
 

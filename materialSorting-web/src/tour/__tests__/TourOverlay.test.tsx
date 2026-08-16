@@ -162,11 +162,11 @@ describe('TourOverlay (US-029/US-030)', () => {
     mockRect(dropZone, { left: 0, top: 0, width: 400, height: 40 });
     document.body.appendChild(dropZone);
 
-    // previewTour step1 (parsed) = [data-tour="size-tabs"]
-    const sizeTabs = document.createElement('div');
-    sizeTabs.setAttribute('data-tour', 'size-tabs');
-    mockRect(sizeTabs, { left: 0, top: 41, width: 800, height: 60 });
-    document.body.appendChild(sizeTabs);
+    // previewTour step1 (parsed) = [data-tour="qty-matrix"]（矩阵化重构 US-005 迁自旧 size-tabs）
+    const qtyMatrix = document.createElement('div');
+    qtyMatrix.setAttribute('data-tour', 'qty-matrix');
+    mockRect(qtyMatrix, { left: 0, top: 41, width: 800, height: 60 });
+    document.body.appendChild(qtyMatrix);
 
     act(() => {
       useTourStore.getState().start('preview');
@@ -184,13 +184,13 @@ describe('TourOverlay (US-029/US-030)', () => {
       useTourStore.getState().next(); // stepIndex 0 → 1
     });
 
-    // step1 spotlight 贴 size-tabs
+    // step1 spotlight 贴 qty-matrix
     spotlight = document.body.querySelector('.tour-spotlight') as HTMLDivElement;
     expect(spotlight.style.top).toBe('41px');
     expect(spotlight.style.width).toBe('800px');
 
     dropZone.remove();
-    sizeTabs.remove();
+    qtyMatrix.remove();
   });
 
   it('US-030 等待态：联动步 ready=false 时气泡渲染 readyHint + 下一步 disabled', () => {
@@ -200,10 +200,10 @@ describe('TourOverlay (US-029/US-030)', () => {
     mockRect(dropZone, { left: 0, top: 0, width: 200, height: 100 });
     document.body.appendChild(dropZone);
 
-    const sizeTabs = document.createElement('div');
-    sizeTabs.setAttribute('data-tour', 'size-tabs');
-    mockRect(sizeTabs, { left: 0, top: 200, width: 500, height: 50 });
-    document.body.appendChild(sizeTabs);
+    const qtyMatrix = document.createElement('div');
+    qtyMatrix.setAttribute('data-tour', 'qty-matrix');
+    mockRect(qtyMatrix, { left: 0, top: 200, width: 500, height: 50 });
+    document.body.appendChild(qtyMatrix);
 
     act(() => {
       useTourStore.getState().start('preview');
@@ -229,7 +229,7 @@ describe('TourOverlay (US-029/US-030)', () => {
     expect(nextBtn1.disabled).toBe(true);
 
     dropZone.remove();
-    sizeTabs.remove();
+    qtyMatrix.remove();
   });
 });
 

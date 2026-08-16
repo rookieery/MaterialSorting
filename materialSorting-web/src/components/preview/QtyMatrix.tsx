@@ -31,6 +31,10 @@
 //     窄屏（≤1366）靠行头 220px + 格子 64px 的 min-width 自然横向滚动，不引入 CSS 框架。
 //   - 缩略图点击 openZoom(label, activeSize) 复用 PieceZoomModal（US-013 声明式受控模态，
 //     PreviewPage 顶层单例）。
+//   - tour 锚点（矩阵化重构 US-005）：根容器 data-tour="qty-matrix"（previewTour parsed 步，
+//     指引列头切码看图形预览）；每行行头 data-tour="qty-rowhead"（set-qty 步，querySelector
+//     命中首行，指引格内编辑 / 行头填充 / 特例高亮）。锚点属步骤内容重大变更，
+//     TOUR_VERSION 已 bump 强制老用户重看（见 tour/steps/index.ts）。
 //
 // 性能注意：
 //   - 每行一个 PiecePreviewSVG compact 缩略图（M1787 10 行 × 5 层 imperative DOM ≈ 60+
@@ -367,7 +371,7 @@ export function QtyMatrix(): JSX.Element | null {
   }
 
   return (
-    <div className="qty-matrix" data-testid="qty-matrix">
+    <div className="qty-matrix" data-testid="qty-matrix" data-tour="qty-matrix">
       <div className="qty-matrix-toolbar">
         <span
           className="qty-total"
@@ -421,7 +425,7 @@ export function QtyMatrix(): JSX.Element | null {
               const paired = rowPaired(r.label);
               return (
                 <tr key={r.label}>
-                  <th className="qty-rowhead" scope="row">
+                  <th className="qty-rowhead" scope="row" data-tour="qty-rowhead">
                     <span className="qty-label-badge">{r.label}</span>
                     {paired ? (
                       <span

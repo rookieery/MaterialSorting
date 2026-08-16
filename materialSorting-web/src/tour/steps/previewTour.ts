@@ -16,8 +16,10 @@
 //
 // 锚点用 data-tour 解耦 CSS 类名重构（querySelector 命中首个即可）：
 //   - upload       [data-tour="drop-zone"]       （UploadPanel.tsx 拖拽落区）
-//   - parsed       [data-tour="size-tabs"]       （锚点暂指旧 SizeTabs（US-003 已删）；US-005 迁移到矩阵锚点）
-//   - set-qty      [data-tour="piece-card-head"] （ParsedPiecesView.tsx 首个裁片卡片头）
+//   - parsed       [data-tour="qty-matrix"]      （QtyMatrix.tsx 矩阵根容器；矩阵化重构
+//                                                US-005 迁自旧 SizeTabs 锚点，指引列头切码）
+//   - set-qty      [data-tour="qty-rowhead"]     （QtyMatrix.tsx 首个行头；矩阵化重构 US-005
+//                                                迁自旧 piece-card-head 锚点，指引矩阵编辑）
 //   - committed    [data-testid="commit-status"] （UploadPanel.tsx commit 状态行）
 //   - goto-nesting [data-tour="tab-nesting"]     （TabBar.tsx 超排按钮）
 //
@@ -49,9 +51,9 @@ export const previewTour: TourDef = {
     },
     {
       id: 'parsed',
-      selector: '[data-tour="size-tabs"]',
+      selector: '[data-tour="qty-matrix"]',
       title: '查看解析结果',
-      body: '解析完成后，按尺码切换查看每码全部裁片。点击裁片图形区可放大预览。',
+      body: '解析完成后出现「裁片 × 尺码」数量矩阵：每行一个裁片、每列一个尺码，全部码的数量分布一屏看全。点击列头（码号）可切换下方图形预览到该码；点击行头缩略图可放大查看裁片图形。',
       placement: 'bottom',
       before: ensurePreviewTab,
       ready: () =>
@@ -61,9 +63,9 @@ export const previewTour: TourDef = {
     },
     {
       id: 'set-qty',
-      selector: '[data-tour="piece-card-head"]',
+      selector: '[data-tour="qty-rowhead"]',
       title: '设置裁片数量',
-      body: '点击数量徽章（如 1片）设置每码排料份数（demand，0 = 该码跳过）。数量跨码匹配同一片型，这是求解前的必要一步。',
+      body: '在矩阵格子内直接输入每码排料份数（demand，0 = 该码不排此片）；行头「填充」可整行设默认值，个别格子改不同的值会高亮为特例。配对片行头有「×2」徽章（1 份 = 左右 2 物理片）。数量跨码匹配同一片型，这是求解前的必要一步。',
       placement: 'bottom',
       before: ensurePreviewTab,
     },
