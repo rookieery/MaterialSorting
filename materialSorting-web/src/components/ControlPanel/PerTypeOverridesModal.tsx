@@ -1,6 +1,6 @@
 // PerTypeOverridesModal —— 高级配置：每片型覆盖弹窗（US-018）。
 //
-// 声明式受控 Portal（参考 PieceQtyDialog/PieceZoomModal）：
+// 声明式受控 Portal（参考 PieceZoomModal）：
 //   - 订阅 controlPanelStore.modal === 'per_type' 自显隐；null 时不挂 DOM。
 //   - Portal 到 document.body（不被 .page overflow/display:none 裁切）。
 //   - 关闭交互（AC#10）：确定 / 取消 / ✕ 按钮 / 遮罩 mousedown / ESC。
@@ -27,7 +27,7 @@
 //   - PtypePreviewModal 自己的 ESC listener 始终只关 previewPtype。
 //
 // 不引入 CSS 框架；.per-type-overlay / .per-type-modal / .per-type-table / .ptype-thumb
-// 全部沿用 style.css 暗背景 #26282e + #2ea06c 同色系（与 PieceQtyDialog 一致）。
+// 全部沿用 style.css 暗背景 #26282e + #2ea06c 同色系（与 PieceZoomModal 一致）。
 
 import { useEffect, useState } from 'react';
 import type { JSX } from 'react';

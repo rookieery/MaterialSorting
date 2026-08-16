@@ -16,7 +16,7 @@
 //
 // 锚点用 data-tour 解耦 CSS 类名重构（querySelector 命中首个即可）：
 //   - upload       [data-tour="drop-zone"]       （UploadPanel.tsx 拖拽落区）
-//   - parsed       [data-tour="size-tabs"]       （SizeTabs.tsx 容器；未解析时不渲染 → 零尺寸回退居中）
+//   - parsed       [data-tour="size-tabs"]       （锚点暂指旧 SizeTabs（US-003 已删）；US-005 迁移到矩阵锚点）
 //   - set-qty      [data-tour="piece-card-head"] （ParsedPiecesView.tsx 首个裁片卡片头）
 //   - committed    [data-testid="commit-status"] （UploadPanel.tsx commit 状态行）
 //   - goto-nesting [data-tour="tab-nesting"]     （TabBar.tsx 超排按钮）

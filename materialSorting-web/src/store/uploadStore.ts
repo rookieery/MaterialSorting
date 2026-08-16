@@ -19,30 +19,28 @@
 //   doc        最近一次成功解析的响应（done 时才有效；其它状态保留旧值或 null ——
 //              由 reset 清零，hook 内不主动清，避免切 uploading 时 UI 闪烁）
 //   activeSize 当前选中的码号（number | null）；done 时默认 = sizes[0]?.size ?? null
-//              （后端按数值升序、null 殿后，故 sizes[0] 是最小码）
+//              （后端按数值升序、null 殿后，故 sizes[0] 是最小码）。矩阵化重构 US-003 起
+//              由 QtyMatrix 列头点击切换（驱动下方 ParsedPiecesView 图形预览区）。
 //   error      error 状态下的中文消息（HTTP 400/413/422 / 网络错）
-//   qtyDialog  数量编辑弹窗的目标（label + size）；null 表示弹窗关闭。
-//              US-012 PieceQtyDialog 订阅此字段自显隐；openQtyDialog/closeQtyDialog
-//              是 ParsedPiecesView 卡片头点击 / 取消 / 遮罩 / ESC 的统一入口。
 //   zoom      放大预览模态的目标（label + size）；null 表示模态关闭。
 //             US-013 PieceZoomModal 订阅此字段自显隐（声明式受控 Portal，
 //             区别于排料页 Tooltip 的命令式单例）；openZoom/closeZoom 是
-//             ParsedPiecesView 卡片图形区点击 / ✕ / 遮罩 / ESC 的统一入口。
+//             QtyMatrix 行头缩略图 / ParsedPiecesView 卡片图形区点击 / ✕ / 遮罩 / ESC
+//             的统一入口。（数量编辑弹窗 qtyDialog 已随矩阵化重构 US-003 拆除，
+//             数量改在 QtyMatrix 格内直接编辑。）
 //
 // actions：
-//   reset()              回到 idle，清空 doc / activeSize / error / qtyDialog / zoom /
+//   reset()              回到 idle，清空 doc / activeSize / error / zoom /
 //                         commitStatus / commitError / commitSummary ——
 //                         用户主动重传时调（重传成功后 US-014 集成 qtyStore.resetQuantities）
-//   setSize(s)           切 activeSize（SizeTabs 点击时调；s = number | null）
-//   openQtyDialog(l, s)  打开数量编辑弹窗（点卡片头 数量(片) button 时调）
-//   closeQtyDialog()     关闭数量编辑弹窗（取消 / 遮罩 / ESC / 确定后调）
-//   openZoom(l, s)       打开放大预览模态（点卡片图形区 body 时调）
+//   setSize(s)           切 activeSize（QtyMatrix 列头点击时调；s = number | null）
+//   openZoom(l, s)       打开放大预览模态（点行头缩略图 / 卡片图形区 body 时调）
 //   closeZoom()          关闭放大预览模态（✕ / 遮罩 / ESC 时调）
 //
 // hook 内部的状态过渡（uploading → done | error）由 useParseDxf 直接
 // `useUploadStore.setState({...})` 写入，不暴露成 store 公开 action，避免业务组件
 // 误触发状态跳变。store 公开 API 只含调用方语义动作（reset / setSize /
-// openQtyDialog / closeQtyDialog / openZoom / closeZoom）。commit 状态过渡
+// openZoom / closeZoom）。commit 状态过渡
 //（idle → committing → done | error）同样由 useCommitToNesting 直接 setState 写入。
 
 import { create } from 'zustand';
@@ -63,14 +61,6 @@ export interface CommitSummary {
   total_area_mm2: number;
 }
 
-/** 数量编辑弹窗目标（label + size；US-012 PieceQtyDialog 订阅此字段自显隐）。 */
-export interface QtyDialogTarget {
-  /** 弹窗编辑的片型 label（A/B/C...，跨码匹配同一片型）。 */
-  label: string;
-  /** 弹窗编辑的码号（SizeTabs 当前 activeSize；null = 通用码）。 */
-  size: number | null;
-}
-
 /** 放大预览模态目标（label + size；US-013 PieceZoomModal 订阅此字段自显隐）。 */
 export interface ZoomTarget {
   /** 模态预览的片型 label（A/B/C...，跨码匹配同一片型）。 */
@@ -88,8 +78,6 @@ export interface UploadState {
   activeSize: number | null;
   /** error 状态下的中文消息（后端 JSONResponse.error 或网络错 message）。 */
   error: string | null;
-  /** 数量编辑弹窗目标（label + size）；null 表示弹窗关闭。 */
-  qtyDialog: QtyDialogTarget | null;
   /** 放大预览模态目标（label + size）；null 表示模态关闭。 */
   zoom: ZoomTarget | null;
   /** US-021 自动 commit 副作用状态机（与 parse status 分离）。 */
@@ -98,15 +86,11 @@ export interface UploadState {
   commitError: string | null;
   /** US-021 commit 成功摘要（commitStatus='done' 时有效）。 */
   commitSummary: CommitSummary | null;
-  /** 重置到 idle，清空 doc / activeSize / error / qtyDialog / zoom / commit*。 */
+  /** 重置到 idle，清空 doc / activeSize / error / zoom / commit*。 */
   reset: () => void;
-  /** 切换当前查看的码号（SizeTabs 调用）。 */
+  /** 切换当前查看的码号（QtyMatrix 列头调用）。 */
   setSize: (size: number | null) => void;
-  /** 打开数量编辑弹窗（点卡片头 数量(片) button 时调）。 */
-  openQtyDialog: (label: string, size: number | null) => void;
-  /** 关闭数量编辑弹窗（取消 / 遮罩 / ESC / 确定后调）。 */
-  closeQtyDialog: () => void;
-  /** 打开放大预览模态（点卡片图形区 body 时调）。 */
+  /** 打开放大预览模态（点行头缩略图 / 卡片图形区 body 时调）。 */
   openZoom: (label: string, size: number | null) => void;
   /** 关闭放大预览模态（✕ / 遮罩 / ESC 时调）。 */
   closeZoom: () => void;
@@ -117,7 +101,6 @@ export const useUploadStore = create<UploadState>((set) => ({
   doc: null,
   activeSize: null,
   error: null,
-  qtyDialog: null,
   zoom: null,
   commitStatus: 'idle',
   commitError: null,
@@ -128,15 +111,12 @@ export const useUploadStore = create<UploadState>((set) => ({
       doc: null,
       activeSize: null,
       error: null,
-      qtyDialog: null,
       zoom: null,
       commitStatus: 'idle',
       commitError: null,
       commitSummary: null,
     }),
   setSize: (size) => set({ activeSize: size }),
-  openQtyDialog: (label, size) => set({ qtyDialog: { label, size } }),
-  closeQtyDialog: () => set({ qtyDialog: null }),
   openZoom: (label, size) => set({ zoom: { label, size } }),
   closeZoom: () => set({ zoom: null }),
 }));

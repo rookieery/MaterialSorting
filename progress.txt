@@ -15,17 +15,18 @@ Started: 2026-08-09
 
 
 
-  - 无浏览器验证：US-001 为纯数据层重构（store/序列化 + 机械涟漪），无 SVG 渲染/坐标变换/可视化逻辑改动（UI Verification 触发条件未命中）；矩阵 UI 的浏览器验证按 story 计划留在 US-002（矩阵渲染）与 US-003（端到端）。
-  - 无后台进程残留（本 Story 未启动 ms-web / vite dev / Chrome；纯单元测试 + 静态类型检查 + 构建）。
-## 2026-08-16 | ralph/preview-qty-matrix | US-002 QtyMatrix 数量矩阵组件
-- 新建 `materialSorting-web/src/components/preview/QtyMatrix.tsx`（488 行）：主组件 QtyMatrix + 同文件子组件 QtyMatrixCell（draft 草稿 + blur/Enter/Tab 提交 clampQty + onFocus select() 全选覆盖输入 + focusedRef 守卫的草稿同步）与 RowFillPopover（初值=baseValue，取消/遮罩 mousedown/ESC 三路关闭 + Enter 快捷应用）。订阅 uploadStore doc/activeSize/setSize/openZoom + qtyStore quantities/setPiecePerSize/setRowAll；doc=null 渲染 null。结构：工具条（总片数 + 全 0 红色警示 + 重置为默认 1）→ sticky 表头（[裁片] + 各码列头 button 点击 setSize + [合计]）→ 数据行 ×N（行头=A 徽章+名+compact 缩略图点击 openZoom(label,activeSize)+悬浮填充按钮）→ 底部 sticky 每码小计行。
-- 行列模型：行=全码 label 并集（doc.sizes 升序首次出现 = 最小码 pieces 顺序优先）；列=doc.sizes 全码（null 殿后「通用」，无 null 不渲染该列）；缺片格（getPieceDisplay editable=false）渲染 disabled「—」不计小计；0 格 .zero 可编辑；特例 .override = !rowAllSame && v!==base（base 兜底 1，整行同值不高亮）。
-- 行填充 setRowAll(label, rowSizes(label), value)——只写该 label 实际存在的码，防 phantom perSize 键污染 getPieceDisplay/serializeQuantities。Enter/Tab 手动 focusNextCell（:not([disabled]) 平铺顺序 + 末格回卷，跳过缺片格）。小计 Σdemand 口径（US-004 升级物理 ×2 口径）。
-- `materialSorting-web/src/style.css` +~30 条 .qty-matrix 系列规则：.qty-matrix-scroll max-height 45vh 内滚；border-collapse:separate + 自绘边框（collapse 吞 sticky 格边框）；sticky z 层级 thead 3/corner 5/rowhead 2/tfoot 3/subtotal-rowhead 4；.qty-cell.zero（#121317）/override（#2a2417+#d8a23a+#ffd98a）/missing（灰禁改）；.qty-fill-btn opacity:0 行头 hover 显现；暗底 #26282e + #2ea06c 同色系，无 CSS 框架。
-- 新建 `materialSorting-web/src/components/preview/__tests__/QtyMatrix.test.tsx`（32 项 / 7 describe）：行列结构 6 + 列头切码 2 + 缩略图 openZoom 1 + 格内编辑 6（blur clamp 150→99/-3→0/2.7→2 + Enter/Tab 跳格跳缺片 + 末格回卷）+ 0/特例高亮 5 + 行填充 popover 7（apply/baseValue/无 phantom 'null' 键/DOM 同步/clamp/取消/ESC/遮罩/Enter/初值=baseValue）+ 小计与总片数 4 + 重置 1（全量 store 断言）。
-- 验收核验：npm run typecheck 0 error；npm run test 616/616（40 文件，+32 新增零回归）；npm run build 无报错。
-- 浏览器验证（chrome-devtools-mcp 不在本会话工具集 → 临时 Vite harness + CDP headless Chrome，US-028 先例）：matrix-harness.html 挂 QtyMatrix + 合成 M1787 形态 doc（11 码 28-38 × 10 片型）经 stores 直灌；headless Chrome --remote-debugging-port=9223（隔离 profile）+ Python websockets 驱动，24/24 断言全过——11 列码序 28..38 / 10 行 / 行头徽章+名+svg / thead+corner+rowhead+tfoot sticky computed / max-height 360px(45vh@800) / 纵向内滚表头钉住 / 预设 override 2 格 + zero 1 格 / 总片数 110 / blur 提交 A@28 2→7（store 7 + 28 码小计 16 + 总 115）/ Enter 提交 3 且焦点跳下一格 / 行填充 B×3（11 格=3、行合计 33、baseValue 3、无高亮、popover 关闭）/ 列头点击 setSize(30)+.active+aria-pressed / 缩略图 openZoom {label:'A',size:30} / 总>0 无警示 / 800px 视口横滚 + 首列钉住。截图 out/us002_wide1366.png + out/us002_narrow800_hscroll.png。
-- 实现踩坑：(1) CSS border-collapse:collapse 会吞 sticky 单元格边框 → separate + 自绘边框；(2) React 18 同一 JS task 内 synthetic type+blur 丢提交（onChange flush 晚于 onBlur 读旧草稿）→ CDP 驱动拆两个 evaluate；(3) (number|null)[] reduce 需显式 reduce<number> 泛型；(4) harness 必须引 style.css 且 #root 不能定宽，否则 sticky/45vh 断言全挂。
-- 清理：自启 headless Chrome（PID 4484，chrome-us002 隔离 profile）已 Stop-Process + profile 目录删除，端口 9223 无监听；matrix-harness.html + out/us002_{a,b,cdp}.py 临时文件已删。会话开始前已存在的 vite :5173（PID 10040）/ms-web :8000（PID 28964）/用户 Chrome（PID 30256）非本 Story 启动，未动。
+
 - 文档同步（/sync-docs）：.docs/technical/agent-component-map.md（覆盖列表 + preview/ 文件树 QtyMatrix.tsx/QtyMatrix.test.tsx + style.css 行 + 文末「矩阵化重构 US-002 落地」节含 8 条关键不变量）+ .docs/technical/todo.md（Recently Completed 加 US-002 行）；materialSorting-web/AGENTS.md（文件分工树两行 + 「矩阵化重构 US-002 关键约定」10 条）。后端零改动（agent-file-map/agent-api-reference 无涉及）。
 - 未接入 PreviewPage / 未加 data-tour 锚点 / 未删 SizeTabs/PieceQtyDialog（均按 PRD 留 US-003/US-005）。
+
+## 矩阵化重构 US-003 拆除旧交互+预览页集成+全 0 拦截（2026-08-16）
+
+- 删除：SizeTabs.tsx / PieceQtyDialog.tsx / Switch.tsx + 三测试文件（git rm）；`grep openQtyDialog src/` = 0；uploadStore 删 QtyDialogTarget/qtyDialog/openQtyDialog/closeQtyDialog（zoom/activeSize/setSize 保留，reset 同步收窄）。
+- PreviewPage：挂 `<QtyMatrix/>` 替 `<SizeTabs/>`，删 `<PieceQtyDialog/>` 单例（PieceZoomModal 保留为唯一模态）；doc_id→hydrate/resetQuantities 与 setNestingEnabled 两条 subscribe effect 原样不动。
+- ParsedPiecesView：语义降级为「按码图形预览」—— 区标题 `.parsed-pieces-title`「图形预览 · 码 X」（null→通用，防御空态保留）；卡片头数量改只读 span「N 份」（editable=false 仅缺片时 .disabled+title）；卡片体 openZoom + role/tabIndex/Enter/Space 全保留。PieceZoomModal 头部单位同步「片」→「份」（FR-9）。
+- ControlPanel.handleStart 全 0 拦截：computeTotalCutPieces(doc, form.sizes, quantities)===0 → onStatus 提示 + 不发 WS start（doc=null 返回 null 不拦截，保 fallback 开发模式与既有用例）。
+- style.css：删 .size-tabs/.size-chip + US-012 弹窗/Switch 全段；.piece-card-qty 收敛只读样式（去 cursor/hover/focus）；新增 .parsed-pieces-title。
+- 测试改写：uploadStore.test 删 qtyDialog 6+1 项；ParsedPiecesView.test 重写 19 项（区标题 4 + 只读数量 4 + openZoom a11y 4）；PreviewPage.test 重写 24 项（QtyMatrix 挂载/列头切码端到端/模态仅 Zoom（qtyDialog 字段不存在断言）/矩阵格子编辑 A@30=3→store+卡片头 3份/US-016 八项不动）；ControlPanel.test 新增 5 项 start guard（全 0 拦截/仅勾全 0 码/默认不误拦/doc=null 不拦/线格式回归 A@28=2→payload quantities.A['28']===2）。589/589 全绿 + typecheck clean + build 无报错。
+- 冒烟：npm run build 产物 + ms-web 启动 GET / 200 + POST /api/parse-dxf 200（后端零改动）；chrome-devtools-mcp 不在本会话工具集（同 US-032 情况），浏览器端到端回归（上传→矩阵→列头切码→放大→求解）留作 US-005 一并验证，已在 AGENTS.md 记录。
+- 文档同步（/sync-docs）：.docs/technical/agent-component-map.md（覆盖列表 + 文件树删三组件/改 PreviewPage/ParsedPiecesView/PieceZoomModal/QtyMatrix/store 行 + ControlPanel 行加全 0 拦截 + previewTour 失配标注 + 文末「矩阵化重构 US-003 落地」节含 6 条关键不变量 + US-001 不变量 #5 修正）；.docs/technical/todo.md（Recently Completed 加 US-003 行）；materialSorting-web/AGENTS.md（文件分工树 + 「矩阵化重构 US-003 关键约定」7 条 + US-002 节头部未接入说明改已接入）。
+- 未做（按 PRD 留 US-004/005）：parse 透传 ptype/paired + 物理片数口径（US-004）；tour 锚点迁移矩阵 + TOUR_VERSION bump + business-overview/CLAUDE.md 文档同步（US-005）。

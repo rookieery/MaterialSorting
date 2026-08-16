@@ -37,7 +37,8 @@ export function App(): React.JSX.Element {
           <NestingPage />
         </div>
 
-        {/* 上传预览页：US-001 占位，US-008 落地 UploadPanel + SizeTabs + ParsedPiecesView */}
+        {/* 上传预览页：US-001 占位，US-008 落地 UploadPanel；矩阵化重构 US-003 起
+            QtyMatrix 数量矩阵 + ParsedPiecesView 按码图形预览 */}
         <div className={`page${activeTab === 'preview' ? '' : ' hidden'}`}>
           <PreviewPage />
         </div>

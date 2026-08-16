@@ -12,6 +12,11 @@
 // US-019 additions:
 //   - 主面板不再渲染 d_ext/d_int/tol_ext/tol_int 输入（内外两档全交高级配置弹窗）。
 //   - cfg.params 永远全 0（collectParams 主面板输入删除后兜底）。
+//
+// 矩阵化重构 US-003 additions:
+//   - 全 0 拦截：doc 非空 + 所选码有效片数 0（数量全 0）→ onStart 不发 + onStatus 提示
+//   - 线格式回归：矩阵改 A@28=2 → start payload quantities.A['28']===2
+//   - doc=null（fallback SIZES 开发模式）→ computeTotalCutPieces=null 不拦截（Start 正常发）
 
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import { StrictMode } from "react";
@@ -20,7 +25,9 @@ import { createRoot, type Root } from "react-dom/client";
 import { ControlPanel, type ControlPanelStartPayload } from "../ControlPanel";
 import { SIZES } from "../../../constants/sizes";
 import { V03_PTYPES } from "../../../constants/v03";
+import { useQtyStore } from "../../../store/qtyStore";
 import { useUploadStore } from "../../../store/uploadStore";
+import type { ParsedDoc } from "../../../types/parsed";
 import type { SolvePhase } from "../../../types/solvePhase";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -37,6 +44,7 @@ beforeEach(() => {
   // US-017：uploadStore 是模块级单例，ControlPanel 现在 subscribe doc；
   // beforeEach 重置到默认 idle/doc=null 保证各用例隔离。
   useUploadStore.getState().reset();
+  useQtyStore.getState().resetQuantities();
   fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation((_input: unknown) =>
     Promise.resolve(
       new Response(JSON.stringify({ representatives: {} }), {
@@ -58,6 +66,7 @@ afterEach(() => {
   container?.remove();
   container = null;
   useUploadStore.getState().reset();
+  useQtyStore.getState().resetQuantities();
   if (fetchSpy) {
     fetchSpy.mockRestore();
     fetchSpy = null;
@@ -549,5 +558,144 @@ describe("ControlPanel doc-banner (当前文件名展示)", () => {
     // 顺序：banner 在 h2 前（h2 相对 banner 处于 FOLLOWING 位）
     const banner = container!.querySelector(".doc-banner")!;
     expect(h2.compareDocumentPosition(banner)).toBe(Node.DOCUMENT_POSITION_PRECEDING);
+  });
+});
+
+// 矩阵化重构 US-003：handleStart 全 0 拦截 + quantities 线格式回归
+describe("ControlPanel start guard (US-003 全 0 拦截)", () => {
+  /** 构造 2 码母版（28: A；30: A+B），并按 PreviewPage 同口径 hydrate（默认 1）。 */
+  function setupDocWithPieces(): void {
+    const doc: ParsedDoc = {
+      doc_id: "guard-test",
+      filename: "M1787.dxf",
+      sizes: [
+        {
+          size: 28,
+          pieces: [
+            {
+              label: "A",
+              name: "前片",
+              polygon: [],
+              internal_lines: [],
+              notches: [],
+              net_polygon: [],
+              grain_line: null,
+            },
+          ],
+        },
+        {
+          size: 30,
+          pieces: [
+            {
+              label: "A",
+              name: "前片",
+              polygon: [],
+              internal_lines: [],
+              notches: [],
+              net_polygon: [],
+              grain_line: null,
+            },
+            {
+              label: "B",
+              name: "后片",
+              polygon: [],
+              internal_lines: [],
+              notches: [],
+              net_polygon: [],
+              grain_line: null,
+            },
+          ],
+        },
+      ],
+    };
+    useUploadStore.setState({ status: "done", doc, activeSize: 28 });
+    useQtyStore.getState().hydrate(
+      doc.sizes.flatMap((s) => s.pieces.map((p) => ({ label: p.label, size: s.size }))),
+    );
+  }
+
+  it("doc 非空 + 所选码有效片数为 0（数量全 0）→ onStart 不发 + onStatus 提示", () => {
+    const onStart = vi.fn();
+    const onStatus = vi.fn();
+    setupDocWithPieces();
+    // 全部数量归 0（整行填充 0）
+    useQtyStore.getState().setRowAll("A", [28, 30], 0);
+    useQtyStore.getState().setRowAll("B", [30], 0);
+    renderPanel(onStart, { onStatus });
+    // 勾选 28 + 30（doc 动态码号 chip）
+    const checkboxes = container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]");
+    act(() => {
+      for (const c of checkboxes) c.click();
+    });
+    const btn = container!.querySelector<HTMLButtonElement>("#start")!;
+    act(() => btn.click());
+    // 全 0 拦截：不发 WS start（onStart 零调用），状态行提示
+    expect(onStart).not.toHaveBeenCalled();
+    expect(onStatus).toHaveBeenCalledTimes(1);
+    expect(onStatus.mock.calls[0][0]).toContain("有效裁片数为 0");
+  });
+
+  it("仅勾选数量全 0 的码 → 同样拦截（所选码口径，非全表）", () => {
+    const onStart = vi.fn();
+    const onStatus = vi.fn();
+    setupDocWithPieces();
+    // A@28=0 但 A@30=1：仅勾 28 → 该码有效片数 0 → 拦截
+    useQtyStore.getState().setPiecePerSize("A", 28, 0);
+    renderPanel(onStart, { onStatus });
+    const checkboxes = container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]");
+    act(() => checkboxes[0].click()); // 28
+    const btn = container!.querySelector<HTMLButtonElement>("#start")!;
+    act(() => btn.click());
+    expect(onStart).not.toHaveBeenCalled();
+    expect(onStatus).toHaveBeenCalledTimes(1);
+    // 再勾 30（A@30=1 有效）→ 通过拦截正常启动
+    act(() => checkboxes[1].click()); // 30
+    act(() => btn.click());
+    expect(onStart).toHaveBeenCalledTimes(1);
+  });
+
+  it("数量有效（默认 hydrate 1）→ onStart 正常发（回归：不误拦）", () => {
+    const onStart = vi.fn();
+    setupDocWithPieces();
+    renderPanel(onStart);
+    const checkboxes = container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]");
+    act(() => checkboxes[0].click());
+    const btn = container!.querySelector<HTMLButtonElement>("#start")!;
+    act(() => btn.click());
+    expect(onStart).toHaveBeenCalledTimes(1);
+  });
+
+  it("doc=null（fallback SIZES 开发模式）→ computeTotalCutPieces=null 不拦截", () => {
+    const onStart = vi.fn();
+    renderPanel(onStart); // doc=null，未 hydrate
+    const checkboxes = container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]");
+    act(() => {
+      for (const c of checkboxes) c.click();
+    });
+    const btn = container!.querySelector<HTMLButtonElement>("#start")!;
+    act(() => btn.click());
+    expect(onStart).toHaveBeenCalledTimes(1);
+  });
+
+  it("线格式回归：矩阵改 A@28=2 → start payload quantities.A['28']===2", () => {
+    const onStart = vi.fn();
+    setupDocWithPieces();
+    // 模拟矩阵格内编辑：A@28=2（特例），其余保持 hydrate 默认 1
+    useQtyStore.getState().setPiecePerSize("A", 28, 2);
+    renderPanel(onStart);
+    const checkboxes = container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]");
+    act(() => {
+      for (const c of checkboxes) c.click(); // 28 + 30
+    });
+    const btn = container!.querySelector<HTMLButtonElement>("#start")!;
+    act(() => btn.click());
+    expect(onStart).toHaveBeenCalledTimes(1);
+    const cfg = onStart.mock.calls[0][0] as ControlPanelStartPayload;
+    expect(cfg.quantities).not.toBeNull();
+    expect(cfg.quantities!.A["28"]).toBe(2);
+    expect(cfg.quantities!.A["30"]).toBe(1);
+    expect(cfg.quantities!.B["30"]).toBe(1);
+    // 未勾选码过滤：B 仅 30 码存在，无 28 键
+    expect("28" in cfg.quantities!.B).toBe(false);
   });
 });

@@ -1,7 +1,7 @@
 // US-013 PieceZoomModal integration tests (>=9 cases):
 //   AC: zoom=null does not render DOM (no portal content)
 //   AC: zoom!==null + doc renders overlay + modal
-//   AC: head contains label badge + qty(片) + sizeLabel + name
+//   AC: head contains label badge + qty(份) + sizeLabel + name
 //   AC: body contains PiecePreviewSVG (svg.piece-preview-svg)
 //   AC: close button click calls closeZoom
 //   AC: overlay click closes; modal inner click does NOT close (stopPropagation)
@@ -110,7 +110,7 @@ describe("PieceZoomModal (US-013)", () => {
     expect(modal!.getAttribute("aria-label")).toContain("30");
   });
 
-  it("head contains label badge + qty(片) + sizeLabel + name", () => {
+  it("head contains label badge + qty(份) + sizeLabel + name", () => {
     useUploadStore.setState({ doc: sampleDoc });
     useUploadStore.getState().openZoom("B", 30);
     renderModal();
@@ -119,7 +119,7 @@ describe("PieceZoomModal (US-013)", () => {
     const badge = head!.querySelector(".piece-card-label");
     expect(badge!.textContent).toBe("B");
     const qty = head!.querySelector(".piece-zoom-qty");
-    expect(qty!.textContent).toBe("0片");
+    expect(qty!.textContent).toBe("0份");
     const meta = head!.querySelector(".piece-zoom-meta");
     expect(meta!.textContent).toContain("30");
     const name = head!.querySelector(".piece-zoom-name");
@@ -132,7 +132,7 @@ describe("PieceZoomModal (US-013)", () => {
     useUploadStore.getState().openZoom("A", 28);
     renderModal();
     const qty = document.body.querySelector(".piece-zoom-qty");
-    expect(qty!.textContent).toBe("7片");
+    expect(qty!.textContent).toBe("7份");
   });
 
   it("sizeLabel shows tong-yong (universal) for null size", () => {

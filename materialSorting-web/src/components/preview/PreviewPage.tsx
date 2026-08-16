@@ -1,11 +1,12 @@
 // PreviewPage —— DXF 上传预览页容器（US-008 落地；US-014 集成模态 + 重传清零；
-// US-016 联动 uiStore.nestingEnabled 解锁/锁定超排 Tab）。
+// US-016 联动 uiStore.nestingEnabled 解锁/锁定超排 Tab；矩阵化重构 US-003 集成 QtyMatrix）。
 //
 // 职责：
-//   1. 左侧 UploadPanel（US-006）+ 右侧（SizeTabs + ParsedPiecesView）的双栏布局。
+//   1. 左侧 UploadPanel（US-006）+ 右侧（QtyMatrix + ParsedPiecesView）的双栏布局。
 //   2. 从 uploadStore 读 status + doc：未上传时右侧显示整体空态提示（与 US-001 占位文案一致风格），
-//      已解析时挂载 SizeTabs + ParsedPiecesView。
-//   3. 顶层挂 <PieceQtyDialog/> + <PieceZoomModal/> 单例（订阅 store 自显隐；US-014 集成）。
+//      已解析时挂载 QtyMatrix（数量矩阵）+ ParsedPiecesView（按码图形预览，码切换由矩阵列头驱动）。
+//   3. 顶层挂 <PieceZoomModal/> 单例（订阅 store 自显隐；US-014 集成；数量编辑弹窗
+//      PieceQtyDialog 已随矩阵化重构 US-003 拆除 —— 数量在 QtyMatrix 格内直接编辑）。
 //   4. uploadStore.doc.doc_id 变化（首次上传 / 重传 / reset）→ 联动 qtyStore：
 //      有 doc 时 hydrate（每码每片默认 1），doc→null 时 resetQuantities。
 //      （US-014 重传清零的演进：旧母版数量不残留，新母版每片默认 1。）
@@ -43,15 +44,15 @@
 //     PreviewPage 作为集成层用 subscribe 绑定。
 //
 // 空态分支：
-//   - status === 'done' 且 doc 非空 → 挂载 SizeTabs + ParsedPiecesView
+//   - status === 'done' 且 doc 非空 → 挂载 QtyMatrix + ParsedPiecesView
 //   - 其它（idle / uploading / error / done 但 doc=null 兜底）→ 显示空态提示卡片
 //   - 上传中时 UploadPanel 自身会显示加载态，右侧空态保持「等待解析」提示一致体验。
 //
-// 模态挂载（US-014）：
-//   - <PieceQtyDialog/> + <PieceZoomModal/> 在 .preview-page 顶层（与 UploadPanel / .preview-main
-//     同级）。两者均 createPortal(..., document.body)，DOM 位置与 React 树位置无关，故结构上
-//     放在 PreviewPage 顶层最直观（与 SizeTabs / ParsedPiecesView 同级语义）。
-//   - 默认 qtyDialog=null / zoom=null → 模态 return null（不挂 DOM）；store 写入目标时自显隐。
+// 模态挂载（US-014；US-003 拆除数量弹窗后仅剩放大预览）：
+//   - <PieceZoomModal/> 在 .preview-page 顶层（与 UploadPanel / .preview-main 同级）。
+//     createPortal(..., document.body)，DOM 位置与 React 树位置无关，故结构上放在
+//     PreviewPage 顶层最直观（与 QtyMatrix / ParsedPiecesView 同级语义）。
+//   - 默认 zoom=null → 模态 return null（不挂 DOM）；store 写入目标时自显隐。
 
 import { useEffect } from 'react';
 import type { JSX } from 'react';
@@ -60,9 +61,8 @@ import { useQtyStore } from '../../store/qtyStore';
 import { useUiStore } from '../../store/uiStore';
 import type { ParsedDoc } from '../../types/parsed';
 import { ParsedPiecesView } from './ParsedPiecesView';
-import { PieceQtyDialog } from './PieceQtyDialog';
 import { PieceZoomModal } from './PieceZoomModal';
-import { SizeTabs } from './SizeTabs';
+import { QtyMatrix } from './QtyMatrix';
 import { UploadPanel } from './UploadPanel';
 
 export function PreviewPage(): JSX.Element {
@@ -133,7 +133,7 @@ export function PreviewPage(): JSX.Element {
     return unsub;
   }, []);
 
-  // 已解析且 doc 非空 → 挂载右侧主体（SizeTabs + ParsedPiecesView）。
+  // 已解析且 doc 非空 → 挂载右侧主体（QtyMatrix + ParsedPiecesView）。
   // 双重条件防御：done 状态理论必有 doc，但 TS 类型上 doc 是 nullable。
   const hasParsed = status === 'done' && doc !== null;
 
@@ -144,7 +144,7 @@ export function PreviewPage(): JSX.Element {
       <section className="preview-main">
         {hasParsed ? (
           <>
-            <SizeTabs />
+            <QtyMatrix />
             <ParsedPiecesView />
           </>
         ) : (
@@ -152,8 +152,8 @@ export function PreviewPage(): JSX.Element {
             <div className="preview-empty-card">
               <h2>DXF 上传预览</h2>
               <p>
-                点击或拖拽母版 DXF 到左侧上传区，解析后按尺码切换查看每码全部裁片
-                （毛版 / 净版 / 内部线 / 刀口 / 布纹线 + A/B/C 标注）。
+                点击或拖拽母版 DXF 到左侧上传区，解析后在数量矩阵中编辑每码裁片数量
+                （毛版 / 净版 / 内部线 / 刀口 / 布纹线 + A/B/C 标注），点击矩阵列头切换图形预览码。
               </p>
               <p className="dim">切到排料 Tab 再切回，本页状态（已选码 / 解析结果）全部保留。</p>
             </div>
@@ -162,7 +162,6 @@ export function PreviewPage(): JSX.Element {
       </section>
 
       {/* 模态单例：订阅 store 自显隐；Portal 到 document.body，与 .preview-page 结构无关 */}
-      <PieceQtyDialog />
       <PieceZoomModal />
     </div>
   );

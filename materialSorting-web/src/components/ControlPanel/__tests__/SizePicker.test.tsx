@@ -1,7 +1,7 @@
 // US-017 SizePicker 单测：
 //   AC#1 doc=null → fallback constants/sizes.ts:SIZES 渲染全量 chip
 //   AC#1 doc 有 11 码（含 null 通用码）→ 渲染全 11 chip
-//   AC#3 null 码 chip 显示「通用」（与 SizeTabs NULL_SIZE_LABEL 同语义）
+//   AC#3 null 码 chip 显示「通用」（与 QtyMatrix 列头「通用」同语义）
 //   AC#1 切 doc（null → 非空）→ 自动重渲染（订阅 uploadStore.doc）
 //   补充：chip 勾选 → onChange 收到对应值；null chip 勾选 → onChange 收到 null
 //   补充：key/id 用 sizeKey（number → String(n)，null → 'null'）—— 无 key 冲突
@@ -138,7 +138,7 @@ describe("SizePicker (US-017)", () => {
     expect(keys).toEqual(["28", "29", "30", "31", "32", "33", "34", "35", "36", "38", "null"]);
   });
 
-  it('AC#3 null 码 chip 显示「通用」（与 SizeTabs NULL_SIZE_LABEL 同语义）', () => {
+  it('AC#3 null 码 chip 显示「通用」（与 QtyMatrix 列头「通用」同语义）', () => {
     useUploadStore.setState({ status: "done", doc: makeDoc11() });
     renderPicker();
     const labels = getLabels();

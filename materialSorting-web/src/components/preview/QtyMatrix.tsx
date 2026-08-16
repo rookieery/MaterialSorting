@@ -5,8 +5,8 @@
 //      后续码新增 label 追加在尾部）；行头 = [A 徽章] + 裁片名 + 缩略图（PiecePreviewSVG
 //      compact）+ 悬浮「填充」按钮。
 //   2. 列 = doc.sizes 全码（null 码殿后显示「通用」，无 null 码不渲染该列）+ 行合计列；
-//      列头是 button，点击 setSize(该码) 驱动下方图形预览区（替代 SizeTabs 的浏览职责，
-//      集成在 US-003），当前 activeSize 列头高亮。
+//      列头是 button，点击 setSize(该码) 驱动下方图形预览区（尺码浏览职责原属 SizeTabs，
+//      US-003 起由本组件列头承担），当前 activeSize 列头高亮。
 //   3. 格子 = 内联 number input：点击直接键入、Enter/Tab 提交并移到下一格、blur 提交；
 //      值一律过 clampQty（[0,99] 整数）写 setPiecePerSize。数量 0 格子显著暗色样式
 //      （语义 = 该码不排此片，title 说明）；某码缺该 label 的格子渲染 disabled「—」
@@ -44,7 +44,7 @@ import { useUploadStore } from '../../store/uploadStore';
 import { clampQty, getPieceDisplay, useQtyStore } from '../../store/qtyStore';
 import type { ParsedPiece } from '../../types/parsed';
 
-/** null 码（通用）的人读文案；与 SizeTabs NULL_SIZE_LABEL 同语义。 */
+/** null 码（通用）的人读文案；与 SizePicker/PreviewPage「通用」同语义。 */
 function sizeLabel(size: number | null): string {
   return size === null ? '通用' : String(size);
 }

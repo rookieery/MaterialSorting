@@ -7,7 +7,7 @@
 // 两层模态可同时存在（previewPtype 叠在 modal 之上，z-index 更高）；
 // 关闭 previewPtype 时 modal 草稿保留（关自身不关底层）。
 //
-// 与 uiStore.nestingEnabled / uploadStore.qtyDialog 同设计：声明式受控 Portal
+// 与 uiStore.nestingEnabled / uploadStore.zoom 同设计：声明式受控 Portal
 // 订阅本 store 自显隐；PerTypeOverrides 按钮 / PerTypeOverridesModal 表头缩略图 /
 // PtypePreviewModal ✕ / 遮罩 / ESC 是统一入口，调用本 store action。
 //

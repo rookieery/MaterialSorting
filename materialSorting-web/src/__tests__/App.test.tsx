@@ -143,7 +143,7 @@ describe('App Tab 集成（US-001）', () => {
 
   it('切到 preview：nesting 加 .hidden（DOM 不卸载，ControlPanel 仍在），preview 取消 .hidden', () => {
     // 此测试验证「已上传」状态下切 preview 后 DOM 不卸载（ControlPanel 仍在）；
-    // beforeEach 设的 done+doc 让 PreviewPage 渲染 SizeTabs+ParsedPiecesView（非 .preview-empty）。
+    // beforeEach 设的 done+doc 让 PreviewPage 渲染 QtyMatrix+ParsedPiecesView（非 .preview-empty）。
     const el = renderApp();
     act(() => {
       useUiStore.getState().setTab('preview');
@@ -154,7 +154,7 @@ describe('App Tab 集成（US-001）', () => {
     // 关键：ControlPanel 仍在 DOM（AC#4 不卸载，求解状态保真）
     expect(pages[0].querySelector('#start')).not.toBeNull();
     expect(pages[0].querySelector('main.main')).not.toBeNull();
-    // preview page 顶层容器可见（US-016 联动后已上传→显示 SizeTabs+ParsedPiecesView，
+    // preview page 顶层容器可见（US-016 联动后已上传→显示 QtyMatrix+ParsedPiecesView，
     // 不再是 .preview-empty；此处断言 .preview-page 容器存在即可证明 preview 页正常渲染）
     expect(pages[1].querySelector('.preview-page')).not.toBeNull();
   });

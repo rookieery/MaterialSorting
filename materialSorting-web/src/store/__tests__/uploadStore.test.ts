@@ -1,12 +1,11 @@
 // US-005 uploadStore 单测：
-//   - 默认 status='idle' / doc=null / activeSize=null / error=null / qtyDialog=null / zoom=null
-//   - reset() 清空所有字段（包括从 done 回到 idle，含 qtyDialog / zoom）
+//   - 默认 status='idle' / doc=null / activeSize=null / error=null / zoom=null
+//   - reset() 清空所有字段（包括从 done 回到 idle，含 zoom）
 //   - setSize(n) / setSize(null) 切 activeSize 并触发订阅
 //   - 直接 setState({status, doc, error}) 写入（hook 内部用，UI 不直接调）
-//   - openQtyDialog/closeQtyDialog 切 qtyDialog（US-012 新增）
-//   - reset() 把 qtyDialog 清回 null（US-012 新增）
 //   - openZoom/closeZoom 切 zoom（US-013 新增）
 //   - reset() 把 zoom 清回 null（US-013 新增）
+//   （qtyDialog 已随矩阵化重构 US-003 拆除 —— 数量编辑入口移至 QtyMatrix 格内编辑。）
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import { useUploadStore } from '../uploadStore';
@@ -90,43 +89,6 @@ describe('uploadStore (US-005)', () => {
   });
 });
 
-describe('uploadStore qtyDialog (US-012)', () => {
-  it('默认 qtyDialog=null', () => {
-    expect(useUploadStore.getState().qtyDialog).toBeNull();
-  });
-
-  it('openQtyDialog(label, size) 写入 {label, size}', () => {
-    useUploadStore.getState().openQtyDialog('A', 30);
-    expect(useUploadStore.getState().qtyDialog).toEqual({ label: 'A', size: 30 });
-  });
-
-  it('openQtyDialog(label, null) 写入 size=null（通用码）', () => {
-    useUploadStore.getState().openQtyDialog('B', null);
-    expect(useUploadStore.getState().qtyDialog).toEqual({ label: 'B', size: null });
-  });
-
-  it('closeQtyDialog() 清回 null', () => {
-    useUploadStore.getState().openQtyDialog('A', 30);
-    useUploadStore.getState().closeQtyDialog();
-    expect(useUploadStore.getState().qtyDialog).toBeNull();
-  });
-
-  it('reset() 同时清 qtyDialog=null', () => {
-    useUploadStore.getState().openQtyDialog('A', 30);
-    useUploadStore.getState().reset();
-    expect(useUploadStore.getState().qtyDialog).toBeNull();
-  });
-
-  it('订阅者收到 qtyDialog 变化（open + close）', () => {
-    const seen: ({ label: string; size: number | null } | null)[] = [];
-    const unsub = useUploadStore.subscribe((s) => seen.push(s.qtyDialog));
-    useUploadStore.getState().openQtyDialog('A', 28);
-    useUploadStore.getState().closeQtyDialog();
-    unsub();
-    expect(seen).toEqual([{ label: 'A', size: 28 }, null]);
-  });
-});
-
 describe('uploadStore zoom (US-013)', () => {
   it('默认 zoom=null', () => {
     expect(useUploadStore.getState().zoom).toBeNull();
@@ -161,16 +123,6 @@ describe('uploadStore zoom (US-013)', () => {
     useUploadStore.getState().closeZoom();
     unsub();
     expect(seen).toEqual([{ label: 'A', size: 28 }, null]);
-  });
-
-  it('zoom 与 qtyDialog 字段独立（互不干扰）', () => {
-    useUploadStore.getState().openQtyDialog('A', 30);
-    useUploadStore.getState().openZoom('B', 32);
-    expect(useUploadStore.getState().qtyDialog).toEqual({ label: 'A', size: 30 });
-    expect(useUploadStore.getState().zoom).toEqual({ label: 'B', size: 32 });
-    useUploadStore.getState().closeZoom();
-    expect(useUploadStore.getState().qtyDialog).toEqual({ label: 'A', size: 30 });
-    expect(useUploadStore.getState().zoom).toBeNull();
   });
 });
 

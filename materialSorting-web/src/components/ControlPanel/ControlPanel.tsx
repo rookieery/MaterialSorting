@@ -20,6 +20,10 @@
 //   ExportButtons 收 phase==='running' 禁用 + partial flag（stopped/error 有帧时标注中间方案提示）。
 //   所有非 running 态「开始求解」统一走本组件 handleStart（读当前 form）—— 无参数快照重放路径
 //   （曾有的 onRestart/lastStartCfgRef 双路径会冻结首次参数，已删除）。
+// 矩阵化重构 US-003：handleStart 增「全 0 拦截」—— 复用 SizePicker.computeTotalCutPieces 判
+//   所选码有效片数为 0（数量全 0）时不启动求解并 onStatus 提示（现状会把空 items 实例交给
+//   spyrrow，密度分母 0 风险）；doc=null（后端开发模式 fallback SIZES）时 computeTotalCutPieces
+//   返回 null，不拦截。
 
 import { useState } from 'react';
 import { useExport } from '../../hooks/useExport';
@@ -30,7 +34,7 @@ import { ExportButtons } from './ExportButtons';
 import { MultiSeedControls } from './MultiSeedControls';
 import { ParamForm } from './ParamForm';
 import { PerTypeOverrides } from './PerTypeOverrides';
-import { SizePicker } from './SizePicker';
+import { SizePicker, computeTotalCutPieces } from './SizePicker';
 import { SolveControls } from './SolveControls';
 import { StatusLine } from './StatusLine';
 import {
@@ -108,6 +112,17 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop }: Contr
     const sizesNum: number[] = form.sizes.filter(
       (s: number | null): s is number => s !== null,
     );
+    // 矩阵化重构 US-003 全 0 拦截：所选码有效片数 = Σ demand（doc=null 开发模式 fallback
+    // 返回 null 不拦截）；为 0（数量全 0）时不发 WS start，状态行提示去预览页改数量。
+    const totalCut = computeTotalCutPieces(
+      doc,
+      form.sizes,
+      useQtyStore.getState().quantities,
+    );
+    if (totalCut === 0) {
+      onStatus('所选码号有效裁片数为 0，请先在上传预览页数量矩阵中设置数量');
+      return;
+    }
     // US-022：从 qtyStore.quantities 序列化扁平化为 label→sizeKey→demand。
     //   - getState() 读快照（不订阅，避免 ControlPanel 因数量编辑频繁重渲染）。
     //   - sizesNum 已过滤 null；perSize 按此列表过滤未勾选码。

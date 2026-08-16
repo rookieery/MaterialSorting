@@ -4,7 +4,7 @@
 //   - chip 列表来自 `useUploadStore(s=>s.doc)`：doc 非空 → `doc.sizes.map(s=>s.size)`
 //     （后端已按 _size_sort_key 排序，前端不二次排序）；doc=null → fallback
 //     `constants/sizes.ts:SIZES`（保后端开发模式下排料页可用）。
-//   - null 码 chip 文案显示「通用」（与 SizeTabs NULL_SIZE_LABEL 同语义）。
+//   - null 码 chip 文案显示「通用」（与 QtyMatrix 列头「通用」同语义）。
 //   - selected 类型扩为 `(number | null)[]`（doc 可能含 null 通用码）。
 //
 // 总裁片数量（chip 下方实时展示）：总实际裁剪数 = Σ 所选码号每片有效 demand。
@@ -24,7 +24,7 @@ import { useUploadStore } from '../../store/uploadStore';
 import type { ParsedDoc } from '../../types/parsed';
 import type { PieceQuantityMap } from '../../types/qty';
 
-/** null 码（母版中代表「通用/不分码」）的人读文案（与 SizeTabs NULL_SIZE_LABEL 同语义）。 */
+/** null 码（母版中代表「通用/不分码」）的人读文案（与 QtyMatrix 列头「通用」同语义）。 */
 const NULL_SIZE_LABEL = '通用';
 
 /** chip 的稳定 key（null → 'null'，number → String(n)）；用于 React key / DOM id。 */

@@ -6,7 +6,7 @@
 // 与 PieceZoomModal（US-013）同模式：
 //   - 声明式受控 Portal：订阅 controlPanelStore.previewPtype + 本地 representatives；
 //     previewPtype=null 时不渲染。
-//   - Portal 到 document.body（与 PieceQtyDialog/PieceZoomModal/PerTypeOverridesModal 同目标）。
+//   - Portal 到 document.body（与 PieceZoomModal/PerTypeOverridesModal 同目标）。
 //   - 关闭交互三方式（AC#10）：✕ / 遮罩 mousedown / ESC（独立于 PerTypeOverridesModal）。
 //
 // 数据源（D10/D11）：本模态自身 fetch /api/ptypes（与 PerTypeOverridesModal 各自独立缓存，

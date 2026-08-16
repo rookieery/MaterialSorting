@@ -1,25 +1,25 @@
-// ParsedPiecesView —— 当前 activeSize 下全部裁片的 grid 视图（US-008；US-014 改造卡片头）。
+// ParsedPiecesView —— 当前 activeSize 下全部裁片的 grid 视图（US-008；US-014 卡片头；
+// 矩阵化重构 US-003 降级为「按码图形预览」区）。
 //
 // 职责：
 //   1. 从 uploadStore 读 doc + activeSize，过滤出当前码的全部 pieces。
-//   2. 渲染响应式 grid（每片一张卡片：PiecePreviewSVG + A/B/C 徽章 + 数量(片)）。
-//   3. 卡片图形区点击 → 放大预览（US-013 PieceZoomModal）；数量(片) 点击 → 数量弹窗
-//      （US-012 PieceQtyDialog）。两个交互入口严格区分（详见点击区域分离约定）。
-//   4. 空态：当前码无 pieces（极少见，但兜底：后端返回某码 pieces=[]）→ 显示「该码无裁片」。
+//   2. 区标题「图形预览 · 码 X」标明当前码（X = activeSize 码号 / 「通用」）；码切换由
+//      QtyMatrix 列头点击驱动（tab 切换职责已移交矩阵列头，SizeTabs 已随 US-003 拆除）。
+//   3. 渲染响应式 grid（每片一张卡片：PiecePreviewSVG + A/B/C 徽章 + 只读数量）。
+//      卡片头数量是**只读** span（数量编辑统一走 QtyMatrix 格内编辑 / 整行填充），
+//      单位「份」：配对片 1 份 = L+R 2 物理片（与后端 demand 语义一致，US-004 起矩阵
+//      行头以配对徽章说明实际片数）。
+//   4. 点卡片图形区 → 放大预览（US-013 PieceZoomModal，role=button/tabIndex/
+//      Enter/Space a11y 保留）。
+//   5. 空态：activeSize 不在 doc.sizes（防御兜底）或当前码 pieces=[] → 「该码无裁片」。
 //
-// 卡片头（US-014；后去掉序号前缀，直接显示「数量+片」单位，文案 = {qty}片）：
-//   - [.piece-card-label] + [.piece-card-qty]（label 徽章 + 数量按钮/标签）
-//   - 数量 + 可编辑性 从 qtyStore getPieceDisplay(quantities, label, activeSize) 读：
-//     * editable=true  → <button class="piece-card-qty" onClick=openQtyDialog>{qty}片</button>
-//     * editable=false → <span class="piece-card-qty disabled" title="该尺码未配置此裁片数量">
-//       {qty}片</span>（该码无此裁片时置灰；当前码 pieces 均有 hydrate 记录，理论不触发）
-//
-// 点击区域分离（US-014 关键约定）：
-//   - .piece-card-qty（button）onClick → openQtyDialog + e.stopPropagation（防冒泡）
-//     虽然 .piece-card-qty 在 .piece-card-head 内（与 .piece-card-body 平级，bubbling 不会
-//     跨兄弟节点），但 stopPropagation 是双重防御 —— 防未来结构重组（如把 qty 移到 body 内）。
-//   - .piece-card-body（SVG 包裹层）onClick → openZoom；role=button + tabIndex + Enter/Space
-//     支持键盘触发（a11y，与 UploadPanel drop-zone 同模式）。
+// 卡片头（US-003 矩阵化重构：数量改只读）：
+//   - [.piece-card-label] + [.piece-card-qty]（label 徽章 + 只读数量 span「N 份」）
+//   - 数量从 qtyStore getPieceDisplay(quantities, label, activeSize) 读：
+//     * 正常 → <span class="piece-card-qty">{qty}份</span>（数量编辑入口在 QtyMatrix）
+//     * 该码无此裁片（editable=false）→ <span class="piece-card-qty disabled"
+//       title="该尺码未配置此裁片数量">{qty}份</span>（当前码 pieces 均有 hydrate
+//       记录，理论不触发；保留作防御）
 //
 // 设计原则（CLAUDE.md / AGENTS.md US-007/US-011 关键约定）：
 //   - 单片卡片用 PiecePreviewSVG 的 **单片模式**（多片能力留作未来扩展，US-007 AC#4）。
@@ -29,7 +29,7 @@
 //     单卡被压扁（每片 polygon 形状不规则，最小宽度需要保证 SVG 不退化成窄条）。
 //   - key 用 `${label}-${name}`：label 在码内唯一（A/B/C/...），name 也唯一；两者拼合跨码安全。
 //   - 数量 map 以 label 为 key 跨码匹配同一片型，不直接读 quantities[label]，统一走
-//     getPieceDisplay selector（与 PieceQtyDialog/PieceZoomModal 同口径）。
+//     getPieceDisplay selector（与 QtyMatrix / PieceZoomModal 同口径）。
 //
 // 性能注意：
 //   - 每片卡片各挂一个 PiecePreviewSVG（独立 useEffect 建 flipGroup）。M1787 每码 ~10 片 ×
@@ -45,18 +45,25 @@ import { useUploadStore } from '../../store/uploadStore';
 import { getPieceDisplay, useQtyStore } from '../../store/qtyStore';
 import type { ParsedPiece } from '../../types/parsed';
 
+/** null 码（母版中代表「通用/不分码」）的人读文案；与 QtyMatrix 列头同语义。 */
+const NULL_SIZE_LABEL = '通用';
+
+/** 码号人读文案（null →「通用」，number → String(n)）。 */
+function sizeLabel(size: number | null): string {
+  return size === null ? NULL_SIZE_LABEL : String(size);
+}
+
 export function ParsedPiecesView(): JSX.Element {
   const doc = useUploadStore((s) => s.doc);
   const activeSize = useUploadStore((s) => s.activeSize);
-  const openQtyDialog = useUploadStore((s) => s.openQtyDialog);
   const openZoom = useUploadStore((s) => s.openZoom);
   const quantities = useQtyStore((s) => s.quantities);
 
   // doc=null 时 PreviewPage 走整体空态分支（双重防御）。
   if (!doc) return <></>;
 
-  // 找当前 activeSize 对应的 ParsedSize；理论一定存在（SizeTabs 只能切到 doc.sizes 里的码），
-  // 防御性兜底：找不到时显示空态。
+  // 找当前 activeSize 对应的 ParsedSize；理论一定存在（QtyMatrix 列头只能切到 doc.sizes
+  // 里的码），防御性兜底：找不到时显示空态。
   const matched = doc.sizes.find((s) => s.size === activeSize);
   const pieces: ParsedPiece[] = matched ? matched.pieces : [];
 
@@ -70,6 +77,9 @@ export function ParsedPiecesView(): JSX.Element {
 
   return (
     <div className="parsed-pieces-view">
+      <div className="parsed-pieces-title" data-testid="parsed-pieces-title">
+        图形预览 · 码 {sizeLabel(activeSize)}
+      </div>
       {pieces.length === 0 ? (
         <div className="parsed-pieces-empty">该尺码无裁片</div>
       ) : (
@@ -80,26 +90,15 @@ export function ParsedPiecesView(): JSX.Element {
               <div key={`${p.label}-${p.name}`} className="piece-card">
                 <div className="piece-card-head" data-tour="piece-card-head">
                   <span className="piece-card-label">{p.label}</span>
-                  {display.editable ? (
-                    <button
-                      type="button"
-                      className="piece-card-qty"
-                      // stopPropagation 双重防御：即使未来 qty 移到 body 内也不会触发 zoom
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        openQtyDialog(p.label, activeSize);
-                      }}
-                    >
-                      {display.qty}片
-                    </button>
-                  ) : (
-                    <span
-                      className="piece-card-qty disabled"
-                      title="该尺码未配置此裁片数量"
-                    >
-                      {display.qty}片
-                    </span>
-                  )}
+                  {/* 只读数量（单位「份」：配对片 1 份 = L+R 2 物理片）；编辑入口在 QtyMatrix */}
+                  <span
+                    className={
+                      'piece-card-qty' + (display.editable ? '' : ' disabled')
+                    }
+                    title={display.editable ? undefined : '该尺码未配置此裁片数量'}
+                  >
+                    {display.qty}份
+                  </span>
                 </div>
                 <div
                   className="piece-card-body"
