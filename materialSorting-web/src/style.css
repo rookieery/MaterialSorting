@@ -921,11 +921,15 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
 }
 
 /* ---- 矩阵化重构 US-002 QtyMatrix（裁片 × 尺码数量矩阵；暗底 #26282e + #2ea06c 同色系） ---- */
-/* 工具条：总片数 + 全 0 警示 + 重置按钮（低频兜底操作，右对齐） */
+/* 工具条：总片数 + 全 0 警示（整表「重置为默认 1」按钮已拆，行级批量走行头「整行设值」icon） */
 .qty-matrix {
   display: flex;
   flex-direction: column;
-  flex-shrink: 0;
+  /* 填满 .preview-main 剩余高度（app 是 100vh flex 壳，矩阵可用高度 = 视口 − Tab 头等，
+     比旧的 max-height:65vh 视口百分比的任意截断大且精确）；min-height:0 允许内部
+     滚动区收缩，.preview-main 不再被撑出第二根外层滚动条 */
+  flex: 1;
+  min-height: 0;
   background: #26282e;
   border-bottom: 1px solid #34363d;
 }
@@ -944,25 +948,14 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
 }
 /* 全 0 红色警示（与 .upload-status.error 红字 #ff8888 同色系） */
 .qty-zero-warn { font-size: 12px; font-weight: 600; color: #ff8888; }
-.qty-reset-btn {
-  margin-left: auto;
-  padding: 4px 12px;
-  font-size: 12px;
-  font-family: inherit;
-  color: #cdd;
-  background: #34363d;
-  border: 1px solid #45484f;
-  border-radius: 4px;
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s;
-}
-.qty-reset-btn:hover { background: #3f424a; color: #e6e6e6; }
-.qty-reset-btn:focus-visible { outline: 2px solid #2ea06c; outline-offset: 1px; }
 
-/* 矩阵滚动区：max-height 65vh 内部滚动（原 45vh 为旧图形预览区留位，该区拆除后放宽，
-   行高随 64×64 缩略图加大）；窄屏（≤1366）横向滚动由表格 min-width 自然触发 */
+/* 矩阵滚动区：flex:1 填满 .qty-matrix 剩余高度（工具条之下），只在真实可用高度不够时
+   纵向滚动 —— 旧的 max-height:65vh 是图形预览区时代的任意截断（内容 > 65vh 而页面仍有
+   剩余高度时会出现「假滚动条+页底空白」，80×80 缩略图加高行后必然触发，已拆除）；
+   窄屏（≤1366）横向滚动由表格 min-width floor（QtyMatrix inline 注入）超出容器自然触发 */
 .qty-matrix-scroll {
-  max-height: 65vh;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow: auto;
   border-top: 1px solid #34363d;
 }
@@ -971,6 +964,10 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
   border-spacing: 0;
   font-size: 12px;
   min-width: 100%;
+  /* fixed 布局：列宽只由首行 th 的 width 决定 —— 行头 148 / 合计 56 钉死不被撑宽，
+     尺码列 width:auto 均分全部富余（auto 布局下 min-width:100% 撑满面板时行头按首选
+     宽度比例吃进最多空白；全列指定 width 时 Chrome 按比例分富余同样撑宽行头） */
+  table-layout: fixed;
 }
 
 /* sticky 表头（thead th 顶层 z=3；左上/左下角 z=5 压过行头 z=2） */
@@ -990,10 +987,15 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
   z-index: 5 !important;
   text-align: left;
   padding: 4px 8px !important;
-  min-width: 132px;
+  width: 148px; /* 与 .qty-rowhead 同宽（首列 sticky 对齐）；fixed 布局下首行 width 钉死列宽 */
 }
-.qty-colhead { min-width: 64px; }
-.qty-total-col { min-width: 56px; }
+/* 尺码列不设 width（fixed 布局 auto 列**均分**剩余水平空间，规范行为跨浏览器一致）：
+   富余宽度全部平分给尺码列。若给全部列指定 width，表格被 min-width 撑宽后的富余分配
+   规范未定义（Chrome 按指定宽比例分 → 行头 148/716≈21% 份额吃进 ~250px，裁片列又变
+   ~390px 宽，即「空白不平分」的根因）。尺码列 64px 下限不在此处设 —— fixed 布局下
+   auto 列可缩到 0，下限由 QtyMatrix 在表格 inline min-width floor 保证（窄屏触发横向滚动） */
+.qty-colhead { width: auto; }
+.qty-total-col { width: 56px; }
 
 /* 列头码按钮：点击 setSize 切 activeSize（行头缩略图优先显示该码版本的裁片），
    当前码绿色高亮（US-003 起取代旧 .size-chip） */
@@ -1018,17 +1020,19 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
 }
 .qty-size-btn:focus-visible { outline: 2px solid #2ea06c; outline-offset: 1px; }
 
-/* sticky 首列（行头，2026-08 简化）：序号徽章 + 大缩略图（名称 / ×2 徽章 / 填充按钮已拆，
-   裁片名走缩略图 title 悬浮与放大模态） */
+/* sticky 首列（行头，2026-08 简化）：序号徽章 + 大缩略图（名称 / ×2 徽章已拆，裁片名走
+   缩略图 title 悬浮与放大模态）+「≡」整行设值 icon（.qty-rowfill-btn）；
+   宽度 148px 定值（fixed 布局由首行 .qty-corner width 钉死，此处保持一致）：
+   padding 6×2 + 徽章 18 + 缩略图 80 + icon 24 + gap 6×2 = 146，2px 富余 */
 .qty-rowhead {
   position: sticky;
   left: 0;
   z-index: 2;
   display: flex;
   align-items: center;
-  gap: 8px;
-  min-width: 132px;
-  padding: 6px 10px;
+  gap: 6px;
+  width: 148px;
+  padding: 6px;
   text-align: left;
   background: #23252b;
   border-right: 1px solid #34363d;
@@ -1050,12 +1054,13 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
   font-size: 11px;
   font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
 }
-/* 缩略图：PiecePreviewSVG compact 64×64（对齐高级配置弹窗 .ptype-thumb 观感），
-   点击 openZoom 放大预览；行高随之加大 */
+/* 缩略图：PiecePreviewSVG compact 80×80（2026-08 自 64 放大，细长裁片 5 层线条更可辨；
+   高级配置弹窗 .ptype-thumb 仍 64，两者观感不再对齐），点击 openZoom 放大预览；
+   行高随之加大 */
 .qty-thumb {
   flex-shrink: 0;
-  width: 64px;
-  height: 64px;
+  width: 80px;
+  height: 80px;
   padding: 2px;
   display: flex;
   align-items: center;
@@ -1070,8 +1075,105 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
 .qty-thumb:focus-visible { outline: 2px solid #2ea06c; outline-offset: 1px; }
 .qty-thumb svg { width: 100%; height: 100%; display: block; }
 
+/* 「≡」整行设值 icon：缩略图右侧常驻小按钮（title 悬浮提示「整行设值」，点击开
+   居中弹层；原悬浮角标方案已换 —— 常驻更可发现，也不再压住缩略图图形） */
+.qty-rowfill-btn {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  font-size: 14px;
+  line-height: 1;
+  color: #9aa0aa;
+  background: #34363d;
+  border: 1px solid #45484f;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.qty-rowfill-btn:hover { color: #e6e6e6; border-color: #2ea06c; background: #3f424a; }
+.qty-rowfill-btn:focus-visible { outline: 2px solid #2ea06c; outline-offset: 1px; }
+
+/* 整行设值弹层：portal 到 body + fixed 定位于矩阵容器可视区中心（inline left/top =
+   开层时算好的中心点，translate(-50%,-50%) 自身居中）。原 absolute 锚 sticky 行头的
+   方案有两硬伤：① 行头 z-index:2 层叠上下文内的弹层会被后续行 sticky 行头（同 z、
+   DOM 靠后）盖住；② 超出 .qty-matrix-scroll（overflow:auto）边界被裁剪/撑出滚动条。
+   z-index 对齐全局模态层（zoom/qty 1000 / overrides 1100 / ptype 1200 / tour 2000） */
+.qty-popover-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+}
+.qty-fill-popover {
+  position: fixed;
+  transform: translate(-50%, -50%);
+  z-index: 1010;
+  width: 200px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: #26282e;
+  border: 1px solid #45484f;
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+}
+.qty-fill-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #e6e6e6;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #34363d;
+}
+.qty-fill-row { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #cdd; }
+.qty-fill-input {
+  width: 64px;
+  height: 28px;
+  text-align: center;
+  background: #1c1d22;
+  color: #e6e6e6;
+  border: 1px solid #3a3d45;
+  border-radius: 4px;
+  font-size: 13px;
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  -moz-appearance: textfield;
+}
+.qty-fill-input::-webkit-outer-spin-button,
+.qty-fill-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.qty-fill-input:focus { outline: none; border-color: #2ea06c; }
+/* 特例兼容提示：整行统一值 vs 个别码例外（单格改）的使用说明 */
+.qty-fill-hint {
+  font-size: 11px;
+  line-height: 1.5;
+  color: #9aa0aa;
+}
+.qty-fill-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.qty-fill-cancel,
+.qty-fill-apply {
+  padding: 4px 12px;
+  font-size: 12px;
+  font-family: inherit;
+  border-radius: 4px;
+  cursor: pointer;
+  border: 1px solid #45484f;
+  background: #34363d;
+  color: #cdd;
+  transition: background 0.15s, color 0.15s;
+}
+.qty-fill-cancel:hover { background: #3f424a; color: #e6e6e6; }
+.qty-fill-apply {
+  background: #2ea06c;
+  color: #fff;
+  border-color: #2ea06c;
+  font-weight: 600;
+}
+.qty-fill-apply:hover { background: #36b47a; border-color: #36b47a; }
+
 /* 数据格：内联 number input；行分隔线自绘（border-separate 模式）。
-   行高随 64×64 缩略图加大 → td 垂直居中（默认 baseline 会让格子贴行底） */
+   行高随 80×80 缩略图加大 → td 垂直居中（默认 baseline 会让格子贴行底） */
 .qty-matrix-table td { vertical-align: middle; }
 .qty-cell {
   border-bottom: 1px solid #2f3138;

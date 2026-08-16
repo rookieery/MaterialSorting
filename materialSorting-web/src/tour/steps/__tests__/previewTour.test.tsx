@@ -2,8 +2,8 @@
 //   1. 5 步 id 序列稳定（upload/parsed/set-qty/committed/goto-nesting）+ tabId
 //   2. parsed/set-qty 锚点迁矩阵（qty-matrix / qty-rowhead），无旧 size-tabs/piece-card-head 残留
 //   3. TOUR_VERSION bump（步骤内容重大变更 → 老用户 seen 被 tourStore init 清空重看）
-//   4. parsed/set-qty 文案描述矩阵操作（列头切码 / 格内编辑 / 特例高亮 / 配对 ×2 口径；
-//      行头填充与 ×2 徽章已随 2026-08 行头简化拆除，文案不再指引）
+//   4. parsed/set-qty 文案描述矩阵操作（列头切码 / 格内编辑 / 整行设值 / 特例高亮 /
+//      配对 ×2 口径；×2 徽章已随 2026-08 行头简化拆除，文案不再指引）
 //   5. 锚点在已渲染的 QtyMatrix 上 querySelector 命中（列头切码 / 行头编辑指引可定位）
 //
 // 设计：测 1~4 直接读 previewTour/TOUR_VERSION 模块常量（纯断言，无需 DOM）；
@@ -103,11 +103,12 @@ describe('previewTour 步骤结构（矩阵化重构 US-005）', () => {
     expect(previewTour.steps[4].selector).toBe('[data-tour="tab-nesting"]');
   });
 
-  it('3. TOUR_VERSION bump 为 4（步骤内容重大变更强制老用户重看）', () => {
+  it('3. TOUR_VERSION bump 为 5（步骤内容重大变更强制老用户重看）', () => {
     // '1'（US-030 首次落地）→ '2'（矩阵化重构 US-005 锚点迁移）
     // → '3'（图形预览区拆除：parsed 步旧文案指引的「下方图形预览」已不存在）
     // → '4'（矩阵行头简化：set-qty 步旧文案指引的「行头填充 / ×2 徽章」已拆除）
-    expect(TOUR_VERSION).toBe('4');
+    // → '5'（行级整行设值回归 + 整表重置拆除：set-qty 步重新指引行级批量设值）
+    expect(TOUR_VERSION).toBe('5');
     // 版本号策略不变量：与旧版本不一致时 tourStore init 清 seen（行为级断言见 tourStore.test.ts）
   });
 
@@ -119,12 +120,12 @@ describe('previewTour 步骤结构（矩阵化重构 US-005）', () => {
     expect(parsed.body).toContain('列头');
     expect(parsed.body).toContain('缩略图');
     expect(parsed.body).not.toContain('图形预览');
-    // set-qty：格内直接编辑 / 特例高亮 / 配对 ×2 口径；
-    // 行头填充按钮与 ×2 徽章已拆（2026-08 行头简化），文案零残留
+    // set-qty：格内直接编辑 / 整行设值（2026-08-16 回归）/ 特例高亮 / 配对 ×2 口径；
+    // ×2 徽章已拆（2026-08 行头简化），文案零残留
     expect(setQty.body).toContain('格子');
+    expect(setQty.body).toContain('整行设值');
     expect(setQty.body).toContain('高亮');
     expect(setQty.body).toContain('×2');
-    expect(setQty.body).not.toContain('填充');
     expect(setQty.body).not.toContain('徽章');
   });
 });

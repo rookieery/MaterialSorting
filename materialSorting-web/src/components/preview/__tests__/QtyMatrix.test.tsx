@@ -1,10 +1,11 @@
 // 矩阵化重构 US-002 QtyMatrix 集成测试：
 //   - 行 = 全码 label 并集（保序，最小码 pieces 顺序优先）；行头 = 序号徽章 + 大缩略图
-//     （2026-08 行头简化：裁片名走缩略图 title；名称 span / ×2 徽章 / 填充按钮已拆除）
+//     + 常驻「≡」整行设值 icon（2026-08 行头简化后回归：裁片名走缩略图 title；
+//     名称 span / ×2 徽章 / 旧文字「填充」按钮不再回来）
 //   - 列 = doc.sizes 全码（null 殿后「通用」，无 null 不渲染该列）+ 合计列；列头点击 setSize + active 高亮
 //   - 格子 blur / Enter / Tab 提交走 clampQty 写 qtyStore；0 格子 .zero + title；缺片格 disabled「—」
 //   - 特例高亮 .override（≠baseValue 且整行非全同；整行同值不高亮）
-//   - 重置为默认 1（setRowAll 整表批量回 1；行头填充 popover 已拆除）
+//   - 行级整行设值（icon → 居中弹层 → setRowAll 整行写；整表「重置为默认 1」按钮已拆）
 //   - 小计：每行合计列 + 每码小计行 + 工具条总片数 + 全 0 警示
 //     （US-004 起物理片数口径 = Σ demand × (paired?2:1)；×2 徽章已拆，缺字段 ×1 兜底）
 //   - 缩略图点击 openZoom(label, rep.size)（所见即所放大；label 不在 activeSize 时回退码）
@@ -131,7 +132,7 @@ describe('QtyMatrix (US-002) 行列结构', () => {
     expect(el.querySelector('.qty-matrix')).toBeNull();
   });
 
-  it('行 = 全码 label 并集（最小码 pieces 顺序优先），行头仅序号徽章+缩略图（名/×2/填充已拆）', () => {
+  it('行 = 全码 label 并集（最小码 pieces 顺序优先），行头 = 序号徽章+缩略图+整行设值 icon', () => {
     const doc = makeStdDoc();
     useUploadStore.setState({ status: 'done', doc, activeSize: 28 });
     const el = renderMatrix();
@@ -145,7 +146,13 @@ describe('QtyMatrix (US-002) 行列结构', () => {
     expect(first.querySelector<HTMLElement>('.qty-thumb')!.getAttribute('title')).toBe(
       '前片28 · 放大预览',
     );
-    // 行头简化拆除项零残留
+    // 整行设值 icon：缩略图右侧常驻（≡ 字符 + title 悬浮提示），点击开居中弹层
+    const fill = first.querySelector<HTMLButtonElement>('[data-testid="qty-rowfill-A"]');
+    expect(fill).not.toBeNull();
+    expect(fill!.textContent).toBe('≡');
+    expect(fill!.getAttribute('aria-label')).toBe('裁片 A 整行设值');
+    expect(fill!.getAttribute('title')).toBe('整行设值：批量设置该裁片全部尺码数量');
+    // 行头简化拆除项零残留（旧文字「填充」按钮 / ×2 徽章）
     expect(first.querySelector('.qty-fill-btn')).toBeNull();
     expect(first.querySelector('.qty-paired-badge')).toBeNull();
     // C 只在 30 / null 码出现，排在 A、B 之后
@@ -584,24 +591,144 @@ describe('QtyMatrix (US-004) 物理片数口径（配对片 ×2；×2 徽章已�
   });
 });
 
-describe('QtyMatrix (US-002) 重置为默认 1', () => {
-  it('点击重置：全部行 setRowAll(x, rowSizes, 1)（值 + baseValue 回 1）', () => {
+describe('QtyMatrix (US-002) 行级整行设值（工具条整表重置已拆）', () => {
+  /** 打开 A 行弹层（点行头「≡」icon）；弹层 portal 到 document.body，一律从 document 查询。 */
+  function openFillPopover(el: HTMLElement): HTMLInputElement {
+    act(() => {
+      clickEl(el.querySelector<HTMLButtonElement>('[data-testid="qty-rowfill-A"]')!);
+    });
+    return document.querySelector<HTMLInputElement>('[data-testid="qty-fill-input"]')!;
+  }
+
+  it('工具条无整表重置按钮（整表回 1 改走逐行整行设值）', () => {
     const doc = makeStdDoc();
     useUploadStore.setState({ status: 'done', doc, activeSize: 28 });
     hydrateDoc(doc);
-    useQtyStore.getState().setRowAll('A', [28, 30], 2);
-    useQtyStore.getState().setPiecePerSize('B', 28, 5);
-    useQtyStore.getState().setPiecePerSize('C', 30, 0);
     const el = renderMatrix();
+    expect(el.querySelector('.qty-reset-btn')).toBeNull();
+  });
+
+  it('点 icon 开弹层：输入初值 = 当前行基准 baseValue', () => {
+    const doc = makeStdDoc();
+    useUploadStore.setState({ status: 'done', doc, activeSize: 28 });
+    hydrateDoc(doc);
+    useQtyStore.getState().setRowAll('A', [28, 30], 2); // A 行基准 2
+    const el = renderMatrix();
+    const input = openFillPopover(el);
+    expect(input.value).toBe('2');
+  });
+
+  it('弹层 portal 到 body + fixed 居中：不在矩阵容器内（逃离 sticky 行头遮挡与滚动裁剪）', () => {
+    const doc = makeStdDoc();
+    useUploadStore.setState({ status: 'done', doc, activeSize: 28 });
+    hydrateDoc(doc);
+    const el = renderMatrix();
+    openFillPopover(el);
+    // 触发按钮留在表格内；弹层本体（含 backdrop）portal 到 body、矩阵容器内零残留
+    expect(el.querySelector('.qty-fill-popover')).toBeNull();
+    expect(el.querySelector('[data-testid="qty-popover-backdrop"]')).toBeNull();
+    const popover = document.querySelector<HTMLElement>('.qty-fill-popover')!;
+    expect(popover).not.toBeNull();
+    expect(document.querySelector('[data-testid="qty-popover-backdrop"]')).not.toBeNull();
+    // 定位中心 inline 化（jsdom rect 全 0 → 0px；真实浏览器为矩阵容器可视区中心）
+    expect(popover.style.left).toBe('0px');
+    expect(popover.style.top).toBe('0px');
+  });
+
+  it('应用：该行整行写 setRowAll(x, rowSizes, X) + 弹层关闭，其它行不动，小计联动', () => {
+    const doc = makeStdDoc();
+    useUploadStore.setState({ status: 'done', doc, activeSize: 28 });
+    hydrateDoc(doc);
+    const el = renderMatrix();
+    const input = openFillPopover(el);
     act(() => {
-      clickEl(el.querySelector<HTMLButtonElement>('.qty-reset-btn')!);
+      setInputValue(input, '3');
+      clickEl(document.querySelector<HTMLButtonElement>('.qty-fill-apply')!);
     });
     const q = useQtyStore.getState().quantities;
-    expect(q.A).toEqual({ perSize: { '28': 1, '30': 1 }, baseValue: 1 });
+    // A 只写实际存在的码（28/30；null 缺片码不写），baseValue 同步
+    expect(q.A).toEqual({ perSize: { '28': 3, '30': 3 }, baseValue: 3 });
+    // 其它行不受影响
     expect(q.B).toEqual({ perSize: { '28': 1, '30': 1 }, baseValue: 1 });
     expect(q.C).toEqual({ perSize: { '30': 1, null: 1 }, baseValue: 1 });
-    expect(el.querySelector('[data-testid="qty-total"]')!.textContent).toBe('6');
-    // 重置后整行同值 → 特例高亮清空
+    // 弹层关闭（backdrop + input 卸载）
+    expect(document.querySelector('[data-testid="qty-fill-input"]')).toBeNull();
+    // 总片数联动：A 3+3 + B 1+1 + C 1+1 = 10；整行同值 → 无特例高亮
+    expect(el.querySelector('[data-testid="qty-total"]')!.textContent).toBe('10');
     expect(el.querySelectorAll('.qty-cell.override').length).toBe(0);
+  });
+
+  it('Enter 快捷应用（同点「应用」）', () => {
+    const doc = makeStdDoc();
+    useUploadStore.setState({ status: 'done', doc, activeSize: 28 });
+    hydrateDoc(doc);
+    const el = renderMatrix();
+    const input = openFillPopover(el);
+    act(() => {
+      setInputValue(input, '2');
+      fireKey(input, 'Enter');
+    });
+    expect(useQtyStore.getState().quantities.A).toEqual({
+      perSize: { '28': 2, '30': 2 },
+      baseValue: 2,
+    });
+    expect(document.querySelector('[data-testid="qty-fill-input"]')).toBeNull();
+  });
+
+  it('取消 / backdrop / ESC 三路关闭不写 store', () => {
+    const doc = makeStdDoc();
+    useUploadStore.setState({ status: 'done', doc, activeSize: 28 });
+    hydrateDoc(doc);
+    const el = renderMatrix();
+    // 取消按钮
+    let input = openFillPopover(el);
+    act(() => {
+      setInputValue(input, '7');
+      clickEl(document.querySelector<HTMLButtonElement>('.qty-fill-cancel')!);
+    });
+    expect(document.querySelector('[data-testid="qty-fill-input"]')).toBeNull();
+    expect(useQtyStore.getState().quantities.A.perSize['28']).toBe(1);
+    // backdrop mousedown（点外关闭）
+    input = openFillPopover(el);
+    act(() => {
+      setInputValue(input, '7');
+      document.querySelector<HTMLElement>('[data-testid="qty-popover-backdrop"]')!.dispatchEvent(
+        new MouseEvent('mousedown', { bubbles: true }),
+      );
+    });
+    expect(document.querySelector('[data-testid="qty-fill-input"]')).toBeNull();
+    expect(useQtyStore.getState().quantities.A.perSize['28']).toBe(1);
+    // ESC（window keydown）
+    input = openFillPopover(el);
+    act(() => {
+      setInputValue(input, '7');
+      fireKey(input, 'Escape');
+    });
+    expect(document.querySelector('[data-testid="qty-fill-input"]')).toBeNull();
+    expect(useQtyStore.getState().quantities.A.perSize['28']).toBe(1);
+  });
+
+  it('特例兼容（UI 路径）：整行设值后单格改 → 仅该格 .override 高亮', () => {
+    const doc = makeStdDoc();
+    useUploadStore.setState({ status: 'done', doc, activeSize: 28 });
+    hydrateDoc(doc);
+    const el = renderMatrix();
+    const input = openFillPopover(el);
+    act(() => {
+      setInputValue(input, '2');
+      clickEl(document.querySelector<HTMLButtonElement>('.qty-fill-apply')!);
+    });
+    // A 行整行 2 后，单格 A@28 改 3（聚焦 → 输入 → blur 提交）→ 仅该格特例
+    const a28 = cellInput(el, 'A', 28);
+    act(() => {
+      a28.focus();
+    });
+    act(() => {
+      setInputValue(a28, '3');
+      a28.blur();
+    });
+    expect(el.querySelectorAll('.qty-cell.override').length).toBe(1);
+    expect(a28.closest('td')!.classList.contains('override')).toBe(true);
+    expect(cellInput(el, 'A', 30).closest('td')!.classList.contains('override')).toBe(false);
   });
 });

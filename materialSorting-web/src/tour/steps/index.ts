@@ -23,6 +23,10 @@
 //   '3' → '4'（矩阵行头简化）：行头只留序号徽章 + 64×64 缩略图，裁片名 / ×2 徽章 /
 //         「填充」按钮（整行填默认值弹层）拆除；set-qty 步文案不再指引行头填充与 ×2 徽章
 //         —— 被指引的交互已不存在，bump 强制老用户重看。
+//   '4' → '5'（行级整行设值回归 + 整表重置拆除）：工具条「重置为默认 1」拆除；行头
+//         缩略图右侧新增常驻「≡」整行设值 icon（title 悬浮提示，点击开居中弹层批量设
+//         整行统一值，特例 = 应用后单格改）；set-qty 步文案重新指引行级批量设值 ——
+//         被指引的交互变化，bump 强制老用户重看。
 //
 // Partial 而非完整 Record<TabId, TourDef>：保留未来新增 Tab 时不必同步补 tour 的灵活性；
 // auto-trigger 对无指引的 Tab（TOURS[tab]===undefined）直接跳过，不报错。
@@ -33,7 +37,7 @@ import { nestingTour } from './nestingTour';
 import { previewTour } from './previewTour';
 
 /** Tour 内容版本号。bump 触发条件：仅步骤内容重大变更时 bump（强制老用户重看）。版本历史见文件头注释。 */
-export const TOUR_VERSION = '4';
+export const TOUR_VERSION = '5';
 
 /**
  * 按 TabId 注册的指引序列。

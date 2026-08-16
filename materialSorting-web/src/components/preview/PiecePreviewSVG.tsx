@@ -254,7 +254,8 @@ export interface PiecePreviewSVGProps {
   pad?: number;
   /**
    * US-018 AC#9 compact 模式：关 A/B/C 标注 + 用 COMPACT_PAD(2) 默认 pad（fit-to-cell）。
-   * 用于 PerTypeOverridesModal 表头缩略图（64×64 cell）。非 compact 行为不变（向后兼容）。
+   * 用于 QtyMatrix 行头（80×80）/ PerTypeOverridesModal 表头（64×64）等缩略图 cell。
+   * 非 compact 行为不变（向后兼容）。
    */
   compact?: boolean;
 }
