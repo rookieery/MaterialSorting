@@ -15,9 +15,10 @@
 //      避免逐格手改满屏噪点）；baseValue 缺席兜底 1（未填充时的高亮基准）。
 //   5. 行头「填充」popover：输入 X 应用 → setRowAll（整行写该 label 存在的码 + baseValue=X，
 //      即「默认值」；特例 = 填充后个别格子再改）。
-//   6. 小计反馈：每行合计列 = Σ 该行各码 demand；底部每码小计行 = Σ 该码各 label demand；
-//      工具条总片数 = 所有小计之和（本 Story Σdemand 口径；US-004 升级为物理片数口径，
-//      配对片 ×2）。全 0 红色警示；「重置为默认 1」整表批量回 1。
+//   6. 小计反馈（US-004 起物理片数口径 = Σ demand × (paired ? 2 : 1)）：每行合计列 /
+//      底部每码小计行 / 工具条总片数均按配对片 ×2 计（demand=N 份 → 配对片型实际排
+//      L+R 共 2N 物理片）；行头配对片显示「×2」徽章。全 0 红色警示；
+//      「重置为默认 1」整表批量回 1。
 //
 // 设计原则（CLAUDE.md / AGENTS.md 矩阵化重构关键约定）：
 //   - 单一真相源：doc/activeSize/setSize/openZoom 来自 uploadStore，quantities/
@@ -304,6 +305,21 @@ export function QtyMatrix(): JSX.Element | null {
     return quantities[label]?.baseValue ?? 1;
   }
 
+  /** 该 (label, size) 格是否配对片型（US-004：缺字段兜底 false → ×1 计）。 */
+  function pairedOf(label: string, size: number | null): boolean {
+    return piecesByLabel.get(label)?.get(sizeKeyOf(size))?.paired === true;
+  }
+
+  /** 物理片数乘数：配对片 1 份 = L+R 2 物理片，内片 1 份 = 1 物理片。 */
+  function multOf(label: string, size: number | null): 1 | 2 {
+    return pairedOf(label, size) ? 2 : 1;
+  }
+
+  /** 行级配对徽章：该 label 任一存在的码为配对片型即显示（label ↔ ptype 跨码一致）。 */
+  function rowPaired(label: string): boolean {
+    return rowSizes(label).some((c) => pairedOf(label, c));
+  }
+
   /** 整行是否全同（全同则整行不高亮，避免逐格手改满屏噪点）。 */
   function rowAllSame(label: string): boolean {
     const sizes = rowSizes(label);
@@ -314,13 +330,13 @@ export function QtyMatrix(): JSX.Element | null {
 
   const rows: MatrixRow[] = labelOrder.map((label) => ({ label, sizes: rowSizes(label) }));
 
-  // 小计（本 Story Σdemand 口径；US-004 升级物理片数口径 = Σ demand × (paired?2:1)）。
+  // 小计（US-004 物理片数口径 = Σ demand × (paired?2:1)；配对片型 demand=N 份 → 2N 物理片）。
   const rowTotals: number[] = rows.map((r) =>
-    r.sizes.reduce<number>((acc, c) => acc + cellQty(r.label, c), 0),
+    r.sizes.reduce<number>((acc, c) => acc + cellQty(r.label, c) * multOf(r.label, c), 0),
   );
   const sizeSubtotals: number[] = columns.map((c) =>
     rows.reduce<number>(
-      (acc, r) => acc + (cellExists(r.label, c) ? cellQty(r.label, c) : 0),
+      (acc, r) => acc + (cellExists(r.label, c) ? cellQty(r.label, c) * multOf(r.label, c) : 0),
       0,
     ),
   );
@@ -353,7 +369,10 @@ export function QtyMatrix(): JSX.Element | null {
   return (
     <div className="qty-matrix" data-testid="qty-matrix">
       <div className="qty-matrix-toolbar">
-        <span className="qty-total">
+        <span
+          className="qty-total"
+          title="物理片数：配对片型（行头 ×2 徽章）每份排 L+R 2 片，内片每份 1 片"
+        >
           总片数 <strong data-testid="qty-total">{total}</strong>
         </span>
         {total === 0 && rows.length > 0 ? (
@@ -399,10 +418,20 @@ export function QtyMatrix(): JSX.Element | null {
               const repName = rep ? rep.name : r.label;
               const base = rowBase(r.label);
               const allSame = rowAllSame(r.label);
+              const paired = rowPaired(r.label);
               return (
                 <tr key={r.label}>
                   <th className="qty-rowhead" scope="row">
                     <span className="qty-label-badge">{r.label}</span>
+                    {paired ? (
+                      <span
+                        className="qty-paired-badge"
+                        data-testid={"qty-paired-" + r.label}
+                        title="配对片型：1 份 = 左右 (L+R) 2 物理片，小计按 ×2 计"
+                      >
+                        ×2
+                      </span>
+                    ) : null}
                     <span className="qty-rowname" title={repName}>
                       {repName}
                     </span>

@@ -7,8 +7,11 @@
 //   - null 码 chip 文案显示「通用」（与 QtyMatrix 列头「通用」同语义）。
 //   - selected 类型扩为 `(number | null)[]`（doc 可能含 null 通用码）。
 //
-// 总裁片数量（chip 下方实时展示）：总实际裁剪数 = Σ 所选码号每片有效 demand。
+// 总裁片数量（chip 下方实时展示）：总实际裁剪数（US-004 起物理片数口径）=
+// Σ 所选码号每片有效 demand × (paired ? 2 : 1)。
 //   - demand 来自 qtyStore.quantities（perSize，与 serializeQuantities 同口径）。
+//   - 配对片型（paired=true，parse 响应 US-004 起透传；PAIR_TYPES 六类：前片/后片/腰/
+//     前袋/后袋/机头）demand=1 份实际排 L+R 2 物理片 → ×2；缺字段向后兼容按 1 计。
 //   - 未配置的 (label,size) → demand 1（与「每片每码排 1 份」默认 + 后端空 quantities 回退
 //     demand=1 一致；故未 hydrate 也能正确显示 = 裁片数）。
 //   - 订阅 quantities：demand 在预览页改过后，回到排料页即正确反映（排料页本身不改 demand）。
@@ -61,7 +64,9 @@ export function effectiveDemand(
 }
 
 /**
- * 总实际裁剪数 = Σ 所选码号每片有效 demand。doc=null（无裁片数据）→ null。
+ * 总实际裁剪数（US-004 物理片数口径）= Σ 所选码号每片有效 demand × (paired ? 2 : 1)。
+ * 配对片型 demand=1 份 → L+R 2 物理片；piece.paired 缺字段（旧响应/测试桩）→ ×1 兜底。
+ * doc=null（无裁片数据）→ null。
  *
  * 纯函数（便于单测）：不读 store，入参 doc / selected / quantities 全显式。
  */
@@ -76,7 +81,7 @@ export function computeTotalCutPieces(
     const entry = doc.sizes.find((sz) => sz.size === sizeVal);
     if (!entry) continue;
     for (const piece of entry.pieces) {
-      total += effectiveDemand(quantities, piece.label, sizeVal);
+      total += effectiveDemand(quantities, piece.label, sizeVal) * (piece.paired ? 2 : 1);
     }
   }
   return total;

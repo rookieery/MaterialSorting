@@ -30,7 +30,7 @@ curl http://127.0.0.1:8000/api/ptypes                                  # US-020 
 - **落盘路径**：`paths.OUT_DIR/uploads/<doc_id>.dxf`（`doc_id = uuid.uuid4().hex`，32 字符无横杠）。**禁硬编码** —— 用模块级常量 `UPLOADS_DIR = Path(paths.OUT_DIR) / 'uploads'`。
 - **CPU 解析走 executor**：`loop.run_in_executor(_executor, _parse_dxf_sync, str(dest))` 复用 6-worker 线程池（与 `/ws/solve` 同池）。母版深度解析 ~1-2s，不阻塞事件循环。
 - **错误码口径**：扩展名非 `.dxf`→400；超 `UPLOAD_MAX_BYTES=20MB`→413；ezdxf/collect 异常→422（中文错误信息）。**200 / 400 / 413 / 422 全部走 JSONResponse**（与 `/export` 一致），不抛 `HTTPException`。
-- **响应字段**（US-005 前端契约，不能改）：`{doc_id, filename, sizes:[{size, pieces:[{label,name,polygon,internal_lines,notches,net_polygon,grain_line}]}]}`。polygon=`[[x,y],...]`；internal_lines=`[[[x,y],...],...]`；notches=`[[x,y,nx,ny],...]`；net_polygon=`[[x,y],...]`；grain_line=`[x1,y1,x2,y2]` 或 `null`。
+- **响应字段**（US-005 前端契约）：`{doc_id, filename, sizes:[{size, pieces:[{label,name,ptype,paired,polygon,internal_lines,notches,net_polygon,grain_line}]}]}`。polygon=`[[x,y],...]`；internal_lines=`[[[x,y],...],...]`；notches=`[[x,y,nx,ny],...]`；net_polygon=`[[x,y],...]`；grain_line=`[x1,y1,x2,y2]` 或 `null`。矩阵化重构 US-004 起每片 additive 附加 `ptype`（`group_key → assign_group_no → GROUP_NAMES`，与 commit 同链路；无映射 null）与 `paired`（`ptype ∈ PAIR_TYPES`，从 `nesting_bounds.load_pieces` 导入，web→nesting_bounds 向下依赖合规）—— 配对片 demand=N 份实际排 L+R 2N 物理片，前端小计按 ×2 计；字段纯新增，排序/标注/label 对齐不变量不动，旧前端忽略无害。
 - **A/B/C 标注口径**：每码内独立编号（不跨码续编）。排序键 `(-centroid_y, centroid_x, -area_mm2, block_name, piece_index)` → 上方/左/大片优先。码号分组排序：数值升序，`null` 殿后。`_label_for` 支持 26+ 自动 AA/AB（实测每码 ≤10 片，AA+ 仅兜底）。
 - **doc_id 是 US-010 入参**：`POST /api/commit-to-nesting {doc_id}` 会读 `uploads/<doc_id>.dxf`。**doc_id 必须可定位落盘文件**，故成功响应才返回 doc_id（422 时文件保留但响应不带 doc_id）。
 

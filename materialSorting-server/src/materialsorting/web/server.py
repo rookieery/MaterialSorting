@@ -34,7 +34,7 @@ from .. import paths
 from ..dxf_parser import explore
 from ..dxf_parser.collect import collect_pieces_with_details
 from ..dxf_parser.export_dxf import assign_group_no, GROUP_NAMES, write_piece_dxf
-from ..nesting_bounds.load_pieces import load_nest_pieces, GATE_MM as NEST_GATE_MM
+from ..nesting_bounds.load_pieces import load_nest_pieces, GATE_MM as NEST_GATE_MM, PAIR_TYPES
 from ..nesting_engine.labeling import (
     label_for,
     centroid as _centroid_pts,
@@ -132,10 +132,19 @@ def _size_sort_key(size: int | None) -> tuple[int, int]:
 def _build_parse_payload(doc_id: str, filename: str, pieces) -> dict:
     """把 collect_pieces_with_details 结果按码号分组 + 质心/面积稳定排序 + 赋 A/B/C 标签。
 
-    响应结构与 US-005 前端契约一致：每片含 label/name/polygon/internal_lines/notches/
-    net_polygon/grain_line。polygon / net_polygon = [[x,y], ...]；internal_lines =
+    响应结构与 US-005 前端契约一致：每片含 label/name/ptype/paired/polygon/internal_lines/
+    notches/net_polygon/grain_line。polygon / net_polygon = [[x,y], ...]；internal_lines =
     [[[x,y], ...], ...]；notches = [[x,y,nx,ny], ...]；grain_line = [x1,y1,x2,y2] 或 null。
+
+    矩阵化重构 US-004：每片 additive 附加 ptype（group_key → assign_group_no → g00..g09 →
+    GROUP_NAMES，与 ``_commit_to_nesting_sync`` 完全同链路）与 paired（ptype ∈ PAIR_TYPES，
+    配对片型 demand=1 份实际排 L+R 2 物理片）。字段纯新增：排序 / A/B/C 标注 /
+    ``labeling.compute_size_ptype_labels`` 的 parse↔intermediate label 对齐不变量全部不动，
+    旧前端忽略新字段无害。
     """
+    # 与 commit 同一 gmap（对全码 pieces 整体 assign，group_key → g00..g09 稳定）
+    gmap = assign_group_no(pieces)
+
     by_size: dict[int | None, list] = {}
     for p in pieces:
         by_size.setdefault(p.size, []).append(p)
@@ -156,9 +165,12 @@ def _build_parse_payload(doc_id: str, filename: str, pieces) -> dict:
         )
         pieces_out = []
         for idx, p in enumerate(members_sorted):
+            ptype = GROUP_NAMES.get(gmap.get(p.group_key))
             pieces_out.append({
                 'label': _label_for(idx),
                 'name': p.block_name,
+                'ptype': ptype,
+                'paired': ptype in PAIR_TYPES,
                 'polygon': [[float(x), float(y)] for x, y in p.polygon_mm],
                 'internal_lines': [
                     [[float(x), float(y)] for x, y in line]

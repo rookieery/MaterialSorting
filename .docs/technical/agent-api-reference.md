@@ -102,6 +102,8 @@ curl -X POST http://127.0.0.1:8000/api/parse-dxf \
         {
           "label": "A",                           // 0→A, 1→B, ..., 25→Z, 26→AA ...
           "name": "noname..28",                   // 解码后的 block_name（GBK→UTF-8）
+          "ptype": "前片",                        // 矩阵化重构 US-004：片型名（group_key→assign_group_no→g00..g09→GROUP_NAMES，与 commit 同链路）；无映射时 null
+          "paired": true,                         // 矩阵化重构 US-004：ptype ∈ PAIR_TYPES（前片/后片/腰/前袋/后袋/机头）→ true；demand=1 份实际排 L+R 2 物理片
           "polygon": [[x, y], ...],               // layer1 毛版外轮廓
           "internal_lines": [[[x, y], ...], ...], // layer8 POLYLINE 内部线（多条）
           "notches": [[x, y, nx, ny], ...],       // layer4 POINT 刀口：点 + 单位外法线（沿法线画 8mm 短线段）
@@ -117,6 +119,10 @@ curl -X POST http://127.0.0.1:8000/api/parse-dxf \
 ```
 
 **全码一次返回**（M1787 实测 ~680KB JSON / 110 片 / 11 码，远低于 1-3MB 上限）；前端按 `activeSize` 本地切片，不做按码懒加载。
+
+### ptype / paired（矩阵化重构 US-004，additive）
+
+每片附加 `ptype`（片型中文名，与 `_commit_to_nesting_sync` 完全同链路：`group_key → assign_group_no → g00..g09 → GROUP_NAMES`；gno 无映射时 `null`）与 `paired = ptype ∈ PAIR_TYPES`（`nesting_bounds.load_pieces.PAIR_TYPES` 六类：前片/后片/腰/前袋/后袋/机头）。语义：`demand=N` 份施加在 (label, size) 的每条 NestPiece 上 → 配对片实际排 L+R 共 `2N` 物理片、内片 `N` 物理片；前端 QtyMatrix / SizePicker 小计与总片数按物理片数口径 `Σ demand × (paired?2:1)`。字段纯新增：排序/A-B-C 标注/`compute_size_ptype_labels` 的 parse↔intermediate label 对齐不变量不动，旧前端忽略新字段无害（M1787 curl 验证 110 片全含两字段，paired 六类 = PAIR_TYPES）。
 
 ### 排序 + 标注
 

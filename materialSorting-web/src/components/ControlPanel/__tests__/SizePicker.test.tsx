@@ -100,6 +100,32 @@ function makeDocWithPieces(): ParsedDoc {
   };
 }
 
+/**
+ * US-004 配对片型 doc：28 码 A 前片(paired) + B 单排(内片)。
+ * demand=1 份 → A 实际 2 物理片、B 1 物理片。
+ */
+function makePairedDoc(): ParsedDoc {
+  const piece = (label: string, ptype: string, paired: boolean) => ({
+    label,
+    name: ptype,
+    ptype,
+    paired,
+    polygon: [],
+    internal_lines: [],
+    notches: [],
+    net_polygon: [],
+    grain_line: null,
+  });
+  return {
+    doc_id: "doc-paired",
+    filename: "M1787-paired.dxf",
+    sizes: [
+      { size: 28, pieces: [piece("A", "前片", true), piece("B", "单排", false)] },
+      { size: 30, pieces: [piece("A", "前片", true)] },
+    ],
+  };
+}
+
 function getChips(): HTMLInputElement[] {
   return Array.from(container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]"));
 }
@@ -329,5 +355,43 @@ describe("computeTotalCutPieces / effectiveDemand", () => {
     expect(effectiveDemand(q, "A", 28)).toBe(0); // 显式 0
     expect(effectiveDemand(q, "A", 29)).toBe(1); // per-size 缺省该码
     expect(effectiveDemand(q, "B", 28)).toBe(1); // B 未配置
+  });
+});
+
+// US-004 物理片数口径：配对片型（paired=true）demand ×2，缺字段向后兼容 ×1。
+describe("computeTotalCutPieces (US-004 物理片数口径)", () => {
+  const pairedDoc = makePairedDoc(); // 28:[A 前片 paired, B 单排] 30:[A 前片 paired]
+
+  it("paired=true → 该片 ×2（勾 28 → A 2 物理片 + B 1 物理片 = 3 片）", () => {
+    expect(computeTotalCutPieces(pairedDoc, [28], {})).toBe(3);
+  });
+
+  it("勾多码 → 配对片逐码 ×2（28+30 → 3 + 2 = 5 物理片）", () => {
+    expect(computeTotalCutPieces(pairedDoc, [28, 30], {})).toBe(5);
+  });
+
+  it("paired × demand 复合放大（A@28 demand=3 → 3×2=6；勾 28 → 6+1=7）", () => {
+    const q: PieceQuantityMap = {
+      A: { perSize: { "28": 3 }, baseValue: 3 },
+    };
+    expect(computeTotalCutPieces(pairedDoc, [28], q)).toBe(7);
+  });
+
+  it("paired 片 demand=0 → 0×2=0 不计入（勾 28 → B 1 片）", () => {
+    const q: PieceQuantityMap = {
+      A: { perSize: { "28": 0 }, baseValue: 0 },
+    };
+    expect(computeTotalCutPieces(pairedDoc, [28], q)).toBe(1);
+  });
+
+  it("缺 paired 字段（旧响应/测试桩）→ ×1 兜底（makeDocWithPieces 无字段）", () => {
+    const legacy = makeDocWithPieces(); // 28:[A,B] 无 paired 字段
+    expect(computeTotalCutPieces(legacy, [28], {})).toBe(2);
+  });
+
+  it("配对片 UI 展示：勾 28 码 →「3 片」（物理口径实时反映）", () => {
+    useUploadStore.setState({ status: "done", doc: makePairedDoc() });
+    renderPicker([28]);
+    expect(getTotalText()).toBe("3 片");
   });
 });
