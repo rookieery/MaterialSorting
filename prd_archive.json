@@ -416,5 +416,16 @@
         "passes": true
       }
     ]
+  },
+  {
+    "branchName": "ralph/preview-qty-matrix",
+    "stories": [
+      {
+        "id": "US-001",
+        "title": "qtyStore 数据层简化+整行填充",
+        "description": "As a developer, I want to simplify the quantity data model（删 global 模式，PieceQuantity 改 {perSize, baseValue}，新增 setRowAll）so that the matrix UI can batch-fill rows while the WS wire format stays byte-identical。详见 tasks/prd-preview-qty-matrix.md US-001。纯前端数据层重构，不碰任何组件（组件在 US-002/003）。\n\n背景：现状 PieceQuantity 为 per-size/global 双模式（US-011），global 模式会把其它码同 label 置灰锁死，无法表达「默认 1、个别码 2」——正是本次重构要删除的语义。已确认决策：未填充时 baseValue 默认 1 作高亮基准；baseValue 仅 UI 高亮用，不参与序列化。\n\n具体任务：\n1. materialSorting-web/src/types/qty.ts — PieceQuantity 改为 { perSize: Record<string, number>; baseValue: number }；删除 QtyMode/globalValue/globalSource 类型。\n2. materialSorting-web/src/store/qtyStore.ts — 保留 quantities/clampQty/resetQuantities；删除 setPieceGlobal 及 getPieceDisplay 的 global 分支（简化为返回 {qty, editable}，editable 仅在「该码无此裁片」时 false，reason 可删）；setPiecePerSize 保留 perSize 写入、删 global 回切逻辑（函数名保留，减少调用方改动）；hydrateDefault/hydrateDefaults 双入口合并为单一 hydrate 入口（以 grep 生产调用方为准，合并后内部对每 (label, sizeKey) 写 1 且 baseValue: 1）；新增 setRowAll(label, sizes, value)（整行写 perSize，value 经 clampQty，并把 baseValue 置为 value）。\n3. materialSorting-web/src/lib/params.ts — serializeQuantities 删 global 分支，per-size 路径逻辑不变。\n4. materialSorting-web/src/store/__tests__/qtyStore.test.ts 改写（删 global 相关约半数用例；新增 setRowAll 整行写入+baseValue、hydrate 默认 1+baseValue=1、clamp 边界 0/99/非数字保留）；materialSorting-web/src/lib/__tests__/params.test.ts 改写（serializeQuantities 显式 0 保留、未勾选码过滤、'null' sizeKey 兜底用例保留）。\n\n验收标准：\n- grep setPieceGlobal src/ 为 0 且无残留引用（QtyMode/globalValue/globalSource 同）；hydrate 合并后 grep 无孤儿入口。\n- setRowAll('A', [28,29,30], 2) 后 quantities.A.perSize 三码=2 且 baseValue===2；hydrate 产出每 (label,size)=1 且 baseValue=1。\n- serializeQuantities 输出结构 Record<label, Record<sizeKey, number>> 与旧版 per-size 路径逐字段一致（0 保留、未勾选码过滤、'null' 兜底）——线格式不变是硬约束，后端主管线零改动的唯一依据。\n- clampQty 公式不变（[0,99] 整数，NaN→0）。\n- cd materialSorting-web && npm run typecheck 通过、npm run test 全绿、npm run build 无报错。",
+        "passes": true
+      }
+    ]
   }
 ]

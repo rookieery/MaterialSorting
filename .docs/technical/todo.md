@@ -35,4 +35,6 @@
 
 - [x] US-032 手动入口完善 + 关闭交互打磨 + 完整单测（TabBar 下拉两项「查看上传预览/超排指引」+ 仅当前 Tab 可点置灰规则；close 统一 markSeen 消除切回 Tab 重复触发 bug1；TourOverlay ESC/遮罩/skip 关闭 + flipPlacement 四方向级联回退修 bug3 + prefers-reduced-motion + scrollIntoView；+18 新单测 TourOverlay +6 / TabBar +7 / useTour +2 / tourStore +3，581 total 全绿；菜单最终两项由 21102a3 fix 收敛） — completed on 2026-08-13 12:34
 
+- [x] 矩阵化重构 US-002 QtyMatrix 数量矩阵组件（新建 QtyMatrix.tsx 主组件 + QtyMatrixCell/RowFillPopover 同文件子组件 + style.css .qty-matrix 系列；行=label 并集[徽章+名+compact 缩略图+填充 popover] × 列=doc.sizes 全码[列头 button setSize+active 高亮]；格内 clampQty 编辑 + Enter/Tab 跳格跳过缺片格 + 0/.zero 与特例/.override 与缺片/— 三态；sticky 表头/首列/底行 + 45vh 内滚 + Σdemand 小计 + 全 0 警示 + 重置 1；32 项新单测 616 total 全绿 typecheck clean build 无报错；CDP headless Chrome 24/24 浏览器断言（11 码横排/sticky/编辑/填充/切码/openZoom/窄屏横滚）；未接入 PreviewPage（US-003 集成）） — completed on 2026-08-16 15:30
+
 *(No completed items)*

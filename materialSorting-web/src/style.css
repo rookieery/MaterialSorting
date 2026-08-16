@@ -1206,3 +1206,328 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
   background: transparent;
   cursor: not-allowed;
 }
+
+/* ---- 矩阵化重构 US-002 QtyMatrix（裁片 × 尺码数量矩阵；暗底 #26282e + #2ea06c 同色系） ---- */
+/* 工具条：总片数 + 全 0 警示 + 重置按钮（低频兜底操作，右对齐） */
+.qty-matrix {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  background: #26282e;
+  border-bottom: 1px solid #34363d;
+}
+.qty-matrix-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 8px 12px;
+}
+.qty-total { font-size: 12px; color: #cdd; }
+.qty-total strong {
+  color: #e6e6e6;
+  font-weight: 600;
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+}
+/* 全 0 红色警示（与 .upload-status.error 红字 #ff8888 同色系） */
+.qty-zero-warn { font-size: 12px; font-weight: 600; color: #ff8888; }
+.qty-reset-btn {
+  margin-left: auto;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-family: inherit;
+  color: #cdd;
+  background: #34363d;
+  border: 1px solid #45484f;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.qty-reset-btn:hover { background: #3f424a; color: #e6e6e6; }
+.qty-reset-btn:focus-visible { outline: 2px solid #2ea06c; outline-offset: 1px; }
+
+/* 矩阵滚动区：max-height 45vh 内部滚动；窄屏（≤1366）横向滚动由表格 min-width 自然触发 */
+.qty-matrix-scroll {
+  max-height: 45vh;
+  overflow: auto;
+  border-top: 1px solid #34363d;
+}
+.qty-matrix-table {
+  border-collapse: separate; /* collapse 下 sticky 单元格边框会被吞，改 separate+自绘边框 */
+  border-spacing: 0;
+  font-size: 12px;
+  min-width: 100%;
+}
+
+/* sticky 表头（thead th 顶层 z=3；左上/左下角 z=5 压过行头 z=2） */
+.qty-matrix-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: #1c1d22;
+  border-bottom: 1px solid #34363d;
+  font-weight: 500;
+  color: #9aa;
+  padding: 4px;
+}
+.qty-corner {
+  position: sticky;
+  left: 0;
+  z-index: 5 !important;
+  text-align: left;
+  padding: 4px 8px !important;
+  min-width: 220px;
+}
+.qty-colhead { min-width: 64px; }
+.qty-total-col { min-width: 56px; }
+
+/* 列头码按钮：承担「图形预览码切换」职责（点击 setSize），当前码绿色高亮（.size-chip.active 同色） */
+.qty-size-btn {
+  width: 100%;
+  padding: 4px 0;
+  font-size: 12px;
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  color: #cdd;
+  background: #34363d;
+  border: 1px solid #45484f;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.qty-size-btn:hover { background: #3f424a; color: #e6e6e6; }
+.qty-size-btn.active {
+  background: #2ea06c;
+  color: #fff;
+  border-color: #2ea06c;
+  font-weight: 600;
+}
+.qty-size-btn:focus-visible { outline: 2px solid #2ea06c; outline-offset: 1px; }
+
+/* sticky 首列（行头）：badge + 名 + 缩略图 + 填充按钮 */
+.qty-rowhead {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 220px;
+  max-width: 260px;
+  padding: 3px 8px;
+  text-align: left;
+  background: #23252b;
+  border-right: 1px solid #34363d;
+  border-bottom: 1px solid #34363d;
+  font-weight: 400;
+}
+.qty-label-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  background: #2ea06c;
+  color: #fff;
+  border-radius: 9px;
+  font-weight: 600;
+  font-size: 11px;
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+}
+.qty-rowname {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #cdd;
+  font-size: 12px;
+}
+/* 缩略图：PiecePreviewSVG compact（36×36），点击 openZoom 放大预览 */
+.qty-thumb {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  padding: 1px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #1c1d22;
+  border: 1px solid #3a3d45;
+  border-radius: 4px;
+  cursor: zoom-in;
+  transition: border-color 0.15s;
+}
+.qty-thumb:hover { border-color: #2ea06c; }
+.qty-thumb:focus-visible { outline: 2px solid #2ea06c; outline-offset: 1px; }
+.qty-thumb svg { width: 100%; height: 100%; display: block; }
+/* 填充按钮：默认透明（悬浮行头 / 自身聚焦才显），低频批量操作不打扰浏览 */
+.qty-fill-btn {
+  flex-shrink: 0;
+  opacity: 0;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-family: inherit;
+  color: #cdd;
+  background: #34363d;
+  border: 1px solid #45484f;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: opacity 0.15s, background 0.15s, color 0.15s;
+}
+.qty-rowhead:hover .qty-fill-btn,
+.qty-fill-btn:focus-visible { opacity: 1; }
+.qty-fill-btn:hover { background: #2ea06c; border-color: #2ea06c; color: #fff; }
+
+/* 行填充 popover：绝对定位于行头下方；backdrop 透明全屏承接点外关闭 */
+.qty-popover-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 15;
+}
+.qty-fill-popover {
+  position: absolute;
+  top: 100%;
+  left: 8px;
+  z-index: 20;
+  margin-top: 4px;
+  width: 200px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  background: #26282e;
+  border: 1px solid #45484f;
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+}
+.qty-fill-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #e6e6e6;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #34363d;
+}
+.qty-fill-row { display: flex; align-items: center; gap: 8px; font-size: 12px; color: #cdd; }
+.qty-fill-input {
+  width: 64px;
+  height: 28px;
+  text-align: center;
+  background: #1c1d22;
+  color: #e6e6e6;
+  border: 1px solid #3a3d45;
+  border-radius: 4px;
+  font-size: 13px;
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  -moz-appearance: textfield;
+}
+.qty-fill-input::-webkit-outer-spin-button,
+.qty-fill-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.qty-fill-input:focus { outline: none; border-color: #2ea06c; }
+.qty-fill-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.qty-fill-cancel,
+.qty-fill-apply {
+  padding: 4px 12px;
+  font-size: 12px;
+  font-family: inherit;
+  border-radius: 4px;
+  cursor: pointer;
+  border: 1px solid #45484f;
+  background: #34363d;
+  color: #cdd;
+  transition: background 0.15s, color 0.15s;
+}
+.qty-fill-cancel:hover { background: #3f424a; color: #e6e6e6; }
+.qty-fill-apply {
+  background: #2ea06c;
+  color: #fff;
+  border-color: #2ea06c;
+  font-weight: 600;
+}
+.qty-fill-apply:hover { background: #36b47a; border-color: #36b47a; }
+
+/* 数据格：内联 number input；行分隔线自绘（border-separate 模式） */
+.qty-cell {
+  border-bottom: 1px solid #2f3138;
+  padding: 2px 3px;
+  text-align: center;
+}
+.qty-cell-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 4px 2px;
+  text-align: center;
+  background: #1c1d22;
+  color: #e6e6e6;
+  border: 1px solid #3a3d45;
+  border-radius: 3px;
+  font-size: 12px;
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  -moz-appearance: textfield;
+}
+.qty-cell-input::-webkit-outer-spin-button,
+.qty-cell-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.qty-cell-input:focus {
+  outline: none;
+  border-color: #2ea06c;
+  background: #212228;
+}
+/* 数量 0：显著暗色（语义 = 该码不排此片，title 说明）；可编辑（区别于缺片「—」） */
+.qty-cell.zero .qty-cell-input {
+  background: #121317;
+  color: #6f7278;
+}
+/* 特例高亮：值 ≠ baseValue 且整行非全同（暖橙系，区别于绿色主操作 / 灰色 0） */
+.qty-cell.override .qty-cell-input {
+  background: #2a2417;
+  border-color: #d8a23a;
+  color: #ffd98a;
+  font-weight: 600;
+}
+/* 缺片格（该码无此 label）：disabled「—」，区别于 0（不可编辑） */
+.qty-cell.missing .qty-cell-input {
+  background: transparent;
+  border-color: transparent;
+  color: #666;
+  cursor: not-allowed;
+}
+
+/* 行合计列 + 底部每码小计行（sticky bottom，与表头同背景） */
+.qty-rowtotal {
+  border-bottom: 1px solid #2f3138;
+  border-left: 1px solid #34363d;
+  padding: 4px;
+  text-align: center;
+  color: #cdd;
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  background: #212228;
+  min-width: 56px;
+}
+.qty-matrix-table tfoot th,
+.qty-matrix-table tfoot td {
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  background: #1c1d22;
+  border-top: 1px solid #34363d;
+  padding: 4px;
+  text-align: center;
+  color: #cdd;
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+}
+.qty-subtotal-rowhead {
+  left: 0;
+  z-index: 4 !important;
+  font-size: 12px;
+  font-weight: 600;
+  color: #9aa;
+  text-align: left !important;
+  padding-left: 8px !important;
+  border-right: 1px solid #34363d;
+}
+.qty-subtotal-total {
+  color: #e6e6e6;
+  font-weight: 600;
+  border-left: 1px solid #34363d;
+}

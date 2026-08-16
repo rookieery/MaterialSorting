@@ -41,7 +41,7 @@ npm run test               # vitest run（US-002 起会有用例）
 - **不引入 CSS 框架**：`.tour-reduced-motion .tour-spotlight, .tour-reduced-motion .tour-bubble { transition: none !important; }` 沿用 style.css（与 .tour-spotlight/.tour-bubble 暗背景 #26282e + #2ea06c 同色系）。无其它新 CSS。
 - **未做浏览器验证（chrome-devtools-mcp 不在本会话工具集）**：本 Story 无 SVG/坐标变换（仅 DOM overlay 关闭交互 + matchMedia + scrollIntoView + CSS class），核心逻辑用 18 项新单测覆盖（TourOverlay 6 项：ESC/遮罩/bubble/skip/reduced-motion×2；TabBar 7 项：菜单展开/三项 action/点外关/ESC关/toggle；useTour 2 项：skip markSeen+close / skip 从等待态清轮询；tourStore 3 项：version 同步写/bump 清 seen/resetSeen 不影响 version）。浏览器端到端回归留作整体回归。
 
-## 文件分工（US-001 Tab 框架 + US-002~US-008 全部落地；上传预览 US-005 状态层 + US-006 UploadPanel + US-007 PiecePreviewSVG + US-008 SizeTabs/ParsedPiecesView/PreviewPage 容器集成 + 上传预览 US-011 qtyStore 数量状态 + 上传预览 US-012 PieceQtyDialog/Switch 数量弹窗 + 上传预览 US-013 PieceZoomModal 放大预览模态 + 上传预览 US-014 ParsedPiecesView 卡片头改造+双模态集成 + US-015 uiStore 扩 nestingEnabled + TabBar 置灰 + US-016 PreviewPage 联动 setNestingEnabled + US-017 SizePicker 动态读码号 + DEFAULT_FORM.sizes=[] + US-018 PerTypeOverridesModal/PtypePreviewModal 高级配置弹窗+片型缩略图+放大预览 + US-021 useCommitToNesting 解析成功自动 commit+D1 闭环 + US-022 求解输入数量 demand per-size + US-024 NestSVG 5 层渲染+共享 LAYER5_COLORS + US-027 NestingPage phase 状态机+useSolveRun.stop()+running 态冻结参数编辑 + US-029 操作指引基础设施 tourStore+TourOverlay+useTour+TabBar 右上角入口 + US-030 previewTour 5 步+advance-on-ready+首次自动触发 + US-031 nestingTour 5 步+runRegistry 帧快照联动推进 + US-032 手动入口完善+关闭交互打磨+reduced-motion+scrollIntoView+完整单测 + 矩阵化重构 US-001 qtyStore 数据层简化（删 global 模式；PieceQuantity={perSize,baseValue}；setRowAll 整行填充；hydrate 单一入口；serializeQuantities 删 global 分支线格式不变）)
+## 文件分工（US-001 Tab 框架 + US-002~US-008 全部落地；上传预览 US-005 状态层 + US-006 UploadPanel + US-007 PiecePreviewSVG + US-008 SizeTabs/ParsedPiecesView/PreviewPage 容器集成 + 上传预览 US-011 qtyStore 数量状态 + 上传预览 US-012 PieceQtyDialog/Switch 数量弹窗 + 上传预览 US-013 PieceZoomModal 放大预览模态 + 上传预览 US-014 ParsedPiecesView 卡片头改造+双模态集成 + US-015 uiStore 扩 nestingEnabled + TabBar 置灰 + US-016 PreviewPage 联动 setNestingEnabled + US-017 SizePicker 动态读码号 + DEFAULT_FORM.sizes=[] + US-018 PerTypeOverridesModal/PtypePreviewModal 高级配置弹窗+片型缩略图+放大预览 + US-021 useCommitToNesting 解析成功自动 commit+D1 闭环 + US-022 求解输入数量 demand per-size + US-024 NestSVG 5 层渲染+共享 LAYER5_COLORS + US-027 NestingPage phase 状态机+useSolveRun.stop()+running 态冻结参数编辑 + US-029 操作指引基础设施 tourStore+TourOverlay+useTour+TabBar 右上角入口 + US-030 previewTour 5 步+advance-on-ready+首次自动触发 + US-031 nestingTour 5 步+runRegistry 帧快照联动推进 + US-032 手动入口完善+关闭交互打磨+reduced-motion+scrollIntoView+完整单测 + 矩阵化重构 US-001 qtyStore 数据层简化（删 global 模式；PieceQuantity={perSize,baseValue}；setRowAll 整行填充；hydrate 单一入口；serializeQuantities 删 global 分支线格式不变）+ 矩阵化重构 US-002 QtyMatrix 数量矩阵组件（裁片×尺码矩阵；未接入 PreviewPage，集成在 US-003）)
 
 ```
 src/
@@ -67,6 +67,7 @@ src/
     │   ├── Switch.tsx          # 上传预览 US-012 ✅ 受控开关（role=switch + aria-checked；PieceQtyDialog 内「仅当前尺码/全部尺码」用）
     │   ├── PieceQtyDialog.tsx  # 上传预览 US-012 ✅ 数量编辑弹窗（草稿+确定；Portal 到 body；ESC/遮罩/取消丢弃草稿）
     │   ├── PieceZoomModal.tsx  # 上传预览 US-013 ✅ 放大预览模态（声明式受控 Portal；订阅 uploadStore.zoom+doc；✕/遮罩/ESC 关闭；复用 PiecePreviewSVG pad=20）
+    │   ├── QtyMatrix.tsx       # 矩阵化重构 US-002 ✅ 数量矩阵（行=label 并集[徽章+名+compact 缩略图+填充 popover] × 列=doc.sizes 全码[列头 button setSize+active]+合计；格内 clampQty 编辑+Enter/Tab 跳格；0/.zero、缺片/—.missing、特例/.override 三态；sticky 表头/首列/底行+45vh 内滚；Σdemand 小计+全 0 警示+重置 1；未接入 PreviewPage（US-003 集成））
     │   └── __tests__/
     │       ├── UploadPanel.test.tsx      # 上传预览 US-006 ✅ 25 项集成测试（US-021 更新 2 项 fetch 计数 + beforeEach/afterEach 加 uiStore reset）
     │       ├── PiecePreviewSVG.test.tsx  # 上传预览 US-007 ✅ 33 项单测（bbox 纯函数 + 5 层渲染 + 翻转 + 标注 + 切片重建）
@@ -75,6 +76,7 @@ src/
     │       ├── PreviewPage.test.tsx      # 上传预览 US-008 ✅ 9 项基础 + US-014 ✅ 7 项新增（默认模态不渲染 / qtyDialog+zoom 自显隐 / reset 联动清 / 重传清 / 切码保留 / 端到端切码→qty 弹窗→确定仅写该码 perSize（矩阵化重构 US-001 改写，global 用例删））
     │       ├── Switch.test.tsx           # 上传预览 US-012 ✅ 5 项单测（role+aria-checked / onChange / label 文案 / disabled / .on class）
     │       ├── PieceQtyDialog.test.tsx   # 上传预览 US-012 ✅ 12 项集成（矩阵化重构 US-001 改写删 global/Switch 用例：null 不渲染 / 标题 / 初值 per-size / [+][-] / 确定 setPiecePerSize / 取消 / 遮罩 / ESC / blur clamp）
+    │       ├── QtyMatrix.test.tsx        # 矩阵化重构 US-002 ✅ 32 项单测（行列结构 6 + 列头切码 2 + 缩略图 openZoom 1 + 格内编辑 6 + 0/特例高亮 5 + 行填充 popover 7 + 小计与总片数 4 + 重置 1）
     │       └── PieceZoomModal.test.tsx   # 上传预览 US-013 ✅ 14 项集成（null 不渲染 / doc=null 不渲染 / overlay+modal+aria / 头部 label+seq(qty)+size+name / qty 从 qtyStore / null 码「通用」/ body svg.piece-preview-svg / ✕ closeZoom / 遮罩 closeZoom / modal 不冒泡 / ESC closeZoom / Portal body / label 不存在兜底 / size 不存在兜底）+ US-016 ✅ PreviewPage.test.tsx 增 8 项（mount idle→false / done→true / error→false / reset→false / 重传 doc_id 变化短暂 false 后 true / 关键不变量 setNestingEnabled(false) 不强制切 Tab / uploading→false / 状态机循环 done→uploading→error→done）
     ├── nests/             # US-003 ✅ NestSVG / NestCard / NestLabel；US-005 ✅ NestsGrid；US-006 ✅ NestSVG seek+hover
     ├── ControlPanel/      # US-004 ✅ 8 子组件；US-005 ✅ MultiSeedControls；US-007 ✅ ExportButtons；US-018 ✅ PerTypeOverrides 改按钮触发 + PerTypeOverridesModal（高级配置弹窗 + 片型缩略图 + D7 预填 + 草稿确定）+ PtypePreviewModal（片型放大预览，双层独立 ESC）；US-031 ✅ 加 data-tour 锚点（doc-banner / start-btn 父容器 / param-form 在 SizePicker / export-group 在 ExportButtons）
@@ -107,6 +109,21 @@ src/
 - **null 码 sizeKey 口径**：`sizeKey(null)='null'`（perSize key 空间，与 number 区分）；人读「通用」文案由各组件自查（qtyStore 内 sizeLabel 已随 reason 删除）。
 - **纯函数 + Zustand 便于测试**：clampQty / getPieceDisplay 是纯函数导出，单测直接调；store 通过 `useQtyStore.getState()` / `setState()` 同步可读可写，无需 React 渲染。单测全部纯函数/store 级，不挂组件。
 - **不进 commit / 排料**：数量仅前端 store（WS start payload 经 serializeQuantities 序列化），不进 intermediate。
+
+## 矩阵化重构 US-002 关键约定（QtyMatrix 数量矩阵 调用方必读）
+
+> 裁片 × 尺码数量矩阵（一屏看全 + 格内直接编辑 + 整行填充 + 即时小计）。本 Story 仅组件本体 + 单测，**未接入 PreviewPage**（集成与 SizeTabs/PieceQtyDialog/Switch 拆除在矩阵化重构 US-003，tour 锚点在 US-005）。
+
+- **行列模型**：行 = 全码 label 并集（doc.sizes 升序遍历首次出现排序 = 最小码 pieces 顺序优先，后续码新增 label 追加尾部）；列 = `doc.sizes` 全码动态（M1787 11 码 28-38，**勿按 8 码写死**；null 码殿后显示「通用」，无 null 码不渲染该列）+ 末列行合计。每 render 从 doc 重算派生（piecesByLabel Map + labelOrder），doc 稳定引用 + ~10×12 规模不做 memo。
+- **行填充只写该 label 实际存在的码**：`setRowAll(label, rowSizes(label), value)`，rowSizes = columns.filter(cellExists)；给缺片码写值会造 phantom perSize 键，污染 getPieceDisplay editable 语义与 serializeQuantities 输出（红线，qtyStore 测试「no phantom key」同步守）。
+- **格内编辑三提交路径**：blur / Enter / Tab，值一律过 clampQty 写 setPiecePerSize；草稿不实时 clamp（允许清空重输中间态），提交时统一规整。Enter 与 Tab 同语义：preventDefault 后手动 focusNextCell（`input.qty-cell-input:not([disabled])` 平铺顺序 + 末格回卷首格，跳过缺片格）。
+- **React 18 事件 flush 时序坑**：synthetic「set value + input event + blur」放同一 JS task 会丢提交（onChange flush 晚于 onBlur 读到旧草稿）——集成测试与 CDP/浏览器驱动必须把 type 和 blur 拆成两个独立 task 派发。
+- **草稿同步 focusedRef 守卫**：QtyMatrixCell 的 `useEffect([value])` 仅同步未聚焦格（行填充/重置等 store 侧外部变更进 DOM）；聚焦格保持用户草稿，blur 时草稿与 store 值一致则不重复写。
+- **三态格子互斥可断言**：0 = 显式「该码不排此片」（`.zero` 暗色 + title + 可编辑，计入小计贡献 0）；缺片 = 该码无此 label（disabled「—」`.missing`，不计入小计）；特例 = `.override`（判定 `!rowAllSame && v !== base`，baseValue 缺席兜底 1；整行同值不高亮防噪点）。
+- **列头即切码入口**：列头是 button，点击 `setSize(该码)`（US-003 起替代 SizeTabs 驱动下方图形预览），activeSize 列 `.active` + aria-pressed。缩略图 rep 优先 activeSize 版本（与图形预览同码视觉一致），点击 `openZoom(label, activeSize)` 复用 PieceZoomModal。
+- **小计 Σdemand 口径（本 Story）**：行合计 = Σ该行各码 demand；每码小计 = Σ该码各 label demand（缺片格不计）；工具条总片数 = sizeSubtotals 之和；全 0 且有行 → 红色警示。**US-004 升级物理口径 `Σ demand × (paired?2:1)`**——只改求和处乘系数，三处小计同源。
+- **CSS 布局不变量**：`.qty-matrix-scroll` max-height:45vh 内部滚动；sticky 表头/首列（.qty-rowhead）/底行（tfoot）；表格 `border-collapse: separate` + 自绘边框（collapse 会吞 sticky 格边框）；sticky z 层级 thead=3 / corner=5 / rowhead=2 / tfoot=3 / subtotal-rowhead=4；窄屏（≤1366）靠行头 220px + 格子 64px min-width 自然横滚。不引入 CSS 框架。
+- **「重置为默认 1」**：逐行 `setRowAll(label, rowSizes(label), 1)`（值与 baseValue 双回 1，整行同值 → 特例高亮清空）。
 
 ## 上传预览 US-012 关键约定（PieceQtyDialog 数量弹窗 + Switch 调用方必读）
 
