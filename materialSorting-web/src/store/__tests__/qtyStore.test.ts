@@ -1,13 +1,13 @@
-// US-011 qtyStore 单测：clampQty 6 + getPieceDisplay 9 + setPiecePerSize 4 + setPieceGlobal 2
-// + resetQuantities 1 + hydrateDefault 3 + store 独立性 2 = 27 项。
+// qtyStore 单测（US-011 起源；矩阵化重构 US-001 改写：删 global 模式，加 setRowAll /
+// baseValue / hydrate 单一入口）。
 //
 // 验收：
-//   - clampQty 处理负数 / 小数 / NaN / 超 99 / 字符串 / 正常值
-//   - getPieceDisplay 四分支 + null 码 sizeKey/sizeLabel
-//   - setPiecePerSize 写入值 + 从 global 切回时 globalValue 继承到 source 码
-//   - setPieceGlobal 切模式后, 非 source 码 editable=false 且 reason 含来源码
+//   - clampQty 处理负数 / 小数 / NaN / 超 99 / 字符串 / 正常值（公式不变）
+//   - getPieceDisplay 三分支 + null 码 sizeKey（editable 仅在「该码无此裁片」时 false）
+//   - setPiecePerSize 写入值（clampQty）+ 保留 baseValue + 新建 label baseValue 兜底 1
+//   - setRowAll 整行写入 + baseValue 置为填充值 + clamp + sizes 外码保留
 //   - resetQuantities 清空为 {}
-//   - hydrateDefault 按 (label×size) 初始化每片默认 1（per-size）
+//   - hydrate 按 (label×size) 初始化每片默认 1 且 baseValue=1（全量重建）
 //   - store 与 uploadStore 字段不重叠
 
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -59,109 +59,54 @@ describe('clampQty (US-011)', () => {
   });
 });
 
-describe('getPieceDisplay (US-011)', () => {
-  it('label not configured -> {qty:0, editable:true, reason:null}', () => {
+describe('getPieceDisplay (US-001 简化后)', () => {
+  it('label 未配置 -> {qty:0, editable:true}', () => {
     const map: PieceQuantityMap = {};
     const r = getPieceDisplay(map, 'A', 30);
-    expect(r).toEqual({ qty: 0, editable: true, reason: null });
+    expect(r).toEqual({ qty: 0, editable: true });
   });
 
-  it('per-size mode -> qty from perSize[sizeKey]', () => {
+  it('该码有值 -> qty 从 perSize[sizeKey] 读，editable=true', () => {
     const map: PieceQuantityMap = {
-      A: { mode: 'per-size', perSize: { '28': 2, '30': 4 }, globalValue: 0, globalSource: null },
+      A: { perSize: { '28': 2, '30': 4 }, baseValue: 2 },
     };
-    expect(getPieceDisplay(map, 'A', 30).qty).toBe(4);
-    expect(getPieceDisplay(map, 'A', 28).qty).toBe(2);
+    expect(getPieceDisplay(map, 'A', 30)).toEqual({ qty: 4, editable: true });
+    expect(getPieceDisplay(map, 'A', 28)).toEqual({ qty: 2, editable: true });
   });
 
-  it('per-size mode size unset -> qty=0', () => {
+  it('该码无此裁片（perSize 缺 sizeKey）-> {qty:0, editable:false}', () => {
     const map: PieceQuantityMap = {
-      A: { mode: 'per-size', perSize: { '28': 2 }, globalValue: 0, globalSource: null },
+      A: { perSize: { '28': 2 }, baseValue: 1 },
     };
-    const r = getPieceDisplay(map, 'A', 32);
-    expect(r).toEqual({ qty: 0, editable: true, reason: null });
+    // 32 码无 A 片（hydrate 只物化 doc 内存在的 (label,size)）
+    expect(getPieceDisplay(map, 'A', 32)).toEqual({ qty: 0, editable: false });
   });
 
-  it('global mode globalSource===size -> editable=true', () => {
+  it('显式 0（该码配置为不排）-> {qty:0, editable:true}', () => {
     const map: PieceQuantityMap = {
-      A: { mode: 'global', perSize: {}, globalValue: 7, globalSource: 30 },
+      A: { perSize: { '28': 0 }, baseValue: 1 },
     };
-    const r = getPieceDisplay(map, 'A', 30);
-    expect(r).toEqual({ qty: 7, editable: true, reason: null });
+    expect(getPieceDisplay(map, 'A', 28)).toEqual({ qty: 0, editable: true });
   });
 
-  it('global mode globalSource!==size -> editable=false + reason has source size', () => {
+  it('null 码用 sizeKey null 作 key', () => {
     const map: PieceQuantityMap = {
-      A: { mode: 'global', perSize: {}, globalValue: 7, globalSource: 30 },
+      A: { perSize: { null: 9 }, baseValue: 1 },
     };
-    const r = getPieceDisplay(map, 'A', 32);
-    expect(r.qty).toBe(7);
-    expect(r.editable).toBe(false);
-    expect(r.reason).toContain('30');
-  });
-
-  it('null size uses sizeKey null (per-size)', () => {
-    const map: PieceQuantityMap = {
-      A: { mode: 'per-size', perSize: { null: 9 }, globalValue: 0, globalSource: null },
-    };
-    expect(getPieceDisplay(map, 'A', null).qty).toBe(9);
-  });
-
-  it('null size with source=28 -> reason contains source size 28', () => {
-    const map: PieceQuantityMap = {
-      A: { mode: 'global', perSize: {}, globalValue: 3, globalSource: 28 },
-    };
-    const r = getPieceDisplay(map, 'A', null);
-    expect(r.editable).toBe(false);
-    expect(r.reason).toContain('28');
-  });
-
-  it('global source=null, access null -> editable=true (source matches)', () => {
-    const map: PieceQuantityMap = {
-      A: { mode: 'global', perSize: {}, globalValue: 5, globalSource: null },
-    };
-    expect(getPieceDisplay(map, 'A', null)).toEqual({ qty: 5, editable: true, reason: null });
-  });
-
-  it('global source=null, access number -> reason contains liang-yong (universal) label', () => {
-    const map: PieceQuantityMap = {
-      A: { mode: 'global', perSize: {}, globalValue: 5, globalSource: null },
-    };
-    const r = getPieceDisplay(map, 'A', 30);
-    expect(r.editable).toBe(false);
-    // sizeLabel(null) = universal code label
-    expect(r.reason).toContain('通用');
+    expect(getPieceDisplay(map, 'A', null)).toEqual({ qty: 9, editable: true });
   });
 });
 
 describe('setPiecePerSize (US-011)', () => {
-  it('per-size mode writes value (via clampQty)', () => {
+  it('写入值（经 clampQty），新建 label baseValue 兜底 1', () => {
     useQtyStore.getState().setPiecePerSize('A', 30, 5);
-    const map = useQtyStore.getState().quantities;
-    expect(map.A).toEqual({
-      mode: 'per-size',
+    expect(useQtyStore.getState().quantities.A).toEqual({
       perSize: { '30': 5 },
-      globalValue: 0,
-      globalSource: null,
+      baseValue: 1,
     });
   });
 
-  it('switching from global inherits globalValue to source size + writes new value', () => {
-    // first set global: source=28, value=7
-    useQtyStore.getState().setPieceGlobal('A', 28, 7);
-    // switch back to per-size at size 30 with value=3
-    useQtyStore.getState().setPiecePerSize('A', 30, 3);
-    const q = useQtyStore.getState().quantities.A;
-    expect(q.mode).toBe('per-size');
-    expect(q.globalValue).toBe(0);
-    expect(q.globalSource).toBeNull();
-    // globalValue 7 inherited to source size 28
-    expect(q.perSize['28']).toBe(7);
-    // new value 3 written to size 30
-    expect(q.perSize['30']).toBe(3);
-  });
-
-  it('per-size independent writes per size do not interfere', () => {
+  it('每码 / 每 label 独立写入互不干扰', () => {
     useQtyStore.getState().setPiecePerSize('A', 28, 2);
     useQtyStore.getState().setPiecePerSize('A', 30, 4);
     useQtyStore.getState().setPiecePerSize('B', 28, 6);
@@ -170,7 +115,7 @@ describe('setPiecePerSize (US-011)', () => {
     expect(map.B.perSize).toEqual({ '28': 6 });
   });
 
-  it('value via clampQty (negative/over-99/decimal)', () => {
+  it('值经 clampQty（负数 / 超 99 / 小数）', () => {
     useQtyStore.getState().setPiecePerSize('A', 30, -1);
     expect(useQtyStore.getState().quantities.A.perSize['30']).toBe(0);
     useQtyStore.getState().setPiecePerSize('A', 32, 200);
@@ -178,138 +123,110 @@ describe('setPiecePerSize (US-011)', () => {
     useQtyStore.getState().setPiecePerSize('A', 34, 3.9);
     expect(useQtyStore.getState().quantities.A.perSize['34']).toBe(3);
   });
+
+  it('格内编辑不动 baseValue（特例高亮基准保持）', () => {
+    useQtyStore.getState().setRowAll('A', [28, 30], 2);
+    useQtyStore.getState().setPiecePerSize('A', 30, 5);
+    const q = useQtyStore.getState().quantities.A;
+    expect(q.perSize).toEqual({ '28': 2, '30': 5 });
+    expect(q.baseValue).toBe(2);
+  });
 });
 
-describe('setPieceGlobal (US-011)', () => {
-  it('after setPieceGlobal, non-source size returns editable=false + reason has source size', () => {
-    useQtyStore.getState().setPieceGlobal('A', 28, 8);
-    const map = useQtyStore.getState().quantities;
-    expect(map.A).toEqual({
-      mode: 'global',
-      perSize: {},
-      globalValue: 8,
-      globalSource: 28,
-    });
-    const r = getPieceDisplay(map, 'A', 30);
-    expect(r.editable).toBe(false);
-    expect(r.reason).toContain('28');
-    // source size itself remains editable
-    expect(getPieceDisplay(map, 'A', 28).editable).toBe(true);
+describe('setRowAll (US-001 整行填充)', () => {
+  it('setRowAll A [28,29,30] 2 -> 三码=2 且 baseValue===2', () => {
+    useQtyStore.getState().setRowAll('A', [28, 29, 30], 2);
+    const q = useQtyStore.getState().quantities.A;
+    expect(q.perSize).toEqual({ '28': 2, '29': 2, '30': 2 });
+    expect(q.baseValue).toBe(2);
   });
 
-  it('setPieceGlobal twice to a different source overwrites previous', () => {
-    useQtyStore.getState().setPieceGlobal('A', 28, 8);
-    useQtyStore.getState().setPieceGlobal('A', 30, 5);
+  it('value 经 clampQty（负数→0，超 99→99）', () => {
+    useQtyStore.getState().setRowAll('A', [28, 30], -3);
+    expect(useQtyStore.getState().quantities.A).toEqual({
+      perSize: { '28': 0, '30': 0 },
+      baseValue: 0,
+    });
+    useQtyStore.getState().setRowAll('A', [28, 30], 150);
+    expect(useQtyStore.getState().quantities.A).toEqual({
+      perSize: { '28': 99, '30': 99 },
+      baseValue: 99,
+    });
+  });
+
+  it('sizes 外的既有码保留原值（非破坏合并）', () => {
+    useQtyStore.getState().setPiecePerSize('A', 32, 7);
+    useQtyStore.getState().setRowAll('A', [28, 30], 2);
+    expect(useQtyStore.getState().quantities.A.perSize).toEqual({
+      '28': 2,
+      '30': 2,
+      '32': 7,
+    });
+  });
+
+  it('二次填充覆盖旧值 + baseValue（含 null 码 sizeKey）', () => {
+    useQtyStore.getState().setRowAll('A', [28, null], 2);
+    useQtyStore.getState().setRowAll('A', [28, null], 3);
     const q = useQtyStore.getState().quantities.A;
-    expect(q.globalSource).toBe(30);
-    expect(q.globalValue).toBe(5);
+    expect(q.perSize).toEqual({ '28': 3, null: 3 });
+    expect(q.baseValue).toBe(3);
   });
 });
 
 describe('resetQuantities (US-011)', () => {
   it('clears to {}', () => {
     useQtyStore.getState().setPiecePerSize('A', 30, 5);
-    useQtyStore.getState().setPieceGlobal('B', 28, 7);
+    useQtyStore.getState().setRowAll('B', [28], 7);
     expect(Object.keys(useQtyStore.getState().quantities).length).toBe(2);
     useQtyStore.getState().resetQuantities();
     expect(useQtyStore.getState().quantities).toEqual({});
   });
 });
 
-describe('hydrateDefault (解析后默认数量)', () => {
-  it('按 (label×size) 初始化每个码下默认 1（per-size 模式）', () => {
+describe('hydrate (解析后默认数量 + baseValue=1)', () => {
+  it('按 (label×size) 初始化每个码下默认 1 且 baseValue=1', () => {
     // 模拟 doc：28 码 A/B，30 码 A（同 label 跨码）
-    useQtyStore.getState().hydrateDefault([
+    useQtyStore.getState().hydrate([
       { label: 'A', size: 28 },
       { label: 'B', size: 28 },
       { label: 'A', size: 30 },
     ]);
     const map = useQtyStore.getState().quantities;
-    expect(map.A).toEqual({
-      mode: 'per-size',
-      perSize: { '28': 1, '30': 1 },
-      globalValue: 0,
-      globalSource: null,
-    });
-    expect(map.B).toEqual({
-      mode: 'per-size',
-      perSize: { '28': 1 },
-      globalValue: 0,
-      globalSource: null,
-    });
+    expect(map.A).toEqual({ perSize: { '28': 1, '30': 1 }, baseValue: 1 });
+    expect(map.B).toEqual({ perSize: { '28': 1 }, baseValue: 1 });
   });
 
   it('null 码（通用）用 sizeKey null 作 key', () => {
-    useQtyStore.getState().hydrateDefault([{ label: 'A', size: null }]);
+    useQtyStore.getState().hydrate([{ label: 'A', size: null }]);
     const map = useQtyStore.getState().quantities;
-    expect(map.A.perSize).toEqual({ null: 1 });
+    expect(map.A).toEqual({ perSize: { null: 1 }, baseValue: 1 });
     expect(getPieceDisplay(map, 'A', null).qty).toBe(1);
   });
 
-  it('全量重建：旧数量被新 doc 默认覆盖（重传场景）', () => {
+  it('全量重建：旧数量 / 旧 baseValue 被新 doc 默认覆盖（重传场景）', () => {
     // 先填一些旧数量
     useQtyStore.getState().setPiecePerSize('A', 28, 9);
-    useQtyStore.getState().setPieceGlobal('B', 30, 7);
+    useQtyStore.getState().setRowAll('B', [30], 7);
     expect(Object.keys(useQtyStore.getState().quantities).length).toBe(2);
     // 重传：新 doc 只有 28 码 A 片 → hydrate 全量重建，旧 B / 旧值 9 被清
-    useQtyStore.getState().hydrateDefault([{ label: 'A', size: 28 }]);
+    useQtyStore.getState().hydrate([{ label: 'A', size: 28 }]);
     const map = useQtyStore.getState().quantities;
     expect(Object.keys(map).sort()).toEqual(['A']);
-    expect(map.A.perSize).toEqual({ '28': 1 });
-  });
-});
-
-describe('hydrateDefaults (US-022 sizes×labels 交叉积)', () => {
-  it('sizes × labels 交叉积全填 1（per-size 模式）', () => {
-    useQtyStore.getState().hydrateDefaults([28, 30], ['A', 'B']);
-    const map = useQtyStore.getState().quantities;
-    expect(map.A).toEqual({
-      mode: 'per-size',
-      perSize: { '28': 1, '30': 1 },
-      globalValue: 0,
-      globalSource: null,
-    });
-    expect(map.B).toEqual({
-      mode: 'per-size',
-      perSize: { '28': 1, '30': 1 },
-      globalValue: 0,
-      globalSource: null,
-    });
+    expect(map.A).toEqual({ perSize: { '28': 1 }, baseValue: 1 });
   });
 
-  it('null 码用 sizeKey null 作 key', () => {
-    useQtyStore.getState().hydrateDefaults([null], ['A']);
-    const map = useQtyStore.getState().quantities;
-    expect(map.A.perSize).toEqual({ null: 1 });
-  });
-
-  it('全量重建：旧数量被新默认覆盖', () => {
+  it('空 entries → 空 map（后续 serializeQuantities 返 null）', () => {
     useQtyStore.getState().setPiecePerSize('A', 28, 9);
-    useQtyStore.getState().hydrateDefaults([28, 30], ['A', 'B']);
-    const map = useQtyStore.getState().quantities;
-    expect(Object.keys(map).sort()).toEqual(['A', 'B']);
-    expect(map.A.perSize).toEqual({ '28': 1, '30': 1 });
-  });
-
-  it('空 sizes / 空 labels → 空 map（后续 serializeQuantities 返 null）', () => {
-    useQtyStore.getState().hydrateDefaults([], ['A']);
-    expect(useQtyStore.getState().quantities).toEqual({});
-    useQtyStore.getState().hydrateDefaults([28], []);
+    useQtyStore.getState().hydrate([]);
     expect(useQtyStore.getState().quantities).toEqual({});
   });
 });
 
 describe('store independence (US-011)', () => {
   it('qtyStore and uploadStore fields do not overlap', () => {
-    // qtyStore only holds quantities + 5 actions（US-022 加 hydrateDefaults 复数版）
+    // qtyStore only holds quantities + 4 actions（US-001 合并 hydrate 双入口 + setRowAll）
     const qKeys = Object.keys(useQtyStore.getState()).filter((k) => k !== 'quantities');
-    expect(qKeys.sort()).toEqual([
-      'hydrateDefault',
-      'hydrateDefaults',
-      'resetQuantities',
-      'setPieceGlobal',
-      'setPiecePerSize',
-    ]);
+    expect(qKeys.sort()).toEqual(['hydrate', 'resetQuantities', 'setPiecePerSize', 'setRowAll']);
     // uploadStore does not hold quantities
     expect(useUploadStore.getState()).not.toHaveProperty('quantities');
   });

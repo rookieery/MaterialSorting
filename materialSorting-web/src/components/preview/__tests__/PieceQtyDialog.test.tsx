@@ -1,9 +1,8 @@
-// US-012 PieceQtyDialog integration tests (>=11 cases):
+// US-012 PieceQtyDialog integration tests（US-001 删「全部尺码」global 开关后改写）:
 //   AC: qtyDialog=null does not render DOM; opening renders title with label+sizeLabel
-//   AC: initial draftQty / draftGlobal from qtyStore (global-source / per-size two initial values)
+//   AC: initial draftQty from qtyStore getPieceDisplay
 //   AC: [+][-] / input change draftQty; [-]@0 disabled
-//   AC: Switch toggles draftGlobal
-//   AC: confirm draftGlobal=true calls setPieceGlobal+close; =false calls setPiecePerSize+close
+//   AC: confirm calls setPiecePerSize (per-size only) + close
 //   AC: cancel does not write store; overlay click closes; ESC closes
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -84,30 +83,15 @@ describe("PieceQtyDialog (US-012)", () => {
     expect(title!.textContent).toContain("30");
   });
 
-  it("initial draftQty from per-size mode getPieceDisplay", () => {
+  it("initial draftQty from getPieceDisplay (perSize[sizeKey])", () => {
     const map: PieceQuantityMap = {
-      A: { mode: "per-size", perSize: { "30": 5 }, globalValue: 0, globalSource: null },
+      A: { perSize: { "30": 5 }, baseValue: 1 },
     };
     useQtyStore.setState({ quantities: map });
     useUploadStore.getState().openQtyDialog("A", 30);
     renderDialog();
     const input = document.body.querySelector(".qty-input") as HTMLInputElement;
     expect(input.value).toBe("5");
-    const sw = document.body.querySelector("button.switch")!;
-    expect(sw.getAttribute("aria-checked")).toBe("false");
-  });
-
-  it("initial draftQty/draftGlobal from global mode source size", () => {
-    const map: PieceQuantityMap = {
-      A: { mode: "global", perSize: {}, globalValue: 7, globalSource: 30 },
-    };
-    useQtyStore.setState({ quantities: map });
-    useUploadStore.getState().openQtyDialog("A", 30);
-    renderDialog();
-    const input = document.body.querySelector(".qty-input") as HTMLInputElement;
-    expect(input.value).toBe("7");
-    const sw = document.body.querySelector("button.switch")!;
-    expect(sw.getAttribute("aria-checked")).toBe("true");
   });
 
   it("[+] [-] buttons change draftQty; [-]@0 disabled", () => {
@@ -143,18 +127,7 @@ describe("PieceQtyDialog (US-012)", () => {
     expect(input.value).toBe("0");
   });
 
-  it("Switch toggles draftGlobal", () => {
-    useUploadStore.getState().openQtyDialog("A", 30);
-    renderDialog();
-    const sw = document.body.querySelector("button.switch")!;
-    expect(sw.getAttribute("aria-checked")).toBe("false");
-    act(() => {
-      sw.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    expect(sw.getAttribute("aria-checked")).toBe("true");
-  });
-
-  it("confirm draftGlobal=false calls setPiecePerSize + close", () => {
+  it("confirm calls setPiecePerSize (仅当前码) + close", () => {
     useUploadStore.getState().openQtyDialog("A", 30);
     renderDialog();
     const inc = document.body.querySelector(".qty-inc") as HTMLButtonElement;
@@ -172,30 +145,7 @@ describe("PieceQtyDialog (US-012)", () => {
       confirm.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
     const q = useQtyStore.getState().quantities.A;
-    expect(q.mode).toBe("per-size");
     expect(q.perSize["30"]).toBe(3);
-    expect(useUploadStore.getState().qtyDialog).toBeNull();
-  });
-
-  it("confirm draftGlobal=true calls setPieceGlobal + close", () => {
-    useUploadStore.getState().openQtyDialog("A", 28);
-    renderDialog();
-    const sw = document.body.querySelector("button.switch")!;
-    act(() => {
-      sw.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    const input = document.body.querySelector(".qty-input") as HTMLInputElement;
-    act(() => {
-      setNativeInputValue(input, "9");
-    });
-    const confirm = document.body.querySelector(".qty-confirm") as HTMLButtonElement;
-    act(() => {
-      confirm.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
-    const q = useQtyStore.getState().quantities.A;
-    expect(q.mode).toBe("global");
-    expect(q.globalValue).toBe(9);
-    expect(q.globalSource).toBe(28);
     expect(useUploadStore.getState().qtyDialog).toBeNull();
   });
 

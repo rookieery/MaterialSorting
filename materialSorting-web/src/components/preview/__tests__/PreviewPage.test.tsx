@@ -5,9 +5,10 @@
 //
 // US-014 新增：
 //   - 顶层挂 <PieceQtyDialog/> + <PieceZoomModal/>（默认 store null 不渲染 DOM）
-//   - 解析完成 / 重传（doc_id 变化）联动 qtyStore.hydrateDefault（每片默认 1）；
+//   - 解析完成 / 重传（doc_id 变化）联动 qtyStore.hydrate（每片默认 1 + baseValue 1）；
 //     reset（doc→null）联动 qtyStore.resetQuantities
-//   - 端到端：切码 → 点数量(片) → 切全局 + 确定 → 切回原码 → 置灰 title 含来源码
+//   - 端到端：切码 → 点数量(片) → 弹窗 +3 → 确定 → store 该码写入 3（US-001 删 global 后
+//     仅 per-size 写入）
 //
 // US-016 新增（Tab 解锁联动）：
 //   - mount idle 时 setNestingEnabled(false)
@@ -194,7 +195,7 @@ describe('PreviewPage (US-008) AC#3 已解析挂载主体', () => {
     expect(el.querySelectorAll('.piece-card').length).toBe(2);
     const qtyTexts = Array.from(el.querySelectorAll('.piece-card-qty')).map((n) => n.textContent);
     expect(qtyTexts.length).toBe(2);
-    // 解析完成后每片默认数量 1（PreviewPage mount 时 hydrateDefault）
+    // 解析完成后每片默认数量 1（PreviewPage mount 时 hydrate）
     expect(qtyTexts).toContain('1片');
   });
 
@@ -331,7 +332,7 @@ describe('PreviewPage (US-014) qtyStore 联动（hydrate 默认 1 / reset 清空
 });
 
 describe('PreviewPage (US-014) 端到端', () => {
-  it('解析成功 → 切码 → 点数量(片) → 切全局+确定 → 切另一码 → 对应片置灰 title 含来源码', () => {
+  it('解析成功 → 切码 → 点数量(片) → 弹窗改数量+确定 → 仅该码 perSize 写入', () => {
     useUploadStore.setState({
       status: 'done',
       doc: makeDoc(),
@@ -345,37 +346,40 @@ describe('PreviewPage (US-014) 端到端', () => {
     // 点 A 片数量(片) 按钮 → 弹数量弹窗
     const qtyButton = el.querySelector('.piece-card .piece-card-qty') as HTMLButtonElement;
     expect(qtyButton.tagName).toBe('BUTTON');
+    expect(qtyButton.textContent).toBe('1片');
     act(() => {
       qtyButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
-    // 弹窗已显示
+    // 弹窗已显示（初值 = hydrate 默认 1）
     expect(document.body.querySelector('.piece-qty-dialog-overlay')).not.toBeNull();
-    // 切换 Switch 到「全部尺码」（global）
-    const sw = document.body.querySelector('button.switch') as HTMLButtonElement;
-    expect(sw.getAttribute('aria-checked')).toBe('false');
+    const input = document.body.querySelector('.qty-input') as HTMLInputElement;
+    expect(input.value).toBe('1');
+    // +1 两次 → 3
+    const inc = document.body.querySelector('.qty-inc') as HTMLButtonElement;
     act(() => {
-      sw.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      inc.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
-    expect(sw.getAttribute('aria-checked')).toBe('true');
+    act(() => {
+      inc.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
     // 点确定
     const confirm = document.body.querySelector('.qty-confirm') as HTMLButtonElement;
     act(() => {
       confirm.dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
-    // qtyStore 已写入 global 模式（source=30）
+    // qtyStore 仅 30 码 perSize 写入 3（per-size，不影响其它码）
     const q = useQtyStore.getState().quantities.A;
-    expect(q.mode).toBe('global');
-    expect(q.globalSource).toBe(30);
+    expect(q.perSize['30']).toBe(3);
+    expect(q.perSize['28']).toBe(1);
     // 弹窗已关闭
     expect(document.body.querySelector('.piece-qty-dialog-overlay')).toBeNull();
-    // 切回 28 码 → A 片应置灰（disabled span + title 含「30」）
+    // 切回 28 码 → A 片仍显示默认 1片（不受 30 码编辑影响）
     act(() => {
       useUploadStore.getState().setSize(28);
     });
-    const disabledQty = el.querySelector('.piece-card .piece-card-qty')!;
-    expect(disabledQty.tagName).toBe('SPAN');
-    expect(disabledQty.classList.contains('disabled')).toBe(true);
-    expect(disabledQty.getAttribute('title')).toContain('30');
+    const qty28 = el.querySelector('.piece-card .piece-card-qty')!;
+    expect(qty28.tagName).toBe('BUTTON');
+    expect(qty28.textContent).toBe('1片');
   });
 });
 

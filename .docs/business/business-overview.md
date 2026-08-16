@@ -99,7 +99,7 @@ out/sparrow_baseline/pieces_intermediate.json   ← 全流程事实源（每片 
 双 Tab：**上传预览**（默认入口）+ **超排**（未上传母版时锁定，US-015/016）。
 
 1. **上传母版**（上传预览 Tab）：拖拽/点击上传 `.dxf` → `/api/parse-dxf` 深度解析 → 按码分组 + A/B/C 标注 + 5 层（毛版/净版/内部线/刺口/布纹线）预览（US-004~008）。点卡片头编辑数量、点卡片体放大预览（US-012~014）。
-2. **编辑数量**（US-011/012/022）：每片 per-size 或 global 数量（qtyStore），0=该码不排；跨码联动置灰。
+2. **编辑数量**（US-011/012/022；矩阵化重构 US-001 删 global 模式）：每片逐码独立数量（qtyStore per-size），0=该码不排；整行填充与矩阵化编辑见矩阵化重构后续故事。
 3. **自动应用**（US-021）：解析成功后台自动 `/api/commit-to-nesting` 把母版转 intermediate（全码 176 片）+ reload 后端 + 解锁超排 Tab（不强制切，用户主动点入）。
 4. **求解配置**（超排 Tab）：SizePicker 从上传 doc 动态读码号（US-017）+ 总裁片数量实时显示；per-type 高级配置弹窗（重合/旋转，US-018）+ 片型缩略图/放大预览；时长/种子/多 seed（≤6）。
 5. **求解**（US-025~028）：点"开始求解"→ WS 推 manifest（5 层骨架）→ 持续推 frame（每 ~0.2s，利用率实时爬升）→ final。**可随时"停止"**（后端 terminate 子进程 → `{type:'stopped'}`）→ stopped 态保留中间方案可导出 → "重新开始"用上次参数一键重跑。phase 五态：idle/running/stopped/done/error。

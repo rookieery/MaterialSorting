@@ -7,7 +7,7 @@
 // 数量展示（卡片头 .piece-card-qty 文案 = {qty}片）：
 //   - 数量默认 0 渲染 0片
 //   - editable 时 .piece-card-qty 为 <button>，点击 openQtyDialog
-//   - global 非 source 时 .piece-card-qty.disabled 为 <span>，title 含来源码
+//   - 该码无此裁片（perSize 缺 sizeKey）时 .piece-card-qty.disabled 为 <span>
 //   - .piece-card-body 点击 openZoom；role=button + tabIndex + Enter/Space
 //   - .piece-card-qty stopPropagation 不冒泡到 body
 //
@@ -270,9 +270,9 @@ describe('ParsedPiecesView (US-014) 数量(片) 渲染', () => {
     expect(dialog!.size).toBe(28);
   });
 
-  it('global 非 source 时 .piece-card-qty.disabled 为 <span>，title 含来源码', () => {
-    // 在 30 码切 global，看 28 码：应渲染 span.disabled + title 含「30」
-    useQtyStore.getState().setPieceGlobal('A', 30, 7);
+  it('该码无此裁片（perSize 缺 sizeKey）时 .piece-card-qty.disabled 为 <span>', () => {
+    // store 里 A 只配置了 30 码（28 码缺 sizeKey）→ 28 码视角渲染 span.disabled
+    useQtyStore.getState().setPiecePerSize('A', 30, 7);
     useUploadStore.setState({
       status: 'done',
       doc: makeDoc([
@@ -285,27 +285,16 @@ describe('ParsedPiecesView (US-014) 数量(片) 渲染', () => {
     const qty = el.querySelector('.piece-card-qty')!;
     expect(qty.tagName).toBe('SPAN');
     expect(qty.classList.contains('disabled')).toBe(true);
-    // title 含来源码 30
-    expect(qty.getAttribute('title')).toContain('30');
-    // 显示全局值 7
-    expect(qty.textContent).toBe('7片');
-  });
-
-  it('global source 码自身仍为 <button>（source 可编辑）', () => {
-    useQtyStore.getState().setPieceGlobal('A', 30, 7);
-    useUploadStore.setState({
-      status: 'done',
-      doc: makeDoc([
-        { size: 28, pieces: [makePiece({ label: 'A', name: '前片28' })] },
-        { size: 30, pieces: [makePiece({ label: 'A', name: '前片30' })] },
-      ]),
-      activeSize: 30,
+    // 缺配置 → qty 兜底 0
+    expect(qty.textContent).toBe('0片');
+    // 已配置的 30 码视角仍为可编辑 button
+    act(() => {
+      useUploadStore.getState().setSize(30);
     });
-    const el = renderView();
-    const qty = el.querySelector('.piece-card-qty')!;
-    expect(qty.tagName).toBe('BUTTON');
-    expect(qty.classList.contains('disabled')).toBe(false);
-    expect(qty.textContent).toBe('7片');
+    const qty30 = el.querySelector('.piece-card-qty')!;
+    expect(qty30.tagName).toBe('BUTTON');
+    expect(qty30.classList.contains('disabled')).toBe(false);
+    expect(qty30.textContent).toBe('7片');
   });
 });
 

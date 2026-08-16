@@ -7,7 +7,7 @@
 //      已解析时挂载 SizeTabs + ParsedPiecesView。
 //   3. 顶层挂 <PieceQtyDialog/> + <PieceZoomModal/> 单例（订阅 store 自显隐；US-014 集成）。
 //   4. uploadStore.doc.doc_id 变化（首次上传 / 重传 / reset）→ 联动 qtyStore：
-//      有 doc 时 hydrateDefault（每码每片默认 1），doc→null 时 resetQuantities。
+//      有 doc 时 hydrate（每码每片默认 1），doc→null 时 resetQuantities。
 //      （US-014 重传清零的演进：旧母版数量不残留，新母版每片默认 1。）
 //   5. 联动 uiStore.setNestingEnabled（US-016）：subscribe uploadStore，按
 //      `status==='done' && doc!==null` 切 nestingEnabled；mount 时立即对齐初值。
@@ -70,18 +70,18 @@ export function PreviewPage(): JSX.Element {
   const doc = useUploadStore((s) => s.doc);
 
   // 解析完成 / 重传 / reset 联动 qtyStore：
-  //   - 有 doc（doc_id 变化或挂载时已有 doc）→ 按 doc 全码全片初始化默认数量 1（per-size）。
+  //   - 有 doc（doc_id 变化或挂载时已有 doc）→ 按 doc 全码全片初始化默认数量 1 + baseValue 1。
   //     把「每尺码每片默认 1」物化进 store（下游 commit / 排料直接读 map，不靠 selector 兜底）。
   //   - doc→null（reset）→ 清空数量。
   // 集成层职责：qtyStore / uploadStore 完全解耦，由 PreviewPage 把 doc.pieces 翻译成
-  // {label,size} 列表喂给 qtyStore.hydrateDefault（store 不依赖 parsed 类型）。
+  // {label,size} 列表喂给 qtyStore.hydrate（store 不依赖 parsed 类型）。
   useEffect(() => {
     const syncQty = (doc: ParsedDoc | null): void => {
       if (doc) {
         const entries = doc.sizes.flatMap((s) =>
           s.pieces.map((p) => ({ label: p.label, size: s.size })),
         );
-        useQtyStore.getState().hydrateDefault(entries);
+        useQtyStore.getState().hydrate(entries);
       } else {
         useQtyStore.getState().resetQuantities();
       }

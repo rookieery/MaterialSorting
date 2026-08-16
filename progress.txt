@@ -16,3 +16,15 @@ Started: 2026-08-09
 
   - 无浏览器验证：US-034 是纯类型扩展 + 数据驱动下拉框 + 测试断言更新，无 SVG/坐标/可视化逻辑改动（UI Verification 触发条件未命中）。后端 PLT 链路在 US-033 已就绪并通过端到端单测，前端 fmt='plt' 透传到 POST /export 由 US-033 路由分支接住，无需重复 UI 验证。
   - 无后台进程残留（本 Story 未启动 ms-web / vite dev；纯单元测试 + 静态类型检查）。
+
+## 2026-08-16 | ralph/preview-qty-matrix | US-001 qtyStore 数据层简化+整行填充
+
+  - 数据层重构：types/qty.ts PieceQuantity 改 { perSize, baseValue }（删 QtyMode/globalValue/globalSource）；qtyStore 删 setPieceGlobal、getPieceDisplay 简化为 {qty, editable}（editable 仅「该码无此裁片」= perSize 缺 sizeKey 时 false，reason/sizeLabel 删除）；setPiecePerSize 删 global 回切逻辑（保留函数名，baseValue 不动、新建 label 兜底 1）；新增 setRowAll(label, sizes, value)（整行写 perSize 经 clampQty + baseValue=value，sizes 外码非破坏保留）；hydrateDefault/hydrateDefaults 合并单一 hydrate(entries)（以 grep 生产调用方为准：唯一生产调用方 PreviewPage 用 entries 形式，故保留该签名；每 (label,sizeKey)=1 且 baseValue=1）。
+  - lib/params.ts serializeQuantities 删 global 展开分支，per-size 路径逻辑逐字段不变（显式 0 保留 / 未勾选码过滤 / 'null' sizeKey 兜底 / 空→null）——WS quantities 线格式不变，后端主管线零改动。
+  - 组件涟漪（仅为保持 typecheck/grep AC 绿的最小机械改动，UI 重构留 US-002/003）：PreviewPage hydrateDefault→hydrate 改名；PieceQtyDialog 删 draftGlobal/Switch 行（确定仅 setPiecePerSize；组件整体拆除在 US-003）；ParsedPiecesView span.disabled title 改固定文案（reason 已删）；SizePicker effectiveDemand 删 global 分支。
+  - 测试改写：qtyStore.test.ts（删 global 约半数用例，新增 setRowAll×4 / hydrate baseValue×4 / getPieceDisplay 新三分支）；params.test.ts serializeQuantities 8 项（新增 'null' 兜底 + baseValue 不序列化 + label 全过滤→null 用例）；PieceQtyDialog.test 15→12 项；ParsedPiecesView/PreviewPage/SizePicker 测试删 global 用例（PreviewPage 端到端改写为 per-size 流：弹窗 +2 → 确定 → 仅 30 码 perSize=3、28 码保持 1）。
+  - 验收核验：grep setPieceGlobal/QtyMode/globalValue/globalSource/hydrateDefault(src) 全 0；setRowAll('A',[28,29,30],2)→三码=2 且 baseValue===2、hydrate 每 (label,size)=1 且 baseValue=1（单测断言）；clampQty 公式不变；npm run typecheck / npm run test（39 文件 584 项全绿）/ npm run build 无报错。
+  - 实现踩坑：getPieceDisplay editable 初版写成 `!(sk in perSize)`（语义写反），584 项里 6 项挂掉暴露后修正为 `sk in perSize`——「该码无此裁片」应为 false。
+  - 文档同步（/sync-docs）：agent-component-map.md 更新现行态描述（store 树/PreviewPage/PieceQtyDialog/params/SizePicker 行）+ US-011/US-012 节加「矩阵化重构 US-001 部分取代」标注 + 文末新增「矩阵化重构 US-001」节（文件表 + 6 条不变量）；AGENTS.md（materialSorting-web）US-011 节整体改写为新契约 + US-012 节标注 + 文件分工/树行同步；business-overview.md 工作台交互第 2 条删 global 描述。
+  - 无浏览器验证：US-001 为纯数据层重构（store/序列化 + 机械涟漪），无 SVG 渲染/坐标变换/可视化逻辑改动（UI Verification 触发条件未命中）；矩阵 UI 的浏览器验证按 story 计划留在 US-002（矩阵渲染）与 US-003（端到端）。
+  - 无后台进程残留（本 Story 未启动 ms-web / vite dev / Chrome；纯单元测试 + 静态类型检查 + 构建）。

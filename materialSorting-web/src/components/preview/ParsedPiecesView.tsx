@@ -11,9 +11,8 @@
 //   - [.piece-card-label] + [.piece-card-qty]（label 徽章 + 数量按钮/标签）
 //   - 数量 + 可编辑性 从 qtyStore getPieceDisplay(quantities, label, activeSize) 读：
 //     * editable=true  → <button class="piece-card-qty" onClick=openQtyDialog>{qty}片</button>
-//     * editable=false → <span class="piece-card-qty disabled" title={reason}>{qty}片</span>
-//       （global 非 source 时置灰，native title 提供 hover 提示文案
-//        「该数值已在「<src>」尺码处使用全局数量」）
+//     * editable=false → <span class="piece-card-qty disabled" title="该尺码未配置此裁片数量">
+//       {qty}片</span>（该码无此裁片时置灰；当前码 pieces 均有 hydrate 记录，理论不触发）
 //
 // 点击区域分离（US-014 关键约定）：
 //   - .piece-card-qty（button）onClick → openQtyDialog + e.stopPropagation（防冒泡）
@@ -96,7 +95,7 @@ export function ParsedPiecesView(): JSX.Element {
                   ) : (
                     <span
                       className="piece-card-qty disabled"
-                      title={display.reason ?? undefined}
+                      title="该尺码未配置此裁片数量"
                     >
                       {display.qty}片
                     </span>

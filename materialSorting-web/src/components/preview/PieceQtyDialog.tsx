@@ -1,30 +1,29 @@
-// PieceQtyDialog —— 数量编辑弹窗（US-012）。
+// PieceQtyDialog —— 数量编辑弹窗（US-012；矩阵化重构 US-001 删「全部尺码」global 开关，
+// 本弹窗整体拆除在 US-003）。
 //
-// 草稿 + 确定模式：打开弹窗后从 qtyStore 读初值进本地草稿（draftQty / draftGlobal），
-// 用户编辑仅改草稿；点确定才写 qtyStore；点取消 / 遮罩 / ESC 仅 closeQtyDialog()，
-// 草稿丢弃。这避免切 global 瞬间把其它码同 label 置灰后无法回滚的体验问题。
+// 草稿 + 确定模式：打开弹窗后从 qtyStore 读初值进本地草稿（draftQty），用户编辑仅改草稿；
+// 点确定才写 qtyStore（setPiecePerSize，仅当前码）；点取消 / 遮罩 / ESC 仅 closeQtyDialog()，
+// 草稿丢弃。
 //
 // 状态来源拆分：
 //   - 显隐目标（label + size）→ uploadStore.qtyDialog（点卡片头 数量(片) 时写入）
-//   - 初值草稿（draftQty / draftGlobal）→ 本组件 useState，open 时初始化、close 时丢弃
-//   - 写入 → qtyStore.setPieceGlobal / setPiecePerSize（确定时调）
+//   - 初值草稿（draftQty）→ 本组件 useState，open 时初始化、close 时丢弃
+//   - 写入 → qtyStore.setPiecePerSize（确定时调，仅当前码）
 //
 // ESC 监听：dialog 打开（target!==null）时挂 window.keydown、关闭时卸载（无残留）。
 //
 // 关键约束（与 US-012 / US-011 一致）：
-//   - getPieceDisplay 是 qtyStore 消费唯一入口；初值 draftQty = display.qty；
-//     draftGlobal 初值 = (mode==='global' && globalSource===size)。
+//   - getPieceDisplay 是 qtyStore 消费唯一入口；初值 draftQty = display.qty。
 //   - clampQty 是数量值规整入口；用 type=number input 仍要在 blur 时 clamp 兜底（防
 //     上下箭头超界 / 字符串粘贴非数字）。
 //   - 不引入 CSS 框架；.piece-qty-dialog-overlay / .piece-qty-dialog-modal /
-//     .qty-input-group / .qty-switch 全部沿用 style.css 暗背景 + 绿色 #2ea06c 同色系。
+//     .qty-input-group 全部沿用 style.css 暗背景 + 绿色 #2ea06c 同色系。
 
 import { useEffect, useState } from 'react';
 import type { JSX } from 'react';
 import { createPortal } from 'react-dom';
 import { clampQty, getPieceDisplay, useQtyStore } from '../../store/qtyStore';
 import { useUploadStore } from '../../store/uploadStore';
-import { Switch } from './Switch';
 
 /** null 码（通用）的人读文案；与 SizeTabs NULL_SIZE_LABEL 同语义。 */
 function sizeLabel(size: number | null): string {
@@ -61,18 +60,12 @@ interface InnerProps {
 function PieceQtyDialogInner({ label, size, onClose }: InnerProps): JSX.Element {
   const quantities = useQtyStore((s) => s.quantities);
   const setPiecePerSize = useQtyStore((s) => s.setPiecePerSize);
-  const setPieceGlobal = useQtyStore((s) => s.setPieceGlobal);
 
-  // 初值：从 qtyStore getPieceDisplay 读
-  //   draftQty    = display.qty
-  //   draftGlobal = (mode==='global' && globalSource===size)
+  // 初值：从 qtyStore getPieceDisplay 读（draftQty = display.qty）。
   // 严格按 US-012 / US-011 口径：用 selector 而非直接读 quantities[label]。
   const initial = getPieceDisplay(quantities, label, size);
-  const initialGlobal =
-    quantities[label]?.mode === 'global' && quantities[label]?.globalSource === size;
 
   const [draftQty, setDraftQty] = useState<number>(initial.qty);
-  const [draftGlobal, setDraftGlobal] = useState<boolean>(initialGlobal);
 
   // ESC 监听：组件 mount 时挂、unmount 时卸载（无残留）。
   useEffect(() => {
@@ -106,11 +99,7 @@ function PieceQtyDialogInner({ label, size, onClose }: InnerProps): JSX.Element 
   }
 
   function handleConfirm(): void {
-    if (draftGlobal) {
-      setPieceGlobal(label, size, draftQty);
-    } else {
-      setPiecePerSize(label, size, draftQty);
-    }
+    setPiecePerSize(label, size, draftQty);
     onClose();
   }
 
@@ -167,16 +156,6 @@ function PieceQtyDialogInner({ label, size, onClose }: InnerProps): JSX.Element 
           >
             +
           </button>
-        </div>
-
-        <div className="qty-switch">
-          <Switch
-            checked={draftGlobal}
-            onChange={setDraftGlobal}
-            labelOff="仅当前尺码"
-            labelOn="全部尺码"
-            data-testid="qty-switch"
-          />
         </div>
 
         <div className="piece-qty-dialog-actions">

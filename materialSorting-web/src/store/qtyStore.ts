@@ -1,12 +1,10 @@
-// QtyState —— 裁片数量状态 store（US-011）。
+// QtyState —— 裁片数量状态 store（US-011；矩阵化重构 US-001 简化 + setRowAll）。
 //
-// 单一真相源：以片型 label（A/B/C...）为 key，跨码匹配同一片型。每个 label 两种模式：
-//   - per-size（默认）：perSize[sizeKey] 独立持有该码数量。
-//   - global         ：在某码（globalSource）设为全局后，全码共享 globalValue；
-//                      非 source 码 getPieceDisplay 返回 editable=false + reason 含来源码。
+// 单一真相源：以片型 label（A/B/C/...）为 key，跨码匹配同一片型。每码独立持有数量
+// （perSize[sizeKey]）；baseValue 是该行的基准值，仅 UI 特例高亮用，不参与序列化。
 //
 // 与 uploadStore 完全解耦：本 store 仅管数量，不依赖 React（纯 Zustand），便于纯函数测试。
-// US-011 仅前端 UI，不进 commit / 排料。
+// US-011 仅前端 UI，不进 commit / 排料；WS 线格式由 lib/params.serializeQuantities 扁平化。
 
 import { create } from 'zustand';
 import type { PieceQuantity, PieceQuantityMap } from '../types/qty';
@@ -24,25 +22,19 @@ function sizeKey(size: number | null): string {
   return size === null ? 'null' : String(size);
 }
 
-/** sizeLabel：null -> '通用'（人读文案）；否则 String(size)。与 SizeTabs 的 NULL_SIZE_LABEL 同语义。 */
-function sizeLabel(size: number | null): string {
-  return size === null ? '通用' : String(size);
-}
-
-/** getPieceDisplay 返回结构：用于卡片头渲染（数量 + 可编辑性 + 不可编辑原因）。 */
+/** getPieceDisplay 返回结构：用于卡片头 / 矩阵格渲染（数量 + 可编辑性）。 */
 export interface PieceDisplay {
   qty: number;
   editable: boolean;
-  reason: string | null;
 }
 
 /**
- * getPieceDisplay —— 纯函数 selector：读 map + label + size -> { qty, editable, reason }。
- * 四分支：
- *   1. label 未配置       -> { qty:0, editable:true, reason:null }
- *   2. mode per-size      -> { qty: perSize[sizeKey] ?? 0, editable:true, reason:null }
- *   3. mode global + source -> { qty: globalValue, editable:true, reason:null }
- *   4. mode global + 非 source -> { qty: globalValue, editable:false, reason:'该数值已在「<src>」尺码处使用全局数量' }
+ * getPieceDisplay —— 纯函数 selector：读 map + label + size -> { qty, editable }。
+ * 分支：
+ *   1. label 未配置                -> { qty:0, editable:true }
+ *   2. 该码无此裁片（hydrate 后     -> { qty:0, editable:false }
+ *      perSize 无该 sizeKey）
+ *   3. 正常                         -> { qty: perSize[sizeKey] ?? 0, editable:true }
  */
 export function getPieceDisplay(
   map: PieceQuantityMap,
@@ -50,54 +42,33 @@ export function getPieceDisplay(
   size: number | null,
 ): PieceDisplay {
   const q = map[label];
-  if (!q) return { qty: 0, editable: true, reason: null };
-  if (q.mode === 'per-size') {
-    return { qty: q.perSize[sizeKey(size)] ?? 0, editable: true, reason: null };
-  }
-  // global 模式
-  if (q.globalSource === size) {
-    return { qty: q.globalValue, editable: true, reason: null };
-  }
-  return {
-    qty: q.globalValue,
-    editable: false,
-    reason: '该数值已在「' + sizeLabel(q.globalSource) + '」尺码处使用全局数量',
-  };
+  if (!q) return { qty: 0, editable: true };
+  const sk = sizeKey(size);
+  // hydrate 对 doc 内每个 (label,size) 物化 perSize=1，故 sizeKey 缺席 = 该码无此裁片。
+  return { qty: q.perSize[sk] ?? 0, editable: sk in q.perSize };
 }
 
 export interface QtyState {
   /** 全部 label 的数量映射；默认 {}（无任何配置）。 */
   quantities: PieceQuantityMap;
-  /**
-   * per-size 模式下设该 label 在该码数量（value 经 clampQty）。
-   * 若当前是 global 模式则先切回 per-size（globalValue 继承到 perSize[globalSource]、
-   * 清空 global 字段）再写入。
-   */
+  /** 设该 label 在该码数量（value 经 clampQty）。baseValue 不动（格内编辑不改基准）。 */
   setPiecePerSize: (label: string, size: number | null, value: number) => void;
   /**
-   * 切 global 模式：mode='global'、globalValue=clampQty(value)、globalSource=sourceSize。
-   * perSize 保留（切回 per-size 时仍可用），不主动清。
+   * 整行填充：把 sizes 列出的每个码 perSize 写为 clampQty(value)，并把 baseValue 置为该值
+   * （矩阵行头「填充默认值」入口）。sizes 外的既有码保留原值。
    */
-  setPieceGlobal: (label: string, sourceSize: number | null, value: number) => void;
+  setRowAll: (label: string, sizes: ReadonlyArray<number | null>, value: number) => void;
   /** 清空为 {}（重传 / reset 路径接入）。 */
   resetQuantities: () => void;
   /**
-   * 按 (label × size) 列表批量初始化默认数量：每个 label 在其出现的每个码下 perSize=1
-   * （per-size 模式）。全量重建 quantities（旧值整体替换）。
+   * 按 (label × size) 列表批量初始化默认数量：每个 label 在其出现的每个码下
+   * perSize=1、baseValue=1（默认基准）。全量重建 quantities（旧值整体替换）。
    * 供 DXF 解析完成 / 重传时由集成层（PreviewPage）调用 —— 把「每尺码每片默认 1」物化进
    * store（单一真相源；下游 commit / 排料直接读 map，不靠 selector 兜底默认值）。
-   * entries 由调用方从 doc.sizes.flatMap(s => s.pieces.map(p => ({label, size: s.size}))) 构造，
-   * 故本 store 仍不依赖 parsed 类型，与 uploadStore 完全解耦。
+   * entries 由调用方从 doc.sizes.flatMap(s => s.pieces.map(p => ({label, size: s.size})))
+   * 构造，故本 store 仍不依赖 parsed 类型，与 uploadStore 完全解耦。
    */
-  hydrateDefault: (entries: ReadonlyArray<{ label: string; size: number | null }>) => void;
-  /**
-   * US-022：按 sizes × labels 交叉积批量初始化默认数量（per-size 模式，每 (label,size)=1）。
-   * 全量重建 quantities（与 hydrateDefault 同语义，入参形式不同：本 action 取分离的
-   * sizes / labels 列表，适合 labels 跨码一致的场景；M1787 各码 ptype 集合相同故适用）。
-   * 缺省值 1 来自 D3：解析后默认每片每码排 1 份，用户改 0 才排除。
-   * 供 useParseDxf 解析成功（doc 到达，已知 sizes + labels）时调用。
-   */
-  hydrateDefaults: (sizes: ReadonlyArray<number | null>, labels: ReadonlyArray<string>) => void;
+  hydrate: (entries: ReadonlyArray<{ label: string; size: number | null }>) => void;
 }
 
 export const useQtyStore = create<QtyState>((set) => ({
@@ -107,66 +78,34 @@ export const useQtyStore = create<QtyState>((set) => ({
       const prev = s.quantities[label];
       const clamped = clampQty(value);
       const sk = sizeKey(size);
-
-      // 从 global 切回 per-size：globalValue 继承到 perSize[globalSource]，清空 global 字段。
-      // per-size 模式下 prev.perSize 直接复用。新建 label 走空对象兜底。
-      // globalSource 可为 null（用户在「通用」码切 global），sizeKey(null)='null' 兜底正确。
-      const perSize: Record<string, number> = prev ? { ...prev.perSize } : {};
-      if (prev?.mode === 'global') {
-        perSize[sizeKey(prev.globalSource)] = prev.globalValue;
-      }
-      perSize[sk] = clamped;
-
+      // 新建 label 走空对象兜底 + baseValue 默认 1（未填充时的特例高亮基准）。
       const next: PieceQuantity = {
-        mode: 'per-size',
-        perSize,
-        globalValue: 0,
-        globalSource: null,
+        perSize: { ...(prev?.perSize ?? {}), [sk]: clamped },
+        baseValue: prev?.baseValue ?? 1,
       };
       return { quantities: { ...s.quantities, [label]: next } };
     }),
-  setPieceGlobal: (label, sourceSize, value) =>
+  setRowAll: (label, sizes, value) =>
     set((s) => {
       const prev = s.quantities[label];
-      const perSize = prev ? { ...prev.perSize } : {};
-      const next: PieceQuantity = {
-        mode: 'global',
-        perSize,
-        globalValue: clampQty(value),
-        globalSource: sourceSize,
-      };
+      const clamped = clampQty(value);
+      // 整行写 perSize：sizes 内每码写 clamped；sizes 外既有码保留（非破坏合并）。
+      const perSize: Record<string, number> = { ...(prev?.perSize ?? {}) };
+      for (const size of sizes) {
+        perSize[sizeKey(size)] = clamped;
+      }
+      const next: PieceQuantity = { perSize, baseValue: clamped };
       return { quantities: { ...s.quantities, [label]: next } };
     }),
   resetQuantities: () => set({ quantities: {} }),
-  hydrateDefault: (entries) =>
+  hydrate: (entries) =>
     set(() => {
       const map: PieceQuantityMap = {};
       for (const { label, size } of entries) {
         // 同 label 多次出现（跨码 / 同码多片复用 label）累加到同一 perSize；同一 (label,size)
         // 重复写 1 幂等。map 每次 hydrate 全量重建，无旧 state 别名，原地 mutate 安全。
-        const q =
-          map[label] ?? { mode: 'per-size', perSize: {}, globalValue: 0, globalSource: null };
+        const q = map[label] ?? { perSize: {}, baseValue: 1 };
         q.perSize[sizeKey(size)] = 1;
-        map[label] = q;
-      }
-      return { quantities: map };
-    }),
-  hydrateDefaults: (sizes, labels) =>
-    set(() => {
-      const map: PieceQuantityMap = {};
-      if (sizes.length === 0 || labels.length === 0) {
-        return { quantities: map };   // 空 sizes / labels → 空 map
-      }
-      for (const label of labels) {
-        const q: PieceQuantity = {
-          mode: 'per-size',
-          perSize: {},
-          globalValue: 0,
-          globalSource: null,
-        };
-        for (const size of sizes) {
-          q.perSize[sizeKey(size)] = 1;
-        }
         map[label] = q;
       }
       return { quantities: map };

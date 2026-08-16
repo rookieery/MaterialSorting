@@ -1,6 +1,6 @@
 # 前端组件 / 模块地图（materialSorting-web/）
 
-> 由 `/sync-docs` 维护。改前端先看这里。当前覆盖 US-001 Tab 框架 + US-002 WS 契约 + US-003 NestSVG + US-004 ControlPanel + US-005 多 seed/收敛曲线 + US-006 回放 seekbar + 片 hover tooltip + US-007 导出 PNG/DXF + DXF 上传预览 US-001 Tab 骨架 + 上传预览 US-005 类型/store/hook + 上传预览 US-006 UploadPanel 组件 + 上传预览 US-007 PiecePreviewSVG 命令式渲染 + 上传预览 US-008 SizeTabs/ParsedPiecesView/PreviewPage 容器集成 + 上传预览 US-011 qtyStore 数量状态（per-size/global 双模式）+ 上传预览 US-012 PieceQtyDialog/Switch（数量编辑弹窗 + 受控开关）+ 上传预览 US-013 PieceZoomModal（放大预览模态）+ 上传预览 US-014 ParsedPiecesView 卡片头改造 + 双模态集成（seq(qty) 替裁片名 + qty/zoom 双入口 + reset 联动）+ US-015 uiStore 扩 nestingEnabled + TabBar 置灰（超排 Tab 解锁闸）+ US-016 PreviewPage 联动 setNestingEnabled（subscribe uploadStore → uiStore 解锁/锁定超排 Tab）+ US-018 PerTypeOverridesModal/PtypePreviewModal（高级配置弹窗 + 片型缩略图 + 放大预览，双层独立 ESC）+ US-021 useCommitToNesting（解析成功自动 commit + D1 闭环 setNestingEnabled+setTab）+ US-022 求解输入数量 demand per-size（qtyStore.hydrateDefaults + serializeQuantities + StartPayload.quantities）+ US-024 NestSVG 5 层渲染 + 共享 LAYER5_COLORS（毛版+净版+内部线+刺口+布纹线，仅渲染透传不参与 NFP 碰撞）+ US-027 NestingPage 求解状态机 phase（idle/running/stopped/done/error）+ useSolveRun.stop() + case stopped + running 态冻结参数编辑 + US-028 SolveControls 按 phase 渲染按钮组（替代 StartButton；idle/running/stopped/done/error 五态按钮 + a11y + 中间方案导出提示）+ US-029 操作指引基础设施（tourStore + TourOverlay 高亮引擎 + useTour 控制器 + TabBar 右上角入口）+ US-030 preview tour 全量（5 步 previewTour + advance-on-ready 完整模型 + 首次进入 Tab 自动触发 useTourAutoTrigger）+ US-031 nesting tour 全量（5 步 nestingTour + runRegistry 帧快照联动推进 result/export 步 + 5 锚点 data-tour 落地）+ US-032 手动入口完善（TabBar 下拉两项 replay-preview/replay-nesting，仅当前 Tab 可点+置灰规则，原 reset 因 close 统一 markSeen 移除）+ 关闭交互完备（ESC/遮罩/skip 统一 markSeen，消除切回 Tab 重复触发 bug1）+ flipPlacement 四方向级联回退（bug3：目标铺满视口时气泡不消失）+ prefers-reduced-motion + scrollIntoView + StrictMode 幂等 + 完整单测。
+> 由 `/sync-docs` 维护。改前端先看这里。当前覆盖 US-001 Tab 框架 + US-002 WS 契约 + US-003 NestSVG + US-004 ControlPanel + US-005 多 seed/收敛曲线 + US-006 回放 seekbar + 片 hover tooltip + US-007 导出 PNG/DXF + DXF 上传预览 US-001 Tab 骨架 + 上传预览 US-005 类型/store/hook + 上传预览 US-006 UploadPanel 组件 + 上传预览 US-007 PiecePreviewSVG 命令式渲染 + 上传预览 US-008 SizeTabs/ParsedPiecesView/PreviewPage 容器集成 + 上传预览 US-011 qtyStore 数量状态（per-size/global 双模式）+ 上传预览 US-012 PieceQtyDialog/Switch（数量编辑弹窗 + 受控开关）+ 上传预览 US-013 PieceZoomModal（放大预览模态）+ 上传预览 US-014 ParsedPiecesView 卡片头改造 + 双模态集成（seq(qty) 替裁片名 + qty/zoom 双入口 + reset 联动）+ US-015 uiStore 扩 nestingEnabled + TabBar 置灰（超排 Tab 解锁闸）+ US-016 PreviewPage 联动 setNestingEnabled（subscribe uploadStore → uiStore 解锁/锁定超排 Tab）+ US-018 PerTypeOverridesModal/PtypePreviewModal（高级配置弹窗 + 片型缩略图 + 放大预览，双层独立 ESC）+ US-021 useCommitToNesting（解析成功自动 commit + D1 闭环 setNestingEnabled+setTab）+ US-022 求解输入数量 demand per-size（qtyStore.hydrateDefaults + serializeQuantities + StartPayload.quantities）+ US-024 NestSVG 5 层渲染 + 共享 LAYER5_COLORS（毛版+净版+内部线+刺口+布纹线，仅渲染透传不参与 NFP 碰撞）+ US-027 NestingPage 求解状态机 phase（idle/running/stopped/done/error）+ useSolveRun.stop() + case stopped + running 态冻结参数编辑 + US-028 SolveControls 按 phase 渲染按钮组（替代 StartButton；idle/running/stopped/done/error 五态按钮 + a11y + 中间方案导出提示）+ US-029 操作指引基础设施（tourStore + TourOverlay 高亮引擎 + useTour 控制器 + TabBar 右上角入口）+ US-030 preview tour 全量（5 步 previewTour + advance-on-ready 完整模型 + 首次进入 Tab 自动触发 useTourAutoTrigger）+ US-031 nesting tour 全量（5 步 nestingTour + runRegistry 帧快照联动推进 result/export 步 + 5 锚点 data-tour 落地）+ US-032 手动入口完善（TabBar 下拉两项 replay-preview/replay-nesting，仅当前 Tab 可点+置灰规则，原 reset 因 close 统一 markSeen 移除）+ 关闭交互完备（ESC/遮罩/skip 统一 markSeen，消除切回 Tab 重复触发 bug1）+ flipPlacement 四方向级联回退（bug3：目标铺满视口时气泡不消失）+ prefers-reduced-motion + scrollIntoView + StrictMode 幂等 + 完整单测 + 矩阵化重构 US-001 qtyStore 数据层简化（删 global 模式；PieceQuantity 改 {perSize, baseValue}；setRowAll 整行填充；hydrateDefault/hydrateDefaults 合并单一 hydrate；serializeQuantities 删 global 分支线格式逐字段不变；WS quantities 契约零改动）。
 
 ## 顶层结构
 
@@ -20,19 +20,19 @@ materialSorting-web/
 │   ├── types/              # US-002：纯数据契约（与 server.py 字段名 1:1）；上传预览 US-005：parsed.ts；上传预览 US-011：qty.ts；US-018：ptype.ts（PtypeRepresentative + PtypesResponse，GET /api/ptypes 契约）
 │   ├── constants/          # US-004：SIZES / PHASE_COLORS / SEED_COLORS / V03_TABLE
 │   ├── lib/                # US-002 起：纯函数工具（ws / geometry / params）；US-007 download
-│   ├── store/              # US-002 RunRegistry + US-003 appStore + US-001 uiStore（US-015 扩 nestingEnabled + setNestingEnabled + setTab guard）；上传预览 US-005 uploadStore（US-021 扩 commitStatus/commitError/commitSummary）；上传预览 US-011 qtyStore（+clampQty+getPieceDisplay 纯函数；US-022 加 hydrateDefaults sizes×labels 交叉积版）；US-018 controlPanelStore（modal + previewPtype 双显隐字段，两层独立）
+│   ├── store/              # US-002 RunRegistry + US-003 appStore + US-001 uiStore（US-015 扩 nestingEnabled + setNestingEnabled + setTab guard）；上传预览 US-005 uploadStore（US-021 扩 commitStatus/commitError/commitSummary）；上传预览 US-011 qtyStore（矩阵化重构 US-001 简化为 perSize+baseValue 单模式：setPiecePerSize/setRowAll/resetQuantities/hydrate + clampQty/getPieceDisplay 纯函数，双 hydrate 入口已合并、setPieceGlobal 已删）；US-018 controlPanelStore（modal + previewPtype 双显隐字段，两层独立）
 │   ├── hooks/              # US-002 起：useSolveRun（US-022 StartConfig 加 quantities 透传；US-027 加 stop() + case stopped）/ useRafThrottle；US-007 useExport；上传预览 US-005 useParseDxf（US-021 解析成功自动 void commit）；上传预览 US-021 useCommitToNesting（POST /api/commit-to-nesting + D1 闭环 setNestingEnabled，不自动切 Tab）
 │   ├── components/
 │   │   ├── TabBar.tsx       # US-001 顶部 Tab（排料/上传预览）；订阅 uiStore.activeTab；US-015 超排 button 在 nestingEnabled===false 时 disabled+.disabled class + aria-disabled；US-029 右上角操作指引入口（.tour-entry + 下拉菜单）；US-030 超排 button 加 data-tour="tab-nesting"（goto-nesting 步锚点）；US-032 下拉菜单两项（replay-preview→start('preview') / replay-nesting→start('nesting')，原 reset 项因 close 统一 markSeen 已移除）+ 每项仅当前 Tab 可点（非当前 Tab 置灰 .disabled+aria-disabled+native disabled + handler 运行时兜底）+ 点外部/ESC 关闭 + toggle
 │   │   ├── NestingPage.tsx  # US-001 排料页（原 App.tsx 业务逻辑外提；持 phase/seeds/useSolveRun；US-027 solving→phase 五态状态机 + handleStop/handleRestart + lastStartCfgRef；US-028 ControlPanel 改收 phase 不再收 solving；US-031 .nest-wrap 加 data-tour="nest-wrap" 锚点）
 │   │   ├── preview/         # US-001 起：上传预览页（US-006 UploadPanel；US-007 PiecePreviewSVG；US-008 落地 SizeTabs/ParsedPiecesView/PreviewPage 容器集成）
-│   │   │   ├── PreviewPage.tsx  # US-008 容器：左 UploadPanel + 右（SizeTabs+ParsedPiecesView）；status=done+doc 时挂主体，否则 .preview-empty 空态；US-014 顶层挂 PieceQtyDialog+PieceZoomModal 单例 + useEffect subscribe 监听 doc_id 变化联动 qtyStore.resetQuantities（重传清零）；US-016 加 useEffect subscribe uploadStore.status 按 `status==='done' && doc!==null` 联动 uiStore.setNestingEnabled（Tab 解锁闸，mount 即对齐）
+│   │   │   ├── PreviewPage.tsx  # US-008 容器：左 UploadPanel + 右（SizeTabs+ParsedPiecesView）；status=done+doc 时挂主体，否则 .preview-empty 空态；US-014 顶层挂 PieceQtyDialog+PieceZoomModal 单例 + useEffect subscribe 监听 doc_id 变化联动 qtyStore（有 doc 时 hydrate 默认 1、doc→null 时 resetQuantities；矩阵化重构 US-001 起 hydrate 同时写 baseValue=1）；US-016 加 useEffect subscribe uploadStore.status 按 `status==='done' && doc!==null` 联动 uiStore.setNestingEnabled（Tab 解锁闸，mount 即对齐）
 │   │   │   ├── UploadPanel.tsx  # US-006 左侧上传面板（点击+拖拽+客户端预校验+status 反馈）；US-021 加 commit 状态行；US-030 .drop-zone 加 data-tour="drop-zone"（upload 步锚点）+ commit 行保留 data-testid="commit-status"（committed 步锚点）
 │   │   │   ├── SizeTabs.tsx  # US-008 尺码切换条：读 uploadStore.doc/activeSize/setSize；chip 行 + active 高亮；null 码→「通用」；US-030 容器加 data-tour="size-tabs"（parsed 步锚点）
 │   │   │   ├── ParsedPiecesView.tsx # US-008 当前 activeSize 下裁片 grid；US-014 改造卡片头为 [A徽章]+数量(片)（editable=button→openQtyDialog / global非source=span.disabled+title）；.piece-card-body onClick→openZoom；US-030 .piece-card-head 加 data-tour="piece-card-head"（set-qty 步锚点，querySelector 取首个）
 │   │   │   ├── PiecePreviewSVG.tsx  # US-007 单片（或多片）母版预览 SVG（命令式渲染 + scale(1,-1) 翻转 + 5 层分层 + A/B/C 标注翻转组外）
 │   │   │   ├── Switch.tsx  # US-012 受控开关（role=switch + aria-checked；PieceQtyDialog 内「仅当前尺码/全部尺码」用）
-│   │   │   ├── PieceQtyDialog.tsx  # US-012 数量编辑弹窗（草稿+确定模式；Portal 到 body；ESC/遮罩/取消丢弃草稿；确定调 setPieceGlobal/setPiecePerSize）
+│   │   │   ├── PieceQtyDialog.tsx  # US-012 数量编辑弹窗（草稿+确定模式；Portal 到 body；ESC/遮罩/取消丢弃草稿；矩阵化重构 US-001 删「全部尺码」global 开关后确定仅调 setPiecePerSize；组件整体拆除在矩阵化重构 US-003）
 │   │   │   ├── PieceZoomModal.tsx  # US-013 放大预览模态（声明式受控 Portal；订阅 uploadStore.zoom+doc；✕/遮罩/ESC 关闭；复用 PiecePreviewSVG pad=20）
 │   │   │   └── __tests__/
 │   │   │       ├── UploadPanel.test.tsx      # US-006 集成测试（25 项）；US-021 更新 2 项 fetch 计数（parse+commit=2）+ beforeEach/afterEach 加 uiStore reset
@@ -279,6 +279,8 @@ materialSorting-web/
 
 ## 上传预览 US-011 落地：qtyStore 数量状态（per-size/global 双模式 + 跨码联动置灰）
 
+> **⚠️ 已被矩阵化重构 US-001 部分取代（2026-08-16）**：global 模式（QtyMode/globalValue/globalSource/setPieceGlobal/getPieceDisplay 四分支）整体删除，PieceQuantity 改 `{perSize, baseValue}`，hydrateDefault/hydrateDefaults 合并单一 `hydrate`。本节以下描述保留作历史记录，现行契约见文末「矩阵化重构 US-001」节。
+
 | 文件 | 角色 |
 | --- | --- |
 | `src/types/qty.ts` | 数量类型契约：`QtyMode = 'per-size' \| 'global'`；`PieceQuantity { mode; perSize: Record<string,number>; globalValue: number; globalSource: number\|null }`；`PieceQuantityMap = Record<string /*label*/, PieceQuantity>`。**label 跨码匹配同一片型**（A/B/C 次序在码间稳定，依赖后端几何排序），与 uploadStore 完全解耦 |
@@ -298,6 +300,8 @@ materialSorting-web/
 9. **不进 commit / 排料** —— US-011 仅前端 UI，数量存 store 不序列化到 intermediate。后端接环（数量→每片复制份数）是后续 Story，不在本故事范围。
 
 ## 上传预览 US-012 落地：PieceQtyDialog 数量编辑弹窗 + Switch 受控开关（草稿 + 确定模式）
+
+> **⚠️ 已被矩阵化重构 US-001 部分取代（2026-08-16）**：「全部尺码」global 开关（draftGlobal/Switch 用法）随 qtyStore 删 global 模式一并移除，弹窗确定仅写当前码 setPiecePerSize；弹窗组件与 Switch 的整体拆除在矩阵化重构 US-003。
 
 | 文件 | 角色 |
 | --- | --- |
@@ -517,9 +521,9 @@ NestingPage 把单一 `solving: boolean` 扩展为五态 `phase: SolvePhase`（i
 | `src/constants/sizes.ts` | `SIZES = [28,29,30,31,33,34,35,36]`（M1787 8 码跳 32；与后端 `nesting_bounds.DEFAULT_SIZES` 一致） |
 | `src/constants/colors.ts` | `PHASE_COLORS`（exploring/compressing/final）+ `SEED_COLORS`（6 seed；US-005 ConvergenceCurve 消费） |
 | `src/constants/v03.ts` | `V03_TABLE` 全 10 片型工艺上限（d / tol / internal；与后端 `constraints.py MAX_OVERLAP / ROTATION_TOL` 1:1）+ `V03_PTYPES` 顺序 |
-| `src/lib/params.ts` | `FormState`（US-019 起：删 d_ext/d_int/tol_ext/tol_int 字段，per_type 是唯一 d/tol 入口）+ `DEFAULT_FORM` + `collectParams(form)` 纯函数（US-019 起 params 永远全 0，per_type 解析逻辑保留）+ `parseSeed / parseTime / parseSeedCount` + US-022 `serializeQuantities(qtyMap, sizes)` 纯函数（qtyStore.quantities → WS payload label→sizeKey→demand；per-size 取 perSize，global 展开 globalValue） |
+| `src/lib/params.ts` | `FormState`（US-019 起：删 d_ext/d_int/tol_ext/tol_int 字段，per_type 是唯一 d/tol 入口）+ `DEFAULT_FORM` + `collectParams(form)` 纯函数（US-019 起 params 永远全 0，per_type 解析逻辑保留）+ `parseSeed / parseTime / parseSeedCount` + US-022 `serializeQuantities(qtyMap, sizes)` 纯函数（qtyStore.quantities → WS payload label→sizeKey→demand；矩阵化重构 US-001 删 global 展开分支，仅 perSize 透传 + 未勾选码过滤 + 'null' 兜底，线格式逐字段不变） |
 | `src/components/ControlPanel/ControlPanel.tsx` | 顶层面板：持 form state；StartButton 触发校验 + collectParams + onStart(cfg) 透传到 App（cfg 含 seed_count）；US-017 订阅 uploadStore.doc，doc=null 时 StatusLine 增「请先在上传预览页解析母版」提示，handleStart/handleExport 过滤 form.sizes 中的 null（保持下游 WS/export 的 number[] 契约）；US-019 删除 ErodeInputs/ToleranceInputs 渲染，主面板不再有内外两档输入；US-022 handleStart 调 serializeQuantities(qtyStore.quantities, sizesNum) 填 cfg.quantities（getState 不订阅，避免数量编辑频繁重渲染） |
-| `src/components/ControlPanel/SizePicker.tsx` | US-017：码号 chip 复选（受控）。订阅 `useUploadStore(s=>s.doc)` 动态读码号：doc 非空 → `doc.sizes.map(s=>s.size)`（不二次排序）；doc=null → fallback `constants/sizes.ts:SIZES`。null 码 chip 显示「通用」（与 SizeTabs NULL_SIZE_LABEL 同语义）；selected/onChange 类型 `(number\|null)[]`。**总裁片数量显示**（commit 4b5edad）：chip 下方 `.sizes-total`（`aria-live="polite"`）实时展示「总裁片数量：N 片」= `computeTotalCutPieces(doc, selected, quantities)`（Σ 所选码号每片有效 demand）；导出纯函数 `computeTotalCutPieces` + `effectiveDemand(quantities, label, size)`（未配置/per-size 缺省 → 1，显式 0 → 0，global 模式全码共享 globalValue）；doc=null（无裁片数据）→ null → 显示「—」；订阅 `useQtyStore(s=>s.quantities)` demand 变化实时重算 |
+| `src/components/ControlPanel/SizePicker.tsx` | US-017：码号 chip 复选（受控）。订阅 `useUploadStore(s=>s.doc)` 动态读码号：doc 非空 → `doc.sizes.map(s=>s.size)`（不二次排序）；doc=null → fallback `constants/sizes.ts:SIZES`。null 码 chip 显示「通用」（与 SizeTabs NULL_SIZE_LABEL 同语义）；selected/onChange 类型 `(number\|null)[]`。**总裁片数量显示**（commit 4b5edad）：chip 下方 `.sizes-total`（`aria-live="polite"`）实时展示「总裁片数量：N 片」= `computeTotalCutPieces(doc, selected, quantities)`（Σ 所选码号每片有效 demand）；导出纯函数 `computeTotalCutPieces` + `effectiveDemand(quantities, label, size)`（未配置/perSize 缺省 → 1，显式 0 → 0；矩阵化重构 US-001 删 global 分支）；doc=null（无裁片数据）→ null → 显示「—」；订阅 `useQtyStore(s=>s.quantities)` demand 变化实时重算 |
 | `src/components/ControlPanel/ParamForm.tsx` | 时长 / base seed 输入（min/max 与旧 index.html 一致） |
 | `src/components/ControlPanel/MultiSeedControls.tsx` | US-005：多 seed 对比 checkbox `#multi_seed` + 数量 input `#seed_count`（min=2 max=6 default 3） |
 | `src/components/ControlPanel/PresetButtons.tsx` | 预览 120s / 精排 600s 一键填 |
@@ -779,3 +783,26 @@ US-029/030/031 的 tour 已全量落地，本故事收尾打磨：手动入口�
 7. **scrollIntoView 在高亮前调** —— useLayoutEffect 内 querySelector 后 `el.scrollIntoView({block:'nearest'})`，避免目标在视口外（如参数区需滚动）时聚光灯贴到视口边缘外。
 8. **StrictMode 双 mount 幂等** —— ESC listener / reduced-motion listener / 菜单 mousedown+keydown listener 均在 useEffect cleanup 卸载；StrictMode 双 mount 下 add→cleanup→add 最终仅一套（参考 Tooltip.tsx 单例范式）。before() 副作用需幂等（ensureNestingTab/ensurePreviewTab 内 if guard）。
 9. **TOUR_VERSION 不 bump（文案微调非重大变更）** —— 21102a3 fix 仅改文案/readyHint/flipPlacement/close 语义，未增删步骤或改 ready 语义，故 TOUR_VERSION 仍 '1'，老用户 seen 不清。
+
+## 矩阵化重构 US-001 落地：qtyStore 数据层简化（删 global 模式 + setRowAll + hydrate 单入口）
+
+> 背景：把「按码分 tab + 逐片弹窗（仅当前码/全部尺码 global）」重构为「裁片 × 尺码数量矩阵」。global 模式会把其它码同 label 锁死，无法表达「默认 1、个别码 2」，故数据层先删 global 语义（本 Story），矩阵组件在矩阵化重构 US-002、旧交互拆除在 US-003。**WS `quantities` 线格式逐字节不变是硬约束**（后端 parse/commit/solve/demand 主管线零改动的唯一依据）。
+
+| 文件 | 角色 |
+| --- | --- |
+| `src/types/qty.ts` | `PieceQuantity = { perSize: Record<string,number>; baseValue: number }`；`QtyMode/globalValue/globalSource` 类型删除。baseValue = 行基准值，仅 UI 特例高亮用（格值 ≠ baseValue 且整行非全同 → 高亮），**不参与序列化** |
+| `src/store/qtyStore.ts` | state `quantities`；actions：`setPiecePerSize(label,size,value)`（perSize 写入 + clampQty，**不动 baseValue**；新建 label 兜底 baseValue=1）、`setRowAll(label,sizes,value)`（sizes 内每码写 clampQty(value) + baseValue=value；sizes 外既有码保留）、`resetQuantities()`、`hydrate(entries)`（**单一入口**，替代旧 hydrateDefault/hydrateDefaults 双入口；每 (label,sizeKey)=1 且 baseValue=1，全量重建）。纯函数 `clampQty` 公式不变；`getPieceDisplay(map,label,size) -> {qty,editable}`（三分支：label 未配置 → {0,true}；perSize 缺 sizeKey（=该码无此裁片）→ {0,false}；正常 → {perSize[sk],true}；reason 字段删除）。sizeLabel 私有函数随之删除 |
+| `src/lib/params.ts` | `serializeQuantities` 删 global 展开分支；per-size 路径逐字段保留（显式 0 保留 / 未勾选码过滤 / 'null' sizeKey 兜底 / label 全空 → null） |
+| `src/components/preview/PreviewPage.tsx` | 数据层涟漪：`hydrateDefault(entries)` 调用改名 `hydrate(entries)`（entries 签名保留，双入口以生产调用方为准合并） |
+| `src/components/preview/PieceQtyDialog.tsx` | 数据层涟漪：删 draftGlobal/Switch 行/initialGlobal，确定仅 `setPiecePerSize`（组件整体拆除在矩阵化重构 US-003） |
+| `src/components/preview/ParsedPiecesView.tsx` | 数据层涟漪：span.disabled 分支 title 改固定文案「该尺码未配置此裁片数量」（reason 已删；US-003 起卡片头转只读） |
+| `src/components/ControlPanel/SizePicker.tsx` | 数据层涟漪：`effectiveDemand` 删 global 分支（label 未配置→1 / perSize 有值→值 / 缺省→1） |
+
+### 关键不变量（矩阵化重构 US-001 立，后续故事不得破坏）
+
+1. **WS 线格式不变** —— `serializeQuantities` 输出 `Record<label, Record<sizeKey, number>>` 与旧版 per-size 路径逐字段一致：显式 0 保留（后端 build_instance 见 0 跳过）、未勾选码过滤、`sizeKey(null)='null'` 兜底、空 → null（后端回退全片 demand=1）。改输出结构需同步 params.test.ts 8 项用例 + 后端 build_instance。
+2. **baseValue 仅 UI 高亮基准，不参与序列化** —— hydrate 写 1、setRowAll 写填充值、setPiecePerSize 新建 label 兜底 1 且后续格内编辑不动它。把 baseValue 混进 serializeQuantities 会污染线格式（硬约束 1）。
+3. **setRowAll 非破坏合并** —— sizes 列表外的既有 perSize 键保留（整行填充只覆盖所列码）。改语义需同步 qtyStore.test.ts「sizes 外的既有码保留原值」用例。
+4. **hydrate 全量重建 + 单一入口** —— 旧 hydrateDefault/hydrateDefaults 双入口已删（grep 0）；重传（doc_id 变化）由 PreviewPage subscribe 调 hydrate 整体替换旧值。新增初始化路径一律走 hydrate，不再加第二入口。
+5. **getPieceDisplay editable 语义收窄** —— 仅「该码无此裁片」（perSize 缺 sizeKey）时 false；qty=0 是显式「该码不排此片」，仍 editable=true。UI 消费唯一入口地位不变（QtyMatrix（US-002 起）/ParsedPiecesView/PieceQtyDialog/PieceZoomModal 统一走 selector，不直接读 quantities[label]）。
+6. **clampQty 公式不变** —— `Math.max(0, Math.min(99, Math.trunc(Number(v) || 0)))`，是所有数量写入（setPiecePerSize/setRowAll）的唯一规整入口。

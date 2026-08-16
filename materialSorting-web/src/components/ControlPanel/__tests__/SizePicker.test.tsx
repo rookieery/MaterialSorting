@@ -277,14 +277,6 @@ describe("SizePicker (US-017)", () => {
     expect(getTotalText()).toBe("2 片");
   });
 
-  it("global 模式 → 全码共享 globalValue，总裁片数量按该值累加", () => {
-    useUploadStore.setState({ status: "done", doc: makeDocWithPieces() });
-    // A 片 global=2（来源 28）：28=A(2)+B(1)=3，29=A(2)+B(1)+C(1)=4，30=A(2)=2 → 合计 9
-    useQtyStore.getState().setPieceGlobal("A", 28, 2);
-    renderPicker([28, 29, 30]);
-    expect(getTotalText()).toBe("9 片");
-  });
-
   it("qtyStore 变化 → 总裁片数量实时重算（订阅 quantities）", () => {
     useUploadStore.setState({ status: "done", doc: makeDocWithPieces() });
     renderPicker([28]);
@@ -321,7 +313,7 @@ describe("computeTotalCutPieces / effectiveDemand", () => {
 
   it("per-size demand 按 (label,size) 精确生效", () => {
     const q: PieceQuantityMap = {
-      A: { mode: "per-size", perSize: { "28": 3 }, globalValue: 0, globalSource: null },
+      A: { perSize: { "28": 3 }, baseValue: 3 },
     };
     // 28: A(3)+B(1未配置→1)=4
     expect(computeTotalCutPieces(doc, [28], q)).toBe(4);
@@ -329,17 +321,9 @@ describe("computeTotalCutPieces / effectiveDemand", () => {
     expect(computeTotalCutPieces(doc, [29], q)).toBe(3);
   });
 
-  it("global demand 全码共享 globalValue", () => {
-    const q: PieceQuantityMap = {
-      A: { mode: "global", perSize: {}, globalValue: 2, globalSource: 28 },
-    };
-    // 28: A(2)+B(1)=3，29: A(2)+B(1)+C(1)=4，30: A(2)=2 → 9
-    expect(computeTotalCutPieces(doc, [28, 29, 30], q)).toBe(9);
-  });
-
   it("effectiveDemand：未配置 label/per-size 缺省 → 1；显式 0 → 0", () => {
     const q: PieceQuantityMap = {
-      A: { mode: "per-size", perSize: { "28": 0 }, globalValue: 0, globalSource: null },
+      A: { perSize: { "28": 0 }, baseValue: 1 },
     };
     expect(effectiveDemand({}, "A", 28)).toBe(1); // label 未配置
     expect(effectiveDemand(q, "A", 28)).toBe(0); // 显式 0

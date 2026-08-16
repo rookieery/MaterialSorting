@@ -110,7 +110,7 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop }: Contr
     );
     // US-022：从 qtyStore.quantities 序列化扁平化为 label→sizeKey→demand。
     //   - getState() 读快照（不订阅，避免 ControlPanel 因数量编辑频繁重渲染）。
-    //   - sizesNum 已过滤 null；global 模式展开依赖此列表枚举 sizeKey。
+    //   - sizesNum 已过滤 null；perSize 按此列表过滤未勾选码。
     const quantities = serializeQuantities(
       useQtyStore.getState().quantities,
       sizesNum,

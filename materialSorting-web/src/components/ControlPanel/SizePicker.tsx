@@ -8,7 +8,7 @@
 //   - selected 类型扩为 `(number | null)[]`（doc 可能含 null 通用码）。
 //
 // 总裁片数量（chip 下方实时展示）：总实际裁剪数 = Σ 所选码号每片有效 demand。
-//   - demand 来自 qtyStore.quantities（per-size / global 两模式，与 serializeQuantities 同口径）。
+//   - demand 来自 qtyStore.quantities（perSize，与 serializeQuantities 同口径）。
 //   - 未配置的 (label,size) → demand 1（与「每片每码排 1 份」默认 + 后端空 quantities 回退
 //     demand=1 一致；故未 hydrate 也能正确显示 = 裁片数）。
 //   - 订阅 quantities：demand 在预览页改过后，回到排料页即正确反映（排料页本身不改 demand）。
@@ -44,11 +44,10 @@ function sizeLabel(s: number | null): string {
  * 默认 1）；本函数面向「总实际裁剪数」展示，未配置应按默认 1 计（与「每片每码排 1 份」+
  * 后端空 quantities 回退 demand=1 一致），否则未 hydrate 时会把全部裁片算成 0。
  *
- * 口径（per-size / global 两模式与 serializeQuantities 一致）：
+ * 口径（perSize 与 serializeQuantities 一致）：
  *   - label 未配置        → 1
- *   - per-size + 该码有值 → perSize[sizeKey]
- *   - per-size + 该码缺省 → 1
- *   - global              → globalValue（全码共享，含 source 与非 source）
+ *   - 该码有值            → perSize[sizeKey]
+ *   - 该码缺省            → 1
  */
 export function effectiveDemand(
   quantities: PieceQuantityMap,
@@ -57,11 +56,8 @@ export function effectiveDemand(
 ): number {
   const q = quantities[label];
   if (!q) return 1;
-  if (q.mode === 'per-size') {
-    const v = q.perSize[sizeKey(size)];
-    return v === undefined ? 1 : v;
-  }
-  return q.globalValue;
+  const v = q.perSize[sizeKey(size)];
+  return v === undefined ? 1 : v;
 }
 
 /**
