@@ -21,6 +21,7 @@ import os
 import sys
 
 from .. import paths
+from ..nesting_bounds.load_pieces import PLOT_SAFE_MAX_Y_MM
 from .sparrow_baseline import (
     _clean_polygon, _write_svg, _plot_curve, solve_with_progress,
 )
@@ -119,8 +120,9 @@ def run_one(doc, gate, exp, erode_d, time_budget, seed):
             demand=1,
             allowed_orientations=m['allowed_orientations'],
         ))
+    # 有效排料宽度 = min(门幅, 绘图仪可写幅宽)（与 web/solver 同口径；密度仍按 gate）
     instance = spyrrow.StripPackingInstance(
-        name=f'm1787_{tag}', strip_height=gate, items=items)
+        name=f'm1787_{tag}', strip_height=min(gate, PLOT_SAFE_MAX_Y_MM), items=items)
     config = spyrrow.StripPackingConfig(
         total_computation_time=time_budget, seed=seed, num_workers=4)
 

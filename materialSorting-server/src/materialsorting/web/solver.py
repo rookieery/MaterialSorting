@@ -27,6 +27,7 @@ from .. import paths
 from ..nesting_engine.sparrow_baseline import _clean_polygon, PTYPE_COLORS
 from ..nesting_engine.sparrow_experiments import erode_polygon, INTERNAL_TYPES
 from ..nesting_engine.constraints import MAX_OVERLAP, ROTATION_TOL
+from ..nesting_bounds.load_pieces import PLOT_SAFE_MAX_Y_MM
 
 DEFAULT_INTERMEDIATE = paths.INTERMEDIATE
 
@@ -77,6 +78,10 @@ def build_instance(pieces, gate_mm, *, time_budget: int, seed: int,
     每片实际 erode = min(申请值, MAX_OVERLAP[ptype])（v0.3 工艺上限兜底）
     每片实际 tol  = min(申请值, ROTATION_TOL[ptype])
     内部片 = 单排/双排/火机袋/裤耳；外部片 = 其余。
+
+    求解约束带 strip_height = min(gate_mm, PLOT_SAFE_MAX_Y_MM)：gate_mm（门幅，
+    如 1980）只是布幅**显示**口径，排料压进绘图仪可写幅宽 1910 才能完整打印
+    （顶部 70mm 内部差）。密度 / 导出 / 前端仍用 gate_mm 原值，不受此钳制影响。
     """
     import spyrrow
     pdef = {'d_ext': 0.0, 'd_int': 0.0, 'tol_ext': 0.0, 'tol_int': 0.0}
@@ -160,8 +165,11 @@ def build_instance(pieces, gate_mm, *, time_budget: int, seed: int,
             allowed_orientations=orientations,
         ))
         total_area += float(p['area_mm2']) * demand
+    # 有效排料宽度：求解约束带 = min(门幅, 绘图仪可写幅宽)。门幅超出可写幅宽的部分
+    # （1980−1910=70mm 内部差）求解时直接不排，marker 顶部不再落进行程外。
+    gate_nest = min(float(gate_mm), PLOT_SAFE_MAX_Y_MM)
     instance = spyrrow.StripPackingInstance(
-        name='workbench', strip_height=gate_mm, items=items)
+        name='workbench', strip_height=gate_nest, items=items)
     config = spyrrow.StripPackingConfig(
         total_computation_time=time_budget, seed=seed, num_workers=4)
     return instance, config, pid_meta, total_area, n_eroded

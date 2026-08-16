@@ -29,6 +29,7 @@ import threading
 import time
 
 from .. import paths
+from ..nesting_bounds.load_pieces import PLOT_SAFE_MAX_Y_MM
 
 # 片型 → SVG 颜色（v0.3 实际 10 片型，区分度优先；前/后片是主角给深色）
 # 色源：d3 category10（前片/后片/腰/前袋/后袋/机头/单排/火机袋/裤耳）+ 双排=#ff1493 deep pink。
@@ -333,9 +334,11 @@ def main():
         ))
     print(f'构造 {len(items)} 个 item（每片 demand=1，{0}°/{180}° 姿态）')
 
+    # 有效排料宽度：门幅超出绘图仪可写幅宽的部分（内部差）不排 —— 与 web/solver
+    # build_instance 同口径；密度/理论用布仍按 gate（显示口径）计算
     instance = spyrrow.StripPackingInstance(
         name=f'm1787_{"_".join(str(p["size"]) for p in pieces[:1]) or "all"}',
-        strip_height=gate,
+        strip_height=min(gate, PLOT_SAFE_MAX_Y_MM),
         items=items,
     )
     # num_workers（spyrrow 0.9.0 已修正拼写；旧版拼错成 num_wokers）；>4 反而质量更差（issue #113）

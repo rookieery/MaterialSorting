@@ -214,6 +214,28 @@ def test_solve_worker_is_picklable_top_level_function():
     assert solve_worker.__qualname__ == "solve_worker"
 
 
+# --------------------------------------------- 求解约束带钳制（绘图仪可写幅宽）
+
+
+def test_build_instance_clamps_strip_to_plotter_width(real_or_synthetic_pieces):
+    """strip_height = min(门幅, PLOT_SAFE_MAX_Y_MM)：1980 门幅按 1910 排，小门幅原样。
+
+    门幅 1980 是布幅显示口径（UI/密度/导出不变），求解约束带压进绘图仪可写幅宽
+    1910（内部差 70mm），marker 顶部不再落进行程外。manifest/density 仍报传入门幅。
+    """
+    from materialsorting.nesting_bounds.load_pieces import PLOT_SAFE_MAX_Y_MM, NEST_GATE_MM
+    from materialsorting.web.solver import build_instance
+
+    pieces, _gate = real_or_synthetic_pieces
+    inst, _cfg, _meta, _area, _n_er = build_instance(
+        pieces, 1980.0, time_budget=1, seed=0)
+    assert inst.strip_height == pytest.approx(NEST_GATE_MM)          # 1910
+    assert inst.strip_height == pytest.approx(PLOT_SAFE_MAX_Y_MM)
+
+    inst_small, *_ = build_instance(pieces, 1500.0, time_budget=1, seed=0)
+    assert inst_small.strip_height == pytest.approx(1500.0)          # 小于可写幅宽不放大
+
+
 if __name__ == "__main__":
     # Windows multiprocessing 守卫：直接 python tests/test_solve_proc.py 时
     # 走 pytest CLI（不在 __main__ 里直接 Process，避免无限 spawn）。

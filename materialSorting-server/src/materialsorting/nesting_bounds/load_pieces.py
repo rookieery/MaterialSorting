@@ -19,7 +19,13 @@ from dataclasses import dataclass, field
 
 from ..dxf_parser import reader, geometry, collect as _collect
 
-GATE_MM = 1980.0  # 门幅（有效排料宽度，不扣布边）
+GATE_MM = 1980.0  # 门幅：布幅**显示**口径（UI / PNG / DXF / PLT 外框、密度分母），不扣布边
+# 绘图仪 Y 可写幅宽（LIKE + WT「高速网口输出中心 V8.8」现场口径，设备端最终确认前按 1910）。
+# 布幅与可写幅宽之差（1980−1910=70mm）属内部差：界面/导出仍显示门幅 1980，**求解约束带
+# 压到 1910**（NEST_GATE_MM），否则 marker 顶部落在绘图仪行程外 —— 小车撞导轨，
+# 2026-08 现场撞机根因。换机器/换布幅只改这两个常量，NEST_GATE_MM 自动跟随。
+PLOT_SAFE_MAX_Y_MM = 1910.0
+NEST_GATE_MM = min(GATE_MM, PLOT_SAFE_MAX_Y_MM)  # 有效排料宽度（求解 strip 高度上限）
 
 # v0.3 规则的成对类（镜像展开为 L/R 两片）
 PAIR_TYPES = {'前片', '后片', '腰', '前袋', '后袋', '机头'}
