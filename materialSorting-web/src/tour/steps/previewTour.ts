@@ -17,7 +17,8 @@
 // 锚点用 data-tour 解耦 CSS 类名重构（querySelector 命中首个即可）：
 //   - upload       [data-tour="drop-zone"]       （UploadPanel.tsx 拖拽落区）
 //   - parsed       [data-tour="qty-matrix"]      （QtyMatrix.tsx 矩阵根容器；矩阵化重构
-//                                                US-005 迁自旧 SizeTabs 锚点，指引列头切码）
+//                                                US-005 迁自旧 SizeTabs 锚点，指引矩阵浏览
+//                                                与行头缩略图放大；图形预览区已拆除）
 //   - set-qty      [data-tour="qty-rowhead"]     （QtyMatrix.tsx 首个行头；矩阵化重构 US-005
 //                                                迁自旧 piece-card-head 锚点，指引矩阵编辑）
 //   - committed    [data-testid="commit-status"] （UploadPanel.tsx commit 状态行）
@@ -53,7 +54,7 @@ export const previewTour: TourDef = {
       id: 'parsed',
       selector: '[data-tour="qty-matrix"]',
       title: '查看解析结果',
-      body: '解析完成后出现「裁片 × 尺码」数量矩阵：每行一个裁片、每列一个尺码，全部码的数量分布一屏看全。点击列头（码号）可切换下方图形预览到该码；点击行头缩略图可放大查看裁片图形。',
+      body: '解析完成后出现「裁片 × 尺码」数量矩阵：每行一个裁片、每列一个尺码，全部码的数量分布一屏看全。点击行头缩略图可放大查看裁片图形（毛版 / 净版 / 内部线 / 刀口 / 布纹线），点击列头（码号）切换行缩略图显示的码。',
       placement: 'bottom',
       before: ensurePreviewTab,
       ready: () =>

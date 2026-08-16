@@ -5,8 +5,9 @@
 //      后续码新增 label 追加在尾部）；行头 = [A 徽章] + 裁片名 + 缩略图（PiecePreviewSVG
 //      compact）+ 悬浮「填充」按钮。
 //   2. 列 = doc.sizes 全码（null 码殿后显示「通用」，无 null 码不渲染该列）+ 行合计列；
-//      列头是 button，点击 setSize(该码) 驱动下方图形预览区（尺码浏览职责原属 SizeTabs，
-//      US-003 起由本组件列头承担），当前 activeSize 列头高亮。
+//      列头是 button，点击 setSize(该码) 切换 activeSize（决定行头缩略图优先显示哪个码
+//      版本的裁片；原「驱动下方图形预览区」职责随 ParsedPiecesView 拆除而收敛于此），
+//      当前 activeSize 列头高亮。
 //   3. 格子 = 内联 number input：点击直接键入、Enter/Tab 提交并移到下一格、blur 提交；
 //      值一律过 clampQty（[0,99] 整数）写 setPiecePerSize。数量 0 格子显著暗色样式
 //      （语义 = 该码不排此片，title 说明）；某码缺该 label 的格子渲染 disabled「—」
@@ -24,23 +25,24 @@
 //   - 单一真相源：doc/activeSize/setSize/openZoom 来自 uploadStore，quantities/
 //     setPiecePerSize/setRowAll 来自 qtyStore；本组件不持业务状态（仅 popover 开关 +
 //     格子草稿两个 UI 态）。数量读取一律走 getPieceDisplay selector（不直接读
-//     quantities[label]，与 ParsedPiecesView / PieceZoomModal 同口径）。
+//     quantities[label]，与 PieceZoomModal 同口径）。
 //   - 行填充只写该 label 实际存在的码（rowSizes），不给缺片码造 phantom perSize 键
 //     （避免 getPieceDisplay editable 语义与 serializeQuantities 输出被污染）。
 //   - 布局：矩阵容器 max-height 45vh 内部滚动 + sticky 表头/首列（.qty-matrix-scroll）；
 //     窄屏（≤1366）靠行头 220px + 格子 64px 的 min-width 自然横向滚动，不引入 CSS 框架。
-//   - 缩略图点击 openZoom(label, activeSize) 复用 PieceZoomModal（US-013 声明式受控模态，
-//     PreviewPage 顶层单例）。
+//   - 缩略图点击 openZoom(label, rep.size) 复用 PieceZoomModal（US-013 声明式受控模态，
+//     PreviewPage 顶层单例）。传 rep 自己的码而非 activeSize：所见即所放大，且该 label
+//     不在 activeSize 时（rep 已回退其它码）不会静默失败。
 //   - tour 锚点（矩阵化重构 US-005）：根容器 data-tour="qty-matrix"（previewTour parsed 步，
-//     指引列头切码看图形预览）；每行行头 data-tour="qty-rowhead"（set-qty 步，querySelector
-//     命中首行，指引格内编辑 / 行头填充 / 特例高亮）。锚点属步骤内容重大变更，
-//     TOUR_VERSION 已 bump 强制老用户重看（见 tour/steps/index.ts）。
+//     指引矩阵编辑与行头缩略图放大）；每行行头 data-tour="qty-rowhead"（set-qty 步，
+//     querySelector 命中首行，指引格内编辑 / 行头填充 / 特例高亮）。步骤内容重大变更时
+//     bump TOUR_VERSION 强制老用户重看（见 tour/steps/index.ts；图形预览区拆除文案已 bump）。
 //
 // 性能注意：
 //   - 每行一个 PiecePreviewSVG compact 缩略图（M1787 10 行 × 5 层 imperative DOM ≈ 60+
 //     节点，低频 UI 开销可接受；切码时 repPiece 换源整组重建，PiecePreviewSVG 内建幂等）。
 //   - 数量编辑（qtyStore set）→ 组件订阅 quantities 整体 re-render；矩阵 ~10×12 格规模，
-//     低频 UI 操作开销可接受（与 ParsedPiecesView 同口径，不做 cell 级 memo）。
+//     低频 UI 操作开销可接受，不做 cell 级 memo。
 
 import { useEffect, useRef, useState } from 'react';
 import type { JSX } from 'react';
@@ -243,8 +245,8 @@ function RowFillPopover({ label, base, onApply, onClose }: RowFillPopoverProps):
  * 数据派生（每 render 重算，doc 稳定引用 + 规模 ~10 行 × 12 列，开销可接受）：
  *   - piecesByLabel：label → (sizeKey → ParsedPiece)，供行存在性 / 缩略图 rep 定位。
  *   - rows：按 doc.sizes 顺序首次出现的 label 并集（最小码 pieces 顺序优先）。
- *   - repPiece(label)：优先 activeSize 的同 label 片（缩略图与下方图形预览同码视觉一致），
- *     activeSize 无此 label 时回退首个含它的码。
+ *   - repPiece(label)：优先 activeSize 的同 label 片（列头切码后行缩略图跟随显示该码
+ *     版本），activeSize 无此 label 时回退首个含它的码。
  */
 export function QtyMatrix(): JSX.Element | null {
   const doc = useUploadStore((s) => s.doc);
@@ -291,15 +293,17 @@ export function QtyMatrix(): JSX.Element | null {
     return columns.filter((c) => cellExists(label, c));
   }
 
-  /** 缩略图 rep 片：优先 activeSize 版本，回退首个含它的码。 */
-  function repPiece(label: string): ParsedPiece | null {
+  /** 缩略图 rep 片：优先 activeSize 版本，回退首个含它的码；返回片 + 所属码
+      （缩略图点击 openZoom 传 rep 自身的码而非 activeSize：所见即所放大，且该 label
+      不在 activeSize 时不会静默失败）。 */
+  function repPiece(label: string): { piece: ParsedPiece; size: number | null } | null {
     const bySize = piecesByLabel.get(label);
     if (!bySize) return null;
     const inActive = bySize.get(sizeKeyOf(activeSize));
-    if (inActive) return inActive;
+    if (inActive) return { piece: inActive, size: activeSize };
     for (const c of columns) {
       const p = bySize.get(sizeKeyOf(c));
-      if (p) return p;
+      if (p) return { piece: p, size: c };
     }
     return null;
   }
@@ -419,7 +423,7 @@ export function QtyMatrix(): JSX.Element | null {
           <tbody>
             {rows.map((r, ri) => {
               const rep = repPiece(r.label);
-              const repName = rep ? rep.name : r.label;
+              const repName = rep ? rep.piece.name : r.label;
               const base = rowBase(r.label);
               const allSame = rowAllSame(r.label);
               const paired = rowPaired(r.label);
@@ -444,9 +448,9 @@ export function QtyMatrix(): JSX.Element | null {
                       className="qty-thumb"
                       aria-label={"放大预览裁片 " + r.label}
                       title="放大预览"
-                      onClick={() => openZoom(r.label, activeSize)}
+                      onClick={() => rep && openZoom(r.label, rep.size)}
                     >
-                      {rep ? <PiecePreviewSVG piece={rep} compact /> : null}
+                      {rep ? <PiecePreviewSVG piece={rep.piece} compact /> : null}
                     </button>
                     <button
                       type="button"

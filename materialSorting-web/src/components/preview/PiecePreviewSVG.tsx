@@ -29,7 +29,8 @@
 //      随几何共翻转。法线为零向量（退化边）时画 0 长度线段（点）兜底，不渲染异常。
 //   6. **AC#4 多片同框**：prop 接受单 piece 或 piece[]；多片时合并 bbox 计算 viewBox，
 //      每片独立渲染 5 层 + 各自 A/B/C 标注。同框不刻意避免重叠（多片本身可能共享边界，
-//      由调用方决定是否同框 —— US-008 ParsedPiecesView 用单片卡片，多片能力留作未来扩展）。
+//      由调用方决定是否同框 —— 现调用方均为单片场景（QtyMatrix 行缩略图 / PieceZoomModal
+//      等），多片能力留作未来扩展）。
 //   7. **compact 模式（US-018 AC#9）**：prop `compact?: boolean` 关 A/B/C 标注 +
 //      小 pad（COMPACT_PAD=2，fit-to-cell）；非 compact 行为不变（向后兼容 PieceZoomModal）。
 //      用于 PerTypeOverridesModal 表头缩略图 / PtypePreviewModal 放大预览（layer-aware，

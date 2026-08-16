@@ -1,7 +1,7 @@
 // 矩阵化重构 US-005 previewTour 单测：
 //   1. 5 步 id 序列稳定（upload/parsed/set-qty/committed/goto-nesting）+ tabId
 //   2. parsed/set-qty 锚点迁矩阵（qty-matrix / qty-rowhead），无旧 size-tabs/piece-card-head 残留
-//   3. TOUR_VERSION bump（锚点重大变更 → 老用户 seen 被 tourStore init 清空重看）
+//   3. TOUR_VERSION bump（步骤内容重大变更 → 老用户 seen 被 tourStore init 清空重看）
 //   4. parsed/set-qty 文案描述矩阵操作（列头切码 / 格内编辑 / 行头填充 / 特例高亮 / ×2）
 //   5. 锚点在已渲染的 QtyMatrix 上 querySelector 命中（列头切码 / 行头编辑指引可定位）
 //
@@ -102,18 +102,21 @@ describe('previewTour 步骤结构（矩阵化重构 US-005）', () => {
     expect(previewTour.steps[4].selector).toBe('[data-tour="tab-nesting"]');
   });
 
-  it('3. TOUR_VERSION bump 为 2（锚点重大变更强制老用户重看）', () => {
+  it('3. TOUR_VERSION bump 为 3（步骤内容重大变更强制老用户重看）', () => {
     // '1'（US-030 首次落地）→ '2'（矩阵化重构 US-005 锚点迁移）
-    expect(TOUR_VERSION).toBe('2');
+    // → '3'（图形预览区拆除：parsed 步旧文案指引的「下方图形预览」已不存在）
+    expect(TOUR_VERSION).toBe('3');
     // 版本号策略不变量：与旧版本不一致时 tourStore init 清 seen（行为级断言见 tourStore.test.ts）
   });
 
   it('4. parsed/set-qty 文案描述矩阵操作', () => {
     const parsed = previewTour.steps.find((s) => s.id === 'parsed')!;
     const setQty = previewTour.steps.find((s) => s.id === 'set-qty')!;
-    // parsed：列头切码看图形预览
+    // parsed：矩阵浏览 + 行头缩略图放大（图形预览区已拆除，不再指引「下方图形预览」）
     expect(parsed.body).toContain('矩阵');
     expect(parsed.body).toContain('列头');
+    expect(parsed.body).toContain('缩略图');
+    expect(parsed.body).not.toContain('图形预览');
     // set-qty：格内直接编辑 / 行头填充默认值 / 特例高亮 / 配对 ×2
     expect(setQty.body).toContain('格子');
     expect(setQty.body).toContain('填充');

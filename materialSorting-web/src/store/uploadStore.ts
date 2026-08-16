@@ -20,21 +20,24 @@
 //              由 reset 清零，hook 内不主动清，避免切 uploading 时 UI 闪烁）
 //   activeSize 当前选中的码号（number | null）；done 时默认 = sizes[0]?.size ?? null
 //              （后端按数值升序、null 殿后，故 sizes[0] 是最小码）。矩阵化重构 US-003 起
-//              由 QtyMatrix 列头点击切换（驱动下方 ParsedPiecesView 图形预览区）。
+//              由 QtyMatrix 列头点击切换（决定行头缩略图优先显示哪个码的版本；原
+//              ParsedPiecesView 图形预览区已拆除）。
 //   error      error 状态下的中文消息（HTTP 400/413/422 / 网络错）
 //   zoom      放大预览模态的目标（label + size）；null 表示模态关闭。
 //             US-013 PieceZoomModal 订阅此字段自显隐（声明式受控 Portal，
 //             区别于排料页 Tooltip 的命令式单例）；openZoom/closeZoom 是
-//             QtyMatrix 行头缩略图 / ParsedPiecesView 卡片图形区点击 / ✕ / 遮罩 / ESC
-//             的统一入口。（数量编辑弹窗 qtyDialog 已随矩阵化重构 US-003 拆除，
-//             数量改在 QtyMatrix 格内直接编辑。）
+//             QtyMatrix 行头缩略图点击（传 rep 自身的码，所见即所放大）/ ✕ / 遮罩 / ESC
+//             的统一入口。（原 ParsedPiecesView 卡片点击入口随图形预览区拆除一并删除；
+//             数量编辑弹窗 qtyDialog 已随矩阵化重构 US-003 拆除，数量改在 QtyMatrix
+//             格内直接编辑。）
 //
 // actions：
 //   reset()              回到 idle，清空 doc / activeSize / error / zoom /
 //                         commitStatus / commitError / commitSummary ——
 //                         用户主动重传时调（重传成功后 US-014 集成 qtyStore.resetQuantities）
 //   setSize(s)           切 activeSize（QtyMatrix 列头点击时调；s = number | null）
-//   openZoom(l, s)       打开放大预览模态（点行头缩略图 / 卡片图形区 body 时调）
+//   openZoom(l, s)       打开放大预览模态（点 QtyMatrix 行头缩略图时调；s = 缩略图 rep
+//                        自身的码而非 activeSize，所见即所放大）
 //   closeZoom()          关闭放大预览模态（✕ / 遮罩 / ESC 时调）
 //
 // hook 内部的状态过渡（uploading → done | error）由 useParseDxf 直接

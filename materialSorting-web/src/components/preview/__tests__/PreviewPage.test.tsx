@@ -1,13 +1,13 @@
 // US-008 PreviewPage 集成测试（US-014 扩：模态挂载 + reset 联动 + 端到端；矩阵化重构
-// US-003 改：QtyMatrix 替代 SizeTabs、数量弹窗拆除）：
-//   AC#3 左 UploadPanel + 右（QtyMatrix + ParsedPiecesView）布局
+// US-003 改：QtyMatrix 替代 SizeTabs、数量弹窗拆除；图形预览区拆除后右侧主体仅 QtyMatrix）：
+//   AC#3 左 UploadPanel + 右 QtyMatrix 布局
 //   AC#3 未上传（doc=null）右侧显示整体空态提示
-//   AC#3 已解析（status=done + doc）挂载 QtyMatrix + ParsedPiecesView
+//   AC#3 已解析（status=done + doc）挂载 QtyMatrix
 //
 // US-003 新增/改写：
 //   - 顶层仅挂 <PieceZoomModal/>（数量弹窗 PieceQtyDialog 已删除；qtyDialog 字段不存在）
-//   - 端到端：矩阵格子改 A@30=3 → qtyStore 该码写入 3；ParsedPiecesView 卡片头只读显示 3份
-//   - 矩阵列头点击切码 → ParsedPiecesView 图形预览刷新 + 区标题跟随
+//   - 端到端：矩阵格子改 A@30=3 → qtyStore 该码写入 3 + 行合计/总片数即时刷新
+//   - 矩阵列头点击切 activeSize（行缩略图跟随；原「图形预览刷新」断言随组件拆除删除）
 //
 // US-016 新增（Tab 解锁联动）：
 //   - mount idle 时 setNestingEnabled(false)
@@ -121,9 +121,8 @@ describe('PreviewPage (US-008) AC#3 布局结构', () => {
     const el = renderPage();
     const main = el.querySelector('.preview-main');
     expect(main!.querySelector('.preview-empty')).not.toBeNull();
-    // 不挂载 QtyMatrix / ParsedPiecesView
+    // 不挂载 QtyMatrix（图形预览区已拆除，右侧主体仅矩阵）
     expect(main!.querySelector('.qty-matrix')).toBeNull();
-    expect(main!.querySelector('.parsed-pieces-view')).toBeNull();
   });
 
   it('uploading 中右侧仍为空态（hasParsed 仅在 done+doc 时 true）', () => {
@@ -143,7 +142,7 @@ describe('PreviewPage (US-008) AC#3 布局结构', () => {
 });
 
 describe('PreviewPage (US-008) AC#3 已解析挂载主体', () => {
-  it('status=done + doc 非 null → 挂载 QtyMatrix + ParsedPiecesView', () => {
+  it('status=done + doc 非 null → 挂载 QtyMatrix（右侧主体仅矩阵，图形预览区已拆除）', () => {
     useUploadStore.setState({
       status: 'done',
       doc: makeDoc(),
@@ -153,7 +152,6 @@ describe('PreviewPage (US-008) AC#3 已解析挂载主体', () => {
     const main = el.querySelector('.preview-main');
     expect(main!.querySelector('.preview-empty')).toBeNull();
     expect(main!.querySelector('.qty-matrix')).not.toBeNull();
-    expect(main!.querySelector('.parsed-pieces-view')).not.toBeNull();
   });
 
   it('QtyMatrix 列头列出 doc 全码（28/30，当前码高亮）', () => {
@@ -172,36 +170,7 @@ describe('PreviewPage (US-008) AC#3 已解析挂载主体', () => {
     expect(colHeads[1].classList.contains('active')).toBe(false);
   });
 
-  it('ParsedPiecesView 渲染当前 activeSize 下的 pieces（28→1 片）', () => {
-    useUploadStore.setState({
-      status: 'done',
-      doc: makeDoc(),
-      activeSize: 28,
-    });
-    const el = renderPage();
-    expect(el.querySelectorAll('.piece-card').length).toBe(1);
-  });
-
-  it('切 activeSize 到 30 → ParsedPiecesView 刷新到 2 片（解析后默认 1份）', () => {
-    useUploadStore.setState({
-      status: 'done',
-      doc: makeDoc(),
-      activeSize: 28,
-    });
-    const el = renderPage();
-    expect(el.querySelectorAll('.piece-card').length).toBe(1);
-
-    act(() => {
-      useUploadStore.getState().setSize(30);
-    });
-    expect(el.querySelectorAll('.piece-card').length).toBe(2);
-    const qtyTexts = Array.from(el.querySelectorAll('.piece-card-qty')).map((n) => n.textContent);
-    expect(qtyTexts.length).toBe(2);
-    // 解析完成后每片默认数量 1（PreviewPage mount 时 hydrate）
-    expect(qtyTexts).toContain('1份');
-  });
-
-  it('点击 QtyMatrix 列头端到端切换 activeSize + 图形预览刷新', () => {
+  it('点击 QtyMatrix 列头端到端切换 activeSize + 列头高亮跟随', () => {
     useUploadStore.setState({
       status: 'done',
       doc: makeDoc(),
@@ -213,9 +182,10 @@ describe('PreviewPage (US-008) AC#3 已解析挂载主体', () => {
       colHeads[1].dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
     expect(useUploadStore.getState().activeSize).toBe(30);
-    expect(el.querySelectorAll('.piece-card').length).toBe(2);
-    // 区标题跟随当前预览码
-    expect(el.querySelector('[data-testid="parsed-pieces-title"]')!.textContent).toBe('图形预览 · 码 30');
+    // 高亮切到 30 列头
+    const after = el.querySelectorAll('button.qty-size-btn');
+    expect(after[1].classList.contains('active')).toBe(true);
+    expect(after[0].classList.contains('active')).toBe(false);
   });
 });
 
@@ -268,7 +238,7 @@ describe('PreviewPage (US-014) qtyStore 联动（hydrate 默认 1 / reset 清空
       activeSize: 28,
     });
     renderPage();
-    // 先填一些数量（包 act，触发 ParsedPiecesView re-render）
+    // 先填一些数量（包 act，触发 QtyMatrix re-render）
     act(() => {
       useQtyStore.getState().setPiecePerSize('A', 28, 5);
     });
@@ -330,7 +300,7 @@ describe('PreviewPage (US-003) 端到端：矩阵格子编辑数量', () => {
     input.dispatchEvent(new Event('input', { bubbles: true }));
   }
 
-  it('解析成功 → 矩阵改 A@30=3（blur 提交）→ 仅该码 perSize 写入 + 卡片头只读显示 3份', () => {
+  it('解析成功 → 矩阵改 A@30=3（blur 提交）→ 仅该码 perSize 写入 + 行合计/总片数即时刷新', () => {
     useUploadStore.setState({
       status: 'done',
       doc: makeDoc(),
@@ -355,15 +325,10 @@ describe('PreviewPage (US-003) 端到端：矩阵格子编辑数量', () => {
     const q = useQtyStore.getState().quantities.A;
     expect(q.perSize['30']).toBe(3);
     expect(q.perSize['28']).toBe(1);
-    // 列头切到 30 → 图形预览卡片头只读显示 3份（28 码仍 1份）
-    act(() => {
-      useUploadStore.getState().setSize(30);
-    });
-    expect(el.querySelector('.piece-card .piece-card-qty')!.textContent).toBe('3份');
-    act(() => {
-      useUploadStore.getState().setSize(28);
-    });
-    expect(el.querySelector('.piece-card .piece-card-qty')!.textContent).toBe('1份');
+    // 行合计即时刷新：A 行 = 28 码 1 + 30 码 3 = 4（makePiece 无 paired → ×1 口径）
+    expect(el.querySelector('tbody .qty-rowtotal')!.textContent).toBe('4');
+    // 工具条总片数 = A(4) + B(1) = 5
+    expect(el.querySelector('[data-testid="qty-total"]')!.textContent).toBe('5');
   });
 });
 

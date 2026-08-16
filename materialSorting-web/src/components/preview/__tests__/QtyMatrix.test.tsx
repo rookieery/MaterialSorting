@@ -6,10 +6,10 @@
 //   - 行填充 popover（应用 setRowAll + baseValue / 取消 / ESC / 遮罩）+ 重置为默认 1
 //   - 小计：每行合计列 + 每码小计行 + 工具条总片数 + 全 0 警示
 //     （US-004 起物理片数口径 = Σ demand × (paired?2:1)，配对片行头 ×2 徽章；缺字段 ×1 兜底）
-//   - 缩略图点击 openZoom(label, activeSize)
+//   - 缩略图点击 openZoom(label, rep.size)（所见即所放大；label 不在 activeSize 时回退码）
 //
-// 测试模式参考 ParsedPiecesView.test.tsx：渲染入 container，store.setState 驱动，
-// 断言 DOM 结构 + store 状态。React 受控 input 用 native setter + input event 模拟。
+// 测试模式（原参考已拆除的 ParsedPiecesView.test.tsx）：渲染入 container，store.setState
+// 驱动，断言 DOM 结构 + store 状态。React 受控 input 用 native setter + input event 模拟。
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { StrictMode } from 'react';
@@ -194,7 +194,7 @@ describe('QtyMatrix (US-002) 行列结构', () => {
   });
 });
 
-describe('QtyMatrix (US-002) 列头切码（图形预览入口）', () => {
+describe('QtyMatrix (US-002) 列头切码（activeSize 切换，行缩略图跟随）', () => {
   it('点击列头调 setSize(该码)，当前 activeSize 列头高亮', () => {
     const doc = makeStdDoc();
     useUploadStore.setState({ status: 'done', doc, activeSize: 28 });
@@ -224,7 +224,7 @@ describe('QtyMatrix (US-002) 列头切码（图形预览入口）', () => {
 });
 
 describe('QtyMatrix (US-002) 缩略图 openZoom', () => {
-  it('点击缩略图 openZoom(label, activeSize)（复用 PieceZoomModal 入口）', () => {
+  it('点击缩略图 openZoom(label, rep.size)：label 在 activeSize → 放大当前码版本', () => {
     const doc = makeStdDoc();
     useUploadStore.setState({ status: 'done', doc, activeSize: 28 });
     const el = renderMatrix();
@@ -233,6 +233,18 @@ describe('QtyMatrix (US-002) 缩略图 openZoom', () => {
       clickEl(thumb);
     });
     expect(useUploadStore.getState().zoom).toEqual({ label: 'A', size: 28 });
+  });
+
+  it('label 不在 activeSize（C@28 缺片）→ 放大回退码 rep（C@30），不静默失败', () => {
+    const doc = makeStdDoc();
+    useUploadStore.setState({ status: 'done', doc, activeSize: 28 });
+    const el = renderMatrix();
+    // 第三行 C：28 码缺片，rep 回退首个含它的码 30
+    const thumb = el.querySelectorAll('tbody tr')[2].querySelector<HTMLButtonElement>('.qty-thumb')!;
+    act(() => {
+      clickEl(thumb);
+    });
+    expect(useUploadStore.getState().zoom).toEqual({ label: 'C', size: 30 });
   });
 });
 

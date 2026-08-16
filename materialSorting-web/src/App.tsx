@@ -38,7 +38,7 @@ export function App(): React.JSX.Element {
         </div>
 
         {/* 上传预览页：US-001 占位，US-008 落地 UploadPanel；矩阵化重构 US-003 起
-            QtyMatrix 数量矩阵 + ParsedPiecesView 按码图形预览 */}
+            QtyMatrix 数量矩阵（按码图形预览区已拆除，裁片细看走行头缩略图放大） */}
         <div className={`page${activeTab === 'preview' ? '' : ' hidden'}`}>
           <PreviewPage />
         </div>

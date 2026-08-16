@@ -16,6 +16,10 @@
 //   '1' → '2'（矩阵化重构 US-005）：previewTour parsed/set-qty 两步锚点从旧 SizeTabs/
 //         piece-card-head 迁到 QtyMatrix 矩阵（qty-matrix / qty-rowhead）+ 文案改矩阵
 //         操作描述 —— 锚点重大变更，老用户 seen 强制清空重看。
+//   '2' → '3'（图形预览区拆除）：ParsedPiecesView 按码图形预览区删除（卡片点击放大与
+//         矩阵行头缩略图弹同一 PieceZoomModal，交互冗余）；parsed 步文案改矩阵 + 缩略图
+//         放大描述。锚点未变，但旧文案指引的「下方图形预览」已不存在 —— 步骤内容重大
+//         变更，bump 强制老用户重看。
 //
 // Partial 而非完整 Record<TabId, TourDef>：保留未来新增 Tab 时不必同步补 tour 的灵活性；
 // auto-trigger 对无指引的 Tab（TOURS[tab]===undefined）直接跳过，不报错。
@@ -26,7 +30,7 @@ import { nestingTour } from './nestingTour';
 import { previewTour } from './previewTour';
 
 /** Tour 内容版本号。bump 触发条件：仅步骤内容重大变更时 bump（强制老用户重看）。版本历史见文件头注释。 */
-export const TOUR_VERSION = '2';
+export const TOUR_VERSION = '3';
 
 /**
  * 按 TabId 注册的指引序列。

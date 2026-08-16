@@ -1,7 +1,8 @@
 // PieceZoomModal —— 放大预览模态（US-013）。
 //
-// 单击 QtyMatrix 行头缩略图 / ParsedPiecesView 卡片图形区（.piece-card-body）时弹出
-// 该裁片的大图模态，复用 PiecePreviewSVG 的 5 层命令式渲染（scale(1,-1) 翻转不变量保留）。
+// 单击 QtyMatrix 行头缩略图时弹出该裁片的大图模态（zoom.size = 缩略图 rep 自身的码，
+// 所见即所放大），复用 PiecePreviewSVG 的 5 层命令式渲染（scale(1,-1) 翻转不变量保留）。
+// 原 ParsedPiecesView 卡片图形区点击入口随图形预览区拆除删除（两入口弹同一模态，冗余）。
 //
 // 声明式受控（矩阵化重构 US-003 起预览页唯一模态）：
 //   - 订阅 uploadStore.zoom + doc；zoom=null 或 doc=null 时渲染 null。
@@ -19,7 +20,7 @@
 //   - 跨码匹配同一片型按 label（A/B/C 次序），与 qtyStore / QtyMatrix 同口径；
 //     不用 name（含码号后缀，跨码不同）。
 //   - 防御性兜底：doc.sizes 找不到匹配码、或码内 pieces 找不到匹配 label → 渲染 null
-//     （不挂 DOM；理论不会发生，因 openZoom 由 ParsedPiecesView / QtyMatrix 在已挂载元素上调）。
+//     （不挂 DOM；理论不会发生，因 openZoom 由 QtyMatrix 在已挂载缩略图上调）。
 //   - 不引入 CSS 框架；.piece-zoom-overlay / .piece-zoom-modal / .piece-zoom-close /
 //     .piece-zoom-body 全部沿用 style.css 暗背景 + 绿色 #2ea06c 同色系。
 //   - 复用 PiecePreviewSVG 的 pad=20（比卡片默认 pad=14 加大留白，放大显示更舒适）。

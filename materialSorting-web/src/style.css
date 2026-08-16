@@ -280,7 +280,7 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
 .upload-summary { font-size: 11px; color: #aab; margin-top: 4px; }
 
 /* ---- US-007 PiecePreviewSVG（单片母版预览；class 由组件 imperative setAttribute 写入） ---- */
-/* 沿用 .nest-card svg 同口径：fill 父容器（US-008 ParsedPiecesView 卡片），背景与排料图同色 */
+/* 沿用 .nest-card svg 同口径：fill 父容器（QtyMatrix 行头缩略图 / PieceZoomModal），背景与排料图同色 */
 .piece-preview-svg {
   display: block;
   width: 100%;
@@ -289,9 +289,10 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
   background: #eef0f3;
 }
 
-/* ---- US-008 PreviewPage / ParsedPiecesView（SizeTabs 已随矩阵化重构 US-003 拆除，
-   尺码切换职责移交 QtyMatrix 列头，见文末矩阵区） ---- */
-/* 三层 flex：.preview-page 横向（左 UploadPanel + 右 main），.preview-main 纵向（矩阵 + 图形预览） */
+/* ---- US-008 PreviewPage（ParsedPiecesView 图形预览区已拆除：卡片点击放大与矩阵行头
+   缩略图点击弹同一 PieceZoomModal，交互冗余；相关 .parsed-pieces-* / .piece-card 系列
+   样式随之删除，仅保留 PieceZoomModal 头部复用的 .piece-card-label） ---- */
+/* 两层 flex：.preview-page 横向（左 UploadPanel + 右 main），.preview-main 纵向（矩阵） */
 .preview-page {
   flex: 1;
   display: flex;
@@ -307,42 +308,8 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
   overflow: auto;
 }
 
-/* ParsedPiecesView：自适应 grid（每片一张卡片），与 .nest-card 视觉同色系 */
-.parsed-pieces-view {
-  flex: 1;
-  padding: 12px;
-  overflow: auto;
-  min-height: 0;
-}
-/* US-003 区标题：标明当前图形预览码（码切换由 QtyMatrix 列头驱动） */
-.parsed-pieces-title {
-  font-size: 12px;
-  color: #9aa;
-  padding: 2px 2px 10px;
-  user-select: none;
-}
-.piece-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 10px;
-}
-.piece-card {
-  display: flex;
-  flex-direction: column;
-  background: #2a2c32;
-  border-radius: 4px;
-  overflow: hidden;
-  min-height: 180px;
-}
-.piece-card-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 10px;
-  background: #1c1d22;
-  border-bottom: 1px solid #34363d;
-  font-size: 12px;
-}
+/* A/B/C 徽章（原 ParsedPiecesView 卡片头遗留，现仅 PieceZoomModal 模态头复用；
+   QtyMatrix 行头徽章是独立的 .qty-label-badge） */
 .piece-card-label {
   display: inline-flex;
   align-items: center;
@@ -356,40 +323,6 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
   font-weight: 600;
   font-size: 11px;
   font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
-}
-/* US-003 矩阵化重构：卡片头数量改只读 span「N 份」（编辑入口在 QtyMatrix）；
-   该码无此裁片时 span.disabled 置灰 + native title 提示 */
-.piece-card-qty {
-  padding: 0 2px;
-  color: #cdd;
-  font-size: 12px;
-  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
-  font-weight: 600;
-}
-.piece-card-qty.disabled {
-  color: #666;
-}
-.piece-card-body {
-  flex: 1;
-  min-height: 0;
-  padding: 6px;
-  display: flex;
-  /* US-014 卡片图形区可点击放大预览：zoom-in 提示用户可点击 */
-  cursor: zoom-in;
-}
-.piece-card-body:focus-visible {
-  outline: 2px solid #2ea06c;
-  outline-offset: -2px;
-}
-.piece-card-body svg {
-  flex: 1;
-  min-height: 140px;
-}
-.parsed-pieces-empty {
-  padding: 32px;
-  text-align: center;
-  font-size: 13px;
-  color: #888;
 }
 
 /* ---- US-012 PieceQtyDialog + Switch 已随矩阵化重构 US-003 拆除（数量改 QtyMatrix
@@ -1061,7 +994,8 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
 .qty-colhead { min-width: 64px; }
 .qty-total-col { min-width: 56px; }
 
-/* 列头码按钮：承担「图形预览码切换」职责（点击 setSize），当前码绿色高亮（US-003 起取代旧 .size-chip） */
+/* 列头码按钮：点击 setSize 切 activeSize（行头缩略图优先显示该码版本的裁片），
+   当前码绿色高亮（US-003 起取代旧 .size-chip） */
 .qty-size-btn {
   width: 100%;
   padding: 4px 0;
