@@ -27,7 +27,7 @@ materialSorting-server/
     │   ├── explore.py                 母版全裁片探索 CLI（SVG/JSON/CSV）
     │   └── export_dxf.py              PieceOutline → 单裁片 R12 DXF
     ├── nesting_bounds/
-    │   └── load_pieces.py             单裁片 → 布纹对齐 → 归一化 → L/R 镜像；定义 NestPiece
+    │   └── load_pieces.py             单裁片 → 布纹对齐 → 归一化 → L/R 镜像；定义 NestPiece + 门幅双口径常量（GATE_MM=1980 显示 / PLOT_SAFE_MAX_Y_MM=1910 绘图仪可写 / NEST_GATE_MM=min 求解约束带）
     ├── nesting_engine/
     │   ├── constraints.py             v0.3 约束常量 + 位图腐蚀 + 合法性校验
     │   ├── sparrow_baseline.py        基线求解 + ★共享层（被 experiments/export/solver 复用）
@@ -35,9 +35,9 @@ materialSorting-server/
     │   └── labeling.py                US-022 共享 A/B/C 标注 + (size,ptype)→label 映射
     └── web/                           FastAPI + WS 工作台（详见 agent-api-reference.md）
         ├── server.py                  app + 路由（GET /、/static、POST /export、POST /api/parse-dxf、POST /api/commit-to-nesting、GET /api/ptypes、WS /ws/solve）+ 求解线程桥 + US-020 _PIECES_STATE 可 reload（threading.Lock immutable snapshot）+ US-004 上传解析 + US-010 commit-to-intermediate（commit 后 reload）+ US-022 intermediate 加 label + WS quantities 入参
-        ├── solver.py                  build_instance（US-022 quantities→demand，0 跳过）+ solve_with_callback（threading 旧版，保留）+ solve_with_callback_proc（US-025 多进程版，返回 process 句柄可 terminate）
+        ├── solver.py                  build_instance（US-022 quantities→demand，0 跳过；strip_height=min(gate,PLOT_SAFE_MAX_Y_MM) 求解钳绘图仪可写幅宽）+ solve_with_callback（threading 旧版，保留）+ solve_with_callback_proc（US-025 多进程版，返回 process 句柄可 terminate）
         ├── solve_worker.py             US-025 子进程入口（顶层 solve_worker，spawn 可 pickle；子进程内 build_instance + solve，仅 JSON 数据跨进程）
-        └── export.py                  PNG(matplotlib) + R12-DXF marker + HPGL/PLT 文本 导出
+        └── export.py                  PNG(matplotlib) + R12-DXF marker + HPGL/PLT 文本 导出（PLT：内容压进 Y≤1910 可写幅宽 + PD 分块 ≤10点/≤110B + 走纸引导）
 ```
 
 ## paths.py — 路径常量（24 行）
@@ -174,7 +174,7 @@ materialSorting-server/
 
 ## nesting_bounds/ — 裁片加载
 
-### `load_pieces.py`（306 行）— 单裁片 → NestPiece（5 层透传，US-024）
+### `load_pieces.py`（312 行）— 单裁片 → NestPiece（5 层透传，US-024）
 
 读单裁片 DXF → 布纹对齐到水平 → 归一化到原点 → 成对镜像展开 L/R。**Stage 0 刻意不强制 v0.3 全局约束**：成对片独立放置（不强制对称），布纹仅用于读取期水平对齐，之后无旋转约束。US-024 起 `_read_piece_full` 读 5 层（layer1+layer14+layer8+layer4+layer7），notch 法线按 outline 最近边重算（与 `collect._nearest_edge_with_normal` 同算法）；5 层经 `_apply_layer_transforms` 与 polygon 共享 rotate→mirror→normalize transform 链。
 
@@ -182,7 +182,9 @@ materialSorting-server/
 
 | 常量 | 值 |
 |------|-----|
-| `GATE_MM` | `1980.0`（门幅，有效排料宽，不减布边） |
+| `GATE_MM` | `1980.0`（门幅：布幅**显示**口径 —— UI / 密度分母 / PNG·DXF·PLT 外框，不减布边） |
+| `PLOT_SAFE_MAX_Y_MM` | `1910.0`（绘图仪 Y 可写幅宽，LIKE + WT「高速网口输出中心 V8.8」现场口径；2026-08 撞机根因 = 旧导出门幅框画到 1980、顶部刺口伸 1983.9mm，Y 超程小车撞导轨硬限位） |
+| `NEST_GATE_MM` | `min(GATE_MM, PLOT_SAFE_MAX_Y_MM)`（**求解约束带** strip 高度上限；web/solver 与 CLI 引擎同源引用；换机器/换布幅只改上面两个常量，此处自动跟随） |
 | `PAIR_TYPES` | `{'前片','后片','腰','前袋','后袋','机头'}`（镜像成 L+R） |
 | `ALL_TYPES` | `['前片','后片','腰','前袋','后袋','机头','单排','双排','火机袋','裤耳']`（10 类规范序） |
 | `DEFAULT_SIZES` | `[28,29,30,31,33,34,35,36]`（8 码，**跳 32**） |
@@ -235,7 +237,7 @@ PAIR_TYPES    = {'前片','后片','腰','前袋','后袋','机头'}
 | `overlap_dpix` | `(ptype, res) → int` | 腐蚀像素数 = `MAX_OVERLAP[ptype]/res` |
 | `validate` | `(placed_world, pieces, used, gate, res) → (ok, issues)` | 校验数量、成对 L/R 1:1（按 ptype+size）、x∈[0,gate]、used>0 |
 
-### `sparrow_baseline.py`（430 行）— 基线 + ★共享层
+### `sparrow_baseline.py`（433 行）— 基线 + ★共享层
 
 Stage 2 §6：把 128 片喂给 spyrrow（无服装约束的纯几何）求几何上界。产出 `result_*.json` / `*.svg` / `*_curve.json` / `*_curve.png`。**同时是共享层**：`_clean_polygon` / `_write_svg` / `_plot_curve` / `solve_with_progress` 被 `sparrow_experiments` 复用。
 
@@ -251,13 +253,13 @@ DEFAULT_COLOR = '#bbbbbb'
 | 函数 | 签名 | 说明 |
 |------|------|------|
 | `solve_with_progress` | `(instance, config) → (sol, curve, elapsed_sec)` | daemon 线程跑 `instance.solve(config, progress=ProgressQueue)`，主线程 drain 收 anytime 曲线；curve 项 `{elapsed,phase,report,density,width_mm}`；30s 心跳 log。**被 baseline + experiments 共用** |
-| `main()` | — | CLI：`--sizes`/`--time`(600)/`--seed`/`--no-svg`/`--no-curve`；读 `INTERMEDIATE`，构 `spyrrow.Item(allowed_orientations=[0,180])` + `StripPackingInstance(strip_height=gate)` + `StripPackingConfig(time,seed,num_workers=4)` |
+| `main()` | — | CLI：`--sizes`/`--time`(600)/`--seed`/`--no-svg`/`--no-curve`；读 `INTERMEDIATE`，构 `spyrrow.Item(allowed_orientations=[0,180])` + `StripPackingInstance(strip_height=min(gate, PLOT_SAFE_MAX_Y_MM))`（与 web/solver 同口径钳绘图仪可写幅宽；密度/理论用布仍按 gate）+ `StripPackingConfig(time,seed,num_workers=4)` |
 
 私有：`_clean_polygon(poly,eps=0.01)`（去连续重复点 + 闭合重复点；spyrrow 自身也去重，此为多一层保险，**不**处理非连续重复/自交）、`_transform_polygon`（绕原点旋 + 平移，与 `PlacedItem` 语义一致）、`_fmt`、`_write_svg`（viewBox = used×gate mm，`<g transform="translate(0,H) scale(1,-1)">` 翻 y）、`_plot_curve`（matplotlib anytime 收敛图 + 阶段着色 + best-so-far 包络 + 90% 参考线；无 matplotlib 优雅降级）。
 
 > `num_workers=4`：spyrrow 0.9.0 修了 `num_wokers` 拼写错；**>4 反而质量更差（issue #113）**。
 
-### `sparrow_experiments.py`（254 行）— 旋转/重合公差实验
+### `sparrow_experiments.py`（256 行）— 旋转/重合公差实验
 
 实验 ②③ 量化旋转公差与重合公差上界。基线 = 实验 ① 600s `{0,180}` 无 erode = **85.79%**（`result_{tag}_t600.json`）。spyrrow 参考数：TROUSERS 92.6% / SHIRTS 90.9%（arxiv 2509.13329）。
 
@@ -269,7 +271,7 @@ DEFAULT_COLOR = '#bbbbbb'
 |------|------|------|
 | `erode_polygon` | `(poly, d) → poly` | shapely 向内 buffer `d` mm → 外环坐标；失败/空回退原 poly；Multi 取最大 |
 | `build_pieces` | `(doc, exp, erode_d) → (items_meta, total_orig_area, n_internal_eroded)` | 4 模式：`free_rot`（全自由旋）/`v0_rot`（内片自由 + 外片 `{0,180}`）/`erode`（仅内片 erode，朝向仍 `{0,180}`）/`erode_rot`（内片 erode+自由旋，外片 `{0,180}`） |
-| `run_one` | `(doc, gate, exp, erode_d, time_budget, seed)` | 跑一次；同时报 `real_density`（原面积分母）+ `sparrow_density`（erode 后自报）；写 `result_{stem}.json`/`{stem}_curve.json`/`{stem}.svg`/`{stem}_curve.png`，stem = `exp_{tag}_t{T}_s{seed}` |
+| `run_one` | `(doc, gate, exp, erode_d, time_budget, seed)` | 跑一次；`strip_height=min(gate, PLOT_SAFE_MAX_Y_MM)`（与 web/solver 同口径；密度仍按 gate）；同时报 `real_density`（原面积分母）+ `sparrow_density`（erode 后自报）；写 `result_{stem}.json`/`{stem}_curve.json`/`{stem}.svg`/`{stem}_curve.png`，stem = `exp_{tag}_t{T}_s{seed}` |
 | `main()` | — | CLI：`--exp {free_rot\|v0_rot\|erode\|erode_rot\|all}`(默认 all)/`--d`(5)/`--time`(600)/`--seed`(0)/`--seeds`(csv→多种子方差汇总)；写 `experiments_summary_t{T}.json` 或 `multiseed_{exp}_d{d}_t{T}.json` |
 
 ### `labeling.py`（US-022 共享 A/B/C 标注）
@@ -289,10 +291,10 @@ parse-dxf 响应（`web/server.py._build_parse_payload`）与 intermediate（`we
 
 | 文件 | 行 | 职责 |
 |------|----|------|
-| `server.py` | 783 | FastAPI app；**启动期 `_reload_pieces_state()`**（US-020 替代旧顶层 `load_pieces()`，allow-empty 不再让 import 崩）；路由 GET `/`、mount `/static`、POST `/export`（文件名前缀取 payload `filename` 上传母版名去 .dxf，缺省回退「排料」/nesting）、POST `/api/parse-dxf`（US-004 上传解析）、POST `/api/commit-to-nesting`（US-010 + US-020 commit 后 reload `_PIECES_STATE` + US-022 intermediate 加 label）、GET `/api/ptypes`（US-020 片型代表裁片 D10/D11）、WS `/ws/solve`（accept 阶段 `_get_pieces_state()` 快照 + US-022 quantities 入参；**US-026 进程化**：`solve_with_callback_proc` 替代旧 threading 桥，write loop 内联 drain queue + read loop 后台 task 收 `{action:'stop'}` → terminate process → 发 `{type:'stopped'}` → 关闭 WS；客户端断开 → terminate+join 防孤儿）；`_terminate_solve_process(state_box)` 幂等 terminate+join+kill 兜底；`_state_lock=threading.Lock()` 保护 immutable snapshot；`ThreadPoolExecutor(max_workers=6)` 跑 `run_solve`（US-004 解析 / US-010 commit 也复用此池）；上传常量 `UPLOAD_MAX_BYTES=20MB` / `UPLOADS_DIR=paths.OUT_DIR/uploads` / `_DOC_ID_RE`；`_build_parse_payload` 按码分组 + 质心/面积稳定排序 + A/B/C 标注；`_commit_to_nesting_sync` Path A 全管线；`_PTYPE_REPRESENTATIVE_FIELDS` 透传白名单 |
-| `solver.py` | 390 | `load_pieces` / `discretize_orientations` / `build_instance`（erode=min(申,max)，tol=min(申,max)，US-022 quantities→demand，0 跳过；US-024 pid_meta 加 5 层字段 `.get()` 向后兼容）/ `solve_with_callback`（**旧** threading 版，保留不删）/ `solve_with_callback_proc`（**US-025** multiprocessing 版 + **US-026 `on_process` 回调**：子进程 `start()` 后回调一次交出 `Process` 句柄供 WS stop/断开 terminate；density 双口径换算在主进程做；terminate 后 `cancel_join_thread + 限时 drain(≤50ms) + join(timeout=5)` 防死锁）+ `_apply_density_dual` 私有换算helper |
+| `server.py` | 795 | FastAPI app；**启动期 `_reload_pieces_state()`**（US-020 替代旧顶层 `load_pieces()`，allow-empty 不再让 import 崩）；路由 GET `/`、mount `/static`、POST `/export`（文件名前缀取 payload `filename` 上传母版名去 .dxf，缺省回退「排料」/nesting）、POST `/api/parse-dxf`（US-004 上传解析；**矩阵化重构 US-004 起每片 additive 透传 `ptype`/`paired`** —— `_build_parse_payload` 入口对全码 pieces `assign_group_no`（与 `_commit_to_nesting_sync` 同 gmap 链路），`paired = ptype in PAIR_TYPES`，前端物理片数口径 ×2 的数据源）、POST `/api/commit-to-nesting`（US-010 + US-020 commit 后 reload `_PIECES_STATE` + US-022 intermediate 加 label）、GET `/api/ptypes`（US-020 片型代表裁片 D10/D11）、WS `/ws/solve`（accept 阶段 `_get_pieces_state()` 快照 + US-022 quantities 入参；**US-026 进程化**：`solve_with_callback_proc` 替代旧 threading 桥，write loop 内联 drain queue + read loop 后台 task 收 `{action:'stop'}` → terminate process → 发 `{type:'stopped'}` → 关闭 WS；客户端断开 → terminate+join 防孤儿）；`_terminate_solve_process(state_box)` 幂等 terminate+join+kill 兜底；`_state_lock=threading.Lock()` 保护 immutable snapshot；`ThreadPoolExecutor(max_workers=6)` 跑 `run_solve`（US-004 解析 / US-010 commit 也复用此池）；上传常量 `UPLOAD_MAX_BYTES=20MB` / `UPLOADS_DIR=paths.OUT_DIR/uploads` / `_DOC_ID_RE`；`_build_parse_payload` 按码分组 + 质心/面积稳定排序 + A/B/C 标注；`_commit_to_nesting_sync` Path A 全管线；`_PTYPE_REPRESENTATIVE_FIELDS` 透传白名单 |
+| `solver.py` | 398 | `load_pieces` / `discretize_orientations` / `build_instance`（erode=min(申,max)，tol=min(申,max)，US-022 quantities→demand，0 跳过；**strip_height=min(gate_mm, PLOT_SAFE_MAX_Y_MM)** —— gate_mm 是显示口径，求解约束带钳绘图仪可写幅宽 1910，密度/导出/前端仍用 gate_mm 原值；US-024 pid_meta 加 5 层字段 `.get()` 向后兼容）/ `solve_with_callback`（**旧** threading 版，保留不删）/ `solve_with_callback_proc`（**US-025** multiprocessing 版 + **US-026 `on_process` 回调**：子进程 `start()` 后回调一次交出 `Process` 句柄供 WS stop/断开 terminate；density 双口径换算在主进程做；terminate 后 `cancel_join_thread + 限时 drain(≤50ms) + join(timeout=5)` 防死锁）+ `_apply_density_dual` 私有换算helper |
 | `solve_worker.py` | 141 | US-025 **新增**。顶层 `solve_worker(pieces_snapshot, gate_mm, solve_params, result_queue)` —— Windows spawn 可 pickle（无闭包、参数全 JSON）。子进程内 `build_instance(...) → 投 {kind:manifest}` → `instance.solve(config, progress=ProgressQueue)` → drain 出中间解投 `{kind:frame,report}` → 末尾投 `{kind:final,final}` 或 `{kind:error,message}`。所有投递纯 JSON，spyrrow 对象绝不跨进程。延迟 import build_instance 避免主进程 `from solve_worker import` 时强制拉 sparrow_baseline |
-| `export.py` | 468 | `apply_transform` / `placed_to_world`（用**原始**非 eroded 轮廓；US-024 起 5 层一并变换，notch 点按点变换 + 法线按向量旋转）/ `render_png`（matplotlib Agg；US-024 起 5 层叠加：net 绿虚线 / internal 橙 / notch 黄短线段 / grain 红虚线）/ `write_marker_dxf`（R12 POLYLINE + ACI 色 + ASCII 标题；US-024 起多 layer：outline layer1 / net layer14 / internal layer8 / notch layer4 POINT / grain layer7 LINE，各自独立 entity）/ `write_marker_plt`（US-033 HPGL/HP-GL 纯文本，**封装口径对齐生产 PLT** `data/PC-20250508NJIF*.plt`：头部 `IN;PS<纸长>;SP1;PW0.08;` + `SP1-6;` PU/PD + 尾部 `PU;PG;`，CRLF 行尾，无 VS/LB 指令；坐标=mm×40 round；5 层笔号 SP1=outline/SP2=net/SP3=internal/SP4=notch/SP5=grain/SP6=border；空层跳过；纯 ASCII bytes，无临时文件、无新依赖）/ `_plt_frame_stats`（越界防御 + PS 纸长取值：全层顶点 + notch 点须在门幅框内，非 0 记 warning；notch 法线端点外伸只计入 max_x 不告警） |
+| `export.py` | 614 | `apply_transform` / `placed_to_world`（用**原始**非 eroded 轮廓；US-024 起 5 层一并变换，notch 点按点变换 + 法线按向量旋转）/ `render_png`（matplotlib Agg；US-024 起 5 层叠加：net 绿虚线 / internal 橙 / notch 黄短线段 / grain 红虚线）/ `write_marker_dxf`（R12 POLYLINE + ACI 色 + ASCII 标题；US-024 起多 layer：outline layer1 / net layer14 / internal layer8 / notch layer4 POINT / grain layer7 LINE，各自独立 entity）/ `write_marker_plt`（US-033 HPGL/HP-GL 纯文本，**封装口径对齐生产 PLT** `data/PC-20250508NJIF*.plt`：头部 `IN;PS<纸长>;SP1;PW0.08;` + `SP1-5;` PU/PD + 尾部 `PU;PG;`，CRLF 行尾，无 VS/LB 指令；坐标=mm×40 round；5 层笔号 SP1=outline/SP2=net/SP3=internal/SP4=notch/SP5=grain + 门幅框并入 SP1；空层跳过；纯 ASCII bytes，无临时文件、无新依赖；**2026-08 现场撞机修正**：① 安全幅面 —— 内容按 y ≤ PLOT_SAFE_MAX_Y_MM 半平面裁剪（削平不缩放）、门幅框上沿压进可写幅宽（Y 内缩 PLOT_BORDER_MARGIN_Y_MM=5）、越界裁片记 warning（二道防线，兜旧 intermediate/求解 bug；求解已由 NEST_GATE_MM 一道钳制）；② PD 分块 —— `_plt_polyline` 单条 PD ≤10 点且整行 ≤110B 续画（对齐 ET 生产 ≤11点/≤118B，防国产 HP-GL 解释器行缓冲溢出坐标错位小车乱走）；③ 走纸引导 —— 全体 X + PLOT_LEAD_X_MM=20（贴 0 起画无定位余量），PS 纸长 = 引导 + max(用布长, 内容最大X) + 尾余量 PLOT_TAIL_X_MM=10）/ `_plt_frame_stats`（越界防御 + PS 纸长取值：全层顶点 + notch 点须在门幅框内，非 0 记 warning；notch 法线端点外伸只计入 max_x 不告警） |
 
 US-004 起 `web/server.py` 直接 import `dxf_parser.collect.collect_pieces_with_details`（web → dxf_parser 跨层依赖，合规：web 是上层）。US-010 起新增 import `dxf_parser.explore` / `dxf_parser.export_dxf` / `nesting_bounds.load_pieces`（web → nesting_bounds → dxf_parser 单向，合规）。上传 multipart 依赖 `python-multipart`（已在 `[web]` extra）。
 
@@ -354,6 +356,7 @@ out/sparrow_baseline/pieces_intermediate.json   ← 全流程事实源（每片 
 9. **5 层中 4 层仅渲染透传（US-024）**：`polygon`（layer1 毛版外轮廓，erode 后）是唯一参与 sparrow NFP 碰撞的几何；`net_polygon` / `internal_lines` / `notches` / `grain_line` 4 层仅渲染与 PNG/DXF/PLT 导出透传，不影响求解结果或利用率。改任一层定义需同步 collect.LAYER_MAPPING + export_dxf.write_piece_dxf + load_pieces._read_piece_full + web/server._commit_to_nesting_sync + solver.pid_meta + web/export.py + NestSVG。
 10. **notch 法线读时重算（US-024）**：DXF POINT 仅存位置，无法线字段；`_read_piece_full` 读时调 `_collect._nearest_edge_with_normal` 按 outline 最近边重算（与 `collect._assign_notch` 同算法）。退化边（连续重复点）返 (0,0) 法线 → NestSVG / PNG 渲染为 0 长度线段兜底。
 11. **求解进程化（US-025 + US-026 接线）**：`solve_with_callback_proc` 是 `solve_with_callback`（threading）的多进程替代 —— spyrrow Rust .pyd 无 cancel/abort/stop API，唯有 `Process.terminate()`（Windows 调 TerminateProcess）可可靠终止原生阻塞 solve；spyrrow 对象不可 pickle，故 `build_instance` 必须在子进程内执行（`solve_worker` 顶层函数 + 参数全 JSON 可序列化），只把 pid_meta/frame/final/error 经 `multiprocessing.Queue` 传回主进程。**US-026 已切换 `ws_solve`**：write loop 内联 + read loop 后台 task 双向并发；`on_process` 回调把 Process 句柄交给 ws_solve；stop/断开 → terminate+join 防孤儿。旧 `solve_with_callback` 保留不删。终止安全：`terminate() → cancel_join_thread() → 限时 drain(≤50ms) → join(timeout=5)`，绝不阻塞。
+12. **门幅双口径解耦（2026-08-16 绘图仪撞机修正，1aedc10）**：`GATE_MM=1980` 是布幅**显示**口径（UI / 密度分母 / 导出外框 / WS manifest gate_mm），`PLOT_SAFE_MAX_Y_MM=1910` 是绘图仪 Y 可写幅宽，`NEST_GATE_MM=min(两者)` 是**求解约束带** —— 三常量单一事实源在 `nesting_bounds/load_pieces.py`，`web/solver.build_instance`、`sparrow_baseline.main`、`sparrow_experiments.run_one` 同源引用（1980−1910=70mm 内部差求解时直接不排，marker 顶部不再落进行程外撞导轨）。密度/理论用布仍按 gate 显示口径计算。PLT 导出内容再按 y≤1910 裁剪属二道防线（削平不缩放）。换机器/换布幅只改 nesting_bounds 一处常量，全部口径自动跟随。
 
 ## 已知问题（迁移中未修，勿在文档/迁移中扩大）
 
