@@ -55,7 +55,8 @@ export interface QtyState {
   setPiecePerSize: (label: string, size: number | null, value: number) => void;
   /**
    * 整行填充：把 sizes 列出的每个码 perSize 写为 clampQty(value)，并把 baseValue 置为该值
-   * （矩阵行头「填充默认值」入口）。sizes 外的既有码保留原值。
+   * （QtyMatrix「重置为默认 1」入口；行头填充 popover 已随 2026-08 行头简化拆除）。
+   * sizes 外的既有码保留原值。
    */
   setRowAll: (label: string, sizes: ReadonlyArray<number | null>, value: number) => void;
   /** 清空为 {}（重传 / reset 路径接入）。 */

@@ -1,9 +1,11 @@
 // QtyMatrix —— 裁片 × 尺码数量矩阵（矩阵化重构 US-002）。
 //
-// 职责（一屏看全 + 直接编辑 + 批量填充 + 即时小计）：
+// 职责（一屏看全 + 直接编辑 + 即时小计）：
 //   1. 行 = 全码 label 并集（按 doc.sizes 顺序首次出现排序 → 最小码 pieces 顺序优先，
-//      后续码新增 label 追加在尾部）；行头 = [A 徽章] + 裁片名 + 缩略图（PiecePreviewSVG
-//      compact）+ 悬浮「填充」按钮。
+//      后续码新增 label 追加在尾部）；行头 = [序号徽章] + 缩略图（PiecePreviewSVG
+//      compact 64×64，点击放大，title 悬浮显裁片名）。行头简化（2026-08，对齐高级配置
+//      弹窗的纯图观感）：裁片名 / ×2 徽章 / 行头「填充」按钮已拆除 —— 裁片名看放大
+//      模态，配对口径看总片数 title，整表批量回 1 用工具条「重置」。
 //   2. 列 = doc.sizes 全码（null 码殿后显示「通用」，无 null 码不渲染该列）+ 行合计列；
 //      列头是 button，点击 setSize(该码) 切换 activeSize（决定行头缩略图优先显示哪个码
 //      版本的裁片；原「驱动下方图形预览区」职责随 ParsedPiecesView 拆除而收敛于此），
@@ -14,28 +16,26 @@
 //      （区别于 0，不可编辑）。
 //   4. 特例高亮：格子值 ≠ 该行 baseValue 且整行非全同 → .override（整行同值不高亮，
 //      避免逐格手改满屏噪点）；baseValue 缺席兜底 1（未填充时的高亮基准）。
-//   5. 行头「填充」popover：输入 X 应用 → setRowAll（整行写该 label 存在的码 + baseValue=X，
-//      即「默认值」；特例 = 填充后个别格子再改）。
-//   6. 小计反馈（US-004 起物理片数口径 = Σ demand × (paired ? 2 : 1)）：每行合计列 /
+//   5. 小计反馈（US-004 起物理片数口径 = Σ demand × (paired ? 2 : 1)）：每行合计列 /
 //      底部每码小计行 / 工具条总片数均按配对片 ×2 计（demand=N 份 → 配对片型实际排
-//      L+R 共 2N 物理片）；行头配对片显示「×2」徽章。全 0 红色警示；
-//      「重置为默认 1」整表批量回 1。
+//      L+R 共 2N 物理片；口径说明只在总片数 title，行头不再有 ×2 徽章）。全 0 红色
+//      警示；「重置为默认 1」整表批量回 1（setRowAll 仅存的入口）。
 //
 // 设计原则（CLAUDE.md / AGENTS.md 矩阵化重构关键约定）：
 //   - 单一真相源：doc/activeSize/setSize/openZoom 来自 uploadStore，quantities/
-//     setPiecePerSize/setRowAll 来自 qtyStore；本组件不持业务状态（仅 popover 开关 +
-//     格子草稿两个 UI 态）。数量读取一律走 getPieceDisplay selector（不直接读
+//     setPiecePerSize/setRowAll 来自 qtyStore；本组件不持业务状态（仅格子草稿一个
+//     UI 态）。数量读取一律走 getPieceDisplay selector（不直接读
 //     quantities[label]，与 PieceZoomModal 同口径）。
-//   - 行填充只写该 label 实际存在的码（rowSizes），不给缺片码造 phantom perSize 键
+//   - 整行写（重置入口）只写该 label 实际存在的码（rowSizes），不给缺片码造 phantom perSize 键
 //     （避免 getPieceDisplay editable 语义与 serializeQuantities 输出被污染）。
 //   - 布局：矩阵容器 max-height 45vh 内部滚动 + sticky 表头/首列（.qty-matrix-scroll）；
-//     窄屏（≤1366）靠行头 220px + 格子 64px 的 min-width 自然横向滚动，不引入 CSS 框架。
+//     窄屏（≤1366）靠行头 132px + 格子 64px 的 min-width 自然横向滚动，不引入 CSS 框架。
 //   - 缩略图点击 openZoom(label, rep.size) 复用 PieceZoomModal（US-013 声明式受控模态，
 //     PreviewPage 顶层单例）。传 rep 自己的码而非 activeSize：所见即所放大，且该 label
 //     不在 activeSize 时（rep 已回退其它码）不会静默失败。
 //   - tour 锚点（矩阵化重构 US-005）：根容器 data-tour="qty-matrix"（previewTour parsed 步，
 //     指引矩阵编辑与行头缩略图放大）；每行行头 data-tour="qty-rowhead"（set-qty 步，
-//     querySelector 命中首行，指引格内编辑 / 行头填充 / 特例高亮）。步骤内容重大变更时
+//     querySelector 命中首行，指引格内编辑 / 特例高亮）。步骤内容重大变更时
 //     bump TOUR_VERSION 强制老用户重看（见 tour/steps/index.ts；图形预览区拆除文案已 bump）。
 //
 // 性能注意：
@@ -61,7 +61,7 @@ function sizeKeyOf(size: number | null): string {
   return size === null ? 'null' : String(size);
 }
 
-/** 矩阵行模型：label + 该 label 实际存在的码列表（行填充范围）。 */
+/** 矩阵行模型：label + 该 label 实际存在的码列表（整行写 / 重置范围）。 */
 interface MatrixRow {
   label: string;
   sizes: (number | null)[];
@@ -92,7 +92,7 @@ interface QtyMatrixCellProps {
  * 数量格子：本地草稿（draft string）+ blur / Enter / Tab 提交。
  *
  * - 草稿不实时 clamp：允许清空重输 / 输入中间态，提交时统一 clampQty 规整。
- * - store 侧外部变更（整行填充 / 重置）经 useEffect 同步进「未聚焦」格子的草稿；
+ * - store 侧外部变更（整行重置 / 其它入口改值）经 useEffect 同步进「未聚焦」格子的草稿；
  *   聚焦中的格子保持用户草稿（blur 时若草稿与 store 值一致则不重复写入）。
  * - 点击 / 聚焦时 select()：直接键入覆盖旧值（零额外点击成本）。
  * - Enter 与 Tab 同语义：preventDefault 后手动移焦到平铺顺序下一格（末格回卷首格）。
@@ -109,7 +109,7 @@ function QtyMatrixCell({
   const [draft, setDraft] = useState<string>(String(value));
   const focusedRef = useRef(false);
 
-  // store 侧外部变更（行填充 / 重置 / 其它入口改值）同步草稿（聚焦中的格子除外）。
+  // store 侧外部变更（整行重置 / 其它入口改值）同步草稿（聚焦中的格子除外）。
   useEffect(() => {
     if (!focusedRef.current) setDraft(String(value));
   }, [value]);
@@ -156,86 +156,6 @@ function QtyMatrixCell({
 }
 
 // ---------------------------------------------------------------------------
-// RowFillPopover —— 行头「填充」弹层（输入默认值 X → setRowAll 整行写）。
-// ---------------------------------------------------------------------------
-
-interface RowFillPopoverProps {
-  label: string;
-  /** 初值 = 该行当前 baseValue（默认基准）。 */
-  base: number;
-  onApply: (label: string, value: number) => void;
-  onClose: () => void;
-}
-
-/**
- * 行填充 popover：草稿 + 应用模式（应用才写 store）。
- * 关闭三路径：取消 / 遮罩（透明 backdrop mousedown）/ ESC；Enter 快捷应用。
- * backdrop 是 fixed 全屏透明层（z 低于 popover），既承接点外关闭又不挡表格视觉。
- */
-function RowFillPopover({ label, base, onApply, onClose }: RowFillPopoverProps): JSX.Element {
-  const [draft, setDraft] = useState<string>(String(base));
-
-  useEffect(() => {
-    function onKey(e: KeyboardEvent): void {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        onClose();
-      }
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
-  function apply(): void {
-    onApply(label, clampQty(draft));
-  }
-
-  return (
-    <>
-      <div
-        className="qty-popover-backdrop"
-        onMouseDown={onClose}
-        aria-hidden="true"
-        data-testid="qty-popover-backdrop"
-      />
-      <div className="qty-fill-popover" role="dialog" aria-label={"裁片 " + label + " 整行填充"}>
-        <div className="qty-fill-title">裁片 {label} · 整行填充</div>
-        <div className="qty-fill-row">
-          <label htmlFor={"qty-fill-" + label}>默认值</label>
-          <input
-            id={"qty-fill-" + label}
-            className="qty-fill-input"
-            type="number"
-            min={0}
-            max={99}
-            step={1}
-            value={draft}
-            autoFocus
-            aria-label="整行填充数量"
-            data-testid="qty-fill-input"
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                e.preventDefault();
-                apply();
-              }
-            }}
-          />
-        </div>
-        <div className="qty-fill-actions">
-          <button type="button" className="qty-fill-cancel" onClick={onClose}>
-            取消
-          </button>
-          <button type="button" className="qty-fill-apply" onClick={apply}>
-            应用
-          </button>
-        </div>
-      </div>
-    </>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // QtyMatrix 主组件
 // ---------------------------------------------------------------------------
 
@@ -257,8 +177,6 @@ export function QtyMatrix(): JSX.Element | null {
   const setPiecePerSize = useQtyStore((s) => s.setPiecePerSize);
   const setRowAll = useQtyStore((s) => s.setRowAll);
 
-  // UI 态：行填充 popover 打开目标（一次至多一个）。
-  const [fillOpen, setFillOpen] = useState<string | null>(null);
   const tableRef = useRef<HTMLTableElement>(null);
 
   if (!doc) return null;
@@ -288,7 +206,7 @@ export function QtyMatrix(): JSX.Element | null {
     return getPieceDisplay(quantities, label, size).qty;
   }
 
-  /** 该 label 存在的码列表（行填充范围：不写缺片码，防 phantom perSize 键）。 */
+  /** 该 label 存在的码列表（整行写 / 重置范围：不写缺片码，防 phantom perSize 键）。 */
   function rowSizes(label: string): (number | null)[] {
     return columns.filter((c) => cellExists(label, c));
   }
@@ -321,11 +239,6 @@ export function QtyMatrix(): JSX.Element | null {
   /** 物理片数乘数：配对片 1 份 = L+R 2 物理片，内片 1 份 = 1 物理片。 */
   function multOf(label: string, size: number | null): 1 | 2 {
     return pairedOf(label, size) ? 2 : 1;
-  }
-
-  /** 行级配对徽章：该 label 任一存在的码为配对片型即显示（label ↔ ptype 跨码一致）。 */
-  function rowPaired(label: string): boolean {
-    return rowSizes(label).some((c) => pairedOf(label, c));
   }
 
   /** 整行是否全同（全同则整行不高亮，避免逐格手改满屏噪点）。 */
@@ -364,11 +277,6 @@ export function QtyMatrix(): JSX.Element | null {
     next.select();
   }
 
-  function handleFillApply(label: string, value: number): void {
-    setRowAll(label, rowSizes(label), value);
-    setFillOpen(null);
-  }
-
   /** 整表重置：每行按其存在的码整行回 1（baseValue 同步 1）。 */
   function handleReset(): void {
     for (const r of rows) setRowAll(r.label, r.sizes, 1);
@@ -379,7 +287,7 @@ export function QtyMatrix(): JSX.Element | null {
       <div className="qty-matrix-toolbar">
         <span
           className="qty-total"
-          title="物理片数：配对片型（行头 ×2 徽章）每份排 L+R 2 片，内片每份 1 片"
+          title="物理片数：配对片型每份排左右（L+R）2 物理片，内片每份 1 片"
         >
           总片数 <strong data-testid="qty-total">{total}</strong>
         </span>
@@ -426,47 +334,19 @@ export function QtyMatrix(): JSX.Element | null {
               const repName = rep ? rep.piece.name : r.label;
               const base = rowBase(r.label);
               const allSame = rowAllSame(r.label);
-              const paired = rowPaired(r.label);
               return (
                 <tr key={r.label}>
                   <th className="qty-rowhead" scope="row" data-tour="qty-rowhead">
                     <span className="qty-label-badge">{r.label}</span>
-                    {paired ? (
-                      <span
-                        className="qty-paired-badge"
-                        data-testid={"qty-paired-" + r.label}
-                        title="配对片型：1 份 = 左右 (L+R) 2 物理片，小计按 ×2 计"
-                      >
-                        ×2
-                      </span>
-                    ) : null}
-                    <span className="qty-rowname" title={repName}>
-                      {repName}
-                    </span>
                     <button
                       type="button"
                       className="qty-thumb"
                       aria-label={"放大预览裁片 " + r.label}
-                      title="放大预览"
+                      title={repName + " · 放大预览"}
                       onClick={() => rep && openZoom(r.label, rep.size)}
                     >
                       {rep ? <PiecePreviewSVG piece={rep.piece} compact /> : null}
                     </button>
-                    <button
-                      type="button"
-                      className="qty-fill-btn"
-                      onClick={() => setFillOpen(fillOpen === r.label ? null : r.label)}
-                    >
-                      填充
-                    </button>
-                    {fillOpen === r.label ? (
-                      <RowFillPopover
-                        label={r.label}
-                        base={base}
-                        onApply={handleFillApply}
-                        onClose={() => setFillOpen(null)}
-                      />
-                    ) : null}
                   </th>
                   {columns.map((c, ci) => {
                     const cellKey = ri + "-" + ci;

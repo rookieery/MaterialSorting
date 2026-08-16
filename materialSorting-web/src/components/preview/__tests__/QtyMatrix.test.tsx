@@ -1,11 +1,12 @@
 // 矩阵化重构 US-002 QtyMatrix 集成测试：
-//   - 行 = 全码 label 并集（保序，最小码 pieces 顺序优先）；行头 = A 徽章 + 名 + 缩略图 + 填充按钮
+//   - 行 = 全码 label 并集（保序，最小码 pieces 顺序优先）；行头 = 序号徽章 + 大缩略图
+//     （2026-08 行头简化：裁片名走缩略图 title；名称 span / ×2 徽章 / 填充按钮已拆除）
 //   - 列 = doc.sizes 全码（null 殿后「通用」，无 null 不渲染该列）+ 合计列；列头点击 setSize + active 高亮
 //   - 格子 blur / Enter / Tab 提交走 clampQty 写 qtyStore；0 格子 .zero + title；缺片格 disabled「—」
 //   - 特例高亮 .override（≠baseValue 且整行非全同；整行同值不高亮）
-//   - 行填充 popover（应用 setRowAll + baseValue / 取消 / ESC / 遮罩）+ 重置为默认 1
+//   - 重置为默认 1（setRowAll 整表批量回 1；行头填充 popover 已拆除）
 //   - 小计：每行合计列 + 每码小计行 + 工具条总片数 + 全 0 警示
-//     （US-004 起物理片数口径 = Σ demand × (paired?2:1)，配对片行头 ×2 徽章；缺字段 ×1 兜底）
+//     （US-004 起物理片数口径 = Σ demand × (paired?2:1)；×2 徽章已拆，缺字段 ×1 兜底）
 //   - 缩略图点击 openZoom(label, rep.size)（所见即所放大；label 不在 activeSize 时回退码）
 //
 // 测试模式（原参考已拆除的 ParsedPiecesView.test.tsx）：渲染入 container，store.setState
@@ -130,7 +131,7 @@ describe('QtyMatrix (US-002) 行列结构', () => {
     expect(el.querySelector('.qty-matrix')).toBeNull();
   });
 
-  it('行 = 全码 label 并集（最小码 pieces 顺序优先），行头含徽章+名+缩略图+填充按钮', () => {
+  it('行 = 全码 label 并集（最小码 pieces 顺序优先），行头仅序号徽章+缩略图（名/×2/填充已拆）', () => {
     const doc = makeStdDoc();
     useUploadStore.setState({ status: 'done', doc, activeSize: 28 });
     const el = renderMatrix();
@@ -138,19 +139,27 @@ describe('QtyMatrix (US-002) 行列结构', () => {
     expect(rows.length).toBe(3);
     const first = rows[0];
     expect(first.querySelector('.qty-label-badge')!.textContent).toBe('A');
-    expect(first.querySelector('.qty-rowname')!.textContent).toBe('前片28');
     expect(first.querySelector('.qty-thumb svg')).not.toBeNull();
-    expect(first.querySelector('.qty-fill-btn')).not.toBeNull();
+    // 裁片名不再占行头空间，走缩略图 title 悬浮显示
+    expect(first.querySelector('.qty-rowname')).toBeNull();
+    expect(first.querySelector<HTMLElement>('.qty-thumb')!.getAttribute('title')).toBe(
+      '前片28 · 放大预览',
+    );
+    // 行头简化拆除项零残留
+    expect(first.querySelector('.qty-fill-btn')).toBeNull();
+    expect(first.querySelector('.qty-paired-badge')).toBeNull();
     // C 只在 30 / null 码出现，排在 A、B 之后
     expect(rows[2].querySelector('.qty-label-badge')!.textContent).toBe('C');
   });
 
-  it('缩略图 rep 优先 activeSize 版本（切码后行名跟随）', () => {
+  it('缩略图 rep 优先 activeSize 版本（切码后缩略图 title 跟随）', () => {
     const doc = makeStdDoc();
     useUploadStore.setState({ status: 'done', doc, activeSize: 30 });
     const el = renderMatrix();
     const rows = el.querySelectorAll('tbody tr');
-    expect(rows[0].querySelector('.qty-rowname')!.textContent).toBe('前片30');
+    expect(rows[0].querySelector<HTMLElement>('.qty-thumb')!.getAttribute('title')).toBe(
+      '前片30 · 放大预览',
+    );
   });
 
   it('列 = doc.sizes 全码（null 殿后「通用」）+ 合计列', () => {
@@ -416,127 +425,6 @@ describe('QtyMatrix (US-002) 0 格子与特例高亮', () => {
   });
 });
 
-describe('QtyMatrix (US-002) 行填充 popover', () => {
-  function openPopover(el: HTMLElement, rowIndex: number): void {
-    const btn = el.querySelectorAll('tbody tr')[rowIndex].querySelector<HTMLButtonElement>('.qty-fill-btn')!;
-    act(() => {
-      clickEl(btn);
-    });
-  }
-
-  it('应用：整行写 clampQty 值 + baseValue 同步，DOM 格子跟随更新', () => {
-    const doc = makeStdDoc();
-    useUploadStore.setState({ status: 'done', doc, activeSize: 28 });
-    hydrateDoc(doc);
-    const el = renderMatrix();
-    openPopover(el, 0);
-    const input = el.querySelector<HTMLInputElement>('[data-testid="qty-fill-input"]')!;
-    expect(input.value).toBe('1'); // 初值 = baseValue
-    act(() => {
-      setInputValue(input, '3');
-    });
-    act(() => {
-      clickEl(el.querySelector<HTMLButtonElement>('.qty-fill-apply')!);
-    });
-    const q = useQtyStore.getState().quantities.A;
-    expect(q.perSize['28']).toBe(3);
-    expect(q.perSize['30']).toBe(3);
-    expect(q.baseValue).toBe(3);
-    // 只写该 label 存在的码（A 无通用列 → 不造 'null' phantom 键）
-    expect('null' in q.perSize).toBe(false);
-    // 未聚焦格子草稿同步（DOM 显示 3）
-    expect(cellInput(el, 'A', 28).value).toBe('3');
-    expect(cellInput(el, 'A', 30).value).toBe('3');
-    // 应用后 popover 关闭
-    expect(el.querySelector('.qty-fill-popover')).toBeNull();
-  });
-
-  it('应用 clamp：150 → 99', () => {
-    const doc = makeStdDoc();
-    useUploadStore.setState({ status: 'done', doc, activeSize: 28 });
-    hydrateDoc(doc);
-    const el = renderMatrix();
-    openPopover(el, 0);
-    const input = el.querySelector<HTMLInputElement>('[data-testid="qty-fill-input"]')!;
-    act(() => {
-      setInputValue(input, '150');
-    });
-    act(() => {
-      clickEl(el.querySelector<HTMLButtonElement>('.qty-fill-apply')!);
-    });
-    expect(useQtyStore.getState().quantities.A.baseValue).toBe(99);
-  });
-
-  it('取消：不写 store，popover 关闭', () => {
-    const doc = makeStdDoc();
-    useUploadStore.setState({ status: 'done', doc, activeSize: 28 });
-    hydrateDoc(doc);
-    const el = renderMatrix();
-    openPopover(el, 0);
-    act(() => {
-      clickEl(el.querySelector<HTMLButtonElement>('.qty-fill-cancel')!);
-    });
-    expect(el.querySelector('.qty-fill-popover')).toBeNull();
-    expect(useQtyStore.getState().quantities.A.baseValue).toBe(1);
-    expect(useQtyStore.getState().quantities.A.perSize['28']).toBe(1);
-  });
-
-  it('ESC 关闭 popover（不写 store）', () => {
-    const doc = makeStdDoc();
-    useUploadStore.setState({ status: 'done', doc, activeSize: 28 });
-    hydrateDoc(doc);
-    const el = renderMatrix();
-    openPopover(el, 0);
-    act(() => {
-      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
-    });
-    expect(el.querySelector('.qty-fill-popover')).toBeNull();
-  });
-
-  it('遮罩 mousedown 关闭 popover（不写 store）', () => {
-    const doc = makeStdDoc();
-    useUploadStore.setState({ status: 'done', doc, activeSize: 28 });
-    hydrateDoc(doc);
-    const el = renderMatrix();
-    openPopover(el, 0);
-    act(() => {
-      el.querySelector<HTMLElement>('[data-testid="qty-popover-backdrop"]')!.dispatchEvent(
-        new MouseEvent('mousedown', { bubbles: true }),
-      );
-    });
-    expect(el.querySelector('.qty-fill-popover')).toBeNull();
-    expect(useQtyStore.getState().quantities.A.baseValue).toBe(1);
-  });
-
-  it('popover 内 Enter 快捷应用', () => {
-    const doc = makeStdDoc();
-    useUploadStore.setState({ status: 'done', doc, activeSize: 28 });
-    hydrateDoc(doc);
-    const el = renderMatrix();
-    openPopover(el, 1);
-    const input = el.querySelector<HTMLInputElement>('[data-testid="qty-fill-input"]')!;
-    act(() => {
-      setInputValue(input, '2');
-    });
-    act(() => {
-      fireKey(input, 'Enter');
-    });
-    expect(useQtyStore.getState().quantities.B.baseValue).toBe(2);
-    expect(useQtyStore.getState().quantities.B.perSize['28']).toBe(2);
-  });
-
-  it('初值 = 当前行 baseValue（填充过 2 再开显示 2）', () => {
-    const doc = makeStdDoc();
-    useUploadStore.setState({ status: 'done', doc, activeSize: 28 });
-    hydrateDoc(doc);
-    useQtyStore.getState().setRowAll('A', [28, 30], 2);
-    const el = renderMatrix();
-    openPopover(el, 0);
-    const input = el.querySelector<HTMLInputElement>('[data-testid="qty-fill-input"]')!;
-    expect(input.value).toBe('2');
-  });
-});
-
 describe('QtyMatrix (US-002) 小计与总片数（缺 paired 字段 → ×1 旧口径兼容）', () => {
   it('每行合计列 + 每码小计行 + 工具条总片数', () => {
     const doc = makeStdDoc();
@@ -622,17 +510,17 @@ function makePairedDoc(): ParsedDoc {
   };
 }
 
-describe('QtyMatrix (US-004) 物理片数口径（配对片 ×2）+ 配对徽章', () => {
-  it('配对片行头显示「×2」徽章（含 title 说明），内片行不显示', () => {
+describe('QtyMatrix (US-004) 物理片数口径（配对片 ×2；×2 徽章已随行头简化拆除）', () => {
+  it('配对片行头不再渲染「×2」徽章（口径说明收敛到总片数 title）', () => {
     useUploadStore.setState({ status: 'done', doc: makePairedDoc(), activeSize: 28 });
     const el = renderMatrix();
     const rowA = el.querySelectorAll('tbody tr')[0];
-    const rowB = el.querySelectorAll('tbody tr')[1];
-    const badgeA = rowA.querySelector<HTMLElement>('[data-testid="qty-paired-A"]')!;
-    expect(badgeA).not.toBeNull();
-    expect(badgeA.textContent).toBe('×2');
-    expect(badgeA.getAttribute('title')).toContain('1 份 = 左右 (L+R) 2 物理片');
-    expect(rowB.querySelector('.qty-paired-badge')).toBeNull();
+    expect(rowA.querySelector('.qty-paired-badge')).toBeNull();
+    expect(el.querySelector('[data-testid="qty-paired-A"]')).toBeNull();
+    // 口径说明迁到工具条总片数 title
+    expect(el.querySelector<HTMLElement>('.qty-total')!.getAttribute('title')).toContain(
+      '配对片型每份排左右（L+R）2 物理片',
+    );
   });
 
   it('每行合计 = Σ demand × (paired?2:1)：A(配对,2码×1份)=4，B(内片,3份)=3', () => {
@@ -680,8 +568,8 @@ describe('QtyMatrix (US-004) 物理片数口径（配对片 ×2）+ 配对徽章
     // 行合计 = 1×2 + 1×1 = 3（按格乘数，不按行统一）
     expect(el.querySelectorAll('.qty-rowtotal')[0].textContent).toBe('3');
     expect(el.querySelector('[data-testid="qty-total"]')!.textContent).toBe('3');
-    // 行级徽章：任一码配对即显示
-    expect(el.querySelector('[data-testid="qty-paired-A"]')).not.toBeNull();
+    // ×2 徽章已拆：混合配对行也不渲染行级徽章
+    expect(el.querySelector('[data-testid="qty-paired-A"]')).toBeNull();
   });
 
   it('全 0 警示不受乘数影响（配对片全 0 → 总片数 0 + 警示）', () => {

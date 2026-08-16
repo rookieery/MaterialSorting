@@ -66,7 +66,7 @@ export const previewTour: TourDef = {
       id: 'set-qty',
       selector: '[data-tour="qty-rowhead"]',
       title: '设置裁片数量',
-      body: '在矩阵格子内直接输入每码排料份数（demand，0 = 该码不排此片）；行头「填充」可整行设默认值，个别格子改不同的值会高亮为特例。配对片行头有「×2」徽章（1 份 = 左右 2 物理片）。数量跨码匹配同一片型，这是求解前的必要一步。',
+      body: '在矩阵格子内直接输入每码排料份数（demand，0 = 该码不排此片）；个别格子改不同的值会高亮为特例。配对片型 1 份 = 左右 2 物理片（小计按 ×2 计）。数量跨码匹配同一片型，这是求解前的必要一步。',
       placement: 'bottom',
       before: ensurePreviewTab,
     },
