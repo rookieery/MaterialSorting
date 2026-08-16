@@ -1,11 +1,4 @@
 {
   "branchName": "ralph/preview-qty-matrix",
-  "stories": [
-    {
-      "id": "US-005",
-      "title": "tour 锚点更新+文档同步",
-      "description": "As a new user, I want preview tour 与项目文档描述矩阵化数量编辑 so that onboarding 与新 UI 一致。详见 tasks/prd-preview-qty-matrix.md US-005。依赖 US-003（最终 UI 形态确定后才能改锚点）+ US-004。\n\n具体任务：\n1. materialSorting-web/src/components/preview/QtyMatrix.tsx — 落地 data-tour 锚点属性（矩阵容器 data-tour=\"qty-matrix\"；行头或列头按 tour 步需要补锚点）。\n2. materialSorting-web/src/tour/steps/previewTour.ts — 第 2 步（parsed）锚点从 [data-tour=\"size-tabs\"] 改为矩阵；第 3 步（set-qty）锚点从 [data-tour=\"piece-card-head\"] 改为矩阵行头/格子区；文案改为矩阵操作描述（列头切码看图形预览 / 格内直接编辑数量 / 行头填充默认值 / 特例高亮）；upload/committed/goto-nesting 三步不动。\n3. materialSorting-web/src/tour/steps/index.ts — TOUR_VERSION bump（锚点变更属步骤内容重大变更，强制老用户重看；注意 tourStore 版本号策略：bump 后 init 清 seen）。\n4. 文档同步：.docs/technical/agent-component-map.md（US-008/011/012/014/022 相关段落加重构后说明：QtyMatrix 替代 SizeTabs/弹窗、qtyStore 单模式 + setRowAll/baseValue、SizeTabs/PieceQtyDialog/Switch 已删除）；.docs/business/business-overview.md「工作台交互」第 2 条（编辑数量）改为矩阵描述；CLAUDE.md 数据流主线与前端描述涉及数量编辑的句子同步。\n5. tour 相关测试同步改写（previewTour 步骤定义如有测试、TourOverlay 测试锚点选择器）。\n\n验收标准：\n- previewTour 第 2/3 步锚点指向矩阵（querySelector 可命中新 [data-tour] 属性），文案描述矩阵操作；TOUR_VERSION bump 后老用户 seen 被清（tourStore 版本号不变量）。\n- 文档三处更新完成，无 SizeTabs/PieceQtyDialog 残留引用（.docs 内描述性提及历史 US 落地过程除外，现行架构描述不残留）。\n- cd materialSorting-web && npx vitest run 全量通过、npm run typecheck 通过、npm run build 无报错。",
-      "passes": true
-    }
-  ]
+  "stories": []
 }
