@@ -1,10 +1,14 @@
 """阶段 1c-3：v0.3 约束层。
 
-- 重合公差：内部裁片位图按 v0.3 max_overlap 向内腐蚀，排料时允许重合（利用率杠杆，
-  非降约束）。外部裁片 max_overlap 0.4-2mm，RES=2 下腐蚀 0-1 像素（≈相切排）。
+- 重合公差：裁片位图按申请 d 向内腐蚀，排料时允许重合（利用率杠杆，非降约束）。
 - 镜像配对校验：成对类 L/R 数量应 1:1。
 - 旋转公差/布纹线/门幅：声明 + 校验。旋转公差（外部锁 {0,180}，内部允许多姿态）
   在排料侧由 allowed_angles 体现；多姿态搜索是后续利用率提升点。
+
+2026-08-17 起：重合/旋转上限改为**全局**口径（与高级配置弹窗一致），不再按片型钳制 ——
+版师确认的每片型工艺上限（外部 0.4~2mm / 前袋旋转 30° 等）保留在
+``.docs/business/排料规则_详细版.md`` §3.2/§4 作参考，由用户在 UI 按片型显式填值控制，
+默认 0（不重合/锁布纹线）。
 """
 from __future__ import annotations
 
@@ -12,16 +16,10 @@ from collections import Counter
 
 import numpy as np
 
-# v0.3 §4 各片最大重合深度（mm，沿接触边法线）
-MAX_OVERLAP = {
-    '前片': 2.0, '后片': 2.0, '腰': 0.4, '前袋': 0.4, '后袋': 0.4, '机头': 0.4,
-    '单排': 10.0, '双排': 10.0, '火机袋': 5.0, '裤耳': 10.0,
-}
-# v0.3 §3 各片旋转公差（度，基准 {0°,180°} 上的 ±）
-ROTATION_TOL = {
-    '前片': 1, '后片': 1, '腰': 3, '前袋': 30, '后袋': 1, '机头': 3,
-    '单排': 15, '双排': 15, '火机袋': 8, '裤耳': 45,
-}
+# 全局最大重合深度（mm，沿接触边法线）。UI 高级配置弹窗重合输入 max 同值。
+MAX_OVERLAP_MM = 10.0
+# 全局最大旋转公差（°，基准 {0°,180°} 上的 ±）。UI 高级配置弹窗旋转输入 max 同值。
+MAX_ROTATION_TOL_DEG = 45.0
 PAIR_TYPES = {'前片', '后片', '腰', '前袋', '后袋', '机头'}   # v0.3 成对类
 
 
@@ -40,11 +38,6 @@ def erode_bitmap(bm: np.ndarray, d_pix: int) -> np.ndarray:
         rt = np.zeros_like(b); rt[:, 1:] = b[:, :-1]
         b = b & up & dn & lf & rt
     return b
-
-
-def overlap_dpix(ptype: str, res: float) -> int:
-    """该片位图腐蚀像素数 = max_overlap / res。"""
-    return int(MAX_OVERLAP.get(ptype, 0.0) / res)
 
 
 def validate(placed_world, pieces, used, gate, res):

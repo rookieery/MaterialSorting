@@ -13,7 +13,7 @@ web  →  nesting_engine  →  nesting_bounds  →  dxf_parser
 
 - `dxf_parser`：底层 DXF 读写。`reader.py`（ezdxf recover + GBK 块名 + R12 POLYLINE）、`geometry.py`（纯几何算子，无 ezdxf）、`model.py`（PieceOutline dataclass）。仅标准库 + ezdxf，不依赖任何兄弟包。
 - `nesting_bounds`：`load_pieces.py` 把单裁片 DXF → 布纹对齐水平 → 归一化到原点 → 成对镜像展开为 L/R。定义 `NestPiece`、`GATE_MM=1980`（布幅显示口径：UI/密度/导出外框）、`PLOT_SAFE_MAX_Y_MM=1910`（绘图仪可写幅宽）、`NEST_GATE_MM=min(两者)`（求解约束带，web/solver 与 CLI 引擎同口径）、`DEFAULT_SIZES`（8 码跳 32）。
-- `nesting_engine`：sparrow 求解。`constraints.py`（v0.3 约束常量 MAX_OVERLAP/ROTATION_TOL + 位图腐蚀 + 合法性校验）、`sparrow_baseline.py`（基线 + **共享层**：PTYPE_COLORS/_clean_polygon/solve_with_progress，被 solver/export/sparrow_experiments 复用）、`sparrow_experiments.py`（旋转/重合公差实验）。
+- `nesting_engine`：sparrow 求解。`constraints.py`（重合/旋转**全局**上限 `MAX_OVERLAP_MM=10` / `MAX_ROTATION_TOL_DEG=45`（2026-08-17 起不再按片型钳制，版师 per-ptype 参考值在 `.docs/business/排料规则_详细版.md`）+ 位图腐蚀 + 合法性校验）、`sparrow_baseline.py`（基线 + **共享层**：PTYPE_COLORS/_clean_polygon/solve_with_progress，被 solver/export/sparrow_experiments 复用）、`sparrow_experiments.py`（旋转/重合公差实验）、`labeling.py`（A/B/C 标注单一真相源：`parse_member_sort_key` 被 parse 赋号/intermediate 标注/ptype 代表裁片三处共用）。
 - `web`：`server.py`（FastAPI + WS）、`solver.py`（build_instance + 子线程求解回调）、`export.py`（PNG + R12-DXF marker）。
 
 ## 路径约定

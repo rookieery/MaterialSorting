@@ -6,7 +6,7 @@
 不改动 sparrow 源码、不改动既有引擎代码，仅 sys.path 引用：
   _clean_polygon / PTYPE_COLORS  (sparrow_baseline)
   erode_polygon / INTERNAL_TYPES (sparrow_experiments)
-  MAX_OVERLAP / ROTATION_TOL     (constraints，v0.3 常量表)
+  MAX_OVERLAP_MM / MAX_ROTATION_TOL_DEG (constraints，2026-08 起全局上限，不再按片型)
 
 US-025 新增 ``solve_with_callback_proc`` —— 把求解从 daemon 线程模型迁到
 ``multiprocessing.Process`` 模型，让调用方持有进程句柄可 ``terminate()``（OS 级回收，
@@ -26,7 +26,7 @@ import time
 from .. import paths
 from ..nesting_engine.sparrow_baseline import _clean_polygon, PTYPE_COLORS
 from ..nesting_engine.sparrow_experiments import erode_polygon, INTERNAL_TYPES
-from ..nesting_engine.constraints import MAX_OVERLAP, ROTATION_TOL
+from ..nesting_engine.constraints import MAX_OVERLAP_MM, MAX_ROTATION_TOL_DEG
 from ..nesting_bounds.load_pieces import PLOT_SAFE_MAX_Y_MM
 
 DEFAULT_INTERMEDIATE = paths.INTERMEDIATE
@@ -75,8 +75,8 @@ def build_instance(pieces, gate_mm, *, time_budget: int, seed: int,
         - **demand=0 跳过该 piece（D2）**（该码该 ptype 不参与排料）；
         - piece 缺 label 或 quantities=None → demand=1（向后兼容旧 intermediate / 旧前端）。
 
-    每片实际 erode = min(申请值, MAX_OVERLAP[ptype])（v0.3 工艺上限兜底）
-    每片实际 tol  = min(申请值, ROTATION_TOL[ptype])
+    每片实际 erode = min(申请值, MAX_OVERLAP_MM=10)（全局上限兜底，2026-08 起不再按片型）
+    每片实际 tol  = min(申请值, MAX_ROTATION_TOL_DEG=45)
     内部片 = 单排/双排/火机袋/裤耳；外部片 = 其余。
 
     求解约束带 strip_height = min(gate_mm, PLOT_SAFE_MAX_Y_MM)：gate_mm（门幅，
@@ -127,8 +127,8 @@ def build_instance(pieces, gate_mm, *, time_budget: int, seed: int,
         else:
             d, tol = base_d, base_tol
 
-        d = min(d, float(MAX_OVERLAP.get(ptype, 0.0)))       # v0.3 重合上限
-        tol = min(tol, float(ROTATION_TOL.get(ptype, 0.0)))  # v0.3 旋转上限
+        d = min(d, MAX_OVERLAP_MM)        # 全局重合上限（10mm；不再按片型钳制）
+        tol = min(tol, MAX_ROTATION_TOL_DEG)   # 全局旋转公差上限（45°）
 
         poly = p['polygon']
         if d > 0:

@@ -37,8 +37,8 @@ from ..dxf_parser.export_dxf import assign_group_no, GROUP_NAMES, write_piece_dx
 from ..nesting_bounds.load_pieces import load_nest_pieces, GATE_MM as NEST_GATE_MM, PAIR_TYPES
 from ..nesting_engine.labeling import (
     label_for,
-    centroid as _centroid_pts,
     size_sort_key,
+    parse_member_sort_key,
     compute_size_ptype_labels,
 )
 
@@ -119,11 +119,6 @@ def _label_for(idx: int) -> str:
     return label_for(idx)
 
 
-def _centroid(poly: list[tuple[float, float]]) -> tuple[float, float]:
-    """顶点算术质心（转发 ``nesting_engine.labeling``，用于稳定排序键）。"""
-    return _centroid_pts(poly)
-
-
 def _size_sort_key(size: int | None) -> tuple[int, int]:
     """码号排序键：None 殿后，其余按数值升序（转发 ``nesting_engine.labeling``）。"""
     return size_sort_key(size)
@@ -153,16 +148,8 @@ def _build_parse_payload(doc_id: str, filename: str, pieces) -> dict:
     for size in sorted(by_size.keys(), key=_size_sort_key):
         members = by_size[size]
         # 稳定排序：DXF 数学系下质心 Y 大者（视觉上方）优先 → X 小者（视觉左）优先 → 面积大者优先
-        members_sorted = sorted(
-            members,
-            key=lambda p: (
-                -_centroid(p.polygon_mm)[1],
-                _centroid(p.polygon_mm)[0],
-                -p.area_mm2,
-                p.block_name,
-                p.piece_index,
-            ),
-        )
+        # （排序键 = labeling.parse_member_sort_key 单一真相源，与 label 对齐 / ptype 代表裁片同键）
+        members_sorted = sorted(members, key=parse_member_sort_key)
         pieces_out = []
         for idx, p in enumerate(members_sorted):
             ptype = GROUP_NAMES.get(gmap.get(p.group_key))
@@ -191,7 +178,7 @@ def _build_parse_payload(doc_id: str, filename: str, pieces) -> dict:
 
 
 def _build_ptype_representatives(pieces, gmap, group_names) -> dict:
-    """每片型 RAW 代表裁片（母版原始坐标，与 ``_build_parse_payload`` 上传预览同口径）。
+    """每片型 RAW 代表裁片 + 编号 label（与 ``_build_parse_payload`` 上传预览同口径）。
 
     供 GET /api/ptypes 渲染高级配置缩略图 / 放大预览。**刻意取原始坐标**（不走
     ``load_nest_pieces`` 的布纹对齐旋转）—— 否则纵向布纹线裁片（如腰 992×166）被
@@ -199,31 +186,42 @@ def _build_ptype_representatives(pieces, gmap, group_names) -> dict:
     （US-018 AC#9 缩略图用于片型识别，应与上传预览同朝向）。布纹对齐是**排料求解**
     的需要（intermediate ``pieces`` 仍存变换后几何供 sparrow），与缩略图展示无关。
 
-    「首个出现的 piece」语义与现有 ``/api/ptypes`` 回退分支一致：遍历 ``pieces``
-    （PieceOutline，即 collect 原始顺序），每片型取首个有效片（ptype/size 均非 None，
-    与 ``write_piece_dxf`` 写出条件一致；跨尺码同片型形状一致，取哪个码均可）。
-    返回 ``{ptype: {polygon, net_polygon, internal_lines, notches, grain_line}}``。
+    代表选取 + 编号（2026-08-17 起，与上传预览严格一致）：按码升序、码内
+    ``parse_member_sort_key`` 稳定排序（与 ``_build_parse_payload`` 赋号同键同序），
+    每片型取**最小码内首个**有效片（ptype/size 均非 None，与 ``write_piece_dxf``
+    写出条件一致），``label`` = 该片在其码内的 A/B/C 编号 —— 高级配置弹窗列头显示
+    该编号徽章，与上传预览 QtyMatrix 列头（同编号缩略图）所指同一片。
+    返回 ``{ptype: {label, polygon, net_polygon, internal_lines, notches, grain_line}}``。
     """
-    reps: dict[str, dict] = {}
+    by_size: dict[int | None, list] = {}
     for p in pieces:
-        ptype = group_names.get(gmap[p.group_key])
-        if ptype is None or ptype in reps or p.size is None:
-            continue
-        reps[ptype] = {
-            'polygon': [[round(float(x), 3), round(float(y), 3)] for x, y in p.polygon_mm],
-            'net_polygon': [[round(float(x), 3), round(float(y), 3)] for x, y in p.net_polygon],
-            'internal_lines': [
-                [[round(float(x), 3), round(float(y), 3)] for x, y in line]
-                for line in p.internal_lines
-            ],
-            'notches': [
-                [round(float(x), 3), round(float(y), 3), round(float(nx), 4), round(float(ny), 4)]
-                for x, y, nx, ny in p.notches
-            ],
-            'grain_line': (
-                [round(float(v), 3) for v in p.grain_line] if p.grain_line is not None else None
-            ),
-        }
+        by_size.setdefault(p.size, []).append(p)
+
+    reps: dict[str, dict] = {}
+    for size in sorted(by_size.keys(), key=_size_sort_key):
+        members_sorted = sorted(by_size[size], key=parse_member_sort_key)
+        for idx, p in enumerate(members_sorted):
+            if p.size is None:
+                continue
+            ptype = group_names.get(gmap.get(p.group_key))
+            if ptype is None or ptype in reps:
+                continue
+            reps[ptype] = {
+                'label': _label_for(idx),
+                'polygon': [[round(float(x), 3), round(float(y), 3)] for x, y in p.polygon_mm],
+                'net_polygon': [[round(float(x), 3), round(float(y), 3)] for x, y in p.net_polygon],
+                'internal_lines': [
+                    [[round(float(x), 3), round(float(y), 3)] for x, y in line]
+                    for line in p.internal_lines
+                ],
+                'notches': [
+                    [round(float(x), 3), round(float(y), 3), round(float(nx), 4), round(float(ny), 4)]
+                    for x, y, nx, ny in p.notches
+                ],
+                'grain_line': (
+                    [round(float(v), 3) for v in p.grain_line] if p.grain_line is not None else None
+                ),
+            }
     return reps
 
 
@@ -454,9 +452,10 @@ def index():
 # ---------------------------------------------------------------- US-020 GET /api/ptypes
 
 # intermediate piece → ptype 代表裁片字段白名单（v1 仅 polygon；US-024 后 intermediate
-# 扩 5 层后自动带 net_polygon/internal_lines/notches/grain_line，前端 layer-aware 渲染）。
+# 扩 5 层后自动带 net_polygon/internal_lines/notches/grain_line，前端 layer-aware 渲染；
+# label = 该片 A/B/C 编号，2026-08-17 起随代表裁片一起下发，供高级配置弹窗显示编号徽章）。
 _PTYPE_REPRESENTATIVE_FIELDS = (
-    'polygon', 'net_polygon', 'internal_lines', 'notches', 'grain_line',
+    'label', 'polygon', 'net_polygon', 'internal_lines', 'notches', 'grain_line',
 )
 
 
@@ -464,11 +463,12 @@ _PTYPE_REPRESENTATIVE_FIELDS = (
 def get_ptypes():
     """US-020 D10：返回当前 ``_PIECES_STATE`` 下每个 ptype 的代表裁片（首个出现）。
 
-    响应：``{representatives: Record<ptype, {polygon, net_polygon?, internal_lines?,
-    notches?, grain_line?}>}``。v1 intermediate 只有 polygon → 仅返 polygon 字段；
-    US-024 intermediate 扩 5 层后自动带 net_polygon/internal_lines/notches/grain_line
-    （前端 layer-aware 渲染，无需改本端点）。空 state（首次启动未 commit、intermediate
-    解析失败）返回 ``{representatives: {}}``，不阻塞前端配置弹窗降级为片型名文字。
+    响应：``{representatives: Record<ptype, {label?, polygon, net_polygon?,
+    internal_lines?, notches?, grain_line?}>}``。``label`` = 代表裁片在上传预览里的
+    A/B/C 编号（2026-08-17 起；选取口径与 ``_build_parse_payload`` 赋号同键同序，
+    保证「编号 → 图形」与上传预览列头一致）。旧 intermediate 无该字段 → 前端兜底
+    显示片型名。空 state（首次启动未 commit、intermediate 解析失败）返回
+    ``{representatives: {}}``，不阻塞前端配置弹窗降级为片型名文字。
 
     坐标口径（US-024fix）：优先返 intermediate ``ptype_representatives`` —— **RAW 母版
     原始坐标**，与 ``/api/parse-dxf`` 上传预览同朝向（未走布纹对齐旋转），让缩略图与

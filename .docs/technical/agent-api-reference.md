@@ -24,7 +24,7 @@
 | POST | `/export` | 导出最优 run → PNG / R12-DXF 附件下载 | `server.export` |
 | POST | `/api/parse-dxf` | US-004：multipart 上传母版 DXF → 深度解析 + A/B/C 标注 JSON | `server.parse_dxf` |
 | POST | `/api/commit-to-nesting` | US-010：把上传母版转排料 intermediate（Path A 全管线，覆盖写回 + .bak）+ US-020 commit 后 reload `_PIECES_STATE` | `server.commit_to_nesting` |
-| GET | `/api/ptypes` | US-020 D10：返回当前 `_PIECES_STATE` 下每个 ptype 的代表裁片（首个出现），供前端高级配置弹窗缩略图/放大预览（D11 layer-aware，v1 仅 polygon） | `server.get_ptypes` |
+| GET | `/api/ptypes` | US-020 D10：返回当前 `_PIECES_STATE` 下每个 ptype 的代表裁片（最小码内 parse 同序首个，2026-08-17 起附 `label` 编号），供前端高级配置弹窗缩略图/放大预览（D11 layer-aware） | `server.get_ptypes` |
 | WS | `/ws/solve` | 排料求解流（manifest → frames → final） | `server.ws_solve` |
 
 > FastAPI 自动暴露 `/docs` `/openapi.json` 等 OpenAPI 路由；业务路由全在上表。
@@ -222,7 +222,7 @@ curl -X POST http://127.0.0.1:8000/api/commit-to-nesting \
 
 ## GET /api/ptypes — US-020 片型代表裁片（D10/D11）
 
-返回当前 `_PIECES_STATE` 下每个 ptype 的代表裁片（首个出现），供前端高级配置弹窗表头缩略图 + 点击放大预览（US-018）。
+返回当前 `_PIECES_STATE` 下每个 ptype 的代表裁片 + 编号 `label`，供前端高级配置弹窗表头缩略图 + 点击放大预览（US-018）。
 
 ### 请求
 
@@ -237,16 +237,16 @@ curl http://127.0.0.1:8000/api/ptypes
 ```jsonc
 {
   "representatives": {
-    "前片":   {"polygon": [[x,y], ...]},     // v1 仅 polygon 字段
-    "后片":   {"polygon": [[x,y], ...]},
-    "腰":     {"polygon": [[x,y], ...]},
-    "前袋":   {"polygon": [[x,y], ...]},
-    "后袋":   {"polygon": [[x,y], ...]},
-    "机头":   {"polygon": [[x,y], ...]},
-    "单排":   {"polygon": [[x,y], ...]},
-    "双排":   {"polygon": [[x,y], ...]},
-    "火机袋": {"polygon": [[x,y], ...]},
-    "裤耳":   {"polygon": [[x,y], ...]}
+    "前片":   {"label": "A", "polygon": [[x,y], ...]},   // 2026-08-17 起附 label 编号
+    "后片":   {"label": "B", "polygon": [[x,y], ...]},
+    "腰":     {"label": "C", "polygon": [[x,y], ...]},
+    "前袋":   {"label": "D", "polygon": [[x,y], ...]},
+    "后袋":   {"label": "E", "polygon": [[x,y], ...]},
+    "机头":   {"label": "F", "polygon": [[x,y], ...]},
+    "单排":   {"label": "G", "polygon": [[x,y], ...]},
+    "双排":   {"label": "H", "polygon": [[x,y], ...]},
+    "火机袋": {"label": "I", "polygon": [[x,y], ...]},
+    "裤耳":   {"label": "J", "polygon": [[x,y], ...]}
     // US-024 后每个代表裁片自动带 net_polygon / internal_lines / notches / grain_line（前端 layer-aware 渲染，本端点无需改）
   }
 }
@@ -254,14 +254,14 @@ curl http://127.0.0.1:8000/api/ptypes
 
 ### 字段透传白名单（`_PTYPE_REPRESENTATIVE_FIELDS`）
 
-`('polygon', 'net_polygon', 'internal_lines', 'notches', 'grain_line')` —— **layer-aware（D11）**：v1 intermediate 只有 polygon → 仅返 polygon；US-024 intermediate 扩 5 层后自动带后 4 个字段，**本端点代码无需改**，前端按数据有无自适应渲染。
+`('label', 'polygon', 'net_polygon', 'internal_lines', 'notches', 'grain_line')` —— **layer-aware（D11）**：v1 intermediate 只有 polygon → 仅返 polygon；US-024 intermediate 扩 5 层后自动带后 4 个字段；`label` = 代表裁片在上传预览里的 A/B/C 编号（2026-08-17 起），前端按数据有无自适应渲染。
 
 ### 关键不变量
 
 1. **空 state（首次启动未 commit / intermediate 缺失）**：返回 `{representatives: {}}`，不阻塞前端配置弹窗降级为片型名文字。
-2. **ptype 首个出现作代表**：按 `_PIECES_STATE.pieces` 数组顺序遍历，每个 ptype 第一次出现时记录；不区分 L/R、不区分码号（同 ptype 几何归一化后等价）。
+2. **代表选取 + 编号与上传预览同口径（2026-08-17 起）**：优先取 intermediate `ptype_representatives`（RAW 原始坐标；选取 = 按码升序 + 码内 `parse_member_sort_key` 稳定排序，每 ptype 取**最小码内首个**有效片，`label` = 该片在其码内的 A/B/C 编号，与 `/api/parse-dxf` 赋号同键同序 —— 高级配置弹窗编号徽章与上传预览 QtyMatrix 列头指同一片，有 `tests/test_ptype_representatives.py` 回归）。旧 intermediate 无该字段 → 回退 `pieces` 首个代表（变换后坐标，无 label），re-commit 后自动切 RAW + label 口径。
 3. **M1787 验证**：commit 后返 10 个 ptype（前片/后片/腰/前袋/后袋/机头/单排/双排/火机袋/裤耳）。
-4. **响应字段不含 pid / size / area**：仅几何数据；片型名是 key。前端只需 polygon 画缩略图。
+4. **响应字段不含 pid / size / area**：仅几何 + label；片型名是 key。前端 polygon 画缩略图、label 画编号徽章（缺席兜底片型名）。
 
 ## WebSocket /ws/solve — 求解流
 
@@ -375,7 +375,7 @@ curl http://127.0.0.1:8000/api/ptypes
 |------|------|------|
 | `load_pieces` | `(intermediate_path=paths.INTERMEDIATE) → (doc, gate_mm, pieces)` | 读 `pieces_intermediate.json` |
 | `discretize_orientations` | `(tol: float) → list[float]` | v0.3 连续旋转公差 → spyrrow 离散角度集。`tol=0→[0,180]`；`tol≤5` 步进 1°；否则 5°。归一化到 [0,360) |
-| `build_instance` | `(pieces, gate_mm, *, time_budget, seed, sizes=None, params=None, per_type=None, quantities=None) → (instance, config, pid_meta, total_area, n_eroded)` | 按 sizes 过滤 → US-022 按 `(label, sizeKey)` 查 quantities 定 demand（0 跳过；缺 label → 1） → 每片 `erode=min(申请d, MAX_OVERLAP[ptype])`、`tol=min(申请tol, ROTATION_TOL[ptype])` → erode+clean → 构造 `spyrrow.Item` + `StripPackingInstance(strip_height=min(gate_mm, PLOT_SAFE_MAX_Y_MM))` + `StripPackingConfig`；pid_meta 含 US-024 5 层字段（`.get()` 向后兼容）。**求解约束带钳绘图仪可写幅宽 1910**（gate_mm 1980 是显示口径，manifest 推给前端的 gate_mm / 密度分母 / 导出外框均不受影响；常量单一事实源 `nesting_bounds/load_pieces.py`） |
+| `build_instance` | `(pieces, gate_mm, *, time_budget, seed, sizes=None, params=None, per_type=None, quantities=None) → (instance, config, pid_meta, total_area, n_eroded)` | 按 sizes 过滤 → US-022 按 `(label, sizeKey)` 查 quantities 定 demand（0 跳过；缺 label → 1） → 每片 `erode=min(申请d, MAX_OVERLAP_MM=10)`、`tol=min(申请tol, MAX_ROTATION_TOL_DEG=45)`（**2026-08-17 起全局上限，不再按片型**） → erode+clean → 构造 `spyrrow.Item` + `StripPackingInstance(strip_height=min(gate_mm, PLOT_SAFE_MAX_Y_MM))` + `StripPackingConfig`；pid_meta 含 US-024 5 层字段（`.get()` 向后兼容）。**求解约束带钳绘图仪可写幅宽 1910**（gate_mm 1980 是显示口径，manifest 推给前端的 gate_mm / 密度分母 / 导出外框均不受影响；常量单一事实源 `nesting_bounds/load_pieces.py`） |
 | `solve_with_callback` | `(instance, config, on_report, *, drain_interval=0.2) → (final_sol, elapsed_sec, err)` | **旧 threading 版（保留）**。子线程 `instance.solve(config, progress=queue)`，主线程 `queue.drain()` 每 0.2s 取中间解 → `on_report({type:frame,...})`。US-026 起 `ws_solve` 切换到 `solve_with_callback_proc`，本函数不删（过渡期） |
 | `solve_with_callback_proc` | `(pieces_snapshot, gate_mm, solve_params, *, on_manifest, on_report, on_process=None, drain_interval=0.2) → (process, final_data, elapsed, err)` | **US-025 多进程版**。spawn 子进程跑 `solve_worker`（在子进程内 `build_instance + solve`，spyrrow 对象不可 pickle 故不跨进程），主进程 drain `multiprocessing.Queue` 分发：manifest → `on_manifest`、frame → `on_report`（density 双口径换算在主进程做）、final/error 记录。**US-026 新增 `on_process` 回调**：子进程 `start()` 后立即回调一次，把 `Process` 句柄交给调用方供 WS stop / 断开时 `terminate()`。返回 `process` 句柄可 `terminate()`；terminate 后 `cancel_join_thread + 限时 drain(≤50ms) + join(timeout=5)` 防死锁；子进程 crash 未投 error 时 `err='worker process exited unexpectedly (code=<exitcode>)'` |
 

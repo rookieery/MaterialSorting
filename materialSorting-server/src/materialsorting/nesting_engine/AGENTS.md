@@ -13,10 +13,10 @@ python -c "from materialsorting.nesting_engine import labeling, constraints, spa
 
 | 文件 | 角色 |
 | --- | --- |
-| `constraints.py` | v0.3 约束常量（`MAX_OVERLAP` / `ROTATION_TOL` / `INTERNAL_TYPES`）+ 位图腐蚀 + 合法性校验 |
+| `constraints.py` | 重合/旋转**全局**上限（2026-08-17 起：`MAX_OVERLAP_MM=10.0` / `MAX_ROTATION_TOL_DEG=45.0`，每片型钳制表已删，版师 per-ptype 参考值在 `.docs/business/排料规则_详细版.md` §3.2/§4）+ `PAIR_TYPES` + 位图腐蚀 + 合法性校验 |
 | `sparrow_baseline.py` | 基线求解 CLI + ★共享层（`PTYPE_COLORS` / `_clean_polygon` / `solve_with_progress`，被 experiments/export/solver 复用） |
 | `sparrow_experiments.py` | 旋转/重合公差实验 CLI；`erode_polygon` + `INTERNAL_TYPES` 被 solver 复用 |
-| `labeling.py` | US-022 共享 A/B/C 标注：`label_for(idx)` / `centroid(poly)` / `size_sort_key(size)` / `compute_size_ptype_labels(pieces, gmap, group_names)` |
+| `labeling.py` | US-022 共享 A/B/C 标注：`label_for(idx)` / `centroid(poly)` / `size_sort_key(size)` / `parse_member_sort_key(p)`（码内排序键单一真相源，2026-08-17 起 parse 赋号 / intermediate 标注 / web ptype 代表裁片三处共用）/ `compute_size_ptype_labels(pieces, gmap, group_names)` |
 
 ## US-022 关键约定（labeling）
 

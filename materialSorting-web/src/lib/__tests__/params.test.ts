@@ -138,7 +138,7 @@ describe('collectParams (US-019)', () => {
     });
   });
 
-  it('全 ptype 全填（V03_TABLE 上限值）→ 所有 10 个 entry 写入', () => {
+  it('全 ptype 全填（工艺参考值，均在全局上限 10/45 内）→ 所有 10 个 entry 写入', () => {
     const form = makeForm({
       per_type: {
         前片: { d: '2', tol: '1' },

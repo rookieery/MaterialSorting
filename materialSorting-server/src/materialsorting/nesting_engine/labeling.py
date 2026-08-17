@@ -42,6 +42,24 @@ def size_sort_key(size: int | None) -> tuple[int, int]:
     return (1, 0) if size is None else (0, size)
 
 
+def parse_member_sort_key(p):
+    """码内成员稳定排序键（parse 响应赋号 / label 对齐 / ptype 代表裁片共用）。
+
+    ``(-centroid_y, centroid_x, -area_mm2, block_name, piece_index)`` —— 上方 / 左 /
+    大片优先。三处消费方（``web/server.py._build_parse_payload``、本模块
+    ``compute_size_ptype_labels``、``web/server.py._build_ptype_representatives``）
+    必须同键：A/B/C 编号、intermediate label 与高级配置代表裁片的对应关系才能跨
+    端点一致（改任何一处须三处同步，故收敛为单一真相源）。
+    """
+    return (
+        -centroid(p.polygon_mm)[1],
+        centroid(p.polygon_mm)[0],
+        -p.area_mm2,
+        p.block_name,
+        p.piece_index,
+    )
+
+
 def compute_size_ptype_labels(
     pieces: Iterable,
     gmap: dict[str, str],
@@ -49,9 +67,8 @@ def compute_size_ptype_labels(
 ) -> dict[tuple[int | None, str], str]:
     """对 ``explore.collect_pieces`` 返回的 PieceOutline 列表计算 (size, ptype) → label。
 
-    排序键与 ``web/server.py._build_parse_payload`` 完全一致：
-        ``(-centroid_y, centroid_x, -area_mm2, block_name, piece_index)``
-    → 上方 / 左 / 大片优先。每码内独立编号（不跨码续编）。
+    排序键 = ``parse_member_sort_key``（与 ``web/server.py._build_parse_payload``
+    完全一致）→ 上方 / 左 / 大片优先。每码内独立编号（不跨码续编）。
 
     gmap / group_names 与 ``dxf_parser.export_dxf.assign_group_no`` /
     ``GROUP_NAMES`` 同源 —— 同一 (group_key → gno → ptype) 链路。
@@ -67,16 +84,7 @@ def compute_size_ptype_labels(
     out: dict[tuple[int | None, str], str] = {}
     for size in sorted(by_size.keys(), key=size_sort_key):
         members = by_size[size]
-        members_sorted = sorted(
-            members,
-            key=lambda p: (
-                -centroid(p.polygon_mm)[1],
-                centroid(p.polygon_mm)[0],
-                -p.area_mm2,
-                p.block_name,
-                p.piece_index,
-            ),
-        )
+        members_sorted = sorted(members, key=parse_member_sort_key)
         for idx, p in enumerate(members_sorted):
             gno = gmap.get(p.group_key)
             if gno is None:

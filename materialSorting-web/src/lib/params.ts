@@ -1,7 +1,8 @@
 // ControlPanel 表单状态 + collectParams 纯函数。
 //
 // US-019（主面板精简）：删除 d_ext/d_int/tol_ext/tol_int 四档主面板输入，全交高级配置弹窗
-// （per_type 显式覆盖 + constraints.MAX_OVERLAP/ROTATION_TOL 兜底）。collectParams 现在 params
+// （per_type 显式覆盖 + 后端全局上限兜底 min(d, MAX_OVERLAP_MM=10)/min(tol,
+// MAX_ROTATION_TOL_DEG=45)，2026-08-17 起不再按片型钳制）。collectParams 现在 params
 // 永远返回全 0，per_type 解析逻辑保留不变（与旧 vanilla 实现 inp.value.trim() !== '' 一致）。
 //
 // 不变量：后端 build_instance 入参契约不变（params 仍传，只是全 0；per_type 仍传）。
@@ -72,7 +73,7 @@ export interface CollectedParams {
  *
  * 不变量：
  *   - params：US-019 起永远返回全 0（主面板内外两档输入删除，v0.3 上限交给 per_type 显式
- *     覆盖 + constraints.MAX_OVERLAP/ROTATION_TOL 兜底）。
+ *     覆盖 + 后端全局上限兜底，2026-08-17 起 min(d,10)/min(tol,45) 不再按片型）。
  *   - per_type：仅当某 ptype 的 d 或 tol 至少一档非空时才创建 entry；
  *     d / tol 各自仅当 trim() !== '' 时写入；最终若 per_type 整体为空 → null。
  *   - 整体 trim 在 d/tol 单字段层做（与旧 vanilla 实现 inp.value.trim() !== '' 一致）。

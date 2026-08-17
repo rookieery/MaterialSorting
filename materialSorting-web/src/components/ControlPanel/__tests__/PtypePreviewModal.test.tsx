@@ -1,6 +1,8 @@
 // US-018 PtypePreviewModal integration tests (>=6 cases):
-//   AC: previewPtype=null does not render DOM
+//   AC: previewPtype=null does not render DOM（且不发 fetch —— 2026-08-17 起打开才 fetch）
 //   AC: previewPtype + fetch success renders overlay + modal + PiecePreviewSVG (svg.piece-preview-svg)
+//   AC: 每次打开重新 fetch（修复与弹窗缩略图数据不一致的旧缓存 bug）
+//   AC: rep.label → 头部编号徽章；无 label 兜底片型名
 //   AC: ✕ button closes
 //   AC: overlay mousedown closes
 //   AC: ESC closes (independent of underlying modal)
@@ -26,6 +28,7 @@ let mockReps: PtypesResponse = { representatives: {} };
 const REPS: PtypesResponse = {
   representatives: {
     前片: {
+      label: 'A',
       polygon: [
         [0, 0],
         [100, 0],
@@ -94,9 +97,12 @@ function renderModal(): HTMLElement {
 }
 
 describe('PtypePreviewModal (US-018)', () => {
-  it('previewPtype=null does not render (no DOM mounted)', () => {
+  it('previewPtype=null does not render (no DOM mounted, no fetch)', async () => {
     renderModal();
     expect(document.body.querySelector('.ptype-preview-overlay')).toBeNull();
+    await flushFetch();
+    // 关闭态不发请求（fetch 只在打开时触发）
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it('previewPtype + fetch success renders overlay + modal + PiecePreviewSVG', async () => {
@@ -108,11 +114,55 @@ describe('PtypePreviewModal (US-018)', () => {
     const modal = document.body.querySelector('.ptype-preview-modal');
     expect(overlay).not.toBeNull();
     expect(modal).not.toBeNull();
-    expect(modal!.getAttribute('aria-label')).toContain('前片');
+    // hover/aria 统一「编号-放大预览」格式，不含片型名
+    expect(modal!.getAttribute('aria-label')).toBe('A-放大预览');
+    expect(modal!.querySelector('.ptype-preview-head')!.getAttribute('title')).toBe('A-放大预览');
     const svg = modal!.querySelector('svg.piece-preview-svg');
     expect(svg).not.toBeNull();
-    // head 含片型名
-    expect(modal!.querySelector('.ptype-preview-name')!.textContent).toContain('前片');
+    // rep.label → 头部编号徽章（与上传预览同口径），不再显示片型名
+    expect(modal!.querySelector('.piece-card-label')!.textContent).toBe('A');
+    expect(modal!.querySelector('.ptype-preview-name')).toBeNull();
+  });
+
+  it('refetches on every open (stale-cache bug fix: 与弹窗缩略图数据保持一致)', async () => {
+    mockReps = REPS;
+    useControlPanelStore.getState().openPreviewPtype('前片');
+    renderModal();
+    await flushFetch();
+    expect(fetchSpy!.mock.calls.length).toBeGreaterThanOrEqual(1);
+    // 关闭再开（换 ptype）→ 再次 fetch
+    act(() => {
+      useControlPanelStore.getState().closePreviewPtype();
+    });
+    await flushFetch();
+    const callsAfterClose = fetchSpy!.mock.calls.length;
+    act(() => {
+      useControlPanelStore.getState().openPreviewPtype('后片');
+    });
+    await flushFetch();
+    expect(fetchSpy!.mock.calls.length).toBeGreaterThan(callsAfterClose);
+  });
+
+  it('rep without label falls back to ptype name in head', async () => {
+    // 旧 intermediate 无 label 字段 → 头部兜底片型名
+    mockReps = {
+      representatives: {
+        前片: {
+          polygon: [
+            [0, 0],
+            [100, 0],
+            [100, 60],
+            [0, 60],
+          ],
+        },
+      },
+    };
+    useControlPanelStore.getState().openPreviewPtype('前片');
+    renderModal();
+    await flushFetch();
+    const modal = document.body.querySelector('.ptype-preview-modal');
+    expect(modal!.querySelector('.ptype-preview-name')!.textContent).toBe('前片');
+    expect(modal!.querySelector('.piece-card-label')).toBeNull();
   });
 
   it('✕ button closes', async () => {

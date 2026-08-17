@@ -5,8 +5,10 @@
 //   AC: tbody renders 2 rows (重合 + 旋转)
 //   AC: mount triggers fetch('/api/ptypes')
 //   AC: fetch failure degrades to name-only (no crash, no thumbnail svg)
-//   AC: fetch success renders representatives[ptype] via PiecePreviewSVG compact
-//   AC: initial draft reads form.per_type (D7 预填 internal=10/0, external=0/0)
+//   AC: fetch success renders representatives[ptype] via PiecePreviewSVG compact + 编号徽章
+//   AC: columns ordered by 编号 A→J（与上传预览行序一致）；无 label 片型殿后
+//   AC: thumbnail hover/aria =「编号-放大预览」不含片型名
+//   AC: initial draft reads form.per_type（预填全 '0'/'0'，2026-08-17 起不再按内部片预填 10）
 //   AC: editing draft does NOT call onChange immediately
 //   AC: confirm calls onChange + onClose (modal closes)
 //   AC: cancel does not call onChange (draft discarded)
@@ -24,7 +26,7 @@ import { PtypePreviewModal } from '../PtypePreviewModal';
 import { useControlPanelStore } from '../../../store/controlPanelStore';
 import type { PtypesResponse } from '../../../types/ptype';
 import type { PerTypeFormValue } from '../../../lib/params';
-import { V03_PTYPES, V03_TABLE } from '../../../constants/v03';
+import { V03_PTYPES, MAX_OVERLAP_MM, MAX_ROTATION_TOL_DEG } from '../../../constants/v03';
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -34,10 +36,11 @@ let fetchSpy: MockInstance<(...args: unknown[]) => Promise<Response>> | null = n
 /** 当前 mock 返回的 representatives 数据（每次 fetch 创建新 Response，避免 body 被消费两次）。 */
 let mockReps: PtypesResponse = { representatives: {} };
 
-/** 含 2 个 ptype 代表裁片的响应（覆盖 layer-aware 渲染断言）。 */
+/** 含 2 个 ptype 代表裁片的响应（覆盖 layer-aware 渲染 + 编号徽章断言）。 */
 const TWO_REPS: PtypesResponse = {
   representatives: {
     前片: {
+      label: 'A',
       polygon: [
         [0, 0],
         [100, 0],
@@ -46,6 +49,7 @@ const TWO_REPS: PtypesResponse = {
       ],
     },
     后片: {
+      label: 'B',
       polygon: [
         [0, 0],
         [80, 0],
@@ -139,7 +143,7 @@ describe('PerTypeOverridesModal (US-018)', () => {
     renderModal();
     const heads = document.body.querySelectorAll('thead .ptype-col');
     expect(heads).toHaveLength(V03_PTYPES.length);
-    // 片型名按 V03_PTYPES 顺序
+    // 无 reps（mockReps={}）→ 全部兜底片型名，按 V03_PTYPES 顺序
     const names = Array.from(heads).map((h) => h.querySelector('.ptype-name')!.textContent);
     expect(names).toEqual(V03_PTYPES);
     // 不含内外徽章（旧 <i>内</i>）
@@ -191,21 +195,84 @@ describe('PerTypeOverridesModal (US-018)', () => {
     expect(svgs.length).toBe(2);
     // compact 模式不渲染 label text
     expect(document.body.querySelectorAll('.ptype-thumb text[data-role="label"]')).toHaveLength(0);
+    // rep.label → 编号徽章（与上传预览 QtyMatrix 同款），其余列兜底片型名
+    const badges = document.body.querySelectorAll('thead .qty-label-badge');
+    expect(badges).toHaveLength(2);
+    expect(badges[0].textContent).toBe('A');
+    expect(badges[1].textContent).toBe('B');
+    expect(document.body.querySelectorAll('thead .ptype-name')).toHaveLength(
+      V03_PTYPES.length - 2,
+    );
   });
 
-  it('initial draft reads D7 prefill (internal=10/0, external=0/0) when form.per_type empty', () => {
+  it('columns ordered by 编号 A→J（与上传预览行序一致）；无 label 片型殿后保持原相对序', async () => {
+    // 故意打乱 label↔片型映射（腰=A、后片=B、前片=C）：列序必须按编号排，不按 V03_PTYPES 固定序
+    mockReps = {
+      representatives: {
+        腰: { label: 'A', polygon: [[0, 0], [60, 0], [60, 40], [0, 40]] },
+        后片: { label: 'B', polygon: [[0, 0], [80, 0], [80, 80], [0, 80]] },
+        前片: { label: 'C', polygon: [[0, 0], [100, 0], [100, 60], [0, 60]] },
+      },
+    };
     useControlPanelStore.getState().openModal('per_type');
     renderModal();
-    // 内部片型（单排）重合=10、旋转=0
+    await flushFetch();
+    // 前 3 列编号徽章 = A/B/C（腰/后片/前片）
+    const badges = Array.from(document.body.querySelectorAll('thead .qty-label-badge')).map(
+      (b) => b.textContent,
+    );
+    expect(badges).toEqual(['A', 'B', 'C']);
+    // 列头与输入列对齐：第 1 列（A=腰）正下方的重合 input 是 d-腰
+    const firstCol = document.body.querySelector('thead .ptype-col')!;
+    expect(firstCol.querySelector('.qty-label-badge')!.textContent).toBe('A');
+    const firstRowInput = document.body.querySelector('tbody tr')!.querySelector('input')!;
+    expect(firstRowInput.getAttribute('data-testid')).toBe('d-腰');
+    // 无 label 的 7 个片型殿后，保持 V03_PTYPES 相对序
+    const names = Array.from(document.body.querySelectorAll('thead .ptype-name')).map(
+      (n) => n.textContent,
+    );
+    expect(names).toEqual(V03_PTYPES.filter((pt) => !['前片', '后片', '腰'].includes(pt)));
+  });
+
+  it('no reps → columns fall back to V03_PTYPES 原序（无重排）', async () => {
+    mockReps = { representatives: {} };
+    useControlPanelStore.getState().openModal('per_type');
+    renderModal();
+    await flushFetch();
+    const heads = document.body.querySelectorAll('thead .ptype-col');
+    const names = Array.from(heads).map((h) => h.querySelector('.ptype-name')!.textContent);
+    expect(names).toEqual(V03_PTYPES);
+  });
+
+  it('thumbnail hover/aria =「编号-放大预览」，不含片型名', async () => {
+    mockReps = TWO_REPS;
+    useControlPanelStore.getState().openModal('per_type');
+    renderModal();
+    await flushFetch();
+    // 有编号：只报 A-放大预览（不出现「前片」）
+    const thumb = document.body.querySelector<HTMLButtonElement>('[data-testid="ptype-thumb-前片"]')!;
+    expect(thumb.title).toBe('A-放大预览');
+    expect(thumb.getAttribute('aria-label')).toBe('A-放大预览');
+    // 无 rep（无编号）→ 兜底片型名作标识
+    const thumbFallback = document.body.querySelector<HTMLButtonElement>(
+      '[data-testid="ptype-thumb-单排"]',
+    )!;
+    expect(thumbFallback.title).toBe('单排-放大预览');
+  });
+
+  it('initial draft prefills all 0/0 when form.per_type empty（2026-08-17 起统一默认 0）', () => {
+    useControlPanelStore.getState().openModal('per_type');
+    renderModal();
+    // 内部片型（单排）不再预填 10，统一 '0'/'0'
     const dDanPai = document.body.querySelector<HTMLInputElement>(
       `[data-testid="d-单排"]`,
     );
     const tolDanPai = document.body.querySelector<HTMLInputElement>(
       `[data-testid="tol-单排"]`,
     );
-    expect(dDanPai!.value).toBe('10');
+    expect(dDanPai!.value).toBe('0');
     expect(tolDanPai!.value).toBe('0');
-    // 外部片型（前片）重合=0、旋转=0
+    // 外部片型（前片）同为 '0'/'0'
     const dQianPian = document.body.querySelector<HTMLInputElement>(`[data-testid="d-前片"]`);
     const tolQianPian = document.body.querySelector<HTMLInputElement>(`[data-testid="tol-前片"]`);
     expect(dQianPian!.value).toBe('0');
@@ -222,9 +289,9 @@ describe('PerTypeOverridesModal (US-018)', () => {
     const tolQianPian = document.body.querySelector<HTMLInputElement>(`[data-testid="tol-前片"]`);
     expect(dQianPian!.value).toBe('1.5');
     expect(tolQianPian!.value).toBe('2');
-    // 未填的 ptype 仍走 D7 预填
+    // 未填的 ptype 仍走统一预填 '0'
     const dDanPai = document.body.querySelector<HTMLInputElement>(`[data-testid="d-单排"]`);
-    expect(dDanPai!.value).toBe('10');
+    expect(dDanPai!.value).toBe('0');
   });
 
   it('editing draft does NOT call onChange immediately', () => {
@@ -340,16 +407,39 @@ describe('PerTypeOverridesModal (US-018)', () => {
     expect(useControlPanelStore.getState().previewPtype).toBe('前片');
   });
 
-  it('placeholders hint d≤X / t≤Y from V03_TABLE', () => {
+  it('inputs carry global caps d≤10 / t≤45 (no per-ptype limits)', () => {
     useControlPanelStore.getState().openModal('per_type');
     renderModal();
     const LE = '≤';
     for (const pt of V03_PTYPES) {
       const dInput = document.body.querySelector<HTMLInputElement>(`[data-testid="d-${pt}"]`);
       const tolInput = document.body.querySelector<HTMLInputElement>(`[data-testid="tol-${pt}"]`);
-      expect(dInput!.placeholder).toBe(`d${LE}${V03_TABLE[pt].d}`);
-      expect(tolInput!.placeholder).toBe(`t${LE}${V03_TABLE[pt].tol}`);
+      // placeholder / max 均为全局固定上限，不再按片型
+      expect(dInput!.placeholder).toBe(`d${LE}${MAX_OVERLAP_MM}`);
+      expect(tolInput!.placeholder).toBe(`t${LE}${MAX_ROTATION_TOL_DEG}`);
+      expect(dInput!.max).toBe(String(MAX_OVERLAP_MM));
+      expect(tolInput!.max).toBe(String(MAX_ROTATION_TOL_DEG));
     }
+  });
+
+  it('blur clamps draft into [0, max] (d→10, tol→45)', () => {
+    useControlPanelStore.getState().openModal('per_type');
+    renderModal();
+    const dInput = document.body.querySelector<HTMLInputElement>(`[data-testid="d-前片"]`)!;
+    const tolInput = document.body.querySelector<HTMLInputElement>(`[data-testid="tol-前片"]`)!;
+    // 原型 setter 绕过 React value tracker（与同文件既有 input 测试同模式）；
+    // React 以 focusout 委托 onBlur，故 blur 用 bubbling focusout 触发。
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+    act(() => {
+      setter.call(dInput, '99');
+      dInput.dispatchEvent(new Event('input', { bubbles: true }));
+      dInput.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
+      setter.call(tolInput, '-3');
+      tolInput.dispatchEvent(new Event('input', { bubbles: true }));
+      tolInput.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
+    });
+    expect(dInput.value).toBe('10');
+    expect(tolInput.value).toBe('0');
   });
 
   it('mousedown inside modal does NOT bubble-close (modal self-click safe)', () => {

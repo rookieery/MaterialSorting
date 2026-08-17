@@ -1,7 +1,7 @@
 // US-004 ControlPanel integration tests:
 //   AC#1 SizePicker renders 8 size chips, all default-checked
 //   AC#2 defaults match legacy index.html (time=60, seed=0; multi_seed=false, seed_count=3)
-//   AC#4 PerTypeOverrides renders V03_TABLE 10 rows, internal ptypes badged
+//   AC#4 PerTypeOverrides（高级配置按钮）→ modal 渲染 V03_PTYPES 10 列
 //   AC#6 click Start -> onStart fires; payload fields match collectParams
 //   AC#7 0 sizes -> onStatus error + onStart NOT called
 //

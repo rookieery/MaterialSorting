@@ -19,7 +19,7 @@
 | 裁片加载（nesting_bounds） | ✅ 稳定 | 单裁片 → 布纹对齐 → 归一化 → L/R 镜像；**US-024 起 5 层透传**（notch 法线按 outline 最近边读时重算）。8 码 → 128 NestPiece / 母版全码 → 176 |
 | intermediate 事实源 | ✅ 稳定 | `pieces_intermediate.json`（每片含 polygon + 5 层字段，全流程事实源；US-022 起 label 字段供 demand 编辑） |
 | sparrow 基线求解 | ✅ 跑通 | 85.79%（600s `{0,180}` 无 erode） |
-| v0.3 约束层 | ⚠️ 部分 | `MAX_OVERLAP`/`ROTATION_TOL` 常量已定 + 校验已写；旋转公差 solver 侧未主动实施 |
+| v0.3 约束层 | ⚠️ 部分 | 2026-08-17 起重合/旋转改**全局上限**（`MAX_OVERLAP_MM=10` / `MAX_ROTATION_TOL_DEG=45`，每片型钳制表已删，版师 per-ptype 参考值留在排料规则文档）+ 校验已写；旋转公差 solver 侧未主动实施 |
 | 实验框架（experiments） | ✅ 跑通 | free_rot / v0_rot / erode / erode_rot 四模式 + 多种子方差 |
 | 母版上传 → 解析 → commit | ✅ 落地 | `/api/parse-dxf`（US-004）+ `/api/commit-to-nesting`（US-010 Path A）+ `/api/ptypes`（US-020）；解析成功自动 commit + 解锁超排 Tab（US-021） |
 | 求解输入 demand | ✅ 落地 | US-022：per-size 数量编辑（qtyStore），0=该码跳过；前端 qtyStore → WS `quantities` |
@@ -32,7 +32,7 @@
 
 ### 片型（10 类）
 
-| 片型 | 配对? | MAX_OVERLAP (mm) | ROTATION_TOL (°) | 说明 |
+| 片型 | 配对? | 重合参考值 (mm) | 旋转参考值 (°) | 说明 |
 |------|------|------------------|------------------|------|
 | 前片 | L+R | 2.0 | 1 | 主片，严格布纹 |
 | 后片 | L+R | 2.0 | 1 | 主片，严格布纹 |
@@ -44,6 +44,8 @@
 | 双排 | 单片 | 10.0 | 15 | 内片 |
 | 火机袋 | 单片 | 5.0 | 8 | 内片 |
 | 裤耳 | 单片 | 10.0 | 45 | 内片，几乎任意角 |
+
+> **2026-08-17 起本表降为版师参考值**：求解钳制不再按片型 —— 后端全局上限 `MAX_OVERLAP_MM=10` / `MAX_ROTATION_TOL_DEG=45`（`constraints.py`），用户在高级配置弹窗按片型显式填 0–10mm / 0–45°（默认 0 = 不重合 / 锁布纹线），solver 按 `min(申请值, 全局上限)` 收边。上表数值作为各片型工艺合理范围的参考保留。
 
 > 配对片（前/后/腰/前袋/后袋/机头）由单裁片镜像展开为 L+R 两份；内片（单排/双排/火机袋/裤耳）单片放置，是利用率提升的"填充料"。
 
