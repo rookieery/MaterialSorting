@@ -1,7 +1,9 @@
-// US-019 collectParams 单测（主面板精简后；US-003 起 per_type 键 = 裁片 g 码）：
+// US-019 collectParams 单测（主面板精简后；US-004 起 per_type 键 = (g 码, 码号) 两级
+// 嵌套 {label:{sizeKey:{d,tol}}}，与高级配置弹窗矩阵一一对应）：
 //   1) params 永远全 0（d_ext/d_int/tol_ext/tol_int 主面板输入已删，全交高级配置弹窗 per_type）。
-//   2) per_type 解析逻辑保留不变：仅 trim()!=='' 写入；空 → null；任一档非空 → 创建 entry。
-//   3) parseTime / parseSeed / parseSeedCount 与旧 vanilla 实现 `parseInt(...) || fallback` 一致。
+//   2) per_type：仅 trim()!=='' 写入；双侧全空格子/全空 label 剔除；整体空 → null。
+//   3) URL 分享格式 perTypeToUrlParam/perTypeFromUrlParam 往返一致；旧 ptype 键忽略不报错。
+//   4) parseTime / parseSeed / parseSeedCount 与旧 vanilla 实现 `parseInt(...) || fallback` 一致。
 
 import { describe, expect, it } from 'vitest';
 import {
@@ -11,6 +13,8 @@ import {
   parseSeed,
   parseSeedCount,
   parseTime,
+  perTypeFromUrlParam,
+  perTypeToUrlParam,
   serializeQuantities,
   type FormState,
 } from '../params';
@@ -25,7 +29,7 @@ function makeForm(overrides: Partial<FormState> = {}): FormState {
   };
 }
 
-describe('collectParams (US-019)', () => {
+describe('collectParams (US-019 / US-004 两级嵌套)', () => {
   it('默认表单：params 全 0；per_type = null（全空）', () => {
     const out = collectParams(DEFAULT_FORM);
     expect(out.params).toEqual<SolveParams>({
@@ -55,27 +59,12 @@ describe('collectParams (US-019)', () => {
     const forms: FormState[] = [
       makeForm(),
       makeForm({
-        per_type: { ...DEFAULT_FORM.per_type, g01: { d: '1', tol: '' } },
+        per_type: { g01: { '28': { d: '1', tol: '' } } },
       }),
       makeForm({
         per_type: {
-          ...DEFAULT_FORM.per_type,
-          g01: { d: '2', tol: '1' },
-          g02: { d: '', tol: '45' },
-        },
-      }),
-      makeForm({
-        per_type: {
-          g01: { d: '2', tol: '1' },
-          g03: { d: '2', tol: '1' },
-          g04: { d: '0.4', tol: '3' },
-          g05: { d: '0.4', tol: '30' },
-          g06: { d: '0.4', tol: '1' },
-          g07: { d: '0.4', tol: '3' },
-          g08: { d: '10', tol: '15' },
-          g09: { d: '10', tol: '15' },
-          g10: { d: '5', tol: '8' },
-          g02: { d: '10', tol: '45' },
+          g01: { '28': { d: '2', tol: '1' }, '30': { d: '', tol: '45' } },
+          g02: { null: { d: '10', tol: '45' } },
         },
       }),
     ];
@@ -89,79 +78,146 @@ describe('collectParams (US-019)', () => {
     }
   });
 
-  it('per_type 单档非空 → entry 仅写该档；另一档缺省', () => {
+  it('US-004: 单格单档非空 → 该 sizeKey entry 仅写该档；另一档缺省', () => {
     const form = makeForm({
-      per_type: { ...DEFAULT_FORM.per_type, g08: { d: '7', tol: '' } },
+      per_type: { g08: { '30': { d: '7', tol: '' } } },
     });
     const out = collectParams(form);
     expect(out.per_type).toEqual<PerTypeOverrides>({
-      g08: { d: 7 },
+      g08: { '30': { d: 7 } },
     });
   });
 
-  it('per_type d 与 tol 都空白 → 不创建 entry（与旧 vanilla 实现 inp.value.trim() 一致）', () => {
-    const form = makeForm({
-      per_type: { ...DEFAULT_FORM.per_type, g04: { d: '   ', tol: '' } },
-    });
-    expect(collectParams(form).per_type).toBeNull();
-  });
-
-  it('per_type 多片型混合（g01 d+tol，g02 仅 tol）正确聚合', () => {
+  it('US-004: 同 g 码多码号独立 entry（(g 码, 码号) 逐格命中）', () => {
     const form = makeForm({
       per_type: {
-        ...DEFAULT_FORM.per_type,
-        g01: { d: '2', tol: '1' },
-        g02: { d: '', tol: '45' },
+        g03: {
+          '28': { d: '1.5', tol: '' },
+          '30': { d: '', tol: '45' },
+          null: { d: '0', tol: '0' },
+        },
       },
     });
     expect(collectParams(form).per_type).toEqual<PerTypeOverrides>({
-      g01: { d: 2, tol: 1 },
-      g02: { tol: 45 },
+      g03: {
+        '28': { d: 1.5 },
+        '30': { tol: 45 },
+        null: { d: 0, tol: 0 },
+      },
+    });
+  });
+
+  it('per_type d 与 tol 都空白 → 该格子剔除（与旧 vanilla 实现 inp.value.trim() 一致）', () => {
+    const form = makeForm({
+      per_type: {
+        g04: { '28': { d: '   ', tol: '' }, '30': { d: '1', tol: '' } },
+      },
+    });
+    expect(collectParams(form).per_type).toEqual<PerTypeOverrides>({
+      g04: { '30': { d: 1 } },
+    });
+  });
+
+  it('label 下全部格子空白 → 该 label 整体剔除；全表空白 → null', () => {
+    const bothEmpty = makeForm({
+      per_type: { g04: { '28': { d: '', tol: '' } } },
+    });
+    expect(collectParams(bothEmpty).per_type).toBeNull();
+  });
+
+  it('per_type 多片混合（g01 d+tol，g02 仅 tol，null 码键）正确聚合', () => {
+    const form = makeForm({
+      per_type: {
+        g01: { '28': { d: '2', tol: '1' } },
+        g02: { null: { d: '', tol: '45' } },
+      },
+    });
+    expect(collectParams(form).per_type).toEqual<PerTypeOverrides>({
+      g01: { '28': { d: 2, tol: 1 } },
+      g02: { null: { tol: 45 } },
     });
   });
 
   it('per_type 含空白（trim 后空 → 不写入；只非空档写）', () => {
     const form = makeForm({
-      per_type: { ...DEFAULT_FORM.per_type, g01: { d: '  ', tol: ' 1 ' } },
+      per_type: { g01: { '28': { d: '  ', tol: ' 1 ' } } },
     });
     expect(collectParams(form).per_type).toEqual<PerTypeOverrides>({
-      g01: { tol: 1 },
+      g01: { '28': { tol: 1 } },
     });
   });
 
   it('per_type 显式 "0" 也写入（区分空 vs "0"，与旧 vanilla 实现一致）', () => {
     const form = makeForm({
-      per_type: { ...DEFAULT_FORM.per_type, g07: { d: '0', tol: '0' } },
+      per_type: { g07: { '28': { d: '0', tol: '0' } } },
     });
     expect(collectParams(form).per_type).toEqual<PerTypeOverrides>({
-      g07: { d: 0, tol: 0 },
+      g07: { '28': { d: 0, tol: 0 } },
     });
   });
 
-  it('per_type 全 g 码填满（示例覆盖值，均在全局上限 10/45 内）→ 所有 10 个 entry 写入', () => {
+  it('US-004 端到端口径：g03@28 d=1.5 → per_type.g03["28"].d === 1.5（WS start payload 形状）', () => {
     const form = makeForm({
-      per_type: {
-        g01: { d: '2', tol: '1' },
-        g03: { d: '2', tol: '1' },
-        g04: { d: '0.4', tol: '3' },
-        g05: { d: '0.4', tol: '30' },
-        g06: { d: '0.4', tol: '1' },
-        g07: { d: '0.4', tol: '3' },
-        g08: { d: '10', tol: '15' },
-        g09: { d: '10', tol: '15' },
-        g10: { d: '5', tol: '8' },
-        g02: { d: '10', tol: '45' },
-      },
+      per_type: { g03: { '28': { d: '1.5', tol: '' } } },
     });
     const out = collectParams(form);
-    expect(Object.keys(out.per_type!)).toHaveLength(10);
-    // params 仍然全 0
-    expect(out.params).toEqual<SolveParams>({
-      d_ext: 0,
-      d_int: 0,
-      tol_ext: 0,
-      tol_int: 0,
+    expect(out.per_type!.g03['28'].d).toBe(1.5);
+  });
+});
+
+describe('per_type URL 分享格式 (US-004)', () => {
+  it('空配置 → 空串；解码空串/null → 空对象', () => {
+    expect(perTypeToUrlParam(DEFAULT_FORM)).toBe('');
+    expect(perTypeFromUrlParam('')).toEqual({});
+    expect(perTypeFromUrlParam(null)).toEqual({});
+  });
+
+  it('编码：仅非空格子产出；格式 label@sizeKey=d,tol', () => {
+    const form = makeForm({
+      per_type: {
+        g03: { '28': { d: '1.5', tol: '' }, '30': { d: '', tol: '45' } },
+        g02: { null: { d: '0', tol: '3' }, '31': { d: '', tol: '' } }, // 31 全空不产出
+      },
     });
+    expect(perTypeToUrlParam(form)).toBe('g03@28=1.5,;g03@30=,45;g02@null=0,3');
+  });
+
+  it('往返一致：编码 → 解码 → 再编码 稳定', () => {
+    const form = makeForm({
+      per_type: {
+        g01: { '28': { d: '2', tol: '1' } },
+        g10: { null: { d: '0.4', tol: '30' } },
+        g100: { '33': { d: '', tol: '45' } },
+      },
+    });
+    const once = perTypeToUrlParam(form);
+    const decoded = perTypeFromUrlParam(once);
+    expect(decoded).toEqual(form.per_type);
+    expect(perTypeToUrlParam({ ...form, per_type: decoded })).toBe(once);
+  });
+
+  it('解码：旧 ptype 键（中文 / 旧 label 单级格式）忽略不报错', () => {
+    // 旧 label 单级格式（US-003 时代）：前片@28=1,2 不匹配新语法 → 跳过
+    const out1 = perTypeFromUrlParam('前片@28=1,2;g03@30=,45');
+    expect(out1).toEqual({ g03: { '30': { d: '', tol: '45' } } });
+    // 旧扁平 d/tol 键形态（d=@28 位）也不匹配 → 跳过
+    const out2 = perTypeFromUrlParam('g03@d=1,tol;g01@28=2,');
+    expect(out2).toEqual({ g01: { '28': { d: '2', tol: '' } } });
+    // 乱拼段（缺 = / 缺 ,）静默跳过
+    const out3 = perTypeFromUrlParam('garbage;;g02@30=1,2;g02@xx=1,2');
+    expect(out3).toEqual({ g02: { '30': { d: '1', tol: '2' } } });
+  });
+
+  it('解码：非数值 d/tol 段跳过（防手拼 NaN 注入）', () => {
+    expect(perTypeFromUrlParam('g01@28=abc,2')).toEqual({});
+    expect(perTypeFromUrlParam('g01@28=1,xyz')).toEqual({});
+    expect(perTypeFromUrlParam('g01@28=1,')).toEqual({ g01: { '28': { d: '1', tol: '' } } });
+  });
+
+  it('解码结果直接可用作 FormState.per_type（collectParams 输出闭环）', () => {
+    const decoded = perTypeFromUrlParam('g03@28=1.5,');
+    const out = collectParams({ ...DEFAULT_FORM, per_type: decoded });
+    expect(out.per_type).toEqual<PerTypeOverrides>({ g03: { '28': { d: 1.5 } } });
   });
 });
 

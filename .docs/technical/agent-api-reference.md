@@ -270,7 +270,7 @@ curl http://127.0.0.1:8000/api/ptypes
   "time": 120,                    // 求解时间预算（秒），默认 120
   "seed": 0,                      // sparrow 随机种子，默认 0
   "params": {"d_ext":0, "d_int":0, "tol_ext":0, "tol_int":0},  // US-019 起前端永远传全 0；主面板内外两档输入已删，d/tol 覆盖全交 per_type
-  "per_type": {"g03": {"28": {"d": 1.5}}},  // 可选，逐片高级覆盖（US-002 起 (label,sizeKey) 键；US-001 v2 intermediate 下旧 ptype 键不命中为 no-op）
+  "per_type": {"g03": {"28": {"d": 1.5}}},  // 可选，逐片高级覆盖（US-002 起 (label,sizeKey) 键；US-004 起高级配置弹窗矩阵逐格产出 —— sizeKey = String(size)，null 码 = "null"；US-001 v2 intermediate 下旧 ptype 键不命中为 no-op）
   "quantities": {"g01": {"28": 2, "30": 0}, "g02": {"28": 1}}  // US-022 可选，label→sizeKey→demand；0=该 piece 该码不排；缺省=null→全片 demand=1
 }
 ```

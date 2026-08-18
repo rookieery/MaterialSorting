@@ -511,14 +511,16 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
   outline-offset: 1px;
 }
 
-/* 表格容器：overflow-x:auto 容纳 10 列窄屏溢出 */
+/* 表格容器：overflow-x:auto 容纳多列窄屏溢出 */
 .per-type-table-wrap {
   overflow-x: auto;
   border: 1px solid #34363d;
   border-radius: 4px;
 }
 
-/* 表格：固定布局（列等宽，缩略图 80px 固定）；首列片型行头粘性 sticky 便于横滚定位 */
+/* 表格：固定布局（列等宽）；首列码号行头粘性 sticky 便于横滚定位。
+   US-004 矩阵化：行 = 码号（含「通用」null 码）、列 = g 码；格 = d/tol 双输入（见
+   .per-type-cell），与上传预览 QtyMatrix 同构 */
 .per-type-table {
   width: 100%;
   border-collapse: collapse;
@@ -533,7 +535,7 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
   vertical-align: middle;
 }
 .per-type-rowhead {
-  width: 48px;
+  width: 52px;
   background: #1c1d22;
   color: #9aa;
   font-weight: 500;
@@ -542,8 +544,39 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
   z-index: 1;
 }
 .per-type-table th.ptype-col {
-  width: 80px;
+  width: 92px;
   background: #23252b;
+}
+/* 列头元信息行（g 码徽章 +「≡」整列设值 icon，复用 QtyMatrix .qty-colhead-meta
+   布局范式；本弹窗 th 无 .qty-colhead-inner 外壳，单独居中） */
+.per-type-table .qty-colhead-meta {
+  justify-content: center;
+  margin-top: 4px;
+}
+
+/* ---- US-004 矩阵格：d/tol 双输入竖排（空 = 继承全局默认；空串与显式 0 可区分） ---- */
+.per-type-cell {
+  padding: 3px 4px;
+}
+.per-type-cell input[type='number'] {
+  display: block;
+  margin: 0 auto;
+}
+.per-type-cell input[type='number'] + input[type='number'] {
+  margin-top: 3px;
+}
+.per-type-missing {
+  color: #55575e;
+  cursor: default;
+}
+
+/* 整列设值弹层（复用 QtyMatrix .qty-fill-* 外观）：叠加在本 modal（z 1100）之上，
+   backdrop 弹层 z 需压过 .per-type-overlay（QtyMatrix 原值 1000/1010 在其下会被盖住） */
+.qty-popover-backdrop--per-type {
+  z-index: 1150;
+}
+.qty-fill-popover--per-type {
+  z-index: 1160;
 }
 
 /* 表头缩略图：64x64 cell 内 PiecePreviewSVG compact 渲染；button 包装触发放大预览 */

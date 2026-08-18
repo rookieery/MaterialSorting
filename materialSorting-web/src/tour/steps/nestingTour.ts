@@ -63,7 +63,7 @@ export const nestingTour: TourDef = {
       id: 'params',
       selector: '[data-tour="param-form"]',
       title: '设置参数',
-      body: '在「幅宽 / 时长 / seed」调整求解参数；开启 multi_seed 可并行对比多个 seed 的方案；点「高级配置」可按裁片 g 码单独覆盖重合 / 旋转公差。上方码号（多选）勾选要参与排料的尺码。',
+      body: '在「幅宽 / 时长 / seed」调整求解参数；开启 multi_seed 可并行对比多个 seed 的方案；点「高级配置」可在 码号 × 裁片 g 码 矩阵中逐格覆盖重合 / 旋转公差（空格 = 继承默认，「≡」整列设值）。上方码号（多选）勾选要参与排料的尺码。',
       placement: 'bottom',
       before: ensureNestingTab,
     },

@@ -1,27 +1,26 @@
-// US-018 PerTypeOverridesModal integration tests（裁片编号化重构 US-003 起改写：
-// V03_PTYPES 固定 10 中文列已删，列集 = /api/ptypes representatives 键 ∪ values
-// 已配置键 —— 全部为裁片 g 码，按 compareByLabel 数值序）：
+// US-004 PerTypeOverridesModal 矩阵化集成测试（行=码号 × 列=g 码、格=(g 码,码号)
+// d/tol 双输入、per_type 两级嵌套 {label:{sizeKey:{d,tol}}}）：
 //   AC: modal=null does not render DOM (no portal content)
 //   AC: modal='per_type' renders overlay + modal + aria-label
-//   AC: thead 列 = reps 键（g 码徽章）；reps 空 + values 空 → 仅行头列（0 数据列）
-//   AC: tbody renders 2 rows (重合 + 旋转)
-//   AC: mount triggers fetch('/api/ptypes')
-//   AC: fetch failure degrades (no crash, 列集退回 values 键)
+//   AC: 行 = doc.sizes（升序、null 通用殿后）；doc=null → SIZES fallback 8 行
+//   AC: values 已配置但不在行集的 sizeKey 追加为行（旧配置不静默丢）
+//   AC: thead 列 = reps 键（g 码徽章 + ≡ 整列设值 icon）；reps 空 + values 空 → 仅行头列
+//   AC: fetch failure degrades (列集退回 values 键，不阻塞)
 //   AC: fetch success renders representatives[label] via PiecePreviewSVG compact
-//   AC: 列序 = compareByLabel 数值序（g01<g02<g99<g100，长度优先防字典序倒挂）
-//   AC: values 已配置键与 reps 键并集（fetch 失败时已配置项仍可配）
-//   AC: thumbnail hover/aria =「g 码-放大预览」不含任何中文片型名
-//   AC: initial draft reads form.per_type（空值预填 '0'/'0'）
+//   AC: 列序 = compareByLabel 数值序（g99<g100，长度优先防字典序倒挂）
+//   AC: 格 = d/tol 双输入（data-testid d-{label}-{sk} / tol-{label}-{sk}；空串+placeholder=继承）
+//   AC: doc 中该 g 码无此码号 → .per-type-cell.missing「—」；label 不在 doc → 可编辑
+//   AC: initial draft 读 form.per_type 非空值；不预填 '0'（空 = 继承）
 //   AC: editing draft does NOT call onChange immediately
-//   AC: confirm calls onChange + onClose (modal closes)
-//   AC: cancel does not call onChange (draft discarded)
-//   AC: overlay mousedown closes (draft discarded)
-//   AC: ESC closes when previewLabel null（双层独立 AC#10）
-//   AC: ESC does NOT close modal when previewLabel open
-//   AC: close button (✕) closes
+//   AC: confirm 回写两级嵌套（剔除全空格子）+ 关闭
+//   AC: cancel / overlay / ESC / ✕ 丢弃草稿（onChange 不调用）
+//   AC: ESC 不关 modal 当 previewLabel open（双层独立）
+//   AC: ESC 只关整列设值弹层（fill open 时 modal 保留）
 //   AC: clicking thumbnail opens PtypePreviewModal (previewLabel set)
-//   AC: inputs carry global caps d≤10 / t≤45
+//   AC: inputs carry global caps d≤10 / t≤45；aria 报 (g 码, 码号)
 //   AC: blur clamps draft into [0, max]
+//   AC: ≡ 整列设值 → 应用写该列全部行（留空侧 = 继承默认）
+//   AC: 整列设值弹层取消 / 遮罩 mousedown 不写 draft
 //   AC: mousedown inside modal does NOT bubble-close
 
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
@@ -31,8 +30,11 @@ import { createRoot, type Root } from 'react-dom/client';
 import { PerTypeOverridesModal } from '../PerTypeOverridesModal';
 import { PtypePreviewModal } from '../PtypePreviewModal';
 import { useControlPanelStore } from '../../../store/controlPanelStore';
+import { useUploadStore } from '../../../store/uploadStore';
+import { SIZES } from '../../../constants/sizes';
+import type { ParsedDoc, ParsedPiece } from '../../../types/parsed';
 import type { PtypesResponse } from '../../../types/ptype';
-import type { PerTypeFormValue } from '../../../lib/params';
+import type { PerTypeFormMap } from '../../../lib/params';
 import { MAX_OVERLAP_MM, MAX_ROTATION_TOL_DEG } from '../../../constants/v03';
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -67,9 +69,41 @@ const TWO_REPS: PtypesResponse = {
   },
 };
 
+/** 构造最小 ParsedPiece（polygon 足够 PiecePreviewSVG/缺片判定用）。 */
+function piece(label: string): ParsedPiece {
+  return {
+    label,
+    polygon: [
+      [0, 0],
+      [100, 0],
+      [100, 60],
+      [0, 60],
+    ],
+    internal_lines: [],
+    notches: [],
+    net_polygon: [],
+    grain_line: null,
+  };
+}
+
+/**
+ * 测试母版：28 码 g01+g02；30 码仅 g01；null 通用码 g01。
+ * 覆盖：正常格 / 缺片格（g02@30 缺）/ 通用码行。
+ */
+const TEST_DOC: ParsedDoc = {
+  doc_id: 'modal-test',
+  filename: 'M1787.dxf',
+  sizes: [
+    { size: 28, pieces: [piece('g01'), piece('g02')] },
+    { size: 30, pieces: [piece('g01')] },
+    { size: null, pieces: [piece('g01')] },
+  ],
+};
+
 beforeEach(() => {
   useControlPanelStore.getState().closeModal();
   useControlPanelStore.getState().closePreviewLabel();
+  useUploadStore.getState().reset();
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -99,6 +133,7 @@ afterEach(() => {
   document.body.innerHTML = '';
   useControlPanelStore.getState().closeModal();
   useControlPanelStore.getState().closePreviewLabel();
+  useUploadStore.getState().reset();
   if (fetchSpy) {
     fetchSpy.mockRestore();
     fetchSpy = null;
@@ -106,8 +141,8 @@ afterEach(() => {
 });
 
 function renderModal(
-  values: Record<string, PerTypeFormValue> = {},
-  onChange: (next: Record<string, PerTypeFormValue>) => void = () => {},
+  values: PerTypeFormMap = {},
+  onChange: (next: PerTypeFormMap) => void = () => {},
 ): HTMLElement {
   act(() => {
     root!.render(
@@ -117,6 +152,15 @@ function renderModal(
     );
   });
   return container!;
+}
+
+/** 写入 uploadStore.doc（rows = doc.sizes 路径）。 */
+function setDoc(doc: ParsedDoc | null): void {
+  if (doc) {
+    useUploadStore.setState({ status: 'done', doc, activeSize: doc.sizes[0]?.size ?? null });
+  } else {
+    useUploadStore.getState().reset();
+  }
 }
 
 async function flushFetch(): Promise<void> {
@@ -134,7 +178,21 @@ function setInputValue(input: HTMLInputElement, value: string): void {
   input.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
-describe('PerTypeOverridesModal (US-018 / US-003 g 码列)', () => {
+/** tbody 行头文本（码号人读：number→String；null→通用）。 */
+function rowHeadTexts(): string[] {
+  return Array.from(document.body.querySelectorAll('tbody .per-type-rowhead')).map(
+    (h) => h.textContent ?? '',
+  );
+}
+
+/** thead 列徽章文本（g 码，compareByLabel 序）。 */
+function colBadges(): string[] {
+  return Array.from(document.body.querySelectorAll('thead .qty-label-badge')).map(
+    (b) => b.textContent ?? '',
+  );
+}
+
+describe('PerTypeOverridesModal (US-004 矩阵化：行=码号 × 列=g 码)', () => {
   it('modal=null does not render (no DOM mounted)', () => {
     renderModal();
     expect(document.body.querySelector('.per-type-overlay')).toBeNull();
@@ -151,15 +209,48 @@ describe('PerTypeOverridesModal (US-018 / US-003 g 码列)', () => {
     expect(modal!.getAttribute('aria-modal')).toBe('true');
   });
 
-  it('thead 列 = reps 键（g 码徽章恒渲染，不再有 .ptype-name 兜底名）', async () => {
+  it('行 = doc.sizes（升序，null 通用殿后）', async () => {
+    setDoc(TEST_DOC);
+    mockReps = TWO_REPS;
+    useControlPanelStore.getState().openModal('per_type');
+    renderModal();
+    await flushFetch();
+    expect(rowHeadTexts()).toEqual(['28', '30', '通用']);
+    // thead 行头列标题 = 码号
+    expect(document.body.querySelector('thead .per-type-rowhead')!.textContent).toBe('码号');
+  });
+
+  it('doc=null → SIZES fallback 8 行（与 SizePicker chip 同源）', async () => {
+    setDoc(null);
+    mockReps = TWO_REPS;
+    useControlPanelStore.getState().openModal('per_type');
+    renderModal();
+    await flushFetch();
+    expect(rowHeadTexts()).toEqual(SIZES.map(String));
+  });
+
+  it('values 已配置但不在行集的 sizeKey 追加为行（旧配置不静默丢）', async () => {
+    setDoc(TEST_DOC); // 行集 28/30/null
+    mockReps = TWO_REPS;
+    useControlPanelStore.getState().openModal('per_type');
+    const values: PerTypeFormMap = { g01: { '33': { d: '1', tol: '' } } };
+    renderModal(values);
+    await flushFetch();
+    expect(rowHeadTexts()).toEqual(['28', '30', '通用', '33']);
+  });
+
+  it('thead 列 = reps 键（g 码徽章 + ≡ 整列设值 icon；无 .ptype-name）', async () => {
+    setDoc(TEST_DOC);
     mockReps = TWO_REPS;
     useControlPanelStore.getState().openModal('per_type');
     renderModal();
     await flushFetch();
     const heads = document.body.querySelectorAll('thead .ptype-col');
     expect(heads).toHaveLength(2);
-    const badges = Array.from(heads).map((h) => h.querySelector('.qty-label-badge')!.textContent);
-    expect(badges).toEqual(['g01', 'g02']);
+    expect(colBadges()).toEqual(['g01', 'g02']);
+    // 每列常驻「≡」整列设值 icon（QtyMatrix 同款）
+    expect(document.body.querySelectorAll('thead .qty-rowfill-btn')).toHaveLength(2);
+    expect(document.body.querySelector('[data-testid="per-type-fill-btn-g01"]')).not.toBeNull();
     // 旧中文片型名列头类名零残留
     expect(document.body.querySelector('.ptype-name')).toBeNull();
   });
@@ -169,19 +260,9 @@ describe('PerTypeOverridesModal (US-018 / US-003 g 码列)', () => {
     renderModal();
     await flushFetch();
     expect(document.body.querySelectorAll('thead .ptype-col')).toHaveLength(0);
-    // 行头仍在（裁片）
-    expect(document.body.querySelector('thead .per-type-rowhead')!.textContent).toBe('裁片');
-    expect(document.body.querySelectorAll('tbody tr')).toHaveLength(2);
-  });
-
-  it('tbody renders 2 rows (重合 + 旋转)', () => {
-    useControlPanelStore.getState().openModal('per_type');
-    renderModal();
-    const rows = document.body.querySelectorAll('tbody tr');
-    expect(rows).toHaveLength(2);
-    const rowHeads = Array.from(rows).map((r) => r.querySelector('.per-type-rowhead')!.textContent);
-    expect(rowHeads).toContain('重合');
-    expect(rowHeads).toContain('旋转');
+    expect(document.body.querySelector('thead .per-type-rowhead')!.textContent).toBe('码号');
+    // SIZES fallback 行仍在（doc=null）
+    expect(document.body.querySelectorAll('tbody tr')).toHaveLength(SIZES.length);
   });
 
   it('mount triggers fetch("/api/ptypes")', async () => {
@@ -196,9 +277,7 @@ describe('PerTypeOverridesModal (US-018 / US-003 g 码列)', () => {
   it('fetch failure degrades (no crash, 列集退回 values 已配置键)', async () => {
     fetchSpy!.mockImplementation((_input: unknown) => Promise.reject(new Error('network')));
     useControlPanelStore.getState().openModal('per_type');
-    const values: Record<string, PerTypeFormValue> = {
-      g05: { d: '2', tol: '3' },
-    };
+    const values: PerTypeFormMap = { g05: { '28': { d: '2', tol: '3' } } };
     renderModal(values);
     await flushFetch();
     // fetch 失败 → reps 空 → 仅 values 键 g05 列保留，可继续配置（不阻塞）
@@ -225,6 +304,7 @@ describe('PerTypeOverridesModal (US-018 / US-003 g 码列)', () => {
 
   it('columns ordered by compareByLabel 数值序（g99 < g100，长度优先防字典序倒挂）', async () => {
     // 故意乱序插入 + 含三位 g 码：字典序会把 g100 排在 g99 前，必须长度优先
+    setDoc(TEST_DOC);
     mockReps = {
       representatives: {
         g100: { label: 'g100', polygon: [[0, 0], [60, 0], [60, 40], [0, 40]] },
@@ -235,44 +315,62 @@ describe('PerTypeOverridesModal (US-018 / US-003 g 码列)', () => {
     useControlPanelStore.getState().openModal('per_type');
     renderModal();
     await flushFetch();
-    const badges = Array.from(document.body.querySelectorAll('thead .qty-label-badge')).map(
-      (b) => b.textContent,
-    );
-    expect(badges).toEqual(['g02', 'g99', 'g100']);
-    // 列头与输入列对齐：第 1 列（g02）正下方的重合 input 是 d-g02
-    const firstRowInput = document.body.querySelector('tbody tr')!.querySelector('input')!;
-    expect(firstRowInput.getAttribute('data-testid')).toBe('d-g02');
+    expect(colBadges()).toEqual(['g02', 'g99', 'g100']);
+    // 列头与格子对齐：首行（28 码）首列（g02）d 输入 = d-g02-28
+    const firstRowD = document.body.querySelector<HTMLInputElement>('tbody tr input')!;
+    expect(firstRowD.getAttribute('data-testid')).toBe('d-g02-28');
   });
 
-  it('values 已配置键并入列集（reps 无该 g 码也渲染，fetch 失败时保留已配置项）', async () => {
+  it('格 = d/tol 双输入（空串 + placeholder = 继承默认；aria 报 (g 码, 码号)）', async () => {
+    setDoc(TEST_DOC);
+    mockReps = TWO_REPS;
+    useControlPanelStore.getState().openModal('per_type');
+    renderModal();
+    await flushFetch();
+    const LE = '≤';
+    const d = document.body.querySelector<HTMLInputElement>('[data-testid="d-g01-28"]')!;
+    const tol = document.body.querySelector<HTMLInputElement>('[data-testid="tol-g01-28"]')!;
+    // 未配置格渲染空串（= 继承默认 0/0），placeholder 提示上限
+    expect(d.value).toBe('');
+    expect(tol.value).toBe('');
+    expect(d.placeholder).toBe(`d${LE}${MAX_OVERLAP_MM}`);
+    expect(tol.placeholder).toBe(`t${LE}${MAX_ROTATION_TOL_DEG}`);
+    expect(d.max).toBe(String(MAX_OVERLAP_MM));
+    expect(tol.max).toBe(String(MAX_ROTATION_TOL_DEG));
+    expect(d.getAttribute('aria-label')).toBe('裁片 g01 码 28 重合');
+    expect(tol.getAttribute('aria-label')).toBe('裁片 g01 码 28 旋转');
+    // 通用码行（null sizeKey）testid 用 'null'
+    expect(
+      document.body.querySelector('[data-testid="d-g01-null"]'),
+    ).not.toBeNull();
+  });
+
+  it('doc 中该 g 码无此码号 → missing 格「—」；label 完全不在 doc → 可编辑', async () => {
+    setDoc(TEST_DOC); // g02 仅 28 码；g03 不在 doc
     mockReps = {
       representatives: {
-        g01: { label: 'g01', polygon: [[0, 0], [100, 0], [100, 60], [0, 60]] },
+        ...TWO_REPS.representatives,
+        g03: { label: 'g03', polygon: [[0, 0], [50, 0], [50, 50], [0, 50]] },
       },
     };
     useControlPanelStore.getState().openModal('per_type');
-    const values: Record<string, PerTypeFormValue> = {
-      g05: { d: '1', tol: '2' },
-    };
-    renderModal(values);
+    renderModal();
     await flushFetch();
-    const badges = Array.from(document.body.querySelectorAll('thead .qty-label-badge')).map(
-      (b) => b.textContent,
-    );
-    // 并集排序：g01（reps）+ g05（values）
-    expect(badges).toEqual(['g01', 'g05']);
-    // g05 无 rep → 缩略图 disabled；g01 有 rep → 可点击
-    expect(
-      (document.body.querySelector('[data-testid="ptype-thumb-g05"]') as HTMLButtonElement)
-        .disabled,
-    ).toBe(true);
-    expect(
-      (document.body.querySelector('[data-testid="ptype-thumb-g01"]') as HTMLButtonElement)
-        .disabled,
-    ).toBe(false);
+    const row30 = Array.from(document.body.querySelectorAll('tbody tr')).find(
+      (tr) => tr.querySelector('.per-type-rowhead')!.textContent === '30',
+    )!;
+    const cells = Array.from(row30.querySelectorAll('td'));
+    // 列序 g01/g02/g03：g01@30 正常、g02@30 missing、g03@30（不在 doc）可编辑
+    expect(cells[0].classList.contains('missing')).toBe(false);
+    expect(cells[1].classList.contains('missing')).toBe(true);
+    expect(cells[1].querySelector('.per-type-missing')!.textContent).toBe('—');
+    expect(cells[1].querySelector('input')).toBeNull();
+    expect(cells[2].classList.contains('missing')).toBe(false);
+    expect(cells[2].querySelectorAll('input').length).toBe(2);
   });
 
   it('thumbnail hover/aria =「g 码-放大预览」不含任何中文片型名', async () => {
+    setDoc(TEST_DOC);
     mockReps = TWO_REPS;
     useControlPanelStore.getState().openModal('per_type');
     renderModal();
@@ -283,71 +381,96 @@ describe('PerTypeOverridesModal (US-018 / US-003 g 码列)', () => {
     expect(thumb.title).not.toContain('前片');
   });
 
-  it('initial draft prefills 0/0 for empty form.per_type values', () => {
+  it('initial draft preserves form.per_type 非空值；不预填 0（空 = 继承）', () => {
+    setDoc(TEST_DOC);
     useControlPanelStore.getState().openModal('per_type');
-    const values: Record<string, PerTypeFormValue> = {
-      g01: { d: '', tol: '' },
+    const values: PerTypeFormMap = {
+      g01: { '28': { d: '1.5', tol: '2' }, '30': { d: '', tol: '' } },
     };
     renderModal(values);
-    const d = document.body.querySelector<HTMLInputElement>('[data-testid="d-g01"]');
-    const tol = document.body.querySelector<HTMLInputElement>('[data-testid="tol-g01"]');
-    expect(d!.value).toBe('0');
-    expect(tol!.value).toBe('0');
-  });
-
-  it('initial draft preserves form.per_type non-empty values', () => {
-    useControlPanelStore.getState().openModal('per_type');
-    const values: Record<string, PerTypeFormValue> = {
-      g01: { d: '1.5', tol: '2' },
-    };
-    renderModal(values);
-    const d = document.body.querySelector<HTMLInputElement>('[data-testid="d-g01"]');
-    const tol = document.body.querySelector<HTMLInputElement>('[data-testid="tol-g01"]');
-    expect(d!.value).toBe('1.5');
-    expect(tol!.value).toBe('2');
+    const d28 = document.body.querySelector<HTMLInputElement>('[data-testid="d-g01-28"]');
+    const tol28 = document.body.querySelector<HTMLInputElement>('[data-testid="tol-g01-28"]');
+    const d30 = document.body.querySelector<HTMLInputElement>('[data-testid="d-g01-30"]');
+    expect(d28!.value).toBe('1.5');
+    expect(tol28!.value).toBe('2');
+    // values 里全空的 ('30') 格子不预填 '0'：空串 = 继承默认
+    expect(d30!.value).toBe('');
   });
 
   it('editing draft does NOT call onChange immediately', () => {
     const onChange = vi.fn();
+    setDoc(TEST_DOC);
     useControlPanelStore.getState().openModal('per_type');
-    const values: Record<string, PerTypeFormValue> = {
-      g01: { d: '0', tol: '0' },
-    };
+    const values: PerTypeFormMap = { g01: { '28': { d: '', tol: '' } } };
     renderModal(values, onChange);
-    const dInput = document.body.querySelector<HTMLInputElement>('[data-testid="d-g01"]')!;
+    const dInput = document.body.querySelector<HTMLInputElement>('[data-testid="d-g01-28"]')!;
     act(() => {
       setInputValue(dInput, '2');
     });
     expect(onChange).not.toHaveBeenCalled();
   });
 
-  it('confirm calls onChange + onClose (modal closes)', () => {
+  it('confirm：onChange 输出两级嵌套（含 g01@28 d=1.5）+ 剔除全空格子 + closes', () => {
     const onChange = vi.fn();
+    setDoc(TEST_DOC);
     useControlPanelStore.getState().openModal('per_type');
-    const values: Record<string, PerTypeFormValue> = {
-      g01: { d: '0', tol: '0' },
-    };
+    const values: PerTypeFormMap = { g01: { '28': { d: '', tol: '' }, '30': { d: '', tol: '' } } };
     renderModal(values, onChange);
-    const dInput = document.body.querySelector<HTMLInputElement>('[data-testid="d-g01"]')!;
+    const d28 = document.body.querySelector<HTMLInputElement>('[data-testid="d-g01-28"]')!;
+    const tol28 = document.body.querySelector<HTMLInputElement>('[data-testid="tol-g01-28"]')!;
     act(() => {
-      setInputValue(dInput, '2');
+      setInputValue(d28, '1.5');
+      setInputValue(tol28, '3');
+    });
+    // 另一格只填 tol（d 留空 = 继承）
+    const d30 = document.body.querySelector<HTMLInputElement>('[data-testid="d-g01-30"]')!;
+    act(() => {
+      setInputValue(d30, '');
+    });
+    const tol30 = document.body.querySelector<HTMLInputElement>('[data-testid="tol-g01-30"]')!;
+    act(() => {
+      setInputValue(tol30, '45');
     });
     const confirm = document.body.querySelector<HTMLButtonElement>('.per-type-btn-confirm')!;
     act(() => confirm.click());
     expect(onChange).toHaveBeenCalledTimes(1);
-    const next = onChange.mock.calls[0][0] as Record<string, PerTypeFormValue>;
-    expect(next['g01'].d).toBe('2');
+    const next = onChange.mock.calls[0][0] as PerTypeFormMap;
+    // 两级嵌套：{g01: {'28': {d:'1.5', tol:'3'}, '30': {d:'', tol:'45'}}}
+    expect(next).toEqual({
+      g01: {
+        '28': { d: '1.5', tol: '3' },
+        '30': { d: '', tol: '45' },
+      },
+    });
     expect(useControlPanelStore.getState().modal).toBeNull();
+  });
+
+  it('confirm 剔除双侧全空的 (label,sizeKey) 与全空 label', () => {
+    const onChange = vi.fn();
+    setDoc(TEST_DOC);
+    useControlPanelStore.getState().openModal('per_type');
+    const values: PerTypeFormMap = {
+      g01: { '28': { d: '', tol: '' } }, // 全空格
+      g02: { '28': { d: '1', tol: '' } },
+    };
+    renderModal(values, onChange);
+    // 把 g02@28 清空 → 两个 label 全空 → per_type 回写 {}
+    const dG02 = document.body.querySelector<HTMLInputElement>('[data-testid="d-g02-28"]')!;
+    act(() => {
+      setInputValue(dG02, '');
+    });
+    const confirm = document.body.querySelector<HTMLButtonElement>('.per-type-btn-confirm')!;
+    act(() => confirm.click());
+    expect(onChange).toHaveBeenCalledWith({});
   });
 
   it('cancel does not call onChange (draft discarded)', () => {
     const onChange = vi.fn();
+    setDoc(TEST_DOC);
     useControlPanelStore.getState().openModal('per_type');
-    const values: Record<string, PerTypeFormValue> = {
-      g01: { d: '0', tol: '0' },
-    };
+    const values: PerTypeFormMap = { g01: { '28': { d: '', tol: '' } } };
     renderModal(values, onChange);
-    const dInput = document.body.querySelector<HTMLInputElement>('[data-testid="d-g01"]')!;
+    const dInput = document.body.querySelector<HTMLInputElement>('[data-testid="d-g01-28"]')!;
     act(() => {
       setInputValue(dInput, '5');
     });
@@ -369,7 +492,7 @@ describe('PerTypeOverridesModal (US-018 / US-003 g 码列)', () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
-  it('ESC closes (draft discarded) when previewLabel is null', () => {
+  it('ESC closes (draft discarded) when previewLabel is null and fill closed', () => {
     const onChange = vi.fn();
     useControlPanelStore.getState().openModal('per_type');
     renderModal({}, onChange);
@@ -380,7 +503,7 @@ describe('PerTypeOverridesModal (US-018 / US-003 g 码列)', () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
-  it('ESC does NOT close modal when previewLabel is open (AC#10 双层独立)', () => {
+  it('ESC does NOT close modal when previewLabel is open (双层独立)', () => {
     // 同时挂 PtypePreviewModal 模拟双层场景（生产时两者同挂于 ControlPanel）
     useControlPanelStore.getState().openModal('per_type');
     useControlPanelStore.getState().openPreviewLabel('g01');
@@ -399,6 +522,25 @@ describe('PerTypeOverridesModal (US-018 / US-003 g 码列)', () => {
     });
     // 预览关闭，底层 modal 保留
     expect(useControlPanelStore.getState().previewLabel).toBeNull();
+    expect(useControlPanelStore.getState().modal).toBe('per_type');
+  });
+
+  it('ESC 只关整列设值弹层（fill open 时 modal 保留）', async () => {
+    setDoc(TEST_DOC);
+    mockReps = TWO_REPS;
+    useControlPanelStore.getState().openModal('per_type');
+    renderModal();
+    await flushFetch();
+    const fillBtn = document.body.querySelector<HTMLButtonElement>(
+      '[data-testid="per-type-fill-btn-g01"]',
+    )!;
+    act(() => fillBtn.click());
+    expect(document.body.querySelector('.qty-fill-popover')).not.toBeNull();
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    });
+    // 弹层关闭，modal 保留（三层独立 ESC）
+    expect(document.body.querySelector('.qty-fill-popover')).toBeNull();
     expect(useControlPanelStore.getState().modal).toBe('per_type');
   });
 
@@ -421,32 +563,14 @@ describe('PerTypeOverridesModal (US-018 / US-003 g 码列)', () => {
     expect(useControlPanelStore.getState().previewLabel).toBe('g01');
   });
 
-  it('inputs carry global caps d≤10 / t≤45', async () => {
-    mockReps = TWO_REPS;
-    useControlPanelStore.getState().openModal('per_type');
-    renderModal();
-    await flushFetch();
-    const LE = '≤';
-    for (const label of ['g01', 'g02']) {
-      const dInput = document.body.querySelector<HTMLInputElement>(`[data-testid="d-${label}"]`);
-      const tolInput = document.body.querySelector<HTMLInputElement>(`[data-testid="tol-${label}"]`);
-      expect(dInput!.placeholder).toBe(`d${LE}${MAX_OVERLAP_MM}`);
-      expect(tolInput!.placeholder).toBe(`t${LE}${MAX_ROTATION_TOL_DEG}`);
-      expect(dInput!.max).toBe(String(MAX_OVERLAP_MM));
-      expect(tolInput!.max).toBe(String(MAX_ROTATION_TOL_DEG));
-      // aria 报 g 码
-      expect(dInput!.getAttribute('aria-label')).toBe(`裁片 ${label} 重合`);
-      expect(tolInput!.getAttribute('aria-label')).toBe(`裁片 ${label} 旋转`);
-    }
-  });
-
   it('blur clamps draft into [0, max] (d→10, tol→0)', async () => {
+    setDoc(TEST_DOC);
     mockReps = TWO_REPS;
     useControlPanelStore.getState().openModal('per_type');
     renderModal();
     await flushFetch();
-    const dInput = document.body.querySelector<HTMLInputElement>('[data-testid="d-g01"]')!;
-    const tolInput = document.body.querySelector<HTMLInputElement>('[data-testid="tol-g01"]')!;
+    const dInput = document.body.querySelector<HTMLInputElement>('[data-testid="d-g01-28"]')!;
+    const tolInput = document.body.querySelector<HTMLInputElement>('[data-testid="tol-g01-28"]')!;
     // React 以 focusout 委托 onBlur，故用 bubbling focusout 触发
     act(() => {
       setInputValue(dInput, '99');
@@ -458,17 +582,6 @@ describe('PerTypeOverridesModal (US-018 / US-003 g 码列)', () => {
     expect(tolInput.value).toBe('0');
   });
 
-  it('reps 到位的新 g 码（draft 无键）渲染空串 = 继承默认 0（placeholder 提示）', async () => {
-    mockReps = TWO_REPS;
-    useControlPanelStore.getState().openModal('per_type');
-    renderModal(); // values={} → draft 无 g01/g02 键
-    await flushFetch();
-    const dG02 = document.body.querySelector<HTMLInputElement>('[data-testid="d-g02"]')!;
-    // 空串 + placeholder（不预填 '0'，空 = 继承同 0）
-    expect(dG02.value).toBe('');
-    expect(dG02.placeholder).toBe(`d≤${MAX_OVERLAP_MM}`);
-  });
-
   it('mousedown inside modal does NOT bubble-close (modal self-click safe)', () => {
     useControlPanelStore.getState().openModal('per_type');
     renderModal();
@@ -477,5 +590,146 @@ describe('PerTypeOverridesModal (US-018 / US-003 g 码列)', () => {
       modal.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
     });
     expect(useControlPanelStore.getState().modal).toBe('per_type');
+  });
+
+  // ------------------------------------------------------- ≡ 整列设值（US-004）
+  it('≡ 整列设值：d=1 应用 → 该列全部行 d=1（确认输出断言）；留空侧继承', async () => {
+    const onChange = vi.fn();
+    setDoc(TEST_DOC); // 行 28/30/null
+    mockReps = TWO_REPS;
+    useControlPanelStore.getState().openModal('per_type');
+    renderModal({}, onChange);
+    await flushFetch();
+    const fillBtn = document.body.querySelector<HTMLButtonElement>(
+      '[data-testid="per-type-fill-btn-g01"]',
+    )!;
+    act(() => fillBtn.click());
+    const popover = document.body.querySelector('.qty-fill-popover')!;
+    expect(popover.getAttribute('aria-label')).toBe('裁片 g01 整列设值');
+    const dFill = document.body.querySelector<HTMLInputElement>('[data-testid="per-type-fill-d"]')!;
+    act(() => {
+      setInputValue(dFill, '1');
+    });
+    act(() => {
+      popover.querySelector<HTMLButtonElement>('.qty-fill-apply')!.click();
+    });
+    // 弹层关闭；格内即时生效（d=1、tol 空串 = 继承）
+    expect(document.body.querySelector('.qty-fill-popover')).toBeNull();
+    expect(
+      document.body.querySelector<HTMLInputElement>('[data-testid="d-g01-28"]')!.value,
+    ).toBe('1');
+    expect(
+      document.body.querySelector<HTMLInputElement>('[data-testid="d-g01-null"]')!.value,
+    ).toBe('1');
+    expect(
+      document.body.querySelector<HTMLInputElement>('[data-testid="tol-g01-28"]')!.value,
+    ).toBe('');
+    // 确认输出：g01 列全部行（含通用 null 行）
+    act(() => {
+      document.body.querySelector<HTMLButtonElement>('.per-type-btn-confirm')!.click();
+    });
+    expect(onChange).toHaveBeenCalledWith({
+      g01: {
+        '28': { d: '1', tol: '' },
+        '30': { d: '1', tol: '' },
+        null: { d: '1', tol: '' },
+      },
+    });
+  });
+
+  it('≡ 整列设值：超限收边（d=99→10）；再全空应用 = 清空整列', async () => {
+    const onChange = vi.fn();
+    setDoc(TEST_DOC);
+    mockReps = TWO_REPS;
+    useControlPanelStore.getState().openModal('per_type');
+    renderModal({ g01: { '28': { d: '5', tol: '' } } }, onChange);
+    await flushFetch();
+    const fillBtn = document.body.querySelector<HTMLButtonElement>(
+      '[data-testid="per-type-fill-btn-g01"]',
+    )!;
+    act(() => fillBtn.click());
+    const dFill = document.body.querySelector<HTMLInputElement>('[data-testid="per-type-fill-d"]')!;
+    const tolFill = document.body.querySelector<HTMLInputElement>(
+      '[data-testid="per-type-fill-tol"]',
+    )!;
+    act(() => {
+      setInputValue(dFill, '99');
+      setInputValue(tolFill, '12');
+    });
+    act(() => {
+      document.body.querySelector<HTMLButtonElement>('.qty-fill-apply')!.click();
+    });
+    expect(
+      document.body.querySelector<HTMLInputElement>('[data-testid="d-g01-28"]')!.value,
+    ).toBe('10');
+    expect(
+      document.body.querySelector<HTMLInputElement>('[data-testid="tol-g01-28"]')!.value,
+    ).toBe('12');
+    // 再全空应用 → 整列清空（= 继承默认），确认输出不含 g01
+    act(() => fillBtn.click());
+    const dFill2 = document.body.querySelector<HTMLInputElement>('[data-testid="per-type-fill-d"]')!;
+    const tolFill2 = document.body.querySelector<HTMLInputElement>(
+      '[data-testid="per-type-fill-tol"]',
+    )!;
+    act(() => {
+      setInputValue(dFill2, '');
+      setInputValue(tolFill2, '');
+    });
+    act(() => {
+      document.body.querySelector<HTMLButtonElement>('.qty-fill-apply')!.click();
+    });
+    act(() => {
+      document.body.querySelector<HTMLButtonElement>('.per-type-btn-confirm')!.click();
+    });
+    expect(onChange).toHaveBeenCalledWith({});
+  });
+
+  it('≡ 整列设值：取消 / 遮罩 mousedown 不写；Enter 快捷应用写入', async () => {
+    setDoc(TEST_DOC);
+    mockReps = TWO_REPS;
+    useControlPanelStore.getState().openModal('per_type');
+    renderModal();
+    await flushFetch();
+    const fillBtn = document.body.querySelector<HTMLButtonElement>(
+      '[data-testid="per-type-fill-btn-g01"]',
+    )!;
+    // 取消：不写
+    act(() => fillBtn.click());
+    act(() => {
+      setInputValue(
+        document.body.querySelector<HTMLInputElement>('[data-testid="per-type-fill-d"]')!,
+        '2',
+      );
+    });
+    act(() => {
+      document.body
+        .querySelector('.qty-fill-popover')!
+        .querySelector<HTMLButtonElement>('.qty-fill-cancel')!
+        .click();
+    });
+    expect(document.body.querySelector('.qty-fill-popover')).toBeNull();
+    expect(
+      document.body.querySelector<HTMLInputElement>('[data-testid="d-g01-28"]')!.value,
+    ).toBe('');
+    // 遮罩 mousedown：不写
+    act(() => fillBtn.click());
+    const backdrop = document.body.querySelector('[data-testid="per-type-fill-backdrop"]')!;
+    act(() => {
+      backdrop.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    });
+    expect(document.body.querySelector('.qty-fill-popover')).toBeNull();
+    expect(
+      document.body.querySelector<HTMLInputElement>('[data-testid="d-g01-28"]')!.value,
+    ).toBe('');
+    // Enter 快捷应用：写
+    act(() => fillBtn.click());
+    const dFill = document.body.querySelector<HTMLInputElement>('[data-testid="per-type-fill-d"]')!;
+    act(() => {
+      setInputValue(dFill, '3');
+      dFill.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    });
+    expect(
+      document.body.querySelector<HTMLInputElement>('[data-testid="d-g01-28"]')!.value,
+    ).toBe('3');
   });
 });
