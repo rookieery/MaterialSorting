@@ -7,10 +7,11 @@
   layer 4  = 刺口(POINT，位置；法线读时按最近边重算，US-024)
   layer 7  = 布纹线(LINE，保留原始方向；排料时按方向旋转统一水平)
 
-库函数（``write_piece_dxf`` / ``assign_group_no`` / ``GROUP_NAMES``）由
-``web/server._commit_to_nesting_sync`` 调用：上传母版 → 切单裁片到
-``out/uploads/<doc_id>_pieces/``。原 CLI ``ms-export-dxf`` 已移除（Web 上传取代），
-生成 intermediate 的唯一途径是「Web 上传母版 → commit-to-nesting」。
+库函数 ``write_piece_dxf`` 由 ``web/server._commit_to_nesting_sync`` 调用：上传母版 →
+切单裁片 ``{label}_{size}.dxf`` 到 ``out/uploads/<doc_id>_pieces/``（裁片 g 码来自
+``nesting_engine.labeling.assign_codes``，本模块不做任何名称识别）。原 CLI
+``ms-export-dxf`` 已移除（Web 上传取代），生成 intermediate 的唯一途径是
+「Web 上传母版 → commit-to-nesting」。
 
 US-024：layer14/8/4 仅当 PieceOutline 携带对应字段（来自 ``collect_pieces_with_details``）
 才写出；旧调用方（仅 layer1+layer7 的 PieceOutline）向后兼容 —— 字段缺省/default_factory=[])
@@ -26,25 +27,6 @@ from ezdxf.lldxf.const import POLYLINE_CLOSED
 
 # 抑制 ezdxf 的 R12 $INSUNITS 等已知无害警告（R12 规范不导出单位变量，单位 mm 隐式）
 logging.getLogger("ezdxf").setLevel(logging.ERROR)
-
-from . import explore
-
-# group 编号 → 类型名（用户基于 SVG 人工识别确认）
-GROUP_NAMES = {
-    "g00": "后片", "g01": "前片", "g02": "机头", "g03": "裤耳",
-    "g04": "前袋", "g05": "火机袋", "g06": "后袋", "g07": "单排",
-    "g08": "双排", "g09": "腰",
-}
-
-
-def assign_group_no(pieces) -> dict[str, str]:
-    """复用 explore 的排序逻辑，把 group_key 映射为 g00..g09。"""
-    groups: dict[str, list] = {}
-    for p in pieces:
-        groups.setdefault(p.group_key, []).append(p)
-    ordered = sorted(groups.keys(), key=lambda k: explore.group_sort_key(groups[k]))
-    return {k: f"g{i:02d}" for i, k in enumerate(ordered)}
-
 
 def write_piece_dxf(piece, out_path: Path) -> None:
     """写单片 R12 DXF（5 层，向后兼容旧 PieceOutline 仅含 layer1+layer7）。

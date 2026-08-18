@@ -10,7 +10,7 @@ python -c "from materialsorting.web.server import app"                # 导入�
 ms-web                                                                 # 启动 uvicorn :8000（console_script）
 python -m materialsorting.web.server                                   # 等价（无 console_script 也能跑）
 curl -X POST http://127.0.0.1:8000/api/parse-dxf -F "file=@<dxf>"      # US-004 上传解析
-curl http://127.0.0.1:8000/api/ptypes                                  # US-020 片型代表裁片
+curl http://127.0.0.1:8000/api/ptypes                                  # US-020 裁片 g 码代表（US-001 v2 键 = label）
 ```
 
 > **intermediate 由 Web 上传母版 commit 生成**（`server.py` 启动期 `_reload_pieces_state()` 在 import 时读 `pieces_intermediate.json`；缺失不崩但 `_PIECES_STATE` 为空 dict，`/ws/solve` 报「排料数据为空」、`/api/ptypes` 返回 `{representatives:{}}`，前端上传母版 commit 成功后自动 reload 填入）。`materialSorting-web/static/` 也需 `npm run build` 一次让 mount 不空（dev 模式 Vite proxy 不依赖 build 产物，但 FastAPI mount 空目录会报错）。
@@ -30,36 +30,36 @@ curl http://127.0.0.1:8000/api/ptypes                                  # US-020 
 - **落盘路径**：`paths.OUT_DIR/uploads/<doc_id>.dxf`（`doc_id = uuid.uuid4().hex`，32 字符无横杠）。**禁硬编码** —— 用模块级常量 `UPLOADS_DIR = Path(paths.OUT_DIR) / 'uploads'`。
 - **CPU 解析走 executor**：`loop.run_in_executor(_executor, _parse_dxf_sync, str(dest))` 复用 6-worker 线程池（与 `/ws/solve` 同池）。母版深度解析 ~1-2s，不阻塞事件循环。
 - **错误码口径**：扩展名非 `.dxf`→400；超 `UPLOAD_MAX_BYTES=20MB`→413；ezdxf/collect 异常→422（中文错误信息）。**200 / 400 / 413 / 422 全部走 JSONResponse**（与 `/export` 一致），不抛 `HTTPException`。
-- **响应字段**（US-005 前端契约）：`{doc_id, filename, sizes:[{size, pieces:[{label,name,ptype,paired,polygon,internal_lines,notches,net_polygon,grain_line}]}]}`。polygon=`[[x,y],...]`；internal_lines=`[[[x,y],...],...]`；notches=`[[x,y,nx,ny],...]`；net_polygon=`[[x,y],...]`；grain_line=`[x1,y1,x2,y2]` 或 `null`。矩阵化重构 US-004 起每片 additive 附加 `ptype`（`group_key → assign_group_no → GROUP_NAMES`，与 commit 同链路；无映射 null）与 `paired`（`ptype ∈ PAIR_TYPES`，从 `nesting_bounds.load_pieces` 导入，web→nesting_bounds 向下依赖合规）—— 配对片 demand=N 份实际排 L+R 2N 物理片，前端小计按 ×2 计；字段纯新增，排序/标注/label 对齐不变量不动，旧前端忽略无害。
-- **A/B/C 标注口径**：每码内独立编号（不跨码续编）。排序键 `(-centroid_y, centroid_x, -area_mm2, block_name, piece_index)` → 上方/左/大片优先。码号分组排序：数值升序，`null` 殿后。`_label_for` 支持 26+ 自动 AA/AB（实测每码 ≤10 片，AA+ 仅兜底）。
+- **响应字段**（US-001 v2 契约，名称字段全删）：`{doc_id, filename, sizes:[{size, pieces:[{label,polygon,internal_lines,notches,net_polygon,grain_line}]}]}`。polygon=`[[x,y],...]`；internal_lines=`[[[x,y],...],...]`；notches=`[[x,y,nx,ny],...]`；net_polygon=`[[x,y],...]`；grain_line=`[x1,y1,x2,y2]` 或 `null`。**`name`/`ptype`/`paired` 已删除**（名称识别整体退场；配对镜像概念删除，需求侧一律走前端 `quantities[label][sizeKey]`，US-003 前端随动）。
+- **g 码赋号口径（US-001 v2）**：每码内独立 `g01+` 零填充编号（不跨码续编，字典序=数值序）。顺序赋码排序键 `sequential_sort_key = (group_key, -centroid_y, centroid_x, -area_mm2, block_name, piece_index)`（**T4：group_key 前置**，同一 block 模板跨码同号；码内成员按上方/左/大片优先）。母版 block 名带显式编号且 all-or-nothing 命中 → 整体复用母版码。码号分组排序：数值升序，`null` 殿后。单一真相源 `nesting_engine/labeling.py`。
 - **doc_id 是 US-010 入参**：`POST /api/commit-to-nesting {doc_id}` 会读 `uploads/<doc_id>.dxf`。**doc_id 必须可定位落盘文件**，故成功响应才返回 doc_id（422 时文件保留但响应不带 doc_id）。
 
 ## US-010 /api/commit-to-nesting 关键约定（Path A 全管线）
 
 - **请求体**：JSON `{doc_id, filename?}`。`doc_id` 必填，仅匹配 `_DOC_ID_RE = ^[0-9A-Za-z]{1,128}$`（防路径逃逸，`uuid.uuid4().hex` 自然命中）；`filename` 可选，缺省用 `<doc_id>.dxf`，作为新 intermediate 的 `source` 字段。
-- **管线（`_commit_to_nesting_sync` 跑在 executor）**：`explore.collect_pieces` → `assign_group_no` + `GROUP_NAMES` 定 ptype → `write_piece_dxf` 切单裁片到 `uploads/<doc_id>_pieces/` → `load_nest_pieces(pieces_dir, sizes=母版全码)` → 写回 `paths.INTERMEDIATE`。
-- **全码**：sizes 取母版实际全码 `sorted({p.size for p in pieces if p.size is not None})`，**不沿用 `DEFAULT_SIZES`** 8 码。M1787 实测 11 码 [28-38] → 176 NestPiece。
-- **临时单裁片目录**：`UPLOADS_DIR / f'{doc_id}_pieces'`。每次 commit 先 `shutil.rmtree` 再重写（**idempotent**）。v1 不自动清理（open question），同 doc_id 重跑覆盖。
+- **管线（`_commit_to_nesting_sync` 跑在 executor，US-001 v2 重排：g 码先行、零丢片、零合成）**：`collect_pieces_with_details` → `labeling.assign_codes(pieces)`（最先执行、无 gmap/group_names 参数）→ 逐片 `write_piece_dxf({label}_{size}.dxf)` + 写 `pieces_manifest.json` sidecar（`[{file,label,size}]`；仅 `size=None` 片跳过并计入 `skipped`，**无映射组不再 skip**）→ `load_nest_pieces(pieces_dir)`（**manifest 驱动**，文件名仅人读）→ 写回 `paths.INTERMEDIATE`（schema v2：每母版轮廓恰一条，无 ptype/side/paired；顶层 `label_representatives`）。
+- **全码**：sizes 取母版实际全码 `sorted({p.size for p in pieces if p.size is not None})`，**不沿用 `DEFAULT_SIZES`** 8 码。M1787 实测 11 码 [28-38] → 110 NestPiece（US-001 v2：= 母版 size≠None 轮廓数；旧 176 是镜像 L/R 合成口径，已删）。
+- **临时单裁片目录**：`UPLOADS_DIR / f'{doc_id}_pieces'` = `{label}_{size}.dxf` × N + `pieces_manifest.json`。每次 commit 先 `shutil.rmtree` 再重写（**idempotent**，同 doc_id 重跑覆盖）。旧版切片目录（无 manifest sidecar）被 `load_nest_pieces` 明确报错「请重新 commit」（FR-9 不静默兼容）。
 - **备份**：写回前 `shutil.copy2(paths.INTERMEDIATE, paths.INTERMEDIATE.with_suffix('.bak'))`（首次 commit 无原文件则跳过）。`.bak` 只保留一份（再 commit 覆盖）。
 - **错误码**：请求体非 JSON / 缺 doc_id / 类型错 / `_DOC_ID_RE` 不中 → **400**；`uploads/<doc_id>.dxf` 不存在 → **404**；管线异常（collect 空 / write 全跳过 / load_nest_pieces 空 / 写盘失败）→ **422**。全部 JSONResponse。
 - **`GATE_MM` 别名导入**：`from ..nesting_bounds.load_pieces import GATE_MM as NEST_GATE_MM`（写回新 intermediate 用源常量 1980，避免与既有 intermediate 的可能脏值扩散）。
 - **commit 后 reload（US-020）**：`_commit_to_nesting_sync` 成功后立即调 `_reload_pieces_state()`，下一次 `/ws/solve` / `/export` / `/api/ptypes` 即看到新裁片（前端无需重启 ms-web）。返回 payload 加 `reloaded: true`；reload 异常（罕见 I/O 竞态）降级为 `reloaded: false` + `reload_error` 字段，保留旧 state 不半切。
-- **回归等价（历史口径）**：对 M1787，commit 产物的 `pid` 集合 / `total_area_mm2` 与历史「全码 CLI 管线」（`load_nest_pieces(<pieces_dir>, sizes=[28..38])`，CLI 已移除）完全等价（实测 176/176 片、PID 集合相同、零面积 diff）。
+- **回归等价（历史口径，v1 时代）**：旧版（176 片镜像合成）commit 产物与历史 CLI 管线完全等价（实测 176/176、零面积 diff）。US-001 v2 起口径改为「intermediate 条数 = 母版 size≠None 轮廓数」（M1787 = 110），同 doc_id 重跑 idempotent（`total_area_mm2` 稳定）。
 
-## US-020 关键约定（_PIECES_STATE reload + GET /api/ptypes）
+## US-020 关键约定（_PIECES_STATE reload + GET /api/ptypes；US-001 v2：键 = g 码）
 
 - **可 reload 状态**：`_PIECES_STATE: dict = {doc, gate_mm, pieces, pieces_by_id}`（替代旧顶层 `PIECES / GATE_MM / PIECES_BY_ID` 三个常量）；`_state_lock = threading.Lock()` 保护读写原子。
 - **immutable snapshot 模式**：`_reload_pieces_state()` 在锁内整体 `clear()+update()` `_PIECES_STATE` 引用内容，读者始终拿到完整一致快照（不会读到半状态）。`_get_pieces_state()` 锁内返回当前 state 引用，调用方拿到后整连接复用（一次 ws 连接内 pieces 不变，避免求解中途数据切）。
 - **启动期 allow-empty**：import 时 `try: _reload_pieces_state() except: pass` —— intermediate 缺失不再让 `import materialsorting.web.server` 直接崩；`_PIECES_STATE={}` 时 `/api/ptypes` 返 `{representatives:{}}`、`/ws/solve` 报「排料数据为空」、`/export` 报「placed 的 pid 均未匹配」（400）。commit 成功后 `_reload_pieces_state()` 真正填入。
 - **`/ws/solve` 快照口径（关键不变量 AC#5）**：accept 阶段 `state = _get_pieces_state()` 取一次快照，整连接内 `pieces/gate_mm` 不变（避免求解中途 reload 切数据）；`build_instance` 用快照 pieces，density 换算用快照 gate_mm。
 - **`/export` 快照口径**：每次请求 `_get_pieces_state()` 拿当前 state（请求粒度快照足够；导出是短操作）。
-- **GET /api/ptypes（D10）**：从 `_PIECES_STATE.pieces` 按 ptype 分组、各取首个 piece 作代表；返回 `{representatives: Record<ptype, {polygon, net_polygon?, internal_lines?, notches?, grain_line?}>}`。字段白名单 `_PTYPE_REPRESENTATIVE_FIELDS` 透传 intermediate 已有字段 —— **layer-aware（D11）**：v1 仅 polygon，US-024 扩 intermediate 为 5 层后自动带 net/internal/notches/grain，前端代码无需改。空 state 返 `{representatives: {}}`。
-- **curl 验证 M1787**：commit 后 `/api/ptypes` 返 10 ptype 代表裁片（前片/后片/腰/前袋/后袋/机头/单排/双排/火机袋/裤耳），每个仅 `polygon` 字段。
+- **GET /api/ptypes（D10，US-001 v2：键 = g 码 label）**：优先返 intermediate 顶层 `label_representatives`（RAW 原始坐标，与上传预览同朝向；键 g01+）；无该字段（v1 旧档）回退从 `_PIECES_STATE.pieces` 按 label 分组取首个代表。返回 `{representatives: Record<label, {label, polygon, net_polygon?, internal_lines?, notches?, grain_line?}>}`。字段白名单 `_LABEL_REPRESENTATIVE_FIELDS` 透传 —— **layer-aware（D11）**：5 层自动带 net/internal/notches/grain。空 state 返 `{representatives: {}}`。
+- **curl 验证 M1787**：commit 后 `/api/ptypes` 返 10 个 g 码代表裁片（键 `g01`..`g10`，每个 5 层字段全带）。
 
-## US-022 关键约定（求解输入数量 demand per-size）
+## US-022 关键约定（求解输入数量 demand per-size；US-001 v2 改写）
 
-- **intermediate 加 label 字段**：`_commit_to_nesting_sync` 调 `nesting_engine.labeling.compute_size_ptype_labels(pieces, gmap, GROUP_NAMES)` → `{(size, ptype): label}` 写入每片的 `label`。L/R 同 ptype 共享 label。
-- **label 对齐不变量（AC#5）**：commit 走 NestPiece（归一化+镜像），parse 走 PieceOutline（原始坐标），坐标系不同不能直接排序对齐；但两者均源自同一母版的 `explore.collect_pieces`，对原始 pieces 施行与 `_build_parse_payload` 完全一致的排序键 `(-centroid_y, centroid_x, -area_mm2, block_name, piece_index)` + `label_for(idx)` 标注，再经 gmap/GROUP_NAMES 关联 ptype → label 按 (size, ptype) 严格对齐（M1787 验证 10/10 对齐）。
+- **intermediate label 字段（v2）**：`_commit_to_nesting_sync` 直接以 `assign_codes` 产出的 g 码为每片主键（`pid = f'{label}_{size}'`；`compute_size_ptype_labels` 已删除，无 (size, ptype) 中转、无 L/R 镜像共享 label 概念）。
+- **label 对齐不变量（AC#5，v2 简化）**：parse 与 commit 各自对同一母版跑 `assign_codes`（同 collect、同排序键、同母版码规则）→ 同一 `(block_name, size, piece_index)` 必得同 g 码；坐标系差异（NestPiece 归一化 vs PieceOutline 原始）不再影响对齐（M1787 实测 11 码 × g01..g10 逐片对齐，`tests/test_commit_pipeline.py` 覆盖）。
 - **共享 labeling 模块**：`nesting_engine/labeling.py` 是 parse/commit 两处标注的单一真相源；`server.py._label_for/_centroid/_size_sort_key` 转发到此。依赖方向合规（web → nesting_engine）。
 - **WS /ws/solve 入参增 quantities**：`{label: {sizeKey(str): N}}` | None。`build_instance` 按 `(piece.label, str(piece.size))` 查 N → `spyrrow.Item(demand=N)`；**demand=0 跳过该 piece（D2）**；piece 缺 label 或 quantities=None → demand=1（向后兼容旧 intermediate / 旧前端）。
 - **sizeKey 口径**：`str(size)`（number→String）；`null`→`'null'`（与前端 qtyStore `sizeKey` 一致）。

@@ -24,7 +24,7 @@
 | POST | `/export` | 导出最优 run → PNG / R12-DXF 附件下载 | `server.export` |
 | POST | `/api/parse-dxf` | US-004：multipart 上传母版 DXF → 深度解析 + A/B/C 标注 JSON | `server.parse_dxf` |
 | POST | `/api/commit-to-nesting` | US-010：把上传母版转排料 intermediate（Path A 全管线，覆盖写回 + .bak）+ US-020 commit 后 reload `_PIECES_STATE` | `server.commit_to_nesting` |
-| GET | `/api/ptypes` | US-020 D10：返回当前 `_PIECES_STATE` 下每个 ptype 的代表裁片（最小码内 parse 同序首个，2026-08-17 起附 `label` 编号），供前端高级配置弹窗缩略图/放大预览（D11 layer-aware） | `server.get_ptypes` |
+| GET | `/api/ptypes` | US-020 D10（US-001 v2：键 = g 码 label）：返回当前 `_PIECES_STATE` 下每个 g 码的代表裁片（最小码内 parse 同序首个，含 `label` 编号），供前端高级配置弹窗缩略图/放大预览（D11 layer-aware） | `server.get_ptypes` |
 | WS | `/ws/solve` | 排料求解流（manifest → frames → final） | `server.ws_solve` |
 
 > FastAPI 自动暴露 `/docs` `/openapi.json` 等 OpenAPI 路由；业务路由全在上表。
@@ -68,7 +68,7 @@
 | 函数 | 签名 | 说明 |
 |------|------|------|
 | `apply_transform` | `(polygon, rotation_deg: float, translation) → [(x,y)...]` | `world = R(θ)·(x,y)+(tx,ty)`，与前端 `pointsStr` 同公式 |
-| `placed_to_world` | `(placed, pieces_by_id) → [{pid,ptype,size,polygon,color,area_mm2}]` | pid 查 `_get_pieces_state()['pieces_by_id']`（US-020）取**原始** polygon → 世界坐标；查不到的跳过并 warning |
+| `placed_to_world` | `(placed, pieces_by_id) → [{pid,ptype,size,polygon,color,area_mm2}]` | pid 查 `_get_pieces_state()['pieces_by_id']`（US-020）取**原始** polygon → 世界坐标；查不到的跳过并 warning。US-001 v2 垫片：`ptype` 用 `.get()` 兜底（v2 intermediate 恒 None → 颜色/图例降级默认值，US-002 按 label 全量重做） |
 | `render_png` | `(world_pieces, *, width_mm, gate_mm, title) → bytes` | matplotlib Agg，dpi=200，类型配色复用 `PTYPE_COLORS`，图例仅画出现过的片型 |
 | `write_marker_dxf` | `(world_pieces, *, width_mm, gate_mm, title) → bytes` | ezdxf R12 + 闭合 POLYLINE（首尾补点），ACI 色号见 `TYPE_ACI`，ASCII 标题；**不用 LWPOLYLINE**（ET2008 轮廓消失坑） |
 | `write_marker_plt` | `(world_pieces, *, width_mm, gate_mm, title) → bytes` | US-033 HPGL/HP-GL 纯文本，**封装口径对齐生产 PLT**（`data/PC-20250508NJIF*.plt`）：头部 `IN;PS<纸长>;SP1;PW0.08;`（PS 纸长 = 走纸引导 + max(用布长度, 内容最大X 含刺口延伸) + 尾余量，×40；无 PS 时 WT 按默认 A0/A3 页幅裁切 7m+ marker）→ 逐片 SP1-SP5 → 尾部 `PU;PG;` 出纸；**CRLF 行尾**；**无 VS/LB 指令**（`title` 仅保签名不输出）；坐标=mm×40 round 取整，5 层笔号 SP1=outline+门幅框/SP2=net/SP3=internal/SP4=notch/SP5=grain；空层跳过；纯 ASCII bytes（无临时文件，无新 pip 依赖）；与 DXF 同闭合策略。**2026-08 现场撞机修正（对照生产 PLT 逐项核出的设备级差异）**：① 安全幅面 —— 内容按 `y ≤ PLOT_SAFE_MAX_Y_MM=1910` 半平面裁剪（**削平不缩放**，绝不变形），门幅框上沿压进可写幅宽（Y 内缩 `PLOT_BORDER_MARGIN_Y_MM=5`），越界裁片记 warning；与求解约束带 `NEST_GATE_MM=min(门幅,1910)` 同一事实源（`nesting_bounds/load_pieces.py`），此处裁剪是二道防线；② PD 分块 —— `_plt_polyline` 单条 PD ≤10 点（`_PLT_PD_MAX_PTS`）且整行 ≤110B（`_PLT_LINE_MAX_BYTES`）续画（对齐 ET 生产 ≤11 点/≤118B；国产 HP-GL 解释器行缓冲仅百余字节，超长单条溢出后坐标流错位 → 小车乱走须急停）；③ 走纸引导 —— 全体 X + `PLOT_LEAD_X_MM=20`（生产 PLT 内容 24mm 起画，贴 0 起画无定位余量），Y 不平移；HPGL 坐标非负整数，clamp 兜底取整负值 |
@@ -100,17 +100,14 @@ curl -X POST http://127.0.0.1:8000/api/parse-dxf \
       "size": 28,                                 // 块名尾码号；解析失败为 null
       "pieces": [
         {
-          "label": "A",                           // 0→A, 1→B, ..., 25→Z, 26→AA ...
-          "name": "noname..28",                   // 解码后的 block_name（GBK→UTF-8）
-          "ptype": "前片",                        // 矩阵化重构 US-004：片型名（group_key→assign_group_no→g00..g09→GROUP_NAMES，与 commit 同链路）；无映射时 null
-          "paired": true,                         // 矩阵化重构 US-004：ptype ∈ PAIR_TYPES（前片/后片/腰/前袋/后袋/机头）→ true；demand=1 份实际排 L+R 2 物理片
+          "label": "g01",                         // US-001 v2：g 码（0→g01, 1→g02 ... 零填充两位）；name/ptype/paired 已删除
           "polygon": [[x, y], ...],               // layer1 毛版外轮廓
           "internal_lines": [[[x, y], ...], ...], // layer8 POLYLINE 内部线（多条）
           "notches": [[x, y, nx, ny], ...],       // layer4 POINT 刀口：点 + 单位外法线（沿法线画 8mm 短线段）
           "net_polygon": [[x, y], ...],           // layer14 POLYLINE 净版轮廓；无则 []
           "grain_line": [x1, y1, x2, y2]          // layer7 LINE 布纹线；无则 null
         },
-        // ...B/C/.../J（每码 10 片）
+        // ...g02..g10（M1787 每码 10 片）
       ]
     },
     // ...29-38 共 11 码
@@ -120,19 +117,19 @@ curl -X POST http://127.0.0.1:8000/api/parse-dxf \
 
 **全码一次返回**（M1787 实测 ~680KB JSON / 110 片 / 11 码，远低于 1-3MB 上限）；前端按 `activeSize` 本地切片，不做按码懒加载。
 
-### ptype / paired（矩阵化重构 US-004，additive）
+### g 码编号（US-001 v2，名称字段全删）
 
-每片附加 `ptype`（片型中文名，与 `_commit_to_nesting_sync` 完全同链路：`group_key → assign_group_no → g00..g09 → GROUP_NAMES`；gno 无映射时 `null`）与 `paired = ptype ∈ PAIR_TYPES`（`nesting_bounds.load_pieces.PAIR_TYPES` 六类：前片/后片/腰/前袋/后袋/机头）。语义：`demand=N` 份施加在 (label, size) 的每条 NestPiece 上 → 配对片实际排 L+R 共 `2N` 物理片、内片 `N` 物理片；前端 QtyMatrix / SizePicker 小计与总片数按物理片数口径 `Σ demand × (paired?2:1)`。字段纯新增：排序/A-B-C 标注/`compute_size_ptype_labels` 的 parse↔intermediate label 对齐不变量不动，旧前端忽略新字段无害（M1787 curl 验证 110 片全含两字段，paired 六类 = PAIR_TYPES）。
+每片 `label` = 该码内 `g01+` 零填充编号（单一真相源 `nesting_engine/labeling.py`）。**`name` / `ptype` / `paired` 已删除**：名称识别（GROUP_NAMES）与配对镜像（PAIR_TYPES）整体退场，排几份完全由前端 `quantities[label][sizeKey]` 表达（数量即一切，WYSIWYG：母版 N 个轮廓 → intermediate N 条）。前端旧契约消费降级（弹窗缩略图空/图例默认色）由 US-003 前端随动收口。
 
 ### 排序 + 标注
 
-每码内裁片按以下键稳定排序后赋 A/B/C...：
+每码内裁片按以下键稳定排序后赋 `g01+`（`labeling.assign_codes`，顺序模式）：
 
 ```
-key = (-centroid_y, centroid_x, -area_mm2, block_name, piece_index)
+key = (group_key, -centroid_y, centroid_x, -area_mm2, block_name, piece_index)
 ```
 
-→ DXXF 数学系（Y 向上）下质心 Y 大者（视觉上方）优先、X 小者（视觉左）优先、面积大者优先；同质心/面积按 `block_name` 字典序 + `piece_index` 兜底。码号分组排序：`size` 升序，`null` 殿后。
+→ **T4：`group_key` 前置**（block 名派生的组标识，名称无关）—— 同一 block 模板跨码同号；组内按质心 Y 大者（视觉上方）优先、X 小者（视觉左）优先、面积大者优先，同质心/面积按 `block_name` 字典序 + `piece_index` 兜底。母版 block 名自带显式编号且每码 all-or-nothing 命中 → 整体复用母版码（输出按码数值序）。码号分组排序：`size` 升序，`null` 殿后。
 
 ### 错误响应
 
@@ -151,15 +148,15 @@ key = (-centroid_y, centroid_x, -area_mm2, block_name, piece_index)
 ### 关键不变量
 
 1. **doc_id 是 US-010 commit 入参**：`POST /api/commit-to-nesting {doc_id}` 会读 `uploads/<doc_id>.dxf`，故 doc_id 必须可定位文件。
-2. **A/B/C 在每码内独立编号**：码 A 与码 B 各自从 A 起算（不跨码续编）。
+2. **g 码在每码内独立编号**（US-001 v2）：码 28 与码 29 各自从 g01 起算（不跨码续编）；跨码同号由 group_key 前置排序保证（T4）。
 3. **`polygon` 是原始毛版几何**（未归一化 / 未对齐布纹 / 未镜像），与 intermediate 的 NestPiece polygon（归一化 + 镜像后）不同；US-007 `PiecePreviewSVG` 直接渲染此字段。
 4. **`grain_line` 与原始 DXF 同坐标系**（Y 向上），前端 SVG `scale(1,-1)` 翻转后与 PNG/R12 导出一致。
 5. **响应大小 ≤ 20MB 解析后压缩**：实测 M1787 ~680KB JSON，前端 `useParseDxf` 一次拿到全码缓存到 Zustand。
-6. **上传预览 US-005 前端契约**：响应字段名（`doc_id` / `filename` / `sizes[].size` / `sizes[].pieces[].{label,name,polygon,internal_lines,notches,net_polygon,grain_line}`）被 `materialSorting-web/src/types/parsed.ts` 严格镜像；改任一字段需同步 `types/parsed.ts` + `useParseDxf.test.tsx` AC#2。前端 hook `useParseDxf` 用 `FormData('file', file)` 发请求，**不手设 Content-Type**（让浏览器自动加 boundary）；成功后默认选中 `sizes[0].size`（最小码）。错误（400/413/422/网络错）统一进 `uploadStore.error`，UI 自取渲染。
+6. **上传预览前端契约**：响应字段名（`doc_id` / `filename` / `sizes[].size` / `sizes[].pieces[].{label,polygon,internal_lines,notches,net_polygon,grain_line}`）被 `materialSorting-web/src/types/parsed.ts` 严格镜像（US-001 v2 起 `name`/`ptype`/`paired` 删除，前端 US-003 随动）；改任一字段需同步 `types/parsed.ts` + `useParseDxf.test.tsx` AC#2。前端 hook `useParseDxf` 用 `FormData('file', file)` 发请求，**不手设 Content-Type**（让浏览器自动加 boundary）；成功后默认选中 `sizes[0].size`（最小码）。错误（400/413/422/网络错）统一进 `uploadStore.error`，UI 自取渲染。
 
 ## POST /api/commit-to-nesting — US-010 上传母版转 intermediate（Path A）
 
-把 US-004 落盘的母版 DXF 转成排料 intermediate（覆盖 `pieces_intermediate.json`），复用 `export_dxf` + `load_nest_pieces` 全管线。**Path A 实现**：服务端跑 `explore.collect_pieces` → `export_dxf.assign_group_no` + `GROUP_NAMES` 定片型 → `write_piece_dxf` 切单裁片到 `paths.OUT_DIR/uploads/<doc_id>_pieces/` → `load_nest_pieces(pieces_dir, sizes=母版全码)` → 写回 `paths.INTERMEDIATE`。CPU 密集管线跑在 `loop.run_in_executor(_executor, ...)` 复用 6-worker 线程池（与 `/ws/solve`、`/api/parse-dxf` 同池，防阻塞 WS）。
+把 US-004 落盘的母版 DXF 转成排料 intermediate（覆盖 `pieces_intermediate.json`），复用 `export_dxf` + `load_nest_pieces` 全管线。**Path A 实现（US-001 v2 重排：g 码先行、零丢片、零合成）**：服务端跑 `collect_pieces_with_details` → `labeling.assign_codes(pieces)`（最先执行、无名称映射参数）→ 逐片 `write_piece_dxf({label}_{size}.dxf)` + 写 `pieces_manifest.json` sidecar（`[{file,label,size}]`；仅 `size=None` 片跳过，无映射组不再 skip）→ `load_nest_pieces(pieces_dir)`（**manifest 驱动**）→ 写回 `paths.INTERMEDIATE`（schema v2：每母版 size≠None 轮廓恰一条）。CPU 密集管线跑在 `loop.run_in_executor(_executor, ...)` 复用 6-worker 线程池（与 `/ws/solve`、`/api/parse-dxf` 同池，防阻塞 WS）。
 
 ### 请求
 
@@ -187,10 +184,10 @@ curl -X POST http://127.0.0.1:8000/api/commit-to-nesting \
   "doc_id": "02a4d4e4f40e423196f026d291a94ea2",
   "source": "M1787(1)(2).dxf",         // 写入 intermediate 的 source 字段
   "sizes": [28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38],  // 母版实际全码（非 DEFAULT_SIZES 8 码）
-  "n_pieces": 176,                      // NestPiece 总数（含 L/R 镜像展开）
-  "total_area_mm2": 17650482.2,         // 所有 NestPiece 面积之和（mm²）
-  "n_written_dxf": 110,                 // 切出的单裁片 DXF 数（写入 uploads/<doc_id>_pieces/）
-  "n_skipped": 0,                       // 未切出的裁片数（GROUP_NAMES 映射缺失 / size=None）
+  "n_pieces": 110,                      // NestPiece 总数（US-001 v2：= 母版 size≠None 轮廓数，无镜像展开）
+  "total_area_mm2": 9251644.5,          // 所有 NestPiece 面积之和（mm²）
+  "n_written_dxf": 110,                 // 切出的单裁片 DXF 数（{label}_{size}.dxf，写入 uploads/<doc_id>_pieces/）
+  "n_skipped": 0,                       // 跳过片数（US-001 v2 仅 size=None 会跳过；无映射组不再 skip）
   "skipped": [],                        // 截断的前 10 条跳过原因（排查用）
   "bak": "D:\\code\\...\\pieces_intermediate.bak",  // 原 intermediate 备份路径
   "reloaded": true                      // US-020：commit 后 _reload_pieces_state() 是否成功（罕见 I/O 竞态时 false + reload_error 字段）
@@ -207,22 +204,22 @@ curl -X POST http://127.0.0.1:8000/api/commit-to-nesting \
 
 ### 副作用 + 写盘
 
-1. **临时单裁片目录**：`paths.OUT_DIR/uploads/<doc_id>_pieces/`（~110 个 DXF，每次 commit 先 `shutil.rmtree` 再重写，**idempotent**）。v1 不自动清理（open question），同 `doc_id` 重跑会覆盖。
+1. **临时单裁片目录**：`paths.OUT_DIR/uploads/<doc_id>_pieces/`（`{label}_{size}.dxf` × N + `pieces_manifest.json` sidecar，每次 commit 先 `shutil.rmtree` 再重写，**idempotent**，同 `doc_id` 重跑会覆盖）。文件名仅人读，语义（label/size）全在 manifest —— 旧版目录（无 sidecar）被 `load_nest_pieces` 明确报错「请重新 commit」（FR-9 不静默兼容）。
 2. **intermediate 备份**：写回前 `shutil.copy2(paths.INTERMEDIATE, paths.INTERMEDIATE.with_suffix('.bak'))`。`pieces_intermediate.bak` 是上一次写回前的快照（首次 commit 无原文件则跳过备份）。**只保留一份**（再 commit 会覆盖 `.bak`）。
-3. **intermediate schema 与历史 CLI 产物一致**：`{source, gate_mm, n_pieces, total_area_mm2, pieces[]}`；pieces 字段 `{pid, ptype, size, side, label(US-022), polygon, bbox, area_mm2, n_verts, allowed_angles, net_polygon(US-024), internal_lines(US-024), notches(US-024), grain_line(US-024)}`。`gate_mm=1980`（`nesting_bounds.load_pieces.GATE_MM`）、`allowed_angles=[0,180]`（v0.3 布纹线）。`label` 由 `compute_size_ptype_labels` 按 parse 同排序同标注生成，L/R 同 ptype 共享 label（AC#5 关键不变量）。US-024 起每片多 4 个 5 层字段（default_factory=[] / None 向后兼容旧 intermediate），由 `load_pieces.load_nest_pieces` 经 `_read_piece_full` + `_apply_layer_transforms` 与 polygon 共享 rotate→mirror→normalize transform 链后透传。
+3. **intermediate schema v2（US-001）**：`{source, gate_mm, n_pieces, total_area_mm2, pieces[], label_representatives}`；pieces 字段 `{pid, label, size, polygon, bbox, area_mm2, n_verts, allowed_angles, net_polygon(US-024), internal_lines(US-024), notches(US-024), grain_line(US-024)}` —— **无 `ptype`/`side`**（镜像/名称概念删除），`pid = f'{label}_{size}'`。`gate_mm=1980`（`nesting_bounds.load_pieces.GATE_MM`）、`allowed_angles=[0,180]`（v0.3 布纹线）。5 层字段由 `load_nest_pieces` 经 `_read_piece` + `_apply_layer_transforms` 与 polygon 共享 rotate→normalize transform 链后透传。顶层 `label_representatives`（原 `ptype_representatives`）：每 g 码 RAW 代表裁片（原始坐标，与上传预览同朝向）。旧 v1 intermediate 被 `solver.load_pieces` 明确拒绝（「intermediate 为旧版 schema v1（含 ptype/side），请重新 commit 母版生成新数据」）。
 4. **commit 后 reload（US-020）**：`_commit_to_nesting_sync` 成功 → 立即调 `_reload_pieces_state()` 重读 intermediate 填入 `_PIECES_STATE`（threading.Lock 保护，原子替换）。下一次 `/ws/solve` / `/export` / `/api/ptypes` 即看到新裁片，**前端无需重启 ms-web**。reload 异常（罕见 I/O 竞态）降级为 `reloaded: false` + `reload_error` 字段，保留旧 state 不半切。
 
 ### 关键不变量
 
-1. **全码**：`load_nest_pieces` 的 sizes 取自母版实际全码（`sorted({p.size for p in pieces if p.size is not None})`），**不沿用 `DEFAULT_SIZES`**（8 码跳 32）。M1787 实测 11 码 [28-38] → 176 NestPiece（vs 8 码 128 片）。
-2. **片型映射复用 `export_dxf.GROUP_NAMES`**（g00→后片 … g09→腰，M1787 结构款 SVG 人工确认）。新款母版须版师重新确认 group→ptype 映射。
-3. **NestPiece 仅含 polygon（毛版 layer1）**：grain/internal/notch 不进 intermediate（排料只需 polygon）；L/R 镜像由 `load_nest_pieces` 的 `PAIR_TYPES` 处理。
-4. **回归等价（历史口径）**：对 M1787，commit 产物的 `pid` 集合 / `total_area_mm2` 与历史「全码 CLI 管线」（`load_nest_pieces(<pieces_dir>, sizes=[28..38])`，CLI 已移除）等价（实测 176/176 片、PID 集合相同、零面积 diff）。
+1. **全码**：manifest 覆盖母版实际全码（`sorted({p.size for p in pieces if p.size is not None})`），**不沿用 `DEFAULT_SIZES`**（8 码跳 32）。M1787 实测 11 码 [28-38] → 110 NestPiece（US-001 v2：= 母版轮廓数；旧 176 为镜像 L/R 合成口径，已删）。
+2. **零丢片零合成（US-001 v2）**：无 GROUP_NAMES 映射组不再 skip（名称识别整体退场，未录入名称/无名 block 的新款母版全片有 g 码）；程序不合成镜像，marker = 母版轮廓 × 用户数量（WYSIWYG）。
+3. **NestPiece 5 层全透传**：毛版/净版/内部线/刺口/布纹随 polygon 共享 rotate→normalize 变换链（无 mirror 分支）。
+4. **回归等价（历史口径，v1 时代）**：旧版 commit 产物与历史全码 CLI 管线等价（实测 176/176、零面积 diff）；v2 起验收口径改为「intermediate 条数 = 母版 size≠None 轮廓数 + parse↔intermediate 逐片 label 对齐（AC#5）」，`tests/test_commit_pipeline.py` 覆盖。
 5. **路径一律走 `paths`**：`paths.OUT_DIR/uploads/`、`paths.INTERMEDIATE`、`paths.INTERMEDIATE.with_suffix('.bak')`；不硬编码 `..` 上溯。
 
-## GET /api/ptypes — US-020 片型代表裁片（D10/D11）
+## GET /api/ptypes — US-020 裁片 g 码代表（D10/D11；US-001 v2：键 = label）
 
-返回当前 `_PIECES_STATE` 下每个 ptype 的代表裁片 + 编号 `label`，供前端高级配置弹窗表头缩略图 + 点击放大预览（US-018）。
+返回当前 `_PIECES_STATE` 下每个 g 码（label）的代表裁片，供前端高级配置弹窗表头缩略图 + 点击放大预览（US-018）。
 
 ### 请求
 
@@ -237,31 +234,23 @@ curl http://127.0.0.1:8000/api/ptypes
 ```jsonc
 {
   "representatives": {
-    "前片":   {"label": "A", "polygon": [[x,y], ...]},   // 2026-08-17 起附 label 编号
-    "后片":   {"label": "B", "polygon": [[x,y], ...]},
-    "腰":     {"label": "C", "polygon": [[x,y], ...]},
-    "前袋":   {"label": "D", "polygon": [[x,y], ...]},
-    "后袋":   {"label": "E", "polygon": [[x,y], ...]},
-    "机头":   {"label": "F", "polygon": [[x,y], ...]},
-    "单排":   {"label": "G", "polygon": [[x,y], ...]},
-    "双排":   {"label": "H", "polygon": [[x,y], ...]},
-    "火机袋": {"label": "I", "polygon": [[x,y], ...]},
-    "裤耳":   {"label": "J", "polygon": [[x,y], ...]}
-    // US-024 后每个代表裁片自动带 net_polygon / internal_lines / notches / grain_line（前端 layer-aware 渲染，本端点无需改）
+    "g01": {"label": "g01", "polygon": [[x,y], ...]},
+    "g02": {"label": "g02", "polygon": [[x,y], ...]},
+    // ... g03..g10（US-001 v2：键 = g 码；每个代表自动带 net_polygon / internal_lines / notches / grain_line 5 层）
   }
 }
 ```
 
-### 字段透传白名单（`_PTYPE_REPRESENTATIVE_FIELDS`）
+### 字段透传白名单（`_LABEL_REPRESENTATIVE_FIELDS`）
 
-`('label', 'polygon', 'net_polygon', 'internal_lines', 'notches', 'grain_line')` —— **layer-aware（D11）**：v1 intermediate 只有 polygon → 仅返 polygon；US-024 intermediate 扩 5 层后自动带后 4 个字段；`label` = 代表裁片在上传预览里的 A/B/C 编号（2026-08-17 起），前端按数据有无自适应渲染。
+`('label', 'polygon', 'net_polygon', 'internal_lines', 'notches', 'grain_line')` —— **layer-aware（D11）**：intermediate 5 层自动带后 4 个字段；`label` = 代表裁片在上传预览里的 g 码编号，前端按数据有无自适应渲染。
 
 ### 关键不变量
 
 1. **空 state（首次启动未 commit / intermediate 缺失）**：返回 `{representatives: {}}`，不阻塞前端配置弹窗降级为片型名文字。
-2. **代表选取 + 编号与上传预览同口径（2026-08-17 起）**：优先取 intermediate `ptype_representatives`（RAW 原始坐标；选取 = 按码升序 + 码内 `parse_member_sort_key` 稳定排序，每 ptype 取**最小码内首个**有效片，`label` = 该片在其码内的 A/B/C 编号，与 `/api/parse-dxf` 赋号同键同序 —— 高级配置弹窗编号徽章与上传预览 QtyMatrix 列头指同一片，有 `tests/test_ptype_representatives.py` 回归）。旧 intermediate 无该字段 → 回退 `pieces` 首个代表（变换后坐标，无 label），re-commit 后自动切 RAW + label 口径。
-3. **M1787 验证**：commit 后返 10 个 ptype（前片/后片/腰/前袋/后袋/机头/单排/双排/火机袋/裤耳）。
-4. **响应字段不含 pid / size / area**：仅几何 + label；片型名是 key。前端 polygon 画缩略图、label 画编号徽章（缺席兜底片型名）。
+2. **代表选取 + 编号与上传预览同口径（US-001 v2）**：优先取 intermediate `label_representatives`（RAW 原始坐标；键 = g 码，选取 = 按码升序 + 码内 `parse_member_sort_key` 稳定排序，每 label 取**最小码内首个** size≠None 片，与 `/api/parse-dxf` 赋号同键同序 —— 高级配置弹窗编号徽章与上传预览 QtyMatrix 列头指同一片，有 `tests/test_label_representatives.py` 回归）。旧 v1 intermediate 无该字段 → 回退 `pieces` 按 label 分组取首个代表，re-commit 后自动切 RAW 口径。
+3. **M1787 验证**：commit 后返 10 个 g 码（`g01`..`g10`，各 5 层字段全带）。
+4. **响应字段不含 pid / size / area**：仅几何 + label；g 码是 key。前端 polygon 画缩略图、label 画编号徽章。
 
 ## WebSocket /ws/solve — 求解流
 
@@ -281,8 +270,8 @@ curl http://127.0.0.1:8000/api/ptypes
   "time": 120,                    // 求解时间预算（秒），默认 120
   "seed": 0,                      // sparrow 随机种子，默认 0
   "params": {"d_ext":0, "d_int":0, "tol_ext":0, "tol_int":0},  // US-019 起前端永远传全 0；主面板内外两档输入已删，d/tol 覆盖全交 per_type
-  "per_type": {"单排": {"d": 8, "tol": 15}},  // 可选，每片型高级覆盖；缺维度回退两档
-  "quantities": {"A": {"28": 2, "30": 0}, "B": {"28": 1}}  // US-022 可选，label→sizeKey→demand；0=该 piece 该码不排；缺省=null→全片 demand=1
+  "per_type": {"g03": {"28": {"d": 1.5}}},  // 可选，逐片高级覆盖（US-002 起 (label,sizeKey) 键；US-001 v2 intermediate 下旧 ptype 键不命中为 no-op）
+  "quantities": {"g01": {"28": 2, "30": 0}, "g02": {"28": 1}}  // US-022 可选，label→sizeKey→demand；0=该 piece 该码不排；缺省=null→全片 demand=1
 }
 ```
 
@@ -303,7 +292,8 @@ curl http://127.0.0.1:8000/api/ptypes
   "n_eroded": <被 erode 的片数>,
   "pieces": [
     {
-      "id": "<pid>", "ptype": "前片", "size": 30, "color": "#...", "area_mm2": <int>,
+      "id": "g03_30", "label": "g03", "size": 30, "color": "#...", "area_mm2": <int>,
+      // US-001 v2 垫片：消息仍含 "ptype" 键（v2 intermediate 恒 null → 前端图例降级默认色；US-002 删该键并按 label 取色）
       "polygon": [[x,y]...],          // 毛版外轮廓（erode 后，参与 sparrow NFP 碰撞）
       "net_polygon": [[x,y]...],      // US-024 净版（仅渲染透传，不参与碰撞；缺省 []）
       "internal_lines": [[[x,y],...]],// US-024 内部线多条（缺省 []）

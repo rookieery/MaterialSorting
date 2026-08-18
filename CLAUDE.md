@@ -12,7 +12,7 @@ web  →  nesting_engine  →  nesting_bounds  →  dxf_parser
 ```
 
 - `dxf_parser`：底层 DXF 读写。`reader.py`（ezdxf recover + GBK 块名 + R12 POLYLINE）、`geometry.py`（纯几何算子，无 ezdxf）、`model.py`（PieceOutline dataclass）。仅标准库 + ezdxf，不依赖任何兄弟包。
-- `nesting_bounds`：`load_pieces.py` 把单裁片 DXF → 布纹对齐水平 → 归一化到原点 → 成对镜像展开为 L/R。定义 `NestPiece`、`GATE_MM=1980`（布幅显示口径：UI/密度/导出外框）、`PLOT_SAFE_MAX_Y_MM=1910`（绘图仪可写幅宽）、`NEST_GATE_MM=min(两者)`（求解约束带，web/solver 与 CLI 引擎同口径）、`DEFAULT_SIZES`（8 码跳 32）。
+- `nesting_bounds`：`load_pieces.py` 把切片目录（`pieces_manifest.json` 驱动）逐文件 → 布纹对齐水平 → 归一化到原点（US-001 v2：**无镜像展开**，每文件恰一条 `NestPiece`，`pid=f'{label}_{size}'`）。定义 `GATE_MM=1980`（布幅显示口径：UI/密度/导出外框）、`PLOT_SAFE_MAX_Y_MM=1910`（绘图仪可写幅宽）、`NEST_GATE_MM=min(两者)`（求解约束带，web/solver 与 CLI 引擎同口径）、`DEFAULT_SIZES`（8 码跳 32）。
 - `nesting_engine`：sparrow 求解。`constraints.py`（重合/旋转**全局**上限 `MAX_OVERLAP_MM=10` / `MAX_ROTATION_TOL_DEG=45`（2026-08-17 起不再按片型钳制，版师 per-ptype 参考值在 `.docs/business/排料规则_详细版.md`）+ 位图腐蚀 + 合法性校验）、`sparrow_baseline.py`（基线 + **共享层**：PTYPE_COLORS/_clean_polygon/solve_with_progress，被 solver/export/sparrow_experiments 复用）、`sparrow_experiments.py`（旋转/重合公差实验）、`labeling.py`（**g01+ 编号单一真相源**：`assign_codes` 统一赋码（顺序模式 = parse_member_sort_key 几何稳定序；母版 block 名自带 `g/G/#`+数字编号且每码内唯一时全量复用），被 parse 赋号/ptype 代表裁片两处共用；导出 PNG/DXF 逐片叠印 g 码，PLT 永不加文字）。
 - `web`：`server.py`（FastAPI + WS）、`solver.py`（build_instance + 子线程求解回调）、`export.py`（PNG + R12-DXF marker）。
 
@@ -37,7 +37,7 @@ web  →  nesting_engine  →  nesting_bounds  →  dxf_parser
 
 ## 数据流主线
 
-上传母版 → `/api/parse-dxf`（解析预览 + 预览页「裁片 × 尺码」数量矩阵编辑 quantities，随求解 WS start 按码下发）→ `/api/commit-to-nesting`（切单裁片到 `out/uploads/<doc_id>_pieces/` → `load_nest_pieces` 归一化+镜像 → 写 `pieces_intermediate.json` 事实源）→ `ms-sparrow-*` / `ms-web`。详见 [README.md](README.md)。
+上传母版 → `/api/parse-dxf`（解析预览，每片 g 码 label + 5 层字段；「裁片 × 尺码」数量矩阵编辑 quantities，随求解 WS start 按码下发）→ `/api/commit-to-nesting`（US-001 v2：`assign_codes` 最先赋 g 码 → 切单裁片 `{label}_{size}.dxf` + `pieces_manifest.json` 到 `out/uploads/<doc_id>_pieces/` → `load_nest_pieces` manifest 驱动归一化（无镜像）→ 写 `pieces_intermediate.json` 事实源，条数 = 母版轮廓数）→ `ms-sparrow-*` / `ms-web`。详见 [README.md](README.md)。
 
 ## 运行方式
 

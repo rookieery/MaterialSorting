@@ -131,12 +131,14 @@ def placed_to_world(placed, pieces_by_id):
                 [(grain_raw[0], grain_raw[1]), (grain_raw[2], grain_raw[3])], rot, tr)
             world_grain = (gx1, gy1, gx2, gy2)
 
+        # US-001 垫片：v2 intermediate 无 ptype → .get() 兜底 None（颜色降级
+        # DEFAULT_COLOR；US-002 删 TYPE_ACI/TYPE_ORDER 并切 LABEL_COLORS + label 键）。
         out.append({
             'pid': pid,
-            'ptype': p['ptype'],
+            'ptype': p.get('ptype'),
             'size': p.get('size'),
             'polygon': world_poly,
-            'color': PTYPE_COLORS.get(p['ptype'], DEFAULT_COLOR),   # 与屏幕同色
+            'color': PTYPE_COLORS.get(p.get('ptype'), DEFAULT_COLOR),
             'area_mm2': p.get('area_mm2'),
             # g 码裁片标识（PNG 质心叠印 / DXF TEXT 用；旧 intermediate 无 → None 跳过）
             'label': p.get('label'),
@@ -216,10 +218,13 @@ def render_png(world_pieces, *, width_mm: float, gate_mm: float, title: str) -> 
     ax.set_title(title, fontsize=11, pad=10)
 
     # 类型图例（放外侧右栏，bbox_inches='tight' 会纳入画布，绝不压住裁片）
-    present = {pc['ptype'] for pc in world_pieces}
+    # US-001 垫片：v2 intermediate 无 ptype → 图例键优先 label（g 码），颜色降级
+    # DEFAULT_COLOR（US-002 全量重做为 LABEL_COLORS + code_sort_key 数值序）。
+    present = {(pc.get('label') or pc.get('ptype')) for pc in world_pieces}
+    present.discard(None)
     handles = [Patch(facecolor=PTYPE_COLORS.get(t, DEFAULT_COLOR),
                      edgecolor=PTYPE_COLORS.get(t, DEFAULT_COLOR), label=t)
-               for t in TYPE_ORDER if t in present]
+               for t in sorted(present)]
     if handles:
         ax.legend(handles=handles, loc='upper left', bbox_to_anchor=(1.01, 1.0),
                   fontsize=8, frameon=False, title='片型')
@@ -264,8 +269,9 @@ def write_marker_dxf(world_pieces, *, width_mm: float, gate_mm: float, title: st
 
     # 每片：5 层
     for pc in world_pieces:
-        ptype = pc['ptype']
-        aci = TYPE_ACI.get(ptype, 7)
+        # US-001 垫片：v2 intermediate 无 ptype → .get() 兜底（ACI 降级默认 7；
+        # US-002 改 label 码公式 ((code-1) % 24) + 1）。
+        aci = TYPE_ACI.get(pc.get('ptype'), 7)
         # layer1 毛版（闭合 POLYLINE；首尾补点闭合；不用 LWPOLYLINE —— ET2008 轮廓消失）
         pts = [(round(x, 2), round(y, 2)) for x, y in pc['polygon']]
         if len(pts) >= 2 and pts[0] != pts[-1]:

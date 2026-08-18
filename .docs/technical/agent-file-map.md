@@ -27,7 +27,7 @@ materialSorting-server/
     │   ├── explore.py                 母版全裁片探索 CLI（SVG/JSON/CSV）
     │   └── export_dxf.py              PieceOutline → 单裁片 R12 DXF
     ├── nesting_bounds/
-    │   └── load_pieces.py             单裁片 → 布纹对齐 → 归一化 → L/R 镜像；定义 NestPiece + 门幅双口径常量（GATE_MM=1980 显示 / PLOT_SAFE_MAX_Y_MM=1910 绘图仪可写 / NEST_GATE_MM=min 求解约束带）
+    │   └── load_pieces.py             单裁片（pieces_manifest.json 驱动）→ 布纹对齐 → 归一化（US-001 v2：无镜像展开）；定义 NestPiece（pid={label}_{size}）+ 门幅双口径常量（GATE_MM=1980 显示 / PLOT_SAFE_MAX_Y_MM=1910 绘图仪可写 / NEST_GATE_MM=min 求解约束带）
     ├── nesting_engine/
     │   ├── constraints.py             v0.3 约束常量 + 位图腐蚀 + 合法性校验
     │   ├── sparrow_baseline.py        基线求解 + ★共享层（被 experiments/export/solver 复用）
@@ -149,8 +149,7 @@ materialSorting-server/
 每个裁片导出为 `<类型>_<码号>.dxf`：layer 1 = 毛版轮廓（闭合 POLYLINE），layer 14 = 净版（闭合 POLYLINE），layer 8 = 内部线（多条 POLYLINE），layer 4 = 刺口（POINT 位置，法线不存盘），layer 7 = 布纹线（LINE）。Richway/ET 兼容。
 
 - **import 时副作用**：`logging.getLogger("ezdxf").setLevel(ERROR)` —— 静默 R12 `$INSUNITS` warning（R12 规范不导出单位变量，单位 mm 隐式）。
-- `GROUP_NAMES = {"g00":"后片","g01":"前片","g02":"机头","g03":"裤耳","g04":"前袋","g05":"火机袋","g06":"后袋","g07":"单排","g08":"双排","g09":"腰"}` —— 用户经 SVG 确认的 group→类型映射。
-- `assign_group_no(pieces)` —— 复用 `explore.group_sort_key` 把每个 `group_key` 映到 `g00..g09`。
+- （US-001 v2 已删）`GROUP_NAMES` / `assign_group_no` —— 名称识别整体退场；本模块仅剩 `write_piece_dxf`（文件名 `{label}_{size}.dxf`，g 码由调用方 `labeling.assign_codes` 决定）。
 - `write_piece_dxf(piece, out_path)` —— 写单裁片 5 层 DXF。US-024：若 PieceOutline 携带 `net_polygon` / `internal_lines` / `notches`（来自 `collect_pieces_with_details`），同时写 layer14/8/4；notch 仅存 POINT 位置，法线 (nx, ny) 丢弃（读时由 `load_pieces._read_piece_full` 按 outline 最近边重算）。库函数，由 `web/server._commit_to_nesting_sync` 调用切单裁片到 `out/uploads/<doc_id>_pieces/`（原 `ms-export-dxf` CLI 已移除）。
 
 ### `explore.py`（335 行）— 母版全裁片探索
@@ -176,7 +175,7 @@ materialSorting-server/
 
 ### `load_pieces.py`（312 行）— 单裁片 → NestPiece（5 层透传，US-024）
 
-读单裁片 DXF → 布纹对齐到水平 → 归一化到原点 → 成对镜像展开 L/R。**Stage 0 刻意不强制 v0.3 全局约束**：成对片独立放置（不强制对称），布纹仅用于读取期水平对齐，之后无旋转约束。US-024 起 `_read_piece_full` 读 5 层（layer1+layer14+layer8+layer4+layer7），notch 法线按 outline 最近边重算（与 `collect._nearest_edge_with_normal` 同算法）；5 层经 `_apply_layer_transforms` 与 polygon 共享 rotate→mirror→normalize transform 链。
+读 `pieces_manifest.json`（US-001 v2 manifest 驱动，`[{file,label,size}]`；无 sidecar 明确报错「请重新 commit」）→ 逐文件读单裁片 DXF → 布纹对齐到水平 → 归一化到原点（**无镜像展开**：镜像/`side` 概念已删，每文件恰一条 NestPiece，`pid=f'{label}_{size}'`）。布纹仅用于读取期水平对齐，之后无旋转约束。`_read_piece` 读 5 层（layer1+layer14+layer8+layer4+layer7），notch 法线按 outline 最近边重算（与 `collect._nearest_edge_with_normal` 同算法）；5 层经 `_apply_layer_transforms` 与 polygon 共享 rotate→normalize transform 链。
 
 **模块级常量：**
 
@@ -185,7 +184,7 @@ materialSorting-server/
 | `GATE_MM` | `1980.0`（门幅：布幅**显示**口径 —— UI / 密度分母 / PNG·DXF·PLT 外框，不减布边） |
 | `PLOT_SAFE_MAX_Y_MM` | `1910.0`（绘图仪 Y 可写幅宽，LIKE + WT「高速网口输出中心 V8.8」现场口径；2026-08 撞机根因 = 旧导出门幅框画到 1980、顶部刺口伸 1983.9mm，Y 超程小车撞导轨硬限位） |
 | `NEST_GATE_MM` | `min(GATE_MM, PLOT_SAFE_MAX_Y_MM)`（**求解约束带** strip 高度上限；web/solver 与 CLI 引擎同源引用；换机器/换布幅只改上面两个常量，此处自动跟随） |
-| `PAIR_TYPES` | `{'前片','后片','腰','前袋','后袋','机头'}`（镜像成 L+R） |
+| （US-001 v2 已删）`PAIR_TYPES` / `ALL_TYPES` —— 镜像展开与片型集合退场 |
 | `ALL_TYPES` | `['前片','后片','腰','前袋','后袋','机头','单排','双排','火机袋','裤耳']`（10 类规范序） |
 | `DEFAULT_SIZES` | `[28,29,30,31,33,34,35,36]`（8 码，**跳 32**） |
 
@@ -208,9 +207,9 @@ materialSorting-server/
 
 属性：`width = bbox[2]-bbox[0]`，`height = bbox[3]-bbox[1]`。
 
-私有：`_rotate`（绕原点旋）、`_mirror_x`（Y 轴镜像 `x→-x`，造右片）、`_normalize`（bbox 左下平移到原点）、`_read_piece`（旧版读 layer1+layer7 → polygon + 布纹角，保留向后兼容）、`_read_piece_full`（**US-024** 读全 5 层 → `(polygon, grain_deg, net, internal, notches, grain_line)`）、`_align_grain_horizontal`（竖布纹 ±90° → 水平；水平不变）、`_rotate_normal(nx, ny, deg)`（US-024 法线随片旋转）、`_grain_rotation_deg(grain_deg)`（US-024 把 grain_deg 映到 transform 旋角，与 `_align_grain_horizontal` 同语义）、`_apply_layer_transforms(...)`（US-024 把 5 层原始数据按 rotate→mirror→normalize 链统一变换；**notch 点必须随片旋转**——旧实现只转法线不转点，竖直布纹片 rot=±90 时刺口飞出轮廓 3m+（腰/后袋），PLT 导出 600 越界点、PNG/DXF 同源污染，已修复并有 `tests/test_load_pieces_notches.py` 回归）。
+私有：`_rotate`（绕原点旋）、`_normalize`（bbox 左下平移到原点）、`_read_piece`（读全 5 层 → `(polygon, grain_deg, net, internal, notches, grain_line)`）、`_align_grain_horizontal`（竖布纹 ±90° → 水平；水平不变）、`_rotate_normal(nx, ny, deg)`（US-024 法线随片旋转）、`_grain_rotation_deg(grain_deg)`（US-024 把 grain_deg 映到 transform 旋角，与 `_align_grain_horizontal` 同语义）、`_apply_layer_transforms(...)`（把 5 层原始数据按 rotate→normalize 链统一变换，US-001 v2 起 **mirror 参数已删**；**notch 点必须随片旋转**——旧实现只转法线不转点，竖直布纹片 rot=±90 时刺口飞出轮廓 3m+（腰/后袋），PLT 导出 600 越界点、PNG/DXF 同源污染，已修复并有 `tests/test_load_pieces_notches.py` 回归）。（US-001 v2 已删：`_mirror_x` / `_read_piece_full` 旧别名 / 镜像分支。）
 
-入口：`load_nest_pieces(data_dir, sizes=None, types=None) → list[NestPiece]`（PAIR_TYPES → 两个，否则一个 `side='M'`；US-024 起 L 与 R 共享同一 transform 链，5 层字段一并变换）。
+入口：`load_nest_pieces(data_dir) → list[NestPiece]`（US-001 v2：读 `pieces_manifest.json` 驱动，每条目恰一片；无 sidecar / 旧版目录 → RuntimeError「请重新 commit」）。
 
 ## nesting_engine/ — sparrow 求解 + v0.3 约束
 
@@ -223,7 +222,7 @@ materialSorting-server/
 ```
 MAX_OVERLAP_MM       = 10.0   # 全局最大重合深度（mm；UI 高级配置重合输入 max 同值）
 MAX_ROTATION_TOL_DEG = 45.0   # 全局最大旋转公差（°，绕 {0°,180°}；旋转输入 max 同值）
-PAIR_TYPES    = {'前片','后片','腰','前袋','后袋','机头'}
+# US-001 v2 已删：GROUP_NAMES / PAIR_TYPES / ALL_TYPES（名称识别与镜像展开退场）
 ```
 
 > 旧 `MAX_OVERLAP`/`ROTATION_TOL` 每片型字典 + `overlap_dpix` 已删（`web/solver.build_instance` 的钳制改 `min(申请值, 全局上限)`）。
@@ -280,7 +279,7 @@ parse-dxf 响应（`web/server.py._build_parse_payload`）与 intermediate（`we
 | `centroid(poly)` | 顶点算术质心（稳定排序键用） |
 | `size_sort_key(size)` | 码号排序：None 殿后，其余升序 |
 | `parse_member_sort_key(p)` | **码内稳定排序键单一真相源** `(-centroid_y, centroid_x, -area_mm2, block_name, piece_index)`（2026-08-17 收敛；parse 赋号 / label 对齐 / ptype 代表裁片三处共用，改一处自动三处同步） |
-| `compute_size_ptype_labels(pieces, gmap, group_names)` | 对 `explore.collect_pieces` 结果按 `parse_member_sort_key` 排序 + `label_for` 标注 → `{(size, ptype): label}`；L/R 同 ptype 共享 label |
+| `sequential_sort_key(p)` | US-001 v2（替代已删 `compute_size_ptype_labels`）：`assign_codes` 顺序赋码排序键 `(group_key,) + parse_member_sort_key(p)` —— T4 group_key 前置保证同一 block 模板跨码同号 |
 
 ## web/ — FastAPI + WebSocket 工作台
 
@@ -288,7 +287,7 @@ parse-dxf 响应（`web/server.py._build_parse_payload`）与 intermediate（`we
 
 | 文件 | 行 | 职责 |
 |------|----|------|
-| `server.py` | 795 | FastAPI app；**启动期 `_reload_pieces_state()`**（US-020 替代旧顶层 `load_pieces()`，allow-empty 不再让 import 崩）；路由 GET `/`、mount `/static`、POST `/export`（文件名前缀取 payload `filename` 上传母版名去 .dxf，缺省回退「排料」/nesting）、POST `/api/parse-dxf`（US-004 上传解析；**矩阵化重构 US-004 起每片 additive 透传 `ptype`/`paired`** —— `_build_parse_payload` 入口对全码 pieces `assign_group_no`（与 `_commit_to_nesting_sync` 同 gmap 链路），`paired = ptype in PAIR_TYPES`，前端物理片数口径 ×2 的数据源）、POST `/api/commit-to-nesting`（US-010 + US-020 commit 后 reload `_PIECES_STATE` + US-022 intermediate 加 label）、GET `/api/ptypes`（US-020 片型代表裁片 D10/D11；2026-08-17 起 reps 附 `label` 编号，选取口径=最小码内 parse 同序首个）、WS `/ws/solve`（accept 阶段 `_get_pieces_state()` 快照 + US-022 quantities 入参；**US-026 进程化**：`solve_with_callback_proc` 替代旧 threading 桥，write loop 内联 drain queue + read loop 后台 task 收 `{action:'stop'}` → terminate process → 发 `{type:'stopped'}` → 关闭 WS；客户端断开 → terminate+join 防孤儿）；`_terminate_solve_process(state_box)` 幂等 terminate+join+kill 兜底；`_state_lock=threading.Lock()` 保护 immutable snapshot；`ThreadPoolExecutor(max_workers=6)` 跑 `run_solve`（US-004 解析 / US-010 commit 也复用此池）；上传常量 `UPLOAD_MAX_BYTES=20MB` / `UPLOADS_DIR=paths.OUT_DIR/uploads` / `_DOC_ID_RE`；`_build_parse_payload` 按码分组 + 质心/面积稳定排序 + A/B/C 标注；`_commit_to_nesting_sync` Path A 全管线；`_PTYPE_REPRESENTATIVE_FIELDS` 透传白名单 |
+| `server.py` | 795 | FastAPI app；**启动期 `_reload_pieces_state()`**（US-020 替代旧顶层 `load_pieces()`，allow-empty 不再让 import 崩）；路由 GET `/`、mount `/static`、POST `/export`（文件名前缀取 payload `filename` 上传母版名去 .dxf，缺省回退「排料」/nesting）、POST `/api/parse-dxf`（US-004 上传解析；**US-001 v2 起响应仅 `label` + 5 层字段，`name`/`ptype`/`paired` 删除** —— `_build_parse_payload` 入口先跑 `labeling.assign_codes(pieces)`（无名称参数）g 码先行）、POST `/api/commit-to-nesting`（US-010 + US-020 commit 后 reload `_PIECES_STATE` + US-022 intermediate 加 label）、GET `/api/ptypes`（US-020 裁片代表 D10/D11；**US-001 v2 键 = g 码 label**，`_LABEL_REPRESENTATIVE_FIELDS` 白名单，优先 intermediate `label_representatives`）、WS `/ws/solve`（accept 阶段 `_get_pieces_state()` 快照 + US-022 quantities 入参；**US-026 进程化**：`solve_with_callback_proc` 替代旧 threading 桥，write loop 内联 drain queue + read loop 后台 task 收 `{action:'stop'}` → terminate process → 发 `{type:'stopped'}` → 关闭 WS；客户端断开 → terminate+join 防孤儿）；`_terminate_solve_process(state_box)` 幂等 terminate+join+kill 兜底；`_state_lock=threading.Lock()` 保护 immutable snapshot；`ThreadPoolExecutor(max_workers=6)` 跑 `run_solve`（US-004 解析 / US-010 commit 也复用此池）；上传常量 `UPLOAD_MAX_BYTES=20MB` / `UPLOADS_DIR=paths.OUT_DIR/uploads` / `_DOC_ID_RE`；`_build_parse_payload` 按码分组 + `assign_codes` g01+ 赋号（T4 group_key 前置排序）；`_commit_to_nesting_sync` Path A 全管线（assign_codes 最先 → `{label}_{size}.dxf` + `pieces_manifest.json` → manifest 驱动加载 → intermediate v2 + `label_representatives`）；`_LABEL_REPRESENTATIVE_FIELDS` 透传白名单 |
 | `solver.py` | 398 | `load_pieces` / `discretize_orientations` / `build_instance`（**erode=min(申, MAX_OVERLAP_MM=10)，tol=min(申, MAX_ROTATION_TOL_DEG=45)，2026-08-17 起全局上限不再按片型**；US-022 quantities→demand，0 跳过；**strip_height=min(gate_mm, PLOT_SAFE_MAX_Y_MM)** —— gate_mm 是显示口径，求解约束带钳绘图仪可写幅宽 1910，密度/导出/前端仍用 gate_mm 原值；US-024 pid_meta 加 5 层字段 `.get()` 向后兼容）/ `solve_with_callback`（**旧** threading 版，保留不删）/ `solve_with_callback_proc`（**US-025** multiprocessing 版 + **US-026 `on_process` 回调**：子进程 `start()` 后回调一次交出 `Process` 句柄供 WS stop/断开 terminate；density 双口径换算在主进程做；terminate 后 `cancel_join_thread + 限时 drain(≤50ms) + join(timeout=5)` 防死锁）+ `_apply_density_dual` 私有换算helper |
 | `solve_worker.py` | 141 | US-025 **新增**。顶层 `solve_worker(pieces_snapshot, gate_mm, solve_params, result_queue)` —— Windows spawn 可 pickle（无闭包、参数全 JSON）。子进程内 `build_instance(...) → 投 {kind:manifest}` → `instance.solve(config, progress=ProgressQueue)` → drain 出中间解投 `{kind:frame,report}` → 末尾投 `{kind:final,final}` 或 `{kind:error,message}`。所有投递纯 JSON，spyrrow 对象绝不跨进程。延迟 import build_instance 避免主进程 `from solve_worker import` 时强制拉 sparrow_baseline |
 | `export.py` | 614 | `apply_transform` / `placed_to_world`（用**原始**非 eroded 轮廓；US-024 起 5 层一并变换，notch 点按点变换 + 法线按向量旋转）/ `render_png`（matplotlib Agg；US-024 起 5 层叠加：net 绿虚线 / internal 橙 / notch 黄短线段 / grain 红虚线）/ `write_marker_dxf`（R12 POLYLINE + ACI 色 + ASCII 标题；US-024 起多 layer：outline layer1 / net layer14 / internal layer8 / notch layer4 POINT / grain layer7 LINE，各自独立 entity）/ `write_marker_plt`（US-033 HPGL/HP-GL 纯文本，**封装口径对齐生产 PLT** `data/PC-20250508NJIF*.plt`：头部 `IN;PS<纸长>;SP1;PW0.08;` + `SP1-5;` PU/PD + 尾部 `PU;PG;`，CRLF 行尾，无 VS/LB 指令；坐标=mm×40 round；5 层笔号 SP1=outline/SP2=net/SP3=internal/SP4=notch/SP5=grain + 门幅框并入 SP1；空层跳过；纯 ASCII bytes，无临时文件、无新依赖；**2026-08 现场撞机修正**：① 安全幅面 —— 内容按 y ≤ PLOT_SAFE_MAX_Y_MM 半平面裁剪（削平不缩放）、门幅框上沿压进可写幅宽（Y 内缩 PLOT_BORDER_MARGIN_Y_MM=5）、越界裁片记 warning（二道防线，兜旧 intermediate/求解 bug；求解已由 NEST_GATE_MM 一道钳制）；② PD 分块 —— `_plt_polyline` 单条 PD ≤10 点且整行 ≤110B 续画（对齐 ET 生产 ≤11点/≤118B，防国产 HP-GL 解释器行缓冲溢出坐标错位小车乱走）；③ 走纸引导 —— 全体 X + PLOT_LEAD_X_MM=20（贴 0 起画无定位余量），PS 纸长 = 引导 + max(用布长, 内容最大X) + 尾余量 PLOT_TAIL_X_MM=10）/ `_plt_frame_stats`（越界防御 + PS 纸长取值：全层顶点 + notch 点须在门幅框内，非 0 记 warning；notch 法线端点外伸只计入 max_x 不告警） |
@@ -302,10 +301,10 @@ US-004 起 `web/server.py` 直接 import `dxf_parser.collect.collect_pieces_with
   │ collect.collect_pieces_with_details（5 层 IR）
   ▼ /api/parse-dxf（预览）→ /api/commit-to-nesting
 out/uploads/<doc_id>_pieces/{类型}_{码号}.dxf（每片 layer1+14+8+4+7 五层，由 write_piece_dxf 切出）
-  │ load_pieces.load_nest_pieces（_read_piece_full 读 5 层 + notch 法线按最近边重算 + _apply_layer_transforms 共享 transform 链 + 布纹对齐 + 归一化 + L/R 镜像）
+  │ load_pieces.load_nest_pieces（pieces_manifest.json 驱动；_read_piece 读 5 层 + notch 法线按最近边重算 + _apply_layer_transforms 共享 transform 链 + 布纹对齐 + 归一化；US-001 v2 无镜像）
   ▼
 NestPiece（母版全码，每片持 polygon + net_polygon + internal_lines + notches + grain_line 5 层）
-  │ _commit_to_nesting_sync（labeling.compute_size_ptype_labels 标 label）
+  │ _commit_to_nesting_sync（labeling.assign_codes 最先赋 g 码，零丢片零合成，写 intermediate v2 + label_representatives）
   ▼
 out/sparrow_baseline/pieces_intermediate.json   ← 全流程事实源（每片 5 层字段）
   │

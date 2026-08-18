@@ -33,10 +33,19 @@ DEFAULT_INTERMEDIATE = paths.INTERMEDIATE
 
 
 def load_pieces(intermediate_path: str = DEFAULT_INTERMEDIATE):
-    """读 pieces_intermediate.json。返回 (doc, gate_mm, pieces)。"""
+    """读 pieces_intermediate.json（schema v2）。返回 (doc, gate_mm, pieces)。
+
+    FR-9 旧数据不双读：v1 intermediate（片含 ptype/side 或顶层 ptype_representatives，
+    含合成镜像的 176 片产物）明确报错「请重新 commit」，不做静默兼容 —— 重新 commit
+    即迁移。
+    """
     with open(intermediate_path, encoding='utf-8') as f:
         doc = json.load(f)
-    return doc, float(doc['gate_mm']), doc['pieces']
+    pieces = doc['pieces']
+    if pieces and any('ptype' in p or 'side' in p for p in pieces)             or 'ptype_representatives' in doc:
+        raise RuntimeError(
+            'intermediate 为旧版 schema v1（含 ptype/side），请重新 commit 母版生成新数据')
+    return doc, float(doc['gate_mm']), pieces
 
 
 def discretize_orientations(tol: float):
@@ -116,7 +125,10 @@ def build_instance(pieces, gate_mm, *, time_budget: int, seed: int,
         if demand <= 0:
             continue   # D2：该 piece 该码 demand=0 → 不排（也不计入 total_area）
 
-        ptype = p['ptype']
+        # US-001 垫片：v2 intermediate 无 ptype → .get() 兜底 None（internal 判断恒
+        # False 走外部档、per_type 键不命中回退两档默认；US-002 删 internal 概念后
+        # 全链路切 label 键）。
+        ptype = p.get('ptype')
         internal = ptype in INTERNAL_TYPES
         base_d = float(pdef['d_int'] if internal else pdef['d_ext'])
         base_tol = float(pdef['tol_int'] if internal else pdef['tol_ext'])

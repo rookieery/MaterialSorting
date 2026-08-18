@@ -3,6 +3,9 @@
 背景：``_apply_layer_transforms`` 旋转步骤旧实现只旋转 notch 法线、**不旋转 notch 点**，
 导致竖直布纹（grain_deg=±90 → rot=±90）的裁片（腰/后袋）刺口点飞出轮廓 3m+，
 污染 intermediate → PLT 600 越界点 / PNG / DXF / 前端预览。本文件锁定该缺陷。
+
+v2（裁片编号化重构）：``_apply_layer_transforms`` 删 mirror 参数（镜像概念全链路
+删除），仅 rotate → normalize。
 """
 from __future__ import annotations
 
@@ -24,7 +27,7 @@ def test_notch_point_rotates_with_piece():
     poly, _net, _internal, out_notches, _gl, bbox, _area = _apply_layer_transforms(
         polygon=polygon, net_polygon=[], internal_lines=[],
         notches=notches, grain_line=None,
-        rotate_deg=90.0, mirror=False,
+        rotate_deg=90.0,
     )
     xs = [p[0] for p in poly]
     ys = [p[1] for p in poly]
@@ -48,22 +51,10 @@ def test_notch_normal_rotates_with_piece():
     _poly, _net, _internal, out_notches, _gl, _bbox, _area = _apply_layer_transforms(
         polygon=polygon, net_polygon=[], internal_lines=[],
         notches=notches, grain_line=None,
-        rotate_deg=90.0, mirror=False,
+        rotate_deg=90.0,
     )
     nx, ny = out_notches[0][2], out_notches[0][3]
     assert abs(nx) < 1e-9 and abs(ny - 1.0) < 1e-9
-
-
-def test_mirror_flips_notch_point_and_normal_x():
-    """mirror：点 x→−x、法线 nx→−nx（R 片成对镜像语义不变）。"""
-    polygon, notches = _piece_layers()
-    _poly, _net, _internal, out_notches, _gl, bbox, _area = _apply_layer_transforms(
-        polygon=polygon, net_polygon=[], internal_lines=[],
-        notches=notches, grain_line=None,
-        rotate_deg=0.0, mirror=True,
-    )
-    # mirror 后 normalize dx=100 → 点 (100,500)→(-100,500)→(0,500)；法线 (1,0)→(-1,0)
-    assert out_notches == [(0.0, 500.0, -1.0, 0.0)]
 
 
 def test_zero_rotation_passthrough():
@@ -72,7 +63,7 @@ def test_zero_rotation_passthrough():
     _poly, _net, _internal, out_notches, _gl, _bbox, _area = _apply_layer_transforms(
         polygon=polygon, net_polygon=[], internal_lines=[],
         notches=notches, grain_line=None,
-        rotate_deg=0.0, mirror=False,
+        rotate_deg=0.0,
     )
     assert out_notches == [(100.0, 500.0, 1.0, 0.0)]
 

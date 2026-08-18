@@ -31,14 +31,16 @@ from fastapi.staticfiles import StaticFiles
 from urllib.parse import quote
 
 from .. import paths
-from ..dxf_parser import explore
 from ..dxf_parser.collect import collect_pieces_with_details
-from ..dxf_parser.export_dxf import assign_group_no, GROUP_NAMES, write_piece_dxf
-from ..nesting_bounds.load_pieces import load_nest_pieces, GATE_MM as NEST_GATE_MM, PAIR_TYPES
+from ..dxf_parser.export_dxf import write_piece_dxf
+from ..nesting_bounds.load_pieces import (
+    load_nest_pieces,
+    GATE_MM as NEST_GATE_MM,
+    PIECES_MANIFEST_NAME,
+)
 from ..nesting_engine.labeling import (
     size_sort_key,
     assign_codes,
-    compute_size_ptype_labels,
 )
 
 STATIC_DIR = paths.STATIC_DIR
@@ -121,35 +123,25 @@ def _size_sort_key(size: int | None) -> tuple[int, int]:
 def _build_parse_payload(doc_id: str, filename: str, pieces) -> dict:
     """把 collect_pieces_with_details 结果按码号分组 + 排序 + 赋 g01+ 裁片码。
 
-    响应结构与 US-005 前端契约一致：每片含 label/name/ptype/paired/polygon/internal_lines/
-    notches/net_polygon/grain_line。polygon / net_polygon = [[x,y], ...]；internal_lines =
-    [[[x,y], ...], ...]；notches = [[x,y,nx,ny], ...]；grain_line = [x1,y1,x2,y2] 或 null。
+    响应结构与前端契约（v2 label-only）一致：每片含 label/polygon/internal_lines/
+    notches/net_polygon/grain_line，**无 name/ptype/paired**（中文名与配对概念已从
+    契约删除）。polygon / net_polygon = [[x,y], ...]；internal_lines = [[[x,y], ...], ...]；
+    notches = [[x,y,nx,ny], ...]；grain_line = [x1,y1,x2,y2] 或 null。
 
-    矩阵化重构 US-004：每片 additive 附加 ptype（group_key → assign_group_no → g00..g09 →
-    GROUP_NAMES，与 ``_commit_to_nesting_sync`` 完全同链路）与 paired（ptype ∈ PAIR_TYPES，
-    配对片型 demand=1 份实际排 L+R 2 物理片）。
-
-    排序 + 编号收敛到 ``labeling.assign_codes`` 单一真相源（2026-08-18 起 g01+ 零填充
-    编号，取代旧 A/B/C 字母序号；母版 block 名带显式编号时整体复用），与
-    ``labeling.compute_size_ptype_labels`` 的 parse↔intermediate label 对齐不变量不动。
+    排序 + 编号收敛到 ``labeling.assign_codes`` 单一真相源（g01+ 零填充；顺序赋码
+    group_key 前置保证跨码同号；母版 block 名带显式编号时整体复用）。parse 与
+    commit 各自对同一母版跑 ``assign_codes``，同一 ``(block_name, size, piece_index)``
+    必得同码（AC#5），不再经 (size, ptype) 中转。
     """
-    # 与 commit 同一 gmap（对全码 pieces 整体 assign，group_key → g00..g09 稳定）
-    gmap = assign_group_no(pieces)
-    # 每码有序 [(piece, code), ...]：顺序模式 = 质心/面积稳定排序（上方/左/大片优先）；
-    # 母版复用模式 = 母版码数值序。三消费方（parse 赋号 / intermediate label / ptype
-    # 代表裁片）迭代同一结构，同序同码。
-    codes_by_size = assign_codes(pieces, gmap, GROUP_NAMES)
+    # g 码最先算（label 先行）；每码有序 [(piece, code), ...]。
+    codes_by_size = assign_codes(pieces)
 
     sizes_out = []
     for size in sorted(codes_by_size.keys(), key=_size_sort_key):
         pieces_out = []
         for p, code in codes_by_size[size]:
-            ptype = GROUP_NAMES.get(gmap.get(p.group_key))
             pieces_out.append({
                 'label': code,
-                'name': p.block_name,
-                'ptype': ptype,
-                'paired': ptype in PAIR_TYPES,
                 'polygon': [[float(x), float(y)] for x, y in p.polygon_mm],
                 'internal_lines': [
                     [[float(x), float(y)] for x, y in line]
@@ -169,8 +161,8 @@ def _build_parse_payload(doc_id: str, filename: str, pieces) -> dict:
     return {'doc_id': doc_id, 'filename': filename, 'sizes': sizes_out}
 
 
-def _build_ptype_representatives(pieces, gmap, group_names) -> dict:
-    """每片型 RAW 代表裁片 + 裁片码 label（与 ``_build_parse_payload`` 上传预览同口径）。
+def _build_label_representatives(pieces) -> dict:
+    """每 g 码 RAW 代表裁片（与 ``_build_parse_payload`` 上传预览同口径）。
 
     供 GET /api/ptypes 渲染高级配置缩略图 / 放大预览。**刻意取原始坐标**（不走
     ``load_nest_pieces`` 的布纹对齐旋转）—— 否则纵向布纹线裁片（如腰 992×166）被
@@ -179,23 +171,21 @@ def _build_ptype_representatives(pieces, gmap, group_names) -> dict:
     的需要（intermediate ``pieces`` 仍存变换后几何供 sparrow），与缩略图展示无关。
 
     代表选取 + 编号（与上传预览严格一致）：按码升序迭代 ``labeling.assign_codes``
-    的每码有序（piece, code）列表（与 ``_build_parse_payload`` 赋号同源同序），
-    每片型取**最小码内首个**有效片（ptype/size 均非 None，与 ``write_piece_dxf``
-    写出条件一致），``label`` = 该片在其码内的 g01+ 裁片码 —— 高级配置弹窗列头显示
-    该编号徽章，与上传预览 QtyMatrix 列头（同编号缩略图）所指同一片。
-    返回 ``{ptype: {label, polygon, net_polygon, internal_lines, notches, grain_line}}``。
+    的每码有序（piece, code）列表（与 ``_build_parse_payload`` 赋号同源同序），每
+    g 码取**最小码内首个**有效片（size 非 None，与 ``write_piece_dxf`` 写出条件
+    一致）。返回 ``{label: {label, polygon, net_polygon, internal_lines, notches,
+    grain_line}}``（键 = g 码）。
     """
-    codes_by_size = assign_codes(pieces, gmap, group_names)
+    codes_by_size = assign_codes(pieces)
 
     reps: dict[str, dict] = {}
     for size in sorted(codes_by_size.keys(), key=_size_sort_key):
         for p, code in codes_by_size[size]:
             if p.size is None:
                 continue
-            ptype = group_names.get(gmap.get(p.group_key))
-            if ptype is None or ptype in reps:
+            if code in reps:
                 continue
-            reps[ptype] = {
+            reps[code] = {
                 'label': code,
                 'polygon': [[round(float(x), 3), round(float(y), 3)] for x, y in p.polygon_mm],
                 'net_polygon': [[round(float(x), 3), round(float(y), 3)] for x, y in p.net_polygon],
@@ -255,26 +245,29 @@ async def parse_dxf(file: UploadFile = File(...)):
 # ---------------------------------------------------------------- US-010 commit-to-nesting
 
 def _commit_to_nesting_sync(doc_id: str, src_dxf: str, source_name: str) -> dict:
-    """US-010 Path A 全管线（同步，跑在 executor 里）：
+    """US-010 Path A 全管线（同步，跑在 executor 里）—— v2：label 先行、名称清零、零合成。
 
     1. ``collect.collect_pieces_with_details`` 取母版全部 5 层（layer1/14/8/4/7，US-024）；
-    2. ``export_dxf.assign_group_no`` + ``GROUP_NAMES`` 定片型；
-    3. ``write_piece_dxf`` 切单裁片（5 层全写出）到 ``paths.OUT_DIR/uploads/<doc_id>_pieces/``；
-    4. ``load_nest_pieces(pieces_dir, sizes=母版全码)`` 对齐布纹线 + 归一化 + L/R 镜像
-       （5 层跟随同一变换链）；
-    5. 备份原 intermediate 为 ``.bak`` 后覆盖写回（schema 与历史 CLI 产物一致）。
+    2. ``labeling.assign_codes`` **最先**算 g 码（label 先行，名称无关，驱动后续一切）；
+    3. ``write_piece_dxf`` 切单裁片 ``{label}_{size}.dxf``（5 层全写出）+ 写
+       ``pieces_manifest.json`` sidecar 到 ``paths.OUT_DIR/uploads/<doc_id>_pieces/``；
+    4. ``load_nest_pieces(pieces_dir)`` manifest 驱动对齐布纹线 + 归一化（无镜像展开）；
+    5. 备份原 intermediate 为 ``.bak`` 后覆盖写回（schema v2：每母版轮廓恰一条，
+       片内无 ptype/side，顶层 ``label_representatives``）。
 
+    未录入名称的组不再 skip（零丢片）；size 为 None 的片仍跳过（无法落
+    ``{label}_{size}.dxf`` 文件名，与 parse 响应的 null 码组一致）。
     返回新 intermediate 摘要 dict（码数/裁片数/总面积/备份路径）。
     """
     # US-024：用 collect_pieces_with_details 取代 explore.collect_pieces，让 write_piece_dxf
-    # 拿到 PieceOutline 全 5 层（layer1+layer7+layer14+layer8+layer4）。assign_group_no 与
-    # compute_size_ptype_labels 仅依赖 group_key / block_name 等基础字段，对深度解析结果
-    # 兼容（PieceOutline 字段是 additive 扩展）。
+    # 拿到 PieceOutline 全 5 层（layer1+layer7+layer14+layer8+layer4）。
     pieces = collect_pieces_with_details(Path(src_dxf))
     if not pieces:
         raise RuntimeError('母版未提取到任何裁片（layer1 POLYLINE 为空）')
 
-    gmap = assign_group_no(pieces)
+    # g 码最先（label 先行）：与 parse 同一 ``assign_codes``（同 collect、同排序键、
+    # 同母版码规则），同一 (block_name, size, piece_index) 必得同码（AC#5）。
+    codes_by_size = assign_codes(pieces)
 
     # 切单裁片（idempotent：每次 commit 先清空再重写，避免残留旧文件污染）
     pieces_dir = UPLOADS_DIR / f'{doc_id}_pieces'
@@ -282,41 +275,32 @@ def _commit_to_nesting_sync(doc_id: str, src_dxf: str, source_name: str) -> dict
         shutil.rmtree(pieces_dir)
     pieces_dir.mkdir(parents=True, exist_ok=True)
 
-    written = 0
+    # 按码升序 × 码内有序写 {label}_{size}.dxf + manifest 条目（manifest 驱动加载的
+    # 唯一语义源；文件名仅人读）。
+    manifest: list[dict] = []
     skipped: list[str] = []
-    for p in pieces:
-        gno = gmap[p.group_key]
-        ptype = GROUP_NAMES.get(gno)
-        if ptype is None:
-            skipped.append(f'{p.block_name}#{p.piece_index}(gno={gno} 无 GROUP_NAMES 映射)')
-            continue
-        if p.size is None:
-            skipped.append(f'{p.block_name}#{p.piece_index}(size 解析为 None)')
-            continue
-        write_piece_dxf(p, pieces_dir / f'{ptype}_{p.size}.dxf')
-        written += 1
+    for size in sorted(codes_by_size.keys(), key=_size_sort_key):
+        for p, code in codes_by_size[size]:
+            if p.size is None:
+                skipped.append(f'{p.block_name}#{p.piece_index}(size 解析为 None)')
+                continue
+            fname = f'{code}_{p.size}.dxf'
+            write_piece_dxf(p, pieces_dir / fname)
+            manifest.append({'file': fname, 'label': code, 'size': p.size})
 
-    if written == 0:
-        raise RuntimeError('未写出任何单裁片（请检查 GROUP_NAMES 映射或母版 layer1 结构）')
+    if not manifest:
+        raise RuntimeError('未写出任何单裁片（母版全部裁片 size 解析为 None）')
+    with open(pieces_dir / PIECES_MANIFEST_NAME, 'w', encoding='utf-8') as f:
+        json.dump(manifest, f, ensure_ascii=False)
 
-    # 母版实际全码（覆盖 DEFAULT_SIZES 8 码）
-    all_sizes = sorted({p.size for p in pieces if p.size is not None})
-    nest_pieces = load_nest_pieces(str(pieces_dir), sizes=all_sizes)
+    nest_pieces = load_nest_pieces(str(pieces_dir))
     if not nest_pieces:
-        raise RuntimeError('load_nest_pieces 未返回裁片（单裁片文件名/片型与 ALL_TYPES 不匹配）')
+        raise RuntimeError('load_nest_pieces 未返回裁片（pieces_manifest.json 为空）')
 
-    # US-022：计算 (size, ptype) → label 映射（与 parse-dxf 响应同排序同标注）。
-    # commit 走 NestPiece（归一化+镜像），parse 走 PieceOutline（原始坐标），两者坐标
-    # 系不同不能直接排序对齐；但两者均源自同一母版的 ``explore.collect_pieces``，故对
-    # 原始 pieces 施行与 _build_parse_payload 同源的 labeling.assign_codes 排序+赋码
-    # （g01+ 零填充；母版编号可复用），再经 gmap/GROUP_NAMES 链路把 label 关联到
-    # ptype，即得与 parse 响应按 (size, ptype) 严格对齐的 label 字典（关键不变量 AC#5）。
-    size_ptype_label = compute_size_ptype_labels(pieces, gmap, GROUP_NAMES)
+    # 每 g 码 RAW 代表裁片（原始坐标，供 /api/ptypes 缩略图与上传预览同朝向）。
+    label_representatives = _build_label_representatives(pieces)
 
-    # 每片型 RAW 代表裁片（原始坐标，供 /api/ptypes 缩略图与上传预览同朝向）。
-    ptype_representatives = _build_ptype_representatives(pieces, gmap, GROUP_NAMES)
-
-    # intermediate schema 与历史 CLI 产物（pieces_export.py，已移除）完全一致
+    # intermediate schema v2：每母版轮廓恰一条（WYSIWYG），无 ptype/side/paired。
     doc = {
         'source': source_name,
         'gate_mm': NEST_GATE_MM,
@@ -325,12 +309,8 @@ def _commit_to_nesting_sync(doc_id: str, src_dxf: str, source_name: str) -> dict
         'pieces': [
             {
                 'pid': p.pid,
-                'ptype': p.ptype,
+                'label': p.label,
                 'size': p.size,
-                'side': p.side,
-                # US-022：label 供前端 qtyStore（按 label 编辑数量）与 build_instance
-                # （按 (label, sizeKey) 查 demand）对齐配对。L/R 同 ptype 共享 label。
-                'label': size_ptype_label.get((p.size, p.ptype)),
                 'polygon': [[round(x, 3), round(y, 3)] for x, y in p.polygon],
                 'bbox': [round(v, 2) for v in p.bbox],
                 'area_mm2': round(p.area_mm2, 1),
@@ -354,8 +334,8 @@ def _commit_to_nesting_sync(doc_id: str, src_dxf: str, source_name: str) -> dict
             }
             for p in nest_pieces
         ],
-        # 每片型 RAW 代表裁片（原始坐标，与上传预览同朝向；见 _build_ptype_representatives）。
-        'ptype_representatives': ptype_representatives,
+        # 每 g 码 RAW 代表裁片（原始坐标，与上传预览同朝向；见 _build_label_representatives）。
+        'label_representatives': label_representatives,
     }
 
     # 备份原 intermediate 为 .bak（首次写回时无原文件 → 不备份）
@@ -370,10 +350,10 @@ def _commit_to_nesting_sync(doc_id: str, src_dxf: str, source_name: str) -> dict
     return {
         'doc_id': doc_id,
         'source': source_name,
-        'sizes': all_sizes,
+        'sizes': sorted({m['size'] for m in manifest}),
         'n_pieces': len(nest_pieces),
         'total_area_mm2': doc['total_area_mm2'],
-        'n_written_dxf': written,
+        'n_written_dxf': len(manifest),
         'n_skipped': len(skipped),
         'skipped': skipped[:10],   # 截断，避免响应过大
         'bak': str(bak_path),
@@ -440,46 +420,39 @@ def index():
 
 # ---------------------------------------------------------------- US-020 GET /api/ptypes
 
-# intermediate piece → ptype 代表裁片字段白名单（v1 仅 polygon；US-024 后 intermediate
-# 扩 5 层后自动带 net_polygon/internal_lines/notches/grain_line，前端 layer-aware 渲染；
-# label = 该片 g01+ 裁片码，2026-08-17 起随代表裁片一起下发，供高级配置弹窗显示编号徽章）。
-_PTYPE_REPRESENTATIVE_FIELDS = (
+# intermediate piece → label 代表裁片字段白名单（5 层透传：polygon/net_polygon/
+# internal_lines/notches/grain_line + label 自身，前端 layer-aware 渲染）。
+_LABEL_REPRESENTATIVE_FIELDS = (
     'label', 'polygon', 'net_polygon', 'internal_lines', 'notches', 'grain_line',
 )
 
 
 @app.get('/api/ptypes')
 def get_ptypes():
-    """US-020 D10：返回当前 ``_PIECES_STATE`` 下每个 ptype 的代表裁片（首个出现）。
+    """US-020 D10：返回当前 ``_PIECES_STATE`` 下每个 g 码（label）的代表裁片。
 
-    响应：``{representatives: Record<ptype, {label?, polygon, net_polygon?,
-    internal_lines?, notches?, grain_line?}>}``。``label`` = 代表裁片在上传预览里的
-    g01+ 裁片码（2026-08-17 起；选取口径与 ``_build_parse_payload`` 赋号同源同序，
-    保证「编号 → 图形」与上传预览列头一致）。旧 intermediate 无该字段 → 前端兜底
-    显示片型名。空 state（首次启动未 commit、intermediate 解析失败）返回
-    ``{representatives: {}}``，不阻塞前端配置弹窗降级为片型名文字。
+    响应：``{representatives: Record<label, {label, polygon, net_polygon,
+    internal_lines, notches, grain_line}>}`` —— 键 = 裁片 g 码（v2 起 ptype 键删除）。
+    选取口径与 ``_build_parse_payload`` 赋号同源同序，保证「编号 → 图形」与上传预览
+    列头一致。空 state（首次启动未 commit、intermediate 解析失败）返回
+    ``{representatives: {}}``，不阻塞前端配置弹窗降级为文字。
 
-    坐标口径（US-024fix）：优先返 intermediate ``ptype_representatives`` —— **RAW 母版
+    坐标口径（US-024fix）：优先返 intermediate ``label_representatives`` —— **RAW 母版
     原始坐标**，与 ``/api/parse-dxf`` 上传预览同朝向（未走布纹对齐旋转），让缩略图与
-    上传预览一致、可辨认。旧 intermediate 无此字段时回退到 ``pieces`` 首个代表（变换后
-    坐标），re-commit 后自动切 RAW 口径。
+    上传预览一致、可辨认。无此字段时回退到 ``pieces`` 首个代表（变换后坐标）。
     """
     state = _get_pieces_state()
-    # 优先用 intermediate 的 ptype_representatives（RAW 原始坐标，与上传预览同朝向）——
-    # 避免纵向布纹片被 load_nest_pieces 布纹对齐旋转让缩略图缩成不可辨认的细竖线。
-    # 旧 intermediate（commit 前生成、无此字段）回退到从 pieces 取首个代表（变换后坐标，
-    # 行为同前，向后兼容；re-commit 后自动切到 RAW 口径）。
-    reps = (state.get('doc') or {}).get('ptype_representatives')
+    reps = (state.get('doc') or {}).get('label_representatives')
     if reps is not None:
         return {'representatives': reps}
     pieces = state.get('pieces') or []
     representatives: dict[str, dict] = {}
     for p in pieces:
-        ptype = p.get('ptype')
-        if ptype is None or ptype in representatives:
+        label = p.get('label')
+        if label is None or label in representatives:
             continue
-        rep = {k: p[k] for k in _PTYPE_REPRESENTATIVE_FIELDS if k in p}
-        representatives[ptype] = rep
+        rep = {k: p[k] for k in _LABEL_REPRESENTATIVE_FIELDS if k in p}
+        representatives[label] = rep
     return {'representatives': representatives}
 
 
@@ -655,7 +628,10 @@ async def ws_solve(ws: WebSocket):
             'total_area_mm2': total_area,
             'n_eroded': m.get('n_eroded', 0),
             'pieces': [
-                {'id': pid, 'ptype': meta['ptype'], 'size': meta['size'], 'color': meta['color'],
+                # US-001 垫片：v2 intermediate 无 ptype → None 透传（前端 US-003 切
+                # label-only 契约；US-002 全量重做 WS manifest 格式）。
+                {'id': pid, 'ptype': meta.get('ptype'), 'size': meta['size'],
+                 'color': meta['color'],
                  'area_mm2': meta['area_mm2'], 'polygon': meta['polygon'],
                  # g 码裁片标识（intermediate label 经 build_instance 透传；旧
                  # intermediate 无 → None，前端 NestSVG tooltip 按缺席降级不显示）。

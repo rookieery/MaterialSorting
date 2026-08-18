@@ -21,3 +21,14 @@ Started: 2026-08-09
 
   - US-005 文档同步：agent-component-map.md（覆盖清单 + tour 文件树 3 行 + QtyMatrix/ParsedPiecesView 行 + US-008/US-014 节加「已被矩阵化重构取代」警告头 + US-030 节加锚点迁移警告头 + 文末「矩阵化重构 US-005 落地」节含 5 条不变量）；business-overview.md 工作台交互第 1/2 条改矩阵描述（删「点卡片头编辑数量」旧交互）；CLAUDE.md 数据流主线加数量矩阵一句；materialSorting-web/AGENTS.md（文件分工头 + tour 树 2 行 + US-003 节失配中间态/浏览器验证两条改落地态 + 文末「矩阵化重构 US-005 关键约定」4 条）；todo.md Recently Completed 加行。
   - US-005 备注：chrome-devtools-mcp 不在本会话工具集（与 US-032/矩阵化 US-002 同况）；本故事无 SVG/坐标变换/可视化逻辑改动（仅锚点属性 + 文案 + 版本号），锚点渲染命中由 previewTour.test.tsx jsdom querySelector 断言覆盖，浏览器整体回归留待后续会话。
+# US-001 后端数据模型+commit 管线去名称化（2026-08-18）
+
+- labeling.py：assign_codes/collect_master_codes 签名删 gmap/group_names；「有效片」= 全部 size≠None 片（未录入名称组不再丢片）；删 compute_size_ptype_labels；新增 sequential_sort_key（T4：group_key 前置排序键，同一 block 模板跨码同号）。
+- export_dxf.py：删 GROUP_NAMES / assign_group_no，仅剩 write_piece_dxf（文件名 {label}_{size}.dxf，g 码由调用方决定）。
+- load_pieces.py：删 PAIR_TYPES / ALL_TYPES / _mirror_x / mirror 分支；load_nest_pieces 改 pieces_manifest.json 驱动（[{file,label,size}]），每文件 rotate→normalize，NestPiece pid=f'{label}_{size}'（无 ptype/side）；旧目录明确报错「请重新 commit」。
+- server.py：管线重排 collect → assign_codes 最先 → 写 {label}_{size}.dxf + manifest → manifest 驱动加载 → intermediate schema v2（无 ptype/side，顶层 label_representatives）；parse 响应删 name/ptype/paired；/api/ptypes 键改 g 码（_LABEL_REPRESENTATIVE_FIELDS）。
+- solver.py / export.py：ptype 下标访问改 .get() 垫片 —— /ws/solve 与 /export 在 v2 intermediate 上跑通不崩（颜色/图例暂降级默认值，US-002 全量重做）；solver.load_pieces 明确拒绝 v1 旧档。
+- 测试：test_labeling.py 重写（13 项）、test_label_representatives.py 更名、test_commit_pipeline.py 新增（7 项：合成无名 block 母版 0 丢片全片有码 / manifest 落盘 / AC#5 逐片对齐 / idempotent / 旧数据报错）；全量 pytest 60/60 绿。
+- 真实母版验证：M1787 重 commit（doc_id us001recommit）→ intermediate 110 条 = 母版轮廓数，g01..g10 × 11 码，parse↔intermediate 逐片 label 对齐；/ws/solve + /export 三格式正常产出。
+- 文档同步：3×AGENTS.md（nesting_engine/web/tests）+ agent-api-reference.md + agent-file-map.md + CLAUDE.md 的镜像/名称/GROUP_NAMES 表述全部改 v2 口径。
+

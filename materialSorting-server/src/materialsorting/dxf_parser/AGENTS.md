@@ -20,7 +20,7 @@ python -m materialsorting.dxf_parser.explore    --dxf "../data/M1787#....dxf"  #
 | `model.py` | `PieceOutline` dataclass（解析期唯一 IR；US-002 扩 `internal_lines`/`notches`/`net_polygon` 默认空 list 向后兼容） |
 | `explore.py` | 母版全裁片探索 CLI：`collect_pieces(path) → list[PieceOutline]`（layer1 毛版 + layer7 布纹线）+ SVG/CSV/JSON 输出 |
 | `collect.py` | **US-003 母版深度解析**：`collect_pieces_with_details(path)` 还原 layer14 净版 + layer8 内部线 + layer4 刀口 + layer7 布纹线 |
-| `export_dxf.py` | `PieceOutline` → 单裁片 R12 DXF（**5 层**：layer1 毛版 + layer14 净版 + layer8 内部线 + layer4 刺口 POINT + layer7 布纹线；US-024 起用 `collect_pieces_with_details` 拿全 5 层 IR；ET2008 兼容） |
+| `export_dxf.py` | `PieceOutline` → 单裁片 R12 DXF（**5 层**：layer1 毛版 + layer14 净版 + layer8 内部线 + layer4 刺口 POINT + layer7 布纹线；US-024 起用 `collect_pieces_with_details` 拿全 5 层 IR；ET2008 兼容）。US-001 起 `GROUP_NAMES` / `assign_group_no` **已删除**（名称识别整体退场），文件名 `{label}_{size}.dxf` 的 g 码由调用方（`web/server.py` 经 `labeling.assign_codes`）决定，本模块零名称逻辑 |
 
 ## layer 映射（`collect.py:LAYER_MAPPING`，版师 2026-08-10 确认；5156 与 M1787 一致）
 

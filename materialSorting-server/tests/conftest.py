@@ -20,20 +20,21 @@ if str(_SRC) not in sys.path:
 
 
 def _synthetic_pieces():
-    """合成 2 个简单矩形裁片（不依赖 intermediate / sparrow 求解结果）。
+    """合成 2 个简单矩形裁片（schema v2：pid={label}_{size}，无 ptype/side；
+    不依赖 intermediate / sparrow 求解结果）。
 
     用于 multiprocessing 测试：picklable、体积小、求解极快（无旋转、无 erode）。
     """
     return [
         {
-            'pid': 'TEST_A_28_L', 'ptype': 'TEST_A', 'size': 28, 'side': 'L', 'label': 'g01',
+            'pid': 'g01_28', 'label': 'g01', 'size': 28,
             'polygon': [[0.0, 0.0], [500.0, 0.0], [500.0, 800.0], [0.0, 800.0]],
             'bbox': [0.0, 0.0, 500.0, 800.0], 'area_mm2': 400000.0, 'n_verts': 4,
             'allowed_angles': [0, 180],
             'net_polygon': [], 'internal_lines': [], 'notches': [], 'grain_line': None,
         },
         {
-            'pid': 'TEST_B_28_L', 'ptype': 'TEST_B', 'size': 28, 'side': 'L', 'label': 'g02',
+            'pid': 'g02_28', 'label': 'g02', 'size': 28,
             'polygon': [[0.0, 0.0], [300.0, 0.0], [300.0, 400.0], [0.0, 400.0]],
             'bbox': [0.0, 0.0, 300.0, 400.0], 'area_mm2': 120000.0, 'n_verts': 4,
             'allowed_angles': [0, 180],
