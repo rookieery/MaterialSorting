@@ -23,6 +23,7 @@ cd materialSorting-server
 | `test_labeling.py` | US-001 v2 `labeling` 单测：`label_for`/`code_sort_key` 边界、`master_code_from_block_name` 保守识别矩阵（含仓内易误伤 block 名）、`collect_master_codes` all-or-nothing（有效片=全部 size≠None，未录名组同样参与）、`assign_codes` 顺序模式（`sequential_sort_key` group_key 前置 / T4 跨码同号 / AC#5 确定性）与母版复用模式 |
 | `test_label_representatives.py` | US-001 v2 `_build_label_representatives`：键=g 码、代表取最小码首个 size≠None 片、5 层字段白名单（由 test_ptype_representatives.py 更名而来） |
 | `test_commit_pipeline.py` | US-001 v2 commit 全管线（合成「未录入名称」母版）：0 丢片全片有 g 码、`{label}_{size}.dxf`+`pieces_manifest.json` 落盘、manifest 驱动 `load_nest_pieces`（pid=`{label}_{size}`）、AC#5 parse↔intermediate 逐片 label+面积对齐、idempotent 重跑、旧切片目录/v1 intermediate 明确报错「请重新 commit」 |
+| `test_solver_label.py` | US-002 求解/导出层 label 键：`label_color`（16 色循环/同码同色/兜底）+ `label_aci`（`((code-1)%24)+1` 公式与循环）、`build_instance` per_type `(label,sizeKey)` 命中即覆盖（erode/tol 只落命中片；未命中与旧 ptype 键 no-op；全局上限收边）、quantities demand 直译（0 跳过/N 副本/面积×demand）、pid_meta 无 ptype 键且 color=label_color、`constraints.validate` 删成对齐套校验后裸 pid 裁片可用 |
 
 ## Windows multiprocessing 测试注意
 

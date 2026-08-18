@@ -22,7 +22,7 @@
 | GET | `/` | 返回 `static/index.html`（prod 入口） | `server.index` → `FileResponse` |
 | mount | `/static/*` | 前端构建产物（JS/CSS/资源） | `StaticFiles(directory=paths.STATIC_DIR)` |
 | POST | `/export` | 导出最优 run → PNG / R12-DXF 附件下载 | `server.export` |
-| POST | `/api/parse-dxf` | US-004：multipart 上传母版 DXF → 深度解析 + A/B/C 标注 JSON | `server.parse_dxf` |
+| POST | `/api/parse-dxf` | US-004：multipart 上传母版 DXF → 深度解析 + g 码赋号 JSON | `server.parse_dxf` |
 | POST | `/api/commit-to-nesting` | US-010：把上传母版转排料 intermediate（Path A 全管线，覆盖写回 + .bak）+ US-020 commit 后 reload `_PIECES_STATE` | `server.commit_to_nesting` |
 | GET | `/api/ptypes` | US-020 D10（US-001 v2：键 = g 码 label）：返回当前 `_PIECES_STATE` 下每个 g 码的代表裁片（最小码内 parse 同序首个，含 `label` 编号），供前端高级配置弹窗缩略图/放大预览（D11 layer-aware） | `server.get_ptypes` |
 | WS | `/ws/solve` | 排料求解流（manifest → frames → final） | `server.ws_solve` |
@@ -68,17 +68,17 @@
 | 函数 | 签名 | 说明 |
 |------|------|------|
 | `apply_transform` | `(polygon, rotation_deg: float, translation) → [(x,y)...]` | `world = R(θ)·(x,y)+(tx,ty)`，与前端 `pointsStr` 同公式 |
-| `placed_to_world` | `(placed, pieces_by_id) → [{pid,ptype,size,polygon,color,area_mm2}]` | pid 查 `_get_pieces_state()['pieces_by_id']`（US-020）取**原始** polygon → 世界坐标；查不到的跳过并 warning。US-001 v2 垫片：`ptype` 用 `.get()` 兜底（v2 intermediate 恒 None → 颜色/图例降级默认值，US-002 按 label 全量重做） |
-| `render_png` | `(world_pieces, *, width_mm, gate_mm, title) → bytes` | matplotlib Agg，dpi=200，类型配色复用 `PTYPE_COLORS`，图例仅画出现过的片型 |
-| `write_marker_dxf` | `(world_pieces, *, width_mm, gate_mm, title) → bytes` | ezdxf R12 + 闭合 POLYLINE（首尾补点），ACI 色号见 `TYPE_ACI`，ASCII 标题；**不用 LWPOLYLINE**（ET2008 轮廓消失坑） |
+| `placed_to_world` | `(placed, pieces_by_id) → [{pid,size,polygon,color,area_mm2,label,...}]` | pid 查 `_get_pieces_state()['pieces_by_id']`（US-020）取**原始** polygon → 世界坐标（直查 intermediate，零重放）；查不到的跳过并 warning。US-002：输出无 `ptype` 键，`color = label_color(label)`（g 码 16 色循环表，与求解屏幕同色） |
+| `render_png` | `(world_pieces, *, width_mm, gate_mm, title) → bytes` | matplotlib Agg，dpi=200，配色 `label_color`（g 码 16 色循环表），图例条目 = 本次 placed 的 g 码并集（`code_sort_key` 数值序），标题「裁片」 |
+| `write_marker_dxf` | `(world_pieces, *, width_mm, gate_mm, title) → bytes` | ezdxf R12 + 闭合 POLYLINE（首尾补点），ACI = `label_aci(label)` = `((code-1) % 24) + 1`（非 g 码兜底 7），ASCII 标题；**不用 LWPOLYLINE**（ET2008 轮廓消失坑） |
 | `write_marker_plt` | `(world_pieces, *, width_mm, gate_mm, title) → bytes` | US-033 HPGL/HP-GL 纯文本，**封装口径对齐生产 PLT**（`data/PC-20250508NJIF*.plt`）：头部 `IN;PS<纸长>;SP1;PW0.08;`（PS 纸长 = 走纸引导 + max(用布长度, 内容最大X 含刺口延伸) + 尾余量，×40；无 PS 时 WT 按默认 A0/A3 页幅裁切 7m+ marker）→ 逐片 SP1-SP5 → 尾部 `PU;PG;` 出纸；**CRLF 行尾**；**无 VS/LB 指令**（`title` 仅保签名不输出）；坐标=mm×40 round 取整，5 层笔号 SP1=outline+门幅框/SP2=net/SP3=internal/SP4=notch/SP5=grain；空层跳过；纯 ASCII bytes（无临时文件，无新 pip 依赖）；与 DXF 同闭合策略。**2026-08 现场撞机修正（对照生产 PLT 逐项核出的设备级差异）**：① 安全幅面 —— 内容按 `y ≤ PLOT_SAFE_MAX_Y_MM=1910` 半平面裁剪（**削平不缩放**，绝不变形），门幅框上沿压进可写幅宽（Y 内缩 `PLOT_BORDER_MARGIN_Y_MM=5`），越界裁片记 warning；与求解约束带 `NEST_GATE_MM=min(门幅,1910)` 同一事实源（`nesting_bounds/load_pieces.py`），此处裁剪是二道防线；② PD 分块 —— `_plt_polyline` 单条 PD ≤10 点（`_PLT_PD_MAX_PTS`）且整行 ≤110B（`_PLT_LINE_MAX_BYTES`）续画（对齐 ET 生产 ≤11 点/≤118B；国产 HP-GL 解释器行缓冲仅百余字节，超长单条溢出后坐标流错位 → 小车乱走须急停）；③ 走纸引导 —— 全体 X + `PLOT_LEAD_X_MM=20`（生产 PLT 内容 24mm 起画，贴 0 起画无定位余量），Y 不平移；HPGL 坐标非负整数，clamp 兜底取整负值 |
 | `_plt_frame_stats` | `(world_pieces, *, width_mm, gate_mm) → (n_out, max_x)` | 越界防御 + PS 纸长取值：全层顶点 + notch 点须在门幅框内（容差 0.5mm），非 0 记 warning（曾因 notch 未随片旋转产生 600 越界点把 WT 预览拉变形）；notch 沿法线 ±`NOTCH_LEN_MM/2` 端点外伸属工艺正常，只计入 max_x（PS 取值）不告警 |
 
-`TYPE_ACI`：前片=1 / 后片=2 / 腰=3 / 前袋=4 / 后袋=5 / 机头=6 / 单排=7 / 双排=8 / 火机袋=9 / 裤耳=10。
+`label_aci(label)`（US-002 起，取代旧 `TYPE_ACI` 中文名色表）：g 码 → ACI 色号 `((code-1) % 24) + 1`（g01→1、g24→24、g25→1 循环；非 g 码/None 兜底 7）。配色单一真相源 `sparrow_baseline.label_color`（`LABEL_PALETTE` 16 色 d3 系循环表，`label_color(label) = PALETTE[(code-1) % 16]`，同码同色），solver manifest / PNG / CLI SVG 三处同源取色。
 
 ## POST /api/parse-dxf — US-004 母版上传解析
 
-`multipart/form-data` 上传单个 `.dxf` 母版 → 服务端落盘 + 调 `dxf_parser.collect.collect_pieces_with_details` 深度解析 → 按码号分组 + 几何稳定排序 + A/B/C 标注的 JSON。CPU 密集解析走 `loop.run_in_executor(_executor, ...)` 复用 6-worker 线程池（与 `/ws/solve` 同池，防阻塞 WS 事件循环）。前端 US-005 `useParseDxf` 经相对路径 fetch（dev 走 Vite proxy `/api`，prod 同源）。
+`multipart/form-data` 上传单个 `.dxf` 母版 → 服务端落盘 + 调 `dxf_parser.collect.collect_pieces_with_details` 深度解析 → 按码号分组 + 几何稳定排序 + `assign_codes` g 码赋号的 JSON。CPU 密集解析走 `loop.run_in_executor(_executor, ...)` 复用 6-worker 线程池（与 `/ws/solve` 同池，防阻塞 WS 事件循环）。前端 US-005 `useParseDxf` 经相对路径 fetch（dev 走 Vite proxy `/api`，prod 同源）。
 
 ### 请求
 
@@ -292,8 +292,8 @@ curl http://127.0.0.1:8000/api/ptypes
   "n_eroded": <被 erode 的片数>,
   "pieces": [
     {
+      // US-002：全 label 键（无 ptype；color = label_color(g 码)）
       "id": "g03_30", "label": "g03", "size": 30, "color": "#...", "area_mm2": <int>,
-      // US-001 v2 垫片：消息仍含 "ptype" 键（v2 intermediate 恒 null → 前端图例降级默认色；US-002 删该键并按 label 取色）
       "polygon": [[x,y]...],          // 毛版外轮廓（erode 后，参与 sparrow NFP 碰撞）
       "net_polygon": [[x,y]...],      // US-024 净版（仅渲染透传，不参与碰撞；缺省 []）
       "internal_lines": [[[x,y],...]],// US-024 内部线多条（缺省 []）
@@ -365,7 +365,7 @@ curl http://127.0.0.1:8000/api/ptypes
 |------|------|------|
 | `load_pieces` | `(intermediate_path=paths.INTERMEDIATE) → (doc, gate_mm, pieces)` | 读 `pieces_intermediate.json` |
 | `discretize_orientations` | `(tol: float) → list[float]` | v0.3 连续旋转公差 → spyrrow 离散角度集。`tol=0→[0,180]`；`tol≤5` 步进 1°；否则 5°。归一化到 [0,360) |
-| `build_instance` | `(pieces, gate_mm, *, time_budget, seed, sizes=None, params=None, per_type=None, quantities=None) → (instance, config, pid_meta, total_area, n_eroded)` | 按 sizes 过滤 → US-022 按 `(label, sizeKey)` 查 quantities 定 demand（0 跳过；缺 label → 1） → 每片 `erode=min(申请d, MAX_OVERLAP_MM=10)`、`tol=min(申请tol, MAX_ROTATION_TOL_DEG=45)`（**2026-08-17 起全局上限，不再按片型**） → erode+clean → 构造 `spyrrow.Item` + `StripPackingInstance(strip_height=min(gate_mm, PLOT_SAFE_MAX_Y_MM))` + `StripPackingConfig`；pid_meta 含 US-024 5 层字段（`.get()` 向后兼容）。**求解约束带钳绘图仪可写幅宽 1910**（gate_mm 1980 是显示口径，manifest 推给前端的 gate_mm / 密度分母 / 导出外框均不受影响；常量单一事实源 `nesting_bounds/load_pieces.py`） |
+| `build_instance` | `(pieces, gate_mm, *, time_budget, seed, sizes=None, params=None, per_type=None, quantities=None) → (instance, config, pid_meta, total_area, n_eroded)` | 按 sizes 过滤 → US-022 按 `(label, sizeKey)` 查 quantities 定 demand（0 跳过；缺 label → 1） → US-002 起 `per_type[label][sizeKey]` 命中即覆盖 d/tol（未命中/缺维度回退 `params.d_ext/tol_ext`；旧 ptype 键 no-op；internal 概念已删，`d_int`/`tol_int` 仍被接受但无消费方） → 每片 `erode=min(申请d, MAX_OVERLAP_MM=10)`、`tol=min(申请tol, MAX_ROTATION_TOL_DEG=45)`（**2026-08-17 起全局上限，不再按片型**） → erode+clean → 构造 `spyrrow.Item` + `StripPackingInstance(strip_height=min(gate_mm, PLOT_SAFE_MAX_Y_MM))` + `StripPackingConfig`；pid_meta 含 US-024 5 层字段 + `label`/`color=label_color(label)`/`demand`（`.get()` 向后兼容）。**求解约束带钳绘图仪可写幅宽 1910**（gate_mm 1980 是显示口径，manifest 推给前端的 gate_mm / 密度分母 / 导出外框均不受影响；常量单一事实源 `nesting_bounds/load_pieces.py`） |
 | `solve_with_callback` | `(instance, config, on_report, *, drain_interval=0.2) → (final_sol, elapsed_sec, err)` | **旧 threading 版（保留）**。子线程 `instance.solve(config, progress=queue)`，主线程 `queue.drain()` 每 0.2s 取中间解 → `on_report({type:frame,...})`。US-026 起 `ws_solve` 切换到 `solve_with_callback_proc`，本函数不删（过渡期） |
 | `solve_with_callback_proc` | `(pieces_snapshot, gate_mm, solve_params, *, on_manifest, on_report, on_process=None, drain_interval=0.2) → (process, final_data, elapsed, err)` | **US-025 多进程版**。spawn 子进程跑 `solve_worker`（在子进程内 `build_instance + solve`，spyrrow 对象不可 pickle 故不跨进程），主进程 drain `multiprocessing.Queue` 分发：manifest → `on_manifest`、frame → `on_report`（density 双口径换算在主进程做）、final/error 记录。**US-026 新增 `on_process` 回调**：子进程 `start()` 后立即回调一次，把 `Process` 句柄交给调用方供 WS stop / 断开时 `terminate()`。返回 `process` 句柄可 `terminate()`；terminate 后 `cancel_join_thread + 限时 drain(≤50ms) + join(timeout=5)` 防死锁；子进程 crash 未投 error 时 `err='worker process exited unexpectedly (code=<exitcode>)'` |
 

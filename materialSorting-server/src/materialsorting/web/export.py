@@ -4,9 +4,9 @@
 放到排料变换位，保证 PNG / DXF / PLT 三格式几何一致、且可直接裁剪 / 绘图。
 
 - PNG：matplotlib（cairosvg 缺失且 Windows 有 native 库坑，故弃用）。配色复用
-  sparrow_baseline.PTYPE_COLORS（与工作台屏幕同色）。
+  sparrow_baseline.label_color（g 码 → 16 色循环表，与工作台屏幕同色）。
 - DXF：ezdxf R12 + POLYLINE（复刻 material sorting/nesting_bounds/export.py 已验证套路，
-  坚决不用 LWPOLYLINE —— ET2008 轮廓消失坑）。每片按类型 ACI 上色 + 门幅边框 + ASCII 标题。
+  坚决不用 LWPOLYLINE —— ET2008 轮廓消失坑）。每片按 g 码 ACI 上色 + 门幅边框 + ASCII 标题。
 - PLT：US-033 新增。HPGL/HP-GL 纯文本（``IN;``/``PS;``/``SP;``/``PU;``/``PD;``/``PG;``），
   喂 WT「高速网口输出 V8.8」+ LIKE 绘图仪的原生 PLT 链路（DXF 在该软件实测无法打印）。
   5 层笔号 SP1-SP5（门幅框并入 SP1，按笔分组每笔只声明一次），与 DXF layer1/14/8/4/7
@@ -16,9 +16,12 @@
   PS 纸长含引导 + 尾余量。
 
 US-024：PNG 与 DXF 都含 5 层（毛版 polygon + 净版 net_polygon + 内部线 internal_lines +
-刺口 notches + 布纹线 grain_line）。毛版 layer1 是裁切轮廓（DXF ACI 按片型）；其余 4 层
+刺口 notches + 布纹线 grain_line）。毛版 layer1 是裁切轮廓（DXF ACI 按 g 码）；其余 4 层
 为工艺参考，DXF 各自独立 layer（14/8/4/7），PNG 用与 PiecePreviewSVG 同口径的配色
 （net 绿 / internal 橙 / notch 黄 / grain 红）。US-033：PLT 同样含 5 层（SP1-SP5）。
+
+US-002：全链路 label 键 —— PNG 图例条目 = 本次 placed 的 g 码并集（数值序）、DXF ACI =
+``((code-1) % 24) + 1``、颜色 = ``label_color``；片型名 / TYPE_ACI / TYPE_ORDER 整体退场。
 
 坐标系：spyrrow 世界坐标 X=用布长度(0..width)，Y=门幅(0..gate)，Y 向上
 （与前端 SVG `scale(1,-1)` 翻转后一致 → PNG 直接对应屏幕观感；PLT 不带翻转，与绘图仪
@@ -46,20 +49,22 @@ import ezdxf  # noqa: E402
 # 抑制 ezdxf R12 $INSUNITS 等已知无害警告
 logging.getLogger('ezdxf').setLevel(logging.ERROR)
 
-# 复用排料引擎的类型配色（PNG 与屏幕同色）
-from ..nesting_engine.sparrow_baseline import PTYPE_COLORS, DEFAULT_COLOR
-# 裁片码质心定位（g 码叠印用；labeling 单一真相源的算子）
-from ..nesting_engine.labeling import centroid
+# 复用排料引擎的 g 码配色（PNG 与屏幕同色；16 色循环表单一真相源在 sparrow_baseline）
+from ..nesting_engine.sparrow_baseline import label_color
+# 裁片码质心定位 + g 码数值序键（g 码叠印 / 图例排序用；labeling 单一真相源的算子）
+from ..nesting_engine.labeling import centroid, code_sort_key
 # 绘图仪可写幅宽（单一事实源：nesting_bounds 定义，web/solver 求解约束同源引用）
 from ..nesting_bounds.load_pieces import PLOT_SAFE_MAX_Y_MM
 
-# DXF ACI 色号（与 nesting_bounds/export.py 一致；10 类全覆盖）
-TYPE_ACI = {
-    '前片': 1, '后片': 2, '腰': 3, '前袋': 4, '后袋': 5, '机头': 6,
-    '单排': 7, '双排': 8, '火机袋': 9, '裤耳': 10,
-}
-# 图例固定顺序（仅出现过的才画）
-TYPE_ORDER = ['前片', '后片', '腰', '前袋', '后袋', '机头', '单排', '双排', '火机袋', '裤耳']
+
+def label_aci(label) -> int:
+    """g 码 → DXF ACI 色号 ``((code-1) % 24) + 1``（US-002 公式；非 g 码兜底 7 白）。
+
+    ACI 1-24 是色轮全谱，g25 起循环回 1（与 LABEL_COLORS 16 色循环同思想，色域不同源）。
+    """
+    code = code_sort_key(label) if isinstance(label, str) else 0
+    return ((code - 1) % 24) + 1 if code > 0 else 7
+
 
 # US-024：5 层配色（与前端 constants/colors.ts LAYER5_COLORS 同口径，确保 PNG/前端视觉一致）
 LAYER5_COLOR_NET = '#33cc33'       # layer14 净版绿虚线
@@ -90,10 +95,13 @@ def placed_to_world(placed, pieces_by_id):
     """把 placed_items 转成世界坐标裁片列表（含 5 层，US-024）。
 
     placed: [{id, rotation, translation:[tx,ty]}, ...]
-    pieces_by_id: {pid: piece_dict}（piece_dict 含原始 polygon/ptype/size/area_mm2 +
-                  US-024 5 层字段 net_polygon/internal_lines/notches/grain_line + label）
-    → [{pid, ptype, size, polygon(world), color, area_mm2, label,
+    pieces_by_id: {pid: piece_dict}（intermediate 直查，零重放；piece_dict 含原始
+                  polygon/label/size/area_mm2 + US-024 5 层字段 net_polygon/
+                  internal_lines/notches/grain_line）
+    → [{pid, size, polygon(world), color, area_mm2, label,
         net_polygon, internal_lines, notches, grain_line}, ...]
+
+    颜色 = ``label_color(label)``（g 码 → 16 色循环表，与求解屏幕/CLI SVG 同源）。
 
     对 5 层全部按 placement 的 rotation+translation 变换到世界坐标：
       - polygon / net_polygon / internal_lines 顶点 → ``apply_transform``（点变换）
@@ -131,14 +139,13 @@ def placed_to_world(placed, pieces_by_id):
                 [(grain_raw[0], grain_raw[1]), (grain_raw[2], grain_raw[3])], rot, tr)
             world_grain = (gx1, gy1, gx2, gy2)
 
-        # US-001 垫片：v2 intermediate 无 ptype → .get() 兜底 None（颜色降级
-        # DEFAULT_COLOR；US-002 删 TYPE_ACI/TYPE_ORDER 并切 LABEL_COLORS + label 键）。
+        # US-002：label 键直取（颜色/图例/TEXT 全随 g 码；旧 intermediate 无 label →
+        # label_color 兜底灰、TEXT 跳过）。
         out.append({
             'pid': pid,
-            'ptype': p.get('ptype'),
             'size': p.get('size'),
             'polygon': world_poly,
-            'color': PTYPE_COLORS.get(p.get('ptype'), DEFAULT_COLOR),
+            'color': label_color(p.get('label')),
             'area_mm2': p.get('area_mm2'),
             # g 码裁片标识（PNG 质心叠印 / DXF TEXT 用；旧 intermediate 无 → None 跳过）
             'label': p.get('label'),
@@ -153,7 +160,7 @@ def placed_to_world(placed, pieces_by_id):
 
 # ===================== PNG（matplotlib）=====================
 def render_png(world_pieces, *, width_mm: float, gate_mm: float, title: str) -> bytes:
-    """渲染排料 PNG：门幅矩形 + 每片 5 层（毛版类型配色 + 工艺线）+ g 码标识 + 标题 + 类型图例。
+    """渲染排料 PNG：门幅矩形 + 每片 5 层（毛版 g 码配色 + 工艺线）+ g 码标识 + 标题 + 裁片图例。
 
     US-024：每片在毛版多边形之上叠加 net_polygon(绿虚线) + internal_lines(橙) +
     notches(黄短线段) + grain_line(红虚线)，与前端 NestSVG 视觉一致。
@@ -217,17 +224,16 @@ def render_png(world_pieces, *, width_mm: float, gate_mm: float, title: str) -> 
     ax.axis('off')
     ax.set_title(title, fontsize=11, pad=10)
 
-    # 类型图例（放外侧右栏，bbox_inches='tight' 会纳入画布，绝不压住裁片）
-    # US-001 垫片：v2 intermediate 无 ptype → 图例键优先 label（g 码），颜色降级
-    # DEFAULT_COLOR（US-002 全量重做为 LABEL_COLORS + code_sort_key 数值序）。
-    present = {(pc.get('label') or pc.get('ptype')) for pc in world_pieces}
+    # 裁片图例（放外侧右栏，bbox_inches='tight' 会纳入画布，绝不压住裁片）
+    # US-002：条目 = 本次 placed 的 g 码并集，按 code_sort_key 数值序；同码同色
+    # （label_color 单一真相源，与求解屏幕 / CLI SVG 一致）。
+    present = {pc.get('label') for pc in world_pieces}
     present.discard(None)
-    handles = [Patch(facecolor=PTYPE_COLORS.get(t, DEFAULT_COLOR),
-                     edgecolor=PTYPE_COLORS.get(t, DEFAULT_COLOR), label=t)
-               for t in sorted(present)]
+    handles = [Patch(facecolor=label_color(t), edgecolor=label_color(t), label=t)
+               for t in sorted(present, key=code_sort_key)]
     if handles:
         ax.legend(handles=handles, loc='upper left', bbox_to_anchor=(1.01, 1.0),
-                  fontsize=8, frameon=False, title='片型')
+                  fontsize=8, frameon=False, title='裁片')
 
     import io
     buf = io.BytesIO()
@@ -249,7 +255,7 @@ _DXF_LAYER_TEXT = 'TEXT'   # g 码裁片标识（2026-08-18；独立层与裁切
 def write_marker_dxf(world_pieces, *, width_mm: float, gate_mm: float, title: str) -> bytes:
     """写排料 marker DXF：R12，门幅边框 + 每片 5 层 POLYLINE/POINT（按 layer 分）+ g 码 TEXT + ASCII 标题。
 
-    US-024：每片除 layer1 毛版（闭合 POLYLINE，ACI 按片型）外，附加：
+    US-024：每片除 layer1 毛版（闭合 POLYLINE，ACI 按 g 码 ``((code-1) % 24) + 1``）外，附加：
       - layer14 净版（闭合 POLYLINE，color=3 绿）
       - layer8 内部线（多条 POLYLINE，color=6 橙，不闭合）
       - layer4 刺口（POINT，color=2 黄）
@@ -269,9 +275,8 @@ def write_marker_dxf(world_pieces, *, width_mm: float, gate_mm: float, title: st
 
     # 每片：5 层
     for pc in world_pieces:
-        # US-001 垫片：v2 intermediate 无 ptype → .get() 兜底（ACI 降级默认 7；
-        # US-002 改 label 码公式 ((code-1) % 24) + 1）。
-        aci = TYPE_ACI.get(pc.get('ptype'), 7)
+        # US-002：ACI 随 g 码（((code-1) % 24) + 1；非 g 码兜底 7）
+        aci = label_aci(pc.get('label'))
         # layer1 毛版（闭合 POLYLINE；首尾补点闭合；不用 LWPOLYLINE —— ET2008 轮廓消失）
         pts = [(round(x, 2), round(y, 2)) for x, y in pc['polygon']]
         if len(pts) >= 2 and pts[0] != pts[-1]:

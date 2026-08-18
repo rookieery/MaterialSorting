@@ -2,10 +2,12 @@
 
 启动：python server.py  →  http://127.0.0.1:8000
 
-WS 协议（详见 README / 实现计划）：
-  client → {action:start, sizes:[...], time:N, seed:N,
-            params:{d_ext,d_int,tol_ext,tol_int}, per_type:{ptype:{d?,tol?}}?}
-  server → {type:manifest, ...} 一次
+WS 协议（详见 README / 实现计划；US-002 起全 label 键，不再接收/透传 paired/internal）：
+  client → {action:start, sizes:[...], time:N, seed:N, gate_mm?:N,
+            params:{d_ext,d_int,tol_ext,tol_int}?,          # d_int/tol_int 已无消费方（恒 0）
+            per_type:{label:{sizeKey:{d?,tol?}}}?,           # (g 码, 码号) 逐片覆盖
+            quantities:{label:{sizeKey:N}}?}                 # per-size demand（0=跳过）
+  server → {type:manifest, ...} 一次（pieces 条目含 label/color(label_color)/demand/5 层）
          → {type:frame, density(原面积口径), density_sparrow(erode后口径), ...} 每个中间解
          → {type:final,   ...} 收尾  （或 {type:error, message}）
 
@@ -628,9 +630,9 @@ async def ws_solve(ws: WebSocket):
             'total_area_mm2': total_area,
             'n_eroded': m.get('n_eroded', 0),
             'pieces': [
-                # US-001 垫片：v2 intermediate 无 ptype → None 透传（前端 US-003 切
-                # label-only 契约；US-002 全量重做 WS manifest 格式）。
-                {'id': pid, 'ptype': meta.get('ptype'), 'size': meta['size'],
+                # US-002：manifest 全 label 键（无 ptype；颜色 = label_color(g 码)，
+                # 前端 US-003 起按 label 消费）。
+                {'id': pid, 'size': meta['size'],
                  'color': meta['color'],
                  'area_mm2': meta['area_mm2'], 'polygon': meta['polygon'],
                  # g 码裁片标识（intermediate label 经 build_instance 透传；旧

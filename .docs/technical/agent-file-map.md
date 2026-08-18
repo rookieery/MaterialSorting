@@ -32,12 +32,12 @@ materialSorting-server/
     │   ├── constraints.py             v0.3 约束常量 + 位图腐蚀 + 合法性校验
     │   ├── sparrow_baseline.py        基线求解 + ★共享层（被 experiments/export/solver 复用）
     │   ├── sparrow_experiments.py     旋转/重合公差实验
-    │   └── labeling.py                US-022 共享 A/B/C 标注 + (size,ptype)→label 映射
+    │   └── labeling.py                g01+ 编号单一真相源（assign_codes；parse/commit 两管线共用）
     └── web/                           FastAPI + WS 工作台（详见 agent-api-reference.md）
         ├── server.py                  app + 路由（GET /、/static、POST /export、POST /api/parse-dxf、POST /api/commit-to-nesting、GET /api/ptypes、WS /ws/solve）+ 求解线程桥 + US-020 _PIECES_STATE 可 reload（threading.Lock immutable snapshot）+ US-004 上传解析 + US-010 commit-to-intermediate（commit 后 reload）+ US-022 intermediate 加 label + WS quantities 入参
-        ├── solver.py                  build_instance（US-022 quantities→demand，0 跳过；strip_height=min(gate,PLOT_SAFE_MAX_Y_MM) 求解钳绘图仪可写幅宽）+ solve_with_callback（threading 旧版，保留）+ solve_with_callback_proc（US-025 多进程版，返回 process 句柄可 terminate）
+        ├── solver.py                  build_instance（US-022 quantities→demand，0 跳过；US-002 per_type[label][sizeKey] 命中即覆盖 + internal 删 + color=label_color；strip_height=min(gate,PLOT_SAFE_MAX_Y_MM) 求解钳绘图仪可写幅宽）+ solve_with_callback（threading 旧版，保留）+ solve_with_callback_proc（US-025 多进程版，返回 process 句柄可 terminate）
         ├── solve_worker.py             US-025 子进程入口（顶层 solve_worker，spawn 可 pickle；子进程内 build_instance + solve，仅 JSON 数据跨进程）
-        └── export.py                  PNG(matplotlib) + R12-DXF marker + HPGL/PLT 文本 导出（PLT：内容压进 Y≤1910 可写幅宽 + PD 分块 ≤10点/≤110B + 走纸引导）
+        └── export.py                  PNG(matplotlib) + R12-DXF marker + HPGL/PLT 文本 导出（US-002 起颜色/图例/ACI 全 g 码键：label_color 16 色循环 + label_aci=((code-1)%24)+1 + 图例=placed label 并集；PLT：内容压进 Y≤1910 可写幅宽 + PD 分块 ≤10点/≤110B + 走纸引导）
 ```
 
 ## paths.py — 路径常量（24 行）
@@ -188,14 +188,13 @@ materialSorting-server/
 | `ALL_TYPES` | `['前片','后片','腰','前袋','后袋','机头','单排','双排','火机袋','裤耳']`（10 类规范序） |
 | `DEFAULT_SIZES` | `[28,29,30,31,33,34,35,36]`（8 码，**跳 32**） |
 
-**`NestPiece` dataclass（US-024 扩 5 层字段）：**
+**`NestPiece` dataclass（US-001 v2 label 主键 + US-024 扩 5 层字段；无 ptype/side）：**
 
 | 字段 | 类型 | 含义 |
 |------|------|------|
-| `pid` | `str` | 唯一 ID，如 `'前片_28_L'` |
-| `ptype` | `str` | 片型 |
+| `pid` | `str` | 唯一 ID = `f'{label}_{size}'`，如 `'g03_28'` |
+| `label` | `str` | 裁片 g 码（全链路主键） |
 | `size` | `int` | 码号 |
-| `side` | `str` | `'L'/'R'/'M'`（M = 单片/不成对） |
 | `polygon` | `list[(x,y)]` | 毛版顶点，bbox 左下归一到原点 |
 | `bbox` | `(minx,miny,maxx,maxy)` | 外接框 |
 | `area_mm2` | `float` | 多边形面积 |
@@ -215,7 +214,7 @@ materialSorting-server/
 
 ### `constraints.py` — v0.3 约束层
 
-重合/旋转**全局**上限（2026-08-17 起，不再按片型钳制）、求解后 `validate`（数量 / 镜像对 / 门幅 / 用料长）。版师确认的每片型工艺上限（外片 0.4–2mm / 前袋旋转 30° 等）保留在 `business/排料规则_详细版.md` §3.2/§4 作参考，由用户在高级配置弹窗按片型显式填值控制，默认 0。
+重合/旋转**全局**上限（2026-08-17 起，不再按片型钳制）、求解后 `validate`（数量 / 门幅 / 用料长）。版师确认的每片型工艺上限（外片 0.4–2mm / 前袋旋转 30° 等）保留在 `business/排料规则_详细版.md` §3.2/§4 作参考，由用户在高级配置弹窗按片型显式填值控制，默认 0。
 
 **模块级常量：**
 
@@ -223,6 +222,7 @@ materialSorting-server/
 MAX_OVERLAP_MM       = 10.0   # 全局最大重合深度（mm；UI 高级配置重合输入 max 同值）
 MAX_ROTATION_TOL_DEG = 45.0   # 全局最大旋转公差（°，绕 {0°,180°}；旋转输入 max 同值）
 # US-001 v2 已删：GROUP_NAMES / PAIR_TYPES / ALL_TYPES（名称识别与镜像展开退场）
+# US-002 已删：PAIR_TYPES + 成对齐套校验（L 数=R 数，服务于已删除的合成镜像模型）
 ```
 
 > 旧 `MAX_OVERLAP`/`ROTATION_TOL` 每片型字典 + `overlap_dpix` 已删（`web/solver.build_instance` 的钳制改 `min(申请值, 全局上限)`）。
@@ -230,19 +230,21 @@ MAX_ROTATION_TOL_DEG = 45.0   # 全局最大旋转公差（°，绕 {0°,180°}�
 | 函数 | 签名 | 说明 |
 |------|------|------|
 | `erode_bitmap` | `(bm, d_pix) → bm` | 4 邻域形态学腐蚀 `d_pix` 次；`d_pix<=0` 原样返回 |
-| `validate` | `(placed_world, pieces, used, gate, res) → (ok, issues)` | 校验数量、成对 L/R 1:1（按 ptype+size）、x∈[0,gate]、used>0 |
+| `validate` | `(placed_world, pieces, used, gate, res) → (ok, issues)` | 校验数量、x∈[0,gate]、used>0（US-002 起不再读 ptype/side —— 成对齐套校验已删） |
 
-### `sparrow_baseline.py`（433 行）— 基线 + ★共享层
+### `sparrow_baseline.py` — 基线 + ★共享层
 
-Stage 2 §6：把 128 片喂给 spyrrow（无服装约束的纯几何）求几何上界。产出 `result_*.json` / `*.svg` / `*_curve.json` / `*_curve.png`。**同时是共享层**：`_clean_polygon` / `_write_svg` / `_plot_curve` / `solve_with_progress` 被 `sparrow_experiments` 复用。
+Stage 2 §6：把 intermediate 全片喂给 spyrrow（无服装约束的纯几何）求几何上界。产出 `result_*.json` / `*.svg` / `*_curve.json` / `*_curve.png`。**同时是共享层**：`label_color` / `_clean_polygon` / `_write_svg` / `_plot_curve` / `solve_with_progress` 被 experiments/export/solver 复用。
 
-**模块级常量：**
+**模块级常量（US-002 起 g 码配色单一真相源）：**
 
 ```
-PTYPE_COLORS  = {'前片':'#1f77b4','后片':'#d62728','腰':'#2ca02c','前袋':'#ff7f0e',
-                 '后袋':'#9467bd','机头':'#bcbd22','单排':'#e377c2','双排':'#ff1493',
-                 '火机袋':'#8c564b','裤耳':'#17becf'}   # v0.3 实际 10 片型（US-023 清理）
-DEFAULT_COLOR = '#bbbbbb'
+LABEL_PALETTE = ('#1f77b4','#ff7f0e','#2ca02c','#d62728','#9467bd','#8c564b','#e377c2',
+                 '#7f7f7f','#bcbd22','#17becf','#aec7e8','#ffbb78','#98df8a','#ff9896',
+                 '#c5b0d5','#c49c94')   # 16 色 d3 系循环表（tableau10 + 6 pastel）
+DEFAULT_COLOR = '#bbbbbb'               # 非 g 码 / None 兜底
+# label_color(label) = LABEL_PALETTE[(code_sort_key(label)-1) % 16]；同码同色，g17 循环回表头。
+# 旧 PTYPE_COLORS（中文名 → 色值）US-002 已删；solver manifest / PNG / CLI SVG 三处同源取色。
 ```
 
 | 函数 | 签名 | 说明 |
@@ -254,32 +256,35 @@ DEFAULT_COLOR = '#bbbbbb'
 
 > `num_workers=4`：spyrrow 0.9.0 修了 `num_wokers` 拼写错；**>4 反而质量更差（issue #113）**。
 
-### `sparrow_experiments.py`（256 行）— 旋转/重合公差实验
+### `sparrow_experiments.py` — 旋转/重合公差实验
 
 实验 ②③ 量化旋转公差与重合公差上界。基线 = 实验 ① 600s `{0,180}` 无 erode = **85.79%**（`result_{tag}_t600.json`）。spyrrow 参考数：TROUSERS 92.6% / SHIRTS 90.9%（arxiv 2509.13329）。
 
 **复用共享层：** `from .sparrow_baseline import _clean_polygon, _write_svg, _plot_curve, solve_with_progress`
 
-**模块级常量：** `INTERNAL_TYPES = {'单排','双排','火机袋','裤耳'}`（内片，v0.3 允许 5–10mm 重合 / 8–45° 旋转）、`STEM_ALL = '28_29_30_31_33_34_35_36'`、`OUT = paths.SPARROW_DIR`、`INTERMEDIATE = paths.INTERMEDIATE`。
+**模块级常量：** `STEM_ALL = '28_29_30_31_33_34_35_36'`、`OUT = paths.SPARROW_DIR`、`INTERMEDIATE = paths.INTERMEDIATE`（US-002 起 `INTERNAL_TYPES` 已删 —— intermediate 无片型字段，内片 g 码集合改 `--internal g04,g07` 命令行参数显式给出）。
 
 | 函数 | 签名 | 说明 |
 |------|------|------|
 | `erode_polygon` | `(poly, d) → poly` | shapely 向内 buffer `d` mm → 外环坐标；失败/空回退原 poly；Multi 取最大 |
-| `build_pieces` | `(doc, exp, erode_d) → (items_meta, total_orig_area, n_internal_eroded)` | 4 模式：`free_rot`（全自由旋）/`v0_rot`（内片自由 + 外片 `{0,180}`）/`erode`（仅内片 erode，朝向仍 `{0,180}`）/`erode_rot`（内片 erode+自由旋，外片 `{0,180}`） |
-| `run_one` | `(doc, gate, exp, erode_d, time_budget, seed)` | 跑一次；`strip_height=min(gate, PLOT_SAFE_MAX_Y_MM)`（与 web/solver 同口径；密度仍按 gate）；同时报 `real_density`（原面积分母）+ `sparrow_density`（erode 后自报）；写 `result_{stem}.json`/`{stem}_curve.json`/`{stem}.svg`/`{stem}_curve.png`，stem = `exp_{tag}_t{T}_s{seed}` |
-| `main()` | — | CLI：`--exp {free_rot\|v0_rot\|erode\|erode_rot\|all}`(默认 all)/`--d`(5)/`--time`(600)/`--seed`(0)/`--seeds`(csv→多种子方差汇总)；写 `experiments_summary_t{T}.json` 或 `multiseed_{exp}_d{d}_t{T}.json` |
+| `build_pieces` | `(doc, exp, erode_d, internal_labels=frozenset()) → (items_meta, total_orig_area, n_internal_eroded)` | 4 模式：`free_rot`（全自由旋）/`v0_rot`（内片自由 + 外片 `{0,180}`）/`erode`（仅内片 erode，朝向仍 `{0,180}`）/`erode_rot`（内片 erode+自由旋，外片 `{0,180}`）；内片判定 = `p.get('label') in internal_labels`，items_meta 条目含 `label` 键（无 ptype） |
+| `run_one` | `(doc, gate, exp, erode_d, time_budget, seed, internal_labels=frozenset())` | 跑一次；`strip_height=min(gate, PLOT_SAFE_MAX_Y_MM)`（与 web/solver 同口径；密度仍按 gate）；同时报 `real_density`（原面积分母）+ `sparrow_density`（erode 后自报）；写 `result_{stem}.json`/`{stem}_curve.json`/`{stem}.svg`/`{stem}_curve.png`，stem = `exp_{tag}_t{T}_s{seed}` |
+| `main()` | — | CLI：`--exp {free_rot\|v0_rot\|erode\|erode_rot\|all}`(默认 all)/`--d`(5)/`--time`(600)/`--seed`(0)/`--internal`(csv g 码集合)/`--seeds`(csv→多种子方差汇总)；写 `experiments_summary_t{T}.json`（含 `internal_labels`）或 `multiseed_{exp}_d{d}_t{T}.json` |
 
-### `labeling.py`（US-022 共享 A/B/C 标注）
+### `labeling.py` — g01+ 编号单一真相源（US-001 v2 label 先行）
 
-parse-dxf 响应（`web/server.py._build_parse_payload`）与 intermediate（`web/server.py._commit_to_nesting_sync`）的**单一真相源** —— 保证两条管线对同一母版产出的 label 按 (size, ptype) 严格对齐（否则 qtyStore 按 label 编辑的数量会配错片型）。
+parse-dxf 响应（`web/server.py._build_parse_payload`）与 intermediate（`web/server.py._commit_to_nesting_sync`）的**单一真相源** —— 保证两条管线对同一母版产出的 label 按 `(block_name, size, piece_index)` 逐片同码（AC#5；否则 qtyStore 按 label 编辑的数量会配错裁片）。
 
 | 函数 | 说明 |
 |------|------|
-| `label_for(idx)` | 0→A, 1→B, ..., 25→Z, 26→AA（与 server.py `_label_for` 同实现，转发） |
-| `centroid(poly)` | 顶点算术质心（稳定排序键用） |
+| `label_for(idx)` | 0→g01, 1→g02, ..., 98→g99（g + 两位零填充，字典序=数值序） |
+| `code_sort_key(code)` | g 码 → 数值序键（'g02'→2；非 g 码兜底 0）；US-002 起图例排序 / `label_color` / `label_aci` 共用 |
+| `master_code_from_block_name(name)` | 母版 block 名显式编号尾缀（`前片g03.30`/`腰G3`/`袋#7`）→ 规范化 `gNN`；纯数字尾缀不识别 |
+| `centroid(poly)` | 顶点算术质心（稳定排序键 + 导出 g 码叠印定位共用） |
 | `size_sort_key(size)` | 码号排序：None 殿后，其余升序 |
-| `parse_member_sort_key(p)` | **码内稳定排序键单一真相源** `(-centroid_y, centroid_x, -area_mm2, block_name, piece_index)`（2026-08-17 收敛；parse 赋号 / label 对齐 / ptype 代表裁片三处共用，改一处自动三处同步） |
+| `parse_member_sort_key(p)` | **码内稳定排序键单一真相源** `(-centroid_y, centroid_x, -area_mm2, block_name, piece_index)`（2026-08-17 收敛；parse 赋号 / label 对齐 / label 代表裁片三处共用，改一处自动三处同步） |
 | `sequential_sort_key(p)` | US-001 v2（替代已删 `compute_size_ptype_labels`）：`assign_codes` 顺序赋码排序键 `(group_key,) + parse_member_sort_key(p)` —— T4 group_key 前置保证同一 block 模板跨码同号 |
+| `collect_master_codes(pieces)` / `assign_codes(pieces)` | 母版编号 all-or-nothing 收集 / 每码排序 + g 码分配（顺序模式 + 母版复用模式），详见 `nesting_engine/AGENTS.md` |
 
 ## web/ — FastAPI + WebSocket 工作台
 
@@ -288,9 +293,9 @@ parse-dxf 响应（`web/server.py._build_parse_payload`）与 intermediate（`we
 | 文件 | 行 | 职责 |
 |------|----|------|
 | `server.py` | 795 | FastAPI app；**启动期 `_reload_pieces_state()`**（US-020 替代旧顶层 `load_pieces()`，allow-empty 不再让 import 崩）；路由 GET `/`、mount `/static`、POST `/export`（文件名前缀取 payload `filename` 上传母版名去 .dxf，缺省回退「排料」/nesting）、POST `/api/parse-dxf`（US-004 上传解析；**US-001 v2 起响应仅 `label` + 5 层字段，`name`/`ptype`/`paired` 删除** —— `_build_parse_payload` 入口先跑 `labeling.assign_codes(pieces)`（无名称参数）g 码先行）、POST `/api/commit-to-nesting`（US-010 + US-020 commit 后 reload `_PIECES_STATE` + US-022 intermediate 加 label）、GET `/api/ptypes`（US-020 裁片代表 D10/D11；**US-001 v2 键 = g 码 label**，`_LABEL_REPRESENTATIVE_FIELDS` 白名单，优先 intermediate `label_representatives`）、WS `/ws/solve`（accept 阶段 `_get_pieces_state()` 快照 + US-022 quantities 入参；**US-026 进程化**：`solve_with_callback_proc` 替代旧 threading 桥，write loop 内联 drain queue + read loop 后台 task 收 `{action:'stop'}` → terminate process → 发 `{type:'stopped'}` → 关闭 WS；客户端断开 → terminate+join 防孤儿）；`_terminate_solve_process(state_box)` 幂等 terminate+join+kill 兜底；`_state_lock=threading.Lock()` 保护 immutable snapshot；`ThreadPoolExecutor(max_workers=6)` 跑 `run_solve`（US-004 解析 / US-010 commit 也复用此池）；上传常量 `UPLOAD_MAX_BYTES=20MB` / `UPLOADS_DIR=paths.OUT_DIR/uploads` / `_DOC_ID_RE`；`_build_parse_payload` 按码分组 + `assign_codes` g01+ 赋号（T4 group_key 前置排序）；`_commit_to_nesting_sync` Path A 全管线（assign_codes 最先 → `{label}_{size}.dxf` + `pieces_manifest.json` → manifest 驱动加载 → intermediate v2 + `label_representatives`）；`_LABEL_REPRESENTATIVE_FIELDS` 透传白名单 |
-| `solver.py` | 398 | `load_pieces` / `discretize_orientations` / `build_instance`（**erode=min(申, MAX_OVERLAP_MM=10)，tol=min(申, MAX_ROTATION_TOL_DEG=45)，2026-08-17 起全局上限不再按片型**；US-022 quantities→demand，0 跳过；**strip_height=min(gate_mm, PLOT_SAFE_MAX_Y_MM)** —— gate_mm 是显示口径，求解约束带钳绘图仪可写幅宽 1910，密度/导出/前端仍用 gate_mm 原值；US-024 pid_meta 加 5 层字段 `.get()` 向后兼容）/ `solve_with_callback`（**旧** threading 版，保留不删）/ `solve_with_callback_proc`（**US-025** multiprocessing 版 + **US-026 `on_process` 回调**：子进程 `start()` 后回调一次交出 `Process` 句柄供 WS stop/断开 terminate；density 双口径换算在主进程做；terminate 后 `cancel_join_thread + 限时 drain(≤50ms) + join(timeout=5)` 防死锁）+ `_apply_density_dual` 私有换算helper |
+| `solver.py` | 398 | `load_pieces` / `discretize_orientations` / `build_instance`（**erode=min(申, MAX_OVERLAP_MM=10)，tol=min(申, MAX_ROTATION_TOL_DEG=45)，2026-08-17 起全局上限不再按片型**；US-022 quantities→demand，0 跳过；**US-002**：`per_type[label][sizeKey]` 命中即覆盖 d/tol（未命中/旧 ptype 键 no-op）、internal 概念删（`d_int`/`tol_int` 无消费方）、pid_meta 无 ptype 键且 `color=label_color(label)`；**strip_height=min(gate_mm, PLOT_SAFE_MAX_Y_MM)** —— gate_mm 是显示口径，求解约束带钳绘图仪可写幅宽 1910，密度/导出/前端仍用 gate_mm 原值；US-024 pid_meta 加 5 层字段 `.get()` 向后兼容）/ `solve_with_callback`（**旧** threading 版，保留不删）/ `solve_with_callback_proc`（**US-025** multiprocessing 版 + **US-026 `on_process` 回调**：子进程 `start()` 后回调一次交出 `Process` 句柄供 WS stop/断开 terminate；density 双口径换算在主进程做；terminate 后 `cancel_join_thread + 限时 drain(≤50ms) + join(timeout=5)` 防死锁）+ `_apply_density_dual` 私有换算helper |
 | `solve_worker.py` | 141 | US-025 **新增**。顶层 `solve_worker(pieces_snapshot, gate_mm, solve_params, result_queue)` —— Windows spawn 可 pickle（无闭包、参数全 JSON）。子进程内 `build_instance(...) → 投 {kind:manifest}` → `instance.solve(config, progress=ProgressQueue)` → drain 出中间解投 `{kind:frame,report}` → 末尾投 `{kind:final,final}` 或 `{kind:error,message}`。所有投递纯 JSON，spyrrow 对象绝不跨进程。延迟 import build_instance 避免主进程 `from solve_worker import` 时强制拉 sparrow_baseline |
-| `export.py` | 614 | `apply_transform` / `placed_to_world`（用**原始**非 eroded 轮廓；US-024 起 5 层一并变换，notch 点按点变换 + 法线按向量旋转）/ `render_png`（matplotlib Agg；US-024 起 5 层叠加：net 绿虚线 / internal 橙 / notch 黄短线段 / grain 红虚线）/ `write_marker_dxf`（R12 POLYLINE + ACI 色 + ASCII 标题；US-024 起多 layer：outline layer1 / net layer14 / internal layer8 / notch layer4 POINT / grain layer7 LINE，各自独立 entity）/ `write_marker_plt`（US-033 HPGL/HP-GL 纯文本，**封装口径对齐生产 PLT** `data/PC-20250508NJIF*.plt`：头部 `IN;PS<纸长>;SP1;PW0.08;` + `SP1-5;` PU/PD + 尾部 `PU;PG;`，CRLF 行尾，无 VS/LB 指令；坐标=mm×40 round；5 层笔号 SP1=outline/SP2=net/SP3=internal/SP4=notch/SP5=grain + 门幅框并入 SP1；空层跳过；纯 ASCII bytes，无临时文件、无新依赖；**2026-08 现场撞机修正**：① 安全幅面 —— 内容按 y ≤ PLOT_SAFE_MAX_Y_MM 半平面裁剪（削平不缩放）、门幅框上沿压进可写幅宽（Y 内缩 PLOT_BORDER_MARGIN_Y_MM=5）、越界裁片记 warning（二道防线，兜旧 intermediate/求解 bug；求解已由 NEST_GATE_MM 一道钳制）；② PD 分块 —— `_plt_polyline` 单条 PD ≤10 点且整行 ≤110B 续画（对齐 ET 生产 ≤11点/≤118B，防国产 HP-GL 解释器行缓冲溢出坐标错位小车乱走）；③ 走纸引导 —— 全体 X + PLOT_LEAD_X_MM=20（贴 0 起画无定位余量），PS 纸长 = 引导 + max(用布长, 内容最大X) + 尾余量 PLOT_TAIL_X_MM=10）/ `_plt_frame_stats`（越界防御 + PS 纸长取值：全层顶点 + notch 点须在门幅框内，非 0 记 warning；notch 法线端点外伸只计入 max_x 不告警） |
+| `export.py` | 614 | `apply_transform` / `placed_to_world`（用**原始**非 eroded 轮廓，pid 直查 intermediate 零重放；US-024 起 5 层一并变换，notch 点按点变换 + 法线按向量旋转；**US-002**：输出无 ptype 键、`color=label_color(label)`、`label_aci()` 取 ACI）/ `render_png`（matplotlib Agg；US-024 起 5 层叠加：net 绿虚线 / internal 橙 / notch 黄短线段 / grain 红虚线；**US-002**：图例条目 = placed 的 g 码并集按 `code_sort_key` 数值序，标题「裁片」，零中文名）/ `write_marker_dxf`（R12 POLYLINE + ACI 色 + ASCII 标题；**US-002**：ACI = `((code-1)%24)+1`，旧 `TYPE_ACI`/`TYPE_ORDER` 已删；US-024 起多 layer：outline layer1 / net layer14 / internal layer8 / notch layer4 POINT / grain layer7 LINE，各自独立 entity）/ `write_marker_plt`（US-033 HPGL/HP-GL 纯文本，**封装口径对齐生产 PLT** `data/PC-20250508NJIF*.plt`：头部 `IN;PS<纸长>;SP1;PW0.08;` + `SP1-5;` PU/PD + 尾部 `PU;PG;`，CRLF 行尾，无 VS/LB 指令；坐标=mm×40 round；5 层笔号 SP1=outline/SP2=net/SP3=internal/SP4=notch/SP5=grain + 门幅框并入 SP1；空层跳过；纯 ASCII bytes，无临时文件、无新依赖；**2026-08 现场撞机修正**：① 安全幅面 —— 内容按 y ≤ PLOT_SAFE_MAX_Y_MM 半平面裁剪（削平不缩放）、门幅框上沿压进可写幅宽（Y 内缩 PLOT_BORDER_MARGIN_Y_MM=5）、越界裁片记 warning（二道防线，兜旧 intermediate/求解 bug；求解已由 NEST_GATE_MM 一道钳制）；② PD 分块 —— `_plt_polyline` 单条 PD ≤10 点且整行 ≤110B 续画（对齐 ET 生产 ≤11点/≤118B，防国产 HP-GL 解释器行缓冲溢出坐标错位小车乱走）；③ 走纸引导 —— 全体 X + PLOT_LEAD_X_MM=20（贴 0 起画无定位余量），PS 纸长 = 引导 + max(用布长, 内容最大X) + 尾余量 PLOT_TAIL_X_MM=10）/ `_plt_frame_stats`（越界防御 + PS 纸长取值：全层顶点 + notch 点须在门幅框内，非 0 记 warning；notch 法线端点外伸只计入 max_x 不告警） |
 
 US-004 起 `web/server.py` 直接 import `dxf_parser.collect.collect_pieces_with_details`（web → dxf_parser 跨层依赖，合规：web 是上层）。US-010 起新增 import `dxf_parser.explore` / `dxf_parser.export_dxf` / `nesting_bounds.load_pieces`（web → nesting_bounds → dxf_parser 单向，合规）。上传 multipart 依赖 `python-multipart`（已在 `[web]` extra）。
 
@@ -300,7 +305,7 @@ US-004 起 `web/server.py` 直接 import `dxf_parser.collect.collect_pieces_with
 用户上传母版 DXF
   │ collect.collect_pieces_with_details（5 层 IR）
   ▼ /api/parse-dxf（预览）→ /api/commit-to-nesting
-out/uploads/<doc_id>_pieces/{类型}_{码号}.dxf（每片 layer1+14+8+4+7 五层，由 write_piece_dxf 切出）
+out/uploads/<doc_id>_pieces/{label}_{size}.dxf（如 g03_28.dxf；每片 layer1+14+8+4+7 五层，由 write_piece_dxf 切出）
   │ load_pieces.load_nest_pieces（pieces_manifest.json 驱动；_read_piece 读 5 层 + notch 法线按最近边重算 + _apply_layer_transforms 共享 transform 链 + 布纹对齐 + 归一化；US-001 v2 无镜像）
   ▼
 NestPiece（母版全码，每片持 polygon + net_polygon + internal_lines + notches + grain_line 5 层）
@@ -318,11 +323,11 @@ out/sparrow_baseline/pieces_intermediate.json   ← 全流程事实源（每片 
 |-----|------------|-----------|
 | 母版 → IR 列表 | `explore.collect_pieces` | `Path` → `list[PieceOutline]`（layer1 毛版 + layer7 布纹线） |
 | 母版 → 深度 IR 列表 | `collect.collect_pieces_with_details`（US-003） | `str\|Path` → `list[PieceOutline]`（layer1+7+14 净版+8 内部线+4 刀口，按 `LAYER_MAPPING`） |
-| 上传母版 → 解析 JSON | `web/server.parse_dxf`（US-004） | `multipart file` → 落盘 `uploads/<uuid>.dxf` + `collect_pieces_with_details` → 按码分组 + A/B/C 标注 JSON（`doc_id` 供 US-010 commit 引用） |
-| 上传母版 → intermediate | `web/server.commit_to_nesting` + `_commit_to_nesting_sync`（US-010 Path A） | `{doc_id, filename?}` → `uploads/<doc_id>_pieces/` + `load_nest_pieces(sizes=母版全码)` → 覆盖 `INTERMEDIATE`（先备份 `.bak`） |
-| IR → 单裁片 DXF | `export_dxf.write_piece_dxf` | `PieceOutline` → `out/uploads/<doc_id>_pieces/<类型>_<码号>.dxf`（`_commit_to_nesting_sync` 调用） |
+| 上传母版 → 解析 JSON | `web/server.parse_dxf`（US-004） | `multipart file` → 落盘 `uploads/<uuid>.dxf` + `collect_pieces_with_details` → 按码分组 + `labeling.assign_codes` g 码赋号 JSON（`doc_id` 供 US-010 commit 引用） |
+| 上传母版 → intermediate | `web/server.commit_to_nesting` + `_commit_to_nesting_sync`（US-010 Path A） | `{doc_id, filename?}` → `uploads/<doc_id>_pieces/` + `load_nest_pieces(pieces_dir)`（manifest 驱动） → 覆盖 `INTERMEDIATE`（先备份 `.bak`） |
+| IR → 单裁片 DXF | `export_dxf.write_piece_dxf` | `PieceOutline` → `out/uploads/<doc_id>_pieces/{label}_{size}.dxf`（`_commit_to_nesting_sync` 调用） |
 | IR → 探索产物 | `explore.write_outputs` | `list[PieceOutline]` → 分组目录 + CSV + 总览 SVG |
-| 单裁片 DXF → NestPiece | `load_pieces.load_nest_pieces` | `uploads/<doc_id>_pieces/` → `list[NestPiece]`（L+R 展开） |
+| 单裁片 DXF → NestPiece | `load_pieces.load_nest_pieces` | `uploads/<doc_id>_pieces/` → `list[NestPiece]`（manifest 驱动、零合成） |
 | NestPiece → intermediate | `web/server._commit_to_nesting_sync`（US-010） | → `INTERMEDIATE`（`{source,gate_mm,n_pieces,total_area_mm2,pieces:[…]}`；写回前 `shutil.copy2(.json, .bak)`） |
 | intermediate → baseline 解 | `sparrow_baseline.main` | → `result_{tag}_t{T}.json`/`svg`/`curve.json`/`curve.png` |
 | intermediate → 实验解 | `sparrow_experiments.main` | → `result_exp_{tag}_t{T}_s{seed}.*` + 汇总 |

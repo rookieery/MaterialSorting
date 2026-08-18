@@ -4,14 +4,19 @@ baseline = 实验① 600s {0,180} 不腐蚀 = 85.79%（result_{tag}_t600.json）
 
 实验② 旋转公差：allowed_orientations 全部放开为 None（自由旋转）。
   → 多姿态杠杆的绝对上界（注意：完全放开布纹线，非工艺可达；回答"+2pp 还是 +5pp"）。
-实验③ 重合公差：内部裁片（单排/双排/火机袋/裤耳，v0.3 允许 5-10mm 重合）轮廓向内腐蚀 d mm。
+实验③ 重合公差：内部裁片轮廓向内腐蚀 d mm。
   → "sparrow 白扔的重合空间"多大。density 用**原面积**算（腐蚀只影响排料紧度，不缩面积）。
 
+内片集合（US-002 起）：intermediate 已无片型字段，「内部裁片」改由命令行 ``--internal``
+显式给 g 码集合（如 ``--internal g04,g07``）；不给则 v0_rot/erode/erode_rot 退化为
+对空集合操作（无片命中）。母版 g 码 ↔ 片型的对应关系看 parse 响应缩略图或
+``.docs/business/排料规则_详细版.md`` 的版师参考表。
+
 用法：
-  python sparrow_experiments.py --exp free_rot        # 实验②
-  python sparrow_experiments.py --exp erode --d 5      # 实验③ 5mm
-  python sparrow_experiments.py --exp erode --d 10     # 实验③ 10mm
-  python sparrow_experiments.py --exp all              # ② + ③-5 + ③-10 串行
+  python sparrow_experiments.py --exp free_rot                       # 实验②
+  python sparrow_experiments.py --exp erode --d 5 --internal g08,g10 # 实验③ 5mm
+  python sparrow_experiments.py --exp erode --d 10 --internal g08,g10
+  python sparrow_experiments.py --exp all --internal g08,g10         # ② + ③-5 + ③-10 串行
 """
 from __future__ import annotations
 
@@ -29,8 +34,6 @@ from .sparrow_baseline import (
 OUT = paths.SPARROW_DIR
 INTERMEDIATE = paths.INTERMEDIATE
 
-# v0.3 内部裁片（允许 5-10mm 实质重合 / 8-45° 旋转）
-INTERNAL_TYPES = {'单排', '双排', '火机袋', '裤耳'}
 STEM_ALL = '28_29_30_31_33_34_35_36'
 
 
@@ -52,10 +55,12 @@ def erode_polygon(poly, d):
     return [list(c) for c in coords]
 
 
-def build_pieces(doc, exp, erode_d):
+def build_pieces(doc, exp, erode_d, internal_labels=frozenset()):
     """按实验配置变换 pieces，返回 (items_meta, total_original_area, n_internal_eroded)。
 
-    items_meta = [{pid, ptype, size, polygon(变换后), area_mm2(原), allowed_orientations}]
+    internal_labels：内片 g 码集合（命令行 ``--internal`` 显式给出；intermediate 已无
+    片型字段，本模块不再内置任何名称集合）。
+    items_meta = [{pid, label, size, polygon(变换后), area_mm2(原), allowed_orientations}]
     正交对照：free_rot 只改旋转不腐蚀；erode 只腐蚀内部、旋转保持 {0,180}；
               erode_rot 组合（阶段0）：内部腐蚀 d mm + 内部自由旋转，外部 {0,180}。
     """
@@ -63,23 +68,24 @@ def build_pieces(doc, exp, erode_d):
     for p in doc['pieces']:
         poly = p['polygon']
         orientations = [0.0, 180.0]
+        is_internal = p.get('label') in internal_labels
         if exp == 'free_rot':
             orientations = None
         elif exp == 'v0_rot':
             # v0.3 规则：外部{0,180}（布纹线硬约束）+ 内部自由旋转（8-45° 公差上界）
-            orientations = None if p['ptype'] in INTERNAL_TYPES else [0.0, 180.0]
-        elif exp == 'erode' and p['ptype'] in INTERNAL_TYPES:
+            orientations = None if is_internal else [0.0, 180.0]
+        elif exp == 'erode' and is_internal:
             poly = erode_polygon(poly, erode_d)
             n_eroded += 1
         elif exp == 'erode_rot':
             # 阶段0组合实验：内部裁片腐蚀 d mm（=允许重合）+ 自由旋转（v0.3 旋转公差上界）
-            if p['ptype'] in INTERNAL_TYPES:
+            if is_internal:
                 poly = erode_polygon(poly, erode_d)
                 n_eroded += 1
                 orientations = None
             # 外部裁片保持 {0,180}
         out.append({
-            'pid': p['pid'], 'ptype': p['ptype'], 'size': p['size'],
+            'pid': p['pid'], 'label': p.get('label'), 'size': p['size'],
             'polygon': poly, 'area_mm2': p['area_mm2'],
             'allowed_orientations': orientations,
         })
@@ -87,7 +93,7 @@ def build_pieces(doc, exp, erode_d):
     return out, total_orig, n_eroded
 
 
-def run_one(doc, gate, exp, erode_d, time_budget, seed):
+def run_one(doc, gate, exp, erode_d, time_budget, seed, internal_labels=frozenset()):
     import spyrrow
     if exp == 'free_rot':
         tag = 'free_rot'
@@ -99,9 +105,9 @@ def run_one(doc, gate, exp, erode_d, time_budget, seed):
         tag = f'erode{erode_d}'
     print(f'\n{"=" * 60}')
     print(f'== 实验 {tag}（预算 {time_budget}s）==')
-    items_meta, total_orig, n_eroded = build_pieces(doc, exp, erode_d)
+    items_meta, total_orig, n_eroded = build_pieces(doc, exp, erode_d, internal_labels)
     if exp == 'erode':
-        print(f'内部裁片腐蚀 {erode_d}mm：{n_eroded} 片（{", ".join(sorted(INTERNAL_TYPES))}）')
+        print(f'内部裁片腐蚀 {erode_d}mm：{n_eroded} 片（g 码：{", ".join(sorted(internal_labels)) or "（未指定 --internal）"}）')
     elif exp == 'erode_rot':
         print(f'阶段0组合：内部裁片腐蚀 {erode_d}mm + 自由旋转（{n_eroded} 片），外部 {{0,180}}')
     elif exp == 'free_rot':
@@ -175,9 +181,14 @@ def main():
     ap.add_argument('--d', type=int, default=5, help='腐蚀深度 mm（实验③，--exp erode 时生效）')
     ap.add_argument('--time', type=int, default=600)
     ap.add_argument('--seed', type=int, default=0)
+    ap.add_argument('--internal', type=str, default='',
+                    help='内片 g 码集合（逗号分隔，如 g04,g07）；v0_rot/erode/erode_rot 实验对这些'
+                         '裁片生效。US-002 起 intermediate 无片型字段，集合须显式给出')
     ap.add_argument('--seeds', type=str, default='',
                     help='逗号分隔多 seed（如 0,1,2,3,4）；给定时对 --exp 跑多 seed 并汇总方差/破90比例')
     args = ap.parse_args()
+
+    internal_labels = frozenset(s.strip() for s in args.internal.split(',') if s.strip())
 
     with open(INTERMEDIATE, encoding='utf-8') as f:
         doc = json.load(f)
@@ -192,7 +203,7 @@ def main():
         ms_results = []
         for sd in seeds_list:
             print(f'\n>>> seed {sd} / exp={args.exp} <<<')
-            ms_results.append(run_one(doc, gate, args.exp, args.d, args.time, sd))
+            ms_results.append(run_one(doc, gate, args.exp, args.d, args.time, sd, internal_labels))
         densities = [r['density_real'] * 100 for r in ms_results]
         used_cm = [r['used_mm'] / 10 for r in ms_results]
         print(f'\n{"=" * 60}')
@@ -220,16 +231,16 @@ def main():
 
     results = []
     if args.exp == 'free_rot':
-        results.append(run_one(doc, gate, 'free_rot', 0, args.time, args.seed))
+        results.append(run_one(doc, gate, 'free_rot', 0, args.time, args.seed, internal_labels))
     if args.exp in ('v0_rot', 'all'):
-        results.append(run_one(doc, gate, 'v0_rot', 0, args.time, args.seed))
+        results.append(run_one(doc, gate, 'v0_rot', 0, args.time, args.seed, internal_labels))
     if args.exp in ('erode', 'all'):
         for d in ([5, 10] if args.exp == 'all' else [args.d]):
-            results.append(run_one(doc, gate, 'erode', d, args.time, args.seed))
+            results.append(run_one(doc, gate, 'erode', d, args.time, args.seed, internal_labels))
     if args.exp in ('erode_rot', 'all'):
         # 阶段0组合实验：all 模式用 d=10，单独模式用 --d（默认10）
         d = 10 if args.exp == 'all' else args.d
-        results.append(run_one(doc, gate, 'erode_rot', d, args.time, args.seed))
+        results.append(run_one(doc, gate, 'erode_rot', d, args.time, args.seed, internal_labels))
 
     # 汇总对比
     print(f'\n{"=" * 60}')
@@ -247,7 +258,7 @@ def main():
         json.dump({'baseline_density': baseline['density'] if baseline else None,
                    'baseline_used_mm': baseline['used_mm'] if baseline else None,
                    'time_budget': args.time,
-                   'internal_types': sorted(INTERNAL_TYPES),
+                   'internal_labels': sorted(internal_labels),
                    'experiments': results}, f, ensure_ascii=False, indent=2)
     print(f'\n汇总 → {os.path.join(OUT, f"experiments_summary_t{args.time}.json")}')
 

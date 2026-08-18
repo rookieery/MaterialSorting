@@ -1,11 +1,15 @@
 """排料可视化工作台 · 求解封装 —— 把 sparrow 求解过程回调出来（含完整 placed_items）。
 
 阶段 A：复用 sparrow_baseline 的「子线程 solve + 主线程 drain」骨架，每个中间解回调完整 placement。
-阶段 B：build_instance 参数化 v0.3 约束（重合 erode 内/外两档 + 旋转公差离散化 + 每片型高级覆盖）。
+阶段 B：build_instance 参数化 v0.3 约束（重合 erode + 旋转公差离散化 + 逐 (g 码, 码号) 高级覆盖）。
+
+US-002 起全链路 label 键：demand / per_type 均按 ``(label, sizeKey)`` 命中，颜色走
+``label_color``（g 码 → 16 色循环表），internal（内片）概念删除 —— 旧 ``params``
+的 d_int/tol_int 键仍被接受但不再有消费方（生产链路 params 恒 0）。
 
 不改动 sparrow 源码、不改动既有引擎代码，仅 sys.path 引用：
-  _clean_polygon / PTYPE_COLORS  (sparrow_baseline)
-  erode_polygon / INTERNAL_TYPES (sparrow_experiments)
+  _clean_polygon / label_color    (sparrow_baseline)
+  erode_polygon                   (sparrow_experiments)
   MAX_OVERLAP_MM / MAX_ROTATION_TOL_DEG (constraints，2026-08 起全局上限，不再按片型)
 
 US-025 新增 ``solve_with_callback_proc`` —— 把求解从 daemon 线程模型迁到
@@ -24,8 +28,8 @@ import threading
 import time
 
 from .. import paths
-from ..nesting_engine.sparrow_baseline import _clean_polygon, PTYPE_COLORS
-from ..nesting_engine.sparrow_experiments import erode_polygon, INTERNAL_TYPES
+from ..nesting_engine.sparrow_baseline import _clean_polygon, label_color
+from ..nesting_engine.sparrow_experiments import erode_polygon
 from ..nesting_engine.constraints import MAX_OVERLAP_MM, MAX_ROTATION_TOL_DEG
 from ..nesting_bounds.load_pieces import PLOT_SAFE_MAX_Y_MM
 
@@ -77,16 +81,18 @@ def build_instance(pieces, gate_mm, *, time_budget: int, seed: int,
                    sizes=None, params=None, per_type=None, quantities=None):
     """按码号 + v0.3 参数构造 (instance, config, pid_meta, total_area, n_eroded)。
 
-    params = {d_ext, d_int, tol_ext, tol_int}（内/外两档；默认全 0 = 阶段A baseline）
-    per_type = {ptype: {d?, tol?}}（每片型高级覆盖；缺的维度回退两档）
+    params = {d_ext, d_int, tol_ext, tol_int}（默认全 0 = 阶段A baseline。US-002 起
+    内/外两档已删，全片统一走 d_ext/tol_ext；d_int/tol_int 仍被接受但无消费方 ——
+    生产链路 params 恒 0，仅为旧前端 payload 兼容保留键位）
+    per_type = {label: {sizeKey(str): {d?, tol?}}}（US-002 起 (g 码, 码号) 逐片覆盖；
+        命中即覆盖，未命中/缺维度回退 params 的 d_ext/tol_ext；旧 ptype 键不命中为 no-op）
     quantities = {label: {sizeKey(str): N}} | None（US-022 per-size demand）。
         - 按 (piece.label, str(piece.size)) 查 N → ``spyrrow.Item(demand=N)``；
-        - **demand=0 跳过该 piece（D2）**（该码该 ptype 不参与排料）；
+        - **demand=0 跳过该 piece（D2）**（该码该裁片不参与排料）；
         - piece 缺 label 或 quantities=None → demand=1（向后兼容旧 intermediate / 旧前端）。
 
     每片实际 erode = min(申请值, MAX_OVERLAP_MM=10)（全局上限兜底，2026-08 起不再按片型）
     每片实际 tol  = min(申请值, MAX_ROTATION_TOL_DEG=45)
-    内部片 = 单排/双排/火机袋/裤耳；外部片 = 其余。
 
     求解约束带 strip_height = min(gate_mm, PLOT_SAFE_MAX_Y_MM)：gate_mm（门幅，
     如 1980）只是布幅**显示**口径，排料压进绘图仪可写幅宽 1910 才能完整打印
@@ -114,30 +120,29 @@ def build_instance(pieces, gate_mm, *, time_budget: int, seed: int,
         # sizeKey 口径与前端 qtyStore 一致：number->String(number)；null->'null'。
         # 旧 intermediate 无 label 或 quantities=None → demand=1（向后兼容）。
         label = p.get('label')
+        sk = 'null' if p['size'] is None else str(p['size'])
         if quantities and label is not None and label in quantities:
             size_map = quantities[label]
             if not isinstance(size_map, dict):
                 size_map = {}
-            sk = 'null' if p['size'] is None else str(p['size'])
             demand = int(size_map.get(sk, 0))
         else:
             demand = 1
         if demand <= 0:
             continue   # D2：该 piece 该码 demand=0 → 不排（也不计入 total_area）
 
-        # US-001 垫片：v2 intermediate 无 ptype → .get() 兜底 None（internal 判断恒
-        # False 走外部档、per_type 键不命中回退两档默认；US-002 删 internal 概念后
-        # 全链路切 label 键）。
-        ptype = p.get('ptype')
-        internal = ptype in INTERNAL_TYPES
-        base_d = float(pdef['d_int'] if internal else pdef['d_ext'])
-        base_tol = float(pdef['tol_int'] if internal else pdef['tol_ext'])
+        base_d = float(pdef['d_ext'])
+        base_tol = float(pdef['tol_ext'])
 
-        if per_type and ptype in per_type:
-            d = float(per_type[ptype].get('d', base_d))
-            tol = float(per_type[ptype].get('tol', base_tol))
-        else:
-            d, tol = base_d, base_tol
+        # US-002：per_type 按 (label, sizeKey) 命中即覆盖（缺维度回退全局档）。
+        d, tol = base_d, base_tol
+        if per_type and label is not None and label in per_type:
+            label_map = per_type[label]
+            if isinstance(label_map, dict):
+                size_over = label_map.get(sk)
+                if isinstance(size_over, dict):
+                    d = float(size_over.get('d', base_d))
+                    tol = float(size_over.get('tol', base_tol))
 
         d = min(d, MAX_OVERLAP_MM)        # 全局重合上限（10mm；不再按片型钳制）
         tol = min(tol, MAX_ROTATION_TOL_DEG)   # 全局旋转公差上限（45°）
@@ -155,14 +160,13 @@ def build_instance(pieces, gate_mm, *, time_budget: int, seed: int,
         # 到 pid_meta → manifest → 前端 NestSVG + 导出。**不参与 sparrow NFP 碰撞**（碰撞只用
         # 上面 erode 后的 ``poly``）。使用 .get() 兜底，旧 intermediate 无这些字段时各层空/None。
         pid_meta[p['pid']] = {
-            'ptype': ptype,
             'size': p['size'],
-            'color': PTYPE_COLORS.get(ptype, '#bbbbbb'),
+            'color': label_color(label),
             'polygon': poly,                 # erode 后 base 多边形（与 placement 一致）
             'area_mm2': p['area_mm2'],
             # g 码裁片标识（intermediate label 透传 → manifest → 前端 NestSVG tooltip /
             # 导出逐片叠印；旧 intermediate 无 label → None，消费方按缺席降级）。
-            'label': p.get('label'),
+            'label': label,
             # demand：该 pid 进 sparrow 的副本数（= quantities[label][sizeKey]，缺省 1）。
             # 透传到 manifest → 前端 NestSVG 按 demand 建 N 个 DOM 副本（见下「多副本渲染」）。
             # **必须透传**：demand>1 时 solver 给同一 pid 发 N 条 placed_items（同 id 不同 translation），

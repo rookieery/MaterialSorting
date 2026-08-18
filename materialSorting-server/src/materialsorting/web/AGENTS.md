@@ -20,9 +20,9 @@ curl http://127.0.0.1:8000/api/ptypes                                  # US-020 
 | 文件 | 角色 |
 | --- | --- |
 | `server.py` | FastAPI app；路由 `GET /`、`mount /static`、`POST /export`、`POST /api/parse-dxf`（US-004）、`POST /api/commit-to-nesting`（US-010）、`GET /api/ptypes`（US-020）、`WS /ws/solve`；US-020 可 reload `_PIECES_STATE`（threading.Lock 保护）；`ThreadPoolExecutor(max_workers=6)` 求解桥 + 上传解析/commit 复用 |
-| `solver.py` | `load_pieces` / `discretize_orientations` / `build_instance`（v0.3 erode+tol 包装，US-024 pid_meta 加 5 层字段 `.get()` 兼容）/ `solve_with_callback`（**旧** threading 版 spyrrow ProgressQueue + 0.2s drain，US-025 起保留不删）/ `solve_with_callback_proc`（**US-025** multiprocessing 版，spawn 子进程跑 `solve_worker`，主进程 drain `multiprocessing.Queue`，返回 `process` 句柄可 `terminate()`；density 双口径换算在主进程处理 frame 时做）+ `_apply_density_dual` 私有 helper |
+| `solver.py` | `load_pieces` / `discretize_orientations` / `build_instance`（v0.3 erode+tol 包装，US-024 pid_meta 加 5 层字段 `.get()` 兼容；**US-002**：demand 按 `(label,sizeKey)` 直译 + `per_type[label][sizeKey]` 命中即覆盖 + internal 概念删（`d_int`/`tol_int` 无消费方）+ `color=label_color(label)`、pid_meta 无 ptype 键）/ `solve_with_callback`（**旧** threading 版 spyrrow ProgressQueue + 0.2s drain，US-025 起保留不删）/ `solve_with_callback_proc`（**US-025** multiprocessing 版，spawn 子进程跑 `solve_worker`，主进程 drain `multiprocessing.Queue`，返回 `process` 句柄可 `terminate()`；density 双口径换算在主进程处理 frame 时做）+ `_apply_density_dual` 私有 helper |
 | `solve_worker.py` | **US-025 新增**。顶层 `solve_worker(pieces_snapshot, gate_mm, solve_params, result_queue)` —— Windows spawn 可 pickle（无闭包、参数全 JSON）。子进程内 `build_instance(...) → 投 {kind:manifest}` → `instance.solve(config, progress=ProgressQueue)` → drain 出中间解投 `{kind:frame,report}` → 末尾投 `{kind:final,final}` 或 `{kind:error,message}`。所有投递纯 JSON，spyrrow 对象绝不跨进程 |
-| `export.py` | `apply_transform` / `placed_to_world`（用**原始**非 eroded 轮廓；US-024 起 5 层一并变换，notch 点按点变换 + 法线按向量旋转）/ `render_png`（matplotlib Agg；US-024 起 5 层叠加 net 绿虚线 / internal 橙 / notch 黄短线段 / grain 红虚线）/ `write_marker_dxf`（R12 POLYLINE + ACI 色；US-024 起多 layer outline1/14/8/4/7 各自独立 entity）/ `write_marker_plt`（US-033 HPGL/HP-GL 文本，`IN;`+`VS80;`+`SP1-6;` PU/PD + `LB<chr(3)>;` ASCII；坐标=mm×40 round；5 层笔号与 DXF layer 同语义；空层跳过；纯 ASCII bytes，无临时文件、无新依赖） |
+| `export.py` | `apply_transform` / `placed_to_world`（用**原始**非 eroded 轮廓，pid 直查 intermediate 零重放；US-024 起 5 层一并变换，notch 点按点变换 + 法线按向量旋转；US-002 起输出无 ptype 键、`color=label_color(label)`）/ `render_png`（matplotlib Agg；US-024 起 5 层叠加 net 绿虚线 / internal 橙 / notch 黄短线段 / grain 红虚线；US-002 起图例条目 = placed 的 g 码并集按 `code_sort_key` 数值序）/ `write_marker_dxf`（R12 POLYLINE + ACI 色；US-024 起多 layer outline1/14/8/4/7 各自独立 entity；US-002 起 ACI = `label_aci(label)` = `((code-1)%24)+1`）/ `write_marker_plt`（US-033 HPGL/HP-GL 文本 `IN;PS;SP1-5;PU/PD/PG`，无 VS/LB；坐标=mm×40 round；5 层笔号与 DXF layer 同语义；空层跳过；纯 ASCII bytes，无临时文件、无新依赖） |
 
 ## US-004 /api/parse-dxf 关键约定（实现方/调用方必读）
 
@@ -56,13 +56,15 @@ curl http://127.0.0.1:8000/api/ptypes                                  # US-020 
 - **GET /api/ptypes（D10，US-001 v2：键 = g 码 label）**：优先返 intermediate 顶层 `label_representatives`（RAW 原始坐标，与上传预览同朝向；键 g01+）；无该字段（v1 旧档）回退从 `_PIECES_STATE.pieces` 按 label 分组取首个代表。返回 `{representatives: Record<label, {label, polygon, net_polygon?, internal_lines?, notches?, grain_line?}>}`。字段白名单 `_LABEL_REPRESENTATIVE_FIELDS` 透传 —— **layer-aware（D11）**：5 层自动带 net/internal/notches/grain。空 state 返 `{representatives: {}}`。
 - **curl 验证 M1787**：commit 后 `/api/ptypes` 返 10 个 g 码代表裁片（键 `g01`..`g10`，每个 5 层字段全带）。
 
-## US-022 关键约定（求解输入数量 demand per-size；US-001 v2 改写）
+## US-022 关键约定（求解输入数量 demand per-size；US-001 v2 改写 + US-002 label 键收口）
 
 - **intermediate label 字段（v2）**：`_commit_to_nesting_sync` 直接以 `assign_codes` 产出的 g 码为每片主键（`pid = f'{label}_{size}'`；`compute_size_ptype_labels` 已删除，无 (size, ptype) 中转、无 L/R 镜像共享 label 概念）。
 - **label 对齐不变量（AC#5，v2 简化）**：parse 与 commit 各自对同一母版跑 `assign_codes`（同 collect、同排序键、同母版码规则）→ 同一 `(block_name, size, piece_index)` 必得同 g 码；坐标系差异（NestPiece 归一化 vs PieceOutline 原始）不再影响对齐（M1787 实测 11 码 × g01..g10 逐片对齐，`tests/test_commit_pipeline.py` 覆盖）。
 - **共享 labeling 模块**：`nesting_engine/labeling.py` 是 parse/commit 两处标注的单一真相源；`server.py._label_for/_centroid/_size_sort_key` 转发到此。依赖方向合规（web → nesting_engine）。
 - **WS /ws/solve 入参增 quantities**：`{label: {sizeKey(str): N}}` | None。`build_instance` 按 `(piece.label, str(piece.size))` 查 N → `spyrrow.Item(demand=N)`；**demand=0 跳过该 piece（D2）**；piece 缺 label 或 quantities=None → demand=1（向后兼容旧 intermediate / 旧前端）。
 - **sizeKey 口径**：`str(size)`（number→String）；`null`→`'null'`（与前端 qtyStore `sizeKey` 一致）。
+- **US-002 per_type（(label, sizeKey) 逐片覆盖）**：`per_type = {label: {sizeKey: {d?, tol?}}}` 命中即覆盖（缺维度回退全局档 `params.d_ext`/`tol_ext`）；未命中 / 旧 ptype 键为 no-op；全局上限收边 `erode=min(d, MAX_OVERLAP_MM=10)`、`tol=min(tol, MAX_ROTATION_TOL_DEG=45)`。**internal 概念已删**：`params.d_int`/`tol_int` 仍被接受但无消费方（R1：生产链路 params 恒 0）。WS start 不再接收/透传 paired/internal。
+- **US-002 manifest 全 label 键**：pieces 条目无 `ptype` 键；`color = label_color(label)`（`sparrow_baseline.LABEL_PALETTE` 16 色循环表单一真相源，`label_color(label)=PALETTE[(code-1)%16]`，同码同色，与 PNG/DXF/CLI SVG 同源）。对照实验复现：`per_type={'g01':{'28':{'d':1.5}}}` → `n_eroded=1`（仅 g01_28 被腐蚀），对照组 `n_eroded=0`（`tests/test_solver_label.py` 覆盖）。
 
 ## 已踩坑 / 注意事项
 
