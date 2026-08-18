@@ -31,6 +31,9 @@
 //         （列头缩略图 + ≡ 整列设值），对齐 PerTypeOverridesModal 高级配置弹窗「裁片
 //         作列」风格；parsed/set-qty 步文案改转置后方位（整行设值 → 整列设值）——
 //         被指引的布局重大变更，bump 强制老用户重看。
+//   '6' → '7'（裁片编号化重构 US-003）：总片数口径从「配对 ×2」改为「Σ 数量（每份
+//         对应母版一个轮廓，不合成镜像）」，set-qty 步文案同口径改写；committed 步
+//         「按片型」改「按裁片 g 码」—— 被指引的数量语义重大变更，bump 强制老用户重看。
 //
 // Partial 而非完整 Record<TabId, TourDef>：保留未来新增 Tab 时不必同步补 tour 的灵活性；
 // auto-trigger 对无指引的 Tab（TOURS[tab]===undefined）直接跳过，不报错。
@@ -41,7 +44,7 @@ import { nestingTour } from './nestingTour';
 import { previewTour } from './previewTour';
 
 /** Tour 内容版本号。bump 触发条件：仅步骤内容重大变更时 bump（强制老用户重看）。版本历史见文件头注释。 */
-export const TOUR_VERSION = '6';
+export const TOUR_VERSION = '7';
 
 /**
  * 按 TabId 注册的指引序列。

@@ -7,14 +7,12 @@
 //   - null 码 chip 文案显示「通用」（与 QtyMatrix 列头「通用」同语义）。
 //   - selected 类型扩为 `(number | null)[]`（doc 可能含 null 通用码）。
 //
-// 总裁片数量（chip 下方实时展示）：总实际裁剪数（US-004 起物理片数口径）=
-// Σ 所选码号每片有效 demand × (paired ? 2 : 1)。
-//   - demand 来自 qtyStore.quantities（perSize，与 serializeQuantities 同口径）。
-//   - 配对片型（paired=true，parse 响应 US-004 起透传；PAIR_TYPES 六类：前片/后片/腰/
-//     前袋/后袋/机头）demand=1 份实际排 L+R 2 物理片 → ×2；缺字段向后兼容按 1 计。
-//   - 未配置的 (label,size) → demand 1（与「每片每码排 1 份」默认 + 后端空 quantities 回退
+// 总裁片数量（chip 下方实时展示；裁片编号化重构 US-003 起 = Σ 所选码号每片有效数量）：
+//   - 数量来自 qtyStore.quantities（perSize，与 serializeQuantities 同口径）；
+//     数量即一切 —— 每份对应母版一个轮廓，不合成镜像（配对 ×2 概念已删除）。
+//   - 未配置的 (label,size) → 1（与「每片每码排 1 份」默认 + 后端空 quantities 回退
 //     demand=1 一致；故未 hydrate 也能正确显示 = 裁片数）。
-//   - 订阅 quantities：demand 在预览页改过后，回到排料页即正确反映（排料页本身不改 demand）。
+//   - 订阅 quantities：数量在预览页改过后，回到排料页即正确反映（排料页本身不改数量）。
 //   - doc=null（fallback SIZES，无裁片数据）→ null，UI 显示「—」。
 //
 // 受控：父级（ControlPanel form.sizes）持有 selected 数组，toggle 时回调 onChange。
@@ -41,10 +39,10 @@ function sizeLabel(s: number | null): string {
 }
 
 /**
- * 读取 (label, size) 的有效 demand；未配置 → 1。
+ * 读取 (label, size) 的有效数量；未配置 → 1。
  *
  * 与 qtyStore.getPieceDisplay 的区别：后者未配置 → 0（store 作单一真相源，依赖 hydrate 物化
- * 默认 1）；本函数面向「总实际裁剪数」展示，未配置应按默认 1 计（与「每片每码排 1 份」+
+ * 默认 1）；本函数面向「总裁片数量」展示，未配置应按默认 1 计（与「每片每码排 1 份」+
  * 后端空 quantities 回退 demand=1 一致），否则未 hydrate 时会把全部裁片算成 0。
  *
  * 口径（perSize 与 serializeQuantities 一致）：
@@ -64,9 +62,8 @@ export function effectiveDemand(
 }
 
 /**
- * 总实际裁剪数（US-004 物理片数口径）= Σ 所选码号每片有效 demand × (paired ? 2 : 1)。
- * 配对片型 demand=1 份 → L+R 2 物理片；piece.paired 缺字段（旧响应/测试桩）→ ×1 兜底。
- * doc=null（无裁片数据）→ null。
+ * 总裁片数量 = Σ 所选码号每片有效数量（US-003 起数量即一切口径；一份 = 母版一个轮廓，
+ * 不合成镜像）。doc=null（无裁片数据）→ null。
  *
  * 纯函数（便于单测）：不读 store，入参 doc / selected / quantities 全显式。
  */
@@ -81,7 +78,7 @@ export function computeTotalCutPieces(
     const entry = doc.sizes.find((sz) => sz.size === sizeVal);
     if (!entry) continue;
     for (const piece of entry.pieces) {
-      total += effectiveDemand(quantities, piece.label, sizeVal) * (piece.paired ? 2 : 1);
+      total += effectiveDemand(quantities, piece.label, sizeVal);
     }
   }
   return total;
@@ -99,15 +96,15 @@ export interface SizePickerProps {
 export function SizePicker({ selected, onChange, disabled = false }: SizePickerProps): JSX.Element {
   // US-017：动态从 uploadStore.doc 读码号列表；doc=null 时 fallback 到 SIZES。
   const doc = useUploadStore((s) => s.doc);
-  // 订阅 quantities：demand 变化（预览页编辑）→ 总数实时重算。SizePicker 是排料页叶子组件，
-  // 订阅仅重渲染自身（排料页不改 demand，实际触发频率低）。
+  // 订阅 quantities：数量变化（预览页编辑）→ 总数实时重算。SizePicker 是排料页叶子组件，
+  // 订阅仅重渲染自身（排料页不改数量，实际触发频率低）。
   const quantities = useQtyStore((s) => s.quantities);
   const chipSizes: (number | null)[] = doc
     ? doc.sizes.map((s) => s.size)
     : [...SIZES];
   const selectedSet = new Set(selected);
 
-  // 总实际裁剪数：所选码号每片 × demand 之和（见 computeTotalCutPieces）。
+  // 总裁片数量：所选码号每片 × 数量之和（见 computeTotalCutPieces）。
   const totalPieces = computeTotalCutPieces(doc, selected, quantities);
 
   return (

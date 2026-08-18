@@ -58,7 +58,7 @@ export type CommitStatus = 'idle' | 'committing' | 'done' | 'error';
 export interface CommitSummary {
   /** 后端返回的 sizes 数组（码号列表，number[]）。 */
   sizes: number[];
-  /** 后端返回的 n_pieces（intermediate 裁片总数，含 L/R 镜像）。 */
+  /** 后端返回的 n_pieces（intermediate 裁片总数 = 母版轮廓数，v2 无镜像展开）。 */
   n_pieces: number;
   /** 后端返回的 total_area_mm2（裁片原面积总和，mm²）。 */
   total_area_mm2: number;
@@ -66,7 +66,7 @@ export interface CommitSummary {
 
 /** 放大预览模态目标（label + size；US-013 PieceZoomModal 订阅此字段自显隐）。 */
 export interface ZoomTarget {
-  /** 模态预览的片型 label（g01+ 裁片码，跨码匹配同一片型）。 */
+  /** 模态预览的裁片 g 码（g01+ 零填充，跨码匹配同一裁片）。 */
   label: string;
   /** 模态预览的码号（点击卡片所属 activeSize；null = 通用码）。 */
   size: number | null;

@@ -1,6 +1,6 @@
 // US-006 NestSVG seek + hover integration tests.
 //   AC#2 seekTime >= 0 -> NestSVG uses frameAtTime(run, seekTime); seekTime=-1 keeps lastFrame
-//   AC#4 mousemove on flipGroup -> closest("polygon") + dataset.ptype -> Tooltip
+//   AC#4 mousemove on flipGroup -> closest("polygon") + dataset.label -> Tooltip
 //   AC#6 switching hover polygon removes old class; mouseleave hides tooltip
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -53,7 +53,7 @@ function makeManifest(): ManifestMsg {
     pieces: [
       {
         id: "p1",
-        ptype: "前片",
+        label: "g01",
         size: 30,
         color: "#ff0000",
         area_mm2: 12345,
@@ -61,7 +61,7 @@ function makeManifest(): ManifestMsg {
       },
       {
         id: "p2",
-        ptype: "后片",
+        label: "g02",
         size: 32,
         color: "#00ff00",
         area_mm2: 23456,
@@ -215,7 +215,7 @@ describe("NestSVG hover (US-006 AC#4..#6)", () => {
     expect(tooltip.style.display).toBe("block");
     expect(tooltip.style.left).toBe("214px");
     expect(tooltip.style.top).toBe("314px");
-    expect(tooltip.innerHTML).toBe("前片 · 码30<br>面积 123.5 cm²");
+    expect(tooltip.innerHTML).toBe("g01 · 码30<br>面积 123.5 cm²");
     expect(poly1.classList.contains("hover")).toBe(true);
   });
 
@@ -260,7 +260,7 @@ describe("NestSVG hover (US-006 AC#4..#6)", () => {
     expect(poly2.classList.contains("hover")).toBe(true);
 
     const tooltip = document.body.querySelector(".tooltip") as HTMLDivElement;
-    expect(tooltip.innerHTML).toContain("后片");
+    expect(tooltip.innerHTML).toContain("g02");
     expect(tooltip.innerHTML).toContain("码32");
   });
 
@@ -278,7 +278,7 @@ describe("NestSVG hover (US-006 AC#4..#6)", () => {
     dispatchMouseMove(poly2, 0, 0);
 
     const tooltip = document.body.querySelector(".tooltip") as HTMLDivElement;
-    expect(tooltip.innerHTML).toBe("后片 · 码32<br>面积 234.6 cm²");
+    expect(tooltip.innerHTML).toBe("g02 · 码32<br>面积 234.6 cm²");
   });
 
   it("AC#6 mouseleave flipGroup hides tooltip + removes highlight", () => {

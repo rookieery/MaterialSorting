@@ -77,12 +77,11 @@ function makeDoc11(): ParsedDoc {
 
 /**
  * 构造 3 码母版（带不同裁片数，用于总裁片数量累加测试）：
- * 28 → 2 片，29 → 3 片，30 → 1 片。pieces 内容仅需占位（总裁片数量只读 length）。
+ * 28 → 2 片，29 → 3 片，30 → 1 片。pieces 内容仅需占位（总裁片数量只读 label）。
  */
 function makeDocWithPieces(): ParsedDoc {
   const piece = (label: string) => ({
     label,
-    name: label,
     polygon: [],
     internal_lines: [],
     notches: [],
@@ -96,32 +95,6 @@ function makeDocWithPieces(): ParsedDoc {
       { size: 28, pieces: [piece("g01"), piece("g02")] },
       { size: 29, pieces: [piece("g01"), piece("g02"), piece("g03")] },
       { size: 30, pieces: [piece("g01")] },
-    ],
-  };
-}
-
-/**
- * US-004 配对片型 doc：28 码 A 前片(paired) + B 单排(内片)。
- * demand=1 份 → A 实际 2 物理片、B 1 物理片。
- */
-function makePairedDoc(): ParsedDoc {
-  const piece = (label: string, ptype: string, paired: boolean) => ({
-    label,
-    name: ptype,
-    ptype,
-    paired,
-    polygon: [],
-    internal_lines: [],
-    notches: [],
-    net_polygon: [],
-    grain_line: null,
-  });
-  return {
-    doc_id: "doc-paired",
-    filename: "M1787-paired.dxf",
-    sizes: [
-      { size: 28, pieces: [piece("g01", "前片", true), piece("g02", "单排", false)] },
-      { size: 30, pieces: [piece("g01", "前片", true)] },
     ],
   };
 }
@@ -358,40 +331,35 @@ describe("computeTotalCutPieces / effectiveDemand", () => {
   });
 });
 
-// US-004 物理片数口径：配对片型（paired=true）demand ×2，缺字段向后兼容 ×1。
-describe("computeTotalCutPieces (US-004 物理片数口径)", () => {
-  const pairedDoc = makePairedDoc(); // 28:[A 前片 paired, B 单排] 30:[A 前片 paired]
+// US-003 数量即一切口径：总裁片数量 = Σ 数量（配对 ×2 / 缺字段兜底概念已删）。
+describe("computeTotalCutPieces (US-003 Σ 数量口径)", () => {
+  const doc = makeDocWithPieces(); // 28:[A,B] 29:[A,B,C] 30:[A]
 
-  it("paired=true → 该片 ×2（勾 28 → A 2 物理片 + B 1 物理片 = 3 片）", () => {
-    expect(computeTotalCutPieces(pairedDoc, [28], {})).toBe(3);
+  it("无乘数：勾 28 → A+B = 2 片（数量即一切，一份 = 母版一个轮廓）", () => {
+    expect(computeTotalCutPieces(doc, [28], {})).toBe(2);
   });
 
-  it("勾多码 → 配对片逐码 ×2（28+30 → 3 + 2 = 5 物理片）", () => {
-    expect(computeTotalCutPieces(pairedDoc, [28, 30], {})).toBe(5);
+  it("勾多码逐码累加（28+30 → 2 + 1 = 3 片）", () => {
+    expect(computeTotalCutPieces(doc, [28, 30], {})).toBe(3);
   });
 
-  it("paired × demand 复合放大（A@28 demand=3 → 3×2=6；勾 28 → 6+1=7）", () => {
+  it("数量放大（A@28=3 → 28 码 = 3+1 = 4；勾 28 → 4 片）", () => {
     const q: PieceQuantityMap = {
       g01: { perSize: { "28": 3 }, baseValue: 3 },
     };
-    expect(computeTotalCutPieces(pairedDoc, [28], q)).toBe(7);
+    expect(computeTotalCutPieces(doc, [28], q)).toBe(4);
   });
 
-  it("paired 片 demand=0 → 0×2=0 不计入（勾 28 → B 1 片）", () => {
+  it("数量 0 → 不计入（A@28=0 → 勾 28 → B 1 片）", () => {
     const q: PieceQuantityMap = {
       g01: { perSize: { "28": 0 }, baseValue: 0 },
     };
-    expect(computeTotalCutPieces(pairedDoc, [28], q)).toBe(1);
+    expect(computeTotalCutPieces(doc, [28], q)).toBe(1);
   });
 
-  it("缺 paired 字段（旧响应/测试桩）→ ×1 兜底（makeDocWithPieces 无字段）", () => {
-    const legacy = makeDocWithPieces(); // 28:[A,B] 无 paired 字段
-    expect(computeTotalCutPieces(legacy, [28], {})).toBe(2);
-  });
-
-  it("配对片 UI 展示：勾 28 码 →「3 片」（物理口径实时反映）", () => {
-    useUploadStore.setState({ status: "done", doc: makePairedDoc() });
+  it("UI 展示：勾 28 码 →「2 片」（Σ 口径实时反映）", () => {
+    useUploadStore.setState({ status: "done", doc: makeDocWithPieces() });
     renderPicker([28]);
-    expect(getTotalText()).toBe("3 片");
+    expect(getTotalText()).toBe("2 片");
   });
 });

@@ -49,7 +49,7 @@ function makeManifest(): ManifestMsg {
     pieces: [
       {
         id: "p1",
-        ptype: "Front",
+        label: "g01",
         size: 30,
         color: "#ff0000",
         area_mm2: 12345,
@@ -57,7 +57,7 @@ function makeManifest(): ManifestMsg {
       },
       {
         id: "p2",
-        ptype: "Back",
+        label: "g02",
         size: 32,
         color: "#00ff00",
         area_mm2: 23456,
@@ -146,12 +146,12 @@ describe("NestSVG (US-003)", () => {
     expect(poly1.getAttribute("fill-opacity")).toBe("0.55");
     expect(poly1.getAttribute("stroke")).toBe("#ff0000");
     expect(poly1.getAttribute("stroke-width")).toBe("1.2");
-    expect(poly1.dataset.ptype).toBe("Front");
+    expect(poly1.dataset.label).toBe("g01");
     expect(poly1.dataset.size).toBe("30");
     expect(poly1.dataset.area).toBe("12345");
     expect(poly1.style.display).toBe("none");
 
-    expect(poly2.dataset.ptype).toBe("Back");
+    expect(poly2.dataset.label).toBe("g02");
     expect(poly2.dataset.size).toBe("32");
   });
 
@@ -306,7 +306,7 @@ function makeManifest5Layers(): ManifestMsg {
     pieces: [
       {
         id: "p1",
-        ptype: "Front",
+        label: "g01",
         size: 30,
         color: "#ff0000",
         area_mm2: 12345,
@@ -329,7 +329,7 @@ function makeManifest5Layers(): ManifestMsg {
       // p2 仅毛版 polygon（验证无 5 层字段时不渲染额外节点）
       {
         id: "p2",
-        ptype: "Back",
+        label: "g02",
         size: 32,
         color: "#00ff00",
         area_mm2: 23456,
@@ -604,7 +604,7 @@ function makeManifestDemand(): ManifestMsg {
     pieces: [
       {
         id: "p1",
-        ptype: "Front",
+        label: "g01",
         size: 30,
         color: "#ff0000",
         area_mm2: 12345,
@@ -628,7 +628,7 @@ describe("NestSVG demand>1 (多副本渲染)", () => {
     expect(polys.length).toBe(2);            // demand=2 → 2 副本（修复前只有 1）
     for (const p of polys) {
       expect(p.getAttribute("fill")).toBe("#ff0000");
-      expect(p.dataset.ptype).toBe("Front");
+      expect(p.dataset.label).toBe("g01");
       expect(p.dataset.size).toBe("30");
       expect(p.style.display).toBe("none");  // 初始未 placed
     }

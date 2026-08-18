@@ -1,7 +1,7 @@
 // US-013 PieceZoomModal integration tests (>=9 cases):
 //   AC: zoom=null does not render DOM (no portal content)
 //   AC: zoom!==null + doc renders overlay + modal
-//   AC: head contains label badge + qty(份) + sizeLabel + name
+//   AC: head contains label badge + qty(份) + sizeLabel（US-003 起 v2 契约无 name）
 //   AC: body contains PiecePreviewSVG (svg.piece-preview-svg)
 //   AC: close button click calls closeZoom
 //   AC: overlay click closes; modal inner click does NOT close (stopPropagation)
@@ -24,10 +24,9 @@ import type { ParsedDoc, ParsedPiece } from "../../../types/parsed";
 let container: HTMLDivElement | null = null;
 let root: Root | null = null;
 
-function makePiece(label: string, name: string): ParsedPiece {
+function makePiece(label: string): ParsedPiece {
   return {
     label,
-    name,
     polygon: [
       [0, 0],
       [100, 0],
@@ -45,9 +44,9 @@ const sampleDoc: ParsedDoc = {
   doc_id: "abc123",
   filename: "M1787.dxf",
   sizes: [
-    { size: 28, pieces: [makePiece("g01", "front..28"), makePiece("g02", "back..28")] },
-    { size: 30, pieces: [makePiece("g01", "front..30"), makePiece("g02", "back..30")] },
-    { size: null, pieces: [makePiece("g03", "universal")] },
+    { size: 28, pieces: [makePiece("g01"), makePiece("g02")] },
+    { size: 30, pieces: [makePiece("g01"), makePiece("g02")] },
+    { size: null, pieces: [makePiece("g03")] },
   ],
 };
 
@@ -110,7 +109,7 @@ describe("PieceZoomModal (US-013)", () => {
     expect(modal!.getAttribute("aria-label")).toContain("30");
   });
 
-  it("head contains label badge + qty(份) + sizeLabel + name", () => {
+  it("head contains label badge + qty(份) + sizeLabel (v2 无 name)", () => {
     useUploadStore.setState({ doc: sampleDoc });
     useUploadStore.getState().openZoom("g02", 30);
     renderModal();
@@ -122,8 +121,8 @@ describe("PieceZoomModal (US-013)", () => {
     expect(qty!.textContent).toBe("0份");
     const meta = head!.querySelector(".piece-zoom-meta");
     expect(meta!.textContent).toContain("30");
-    const name = head!.querySelector(".piece-zoom-name");
-    expect(name!.textContent).toContain("back..30");
+    // US-003 起 v2 契约无 name 字段：头部不再渲染名称 span
+    expect(head!.querySelector(".piece-zoom-name")).toBeNull();
   });
 
   it("head shows qty from qtyStore getPieceDisplay", () => {

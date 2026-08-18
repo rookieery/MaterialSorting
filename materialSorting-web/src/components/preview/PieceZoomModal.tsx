@@ -1,4 +1,5 @@
-// PieceZoomModal —— 放大预览模态（US-013）。
+// PieceZoomModal —— 放大预览模态（US-013；裁片编号化重构 US-003 起头部只显 g 码 + 码号，
+// 中文 block 名已从契约删除）。
 //
 // 单击 QtyMatrix 行头缩略图时弹出该裁片的大图模态（zoom.size = 缩略图 rep 自身的码，
 // 所见即所放大），复用 PiecePreviewSVG 的 5 层命令式渲染（scale(1,-1) 翻转不变量保留）。
@@ -11,14 +12,13 @@
 //   - 仅展示（无可编辑控件），故无需草稿 state；数量编辑入口在 QtyMatrix（数量弹窗已拆除）。
 //
 // 头部信息（详情模态追求信息完整，与卡片头追求简洁互补）：
-//   [label徽章] {qty}份 · 码 {sizeLabel(size)} · {name}
+//   [g码徽章] {qty}份 · 码 {sizeLabel(size)}
 //   - 数量与卡片头同口径：qtyStore getPieceDisplay(quantities, label, size).qty，
-//     单位「份」（FR-9：配对片 1 份 = L+R 2 物理片；US-004 起矩阵行头以配对徽章说明实际片数）。
-//   - name 是母版 block 名（中文），详情模态显示便于版师识别
+//     单位「份」（一份 = 母版一个轮廓，数量即一切、不合成镜像）。
+//   - 唯一标识 = g 码（v2 契约 parse 响应无 name 字段）。
 //
 // 关键约束：
-//   - 跨码匹配同一片型按 label（g 码次序），与 qtyStore / QtyMatrix 同口径；
-//     不用 name（含码号后缀，跨码不同）。
+//   - 跨码匹配同一裁片按 label（g 码次序），与 qtyStore / QtyMatrix 同口径。
 //   - 防御性兜底：doc.sizes 找不到匹配码、或码内 pieces 找不到匹配 label → 渲染 null
 //     （不挂 DOM；理论不会发生，因 openZoom 由 QtyMatrix 在已挂载缩略图上调）。
 //   - 不引入 CSS 框架；.piece-zoom-overlay / .piece-zoom-modal / .piece-zoom-close /
@@ -118,8 +118,7 @@ export function PieceZoomModal(): JSX.Element | null {
         <div className="piece-zoom-head">
           <span className="piece-card-label">{piece.label}</span>
           <span className="piece-zoom-qty">{display.qty}份</span>
-          <span className="piece-zoom-meta"> · 码 {sizeLabel(zoom.size)} · </span>
-          <span className="piece-zoom-name">{piece.name}</span>
+          <span className="piece-zoom-meta"> · 码 {sizeLabel(zoom.size)}</span>
         </div>
         <div className="piece-zoom-body">
           <PiecePreviewSVG piece={piece} pad={20} />

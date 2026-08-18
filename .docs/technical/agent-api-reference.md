@@ -119,7 +119,7 @@ curl -X POST http://127.0.0.1:8000/api/parse-dxf \
 
 ### g 码编号（US-001 v2，名称字段全删）
 
-每片 `label` = 该码内 `g01+` 零填充编号（单一真相源 `nesting_engine/labeling.py`）。**`name` / `ptype` / `paired` 已删除**：名称识别（GROUP_NAMES）与配对镜像（PAIR_TYPES）整体退场，排几份完全由前端 `quantities[label][sizeKey]` 表达（数量即一切，WYSIWYG：母版 N 个轮廓 → intermediate N 条）。前端旧契约消费降级（弹窗缩略图空/图例默认色）由 US-003 前端随动收口。
+每片 `label` = 该码内 `g01+` 零填充编号（单一真相源 `nesting_engine/labeling.py`）。**`name` / `ptype` / `paired` 已删除**：名称识别（GROUP_NAMES）与配对镜像（PAIR_TYPES）整体退场，排几份完全由前端 `quantities[label][sizeKey]` 表达（数量即一切，WYSIWYG：母版 N 个轮廓 → intermediate N 条）。前端已于 US-003 收口（全链路 g 码：types/parsed.ts 无 name/ptype/paired，QtyMatrix/高级配置/预览均显 g 码）。
 
 ### 排序 + 标注
 

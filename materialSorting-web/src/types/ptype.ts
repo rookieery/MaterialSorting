@@ -1,17 +1,18 @@
-// PtypeRepresentative —— GET /api/ptypes 代表裁片契约（US-020 后端 → US-018 前端）。
+// PtypeRepresentative —— GET /api/ptypes 代表裁片契约（US-020 后端 → US-018 前端；
+// 裁片编号化重构 US-003 起 representatives 键 = 裁片 g 码 label，v2 无 ptype 键）。
 //
-// 与后端 web/server.py `_PTYPE_REPRESENTATIVE_FIELDS` 字段一致：
-//   { representatives: Record<ptype, { label?, polygon, net_polygon?, internal_lines?,
+// 与后端 web/server.py `_LABEL_REPRESENTATIVE_FIELDS` 字段一致：
+//   { representatives: Record<label, { label, polygon, net_polygon?, internal_lines?,
 //                                     notches?, grain_line? }> }
 //
 // v1 intermediate 仅 polygon → 仅 polygon 字段；US-024 intermediate 扩 5 层后
 // 自动带 net_polygon/internal_lines/notches/grain_line（前端 layer-aware 渲染，D11）。
 //
-// 与 types/parsed.ts ParsedPiece 同源（裁片几何），但**无 name 字段** —— 代表裁片是
-// 「该 ptype 最小码内首个出现的 piece」（选取口径与 parse 赋号同源同序）。label =
-// 该片在上传预览里的 g01+ 裁片码（2026-08-17 起下发，2026-08-18 切 g 码），高级配置
-// 弹窗列头 / 放大预览头显示该编号徽章；旧 intermediate 无该字段 → 前端兜底显示片型名。
-// 故本类型独立定义；PiecePreviewSVG compact 模式不渲染 label，正好契合。
+// 与 types/parsed.ts ParsedPiece 同源（裁片几何）。代表裁片是「该 g 码最小码内首个出现
+// 的 piece」（选取口径与 parse 赋号同源同序，_build_label_representatives）。
+// Record 键 = rep.label = 裁片 g 码（g01+ 零填充，字典序=数值序），高级配置弹窗列头 /
+// 放大预览头显示该编号徽章。故本类型独立定义；PiecePreviewSVG compact 模式不渲染
+// label，正好契合。
 //
 // 坐标口径：所有顶点 = sparrow 世界坐标 (X=用布长度 mm, Y=门幅 mm，Y 向上)。
 //   - polygon / net_polygon: [[x, y], ...]（R12 POLYLINE 闭合，无重复起点）
@@ -21,9 +22,9 @@
 
 import type { ParsedGrainLine, ParsedNotch, ParsedPt } from './parsed';
 
-/** GET /api/ptypes representatives[ptype] 单条代表裁片（layer-aware：v1 仅 polygon，v2 5 层）。 */
+/** GET /api/ptypes representatives[label] 单条代表裁片（layer-aware：v1 仅 polygon，v2 5 层）。 */
 export interface PtypeRepresentative {
-  /** 代表裁片在上传预览里的 g01+ 裁片码（与 parse 赋号同口径）；旧数据 absent → 兜底片型名。 */
+  /** 代表裁片的 g01+ 裁片码（与 Record 键同值；旧数据 absent → 前端用键本身兜底显示）。 */
   label?: string;
   /** 毛版外轮廓（layer1 POLYLINE），闭合无重复起点。 */
   polygon: ParsedPt[];

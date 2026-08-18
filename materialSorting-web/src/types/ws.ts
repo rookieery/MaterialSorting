@@ -11,7 +11,8 @@ import type { PerTypeOverrides, SolveParams } from './v03';
 
 /**
  * client → server：启动求解（首条消息，必须 action:'start'）。
- * per_type 空时序列化为 null（同旧 vanilla 实现 collectParams）。
+ * per_type 空时序列化为 null（同旧 vanilla 实现 collectParams）；键 = 裁片 g 码
+ * （裁片编号化重构 US-003 起；v2 后端命中 (label, sizeKey) 覆盖，旧 ptype 键 no-op）。
  */
 export interface StartPayload {
   action: 'start';

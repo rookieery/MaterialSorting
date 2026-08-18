@@ -1,11 +1,12 @@
 // QtyMatrix —— 尺码 × 裁片数量矩阵（矩阵化重构 US-002；2026-08-16 行列转置，对齐
-// PerTypeOverridesModal 高级配置弹窗的「裁片作列」风格）。
+// PerTypeOverridesModal 高级配置弹窗的「裁片作列」风格；裁片编号化重构 US-003 起数量
+// 口径 = Σ perSize 数量，配对 ×2 概念删除 —— 数量即一切，母版 N 个轮廓 × 数量）。
 //
 // 职责（一屏看全 + 直接编辑 + 即时小计）：
 //   1. 列 = 全码 label 并集（按 doc.sizes 顺序首次出现排序 → 最小码 pieces 顺序优先，
 //      后续码新增 label 追加在尾部）；列头 = 缩略图（PiecePreviewSVG compact 80×80，
-//      点击放大，title 悬浮显裁片名）+「序号徽章」+「≡」整列设值 icon（见 6，缩略图
-//      下方常驻小按钮）。列头与高级配置弹窗 thead（缩略图 + 片型名）同构，观感一致。
+//      点击放大，title/aria = g 码）+「序号徽章」+「≡」整列设值 icon（见 6，缩略图
+//      下方常驻小按钮）。列头与高级配置弹窗 thead（缩略图 + g 码徽章）同构，观感一致。
 //   2. 行 = doc.sizes 全码（null 码殿后显示「通用」，无 null 码不渲染该行）+ 行尾小计列；
 //      行头是 button，点击 setSize(该码) 切换 activeSize（决定列头缩略图优先显示哪个码
 //      版本的裁片），当前 activeSize 行头高亮。
@@ -15,9 +16,9 @@
 //      （区别于 0，不可编辑）。
 //   4. 特例高亮：格子值 ≠ 该列 baseValue 且整列非全同 → .override（整列同值不高亮，
 //      避免逐格手改满屏噪点）；baseValue 缺席兜底 1（未填充时的高亮基准）。
-//   5. 小计反馈（US-004 起物理片数口径 = Σ demand × (paired ? 2 : 1)）：行尾小计列（每码）/
-//      底部合计行（每裁片）/ 工具条总片数均按配对片 ×2 计（demand=N 份 → 配对片型实际排
-//      L+R 共 2N 物理片；口径说明只在总片数 title，列头不再有 ×2 徽章）。全 0 红色警示。
+//   5. 小计反馈（US-003 起 = Σ perSize 数量）：行尾小计列（每码）/ 底部合计行（每裁片）/
+//      工具条总片数 = 数量之和（每份对应母版一个轮廓，不合成镜像；口径说明在总片数
+//      title）。全 0 红色警示。
 //   6. 列级整列设值（2026-08-16 转置回归，适配纯图列头）：点缩略图下方「≡」icon（title
 //      悬浮提示「整列设值」）→ 弹层输入统一值 X → setRowAll 整列写（值 + baseValue=X）。
 //      特例兼容 = 应用后单格再改（.override 高亮，见 4）。弹层 createPortal 到 body +
@@ -98,7 +99,7 @@ interface MatrixCol {
 // ---------------------------------------------------------------------------
 
 interface QtyMatrixCellProps {
-  /** 片型 label（g01+ 裁片码，跨码匹配同一片型）。 */
+  /** 裁片 g 码（g01+ 零填充，跨码匹配同一裁片）。 */
   label: string;
   /** 该格码号（number 或 null=通用）。 */
   size: number | null;
@@ -356,16 +357,6 @@ export function QtyMatrix(): JSX.Element | null {
     return quantities[label]?.baseValue ?? 1;
   }
 
-  /** 该 (label, size) 格是否配对片型（US-004：缺字段兜底 false → ×1 计）。 */
-  function pairedOf(label: string, size: number | null): boolean {
-    return piecesByLabel.get(label)?.get(sizeKeyOf(size))?.paired === true;
-  }
-
-  /** 物理片数乘数：配对片 1 份 = L+R 2 物理片，内片 1 份 = 1 物理片。 */
-  function multOf(label: string, size: number | null): 1 | 2 {
-    return pairedOf(label, size) ? 2 : 1;
-  }
-
   /** 整列是否全同（全同则整列不高亮，避免逐格手改满屏噪点）。 */
   function colAllSame(label: string): boolean {
     const sizes = labelSizes(label);
@@ -376,17 +367,14 @@ export function QtyMatrix(): JSX.Element | null {
 
   const cols: MatrixCol[] = labelOrder.map((label) => ({ label, sizes: labelSizes(label) }));
 
-  // 小计（US-004 物理片数口径 = Σ demand × (paired?2:1)；配对片型 demand=N 份 → 2N 物理片）。
+  // 小计（US-003 起口径 = Σ perSize 数量；一份 = 母版一个轮廓，不合成镜像）。
   //   - labelTotals：每裁片合计（tfoot 底部合计行，按列）。
   //   - sizeSubtotals：每码小计（tbody 行尾小计列）。
   const labelTotals: number[] = cols.map((c) =>
-    c.sizes.reduce<number>((acc, s) => acc + cellQty(c.label, s) * multOf(c.label, s), 0),
+    c.sizes.reduce<number>((acc, s) => acc + cellQty(c.label, s), 0),
   );
   const sizeSubtotals: number[] = sizeRows.map((s) =>
-    cols.reduce<number>(
-      (acc, c) => acc + (cellExists(c.label, s) ? cellQty(c.label, s) * multOf(c.label, s) : 0),
-      0,
-    ),
+    cols.reduce<number>((acc, c) => acc + (cellExists(c.label, s) ? cellQty(c.label, s) : 0), 0),
   );
   const total = sizeSubtotals.reduce<number>((a, b) => a + b, 0);
 
@@ -439,10 +427,7 @@ export function QtyMatrix(): JSX.Element | null {
   return (
     <div className="qty-matrix" ref={rootRef} data-testid="qty-matrix" data-tour="qty-matrix">
       <div className="qty-matrix-toolbar">
-        <span
-          className="qty-total"
-          title="物理片数：配对片型每份排左右（L+R）2 物理片，内片每份 1 物理片"
-        >
+        <span className="qty-total" title="总片数 = 各尺码数量之和；每份对应母版一个轮廓（不合成镜像）">
           总片数 <strong data-testid="qty-total">{total}</strong>
         </span>
         {total === 0 && cols.length > 0 ? (
@@ -467,7 +452,6 @@ export function QtyMatrix(): JSX.Element | null {
               </th>
               {cols.map((c) => {
                 const rep = repPiece(c.label);
-                const repName = rep ? rep.piece.name : c.label;
                 return (
                   <th className="qty-colhead" scope="col" key={c.label}>
                     {/* th 保持 table-cell（display:flex 会拆掉表格布局），内部 flex 布局
@@ -477,7 +461,7 @@ export function QtyMatrix(): JSX.Element | null {
                         type="button"
                         className="qty-thumb"
                         aria-label={"放大预览裁片 " + c.label}
-                        title={repName + " · 放大预览"}
+                        title={c.label + " · 放大预览"}
                         onClick={() => rep && openZoom(c.label, rep.size)}
                       >
                         {rep ? <PiecePreviewSVG piece={rep.piece} compact /> : null}

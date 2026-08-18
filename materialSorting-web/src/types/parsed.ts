@@ -1,8 +1,9 @@
-// ParsedDoc / ParsedSize / ParsedPiece —— DXF 上传解析响应契约（US-004 后端 → US-005 前端）。
+// ParsedDoc / ParsedSize / ParsedPiece —— DXF 上传解析响应契约（US-004 后端 → US-005 前端；
+// 裁片编号化重构 US-003 起随 v2 schema 去 name/ptype/配对字段，label-only）。
 //
 // 与后端 web/server.py `_build_parse_payload()` 字段严格一致：
-//   { doc_id, filename, sizes: [{ size, pieces: [{ label, name, ptype, paired, polygon,
-//                                                  internal_lines, notches, net_polygon,
+//   { doc_id, filename, sizes: [{ size, pieces: [{ label, polygon, internal_lines,
+//                                                  notches, net_polygon,
 //                                                  grain_line }] }] }
 //
 // 坐标口径：所有顶点 = sparrow 世界坐标 (X=用布长度 mm, Y=门幅 mm，Y 向上)。
@@ -23,25 +24,14 @@ export type ParsedNotch = [number, number, number, number];
 /** 布纹线两端点：[x1, y1, x2, y2]（与 US-004 `grain_line = [x1,y1,x2,y2]` 一致）。 */
 export type ParsedGrainLine = [number, number, number, number];
 
-/** 单片解析结果（与 server.py `_build_parse_payload` 字段名严格一致）。 */
+/**
+ * 单片解析结果（与 server.py `_build_parse_payload` 字段名严格一致）。
+ * v2 契约：只有 g 码 label 一个标识字段（无 name/ptype/配对布尔 —— 中文名、片型与配对
+ * 概念已从全链路删除，数量即一切，母版 N 个轮廓 × quantities 数量 = 排料件数）。
+ */
 export interface ParsedPiece {
   /** g01+ 裁片码（每码内独立零填充编号，字典序=数值序；实测每码 ≤10 片；母版自带编号时复用）。 */
   label: string;
-  /** 母版 block 名（中文 / GBK 已解码）。 */
-  name: string;
-  /**
-   * 片型名（后片/前片/机头/裤耳/前袋/火机袋/后袋/单排/双排/腰，矩阵化重构 US-004 起）。
-   * 与 commit 链路同源：group_key → assign_group_no(g00..g09) → GROUP_NAMES。
-   * 可选：旧响应 / 测试桩缺字段按非配对（×1）计，向后兼容。
-   */
-  ptype?: string;
-  /**
-   * 是否配对片型（ptype ∈ PAIR_TYPES 六类：前片/后片/腰/前袋/后袋/机头）。
-   * 语义：demand=N 份 → 实际排 L+R 共 2N 物理片（内片 N 物理片）。
-   * 小计 / 总片数（QtyMatrix / SizePicker）按物理片数口径 = Σ demand × (paired ? 2 : 1)。
-   * 可选：缺字段按 false（×1）计。
-   */
-  paired?: boolean;
   /** 毛版外轮廓 (layer1 POLYLINE)，闭合无重复起点。 */
   polygon: ParsedPt[];
   /** 内部辅助线 (layer8)，每条是顶点数组。 */

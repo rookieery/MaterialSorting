@@ -39,7 +39,6 @@ afterEach(() => {
 function makePiece(overrides: Partial<ParsedPiece> = {}): ParsedPiece {
   return {
     label: 'g01',
-    name: '前片-30',
     polygon: [
       [10, 20],
       [110, 20],
@@ -122,7 +121,6 @@ describe('PiecePreviewSVG (US-007) — pieceBBox / piecesBBox pure helpers', () 
   it('pieceBBox 空片（全无数据）返回 null', () => {
     const p: ParsedPiece = {
       label: 'g01',
-      name: '空',
       polygon: [],
       internal_lines: [],
       notches: [],
@@ -155,7 +153,6 @@ describe('PiecePreviewSVG (US-007) — pieceBBox / piecesBBox pure helpers', () 
   it('piecesBBox 全空片返回 null', () => {
     const empty: ParsedPiece = {
       label: '',
-      name: '',
       polygon: [],
       internal_lines: [],
       notches: [],
@@ -353,7 +350,6 @@ describe('PiecePreviewSVG (US-007) AC#3 坐标系翻转 + g 码文字标注（�
     const a = makePiece(); // (10,20)-(110,100)
     const b = makePiece({
       label: 'g02',
-      name: 'b',
       polygon: [
         [200, 0],
         [300, 0],
@@ -415,7 +411,6 @@ describe('PiecePreviewSVG (US-007) AC#3 坐标系翻转 + g 码文字标注（�
     const a = makePiece({ label: 'g01' }); // bbox (10,20)-(110,100) → 文字在 (10,17)
     const b = makePiece({
       label: 'g02',
-      name: 'b',
       polygon: [
         [200, 0],
         [300, 0],
@@ -447,7 +442,6 @@ describe('PiecePreviewSVG (US-007) AC#4 单片 / 多片 / 空片容错', () => {
       makePiece({ label: 'g01' }),
       makePiece({
         label: 'g02',
-        name: 'b',
         polygon: [
           [200, 0],
           [300, 0],
@@ -457,7 +451,6 @@ describe('PiecePreviewSVG (US-007) AC#4 单片 / 多片 / 空片容错', () => {
       }),
       makePiece({
         label: 'g03',
-        name: 'c',
         polygon: [
           [10, 200],
           [110, 200],
@@ -474,7 +467,6 @@ describe('PiecePreviewSVG (US-007) AC#4 单片 / 多片 / 空片容错', () => {
   it('空片（无 polygon）：svg 清空后啥都不画（无 viewBox / 无 flipGroup）', () => {
     const empty: ParsedPiece = {
       label: 'g01',
-      name: '空',
       polygon: [],
       internal_lines: [],
       notches: [],
@@ -490,7 +482,6 @@ describe('PiecePreviewSVG (US-007) AC#4 单片 / 多片 / 空片容错', () => {
   it('polygon < 3 顶点跳过 rough；其他层照常渲染', () => {
     const piece: ParsedPiece = {
       label: 'g01',
-      name: '退化',
       polygon: [
         [10, 20],
         [110, 20],
@@ -526,7 +517,6 @@ describe('PiecePreviewSVG (US-007) AC#5 切 piece 整组重建', () => {
             <PiecePreviewSVG
               piece={makePiece({
                 label: 'g02',
-                name: 'b',
                 polygon: [
                   [200, 0],
                   [300, 0],
@@ -555,7 +545,6 @@ describe('PiecePreviewSVG (US-007) AC#5 切 piece 整组重建', () => {
 
     const empty: ParsedPiece = {
       label: '',
-      name: '',
       polygon: [],
       internal_lines: [],
       notches: [],

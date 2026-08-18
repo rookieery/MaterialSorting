@@ -10,7 +10,6 @@
 // 字段都按字符串存储（对应 input.value），collectParams 做解析；这样「空串 vs "0"」可区分
 // （per_type 必须：空 = 继承，"0" = 显式 0）。
 
-import { V03_PTYPES } from '../constants/v03';
 import type { PerTypeOverrides, PerTypeOverride, SolveParams } from '../types/v03';
 import type { PieceQuantityMap } from '../types/qty';
 
@@ -41,7 +40,8 @@ export interface FormState {
   /** 多 seed 数量字符串（旧 index.html `#seed_count`，默认 "3"，clamp [2,6]）。 */
   seed_count: string;
   /**
-   * 每片型高级覆盖（V03_PTYPES 全量 key，d/tol 各一字符串）。
+   * 每裁片高级覆盖（键 = g01+ 裁片码，d/tol 各一字符串；动态来自高级配置弹窗，
+   * 列集 = 当前母版 g 码并集 —— V03_PTYPES 固定清单已删）。空对象 = 全部继承默认 0。
    * US-019 起：内外两档全局输入删除，per_type 是唯一的 d/tol 覆盖入口（高级配置弹窗）。
    */
   per_type: Record<string, PerTypeFormValue>;
@@ -49,7 +49,8 @@ export interface FormState {
 
 /**
  * 默认值（US-017 起 sizes 默认空数组，强制用户勾选；gate=198cm（=GATE_MM 1980mm），
- * time=120，seed=0；multi_seed 关闭，seed_count=3；per_type 全空 = 继承 v0.3 默认）。
+ * time=120，seed=0；multi_seed 关闭，seed_count=3；per_type 空对象 = 无任何覆盖 =
+ * 继承 v0.3 默认 0 —— 裁片键动态出现，仅在弹窗确定后写入）。
  */
 export const DEFAULT_FORM: FormState = {
   sizes: [],
@@ -58,7 +59,7 @@ export const DEFAULT_FORM: FormState = {
   seed: '0',
   multi_seed: false,
   seed_count: '3',
-  per_type: Object.fromEntries(V03_PTYPES.map((pt) => [pt, { d: '', tol: '' }])),
+  per_type: {},
 };
 
 /** collectParams 输出（与旧 vanilla 实现 collectParams 返回值结构一致）。 */
@@ -74,7 +75,8 @@ export interface CollectedParams {
  * 不变量：
  *   - params：US-019 起永远返回全 0（主面板内外两档输入删除，v0.3 上限交给 per_type 显式
  *     覆盖 + 后端全局上限兜底，2026-08-17 起 min(d,10)/min(tol,45) 不再按片型）。
- *   - per_type：仅当某 ptype 的 d 或 tol 至少一档非空时才创建 entry；
+ *   - per_type：键 = 裁片 g 码（US-003 起动态键，遍历 form.per_type 实际持有的键，无固定
+ *     清单）；仅当某 label 的 d 或 tol 至少一档非空时才创建 entry；
  *     d / tol 各自仅当 trim() !== '' 时写入；最终若 per_type 整体为空 → null。
  *   - 整体 trim 在 d/tol 单字段层做（与旧 vanilla 实现 inp.value.trim() !== '' 一致）。
  */
@@ -87,8 +89,8 @@ export function collectParams(form: FormState): CollectedParams {
   };
 
   const per_type: PerTypeOverrides = {};
-  for (const pt of V03_PTYPES) {
-    const vals = form.per_type[pt];
+  for (const label of Object.keys(form.per_type)) {
+    const vals = form.per_type[label];
     if (!vals) continue;
     const dStr = vals.d.trim();
     const tStr = vals.tol.trim();
@@ -96,7 +98,7 @@ export function collectParams(form: FormState): CollectedParams {
       const entry: PerTypeOverride = {};
       if (dStr !== '') entry.d = parseFloat(dStr);
       if (tStr !== '') entry.tol = parseFloat(tStr);
-      per_type[pt] = entry;
+      per_type[label] = entry;
     }
   }
   return {

@@ -15,8 +15,9 @@
 // US-006 增量：
 //   5. 回放感知：seekTime >= 0 时改用 frameAtTime(run, seekTime)（二分，lib/seek.ts）；
 //      seekTime = -1 时维持 live（lastFrame）。effect deps 加 seekTime，拖动时立即重绘。
-//   6. flipGroup 上事件委托 mousemove + mouseleave（AC#4）：e.target.closest('polygon') + dataset.ptype
-//      → Tooltip 显示片型/码/面积(cm²)；切换 polygon 时旧高亮 class 自动移除（AC#6）。
+//   6. flipGroup 上事件委托 mousemove + mouseleave（AC#4）：e.target.closest('polygon') +
+//      dataset.label（裁片 g 码，US-003 起 manifest 唯一标识）→ Tooltip 显示
+//      `g03 · 码28` + 面积(cm²)；切换 polygon 时旧高亮 class 自动移除（AC#6）。
 //      高频 mousemove 直接 mutate Tooltip DOM（imperative，不进 React state）。
 //
 // US-024 增量（5 层渲染）：
@@ -44,7 +45,7 @@ const SVGNS = 'http://www.w3.org/2000/svg';
 /**
  * 单个裁片的引用持有（毛版 polygon + 4 层工艺 DOM 节点，US-024）。
  *
- * - el: 毛版 polygon（layer1）—— ptype 配色，与 mousemove tooltip 联动。
+ * - el: 毛版 polygon（layer1）—— label 配色（label_color 单一真相源），与 mousemove tooltip 联动。
  * - netEl / internalEls / notchEls / grainEl: 4 层工艺节点（layer14/8/4/7）—— 仅渲染透传。
  * - 所有节点在 manifest 到达时一次性创建，frame 切换只 setAttribute。
  */
@@ -150,7 +151,7 @@ export function NestSVG({ run }: NestSVGProps) {
       // US-006 AC#4..#6：flipGroup 上事件委托 mousemove + mouseleave。
       // 与旧 vanilla 实现 setupHover 等价（旧版绑 svg，AC 要求 flipGroup；多边形均在 flipGroup 内，
       // 行为一致：mousemove 落在 polygon → 显 tooltip + 高亮；其他 / mouseleave → 隐 + 移除高亮）。
-      // US-024：4 层工艺节点 pointerEvents='none'，事件委托只触发于毛版 polygon（dataset.ptype 必有）。
+      // US-024：4 层工艺节点 pointerEvents='none'，事件委托只触发于毛版 polygon（dataset.label 必有）。
       g.addEventListener('mousemove', handleHover);
       g.addEventListener('mouseleave', handleHoverEnd);
 
@@ -265,21 +266,20 @@ export function NestSVG({ run }: NestSVGProps) {
  * 为单片 PieceInfo 创建一组 5 层 DOM 节点（毛版 polygon + net/internal/notch/grain）并 append 到 g。
  * 返回 PieceEntry 持有这些节点引用。demand>1 时对本函数调用 N 次 → N 个独立副本（多副本渲染）。
  *
- * 与旧 vanilla 实现 onManifest 内单片建节点逻辑等价（layer1 ptype 配色 + US-024 4 层）。
+ * 与旧 vanilla 实现 onManifest 内单片建节点逻辑等价（layer1 label 配色 + US-024 4 层）。
  * 所有节点初始 display:none（等 frame 到达再显）。纯提取，无行为变更。
  */
 function createPieceEntry(p: PieceInfo, g: SVGGElement): PieceEntry {
-  // layer1 毛版 polygon（ptype 配色）—— 与既有渲染一致（mouse 联动仅绑此层）
+  // layer1 毛版 polygon（label 配色）—— 与既有渲染一致（mouse 联动仅绑此层）
   const poly = document.createElementNS(SVGNS, 'polygon');
   poly.setAttribute('fill', p.color);
   poly.setAttribute('fill-opacity', '0.55');
   poly.setAttribute('stroke', p.color);
   poly.setAttribute('stroke-width', '1.2');
   poly.style.display = 'none';
-  poly.dataset.ptype = p.ptype;
   poly.dataset.size = String(p.size);
   poly.dataset.area = String(p.area_mm2);
-  // g 码裁片标识（2026-08-18 起 manifest 透传；旧后端无 → undefined，tooltip 不显前缀）
+  // g 码裁片标识（v2 manifest 必有；旧后端无 → undefined，tooltip 命中判定降级不显）
   if (p.label) poly.dataset.label = p.label;
   g.appendChild(poly);
 
@@ -368,23 +368,22 @@ function transformPt(pt: [number, number], rot: number, tr: [number, number]): [
  *
  * 与旧 vanilla 实现 setupHover 内 mousemove 一致：
  *   - poly = e.target.closest('polygon')（事件委托，e.target 可能是 polygon 本身或其子节点）
- *   - poly && poly.dataset.ptype → setHovered + showTooltip（g 码·片型/码/面积 cm²）
+ *   - poly && poly.dataset.label → setHovered + showTooltip（`g03 · 码28` + 面积 cm²；
+ *     US-003 起命中判定走 dataset.label —— v2 manifest 唯一标识 = 裁片 g 码）
  *   - 否则 → clearHovered + hideTooltip
  *
  * 面积换算：dataset.area 单位 mm²，÷100 → cm²（与旧 vanilla 实现 `parseFloat/100` 一致）。
- * g 码前缀：dataset.label（2026-08-18 起 manifest 透传；旧后端无 → 不显前缀）。
  */
 function handleHover(e: MouseEvent): void {
   const target = e.target as Element | null;
   const poly = target?.closest('polygon') as SVGPolygonElement | null;
-  if (poly && poly.dataset.ptype) {
+  if (poly && poly.dataset.label) {
     setHovered(poly);
     const area_cm2 = (parseFloat(poly.dataset.area || '0') / 100).toFixed(1);
-    const prefix = poly.dataset.label ? `${poly.dataset.label} · ` : '';
     showTooltip(
       e.clientX,
       e.clientY,
-      `${prefix}${poly.dataset.ptype} · 码${poly.dataset.size}<br>面积 ${area_cm2} cm²`,
+      `${poly.dataset.label} · 码${poly.dataset.size}<br>面积 ${area_cm2} cm²`,
     );
   } else {
     clearHovered();

@@ -71,7 +71,6 @@ afterEach(() => {
 function makePiece(overrides: Partial<ParsedPiece> = {}): ParsedPiece {
   return {
     label: 'g01',
-    name: '前片',
     polygon: [
       [10, 20],
       [110, 20],
@@ -91,8 +90,8 @@ function makeDoc(): ParsedDoc {
     doc_id: 'deadbeef',
     filename: 'M1787.dxf',
     sizes: [
-      { size: 28, pieces: [makePiece({ label: 'g01', name: '前片28' })] },
-      { size: 30, pieces: [makePiece({ label: 'g01', name: '前片30' }), makePiece({ label: 'g02', name: '后片30' })] },
+      { size: 28, pieces: [makePiece({ label: 'g01' })] },
+      { size: 30, pieces: [makePiece({ label: 'g01' }), makePiece({ label: 'g02' })] },
     ],
   };
 }
@@ -326,7 +325,7 @@ describe('PreviewPage (US-003) 端到端：矩阵格子编辑数量', () => {
     expect(q.perSize['30']).toBe(3);
     expect(q.perSize['28']).toBe(1);
     // A 列合计即时刷新（转置后每裁片合计在 tfoot）：A = 28 码 1 + 30 码 3 = 4
-    // （makePiece 无 paired → ×1 口径）
+    // （US-003 起 Σ 数量口径，无乘数）
     expect(el.querySelector('tfoot .qty-subtotal')!.textContent).toBe('4');
     // 工具条总片数 = A(4) + B(1) = 5
     expect(el.querySelector('[data-testid="qty-total"]')!.textContent).toBe('5');

@@ -1,12 +1,14 @@
-// US-018 PtypePreviewModal integration tests (>=6 cases):
-//   AC: previewPtype=null does not render DOM（且不发 fetch —— 2026-08-17 起打开才 fetch）
-//   AC: previewPtype + fetch success renders overlay + modal + PiecePreviewSVG (svg.piece-preview-svg)
+// US-018 PtypePreviewModal integration tests（裁片编号化重构 US-003 起：
+// /api/ptypes representatives 键 = 裁片 g 码；store previewPtype→previewLabel）：
+//   AC: previewLabel=null does not render DOM（且不发 fetch —— 2026-08-17 起打开才 fetch）
+//   AC: previewLabel + fetch success renders overlay + modal + PiecePreviewSVG (svg.piece-preview-svg)
 //   AC: 每次打开重新 fetch（修复与弹窗缩略图数据不一致的旧缓存 bug）
-//   AC: rep.label → 头部编号徽章；无 label 兜底片型名
+//   AC: 头部 g 码徽章（rep.label；缺 label 兜底 Record 键，键即 g 码）
 //   AC: ✕ button closes
 //   AC: overlay mousedown closes
 //   AC: ESC closes (independent of underlying modal)
 //   AC: stacked with PerTypeOverridesModal: close preview keeps底层 modal
+//   AC: fetch 失败 / representative 缺失 → 降级空态（不崩溃）
 
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { StrictMode } from 'react';
@@ -15,6 +17,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { PtypePreviewModal } from '../PtypePreviewModal';
 import { PerTypeOverridesModal } from '../PerTypeOverridesModal';
 import { useControlPanelStore } from '../../../store/controlPanelStore';
+import type { ParsedPt } from '../../../types/parsed';
 import type { PtypesResponse } from '../../../types/ptype';
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -25,29 +28,29 @@ let fetchSpy: MockInstance<(...args: unknown[]) => Promise<Response>> | null = n
 /** 当前 mock 返回的 representatives（每次 fetch 创建新 Response，避免 body 复用问题）。 */
 let mockReps: PtypesResponse = { representatives: {} };
 
+const SQUARE: ParsedPt[] = [
+  [0, 0],
+  [100, 0],
+  [100, 60],
+  [0, 60],
+];
+
+/** 键 = 裁片 g 码（v2 契约，rep.label 与键同值）。 */
 const REPS: PtypesResponse = {
   representatives: {
-    前片: {
-      label: 'g01',
-      polygon: [
-        [0, 0],
-        [100, 0],
-        [100, 60],
-        [0, 60],
-      ],
-    },
+    g01: { label: 'g01', polygon: SQUARE },
   },
 };
 
 beforeEach(() => {
   useControlPanelStore.getState().closeModal();
-  useControlPanelStore.getState().closePreviewPtype();
+  useControlPanelStore.getState().closePreviewLabel();
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
   mockReps = { representatives: {} };
-  // 用 mockImplementation 每次 fetch 创建新 Response（StrictMode 双 mount 会调 2 次 fetch；
-  // mockResolvedValue 共享同一 Response 会被首次 .json() 消费完，第二次报 "body stream already read"）。
+  // mockImplementation 每次 fetch 创建新 Response（StrictMode 双 mount 会调 2 次 fetch；
+  // mockResolvedValue 共享同一 Response 会被首次 .json() 消费完，第二次报 body 已读）。
   fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((_input: unknown) =>
     Promise.resolve(
       new Response(JSON.stringify(mockReps), {
@@ -70,7 +73,7 @@ afterEach(() => {
   container = null;
   document.body.innerHTML = '';
   useControlPanelStore.getState().closeModal();
-  useControlPanelStore.getState().closePreviewPtype();
+  useControlPanelStore.getState().closePreviewLabel();
   if (fetchSpy) {
     fetchSpy.mockRestore();
     fetchSpy = null;
@@ -97,7 +100,7 @@ function renderModal(): HTMLElement {
 }
 
 describe('PtypePreviewModal (US-018)', () => {
-  it('previewPtype=null does not render (no DOM mounted, no fetch)', async () => {
+  it('previewLabel=null does not render (no DOM mounted, no fetch)', async () => {
     renderModal();
     expect(document.body.querySelector('.ptype-preview-overlay')).toBeNull();
     await flushFetch();
@@ -105,103 +108,92 @@ describe('PtypePreviewModal (US-018)', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it('previewPtype + fetch success renders overlay + modal + PiecePreviewSVG', async () => {
+  it('previewLabel + fetch success renders overlay + modal + PiecePreviewSVG', async () => {
     mockReps = REPS;
-    useControlPanelStore.getState().openPreviewPtype('前片');
+    useControlPanelStore.getState().openPreviewLabel('g01');
     renderModal();
     await flushFetch();
     const overlay = document.body.querySelector('.ptype-preview-overlay');
     const modal = document.body.querySelector('.ptype-preview-modal');
     expect(overlay).not.toBeNull();
     expect(modal).not.toBeNull();
-    // hover/aria 统一「编号-放大预览」格式，不含片型名
+    // hover/aria 统一「g 码-放大预览」格式
     expect(modal!.getAttribute('aria-label')).toBe('g01-放大预览');
     expect(modal!.querySelector('.ptype-preview-head')!.getAttribute('title')).toBe('g01-放大预览');
     const svg = modal!.querySelector('svg.piece-preview-svg');
     expect(svg).not.toBeNull();
-    // rep.label → 头部编号徽章（与上传预览同口径），不再显示片型名
+    // 头部 g 码徽章（与上传预览同口径）
     expect(modal!.querySelector('.piece-card-label')!.textContent).toBe('g01');
-    expect(modal!.querySelector('.ptype-preview-name')).toBeNull();
   });
 
   it('refetches on every open (stale-cache bug fix: 与弹窗缩略图数据保持一致)', async () => {
     mockReps = REPS;
-    useControlPanelStore.getState().openPreviewPtype('前片');
+    useControlPanelStore.getState().openPreviewLabel('g01');
     renderModal();
     await flushFetch();
     expect(fetchSpy!.mock.calls.length).toBeGreaterThanOrEqual(1);
-    // 关闭再开（换 ptype）→ 再次 fetch
+    // 关闭再开（换 g 码）→ 再次 fetch
     act(() => {
-      useControlPanelStore.getState().closePreviewPtype();
+      useControlPanelStore.getState().closePreviewLabel();
     });
     await flushFetch();
     const callsAfterClose = fetchSpy!.mock.calls.length;
     act(() => {
-      useControlPanelStore.getState().openPreviewPtype('后片');
+      useControlPanelStore.getState().openPreviewLabel('g02');
     });
     await flushFetch();
     expect(fetchSpy!.mock.calls.length).toBeGreaterThan(callsAfterClose);
   });
 
-  it('rep without label falls back to ptype name in head', async () => {
-    // 旧 intermediate 无 label 字段 → 头部兜底片型名
+  it('rep 缺 label 字段（旧数据）→ 头部兜底 Record 键本身（键即 g 码）', async () => {
     mockReps = {
       representatives: {
-        前片: {
-          polygon: [
-            [0, 0],
-            [100, 0],
-            [100, 60],
-            [0, 60],
-          ],
-        },
+        g07: { polygon: SQUARE },
       },
     };
-    useControlPanelStore.getState().openPreviewPtype('前片');
+    useControlPanelStore.getState().openPreviewLabel('g07');
     renderModal();
     await flushFetch();
     const modal = document.body.querySelector('.ptype-preview-modal');
-    expect(modal!.querySelector('.ptype-preview-name')!.textContent).toBe('前片');
-    expect(modal!.querySelector('.piece-card-label')).toBeNull();
+    expect(modal!.querySelector('.piece-card-label')!.textContent).toBe('g07');
   });
 
   it('✕ button closes', async () => {
-    useControlPanelStore.getState().openPreviewPtype('前片');
+    useControlPanelStore.getState().openPreviewLabel('g01');
     renderModal();
     await flushFetch();
     const closeBtn = document.body.querySelector<HTMLButtonElement>('.ptype-preview-close')!;
     act(() => closeBtn.click());
-    expect(useControlPanelStore.getState().previewPtype).toBeNull();
+    expect(useControlPanelStore.getState().previewLabel).toBeNull();
   });
 
   it('overlay mousedown closes', async () => {
-    useControlPanelStore.getState().openPreviewPtype('前片');
+    useControlPanelStore.getState().openPreviewLabel('g01');
     renderModal();
     await flushFetch();
     const overlay = document.body.querySelector('.ptype-preview-overlay') as HTMLDivElement;
     act(() => {
       overlay.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
     });
-    expect(useControlPanelStore.getState().previewPtype).toBeNull();
+    expect(useControlPanelStore.getState().previewLabel).toBeNull();
   });
 
   it('ESC closes (independent of underlying modal)', async () => {
-    useControlPanelStore.getState().openPreviewPtype('前片');
+    useControlPanelStore.getState().openPreviewLabel('g01');
     renderModal();
     await flushFetch();
     act(() => {
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
     });
-    expect(useControlPanelStore.getState().previewPtype).toBeNull();
+    expect(useControlPanelStore.getState().previewLabel).toBeNull();
   });
 
   it('stacked with PerTypeOverridesModal: close preview keeps 底层 modal + draft', async () => {
     mockReps = REPS;
     const onChange = vi.fn();
-    // 两层都挂载（PerTypeOverrides 内含 PerTypeOverridesModal + PtypePreviewModal，
-    // 但本测试直接两层并行 mount 模拟同效果）
+    // 两层并行 mount：PerTypeOverridesModal（底层）+ PtypePreviewModal（上层）
     useControlPanelStore.getState().openModal('per_type');
-    useControlPanelStore.getState().openPreviewPtype('前片');
+    useControlPanelStore.getState().openPreviewLabel('g01');
     act(() => {
       root!.render(
         <StrictMode>
@@ -221,7 +213,7 @@ describe('PtypePreviewModal (US-018)', () => {
     act(() => {
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
     });
-    expect(useControlPanelStore.getState().previewPtype).toBeNull();
+    expect(useControlPanelStore.getState().previewLabel).toBeNull();
     expect(useControlPanelStore.getState().modal).toBe('per_type');
     // 底层 modal 仍在（草稿保留）
     expect(document.body.querySelector('.per-type-overlay')).not.toBeNull();
@@ -229,9 +221,9 @@ describe('PtypePreviewModal (US-018)', () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
-  it('representative 缺失渲染降级空态（fetch 失败 / ptype 无代表裁片）', async () => {
+  it('representative 缺失渲染降级空态（fetch 失败 / g 码无代表裁片）', async () => {
     fetchSpy!.mockImplementation((_input: unknown) => Promise.reject(new Error('network')));
-    useControlPanelStore.getState().openPreviewPtype('腰');
+    useControlPanelStore.getState().openPreviewLabel('g09');
     renderModal();
     await flushFetch();
     // modal 仍渲染（不崩溃），但 body 显示降级空态

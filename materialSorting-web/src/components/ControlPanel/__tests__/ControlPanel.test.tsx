@@ -1,7 +1,8 @@
 // US-004 ControlPanel integration tests:
 //   AC#1 SizePicker renders 8 size chips, all default-checked
 //   AC#2 defaults match legacy index.html (time=60, seed=0; multi_seed=false, seed_count=3)
-//   AC#4 PerTypeOverrides（高级配置按钮）→ modal 渲染 V03_PTYPES 10 列
+//   AC#4 PerTypeOverrides（高级配置按钮）→ modal 列 = /api/ptypes reps 键（g 码，
+//       US-003 起 V03_PTYPES 固定 10 中文列已删）
 //   AC#6 click Start -> onStart fires; payload fields match collectParams
 //   AC#7 0 sizes -> onStatus error + onStart NOT called
 //
@@ -24,7 +25,6 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { ControlPanel, type ControlPanelStartPayload } from "../ControlPanel";
 import { SIZES } from "../../../constants/sizes";
-import { V03_PTYPES } from "../../../constants/v03";
 import { useQtyStore } from "../../../store/qtyStore";
 import { useUploadStore } from "../../../store/uploadStore";
 import type { ParsedDoc } from "../../../types/parsed";
@@ -34,8 +34,18 @@ import type { SolvePhase } from "../../../types/solvePhase";
 
 let container: HTMLDivElement | null = null;
 let root: Root | null = null;
-// US-018：ControlPanel 内 PtypePreviewModal 会 fetch /api/ptypes；stub 防止 act warning。
+// US-018：ControlPanel 内 PtypePreviewModal / PerTypeOverridesModal 会 fetch /api/ptypes；
+// stub 防止 act warning。US-003 起 reps 键 = 裁片 g 码。
 let fetchSpy: MockInstance<(...args: unknown[]) => Promise<Response>> | null = null;
+/** 当前 mock 返回的 representatives（每次 fetch 创建新 Response，避免 body 复用问题）。 */
+let mockReps: { representatives: Record<string, unknown> } = { representatives: {} };
+/** 两个 g 码代表裁片（modal 列集来源）。 */
+const TWO_G_REPS = {
+  representatives: {
+    g01: { label: "g01", polygon: [[0, 0], [100, 0], [100, 60], [0, 60]] },
+    g02: { label: "g02", polygon: [[0, 0], [80, 0], [80, 80], [0, 80]] },
+  },
+};
 
 beforeEach(() => {
   container = document.createElement("div");
@@ -45,9 +55,10 @@ beforeEach(() => {
   // beforeEach 重置到默认 idle/doc=null 保证各用例隔离。
   useUploadStore.getState().reset();
   useQtyStore.getState().resetQuantities();
+  mockReps = { representatives: {} };
   fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation((_input: unknown) =>
     Promise.resolve(
-      new Response(JSON.stringify({ representatives: {} }), {
+      new Response(JSON.stringify(mockReps), {
         status: 200,
         headers: { "Content-Type": "application/json" },
       }),
@@ -144,15 +155,24 @@ describe("ControlPanel per_type (US-018 button trigger)", () => {
     expect(container!.querySelector("details.advanced")).toBeNull();
   });
 
-  it("AC#4 click button opens PerTypeOverridesModal (overlay+modal rendered)", () => {
+  it("AC#4 click button opens PerTypeOverridesModal (overlay+modal rendered)", async () => {
+    // US-003：列 = /api/ptypes reps 键（g 码）；mock 返 2 个 g 码 → 2 列
+    mockReps = TWO_G_REPS;
     renderPanel();
     const btn = container!.querySelector<HTMLButtonElement>(".per-type-btn")!;
     act(() => btn.click());
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
     const overlay = document.body.querySelector(".per-type-overlay");
     expect(overlay).not.toBeNull();
-    // 表头 10 列 + 1 行头列
+    // 表头 2 列（g01/g02）+ 1 行头列
     const heads = overlay!.querySelectorAll("thead .ptype-col");
-    expect(heads).toHaveLength(V03_PTYPES.length);
+    expect(heads).toHaveLength(2);
+    const badges = Array.from(heads).map((h) => h.querySelector(".qty-label-badge")!.textContent);
+    expect(badges).toEqual(["g01", "g02"]);
     // tbody 2 行（重合 + 旋转）
     const rows = overlay!.querySelectorAll("tbody tr");
     expect(rows).toHaveLength(2);
@@ -216,24 +236,26 @@ describe("ControlPanel start flow (US-004)", () => {
     expect(cfg.sizes).toEqual([30, 31]);
   });
 
-  it("AC#6 fill per_type via modal -> payload.per_type non-null with the edited entry", () => {
+  it("AC#6 fill per_type via modal -> payload.per_type non-null with the edited entry", async () => {
     const onStart = vi.fn();
+    // US-003：列集来自 /api/ptypes reps 键 → mock 返 g01/g02 两列
+    mockReps = TWO_G_REPS;
     renderPanel(onStart);
     // US-017：先勾选至少一个码号，否则 Start 校验失败
     const checkboxes = container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]");
     act(() => checkboxes[0].click());
-    // US-018：点击「高级配置」按钮打开 modal
+    // US-018：点击「高级配置」按钮打开 modal（fetch reps 后列集到位）
     const perTypeBtn = container!.querySelector<HTMLButtonElement>(".per-type-btn")!;
     act(() => perTypeBtn.click());
-    // 在 modal 内修改第一列（V03_PTYPES[0]）的两个 input
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
     const overlay = document.body.querySelector(".per-type-overlay")!;
-    const ptype = V03_PTYPES[0];
-    const dInput = overlay.querySelector<HTMLInputElement>(
-      `[data-testid="d-${ptype}"]`,
-    )!;
-    const tolInput = overlay.querySelector<HTMLInputElement>(
-      `[data-testid="tol-${ptype}"]`,
-    )!;
+    // 在 modal 内修改 g01 列的两个 input（键 = 裁片 g 码）
+    const dInput = overlay.querySelector<HTMLInputElement>(`[data-testid="d-g01"]`)!;
+    const tolInput = overlay.querySelector<HTMLInputElement>(`[data-testid="tol-g01"]`)!;
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
     act(() => {
       setter.call(dInput, "1");
@@ -247,12 +269,12 @@ describe("ControlPanel start flow (US-004)", () => {
     const confirm = overlay.querySelector<HTMLButtonElement>(".per-type-btn-confirm")!;
     act(() => confirm.click());
     expect(document.body.querySelector(".per-type-overlay")).toBeNull();
-    // Start -> per_type 含该片型的 {d:1, tol:1}
+    // Start -> per_type 含该 g 码的 {d:1, tol:1}
     const btn = container!.querySelector<HTMLButtonElement>("#start")!;
     act(() => btn.click());
     const cfg = onStart.mock.calls[0][0] as ControlPanelStartPayload;
     expect(cfg.per_type).not.toBeNull();
-    expect(cfg.per_type![ptype]).toEqual({ d: 1, tol: 1 });
+    expect(cfg.per_type!["g01"]).toEqual({ d: 1, tol: 1 });
   });
 
   it("US-028 phase=running -> 无 #start 按钮（SolveControls 渲染 #stop）；参数编辑冻结", () => {
@@ -574,7 +596,6 @@ describe("ControlPanel start guard (US-003 全 0 拦截)", () => {
           pieces: [
             {
               label: "g01",
-              name: "前片",
               polygon: [],
               internal_lines: [],
               notches: [],
@@ -588,7 +609,6 @@ describe("ControlPanel start guard (US-003 全 0 拦截)", () => {
           pieces: [
             {
               label: "g01",
-              name: "前片",
               polygon: [],
               internal_lines: [],
               notches: [],
@@ -597,7 +617,6 @@ describe("ControlPanel start guard (US-003 全 0 拦截)", () => {
             },
             {
               label: "g02",
-              name: "后片",
               polygon: [],
               internal_lines: [],
               notches: [],

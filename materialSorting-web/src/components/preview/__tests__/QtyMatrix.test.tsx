@@ -1,7 +1,7 @@
 // 矩阵化重构 US-002 QtyMatrix 集成测试（2026-08-16 转置回归：行 = 尺码，列 = 裁片，
 // 对齐 PerTypeOverridesModal 高级配置弹窗「裁片作列 + 列头缩略图」风格）：
 //   - 列 = 全码 label 并集（保序，最小码 pieces 顺序优先）；列头 = 大缩略图
-//     + 序号徽章 + 常驻「≡」整列设值 icon（裁片名走缩略图 title；名称 span / ×2 徽章 /
+//     + g 码徽章 + 常驻「≡」整列设值 icon（title = g 码；名称 span / ×2 徽章 /
 //     旧文字「填充」按钮不再回来）
 //   - 行 = doc.sizes 全码（null 殿后「通用」，无 null 不渲染该行）+ 行尾小计列；
 //     行头点击 setSize + active 高亮
@@ -9,7 +9,7 @@
 //   - 特例高亮 .override（≠baseValue 且整列非全同；整列同值不高亮）
 //   - 列级整列设值（icon → 居中弹层 → setRowAll 整列写；整表「重置为默认 1」按钮已拆）
 //   - 小计：行尾每码小计列 + 底部每裁片合计行 + 工具条总片数 + 全 0 警示
-//     （US-004 起物理片数口径 = Σ demand × (paired?2:1)；×2 徽章已拆，缺字段 ×1 兜底）
+//     （US-003 起口径 = Σ perSize 数量；配对 ×2 概念已删，数量即一切不合成镜像）
 //   - 缩略图点击 openZoom(label, rep.size)（所见即所放大；label 不在 activeSize 时回退码）
 //   - Enter/Tab 跳格 = 列优先平铺序（同裁片沿列向下跨码 → 下一裁片列顶；末格回卷）
 //
@@ -56,7 +56,6 @@ afterEach(() => {
 function makePiece(overrides: Partial<ParsedPiece> = {}): ParsedPiece {
   return {
     label: 'g01',
-    name: '前片',
     polygon: [
       [10, 20],
       [110, 20],
@@ -81,9 +80,9 @@ function makeStdDoc(): ParsedDoc {
     doc_id: 'deadbeef',
     filename: 'M1787.dxf',
     sizes: [
-      { size: 28, pieces: [makePiece({ label: 'g01', name: '前片28' }), makePiece({ label: 'g02', name: '后片28' })] },
-      { size: 30, pieces: [makePiece({ label: 'g01', name: '前片30' }), makePiece({ label: 'g02', name: '后片30' }), makePiece({ label: 'g03', name: '腰30' })] },
-      { size: null, pieces: [makePiece({ label: 'g03', name: '腰通用' })] },
+      { size: 28, pieces: [makePiece({ label: 'g01' }), makePiece({ label: 'g02' })] },
+      { size: 30, pieces: [makePiece({ label: 'g01' }), makePiece({ label: 'g02' }), makePiece({ label: 'g03' })] },
+      { size: null, pieces: [makePiece({ label: 'g03' })] },
     ],
   };
 }
@@ -160,11 +159,11 @@ describe('QtyMatrix (US-002 转置) 行列结构', () => {
     const heads = el.querySelectorAll('thead th');
     expect(heads[0].textContent).toBe('尺码');
     expect(heads[heads.length - 1].textContent).toBe('小计');
-    // 列头 A：缩略图（title 悬浮裁片名）+ ≡ icon（常驻，title 悬浮提示）
+    // 列头 A：缩略图（title = g 码）+ ≡ icon（常驻，title 悬浮提示）
     const colA = heads[1];
     expect(colA.querySelector('.qty-thumb svg')).not.toBeNull();
     expect(colA.querySelector<HTMLElement>('.qty-thumb')!.getAttribute('title')).toBe(
-      '前片28 · 放大预览',
+      'g01 · 放大预览',
     );
     const fill = colA.querySelector<HTMLButtonElement>('[data-testid="qty-rowfill-g01"]');
     expect(fill).not.toBeNull();
@@ -177,12 +176,12 @@ describe('QtyMatrix (US-002 转置) 行列结构', () => {
     expect(colA.querySelector('.qty-rowname')).toBeNull();
   });
 
-  it('缩略图 rep 优先 activeSize 版本（切码后列头缩略图 title 跟随）', () => {
+  it('缩略图 rep 优先 activeSize 版本（切码后列头缩略图跟随，title 恒为 g 码）', () => {
     const doc = makeStdDoc();
     useUploadStore.setState({ status: 'done', doc, activeSize: 30 });
     const el = renderMatrix();
     const thumbs = el.querySelectorAll<HTMLElement>('thead .qty-thumb');
-    expect(thumbs[0].getAttribute('title')).toBe('前片30 · 放大预览');
+    expect(thumbs[0].getAttribute('title')).toBe('g01 · 放大预览');
   });
 
   it('无 null 码时不渲染「通用」行', () => {
@@ -440,7 +439,7 @@ describe('QtyMatrix (US-002) 0 格子与特例高亮', () => {
   });
 });
 
-describe('QtyMatrix (US-002) 小计与总片数（缺 paired 字段 → ×1 旧口径兼容）', () => {
+describe('QtyMatrix (US-002) 小计与总片数（Σ perSize 数量口径）', () => {
   it('行尾每码小计列 + 底部每裁片合计行 + 工具条总片数', () => {
     const doc = makeStdDoc();
     useUploadStore.setState({ status: 'done', doc, activeSize: 28 });
@@ -498,100 +497,66 @@ describe('QtyMatrix (US-002) 小计与总片数（缺 paired 字段 → ×1 旧�
 });
 
 /**
- * US-004 物理片数口径 doc：三码两片型（含配对）。
- *   28: A 前片(paired) + B 单排(内片)；30: A + B；null: B。
- * 默认全 demand=1 → 物理片数：A 列 = 2 码 × 1 份 × 2 = 4；B 列 = 2+1 份 × 1 = 3。
+ * US-003 数量即一切 doc：三码两裁片（与旧 US-004 配对 doc 同形，无 paired 字段）。
+ *   28: A + B；30: A + B；null: B。
  */
-function makePairedDoc(): ParsedDoc {
+function makeSumDoc(): ParsedDoc {
   return {
-    doc_id: 'paired1',
-    filename: 'M1787-paired.dxf',
+    doc_id: 'sum1',
+    filename: 'M1787-sum.dxf',
     sizes: [
-      {
-        size: 28,
-        pieces: [
-          makePiece({ label: 'g01', name: '前片28', ptype: '前片', paired: true }),
-          makePiece({ label: 'g02', name: '单排28', ptype: '单排', paired: false }),
-        ],
-      },
-      {
-        size: 30,
-        pieces: [
-          makePiece({ label: 'g01', name: '前片30', ptype: '前片', paired: true }),
-          makePiece({ label: 'g02', name: '单排30', ptype: '单排', paired: false }),
-        ],
-      },
-      { size: null, pieces: [makePiece({ label: 'g02', name: '单排通用', ptype: '单排', paired: false })] },
+      { size: 28, pieces: [makePiece({ label: 'g01' }), makePiece({ label: 'g02' })] },
+      { size: 30, pieces: [makePiece({ label: 'g01' }), makePiece({ label: 'g02' })] },
+      { size: null, pieces: [makePiece({ label: 'g02' })] },
     ],
   };
 }
 
-describe('QtyMatrix (US-004) 物理片数口径（配对片 ×2；×2 徽章已随列头简化拆除）', () => {
-  it('配对片列头不再渲染「×2」徽章（口径说明收敛到总片数 title）', () => {
-    useUploadStore.setState({ status: 'done', doc: makePairedDoc(), activeSize: 28 });
+describe('QtyMatrix (US-003) 数量即一切口径（Σ 数量；配对 ×2 已删，无任何乘数）', () => {
+  it('列头不渲染「×2」徽章；总片数 title 口径 = 数量之和、不合成镜像', () => {
+    useUploadStore.setState({ status: 'done', doc: makeSumDoc(), activeSize: 28 });
     const el = renderMatrix();
-    const colA = el.querySelectorAll('thead th')[1];
-    expect(colA.querySelector('.qty-paired-badge')).toBeNull();
-    expect(el.querySelector('[data-testid="qty-paired-A"]')).toBeNull();
-    // 口径说明迁到工具条总片数 title
-    expect(el.querySelector<HTMLElement>('.qty-total')!.getAttribute('title')).toContain(
-      '配对片型每份排左右（L+R）2 物理片',
-    );
+    expect(el.querySelector('.qty-paired-badge')).toBeNull();
+    // 口径说明不再出现「配对/L+R/×2」表述
+    const title = el.querySelector<HTMLElement>('.qty-total')!.getAttribute('title')!;
+    expect(title).toContain('数量之和');
+    expect(title).not.toContain('配对');
+    expect(title).not.toContain('L+R');
   });
 
-  it('底部每裁片合计 = Σ demand × (paired?2:1)：A(配对,2码×1份)=4，B(内片,3份)=3', () => {
-    useUploadStore.setState({ status: 'done', doc: makePairedDoc(), activeSize: 28 });
-    hydrateDoc(makePairedDoc());
+  it('底部每裁片合计 = Σ 数量：A(2 码×1)=2，B(3 份)=3', () => {
+    useUploadStore.setState({ status: 'done', doc: makeSumDoc(), activeSize: 28 });
+    hydrateDoc(makeSumDoc());
     const el = renderMatrix();
     const subtotals = Array.from(el.querySelectorAll('tfoot .qty-subtotal')).map((td) => td.textContent);
-    expect(subtotals).toEqual(['4', '3', '7']);
+    expect(subtotals).toEqual(['2', '3', '5']);
   });
 
-  it('行尾每码小计 + 工具条总片数 = 物理片数：28=(1×2)+(1×1)=3，30=3，通用=1，总 7', () => {
-    useUploadStore.setState({ status: 'done', doc: makePairedDoc(), activeSize: 28 });
-    hydrateDoc(makePairedDoc());
+  it('行尾每码小计 + 工具条总片数 = Σ 数量：28=2，30=2，通用=1，总 5', () => {
+    useUploadStore.setState({ status: 'done', doc: makeSumDoc(), activeSize: 28 });
+    hydrateDoc(makeSumDoc());
     const el = renderMatrix();
     const rowTotals = Array.from(el.querySelectorAll('.qty-rowtotal')).map((td) => td.textContent);
-    expect(rowTotals).toEqual(['3', '3', '1']);
-    expect(el.querySelector('[data-testid="qty-total"]')!.textContent).toBe('7');
+    expect(rowTotals).toEqual(['2', '2', '1']);
+    expect(el.querySelector('[data-testid="qty-total"]')!.textContent).toBe('5');
   });
 
-  it('改配对片 demand → 物理片数按 ×2 联动（A@28=2 → 28 码小计 3+2=5，总 9）', () => {
-    const doc = makePairedDoc();
+  it('改一格数量 → 小计按 Σ 联动（A@28=2 → 28 码小计 3，总 6）', () => {
+    const doc = makeSumDoc();
     useUploadStore.setState({ status: 'done', doc, activeSize: 28 });
     hydrateDoc(doc);
     useQtyStore.getState().setPiecePerSize('g01', 28, 2);
     const el = renderMatrix();
     const rowTotals = Array.from(el.querySelectorAll('.qty-rowtotal')).map((td) => td.textContent);
-    // 28 = A(2份×2) + B(1) = 5；30 = 3；通用 = 1
-    expect(rowTotals).toEqual(['5', '3', '1']);
-    // A 列合计 = 2×2(28) + 1×2(30) = 6；B 列 = 3；总 9
+    // 28 = A(2) + B(1) = 3；30 = 2；通用 = 1
+    expect(rowTotals).toEqual(['3', '2', '1']);
+    // A 列合计 = 2 + 1 = 3；B 列 = 3；总 6（无 ×2 乘数）
     const subtotals = Array.from(el.querySelectorAll('tfoot .qty-subtotal')).map((td) => td.textContent);
-    expect(subtotals).toEqual(['6', '3', '9']);
+    expect(subtotals).toEqual(['3', '3', '6']);
   });
 
-  it('同 label 跨码 paired 不一致时按格取值（防御：A@30 缺字段 → 该格 ×1）', () => {
-    const doc: ParsedDoc = {
-      doc_id: 'mixed',
-      filename: 'mixed.dxf',
-      sizes: [
-        { size: 28, pieces: [makePiece({ label: 'g01', ptype: '前片', paired: true })] },
-        { size: 30, pieces: [makePiece({ label: 'g01' })] }, // 缺 paired 字段 → ×1
-      ],
-    };
-    useUploadStore.setState({ status: 'done', doc, activeSize: 28 });
-    hydrateDoc(doc);
-    const el = renderMatrix();
-    // A 列合计 = 1×2 + 1×1 = 3（按格乘数，不按列统一）
-    const subtotals = Array.from(el.querySelectorAll('tfoot .qty-subtotal')).map((td) => td.textContent);
-    expect(subtotals).toEqual(['3', '3']);
-    expect(el.querySelector('[data-testid="qty-total"]')!.textContent).toBe('3');
-    // ×2 徽章已拆：混合配对列也不渲染列级徽章
-    expect(el.querySelector('[data-testid="qty-paired-A"]')).toBeNull();
-  });
-
-  it('全 0 警示不受乘数影响（配对片全 0 → 总片数 0 + 警示）', () => {
-    const doc = makePairedDoc();
+  it('全 0 警示正常（全部数量 0 → 总片数 0 + 警示）', () => {
+    const doc = makeSumDoc();
     useUploadStore.setState({ status: 'done', doc, activeSize: 28 });
     hydrateDoc(doc);
     useQtyStore.getState().setRowAll('g01', [28, 30], 0);

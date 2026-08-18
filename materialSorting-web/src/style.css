@@ -374,10 +374,6 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
 .piece-zoom-meta {
   color: #9aa;
 }
-.piece-zoom-name {
-  color: #cdd;
-  word-break: break-all;
-}
 /* 关闭按钮：绝对定位右上角；暗底亮字 + hover 高亮 */
 .piece-zoom-close {
   position: absolute;

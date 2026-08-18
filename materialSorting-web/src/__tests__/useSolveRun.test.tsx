@@ -349,7 +349,7 @@ describe('useSolveRun', () => {
       pieces: [
         {
           id: 'p1',
-          ptype: 'Front',
+          label: 'g01',
           size: 30,
           color: '#ff0000',
           area_mm2: 12345,
@@ -362,7 +362,7 @@ describe('useSolveRun', () => {
         },
         {
           id: 'p2',
-          ptype: 'Back',
+          label: 'g02',
           size: 32,
           color: '#00ff00',
           area_mm2: 23456,

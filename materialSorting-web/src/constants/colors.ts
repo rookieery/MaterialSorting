@@ -7,8 +7,9 @@
 //
 // US-024 起 LAYER5_COLORS：5 层裁片配色（毛版/净版/内部线/刺口/布纹线），由
 // PiecePreviewSVG / NestSVG 共享，保证预览页/排料页/导出 PNG 视觉一致（与后端
-// web/export.py LAYER5_COLOR_* 字面量同口径）。毛版用 ptype 配色（PTYPE_COLORS，
-// 排料页区分片型）；其余 4 层用工艺色（与版师认知一致）。
+// web/export.py LAYER5_COLOR_* 字面量同口径）。排料页毛版用 label 配色（后端
+// LABEL_COLORS.label_color，g 码 → 16 色循环表，同码同色）；其余 4 层用工艺色
+// （与版师认知一致）。
 
 /** sparrow phase → 散点颜色。 */
 export const PHASE_COLORS = {
@@ -25,11 +26,11 @@ export const SEED_COLORS = ['#1f77b4', '#d62728', '#2ca02c', '#ff7f0e', '#9467bd
  *
  * 与 PiecePreviewSVG（上传预览页）历史配色 1:1 一致 —— US-024 把字面量抽到本共享常量，
  * NestSVG（排料页）与 web/export.py（PNG/DXF 导出）同步消费。
- * - ROUGH_FILL/STROKE：仅预览页单片用（排料页毛版用 ptype 颜色，导出 PNG 同）。
+ * - ROUGH_FILL/STROKE：仅预览页单片用（排料页毛版用 label 颜色，导出 PNG 同）。
  * - NET/INTERNAL/NOTCH/GRAIN：四层工艺色，所有渲染场景共享。
  */
 export const LAYER5_COLORS = {
-  /** layer1 毛版半透明蓝实心（上传预览页 PiecePreviewSVG 配色；排料页 NestSVG 用 ptype 颜色）。 */
+  /** layer1 毛版半透明蓝实心（上传预览页 PiecePreviewSVG 配色；排料页 NestSVG 用 label 颜色）。 */
   ROUGH_FILL: 'rgba(80, 140, 200, 0.22)',
   ROUGH_STROKE: '#3f7fbf',
   /** layer14 净版绿虚线（所有场景同色）。 */

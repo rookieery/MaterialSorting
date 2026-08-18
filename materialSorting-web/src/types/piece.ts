@@ -1,8 +1,10 @@
 // 裁片几何 / 位置 类型。
-// 与后端 server.py / solver.py 字段名一致（id / ptype / size / color / area_mm2 / polygon / rotation / translation）。
+// 与后端 server.py / solver.py 字段名一致（id / label / size / color / area_mm2 / polygon /
+// rotation / translation；v2 起 id = pid = `{label}_{size}`，无 side 后缀、无 ptype）。
 //
 // US-024 起 PieceInfo 扩 5 层字段（net_polygon / internal_lines / notches / grain_line），
 // 与后端 manifest 同口径；字段 optional → 缺失时各层视为空/不渲染（前端 layer-aware）。
+// 裁片编号化重构 US-003 起 ptype 字段删除：颜色/tooltip/图例一律走 label（g 码）。
 
 /** 多边形顶点 [x_mm, y_mm]（与 sparrow 世界坐标一致：X=用布长度，Y=门幅向上）。 */
 export type Pt = [number, number];
@@ -18,18 +20,15 @@ export type GrainLine = [number, number, number, number];
 
 /** manifest 推送的单片几何 + 元信息（erode 后的 base 多边形）。 */
 export interface PieceInfo {
+  /** pid = `{label}_{size}`（v2 无 side 后缀；如 `g03_28`）。 */
   id: string;
-  ptype: string;
+  /** g01+ 裁片码（intermediate label 透传，v2 manifest 必有）。同码同色（label_color 单一真相源），
+   * NestSVG tooltip / 命中判定均用此键；旧 intermediate 无 → null/absent，消费方按缺席降级。 */
+  label?: string | null;
   size: number;
   color: string;
   area_mm2: number;
   polygon: Polygon;
-  /**
-   * g01+ 裁片码（intermediate label 透传，2026-08-18 起）。每码内独立零填充编号
-   * （字典序=数值序）；L/R 镜像副本共享同码。旧 intermediate 无 → null/absent，
-   * NestSVG tooltip 按缺席降级不显示。
-   */
-  label?: string | null;
   /**
    * 该 pid 进 sparrow 的**副本数**（= quantities[label][sizeKey]；缺省/未分发 → 1）。
    *

@@ -1,4 +1,4 @@
-// US-019 collectParams 单测（主面板精简后）：
+// US-019 collectParams 单测（主面板精简后；US-003 起 per_type 键 = 裁片 g 码）：
 //   1) params 永远全 0（d_ext/d_int/tol_ext/tol_int 主面板输入已删，全交高级配置弹窗 per_type）。
 //   2) per_type 解析逻辑保留不变：仅 trim()!=='' 写入；空 → null；任一档非空 → 创建 entry。
 //   3) parseTime / parseSeed / parseSeedCount 与旧 vanilla 实现 `parseInt(...) || fallback` 一致。
@@ -55,27 +55,27 @@ describe('collectParams (US-019)', () => {
     const forms: FormState[] = [
       makeForm(),
       makeForm({
-        per_type: { ...DEFAULT_FORM.per_type, 前片: { d: '1', tol: '' } },
+        per_type: { ...DEFAULT_FORM.per_type, g01: { d: '1', tol: '' } },
       }),
       makeForm({
         per_type: {
           ...DEFAULT_FORM.per_type,
-          前片: { d: '2', tol: '1' },
-          裤耳: { d: '', tol: '45' },
+          g01: { d: '2', tol: '1' },
+          g02: { d: '', tol: '45' },
         },
       }),
       makeForm({
         per_type: {
-          前片: { d: '2', tol: '1' },
-          后片: { d: '2', tol: '1' },
-          腰: { d: '0.4', tol: '3' },
-          前袋: { d: '0.4', tol: '30' },
-          后袋: { d: '0.4', tol: '1' },
-          机头: { d: '0.4', tol: '3' },
-          单排: { d: '10', tol: '15' },
-          双排: { d: '10', tol: '15' },
-          火机袋: { d: '5', tol: '8' },
-          裤耳: { d: '10', tol: '45' },
+          g01: { d: '2', tol: '1' },
+          g03: { d: '2', tol: '1' },
+          g04: { d: '0.4', tol: '3' },
+          g05: { d: '0.4', tol: '30' },
+          g06: { d: '0.4', tol: '1' },
+          g07: { d: '0.4', tol: '3' },
+          g08: { d: '10', tol: '15' },
+          g09: { d: '10', tol: '15' },
+          g10: { d: '5', tol: '8' },
+          g02: { d: '10', tol: '45' },
         },
       }),
     ];
@@ -91,66 +91,66 @@ describe('collectParams (US-019)', () => {
 
   it('per_type 单档非空 → entry 仅写该档；另一档缺省', () => {
     const form = makeForm({
-      per_type: { ...DEFAULT_FORM.per_type, 单排: { d: '7', tol: '' } },
+      per_type: { ...DEFAULT_FORM.per_type, g08: { d: '7', tol: '' } },
     });
     const out = collectParams(form);
     expect(out.per_type).toEqual<PerTypeOverrides>({
-      单排: { d: 7 },
+      g08: { d: 7 },
     });
   });
 
   it('per_type d 与 tol 都空白 → 不创建 entry（与旧 vanilla 实现 inp.value.trim() 一致）', () => {
     const form = makeForm({
-      per_type: { ...DEFAULT_FORM.per_type, 腰: { d: '   ', tol: '' } },
+      per_type: { ...DEFAULT_FORM.per_type, g04: { d: '   ', tol: '' } },
     });
     expect(collectParams(form).per_type).toBeNull();
   });
 
-  it('per_type 多片型混合（前片 d+tol，裤耳 仅 tol）正确聚合', () => {
+  it('per_type 多片型混合（g01 d+tol，g02 仅 tol）正确聚合', () => {
     const form = makeForm({
       per_type: {
         ...DEFAULT_FORM.per_type,
-        前片: { d: '2', tol: '1' },
-        裤耳: { d: '', tol: '45' },
+        g01: { d: '2', tol: '1' },
+        g02: { d: '', tol: '45' },
       },
     });
     expect(collectParams(form).per_type).toEqual<PerTypeOverrides>({
-      前片: { d: 2, tol: 1 },
-      裤耳: { tol: 45 },
+      g01: { d: 2, tol: 1 },
+      g02: { tol: 45 },
     });
   });
 
   it('per_type 含空白（trim 后空 → 不写入；只非空档写）', () => {
     const form = makeForm({
-      per_type: { ...DEFAULT_FORM.per_type, 前片: { d: '  ', tol: ' 1 ' } },
+      per_type: { ...DEFAULT_FORM.per_type, g01: { d: '  ', tol: ' 1 ' } },
     });
     expect(collectParams(form).per_type).toEqual<PerTypeOverrides>({
-      前片: { tol: 1 },
+      g01: { tol: 1 },
     });
   });
 
   it('per_type 显式 "0" 也写入（区分空 vs "0"，与旧 vanilla 实现一致）', () => {
     const form = makeForm({
-      per_type: { ...DEFAULT_FORM.per_type, 机头: { d: '0', tol: '0' } },
+      per_type: { ...DEFAULT_FORM.per_type, g07: { d: '0', tol: '0' } },
     });
     expect(collectParams(form).per_type).toEqual<PerTypeOverrides>({
-      机头: { d: 0, tol: 0 },
+      g07: { d: 0, tol: 0 },
     });
   });
 
-  it('全 ptype 全填（工艺参考值，均在全局上限 10/45 内）→ 所有 10 个 entry 写入', () => {
+  it('per_type 全 g 码填满（示例覆盖值，均在全局上限 10/45 内）→ 所有 10 个 entry 写入', () => {
     const form = makeForm({
       per_type: {
-        前片: { d: '2', tol: '1' },
-        后片: { d: '2', tol: '1' },
-        腰: { d: '0.4', tol: '3' },
-        前袋: { d: '0.4', tol: '30' },
-        后袋: { d: '0.4', tol: '1' },
-        机头: { d: '0.4', tol: '3' },
-        单排: { d: '10', tol: '15' },
-        双排: { d: '10', tol: '15' },
-        火机袋: { d: '5', tol: '8' },
-        裤耳: { d: '10', tol: '45' },
+        g01: { d: '2', tol: '1' },
+        g03: { d: '2', tol: '1' },
+        g04: { d: '0.4', tol: '3' },
+        g05: { d: '0.4', tol: '30' },
+        g06: { d: '0.4', tol: '1' },
+        g07: { d: '0.4', tol: '3' },
+        g08: { d: '10', tol: '15' },
+        g09: { d: '10', tol: '15' },
+        g10: { d: '5', tol: '8' },
+        g02: { d: '10', tol: '45' },
       },
     });
     const out = collectParams(form);

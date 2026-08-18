@@ -58,7 +58,7 @@ function makePolygon(): SVGPolygonElement {
   // SVG namespace polygon + dataset 填充（与 NestSVG 实际产物一致）。
   const SVGNS = 'http://www.w3.org/2000/svg';
   const poly = document.createElementNS(SVGNS, 'polygon') as SVGPolygonElement;
-  poly.dataset.ptype = 'Front';
+  poly.dataset.label = 'g01';
   poly.dataset.size = '30';
   poly.dataset.area = '12345';
   return poly;
