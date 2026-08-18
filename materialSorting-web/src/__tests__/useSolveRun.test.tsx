@@ -275,13 +275,13 @@ describe('useSolveRun', () => {
         seed: 0,
         gate_mm: 1980,
         params: { d_ext: 0, d_int: 0, tol_ext: 0, tol_int: 0 },
-        per_type: { g03: { '30': { d: 1.5, tol: 2 } } },
+        per_type: { g03: { d: 1, tol: 1 } },
       }),
     );
     const ws = mockInstances[0];
     act(() => ws.onopen?.());
     const parsed: StartPayload = JSON.parse(ws.sent[0]);
-    expect(parsed.per_type).toEqual({ g03: { '30': { d: 1.5, tol: 2 } } });
+    expect(parsed.per_type).toEqual({ g03: { d: 1, tol: 1 } });
   });
 
   it('US-022 quantities 非空时透传到 StartPayload（label→sizeKey→demand）', () => {

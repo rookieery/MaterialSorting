@@ -1,11 +1,14 @@
 """排料可视化工作台 · 求解封装 —— 把 sparrow 求解过程回调出来（含完整 placed_items）。
 
 阶段 A：复用 sparrow_baseline 的「子线程 solve + 主线程 drain」骨架，每个中间解回调完整 placement。
-阶段 B：build_instance 参数化 v0.3 约束（重合 erode + 旋转公差离散化 + 逐 (g 码, 码号) 高级覆盖）。
+阶段 B：build_instance 参数化 v0.3 约束（重合 erode + 旋转公差离散化 + 逐 g 码高级覆盖）。
 
-US-002 起全链路 label 键：demand / per_type 均按 ``(label, sizeKey)`` 命中，颜色走
+US-002 起全链路 label 键：demand / per_type 均按 ``label`` 命中，颜色走
 ``label_color``（g 码 → 16 色循环表），internal（内片）概念删除 —— 旧 ``params``
 的 d_int/tol_int 键仍被接受但不再有消费方（生产链路 params 恒 0）。
+2026-08-18 回退 US-004 矩阵化：per_type 从 ``(label, sizeKey)`` 两级命中收敛回
+单级 ``{label: {d?, tol?}}`` —— 重合/旋转是片型工艺属性、与码号无关，命中 label
+即对该 g 码全部码号生效；quantities（数量矩阵）仍按 ``(label, sizeKey)`` 不变。
 
 不改动 sparrow 源码、不改动既有引擎代码，仅 sys.path 引用：
   _clean_polygon / label_color    (sparrow_baseline)
@@ -84,8 +87,9 @@ def build_instance(pieces, gate_mm, *, time_budget: int, seed: int,
     params = {d_ext, d_int, tol_ext, tol_int}（默认全 0 = 阶段A baseline。US-002 起
     内/外两档已删，全片统一走 d_ext/tol_ext；d_int/tol_int 仍被接受但无消费方 ——
     生产链路 params 恒 0，仅为旧前端 payload 兼容保留键位）
-    per_type = {label: {sizeKey(str): {d?, tol?}}}（US-002 起 (g 码, 码号) 逐片覆盖；
-        命中即覆盖，未命中/缺维度回退 params 的 d_ext/tol_ext；旧 ptype 键不命中为 no-op）
+    per_type = {label: {d?, tol?}}（US-002 起 label 级逐片覆盖；2026-08-18 回退 US-004
+        矩阵化后单级——命中 label 即对该 g 码**全部码号**覆盖，缺维度回退 params 的
+        d_ext/tol_ext；旧 ptype 键 / 旧两级 {label:{sizeKey:...}} 键不命中为 no-op）
     quantities = {label: {sizeKey(str): N}} | None（US-022 per-size demand）。
         - 按 (piece.label, str(piece.size)) 查 N → ``spyrrow.Item(demand=N)``；
         - **demand=0 跳过该 piece（D2）**（该码该裁片不参与排料）；
@@ -134,15 +138,16 @@ def build_instance(pieces, gate_mm, *, time_budget: int, seed: int,
         base_d = float(pdef['d_ext'])
         base_tol = float(pdef['tol_ext'])
 
-        # US-002：per_type 按 (label, sizeKey) 命中即覆盖（缺维度回退全局档）。
+        # US-002：per_type 按 label 命中即覆盖（缺维度回退全局档）。2026-08-18 回退
+        # US-004 矩阵化：单级 {label: {d?, tol?}}，命中即对该 g 码全部码号生效。
+        # 旧两级 payload（{label: {sizeKey: {...}}}）在 label 层取不到 d/tol → 回退
+        # 默认，no-op 不崩（对称向后兼容）。
         d, tol = base_d, base_tol
         if per_type and label is not None and label in per_type:
-            label_map = per_type[label]
-            if isinstance(label_map, dict):
-                size_over = label_map.get(sk)
-                if isinstance(size_over, dict):
-                    d = float(size_over.get('d', base_d))
-                    tol = float(size_over.get('tol', base_tol))
+            over = per_type[label]
+            if isinstance(over, dict):
+                d = float(over.get('d', base_d))
+                tol = float(over.get('tol', base_tol))
 
         d = min(d, MAX_OVERLAP_MM)        # 全局重合上限（10mm；不再按片型钳制）
         tol = min(tol, MAX_ROTATION_TOL_DEG)   # 全局旋转公差上限（45°）

@@ -1,8 +1,7 @@
 // PerTypeOverrides —— 高级「每裁片覆盖」入口（US-018 改造为按钮触发器；裁片编号化重构
-// US-004 起 values/onChange 契约 = 两级嵌套 {label: {sizeKey: {d, tol}}}，与弹窗矩阵
-// 行（码号）× 列（g 码）一一对应）。
+// US-003 起覆盖键 = 裁片 g 码；2026-08-18 回退 US-004 矩阵化后维持单级 {g 码: {d, tol}}）。
 //
-// 旧版（US-004）：`<details>` 折叠面板，内嵌 10 行 d/tol 输入。
+// 更早旧版：`<details>` 折叠面板，内嵌 10 行 d/tol 输入（US-018 已删）。
 // US-018：改为 `<button class="per-type-btn">` 触发 → PerTypeOverridesModal 弹窗 table。
 //
 // 保留 values/onChange 契约（ControlPanel 仍 `<PerTypeOverrides values={form.per_type}
@@ -17,15 +16,15 @@
 
 import type { JSX } from 'react';
 import { useControlPanelStore } from '../../store/controlPanelStore';
-import type { PerTypeFormMap } from '../../lib/params';
+import type { PerTypeFormValue } from '../../lib/params';
 import { PerTypeOverridesModal } from './PerTypeOverridesModal';
 import { PtypePreviewModal } from './PtypePreviewModal';
 
 export interface PerTypeOverridesProps {
-  /** 每 (g 码, 码号) 的 d/tol 输入字符串（两级嵌套 {label: {sizeKey: {d, tol}}}，动态键）。 */
-  values: PerTypeFormMap;
-  /** Modal 确定时回写（已剔除全空格子）。 */
-  onChange: (next: PerTypeFormMap) => void;
+  /** 每裁片（g 码）的 d/tol 输入字符串（key = 当前母版 g 码并集，动态）。 */
+  values: Record<string, PerTypeFormValue>;
+  /** Modal 确定时回写（label + 'd' | 'tol' + 新字符串）。 */
+  onChange: (next: Record<string, PerTypeFormValue>) => void;
   /** US-027 求解中冻结高级配置入口（与 StartButton disabled 同套机制）。 */
   disabled?: boolean;
 }

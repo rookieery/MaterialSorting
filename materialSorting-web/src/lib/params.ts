@@ -5,12 +5,9 @@
 // MAX_ROTATION_TOL_DEG=45)，2026-08-17 起不再按片型钳制）。collectParams 现在 params
 // 永远返回全 0，per_type 解析逻辑保留不变（与旧 vanilla 实现 inp.value.trim() !== '' 一致）。
 //
-// US-004（矩阵化）：per_type 键从「label 单级」改「(label, sizeKey) 两级嵌套」——
-// FormState.per_type = { label: { sizeKey: {d, tol} } }，与高级配置弹窗
-// 行（码号）× 列（g 码）矩阵一一对应；collectParams / URL 分享格式随动（旧 label 单级
-// 键不再产出，解码侧遇到不匹配条目直接忽略）。
-//
 // 不变量：后端 build_instance 入参契约不变（params 仍传，只是全 0；per_type 仍传）。
+// 2026-08-18 回退 US-004 矩阵化：per_type 维持单级 {g 码: {d, tol}}（不按码号细分），
+// 与后端 build_instance 的 label 级命中同步（US-004 曾改两级 {label:{sizeKey:...}}）。
 //
 // 字段都按字符串存储（对应 input.value），collectParams 做解析；这样「空串 vs "0"」可区分
 // （per_type 必须：空 = 继承，"0" = 显式 0）。
@@ -18,18 +15,10 @@
 import type { PerTypeOverrides, PerTypeOverride, SolveParams } from '../types/v03';
 import type { PieceQuantityMap } from '../types/qty';
 
-/** 单 (g 码, 码号) 的两条高级覆盖输入（d / tol 各一字符串，空串 = 继承全局默认 0/0）。 */
+/** 单片型的两条高级覆盖输入（d / tol 各一字符串，空串 = 继承 v0.3 默认）。 */
 export interface PerTypeFormValue {
   d: string;
   tol: string;
-}
-
-/** FormState.per_type 类型别名：label(g 码) → sizeKey(码号键) → d/tol 输入字符串。 */
-export type PerTypeFormMap = Record<string, Record<string, PerTypeFormValue>>;
-
-/** sizeKey 口径与 qtyStore / serializeQuantities 一致：number→String(size)；null→'null'。 */
-export function perTypeSizeKey(size: number | null): string {
-  return size === null ? 'null' : String(size);
 }
 
 /** ControlPanel 表单全量状态（字段都按 input.value 字符串存）。 */
@@ -53,12 +42,11 @@ export interface FormState {
   /** 多 seed 数量字符串（旧 index.html `#seed_count`，默认 "3"，clamp [2,6]）。 */
   seed_count: string;
   /**
-   * 每裁片高级覆盖（US-004 矩阵化：两级嵌套 {label: {sizeKey: {d, tol}}}，全部字符串；
-   * 来自高级配置弹窗 行(码号)×列(g 码) 矩阵的确定回写）。行集 = doc.sizes（无 doc 时
-   * SIZES fallback），列集 = /api/ptypes g 码并集，均动态。空对象 = 全部继承默认 0/0。
+   * 每裁片高级覆盖（键 = g01+ 裁片码，d/tol 各一字符串；动态来自高级配置弹窗，
+   * 列集 = 当前母版 g 码并集 —— V03_PTYPES 固定清单已删）。空对象 = 全部继承默认 0。
    * US-019 起：内外两档全局输入删除，per_type 是唯一的 d/tol 覆盖入口（高级配置弹窗）。
    */
-  per_type: PerTypeFormMap;
+  per_type: Record<string, PerTypeFormValue>;
 }
 
 /**
@@ -89,10 +77,9 @@ export interface CollectedParams {
  * 不变量：
  *   - params：US-019 起永远返回全 0（主面板内外两档输入删除，v0.3 上限交给 per_type 显式
  *     覆盖 + 后端全局上限兜底，2026-08-17 起 min(d,10)/min(tol,45) 不再按片型）。
- *   - per_type：US-004 起两级嵌套 {label: {sizeKey: {d?, tol?}}}（与后端 build_instance
- *     的 (label, sizeKey) 命中口径一致）；仅当某 (label, sizeKey) 的 d 或 tol 至少一档
- *     非空时才创建该 sizeKey entry，d/tol 各自仅当 trim() !== '' 时写入；
- *     全空的 label 映射整体剔除；最终 per_type 整体为空 → null。
+ *   - per_type：键 = 裁片 g 码（US-003 起动态键，遍历 form.per_type 实际持有的键，无固定
+ *     清单）；仅当某 label 的 d 或 tol 至少一档非空时才创建 entry；
+ *     d / tol 各自仅当 trim() !== '' 时写入；最终若 per_type 整体为空 → null。
  *   - 整体 trim 在 d/tol 单字段层做（与旧 vanilla 实现 inp.value.trim() !== '' 一致）。
  */
 export function collectParams(form: FormState): CollectedParams {
@@ -105,22 +92,16 @@ export function collectParams(form: FormState): CollectedParams {
 
   const per_type: PerTypeOverrides = {};
   for (const label of Object.keys(form.per_type)) {
-    const sizeMap = form.per_type[label];
-    if (!sizeMap) continue;
-    const outSizes: Record<string, PerTypeOverride> = {};
-    for (const sk of Object.keys(sizeMap)) {
-      const vals = sizeMap[sk];
-      if (!vals) continue;
-      const dStr = vals.d.trim();
-      const tStr = vals.tol.trim();
-      if (dStr !== '' || tStr !== '') {
-        const entry: PerTypeOverride = {};
-        if (dStr !== '') entry.d = parseFloat(dStr);
-        if (tStr !== '') entry.tol = parseFloat(tStr);
-        outSizes[sk] = entry;
-      }
+    const vals = form.per_type[label];
+    if (!vals) continue;
+    const dStr = vals.d.trim();
+    const tStr = vals.tol.trim();
+    if (dStr !== '' || tStr !== '') {
+      const entry: PerTypeOverride = {};
+      if (dStr !== '') entry.d = parseFloat(dStr);
+      if (tStr !== '') entry.tol = parseFloat(tStr);
+      per_type[label] = entry;
     }
-    if (Object.keys(outSizes).length > 0) per_type[label] = outSizes;
   }
   return {
     params,
@@ -166,7 +147,10 @@ export function parseSeedCount(form: FormState): number {
 
 // ---------------------------------------------------------------- US-022 quantities 序列化
 
-// sizeKey 口径统一用上方 perTypeSizeKey（number→String；null→'null'）。
+/** sizeKey 口径与 qtyStore 一致：number->String(number)；null->'null'。 */
+function sizeKey(size: number | null): string {
+  return size === null ? 'null' : String(size);
+}
 
 /**
  * US-022：把 ``qtyStore.quantities`` 扁平化为 WS payload 的 quantities 结构。
@@ -189,7 +173,7 @@ export function serializeQuantities(
   const labels = Object.keys(quantities);
   if (labels.length === 0) return null;
 
-  const sizeKeys = sizes.map((s) => perTypeSizeKey(s));
+  const sizeKeys = sizes.map((s) => sizeKey(s));
   const out: Record<string, Record<string, number>> = {};
   for (const label of labels) {
     const q = quantities[label];
@@ -208,60 +192,4 @@ export function serializeQuantities(
     if (Object.keys(filtered).length > 0) out[label] = filtered;
   }
   return Object.keys(out).length > 0 ? out : null;
-}
-
-// ---------------------------------------------------------------- US-004 per_type URL 分享格式
-//
-// 把 form.per_type 压成可放进 URL query 的紧凑字符串（供分享/回放参数随动；应用侧
-// 当前不主动读写地址栏，此处提供纯函数单一真相源）。格式：
-//
-//   entry := label '@' sizeKey '=' d ',' tol      // d/tol 任一侧可空，两侧全空的格子不产出
-//   param := entry (';' entry)*                    // 空配置 → ''（调用方据此省略参数）
-//
-// 例：`g03@28=1.5,;g02@30=,45`（g03@28 d=1.5 tol 继承；g02@30 d 继承 tol=45）。
-//
-// 解码侧（perTypeFromUrlParam）宽松容错：不匹配 `g 码@码号键=d,tol` 语法的条目
-// （旧 label 单级格式 / 旧中文片型键 / 手拼错段）一律跳过，不抛错（AC：旧 ptype 键忽略）。
-
-/** URL 分享条目语法：g 码（g+1..4 位数字）@ 码号键（数字或 'null'）= d,tol。 */
-const PER_TYPE_URL_ENTRY_RE = /^(g\d{1,4})@(null|\d{1,4})=([^;,]*),([^;]*)$/;
-
-/**
- * FormState.per_type → URL 分享字符串。仅产出至少一档非空的 (label, sizeKey) 格子
- * （与 collectParams 的空串剔除口径一致）；全空 → ''。
- */
-export function perTypeToUrlParam(form: FormState): string {
-  const parts: string[] = [];
-  for (const label of Object.keys(form.per_type)) {
-    const sizeMap = form.per_type[label];
-    if (!sizeMap) continue;
-    for (const sk of Object.keys(sizeMap)) {
-      const v = sizeMap[sk];
-      if (!v) continue;
-      if (v.d.trim() === '' && v.tol.trim() === '') continue;
-      parts.push(`${label}@${sk}=${v.d.trim()},${v.tol.trim()}`);
-    }
-  }
-  return parts.join(';');
-}
-
-/**
- * URL 分享字符串 → FormState.per_type（新格式）。语法不符的条目（含旧 ptype 键 /
- * 旧 label 单级格式）静默跳过；d/tol 解析为 NaN 的条目同样跳过（不抛错）。
- */
-export function perTypeFromUrlParam(raw: string | null | undefined): PerTypeFormMap {
-  const out: PerTypeFormMap = {};
-  if (!raw) return out;
-  for (const part of raw.split(';')) {
-    const entry = part.trim();
-    if (entry === '') continue;
-    const m = PER_TYPE_URL_ENTRY_RE.exec(entry);
-    if (!m) continue;
-    const [, label, sk, dStr, tolStr] = m;
-    if (dStr !== '' && Number.isNaN(parseFloat(dStr))) continue;
-    if (tolStr !== '' && Number.isNaN(parseFloat(tolStr))) continue;
-    const sizeMap = out[label] ?? (out[label] = {});
-    sizeMap[sk] = { d: dStr, tol: tolStr };
-  }
-  return out;
 }

@@ -173,12 +173,9 @@ describe("ControlPanel per_type (US-018 button trigger)", () => {
     expect(heads).toHaveLength(2);
     const badges = Array.from(heads).map((h) => h.querySelector(".qty-label-badge")!.textContent);
     expect(badges).toEqual(["g01", "g02"]);
-    // US-004 矩阵化：tbody 行 = 码号（doc=null → SIZES fallback 8 行），非旧 2 行 d/tol
+    // tbody 2 行（重合 + 旋转）
     const rows = overlay!.querySelectorAll("tbody tr");
-    expect(rows).toHaveLength(SIZES.length);
-    // 格 = (g 码, 码号) 双输入：首行（SIZES[0]=28）g01 列 d/tol 输入存在
-    expect(overlay!.querySelector('[data-testid="d-g01-28"]')).not.toBeNull();
-    expect(overlay!.querySelector('[data-testid="tol-g01-28"]')).not.toBeNull();
+    expect(rows).toHaveLength(2);
   });
 });
 
@@ -244,7 +241,7 @@ describe("ControlPanel start flow (US-004)", () => {
     // US-003：列集来自 /api/ptypes reps 键 → mock 返 g01/g02 两列
     mockReps = TWO_G_REPS;
     renderPanel(onStart);
-    // US-017：先勾选至少一个码号，否则 Start 校验失败（SIZES[0]=28）
+    // US-017：先勾选至少一个码号，否则 Start 校验失败
     const checkboxes = container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]");
     act(() => checkboxes[0].click());
     // US-018：点击「高级配置」按钮打开 modal（fetch reps 后列集到位）
@@ -256,9 +253,9 @@ describe("ControlPanel start flow (US-004)", () => {
       await Promise.resolve();
     });
     const overlay = document.body.querySelector(".per-type-overlay")!;
-    // US-004 矩阵：修改 (g01, 28) 格的两个 input（键 = (g 码, 码号)）
-    const dInput = overlay.querySelector<HTMLInputElement>(`[data-testid="d-g01-28"]`)!;
-    const tolInput = overlay.querySelector<HTMLInputElement>(`[data-testid="tol-g01-28"]`)!;
+    // 在 modal 内修改 g01 列的两个 input（键 = 裁片 g 码）
+    const dInput = overlay.querySelector<HTMLInputElement>(`[data-testid="d-g01"]`)!;
+    const tolInput = overlay.querySelector<HTMLInputElement>(`[data-testid="tol-g01"]`)!;
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
     act(() => {
       setter.call(dInput, "1");
@@ -272,12 +269,12 @@ describe("ControlPanel start flow (US-004)", () => {
     const confirm = overlay.querySelector<HTMLButtonElement>(".per-type-btn-confirm")!;
     act(() => confirm.click());
     expect(document.body.querySelector(".per-type-overlay")).toBeNull();
-    // Start -> per_type 两级嵌套含 (g01, 28) 的 {d:1, tol:1}
+    // Start -> per_type 含该 g 码的 {d:1, tol:1}
     const btn = container!.querySelector<HTMLButtonElement>("#start")!;
     act(() => btn.click());
     const cfg = onStart.mock.calls[0][0] as ControlPanelStartPayload;
     expect(cfg.per_type).not.toBeNull();
-    expect(cfg.per_type!["g01"]!["28"]).toEqual({ d: 1, tol: 1 });
+    expect(cfg.per_type!["g01"]).toEqual({ d: 1, tol: 1 });
   });
 
   it("US-028 phase=running -> 无 #start 按钮（SolveControls 渲染 #stop）；参数编辑冻结", () => {

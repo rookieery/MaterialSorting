@@ -11,9 +11,9 @@ import type { PerTypeOverrides, SolveParams } from './v03';
 
 /**
  * client → server：启动求解（首条消息，必须 action:'start'）。
- * per_type 空时序列化为 null（同旧 vanilla 实现 collectParams）；US-004 起两级嵌套
- * {label:{sizeKey:{d?,tol?}}}，后端按 (g 码, 码号键) 命中即覆盖（旧 label 单级 / ptype
- * 键不命中为 no-op）。
+ * per_type 空时序列化为 null（同旧 vanilla 实现 collectParams）；键 = 裁片 g 码
+ * （裁片编号化重构 US-003 起；后端按 label 命中对该 g 码**全部码号**覆盖，2026-08-18
+ * 回退 US-004 矩阵化（label×sizeKey 两级）后单级；旧 ptype / 两级键 no-op）。
  */
 export interface StartPayload {
   action: 'start';

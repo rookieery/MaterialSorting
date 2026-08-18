@@ -5,7 +5,7 @@
 WS 协议（详见 README / 实现计划；US-002 起全 label 键，不再接收/透传 paired/internal）：
   client → {action:start, sizes:[...], time:N, seed:N, gate_mm?:N,
             params:{d_ext,d_int,tol_ext,tol_int}?,          # d_int/tol_int 已无消费方（恒 0）
-            per_type:{label:{sizeKey:{d?,tol?}}}?,           # (g 码, 码号) 逐片覆盖
+            per_type:{label:{d?,tol?}}?,                     # g 码逐片覆盖（该码全部码号生效）
             quantities:{label:{sizeKey:N}}?}                 # per-size demand（0=跳过）
   server → {type:manifest, ...} 一次（pieces 条目含 label/color(label_color)/demand/5 层）
          → {type:frame, density(原面积口径), density_sparrow(erode后口径), ...} 每个中间解

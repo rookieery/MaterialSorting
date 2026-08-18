@@ -3,8 +3,8 @@
 覆盖：
   1. ``label_color``（LABEL_COLORS 单一真相源）：同码同色、16 色循环、非 g 码兜底；
   2. ``label_aci``（DXF ACI 公式 ``((code-1) % 24) + 1``）：正码段、循环、兜底；
-  3. ``build_instance`` per_type 按 ``(label, sizeKey)`` 命中即覆盖（erode/tol 只落在
-     命中片上），未命中 / 旧 ptype 键为 no-op；
+  3. ``build_instance`` per_type 按 ``label`` 命中即覆盖（2026-08-18 回退 US-004 矩阵化
+     后单级：erode/tol 落在该 g 码**全部码号**上），未命中 / 旧 ptype 键 / 旧两级键为 no-op；
   4. ``build_instance`` quantities demand 直译（0 跳过、N 多副本、total_area×demand）；
   5. pid_meta / 中间键全 label 化（无 ptype、color=label_color）；
   6. ``constraints.validate`` 删成对齐套校验后对无 ptype/side 的裁片直接可用。
@@ -66,20 +66,23 @@ def test_label_aci_formula_and_cycle():
     assert label_aci('前片') == 7
 
 
-# --------------------------------------------- build_instance per_type (label, sizeKey)
+# --------------------------------------------- build_instance per_type（label 单级命中）
 
 def _build(pieces, **kw):
     from materialsorting.web.solver import build_instance
     return build_instance(pieces, 1980.0, time_budget=1, seed=0, **kw)
 
 
-def test_per_type_label_size_hit_overrides_erode_and_tol():
-    """per_type.g01['28']={d,tol} 命中 → 只有 g01_28 被 erode/放开旋转，g02_28 不受影响。"""
-    pieces = [_piece('g01_28', 'g01', 28), _piece('g02_28', 'g02', 28)]
+def test_per_type_label_hit_overrides_erode_and_tol():
+    """per_type.g01={d,tol} 命中 → g01 全部码号被 erode/放开旋转，g02 不受影响。"""
+    pieces = [
+        _piece('g01_28', 'g01', 28), _piece('g01_30', 'g01', 30),
+        _piece('g02_28', 'g02', 28),
+    ]
     inst, _cfg, meta, _area, n_eroded = _build(
-        pieces, per_type={'g01': {'28': {'d': 2.0, 'tol': 10.0}}})
+        pieces, per_type={'g01': {'d': 2.0, 'tol': 10.0}})
 
-    assert n_eroded == 1                                   # 仅 g01 腐蚀
+    assert n_eroded == 2                                   # g01 两个码号都腐蚀（label 级命中）
     # erode 后 g01 多边形仍是矩形（shapely 对矩形的腐蚀结果），面积变小
     g01_poly = meta['g01_28']['polygon']
     xs = [p[0] for p in g01_poly]
@@ -87,21 +90,28 @@ def test_per_type_label_size_hit_overrides_erode_and_tol():
     # 旋转公差命中 → 离散角度集扩展（10° 步进 1° 应含 10.0）
     items = {it.id: it for it in inst.items}
     assert 10.0 in items['g01_28'].allowed_orientations
+    assert 10.0 in items['g01_30'].allowed_orientations    # 同 g 码其他码号同样生效
     assert list(items['g02_28'].allowed_orientations) == [0.0, 180.0]   # 未命中保持布纹线
 
 
-def test_per_type_miss_falls_back_and_old_ptype_keys_are_noop():
-    """sizeKey 不命中 / 旧 ptype 键 → 回退全局默认（0/0），无 erode、锁 {0,180}。"""
+def test_per_type_miss_falls_back_and_old_keys_are_noop():
+    """label 不命中 / 旧 ptype 键 / 旧两级（US-004 矩阵化）键 → 回退全局默认（0/0），
+    无 erode、锁 {0,180}；旧两级 payload 在 label 层取不到 d/tol，对称向后兼容不崩。"""
     pieces = [_piece('g01_28', 'g01', 28), _piece('g02_28', 'g02', 28)]
-    # sizeKey 30 不命中（piece size=28）
-    _inst, _cfg, _meta, _area, n1 = _build(pieces, per_type={'g01': {'30': {'d': 2.0}}})
+    # label g99 不命中
+    _inst, _cfg, _meta, _area, n1 = _build(pieces, per_type={'g99': {'d': 2.0}})
     assert n1 == 0
     # 旧 ptype 键（v1 时代的中文片型名）不再命中 → no-op
-    _inst, _cfg, _meta, _area, n2 = _build(pieces, per_type={'前片': {'28': {'d': 5.0}}})
+    _inst, _cfg, _meta, _area, n2 = _build(pieces, per_type={'前片': {'d': 5.0}})
     assert n2 == 0
+    # 旧两级 payload（US-004 矩阵化时代的 {label:{sizeKey:{...}}}）→ label 层取不到
+    # d/tol → 回退默认，no-op 不崩（未刷新的旧前端页面残留 payload 场景）
+    _inst, _cfg, _meta, _area, n3 = _build(
+        pieces, per_type={'g01': {'28': {'d': 2.0, 'tol': 10.0}}})
+    assert n3 == 0
     # 命中但只给 d（缺 tol）→ tol 回退全局默认 0
-    inst, _cfg, _meta, _area, n3 = _build(pieces, per_type={'g02': {'28': {'d': 1.0}}})
-    assert n3 == 1
+    inst, _cfg, _meta, _area, n4 = _build(pieces, per_type={'g02': {'d': 1.0}})
+    assert n4 == 1
     items = {it.id: it for it in inst.items}
     assert list(items['g02_28'].allowed_orientations) == [0.0, 180.0]
 
@@ -113,7 +123,7 @@ def test_per_type_clamped_by_global_caps():
         MAX_OVERLAP_MM, MAX_ROTATION_TOL_DEG,
     )
     _inst, _cfg, _meta, _area, n_eroded = _build(
-        pieces, per_type={'g01': {'28': {'d': 99.0, 'tol': 99.0}}})
+        pieces, per_type={'g01': {'d': 99.0, 'tol': 99.0}})
     assert n_eroded == 1
     assert MAX_OVERLAP_MM == 10.0 and MAX_ROTATION_TOL_DEG == 45.0   # 上限口径锁定
 
