@@ -7,7 +7,7 @@
 
 **MaterialSorting** 是一套牛仔裤排料（marker making）引擎与可视化工作台，从 `D:\Pattern_Making` 的排料模块迁移而来，重构为正经 Python 包并与打板模块完全解耦。
 
-**核心目标**：把 M1787 直筒款 **8 码套排**的布料利用率做到 **90%+** —— 版师认可的"行业生死线"。当前 sparrow 基线（600s、`{0,180}`、无 erode）= **85.79%**，距 90% 仍有约 4 个百分点，是后续 v0.3 约束层（旋转公差 + 内片重合）要攻的主目标。
+**核心目标**：把 M1787 直筒款套排的布料利用率做到 **90%+** —— 版师认可的"行业生死线"。**当前对拍基线（US-005，2026-08-18）**：110 片（母版全码 g01–g10 × 11 码、全 demand=1、无合成镜像）600s `{0,180}` 无 erode seed 0 → **real 85.59%**（原面积口径 `total_area/(width×1980)`，用布 5459.4mm；sparrow 自报 88.72% 是 1910 约束带口径）。旧基线 85.79%（176 片、含 L/R 合成镜像，实例口径已废）**归档不再对拍**。距 90% 仍有约 4 个百分点，是后续 v0.3 约束层（旋转公差 + 内片重合）要攻的主目标。
 
 **用户**：版师 / 排料工程师。交付物是可直接裁剪的 marker（PNG 预览 + R12-DXF 给 ET2008 刻绘）。
 
@@ -16,10 +16,10 @@
 | 模块 | 状态 | 说明 |
 |------|------|------|
 | DXF 解析（dxf_parser） | ✅ 稳定 | 抗住母版 3 怪癖；`collect.py`（US-003）深度解析 5 层 IR（毛版/净版/内部线/刺口/布纹线） |
-| 裁片加载（nesting_bounds） | ✅ 稳定 | 单裁片 → 布纹对齐 → 归一化 → L/R 镜像；**US-024 起 5 层透传**（notch 法线按 outline 最近边读时重算）。8 码 → 128 NestPiece / 母版全码 → 176 |
-| intermediate 事实源 | ✅ 稳定 | `pieces_intermediate.json`（每片含 polygon + 5 层字段，全流程事实源；US-022 起 label 字段供 demand 编辑） |
-| sparrow 基线求解 | ✅ 跑通 | 85.79%（600s `{0,180}` 无 erode） |
-| v0.3 约束层 | ⚠️ 部分 | 2026-08-17 起重合/旋转改**全局上限**（`MAX_OVERLAP_MM=10` / `MAX_ROTATION_TOL_DEG=45`，每片型钳制表已删，版师 per-ptype 参考值留在排料规则文档）+ 校验已写；旋转公差 solver 侧未主动实施 |
+| 裁片加载（nesting_bounds） | ✅ 稳定 | manifest 驱动：单裁片 → 布纹对齐 → 归一化（**US-001 v2 起无 L/R 镜像展开，引擎不合成任何片**）；**US-024 起 5 层透传**（notch 法线按 outline 最近边读时重算）。母版全码 → 110 NestPiece（M1787 = 10 片 × 11 码） |
+| intermediate 事实源 | ✅ 稳定 | `pieces_intermediate.json`（schema v2：每片 polygon + 5 层 + label（g 码），无 ptype/side；全流程事实源，US-022 起 label 字段供 demand 编辑） |
+| sparrow 基线求解 | ✅ 跑通 | **新基线 85.59%**（US-005：110 片全 demand=1，600s `{0,180}` 无 erode seed 0，real 口径）；旧 85.79%（176 片含合成镜像）已归档 |
+| v0.3 约束层 | ⚠️ 部分 | 2026-08-17 起重合/旋转改**全局上限**（`MAX_OVERLAP_MM=10` / `MAX_ROTATION_TOL_DEG=45`，每片型钳制表已删，版师按片型的工艺参考值留在排料规则文档）+ 校验已写；旋转公差 solver 侧未主动实施 |
 | 实验框架（experiments） | ✅ 跑通 | free_rot / v0_rot / erode / erode_rot 四模式 + 多种子方差 |
 | 母版上传 → 解析 → commit | ✅ 落地 | `/api/parse-dxf`（US-004）+ `/api/commit-to-nesting`（US-010 Path A）+ `/api/ptypes`（US-020）；解析成功自动 commit + 解锁超排 Tab（US-021） |
 | 求解输入 demand | ✅ 落地 | US-022：per-size 数量编辑（qtyStore），0=该码跳过；前端 qtyStore → WS `quantities` |
@@ -32,7 +32,9 @@
 
 ### 片型（10 类）
 
-| 片型 | 配对? | 重合参考值 (mm) | 旋转参考值 (°) | 说明 |
+> **口径注记（US-005，2026-08-18）**：本表是**版师工艺参考表**，不是代码数据模型 —— 现行实现中片型中文名（GROUP_NAMES/PAIR_TYPES/INTERNAL_TYPES）已全部删除，代码/界面/导出对单片一律用 **g 码**（g01+，单一真相源 `nesting_engine/labeling.py`）标识；「配对?」「重合/旋转参考值」列仅为工艺范围参考（求解钳制是全局上限，见下注）。M1787 每码 10 片 = g01..g10（跨码同号同片型，由母版 block 编号复用/几何稳定排序保证）。
+
+| 片型（工艺参考名） | 配对? | 重合参考值 (mm) | 旋转参考值 (°) | 说明 |
 |------|------|------------------|------------------|------|
 | 前片 | L+R | 2.0 | 1 | 主片，严格布纹 |
 | 后片 | L+R | 2.0 | 1 | 主片，严格布纹 |
@@ -45,15 +47,15 @@
 | 火机袋 | 单片 | 5.0 | 8 | 内片 |
 | 裤耳 | 单片 | 10.0 | 45 | 内片，几乎任意角 |
 
-> **2026-08-17 起本表降为版师参考值**：求解钳制不再按片型 —— 后端全局上限 `MAX_OVERLAP_MM=10` / `MAX_ROTATION_TOL_DEG=45`（`constraints.py`），用户在高级配置弹窗按片型显式填 0–10mm / 0–45°（默认 0 = 不重合 / 锁布纹线），solver 按 `min(申请值, 全局上限)` 收边。上表数值作为各片型工艺合理范围的参考保留。
+> **2026-08-17 起本表降为版师参考值**：求解钳制不再按片型 —— 后端全局上限 `MAX_OVERLAP_MM=10` / `MAX_ROTATION_TOL_DEG=45`（`constraints.py`），用户在高级配置弹窗按（g 码 × 码号）格显式填 0–10mm / 0–45°（默认 0 = 不重合 / 锁布纹线），solver 按 `min(申请值, 全局上限)` 收边。上表数值作为各片型工艺合理范围的参考保留。
 
-> 配对片（前/后/腰/前袋/后袋/机头）由单裁片镜像展开为 L+R 两份；内片（单排/双排/火机袋/裤耳）单片放置，是利用率提升的"填充料"。
+> **引擎不合成镜像（US-001 v2 起，数量即一切）**：旧口径"配对片由单裁片镜像展开为 L+R 两份"已删除 —— 引擎对母版轮廓零合成、零丢弃（WYSIWYG：母版 N 个轮廓 → intermediate N 条 NestPiece）。要排左右两片就在数量矩阵把该（g 码 × 码号）数量填 2；母版本身自带左右两片轮廓的（如 M1787），两片各自有独立 g 码。内片（单排/双排/火机袋/裤耳等小片）仍是利用率提升的"填充料"。
 
 ### 码号
 
-`DEFAULT_SIZES = [28, 29, 30, 31, 33, 34, 35, 36]` —— **8 码套排，刻意跳过 32**（版师要求）。8 码 × 配对展开 = 128 个排料单元（NestPiece）。
+`DEFAULT_SIZES = [28, 29, 30, 31, 33, 34, 35, 36]` —— 8 码套排（刻意跳过 32，版师要求），仅作 `load_nest_pieces` 默认兜底，**不是现行排料口径**。
 
-> **码号口径**：工作台上传母版经 `/api/commit-to-nesting`（US-010）取**母版实际全码**（M1787 = 11 码 [28-38]）→ 176 NestPiece；`DEFAULT_SIZES`（8 码跳 32）仅作 `load_nest_pieces` 默认兜底。前端 SizePicker（US-017）从上传 doc 动态读码号，demand（US-022）按码可设 0 跳过。
+> **码号口径（US-001 v2 起）**：工作台上传母版经 `/api/commit-to-nesting`（US-010）取**母版实际全码**（M1787 = 11 码 [28-38]）→ **110 NestPiece**（每码 10 片 × 11 码；= 母版 size≠None 轮廓数，无镜像合成）。前端 SizePicker（US-017）从上传 doc 动态读码号，demand（US-022）按码可设 0 跳过、按（g 码 × 码号）可设 N 份。
 
 ### 门幅（双口径，2026-08 绘图仪撞机修正后解耦）
 
@@ -79,11 +81,11 @@
 ```
 用户上传母版 DXF
    ↓ /api/parse-dxf + /api/commit-to-nesting（US-004/010）
-out/uploads/<doc_id>_pieces/{类型}_{码号}.dxf（母版全码，每片 5 层 US-024）
-   ↓ load_pieces（布纹对齐水平 + 归一化原点 + L/R 镜像展开 + 5 层共享 transform）
-NestPiece（母版全码 176）
-   ↓ server._commit_to_nesting_sync（GROUP_NAMES 定片型 + labeling 标 label）
-out/sparrow_baseline/pieces_intermediate.json   ← 全流程事实源（每片 polygon + 5 层 + label）
+out/uploads/<doc_id>_pieces/{g码}_{码号}.dxf + pieces_manifest.json sidecar（母版全码，每片 5 层 US-024）
+   ↓ load_nest_pieces（manifest 驱动：布纹对齐水平 + 归一化原点 + 5 层共享 transform，无镜像展开）
+NestPiece（母版全码 110 = 母版 size≠None 轮廓数，WYSIWYG）
+   ↓ server._commit_to_nesting_sync（labeling.assign_codes 最先赋 g 码，名称无关、零丢片零合成）
+out/sparrow_baseline/pieces_intermediate.json   ← 全流程事实源（schema v2：每片 polygon + 5 层 + label，无 ptype/side）
    ↓
    ├─ ms-sparrow-baseline / ms-sparrow-exp（sparrow 求解 → result/svg/curve）
    └─ ms-web（启动期 _PIECES_STATE 读取 + commit 后 reload + 实时可视化 5 层 + 导出 PNG/R12-DXF/PLT 5 层）
@@ -96,8 +98,8 @@ out/sparrow_baseline/pieces_intermediate.json   ← 全流程事实源（每片 
 四层单向依赖（`web → nesting_engine → nesting_bounds → dxf_parser`），下层禁 import 上层：
 
 - **dxf_parser**：底层 DXF 读写。`reader`（ezdxf recover + GBK + R12 POLYLINE）、`geometry`（纯几何）、`model`（PieceOutline，US-002 扩 5 层字段）、`explore`（母版探索）、`collect`（US-003 母版深度解析 5 层 IR）、`export_dxf`（单裁片 5 层导出）。仅 stdlib + ezdxf。
-- **nesting_bounds**：`load_pieces` 把单裁片 → 布纹对齐 → 归一化 → L/R 镜像；US-024 起 `_read_piece_full` 读 5 层 + notch 法线按 outline 最近边重算。定义 `NestPiece`、`GATE_MM=1980`、`DEFAULT_SIZES`。
-- **nesting_engine**：sparrow 求解。`constraints`（v0.3 常量 + 位图腐蚀 + 校验）、`sparrow_baseline`（基线 + ★共享层）、`sparrow_experiments`（公差实验）、`labeling`（US-022 共享 A/B/C 标注）。intermediate 由 `web/server._commit_to_nesting_sync` 生成（US-022 label / US-024 5 层）。
+- **nesting_bounds**：`load_pieces` 把单裁片 → 布纹对齐 → 归一化（US-001 v2 起 manifest 驱动、无 L/R 镜像展开）；US-024 起 `_read_piece` 读 5 层 + notch 法线按 outline 最近边重算。定义 `NestPiece`、`GATE_MM=1980`、`DEFAULT_SIZES`。
+- **nesting_engine**：sparrow 求解。`constraints`（v0.3 常量 + 位图腐蚀 + 校验）、`sparrow_baseline`（基线 + ★共享层）、`sparrow_experiments`（公差实验）、`labeling`（**g 码赋号单一真相源**，US-001 v2：assign_codes + 母版编号复用，无名称映射）。intermediate 由 `web/server._commit_to_nesting_sync` 生成（US-001 v2 label 先行 / US-024 5 层，schema v2）。
 - **web**：`server`（FastAPI + WS + 启动期 `_PIECES_STATE` reload + parse/commit/ptypes 路由 + WS stop 协议）、`solver`（build_instance + demand + 旧 threading / **US-025 多进程** `solve_with_callback_proc`）、`solve_worker`（US-025 子进程入口）、`export`（PNG + R12-DXF marker，US-024 起 5 层叠加）。
 
 文件级细节见 [technical/agent-file-map.md](../technical/agent-file-map.md)；HTTP/WS 契约见 [technical/agent-api-reference.md](../technical/agent-api-reference.md)。
@@ -106,10 +108,10 @@ out/sparrow_baseline/pieces_intermediate.json   ← 全流程事实源（每片 
 
 双 Tab：**上传预览**（默认入口）+ **超排**（未上传母版时锁定，US-015/016）。
 
-1. **上传母版**（上传预览 Tab）：拖拽/点击上传 `.dxf` → `/api/parse-dxf` 深度解析 → 按码分组 + A/B/C 标注 + 5 层（毛版/净版/内部线/刺口/布纹线）数据（US-004~008）。
-2. **编辑数量**（US-011/022；矩阵化重构 US-001~005 改「裁片 × 尺码」数量矩阵；图形预览区已拆除；行头已简化 + 行级整行设值回归）：QtyMatrix 每行一个裁片、每列一个尺码，全部码数量分布一屏看全；格内直接编辑每码排料份数（0 = 该码不排此片）、行头「≡」icon 开弹层整行设统一值（个别尺码不同 = 应用后单格再改，高亮为特例）；点行头缩略图放大查看裁片图形（US-013 PieceZoomModal，5 层）、点列头（码号）切换行缩略图显示的码；每码小计/总片数按物理片数计（配对片 1 份 = 左右 2 物理片，说明在总片数悬浮提示）；数量随求解 start payload 按码下发（demand per-size）。
-3. **自动应用**（US-021）：解析成功后台自动 `/api/commit-to-nesting` 把母版转 intermediate（全码 176 片）+ reload 后端 + 解锁超排 Tab（不强制切，用户主动点入）。
-4. **求解配置**（超排 Tab）：SizePicker 从上传 doc 动态读码号（US-017）+ 总裁片数量实时显示；per-type 高级配置弹窗（重合/旋转，US-018）+ 片型缩略图/放大预览；时长/种子/多 seed（≤6）。
+1. **上传母版**（上传预览 Tab）：拖拽/点击上传 `.dxf` → `/api/parse-dxf` 深度解析 → 按码分组 + **g 码标注**（g01+，`labeling.py` 单一真相源，无中文名）+ 5 层（毛版/净版/内部线/刺口/布纹线）数据（US-004~008；裁片编号化 US-001~005）。
+2. **编辑数量**（US-011/022；矩阵化重构 + 裁片编号化后 =「码号 × g 码」数量矩阵；图形预览区已拆除）：QtyMatrix 行 = 码号、列 = g 码（列头缩略图 + 序号徽章 + 「≡」整列设值），全部码数量分布一屏看全；格内直接编辑每（g 码 × 码号）排料份数（0 = 该码不排此片）、「≡」整列设统一值（个别码不同 = 应用后单格再改，高亮为特例）；点列头缩略图放大查看裁片图形（US-013 PieceZoomModal，5 层）、点行头（码号）切换列头缩略图显示的码；每码小计/底部合计/总片数 = **Σ 数量口径**（一份 = 母版一个轮廓，引擎不合成镜像）；数量随求解 start payload 按（g 码 × 码号）下发（demand per-size）。
+3. **自动应用**（US-021）：解析成功后台自动 `/api/commit-to-nesting` 把母版转 intermediate（母版全码 110 片，无合成）+ reload 后端 + 解锁超排 Tab（不强制切，用户主动点入）。
+4. **求解配置**（超排 Tab）：SizePicker 从上传 doc 动态读码号（US-017）+ 总裁片数量实时显示（Σ 数量口径）；高级配置弹窗（重合/旋转，US-018；US-004 起 = 码号 × g 码矩阵，逐格 d/tol + 「≡」整列设值）+ g 码缩略图/放大预览；时长/种子/多 seed（≤6）。
 5. **求解**（US-025~028）：点"开始求解"→ WS 推 manifest（5 层骨架）→ 持续推 frame（每 ~0.2s，利用率实时爬升）→ final。**可随时"停止"**（后端 terminate 子进程 → `{type:'stopped'}`）→ stopped 态保留中间方案可导出 → "重新开始"用上次参数一键重跑。phase 五态：idle/running/stopped/done/error。
 6. **多 seed 并发对比**（最多 6 路），自动保留最优 run。
 7. **回放**：seekbar 拖动看任意时间点布局（US-006）。
@@ -126,7 +128,8 @@ out/sparrow_baseline/pieces_intermediate.json   ← 全流程事实源（每片 
 ## 验收标准（90% 目标的硬指标）
 
 - ✅ `real_density = total_area/(width×gate)` 达到 90%（非 sparrow 自报密度）。
-- ✅ commit-to-nesting 生成的 intermediate 含母版全码 NestPiece（M1787 = 176 片）。
+- ✅ commit-to-nesting 生成的 intermediate 含母版全码 NestPiece（M1787 = 110 片 = 母版 size≠None 轮廓数，无镜像合成；每片 label = g 码）。
+- ✅ 基线对拍（US-005）：同 seed（0）重跑 110 片基线 density 一致；新基线 **real 85.59%** 记录在案（旧 176 片/85.79% 基线随镜像概念归档，不再对拍）。
 - ✅ 导出 DXF 可被 ET2008 正确读出轮廓（R12 + POLYLINE）。
 - ✅ 分层依赖未反向（`web→engine→bounds→parser`）。
 - ✅ Python 模块可通过 `python -m materialsorting.<sub>.<module>` 跑通。

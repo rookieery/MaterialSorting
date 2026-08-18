@@ -1,15 +1,11 @@
 # Ralph Progress Log
 Started: 2026-08-09
 
-## 2026-08-18 US-004 高级配置弹窗矩阵化（g码×码号 d/tol）
-- 数据层：types/v03.ts PerTypeOverrides 改两级嵌套 Record<label, Record<sizeKey, {d?,tol?}>>；lib/params.ts 增 PerTypeFormMap（弹窗草稿字符串形状）+ perTypeSizeKey（number→String / null→'null'，与 serializeQuantities 同口径单一实现）；collectParams 双层遍历 label→sizeKey（空串档剥离、双侧全空格剔除、整体空→null）。
-- URL 分享：perTypeToUrlParam → `label@sizeKey=d,tol;...`（仅非空格产出）；perTypeFromUrlParam 正则 `^(g\d{1,4})@(null|\d{1,4})=([^;,]*),([^;]*)$` 逐段校验，旧 ptype 键/中文/NaN/乱拼段静默跳过不抛错（lenient decode）。
-- PerTypeOverridesModal 矩阵化重建：行 = doc.sizes（升序 null 通用殿后）∪ 已配置 sizeKey 追加行（旧配置不静默丢），doc=null → SIZES fallback；列 = /api/ptypes reps 键 ∪ 已配置键，compareByLabel 数值序（先长度再字典序 g99<g100）；列头 = 缩略图（点击放大预览）+ .qty-label-badge g 码 + .qty-rowfill-btn「≡」；格 = (g 码, 码号) d/tol 双输入（testid d-/tol-${label}-${sk}，空 = 继承默认 0/0，blur clampDraft 收边）；doc 缺片格「—」disabled（label 不在 doc 不判缺，parse/commit 暂不同步不阻塞）。
-- ColumnFillPopover（文件尾内部组件）：「≡」整列设值弹层，Portal body + fixed 表容器可视区中心（QtyMatrix 同款定位）；复用 .qty-fill-* 样式 + --per-type modifier（z 1150/1160 盖过 overlay 1100）；应用写全部非 missing 行（不造 phantom 键），留空侧 = 继承默认；Enter 快捷应用。
-- 三层独立 ESC：modal listener 判 previewLabel===null && fill===null 才关；PtypePreviewModal 只关预览；popover 只关自己。草稿 + 确定：mount 深拷贝（不再预填 '0'），确定 pruneDraft 剔全空格回写。
-- style.css：.per-type-rowhead 52px / .ptype-col 92px、.qty-colhead-meta 居中、.per-type-cell 双 input 堆叠、.per-type-missing、.qty-popover-backdrop--per-type(1150) / .qty-fill-popover--per-type(1160)。
-- PtypePreviewModal：US-003 已 label 键就绪，浏览器联调缩略图 → g 码放大预览正常（harness 断言）；nestingTour params 步文案改矩阵口径（不 bump TOUR_VERSION）。
-- 测试：PerTypeOverridesModal.test.tsx 全量重写 30 项；params.test.ts per_type 嵌套组重写 + URL 分享 6 项新增；ControlPanel.test.tsx 矩阵断言（d-g01-28 + cfg.per_type['g01']['28']={d:1,tol:1}）；useSolveRun fixture 随动 —— npx vitest run 605/605 绿、tsc --noEmit 零错、npm run build 过（209.50 kB）。
-- 后端命中冒烟：build_instance per_type={'g03':{'28':{'d':1.5}}} → n_eroded 0→1（仅 g03_28 被腐蚀，(label,sizeKey) 键命中）。
+
+2026-08-18 [US-005] 测试收口+文档同步+新基线对拍（ralph/piece-code-refactor）
+- grep 验收：后端+前端非测试/非注释程序代码中文片型名（前片/后片/腰/前袋/后袋/机头/单排/双排/短双排/火机袋/裤耳）0 命中（仅 docstring 工艺说明保留）；GROUP_NAMES/PAIR_TYPES/INTERNAL_TYPES/ALL_TYPES 程序内 0 定义。
+- 新基线（US-005 记录在案）：重 commit M1787(2) → intermediate 110 片（g01-g10 × 11 码 28-38，全 demand=1，无 ptype/side）；600s {0,180} 无 erode seed 0 → real 85.59%（原面积口径 total_area/(5459.4×1980)=0.855865，用布 5459.4mm，~160s 早停 n_reports=2500）；sparrow 自报 88.72% 为 1910 约束带口径；同 seed 经 ms-sparrow-baseline 重跑 placed_items 位级一致、density 一致（可复现）。旧基线 85.79%（176 片含 L/R 合成镜像）归档不再对拍。
+- 全量验证：pytest 69/69 全绿（含 3 个 test_ws_stop，实际全过无例外）；vitest 605/605 + npm run build + typecheck 全绿；ms-explore/ms-sparrow-baseline/ms-sparrow-exp/ms-web 四 CLI 入口逐个跑通；分层依赖未反向（web→engine→bounds→parser）。
+- 文档同步 8 份：business-overview（数量即一切/110 片/新基线 85.59%/实体表口径注记）、排料规则_详细版（§1.1 引擎不合成镜像、§2.3 成对改工艺核对项、附录优先级链第 2 条）、agent-api-reference（invariant 3 无镜像变换/ptypes degrade 口径/WS sizes 注释）、agent-component-map（QtyMatrix/PieceZoomModal/SizePicker 行 + TOUR_VERSION '7' + US-018/011/矩阵化节 superseded 警告）、CLAUDE.md（nesting_engine 行 sequential_sort_key）、nesting_engine/AGENTS.md（labeling 现行口径）、materialSorting-web/AGENTS.md（文件树+US-032 两项口径+US-011 g 码 key+US-013 头部现行结构+矩阵化 US-003/004 节 superseded+US-002 转置行列模型+CSS 布局 16855fd 重构+TOUR_VERSION 链）；dxf_parser/web 两份 AGENTS.md 核对已现行无需改。
 - 浏览器验证（CDP headless Chrome harness scripts/us004_verify.mjs，15/15 PASS + 截图 out/us004_verify/）：上传母版 → 矩阵 10 动态 g 码列 × doc.sizes 11 码号行 + d/tol 格 + 10 个 ≡；三层 ESC（预览/整列设值独立）；配 g03@28 d=1.5 + g05 整列 d=2 → 确定 → 选码 → 开始求解 → patch WebSocket.prototype.send 捕获 WS start payload 断言 per_type.g03['28'].d===1.5（端到端 AC）+ g05 全码号键。
 - 文档同步：agent-component-map（header + US-018 节 5 行改写 + 不变量 2/3/6/7 修订 + 新增 11~13 + params.ts/style.css/PerTypeOverrides.tsx/ControlPanel.test.tsx 行）、agent-api-reference（WS per_type 注释补 US-004 矩阵产出与 sizeKey 口径）、materialSorting-web/AGENTS.md（header + 目录注释 + US-018 节 US-004 矩阵条目重写 + params 约定 3 处修订）。

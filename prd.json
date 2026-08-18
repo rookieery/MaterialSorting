@@ -2,16 +2,10 @@
   "branchName": "ralph/piece-code-refactor",
   "stories": [
     {
-      "id": "US-004",
-      "title": "高级配置弹窗矩阵化（g码×码号 d/tol）",
-      "description": "As a 版师, I want the advanced config modal rebuilt as a label × size matrix, so that I can tune overlap/rotation tolerance per (g-code, size) instead of per Chinese piece name. 详见 tasks/prd-piece-code-refactor.md US-004。依赖 US-003（契约与 PtypePreviewModal label 键已就绪）。\n\n背景：D2 已确认——高级配置固定 10 中文列改当前母版实际 g 码动态列，d/tol 键 (label, sizeKey) 逐码；弹窗结构与数量矩阵同构（复用 QtyMatrix 交互范式与样式）。\n\n具体任务：\n1. materialSorting-web/src/components/ControlPanel/PerTypeOverridesModal.tsx — 矩阵化重构：行=参与排料码号（doc.sizes），列=parse 响应 label 并集（compareByLabel 数值序）；列头=缩略图（GET /api/ptypes label 键）+ g 码徽章 + ≡ 整列设值；格=d/tol 两个小输入（空=继承全局默认 0/0）；草稿+确定、ESC/遮罩关闭、双层 modal 独立 ESC（PtypePreviewModal 叠加上层）既有约定保留。\n2. materialSorting-web/src/lib/params.ts — collectParams 输出 per_type={label:{sizeKey:{d?,tol?}}}（空串剔除；整体空→null）；FormState.per_type 类型与 hydrate（parse 成功后按 doc 动态列）同步；URL 分享参数 per_type 新格式（旧键忽略）。\n3. materialSorting-web/src/components/ControlPanel/PtypePreviewModal.tsx — 缩略图点击放大预览按 label 键联调（US-003 已改键，本 Story 联调）。\n4. materialSorting-web/src/style.css — 矩阵格 d/tol 双输入样式段（沿用暗底 #26282e + #2ea06c 同色系，不引入 CSS 框架）。\n5. 测试：PerTypeOverridesModal.test.tsx 重写（矩阵结构/草稿确定/整列设值/空值继承/序列化新格式）+ params.test.ts 新格式用例（含 URL 序列化）。\n\n验收标准：\n- 弹窗列=当前母版 g 码并集（动态，非固定 10 列）、行=码号；格内 d/tol 双输入；空=继承默认。\n- 端到端：弹窗配 g03@28 d=1.5 → 求解 start payload per_type.g03['28'].d===1.5（DevTools/测试断言）→ US-002 后端命中覆盖生效。\n- URL 分享参数 per_type 新格式往返一致（旧 ptype 键忽略不报错）。\n- cd materialSorting-web && npm run typecheck 通过、npx vitest run 全绿、npm run build 无报错；通过浏览器验证弹窗矩阵渲染与操作（含双层 modal）。 ",
-      "passes": true
-    },
-    {
       "id": "US-005",
       "title": "测试收口+文档同步+新基线对拍",
       "description": "As a maintainer, I want all docs, tests and the density baseline updated to the new label-only reality, so that the codebase and documentation agree and the refactor provably didn't regress utilization. 详见 tasks/prd-piece-code-refactor.md US-005。依赖 US-001~004 全部完成。\n\n具体任务：\n1. grep 验收：十个中文片型名（前片/后片/腰/前袋/后袋/机头/单排/双排/短双排/火机袋/裤耳）在后端+前端非测试、非注释、非 dxf_parser/explore.py 代码 0 命中；GROUP_NAMES/PAIR_TYPES/INTERNAL_TYPES/ALL_TYPES 程序内 0 定义。\n2. 文档同步：CLAUDE.md（架构分层描述 labeling 单一真相源+数据流主线镜像→数量即一切）；materialSorting-server/src/materialsorting/{dxf_parser,nesting_bounds,nesting_engine,web}/AGENTS.md 共 3 份+web AGENTS.md（各层文件表更新）；.docs/business/排料规则_详细版.md（§1.1 增补「引擎不合成镜像」口径、§2.3 成对镜像条款改口径、附录优先级链第 2 条调整）；.docs/technical/agent-api-reference.md（parse/commit/ptypes/WS 契约全面更新）；.docs/technical/agent-component-map.md（QtyMatrix/SizePicker/弹窗新口径）；.docs/business/business-overview.md（镜像展开→数量即一切、176→110、核心业务实体表口径注记）。\n3. 新基线：当前母版重 commit（intermediate 110 片、全 demand=1）→ 同 seed 求解，real density（原面积口径 total_area/(width×GATE_MM)）记录归档为对拍基线（写入 .docs/ 对应文档）；旧基线（176 片含合成镜像）归档不再对拍。\n4. 全量验证：cd materialSorting-server && python -m pytest 全绿（3 个 test_ws_stop 既有失败除外）；cd materialSorting-web && npx vitest run + npm run build + npm run typecheck 全绿；pyproject 4 个 ms-* CLI 入口逐个跑通（ms-web/ms-sparrow-baseline/ms-sparrow-exp/ms-pieces-export 按实际入口名）。\n\n验收标准：\n- grep 中文片型名非测试/非注释/非 explore.py 0 命中；四个常量程序内 0 定义。\n- 6 份文档（CLAUDE.md/3×AGENTS.md/排料规则_详细版/api-reference/component-map/business-overview 按实际清单）同步完成，现行架构描述无镜像/paired/ptype 残留。\n- 新基线 density 数值记录在案，同 seed 重跑一致。\n- pytest + vitest + build + typecheck 全绿；ms-* 入口全跑通、分层依赖未反向。",
-      "passes": false
+      "passes": true
     }
   ]
 }

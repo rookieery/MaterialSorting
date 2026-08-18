@@ -29,14 +29,14 @@ materialSorting-web/
 │   │   │   ├── PreviewPage.tsx  # US-008 容器：左 UploadPanel + 右 QtyMatrix（图形预览区拆除后右侧主体仅矩阵）；status=done+doc 时挂主体，否则 .preview-empty 空态；US-014 顶层模态单例（US-003 后仅剩 PieceZoomModal）+ useEffect subscribe 监听 doc_id 变化联动 qtyStore（有 doc 时 hydrate 默认 1、doc→null 时 resetQuantities；矩阵化重构 US-001 起 hydrate 同时写 baseValue=1）；US-016 加 useEffect subscribe uploadStore.status 按 `status==='done' && doc!==null` 联动 uiStore.setNestingEnabled（Tab 解锁闸，mount 即对齐）
 │   │   │   ├── UploadPanel.tsx  # US-006 左侧上传面板（点击+拖拽+客户端预校验+status 反馈）；US-021 加 commit 状态行；US-030 .drop-zone 加 data-tour="drop-zone"（upload 步锚点）+ commit 行保留 data-testid="commit-status"（committed 步锚点）
 │   │   │   ├── PiecePreviewSVG.tsx  # US-007 单片（或多片）母版预览 SVG（命令式渲染 + scale(1,-1) 翻转 + 5 层分层 + A/B/C 标注翻转组外）
-│   │   │   ├── PieceZoomModal.tsx  # US-013 放大预览模态（声明式受控 Portal；订阅 uploadStore.zoom+doc；✕/遮罩/ESC 关闭；复用 PiecePreviewSVG pad=20；US-003 起为预览页唯一模态，头部数量单位改「份」）
-│   │   │   ├── QtyMatrix.tsx      # 矩阵化重构 US-002 数量矩阵（US-003 起接入 PreviewPage；图形预览区拆除后为右侧唯一主体）：行=label 并集[行头=序号徽章+compact 80×80 缩略图（title 悬浮显名）+「≡」整行设值 icon（85b6a8c 拆裁片名/×2 徽章/悬浮填充按钮后 16855fd 回归弹层入口）] × 列=doc.sizes 全码+合计；格内 clampQty 编辑 + Enter/Tab 跳格 + 0/缺片/特例格样式；列头 button setSize（切 activeSize → 行缩略图优先显示该码版本；图形预览区拆除后职责收敛于此）；缩略图点击 openZoom(label, rep.size) 所见即所放大（rep 回退码也可弹出）；RowFillPopover createPortal 到 body + fixed 居中矩阵容器可视区（不锚 sticky 行头，防被后续行盖/被 overflow 裁剪）；sticky 表头/首列/底行 + flex 吃满剩余高度内滚（拆 45vh 截断）+ table-layout:fixed 列宽均分 + inline min-width floor 窄屏横滚；小计按 US-003 Σ 数量口径（= Σ perSize 数量，配对 ×2 乘数已删，一份 = 母版一个轮廓）；US-005 落地 tour 锚点（根容器 data-tour="qty-matrix"=parsed 步 + 行头 data-tour="qty-rowhead"=set-qty 步）
+│   │   │   ├── PieceZoomModal.tsx  # US-013 放大预览模态（声明式受控 Portal；订阅 uploadStore.zoom+doc；✕/遮罩/ESC 关闭；复用 PiecePreviewSVG pad=20；US-003 起为预览页唯一模态；**裁片编号化 US-003 起头部只显 g 码徽章 + qty(份) + 码号（v2 契约无 name）**）
+│   │   │   ├── QtyMatrix.tsx      # 矩阵化重构 US-002 数量矩阵（US-003 起接入 PreviewPage；图形预览区拆除后为右侧唯一主体；**2026-08-16 行列转置**）：**行=doc.sizes 全码**[行头=button setSize（切 activeSize，当前码高亮）+ 行尾小计列] × **列=全码 label（g 码）并集**[列头=compact 80×80 缩略图（title 恒为 g 码）+ 序号徽章 +「≡」整列设值 icon]；格内 clampQty 编辑 + Enter/Tab 跳格 + 0/缺片/特例格样式；缩略图点击 openZoom(label, rep.size) 所见即所放大（rep 回退码也可弹出）；ColFillPopover createPortal 到 body + fixed 居中矩阵容器可视区（不锚 sticky 列头，防被 sticky 行头盖/被 overflow 裁剪）；sticky 表头/首列/底行 + flex 吃满剩余高度内滚（拆 45vh 截断）+ table-layout:fixed 列宽均分 + inline min-width floor 窄屏横滚；小计按裁片编号化 US-003 **Σ 数量口径**（= Σ perSize 数量，无任何乘数，一份 = 母版一个轮廓，不合成镜像）；US-005 落地 tour 锚点（根容器 data-tour="qty-matrix"=parsed 步 + 行头 data-tour="qty-rowhead"=set-qty 步）
 │   │   │   └── __tests__/
 │   │   │       ├── UploadPanel.test.tsx      # US-006 集成测试（25 项）；US-021 更新 2 项 fetch 计数（parse+commit=2）+ beforeEach/afterEach 加 uiStore reset
 │   │   │       ├── PiecePreviewSVG.test.tsx  # US-007 单测（33 项：bbox 5 + 命令式 2 + 5 层 11 + 翻转/标注 9 + 单片/多片/空片 4 + 切片重建 3）
 │   │   │       ├── PreviewPage.test.tsx      # US-008 集成 + US-014 qtyStore 联动 + US-016 Tab 解锁联动 + US-003 改写 + 图形预览区拆除改写（22 项：布局 / 空态分支×3 / 已解析挂 QtyMatrix / 列头列码+高亮 / 列头点击端到端切 activeSize / 模态仅 PieceZoomModal（qtyDialog 字段不存在断言）/ zoom 自显隐 / hydrate 默认 1 / reset 清空 / 重传覆盖 / 切码保留 / 矩阵格子编辑端到端（A@30=3→store+行合计/总片数刷新）/ US-016 八项不变量）
-│   │   │       ├── QtyMatrix.test.tsx        # 矩阵化重构 US-002 单测 + US-004 物理口径 + 缩略图 rep.size 口径 + 行头简化/整行设值回归改写（38 项 8 组：行列结构 6 + 列头切码 2 + 缩略图 openZoom 2（activeSize 命中 / 缺片回退码） + 格内编辑 6 + 0/特例高亮 5 + 小计与总片数（缺 paired ×1 兼容） + US-004 物理片数口径（配对 ×2；×2 徽章已随行头简化拆除） + 行级整行设值（「≡」icon 弹层：开关/应用写 store/ESC/遮罩/取消；工具条整表重置已拆））
-│   │   │       └── PieceZoomModal.test.tsx   # US-013 集成（14 项：zoom=null 不渲染 / doc=null 不渲染 / 渲染 overlay+modal+aria / 头部 label+qty(份)+size+name / qty 从 qtyStore / null 码「通用」/ body svg.piece-preview-svg / ✕ closeZoom / 遮罩 closeZoom / modal 内不冒泡 / ESC closeZoom / Portal body / label 不存在兜底 / size 不存在兜底）
+│   │   │       ├── QtyMatrix.test.tsx        # 矩阵化重构 US-002 单测 + 转置/裁片编号化 US-003 口径改写（38 项 8 组：行列结构 6（行=码号 null 殿后「通用」/列=g 码并集，列头=缩略图+徽章+「≡」/缺片格「—」） + 行头切码 2 + 列头缩略图 openZoom 2（activeSize 版本 / 缺片回退码 rep） + 格内编辑 6（clampQty 上下界/小数截断/Enter/Tab 跳格/末格回卷） + 0 与特例高亮 5 + 小计与总片数 4 + **US-003 数量即一切口径 5（Σ perSize 数量、无任何乘数、不合成镜像；「×2」徽章不渲染）** + 列级整列设值 8（「≡」icon 弹层：开关/初值=baseValue/portal fixed 居中/应用写 setRowAll/Enter 快捷/取消-遮罩-ESC 三路关闭/特例兼容；工具条整表重置已拆））
+│   │   │       └── PieceZoomModal.test.tsx   # US-013 集成（14 项：zoom=null 不渲染 / doc=null 不渲染 / 渲染 overlay+modal+aria / 头部 label 徽章+qty(份)+sizeLabel（**US-003 v2 契约无 name，名称 span 断言不存在**）/ qty 从 qtyStore / null 码「通用」/ body svg.piece-preview-svg / ✕ closeZoom / 遮罩 closeZoom / modal 内不冒泡 / ESC closeZoom / Portal body / label 不存在兜底 / size 不存在兜底）
 │   │   ├── nests/          # US-003 NestSVG/NestCard/NestLabel + US-005 NestsGrid；US-006 NestSVG 加 seek+hover
 │   │   ├── ControlPanel/   # US-004 8 子组件 + US-005 MultiSeedControls；US-007 ExportButtons；US-018 PerTypeOverrides 改按钮 + PerTypeOverridesModal/PtypePreviewModal（高级配置弹窗 + 片型缩略图 + 放大预览；US-004 起矩阵化 行=码号 × 列=g 码 格=d/tol + ≡ 整列设值，三层独立 ESC）；US-028 SolveControls 替代 StartButton（按 phase 渲染按钮组）+ ExportButtons 加 partial 提示；US-031 加 4 个 data-tour 锚点（doc-banner / param-form 在 SizePicker / start-btn 父容器 / export-group 在 ExportButtons）
 │   │   ├── curve/          # US-005 ConvergenceCurve（命令式 innerHTML）
@@ -48,7 +48,7 @@ materialSorting-web/
 │   │   ├── TourOverlay.tsx  # 高亮引擎（Portal 到 body，z-index 2000；spotlight box-shadow 镂空 + bubble 按 placement 定位 + 零尺寸居中兜底）；US-032 加 ESC/遮罩/skip 关闭 + reduced-motion class + scrollIntoView
 │   │   ├── useTour.ts       # 控制器 hook（US-030 完整 advance-on-ready：检查当前步 ready + 200ms 轮询自动推进；next/prev/close/skip + before 副作用 + 等待态）+ useTourAutoTrigger（首次进入 Tab 自动启动）；US-032 加 skip（markSeen+close）
 │   │   ├── steps/           # tour 步骤定义（TOURS:Partial<Record<TabId,TourDef>>，US-030 注册 preview / US-031 注册 nesting）
-│   │   │   ├── index.ts     # TOUR_VERSION='5'（'2'←矩阵化重构 US-005 锚点迁矩阵 / '3'←图形预览区拆除 / '4'←矩阵行头简化 / '5'←行级整行设值回归；完整版本历史见文件头注释）+ TOURS:Partial<Record<TabId,TourDef>>（preview + nesting 均注册）
+│   │   │   ├── index.ts     # TOUR_VERSION='7'（'2'←矩阵化重构 US-005 锚点迁矩阵 / '3'←图形预览区拆除 / '4'←矩阵行头简化 / '5'←行级整行设值回归 / '6'←数量矩阵行列转置 / '7'←裁片编号化 US-003 总片数 Σ 口径改写；完整版本历史见文件头注释）+ TOURS:Partial<Record<TabId,TourDef>>（preview + nesting 均注册）
 │   │   │   ├── previewTour.ts # US-030 5 步 preview tour（upload/parsed/set-qty/committed/goto-nesting；联动步读 uploadStore/uiStore 快照；矩阵化重构 US-005 parsed/set-qty 锚点迁矩阵 qty-matrix/qty-rowhead + 文案改矩阵操作描述；行头简化/整行设值回归两次同步文案，见 TOUR_VERSION '4'/'5'）
 │   │   │   └── nestingTour.ts # US-031 5 步 nesting tour（doc-banner/params/solve/result/export；result/export 联动步读 runRegistry.list().some(r=>r.lastFrame!==null) 帧快照）
 │   │   └── __tests__/
@@ -150,7 +150,9 @@ materialSorting-web/
 
 ## US-018 落地：PerTypeOverridesModal + PtypePreviewModal（高级配置弹窗 + 片型缩略图 + 放大预览）
 
-把旧版 PerTypeOverrides 的 `<details>` 折叠面板（10 行 d/tol input + 内/外徽章）改造为「按钮 → 弹窗 table + 片型缩略图 + 放大预览」两层模态。表头列=片型缩略图（compact 渲染）+ **编号徽章 A/B/C**（2026-08-17 起复用上传预览 QtyMatrix 的 `.qty-label-badge` 与编号口径；rep.label 缺席兜底片型名，不含内外徽章 —— US-019 移除内外区分），**列序按编号 A→J 排**（与上传预览行序一致；无 label 片型殿后保持 V03_PTYPES 相对序，reps 未到位时退回 V03_PTYPES 原序），两行=重合（0–10mm）/旋转（0–45°，**全局上限不再按片型**，blur 规整到 [0,max]，默认 '0'）；缩略图点击触发放大预览（PtypePreviewModal 叠在 PerTypeOverridesModal 之上），hover/aria 只报「编号-放大预览」不含片型名。缩略图数据源 = `GET /api/ptypes`（US-020），fetch 失败降级为片型名文字（不阻塞配置）。
+把旧版 PerTypeOverrides 的 `<details>` 折叠面板（10 行 d/tol input + 内/外徽章）改造为「按钮 → 弹窗 table + 缩略图 + 放大预览」两层模态。
+
+> **⚠️ 本段为 US-018 原始落地描述，已被两次演进取代**：① 裁片编号化 US-003（2026-08-18）—— 编号徽章从 A/B/C 改 **g 码**，`V03_PTYPES` 固定 10 片型清单删除，列集 = `/api/ptypes` reps 键（g 码）∪ per_type 已配置键动态并集，片型名彻底退场；② 高级配置矩阵化 US-004（2026-08-18）—— 布局改 **行=码号 × 列=g 码矩阵**，格 = (g 码, 码号) d/tol 双输入 + 「≡」整列设值弹层 + 三层独立 ESC + URL 分享（现行全量描述见下表 PerTypeOverridesModal.tsx 行与不变量 11~13）。fetch 失败降级 = 列集退回已配置键 + 缩略图 disabled（**不再有片型名文字可降级**）。
 
 ### 新增 / 改造文件
 
@@ -160,12 +162,12 @@ materialSorting-web/
 | `src/types/ptype.ts` | **新建** `PtypeRepresentative` + `PtypesResponse` 类型（与后端 `_PTYPE_REPRESENTATIVE_FIELDS` 字段一致）。v1 仅 polygon 字段必填；US-024 后 intermediate 扩 5 层 → representatives 自动带 net_polygon/internal_lines/notches/grain_line（前端 layer-aware 渲染） |
 | `src/components/ControlPanel/PerTypeOverrides.tsx` | **改造**：旧 `<details>` 折叠 10 行 d/tol input → 单行 `<button class="per-type-btn">` 触发器。保留 values/onChange 契约（US-004 起类型 = `PerTypeFormMap` 两级嵌套，透传给 PerTypeOverridesModal）；内部挂 PerTypeOverridesModal + PtypePreviewModal（声明式受控 Portal 订阅 controlPanelStore） |
 | `src/components/ControlPanel/PerTypeOverridesModal.tsx` | **新建** 高级配置弹窗（声明式受控 Portal → document.body；订阅 controlPanelStore.modal）。**US-004 矩阵化改写**（演化：US-018 10 中文列 → US-003 g 码列 2 行 d/tol → US-004 行=码号 × 列=g 码 矩阵）：行集 = uploadStore.doc.sizes（升序 null 通用殿后）∪ form.per_type 已配置 sizeKey（追加，旧配置不静默丢），doc=null → SIZES fallback（与 SizePicker chip 同源）；列集 = /api/ptypes reps 键 ∪ form.per_type 已配置键，`compareByLabel` 数值序（先长度再字典序，g100 排 g99 后）。列头 = 缩略图（点击 openPreviewLabel 放大预览）+ `.qty-label-badge` g 码徽章 + `.qty-rowfill-btn`「≡」整列设值（QtyMatrix 范式复用）。格 = (label, sizeKey) d/tol 双输入（testid `d-${label}-${sk}`/`tol-${label}-${sk}`，sk = String(size)/'null'；空串 = 继承全局默认 0/0，placeholder `d≤10`/`t≤45`；blur `clampDraft` 收边）；doc 中该 g 码无此码号 → `.per-type-cell.missing`「—」disabled（label 完全不在 doc 不判缺，parse/commit 暂不同步不阻塞）。挂载时 fetch GET /api/ptypes（cancelled flag，StrictMode 双 mount 安全；失败降级空 reps → 列集退回已配置键）。草稿+确定：mount 深拷贝 values（**不预填 '0'**，空 = 继承默认），确定 `pruneDraft` 剔除双侧全空格子后回写。**ColumnFillPopover**（文件尾内部组件）：列头「≡」→ 居中弹层（Portal body + fixed，复用 `.qty-fill-*` 样式 + `--per-type` modifier z-index 1150/1160）输入统一 d/tol → 应用写该列全部行（missing 行跳过，QtyMatrix「不给缺片码造 phantom 键」同款）；Enter 快捷应用 / ESC/遮罩/取消只关弹层。三层独立 ESC（previewLabel 与 fill 均关才关本 modal） |
-| `src/components/ControlPanel/PtypePreviewModal.tsx` | **新建** 裁片放大预览模态（US-003 起订阅 controlPanelStore.previewLabel，键 = g 码）。**每次打开（previewPtype 变非 null）重新 fetch /api/ptypes**（2026-08-17 修复旧缓存 bug：旧实现 fetch 一次，重传母版 commit 后与弹窗缩略图数据不一致；fetch 期间保留上次 reps 不闪 loading，关闭态不发请求）。previewPtype !== null 时显示 overlay+modal（aria-modal）；头部 = rep.label 编号徽章（`.piece-card-label`，与上传预览同口径；缺席兜底片型名）+ hover/aria/title 统一 `${编号}-放大预览`（不含片型名）；PiecePreviewSVG pad=20 全量渲染（layer-aware）；ESC 始终只关 previewPtype（独立于 PerTypeOverridesModal）；representative 缺失渲染降级空态 |
+| `src/components/ControlPanel/PtypePreviewModal.tsx` | **新建** 裁片放大预览模态（裁片编号化 US-003 起订阅 controlPanelStore.previewLabel，键 = g 码）。**每次打开（previewLabel 变非 null）重新 fetch /api/ptypes**（2026-08-17 修复旧缓存 bug：旧实现 fetch 一次，重传母版 commit 后与弹窗缩略图数据不一致；fetch 期间保留上次 reps 不闪 loading，关闭态不发请求）。previewLabel !== null 时显示 overlay+modal（aria-modal）；头部 = rep.label **g 码徽章**（`.piece-card-label`，与上传预览同口径；rep 缺 label 字段兜底 Record 键本身，键即 g 码）+ hover/aria/title 统一 `${g 码}-放大预览`（无任何名称）；PiecePreviewSVG pad=20 全量渲染（layer-aware）；ESC 始终只关 previewLabel（独立于 PerTypeOverridesModal）；representative 缺失渲染降级空态 |
 | `src/components/preview/PiecePreviewSVG.tsx` | **新增 `compact?: boolean` prop**：compact=true 时跳过 renderLabel（A/B/C 标注）+ 默认 pad 改为 COMPACT_PAD(2)（fit-to-cell）；显式 pad 仍优先。layer-aware 渲染不变（数据带几层画几层）；非 compact 行为不变（向后兼容 PieceZoomModal pad=20） |
 | `src/style.css` | **新增样式段**：`.per-type-wrapper/.per-type-btn`(蓝色按钮 #2c5d8f) + `.per-type-overlay/.per-type-modal/.per-type-head/.per-type-close/.per-type-table-wrap/.per-type-table/.per-type-rowhead(sticky)/.ptype-col/.ptype-thumb(64×64 zoom-in)/.ptype-thumb-placeholder/.per-type-table input/.per-type-hint/.per-type-actions/.per-type-btn-cancel/.per-type-btn-confirm` + `.ptype-preview-overlay/.ptype-preview-modal/.per-type-preview-head/.ptype-preview-name/.ptype-preview-close/.ptype-preview-body/.ptype-preview-empty`（z-index 1100 per-type / 1200 ptype-preview，暗背景 #26282e + #2ea06c 同色系，与 PieceQtyDialog/PieceZoomModal 一致）。**US-004 矩阵增补**：`.per-type-rowhead` 52px / `.ptype-col` 92px（双输入列宽）、`.qty-colhead-meta` 居中（徽章+≡）、`.per-type-cell`（d/tol 双 input 堆叠居中）、`.per-type-missing`（「—」灰字）、`.qty-popover-backdrop--per-type`(z 1150) / `.qty-fill-popover--per-type`(z 1160)（整列设值弹层提层盖过 per-type overlay 1100） |
-| `src/store/__tests__/controlPanelStore.test.ts` | **新建** 7 项单测：默认 null / openModal-closeModal / openPreviewPtype-closePreviewPtype / 订阅者收到 modal 变化 / 订阅者收到 previewPtype 变化 / 两层 state 独立（closeModal 不影响 previewPtype）/ 两层 state 独立（closePreviewPtype 不影响 modal） |
+| `src/store/__tests__/controlPanelStore.test.ts` | **新建** 7 项单测：默认 null / openModal-closeModal / openPreviewLabel-closePreviewLabel / 订阅者收到 modal 变化 / 订阅者收到 previewLabel 变化 / 两层 state 独立（closeModal 不影响 previewLabel）/ 两层 state 独立（closePreviewLabel 不影响 modal） |
 | `src/components/ControlPanel/__tests__/PerTypeOverridesModal.test.tsx` | **US-004 全量重写 30 项**：modal=null 不渲染 / overlay+modal+aria / 行 = doc.sizes（null 通用殿后）/ doc=null → SIZES fallback 8 行 / values 已配置 sizeKey 追加为行 / 列 = reps 键（g 码徽章 + ≡ icon，.ptype-name 零残留）/ reps+values 全空 → 仅行头列 / 挂载 fetch /api/ptypes / fetch 失败降级（列集退回 values 键 + thumb disabled）/ fetch 成功渲染 compact svg / 列序 compareByLabel 数值序（g02<g99<g100，首行列头与 d-g02-28 对齐）/ 格 = d/tol 双输入（空串+placeholder=继承、aria 报 (g 码, 码号)、null 码 testid 'null'）/ missing 格「—」与 label 不在 doc 可编辑 / 缩略图 hover/aria=`g01-放大预览` / 初值不预填 0（空 = 继承）+ 保留非空值 / 编辑不立即回写 / 确定 `pruneDraft` 两级嵌套输出（g01@28 d=1.5、g01@30 仅 tol=45）+ 关闭 / 全空格剔除 → {} / 取消 / 遮罩 / ESC（preview+fill 均关时）/ ESC 不关 modal 当 previewLabel open（双层独立）/ ESC 只关整列设值弹层（三层独立）/ ✕ / 缩略图 click openPreviewLabel / blur clamp（99→10、-3→0）/ modal 内 mousedown 不冒泡 / ≡ 应用写全部行（含 null 通用行，确认输出断言）/ ≡ 超限收边（99→10）+ 再全空应用清整列 / ≡ 取消/遮罩不写 + Enter 快捷应用写入 |
-| `src/components/ControlPanel/__tests__/PtypePreviewModal.test.tsx` | **新建** 9 项集成测试：previewPtype=null 不渲染且不发 fetch / previewPtype + fetch 成功渲染 overlay+modal+svg（头部编号徽章 'A'、无 .ptype-preview-name）/ 每次打开重新 fetch（stale-cache 修复回归）/ rep 无 label 兜底片型名 / ✕ 关闭 / 遮罩关闭 / ESC 关闭（独立于底层 modal）/ 叠层场景（与 PerTypeOverridesModal 同挂）ESC 只关预览 + 底层 modal+草稿保留 / representative 缺失渲染降级空态 |
+| `src/components/ControlPanel/__tests__/PtypePreviewModal.test.tsx` | **新建** 9 项集成测试：previewLabel=null 不渲染且不发 fetch / previewLabel + fetch 成功渲染 overlay+modal+svg（头部 g 码徽章 'g01'、aria/title=`g01-放大预览`、无 .ptype-preview-name）/ 每次打开重新 fetch（stale-cache 修复回归）/ rep 缺 label 字段（旧数据）兜底 Record 键本身（键即 g 码）/ ✕ 关闭 / 遮罩关闭 / ESC 关闭（独立于底层 modal）/ 叠层场景（与 PerTypeOverridesModal 同挂）ESC 只关预览 + 底层 modal+草稿保留 / representative 缺失渲染降级空态 |
 | `src/components/preview/__tests__/PiecePreviewSVG.test.tsx` | **新增「compact 模式」5 项**：compact=true 跳过 A/B/C 标注 / compact=true pad=COMPACT_PAD(2) viewBox 紧贴 / compact=true layer-aware 渲染不变（数据带 5 层仍渲染 5 层）/ 默认（compact=false）A/B/C 标注正常（向后兼容）/ compact=true + 显式 pad 优先 |
 | `src/components/ControlPanel/__tests__/ControlPanel.test.tsx` | **改造**：原 US-004 「`.per_type .pt-row` 10 行 + 内外徽章」用例 → US-018 「`.per-type-btn` 按钮 + 点开 modal」用例 → US-004 矩阵断言（tbody 行 = SIZES.length、`d-g01-28`/`tol-g01-28` 格输入存在）；「fill per_type via modal」端到端改矩阵口径（编辑 (g01,28) 双 input → 确定 → Start → `cfg.per_type["g01"]["28"]` = `{d:1, tol:1}`）；beforeEach/afterEach 加 fetch /api/ptypes stub（防 PtypePreviewModal mount 时 act 警告） |
 
@@ -175,12 +177,12 @@ materialSorting-web/
 2. **PerTypeOverridesModal 草稿 + 确定（与 PieceQtyDialog 同模式）** —— 打开时从 form.per_type 深拷贝 draft（key 强制每次 open 重建）；编辑/整列设值仅改 draft；确定调 `onChange(pruneDraft(draft))` + 关闭（US-004：prune 剔除双侧全空格子/全空 label，与 collectParams 剔除口径一致）；取消/遮罩/ESC 仅关闭、draft 丢弃。改即时回写会破坏 AC 草稿语义。
 3. **空 = 继承默认（US-004 修订，'0' 预填已删）** —— 未配置格渲染空串（placeholder `d≤10`/`t≤45` 提示），**不预填 '0'**（空串 = 继承全局默认 0/0，与"显式 0"可区分）；全局上限重合 10mm / 旋转 45°（`constants/v03.ts MAX_OVERLAP_MM/MAX_ROTATION_TOL_DEG`，与后端 `constraints.py` 同名常量一致），input max 属性 + blur `clampDraft` 双重收边（负值/超限收边、空串保留）。改上限需前后端两处同名常量同步。
 4. **缩略图 layer-aware 渲染（D11）** —— v1 representatives 仅 polygon → 缩略图只画外轮廓；US-024 intermediate 扩 5 层后 representatives 自动带 5 层字段，缩略图自动画 5 层（PiecePreviewSVG compact 模式按数据有无渲染，无需改动本组件）。
-5. **fetch /api/ptypes 失败降级** —— 表头仍渲染 10 列片型名文字，缩略图按钮 disabled；不阻塞重合/旋转配置。改降级为「整体弹窗关闭」会破坏 AC#4「fetch 失败不阻塞」语义。
+5. **fetch /api/ptypes 失败降级（裁片编号化 US-003 改口径）** —— 列集退回 form.per_type 已配置键（仍可配置，后端命不中为 no-op），缩略图按钮 disabled + g 码首字占位（loading 态「…」）；不阻塞重合/旋转配置。~~表头仍渲染 10 列片型名文字~~（V03_PTYPES 已删，无片型名可降级）。改降级为「整体弹窗关闭」会破坏「fetch 失败不阻塞」语义。
 6. **三层 ESC 独立（AC#10，US-004 扩）** —— PerTypeOverridesModal listener 内判 `previewLabel === null && fill === null` 才关；PtypePreviewModal listener 始终只关 previewLabel；ColumnFillPopover listener 只关弹层。改多层同时关会破坏「放大预览/整列设值打开时 ESC 只关最上层」语义。
 7. **z-index 层级：tooltip(100) < piece-qty/piece-zoom(1000) < per-type(1100) < qty-fill--per-type(1150/1160 backdrop/popover) < ptype-preview(1200)** —— PtypePreviewModal 叠在最上；整列设值弹层必须盖过 per-type overlay（QtyMatrix 原生 .qty-fill-* 是 1000/1010，低于 1100，故加 `--per-type` modifier 提层）。改层级会破坏叠层视觉。
 8. **fetch mockImplementation 而非 mockResolvedValue** —— StrictMode 双 mount 会调 2 次 fetch；mockResolvedValue 共享同一 Response 会被首次 .json() 消费完，第二次报 "body stream already read"。测试用 `vi.spyOn(globalThis, 'fetch').mockImplementation(...)` 每次创建新 Response。改 mockResolvedValue 会触发 StrictMode 假失败。
 9. **PiecePreviewSVG compact 模式不影响非 compact 调用方** —— PieceZoomModal 仍传 pad=20 默认 compact=false（5 层 + A/B/C 标注正常渲染）；PerTypeOverridesModal 传 compact（无标注、pad 默认 2）；PtypePreviewModal 传 pad=20 默认 compact=false（5 层渲染但 svg 内无 A/B/C 标注 —— 两模态的 `repToPiece` 均刻意传 `label: ''`，编号只出现在表头徽章/预览头部徽章，与上传预览缩略图内嵌标注的展示位不同）。改 compact 默认值或副作用会破坏向后兼容。
-10. **编号口径与上传预览严格一致（2026-08-17 立）** —— `/api/ptypes` 每个代表附 `label` = 该片在其（最小）码内 parse 赋号的 A/B/C（后端 `_build_ptype_representatives` 与 `labeling.compute_size_ptype_labels` 共用 `parse_member_sort_key`，有 `tests/test_ptype_representatives.py` 回归）；前端徽章 `rep.label ?? 片型名` 兜底旧 intermediate；**弹窗列序 = 编号序**（同不变量 6），hover/aria/title 全部只报「编号-放大预览」不含片型名。改选取顺序/排序键会使「弹窗编号 → 图形」与 QtyMatrix 列头对不上。
+10. **编号口径与上传预览严格一致（2026-08-17 立；裁片编号化 US-003 起 = g 码）** —— `/api/ptypes` 每个代表附 `label` = 该片的 **g 码**（US-001 v2 起后端优先读 intermediate `label_representatives`（RAW 原始坐标、键 = g 码），与 `/api/parse-dxf` 赋号同键同序，有 `tests/test_label_representatives.py` 回归）；前端徽章 `rep.label ?? Record 键`（键即 g 码）兜底旧数据；**弹窗列序 = g 码数值序**（compareByLabel），hover/aria/title 全部只报「g 码-放大预览」。改选取顺序/排序键会使「弹窗 g 码 → 图形」与 QtyMatrix 列头对不上。
 11. **per_type 两级嵌套 {label: {sizeKey: {d?, tol?}}}（US-004 立矩阵映射）** —— sizeKey 约定 `number→String(size)`、`null→'null'`（`lib/params.perTypeSizeKey` 单一实现，qtyStore/serializeQuantities 同口径）；`PerTypeFormMap` 是弹窗草稿形状、`PerTypeOverrides`（types/v03.ts）是 WS payload 形状，collectParams 双层遍历转换（空串剥离、整体空→null）。改嵌套结构需同步 params.test.ts + PerTypeOverridesModal.test.tsx + 后端 build_instance `(label, sizeKey)` 命中。
 12. **行/列集并集口径（US-004 立）** —— 行 = doc.sizes ∪ values 已配置 sizeKey（追加，防旧配置静默丢）；列 = reps 键 ∪ values 已配置键（fetch 失败不阻塞）。missing 判定仅当 label 在 doc 中存在（`labelsInDoc`）；label 完全不在 doc → 格子可编辑（parse/commit 暂不同步，后端命不中为 no-op）。整列设值跳过 missing 行（不造 phantom 键）。改并集/缺片口径需同步 30 项 modal 测试。
 13. **URL 分享格式 `label@sizeKey=d,tol;...`（US-004 立）** —— `perTypeToUrlParam`/`perTypeFromUrlParam` 纯函数（lib/params.ts）为唯一编解码实现；解码按正则 `^(g\d{1,4})@(null|\d{1,4})=([^;,]*),([^;]*)$` 逐段校验，非法段（旧 ptype 键/中文/NaN/乱拼）静默跳过不抛错。改格式需同步 params.test.ts「per_type URL 分享格式」6 项。
@@ -280,6 +282,8 @@ materialSorting-web/
 ## 上传预览 US-011 落地：qtyStore 数量状态（per-size/global 双模式 + 跨码联动置灰）
 
 > **⚠️ 已被矩阵化重构 US-001 部分取代（2026-08-16）**：global 模式（QtyMode/globalValue/globalSource/setPieceGlobal/getPieceDisplay 四分支）整体删除，PieceQuantity 改 `{perSize, baseValue}`，hydrateDefault/hydrateDefaults 合并单一 `hydrate`。本节以下描述保留作历史记录，现行契约见文末「矩阵化重构 US-001」节。
+>
+> **⚠️ 编号口径已被裁片编号化取代（2026-08-18）**：本节的 label = A/B/C 已整体改为 **g 码**（g01+，`labeling.py` 单一真相源；后端 `_label_for`/`parse_member_sort_key` 已被 `assign_codes`/`sequential_sort_key` 取代）。
 
 | 文件 | 角色 |
 | --- | --- |
@@ -537,7 +541,7 @@ NestingPage 把单一 `solving: boolean` 扩展为五态 `phase: SolvePhase`（i
 | `src/App.tsx` | US-005：handleStart 启 N 个 WS（seed=base+i）；doneCountRef/totalSeedsRef all-done 检测；多 seed setStatus summary+best |
 | `src/lib/__tests__/params.test.ts` | US-019 重写：默认 params 全 0 + per_type=null / params 永远全 0（4 组 form 对比）/ FormState 无 d_ext/d_int/tol_ext/tol_int 字段断言 / per_type 单档非空 entry / 全空白 → null / 多片型混合 / 显式 "0" 区分空 / 全 10 ptype 填 / parseSeedCount 7 组（单 seed → 1 / multi + 默认 3 / clamp 2,6 / fallback 3） |
 | `src/components/ControlPanel/__tests__/ControlPanel.test.tsx` | 24 项：AC#1..#7 集成（US-017 起默认 sizes=[] 全未勾选；US-019 起主面板不再渲染 d_ext/d_int/tol_ext/tol_int 输入 + 新增「不再渲染两档」断言）+ US-005 multi_seed/seed_count 5 项 + US-007 export wiring 4 项 + US-017 StatusLine hint 4 项 |
-| `src/components/ControlPanel/__tests__/SizePicker.test.tsx` | 25 项：US-017 基础 8（doc=null fallback SIZES / doc 11 码渲染全 11 / null 通用码 / 切 doc 自动重渲染 / toggle 数字 chip / toggle null chip / selected 含 null / key-id 唯一）+ 总裁片数量（含矩阵化重构 US-001 删 global 后改写 + US-004 物理口径 6 项：paired ×2 单码/多码 / paired×demand 复合放大 / paired demand=0 → 0 / 缺 paired 字段 ×1 兜底 / 配对 doc UI 展示「3 片」） |
+| `src/components/ControlPanel/__tests__/SizePicker.test.tsx` | 24 项：US-017 基础 8（doc=null fallback SIZES / doc 11 码渲染全 11 / null 通用码 / 切 doc 自动重渲染 / toggle 数字 chip / toggle null chip / selected 含 null / key-id 唯一）+ 总裁片数量联动 6（默认 demand=1 之和 / 勾选实时更新 / demand>1 放大 / demand=0 排除 / qtyStore 订阅重算 / doc=null「—」）+ computeTotalCutPieces/effectiveDemand 纯函数 5 + **US-003 Σ 数量口径 5（无乘数，一份 = 母版一个轮廓；数量即一切）** |
 | `src/components/nests/__tests__/NestsGrid.test.tsx` | US-005 6 项：空容器 / N 卡渲染 / registry 缺失跳过 / 顺序与 seeds 一致 / seeds 不变不重复挂载 / seeds 增减跟着变 |
 | `src/components/curve/__tests__/ConvergenceCurve.test.tsx` | US-005 14 项：sampleFrames 4（空 / ≤400 / >400 / 整除）+ 渲染 10（90% 线 / 单 seed 散点+折线+末点 / 多 seed 折线+标签 / 单/多 seed 图例 / renderTick 订阅 / 多次 bump 不重建 / renderCurveInto 纯函数） |
 
@@ -813,7 +817,7 @@ US-029/030/031 的 tour 已全量落地，本故事收尾打磨：手动入口�
 
 ## 矩阵化重构 US-002 落地：QtyMatrix 数量矩阵组件
 
-> 背景：把数量编辑从「按码分 tab + 逐片弹窗」重构为「裁片 × 尺码矩阵」。本 Story 仅新增组件（**不接入 PreviewPage**，集成/旧交互拆除在矩阵化重构 US-003；tour 锚点在 US-005）。小计口径本 Story 用 **Σdemand**（每格 demand 直接求和），矩阵化重构 US-004 升级为物理片数口径（配对片 ×2）。
+> 背景：把数量编辑从「按码分 tab + 逐片弹窗」重构为「裁片 × 尺码矩阵」。本 Story 仅新增组件（**不接入 PreviewPage**，集成/旧交互拆除在矩阵化重构 US-003；tour 锚点在 US-005）。小计口径本 Story 用 **Σdemand**（每格 demand 直接求和）。~~矩阵化重构 US-004 升级为物理片数口径（配对片 ×2）~~（**已被裁片编号化 US-003 取代**：ptype/paired 字段删除，回到 Σ 数量口径，一份 = 母版一个轮廓）。
 
 | 文件 | 角色 |
 | --- | --- |
@@ -835,6 +839,8 @@ US-029/030/031 的 tour 已全量落地，本故事收尾打磨：手动入口�
 ## 矩阵化重构 US-003 落地：拆除旧交互 + 预览页集成 + 全 0 拦截
 
 > 背景：QtyMatrix（US-002）接入 PreviewPage；SizeTabs/PieceQtyDialog/Switch 及其测试整体删除（SizeTabs 的「按码看图形」职责移交矩阵列头、数量编辑职责移交矩阵格子）；ControlPanel.handleStart 补全 0 拦截。tour 锚点迁移与文档大同步在 US-005。
+>
+> **⚠️ 本节 ParsedPiecesView 相关内容已被后续演进取代**：「按码图形预览」区已整体拆除（见下「图形预览区拆除」节，组件删除）；「份 = 配对片 1 份 L+R 2 物理片」口径已随裁片编号化 US-003 改为「一份 = 母版一个轮廓」（数量即一切）。本节仅作历史落地记录。
 
 | 文件 | 变更 |
 | --- | --- |
@@ -863,6 +869,8 @@ US-029/030/031 的 tour 已全量落地，本故事收尾打磨：手动入口�
 ## 矩阵化重构 US-004 落地：parse 透传 ptype/paired + 物理片数口径
 
 > 背景：`/api/parse-dxf` 响应每片 additive 附加 `ptype`/`paired`（修正「总裁片数量」按 label 份数计、配对片少算一半的语义偏差）；前端 QtyMatrix / SizePicker 小计与总片数升级为物理片数口径 = Σ demand × (paired ? 2 : 1)。tour 锚点迁移与文档大同步在 US-005。
+>
+> **⚠️ 本节已整体被裁片编号化重构取代（2026-08-18）**：`ptype`/`paired` 字段已从 parse 响应契约与 `ParsedPiece` 类型中删除（GROUP_NAMES/PAIR_TYPES 后端整体退场），QtyMatrix/SizePicker 小计回到 **Σ 数量口径（无乘数，一份 = 母版一个轮廓）**，`×2` 徽章不渲染。本节仅作历史落地记录，勿按本节实现。
 
 | 文件 | 变更 |
 | --- | --- |

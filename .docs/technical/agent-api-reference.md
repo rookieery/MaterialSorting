@@ -149,7 +149,7 @@ key = (group_key, -centroid_y, centroid_x, -area_mm2, block_name, piece_index)
 
 1. **doc_id 是 US-010 commit 入参**：`POST /api/commit-to-nesting {doc_id}` 会读 `uploads/<doc_id>.dxf`，故 doc_id 必须可定位文件。
 2. **g 码在每码内独立编号**（US-001 v2）：码 28 与码 29 各自从 g01 起算（不跨码续编）；跨码同号由 group_key 前置排序保证（T4）。
-3. **`polygon` 是原始毛版几何**（未归一化 / 未对齐布纹 / 未镜像），与 intermediate 的 NestPiece polygon（归一化 + 镜像后）不同；US-007 `PiecePreviewSVG` 直接渲染此字段。
+3. **`polygon` 是原始毛版几何**（未归一化 / 未对齐布纹 / 坐标系与母版 DXF 一致），与 intermediate 的 NestPiece polygon（布纹对齐 + 归一化后，US-001 v2 起无镜像变换）不同；US-007 `PiecePreviewSVG` 直接渲染此字段。
 4. **`grain_line` 与原始 DXF 同坐标系**（Y 向上），前端 SVG `scale(1,-1)` 翻转后与 PNG/R12 导出一致。
 5. **响应大小 ≤ 20MB 解析后压缩**：实测 M1787 ~680KB JSON，前端 `useParseDxf` 一次拿到全码缓存到 Zustand。
 6. **上传预览前端契约**：响应字段名（`doc_id` / `filename` / `sizes[].size` / `sizes[].pieces[].{label,polygon,internal_lines,notches,net_polygon,grain_line}`）被 `materialSorting-web/src/types/parsed.ts` 严格镜像（US-001 v2 起 `name`/`ptype`/`paired` 删除，前端 US-003 随动）；改任一字段需同步 `types/parsed.ts` + `useParseDxf.test.tsx` AC#2。前端 hook `useParseDxf` 用 `FormData('file', file)` 发请求，**不手设 Content-Type**（让浏览器自动加 boundary）；成功后默认选中 `sizes[0].size`（最小码）。错误（400/413/422/网络错）统一进 `uploadStore.error`，UI 自取渲染。
@@ -247,7 +247,7 @@ curl http://127.0.0.1:8000/api/ptypes
 
 ### 关键不变量
 
-1. **空 state（首次启动未 commit / intermediate 缺失）**：返回 `{representatives: {}}`，不阻塞前端配置弹窗降级为片型名文字。
+1. **空 state（首次启动未 commit / intermediate 缺失）**：返回 `{representatives: {}}`，不阻塞前端 —— 高级配置弹窗列集退化（rep 缺失的 g 码缩略图 button disabled + 显示 g 码首字占位，loading 态「…」），矩阵仍可配置（后端命不中为 no-op）。
 2. **代表选取 + 编号与上传预览同口径（US-001 v2）**：优先取 intermediate `label_representatives`（RAW 原始坐标；键 = g 码，选取 = 按码升序 + 码内 `parse_member_sort_key` 稳定排序，每 label 取**最小码内首个** size≠None 片，与 `/api/parse-dxf` 赋号同键同序 —— 高级配置弹窗编号徽章与上传预览 QtyMatrix 列头指同一片，有 `tests/test_label_representatives.py` 回归）。旧 v1 intermediate 无该字段 → 回退 `pieces` 按 label 分组取首个代表，re-commit 后自动切 RAW 口径。
 3. **M1787 验证**：commit 后返 10 个 g 码（`g01`..`g10`，各 5 层字段全带）。
 4. **响应字段不含 pid / size / area**：仅几何 + label；g 码是 key。前端 polygon 画缩略图、label 画编号徽章。
@@ -266,7 +266,7 @@ curl http://127.0.0.1:8000/api/ptypes
 // 首条消息 —— 启动求解
 {
   "action": "start",              // 必须为 "start"，否则 server 直接 error 并关闭
-  "sizes": [28, 29, 30, 31, 33, 34, 35, 36],  // 码号；空 = 全部 128 片
+  "sizes": [28, 29, 30, 31, 33, 34, 35, 36],  // 码号；空 = 全部片（intermediate 全量，M1787 = 110 片全 demand=1）
   "time": 120,                    // 求解时间预算（秒），默认 120
   "seed": 0,                      // sparrow 随机种子，默认 0
   "params": {"d_ext":0, "d_int":0, "tol_ext":0, "tol_int":0},  // US-019 起前端永远传全 0；主面板内外两档输入已删，d/tol 覆盖全交 per_type

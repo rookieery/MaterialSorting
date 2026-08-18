@@ -30,16 +30,16 @@ npm run test               # vitest run（US-002 起会有用例）
 
 ## US-032 关键约定（手动入口完善 + 关闭交互打磨 + 完整单测 调用方必读）
 
-- **TabBar 下拉三项严格分离**：①「重看上传预览指引」→ `start('preview')`（强制重放，不检查 seen）；②「重看超排指引」→ `start('nesting')`；③「重置全部指引」→ `resetSeen()`（清 localStorage 全部 `ms.tour.seen.*`，**不启动 tour**；区别于旧 US-029 行为 resetSeen+start('preview') 跑假 tour）。reset 后下次进 Tab 由 `useTourAutoTrigger` 自动触发（seen=false + 300ms 延迟）。改任一 action 需同步 TabBar.test.tsx 3 项菜单用例。
-- **关闭交互三路径语义严格区分**：① ESC → `close()`（仅关闭，不 markSeen，下次进 Tab 可再自动触发）；② 遮罩 mousedown（`e.target===e.currentTarget`，参考 .piece-qty-dialog-overlay 模式）→ `close()`；③ 「跳过」按钮 → `skip()`（`markSeen(activeTour)+close`，视为已读不再自动触发）。改语义需同步 TourOverlay.test.tsx 4 项关闭用例。spotlight `pointer-events:none` 让点击穿透到 overlay → mousedown target=overlay=currentTarget → close；bubble `pointer-events:auto` 点击 target≠overlay → 不关闭。
-- **`skip` 与 `close` 的区别是 markSeen**：`close=clearPolling+storeClose`；`skip=markSeen(activeTour)+clearPolling+storeClose`。skip 用于用户显式「跳过」（视为已读不再自动触发）；close 用于 ESC/遮罩点击（意外关闭，可再触发）。useTour 暴露 `skip()` 方法（US-032 新增），TourOverlay 跳过按钮调 `tour.skip`。
+- **TabBar 下拉两项（replay-preview / replay-nesting，仅当前 Tab 可点）**：①「查看上传预览指引」→ `start('preview')`（强制重放，不检查 seen）；②「查看超排指引」→ `start('nesting')`。置灰规则：非当前 Tab 项 `.disabled` + `aria-disabled` + native `disabled` + handler 内 `if (disabled) return` 运行时兜底（与超排 Tab 解锁闸 US-015 同款多重防御）。**原③「重置全部指引」已移除**：close 统一 markSeen 后 reset 语义冗余（重看 = 菜单 force start，不检查 seen；seen 由关闭路径自动管理）。改任一 action 需同步 TabBar.test.tsx 菜单用例（含 `tour-menu-reset` 不存在断言）。
+- **关闭交互三路径统一 markSeen（bug1 修复终态）**：① ESC → `close()`；② 遮罩 mousedown（`e.target===e.currentTarget`，参考 .piece-qty-dialog-overlay 模式）→ `close()`；③ 「跳过」按钮 → `skip()`。**任何关闭路径都 markSeen**（ESC/遮罩关闭属「我不想看了」语义，视为已读；否则 seen 仍 false → 切走再切回 Tab 会重复自动触发）。spotlight `pointer-events:none` 让点击穿透到 overlay → mousedown target=overlay=currentTarget → close；bubble `pointer-events:auto` 点击 target≠overlay → 不关闭。改语义需同步 TourOverlay.test.tsx 关闭用例。
+- **`skip` 与 `close` 现同语义（markSeen+close）**：`close=markSeen(activeTour)+clearPolling+storeClose`；`skip=markSeen(activeTour)+clearPolling+storeClose`。skip 保留为气泡内显式可见入口；用户想重看用右上角菜单「查看 XX 指引」（force start，不检查 seen）。useTour 暴露 `skip()` 方法（US-032），TourOverlay 跳过按钮调 `tour.skip`。
 - **prefers-reduced-motion 用 matchMedia 检测**：`useEffect` 内 `window.matchMedia('(prefers-reduced-motion: reduce)')`，`matches=true` 时 overlay 加 `.tour-reduced-motion` class，CSS 禁用 spotlight/bubble `transition: all 0.15s ease-out`（直接定位，无动画）。matchMedia change listener 跟随系统设置实时切换。改检测逻辑需同步 TourOverlay.test.tsx 2 项 reduced-motion 用例（mock matchMedia）。
 - **scrollIntoView 在 readRect 前调**：useLayoutEffect 内先 `document.querySelector(selector)` → `el.scrollIntoView({block:'nearest'})` → 再 `readRect(el)` 读 post-scroll 的 getBoundingClientRect。避免目标在视口外时聚光灯贴到视口边缘外（目标 scrollIntoView 后 rect 在视口内）。`typeof el.scrollIntoView === 'function'` guard 防 jsdom 未实现。
 - **readRect 改为接收 element**：US-029 `readTargetRect(selector)` 改为 `readRect(el)`（US-032），避免 useLayoutEffect 内 querySelector 重复调用（scrollIntoView 和 readRect 共享同一 element 引用）。
 - **StrictMode 双 mount 幂等（参考 Tooltip.tsx registerTooltipEl 范式）**：所有 listener（resize/scroll capture / ESC keydown / matchMedia change）在 `useEffect cleanup` 中卸载；StrictMode 双 mount 下 add→cleanup→add 最终仅一套 listener（与 Tooltip.tsx 模块级单例 `_el` 同语义）。advance-on-ready effect 同理：polling interval 在 cleanup 中 clearInterval（US-030 useTour.test.tsx 测 5 覆盖 close 无残留）。before() 在 StrictMode 下调两次，需幂等（previewTour `ensurePreviewTab` / nestingTour `ensureNestingTab` 均 `if (activeTab!==target) setTab(target)` 幂等）。
 - **版本号策略（TOUR_VERSION）**：仅步骤内容重大变更（增删步骤 / 改 ready 语义 / 改锚点导致旧 seen 语义失效）时 bump；文案小改 / 微调 placement 不 bump。bump 后 hydrateSeen init 检测 storedVersion!==TOUR_VERSION → 清全部 seen（US-029 已实现，US-032 补 3 项单测验证）。markSeen 同步写 version key（防 localStorage 部分清除后 re-hydrate 误清）。
 - **不引入 CSS 框架**：`.tour-reduced-motion .tour-spotlight, .tour-reduced-motion .tour-bubble { transition: none !important; }` 沿用 style.css（与 .tour-spotlight/.tour-bubble 暗背景 #26282e + #2ea06c 同色系）。无其它新 CSS。
-- **未做浏览器验证（chrome-devtools-mcp 不在本会话工具集）**：本 Story 无 SVG/坐标变换（仅 DOM overlay 关闭交互 + matchMedia + scrollIntoView + CSS class），核心逻辑用 18 项新单测覆盖（TourOverlay 6 项：ESC/遮罩/bubble/skip/reduced-motion×2；TabBar 7 项：菜单展开/三项 action/点外关/ESC关/toggle；useTour 2 项：skip markSeen+close / skip 从等待态清轮询；tourStore 3 项：version 同步写/bump 清 seen/resetSeen 不影响 version）。浏览器端到端回归留作整体回归。
+- **未做浏览器验证（chrome-devtools-mcp 不在本会话工具集）**：本 Story 无 SVG/坐标变换（仅 DOM overlay 关闭交互 + matchMedia + scrollIntoView + CSS class），核心逻辑用新单测覆盖（TourOverlay 6 项：ESC/遮罩/bubble/skip/reduced-motion×2；TabBar 9 项：菜单展开两项/两项 action/点外关/ESC关/toggle/置灰×2/点置灰兜底；useTour 2 项：skip markSeen+close / skip 从等待态清轮询；tourStore 3 项：version 同步写/bump 清 seen/resetSeen 不影响 version）。浏览器端到端回归留作整体回归。
 
 ## 文件分工（US-001 Tab 框架 + US-002~US-008 全部落地；上传预览 US-005 状态层 + US-006 UploadPanel + US-007 PiecePreviewSVG + US-008 容器集成 + 上传预览 US-011 qtyStore 数量状态 + 上传预览 US-013 PieceZoomModal 放大预览模态 + 上传预览 US-014 卡片头改造+模态集成 + US-015 uiStore 扩 nestingEnabled + TabBar 置灰 + US-016 PreviewPage 联动 setNestingEnabled + US-017 SizePicker 动态读码号 + DEFAULT_FORM.sizes=[] + US-018 PerTypeOverridesModal/PtypePreviewModal 高级配置弹窗+片型缩略图+放大预览 + US-021 useCommitToNesting 解析成功自动 commit+D1 闭环 + US-022 求解输入数量 demand per-size + US-024 NestSVG 5 层渲染+共享 LAYER5_COLORS + US-027 NestingPage phase 状态机+useSolveRun.stop()+running 态冻结参数编辑 + US-029 操作指引基础设施 tourStore+TourOverlay+useTour+TabBar 右上角入口 + US-030 previewTour 5 步+advance-on-ready+首次自动触发 + US-031 nestingTour 5 步+runRegistry 帧快照联动推进 + US-032 手动入口完善+关闭交互打磨+reduced-motion+scrollIntoView+完整单测 + 矩阵化重构 US-001 qtyStore 数据层简化（删 global 模式；PieceQuantity={perSize,baseValue}；setRowAll 整行填充；hydrate 单一入口；serializeQuantities 删 global 分支线格式不变）+ 矩阵化重构 US-002 QtyMatrix 数量矩阵组件（裁片×尺码矩阵）+ 矩阵化重构 US-003 拆除旧交互+预览页集成+全 0 拦截（SizeTabs/PieceQtyDialog/Switch 删除；uploadStore 删 qtyDialog；ParsedPiecesView 只读「N份」+区标题；ControlPanel 全 0 拦截）+ 矩阵化重构 US-004 parse 透传 ptype/paired+物理片数口径（parsed.ts 可选 ptype?/paired?；QtyMatrix ×2 徽章+物理口径小计；SizePicker.computeTotalCutPieces 同口径缺字段 ×1 兜底）+ 矩阵化重构 US-005 tour 锚点迁矩阵+文档同步（previewTour parsed/set-qty 锚点→QtyMatrix qty-matrix/qty-rowhead；TOUR_VERSION '1'→'2' bump；previewTour.test.tsx 新建 5 项）+ 裁片编号化重构 US-003 前端契约与显示层去名称化（2026-08-18：ParsedPiece 删 name/ptype/paired；V03_PTYPES 删→高级配置列集 = /api/ptypes reps 键动态；controlPanelStore previewPtype→previewLabel；QtyMatrix/SizePicker 小计/总片数 Σ 数量口径（配对 ×2 删）；PieceZoomModal/PtypePreviewModal 头部只显 g 码；NestSVG dataset.label + tooltip「g03 · 码28」；TOUR_VERSION '6'→'7'）+ 高级配置矩阵化 US-004 PerTypeOverridesModal 矩阵重构（2026-08-18：行=码号 × 列=g 码 矩阵、格=(g 码,码号) d/tol 双输入（空=继承默认）；per_type 两级嵌套 {label:{sizeKey:{d,tol}}} + perTypeSizeKey 单一口径；「≡」整列设值弹层（QtyMatrix 范式）；URL 分享 perTypeToUrlParam/perTypeFromUrlParam；三层独立 ESC）
 
@@ -47,7 +47,7 @@ npm run test               # vitest run（US-002 起会有用例）
 src/
 ├── main.tsx               # US-001：createRoot + StrictMode
 ├── App.tsx                # US-001 ✅ Tab 骨架：TabBar + 双 .page 容器（display:none 切换）+ Tooltip 单例；US-029 ✅ 加 TourOverlay 单例
-├── style.css              # 由 vanilla 前身 1:1 迁入；US-001 加 .tabbar/.tab/.page/.hidden/.preview-empty；上传预览 US-006 加 .upload-panel/.drop-zone/.upload-btn/.upload-status；US-007 加 .piece-preview-svg；US-008 加 .preview-page/.preview-main/.size-tabs/.size-chip/.parsed-pieces-view/.piece-grid/.piece-card*；上传预览 US-012 加 .piece-qty-dialog-overlay/.piece-qty-dialog-modal/.qty-input-group/.qty-step/.qty-input/.switch/.switch-track/.switch-label-*/.switch-thumb/.qty-btn/.qty-confirm；上传预览 US-013 加 .piece-zoom-overlay/.piece-zoom-modal/.piece-zoom-head/.piece-zoom-seq/.piece-zoom-meta/.piece-zoom-name/.piece-zoom-close/.piece-zoom-body；上传预览 US-014 改 .piece-card-name→.piece-card-qty(+.disabled) + .piece-card-body 加 cursor:zoom-in；US-015 加 .tab.disabled(+hover)（#555 灰字 + not-allowed）；US-018 加 .per-type-wrapper/.per-type-btn/.per-type-overlay(z=1100)/.per-type-modal/.per-type-head/.per-type-close/.per-type-table-wrap/.per-type-table/.per-type-rowhead(sticky)/.ptype-col/.ptype-thumb(64×64 zoom-in)/.ptype-name/.per-type-hint/.per-type-actions/.per-type-btn-cancel/.per-type-btn-confirm + .ptype-preview-overlay(z=1200)/.ptype-preview-modal/.ptype-preview-head/.ptype-preview-name/.ptype-preview-close/.ptype-preview-body/.ptype-preview-empty
+├── style.css              # 由 vanilla 前身 1:1 迁入；US-001 加 .tabbar/.tab/.page/.hidden/.preview-empty；上传预览 US-006 加 .upload-panel/.drop-zone/.upload-btn/.upload-status；US-007 加 .piece-preview-svg；US-008 加 .preview-page/.preview-main/.size-tabs/.size-chip/.parsed-pieces-view/.piece-grid/.piece-card*；上传预览 US-012 加 .piece-qty-dialog 族/.switch 族；上传预览 US-013 加 .piece-zoom-overlay/.piece-zoom-modal/.piece-zoom-head/.piece-zoom-seq/.piece-zoom-meta/.piece-zoom-name/.piece-zoom-close/.piece-zoom-body；上传预览 US-014 改 .piece-card-name→.piece-card-qty(+.disabled)；US-015 加 .tab.disabled(+hover)；US-018 加 .per-type-*/.ptype-* 族 + US-004 矩阵增补（.per-type-rowhead 52px/.ptype-col 92px/.per-type-cell/.per-type-missing/弹层 --per-type modifier）；**后续删除**：矩阵化重构 US-003 删 .size-tabs/.size-chip/.piece-qty-dialog 族/.switch 族；图形预览区拆除删 .parsed-pieces-*/.piece-grid/.piece-card 系列（保留 .piece-card-label 供 PieceZoomModal 头部 g 码徽章）；矩阵行头简化删 .qty-rowname/.qty-paired-badge/.qty-reset-btn 族；裁片编号化 US-003 删 .piece-zoom-seq/.piece-zoom-name（v2 头部改 .piece-zoom-qty）
 ├── vite-env.d.ts          # vite/client 类型
 ├── types/                 # US-002 ✅：ws.ts / piece.ts / v03.ts；上传预览 US-005 ✅ parsed.ts（US-001 v2 响应契约；裁片编号化 US-003 ✅ 删 name/ptype/paired —— label 即 g 码全链路主键）；上传预览 US-011 ✅ qty.ts（PieceQuantity/PieceQuantityMap）；US-027 ✅ solvePhase.ts（SolvePhase 五态）
 ├── lib/                   # US-002 ✅ ws.ts；US-003 ✅ geometry.ts；US-004 ✅ params.ts；US-006 ✅ seek.ts；US-007 ✅ download.ts
@@ -56,22 +56,20 @@ src/
 ├── constants/             # US-004 ✅：sizes.ts / colors.ts / v03.ts
 ├── __tests__/             # US-002 ✅ useSolveRun；US-003 ✅ 各模块单测；US-007 ✅ useExport；US-001 ✅ App 集成 smoke（US-015 beforeEach 加 setNestingEnabled(true) 兜底 store guard）
 └── components/
-    ├── TabBar.tsx         # US-001 ✅ 顶部 Tab（超排/上传预览），订阅 uiStore.activeTab；US-015 ✅ 超排 button disabled 闸（nestingEnabled===false 时 native disabled + .disabled class + aria-disabled + onClick 运行时判）；US-029 ✅ 右上角操作指引入口（margin-left:auto .tour-entry + 下拉菜单）；US-030 ✅ 超排 button 加 data-tour="tab-nesting"；US-032 ✅ 下拉菜单补全三项（replay-preview→start('preview') / replay-nesting→start('nesting') / reset→resetSeen() 不启动 tour）+ 点外部/ESC 关闭 + toggle
+    ├── TabBar.tsx         # US-001 ✅ 顶部 Tab（超排/上传预览），订阅 uiStore.activeTab；US-015 ✅ 超排 button disabled 闸（nestingEnabled===false 时 native disabled + .disabled class + aria-disabled + onClick 运行时判）；US-029 ✅ 右上角操作指引入口（margin-left:auto .tour-entry + 下拉菜单）；US-030 ✅ 超排 button 加 data-tour="tab-nesting"；US-032 ✅ 下拉菜单两项（replay-preview→start('preview') / replay-nesting→start('nesting')，仅当前 Tab 可点+置灰；原 reset 项因 close 统一 markSeen 已移除）+ 点外部/ESC 关闭 + toggle
     ├── NestingPage.tsx    # US-001 ✅ 排料页（原 App 业务逻辑外提；持 phase/seeds/useSolveRun）；US-027 ✅ solving→phase 五态状态机 + handleStop/handleRestart + lastStartCfgRef + running 态冻结参数编辑；US-031 ✅ .nest-wrap 加 data-tour="nest-wrap"（nestingTour step4 锚点）
-    ├── preview/           # US-001 起：上传预览页（矩阵化重构 US-003 ✅ QtyMatrix 接入 + SizeTabs/PieceQtyDialog/Switch 拆除）
-    │   ├── PreviewPage.tsx # US-008 ✅ 容器（左 UploadPanel + 右 QtyMatrix+ParsedPiecesView（US-003 起）；未解析空态）；US-014 ✅ 顶层模态单例（US-003 后仅 PieceZoomModal）+ useEffect subscribe 联动 qtyStore（doc→hydrate 默认 1+baseValue 1 / doc→null→resetQuantities）；US-016 ✅ 加 useEffect subscribe uploadStore.status 联动 uiStore.setNestingEnabled（`status==='done' && doc!==null` → true，否则 false；mount 即对齐）
+    ├── preview/           # US-001 起：上传预览页（矩阵化重构 US-003 ✅ QtyMatrix 接入 + SizeTabs/PieceQtyDialog/Switch 拆除；**图形预览区拆除：ParsedPiecesView 已删除，右侧主体仅 QtyMatrix**）
+    │   ├── PreviewPage.tsx # US-008 ✅ 容器（左 UploadPanel + 右 QtyMatrix（图形预览区拆除后右侧唯一主体）；未解析空态）；US-014 ✅ 顶层模态单例（US-003 后仅 PieceZoomModal）+ useEffect subscribe 联动 qtyStore（doc→hydrate 默认 1+baseValue 1 / doc→null→resetQuantities）；US-016 ✅ 加 useEffect subscribe uploadStore.status 联动 uiStore.setNestingEnabled（`status==='done' && doc!==null` → true，否则 false；mount 即对齐）
     │   ├── UploadPanel.tsx # 上传预览 US-006 ✅ 左侧上传面板（点击+拖拽+客户端预校验+status 反馈）；US-021 ✅ 加 commit 状态行（committing→应用中… / done→已应用至超排：N 裁片 M 码 / error→应用失败：msg）
-    │   ├── ParsedPiecesView.tsx # 上传预览 US-008 ✅ 当前 activeSize 下裁片 grid（US-003 起语义=「按码图形预览」）；区标题「图形预览 · 码 X」（.parsed-pieces-title，null 码→通用）；卡片头 [A徽章]+只读 span「N份」（editable 仅缺片时 false→.disabled+title；编辑入口在 QtyMatrix）+ .piece-card-body onClick→openZoom + role=button+tabIndex+Enter/Space
-    │   ├── PiecePreviewSVG.tsx # 上传预览 US-007 ✅ 单片（或多片）母版预览 SVG（命令式渲染 + scale(1,-1) 翻转）
-    │   ├── PieceZoomModal.tsx  # 上传预览 US-013 ✅ 放大预览模态（声明式受控 Portal；订阅 uploadStore.zoom+doc；✕/遮罩/ESC 关闭；复用 PiecePreviewSVG pad=20；US-003 起预览页唯一模态，头部数量单位「份」）
+    │   ├── PiecePreviewSVG.tsx # 上传预览 US-007 ✅ 单片（或多片）母版预览 SVG（命令式渲染 + scale(1,-1) 翻转；US-018 ✅ compact prop 供矩阵/高级配置列头缩略图）
+    │   ├── PieceZoomModal.tsx  # 上传预览 US-013 ✅ 放大预览模态（声明式受控 Portal；订阅 uploadStore.zoom+doc；✕/遮罩/ESC 关闭；复用 PiecePreviewSVG pad=20；US-003 起预览页唯一模态；**裁片编号化 US-003 起头部只显 [g 码徽章] {qty}份 · 码 {sizeLabel}（v2 契约无 name、无序号）**）
     │   ├── QtyMatrix.tsx       # 矩阵化重构 US-002 ✅ 数量矩阵（US-003 ✅ 接入 PreviewPage）：行=doc.sizes 全码（行头码按钮切 activeSize）× 列=label 并集[徽章+compact 缩略图+「≡」整列设值]（2026-08-16 转置）；格内 clampQty 编辑+Enter/Tab 跳格；0/.zero、缺片/—.missing、特例/.override 三态；sticky+flex 内滚；小计 US-003 起 Σ 数量口径（配对 ×2 乘数已删，一份=母版一个轮廓）+全 0 警示
     │   └── __tests__/
     │       ├── UploadPanel.test.tsx      # 上传预览 US-006 ✅ 25 项集成测试（US-021 更新 2 项 fetch 计数 + beforeEach/afterEach 加 uiStore reset）
-    │       ├── PiecePreviewSVG.test.tsx  # 上传预览 US-007 ✅ 33 项单测（bbox 纯函数 + 5 层渲染 + 翻转 + 标注 + 切片重建）
-    │       ├── ParsedPiecesView.test.tsx # 上传预览 US-008 ✅ 基础 + US-014 ✅ + 矩阵化重构 US-003 ✅ 改写 19 项（grid 渲染 / 只读数量(份) / 区标题 4（码跟随+null 通用+防御空态）/ 缺片 .disabled / body openZoom + Enter/Space；弹窗用例已删）
-    │       ├── PreviewPage.test.tsx      # 上传预览 US-008 ✅ 基础 + US-014 ✅ 联动 + US-016 ✅ 8 项 + 矩阵化重构 US-003 ✅ 改写 24 项（QtyMatrix 挂载+列头切码 / 模态仅 PieceZoomModal（qtyDialog 字段断言不存在）/ 端到端矩阵格子编辑 A@30=3→store+卡片头 3份；弹窗用例已删）
-    │       ├── QtyMatrix.test.tsx        # 矩阵化重构 US-002 ✅ 38 项单测（US-003 起配对/×2/物理口径用例全改写为 Σ 数量口径：行列结构/切码/openZoom/格内编辑/0 特例高亮/整列设值 popover/小计与总片数 Σ 联动/全 0 警示）
-    │       └── PieceZoomModal.test.tsx   # 上传预览 US-013 ✅ 14 项集成（null 不渲染 / doc=null 不渲染 / overlay+modal+aria / 头部 label+qty(份)+size+name / qty 从 qtyStore / null 码「通用」/ body svg.piece-preview-svg / ✕ closeZoom / 遮罩 closeZoom / modal 不冒泡 / ESC closeZoom / Portal body / label 不存在兜底 / size 不存在兜底）+ US-016 ✅ PreviewPage.test.tsx 增 8 项（mount idle→false / done→true / error→false / reset→false / 重传 doc_id 变化短暂 false 后 true / 关键不变量 setNestingEnabled(false) 不强制切 Tab / uploading→false / 状态机循环 done→uploading→error→done）
+    │       ├── PiecePreviewSVG.test.tsx  # 上传预览 US-007 ✅ 38 项单测（33 项基础：bbox 纯函数 + 5 层渲染 + 翻转 + 标注 + 切片重建；US-018 ✅ compact 5 项）
+    │       ├── PreviewPage.test.tsx      # 上传预览 US-008 ✅ 基础 + US-014 ✅ 联动 + US-016 ✅ 8 项 + 矩阵化重构 US-003 ✅ 改写 + 图形预览区拆除 ✅ 改写共 22 项（QtyMatrix 挂载+行头切码 / 模态仅 PieceZoomModal（qtyDialog 字段断言不存在）/ 端到端矩阵格子编辑 A@30=3→store+小计联动；弹窗与图形预览用例已删）
+    │       ├── QtyMatrix.test.tsx        # 矩阵化重构 US-002 ✅ 38 项单测 8 组（转置后行=码号 × 列=g 码；裁片编号化 US-003 ✅ 配对/×2/物理口径用例全改写为 Σ 数量口径：行列结构/行头切码/缩略图 openZoom/格内编辑/0 特例高亮/整列设值 popover/小计与总片数 Σ 联动/全 0 警示）
+    │       └── PieceZoomModal.test.tsx   # 上传预览 US-013 ✅ 14 项集成（null 不渲染 / doc=null 不渲染 / overlay+modal+aria / 头部 label 徽章+qty(份)+sizeLabel（**v2 契约无 name，名称 span 断言不存在**）/ qty 从 qtyStore / null 码「通用」/ body svg.piece-preview-svg / ✕ closeZoom / 遮罩 closeZoom / modal 不冒泡 / ESC closeZoom / Portal body / label 不存在兜底 / size 不存在兜底）+ US-016 ✅ PreviewPage.test.tsx 增 8 项（mount idle→false / done→true / error→false / reset→false / 重传 doc_id 变化短暂 false 后 true / 关键不变量 setNestingEnabled(false) 不强制切 Tab / uploading→false / 状态机循环 done→uploading→error→done）
     ├── nests/             # US-003 ✅ NestSVG / NestCard / NestLabel；US-005 ✅ NestsGrid；US-006 ✅ NestSVG seek+hover
     ├── ControlPanel/      # US-004 ✅ 8 子组件；US-005 ✅ MultiSeedControls；US-007 ✅ ExportButtons；US-018 ✅ PerTypeOverrides 改按钮触发 + PerTypeOverridesModal（高级配置弹窗；**矩阵化 US-004 起行=码号 × 列=g 码 矩阵 + ≡ 整列设值 + 三层独立 ESC**）+ PtypePreviewModal（片型放大预览）；US-031 ✅ 加 data-tour 锚点（doc-banner / start-btn 父容器 / param-form 在 SizePicker / export-group 在 ExportButtons）
     ├── curve/             # US-005 ✅ ConvergenceCurve
@@ -82,8 +80,8 @@ src/
 │   ├── TourOverlay.tsx   # US-029 ✅ 高亮引擎（Portal body z=2000；spotlight box-shadow 镂空 + bubble placement 定位 + 零尺寸居中兜底 + useLayoutEffect imperative 定位）+ US-032 ✅ ESC/遮罩/skip 关闭 + reduced-motion class + scrollIntoView
 │   ├── useTour.ts        # US-029 ✅ 控制器 hook + US-030 ✅ advance-on-ready 完整轮询 + useTourAutoTrigger（首次进 Tab 自动触发）+ US-032 ✅ skip()=markSeen+close
 │   ├── steps/
-│   │   ├── index.ts      # US-029 ✅ TOUR_VERSION='2'（矩阵化重构 US-005 bump + 版本历史注释）+ TOURS: Partial<Record<TabId,TourDef>>（US-030 注册 preview / US-031 注册 nesting）
-│   │   ├── previewTour.ts # US-030 ✅ 上传预览 5 步（upload/parsed/set-qty/committed/goto-nesting；联动步读 uploadStore/uiStore 快照）；矩阵化重构 US-005 ✅ parsed/set-qty 锚点迁矩阵（qty-matrix/qty-rowhead）+ 文案改矩阵操作描述
+│   │   ├── index.ts      # US-029 ✅ TOUR_VERSION='7'（'2'←矩阵化重构 US-005 锚点迁矩阵 / '3'←图形预览区拆除 / '4'←矩阵行头简化 / '5'←行级整行设值回归 / '6'←数量矩阵行列转置 / '7'←裁片编号化 US-003 Σ 口径；完整版本历史见文件头注释）+ TOURS: Partial<Record<TabId,TourDef>>（US-030 注册 preview / US-031 注册 nesting）
+│   │   ├── previewTour.ts # US-030 ✅ 上传预览 5 步（upload/parsed/set-qty/committed/goto-nesting；联动步读 uploadStore/uiStore 快照）；矩阵化重构 US-005 ✅ parsed/set-qty 锚点迁矩阵（qty-matrix/qty-rowhead）+ 文案改矩阵操作描述（图形预览区拆除后不再指引图形预览区）
 │   │   └── nestingTour.ts # US-031 ✅ 超排 5 步（doc-banner/params/solve/result/export；result/export 联动步读 runRegistry.list().some(r=>r.lastFrame!==null) 帧快照）
 │   └── __tests__/
 │       ├── TourOverlay.test.tsx # US-029 ✅ 5 项基础 + US-030 ✅ 1 项等待态 + US-032 ✅ 6 项（ESC/遮罩/bubble/skip/reduced-motion×2）
@@ -94,8 +92,8 @@ src/
 ## 上传预览 US-011 关键约定（qtyStore 数量状态 调用方必读；矩阵化重构 US-001 简化）
 
 - **qtyStore 与 uploadStore 完全解耦**：qtyStore 只持 `quantities: PieceQuantityMap` + 4 actions（setPiecePerSize / setRowAll / resetQuantities / hydrate），不读 doc/activeSize；uploadStore 不持 quantities。重传联动由 PreviewPage 集成层 subscribe doc_id 变化：有 doc → `hydrate`（默认 1 + baseValue 1）、doc→null → `resetQuantities()`。
-- **label 跨码匹配同一片型**：数量 map 以 label（A/B/C...）为 key，跨码语义同片型。依赖后端 `_label_for` 几何排序 `(-centroid_y, centroid_x, -area_mm2, ...)` 在码间稳定（M1787 结构款成立）。name 含码号后缀（如 `noname..28`）跨码不同，故不用 name 做 key。
-- **`getPieceDisplay` 是 UI 消费的唯一入口**：三分支严格固定 —— （a）label 未在 map → `{qty:0, editable:true}`；（b）perSize 缺 sizeKey（=该码无此裁片）→ `{qty:0, editable:false}`；（c）正常 → `{qty: perSize[sizeKey] ?? 0, editable:true}`。qty=0 是显式「该码不排此片」，仍 editable=true（区别于缺片「—」）。QtyMatrix（US-002 起）/ParsedPiecesView/PieceZoomModal 都调此 selector，不直接读 quantities[label]。
+- **label 跨码匹配同一片型**：数量 map 以 label（**g 码 g01+**，裁片编号化 US-003 起取代 A/B/C）为 key，跨码语义同片型。依赖后端 `labeling.sequential_sort_key`（group_key 前置保跨码同号 + 几何稳定序）在码间稳定（M1787 结构款成立）。v2 契约已无 name 字段（去名称化删除，不存在「用 name 做 key」问题）。
+- **`getPieceDisplay` 是 UI 消费的唯一入口**：三分支严格固定 —— （a）label 未在 map → `{qty:0, editable:true}`；（b）perSize 缺 sizeKey（=该码无此裁片）→ `{qty:0, editable:false}`；（c）正常 → `{qty: perSize[sizeKey] ?? 0, editable:true}`。qty=0 是显式「该码不排此片」，仍 editable=true（区别于缺片「—」）。QtyMatrix（US-002 起）/PieceZoomModal 都调此 selector，不直接读 quantities[label]。
 - **`clampQty` 是数量值唯一规整入口**：`Math.max(0, Math.min(99, Math.trunc(Number(v) || 0)))`。负数/NaN/非数字→0；小数→截断（非四舍五入）；>99→99；字符串数字→对应整数。setPiecePerSize / setRowAll 内部统一走 clampQty，调用方传入原值即可。
 - **baseValue 仅 UI 特例高亮基准，不参与序列化**：hydrate 写 1、setRowAll 写填充值、setPiecePerSize 新建 label 兜底 1 且格内编辑不动它。把 baseValue 混进 serializeQuantities 会污染 WS 线格式。
 - **setRowAll 非破坏合并**：sizes 列表外的既有 perSize 键保留（整行填充只覆盖所列码）；value 经 clampQty 后同时写 perSize 与 baseValue。
@@ -106,18 +104,18 @@ src/
 
 ## 矩阵化重构 US-002 关键约定（QtyMatrix 数量矩阵 调用方必读）
 
-> 裁片 × 尺码数量矩阵（一屏看全 + 格内直接编辑 + 整行填充 + 即时小计）。US-003 起已接入 PreviewPage（替代 SizeTabs；SizeTabs/PieceQtyDialog/Switch 已拆除）；US-005 起承载 previewTour parsed/set-qty 两步锚点（根容器 data-tour="qty-matrix" + 行头 data-tour="qty-rowhead"）。
+> 裁片 × 尺码数量矩阵（一屏看全 + 格内直接编辑 + 整列设值 + 即时小计）。US-003 起已接入 PreviewPage（替代 SizeTabs；SizeTabs/PieceQtyDialog/Switch 已拆除）；图形预览区拆除后为右侧唯一主体；US-005 起承载 previewTour parsed/set-qty 两步锚点（根容器 data-tour="qty-matrix" + 行头 data-tour="qty-rowhead"）。
 
-- **行列模型**：行 = 全码 label 并集（doc.sizes 升序遍历首次出现排序 = 最小码 pieces 顺序优先，后续码新增 label 追加尾部）；列 = `doc.sizes` 全码动态（M1787 11 码 28-38，**勿按 8 码写死**；null 码殿后显示「通用」，无 null 码不渲染该列）+ 末列行合计。每 render 从 doc 重算派生（piecesByLabel Map + labelOrder），doc 稳定引用 + ~10×12 规模不做 memo。
-- **行填充只写该 label 实际存在的码**：`setRowAll(label, rowSizes(label), value)`，rowSizes = columns.filter(cellExists)；给缺片码写值会造 phantom perSize 键，污染 getPieceDisplay editable 语义与 serializeQuantities 输出（红线，qtyStore 测试「no phantom key」同步守）。
+- **行列模型（2026-08-16 行列转置）**：**行 = `doc.sizes` 全码动态**（M1787 11 码 28-38，**勿按 8 码写死**；null 码殿后显示「通用」，无 null 码不渲染该行）[行头 = button `setSize(码)` 切 activeSize + 行尾小计列]；**列 = 全码 label（g 码）并集**（doc.sizes 升序遍历首次出现排序 = 最小码 pieces 顺序优先，后续码新增 label 追加尾部）[列头 = compact 80×80 缩略图（title 恒为 g 码）+ 序号徽章 +「≡」整列设值 icon]。每 render 从 doc 重算派生（piecesByLabel Map + labelOrder），doc 稳定引用 + ~10×12 规模不做 memo。
+- **整列设值只写该 label 实际存在的码**：`setRowAll(label, rowSizes(label), value)`，rowSizes = 该 label 有片的码集；给缺片码写值会造 phantom perSize 键，污染 getPieceDisplay editable 语义与 serializeQuantities 输出（红线，qtyStore 测试「no phantom key」同步守）。ColFillPopover createPortal 到 body + fixed 居中矩形容器可视区（不锚 sticky 列头，防被盖/被 overflow 裁剪）。
 - **格内编辑三提交路径**：blur / Enter / Tab，值一律过 clampQty 写 setPiecePerSize；草稿不实时 clamp（允许清空重输中间态），提交时统一规整。Enter 与 Tab 同语义：preventDefault 后手动 focusNextCell（`input.qty-cell-input:not([disabled])` 平铺顺序 + 末格回卷首格，跳过缺片格）。
 - **React 18 事件 flush 时序坑**：synthetic「set value + input event + blur」放同一 JS task 会丢提交（onChange flush 晚于 onBlur 读到旧草稿）——集成测试与 CDP/浏览器驱动必须把 type 和 blur 拆成两个独立 task 派发。
 - **草稿同步 focusedRef 守卫**：QtyMatrixCell 的 `useEffect([value])` 仅同步未聚焦格（行填充/重置等 store 侧外部变更进 DOM）；聚焦格保持用户草稿，blur 时草稿与 store 值一致则不重复写。
 - **三态格子互斥可断言**：0 = 显式「该码不排此片」（`.zero` 暗色 + title + 可编辑，计入小计贡献 0）；缺片 = 该码无此 label（disabled「—」`.missing`，不计入小计）；特例 = `.override`（判定 `!rowAllSame && v !== base`，baseValue 缺席兜底 1；整行同值不高亮防噪点）。
-- **列头即切码入口**：列头是 button，点击 `setSize(该码)`（US-003 起替代 SizeTabs 驱动下方图形预览），activeSize 列 `.active` + aria-pressed。缩略图 rep 优先 activeSize 版本（与图形预览同码视觉一致），点击 `openZoom(label, activeSize)` 复用 PieceZoomModal。
-- **小计 Σdemand 口径（本 Story）**：行合计 = Σ该行各码 demand；每码小计 = Σ该码各 label demand（缺片格不计）；工具条总片数 = sizeSubtotals 之和；全 0 且有行 → 红色警示。**US-003 起 Σ 数量口径（无乘数）**——一份 = 母版一个轮廓，不合成镜像；三处小计同源只做求和。
-- **CSS 布局不变量**：`.qty-matrix-scroll` max-height:45vh 内部滚动；sticky 表头/首列（.qty-rowhead）/底行（tfoot）；表格 `border-collapse: separate` + 自绘边框（collapse 会吞 sticky 格边框）；sticky z 层级 thead=3 / corner=5 / rowhead=2 / tfoot=3 / subtotal-rowhead=4；窄屏（≤1366）靠行头 220px + 格子 64px min-width 自然横滚。不引入 CSS 框架。
-- **「重置为默认 1」**：逐行 `setRowAll(label, rowSizes(label), 1)`（值与 baseValue 双回 1，整行同值 → 特例高亮清空）。
+- **行头即切码入口**：行头是 button，点击 `setSize(该码)`，activeSize 行 `.active`（US-003 起替代 SizeTabs；图形预览区拆除后语义收敛为「行头缩略图优先显示哪个码的版本」）。缩略图 rep 优先 activeSize 版本，点击 `openZoom(label, rep.size)`（**所见即所放大**，label 缺 activeSize 片时回退码也正常弹出；图形预览区拆除后预览页唯一放大入口）复用 PieceZoomModal。
+- **小计 Σdemand 口径（本 Story）**：每码小计行 = Σ该行各 label demand（缺片格不计）；label 列小计 = Σ该列各码 demand；工具条总片数 = sizeSubtotals 之和；全 0 且有格 → 红色警示。**US-003 起 Σ 数量口径（无乘数）**——一份 = 母版一个轮廓，不合成镜像；三处小计同源只做求和。
+- **CSS 布局不变量（行级整行设值回归 16855fd 重构）**：`.qty-matrix` flex:1 吃满 `.preview-main` 剩余高度（**拆掉旧 45vh 任意截断**）+ `.qty-matrix-scroll` flex:1/min-height:0；表格 `table-layout:fixed`（行头 148px / 合计列 56px 定宽钉死、尺码列 auto 均分富余）+ inline `min-width` floor（行头 148 + N×64 + 56px）窄屏自然横滚；sticky 表头/首列（.qty-rowhead）/底行（tfoot）+ `border-collapse: separate` 自绘边框（collapse 会吞 sticky 格边框）。缩略图 80×80。不引入 CSS 框架。
+- **~~「重置为默认 1」按钮~~（已拆）**：工具条整表重置按钮已随矩阵行头简化（85b6a8c）拆除；整表回 1 = 逐列「≡」整列设值 1（值与 baseValue 双回 1，整列同值 → 特例高亮清空）。重建工具条级批量按钮前先确认与列级入口的交互分工。
 
 ## 上传预览 US-012 关键约定（PieceQtyDialog 数量弹窗 + Switch 调用方必读）
 
@@ -141,16 +139,18 @@ src/
 - **uploadStore 扩 zoom + open/close**：新增字段 `zoom: {label:string; size:number|null} | null`（默认 null）+ actions `openZoom(label, size)` / `closeZoom()`；`reset()` 同步清 `zoom=null`。store 公开 API 扩到 6 个（reset/setSize/openQtyDialog/closeQtyDialog/openZoom/closeZoom）；hook useParseDxf 的 setState 流程**不写 zoom**（模态显隐仅由 UI 触发，与上传解析无关）。
 - **ESC 监听在 zoom 切换时挂/卸载**：`useEffect` dep `[zoom, closeZoom]`；`zoom===null` 时 effect 早 return（不挂 listener）；`zoom!==null` 时挂 window.keydown，cleanup 函数卸载 listener。zoom 切 null（关闭）时 effect 重跑 → cleanup → 自动卸载，无残留。**hook 必须无条件调（不能在条件分支里）**，故 zoom!==null 判定在 effect 内部（与 PieceQtyDialog 把 ESC 挂在 Inner 子组件不同：PieceQtyDialog 用 key 重建 Inner，本模态无 Inner 子组件故直接在主组件判 zoom）。
 - **遮罩 onClick 用 `e.target === e.currentTarget` + modal stopPropagation 双重防御**：只在 click 落在 overlay 自身（不是冒泡上来的子元素）时 closeZoom；modal 用 `onClick stopPropagation` 双重防御（即使冒泡到 overlay 也已被 stop）。用 click（不是 mousedown）—— 与 PieceQtyDialog 用 mousedown 不同；本模态无可拖选文本场景，click 语义更直观。
-- **`locatePiece` 防御性兜底渲染 null**：`doc.sizes.find(s=>s.size===size)` 找不到 → null；`pieces.findIndex(p=>p.label===label) < 0` → null。理论不会发生（openZoom 由 ParsedPiecesView 在已挂载卡片上调，必然能定位），但兜底防御 doc 切换 race / 异常 store state。
-- **序号 = pieces 数组 index+1（与卡片头序号同口径，US-014 集成时复用）**：`locatePiece` 返回 `{piece, seq: idx+1}`；与 label 字母次序一致（A=1, B=2, ...，依赖后端 `_label_for` 几何排序）。**详情模态头部同时显示 label 徽章 + 序号(数量)**：徽章给版师字母习惯，序号给数量定位（D1 决策信息冗余但语义一致）。
-- **数量从 `getPieceDisplay` 读（与卡片头/PieceQtyDialog 同 selector）**：头部 `seq(display.qty)` 中 `display = getPieceDisplay(quantities, label, size)`，**不直接读 `quantities[label]`**（区分 per-size / global-source / global-非source 四分支）。改 selector 来源会破坏「global 模式非 source 码显示全局值」语义。
+- **`locatePiece` 防御性兜底渲染 null**：`doc.sizes.find(s=>s.size===size)` 找不到 → null；`pieces.findIndex(p=>p.label===label) < 0` → null。理论不会发生（openZoom 由 QtyMatrix 行头缩略图在已挂载矩阵上调，必然能定位；图形预览区拆除前也可由 ParsedPiecesView 卡片调），但兜底防御 doc 切换 race / 异常 store state。
+- **头部结构（裁片编号化 US-003 起现行口径）**：`[g 码徽章 .piece-card-label] {qty}份 · 码 {sizeLabel(size)}`——qty 从 `getPieceDisplay` 读；**v2 契约无 name、无序号**（原「label 徽章 + 序号(数量) + name」三段头部已随去名称化改写，`.piece-zoom-seq`/`.piece-zoom-name` 节点与 CSS 均删）。aria-label=`裁片 ${label} 码 ${sizeLabel} 放大预览`。单位「份」= 一份母版一个轮廓（数量即一切，不合成镜像）。
+- **数量从 `getPieceDisplay` 读（唯一 selector）**：头部 `{display.qty}份` 中 `display = getPieceDisplay(quantities, label, size)`，**不直接读 `quantities[label]`**（矩阵化重构 US-001 起 global 模式已删，selector 三分支）。
 - **PiecePreviewSVG pad=20（比卡片默认 pad=14 加大留白）**：放大显示更多内边距视觉更舒适；pad 经 PiecePreviewSVG 内 `safePad = Math.max(MIN_PAD=4, pad)` clamp，20 安全。改 pad 需视觉回归核对（M1787 每片放大模态显示宽度 ≈ 90vw）。
-- **头部 padding-right 28 给 ✕ 按钮留位**：✕ 按钮绝对定位 `top:8 right:10 + 28×28`；头部 `padding-right: 28` 防长 name 被按钮遮挡。改 ✕ 位置 / 头部 padding 需同步视觉回归。
+- **头部 padding-right 28 给 ✕ 按钮留位**：✕ 按钮绝对定位 `top:8 right:10 + 28×28`；头部 `padding-right: 28` 防头部文本被按钮遮挡（v2 无 name 后仅 qty/码号短文本，保留留位稳妥）。改 ✕ 位置 / 头部 padding 需同步视觉回归。
 - **uploadStore.reset 联动 zoom 清零（不联动 qtyStore.resetQuantities）**：本故事只扩 uploadStore.reset 同步清 `zoom=null`（同 store 内）；qtyStore 独立 store 的 resetQuantities 联动（重传清零数量）仍由 US-014 集成时挂入。本故事范围仅模态组件 + store 字段 + 单测，**不集成到 PreviewPage**（PreviewPage 顶层挂 PieceZoomModal 单例是 US-014 任务）。
-- **不引入 CSS 框架**：`.piece-zoom-overlay` / `.piece-zoom-modal` / `.piece-zoom-head` / `.piece-zoom-seq` / `.piece-zoom-meta` / `.piece-zoom-name` / `.piece-zoom-close` / `.piece-zoom-body` 全部沿用 style.css 命令式 className，与 piece-card / piece-qty-dialog 暗背景 `#2a2c32/#26282e` + 绿色 `#2ea06c` 强调同色系。
+- **不引入 CSS 框架**：`.piece-zoom-overlay` / `.piece-zoom-modal` / `.piece-zoom-head` / `.piece-zoom-qty` / `.piece-zoom-meta` / `.piece-zoom-close` / `.piece-zoom-body` 沿用 style.css 命令式 className（`.piece-zoom-seq`/`.piece-zoom-name` 已随 v2 头部改写删除），与 piece-card / piece-qty-dialog 暗背景 `#2a2c32/#26282e` + 绿色 `#2ea06c` 强调同色系。
 - **未做浏览器验证**：本故事无 SVG/坐标变换改动（仅复用 PiecePreviewSVG 加大 pad，DOM 弹窗外壳），AC 仅要求 typecheck + 单测，故跳过 chrome-devtools-mcp；US-014 集成时再统一浏览器回归（含放大模态显隐 / ✕/遮罩/ESC / 头部信息）。
 
 ## 上传预览 US-014 关键约定（ParsedPiecesView 卡片头改造 + 双模态集成 调用方必读）
+
+> **⚠️ 已被矩阵化重构 US-003 部分取代（2026-08-16）**：卡片头数量按钮（openQtyDialog 入口）改为只读 span「N份」（编辑入口统一 QtyMatrix）；PieceQtyDialog 单例已删（PreviewPage 仅余 PieceZoomModal）；序号(qty) 头部展示改到 QtyMatrix；**图形预览区拆除后 ParsedPiecesView 组件整体删除**。本节以下描述保留作历史记录，现行契约见「矩阵化重构 US-002/US-003」节。
 
 - **卡片头双模态入口严格分离**：`.piece-card-qty`（在 head）点击 → openQtyDialog；`.piece-card-body`（SVG 包裹层）点击 → openZoom。两个交互入口由位置分离（head vs body 平级）+ stopPropagation 双重防御（qty button onClick 调 `e.stopPropagation()`，即使未来 qty 移到 body 内也不会冒泡触发 zoom）。改分离逻辑需同步 ParsedPiecesView.test.tsx「qty 不冒泡到 body」用例。
 - **.piece-card-qty 双形态渲染**：editable=true（label 未配置 / per-size 模式 / global source 码）渲染 `<button class="piece-card-qty">`，点击 openQtyDialog；editable=false（global 非 source 码）渲染 `<span class="piece-card-qty disabled">`，不可点击 + native title 提供 hover 提示文案（reason=`'该数值已在「<sizeLabel(globalSource)>」处使用全局数量'`）。qty=0 正常显示 `序号(0)`（默认态）。改双形态分支需同步「editable button / global非source span.disabled / global source button」3 项用例。
@@ -192,18 +192,20 @@ src/
 
 - **命令式渲染范式（参考 NestSVG.tsx）**：React 仅渲染 `<svg ref/>` 空骨架；useEffect 内 imperative 建 flipGroup `<g>` + 各层节点（polygon / polyline / line / text），用 `setAttribute` 写 transform / points / stroke / ...，**逃逸 React reconciliation**。改任何 attr 走 JSX prop 会被 React 用 vdom 覆盖回旧值（同 NestSVG 关键约定 #2）。
 - **翻转组 transform = `translate(0 ${minY+maxY}) scale(1 -1)`**：sparrow Y-up → SVG Y-down（与 PNG / R12-DXF / NestSVG 一致）。`minY+maxY` 是 bbox 的 Y 对称轴，翻转后 bbox 内几何视觉与 sparrow 视图一致（不上下颠倒）。NestSVG 是其特例（minY=0, maxY=gate → `translate(0 gate) scale(1 -1)`）。改字面量需同步 PiecePreviewSVG.test.tsx AC#3 用例。
-- **A/B/C 文字标注放在翻转组 `<g>` 之外**（AC#3 不镜像）：用屏幕坐标（SVG Y-down）直接定位 —— 锚点 = piece bbox 左上角上方 `LABEL_Y_OFFSET=3`（baseline 在 `minY - 3`），`font-size=11` / `dominant-baseline=alphabetic`。改位置 / 字号需同步 PiecePreviewSVG.test.tsx 「A/B/C 标注用屏幕坐标」用例。
+- **label 文字标注放在翻转组 `<g>` 之外**（AC#3 不镜像；历史 A/B/C，裁片编号化起标注值 = g 码）：用屏幕坐标（SVG Y-down）直接定位 —— 锚点 = piece bbox 左上角上方 `LABEL_Y_OFFSET=3`（baseline 在 `minY - 3`），`font-size=11` / `dominant-baseline=alphabetic`。改位置 / 字号需同步 PiecePreviewSVG.test.tsx 「标注用屏幕坐标」用例。
 - **viewBox = bbox + pad**（默认 `DEFAULT_PAD=14`，最小 `MIN_PAD=4` clamp）：pad 容纳 8mm 刀口半段（4mm）+ 标注文本（~10mm cap 高度）。改 pad 默认需同步「viewBox = bbox + pad」用例（默认 + 自定义 + clamp 三组）。
 - **5 层渲染分层（颜色 / 线型严格固定，改需同步测试 + 版师确认）**：layer1 毛版半透明蓝实心 `rgba(80,140,200,0.22)` + `#3f7fbf` 实线边（闭合 polygon）；layer14 净版绿虚线 `#33cc33` `stroke-dasharray=6 3`（闭合 polygon，fill=none）；layer8 内部线橙实线 `#ff8c1a`（polyline 不闭合，line.length<2 跳过）；layer4 刀口黄短线段 `#ffd700`（line，端点 `P ± 4*unit_normal`，长度 `NOTCH_LEN_MM=8`，**待版师确认**）；layer7 布纹线红虚线 `#e53e3e` `stroke-dasharray=5 3`（line，grain_line=null 跳过）。
 - **刀口端点 = `P ± 4 * unit_normal`**（unit_normal 来自后端 `notch[2..3]`）：法线为单位向量，half=4，端点 `(x∓4nx, y∓4ny)`，r2 截断。法线为零向量（退化边）→ 0 长度线段（点）兜底。改 NOTCH_LEN_MM 需同步 PiecePreviewSVG.test.tsx 2 项刀口用例 + 版师确认。
 - **piece(s) 切换整组重建（不同于 NestSVG flipRef 幂等）**：useEffect 头部 `while (svg.firstChild) svg.removeChild(svg.firstChild)` 清空旧内容后重建。NestSVG 同 run 内 N 帧复用 DOM（高频），PiecePreviewSVG 切片是低频 UI 操作，重建简洁且开销可接受。StrictMode 双 mount 同样安全（清空再建）。
-- **AC#4 多片同框**：prop 接受 `ParsedPiece | ParsedPiece[]`，归一化为数组；多片时合并 bbox 计算 viewBox（`piecesBBox`），每片独立渲染 5 层 + 各自 A/B/C 标注。US-008 ParsedPiecesView 用单片卡片，多片能力留作未来扩展（不刻意避免重叠，由调用方决定）。
+- **AC#4 多片同框**：prop 接受 `ParsedPiece | ParsedPiece[]`，归一化为数组；多片时合并 bbox 计算 viewBox（`piecesBBox`），每片独立渲染 5 层 + 各自 label 标注。现调用方均为单片场景（QtyMatrix 行缩略图 compact 无标注 / PieceZoomModal / PtypePreviewModal 等），多片能力留作未来扩展（不刻意避免重叠，由调用方决定；原 ParsedPiecesView 单片卡片已随图形预览区拆除）。
 - **空片容错（polygon=[] 或全无数据）**：`piecesBBox` 返回 null → svg 清空后啥都不画（无 viewBox / 无 flipGroup / 无标注），不留残影。polygon.length<3 跳过 rough 层；其他层照常渲染。改兜底需同步「空片」「polygon<3 跳过 rough」用例。
 - **pad prop 最小 4 clamp**：`safePad = Math.max(MIN_PAD, pad)`，防 8mm 刀口半段被裁。负数 / NaN（NaN 经 max 比较返回另一侧）兜底为 4。
 - **导出辅助 `pieceBBox` / `piecesBBox` / `BBox` 便于测试**：纯函数 / 类型导出，单测直接调；不改 React 渲染。PiecePreviewSVG.test.tsx 5 项 bbox 用例覆盖（合并所有层顶点 / 空片 null / 无 grain 跳过 / 多片合并 / 全空片 null）。
 - **不引入 CSS 框架**：`.piece-preview-svg`（display:block + width:100% + height:100% + bg `#eef0f3`，与排料图同色）由 imperative setAttribute('class', ...) 写入，沿用 style.css；与 `.nest-card svg` 同口径。
 
 ## 上传预览 US-008 关键约定（SizeTabs / ParsedPiecesView / PreviewPage 调用方必读）
+
+> **⚠️ 已被矩阵化重构 US-003 取代（2026-08-16）**：SizeTabs 已删除（尺码切换职责移交 QtyMatrix 行头），ParsedPiecesView 已随图形预览区拆除整体删除，PreviewPage 主体改为仅 QtyMatrix。本节以下描述保留作历史记录，现行契约见「矩阵化重构 US-002/US-003」节。
 
 - **三个新组件都从 uploadStore 读、不持本地状态**：SizeTabs 读 `doc`/`activeSize`/`setSize`；ParsedPiecesView 读 `doc`/`activeSize`；PreviewPage 读 `status`/`doc`。store 是单一真相源（US-005 关键约定），切 Tab 后状态保留 = store 是模块级 + display:none 不卸载（AC#5 由 store 持久性保证，组件本身无需任何持久化逻辑）。
 - **PreviewPage 空态分支用 `hasParsed = status === 'done' && doc !== null`**：双重条件防御（done 理论必有 doc，但 TS 类型上 doc nullable）。uploading / error 时仍显示空态卡片（不显示「上传中…」之类的状态行 —— 那是 UploadPanel 的事），保持右侧稳定布局。改分支需同步 PreviewPage.test.tsx 4 项空态用例。
@@ -245,7 +247,7 @@ src/
 - **SizePicker 订阅 uploadStore.doc，不再硬编码 SIZES**：`doc !== null` → chip 列表 = `doc.sizes.map(s=>s.size)`（后端已按 `_size_sort_key` 排序，**前端不二次排序**）；`doc === null` → fallback `constants/sizes.ts:SIZES`（保后端开发模式下排料页可用）。改订阅源会破坏「切款母版 → 码号区自动同步」语义。
 - **DEFAULT_FORM.sizes = [] 强制用户选**（旧 `[...SIZES]` 全选废除）：用户必须主动勾选码号；ControlPanel「请至少选一个码号」校验保留兜底。改默认值需同步 `params.test.ts` 「DEFAULT_FORM.sizes 默认空数组」用例 + `ControlPanel.test.tsx` AC#1 / AC#7 默认态断言。
 - **FormState.sizes 类型扩 `(number|null)[]`**：doc.sizes 可能含 null（通用码），selected/onChange 也扩为 `(number|null)[]`。null 用 Set 的 `===` 比较自然去重 / 命中。
-- **null 码 chip 文案「通用」**（与 SizeTabs NULL_SIZE_LABEL 同语义）：`sizeLabel(null)='通用'`、`sizeKey(null)='null'`（DOM id `sz_null` / value `'null'`）。改文案需同步 SizePicker.test.tsx 「null 码 chip 显示通用」+ ControlPanel.test.tsx US-017 StatusLine hint 用例。
+- **null 码 chip 文案「通用」**（与上传预览矩阵行头「通用」同语义；SizeTabs 已删，无共享常量）：`sizeLabel(null)='通用'`、`sizeKey(null)='null'`（DOM id `sz_null` / value `'null'`）。改文案需同步 SizePicker.test.tsx 「null 码 chip 显示通用」+ ControlPanel.test.tsx US-017 StatusLine hint 用例。
 - **下游 WS / export 契约仍是 `number[]`**：ControlPanel.handleStart / handleExport 用类型守卫 `(s): s is number => s !== null` 过滤 null 后再透传（StartConfig.sizes / useExport.exportAs 签名不变）。M1787 实际母版无 null 码；含 null 母版的完整端到端支持留给 US-022（数量 demand 按 (label, sizeKey) 查表，sizeKey 已支持 null）。
 - **ControlPanel 订阅 uploadStore.doc 用于 StatusLine 提示**：doc=null 时 `visibleStatus = ${status} — 请先在上传预览页解析母版`；doc 非空时 `visibleStatus = status`（无后缀）。StatusLine 组件本身不动（仅渲染 text）。改提示文案需同步 ControlPanel.test.tsx US-017 「doc=null StatusLine 增提示 / doc 非空无提示」2 项。
 - **不引入 CSS 框架**：`.sizes` / `.chip` / `.chip input` / `.field-label` 全部沿用 style.css（与旧 vanilla SizePicker 同 className）。新增 `sz_null` DOM id（与 `sz_28` 等同形）。
@@ -315,7 +317,7 @@ src/
 - **「≡」整列设值（ColumnFillPopover，文件尾内部组件）**：列头 `.qty-rowfill-btn` 点击 → 开居中弹层（Portal 到 body + fixed 定位于表格容器可视区中心，不锚 sticky 列头 —— QtyMatrix 2026-08-16 修复同款定位）；复用 `.qty-fill-*` 样式段 + `qty-fill-popover--per-type` modifier；d/tol 任一侧留空 = 该侧整列继承默认（清空）；应用 clamp 后写该列全部非 missing 行（draft 级）；Enter 快捷应用 / ESC/遮罩/取消只关弹层。z-index：backdrop 1150 / popover 1160（必须盖过 per-type overlay 1100，QtyMatrix 原生 1000/1010 不够）。
 - **URL 分享格式（US-004）**：`perTypeToUrlParam(form)` → `label@sizeKey=d,tol;...`（仅非空格产出）；`perTypeFromUrlParam(raw)` 正则 `^(g\d{1,4})@(null|\d{1,4})=([^;,]*),([^;]*)$` 逐段校验，旧 ptype 键/中文/NaN/乱拼段**静默跳过不抛错**（lenient decode）；两函数在 lib/params.ts 单一实现，改格式需同步 params.test.ts「per_type URL 分享格式」6 项。
 - **片型缩略图来自 GET /api/ptypes（US-020 契约）**：PerTypeOverridesModal mount 时 fetch `/api/ptypes` → `PtypesResponse.representatives[label]`（US-004 起键 = g 码）；rep 存在 → `<button class="ptype-thumb">` 内渲染 PiecePreviewSVG compact（64×64，无 label，pad=2）；rep 不存在 / fetch 失败 → button disabled + 显示 g 码首字占位（loading 态「…」）。**fetch 用 cancelled flag 防 StrictMode 双 mount race**（mount→cleanup→mount，第一次 fetch 的 setState 被 cancelled 跳过）。改 fetch 逻辑需同步「mount triggers fetch」+「fetch failure degrades」+「fetch success renders compact svg」3 项。
-- **PiecePreviewSVG `compact` prop**：compact=true 时（1）pad 默认 `COMPACT_PAD=2`（不是 DEFAULT_PAD=14）；（2）跳过 `renderLabel`（不渲染 A/B/C 文本）；（3）其它 5 层渲染（polygon / net_polygon / internal_lines / notches / grain_line）layer-aware 不变。改 compact 分支需同步 PiecePreviewSVG.test.tsx 5 项 compact 用例。
+- **PiecePreviewSVG `compact` prop**：compact=true 时（1）pad 默认 `COMPACT_PAD=2`（不是 DEFAULT_PAD=14）；（2）跳过 `renderLabel`（不渲染 label 文本）；（3）其它 5 层渲染（polygon / net_polygon / internal_lines / notches / grain_line）layer-aware 不变。改 compact 分支需同步 PiecePreviewSVG.test.tsx 5 项 compact 用例。
 - **点击缩略图 → PtypePreviewModal 放大预览**：`.ptype-thumb` onClick 调 `openPreviewLabel(label)`（US-003 起 label = g 码）；PtypePreviewModal 订阅 `previewLabel` 自显隐，渲染同 rep 的 PiecePreviewSVG（pad=20，非 compact，label 叠印 g 码标注）。**PtypePreviewModal 每次打开（previewLabel 变非 null）重新 fetch /api/ptypes**（2026-08-17 修复旧缓存与弹窗缩略图数据不一致 bug；关闭态不发请求）。改 click 行为需同步 PerTypeOverridesModal.test.tsx「clicking thumbnail opens PtypePreviewModal」用例。
 - **rep→Piece piece 转换**：`repToPiece(rep)` 把 PtypeRepresentative 扩展为 ParsedPiece（label=''，compact 模式不渲染标注），其余 5 层字段原样透传。PiecePreviewSVG layer-aware 渲染按字段存在性决定（polygon 缺失跳过 rough 层、net_polygon 缺失跳过 net 层等），无需 compact 分支特判。
 - **z-index 层级**：tooltip(100) < piece-qty/zoom(1000) < per-type(1100) < per-type fill backdrop/popover(1150/1160) < ptype-preview(1200)。放大预览覆盖在最上；整列设值弹层覆盖在高级配置 modal 之上；高级配置 modal 覆盖在 ControlPanel 之上。改 z-index 需同步视觉回归。
@@ -436,26 +438,30 @@ src/
 
 ## 矩阵化重构 US-003 关键约定（拆除旧交互+预览页集成+全 0 拦截 调用方必读）
 
-- **数量编辑唯一入口 = QtyMatrix**：SizeTabs/PieceQtyDialog/Switch 已删除（含测试）；`grep openQtyDialog src/` = 0，uploadStore 无 qtyDialog 字段（zoom/activeSize/setSize 保留，矩阵列头/缩略图/图形预览依赖）。重建任何「点数量弹窗」交互都属回退。
-- **PreviewPage 主体 = QtyMatrix + ParsedPiecesView**：矩阵在上（编辑+列头切码），图形预览在下（区标题「图形预览 · 码 X」随 activeSize）；顶层模态仅 PieceZoomModal（缩略图/卡片体两入口都归它）。doc_id→hydrate/resetQuantities 与 status→setNestingEnabled 两条 subscribe effect 原样保留。
-- **ParsedPiecesView 只读化**：卡片头数量是 span「{qty}份」（无 onClick；editable=false 仅「该码无此裁片」时 .disabled+title）；`.piece-card-body` 保留 openZoom + role=button/tabIndex/Enter/Space。数量单位统一「份」（FR-9：配对片 1 份 = L+R 2 物理片；US-004 起矩阵行头加 ×2 徽章）。
+> **⚠️ 本节 ParsedPiecesView 相关条目已被后续演进取代**：①图形预览区拆除 —— ParsedPiecesView 组件已删除，右侧主体仅 QtyMatrix；②「份 = 配对片 1 份 L+R 2 物理片」口径已随裁片编号化 US-003 改为「一份 = 母版一个轮廓」（Σ 数量口径，数量即一切）。本节其余条目（唯一入口/全 0 拦截/线格式）仍现行有效。
+
+- **数量编辑唯一入口 = QtyMatrix**：SizeTabs/PieceQtyDialog/Switch 已删除（含测试）；`grep openQtyDialog src/` = 0，uploadStore 无 qtyDialog 字段（zoom/activeSize/setSize 保留，矩阵行头/缩略图依赖）。重建任何「点数量弹窗」交互都属回退。
+- **~~PreviewPage 主体 = QtyMatrix + ParsedPiecesView~~（已废）**：图形预览区拆除后右侧主体仅 QtyMatrix；顶层模态仍仅 PieceZoomModal（唯一放大入口 = 矩阵行头缩略图，`openZoom(label, rep.size)` 所见即所放大）。doc_id→hydrate/resetQuantities 与 status→setNestingEnabled 两条 subscribe effect 原样保留。
+- **~~ParsedPiecesView 只读化~~（组件已删除）**：数量单位统一「份」（裁片编号化 US-003 起现行口径：一份 = 母版一个轮廓，Σ 数量求和无乘数；~~FR-9 配对 ×2~~ 已废）。
 - **ControlPanel.handleStart 全 0 拦截**：`computeTotalCutPieces(doc, form.sizes, qtyStore.quantities) === 0` → `onStatus('所选码号有效裁片数为 0，请先在上传预览页数量矩阵中设置数量')` + 不发 WS start（防空 items 实例交 spyrrow 密度分母 0）。返回 null（doc=null fallback 开发模式）不拦截。改判定需同步 ControlPanel.test.tsx 5 项 start guard 用例。
 - **线格式回归基线**：矩阵格内改 A@28=2 → handleStart payload `quantities.A['28']===2`（serializeQuantities 过滤未勾选码、显式 0 保留、'null' 兜底 —— 矩阵化重构 US-001 不变量延续）。ControlPanel.test.tsx 有对应回归用例。
-- **previewTour 锚点已迁矩阵（US-005 落地）**：parsed 步锚点 `[data-tour="qty-matrix"]`（QtyMatrix 根容器）、set-qty 步锚点 `[data-tour="qty-rowhead"]`（行头 th，querySelector 命中首行）；旧 `size-tabs`/`piece-card-head` 选择器与 ParsedPiecesView 卡片头的死锚点属性均已删除；TOUR_VERSION '1'→'2'（tourStore init 清老用户 seen 强制重看）。改 selector / 增删步骤必须 bump TOUR_VERSION（US-032 版本号策略 + index.ts 版本历史注释）。
-- **浏览器端到端验证留作整体回归**：本会话工具集无 chrome-devtools-mcp（与 US-032 同况）；已覆盖 npm build + ms-web 冒烟（GET / 200 + parse API 200）+ jsdom 单测全绿（US-005 起 606 项，含 previewTour.test.tsx 锚点渲染命中 5 项）。
+- **previewTour 锚点已迁矩阵（US-005 落地）**：parsed 步锚点 `[data-tour="qty-matrix"]`（QtyMatrix 根容器）、set-qty 步锚点 `[data-tour="qty-rowhead"]`（行头 th，querySelector 命中首行）；旧 `size-tabs`/`piece-card-head` 选择器与 ParsedPiecesView 卡片头的死锚点属性均已删除；TOUR_VERSION '1'→'2'（后经 '3'~'7' 连续 bump，现行 '7'，见 tour index 行）。改 selector / 增删步骤必须 bump TOUR_VERSION（US-032 版本号策略 + index.ts 版本历史注释）。
+- **浏览器端到端验证留作整体回归**：本会话工具集无 chrome-devtools-mcp（与 US-032 同况）；已覆盖 npm build + ms-web 冒烟（GET / 200 + parse API 200）+ jsdom 单测全绿（US-005 收口 605 项，含 previewTour.test.tsx 锚点渲染命中 5 项）。
 
 ## 矩阵化重构 US-004 关键约定（parse 透传 ptype/paired + 物理片数口径 调用方必读）
 
-- **ptype/paired 是 additive 可选字段**：`ParsedPiece.ptype?: string` / `paired?: boolean`。旧响应 / 测试桩 / 防御路径缺字段一律按非配对（×1）计 —— QtyMatrix `pairedOf` 用 `=== true` 判、SizePicker 用 `piece.paired ? 2 : 1`。改兜底语义须同步 QtyMatrix「缺 paired 字段 → ×1 旧口径兼容」describe 与 SizePicker「缺 paired 字段」用例。
-- **物理片数口径只活在展示层**：行合计列 / 每码小计行 / 工具条总片数（QtyMatrix）+「总裁片数量」（SizePicker）= Σ demand × (paired ? 2 : 1)；WS `quantities` 线格式仍是「份」口径（serializeQuantities 零改动）。把 ×2 写进 qtyStore / start payload 属回退。
-- **乘数按 (label, size) 逐格取**：`multOf(label, size)` 从 piecesByLabel 逐格查 `paired`（理论同 label 跨码不一致时按格累加）；仅行头徽章 `rowPaired` 取「任一码配对」（视觉汇总）。QtyMatrix「同 label 跨码 paired 不一致」用例锁死。
-- **配对徽章**：行头 `.qty-paired-badge`「×2」，title「配对片型：1 份 = 左右 (L+R) 2 物理片，小计按 ×2 计」；内片行不渲染。data-testid=`qty-paired-<label>` 供测试。
-- **全 0 拦截语义不变**：乘数 ≥1 → `computeTotalCutPieces === 0` ⟺ 全 demand=0；ControlPanel.handleStart 拦截逻辑零改动。
-- **后端同源**：parse 的 ptype 与 commit 完全同链路（`assign_group_no` + `GROUP_NAMES` 同函数同输入 → 同 gmap），label↔paired 徽章才能与后端镜像 L/R 展开对得上。后端链路任何改动须同步本组件口径（详见 materialSorting-server/src/materialsorting/web/AGENTS.md US-004 节）。
+> **⚠️ 本节已整体被裁片编号化重构取代（2026-08-18）**：`ptype`/`paired` 字段已从 parse 响应契约与 `ParsedPiece` 类型删除（GROUP_NAMES/PAIR_TYPES 后端整体退场），QtyMatrix/SizePicker 小计回到 **Σ 数量口径（无乘数，一份 = 母版一个轮廓）**，×2 徽章不渲染。本节仅作历史落地记录，勿按本节实现。
+
+- ~~**ptype/paired 是 additive 可选字段**~~（字段已删）：~~`ParsedPiece.ptype?: string` / `paired?: boolean`~~。
+- ~~**物理片数口径只活在展示层**~~（已回 Σ 数量口径）：行/列小计与总片数 = Σ demand（无乘数）；WS `quantities` 线格式仍是「份」口径（serializeQuantities 零改动 —— 该不变量延续）。
+- ~~**乘数按 (label, size) 逐格取**~~（multOf/pairedOf/rowPaired 已删）。
+- ~~**配对徽章**~~（`.qty-paired-badge` ×2 已删，QtyMatrix.test 断言其不渲染）。
+- **全 0 拦截语义不变**：`computeTotalCutPieces === 0` ⟺ 全 demand=0；ControlPanel.handleStart 拦截逻辑零改动（乘数删除后此条自然成立）。
+- ~~**后端同源**~~（assign_group_no/GROUP_NAMES 链路已删；后端现行赋码单一真相源 = `nesting_engine/labeling.assign_codes`，parse 与 commit 同函数同输入 → 同 g 码，详见 materialSorting-server 各 AGENTS.md）。
 
 ## 矩阵化重构 US-005 关键约定（tour 锚点迁矩阵 + TOUR_VERSION bump 调用方必读）
 
-- **previewTour 锚点只落 QtyMatrix**：parsed 步 = `[data-tour="qty-matrix"]`（根容器，指引列头切码看图形预览）；set-qty 步 = `[data-tour="qty-rowhead"]`（每个行头 th 都带，querySelector 命中首行；doc 非空 ⟹ 行数 ≥1，锚点恒在）。ParsedPiecesView 的旧 `data-tour="piece-card-head"` 已删（死锚点不残留）。重建旧锚点属回退。
-- **TOUR_VERSION bump 与锚点/步骤变更强绑定**：`'1'`（US-030 首次落地）→ `'2'`（US-005 锚点迁移）；tourStore init 检测 storedVersion 不一致自动清全部 seen（老用户下次进 Tab 自动重看）。改 selector / 增删步骤 / 改 ready 语义必须 bump 并更新 index.ts 文件头版本历史；仅文案微调不 bump。
-- **改 previewTour 步骤定义需同步 previewTour.test.tsx**：5 步 id 序列 / parsed+set-qty selector 精确值 + 旧选择器零残留 / TOUR_VERSION 值 / 文案关键词（矩阵/列头/格子/填充/高亮/×2）/ 锚点在渲染后 QtyMatrix 上 querySelector 命中，共 5 项。TourOverlay.test.tsx 的 step1 mock 元素也用 `qty-matrix`（跟真实 selector 走）。
+- **previewTour 锚点只落 QtyMatrix**：parsed 步 = `[data-tour="qty-matrix"]`（根容器；图形预览区拆除后文案指引矩阵 + 行头缩略图放大，不再指引图形预览区）；set-qty 步 = `[data-tour="qty-rowhead"]`（每个行头 th 都带，querySelector 命中首行；doc 非空 ⟹ 行数 ≥1，锚点恒在）。ParsedPiecesView 的旧 `data-tour="piece-card-head"` 已删（死锚点不残留）。重建旧锚点属回退。
+- **TOUR_VERSION bump 与锚点/步骤变更强绑定**：`'1'`（US-030 首次落地）→ `'2'`（US-005 锚点迁移）→ `'3'`（图形预览区拆除）→ `'4'`（矩阵行头简化）→ `'5'`（行级整行设值回归）→ `'6'`（数量矩阵行列转置）→ **`'7'`（现行，裁片编号化 US-003 Σ 口径）**；tourStore init 检测 storedVersion 不一致自动清全部 seen（老用户下次进 Tab 自动重看）。改 selector / 增删步骤 / 改 ready 语义必须 bump 并更新 index.ts 文件头版本历史；仅文案微调不 bump。
+- **改 previewTour 步骤定义需同步 previewTour.test.tsx**：5 步 id 序列 / parsed+set-qty selector 精确值 + 旧选择器零残留 / TOUR_VERSION 值（现行 '7'）/ 文案关键词（矩阵/行头/缩略图/整列设值）/ 锚点在渲染后 QtyMatrix 上 querySelector 命中，共 5 项。TourOverlay.test.tsx 的 step1 mock 元素也用 `qty-matrix`（跟真实 selector 走）。
 - **文档三处口径（改动后自查）**：`.docs/technical/agent-component-map.md`（覆盖清单 + 文件树 tour 行 + US-005 节 + US-008/014/030 节警告头）、`.docs/business/business-overview.md` 工作台交互 1/2 条、`CLAUDE.md` 数据流主线 —— 现行架构描述不得残留 SizeTabs/piece-card-head 数量编辑交互（历史落地段落除外，须带「已被矩阵化重构取代」警告头）。
