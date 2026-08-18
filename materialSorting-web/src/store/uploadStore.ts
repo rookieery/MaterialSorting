@@ -66,7 +66,7 @@ export interface CommitSummary {
 
 /** 放大预览模态目标（label + size；US-013 PieceZoomModal 订阅此字段自显隐）。 */
 export interface ZoomTarget {
-  /** 模态预览的片型 label（A/B/C...，跨码匹配同一片型）。 */
+  /** 模态预览的片型 label（g01+ 裁片码，跨码匹配同一片型）。 */
   label: string;
   /** 模态预览的码号（点击卡片所属 activeSize；null = 通用码）。 */
   size: number | null;

@@ -287,8 +287,8 @@ describe('useSolveRun', () => {
   it('US-022 quantities 非空时透传到 StartPayload（label→sizeKey→demand）', () => {
     const startRef = mountHook({});
     const quantities = {
-      A: { '30': 2, '32': 0 },
-      B: { '30': 1, '32': 1 },
+      g01: { '30': 2, '32': 0 },
+      g02: { '30': 1, '32': 1 },
     };
     act(() =>
       startRef.current({

@@ -28,7 +28,7 @@ let mockReps: PtypesResponse = { representatives: {} };
 const REPS: PtypesResponse = {
   representatives: {
     前片: {
-      label: 'A',
+      label: 'g01',
       polygon: [
         [0, 0],
         [100, 0],
@@ -115,12 +115,12 @@ describe('PtypePreviewModal (US-018)', () => {
     expect(overlay).not.toBeNull();
     expect(modal).not.toBeNull();
     // hover/aria 统一「编号-放大预览」格式，不含片型名
-    expect(modal!.getAttribute('aria-label')).toBe('A-放大预览');
-    expect(modal!.querySelector('.ptype-preview-head')!.getAttribute('title')).toBe('A-放大预览');
+    expect(modal!.getAttribute('aria-label')).toBe('g01-放大预览');
+    expect(modal!.querySelector('.ptype-preview-head')!.getAttribute('title')).toBe('g01-放大预览');
     const svg = modal!.querySelector('svg.piece-preview-svg');
     expect(svg).not.toBeNull();
     // rep.label → 头部编号徽章（与上传预览同口径），不再显示片型名
-    expect(modal!.querySelector('.piece-card-label')!.textContent).toBe('A');
+    expect(modal!.querySelector('.piece-card-label')!.textContent).toBe('g01');
     expect(modal!.querySelector('.ptype-preview-name')).toBeNull();
   });
 

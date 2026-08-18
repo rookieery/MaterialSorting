@@ -26,14 +26,14 @@ def _synthetic_pieces():
     """
     return [
         {
-            'pid': 'TEST_A_28_L', 'ptype': 'TEST_A', 'size': 28, 'side': 'L', 'label': 'A',
+            'pid': 'TEST_A_28_L', 'ptype': 'TEST_A', 'size': 28, 'side': 'L', 'label': 'g01',
             'polygon': [[0.0, 0.0], [500.0, 0.0], [500.0, 800.0], [0.0, 800.0]],
             'bbox': [0.0, 0.0, 500.0, 800.0], 'area_mm2': 400000.0, 'n_verts': 4,
             'allowed_angles': [0, 180],
             'net_polygon': [], 'internal_lines': [], 'notches': [], 'grain_line': None,
         },
         {
-            'pid': 'TEST_B_28_L', 'ptype': 'TEST_B', 'size': 28, 'side': 'L', 'label': 'B',
+            'pid': 'TEST_B_28_L', 'ptype': 'TEST_B', 'size': 28, 'side': 'L', 'label': 'g02',
             'polygon': [[0.0, 0.0], [300.0, 0.0], [300.0, 400.0], [0.0, 400.0]],
             'bbox': [0.0, 0.0, 300.0, 400.0], 'area_mm2': 120000.0, 'n_verts': 4,
             'allowed_angles': [0, 180],

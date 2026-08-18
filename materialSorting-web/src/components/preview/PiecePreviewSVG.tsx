@@ -6,7 +6,7 @@
 //   - layer8  内部线（polyline[]）：橙色实线
 //   - layer4  刀口（line[]）：黄色短线段，沿轮廓法线 8mm（暂定，待版师确认）
 //   - layer7  布纹线（line）：红色虚线
-//   - A/B/C 文字标注：暗底亮字（#e6e6e6），在翻转组外用屏幕坐标定位
+//   - g 码文字标注：暗底亮字（#e6e6e6），在翻转组外用屏幕坐标定位
 //
 // 命令式渲染范式（参考 NestSVG.tsx）：
 //   - React 仅渲染空骨架 `<svg ref/>`；
@@ -20,7 +20,7 @@
 //      SVG Y-down（与 PNG / R12-DXF / NestSVG 一致）。minY+maxY 是 bbox 的 Y 对称轴，
 //      翻转后 bbox 内几何视觉与 sparrow 视图一致（不上下颠倒）。NestSVG 是其特例
 //      （minY=0, maxY=gate → translate(0 gate) scale(1 -1)）。
-//   2. **A/B/C 文字标注放在翻转组 <g> 之外**（避免镜像），用屏幕坐标（SVG Y-down）
+//   2. **g 码文字标注放在翻转组 <g> 之外**（避免镜像），用屏幕坐标（SVG Y-down）
 //      定位；标注锚点 = 该片 bbox 左上角上方 LABEL_Y_OFFSET（baseline 在 minY - offset），
 //      font-size=LABEL_FONT_SIZE（cap 顶 ≈ minY - offset - 0.8*size，pad=14 时刚好在 viewBox 内）。
 //   3. **viewBox = bbox + pad**（默认 14，足够容纳 8mm 刀口短线段的一半 4mm + 标注文本 ~10mm）。
@@ -28,10 +28,10 @@
 //   5. **刀口端点 = P ± 4 * unit_normal**（unit_normal 来自后端 notch[2..3]），落在翻转组内
 //      随几何共翻转。法线为零向量（退化边）时画 0 长度线段（点）兜底，不渲染异常。
 //   6. **AC#4 多片同框**：prop 接受单 piece 或 piece[]；多片时合并 bbox 计算 viewBox，
-//      每片独立渲染 5 层 + 各自 A/B/C 标注。同框不刻意避免重叠（多片本身可能共享边界，
+//      每片独立渲染 5 层 + 各自 g 码标注。同框不刻意避免重叠（多片本身可能共享边界，
 //      由调用方决定是否同框 —— 现调用方均为单片场景（QtyMatrix 行缩略图 / PieceZoomModal
 //      等），多片能力留作未来扩展）。
-//   7. **compact 模式（US-018 AC#9）**：prop `compact?: boolean` 关 A/B/C 标注 +
+//   7. **compact 模式（US-018 AC#9）**：prop `compact?: boolean` 关 g 码标注 +
 //      小 pad（COMPACT_PAD=2，fit-to-cell）；非 compact 行为不变（向后兼容 PieceZoomModal）。
 //      用于 PerTypeOverridesModal 表头缩略图 / PtypePreviewModal 放大预览（layer-aware，
 //      v1 仅外轮廓，US-024 后数据带 5 层则画 5 层，本组件无需改动）。
@@ -50,7 +50,7 @@ const COLOR_NET = LAYER5_COLORS.NET;
 const COLOR_INTERNAL = LAYER5_COLORS.INTERNAL;
 const COLOR_NOTCH = LAYER5_COLORS.NOTCH;
 const COLOR_GRAIN = LAYER5_COLORS.GRAIN;
-const COLOR_LABEL = '#e6e6e6'; // A/B/C 标注（暗底亮字，与 body color 同色）
+const COLOR_LABEL = '#e6e6e6'; // g 码标注（暗底亮字，与 body color 同色）
 
 // ---- 几何常量 ----
 /** viewBox 默认内边距（mm）。14 容纳 4mm 刀口半段 + ~10mm 标注文本。 */
@@ -59,9 +59,9 @@ const DEFAULT_PAD = 14;
 const COMPACT_PAD = 2;
 /** pad 最小值（防刀口短线段被裁）。compact 模式不受此 clamp（缩略图刻意贴近边缘）。 */
 const MIN_PAD = 4;
-/** A/B/C 标注字体大小（用户单位 = mm）。 */
+/** g 码标注字体大小（用户单位 = mm）。 */
 const LABEL_FONT_SIZE = 11;
-/** A/B/C 标注 Y 偏移（baseline 距 bbox 顶部，单位 mm）。 */
+/** g 码标注 Y 偏移（baseline 距 bbox 顶部，单位 mm）。 */
 const LABEL_Y_OFFSET = 3;
 
 // ---- 类型 + 纯函数（导出便于单测） ----
@@ -222,7 +222,7 @@ function renderPieceLayers(flipGroup: SVGGElement, piece: ParsedPiece): void {
   }
 }
 /**
- * 在 svg 根（翻转组外）渲染 A/B/C 文字标注。屏幕坐标（SVG Y-down）定位 ——
+ * 在 svg 根（翻转组外）渲染 g 码文字标注。屏幕坐标（SVG Y-down）定位 ——
  * 不进翻转组避免镜像；锚点 = piece bbox 左上角上方 LABEL_Y_OFFSET（baseline 在 minY - offset）。
  */
 function renderLabel(svg: SVGSVGElement, piece: ParsedPiece): void {
@@ -253,7 +253,7 @@ export interface PiecePreviewSVGProps {
   /** viewBox 内边距（mm），默认 14（容纳 8mm 刀口 + 标注文本）；最小 4。 */
   pad?: number;
   /**
-   * US-018 AC#9 compact 模式：关 A/B/C 标注 + 用 COMPACT_PAD(2) 默认 pad（fit-to-cell）。
+   * US-018 AC#9 compact 模式：关 g 码标注 + 用 COMPACT_PAD(2) 默认 pad（fit-to-cell）。
    * 用于 QtyMatrix 行头（80×80）/ PerTypeOverridesModal 表头（64×64）等缩略图 cell。
    * 非 compact 行为不变（向后兼容）。
    */
@@ -307,7 +307,7 @@ export function PiecePreviewSVG({
     svg.appendChild(flip);
     for (const p of pieces) renderPieceLayers(flip, p);
 
-    // 2) A/B/C 文字标注（屏幕坐标，翻转组外）—— compact 模式跳过（缩略图无标注）
+    // 2) g 码文字标注（屏幕坐标，翻转组外）—— compact 模式跳过（缩略图无标注）
     if (!compact) {
       for (const p of pieces) renderLabel(svg, p);
     }

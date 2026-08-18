@@ -93,9 +93,9 @@ function makeDocWithPieces(): ParsedDoc {
     doc_id: "doc-pieces",
     filename: "M1787-pieces.dxf",
     sizes: [
-      { size: 28, pieces: [piece("A"), piece("B")] },
-      { size: 29, pieces: [piece("A"), piece("B"), piece("C")] },
-      { size: 30, pieces: [piece("A")] },
+      { size: 28, pieces: [piece("g01"), piece("g02")] },
+      { size: 29, pieces: [piece("g01"), piece("g02"), piece("g03")] },
+      { size: 30, pieces: [piece("g01")] },
     ],
   };
 }
@@ -120,8 +120,8 @@ function makePairedDoc(): ParsedDoc {
     doc_id: "doc-paired",
     filename: "M1787-paired.dxf",
     sizes: [
-      { size: 28, pieces: [piece("A", "前片", true), piece("B", "单排", false)] },
-      { size: 30, pieces: [piece("A", "前片", true)] },
+      { size: 28, pieces: [piece("g01", "前片", true), piece("g02", "单排", false)] },
+      { size: 30, pieces: [piece("g01", "前片", true)] },
     ],
   };
 }
@@ -290,7 +290,7 @@ describe("SizePicker (US-017)", () => {
   it("demand>1 → 总裁片数量按 demand 放大（每片 × demand）", () => {
     useUploadStore.setState({ status: "done", doc: makeDocWithPieces() });
     // 28 码 A 片 demand=3（其余未配置 → 1）：28 = A(3) + B(1) = 4；30 = A(1) = 1 → 合计 5
-    useQtyStore.getState().setPiecePerSize("A", 28, 3);
+    useQtyStore.getState().setPiecePerSize("g01", 28, 3);
     renderPicker([28, 30]);
     expect(getTotalText()).toBe("5 片");
   });
@@ -298,7 +298,7 @@ describe("SizePicker (US-017)", () => {
   it("demand=0 → 该片不计入总裁片数量（显式排除）", () => {
     useUploadStore.setState({ status: "done", doc: makeDocWithPieces() });
     // 28 码 A 片 demand=0：28 = A(0) + B(1) = 1；30 = A(1) = 1 → 合计 2
-    useQtyStore.getState().setPiecePerSize("A", 28, 0);
+    useQtyStore.getState().setPiecePerSize("g01", 28, 0);
     renderPicker([28, 30]);
     expect(getTotalText()).toBe("2 片");
   });
@@ -309,7 +309,7 @@ describe("SizePicker (US-017)", () => {
     // 初始未配置 → 28 = A(1) + B(1) = 2 片
     expect(getTotalText()).toBe("2 片");
     // 改 A 片 28 码 demand=5 → 28 = A(5) + B(1) = 6 片（订阅触发重渲染）
-    act(() => useQtyStore.getState().setPiecePerSize("A", 28, 5));
+    act(() => useQtyStore.getState().setPiecePerSize("g01", 28, 5));
     expect(getTotalText()).toBe("6 片");
   });
 
@@ -339,7 +339,7 @@ describe("computeTotalCutPieces / effectiveDemand", () => {
 
   it("per-size demand 按 (label,size) 精确生效", () => {
     const q: PieceQuantityMap = {
-      A: { perSize: { "28": 3 }, baseValue: 3 },
+      g01: { perSize: { "28": 3 }, baseValue: 3 },
     };
     // 28: A(3)+B(1未配置→1)=4
     expect(computeTotalCutPieces(doc, [28], q)).toBe(4);
@@ -349,12 +349,12 @@ describe("computeTotalCutPieces / effectiveDemand", () => {
 
   it("effectiveDemand：未配置 label/per-size 缺省 → 1；显式 0 → 0", () => {
     const q: PieceQuantityMap = {
-      A: { perSize: { "28": 0 }, baseValue: 1 },
+      g01: { perSize: { "28": 0 }, baseValue: 1 },
     };
-    expect(effectiveDemand({}, "A", 28)).toBe(1); // label 未配置
-    expect(effectiveDemand(q, "A", 28)).toBe(0); // 显式 0
-    expect(effectiveDemand(q, "A", 29)).toBe(1); // per-size 缺省该码
-    expect(effectiveDemand(q, "B", 28)).toBe(1); // B 未配置
+    expect(effectiveDemand({}, "g01", 28)).toBe(1); // label 未配置
+    expect(effectiveDemand(q, "g01", 28)).toBe(0); // 显式 0
+    expect(effectiveDemand(q, "g01", 29)).toBe(1); // per-size 缺省该码
+    expect(effectiveDemand(q, "g02", 28)).toBe(1); // B 未配置
   });
 });
 
@@ -372,14 +372,14 @@ describe("computeTotalCutPieces (US-004 物理片数口径)", () => {
 
   it("paired × demand 复合放大（A@28 demand=3 → 3×2=6；勾 28 → 6+1=7）", () => {
     const q: PieceQuantityMap = {
-      A: { perSize: { "28": 3 }, baseValue: 3 },
+      g01: { perSize: { "28": 3 }, baseValue: 3 },
     };
     expect(computeTotalCutPieces(pairedDoc, [28], q)).toBe(7);
   });
 
   it("paired 片 demand=0 → 0×2=0 不计入（勾 28 → B 1 片）", () => {
     const q: PieceQuantityMap = {
-      A: { perSize: { "28": 0 }, baseValue: 0 },
+      g01: { perSize: { "28": 0 }, baseValue: 0 },
     };
     expect(computeTotalCutPieces(pairedDoc, [28], q)).toBe(1);
   });

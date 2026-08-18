@@ -48,6 +48,8 @@ logging.getLogger('ezdxf').setLevel(logging.ERROR)
 
 # 复用排料引擎的类型配色（PNG 与屏幕同色）
 from ..nesting_engine.sparrow_baseline import PTYPE_COLORS, DEFAULT_COLOR
+# 裁片码质心定位（g 码叠印用；labeling 单一真相源的算子）
+from ..nesting_engine.labeling import centroid
 # 绘图仪可写幅宽（单一事实源：nesting_bounds 定义，web/solver 求解约束同源引用）
 from ..nesting_bounds.load_pieces import PLOT_SAFE_MAX_Y_MM
 
@@ -89,8 +91,8 @@ def placed_to_world(placed, pieces_by_id):
 
     placed: [{id, rotation, translation:[tx,ty]}, ...]
     pieces_by_id: {pid: piece_dict}（piece_dict 含原始 polygon/ptype/size/area_mm2 +
-                  US-024 5 层字段 net_polygon/internal_lines/notches/grain_line）
-    → [{pid, ptype, size, polygon(world), color, area_mm2,
+                  US-024 5 层字段 net_polygon/internal_lines/notches/grain_line + label）
+    → [{pid, ptype, size, polygon(world), color, area_mm2, label,
         net_polygon, internal_lines, notches, grain_line}, ...]
 
     对 5 层全部按 placement 的 rotation+translation 变换到世界坐标：
@@ -136,6 +138,8 @@ def placed_to_world(placed, pieces_by_id):
             'polygon': world_poly,
             'color': PTYPE_COLORS.get(p['ptype'], DEFAULT_COLOR),   # 与屏幕同色
             'area_mm2': p.get('area_mm2'),
+            # g 码裁片标识（PNG 质心叠印 / DXF TEXT 用；旧 intermediate 无 → None 跳过）
+            'label': p.get('label'),
             # US-024：5 层世界坐标数据（PNG + DXF 共用）
             'net_polygon': world_net,
             'internal_lines': world_internal,
@@ -147,10 +151,12 @@ def placed_to_world(placed, pieces_by_id):
 
 # ===================== PNG（matplotlib）=====================
 def render_png(world_pieces, *, width_mm: float, gate_mm: float, title: str) -> bytes:
-    """渲染排料 PNG：门幅矩形 + 每片 5 层（毛版类型配色 + 工艺线）+ 标题 + 类型图例。
+    """渲染排料 PNG：门幅矩形 + 每片 5 层（毛版类型配色 + 工艺线）+ g 码标识 + 标题 + 类型图例。
 
     US-024：每片在毛版多边形之上叠加 net_polygon(绿虚线) + internal_lines(橙) +
     notches(黄短线段) + grain_line(红虚线)，与前端 NestSVG 视觉一致。
+    2026-08-18：每片质心叠印 g01+ 裁片码（深灰小字，zorder=3 在 5 层之上；label
+    缺席（旧 intermediate）跳过），打印产物可对照界面找片。
     """
     long_mm = max(width_mm, gate_mm, 1.0)
     long_in = 14.0
@@ -195,6 +201,13 @@ def render_png(world_pieces, *, width_mm: float, gate_mm: float, title: str) -> 
             ax.plot([gl[0], gl[2]], [gl[1], gl[3]],
                     color=LAYER5_COLOR_GRAIN, linewidth=0.7,
                     linestyle='--', zorder=2)
+        # g 码标识 —— 每片质心深灰小字（5 层之上；多副本同 pid 各自 placement 同码
+        # 各印，与界面/图例可对照；label 缺席（旧 intermediate）跳过）
+        label = pc.get('label')
+        if label:
+            cx, cy = centroid(pc['polygon'])
+            ax.text(cx, cy, label, fontsize=7, color='#333333',
+                    ha='center', va='center', zorder=3)
 
     ax.set_xlim(0, width_mm)
     ax.set_ylim(0, gate_mm)
@@ -225,16 +238,19 @@ _DXF_LAYER_NET = '14'      # 净版
 _DXF_LAYER_INTERNAL = '8'  # 内部线
 _DXF_LAYER_NOTCH = '4'     # 刺口（POINT）
 _DXF_LAYER_GRAIN = '7'     # 布纹线
+_DXF_LAYER_TEXT = 'TEXT'   # g 码裁片标识（2026-08-18；独立层与裁切/工艺层隔离）
 
 
 def write_marker_dxf(world_pieces, *, width_mm: float, gate_mm: float, title: str) -> bytes:
-    """写排料 marker DXF：R12，门幅边框 + 每片 5 层 POLYLINE/POINT（按 layer 分）+ ASCII 标题。
+    """写排料 marker DXF：R12，门幅边框 + 每片 5 层 POLYLINE/POINT（按 layer 分）+ g 码 TEXT + ASCII 标题。
 
     US-024：每片除 layer1 毛版（闭合 POLYLINE，ACI 按片型）外，附加：
       - layer14 净版（闭合 POLYLINE，color=3 绿）
       - layer8 内部线（多条 POLYLINE，color=6 橙，不闭合）
       - layer4 刺口（POINT，color=2 黄）
       - layer7 布纹线（LINE，color=7 红）
+    2026-08-18：每片质心附加 TEXT 层 ASCII 裁片码（``g01-30`` = g 码-码号；label
+    缺席（旧 intermediate）跳过），独立 layer 'TEXT' 与裁切/工艺层隔离。
     ET2008 兼容：layer1 是唯一裁切轮廓；附加 layer 仅工艺参考，裁床切 layer1。
     """
     doc = ezdxf.new('R12')
@@ -281,6 +297,17 @@ def write_marker_dxf(world_pieces, *, width_mm: float, gate_mm: float, title: st
             msp.add_line((round(gl[0], 2), round(gl[1], 2)),
                          (round(gl[2], 2), round(gl[3], 2)),
                          dxfattribs={'color': 7, 'layer': _DXF_LAYER_GRAIN})
+
+        # g 码标识（2026-08-18）：每片质心 ASCII TEXT（g 码-码号，如 ``g01-30``；
+        # size 为 None 时只印 g 码），独立 layer 'TEXT'。label 缺席（旧
+        # intermediate）跳过。纯 ASCII，无 GBK/字库坑（同标题口径）。
+        label = pc.get('label')
+        if label:
+            cx, cy = centroid(pc['polygon'])
+            text = f"{label}-{pc['size']}" if pc.get('size') is not None else label
+            msp.add_text(text, dxfattribs={
+                'height': 25, 'insert': (round(cx, 2), round(cy, 2)),
+                'layer': _DXF_LAYER_TEXT, 'color': 7})
 
     # ASCII 标题（避免 GBK/编码坑）
     if title:
@@ -458,7 +485,8 @@ def write_marker_plt(world_pieces, *, width_mm: float, gate_mm: float, title: st
     ``SP1`` 门幅框+全部毛版轮廓 → ``SP2..SP5`` 逐层净版/内部线/刺口/布纹线（与
     DXF layer1/14/8/4/7 同映射）→ ``PU;PG;`` 出纸收尾一行。笔号语义见 ``_PEN_*``。
     ``title`` 参数仅为与 ``write_marker_dxf`` 同签名保留，**不输出 LB 文字**（生产
-    PLT 无文字指令，字库兼容性交给设备端）。
+    PLT 无文字指令，字库兼容性交给设备端；PNG/DXF 的逐片 g 码标识同样**不进 PLT**，
+    撞机/字库风险优先）。
 
     安全幅面（防撞机，见模块注释「现场撞机修正」）：
       - 求解侧已把约束带钳到 ``min(门幅, PLOT_SAFE_MAX_Y_MM)``（web/solver

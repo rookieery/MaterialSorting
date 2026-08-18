@@ -1,6 +1,6 @@
 // QtyState —— 裁片数量状态 store（US-011；矩阵化重构 US-001 简化 + setRowAll）。
 //
-// 单一真相源：以片型 label（A/B/C/...）为 key，跨码匹配同一片型。每码独立持有数量
+// 单一真相源：以片型 label（g01+ 裁片码）为 key，跨码匹配同一片型。每码独立持有数量
 // （perSize[sizeKey]）；baseValue 是该行的基准值，仅 UI 特例高亮用，不参与序列化。
 //
 // 与 uploadStore 完全解耦：本 store 仅管数量，不依赖 React（纯 Zustand），便于纯函数测试。

@@ -45,9 +45,9 @@ const sampleDoc: ParsedDoc = {
   doc_id: "abc123",
   filename: "M1787.dxf",
   sizes: [
-    { size: 28, pieces: [makePiece("A", "front..28"), makePiece("B", "back..28")] },
-    { size: 30, pieces: [makePiece("A", "front..30"), makePiece("B", "back..30")] },
-    { size: null, pieces: [makePiece("C", "universal")] },
+    { size: 28, pieces: [makePiece("g01", "front..28"), makePiece("g02", "back..28")] },
+    { size: 30, pieces: [makePiece("g01", "front..30"), makePiece("g02", "back..30")] },
+    { size: null, pieces: [makePiece("g03", "universal")] },
   ],
 };
 
@@ -93,31 +93,31 @@ describe("PieceZoomModal (US-013)", () => {
   });
 
   it("doc=null does not render even if zoom!==null", () => {
-    useUploadStore.getState().openZoom("A", 30);
+    useUploadStore.getState().openZoom("g01", 30);
     renderModal();
     expect(document.body.querySelector(".piece-zoom-overlay")).toBeNull();
   });
 
   it("opening renders overlay + modal with aria-label", () => {
     useUploadStore.setState({ doc: sampleDoc });
-    useUploadStore.getState().openZoom("A", 30);
+    useUploadStore.getState().openZoom("g01", 30);
     renderModal();
     const overlay = document.body.querySelector(".piece-zoom-overlay");
     const modal = document.body.querySelector(".piece-zoom-modal");
     expect(overlay).not.toBeNull();
     expect(modal).not.toBeNull();
-    expect(modal!.getAttribute("aria-label")).toContain("A");
+    expect(modal!.getAttribute("aria-label")).toContain("g01");
     expect(modal!.getAttribute("aria-label")).toContain("30");
   });
 
   it("head contains label badge + qty(份) + sizeLabel + name", () => {
     useUploadStore.setState({ doc: sampleDoc });
-    useUploadStore.getState().openZoom("B", 30);
+    useUploadStore.getState().openZoom("g02", 30);
     renderModal();
     const head = document.body.querySelector(".piece-zoom-head");
     expect(head).not.toBeNull();
     const badge = head!.querySelector(".piece-card-label");
-    expect(badge!.textContent).toBe("B");
+    expect(badge!.textContent).toBe("g02");
     const qty = head!.querySelector(".piece-zoom-qty");
     expect(qty!.textContent).toBe("0份");
     const meta = head!.querySelector(".piece-zoom-meta");
@@ -127,9 +127,9 @@ describe("PieceZoomModal (US-013)", () => {
   });
 
   it("head shows qty from qtyStore getPieceDisplay", () => {
-    useQtyStore.getState().setPiecePerSize("A", 28, 7);
+    useQtyStore.getState().setPiecePerSize("g01", 28, 7);
     useUploadStore.setState({ doc: sampleDoc });
-    useUploadStore.getState().openZoom("A", 28);
+    useUploadStore.getState().openZoom("g01", 28);
     renderModal();
     const qty = document.body.querySelector(".piece-zoom-qty");
     expect(qty!.textContent).toBe("7份");
@@ -137,7 +137,7 @@ describe("PieceZoomModal (US-013)", () => {
 
   it("sizeLabel shows tong-yong (universal) for null size", () => {
     useUploadStore.setState({ doc: sampleDoc });
-    useUploadStore.getState().openZoom("C", null);
+    useUploadStore.getState().openZoom("g03", null);
     renderModal();
     const meta = document.body.querySelector(".piece-zoom-meta");
     // 通用 = universal in CN
@@ -146,7 +146,7 @@ describe("PieceZoomModal (US-013)", () => {
 
   it("body contains svg.piece-preview-svg (PiecePreviewSVG reused)", () => {
     useUploadStore.setState({ doc: sampleDoc });
-    useUploadStore.getState().openZoom("A", 30);
+    useUploadStore.getState().openZoom("g01", 30);
     renderModal();
     const body = document.body.querySelector(".piece-zoom-body");
     expect(body).not.toBeNull();
@@ -156,7 +156,7 @@ describe("PieceZoomModal (US-013)", () => {
 
   it("close button click calls closeZoom", () => {
     useUploadStore.setState({ doc: sampleDoc });
-    useUploadStore.getState().openZoom("A", 30);
+    useUploadStore.getState().openZoom("g01", 30);
     renderModal();
     const closeBtn = document.body.querySelector(".piece-zoom-close") as HTMLButtonElement;
     expect(useUploadStore.getState().zoom).not.toBeNull();
@@ -168,7 +168,7 @@ describe("PieceZoomModal (US-013)", () => {
 
   it("overlay click closes modal", () => {
     useUploadStore.setState({ doc: sampleDoc });
-    useUploadStore.getState().openZoom("A", 30);
+    useUploadStore.getState().openZoom("g01", 30);
     renderModal();
     const overlay = document.body.querySelector(".piece-zoom-overlay") as HTMLDivElement;
     act(() => {
@@ -179,7 +179,7 @@ describe("PieceZoomModal (US-013)", () => {
 
   it("modal inner click does NOT close (stopPropagation)", () => {
     useUploadStore.setState({ doc: sampleDoc });
-    useUploadStore.getState().openZoom("A", 30);
+    useUploadStore.getState().openZoom("g01", 30);
     renderModal();
     const modal = document.body.querySelector(".piece-zoom-modal") as HTMLDivElement;
     act(() => {
@@ -190,7 +190,7 @@ describe("PieceZoomModal (US-013)", () => {
 
   it("ESC closes modal", () => {
     useUploadStore.setState({ doc: sampleDoc });
-    useUploadStore.getState().openZoom("A", 30);
+    useUploadStore.getState().openZoom("g01", 30);
     renderModal();
     act(() => {
       window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
@@ -200,7 +200,7 @@ describe("PieceZoomModal (US-013)", () => {
 
   it("Portal target = document.body (root not inside container)", () => {
     useUploadStore.setState({ doc: sampleDoc });
-    useUploadStore.getState().openZoom("A", 30);
+    useUploadStore.getState().openZoom("g01", 30);
     renderModal();
     const overlay = document.body.querySelector(".piece-zoom-overlay");
     expect(overlay).not.toBeNull();
@@ -217,7 +217,7 @@ describe("PieceZoomModal (US-013)", () => {
 
   it("size not found in doc -> no render (defensive)", () => {
     useUploadStore.setState({ doc: sampleDoc });
-    useUploadStore.getState().openZoom("A", 99);
+    useUploadStore.getState().openZoom("g01", 99);
     renderModal();
     expect(document.body.querySelector(".piece-zoom-overlay")).toBeNull();
   });

@@ -16,7 +16,7 @@
 // fetch 期间保留上次 reps（不闪 loading）。representatives[previewPtype] 不存在 →
 // 渲染空体（降级：fetch 失败、空 state、ptype 缺代表裁片，均退化为「无预览」）。
 //
-// 头部编号（2026-08-17）：rep.label（代表裁片在上传预览里的 A/B/C 编号，与
+// 头部编号（2026-08-17）：rep.label（代表裁片在上传预览里的 g01+ 编号，与
 // QtyMatrix 列头同口径）徽章复用 .piece-card-label（PieceZoomModal 头部同款）；
 // rep.label 缺席（旧 intermediate / fetch 降级）兜底片型名。hover/aria 只报编号
 // 不报片型名：`${编号}-放大预览`（与 PerTypeOverridesModal 缩略图 hover 同格式）。
@@ -41,7 +41,7 @@ import { PiecePreviewSVG } from '../preview/PiecePreviewSVG';
 /** 把 PtypeRepresentative 扩展为 ParsedPiece（label 空、name=ptype）。 */
 function repToPiece(rep: PtypeRepresentative, ptype: string): ParsedPiece {
   return {
-    label: '', // 放大预览不展示 A/B/C 标注（ptype 代表裁片跨码合并，label 无意义）
+    label: '', // 放大预览不展示 g 码标注（ptype 代表裁片跨码合并，label 无意义）
     name: ptype,
     polygon: rep.polygon,
     internal_lines: rep.internal_lines ?? [],

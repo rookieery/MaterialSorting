@@ -248,53 +248,53 @@ describe('serializeQuantities (US-022；US-001 删 global 分支)', () => {
   });
 
   it('perSize 原样透传（含 0，不抹零）', () => {
-    const map = makePerSizeMap('A', { '28': 2, '30': 0 });
+    const map = makePerSizeMap('g01', { '28': 2, '30': 0 });
     const out = serializeQuantities(map, [28, 30]);
-    expect(out).toEqual({ A: { '28': 2, '30': 0 } });
+    expect(out).toEqual({ g01: { '28': 2, '30': 0 } });
   });
 
   it('未选中码被过滤（用户取消勾选 → 不参与排料）', () => {
-    const map = makePerSizeMap('A', { '28': 1, '30': 1, '32': 1 });
+    const map = makePerSizeMap('g01', { '28': 1, '30': 1, '32': 1 });
     // 只选了 28 / 30，32 被过滤
     const out = serializeQuantities(map, [28, 30]);
-    expect(out).toEqual({ A: { '28': 1, '30': 1 } });
+    expect(out).toEqual({ g01: { '28': 1, '30': 1 } });
   });
 
   it("'null' sizeKey（通用码）兜底保留（不在 sizes 内也透传）", () => {
-    const map = makePerSizeMap('A', { null: 2 });
+    const map = makePerSizeMap('g01', { null: 2 });
     const out = serializeQuantities(map, [28]);
-    expect(out).toEqual({ A: { null: 2 } });
+    expect(out).toEqual({ g01: { null: 2 } });
   });
 
   it('多 label 独立透传（线格式与旧版 per-size 路径逐字段一致）', () => {
     const map: PieceQuantityMap = {
-      A: { perSize: { '28': 2, '30': 1 }, baseValue: 1 },
-      B: { perSize: { '28': 1, '30': 4 }, baseValue: 4 },
+      g01: { perSize: { '28': 2, '30': 1 }, baseValue: 1 },
+      g02: { perSize: { '28': 1, '30': 4 }, baseValue: 4 },
     };
     const out = serializeQuantities(map, [28, 30]);
     expect(out).toEqual({
-      A: { '28': 2, '30': 1 },
-      B: { '28': 1, '30': 4 },
+      g01: { '28': 2, '30': 1 },
+      g02: { '28': 1, '30': 4 },
     });
   });
 
   it('baseValue 不参与序列化（仅 UI 高亮基准）', () => {
-    const map = makePerSizeMap('A', { '28': 2 });
+    const map = makePerSizeMap('g01', { '28': 2 });
     const out = serializeQuantities(map, [28]);
-    expect(out).toEqual({ A: { '28': 2 } });
+    expect(out).toEqual({ g01: { '28': 2 } });
     expect(JSON.stringify(out)).not.toContain('baseValue');
   });
 
   it('label 全部码被过滤（未勾选任何码）→ 该 label 不出现在输出', () => {
     const map: PieceQuantityMap = {
-      A: { perSize: { '32': 1 }, baseValue: 1 },
+      g01: { perSize: { '32': 1 }, baseValue: 1 },
     };
     const out = serializeQuantities(map, [28]);
     expect(out).toBeNull();
   });
 
   it('空 sizes → null（无选中码，不发 demand；ControlPanel.handleStart 已前置校验）', () => {
-    const map = makePerSizeMap('A', { '28': 1 });
+    const map = makePerSizeMap('g01', { '28': 1 });
     const out = serializeQuantities(map, []);
     expect(out).toBeNull();
   });

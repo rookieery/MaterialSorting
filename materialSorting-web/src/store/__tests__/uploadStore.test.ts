@@ -95,23 +95,23 @@ describe('uploadStore zoom (US-013)', () => {
   });
 
   it('openZoom(label, size) 写入 {label, size}', () => {
-    useUploadStore.getState().openZoom('A', 30);
-    expect(useUploadStore.getState().zoom).toEqual({ label: 'A', size: 30 });
+    useUploadStore.getState().openZoom('g01', 30);
+    expect(useUploadStore.getState().zoom).toEqual({ label: 'g01', size: 30 });
   });
 
   it('openZoom(label, null) 写入 size=null（通用码）', () => {
-    useUploadStore.getState().openZoom('B', null);
-    expect(useUploadStore.getState().zoom).toEqual({ label: 'B', size: null });
+    useUploadStore.getState().openZoom('g02', null);
+    expect(useUploadStore.getState().zoom).toEqual({ label: 'g02', size: null });
   });
 
   it('closeZoom() 清回 null', () => {
-    useUploadStore.getState().openZoom('A', 30);
+    useUploadStore.getState().openZoom('g01', 30);
     useUploadStore.getState().closeZoom();
     expect(useUploadStore.getState().zoom).toBeNull();
   });
 
   it('reset() 同时清 zoom=null', () => {
-    useUploadStore.getState().openZoom('A', 30);
+    useUploadStore.getState().openZoom('g01', 30);
     useUploadStore.getState().reset();
     expect(useUploadStore.getState().zoom).toBeNull();
   });
@@ -119,10 +119,10 @@ describe('uploadStore zoom (US-013)', () => {
   it('订阅者收到 zoom 变化（open + close）', () => {
     const seen: ({ label: string; size: number | null } | null)[] = [];
     const unsub = useUploadStore.subscribe((s) => seen.push(s.zoom));
-    useUploadStore.getState().openZoom('A', 28);
+    useUploadStore.getState().openZoom('g01', 28);
     useUploadStore.getState().closeZoom();
     unsub();
-    expect(seen).toEqual([{ label: 'A', size: 28 }, null]);
+    expect(seen).toEqual([{ label: 'g01', size: 28 }, null]);
   });
 });
 

@@ -70,7 +70,7 @@ afterEach(() => {
 /** 构造一片：方框 100x80。 */
 function makePiece(overrides: Partial<ParsedPiece> = {}): ParsedPiece {
   return {
-    label: 'A',
+    label: 'g01',
     name: '前片',
     polygon: [
       [10, 20],
@@ -91,8 +91,8 @@ function makeDoc(): ParsedDoc {
     doc_id: 'deadbeef',
     filename: 'M1787.dxf',
     sizes: [
-      { size: 28, pieces: [makePiece({ label: 'A', name: '前片28' })] },
-      { size: 30, pieces: [makePiece({ label: 'A', name: '前片30' }), makePiece({ label: 'B', name: '后片30' })] },
+      { size: 28, pieces: [makePiece({ label: 'g01', name: '前片28' })] },
+      { size: 30, pieces: [makePiece({ label: 'g01', name: '前片30' }), makePiece({ label: 'g02', name: '后片30' })] },
     ],
   };
 }
@@ -211,7 +211,7 @@ describe('PreviewPage (US-014) 模态挂载', () => {
     });
     renderPage();
     act(() => {
-      useUploadStore.getState().openZoom('A', 28);
+      useUploadStore.getState().openZoom('g01', 28);
     });
     expect(document.body.querySelector('.piece-zoom-overlay')).not.toBeNull();
   });
@@ -227,8 +227,8 @@ describe('PreviewPage (US-014) qtyStore 联动（hydrate 默认 1 / reset 清空
     renderPage();
     const map = useQtyStore.getState().quantities;
     // makeDoc：28 码 A，30 码 A+B
-    expect(map.A.perSize).toEqual({ '28': 1, '30': 1 });
-    expect(map.B.perSize).toEqual({ '30': 1 });
+    expect(map.g01.perSize).toEqual({ '28': 1, '30': 1 });
+    expect(map.g02.perSize).toEqual({ '30': 1 });
   });
 
   it('uploadStore.reset() 联动 qtyStore.resetQuantities（doc→null 触发）', () => {
@@ -240,7 +240,7 @@ describe('PreviewPage (US-014) qtyStore 联动（hydrate 默认 1 / reset 清空
     renderPage();
     // 先填一些数量（包 act，触发 QtyMatrix re-render）
     act(() => {
-      useQtyStore.getState().setPiecePerSize('A', 28, 5);
+      useQtyStore.getState().setPiecePerSize('g01', 28, 5);
     });
     expect(Object.keys(useQtyStore.getState().quantities).length).toBeGreaterThan(0);
     // 调 reset
@@ -258,9 +258,9 @@ describe('PreviewPage (US-014) qtyStore 联动（hydrate 默认 1 / reset 清空
     });
     renderPage();
     act(() => {
-      useQtyStore.getState().setPiecePerSize('A', 28, 5);
+      useQtyStore.getState().setPiecePerSize('g01', 28, 5);
     });
-    expect(useQtyStore.getState().quantities.A.perSize['28']).toBe(5);
+    expect(useQtyStore.getState().quantities.g01.perSize['28']).toBe(5);
     // 模拟重传：doc_id 变化（同 sizes）→ 重新 hydrate，旧编辑 5 被默认 1 覆盖
     act(() => {
       useUploadStore.setState({
@@ -270,8 +270,8 @@ describe('PreviewPage (US-014) qtyStore 联动（hydrate 默认 1 / reset 清空
       });
     });
     const map = useQtyStore.getState().quantities;
-    expect(map.A.perSize).toEqual({ '28': 1, '30': 1 });
-    expect(map.B.perSize).toEqual({ '30': 1 });
+    expect(map.g01.perSize).toEqual({ '28': 1, '30': 1 });
+    expect(map.g02.perSize).toEqual({ '30': 1 });
   });
 
   it('切 activeSize 不触发 hydrate/reset（doc_id 不变，数量保留）', () => {
@@ -282,13 +282,13 @@ describe('PreviewPage (US-014) qtyStore 联动（hydrate 默认 1 / reset 清空
     });
     renderPage();
     act(() => {
-      useQtyStore.getState().setPiecePerSize('A', 28, 5);
+      useQtyStore.getState().setPiecePerSize('g01', 28, 5);
     });
     act(() => {
       useUploadStore.getState().setSize(30);
     });
     // 数量应保留
-    expect(useQtyStore.getState().quantities.A.perSize['28']).toBe(5);
+    expect(useQtyStore.getState().quantities.g01.perSize['28']).toBe(5);
   });
 });
 
@@ -300,7 +300,7 @@ describe('PreviewPage (US-003) 端到端：矩阵格子编辑数量', () => {
     input.dispatchEvent(new Event('input', { bubbles: true }));
   }
 
-  it('解析成功 → 矩阵改 A@30=3（blur 提交）→ 仅该码 perSize 写入 + 行合计/总片数即时刷新', () => {
+  it('解析成功 → 矩阵改 g01@30=3（blur 提交）→ 仅该码 perSize 写入 + 行合计/总片数即时刷新', () => {
     useUploadStore.setState({
       status: 'done',
       doc: makeDoc(),
@@ -309,7 +309,7 @@ describe('PreviewPage (US-003) 端到端：矩阵格子编辑数量', () => {
     const el = renderPage();
     // 定位 A@30 格子（aria-label 精确匹配，QtyMatrix 同口径）
     const cell = el.querySelector<HTMLInputElement>(
-      'input[aria-label="裁片 A 码 30 数量"]',
+      'input[aria-label="裁片 g01 码 30 数量"]',
     )!;
     expect(cell).not.toBeNull();
     act(() => {
@@ -322,7 +322,7 @@ describe('PreviewPage (US-003) 端到端：矩阵格子编辑数量', () => {
       cell.blur();
     });
     // qtyStore 仅 30 码 perSize 写入 3（格内编辑，不影响其它码）
-    const q = useQtyStore.getState().quantities.A;
+    const q = useQtyStore.getState().quantities.g01;
     expect(q.perSize['30']).toBe(3);
     expect(q.perSize['28']).toBe(1);
     // A 列合计即时刷新（转置后每裁片合计在 tfoot）：A = 28 码 1 + 30 码 3 = 4

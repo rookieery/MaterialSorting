@@ -1,7 +1,7 @@
 // PiecePreviewSVG 单测（US-007）：
 //   AC#1 命令式渲染范式（React 仅渲染空骨架；子节点全部 imperative；flipRef 幂等在 StrictMode 双 mount 安全）
 //   AC#2 渲染分层（毛版蓝实心 / 净版绿虚 / 内部线橙实 / 刀口黄短线 / 布纹线红虚）
-//   AC#3 翻转组 transform = translate(0 minY+maxY) scale(1 -1) + A/B/C 文字在翻转组外（不镜像）
+//   AC#3 翻转组 transform = translate(0 minY+maxY) scale(1 -1) + g 码文字在翻转组外（不镜像）
 //   AC#4 单片 / 多片同框 / 空片容错
 //   AC#5 切 piece 整组重建（不残留旧节点）+ pad clamp
 
@@ -38,7 +38,7 @@ afterEach(() => {
 /** 构造一片：方框 100x80 在 (10,20)-(110,100)，可选附加 net/internal/notch/grain。 */
 function makePiece(overrides: Partial<ParsedPiece> = {}): ParsedPiece {
   return {
-    label: 'A',
+    label: 'g01',
     name: '前片-30',
     polygon: [
       [10, 20],
@@ -121,7 +121,7 @@ describe('PiecePreviewSVG (US-007) — pieceBBox / piecesBBox pure helpers', () 
 
   it('pieceBBox 空片（全无数据）返回 null', () => {
     const p: ParsedPiece = {
-      label: 'A',
+      label: 'g01',
       name: '空',
       polygon: [],
       internal_lines: [],
@@ -341,7 +341,7 @@ describe('PiecePreviewSVG (US-007) AC#2 渲染分层（颜色 / 线型 / 数据�
     expect(flip.querySelectorAll('line[data-role="grain"]').length).toBe(1);
   });
 });
-describe('PiecePreviewSVG (US-007) AC#3 坐标系翻转 + A/B/C 文字标注（不镜像）', () => {
+describe('PiecePreviewSVG (US-007) AC#3 坐标系翻转 + g 码文字标注（不镜像）', () => {
   it('翻转组 transform = translate(0 minY+maxY) scale(1 -1)', () => {
     // piece bbox (10,20)-(110,100)：minY+maxY=120
     const svg = mountSimple(makePiece());
@@ -352,7 +352,7 @@ describe('PiecePreviewSVG (US-007) AC#3 坐标系翻转 + A/B/C 文字标注（�
   it('翻转组 transform 与多片合并 bbox 一致（取并集 minY+maxY）', () => {
     const a = makePiece(); // (10,20)-(110,100)
     const b = makePiece({
-      label: 'B',
+      label: 'g02',
       name: 'b',
       polygon: [
         [200, 0],
@@ -386,18 +386,18 @@ describe('PiecePreviewSVG (US-007) AC#3 坐标系翻转 + A/B/C 文字标注（�
     expect(svg.getAttribute('viewBox')).toBe('6 16 108 88');
   });
 
-  it('A/B/C 文字标注在翻转组外（svg 直接子节点，非 flipGroup 内）', () => {
-    const svg = mountSimple(makePiece({ label: 'C' }));
+  it('g 码文字标注在翻转组外（svg 直接子节点，非 flipGroup 内）', () => {
+    const svg = mountSimple(makePiece({ label: 'g03' }));
     const text = svg.querySelector('text[data-role="label"]') as SVGTextElement | null;
     expect(text).not.toBeNull();
     // 直接 child of svg，不在 flipGroup 内
     expect(text!.parentNode).toBe(svg);
-    expect(text!.textContent).toBe('C');
+    expect(text!.textContent).toBe('g03');
   });
 
-  it('A/B/C 标注用屏幕坐标（minX, minY - LABEL_Y_OFFSET）', () => {
+  it('g 码标注用屏幕坐标（minX, minY - LABEL_Y_OFFSET）', () => {
     // piece bbox (10,20)-(110,100)；minX=10, minY=20, offset=3 → baseline y=17
-    const svg = mountSimple(makePiece({ label: 'A' }));
+    const svg = mountSimple(makePiece({ label: 'g01' }));
     const text = svg.querySelector('text[data-role="label"]')!;
     expect(text.getAttribute('x')).toBe('10');
     expect(text.getAttribute('y')).toBe('17');
@@ -411,10 +411,10 @@ describe('PiecePreviewSVG (US-007) AC#3 坐标系翻转 + A/B/C 文字标注（�
     expect(svg.querySelector('text[data-role="label"]')).toBeNull();
   });
 
-  it('多片同框：每个 piece 各自的 A/B/C 标注独立渲染（无镜像，各自 bbox 锚点）', () => {
-    const a = makePiece({ label: 'A' }); // bbox (10,20)-(110,100) → 文字在 (10,17)
+  it('多片同框：每个 piece 各自的 g 码标注独立渲染（无镜像，各自 bbox 锚点）', () => {
+    const a = makePiece({ label: 'g01' }); // bbox (10,20)-(110,100) → 文字在 (10,17)
     const b = makePiece({
-      label: 'B',
+      label: 'g02',
       name: 'b',
       polygon: [
         [200, 0],
@@ -427,10 +427,10 @@ describe('PiecePreviewSVG (US-007) AC#3 坐标系翻转 + A/B/C 文字标注（�
     const texts = svg.querySelectorAll('text[data-role="label"]');
     expect(texts.length).toBe(2);
     const labels = Array.from(texts).map((t) => t.textContent);
-    expect(labels).toContain('A');
-    expect(labels).toContain('B');
+    expect(labels).toContain('g01');
+    expect(labels).toContain('g02');
     // B 的 baseline y = 0 - 3 = -3
-    const textB = Array.from(texts).find((t) => t.textContent === 'B')!;
+    const textB = Array.from(texts).find((t) => t.textContent === 'g02')!;
     expect(textB.getAttribute('x')).toBe('200');
     expect(textB.getAttribute('y')).toBe('-3');
   });
@@ -444,9 +444,9 @@ describe('PiecePreviewSVG (US-007) AC#4 单片 / 多片 / 空片容错', () => {
 
   it('多片：flipGroup 内 rough 数 = pieces.length；标注数 = pieces.length', () => {
     const pieces: ParsedPiece[] = [
-      makePiece({ label: 'A' }),
+      makePiece({ label: 'g01' }),
       makePiece({
-        label: 'B',
+        label: 'g02',
         name: 'b',
         polygon: [
           [200, 0],
@@ -456,7 +456,7 @@ describe('PiecePreviewSVG (US-007) AC#4 单片 / 多片 / 空片容错', () => {
         ],
       }),
       makePiece({
-        label: 'C',
+        label: 'g03',
         name: 'c',
         polygon: [
           [10, 200],
@@ -473,7 +473,7 @@ describe('PiecePreviewSVG (US-007) AC#4 单片 / 多片 / 空片容错', () => {
 
   it('空片（无 polygon）：svg 清空后啥都不画（无 viewBox / 无 flipGroup）', () => {
     const empty: ParsedPiece = {
-      label: 'A',
+      label: 'g01',
       name: '空',
       polygon: [],
       internal_lines: [],
@@ -489,7 +489,7 @@ describe('PiecePreviewSVG (US-007) AC#4 单片 / 多片 / 空片容错', () => {
 
   it('polygon < 3 顶点跳过 rough；其他层照常渲染', () => {
     const piece: ParsedPiece = {
-      label: 'A',
+      label: 'g01',
       name: '退化',
       polygon: [
         [10, 20],
@@ -509,7 +509,7 @@ describe('PiecePreviewSVG (US-007) AC#4 单片 / 多片 / 空片容错', () => {
 
 describe('PiecePreviewSVG (US-007) AC#5 切 piece 整组重建', () => {
   it('切换 piece：旧 flipGroup 子节点清空 + 新 piece 节点写入', () => {
-    const ref = mountProbe(makePiece({ label: 'A' }));
+    const ref = mountProbe(makePiece({ label: 'g01' }));
     const svgBefore = ref.current!;
     const roughBefore = svgBefore.querySelector('polygon[data-role="rough"]')!;
     expect(roughBefore.getAttribute('points')).toBe('10,20 110,20 110,100 10,100');
@@ -525,7 +525,7 @@ describe('PiecePreviewSVG (US-007) AC#5 切 piece 整组重建', () => {
           >
             <PiecePreviewSVG
               piece={makePiece({
-                label: 'B',
+                label: 'g02',
                 name: 'b',
                 polygon: [
                   [200, 0],
@@ -604,7 +604,7 @@ describe('PiecePreviewSVG (US-007) AC#5 切 piece 整组重建', () => {
 });
 
 describe('PiecePreviewSVG (US-018) compact 模式', () => {
-  it('compact=true：不渲染 A/B/C label text（即使 piece.label 非空）', () => {
+  it('compact=true：不渲染 g 码 label text（即使 piece.label 非空）', () => {
     let svg: SVGSVGElement | null = null;
     act(() => {
       root!.render(
@@ -613,13 +613,13 @@ describe('PiecePreviewSVG (US-018) compact 模式', () => {
             svg = el?.querySelector('svg') ?? null;
           }}
         >
-          <PiecePreviewSVG piece={makePiece({ label: 'A' })} compact />
+          <PiecePreviewSVG piece={makePiece({ label: 'g01' })} compact />
         </div>,
       );
     });
     expect(svg).not.toBeNull();
     expect(svg!.querySelector('polygon[data-role="rough"]')).not.toBeNull();
-    // 关 A/B/C 标注（即使 label='A'）
+    // 关 g 码标注（即使 label='g01'）
     expect(svg!.querySelector('text[data-role="label"]')).toBeNull();
   });
 
@@ -679,7 +679,7 @@ describe('PiecePreviewSVG (US-018) compact 模式', () => {
     expect(svg!.querySelectorAll('text[data-role="label"]').length).toBe(0);
   });
 
-  it('compact=false（默认）：A/B/C 标注正常渲染（向后兼容）', () => {
+  it('compact=false（默认）：g 码标注正常渲染（向后兼容）', () => {
     let svg: SVGSVGElement | null = null;
     act(() => {
       root!.render(
@@ -688,12 +688,12 @@ describe('PiecePreviewSVG (US-018) compact 模式', () => {
             svg = el?.querySelector('svg') ?? null;
           }}
         >
-          <PiecePreviewSVG piece={makePiece({ label: 'A' })} />
+          <PiecePreviewSVG piece={makePiece({ label: 'g01' })} />
         </div>,
       );
     });
     expect(svg!.querySelector('text[data-role="label"]')).not.toBeNull();
-    expect(svg!.querySelector('text[data-role="label"]')!.textContent).toBe('A');
+    expect(svg!.querySelector('text[data-role="label"]')!.textContent).toBe('g01');
   });
 
   it('compact=true + 显式 pad：使用显式 pad（COMPACT_PAD 仅作未指定时默认）', () => {

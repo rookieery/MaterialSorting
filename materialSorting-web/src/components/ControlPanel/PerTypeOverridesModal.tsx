@@ -8,7 +8,7 @@
 // 表格布局（D10 / AC#3；2026-08-17 编号化 + 全局上限改造）：
 //   - thead 列 = 10 个片型**按代表裁片编号 A,B,C… 排序**（与上传预览 QtyMatrix 行序
 //     一致；无 label 的片型殿后，稳定排序保持 V03_PTYPES 相对序）。每列缩略图 64×64 +
-//     编号徽章 A/B/C —— 复用上传预览 QtyMatrix 的 .qty-label-badge 与编号口径，
+//     编号徽章 g01+ —— 复用上传预览 QtyMatrix 的 .qty-label-badge 与编号口径，
 //     rep.label 缺席（fetch 失败 / 旧 intermediate）时兜底片型名 .ptype-name。
 //   - tbody 行 = 2 行：重合 input（0–10mm）+ 旋转 input（0–45°）；全局上限不再按片型
 //     （旧 V03_TABLE 每片型 placeholder 上限已删）；blur 规整到 [0, max]。
@@ -48,8 +48,10 @@ import { PiecePreviewSVG } from '../preview/PiecePreviewSVG';
 const LE = '≤';
 
 /**
- * 编号比较器（A<B<…<Z<AA<AB…：先长度再字典序）；无 label（undefined）殿后。
- * Array.prototype.sort 稳定 → 殿后的片型保持 V03_PTYPES 相对序。
+ * 编号比较器（g 码 g01<g02<…<g99<g100：先长度再字典序）。g 码两位零填充下
+ * 「先长度再字典序」= 数值序（g100 三位自然排后），**勿去零填充**（'g10'<'g9' 字典序
+ * 会错）；无 label（undefined）殿后。Array.prototype.sort 稳定 → 殿后的片型保持
+ * V03_PTYPES 相对序。
  */
 function compareByLabel(a: string | undefined, b: string | undefined): number {
   if (!a && !b) return 0;

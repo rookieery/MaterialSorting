@@ -98,7 +98,7 @@ interface MatrixCol {
 // ---------------------------------------------------------------------------
 
 interface QtyMatrixCellProps {
-  /** 片型 label（A/B/C...，跨码匹配同一片型）。 */
+  /** 片型 label（g01+ 裁片码，跨码匹配同一片型）。 */
   label: string;
   /** 该格码号（number 或 null=通用）。 */
   size: number | null;

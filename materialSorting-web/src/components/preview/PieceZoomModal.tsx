@@ -17,7 +17,7 @@
 //   - name 是母版 block 名（中文），详情模态显示便于版师识别
 //
 // 关键约束：
-//   - 跨码匹配同一片型按 label（A/B/C 次序），与 qtyStore / QtyMatrix 同口径；
+//   - 跨码匹配同一片型按 label（g 码次序），与 qtyStore / QtyMatrix 同口径；
 //     不用 name（含码号后缀，跨码不同）。
 //   - 防御性兜底：doc.sizes 找不到匹配码、或码内 pieces 找不到匹配 label → 渲染 null
 //     （不挂 DOM；理论不会发生，因 openZoom 由 QtyMatrix 在已挂载缩略图上调）。

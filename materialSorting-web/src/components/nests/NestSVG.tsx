@@ -279,6 +279,8 @@ function createPieceEntry(p: PieceInfo, g: SVGGElement): PieceEntry {
   poly.dataset.ptype = p.ptype;
   poly.dataset.size = String(p.size);
   poly.dataset.area = String(p.area_mm2);
+  // g 码裁片标识（2026-08-18 起 manifest 透传；旧后端无 → undefined，tooltip 不显前缀）
+  if (p.label) poly.dataset.label = p.label;
   g.appendChild(poly);
 
   // US-024 layer14 净版（绿 dashed polygon，无填充）—— 数据缺失不渲染
@@ -366,10 +368,11 @@ function transformPt(pt: [number, number], rot: number, tr: [number, number]): [
  *
  * 与旧 vanilla 实现 setupHover 内 mousemove 一致：
  *   - poly = e.target.closest('polygon')（事件委托，e.target 可能是 polygon 本身或其子节点）
- *   - poly && poly.dataset.ptype → setHovered + showTooltip（片型/码/面积 cm²）
+ *   - poly && poly.dataset.ptype → setHovered + showTooltip（g 码·片型/码/面积 cm²）
  *   - 否则 → clearHovered + hideTooltip
  *
  * 面积换算：dataset.area 单位 mm²，÷100 → cm²（与旧 vanilla 实现 `parseFloat/100` 一致）。
+ * g 码前缀：dataset.label（2026-08-18 起 manifest 透传；旧后端无 → 不显前缀）。
  */
 function handleHover(e: MouseEvent): void {
   const target = e.target as Element | null;
@@ -377,10 +380,11 @@ function handleHover(e: MouseEvent): void {
   if (poly && poly.dataset.ptype) {
     setHovered(poly);
     const area_cm2 = (parseFloat(poly.dataset.area || '0') / 100).toFixed(1);
+    const prefix = poly.dataset.label ? `${poly.dataset.label} · ` : '';
     showTooltip(
       e.clientX,
       e.clientY,
-      `${poly.dataset.ptype} · 码${poly.dataset.size}<br>面积 ${area_cm2} cm²`,
+      `${prefix}${poly.dataset.ptype} · 码${poly.dataset.size}<br>面积 ${area_cm2} cm²`,
     );
   } else {
     clearHovered();

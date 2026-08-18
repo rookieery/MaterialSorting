@@ -25,7 +25,7 @@ export type ParsedGrainLine = [number, number, number, number];
 
 /** 单片解析结果（与 server.py `_build_parse_payload` 字段名严格一致）。 */
 export interface ParsedPiece {
-  /** A/B/C 标注（每码内独立编号；26+ 走 AA/AB，实测每码 ≤10 片）。 */
+  /** g01+ 裁片码（每码内独立零填充编号，字典序=数值序；实测每码 ≤10 片；母版自带编号时复用）。 */
   label: string;
   /** 母版 block 名（中文 / GBK 已解码）。 */
   name: string;
@@ -54,7 +54,7 @@ export interface ParsedPiece {
   grain_line: ParsedGrainLine | null;
 }
 
-/** 单码结果：码号 + 该码全部裁片（已按 A/B/C 排序）。 */
+/** 单码结果：码号 + 该码全部裁片（已按裁片码排序：顺序模式=几何稳定序，母版复用=码序）。 */
 export interface ParsedSize {
   /** 码号；后端按数值升序、null 殿后排序，前端展示时也按此序。 */
   size: number | null;

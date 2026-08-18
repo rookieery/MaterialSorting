@@ -1,6 +1,6 @@
 // PieceQuantity / PieceQuantityMap —— 数量状态类型契约（US-011；矩阵化重构 US-001 简化）。
 //
-// 数量以片型 label（A/B/C/...）为 key —— 按 label 跨码匹配同一片型，每码独立持有数量
+// 数量以片型 label（g01+ 裁片码）为 key —— 按 label 跨码匹配同一片型，每码独立持有数量
 // （perSize 用 sizeKey 索引：number->String、null->'null'）。
 //
 // baseValue：该行的「基准值」，仅 UI 特例高亮用（格子值 ≠ baseValue 且整行非全同 → 高亮），
@@ -18,5 +18,5 @@ export interface PieceQuantity {
   baseValue: number;
 }
 
-/** 全部 label 的数量映射（label = A/B/C/...，跨码匹配同一片型）。 */
+/** 全部 label 的数量映射（label = g01+ 裁片码，跨码匹配同一片型）。 */
 export type PieceQuantityMap = Record<string /* label */, PieceQuantity>;

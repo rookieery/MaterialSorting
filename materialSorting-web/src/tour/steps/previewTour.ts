@@ -47,7 +47,7 @@ export const previewTour: TourDef = {
       id: 'upload',
       selector: '[data-tour="drop-zone"]',
       title: '上传 DXF 母版',
-      body: '把母版 DXF 文件拖到左侧上传区，或点击选择文件。解析后按码号查看每码全部裁片（毛版 / 净版 / 内部线 / 刀口 / 布纹线 + A/B/C 标注）。',
+      body: '把母版 DXF 文件拖到左侧上传区，或点击选择文件。解析后按码号查看每码全部裁片（毛版 / 净版 / 内部线 / 刀口 / 布纹线 + g 码标注）。',
       placement: 'bottom',
       before: ensurePreviewTab,
     },

@@ -47,7 +47,7 @@ afterEach(() => {
 /** 构造一片：方框 100x80（与 QtyMatrix.test.tsx makePiece 同模式）。 */
 function makePiece(overrides: Partial<ParsedPiece> = {}): ParsedPiece {
   return {
-    label: 'A',
+    label: 'g01',
     name: '前片',
     polygon: [
       [10, 20],
@@ -69,8 +69,8 @@ function makeDoc(): ParsedDoc {
     doc_id: 'deadbeef',
     filename: 'M1787.dxf',
     sizes: [
-      { size: 28, pieces: [makePiece({ label: 'A' }), makePiece({ label: 'B', name: '后片' })] },
-      { size: null, pieces: [makePiece({ label: 'C', name: '腰通用' })] },
+      { size: 28, pieces: [makePiece({ label: 'g01' }), makePiece({ label: 'g02', name: '后片' })] },
+      { size: null, pieces: [makePiece({ label: 'g03', name: '腰通用' })] },
     ],
   };
 }

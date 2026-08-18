@@ -25,6 +25,12 @@ export interface PieceInfo {
   area_mm2: number;
   polygon: Polygon;
   /**
+   * g01+ 裁片码（intermediate label 透传，2026-08-18 起）。每码内独立零填充编号
+   * （字典序=数值序）；L/R 镜像副本共享同码。旧 intermediate 无 → null/absent，
+   * NestSVG tooltip 按缺席降级不显示。
+   */
+  label?: string | null;
+  /**
    * 该 pid 进 sparrow 的**副本数**（= quantities[label][sizeKey]；缺省/未分发 → 1）。
    *
    * demand>1 时 solver 给同一 pid 发 N 条 placed_items（同 id、不同 translation）。

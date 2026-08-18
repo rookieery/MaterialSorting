@@ -1,8 +1,9 @@
-"""每片型代表裁片选取 + 编号口径测试（2026-08-17 编号化改造）。
+"""每片型代表裁片选取 + 编号口径测试（2026-08-17 编号化、2026-08-18 切 g 码）。
 
 关键不变量：``_build_ptype_representatives`` 与 ``labeling.compute_size_ptype_labels``
-（= parse 响应赋号口径）共用 ``parse_member_sort_key`` —— 高级配置弹窗列头编号徽章
-与上传预览 QtyMatrix 列头（同编号缩略图）指同一片；且代表取自**最小码**首个片。
+（= parse 响应赋号口径）共用 ``labeling.assign_codes`` 单一真相源 —— 高级配置弹窗
+列头编号徽章与上传预览 QtyMatrix 列头（同编号缩略图）指同一片；且代表取自**最小码**
+首个片。
 """
 from __future__ import annotations
 
@@ -49,14 +50,14 @@ GMAP = {'k_hou': 'g00', 'k_qian': 'g01', 'k_yao': 'g09'}
 def _pieces():
     """两码三片型；质心 Y 决定码内排序（视觉上方优先）。
 
-    - 码 30（最小码）：前片最上 → A，后片居中 → B，腰最下 → C。
+    - 码 30（最小码）：前片最上 → g01，后片居中 → g02，腰最下 → g03。
     - 码 32：排序故意反转（腰最上）→ 若代表不取最小码，编号会张冠李戴。
     """
     return [
         # 码 30：前片宽 40（供「代表取自最小码」几何断言）
-        _FakePiece('k_qian', 30, _rect(0, 200, 40, 40)),   # 质心 y=220 → A
-        _FakePiece('k_hou', 30, _rect(0, 100, 30, 30)),    # 质心 y=115 → B
-        _FakePiece('k_yao', 30, _rect(0, 0, 20, 20)),      # 质心 y=10  → C
+        _FakePiece('k_qian', 30, _rect(0, 200, 40, 40)),   # 质心 y=220 → g01
+        _FakePiece('k_hou', 30, _rect(0, 100, 30, 30)),    # 质心 y=115 → g02
+        _FakePiece('k_yao', 30, _rect(0, 0, 20, 20)),      # 质心 y=10  → g03
         # 码 32：腰最上（前片宽 60，与码 30 区分）
         _FakePiece('k_yao', 32, _rect(0, 200, 60, 40)),
         _FakePiece('k_qian', 32, _rect(0, 100, 60, 30)),
@@ -68,10 +69,10 @@ def test_reps_from_smallest_size_with_parse_aligned_labels():
     reps = _build_ptype_representatives(_pieces(), GMAP, GROUP_NAMES)
     # 三片型齐
     assert set(reps) == {'前片', '后片', '腰'}
-    # 编号 = 码 30（最小码）内 parse 赋号：前片 A / 后片 B / 腰 C
-    assert reps['前片']['label'] == 'A'
-    assert reps['后片']['label'] == 'B'
-    assert reps['腰']['label'] == 'C'
+    # 编号 = 码 30（最小码）内 parse 赋号：前片 g01 / 后片 g02 / 腰 g03
+    assert reps['前片']['label'] == 'g01'
+    assert reps['后片']['label'] == 'g02'
+    assert reps['腰']['label'] == 'g03'
     # 代表几何取自最小码（码 30 前片宽 40；码 32 是 60）
     xs = [pt[0] for pt in reps['前片']['polygon']]
     assert max(xs) - min(xs) == 40

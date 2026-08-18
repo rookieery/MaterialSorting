@@ -148,6 +148,9 @@ def build_instance(pieces, gate_mm, *, time_budget: int, seed: int,
             'color': PTYPE_COLORS.get(ptype, '#bbbbbb'),
             'polygon': poly,                 # erode 后 base 多边形（与 placement 一致）
             'area_mm2': p['area_mm2'],
+            # g 码裁片标识（intermediate label 透传 → manifest → 前端 NestSVG tooltip /
+            # 导出逐片叠印；旧 intermediate 无 label → None，消费方按缺席降级）。
+            'label': p.get('label'),
             # demand：该 pid 进 sparrow 的副本数（= quantities[label][sizeKey]，缺省 1）。
             # 透传到 manifest → 前端 NestSVG 按 demand 建 N 个 DOM 副本（见下「多副本渲染」）。
             # **必须透传**：demand>1 时 solver 给同一 pid 发 N 条 placed_items（同 id 不同 translation），

@@ -15,7 +15,7 @@
 //
 // 矩阵化重构 US-003 additions:
 //   - 全 0 拦截：doc 非空 + 所选码有效片数 0（数量全 0）→ onStart 不发 + onStatus 提示
-//   - 线格式回归：矩阵改 A@28=2 → start payload quantities.A['28']===2
+//   - 线格式回归：矩阵改 A@28=2 → start payload quantities.g01['28']===2
 //   - doc=null（fallback SIZES 开发模式）→ computeTotalCutPieces=null 不拦截（Start 正常发）
 
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
@@ -573,7 +573,7 @@ describe("ControlPanel start guard (US-003 全 0 拦截)", () => {
           size: 28,
           pieces: [
             {
-              label: "A",
+              label: "g01",
               name: "前片",
               polygon: [],
               internal_lines: [],
@@ -587,7 +587,7 @@ describe("ControlPanel start guard (US-003 全 0 拦截)", () => {
           size: 30,
           pieces: [
             {
-              label: "A",
+              label: "g01",
               name: "前片",
               polygon: [],
               internal_lines: [],
@@ -596,7 +596,7 @@ describe("ControlPanel start guard (US-003 全 0 拦截)", () => {
               grain_line: null,
             },
             {
-              label: "B",
+              label: "g02",
               name: "后片",
               polygon: [],
               internal_lines: [],
@@ -619,8 +619,8 @@ describe("ControlPanel start guard (US-003 全 0 拦截)", () => {
     const onStatus = vi.fn();
     setupDocWithPieces();
     // 全部数量归 0（整行填充 0）
-    useQtyStore.getState().setRowAll("A", [28, 30], 0);
-    useQtyStore.getState().setRowAll("B", [30], 0);
+    useQtyStore.getState().setRowAll("g01", [28, 30], 0);
+    useQtyStore.getState().setRowAll("g02", [30], 0);
     renderPanel(onStart, { onStatus });
     // 勾选 28 + 30（doc 动态码号 chip）
     const checkboxes = container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]");
@@ -640,7 +640,7 @@ describe("ControlPanel start guard (US-003 全 0 拦截)", () => {
     const onStatus = vi.fn();
     setupDocWithPieces();
     // A@28=0 但 A@30=1：仅勾 28 → 该码有效片数 0 → 拦截
-    useQtyStore.getState().setPiecePerSize("A", 28, 0);
+    useQtyStore.getState().setPiecePerSize("g01", 28, 0);
     renderPanel(onStart, { onStatus });
     const checkboxes = container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]");
     act(() => checkboxes[0].click()); // 28
@@ -677,11 +677,11 @@ describe("ControlPanel start guard (US-003 全 0 拦截)", () => {
     expect(onStart).toHaveBeenCalledTimes(1);
   });
 
-  it("线格式回归：矩阵改 A@28=2 → start payload quantities.A['28']===2", () => {
+  it("线格式回归：矩阵改 A@28=2 → start payload quantities.g01['28']===2", () => {
     const onStart = vi.fn();
     setupDocWithPieces();
     // 模拟矩阵格内编辑：A@28=2（特例），其余保持 hydrate 默认 1
-    useQtyStore.getState().setPiecePerSize("A", 28, 2);
+    useQtyStore.getState().setPiecePerSize("g01", 28, 2);
     renderPanel(onStart);
     const checkboxes = container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]");
     act(() => {
@@ -692,10 +692,10 @@ describe("ControlPanel start guard (US-003 全 0 拦截)", () => {
     expect(onStart).toHaveBeenCalledTimes(1);
     const cfg = onStart.mock.calls[0][0] as ControlPanelStartPayload;
     expect(cfg.quantities).not.toBeNull();
-    expect(cfg.quantities!.A["28"]).toBe(2);
-    expect(cfg.quantities!.A["30"]).toBe(1);
-    expect(cfg.quantities!.B["30"]).toBe(1);
+    expect(cfg.quantities!.g01["28"]).toBe(2);
+    expect(cfg.quantities!.g01["30"]).toBe(1);
+    expect(cfg.quantities!.g02["30"]).toBe(1);
     // 未勾选码过滤：B 仅 30 码存在，无 28 键
-    expect("28" in cfg.quantities!.B).toBe(false);
+    expect("28" in cfg.quantities!.g02).toBe(false);
   });
 });

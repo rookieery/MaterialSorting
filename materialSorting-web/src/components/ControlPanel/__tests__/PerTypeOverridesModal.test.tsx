@@ -40,7 +40,7 @@ let mockReps: PtypesResponse = { representatives: {} };
 const TWO_REPS: PtypesResponse = {
   representatives: {
     前片: {
-      label: 'A',
+      label: 'g01',
       polygon: [
         [0, 0],
         [100, 0],
@@ -49,7 +49,7 @@ const TWO_REPS: PtypesResponse = {
       ],
     },
     后片: {
-      label: 'B',
+      label: 'g02',
       polygon: [
         [0, 0],
         [80, 0],
@@ -198,8 +198,8 @@ describe('PerTypeOverridesModal (US-018)', () => {
     // rep.label → 编号徽章（与上传预览 QtyMatrix 同款），其余列兜底片型名
     const badges = document.body.querySelectorAll('thead .qty-label-badge');
     expect(badges).toHaveLength(2);
-    expect(badges[0].textContent).toBe('A');
-    expect(badges[1].textContent).toBe('B');
+    expect(badges[0].textContent).toBe('g01');
+    expect(badges[1].textContent).toBe('g02');
     expect(document.body.querySelectorAll('thead .ptype-name')).toHaveLength(
       V03_PTYPES.length - 2,
     );
@@ -209,22 +209,22 @@ describe('PerTypeOverridesModal (US-018)', () => {
     // 故意打乱 label↔片型映射（腰=A、后片=B、前片=C）：列序必须按编号排，不按 V03_PTYPES 固定序
     mockReps = {
       representatives: {
-        腰: { label: 'A', polygon: [[0, 0], [60, 0], [60, 40], [0, 40]] },
-        后片: { label: 'B', polygon: [[0, 0], [80, 0], [80, 80], [0, 80]] },
-        前片: { label: 'C', polygon: [[0, 0], [100, 0], [100, 60], [0, 60]] },
+        腰: { label: 'g01', polygon: [[0, 0], [60, 0], [60, 40], [0, 40]] },
+        后片: { label: 'g02', polygon: [[0, 0], [80, 0], [80, 80], [0, 80]] },
+        前片: { label: 'g03', polygon: [[0, 0], [100, 0], [100, 60], [0, 60]] },
       },
     };
     useControlPanelStore.getState().openModal('per_type');
     renderModal();
     await flushFetch();
-    // 前 3 列编号徽章 = A/B/C（腰/后片/前片）
+    // 前 3 列编号徽章 = g01/g02/g03（腰/后片/前片）
     const badges = Array.from(document.body.querySelectorAll('thead .qty-label-badge')).map(
       (b) => b.textContent,
     );
-    expect(badges).toEqual(['A', 'B', 'C']);
+    expect(badges).toEqual(['g01', 'g02', 'g03']);
     // 列头与输入列对齐：第 1 列（A=腰）正下方的重合 input 是 d-腰
     const firstCol = document.body.querySelector('thead .ptype-col')!;
-    expect(firstCol.querySelector('.qty-label-badge')!.textContent).toBe('A');
+    expect(firstCol.querySelector('.qty-label-badge')!.textContent).toBe('g01');
     const firstRowInput = document.body.querySelector('tbody tr')!.querySelector('input')!;
     expect(firstRowInput.getAttribute('data-testid')).toBe('d-腰');
     // 无 label 的 7 个片型殿后，保持 V03_PTYPES 相对序
@@ -249,10 +249,10 @@ describe('PerTypeOverridesModal (US-018)', () => {
     useControlPanelStore.getState().openModal('per_type');
     renderModal();
     await flushFetch();
-    // 有编号：只报 A-放大预览（不出现「前片」）
+    // 有编号：只报 g01-放大预览（不出现「前片」）
     const thumb = document.body.querySelector<HTMLButtonElement>('[data-testid="ptype-thumb-前片"]')!;
-    expect(thumb.title).toBe('A-放大预览');
-    expect(thumb.getAttribute('aria-label')).toBe('A-放大预览');
+    expect(thumb.title).toBe('g01-放大预览');
+    expect(thumb.getAttribute('aria-label')).toBe('g01-放大预览');
     // 无 rep（无编号）→ 兜底片型名作标识
     const thumbFallback = document.body.querySelector<HTMLButtonElement>(
       '[data-testid="ptype-thumb-单排"]',

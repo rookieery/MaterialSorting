@@ -38,7 +38,7 @@ function makeParsedDoc(): ParsedDoc {
   return {
     doc_id: 'app-test-doc',
     filename: 'M1787.dxf',
-    sizes: [{ size: 28, pieces: [{ label: 'A', name: '前片', polygon: [], internal_lines: [], notches: [], net_polygon: [], grain_line: null }] }],
+    sizes: [{ size: 28, pieces: [{ label: 'g01', name: '前片', polygon: [], internal_lines: [], notches: [], net_polygon: [], grain_line: null }] }],
   };
 }
 
