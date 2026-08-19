@@ -95,6 +95,13 @@ python -m materialsorting.cli.run_config <config.json> --name demo --quiet   # �
 
 **求解进程化（PC-001）**：每 seed 经 `solve_with_callback_proc` 多进程满血求解（子进程重建实例是固有秒级成本），`solve_pieces` 支持逐帧 `should_stop` 中止（OS 级 terminate，以 best-so-far 帧交付）—— 是串行 seed portfolio 控制器（kill / 达标即停）与标定管线的执行手段。Ctrl-C 退出码 130，已完成轮产物已落盘。
 
+**串行 seed portfolio 控制器（PC-002）**：多 seed 串行循环经 `cli/portfolio.py` 控制器转发 —— **incumbent banking**（逐帧入账全局最优帧，被 kill/中断 seed 的最优帧同样参与，`best` 升级为帧级全局最优且含完整 `placed_items` 布局，result.json 新增 `portfolio` 段 `{target, incumbent, per_seed, theta_history}`）+ **R0 达标即停** + R4 队列耗尽交付。新旗标：`--target <0..1>`（原面积口径任一帧达标 → 当前 seed 被 stop（`killed=True`）+ 剩余队列不启动，退出码仍 0；缺省不启用）与 `--params <controller_params.json>`（标定参数文件，PC-002 仅校验可加载）。单 seed 且不带 `--target` 时 result.json 为空 portfolio 段、`best` 保持旧语义（solve 数组 `real_density` 最大轮）—— 与 PC-001 基线无旗标冒烟对拍兼容：
+
+```bash
+ms-run-config data/configs/5336_coded_really.json --time 5 --target 0.9 --quiet   # R0 达标即停
+ms-run-config data/configs/5336_coded_really.json --time 5 --target 0.9 --params controller_params.json
+```
+
 **不触碰 web 数据**：CLI 唯一可写目录是 `out/config_runs/`，绝不写 `out/sparrow_baseline/pieces_intermediate.json`（web 事实源）与 `out/uploads/` —— 与 ms-web 同时运行互不干扰（并行回归已验证：web 求解进行中跑 CLI，结束后两者事实源 mtime/内容不变、uploads 无新目录）。
 
 ## 数据流

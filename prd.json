@@ -2,16 +2,10 @@
   "branchName": "ralph/serial-seed-portfolio",
   "stories": [
     {
-      "id": "US-001",
-      "title": "solve_pieces 进程化与帧轨迹落盘",
-      "description": "[PRD tasks/prd-serial-seed-portfolio.md PC-001] 单 seed 求解可中途终止、逐帧轨迹落盘，为 kill/达标即停提供执行手段、为标定提供数据。\n\n具体任务：\n1. materialSorting-server/src/materialsorting/cli/pipeline.py — solve_pieces 求解从 threading 版 solve_with_callback 切换到 web.solver.solve_with_callback_proc 多进程版（terminate 链路 terminate → cancel_join_thread → drain ≤50ms → join(timeout=5) 已验证）；主进程仍先 build_instance 取 meta（demand_sum 校验、total_area、pid_meta），子进程内重建 instance 是 proc 设计固有成本（秒级）。\n2. 同文件 — 新增可选参数 should_stop(frame) -> bool：每帧回调，True 时走 terminate 链路终止子进程，以该 seed 的 best-so-far 帧作为结果返回（killed=True + reason）。\n3. 同文件 — 落盘新增（run_dir 内）：curve_s{seed}.json（每帧 {elapsed, phase, density, density_sparrow, width_mm}，不含 placed_items 控体积）+ best_frame_s{seed}.json（该 seed 最优帧完整 placed_items，density 严格大于才覆盖写）。\n4. 新增/更新单测（materialSorting-server/tests/，fake solve 驱动）。\n\n验收标准：\n- 行为零回归：ms-run-config data/configs/5336_coded_really.json --time 5 冒烟通过（真实公差路径含 erode），result.json solve 数组字段结构与现版一致（seed/n_items/n_eroded/total_area_mm2/width_mm/real_density/density_sparrow/placed_items/elapsed），placed == Σdemand 校验仍生效，stdout 汇总行格式不变。\n- should_stop 恒 False 时与不传等价；返回 True 时子进程确被终止（无孤儿，单测以 on_process 句柄 join 断言），返回 killed=True 且 density = 终止前 best-so-far 帧原面积口径。\n- curve_s{seed}.json 帧数 ≥1 且 elapsed 单调不减；best_frame_s{seed}.json 的 density = 曲线内最大帧 density。\n- Ctrl-C 中断多 seed 循环时，已完成 seed 的 curve/best_frame/result 均已落盘（逐 seed 写，不攒内存）。\n- 密度口径不变：复用 _apply_density_dual（不在 CLI 复制公式）；python -m materialsorting.cli.pipeline 导入冒烟 + pytest 全绿 + 分层未反向（cli → web 单向）。",
-      "passes": true
-    },
-    {
       "id": "US-002",
       "title": "portfolio 调度器与最优帧入账",
       "description": "[PRD tasks/prd-serial-seed-portfolio.md PC-002] 串行 seed 队列运行中全局最优帧持续入账并最终交付（incumbent banking），任何中断（kill/Ctrl-C/队列耗尽）交付物永远是过程中的最好解。\n\n具体任务：\n1. materialSorting-server/src/materialsorting/cli/portfolio.py（新建）— 控制器状态机：逐 seed 串行调 solve_pieces（run_config 现有串行循环改为经控制器转发）；每帧 density > I 则更新 incumbent（I=全局最优密度，记录来源 seed/frame_index/elapsed/width_mm/placed_items）。规则：R0 任一帧 density ≥ target → 对当前 seed 触发 should_stop 并终止剩余队列；R4 队列耗尽正常结束。\n2. materialSorting-server/src/materialsorting/cli/run_config.py — 新 CLI 旗标（config 7 键 schema 不动）：--target <0..1>（缺省不启用 R0）、--params <controller_params.json>（可选，标定参数覆盖默认阈值）。进度输出沿用「原面积口径新最优才打 + 30s 心跳」模式，新增 per-seed 轮次头与 incumbent 行（--quiet 全抑制）。\n3. result.json 新增 portfolio 段：{target, incumbent: {density, width_mm, seed, frame_index, elapsed, placed_items}, per_seed: [{seed, killed, kill_reason, best_density, elapsed}], theta_history}；best 语义升级为 incumbent（帧级全局最优），solve 数组保留不变。\n\n验收标准：\n- incumbent 单测（fake solve 注入帧序列）：3 seed 交错轨迹下 incumbent = 全局最大帧 density、来源字段正确；被 kill/中途停止的 seed 的最优帧参与全局最优（修复 best 只看 per-seed 终值的盲区）。\n- R0：mock seed2 中途达标 → seed2 被 stop、seed3 不再启动、退出码 0；无 --target 时行为与现版一致（跑满全队列）。\n- best 与 portfolio.incumbent 一致且含完整 placed_items；不带 --target 的单 seed 运行 result.json 含空 portfolio 段、best 与旧语义兼容（无旗标冒烟对拍）。\n- python -m materialsorting.cli.run_config --help 含新旗标；pytest 全绿；分层未反向。",
-      "passes": false
+      "passes": true
     },
     {
       "id": "US-003",

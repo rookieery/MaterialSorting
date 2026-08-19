@@ -196,13 +196,16 @@ def test_main_end_to_end_smoke(iso_env, capsys):
     assert rd.name.startswith('cfg_run_')
 
     result = json.loads((rd / 'result.json').read_text(encoding='utf-8'))
-    assert set(result) == {'config', 'commit', 'solve', 'best'}
+    assert set(result) == {'config', 'commit', 'solve', 'best', 'portfolio'}
     assert result['config']['master_dxf'] == str(master.resolve())
     assert result['config']['time'] == 2                # --time 覆盖后回显生效值
     assert result['config']['seeds'] == [0]
     assert result['commit']['n_pieces'] == _N_PIECES
     assert len(result['solve']) == 1
     assert result['best'] == result['solve'][0]         # 单 seed best 即唯一解
+    # PC-002：单 seed 且无 --target → 空 portfolio 段 + best 旧语义（冒烟对拍兼容）
+    assert result['portfolio'] == {'target': None, 'incumbent': None,
+                                   'per_seed': [], 'theta_history': []}
     s = result['solve'][0]
     for k in ('seed', 'width_mm', 'real_density', 'density_sparrow', 'elapsed'):
         assert k in s, k
@@ -301,19 +304,35 @@ def test_main_multi_seed_serial_and_best(iso_env, capsys, monkeypatch):
 
     (rd,) = list(runs.iterdir())
     result = json.loads((rd / 'result.json').read_text(encoding='utf-8'))
-    assert set(result) == {'config', 'commit', 'solve', 'best'}
+    assert set(result) == {'config', 'commit', 'solve', 'best', 'portfolio'}
     assert result['config']['seeds'] == [0, 1, 2, 3, 4]
     assert [s['seed'] for s in result['solve']] == [0, 1, 2, 3, 4]   # 数组长度 = len(seeds)
-    top = max(s['real_density'] for s in result['solve'])
-    assert result['best']['real_density'] == top
-    # seed 字段正确：并列时取先执行者（max 首个极大值语义）
-    expect_seed = next(s['seed'] for s in result['solve'] if s['real_density'] == top)
-    assert result['best']['seed'] == expect_seed
-    expect_rec = next(s for s in result['solve'] if s['seed'] == expect_seed)
-    assert result['best'] == expect_rec                # best = 对轮次完整指标的引用
-    # 末行汇总取 best（含 run_dir 完整路径）
+    # PC-002：多 seed → best 升级为 incumbent（帧级全局最优，含完整 placed_items）
+    inc = result['portfolio']['incumbent']
+    assert result['portfolio']['target'] is None
+    assert set(inc) == {'density', 'width_mm', 'seed', 'frame_index',
+                        'elapsed', 'placed_items'}
+    assert inc['seed'] in (0, 1, 2, 3, 4)
+    assert isinstance(inc['placed_items'], list) and inc['placed_items']
+    assert result['best'] == inc                       # best 与 portfolio.incumbent 一致
+    # incumbent = 全局最大帧 density：与各 seed best 帧文件对拍（帧级口径）
+    best_frames = [json.loads((rd / f'best_frame_s{s}.json').read_text(encoding='utf-8'))
+                   for s in (0, 1, 2, 3, 4)]
+    top_frame = max(bf['density'] for bf in best_frames)
+    assert inc['density'] == pytest.approx(top_frame, abs=1e-9)
+    assert next(bf for bf in best_frames if bf['density'] == inc['density'])['seed'] \
+        == inc['seed']
+    # per_seed 汇总：5 条、无 killed、best_density 与 best 帧文件一致、theta_history 空
+    assert [e['seed'] for e in result['portfolio']['per_seed']] == [0, 1, 2, 3, 4]
+    for e, bf in zip(result['portfolio']['per_seed'], best_frames):
+        assert set(e) == {'seed', 'killed', 'kill_reason', 'best_density', 'elapsed'}
+        assert e['killed'] is False and e['kill_reason'] is None
+        assert e['best_density'] == pytest.approx(bf['density'], abs=1e-9)
+    assert result['portfolio']['theta_history'] == []
+    # 末行汇总取 best（含 run_dir 完整路径；incumbent 形态经 _best_summary 归一）
     last_line = out.strip().splitlines()[-1]
     assert 'real_density（原面积口径）' in last_line and str(runs.resolve()) in last_line
+    assert f'{inc["density"]:.2%}' in last_line
 
     assert inter.read_bytes() == inter_before          # web 事实源零触碰（FR-5）
     assert list(uploads.iterdir()) == []

@@ -8,13 +8,13 @@ Started: 2026-08-09
 
 
 
-- 质量闸：cli 三模块 python -m 导入冒烟零副作用 + compileall 通过；AST 分层全包零反向 + cli 全模块不 import web.server；pytest 全量 112 passed 0 failed —— US-001~004 遗留的 test_ws_stop 三例失败为环境数据漂移（intermediate 曾被 5336 母版覆盖而用例硬编码 sizes:[28]），本 E2E commit 回写 M1787 intermediate（sizes 28-38）后自愈，归档结案。
-- 注：本会话无 chrome-devtools-mcp 工具，浏览器级验证以 API 级 E2E（同端点链 parse/commit/ws/export）替代；server.py 与前端零改动，可视化回归无风险面。
 
-## 2026-08-19 · US-001（PC-001）solve_pieces 进程化与帧轨迹落盘
-- `cli/pipeline.solve_pieces`：threading 版 `solve_with_callback` → **多进程** `solve_with_callback_proc`（主进程仍先 `build_instance` 取 meta：demand_sum/total_area/n_items/n_eroded，单一真相源不复制 demand 查询）；新增 `should_stop(frame) -> bool|str`（真值 → 帧回调内就地 `terminate()`，以该 seed **best-so-far 帧**交付，记录追加 `killed=True`/`kill_reason`，该路径不做 placed==Σdemand 校验；恒 False/不传零回归）。
-- 落盘（run_dir）：`curve_s{seed}.json`（`{elapsed,phase,density,density_sparrow,width_mm}`，**增量 append** —— exploring 期 ~5ms/帧，整文件重写是 O(N²) 磁盘写，实测 5s 冒烟即 ~75MB，改 append 后 5s 仅 115KB；seed 结束/中断 finally 补 `]` 收口成合法 JSON）+ `best_frame_s{seed}.json`（最优帧完整 placed_items，density 严格大于才覆盖写，含 `frame_index` 供 PC-002 incumbent 标来源）。
-- `cli/run_config`：result.json **逐轮重写**（Ctrl-C/崩溃不丢已完成轮）+ `KeyboardInterrupt` 捕获 → stderr 中断说明 + 退出码 **130**（不打 traceback）。
-- 密度口径：换算仍在 `solve_with_callback_proc` 内经同一 `_apply_density_dual` 完成，CLI 不复制公式；solve 记录字段与旧版完全一致（零回归）。
 - 验证：`ms-run-config data/configs/5336_coded_really.json --time 5` 冒烟（real 83.07%、119 片、curve 1013 帧单调、best_frame=曲线最大帧）；新增 `tests/test_cli_solve_pieces_proc.py` 9 例（fake solve 注入帧序列 + 真子进程 terminate 端到端：exitcode≠0/on_process 句柄 join 无孤儿/active_children 无 solve_worker）；pytest 全量 **124 passed**（含 3 例 test_ws_stop 环境数据漂移自愈 —— 本会话重跑 `_commit_to_nesting_sync` 回写 M1787 intermediate，out/ 为 gitignore 区）；compileall + `python -m` 导入冒烟 + AST 分层全包零反向。
+- 本会话无 chrome-devtools-mcp 工具且改动仅限后端 CLI 求解链（web/server、solver、前端零改动），无可视化回归面。
+
+## 2026-08-19 US-002 portfolio 调度器与最优帧入账（PC-002）
+- 新建 `cli/portfolio.py`（294 行）：`PortfolioController` 状态机（incumbent 全局最优帧 banking —— 每帧 density 严格大于即入账 {density,width_mm,seed,frame_index,elapsed,placed_items 完整布局}，被 kill/Ctrl-C 中断 seed 的最优帧同样参与；`make_progress` 兼进度行输出（per-seed 新最优/30s 心跳逐字保留旧格式、跨 seed 反超才打 incumbent 行、echo=None 即 --quiet 全静默）；`make_should_stop` R0 达标即停（仅 --target 给定时挂载 → 无旗标 solve 调用形与旧版完全一致，触发帧先入账后停）；`finish_seed` per_seed {seed,killed,kill_reason,best_density,elapsed}；`portfolio_section()` engaged(target 给定或 seeds≥2)/不激活(单 seed 无 --target 全空段)；`best_record()` engaged→incumbent / 否则旧语义 max(real_density)）+ `run_serial_portfolio`（串行编排，solve 可注入 fake、Ctrl-C 捕获为 interrupted+last_round、求解异常上抛、queue_stopped 剩余 seed 不启动）+ `load_controller_params`（--params 校验加载：存在/合法 JSON 对象/utf-8-sig 容错 BOM，ControllerParamsError）。
+- `cli/run_config.py`：串行循环改经控制器转发；新旗标 `--target P`（(0,1] 越界退出 1）与 `--params FILE`（坏文件退出 1）；result.json 新增 portfolio 段、best 语义升级（engaged → best==portfolio.incumbent 帧级全局最优含完整 placed_items；单 seed 无 --target → 空段 + best=solve 记录，无旗标冒烟对拍兼容）；`_best_summary()` 归一两种 best 形态保末行汇总格式不变；轮次头扩展到单 seed+--target；R0 提前停打终局行（--quiet 也打）退出码 0；删 `_make_progress_printer`（进度行职责移入控制器）。
+- 新增 `tests/test_cli_portfolio.py` 20 例（fake solve 双层驱动：run_serial_portfolio 注入 + monkeypatch rc_mod.solve_pieces 走 main()）+ 更新 test_cli_run_config 2 例（result keys + 多 seed best=incumbent 与 best_frame 文件对拍）。
+- 验证：pytest 全量 **144 passed**（124→144）；`ms-run-config data/configs/5336_coded_really.json --time 5` 无旗标冒烟 = PC-001 基线（83.07%/119 片，best==solve[0] 旧语义 + 空 portfolio 段）；`--time 20 --target 0.5` 真实 R0 冒烟（frame 1 达标即停、killed=R0_target_reached、退出码 0、best==incumbent）；2 seed 真实冒烟验证 best=incumbent 帧峰 83.11% > 两 seed 终值 83.07%/82.36%（盲区修复实证）；compileall + `python -m materialsorting.cli.run_config --help` 含新旗标 + AST 分层全包零反向（portfolio 模块级仅 .pipeline+stdlib）。
 - 本会话无 chrome-devtools-mcp 工具且改动仅限后端 CLI 求解链（web/server、solver、前端零改动），无可视化回归面。
