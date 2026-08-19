@@ -109,6 +109,13 @@ ms-run-config data/configs/5336_coded_really.json --time 5 --target 0.9   # 默�
 ms-run-config data/configs/5336_coded_really.json --time 5 --target 0.9 --kill on --params controller_params.json  # 标定就绪才真杀
 ```
 
+**solver_opts 透传与配置轮换（PC-006）**：`--solver-opts '<JSON>'`（spyrrow 求解旋钮，**全 seed 生效**）/ `--rotate-opts`（内置 4 档轮换池逐 seed 取档 `pool[队列序 % 4]`，池首空档 = 默认行为）—— 探索/压缩配比（`exploration_pct` 0.1~0.95，换算两段 int 秒与 total_computation_time 互斥）+ 四叉树深度（`quadtree_depth` 3/4/5）+ 并行核数（`num_workers`，默认 4）让不同 seed 搜索行为**去相关**、上尾更易被摸到。白名单外键忽略、越界 clamp（清洗单一真相源 `web.solver._normalize_solver_opts`）；两旗标互斥 / JSON 坏串 / 非对象 → 退出码 1；不传任何旗标 = 现行行为不变（WS 协议与 web 前端零改动）；旗标给了才在 result.json `config` 段回显 `solver_opts` / `rotate_opts`。
+
+```bash
+ms-run-config data/configs/5336_coded_really.json --time 5 --solver-opts '{"exploration_pct": 0.6, "quadtree_depth": 5}'  # 固定档全 seed 生效
+ms-run-config data/configs/5336_coded_really.json --time 5 --rotate-opts                                                # 内置池逐 seed 轮换
+```
+
 **标定管线（PC-004/005）**：`python -m materialsorting.cli.calibration` 四个子命令，为 kill 引擎产出数据依据（`--params` 消费的 `controller_params.json`）并防过拟合单一订单：
 - **batch**：`--config <7键配置> [--tag T] [--short-seeds 20] [--short-time 90] [--full-seeds 8] [--full-time N]`（full-time 缺省用 config 的 `time`）。标定基实例 = `data/configs/5336_coded_really.json`（真实 per_type 公差 + 真实订单配比）。`commit_from_config` 只跑一次，逐 seed 串行 `solve_pieces`；曲线/best 帧落 `out/portfolio_calibration/<tag>/base/{short,full}/`，逐 seed 写 manifest.json（Ctrl-C 安全，重跑跳过已完整 seed）。
 - **variants**：确定性订单邻域变体（seeded RNG，RNG seed=i）—— 只抖 `quantities` 的 (g码, 码∈sizes) 条目 `n' = max(1, n±1)`（保底 1 片；惰性条目不动），per_type/gate_mm/master_dxf/sizes 逐字段固定。产出 `variant_{i}.json`（i=0..3）+ 每变体 6 seed × 90s + 1 × 300s 曲线（共享同一 commit）。

@@ -5,6 +5,7 @@ r"""ms-run-config 入口 —— 一条命令跑完「commit → 求解」，无�
     ms-run-config <config.json> [--name RUN_NAME] [--time N] [--quiet]
                   [--target P] [--params controller_params.json]
                   [--kill shadow|off|on]
+                  [--solver-opts '{"exploration_pct":0.7}' | --rotate-opts]
     python -m materialsorting.cli.run_config <config.json> --time 5
 
 流程：``load_config``（7 键 schema 校验）→ ``new_run_dir``（时间戳目录保留历史）
@@ -47,6 +48,19 @@ PC-003 kill 引擎（``--kill shadow|off|on``，默认 **shadow**；仅 ``--targ
     ``--target`` 真值（R3 θ 衰减只降 kill 门槛）；θ 衰减时经 notify 打一行
     （``--quiet`` 也打，不静默改判据）。
 
+PC-006 solver_opts 透传与配置轮换（``--solver-opts`` / ``--rotate-opts`` 互斥，
+7 键 config schema 与 WS 协议均不动、web 前端零改动）：
+
+  - ``--solver-opts '<JSON>'``：spyrrow 求解旋钮（白名单 ``exploration_pct`` /
+    ``quadtree_depth`` / ``num_workers``，越界 clamp、非法忽略 —— 清洗在
+    ``web.solver._normalize_solver_opts`` 单一真相源），**全 seed 生效**；
+  - ``--rotate-opts``（默认 OFF）：按内置轮换池 ``SOLVER_OPTS_POOL`` 逐 seed 取
+    档（``pool[seed_index % len]``，seed_index 为 0 起队列序；池首空档 = 默认
+    行为）—— 不同探索/压缩配比 + 四叉树深度让样本去相关、上尾更易被摸到；
+  - 两旗标同给 / JSON 坏串 / 非 JSON 对象 → 配置错误退出 1；旗标未给时
+    solve 调用形与 PC-001 基线一致（result.json config 段不加新键，冒烟对拍
+    零回归）；给了旗标则 config 段回显 ``solver_opts`` / ``rotate_opts``。
+
 run_name 缺省 = 配置文件 stem，``--name`` 覆盖；Windows 非法文件名字符
 （``<>:"/\|?*`` 与控制字符）替换 ``_``，清洗后为空回退 ``run``。
 
@@ -77,7 +91,7 @@ from .pipeline import commit_from_config, new_run_dir, solve_pieces
 from .portfolio import (KILL_MODES, ControllerParamsError, PortfolioController,
                         load_controller_params, run_serial_portfolio)
 
-__all__ = ['main']
+__all__ = ['SOLVER_OPTS_POOL', 'rotation_opts_for', 'main']
 
 # Windows 文件名非法字符 + 控制字符（run_name 进目录名前清洗）。
 _ILLEGAL_NAME_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
@@ -112,6 +126,13 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
                         'run_dir/kill_decisions.jsonl 不真正 kill；on 真正淘汰必死 seed'
                         '（需 --params 标定就绪 calibrated: true，否则自动降级 shadow）；'
                         'off 关闭。引擎仅 --target 给定时激活，seed 1 永不 kill')
+    p.add_argument('--solver-opts', metavar='JSON',
+                   help='spyrrow 求解旋钮 JSON 对象（PC-006，全 seed 生效）：'
+                        '{"exploration_pct":0.6, "quadtree_depth":5, "num_workers":4}；'
+                        '白名单外键忽略、越界 clamp；与 --rotate-opts 互斥')
+    p.add_argument('--rotate-opts', action='store_true',
+                   help='逐 seed 按内置轮换池轮换 solver_opts（pool[队列序 %% 池长]，'
+                        '池首空档=默认行为；样本去相关）；与 --solver-opts 互斥')
     return p.parse_args(argv)
 
 
@@ -119,6 +140,23 @@ def _clean_run_name(raw: str) -> str:
     """run_name 清洗：非法文件名字符 → ``_``，去首尾空白/点；清洗后为空回退 ``run``。"""
     cleaned = _ILLEGAL_NAME_RE.sub('_', raw).strip().strip('. ')
     return cleaned or 'run'
+
+
+# PC-006 --rotate-opts 内置轮换池：探索/压缩配比（exploration_pct）与四叉树深度
+# （quadtree_depth）交叉取档 —— 不同 seed 的搜索行为去相关，上尾更易被摸到。池首
+# None 空档 = 默认行为（spyrrow total 模式自动 80/20 分段），与无旗标冒烟同形；
+# 修改池内容属于实验参数变更，档数（len）变化会改变轮换周期。
+SOLVER_OPTS_POOL: list[dict | None] = [
+    None,                                            # 空档：默认行为（80/20 自动分段）
+    {'exploration_pct': 0.9},                        # 长探索档
+    {'exploration_pct': 0.6, 'quadtree_depth': 5},   # 中探索 + 深四叉树
+    {'exploration_pct': 0.5, 'quadtree_depth': 3},   # 短探索 + 浅四叉树
+]
+
+
+def rotation_opts_for(seed_index: int) -> dict | None:
+    """轮换取档：``SOLVER_OPTS_POOL[seed_index % len]``（seed_index 为 0 起队列序）。"""
+    return SOLVER_OPTS_POOL[int(seed_index) % len(SOLVER_OPTS_POOL)]
 
 
 def _best_summary(best: dict) -> tuple[float, float, int, float]:
@@ -156,6 +194,33 @@ def main(argv: list[str] | None = None) -> int:
         print(f'配置错误: --target 须为 (0,1] 区间内的比例值（如 0.9），'
               f'当前为 {args.target}', file=sys.stderr)
         return _EXIT_CONFIG_OR_COMMIT
+    # PC-006 solver_opts 旗标裁决（配置错误须在 new_run_dir 之前拦下，不留空目录）：
+    # --solver-opts（固定档全 seed 生效）与 --rotate-opts（内置池逐 seed 轮换）互斥；
+    # JSON 坏串 / 非 JSON 对象同按配置错误退出 1。旋钮清洗（clamp/白名单）不在 CLI
+    # 做 —— web.solver._normalize_solver_opts 是单一真相源。
+    if args.solver_opts is not None and args.rotate_opts:
+        print('配置错误: --solver-opts 与 --rotate-opts 互斥（固定档 vs 逐 seed 轮换池），'
+              '只能给其一', file=sys.stderr)
+        return _EXIT_CONFIG_OR_COMMIT
+    fixed_solver_opts = None
+    solver_opts_for = None
+    if args.solver_opts is not None:
+        try:
+            fixed_solver_opts = json.loads(args.solver_opts)
+        except json.JSONDecodeError as e:
+            print(f'配置错误: --solver-opts 不是合法 JSON: {e}', file=sys.stderr)
+            return _EXIT_CONFIG_OR_COMMIT
+        if not isinstance(fixed_solver_opts, dict):
+            print('配置错误: --solver-opts 须为 JSON 对象（如 {"exploration_pct": 0.6}）',
+                  file=sys.stderr)
+            return _EXIT_CONFIG_OR_COMMIT
+
+        def solver_opts_for(_index, _seed, _fixed=fixed_solver_opts):
+            return _fixed
+    elif args.rotate_opts:
+
+        def solver_opts_for(index, _seed):
+            return rotation_opts_for(index)
     params = None
     if args.params is not None:
         try:
@@ -192,6 +257,13 @@ def main(argv: list[str] | None = None) -> int:
         # 评估配置前先知道要等多久，避免把长跑误判挂死。
         print(f'多 seed 串行 {n_rounds} 轮 × {time_budget}s，'
               f'预计总时长 ≈ {n_rounds * time_budget}s（不含解析/切片）')
+    # PC-006 旋钮生效方式一行说明（--quiet 也打：改求解行为的开关不静默）。
+    if fixed_solver_opts is not None:
+        print(f"solver_opts: {json.dumps(fixed_solver_opts, ensure_ascii=False)}"
+              f'（全 seed 生效）')
+    elif args.rotate_opts:
+        print(f'rotate_opts: 内置池 {len(SOLVER_OPTS_POOL)} 档逐 seed 轮换'
+              f'（pool[队列序 % {len(SOLVER_OPTS_POOL)}]，池首空档=默认行为）')
 
     try:
         commit = commit_from_config(cfg, run_dir)
@@ -240,6 +312,10 @@ def main(argv: list[str] | None = None) -> int:
                 'seeds': list(cfg.seeds),
                 'per_type': cfg.per_type,
                 'quantities': cfg.quantities,
+                # PC-006 旋钮回显（旗标未给时不加键：无旗标冒烟的结构对拍不受扰）。
+                **({'solver_opts': fixed_solver_opts}
+                   if fixed_solver_opts is not None else {}),
+                **({'rotate_opts': True} if args.rotate_opts else {}),
             },
             'commit': commit,
             'solve': solves,
@@ -264,7 +340,7 @@ def main(argv: list[str] | None = None) -> int:
         run = run_serial_portfolio(
             cfg, run_dir, controller=controller, time_budget=time_budget,
             solve=solve_pieces, on_seed_start=_on_seed_start,
-            on_seed_done=_on_seed_done)
+            on_seed_done=_on_seed_done, solver_opts_for=solver_opts_for)
     except Exception as e:
         print(f'求解失败 (seed={current["seed"]}): {e}', file=sys.stderr)
         return _EXIT_SOLVE

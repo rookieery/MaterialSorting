@@ -36,6 +36,11 @@ PC-001 落盘（run_dir 内，逐帧/逐 seed 写，不攒内存）：
     width_mm}, ...]`` —— **不含 placed_items**（控体积；布局只在 best 帧文件里）；
   - ``best_frame_s{seed}.json``：该 seed 最优帧完整布局（``density`` 原面积口径，
     严格大于当前最优才覆盖写）。
+
+US-006（PC-006）：``solve_pieces`` 加可选 ``solver_opts``（spyrrow 求解旋钮，
+与 ``web.solver.build_instance`` 同形白名单）—— 原样并入 solve_params 透传到子
+进程（全 JSON，Windows spawn 安全），主进程 meta 构造与子进程求解同一清洗口径；
+非空时返回记录附带 ``solver_opts`` 回显（空档不加键，无旗标冒烟零回归）。
 """
 from __future__ import annotations
 
@@ -223,7 +228,8 @@ def _best_frame_record(seed: int, frame_index: int, report: dict) -> dict:
 
 
 def solve_pieces(cfg, run_dir, *, seed: int, time_budget: int | None = None,
-                 on_progress=None, should_stop=None) -> dict:
+                 on_progress=None, should_stop=None,
+                 solver_opts: dict | None = None) -> dict:
     """配置驱动的单 seed 求解（PC-001 起进程化 + 帧轨迹落盘 + 可中止）。
 
     读 ``run_dir/pieces_intermediate.json``（``commit_from_config`` 产物；每轮求解
@@ -266,6 +272,12 @@ def solve_pieces(cfg, run_dir, *, seed: int, time_budget: int | None = None,
         帧**作为结果返回（``killed=True`` + ``kill_reason``）；返回字符串时作为
         ``kill_reason``（portfolio 控制器报规则名），``True`` 用缺省 ``'should_stop'``。
         恒 ``False`` / 不传 = 现行行为（跑满预算）。
+    solver_opts : dict | None
+        spyrrow 求解旋钮（US-006，与 ``web.solver.build_instance`` 同形 additive
+        白名单：``exploration_pct`` / ``quadtree_depth`` / ``num_workers``）。原样
+        并入 solve_params（全 JSON 可序列化，Windows spawn 安全），清洗与换算在
+        ``build_instance`` 内做（主进程 meta 构造与子进程求解同一口径）。None /
+        空档 = 现行行为不变；非空时返回记录附带 ``solver_opts`` 回显字段。
 
     Returns
     -------
@@ -297,6 +309,8 @@ def solve_pieces(cfg, run_dir, *, seed: int, time_budget: int | None = None,
         'sizes': cfg.sizes,
         'per_type': cfg.per_type,
         'quantities': cfg.quantities,
+        # US-006：原样透传（JSON 可序列化，spawn 安全）；白名单清洗在 build_instance。
+        'solver_opts': solver_opts,
     }
     # 主进程先建一次实例只取 meta（demand_sum / total_area / n_items / n_eroded）——
     # 避免在 CLI 复制 demand 查询逻辑（单一真相源仍是 web.solver.build_instance）。
@@ -357,6 +371,10 @@ def solve_pieces(cfg, run_dir, *, seed: int, time_budget: int | None = None,
         curve_file.write(']\n')
         curve_file.close()
 
+    # US-006 回显：非空 solver_opts 才附带（无旗标运行的记录字段与 PC-001 基线
+    # 逐键一致，冒烟对拍不受扰）。
+    opts_echo = {'solver_opts': dict(solver_opts)} if solver_opts else {}
+
     # 被 should_stop 中止：以 best-so-far 帧交付（err/final 缺席是 terminate 的预期形态）。
     if state['reason'] is not None:
         best = state['best']
@@ -375,6 +393,7 @@ def solve_pieces(cfg, run_dir, *, seed: int, time_budget: int | None = None,
             'elapsed': round(elapsed, 1),
             'killed': True,
             'kill_reason': state['reason'],
+            **opts_echo,
         }
 
     if err is not None:
@@ -397,4 +416,5 @@ def solve_pieces(cfg, run_dir, *, seed: int, time_budget: int | None = None,
         'density_sparrow': round(float(final['density_sparrow']), 6),
         'placed_items': n_placed,
         'elapsed': round(elapsed, 1),
+        **opts_echo,
     }

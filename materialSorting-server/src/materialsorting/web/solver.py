@@ -19,10 +19,16 @@ US-025 新增 ``solve_with_callback_proc`` —— 把求解从 daemon 线程模�
 ``multiprocessing.Process`` 模型，让调用方持有进程句柄可 ``terminate()``（OS 级回收，
 唯一可靠终止 spyrrow Rust 原生 solve 的方式）。旧 ``solve_with_callback``（threading 版）
 **保留不删**，US-026 才切换 ``ws_solve`` 的调用方，保证本次提交系统行为零变化。
+
+US-006（PC-006）``build_instance`` 新增可选 ``solver_opts``（spyrrow 求解旋钮透传，
+additive 白名单）：``exploration_pct`` / ``quadtree_depth`` / ``num_workers`` 三键，
+非法值 clamp + 忽略、不传 = 现行行为原样（total_computation_time 模式自动 80/20
+分段）。solve_params 全 JSON 可序列化，Windows spawn 安全。
 """
 from __future__ import annotations
 
 import json
+import math
 import multiprocessing
 import os
 import queue as _queue_mod
@@ -80,8 +86,68 @@ def discretize_orientations(tol: float):
     return sorted(angs)
 
 
+# ------------------------------------------------ US-006 solver_opts 清洗与换算
+
+
+# exploration_pct 合法域（PRD PC-006：越界 clamp 到边界）。
+_EXPLORATION_PCT_RANGE = (0.1, 0.95)
+# quadtree_depth 合法域（spyrrow 常用值 3/4/5，越界 clamp）。
+_QUADTREE_DEPTH_RANGE = (3, 5)
+
+
+def _clamp_finite(value, lo, hi):
+    """数值清洗：非数值 / NaN / ±inf → None（调用方忽略该键）；有限值 clamp 到 [lo, hi]。"""
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(f):
+        return None
+    return min(max(f, lo), hi)
+
+
+def _normalize_solver_opts(solver_opts) -> dict:
+    """solver_opts 白名单清洗（US-006）：只保留三键，非法值 clamp（越界）/ 忽略（非数值）。
+
+    - ``exploration_pct``：clamp 到 [0.1, 0.95]；
+    - ``quadtree_depth``：clamp 到 [3, 5] 后取整；
+    - ``num_workers``：下限 1 后取整（无上限——按机器核数自治）；
+    - 其余键一律忽略（additive 白名单，未知旋钮不透传给 spyrrow）。
+
+    None / 非 dict / 空 dict → ``{}``（= 不改现行行为）。
+    """
+    if not isinstance(solver_opts, dict):
+        return {}
+    out: dict = {}
+    pct = _clamp_finite(solver_opts.get('exploration_pct'), *_EXPLORATION_PCT_RANGE)
+    if pct is not None:
+        out['exploration_pct'] = pct
+    depth = _clamp_finite(solver_opts.get('quadtree_depth'), *_QUADTREE_DEPTH_RANGE)
+    if depth is not None:
+        out['quadtree_depth'] = int(round(depth))
+    workers = _clamp_finite(solver_opts.get('num_workers'), 1, math.inf)
+    if workers is not None:
+        out['num_workers'] = int(round(workers))
+    return out
+
+
+def _split_time_budget(total: int, pct: float) -> tuple[int, int]:
+    """total 秒按 pct 切 (exploration_time, compression_time) 两段 int 秒。
+
+    两段均 ≥1s（压缩段 0s 无意义）、四舍五入取整、和 ≈ total（|和 − total| ≤ 1s；
+    total < 2s 的极端预算下为保两段 ≥1s，和可到 total + 1）。
+    """
+    expl = int(round(total * pct))
+    if total >= 2:
+        expl = min(max(expl, 1), total - 1)
+    else:
+        expl = max(expl, 1)
+    return expl, max(1, total - expl)
+
+
 def build_instance(pieces, gate_mm, *, time_budget: int, seed: int,
-                   sizes=None, params=None, per_type=None, quantities=None):
+                   sizes=None, params=None, per_type=None, quantities=None,
+                   solver_opts: dict | None = None):
     """按码号 + v0.3 参数构造 (instance, config, pid_meta, total_area, n_eroded)。
 
     params = {d_ext, d_int, tol_ext, tol_int}（默认全 0 = 阶段A baseline。US-002 起
@@ -94,6 +160,15 @@ def build_instance(pieces, gate_mm, *, time_budget: int, seed: int,
         - 按 (piece.label, str(piece.size)) 查 N → ``spyrrow.Item(demand=N)``；
         - **demand=0 跳过该 piece（D2）**（该码该裁片不参与排料）；
         - piece 缺 label 或 quantities=None → demand=1（向后兼容旧 intermediate / 旧前端）。
+    solver_opts = {exploration_pct?, quadtree_depth?, num_workers?} | None
+        （US-006 spyrrow 求解旋钮透传，additive 白名单、未知键忽略）：
+        - exploration_pct ∈ [0.1, 0.95]（越界 clamp、非数值忽略）：把 time_budget
+          换算为 exploration_time / compression_time 两段 int 秒（**与
+          total_computation_time 互斥**传入 spyrrow —— 两键同给 spyrrow 直接
+          ValueError；不传时 spyrrow total 模式自动 80/20 分段 = 现行行为）；
+        - quadtree_depth ∈ [3, 5]（缺省 4）；num_workers ≥ 1（缺省 4）。
+        PC-006 消费方：CLI ``--solver-opts`` / ``--rotate-opts``（seed 间轮换去相关）；
+        WS 协议本期不加字段（web 前端零改动）。
 
     每片实际 erode = min(申请值, MAX_OVERLAP_MM=10)（全局上限兜底，2026-08 起不再按片型）
     每片实际 tol  = min(申请值, MAX_ROTATION_TOL_DEG=45)
@@ -194,8 +269,27 @@ def build_instance(pieces, gate_mm, *, time_budget: int, seed: int,
     gate_nest = min(float(gate_mm), PLOT_SAFE_MAX_Y_MM)
     instance = spyrrow.StripPackingInstance(
         name='workbench', strip_height=gate_nest, items=items)
-    config = spyrrow.StripPackingConfig(
-        total_computation_time=time_budget, seed=seed, num_workers=4)
+    # US-006 求解旋钮：白名单清洗（越界 clamp / 非法忽略）后按需改写 config 构造。
+    # 不传 solver_opts（或清洗后为空）时与旧版构造逐字段一致（total 模式 + 默认
+    # quadtree_depth=4 + num_workers=4），无旗标冒烟零回归。
+    opts = _normalize_solver_opts(solver_opts)
+    total = int(time_budget)
+    if 'exploration_pct' in opts:
+        # 两段模式与 total_computation_time 互斥：spyrrow 的 total 键缺省 600（非
+        # None），两段模式必须显式传 total_computation_time=None，否则触发
+        # "not all 3 or some other combination" ValueError。
+        expl, cmpr = _split_time_budget(total, opts['exploration_pct'])
+        config = spyrrow.StripPackingConfig(
+            total_computation_time=None,
+            exploration_time=expl, compression_time=cmpr,
+            seed=seed,
+            quadtree_depth=opts.get('quadtree_depth', 4),
+            num_workers=opts.get('num_workers', 4))
+    else:
+        config = spyrrow.StripPackingConfig(
+            total_computation_time=total, seed=seed,
+            quadtree_depth=opts.get('quadtree_depth', 4),
+            num_workers=opts.get('num_workers', 4))
     return instance, config, pid_meta, total_area, n_eroded
 
 

@@ -28,7 +28,9 @@ def solve_worker(pieces_snapshot, gate_mm, solve_params, result_queue):
         门幅（mm，spyrrow 世界坐标 Y 范围）。
     solve_params : dict
         拆给 ``build_instance`` 的关键字参数 —— ``time_budget`` / ``seed`` / ``sizes``
-        / ``params`` / ``per_type`` / ``quantities``（全部 JSON 可序列化）。
+        / ``params`` / ``per_type`` / ``quantities`` / ``solver_opts``（US-006，全部
+        JSON 可序列化；``solver_opts`` 原样透传给 ``build_instance`` 做白名单清洗，
+        本 worker 不解释旋钮语义）。
     result_queue : multiprocessing.Queue
         子进程 → 主进程的消息队列。投递内容全部 JSON 可序列化，spyrrow 对象绝不跨进程：
         - ``{kind:'manifest', pid_meta, total_area, n_eroded, gate_mm}``（首条）

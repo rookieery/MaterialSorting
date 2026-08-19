@@ -509,7 +509,8 @@ class PortfolioController:
 
 def run_serial_portfolio(cfg, run_dir, *, controller: PortfolioController,
                          time_budget: int | None = None, solve=None,
-                         on_seed_start=None, on_seed_done=None) -> PortfolioRun:
+                         on_seed_start=None, on_seed_done=None,
+                         solver_opts_for=None) -> PortfolioRun:
     """经控制器串行跑完 seed 队列（run_config 现有串行循环的转发实现）。
 
     每轮：R0 已触发则剩余 seed 不启动（AC：per_seed 对未启动 seed 无记录）→
@@ -527,6 +528,11 @@ def run_serial_portfolio(cfg, run_dir, *, controller: PortfolioController,
         单 seed 求解函数（缺省 ``pipeline.solve_pieces``；测试注入 fake solve）。
     on_seed_start / on_seed_done : callable | None
         每轮开始 / 完成回调（打印轮次头 / 逐轮落盘）。
+    solver_opts_for : callable(index, seed) -> dict | None | None
+        US-006 求解旋钮解析器（``run_config`` 由 ``--solver-opts`` / ``--rotate-opts``
+        构造）：``index`` 为 **0 起队列序**（轮换池下标口径），返回非空 dict 时以
+        ``solver_opts=...`` 传入该轮 solve（None / 空档 = 现行行为）。缺省 None
+        全程不加该键（无旗标调用形与旧版一致，fake solve 兼容）。
     """
     if solve is None:
         solve = solve_pieces
@@ -551,6 +557,11 @@ def run_serial_portfolio(cfg, run_dir, *, controller: PortfolioController,
                       'on_progress': controller.make_progress(seed, index=i)}
             if controller.target is not None:
                 kwargs['should_stop'] = controller.make_should_stop(seed, index=i)
+            if solver_opts_for is not None:
+                # i 为 1 起队列序 → 转 0 起轮换下标（pool[seed_index % len] 口径）。
+                opts = solver_opts_for(i - 1, seed)
+                if opts:
+                    kwargs['solver_opts'] = dict(opts)
             rec = solve(cfg, run_dir, **kwargs)
         except KeyboardInterrupt:
             interrupted = True
