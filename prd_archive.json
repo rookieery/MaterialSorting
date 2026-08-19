@@ -513,6 +513,12 @@
         "title": "多 seed 串行多轮与 best 汇总（可延后）",
         "description": "作为算法调参用户，我想要 seeds 列表含多个种子时自动串行逐个求解并汇总最优，消除单 seed 随机性对配置评估的干扰。\n\n具体任务：\n1. cli/run_config.py：for seed in cfg.seeds 顺序循环，复用同一份 commit 产物逐 seed 求解（每轮重建 build_instance，不重复 parse/commit）；result.json 记 per-seed solve 数组 + best（real_density 最大者）；多 seed 启动时打印预计总时长（len(seeds) × time）。种子不要求连续（[0,42] 合法，供复现历史 seed 对比）；确定只做串行，不做并行\n\n验收标准：\n- seeds=[0,1,2,3,4] 顺序执行 5 轮；--time 5 冒烟：result.json 的 solve 数组长度 = len(seeds)，best 取 real_density 最大者且 seed 字段正确\n- seeds=[0]（含缺省默认 [0]）行为与 US-003 完全一致（单 seed 回归）\n- python -m materialsorting.cli.run_config 冒烟通过、分层依赖未反向",
         "passes": true
+      },
+      {
+        "id": "US-005",
+        "title": "web 回归验证 + 文档同步",
+        "description": "作为项目维护者，我想要全量 web 回归证据与文档更新，使新通道合入后工作台零回归成为可审计事实。\n\n具体任务：\n1. README.md / CLAUDE.md（运行方式段）：增补 CLI 用法、7 键配置 schema（含 seeds 列表串行语义）、out/config_runs/ 时间戳产物说明、「不触碰 web 数据」声明\n2. .docs/technical/agent-file-map.md 增补 cli 子包条目（config.py / pipeline.py / run_config.py 职责一行一条）\n\n验收标准：\n- web E2E 手测记录：ms-web 启动 → 上传母版 → parse 预览 g 码 → commit → WS 求解（time 调小）→ 导出 PNG/DXF，行为与改动前一致（改 server.py 相关的 verify-api hook 5 端点 404 为已知误报，本项目未改 server.py 不会触发）\n- 并行无干扰记录：web 求解进行中同时跑 CLI 冒烟，结束后 out/sparrow_baseline/pieces_intermediate.json mtime 与内容未变、out/uploads/ 无新目录\n- 全部 cli 模块 python -m 导入冒烟 + compileall 通过，分层依赖未反向",
+        "passes": true
       }
     ]
   }
