@@ -20,6 +20,7 @@ MaterialSorting/
 │       ├── nesting_engine/    sparrow 排料 + v0.3 约束
 │       ├── web/               FastAPI + WebSocket 工作台
 │       └── cli/               配置驱动求解 CLI（ms-run-config，不依赖浏览器）
+├── scripts/                   repo 根维护脚本（embed_piece_codes.py 母版植入 g 码编号等）
 └── materialSorting-web/       前端 React + TypeScript + Vite（src/ → npm run build → static/）
     ├── src/                   源码（React 18 + TS 5 + Zustand）
     └── static/                构建产物（npm run build 生成，gitignore，由 ms-web serve）
@@ -121,6 +122,7 @@ ms-run-config <config.json>（CLI 平行通道，不经过 web）
 | `ms-sparrow-exp` | 旋转公差 / 重合公差 / 组合实验 |
 | `ms-web` | 可视化工作台（http://127.0.0.1:8000） |
 | `ms-run-config` | 配置驱动排料一条命令（commit → 串行多 seed 求解 → `out/config_runs/` result.json，见上文「配置驱动求解」） |
+| `python scripts/embed_piece_codes.py <母版.dxf>` | 把 g01+ 编号植入母版 DXF 生成 `_coded.dxf`（与 Web 解析同源编号，幂等 + 自校验，版师在 ET2008 可对上 g 码） |
 
 也可用 `python -m materialsorting.<subpackage>.<module>` 形式运行。
 

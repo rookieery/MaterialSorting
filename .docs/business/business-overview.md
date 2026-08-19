@@ -26,6 +26,8 @@
 | 可视化工作台（web） | ✅ 落地 | FastAPI + WS，React 18 + TS 5 + Vite 5 前端（US-001~US-028：Tab 框架 + 上传预览 + 5 层渲染 + 求解停止/重启状态机） |
 | 求解停止 / 重启 | ✅ 落地 | US-025 进程化（`solve_with_callback_proc` + `solve_worker`）+ US-026 WS stop 协议 + US-027 phase 五态状态机 + US-028 SolveControls 按钮组 |
 | 导出 PNG / R12-DXF / PLT | ✅ 落地 | 用原始母版轮廓，**US-024 起 5 层叠加**（毛版+净版+内部线+刺口+布纹线），ET2008 兼容；**US-033 起 PLT/HPGL**（WT V8.8 / LIKE 绘图仪原生链路，DXF 在该软件实测无法打印）；**2026-08 撞机修正**：PLT 内容压进绘图仪 Y 可写幅宽 1910 + PD 分块 ≤10点/≤110B + 走纸引导（设备级差异详见 [technical/agent-api-reference.md](../technical/agent-api-reference.md)） |
+| 配置驱动求解 CLI（cli 子包） | ✅ 落地 | 2026-08-19：`ms-run-config <config.json>`（7 键配置：master_dxf/gate_mm 必填 + sizes/time/seeds/per_type/quantities）→ 独立 commit → **串行**多 seed 求解 + best 汇总（real 口径）；产物只落 `out/config_runs/<run>_<时间戳>/`（pieces/ + intermediate + result.json），物理隔离 web 事实源，与 ms-web 可并行互不干扰，无需浏览器 |
+| 母版编号植入脚本 | ✅ 可用 | 2026-08-18：`python scripts/embed_piece_codes.py <母版.dxf>` 把 g01+ 编号 TEXT 植入母版（与 Web parse 同源 `assign_codes`，幂等 + 自校验）—— 版师在 ET2008 打开母版即可把图面片对上 g 码；`_coded.dxf` 产物可直接再上传 Web，g 码不变 |
 | 90% 利用率目标 | 🎯 进行中 | 距 90% 生死线约 4pp，主攻旋转公差 + 内片重合 |
 
 ## 核心业务实体
@@ -91,12 +93,15 @@ out/sparrow_baseline/pieces_intermediate.json   ← 全流程事实源（schema 
    └─ ms-web（启动期 _PIECES_STATE 读取 + commit 后 reload + 实时可视化 5 层 + 导出 PNG/R12-DXF/PLT 5 层）
 ```
 
+> **CLI 平行通道**（2026-08-19）：`ms-run-config <config.json>` 从 `data/configs/` 7 键配置出发，走同一编排链独立 commit 到 `out/config_runs/<run>_<时间戳>/` 再串行多 seed 求解 —— **不经上述 web 事实源**（不写 `out/sparrow_baseline/` 与 `out/uploads/`），可与 ms-web 并行互不干扰。
+
 详细函数链见 [technical/agent-file-map.md](../technical/agent-file-map.md#数据流主线)。
 
 ## 后端架构
 
-四层单向依赖（`web → nesting_engine → nesting_bounds → dxf_parser`），下层禁 import 上层：
+五层单向依赖（`cli → web → nesting_engine → nesting_bounds → dxf_parser`），下层禁 import 上层：
 
+- **cli**：最上层编排者（2026-08-19 新增）。`config`（7 键 JSON 严格校验，中文报错含字段名）、`pipeline`（commit 管线镜像 `server._commit_to_nesting_sync` + `solve_pieces` 求解封装，复用 `web.solver.build_instance` 与 web 同代码路径）、`run_config`（`ms-run-config` 入口：逐 seeds 串行多轮 + best 汇总）；绝不 import `web.server`，产物只落 `out/config_runs/`。
 - **dxf_parser**：底层 DXF 读写。`reader`（ezdxf recover + GBK + R12 POLYLINE）、`geometry`（纯几何）、`model`（PieceOutline，US-002 扩 5 层字段）、`explore`（母版探索）、`collect`（US-003 母版深度解析 5 层 IR）、`export_dxf`（单裁片 5 层导出）。仅 stdlib + ezdxf。
 - **nesting_bounds**：`load_pieces` 把单裁片 → 布纹对齐 → 归一化（US-001 v2 起 manifest 驱动、无 L/R 镜像展开）；US-024 起 `_read_piece` 读 5 层 + notch 法线按 outline 最近边重算。定义 `NestPiece`、`GATE_MM=1980`、`DEFAULT_SIZES`。
 - **nesting_engine**：sparrow 求解。`constraints`（v0.3 常量 + 位图腐蚀 + 校验）、`sparrow_baseline`（基线 + ★共享层）、`sparrow_experiments`（公差实验）、`labeling`（**g 码赋号单一真相源**，US-001 v2：assign_codes + 母版编号复用，无名称映射）。intermediate 由 `web/server._commit_to_nesting_sync` 生成（US-001 v2 label 先行 / US-024 5 层，schema v2）。
