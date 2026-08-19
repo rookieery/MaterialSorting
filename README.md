@@ -91,7 +91,9 @@ python -m materialsorting.cli.run_config <config.json> --name demo --quiet   # �
 | `per_type` | dict | — | `{g码: {d?, tol?}}` 逐 g 码公差覆盖（d=重合 mm、tol=旋转公差 °，≥0；超全局上限不报错但被钳制） |
 | `quantities` | dict | — | `{g码: {码号: 数量}}` per-size demand（码号键须数字字符串或 `"null"`，数量 JSON 数字 ≥0 整数） |
 
-**产物只落 `out/config_runs/<run_name>_<YYYYMMDD-HHMMSS>/`**（时间戳目录保留历史互不覆盖；`run_name` 缺省 = 配置文件 stem，`--name` 覆盖）：`pieces/`（切单裁片 + manifest）、`pieces_intermediate.json`（本 run 事实源）、`result.json`（config 回显 + commit 摘要 + 逐 seed solve 指标数组 + `best`）。
+**产物只落 `out/config_runs/<run_name>_<YYYYMMDD-HHMMSS>/`**（时间戳目录保留历史互不覆盖；`run_name` 缺省 = 配置文件 stem，`--name` 覆盖）：`pieces/`（切单裁片 + manifest）、`pieces_intermediate.json`（本 run 事实源）、`result.json`（config 回显 + commit 摘要 + 逐 seed solve 指标数组 + `best`；**逐轮重写**，Ctrl-C 不丢已完成轮）、`curve_s{seed}.json`（逐帧轨迹 `{elapsed, phase, density, density_sparrow, width_mm}`，不含布局控体积）、`best_frame_s{seed}.json`（该 seed 最优帧完整 `placed_items`）。
+
+**求解进程化（PC-001）**：每 seed 经 `solve_with_callback_proc` 多进程满血求解（子进程重建实例是固有秒级成本），`solve_pieces` 支持逐帧 `should_stop` 中止（OS 级 terminate，以 best-so-far 帧交付）—— 是串行 seed portfolio 控制器（kill / 达标即停）与标定管线的执行手段。Ctrl-C 退出码 130，已完成轮产物已落盘。
 
 **不触碰 web 数据**：CLI 唯一可写目录是 `out/config_runs/`，绝不写 `out/sparrow_baseline/pieces_intermediate.json`（web 事实源）与 `out/uploads/` —— 与 ms-web 同时运行互不干扰（并行回归已验证：web 求解进行中跑 CLI，结束后两者事实源 mtime/内容不变、uploads 无新目录）。
 

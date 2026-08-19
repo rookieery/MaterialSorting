@@ -18,14 +18,24 @@ sidecar → load_nest_pieces → intermediate 落盘」全管线，产出与 web
 polygon/bbox/area_mm2/n_verts/allowed_angles + 5 层透传 + rounding 位数）变更时，
 本模块 ``_piece_record`` 必须同步（web 层零改动约束下无法抽共享函数，只能镜像）。
 
-``solve_pieces(cfg, run_dir, *, seed, ...)``（US-003）：单 seed 求解封装 —— 读
-``run_dir/pieces_intermediate.json`` → ``web.solver.build_instance`` →
-``web.solver.solve_with_callback``（**threading 版**进程内直跑；不用
-``solve_with_callback_proc`` 多进程版 —— terminate 能力是 WS stop 场景专用，CLI
-前台同步跑完即退，无需进程句柄）。density 双口径直接复用
-``web.solver._apply_density_dual``（同一函数 = 同一公式同一口径，web 层零改动
-约束下不复制公式）：``density`` = 原面积口径 ``total_area/(width*gate_mm)``
-（版师 / 90% 生死线），``density_sparrow`` = sparrow 自报（erode 后，仅参考）。
+``solve_pieces(cfg, run_dir, *, seed, ...)``（US-003；PC-001 起进程化）：单 seed
+求解封装 —— 读 ``run_dir/pieces_intermediate.json`` → 主进程 ``web.solver.
+build_instance`` 取 meta（demand_sum 校验 / total_area / n_items / n_eroded）→
+``web.solver.solve_with_callback_proc`` **多进程版**求解（spyrrow 对象不可 pickle，
+子进程内重建 instance 是 proc 设计固有成本，秒级）。切换动机：``should_stop``
+逐帧中止需要持有进程句柄 ``terminate()``（OS 级回收，唯一可靠终止 spyrrow Rust
+原生 solve 的方式 —— threading 版不可中断）。density 双口径换算发生在
+``solve_with_callback_proc`` 内部（同一 ``web.solver._apply_density_dual`` = 同一
+公式同一口径，web 层零改动约束下 CLI 不复制公式）：``density`` = 原面积口径
+``total_area/(width*gate_mm)``（版师 / 90% 生死线），``density_sparrow`` = sparrow
+自报（erode 后，仅参考）。
+
+PC-001 落盘（run_dir 内，逐帧/逐 seed 写，不攒内存）：
+
+  - ``curve_s{seed}.json``：帧轨迹 ``[{elapsed, phase, density, density_sparrow,
+    width_mm}, ...]`` —— **不含 placed_items**（控体积；布局只在 best 帧文件里）；
+  - ``best_frame_s{seed}.json``：该 seed 最优帧完整布局（``density`` 原面积口径，
+    严格大于当前最优才覆盖写）。
 """
 from __future__ import annotations
 
@@ -39,7 +49,8 @@ from ..dxf_parser.export_dxf import write_piece_dxf
 from ..nesting_bounds.load_pieces import load_nest_pieces, PIECES_MANIFEST_NAME
 from ..nesting_engine.labeling import assign_codes, size_sort_key
 
-__all__ = ['new_run_dir', 'commit_from_config', 'solve_pieces']
+__all__ = ['new_run_dir', 'commit_from_config', 'solve_pieces',
+           '_curve_entry', '_best_frame_record']
 
 
 def new_run_dir(run_name: str) -> Path:
@@ -170,15 +181,66 @@ def commit_from_config(cfg, run_dir) -> dict:
     }
 
 
+def _dump_json(path: Path, payload) -> None:
+    """JSON 落盘（UTF-8、ensure_ascii=False，与 intermediate/result.json 同风格）。"""
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(payload, f, ensure_ascii=False)
+
+
+def _curve_entry(report: dict) -> dict:
+    """frame → ``curve_s{seed}.json`` 单帧条目（**不含 placed_items**，控体积）。
+
+    字段白名单 + rounding：elapsed 3 位（与 worker ``_emit_frame`` 一致）、density
+    双口径 6 位（与 solve 指标一致）、width 2 位。
+    """
+    return {
+        'elapsed': round(float(report.get('elapsed', 0.0)), 3),
+        'phase': str(report.get('phase', '')),
+        'density': round(float(report.get('density', 0.0)), 6),
+        'density_sparrow': round(float(report.get('density_sparrow', 0.0)), 6),
+        'width_mm': round(float(report.get('width_mm', 0.0)), 2),
+    }
+
+
+def _best_frame_record(seed: int, frame_index: int, report: dict) -> dict:
+    """frame → ``best_frame_s{seed}.json`` 完整记录（含 placed_items 布局）。
+
+    ``frame_index`` 是该 seed 帧序（0 起，与 ``curve_s{seed}.json`` 下标对齐）——
+    portfolio incumbent 的来源字段（PC-002 消费）。
+    """
+    placed = report.get('placed_items') or []
+    return {
+        'seed': int(seed),
+        'frame_index': int(frame_index),
+        'elapsed': round(float(report.get('elapsed', 0.0)), 3),
+        'phase': str(report.get('phase', '')),
+        'density': round(float(report['density']), 6),
+        'density_sparrow': round(float(report.get('density_sparrow', 0.0)), 6),
+        'width_mm': round(float(report.get('width_mm', 0.0)), 2),
+        'n_placed': len(placed),
+        'placed_items': placed,
+    }
+
+
 def solve_pieces(cfg, run_dir, *, seed: int, time_budget: int | None = None,
-                 on_progress=None) -> dict:
-    """配置驱动的单 seed 求解：run_dir intermediate → build_instance → solve。
+                 on_progress=None, should_stop=None) -> dict:
+    """配置驱动的单 seed 求解（PC-001 起进程化 + 帧轨迹落盘 + 可中止）。
 
     读 ``run_dir/pieces_intermediate.json``（``commit_from_config`` 产物；每轮求解
     重新 ``build_instance``，不重复 parse/commit —— 多 seed 串行复用同一份 commit
-    产物的语义由此成立）。求解用 ``web.solver.solve_with_callback`` **threading 版**
-    进程内直跑（非 ``solve_with_callback_proc`` 多进程版 —— terminate 进程句柄是
-    WS stop 场景专用，CLI 前台跑完即退）。
+    产物的语义由此成立）。主进程先 ``build_instance`` 取 meta（``demand_sum`` 校验
+    / ``total_area`` / ``n_items`` / ``n_eroded``），再交 ``solve_with_callback_proc``
+    **多进程版**求解 —— spyrrow 对象不可 pickle，子进程内重建 instance 是 proc 设计
+    固有成本（秒级）；换来的是调用方可经 ``should_stop`` 逐帧触发 ``terminate()``
+    中止子进程（OS 级回收，唯一可靠终止 spyrrow Rust 原生 solve 的方式）。
+
+    逐帧落盘（run_dir 内，不攒内存；见模块 docstring「PC-001 落盘」）：
+      - ``curve_s{seed}.json``：全部帧的 ``{elapsed, phase, density,
+        density_sparrow, width_mm}``（**增量 append** —— exploring 期 ~5ms 一帧、
+        300s 预算可上万帧，整文件重写是 O(N²) 磁盘写；seed 结束/中断时 finally 补
+        右括号收口成合法 JSON 数组）；
+      - ``best_frame_s{seed}.json``：该 seed 最优帧完整 ``placed_items``，``density``
+        严格大于当前最优才覆盖写（等值不重写，避免无谓 I/O）。
 
     Parameters
     ----------
@@ -192,10 +254,18 @@ def solve_pieces(cfg, run_dir, *, seed: int, time_budget: int | None = None,
     time_budget : int | None
         覆盖单轮求解时长（秒）；None → ``cfg.time``。
     on_progress : callable(dict) | None
-        每个中间解帧回调一次。帧已经 ``_apply_density_dual`` 换算 —— ``density``
-        = **原面积口径** ``total_area/(width_mm*gate_mm)``（90% 生死线口径），
+        每个中间解帧回调一次。帧已经 ``web.solver._apply_density_dual`` 换算（在
+        ``solve_with_callback_proc`` 内完成，CLI 不复制公式）—— ``density`` =
+        **原面积口径** ``total_area/(width_mm*gate_mm)``（90% 生死线口径），
         ``density_sparrow`` = sparrow 自报（erode 后，仅参考）。「新最优过滤 / 心跳
         节流」属 CLI 呈现层职责，由调用方（``run_config``）在回调内实现。
+    should_stop : callable(dict) -> bool | str | None
+        每帧评估是否中止（``True`` / 非空字符串 → 停）。触发即走 terminate 链路杀
+        子进程（``terminate → cancel_join_thread → drain ≤50ms → join(5)``，由
+        ``solve_with_callback_proc`` finally 保证），本函数以该 seed **best-so-far
+        帧**作为结果返回（``killed=True`` + ``kill_reason``）；返回字符串时作为
+        ``kill_reason``（portfolio 控制器报规则名），``True`` 用缺省 ``'should_stop'``。
+        恒 ``False`` / 不传 = 现行行为（跑满预算）。
 
     Returns
     -------
@@ -203,57 +273,126 @@ def solve_pieces(cfg, run_dir, *, seed: int, time_budget: int | None = None,
         单 seed 求解指标（result.json ``solve`` 数组元素）：``seed`` / ``n_items``
         （进 sparrow 的 Item 数）/ ``n_eroded`` / ``total_area_mm2`` / ``width_mm``
         / ``real_density``（原面积口径）/ ``density_sparrow`` / ``placed_items``
-        （放置副本数）/ ``elapsed``（wall-clock 秒）。
+        （放置副本数）/ ``elapsed``（wall-clock 秒）。**被 should_stop 中止时**额外
+        含 ``killed=True`` / ``kill_reason``，且 ``width_mm`` / ``real_density`` /
+        ``density_sparrow`` / ``placed_items`` 取终止前 best-so-far 帧（不再做
+        ``placed == Σdemand`` 完整性校验 —— 中间帧允许未放满）。
 
     Raises
     ------
     RuntimeError
-        求解失败（solver 抛错 / 返回 None）或 ``len(placed_items) != Σdemand``
-        （解不完整，不允许静默截断）。
+        求解失败（子进程抛错 / 未返回 final）、``len(placed_items) != Σdemand``
+        （正常结束的解不完整，不允许静默截断）、或被中止时一帧未收（无 best-so-far
+        可交付）。
     """
     # 延迟 import（约定同 solve_worker）：cli → web.solver 是合规向下依赖，但避免
     # `python -m materialsorting.cli.pipeline` 导入冒烟时拉起 web 包链。
-    from ..web.solver import (
-        _apply_density_dual, build_instance, load_pieces, solve_with_callback,
-    )
+    from ..web.solver import build_instance, load_pieces, solve_with_callback_proc
 
+    seed = int(seed)
     _, gate_mm, pieces = load_pieces(str(Path(run_dir) / 'pieces_intermediate.json'))
-    instance, config, pid_meta, total_area, n_eroded = build_instance(
-        pieces, gate_mm,
-        time_budget=int(cfg.time if time_budget is None else time_budget),
-        seed=int(seed),
-        sizes=cfg.sizes,
-        per_type=cfg.per_type,
-        quantities=cfg.quantities,
-    )
+    solve_params = {
+        'time_budget': int(cfg.time if time_budget is None else time_budget),
+        'seed': seed,
+        'sizes': cfg.sizes,
+        'per_type': cfg.per_type,
+        'quantities': cfg.quantities,
+    }
+    # 主进程先建一次实例只取 meta（demand_sum / total_area / n_items / n_eroded）——
+    # 避免在 CLI 复制 demand 查询逻辑（单一真相源仍是 web.solver.build_instance）。
+    instance, _config, _pid_meta, total_area, n_eroded = build_instance(
+        pieces, gate_mm, **solve_params)
+    n_items = len(instance.items)
     demand_sum = int(sum(it.demand for it in instance.items))
 
+    curve_path = Path(run_dir) / f'curve_s{seed}.json'
+    best_path = Path(run_dir) / f'best_frame_s{seed}.json'
+    state: dict = {'best': None, 'reason': None, 'proc': None, 'n_frames': 0}
+
+    # curve 增量写：sparrow exploring 期 ~5ms 一帧（300s 预算可上万帧），整文件重写
+    # 是 O(N²) 磁盘写（实测 5s 冒烟即 ~75MB）—— 改为打开一次、逐帧 append 条目，
+    # seed 结束（含 Ctrl-C 的 finally）补右括号收口成合法 JSON 数组。
+    curve_file = open(curve_path, 'w', encoding='utf-8')
+    curve_file.write('[\n')
+
+    def _on_process(proc) -> None:
+        # 持有子进程句柄：should_stop 触发时在帧回调内就地 terminate（US-026 同款链路）。
+        state['proc'] = proc
+
+    def _on_manifest(_manifest: dict) -> None:
+        # meta 已由主进程 build_instance 提供（total_area/pid_meta/n_eroded），manifest
+        # 消息只确认子进程口径一致，无需重复消费。
+        return None
+
     def _on_report(report: dict) -> None:
-        # 密度双口径换算：直接复用 web 的 _apply_density_dual（同函数同公式同口径，
-        # 不在 CLI 侧复制公式 —— web 层零改动约束下私有函数跨包引用是唯一复用途径）。
-        _apply_density_dual(report, total_area, gate_mm)
+        # 密度双口径换算已由 solve_with_callback_proc 内 _apply_density_dual 完成。
+        idx = state['n_frames']
+        state['n_frames'] = idx + 1
+        curve_file.write((',' if idx else '') +
+                         json.dumps(_curve_entry(report), ensure_ascii=False) + '\n')
+        best = state['best']
+        if best is None or report['density'] > best['density']:
+            state['best'] = _best_frame_record(seed, idx, report)
+            _dump_json(best_path, state['best'])
         if on_progress is not None:
             on_progress(report)
+        if state['reason'] is None and should_stop is not None:
+            verdict = should_stop(report)
+            if verdict:
+                state['reason'] = verdict if isinstance(verdict, str) and verdict else 'should_stop'
+                proc = state['proc']
+                if proc is not None:
+                    try:
+                        proc.terminate()
+                    except Exception:
+                        pass                  # 子进程已退出等：交 solve_with_callback_proc 收尾
 
-    sol, elapsed, err = solve_with_callback(instance, config, _on_report)
+    try:
+        _proc, final, elapsed, err = solve_with_callback_proc(
+            pieces, gate_mm, solve_params,
+            on_manifest=_on_manifest, on_report=_on_report, on_process=_on_process)
+    finally:
+        # 收口成合法 JSON 数组（KeyboardInterrupt / 求解异常 / killed 路径都走这里，
+        # Ctrl-C 不留半截 curve；仅硬崩溃（进程被杀）才可能缺右括号）。
+        curve_file.write(']\n')
+        curve_file.close()
+
+    # 被 should_stop 中止：以 best-so-far 帧交付（err/final 缺席是 terminate 的预期形态）。
+    if state['reason'] is not None:
+        best = state['best']
+        if best is None:
+            raise RuntimeError(
+                f'seed {seed} 被中止（{state["reason"]}）时未收到任何帧，无 best-so-far 可交付')
+        return {
+            'seed': seed,
+            'n_items': n_items,
+            'n_eroded': int(n_eroded),
+            'total_area_mm2': round(total_area, 1),
+            'width_mm': best['width_mm'],
+            'real_density': best['density'],
+            'density_sparrow': best['density_sparrow'],
+            'placed_items': best['n_placed'],
+            'elapsed': round(elapsed, 1),
+            'killed': True,
+            'kill_reason': state['reason'],
+        }
+
     if err is not None:
         raise RuntimeError(f'sparrow solve 抛错: {err}')
-    if sol is None:
+    if final is None:
         raise RuntimeError('sparrow solve 未返回解（sol=None）')
 
-    final = {'density': float(sol.density), 'width_mm': float(sol.width)}
-    _apply_density_dual(final, total_area, gate_mm)
-    n_placed = len(sol.placed_items)
+    n_placed = len(final.get('placed_items') or [])
     if n_placed != demand_sum:
         raise RuntimeError(
             f'解不完整：placed_items={n_placed} != Σdemand={demand_sum}（裁片未全部放置）')
 
     return {
-        'seed': int(seed),
-        'n_items': len(instance.items),
+        'seed': seed,
+        'n_items': n_items,
         'n_eroded': int(n_eroded),
         'total_area_mm2': round(total_area, 1),
-        'width_mm': round(float(sol.width), 2),
+        'width_mm': round(float(final['width_mm']), 2),
         'real_density': round(float(final['density']), 6),
         'density_sparrow': round(float(final['density_sparrow']), 6),
         'placed_items': n_placed,

@@ -2,11 +2,12 @@
 
 合成母版（与 ``test_cli_pipeline.py`` 同构）走「commit → 求解」全链路：
 solve_pieces 的指标口径（real_density=total_area/(width*gate)、placed==Σdemand、
-per_type/quantities 透传）、main 的退出码矩阵（0/1）、result.json 落盘结构、
+per_type/quantities 透传）、main 的退出码矩阵（0/1/130）、result.json 落盘结构、
 进度/汇总输出、多 seed 串行（commit 仅一次 + 逐 seed 顺序求解 + best 取
 real_density 最大者 + 预计总时长打印）、单 seed 回归（seeds=[0] 与缺省一致）、
 web 事实源零触碰、分层（run_config 不 import web；pipeline 对 web.solver 仅
-函数内延迟 import）。
+函数内延迟 import）。PC-001 增补：Ctrl-C 中断安全（已完成轮产物逐轮落盘、
+退出码 130）与 result.json 逐 seed 写入。
 """
 from __future__ import annotations
 
@@ -126,7 +127,11 @@ def test_solve_pieces_erode_count_via_per_type(iso_env):
 
 
 def test_solve_pieces_rejects_incomplete_solution(iso_env, monkeypatch):
-    """解不完整（placed != Σdemand）→ RuntimeError（exit 2 的数据源）。"""
+    """解不完整（placed != Σdemand）→ RuntimeError（exit 2 的数据源）。
+
+    PC-001 起 solve 走 ``solve_with_callback_proc``：fake 返回末态 dict（只放 1 片，
+    Σdemand=6），pipeline 主进程 build_instance 校验 demand 拦下。
+    """
     tmp, _, _, _, master = iso_env
     cfg = load_config(_write_config(tmp / 'cfg_bad.json', master))
     run_dir = new_run_dir('sp_bad')
@@ -134,16 +139,32 @@ def test_solve_pieces_rejects_incomplete_solution(iso_env, monkeypatch):
 
     import materialsorting.web.solver as web_solver
 
-    class _FakeSol:                                    # 只放 1 片（Σdemand=6）
-        width = 1000.0
-        density = 0.5
-        placed_items = [object()]
+    class _FakeProc:                                   # 伪 Process 句柄（已退出）
+        def is_alive(self):
+            return False
 
-    def _fake_solve_with_callback(instance, config, on_report, **kw):
-        return _FakeSol(), 0.1, None
+        def join(self, timeout=None):
+            return None
+
+        @property
+        def exitcode(self):
+            return 0
+
+    def _fake_proc(pieces, gate_mm, solve_params, *, on_manifest, on_report,
+                  on_process=None, **kw):
+        if on_process is not None:
+            on_process(_FakeProc())
+        on_manifest({'pid_meta': {}, 'total_area': 0.0, 'n_eroded': 0,
+                     'gate_mm': float(gate_mm)})
+        return _FakeProc(), {                     # 末态只放 1 片（Σdemand=6）
+            'type': 'final', 'density': 0.5, 'density_sparrow': 0.5,
+            'width_mm': 1000.0, 'elapsed': 0.1,
+            'placed_items': [{'id': 'g01_28', 'rotation': 0.0,
+                              'translation': [0.0, 0.0]}],
+        }, 0.1, None
 
     # pipeline 延迟 import 取的是 web_solver 模块属性 → patch 模块即生效
-    monkeypatch.setattr(web_solver, 'solve_with_callback', _fake_solve_with_callback)
+    monkeypatch.setattr(web_solver, 'solve_with_callback_proc', _fake_proc)
     with pytest.raises(RuntimeError, match='Σdemand'):
         solve_pieces(cfg, run_dir, seed=0, time_budget=1)
 
@@ -326,6 +347,79 @@ def test_multi_seed_non_contiguous_ok(iso_env):
     for r in recs:                                     # 每轮均完整解、指标字段齐全
         assert r['placed_items'] == _N_PIECES == r['n_items']
         assert 0.0 < r['real_density'] < 1.0
+
+
+# ------------------------------------------------------- Ctrl-C 中断安全（PC-001 AC#4）
+
+
+def test_main_ctrl_c_flushes_completed_seeds(iso_env, capsys, monkeypatch):
+    """AC#4：多 seed 循环中途 Ctrl-C → 已完成 seed 的 curve/best_frame/result 均已
+    落盘（逐 seed 写）、退出码 130、stderr 中断说明、result.json 含已完成 solve。"""
+    tmp, runs, _, _, master = iso_env
+    cfg_path = _write_config(tmp / 'cfg_int.json', master, seeds=[0, 1, 2])
+    from materialsorting.cli import run_config as rc_mod
+    orig_solve = rc_mod.solve_pieces
+    calls = {'n': 0}
+
+    def _solve_then_interrupt(cfg, run_dir, *, seed, time_budget=None,
+                              on_progress=None, **kw):
+        calls['n'] += 1
+        if calls['n'] == 3:                       # 第 3 轮（seed=2）模拟 Ctrl-C
+            raise KeyboardInterrupt
+        return orig_solve(cfg, run_dir, seed=seed, time_budget=time_budget,
+                          on_progress=on_progress)
+
+    monkeypatch.setattr(rc_mod, 'solve_pieces', _solve_then_interrupt)
+    rc = main([str(cfg_path), '--time', '2', '--quiet'])
+    assert rc == 130
+    err = capsys.readouterr().err
+    assert '[中断]' in err and '2/3' in err
+
+    (rd,) = list(runs.iterdir())
+    result = json.loads((rd / 'result.json').read_text(encoding='utf-8'))
+    assert [s['seed'] for s in result['solve']] == [0, 1]    # 逐轮落盘不丢
+    assert result['best']['seed'] in (0, 1)
+    for s in (0, 1):
+        assert (rd / f'curve_s{s}.json').exists()
+        assert (rd / f'best_frame_s{s}.json').exists()
+    assert not (rd / 'curve_s2.json').exists()               # 未开始轮零产物
+
+
+def test_main_ctrl_c_before_any_seed(iso_env, capsys, monkeypatch):
+    """Ctrl-C 在第 1 轮 → 退出码 130，无 result.json（无完整求解轮可交付）。"""
+    tmp, runs, _, _, master = iso_env
+    cfg_path = _write_config(tmp / 'cfg_none.json', master, seeds=[0, 1])
+    from materialsorting.cli import run_config as rc_mod
+    monkeypatch.setattr(rc_mod, 'solve_pieces',
+                        lambda *a, **kw: (_ for _ in ()).throw(KeyboardInterrupt))
+    rc = main([str(cfg_path), '--time', '2', '--quiet'])
+    assert rc == 130
+    assert '[中断]' in capsys.readouterr().err
+    (rd,) = list(runs.iterdir())
+    assert not (rd / 'result.json').exists()
+
+
+def test_main_result_written_per_seed(iso_env, monkeypatch):
+    """逐 seed 落盘：第 1 轮完成后 result.json 已在场且 solve 数组恰 1 条（不攒内存）。"""
+    tmp, runs, _, _, master = iso_env
+    cfg_path = _write_config(tmp / 'cfg_inc.json', master, seeds=[0, 1])
+    from materialsorting.cli import run_config as rc_mod
+    orig_solve = rc_mod.solve_pieces
+    snapshots: list[int] = []
+
+    def _spy(cfg, run_dir, *, seed, time_budget=None, on_progress=None, **kw):
+        rec = orig_solve(cfg, run_dir, seed=seed, time_budget=time_budget,
+                         on_progress=on_progress)
+        p = Path(run_dir) / 'result.json'
+        if p.exists():                       # 下一轮开始时读上一轮写下的 result.json
+            snapshots.append(len(json.loads(p.read_text(encoding='utf-8'))['solve']))
+        return rec
+
+    monkeypatch.setattr(rc_mod, 'solve_pieces', _spy)
+    rc = main([str(cfg_path), '--time', '2', '--quiet'])
+    assert rc == 0
+    # seed 1 求解时读到的 result.json 是 seed 0 完成后写的（恰 1 条 solve）
+    assert snapshots == [1]
 
 
 # ------------------------------------------------------- 分层（AC#4）

@@ -21,7 +21,12 @@ run_name 缺省 = 配置文件 stem，``--name`` 覆盖；Windows 非法文件�
 （``<>:"/\|?*`` 与控制字符）替换 ``_``，清洗后为空回退 ``run``。
 
 退出码：0 成功；1 配置或管线失败（ConfigError / commit 抛错）；2 求解失败
-（solve 抛错 / placed != Σdemand）。
+（solve 抛错 / placed != Σdemand）；130 Ctrl-C 中断（已完成轮产物已落盘）。
+
+PC-001 落盘口径（逐 seed 写，不攒内存）：每轮 ``solve_pieces`` 完成即把当前
+``result.json`` 重写一次（config 回显 + commit 摘要 + 已完成 solve 数组 + best），
+Ctrl-C / 崩溃时 run_dir 内已持有已完成轮的完整产物（curve_s*/best_frame_s* 由
+``solve_pieces`` 逐帧写，result.json 由本入口逐轮写）。
 
 进度口径（``--quiet`` 全部抑制，仅保留最终汇总）：
   - 「原面积口径新最优」帧：每帧 real_density 刷新历史最优才打一行；
@@ -49,6 +54,7 @@ _HEARTBEAT_SEC = 30.0
 _EXIT_OK = 0
 _EXIT_CONFIG_OR_COMMIT = 1
 _EXIT_SOLVE = 2
+_EXIT_INTERRUPT = 130          # Ctrl-C（SIGINT 惯用码）：已完成轮产物已落盘
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
@@ -143,6 +149,38 @@ def main(argv: list[str] | None = None) -> int:
           f"sizes={commit['sizes']} skipped={commit['n_skipped']}")
 
     solves: list[dict] = []
+    result_path = Path(run_dir) / 'result.json'
+
+    def _flush_result() -> dict:
+        """逐轮重写 result.json（已完成 solve 数组 + best）—— Ctrl-C/崩溃不丢已完成轮。
+
+        结构与终态完全一致（config 回显 + commit 摘要 + solve 数组 + best），中途
+        落盘只是「solve 数组尚未跑满 len(seeds)」这一维度不同。
+        """
+        # best = per-seed 解中 real_density（原面积口径）最大者；并列取先执行者
+        # （max 首个极大值）—— 多轮消除单 seed 随机性，配置评估取最优口径。
+        best = max(solves, key=lambda r: r['real_density'])
+        result = {
+            'config': {
+                'path': str(Path(args.config).resolve()),
+                'master_dxf': str(cfg.master_dxf),
+                'sizes': cfg.sizes,
+                'gate_mm': cfg.gate_mm,
+                # time 回显「实际生效值」（--time 覆盖后的），run 可复现优先于原文件字面。
+                'time': time_budget,
+                'seeds': list(cfg.seeds),
+                'per_type': cfg.per_type,
+                'quantities': cfg.quantities,
+            },
+            'commit': commit,
+            'solve': solves,
+            'best': best,
+        }
+        with open(result_path, 'w', encoding='utf-8') as f:
+            json.dump(result, f, ensure_ascii=False, indent=2)
+        return result
+
+    interrupted = False
     for i, seed in enumerate(cfg.seeds, start=1):
         if not args.quiet and n_rounds > 1:
             print(f'── 第 {i}/{n_rounds} 轮（seed={seed}）开始 ──')
@@ -150,34 +188,29 @@ def main(argv: list[str] | None = None) -> int:
             rec = solve_pieces(
                 cfg, run_dir, seed=seed, time_budget=time_budget,
                 on_progress=_make_progress_printer(seed, args.quiet))
+        except KeyboardInterrupt:
+            # Ctrl-C：当前轮弃，已完成轮的 curve/best_frame/result 已逐轮落盘
+            # （solve_pieces finally 保证在飞 seed 的 curve 也写全）。
+            interrupted = True
+            break
         except Exception as e:
             print(f'求解失败 (seed={seed}): {e}', file=sys.stderr)
             return _EXIT_SOLVE
         solves.append(rec)
+        _flush_result()
 
-    # best = per-seed 解中 real_density（原面积口径）最大者；并列取先执行者
-    # （max 首个极大值）—— 多轮消除单 seed 随机性，配置评估取最优口径。
-    best = max(solves, key=lambda r: r['real_density'])
+    if interrupted:
+        if not solves:
+            print(f'\n[中断] Ctrl-C：第 {i}/{n_rounds} 轮（seed={seed}）未完成，'
+                  f'尚无完整求解轮，run_dir = {run_dir.resolve()}', file=sys.stderr)
+            return _EXIT_INTERRUPT
+        best = _flush_result()['best']
+        print(f'\n[中断] Ctrl-C：已完成 {len(solves)}/{n_rounds} 轮，'
+              f'best real_density（原面积口径）= {best["real_density"]:.2%}，'
+              f'产物已落盘 {run_dir.resolve()}', file=sys.stderr)
+        return _EXIT_INTERRUPT
 
-    result = {
-        'config': {
-            'path': str(Path(args.config).resolve()),
-            'master_dxf': str(cfg.master_dxf),
-            'sizes': cfg.sizes,
-            'gate_mm': cfg.gate_mm,
-            # time 回显「实际生效值」（--time 覆盖后的），run 可复现优先于原文件字面。
-            'time': time_budget,
-            'seeds': list(cfg.seeds),
-            'per_type': cfg.per_type,
-            'quantities': cfg.quantities,
-        },
-        'commit': commit,
-        'solve': solves,
-        'best': best,
-    }
-    result_path = Path(run_dir) / 'result.json'
-    with open(result_path, 'w', encoding='utf-8') as f:
-        json.dump(result, f, ensure_ascii=False, indent=2)
+    best = _flush_result()['best']
 
     if n_rounds > 1:
         digest = ' | '.join(
