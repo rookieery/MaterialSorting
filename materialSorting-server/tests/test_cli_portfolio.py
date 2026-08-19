@@ -277,7 +277,7 @@ def test_portfolio_section_and_best_semantics():
     traj = {0: [(1.0, 0.80), (2.0, 0.84)], 1: [(1.0, 0.86)]}
     run = _run(traj, [0, 1])
     sec = run.controller.portfolio_section()
-    assert set(sec) == {'target', 'incumbent', 'per_seed', 'theta_history'}
+    assert set(sec) == {'target', 'incumbent', 'per_seed', 'theta_history', 'kill_mode'}
     assert sec['target'] is None
     assert run.controller.best_record(run.solves) == sec['incumbent']
     assert [set(e) for e in sec['per_seed']] == [
@@ -289,7 +289,8 @@ def test_portfolio_section_and_best_semantics():
     # 不激活：单 seed 无 target → 空段 + 旧 best（帧 0.90 高于 final 0.85 也不入 best）
     run_single = _run({5: [(1.0, 0.90), (2.0, 0.85)]}, [5])
     assert run_single.controller.portfolio_section() == \
-        {'target': None, 'incumbent': None, 'per_seed': [], 'theta_history': []}
+        {'target': None, 'incumbent': None, 'per_seed': [],
+         'theta_history': [], 'kill_mode': 'off'}
     assert run_single.controller.best_record(run_single.solves) == run_single.solves[0]
     assert run_single.controller.best_record(run_single.solves)['real_density'] \
         == pytest.approx(0.85, abs=1e-9)          # 旧语义 = final，不看帧
@@ -433,7 +434,8 @@ def test_main_single_seed_no_target_empty_portfolio(iso_env, capsys, monkeypatch
     (rd,) = list(runs.iterdir())
     result = json.loads((rd / 'result.json').read_text(encoding='utf-8'))
     assert result['portfolio'] == {'target': None, 'incumbent': None,
-                                   'per_seed': [], 'theta_history': []}
+                                   'per_seed': [], 'theta_history': [],
+                                   'kill_mode': 'off'}
     assert result['best'] == result['solve'][0]           # 旧语义引用（非 incumbent）
     assert result['best']['real_density'] == pytest.approx(0.85, abs=1e-9)
     out = capsys.readouterr().out

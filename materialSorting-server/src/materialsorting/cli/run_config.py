@@ -4,6 +4,7 @@ r"""ms-run-config 入口 —— 一条命令跑完「commit → 求解」，无�
 
     ms-run-config <config.json> [--name RUN_NAME] [--time N] [--quiet]
                   [--target P] [--params controller_params.json]
+                  [--kill shadow|off|on]
     python -m materialsorting.cli.run_config <config.json> --time 5
 
 流程：``load_config``（7 键 schema 校验）→ ``new_run_dir``（时间戳目录保留历史）
@@ -17,18 +18,34 @@ r"""ms-run-config 入口 —— 一条命令跑完「commit → 求解」，无�
 并行**（任一时刻至多 1 个求解进程）。多 seed 启动即打印预计总时长
 （``len(seeds) × time``，不含解析/切片）。
 
-PC-002 portfolio 语义（``--target`` / ``--params`` 新旗标，7 键 config schema 不动）：
+PC-002 portfolio 语义（``--target`` / ``--params`` 旗标，7 键 config schema 不动）：
 
   - **incumbent banking**：逐帧入账全局最优（含被 kill / 中途停止 seed 的最优帧，
     修复旧 best 只看 per-seed 终值的盲区）；``--target`` 给定或 seeds ≥2 时
     ``best`` 升级为 incumbent（帧级全局最优，含完整 ``placed_items``），result.json
-    新增 ``portfolio`` 段（target / incumbent / per_seed / theta_history）。
+    新增 ``portfolio`` 段（target / incumbent / per_seed / theta_history / kill_mode）。
   - **R0 达标即停**：``--target <0..1>``（原面积口径）任一帧达标 → 当前 seed 被
     stop（交付 best-so-far 帧）+ 剩余队列不启动，退出码仍 0；缺省不启用。
   - **单 seed 无 --target**：空 portfolio 段 + ``best`` 保持旧语义（solve 数组
     real_density 最大者）—— 与 PC-001 基线无旗标冒烟对拍兼容。
-  - ``--params``：controller 标定参数 JSON（PC-004 产物，PC-003 消费）；仅校验
-    可加载（存在 + JSON 对象），坏文件按配置错误退出 1。
+  - ``--params``：controller 标定参数 JSON（PC-004 产物）；数值阈值（tau0/W/m/
+    epsilon/delta/m_streak/uplift_q95）+ envelope（R1 包络 S(τ)）+ calibrated
+    在此消费，坏文件按配置错误退出 1。
+
+PC-003 kill 引擎（``--kill shadow|off|on``，默认 **shadow**；仅 ``--target`` 给定时
+激活 —— θ 初值 = target 是判据锚点，无 target 引擎恒 off）：
+
+  - **shadow**（默认）：R1/R2 规则照常逐帧评估，但**绝不终止求解**（should_stop
+    仅由 R0 触发）；kill 决策逐条 append ``run_dir/kill_decisions.jsonl``
+    （``{t, seed, rule, d, tau, S_tau, theta, I, would_kill}``，每 (seed, rule)
+    首次触发记一条）—— PC-005 仿真器据此统计 would-kill 假阳性。
+  - **on**：kill 判据真正触发 should_stop（必死 seed 提前淘汰省出预算）。**要求
+    标定参数就绪**（``--params`` 文件含 ``"calibrated": true``），否则**自动降级
+    shadow 并 warn**（stderr）—— 未标定的包络/uplift 不可信，不许真杀。
+  - **off**：引擎不评估不落盘。
+  - seed 1（队列首）永不 kill（锚定交付下限 + 校准样本）；R0 停止条件恒用
+    ``--target`` 真值（R3 θ 衰减只降 kill 门槛）；θ 衰减时经 notify 打一行
+    （``--quiet`` 也打，不静默改判据）。
 
 run_name 缺省 = 配置文件 stem，``--name`` 覆盖；Windows 非法文件名字符
 （``<>:"/\|?*`` 与控制字符）替换 ``_``，清洗后为空回退 ``run``。
@@ -40,11 +57,12 @@ run_name 缺省 = 配置文件 stem，``--name`` 覆盖；Windows 非法文件�
 PC-001 落盘口径（逐 seed 写，不攒内存）：每轮 ``solve_pieces`` 完成即把当前
 ``result.json`` 重写一次（config 回显 + commit 摘要 + 已完成 solve 数组 + best +
 portfolio 段），Ctrl-C / 崩溃时 run_dir 内已持有已完成轮的完整产物（curve_s*/
-best_frame_s* 由 ``solve_pieces`` 逐帧写，result.json 由本入口逐轮写）。
+best_frame_s* 由 ``solve_pieces`` 逐帧写，result.json 由本入口逐轮写；
+kill_decisions.jsonl 由决策回调逐条 flush 写）。
 
-进度口径（``--quiet`` 全部抑制，仅保留最终汇总；行格式由 ``cli.portfolio`` 控制器
-统一实现）：「原面积口径新最优」帧 + 30s 心跳 + 跨 seed 反超的 incumbent 行 +
-per-seed 轮次头（多 seed 或 ``--target`` 给定时打印）。
+进度口径（``--quiet`` 全部抑制，仅保留最终汇总与终局事件；行格式由
+``cli.portfolio`` 控制器统一实现）：「原面积口径新最优」帧 + 30s 心跳 + 跨 seed
+反超的 incumbent 行 + per-seed 轮次头（多 seed 或 ``--target`` 给定时打印）。
 """
 from __future__ import annotations
 
@@ -56,7 +74,7 @@ from pathlib import Path
 
 from .config import ConfigError, load_config
 from .pipeline import commit_from_config, new_run_dir, solve_pieces
-from .portfolio import (ControllerParamsError, PortfolioController,
+from .portfolio import (KILL_MODES, ControllerParamsError, PortfolioController,
                         load_controller_params, run_serial_portfolio)
 
 __all__ = ['main']
@@ -86,8 +104,14 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
                    help='R0 达标即停阈值（0..1 比例，原面积口径 density ≥ target 即'
                         '停当前 seed 并终止剩余队列）；缺省不启用 R0')
     p.add_argument('--params', metavar='FILE',
-                   help='controller 标定参数 JSON（PC-004 产物，覆盖默认阈值；'
-                        'PC-002 仅校验可加载）')
+                   help='controller 标定参数 JSON（PC-004 产物）：覆盖 kill 阈值默认值'
+                        '（tau0/W/m/epsilon/delta/m_streak/uplift_q95）+ envelope 包络'
+                        ' S(τ) + calibrated 开关；仅校验可加载，坏文件退出 1')
+    p.add_argument('--kill', choices=KILL_MODES, default='shadow',
+                   help='kill 规则引擎模式（PC-003，默认 shadow）：shadow 只记 '
+                        'run_dir/kill_decisions.jsonl 不真正 kill；on 真正淘汰必死 seed'
+                        '（需 --params 标定就绪 calibrated: true，否则自动降级 shadow）；'
+                        'off 关闭。引擎仅 --target 给定时激活，seed 1 永不 kill')
     return p.parse_args(argv)
 
 
@@ -139,6 +163,20 @@ def main(argv: list[str] | None = None) -> int:
         except ControllerParamsError as e:
             print(f'配置错误: {e}', file=sys.stderr)
             return _EXIT_CONFIG_OR_COMMIT
+    # PC-003 kill 模式裁决（生效模式）：引擎仅 --target 给定时激活（θ 初值 = target
+    # 是判据锚点）；--kill on 需标定就绪（calibrated: true），否则降级 shadow 并 warn
+    # —— 未标定的包络/uplift 不可信，不许真杀。
+    kill_mode = args.kill
+    if args.target is None:
+        if kill_mode == 'on':
+            print('警告: --kill 需要 --target（θ 初值 = target），本次 kill 引擎未激活',
+                  file=sys.stderr)
+        kill_mode = 'off'
+    elif kill_mode == 'on' and not (params and params.get('calibrated') is True):
+        kill_mode = 'shadow'
+        print('警告: --kill on 需标定参数就绪（--params 文件含 "calibrated": true），'
+              '本次自动降级 shadow（只记 kill_decisions.jsonl，不真正 kill）',
+              file=sys.stderr)
 
     time_budget = args.time if args.time is not None else cfg.time
     run_name = _clean_run_name(args.name if args.name else Path(args.config).stem)
@@ -166,9 +204,21 @@ def main(argv: list[str] | None = None) -> int:
 
     solves: list[dict] = []
     result_path = Path(run_dir) / 'result.json'
+    # PC-003 kill 决策日志：引擎激活（shadow/on）即建文件（空文件也在场，路径稳定），
+    # 决策逐条 append + flush —— Ctrl-C / 崩溃不丢已记条目；控制器经回调交出记录，
+    # 自身不做文件 I/O（呈现层职责）。
+    kill_log_path = Path(run_dir) / 'kill_decisions.jsonl'
+    kill_log = open(kill_log_path, 'w', encoding='utf-8') if kill_mode != 'off' else None
+
+    def _on_kill_decision(entry: dict) -> None:
+        kill_log.write(json.dumps(entry, ensure_ascii=False) + '\n')
+        kill_log.flush()
+
     controller = PortfolioController(
         seeds=list(cfg.seeds), target=args.target, params=params,
-        echo=None if args.quiet else print)
+        echo=None if args.quiet else print,
+        kill=kill_mode, time_budget=time_budget,
+        notify=print, on_decision=_on_kill_decision if kill_log is not None else None)
     current = {'seed': None}       # 求解异常报错定位用（on_seed_start 持续刷新）
 
     def _flush_result() -> dict:
@@ -218,6 +268,9 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as e:
         print(f'求解失败 (seed={current["seed"]}): {e}', file=sys.stderr)
         return _EXIT_SOLVE
+    finally:
+        if kill_log is not None:
+            kill_log.close()
 
     if run.interrupted:
         i, seed = run.last_round
@@ -252,6 +305,12 @@ def main(argv: list[str] | None = None) -> int:
                   f'（incumbent，帧级全局最优）')
         else:
             print(f"best = seed {best['seed']}（real_density 最大者）")
+    if controller.kill_mode != 'off':
+        # 终局产物行（--quiet 也打）：shadow/on 的判定去向与条数。置于末行汇总前
+        # ——「末行 = real_density 汇总」是既有输出契约（冒烟对拍口径）。
+        print(f"[kill] {controller.kill_mode} 模式："
+              f"{len(controller.kill_decisions)} 条 kill 判定已写 "
+              f"{kill_log_path.resolve()}")
     d, w, n_placed, elapsed = _best_summary(best)
     print(f"real_density（原面积口径）= {d:.2%} | "
           f"用布长度 = {w:.0f}mm | 片数 = {n_placed} | "

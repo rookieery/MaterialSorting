@@ -95,11 +95,18 @@ python -m materialsorting.cli.run_config <config.json> --name demo --quiet   # �
 
 **求解进程化（PC-001）**：每 seed 经 `solve_with_callback_proc` 多进程满血求解（子进程重建实例是固有秒级成本），`solve_pieces` 支持逐帧 `should_stop` 中止（OS 级 terminate，以 best-so-far 帧交付）—— 是串行 seed portfolio 控制器（kill / 达标即停）与标定管线的执行手段。Ctrl-C 退出码 130，已完成轮产物已落盘。
 
-**串行 seed portfolio 控制器（PC-002）**：多 seed 串行循环经 `cli/portfolio.py` 控制器转发 —— **incumbent banking**（逐帧入账全局最优帧，被 kill/中断 seed 的最优帧同样参与，`best` 升级为帧级全局最优且含完整 `placed_items` 布局，result.json 新增 `portfolio` 段 `{target, incumbent, per_seed, theta_history}`）+ **R0 达标即停** + R4 队列耗尽交付。新旗标：`--target <0..1>`（原面积口径任一帧达标 → 当前 seed 被 stop（`killed=True`）+ 剩余队列不启动，退出码仍 0；缺省不启用）与 `--params <controller_params.json>`（标定参数文件，PC-002 仅校验可加载）。单 seed 且不带 `--target` 时 result.json 为空 portfolio 段、`best` 保持旧语义（solve 数组 `real_density` 最大轮）—— 与 PC-001 基线无旗标冒烟对拍兼容：
+**串行 seed portfolio 控制器（PC-002）**：多 seed 串行循环经 `cli/portfolio.py` 控制器转发 —— **incumbent banking**（逐帧入账全局最优帧，被 kill/中断 seed 的最优帧同样参与，`best` 升级为帧级全局最优且含完整 `placed_items` 布局，result.json 新增 `portfolio` 段 `{target, incumbent, per_seed, theta_history, kill_mode}`）+ **R0 达标即停** + R4 队列耗尽交付。新旗标：`--target <0..1>`（原面积口径任一帧达标 → 当前 seed 被 stop（`killed=True`）+ 剩余队列不启动，退出码仍 0；缺省不启用）与 `--params <controller_params.json>`（标定参数文件：kill 阈值 + envelope 包络 + calibrated 开关）。单 seed 且不带 `--target` 时 result.json 为空 portfolio 段、`best` 保持旧语义（solve 数组 `real_density` 最大轮）—— 与 PC-001 基线无旗标冒烟对拍兼容：
 
 ```bash
 ms-run-config data/configs/5336_coded_really.json --time 5 --target 0.9 --quiet   # R0 达标即停
 ms-run-config data/configs/5336_coded_really.json --time 5 --target 0.9 --params controller_params.json
+```
+
+**kill 规则引擎 + shadow mode（PC-003）**：`--kill shadow|off|on`（默认 **shadow**；仅 `--target` 给定时激活 —— θ 初值 = target 是判据锚点）。必死 seed 提前淘汰省出预算：**R1 包络 kill**（队列序号 >1 且 τ>τ0 且 best-so-far 低于成功包络 `S(τ)−m` 持续 W 秒；`S(τ)` 来自 `--params` 的 `envelope`，无标定时 R1 整体禁用）、**R2 压缩期判决**（首帧 `phase=='compressing'` 时 `d + uplift_q95 < max(θ, I+ε)` → 必死；无标定用保守默认 0.005）、**R3 θ 衰减**（连杀 ≥ m_streak → `θ := I + δ` 单调只降，只降 kill 门槛，**R0 恒用 --target 真值**；衰减打一行不静默）；**seed 1（队列首）永不 kill**（锚定交付下限 + 校准样本）。保守默认 τ0=0.3、W=10s、m=0.5pt、ε=0.1pt、δ=0.3pt、m_streak=3（`--params` 数值键可覆盖）。**shadow 只记不杀**：kill 决策逐条 append `run_dir/kill_decisions.jsonl`（`{t, seed, rule, d, tau, S_tau, theta, I, would_kill}`，每 (seed, rule) 首次触发一条），`should_stop` 仅由 R0 触发；**on 才真杀**，且要求标定就绪（`--params` 含 `"calibrated": true`），否则自动降级 shadow 并 stderr warn：
+
+```bash
+ms-run-config data/configs/5336_coded_really.json --time 5 --target 0.9   # 默认 shadow：只记 kill_decisions.jsonl 不真杀
+ms-run-config data/configs/5336_coded_really.json --time 5 --target 0.9 --kill on --params controller_params.json  # 标定就绪才真杀
 ```
 
 **不触碰 web 数据**：CLI 唯一可写目录是 `out/config_runs/`，绝不写 `out/sparrow_baseline/pieces_intermediate.json`（web 事实源）与 `out/uploads/` —— 与 ms-web 同时运行互不干扰（并行回归已验证：web 求解进行中跑 CLI，结束后两者事实源 mtime/内容不变、uploads 无新目录）。

@@ -204,8 +204,10 @@ def test_main_end_to_end_smoke(iso_env, capsys):
     assert len(result['solve']) == 1
     assert result['best'] == result['solve'][0]         # 单 seed best 即唯一解
     # PC-002：单 seed 且无 --target → 空 portfolio 段 + best 旧语义（冒烟对拍兼容）
+    # PC-003：段新增 kill_mode（引擎无 --target 恒不激活 → 'off'）
     assert result['portfolio'] == {'target': None, 'incumbent': None,
-                                   'per_seed': [], 'theta_history': []}
+                                   'per_seed': [], 'theta_history': [],
+                                   'kill_mode': 'off'}
     s = result['solve'][0]
     for k in ('seed', 'width_mm', 'real_density', 'density_sparrow', 'elapsed'):
         assert k in s, k
