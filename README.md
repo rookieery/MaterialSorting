@@ -123,6 +123,13 @@ ms-lns --run-dir out/config_runs/<run目录> --time 30 --rounds 5            # �
 ms-lns --run-dir out/config_runs/<run目录> --time 60 --band-width 1500     # 更细波段粒度
 ```
 
+**LNS 接入编排（PC-008）**：`ms-run-config ... --lns [--lns-time 30] [--lns-rounds 5]` —— portfolio 跑完（含 R0 提前停路径，对达标解也可再压宽度）后**自动**对最优布局（incumbent；单 seed 旧语义回退 best 帧边车）跑 PC-007 核心循环（`lns.postprocess_run_dir`，与 ms-lns 同一条代码路径），无需手工二次命令。**严格更优才回写** result.json：`portfolio.incumbent` 的 density/width_mm/placed_items 更新（seed/frame_index 保持来源帧出处）+ 新增 `lns` 段（前后对比 / Δ / 轮次明细 / 复检；placed_items 不入段控体积），`best` 同步；不优则 result.json **逐字节不变**（LNS 明细仍写 `result_lns.json` + `lns_compare.svg`）。stdout 汇总加 LNS 前后两行（`--quiet` 也打；LNS 逐段接受进度行走 `--quiet` 抑制）。回写只在改进判定后一次性整体重写 —— Ctrl-C 不留半写的 result.json（已完成轮保底落 result_lns.json，退出码 130）；`--lns-time` / `--lns-rounds` 单独给出或值 <1 → 配置错误退出 1；LNS 环节输入错误降级 stderr warn 跳过（退出码 0，不否定求解交付物）。
+
+```bash
+ms-run-config data/configs/5336_coded_really.json --time 5 --target 0.5 --lns --lns-time 5   # R0 停后自动 LNS 后处理
+ms-run-config data/configs/5336_coded_really.json --time 300 --lns --lns-time 60 --lns-rounds 8
+```
+
 **标定管线（PC-004/005）**：`python -m materialsorting.cli.calibration` 四个子命令，为 kill 引擎产出数据依据（`--params` 消费的 `controller_params.json`）并防过拟合单一订单：
 - **batch**：`--config <7键配置> [--tag T] [--short-seeds 20] [--short-time 90] [--full-seeds 8] [--full-time N]`（full-time 缺省用 config 的 `time`）。标定基实例 = `data/configs/5336_coded_really.json`（真实 per_type 公差 + 真实订单配比）。`commit_from_config` 只跑一次，逐 seed 串行 `solve_pieces`；曲线/best 帧落 `out/portfolio_calibration/<tag>/base/{short,full}/`，逐 seed 写 manifest.json（Ctrl-C 安全，重跑跳过已完整 seed）。
 - **variants**：确定性订单邻域变体（seeded RNG，RNG seed=i）—— 只抖 `quantities` 的 (g码, 码∈sizes) 条目 `n' = max(1, n±1)`（保底 1 片；惰性条目不动），per_type/gate_mm/master_dxf/sizes 逐字段固定。产出 `variant_{i}.json`（i=0..3）+ 每变体 6 seed × 90s + 1 × 300s 曲线（共享同一 commit）。
@@ -166,7 +173,7 @@ ms-run-config <config.json>（CLI 平行通道，不经过 web）
 | `ms-sparrow-baseline` | sparrow 基线求解（{0,180}，无 erode） |
 | `ms-sparrow-exp` | 旋转公差 / 重合公差 / 组合实验 |
 | `ms-web` | 可视化工作台（http://127.0.0.1:8000） |
-| `ms-run-config` | 配置驱动排料一条命令（commit → 串行多 seed 求解 → `out/config_runs/` result.json，见上文「配置驱动求解」） |
+| `ms-run-config` | 配置驱动排料一条命令（commit → 串行多 seed 求解 → `out/config_runs/` result.json；`--lns` 自动 LNS 后处理（PC-008），见上文「配置驱动求解」） |
 | `ms-lns` | LNS 波段重排后处理（对 run 目录最优布局波段级 ruin-and-recreate，产 result_lns.json + 前后对比 SVG，PC-007） |
 | `python scripts/embed_piece_codes.py <母版.dxf>` | 把 g01+ 编号植入母版 DXF 生成 `_coded.dxf`（与 Web 解析同源编号，幂等 + 自校验，版师在 ET2008 可对上 g 码） |
 

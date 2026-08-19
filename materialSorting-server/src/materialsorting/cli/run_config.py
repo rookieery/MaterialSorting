@@ -6,6 +6,7 @@ r"""ms-run-config 入口 —— 一条命令跑完「commit → 求解」，无�
                   [--target P] [--params controller_params.json]
                   [--kill shadow|off|on]
                   [--solver-opts '{"exploration_pct":0.7}' | --rotate-opts]
+                  [--lns [--lns-time 30] [--lns-rounds 5]]
     python -m materialsorting.cli.run_config <config.json> --time 5
 
 流程：``load_config``（7 键 schema 校验）→ ``new_run_dir``（时间戳目录保留历史）
@@ -61,6 +62,24 @@ PC-006 solver_opts 透传与配置轮换（``--solver-opts`` / ``--rotate-opts``
     solve 调用形与 PC-001 基线一致（result.json config 段不加新键，冒烟对拍
     零回归）；给了旗标则 config 段回显 ``solver_opts`` / ``rotate_opts``。
 
+PC-008 LNS 后处理（``--lns [--lns-time 30] [--lns-rounds 5]``，PC-007 核心循环
+接入编排 —— 无需手工二次 ``ms-lns``）：
+
+  - portfolio 跑完后（含 R0 提前停路径 —— 达标解同样可再压宽度）对最优布局
+    （engaged：``portfolio.incumbent``；单 seed 无旗标的旧语义 best：回退
+    ``best_frame_s{seed}.json`` 边车）跑 ``lns.postprocess_run_dir``（与 ms-lns
+    CLI 同一条代码路径），进度行走 ``--quiet`` 抑制、前后两行汇总恒打；
+  - **严格更优才回写** result.json：incumbent 的 density / width_mm /
+    placed_items 更新（seed / frame_index / elapsed 保持来源帧出处）+ 新增
+    ``lns`` 段（前后对比 / Δ / 轮次明细 / 复检，placed_items 不入段控体积）；
+    不优则 result.json **逐字节不变**（LNS 明细仍写 ``result_lns.json`` +
+    ``lns_compare.svg``）—— 回写只在 LNS 完成判定后一次性整体重写，Ctrl-C 不
+    留半写的 result.json（已完成轮次保底落 result_lns.json，退出码 130）；
+  - 从属旗标 ``--lns-time`` / ``--lns-rounds`` 须与 ``--lns`` 同给（单独给出 =
+    配置错误退出 1，不留空 run_dir）；值域同 ms-lns（≥1）。LNS 环节自身输入
+    错误（如旧 run 无布局）降级为 stderr warn 跳过 —— 后处理失败不否定已完成的
+    求解交付物（退出码仍 0）。
+
 run_name 缺省 = 配置文件 stem，``--name`` 覆盖；Windows 非法文件名字符
 （``<>:"/\|?*`` 与控制字符）替换 ``_``，清洗后为空回退 ``run``。
 
@@ -87,6 +106,7 @@ import sys
 from pathlib import Path
 
 from .config import ConfigError, load_config
+from .lns import LnsError, postprocess_run_dir
 from .pipeline import commit_from_config, new_run_dir, solve_pieces
 from .portfolio import (KILL_MODES, ControllerParamsError, PortfolioController,
                         load_controller_params, run_serial_portfolio)
@@ -133,6 +153,14 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument('--rotate-opts', action='store_true',
                    help='逐 seed 按内置轮换池轮换 solver_opts（pool[队列序 %% 池长]，'
                         '池首空档=默认行为；样本去相关）；与 --solver-opts 互斥')
+    p.add_argument('--lns', action='store_true',
+                   help='portfolio 结束后对最优布局（incumbent）跑 LNS 波段重排后'
+                        '处理（PC-008）：严格更优才回写 result.json（incumbent 更新 + '
+                        'lns 段），不优则 result.json 不变（明细仍写 result_lns.json）')
+    p.add_argument('--lns-time', type=int, default=None, metavar='N',
+                   help='LNS 总预算（秒，默认 30；须与 --lns 同给）')
+    p.add_argument('--lns-rounds', type=int, default=None, metavar='N',
+                   help='LNS 最大轮数（默认 5；须与 --lns 同给）')
     return p.parse_args(argv)
 
 
@@ -157,6 +185,34 @@ SOLVER_OPTS_POOL: list[dict | None] = [
 def rotation_opts_for(seed_index: int) -> dict | None:
     """轮换取档：``SOLVER_OPTS_POOL[seed_index % len]``（seed_index 为 0 起队列序）。"""
     return SOLVER_OPTS_POOL[int(seed_index) % len(SOLVER_OPTS_POOL)]
+
+
+def _lns_section(out: dict) -> dict:
+    """PC-008 result.json 的 ``lns`` 段：前后对比 + 轮次明细 + 复检。
+
+    ``out`` = ``lns.postprocess_run_dir`` 返回的写盘 payload。``placed_items``
+    不入段（改进布局在 incumbent / ``result_lns.json``，result.json 控体积）；
+    段内记产物文件名与 base_seed 便于溯源。
+    """
+    src = out.get('source') or {}
+    return {
+        'time_budget_sec': out['time_budget_sec'],
+        'rounds_requested': out['rounds_requested'],
+        'rounds_executed': out['rounds_executed'],
+        'stop_reason': out['stop_reason'],
+        'interrupted': out['interrupted'],
+        'elapsed': out['elapsed'],
+        'band_width_mm': out['band_width_mm'],
+        'improved': out['improved'],
+        'before': out['before'],
+        'after': out['after'],
+        'delta': out['delta'],
+        'recheck': out['recheck'],
+        'rounds_detail': out['rounds_detail'],
+        'base_seed': src.get('incumbent_seed'),
+        'result_lns': 'result_lns.json',
+        'compare_svg': 'lns_compare.svg',
+    }
 
 
 def _best_summary(best: dict) -> tuple[float, float, int, float]:
@@ -221,6 +277,21 @@ def main(argv: list[str] | None = None) -> int:
 
         def solver_opts_for(index, _seed):
             return rotation_opts_for(index)
+    # PC-008 LNS 后处理旗标裁决（配置错误须在 new_run_dir 之前拦下，不留空目录）：
+    # --lns-time / --lns-rounds 是 --lns 的从属旗标（单独给出 = 笔误，退出 1）；
+    # 值域与 ms-lns CLI 同口径（time >= 1s、rounds >= 1）。
+    if (args.lns_time is not None or args.lns_rounds is not None) and not args.lns:
+        print('配置错误: --lns-time / --lns-rounds 须与 --lns 同给（LNS 后处理未启用）',
+              file=sys.stderr)
+        return _EXIT_CONFIG_OR_COMMIT
+    lns_time = 30 if args.lns_time is None else args.lns_time
+    lns_rounds = 5 if args.lns_rounds is None else args.lns_rounds
+    if args.lns and args.lns_time is not None and lns_time < 1:
+        print(f'配置错误: --lns-time 须 >= 1 秒，当前 {args.lns_time}', file=sys.stderr)
+        return _EXIT_CONFIG_OR_COMMIT
+    if args.lns and args.lns_rounds is not None and lns_rounds < 1:
+        print(f'配置错误: --lns-rounds 须 >= 1，当前 {args.lns_rounds}', file=sys.stderr)
+        return _EXIT_CONFIG_OR_COMMIT
     params = None
     if args.params is not None:
         try:
@@ -264,6 +335,10 @@ def main(argv: list[str] | None = None) -> int:
     elif args.rotate_opts:
         print(f'rotate_opts: 内置池 {len(SOLVER_OPTS_POOL)} 档逐 seed 轮换'
               f'（pool[队列序 % {len(SOLVER_OPTS_POOL)}]，池首空档=默认行为）')
+    # PC-008 后处理开关说明（--quiet 也打：改交付物的开关不静默）。
+    if args.lns:
+        print(f'LNS 后处理: time={lns_time}s rounds={lns_rounds}'
+              f'（严格更优才回写 result.json，明细写 result_lns.json）')
 
     try:
         commit = commit_from_config(cfg, run_dir)
@@ -292,6 +367,9 @@ def main(argv: list[str] | None = None) -> int:
         kill=kill_mode, time_budget=time_budget,
         notify=print, on_decision=_on_kill_decision if kill_log is not None else None)
     current = {'seed': None}       # 求解异常报错定位用（on_seed_start 持续刷新）
+    # PC-008：LNS 严格更优时的 result.json lns 段（None = 不写该键 —— 无 --lns /
+    # LNS 不优的 result.json 与基线逐字节一致，见 _flush_result）。
+    lns_state = {'section': None}
 
     def _flush_result() -> dict:
         """逐轮重写 result.json（solve 数组 + best + portfolio 段）—— Ctrl-C/崩溃
@@ -299,6 +377,8 @@ def main(argv: list[str] | None = None) -> int:
 
         结构与终态完全一致（config 回显 + commit 摘要 + solve 数组 + best +
         portfolio 段），中途落盘只是「solve 数组尚未跑满 len(seeds)」这一维度不同。
+        PC-008：LNS 严格更优时额外附 ``lns`` 段（前后对比 + 轮次明细；未改进 /
+        未启用时无该键 —— 与无 --lns 运行逐字节一致）。
         """
         best = controller.best_record(solves)
         result = {
@@ -322,6 +402,8 @@ def main(argv: list[str] | None = None) -> int:
             'best': best,
             'portfolio': controller.portfolio_section(),
         }
+        if lns_state['section'] is not None:
+            result['lns'] = lns_state['section']
         with open(result_path, 'w', encoding='utf-8') as f:
             json.dump(result, f, ensure_ascii=False, indent=2)
         return result
@@ -387,6 +469,53 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[kill] {controller.kill_mode} 模式："
               f"{len(controller.kill_decisions)} 条 kill 判定已写 "
               f"{kill_log_path.resolve()}")
+    # ---- PC-008 LNS 后处理（--lns）：对 portfolio 最优布局跑 PC-007 波段重排。
+    # R0 提前停（queue_stopped）同样走到这里 —— 对达标解也可再压宽度；Ctrl-C 中断
+    # 的 run 不做后处理（portfolio 未跑完，按中断路径 130 收口）。
+    if args.lns:
+        try:
+            out = postprocess_run_dir(run_dir, time_budget=lns_time,
+                                      rounds=lns_rounds,
+                                      echo=None if args.quiet else print)
+        except KeyboardInterrupt:
+            # run_lns 内部已捕获正常路径的 Ctrl-C；此处兜底读文件/落盘窗口 ——
+            # result.json 从未被 LNS 半写（改写只在改进判定后一次性整体重写）。
+            print('\n[中断] Ctrl-C：LNS 后处理未产出结果，主 result.json 保持完整',
+                  file=sys.stderr)
+            return _EXIT_INTERRUPT
+        except (LnsError, ValueError, KeyError, TypeError, OSError,
+                json.JSONDecodeError) as e:
+            # 后处理输入错误（旧 run 无布局 / 中间产物缺失等）不否定已完成的求解
+            # 交付物：warn 后按已有产物收尾（退出码 0）。
+            print(f'LNS 后处理失败（已有求解产物不受影响）: {e}', file=sys.stderr)
+            out = None
+        if out is not None:
+            b, a, dlt = out['before'], out['after'], out['delta']
+            # 前后两行汇总（终局汇总口径，--quiet 也打）。
+            print(f'[LNS] 前（portfolio 最优）: width={b["width_mm"]:.0f}mm '
+                  f'density={b["density"]:.2%}（原面积口径）')
+            print(f'[LNS] 后: width={a["width_mm"]:.0f}mm '
+                  f'density={a["density"]:.2%}（原面积口径）'
+                  f' | Δwidth={dlt["width_mm"]:+.0f}mm '
+                  f'Δdensity={dlt["density"] * 100:+.2f}pt'
+                  f' | rounds={out["rounds_executed"]}/{out["rounds_requested"]}'
+                  f'（{out["stop_reason"]}）improved={out["improved"]}')
+            if out['improved']:
+                # 严格更优才回写：incumbent 三字段更新（seed/frame_index/elapsed
+                # 保持来源帧出处）+ lns 段，一次性整体重写 result.json（best 与
+                # portfolio.incumbent 同源，best_record 返回同一 dict 自动同步）。
+                if controller.incumbent is not None:
+                    controller.incumbent['density'] = a['density']
+                    controller.incumbent['width_mm'] = a['width_mm']
+                    controller.incumbent['placed_items'] = out['placed_items']
+                lns_state['section'] = _lns_section(out)
+                best = _flush_result()['best']
+            if out['interrupted']:
+                # Ctrl-C 在 LNS 环节：已完成轮次已落 result_lns.json；改进（若有）
+                # 已一次性回写，主 result.json 完整 —— 按中断契约退出 130。
+                print('\n[中断] Ctrl-C：LNS 已完成轮次已写 result_lns.json，'
+                      '主 result.json 保持完整', file=sys.stderr)
+                return _EXIT_INTERRUPT
     d, w, n_placed, elapsed = _best_summary(best)
     print(f"real_density（原面积口径）= {d:.2%} | "
           f"用布长度 = {w:.0f}mm | 片数 = {n_placed} | "

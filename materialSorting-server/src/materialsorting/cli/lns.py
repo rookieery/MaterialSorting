@@ -36,6 +36,11 @@ ruin-and-recreate，突破单 seed 收敛分布上限。
 对比 + 逐段尝试明细）+ ``lns_compare.svg``（前后双面板对比，坐标口径 / 配色与其余
 排料 SVG 一致）。
 
+PC-008（US-008）起 ``postprocess_run_dir`` 是 run_dir 级共用编排入口（``ms-lns``
+CLI 与 ``run_config --lns`` 后处理同一条代码路径）：读 ``result.json`` 选布局 →
+``run_lns`` 核心循环 → 双产物落盘，返回写盘 payload；输入错误经异常上抛由调用方
+决定呈现（CLI 退出 1 / run_config 降级 warn 跳过）。
+
 跨组重叠护栏（超出 PC-007 验收口径的工程加固）：重排只保证段内非重叠（子求解
 语义同母求解，重合公差 d 的合法重叠照常允许）与段间 x 空间让位，但波段边界处
 互相咬合（interlock）的片在 splice 后可能产生**新**重叠 —— ``constraints.validate``
@@ -65,7 +70,7 @@ from ..nesting_engine.sparrow_baseline import label_color
 
 __all__ = ['ACCEPT_EPS_MM', 'DEFAULT_BAND_WIDTH', 'LnsError', 'split_bands',
            'band_solve_params', 'run_lns', 'recheck_layout', 'write_compare_svg',
-           'main']
+           'postprocess_run_dir', 'main']
 
 # 接受阈值 ε（mm）：新段跨度须比原段跨度窄 ε 以上（消浮点噪声 / 取整抖动）。
 ACCEPT_EPS_MM = 0.5
@@ -698,6 +703,55 @@ def _incumbent(doc: dict, run_dir: Path | None = None) -> dict:
     raise LnsError('result.json 无 incumbent/best placed_items（尚无求解产物）')
 
 
+def postprocess_run_dir(run_dir, *, time_budget, rounds, band_width=None,
+                        echo=None, solve=None) -> dict:
+    """run_dir 级 LNS 编排（PC-008：``ms-lns`` CLI 与 ``run_config --lns`` 共用入口）。
+
+    读 ``run_dir/result.json``（布局来源 = ``_incumbent``：portfolio.incumbent
+    优先，旧式 best 的 int 计数回退 ``best_frame_s{seed}.json`` 边车）+
+    ``pieces_intermediate.json`` → ``run_lns`` 核心循环 → ``result_lns.json`` +
+    ``lns_compare.svg`` 落盘。返回写盘 payload（``source`` 段 + ``run_lns`` 全部
+    结果键 —— ``improved`` / ``before`` / ``after`` / ``rounds_detail`` /
+    ``placed_items`` 等，调用方据此裁决回写）。
+
+    输入缺失 / 无布局 / 参数非法抛 ``LnsError``（或 ``OSError`` /
+    ``JSONDecodeError``），由调用方决定呈现：ms-lns 退出 1；run_config 降级为
+    warn 跳过后处理（不否定已完成求解的交付物）。``solve`` 为子求解注入点
+    （缺省真实多进程链路；单测注入 fake packer）。Ctrl-C 由 ``run_lns`` 内部
+    捕获为 ``interrupted=True``（已完成轮保留在结果里），本函数不半写任何文件。
+    """
+    run_dir = Path(run_dir)
+    doc = json.loads((run_dir / 'result.json').read_text(encoding='utf-8'))
+    inter = json.loads((run_dir / 'pieces_intermediate.json').read_text(encoding='utf-8'))
+    inc = _incumbent(doc, run_dir)
+    placed_items = inc['placed_items']
+    cfg = doc.get('config') or {}
+    pieces = inter['pieces']
+    gate_mm = float(inter['gate_mm'])
+    seed = inc.get('seed')
+    base_seed = int(seed) if isinstance(seed, (int, float)) else 0
+    solve_kw = {} if solve is None else {'solve': solve}
+    res = run_lns(placed_items, pieces, gate_mm,
+                  per_type=cfg.get('per_type'), sizes=cfg.get('sizes'),
+                  band_width=band_width, time_budget=time_budget,
+                  rounds=rounds, base_seed=base_seed, echo=echo, **solve_kw)
+    out = {'source': {'run_dir': str(run_dir.resolve()), 'result': 'result.json',
+                      'intermediate': 'pieces_intermediate.json',
+                      'incumbent_seed': base_seed,
+                      'config_echo': {'per_type': cfg.get('per_type'),
+                                      'sizes': cfg.get('sizes')}},
+           **res}
+    with open(run_dir / 'result_lns.json', 'w', encoding='utf-8') as f:
+        json.dump(out, f, ensure_ascii=False, indent=2)
+    write_compare_svg(run_dir / 'lns_compare.svg',
+                      before=dict(res['before'], placed=placed_items,
+                                  caption='LNS 前（incumbent）'),
+                      after=dict(res['after'], placed=res['placed_items'],
+                                 caption='LNS 后'),
+                      pieces_by_id={p['pid']: p for p in pieces}, gate_mm=gate_mm)
+    return out
+
+
 def main(argv: list[str] | None = None) -> int:
     # 首行防乱码：Windows 管道/重定向默认 GBK，强制 UTF-8（与 run_config 同款）。
     try:
@@ -728,55 +782,28 @@ def main(argv: list[str] | None = None) -> int:
         print('输入错误: %s 不存在' % inter_path.resolve(), file=sys.stderr)
         return 1
 
-    cfg = {}
     try:
-        doc = json.loads(result_path.read_text(encoding='utf-8'))
-        inter = json.loads(inter_path.read_text(encoding='utf-8'))
-        inc = _incumbent(doc, run_dir)
-        placed_items = inc['placed_items']
-        cfg = doc.get('config') or {}
-        pieces = inter['pieces']
-        gate_mm = float(inter['gate_mm'])
-        seed = inc.get('seed')
-        base_seed = int(seed) if isinstance(seed, (int, float)) else 0
-        res = run_lns(placed_items, pieces, gate_mm,
-                      per_type=cfg.get('per_type'), sizes=cfg.get('sizes'),
-                      band_width=args.band_width, time_budget=args.time,
-                      rounds=args.rounds, base_seed=base_seed, echo=print)
+        out = postprocess_run_dir(run_dir, time_budget=args.time,
+                                  rounds=args.rounds, band_width=args.band_width,
+                                  echo=print)
     except (LnsError, ValueError, KeyError, TypeError, OSError,
             json.JSONDecodeError) as e:
         print('LNS 输入错误: %s' % e, file=sys.stderr)
         return 1
 
-    out = {'source': {'run_dir': str(run_dir.resolve()), 'result': 'result.json',
-                      'intermediate': 'pieces_intermediate.json',
-                      'incumbent_seed': base_seed,
-                      'config_echo': {'per_type': cfg.get('per_type'),
-                                      'sizes': cfg.get('sizes')}},
-           **res}
-    lns_json = run_dir / 'result_lns.json'
-    with open(lns_json, 'w', encoding='utf-8') as f:
-        json.dump(out, f, ensure_ascii=False, indent=2)
-    svg_path = run_dir / 'lns_compare.svg'
-    write_compare_svg(svg_path,
-                      before=dict(res['before'], placed=placed_items,
-                                  caption='LNS 前（incumbent）'),
-                      after=dict(res['after'], placed=res['placed_items'],
-                                 caption='LNS 后'),
-                      pieces_by_id={p['pid']: p for p in pieces}, gate_mm=gate_mm)
-
-    b, a, dlt = res['before'], res['after'], res['delta']
+    b, a, dlt = out['before'], out['after'], out['delta']
     print('[LNS] before: width=%.0fmm density=%.2f%% | after: width=%.0fmm '
           'density=%.2f%% | Δwidth=%+.0fmm Δdensity=%+.2fpt | rounds=%d/%d（%s）'
           'improved=%s'
           % (b['width_mm'], b['density'] * 100, a['width_mm'], a['density'] * 100,
-             dlt['width_mm'], dlt['density'] * 100, res['rounds_executed'],
-             res['rounds_requested'], res['stop_reason'], res['improved']))
-    if res['recheck']['reverted']:
-        print('[LNS] 终检未过（%s），已回退输入布局' % res['recheck']['issues'],
+             dlt['width_mm'], dlt['density'] * 100, out['rounds_executed'],
+             out['rounds_requested'], out['stop_reason'], out['improved']))
+    if out['recheck']['reverted']:
+        print('[LNS] 终检未过（%s），已回退输入布局' % out['recheck']['issues'],
               file=sys.stderr)
     print('[LNS] result_lns.json → %s | lns_compare.svg → %s'
-          % (lns_json.resolve(), svg_path.resolve()))
+          % ((run_dir / 'result_lns.json').resolve(),
+             (run_dir / 'lns_compare.svg').resolve()))
     return 0
 
 

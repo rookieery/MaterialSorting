@@ -2,16 +2,10 @@
   "branchName": "ralph/serial-seed-portfolio",
   "stories": [
     {
-      "id": "US-007",
-      "title": "LNS 波段重排核心模块",
-      "description": "[PRD tasks/prd-serial-seed-portfolio.md PC-007] 对 portfolio 最优布局做波段级 ruin-and-recreate，突破单 seed 收敛分布上限。\n\n具体任务：\n1. materialSorting-server/src/materialsorting/cli/lns.py（新建，python -m materialsorting.cli.lns --run-dir <dir> --time 30 --rounds 5 [--band-width mm]；cli → web.solver/engine 合规向下依赖）。输入 run_dir 的 result.json（incumbent placed_items）+ pieces_intermediate.json，算法：\n   ① 按 x 切竖直波段（默认段宽 1.5×NEST_GATE_MM）。\n   ② 每段局部密度 = 段内片面积和/（段宽×NEST_GATE_MM），升序取最差段。\n   ③ 段内裁片构造同口径子实例（web.solver.build_instance；per_type/quantities 按 g 码键透传；demand>1 的 pid 全部副本整段进波段重排，禁止拆分）。\n   ④ 新段宽 < 原段宽 − ε → 接受：后续波段左移 splice、总宽缩短；否则拒绝（幂等安全）。\n   ⑤ 循环 rounds 直到无段可改进或预算耗尽；结束 constraints.validate 全版复检 + y ≤ PLOT_SAFE_MAX_Y_MM 越界复检。\n2. 输出 result_lns.json（新 placed_items + 前后 density/width 对比）+ 前后对比 SVG。\n\n验收标准：\n- 构造带人工空洞的 fixture 布局单测：一轮后总宽缩短 ≥ 空洞宽 50%，全片在场（数量 = Σdemand，含 demand>1 副本数不变）。\n- 子实例同口径单测：erode/tol/orientations/strip_height 钳制与母实例一致（g 码 per_type 命中）。\n- 拒绝路径：子解不优于原段 → 输入布局逐字节不变。\n- 复检双通过：constraints.validate ok + y 越界 0 片。\n- python -m materialsorting.cli.lns --help 跑通；单测 ≥ 10 项；分层未反向。",
-      "passes": true
-    },
-    {
       "id": "US-008",
       "title": "LNS 接入 portfolio 编排",
       "description": "[PRD tasks/prd-serial-seed-portfolio.md PC-008] portfolio 跑完后自动对最优解跑 LNS 后处理，无需手工二次命令。\n\n具体任务：\n1. materialSorting-server/src/materialsorting/cli/run_config.py — 加旗标 --lns [--lns-time 30] [--lns-rounds 5]：portfolio 结束后对 incumbent 跑 US-007 的 LNS 核心循环，严格更优才回写 result.json（portfolio.incumbent 更新 + 新增 lns 段记录前后对比与轮次明细），不优则 result.json 不变（LNS 明细仍写 result_lns.json）。stdout 汇总加 LNS 前后两行。\n2. LNS 中断安全：Ctrl-C 时已完成轮次写入 result_lns.json，主 result.json 不半写。\n\n验收标准：\n- 改进路径单测：LNS 更优 → incumbent 的 density/width_mm/placed_items 更新、lns 段含 before/after；不优 → result.json 与无 --lns 运行逐字节一致。\n- --lns 与 --target 组合：R0 提前停后同样执行后处理（对达标解也可再压宽度）。\n- 端到端冒烟：ms-run-config data/configs/5336_coded_really.json --time 5 --target 0.5 --lns --lns-time 5 全链路跑通。\n- python -m materialsorting.cli.run_config --help 跑通；pytest 全绿；分层未反向。",
-      "passes": false
+      "passes": true
     },
     {
       "id": "US-009",
