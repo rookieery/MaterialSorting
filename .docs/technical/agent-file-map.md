@@ -6,8 +6,8 @@
 ## 分层架构（依赖单向，禁反向）
 
 ```
-web  →  nesting_engine  →  nesting_bounds  →  dxf_parser
-                  (sparrow_experiments → sparrow_baseline)
+cli  →  web  →  nesting_engine  →  nesting_bounds  →  dxf_parser
+       (sparrow_experiments → sparrow_baseline)
 ```
 
 每层只依赖下层；下层不得 import 上层。`paths.py` 是所有层的公共路径常量来源。
@@ -33,11 +33,13 @@ materialSorting-server/
     │   ├── sparrow_baseline.py        基线求解 + ★共享层（被 experiments/export/solver 复用）
     │   ├── sparrow_experiments.py     旋转/重合公差实验
     │   └── labeling.py                g01+ 编号单一真相源（assign_codes；parse/commit 两管线共用）
-    └── web/                           FastAPI + WS 工作台（详见 agent-api-reference.md）
+    ├── web/                           FastAPI + WS 工作台（详见 agent-api-reference.md）
         ├── server.py                  app + 路由（GET /、/static、POST /export、POST /api/parse-dxf、POST /api/commit-to-nesting、GET /api/ptypes、WS /ws/solve）+ 求解线程桥 + US-020 _PIECES_STATE 可 reload（threading.Lock immutable snapshot）+ US-004 上传解析 + US-010 commit-to-intermediate（commit 后 reload）+ US-022 intermediate 加 label + WS quantities 入参
         ├── solver.py                  build_instance（US-022 quantities→demand，0 跳过；US-002 per_type[label][sizeKey] 命中即覆盖 + internal 删 + color=label_color；strip_height=min(gate,PLOT_SAFE_MAX_Y_MM) 求解钳绘图仪可写幅宽）+ solve_with_callback（threading 旧版，保留）+ solve_with_callback_proc（US-025 多进程版，返回 process 句柄可 terminate）
         ├── solve_worker.py             US-025 子进程入口（顶层 solve_worker，spawn 可 pickle；子进程内 build_instance + solve，仅 JSON 数据跨进程）
         └── export.py                  PNG(matplotlib) + R12-DXF marker + HPGL/PLT 文本 导出（US-002 起颜色/图例/ACI 全 g 码键：label_color 16 色循环 + label_aci=((code-1)%24)+1 + 图例=placed label 并集；PLT：内容压进 Y≤1910 可写幅宽 + PD 分块 ≤10点/≤110B + 走纸引导）
+    └── cli/                           配置驱动求解 CLI（PRD config-driven-solve-cli；最上层编排，绝不 import web.server，产物只落 out/config_runs/）
+        └── config.py                  US-001 load_config：7 键 JSON 配置严格校验（ConfigError(ValueError) 中文报错含字段名；seeds 非负整数列表取代旧 seed 三键；master_dxf 相对路径 CWD→仓库根两候选解析；quantities 码号键数字字符串或 'null'、数量 JSON 数字；per_type g 码键 + d/tol，超 MAX_OVERLAP_MM/MAX_ROTATION_TOL_DEG 上限 warn 钳制提示）→ NestRunConfig dataclass；模块级仅标准库（paths/constraints 走函数内延迟 import 保持单一真相源）
 ```
 
 ## paths.py — 路径常量（24 行）
@@ -298,6 +300,14 @@ parse-dxf 响应（`web/server.py._build_parse_payload`）与 intermediate（`we
 | `export.py` | 614 | `apply_transform` / `placed_to_world`（用**原始**非 eroded 轮廓，pid 直查 intermediate 零重放；US-024 起 5 层一并变换，notch 点按点变换 + 法线按向量旋转；**US-002**：输出无 ptype 键、`color=label_color(label)`、`label_aci()` 取 ACI）/ `render_png`（matplotlib Agg；US-024 起 5 层叠加：net 绿虚线 / internal 橙 / notch 黄短线段 / grain 红虚线；**US-002**：图例条目 = placed 的 g 码并集按 `code_sort_key` 数值序，标题「裁片」，零中文名）/ `write_marker_dxf`（R12 POLYLINE + ACI 色 + ASCII 标题；**US-002**：ACI = `((code-1)%24)+1`，旧 `TYPE_ACI`/`TYPE_ORDER` 已删；US-024 起多 layer：outline layer1 / net layer14 / internal layer8 / notch layer4 POINT / grain layer7 LINE，各自独立 entity）/ `write_marker_plt`（US-033 HPGL/HP-GL 纯文本，**封装口径对齐生产 PLT** `data/PC-20250508NJIF*.plt`：头部 `IN;PS<纸长>;SP1;PW0.08;` + `SP1-5;` PU/PD + 尾部 `PU;PG;`，CRLF 行尾，无 VS/LB 指令；坐标=mm×40 round；5 层笔号 SP1=outline/SP2=net/SP3=internal/SP4=notch/SP5=grain + 门幅框并入 SP1；空层跳过；纯 ASCII bytes，无临时文件、无新依赖；**2026-08 现场撞机修正**：① 安全幅面 —— 内容按 y ≤ PLOT_SAFE_MAX_Y_MM 半平面裁剪（削平不缩放）、门幅框上沿压进可写幅宽（Y 内缩 PLOT_BORDER_MARGIN_Y_MM=5）、越界裁片记 warning（二道防线，兜旧 intermediate/求解 bug；求解已由 NEST_GATE_MM 一道钳制）；② PD 分块 —— `_plt_polyline` 单条 PD ≤10 点且整行 ≤110B 续画（对齐 ET 生产 ≤11点/≤118B，防国产 HP-GL 解释器行缓冲溢出坐标错位小车乱走）；③ 走纸引导 —— 全体 X + PLOT_LEAD_X_MM=20（贴 0 起画无定位余量），PS 纸长 = 引导 + max(用布长, 内容最大X) + 尾余量 PLOT_TAIL_X_MM=10）/ `_plt_frame_stats`（越界防御 + PS 纸长取值：全层顶点 + notch 点须在门幅框内，非 0 记 warning；notch 法线端点外伸只计入 max_x 不告警） |
 
 US-004 起 `web/server.py` 直接 import `dxf_parser.collect.collect_pieces_with_details`（web → dxf_parser 跨层依赖，合规：web 是上层）。US-010 起新增 import `dxf_parser.explore` / `dxf_parser.export_dxf` / `nesting_bounds.load_pieces`（web → nesting_bounds → dxf_parser 单向，合规）。上传 multipart 依赖 `python-multipart`（已在 `[web]` extra）。
+
+## cli/ — 配置驱动求解 CLI（PRD config-driven-solve-cli，US-001 起）
+
+最上层编排者（`cli → web → nesting_engine → nesting_bounds → dxf_parser`）：读 `data/configs/` 下 7 键 JSON 配置跑「parse → commit → solve」全管线，**绝不 import `web.server`**（可 import `web.solver` 等纯求解封装）；产物只落 `out/config_runs/<run_name>_<时间戳>/`，物理隔离 web 事实源（`out/sparrow_baseline/` 与 `out/uploads/` 零触碰）。
+
+| 文件 | 职责 |
+|------|------|
+| `config.py` | US-001 `load_config(path)` 严格校验 7 键 schema（`master_dxf/sizes/gate_mm/time/seeds/per_type/quantities`）→ `NestRunConfig` frozen dataclass；`ConfigError(ValueError)` 中文报错含字段名（未知顶层键含旧 `seed`/`multi_seed`/`seed_count` → 提示已被 `seeds` 列表取代；`master_dxf` 相对路径 CWD→`paths.REPO_DIR` 两候选解析、失败列两个绝对路径；quantities 码号键须数字字符串或 `'null'`、数量须 JSON 数字 ≥0；per_type 键 `^g\d{1,3}$`、值仅 `d`/`tol` ≥0，超 `MAX_OVERLAP_MM=10`/`MAX_ROTATION_TOL_DEG=45` 不报错但 UserWarning 钳制提示）。**模块级 import 仅标准库**（paths/constraints 走函数内延迟 import 单一真相源），`python -m materialsorting.cli.config` 零副作用 |
 
 ## 数据流主线
 

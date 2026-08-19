@@ -5,3 +5,12 @@ Started: 2026-08-09
 
 - 浏览器验证（CDP headless Chrome harness scripts/us004_verify.mjs，15/15 PASS + 截图 out/us004_verify/）：上传母版 → 矩阵 10 动态 g 码列 × doc.sizes 11 码号行 + d/tol 格 + 10 个 ≡；三层 ESC（预览/整列设值独立）；配 g03@28 d=1.5 + g05 整列 d=2 → 确定 → 选码 → 开始求解 → patch WebSocket.prototype.send 捕获 WS start payload 断言 per_type.g03['28'].d===1.5（端到端 AC）+ g05 全码号键。
 - 文档同步：agent-component-map（header + US-018 节 5 行改写 + 不变量 2/3/6/7 修订 + 新增 11~13 + params.ts/style.css/PerTypeOverrides.tsx/ControlPanel.test.tsx 行）、agent-api-reference（WS per_type 注释补 US-004 矩阵产出与 sizeKey 口径）、materialSorting-web/AGENTS.md（header + 目录注释 + US-018 节 US-004 矩阵条目重写 + params 约定 3 处修订）。
+
+## 2026-08-19 · ralph/config-driven-solve-cli · US-001 配置加载与校验模块（cli/config.py）
+
+- 新建 `materialsorting/cli/` 子包（`__init__.py` 仅 docstring：cli → web → nesting_engine → nesting_bounds → dxf_parser 最上层编排，绝不 import web.server）+ `cli/config.py`（ConfigError(ValueError) / NestRunConfig frozen dataclass / load_config）。
+- 7 键 schema 严格校验：未知顶层键（旧 seed/multi_seed/seed_count 按未知键报错并附「已由 seeds 列表取代」提示）；master_dxf 绝对直用、相对 CWD→paths.REPO_DIR 两候选解析（延迟 import paths 保持模块级仅标准库），失败列两个候选绝对路径；sizes 空列表报错（build_instance 把 [] 当不过滤的静默歧义）；seeds 非空/非负/不重复/整数列表（缺省 [0]）；gate_mm>0、time 正整数（缺省 300）；per_type 键 ^g\d{1,3}$、值仅 d/tol ≥0，超 MAX_OVERLAP_MM=10 / MAX_ROTATION_TOL_DEG=45 不抛错但 UserWarning 引用常量名+钳制说明（延迟 import constraints 单一真相源）；quantities 键同 g 码正则、码号键 ^[0-9]+$ 或 'null'（solver str(size) 查 demand 口径）、数量 JSON 数字 ≥0 整数（字符串 "1" 报错提示「应写 1 而非 "1"」）。
+- 新建 `tests/test_cli_config.py` 21 用例全绿（`.venv/Scripts/python.exe -m pytest materialSorting-server/tests/test_cli_config.py`）：示例配置 AC 全断言 + 相对路径三态解析矩阵（CWD 命中/仓库根兜底/两候选报错）+ 各字段错误矩阵 + 上限警告/恰等不警告 + 模块纯度（AST 断言模块级 import 仅标准库、子进程 `python -m materialsorting.cli.config` 退出码 0 零输出、ConfigError 是 ValueError 子类）。
+- 质量闸：`python -m materialsorting.cli.config` 冒烟零副作用；compileall 通过；`git diff -- materialSorting-server/src/materialsorting/web/` 为空（web 层零改动）。
+- 全量回归：87 passed + 3 failed（test_ws_stop.py 三例）——**预先存在**（stash 我的改动后在干净树复现同样失败）：环境数据漂移——当前真实 intermediate 为 5336 母版 sizes 30..40，而该测试硬编码 sizes:[28] → total_area=0。与 US-001 无关，留待 US-005 web 回归记录处置。
+- 文档同步（/sync-docs）：`.docs/technical/agent-file-map.md`（分层图加 cli 顶层 + 目录树 cli/ 条目 + 新增「cli/ — 配置驱动求解 CLI」节）、`tests/AGENTS.md`（test_cli_config.py 行）。

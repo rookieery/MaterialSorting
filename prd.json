@@ -1,4 +1,35 @@
 {
-  "branchName": "ralph/piece-code-refactor",
-  "stories": []
+  "branchName": "ralph/config-driven-solve-cli",
+  "stories": [
+    {
+      "id": "US-001",
+      "title": "配置加载与校验模块（cli/config.py）",
+      "description": "作为算法调参用户，我希望一份 JSON 配置被严格加载校验，使拼写/类型/路径错误在管线启动前就被中文报错拦下。\n\n具体任务：\n1. 新建 materialSorting-server/src/materialsorting/cli/__init__.py（仅 docstring，标注分层位置：cli → web → nesting_engine → nesting_bounds → dxf_parser，绝不 import web.server）\n2. 新建 cli/config.py：ConfigError(ValueError)、NestRunConfig dataclass、load_config(path)。7 键 schema：master_dxf / sizes / gate_mm / time / seeds / per_type / quantities；seeds = 非负整数列表（缺省 [0]，取代旧 seed/multi_seed/seed_count 三字段，无模式开关无 clamp [2,6]）；master_dxf 路径解析（绝对直用；相对先试 CWD 再试 paths 仓库根，均失败报错列出两个候选绝对路径）；quantities 的 sizeKey 必须数字字符串或 'null'、值 JSON 数字 ≥0；per_type 键须匹配 ^g\\d{1,3}$、值仅 d/tol 数值 ≥0\n3. 新建 materialSorting-server/tests/test_cli_config.py 单测\n\n验收标准：\n- load_config(data/configs/5336_coded_sizes32-38.json) 成功：sizes=[32..38]、gate_mm=1980、seeds=[0]、quantities 键类型 dict[str, dict[str, int]]、master_dxf 解析为存在的绝对路径\n- 以下各自抛 ConfigError 且消息含出错字段名：未知顶层键（旧 seed / multi_seed / seed_count 按未知键报错）；master_dxf 不存在（消息列出两个候选绝对路径）；sizes 含字符串元素；seeds 空列表 / 含负数或非整数 / 含重复项；per_type 含非 g 码键；quantities 值为字符串 \"1\"（提示 JSON 应写数字）；gate_mm<=0\n- per_type 的 d>10 或 tol>45 不抛错但警告（引用 MAX_OVERLAP_MM / MAX_ROTATION_TOL_DEG，说明将被全局上限钳制）\n- .venv/Scripts/python.exe -m pytest materialSorting-server/tests/test_cli_config.py 通过；python -m materialsorting.cli.config 导入无副作用、仅标准库无兄弟包 import、分层依赖未反向",
+      "passes": true
+    },
+    {
+      "id": "US-002",
+      "title": "commit 管线编排（paths 常量 + cli/pipeline.py）",
+      "description": "作为后端开发者，我想要配置驱动的独立 commit 管线产出切片与 intermediate，不触碰 web 事实源也能拿到与 web 同口径的排料输入。\n\n具体任务：\n1. materialsorting/paths.py 追加 1 行常量 CONFIG_RUNS_DIR = OUT_DIR/config_runs（docstring 注明 CLI 专属，禁止写 INTERMEDIATE / uploads）\n2. 新建 cli/pipeline.py 的 commit_from_config(cfg, run_dir)：镜像 web/server._commit_to_nesting_sync 编排——dxf_parser.collect.collect_pieces_with_details → nesting_engine.labeling.assign_codes → 在 run_dir/pieces/ 下 export_dxf.write_piece_dxf({label}_{size}.dxf) + pieces_manifest.json sidecar → nesting_bounds.load_pieces.load_nest_pieces → intermediate 落盘 run_dir/pieces_intermediate.json；piece 字段与 server 产物逐字段一致（含 rounding 位数），顶层省略 web 专属 label_representatives；不写 .bak；时间戳 run_dir 天然全新无需清理旧产物\n\n验收标准：\n- 示例配置运行后 run_dir（out/config_runs/<run_name>_<YYYYMMDD-HHMMSS>/）内 pieces/ 切片 DXF 数 + manifest 条目数 = 母版 size≠None 轮廓数（预期 110），intermediate 生成且 gate_mm=1980\n- web.solver.load_pieces(run_dir/pieces_intermediate.json) 读回成功，pieces 数与 manifest 一致（schema v2 兼容自证）\n- 运行前后 out/sparrow_baseline/pieces_intermediate.json 与 out/uploads/ 内容和 mtime 不变（web 事实源未被触碰）\n- 与 web commit 同母版对拍：pid 集合相等、total_area_mm2 相等、同 pid polygon 逐点相等\n- python -m materialsorting.cli.pipeline 导入冒烟通过、分层依赖未反向（cli 只 import 底层原语与 web.solver，不 import web.server）",
+      "passes": false
+    },
+    {
+      "id": "US-003",
+      "title": "求解封装 + CLI 入口 + console_script 注册",
+      "description": "作为算法调参用户，我想要 ms-run-config <config> 一条命令跑完「commit → 求解」并输出利用率，无需浏览器即可评估配置。\n\n具体任务：\n1. cli/pipeline.py 增 solve_pieces：复用 web.solver.build_instance + solve_with_callback（threading 版进程内直跑，不用多进程版——terminate 能力是 WS stop 场景专用）；real_density = total_area/(sol.width × gate_mm)，与 web _apply_density_dual 同公式同口径；校验 len(placed_items)==Σdemand\n2. 新建 cli/run_config.py：argparse（config 位置参数 + --name 覆盖 run_name + --time N 覆盖时长（冒烟用）+ --quiet）；run_dir = CONFIG_RUNS_DIR/<run_name>_<YYYYMMDD-HHMMSS>（run_name 默认配置文件 stem，非法字符清洗，时间戳保留历史互不覆盖）；逐 seeds 列表元素求解（本 Story 单 seed 场景）；进度仅打「原面积口径新最优」帧 + 30s 心跳；写 result.json（config 回显 + commit 摘要 + solve 数组）；main() 首行 sys.stdout/stderr.reconfigure(encoding='utf-8')（Windows GBK 防乱码）；退出码 0=成功 / 1=配置或管线失败 / 2=求解失败\n3. materialSorting-server/pyproject.toml [project.scripts] 追加 ms-run-config = \"materialsorting.cli.run_config:main\"，并执行 .venv/Scripts/python.exe -m pip install -e materialSorting-server --no-deps 刷新入口（刷新前 python -m materialsorting.cli.run_config 等价可用）\n\n验收标准：\n- 冒烟 ms-run-config data/configs/5336_coded_sizes32-38.json --time 5：退出码 0，n_items=70（10 g 码 × 码 32-38）、n_eroded=0（per_type 全 0）、placed_items=70、real_density∈(0,1)、width_mm>0\n- result.json 落盘 run_dir（config 回显 + commit 摘要 n_pieces/total_area + solve 指标 seed/width_mm/real_density/density_sparrow/elapsed）；stdout 末行含「real_density（原面积口径）+ 用布长度 + 片数 + 耗时 + 本次 run_dir 完整路径」人类可读汇总，中文不乱码\n- git diff -- materialSorting-server/src/materialsorting/web/ 为空（server.py/solver.py/solve_worker.py/export.py 零改动）\n- python -m materialsorting.cli.run_config --help 输出用法（config/--name/--time/--quiet），分层依赖未反向",
+      "passes": false
+    },
+    {
+      "id": "US-004",
+      "title": "多 seed 串行多轮与 best 汇总（可延后）",
+      "description": "作为算法调参用户，我想要 seeds 列表含多个种子时自动串行逐个求解并汇总最优，消除单 seed 随机性对配置评估的干扰。\n\n具体任务：\n1. cli/run_config.py：for seed in cfg.seeds 顺序循环，复用同一份 commit 产物逐 seed 求解（每轮重建 build_instance，不重复 parse/commit）；result.json 记 per-seed solve 数组 + best（real_density 最大者）；多 seed 启动时打印预计总时长（len(seeds) × time）。种子不要求连续（[0,42] 合法，供复现历史 seed 对比）；确定只做串行，不做并行\n\n验收标准：\n- seeds=[0,1,2,3,4] 顺序执行 5 轮；--time 5 冒烟：result.json 的 solve 数组长度 = len(seeds)，best 取 real_density 最大者且 seed 字段正确\n- seeds=[0]（含缺省默认 [0]）行为与 US-003 完全一致（单 seed 回归）\n- python -m materialsorting.cli.run_config 冒烟通过、分层依赖未反向",
+      "passes": false
+    },
+    {
+      "id": "US-005",
+      "title": "web 回归验证 + 文档同步",
+      "description": "作为项目维护者，我想要全量 web 回归证据与文档更新，使新通道合入后工作台零回归成为可审计事实。\n\n具体任务：\n1. README.md / CLAUDE.md（运行方式段）：增补 CLI 用法、7 键配置 schema（含 seeds 列表串行语义）、out/config_runs/ 时间戳产物说明、「不触碰 web 数据」声明\n2. .docs/technical/agent-file-map.md 增补 cli 子包条目（config.py / pipeline.py / run_config.py 职责一行一条）\n\n验收标准：\n- web E2E 手测记录：ms-web 启动 → 上传母版 → parse 预览 g 码 → commit → WS 求解（time 调小）→ 导出 PNG/DXF，行为与改动前一致（改 server.py 相关的 verify-api hook 5 端点 404 为已知误报，本项目未改 server.py 不会触发）\n- 并行无干扰记录：web 求解进行中同时跑 CLI 冒烟，结束后 out/sparrow_baseline/pieces_intermediate.json mtime 与内容未变、out/uploads/ 无新目录\n- 全部 cli 模块 python -m 导入冒烟 + compileall 通过，分层依赖未反向",
+      "passes": false
+    }
+  ]
 }

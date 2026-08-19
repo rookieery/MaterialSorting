@@ -24,6 +24,7 @@ cd materialSorting-server
 | `test_label_representatives.py` | US-001 v2 `_build_label_representatives`：键=g 码、代表取最小码首个 size≠None 片、5 层字段白名单（由 test_ptype_representatives.py 更名而来） |
 | `test_commit_pipeline.py` | US-001 v2 commit 全管线（合成「未录入名称」母版）：0 丢片全片有 g 码、`{label}_{size}.dxf`+`pieces_manifest.json` 落盘、manifest 驱动 `load_nest_pieces`（pid=`{label}_{size}`）、AC#5 parse↔intermediate 逐片 label+面积对齐、idempotent 重跑、旧切片目录/v1 intermediate 明确报错「请重新 commit」 |
 | `test_solver_label.py` | US-002 求解/导出层 label 键：`label_color`（16 色循环/同码同色/兜底）+ `label_aci`（`((code-1)%24)+1` 公式与循环）、`build_instance` per_type label 命中即覆盖（2026-08-18 回退 US-004 后单级：erode/tol 落在该 g 码全部码号；未命中与旧 ptype / 旧两级键 no-op；全局上限收边）、quantities demand 直译（0 跳过/N 副本/面积×demand）、pid_meta 无 ptype 键且 color=label_color、`constraints.validate` 删成对齐套校验后裸 pid 裁片可用 |
+| `test_cli_config.py` | US-001 `cli/config.py` 7 键配置校验：示例配置 `data/configs/5336_coded_sizes32-38.json` 加载成功（sizes/gate_mm/seeds/quantities 键类型/master_dxf 绝对路径）+ 相对路径 CWD→仓库根两候选解析矩阵；错误矩阵（未知顶层键含旧 seed 三键附迁移提示 / master_dxf 不存在列两候选 / sizes 字符串 / seeds 空列表·负数·非整数·重复 / per_type 非 g 码·未知内键·负值 / quantities 字符串数量提示 JSON 写数字·坏码号键·负数 / gate_mm≤0 / time 非正整数 / 配置文件不存在·非法 JSON·顶层数组）；d>10 或 tol>45 UserWarning 引用 MAX_OVERLAP_MM/MAX_ROTATION_TOL_DEG 钳制提示、恰等上限不警告；模块纯度（AST 断言模块级仅标准库 import、`python -m` 子进程运行零输出零副作用、ConfigError 是 ValueError 子类） |
 
 ## Windows multiprocessing 测试注意
 
