@@ -4,7 +4,7 @@
 
 ## technical/（技术文档）
 > 代码地图、待办追踪 —— "改 X 找哪里"的速查与工程清单。
-- [technical/agent-file-map.md](technical/agent-file-map.md) — 后端 Python 包逐文件索引（dxf_parser / nesting_bounds / nesting_engine / web）
+- [technical/agent-file-map.md](technical/agent-file-map.md) — 后端 Python 包逐文件索引（dxf_parser / nesting_bounds / nesting_engine / web / cli）
 - [technical/agent-component-map.md](technical/agent-component-map.md) — 前端（materialSorting-web/）组件/模块地图
 - [technical/agent-api-reference.md](technical/agent-api-reference.md) — HTTP 路由 + WS `/ws/solve` 协议 + 导出契约
 - [technical/todo.md](technical/todo.md) — `/todo` skill 维护

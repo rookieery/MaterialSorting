@@ -507,6 +507,12 @@
         "title": "求解封装 + CLI 入口 + console_script 注册",
         "description": "作为算法调参用户，我想要 ms-run-config <config> 一条命令跑完「commit → 求解」并输出利用率，无需浏览器即可评估配置。\n\n具体任务：\n1. cli/pipeline.py 增 solve_pieces：复用 web.solver.build_instance + solve_with_callback（threading 版进程内直跑，不用多进程版——terminate 能力是 WS stop 场景专用）；real_density = total_area/(sol.width × gate_mm)，与 web _apply_density_dual 同公式同口径；校验 len(placed_items)==Σdemand\n2. 新建 cli/run_config.py：argparse（config 位置参数 + --name 覆盖 run_name + --time N 覆盖时长（冒烟用）+ --quiet）；run_dir = CONFIG_RUNS_DIR/<run_name>_<YYYYMMDD-HHMMSS>（run_name 默认配置文件 stem，非法字符清洗，时间戳保留历史互不覆盖）；逐 seeds 列表元素求解（本 Story 单 seed 场景）；进度仅打「原面积口径新最优」帧 + 30s 心跳；写 result.json（config 回显 + commit 摘要 + solve 数组）；main() 首行 sys.stdout/stderr.reconfigure(encoding='utf-8')（Windows GBK 防乱码）；退出码 0=成功 / 1=配置或管线失败 / 2=求解失败\n3. materialSorting-server/pyproject.toml [project.scripts] 追加 ms-run-config = \"materialsorting.cli.run_config:main\"，并执行 .venv/Scripts/python.exe -m pip install -e materialSorting-server --no-deps 刷新入口（刷新前 python -m materialsorting.cli.run_config 等价可用）\n\n验收标准：\n- 冒烟 ms-run-config data/configs/5336_coded_sizes32-38.json --time 5：退出码 0，n_items=70（10 g 码 × 码 32-38）、n_eroded=0（per_type 全 0）、placed_items=70、real_density∈(0,1)、width_mm>0\n- result.json 落盘 run_dir（config 回显 + commit 摘要 n_pieces/total_area + solve 指标 seed/width_mm/real_density/density_sparrow/elapsed）；stdout 末行含「real_density（原面积口径）+ 用布长度 + 片数 + 耗时 + 本次 run_dir 完整路径」人类可读汇总，中文不乱码\n- git diff -- materialSorting-server/src/materialsorting/web/ 为空（server.py/solver.py/solve_worker.py/export.py 零改动）\n- python -m materialsorting.cli.run_config --help 输出用法（config/--name/--time/--quiet），分层依赖未反向",
         "passes": true
+      },
+      {
+        "id": "US-004",
+        "title": "多 seed 串行多轮与 best 汇总（可延后）",
+        "description": "作为算法调参用户，我想要 seeds 列表含多个种子时自动串行逐个求解并汇总最优，消除单 seed 随机性对配置评估的干扰。\n\n具体任务：\n1. cli/run_config.py：for seed in cfg.seeds 顺序循环，复用同一份 commit 产物逐 seed 求解（每轮重建 build_instance，不重复 parse/commit）；result.json 记 per-seed solve 数组 + best（real_density 最大者）；多 seed 启动时打印预计总时长（len(seeds) × time）。种子不要求连续（[0,42] 合法，供复现历史 seed 对比）；确定只做串行，不做并行\n\n验收标准：\n- seeds=[0,1,2,3,4] 顺序执行 5 轮；--time 5 冒烟：result.json 的 solve 数组长度 = len(seeds)，best 取 real_density 最大者且 seed 字段正确\n- seeds=[0]（含缺省默认 [0]）行为与 US-003 完全一致（单 seed 回归）\n- python -m materialsorting.cli.run_config 冒烟通过、分层依赖未反向",
+        "passes": true
       }
     ]
   }

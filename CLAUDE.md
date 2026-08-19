@@ -7,10 +7,11 @@
 ## 分层架构（依赖方向单向，禁反向）
 
 ```
-web  →  nesting_engine  →  nesting_bounds  →  dxf_parser
-                            (sparrow_experiments → sparrow_baseline)
+cli  →  web  →  nesting_engine  →  nesting_bounds  →  dxf_parser
+              (sparrow_experiments → sparrow_baseline)
 ```
 
+- `cli`：最上层编排者（`ms-run-config` 配置驱动求解，见下「运行方式」）。只 import 底层原语与 `web.solver` 求解封装，**绝不 import `web.server`**（FastAPI 服务进程副作用）。产物只落 `out/config_runs/`（cli 子包唯一可写目录），物理隔离 web 事实源。`config.py`（7 键 JSON 配置严格校验，模块级仅标准库）、`pipeline.py`（commit 管线镜像 `server._commit_to_nesting_sync` + `solve_pieces` 单 seed 求解封装）、`run_config.py`（入口：逐 seeds 串行多轮 + best 汇总）。
 - `dxf_parser`：底层 DXF 读写。`reader.py`（ezdxf recover + GBK 块名 + R12 POLYLINE）、`geometry.py`（纯几何算子，无 ezdxf）、`model.py`（PieceOutline dataclass）。仅标准库 + ezdxf，不依赖任何兄弟包。
 - `nesting_bounds`：`load_pieces.py` 把切片目录（`pieces_manifest.json` 驱动）逐文件 → 布纹对齐水平 → 归一化到原点（US-001 v2：**无镜像展开**，每文件恰一条 `NestPiece`，`pid=f'{label}_{size}'`）。定义 `GATE_MM=1980`（布幅显示口径：UI/密度/导出外框）、`PLOT_SAFE_MAX_Y_MM=1910`（绘图仪可写幅宽）、`NEST_GATE_MM=min(两者)`（求解约束带，web/solver 与 CLI 引擎同口径）、`DEFAULT_SIZES`（8 码跳 32）。
 - `nesting_engine`：sparrow 求解。`constraints.py`（重合/旋转**全局**上限 `MAX_OVERLAP_MM=10` / `MAX_ROTATION_TOL_DEG=45`（2026-08-17 起不再按片型钳制，版师按片型的工艺参考值在 `.docs/business/排料规则_详细版.md`）+ 位图腐蚀 + 合法性校验（US-002 起成对齐套校验与 `PAIR_TYPES` 已删））、`sparrow_baseline.py`（基线 + **共享层**：`LABEL_PALETTE`/`label_color`（US-002 起 g 码 → 16 色循环表**单一真相源**，solver manifest / PNG / CLI SVG 三处同源取色）/_clean_polygon/solve_with_progress，被 solver/export/sparrow_experiments 复用）、`sparrow_experiments.py`（旋转/重合公差实验；US-002 起内片集合改 `--internal g04,g07` 命令行参数）、`labeling.py`（**g01+ 编号单一真相源**：`assign_codes` 统一赋码（顺序模式 = `sequential_sort_key`（group_key 前置保跨码同号 + 几何稳定序）；母版 block 名自带 `g/G/#`+数字编号且每码内唯一时全量复用），被 parse 赋号/label 代表裁片两处共用；导出 PNG/DXF 逐片叠印 g 码，PLT 永不加文字）。
@@ -41,7 +42,9 @@ web  →  nesting_engine  →  nesting_bounds  →  dxf_parser
 
 ## 运行方式
 
-重构为正经包后，不能直接 `python file.py`（相对导入）。用 console_scripts（`ms-*`）或 `python -m materialsorting.<sub>.<module>`。4 个入口定义在 `pyproject.toml`。
+重构为正经包后，不能直接 `python file.py`（相对导入）。用 console_scripts（`ms-*`）或 `python -m materialsorting.<sub>.<module>`。5 个入口定义在 `pyproject.toml`：`ms-explore` / `ms-sparrow-baseline` / `ms-sparrow-exp` / `ms-web` / `ms-run-config`。
+
+**配置驱动求解（无需浏览器）**：`ms-run-config <config.json> [--name RUN_NAME] [--time N] [--quiet]` 一条命令跑完「commit → 求解」。配置是 7 键 JSON schema（`master_dxf` / `gate_mm` 必填；`sizes` / `time` / `seeds` / `per_type` / `quantities` 可选，字段语义与 WS StartPayload 1:1；示例 `data/configs/`，加载校验见 `cli/config.py`）。`seeds` 是**串行**种子列表（缺省 `[0]`；≥2 个时逐 seed 串行求解，`best` 取原面积口径 real_density 最大轮）；取代旧 `seed`/`multi_seed`/`seed_count` 三键。产物只落 `out/config_runs/<run_name>_<时间戳>/`（pieces/ + pieces_intermediate.json + result.json），**不触碰 web 数据**（不写 `out/sparrow_baseline/` 与 `out/uploads/`，可与 ms-web 并行运行互不干扰）。详见 README「配置驱动求解」。
 
 ## 已知问题（待清理，勿在迁移中扩大改动）
 
