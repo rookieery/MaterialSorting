@@ -109,15 +109,17 @@ ms-run-config data/configs/5336_coded_really.json --time 5 --target 0.9   # 默�
 ms-run-config data/configs/5336_coded_really.json --time 5 --target 0.9 --kill on --params controller_params.json  # 标定就绪才真杀
 ```
 
-**标定管线（PC-004）**：`python -m materialsorting.cli.calibration` 三个子命令，为 kill 引擎产出数据依据（`--params` 消费的 `controller_params.json`）并防过拟合单一订单：
+**标定管线（PC-004/005）**：`python -m materialsorting.cli.calibration` 四个子命令，为 kill 引擎产出数据依据（`--params` 消费的 `controller_params.json`）并防过拟合单一订单：
 - **batch**：`--config <7键配置> [--tag T] [--short-seeds 20] [--short-time 90] [--full-seeds 8] [--full-time N]`（full-time 缺省用 config 的 `time`）。标定基实例 = `data/configs/5336_coded_really.json`（真实 per_type 公差 + 真实订单配比）。`commit_from_config` 只跑一次，逐 seed 串行 `solve_pieces`；曲线/best 帧落 `out/portfolio_calibration/<tag>/base/{short,full}/`，逐 seed 写 manifest.json（Ctrl-C 安全，重跑跳过已完整 seed）。
 - **variants**：确定性订单邻域变体（seeded RNG，RNG seed=i）—— 只抖 `quantities` 的 (g码, 码∈sizes) 条目 `n' = max(1, n±1)`（保底 1 片；惰性条目不动），per_type/gate_mm/master_dxf/sizes 逐字段固定。产出 `variant_{i}.json`（i=0..3）+ 每变体 6 seed × 90s + 1 × 300s 曲线（共享同一 commit）。
 - **analyze**：`--tag T --target P [--env-quantile 0.25]` 聚合曲线 → `analysis/`：`summary.json`（每 seed 终值/best/收敛平台 + mean/σ/P(≥target)）、`controller_params.json`（成功包络 S(τ)（τ 网格 0.05~1.0 步长 0.05）+ τ0/W/m/ε/δ/m_streak 推荐值；达标 seed <10 或包络格点不足 → `calibrated: false` 拒绝下发）、`generalization.json`（base 包络套用到各变体的误杀率/可迁移判定）。内部含 train/test 误杀回测 + 短/全秩相关 + uplift q50/q95。
+- **simulate**（ETT 离线仿真器）：`--tag T --target P [--budget SEC] [--scenarios 500] [--env-quantile 0.25] [--shadow-log kill_decisions.jsonl]` 用历史轨迹**零求解成本**回放策略网格（单 seed 基线 / 均匀 best-of-k / kill 三档 / θ 衰减两档，**同总预算公平比较** k×B 恒等）→ `analysis/simulation_report.json` + 控制台表格：每策略 ETT（达标 = 首次达标时刻，不可达 = 实际耗时，kill 省时计入）、P(达标|预算内)、误杀率、不可达场景 incumbent 终值（截断轨迹用「kill 时刻 best + 条件期望增量」插值，物理下界 ≥ kill 时刻 best-so-far，无 hindsight）。**变体曲线作 held-out**（kill 包络只源自 base 池、按仿真预算 B 绝对墙钟重采样）：推荐档须 base 与变体 ETT 双不劣于单 seed 基线且两者误杀率 <5%，`recommendation.params` 键与 controller_params.json 同构可直接抄进 `--params`。场景采样确定性（|pool|^k ≤ 4096 全枚举，否则固定种子 bootstrap）。`--shadow-log` 统计真实 would-kill 决策的假阳性（配同目录 curve_s{seed}.json；决策后才达标 = 假阳性，全程不达标 = 正确 kill）。
 
 ```bash
 python -m materialsorting.cli.calibration batch --config data/configs/5336_coded_really.json
 python -m materialsorting.cli.calibration variants --config data/configs/5336_coded_really.json
 python -m materialsorting.cli.calibration analyze --tag 5336_coded_really --target 0.85
+python -m materialsorting.cli.calibration simulate --tag 5336_coded_really --target 0.85   # 参数选型零真实求解成本
 ```
 
 真实跑批 ≈2 小时机器时间（28 base seed + 4 变体 × 7 seed），产物全部落 `out/portfolio_calibration/`（gitignore 区），不触碰 `out/config_runs/` 与 web 数据目录。`controller_params.json` 的键名与 `--params` 直接对接（`ms-run-config ... --params out/portfolio_calibration/<tag>/analysis/controller_params.json`）。

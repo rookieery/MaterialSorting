@@ -666,10 +666,10 @@ def test_layering_calibration_no_web_import():
 
 
 def test_module_help_smoke():
-    """``python -m materialsorting.cli.calibration <子命令> --help`` 三入口冒烟。"""
+    """``python -m materialsorting.cli.calibration <子命令> --help`` 四入口冒烟。"""
     import os
     env = {**os.environ, 'PYTHONPATH': str(_SRC)}
-    for cmd in ('batch', 'variants', 'analyze'):
+    for cmd in ('batch', 'variants', 'analyze', 'simulate'):
         r = subprocess.run(
             [sys.executable, '-m', 'materialsorting.cli.calibration', cmd, '--help'],
             capture_output=True, env=env, cwd=str(_SRC.parent), timeout=60)
