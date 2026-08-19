@@ -23,6 +23,7 @@ ms-explore = "materialsorting.dxf_parser.explore:main"
 ms-sparrow-baseline = "materialsorting.nesting_engine.sparrow_baseline:main"
 ms-sparrow-exp = "materialsorting.nesting_engine.sparrow_experiments:main"
 ms-web = "materialsorting.web.server:main"
+ms-run-config = "materialsorting.cli.run_config:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -17,6 +17,15 @@ sidecar → load_nest_pieces → intermediate 落盘」全管线，产出与 web
 镜像维护约定：``server._commit_to_nesting_sync`` 的 piece schema（pid/label/size/
 polygon/bbox/area_mm2/n_verts/allowed_angles + 5 层透传 + rounding 位数）变更时，
 本模块 ``_piece_record`` 必须同步（web 层零改动约束下无法抽共享函数，只能镜像）。
+
+``solve_pieces(cfg, run_dir, *, seed, ...)``（US-003）：单 seed 求解封装 —— 读
+``run_dir/pieces_intermediate.json`` → ``web.solver.build_instance`` →
+``web.solver.solve_with_callback``（**threading 版**进程内直跑；不用
+``solve_with_callback_proc`` 多进程版 —— terminate 能力是 WS stop 场景专用，CLI
+前台同步跑完即退，无需进程句柄）。density 双口径直接复用
+``web.solver._apply_density_dual``（同一函数 = 同一公式同一口径，web 层零改动
+约束下不复制公式）：``density`` = 原面积口径 ``total_area/(width*gate_mm)``
+（版师 / 90% 生死线），``density_sparrow`` = sparrow 自报（erode 后，仅参考）。
 """
 from __future__ import annotations
 
@@ -30,7 +39,7 @@ from ..dxf_parser.export_dxf import write_piece_dxf
 from ..nesting_bounds.load_pieces import load_nest_pieces, PIECES_MANIFEST_NAME
 from ..nesting_engine.labeling import assign_codes, size_sort_key
 
-__all__ = ['new_run_dir', 'commit_from_config']
+__all__ = ['new_run_dir', 'commit_from_config', 'solve_pieces']
 
 
 def new_run_dir(run_name: str) -> Path:
@@ -158,4 +167,95 @@ def commit_from_config(cfg, run_dir) -> dict:
         'n_written_dxf': len(manifest),
         'n_skipped': len(skipped),
         'skipped': skipped,
+    }
+
+
+def solve_pieces(cfg, run_dir, *, seed: int, time_budget: int | None = None,
+                 on_progress=None) -> dict:
+    """配置驱动的单 seed 求解：run_dir intermediate → build_instance → solve。
+
+    读 ``run_dir/pieces_intermediate.json``（``commit_from_config`` 产物；每轮求解
+    重新 ``build_instance``，不重复 parse/commit —— 多 seed 串行复用同一份 commit
+    产物的语义由此成立）。求解用 ``web.solver.solve_with_callback`` **threading 版**
+    进程内直跑（非 ``solve_with_callback_proc`` 多进程版 —— terminate 进程句柄是
+    WS stop 场景专用，CLI 前台跑完即退）。
+
+    Parameters
+    ----------
+    cfg : NestRunConfig
+        求解期参数取 ``sizes`` / ``per_type`` / ``quantities``（commit 期未消费的字段
+        在此生效）；``time`` 仅作 ``time_budget`` 缺省值。
+    run_dir : Path
+        commit 产物目录（须含 ``pieces_intermediate.json``）。
+    seed : int
+        sparrow 随机种子（``build_instance(seed=...)``）。
+    time_budget : int | None
+        覆盖单轮求解时长（秒）；None → ``cfg.time``。
+    on_progress : callable(dict) | None
+        每个中间解帧回调一次。帧已经 ``_apply_density_dual`` 换算 —— ``density``
+        = **原面积口径** ``total_area/(width_mm*gate_mm)``（90% 生死线口径），
+        ``density_sparrow`` = sparrow 自报（erode 后，仅参考）。「新最优过滤 / 心跳
+        节流」属 CLI 呈现层职责，由调用方（``run_config``）在回调内实现。
+
+    Returns
+    -------
+    dict
+        单 seed 求解指标（result.json ``solve`` 数组元素）：``seed`` / ``n_items``
+        （进 sparrow 的 Item 数）/ ``n_eroded`` / ``total_area_mm2`` / ``width_mm``
+        / ``real_density``（原面积口径）/ ``density_sparrow`` / ``placed_items``
+        （放置副本数）/ ``elapsed``（wall-clock 秒）。
+
+    Raises
+    ------
+    RuntimeError
+        求解失败（solver 抛错 / 返回 None）或 ``len(placed_items) != Σdemand``
+        （解不完整，不允许静默截断）。
+    """
+    # 延迟 import（约定同 solve_worker）：cli → web.solver 是合规向下依赖，但避免
+    # `python -m materialsorting.cli.pipeline` 导入冒烟时拉起 web 包链。
+    from ..web.solver import (
+        _apply_density_dual, build_instance, load_pieces, solve_with_callback,
+    )
+
+    _, gate_mm, pieces = load_pieces(str(Path(run_dir) / 'pieces_intermediate.json'))
+    instance, config, pid_meta, total_area, n_eroded = build_instance(
+        pieces, gate_mm,
+        time_budget=int(cfg.time if time_budget is None else time_budget),
+        seed=int(seed),
+        sizes=cfg.sizes,
+        per_type=cfg.per_type,
+        quantities=cfg.quantities,
+    )
+    demand_sum = int(sum(it.demand for it in instance.items))
+
+    def _on_report(report: dict) -> None:
+        # 密度双口径换算：直接复用 web 的 _apply_density_dual（同函数同公式同口径，
+        # 不在 CLI 侧复制公式 —— web 层零改动约束下私有函数跨包引用是唯一复用途径）。
+        _apply_density_dual(report, total_area, gate_mm)
+        if on_progress is not None:
+            on_progress(report)
+
+    sol, elapsed, err = solve_with_callback(instance, config, _on_report)
+    if err is not None:
+        raise RuntimeError(f'sparrow solve 抛错: {err}')
+    if sol is None:
+        raise RuntimeError('sparrow solve 未返回解（sol=None）')
+
+    final = {'density': float(sol.density), 'width_mm': float(sol.width)}
+    _apply_density_dual(final, total_area, gate_mm)
+    n_placed = len(sol.placed_items)
+    if n_placed != demand_sum:
+        raise RuntimeError(
+            f'解不完整：placed_items={n_placed} != Σdemand={demand_sum}（裁片未全部放置）')
+
+    return {
+        'seed': int(seed),
+        'n_items': len(instance.items),
+        'n_eroded': int(n_eroded),
+        'total_area_mm2': round(total_area, 1),
+        'width_mm': round(float(sol.width), 2),
+        'real_density': round(float(final['density']), 6),
+        'density_sparrow': round(float(final['density_sparrow']), 6),
+        'placed_items': n_placed,
+        'elapsed': round(elapsed, 1),
     }

@@ -4,12 +4,14 @@ Started: 2026-08-09
 
 
 
-- 全量回归：87 passed + 3 failed（test_ws_stop.py 三例）——**预先存在**（stash 我的改动后在干净树复现同样失败）：环境数据漂移——当前真实 intermediate 为 5336 母版 sizes 30..40，而该测试硬编码 sizes:[28] → total_area=0。与 US-001 无关，留待 US-005 web 回归记录处置。
-- 文档同步（/sync-docs）：`.docs/technical/agent-file-map.md`（分层图加 cli 顶层 + 目录树 cli/ 条目 + 新增「cli/ — 配置驱动求解 CLI」节）、`tests/AGENTS.md`（test_cli_config.py 行）。
 
-## 2026-08-19 · ralph/config-driven-solve-cli · US-002 commit 管线编排（paths 常量 + cli/pipeline.py）
-- 实现：`paths.py` 追加 `CONFIG_RUNS_DIR = OUT_DIR/config_runs`（docstring 子目录约定注明 CLI 专属、禁写 INTERMEDIATE/uploads）；新建 `cli/pipeline.py`（`new_run_dir(run_name)` 时间戳目录 `<name>_<YYYYMMDD-HHMMSS>` + `commit_from_config(cfg, run_dir)` 镜像 `_commit_to_nesting_sync`：collect → assign_codes → write_piece_dxf `{label}_{size}.dxf` + pieces_manifest.json 到 run_dir/pieces/ → load_nest_pieces → intermediate 落 run_dir；piece 条目经 `_piece_record` 与 server 逐字段一致含 rounding 位数；刻意差异=不写 .bak / 省略 label_representatives / gate_mm 写 cfg.gate_mm 配置驱动）。commit 只消费 master_dxf/gate_mm（sizes/quantities/per_type 求解期才用，commit 全量切片与 web 同口径）。
-- 真实母版冒烟（data/configs/5336_coded_sizes32-38.json）：run_dir 内切片 DXF 110 + manifest 110 = 母版 size≠None 轮廓数 ✓、intermediate gate_mm=1980 ✓、`web.solver.load_pieces` 读回 110 片 ✓、web 事实源 INTERMEDIATE sha256+mtime 与 uploads/ 8861 文件快照运行前后不变 ✓、与既有 web intermediate（同母版）对拍 pid 集合相等 / total_area_mm2=10512780.4 相等 / 同 pid polygon 逐点相等（且 piece 记录全字段相等，超出 AC 的加强验证）✓。
-- 新建 `tests/test_cli_pipeline.py` 8 用例全绿：run_dir 产物计数、gate_mm 配置驱动、solver 读回、web 事实源哨兵不变、**与 web commit 逐字段对拍**（合成母版小数坐标暴露 rounding 差异）、new_run_dir 时间戳幂等、AST 分层（全模块禁 import web.server + 模块级兄弟包仅向下）、`python -m` 零输出冒烟。
 - 质量闸：`python -m materialsorting.cli.pipeline` 导入冒烟零副作用；compileall 通过；`git diff -- materialSorting-server/src/materialsorting/web/` 为空（web 层零改动）；全量回归 95 passed + 3 failed（test_ws_stop.py 三例，预先存在的环境数据漂移，与 US-002 无关，留待 US-005 处置）。
 - 文档同步（/sync-docs）：`.docs/technical/agent-file-map.md`（目录树 cli/ 加 pipeline.py 行 + cli 节 pipeline.py 表行 + paths.py 节 CONFIG_RUNS_DIR 行与行数 24→30）、`tests/AGENTS.md`（test_cli_pipeline.py 行）。
+
+## US-003 求解封装 + CLI 入口 + console_script 注册（2026-08-19）
+
+- 实现：`cli/pipeline.solve_pieces`（读 run_dir intermediate → `web.solver.build_instance` + `solve_with_callback` **threading 版**进程内直跑；每帧直接复用 `web.solver._apply_density_dual` 换算双口径 —— density=原面积口径 total_area/(width*gate)、density_sparrow=sparrow 自报，同函数=同公式零复制；末解校验 placed==Σdemand 不齐抛 RuntimeError）；`cli/run_config.py`（argparse config/--name/--time/--quiet；run_name=配置 stem 或 --name，Windows 非法字符→'_'；逐 seeds 串行；进度仅打原面积口径新最优帧+30s 心跳；result.json=config 回显(time 为生效值)+commit 摘要+solve 数组；main 首行 stdout/stderr.reconfigure(utf-8)；退出码 0/1/2）；pyproject [project.scripts] 注册 `ms-run-config` 并 pip install -e 刷新。
+- 关键决策：web.solver 走**函数内延迟 import**（pipeline 模块级不 import web，`python -m materialsorting.cli.pipeline` 导入冒烟保持零副作用；cli → web.solver 向下依赖合规，绝不 import web.server）。
+- 验收：冒烟 `ms-run-config data/configs/5336_coded_sizes32-38.json --time 5` 退出码 0，n_items=70（10 g 码×码 32-38）、n_eroded=0、placed_items=70、real_density=80.84%∈(0,1)、width_mm=4187>0；result.json 落 run_dir 且 stdout 末行含 real_density（原面积口径）+用布长度+片数+耗时+run_dir 完整路径，中文不乱码；`git diff -- materialSorting-server/src/materialsorting/web/` 为空；`python -m materialsorting.cli.run_config --help` 正常。
+- 质量闸：新增 tests/test_cli_run_config.py 11 例全过（solve_pieces 口径/demand/erode/不完整解、main 端到端/quiet/--name 清洗/退出码 1 矩阵、web 事实源哨兵零触碰、分层 AST：run_config 全模块不 import web + pipeline 仅 solve_pieces 内唯一延迟 import web.solver）；全量回归 106 passed + 3 failed（test_ws_stop.py 三例为 US-002 起已知环境数据漂移，留待 US-005，与本次无关）；compileall 通过。
+- 文档同步（/sync-docs）：`.docs/technical/agent-file-map.md`（pyproject 6→7 个 console_scripts、目录树 cli/ 加 run_config.py 行 + pipeline.py 行补 solve_pieces、cli 表 pipeline 行补 solve_pieces + 新增 run_config.py 行、入口表加 ms-run-config 行）、`tests/AGENTS.md`（test_cli_run_config.py 行）。
