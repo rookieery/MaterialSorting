@@ -39,10 +39,11 @@ materialSorting-server/
         ├── solve_worker.py             US-025 子进程入口（顶层 solve_worker，spawn 可 pickle；子进程内 build_instance + solve，仅 JSON 数据跨进程）
         └── export.py                  PNG(matplotlib) + R12-DXF marker + HPGL/PLT 文本 导出（US-002 起颜色/图例/ACI 全 g 码键：label_color 16 色循环 + label_aci=((code-1)%24)+1 + 图例=placed label 并集；PLT：内容压进 Y≤1910 可写幅宽 + PD 分块 ≤10点/≤110B + 走纸引导）
     └── cli/                           配置驱动求解 CLI（PRD config-driven-solve-cli；最上层编排，绝不 import web.server，产物只落 out/config_runs/）
-        └── config.py                  US-001 load_config：7 键 JSON 配置严格校验（ConfigError(ValueError) 中文报错含字段名；seeds 非负整数列表取代旧 seed 三键；master_dxf 相对路径 CWD→仓库根两候选解析；quantities 码号键数字字符串或 'null'、数量 JSON 数字；per_type g 码键 + d/tol，超 MAX_OVERLAP_MM/MAX_ROTATION_TOL_DEG 上限 warn 钳制提示）→ NestRunConfig dataclass；模块级仅标准库（paths/constraints 走函数内延迟 import 保持单一真相源）
+        ├── config.py                  US-001 load_config：7 键 JSON 配置严格校验（ConfigError(ValueError) 中文报错含字段名；seeds 非负整数列表取代旧 seed 三键；master_dxf 相对路径 CWD→仓库根两候选解析；quantities 码号键数字字符串或 'null'、数量 JSON 数字；per_type g 码键 + d/tol，超 MAX_OVERLAP_MM/MAX_ROTATION_TOL_DEG 上限 warn 钳制提示）→ NestRunConfig dataclass；模块级仅标准库（paths/constraints 走函数内延迟 import 保持单一真相源）
+        └── pipeline.py                US-002 commit_from_config(cfg, run_dir)：镜像 web/server._commit_to_nesting_sync 编排（collect → assign_codes → write_piece_dxf {label}_{size}.dxf + pieces_manifest.json → load_nest_pieces → intermediate 落 run_dir/pieces_intermediate.json），piece 条目与 web 逐字段一致（含 rounding 位数）、顶层省略 label_representatives、不写 .bak、gate_mm 写 cfg.gate_mm（配置驱动）；new_run_dir(run_name) 时间戳目录 <name>_<YYYYMMDD-HHMMSS>；只写 paths.CONFIG_RUNS_DIR 物理隔离 web 事实源
 ```
 
-## paths.py — 路径常量（24 行）
+## paths.py — 路径常量（30 行）
 
 所有数据/产物/前端目录的唯一来源。**禁止在代码里硬编码 `..` 上溯或绝对路径**，一律 `from .. import paths` 后用 `paths.XXX`。
 
@@ -52,6 +53,7 @@ materialSorting-server/
 | `OUT_DIR` | `<server>/out` | `MS_OUT_DIR` |
 | `SPARROW_DIR` | `OUT_DIR/sparrow_baseline` | — |
 | `INTERMEDIATE` | `SPARROW_DIR/pieces_intermediate.json` | — |
+| `CONFIG_RUNS_DIR` | `OUT_DIR/config_runs`（US-002 起，CLI 专属产物根：cli 子包唯一可写目录，禁写 INTERMEDIATE/uploads） | — |
 | `MASTER_DXF_GLOB` | `DATA_DIR/M1787*(2).dxf` | — |
 | `STATIC_DIR` | `<repo>/materialSorting-web/static` | `MS_STATIC_DIR` |
 
@@ -308,6 +310,7 @@ US-004 起 `web/server.py` 直接 import `dxf_parser.collect.collect_pieces_with
 | 文件 | 职责 |
 |------|------|
 | `config.py` | US-001 `load_config(path)` 严格校验 7 键 schema（`master_dxf/sizes/gate_mm/time/seeds/per_type/quantities`）→ `NestRunConfig` frozen dataclass；`ConfigError(ValueError)` 中文报错含字段名（未知顶层键含旧 `seed`/`multi_seed`/`seed_count` → 提示已被 `seeds` 列表取代；`master_dxf` 相对路径 CWD→`paths.REPO_DIR` 两候选解析、失败列两个绝对路径；quantities 码号键须数字字符串或 `'null'`、数量须 JSON 数字 ≥0；per_type 键 `^g\d{1,3}$`、值仅 `d`/`tol` ≥0，超 `MAX_OVERLAP_MM=10`/`MAX_ROTATION_TOL_DEG=45` 不报错但 UserWarning 钳制提示）。**模块级 import 仅标准库**（paths/constraints 走函数内延迟 import 单一真相源），`python -m materialsorting.cli.config` 零副作用 |
+| `pipeline.py` | US-002 `commit_from_config(cfg, run_dir)` 独立 commit 管线：镜像 `web/server._commit_to_nesting_sync` 同一编排链（`collect_pieces_with_details` → `assign_codes` → `write_piece_dxf` 切 `{label}_{size}.dxf` + `pieces_manifest.json` 到 `run_dir/pieces/` → `load_nest_pieces` → intermediate 落 `run_dir/pieces_intermediate.json`，schema v2 与 web `web.solver.load_pieces` 互读）。**与 web commit 的刻意差异**：不写 `.bak`（时间戳 run_dir 天然全新）、顶层省略 `label_representatives`（web 专属缩略图）、`gate_mm` 写 `cfg.gate_mm`（配置驱动 = 该 run 密度分母；web 固定 `GATE_MM=1980`）；piece 条目经 `_piece_record` 与 server 逐字段一致（含 rounding 位数：点 3 位/法线 4 位/bbox 2 位/area 1 位）—— server schema 变更须同步镜像（web 零改动约束下无法抽共享函数）。`new_run_dir(run_name)` 创建 `CONFIG_RUNS_DIR/<name>_<YYYYMMDD-HHMMSS>` 时间戳目录（保留历史互不覆盖；run_name 清洗归 `run_config`）。commit 只消费 `cfg.master_dxf`/`cfg.gate_mm`（sizes/quantities/per_type 是求解期参数，commit 不过滤全量切片） |
 
 ## 数据流主线
 
