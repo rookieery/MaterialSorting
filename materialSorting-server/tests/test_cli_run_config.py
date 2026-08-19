@@ -1,10 +1,12 @@
-"""US-003 ``cli/run_config.main`` + ``cli/pipeline.solve_pieces`` 测试。
+"""US-003 ``cli/run_config.main`` + ``cli/pipeline.solve_pieces`` 测试；US-004 多 seed 串行与 best 汇总。
 
 合成母版（与 ``test_cli_pipeline.py`` 同构）走「commit → 求解」全链路：
 solve_pieces 的指标口径（real_density=total_area/(width*gate)、placed==Σdemand、
 per_type/quantities 透传）、main 的退出码矩阵（0/1）、result.json 落盘结构、
-进度/汇总输出、web 事实源零触碰、分层（run_config 不 import web；pipeline 对
-web.solver 仅函数内延迟 import）。
+进度/汇总输出、多 seed 串行（commit 仅一次 + 逐 seed 顺序求解 + best 取
+real_density 最大者 + 预计总时长打印）、单 seed 回归（seeds=[0] 与缺省一致）、
+web 事实源零触碰、分层（run_config 不 import web；pipeline 对 web.solver 仅
+函数内延迟 import）。
 """
 from __future__ import annotations
 
@@ -160,6 +162,7 @@ def test_main_end_to_end_smoke(iso_env, capsys):
     out = capsys.readouterr().out
     assert rc == 0
     assert '原面积口径新最优' in out                    # 进度帧口径
+    assert '预计总时长' not in out and '各 seed' not in out   # 单 seed 无多 seed 汇总行
     last_line = out.strip().splitlines()[-1]
     assert 'real_density（原面积口径）' in last_line
     assert '用布长度' in last_line and '片数' in last_line and '耗时' in last_line
@@ -172,12 +175,13 @@ def test_main_end_to_end_smoke(iso_env, capsys):
     assert rd.name.startswith('cfg_run_')
 
     result = json.loads((rd / 'result.json').read_text(encoding='utf-8'))
-    assert set(result) == {'config', 'commit', 'solve'}
+    assert set(result) == {'config', 'commit', 'solve', 'best'}
     assert result['config']['master_dxf'] == str(master.resolve())
     assert result['config']['time'] == 2                # --time 覆盖后回显生效值
     assert result['config']['seeds'] == [0]
     assert result['commit']['n_pieces'] == _N_PIECES
     assert len(result['solve']) == 1
+    assert result['best'] == result['solve'][0]         # 单 seed best 即唯一解
     s = result['solve'][0]
     for k in ('seed', 'width_mm', 'real_density', 'density_sparrow', 'elapsed'):
         assert k in s, k
@@ -236,6 +240,92 @@ def test_clean_run_name():
     assert _clean_run_name('  spaced. ') == 'spaced'
     assert _clean_run_name('???') == '___'           # 全非法字符 → 下划线（合法目录名）
     assert _clean_run_name('正常名-1.2') == '正常名-1.2'
+
+
+# ------------------------------------------------------- 多 seed 串行与 best（US-004）
+
+
+def test_main_multi_seed_serial_and_best(iso_env, capsys, monkeypatch):
+    """AC#1：seeds=[0,1,2,3,4] 串行 5 轮 —— commit 仅一次（复用产物）、solve 顺序
+    [0..4]、预计总时长打印、轮次标记、result.json solve 数组长度=len(seeds)、best
+    取 real_density 最大者且 seed 字段正确、web 事实源零触碰。"""
+    tmp, runs, inter, uploads, master = iso_env
+    cfg_path = _write_config(tmp / 'cfg_multi.json', master, seeds=[0, 1, 2, 3, 4])
+    inter_before = inter.read_bytes()
+
+    from materialsorting.cli import run_config as rc_mod
+    calls = {'commit': 0, 'solve': []}
+    orig_commit, orig_solve = rc_mod.commit_from_config, rc_mod.solve_pieces
+
+    def _spy_commit(cfg, run_dir):
+        calls['commit'] += 1
+        return orig_commit(cfg, run_dir)
+
+    def _spy_solve(cfg, run_dir, *, seed, time_budget=None, on_progress=None):
+        calls['solve'].append(seed)
+        return orig_solve(cfg, run_dir, seed=seed, time_budget=time_budget,
+                          on_progress=on_progress)
+
+    monkeypatch.setattr(rc_mod, 'commit_from_config', _spy_commit)
+    monkeypatch.setattr(rc_mod, 'solve_pieces', _spy_solve)
+
+    rc = main([str(cfg_path), '--time', '2'])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert calls['commit'] == 1                        # commit 仅一次，5 轮复用同一产物
+    assert calls['solve'] == [0, 1, 2, 3, 4]           # 串行顺序执行，无并行
+    assert '多 seed 串行 5 轮 × 2s' in out and '预计总时长 ≈ 10s' in out
+    assert '第 1/5 轮（seed=0）' in out and '第 5/5 轮（seed=4）' in out
+    assert '各 seed real_density' in out and 'best = seed' in out
+
+    (rd,) = list(runs.iterdir())
+    result = json.loads((rd / 'result.json').read_text(encoding='utf-8'))
+    assert set(result) == {'config', 'commit', 'solve', 'best'}
+    assert result['config']['seeds'] == [0, 1, 2, 3, 4]
+    assert [s['seed'] for s in result['solve']] == [0, 1, 2, 3, 4]   # 数组长度 = len(seeds)
+    top = max(s['real_density'] for s in result['solve'])
+    assert result['best']['real_density'] == top
+    # seed 字段正确：并列时取先执行者（max 首个极大值语义）
+    expect_seed = next(s['seed'] for s in result['solve'] if s['real_density'] == top)
+    assert result['best']['seed'] == expect_seed
+    expect_rec = next(s for s in result['solve'] if s['seed'] == expect_seed)
+    assert result['best'] == expect_rec                # best = 对轮次完整指标的引用
+    # 末行汇总取 best（含 run_dir 完整路径）
+    last_line = out.strip().splitlines()[-1]
+    assert 'real_density（原面积口径）' in last_line and str(runs.resolve()) in last_line
+
+    assert inter.read_bytes() == inter_before          # web 事实源零触碰（FR-5）
+    assert list(uploads.iterdir()) == []
+
+
+def test_main_single_seed_explicit_matches_default(iso_env, capsys):
+    """AC#2：seeds=[0] 显式与缺省一致 —— solve 数组长度 1、best=solve[0]、
+    无多 seed 启动行/轮次标记/汇总行，与 US-003 行为完全一致。"""
+    tmp, runs, _, _, master = iso_env
+    cfg_path = _write_config(tmp / 'cfg_s1.json', master, seeds=[0])
+    rc = main([str(cfg_path), '--time', '2'])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert '预计总时长' not in out and '轮（seed=' not in out and '各 seed' not in out
+    (rd,) = list(runs.iterdir())
+    result = json.loads((rd / 'result.json').read_text(encoding='utf-8'))
+    assert result['config']['seeds'] == [0]
+    assert len(result['solve']) == 1
+    assert result['best'] == result['solve'][0]
+
+
+def test_multi_seed_non_contiguous_ok(iso_env):
+    """种子不要求连续：[0, 42] 合法（复现历史 seed 对比），顺序逐 seed 求解。"""
+    tmp, _, _, _, master = iso_env
+    cfg = load_config(_write_config(tmp / 'cfg_jump.json', master, seeds=[0, 42]))
+    assert cfg.seeds == [0, 42]
+    run_dir = new_run_dir('jump')
+    commit_from_config(cfg, run_dir)
+    recs = [solve_pieces(cfg, run_dir, seed=s, time_budget=2) for s in (0, 42)]
+    assert [r['seed'] for r in recs] == [0, 42]
+    for r in recs:                                     # 每轮均完整解、指标字段齐全
+        assert r['placed_items'] == _N_PIECES == r['n_items']
+        assert 0.0 < r['real_density'] < 1.0
 
 
 # ------------------------------------------------------- 分层（AC#4）

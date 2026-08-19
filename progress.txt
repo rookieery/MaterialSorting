@@ -5,13 +5,12 @@ Started: 2026-08-09
 
 
 
-- 质量闸：`python -m materialsorting.cli.pipeline` 导入冒烟零副作用；compileall 通过；`git diff -- materialSorting-server/src/materialsorting/web/` 为空（web 层零改动）；全量回归 95 passed + 3 failed（test_ws_stop.py 三例，预先存在的环境数据漂移，与 US-002 无关，留待 US-005 处置）。
-- 文档同步（/sync-docs）：`.docs/technical/agent-file-map.md`（目录树 cli/ 加 pipeline.py 行 + cli 节 pipeline.py 表行 + paths.py 节 CONFIG_RUNS_DIR 行与行数 24→30）、`tests/AGENTS.md`（test_cli_pipeline.py 行）。
 
-## US-003 求解封装 + CLI 入口 + console_script 注册（2026-08-19）
-
-- 实现：`cli/pipeline.solve_pieces`（读 run_dir intermediate → `web.solver.build_instance` + `solve_with_callback` **threading 版**进程内直跑；每帧直接复用 `web.solver._apply_density_dual` 换算双口径 —— density=原面积口径 total_area/(width*gate)、density_sparrow=sparrow 自报，同函数=同公式零复制；末解校验 placed==Σdemand 不齐抛 RuntimeError）；`cli/run_config.py`（argparse config/--name/--time/--quiet；run_name=配置 stem 或 --name，Windows 非法字符→'_'；逐 seeds 串行；进度仅打原面积口径新最优帧+30s 心跳；result.json=config 回显(time 为生效值)+commit 摘要+solve 数组；main 首行 stdout/stderr.reconfigure(utf-8)；退出码 0/1/2）；pyproject [project.scripts] 注册 `ms-run-config` 并 pip install -e 刷新。
-- 关键决策：web.solver 走**函数内延迟 import**（pipeline 模块级不 import web，`python -m materialsorting.cli.pipeline` 导入冒烟保持零副作用；cli → web.solver 向下依赖合规，绝不 import web.server）。
-- 验收：冒烟 `ms-run-config data/configs/5336_coded_sizes32-38.json --time 5` 退出码 0，n_items=70（10 g 码×码 32-38）、n_eroded=0、placed_items=70、real_density=80.84%∈(0,1)、width_mm=4187>0；result.json 落 run_dir 且 stdout 末行含 real_density（原面积口径）+用布长度+片数+耗时+run_dir 完整路径，中文不乱码；`git diff -- materialSorting-server/src/materialsorting/web/` 为空；`python -m materialsorting.cli.run_config --help` 正常。
 - 质量闸：新增 tests/test_cli_run_config.py 11 例全过（solve_pieces 口径/demand/erode/不完整解、main 端到端/quiet/--name 清洗/退出码 1 矩阵、web 事实源哨兵零触碰、分层 AST：run_config 全模块不 import web + pipeline 仅 solve_pieces 内唯一延迟 import web.solver）；全量回归 106 passed + 3 failed（test_ws_stop.py 三例为 US-002 起已知环境数据漂移，留待 US-005，与本次无关）；compileall 通过。
 - 文档同步（/sync-docs）：`.docs/technical/agent-file-map.md`（pyproject 6→7 个 console_scripts、目录树 cli/ 加 run_config.py 行 + pipeline.py 行补 solve_pieces、cli 表 pipeline 行补 solve_pieces + 新增 run_config.py 行、入口表加 ms-run-config 行）、`tests/AGENTS.md`（test_cli_run_config.py 行）。
+
+## US-004 多 seed 串行多轮与 best 汇总（2026-08-19）
+- 实现：cli/run_config.py 增量三处（US-003 已建 for-seed 循环骨架）：①多 seed 启动打印预计总时长 `len(seeds)×time`（不含解析/切片）+ 每轮「第 i/N 轮（seed=s）」标记（quiet 抑制轮标记，单 seed 不打印）；②result.json 增 `best` 键 = per-seed 解中 real_density（原面积口径）最大者的完整指标 dict（并列取先执行者，max 首个极大值）；③多 seed 末段打「各 seed real_density」汇总行 + 「best = seed N」行，末行汇总取 best（单 seed best=唯一解 → 输出与 US-003 逐字一致，零回归）。种子不要求连续（[0,42] 合法），只串行不并行；commit 仅一次、每轮 solve_pieces 重建 build_instance 复用产物（US-003 已有语义，本轮加 spy 测试锁死）。
+- 质量闸：tests/test_cli_run_config.py 11→14 例全过（新增 multi-seed 串行+best / 单 seed 显式=缺省回归 / [0,42] 非连续种子）；全量 109 passed + 3 failed（test_ws_stop.py 三例仍为 US-002 起已知环境数据漂移，归 US-005）；compileall + import 冒烟通过。
+- AC 实跑证据：真实母版 seeds=[0,1,2,3,4] --time 5 —— solve 数组长度 5、best=seed 1（82.87% > 80.84/79.60/79.76/81.17）、`python -m materialsorting.cli.run_config` 退出 0；分层 AST 测试（run_config 不 import web）通过。
+- 文档同步（/sync-docs）：`.docs/technical/agent-file-map.md`（目录树 run_config.py 行 + cli 表 run_config.py 行补 US-004 多 seed/best/预计总时词语义）、`tests/AGENTS.md`（test_cli_run_config.py 行补 US-004 覆盖）。

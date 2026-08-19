@@ -6,9 +6,16 @@ r"""ms-run-config 入口 —— 一条命令跑完「commit → 求解」，无�
     python -m materialsorting.cli.run_config <config.json> --time 5
 
 流程：``load_config``（7 键 schema 校验）→ ``new_run_dir``（时间戳目录保留历史）
-→ ``commit_from_config``（切片 + intermediate 落 run_dir）→ 逐 ``seeds`` 元素
-``solve_pieces``（每轮重建 build_instance，复用同一份 commit 产物）→ ``result.json``
-（config 回显 + commit 摘要 + solve 指标数组）→ stdout 末行人类可读汇总。
+→ ``commit_from_config``（切片 + intermediate 落 run_dir，**仅一次**）→ 逐 ``seeds``
+元素**串行** ``solve_pieces``（每轮重建 build_instance，复用同一份 commit 产物）
+→ ``result.json``（config 回显 + commit 摘要 + solve 指标数组 + **best**）→
+stdout 末行人类可读汇总。
+
+多 seed 语义（US-004）：seeds 列表 ≥2 个时自动串行逐 seed 求解并汇总最优 ——
+``best`` 取 per-seed 解中 ``real_density``（原面积口径）最大者（并列取先执行者），
+消除单 seed 随机性对配置评估的干扰。种子不要求连续（``[0, 42]`` 合法，供复现
+历史 seed 对比）；**只做串行，不做并行**（确定性 + 零进程管理复杂度）。多 seed
+启动即打印预计总时长（``len(seeds) × time``，不含解析/切片）。
 
 run_name 缺省 = 配置文件 stem，``--name`` 覆盖；Windows 非法文件名字符
 （``<>:"/\|?*`` 与控制字符）替换 ``_``，清洗后为空回退 ``run``。
@@ -119,6 +126,12 @@ def main(argv: list[str] | None = None) -> int:
     print(f'run_dir: {run_dir}')
     print(f'配置: {Path(args.config).resolve()} | 求解时长: {time_budget}s | '
           f'seeds: {cfg.seeds}')
+    n_rounds = len(cfg.seeds)
+    if n_rounds > 1:
+        # 多 seed 启动即给总时长预期（len(seeds) × time，不含解析/切片）——
+        # 评估配置前先知道要等多久，避免把长跑误判挂死。
+        print(f'多 seed 串行 {n_rounds} 轮 × {time_budget}s，'
+              f'预计总时长 ≈ {n_rounds * time_budget}s（不含解析/切片）')
 
     try:
         commit = commit_from_config(cfg, run_dir)
@@ -130,7 +143,9 @@ def main(argv: list[str] | None = None) -> int:
           f"sizes={commit['sizes']} skipped={commit['n_skipped']}")
 
     solves: list[dict] = []
-    for seed in cfg.seeds:
+    for i, seed in enumerate(cfg.seeds, start=1):
+        if not args.quiet and n_rounds > 1:
+            print(f'── 第 {i}/{n_rounds} 轮（seed={seed}）开始 ──')
         try:
             rec = solve_pieces(
                 cfg, run_dir, seed=seed, time_budget=time_budget,
@@ -139,6 +154,10 @@ def main(argv: list[str] | None = None) -> int:
             print(f'求解失败 (seed={seed}): {e}', file=sys.stderr)
             return _EXIT_SOLVE
         solves.append(rec)
+
+    # best = per-seed 解中 real_density（原面积口径）最大者；并列取先执行者
+    # （max 首个极大值）—— 多轮消除单 seed 随机性，配置评估取最优口径。
+    best = max(solves, key=lambda r: r['real_density'])
 
     result = {
         'config': {
@@ -154,15 +173,20 @@ def main(argv: list[str] | None = None) -> int:
         },
         'commit': commit,
         'solve': solves,
+        'best': best,
     }
     result_path = Path(run_dir) / 'result.json'
     with open(result_path, 'w', encoding='utf-8') as f:
         json.dump(result, f, ensure_ascii=False, indent=2)
 
-    last = solves[-1]
-    print(f"real_density（原面积口径）= {last['real_density']:.2%} | "
-          f"用布长度 = {last['width_mm']:.0f}mm | 片数 = {last['placed_items']} | "
-          f"耗时 = {last['elapsed']:.1f}s | run_dir = {run_dir.resolve()}")
+    if n_rounds > 1:
+        digest = ' | '.join(
+            f"seed {r['seed']}={r['real_density']:.2%}" for r in solves)
+        print(f'各 seed real_density（原面积口径）: {digest}')
+        print(f"best = seed {best['seed']}（real_density 最大者）")
+    print(f"real_density（原面积口径）= {best['real_density']:.2%} | "
+          f"用布长度 = {best['width_mm']:.0f}mm | 片数 = {best['placed_items']} | "
+          f"耗时 = {best['elapsed']:.1f}s | run_dir = {run_dir.resolve()}")
     return _EXIT_OK
 
 
