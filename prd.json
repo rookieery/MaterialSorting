@@ -1,11 +1,4 @@
 {
   "branchName": "ralph/serial-seed-portfolio",
-  "stories": [
-    {
-      "id": "US-009",
-      "title": "run 统计库与 θ₀ 校准",
-      "description": "[PRD tasks/prd-serial-seed-portfolio.md PC-009] run 结果自动沉淀为按实例类统计，θ 初值按可达性校准（历史最高 89.6% 的组合不再从 90 起跑）。\n\n具体任务：\n1. materialSorting-server/src/materialsorting/cli/run_config.py — 结束时（含 R0 提前停/kill 路径）追加一行 JSONL 到 out/run_stats.jsonl：{ts, source, sizes, class_key, seeds, target, best_density, n_killed, elapsed_total, config: {time, per_type, quantities}}（class_key = sha1(source + sizes + quantities + per_type) 短哈希）；写盘失败 try/except 不阻塞主流程。\n2. materialSorting-server/src/materialsorting/cli/portfolio.py — 启动时读该文件：当前 class_key 命中且 ≥5 条记录 → θ 初值 = min(target, 历史最大 best_density + 0.003) 并打一行说明，否则 θ = target。θ₀ 只影响 kill 门槛，R0 停止条件恒用 --target。\n\n验收标准：\n- 连跑 2 次 → JSONL 恰 2 行、字段完整（fake solve 单测）；R0 提前停路径也落盘。\n- θ₀ 单测：命中且 ≥5 条 → min(target, max+0.003)；不足 5 条 → target；不同 class_key 互不污染；θ₀ 只影响 kill 门槛（回归断言）。\n- 写盘失败（模拟只读目录）不抛出、run 正常完成（warning log）。\n- python -m materialsorting.cli.run_config 冒烟 + pytest 全绿；分层未反向。",
-      "passes": true
-    }
-  ]
+  "stories": []
 }
