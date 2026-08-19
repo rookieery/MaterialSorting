@@ -15,6 +15,9 @@
                        **禁止**写 INTERMEDIATE / uploads（web 事实源物理隔离）
     portfolio_calibration/  PC-004 标定管线产物根（cli.calibration batch/variants/
                        analyze 的曲线与参数；gitignore 区，与 config_runs 平级）
+    run_stats.jsonl   PC-009 run 统计库（OUT_DIR 直下单文件，append-only）：
+                       ms-run-config 每次 run 结束追加一行（class_key 按实例类聚合），
+                       portfolio θ₀ 校准读取 —— 历史密度分布越测越准。
 """
 import os
 
@@ -28,6 +31,7 @@ SPARROW_DIR = os.path.join(OUT_DIR, 'sparrow_baseline')           # 与原 _outp
 INTERMEDIATE = os.path.join(SPARROW_DIR, 'pieces_intermediate.json')   # 全流程事实源（文件全路径）
 CONFIG_RUNS_DIR = os.path.join(OUT_DIR, 'config_runs')     # CLI（ms-run-config）专属产物根：只此可写，禁写 INTERMEDIATE/uploads
 CALIBRATION_DIR = os.path.join(OUT_DIR, 'portfolio_calibration')   # PC-004 标定管线产物根（batch/variants/analyze，gitignore 区）
+RUN_STATS_JSONL = os.path.join(OUT_DIR, 'run_stats.jsonl')   # PC-009 run 统计库（ms-run-config 追加 / portfolio θ₀ 校准读取）
 MASTER_DXF_GLOB = os.path.join(DATA_DIR, 'M1787*(2).dxf')         # 母版 DXF glob（命中的是 2.9MB 的 (1)(2)）
 STATIC_DIR = os.environ.get('MS_STATIC_DIR',
                             os.path.join(REPO_DIR, 'materialSorting-web', 'static'))

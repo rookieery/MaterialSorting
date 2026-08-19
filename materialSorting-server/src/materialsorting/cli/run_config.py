@@ -80,6 +80,22 @@ PC-008 LNS 后处理（``--lns [--lns-time 30] [--lns-rounds 5]``，PC-007 核�
     错误（如旧 run 无布局）降级为 stderr warn 跳过 —— 后处理失败不否定已完成的
     求解交付物（退出码仍 0）。
 
+PC-009 run 统计库与 θ₀ 校准（``--target`` 模式的 kill 门槛按历史可达性起跑）：
+
+  - **写侧**：run 结束（exit 0 收口的完成路径，含 R0 提前停 / kill 路径；Ctrl-C
+    / 求解失败不沉淀 —— 不完整数据会污染历史 max）追加一行 JSONL 到
+    ``out/run_stats.jsonl``（``paths.RUN_STATS_JSONL``）：``{ts, source, sizes,
+    class_key, seeds, target, best_density, n_killed, elapsed_total, config:
+    {time, per_type, quantities}}``；``class_key`` = sha1(source + sizes +
+    quantities + per_type) 短哈希（``portfolio.run_stats_class_key`` 单一真相
+    源）。写盘失败 try/except 只 stderr warn，不阻塞主流程（统计沉淀是旁路
+    产物，绝不否定求解交付物）。
+  - **读侧**：``--target`` 给定时启动即读统计库 —— 当前 class_key 命中且 ≥5 条
+    记录 → ``θ₀ = min(target, 历史最大 best_density + 0.003)``（历史最高 89.6%
+    的组合不再从 90 起跑），否则 θ₀ = target；θ₀ 经 ``PortfolioController(
+    theta0=...)`` 只作 kill 门槛初值，**R0 停止条件恒用 ``--target`` 真值**。
+    校准说明行 ``--quiet`` 也打（判据变更不静默，同 R3 θ 衰减口径）。
+
 run_name 缺省 = 配置文件 stem，``--name`` 覆盖；Windows 非法文件名字符
 （``<>:"/\|?*`` 与控制字符）替换 ``_``，清洗后为空回退 ``run``。
 
@@ -103,13 +119,17 @@ import argparse
 import json
 import re
 import sys
+import time
 from pathlib import Path
 
+from .. import paths
 from .config import ConfigError, load_config
 from .lns import LnsError, postprocess_run_dir
 from .pipeline import commit_from_config, new_run_dir, solve_pieces
-from .portfolio import (KILL_MODES, ControllerParamsError, PortfolioController,
-                        load_controller_params, run_serial_portfolio)
+from .portfolio import (KILL_MODES, THETA0_MARGIN, ControllerParamsError,
+                        PortfolioController, calibrate_theta0,
+                        load_controller_params, load_run_stats,
+                        run_serial_portfolio, run_stats_class_key)
 
 __all__ = ['SOLVER_OPTS_POOL', 'rotation_opts_for', 'main']
 
@@ -229,6 +249,23 @@ def _best_summary(best: dict) -> tuple[float, float, int, float]:
     return float(density), float(best['width_mm']), int(n_placed), float(best['elapsed'])
 
 
+def _append_run_stats(entry: dict, path=None) -> None:
+    """PC-009 统计行追加（缺省 ``paths.RUN_STATS_JSONL``）；写盘失败只 warn 不阻塞。
+
+    run_stats.jsonl 是 append-only 统计库（θ₀ 校准数据源，只增不改）：本函数只做
+    「一行 JSON + 换行」追加，坏行由读取侧（``portfolio.load_run_stats``）容错
+    跳过；任何 OSError（目录只读 / 路径不可建 / 目标是目录等）降级 stderr 警告 ——
+    统计沉淀是旁路产物，绝不否定已完成的求解交付物（退出码与末行汇总不受影响）。
+    """
+    p = Path(paths.RUN_STATS_JSONL if path is None else path)
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with open(p, 'a', encoding='utf-8') as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + '\n')
+    except OSError as e:
+        print(f'警告: run 统计落盘失败（{p}）: {e}', file=sys.stderr)
+
+
 def main(argv: list[str] | None = None) -> int:
     # 首行防乱码：Windows 管道/重定向默认 GBK，强制 UTF-8（真实控制台走
     # WindowsConsoleIO 本就 UTF-8，reconfigure 无害）。非常规流（pytest capture）
@@ -240,6 +277,7 @@ def main(argv: list[str] | None = None) -> int:
         pass
 
     args = _parse_args(argv)
+    t_start = time.monotonic()          # PC-009 elapsed_total 口径：整 run 墙钟
 
     try:
         cfg = load_config(args.config)
@@ -339,6 +377,25 @@ def main(argv: list[str] | None = None) -> int:
     if args.lns:
         print(f'LNS 后处理: time={lns_time}s rounds={lns_rounds}'
               f'（严格更优才回写 result.json，明细写 result_lns.json）')
+    # PC-009 θ₀ 校准（读 run 统计库，--target 模式才有 kill 门槛可校准）：当前
+    # 实例类（class_key）命中且 ≥5 条历史 → θ 初值 = min(target, 历史最大
+    # best_density + 0.003)（贴可达性起跑），否则 θ = target。θ₀ 只影响 kill
+    # 门槛（R2/R3 判据锚），R0 停止条件恒用 --target 真值；说明行 --quiet 也打
+    # （判据变更不静默，同 R3 θ 衰减口径）。统计库缺失 / 坏行由 load_run_stats
+    # 容错（→ 无历史 → 不校准），读失败绝不阻断求解。
+    stats_class_key = run_stats_class_key(str(cfg.master_dxf), cfg.sizes,
+                                          cfg.quantities, cfg.per_type)
+    theta0 = None
+    if args.target is not None:
+        theta0, info = calibrate_theta0(load_run_stats(paths.RUN_STATS_JSONL),
+                                        stats_class_key, args.target)
+        if info is not None:
+            print(f'[portfolio] θ₀ 校准: class_key {stats_class_key} 命中 '
+                  f"{info['n_records']} 条历史"
+                  f"（最高 best_density={info['max_density']:.2%}）→ "
+                  f'θ 初值={theta0:.2%}'
+                  f'（= min(target, 历史最高 + {THETA0_MARGIN * 100:.2f}pt)；'
+                  f'只影响 kill 门槛，R0 停止条件恒用 --target）')
 
     try:
         commit = commit_from_config(cfg, run_dir)
@@ -365,7 +422,8 @@ def main(argv: list[str] | None = None) -> int:
         seeds=list(cfg.seeds), target=args.target, params=params,
         echo=None if args.quiet else print,
         kill=kill_mode, time_budget=time_budget,
-        notify=print, on_decision=_on_kill_decision if kill_log is not None else None)
+        notify=print, on_decision=_on_kill_decision if kill_log is not None else None,
+        theta0=theta0)
     current = {'seed': None}       # 求解异常报错定位用（on_seed_start 持续刷新）
     # PC-008：LNS 严格更优时的 result.json lns 段（None = 不写该键 —— 无 --lns /
     # LNS 不优的 result.json 与基线逐字节一致，见 _flush_result）。
@@ -517,6 +575,22 @@ def main(argv: list[str] | None = None) -> int:
                       '主 result.json 保持完整', file=sys.stderr)
                 return _EXIT_INTERRUPT
     d, w, n_placed, elapsed = _best_summary(best)
+    # PC-009 run 统计库：完成路径（含 R0 提前停 / kill 路径，均 exit 0 收口）追加
+    # 一行 —— θ₀ 校准的数据源（分布越测越准）；best_density 取末行汇总同款口径
+    # （LNS 改进已并入 best）。写侧失败在 _append_run_stats 内降级 warn。
+    _append_run_stats({
+        'ts': time.strftime('%Y-%m-%dT%H:%M:%S'),
+        'source': str(cfg.master_dxf),
+        'sizes': cfg.sizes,
+        'class_key': stats_class_key,
+        'seeds': list(cfg.seeds),
+        'target': args.target,
+        'best_density': round(d, 6),
+        'n_killed': sum(1 for e in controller.per_seed if e.get('killed')),
+        'elapsed_total': round(time.monotonic() - t_start, 1),
+        'config': {'time': time_budget, 'per_type': cfg.per_type,
+                   'quantities': cfg.quantities},
+    })
     print(f"real_density（原面积口径）= {d:.2%} | "
           f"用布长度 = {w:.0f}mm | 片数 = {n_placed} | "
           f"耗时 = {elapsed:.1f}s | run_dir = {run_dir.resolve()}")

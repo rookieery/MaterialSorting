@@ -69,3 +69,16 @@ def real_or_synthetic_pieces():
 def synthetic_pieces():
     """总是合成数据（用于错误路径测试，确保不依赖真实 intermediate）。"""
     return _synthetic_pieces(), 1980.0
+
+
+@pytest.fixture(autouse=True)
+def _isolate_run_stats(tmp_path, monkeypatch):
+    """PC-009 run 统计库隔离：任一测试都把 ``paths.RUN_STATS_JSONL`` 指到临时文件。
+
+    ``run_config.main`` 结束时向统计库追加一行 —— 不隔离会把 fake solve 的测试
+    数据泄漏进真实 ``out/run_stats.jsonl``（θ₀ 校准数据源被污染）。需要断言统计
+    内容的测试（test_cli_run_stats）在自己 fixture 里覆盖为可读路径即可。
+    """
+    from materialsorting import paths
+    monkeypatch.setattr(paths, 'RUN_STATS_JSONL',
+                        str(tmp_path / 'run_stats_test.jsonl'))

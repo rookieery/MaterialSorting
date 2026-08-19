@@ -1,5 +1,6 @@
 """串行 seed portfolio 控制器（PC-002）：incumbent banking + R0 达标即停 + R4 队列耗尽；
-PC-003 扩展 kill 引擎（R1 包络 / R2 压缩期判决 / R3 θ 衰减 + shadow mode）。
+PC-003 扩展 kill 引擎（R1 包络 / R2 压缩期判决 / R3 θ 衰减 + shadow mode）；
+PC-009 扩展 run 统计库读取与 θ₀ 按实例类校准。
 
 ``run_config`` 的多 seed 串行循环自 PC-002 起**经本控制器转发**（不再裸调
 ``solve_pieces``）：控制器是纯 Python 状态机，持有三类状态 ——
@@ -46,6 +47,20 @@ kill 决策落盘：shadow / on 模式下每个 ``(seed, rule)`` **首次**触�
 加载为 dict 传入控制器 —— 数值阈值（tau0/W/m/epsilon/delta/m_streak/uplift_q95）
 与 ``envelope``（S(τ) 阶梯）/ ``calibrated`` 在此消费；7 键 config schema 不动。
 
+PC-009 run 统计库与 θ₀ 校准（``run_config`` 结束时向 ``paths.RUN_STATS_JSONL``
+追加一行，本模块提供读取与校准纯函数）：
+
+  - ``run_stats_class_key(source, sizes, quantities, per_type)``：实例类指纹 =
+    sha1(规范化 JSON) 前 10 位十六进制 —— 同一母版 + 码号集 + 订单配比 + 逐码
+    公差的组合视为同一「实例类」（工艺维度不变、订单漂移内的历史可互相参考）；
+  - ``load_run_stats(path)``：读 JSONL → 记录列表（缺文件 / 坏行 / 非 dict 行
+    静默跳过 —— 统计库 append-only，坏行不阻断校准）；
+  - ``calibrate_theta0(records, class_key, target)``：当前实例类命中且 ≥
+    ``THETA0_MIN_RECORDS``(5) 条 → ``θ₀ = min(target, 历史最大 best_density +
+    THETA0_MARGIN 0.003)``（历史最高 89.6% 的组合不再从 90 起跑 —— kill 门槛贴
+    着可达性走，省下注定追不上的预算），否则 θ₀ = target。θ₀ **只影响 kill
+    门槛**（R2/R3 判据锚），R0 停止条件恒用 ``--target`` 真值。
+
 进度口径（``echo`` 给定时；``run_config`` 传 ``None if quiet else print``）：
 沿用「原面积口径新最优才打 + 30s 心跳」—— per-seed 新最优行与心跳行**逐字保留**
 旧版格式（零回归），新增**跨 seed 反超**时的 incumbent 行（同 seed 自我刷新不打，
@@ -53,6 +68,7 @@ kill 决策落盘：shadow / on 模式下每个 ``(seed, rule)`` **首次**触�
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from dataclasses import dataclass
@@ -61,9 +77,11 @@ from pathlib import Path
 from .pipeline import solve_pieces
 
 __all__ = ['R0_REASON', 'R1_REASON', 'R2_REASON', 'KILL_DEFAULTS', 'KILL_MODES',
-           'ControllerParamsError', 'PortfolioController', 'PortfolioRun',
-           'load_controller_params', 'make_envelope', 'r1_below_envelope',
-           'r2_below_threshold', 'resolve_kill_params', 'run_serial_portfolio']
+           'THETA0_MIN_RECORDS', 'THETA0_MARGIN', 'ControllerParamsError',
+           'PortfolioController', 'PortfolioRun', 'calibrate_theta0',
+           'load_controller_params', 'load_run_stats', 'make_envelope',
+           'r1_below_envelope', 'r2_below_threshold', 'resolve_kill_params',
+           'run_serial_portfolio', 'run_stats_class_key']
 
 # R0 / R1 / R2 触发的 should_stop 返回值（solve_pieces 透传为 kill_reason）。
 R0_REASON = 'R0_target_reached'
@@ -85,6 +103,87 @@ KILL_DEFAULTS: dict = {
     'm_streak': 3,        # R3 连杀阈值（连续被 kill 的 seed 数）
     'uplift_q95': 0.005,  # R2 压缩期 uplift 无标定保守默认
 }
+
+# PC-009 θ₀ 校准参数：当前实例类历史样本量与贴边余量（与 R3 δ 同值 —— θ 系
+# 列判据统一用 0.3pt 步进）。
+THETA0_MIN_RECORDS = 5    # 触发校准的最少历史 run 数（不足 → θ₀ = target 不动）
+THETA0_MARGIN = 0.003     # θ₀ = min(target, 历史最大 best_density + margin)
+
+
+# -------------------------------------------------------------- run 统计库（PC-009）
+
+
+def run_stats_class_key(source, sizes, quantities, per_type) -> str:
+    """实例类指纹：``sha1(规范化 JSON)[:10]``（十六进制短哈希）。
+
+    组件 = ``(source, sizes, quantities, per_type)`` —— 母版（绝对路径字符串）+
+    码号过滤 + 订单配比 + 逐 g 码公差，即「工艺维度固定、订单邻域内」的组合键；
+    dict 组件经 ``sort_keys`` 规范化（键序无关），同输入必同 key。写入侧
+    （``run_config`` 结束追加）与读取侧（θ₀ 校准）共用本函数，class 口径单一
+    真相源。
+    """
+    payload = json.dumps(
+        {'source': str(source), 'sizes': sizes, 'quantities': quantities,
+         'per_type': per_type},
+        ensure_ascii=False, sort_keys=True, separators=(',', ':'))
+    return hashlib.sha1(payload.encode('utf-8')).hexdigest()[:10]
+
+
+def load_run_stats(path) -> list[dict]:
+    """读 run 统计库 JSONL → 记录列表（缺文件 / 坏 JSON 行 / 非 dict 行静默跳过）。
+
+    统计库 append-only 且只增不改（PC-005 kill 引擎决策日志同款容错哲学）：单行
+    损坏只损失该行样本，不让 θ₀ 校准整体失败。空行剔除；文件不可读（OSError）
+    视为无历史。
+    """
+    try:
+        text = Path(path).read_text(encoding='utf-8-sig')
+    except OSError:
+        return []
+    out: list[dict] = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(rec, dict):
+            out.append(rec)
+    return out
+
+
+def calibrate_theta0(records, class_key: str, target: float,
+                     *, min_records: int = THETA0_MIN_RECORDS,
+                     margin: float = THETA0_MARGIN) -> tuple[float, dict | None]:
+    """θ₀ 校准（纯）：按实例类聚合历史 best_density，贴可达性定 kill 门槛初值。
+
+    当前 ``class_key`` 命中且有效记录 ≥ ``min_records`` 条 →
+    ``θ₀ = min(target, 历史最大 best_density + margin)``（``min`` 封顶防历史最高
+    + 余量反超 target 抬门槛）；否则 ``θ₀ = target``（新款首次排料 / 样本不足的
+    回退语义）。返回 ``(theta0, info)``：``info`` 为 None（未校准）或
+    ``{'n_records', 'max_density'}``（命中说明行的数据源）。
+
+    θ₀ **只影响 kill 门槛**（控制器 ``self.theta`` 的初值，R2 判据锚 / R3 衰减
+    起点）；R0 停止条件恒用 ``--target`` 真值（回归由 ``make_should_stop`` 保证）。
+    记录里缺 ``best_density`` / 非数值 / bool 的行不计入样本（写侧坏行防御）。
+    """
+    target = float(target)
+    densities: list[float] = []
+    for rec in records if isinstance(records, list) else []:
+        if not isinstance(rec, dict) or rec.get('class_key') != class_key:
+            continue
+        v = rec.get('best_density')
+        if isinstance(v, bool) or not isinstance(v, (int, float)):
+            continue
+        densities.append(float(v))
+    if len(densities) < min_records:
+        return target, None
+    hist_max = max(densities)
+    theta0 = min(target, hist_max + float(margin))
+    return round(theta0, 6), {'n_records': len(densities),
+                              'max_density': round(hist_max, 6)}
 
 
 # -------------------------------------------------------------- kill 纯函数
@@ -210,10 +309,15 @@ class PortfolioController:
     （连续被 kill 的 seed 数，非 kill 结束即清零）、``kill_decisions``（决策记录
     副本）。``kill_mode`` 为**生效**模式：target 未给定时引擎不激活（恒 'off'，
     即便调用方传了 shadow/on）。
+
+    PC-009：``theta0``（run 统计库校准的门槛初值，``calibrate_theta0`` 产物）——
+    只作 ``self.theta`` 初值（kill 判据锚），**R0 停止条件恒用 ``self.target``
+    真值**；缺省 None → θ = target（旧行为，零回归）。
     """
 
     def __init__(self, *, seeds, target=None, params=None, echo=None,
-                 kill='shadow', time_budget=None, notify=None, on_decision=None):
+                 kill='shadow', time_budget=None, notify=None, on_decision=None,
+                 theta0=None):
         self.seeds = [int(s) for s in seeds]
         self.target = None if target is None else float(target)
         self.params = dict(params) if params else {}
@@ -230,7 +334,9 @@ class PortfolioController:
             raise ValueError(f'kill 模式须为 {KILL_MODES} 之一，当前为 {kill!r}')
         self.kill_mode = kill if self.target is not None else 'off'
         self.time_budget = None if time_budget is None else float(time_budget)
-        self.theta = self.target            # θ 初值 = target；R0 停止条件恒用 target
+        # θ 初值 = target；PC-009 起可由 run 统计库校准覆盖（只影响 kill 门槛，
+        # R0 停止条件恒用 target）。
+        self.theta = self.target if theta0 is None else float(theta0)
         self.kill_streak = 0
         self.kill_decisions: list[dict] = []
         self._notify = notify

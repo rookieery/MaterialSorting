@@ -130,6 +130,8 @@ ms-run-config data/configs/5336_coded_really.json --time 5 --target 0.5 --lns --
 ms-run-config data/configs/5336_coded_really.json --time 300 --lns --lns-time 60 --lns-rounds 8
 ```
 
+**run 统计库与 θ₀ 校准（PC-009）**：每次 run 结束（含 R0 提前停 / kill 路径）自动追加一行 JSONL 到 `out/run_stats.jsonl`：`{ts, source, sizes, class_key, seeds, target, best_density, n_killed, elapsed_total, config: {time, per_type, quantities}}`，`class_key` = sha1(source+sizes+quantities+per_type) 10 位短哈希（实例类指纹：同母版 + 码号集 + 订单配比 + 逐码公差视为同类）。写盘失败只 stderr warn 不阻塞主流程（统计沉淀是旁路产物）。`--target` 模式启动时读该库做 **θ₀ 校准**：当前 class_key 命中且 ≥5 条历史 → kill 门槛初值 `θ₀ = min(target, 历史最大 best_density + 0.003)`（历史最高 89.6% 的组合不再从 90 起跑 —— 分布越测越准），否则 θ₀ = target；θ₀ **只影响 kill 门槛**（R2/R3 判据锚），R0 停止条件恒用 `--target` 真值，校准说明行 `--quiet` 也打（判据变更不静默）。Ctrl-C / 求解失败的 run 不沉淀（不完整数据会污染历史 max）。
+
 **标定管线（PC-004/005）**：`python -m materialsorting.cli.calibration` 四个子命令，为 kill 引擎产出数据依据（`--params` 消费的 `controller_params.json`）并防过拟合单一订单：
 - **batch**：`--config <7键配置> [--tag T] [--short-seeds 20] [--short-time 90] [--full-seeds 8] [--full-time N]`（full-time 缺省用 config 的 `time`）。标定基实例 = `data/configs/5336_coded_really.json`（真实 per_type 公差 + 真实订单配比）。`commit_from_config` 只跑一次，逐 seed 串行 `solve_pieces`；曲线/best 帧落 `out/portfolio_calibration/<tag>/base/{short,full}/`，逐 seed 写 manifest.json（Ctrl-C 安全，重跑跳过已完整 seed）。
 - **variants**：确定性订单邻域变体（seeded RNG，RNG seed=i）—— 只抖 `quantities` 的 (g码, 码∈sizes) 条目 `n' = max(1, n±1)`（保底 1 片；惰性条目不动），per_type/gate_mm/master_dxf/sizes 逐字段固定。产出 `variant_{i}.json`（i=0..3）+ 每变体 6 seed × 90s + 1 × 300s 曲线（共享同一 commit）。
@@ -145,7 +147,7 @@ python -m materialsorting.cli.calibration simulate --tag 5336_coded_really --tar
 
 真实跑批 ≈2 小时机器时间（28 base seed + 4 变体 × 7 seed），产物全部落 `out/portfolio_calibration/`（gitignore 区），不触碰 `out/config_runs/` 与 web 数据目录。`controller_params.json` 的键名与 `--params` 直接对接（`ms-run-config ... --params out/portfolio_calibration/<tag>/analysis/controller_params.json`）。
 
-**不触碰 web 数据**：CLI 唯一可写目录是 `out/config_runs/`（标定管线为 `out/portfolio_calibration/`），绝不写 `out/sparrow_baseline/pieces_intermediate.json`（web 事实源）与 `out/uploads/` —— 与 ms-web 同时运行互不干扰（并行回归已验证：web 求解进行中跑 CLI，结束后两者事实源 mtime/内容不变、uploads 无新目录）。
+**不触碰 web 数据**：CLI 唯一可写目录是 `out/config_runs/`（标定管线为 `out/portfolio_calibration/`，PC-009 统计库为 `out/run_stats.jsonl` 单文件），绝不写 `out/sparrow_baseline/pieces_intermediate.json`（web 事实源）与 `out/uploads/` —— 与 ms-web 同时运行互不干扰（并行回归已验证：web 求解进行中跑 CLI，结束后两者事实源 mtime/内容不变、uploads 无新目录）。
 
 ## 数据流
 
@@ -173,7 +175,7 @@ ms-run-config <config.json>（CLI 平行通道，不经过 web）
 | `ms-sparrow-baseline` | sparrow 基线求解（{0,180}，无 erode） |
 | `ms-sparrow-exp` | 旋转公差 / 重合公差 / 组合实验 |
 | `ms-web` | 可视化工作台（http://127.0.0.1:8000） |
-| `ms-run-config` | 配置驱动排料一条命令（commit → 串行多 seed 求解 → `out/config_runs/` result.json；`--lns` 自动 LNS 后处理（PC-008），见上文「配置驱动求解」） |
+| `ms-run-config` | 配置驱动排料一条命令（commit → 串行多 seed 求解 → `out/config_runs/` result.json；`--lns` 自动 LNS 后处理（PC-008）；run 结束沉淀统计 + θ₀ 按实例类校准（PC-009），见上文「配置驱动求解」） |
 | `ms-lns` | LNS 波段重排后处理（对 run 目录最优布局波段级 ruin-and-recreate，产 result_lns.json + 前后对比 SVG，PC-007） |
 | `python scripts/embed_piece_codes.py <母版.dxf>` | 把 g01+ 编号植入母版 DXF 生成 `_coded.dxf`（与 Web 解析同源编号，幂等 + 自校验，版师在 ET2008 可对上 g 码） |
 
