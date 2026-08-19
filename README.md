@@ -109,7 +109,20 @@ ms-run-config data/configs/5336_coded_really.json --time 5 --target 0.9   # 默�
 ms-run-config data/configs/5336_coded_really.json --time 5 --target 0.9 --kill on --params controller_params.json  # 标定就绪才真杀
 ```
 
-**不触碰 web 数据**：CLI 唯一可写目录是 `out/config_runs/`，绝不写 `out/sparrow_baseline/pieces_intermediate.json`（web 事实源）与 `out/uploads/` —— 与 ms-web 同时运行互不干扰（并行回归已验证：web 求解进行中跑 CLI，结束后两者事实源 mtime/内容不变、uploads 无新目录）。
+**标定管线（PC-004）**：`python -m materialsorting.cli.calibration` 三个子命令，为 kill 引擎产出数据依据（`--params` 消费的 `controller_params.json`）并防过拟合单一订单：
+- **batch**：`--config <7键配置> [--tag T] [--short-seeds 20] [--short-time 90] [--full-seeds 8] [--full-time N]`（full-time 缺省用 config 的 `time`）。标定基实例 = `data/configs/5336_coded_really.json`（真实 per_type 公差 + 真实订单配比）。`commit_from_config` 只跑一次，逐 seed 串行 `solve_pieces`；曲线/best 帧落 `out/portfolio_calibration/<tag>/base/{short,full}/`，逐 seed 写 manifest.json（Ctrl-C 安全，重跑跳过已完整 seed）。
+- **variants**：确定性订单邻域变体（seeded RNG，RNG seed=i）—— 只抖 `quantities` 的 (g码, 码∈sizes) 条目 `n' = max(1, n±1)`（保底 1 片；惰性条目不动），per_type/gate_mm/master_dxf/sizes 逐字段固定。产出 `variant_{i}.json`（i=0..3）+ 每变体 6 seed × 90s + 1 × 300s 曲线（共享同一 commit）。
+- **analyze**：`--tag T --target P [--env-quantile 0.25]` 聚合曲线 → `analysis/`：`summary.json`（每 seed 终值/best/收敛平台 + mean/σ/P(≥target)）、`controller_params.json`（成功包络 S(τ)（τ 网格 0.05~1.0 步长 0.05）+ τ0/W/m/ε/δ/m_streak 推荐值；达标 seed <10 或包络格点不足 → `calibrated: false` 拒绝下发）、`generalization.json`（base 包络套用到各变体的误杀率/可迁移判定）。内部含 train/test 误杀回测 + 短/全秩相关 + uplift q50/q95。
+
+```bash
+python -m materialsorting.cli.calibration batch --config data/configs/5336_coded_really.json
+python -m materialsorting.cli.calibration variants --config data/configs/5336_coded_really.json
+python -m materialsorting.cli.calibration analyze --tag 5336_coded_really --target 0.85
+```
+
+真实跑批 ≈2 小时机器时间（28 base seed + 4 变体 × 7 seed），产物全部落 `out/portfolio_calibration/`（gitignore 区），不触碰 `out/config_runs/` 与 web 数据目录。`controller_params.json` 的键名与 `--params` 直接对接（`ms-run-config ... --params out/portfolio_calibration/<tag>/analysis/controller_params.json`）。
+
+**不触碰 web 数据**：CLI 唯一可写目录是 `out/config_runs/`（标定管线为 `out/portfolio_calibration/`），绝不写 `out/sparrow_baseline/pieces_intermediate.json`（web 事实源）与 `out/uploads/` —— 与 ms-web 同时运行互不干扰（并行回归已验证：web 求解进行中跑 CLI，结束后两者事实源 mtime/内容不变、uploads 无新目录）。
 
 ## 数据流
 
