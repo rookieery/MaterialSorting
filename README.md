@@ -116,6 +116,13 @@ ms-run-config data/configs/5336_coded_really.json --time 5 --solver-opts '{"expl
 ms-run-config data/configs/5336_coded_really.json --time 5 --rotate-opts                                                # 内置池逐 seed 轮换
 ```
 
+**LNS 波段重排后处理（PC-007）**：`ms-lns --run-dir <run目录> --time 30 --rounds 5 [--band-width 2865]` 对该 run 的最优布局（`portfolio.incumbent`，旧式 run 回退 best / 边车 `best_frame_s{seed}.json`）做波段级 ruin-and-recreate，突破单 seed 收敛分布上限。每轮：按 x 切竖直波段（缺省段宽 1.5×NEST_GATE_MM）→ 取局部密度（段内原面积和/(段宽×1910)）最差段 → 段内裁片构造**同口径子实例**（per_type/sizes/quantities 与母实例一致；demand>1 的 pid 全部副本整段重排禁拆分）多进程重解 → 新段跨度严格更窄才接受（新段压回原足迹内、右侧片左移 splice、总宽缩短），否则拒绝（**无改进时输出与输入逐字节不变**）；空段（纯空洞）无需求解直接让位。结束 `constraints.validate` + `y≤1910` 双复检，失败回退输入布局。跨组重叠护栏逐对不劣化（shapely 对比原布局基线，杜绝拼接咬合产生新重叠）。产物落 run_dir：`result_lns.json`（新 placed_items + 前后 width/density 对比 + 逐段明细）+ `lns_compare.svg`（前后双面板对比）。
+
+```bash
+ms-lns --run-dir out/config_runs/<run目录> --time 30 --rounds 5            # 缺省段宽 1.5×门幅有效宽
+ms-lns --run-dir out/config_runs/<run目录> --time 60 --band-width 1500     # 更细波段粒度
+```
+
 **标定管线（PC-004/005）**：`python -m materialsorting.cli.calibration` 四个子命令，为 kill 引擎产出数据依据（`--params` 消费的 `controller_params.json`）并防过拟合单一订单：
 - **batch**：`--config <7键配置> [--tag T] [--short-seeds 20] [--short-time 90] [--full-seeds 8] [--full-time N]`（full-time 缺省用 config 的 `time`）。标定基实例 = `data/configs/5336_coded_really.json`（真实 per_type 公差 + 真实订单配比）。`commit_from_config` 只跑一次，逐 seed 串行 `solve_pieces`；曲线/best 帧落 `out/portfolio_calibration/<tag>/base/{short,full}/`，逐 seed 写 manifest.json（Ctrl-C 安全，重跑跳过已完整 seed）。
 - **variants**：确定性订单邻域变体（seeded RNG，RNG seed=i）—— 只抖 `quantities` 的 (g码, 码∈sizes) 条目 `n' = max(1, n±1)`（保底 1 片；惰性条目不动），per_type/gate_mm/master_dxf/sizes 逐字段固定。产出 `variant_{i}.json`（i=0..3）+ 每变体 6 seed × 90s + 1 × 300s 曲线（共享同一 commit）。
@@ -160,6 +167,7 @@ ms-run-config <config.json>（CLI 平行通道，不经过 web）
 | `ms-sparrow-exp` | 旋转公差 / 重合公差 / 组合实验 |
 | `ms-web` | 可视化工作台（http://127.0.0.1:8000） |
 | `ms-run-config` | 配置驱动排料一条命令（commit → 串行多 seed 求解 → `out/config_runs/` result.json，见上文「配置驱动求解」） |
+| `ms-lns` | LNS 波段重排后处理（对 run 目录最优布局波段级 ruin-and-recreate，产 result_lns.json + 前后对比 SVG，PC-007） |
 | `python scripts/embed_piece_codes.py <母版.dxf>` | 把 g01+ 编号植入母版 DXF 生成 `_coded.dxf`（与 Web 解析同源编号，幂等 + 自校验，版师在 ET2008 可对上 g 码） |
 
 也可用 `python -m materialsorting.<subpackage>.<module>` 形式运行。

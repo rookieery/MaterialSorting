@@ -554,6 +554,12 @@
         "title": "ETT 离线仿真器",
         "description": "[PRD tasks/prd-serial-seed-portfolio.md PC-005] 用历史轨迹离线回放比较策略网格的 ETT 与保底终值，参数选型零真实求解成本。\n\n具体任务：\n1. materialSorting-server/src/materialsorting/cli/calibration.py — 加 simulate 子命令：输入曲线集（batch/variants 产物）+ 策略网格（单 seed 基线 / 均匀 best-of-k / kill 各档 / θ 衰减各档），回放仿真输出 simulation_report.json + 控制台表格：每策略 ETT（达标用时期望）、P(达标|预算内)、不可达场景 incumbent 终值（截断轨迹用「kill 时刻 best + 条件期望增量」插值，物理有界：不低于 kill 时刻 best-so-far）。变体曲线作 held-out——策略在变体上的 ETT/误杀率一并输出，推荐档须 base 与变体双达标。\n2. 同文件 — 同时消费 shadow 日志：--shadow-log <kill_decisions.jsonl> 统计真实 would-kill 决策的假阳性。\n\n验收标准：\n- 合成曲线（已知分布）下 ETT 排序符合理论：best-of-k < 单 seed；分离度大时激进 kill < 保守 kill——单测固化。\n- 截断插值下界单测：kill 时刻的 incumbent 估计 ≥ 该时刻 best-so-far。\n- 报告含推荐参数档（base 与变体集上 ETT 均不劣于单 seed 基线、两者误杀率 <5%），字段可直接抄进 controller_params.json。\n- python -m materialsorting.cli.calibration simulate --help 跑通；单测 ≥ 8 项；分层未反向。",
         "passes": true
+      },
+      {
+        "id": "US-006",
+        "title": "solver_opts 透传与配置轮换",
+        "description": "[PRD tasks/prd-serial-seed-portfolio.md PC-006] spyrrow 求解旋钮可透传并在 seed 间轮换，样本去相关、上尾更易被摸到。\n\n具体任务：\n1. materialSorting-server/src/materialsorting/web/solver.py — build_instance 加可选参数 solver_opts: dict | None（additive）：exploration_pct（0.1~0.95，换算 total_computation_time 为 exploration_time/compression_time 两段 int 秒，与 total_computation_time 互斥传入 spyrrow）、quadtree_depth（3/4/5）、num_workers（默认仍 4）；非法值 clamp + 忽略；不传 = 现行行为不变。\n2. materialSorting-server/src/materialsorting/web/solve_worker.py — 若参数传递需要，透传 solver_opts（solve_params 全 JSON 可序列化，Windows spawn 安全）。\n3. materialSorting-server/src/materialsorting/cli/pipeline.py — solve_pieces 加同形参数并入 solve_params。\n4. materialSorting-server/src/materialsorting/cli/run_config.py — CLI 旗标：--solver-opts（JSON 串，全 seed 生效）+ --rotate-opts（默认 OFF；开启后按内置轮换池 pool[seed_index % len] 取档，池内含空档=默认行为；两旗标互斥报错，退出码 1）。WS 协议本期不加字段，web 前端零改动。\n\n验收标准：\n- build_instance 单测：不传 solver_opts 时 config 字段与现状一致；exploration_pct=0.6 → 两段 int 秒、和 ≈ time_budget；越界 clamp；quadtree_depth/num_workers 透传。\n- solve_pieces/solve_worker 透传链单测（fake config 断言子进程收到的 solve_params 含 solver_opts）。\n- 轮换单测：k=5、池 4 档时第 5 个 seed 回到 pool[0]；--solver-opts 与 --rotate-opts 同给报配置错误（退出码 1）。\n- 无旗标冒烟：ms-run-config data/configs/5336_coded_really.json --time 5 与 US-001 基线一致（结构性字段对拍，不要求逐位一致——num_workers=4 并行探索本就不保证可复现）。\n- python -c \"from materialsorting.web.solver import build_instance\" 导入通过 + pytest 全绿 + 分层未反向（cli → web 单向）。",
+        "passes": true
       }
     ]
   }
