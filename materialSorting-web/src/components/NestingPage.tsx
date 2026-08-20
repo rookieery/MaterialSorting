@@ -12,6 +12,12 @@
 //   所有非 running 态的「开始求解」都走 handleStart（读当前 form —— 曾有 lastStartCfgRef
 //   快照重放路径导致改参数不生效，已删除，见 SolveControls 注释）。
 //
+// US-006（策略 se/race）：applyStrategyResult(result) 把策略 run 终局最优一键应用到主画布 ——
+//   runRegistry.clear() 清场后合成单条 RunRecord（manifest = result 端点 build_pid_meta 快照
+//   口径，与 /ws/solve manifest 同形；frames = [best 帧]，FrameMsg 字段同形），NestSVG /
+//   ConvergenceCurve / PlaybackBar / ExportButtons 零改动兼容。应用是显式按钮（弹窗结果态），
+//   不自动应用 —— 会清掉主画布现有对比 run；result 常驻 strategyStore，关弹窗再开仍可应用。
+//
 // Tooltip 仍由父 App 渲染（全局单例，不能多挂）；本页只渲染业务区，不挂 Tooltip。
 
 import { useRef, useState } from 'react';
@@ -25,7 +31,9 @@ import { useSolveRun } from '../hooks/useSolveRun';
 import { maxElapsed } from '../lib/seek';
 import { useAppStore } from '../store/appStore';
 import { runRegistry } from '../store/runRegistry';
+import type { StrategyResult } from '../types/strategy';
 import type { SolvePhase } from '../types/solvePhase';
+import type { FrameMsg, ManifestMsg } from '../types/ws';
 
 export function NestingPage(): React.JSX.Element {
   /** 已 start 的 seed 列表（base+i, i=0..N-1）。仅用于触发首次挂载 NestsGrid 内 NestCard。 */
@@ -143,6 +151,78 @@ export function NestingPage(): React.JSX.Element {
     // 不立即 setPhase：等 server 回 {type:'stopped'} → onmessage case 'stopped' → finish → onDone 统一切。
   }
 
+  /**
+   * US-006 策略 run 结果应用到主画布（弹窗结果态「应用到主画布」显式按钮触发，不自动应用）。
+   *
+   * 应用语义 = 显式清场 + 合成单条 RunRecord：
+   *   - runRegistry.clear()（关旧 WS —— 主画布现有对比 run 被清掉，破坏性操作由用户点击确认）
+   *     + 计数 ref 重置（totalSeeds=1，防残留 onDone 闭包误判）；
+   *   - manifest = result.manifest（result 端点 build_pid_meta 快照口径 —— erode 后几何与
+   *     placed_items 对齐、demand 已含，NestSVG 副本池按 demand 建 N 份承接多副本 placement）；
+   *   - frames = [合成帧]、lastFrame = 同帧（FrameMsg 形状：type:'frame'/index=best.frame_index/
+   *     elapsed/phase:'final'/density 双口径/width_mm/placed_items）—— 与 WS 帧同形，
+   *     NestSVG / ConvergenceCurve / PlaybackBar / ExportButtons/useExport/bestRun() 零改动兼容；
+   *   - 页面状态：setSeeds([best.seed]) + setPhase('done') + setSeekTime(-1)（回 live）+
+   *     setStatus('策略 run 已应用：seed N · X.XX%')。
+   *
+   * result 常驻 strategyStore（关弹窗再开仍可应用）；母版变更场景导出 pid 失配走既有 400 兜底。
+   */
+  function applyStrategyResult(result: StrategyResult) {
+    // 防御：主画布 running 禁应用（入口按钮本就互斥 disabled，此处兜底弹窗滞留的极端时序）。
+    if (phase === 'running') return;
+    const best = result.best;
+    const seed = best.seed ?? 0;
+    const density = best.density ?? 0;
+    const densitySparrow = best.density_sparrow ?? 0;
+    const widthMm = best.width_mm ?? 0;
+
+    // 1) 清场（与 handleStart 同口径）：关旧 WS + 清 registry + 计数 ref 重置。
+    runRegistry.clear();
+    doneCountRef.current = 0;
+    totalSeedsRef.current = 1;
+
+    // 2) 合成 manifest（result 端点 StrategyManifest → WS ManifestMsg 同形，补 type 判别键）。
+    const manifest: ManifestMsg = {
+      type: 'manifest',
+      gate_mm: result.manifest.gate_mm,
+      gate_nest_mm: result.manifest.gate_nest_mm,
+      total_area_mm2: result.manifest.total_area_mm2,
+      n_eroded: result.manifest.n_eroded,
+      pieces: result.manifest.pieces,
+    };
+    // 3) 合成终局帧（FrameMsg 同形；phase='final' 与求解收尾帧口径一致）。
+    const frame: FrameMsg = {
+      type: 'frame',
+      index: best.frame_index ?? 0,
+      elapsed: best.elapsed ?? 0,
+      phase: 'final',
+      density,
+      density_sparrow: densitySparrow,
+      width_mm: widthMm,
+      placed_items: best.placed_items ?? [],
+    };
+
+    // 4) 置换单条 RunRecord（导出链路 bestRun() 直接选中；ws=null 无 WS 可关）。
+    const rec = runRegistry.create(seed);
+    rec.manifest = manifest;
+    rec.frames.push(frame);
+    rec.lastFrame = frame;
+    rec.finalDensity = density;
+    rec.finalDensitySparrow = densitySparrow;
+    rec.viewBoxMaxW = widthMm;
+    rec.done = true;
+    rec.error = null;
+    rec.stopped = false;
+
+    // 5) 页面状态：seeds 挂 NestCard → done（导出解禁）+ seek 回 live + 状态行汇报。
+    clearHovered();
+    hideTooltip();
+    useAppStore.getState().setSeekTime(-1);
+    setSeeds([seed]);
+    setPhase('done');
+    setStatus(`策略 run 已应用：seed ${seed} · ${(density * 100).toFixed(2)}%`);
+  }
+
   return (
     <>
       <ControlPanel
@@ -151,6 +231,7 @@ export function NestingPage(): React.JSX.Element {
         phase={phase}
         status={status}
         onStatus={setStatus}
+        onApplyStrategy={applyStrategyResult}
       />
 
       <main className="main">

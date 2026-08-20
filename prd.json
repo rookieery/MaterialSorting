@@ -5,7 +5,7 @@
       "id": "US-006",
       "title": "策略结果应用到画布与导出闭环",
       "description": "As a 排料版师, I want 一键把策略 run 最优方案应用到主画布并导出 PNG/DXF, so that 拿到可直接下料的 marker。详见 tasks/prd-strategy-se-race.md US-006。\n\n具体任务：\n1. materialSorting-web/src/components/NestingPage.tsx — 新增 applyStrategyResult(result)（prop 链 ControlPanel→StrategyRunModal「应用到主画布」按钮，显式按钮不自动应用——会清掉主画布现有对比 run，破坏性操作需用户确认；结果常驻 strategyStore，关弹窗后再开仍可应用）：\n   - runRegistry.clear()（关旧 WS）+计数 ref 重置；\n   - runRegistry.create(result.best.seed) 合成 RunRecord：manifest=result.manifest（US-004 build_pid_meta 产物——erode 后几何与 placed_items 对齐、demand 已含，NestSVG 副本池按 demand 建 N 份承接多副本 placement）；frames=[合成帧]、lastFrame=同帧（FrameMsg 形状：type:'frame'/index=best.frame_index/elapsed/phase:'final'/density 双口径/width_mm/placed_items）；finalDensity/finalDensitySparrow=best 双口径、viewBoxMaxW=best.width_mm、done=true、ws=null、stopped=false；\n   - setSeeds([best.seed])+setPhase('done')+setSeekTime(-1)+setStatus('策略 run 已应用：seed N·X.XX%')。\n2. 导出零改动可用：既有 ExportButtons/useExport/bestRun() 选中该 record→POST /export placed→后端 placed_to_world(placed,_PIECES_STATE.pieces_by_id) pid {label}_{size} 两边同规则；导出文件内容与 incumbent 布局一致（含 demand 多副本 N 条 placement）。\n3. 母版变更场景：result 端点 warning 在弹窗结果态展示；应用后导出 pid 失配走既有 400 兜底。\n\n验收标准：\n- vitest 集成测试≥3 例：apply 后 runRegistry.list() 恰 1 条且字段齐全（manifest/frames/finalDensity/viewBoxMaxW/done）、phase==='done'、ExportButtons 非 disabled。\n- npm run build 通过；浏览器视觉验证：应用后 NestSVG 正常渲染（含多副本）、PNG/DXF 导出与弹窗结果一致。",
-      "passes": false
+      "passes": true
     }
   ]
 }

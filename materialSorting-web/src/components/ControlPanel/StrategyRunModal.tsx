@@ -28,7 +28,8 @@
 //   结果态 done/stopped/error/orphan
 //                  done：完成 · 最优 X.XX%（seed N · 用布 X.XXm）+ 模式汇总（race：
 //                  M 轮中 K 轮门杀 · 全程 X 分 X 秒 / SE：k 筛 + 冠军延长）+ 运行目录
-//                  （可复制）+ [应用到主画布]（US-006 接线，未传回调时 disabled）。
+//                  （可复制）+ [应用到主画布]（US-006 已接线 —— NestingPage
+//                  applyStrategyResult 经 ControlPanel 透传；未传回调时 disabled）。
 //                  stopped：已终止 · 保留终止前最优 X%（同样给应用按钮）。
 //                  error：错误信息 + 重试（lastStart 在场 → 原载荷重启；否则回配置态）。
 //                  orphan：检测到遗留运行（server 重启后 marker 残留）+ pid/存活 +
@@ -640,7 +641,11 @@ function ResultState({
           className="strategy-btn-apply"
           data-testid="strategy-apply-btn"
           disabled={onApplyStrategy === undefined}
-          title={onApplyStrategy === undefined ? 'US-006 接线后可用' : undefined}
+          title={
+            onApplyStrategy === undefined
+              ? '应用回调未接线'
+              : '应用到主画布（会替换当前画布的排料方案）'
+          }
           onClick={() => onApplyStrategy?.(result)}
         >
           应用到主画布
