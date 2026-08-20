@@ -14,7 +14,7 @@ python -c "from materialsorting.nesting_engine import labeling, constraints, spa
 | 文件 | 角色 |
 | --- | --- |
 | `constraints.py` | 重合/旋转**全局**上限（2026-08-17 起：`MAX_OVERLAP_MM=10.0` / `MAX_ROTATION_TOL_DEG=45.0`，每片型钳制表已删，版师按片型的工艺参考值在 `.docs/business/排料规则_详细版.md` §3.2/§4）+ 位图腐蚀 + 合法性校验（US-002 起 `PAIR_TYPES` 与成对齐套校验已删 —— 服务于已删除的合成镜像模型） |
-| `sparrow_baseline.py` | 基线求解 CLI + ★共享层（`LABEL_PALETTE`/`label_color`（US-002 起 g 码 → 16 色循环表单一真相源，取代 `PTYPE_COLORS`）/ `_clean_polygon` / `solve_with_progress`，被 experiments/export/solver 复用；SVG 图例按 g 码数值序、标题「裁片」） |
+| `sparrow_baseline.py` | 基线求解 CLI + ★共享层（`SIZE_PALETTE`/`size_color`（2026-08-20 起**尺码** → 16 色循环表单一真相源，锚点 `SIZE_ANCHOR=DEFAULT_SIZES[0]=28` 稳定绝对映射、同码同色跨片型；US-002~2026-08-19 为 g 码键 `label_color`，更早 `PTYPE_COLORS` US-002 已删）/ `_clean_polygon` / `solve_with_progress`，被 experiments/export/solver 复用；SVG 图例按尺码数值序、标题「尺码」） |
 | `sparrow_experiments.py` | 旋转/重合公差实验 CLI（US-002 起 `INTERNAL_TYPES` 已删，内片集合改 `--internal g04,g07` 命令行参数显式给出）；`erode_polygon` 被 solver 复用 |
 | `labeling.py` | 裁片 g 码编号**单一真相源**（US-001 v2：label 先行、名称无关）：`label_for(idx)` / `code_sort_key(code)` / `master_code_from_block_name(name)` / `centroid` / `size_sort_key` / `parse_member_sort_key(p)`（码内成员稳定排序键）/ `sequential_sort_key(p)`（**T4：group_key 前置**，同一 block 模板跨码同号）/ `collect_master_codes(pieces)`（all-or-nothing，有效片=全部 size≠None）/ `assign_codes(pieces)`（签名无 gmap/group_names；`compute_size_ptype_labels` 已删除） |
 

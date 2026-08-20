@@ -29,39 +29,41 @@ import threading
 import time
 
 from .. import paths
-from ..nesting_bounds.load_pieces import PLOT_SAFE_MAX_Y_MM
-from .labeling import code_sort_key
+from ..nesting_bounds.load_pieces import DEFAULT_SIZES, PLOT_SAFE_MAX_Y_MM
 
-# g 码 → 颜色 16 色循环表（d3 tableau10 + 6 pastel，US-002 起单一真相源）。
-# 同码同色（g01 恒蓝、g02 恒橙……），g17 起循环回表头；solver / export / 本模块
-# SVG 三处消费方一律经 ``label_color`` 取值，不再存在按中文片型名查色的表。
-LABEL_PALETTE = (
-    '#1f77b4',   # g01 蓝
-    '#ff7f0e',   # g02 橙
-    '#2ca02c',   # g03 绿
-    '#d62728',   # g04 红
-    '#9467bd',   # g05 紫
-    '#8c564b',   # g06 棕
-    '#e377c2',   # g07 粉
-    '#7f7f7f',   # g08 灰
-    '#bcbd22',   # g09 橄榄
-    '#17becf',   # g10 青
-    '#aec7e8',   # g11 浅蓝
-    '#ffbb78',   # g12 浅橙
-    '#98df8a',   # g13 浅绿
-    '#ff9896',   # g14 浅红
-    '#c5b0d5',   # g15 浅紫
-    '#c49c94',   # g16 浅棕
+# 尺码 → 颜色 16 色循环表（d3 tableau10 + 6 pastel；2026-08-20 起由 g 码换键为尺码，
+# 同码同色跨片型一致，solver / export / 本模块 SVG 三处消费方一律经 ``size_color`` 取色）。
+SIZE_PALETTE = (
+    '#1f77b4',   # 28 蓝（锚点 = DEFAULT_SIZES[0]）
+    '#ff7f0e',   # 29 橙
+    '#2ca02c',   # 30 绿
+    '#d62728',   # 31 红
+    '#9467bd',   # 32 紫
+    '#8c564b',   # 33 棕
+    '#e377c2',   # 34 粉
+    '#7f7f7f',   # 35 灰
+    '#bcbd22',   # 36 橄榄
+    '#17becf',   # 37 青
+    '#aec7e8',   # 38 浅蓝
+    '#ffbb78',   # 39 浅橙
+    '#98df8a',   # 40 浅绿
+    '#ff9896',   # 41 浅红
+    '#c5b0d5',   # 42 浅紫
+    '#c49c94',   # 43 浅棕
 )
 DEFAULT_COLOR = '#bbbbbb'
 
+# 尺码锚点：稳定绝对映射——28 恒表头色，与 run 内实际出现哪些码无关（子集 run 不漂移）；
+# 16 码跨度内互不相同（M1787 实测 11 码 28-38 全覆盖），44 起循环回表头。
+# 公开常量：web/export.size_aci（DXF ACI 公式）与 size_color 共用同一锚点。
+SIZE_ANCHOR = DEFAULT_SIZES[0]
 
-def label_color(label) -> str:
-    """g 码 → ``LABEL_PALETTE[(code-1) % 16]``（同码同色；非 g 码/None 兜底 DEFAULT_COLOR）。"""
-    code = code_sort_key(label) if isinstance(label, str) else 0
-    if code <= 0:
+
+def size_color(size) -> str:
+    """尺码 → ``SIZE_PALETTE[(size - SIZE_ANCHOR) % 16]``（同码同色；None/非数字兜底 DEFAULT_COLOR）。"""
+    if isinstance(size, bool) or not isinstance(size, (int, float)):
         return DEFAULT_COLOR
-    return LABEL_PALETTE[(code - 1) % len(LABEL_PALETTE)]
+    return SIZE_PALETTE[int(size - SIZE_ANCHOR) % len(SIZE_PALETTE)]
 
 
 def _clean_polygon(poly, eps=0.01):
@@ -107,14 +109,14 @@ def _write_svg(out_path, *, placed, pid_meta, gate_mm, used_mm, density, title):
     因 SVG y 轴向下而数据 y 轴向上，用一个 group transform translate(0,gate) scale(1,-1) 翻转。
     """
     W, H = used_mm, gate_mm
-    # 收集出现的 g 码（图例条目，按 code_sort_key 数值序）
-    labels = set()
+    # 收集出现的尺码（图例条目，按数值序）
+    sizes = set()
     for pid, rotation, translation in placed:
         meta = pid_meta.get(pid, {})
-        label = meta.get('label')
-        if label:
-            labels.add(label)
-    legend_labels = sorted(labels, key=code_sort_key)
+        size = meta.get('size')
+        if size is not None:
+            sizes.add(size)
+    legend_sizes = sorted(sizes)
 
     parts = []
     parts.append(
@@ -146,7 +148,7 @@ def _write_svg(out_path, *, placed, pid_meta, gate_mm, used_mm, density, title):
             continue
         world = _transform_polygon(base, rotation, translation)
         pts = ' '.join(f'{_fmt(x)},{_fmt(y)}' for x, y in world)
-        color = label_color(meta.get('label'))
+        color = size_color(meta.get('size'))
         parts.append(
             f'<polygon points="{pts}" fill="{color}" fill-opacity="0.55" '
             f'stroke="{color}" stroke-width="{max(W,H)*0.0015:.1f}"/>'
@@ -158,10 +160,10 @@ def _write_svg(out_path, *, placed, pid_meta, gate_mm, used_mm, density, title):
     ly = 14
     step = H * 0.035
     parts.append(f'<text x="{lx:.1f}" y="{ly:.1f}" font-size="{H*0.028:.0f}" '
-                 f'font-weight="bold" fill="#222">裁片图例</text>')
+                 f'font-weight="bold" fill="#222">尺码图例</text>')
     ly += step * 1.4
-    for t in legend_labels:
-        color = label_color(t)
+    for t in legend_sizes:
+        color = size_color(t)
         parts.append(f'<rect x="{lx:.1f}" y="{ly - step*0.7:.1f}" '
                      f'width="{step*1.2:.1f}" height="{step*1.2:.1f}" '
                      f'fill="{color}" fill-opacity="0.55" stroke="{color}"/>')

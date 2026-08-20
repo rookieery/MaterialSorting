@@ -7,31 +7,35 @@ WS 协议（详见 README / 实现计划；US-002 起全 label 键，不再接�
             params:{d_ext,d_int,tol_ext,tol_int}?,          # d_int/tol_int 已无消费方（恒 0）
             per_type:{label:{d?,tol?}}?,                     # g 码逐片覆盖（该码全部码号生效）
             quantities:{label:{sizeKey:N}}?}                 # per-size demand（0=跳过）
-  server → {type:manifest, ...} 一次（pieces 条目含 label/color(label_color)/demand/5 层）
+  server → {type:manifest, ...} 一次（pieces 条目含 label/color(size_color)/demand/5 层）
          → {type:frame, density(原面积口径), density_sparrow(erode后口径), ...} 每个中间解
          → {type:final,   ...} 收尾  （或 {type:error, message}）
 
 阶段 B：density 统一用原面积口径 real_density = total_area/(width*min(gate, PLOT_SAFE_MAX_Y_MM))
         （实际幅宽口径，2026-08-20 起分母与求解约束带同口径），与版师/90%生死线一致；
         erode 后的 sparrow 自报密度保留为 density_sparrow 供参考。
+
+模块结构（行为保持拆分）：本文件保留 app 装配 + 上传解析/commit 路由（含
+``_commit_to_nesting_sync`` —— tests monkeypatch ``server_mod.UPLOADS_DIR`` 后直接
+调用，函数 ``__globals__`` 必须留在本模块才能吃到 patch）；其余机械拆出：
+  - ``runtime.py``        pieces state 快照 + 共享 executor（import 即做启动 reload）；
+  - ``parse_payload.py``  解析预览 / label 代表裁片纯函数；
+  - ``routes_views.py``   GET / 、GET /api/ptypes 、POST /export；
+  - ``routes_ws.py``      WS /ws/solve + 求解子进程终止封装。
 """
 from __future__ import annotations
 
 import asyncio
 import json
-import os
 import re
 import shutil
 import sys
-import threading
 import uuid
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from fastapi import FastAPI, Request, UploadFile, File, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi import FastAPI, Request, UploadFile, File
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from urllib.parse import quote
 
 from .. import paths
 from ..dxf_parser.collect import collect_pieces_with_details
@@ -40,75 +44,31 @@ from ..nesting_bounds.load_pieces import (
     load_nest_pieces,
     GATE_MM as NEST_GATE_MM,
     PIECES_MANIFEST_NAME,
-    PLOT_SAFE_MAX_Y_MM,
 )
-from ..nesting_engine.labeling import (
-    size_sort_key,
-    assign_codes,
-)
+from ..nesting_engine.labeling import assign_codes
 
 STATIC_DIR = paths.STATIC_DIR
-from .solver import build_instance, load_pieces, solve_with_callback, solve_with_callback_proc
-from .export import placed_to_world, render_png, write_marker_dxf, write_marker_plt
-
-# US-020：可 reload 的排料裁片状态。
-# `_PIECES_STATE` 是一个 immutable snapshot dict —— `_reload_pieces_state()` 走「在外
-# 构建新 dict → 锁内整体替换引用」模式，读者始终拿到一个完整一致的快照（不会读到
-# 半状态）。`/ws/solve` 在 accept 阶段拿一次快照，整个 ws 连接内 pieces 不变（避免
-# 求解中途数据切）；`/export` 路由同样走 `_get_pieces_state()`。commit 成功后立即调
-# `_reload_pieces_state()` 让下一次请求吃到新 intermediate（前端无需重启 ms-web）。
-_state_lock = threading.Lock()
-_PIECES_STATE: dict = {}
-
-
-def _build_pieces_state(intermediate_path: str = paths.INTERMEDIATE) -> dict:
-    """从 intermediate JSON 构建 pieces state 快照（不在锁内调用，可重入）。
-
-    返回 {doc, gate_mm, pieces, pieces_by_id}；pieces_by_id = {pid: piece_dict}。
-    intermediate 缺失或解析异常时返回空 state（{n:0,...}）—— 启动期 allow-empty 由
-    `_init_pieces_state()` 决定，本函数纯粹做读取 + 索引。
-    """
-    doc, gate_mm, pieces = load_pieces(intermediate_path)
-    return {
-        'doc': doc,
-        'gate_mm': gate_mm,
-        'pieces': pieces,
-        'pieces_by_id': {p['pid']: p for p in pieces},
-    }
-
-
-def _reload_pieces_state(intermediate_path: str = paths.INTERMEDIATE) -> dict:
-    """重读 intermediate → 原子替换 `_PIECES_STATE` 引用 → 返回新快照。
-
-    在锁内构建新 dict（load_pieces 是文件 I/O + JSON 解析；commit 频率远低于 ws 读
-    取，且锁粒度对 6-worker 池可忽略），保证读者不会看到半状态。返回的 dict 同时被
-    `_PIECES_STATE` 引用，调用方可以放心返回给前端 / 后续路由使用。
-    """
-    with _state_lock:
-        new_state = _build_pieces_state(intermediate_path)
-        _PIECES_STATE.clear()
-        _PIECES_STATE.update(new_state)
-        return new_state
-
-
-def _get_pieces_state() -> dict:
-    """锁内返回当前 `_PIECES_STATE` 只读快照（调用方拿到后整连接复用，不再切）。"""
-    with _state_lock:
-        return _PIECES_STATE
-
-
-# 启动时读一次中间数据（事实源：paths.INTERMEDIATE）→ 填入 _PIECES_STATE。
-# 若 intermediate 不存在（首次启动未上传母版 commit），_PIECES_STATE 保持空 dict；
-# 后续 GET /api/ptypes / /ws/solve 会降级返回空数据，commit 成功后 _reload 才真正填入。
-try:
-    _reload_pieces_state()
-except Exception as e:
-    print(f'[server] 启动期 load_pieces 失败，_PIECES_STATE 暂为空：{e}', file=sys.stderr)
+# 共享运行时：import 即触发启动期 `_reload_pieces_state()` 读 intermediate 填
+# `_PIECES_STATE`（与拆分前同为 app 创建之前发生的模块级副作用）。下列名字同时在
+# server 命名空间 re-export：strategy.py 延迟 `from .server import _get_pieces_state`、
+# tests 读 `server_mod._PIECES_STATE` / patch `server_mod.UPLOADS_DIR`（后者定义在
+# 本文件，见下）。`_PIECES_STATE` 只原位 clear+update，re-export 的是同一 dict 对象。
+from .runtime import (  # noqa: E402（保持与原文件同序：state 副作用先于 app 创建）
+    _PIECES_STATE,
+    _build_pieces_state,
+    _executor,
+    _get_pieces_state,
+    _reload_pieces_state,
+    _state_lock,
+)
+from .parse_payload import (
+    _build_label_representatives,
+    _build_parse_payload,
+    _size_sort_key,
+)
 
 app = FastAPI(title='排料可视化工作台')
 app.mount('/static', StaticFiles(directory=STATIC_DIR), name='static')
-_executor = ThreadPoolExecutor(max_workers=6)   # 多 seed 对比最多 6 个并发求解（seed 间同等 CPU 竞争 → 排名仍公平）
-_SENTINEL = object()
 
 # US-004：上传解析配置
 UPLOAD_MAX_BYTES = 20 * 1024 * 1024   # 20MB 上限（实测生产母版 ~3MB，留足余量）
@@ -118,95 +78,6 @@ _DOC_ID_RE = re.compile(r'^[0-9A-Za-z]{1,128}$')
 
 
 # ---------------------------------------------------------------- US-004 上传解析
-
-def _size_sort_key(size: int | None) -> tuple[int, int]:
-    """码号排序键：None 殿后，其余按数值升序（转发 ``nesting_engine.labeling``）。"""
-    return size_sort_key(size)
-
-
-def _build_parse_payload(doc_id: str, filename: str, pieces) -> dict:
-    """把 collect_pieces_with_details 结果按码号分组 + 排序 + 赋 g01+ 裁片码。
-
-    响应结构与前端契约（v2 label-only）一致：每片含 label/polygon/internal_lines/
-    notches/net_polygon/grain_line，**无 name/ptype/paired**（中文名与配对概念已从
-    契约删除）。polygon / net_polygon = [[x,y], ...]；internal_lines = [[[x,y], ...], ...]；
-    notches = [[x,y,nx,ny], ...]；grain_line = [x1,y1,x2,y2] 或 null。
-
-    排序 + 编号收敛到 ``labeling.assign_codes`` 单一真相源（g01+ 零填充；顺序赋码
-    group_key 前置保证跨码同号；母版 block 名带显式编号时整体复用）。parse 与
-    commit 各自对同一母版跑 ``assign_codes``，同一 ``(block_name, size, piece_index)``
-    必得同码（AC#5），不再经 (size, ptype) 中转。
-    """
-    # g 码最先算（label 先行）；每码有序 [(piece, code), ...]。
-    codes_by_size = assign_codes(pieces)
-
-    sizes_out = []
-    for size in sorted(codes_by_size.keys(), key=_size_sort_key):
-        pieces_out = []
-        for p, code in codes_by_size[size]:
-            pieces_out.append({
-                'label': code,
-                'polygon': [[float(x), float(y)] for x, y in p.polygon_mm],
-                'internal_lines': [
-                    [[float(x), float(y)] for x, y in line]
-                    for line in p.internal_lines
-                ],
-                'notches': [
-                    [float(x), float(y), float(nx), float(ny)]
-                    for x, y, nx, ny in p.notches
-                ],
-                'net_polygon': [[float(x), float(y)] for x, y in p.net_polygon],
-                'grain_line': (
-                    [float(v) for v in p.grain_line] if p.grain_line is not None else None
-                ),
-            })
-        sizes_out.append({'size': size, 'pieces': pieces_out})
-
-    return {'doc_id': doc_id, 'filename': filename, 'sizes': sizes_out}
-
-
-def _build_label_representatives(pieces) -> dict:
-    """每 g 码 RAW 代表裁片（与 ``_build_parse_payload`` 上传预览同口径）。
-
-    供 GET /api/ptypes 渲染高级配置缩略图 / 放大预览。**刻意取原始坐标**（不走
-    ``load_nest_pieces`` 的布纹对齐旋转）—— 否则纵向布纹线裁片（如腰 992×166）被
-    旋转 ±90° 后在 64×64 方形缩略格里缩成 ~11px 细竖线，与上传预览不一致且不可辨认
-    （US-018 AC#9 缩略图用于片型识别，应与上传预览同朝向）。布纹对齐是**排料求解**
-    的需要（intermediate ``pieces`` 仍存变换后几何供 sparrow），与缩略图展示无关。
-
-    代表选取 + 编号（与上传预览严格一致）：按码升序迭代 ``labeling.assign_codes``
-    的每码有序（piece, code）列表（与 ``_build_parse_payload`` 赋号同源同序），每
-    g 码取**最小码内首个**有效片（size 非 None，与 ``write_piece_dxf`` 写出条件
-    一致）。返回 ``{label: {label, polygon, net_polygon, internal_lines, notches,
-    grain_line}}``（键 = g 码）。
-    """
-    codes_by_size = assign_codes(pieces)
-
-    reps: dict[str, dict] = {}
-    for size in sorted(codes_by_size.keys(), key=_size_sort_key):
-        for p, code in codes_by_size[size]:
-            if p.size is None:
-                continue
-            if code in reps:
-                continue
-            reps[code] = {
-                'label': code,
-                'polygon': [[round(float(x), 3), round(float(y), 3)] for x, y in p.polygon_mm],
-                'net_polygon': [[round(float(x), 3), round(float(y), 3)] for x, y in p.net_polygon],
-                'internal_lines': [
-                    [[round(float(x), 3), round(float(y), 3)] for x, y in line]
-                    for line in p.internal_lines
-                ],
-                'notches': [
-                    [round(float(x), 3), round(float(y), 3), round(float(nx), 4), round(float(ny), 4)]
-                    for x, y, nx, ny in p.notches
-                ],
-                'grain_line': (
-                    [round(float(v), 3) for v in p.grain_line] if p.grain_line is not None else None
-                ),
-            }
-    return reps
-
 
 def _parse_dxf_sync(path: str):
     """同步包装：在 executor 里调用 collect_pieces_with_details。"""
@@ -421,348 +292,23 @@ async def commit_to_nesting(req: Request):
     return result
 
 
-@app.get('/')
-def index():
-    return FileResponse(os.path.join(STATIC_DIR, 'index.html'))
+# ------------------------------------------------- 视图/导出/WS 路由（机械拆出，路由表顺序与拆分前一致）
+from . import routes_views, routes_ws  # noqa: E402
 
-
-# ---------------------------------------------------------------- US-020 GET /api/ptypes
-
-# intermediate piece → label 代表裁片字段白名单（5 层透传：polygon/net_polygon/
-# internal_lines/notches/grain_line + label 自身，前端 layer-aware 渲染）。
-_LABEL_REPRESENTATIVE_FIELDS = (
-    'label', 'polygon', 'net_polygon', 'internal_lines', 'notches', 'grain_line',
+app.include_router(routes_views.router)
+app.include_router(routes_ws.router)
+# 拆出路由的处理函数与私有符号 re-export（保持 ``from .server import X`` 兼容）：
+from .routes_views import (  # noqa: E402,F401
+    _LABEL_REPRESENTATIVE_FIELDS,
+    export,
+    get_ptypes,
+    index,
 )
-
-
-@app.get('/api/ptypes')
-def get_ptypes():
-    """US-020 D10：返回当前 ``_PIECES_STATE`` 下每个 g 码（label）的代表裁片。
-
-    响应：``{representatives: Record<label, {label, polygon, net_polygon,
-    internal_lines, notches, grain_line}>}`` —— 键 = 裁片 g 码（v2 起 ptype 键删除）。
-    选取口径与 ``_build_parse_payload`` 赋号同源同序，保证「编号 → 图形」与上传预览
-    列头一致。空 state（首次启动未 commit、intermediate 解析失败）返回
-    ``{representatives: {}}``，不阻塞前端配置弹窗降级为文字。
-
-    坐标口径（US-024fix）：优先返 intermediate ``label_representatives`` —— **RAW 母版
-    原始坐标**，与 ``/api/parse-dxf`` 上传预览同朝向（未走布纹对齐旋转），让缩略图与
-    上传预览一致、可辨认。无此字段时回退到 ``pieces`` 首个代表（变换后坐标）。
-    """
-    state = _get_pieces_state()
-    reps = (state.get('doc') or {}).get('label_representatives')
-    if reps is not None:
-        return {'representatives': reps}
-    pieces = state.get('pieces') or []
-    representatives: dict[str, dict] = {}
-    for p in pieces:
-        label = p.get('label')
-        if label is None or label in representatives:
-            continue
-        rep = {k: p[k] for k in _LABEL_REPRESENTATIVE_FIELDS if k in p}
-        representatives[label] = rep
-    return {'representatives': representatives}
-
-
-@app.post('/export')
-async def export(req: Request):
-    """导出最优排料方案：前端 POST 最优 run 的最终帧 placed_items → 出 PNG / R12-DXF。
-
-    payload = {fmt:'png'|'dxf', sizes:[..], seed, gate_mm, width_mm, density,
-               placed:[{id,rotation,translation},...], filename?}
-    filename 为上传母版名（用作导出文件名前缀，去 .dxf）；缺省回退「排料」。
-    返回文件字节流（Content-Disposition 附件下载，中文文件名走 RFC5987）。
-    """
-    state = _get_pieces_state()
-    pieces_by_id = state.get('pieces_by_id') or {}
-
-    payload = await req.json()
-    fmt = payload.get('fmt')
-    placed = payload.get('placed') or []
-    width_mm = float(payload.get('width_mm') or 0.0)
-    # 幅宽优先取求解时实际值（前端 ExportPayload.gate_mm = manifest.gate_mm，与求解/渲染口径一致）；
-    # 缺省/非法 → 回退 intermediate 的 gate_mm（旧行为）。
-    gate_mm = float(payload.get('gate_mm') or 0.0) or (state.get('gate_mm') or 0.0)
-    density = float(payload.get('density') or 0.0)
-    seed = payload.get('seed', 0)
-    sizes = payload.get('sizes') or []
-
-    if width_mm <= 0 or not placed:
-        return JSONResponse({'error': '无可导出的方案（width=0 或无裁片）'}, status_code=400)
-
-    world = placed_to_world(placed, pieces_by_id)
-    if not world:
-        return JSONResponse({'error': '导出失败：placed 的 pid 均未匹配到原始轮廓'}, status_code=400)
-
-    sizes_str = '-'.join(str(s) for s in sorted(int(s) for s in sizes)) if sizes else 'all'
-    pct = density * 100
-
-    if fmt == 'png':
-        title = (f'M1787 直筒 | 码 {sizes_str} | 利用率 {pct:.2f}% | '
-                 f'用布 {width_mm / 1000:.2f} m | 门幅 {int(gate_mm)} mm | seed {seed}')
-        data = render_png(world, width_mm=width_mm, gate_mm=gate_mm, title=title)
-        media, ext = 'image/png', 'png'
-    elif fmt == 'dxf':
-        title = f'M1787 util={pct:.2f}% L={width_mm / 10:.1f}cm gate={int(gate_mm)} seed={seed}'
-        data = write_marker_dxf(world, width_mm=width_mm, gate_mm=gate_mm, title=title)
-        media, ext = 'application/dxf', 'dxf'
-    elif fmt == 'plt':
-        # US-033：PLT/HPGL 文本导出（LIKE 绘图仪 / WT V8.8 原生链路）；title 复用 DXF 同款
-        # ASCII（格式：M1787 util=<pct>% L=<L>cm gate=<gate> seed=<seed>），避免中文编码风险。
-        title = f'M1787 util={pct:.2f}% L={width_mm / 10:.1f}cm gate={int(gate_mm)} seed={seed}'
-        data = write_marker_plt(world, width_mm=width_mm, gate_mm=gate_mm, title=title)
-        media, ext = 'application/plt', 'plt'
-    else:
-        return JSONResponse({'error': f'未知格式 {fmt}'}, status_code=400)
-
-    # 文件名前缀优先用前端透传的上传母版名（uploadStore.doc.filename，与界面「当前文件」
-    # 同源），去 .dxf 扩展名；前端未传（旧前端）回退「排料」——多个款号同时排料导出后凭前缀区分。
-    # 不读 intermediate `source`：_build_pieces_state 构建的 state 不含该字段（恒 None）。
-    upload_name = (payload.get('filename') or '').strip()
-    stem = upload_name[:-4] if upload_name.lower().endswith('.dxf') else upload_name
-    prefix_cn = stem or '排料'
-    # ASCII fallback（filename="..."，老浏览器不支持 filename* 时显示）：文件名纯 ASCII 时
-    # 直接用，含中文则回退 nesting（避免 fallback 名出现未编码中文）。
-    prefix_ascii = stem if stem and stem.isascii() else 'nesting'
-    fname_ascii = f'{prefix_ascii}_{sizes_str}_{pct:.2f}pct_seed{seed}.{ext}'
-    fname_cn = f'{prefix_cn}_码{sizes_str}_{pct:.2f}pct_seed{seed}.{ext}'
-    cd = f"attachment; filename=\"{fname_ascii}\"; filename*=UTF-8''{quote(fname_cn)}"
-    return Response(content=data, media_type=media,
-                    headers={'Content-Disposition': cd})
-
-
-# US-026：process.terminate()+join(timeout=5) 封装 —— read_loop（stop/断开）、write_loop
-# （send 失败）、ws_solve finally 三处调用，确保任何路径下都不留孤儿进程。幂等安全：
-# process 已死时 terminate/join 是 no-op。state_box 缺 process 键（启动竞态）也无害。
-def _terminate_solve_process(state_box: dict) -> None:
-    """终止 solve 子进程（幂等）：alive → terminate → join(timeout=5) → kill 兜底。"""
-    proc = state_box.get('process')
-    if proc is None:
-        return
-    if proc.is_alive():
-        proc.terminate()
-        proc.join(timeout=5.0)
-        # terminate 后仍存活（极端情况：Rust 原生代码 ignore SIGTERM）→ kill 兜底。
-        if proc.is_alive():
-            try:
-                proc.kill()
-            except Exception:
-                pass
-            proc.join(timeout=1.0)
-
-
-@app.websocket('/ws/solve')
-async def ws_solve(ws: WebSocket):
-    """排料求解 WebSocket 端点（US-026 进程化 + stop/断开清理）。
-
-    生命周期（双向并发：write loop 内联 + read loop 后台 task）：
-      1. accept → 读首条消息（必须 ``{action:'start'}``）→ accept 阶段拿 pieces 快照；
-      2. ``solve_with_callback_proc`` 在 executor 线程阻塞跑（spawn 子进程），通过
-         ``on_manifest`` / ``on_report`` 回调把消息经 ``call_soon_threadsafe`` 投入
-         asyncio queue；``on_process`` 把 Process 句柄交给本协程供 stop/断开时 terminate；
-      3. write loop（内联主流程）drain queue → ``ws.send_json``（manifest/frame/final/error）；
-      4. read loop（后台 task）持续 ``await ws.receive_json()``：收到 ``{action:'stop'}`` →
-         ``process.terminate()+join(timeout=5)`` → 直发 ``{type:stopped}`` → 投 SENTINEL；
-      5. 客户端断开（WebSocketDisconnect / 连接异常）→ terminate+join 防孤儿进程（修旧 bug）。
-
-    write loop 消费 SENTINEL（run_solve 或 read_loop 投）后 break → finally 显式 ``ws.close()``
-    + cancel read_task + terminate process 兜底。空 state（intermediate 缺失）行为不变：
-    发 error「排料数据为空」并关闭。
-    """
-    await ws.accept()
-    msg = await ws.receive_json()
-    if msg.get('action') != 'start':
-        await ws.send_json({'type': 'error', 'message': '首条消息须为 {action:start}'})
-        return
-
-    # US-020：accept 阶段拿一次 state 快照，整连接内 pieces/gate_mm 不变（避免求解
-    # 中途 reload 切数据）。state 空时（首次启动未 commit / intermediate 缺失）→ 报错。
-    state = _get_pieces_state()
-    pieces = state.get('pieces') or []
-    gate_mm = state.get('gate_mm') or 0.0
-    if not pieces or gate_mm <= 0:
-        await ws.send_json({'type': 'error',
-                            'message': '排料数据为空（请先上传解析母版并 commit）'})
-        return
-
-    sizes = msg.get('sizes') or []
-    time_budget = int(msg.get('time', 120))
-    # 幅宽：前端 gate_mm（cm×10→mm）优先覆盖 intermediate 的默认门幅；未传/非正/非法 → 沿用 state。
-    req_gate = msg.get('gate_mm')
-    if req_gate:
-        try:
-            g = float(req_gate)
-            if g > 0:
-                gate_mm = g
-        except (TypeError, ValueError):
-            pass
-    seed = int(msg.get('seed', 0))
-    params = msg.get('params') or None
-    per_type = msg.get('per_type') or None
-    # US-022：quantities = {label: {sizeKey: N}}（per-size demand；0=该 piece 该码不排）。
-    # 缺省/None → 全片 demand=1（向后兼容旧前端 / 旧 intermediate 无 label）。
-    quantities = msg.get('quantities')
-    if not isinstance(quantities, dict):
-        quantities = None
-
-    # US-026：pieces_snapshot = 纯 dict 列表（deep copy 防连接内 mutate），连同 solve_params
-    # 传给 solve_with_callback_proc → solve_worker 子进程内 build_instance（spyrrow 对象
-    # 不可 pickle，主进程不构造 instance）。
-    pieces_snapshot = [dict(p) for p in pieces]
-    solve_params = {
-        'time_budget': time_budget,
-        'seed': seed,
-        'sizes': sizes,
-        'params': params,
-        'per_type': per_type,
-        'quantities': quantities,
-    }
-
-    loop = asyncio.get_running_loop()
-    queue: asyncio.Queue = asyncio.Queue()
-    # 跨线程共享状态盒：process 句柄（on_process 填）、stopped 标志（read_loop 填）、
-    # 帧计数与 n_eroded（on_report/on_manifest 填，run_solve 读 → final 消息用）。
-    # 所有字段仅在 executor 单线程内 mutate（on_manifest/on_report/run_solve 同线程），
-    # stopped 标志由事件循环线程写 —— 两者用 bool 简单写读，GIL 下无撕裂风险。
-    state_box: dict = {'process': None, 'stopped': False, 'n_frames': 0, 'n_eroded': 0}
-
-    def on_manifest(m):
-        """子进程 manifest → 组装前端契约消息 → 投 asyncio queue。"""
-        state_box['n_eroded'] = m.get('n_eroded', 0)
-        total_area = m.get('total_area', 0.0)
-        manifest_msg = {
-            'type': 'manifest',
-            'gate_mm': gate_mm,
-            # 实际排料幅宽（求解约束带口径）：density 分母 + 前端红色虚线（实际范围
-            # 边界）唯一数据源；gate_mm 仍为显示口径（viewBox / 导出外框）。
-            'gate_nest_mm': min(float(gate_mm), PLOT_SAFE_MAX_Y_MM),
-            'total_area_mm2': total_area,
-            'n_eroded': m.get('n_eroded', 0),
-            'pieces': [
-                # US-002：manifest 全 label 键（无 ptype；颜色 = label_color(g 码)，
-                # 前端 US-003 起按 label 消费）。
-                {'id': pid, 'size': meta['size'],
-                 'color': meta['color'],
-                 'area_mm2': meta['area_mm2'], 'polygon': meta['polygon'],
-                 # g 码裁片标识（intermediate label 经 build_instance 透传；旧
-                 # intermediate 无 → None，前端 NestSVG tooltip 按缺席降级不显示）。
-                 'label': meta.get('label'),
-                 # demand：该 pid 的副本数（build_instance 透传；缺省 1 = 单副本/旧兼容）。
-                 # 前端 NestSVG 按 demand 建 N 个 polygon 副本，避免 demand>1 时同 id 多 placement 互相覆盖。
-                 'demand': meta.get('demand', 1),
-                 # US-024：5 层透传字段（None-safe；缺字段时各层视为空/None，前端 layer-aware 渲染）。
-                 'net_polygon': meta.get('net_polygon', []),
-                 'internal_lines': meta.get('internal_lines', []),
-                 'notches': meta.get('notches', []),
-                 'grain_line': meta.get('grain_line'),
-                 }
-                for pid, meta in m['pid_meta'].items()
-            ],
-        }
-        loop.call_soon_threadsafe(queue.put_nowait, manifest_msg)
-
-    def on_report(r):
-        """子进程 frame（density 双口径已由 solve_with_callback_proc 换算）→ 加 index 投队列。"""
-        r['index'] = state_box['n_frames']
-        state_box['n_frames'] += 1
-        loop.call_soon_threadsafe(queue.put_nowait, r)
-
-    def on_process(proc):
-        """子进程 start 后立即回调，把 Process 句柄交给事件循环供 stop/断开 terminate。"""
-        state_box['process'] = proc
-
-    def run_solve():
-        """executor 线程：阻塞跑 solve_with_callback_proc → 投 final/error/SENTINEL。"""
-        _, final_data, elapsed, err = solve_with_callback_proc(
-            pieces_snapshot, gate_mm, solve_params,
-            on_manifest=on_manifest, on_report=on_report, on_process=on_process,
-        )
-        # stopped 标志由 read_loop 在 stop/断开时置 True → 不再投 final/error（避免
-        # 与 stopped 消息冲突；客户端只收 stopped 或 final/error，不会同时收）。
-        if not state_box['stopped']:
-            if err is not None:
-                loop.call_soon_threadsafe(queue.put_nowait,
-                    {'type': 'error', 'message': f'求解失败: {err}'})
-            elif final_data is not None:
-                loop.call_soon_threadsafe(queue.put_nowait, {
-                    'type': 'final',
-                    'density': final_data['density'],
-                    'density_sparrow': final_data['density_sparrow'],
-                    'width_mm': final_data['width_mm'],
-                    'elapsed': round(elapsed, 2),
-                    'n_frames': state_box['n_frames'],
-                    'n_eroded': state_box['n_eroded'],
-                })
-        loop.call_soon_threadsafe(queue.put_nowait, _SENTINEL)
-
-    loop.run_in_executor(_executor, run_solve)
-
-    # ---- 双向并发：write loop 内联 await（主流程）；read loop 后台 task 收 stop/断开 ----
-    # write loop 消费 SENTINEL 后自然 break → ws_solve 返回 → FastAPI 关闭 WS。read loop
-    # 被 cancel（仍在 receive_json 阻塞）或已自行 return（stop/断开）。任一路径 finally
-    # 都 terminate+join process，防孤儿。
-    async def read_loop():
-        """后台持续读客户端消息：{action:'stop'} → terminate + 直发 stopped + 投 SENTINEL；断开 → terminate。"""
-        try:
-            while True:
-                cmsg = await ws.receive_json()
-                if isinstance(cmsg, dict) and cmsg.get('action') == 'stop':
-                    state_box['stopped'] = True
-                    _terminate_solve_process(state_box)
-                    # stopped 消息由 read_loop 直发（不经 queue），确保是客户端收到的最后
-                    # 一条业务消息。先发 stopped 再投 SENTINEL：write loop 在 stopped 标志
-                    # 已置 True 时丢弃残余 frame（continue），收到 SENTINEL 后 break → WS 关闭。
-                    # 若先投 SENTINEL，write loop 会在 send_json(stopped) 的 await 期间 break
-                    # → finally cancel read_task → stopped 可能未发完。
-                    try:
-                        await ws.send_json({'type': 'stopped', 'reason': 'user_requested'})
-                    except Exception:
-                        pass   # send 失败（客户端已断开）—— 忽略，finally 兜底清理
-                    queue.put_nowait(_SENTINEL)
-                    return
-        except WebSocketDisconnect:
-            # 客户端主动断开 → 清理子进程（修旧 bug：旧版 except:pass 留孤儿进程跑满预算）。
-            state_box['stopped'] = True
-            _terminate_solve_process(state_box)
-        except (asyncio.CancelledError, SystemExit, GeneratorExit):
-            raise   # 不吞取消/退出类异常，让上层 finally 处理
-        except Exception:
-            # 其它连接异常（网络中断等）→ 同样清理。
-            state_box['stopped'] = True
-            _terminate_solve_process(state_box)
-
-    read_task = asyncio.create_task(read_loop())
-    try:
-        # write loop 内联（主流程）：drain asyncio queue → ws.send_json；SENTINEL / stopped 收尾。
-        while True:
-            item = await queue.get()
-            if item is _SENTINEL:
-                break
-            if state_box['stopped']:
-                # stop 已触发：read_loop 已直发 stopped → 丢弃残余 frame，等 SENTINEL。
-                continue
-            try:
-                await ws.send_json(item)
-            except Exception:
-                # send 失败（客户端已断开）→ 标记 stopped + terminate，让 run_solve 跳过 final。
-                state_box['stopped'] = True
-                _terminate_solve_process(state_box)
-                break
-    finally:
-        # 兜底清理：无论正常收尾还是异常，确保 process 被终止 + read_task 被 cancel + WS 关闭。
-        _terminate_solve_process(state_box)
-        if not read_task.done():
-            read_task.cancel()
-            # 不 await read_task：TestClient（anyio portal）下 ws.receive_json() 阻塞在线程
-            # 安全部列上，task.cancel() 的 CancelledError 无法投递到阻塞中的 coroutine ——
-            # await read_task / wait_for(read_task) 会永久挂起。uvicorn 生产环境下 cancel
-            # 正常生效（receive_json 是真 async，可被中断）。
-        # 显式关闭 WS：ws_solve 返回后 FastAPI 自动关 WS，但 TestClient 需要显式 close
-        # 才能让 client 端 receive_json 抛 WebSocketDisconnect（Starlette 实现差异）。
-        try:
-            await ws.close()
-        except Exception:
-            pass
+from .routes_ws import (  # noqa: E402,F401
+    _SENTINEL,
+    _terminate_solve_process,
+    ws_solve,
+)
 
 
 def main():

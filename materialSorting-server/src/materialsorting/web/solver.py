@@ -3,15 +3,16 @@
 阶段 A：复用 sparrow_baseline 的「子线程 solve + 主线程 drain」骨架，每个中间解回调完整 placement。
 阶段 B：build_instance 参数化 v0.3 约束（重合 erode + 旋转公差离散化 + 逐 g 码高级覆盖）。
 
-US-002 起全链路 label 键：demand / per_type 均按 ``label`` 命中，颜色走
-``label_color``（g 码 → 16 色循环表），internal（内片）概念删除 —— 旧 ``params``
-的 d_int/tol_int 键仍被接受但不再有消费方（生产链路 params 恒 0）。
+US-002 起全链路 label 键：demand / per_type 均按 ``label`` 命中，internal（内片）
+概念删除 —— 旧 ``params`` 的 d_int/tol_int 键仍被接受但不再有消费方（生产链路
+params 恒 0）。颜色 2026-08-20 起走 ``size_color``（尺码 → 16 色循环表，同码同色
+跨片型一致；此前为 g 码键）。
 2026-08-18 回退 US-004 矩阵化：per_type 从 ``(label, sizeKey)`` 两级命中收敛回
 单级 ``{label: {d?, tol?}}`` —— 重合/旋转是片型工艺属性、与码号无关，命中 label
 即对该 g 码全部码号生效；quantities（数量矩阵）仍按 ``(label, sizeKey)`` 不变。
 
 不改动 sparrow 源码、不改动既有引擎代码，仅 sys.path 引用：
-  _clean_polygon / label_color    (sparrow_baseline)
+  _clean_polygon / size_color    (sparrow_baseline)
   erode_polygon                   (sparrow_experiments)
   MAX_OVERLAP_MM / MAX_ROTATION_TOL_DEG (constraints，2026-08 起全局上限，不再按片型)
 
@@ -44,7 +45,7 @@ import threading
 import time
 
 from .. import paths
-from ..nesting_engine.sparrow_baseline import _clean_polygon, label_color
+from ..nesting_engine.sparrow_baseline import _clean_polygon, size_color
 from ..nesting_engine.sparrow_experiments import erode_polygon
 from ..nesting_engine.constraints import MAX_OVERLAP_MM, MAX_ROTATION_TOL_DEG
 from ..nesting_bounds.load_pieces import PLOT_SAFE_MAX_Y_MM
@@ -237,7 +238,9 @@ def build_pid_meta(pieces, *, sizes=None, per_type=None, quantities=None,
         # 上面 erode 后的 ``poly``）。使用 .get() 兜底，旧 intermediate 无这些字段时各层空/None。
         pid_meta[p['pid']] = {
             'size': p['size'],
-            'color': label_color(label),
+            # 尺码配色（size_color 单一真相源：同码同色跨片型一致，manifest → 前端
+            # NestSVG fill / 导出 PNG 同源；旧 g 码配色 2026-08-20 换键为尺码）。
+            'color': size_color(p['size']),
             'polygon': poly,                 # erode 后 base 多边形（与 placement 一致）
             'area_mm2': p['area_mm2'],
             # g 码裁片标识（intermediate label 透传 → manifest → 前端 NestSVG tooltip /

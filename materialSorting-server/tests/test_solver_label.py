@@ -1,12 +1,13 @@
 """US-002 求解/导出层 label 键测试。
 
 覆盖：
-  1. ``label_color``（LABEL_COLORS 单一真相源）：同码同色、16 色循环、非 g 码兜底；
-  2. ``label_aci``（DXF ACI 公式 ``((code-1) % 24) + 1``）：正码段、循环、兜底；
+  1. ``size_color``（SIZE_PALETTE 单一真相源，2026-08-20 起尺码键）：同码同色跨片型、
+     16 色循环、None/非数字兜底；
+  2. ``size_aci``（DXF ACI 公式 ``((size - 28) % 24) + 1``）：正码段、循环、兜底；
   3. ``build_instance`` per_type 按 ``label`` 命中即覆盖（2026-08-18 回退 US-004 矩阵化
      后单级：erode/tol 落在该 g 码**全部码号**上），未命中 / 旧 ptype 键 / 旧两级键为 no-op；
   4. ``build_instance`` quantities demand 直译（0 跳过、N 多副本、total_area×demand）；
-  5. pid_meta / 中间键全 label 化（无 ptype、color=label_color）；
+  5. pid_meta / 中间键全 label 化（无 ptype、color=size_color(size)）；
   6. ``constraints.validate`` 删成对齐套校验后对无 ptype/side 的裁片直接可用。
 """
 from __future__ import annotations
@@ -16,10 +17,10 @@ from collections import namedtuple
 import pytest
 
 from materialsorting.nesting_engine.sparrow_baseline import (
-    LABEL_PALETTE, DEFAULT_COLOR, label_color,
+    SIZE_PALETTE, DEFAULT_COLOR, size_color,
 )
 from materialsorting.nesting_engine.constraints import validate
-from materialsorting.web.export import label_aci
+from materialsorting.web.export import size_aci
 
 
 def _piece(pid, label, size, w=500.0, h=800.0):
@@ -32,38 +33,40 @@ def _piece(pid, label, size, w=500.0, h=800.0):
     }
 
 
-# --------------------------------------------- label_color（LABEL_COLORS 单一真相源）
+# --------------------------------------------- size_color（SIZE_PALETTE 单一真相源）
 
-def test_label_color_same_code_same_color_and_palette_cycle():
-    """g01→表头色、g17 循环回 g01 色（16 色循环表）；同码恒同色。"""
-    assert label_color('g01') == LABEL_PALETTE[0]
-    assert label_color('g02') == LABEL_PALETTE[1]
-    assert label_color('g16') == LABEL_PALETTE[15]
-    assert label_color('g17') == LABEL_PALETTE[0]      # (17-1) % 16 == 0
-    assert label_color('g33') == LABEL_PALETTE[0]      # 再绕一圈仍回表头
-    assert len(set(LABEL_PALETTE)) == 16               # 16 色互不相同
-    assert label_color('g05') == label_color('g05')
-
-
-def test_label_color_invalid_falls_back_to_default():
-    """None / 非 g 码（旧 ptype 名等）兜底 DEFAULT_COLOR。"""
-    assert label_color(None) == DEFAULT_COLOR
-    assert label_color('前片') == DEFAULT_COLOR
-    assert label_color('') == DEFAULT_COLOR
-    assert label_color(123) == DEFAULT_COLOR
+def test_size_color_same_size_same_color_and_palette_cycle():
+    """28→表头色、44 循环回 28 色（16 色循环表，锚点 DEFAULT_SIZES[0]=28）；同码恒同色跨片型。"""
+    assert size_color(28) == SIZE_PALETTE[0]
+    assert size_color(29) == SIZE_PALETTE[1]
+    assert size_color(43) == SIZE_PALETTE[15]
+    assert size_color(44) == SIZE_PALETTE[0]          # (44-28) % 16 == 0
+    assert size_color(60) == SIZE_PALETTE[0]          # 再绕一圈仍回表头
+    assert len(set(SIZE_PALETTE)) == 16               # 16 色互不相同
+    assert size_color(35) == size_color(35)           # 同码恒同色
+    # M1787 实测 11 码 28-38 全段落互不相同（同码同色跨片型的前提）
+    assert len({size_color(s) for s in range(28, 39)}) == 11
 
 
-# --------------------------------------------- label_aci（DXF ACI 公式）
+def test_size_color_invalid_falls_back_to_default():
+    """None / 非数字（str 等）兜底 DEFAULT_COLOR。"""
+    assert size_color(None) == DEFAULT_COLOR
+    assert size_color('28') == DEFAULT_COLOR
+    assert size_color('') == DEFAULT_COLOR
+    assert size_color(True) == DEFAULT_COLOR          # bool 显式排除
 
-def test_label_aci_formula_and_cycle():
-    """ACI = ((code-1) % 24) + 1：g01→1、g24→24、g25→1；非 g 码兜底 7。"""
-    assert label_aci('g01') == 1
-    assert label_aci('g10') == 10
-    assert label_aci('g24') == 24
-    assert label_aci('g25') == 1       # ((25-1) % 24) + 1
-    assert label_aci('g49') == 1
-    assert label_aci(None) == 7
-    assert label_aci('前片') == 7
+
+# --------------------------------------------- size_aci（DXF ACI 公式）
+
+def test_size_aci_formula_and_cycle():
+    """ACI = ((size - 28) % 24) + 1：28→1、51→24、52→1；非数字兜底 7。"""
+    assert size_aci(28) == 1
+    assert size_aci(38) == 11
+    assert size_aci(51) == 24
+    assert size_aci(52) == 1       # ((52-28) % 24) + 1
+    assert size_aci(76) == 1
+    assert size_aci(None) == 7
+    assert size_aci('28') == 7
 
 
 # --------------------------------------------- build_instance per_type（label 单级命中）
@@ -143,14 +146,16 @@ def test_quantities_demand_translation():
     assert total_area == pytest.approx(500.0 * 800.0 * 2)  # 面积 × demand
 
 
-def test_pid_meta_is_label_keyed_with_label_color():
-    """pid_meta 无 ptype 键；color = label_color(label)（16 色循环表单一真相源）。"""
-    pieces = [_piece('g01_28', 'g01', 28)]
+def test_pid_meta_is_label_keyed_with_size_color():
+    """pid_meta 无 ptype 键；color = size_color(size)（尺码 16 色循环表单一真相源，
+    同码同色跨片型一致——不同 g 码同码号取同色）。"""
+    pieces = [_piece('g01_28', 'g01', 28), _piece('g02_28', 'g02', 28, w=300.0, h=400.0)]
     _inst, _cfg, meta, _area, _n = _build(pieces)
     m = meta['g01_28']
     assert 'ptype' not in m
     assert m['label'] == 'g01'
-    assert m['color'] == label_color('g01') == LABEL_PALETTE[0]
+    assert m['color'] == size_color(28) == SIZE_PALETTE[0]
+    assert meta['g02_28']['color'] == m['color']       # 跨片型同码同色
 
 
 # --------------------------------------------- constraints.validate（成对齐套校验已删）

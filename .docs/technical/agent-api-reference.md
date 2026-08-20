@@ -1,6 +1,6 @@
 # Agent API 参考 — 排料可视化工作台后端
 
-> 后端 HTTP / WebSocket 契约文档。改 `web/server.py` / `web/solver.py` / `web/export.py` 任一处先看这里，并同步本文件。
+> 后端 HTTP / WebSocket 契约文档。改 `web/server.py`（含 2026-08-20 拆出的 `runtime.py`/`parse_payload.py`/`routes_views.py`/`routes_ws.py`）/ `web/solver.py` / `web/export.py`（含拆出的 `export_geometry/png/dxf/plt`）任一处先看这里，并同步本文件。
 > 入口：`ms-web`（console_script）→ `materialsorting.web.server:main` → uvicorn `127.0.0.1:8000`。
 
 ## 状态
@@ -9,7 +9,7 @@
 
 ## 启动约束（重要）
 
-1. `server.py` 顶层执行 `_reload_pieces_state()` —— import 时读 intermediate 填入 `_PIECES_STATE`（US-020）。intermediate 缺失**不再让 import 崩**：`_PIECES_STATE={}` 时 `/api/ptypes` 返 `{representatives:{}}`、`/ws/solve` 报「排料数据为空」、`/export` 报「placed 的 pid 均未匹配」。intermediate 由 Web commit（`/api/commit-to-nesting`）生成，首次启动空 state 正常，前端上传母版后自动 reload 填入。
+1. `server.py` 顶层执行 `_reload_pieces_state()` —— import 时读 intermediate 填入 `_PIECES_STATE`（US-020；2026-08-20 拆分后该逻辑在 `runtime.py`，server.py 首个 import 即触发，顺序与拆分前一致）。intermediate 缺失**不再让 import 崩**：`_PIECES_STATE={}` 时 `/api/ptypes` 返 `{representatives:{}}`、`/ws/solve` 报「排料数据为空」、`/export` 报「placed 的 pid 均未匹配」。intermediate 由 Web commit（`/api/commit-to-nesting`）生成，首次启动空 state 正常，前端上传母版后自动 reload 填入。
 2. `app.mount('/static', ...)` 指向 `materialSorting-web/static/`（前端构建产物）。
    - **prod**：先 `cd materialSorting-web && npm run build` 生成 `static/`；
    - **dev**：`npm run dev` 起 Vite :5173，经 proxy 打 :8000（仍建议先 build 一次让 `static/` 存在，避免 mount 空目录报错）。
@@ -67,18 +67,18 @@
   - PLT：`media_type=application/plt`，`write_marker_plt`（US-033；HPGL/HP-GL 文本，封装口径对齐生产 PLT `data/PC-20250508NJIF*.plt`：头部 `IN;PS<纸长>;SP1;PW0.08;` + 5 层 SP1-SP5 笔号（门幅框并入 SP1）+ 尾部 `PU;PG;`，CRLF 行尾，无 VS/LB；喂 WT V8.8 + LIKE 绘图仪原生 PLT 链路；**2026-08 现场撞机修正**：内容压进绘图仪 Y 可写幅宽 `PLOT_SAFE_MAX_Y_MM=1910`（半平面裁剪削平不缩放，越界裁片记 warning）、PD 分块 ≤10 点/行 ≤110B、全体 X 加走纸引导 `PLOT_LEAD_X_MM=20`，详见下表）
 - 400：`width_mm<=0` 或 `placed` 空 → `{"error":"无可导出的方案（width=0 或无裁片）"}`；`placed` 的 pid 全匹配不到 → `{"error":"导出失败：placed 的 pid 均未匹配到原始轮廓"}`；未知 fmt → `{"error":"未知格式 <fmt>"}`。
 
-### 导出关键函数（`web/export.py`）
+### 导出关键函数（`web/export.py` 门面；2026-08-20 拆分后实现在 `export_geometry/png/dxf/plt` 四模块，门面 re-export 全部旧符号，import 路径不变）
 
 | 函数 | 签名 | 说明 |
 |------|------|------|
 | `apply_transform` | `(polygon, rotation_deg: float, translation) → [(x,y)...]` | `world = R(θ)·(x,y)+(tx,ty)`，与前端 `pointsStr` 同公式 |
-| `placed_to_world` | `(placed, pieces_by_id) → [{pid,size,polygon,color,area_mm2,label,...}]` | pid 查 `_get_pieces_state()['pieces_by_id']`（US-020）取**原始** polygon → 世界坐标（直查 intermediate，零重放）；查不到的跳过并 warning。US-002：输出无 `ptype` 键，`color = label_color(label)`（g 码 16 色循环表，与求解屏幕同色） |
-| `render_png` | `(world_pieces, *, width_mm, gate_mm, title) → bytes` | matplotlib Agg，dpi=200，配色 `label_color`（g 码 16 色循环表），图例条目 = 本次 placed 的 g 码并集（`code_sort_key` 数值序），标题「裁片」 |
-| `write_marker_dxf` | `(world_pieces, *, width_mm, gate_mm, title) → bytes` | ezdxf R12 + 闭合 POLYLINE（首尾补点），ACI = `label_aci(label)` = `((code-1) % 24) + 1`（非 g 码兜底 7），ASCII 标题；**不用 LWPOLYLINE**（ET2008 轮廓消失坑） |
+| `placed_to_world` | `(placed, pieces_by_id) → [{pid,size,polygon,color,area_mm2,label,...}]` | pid 查 `_get_pieces_state()['pieces_by_id']`（US-020）取**原始** polygon → 世界坐标（直查 intermediate，零重放）；查不到的跳过并 warning。US-002：输出无 `ptype` 键，`color = size_color(size)`（尺码 16 色循环表，2026-08-20 起同码同色跨片型，与求解屏幕同色） |
+| `render_png` | `(world_pieces, *, width_mm, gate_mm, title) → bytes` | matplotlib Agg，dpi=200，配色 `size_color`（尺码 16 色循环表），图例条目 = 本次 placed 的尺码并集（数值序），标题「尺码」 |
+| `write_marker_dxf` | `(world_pieces, *, width_mm, gate_mm, title) → bytes` | ezdxf R12 + 闭合 POLYLINE（首尾补点），ACI = `size_aci(size)` = `((size - 28) % 24) + 1`（非数字兜底 7），ASCII 标题；**不用 LWPOLYLINE**（ET2008 轮廓消失坑） |
 | `write_marker_plt` | `(world_pieces, *, width_mm, gate_mm, title) → bytes` | US-033 HPGL/HP-GL 纯文本，**封装口径对齐生产 PLT**（`data/PC-20250508NJIF*.plt`）：头部 `IN;PS<纸长>;SP1;PW0.08;`（PS 纸长 = 走纸引导 + max(用布长度, 内容最大X 含刺口延伸) + 尾余量，×40；无 PS 时 WT 按默认 A0/A3 页幅裁切 7m+ marker）→ 逐片 SP1-SP5 → 尾部 `PU;PG;` 出纸；**CRLF 行尾**；**无 VS/LB 指令**（`title` 仅保签名不输出）；坐标=mm×40 round 取整，5 层笔号 SP1=outline+门幅框/SP2=net/SP3=internal/SP4=notch/SP5=grain；空层跳过；纯 ASCII bytes（无临时文件，无新 pip 依赖）；与 DXF 同闭合策略。**2026-08 现场撞机修正（对照生产 PLT 逐项核出的设备级差异）**：① 安全幅面 —— 内容按 `y ≤ PLOT_SAFE_MAX_Y_MM=1910` 半平面裁剪（**削平不缩放**，绝不变形），门幅框上沿压进可写幅宽（Y 内缩 `PLOT_BORDER_MARGIN_Y_MM=5`），越界裁片记 warning；与求解约束带 `NEST_GATE_MM=min(门幅,1910)` 同一事实源（`nesting_bounds/load_pieces.py`），此处裁剪是二道防线；② PD 分块 —— `_plt_polyline` 单条 PD ≤10 点（`_PLT_PD_MAX_PTS`）且整行 ≤110B（`_PLT_LINE_MAX_BYTES`）续画（对齐 ET 生产 ≤11 点/≤118B；国产 HP-GL 解释器行缓冲仅百余字节，超长单条溢出后坐标流错位 → 小车乱走须急停）；③ 走纸引导 —— 全体 X + `PLOT_LEAD_X_MM=20`（生产 PLT 内容 24mm 起画，贴 0 起画无定位余量），Y 不平移；HPGL 坐标非负整数，clamp 兜底取整负值 |
 | `_plt_frame_stats` | `(world_pieces, *, width_mm, gate_mm) → (n_out, max_x)` | 越界防御 + PS 纸长取值：全层顶点 + notch 点须在门幅框内（容差 0.5mm），非 0 记 warning（曾因 notch 未随片旋转产生 600 越界点把 WT 预览拉变形）；notch 沿法线 ±`NOTCH_LEN_MM/2` 端点外伸属工艺正常，只计入 max_x（PS 取值）不告警 |
 
-`label_aci(label)`（US-002 起，取代旧 `TYPE_ACI` 中文名色表）：g 码 → ACI 色号 `((code-1) % 24) + 1`（g01→1、g24→24、g25→1 循环；非 g 码/None 兜底 7）。配色单一真相源 `sparrow_baseline.label_color`（`LABEL_PALETTE` 16 色 d3 系循环表，`label_color(label) = PALETTE[(code-1) % 16]`，同码同色），solver manifest / PNG / CLI SVG 三处同源取色。
+`size_aci(size)`（2026-08-20 起尺码键，取代 US-002 的 `label_aci` g 码公式；更早的 `TYPE_ACI` 中文名色表 US-002 已删）：尺码 → ACI 色号 `((size - SIZE_ANCHOR) % 24) + 1`（28→1、51→24、52→1 循环；非数字/None 兜底 7）。配色单一真相源 `sparrow_baseline.size_color`（`SIZE_PALETTE` 16 色 d3 系循环表，`size_color(size) = PALETTE[(size - SIZE_ANCHOR) % 16]`，锚点 `SIZE_ANCHOR=DEFAULT_SIZES[0]=28` 稳定绝对映射、同码同色跨片型），solver manifest / PNG / DXF ACI / CLI SVG 四处同源取色。PNG/DXF 每片 g 码文字叠印不变（颜色=尺码、文字=片型互补编码）。
 
 ## POST /api/parse-dxf — US-004 母版上传解析
 
@@ -342,7 +342,7 @@ done/stopped 可读（running → 409「尚未结束」；idle → 404）。响�
   "n_eroded": <被 erode 的片数>,
   "pieces": [
     {
-      // US-002：全 label 键（无 ptype；color = label_color(g 码)）
+      // US-002：全 label 键（无 ptype）；color = size_color(size)（2026-08-20 尺码键）
       "id": "g03_30", "label": "g03", "size": 30, "color": "#...", "area_mm2": <int>,
       "polygon": [[x,y]...],          // 毛版外轮廓（erode 后，参与 sparrow NFP 碰撞）
       "net_polygon": [[x,y]...],      // US-024 净版（仅渲染透传，不参与碰撞；缺省 []）
@@ -416,7 +416,7 @@ done/stopped 可读（running → 409「尚未结束」；idle → 404）。响�
 | `load_pieces` | `(intermediate_path=paths.INTERMEDIATE) → (doc, gate_mm, pieces)` | 读 `pieces_intermediate.json` |
 | `build_pid_meta` | `(pieces, *, sizes=None, per_type=None, quantities=None, params=None) → (pid_meta, total_area, n_eroded)` | **strategy US-004 自 `build_instance` 提取**的裁片级流水线（**不 import spyrrow、不构造求解对象** —— `/api/strategy/result` 组装 manifest 直接用）：sizes 过滤 → demand 判定（quantities 按 `(label, str(size))` 查 N，0=跳过；缺 label→1）→ per_type 覆盖 + 全局上限钳制（`_resolve_d_tol` 单一真相源，与 `build_instance` 的 Item orientations 同口径）→ erode/清洗（<3 顶点跳过）→ pid_meta 条目（US-024 5 层 + label/color/demand）→ `total_area=Σ(area×demand)`。对拍单测（`test_web_strategy.py`）保证提取前后 `build_instance` 输出逐字段一致 |
 | `discretize_orientations` | `(tol: float) → list[float]` | v0.3 连续旋转公差 → spyrrow 离散角度集。`tol=0→[0,180]`；`tol≤5` 步进 1°；否则 5°。归一化到 [0,360) |
-| `build_instance` | `(pieces, gate_mm, *, time_budget, seed, sizes=None, params=None, per_type=None, quantities=None, solver_opts=None) → (instance, config, pid_meta, total_area, n_eroded)` | strategy US-004 起裁片级流水线（sizes/demand/per_type/erode/pid_meta/total_area）**委托 `build_pid_meta`**（单一真相源），本函数补 spyrrow 侧构造：`Item`（shape 用 pid_meta 的 erode 后 polygon、orientations 用同口径 `_resolve_d_tol` 的 tol 离散化）。按 sizes 过滤 → US-022 按 `(label, sizeKey)` 查 quantities 定 demand（0 跳过；缺 label → 1） → US-002 起 `per_type[label]` 命中即覆盖 d/tol（2026-08-18 回退 US-004 后 label 单级，命中即对该 g 码全部码号生效；未命中/缺维度回退 `params.d_ext/tol_ext`；旧 ptype / 旧两级键 no-op；internal 概念已删，`d_int`/`tol_int` 仍被接受但无消费方） → 每片 `erode=min(申请d, MAX_OVERLAP_MM=10)`、`tol=min(申请tol, MAX_ROTATION_TOL_DEG=45)`（**2026-08-17 起全局上限，不再按片型**） → erode+clean → 构造 `spyrrow.Item` + `StripPackingInstance(strip_height=min(gate_mm, PLOT_SAFE_MAX_Y_MM))` + `StripPackingConfig`；pid_meta 含 US-024 5 层字段 + `label`/`color=label_color(label)`/`demand`（`.get()` 向后兼容）。**求解约束带钳绘图仪可写幅宽 1910**（gate_mm 1980 是显示口径，manifest 推给前端的 gate_mm / 密度分母 / 导出外框均不受影响；常量单一事实源 `nesting_bounds/load_pieces.py`）。**US-006（PC-006）`solver_opts`**（additive 白名单 exploration_pct/quadtree_depth/num_workers 三键，越界 clamp、非数值/未知键忽略、不传=现行行为）：`exploration_pct∈[0.1,0.95]` 把 time_budget 换算为 exploration_time/compression_time 两段 int 秒（各 ≥1s、和≈budget，**与 total_computation_time 互斥** —— spyrrow 的 total 键缺省 600 非 None，两段模式必须显式传 total_computation_time=None，否则 not-all-3 ValueError）；quadtree_depth∈[3,5]（缺省 4）、num_workers≥1（缺省 4）。清洗单一真相源 `_normalize_solver_opts`。WS 协议本期不加字段（web 前端零改动），消费方仅 CLI --solver-opts/--rotate-opts |
+| `build_instance` | `(pieces, gate_mm, *, time_budget, seed, sizes=None, params=None, per_type=None, quantities=None, solver_opts=None) → (instance, config, pid_meta, total_area, n_eroded)` | strategy US-004 起裁片级流水线（sizes/demand/per_type/erode/pid_meta/total_area）**委托 `build_pid_meta`**（单一真相源），本函数补 spyrrow 侧构造：`Item`（shape 用 pid_meta 的 erode 后 polygon、orientations 用同口径 `_resolve_d_tol` 的 tol 离散化）。按 sizes 过滤 → US-022 按 `(label, sizeKey)` 查 quantities 定 demand（0 跳过；缺 label → 1） → US-002 起 `per_type[label]` 命中即覆盖 d/tol（2026-08-18 回退 US-004 后 label 单级，命中即对该 g 码全部码号生效；未命中/缺维度回退 `params.d_ext/tol_ext`；旧 ptype / 旧两级键 no-op；internal 概念已删，`d_int`/`tol_int` 仍被接受但无消费方） → 每片 `erode=min(申请d, MAX_OVERLAP_MM=10)`、`tol=min(申请tol, MAX_ROTATION_TOL_DEG=45)`（**2026-08-17 起全局上限，不再按片型**） → erode+clean → 构造 `spyrrow.Item` + `StripPackingInstance(strip_height=min(gate_mm, PLOT_SAFE_MAX_Y_MM))` + `StripPackingConfig`；pid_meta 含 US-024 5 层字段 + `label`/`color=size_color(size)`（2026-08-20 尺码键）/`demand`（`.get()` 向后兼容）。**求解约束带钳绘图仪可写幅宽 1910**（gate_mm 1980 是显示口径，manifest 推给前端的 gate_mm / 密度分母 / 导出外框均不受影响；常量单一事实源 `nesting_bounds/load_pieces.py`）。**US-006（PC-006）`solver_opts`**（additive 白名单 exploration_pct/quadtree_depth/num_workers 三键，越界 clamp、非数值/未知键忽略、不传=现行行为）：`exploration_pct∈[0.1,0.95]` 把 time_budget 换算为 exploration_time/compression_time 两段 int 秒（各 ≥1s、和≈budget，**与 total_computation_time 互斥** —— spyrrow 的 total 键缺省 600 非 None，两段模式必须显式传 total_computation_time=None，否则 not-all-3 ValueError）；quadtree_depth∈[3,5]（缺省 4）、num_workers≥1（缺省 4）。清洗单一真相源 `_normalize_solver_opts`。WS 协议本期不加字段（web 前端零改动），消费方仅 CLI --solver-opts/--rotate-opts |
 | `solve_with_callback` | `(instance, config, on_report, *, drain_interval=0.2) → (final_sol, elapsed_sec, err)` | **旧 threading 版（保留）**。子线程 `instance.solve(config, progress=queue)`，主线程 `queue.drain()` 每 0.2s 取中间解 → `on_report({type:frame,...})`。US-026 起 `ws_solve` 切换到 `solve_with_callback_proc`，本函数不删（过渡期） |
 | `solve_with_callback_proc` | `(pieces_snapshot, gate_mm, solve_params, *, on_manifest, on_report, on_process=None, drain_interval=0.2) → (process, final_data, elapsed, err)` | **US-025 多进程版**。spawn 子进程跑 `solve_worker`（在子进程内 `build_instance + solve`，spyrrow 对象不可 pickle 故不跨进程），主进程 drain `multiprocessing.Queue` 分发：manifest → `on_manifest`、frame → `on_report`（density 双口径换算在主进程做）、final/error 记录。**US-026 新增 `on_process` 回调**：子进程 `start()` 后立即回调一次，把 `Process` 句柄交给调用方供 WS stop / 断开时 `terminate()`。返回 `process` 句柄可 `terminate()`；terminate 后 `cancel_join_thread + 限时 drain(≤50ms) + join(timeout=5)` 防死锁；子进程 crash 未投 error 时 `err='worker process exited unexpectedly (code=<exitcode>)'` |
 

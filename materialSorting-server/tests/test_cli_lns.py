@@ -395,7 +395,8 @@ def test_cli_end_to_end_fake(tmp_path, capsys, monkeypatch):
     assert out['recheck']['ok'] is True
     svg = (run_dir / 'lns_compare.svg').read_text(encoding='utf-8')
     assert svg.count('scale(1,-1)') == 2          # 双面板翻转组
-    assert 'LNS 前' in svg and 'LNS 后' in svg and '裁片图例' in svg
+    assert 'LNS 前' in svg and 'LNS 后' in svg and '尺码图例' in svg   # 图例=尺码维度（2026-08-20 换键）
+    assert '>30</text>' in svg                                       # 图例条目是码号（非 g 码）
     stdout = capsys.readouterr().out
     assert '[LNS] before:' in stdout and 'improved=True' in stdout
     assert 'result_lns.json' in stdout

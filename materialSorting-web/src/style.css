@@ -138,6 +138,7 @@ button#stop:disabled { background: #555; cursor: default; }
   flex: 1 1 0; min-width: 140px;
   display: flex; flex-direction: column;
   background: #2a2c32; border-radius: 4px; overflow: hidden;
+  position: relative;   /* SizeLegend overlay 的定位锚 */
 }
 .nest-label {
   padding: 4px 8px; font-size: 12px; color: #cdd; background: #1c1d22;
@@ -145,6 +146,24 @@ button#stop:disabled { background: #555; cursor: default; }
 }
 .nest-card svg { flex: 1; width: 100%; min-height: 0; background: #eef0f3; display: block; }
 polygon.hover { fill-opacity: 0.9 !important; stroke: #fff !important; stroke-width: 2.6 !important; }
+
+/* 尺码图例（2026-08-20 配色换键为尺码后新增）：nest-card 内右上角 overlay，压在浅色画布上。
+   pointer-events none —— 不挡裁片 hover/tooltip；随 manifest 到达/撤走渲染（SizeLegend.tsx）。 */
+.size-legend {
+  position: absolute; top: 28px; right: 8px;   /* 28px 让出顶部 nest-label 条 */
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 5px 8px;
+  background: rgba(255, 255, 255, 0.88);
+  border: 1px solid #8a8a8a; border-radius: 4px;
+  font-size: 11px; color: #333;
+  pointer-events: none;
+}
+.size-legend-title { font-weight: 600; margin-bottom: 2px; }
+.size-legend-row { display: flex; align-items: center; gap: 6px; line-height: 1.2; }
+.size-legend-swatch {
+  width: 10px; height: 10px; border-radius: 2px;
+  border-style: solid; border-width: 1px; opacity: 0.8;
+}
 
 .bottom {
   height: 250px;

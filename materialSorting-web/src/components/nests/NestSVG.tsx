@@ -46,7 +46,7 @@ const SVGNS = 'http://www.w3.org/2000/svg';
 /**
  * 单个裁片的引用持有（毛版 polygon + 4 层工艺 DOM 节点，US-024）。
  *
- * - el: 毛版 polygon（layer1）—— label 配色（label_color 单一真相源），与 mousemove tooltip 联动。
+ * - el: 毛版 polygon（layer1）—— 尺码配色（size_color 单一真相源，同码同色跨片型），与 mousemove tooltip 联动。
  * - netEl / internalEls / notchEls / grainEl: 4 层工艺节点（layer14/8/4/7）—— 仅渲染透传。
  * - 所有节点在 manifest 到达时一次性创建，frame 切换只 setAttribute。
  */
@@ -301,11 +301,11 @@ export function NestSVG({ run }: NestSVGProps) {
  * 为单片 PieceInfo 创建一组 5 层 DOM 节点（毛版 polygon + net/internal/notch/grain）并 append 到 g。
  * 返回 PieceEntry 持有这些节点引用。demand>1 时对本函数调用 N 次 → N 个独立副本（多副本渲染）。
  *
- * 与旧 vanilla 实现 onManifest 内单片建节点逻辑等价（layer1 label 配色 + US-024 4 层）。
+ * 与旧 vanilla 实现 onManifest 内单片建节点逻辑等价（layer1 尺码配色 + US-024 4 层）。
  * 所有节点初始 display:none（等 frame 到达再显）。纯提取，无行为变更。
  */
 function createPieceEntry(p: PieceInfo, g: SVGGElement): PieceEntry {
-  // layer1 毛版 polygon（label 配色）—— 与既有渲染一致（mouse 联动仅绑此层）
+  // layer1 毛版 polygon（尺码配色，manifest p.color 透传后端 size_color）—— 与既有渲染一致（mouse 联动仅绑此层）
   const poly = document.createElementNS(SVGNS, 'polygon');
   poly.setAttribute('fill', p.color);
   poly.setAttribute('fill-opacity', '0.55');
