@@ -7,6 +7,9 @@ r"""ms-run-config 入口 —— 一条命令跑完「commit → 求解」，无�
                   [--kill shadow|off|on]
                   [--solver-opts '{"exploration_pct":0.7}' | --rotate-opts]
                   [--lns [--lns-time 30] [--lns-rounds 5]]
+                  [--strategy [se|race] --time 总预算
+                    [--se-screen 90] [--se-extend 180]
+                    [--race-budget 180] [--race-gate 0.5]]
     python -m materialsorting.cli.run_config <config.json> --time 5
 
 流程：``load_config``（7 键 schema 校验）→ ``new_run_dir``（时间戳目录保留历史）
@@ -92,9 +95,36 @@ PC-009 run 统计库与 θ₀ 校准（``--target`` 模式的 kill 门槛按历�
     产物，绝不否定求解交付物）。
   - **读侧**：``--target`` 给定时启动即读统计库 —— 当前 class_key 命中且 ≥5 条
     记录 → ``θ₀ = min(target, 历史最大 best_density + 0.003)``（历史最高 89.6%
-    的组合不再从 90 起跑），否则 θ₀ = target；θ₀ 经 ``PortfolioController(
+    的组合不再从 90 起步），否则 θ₀ = target；θ₀ 经 ``PortfolioController(
     theta0=...)`` 只作 kill 门槛初值，**R0 停止条件恒用 ``--target`` 真值**。
     校准说明行 ``--quiet`` 也打（判据变更不静默，同 R3 θ 衰减口径）。
+
+US-002 策略双模式（``--strategy [se|race]``，给定总预算拿更高利用率）：
+
+  - ``--strategy``（裸旗标 = race = 方案 B 门杀）/ ``--strategy se``（方案 A
+    筛延）；策略模式 ``--time N`` = **总预算秒数且必填**（缺省退出 1）。4 个
+    参数旗标：``--se-screen 90`` / ``--se-extend 180`` / ``--race-budget 180``
+    / ``--race-gate 0.5``（(0,1) 开区间），须与 ``--strategy`` 同给。
+  - **race（默认）**：每 seed 按 ``--race-budget`` 预算启动，门时刻（预算 ×
+    ``--race-gate``）处严格破纪录才续跑（US-001 ``decide_race_kill``：首 seed
+    豁免、bar 含被杀者、每 seed 至多一笔）；判杀走既有 terminate 链交付
+    best-so-far，门杀行 ``--quiet`` 也打。名义记账（预算 + ~2.5s 启动开销）：
+    被杀记门段、跑满记全程，启动条件 ``spent + 门段 <= T``（被杀省出的预算由
+    串行队列自然吸收）。
+  - **se**：阶段 1 ``k`` 轮 ``--se-screen`` 串行筛选 + 阶段 2 冠军（solve 记录
+    ``real_density`` argmax）同 seed 以 ``--se-extend`` 预算再跑一轮 —— 延长
+    轮产物写 ``curve_s{seed}_ext.json`` / ``best_frame_s{seed}_ext.json``（防
+    覆盖筛选产物），solve 条目附 ``phase: 'extension'``。
+  - 两模式被门杀 / 被筛 seed 的最优帧照常入 incumbent；策略模式下 R1/R2 不评
+    估、θ 不维护；``--target`` 共存时 R0 达标即停优先于模式继续。race 决策
+    逐条写 ``run_dir/kill_decisions.jsonl``（复用 schema：``S_tau`` = bar 参照
+    值、``theta`` = null，README 注明重载）；预算不足（T < 最小配置）退出 1。
+  - **R1 增量（US-004 web 桥接前置）**：策略模式 commit 完成后、首轮求解前写
+    ``run_dir/strategy.json`` ``{mode, total_budget, planned_seeds, race|se,
+    started_at}`` —— run 一启动即暴露模式 / 计划轮数 / 种子流（result.json
+    要等首个 seed 完成才首次落盘，race 默认下前 ~180s 无信息）。
+  - 无 ``--strategy`` 时行为与 result.json 与现版**逐字节一致**（零回归红线，
+    portfolio 段不加 mode 键、config 段不加 strategy 键）。
 
 run_name 缺省 = 配置文件 stem，``--name`` 覆盖；Windows 非法文件名字符
 （``<>:"/\|?*`` 与控制字符）替换 ``_``，清洗后为空回退 ``run``。
@@ -126,10 +156,13 @@ from .. import paths
 from .config import ConfigError, load_config
 from .lns import LnsError, postprocess_run_dir
 from .pipeline import commit_from_config, new_run_dir, solve_pieces
-from .portfolio import (KILL_MODES, THETA0_MARGIN, ControllerParamsError,
+from .portfolio import (KILL_MODES, RACE_BUDGET_S, RACE_GATE_TAU, SE_EXT_S,
+                        SE_SCREEN_S, STRATEGY_MODES, THETA0_MARGIN,
+                        StrategyBudgetError, ControllerParamsError,
                         PortfolioController, calibrate_theta0,
-                        load_controller_params, load_run_stats,
-                        run_serial_portfolio, run_stats_class_key)
+                        load_controller_params, load_run_stats, race_plan,
+                        run_serial_portfolio, run_stats_class_key, se_plan,
+                        strategy_seed_stream)
 
 __all__ = ['SOLVER_OPTS_POOL', 'rotation_opts_for', 'main']
 
@@ -151,7 +184,9 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument('--name', metavar='RUN_NAME',
                    help='覆盖 run_name（缺省 = 配置文件 stem，非法字符清洗）')
     p.add_argument('--time', type=int, metavar='N',
-                   help='覆盖单轮求解时长（秒）；冒烟/调试用（result.json 回显生效值）')
+                   help='覆盖单轮求解时长（秒）；策略模式（--strategy）= 总预算秒数'
+                        '且必填（race 门杀省出的预算再投资 / se 筛选+延长同口径记账）；'
+                        'result.json 回显生效值')
     p.add_argument('--quiet', action='store_true',
                    help='静默：不打进度帧与心跳（最终汇总仍输出）')
     p.add_argument('--target', type=float, metavar='P',
@@ -161,11 +196,12 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
                    help='controller 标定参数 JSON（PC-004 产物）：覆盖 kill 阈值默认值'
                         '（tau0/W/m/epsilon/delta/m_streak/uplift_q95）+ envelope 包络'
                         ' S(τ) + calibrated 开关；仅校验可加载，坏文件退出 1')
-    p.add_argument('--kill', choices=KILL_MODES, default='shadow',
+    p.add_argument('--kill', choices=KILL_MODES, default=None,
                    help='kill 规则引擎模式（PC-003，默认 shadow）：shadow 只记 '
                         'run_dir/kill_decisions.jsonl 不真正 kill；on 真正淘汰必死 seed'
                         '（需 --params 标定就绪 calibrated: true，否则自动降级 shadow）；'
-                        'off 关闭。引擎仅 --target 给定时激活，seed 1 永不 kill')
+                        'off 关闭。引擎仅 --target 给定时激活，seed 1 永不 kill；'
+                        '与 --strategy 显式同给退出 1（策略模式判据内建）')
     p.add_argument('--solver-opts', metavar='JSON',
                    help='spyrrow 求解旋钮 JSON 对象（PC-006，全 seed 生效）：'
                         '{"exploration_pct":0.6, "quadtree_depth":5, "num_workers":4}；'
@@ -181,6 +217,22 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
                    help='LNS 总预算（秒，默认 30；须与 --lns 同给）')
     p.add_argument('--lns-rounds', type=int, default=None, metavar='N',
                    help='LNS 最大轮数（默认 5；须与 --lns 同给）')
+    p.add_argument('--strategy', nargs='?', const='race', default=None,
+                   metavar='[se|race]',
+                   help='策略双模式（US-002，给定总预算拿更高利用率）：裸旗标 = '
+                        'race 门杀（方案 B，默认）= 每 seed 全预算启动、门时刻严格'
+                        '破纪录才续跑（弱 seed 提前淘汰省出预算再投资）；se = 筛延'
+                        '（方案 A）= k 轮短筛选 + 冠军 seed 全预算再战。策略模式 '
+                        '--time = 总预算秒数（必填）；20min 起比均分稳定 +0.2pt')
+    p.add_argument('--se-screen', type=int, default=None, metavar='N',
+                   help='se 阶段 1 每轮筛选预算（秒，默认 90；须与 --strategy 同给）')
+    p.add_argument('--se-extend', type=int, default=None, metavar='N',
+                   help='se 阶段 2 冠军延长预算（秒，默认 180；须与 --strategy 同给）')
+    p.add_argument('--race-budget', type=int, default=None, metavar='N',
+                   help='race 每 seed 求解预算（秒，默认 180；须与 --strategy 同给）')
+    p.add_argument('--race-gate', type=float, default=None, metavar='TAU',
+                   help='race 门时刻占预算比（默认 0.5，(0,1) 开区间；须与 '
+                        '--strategy 同给）')
     return p.parse_args(argv)
 
 
@@ -330,6 +382,69 @@ def main(argv: list[str] | None = None) -> int:
     if args.lns and args.lns_rounds is not None and lns_rounds < 1:
         print(f'配置错误: --lns-rounds 须 >= 1，当前 {args.lns_rounds}', file=sys.stderr)
         return _EXIT_CONFIG_OR_COMMIT
+    # ---- US-002 策略双模式旗标裁决（配置错误在 new_run_dir 之前拦下，不留空目录）。
+    # --strategy 不走 argparse choices（choices 外退出码是 2）→ 手工校验退出 1；
+    # 策略模式 --time = 总预算秒数且必填；与 --kill 显式同给互斥（策略模式判据
+    # 内建：race 门杀 R5_race_gate、R1/R2 引擎不评估）；4 个参数旗标是从属旗标
+    # （单独给出 = 笔误退出 1，同 --lns-time 口径）；预算不足由 race_plan / se_plan
+    # 抛 StrategyBudgetError（同样按配置错误退出 1）。
+    strategy = args.strategy
+    if strategy is not None and strategy not in ('se', 'race'):
+        print(f'配置错误: --strategy 须为 se 或 race，当前为 {strategy!r}', file=sys.stderr)
+        return _EXIT_CONFIG_OR_COMMIT
+    if (args.se_screen is not None or args.se_extend is not None
+            or args.race_budget is not None or args.race_gate is not None) \
+            and strategy is None:
+        print('配置错误: --se-screen / --se-extend / --race-budget / --race-gate '
+              '须与 --strategy 同给（策略模式未启用）', file=sys.stderr)
+        return _EXIT_CONFIG_OR_COMMIT
+    if strategy is not None:
+        if args.kill is not None:
+            print('配置错误: --strategy 与 --kill 互斥（策略模式 kill 判据内建：'
+                  'race 门杀 R5_race_gate，R1/R2 引擎不评估）', file=sys.stderr)
+            return _EXIT_CONFIG_OR_COMMIT
+        if args.time is None:
+            print('配置错误: 策略模式需 --time 总预算（秒），如 --strategy --time 1200',
+                  file=sys.stderr)
+            return _EXIT_CONFIG_OR_COMMIT
+        if args.time <= 0:
+            print(f'配置错误: --time 须为正整数（策略模式 = 总预算秒数），当前 {args.time}',
+                  file=sys.stderr)
+            return _EXIT_CONFIG_OR_COMMIT
+    se_screen = SE_SCREEN_S if args.se_screen is None else args.se_screen
+    se_ext = SE_EXT_S if args.se_extend is None else args.se_extend
+    race_budget = RACE_BUDGET_S if args.race_budget is None else args.race_budget
+    race_gate_tau = RACE_GATE_TAU if args.race_gate is None else args.race_gate
+    k_screens = 1                         # se 阶段 1 筛选轮数（策略模式外不消费）
+    gate_seconds: float | None = None
+    strategy_seeds: list[int] | None = None
+    if strategy == 'race':
+        if race_budget < 1:
+            print(f'配置错误: --race-budget 须 >= 1 秒，当前 {race_budget}', file=sys.stderr)
+            return _EXIT_CONFIG_OR_COMMIT
+        if not 0.0 < race_gate_tau < 1.0:
+            print(f'配置错误: --race-gate 须为 (0,1) 开区间内的比例值（如 0.5），'
+                  f'当前 {race_gate_tau}', file=sys.stderr)
+            return _EXIT_CONFIG_OR_COMMIT
+        try:
+            n_planned, gate_seconds = race_plan(args.time, race_budget, race_gate_tau)
+        except StrategyBudgetError as e:
+            print(f'配置错误: {e}', file=sys.stderr)
+            return _EXIT_CONFIG_OR_COMMIT
+        strategy_seeds = strategy_seed_stream(cfg.seeds, n_planned)
+    elif strategy == 'se':
+        if se_screen < 1:
+            print(f'配置错误: --se-screen 须 >= 1 秒，当前 {se_screen}', file=sys.stderr)
+            return _EXIT_CONFIG_OR_COMMIT
+        if se_ext < 1:
+            print(f'配置错误: --se-extend 须 >= 1 秒，当前 {se_ext}', file=sys.stderr)
+            return _EXIT_CONFIG_OR_COMMIT
+        try:
+            k_screens, _ext = se_plan(args.time, se_screen, se_ext)
+        except StrategyBudgetError as e:
+            print(f'配置错误: {e}', file=sys.stderr)
+            return _EXIT_CONFIG_OR_COMMIT
+        strategy_seeds = strategy_seed_stream(cfg.seeds, k_screens)
     params = None
     if args.params is not None:
         try:
@@ -339,9 +454,12 @@ def main(argv: list[str] | None = None) -> int:
             return _EXIT_CONFIG_OR_COMMIT
     # PC-003 kill 模式裁决（生效模式）：引擎仅 --target 给定时激活（θ 初值 = target
     # 是判据锚点）；--kill on 需标定就绪（calibrated: true），否则降级 shadow 并 warn
-    # —— 未标定的包络/uplift 不可信，不许真杀。
-    kill_mode = args.kill
-    if args.target is None:
+    # —— 未标定的包络/uplift 不可信，不许真杀。US-002：--kill 缺省 None → 生效
+    # shadow（显式与否由互斥校验消费）；策略模式 R1/R2 引擎不评估 → 恒 off。
+    kill_mode = args.kill or 'shadow'
+    if strategy is not None:
+        kill_mode = 'off'
+    elif args.target is None:
         if kill_mode == 'on':
             print('警告: --kill 需要 --target（θ 初值 = target），本次 kill 引擎未激活',
                   file=sys.stderr)
@@ -352,6 +470,7 @@ def main(argv: list[str] | None = None) -> int:
               '本次自动降级 shadow（只记 kill_decisions.jsonl，不真正 kill）',
               file=sys.stderr)
 
+    # 策略模式 --time = 总预算（config 回显同值）；legacy 语义不变（单轮求解时长）。
     time_budget = args.time if args.time is not None else cfg.time
     run_name = _clean_run_name(args.name if args.name else Path(args.config).stem)
     run_dir = new_run_dir(run_name)
@@ -360,8 +479,20 @@ def main(argv: list[str] | None = None) -> int:
     print(f'配置: {Path(args.config).resolve()} | 求解时长: {time_budget}s | '
           f'seeds: {cfg.seeds}'
           + (f' | target: {args.target:.2%}' if args.target is not None else ''))
-    n_rounds = len(cfg.seeds)
-    if n_rounds > 1:
+    n_rounds = len(strategy_seeds) if strategy_seeds is not None else len(cfg.seeds)
+    if strategy is not None:
+        # US-002 策略模式启动行（--quiet 也打：改求解编排的开关不静默，同
+        # solver_opts 口径）—— 一条命令即可核对模式 / 门时刻 / 计划轮数 / 种子流。
+        if strategy == 'race':
+            print(f'[portfolio] 策略模式 race（门杀）：总预算 {args.time}s，每 seed '
+                  f'{race_budget:g}s 预算，门时刻 {gate_seconds:g}s'
+                  f'（τ={race_gate_tau:g}，严格破纪录才续跑），'
+                  f'计划 ≤ {n_rounds} 个 seed（种子流 {strategy_seeds}）')
+        else:
+            print(f'[portfolio] 策略模式 se（筛延）：总预算 {args.time}s = 阶段 1 '
+                  f'{n_rounds} × {se_screen:g}s 筛选 + 阶段 2 冠军 {se_ext:g}s 延长'
+                  f'（种子流 {strategy_seeds}）')
+    elif n_rounds > 1:
         # 多 seed 启动即给总时长预期（len(seeds) × time，不含解析/切片）——
         # 评估配置前先知道要等多久，避免把长跑误判挂死。
         print(f'多 seed 串行 {n_rounds} 轮 × {time_budget}s，'
@@ -386,7 +517,8 @@ def main(argv: list[str] | None = None) -> int:
     stats_class_key = run_stats_class_key(str(cfg.master_dxf), cfg.sizes,
                                           cfg.quantities, cfg.per_type)
     theta0 = None
-    if args.target is not None:
+    # US-002：策略模式 θ 不维护（R1/R2 不评估），校准无判据可锚 → 跳过。
+    if args.target is not None and strategy is None:
         theta0, info = calibrate_theta0(load_run_stats(paths.RUN_STATS_JSONL),
                                         stats_class_key, args.target)
         if info is not None:
@@ -406,25 +538,59 @@ def main(argv: list[str] | None = None) -> int:
           f"total_area={commit['total_area_mm2']:,.1f}mm² "
           f"sizes={commit['sizes']} skipped={commit['n_skipped']}")
 
+    # US-002 R1 增量（US-004 web 桥接前置）：策略模式 commit 完成后、首轮求解前
+    # 写 strategy.json —— run 一启动即暴露模式 / 计划轮数 / 种子流（result.json
+    # 要等首个 seed 完成才首次落盘，race 默认下前 ~180s 无信息可轮询）。
+    if strategy is not None:
+        plan_payload = {
+            'mode': strategy,
+            'total_budget': int(args.time),
+            'planned_seeds': list(strategy_seeds),
+            'started_at': time.strftime('%Y-%m-%dT%H:%M:%S'),
+        }
+        if strategy == 'race':
+            plan_payload['race'] = {'gate_seconds': round(float(gate_seconds), 3)}
+        else:
+            plan_payload['se'] = {'k_screens': int(k_screens),
+                                  'screen_s': se_screen, 'ext_s': se_ext}
+        with open(Path(run_dir) / 'strategy.json', 'w', encoding='utf-8') as f:
+            json.dump(plan_payload, f, ensure_ascii=False, indent=2)
+
     solves: list[dict] = []
     result_path = Path(run_dir) / 'result.json'
     # PC-003 kill 决策日志：引擎激活（shadow/on）即建文件（空文件也在场，路径稳定），
     # 决策逐条 append + flush —— Ctrl-C / 崩溃不丢已记条目；控制器经回调交出记录，
-    # 自身不做文件 I/O（呈现层职责）。
+    # 自身不做文件 I/O（呈现层职责）。US-002：race 模式门杀决策（R5_race_gate）
+    # 复用同一文件 —— S_tau 重载为 bar 参照值、theta 恒 null（README 注明）。
     kill_log_path = Path(run_dir) / 'kill_decisions.jsonl'
-    kill_log = open(kill_log_path, 'w', encoding='utf-8') if kill_mode != 'off' else None
+    kill_log = (open(kill_log_path, 'w', encoding='utf-8')
+                if kill_mode != 'off' or strategy == 'race' else None)
 
     def _on_kill_decision(entry: dict) -> None:
         kill_log.write(json.dumps(entry, ensure_ascii=False) + '\n')
         kill_log.flush()
 
     controller = PortfolioController(
-        seeds=list(cfg.seeds), target=args.target, params=params,
+        seeds=list(cfg.seeds) if strategy is None else list(strategy_seeds),
+        target=args.target, params=params,
         echo=None if args.quiet else print,
         kill=kill_mode, time_budget=time_budget,
         notify=print, on_decision=_on_kill_decision if kill_log is not None else None,
-        theta0=theta0)
+        theta0=theta0,
+        # ---- US-002 策略双模式（legacy 全缺省零回归）----
+        mode='legacy' if strategy is None else strategy,
+        total_budget=args.time if strategy is not None else None,
+        race_budget=race_budget, race_gate_tau=race_gate_tau,
+        se_k=k_screens, se_screen=se_screen, se_ext=se_ext)
     current = {'seed': None}       # 求解异常报错定位用（on_seed_start 持续刷新）
+    # US-002 策略参数回显（result.json config 段；legacy → None 不加键）。
+    if strategy == 'race':
+        strategy_echo = {'mode': 'race', 'race_budget': race_budget,
+                         'race_gate': race_gate_tau}
+    elif strategy == 'se':
+        strategy_echo = {'mode': 'se', 'se_screen': se_screen, 'se_extend': se_ext}
+    else:
+        strategy_echo = None
     # PC-008：LNS 严格更优时的 result.json lns 段（None = 不写该键 —— 无 --lns /
     # LNS 不优的 result.json 与基线逐字节一致，见 _flush_result）。
     lns_state = {'section': None}
@@ -454,6 +620,9 @@ def main(argv: list[str] | None = None) -> int:
                 **({'solver_opts': fixed_solver_opts}
                    if fixed_solver_opts is not None else {}),
                 **({'rotate_opts': True} if args.rotate_opts else {}),
+                # US-002 策略回显（旗标未给时不加键：无 --strategy 的 result.json
+                # 与现版逐字节一致；time 字段在策略模式 = 总预算，参数在此回显）。
+                **({'strategy': strategy_echo} if strategy_echo is not None else {}),
             },
             'commit': commit,
             'solve': solves,
@@ -468,8 +637,15 @@ def main(argv: list[str] | None = None) -> int:
 
     def _on_seed_start(i: int, seed: int) -> None:
         current['seed'] = seed
-        # 轮次头：多 seed 或 R0 模式（单 seed 无旗标运行保持旧版零输出增量）。
-        if not args.quiet and (n_rounds > 1 or args.target is not None):
+        if args.quiet:
+            return
+        # US-002 se 延长轮专用头（队列序 > 计划筛选数 n_rounds，i/n_rounds 分母
+        # 不适用；按序号判定 —— on_seed_start 先于 make_progress 的 phase 刷新）。
+        if strategy == 'se' and i > n_rounds:
+            print(f'── 延长轮（seed={seed}·筛选冠军）开始 ──')
+            return
+        # 轮次头：多 seed、R0 模式或策略模式（单 seed 无旗标运行保持旧版零输出增量）。
+        if n_rounds > 1 or args.target is not None or strategy is not None:
             print(f'── 第 {i}/{n_rounds} 轮（seed={seed}）开始 ──')
 
     def _on_seed_done(rec: dict) -> None:
@@ -495,7 +671,9 @@ def main(argv: list[str] | None = None) -> int:
                   f'尚无完整求解轮，run_dir = {run_dir.resolve()}', file=sys.stderr)
             return _EXIT_INTERRUPT
         d, _w, _n, _e = _best_summary(_flush_result()['best'])
-        print(f'\n[中断] Ctrl-C：已完成 {len(solves)}/{n_rounds} 轮，'
+        where = ('（延长轮）' if strategy == 'se'
+                 and controller.current_phase == 'extension' else '')
+        print(f'\n[中断] Ctrl-C：已完成 {len(solves)}/{n_rounds} 轮{where}，'
               f'best real_density（原面积口径）= {d:.2%}，'
               f'产物已落盘 {run_dir.resolve()}', file=sys.stderr)
         return _EXIT_INTERRUPT
@@ -511,20 +689,32 @@ def main(argv: list[str] | None = None) -> int:
               f'incumbent real_density={inc["density"]:.2%}'
               f'（seed {inc["seed"]} frame {inc["frame_index"]}），'
               f'剩余 {skipped} 个 seed 未启动')
+    elif strategy == 'race':
+        # race 名义预算收口（终局事件，--quiet 也打）：计划数是全门杀乐观上界，
+        # 有 seed 破纪录跑满时队列在此提前收口（被杀省出的预算已自然吸收）。
+        executed = run.last_round[0] if run.last_round else 0
+        skipped = n_rounds - executed
+        if skipped > 0:
+            print(f'[portfolio] race 预算收口：{skipped} 个计划 seed 未启动'
+                  f'（名义记账 {controller.spent_nominal:g}s / 总预算 {args.time}s）')
 
-    if n_rounds > 1:
+    if n_rounds > 1 or strategy is not None:
         digest = ' | '.join(
-            f"seed {r['seed']}={r['real_density']:.2%}" for r in solves)
+            f"seed {r['seed']}={r['real_density']:.2%}"
+            + ('（延长）' if r.get('phase') == 'extension' else '')
+            for r in solves)
         print(f'各 seed real_density（原面积口径）: {digest}')
         if controller.engaged and controller.incumbent is not None:
             print(f"best = seed {best['seed']} frame {best['frame_index']}"
                   f'（incumbent，帧级全局最优）')
         else:
             print(f"best = seed {best['seed']}（real_density 最大者）")
-    if controller.kill_mode != 'off':
+    if controller.kill_mode != 'off' or strategy == 'race':
         # 终局产物行（--quiet 也打）：shadow/on 的判定去向与条数。置于末行汇总前
-        # ——「末行 = real_density 汇总」是既有输出契约（冒烟对拍口径）。
-        print(f"[kill] {controller.kill_mode} 模式："
+        # ——「末行 = real_density 汇总」是既有输出契约（冒烟对拍口径）。US-002
+        # race：R5 门杀决策同文件（引擎 off 但决策在场，标签如实标 race）。
+        tag = 'race' if controller.kill_mode == 'off' else controller.kill_mode
+        print(f"[kill] {tag} 模式："
               f"{len(controller.kill_decisions)} 条 kill 判定已写 "
               f"{kill_log_path.resolve()}")
     # ---- PC-008 LNS 后处理（--lns）：对 portfolio 最优布局跑 PC-007 波段重排。
@@ -583,7 +773,9 @@ def main(argv: list[str] | None = None) -> int:
         'source': str(cfg.master_dxf),
         'sizes': cfg.sizes,
         'class_key': stats_class_key,
-        'seeds': list(cfg.seeds),
+        # US-002：策略模式记计划种子流（strategy_seed_stream 产物，config 原值在
+        # result.json config 段回显）；legacy 保持 cfg.seeds 原样。
+        'seeds': list(controller.seeds) if strategy is not None else list(cfg.seeds),
         'target': args.target,
         'best_density': round(d, 6),
         'n_killed': sum(1 for e in controller.per_seed if e.get('killed')),

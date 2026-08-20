@@ -109,6 +109,8 @@ ms-run-config data/configs/5336_coded_really.json --time 5 --target 0.9   # 默�
 ms-run-config data/configs/5336_coded_really.json --time 5 --target 0.9 --kill on --params controller_params.json  # 标定就绪才真杀
 ```
 
+> 语义过载备注：`--strategy race`（门杀模式）复用同一 `kill_decisions.jsonl` 逐行 schema 记录门判决 —— 其中 `S_tau` 存**门参考值 bar**（非包络 `S(τ)`）、`theta` 恒 `null`（race 不维护 θ）、`rule` 为 `R5_race_gate`；含豁免/通过/门杀三类行，以 `would_kill` 区分。
+
 **solver_opts 透传与配置轮换（PC-006）**：`--solver-opts '<JSON>'`（spyrrow 求解旋钮，**全 seed 生效**）/ `--rotate-opts`（内置 4 档轮换池逐 seed 取档 `pool[队列序 % 4]`，池首空档 = 默认行为）—— 探索/压缩配比（`exploration_pct` 0.1~0.95，换算两段 int 秒与 total_computation_time 互斥）+ 四叉树深度（`quadtree_depth` 3/4/5）+ 并行核数（`num_workers`，默认 4）让不同 seed 搜索行为**去相关**、上尾更易被摸到。白名单外键忽略、越界 clamp（清洗单一真相源 `web.solver._normalize_solver_opts`）；两旗标互斥 / JSON 坏串 / 非对象 → 退出码 1；不传任何旗标 = 现行行为不变（WS 协议与 web 前端零改动）；旗标给了才在 result.json `config` 段回显 `solver_opts` / `rotate_opts`。
 
 ```bash

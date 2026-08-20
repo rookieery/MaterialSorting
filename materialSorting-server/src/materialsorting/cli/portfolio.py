@@ -1,7 +1,9 @@
 """串行 seed portfolio 控制器（PC-002）：incumbent banking + R0 达标即停 + R4 队列耗尽；
 PC-003 扩展 kill 引擎（R1 包络 / R2 压缩期判决 / R3 θ 衰减 + shadow mode）；
 PC-009 扩展 run 统计库读取与 θ₀ 按实例类校准；
-US-001 扩展策略双模式判据纯函数族（race 门杀 / SE 筛延 + 种子流 + 名义记账规划）。
+US-001 扩展策略双模式判据纯函数族（race 门杀 / SE 筛延 + 种子流 + 名义记账规划）；
+US-002 控制器接线双模式（mode='race'|'se'：门杀 should_stop / 名义记账队列收口 /
+SE 冠军延长轮，legacy 零回归）。
 
 ``run_config`` 的多 seed 串行循环自 PC-002 起**经本控制器转发**（不再裸调
 ``solve_pieces``）：控制器是纯 Python 状态机，持有三类状态 ——
@@ -63,7 +65,8 @@ PC-009 run 统计库与 θ₀ 校准（``run_config`` 结束时向 ``paths.RUN_S
     门槛**（R2/R3 判据锚），R0 停止条件恒用 ``--target`` 真值。
 
 US-001 策略双模式判据（``--strategy race|se`` 的单一真相源，纯函数无 I/O 无进程；
-US-002 由 ``PortfolioController`` 接线消费，US-003 simulate 复用同一判据）：
+US-002 已由 ``PortfolioController`` 接线消费（``mode`` kwarg），US-003 simulate
+复用同一判据）：
 
   - **race 门杀（方案 B，默认）**：每 seed 带 ``RACE_BUDGET_S``(180s) 预算启动，
     ``race_gate_seconds``(默认 90s) 门帧处 ``decide_race_kill`` 判定 ——
@@ -90,15 +93,15 @@ from pathlib import Path
 from .pipeline import solve_pieces
 
 __all__ = ['R0_REASON', 'R1_REASON', 'R2_REASON', 'R5_REASON', 'KILL_DEFAULTS',
-           'KILL_MODES', 'THETA0_MIN_RECORDS', 'THETA0_MARGIN',
+           'KILL_MODES', 'STRATEGY_MODES', 'THETA0_MIN_RECORDS', 'THETA0_MARGIN',
            'RACE_BUDGET_S', 'RACE_GATE_TAU', 'SE_SCREEN_S', 'SE_EXT_S',
            'SEED_UNIT_S', 'FULL_UNIT_S', 'STRATEGY_STARTUP_S',
            'ControllerParamsError', 'StrategyBudgetError', 'PortfolioController',
            'PortfolioRun', 'calibrate_theta0', 'decide_race_kill',
            'load_controller_params', 'load_run_stats', 'make_envelope',
-           'r1_below_envelope', 'race_gate_seconds', 'r2_below_threshold',
-           'resolve_kill_params', 'run_serial_portfolio', 'run_stats_class_key',
-           'se_plan', 'strategy_seed_stream']
+           'r1_below_envelope', 'race_gate_seconds', 'race_plan',
+           'r2_below_threshold', 'resolve_kill_params', 'run_serial_portfolio',
+           'run_stats_class_key', 'se_plan', 'strategy_seed_stream']
 
 # R0 / R1 / R2 触发的 should_stop 返回值（solve_pieces 透传为 kill_reason）。
 R0_REASON = 'R0_target_reached'
@@ -109,6 +112,9 @@ _HEARTBEAT_SEC = 30.0
 
 # --kill 旗标取值（run_config argparse choices 同源）。
 KILL_MODES = ('shadow', 'off', 'on')
+# PortfolioController 模式（US-002）：legacy = 现行串行（无 --strategy，零回归红线）；
+# race / se = 策略双模式（R1/R2 不评估、θ 不维护，US-001 判据单一真相源）。
+STRATEGY_MODES = ('legacy', 'race', 'se')
 
 # kill 引擎保守默认（--params 数值键可覆盖；pt = 密度百分点，0.005 = 0.5pt）。
 KILL_DEFAULTS: dict = {
@@ -394,6 +400,30 @@ def se_plan(total_budget: float, screen_s: float = SE_SCREEN_S,
     return k, float(ext_s)
 
 
+def race_plan(total_budget: float, race_budget: float = RACE_BUDGET_S,
+              race_gate_tau: float = RACE_GATE_TAU) -> tuple[int, float]:
+    """race 规划（纯）：``(n_planned, gate_seconds)`` = 计划种子数上限 + 门时刻。
+
+    名义记账（与 se_plan / 离线对决同口径）：首 seed 全程豁免按
+    ``race_budget + STRATEGY_STARTUP_S`` 记账、其余 seed **至少**消费门段
+    ``gate_seconds + STRATEGY_STARTUP_S``（被门杀省出的预算由串行队列自然吸收，
+    运行期经 ``PortfolioController.can_start_next`` 动态复核 ``spent + 门段 <= T``，
+    计划数只是全门杀的乐观上界）。``T < 首轮全程 + 一轮门段``（race 概念上至少要
+    1 个豁免参照 + 1 个门杀候选）→ ``StrategyBudgetError``（CLI 层以退出 1 呈现）。
+    """
+    t = float(total_budget)
+    b = float(race_budget)
+    gate = race_gate_seconds(b, race_gate_tau)
+    gate_unit = gate + STRATEGY_STARTUP_S
+    full_unit = b + STRATEGY_STARTUP_S
+    if t < full_unit + gate_unit:
+        raise StrategyBudgetError(
+            f'预算不足：race 模式至少需要首轮全程 {full_unit:g}s + 一轮门段 {gate_unit:g}s '
+            f'= {full_unit + gate_unit:g}s 名义预算，当前 --time={t:g}s')
+    n = 1 + int((t - full_unit) // gate_unit)
+    return n, gate
+
+
 class ControllerParamsError(ValueError):
     """controller 标定参数文件加载失败（不存在 / 非 JSON / 顶层非对象）。"""
 
@@ -441,8 +471,8 @@ class PortfolioController:
     ``finish_seed``），也可被单测直接驱动（fake solve 注入帧序列）。控制器不做
     文件 I/O（result.json / kill_decisions.jsonl 落盘属 run_config 呈现层，经
     ``on_decision`` 回调交出决策记录）；``echo`` 只用于进度行（None = 静默，
-    --quiet），``notify`` 用于不可静默的判据事件（R3 θ 衰减 —— run_config 传
-    无条件 print）。
+    --quiet），``notify`` 用于不可静默的判据事件（R3 θ 衰减 / US-002 race 门杀行
+    —— run_config 传无条件 print）。
 
     PC-003 kill 引擎状态：``theta``（kill 门槛锚，初值 = target）、``kill_streak``
     （连续被 kill 的 seed 数，非 kill 结束即清零）、``kill_decisions``（决策记录
@@ -452,11 +482,33 @@ class PortfolioController:
     PC-009：``theta0``（run 统计库校准的门槛初值，``calibrate_theta0`` 产物）——
     只作 ``self.theta`` 初值（kill 判据锚），**R0 停止条件恒用 ``self.target``
     真值**；缺省 None → θ = target（旧行为，零回归）。
+
+    US-002 策略双模式（``mode='race'|'se'``，缺省 ``'legacy'`` 零回归）：
+
+      - **race**：每 seed 按 ``race_budget`` 预算求解，``make_should_stop`` 挂
+        US-001 ``decide_race_kill`` 门杀判据（首 seed 豁免、严格破纪录才续跑、
+        bar 含被杀者、每 seed 至多一笔）—— 判杀返回 ``R5_REASON`` 走既有
+        terminate 链交付 best-so-far。名义记账（``STRATEGY_STARTUP_S`` 口径）：
+        被门杀记门段、跑满记全程；``can_start_next`` 复核 ``spent + 门段 <= T``
+        （计划数只是乐观上界，运行期动态收口）。
+      - **se**：阶段 1 ``se_k`` 轮 × ``se_screen`` 预算串行筛选，阶段 2 冠军
+        （solve 记录 ``real_density`` argmax，``se_champion``）以 ``se_ext``
+        预算再跑一轮（``round_budget`` 按队列序切换预算）。
+      - 策略模式下 R1/R2 不评估、θ 不维护（``kill_mode`` 应传 'off'，R3 连杀
+        衰减随之不触发）；被门杀 / 被筛 seed 的最优帧照常入 incumbent；
+        ``--target`` 共存时 R0 恒先（达标即停优先于模式继续）。
     """
 
     def __init__(self, *, seeds, target=None, params=None, echo=None,
                  kill='shadow', time_budget=None, notify=None, on_decision=None,
-                 theta0=None):
+                 theta0=None, mode='legacy', total_budget=None,
+                 race_budget=RACE_BUDGET_S, race_gate_tau=RACE_GATE_TAU,
+                 se_k=1, se_screen=SE_SCREEN_S, se_ext=SE_EXT_S):
+        if mode not in STRATEGY_MODES:
+            raise ValueError(f'mode 须为 {STRATEGY_MODES} 之一，当前为 {mode!r}')
+        if mode == 'race' and total_budget is None:
+            raise ValueError('race 模式须给 total_budget（can_start_next 记账锚）')
+        self.mode = mode
         self.seeds = [int(s) for s in seeds]
         self.target = None if target is None else float(target)
         self.params = dict(params) if params else {}
@@ -483,18 +535,37 @@ class PortfolioController:
         self._kp = resolve_kill_params(self.params)
         self._envelope = make_envelope(self.params)
         self._kill: dict | None = None      # 当前 seed 的 kill 判定瞬态
+        # ---- US-002 策略双模式 ----
+        self.total_budget = None if total_budget is None else float(total_budget)
+        self.race_budget = float(race_budget)
+        self._gate_seconds = race_gate_seconds(self.race_budget, race_gate_tau)
+        self._gate_unit = self._gate_seconds + STRATEGY_STARTUP_S    # 门杀名义成本
+        self._race_full_unit = self.race_budget + STRATEGY_STARTUP_S  # 跑满名义成本
+        self._spent = 0.0                  # 名义记账累计（solver 早退按名义记账）
+        self._race_bar: float | None = None
+        self._race_judged: set[int] = set()
+        self.kept_seeds: list[int] = []    # 跑满（或豁免 / R0 停）的 seed
+        self.gated_seeds: list[int] = []   # 被门杀的 seed
+        self.se_k = int(se_k)              # se 阶段 1 筛选轮数（队列序 <= se_k）
+        self.se_screen = float(se_screen)
+        self.se_ext = float(se_ext)
+        self.se_champion: int | None = None
+        self.current_phase: str | None = None   # 本轮阶段标记（per_seed.phase 数据源）
 
     # -------------------------------------------------------------- 判定
 
     @property
     def engaged(self) -> bool:
-        """portfolio 交付语义是否激活：给了 ``--target`` 或队列 ≥2 seed。
+        """portfolio 交付语义是否激活：给了 ``--target``、队列 ≥2 seed 或策略模式。
 
-        不激活（单 seed 且无 --target）时 result.json 写**空 portfolio 段**、
-        ``best`` 保持旧语义（solve 数组 real_density 最大者）—— 与 PC-001 基线
-        无旗标冒烟对拍兼容；激活时 ``best`` 升级为 incumbent（帧级全局最优）。
+        不激活（单 seed 且无 --target 的 legacy 模式）时 result.json 写**空
+        portfolio 段**、``best`` 保持旧语义（solve 数组 real_density 最大者）——
+        与 PC-001 基线无旗标冒烟对拍兼容；激活时 ``best`` 升级为 incumbent（帧级
+        全局最优）。策略模式（US-002）恒激活 —— race/se 的 portfolio 段必含
+        ``mode`` + 模式子段（se 最小计划 k=1 也是两段式结构）。
         """
-        return self.target is not None or len(self.seeds) > 1
+        return (self.target is not None or len(self.seeds) > 1
+                or self.mode != 'legacy')
 
     # -------------------------------------------------------------- 逐帧 hooks
 
@@ -506,13 +577,19 @@ class PortfolioController:
         ``curve_s{seed}.json`` 下标及 ``best_frame_s{seed}.json`` 的 frame_index
         对齐。心跳计时器每 seed 重置（与旧版 per-seed printer 行为一致）。
         ``index`` = 队列序号（1 起）：seed 1 永不 kill，同时重置该 seed 的 kill
-        判定瞬态（R1 迟滞计时 / R2 首压缩帧旗标 / 已记决策去重集）。
+        判定瞬态（R1 迟滞计时 / R2 首压缩帧旗标 / 已记决策去重集）。US-002 策略
+        模式在此刷新 ``current_phase``（se 队列序 > se_k 即延长轮 —— run_config
+        轮次头与 per_seed.phase 的数据源）。
         """
         seed = int(seed)
         self._frames_seen[seed] = 0
         self._last_output = time.time()
         self._kill = {'seed': seed, 'index': int(index), 'r1_since': None,
                       'r2_seen': False, 'logged': set()}
+        if self.mode == 'race':
+            self.current_phase = 'race'
+        elif self.mode == 'se':
+            self.current_phase = 'extension' if int(index) > self.se_k else 'screen'
 
         def on_frame(report: dict) -> None:
             idx = self._frames_seen.get(seed, 0)
@@ -568,21 +645,28 @@ class PortfolioController:
                        f"width={report.get('width_mm', 0.0):.0f}mm")
 
     def make_should_stop(self, seed: int, index: int = 1):
-        """构造该 seed 的 ``should_stop`` 回调（R0 + kill 判定，仅 --target 给定时挂载）。
+        """构造该 seed 的 ``should_stop`` 回调（R0 + race 门杀 / kill 判定）。
+
+        挂载条件（run_serial_portfolio）：``--target`` 给定或 race 模式（se 无
+        门杀、无 target 时无需挂载，调用形与旧版一致）。
 
         触发帧已先经 ``on_progress`` 入账（solve_pieces 的调用序：curve →
         best_frame → on_progress → should_stop），故 R0 / kill 帧**必在 incumbent
         候选内** —— 达标即停与被 kill 的 seed 交付的都是「全局最好帧」。
 
-        判定序：R0 恒先且恒用 ``--target`` 真值（θ 衰减不影响停止条件）；随后
-        kill 引擎（``kill_mode == 'off'`` 时不评估）—— shadow 只记决策不终止
-        求解，on 才把 kill 判据作为 should_stop 返回值真正触发。
+        判定序：R0 恒先且恒用 ``--target`` 真值（θ 衰减不影响停止条件；US-002
+        策略模式与 --target 共存时 R0 达标即停优先于模式继续）；随后 race 门杀
+        （US-002，策略模式）或 kill 引擎（legacy，``kill_mode == 'off'`` 时不
+        评估）—— shadow 只记决策不终止求解，on 才把 kill 判据作为 should_stop
+        返回值真正触发。
         """
 
         def should_stop(report: dict):
             if self.target is not None and float(report.get('density', 0.0)) >= self.target:
                 self.queue_stopped = True
                 return R0_REASON
+            if self.mode == 'race':
+                return self._evaluate_race(report, seed, index)
             if self.kill_mode == 'off':
                 return False
             reason = self._evaluate_kill(report, seed, index)
@@ -671,6 +755,71 @@ class PortfolioController:
         if self._on_decision is not None:
             self._on_decision(dict(entry))
 
+    # -------------------------------------------------------------- 策略双模式（US-002）
+
+    def _evaluate_race(self, report: dict, seed: int, index: int) -> str | None:
+        """race 门杀判定：US-001 ``decide_race_kill`` 单一真相源 + 控制器状态接线。
+
+        门值 = 该 seed best-so-far（``_seed_best``，触发帧已先经 on_progress 入账）；
+        bar 跨 seed 共享（含被杀者，单调只升）、judged 每 seed 至多一笔（集合标记，
+        与纯函数 ``state['judged']`` 等价）。每个门帧决策（杀 / 放行 / 豁免）都经
+        ``on_decision`` 交出（run_config 逐条 append ``kill_decisions.jsonl`` ——
+        race 重载 ``S_tau``=bar 参照值、``theta``=null）；判杀额外经 ``notify``
+        打一行（``--quiet`` 也打，判据事件不静默）并返回 ``R5_REASON`` —— 走既有
+        terminate 链交付 best-so-far。
+        """
+        d = self._seed_best.get(seed)
+        if d is None:
+            return None
+        state = {'seed': int(seed), 'index': int(index),
+                 'gate_seconds': self._gate_seconds, 'budget': self.race_budget,
+                 'bar': self._race_bar,
+                 'incumbent': (None if self.incumbent is None
+                               else self.incumbent['density']),
+                 'judged': int(seed) in self._race_judged}
+        row = decide_race_kill(d, float(report.get('elapsed', 0.0)), state)
+        self._race_bar = state['bar']
+        if row is None:
+            return None
+        if state['judged']:
+            self._race_judged.add(int(seed))
+        self.kill_decisions.append(row)
+        if self._on_decision is not None:
+            self._on_decision(dict(row))
+        if row['would_kill']:
+            self._notify_line(
+                f"[portfolio] seed {seed} race 门杀（{R5_REASON}）："
+                f"门值 {row['d']:.2%} ≤ bar {row['S_tau']:.2%} → "
+                f'终止交付 best-so-far，省出预算')
+            return R5_REASON
+        return None
+
+    def can_start_next(self) -> bool:
+        """是否启动下一 seed：race 按名义记账复核 ``spent + 门段 <= T``。
+
+        se（se_plan 已保证 k 筛 + 1 延装得下）与 legacy 恒 True。race 的计划
+        种子数只是全门杀的乐观上界 —— 有 seed 破纪录跑满时 spent 上升更快，
+        队列在此自然提前收口（被杀省出的预算由串行队列吸收，不空转）。
+        """
+        if self.mode != 'race' or self.queue_stopped:
+            return True
+        return self._spent + self._gate_unit <= self.total_budget + 1e-9
+
+    @property
+    def spent_nominal(self) -> float:
+        """名义记账累计（秒）：被门杀记门段（gate + 启动开销）、跑满记全程。"""
+        return round(self._spent, 3)
+
+    def round_budget(self, index: int, default=None):
+        """该轮求解预算（秒）：race = race_budget / se = 阶段 1 screen · 阶段 2 ext
+        （队列序 1 起，> se_k 即延长轮）；legacy = ``default``（--time / cfg.time，
+        调用形与旧版一致）。"""
+        if self.mode == 'race':
+            return int(self.race_budget)
+        if self.mode == 'se':
+            return int(self.se_ext if int(index) > self.se_k else self.se_screen)
+        return default
+
     def _notify_line(self, msg: str) -> None:
         """判据事件输出：``notify`` 优先（run_config 传无条件 print，--quiet 也打），
         缺省回落 ``echo``，两者皆无则静默（theta_history 仍落 result.json）。"""
@@ -683,21 +832,35 @@ class PortfolioController:
     def finish_seed(self, rec: dict) -> None:
         """seed 求解返回后入账 per_seed（killed / kill_reason 由 rec 带回）。
 
-        PC-003 R3 θ 衰减：连续 ≥ m_streak 个 seed 被 kill 规则（R1/R2）淘汰 →
-        ``θ := min(θ, I + δ)``（单调只降，防 incumbent 回升抬门槛）—— 只降 kill
-        门槛，**R0 停止条件恒用 --target 真值**；衰减经 ``notify`` 打一行 + 记
-        ``theta_history``（不静默改判据）。非 kill 结束（跑满 / R0 / 异常）清零
-        连杀计数。
+        US-002 策略模式：per_seed 条目附带 ``phase``（race / screen / extension，
+        ``make_progress`` 刷新的 ``current_phase``）；race 在此做名义记账（被门杀
+        记门段、其余记全程 —— solver 收敛早退按名义记账，两臂对称）+ kept/gated
+        归档。PC-003 R3 θ 衰减：连续 ≥ m_streak 个 seed 被 kill 规则（R1/R2）
+        淘汰 → ``θ := min(θ, I + δ)``（单调只降，防 incumbent 回升抬门槛）——
+        只降 kill 门槛，**R0 停止条件恒用 --target 真值**；衰减经 ``notify``
+        打一行 + 记 ``theta_history``（不静默改判据）。非 kill 结束（跑满 / R0 /
+        异常）清零连杀计数。策略模式下 R1/R2 不评估（kill_mode='off'）、θ 不
+        维护（提前 return，R3 不触发）。
         """
         seed = int(rec['seed'])
         best = self._seed_best.get(seed)
-        self.per_seed.append({
+        entry = {
             'seed': seed,
             'killed': bool(rec.get('killed', False)),
             'kill_reason': rec.get('kill_reason') or None,
             'best_density': None if best is None else round(best, 6),
             'elapsed': rec.get('elapsed'),
-        })
+        }
+        if self.mode != 'legacy':
+            entry['phase'] = self.current_phase or self.mode
+            if self.mode == 'race':
+                if rec.get('killed') and rec.get('kill_reason') == R5_REASON:
+                    self._spent += self._gate_unit
+                    self.gated_seeds.append(seed)
+                else:
+                    self._spent += self._race_full_unit
+                    self.kept_seeds.append(seed)
+        self.per_seed.append(entry)
         if self.kill_mode == 'off':
             return
         if rec.get('killed') and rec.get('kill_reason') in (R1_REASON, R2_REASON):
@@ -729,19 +892,36 @@ class PortfolioController:
 
         激活：``{target, incumbent, per_seed, theta_history, kill_mode}``（incumbent
         含完整 ``placed_items`` 布局；theta_history 记 R3 θ 衰减事件；kill_mode =
-        生效模式）。不激活（单 seed 无 --target）：全空段 + ``kill_mode='off'``
-        （引擎未激活），best 走旧语义 —— 无旗标冒烟对拍兼容。
+        生效模式）。不激活（单 seed 无 --target 的 legacy）：全空段 +
+        ``kill_mode='off'``（引擎未激活），best 走旧语义 —— 无旗标冒烟对拍兼容。
+
+        US-002 策略模式额外附 ``mode`` + 模式子段：race ``{gate_seconds,
+        kept_seeds, gated_seeds}`` / se ``{k_screens, screen_s, ext_s, champion}``
+        （策略模式 R1/R2 引擎不评估 → kill_mode 恒 'off'、theta_history 恒空；
+        legacy 不加 mode 键 —— 无 --strategy 时与现版逐字节一致）。
         """
         if not self.engaged:
             return {'target': None, 'incumbent': None, 'per_seed': [],
                     'theta_history': [], 'kill_mode': 'off'}
-        return {
+        section = {
             'target': self.target,
             'incumbent': dict(self.incumbent) if self.incumbent is not None else None,
             'per_seed': [dict(e) for e in self.per_seed],
             'theta_history': list(self.theta_history),
             'kill_mode': self.kill_mode,
         }
+        if self.mode == 'race':
+            section['mode'] = 'race'
+            section['race'] = {'gate_seconds': round(self._gate_seconds, 3),
+                               'kept_seeds': list(self.kept_seeds),
+                               'gated_seeds': list(self.gated_seeds)}
+        elif self.mode == 'se':
+            section['mode'] = 'se'
+            section['se'] = {'k_screens': self.se_k,
+                             'screen_s': self.se_screen,
+                             'ext_s': self.se_ext,
+                             'champion': self.se_champion}
+        return section
 
     def best_record(self, solves: list[dict]) -> dict:
         """result.json 的 ``best``：激活且已见帧 → incumbent（帧级全局最优，含完整
@@ -758,19 +938,28 @@ def run_serial_portfolio(cfg, run_dir, *, controller: PortfolioController,
                          solver_opts_for=None) -> PortfolioRun:
     """经控制器串行跑完 seed 队列（run_config 现有串行循环的转发实现）。
 
-    每轮：R0 已触发则剩余 seed 不启动（AC：per_seed 对未启动 seed 无记录）→
-    ``on_seed_start(i, seed)``（轮次头打印）→ ``solve_pieces``（on_progress 挂
-    banking/进度、仅 ``--target`` 给定时挂 should_stop —— 无旗标调用形与旧版
-    完全一致）→ ``finish_seed`` 入账 → ``on_seed_done(rec)``（run_config 逐轮
-    重写 result.json）。Ctrl-C 捕获为 ``interrupted=True``（求解异常向上传播给
-    呈现层）；无论何种终止，已收帧均已入账 incumbent（中断交付不变量）。
+    每轮：R0 已触发或 race 名义预算不足则剩余 seed 不启动（AC：per_seed 对未
+    启动 seed 无记录）→ ``on_seed_start(i, seed)``（轮次头打印）→ ``solve_pieces``
+    （on_progress 挂 banking/进度；``--target`` 给定或 race 模式挂 should_stop
+    —— se 无门杀无 target 时不挂，无旗标调用形与旧版完全一致）→ ``finish_seed``
+    入账 → ``on_seed_done(rec)``（run_config 逐轮重写 result.json）。Ctrl-C
+    捕获为 ``interrupted=True``（求解异常向上传播给呈现层）；无论何种终止，
+    已收帧均已入账 incumbent（中断交付不变量）。
+
+    US-002：每轮预算经 ``controller.round_budget(i, default=time_budget)`` 解析
+    （race = race_budget、se = screen/ext 两段切换、legacy = time_budget 原样）；
+    race 队列启动前经 ``controller.can_start_next()`` 复核名义记账。se 模式在
+    阶段 1（k 轮筛选）跑完且未 R0 / 未中断后进入**阶段 2 延长轮**：冠军
+    （solve 记录 ``real_density`` argmax）同 seed 以 ``se_ext`` 预算再跑一轮
+    （``artifact_suffix='_ext'`` 防覆盖筛选产物，solve 条目附 ``phase='extension'``）。
 
     Parameters
     ----------
     controller : PortfolioController
         由调用方构造并持有（run_config 需要在逐轮回调里读它写 result.json）。
     solve : callable | None
-        单 seed 求解函数（缺省 ``pipeline.solve_pieces``；测试注入 fake solve）。
+        单 seed 求解函数（缺省 ``pipeline.solve_pieces``；测试注入 fake solve ——
+        策略模式会带 ``artifact_suffix`` 关键字，fake 需以 ``**kw`` 兜底）。
     on_seed_start / on_seed_done : callable | None
         每轮开始 / 完成回调（打印轮次头 / 逐轮落盘）。
     solver_opts_for : callable(index, seed) -> dict | None | None
@@ -783,7 +972,8 @@ def run_serial_portfolio(cfg, run_dir, *, controller: PortfolioController,
         solve = solve_pieces
     # kill 引擎的 τ = elapsed / time_budget：直接驱动（单测）未显式给预算时在此
     # 补齐（--time 覆盖 > cfg.time；都缺失则保持 None → 引擎不可评估、恒不 kill）。
-    if controller.time_budget is None:
+    # 策略模式 τ 用各自预算（race 门帧判据自带 budget，se 不评估 R1/R2）不在此补。
+    if controller.mode == 'legacy' and controller.time_budget is None:
         eff = time_budget if time_budget is not None else (
             cfg.time if cfg is not None else None)
         if eff:
@@ -791,23 +981,33 @@ def run_serial_portfolio(cfg, run_dir, *, controller: PortfolioController,
     solves: list[dict] = []
     interrupted = False
     last_round: tuple[int, int] | None = None
+
+    def _run_round(i: int, seed: int, *, suffix: str = '') -> dict:
+        """单轮求解（阶段共用）：预算 / should_stop / solver_opts 装配 + solve。"""
+        kwargs = {'seed': seed,
+                  'time_budget': controller.round_budget(i, default=time_budget),
+                  'on_progress': controller.make_progress(seed, index=i)}
+        if controller.target is not None or controller.mode == 'race':
+            kwargs['should_stop'] = controller.make_should_stop(seed, index=i)
+        if solver_opts_for is not None:
+            # i 为 1 起队列序 → 转 0 起轮换下标（pool[seed_index % len] 口径）。
+            opts = solver_opts_for(i - 1, seed)
+            if opts:
+                kwargs['solver_opts'] = dict(opts)
+        if suffix:
+            kwargs['artifact_suffix'] = suffix
+        return solve(cfg, run_dir, **kwargs)
+
     for i, seed in enumerate(controller.seeds, start=1):
         if controller.queue_stopped:           # R0：剩余队列不启动（R4 耗尽则自然结束）
+            break
+        if not controller.can_start_next():    # race：名义预算复核（se/legacy 恒 True）
             break
         last_round = (i, seed)
         if on_seed_start is not None:
             on_seed_start(i, seed)
         try:
-            kwargs = {'seed': seed, 'time_budget': time_budget,
-                      'on_progress': controller.make_progress(seed, index=i)}
-            if controller.target is not None:
-                kwargs['should_stop'] = controller.make_should_stop(seed, index=i)
-            if solver_opts_for is not None:
-                # i 为 1 起队列序 → 转 0 起轮换下标（pool[seed_index % len] 口径）。
-                opts = solver_opts_for(i - 1, seed)
-                if opts:
-                    kwargs['solver_opts'] = dict(opts)
-            rec = solve(cfg, run_dir, **kwargs)
+            rec = _run_round(i, seed)
         except KeyboardInterrupt:
             interrupted = True
             break
@@ -815,6 +1015,30 @@ def run_serial_portfolio(cfg, run_dir, *, controller: PortfolioController,
         controller.finish_seed(rec)
         if on_seed_done is not None:
             on_seed_done(rec)
+
+    # ---- US-002 se 阶段 2：冠军延长轮（阶段 1 跑满、未 R0、未中断才进入）。
+    # 冠军 = solve 记录 real_density argmax（并列取先执行者）；同 seed 换预算的
+    # 全新 run（确定性重放下延长 = 冠军全程潜力的零方差求值），产物带 _ext 后缀
+    # 防覆盖筛选 curve/best_frame；champion 先行落账（中断也可审计冠军归属）。
+    if (controller.mode == 'se' and not interrupted
+            and not controller.queue_stopped and solves
+            and controller.se_champion is None):
+        champ = int(max(solves, key=lambda r: r['real_density'])['seed'])
+        controller.se_champion = champ
+        i_ext = len(controller.seeds) + 1
+        last_round = (i_ext, champ)
+        if on_seed_start is not None:
+            on_seed_start(i_ext, champ)
+        try:
+            rec = _run_round(i_ext, champ, suffix='_ext')
+        except KeyboardInterrupt:
+            interrupted = True
+        else:
+            rec['phase'] = 'extension'
+            solves.append(rec)
+            controller.finish_seed(rec)
+            if on_seed_done is not None:
+                on_seed_done(rec)
     return PortfolioRun(solves=solves, controller=controller,
                         interrupted=interrupted, last_round=last_round)
 

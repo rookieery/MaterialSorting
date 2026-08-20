@@ -229,7 +229,8 @@ def _best_frame_record(seed: int, frame_index: int, report: dict) -> dict:
 
 def solve_pieces(cfg, run_dir, *, seed: int, time_budget: int | None = None,
                  on_progress=None, should_stop=None,
-                 solver_opts: dict | None = None) -> dict:
+                 solver_opts: dict | None = None,
+                 artifact_suffix: str = '') -> dict:
     """配置驱动的单 seed 求解（PC-001 起进程化 + 帧轨迹落盘 + 可中止）。
 
     读 ``run_dir/pieces_intermediate.json``（``commit_from_config`` 产物；每轮求解
@@ -278,6 +279,11 @@ def solve_pieces(cfg, run_dir, *, seed: int, time_budget: int | None = None,
         并入 solve_params（全 JSON 可序列化，Windows spawn 安全），清洗与换算在
         ``build_instance`` 内做（主进程 meta 构造与子进程求解同一口径）。None /
         空档 = 现行行为不变；非空时返回记录附带 ``solver_opts`` 回显字段。
+    artifact_suffix : str
+        轨迹产物文件名后缀（US-002 SE 延长轮传 ``'_ext'``）：curve/best_frame
+        写 ``curve_s{seed}{suffix}.json`` / ``best_frame_s{seed}{suffix}.json``，
+        防覆盖同 seed 的筛选轮产物（延长是同 seed 换预算的新轨迹）；缺省 '' 与
+        现行文件名逐字一致（零回归）。
 
     Returns
     -------
@@ -319,8 +325,8 @@ def solve_pieces(cfg, run_dir, *, seed: int, time_budget: int | None = None,
     n_items = len(instance.items)
     demand_sum = int(sum(it.demand for it in instance.items))
 
-    curve_path = Path(run_dir) / f'curve_s{seed}.json'
-    best_path = Path(run_dir) / f'best_frame_s{seed}.json'
+    curve_path = Path(run_dir) / f'curve_s{seed}{artifact_suffix}.json'
+    best_path = Path(run_dir) / f'best_frame_s{seed}{artifact_suffix}.json'
     state: dict = {'best': None, 'reason': None, 'proc': None, 'n_frames': 0}
 
     # curve 增量写：sparrow exploring 期 ~5ms 一帧（300s 预算可上万帧），整文件重写
