@@ -398,7 +398,8 @@ def test_cli_simulate_end_to_end(iso_env):
     assert rc == 0, err
     assert '总预算 100s' in out and 'base 曲线 6 条' in out
     assert '变体曲线 4 条（held-out）' in out
-    for name in ('single', 'best_of_3', 'kill_aggressive', 'theta_slow'):
+    for name in ('single', 'best_of_3', 'kill_aggressive', 'theta_slow',
+                 'se180', 'race180'):
         assert name in out
     assert '[simulate] 推荐: ' in out and '报告: ' in out
 
@@ -406,7 +407,11 @@ def test_cli_simulate_end_to_end(iso_env):
                      .read_text(encoding='utf-8'))
     assert rep['target'] == TARGET and rep['total_budget'] == 100.0
     assert list(rep['strategies']) == [s['name'] for s in SIM_STRATEGY_GRID]
-    for st in rep['strategies'].values():
+    for name, st in rep['strategies'].items():
+        if st['kind'] == 'strategy':
+            # sim1 总预算 100s < 双档最小配置 275s → 降级 metrics=None + note。
+            assert st['base'] is None and '最小配置' in st['note']
+            continue
         assert st['base'] is not None and st['variants'] is not None
         for m in (st['base'], st['variants']):
             assert m['ett'] > 0 and 0.0 <= m['p_reach'] <= 1.0
@@ -450,7 +455,10 @@ def test_cli_simulate_budget_eligibility(iso_env):
     assert ('[simulate] 推荐: kill_' in out) or ('[simulate] 推荐: theta_' in out)
     rep60 = json.loads((cal_root / 'sim1' / 'analysis' / 'simulation_report.json')
                        .read_text(encoding='utf-8'))
-    assert all(st['base'] is not None for st in rep60['strategies'].values())
+    assert all(st['base'] is not None for st in rep60['strategies'].values()
+               if st['kind'] != 'strategy')   # 双档 T<275 预算不足 → 降级 None
+    assert rep60['strategies']['se180']['base'] is None
+    assert '最小配置' in rep60['strategies']['race180']['note']
 
 
 def test_cli_simulate_with_shadow_log(iso_env):
@@ -506,15 +514,18 @@ def test_module_help_smoke():
 
 
 def test_simulate_tag_pool_contract(iso_env):
-    """simulate_tag 返回值契约：pools 统计 + k×B ≈ 总预算 + 报告路径。"""
+    """simulate_tag 返回值契约：pools 统计（含 US-003 配对计数）+ 非 strategy 档
+    k×B ≈ 总预算 + 报告路径。"""
     tmp_path, cal_root = iso_env
     tag_dir = _seed_sim_tag(cal_root)
     result = simulate_tag(tag_dir, TARGET)
     rep, path = result['report'], result['path']
-    assert rep['pools']['base'] == {'n_curves': 6, 'short': 6, 'full': 0}
+    assert rep['pools']['base'] == {'n_curves': 6, 'short': 6, 'full': 0, 'pairs': 0}
     assert rep['pools']['variants'] == {'n_curves': 4,
-                                        'by_variant': {'variant_0': 4}}
+                                        'by_variant': {'variant_0': 4}, 'pairs': 0}
     for st in rep['strategies'].values():
+        if st['kind'] == 'strategy':
+            continue                        # 双档按名义记账规划（92.5/182.5），非 k×B
         assert st['k'] * st['per_seed_budget'] == pytest.approx(
             rep['total_budget'], abs=0.05)
     assert path.endswith('simulation_report.json')

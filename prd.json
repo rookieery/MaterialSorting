@@ -2,16 +2,10 @@
   "branchName": "ralph/strategy-se-race-web",
   "stories": [
     {
-      "id": "US-002",
-      "title": "双模式 CLI 旗标接线与真实冒烟",
-      "description": "As a 生产使用者, I want ms-run-config --strategy 一条命令按总预算跑双模式（race 门杀=默认方案B / SE 筛延=方案A）, so that 20 分钟以上预算自动拿到比均分更高的利用率。详见 tasks/prd-strategy-se-race.md US-002（含 R1 增量）。\n\n具体任务：\n1. materialSorting-server/src/materialsorting/cli/run_config.py — 新旗标 --strategy [se|race]（nargs='?' const='race' default=None，裸旗标=race=默认，choices 外退出1）；策略模式 --time=总预算秒数且必填（缺省退出1，错误信息明示）；--se-screen 90 / --se-extend 180 / --race-budget 180 / --race-gate 0.5（(0,1) 开区间）。\n2. materialSorting-server/src/materialsorting/cli/portfolio.py — PortfolioController 加 mode（legacy|race|se）：策略模式 R1/R2 不评估、θ 不维护；种子流=strategy_seed_stream；名义记账 92.5/182.5，start 条件 spent+92.5≤T。race：每 seed solve_pieces(time_budget=race_budget)+make_should_stop 接 US-001 判据（判杀 R5_REASON 走既有 terminate 链交付 best-so-far，门杀行 --quiet 也打）。se：阶段1 k×--se-screen 串行筛选；阶段2 冠军（argmax real_density）以 --se-extend 再跑一轮，产物写 curve_s{seed}_ext.json / best_frame_s{seed}_ext.json（防覆盖筛选产物），solve 条目加 phase:'extension'。两模式被杀/被筛 seed 最优帧照常入 incumbent。\n3. 互斥与共存：--strategy 与 --kill 显式同给退出1；与 --target 共存（R0 达标即停优先）；与 --lns/--solver-opts/--rotate-opts 兼容透传；预算不足退出1；race 决策逐条写 run_dir/kill_decisions.jsonl（复用 schema，S_tau=bar 参照值、theta=null，README 注明重载）。\n4. result.json portfolio 段新增 mode 字段+模式子段（race {gate_seconds,kept_seeds,gated_seeds} / se {k_screens,screen_s,ext_s,champion}）；无 --strategy 时与现版输出逐字节一致（对拍单测）。\n5. R1 增量（US-004 前置）：策略模式 commit 完成后、首轮求解前写 run_dir/strategy.json {mode,total_budget,planned_seeds,race:{gate_seconds}|se:{k_screens,screen_s,ext_s},started_at}——run 启动即暴露模式/计划轮数/种子流（result.json 要等首 seed 完成才首次落盘，race 默认下前 ~180s 无信息）。\n\n验收标准：\n- 真实冒烟（~10min 机时）：--strategy --time 240 --race-budget 60 --race-gate 0.5 → ≥1 seed 于 ~30s 被门杀（kill_reason=R5_race_gate、决策行在场、被杀 best 入 incumbent）rc=0；--strategy se --time 300 --se-screen 30 --se-extend 60 → 阶段1 k 个 30s 筛选+1 个 60s 延长（_ext 产物在场、incumbent≥max 筛选值）rc=0。\n- python -m materialsorting.cli.run_config --help 含新旗标；pytest 全绿；AST 分层零反向；无 --strategy 时 result.json 零回归（逐字节一致）。",
-      "passes": true
-    },
-    {
       "id": "US-003",
       "title": "simulate 双档扩展与文档同步",
       "description": "As a 参数调优者, I want ETT 仿真器支持 se180/race180 双策略档, so that 换实例类时能离线重标收益与门槛，不烧真实机时。详见 tasks/prd-strategy-se-race.md US-003。\n\n具体任务：\n1. materialSorting-server/src/materialsorting/cli/calibration.py — simulate 策略网格新增 se180/race180 档（跨 fork 诚实口径：筛选读 short 曲线终值、延长/续跑读 full 曲线 180s 帧，同总预算口径）；simulation_report.json strategies 增对应行（E[max 口径 delivered 与漏 max 率一并输出）；双档纳入推荐候选（判据同现有）。\n2. 单测≥6 例：合成池上双模式行为（se 筛+延结构、race 门杀省时再投资、首 seed 参照、同 seed 不二次续跑）、报告字段、与 US-001 fixture 回放器共享判据逻辑（DRY 断言）。\n3. 文档同步：README「配置驱动求解」新增策略双模式块（词汇表+用法示例+四档速查表+现场对跑 88.38 平局与确定性重放结论）、CLAUDE.md 运行方式条目、.docs/technical/agent-file-map.md、materialSorting-server/tests/AGENTS.md。\n\n验收标准：\n- 若 out/portfolio_calibration/5336_coded_really/ 存在则 simulate --tag 5336_coded_really --target 0.85 输出含双档行（运营产物非测试依赖）。\n- pytest 全绿；文档四处同步完成。",
-      "passes": false
+      "passes": true
     },
     {
       "id": "US-004",

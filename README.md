@@ -111,6 +111,28 @@ ms-run-config data/configs/5336_coded_really.json --time 5 --target 0.9 --kill o
 
 > 语义过载备注：`--strategy race`（门杀模式）复用同一 `kill_decisions.jsonl` 逐行 schema 记录门判决 —— 其中 `S_tau` 存**门参考值 bar**（非包络 `S(τ)`）、`theta` 恒 `null`（race 不维护 θ）、`rule` 为 `R5_race_gate`；含豁免/通过/门杀三类行，以 `would_kill` 区分。
 
+**策略双模式（US-001/002，`--strategy [se|race]`，给定总预算拿更高利用率）**：词汇表 —— **race 门杀**（方案 B，裸旗标 `--strategy` 即此档）：每 seed 按 `--race-budget`（默认 180s）预算启动，**门时刻**（预算 × `--race-gate` τ，默认 0.5 → 90s）处**严格破纪录**（当前 best 严格 > **bar** 才续跑满程，否则真 terminate + best-so-far 帧交付，省出预算再投资后续 seed；首 seed 豁免 —— 无 bar 参照即锚定交付下限）；**SE 筛延**（方案 A，`--strategy se`）：阶段 1 k 轮 `--se-screen`（默认 90s）串行筛选，阶段 2 **冠军**（筛选 argmax，平手取队列先）同 seed 全新 `--se-extend`（默认 180s）run，边车 `best_frame_s{seed}_ext.json`；**名义记账**：门杀 seed 计 92.5s（90s 门 + 2.5s 启动）、满程 seed 计 182.5s（180s + 2.5s），`--time` 在策略模式 = **总预算秒数且必填**（与两档共享口径对账，T≥275 才可启动）；**确定性重放**：同 seed + 同 time_budget 逐帧一致（求解链路确定性），因此 SE 的延长 = 冠军 180s 潜力的**零方差求值** —— 两模式期望等价是机制保证而非巧合。
+
+```bash
+ms-run-config data/configs/5336_coded_really.json --strategy --time 1200 --quiet                     # race 门杀（默认档）
+ms-run-config data/configs/5336_coded_really.json --strategy se --time 1200 --quiet                  # SE 筛延
+ms-run-config data/configs/5336_coded_really.json --strategy --time 600 --race-gate 0.4              # 调门位置（默认 0.5）
+ms-run-config data/configs/5336_coded_really.json --strategy se --time 600 --se-screen 90 --se-extend 180   # 显式双参（即默认值）
+```
+
+参数旗标 `--se-screen` / `--se-extend` / `--race-budget` / `--race-gate`（(0,1) 开区间）须与 `--strategy` 同给；种子流无重复（config `seeds` 优先、max+1 补齐）；`--target` 共存时 R0 达标即停优先于模式继续；`--kill` 与 `--strategy` 显式同给退出 1（策略模式判据内建，不叠 kill 引擎）。产物 `run_dir/strategy.json`（`mode`/`total_budget`/`planned_seeds`/`race|se` 参数/kill 统计）；无 `--strategy` 时行为与 result.json 与现版**逐字节一致**（零回归红线）。
+
+**四档速查表（5336 实例；离线对决跨 fork 诚实口径：筛选读 90s 曲线终值、延长/续跑读 300s 曲线 180s 帧，8 配对 seed、bootstrap 3000）**：
+
+| 档位 | 均分 k×90s | 方案 A：SE 延 180 | 方案 B：race180（破纪录门） |
+|---|---|---|---|
+| 10min | 86.32% | 86.33% | 86.40% |
+| 20min | 86.80% | 87.01% | 87.05% |
+| 30min | 86.94% | 87.18% | 87.16% |
+| 1h | 87.00% | 87.22% | 87.22% |
+
+10min 档三法打平属预期（延长占预算比过高、筛选票过少），20min 起双模式比均分 +0.2pt 量级，1h 达上限 —— 不设 auto 阈值、四档全支持两模式（用户显式选择）。**现场对跑**（live_duel_ab，共享 fresh seed 序列 Random(2026)、同一 commit、各 1200s 名义预算）：**A=B=88.38% 精确平**（冠军 seed221：A 筛选 87.63 → 延长 88.38；B 门值 87.99 → 续跑 88.38，后续 11 seed 全部门杀且事后全部正确；最优帧 88.41% @172s 两臂相同）—— 与确定性重放机制互为印证。
+
 **solver_opts 透传与配置轮换（PC-006）**：`--solver-opts '<JSON>'`（spyrrow 求解旋钮，**全 seed 生效**）/ `--rotate-opts`（内置 4 档轮换池逐 seed 取档 `pool[队列序 % 4]`，池首空档 = 默认行为）—— 探索/压缩配比（`exploration_pct` 0.1~0.95，换算两段 int 秒与 total_computation_time 互斥）+ 四叉树深度（`quadtree_depth` 3/4/5）+ 并行核数（`num_workers`，默认 4）让不同 seed 搜索行为**去相关**、上尾更易被摸到。白名单外键忽略、越界 clamp（清洗单一真相源 `web.solver._normalize_solver_opts`）；两旗标互斥 / JSON 坏串 / 非对象 → 退出码 1；不传任何旗标 = 现行行为不变（WS 协议与 web 前端零改动）；旗标给了才在 result.json `config` 段回显 `solver_opts` / `rotate_opts`。
 
 ```bash
@@ -138,7 +160,7 @@ ms-run-config data/configs/5336_coded_really.json --time 300 --lns --lns-time 60
 - **batch**：`--config <7键配置> [--tag T] [--short-seeds 20] [--short-time 90] [--full-seeds 8] [--full-time N]`（full-time 缺省用 config 的 `time`）。标定基实例 = `data/configs/5336_coded_really.json`（真实 per_type 公差 + 真实订单配比）。`commit_from_config` 只跑一次，逐 seed 串行 `solve_pieces`；曲线/best 帧落 `out/portfolio_calibration/<tag>/base/{short,full}/`，逐 seed 写 manifest.json（Ctrl-C 安全，重跑跳过已完整 seed）。
 - **variants**：确定性订单邻域变体（seeded RNG，RNG seed=i）—— 只抖 `quantities` 的 (g码, 码∈sizes) 条目 `n' = max(1, n±1)`（保底 1 片；惰性条目不动），per_type/gate_mm/master_dxf/sizes 逐字段固定。产出 `variant_{i}.json`（i=0..3）+ 每变体 6 seed × 90s + 1 × 300s 曲线（共享同一 commit）。
 - **analyze**：`--tag T --target P [--env-quantile 0.25]` 聚合曲线 → `analysis/`：`summary.json`（每 seed 终值/best/收敛平台 + mean/σ/P(≥target)）、`controller_params.json`（成功包络 S(τ)（τ 网格 0.05~1.0 步长 0.05）+ τ0/W/m/ε/δ/m_streak 推荐值；达标 seed <10 或包络格点不足 → `calibrated: false` 拒绝下发）、`generalization.json`（base 包络套用到各变体的误杀率/可迁移判定）。内部含 train/test 误杀回测 + 短/全秩相关 + uplift q50/q95。
-- **simulate**（ETT 离线仿真器）：`--tag T --target P [--budget SEC] [--scenarios 500] [--env-quantile 0.25] [--shadow-log kill_decisions.jsonl]` 用历史轨迹**零求解成本**回放策略网格（单 seed 基线 / 均匀 best-of-k / kill 三档 / θ 衰减两档，**同总预算公平比较** k×B 恒等）→ `analysis/simulation_report.json` + 控制台表格：每策略 ETT（达标 = 首次达标时刻，不可达 = 实际耗时，kill 省时计入）、P(达标|预算内)、误杀率、不可达场景 incumbent 终值（截断轨迹用「kill 时刻 best + 条件期望增量」插值，物理下界 ≥ kill 时刻 best-so-far，无 hindsight）。**变体曲线作 held-out**（kill 包络只源自 base 池、按仿真预算 B 绝对墙钟重采样）：推荐档须 base 与变体 ETT 双不劣于单 seed 基线且两者误杀率 <5%，`recommendation.params` 键与 controller_params.json 同构可直接抄进 `--params`。场景采样确定性（|pool|^k ≤ 4096 全枚举，否则固定种子 bootstrap）。`--shadow-log` 统计真实 would-kill 决策的假阳性（配同目录 curve_s{seed}.json；决策后才达标 = 假阳性，全程不达标 = 正确 kill）。
+- **simulate**（ETT 离线仿真器）：`--tag T --target P [--budget SEC] [--scenarios 500] [--env-quantile 0.25] [--shadow-log kill_decisions.jsonl]` 用历史轨迹**零求解成本**回放策略网格（单 seed 基线 / 均匀 best-of-k / kill 三档 / θ 衰减两档 / **策略双档 se180·race180**（US-003），**同总预算公平比较** k×B 恒等）→ `analysis/simulation_report.json` + 控制台表格：每策略 ETT（达标 = 首次达标时刻，不可达 = 实际耗时，kill 省时计入）、P(达标|预算内)、误杀率、不可达场景 incumbent 终值（截断轨迹用「kill 时刻 best + 条件期望增量」插值，物理下界 ≥ kill 时刻 best-so-far，无 hindsight）。**策略双档走配对曲线回放**（`base/{short,full}` 同 seed 配对、short 终值 ≥90s 且 full 终值 ≥180s 才合格；跨 fork 诚实口径同现场：筛选读 short 曲线终值、延长/续跑读 full 曲线 180s 帧），judgment 复用 US-001 单一真相源 `decide_race_kill`/`race_plan`/`se_plan`，另出**E[max] 口径**副表（delivered 期望 / 漏 max 率 / 对配对 uniform90 基线的增益）。**变体曲线作 held-out**（kill 包络只源自 base 池、按仿真预算 B 绝对墙钟重采样）：推荐档须 base 与变体 ETT 双不劣于单 seed 基线且两者误杀率 <5%（策略双档同判据纳入候选，`params` 含 `strategy`/`time`/`race_*`/`se_*` 键），`recommendation.params` 键与 controller_params.json 同构可直接抄进 `--params`。场景采样确定性（|pool|^k ≤ 4096 全枚举，否则固定种子 bootstrap）。`--shadow-log` 统计真实 would-kill 决策的假阳性（配同目录 curve_s{seed}.json；决策后才达标 = 假阳性，全程不达标 = 正确 kill）。
 
 ```bash
 python -m materialsorting.cli.calibration batch --config data/configs/5336_coded_really.json

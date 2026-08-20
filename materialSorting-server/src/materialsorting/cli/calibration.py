@@ -85,6 +85,19 @@ r"""PC-004 标定管线（batch / variants / analyze）+ PC-005 ETT 离线仿真
     ``ms-run-config`` 的 shadow 决策日志（配同目录 curve_s{seed}.json）统计真实
     would-kill 决策的假阳性。产物：``analysis/simulation_report.json`` + 控制台
     对比表。确定性：除 ``generated`` 时间戳外同输入两次运行逐字节一致。
+  - **simulate 策略双档**（US-003）：网格追加 ``se180`` / ``race180``（``--strategy``
+    双模式的离线镜像），**跨 fork 诚实口径** —— se 筛选读 short（90s）曲线终值、
+    延长与 race 续跑读 full 曲线 180s 帧（同 seed 值配对 ``paired_curves``，输入
+    = batch 的 base/{short,full} 同 seed 交集）；判据单一真相源在 ``portfolio``
+    （``se_plan`` / ``race_plan`` / ``decide_race_kill``，与生产 US-001/002 同源）。
+    名义记账同口径（92.5/182.5，启动开销 2.5s）：race 队列启动复核
+    ``spent + 门段 <= T``（门杀省时再投资）、uniform90 基线 k' = T // 92.5。
+    指标双输出：ETT 口径（字段与 kill/θ 档同构 → 推荐判据同现有代码路径，race
+    误杀 = 被杀 seed 的 180s 窗口内本可达标）+ **E[max] 口径**（``delivered_mean``
+    交付期望 / ``oracle_max_mean`` / ``miss_max_rate`` 漏 max 率 /
+    ``uniform90_delivered_mean`` 配对基线与 ``gain_vs_uniform90`` 增益 —— 换实例类
+    离线重标收益与门槛，不烧真实机时）。预算不足 / 无配对曲线 → 该档 metrics=None
+    + note（不进推荐）。
 
 退出码：0 成功；1 配置/输入错误（ConfigError / --target 越界 / tag 无曲线 /
 --shadow-log 不可读）；2 求解失败；130 Ctrl-C（已完成 seed 产物已落盘）。
@@ -109,19 +122,25 @@ from pathlib import Path
 from .. import paths
 from .config import ConfigError, load_config
 from .pipeline import commit_from_config, solve_pieces
-from .portfolio import (KILL_DEFAULTS, PortfolioController, R0_REASON,
-                        make_envelope, r1_below_envelope, resolve_kill_params)
+from .portfolio import (FULL_UNIT_S, KILL_DEFAULTS, R0_REASON, R5_REASON,
+                        RACE_BUDGET_S, RACE_GATE_TAU, SEED_UNIT_S, SE_EXT_S,
+                        SE_SCREEN_S, PortfolioController, StrategyBudgetError,
+                        decide_race_kill, make_envelope, race_gate_seconds,
+                        race_plan, r1_below_envelope, resolve_kill_params,
+                        se_plan)
 
 __all__ = ['CalibrationError', 'DEFAULT_SIM_SCENARIOS', 'SIM_STRATEGY_GRID',
            'TAU_GRID', 'backtest', 'best_density_upto', 'calibration_dir',
            'conditional_gain', 'curve_stats', 'envelope_at_budget',
-           'envelope_from_curves', 'evaluate_strategy', 'generate_variants',
+           'envelope_from_curves', 'evaluate_strategy',
+           'evaluate_strategy_tier', 'generate_variants',
            'interpolate_truncated_final', 'jitter_quantities', 'load_curve',
-           'load_group_curves', 'main', 'rank_correlation', 'recommend_strategy',
-           'replay_r1', 'run_batch', 'run_variants', 'scenario_incumbent_final',
-           'separation_tau0', 'shadow_log_stats', 'simulate_portfolio',
-           'simulate_tag', 'spearman', 'split_train_test', 'time_to_target',
-           'truncate_curve', 'uplift_distribution']
+           'load_group_curves', 'main', 'paired_curves', 'rank_correlation',
+           'recommend_strategy', 'replay_r1', 'run_batch', 'run_variants',
+           'scenario_incumbent_final', 'separation_tau0', 'shadow_log_stats',
+           'simulate_portfolio', 'simulate_strategy_scenario', 'simulate_tag',
+           'spearman', 'split_train_test', 'time_to_target', 'truncate_curve',
+           'uplift_distribution']
 
 # 退出码（与 run_config 同风格）。
 _EXIT_OK = 0
@@ -885,6 +904,14 @@ _SIM_RNG_SEED = 0
 # （resolve_kill_params 合并语义；未列键回落保守默认）。θ 衰减档需要 k 足够大
 # 才能让连杀 → 衰减 → 影响后续 seed 的链条在场景内发生（seed 1 永不 kill，
 # 故 m_streak < k 是必要条件）。
+#
+# US-003 策略双档（kind='strategy'）：与 kill/θ 档不同，不按 k×B 均分 ——
+# se180 = se_plan(T) 轮 × 90s 筛选 + 冠军 180s 延长、race180 = 每 seed 180s
+# 预算 + 90s 门杀省时再投资（名义记账 92.5/182.5，判据单一真相源在
+# ``portfolio`` 的 se_plan / race_plan / decide_race_kill）。需要**同 seed 值
+# 配对**的 short/full 曲线（跨 fork 诚实口径：筛选读 short 终值、延长/续跑读
+# full 曲线 180s 帧），指标双输出：ETT 口径（与 kill/θ 档同字段名，推荐判据
+# 同现有代码路径）+ E[max] 口径（delivered / 漏 max 率 / 配对 uniform90 基线）。
 SIM_STRATEGY_GRID: tuple[dict, ...] = (
     {'name': 'single', 'kind': 'baseline', 'k': 1, 'kill': None},
     {'name': 'best_of_2', 'kind': 'portfolio', 'k': 2, 'kill': None},
@@ -899,6 +926,8 @@ SIM_STRATEGY_GRID: tuple[dict, ...] = (
      'kill': {'tau0': 0.2, 'W': 5.0, 'm': 0.01, 'delta': 0.005, 'm_streak': 2}},
     {'name': 'theta_slow', 'kind': 'theta', 'k': 5,
      'kill': {'tau0': 0.2, 'W': 5.0, 'm': 0.01, 'delta': 0.001, 'm_streak': 3}},
+    {'name': 'se180', 'kind': 'strategy', 'mode': 'se'},
+    {'name': 'race180', 'kind': 'strategy', 'mode': 'race'},
 )
 
 
@@ -1173,16 +1202,332 @@ def evaluate_strategy(pool: list[list[dict]], spec: dict, *, target: float,
     return out
 
 
+# -------------------------------------------------------------- 策略双档离线回放（US-003）
+
+# 推荐候选 kind：kill/θ 档（--params 消费）+ 策略双档（--strategy 消费）。
+_RECOMMEND_KINDS = ('kill', 'theta', 'strategy')
+
+
+def paired_curves(short_dir: str | Path,
+                  full_dir: str | Path) -> dict[int, tuple[list[dict], list[dict]]]:
+    """同 seed 值配对的 short/full 曲线（跨 fork 诚实口径的输入侧）。
+
+    batch 的 base 两组（short 90s / full 300s）按同 seed 值采样 → 交集即配对
+    池；seed 升序确定性。返回 ``{seed: (short_curve, full_curve)}``（空组交集
+    为空 dict，调用方按「无配对曲线」降级）。
+    """
+    short = load_group_curves(short_dir)
+    full = load_group_curves(full_dir)
+    return {s: (short[s], full[s]) for s in sorted(set(short) & set(full))}
+
+
+def _eligible_pairs(pairs) -> list[tuple[list[dict], list[dict]]]:
+    """双档可回放的配对：short 原生 ≥ 筛选预算 90s 且 full 原生 ≥ 续跑/延长
+    预算 180s（预算外无观测不外推，与 ``_eligible_pool`` 同原则）。"""
+    return [(sc, fc) for sc, fc in pairs
+            if _final_elapsed(sc) >= SE_SCREEN_S - 1e-6
+            and _final_elapsed(fc) >= RACE_BUDGET_S - 1e-6]
+
+
+def _uniform90_delivered(pairs, total_budget: float) -> float | None:
+    """均分 k×90s 基线交付（E[max] 口径的对照组）：k' = T // SEED_UNIT_S 轮
+    90s 筛选（名义记账与 se/race 同口径），交付 = 各轮 short 曲线 90s 终值 max。"""
+    k = int(float(total_budget) // SEED_UNIT_S)
+    vals = [best_density_upto(sc, SE_SCREEN_S) for sc, _fc in list(pairs)[:k]]
+    vals = [v for v in vals if v is not None]
+    return max(vals) if vals else None
+
+
+def simulate_strategy_scenario(pairs, mode: str, total_budget: float,
+                               *, target: float | None = None) -> dict:
+    """单场景策略双模式回放（US-003，跨 fork 诚实口径，判据单一真相源在
+    ``portfolio``：``se_plan`` / ``race_plan`` / ``decide_race_kill``）。
+
+    ``pairs`` = 队列序配对曲线 ``[(short_curve, full_curve), ...]``：
+
+    - **race（门杀）**：每 seed 以 ``RACE_BUDGET_S``(180s) 预算回放 **full**
+      曲线，门帧（``race_gate_seconds`` = 90s）经 ``decide_race_kill`` 判杀
+      （首 seed 豁免、严格破纪录才续跑、bar 含被杀者、每 seed 至多一笔）；
+      被杀 seed 交付 kill 时刻 best-so-far（与生产 terminate 链同口径），跑满
+      seed 交付 180s 窗口 best。队列启动条件 = 名义记账 ``spent + 门段 <= T``
+      （``STRATEGY_STARTUP_S`` 口径，与 ``PortfolioController.can_start_next``
+      一致 —— 被杀省出的预算由串行队列再投资）。
+    - **se（筛延）**：``se_plan(T)`` 轮 × ``SE_SCREEN_S``(90s) 筛选（读
+      **short** 曲线终值 —— 跨 fork 诚实：筛选与延长是不同 fork 的独立 run，
+      不偷看同 fork 后段）+ 冠军（筛选值 argmax，并列取先执行者）以
+      ``SE_EXT_S``(180s) 预算延长（读 **full** 曲线 180s 帧），延长恰一次
+      （同 seed 不二次续跑）。
+    - ``target`` 给定时 R0 恒先（当前帧 density ≥ target 即停整场景，与
+      ``--target`` 共存语义一致：达标即停优先于模式继续）。
+
+    Returns
+    -------
+    dict
+        ``{'reached', 'wall_time', 'delivered', 'oracle_max', 'miss_max',
+        'started', 'per_seed'}``；per_seed outcome：race = ``full|kill|r0``、
+        se = ``screen|extension|r0``；kill 条目带 ``false_kill`` oracle（被杀
+        seed 的 full 曲线 180s 窗口内本可达标 —— R0 先判保证达标时刻必在门后）。
+        ``oracle_max`` = 启动 seed 的 full 曲线 180s 帧潜力 max（漏 max 分子）；
+        ``miss_max`` = delivered < oracle_max（交付错过全程最优）。wall_time 用
+        曲线实际 elapsed（与 ``simulate_portfolio`` 同 ETT 口径）。
+    """
+    if mode not in ('se', 'race'):
+        raise CalibrationError(f'策略双档 mode 须为 se/race，当前为 {mode!r}')
+    t = float(total_budget)
+    per_seed: list[dict] = []
+    delivered = 0.0
+    oracle_vals: list[float] = []
+    offset = 0.0
+    reached = False
+    wall_time = 0.0
+    started = 0
+
+    if mode == 'race':
+        gate = race_gate_seconds(RACE_BUDGET_S, RACE_GATE_TAU)
+        spent = 0.0
+        bar = None
+        for index, (_short_c, full_c) in enumerate(pairs, start=1):
+            if spent + SEED_UNIT_S > t + 1e-9:      # can_start_next 名义口径
+                break
+            started += 1
+            oracle_vals.append(best_density_upto(full_c, RACE_BUDGET_S) or 0.0)
+            state = {'seed': index, 'index': index, 'gate_seconds': gate,
+                     'budget': RACE_BUDGET_S, 'bar': bar,
+                     'incumbent': delivered if delivered > 0.0 else None,
+                     'judged': False}
+            frames = truncate_curve(full_c, RACE_BUDGET_S)
+            best = -math.inf
+            outcome, reason, t_stop = 'full', None, None
+            for fr in frames:
+                d = float(fr.get('density', 0.0))
+                if d > best:
+                    best = d
+                el = float(fr.get('elapsed', 0.0))
+                if target is not None and d >= target:
+                    outcome, reason, t_stop = 'r0', R0_REASON, el
+                    break                       # R0 恒先（--target 共存语义）
+                row = decide_race_kill(best, el, state)
+                if row is not None and row['would_kill']:
+                    outcome, reason, t_stop = 'kill', R5_REASON, el
+                    break
+            bar = state['bar']
+            if best > delivered:
+                delivered = best
+            if outcome == 'r0':
+                per_seed.append({'index': index, 'outcome': 'r0', 'reason': reason,
+                                 't_stop': t_stop, 'false_kill': None})
+                reached = True
+                wall_time = offset + t_stop
+                break                           # 剩余队列不启动
+            if outcome == 'kill':
+                fk = None
+                if target is not None:
+                    fk = time_to_target(truncate_curve(full_c, RACE_BUDGET_S),
+                                        target) is not None
+                per_seed.append({'index': index, 'outcome': 'kill', 'reason': reason,
+                                 't_stop': t_stop, 'false_kill': fk})
+                offset += t_stop
+                spent += SEED_UNIT_S             # 被杀记门段（名义）
+            else:
+                last = float(frames[-1].get('elapsed', 0.0)) if frames else RACE_BUDGET_S
+                per_seed.append({'index': index, 'outcome': 'full', 'reason': None,
+                                 't_stop': last, 'false_kill': None})
+                offset += last
+                spent += FULL_UNIT_S             # 跑满记全程（名义）
+            wall_time = offset
+    else:
+        k_screens, ext_s = se_plan(t)
+        screens = list(pairs)[:k_screens]
+        screen_vals: list[float] = []
+        for index, (short_c, full_c) in enumerate(screens, start=1):
+            started += 1
+            oracle_vals.append(best_density_upto(full_c, ext_s) or 0.0)
+            frames = truncate_curve(short_c, SE_SCREEN_S)
+            best = -math.inf
+            t_reach = None
+            last = 0.0
+            for fr in frames:
+                d = float(fr.get('density', 0.0))
+                if d > best:
+                    best = d
+                last = float(fr.get('elapsed', 0.0))
+                if target is not None and d >= target:
+                    t_reach = last
+                    break                       # R0：达标即停（跳过延长）
+            if best > delivered:
+                delivered = best
+            screen_vals.append(best)
+            per_seed.append({'index': index,
+                             'outcome': 'r0' if t_reach is not None else 'screen',
+                             'reason': R0_REASON if t_reach is not None else None,
+                             't_stop': t_reach if t_reach is not None else last,
+                             'false_kill': None})
+            if t_reach is not None:
+                reached = True
+                wall_time = offset + t_reach
+                break
+            offset += last if frames else SE_SCREEN_S
+            wall_time = offset
+        if not reached and screens:
+            # 冠军延长（恰一次）：筛选值 argmax，并列取先执行者（max 语义）。
+            champ_i = max(range(len(screens)), key=lambda i: screen_vals[i])
+            champ_full = screens[champ_i][1]
+            frames = truncate_curve(champ_full, ext_s)
+            best = -math.inf
+            t_reach = None
+            last = 0.0
+            for fr in frames:
+                d = float(fr.get('density', 0.0))
+                if d > best:
+                    best = d
+                last = float(fr.get('elapsed', 0.0))
+                if target is not None and d >= target:
+                    t_reach = last
+                    break
+            if best > delivered:
+                delivered = best
+            per_seed.append({'index': champ_i + 1,
+                             'outcome': 'r0' if t_reach is not None else 'extension',
+                             'reason': R0_REASON if t_reach is not None else None,
+                             't_stop': t_reach if t_reach is not None else last,
+                             'false_kill': None, 'champion': True})
+            if t_reach is not None:
+                reached = True
+            offset += last if frames else ext_s
+            wall_time = offset
+    oracle = max(oracle_vals) if oracle_vals else None
+    return {'reached': reached, 'wall_time': round(wall_time, 3),
+            'delivered': round(delivered, 6), 'oracle_max': oracle,
+            'miss_max': (delivered < oracle - 1e-9) if oracle is not None else None,
+            'started': started, 'per_seed': per_seed}
+
+
+def evaluate_strategy_tier(pairs, spec: dict, *, target: float,
+                           total_budget: float,
+                           n_scenarios: int = DEFAULT_SIM_SCENARIOS,
+                           seq_len: int | None = None) -> dict:
+    """策略双档（se180/race180）在配对曲线池上的回放指标（US-003）。
+
+    跨 fork 诚实口径（筛选读 short 终值、延长/续跑读 full 180s 帧）+ 同总预算
+    名义记账（92.5/182.5，与 ``se_plan``/``race_plan``/uniform90 基线同口径）。
+    指标双输出：
+
+    - **ETT 口径**（``ett``/``ett_reached``/``p_reach``/误杀率）：字段名与
+      kill/θ 档一致 → ``recommend_strategy`` 推荐判据同现有代码路径直接消费
+      （race 门杀误杀 = 被杀 seed 的 180s 窗口内本可达标）；
+    - **E[max] 口径**：``delivered_mean``（交付期望）、``oracle_max_mean``、
+      ``miss_max_rate``（漏 max 率）、配对 ``uniform90_delivered_mean`` 与
+      ``gain_vs_uniform90``（同场景序列配对比较 —— 换实例类离线重标收益，
+      不烧真实机时）。
+
+    eligible 配对 = short 原生 ≥ 90s 且 full 原生 ≥ 180s；``seq_len`` = 场景
+    采样序列长度（调用方对齐双档与 uniform90 基线的最大需求，保证同池同序列
+    可比；缺省按本档规划 + 基线轮数推导）。预算不足（``StrategyBudgetError``）
+    或无配对曲线 → ``metrics=None`` + note（该档无数据，不进推荐）。
+    """
+    mode = str(spec['mode'])
+    t = float(total_budget)
+    out: dict = {'kind': 'strategy', 'mode': mode, 'kill_params': None,
+                 'envelope': None, 'n_pool': len(pairs), 'total_budget': t}
+    try:
+        if mode == 'race':
+            n_planned, gate_s = race_plan(t)
+            plan = {'n_planned': n_planned, 'race_budget': RACE_BUDGET_S,
+                    'race_gate_tau': RACE_GATE_TAU, 'gate_seconds': gate_s,
+                    'nominal_gate_unit': SEED_UNIT_S,
+                    'nominal_full_unit': FULL_UNIT_S}
+            k_disp, b_disp, need = n_planned, RACE_BUDGET_S, n_planned
+        else:
+            k_screens, ext_s = se_plan(t)
+            plan = {'k_screens': k_screens, 'screen_s': SE_SCREEN_S, 'ext_s': ext_s,
+                    'nominal_seed_unit': SEED_UNIT_S,
+                    'nominal_full_unit': FULL_UNIT_S}
+            k_disp, b_disp, need = k_screens, SE_SCREEN_S, k_screens
+    except StrategyBudgetError as e:
+        out.update({'k': None, 'per_seed_budget': None, 'plan': None,
+                    'n_eligible': 0, 'metrics': None,
+                    'note': f'总预算 {t:g}s 不足策略双档最小配置（{e}）'})
+        return out
+    out.update({'k': k_disp, 'per_seed_budget': b_disp, 'plan': plan})
+    eligible = _eligible_pairs(pairs)
+    out['n_eligible'] = len(eligible)
+    if not eligible:
+        out['metrics'] = None
+        out['note'] = ('无同 seed 配对的 short/full 曲线（双档需 base/short 与 '
+                       'base/full 同 seed 配对 —— 先跑 batch 的 full 组）')
+        return out
+    k_uniform = int(t // SEED_UNIT_S)
+    seq = int(seq_len) if seq_len else max(need, k_uniform)
+    idx_tuples, sample_mode = _scenario_tuples(len(eligible), seq, n_scenarios)
+    walls: list[float] = []
+    reached_walls: list[float] = []
+    delivered_vals: list[float] = []
+    oracle_vals: list[float] = []
+    uniform_vals: list[float] = []
+    miss = 0
+    kills = false_kills = 0
+    started_sum = 0
+    for tup in idx_tuples:
+        chunk = [eligible[i] for i in tup]
+        r = simulate_strategy_scenario(chunk, mode, t, target=target)
+        started_sum += r['started']
+        walls.append(r['wall_time'])
+        if r['reached']:
+            reached_walls.append(r['wall_time'])
+        delivered_vals.append(r['delivered'])
+        if r['oracle_max'] is not None:
+            oracle_vals.append(r['oracle_max'])
+        if r['miss_max']:
+            miss += 1
+        u = _uniform90_delivered(chunk, t)
+        if u is not None:
+            uniform_vals.append(u)
+        for e in r['per_seed']:
+            if e['outcome'] == 'kill':
+                kills += 1
+                if e['false_kill']:
+                    false_kills += 1
+    n = len(idx_tuples)
+    d_mean = statistics.fmean(delivered_vals) if delivered_vals else None
+    u_mean = statistics.fmean(uniform_vals) if uniform_vals else None
+    out['metrics'] = {
+        'n_scenarios': n,
+        'mode': sample_mode,
+        'ett': round(statistics.fmean(walls), 3),
+        'ett_reached': (round(statistics.fmean(reached_walls), 3)
+                        if reached_walls else None),
+        'p_reach': round(len(reached_walls) / n, 4),
+        'n_unreachable': n - len(reached_walls),
+        'delivered_mean': None if d_mean is None else round(d_mean, 6),
+        'delivered_sigma': (round(statistics.stdev(delivered_vals), 6)
+                            if len(delivered_vals) >= 2 else 0.0),
+        'oracle_max_mean': (round(statistics.fmean(oracle_vals), 6)
+                            if oracle_vals else None),
+        'miss_max_rate': round(miss / n, 4),
+        'uniform90_delivered_mean': None if u_mean is None else round(u_mean, 6),
+        'gain_vs_uniform90': (round(d_mean - u_mean, 6)
+                              if d_mean is not None and u_mean is not None else None),
+        'started_mean': round(started_sum / n, 3),
+        'n_kills': kills,
+        'n_false_kills': false_kills,
+        'false_kill_rate': round(false_kills / kills, 4) if kills else 0.0,
+    }
+    return out
+
+
 def recommend_strategy(entries: dict[str, dict], *, target: float, source: str,
                        has_variants: bool) -> dict:
-    """推荐参数档：kill/θ 档中「base 与变体 ETT 均不劣于单 seed 基线、两者误杀率
-    < 5%」者里 base ETT 最小者（并列依次比变体 ETT、名字序，确定性）。
+    """推荐参数档：kill/θ/策略双档中「base 与变体 ETT 均不劣于单 seed 基线、
+    两者误杀率 < 5%」者里 base ETT 最小者（并列依次比变体 ETT、名字序，确定性）。
 
     ``entries`` = ``simulate_tag`` 的 strategies dict（``base``/``variants`` 为
-    metrics 或 None）。返回 ``params`` 键与 controller_params.json 同构
-    （``resolve_kill_params`` 合并 + envelope + calibrated: true + n_seeds/
-    per_seed_time 使用说明），可直接抄进 ``--params``。无合格档 → ``strategy:
-    None`` + note（不硬推）。
+    metrics 或 None）。US-003 起策略双档（kind='strategy'）纳入候选 —— 判据同
+    现有（ETT/误杀率字段同构，race 门杀误杀 = 被杀 seed 180s 窗口内本可达标）。
+    返回 ``params``：kill/θ 档与 controller_params.json 同构（``resolve_kill_params``
+    合并 + envelope + calibrated: true + n_seeds/per_seed_time 使用说明），可直接
+    抄进 ``--params``；策略双档为 ``--strategy`` 旗标形（``{strategy, time,
+    race_budget, race_gate | se_screen, se_extend}``），可直接抄进 ``ms-run-config``。
+    无合格档 → ``strategy: None`` + note（不硬推）。
     """
     single = entries.get('single')
     if not single or single['base'] is None:
@@ -1195,7 +1540,7 @@ def recommend_strategy(entries: dict[str, dict], *, target: float, source: str,
     var_ett = var_single['ett'] if var_single is not None else None
     qualified: list[str] = []
     for name, st in entries.items():
-        if st['kind'] not in ('kill', 'theta') or st['base'] is None:
+        if st['kind'] not in _RECOMMEND_KINDS or st['base'] is None:
             continue
         if st['base']['ett'] > base_ett + 1e-9:
             continue                        # base ETT 劣于单 seed 基线
@@ -1224,15 +1569,28 @@ def recommend_strategy(entries: dict[str, dict], *, target: float, source: str,
         entries[nm]['variants']['ett'] if entries[nm]['variants'] is not None
         else float('inf'), nm))
     st = entries[name]
-    kp = resolve_kill_params(st['kill_params'] or {})
+    if st['kind'] == 'strategy':
+        plan = st.get('plan') or {}
+        params: dict = {'strategy': st['mode'],
+                        'time': int(round(float(st.get('total_budget', 0.0)))),
+                        'calibrated': True, 'target': target, 'source': source}
+        if st['mode'] == 'race':
+            params['race_budget'] = plan.get('race_budget', RACE_BUDGET_S)
+            params['race_gate'] = plan.get('race_gate_tau', RACE_GATE_TAU)
+        else:
+            params['se_screen'] = plan.get('screen_s', SE_SCREEN_S)
+            params['se_extend'] = plan.get('ext_s', SE_EXT_S)
+    else:
+        kp = resolve_kill_params(st['kill_params'] or {})
+        params = {**kp,
+                  'envelope': dict(st['envelope']) if st['envelope'] else {},
+                  'calibrated': True,
+                  'n_seeds': st['k'],
+                  'per_seed_time': st['per_seed_budget'],
+                  'target': target,
+                  'source': source}
     out['strategy'] = name
-    out['params'] = {**kp,
-                     'envelope': dict(st['envelope']) if st['envelope'] else {},
-                     'calibrated': True,
-                     'n_seeds': st['k'],
-                     'per_seed_time': st['per_seed_budget'],
-                     'target': target,
-                     'source': source}
+    out['params'] = params
     mb, mv = st['base'], st['variants']
     out['ett_base'] = round(mb['ett'], 3)
     out['ett_gain_base'] = round(1.0 - mb['ett'] / base_ett, 4) if base_ett > 0 else None
@@ -1354,8 +1712,50 @@ def simulate_tag(tag_dir, target: float, *, budget: float | None = None,
             variant_counts[vd.name] = len(curves)
             variant_pool.extend(curves)
 
+    # US-003 策略双档输入侧：同 seed 值配对的 short/full 曲线（变体池整体 held-out，
+    # 与 kill 档同原则）。场景序列长度对齐双档规划与 uniform90 基线的最大需求 ——
+    # 同池同 bootstrap 种子下 se180/race180 场景集合一致（跨档可比）。
+    base_pairs = paired_curves(tag_dir / 'base' / 'short', tag_dir / 'base' / 'full')
+    variant_pairs: list[tuple[list[dict], list[dict]]] = []
+    for vd in sorted(tag_dir.glob('variant_*')):
+        if vd.is_dir():
+            variant_pairs.extend(paired_curves(vd / 'short', vd / 'full').values())
+    strat_seq_len: int | None = None
+    if any(s['kind'] == 'strategy' for s in SIM_STRATEGY_GRID):
+        try:
+            strat_seq_len = max(race_plan(budget)[0], se_plan(budget)[0],
+                                int(budget // SEED_UNIT_S))
+        except StrategyBudgetError:
+            strat_seq_len = None             # 预算不足：双档各自降级 metrics=None
+
     entries: dict[str, dict] = {}
     for spec in SIM_STRATEGY_GRID:
+        if spec['kind'] == 'strategy':
+            stat = evaluate_strategy_tier(list(base_pairs.values()), spec,
+                                          target=target, total_budget=budget,
+                                          n_scenarios=scenarios,
+                                          seq_len=strat_seq_len)
+            entry = {'kind': stat['kind'], 'mode': stat['mode'], 'k': stat['k'],
+                     'per_seed_budget': stat['per_seed_budget'],
+                     'total_budget': stat['total_budget'], 'plan': stat['plan'],
+                     'kill_params': stat['kill_params'],
+                     'n_eligible': stat['n_eligible'],
+                     'envelope': stat.get('envelope'), 'base': stat['metrics']}
+            if 'note' in stat:
+                entry['note'] = stat['note']
+            if variant_pairs:
+                stat_v = evaluate_strategy_tier(variant_pairs, spec, target=target,
+                                                total_budget=budget,
+                                                n_scenarios=scenarios,
+                                                seq_len=strat_seq_len)
+                entry['variants'] = stat_v['metrics']
+                if 'note' in stat_v:
+                    entry['note'] = f"{entry.get('note', '')} | 变体: {stat_v['note']}" \
+                        .strip(' |')
+            else:
+                entry['variants'] = None
+            entries[spec['name']] = entry
+            continue
         stat = evaluate_strategy(base_pool, spec, target=target,
                                  total_budget=budget, n_scenarios=scenarios,
                                  env_q=env_q, uplift_q95=uplift_q95)
@@ -1390,9 +1790,11 @@ def simulate_tag(tag_dir, target: float, *, budget: float | None = None,
         'generated': time.strftime('%Y-%m-%dT%H:%M:%S'),
         'tag_dir': str(tag_dir.resolve()),
         'pools': {'base': {'n_curves': len(base_pool),
-                           'short': len(short_curves), 'full': len(full_curves)},
+                           'short': len(short_curves), 'full': len(full_curves),
+                           'pairs': len(base_pairs)},
                   'variants': ({'n_curves': len(variant_pool),
-                                'by_variant': variant_counts}
+                                'by_variant': variant_counts,
+                                'pairs': len(variant_pairs)}
                                if variant_pool else None)},
         'strategies': entries,
         'recommendation': recommendation,
@@ -1584,6 +1986,33 @@ def _cmd_analyze(args) -> int:
     return _EXIT_OK
 
 
+def _print_strategy_tier_table(rep: dict) -> None:
+    """策略双档 E[max] 口径控制台表（US-003）：交付期望 / 漏 max 率 / 配对
+    uniform90 基线增益（换实例类离线重标收益）。无数据档 n/a。"""
+    specs = [s for s in SIM_STRATEGY_GRID if s['kind'] == 'strategy']
+    if not specs:
+        return
+
+    def _cells(m: dict | None) -> tuple[str, str, str]:
+        """metrics → (E[max], 漏 max 率, 增益) 三列。"""
+        if m is None:
+            return '         n/a', '      n/a', '        n/a'
+        gain = m.get('gain_vs_uniform90')
+        gain_txt = '        n/a' if gain is None else f'{gain * 100:+9.2f}pt'
+        return (f"{m['delivered_mean']:9.2%}", f"{m['miss_max_rate']:7.1%}",
+                gain_txt)
+
+    print('[simulate] 策略双档 E[max] 口径（同总预算；跨 fork 诚实：筛选读 short '
+          '终值、延长/续跑读 full 曲线 180s 帧；增益 = 配对 uniform90 基线差）')
+    print(f"{'策略':<10}{'base E[max]':>12} {'漏max':>7} {'增益':>10}"
+          f"{'变体 E[max]':>13} {'漏max':>7} {'增益':>10}")
+    for spec in specs:
+        st = rep['strategies'][spec['name']]
+        b_d, b_m, b_g = _cells(st['base'])
+        v_d, v_m, v_g = _cells(st['variants'])
+        print(f"{spec['name']:<10}{b_d} {b_m} {b_g}{v_d} {v_m} {v_g}")
+
+
 def _cmd_simulate(args) -> int:
     if not 0.0 < args.target <= 1.0:
         print(f'配置错误: --target 须为 (0,1] 区间内的比例值（如 0.88），'
@@ -1625,11 +2054,28 @@ def _cmd_simulate(args) -> int:
         b_ett, b_p, b_fk = _cells(st['base'])
         v_ett, v_p, v_fk = _cells(st['variants'])
         mark = '*' if rep['recommendation']['strategy'] == spec['name'] else ''
-        print(f"{spec['name'] + mark:<20}{st['k']:>2} {st['per_seed_budget']:8.1f}"
+        kb = '-' if st['k'] is None else f"{st['k']:>2}"
+        bb = '      -' if st['per_seed_budget'] is None \
+            else f"{st['per_seed_budget']:8.1f}"
+        print(f"{spec['name'] + mark:<20}{kb} {bb}"
               f"{b_ett}{b_p}{b_fk}{v_ett}{v_p}{v_fk}")
+    _print_strategy_tier_table(rep)
     rec = rep['recommendation']
     if rec['strategy'] is None:
         print(f"[simulate] 推荐: 无（{rec.get('note', '')}）")
+    elif 'strategy' in (rec['params'] or {}):
+        gain_v = rec.get('ett_gain_variants')
+        gain_v_txt = '' if gain_v is None else f" | 变体 ETT ↓{gain_v:.1%}"
+        fkr_v = rec.get('false_kill_rate_variants')
+        fkr_v_txt = 'n/a' if fkr_v is None else f'{fkr_v:.1%}'
+        p = rec['params']
+        print(f"[simulate] 推荐: {rec['strategy']}*（--strategy {p['strategy']} "
+              f"--time {p['time']}）| "
+              f"base ETT {rec['ett_baseline_base']:.1f} → {rec['ett_base']:.1f}"
+              f"（↓{rec['ett_gain_base']:.1%}）{gain_v_txt}"
+              f" | 误杀率 {rec['false_kill_rate_base']:.1%}/{fkr_v_txt}")
+        print('[simulate] 推荐旗标见报告 recommendation.params（键与 --strategy '
+              '旗标同构，可直接抄进 ms-run-config）')
     else:
         gain_v = rec.get('ett_gain_variants')
         gain_v_txt = '' if gain_v is None else f" | 变体 ETT ↓{gain_v:.1%}"
