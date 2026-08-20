@@ -24,8 +24,13 @@
 //   所选码有效片数为 0（数量全 0）时不启动求解并 onStatus 提示（现状会把空 items 实例交给
 //   spyrrow，密度分母 0 风险）；doc=null（后端开发模式 fallback SIZES）时 computeTotalCutPieces
 //   返回 null，不拦截。
+// US-005：PerTypeOverrides 之后渲染 StrategyRunButton（高级运行入口；透传 solving/
+//   buildStartContext/onApplyStrategy）。start 载荷构造与 handleStart 同源 —— 提取
+//   collectStartContext(form, quantities) 共用（sizesNum / serializeQuantities /
+//   collectParams 逐字段同一实现，不复制逻辑）；buildStartContext 闭包在 Modal 执行时
+//   现取（数量矩阵编辑后即时生效）。
 
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useExport } from '../../hooks/useExport';
 import type { ExportFmt } from '../../lib/download';
 import { useUploadStore } from '../../store/uploadStore';
@@ -37,17 +42,15 @@ import { PerTypeOverrides } from './PerTypeOverrides';
 import { SizePicker, computeTotalCutPieces } from './SizePicker';
 import { SolveControls } from './SolveControls';
 import { StatusLine } from './StatusLine';
+import { StrategyRunButton } from './StrategyRunButton';
 import {
-  collectParams,
+  collectStartContext,
   DEFAULT_FORM,
-  parseGate,
-  parseSeed,
   parseSeedCount,
-  parseTime,
-  serializeQuantities,
   type FormState,
 } from '../../lib/params';
 import type { PerTypeOverrides as PerTypeOverridesValue, SolveParams } from '../../types/v03';
+import type { StrategyResult } from '../../types/strategy';
 import type { SolvePhase } from '../../types/solvePhase';
 
 /** onStart 透传给 App 的载荷（直接喂给 useSolveRun.start 的 StartConfig 子集）。 */
@@ -80,9 +83,14 @@ export interface ControlPanelProps {
   onStatus: (text: string) => void;
   /** US-027 停止求解回调（US-028 由 SolveControls 停止按钮接线）。 */
   onStop: () => void;
+  /**
+   * US-006 策略 run 应用到主画布回调（StrategyRunModal 结果态按钮）。
+   * US-005 仅透传链路（未传 → 应用按钮 disabled）；NestingPage 接线在 US-006。
+   */
+  onApplyStrategy?: (result: StrategyResult) => void;
 }
 
-export function ControlPanel({ onStart, phase, status, onStatus, onStop }: ControlPanelProps) {
+export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApplyStrategy }: ControlPanelProps) {
   const [form, setForm] = useState<FormState>(DEFAULT_FORM);
   // US-017：订阅 uploadStore.doc 判断是否已解析母版（doc=null → StatusLine 增提示）。
   const doc = useUploadStore((s) => s.doc);
@@ -100,18 +108,22 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop }: Contr
     setForm((prev) => ({ ...prev, ...p }));
   }
 
+  /**
+   * US-005：handleStart 与 StrategyRunModal「执行」共用的 start 上下文构造器
+   * （collectStartContext 单一实现 —— 码号过滤 / 幅宽 / seed / params / per_type /
+   * quantities 逐字段同源，不复制逻辑）。getState() 取调用时刻数量快照（不订阅）。
+   */
+  const buildStartContext = useCallback(
+    () => collectStartContext(form, useQtyStore.getState().quantities),
+    [form],
+  );
+
   function handleStart() {
     if (solving) return;
     if (form.sizes.length === 0) {
       onStatus('请至少选一个码号');
       return;
     }
-    const { params, per_type } = collectParams(form);
-    // US-017：form.sizes 可能含 null（通用码），下游 WS / export 契约仍是 number[]，
-    // 此处过滤 null（M1787 实际母版无 null 码；含 null 母版的完整支持见 US-022）。
-    const sizesNum: number[] = form.sizes.filter(
-      (s: number | null): s is number => s !== null,
-    );
     // 矩阵化重构 US-003 全 0 拦截：所选码有效片数 = Σ demand（doc=null 开发模式 fallback
     // 返回 null 不拦截）；为 0（数量全 0）时不发 WS start，状态行提示去预览页改数量。
     const totalCut = computeTotalCutPieces(
@@ -123,23 +135,10 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop }: Contr
       onStatus('所选码号有效裁片数为 0，请先在上传预览页数量矩阵中设置数量');
       return;
     }
-    // US-022：从 qtyStore.quantities 序列化扁平化为 label→sizeKey→demand。
-    //   - getState() 读快照（不订阅，避免 ControlPanel 因数量编辑频繁重渲染）。
-    //   - sizesNum 已过滤 null；perSize 按此列表过滤未勾选码。
-    const quantities = serializeQuantities(
-      useQtyStore.getState().quantities,
-      sizesNum,
-    );
-    onStart({
-      sizes: sizesNum,
-      gate_mm: parseGate(form),
-      time: parseTime(form),
-      seed: parseSeed(form),
-      seed_count: parseSeedCount(form),
-      params,
-      per_type,
-      quantities,
-    });
+    // US-005：载荷构造与策略 run「执行」同源（collectStartContext）；seed_count 是
+    // 主画布 multi_seed 专属，仅本路径附加。
+    const ctx = buildStartContext();
+    onStart({ ...ctx, seed_count: parseSeedCount(form) });
   }
 
   /** 导出按钮回调 —— 透传 form.sizes（过滤 null）给 useExport.exportAs（与旧 vanilla 实现 `sizes: selectedSizes()` 一致）。 */
@@ -199,6 +198,14 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop }: Contr
           disabled={solving}
         />
         <PerTypeOverrides values={form.per_type} onChange={(per_type) => patch({ per_type })} disabled={solving} />
+        {/* US-005 高级运行入口（策略 run 10/20/30/60min + race/se 双模式）：disabled =
+            solving（互斥防 CPU 竞争）|| doc===null（未 commit 无排料数据）。 */}
+        <StrategyRunButton
+          solving={solving}
+          buildStartContext={buildStartContext}
+          onApplyStrategy={onApplyStrategy}
+          disabled={solving || doc === null}
+        />
       </div>
       {/* US-031：data-tour="start-btn" 锚定 SolveControls 父容器（nestingTour step3 高亮目标）。 */}
       <div data-tour="start-btn">

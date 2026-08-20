@@ -258,7 +258,7 @@ curl http://127.0.0.1:8000/api/ptypes
 
 ## 策略桥接（strategy PRD US-004）— `/api/strategy/*` 四路由（`web/strategy.py`）
 
-桥接方式 = **spawn `python -m materialsorting.cli.run_config <cfg> --name web_<mode>_<rand6> --strategy <mode> --time <minutes*60> --quiet` 子进程 + HTTP 轮询 run_dir 产物**（分层零违规：进程边界而非 import 边界 —— `strategy.py` 全模块禁 import `..cli.*`，AST 守卫 `tests/test_web_strategy.py`；判据逻辑单一真相源留在 `cli.portfolio`）。子进程经 env 继承拿到与 ms-web 相同的 `paths`（`MS_OUT_DIR` 等环境变量父子同源）。
+桥接方式 = **spawn `python -m materialsorting.cli.run_config <cfg> --name web_<mode>_<rand6> --strategy <mode> --time <minutes*60> --quiet` 子进程 + HTTP 轮询 run_dir 产物**（分层零违规：进程边界而非 import 边界 —— `strategy.py` 全模块禁 import `..cli.*`，AST 守卫 `tests/test_web_strategy.py`；判据逻辑单一真相源留在 `cli.portfolio`）。子进程经 env 继承拿到与 ms-web 相同的 `paths`（`MS_OUT_DIR` 等环境变量父子同源）。前端消费方 = 策略 PRD US-005 弹窗（`strategyStore` + `useStrategyPoll`，详见 `agent-component-map.md` US-005 专节）：GET status 轮询双档 **弹窗开 2s / 关 15s**（关弹窗由入口徽标维持观测），terminal 态停表；start 载荷 = 面板排料参数 + `{mode, minutes}`；**关闭弹窗（ESC/遮罩/✕）不调 stop** —— 终止唯一入口 = 显式终止/清理按钮。
 
 状态机：`idle → starting →（run_dir 快照 diff 发现）running → done | stopped | error`；内存态空 + marker 在 → `orphan`。marker = `out/config_runs/.web_strategy_active.json` 恰 5 键 `{pid, run_dir, doc_id, mode, started_at}`（run_dir 初始 null、发现后回写；终态清 marker、内存态 `_STRATEGY_STATE` 保留供 status/result 续读）。
 

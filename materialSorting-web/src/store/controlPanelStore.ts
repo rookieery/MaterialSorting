@@ -2,7 +2,7 @@
 // US-003 起预览目标字段改名 previewLabel，键 = 裁片 g 码）。
 //
 // 两个独立显隐字段，对应两层模态：
-//   modal         'per_type' | null  —— 高级配置：每裁片覆盖表格弹窗
+//   modal         'per_type' | 'strategy_run' | null —— 高级配置弹窗 / 高级运行弹窗
 //   previewLabel  label(如 'g03') | null —— 裁片放大预览（点击弹窗表头缩略图触发）
 //
 // 两层模态可同时存在（previewLabel 叠在 modal 之上，z-index 更高）；
@@ -18,8 +18,8 @@
 
 import { create } from 'zustand';
 
-/** 当前激活的模态（仅 'per_type' 一种；预留扩展用联合类型）。 */
-export type ControlPanelModalId = 'per_type';
+/** 当前激活的模态（US-005 起 'per_type' | 'strategy_run'；预留扩展用联合类型）。 */
+export type ControlPanelModalId = 'per_type' | 'strategy_run';
 
 export interface ControlPanelState {
   /** 高级配置弹窗显隐；null = 关闭。 */

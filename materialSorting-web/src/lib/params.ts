@@ -193,3 +193,51 @@ export function serializeQuantities(
   }
   return Object.keys(out).length > 0 ? out : null;
 }
+
+// ------------------------------------------------- US-005 collectStartContext
+
+/**
+ * ControlPanel.handleStart 与 StrategyRunModal「执行」共用的 start 上下文
+ * （US-005 提取：主画布 WS start 与策略 run POST /api/strategy/start 的排料参数
+ * 构造**同源**，不复制逻辑 —— 码号过滤 null / 幅宽 / seed / params / per_type /
+ * quantities 逐字段同一实现）。
+ *
+ * quantities 入参传 ``useQtyStore.getState().quantities``（调用时快照，保持
+ * params.ts 纯函数 —— 不 import store）。
+ */
+export interface StartContext {
+  /** 已过滤 null 的码号（下游 WS / export / strategy start 契约都是 number[]）。 */
+  sizes: number[];
+  /** 幅宽 mm（parseGate：cm ×10，非法回退 1980）。 */
+  gate_mm: number;
+  /** base seed（parseSeed）。 */
+  seed: number;
+  /** 时长秒（parseTime；策略模式不使用 —— 总预算由弹窗时长档决定）。 */
+  time: number;
+  /** collectParams：US-019 起恒全 0（per_type 是唯一 d/tol 覆盖入口）。 */
+  params: SolveParams;
+  /** collectParams：空 → null。 */
+  per_type: PerTypeOverrides | null;
+  /** serializeQuantities：空 / 全未选 → null（后端全片 demand=1）。 */
+  quantities: Record<string, Record<string, number>> | null;
+}
+
+/** 把 FormState + 数量快照解析为 StartContext（handleStart / strategy start 同源）。 */
+export function collectStartContext(
+  form: FormState,
+  quantities: PieceQuantityMap,
+): StartContext {
+  const { params, per_type } = collectParams(form);
+  const sizes: number[] = form.sizes.filter(
+    (s: number | null): s is number => s !== null,
+  );
+  return {
+    sizes,
+    gate_mm: parseGate(form),
+    time: parseTime(form),
+    seed: parseSeed(form),
+    params,
+    per_type,
+    quantities: serializeQuantities(quantities, sizes),
+  };
+}

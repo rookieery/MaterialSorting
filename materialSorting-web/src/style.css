@@ -1270,3 +1270,364 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
   font-weight: 600;
   border-left: 1px solid #34363d;
 }
+
+/* ---- US-005 StrategyRunButton + StrategyRunModal（高级运行弹窗：暗底 #26282e + #2ea06c 同色系） ---- */
+/* 入口按钮：主面板一行（PerTypeOverrides 之下）；策略运行中挂「运行中」徽标 */
+.strategy-wrapper {
+  margin: 8px 0;
+}
+.strategy-btn {
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  background: #23252b;
+  color: #e6e6e6;
+  border: 1px solid #2ea06c;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: background 0.15s;
+}
+.strategy-btn:hover:not(:disabled) {
+  background: #2c2f35;
+}
+.strategy-btn:focus-visible {
+  outline: 2px solid #2ea06c;
+  outline-offset: 2px;
+}
+.strategy-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+  border-color: #45484f;
+}
+.strategy-badge {
+  background: #2ea06c;
+  color: #fff;
+  border-radius: 9px;
+  padding: 1px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+/* overlay/modal：与 per-type 同款（fixed 遮罩 + 暗底圆角卡片，z-index 1100） */
+.strategy-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1100;
+}
+.strategy-modal {
+  position: relative;
+  background: #26282e;
+  border: 1px solid #34363d;
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  padding: 18px 20px 16px;
+  width: 440px;
+  max-width: 92vw;
+  max-height: 92vh;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  font-size: 13px;
+  color: #e6e6e6;
+}
+.strategy-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-right: 28px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #e6e6e6;
+  flex-shrink: 0;
+}
+.strategy-title {
+  flex: 1;
+}
+.strategy-close {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: #cdd;
+  border: 0;
+  border-radius: 4px;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s, color 0.15s;
+}
+.strategy-close:hover {
+  background: #3f424a;
+  color: #2ea06c;
+}
+.strategy-close:focus-visible {
+  outline: 2px solid #2ea06c;
+  outline-offset: 1px;
+}
+
+/* 配置态：时长/模式下拉 + 模式说明行 + 常驻提示 */
+.strategy-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.strategy-field label {
+  color: #9aa;
+  font-size: 12px;
+}
+.strategy-select {
+  background: #1c1d22;
+  color: #e6e6e6;
+  border: 1px solid #3a3d45;
+  border-radius: 3px;
+  padding: 7px 8px;
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.strategy-select:focus {
+  outline: none;
+  border-color: #2ea06c;
+}
+.strategy-mode-desc {
+  color: #9aa;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.strategy-hint {
+  color: #888;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+/* 操作区按钮族（执行=绿主按钮 / 终止=红 / 再次运行=次级 / 应用=绿主按钮） */
+.strategy-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 4px;
+  flex-shrink: 0;
+}
+.strategy-btn-exec,
+.strategy-btn-apply {
+  padding: 8px 18px;
+  font-size: 13px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  background: #2ea06c;
+  color: #fff;
+  border: 1px solid #2ea06c;
+  font-weight: 600;
+  transition: background 0.15s, border-color 0.15s;
+}
+.strategy-btn-exec:hover:not(:disabled),
+.strategy-btn-apply:hover:not(:disabled) {
+  background: #36b47a;
+  border-color: #36b47a;
+}
+.strategy-btn-exec:disabled,
+.strategy-btn-apply:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.strategy-stop-btn {
+  padding: 8px 16px;
+  font-size: 13px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  background: #8a3b3b;
+  color: #fff;
+  border: 1px solid #8a3b3b;
+  font-weight: 600;
+  transition: background 0.15s;
+}
+.strategy-stop-btn:hover {
+  background: #a34848;
+}
+.strategy-btn-again {
+  padding: 8px 14px;
+  font-size: 13px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  border: 1px solid #45484f;
+  background: #34363d;
+  color: #cdd;
+  transition: background 0.15s;
+}
+.strategy-btn-again:hover {
+  background: #3f424a;
+  color: #e6e6e6;
+}
+
+/* 进度态五件套：标题行 / 大数字 / 预算条 / 阶段行 / seed chips + 事件行 */
+.strategy-title-line {
+  color: #cdd;
+  font-size: 13px;
+}
+.strategy-big-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 0;
+}
+.strategy-big-density {
+  font-size: 36px;
+  font-weight: 700;
+  color: #2ea06c;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+.strategy-big-density-label {
+  text-align: center;
+  color: #9aa;
+  font-size: 11px;
+}
+.strategy-budget-bar {
+  height: 10px;
+  background: #1c1d22;
+  border: 1px solid #3a3d45;
+  border-radius: 5px;
+  overflow: hidden;
+}
+.strategy-budget-fill {
+  height: 100%;
+  background: #2ea06c;
+  transition: width 0.3s ease-out;
+}
+.strategy-budget-label {
+  color: #9aa;
+  font-size: 11px;
+  text-align: right;
+  margin-top: 3px;
+  font-variant-numeric: tabular-nums;
+}
+.strategy-stage-line {
+  color: #e6e6e6;
+  font-size: 13px;
+}
+.strategy-seed-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.strategy-chip {
+  padding: 3px 8px;
+  border-radius: 10px;
+  font-size: 11px;
+  border: 1px solid #3a3d45;
+  background: #23252b;
+  color: #cdd;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.strategy-chip.done {
+  border-color: #3a7d5c;
+  color: #6cc79a;
+}
+.strategy-chip.killed {
+  border-color: #7a4040;
+  color: #e08a8a;
+}
+.strategy-chip.running {
+  border-color: #2ea06c;
+  color: #2ea06c;
+}
+.strategy-chip.pending {
+  color: #666;
+  border-color: #2c2e33;
+}
+.strategy-event-line {
+  color: #888;
+  font-size: 11px;
+  min-height: 16px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 结果态：head / 明细 / warning / 运行目录（可复制） */
+.strategy-result-head {
+  font-size: 16px;
+  font-weight: 700;
+  color: #2ea06c;
+}
+.strategy-result-head.stopped {
+  color: #d9a05b;
+}
+.strategy-result-head.error {
+  color: #e08a8a;
+}
+.strategy-result-detail {
+  color: #cdd;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.strategy-error-detail {
+  color: #e08a8a;
+  font-size: 13px;
+  line-height: 1.6;
+  word-break: break-all;
+}
+.strategy-warning {
+  color: #d9a05b;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.strategy-run-dir {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  background: #1c1d22;
+  border: 1px solid #3a3d45;
+  border-radius: 4px;
+  padding: 6px 8px;
+  font-size: 11px;
+  color: #9aa;
+}
+.strategy-run-dir-path {
+  flex: 1;
+  word-break: break-all;
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+}
+.strategy-copy-btn {
+  flex-shrink: 0;
+  padding: 3px 10px;
+  font-size: 11px;
+  background: #34363d;
+  color: #cdd;
+  border: 1px solid #45484f;
+  border-radius: 3px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.strategy-copy-btn:hover:not(:disabled) {
+  background: #3f424a;
+  color: #e6e6e6;
+}
+.strategy-copy-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
