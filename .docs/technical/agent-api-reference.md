@@ -5,7 +5,7 @@
 
 ## 状态
 
-单页工作台后端，5 个 HTTP 端点 + 1 条 WS。**US-026 起求解用 `solve_with_callback_proc`（多进程版）**：`ThreadPoolExecutor(max_workers=6)` 跑 `run_solve` → `solve_with_callback_proc` spawn 子进程执行 sparrow solve，主进程 drain `multiprocessing.Queue` 分发 manifest/frame/final（多 seed 最多 6 路并发，seed 间同等 CPU 竞争 → 排名仍公平）。WS 双向并发：write loop drain queue → `ws.send_json`；read loop 持续读客户端消息（`{action:'stop'}` → terminate 子进程 → 发 stopped → 关闭 WS）。**`server.py` 启动期 `_reload_pieces_state()` 读 intermediate 填入 `_PIECES_STATE`**（US-020：commit 后可 reload，allow-empty 不再让 import 崩）。US-004 起 `/api/parse-dxf` 上传解析也复用这个 6-worker 线程池跑 CPU 密集的 DXF 深度解析（`collect_pieces_with_details`）。
+单页工作台后端，9 个 HTTP 端点 + 1 条 WS。**US-026 起求解用 `solve_with_callback_proc`（多进程版）**：`ThreadPoolExecutor(max_workers=6)` 跑 `run_solve` → `solve_with_callback_proc` spawn 子进程执行 sparrow solve，主进程 drain `multiprocessing.Queue` 分发 manifest/frame/final（多 seed 最多 6 路并发，seed 间同等 CPU 竞争 → 排名仍公平）。WS 双向并发：write loop drain queue → `ws.send_json`；read loop 持续读客户端消息（`{action:'stop'}` → terminate 子进程 → 发 stopped → 关闭 WS）。**`server.py` 启动期 `_reload_pieces_state()` 读 intermediate 填入 `_PIECES_STATE`**（US-020：commit 后可 reload，allow-empty 不再让 import 崩）。US-004 起 `/api/parse-dxf` 上传解析也复用这个 6-worker 线程池跑 CPU 密集的 DXF 深度解析（`collect_pieces_with_details`）。strategy PRD US-004 起 `/api/strategy/*` 四路由（`web/strategy.py`）spawn `ms-run-config --strategy` 子进程跑双模式长跑（HTTP 轮询 run_dir 产物，无 WS），见下「策略桥接」。
 
 ## 启动约束（重要）
 
@@ -25,6 +25,10 @@
 | POST | `/api/parse-dxf` | US-004：multipart 上传母版 DXF → 深度解析 + g 码赋号 JSON | `server.parse_dxf` |
 | POST | `/api/commit-to-nesting` | US-010：把上传母版转排料 intermediate（Path A 全管线，覆盖写回 + .bak）+ US-020 commit 后 reload `_PIECES_STATE` | `server.commit_to_nesting` |
 | GET | `/api/ptypes` | US-020 D10（US-001 v2：键 = g 码 label）：返回当前 `_PIECES_STATE` 下每个 g 码的代表裁片（最小码内 parse 同序首个，含 `label` 编号），供前端高级配置弹窗缩略图/放大预览（D11 layer-aware） | `server.get_ptypes` |
+| POST | `/api/strategy/start` | strategy US-004：spawn `ms-run-config --strategy` 子进程启动双模式长跑（202） | `strategy.strategy_start` |
+| GET | `/api/strategy/status` | strategy US-004：无状态惰性轮询 run_dir 产物组装进度 | `strategy.strategy_status` |
+| POST | `/api/strategy/stop` | strategy US-004：树杀子进程（taskkill /T /F / killpg）+ 清 marker | `strategy.strategy_stop` |
+| GET | `/api/strategy/result` | strategy US-004：done/stopped run → best + manifest（应用到主画布数据源） | `strategy.strategy_result` |
 | WS | `/ws/solve` | 排料求解流（manifest → frames → final） | `server.ws_solve` |
 
 > FastAPI 自动暴露 `/docs` `/openapi.json` 等 OpenAPI 路由；业务路由全在上表。
@@ -206,7 +210,7 @@ curl -X POST http://127.0.0.1:8000/api/commit-to-nesting \
 
 1. **临时单裁片目录**：`paths.OUT_DIR/uploads/<doc_id>_pieces/`（`{label}_{size}.dxf` × N + `pieces_manifest.json` sidecar，每次 commit 先 `shutil.rmtree` 再重写，**idempotent**，同 `doc_id` 重跑会覆盖）。文件名仅人读，语义（label/size）全在 manifest —— 旧版目录（无 sidecar）被 `load_nest_pieces` 明确报错「请重新 commit」（FR-9 不静默兼容）。
 2. **intermediate 备份**：写回前 `shutil.copy2(paths.INTERMEDIATE, paths.INTERMEDIATE.with_suffix('.bak'))`。`pieces_intermediate.bak` 是上一次写回前的快照（首次 commit 无原文件则跳过备份）。**只保留一份**（再 commit 会覆盖 `.bak`）。
-3. **intermediate schema v2（US-001）**：`{source, gate_mm, n_pieces, total_area_mm2, pieces[], label_representatives}`；pieces 字段 `{pid, label, size, polygon, bbox, area_mm2, n_verts, allowed_angles, net_polygon(US-024), internal_lines(US-024), notches(US-024), grain_line(US-024)}` —— **无 `ptype`/`side`**（镜像/名称概念删除），`pid = f'{label}_{size}'`。`gate_mm=1980`（`nesting_bounds.load_pieces.GATE_MM`）、`allowed_angles=[0,180]`（v0.3 布纹线）。5 层字段由 `load_nest_pieces` 经 `_read_piece` + `_apply_layer_transforms` 与 polygon 共享 rotate→normalize transform 链后透传。顶层 `label_representatives`（原 `ptype_representatives`）：每 g 码 RAW 代表裁片（原始坐标，与上传预览同朝向）。旧 v1 intermediate 被 `solver.load_pieces` 明确拒绝（「intermediate 为旧版 schema v1（含 ptype/side），请重新 commit 母版生成新数据」）。
+3. **intermediate schema v2（US-001）**：`{doc_id(strategy US-004), source, gate_mm, n_pieces, total_area_mm2, pieces[], label_representatives}`；pieces 字段 `{pid, label, size, polygon, bbox, area_mm2, n_verts, allowed_angles, net_polygon(US-024), internal_lines(US-024), notches(US-024), grain_line(US-024)}` —— **无 `ptype`/`side`**（镜像/名称概念删除），`pid = f'{label}_{size}'`。`gate_mm=1980`（`nesting_bounds.load_pieces.GATE_MM`）、`allowed_angles=[0,180]`（v0.3 布纹线）。5 层字段由 `load_nest_pieces` 经 `_read_piece` + `_apply_layer_transforms` 与 polygon 共享 rotate→normalize transform 链后透传。顶层 `label_representatives`（原 `ptype_representatives`）：每 g 码 RAW 代表裁片（原始坐标，与上传预览同朝向）。`doc_id`（strategy US-004 新增）：commit 的母版原件定位键（`uploads/<doc_id>.dxf`，策略 start 的 config `master_dxf` 来源）；**旧 intermediate 无此键 → `/api/strategy/start` 422「母版信息缺少 doc_id，请重新上传并 commit」**。旧 v1 intermediate 被 `solver.load_pieces` 明确拒绝（「intermediate 为旧版 schema v1（含 ptype/side），请重新 commit 母版生成新数据」）。
 4. **commit 后 reload（US-020）**：`_commit_to_nesting_sync` 成功 → 立即调 `_reload_pieces_state()` 重读 intermediate 填入 `_PIECES_STATE`（threading.Lock 保护，原子替换）。下一次 `/ws/solve` / `/export` / `/api/ptypes` 即看到新裁片，**前端无需重启 ms-web**。reload 异常（罕见 I/O 竞态）降级为 `reloaded: false` + `reload_error` 字段，保留旧 state 不半切。
 
 ### 关键不变量
@@ -251,6 +255,52 @@ curl http://127.0.0.1:8000/api/ptypes
 2. **代表选取 + 编号与上传预览同口径（US-001 v2）**：优先取 intermediate `label_representatives`（RAW 原始坐标；键 = g 码，选取 = 按码升序 + 码内 `parse_member_sort_key` 稳定排序，每 label 取**最小码内首个** size≠None 片，与 `/api/parse-dxf` 赋号同键同序 —— 高级配置弹窗编号徽章与上传预览 QtyMatrix 列头指同一片，有 `tests/test_label_representatives.py` 回归）。旧 v1 intermediate 无该字段 → 回退 `pieces` 按 label 分组取首个代表，re-commit 后自动切 RAW 口径。
 3. **M1787 验证**：commit 后返 10 个 g 码（`g01`..`g10`，各 5 层字段全带）。
 4. **响应字段不含 pid / size / area**：仅几何 + label；g 码是 key。前端 polygon 画缩略图、label 画编号徽章。
+
+## 策略桥接（strategy PRD US-004）— `/api/strategy/*` 四路由（`web/strategy.py`）
+
+桥接方式 = **spawn `python -m materialsorting.cli.run_config <cfg> --name web_<mode>_<rand6> --strategy <mode> --time <minutes*60> --quiet` 子进程 + HTTP 轮询 run_dir 产物**（分层零违规：进程边界而非 import 边界 —— `strategy.py` 全模块禁 import `..cli.*`，AST 守卫 `tests/test_web_strategy.py`；判据逻辑单一真相源留在 `cli.portfolio`）。子进程经 env 继承拿到与 ms-web 相同的 `paths`（`MS_OUT_DIR` 等环境变量父子同源）。
+
+状态机：`idle → starting →（run_dir 快照 diff 发现）running → done | stopped | error`；内存态空 + marker 在 → `orphan`。marker = `out/config_runs/.web_strategy_active.json` 恰 5 键 `{pid, run_dir, doc_id, mode, started_at}`（run_dir 初始 null、发现后回写；终态清 marker、内存态 `_STRATEGY_STATE` 保留供 status/result 续读）。
+
+### POST /api/strategy/start — 启动策略 run
+
+请求 `{mode: 'se'|'race', minutes: 10|20|30|60, seed?, gate_mm?, sizes?, per_type?, quantities?}`（sizes/per_type/quantities 与 WS StartPayload 同语义 —— 前端「排料参数取当前面板」）。
+
+- 409：已有进行中 run（内存态非终态）或 marker 在（含 orphan 遗留，先停止/清理）
+- 422：`_PIECES_STATE` 空；intermediate doc 缺 `doc_id`（旧 intermediate → 「母版信息缺少 doc_id，请重新上传并 commit」）；`uploads/<doc_id>.dxf` 丢失
+- 400：mode 非法 / minutes 非法（含字符串）/ seed 非整数
+- 202：写 7 键 config JSON 到 `out/uploads/strategy_cfg_<stamp>.json`（`master_dxf` = 母版原件**绝对路径**；`gate_mm` 请求值回退 state；`seeds=[seed]`；可选键 truthy 才写）→ spawn（stdout=DEVNULL、stderr=临时文件）→ 快照 `out/config_runs/`（**先于 spawn**，防 CLI 抢先建目录 diff 扑空）→ 写 marker → `{started, pid, mode, minutes, run_name}`
+
+### GET /api/strategy/status — 无状态惰性轮询
+
+每次现读产物组装（不缓存中间态）；进度源白名单 `strategy.json` / `result.json` / `best_frame_s*.json` / `kill_decisions.jsonl` —— **绝不读 `curve_s*.json`**（运行中缺右括号非法 JSON）。响应 `{state, mode, total_budget_sec, elapsed_sec(墙钟), run_dir, plan, incumbent, current, per_seed, events, error, exit_code}`：
+
+- `plan`：strategy.json → `{planned_seeds, gate_seconds}`（race）| `{planned_seeds, k_screens, screen_s, ext_s}`（se）
+- `incumbent`：result.json portfolio.incumbent 摘要 `{density, width_mm, seed, frame_index, elapsed}`（**无 placed_items** 控载荷）
+- `current`：最新 mtime `best_frame_s*.json` → `{seed, density, density_sparrow, ext}`（`_ext` 后缀 → ext=true，SE 延长检测）
+- `per_seed`：result.json portfolio.per_seed 透传（含 `phase`: race/screen/extension、`killed`）
+- `events`：kill_decisions R5_race_gate 行（`S_tau` 重载为 bar 参照值）+ extension（`best_frame_s{seed}_ext.json` 在场）+ seed_done（per_seed），只保留尾部 20 条
+- 缺文件一律降级 null / `[]`；run_dir 未发现 + 进程死 + >30s 宽限 → `error`（附 stderr 尾部 2000 字符）；终态顺手清 marker 并把 state 写回内存态
+
+### POST /api/strategy/stop — 树杀
+
+Windows `taskkill /PID <pid> /T /F`（`/T` 整树 —— run_config 会 spawn 多进程 solve 孙进程，单杀父进程留孙进程白烧 CPU）；POSIX spawn 带 `start_new_session=True` + `os.killpg`。进行中 → 置 stopped + 清 marker；orphan（内存空 + marker 在）→ pid 存活则树杀 + 清 marker；无活动 → 400。
+
+### GET /api/strategy/result — 最优方案 + manifest（US-006 应用到主画布数据源）
+
+done/stopped 可读（running → 409「尚未结束」；idle → 404）。响应 `{state, mode, run_dir, manifest, best, summary, warning?}`：
+
+- `best`：result.json `portfolio.incumbent`（完整 `placed_items`；**无 `density_sparrow`** —— 从 `best_frame_s{seed}.json` 边车补，缺则 null）；stopped 无 result.json → 回落各 `best_frame_s*.json` 取 density 最大
+- `manifest`：`build_pid_meta(start 时快照 pieces, sizes/per_type/quantities 同口径)` → `{gate_mm, gate_nest_mm, total_area_mm2, n_eroded, pieces:[{id,size,color,area_mm2,polygon(erode 后),label,demand,net_polygon,internal_lines,notches,grain_line}]}`（与 /ws/solve manifest.pieces 同形；erode 后几何与 placed_items 对齐、demand 已含 —— 前端 NestSVG 副本池按 demand 建 N 份承接多副本 placement）
+- `summary`：`{per_seed, mode, race?|se?}`（result.json portfolio 模式段透传）
+- `warning`：start 快照 `doc_id` ≠ 当前画布 `doc_id` → 「母版已变更，应用结果可能与当前画布不一致」（导出 pid 失配走既有 400 兜底）
+
+### 关键不变量
+
+1. **server.py 文件尾** `from .strategy import register_strategy_routes` 注册路由；`strategy.py` 对 server 的依赖走**函数内延迟 import**（`_pieces_state()`）—— 任意 import 顺序不成环。
+2. start 时 `sizes/per_type/quantities/seed/gate_mm/pieces` 快照存模块级 `_STRATEGY_STATE` —— result 组装 manifest 用同口径，不依赖前端二次回传。
+3. `_status_from_active` 把解析出的 state **写回** `st['state']`（否则「跑完后从未轮询」内存态永远停在 running，start 单例检查失效）。
+4. orphan `_pid_alive`：Windows `ctypes kernel32.OpenProcess(0x1000)` 句柄探测（非本进程孩子无法 poll）；报 `state:'orphan' + alive` 由前端提供清理动作，不自动接管。
 
 ## WebSocket /ws/solve — 求解流
 
@@ -364,8 +414,9 @@ curl http://127.0.0.1:8000/api/ptypes
 | 函数 | 签名 | 说明 |
 |------|------|------|
 | `load_pieces` | `(intermediate_path=paths.INTERMEDIATE) → (doc, gate_mm, pieces)` | 读 `pieces_intermediate.json` |
+| `build_pid_meta` | `(pieces, *, sizes=None, per_type=None, quantities=None, params=None) → (pid_meta, total_area, n_eroded)` | **strategy US-004 自 `build_instance` 提取**的裁片级流水线（**不 import spyrrow、不构造求解对象** —— `/api/strategy/result` 组装 manifest 直接用）：sizes 过滤 → demand 判定（quantities 按 `(label, str(size))` 查 N，0=跳过；缺 label→1）→ per_type 覆盖 + 全局上限钳制（`_resolve_d_tol` 单一真相源，与 `build_instance` 的 Item orientations 同口径）→ erode/清洗（<3 顶点跳过）→ pid_meta 条目（US-024 5 层 + label/color/demand）→ `total_area=Σ(area×demand)`。对拍单测（`test_web_strategy.py`）保证提取前后 `build_instance` 输出逐字段一致 |
 | `discretize_orientations` | `(tol: float) → list[float]` | v0.3 连续旋转公差 → spyrrow 离散角度集。`tol=0→[0,180]`；`tol≤5` 步进 1°；否则 5°。归一化到 [0,360) |
-| `build_instance` | `(pieces, gate_mm, *, time_budget, seed, sizes=None, params=None, per_type=None, quantities=None, solver_opts=None) → (instance, config, pid_meta, total_area, n_eroded)` | 按 sizes 过滤 → US-022 按 `(label, sizeKey)` 查 quantities 定 demand（0 跳过；缺 label → 1） → US-002 起 `per_type[label]` 命中即覆盖 d/tol（2026-08-18 回退 US-004 后 label 单级，命中即对该 g 码全部码号生效；未命中/缺维度回退 `params.d_ext/tol_ext`；旧 ptype / 旧两级键 no-op；internal 概念已删，`d_int`/`tol_int` 仍被接受但无消费方） → 每片 `erode=min(申请d, MAX_OVERLAP_MM=10)`、`tol=min(申请tol, MAX_ROTATION_TOL_DEG=45)`（**2026-08-17 起全局上限，不再按片型**） → erode+clean → 构造 `spyrrow.Item` + `StripPackingInstance(strip_height=min(gate_mm, PLOT_SAFE_MAX_Y_MM))` + `StripPackingConfig`；pid_meta 含 US-024 5 层字段 + `label`/`color=label_color(label)`/`demand`（`.get()` 向后兼容）。**求解约束带钳绘图仪可写幅宽 1910**（gate_mm 1980 是显示口径，manifest 推给前端的 gate_mm / 密度分母 / 导出外框均不受影响；常量单一事实源 `nesting_bounds/load_pieces.py`）。**US-006（PC-006）`solver_opts`**（additive 白名单 exploration_pct/quadtree_depth/num_workers 三键，越界 clamp、非数值/未知键忽略、不传=现行行为）：`exploration_pct∈[0.1,0.95]` 把 time_budget 换算为 exploration_time/compression_time 两段 int 秒（各 ≥1s、和≈budget，**与 total_computation_time 互斥** —— spyrrow 的 total 键缺省 600 非 None，两段模式必须显式传 total_computation_time=None，否则 not-all-3 ValueError）；quadtree_depth∈[3,5]（缺省 4）、num_workers≥1（缺省 4）。清洗单一真相源 `_normalize_solver_opts`。WS 协议本期不加字段（web 前端零改动），消费方仅 CLI --solver-opts/--rotate-opts |
+| `build_instance` | `(pieces, gate_mm, *, time_budget, seed, sizes=None, params=None, per_type=None, quantities=None, solver_opts=None) → (instance, config, pid_meta, total_area, n_eroded)` | strategy US-004 起裁片级流水线（sizes/demand/per_type/erode/pid_meta/total_area）**委托 `build_pid_meta`**（单一真相源），本函数补 spyrrow 侧构造：`Item`（shape 用 pid_meta 的 erode 后 polygon、orientations 用同口径 `_resolve_d_tol` 的 tol 离散化）。按 sizes 过滤 → US-022 按 `(label, sizeKey)` 查 quantities 定 demand（0 跳过；缺 label → 1） → US-002 起 `per_type[label]` 命中即覆盖 d/tol（2026-08-18 回退 US-004 后 label 单级，命中即对该 g 码全部码号生效；未命中/缺维度回退 `params.d_ext/tol_ext`；旧 ptype / 旧两级键 no-op；internal 概念已删，`d_int`/`tol_int` 仍被接受但无消费方） → 每片 `erode=min(申请d, MAX_OVERLAP_MM=10)`、`tol=min(申请tol, MAX_ROTATION_TOL_DEG=45)`（**2026-08-17 起全局上限，不再按片型**） → erode+clean → 构造 `spyrrow.Item` + `StripPackingInstance(strip_height=min(gate_mm, PLOT_SAFE_MAX_Y_MM))` + `StripPackingConfig`；pid_meta 含 US-024 5 层字段 + `label`/`color=label_color(label)`/`demand`（`.get()` 向后兼容）。**求解约束带钳绘图仪可写幅宽 1910**（gate_mm 1980 是显示口径，manifest 推给前端的 gate_mm / 密度分母 / 导出外框均不受影响；常量单一事实源 `nesting_bounds/load_pieces.py`）。**US-006（PC-006）`solver_opts`**（additive 白名单 exploration_pct/quadtree_depth/num_workers 三键，越界 clamp、非数值/未知键忽略、不传=现行行为）：`exploration_pct∈[0.1,0.95]` 把 time_budget 换算为 exploration_time/compression_time 两段 int 秒（各 ≥1s、和≈budget，**与 total_computation_time 互斥** —— spyrrow 的 total 键缺省 600 非 None，两段模式必须显式传 total_computation_time=None，否则 not-all-3 ValueError）；quadtree_depth∈[3,5]（缺省 4）、num_workers≥1（缺省 4）。清洗单一真相源 `_normalize_solver_opts`。WS 协议本期不加字段（web 前端零改动），消费方仅 CLI --solver-opts/--rotate-opts |
 | `solve_with_callback` | `(instance, config, on_report, *, drain_interval=0.2) → (final_sol, elapsed_sec, err)` | **旧 threading 版（保留）**。子线程 `instance.solve(config, progress=queue)`，主线程 `queue.drain()` 每 0.2s 取中间解 → `on_report({type:frame,...})`。US-026 起 `ws_solve` 切换到 `solve_with_callback_proc`，本函数不删（过渡期） |
 | `solve_with_callback_proc` | `(pieces_snapshot, gate_mm, solve_params, *, on_manifest, on_report, on_process=None, drain_interval=0.2) → (process, final_data, elapsed, err)` | **US-025 多进程版**。spawn 子进程跑 `solve_worker`（在子进程内 `build_instance + solve`，spyrrow 对象不可 pickle 故不跨进程），主进程 drain `multiprocessing.Queue` 分发：manifest → `on_manifest`、frame → `on_report`（density 双口径换算在主进程做）、final/error 记录。**US-026 新增 `on_process` 回调**：子进程 `start()` 后立即回调一次，把 `Process` 句柄交给调用方供 WS stop / 断开时 `terminate()`。返回 `process` 句柄可 `terminate()`；terminate 后 `cancel_join_thread + 限时 drain(≤50ms) + join(timeout=5)` 防死锁；子进程 crash 未投 error 时 `err='worker process exited unexpectedly (code=<exitcode>)'` |
 

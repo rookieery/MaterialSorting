@@ -305,7 +305,11 @@ def _commit_to_nesting_sync(doc_id: str, src_dxf: str, source_name: str) -> dict
     label_representatives = _build_label_representatives(pieces)
 
     # intermediate schema v2：每母版轮廓恰一条（WYSIWYG），无 ptype/side/paired。
+    # US-004（策略 web 桥接）：doc_id 记入 doc —— 策略 start 定位母版原件
+    # ``out/uploads/<doc_id>.dxf``（spawn CLI 子进程的 master_dxf）；旧 intermediate
+    # 无此键 → 策略 start 422 提示重新上传 commit。
     doc = {
+        'doc_id': doc_id,
         'source': source_name,
         'gate_mm': NEST_GATE_MM,
         'n_pieces': len(nest_pieces),
@@ -764,6 +768,15 @@ async def ws_solve(ws: WebSocket):
 def main():
     import uvicorn
     uvicorn.run(app, host='127.0.0.1', port=8000)
+
+
+# US-004：web 策略桥接四路由（start/status/stop/result）。strategy 模块对本模块
+# 的依赖走函数内延迟 import（本行位于文件尾，此时 server 模块已完整初始化），
+# 模块级无环。strategy **禁 import ..cli.\***（AST 守卫，见 tests/test_web_strategy.py）
+# —— spawn 子进程是进程边界而非 import 边界，判据逻辑单一真相源留在 cli。
+from .strategy import register_strategy_routes   # noqa: E402
+
+register_strategy_routes(app)
 
 
 if __name__ == '__main__':

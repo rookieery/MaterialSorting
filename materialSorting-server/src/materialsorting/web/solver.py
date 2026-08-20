@@ -24,6 +24,13 @@ US-006（PC-006）``build_instance`` 新增可选 ``solver_opts``（spyrrow 求�
 additive 白名单）：``exploration_pct`` / ``quadtree_depth`` / ``num_workers`` 三键，
 非法值 clamp + 忽略、不传 = 现行行为原样（total_computation_time 模式自动 80/20
 分段）。solve_params 全 JSON 可序列化，Windows spawn 安全。
+
+US-004（策略 web 桥接）提取 ``build_pid_meta`` —— ``build_instance`` 内「demand
+判定 → per_type 覆盖 → erode/清洗 → pid_meta 构造 → total_area 累计」的裁片级
+流水线独立成纯函数（**不 import spyrrow**），web 策略 result 端点用它按 start 时
+快照口径组装 manifest（erode 后几何与 placed_items 对齐），不必构造求解实例；
+``build_instance`` 改为调用它后补 spyrrow ``Item``/``StripPackingInstance`` 构造
+（对拍单测保证提取前后输出逐字段一致）。
 """
 from __future__ import annotations
 
@@ -145,6 +152,111 @@ def _split_time_budget(total: int, pct: float) -> tuple[int, int]:
     return expl, max(1, total - expl)
 
 
+def _resolve_d_tol(label, pdef: dict, per_type) -> tuple[float, float]:
+    """单片的 (d, tol) 裁定：params 全局档 → per_type 按 label 覆盖 → 全局上限钳制。
+
+    ``build_pid_meta``（pid_meta 构造，erode 用 d）与 ``build_instance``（spyrrow
+    ``Item.allowed_orientations`` 用 tol）两处共用的单一真相源 —— US-004 提取时
+    保证两处口径一致（对拍护栏的前提）。
+    """
+    base_d = float(pdef['d_ext'])
+    base_tol = float(pdef['tol_ext'])
+    d, tol = base_d, base_tol
+    if per_type and label is not None and label in per_type:
+        over = per_type[label]
+        if isinstance(over, dict):
+            d = float(over.get('d', base_d))
+            tol = float(over.get('tol', base_tol))
+    return min(d, MAX_OVERLAP_MM), min(tol, MAX_ROTATION_TOL_DEG)
+
+
+def build_pid_meta(pieces, *, sizes=None, per_type=None, quantities=None,
+                   params=None) -> tuple[dict, float, int]:
+    """裁片级流水线 → ``(pid_meta, total_area, n_eroded)``（US-004 自 build_instance 提取）。
+
+    流水线（与原 ``build_instance`` 内循环逐字段一致，对拍单测护栏）：
+    sizes 过滤 → demand 判定（quantities 按 (label, str(size)) 查 N；0 = 跳过该
+    piece）→ per_type 覆盖 + 全局上限钳制（``_resolve_d_tol``）→ erode/清洗
+    （<3 顶点跳过）→ pid_meta 条目（含 5 层透传字段）→ ``total_area = Σ(area×demand)``。
+
+    **不 import spyrrow、不构造求解对象** —— web 策略 result 端点组装 manifest 用
+    （erode 后几何与 run 的 placed_items 对齐、demand 已含，前端 NestSVG 副本池按
+    demand 建 N 份承接多副本 placement）。``params`` 为全局档
+    （{d_ext, tol_ext, ...}，缺省全 0），语义与 ``build_instance`` 同名参数一致。
+
+    返回：pid_meta = {pid: {size, color, polygon(erode后), area_mm2, label, demand,
+    net_polygon, internal_lines, notches, grain_line}}。
+    """
+    pdef = {'d_ext': 0.0, 'd_int': 0.0, 'tol_ext': 0.0, 'tol_int': 0.0}
+    if params:
+        pdef.update(params)
+
+    if sizes:
+        want = {int(s) for s in sizes}
+        pieces = [p for p in pieces if p['size'] in want]
+
+    pid_meta = {}
+    n_eroded = 0
+    # total_area 必须按「实际排料面积」累加 = Σ(area × demand)，仅含真正进 sparrow 的片。
+    # 旧实现 ``sum(p['area_mm2'] for p in pieces)`` 有两处错：(1) 漏乘 demand —— demand>1
+    # 时求解器排 N 份、用布长度变 N 倍，但面积只算 1 份 → real_density 被 demand 整除
+    # （demand=2 时 84% 被错报成 ~42%）；(2) 把 demand=0 跳过的片也计入了面积。两者都修。
+    total_area = 0.0
+    for p in pieces:
+        # US-022：先定 demand（demand=0 跳过该 piece，不进 sparrow 实例）。
+        # sizeKey 口径与前端 qtyStore 一致：number->String(number)；null->'null'。
+        # 旧 intermediate 无 label 或 quantities=None → demand=1（向后兼容）。
+        label = p.get('label')
+        sk = 'null' if p['size'] is None else str(p['size'])
+        if quantities and label is not None and label in quantities:
+            size_map = quantities[label]
+            if not isinstance(size_map, dict):
+                size_map = {}
+            demand = int(size_map.get(sk, 0))
+        else:
+            demand = 1
+        if demand <= 0:
+            continue   # D2：该 piece 该码 demand=0 → 不排（也不计入 total_area）
+
+        # US-002：per_type 按 label 命中即覆盖（缺维度回退全局档）。2026-08-18 回退
+        # US-004 矩阵化：单级 {label: {d?, tol?}}，命中即对该 g 码全部码号生效。
+        # 旧两级 payload（{label: {sizeKey: {...}}}）在 label 层取不到 d/tol → 回退
+        # 默认，no-op 不崩（对称向后兼容）。
+        d, tol = _resolve_d_tol(label, pdef, per_type)
+
+        poly = p['polygon']
+        if d > 0:
+            poly = erode_polygon(poly, d)
+            n_eroded += 1
+        poly = _clean_polygon(poly)
+        if len(poly) < 3:
+            continue
+
+        # US-024：5 层细节（net_polygon/internal_lines/notches/grain_line）从 intermediate 透传
+        # 到 pid_meta → manifest → 前端 NestSVG + 导出。**不参与 sparrow NFP 碰撞**（碰撞只用
+        # 上面 erode 后的 ``poly``）。使用 .get() 兜底，旧 intermediate 无这些字段时各层空/None。
+        pid_meta[p['pid']] = {
+            'size': p['size'],
+            'color': label_color(label),
+            'polygon': poly,                 # erode 后 base 多边形（与 placement 一致）
+            'area_mm2': p['area_mm2'],
+            # g 码裁片标识（intermediate label 透传 → manifest → 前端 NestSVG tooltip /
+            # 导出逐片叠印；旧 intermediate 无 label → None，消费方按缺席降级）。
+            'label': label,
+            # demand：该 pid 进 sparrow 的副本数（= quantities[label][sizeKey]，缺省 1）。
+            # 透传到 manifest → 前端 NestSVG 按 demand 建 N 个 DOM 副本（见下「多副本渲染」）。
+            # **必须透传**：demand>1 时 solver 给同一 pid 发 N 条 placed_items（同 id 不同 translation），
+            # 若前端只建 1 个 polygon 会被后一条覆盖 → 只剩 1/N 副本可见（视觉稀疏，密度数却正确）。
+            'demand': demand,
+            'net_polygon': p.get('net_polygon', []),
+            'internal_lines': p.get('internal_lines', []),
+            'notches': p.get('notches', []),
+            'grain_line': p.get('grain_line'),
+        }
+        total_area += float(p['area_mm2']) * demand
+    return pid_meta, total_area, n_eroded
+
+
 def build_instance(pieces, gate_mm, *, time_budget: int, seed: int,
                    sizes=None, params=None, per_type=None, quantities=None,
                    solver_opts: dict | None = None):
@@ -177,94 +289,39 @@ def build_instance(pieces, gate_mm, *, time_budget: int, seed: int,
     如 1980）只是布幅**显示**口径（viewBox / 导出外框），排料压进绘图仪可写幅宽
     1910 才能完整打印（顶部 70mm 内部差）。密度分母同取 min(gate_mm, 1910)
     （实际幅宽口径，见 ``_apply_density_dual``）；导出外框 / 前端 viewBox 仍用 gate_mm。
+
+    US-004 起裁片级流水线（sizes/demand/per_type/erode/pid_meta/total_area）委托
+    ``build_pid_meta``（单一真相源，见其 docstring）；本函数补 spyrrow 侧构造：
+    ``Item``（shape 用 pid_meta 的 erode 后 polygon、orientations 用同口径
+    ``_resolve_d_tol`` 的 tol 离散化 —— 提取前后逐字段一致，对拍护栏见
+    ``test_web_strategy.py``）。
     """
     import spyrrow
     pdef = {'d_ext': 0.0, 'd_int': 0.0, 'tol_ext': 0.0, 'tol_int': 0.0}
     if params:
         pdef.update(params)
 
+    pid_meta, total_area, n_eroded = build_pid_meta(
+        pieces, sizes=sizes, per_type=per_type, quantities=quantities, params=params)
+
     if sizes:
         want = {int(s) for s in sizes}
         pieces = [p for p in pieces if p['size'] in want]
 
-    pid_meta = {}
     items = []
-    n_eroded = 0
-    # total_area 必须按「实际排料面积」累加 = Σ(area × demand)，仅含真正进 sparrow 的片。
-    # 旧实现 ``sum(p['area_mm2'] for p in pieces)`` 有两处错：(1) 漏乘 demand —— demand>1
-    # 时求解器排 N 份、用布长度变 N 倍，但面积只算 1 份 → real_density 被 demand 整除
-    # （demand=2 时 84% 被错报成 ~42%）；(2) 把 demand=0 跳过的片也计入了面积。两者都修。
-    total_area = 0.0
     for p in pieces:
-        # US-022：先定 demand（demand=0 跳过该 piece，不进 sparrow 实例）。
-        # sizeKey 口径与前端 qtyStore 一致：number->String(number)；null->'null'。
-        # 旧 intermediate 无 label 或 quantities=None → demand=1（向后兼容）。
-        label = p.get('label')
-        sk = 'null' if p['size'] is None else str(p['size'])
-        if quantities and label is not None and label in quantities:
-            size_map = quantities[label]
-            if not isinstance(size_map, dict):
-                size_map = {}
-            demand = int(size_map.get(sk, 0))
-        else:
-            demand = 1
-        if demand <= 0:
-            continue   # D2：该 piece 该码 demand=0 → 不排（也不计入 total_area）
-
-        base_d = float(pdef['d_ext'])
-        base_tol = float(pdef['tol_ext'])
-
-        # US-002：per_type 按 label 命中即覆盖（缺维度回退全局档）。2026-08-18 回退
-        # US-004 矩阵化：单级 {label: {d?, tol?}}，命中即对该 g 码全部码号生效。
-        # 旧两级 payload（{label: {sizeKey: {...}}}）在 label 层取不到 d/tol → 回退
-        # 默认，no-op 不崩（对称向后兼容）。
-        d, tol = base_d, base_tol
-        if per_type and label is not None and label in per_type:
-            over = per_type[label]
-            if isinstance(over, dict):
-                d = float(over.get('d', base_d))
-                tol = float(over.get('tol', base_tol))
-
-        d = min(d, MAX_OVERLAP_MM)        # 全局重合上限（10mm；不再按片型钳制）
-        tol = min(tol, MAX_ROTATION_TOL_DEG)   # 全局旋转公差上限（45°）
-
-        poly = p['polygon']
-        if d > 0:
-            poly = erode_polygon(poly, d)
-            n_eroded += 1
-        poly = _clean_polygon(poly)
-        if len(poly) < 3:
-            continue
-
+        meta = pid_meta.get(p['pid'])
+        if meta is None:
+            continue   # demand=0 跳过 / 清洗后 <3 顶点（build_pid_meta 已滤）
+        # tol 与 pid_meta 的 erode 同口径裁定（_resolve_d_tol 单一真相源）→ 离散角度集。
+        _d, tol = _resolve_d_tol(p.get('label'), pdef, per_type)
         orientations = discretize_orientations(tol)
-        # US-024：5 层细节（net_polygon/internal_lines/notches/grain_line）从 intermediate 透传
-        # 到 pid_meta → manifest → 前端 NestSVG + 导出。**不参与 sparrow NFP 碰撞**（碰撞只用
-        # 上面 erode 后的 ``poly``）。使用 .get() 兜底，旧 intermediate 无这些字段时各层空/None。
-        pid_meta[p['pid']] = {
-            'size': p['size'],
-            'color': label_color(label),
-            'polygon': poly,                 # erode 后 base 多边形（与 placement 一致）
-            'area_mm2': p['area_mm2'],
-            # g 码裁片标识（intermediate label 透传 → manifest → 前端 NestSVG tooltip /
-            # 导出逐片叠印；旧 intermediate 无 label → None，消费方按缺席降级）。
-            'label': label,
-            # demand：该 pid 进 sparrow 的副本数（= quantities[label][sizeKey]，缺省 1）。
-            # 透传到 manifest → 前端 NestSVG 按 demand 建 N 个 DOM 副本（见下「多副本渲染」）。
-            # **必须透传**：demand>1 时 solver 给同一 pid 发 N 条 placed_items（同 id 不同 translation），
-            # 若前端只建 1 个 polygon 会被后一条覆盖 → 只剩 1/N 副本可见（视觉稀疏，密度数却正确）。
-            'demand': demand,
-            'net_polygon': p.get('net_polygon', []),
-            'internal_lines': p.get('internal_lines', []),
-            'notches': p.get('notches', []),
-            'grain_line': p.get('grain_line'),
-        }
         items.append(spyrrow.Item(
             id=p['pid'],
-            shape=[(float(x), float(y)) for x, y in poly],
-            demand=demand,
+            shape=[(float(x), float(y)) for x, y in meta['polygon']],
+            demand=meta['demand'],
             allowed_orientations=orientations,
         ))
-        total_area += float(p['area_mm2']) * demand
     # 有效排料宽度：求解约束带 = min(门幅, 绘图仪可写幅宽)。门幅超出可写幅宽的部分
     # （1980−1910=70mm 内部差）求解时直接不排，marker 顶部不再落进行程外。
     gate_nest = min(float(gate_mm), PLOT_SAFE_MAX_Y_MM)
