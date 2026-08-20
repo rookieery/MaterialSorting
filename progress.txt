@@ -2,19 +2,6 @@
 Started: 2026-08-09
 
 
-- 真实端到端验证（非 mock）：`MS_OUT_DIR` 指临时目录（子进程同 env 继承 → 父子 run_dir 一致）start 202 → 真子进程 spawn → status 轮询发现 run_dir（web_race_dae48b_*）→ 快速失败路径 error 态 + stderr 中文尾巴（坏 master_dxf rc=1「配置错误」）→ marker 清理闭环；`python -m materialsorting.web.strategy` 导入冒烟零副作用。
-- 验证：pytest 全量 **337 passed**（315→337，0 failed）；无 --strategy 既有链零回归；分层零反向（strategy.py 模块级仅标准库+fastapi+.paths，cli 交互全走子进程边界）；TestClient 探测四路由 200/4xx 正常。文档同步：`web/AGENTS.md`（文件表三行 + US-004 策略桥接关键约定段）、`tests/AGENTS.md`（test_web_strategy 行）、`.docs/technical/agent-api-reference.md`（9 端点 + 路由表 + 策略桥接契约节 + solver 表 build_pid_meta 行 + intermediate doc_id 422 注记）、`.docs/technical/agent-file-map.md`（web 树 strategy.py 行 + 详表 server/solver 行更新 + strategy.py 新行）。本 story 纯后端（无 SVG/前端改动），浏览器验证不适用（TestClient 探测替代）。
 
-[2026-08-20] US-005 — 前端高级运行弹窗三态进度 UI
-  环境: Windows / Node v24.15.0 / npm 11.12.1 / Python 3.11.6（ms-web = py -m materialsorting.web.server）
-  改动:
-    - materialSorting-web/src/types/strategy.ts 新建: /api/strategy/* 四路由响应 TS 镜像（StrategyPhase 七态 / StrategyStatus 除 state 全可选 / StrategyResult manifest 嵌套键 / race·se summary 判别联合）
-    - materialSorting-web/src/store/strategyStore.ts 新建: phase+status+result+errorMessage+lastStart；start（202→starting+refresh，非 202→error 文案透传）/ stop / refresh（isStrategyState 守卫非法载荷不动 phase；done/stopped 且 result===null 拉 result 每 run 恰一次）/ reset；**代际号 guard**：start/reset bump gen，在飞 refresh 响应代际已变即丢弃（修复「再次运行」后被过期 done 响应拽回结果态的竞态）
-    - materialSorting-web/src/hooks/useStrategyPoll.ts 新建: STRATEGY_POLL_OPEN_MS=2000 / CLOSED_MS=15000 / isStrategyActive；useStrategyPoll(open) mount+open 切换立即 refresh + active 态 setInterval（开 2s 关 15s），terminal 停表
-    - store/controlPanelStore.ts: ControlPanelModalId 加 'strategy_run'；lib/params.ts: collectStartContext（handleStart 与策略 start 载荷同源构造器）
-    - components/ControlPanel/StrategyRunButton.tsx 新建（入口 + 运行中徽标 + 单例 Modal + 唯一 useStrategyPoll 挂载点）；StrategyRunModal.tsx 新建（配置态四档时长+双模式+说明行+两提示+不暴露 4 策略参数；进度态五件套 标题/大数字=max(incumbent,current)/预算条≈墙钟/阶段行/seed chips+事件行+终止按钮+关闭不终止提示；结果态 done/stopped 最优+用布+模式汇总+可复制 run_dir+再次运行+应用按钮 US-006 前 disabled；error+重试原载荷重发；orphan+清理）；ControlPanel.tsx 渲染入口（buildStartContext useCallback + onApplyStrategy 可选 prop 链路）；style.css 加 .strategy-* 族（z-index 1100 #26282e/#2ea06c）
-  验证:
-    - vitest 全量 **625 passed**（624→625：strategyStore 7 / useStrategyPoll 5 / StrategyRunModal 13 / StrategyRunButton 4 新增 + 竞态回归 1；既有 624 零回归）；npm run build 通过
-    - 浏览器验证（CDP headless Chrome harness scripts/us005_verify.mjs，ms-web 真后端 + 真 race 10min run）**28/28 PASS**：配置态（四档/双模式/说明行/两提示/无输入框/role=dialog）→ 执行 → 进度态五件套实时（71.27% 大数字 / ≈4s÷600s / 第 1/5 轮 · seed 0 / chips running●+pending—）→ ESC 关不终止 + 入口徽标「运行中」+ 重开恢复 → 本 run 无门杀（SKIP，✕门杀 chip 由单测 fixture 覆盖）→ done 结果态（完成·最优 71.55% / seed 0 · 用布 1.12m / race：3 轮中 0 轮门杀 · 全程 3 分 2 秒 / run_dir web_race_* / 应用按钮 disabled / 徽标消失）→ 再次运行回配置态；含结果态刷新常驻恢复（server 内存终态 + refresh 恢复）
     - 排障记录：初跑 422「母版信息缺少 doc_id」根因 = 本机残留双 ms-web 实例端口劫持（页面 commit 落 A 实例、策略 POST 落 B 实例旧内存态）——杀全部残留 + 单实例重启后通过；server/Chrome 已全清（8000/9223 free）
     - 文档同步: .docs/technical/agent-component-map.md（头部覆盖注记 + 目录树 5 行 + US-005 专节文件表 + 关键不变量 6 条）、materialSorting-web/AGENTS.md（文件分工行 + 树行）、.docs/technical/agent-api-reference.md（策略桥接节补前端轮询口径注记）
