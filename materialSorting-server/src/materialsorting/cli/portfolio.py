@@ -1,6 +1,7 @@
 """串行 seed portfolio 控制器（PC-002）：incumbent banking + R0 达标即停 + R4 队列耗尽；
 PC-003 扩展 kill 引擎（R1 包络 / R2 压缩期判决 / R3 θ 衰减 + shadow mode）；
-PC-009 扩展 run 统计库读取与 θ₀ 按实例类校准。
+PC-009 扩展 run 统计库读取与 θ₀ 按实例类校准；
+US-001 扩展策略双模式判据纯函数族（race 门杀 / SE 筛延 + 种子流 + 名义记账规划）。
 
 ``run_config`` 的多 seed 串行循环自 PC-002 起**经本控制器转发**（不再裸调
 ``solve_pieces``）：控制器是纯 Python 状态机，持有三类状态 ——
@@ -61,6 +62,18 @@ PC-009 run 统计库与 θ₀ 校准（``run_config`` 结束时向 ``paths.RUN_S
     着可达性走，省下注定追不上的预算），否则 θ₀ = target。θ₀ **只影响 kill
     门槛**（R2/R3 判据锚），R0 停止条件恒用 ``--target`` 真值。
 
+US-001 策略双模式判据（``--strategy race|se`` 的单一真相源，纯函数无 I/O 无进程；
+US-002 由 ``PortfolioController`` 接线消费，US-003 simulate 复用同一判据）：
+
+  - **race 门杀（方案 B，默认）**：每 seed 带 ``RACE_BUDGET_S``(180s) 预算启动，
+    ``race_gate_seconds``(默认 90s) 门帧处 ``decide_race_kill`` 判定 ——
+    ``best_so_far <= bar`` 即杀（严格破纪录才续跑）、首 seed 豁免、bar = 历史
+    所有 seed 门值最大值（含被杀者）、每 seed 至多一笔（门后不再判）；
+  - **SE 筛延（方案 A）**：``se_plan`` 名义记账规划 k 轮 ``SE_SCREEN_S``(90s)
+    筛选 + 冠军 ``SE_EXT_S``(180s) 延长（预算不足 ``StrategyBudgetError``）；
+  - **种子流** ``strategy_seed_stream``：config seeds 优先、max+1 补齐、保证
+    无重复（同预算重跑同 seed 是纯浪费 —— 确定性重放下零信息增益）。
+
 进度口径（``echo`` 给定时；``run_config`` 传 ``None if quiet else print``）：
 沿用「原面积口径新最优才打 + 30s 心跳」—— per-seed 新最优行与心跳行**逐字保留**
 旧版格式（零回归），新增**跨 seed 反超**时的 incumbent 行（同 seed 自我刷新不打，
@@ -76,12 +89,16 @@ from pathlib import Path
 
 from .pipeline import solve_pieces
 
-__all__ = ['R0_REASON', 'R1_REASON', 'R2_REASON', 'KILL_DEFAULTS', 'KILL_MODES',
-           'THETA0_MIN_RECORDS', 'THETA0_MARGIN', 'ControllerParamsError',
-           'PortfolioController', 'PortfolioRun', 'calibrate_theta0',
+__all__ = ['R0_REASON', 'R1_REASON', 'R2_REASON', 'R5_REASON', 'KILL_DEFAULTS',
+           'KILL_MODES', 'THETA0_MIN_RECORDS', 'THETA0_MARGIN',
+           'RACE_BUDGET_S', 'RACE_GATE_TAU', 'SE_SCREEN_S', 'SE_EXT_S',
+           'SEED_UNIT_S', 'FULL_UNIT_S', 'STRATEGY_STARTUP_S',
+           'ControllerParamsError', 'StrategyBudgetError', 'PortfolioController',
+           'PortfolioRun', 'calibrate_theta0', 'decide_race_kill',
            'load_controller_params', 'load_run_stats', 'make_envelope',
-           'r1_below_envelope', 'r2_below_threshold', 'resolve_kill_params',
-           'run_serial_portfolio', 'run_stats_class_key']
+           'r1_below_envelope', 'race_gate_seconds', 'r2_below_threshold',
+           'resolve_kill_params', 'run_serial_portfolio', 'run_stats_class_key',
+           'se_plan', 'strategy_seed_stream']
 
 # R0 / R1 / R2 触发的 should_stop 返回值（solve_pieces 透传为 kill_reason）。
 R0_REASON = 'R0_target_reached'
@@ -253,6 +270,128 @@ def resolve_kill_params(params: dict) -> dict:
         if v >= 0:
             merged[key] = float(v)
     return merged
+
+
+# -------------------------------------------------------------- 策略双模式判据（US-001）
+
+# race 门杀 should_stop 返回值（solve_pieces 透传为 kill_reason；kill_decisions
+# 行的 rule 字段同值）。
+R5_REASON = 'R5_race_gate'
+# 策略双模式实测默认（PRD 2026-08-20 四重证据链；--strategy 旗标的缺省值同源）。
+RACE_BUDGET_S = 180.0   # race：每 seed 求解预算（秒）
+RACE_GATE_TAU = 0.5     # race：门时刻占预算比（τ_gate，(0,1) 开区间）
+SE_SCREEN_S = 90.0      # se：阶段 1 每轮筛选预算（秒）
+SE_EXT_S = 180.0        # se：阶段 2 冠军延长预算（秒）
+# 名义记账单位（秒）：求解预算 + ~2.5s 启动开销（build_instance 取 meta + 子进程
+# 冷启动），与离线对决 / ETT 仿真同口径；solver 收敛早退按名义记账（两臂对称）。
+STRATEGY_STARTUP_S = 2.5
+SEED_UNIT_S = 92.5      # 单轮筛选名义成本 = SE_SCREEN_S + STRATEGY_STARTUP_S
+FULL_UNIT_S = 182.5     # 单轮全程名义成本 = SE_EXT_S + STRATEGY_STARTUP_S
+
+
+class StrategyBudgetError(ValueError):
+    """策略模式总预算不足（se：T < 全程 + 单轮筛选的名义成本）。"""
+
+
+def strategy_seed_stream(cfg_seeds, n: int) -> list[int]:
+    """策略模式种子流：config seeds 优先消费，不足按 ``max+1`` 递增补齐。
+
+    **保证无重复** —— 同预算重跑同一 seed 是纯浪费（确定性重放：同 seed + 同
+    time_budget 逐帧一致，零信息增益），重复 seed 只烧预算不产生新样本。config
+    seeds 自带重复时去重（保序取首个）；``n`` 截断消费（config seeds 多于所需时
+    取前缀）；空 config 从 1 起补齐（基线 0 = max(∅)+1 的约定）。
+    """
+    n = int(n)
+    if n <= 0:
+        return []
+    stream: list[int] = []
+    seen: set[int] = set()
+    for s in cfg_seeds or []:
+        if len(stream) >= n:
+            break
+        s = int(s)
+        if s not in seen:
+            seen.add(s)
+            stream.append(s)
+    nxt = max(seen) if seen else 0
+    while len(stream) < n:
+        nxt += 1                    # max+1 递增：必不在 seen（无重复补齐）
+        seen.add(nxt)
+        stream.append(nxt)
+    return stream
+
+
+def race_gate_seconds(budget: float, tau: float = RACE_GATE_TAU) -> float:
+    """race 门时刻（秒）= 每轮预算 ``budget`` × 门占比 ``tau``（默认 180×0.5=90）。"""
+    return float(budget) * float(tau)
+
+
+def decide_race_kill(best_so_far: float, elapsed: float, state: dict) -> dict | None:
+    """race 门杀判据（纯函数 + 显式 ``state`` 字典，无 I/O 无进程）。
+
+    门帧 = **首帧** ``elapsed >= gate_seconds``：该 seed 的 ``best_so_far <= bar``
+    即判杀（**严格破纪录才续跑**）；首 seed（``state['index'] <= 1``）无条件豁免
+    （无参照值 + 锚定交付下限，与 kill 引擎 seed 1 永不 kill 同哲学）。
+    ``bar`` = 历史所有 seed 门值最大值（**含被杀者** —— 弱 seed 的门值同样是
+    判杀参照）；门值经 ``state['bar']`` 回写（单调只升）。**每 seed 至多一笔**：
+    门帧评估后置 ``state['judged'] = True``，此后同 seed 任意帧直接返回 None
+    （门后不再判）—— 与确定性重放联合保证「同 seed 永不二次续跑后再杀」。
+
+    ``state`` 契约（调用方按 seed 重建 judged，跨 seed 线程 bar / incumbent）：
+    ``seed`` / ``index``（队列序 1 起）/ ``gate_seconds`` / ``budget``（τ 分母，
+    可 None）/ ``bar``（None = 尚无门值历史）/ ``incumbent``（全局最优密度，可
+    None）/ ``judged``（bool）。返回决策 dict（与 kill_decisions 行同构：
+    ``{t, seed, rule, d, tau, S_tau, theta, I, would_kill}``；race 重载：
+    ``S_tau`` = bar 参照值、``theta`` = None）；门帧未到 / 已判过返回 None。
+    """
+    if state.get('judged'):
+        return None                          # 门后不再判（每 seed 至多一笔）
+    gate = float(state.get('gate_seconds') or 0.0)
+    elapsed = float(elapsed)
+    if elapsed < gate:
+        return None                          # 门帧 = 首帧 elapsed >= gate_seconds
+    state['judged'] = True
+    d = float(best_so_far)
+    bar = state.get('bar')
+    if bar is None or d > bar:
+        state['bar'] = d                     # bar 含被杀者 / 豁免者的门值（max 只升）
+    kill = state.get('index', 1) > 1 and bar is not None and d <= bar
+    budget = state.get('budget')
+    inc = state.get('incumbent')
+    return {
+        't': round(elapsed, 3),
+        'seed': int(state.get('seed', 0)),
+        'rule': R5_REASON,
+        'd': round(d, 6),
+        'tau': None if not budget else round(elapsed / float(budget), 4),
+        'S_tau': None if bar is None else round(float(bar), 6),
+        'theta': None,
+        'I': None if inc is None else round(float(inc), 6),
+        'would_kill': kill,
+    }
+
+
+def se_plan(total_budget: float, screen_s: float = SE_SCREEN_S,
+            ext_s: float = SE_EXT_S) -> tuple[int, float]:
+    """SE 两段式规划（纯）：``(k, ext_s)`` = 阶段 1 筛选轮数 + 阶段 2 延长预算。
+
+    名义成本口径：单轮筛选 ``screen_s + STRATEGY_STARTUP_S``（默认 = SEED_UNIT_S
+    92.5）、冠军全程 ``ext_s + STRATEGY_STARTUP_S``（默认 = FULL_UNIT_S 182.5）——
+    与 race 记账同口径（solver 收敛早退按名义记账）。算术：
+    ``k = max(1, (T − full_unit) // seed_unit)``；``T < full_unit + seed_unit``
+    （连「1 轮筛选 + 1 轮延长」的最小配置都装不下）→ ``StrategyBudgetError``
+    （CLI 层以退出 1 呈现）。返回延长预算原样（180s 实测即最优：冠军类曲线
+    120~180s 进平台，再砍到 120s 开始亏）。
+    """
+    t = float(total_budget)
+    seed_unit = float(screen_s) + STRATEGY_STARTUP_S
+    full_unit = float(ext_s) + STRATEGY_STARTUP_S
+    if t < full_unit + seed_unit:
+        raise StrategyBudgetError(
+            f'预算不足：SE 模式至少需要全程 {full_unit:g}s + 单轮筛选 {seed_unit:g}s '
+            f'= {full_unit + seed_unit:g}s 名义预算，当前 --time={t:g}s')
+    k = max(1, int((t - full_unit) // seed_unit))
+    return k, float(ext_s)
 
 
 class ControllerParamsError(ValueError):

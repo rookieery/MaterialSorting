@@ -19,14 +19,28 @@ from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from materialsorting.nesting_bounds.load_pieces import PLOT_SAFE_MAX_Y_MM
+from materialsorting.web import server as server_mod
 from materialsorting.web.server import app
 
 
+def _smallest_loaded_size() -> int:
+    """当前 ``_PIECES_STATE`` 最小码号（单码子集加速）。
+
+    真实 intermediate 的码号集随母版漂移（本机 30~40、开发期 28~38），硬编码
+    28 会在母版切换后 manifest 0 片 —— 与 conftest「real or synthetic」同哲学：
+    从已加载状态动态取码，空状态回退 28。
+    """
+    pieces = server_mod._PIECES_STATE.get('pieces_by_id') or {}
+    sizes = sorted({p['size'] for p in pieces.values()
+                    if isinstance(p, dict) and isinstance(p.get('size'), int)})
+    return sizes[0] if sizes else 28
+
+
 def _start_payload(*, time_budget: int = 3, seed: int = 1) -> dict[str, Any]:
-    """构造最小合法 start payload（sizes 取 [28] 子集加速，短预算）。"""
+    """构造最小合法 start payload（sizes 取最小码子集加速，短预算）。"""
     return {
         'action': 'start',
-        'sizes': [28],
+        'sizes': [_smallest_loaded_size()],
         'time': time_budget,
         'seed': seed,
         'params': {'d_ext': 0, 'd_int': 0, 'tol_ext': 0, 'tol_int': 0},
