@@ -394,13 +394,14 @@ src/
 - **WS 连接只在 `start(cfg)` 显式 new**：不要在 useEffect 里 auto-connect，React 18 StrictMode 双 mount 会双连。
 - **frames 是 mutable 引用**：`runRegistry.list()` 返回的 RunRecord 本身可被 push，**不进 React state**；高频重绘由 US-003 renderTick 单字段节流。
 - **per_type 空 → 序列化为 null**（与旧 vanilla 实现 collectParams 一致；Python `or None` 接住）。
-- **density 双口径**：`FrameMsg.density` 是原面积口径（90% 生死线以此为准），`density_sparrow` 是 erode 后 sparrow 自报（参考）。任何决策 / 显示优先 density。
+- **density 双口径**：`FrameMsg.density` 是原面积·**实际幅宽**口径（`total_area/(width*min(gate_mm,1910))`，与后端 `_apply_density_dual` 同式，90% 生死线以此为准），`density_sparrow` 是 erode 后 sparrow 自报（参考）。任何决策 / 显示优先 density。
 - **不重连**：onclose / onerror 触发 `onDone`（done flag 防重复），交由调用层决定是否重启。
 - **测试**：`npx vitest run`，需 `(globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;` 才能 avoid act warning；Mock WebSocket 用 ctor 返回 mock 实例的方式（`new WebSocket(url)` 直接拿到 mock）。
 
 ## US-003 关键约定（NestSVG / 节流闸 调用方必读）
 
-- **React 只渲染空骨架一次**：`NestSVG` JSX 仅返回 `<svg ref={svgRef}/>`；所有子节点（bg / 用布矩形 / 翻换组 `<g>` / N 个 `<polygon>`）全部 imperative 创建，由 `useRef` 持有。
+- **React 只渲染空骨架一次**：`NestSVG` JSX 仅返回 `<svg ref={svgRef}/>`；所有子节点（bg / 用布矩形 / 翻换组 `<g>` / N 个 `<polygon>` / 实际排料边界红虚线）全部 imperative 创建，由 `useRef` 持有。
+- **实际排料边界红虚线（2026-08-20）**：manifest 带 `gate_nest_mm` 且 < `gate_mm`（门幅被绘图仪可写幅宽 1910 钳制）时建第 4 个骨架节点 `<line>`（红 `#e53e3e`、dasharray `8 5`、顶层 + pointer-events none、根坐标不进翻转组），逐帧定位 `y = gate_mm − gate_nest_mm`、`x2 = viewBox 锚宽 W`；缺字段 / 未钳制 → 不建。随骨架重建拆除。
 - **翻转组 transform 必须用 setAttribute 写**：`translate(0 ${gate_mm}) scale(1 -1)`，**不走 JSX prop**，否则 React reconciliation 会用 vdom 覆盖回旧值。
 - **renderTick 单字段节流**：`useAppStore` 只持 `renderTick` 一个字段；`useRafThrottle(active)` 在 active=true 时每 100ms bump 一次；NestSVG / NestLabel 通过 `useAppStore(s => s.renderTick)` 订阅 → useEffect 重跑 → setAttribute imperative 更新。frames 仍 mutable push 到 runRegistry。
 - **pointsStr(poly, rot, tr) 字节级对齐旧 vanilla 实现**：rad=rot*π/180，c=cos, s=sin，`x'=x*c−y*s+tx`，`y'=x*s+y*c+ty`，每点 `r2(x),r2(y)`，空格分隔。改这个函数必须同步后端 `_transform_polygon` 和 `lib/__tests__/geometry.test.ts`。

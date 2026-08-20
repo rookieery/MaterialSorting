@@ -16,6 +16,7 @@ import time
 
 import pytest
 
+from materialsorting.nesting_bounds.load_pieces import PLOT_SAFE_MAX_Y_MM
 from materialsorting.web.solve_worker import solve_worker
 from materialsorting.web.solver import solve_with_callback_proc
 
@@ -28,7 +29,8 @@ def test_normal_solve_manifest_frame_final_density_dual(real_or_synthetic_pieces
 
     - manifest 先于 frame 到达（顺序保证）；
     - 每个 frame 同时含 density（原面积口径）与 density_sparrow（sparrow 自报）；
-    - final.density 与单进程期望一致：density == total_area / (width * gate)。
+    - final.density 与单进程期望一致：density == total_area / (width * min(gate, 1910))
+      （实际幅宽口径：求解约束带 = 密度分母）。
     """
     pieces, gate_mm = real_or_synthetic_pieces
     manifests: list = []
@@ -58,10 +60,10 @@ def test_normal_solve_manifest_frame_final_density_dual(real_or_synthetic_pieces
     assert m["gate_mm"] == pytest.approx(gate_mm)
     assert isinstance(m["pid_meta"], dict) and len(m["pid_meta"]) >= 1
 
-    # 每个 frame 双口径换算校验：density == total_area/(width*gate)
+    # 每个 frame 双口径换算校验：density == total_area/(width*min(gate, PLOT_SAFE))
     for f in frames:
         assert "density" in f and "density_sparrow" in f
-        expected = total_area / (f["width_mm"] * gate_mm)
+        expected = total_area / (f["width_mm"] * min(gate_mm, PLOT_SAFE_MAX_Y_MM))
         assert f["density"] == pytest.approx(expected, rel=1e-6), (
             f"density real={f['density']} expected={expected}")
         # sparrow 自报口径非负（无 erode 时与真实口径浮点近似相等；
@@ -75,7 +77,7 @@ def test_normal_solve_manifest_frame_final_density_dual(real_or_synthetic_pieces
     # final 也有双口径
     assert "density" in final and "density_sparrow" in final
     assert final["density"] == pytest.approx(
-        total_area / (final["width_mm"] * gate_mm), rel=1e-6)
+        total_area / (final["width_mm"] * min(gate_mm, PLOT_SAFE_MAX_Y_MM)), rel=1e-6)
     # final.width_mm <= 任意中间 frame.width_mm（收敛）
     assert final["width_mm"] <= max(f["width_mm"] for f in frames) + 1e-6
     assert elapsed > 0
@@ -220,8 +222,9 @@ def test_solve_worker_is_picklable_top_level_function():
 def test_build_instance_clamps_strip_to_plotter_width(real_or_synthetic_pieces):
     """strip_height = min(门幅, PLOT_SAFE_MAX_Y_MM)：1980 门幅按 1910 排，小门幅原样。
 
-    门幅 1980 是布幅显示口径（UI/密度/导出不变），求解约束带压进绘图仪可写幅宽
-    1910（内部差 70mm），marker 顶部不再落进行程外。manifest/density 仍报传入门幅。
+    门幅 1980 是布幅显示口径（UI/导出外框不变），求解约束带压进绘图仪可写幅宽
+    1910（内部差 70mm），marker 顶部不再落进行程外。density 分母同取该钳制值
+    （实际幅宽口径）；manifest 仍报传入门幅（gate_mm 字段语义不变）。
     """
     from materialsorting.nesting_bounds.load_pieces import PLOT_SAFE_MAX_Y_MM, NEST_GATE_MM
     from materialsorting.web.solver import build_instance

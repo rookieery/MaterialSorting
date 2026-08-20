@@ -126,7 +126,7 @@ def run_one(doc, gate, exp, erode_d, time_budget, seed, internal_labels=frozense
             demand=1,
             allowed_orientations=m['allowed_orientations'],
         ))
-    # 有效排料宽度 = min(门幅, 绘图仪可写幅宽)（与 web/solver 同口径；密度仍按 gate）
+    # 有效排料宽度 = min(门幅, 绘图仪可写幅宽)（与 web/solver 同口径；密度分母同取该值）
     instance = spyrrow.StripPackingInstance(
         name=f'm1787_{tag}', strip_height=min(gate, PLOT_SAFE_MAX_Y_MM), items=items)
     config = spyrrow.StripPackingConfig(
@@ -134,7 +134,7 @@ def run_one(doc, gate, exp, erode_d, time_budget, seed, internal_labels=frozense
 
     sol, curve, dt = solve_with_progress(instance, config)
     used_mm = float(sol.width)
-    real_density = total_orig / (used_mm * gate)        # 原面积口径（腐蚀不缩面积）
+    real_density = total_orig / (used_mm * min(gate, PLOT_SAFE_MAX_Y_MM))  # 原面积·实际幅宽口径
     sparrow_density = float(sol.density)                # 腐蚀后面积口径（sparrow 自报）
 
     print(f'\n== {tag} 结果 ==')

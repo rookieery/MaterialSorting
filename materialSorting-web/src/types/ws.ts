@@ -3,7 +3,8 @@
 // server → client: ServerMsg = ManifestMsg | FrameMsg | FinalMsg | ErrorMsg | StoppedMsg（判别联合，按 type 区分）
 //
 // 密度双口径：
-//   density         —— 原面积口径（= total_area / (width*gate)），版师 / 90% 生死线以此为准
+//   density         —— 原面积·实际幅宽口径（= total_area / (width * min(gate_mm, 1910))），
+//                      版师 / 90% 生死线以此为准（2026-08-20 起分母与求解约束带同口径）
 //   density_sparrow —— sparrow 自报（erode 后面积），仅作参考
 
 import type { PieceInfo, PlacedItem } from './piece';
@@ -53,6 +54,12 @@ export type Phase = 'exploring' | 'compressing' | 'final';
 export interface ManifestMsg {
   type: 'manifest';
   gate_mm: number;
+  /**
+   * 实际排料幅宽 = min(gate_mm, 1910)（求解约束带 / density 分母口径）。
+   * NestSVG 据此画红色虚线（实际范围边界）；缺省（旧后端）→ 不画线。
+   * gate_mm 仍为显示口径（viewBox / 翻转 / 导出外框）。
+   */
+  gate_nest_mm?: number;
   total_area_mm2: number;
   n_eroded: number;
   pieces: PieceInfo[];

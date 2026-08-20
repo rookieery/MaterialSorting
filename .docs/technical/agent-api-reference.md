@@ -315,7 +315,7 @@ curl http://127.0.0.1:8000/api/ptypes
   "index": 0,                     // server 侧递增序号（counter['n']）
   "elapsed": 0.123,               // 秒，自 solve 开始
   "phase": "exploring",           // spyrrow rtype.phase_name()：exploring / compressing / final
-  "density": 0.8983,              // ★ 原面积口径 real = total_area/(width*gate)（与 90% 生死线一致）
+  "density": 0.8983,              // ★ 原面积·实际幅宽口径 real = total_area/(width*min(gate,1910))（与 90% 生死线一致）
   "density_sparrow": 0.8809,      // spyrrow 自报（erode 后面积口径，偏低，仅参考）
   "width_mm": 7058.0,             // 当前用布长度
   "placed_items": [               // 完整布局（每帧全量）
@@ -412,7 +412,7 @@ read loop (后台 task):                               # 持续读客户端消�
 
 ## 关键不变量（改后端勿破坏）
 
-1. **density 双口径**：frame/final 的 `density` 必须是原面积口径（`total_area/(width*gate)`），`density_sparrow` 才是 spyrrow 自报。前端 90% 生死线判定用 `density`。
+1. **density 双口径**：frame/final 的 `density` 必须是原面积·实际幅宽口径（`total_area/(width*min(gate_mm, PLOT_SAFE_MAX_Y_MM))`，2026-08-20 起与求解约束带同口径；manifest 另带 `gate_nest_mm` 供前端画实际排料边界红虚线），`density_sparrow` 才是 spyrrow 自报。前端 90% 生死线判定用 `density`。
 2. **导出用原始轮廓非 eroded**：`_PIECES_STATE['pieces_by_id']`（US-020 替代旧 `PIECES_BY_ID`）持有原始 polygon；`placed_to_world` 用它变换。eroded 多边形只用于求解/屏幕。
 3. **DXF 走 R12 + POLYLINE**（非 LWPOLYLINE）：ET2008 读 LWPOLYLINE 轮廓消失。单裁片与 marker 导出均如此。
 4. **`server.py` 启动期 `_reload_pieces_state()`**（US-020）：import 时读 intermediate 填 `_PIECES_STATE`；缺失不再让 import 崩（allow-empty）。改启动顺序需保证调用顺序在 `app` 定义前。

@@ -84,7 +84,7 @@ python -m materialsorting.cli.run_config <config.json> --name demo --quiet   # �
 | 键 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `master_dxf` | str | ✓ | 母版 DXF 路径；相对路径先按 CWD 再按仓库根解析 |
-| `gate_mm` | num | ✓ | 门幅（mm，>0）；intermediate 与密度分母口径 |
+| `gate_mm` | num | ✓ | 门幅（mm，>0）；intermediate 口径；密度分母 = min(gate_mm, 1910)（实际幅宽，与求解约束带同口径） |
 | `sizes` | list | — | 码号过滤（JSON 整数列表，非空）；缺省 = 全部码号 |
 | `time` | int | — | 单轮求解时长（秒，正整数），缺省 300 |
 | `seeds` | list | — | **串行**种子列表（非负整数、不重复、非空），缺省 `[0]`；≥2 个时逐 seed 串行求解，`best` 取原面积口径 `real_density` 最大轮（消除单 seed 随机性；种子不要求连续）。取代旧 `seed`/`multi_seed`/`seed_count` 三键（旧键按未知键报错） |

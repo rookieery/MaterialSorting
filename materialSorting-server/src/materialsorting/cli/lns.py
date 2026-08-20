@@ -385,7 +385,9 @@ def run_lns(placed_items, pieces, gate_mm, *, per_type=None, sizes=None,
     geoms0 = _layout_geometry(placed_items, pieces_by_id)   # 兼验 pid 在场
     total_area = sum(float(pieces_by_id[it['id']]['area_mm2']) for it in placed_items)
     width_before = max(max(g[2] for g in geoms0), 0.0)
-    density_before = total_area / (width_before * float(gate_mm))
+    # 密度分母 = 实际幅宽 min(gate_mm, PLOT_SAFE_MAX_Y_MM)（与 _apply_density_dual 同口径，
+    # 回写 result.json 的 incumbent density 与 solve 段 real_density 保持一致）。
+    density_before = total_area / (width_before * min(float(gate_mm), PLOT_SAFE_MAX_Y_MM))
 
     current = list(placed_items)      # 浅拷贝：接受时替换元素为新 dict，绝不动入参
     improved_any = False
@@ -532,7 +534,7 @@ def run_lns(placed_items, pieces, gate_mm, *, per_type=None, sizes=None,
 
     geoms_f = _layout_geometry(current, pieces_by_id)
     width_after = max(max(g[2] for g in geoms_f), 0.0)
-    density_after = total_area / (width_after * float(gate_mm))
+    density_after = total_area / (width_after * min(float(gate_mm), PLOT_SAFE_MAX_Y_MM))
     ok, issues, y_viol = recheck_layout(current, pieces_by_id, gate_mm)
     reverted = False
     if improved_any and not ok:

@@ -25,6 +25,7 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 from materialsorting import paths as paths_mod
+from materialsorting.nesting_bounds.load_pieces import PLOT_SAFE_MAX_Y_MM
 from materialsorting.cli.config import load_config
 from materialsorting.cli.pipeline import commit_from_config, new_run_dir, solve_pieces
 from materialsorting.cli.run_config import _clean_run_name, main
@@ -99,8 +100,8 @@ def test_solve_pieces_metrics_and_demand_sum(iso_env):
     assert rec['placed_items'] == _N_PIECES           # demand 缺省全 1
     assert rec['width_mm'] > 0
     assert 0.0 < rec['real_density'] < 1.0
-    # 原面积口径公式对拍（分母 = width × gate，与 web _apply_density_dual 同式）
-    expect = rec['total_area_mm2'] / (rec['width_mm'] * cfg.gate_mm)
+    # 原面积口径公式对拍（分母 = width × min(gate, 1910)，与 web _apply_density_dual 同式）
+    expect = rec['total_area_mm2'] / (rec['width_mm'] * min(cfg.gate_mm, PLOT_SAFE_MAX_Y_MM))
     assert rec['real_density'] == pytest.approx(expect, abs=1e-4)
     assert rec['density_sparrow'] > 0                 # sparrow 自报口径同时在场
     assert rec['elapsed'] >= 0

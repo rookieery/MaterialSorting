@@ -191,9 +191,9 @@ materialSorting-server/
 
 | 常量 | 值 |
 |------|-----|
-| `GATE_MM` | `1980.0`（门幅：布幅**显示**口径 —— UI / 密度分母 / PNG·DXF·PLT 外框，不减布边） |
+| `GATE_MM` | `1980.0`（门幅：布幅**显示**口径 —— UI viewBox / PNG·DXF·PLT 外框，不减布边） |
 | `PLOT_SAFE_MAX_Y_MM` | `1910.0`（绘图仪 Y 可写幅宽，LIKE + WT「高速网口输出中心 V8.8」现场口径；2026-08 撞机根因 = 旧导出门幅框画到 1980、顶部刺口伸 1983.9mm，Y 超程小车撞导轨硬限位） |
-| `NEST_GATE_MM` | `min(GATE_MM, PLOT_SAFE_MAX_Y_MM)`（**求解约束带** strip 高度上限；web/solver 与 CLI 引擎同源引用；换机器/换布幅只改上面两个常量，此处自动跟随） |
+| `NEST_GATE_MM` | `min(GATE_MM, PLOT_SAFE_MAX_Y_MM)`（**求解约束带** strip 高度上限 + **密度分母**实际幅宽口径（2026-08-20 起，单一换算点 `web.solver._apply_density_dual`）；web/solver 与 CLI 引擎同源引用；换机器/换布幅只改上面两个常量，此处自动跟随） |
 | （US-001 v2 已删）`PAIR_TYPES` / `ALL_TYPES` —— 镜像展开与片型集合退场 |
 | `ALL_TYPES` | `['前片','后片','腰','前袋','后袋','机头','单排','双排','火机袋','裤耳']`（10 类规范序） |
 | `DEFAULT_SIZES` | `[28,29,30,31,33,34,35,36]`（8 码，**跳 32**） |
@@ -382,7 +382,7 @@ out/sparrow_baseline/pieces_intermediate.json   ← 全流程事实源（每片 
 2. **路径走 `paths.py`**：禁硬编码 `..` / 绝对路径。
 3. **DXF 走 R12 + POLYLINE**（非 LWPOLYLINE）：ET2008 读 LWPOLYLINE 轮廓消失。单裁片与 marker 导出均如此。
 4. **sparrow 不改源码**：作为 `spyrrow` pip 包引用，v0.3 约束在外层 `constraints.py` + `solver.build_instance` 包装实现。
-5. **density 双口径**：`real_density = total_area/(width*gate)`（90% 生死线口径，导出为 `density`）；`density_sparrow`（erode 后 sparrow 自报，仅参考）。
+5. **density 双口径**：`real_density = total_area/(width*min(gate_mm, PLOT_SAFE_MAX_Y_MM))`（原面积·实际幅宽口径，2026-08-20 起分母与求解约束带同口径，导出为 `density`，90% 生死线口径）；`density_sparrow`（erode 后 sparrow 自报，仅参考）。
 6. **坐标系**：spyrrow X=用布长度(0..width)，Y=门幅(0..gate)，Y 向上；前端 SVG `scale(1,-1)` 翻转后与 PNG / R12-DXF 一致。
 7. **导出用原始轮廓非 eroded**：`_PIECES_STATE['pieces_by_id']`（US-020 替代旧 `PIECES_BY_ID`）持原始 polygon，`placed_to_world` 用它变换；eroded 仅用于求解/屏幕。
 8. **`server.py` 启动期 `_reload_pieces_state()`**（US-020）：import 时读 intermediate 填 `_PIECES_STATE`；allow-empty 不再让 import 崩；commit 成功后立即 reload，前端无需重启 ms-web。`_state_lock=threading.Lock()` 保护 immutable snapshot 模式（整体替换 dict 内容）。

@@ -349,7 +349,7 @@ def main():
     print(f'构造 {len(items)} 个 item（每片 demand=1，{0}°/{180}° 姿态）')
 
     # 有效排料宽度：门幅超出绘图仪可写幅宽的部分（内部差）不排 —— 与 web/solver
-    # build_instance 同口径；密度/理论用布仍按 gate（显示口径）计算
+    # build_instance 同口径；下方对比目标长度按同一有效幅宽计算（密度实际幅宽口径）
     instance = spyrrow.StripPackingInstance(
         name=f'm1787_{"_".join(str(p["size"]) for p in pieces[:1]) or "all"}',
         strip_height=min(gate, PLOT_SAFE_MAX_Y_MM),
@@ -378,12 +378,14 @@ def main():
     print(f'用布长度 = {used_mm/10:.1f} cm')
     print(f'耗时 {dt:.0f}s | anytime 报告 {len(curve)} 条')
 
+    # 对比目标长度按实际幅宽（与求解约束带/密度分母同口径）折算
+    gate_eff = min(gate, PLOT_SAFE_MAX_Y_MM)
     print(f'\n== 对比 ==')
     print(f'  stage1c(位图+弱SA) : 71.9%')
     print(f'  sparrow(本次)      : {density*100:.2f}%')
-    print(f'  人工目标           : 93% = {total_area/(gate*0.93)/10:.1f}cm')
-    print(f'  90%                : {total_area/(gate*0.9)/10:.1f}cm')
-    print(f'  100%(理论)         : {total_area/gate/10:.1f}cm')
+    print(f'  人工目标           : 93% = {total_area/(gate_eff*0.93)/10:.1f}cm')
+    print(f'  90%                : {total_area/(gate_eff*0.9)/10:.1f}cm')
+    print(f'  100%(理论)         : {total_area/gate_eff/10:.1f}cm')
 
     # ---- 保存 result（含 placements，可离线重画）----
     placed = [(pi.id, pi.rotation, pi.translation) for pi in sol.placed_items]

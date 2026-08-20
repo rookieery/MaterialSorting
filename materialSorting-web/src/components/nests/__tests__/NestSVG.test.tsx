@@ -723,3 +723,5 @@ describe("NestSVG demand>1 (多副本渲染)", () => {
     expect(polys[1].getAttribute("points")).toBe("100,200 110,200 110,210 100,210");
   });
 });
+
+// 实际排料边界红虚线（gate_nest_mm）用例在 NestSVG.plotSafeLine.test.tsx（2026-08-20 拆出）。

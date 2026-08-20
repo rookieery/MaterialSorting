@@ -63,9 +63,9 @@
 
 | 常量 | 值 | 口径 |
 |------|-----|------|
-| `GATE_MM` | 1980 | **布幅显示口径**：UI / 密度分母 / PNG·DXF·PLT 外框 / WS manifest `gate_mm`。不减布边 |
+| `GATE_MM` | 1980 | **布幅显示口径**：UI viewBox / PNG·DXF·PLT 外框 / WS manifest `gate_mm`。不减布边 |
 | `PLOT_SAFE_MAX_Y_MM` | 1910 | **绘图仪 Y 可写幅宽**（LIKE + WT「高速网口输出中心 V8.8」现场口径）。旧口径把门幅框画到 1980、顶部刺口伸到 1983.9mm，Y 超程小车撞导轨硬限位 —— 2026-08 现场撞机根因 |
-| `NEST_GATE_MM` | min(两者)=1910 | **求解约束带**（spyrrow strip 高度上限）：1980−1910=70mm 内部差求解时直接不排。web/solver 与 CLI 引擎（baseline/experiments）同源引用 |
+| `NEST_GATE_MM` | min(两者)=1910 | **求解约束带**（spyrrow strip 高度上限）+ **密度分母实际幅宽**（2026-08-20 起）：1980−1910=70mm 内部差求解时直接不排、密度也不计入分母。web/solver 与 CLI 引擎（baseline/experiments）同源引用 |
 
 三常量单一事实源在 `nesting_bounds/load_pieces.py`，换机器/换布幅只改一处。PLT 导出内容再按 y≤1910 裁剪属二道防线（削平不缩放）。
 
@@ -73,7 +73,7 @@
 
 | 口径 | 公式 | 用途 |
 |------|------|------|
-| **real（原面积）** | `total_area / (width × gate)` | ★ 90% 生死线判定；导出为 `density`；版师口径 |
+| **real（原面积·实际幅宽）** | `total_area / (width × min(gate_mm, 1910))` | ★ 90% 生死线判定；导出为 `density`；版师口径。2026-08-20 起分母与求解约束带同口径（同布局较旧门幅分母口径 +~3.7pp；此前按 1980 计的历史数字不可直接对比） |
 | sparrow（erode 后） | spyrrow 自报 | 仅参考，偏低（erode 缩小了分子） |
 
 **任何对版师的汇报、前端显示、目标判定都用 real 口径。**
@@ -132,7 +132,7 @@ out/sparrow_baseline/pieces_intermediate.json   ← 全流程事实源（schema 
 
 ## 验收标准（90% 目标的硬指标）
 
-- ✅ `real_density = total_area/(width×gate)` 达到 90%（非 sparrow 自报密度）。
+- ✅ `real_density = total_area/(width×min(gate_mm,1910))` 达到 90%（实际幅宽口径，非 sparrow 自报密度；2026-08-20 起生效）。
 - ✅ commit-to-nesting 生成的 intermediate 含母版全码 NestPiece（M1787 = 110 片 = 母版 size≠None 轮廓数，无镜像合成；每片 label = g 码）。
 - ✅ 基线对拍（US-005）：同 seed（0）重跑 110 片基线 density 一致；新基线 **real 85.59%** 记录在案（旧 176 片/85.79% 基线随镜像概念归档，不再对拍）。
 - ✅ 导出 DXF 可被 ET2008 正确读出轮廓（R12 + POLYLINE）。

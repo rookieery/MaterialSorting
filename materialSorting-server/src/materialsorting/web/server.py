@@ -11,7 +11,8 @@ WS 协议（详见 README / 实现计划；US-002 起全 label 键，不再接�
          → {type:frame, density(原面积口径), density_sparrow(erode后口径), ...} 每个中间解
          → {type:final,   ...} 收尾  （或 {type:error, message}）
 
-阶段 B：density 统一用原面积口径 real_density = total_area/(width*gate)，与版师/90%生死线一致；
+阶段 B：density 统一用原面积口径 real_density = total_area/(width*min(gate, PLOT_SAFE_MAX_Y_MM))
+        （实际幅宽口径，2026-08-20 起分母与求解约束带同口径），与版师/90%生死线一致；
         erode 后的 sparrow 自报密度保留为 density_sparrow 供参考。
 """
 from __future__ import annotations
@@ -39,6 +40,7 @@ from ..nesting_bounds.load_pieces import (
     load_nest_pieces,
     GATE_MM as NEST_GATE_MM,
     PIECES_MANIFEST_NAME,
+    PLOT_SAFE_MAX_Y_MM,
 )
 from ..nesting_engine.labeling import (
     size_sort_key,
@@ -627,6 +629,9 @@ async def ws_solve(ws: WebSocket):
         manifest_msg = {
             'type': 'manifest',
             'gate_mm': gate_mm,
+            # 实际排料幅宽（求解约束带口径）：density 分母 + 前端红色虚线（实际范围
+            # 边界）唯一数据源；gate_mm 仍为显示口径（viewBox / 导出外框）。
+            'gate_nest_mm': min(float(gate_mm), PLOT_SAFE_MAX_Y_MM),
             'total_area_mm2': total_area,
             'n_eroded': m.get('n_eroded', 0),
             'pieces': [
