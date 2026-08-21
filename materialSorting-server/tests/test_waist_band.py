@@ -164,7 +164,11 @@ def test_build_band_plan_conservation_pid_and_ordering():
 
     # 带内填充率口径：实际占用 bbox（非全幅 1910），矩形紧排应显著高于 45% 下限
     assert chunk.fill_pct > 45.0
-    assert 0 < chunk.bbox['width_mm'] and 0 < chunk.bbox['height_mm'] < 1910.0
+    # US-014：组合片须进主解条带（build_instance strip=min(gate, PLOT_SAFE_MAX_Y_MM)
+    # =1910）—— 带内求解幅宽已同口径钳制，高度 <= 1910（等高合法：主解 y=0 可放）。
+    from materialsorting.nesting_bounds.load_pieces import PLOT_SAFE_MAX_Y_MM
+    assert 0 < chunk.bbox['width_mm']
+    assert chunk.bbox['height_mm'] <= PLOT_SAFE_MAX_Y_MM + 1e-6
 
 
 def test_build_band_plan_envelope_assertion():

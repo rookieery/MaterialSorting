@@ -2,16 +2,10 @@
   "branchName": "ralph/waist-band",
   "stories": [
     {
-      "id": "US-013",
-      "title": "弹窗布局设置 UI+校验+互斥+预览回显",
-      "description": "高级配置弹窗「布局设置」分区 UI + 启动校验 + 策略互斥 + 预求解预览。详见 tasks/prd-waist-band.md US-013。（组件路径以仓库实际位置为准，PerTypeOverridesModal/ControlPanel 预计在 materialSorting-web/src/components/ControlPanel/ 下）\n\n具体任务：\n1. PerTypeOverridesModal.tsx — 新增「布局设置」分区标题；子标题「开启腰头成带」+ 勾选框；右侧子标题「腰头编号」+ 下拉框（值域 = /api/ptypes representatives 动态 g 码，80×80 缩略图 + 徽章复用现有模式，fetch 失败降级纯文字列表不阻塞）；draft+confirm 语义、未勾选禁用下拉，confirm 写回 form.band_*，取消/遮罩/ESC 丢弃草稿（既有双层 modal 约定不破坏）\n2. ControlPanel.tsx — 启动校验（勾选未选编号 / 选中 g 码数量全 0 → 开始求解按钮置灰 + StatusLine 具体文案）；band 开启时「高级运行」入口 disabled + title 说明原因；QtyMatrix 该 g 码某码数量为奇数时警告「该码不成对」\n3. 后端新增 POST /api/band/preview — body 同 band 配置，executor 线程跑 5s 预算 build_band_plan，回显 {fill_pct, bbox} 对照 break-even 参考线（62.4~63.6%）；预览失败不阻塞确认（降级提示）\n4. materialSorting-web/src/style.css — .per-type-band 分区等暗色样式（#26282e 背景 / #2ea06c 强调色系，不引入 CSS 框架，scale(1,-1) 坐标系约定不变）\n5. PerTypeOverridesModal.test.tsx / ControlPanel.test.tsx — vitest 扩展\n\n验收标准：\n- 下拉值域动态、confirm 写回生效；奇数数量码显示不成对警告；band 与策略运行互斥生效\n- vitest 扩展全绿；npm run build 通过\n- 通过浏览器验证：弹窗布局与暗色主题一致、勾选→下拉→确认→求解状态行 stage 提示全链路目检",
-      "passes": true
-    },
-    {
       "id": "US-014",
       "title": "A/B 验收与形态判据闭环",
       "description": "5336 同源同构终验 + 形态判据 + 导出验证 + 文档更新，以可证方式达到验收线后合入。详见 tasks/prd-waist-band.md US-014。\n\n具体任务：\n1. A/B 终验跑批 — band off vs on × seed {0,1,2} 同源同构对照（注意与生产 0.9063 基线不同构：uploads 源、g05 d=0.0、kill 跑法；只与同配置 off 对照）\n2. 形态判据 — 同码成对相邻率（同 pid 副本中心距 ≤ (w_i+w_j)/2+ε）= 100%；带 span 阈值与成簇目测；截图落 .docs/\n3. 导出验证 — PNG/R12-DXF/PLT 三格式成功，后端日志 grep 无「导出跳过：pid」（WB_ 泄漏哨兵）；band 关闭路径产物与 HEAD 行为一致\n4. CLAUDE.md 数据流主线补 band 支线一句 + .docs/business/ A/B 报告落盘\n\n验收标准：\n- 同码成对相邻率 100%；带形态成簇无散落（截图在案）；密度劣化 ≤1.0pt\n- 同 seed 重跑 placed_items/density 序列逐帧相等（非 byte-identity——帧嵌 wall-clock elapsed）；band_runs 工件可回放对拍\n- pytest + npm run build + npm test 全绿",
-      "passes": false
+      "passes": true
     },
     {
       "id": "US-015",

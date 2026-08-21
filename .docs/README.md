@@ -24,6 +24,8 @@
 - [business/排料引擎技术分析.md](business/排料引擎技术分析.md) — sparrow + 自研约束层
 - [business/排料利用率_扩展配置项_方案.md](business/排料利用率_扩展配置项_方案.md) — spyrrow 原生旋钮 + 建模层利用率杠杆盘点（2026-08-13，盘点阶段未立项）
 - [business/多seed并发与部署架构_分析.md](business/多seed并发与部署架构_分析.md) — 多 seed 并发承载能力 + 三种部署形态并发安全评估（2026-08-14，前瞻分析未实现）
+- [business/腰头成带_落地方案.md](business/腰头成带_落地方案.md) — 腰头 g 码聚排成带机制方案（ralph/waist-band 分支，US-009~014）
+- [business/腰头成带_AB验收报告_US014.md](business/腰头成带_AB验收报告_US014.md) — US-014 A/B 终验 accept：密度/形态/确定性/导出四判据全过 + 目测截图（2026-08-21）
 
 ### 阶段规划
 - [business/阶段0_利用率上界估算_规划.md](business/阶段0_利用率上界估算_规划.md)

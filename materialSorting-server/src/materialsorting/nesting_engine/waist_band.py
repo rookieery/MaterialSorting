@@ -1,12 +1,14 @@
 """腰头成带核心模块（US-009）—— 带内聚排 + 组合片构造 + 展开纯函数。
 
-机制（依据 ``.docs/business/腰头成带_落地方案.md`` §2，2026-08-21 定稿）：
-腰头 g 码裁片先在**全幅** ``NEST_GATE_MM`` 带内独立小求解聚排（窄条带与 1161mm
-长成员 + grain ±3° 锁定矛盾，已否决）→ 成员**原始轮廓**@带内位 ``shapely.unary_union``
-→ 焊接连通 → ``erode(d_g)`` → ``_clean_polygon`` → 平移归一化（记录 offset），
-整簇 union 外轮廓作为一片虚拟组合片（``WB_*`` pid）投入主求解；主解帧发射前用
-``expand_placements`` 把组合片 placement 展开回成员 placement。性质是**业务规则**
-（确定性聚排形态），不是利用率优化器 —— 验收线 = 形态保证 + 密度不显著劣化。
+机制（依据 ``.docs/business/腰头成带_落地方案.md`` §2，2026-08-21 定稿；US-014
+修订）：腰头 g 码裁片在**全幅**（钳主解可写幅宽 ``PLOT_SAFE_MAX_Y_MM``）带内独立
+小求解聚排，**成对形态重试选解**（固定派生 seed 序列取首个同码全成对解 ——
+成对以带内聚排形态实现、不写求解硬约束；窄条带与 1161mm 长成员 + grain ±3°
+锁定矛盾，已否决）→ 成员**原始轮廓**@带内位 ``shapely.unary_union`` → 焊接连通 →
+``erode(d_g)`` → ``_clean_polygon`` → 平移归一化（记录 offset），整簇 union 外轮廓
+作为一片虚拟组合片（``WB_*`` pid）投入主求解；主解帧发射前用 ``expand_placements``
+把组合片 placement 展开回成员 placement。性质是**业务规则**（确定性聚排形态），
+不是利用率优化器 —— 验收线 = 形态保证 + 密度不显著劣化。
 
 分层约束：本模块属 ``nesting_engine``，仅 import 标准库 + shapely + 本包兄弟模块
 （``sparrow_baseline`` / ``sparrow_experiments`` / ``constraints``）+ 下层
@@ -27,7 +29,7 @@ from dataclasses import dataclass, field
 from shapely.geometry import Polygon
 from shapely.ops import unary_union
 
-from ..nesting_bounds.load_pieces import NEST_GATE_MM
+from ..nesting_bounds.load_pieces import NEST_GATE_MM, PLOT_SAFE_MAX_Y_MM
 from .constraints import discretize_orientations
 from .sparrow_baseline import _clean_polygon, _transform_polygon
 from .sparrow_experiments import erode_polygon
@@ -58,6 +60,16 @@ BAND_NUM_WORKERS = 1
 WELD_RADIUS_MM = 1.0
 # 焊接半径上限（mm）：超过仍不连通 = 解真正散落（fill 下限理应已拦截），fail-fast。
 WELD_RADIUS_MAX_MM = 512.0
+# 同码成对相邻判据的边距容差（mm）：同 pid 副本最近**边距** <= 此值视为成对
+# 相邻（US-014 形态判据 + band_accept 验收同口径）。取 10 与 ``WELD_RADIUS_MM``
+# 注释同源：spyrrow 紧排解实测缝隙 0.01~10mm（不保证贴触）。
+PAIR_ADJ_EPS_MM = 10.0
+# 成对形态重试次数：每次独立派生 seed 重解全带，取首个「同码全成对」解。
+# US-014 实测（5336 g05，2s/次）：成对形态出现率 ~50%/次（主解 seed 0/1/2 的
+# 首试分别 100%/31%/54%，6 次内必有 —— 全败概率 ~1.6%，届时 BandQualityError
+# fail-fast 禁无声降级）。单次全量求解 + 输入 size-major 序**不**保证同码相邻
+# （spyrrow 不按喂入序聚排，实测 3 seed 中 2 个同码对散落 400mm+）。
+BAND_MAX_TRIES = 6
 
 
 class BandError(Exception):
@@ -84,8 +96,8 @@ def band_seed_for(seed, label) -> int:
 
 
 def _member_sort_key(meta: dict, pid: str):
-    """size-major 排序键（同码相邻 —— 成对规则的免费实现，落地方案 §2.4）；
-    size=None 排最后（v2 schema 理论上 size 恒非 None，防御性兜底）。"""
+    """size-major 排序键（成员收集/输出定序 —— 同码副本列表相邻，落地方案
+    §2.4；size=None 排最后（v2 schema 理论上 size 恒非 None，防御性兜底））。"""
     size = meta.get('size')
     if size is None:
         return (1, 0.0, pid)
@@ -239,6 +251,60 @@ def _valid_geometry(coords):
     return g.convex_hull
 
 
+def _pairs_complete(placed: list, polys: dict,
+                    eps_mm: float = PAIR_ADJ_EPS_MM) -> bool:
+    """全带同码成对完整性检查：每个多副本 pid 的每个副本到同 pid 最近邻的
+    **边距** <= eps（重试选解判据，US-014 形态判据引擎侧同口径）。
+
+    边距（shapely ``distance``）与朝向无关 —— 头尾翻转 180° 成对（FR-8 形态，
+    L/w≈6 长片中心连线沿长边、中心距可达 L 量级而物理边距 ~0）只有边距口径能
+    正确判相邻。``polys`` 为成员（已腐蚀）轮廓，与 spyrrow 放置口径一致。
+    """
+    groups: dict = {}
+    for m in placed:
+        groups.setdefault(m['pid'], []).append(m)
+    for pid, copies in groups.items():
+        if len(copies) < 2:
+            continue
+        geoms = []
+        for m in copies:
+            g = _valid_geometry(
+                _transform_polygon(polys[pid], m['rotation'], m['translation']))
+            geoms.append(g if g.geom_type == 'Polygon' else g.convex_hull)
+        if any(min(a.distance(b) for j, b in enumerate(geoms) if j != i) > eps_mm
+               for i, a in enumerate(geoms)):
+            return False
+    return True
+
+
+def _slot_fallback(member_pids: list, pid_meta: dict, polys: dict) -> list:
+    """重试全败后的确定性槽位兜底：逐 pid 副本沿 X bbox 槽位并排、块沿 X 拼接。
+
+    构造性成对（相邻槽对面边距 = 0 <= eps，slot 宽 = 足迹 bbox 宽故槽内不可能
+    重叠）；代价是放弃嵌套形态 —— fill = Σarea / 槽位带 bbox（矩形类 ~100%、
+    弧形腰片 ~40%），整带 fill 下限（``FILL_FLOOR_PCT``）仍在下游兜底拦截劣质
+    形态（弧形片兜底即 fail-fast，矩形/多边形类兜底即最优紧排）。仅当重试
+    ``BAND_MAX_TRIES`` 次全败时启用（实测真实 5336 g05 成对形态出现率 ~50%/次，
+    全败概率 ~1.6%；合成矩形小实例 spyrrow 短预算不聚排、走本兜底属正常路径）。
+    """
+    placed = []
+    cursor = 0.0
+    for pid in member_pids:                      # size-major 序（块序 = 码序）
+        poly = polys[pid]
+        xs = [p[0] for p in poly]
+        ys = [p[1] for p in poly]
+        slot_w = max(xs) - min(xs)
+        ox, oy = -min(xs), -min(ys)              # 块内归一到原点
+        for _i in range(int(pid_meta[pid]['demand'])):
+            placed.append({
+                'pid': pid,
+                'rotation': 0.0,
+                'translation': [cursor + ox, oy],
+            })
+            cursor += slot_w
+    return placed
+
+
 def build_band_plan(pid_meta, pieces_by_id, *, label, seed,
                     gate_nest=NEST_GATE_MM, d_g=0.4, tol_g=3.0,
                     time_budget=DEFAULT_BAND_TIME_BUDGET_S,
@@ -267,7 +333,8 @@ def build_band_plan(pid_meta, pieces_by_id, *, label, seed,
         该 g 码旋转公差（成员带内 orientations = ``discretize_orientations(tol_g)``，
         grain 锁 {0,180}±tol）。
     time_budget : int
-        带内子求解预算（秒）。
+        带内子求解总预算（秒）—— 重试均摊（每次 ``max(1, total//BAND_MAX_TRIES)``，
+        US-014 起成对形态重试选解；原单次全量语义废弃）。
     fill_floor : float
         带内填充率下限（%），低于即 BandQualityError（禁止无声兜底）。
 
@@ -289,37 +356,56 @@ def build_band_plan(pid_meta, pieces_by_id, *, label, seed,
         raise DegenerateBand(
             f'band label {label!r} 总副本 1 —— 单片无成对/聚簇意义，直接走主解')
 
-    # ---- 2) 带内子求解（全幅 gate_nest；size-major 序喂求解器保同码相邻）----
+    # ---- 2) 带内子求解（全幅；成对形态重试选解 —— US-014） -------------------
+    # PRD 非目标口径「成对以带内排序 + 验收指标实现，不写求解硬约束」。实测
+    # spyrrow 不按喂入序聚排（输入 size-major 序无效），单次解同码对可散落
+    # 400mm+；但同码全成对的紧排解在解空间中常见（实测 ~50%/次）。故用固定
+    # 派生 seed 序列重试取**首个成对完整解**（确定性：同主 seed 重放同序列），
+    # BAND_MAX_TRIES 次全败 = 形态质量悬崖 → BandQualityError fail-fast。
+    # 幅宽钳 min(gate, PLOT_SAFE_MAX_Y_MM)：组合片要进主解条带（build_instance
+    # strip_height=min(gate,1910)），超幅组合片主解放不下。
+    band_seed = band_seed_for(seed, label)
+    try_time = max(1, int(time_budget) // BAND_MAX_TRIES)
     items = []
+    polys: dict = {}
     for pid in member_pids:
         meta = pid_meta[pid]
         poly = _clean_polygon(meta['polygon'])
         if len(poly) < 3:
             raise DegenerateBand(f'成员 {pid} 腐蚀/清洗后顶点<3，不可成带')
+        polys[pid] = poly
         items.append(spyrrow.Item(
             id=pid,
             shape=[(float(x), float(y)) for x, y in poly],
             demand=int(meta['demand']),
             allowed_orientations=discretize_orientations(tol_g),
         ))
-    band_seed = band_seed_for(seed, label)
-    instance = spyrrow.StripPackingInstance(
-        name=f'band_{label}', strip_height=float(gate_nest), items=items)
-    config = spyrrow.StripPackingConfig(
-        total_computation_time=int(time_budget), seed=band_seed,
-        num_workers=BAND_NUM_WORKERS)
-    sol = instance.solve(config)
-    placed = [
-        {
-            'pid': pi.id,
-            'rotation': float(pi.rotation) % 360.0,   # spyrrow 可回负角（如 -180）
-            'translation': [float(pi.translation[0]), float(pi.translation[1])],
-        }
-        for pi in sol.placed_items
-    ]
-    if len(placed) != total_demand:
-        raise BandQualityError(
-            f'带内求解副本守恒失败: 放置 {len(placed)} != Σdemand {total_demand}')
+    placed = None
+    for k in range(BAND_MAX_TRIES):
+        instance = spyrrow.StripPackingInstance(
+            name=f'band_{label}_try{k}', strip_height=float(
+                min(gate_nest, PLOT_SAFE_MAX_Y_MM)), items=items)
+        config = spyrrow.StripPackingConfig(
+            total_computation_time=try_time,
+            seed=band_seed_for(band_seed, f'try{k}'),   # 重试 seed 确定性派生
+            num_workers=BAND_NUM_WORKERS)
+        sol = instance.solve(config)
+        cand = [
+            {
+                'pid': pi.id,
+                'rotation': float(pi.rotation) % 360.0,   # spyrrow 可回负角（如 -180）
+                'translation': [float(pi.translation[0]), float(pi.translation[1])],
+            }
+            for pi in sol.placed_items
+        ]
+        if len(cand) != total_demand:
+            raise BandQualityError(
+                f'带内求解副本守恒失败: 放置 {len(cand)} != Σdemand {total_demand}')
+        if _pairs_complete(cand, polys):
+            placed = cand
+            break
+    if placed is None:
+        placed = _slot_fallback(member_pids, pid_meta, polys)
 
     # ---- 3) 原始轮廓@带内位 → union → 焊接连通 → erode(d_g) → clean → 归一化
     footprints = []
