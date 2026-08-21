@@ -17,6 +17,10 @@ import type { PerTypeOverrides, SolveParams } from './v03';
  * StartPayload 的 ``band`` 键：缺省 / null / enabled falsy = 关闭（旧行为逐字节不变）；
  * 开启时后端 ``routes_ws._parse_band`` 服务端校验（label ``^g\d+$`` / 存在于母版 /
  * 该 g 码 quantities>0 / 硬警告形态需显式 ack）。
+ *
+ * US-015（v1.1 填料混带）：``fillers`` 任意 g 码多选（版师确认无白名单约束），
+ * 填料副本进带内空隙并同展开/守恒/泄漏口径；服务端校验存在性/数量上限/
+ * 与主 g 码不同（``BAND_MAX_FILLERS`` 前端镜像）。
  */
 export interface BandConfig {
   enabled: boolean;
@@ -27,6 +31,11 @@ export interface BandConfig {
    * 置 true，缺省不随带。后端校验失败回结构化 error 早退。
    */
   ack?: boolean;
+  /**
+   * US-015 混带填料 g 码（去重、不含 label 本身；空数组/缺省 = 纯腰成带 v2）。
+   * 非空才随 band 序列化（旧 payload 形状不变）。
+   */
+  fillers?: string[];
 }
 
 /**

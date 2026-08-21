@@ -7,11 +7,15 @@ break-even 参考线（62.4~63.6%，实测口径出自 US-010 闸门报告：混
 
 body 同 WS StartPayload 的 band 求解上下文子集::
 
-    {"band": {"enabled": true, "label": "g05", "ack"?: true},
+    {"band": {"enabled": true, "label": "g05", "ack"?: true, "fillers"?: [...]},
      "sizes"?: [...], "seed"?: int, "per_type"?: {...}, "quantities"?: {...}}
 
+US-015 起 ``band.fillers``（任意 g 码多选）随预演同口径混带（fill_pct 分子 =
+腰 + 填料面积和）。
+
 - 服务端校验复用 ``routes_ws._parse_band``（单一真相源：label ``^g\d+$`` / 存在于
-  母版 / quantities>0 / 硬警告形态需 ack）；``time_budget`` 内部旋钮可缩短预算（测试用）；
+  母版 / quantities>0 / 硬警告形态需 ack / US-015 fillers 全护栏）；
+  ``time_budget`` 内部旋钮可缩短预算（测试用）；
 - 不落 ``band_runs`` 工件（预演不是求解，US-014 回放对拍只收真实求解工件）；
 - 响应口径：
   - 200 ``{ok:true, fill_pct, bbox, elapsed, break_even}`` —— 成带预演成功；
@@ -49,17 +53,22 @@ def _band_preview_sync(pieces_snapshot, gate_mm, solve_params, band_cfg):
     """executor 线程同步体：build_pid_meta + build_band_plan（与 _build_band 同口径）。
 
     d_g/tol_g 经 ``_resolve_d_tol`` 与主解同源裁定（FR-3 带内 per_type 沿用该 g 码
-    d/tol）；带内约束带 = min(gate_mm, PLOT_SAFE_MAX_Y_MM)（与主解同口径）。几何失败
-    （BandError 家族 / ValueError）向上抛 —— 路由层转 ``{ok:false, error}``（200）。
+    d/tol；US-015 填料各 label 同法逐个裁定喂 ``filler_ds``）；带内约束带 =
+    min(gate_mm, PLOT_SAFE_MAX_Y_MM)（与主解同口径）。几何失败（BandError 家族 /
+    ValueError）向上抛 —— 路由层转 ``{ok:false, error}``（200）。
     """
     from ..nesting_engine.waist_band import build_band_plan
     from .solver import _resolve_d_tol, build_pid_meta
 
     label = str(band_cfg['label'])
+    fillers = [str(f) for f in (band_cfg.get('fillers') or [])]
     t0 = time.time()
     pdef = {'d_ext': 0.0, 'd_int': 0.0, 'tol_ext': 0.0, 'tol_int': 0.0}
     pdef.update(solve_params.get('params') or {})
     d_g, tol_g = _resolve_d_tol(label, pdef, solve_params.get('per_type'))
+    filler_ds = {}
+    for f in fillers:
+        filler_ds[f], _tol_f = _resolve_d_tol(f, pdef, solve_params.get('per_type'))
     pid_meta, _area, _n = build_pid_meta(
         pieces_snapshot,
         sizes=solve_params.get('sizes'),
@@ -72,6 +81,7 @@ def _band_preview_sync(pieces_snapshot, gate_mm, solve_params, band_cfg):
         seed=int(solve_params.get('seed', 0)),
         gate_nest=min(float(gate_mm), PLOT_SAFE_MAX_Y_MM),
         d_g=d_g, tol_g=tol_g,
+        fillers=fillers, filler_ds=filler_ds,
         time_budget=int(band_cfg.get('time_budget') or BAND_PREVIEW_TIME_BUDGET_S))
     return {
         'ok': True,

@@ -21,6 +21,16 @@
 //     form.band_ack（此后 WS start band 带 ack，后端放行）。切换 g 码 / 关闭成带 →
 //     ack 草稿重置（FR-1：ack 只对当前指认形态生效）。
 //
+// US-015 v1.1 填料混带（「布局设置」第二行）：勾选成带后渲染填料行 —— 缩略图 chip
+// 多选（数据源与腰头编号下拉同源 orderedLabels / representatives，点击切换选中态
+// ``aria-pressed``）：
+//   - 主 g 码（当前 bandLabel）不在候选集（混带填料不可与主 g 码相同，切换腰头编号
+//     时若旧主码在选中集内则剔除 —— 始终满足 ≠ 主码）；
+//   - 数量上限 ``BAND_MAX_FILLERS``（3）：已满且未选中 → chip 置灰（``disabled``），
+//     toggle 函数同步兜底；
+//   - 填料选择变化触发预演重跑（fill_pct 分子 = 腰 + 填料面积和，同后端口径），
+//     确定时随 band 草稿写回 ``form.band_fillers``（取消/遮罩/ESC 一并丢弃）。
+//
 // 声明式受控 Portal（参考 PieceZoomModal）：
 //   - 订阅 controlPanelStore.modal === 'per_type' 自显隐；null 时不挂 DOM。
 //   - Portal 到 document.body（不被 .page overflow/display:none 裁切）。
@@ -59,7 +69,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { JSX } from 'react';
 import { createPortal } from 'react-dom';
 import { MAX_OVERLAP_MM, MAX_ROTATION_TOL_DEG } from '../../constants/v03';
-import { BAND_LABEL_RE, type PerTypeFormValue, type StartContext } from '../../lib/params';
+import { BAND_LABEL_RE, BAND_MAX_FILLERS, type PerTypeFormValue, type StartContext } from '../../lib/params';
 import { useControlPanelStore } from '../../store/controlPanelStore';
 import type { ParsedPiece } from '../../types/parsed';
 import type { PtypeRepresentative, PtypesResponse } from '../../types/ptype';
@@ -118,12 +128,14 @@ function repToPiece(rep: PtypeRepresentative): ParsedPiece {
   };
 }
 
-/** US-013 布局设置分区草稿/回写形状（= form.band_* 三元组；ack 仅硬警告形态勾选）。 */
+/** US-013 布局设置分区草稿/回写形状（= form.band_* 组；ack 仅硬警告形态勾选）。 */
 export interface BandFormValue {
   enabled: boolean;
   label: string;
   /** 硬警告形态二次确认位（预演 422 hard_warning 后渲染勾选框置 true）。 */
   ack: boolean;
+  /** US-015 填料 g 码多选草稿（空数组 = 纯腰 v2；上限 BAND_MAX_FILLERS、不含主码）。 */
+  fillers: string[];
 }
 
 export interface PerTypeOverridesModalProps {
@@ -200,6 +212,10 @@ function PerTypeOverridesModalInner({
   const [bandEnabled, setBandEnabled] = useState<boolean>(band.enabled);
   const [bandLabel, setBandLabel] = useState<string>(band.label);
   const [bandAck, setBandAck] = useState<boolean>(band.ack);
+  // US-015 填料草稿：mount 读初值，剔除与当前主码相同的项（≠ 主码不变量）。
+  const [bandFillers, setBandFillers] = useState<string[]>(() =>
+    band.fillers.filter((f) => f !== band.label),
+  );
   const [preview, setPreview] = useState<BandPreviewState>({ state: 'idle' });
 
   // buildStartContext 经 ref 取（effect 依赖只锁 band 选择 —— form 其它字段变化
@@ -254,9 +270,12 @@ function PerTypeOverridesModalInner({
   // US-013 预演：band 草稿为有效 g 码（勾选 + ^g\d+$）时 POST /api/band/preview
   // （body = buildStartContext() + band 草稿 —— sizes/quantities/per_type/seed 与
   // 未来 WS start 同源，预演所见即求解所得；ack 草稿为 true 时随 band 带 ack ——
-  // 硬警告形态二次确认后重试放行）。响应携带盈亏参考线（后端单一真相源，
-  // 前端不双写）；失败（含几何失败 ok:false 与网络/4xx）降级提示，不阻塞确定（FR-7）。
+  // 硬警告形态二次确认后重试放行）。US-015 起填料草稿非空随 band 带 ``fillers``
+  // （fill_pct 分子 = 腰 + 填料面积和，与后端求解同口径）。响应携带盈亏参考线
+  // （后端单一真相源，前端不双写）；失败（含几何失败 ok:false 与网络/4xx）降级
+  // 提示，不阻塞确定（FR-7）。
   const validBandLabel = bandEnabled && BAND_LABEL_RE.test(bandLabel) ? bandLabel : null;
+  const fillersKey = bandFillers.join(',');
   useEffect(() => {
     if (validBandLabel === null) {
       setPreview({ state: 'idle' });
@@ -265,13 +284,17 @@ function PerTypeOverridesModalInner({
     let cancelled = false;
     setPreview({ state: 'loading' });
     const ctx = buildCtxRef.current();
+    // fillersKey 稳定字符串依赖（数组引用每次 render 变化会误触发 5s 预演重跑）
+    const fillers = fillersKey === '' ? [] : fillersKey.split(',');
+    const bandPayload: Record<string, unknown> = bandAck
+      ? { enabled: true, label: validBandLabel, ack: true }
+      : { enabled: true, label: validBandLabel };
+    if (fillers.length > 0) bandPayload.fillers = fillers;
     fetch('/api/band/preview', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        band: bandAck
-          ? { enabled: true, label: validBandLabel, ack: true }
-          : { enabled: true, label: validBandLabel },
+        band: bandPayload,
         sizes: ctx.sizes,
         seed: ctx.seed,
         per_type: ctx.per_type,
@@ -303,7 +326,7 @@ function PerTypeOverridesModalInner({
     return () => {
       cancelled = true;
     };
-  }, [validBandLabel, bandAck]);
+  }, [validBandLabel, bandAck, fillersKey]);
 
   // ESC 监听（AC#10）：previewLabel !== null 时由 PtypePreviewModal 处理 ESC（双层独立）。
   // 本 listener 仅在 previewLabel===null 时关 modal，避免双层同时关闭。
@@ -326,11 +349,22 @@ function PerTypeOverridesModalInner({
     }));
   }
 
+  /** US-015 填料切换：选中 → 剔除；未选中 → 追加（上限兜底 —— UI 已置灰，此处防
+   * 事件竞态下超限；主码候选集外，理论上不达此路径）。 */
+  function toggleFiller(label: string): void {
+    setBandFillers((prev) => {
+      if (prev.includes(label)) return prev.filter((f) => f !== label);
+      if (prev.length >= BAND_MAX_FILLERS) return prev;
+      return [...prev, label];
+    });
+  }
+
   function handleConfirm(): void {
     onChange(draft);
     // US-013：band 草稿一并回写（未勾选时 label 原样保留 —— collectBand 对 enabled=false
     // 恒 null，重新勾选时上次选择不丢；ack 仅硬警告形态勾选后为 true）。
-    onBandChange({ enabled: bandEnabled, label: bandLabel, ack: bandAck });
+    // US-015：fillers 随草稿写回（form.band_fillers；collectBand 清洗后进 WS payload）。
+    onBandChange({ enabled: bandEnabled, label: bandLabel, ack: bandAck, fillers: bandFillers });
     onClose();
   }
 
@@ -402,6 +436,8 @@ function PerTypeOverridesModalInner({
                   setBandLabel(e.target.value);
                   // 切换 g 码 → ack 重置（形态确认是 per-label 的，FR-1）
                   setBandAck(false);
+                  // US-015：新主码若在填料选中集内 → 剔除（填料不可与主 g 码相同）
+                  setBandFillers((prev) => prev.filter((f) => f !== e.target.value));
                 }}
                 disabled={!bandEnabled}
                 data-testid="band-label-select"
@@ -431,6 +467,51 @@ function PerTypeOverridesModalInner({
               </button>
             ) : null}
           </div>
+          {/* US-015 填料行：勾选成带后渲染（数据源与腰头编号下拉同源 orderedLabels /
+              representatives）。chip = 缩略图 + g 码徽章，点击切换选中态（aria-pressed）；
+              主 g 码不在候选集；满 BAND_MAX_FILLERS 且未选中 → 置灰。 */}
+          {bandEnabled && (
+            <div className="per-type-band-fillers" data-testid="band-fillers">
+              <span className="per-type-band-subhead">填料（多选 ≤{BAND_MAX_FILLERS}）</span>
+              <div className="per-type-filler-row">
+                {orderedLabels
+                  .filter((label) => label !== bandLabel)
+                  .map((label) => {
+                    const rep = representatives[label];
+                    const on = bandFillers.includes(label);
+                    const capped = !on && bandFillers.length >= BAND_MAX_FILLERS;
+                    return (
+                      <button
+                        type="button"
+                        key={label}
+                        className={`per-type-filler-chip${on ? ' on' : ''}`}
+                        onClick={() => toggleFiller(label)}
+                        disabled={capped}
+                        aria-pressed={on}
+                        aria-label={`填料 ${label}`}
+                        title={`填料 ${label}${on ? '（已选）' : ''}`}
+                        data-testid={`band-filler-${label}`}
+                      >
+                        {rep ? (
+                          <PiecePreviewSVG piece={repToPiece(rep)} compact />
+                        ) : (
+                          <span className="ptype-thumb-placeholder" aria-hidden="true">
+                            {loadingReps ? '…' : label.slice(0, 1)}
+                          </span>
+                        )}
+                        <span className="qty-label-badge">{label}</span>
+                      </button>
+                    );
+                  })}
+                {orderedLabels.filter((label) => label !== bandLabel).length === 0 && (
+                  <span className="per-type-filler-hint">（暂无候选 g 码）</span>
+                )}
+              </div>
+              <div className="per-type-filler-hint">
+                填料副本填充带内空隙（混带 v1.1）；不可选腰头编号本身，最多 {BAND_MAX_FILLERS} 个。
+              </div>
+            </div>
+          )}
           {/* 预演回显：fill/bbox 对照盈亏参考线（参考线由后端响应携带）；失败降级提示
               不阻塞确定（FR-7）。硬警告形态（422 hard_warning）追加二次确认勾选框 ——
               勾选即带 ack 重试预演，确定时随 band 写回。仅在勾选 + 有效 g 码时渲染。 */}

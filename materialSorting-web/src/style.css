@@ -794,6 +794,58 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
   accent-color: #d9b06a;
 }
 
+/* ---- US-015 填料行（v1.1 混带：缩略图 chip 多选，与腰头缩略图同色系小一号） ---- */
+.per-type-band-fillers {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.per-type-filler-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+/* 单个填料 chip：48×48 缩略图 + g 码徽章（QtyMatrix 列头模式缩小版）；选中态
+   #2ea06c 边框 + 底色微亮（aria-pressed 语义的视觉投影）；满 3 个未选中置灰 */
+.per-type-filler-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 3px;
+  background: #1c1d22;
+  border: 1px solid #3a3d45;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.per-type-filler-chip svg {
+  width: 48px;
+  height: 48px;
+  display: block;
+}
+.per-type-filler-chip:hover:not(:disabled) {
+  border-color: #2ea06c;
+}
+.per-type-filler-chip:focus-visible {
+  outline: 2px solid #2ea06c;
+  outline-offset: 1px;
+}
+.per-type-filler-chip.on {
+  border-color: #2ea06c;
+  background: #21362c;
+}
+.per-type-filler-chip:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.per-type-filler-hint {
+  color: #778;
+  font-size: 10.5px;
+  line-height: 1.4;
+}
+
 /* PtypePreviewModal：z-index 1200（高于 PerTypeOverridesModal 1100，叠在其上） */
 .ptype-preview-overlay {
   position: fixed;

@@ -35,6 +35,13 @@
 //       confirm 写回 ack:true；几何失败（无 hard_warning）不渲染勾选框
 //   AC: 切换 g 码 → ack 草稿重置（形态确认 per-label，FR-1）
 //   AC: confirm 同时回写 per_type + band；取消/遮罩/ESC 丢弃 band 草稿
+//
+// US-015 填料行 additions（v1.1 混带多选）：
+//   AC: 未勾选成带填料行不渲染；勾选后候选 = orderedLabels - 主码
+//   AC: 点击 chip 选中（.on + aria-pressed）→ 预演 body 带 band.fillers；再点取消
+//   AC: 上限 3：满 3 后未选中 chip disabled；取消一个恢复
+//   AC: 切换腰头编号 → 填料集合中与新主码相同的项剔除
+//   AC: confirm 写回 fillers；取消丢弃；props 初值剔除 = 主码项
 
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { StrictMode } from 'react';
@@ -161,7 +168,7 @@ function renderModal(
         <PerTypeOverridesModal
           values={values}
           onChange={onChange}
-          band={opts.band ?? { enabled: false, label: '', ack: false }}
+          band={opts.band ?? { enabled: false, label: '', ack: false, fillers: [] }}
           onBandChange={opts.onBandChange ?? (() => {})}
           buildStartContext={
             opts.buildStartContext ??
@@ -196,6 +203,23 @@ function setInputValue(input: HTMLInputElement, value: string): void {
   const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
   setter.call(input, value);
   input.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+/** 勾选 band → 选 g 码（native setter + change；US-013/US-015 共用，模块级导出给两个 describe）。 */
+function enableAndSelect(label: string): void {
+  const check = document.body.querySelector<HTMLInputElement>('[data-testid="band-enabled"]')!;
+  act(() => check.click());
+  selectLabel(label);
+}
+
+/** 仅切换下拉 g 码（已勾选场景；切码重置 ack / US-015 剔除同码填料路径用）。 */
+function selectLabel(label: string): void {
+  const select = document.body.querySelector<HTMLSelectElement>('[data-testid="band-label-select"]')!;
+  const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!;
+  act(() => {
+    setter.call(select, label);
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+  });
 }
 
 describe('PerTypeOverridesModal (US-018 / US-003 g 码列)', () => {
@@ -455,7 +479,7 @@ describe('PerTypeOverridesModal (US-018 / US-003 g 码列)', () => {
             <PerTypeOverridesModal
               values={{}}
               onChange={() => {}}
-              band={{ enabled: false, label: '', ack: false }}
+              band={{ enabled: false, label: '', ack: false, fillers: [] }}
               onBandChange={() => {}}
               buildStartContext={() => ({
                 sizes: [], gate_mm: 1980, seed: 0, time: 120,
@@ -555,23 +579,6 @@ describe('PerTypeOverridesModal (US-018 / US-003 g 码列)', () => {
 });
 
 describe('PerTypeOverridesModal 布局设置分区 (US-013)', () => {
-  /** 勾选 band → 选 g 码（native setter + change，AGENTS.md US-004 受控元素模式）。 */
-  function enableAndSelect(label: string): void {
-    const check = document.body.querySelector<HTMLInputElement>('[data-testid="band-enabled"]')!;
-    act(() => check.click());
-    selectLabel(label);
-  }
-
-  /** 仅切换下拉 g 码（已勾选场景；US-013 切码重置 ack 路径用）。 */
-  function selectLabel(label: string): void {
-    const select = document.body.querySelector<HTMLSelectElement>('[data-testid="band-label-select"]')!;
-    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!;
-    act(() => {
-      setter.call(select, label);
-      select.dispatchEvent(new Event('change', { bubbles: true }));
-    });
-  }
-
   it('分区渲染：标题「布局设置」+ 勾选「开启腰头成带」+ 子标题「腰头编号」+ 下拉', () => {
     useControlPanelStore.getState().openModal('per_type');
     renderModal();
@@ -586,7 +593,7 @@ describe('PerTypeOverridesModal 布局设置分区 (US-013)', () => {
   it('未勾选时下拉 disabled；band 草稿初值从 props 读入（勾选+label 预选）', () => {
     useControlPanelStore.getState().openModal('per_type');
     renderModal({}, () => {}, {
-      band: { enabled: true, label: 'g01', ack: false },
+      band: { enabled: true, label: 'g01', ack: false, fillers: [] },
     });
     const select = document.body.querySelector<HTMLSelectElement>('[data-testid="band-label-select"]')!;
     // props band.enabled=true → 下拉启用且初值 = props label
@@ -695,7 +702,7 @@ describe('PerTypeOverridesModal 布局设置分区 (US-013)', () => {
     // 确定仍可点且写回 band 草稿
     const confirm = document.body.querySelector<HTMLButtonElement>('.per-type-btn-confirm')!;
     act(() => confirm.click());
-    expect(onBandChange).toHaveBeenCalledWith({ enabled: true, label: 'g01', ack: false });
+    expect(onBandChange).toHaveBeenCalledWith({ enabled: true, label: 'g01', ack: false, fillers: [] });
   });
 
   it('硬警告形态（422 hard_warning）→ 失败提示 + ack 勾选框；勾选 → 带 ack 重试成功 → confirm 写回 ack:true', async () => {
@@ -741,7 +748,7 @@ describe('PerTypeOverridesModal 布局设置分区 (US-013)', () => {
     expect(lastBody.band).toEqual({ enabled: true, label: 'g01', ack: true });
     // confirm 写回 ack:true（此后 WS start band 带 ack，后端放行）
     act(() => document.body.querySelector<HTMLButtonElement>('.per-type-btn-confirm')!.click());
-    expect(onBandChange).toHaveBeenCalledWith({ enabled: true, label: 'g01', ack: true });
+    expect(onBandChange).toHaveBeenCalledWith({ enabled: true, label: 'g01', ack: true, fillers: [] });
   });
 
   it('几何失败（无 hard_warning）→ 无 ack 勾选框（只有硬警告形态渲染二次确认）', async () => {
@@ -787,7 +794,7 @@ describe('PerTypeOverridesModal 布局设置分区 (US-013)', () => {
     act(() => confirm.click());
     expect(onChange).toHaveBeenCalledTimes(1);
     expect(onBandChange).toHaveBeenCalledTimes(1);
-    expect(onBandChange).toHaveBeenCalledWith({ enabled: true, label: 'g01', ack: false });
+    expect(onBandChange).toHaveBeenCalledWith({ enabled: true, label: 'g01', ack: false, fillers: [] });
     expect(useControlPanelStore.getState().modal).toBeNull();
   });
 
@@ -818,5 +825,166 @@ describe('PerTypeOverridesModal 布局设置分区 (US-013)', () => {
     act(() => thumb.click());
     expect(useControlPanelStore.getState().previewLabel).toBe('g01');
     expect(useControlPanelStore.getState().modal).toBe('per_type');   // 底层保留
+  });
+});
+
+describe('PerTypeOverridesModal 填料行 (US-015 v1.1 混带)', () => {
+  /** 5 个 g 码（主码 g01 + 4 个填料候选 g02~g05，供上限 3 测试）。 */
+  const FIVE_REPS: PtypesResponse = {
+    representatives: {
+      g01: { label: 'g01', polygon: [[0, 0], [100, 0], [100, 60], [0, 60]] },
+      g02: { label: 'g02', polygon: [[0, 0], [80, 0], [80, 80], [0, 80]] },
+      g03: { label: 'g03', polygon: [[0, 0], [70, 0], [70, 50], [0, 50]] },
+      g04: { label: 'g04', polygon: [[0, 0], [60, 0], [60, 90], [0, 90]] },
+      g05: { label: 'g05', polygon: [[0, 0], [90, 0], [90, 40], [0, 40]] },
+    },
+  };
+
+  /** 点击填料 chip（受控 button，直接 click）。 */
+  function clickFiller(label: string): void {
+    const chip = document.body.querySelector<HTMLButtonElement>(`[data-testid="band-filler-${label}"]`)!;
+    act(() => chip.click());
+  }
+
+  /** 当前预演请求 body（取最后一次 /api/band/preview 调用）。 */
+  function lastPreviewBody(): Record<string, unknown> {
+    const calls = fetchSpy!.mock.calls.filter((c: unknown[]) => String(c[0]).includes('/api/band/preview'));
+    return JSON.parse(String((calls[calls.length - 1][1] as RequestInit).body));
+  }
+
+  it('未勾选成带 → 填料行不渲染；勾选后渲染（chip = 候选 g 码 - 主码）', async () => {
+    mockReps = FIVE_REPS;
+    useControlPanelStore.getState().openModal('per_type');
+    renderModal();
+    await flushFetch();
+    expect(document.body.querySelector('[data-testid="band-fillers"]')).toBeNull();
+    // 勾选 + 选主码 g01 → 填料行出现，候选 = g02~g05（主码不在候选集）
+    enableAndSelect('g01');
+    const row = document.body.querySelector('[data-testid="band-fillers"]')!;
+    expect(row).not.toBeNull();
+    const chips = Array.from(row.querySelectorAll('.per-type-filler-chip'));
+    expect(chips.map((c) => c.querySelector('.qty-label-badge')!.textContent)).toEqual([
+      'g02', 'g03', 'g04', 'g05',
+    ]);
+    // chip 有 rep → 缩略图 svg；hint 提示上限
+    expect(row.querySelector('.per-type-filler-chip svg.piece-preview-svg')).not.toBeNull();
+    expect(row.querySelector('.per-type-filler-hint')!.textContent).toContain('最多 3 个');
+  });
+
+  it('多选交互：点击选中（.on + aria-pressed）→ 预演 body 带 fillers → 再点取消', async () => {
+    mockReps = FIVE_REPS;
+    useControlPanelStore.getState().openModal('per_type');
+    renderModal();
+    await flushFetch();
+    enableAndSelect('g01');
+    await flushFetch();
+    // 初始无 fillers 键（payload 形状与旧版一致）
+    expect(lastPreviewBody().band).toEqual({ enabled: true, label: 'g01' });
+    clickFiller('g02');
+    await flushFetch();
+    const chip = document.body.querySelector<HTMLButtonElement>('[data-testid="band-filler-g02"]')!;
+    expect(chip.classList.contains('on')).toBe(true);
+    expect(chip.getAttribute('aria-pressed')).toBe('true');
+    // 填料选择变化触发预演重跑，body 带 fillers（腰 + 填料同口径）
+    expect(lastPreviewBody().band).toEqual({ enabled: true, label: 'g01', fillers: ['g02'] });
+    // 再点取消 → 回到无 fillers
+    clickFiller('g02');
+    await flushFetch();
+    expect(lastPreviewBody().band).toEqual({ enabled: true, label: 'g01' });
+  });
+
+  it('数量上限 3：满 3 后未选中 chip 置灰；取消一个恢复可选', async () => {
+    mockReps = FIVE_REPS;
+    useControlPanelStore.getState().openModal('per_type');
+    renderModal();
+    await flushFetch();
+    enableAndSelect('g01');
+    await flushFetch();
+    clickFiller('g02');
+    clickFiller('g03');
+    clickFiller('g04');
+    await flushFetch();
+    expect(lastPreviewBody().band).toEqual({
+      enabled: true, label: 'g01', fillers: ['g02', 'g03', 'g04'],
+    });
+    // g05 未选中且已满 → disabled
+    const g05 = document.body.querySelector<HTMLButtonElement>('[data-testid="band-filler-g05"]')!;
+    expect(g05.disabled).toBe(true);
+    // 已选中的仍可取消
+    const g02 = document.body.querySelector<HTMLButtonElement>('[data-testid="band-filler-g02"]')!;
+    expect(g02.disabled).toBe(false);
+    clickFiller('g02');
+    await flushFetch();
+    expect(lastPreviewBody().band).toEqual({ enabled: true, label: 'g01', fillers: ['g03', 'g04'] });
+    expect(
+      (document.body.querySelector<HTMLButtonElement>('[data-testid="band-filler-g05"]')!).disabled,
+    ).toBe(false);
+  });
+
+  it('切换腰头编号 → 旧填料集合中与新主码相同的项被剔除', async () => {
+    mockReps = FIVE_REPS;
+    useControlPanelStore.getState().openModal('per_type');
+    renderModal();
+    await flushFetch();
+    enableAndSelect('g01');
+    await flushFetch();
+    clickFiller('g02');
+    await flushFetch();
+    // 切主码到 g02 → 填料 g02 剔除（不可与主 g 码相同）
+    selectLabel('g02');
+    await flushFetch();
+    expect(lastPreviewBody().band).toEqual({ enabled: true, label: 'g02' });
+    // 候选集更新：主码 g02 缺席，g01 回到候选
+    const badges = Array.from(
+      document.body.querySelectorAll('[data-testid="band-fillers"] .qty-label-badge'),
+    ).map((b) => b.textContent);
+    expect(badges).toEqual(['g01', 'g03', 'g04', 'g05']);
+  });
+
+  it('confirm 写回 fillers；取消丢弃（form.band_fillers 草稿语义）', async () => {
+    mockReps = FIVE_REPS;
+    const onBandChange = vi.fn();
+    useControlPanelStore.getState().openModal('per_type');
+    renderModal({}, () => {}, { onBandChange });
+    await flushFetch();
+    enableAndSelect('g01');
+    await flushFetch();
+    clickFiller('g02');
+    clickFiller('g03');
+    await flushFetch();
+    // 取消 → 草稿丢弃
+    act(() => document.body.querySelector<HTMLButtonElement>('.per-type-btn-cancel')!.click());
+    expect(onBandChange).not.toHaveBeenCalled();
+    expect(useControlPanelStore.getState().modal).toBeNull();
+    // 重开（同 props）→ 重新选 → 确定 → 写回 fillers
+    useControlPanelStore.getState().openModal('per_type');
+    renderModal({}, () => {}, { onBandChange });
+    await flushFetch();
+    enableAndSelect('g01');
+    await flushFetch();
+    clickFiller('g02');
+    clickFiller('g03');
+    await flushFetch();
+    act(() => document.body.querySelector<HTMLButtonElement>('.per-type-btn-confirm')!.click());
+    expect(onBandChange).toHaveBeenCalledWith({
+      enabled: true, label: 'g01', ack: false, fillers: ['g02', 'g03'],
+    });
+    await flushFetch();
+  });
+
+  it('props 初值带 fillers：草稿读入 + 与主码相同项剔除（≠主码不变量兜底）', async () => {
+    mockReps = FIVE_REPS;
+    useControlPanelStore.getState().openModal('per_type');
+    renderModal({}, () => {}, {
+      band: { enabled: true, label: 'g01', ack: false, fillers: ['g01', 'g03'] },
+    });
+    await flushFetch();
+    // g01（= 主码）被剔除，g03 保留选中
+    const g01Chip = document.body.querySelector<HTMLButtonElement>('[data-testid="band-filler-g01"]');
+    expect(g01Chip).toBeNull();   // 主码不在候选集
+    const g03 = document.body.querySelector<HTMLButtonElement>('[data-testid="band-filler-g03"]')!;
+    expect(g03.classList.contains('on')).toBe(true);
+    await flushFetch();
+    expect(lastPreviewBody().band).toEqual({ enabled: true, label: 'g01', fillers: ['g03'] });
   });
 });

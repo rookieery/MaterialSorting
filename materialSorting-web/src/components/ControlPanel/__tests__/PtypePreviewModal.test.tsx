@@ -201,7 +201,7 @@ describe('PtypePreviewModal (US-018)', () => {
             <PerTypeOverridesModal
               values={{}}
               onChange={onChange}
-              band={{ enabled: false, label: '', ack: false }}
+              band={{ enabled: false, label: '', ack: false, fillers: [] }}
               onBandChange={() => {}}
               buildStartContext={() => ({
                 sizes: [], gate_mm: 1980, seed: 0, time: 120,

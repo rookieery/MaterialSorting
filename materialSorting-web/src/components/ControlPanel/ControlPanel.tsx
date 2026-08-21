@@ -39,6 +39,9 @@
 //     预演 /api/band/preview）；
 //   - form.band_* → bandStore 单向镜像（useEffect 同步）—— QtyMatrix（上传预览页）跨页
 //     读该镜像做「该码不成对」奇数数量警告，props 无通路。
+// US-015（v1.1 填料混带）：form.band_fillers（弹窗填料行多选）随 band 透传 WS
+//   ``band.fillers``；启动闸门对填料同口径 —— 任一填料所选码数量全 0 → 「开始求解」
+//   置灰 + StatusLine 报首个冒犯 g 码（与后端 _parse_band quantities>0 校验对齐）。
 
 import { useCallback, useEffect, useState } from 'react';
 import { useExport } from '../../hooks/useExport';
@@ -150,12 +153,19 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
   // US-013 band 启动闸门（AC#3）：勾选未选编号 / 选中 g 码数量全 0（bandMemberCount
   // 三态：missing→1 / 显 0 / 未选码过滤，后端 _band_demand 口径对齐 —— 后端同条件
   // 会回结构化 error，这里是前置 UI 闸门）。startDisabled 消费 + handleStart 兜底。
+  // US-015：填料同闸门口径（首个数量全 0 的填料报具体 g 码 —— 后端 _parse_band 对
+  // 填料 quantities>0 同校验，此处前置）。
   const bandMissingLabel =
     form.band_enabled && form.band_label.trim() === '';
   const bandZeroQty =
     form.band_enabled &&
     form.band_label.trim() !== '' &&
     bandMemberCount(form, quantities, form.band_label.trim()) === 0;
+  const bandFillerZeroLabel = form.band_enabled
+    ? form.band_fillers.find(
+        (f) => f.trim() !== '' && bandMemberCount(form, quantities, f.trim()) === 0,
+      )
+    : undefined;
 
   function handleStart() {
     if (solving) return;
@@ -171,6 +181,12 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
     if (bandZeroQty) {
       onStatus(
         `腰头 ${form.band_label.trim()} 所选码数量全 0，请先在上传预览页数量矩阵设置数量`,
+      );
+      return;
+    }
+    if (bandFillerZeroLabel !== undefined) {
+      onStatus(
+        `填料 ${bandFillerZeroLabel} 所选码数量全 0，请先在上传预览页数量矩阵设置数量`,
       );
       return;
     }
@@ -200,12 +216,15 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
   }
 
   // US-017：doc=null 时 StatusLine 增提示「请先在上传预览页解析母版」（AC#3）；
-  // US-013：band 闸门态追加 band 段具体文案（与 startDisabled 同源派生）。
+  // US-013：band 闸门态追加 band 段具体文案（与 startDisabled 同源派生）；
+  // US-015：填料数量全 0 同报（首个冒犯 g 码）。
   const bandHint = bandMissingLabel
     ? '已开启腰头成带，请先选择腰头编号（高级配置 → 布局设置）'
     : bandZeroQty
       ? `腰头 ${form.band_label.trim()} 所选码数量全 0，请先在上传预览页数量矩阵设置数量`
-      : '';
+      : bandFillerZeroLabel !== undefined
+        ? `填料 ${bandFillerZeroLabel} 所选码数量全 0，请先在上传预览页数量矩阵设置数量`
+        : '';
   const visibleStatus = [status, doc === null ? '请先在上传预览页解析母版' : '', bandHint]
     .filter(Boolean)
     .join(' — ');
@@ -216,8 +235,13 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
   const partial = phase === 'stopped' || phase === 'error';
 
   // 码号未选时「开始求解」按钮置灰（与 handleStart 内 sizes 非空校验同源；前置 UI 反馈，AC#7）；
-  // US-013：band 闸门（未选编号 / 数量全 0）同置灰（SolveControls 应用到所有非 running 态按钮）。
-  const startDisabled = form.sizes.length === 0 || bandMissingLabel || bandZeroQty;
+  // US-013：band 闸门（未选编号 / 数量全 0）同置灰（SolveControls 应用到所有非 running 态按钮）；
+  // US-015：填料数量全 0 同置灰。
+  const startDisabled =
+    form.sizes.length === 0 ||
+    bandMissingLabel ||
+    bandZeroQty ||
+    bandFillerZeroLabel !== undefined;
 
   // US-013（FR-6）：band 开启时「高级运行」互斥置灰 + title 说明原因（既有 solving /
   // 未 commit 置灰不加说明 —— title 仅 band 互斥时给，避免与旧语义混淆）。
@@ -261,9 +285,19 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
         <PerTypeOverrides
           values={form.per_type}
           onChange={(per_type) => patch({ per_type })}
-          band={{ enabled: form.band_enabled, label: form.band_label, ack: form.band_ack }}
+          band={{
+            enabled: form.band_enabled,
+            label: form.band_label,
+            ack: form.band_ack,
+            fillers: form.band_fillers,
+          }}
           onBandChange={(band) =>
-            patch({ band_enabled: band.enabled, band_label: band.label, band_ack: band.ack })
+            patch({
+              band_enabled: band.enabled,
+              band_label: band.label,
+              band_ack: band.ack,
+              band_fillers: band.fillers,
+            })
           }
           buildStartContext={buildStartContext}
           disabled={solving}

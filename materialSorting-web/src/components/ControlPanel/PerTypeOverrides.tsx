@@ -10,6 +10,8 @@
 //
 // US-013：透传扩展 —— band/onBandChange（布局设置分区 form.band_* 草稿/回写）+
 // buildStartContext（预演 POST /api/band/preview 的求解上下文构造器）。
+// US-015：BandFormValue 增 fillers（填料多选草稿随 band 原样透传，形状由
+// PerTypeOverridesModal 定义 —— 本入口不做二次加工）。
 //
 // 关键不变量（AC#6）：与 ControlPanel 的 values/onChange 契约不变；
 // PerTypeOverridesModal 订阅 controlPanelStore.modal 自显隐（声明式受控 Portal）。

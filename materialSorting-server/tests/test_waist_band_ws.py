@@ -10,6 +10,15 @@
 5. band 阶段 stop：无存活 python 子进程（进程内线程化模型 —— terminate 不级联孙进程）；
 6. build_instance exclude_labels 只跳 Item 层（pid_meta/total_area 不动，一致性单测）。
 
+US-015（v1.1 填料混带）additions：
+7. ``band.fillers`` 服务端校验矩阵（非数组 / 非 g 码项 / 含主码 / 超上限 / 不存在 /
+   数量全 0 → 结构化 error；重复项静默去重放行）；
+8. 混带 e2e：stage → manifest → final（腰 + 填料成员按 demand 出现 N 次 —— 填料
+   副本同守恒口径）+ band_runs 工件 fillers 记录；
+9. manifest 一致性：混带 on vs off 的 total_area / pieces 逐字段一致（exclude_labels
+   跳 {主码, 填料} 仍只作用于 Item 层）；
+10. 预演 POST /api/band/preview 带 fillers → 200 {ok:true}（fill 分子 = 腰 + 填料）。
+
 合成数据结构同 5336 g05（多码 × demand 2 矩形腰片）+ 硬警告形态 g06（30×559 裤耳类）。
 band_runs 工件经 MS_OUT_DIR 随 spawn 传给子进程，落 tmp 可断言（US-014 回放对拍数据源）。
 """
@@ -335,18 +344,159 @@ def test_build_instance_exclude_labels_item_layer_only():
 
 
 def test_parse_band_time_budget_internal_knob():
-    """_parse_band 内部旋钮：time_budget 非法值静默回退 None（= 默认 15s），不报错。"""
+    """_parse_band 内部旋钮：time_budget 非法值静默回退 None（= 默认 15s），不报错。
+
+    US-015 起返回 dict 恒含 ``fillers`` 键（缺省 []，旧 payload 无 fillers 行为不变）。"""
     from materialsorting.web.routes_ws import _parse_band
 
     pieces = _band_pieces()
     quantities = {'g05': {'28': 2, '29': 2}}
     cfg = _parse_band({'enabled': True, 'label': 'g05', 'time_budget': 'x'},
                       pieces, quantities)
-    assert cfg == {'label': 'g05', 'time_budget': None}
+    assert cfg == {'label': 'g05', 'fillers': [], 'time_budget': None}
     cfg2 = _parse_band({'enabled': True, 'label': 'g05', 'time_budget': 2},
                        pieces, quantities)
-    assert cfg2 == {'label': 'g05', 'time_budget': 2}
+    assert cfg2 == {'label': 'g05', 'fillers': [], 'time_budget': 2}
     assert _parse_band(None, pieces, None) is None
+
+
+# --------------------------------------------- US-015 填料混带（v1.1）
+
+
+@pytest.mark.parametrize('band,quantities,frag', [
+    ({'enabled': True, 'label': 'g05', 'fillers': 'g06'}, None, '须为 g 码数组'),
+    ({'enabled': True, 'label': 'g05', 'fillers': [5]}, None, '须为 g 码'),
+    ({'enabled': True, 'label': 'g05', 'fillers': ['x6']}, None, '须为 g 码'),
+    ({'enabled': True, 'label': 'g05', 'fillers': ['g05']}, None, '不可包含主 g 码'),
+    ({'enabled': True, 'label': 'g05', 'fillers': ['g01', 'g05', 'g06']},
+     None, '不可包含主 g 码'),
+    ({'enabled': True, 'label': 'g05', 'fillers': ['g01', 'g06', 'g97', 'g98']},
+     None, '超上限'),
+    ({'enabled': True, 'label': 'g05', 'fillers': ['g99']},
+     None, '不存在于当前母版'),
+    ({'enabled': True, 'label': 'g05', 'fillers': ['g01', 'g06']},
+     {'g05': {'28': 2, '29': 2}, 'g01': {'28': 0}, 'g06': {'28': 2}},
+     '填料 g 码 g01 数量全为 0'),
+])
+def test_band_fillers_validation_matrix(band_client, band, quantities, frag):
+    """US-015 fillers 服务端校验：非法 → 结构化 error 早退（无 stage / 无 manifest）。"""
+    with band_client.websocket_connect('/ws/solve') as ws:
+        ws.send_json(_start(band=band, quantities=quantities, time_budget=60))
+        msg = ws.receive_json()
+        assert msg['type'] == 'error', f'expected error, got {msg}'
+        assert frag in msg['message']
+        with pytest.raises((WebSocketDisconnect, Exception)):
+            ws.receive_json()
+
+
+def test_band_fillers_dedupe_and_parse_through(band_client):
+    """重复项静默去重（JSON 往返可能重复）+ _parse_band 返回 fillers 清单。"""
+    from materialsorting.web.routes_ws import _parse_band
+
+    pieces = _band_pieces()
+    quantities = {'g05': {'28': 2, '29': 2}, 'g06': {'28': 2}}
+    cfg = _parse_band(
+        {'enabled': True, 'label': 'g05', 'fillers': ['g06', 'g06']}, pieces, quantities)
+    assert cfg['fillers'] == ['g06']            # 去重后 ≤ 上限
+    assert cfg['label'] == 'g05'
+
+
+def test_mixed_band_stage_manifest_final_conservation(band_client):
+    """US-015 混带 e2e：stage → manifest → final；填料成员与腰成员同守恒口径
+    （g06 副本出现在带内展开位、主实例不重复排）+ band_runs 工件记录 fillers。"""
+    with band_client.websocket_connect('/ws/solve') as ws:
+        ws.send_json(_start(
+            band={'enabled': True, 'label': 'g05', 'fillers': ['g06'],
+                  'time_budget': 2},
+            quantities={'g05': {'28': 2, '29': 2}, 'g06': {'28': 2}},
+            time_budget=2))
+
+        stage = ws.receive_json()
+        assert stage['type'] == 'stage' and stage['stage'] == 'band'
+        assert stage['fill_pct'] > 45.0           # 分子 = 腰 + 填料面积和
+        assert stage['bbox']['width_mm'] > 0
+
+        manifest = ws.receive_json()
+        assert manifest['type'] == 'manifest'
+        assert not any(str(p['id']).startswith('WB_') for p in manifest['pieces'])
+        demand = {p['id']: p['demand'] for p in manifest['pieces']}
+        assert demand['g05_28'] == 2 and demand['g05_29'] == 2
+        assert demand['g06_28'] == 2
+
+        final = None
+        last_frame = None
+        deadline = time.time() + 40.0
+        while time.time() < deadline:
+            m = ws.receive_json()
+            if m['type'] == 'frame':
+                assert not any(pi['id'].startswith('WB_') for pi in m['placed_items'])
+                last_frame = m
+            elif m['type'] == 'final':
+                final = m
+                break
+            elif m['type'] == 'error':
+                pytest.fail(f'unexpected error: {m}')
+        assert final is not None and last_frame is not None
+        counts = {}
+        for pi in last_frame['placed_items']:
+            counts[pi['id']] = counts.get(pi['id'], 0) + 1
+        # 守恒：腰 2+2 进带 + 填料 g06 2 副本进带（主实例 exclude {g05,g06} 扣减）
+        assert counts == {'g05_28': 2, 'g05_29': 2, 'g06_28': 2, 'g01_28': 1}
+
+    band_dir = Path(os.environ['MS_OUT_DIR']) / 'band_runs'
+    files = sorted(band_dir.glob('band_g05_seed1_*.json'))
+    assert files, f'band artifact not written under {band_dir}'
+    doc = json.loads(files[-1].read_text(encoding='utf-8'))
+    assert doc['fillers'] == ['g06']              # 工件回放口径（US-014 对拍）
+    assert len(doc['members']) == 6               # 腰 4 + 填料 2
+
+
+def test_manifest_consistency_mixed_band_on_vs_off(band_client):
+    """混带 on（fillers）vs off：manifest total_area 与 pieces 逐字段一致
+    （exclude_labels={主码, 填料} 只跳 Item 层，一致性口径同 US-011 AC#1）。"""
+    quantities = {'g05': {'28': 2, '29': 2}, 'g06': {'28': 2}}
+    manifests = {}
+    for key, band in (('off', None),
+                      ('on', {'enabled': True, 'label': 'g05',
+                              'fillers': ['g06'], 'time_budget': 2})):
+        with band_client.websocket_connect('/ws/solve') as ws:
+            ws.send_json(_start(band=band, quantities=quantities, time_budget=60))
+            if key == 'on':
+                assert ws.receive_json()['type'] == 'stage'
+            m = ws.receive_json()
+            assert m['type'] == 'manifest'
+            manifests[key] = m
+            ws.send_json({'action': 'stop'})
+            _drain_until_stopped(ws)
+    assert manifests['off']['total_area_mm2'] == manifests['on']['total_area_mm2']
+    assert manifests['off']['pieces'] == manifests['on']['pieces']
+    assert manifests['off']['gate_nest_mm'] == manifests['on']['gate_nest_mm']
+
+
+def test_band_preview_with_fillers_ok(band_client):
+    """US-015 预演带 fillers：200 {ok:true}（fill_pct 分子 = 腰 + 填料面积和，
+    与 WS 求解同口径 —— 预演所见即求解所得）。"""
+    r = band_client.post('/api/band/preview', json={
+        'band': {'enabled': True, 'label': 'g05', 'fillers': ['g06'],
+                 'time_budget': 2},
+        'sizes': [], 'seed': 1,
+        'quantities': {'g05': {'28': 2, '29': 2}, 'g06': {'28': 2}}})
+    assert r.status_code == 200
+    data = r.json()
+    assert data['ok'] is True
+    assert data['fill_pct'] > 45.0
+    assert data['bbox']['width_mm'] > 0
+    assert data['break_even'] == [62.4, 63.6]
+
+
+def test_band_preview_fillers_structural_errors(band_client):
+    """预演 fillers 校验失败 → 422 {error}（与 WS 同一 _parse_band 单一真相源）。"""
+    r = band_client.post('/api/band/preview', json={
+        'band': {'enabled': True, 'label': 'g05', 'fillers': ['g05']},
+        'quantities': {'g05': {'28': 2, '29': 2}}})
+    assert r.status_code == 422
+    assert '不可包含主 g 码' in r.json()['error']
+    assert 'hard_warning' not in r.json()          # 填料校验不是硬警告形态
 
 
 # --------------------------------------------- US-013 POST /api/band/preview

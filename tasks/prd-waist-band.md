@@ -79,6 +79,7 @@
   2. UI 多选（缩略图同源）；主实例扣减后 total_area/manifest 仍与 off 口径一致（一致性单测沿用 US-011 #1）
   3. A/B：混带 on 的带区域效率（带板 bbox 内腰+填料面积/占用）≥ break-even 参考线，全局劣化 ≤1.0pt
   4. 全量测试零回归 + 浏览器目检多选交互
+- **实测**: 5336 g05+g07（`scripts/us015_band_ab.py`，报告 `out/config_runs/_probes/us015_ab_report.json` + `.docs/business/腰头成带_AB验收报告_US015.md`）：带 fill 79.5%→**86.52%**（bbox 1153×1271→1097×1333，收窄 55mm）≥ 62.4%；全局 3 seed 均值劣化 **−0.534pt**（seed0 −2.06 / seed1 −0.46 / seed2 +0.92）≤1.0pt；守恒（g05=14+g07=7）+ 无 WB_ 泄漏全过；浏览器 `scripts/us015_verify.mjs` 17/17（多选/置灰/预演 body fillers/终值 87.77%==A/B 87.766%）；pytest 416 + vitest 684 + build 全绿。填料选择：g06 长条 44.4% 触发灾难守卫、g07 实测最优；`BAND_INNER_D_MM=2.0`（2~4mm 保守端）。
 - **Priority**: 7
 
 ### US-016: v2 构造性链构造（版师形态：开口朝左 + 最大码在最右）

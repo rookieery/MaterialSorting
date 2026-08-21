@@ -344,6 +344,167 @@ def test_arc_band_chunk_two_chains():
     assert _opening_side(chunk.members, polys) == 'left'
 
 
+# ------------------------------------------------- US-015 混带填料（v1.1）
+
+def _mixed_ctx(filler_sizes=(28,), filler_demand=4, fw=40.0, fh=100.0):
+    """混带上下文：腰 g05（_band_ctx 同构 7 码 × 2 = 14 副本）+ 填料 g06 小矩形。
+
+    返回 (pid_meta, pieces_by_id, total_waist, total_filler)。填料小件形态
+    （40×100 ≪ 60×300 腰片）对应真实母版里 g07/g08 类小裁片塞肋间空隙场景。
+    """
+    pid_meta, pieces = _band_ctx()
+    for s in filler_sizes:
+        pid = f'g06_{s}'
+        p = _rect_piece(pid, 'g06', s, fw, fh)
+        pieces[pid] = p
+        poly = erode_polygon(p['polygon'], 0.4) if 0.4 > 0 else p['polygon']
+        pid_meta[pid] = {
+            'size': s, 'color': '#000000', 'polygon': poly,
+            'area_mm2': p['area_mm2'], 'label': 'g06', 'demand': filler_demand,
+            'net_polygon': [], 'internal_lines': [], 'notches': [], 'grain_line': None,
+        }
+    total_filler = filler_demand * len(filler_sizes)
+    return pid_meta, pieces, 14, total_filler
+
+
+def test_fillers_conservation_members_and_dict():
+    """US-015 守恒口径：腰 14 + 填料 4 = 18 副本全进 members；fillers 记录进 chunk/to_dict。"""
+    pid_meta, pieces, n_waist, n_filler = _mixed_ctx()
+    chunk = build_band_plan(pid_meta, pieces, label='g05', seed=0,
+                            fillers=['g06'], filler_ds={'g06': 0.4},
+                            time_budget=_SOLVE_BUDGET_S)
+    filler_pids = {pid for pid, m in pid_meta.items() if m['label'] == 'g06'}
+    waist_pids = {pid for pid, m in pid_meta.items() if m['label'] == 'g05'}
+    member_pids = [m['pid'] for m in chunk.members]
+    # 守恒：腰 + 填料全部副本（无 WB_ 混入、无丢片）
+    assert chunk.n_members == n_waist + n_filler == 18
+    assert member_pids.count('g06_28') == n_filler
+    assert sum(1 for p in member_pids if p in waist_pids) == n_waist
+    assert all(p in waist_pids | filler_pids for p in member_pids)
+    assert chunk.total_demand == n_waist + n_filler
+    # fillers 序列化（band_runs 工件回放口径）
+    assert chunk.fillers == ('g06',)
+    assert chunk.to_dict()['fillers'] == ['g06']
+    # 填料进了带内：fill 分子 = 腰 + 填料面积和（同 bbox 口径），仍过灾难下限
+    assert chunk.fill_pct > 45.0
+
+
+def test_fillers_envelope_and_expansion():
+    """US-015 包络断言（填料同口径）：union(成员原轮廓@展开位) ⊆ composite ⊕ d_g
+    + 展开无 WB_ 泄漏 + 混带下腰成员原轮廓重叠深度 ≤ 2·BAND_INNER_D_MM + 0.5
+    （带内碰撞补腐蚀把肋间切口端部开到小件可入宽度 —— 重叠深度即腐蚀深度口径：
+    erode(e) 贴触 ⇒ 原轮廓接触区重叠 ≤ 2e，混带 e=BAND_INNER_D_MM、纯腰 e=d_g）。"""
+    from materialsorting.nesting_engine.waist_band import BAND_INNER_D_MM
+    assert 2.0 <= BAND_INNER_D_MM <= 4.0      # 版师口径 2~4mm 取保守端
+    pid_meta, pieces, _n_w, _n_f = _mixed_ctx()
+    chunk = build_band_plan(pid_meta, pieces, label='g05', seed=0,
+                            fillers=['g06'], filler_ds={'g06': 0.4},
+                            time_budget=_SOLVE_BUDGET_S)
+    waist_pids = {pid for pid, m in pid_meta.items() if m['label'] == 'g05'}
+    for c_rot, c_tr in [(0.0, (700.0, 300.0)), (180.0, (2000.0, 1500.0))]:
+        expanded = expand_placements(chunk, c_rot, c_tr)
+        assert len(expanded) == 18                     # 守恒（展开侧含填料）
+        comp_world = Polygon(_transform_polygon(chunk.polygon, c_rot, c_tr))
+        member_union = unary_union([
+            Polygon(_transform_polygon(
+                pieces[e['id']]['polygon'], e['rotation'], e['translation']))
+            for e in expanded
+        ])
+        assert comp_world.buffer(chunk.d_g + 0.5).contains(member_union), (c_rot, c_tr)
+        assert all(e['id'] in pid_meta for e in expanded)   # 无 WB_ 泄漏
+    # 混带碰撞口径：腰成员原轮廓两两重叠深度 ≤ 2·BAND_INNER_D_MM + 0.5（双侧各腐蚀
+    # e 后贴触 —— 深度超过该值即碰撞腐蚀失效）
+    geoms = _placed_originals(chunk, pieces)
+    half = BAND_INNER_D_MM + 0.25
+    for i, a in enumerate(geoms):
+        for b in geoms[i + 1:]:
+            assert a.buffer(-half).disjoint(b.buffer(-half)), (i, a.distance(b))
+
+
+def _placed_originals(chunk, pieces_by_id):
+    """成员原始轮廓@带内位（包络/间距断言共用口径）。"""
+    return [Polygon(_transform_polygon(pieces_by_id[m['pid']]['polygon'],
+                                       m['rotation'], m['translation']))
+            for m in chunk.members]
+
+
+def test_arc_fillers_fill_gaps_and_open_ribs():
+    """US-015 弧形形态（真实 g05 几何族）：混带 fill 高于纯腰（填料塞进肋间空隙，
+    「切口端部开到小件可入宽度」的效果判据）+ 填料全落带内 + 填料-腰原轮廓重叠
+    深度 ≤ BAND_INNER_D_MM + d_f + 0.5（碰撞正确性）。"""
+    from materialsorting.nesting_engine.waist_band import BAND_INNER_D_MM
+    pid_meta, pieces = _arc_ctx()
+    for s in (28,):
+        pid = 'g06_28'
+        p = _rect_piece(pid, 'g06', s, 60.0, 80.0)
+        pieces[pid] = p
+        pid_meta[pid] = {
+            'size': s, 'color': '#000000',
+            'polygon': erode_polygon(p['polygon'], 0.4),
+            'area_mm2': p['area_mm2'], 'label': 'g06', 'demand': 3,
+            'net_polygon': [], 'internal_lines': [], 'notches': [], 'grain_line': None,
+        }
+    pure = build_band_plan(pid_meta, pieces, label='g05', seed=0,
+                           time_budget=_SOLVE_BUDGET_S)
+    mixed = build_band_plan(pid_meta, pieces, label='g05', seed=0,
+                            fillers=['g06'], filler_ds={'g06': 0.4},
+                            time_budget=_SOLVE_BUDGET_S)
+    # 填料塞隙效果：fill（分子=腰+填料面积和）高于纯腰，且带板 bbox 不放大
+    assert mixed.fill_pct > pure.fill_pct
+    assert mixed.bbox['width_mm'] <= pure.bbox['width_mm'] + 1.0
+    assert mixed.bbox['height_mm'] <= pure.bbox['height_mm'] + 1.0
+    # 填料全落带内（bbox 内），与腰原轮廓重叠深度 ≤ BAND_INNER_D_MM + 0.4 + 0.5
+    waist_pids = {pid for pid, m in pid_meta.items() if m['label'] == 'g05'}
+    waist_union = unary_union([
+        Polygon(_transform_polygon(pieces[m['pid']]['polygon'],
+                                   m['rotation'], m['translation']))
+        for m in mixed.members if m['pid'] in waist_pids])
+    fillers = [
+        Polygon(_transform_polygon(pieces[m['pid']]['polygon'],
+                                   m['rotation'], m['translation']))
+        for m in mixed.members if m['pid'] not in waist_pids]
+    assert len(fillers) == 3
+    half = BAND_INNER_D_MM + 0.4 + 0.25
+    for f in fillers:
+        assert f.buffer(-half).disjoint(waist_union.buffer(-half))
+        cx, cy = f.centroid.x, f.centroid.y
+        assert -1.0 <= cx <= mixed.bbox['width_mm'] + 1.0
+        assert -1.0 <= cy <= mixed.bbox['height_mm'] + 1.0
+
+
+def test_fillers_deterministic_same_seed():
+    """混带确定性：同 seed 两跑 to_dict JSON 相等（_fill_gaps 贪心无 RNG）。"""
+    pid_meta, pieces, _n_w, _n_f = _mixed_ctx()
+    c1 = build_band_plan(pid_meta, pieces, label='g05', seed=0,
+                         fillers=['g06'], filler_ds={'g06': 0.4},
+                         time_budget=_SOLVE_BUDGET_S)
+    c2 = build_band_plan(pid_meta, pieces, label='g05', seed=0,
+                         fillers=['g06'], filler_ds={'g06': 0.4},
+                         time_budget=_SOLVE_BUDGET_S)
+    assert json.dumps(c1.to_dict(), sort_keys=True) == json.dumps(c2.to_dict(), sort_keys=True)
+
+
+def test_filler_same_as_label_raises():
+    """填料 = 主 g 码 → ValueError（fail-fast，服务端校验的兜底防线）。"""
+    pid_meta, pieces, _n_w, _n_f = _mixed_ctx()
+    with pytest.raises(ValueError, match='不可与主 g 码相同'):
+        build_band_plan(pid_meta, pieces, label='g05', seed=0, fillers=['g05'],
+                        time_budget=_SOLVE_BUDGET_S)
+
+
+def test_filler_zero_copies_raises():
+    """填料 label 不存在 / 全部 demand=0 → ValueError（0 副本不可混带）。"""
+    pid_meta, pieces, _n_w, _n_f = _mixed_ctx()
+    with pytest.raises(ValueError, match='0 副本'):
+        build_band_plan(pid_meta, pieces, label='g05', seed=0, fillers=['g99'],
+                        time_budget=_SOLVE_BUDGET_S)
+    zero = {pid: ({**m, 'demand': 0} if m['label'] == 'g06' else m)
+            for pid, m in pid_meta.items()}
+    with pytest.raises(ValueError, match='0 副本'):
+        build_band_plan(zero, pieces, label='g05', seed=0, fillers=['g06'],
+                        time_budget=_SOLVE_BUDGET_S)
+
+
 # --------------------------------------------------------------- 分层纯度
 
 def test_module_layering_purity():

@@ -29,7 +29,7 @@
 | GET | `/api/strategy/status` | strategy US-004：无状态惰性轮询 run_dir 产物组装进度 | `strategy.strategy_status` |
 | POST | `/api/strategy/stop` | strategy US-004：树杀子进程（taskkill /T /F / killpg）+ 清 marker | `strategy.strategy_stop` |
 | GET | `/api/strategy/result` | strategy US-004：done/stopped run → best + manifest（应用到主画布数据源） | `strategy.strategy_result` |
-| POST | `/api/band/preview` | US-013（FR-7）：5s 预算 `build_band_plan` 成带预演 → `{ok, fill_pct, bbox, break_even}` 对照盈亏参考线 62.4~63.6%（几何失败也 200 `ok:false` = 结果数据；硬警告形态 422 附 `hard_warning:true`） | `routes_band.band_preview` |
+| POST | `/api/band/preview` | US-013（FR-7）：5s 预算 `build_band_plan` 成带预演 → `{ok, fill_pct, bbox, break_even}` 对照盈亏参考线 62.4~63.6%（几何失败也 200 `ok:false` = 结果数据；硬警告形态 422 附 `hard_warning:true`；**US-015 body 可带 band.fillers**，fill 分子 = 腰 + 填料面积） | `routes_band.band_preview` |
 | WS | `/ws/solve` | 排料求解流（manifest → frames → final） | `server.ws_solve` |
 
 > FastAPI 自动暴露 `/docs` `/openapi.json` 等 OpenAPI 路由；业务路由全在上表。
@@ -267,20 +267,20 @@ body 同 WS StartPayload 的 band 求解上下文子集（前端取 `buildStartC
 
 ```jsonc
 {
-  "band": {"enabled": true, "label": "g05", "ack"?: true},
+  "band": {"enabled": true, "label": "g05", "ack"?: true, "fillers"?: ["g07"]},
   "sizes"?: [30, 31], "seed"?: 0, "per_type"?: {...}, "quantities"?: {...}
 }
 ```
 
 ### 响应
 
-- **200 `{ok:true, fill_pct, bbox:{width_mm,height_mm}, elapsed, break_even:[62.4,63.6]}`** —— 预演成功；
+- **200 `{ok:true, fill_pct, bbox:{width_mm,height_mm}, elapsed, break_even:[62.4,63.6]}`** —— 预演成功（`fill_pct` 分子 = 腰 + 填料全部副本面积，US-015 混带口径）；
 - **200 `{ok:false, error}`** —— **几何失败也是结果数据**（该 g 码不适合成带的量化证据，如 fill<45% / 总副本 1），前端降级提示**不阻塞确定**（FR-7）；
 - 400（body 非 JSON / band 非法）/ 409（pieces state 空）/ 422（校验失败）`{error}`；其中**硬警告形态的 422 附 `hard_warning:true`**（`routes_ws.BandAckRequired` → 前端弹窗渲染二次确认勾选框「我已确认…仍要成带」，勾选后带 `ack:true` 重试放行）。
 
 ### 关键不变量
 
-1. 服务端校验复用 `routes_ws._parse_band`（单一真相源：label / 存在性 / quantities>0 / 硬警告 ack）—— `_parse_band` 抛 `BandAckRequired`（ValueError 子类，WS 路径仍按 `str(e)` 报错行为不变）时预演路由回结构化 `hard_warning` 标记；
+1. 服务端校验复用 `routes_ws._parse_band`（单一真相源：label / 存在性 / quantities>0 / 硬警告 ack；**US-015 起含 fillers 全套护栏** —— 含主码 → 422「不可包含主 g 码」且**不设** `hard_warning`（填料本就是小片，不走 ack 流））—— `_parse_band` 抛 `BandAckRequired`（ValueError 子类，WS 路径仍按 `str(e)` 报错行为不变）时预演路由回结构化 `hard_warning` 标记；
 2. d_g/tol_g 经 `_resolve_d_tol` 与主解同源裁定（FR-3 带内 per_type 沿用该 g 码 d/tol）；带内约束带 = `min(gate_mm, PLOT_SAFE_MAX_Y_MM)`（与主解同口径）；
 3. 不落 `band_runs` 工件（预演不是求解，US-014 回放对拍只收真实求解工件）；`time_budget` 内部旋钮可缩短预算（测试用，非前端契约键）；
 4. 分层：web 层 import `.solver`（`build_pid_meta`/`_resolve_d_tol`，与 `solve_worker._build_band` 同口径）+ `nesting_engine.waist_band`；不 import cli。
@@ -339,7 +339,7 @@ done/stopped 可读（running → 409「尚未结束」；idle → 404）。响�
 >
 > US-026：ws_solve 改为 `solve_with_callback_proc` 进程化求解（build_instance 移入子进程）。write loop 内联 drain asyncio queue → ws.send_json；read loop 后台 task 持续读客户端消息。收到 `{action:'stop'}` → `process.terminate()+join(timeout=5)` → 直发 `{type:'stopped'}` → 关闭 WS。客户端断开（WebSocketDisconnect）→ 同样 terminate+join 防孤儿进程（**修复旧 bug**：旧版 `except:pass` 静默忽略断开，求解线程跑满预算）。
 >
-> US-011（腰头成带）：StartPayload 可缺省 `band` 键。开启时 `solve_worker` 先在**本进程内**跑带内聚排（不 spawn 孙进程 —— terminate 即整进程回收），成功投 stage（见 1.5）+ 落 `out/band_runs/*.json` 工件；主实例以 `exclude_labels={label}` 跳过 band 成员（pid_meta/total_area/manifest 逐字段不变）并把组合片（`WB_*` pid）经 `extra_items` 构造期进 items；帧/final 发射经 `_emit_placed` 单点展开回成员 placement —— **WB_ 永不出现在 manifest/frame/final**。成带失败（0 副本/总副本 1/fill 下限等）只投 error 不投 manifest（与 build 失败同契约）。
+> US-011（腰头成带）：StartPayload 可缺省 `band` 键。开启时 `solve_worker` 先在**本进程内**跑带内聚排（不 spawn 孙进程 —— terminate 即整进程回收），成功投 stage（见 1.5）+ 落 `out/band_runs/*.json` 工件；主实例以 `exclude_labels={label}` 跳过 band 成员（**US-015 起填料同扣减：`exclude_labels={label, *fillers}`** —— pid_meta/total_area/manifest 逐字段不变）并把组合片（`WB_*` pid）经 `extra_items` 构造期进 items；帧/final 发射经 `_emit_placed` 单点展开回成员 placement —— **WB_ 永不出现在 manifest/frame/final**。成带失败（0 副本/总副本 1/fill 下限等）只投 error 不投 manifest（与 build 失败同契约）。
 
 ### 1. 握手（client → server，**首条必须 action:'start'**；后续可发 action:'stop'）
 
@@ -353,7 +353,7 @@ done/stopped 可读（running → 409「尚未结束」；idle → 404）。响�
   "params": {"d_ext":0, "d_int":0, "tol_ext":0, "tol_int":0},  // US-019 起前端永远传全 0；主面板内外两档输入已删，d/tol 覆盖全交 per_type
   "per_type": {"g03": {"d": 1.5}},  // 可选，逐片高级覆盖（US-002 起 label 键；2026-08-18 回退 US-004 矩阵化后单级，命中即对该 g 码全部码号生效；旧 ptype / 旧两级 (label,sizeKey) 键不命中为 no-op）
   "quantities": {"g01": {"28": 2, "30": 0}, "g02": {"28": 1}},  // US-022 可选，label→sizeKey→demand；0=该 piece 该码不排；缺省=null→全片 demand=1
-  "band": {"enabled": true, "label": "g05", "ack": true}  // US-011 可选腰头成带；缺省/null/{}/非 dict/enabled falsy = 关闭（旧行为逐字段不变）；ack 仅 US-013 确认弹窗对硬警告形态显式置 true（预演 422 hard_warning → 勾选二次确认后随 band 发送，见 /api/band/preview 节）
+  "band": {"enabled": true, "label": "g05", "ack": true, "fillers": ["g07"]}  // US-011 可选腰头成带；缺省/null/{}/非 dict/enabled falsy = 关闭（旧行为逐字段不变）；ack 仅 US-013 确认弹窗对硬警告形态显式置 true（预演 422 hard_warning → 勾选二次确认后随 band 发送，见 /api/band/preview 节）；fillers = US-015 v1.1 填料混带（任意 g 码多选 ≤3、≠主码，可选键 —— 空/缺省 = 纯腰路径 payload 逐键不变）
 }
 ```
 
@@ -369,6 +369,7 @@ done/stopped 可读（running → 409「尚未结束」；idle → 404）。响�
 - 非 dict / 无 `enabled` / `enabled` falsy → 关闭（不校验其余键）；
 - `label` 须匹配 `^g\d+$` 且存在于当前母版，且该 g 码在 quantities 口径下至少一个码 demand>0（missing→1 同 `build_pid_meta` 口径）；
 - 硬警告形态护栏：该 label 全部 demand>0 成员中**最小边 <60mm 或长宽比 >6**（多边形 bbox 口径，常量在 routes_ws）需显式 `ack:true` 才执行（裤耳类小片/细长条误选护栏，参数值 US-013 试用后可调；缺 ack 抛 `BandAckRequired`（ValueError 子类）—— WS 路径按 `str(e)` 报错行为不变，US-013 预演路由据此回 422 `hard_warning:true` 结构化标记，前端弹窗渲染二次确认勾选框）；
+- **US-015 `fillers`**（可选 `["g07","g08"]`）：数组、每项 `^g\d+$`、**≠主 label**、去重后 ≤`_BAND_MAX_FILLERS=3`、各自存在于母版且 quantities 口径至少一码 demand>0（missing→1 同口径）；版师确认无白名单约束（任意 g 码可混）；**填料不做硬警告 ack 判定**（填料本就是小片）；重复项静默去重放行；返回 dict 恒含 `fillers` 键（缺省 `[]`，旧 payload 行为不变）；
 - 可选内部旋钮 `time_budget`（int ≥1，非法静默回退缺省 15s）—— 测试 / US-013 预演缩短带内预算用，**非 FR-1 前端契约键**。
 
 ### 1.5 server → stage（US-011，band 开启时 manifest 前**恰一次**）
@@ -478,8 +479,8 @@ done/stopped 可读（running → 409「尚未结束」；idle → 404）。响�
 
 | 函数 | 签名 | 说明 |
 |------|------|------|
-| `solve_worker` | `(pieces_snapshot, gate_mm, solve_params, result_queue, band=None)` | **子进程入口（顶层函数，Windows spawn 可 pickle）**。子进程内 `build_instance(pieces_snapshot, gate_mm, **solve_params)` → 投递 `{kind:manifest, pid_meta, total_area, n_eroded, gate_mm}` → `instance.solve(config, progress=ProgressQueue)` → drain 出的中间解投递 `{kind:frame, report}` → 末尾投递 `{kind:final, final}` 或 `{kind:error, message}`。所有投递纯 JSON 可序列化，spyrrow 对象绝不跨进程。**US-011 `band`**（`{'label','time_budget'?}`）：先 `_build_band`（本进程内同步 `build_band_plan`，d_g/tol_g 与主实例同源 `_resolve_d_tol`、带内 gate=min(gate_mm,1910)）→ 成功投 `{kind:stage}`（manifest 前一次）+ `_write_band_artifact` 落 `paths.OUT_DIR/band_runs/band_{label}_seed{seed}_{ts}.json`（写失败仅 warn）→ 主实例 `exclude_labels={label}` + 组合片 `extra_items`（demand=1、orientations=[0,180] FR-8）→ 帧/final 经 `_emit_placed(sol.placed_items, band_chunk)` **单点展开** WB_ 条目回成员 placement（`expand_placements` 权威式）；失败（BandError/ValueError/几何异常）投 `{kind:error,'成带失败: …'}` 只投 error 不投 manifest |
-| `_build_band` | `(pieces_snapshot, gate_mm, solve_params, band, result_queue) → BandChunk \| None` | **进程内**带内聚排编排（不 spawn 孙进程 —— terminate 即随本进程回收，band 阶段 stop 无孤儿）；`build_pid_meta` 建成员 meta、`_resolve_d_tol` 裁定 d_g/tol_g、`build_band_plan` 求解构造 |
+| `solve_worker` | `(pieces_snapshot, gate_mm, solve_params, result_queue, band=None)` | **子进程入口（顶层函数，Windows spawn 可 pickle）**。子进程内 `build_instance(pieces_snapshot, gate_mm, **solve_params)` → 投递 `{kind:manifest, pid_meta, total_area, n_eroded, gate_mm}` → `instance.solve(config, progress=ProgressQueue)` → drain 出的中间解投递 `{kind:frame, report}` → 末尾投递 `{kind:final, final}` 或 `{kind:error, message}`。所有投递纯 JSON 可序列化，spyrrow 对象绝不跨进程。**US-011 `band`**（`{'label','ack'?,'fillers'?,'time_budget'?}`）：先 `_build_band`（本进程内同步 `build_band_plan`，d_g/tol_g 与主实例同源 `_resolve_d_tol`、带内 gate=min(gate_mm,1910)；**US-015 透传 `fillers`/`filler_ds`（逐 filler `_resolve_d_tol`）**）→ 成功投 `{kind:stage}`（manifest 前一次）+ `_write_band_artifact` 落 `paths.OUT_DIR/band_runs/band_{label}_seed{seed}_{ts}.json`（写失败仅 warn）→ 主实例 `exclude_labels={label, *fillers}` + 组合片 `extra_items`（demand=1、orientations=[0,180] FR-8）→ 帧/final 经 `_emit_placed(sol.placed_items, band_chunk)` **单点展开** WB_ 条目回成员 placement（`expand_placements` 权威式）；失败（BandError/ValueError/几何异常）投 `{kind:error,'成带失败: …'}` 只投 error 不投 manifest |
+| `_build_band` | `(pieces_snapshot, gate_mm, solve_params, band, result_queue) → BandChunk \| None` | **进程内**带内聚排编排（不 spawn 孙进程 —— terminate 即随本进程回收，band 阶段 stop 无孤儿）；`build_pid_meta` 建成员 meta、`_resolve_d_tol` 裁定 d_g/tol_g（US-015 起逐 filler 裁定进 `filler_ds`）、`build_band_plan` 求解构造 |
 | `_write_band_artifact` | `(chunk, seed, band_elapsed)` | band_runs 工件（`BandChunk.to_dict()` + main_seed/band_elapsed；US-014 回放对拍数据源）；OUT_DIR 经 `MS_OUT_DIR` 随 spawn 传递，测试可隔离 |
 | `_emit_placed` | `(placed_items, band=None) → list[{id,rotation,translation}]` | 序列化器 + **US-011 展开单点**：`band` 非 None 时 WB_ 条目替换为 `expand_placements` 产物（帧 :129/:134 与 final :156 三处发射点共享） |
 

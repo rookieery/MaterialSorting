@@ -8,6 +8,11 @@ US-011（腰头成带）：StartPayload 新增可缺省 ``band`` 键（``{enable
 ``^g\\d+$`` / 存在于母版 / 该 g 码 quantities>0 / 硬警告形态需显式 ack）非法即结构化
 error 早退；band 开启时 WS 依序收到 ``stage`` → ``manifest`` → ``frames/final``
 （组合片 WB_ pid 在 solve_worker 帧前展开，永不泄漏）。
+
+US-015（v1.1 填料混带）：``band.fillers: [labels]`` 任意 g 码多选（版师确认无
+白名单约束）—— 校验（g 码格式 / 存在于母版 / 该 g 码 quantities>0 / 与主 g 码
+不同 / 数量 ≤ ``_BAND_MAX_FILLERS``，重复项静默去重）；填料成员与腰成员同一
+展开/守恒/泄漏口径，主实例同 ``exclude_labels`` 路径扣减。
 """
 from __future__ import annotations
 
@@ -25,6 +30,9 @@ _SENTINEL = object()
 
 # US-011 band 服务端校验常量（落地方案 §2.8 误选护栏；参数值可在 US-013 试用后调）。
 _BAND_LABEL_RE = re.compile(r'^g\d+$')
+# US-015 填料数量上限（版师确认无白名单约束，仅保留数量护栏；前端
+# ``BAND_MAX_FILLERS`` 镜像）。
+_BAND_MAX_FILLERS = 3
 # 硬警告形态阈值：成员最小边 <60mm（裤耳类小片）或长宽比 >6（细长条）的 label 需
 # payload 显式 ``ack:true`` 才执行成带。
 _BAND_ACK_MIN_EDGE_MM = 60.0
@@ -58,16 +66,20 @@ def _band_piece_wh(p):
 
 
 def _parse_band(raw, pieces, quantities):
-    """StartPayload ``band`` 键 → worker 成带配置 dict | None（US-011 单一校验点）。
+    """StartPayload ``band`` 键 → worker 成带配置 dict | None（US-011/015 单一校验点）。
 
     规则（FR-1 / AC#3）：非 dict / 无 ``enabled`` / enabled falsy → None（关闭，
     旧行为）；enabled 时 label 须匹配 ``^g\\d+$`` 且存在于当前母版且该 g 码
     quantities>0；成员最小边 <60mm 或长宽比 >6 的 label 需显式 ``ack:true``。
+    US-015：``fillers``（可选数组）逐项须为 g 码、存在于母版、该 g 码
+    quantities>0 且 ≠ 主 g 码，去重后 ≤ ``_BAND_MAX_FILLERS``；填料**不做**硬警告
+    形态判定（填料本就是小片，ack 语义只约束主腰形态）。
     非法抛 ``ValueError``（调用方转 ``{type:error}`` 早退，不发 manifest）。
 
-    返回 ``{'label': str, 'time_budget': int|None}``（ack 校验通过后不透传）；
-    ``time_budget`` 为可选内部旋钮（缺省 15s = ``DEFAULT_BAND_TIME_BUDGET_S``，
-    测试/US-013 预演缩短预算用，非 FR-1 前端契约键）。
+    返回 ``{'label': str, 'fillers': list[str], 'time_budget': int|None}``（ack
+    校验通过后不透传）；``time_budget`` 为可选内部旋钮（缺省 15s =
+    ``DEFAULT_BAND_TIME_BUDGET_S``，测试/US-013 预演缩短预算用，非 FR-1 前端
+    契约键）。
     """
     if not isinstance(raw, dict) or not raw.get('enabled'):
         return None
@@ -88,12 +100,35 @@ def _parse_band(raw, pieces, quantities):
         raise BandAckRequired(
             f'band g 码 {label} 最小边 {min_edge:.0f}mm（<60）或长宽比 {aspect:.1f}（>6），'
             '属硬警告形态，需显式确认（band.ack=true）才执行成带')
+    fillers_raw = raw.get('fillers')
+    fillers: list = []
+    if fillers_raw is not None:
+        if not isinstance(fillers_raw, list):
+            raise ValueError(
+                f'band.fillers 须为 g 码数组，收到 {type(fillers_raw).__name__}')
+        for f in fillers_raw:
+            if not isinstance(f, str) or not _BAND_LABEL_RE.match(f):
+                raise ValueError(f'band.fillers 项须为 g 码（如 g06），收到 {f!r}')
+            if f == label:
+                raise ValueError(f'band.fillers 不可包含主 g 码 {label!r}')
+            if f not in fillers:
+                fillers.append(f)          # 重复项静默去重（JSON 往返可能重复）
+        if len(fillers) > _BAND_MAX_FILLERS:
+            raise ValueError(
+                f'band.fillers 数量超上限（≤{_BAND_MAX_FILLERS}），收到 {len(fillers)} 个')
+        for f in fillers:
+            if not any(p.get('label') == f for p in pieces):
+                raise ValueError(f'band.fillers 项 {f!r} 不存在于当前母版')
+            if not [p for p in pieces
+                    if p.get('label') == f and _band_demand(p, quantities) > 0]:
+                raise ValueError(
+                    f'band 填料 g 码 {f} 数量全为 0（QtyMatrix 须至少一个码数量 > 0）')
     tb = raw.get('time_budget')
     try:
         tb = max(1, int(tb)) if tb is not None else None
     except (TypeError, ValueError):
         tb = None
-    return {'label': label, 'time_budget': tb}
+    return {'label': label, 'fillers': fillers, 'time_budget': tb}
 
 
 # US-026：process.terminate()+join(timeout=5) 封装 —— read_loop（stop/断开）、write_loop

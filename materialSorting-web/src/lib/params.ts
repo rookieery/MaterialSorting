@@ -64,6 +64,12 @@ export interface FormState {
    * 写回 true（此后 WS start band 带 ``ack:true``）。关闭成带 / 切换 g 码 → 重置 false。
    */
   band_ack: boolean;
+  /**
+   * US-015 混带填料 g 码多选（高级配置弹窗「布局设置」填料行写回；空数组 = 纯腰
+   * 成带 v2）。数量上限 ``BAND_MAX_FILLERS``、不可含 ``band_label`` —— 弹窗 UI
+   * 前置约束 + ``collectBand`` 兜底清洗 + 后端 ``_parse_band`` 权威校验。
+   */
+  band_fillers: string[];
 }
 
 /**
@@ -82,6 +88,7 @@ export const DEFAULT_FORM: FormState = {
   band_enabled: false,
   band_label: '',
   band_ack: false,
+  band_fillers: [],
 };
 
 /** collectParams 输出（与旧 vanilla 实现 collectParams 返回值结构一致）。 */
@@ -218,6 +225,8 @@ export function serializeQuantities(
 
 /** g 码模式（后端 routes_ws._BAND_LABEL_RE `^g\d+$` 的前端镜像；US-013 弹窗共用）。 */
 export const BAND_LABEL_RE = /^g\d+$/;
+/** US-015 填料数量上限（后端 routes_ws._BAND_MAX_FILLERS 的前端镜像；弹窗置灰）。 */
+export const BAND_MAX_FILLERS = 3;
 
 /**
  * US-012 band 三态解析（FR-1）：FormState.band_* → WS StartPayload.band 值。
@@ -227,16 +236,29 @@ export const BAND_LABEL_RE = /^g\d+$/;
  *      后端对空 label 会回结构化 error，此处静默降级为关；US-013 前端闸门在先，
  *      这里是兜底防线）；
  *   3. 开且有效（`^g\d+$`）                        → {enabled:true, label}；US-013 起
- *      ``band_ack=true`` 时附 ``ack:true``（仅确认弹窗对硬警告形态显式勾选后置位）。
+ *      ``band_ack=true`` 时附 ``ack:true``（仅确认弹窗对硬警告形态显式勾选后置位）；
+ *      US-015 起 ``band_fillers`` 清洗（trim / ^g\d+$ / 去重 / 剔除主 g 码）后
+ *      非空才附 ``fillers``（空 = 纯腰 v2，payload 形状与旧版逐键一致）。
  *
- * label 是否存在于当前母版 / 该 g 码 quantities>0 / 硬警告形态需 ack 由后端
- * ``_parse_band`` 权威校验（前端 store 无母版全集，不预判存在性）。
+ * label 是否存在于当前母版 / 该 g 码 quantities>0 / 硬警告形态需 ack / 填料护栏
+ * （存在 / 数量>0 / ≤上限 / ≠主码）由后端 ``_parse_band`` 权威校验（前端 store
+ * 无母版全集，不预判存在性）。
  */
 export function collectBand(form: FormState): BandConfig | null {
   if (!form.band_enabled) return null;
   const label = form.band_label.trim();
   if (!BAND_LABEL_RE.test(label)) return null;
-  return form.band_ack ? { enabled: true, label, ack: true } : { enabled: true, label };
+  const base: BandConfig = form.band_ack
+    ? { enabled: true, label, ack: true }
+    : { enabled: true, label };
+  const fillers = Array.from(
+    new Set(
+      form.band_fillers
+        .map((f) => f.trim())
+        .filter((f) => BAND_LABEL_RE.test(f) && f !== label),
+    ),
+  );
+  return fillers.length > 0 ? { ...base, fillers } : base;
 }
 
 /**

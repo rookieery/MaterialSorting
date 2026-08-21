@@ -359,6 +359,49 @@ describe('collectBand / collectStartContext.band (US-012 三态)', () => {
     expect(collectBand(makeForm({ band_enabled: false, band_label: 'g05', band_ack: true }))).toBeNull();
   });
 
+  it('US-015 fillers：非空清洗后随 band 带 fillers（trim / 去重 / 剔除主码 / 非 g 码过滤）', () => {
+    // 正常多选：透传（顺序保留）
+    expect(
+      collectBand(makeForm({ band_enabled: true, band_label: 'g05', band_fillers: ['g07', 'g08'] })),
+    ).toEqual({ enabled: true, label: 'g05', fillers: ['g07', 'g08'] });
+    // trim + 去重（Set 保序去重）
+    expect(
+      collectBand(makeForm({ band_enabled: true, band_label: 'g05', band_fillers: [' g07 ', 'g07', 'g08'] })),
+    ).toEqual({ enabled: true, label: 'g05', fillers: ['g07', 'g08'] });
+    // 与主 g 码相同 → 剔除（混带填料不可与主 g 码相同）
+    expect(
+      collectBand(makeForm({ band_enabled: true, band_label: 'g05', band_fillers: ['g05', 'g07'] })),
+    ).toEqual({ enabled: true, label: 'g05', fillers: ['g07'] });
+    // 非 g 码项过滤
+    expect(
+      collectBand(makeForm({ band_enabled: true, band_label: 'g05', band_fillers: ['bad', 'g5x', 'g07'] })),
+    ).toEqual({ enabled: true, label: 'g05', fillers: ['g07'] });
+    // 与 ack 组合
+    expect(
+      collectBand(makeForm({ band_enabled: true, band_label: 'g05', band_ack: true, band_fillers: ['g07'] })),
+    ).toEqual({ enabled: true, label: 'g05', ack: true, fillers: ['g07'] });
+  });
+
+  it('US-015 fillers：清洗后为空 → 不带 fillers 键（payload 形状与旧版逐键一致）', () => {
+    // 空数组 / 全主码 / 全非 g 码 → 无 fillers 键（纯腰 v2）
+    for (const fillers of [[], ['g05'], ['bad', '']]) {
+      const out = collectBand(makeForm({ band_enabled: true, band_label: 'g05', band_fillers: fillers }));
+      expect(out).toEqual({ enabled: true, label: 'g05' });
+      expect(JSON.parse(JSON.stringify(out))).toEqual({ enabled: true, label: 'g05' });
+    }
+    // DEFAULT_FORM.band_fillers = []（默认纯腰）
+    expect(DEFAULT_FORM.band_fillers).toEqual([]);
+  });
+
+  it('US-015 fillers：band 关 → fillers 不进 payload（即使残留非空）', () => {
+    expect(
+      collectBand(makeForm({ band_enabled: false, band_label: 'g05', band_fillers: ['g07'] })),
+    ).toBeNull();
+    expect(
+      collectStartContext(makeForm({ band_enabled: false, band_label: 'g05', band_fillers: ['g07'] }), {}).band,
+    ).toBeNull();
+  });
+
   it('collectStartContext.band 与 collectBand 同源（开且有效透传，其余字段不受 band 影响）', () => {
     const q: PieceQuantityMap = { g05: { perSize: { '28': 2 }, baseValue: 1 } };
     const form = makeForm({ band_enabled: true, band_label: 'g05', sizes: [28] });
