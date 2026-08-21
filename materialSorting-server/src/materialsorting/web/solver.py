@@ -32,6 +32,14 @@ US-004（策略 web 桥接）提取 ``build_pid_meta`` —— ``build_instance``
 快照口径组装 manifest（erode 后几何与 placed_items 对齐），不必构造求解实例；
 ``build_instance`` 改为调用它后补 spyrrow ``Item``/``StripPackingInstance`` 构造
 （对拍单测保证提取前后输出逐字段一致）。
+
+US-011（腰头成带编排接线）：``build_instance`` 加 ``exclude_labels`` —— band 成员
+只在 **Item 构造层**跳过（组合片由调用方 ``solve_worker`` 以 WB_ pid 追加），
+``pid_meta`` / ``total_area`` / manifest 原样保留（**禁**用 quantities=0 移除：
+那会连 pid_meta/total_area 一起抹掉，密度掉 ~12pt，见落地方案 §2.2）；
+``solve_with_callback_proc`` 加 ``on_stage`` 回调 + ``band`` 透传 —— drain 循环
+显式转发 ``{kind:stage}``（此前未知 kind 静默丢弃），band 子配置原样带给
+``solve_worker``（带内聚排在 worker 进程内跑，见其 docstring）。
 """
 from __future__ import annotations
 
@@ -251,7 +259,8 @@ def build_pid_meta(pieces, *, sizes=None, per_type=None, quantities=None,
 
 def build_instance(pieces, gate_mm, *, time_budget: int, seed: int,
                    sizes=None, params=None, per_type=None, quantities=None,
-                   solver_opts: dict | None = None):
+                   solver_opts: dict | None = None, exclude_labels=None,
+                   extra_items=None):
     """按码号 + v0.3 参数构造 (instance, config, pid_meta, total_area, n_eroded)。
 
     params = {d_ext, d_int, tol_ext, tol_int}（默认全 0 = 阶段A baseline。US-002 起
@@ -273,6 +282,15 @@ def build_instance(pieces, gate_mm, *, time_budget: int, seed: int,
         - quadtree_depth ∈ [3, 5]（缺省 4）；num_workers ≥ 1（缺省 4）。
         PC-006 消费方：CLI ``--solver-opts`` / ``--rotate-opts``（seed 间轮换去相关）；
         WS 协议本期不加字段（web 前端零改动）。
+    exclude_labels = iterable[str] | None（US-011 腰头成带）：该 label 集合的裁片
+        **只在 Item 构造层跳过**（不进 sparrow 实例），``pid_meta`` / ``total_area``
+        / manifest 逐字段不变 —— band on/off 的 manifest 一致性即由此保证。
+        **禁**用 quantities=0 达成同效：那会在 ``build_pid_meta`` 把 pid_meta /
+        total_area / manifest 一起抹掉（密度口径事故，落地方案 §2.2）。
+    extra_items = list[dict] | None（US-011）：构造期追加进 items 的补充 Item
+        （JSON 可序列化 dict：``{id, polygon, demand=1, orientations}``）—— 成带
+        组合片（WB_ pid）由此进主解。**必须构造期传入**：``instance.items`` 是
+        spyrrow Rust 侧暴露的副本 list，构造后 append 不生效（实测验证）。
 
     每片实际 erode = min(申请值, MAX_OVERLAP_MM=10)（全局上限兜底，2026-08 起不再按片型）
     每片实际 tol  = min(申请值, MAX_ROTATION_TOL_DEG=45)
@@ -301,10 +319,15 @@ def build_instance(pieces, gate_mm, *, time_budget: int, seed: int,
         pieces = [p for p in pieces if p['size'] in want]
 
     items = []
+    exclude = {str(l) for l in exclude_labels} if exclude_labels else frozenset()
     for p in pieces:
         meta = pid_meta.get(p['pid'])
         if meta is None:
             continue   # demand=0 跳过 / 清洗后 <3 顶点（build_pid_meta 已滤）
+        # US-011：band 成员只在 Item 层跳过（pid_meta/total_area/manifest 不动 ——
+        # 组合片由 solve_worker 追加；quantities=0 移除是口径事故，见 docstring）。
+        if p.get('label') in exclude:
+            continue
         # tol 与 pid_meta 的 erode 同口径裁定（_resolve_d_tol 单一真相源）→ 离散角度集。
         _d, tol = _resolve_d_tol(p.get('label'), pdef, per_type)
         orientations = discretize_orientations(tol)
@@ -313,6 +336,15 @@ def build_instance(pieces, gate_mm, *, time_budget: int, seed: int,
             shape=[(float(x), float(y)) for x, y in meta['polygon']],
             demand=meta['demand'],
             allowed_orientations=orientations,
+        ))
+    # US-011：补充 Item（成带组合片等）必须**构造期**进 items —— instance.items 是
+    # Rust 侧暴露的副本 list，构造后 append 不生效（实测验证，见 docstring）。
+    for ex in (extra_items or []):
+        items.append(spyrrow.Item(
+            id=str(ex['id']),
+            shape=[(float(x), float(y)) for x, y in ex['polygon']],
+            demand=int(ex.get('demand', 1)),
+            allowed_orientations=[float(a) for a in ex.get('orientations', (0.0,))],
         ))
     # 有效排料宽度：求解约束带 = min(门幅, 绘图仪可写幅宽)。门幅超出可写幅宽的部分
     # （1980−1910=70mm 内部差）求解时直接不排，marker 顶部不再落进行程外。
@@ -404,7 +436,8 @@ _JOIN_TIMEOUT_SEC = 5.0
 
 def solve_with_callback_proc(pieces_snapshot, gate_mm, solve_params, *,
                              on_manifest, on_report, on_process=None,
-                             drain_interval: float = 0.2):
+                             on_stage=None, drain_interval: float = 0.2,
+                             band=None):
     """多进程版求解：spawn 子进程跑 ``build_instance + solve``，主进程 drain queue 分发。
 
     与旧 ``solve_with_callback``（threading 版）的关键区别：
@@ -436,8 +469,18 @@ def solve_with_callback_proc(pieces_snapshot, gate_mm, solve_params, *,
         **US-026**：子进程 ``start()`` 后立即回调一次，把 ``Process`` 句柄交给调用方，
         让调用方可以在 solve 完成前调 ``terminate()``（WS stop / 客户端断开场景）。
         缺省 None（向后兼容旧调用方）。
+    on_stage : callable(dict) | None
+        **US-011**：收到 ``{kind:stage}`` 消息时回调（参数含 ``stage`` / ``fill_pct``
+        / ``bbox`` / ``fallback`` / ``elapsed``）。band 开启时 worker 在 manifest 前
+        投一次（带内聚排完成）；缺省 None = 丢弃（与旧版未知 kind 行为一致，
+        CLI 调用方无 stage 消费方）。
     drain_interval : float
         主进程 drain result_queue 的轮询间隔（秒，默认 0.2）。
+    band : dict | None
+        **US-011**：腰头成带配置 ``{'label': str, 'time_budget': int|None}``（routes_ws
+        服务端校验后产物）。原样传给 ``solve_worker`` —— 带内聚排 + 组合片构造 +
+        帧前展开都在 worker 进程内做（组合片 ``BandChunk`` 不跨进程）。缺省 None =
+        关闭，worker 走原五元路径（manifest → frame* → final/error）。
 
     Returns
     -------
@@ -459,7 +502,7 @@ def solve_with_callback_proc(pieces_snapshot, gate_mm, solve_params, *,
     result_queue: multiprocessing.Queue = multiprocessing.Queue()
     process = multiprocessing.Process(
         target=solve_worker,
-        args=(pieces_snapshot, gate_mm, solve_params, result_queue),
+        args=(pieces_snapshot, gate_mm, solve_params, result_queue, band),
         name='solve_worker',
     )
     process.start()
@@ -508,6 +551,11 @@ def solve_with_callback_proc(pieces_snapshot, gate_mm, solve_params, *,
             elif kind == 'error':
                 err = msg.get('message', 'unknown error')
                 # error 后子进程会自然退出；继续 drain 残余 frame（如有）直到「进程死 + queue 空」。
+            elif kind == 'stage':
+                # US-011：band 带内聚排完成（manifest 前唯一一次）；显式转发，
+                # 无消费方（on_stage=None，CLI 路径）时静默丢弃 = 旧行为。
+                if on_stage is not None:
+                    on_stage(msg)
             # 未知 kind 忽略（前向兼容）
     finally:
         # 防死锁清理（spec AC#4）：terminate → cancel_join_thread → 限时 drain → join

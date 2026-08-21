@@ -5,8 +5,8 @@ Started: 2026-08-09
 
 
 
-- 真实数据冒烟：M1787 g05（22 副本弧形轮廓）6s 预算 fill 54.5%、组合片 1530 顶点（simplify 后）、envelope rot 0/180 双向通过；全量 pytest 349 passed 零回归；`from materialsorting.web.server import app` 冒烟 OK
-- 文档同步：agent-file-map.md（waist_band 专节 + constraints/web solver 行）、nesting_engine/AGENTS.md（waist_band 行 + 启动校验行 + baseline/experiments 复用方补 waist_band）、web/AGENTS.md（solver 行 re-export 注记）、tests/AGENTS.md（test_waist_band 行）、CLAUDE.md（nesting_engine 行补 waist_band）
-- [US-010] go/no-go 试点闸门落地：新增 nesting_engine/waist_band_gate.py（python -m 入口，复用 US-009 模块、零产品代码改动；build_probe_pid_meta = web.solver.build_pid_meta 探针同构镜像，两 arm 同源同构）；新增 tests/test_waist_band_gate.py 9 例（分层 AST 守卫禁 web/cli + decide 三态 + fill_saturation 三分支 + P0 口径复现 119 副本/87.446% + 非 5336 fail-fast）
+
 - [US-010] 闸门实测（5336 P0 同配置，~15min 全量跑）：①密度 A/B seed{0,1,2} off 87.447/86.871/90.036 vs on 87.252/86.948/86.542，均值劣化 1.204pt > 1.0pt FAIL（seed 方差 ≳ 组间差：seed2 off 波动至 90.04% 拖垮均值，on 臂反而平稳 86.5~87.3）；②NFP 吞吐 27.83→18.09 帧/s 劣化 35.0% > 30% FAIL（组合片实测 694 顶点 > 预估 500，simplify(0.05) 压不进 600）；③fill-预算曲线 51.8/51.5/61.1/54.5/54.8 无稳定平台，15s 局部最优=初值；结论 no-go，报告 out/config_runs/_probes/band_gate_report.json
 - [US-010] 依预决策路线转轨：纯腰 v1（US-011~014）不合入搁置，后续主线直接走 US-015 v1.1 混填料（唯一实测过 break-even 线 62.4~63.6% 的形态，混带 72.5%）；全量 pytest 358 passed 零回归；文档同步 agent-file-map/business-overview/nesting_engine AGENTS/tests AGENTS/CLAUDE.md
+
+- [US-011] 后端编排接线：build_instance 增 exclude_labels（只跳 Item 层，pid_meta/total_area 原样，band on/off manifest 逐字段一致）+ extra_items（组合片构造期注入——spyrrow instance.items 是 Rust 副本，构造后 append 静默失效）；solve_worker 增 band 参数：_build_band 进程内同步跑 build_band_plan（不 spawn 孙进程，stop 无孤儿；失败=成带失败 error 不投 manifest）+ _write_band_artifact 落 OUT_DIR/band_runs/*.json + _emit_placed 展开单点（WB_ 帧前展开回成员 placement，永不泄漏）；routes_ws 增 _parse_band 服务端校验（g 码/存在母版/数量>0/硬警告形态需 ack，非法结构化 error 早退+显式 close）+ on_stage 投 stage 消息；新增 tests/test_waist_band_ws.py 16 项全绿，test_solve_proc/test_ws_stop 零改动，全量 pytest 374 passed 零回归；文档同步 agent-api-reference/agent-file-map/web AGENTS

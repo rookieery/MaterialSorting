@@ -304,11 +304,13 @@ done/stopped 可读（running → 409「尚未结束」；idle → 404）。响�
 
 ## WebSocket /ws/solve — 求解流
 
-单条长连接，生命周期：**client 发 start（首条必须）→ server 推 1×manifest → N×frame → 1×final（或 error）；client 可在任意时刻发 stop → server 推 1×stopped → 关闭 WS**。
+单条长连接，生命周期：**client 发 start（首条必须）→ server 推 1×manifest → N×frame → 1×final（或 error）；client 可在任意时刻发 stop → server 推 1×stopped → 关闭 WS**。**US-011 band 开启时在 manifest 前多推 1×stage**（腰头成带带内聚排完成统计）。
 
 > US-020：accept 阶段 `state = _get_pieces_state()` 拿一次快照，整连接内 `pieces / gate_mm` 不变（避免求解中途 reload 切数据）。state 空时（首次启动未 commit / intermediate 缺失）直接发 error「排料数据为空」并关闭。
 >
 > US-026：ws_solve 改为 `solve_with_callback_proc` 进程化求解（build_instance 移入子进程）。write loop 内联 drain asyncio queue → ws.send_json；read loop 后台 task 持续读客户端消息。收到 `{action:'stop'}` → `process.terminate()+join(timeout=5)` → 直发 `{type:'stopped'}` → 关闭 WS。客户端断开（WebSocketDisconnect）→ 同样 terminate+join 防孤儿进程（**修复旧 bug**：旧版 `except:pass` 静默忽略断开，求解线程跑满预算）。
+>
+> US-011（腰头成带）：StartPayload 可缺省 `band` 键。开启时 `solve_worker` 先在**本进程内**跑带内聚排（不 spawn 孙进程 —— terminate 即整进程回收），成功投 stage（见 1.5）+ 落 `out/band_runs/*.json` 工件；主实例以 `exclude_labels={label}` 跳过 band 成员（pid_meta/total_area/manifest 逐字段不变）并把组合片（`WB_*` pid）经 `extra_items` 构造期进 items；帧/final 发射经 `_emit_placed` 单点展开回成员 placement —— **WB_ 永不出现在 manifest/frame/final**。成带失败（0 副本/总副本 1/fill 下限等）只投 error 不投 manifest（与 build 失败同契约）。
 
 ### 1. 握手（client → server，**首条必须 action:'start'**；后续可发 action:'stop'）
 
@@ -321,7 +323,8 @@ done/stopped 可读（running → 409「尚未结束」；idle → 404）。响�
   "seed": 0,                      // sparrow 随机种子，默认 0
   "params": {"d_ext":0, "d_int":0, "tol_ext":0, "tol_int":0},  // US-019 起前端永远传全 0；主面板内外两档输入已删，d/tol 覆盖全交 per_type
   "per_type": {"g03": {"d": 1.5}},  // 可选，逐片高级覆盖（US-002 起 label 键；2026-08-18 回退 US-004 矩阵化后单级，命中即对该 g 码全部码号生效；旧 ptype / 旧两级 (label,sizeKey) 键不命中为 no-op）
-  "quantities": {"g01": {"28": 2, "30": 0}, "g02": {"28": 1}}  // US-022 可选，label→sizeKey→demand；0=该 piece 该码不排；缺省=null→全片 demand=1
+  "quantities": {"g01": {"28": 2, "30": 0}, "g02": {"28": 1}},  // US-022 可选，label→sizeKey→demand；0=该 piece 该码不排；缺省=null→全片 demand=1
+  "band": {"enabled": true, "label": "g05", "ack": false}  // US-011 可选腰头成带；缺省/null/{}/非 dict/enabled falsy = 关闭（旧行为逐字段不变）
 }
 ```
 
@@ -331,6 +334,28 @@ done/stopped 可读（running → 409「尚未结束」；idle → 404）。响�
 ```
 
 `params` / `per_type` 缺省 = baseline（无 erode、严格布纹线 `{0°,180°}`）。`quantities` 缺省 / `null` = 全片 `demand=1`（向后兼容旧前端 / 旧 intermediate 无 label）。US-022 起 `build_instance` 按 `(piece.label, str(piece.size))` 查 `quantities` → `spyrrow.Item(demand=N)`；demand=0 跳过（D2）；piece 缺 label 回退 demand=1。
+
+**US-011 `band` 服务端校验**（`routes_ws._parse_band`，quantities 解析后；非法 = `{type:error}` 早退 + 显式关 WS，不发 manifest）：
+
+- 非 dict / 无 `enabled` / `enabled` falsy → 关闭（不校验其余键）；
+- `label` 须匹配 `^g\d+$` 且存在于当前母版，且该 g 码在 quantities 口径下至少一个码 demand>0（missing→1 同 `build_pid_meta` 口径）；
+- 硬警告形态护栏：该 label 全部 demand>0 成员中**最小边 <60mm 或长宽比 >6**（多边形 bbox 口径，常量在 routes_ws）需显式 `ack:true` 才执行（裤耳类小片/细长条误选护栏，参数值 US-013 试用后可调）；
+- 可选内部旋钮 `time_budget`（int ≥1，非法静默回退缺省 15s）—— 测试 / US-013 预演缩短带内预算用，**非 FR-1 前端契约键**。
+
+### 1.5 server → stage（US-011，band 开启时 manifest 前**恰一次**）
+
+```jsonc
+{
+  "type": "stage",
+  "stage": "band",               // 目前仅 'band'（带内聚排完成）
+  "fill_pct": 78.19,             // 带内填充率（%，成员原面积和 / 实际占用 bbox 面积）
+  "bbox": {"width_mm": 60.0, "height_mm": 1534.6},  // 带实际占用 bbox（非全幅）
+  "fallback": false,             // v1 恒 false（无降级路径；键为协议稳定性保留）
+  "elapsed": 15.3                // 带内聚排 wall-clock 秒
+}
+```
+
+仅 StartPayload `band.enabled` 时出现，在 manifest 前发一次。旧前端 default:break 静默忽略（前向兼容）；前端 US-012 起在状态行呈现「腰头成带中…」（秒级提示，不进 phase 五态状态机）。
 
 ### 2. server → manifest（**一次**，握手后立即发）
 
@@ -416,23 +441,29 @@ done/stopped 可读（running → 409「尚未结束」；idle → 404）。响�
 | `load_pieces` | `(intermediate_path=paths.INTERMEDIATE) → (doc, gate_mm, pieces)` | 读 `pieces_intermediate.json` |
 | `build_pid_meta` | `(pieces, *, sizes=None, per_type=None, quantities=None, params=None) → (pid_meta, total_area, n_eroded)` | **strategy US-004 自 `build_instance` 提取**的裁片级流水线（**不 import spyrrow、不构造求解对象** —— `/api/strategy/result` 组装 manifest 直接用）：sizes 过滤 → demand 判定（quantities 按 `(label, str(size))` 查 N，0=跳过；缺 label→1）→ per_type 覆盖 + 全局上限钳制（`_resolve_d_tol` 单一真相源，与 `build_instance` 的 Item orientations 同口径）→ erode/清洗（<3 顶点跳过）→ pid_meta 条目（US-024 5 层 + label/color/demand）→ `total_area=Σ(area×demand)`。对拍单测（`test_web_strategy.py`）保证提取前后 `build_instance` 输出逐字段一致 |
 | `discretize_orientations` | `(tol: float) → list[float]` | v0.3 连续旋转公差 → spyrrow 离散角度集。`tol=0→[0,180]`；`tol≤5` 步进 1°；否则 5°。归一化到 [0,360) |
-| `build_instance` | `(pieces, gate_mm, *, time_budget, seed, sizes=None, params=None, per_type=None, quantities=None, solver_opts=None) → (instance, config, pid_meta, total_area, n_eroded)` | strategy US-004 起裁片级流水线（sizes/demand/per_type/erode/pid_meta/total_area）**委托 `build_pid_meta`**（单一真相源），本函数补 spyrrow 侧构造：`Item`（shape 用 pid_meta 的 erode 后 polygon、orientations 用同口径 `_resolve_d_tol` 的 tol 离散化）。按 sizes 过滤 → US-022 按 `(label, sizeKey)` 查 quantities 定 demand（0 跳过；缺 label → 1） → US-002 起 `per_type[label]` 命中即覆盖 d/tol（2026-08-18 回退 US-004 后 label 单级，命中即对该 g 码全部码号生效；未命中/缺维度回退 `params.d_ext/tol_ext`；旧 ptype / 旧两级键 no-op；internal 概念已删，`d_int`/`tol_int` 仍被接受但无消费方） → 每片 `erode=min(申请d, MAX_OVERLAP_MM=10)`、`tol=min(申请tol, MAX_ROTATION_TOL_DEG=45)`（**2026-08-17 起全局上限，不再按片型**） → erode+clean → 构造 `spyrrow.Item` + `StripPackingInstance(strip_height=min(gate_mm, PLOT_SAFE_MAX_Y_MM))` + `StripPackingConfig`；pid_meta 含 US-024 5 层字段 + `label`/`color=size_color(size)`（2026-08-20 尺码键）/`demand`（`.get()` 向后兼容）。**求解约束带钳绘图仪可写幅宽 1910**（gate_mm 1980 是显示口径，manifest 推给前端的 gate_mm / 密度分母 / 导出外框均不受影响；常量单一事实源 `nesting_bounds/load_pieces.py`）。**US-006（PC-006）`solver_opts`**（additive 白名单 exploration_pct/quadtree_depth/num_workers 三键，越界 clamp、非数值/未知键忽略、不传=现行行为）：`exploration_pct∈[0.1,0.95]` 把 time_budget 换算为 exploration_time/compression_time 两段 int 秒（各 ≥1s、和≈budget，**与 total_computation_time 互斥** —— spyrrow 的 total 键缺省 600 非 None，两段模式必须显式传 total_computation_time=None，否则 not-all-3 ValueError）；quadtree_depth∈[3,5]（缺省 4）、num_workers≥1（缺省 4）。清洗单一真相源 `_normalize_solver_opts`。WS 协议本期不加字段（web 前端零改动），消费方仅 CLI --solver-opts/--rotate-opts |
+| `build_instance` | `(pieces, gate_mm, *, time_budget, seed, sizes=None, params=None, per_type=None, quantities=None, solver_opts=None, exclude_labels=None, extra_items=None) → (instance, config, pid_meta, total_area, n_eroded)` | strategy US-004 起裁片级流水线（sizes/demand/per_type/erode/pid_meta/total_area）**委托 `build_pid_meta`**（单一真相源），本函数补 spyrrow 侧构造：`Item`（shape 用 pid_meta 的 erode 后 polygon、orientations 用同口径 `_resolve_d_tol` 的 tol 离散化）。按 sizes 过滤 → US-022 按 `(label, sizeKey)` 查 quantities 定 demand（0 跳过；缺 label → 1） → US-002 起 `per_type[label]` 命中即覆盖 d/tol（2026-08-18 回退 US-004 后 label 单级，命中即对该 g 码全部码号生效；未命中/缺维度回退 `params.d_ext/tol_ext`；旧 ptype / 旧两级键 no-op；internal 概念已删，`d_int`/`tol_int` 仍被接受但无消费方） → 每片 `erode=min(申请d, MAX_OVERLAP_MM=10)`、`tol=min(申请tol, MAX_ROTATION_TOL_DEG=45)`（**2026-08-17 起全局上限，不再按片型**） → erode+clean → 构造 `spyrrow.Item` + `StripPackingInstance(strip_height=min(gate_mm, PLOT_SAFE_MAX_Y_MM))` + `StripPackingConfig`；pid_meta 含 US-024 5 层字段 + `label`/`color=size_color(size)`（2026-08-20 尺码键）/`demand`（`.get()` 向后兼容）。**求解约束带钳绘图仪可写幅宽 1910**（gate_mm 1980 是显示口径，manifest 推给前端的 gate_mm / 密度分母 / 导出外框均不受影响；常量单一事实源 `nesting_bounds/load_pieces.py`）。**US-006（PC-006）`solver_opts`**（additive 白名单 exploration_pct/quadtree_depth/num_workers 三键，越界 clamp、非数值/未知键忽略、不传=现行行为）：`exploration_pct∈[0.1,0.95]` 把 time_budget 换算为 exploration_time/compression_time 两段 int 秒（各 ≥1s、和≈budget，**与 total_computation_time 互斥** —— spyrrow 的 total 键缺省 600 非 None，两段模式必须显式传 total_computation_time=None，否则 not-all-3 ValueError）；quadtree_depth∈[3,5]（缺省 4）、num_workers≥1（缺省 4）。清洗单一真相源 `_normalize_solver_opts`。**US-011 `exclude_labels`**（iterable[str]）：该 label 集合只在 **Item 构造层**跳过（pid_meta/total_area/manifest 逐字段不变 —— band on/off manifest 一致性由此保证；**禁** quantities=0 移除：连 pid_meta/total_area 一起抹掉，密度掉 ~12pt）；**US-011 `extra_items`**（list[{id,polygon,demand=1,orientations}]）：构造期追加进 items 的补充 Item（成带组合片 WB_ pid）—— **必须构造期传入**，spyrrow `instance.items` 是 Rust 侧暴露的副本 list，构造后 append 不生效（实测组合片整解缺席） |
 | `solve_with_callback` | `(instance, config, on_report, *, drain_interval=0.2) → (final_sol, elapsed_sec, err)` | **旧 threading 版（保留）**。子线程 `instance.solve(config, progress=queue)`，主线程 `queue.drain()` 每 0.2s 取中间解 → `on_report({type:frame,...})`。US-026 起 `ws_solve` 切换到 `solve_with_callback_proc`，本函数不删（过渡期） |
-| `solve_with_callback_proc` | `(pieces_snapshot, gate_mm, solve_params, *, on_manifest, on_report, on_process=None, drain_interval=0.2) → (process, final_data, elapsed, err)` | **US-025 多进程版**。spawn 子进程跑 `solve_worker`（在子进程内 `build_instance + solve`，spyrrow 对象不可 pickle 故不跨进程），主进程 drain `multiprocessing.Queue` 分发：manifest → `on_manifest`、frame → `on_report`（density 双口径换算在主进程做）、final/error 记录。**US-026 新增 `on_process` 回调**：子进程 `start()` 后立即回调一次，把 `Process` 句柄交给调用方供 WS stop / 断开时 `terminate()`。返回 `process` 句柄可 `terminate()`；terminate 后 `cancel_join_thread + 限时 drain(≤50ms) + join(timeout=5)` 防死锁；子进程 crash 未投 error 时 `err='worker process exited unexpectedly (code=<exitcode>)'` |
+| `solve_with_callback_proc` | `(pieces_snapshot, gate_mm, solve_params, *, on_manifest, on_report, on_process=None, on_stage=None, drain_interval=0.2, band=None) → (process, final_data, elapsed, err)` | **US-025 多进程版**。spawn 子进程跑 `solve_worker`（在子进程内 `build_instance + solve`，spyrrow 对象不可 pickle 故不跨进程），主进程 drain `multiprocessing.Queue` 分发：manifest → `on_manifest`、frame → `on_report`（density 双口径换算在主进程做）、final/error 记录。**US-026 新增 `on_process` 回调**：子进程 `start()` 后立即回调一次，把 `Process` 句柄交给调用方供 WS stop / 断开时 `terminate()`。**US-011 新增 `on_stage` 回调 + `band` 透传**：drain 循环显式转发 `{kind:stage}`（此前未知 kind 静默丢弃；`on_stage=None` = 丢弃 = CLI 路径旧行为）；`band` 原样带给 `solve_worker`（BandChunk 不跨进程）。返回 `process` 句柄可 `terminate()`；terminate 后 `cancel_join_thread + 限时 drain(≤50ms) + join(timeout=5)` 防死锁；子进程 crash 未投 error 时 `err='worker process exited unexpectedly (code=<exitcode>)'` |
 
 ### `web/solve_worker.py`（US-025 新增）
 
 | 函数 | 签名 | 说明 |
 |------|------|------|
-| `solve_worker` | `(pieces_snapshot, gate_mm, solve_params, result_queue)` | **子进程入口（顶层函数，Windows spawn 可 pickle）**。子进程内 `build_instance(pieces_snapshot, gate_mm, **solve_params)` → 投递 `{kind:manifest, pid_meta, total_area, n_eroded, gate_mm}` → `instance.solve(config, progress=ProgressQueue)` → drain 出的中间解投递 `{kind:frame, report}` → 末尾投递 `{kind:final, final}` 或 `{kind:error, message}`。所有投递纯 JSON 可序列化，spyrrow 对象绝不跨进程 |
+| `solve_worker` | `(pieces_snapshot, gate_mm, solve_params, result_queue, band=None)` | **子进程入口（顶层函数，Windows spawn 可 pickle）**。子进程内 `build_instance(pieces_snapshot, gate_mm, **solve_params)` → 投递 `{kind:manifest, pid_meta, total_area, n_eroded, gate_mm}` → `instance.solve(config, progress=ProgressQueue)` → drain 出的中间解投递 `{kind:frame, report}` → 末尾投递 `{kind:final, final}` 或 `{kind:error, message}`。所有投递纯 JSON 可序列化，spyrrow 对象绝不跨进程。**US-011 `band`**（`{'label','time_budget'?}`）：先 `_build_band`（本进程内同步 `build_band_plan`，d_g/tol_g 与主实例同源 `_resolve_d_tol`、带内 gate=min(gate_mm,1910)）→ 成功投 `{kind:stage}`（manifest 前一次）+ `_write_band_artifact` 落 `paths.OUT_DIR/band_runs/band_{label}_seed{seed}_{ts}.json`（写失败仅 warn）→ 主实例 `exclude_labels={label}` + 组合片 `extra_items`（demand=1、orientations=[0,180] FR-8）→ 帧/final 经 `_emit_placed(sol.placed_items, band_chunk)` **单点展开** WB_ 条目回成员 placement（`expand_placements` 权威式）；失败（BandError/ValueError/几何异常）投 `{kind:error,'成带失败: …'}` 只投 error 不投 manifest |
+| `_build_band` | `(pieces_snapshot, gate_mm, solve_params, band, result_queue) → BandChunk \| None` | **进程内**带内聚排编排（不 spawn 孙进程 —— terminate 即随本进程回收，band 阶段 stop 无孤儿）；`build_pid_meta` 建成员 meta、`_resolve_d_tol` 裁定 d_g/tol_g、`build_band_plan` 求解构造 |
+| `_write_band_artifact` | `(chunk, seed, band_elapsed)` | band_runs 工件（`BandChunk.to_dict()` + main_seed/band_elapsed；US-014 回放对拍数据源）；OUT_DIR 经 `MS_OUT_DIR` 随 spawn 传递，测试可隔离 |
+| `_emit_placed` | `(placed_items, band=None) → list[{id,rotation,translation}]` | 序列化器 + **US-011 展开单点**：`band` 非 None 时 WB_ 条目替换为 `expand_placements` 产物（帧 :129/:134 与 final :156 三处发射点共享） |
 
 ### 求解进程 ↔ 事件循环桥（`server.ws_solve`，US-026 进程化版）
 
 ```
 accept → receive_json() → {action:start}            # 主协程，读首条消息
   ↓
-solve_with_callback_proc(pieces_snapshot, ...)       # executor 线程，阻塞跑
+_parse_band(msg.band, pieces, quantities)            # US-011 服务端校验；非法 → error 早退 + ws.close()
+  ↓
+solve_with_callback_proc(pieces_snapshot, ..., band=band_cfg)  # executor 线程，阻塞跑
   on_process(proc): state_box['process'] = proc      # 子进程 start 后回调，存句柄
+  on_stage(m): → queue.put(stage_msg)                # US-011 band 开启时 manifest 前一次
   on_manifest(m): → queue.put(manifest_msg)          # 子进程 → 主进程回调
   on_report(r): r['index']=N; → queue.put(r)         # density 双口径已在 proc 版换算
   → return (process, final_data, elapsed, err)
