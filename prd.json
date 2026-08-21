@@ -1,11 +1,4 @@
 {
   "branchName": "ralph/waist-band",
-  "stories": [
-    {
-      "id": "US-015",
-      "title": "v1.1 填料混带（任意 g 码多选）",
-      "description": "v1.1 填料混带——唯一实测过 break-even 线的形态（混带 72.5% > 线 62.4~63.6%，纯腰 54.8~60.9% 不过线）。填料进 band 子求解并进 union，填掉封闭肋间内腔（v1 死区，spyrrow 无洞支持）。详见 tasks/prd-waist-band.md US-015。\n\n具体任务：\n1. WS 协议 — band.fillers: [labels]（版师确认无白名单约束：任意 g 码多选，带数量上限，不可选主 g 码）\n2. web 后端 — 填料成员与腰成员同一展开/守恒/泄漏口径；主实例同步扣减（同一 exclude_labels 路径）；band 内 d 适度放大（2~4mm）把肋间切口端部开到小件可入宽度\n3. 前端 — UI 多选（缩略图与腰头编号下拉同源）\n\n验收标准：\n- band.fillers 服务端校验（填料 g 码存在、数量上限、与主 g 码不同）；扣减后 total_area/manifest 与 off 口径一致（一致性单测沿用 US-011）\n- A/B：混带 on 的带区域效率（带板 bbox 内腰+填料面积/占用）≥ break-even 参考线，全局劣化 ≤1.0pt\n- 全量测试零回归 + 浏览器目检多选交互",
-      "passes": true
-    }
-  ]
+  "stories": []
 }
