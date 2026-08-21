@@ -8,13 +8,14 @@ spyrrow Rust 原生 ``solve()`` 的方式 —— 全包无 cancel/abort/stop/pau
 spyrrow 对象不可 pickle，故 ``build_instance`` 必须在子进程内执行，只把 JSON 可序列化
 数据（pid_meta / frame / final / error）经 ``multiprocessing.Queue`` 传回主进程。
 
-US-011（腰头成带编排）：``band`` 配置非空时，本 worker 先在**进程内**跑带内聚排
-（``waist_band.build_band_plan`` —— 不 spawn 孙进程：``routes_ws._terminate_solve_process``
-的 terminate 不级联孙进程，同步调用随本进程一并被 OS 回收，stop 后无存活 python
-子进程），投 ``{kind:stage}``（manifest 前唯一一次）+ 落 ``band_runs`` 工件，随后主
-实例以 ``exclude_labels={label}`` 构造并把组合片（WB_ pid）追加进 items；帧/final
-发射经 ``_emit_placed`` **单点**把组合片 placement 展开回成员 placement（三处发射点
-共享该序列化器 → WB_ 永不出现在 manifest/frame/final）。
+US-011（腰头成带编排）：``band`` 配置非空时，本 worker 先在**进程内**构造腰头带
+（``waist_band.build_band_plan`` v2 构造性链构造 —— 不 spawn 孙进程：
+``routes_ws._terminate_solve_process`` 的 terminate 不级联孙进程，同步调用随本进程
+一并被 OS 回收，stop 后无存活 python 子进程），投 ``{kind:stage}``（manifest 前唯一
+一次）+ 落 ``band_runs`` 工件，随后主实例以 ``exclude_labels={label}`` 构造并把
+组合片（WB_ pid）追加进 items；帧/final 发射经 ``_emit_placed`` **单点**把组合片
+placement 展开回成员 placement（三处发射点共享该序列化器 → WB_ 永不出现在
+manifest/frame/final）。
 
 **picklable 约束（Windows spawn）**：``solve_worker`` 必须是**顶层函数**、无闭包、参数
 全部 JSON 可序列化（list/dict/float/int/str）。子进程 spawn 时会通过 pickle 重建本函数。
@@ -162,14 +163,16 @@ def solve_worker(pieces_snapshot, gate_mm, solve_params, result_queue, band=None
 
 
 def _build_band(pieces_snapshot, gate_mm, solve_params, band, result_queue):
-    """带内聚排（US-011 编排层）：本进程内同步跑 ``build_band_plan``。
+    """成带（US-011 编排层）：本进程内同步跑 ``build_band_plan``（v2 构造性链
+    构造，确定性毫秒级 —— 2026-08-21 起替换 v1 spyrrow 带内子求解）。
 
     进程模型（落地方案 §2.6）：**不 spawn 孙进程** —— 父级 ``terminate()`` 不级联
     孙进程，band 跑在本 worker 进程内（同步调用）则随进程整体被 OS 回收，stop 后
     无存活 python 子进程。
 
     d_g/tol_g 与主实例同源裁定（``_resolve_d_tol`` 单一真相源 —— FR-3 带内 per_type
-    沿用该 g 码的 d/tol）；带内约束带 = min(gate_mm, PLOT_SAFE_MAX_Y_MM)（与主解同口径）。
+    沿用该 g 码的 d/tol）；带高守卫 = min(gate_mm, PLOT_SAFE_MAX_Y_MM)（与主解同口径）。
+    ``band.time_budget`` 为 deprecated no-op（构造性链构造无预算依赖，接受即忽略）。
 
     失败（BandError/ValueError 等）投 ``{kind:error}``（「成带失败」前缀，只投 error
     不投 manifest —— 与 build_instance 抛错同契约）返回 None；成功投 ``{kind:stage}``

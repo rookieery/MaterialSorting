@@ -39,7 +39,7 @@ US-011（腰头成带编排接线）：``build_instance`` 加 ``exclude_labels``
 那会连 pid_meta/total_area 一起抹掉，密度掉 ~12pt，见落地方案 §2.2）；
 ``solve_with_callback_proc`` 加 ``on_stage`` 回调 + ``band`` 透传 —— drain 循环
 显式转发 ``{kind:stage}``（此前未知 kind 静默丢弃），band 子配置原样带给
-``solve_worker``（带内聚排在 worker 进程内跑，见其 docstring）。
+``solve_worker``（带构造在 worker 进程内跑，见其 docstring）。
 """
 from __future__ import annotations
 

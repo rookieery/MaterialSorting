@@ -1,15 +1,18 @@
-"""US-009 waist_band 核心模块测试。
+"""US-009 waist_band 核心模块测试（v2 2026-08-21：构造性链构造替换 spyrrow 带内求解）。
 
-覆盖（tasks/prd-waist-band.md US-009 验收标准）：
+覆盖（tasks/prd-waist-band.md US-009 验收标准 + v2 版师形态）：
 1. 展开黄金用例：rot=180 + 带偏移成员**手算对拍**（权威式 rot_f / tr_f，offset 减号）
    + 变换链等价（先带内变换、减 offset、再组合片变换 == 直接展开）；
 2. 包络断言：union(成员原轮廓@展开位) ⊆ composite@主解位 ⊕ d_g（容差 0.5mm）；
 3. 副本守恒：Σ 展开成员条数 == Σ demand（5336 g05 同构 7 码 × 2 = 14/14）；
 4. 异常路径：0 副本 ValueError、总副本 1 DegenerateBand、fill 超限 BandQualityError；
 5. 确定性：band seed = zlib.crc32 派生（勿用 hash()）、同 seed 两跑 to_dict JSON 相等；
-6. 分层纯度：模块级不 import web（AST 守卫，套路同 test_cli_lns）。
+6. 分层纯度：模块级不 import web（AST 守卫，套路同 test_cli_lns）；
+7. v2 版师形态（真实弧形几何）：链内贴触 ≤ ``CHAIN_GAP_EPS_MM``、开口朝左、
+   最大码在最右（降序构造 + 整链点对称翻转）。
 
-真实求解用 2s 小预算 + 合成矩形（结构同 5336 g05：7 码 × demand 2）。
+合成夹具：矩形（结构同 5336 g05：7 码 × demand 2）+ 月牙弧（曲率相近异码嵌套）。
+``time_budget`` 形参 v2 起 deprecated no-op（构造性链构造毫秒级，传值仅验证兼容）。
 """
 from __future__ import annotations
 
@@ -37,7 +40,7 @@ from materialsorting.nesting_engine.waist_band import (
     expand_placements,
 )
 
-# 真实求解预算（秒）：14 片矩形 strip 解足够收敛，整文件实测 ~10s。
+# v1 带内求解预算（秒）：v2 起 deprecated no-op，传值仅为形参兼容回归。
 _SOLVE_BUDGET_S = 2
 
 
@@ -70,6 +73,47 @@ def _band_ctx(label='g05', sizes=(28, 29, 30, 31, 33, 34, 35), demand=2,
             'size': s, 'color': '#000000', 'polygon': poly,
             'area_mm2': p['area_mm2'], 'label': label, 'demand': demand,
             'net_polygon': [], 'internal_lines': [], 'notches': [], 'grain_line': None,
+        }
+    return pid_meta, pieces_by_id
+
+
+def _arc_piece(pid, label, size, r_in, thick=68.0, half_deg=19.0, n=24):
+    """合成月牙腰片（v2 形态用例）：−X 轴向离散环形扇带，凸侧朝 −X。
+
+    默认参数与朝向取 5336 g05 真实几何族（r≈1550+、thick≈68、half≈19°、rot0
+    单片质心偏移 −18~−22mm 即凸侧 −X）—— 异码曲率相近、可贴触嵌套；开口方向
+    判据 ``_opening_side`` 在此类几何上有信号（对称片返回 'flat'）。
+    """
+    r_out = r_in + thick
+    pts = []
+    for i in range(n + 1):          # 外弧（凸侧）180−half → 180+half
+        a = math.radians(180.0 - half_deg + 2.0 * half_deg * i / n)
+        pts.append([r_out * math.cos(a), r_out * math.sin(a)])
+    for i in range(n + 1):          # 内弧（凹侧）180+half → 180−half
+        a = math.radians(180.0 + half_deg - 2.0 * half_deg * i / n)
+        pts.append([r_in * math.cos(a), r_in * math.sin(a)])
+    return {
+        'pid': pid, 'label': label, 'size': size, 'polygon': pts,
+        'area_mm2': Polygon(pts).area,
+        'net_polygon': [], 'internal_lines': [], 'notches': [], 'grain_line': None,
+    }
+
+
+def _arc_ctx(label='g05', sizes=(28, 29, 30, 31, 33, 34, 35), demand=2, d_g=0.4):
+    """弧形腰片上下文：7 码 × demand 2（同 _band_ctx 结构，r_in=1550+40·(码−28)
+    —— 5336 g05 真实几何族参数，链构造实测片片贴触）。"""
+    pieces_by_id = {}
+    pid_meta = {}
+    for s in sizes:
+        pid = f'{label}_{s}'
+        p = _arc_piece(pid, label, s, r_in=1550.0 + (float(s) - 28.0) * 40.0)
+        pieces_by_id[pid] = p
+        poly = erode_polygon(p['polygon'], d_g) if d_g > 0 else p['polygon']
+        pid_meta[pid] = {
+            'size': s, 'color': '#000000', 'polygon': poly,
+            'area_mm2': p['area_mm2'], 'label': label, 'demand': demand,
+            'net_polygon': [], 'internal_lines': [], 'notches': [],
+            'grain_line': None,
         }
     return pid_meta, pieces_by_id
 
@@ -220,13 +264,13 @@ def test_single_copy_raises_degenerate_band():
 def test_fill_below_floor_raises_band_quality_error():
     """fill < 下限 → BandQualityError（禁止无声 shelf 兜底）。
 
-    矩形紧排 fill 实测 <102%（成员原轮廓接触处 ≤2·d_g 重叠），下限抬到 103% 必触发
-    —— 不依赖求解质量，杜绝用例对求解器行为的脆弱耦合。
+    v2 矩形链构造确定性 fill ≈116%（腐蚀轮廓贴触 ⇒ 原轮廓接触处 ≤2·d_g 重叠），
+    下限抬到 130% 必触发 —— 构造确定性使断言不依赖任何求解器行为。
     """
     pid_meta, pieces = _band_ctx()
     with pytest.raises(BandQualityError, match='填充率'):
         build_band_plan(pid_meta, pieces, label='g05', seed=0,
-                        time_budget=_SOLVE_BUDGET_S, fill_floor=103.0)
+                        time_budget=_SOLVE_BUDGET_S, fill_floor=130.0)
 
 
 # --------------------------------------------------------------- 确定性
@@ -258,6 +302,46 @@ def test_build_band_plan_deterministic_same_seed():
     c3 = build_band_plan(pid_meta, pieces, label='g05', seed=1,
                          time_budget=_SOLVE_BUDGET_S)
     assert c3.seed == band_seed_for(1, 'g05')
+
+
+# ------------------------------------------------- v2 构造性链形态（版师判据）
+
+def test_arc_chain_contact_gap_and_form():
+    """v2 版师形态（弧形单链机制）：链内贴触 ≤ ``CHAIN_GAP_EPS_MM`` + 开口朝左
+    + 最大码在最右（降序构造 + 整链点对称翻转 —— 与 build_band_plan 第 2 步同序）。"""
+    from materialsorting.nesting_engine.waist_band import (
+        CHAIN_GAP_EPS_MM, _chain_gap, _chain_nest, _flip_chain, _geom_at,
+        _norm_chain, _opening_side)
+    pid_meta, _pieces = _arc_ctx(demand=1)
+    polys = {pid: waist_band._clean_polygon(m['polygon'])
+             for pid, m in pid_meta.items()}
+    chain_pids = sorted(
+        pid_meta, key=lambda p: waist_band._member_sort_key(pid_meta[p], p),
+        reverse=True)                     # size 降序（版师链序）
+    chain = _norm_chain(_flip_chain(_chain_nest(chain_pids, polys)), polys)
+    assert _chain_gap(chain, polys) <= CHAIN_GAP_EPS_MM       # 片片贴触
+    assert _opening_side(chain, polys) == 'left'              # 开口朝左
+    cx = {m['pid']: _geom_at(polys[m['pid']], m['rotation'],
+                             m['translation']).centroid.x for m in chain}
+    assert max(cx, key=cx.get) == chain_pids[0]               # 最大码最右
+
+
+def test_arc_band_chunk_two_chains():
+    """弧形全链路（demand=2 → 双链堆叠）：守恒 14/14 + WB_ pid + fill 过灾难下限
+    + 带高进主解条带 + 整带开口朝左（链同向、堆叠不翻链）。"""
+    from materialsorting.nesting_bounds.load_pieces import PLOT_SAFE_MAX_Y_MM
+    from materialsorting.nesting_engine.waist_band import _opening_side
+    pid_meta, pieces = _arc_ctx()
+    chunk = build_band_plan(pid_meta, pieces, label='g05', seed=0,
+                            time_budget=_SOLVE_BUDGET_S)
+    assert chunk.n_members == 14 and chunk.total_demand == 14
+    assert chunk.pid == f'{COMPOSITE_PID_PREFIX}g05'
+    assert chunk.fill_pct > 45.0                             # 灾难形态下限
+    assert 0 < chunk.bbox['width_mm']
+    assert chunk.bbox['height_mm'] <= PLOT_SAFE_MAX_Y_MM + 1e-6
+    polys = {m['pid']: waist_band._clean_polygon(pid_meta[m['pid']]['polygon'])
+             for m in chunk.members}
+    assert _opening_side(chunk.members, polys) == 'left'
 
 
 # --------------------------------------------------------------- 分层纯度

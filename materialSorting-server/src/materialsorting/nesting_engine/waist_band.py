@@ -1,14 +1,19 @@
-"""腰头成带核心模块（US-009）—— 带内聚排 + 组合片构造 + 展开纯函数。
+"""腰头成带核心模块（US-009；v2 2026-08-21 构造性链构造重写）—— 链构造 + 组合片
+构造 + 展开纯函数。
 
-机制（依据 ``.docs/business/腰头成带_落地方案.md`` §2，2026-08-21 定稿；US-014
-修订）：腰头 g 码裁片在**全幅**（钳主解可写幅宽 ``PLOT_SAFE_MAX_Y_MM``）带内独立
-小求解聚排，**成对形态重试选解**（固定派生 seed 序列取首个同码全成对解 ——
-成对以带内聚排形态实现、不写求解硬约束；窄条带与 1161mm 长成员 + grain ±3°
-锁定矛盾，已否决）→ 成员**原始轮廓**@带内位 ``shapely.unary_union`` → 焊接连通 →
-``erode(d_g)`` → ``_clean_polygon`` → 平移归一化（记录 offset），整簇 union 外轮廓
-作为一片虚拟组合片（``WB_*`` pid）投入主求解；主解帧发射前用 ``expand_placements``
-把组合片 placement 展开回成员 placement。性质是**业务规则**（确定性聚排形态），
-不是利用率优化器 —— 验收线 = 形态保证 + 密度不显著劣化。
+机制（依据 ``.docs/business/腰头成带_落地方案.md`` §2 + 版师形态指正 2026-08-21）：
+腰头 g 码裁片按「每码第 k 副本」拆成 N 条**单副本异码链**（版师构造：链内片片
+贴触、缝隙只在链间，**不需要同码成对**），构造性滑移贴靠贪心逐链紧排（确定性、
+毫秒级、无预算依赖 —— 替换 v1 的 spyrrow strip 带内子求解：其目标是最短用布 X
+而非贴触，产 48% 对角阶梯，且 US-014 成对重试在单副本配置空真失效）。链构造
+「size 降序 + 整链点对称翻转」⇒ **开口（凹口）朝左、最大码在最右端**（v2 版师
+形态判据；成员各自 rot+180 是合法布纹旋转、无镜像）→ 链间滑移堆叠 → 成员**原始
+轮廓**@带内位 ``shapely.unary_union`` → 焊接连通 → ``erode(d_g)`` →
+``_clean_polygon`` → 平移归一化（记录 offset），整簇 union 外轮廓作为一片虚拟
+组合片（``WB_*`` pid）投入主求解；主解帧发射前用 ``expand_placements`` 把组合片
+placement 展开回成员 placement。性质是**业务规则**（确定性聚排形态），不是利用率
+优化器 —— 验收线 = 形态保证（链内贴触 + 开口/码序）+ 密度不显著劣化（实测紧带
+进主解 +1.4pt vs OFF）。
 
 分层约束：本模块属 ``nesting_engine``，仅 import 标准库 + shapely + 本包兄弟模块
 （``sparrow_baseline`` / ``sparrow_experiments`` / ``constraints``）+ 下层
@@ -26,11 +31,11 @@ import math
 import zlib
 from dataclasses import dataclass, field
 
+from shapely.affinity import rotate, translate
 from shapely.geometry import Polygon
 from shapely.ops import unary_union
 
 from ..nesting_bounds.load_pieces import NEST_GATE_MM, PLOT_SAFE_MAX_Y_MM
-from .constraints import discretize_orientations
 from .sparrow_baseline import _clean_polygon, _transform_polygon
 from .sparrow_experiments import erode_polygon
 
@@ -44,32 +49,36 @@ COMPOSITE_ORIENTATIONS = (0.0, 180.0)
 # ~500+ 顶点，NFP 代价是 US-010 微基准关注点；0.05mm 偏差 ≪ 包络容差 0.5mm）。
 MAX_COMPOSITE_VERTICES = 600
 SIMPLIFY_TOLERANCE_MM = 0.05
-# 带内子求解默认预算（初值 15s/带，与 fill 曲线挂钩 —— 落地方案 §2.5；US-010 实测标定）。
+# 【v1 遗产·deprecated】带内子求解预算：v2 构造性链构造毫秒级完成、无预算依赖。
+# 常量与 ``build_band_plan(time_budget=...)`` 形参保留仅为 ``solve_worker`` /
+# ``routes_band`` / ``band_accept`` / ``waist_band_gate`` 的 import 兼容（接受即忽略）。
 DEFAULT_BAND_TIME_BUDGET_S = 15
-# 带内填充率下限（%）：腰 g05 实测 ~70%+（实际占用 bbox 口径），裤耳 g06 类 13%
-# 灾难形态在此拦截。禁止无声 shelf 兜底 —— 异常 fail-fast 抛 BandQualityError。
+# 带内填充率下限（%）：v2 起降为**灾难形态兜底**（裤耳 g06 类 13% 在此拦截）——
+# 主判据是链内贴触 ``CHAIN_GAP_EPS_MM``（新月片 bbox 空隙是构造性的，版师接受，
+# 弧形腰片实测 fill 63~80% 均合法）。禁止无声 shelf 兜底 —— 异常 fail-fast 抛
+# BandQualityError。
 FILL_FLOOR_PCT = 45.0
-# 带内子求解 worker 数：**锁 1**。实测 spyrrow 同 seed 下 num_workers=1 与 =4 结果
-# 不同（多 worker 改变搜索轨迹），而确定性验收要求同 seed 可重放 —— 固定值是重放
-# 不变量之一（BandChunk 之外），带内仅 ~14 片小实例单 worker 足够。
-BAND_NUM_WORKERS = 1
-# 焊接初始半径（mm）：strip 解成员间常有亚毫米~数毫米缝隙（sparrow 不保证贴触），
-# closing(X, r) = X⊕r⊖r（恒 ⊇ X）把 ≤2r 的缝焊成整带单组合片；缝隙更大时半径逐次
-# 翻倍直至连通（见 ``_solid_region``）。成员原始轮廓本身已含 d_g 外扩，正常紧排解
+# 焊接初始半径（mm）：v2 成员碰撞口径是**已腐蚀**轮廓（pid_meta.polygon，erode
+# d_g），贴触即原轮廓间隙 ~2·d_g；closing(X, r) = X⊕r⊖r（恒 ⊇ X）把 ≤2r 的缝焊成
+# 整带单组合片，缝隙更大时半径逐次翻倍直至连通（见 ``_solid_region``）。正常紧排
 # 缝隙远小于 2×WELD_RADIUS_MM，r 不增长、外轮廓凹口（FR-9 密度回收来源）保持开放。
 WELD_RADIUS_MM = 1.0
-# 焊接半径上限（mm）：超过仍不连通 = 解真正散落（fill 下限理应已拦截），fail-fast。
+# 焊接半径上限（mm）：超过仍不连通 = 解真正散落（贴触判据理应已拦截），fail-fast。
 WELD_RADIUS_MAX_MM = 512.0
-# 同码成对相邻判据的边距容差（mm）：同 pid 副本最近**边距** <= 此值视为成对
-# 相邻（US-014 形态判据 + band_accept 验收同口径）。取 10 与 ``WELD_RADIUS_MM``
-# 注释同源：spyrrow 紧排解实测缝隙 0.01~10mm（不保证贴触）。
+# 【v1 遗产·deprecated】同码成对相邻判据的边距容差（mm）：v2 链构造不需要成对
+# （版师形态 = 单副本异码链）；常量保留仅为 ``web.band_accept``（US-014 验收
+# 口径）import 兼容。
 PAIR_ADJ_EPS_MM = 10.0
-# 成对形态重试次数：每次独立派生 seed 重解全带，取首个「同码全成对」解。
-# US-014 实测（5336 g05，2s/次）：成对形态出现率 ~50%/次（主解 seed 0/1/2 的
-# 首试分别 100%/31%/54%，6 次内必有 —— 全败概率 ~1.6%，届时 BandQualityError
-# fail-fast 禁无声降级）。单次全量求解 + 输入 size-major 序**不**保证同码相邻
-# （spyrrow 不按喂入序聚排，实测 3 seed 中 2 个同码对散落 400mm+）。
-BAND_MAX_TRIES = 6
+# ---- v2 构造性链构造参数（exp_band_fill.py / exp_rightband.py 探针标定） ----
+# 链内贴触判据（mm）：每片到最近邻**边距**的最大值上限（碰撞口径 = 已腐蚀轮廓，
+# 实测 0.00；新月片 bbox fill 不是版师验收口径）。
+CHAIN_GAP_EPS_MM = 1.0
+# 滑移粗扫步进（mm）：可行域非凸，从右侧远处向左粗扫找首个碰撞界后二分收敛。
+CHAIN_SLIDE_STEP_MM = 20.0
+# 滑移二分次数（40 次 ⇒ 收敛精度 ~2^-40×扫描区间，远小于 0.01mm）。
+CHAIN_BISECT_ITERS = 40
+# 链构造/堆叠的 y 对齐候选（链: 片对已排 union；堆叠: 链对已堆叠 union）。
+CHAIN_Y_ALIGNS = ('bottom', 'mid', 'top', 'b2t', 't2b')
 
 
 class BandError(Exception):
@@ -77,7 +86,7 @@ class BandError(Exception):
 
 
 class DegenerateBand(BandError):
-    """带退化：总副本 1（无法成对/聚簇）或组合片轮廓腐蚀后不足 3 顶点。"""
+    """带退化：总副本 1（单片无成带意义）或成员/组合片轮廓腐蚀后不足 3 顶点。"""
 
 
 class BandQualityError(BandError):
@@ -209,11 +218,12 @@ def expand_placements(chunk: BandChunk, rotation: float, translation) -> list:
 def _solid_region(union) -> Polygon:
     """union → 整带连通单 Polygon（closing 焊接，恒 ⊇ 原 union）。
 
-    strip 解成员间常有缝隙（sparrow 不保证贴触，实测同 seed 2s 解即有 0.01~10mm
-    缝），``unary_union`` 可得 MultiPolygon；「整带单组合片」要求连通区域，故用
-    closing(X, r) = X ⊕r ⊖r 焊接：数学上恒为原集合的超集（包络断言不受影响），
-    r 从 ``WELD_RADIUS_MM`` 起翻倍直到结果连通。半径增大只填充更宽的凹口/缝隙
-    （散落解浪费面积，fill 下限已在构造期拦截真正散落）；到上限仍不连通视为病态。
+    v2 链构造成员碰撞口径是已腐蚀轮廓，贴触即原轮廓间隙 ~2·d_g（v1 为 spyrrow
+    解 0.01~10mm 缝），``unary_union`` 可得 MultiPolygon；「整带单组合片」要求
+    连通区域，故用 closing(X, r) = X ⊕r ⊖r 焊接：数学上恒为原集合的超集（包络
+    断言不受影响），r 从 ``WELD_RADIUS_MM`` 起翻倍直到结果连通。半径增大只填充
+    更宽的凹口/缝隙（真正散落已被链贴触判据在构造期拦截）；到上限仍不连通视为
+    病态。
     """
     r = WELD_RADIUS_MM
     while True:
@@ -251,99 +261,233 @@ def _valid_geometry(coords):
     return g.convex_hull
 
 
-def _pairs_complete(placed: list, polys: dict,
-                    eps_mm: float = PAIR_ADJ_EPS_MM) -> bool:
-    """全带同码成对完整性检查：每个多副本 pid 的每个副本到同 pid 最近邻的
-    **边距** <= eps（重试选解判据，US-014 形态判据引擎侧同口径）。
+def _geom_at(poly, rot, tr):
+    """轮廓@放置位（`_transform_polygon` + `_valid_geometry` 修复）。"""
+    return _valid_geometry(_transform_polygon(poly, rot, tr))
 
-    边距（shapely ``distance``）与朝向无关 —— 头尾翻转 180° 成对（FR-8 形态，
-    L/w≈6 长片中心连线沿长边、中心距可达 L 量级而物理边距 ~0）只有边距口径能
-    正确判相邻。``polys`` 为成员（已腐蚀）轮廓，与 spyrrow 放置口径一致。
+
+def _slide_touch(g_moving, g_fixed, y_offset):
+    """右侧远处向左滑到与 g_fixed 首次贴触：粗扫定界 + 二分收敛。
+
+    可行域（不碰撞的 x 区间）非凸 —— 必须从右侧远处起步向左找**首个**碰撞界，
+    再在 (碰撞, 不碰撞) 区间二分到贴触点；从左侧起步二分会卡进远端凹口。
+    y_offset = 施加于 g_moving 的 y 平移量。返回 ``(放置几何, dx)``，其中 dx 为
+    施加的 x 平移量（``translate(g_moving, dx, y_offset) == 放置几何``）—— 调用方
+    按 transform 记账语义直接入 placement，勿再拿「左边缘坐标」当平移量。
     """
-    groups: dict = {}
-    for m in placed:
-        groups.setdefault(m['pid'], []).append(m)
-    for pid, copies in groups.items():
-        if len(copies) < 2:
-            continue
-        geoms = []
-        for m in copies:
-            g = _valid_geometry(
-                _transform_polygon(polys[pid], m['rotation'], m['translation']))
-            geoms.append(g if g.geom_type == 'Polygon' else g.convex_hull)
-        if any(min(a.distance(b) for j, b in enumerate(geoms) if j != i) > eps_mm
-               for i, a in enumerate(geoms)):
-            return False
-    return True
+    mb = g_moving.bounds
+    fb = g_fixed.bounds
+    x_hi = fb[2] + (mb[2] - mb[0]) + 50.0
+    x_lo = fb[0] - (mb[2] - mb[0]) - 5.0
+
+    def place(x_left):
+        return translate(g_moving, xoff=x_left - mb[0], yoff=y_offset)
+
+    def collides(x_left):
+        return place(x_left).intersection(g_fixed).area >= 1e-6
+
+    if collides(x_hi):
+        return place(x_hi), x_hi - mb[0]    # 起点就碰（y 对齐重叠）：直接放
+    hit = None
+    x = x_hi
+    while x > x_lo:
+        xn = max(x - CHAIN_SLIDE_STEP_MM, x_lo)
+        if collides(xn):
+            hit = (xn, x)                   # (碰撞, 不碰撞)
+            break
+        x = xn
+    if hit is None:
+        return place(x_lo), x_lo - mb[0]
+    a, b = hit
+    for _i in range(CHAIN_BISECT_ITERS):
+        mid = (a + b) / 2.0
+        if collides(mid):
+            a = mid
+        else:
+            b = mid
+    return place(b), b - mb[0]              # b = 最右贴触位（不碰撞侧）
 
 
-def _slot_fallback(member_pids: list, pid_meta: dict, polys: dict) -> list:
-    """重试全败后的确定性槽位兜底：逐 pid 副本沿 X bbox 槽位并排、块沿 X 拼接。
+def _chain_nest(member_pids, polys):
+    """构造性滑移贴靠贪心：首片锚定原点，后续每片 rot{0,180} × 5 种 y 对齐
+    滑移贴触到已排 union，取 union bbox 面积增长最小（确定性、无 RNG）。
 
-    构造性成对（相邻槽对面边距 = 0 <= eps，slot 宽 = 足迹 bbox 宽故槽内不可能
-    重叠）；代价是放弃嵌套形态 —— fill = Σarea / 槽位带 bbox（矩形类 ~100%、
-    弧形腰片 ~40%），整带 fill 下限（``FILL_FLOOR_PCT``）仍在下游兜底拦截劣质
-    形态（弧形片兜底即 fail-fast，矩形/多边形类兜底即最优紧排）。仅当重试
-    ``BAND_MAX_TRIES`` 次全败时启用（实测真实 5336 g05 成对形态出现率 ~50%/次，
-    全败概率 ~1.6%；合成矩形小实例 spyrrow 短预算不聚排、走本兜底属正常路径）。
+    ``member_pids`` 顺序即放置顺序（调用方给 size **降序** —— 与「升序+右滑 =
+    开口朝右」相对，降序构造经 ``_flip_chain`` 后得开口朝左+最大码在右）。
+    碰撞口径 = ``polys``（pid_meta 已腐蚀轮廓，与 v1 spyrrow Item 同口径）。
     """
+    packed = None
     placed = []
-    cursor = 0.0
-    for pid in member_pids:                      # size-major 序（块序 = 码序）
-        poly = polys[pid]
-        xs = [p[0] for p in poly]
-        ys = [p[1] for p in poly]
-        slot_w = max(xs) - min(xs)
-        ox, oy = -min(xs), -min(ys)              # 块内归一到原点
-        for _i in range(int(pid_meta[pid]['demand'])):
-            placed.append({
-                'pid': pid,
-                'rotation': 0.0,
-                'translation': [cursor + ox, oy],
-            })
-            cursor += slot_w
+    for pid in member_pids:
+        candidates = []
+        for r in (0.0, 180.0):
+            g0 = rotate(_valid_geometry(polys[pid]), r, origin=(0, 0))
+            gb = g0.bounds
+            if packed is None:
+                g = translate(g0, xoff=-gb[0], yoff=-gb[1])
+                candidates.append((g, {'pid': pid, 'rotation': r,
+                                       'translation': [-gb[0], -gb[1]]}))
+                continue
+            pb = packed.bounds
+            for y_align in CHAIN_Y_ALIGNS:
+                if y_align == 'bottom':
+                    yo = pb[1] - gb[1]
+                elif y_align == 'top':
+                    yo = pb[3] - gb[3]
+                elif y_align == 'b2t':
+                    yo = pb[3] - gb[1]
+                elif y_align == 't2b':
+                    yo = pb[1] - gb[3]
+                else:
+                    yo = (pb[1] + pb[3]) / 2 - (gb[1] + gb[3]) / 2
+                g, dx = _slide_touch(g0, packed, yo)
+                candidates.append((g, {'pid': pid, 'rotation': r,
+                                       'translation': [dx, yo]}))
+        best = None
+        for g, meta in candidates:
+            u = g if packed is None else unary_union([packed, g])
+            b = u.bounds
+            cost = (b[2] - b[0]) * (b[3] - b[1])
+            if best is None or cost < best[0]:
+                best = (cost, g, meta)
+        _, g, meta = best
+        packed = g if packed is None else unary_union([packed, g])
+        placed.append(meta)
     return placed
+
+
+def _flip_chain(placed):
+    """整链点对称翻转（绕原点 180°）：成员各自 (rot+180, tr 取负)。
+
+    合法布纹旋转、无镜像；同时翻转开口方向与 X 向码序 —— 「降序构造 + 本翻转」
+    ⇒ 开口朝左、最大码在最右（v2 版师形态判据的几何根基）。
+    """
+    return [{'pid': m['pid'],
+             'rotation': (float(m['rotation']) + 180.0) % 360.0,
+             'translation': [-float(m['translation'][0]),
+                             -float(m['translation'][1])]}
+            for m in placed]
+
+
+def _norm_chain(placed, polys):
+    """归一到 union bbox 原点（返回平移后的新成员 list）。"""
+    u = unary_union([_geom_at(polys[m['pid']], m['rotation'], m['translation'])
+                     for m in placed])
+    minx, miny = u.bounds[0], u.bounds[1]
+    return [{'pid': m['pid'], 'rotation': m['rotation'],
+             'translation': [m['translation'][0] - minx,
+                             m['translation'][1] - miny]}
+            for m in placed]
+
+
+def _stack_chains(chains, polys):
+    """多链堆叠为单成员集：逐链 5 种 y 对齐滑移贴靠到已堆叠 union，取 union
+    bbox 面积增长最小。**不做翻链变体**（翻转会反转开口方向，违反 v2 形态判据）。"""
+    placed = list(chains[0])
+    packed = unary_union([_geom_at(polys[m['pid']], m['rotation'],
+                                   m['translation']) for m in placed])
+    for ch in chains[1:]:
+        ch_u = unary_union([_geom_at(polys[m['pid']], m['rotation'],
+                                     m['translation']) for m in ch])
+        pb, gb = packed.bounds, ch_u.bounds
+        best = None
+        for y_align in CHAIN_Y_ALIGNS:
+            if y_align == 'bottom':
+                yo = pb[1] - gb[1]
+            elif y_align == 'top':
+                yo = pb[3] - gb[3]
+            elif y_align == 'b2t':
+                yo = pb[3] - gb[1]
+            elif y_align == 't2b':
+                yo = pb[1] - gb[3]
+            else:
+                yo = (pb[1] + pb[3]) / 2 - (gb[1] + gb[3]) / 2
+            _, dx = _slide_touch(ch_u, packed, yo)
+            cand = [dict(m, translation=[m['translation'][0] + dx,
+                                         m['translation'][1] + yo]) for m in ch]
+            u = unary_union([_geom_at(polys[c['pid']], c['rotation'],
+                                      c['translation'])
+                             for c in placed + cand])
+            b = u.bounds
+            cost = (b[2] - b[0]) * (b[3] - b[1])
+            if best is None or cost < best[0]:
+                best = (cost, cand, u)
+        _, cand, packed = best
+        placed = placed + cand
+    return placed
+
+
+def _chain_gap(placed, polys):
+    """链内最大相邻缝隙（mm）：每片到最近其他片**边距**的最大值（0 = 片片贴触）。
+
+    版师验收口径 —— 贴触而非 bbox fill（新月片 bbox 空隙是构造性的、可接受）。
+    """
+    gs = [_geom_at(polys[m['pid']], m['rotation'], m['translation'])
+          for m in placed]
+    if len(gs) < 2:
+        return 0.0
+    return max(min(gs[j].distance(g) for j in range(len(gs)) if j != i)
+               for i, g in enumerate(gs))
+
+
+def _opening_side(placed, polys, flat_eps=1.0):
+    """链开口（凹口）方向：凸侧拉质心 ⇒ 开口 = 质心相对 bbox 中心 X 偏移的反侧。
+
+    已在 v1 真实链校准（判 right = 版师目测 right）；|偏移| < flat_eps 视为
+    'flat'（矩形/对称片无开口概念，判据空真）。返回 'left' / 'right' / 'flat'。
+    """
+    u = unary_union([_geom_at(polys[m['pid']], m['rotation'], m['translation'])
+                     for m in placed])
+    minx, _, maxx, _ = u.bounds
+    off = u.centroid.x - (minx + maxx) / 2
+    if abs(off) < flat_eps:
+        return 'flat'
+    return 'left' if off > 0 else 'right'
 
 
 def build_band_plan(pid_meta, pieces_by_id, *, label, seed,
                     gate_nest=NEST_GATE_MM, d_g=0.4, tol_g=3.0,
                     time_budget=DEFAULT_BAND_TIME_BUDGET_S,
                     fill_floor=FILL_FLOOR_PCT) -> BandChunk:
-    """带内聚排 → 组合片构造（单一真相源；web 编排在 US-011 接线）。
+    """构造性链构造 → 组合片构造（单一真相源；web 编排在 US-011 接线）。
+
+    版师形态（v2，2026-08-21）：每码第 k 副本一条链 → 降序构造+整链翻转（开口
+    朝左、最大码在最右）→ 链间滑移堆叠 → union/erode/归一化（v1 管线不变）。
 
     Parameters
     ----------
     pid_meta : dict
         ``web.solver.build_pid_meta`` 产物 ``{pid: {label, size, demand, polygon,
-        area_mm2, ...}}``。成员 Item 直接用其**已腐蚀** polygon（不二次腐蚀）；
+        area_mm2, ...}}``。链构造碰撞用其**已腐蚀** polygon（不二次腐蚀）；
         demand>0 过滤已由 build_pid_meta 完成（此处再校验兜底）。
     pieces_by_id : dict
         intermediate 原始裁片 ``{pid: {'polygon': 原始轮廓, ...}}`` —— union 与
-        包络断言用**原始**轮廓（erode 只进 spyrrow 碰撞，不缩面积/不缩带）。
+        包络断言用**原始**轮廓（erode 只进碰撞口径，不缩面积/不缩带）。
     label : str
         腰头 g 码（如 'g05'；跨母版漂移由用户在 UI 指认）。
     seed : int
-        主解 seed；带内 seed = ``band_seed_for(seed, label)``（crc32 派生，确定性）。
+        主解 seed；``BandChunk.seed`` = ``band_seed_for(seed, label)``（crc32 派生
+        确定性身份标识 —— 链构造无 RNG，同输入即逐字节可重放）。
     gate_nest : float
-        带内子求解约束带高度（全幅有效幅宽，缺省 ``NEST_GATE_MM``）。
+        组合片高度上限基准（钳 ``min(gate_nest, PLOT_SAFE_MAX_Y_MM)``：组合片须进
+        主解条带，超幅主解放不下；链构造无 strip 约束，事后显式校验）。
     d_g : float
         该 g 码重合公差（应与构造 pid_meta 时该 label 的 per_type d 同值；组合片
         union 后 erode 深度 —— 使主解其他裁片对带边界保持与单片相同的 d_g 邻接语义）。
     tol_g : float
-        该 g 码旋转公差（成员带内 orientations = ``discretize_orientations(tol_g)``，
-        grain 锁 {0,180}±tol）。
+        该 g 码旋转公差（记录进 chunk；链构造成员朝向恒取 grain 锁 {0,180}，严于
+        ``discretize_orientations(tol_g)`` —— FR-8 同口径：工艺公差属裁片不属于带）。
     time_budget : int
-        带内子求解总预算（秒）—— 重试均摊（每次 ``max(1, total//BAND_MAX_TRIES)``，
-        US-014 起成对形态重试选解；原单次全量语义废弃）。
+        【deprecated no-op】v1 带内子求解预算；构造性链构造毫秒级完成、无预算
+        依赖。形参保留仅为调用方（solve_worker/routes_band/band_accept/gate）兼容。
     fill_floor : float
-        带内填充率下限（%），低于即 BandQualityError（禁止无声兜底）。
+        带内填充率下限（%），低于即 BandQualityError（灾难形态兜底；主判据是
+        链内贴触 ``CHAIN_GAP_EPS_MM``）。
 
     Returns
     -------
     BandChunk
     """
-    import spyrrow
-
     # ---- 1) 成员收集 + 副本守恒前置校验 -----------------------------------
     member_pids = sorted(
         (pid for pid, m in pid_meta.items()
@@ -354,58 +498,48 @@ def build_band_plan(pid_meta, pieces_by_id, *, label, seed,
     total_demand = sum(int(pid_meta[pid]['demand']) for pid in member_pids)
     if total_demand == 1:
         raise DegenerateBand(
-            f'band label {label!r} 总副本 1 —— 单片无成对/聚簇意义，直接走主解')
+            f'band label {label!r} 总副本 1 —— 单片无成带意义，直接走主解')
 
-    # ---- 2) 带内子求解（全幅；成对形态重试选解 —— US-014） -------------------
-    # PRD 非目标口径「成对以带内排序 + 验收指标实现，不写求解硬约束」。实测
-    # spyrrow 不按喂入序聚排（输入 size-major 序无效），单次解同码对可散落
-    # 400mm+；但同码全成对的紧排解在解空间中常见（实测 ~50%/次）。故用固定
-    # 派生 seed 序列重试取**首个成对完整解**（确定性：同主 seed 重放同序列），
-    # BAND_MAX_TRIES 次全败 = 形态质量悬崖 → BandQualityError fail-fast。
-    # 幅宽钳 min(gate, PLOT_SAFE_MAX_Y_MM)：组合片要进主解条带（build_instance
-    # strip_height=min(gate,1910)），超幅组合片主解放不下。
+    # ---- 2) 构造性链构造（v2 版师形态） -------------------------------------
+    # 版师构造（2026-08-21 指正）：每码第 k 副本一条链 —— 链内片片贴触、缝隙只在
+    # 链间，不需要同码成对。v1 spyrrow strip 带内子求解目标是最短用布 X 而非贴触
+    # （产 48% 对角阶梯、预算 ×30 仅 +4.1pt 结构性卡死；US-014 成对重试在单副本
+    # 配置空真失效），整体弃用。碰撞口径 = 已腐蚀轮廓（与 v1 Item 同口径）。
     band_seed = band_seed_for(seed, label)
-    try_time = max(1, int(time_budget) // BAND_MAX_TRIES)
-    items = []
     polys: dict = {}
     for pid in member_pids:
-        meta = pid_meta[pid]
-        poly = _clean_polygon(meta['polygon'])
+        poly = _clean_polygon(pid_meta[pid]['polygon'])
         if len(poly) < 3:
             raise DegenerateBand(f'成员 {pid} 腐蚀/清洗后顶点<3，不可成带')
         polys[pid] = poly
-        items.append(spyrrow.Item(
-            id=pid,
-            shape=[(float(x), float(y)) for x, y in poly],
-            demand=int(meta['demand']),
-            allowed_orientations=discretize_orientations(tol_g),
-        ))
-    placed = None
-    for k in range(BAND_MAX_TRIES):
-        instance = spyrrow.StripPackingInstance(
-            name=f'band_{label}_try{k}', strip_height=float(
-                min(gate_nest, PLOT_SAFE_MAX_Y_MM)), items=items)
-        config = spyrrow.StripPackingConfig(
-            total_computation_time=try_time,
-            seed=band_seed_for(band_seed, f'try{k}'),   # 重试 seed 确定性派生
-            num_workers=BAND_NUM_WORKERS)
-        sol = instance.solve(config)
-        cand = [
-            {
-                'pid': pi.id,
-                'rotation': float(pi.rotation) % 360.0,   # spyrrow 可回负角（如 -180）
-                'translation': [float(pi.translation[0]), float(pi.translation[1])],
-            }
-            for pi in sol.placed_items
-        ]
-        if len(cand) != total_demand:
+    max_demand = max(int(pid_meta[pid]['demand']) for pid in member_pids)
+    chains = []
+    for k in range(max_demand):
+        chain_pids = sorted(
+            (pid for pid in member_pids if int(pid_meta[pid]['demand']) > k),
+            key=lambda pid: _member_sort_key(pid_meta[pid], pid),
+            reverse=True)                   # size 降序（版师链序；首锚片=最大码）
+        chain = _norm_chain(_flip_chain(_chain_nest(chain_pids, polys)), polys)
+        gap = _chain_gap(chain, polys)
+        if gap > CHAIN_GAP_EPS_MM:
             raise BandQualityError(
-                f'带内求解副本守恒失败: 放置 {len(cand)} != Σdemand {total_demand}')
-        if _pairs_complete(cand, polys):
-            placed = cand
-            break
-    if placed is None:
-        placed = _slot_fallback(member_pids, pid_meta, polys)
+                f'链 {label!r} 第 {k} 链贴触失败（最大缝隙 {gap:.2f}mm > '
+                f'{CHAIN_GAP_EPS_MM}mm）—— 形态质量悬崖，禁无声降级')
+        if _opening_side(chain, polys) == 'right':
+            raise BandQualityError(
+                f'链 {label!r} 第 {k} 链开口朝右（降序+翻转构造异常）')
+        # 最大码在最右（降序+翻转构造保证；程序断言自校验 —— 首锚片翻转后落
+        # 最右端，右端成员应即 chain_pids[0]）
+        cx = {m['pid']: _geom_at(polys[m['pid']], m['rotation'],
+                                 m['translation']).centroid.x for m in chain}
+        if max(cx, key=cx.get) != chain_pids[0]:
+            raise BandQualityError(
+                f'链 {label!r} 第 {k} 链最右成员非最大码（降序+翻转构造异常）')
+        chains.append(chain)
+    placed = chains[0] if len(chains) == 1 else _stack_chains(chains, polys)
+    if len(placed) != total_demand:
+        raise BandQualityError(
+            f'链构造副本守恒失败: 放置 {len(placed)} != Σdemand {total_demand}')
 
     # ---- 3) 原始轮廓@带内位 → union → 焊接连通 → erode(d_g) → clean → 归一化
     footprints = []
@@ -419,6 +553,11 @@ def build_band_plan(pid_meta, pieces_by_id, *, label, seed,
     minx, miny, maxx, maxy = union.bounds
     offset = (float(minx), float(miny))
     bbox = {'width_mm': float(maxx - minx), 'height_mm': float(maxy - miny)}
+    strip_h = float(min(gate_nest, PLOT_SAFE_MAX_Y_MM))
+    if bbox['height_mm'] > strip_h + 1e-6:
+        raise BandQualityError(
+            f'带高 {bbox["height_mm"]:.0f}mm > 主解条带 {strip_h:.0f}mm'
+            f'（{label} 链堆叠超高，组合片主解放不下）')
 
     solid = _solid_region(union)
     outline = _exterior_coords(solid)

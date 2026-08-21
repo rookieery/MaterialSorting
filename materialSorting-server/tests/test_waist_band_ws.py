@@ -248,18 +248,54 @@ def test_band_degenerate_single_copy_worker_error(band_client):
 # --------------------------------------------- AC#4 band 阶段 stop 无孤儿
 
 
+def _slow_arc_piece(pid, label, size, r_in=1550.0, thick=68.0, half_deg=19.0, n=24):
+    """7 码 × 8 副本弧形腰片（5336 g05 真实几何族参数，凸侧 −X）—— v2 构造性
+    链构造对 56 片 ~2s，给 stop 用例撑出确定性 terminate-during-band 窗口
+    （紧凑版，完整口径见 test_waist_band._arc_piece）。"""
+    import math
+
+    r_out = r_in + thick
+    pts = []
+    for i in range(n + 1):          # 外弧（凸侧）180−half → 180+half
+        a = math.radians(180.0 - half_deg + 2.0 * half_deg * i / n)
+        pts.append([r_out * math.cos(a), r_out * math.sin(a)])
+    for i in range(n + 1):          # 内弧（凹侧）180+half → 180−half
+        a = math.radians(180.0 + half_deg - 2.0 * half_deg * i / n)
+        pts.append([r_in * math.cos(a), r_in * math.sin(a)])
+    xs = [p[0] for p in pts]
+    ys = [p[1] for p in pts]
+    return {
+        'pid': pid, 'label': label, 'size': size, 'polygon': pts,
+        'bbox': [min(xs), min(ys), max(xs), max(ys)],
+        'area_mm2': 0.5 * abs(sum(pts[i][0] * pts[(i + 1) % len(pts)][1]
+                                  - pts[(i + 1) % len(pts)][0] * pts[i][1]
+                                  for i in range(len(pts)))),
+        'n_verts': len(pts), 'allowed_angles': [0, 180],
+        'net_polygon': [], 'internal_lines': [], 'notches': [], 'grain_line': None,
+    }
+
+
 def test_stop_during_band_stage_no_live_child(band_client):
     """band 阶段 stop：stopped 直达（无 manifest），无存活 python 子进程。
 
-    band 子求解跑在 worker 进程内（同步调用，不 spawn 孙进程）—— terminate 即随
-    进程整体回收；若误用孙进程模型，本用例的子进程回收断言将留孤儿。
+    v2 构造性链构造毫秒级（两码矩形 ~50ms，固定 sleep 停不进 band 窗口）——
+    本用例换 7 码 × 8 副本弧形腰片撑出 ~2s band 构造窗口，stop 落在带构造
+    中段。band 跑在 worker 进程内（同步调用，不 spawn 孙进程）—— terminate
+    即随进程整体回收；若误用孙进程模型，本用例的子进程回收断言将留孤儿。
     """
+    sizes = (28, 29, 30, 31, 33, 34, 35)
+    arcs = [_slow_arc_piece(f'g05_{s}', 'g05', s) for s in sizes]
+    state = server_mod._PIECES_STATE          # band_client 已存快照，teardown 恢复
+    state['pieces'] = arcs
+    state['pieces_by_id'] = {p['pid']: p for p in arcs}
+
     before = len(multiprocessing.active_children())
     with band_client.websocket_connect('/ws/solve') as ws:
         ws.send_json(_start(
-            band={'enabled': True, 'label': 'g05', 'time_budget': 30},
-            quantities={'g05': {'28': 2, '29': 2}}, time_budget=60))
-        time.sleep(0.6)   # 让 on_process 把 Process 句柄写入 state_box（spawn 竞态窗口）
+            band={'enabled': True, 'label': 'g05', 'ack': True},   # 弧片长宽比 6.9>6 硬警告形态
+            quantities={'g05': {str(s): 8 for s in sizes}}, time_budget=60))
+        # worker spawn+import ≈0.6s、band 构造 ≈2s → 1.3s 落在带构造中段（±0.7s 余量）
+        time.sleep(1.3)
         ws.send_json({'action': 'stop'})
         seen = _drain_until_stopped(ws)
         assert all(m.get('type') != 'manifest' for m in seen), (

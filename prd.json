@@ -12,6 +12,12 @@
       "title": "v1.1 填料混带（任意 g 码多选）",
       "description": "v1.1 填料混带——唯一实测过 break-even 线的形态（混带 72.5% > 线 62.4~63.6%，纯腰 54.8~60.9% 不过线）。填料进 band 子求解并进 union，填掉封闭肋间内腔（v1 死区，spyrrow 无洞支持）。详见 tasks/prd-waist-band.md US-015。\n\n具体任务：\n1. WS 协议 — band.fillers: [labels]（版师确认无白名单约束：任意 g 码多选，带数量上限，不可选主 g 码）\n2. web 后端 — 填料成员与腰成员同一展开/守恒/泄漏口径；主实例同步扣减（同一 exclude_labels 路径）；band 内 d 适度放大（2~4mm）把肋间切口端部开到小件可入宽度\n3. 前端 — UI 多选（缩略图与腰头编号下拉同源）\n\n验收标准：\n- band.fillers 服务端校验（填料 g 码存在、数量上限、与主 g 码不同）；扣减后 total_area/manifest 与 off 口径一致（一致性单测沿用 US-011）\n- A/B：混带 on 的带区域效率（带板 bbox 内腰+填料面积/占用）≥ break-even 参考线，全局劣化 ≤1.0pt\n- 全量测试零回归 + 浏览器目检多选交互",
       "passes": false
+    },
+    {
+      "id": "US-016",
+      "title": "v2 构造性链构造（版师形态：开口朝左 + 最大码在最右）",
+      "description": "用户实测成带后布局乱象（6 码×1 主解 -3.81pt）诊断闭环：v1 spyrrow 带内求解目标错位产出坏带形反噬主解。版师真实构造 = N 条单副本异码链（链内贴触、缝隙只在链间，无需同码成对）。重写 waist_band.py 第 2 步为构造性链构造：降序滑移贴靠贪心 + 整链点对称翻转 ⇒ 开口朝左+最大码在最右（用户建议1；建议2 带置布料最右实测 -2.10pt 暂缓）。详见 tasks/prd-waist-band.md US-016。\n\n具体任务：\n1. waist_band.py 核心重写 —— _chain_nest/_slide_touch/_flip_chain/_stack_chains/_chain_gap/_opening_side 六个纯 shapely 私有函数 + 形态自检 + 带高守卫；删除 spyrrow 求解与 US-014 成对重试；deprecated 参数保留外部兼容\n2. 调用点零改动 —— solve_worker/routes_band/band_accept/CLI/前端不动（stage 帧字段照常，elapsed 变毫秒级）\n3. 测试 —— 弧形形态用例（5336 g05 真实几何族参数、凸侧 −X 朝向对齐）+ fill 阈值适配 + stop 用例弧片撑窗口\n\n验收标准：\n- 真实 5336 两配置：缝隙 0.00mm / 开口左 / 最大码右 / fill 71.8%（6×1）、79.5%（P0）\n- 端到端 A/B：ON ≥ OFF（实测 88.35% vs 86.08%，+2.27pt）、无 WB_ 泄漏、守恒、链形态\n- 同 seed 两跑 to_dict JSON 相等；pytest 全绿",
+      "passes": true
     }
   ]
 }

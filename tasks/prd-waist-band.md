@@ -81,6 +81,17 @@
   4. 全量测试零回归 + 浏览器目检多选交互
 - **Priority**: 7
 
+### US-016: v2 构造性链构造（版师形态：开口朝左 + 最大码在最右）
+- **Description**: 2026-08-21 用户实测「成带后布局乱象」（6 码×1 少副本配置主解 -3.81pt），诊断闭环（`out/tmp_probe/exp_*.py`）：① v1 spyrrow StripPacking 带内目标 = 最短用布 X 而非贴触 → 48.2% 对角阶梯坏带形（预算 ×30 仅 +4.1pt，结构性卡死）；② US-014 成对重试 `_pairs_complete` 在每 pid 单副本时空真无牙口；③ 紧带组合片（607×1326）进主解实测 87.51% > OFF 86.08% —— 劣化是坏带形的代价、非成带固有代价。版师指正真实构造：**N 条单副本异码链**（每码第 k 副本一条链），链内片片贴触、缝隙只在链间，无需同码成对。用户建议1（本 story）：带开口朝**左**、最大尺码在**最右**；建议2（带置布料最右）实测结构性右置 -2.10pt，用户拍板暂缓。
+- **实现**: `waist_band.py` 重写第 2 步：链拆分（chain_k=每码第 k 副本）→ 链内 size 降序 `_chain_nest` 构造性滑移贴靠贪心（rot{0,180}×5 y 对齐 × `_slide_touch` 右起 20mm 粗扫+40 次二分贴触，union bbox 增长最小，无 RNG 毫秒级）→ `_flip_chain` 整链点对称翻转（rot+180/tr 取负，合法布纹无镜像）⇒ 开口左+最大码右 → 形态自检（`_chain_gap`≤`CHAIN_GAP_EPS_MM`=1.0 贴触口径 + `_opening_side`∈{left,flat} + 最大码质心 x 最大）→ `_stack_chains` 堆叠（不翻链保开口）+ 带高守卫 ≤min(gate_nest,1910)。删除 spyrrow 求解/成对重试（`_pairs_complete`/`_slot_fallback`/`BAND_MAX_TRIES`/`BAND_NUM_WORKERS`）；`time_budget`/`fill_floor`/`PAIR_ADJ_EPS_MM` deprecated 保留（外部 import 兼容）。第 3-5 步管线（原始轮廓 union→焊接→erode(d_g)→归一化）与 BandChunk/expand_placements 契约零改动；solve_worker/routes_band/band_accept/CLI/前端零改动。
+- **Acceptance Criteria**:
+  1. 真实 5336 g05 两配置形态：链内缝隙 0.00mm、开口左、最大码右、fill ≥71.8%（6 码×1）/ ≥79.5%（P0 14 副本）
+  2. 端到端 A/B（30s seed0 生产 WS 链路）：band on 密度 ≥ off；无 WB_ 泄漏；成员守恒；成员紧贴链形态（相邻 x 区间交集 >0）
+  3. 确定性：同 seed 两跑 `to_dict()` JSON 相等
+  4. pytest 全绿（band 四套件）
+- **实测**: 6×1 fill 71.8%（537×1326）缝隙 0.00mm；P0 79.5%（1153×1271）；A/B **ON 88.35% vs OFF 86.08%（+2.27pt）**；stage fill/bbox/elapsed 与直测逐字段一致（71.77%/537×1326/0.21s）；pytest 60 项全绿。
+- **Priority**: 8
+
 ## 功能需求 (Functional Requirements)
 
 - FR-1: StartPayload 新增可缺省 `band: {enabled: bool, label: string, ack?: bool} | null`，缺省/null/{} = 关闭，旧行为逐字节不变；服务端校验 label 合法性与数量非零。

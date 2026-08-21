@@ -247,7 +247,7 @@ async def ws_solve(ws: WebSocket):
         loop.call_soon_threadsafe(queue.put_nowait, r)
 
     def on_stage(m):
-        """子进程 stage（band 带内聚排完成统计）→ 前端契约消息（manifest 前唯一一次）。
+        """子进程 stage（band 带构造完成统计）→ 前端契约消息（manifest 前唯一一次）。
 
         FR-2：``{'type':'stage','stage':'band', fill_pct, bbox, fallback:false, elapsed}``
         —— 旧前端 default:break 静默忽略，前向兼容。
