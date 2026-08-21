@@ -161,3 +161,28 @@ export type ServerMsg =
   | ErrorMsg
   | StoppedMsg
   | StageMsg;
+
+/**
+ * US-013（FR-7）POST /api/band/preview 响应（后端 web/routes_band.py；band 契约
+ * 集中在本文件）。executor 线程跑 5s 预算 build_band_plan：
+ *   - 成功 ``{ok:true, fill_pct, bbox, elapsed, break_even}``（break_even 盈亏参考线
+ *     随响应回传，前端展示同源不双写）；
+ *   - 几何失败也回 200 ``{ok:false, error}`` —— 预演失败是结果数据，前端降级提示
+ *     **不阻塞确认**；结构错误（400/409/422）同 ``{error}`` 形状，其中硬警告形态的
+ *     422 附 ``hard_warning:true``（前端渲染二次确认勾选框，勾选后带 ack:true 重试）。
+ */
+export interface BandPreviewResponse {
+  ok: boolean;
+  /** 带内填充率（%，实际占用 bbox 口径；成功时存在）。 */
+  fill_pct?: number;
+  /** 带板实际占用 bbox（成功时存在）。 */
+  bbox?: { width_mm: number; height_mm: number };
+  /** 预演耗时 s（成功时存在）。 */
+  elapsed?: number;
+  /** 盈亏参考线 [62.4, 63.6]（成功时存在）。 */
+  break_even?: [number, number];
+  /** 失败原因（ok:false / 结构错误时存在）。 */
+  error?: string;
+  /** 硬警告形态（422 需 ack）标记 —— 前端据此渲染二次确认勾选框。 */
+  hard_warning?: boolean;
+}

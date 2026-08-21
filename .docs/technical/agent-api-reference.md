@@ -29,6 +29,7 @@
 | GET | `/api/strategy/status` | strategy US-004：无状态惰性轮询 run_dir 产物组装进度 | `strategy.strategy_status` |
 | POST | `/api/strategy/stop` | strategy US-004：树杀子进程（taskkill /T /F / killpg）+ 清 marker | `strategy.strategy_stop` |
 | GET | `/api/strategy/result` | strategy US-004：done/stopped run → best + manifest（应用到主画布数据源） | `strategy.strategy_result` |
+| POST | `/api/band/preview` | US-013（FR-7）：5s 预算 `build_band_plan` 成带预演 → `{ok, fill_pct, bbox, break_even}` 对照盈亏参考线 62.4~63.6%（几何失败也 200 `ok:false` = 结果数据；硬警告形态 422 附 `hard_warning:true`） | `routes_band.band_preview` |
 | WS | `/ws/solve` | 排料求解流（manifest → frames → final） | `server.ws_solve` |
 
 > FastAPI 自动暴露 `/docs` `/openapi.json` 等 OpenAPI 路由；业务路由全在上表。
@@ -256,6 +257,34 @@ curl http://127.0.0.1:8000/api/ptypes
 3. **M1787 验证**：commit 后返 10 个 g 码（`g01`..`g10`，各 5 层字段全带）。
 4. **响应字段不含 pid / size / area**：仅几何 + label；g 码是 key。前端 polygon 画缩略图、label 画编号徽章。
 
+## POST /api/band/preview — US-013 腰头成带预演回显（`web/routes_band.py`）
+
+高级配置弹窗「布局设置」分区选定腰头 g 码后的预演回显数据源：executor 线程跑 `waist_band.build_band_plan`（5s 预算），把实测 `{fill_pct, bbox}` 交前端对照 break-even 参考线（**62.4~63.6%**，US-010 闸门实测口径：混带 72.5% 过线、纯腰 54.8~60.9% 不过线 —— 参考线由响应携带，前端不双写）。
+
+### 请求
+
+body 同 WS StartPayload 的 band 求解上下文子集（前端取 `buildStartContext()` + band 草稿同源构造 —— 预演所见即求解所得）：
+
+```jsonc
+{
+  "band": {"enabled": true, "label": "g05", "ack"?: true},
+  "sizes"?: [30, 31], "seed"?: 0, "per_type"?: {...}, "quantities"?: {...}
+}
+```
+
+### 响应
+
+- **200 `{ok:true, fill_pct, bbox:{width_mm,height_mm}, elapsed, break_even:[62.4,63.6]}`** —— 预演成功；
+- **200 `{ok:false, error}`** —— **几何失败也是结果数据**（该 g 码不适合成带的量化证据，如 fill<45% / 总副本 1），前端降级提示**不阻塞确定**（FR-7）；
+- 400（body 非 JSON / band 非法）/ 409（pieces state 空）/ 422（校验失败）`{error}`；其中**硬警告形态的 422 附 `hard_warning:true`**（`routes_ws.BandAckRequired` → 前端弹窗渲染二次确认勾选框「我已确认…仍要成带」，勾选后带 `ack:true` 重试放行）。
+
+### 关键不变量
+
+1. 服务端校验复用 `routes_ws._parse_band`（单一真相源：label / 存在性 / quantities>0 / 硬警告 ack）—— `_parse_band` 抛 `BandAckRequired`（ValueError 子类，WS 路径仍按 `str(e)` 报错行为不变）时预演路由回结构化 `hard_warning` 标记；
+2. d_g/tol_g 经 `_resolve_d_tol` 与主解同源裁定（FR-3 带内 per_type 沿用该 g 码 d/tol）；带内约束带 = `min(gate_mm, PLOT_SAFE_MAX_Y_MM)`（与主解同口径）；
+3. 不落 `band_runs` 工件（预演不是求解，US-014 回放对拍只收真实求解工件）；`time_budget` 内部旋钮可缩短预算（测试用，非前端契约键）；
+4. 分层：web 层 import `.solver`（`build_pid_meta`/`_resolve_d_tol`，与 `solve_worker._build_band` 同口径）+ `nesting_engine.waist_band`；不 import cli。
+
 ## 策略桥接（strategy PRD US-004）— `/api/strategy/*` 四路由（`web/strategy.py`）
 
 桥接方式 = **spawn `python -m materialsorting.cli.run_config <cfg> --name web_<mode>_<rand6> --strategy <mode> --time <minutes*60> --quiet` 子进程 + HTTP 轮询 run_dir 产物**（分层零违规：进程边界而非 import 边界 —— `strategy.py` 全模块禁 import `..cli.*`，AST 守卫 `tests/test_web_strategy.py`；判据逻辑单一真相源留在 `cli.portfolio`）。子进程经 env 继承拿到与 ms-web 相同的 `paths`（`MS_OUT_DIR` 等环境变量父子同源）。前端消费方 = 策略 PRD US-005 弹窗（`strategyStore` + `useStrategyPoll`，详见 `agent-component-map.md` US-005 专节）：GET status 轮询双档 **弹窗开 2s / 关 15s**（关弹窗由入口徽标维持观测），terminal 态停表；start 载荷 = 面板排料参数 + `{mode, minutes}`；**关闭弹窗（ESC/遮罩/✕）不调 stop** —— 终止唯一入口 = 显式终止/清理按钮。
@@ -324,7 +353,7 @@ done/stopped 可读（running → 409「尚未结束」；idle → 404）。响�
   "params": {"d_ext":0, "d_int":0, "tol_ext":0, "tol_int":0},  // US-019 起前端永远传全 0；主面板内外两档输入已删，d/tol 覆盖全交 per_type
   "per_type": {"g03": {"d": 1.5}},  // 可选，逐片高级覆盖（US-002 起 label 键；2026-08-18 回退 US-004 矩阵化后单级，命中即对该 g 码全部码号生效；旧 ptype / 旧两级 (label,sizeKey) 键不命中为 no-op）
   "quantities": {"g01": {"28": 2, "30": 0}, "g02": {"28": 1}},  // US-022 可选，label→sizeKey→demand；0=该 piece 该码不排；缺省=null→全片 demand=1
-  "band": {"enabled": true, "label": "g05", "ack": false}  // US-011 可选腰头成带；缺省/null/{}/非 dict/enabled falsy = 关闭（旧行为逐字段不变）
+  "band": {"enabled": true, "label": "g05", "ack": true}  // US-011 可选腰头成带；缺省/null/{}/非 dict/enabled falsy = 关闭（旧行为逐字段不变）；ack 仅 US-013 确认弹窗对硬警告形态显式置 true（预演 422 hard_warning → 勾选二次确认后随 band 发送，见 /api/band/preview 节）
 }
 ```
 
@@ -339,7 +368,7 @@ done/stopped 可读（running → 409「尚未结束」；idle → 404）。响�
 
 - 非 dict / 无 `enabled` / `enabled` falsy → 关闭（不校验其余键）；
 - `label` 须匹配 `^g\d+$` 且存在于当前母版，且该 g 码在 quantities 口径下至少一个码 demand>0（missing→1 同 `build_pid_meta` 口径）；
-- 硬警告形态护栏：该 label 全部 demand>0 成员中**最小边 <60mm 或长宽比 >6**（多边形 bbox 口径，常量在 routes_ws）需显式 `ack:true` 才执行（裤耳类小片/细长条误选护栏，参数值 US-013 试用后可调）；
+- 硬警告形态护栏：该 label 全部 demand>0 成员中**最小边 <60mm 或长宽比 >6**（多边形 bbox 口径，常量在 routes_ws）需显式 `ack:true` 才执行（裤耳类小片/细长条误选护栏，参数值 US-013 试用后可调；缺 ack 抛 `BandAckRequired`（ValueError 子类）—— WS 路径按 `str(e)` 报错行为不变，US-013 预演路由据此回 422 `hard_warning:true` 结构化标记，前端弹窗渲染二次确认勾选框）；
 - 可选内部旋钮 `time_budget`（int ≥1，非法静默回退缺省 15s）—— 测试 / US-013 预演缩短带内预算用，**非 FR-1 前端契约键**。
 
 ### 1.5 server → stage（US-011，band 开启时 manifest 前**恰一次**）

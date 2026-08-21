@@ -198,7 +198,17 @@ describe('PtypePreviewModal (US-018)', () => {
       root!.render(
         <StrictMode>
           <>
-            <PerTypeOverridesModal values={{}} onChange={onChange} />
+            <PerTypeOverridesModal
+              values={{}}
+              onChange={onChange}
+              band={{ enabled: false, label: '', ack: false }}
+              onBandChange={() => {}}
+              buildStartContext={() => ({
+                sizes: [], gate_mm: 1980, seed: 0, time: 120,
+                params: { d_ext: 0, d_int: 0, tol_ext: 0, tol_int: 0 },
+                per_type: null, quantities: null, band: null,
+              })}
+            />
             <PtypePreviewModal />
           </>
         </StrictMode>,

@@ -58,6 +58,12 @@ export interface FormState {
    * 三态解析为 null，US-013 前端闸门兜底前的最后防线）。
    */
   band_label: string;
+  /**
+   * US-013 硬警告形态显式确认（FR-1「ack 仅确认弹窗对硬警告形态显式置 true」）：
+   * 预演 422 ``hard_warning:true`` → 弹窗渲染二次确认勾选框 → 勾选后重试成功 → 确认
+   * 写回 true（此后 WS start band 带 ``ack:true``）。关闭成带 / 切换 g 码 → 重置 false。
+   */
+  band_ack: boolean;
 }
 
 /**
@@ -75,6 +81,7 @@ export const DEFAULT_FORM: FormState = {
   per_type: {},
   band_enabled: false,
   band_label: '',
+  band_ack: false,
 };
 
 /** collectParams 输出（与旧 vanilla 实现 collectParams 返回值结构一致）。 */
@@ -209,8 +216,8 @@ export function serializeQuantities(
 
 // ------------------------------------------------- US-012 腰头成带 band 参数
 
-/** g 码模式（后端 routes_ws._BAND_LABEL_RE `^g\d+$` 的前端镜像）。 */
-const BAND_LABEL_RE = /^g\d+$/;
+/** g 码模式（后端 routes_ws._BAND_LABEL_RE `^g\d+$` 的前端镜像；US-013 弹窗共用）。 */
+export const BAND_LABEL_RE = /^g\d+$/;
 
 /**
  * US-012 band 三态解析（FR-1）：FormState.band_* → WS StartPayload.band 值。
@@ -219,17 +226,17 @@ const BAND_LABEL_RE = /^g\d+$/;
  *   2. 开但未选编号 / label 非 g 码（含空白）      → null（「开且未选」不冒充有效配置 ——
  *      后端对空 label 会回结构化 error，此处静默降级为关；US-013 前端闸门在先，
  *      这里是兜底防线）；
- *   3. 开且有效（`^g\d+$`）                        → {enabled:true, label}（ack 不在此层 ——
- *      仅 US-013 确认弹窗对硬警告形态显式置 true）。
+ *   3. 开且有效（`^g\d+$`）                        → {enabled:true, label}；US-013 起
+ *      ``band_ack=true`` 时附 ``ack:true``（仅确认弹窗对硬警告形态显式勾选后置位）。
  *
- * label 是否存在于当前母版 / 该 g 码 quantities>0 由后端 ``_parse_band`` 权威校验
- * （前端 store 无母版全集，不预判存在性）。
+ * label 是否存在于当前母版 / 该 g 码 quantities>0 / 硬警告形态需 ack 由后端
+ * ``_parse_band`` 权威校验（前端 store 无母版全集，不预判存在性）。
  */
 export function collectBand(form: FormState): BandConfig | null {
   if (!form.band_enabled) return null;
   const label = form.band_label.trim();
   if (!BAND_LABEL_RE.test(label)) return null;
-  return { enabled: true, label };
+  return form.band_ack ? { enabled: true, label, ack: true } : { enabled: true, label };
 }
 
 /**

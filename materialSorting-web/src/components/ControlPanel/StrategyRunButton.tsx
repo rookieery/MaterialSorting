@@ -26,8 +26,13 @@ export interface StrategyRunButtonProps {
   buildStartContext: () => StartContext;
   /** US-006 应用到主画布回调（未传 → 应用按钮 disabled）。 */
   onApplyStrategy?: (result: StrategyResult) => void;
-  /** 入口 disabled（solving || 未 commit，ControlPanel 计算）。 */
+  /** 入口 disabled（solving || 未 commit || band 开启互斥，ControlPanel 计算）。 */
   disabled?: boolean;
+  /**
+   * US-013 置灰原因悬停说明（band 开启互斥时传「腰头成带与策略运行互斥…」；
+   * 缺省不渲染 title —— solving / 未 commit 的既有置灰不加说明）。
+   */
+  title?: string;
 }
 
 export function StrategyRunButton({
@@ -35,6 +40,7 @@ export function StrategyRunButton({
   buildStartContext,
   onApplyStrategy,
   disabled = false,
+  title,
 }: StrategyRunButtonProps): JSX.Element {
   const openModal = useControlPanelStore((s) => s.openModal);
   const modalOpen = useControlPanelStore((s) => s.modal) === 'strategy_run';
@@ -49,6 +55,7 @@ export function StrategyRunButton({
         type="button"
         className="strategy-btn"
         disabled={disabled}
+        title={title}
         onClick={() => openModal('strategy_run')}
         data-testid="strategy-btn"
       >

@@ -31,6 +31,12 @@ _BAND_ACK_MIN_EDGE_MM = 60.0
 _BAND_ACK_MAX_ASPECT = 6.0
 
 
+class BandAckRequired(ValueError):
+    """硬警告形态（最小边 <60 / 长宽比 >6）需显式 ``ack:true``（US-013 预演路由
+    据此回结构化 ``hard_warning`` 标记，前端弹窗渲染二次确认勾选框；WS 路径仍按
+    ``str(e)`` 报错，行为不变）。"""
+
+
 def _band_demand(p, quantities) -> int:
     """该 piece 在 quantities 口径下的 demand（与 ``build_pid_meta`` 同口径镜像）。
 
@@ -79,7 +85,7 @@ def _parse_band(raw, pieces, quantities):
     aspect = max((max(w, h) / min(w, h)) if min(w, h) > 0 else float('inf') for w, h in wh)
     if (min_edge < _BAND_ACK_MIN_EDGE_MM or aspect > _BAND_ACK_MAX_ASPECT) \
             and raw.get('ack') is not True:
-        raise ValueError(
+        raise BandAckRequired(
             f'band g 码 {label} 最小边 {min_edge:.0f}mm（<60）或长宽比 {aspect:.1f}（>6），'
             '属硬警告形态，需显式确认（band.ack=true）才执行成带')
     tb = raw.get('time_budget')

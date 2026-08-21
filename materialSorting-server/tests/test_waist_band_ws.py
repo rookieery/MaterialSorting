@@ -313,6 +313,92 @@ def test_parse_band_time_budget_internal_knob():
     assert _parse_band(None, pieces, None) is None
 
 
+# --------------------------------------------- US-013 POST /api/band/preview
+
+
+def test_band_preview_ok(band_client):
+    """US-013 AC#2 预演成功：200 {ok:true, fill_pct, bbox, elapsed, break_even}。"""
+    r = band_client.post('/api/band/preview', json={
+        'band': {'enabled': True, 'label': 'g05', 'time_budget': 2},
+        'sizes': [], 'seed': 1,
+        'quantities': {'g05': {'28': 2, '29': 2}}})
+    assert r.status_code == 200
+    data = r.json()
+    assert data['ok'] is True
+    assert data['fill_pct'] > 45.0
+    assert data['bbox']['width_mm'] > 0 and data['bbox']['height_mm'] > 0
+    # break-even 参考线随响应回传（前端对照展示同源，不前端硬编码两份）
+    assert data['break_even'] == [62.4, 63.6]
+    assert data['elapsed'] > 0
+
+
+def test_band_preview_geometry_failure_ok_false(band_client):
+    """几何失败（总副本 1 DegenerateBand）→ 200 {ok:false, error} —— 预演失败是
+    结果数据（该 g 码不适合成带的量化证据），前端降级提示不阻塞确认（FR-7）。"""
+    r = band_client.post('/api/band/preview', json={
+        'band': {'enabled': True, 'label': 'g06', 'ack': True, 'time_budget': 1},
+        'quantities': {'g06': {'28': 1}}})
+    assert r.status_code == 200
+    data = r.json()
+    assert data['ok'] is False
+    assert '总副本 1' in data['error']
+
+
+@pytest.mark.parametrize('body,status,frag', [
+    ({}, 400, 'band'),                                            # band 键缺席
+    ({'band': {'enabled': False, 'label': 'g05'}}, 400, 'band'),  # enabled falsy
+    ({'band': {'enabled': True, 'label': 'g99'}}, 422, '不存在于当前母版'),
+    ({'band': {'enabled': True, 'label': 'g05'},
+      'quantities': {'g05': {'28': 0, '29': 0}}}, 422, '数量全为 0'),
+    ({'band': {'enabled': True, 'label': 'g06'},
+      'quantities': {'g06': {'28': 2}}}, 422, 'ack'),             # 硬警告形态无 ack
+])
+def test_band_preview_structural_errors(band_client, body, status, frag):
+    """结构错误：band 非法 → 400；校验失败（不存在 / 数量 0 / 需 ack）→ 422 {error}。"""
+    r = band_client.post('/api/band/preview', json=body)
+    assert r.status_code == status
+    assert frag in r.json()['error']
+
+
+def test_band_preview_hard_warning_structured_flag(band_client):
+    """US-013 硬警告形态 422 附 ``hard_warning:true`` 结构化标记（区别于其它 422）——
+    前端弹窗据此渲染二次确认勾选框；带 ``ack:true`` 重试即放行（成带预演成功口径）。"""
+    r = band_client.post('/api/band/preview', json={
+        'band': {'enabled': True, 'label': 'g06'},
+        'quantities': {'g06': {'28': 2}}})
+    assert r.status_code == 422
+    data = r.json()
+    assert data['hard_warning'] is True
+    assert 'ack' in data['error']
+    # 对照：其它 422（如 label 不存在）不带 hard_warning（形状键缺席，前端不误渲染勾选框）
+    r2 = band_client.post('/api/band/preview', json={
+        'band': {'enabled': True, 'label': 'g99'}})
+    assert r2.status_code == 422
+    assert 'hard_warning' not in r2.json()
+    # ack 后重试放行（g06 最小边 30 硬警告 + ack → 预演走几何路径）
+    r3 = band_client.post('/api/band/preview', json={
+        'band': {'enabled': True, 'label': 'g06', 'ack': True, 'time_budget': 2},
+        'quantities': {'g06': {'28': 4}}})
+    assert r3.status_code == 200
+    assert r3.json()['ok'] is True
+
+
+def test_band_preview_empty_state_409(band_client):
+    """pieces state 空（首次启动未 commit）→ 409（与 /ws/solve 空态报错同语义）。"""
+    state = server_mod._PIECES_STATE
+    saved = dict(state)
+    state.clear()
+    state.update({'doc': None, 'gate_mm': 0.0, 'pieces': [], 'pieces_by_id': {}})
+    try:
+        r = band_client.post('/api/band/preview', json={
+            'band': {'enabled': True, 'label': 'g05'}})
+        assert r.status_code == 409
+        assert '排料数据为空' in r.json()['error']
+    finally:
+        state.clear()
+        state.update(saved)
+
+
 if __name__ == '__main__':
     import sys
     sys.exit(pytest.main([__file__, '-v']))

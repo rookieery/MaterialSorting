@@ -674,6 +674,126 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
   color: #fff;
 }
 
+/* ---- US-013 PerTypeOverridesModal「布局设置」分区（腰头成带；暗底 + #2ea06c 同色系） ---- */
+/* 分区容器：表格上方独立区块（#23252b 与 .ptype-col 表头同底），标题带 #2ea06c 左缘 */
+.per-type-band {
+  border: 1px solid #34363d;
+  border-radius: 4px;
+  background: #23252b;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.per-type-band-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #cdd;
+  padding-left: 8px;
+  border-left: 3px solid #2ea06c;
+  line-height: 1.2;
+}
+.per-type-band-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+/* 左：子标题「开启腰头成带」+ 勾选框（横向一行） */
+.per-type-band-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #cdd;
+  cursor: pointer;
+  user-select: none;
+  padding-top: 16px;   /* 与右侧子标题+下拉的视觉基线对齐 */
+}
+.per-type-band-check input[type='checkbox'] {
+  width: 15px;
+  height: 15px;
+  accent-color: #2ea06c;
+  cursor: pointer;
+}
+/* 右：子标题「腰头编号」+ 下拉框（纵向堆叠） */
+.per-type-band-select-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.per-type-band-subhead {
+  color: #9aa;
+  font-size: 11px;
+}
+.per-type-band-select {
+  min-width: 140px;
+  padding: 5px 8px;
+  background: #1c1d22;
+  color: #e6e6e6;
+  border: 1px solid #3a3d45;
+  border-radius: 3px;
+  font-size: 12px;
+  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  cursor: pointer;
+}
+.per-type-band-select:focus {
+  outline: none;
+  border-color: #2ea06c;
+}
+.per-type-band-select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+/* 选中 g 码缩略图：80×80 与 QtyMatrix 列头同款（.qty-thumb 同模式 + g 码徽章），
+   点击 openPreviewLabel 放大（双层 modal 约定） */
+.per-type-band-thumb {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 2px;
+  background: #1c1d22;
+  border: 1px solid #3a3d45;
+  border-radius: 4px;
+  cursor: zoom-in;
+  transition: border-color 0.15s;
+}
+.per-type-band-thumb:hover {
+  border-color: #2ea06c;
+}
+.per-type-band-thumb:focus-visible {
+  outline: 2px solid #2ea06c;
+  outline-offset: 1px;
+}
+.per-type-band-thumb svg {
+  width: 80px;
+  height: 80px;
+  display: block;
+}
+/* 预演回显行：fill/bbox 对照盈亏参考线（62.4~63.6% 由后端响应携带）；失败降级提示 */
+.per-type-band-preview {
+  font-size: 11px;
+  color: #9aa;
+  line-height: 1.5;
+}
+/* US-013 硬警告形态二次确认勾选框（422 hard_warning 后出现；amber 警示色系区分于
+   主勾选的 #2ea06c —— 形态确认是风险动作，视觉上须可分辨） */
+.per-type-band-ack {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  font-size: 11px;
+  color: #d9b06a;
+  cursor: pointer;
+  user-select: none;
+}
+.per-type-band-ack input[type='checkbox'] {
+  accent-color: #d9b06a;
+}
+
 /* PtypePreviewModal：z-index 1200（高于 PerTypeOverridesModal 1100，叠在其上） */
 .ptype-preview-overlay {
   position: fixed;
@@ -1249,6 +1369,27 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
   border-color: transparent;
   color: #666;
   cursor: not-allowed;
+}
+/* US-013 不成对警告：腰头 g 码列奇数数量格（暖红系，区别于特例高亮橙 / 0 灰；
+   警告不拦截编辑 —— title 说明成带同码成对相邻，奇数必有落单副本） */
+.qty-cell.odd .qty-cell-input {
+  background: #2b1c1c;
+  border-color: #c96a6a;
+  color: #ffb3b3;
+}
+/* 列头不成对徽章：该腰头列任一奇数码时显示（与 .qty-label-badge 同排） */
+.qty-odd-badge {
+  display: inline-flex;
+  align-items: center;
+  height: 16px;
+  padding: 0 5px;
+  background: #4a2323;
+  color: #ffb3b3;
+  border: 1px solid #c96a6a;
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 600;
+  white-space: nowrap;
 }
 
 /* 行尾每码小计列 + 底部每裁片合计行（sticky bottom，与表头同背景） */

@@ -718,3 +718,218 @@ describe("ControlPanel start guard (US-003 全 0 拦截)", () => {
     expect("28" in cfg.quantities!.g02).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------- US-013 band
+// 布局设置接线：弹窗勾选/下拉/确定写回 form.band_* → 启动闸门（置灰 + StatusLine
+// band 段文案）/ 策略互斥（strategy-btn disabled + title）/ start payload band 生效。
+describe("ControlPanel band 接线 (US-013)", () => {
+  /** 2 码母版（28: g01；30: g01+g02），hydrate 默认 1（bandMemberCount 口径对齐）。 */
+  function setupBandDoc(): void {
+    const doc: ParsedDoc = {
+      doc_id: "band-test",
+      filename: "M1787.dxf",
+      sizes: [
+        {
+          size: 28,
+          pieces: [
+            { label: "g01", polygon: [], internal_lines: [], notches: [], net_polygon: [], grain_line: null },
+          ],
+        },
+        {
+          size: 30,
+          pieces: [
+            { label: "g01", polygon: [], internal_lines: [], notches: [], net_polygon: [], grain_line: null },
+            { label: "g02", polygon: [], internal_lines: [], notches: [], net_polygon: [], grain_line: null },
+          ],
+        },
+      ],
+    };
+    useUploadStore.setState({ status: "done", doc, activeSize: 28 });
+    useQtyStore.getState().hydrate(
+      doc.sizes.flatMap((s) => s.pieces.map((p) => ({ label: p.label, size: s.size }))),
+    );
+  }
+
+  /** 经弹窗写回 band 草稿（勾选 [+ 选 g01] → 确定）；label='' 仅勾选不选。 */
+  async function enableBandViaModal(label: string): Promise<void> {
+    mockReps = TWO_G_REPS;
+    const perTypeBtn = container!.querySelector<HTMLButtonElement>(".per-type-btn")!;
+    act(() => perTypeBtn.click());
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const check = document.body.querySelector<HTMLInputElement>('[data-testid="band-enabled"]')!;
+    act(() => check.click());
+    if (label !== "") {
+      const select = document.body.querySelector<HTMLSelectElement>('[data-testid="band-label-select"]')!;
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!;
+      act(() => {
+        setter.call(select, label);
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+      // 预演 fetch（/api/band/preview）resolve（mock 返 reps JSON → ok 缺席 → 降级提示，无害）
+      await act(async () => {
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+    }
+    const confirm = document.body.querySelector<HTMLButtonElement>(".per-type-btn-confirm")!;
+    act(() => confirm.click());
+  }
+
+  /** 勾选全部码号（doc 动态码号 chips）。 */
+  function selectAllSizes(): void {
+    const checkboxes = container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]");
+    act(() => {
+      for (const c of checkboxes) c.click();
+    });
+  }
+
+  it("band 开启未选编号 → #start 置灰 + StatusLine band 段文案；选中编号后解灰", async () => {
+    const onStart = vi.fn();
+    const onStatus = vi.fn();
+    setupBandDoc();
+    renderPanel(onStart, { onStatus });
+    selectAllSizes();
+    await enableBandViaModal("");
+    const btn = container!.querySelector<HTMLButtonElement>("#start")!;
+    expect(btn.disabled).toBe(true);
+    const status = container!.querySelector("#status")!;
+    expect(status.textContent).toContain("已开启腰头成带，请先选择腰头编号");
+    // 置灰下点击不触发（防御）
+    act(() => btn.click());
+    expect(onStart).not.toHaveBeenCalled();
+  });
+
+  it("band 选中 g 码数量全 0 → #start 置灰 + StatusLine 提示；恢复数量解灰", async () => {
+    const onStart = vi.fn();
+    setupBandDoc();
+    renderPanel(onStart);
+    selectAllSizes();
+    // g01 两码数量全 0（bandMemberCount=0 → 后端「数量全为 0」同条件前置闸门）
+    act(() => {
+      useQtyStore.getState().setRowAll("g01", [28, 30], 0);
+    });
+    await enableBandViaModal("g01");
+    const btn = container!.querySelector<HTMLButtonElement>("#start")!;
+    expect(btn.disabled).toBe(true);
+    const status = container!.querySelector("#status")!;
+    expect(status.textContent).toContain("腰头 g01 所选码数量全 0");
+    // 恢复数量（28=2 偶数、30=2）→ 解灰
+    act(() => {
+      useQtyStore.getState().setRowAll("g01", [28, 30], 2);
+    });
+    expect(btn.disabled).toBe(false);
+  });
+
+  it("band 确定写回 form.band_* → start payload band = {enabled,label}（全链路写回生效）", async () => {
+    const onStart = vi.fn();
+    setupBandDoc();
+    renderPanel(onStart);
+    selectAllSizes();
+    await enableBandViaModal("g01");
+    const btn = container!.querySelector<HTMLButtonElement>("#start")!;
+    expect(btn.disabled).toBe(false);
+    act(() => btn.click());
+    expect(onStart).toHaveBeenCalledTimes(1);
+    const cfg = onStart.mock.calls[0][0] as ControlPanelStartPayload;
+    expect(cfg.band).toEqual({ enabled: true, label: "g01" });
+  });
+
+  it("band 硬警告形态 → 弹窗 ack 勾选 → 确定写回 → start payload band 带 ack:true（全链路）", async () => {
+    const onStart = vi.fn();
+    setupBandDoc();
+    renderPanel(onStart);
+    selectAllSizes();
+    // 本用例 mock 按 URL 分流：/api/ptypes 返 reps；/api/band/preview 无 ack → 422
+    // hard_warning，带 ack → 成功（勾选后重试放行口径）。
+    fetchSpy!.mockImplementation((input: unknown, init?: unknown) => {
+      const url = String(input);
+      const headers = { "Content-Type": "application/json" };
+      if (url.includes("/api/band/preview")) {
+        const body = JSON.parse(String((init as RequestInit | undefined)?.body ?? "{}"));
+        if (body?.band?.ack === true) {
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                ok: true, fill_pct: 66.0,
+                bbox: { width_mm: 900, height_mm: 1980 },
+                elapsed: 5.0, break_even: [62.4, 63.6],
+              }),
+              { status: 200, headers },
+            ),
+          );
+        }
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              ok: false,
+              error: "band g 码 g01 长宽比 6.9（>6），属硬警告形态，需显式确认（band.ack=true）",
+              hard_warning: true,
+            }),
+            { status: 422, headers },
+          ),
+        );
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify(TWO_G_REPS), { status: 200, headers }),
+      );
+    });
+    // 勾选 + 选 g01 → 422 hard_warning → ack 勾选框出现
+    mockReps = TWO_G_REPS;
+    const perTypeBtn = container!.querySelector<HTMLButtonElement>(".per-type-btn")!;
+    act(() => perTypeBtn.click());
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+    act(() => document.body.querySelector<HTMLInputElement>('[data-testid="band-enabled"]')!.click());
+    const select = document.body.querySelector<HTMLSelectElement>('[data-testid="band-label-select"]')!;
+    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!;
+    act(() => {
+      setter.call(select, "g01");
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+    const ack = document.body.querySelector<HTMLInputElement>('[data-testid="band-ack"]')!;
+    expect(ack).not.toBeNull();
+    // 勾选 ack → 带 ack 重试成功（预演行回显 fill）
+    act(() => ack.click());
+    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
+    expect(document.body.querySelector('[data-testid="band-preview"]')!.textContent).toContain("66.0");
+    // 确定 → start payload band 带 ack:true（后端 _parse_band 放行硬警告形态）
+    act(() => document.body.querySelector<HTMLButtonElement>(".per-type-btn-confirm")!.click());
+    const btn = container!.querySelector<HTMLButtonElement>("#start")!;
+    expect(btn.disabled).toBe(false);
+    act(() => btn.click());
+    const cfg = onStart.mock.calls[0][0] as ControlPanelStartPayload;
+    expect(cfg.band).toEqual({ enabled: true, label: "g01", ack: true });
+  });
+
+  it("band 开启 → strategy-btn 置灰 + title 互斥说明；band 关闭恢复可用", async () => {
+    setupBandDoc();
+    renderPanel(() => {});
+    // band 关闭：doc 非空 + 非 solving → 可用，无 title
+    const strategyBtn = container!.querySelector<HTMLButtonElement>('[data-testid="strategy-btn"]')!;
+    expect(strategyBtn.disabled).toBe(false);
+    expect(strategyBtn.getAttribute("title")).toBeNull();
+    await enableBandViaModal("g01");
+    expect(strategyBtn.disabled).toBe(true);
+    expect(strategyBtn.getAttribute("title")).toContain("腰头成带与策略运行互斥");
+    // 再经弹窗取消勾选 → 恢复
+    const perTypeBtn = container!.querySelector<HTMLButtonElement>(".per-type-btn")!;
+    act(() => perTypeBtn.click());
+    const check = document.body.querySelector<HTMLInputElement>('[data-testid="band-enabled"]')!;
+    act(() => check.click());   // 取消勾选（草稿 enabled=false）
+    const confirm = document.body.querySelector<HTMLButtonElement>(".per-type-btn-confirm")!;
+    act(() => confirm.click());
+    expect(strategyBtn.disabled).toBe(false);
+  });
+
+  it("band 关闭（默认）→ strategy-btn 维持既有置灰口径（doc=null 仍置灰、无 title）", () => {
+    renderPanel(() => {});   // doc=null
+    const strategyBtn = container!.querySelector<HTMLButtonElement>('[data-testid="strategy-btn"]')!;
+    expect(strategyBtn.disabled).toBe(true);   // doc===null 置灰（既有口径）
+    expect(strategyBtn.getAttribute("title")).toBeNull();   // band 互斥 title 不出现
+  });
+});

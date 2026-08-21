@@ -308,9 +308,10 @@ describe('serializeQuantities (US-022；US-001 删 global 分支)', () => {
 // US-012 腰头成带：collectBand 三态 + collectStartContext.band + bandMemberCount 三态
 // ============================================================
 describe('collectBand / collectStartContext.band (US-012 三态)', () => {
-  it('DEFAULT_FORM：band_enabled=false / band_label=""（默认关闭）', () => {
+  it('DEFAULT_FORM：band_enabled=false / band_label="" / band_ack=false（默认关闭）', () => {
     expect(DEFAULT_FORM.band_enabled).toBe(false);
     expect(DEFAULT_FORM.band_label).toBe('');
+    expect(DEFAULT_FORM.band_ack).toBe(false);
     // 默认表单 collectStartContext → band null（旧行为：StartPayload band 键恒 null）
     expect(collectStartContext(DEFAULT_FORM, {}).band).toBeNull();
   });
@@ -343,8 +344,19 @@ describe('collectBand / collectStartContext.band (US-012 三态)', () => {
       enabled: true,
       label: 'g09',
     });
-    // 序列化形态：JSON.stringify 后恰两键（ack 仅 US-013 确认弹窗显式置）
+    // 序列化形态：JSON.stringify 后恰两键（ack 缺省不随带）
     expect(JSON.parse(JSON.stringify(out))).toEqual({ enabled: true, label: 'g05' });
+  });
+
+  it('US-013 ack：band_ack=true 且开且有效 → {enabled,label,ack:true}（硬警告形态放行键）', () => {
+    // 弹窗对硬警告形态勾选二次确认后置 true（FR-1：ack 仅显式勾选时随 band 发送）
+    const form = makeForm({ band_enabled: true, band_label: 'g05', band_ack: true });
+    expect(collectBand(form)).toEqual({ enabled: true, label: 'g05', ack: true });
+    expect(collectStartContext(form, {}).band).toEqual({
+      enabled: true, label: 'g05', ack: true,
+    });
+    // band 关（即使 ack 残留 true）→ null（enabled=false 恒 null）
+    expect(collectBand(makeForm({ band_enabled: false, band_label: 'g05', band_ack: true }))).toBeNull();
   });
 
   it('collectStartContext.band 与 collectBand 同源（开且有效透传，其余字段不受 band 影响）', () => {
