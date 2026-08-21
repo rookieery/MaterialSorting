@@ -141,6 +141,8 @@ describe('useSolveRun', () => {
       per_type: null,
       // US-022：quantities 缺省 → null（后端回退全片 demand=1）。
       quantities: null,
+      // US-012：band 缺省 → null（后端 _parse_band 见 null = 关闭，旧行为不变）。
+      band: null,
     });
   });
 
@@ -389,5 +391,146 @@ describe('useSolveRun', () => {
     expect(p2.internal_lines).toBeUndefined();
     expect(p2.notches).toBeUndefined();
     expect(p2.grain_line).toBeUndefined();
+  });
+
+  // ============================================================
+  // US-012 腰头成带：band 透传（StartPayload 序列化）+ stage 消息分发（run 不 finish）
+  // ============================================================
+  it('US-012 band 开且有效 → StartPayload.band = {enabled:true,label}（不带 ack）', () => {
+    const startRef = mountHook({});
+    act(() =>
+      startRef.current({
+        sizes: [30],
+        time: 120,
+        seed: 0,
+        gate_mm: 1980,
+        params: { d_ext: 0, d_int: 0, tol_ext: 0, tol_int: 0 },
+        band: { enabled: true, label: 'g05' },
+      }),
+    );
+    const ws = mockInstances[0];
+    act(() => ws.onopen?.());
+    const parsed: StartPayload = JSON.parse(ws.sent[0]);
+    expect(parsed.band).toEqual({ enabled: true, label: 'g05' });
+    // 序列化无 ack 键（仅 US-013 确认弹窗对硬警告形态显式置）
+    expect(JSON.parse(JSON.stringify(parsed.band!))).toEqual({ enabled: true, label: 'g05' });
+  });
+
+  it('US-012 band 显式 null → StartPayload.band = null（band 关，与缺省同线格式）', () => {
+    const startRef = mountHook({});
+    act(() =>
+      startRef.current({
+        sizes: [30],
+        time: 1,
+        seed: 0,
+        gate_mm: 1980,
+        params: { d_ext: 0, d_int: 0, tol_ext: 0, tol_int: 0 },
+        band: null,
+      }),
+    );
+    const ws = mockInstances[0];
+    act(() => ws.onopen?.());
+    const parsed: StartPayload = JSON.parse(ws.sent[0]);
+    expect(parsed.band).toBeNull();
+  });
+
+  it('US-012 stage 消息 → rec.stage 落盘 + onStage 回调；run 不 finish（后续 manifest/final 正常）', () => {
+    const onStage = vi.fn();
+    const onManifest = vi.fn();
+    const onFinal = vi.fn();
+    const onDone = vi.fn();
+    const startRef = mountHook({ onStage, onManifest, onFinal, onDone });
+    act(() =>
+      startRef.current({
+        sizes: [30],
+        time: 1,
+        seed: 3,
+        gate_mm: 1980,
+        params: { d_ext: 0, d_int: 0, tol_ext: 0, tol_int: 0 },
+        band: { enabled: true, label: 'g05' },
+      }),
+    );
+    const ws = mockInstances[0];
+
+    // FR-2：stage（band 带内聚排统计）在 manifest 前唯一一次。
+    const stage: ServerMsg = {
+      type: 'stage',
+      stage: 'band',
+      fill_pct: 54.8,
+      bbox: { width_mm: 3400, height_mm: 1910 },
+      fallback: false,
+      elapsed: 15.2,
+    };
+    act(() => ws.onmessage?.({ data: JSON.stringify(stage) }));
+
+    expect(onStage).toHaveBeenCalledTimes(1);
+    expect(onStage.mock.calls[0][0]).toMatchObject({
+      type: 'stage',
+      stage: 'band',
+      fill_pct: 54.8,
+    });
+    const rec = runRegistry.list()[0];
+    expect(rec.stage).toMatchObject({ type: 'stage', stage: 'band', fill_pct: 54.8 });
+    // **run 不 finish**：stage 不是终态 —— done 仍 false、onDone 未触发
+    expect(rec.done).toBe(false);
+    expect(onDone).not.toHaveBeenCalled();
+
+    // 后续 manifest → final 正常流转（stage 不影响生命周期）
+    act(() =>
+      ws.onmessage?.({
+        data: JSON.stringify({
+          type: 'manifest',
+          gate_mm: 1980,
+          total_area_mm2: 1,
+          n_eroded: 0,
+          pieces: [],
+        }),
+      }),
+    );
+    expect(onManifest).toHaveBeenCalledTimes(1);
+    act(() =>
+      ws.onmessage?.({
+        data: JSON.stringify({
+          type: 'final',
+          density: 0.87,
+          density_sparrow: 0.89,
+          width_mm: 9000,
+          elapsed: 1.2,
+          n_frames: 3,
+          n_eroded: 0,
+        }),
+      }),
+    );
+    expect(onFinal).toHaveBeenCalledTimes(1);
+    expect(onDone).toHaveBeenCalledTimes(1);
+    expect(rec.done).toBe(true);
+    // stage 统计保留（信息记录，不被 final 清除）
+    expect(rec.stage).not.toBeNull();
+  });
+
+  it('US-012 未知消息类型仍 default:break 静默忽略（不 throw / 不 finish；旧后端不发 stage 也安全）', () => {
+    const onDone = vi.fn();
+    const startRef = mountHook({ onDone });
+    act(() =>
+      startRef.current({
+        sizes: [30],
+        time: 1,
+        seed: 0,
+        gate_mm: 1980,
+        params: { d_ext: 0, d_int: 0, tol_ext: 0, tol_int: 0 },
+      }),
+    );
+    const ws = mockInstances[0];
+    // 未知 type / 缺 type —— 静默丢弃，run 继续
+    expect(() =>
+      act(() => {
+        ws.onmessage?.({ data: JSON.stringify({ type: 'telemetry', payload: 1 }) });
+        ws.onmessage?.({ data: JSON.stringify({ hello: 'world' }) });
+      }),
+    ).not.toThrow();
+    expect(onDone).not.toHaveBeenCalled();
+    expect(runRegistry.list()[0].done).toBe(false);
+    // 非 JSON —— 既有行为：解析失败静默 return
+    expect(() => act(() => ws.onmessage?.({ data: 'not-json' }))).not.toThrow();
   });
 });

@@ -2,10 +2,14 @@
 //   1) params 永远全 0（d_ext/d_int/tol_ext/tol_int 主面板输入已删，全交高级配置弹窗 per_type）。
 //   2) per_type 解析逻辑保留不变：仅 trim()!=='' 写入；空 → null；任一档非空 → 创建 entry。
 //   3) parseTime / parseSeed / parseSeedCount 与旧 vanilla 实现 `parseInt(...) || fallback` 一致。
+// US-012 band 三态（collectBand / collectStartContext.band）+ bandMemberCount 三态。
 
 import { describe, expect, it } from 'vitest';
 import {
+  bandMemberCount,
+  collectBand,
   collectParams,
+  collectStartContext,
   DEFAULT_FORM,
   parseGate,
   parseSeed,
@@ -297,5 +301,110 @@ describe('serializeQuantities (US-022；US-001 删 global 分支)', () => {
     const map = makePerSizeMap('g01', { '28': 1 });
     const out = serializeQuantities(map, []);
     expect(out).toBeNull();
+  });
+});
+
+// ============================================================
+// US-012 腰头成带：collectBand 三态 + collectStartContext.band + bandMemberCount 三态
+// ============================================================
+describe('collectBand / collectStartContext.band (US-012 三态)', () => {
+  it('DEFAULT_FORM：band_enabled=false / band_label=""（默认关闭）', () => {
+    expect(DEFAULT_FORM.band_enabled).toBe(false);
+    expect(DEFAULT_FORM.band_label).toBe('');
+    // 默认表单 collectStartContext → band null（旧行为：StartPayload band 键恒 null）
+    expect(collectStartContext(DEFAULT_FORM, {}).band).toBeNull();
+  });
+
+  it('三态①：band 关（band_enabled=false，即使 band_label 有值）→ null', () => {
+    const form = makeForm({ band_enabled: false, band_label: 'g05' });
+    expect(collectBand(form)).toBeNull();
+    expect(collectStartContext(form, {}).band).toBeNull();
+  });
+
+  it('三态②：开但未选编号（空串 / 纯空白）→ null', () => {
+    expect(collectBand(makeForm({ band_enabled: true, band_label: '' }))).toBeNull();
+    expect(collectBand(makeForm({ band_enabled: true, band_label: '   ' }))).toBeNull();
+    expect(
+      collectStartContext(makeForm({ band_enabled: true, band_label: '' }), {}).band,
+    ).toBeNull();
+  });
+
+  it('三态②（延伸）：开但 label 非 g 码模式（^g\\d+$ 镜像后端）→ null 静默降级', () => {
+    for (const bad of ['waist', 'g', 'g5x', 'G05', '5', 'g-5', 'g 05']) {
+      expect(collectBand(makeForm({ band_enabled: true, band_label: bad }))).toBeNull();
+    }
+  });
+
+  it('三态③：开且有效 → {enabled:true,label}（首尾空白 trim；不带 ack 键）', () => {
+    const out = collectBand(makeForm({ band_enabled: true, band_label: 'g05' }));
+    expect(out).toEqual({ enabled: true, label: 'g05' });
+    // trim：' g09 ' → 'g09'
+    expect(collectBand(makeForm({ band_enabled: true, band_label: ' g09 ' }))).toEqual({
+      enabled: true,
+      label: 'g09',
+    });
+    // 序列化形态：JSON.stringify 后恰两键（ack 仅 US-013 确认弹窗显式置）
+    expect(JSON.parse(JSON.stringify(out))).toEqual({ enabled: true, label: 'g05' });
+  });
+
+  it('collectStartContext.band 与 collectBand 同源（开且有效透传，其余字段不受 band 影响）', () => {
+    const q: PieceQuantityMap = { g05: { perSize: { '28': 2 }, baseValue: 1 } };
+    const form = makeForm({ band_enabled: true, band_label: 'g05', sizes: [28] });
+    const ctx = collectStartContext(form, q);
+    expect(ctx.band).toEqual({ enabled: true, label: 'g05' });
+    // 既有字段不受影响（sizes/quantities 正常解析）
+    expect(ctx.sizes).toEqual([28]);
+    expect(ctx.quantities).toEqual({ g05: { '28': 2 } });
+  });
+});
+
+describe('bandMemberCount (US-012 三态：missing→1 / 显式 0 / 未选码过滤)', () => {
+  /** g05 行 fixture：28 码 2 份、30 码显式 0、32 码 1 份。 */
+  const Q: PieceQuantityMap = {
+    g05: { perSize: { '28': 2, '30': 0, '32': 1 }, baseValue: 1 },
+  };
+
+  it('显式 0 → 0（该码不计入成员）', () => {
+    // 28→2、30 显式 0→0、32→1 = 3
+    expect(bandMemberCount(makeForm({ sizes: [28, 30, 32] }), Q, 'g05')).toBe(3);
+  });
+
+  it('未选码过滤：未勾选码不计（即使有数量）', () => {
+    // 只选 28：30（显式 0）/ 32（有 1 份）都未选 → 过滤 → 仅 28 的 2
+    expect(bandMemberCount(makeForm({ sizes: [28] }), Q, 'g05')).toBe(2);
+    // 只选 30（显式 0）→ 0 —— US-013「选中 g 码数量全 0」闸门触发态
+    expect(bandMemberCount(makeForm({ sizes: [30] }), Q, 'g05')).toBe(0);
+  });
+
+  it('missing→1：label 行缺 / sizeKey 缺（无记录）→ 按默认 1 计（后端空 quantities 回退口径）', () => {
+    // label 行整缺（store 未 hydrate）：每个选中码各计 1 片
+    expect(bandMemberCount(makeForm({ sizes: [28, 30] }), {}, 'g05')).toBe(2);
+    // 行在但 sizeKey 缺（28 有记录、30 无记录）→ 28→2 + 30→1 = 3
+    const partial: PieceQuantityMap = { g05: { perSize: { '28': 2 }, baseValue: 1 } };
+    expect(bandMemberCount(makeForm({ sizes: [28, 30] }), partial, 'g05')).toBe(3);
+  });
+
+  it("null 通用码不计（后端 sizes 过滤 want=数字集，null 码裁片不进求解）", () => {
+    const withNull: PieceQuantityMap = {
+      g05: { perSize: { '28': 2, null: 5 }, baseValue: 1 },
+    };
+    // null 即使在 perSize 且 form.sizes 含 null 也不计（与既有下游 number[] 契约一致）
+    expect(bandMemberCount(makeForm({ sizes: [28, null] }), withNull, 'g05')).toBe(2);
+  });
+
+  it('选中 g 码数量全 0 → 0（US-013 启动闸门触发态）；空 sizes → 0', () => {
+    const allZero: PieceQuantityMap = {
+      g05: { perSize: { '28': 0, '30': 0 }, baseValue: 1 },
+    };
+    expect(bandMemberCount(makeForm({ sizes: [28, 30] }), allZero, 'g05')).toBe(0);
+    expect(bandMemberCount(makeForm({ sizes: [] }), Q, 'g05')).toBe(0);
+  });
+
+  it('非 band label 不串行（只统计入参 label 的码）', () => {
+    const two: PieceQuantityMap = {
+      g05: { perSize: { '28': 2 }, baseValue: 1 },
+      g09: { perSize: { '28': 9 }, baseValue: 1 },
+    };
+    expect(bandMemberCount(makeForm({ sizes: [28] }), two, 'g09')).toBe(9);
   });
 });

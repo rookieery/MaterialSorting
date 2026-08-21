@@ -1,6 +1,6 @@
 // WS 消息契约（与后端 server.py / solver.py 字段名严格一致）。
 // client → server: ClientMsg = StartPayload | StopPayload
-// server → client: ServerMsg = ManifestMsg | FrameMsg | FinalMsg | ErrorMsg | StoppedMsg（判别联合，按 type 区分）
+// server → client: ServerMsg = ManifestMsg | FrameMsg | FinalMsg | ErrorMsg | StoppedMsg | StageMsg（判别联合，按 type 区分）
 //
 // 密度双口径：
 //   density         —— 原面积·实际幅宽口径（= total_area / (width * min(gate_mm, 1910))），
@@ -9,6 +9,25 @@
 
 import type { PieceInfo, PlacedItem } from './piece';
 import type { PerTypeOverrides, SolveParams } from './v03';
+
+/**
+ * US-012（FR-1）腰头成带配置：选中 g 码先在带内独立聚排成组合片（WB_ pid 在
+ * solve_worker 帧前展开回成员 placement，前端只见成员 pid）。
+ *
+ * StartPayload 的 ``band`` 键：缺省 / null / enabled falsy = 关闭（旧行为逐字节不变）；
+ * 开启时后端 ``routes_ws._parse_band`` 服务端校验（label ``^g\d+$`` / 存在于母版 /
+ * 该 g 码 quantities>0 / 硬警告形态需显式 ack）。
+ */
+export interface BandConfig {
+  enabled: boolean;
+  /** 腰头 g 码（如 'g05'；跨母版漂移 —— 由用户在高级配置弹窗指认，US-013）。 */
+  label: string;
+  /**
+   * 硬警告形态（成员最小边 <60mm 或长宽比 >6）显式确认位；仅确认弹窗（US-013）
+   * 置 true，缺省不随带。后端校验失败回结构化 error 早退。
+   */
+  ack?: boolean;
+}
 
 /**
  * client → server：启动求解（首条消息，必须 action:'start'）。
@@ -34,6 +53,11 @@ export interface StartPayload {
    * 缺省 / null → 后端全片 demand=1（向后兼容旧前端）。
    */
   quantities: Record<string, Record<string, number>> | null;
+  /**
+   * US-012（FR-1）腰头成带：缺省 / null / enabled falsy = 关闭（旧行为不变）；
+   * 开且有效 → ``{enabled:true,label}``（collectStartContext 三态解析，见 lib/params.ts）。
+   */
+  band?: BandConfig | null;
 }
 
 /**
@@ -109,5 +133,31 @@ export interface StoppedMsg {
   reason: string;
 }
 
+/**
+ * US-012（FR-2）stage：band 带内聚排完成统计，仅 band 开启时在 manifest 前发一次
+ * （solve_worker `_build_band` → routes_ws `on_stage` 转发）。旧前端 default:break
+ * 静默忽略，前向兼容；前端收到后状态行提示「腰头成带中…」，**run 不 finish**
+ * （不进 phase 五态状态机，秒级提示）。
+ */
+export interface StageMsg {
+  type: 'stage';
+  /** 阶段名（目前恒 'band'）。 */
+  stage: string;
+  /** 带内填充率（erode 前 union 面积 / 带板 bbox）。 */
+  fill_pct?: number | null;
+  /** 带板实际占用 bbox（裁剪后）。 */
+  bbox?: { width_mm: number; height_mm: number } | null;
+  /** 兜底标记（当前恒 false；保留协议位）。 */
+  fallback: boolean;
+  /** 带内聚排耗时 s。 */
+  elapsed?: number | null;
+}
+
 /** server → client 判别联合（按 type 字段区分）。 */
-export type ServerMsg = ManifestMsg | FrameMsg | FinalMsg | ErrorMsg | StoppedMsg;
+export type ServerMsg =
+  | ManifestMsg
+  | FrameMsg
+  | FinalMsg
+  | ErrorMsg
+  | StoppedMsg
+  | StageMsg;

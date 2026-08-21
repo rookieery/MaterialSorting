@@ -998,3 +998,25 @@ US-029/030/031 的 tour 已全量落地，本故事收尾打磨：手动入口�
 3. **计数 ref 同步重置** —— apply 后 totalSeedsRef=1/doneCountRef=0（防残留 onDone 闭包对置换后 registry 误判 all-done 汇总覆写状态行）。
 4. **导出链路零改动** —— apply 不触碰 useExport/ExportButtons//export；pid 失配（母版变更后应用）走既有 400 兜底，前端只透传错误文案。
 5. **result 常驻到下一次 start/reset**（延续 US-005 不变量 #6）—— 关弹窗不清 result，重开弹窗仍可应用；「再次运行」（reset）后应用按钮随 phase=idle 消失。
+
+## 腰头成带 US-012 落地：前端参数链路（FormState.band_* + BandConfig/StageMsg 类型 + useSolveRun band 透传/stage 分支 + NestingPage 状态行）
+
+band 配置（用户指认腰头 g 码成带）从表单到 WS 的纯参数链路：`FormState.band_enabled/band_label`（US-013 弹窗「布局设置」分区写回，本 story 仅字段+解析）→ `collectBand` 三态解析（关 / 开未选 → null；开且有效 `^g\d+$` → `{enabled:true,label}`，ack 不在此层）→ `StartContext.band` → `ControlPanelStartPayload.band`（handleStart 的 ctx spread 自动携带）→ `NestingPage.handleStart` → `useSolveRun.start(cfg.band)` → StartPayload `band: cfg.band ?? null`。反向链：WS `{'type':'stage','stage':'band',fill_pct,bbox,fallback,elapsed}`（manifest 前唯一一次）→ `useSolveRun` `case 'stage'` 写 `rec.stage` + `onStage` 回调（**run 不 finish**）→ NestingPage 状态行「腰头成带中：带内聚排…」（秒级提示，不进 phase 五态状态机）。
+
+| 文件 | 变更 |
+| --- | --- |
+| `src/types/ws.ts` | **新增** `BandConfig {enabled, label, ack?}`（FR-1 契约镜像）+ `StageMsg {type:'stage', stage, fill_pct?, bbox?, fallback, elapsed?}`；`StartPayload` 加可缺省 `band?: BandConfig \| null`；`ServerMsg` 判别联合加 `StageMsg` |
+| `src/lib/params.ts` | **扩 FormState** `band_enabled: boolean` / `band_label: string`（DEFAULT_FORM false/''，WS band 键恒 null = 旧行为）；**新增** `collectBand(form)` 三态解析（BAND_LABEL_RE=`^g\d+$` 镜像后端 `_BAND_LABEL_RE`，trim 后校验；label 存在性/quantities>0 由后端 `_parse_band` 权威校验不预判）+ `bandMemberCount(form, quantities, label)` 成员数三态（missing→1 / 显式 0→0 / 未选码过滤不计；null 通用码不计 —— 后端 sizes 过滤 want=数字集；US-013 启动闸门消费 =0 置灰）；**扩 StartContext** `band: BandConfig \| null`（collectStartContext 产出 collectBand(form)） |
+| `src/store/runRegistry.ts` | **扩 RunRecord** `stage: StageMsg \| null`（默认 null；信息记录不影响 phase/done；band 关闭恒 null） |
+| `src/hooks/useSolveRun.ts` | **扩 StartConfig** `band?: BandConfig \| null`（payload `band: cfg.band ?? null`）；**扩 UseSolveRunCallbacks** `onStage?`；**onmessage 新增 `case 'stage'`**：`rec.stage = msg` + 回调，不 finish（后续 manifest/frames/final 正常流转；未知 type 仍 default:break 静默忽略） |
+| `src/components/ControlPanel/ControlPanel.tsx` | **扩 ControlPanelStartPayload** `band: BandConfig \| null`（类型补全 —— handleStart 的 `{...ctx, seed_count}` spread 自动携带，逻辑零改动） |
+| `src/components/NestingPage.tsx` | **useSolveRun 回调加 `onStage`** → `setStatus('腰头成带中：带内聚排…')`（秒级提示，不进 phase 五态状态机）；handleStart 循环内 start() 透传 `band: cfg.band`（N seed 共用同一份 band） |
+| 测试 | `params.test.ts` +18 项（collectBand 三态+非 g 码降级+trim / collectStartContext.band 同源 / bandMemberCount 三态+全 0 闸门态+null 码不计+跨 label 不串行）；`useSolveRun.test.tsx` +4 项（band 序列化 {enabled,label} 无 ack / band null / stage→rec.stage+onStage+不 finish+后续 final 正常 / 未知类型静默）+ 既有 StartPayload toEqual 更新含 band:null；`useSolveRun.stop.test.tsx` +2 项 NestingPage 集成（stage→状态行「腰头成带中」+phase 仍 running + final 后覆盖 / 旧后端无 stage 行为一致）；StrategyRunButton/StrategyRunModal fixture 补 `band: null` |
+
+### 关键不变量（腰头成带 US-012 立，后续故事不得破坏）
+
+1. **band 三态解析单一真相源 = collectBand** —— 「开但未选/非 g 码」一律降级 null（不冒充有效配置送后端吃 error）；`^g\d+$` 前端镜像与后端 `_BAND_LABEL_RE` 必须同步改。US-013 弹窗 confirm 只写 `form.band_*` 两字段，不自行构造 BandConfig。
+2. **bandMemberCount 与后端 demand 口径对齐（missing→1/显式 0/未选码过滤）** —— 修改任一分支须对照后端 `build_pid_meta`（sizes 过滤 + `(label,sizeKey)` 查 quantities：0 跳过、缺 label→1）与 `routes_ws._band_demand`；null 通用码不计是 sizes 过滤的镜像，不是遗漏。
+3. **band 不进策略 run（FR-6 互斥）** —— StrategyRunModal.handleExec 只拷白名单键（seed/gate_mm/sizes/per_type/quantities），StartContext.band 对策略路径天然不可见；US-013 前端互斥（band 开启时高级运行入口 disabled）在此不变量之上叠加。
+4. **stage 是信息消息不是终态** —— `case 'stage'` 只写 rec.stage + onStage，绝不 finish/done/stopped；phase 五态状态机与 doneCountRef 汇总均不感知 stage。旧后端不发 stage → 前端零依赖安全。
+5. **band 关闭路径与 HEAD 行为一致** —— DEFAULT_FORM band 全关、StartPayload band 恒 null、后端 `_parse_band(null)` 返回 None 走原五元路径；band 字段加入不得改变既有 StartPayload 其它键的序列化（既有 toEqual 用例已扩 band:null 护栏）。

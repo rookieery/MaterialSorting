@@ -14,6 +14,7 @@
 
 import type { PerTypeOverrides, PerTypeOverride, SolveParams } from '../types/v03';
 import type { PieceQuantityMap } from '../types/qty';
+import type { BandConfig } from '../types/ws';
 
 /** 单片型的两条高级覆盖输入（d / tol 各一字符串，空串 = 继承 v0.3 默认）。 */
 export interface PerTypeFormValue {
@@ -47,6 +48,16 @@ export interface FormState {
    * US-019 起：内外两档全局输入删除，per_type 是唯一的 d/tol 覆盖入口（高级配置弹窗）。
    */
   per_type: Record<string, PerTypeFormValue>;
+  /**
+   * US-012 腰头成带开关（高级配置弹窗「布局设置」分区写回，US-013 接入 UI；
+   * 本 story 仅参数链路）。false = 关（默认，WS band 键恒 null）。
+   */
+  band_enabled: boolean;
+  /**
+   * US-012 腰头 g 码（如 'g05'；空串 = 已勾选但未选编号 —— collectStartContext
+   * 三态解析为 null，US-013 前端闸门兜底前的最后防线）。
+   */
+  band_label: string;
 }
 
 /**
@@ -62,6 +73,8 @@ export const DEFAULT_FORM: FormState = {
   multi_seed: false,
   seed_count: '3',
   per_type: {},
+  band_enabled: false,
+  band_label: '',
 };
 
 /** collectParams 输出（与旧 vanilla 实现 collectParams 返回值结构一致）。 */
@@ -194,6 +207,63 @@ export function serializeQuantities(
   return Object.keys(out).length > 0 ? out : null;
 }
 
+// ------------------------------------------------- US-012 腰头成带 band 参数
+
+/** g 码模式（后端 routes_ws._BAND_LABEL_RE `^g\d+$` 的前端镜像）。 */
+const BAND_LABEL_RE = /^g\d+$/;
+
+/**
+ * US-012 band 三态解析（FR-1）：FormState.band_* → WS StartPayload.band 值。
+ *
+ *   1. band 关（band_enabled=false）              → null；
+ *   2. 开但未选编号 / label 非 g 码（含空白）      → null（「开且未选」不冒充有效配置 ——
+ *      后端对空 label 会回结构化 error，此处静默降级为关；US-013 前端闸门在先，
+ *      这里是兜底防线）；
+ *   3. 开且有效（`^g\d+$`）                        → {enabled:true, label}（ack 不在此层 ——
+ *      仅 US-013 确认弹窗对硬警告形态显式置 true）。
+ *
+ * label 是否存在于当前母版 / 该 g 码 quantities>0 由后端 ``_parse_band`` 权威校验
+ * （前端 store 无母版全集，不预判存在性）。
+ */
+export function collectBand(form: FormState): BandConfig | null {
+  if (!form.band_enabled) return null;
+  const label = form.band_label.trim();
+  if (!BAND_LABEL_RE.test(label)) return null;
+  return { enabled: true, label };
+}
+
+/**
+ * US-012 band 成员数校验函数：该 g 码在当前表单 / 数量状态下进入带内的成员副本总数
+ * （US-013 启动闸门消费：= 0 → 「选中 g 码数量全 0」置灰拦截）。
+ *
+ * 逐码三态解析，与后端 demand 判定（build_pid_meta / routes_ws._band_demand）口径对齐：
+ *   1. **missing→1**：该 (label, 码) 在数量矩阵无记录（label 行缺或 sizeKey 缺）→ 按默认
+ *      1 计 —— 与后端「空 quantities 回退 demand=1」向后兼容口径 + SizePicker.effectiveDemand
+ *      同约定（未 hydrate 不误拦「数量全 0」；label 行整缺时对每个选中码各计 1 片）；
+ *   2. **显式 0** → 0（该码显式排除，后端 demand=0 跳过同口径）；
+ *   3. **未选码过滤** → 不计（码号未勾选 → serializeQuantities 丢弃该键 + 后端
+ *      build_pid_meta sizes 过滤，该码裁片不进求解）。
+ *
+ * 注：'null' 通用码不计 —— 后端 sizes 过滤（`p['size'] in want`，want=数字集）下
+ * null 码裁片本就不进求解（form.sizes 过滤 null 与既有下游契约一致）。
+ */
+export function bandMemberCount(
+  form: FormState,
+  quantities: PieceQuantityMap,
+  label: string,
+): number {
+  const selected = form.sizes.filter(
+    (s: number | null): s is number => s !== null,
+  );
+  const row = quantities[label];
+  let count = 0;
+  for (const size of selected) {
+    const v = row?.perSize[String(size)];
+    count += v === undefined ? 1 : v;
+  }
+  return count;
+}
+
 // ------------------------------------------------- US-005 collectStartContext
 
 /**
@@ -220,6 +290,12 @@ export interface StartContext {
   per_type: PerTypeOverrides | null;
   /** serializeQuantities：空 / 全未选 → null（后端全片 demand=1）。 */
   quantities: Record<string, Record<string, number>> | null;
+  /**
+   * US-012 collectBand 三态解析：关 / 开未选 → null；开且有效 → {enabled:true,label}。
+   * 策略 run（StrategyRunModal.handleExec）只拷白名单键，band 不进 /api/strategy/start
+   * （FR-6 band 与策略运行互斥）；主画布 WS start 全量透传。
+   */
+  band: BandConfig | null;
 }
 
 /** 把 FormState + 数量快照解析为 StartContext（handleStart / strategy start 同源）。 */
@@ -239,5 +315,6 @@ export function collectStartContext(
     params,
     per_type,
     quantities: serializeQuantities(quantities, sizes),
+    band: collectBand(form),
   };
 }

@@ -40,6 +40,9 @@ const CTX: StartContext = {
   params: { d_ext: 0, d_int: 0, tol_ext: 0, tol_int: 0 },
   per_type: null,
   quantities: { g01: { '30': 2, '32': 1 } },
+  // US-012：band 不进策略 run（FR-6 互斥 —— handleExec 只拷白名单键，即使主画布
+  // band 开启也不透传到 /api/strategy/start）。
+  band: null,
 };
 
 const EMPTY_CTX: StartContext = { ...CTX, sizes: [], quantities: null };

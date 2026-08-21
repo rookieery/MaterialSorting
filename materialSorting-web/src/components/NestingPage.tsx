@@ -18,6 +18,10 @@
 //   ConvergenceCurve / PlaybackBar / ExportButtons 零改动兼容。应用是显式按钮（弹窗结果态），
 //   不自动应用 —— 会清掉主画布现有对比 run；result 常驻 strategyStore，关弹窗再开仍可应用。
 //
+// US-012（腰头成带）：handleStart 透传 cfg.band → useSolveRun.start → WS StartPayload.band；
+//   onStage 回调（band 带内聚排统计，manifest 前唯一一次）→ 状态行「腰头成带中：带内聚排…」
+//   秒级提示（**不进 phase 五态状态机**，run 不 finish；后续 manifest/frames 正常流转）。
+//
 // Tooltip 仍由父 App 渲染（全局单例，不能多挂）；本页只渲染业务区，不挂 Tooltip。
 
 import { useRef, useState } from 'react';
@@ -49,6 +53,12 @@ export function NestingPage(): React.JSX.Element {
   const totalSeedsRef = useRef(0);
 
   const { start, stop } = useSolveRun({
+    // US-012 band stage：带内聚排完成统计（manifest 前唯一一次）→ 状态行秒级提示。
+    // **不进 phase 五态状态机**（run 不 finish；后续 manifest/frames/final 正常流转，
+    // 全部 done 后 onDone 统一切 phase）。旧后端不发 stage → 回调不触发，安全。
+    onStage: () => {
+      setStatus('腰头成带中：带内聚排…');
+    },
     onDone: () => {
       doneCountRef.current += 1;
       if (doneCountRef.current < totalSeedsRef.current) return;
@@ -141,6 +151,9 @@ export function NestingPage(): React.JSX.Element {
         per_type: cfg.per_type,
         // US-022：per-size demand 透传（N 个 seed 共用同一份 quantities）。
         quantities: cfg.quantities,
+        // US-012：腰头成带配置透传（N 个 seed 共用同一份 band；后端各 run 独立成带，
+        // band seed 由 zlib.crc32(f'{seed}|{label}') 派生保证确定性）。
+        band: cfg.band,
       });
     }
   }

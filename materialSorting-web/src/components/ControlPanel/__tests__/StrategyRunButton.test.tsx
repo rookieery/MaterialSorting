@@ -19,6 +19,8 @@ const CTX: StartContext = {
   params: { d_ext: 0, d_int: 0, tol_ext: 0, tol_int: 0 },
   per_type: null,
   quantities: null,
+  // US-012：band 不进策略 run（FR-6 互斥 —— handleExec 只拷白名单键），fixture 恒 null。
+  band: null,
 };
 
 let container: HTMLDivElement | null = null;

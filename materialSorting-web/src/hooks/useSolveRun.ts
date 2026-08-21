@@ -11,11 +11,13 @@
 
 import { useCallback, useRef, useState } from 'react';
 import type {
+  BandConfig,
   ErrorMsg,
   FinalMsg,
   FrameMsg,
   ManifestMsg,
   ServerMsg,
+  StageMsg,
   StartPayload,
 } from '../types/ws';
 import type { PerTypeOverrides, SolveParams } from '../types/v03';
@@ -37,6 +39,11 @@ export interface StartConfig {
    * 由调用方（NestingPage）经 serializeQuantities(qtyStore.quantities, sizes) 序列化。
    */
   quantities?: Record<string, Record<string, number>> | null;
+  /**
+   * US-012 腰头成带配置：缺省 / null → 序列化为 null（band 关，旧行为不变）；
+   * 开且有效 → {enabled:true,label}（collectStartContext 三态解析产物）。
+   */
+  band?: BandConfig | null;
 }
 
 /** 各类消息的可选回调（订阅层按需注册；不抛错，无返回）。 */
@@ -45,6 +52,12 @@ export interface UseSolveRunCallbacks {
   onFrame?: (f: FrameMsg, run: RunRecord) => void;
   onFinal?: (f: FinalMsg, run: RunRecord) => void;
   onError?: (e: ErrorMsg, run: RunRecord) => void;
+  /**
+   * US-012 stage（band 带内聚排完成统计，manifest 前唯一一次）。**run 不 finish** ——
+   * 仅信息性回调（NestingPage 写状态行「腰头成带中…」）；旧后端不发 stage 也安全
+   * （回调不注册即无副作用）。
+   */
+  onStage?: (m: StageMsg, run: RunRecord) => void;
   /** run 结束（final / error / onclose 任一）时调一次。 */
   onDone?: (run: RunRecord) => void;
 }
@@ -85,6 +98,8 @@ export function useSolveRun(cb: UseSolveRunCallbacks = {}): {
       per_type: cfg.per_type ?? null,
       // US-022：quantities 缺省 → null（后端 build_instance 回退全片 demand=1）。
       quantities: cfg.quantities ?? null,
+      // US-012：band 缺省 → null（后端 _parse_band 见 null = 关闭，旧行为不变）。
+      band: cfg.band ?? null,
     };
     ws.onopen = () => {
       ws.send(JSON.stringify(payload));
@@ -102,6 +117,12 @@ export function useSolveRun(cb: UseSolveRunCallbacks = {}): {
         case 'manifest':
           rec.manifest = msg;
           cbRef.current.onManifest?.(msg, rec);
+          break;
+        case 'stage':
+          // US-012：band 带内聚排统计（manifest 前唯一一次）—— 落 rec.stage +
+          // onStage 回调，**不 finish**（run 继续；后续 manifest/frames/final 正常走）。
+          rec.stage = msg;
+          cbRef.current.onStage?.(msg, rec);
           break;
         case 'frame':
           rec.frames.push(msg);

@@ -7,7 +7,7 @@
 // 生命周期：useSolveRun.start(seed) → create(seed) → WS onmessage 推 frame → push(frame)。
 // 新一次 start / cleanup → clear() 关闭所有 WS 并清空。
 
-import type { FinalMsg, FrameMsg, ManifestMsg } from '../types/ws';
+import type { FinalMsg, FrameMsg, ManifestMsg, StageMsg } from '../types/ws';
 
 /** 单个 run 的全部上下文（高频字段 frames/lastFrame 直接 mutate）。 */
 export interface RunRecord {
@@ -16,6 +16,11 @@ export interface RunRecord {
   ws: WebSocket | null;
   /** manifest 一次性引用（含 gate_mm / pieces 元信息）。 */
   manifest: ManifestMsg | null;
+  /**
+   * US-012 band 带内聚排 stage 统计（manifest 前唯一一次；band 关闭 → 恒 null）。
+   * 仅信息记录（状态行「腰头成带中…」由 onStage 回调驱动），不影响 phase / done。
+   */
+  stage: StageMsg | null;
   /** 所有中间解帧（mutable 数组，hook 直接 push）。 */
   frames: FrameMsg[];
   /** 最新一帧（= frames[frames.length-1]，缓存便于渲染层 O(1) 取）。 */
@@ -44,6 +49,7 @@ export const runRegistry = {
       seed,
       ws: null,
       manifest: null,
+      stage: null,
       frames: [],
       lastFrame: null,
       finalDensity: 0,

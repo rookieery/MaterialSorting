@@ -328,3 +328,65 @@ describe('US-027 NestingPage phase 转换', () => {
     expect(sizeInputRunning.disabled).toBe(true);
   });
 });
+
+describe('US-012 NestingPage band stage → 状态行（秒级提示，不进 phase 五态状态机）', () => {
+  beforeEach(() => {
+    useUploadStore.getState().reset();
+    mountNestingPage();
+  });
+
+  it('收到 stage → 状态行「腰头成带中」+ phase 仍 running（#stop 在场）+ run 不 finish', () => {
+    startSolveViaPanel();
+    const ws = mockInstances[0];
+
+    const stage: ServerMsg = {
+      type: 'stage',
+      stage: 'band',
+      fill_pct: 54.8,
+      bbox: { width_mm: 3400, height_mm: 1910 },
+      fallback: false,
+      elapsed: 15.2,
+    };
+    act(() => ws.onmessage?.({ data: JSON.stringify(stage) }));
+
+    // 状态行更新（秒级提示文案）
+    expect(statusText()).toContain('腰头成带中');
+    // **不进 phase 五态状态机**：仍 running（#stop 在场、参数编辑冻结），run 未 finish
+    expect(container!.querySelector('#stop')).not.toBeNull();
+    expect(runRegistry.list()[0].done).toBe(false);
+    expect(runRegistry.list()[0].stage).toMatchObject({ type: 'stage', stage: 'band' });
+
+    // 后续 final 正常收尾（stage 不吞生命周期）→ done + 状态行被 onDone 汇总覆盖
+    const finalMsg: ServerMsg = {
+      type: 'final',
+      density: 0.86,
+      density_sparrow: 0.88,
+      width_mm: 900,
+      elapsed: 1.2,
+      n_frames: 3,
+      n_eroded: 0,
+    };
+    act(() => ws.onmessage?.({ data: JSON.stringify(finalMsg) }));
+    expect(container!.querySelector('#restart')).not.toBeNull();
+    expect(statusText()).toContain('完成');
+    expect(statusText()).not.toContain('腰头成带中');
+  });
+
+  it('旧后端（不发 stage，直推 final）→ 状态行无「腰头成带中」，行为与 HEAD 一致', () => {
+    startSolveViaPanel();
+    const ws = mockInstances[0];
+    const finalMsg: ServerMsg = {
+      type: 'final',
+      density: 0.8,
+      density_sparrow: 0.82,
+      width_mm: 900,
+      elapsed: 1,
+      n_frames: 2,
+      n_eroded: 0,
+    };
+    act(() => ws.onmessage?.({ data: JSON.stringify(finalMsg) }));
+    expect(statusText()).not.toContain('腰头成带中');
+    expect(statusText()).toContain('完成');
+    expect(runRegistry.list()[0].stage).toBeNull();
+  });
+});

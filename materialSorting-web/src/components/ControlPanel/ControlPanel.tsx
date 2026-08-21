@@ -52,6 +52,7 @@ import {
 import type { PerTypeOverrides as PerTypeOverridesValue, SolveParams } from '../../types/v03';
 import type { StrategyResult } from '../../types/strategy';
 import type { SolvePhase } from '../../types/solvePhase';
+import type { BandConfig } from '../../types/ws';
 
 /** onStart 透传给 App 的载荷（直接喂给 useSolveRun.start 的 StartConfig 子集）。 */
 export interface ControlPanelStartPayload {
@@ -70,6 +71,12 @@ export interface ControlPanelStartPayload {
    * ControlPanel.handleStart 内经 serializeQuantities(qtyStore.quantities, sizes) 序列化。
    */
   quantities: Record<string, Record<string, number>> | null;
+  /**
+   * US-012 腰头成带：collectStartContext 三态解析（关 / 开未选 → null；开且有效 →
+   * {enabled:true,label}）。随 handleStart 的 ctx spread 自动透传，NestingPage 转发到
+   * useSolveRun.start → WS StartPayload.band。
+   */
+  band: BandConfig | null;
 }
 
 export interface ControlPanelProps {
