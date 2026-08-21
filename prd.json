@@ -2,16 +2,10 @@
   "branchName": "ralph/waist-band",
   "stories": [
     {
-      "id": "US-009",
-      "title": "waist_band 核心模块：带内聚排+组合片+展开",
-      "description": "新建 materialSorting-server/src/materialsorting/nesting_engine/waist_band.py（腰头成带核心模块，单一真相源，不 import web）。机制（依据 .docs/business/腰头成带_落地方案.md）：腰头 g 码裁片在全幅 NEST_GATE_MM 带内独立小求解聚排（禁止窄条带——1161mm 长成员 + grain ±3° 锁定下不可行）→ 裁剪实际占用 bbox → shapely.unary_union（成员原始轮廓@带内位）→ erode(d_g) → sparrow_baseline._clean_polygon → 平移归一化并记录 offset；组合片 demand=1、orientations=[0.,180.]（成带后整块不再旋转，0/180 均严格顺布纹）。\n\n具体任务：\n1. waist_band.py — build_band_plan(pid_meta, pieces_by_id, *, label, seed, gate_nest) / expand_placements / BandChunk / 异常类（DegenerateBand、BandQualityError）\n2. tests/test_waist_band.py — 黄金用例与守恒断言\n\n关键实现要求：\n- 成员 = 该 label 在 quantities 口径下 demand>0 的全部副本，size-major 排序（同码相邻）；默认整带单组合片，顶点超阈值时 simplify(0.05)\n- 成员 Item 用 pid_meta 已腐蚀多边形（不二次腐蚀），orientations=各自 tol 离散角（grain 锁 {0,180}±3°）\n- 展开权威式（黄金单测锁死）：rot_f = m.rot + c.rot；tr_f = R(c.rot)·(m.tr − offset) + c.tr，offset=(minx,miny) 为 union bbox 最小角——注意是减号\n- band seed = zlib.crc32(f'{seed}|{label}') 派生（勿用 hash()）；禁止无声 shelf 兜底，fill<45% 抛 BandQualityError\n\n验收标准：\n- 展开黄金用例 rot=180 + 带偏移成员手算对拍通过；包络断言 union(成员轮廓@展开位) ⊆ composite@主解位 ⊕ d_g（容差 0.5mm）\n- Σ展开成员条数 == Σ demand（5336 g05 → 14/14）；0 副本 ValueError、总副本 1 抛 DegenerateBand\n- 同 seed 两跑 build_band_plan 输出 JSON 相等\n- tests/test_waist_band.py 全绿且既有 pytest 零回归；模块仅依赖 stdlib+shapely+nesting_bounds/nesting_engine，python -c \"import materialsorting.nesting_engine.waist_band\" 跑通、分层依赖未反向",
-      "passes": true
-    },
-    {
       "id": "US-010",
       "title": "go/no-go 试点闸门：A/B+NFP 微基准+fill 曲线",
       "description": "在 UI/协议开发（US-011+）前跑 go/no-go 决策实验，复用 US-009 模块、不改产品代码。产物只落 out/config_runs/（探针惯例），不写 web 事实源目录（out/sparrow_baseline/ 与 out/uploads/）。\n\n具体任务：\n1. 新建 materialSorting-server/src/materialsorting/nesting_engine/waist_band_gate.py — 三组实验编排 + 报告生成\n\n实验内容：\n- 密度 A/B：5336 同配置（120s、per_type g05={d:0.4,tol:3}）band off vs on × seed {0,1,2}，逐 seed real_density 对比表；接受线 = on 的 3 seed 均值劣化 ≤1.0pt\n- NFP 吞吐微基准：主实例含 ~500 顶点 comb 组合片 vs 不含，同预算主解帧数/收敛曲线对比；吞吐劣化 >30% 判不过\n- 带内 fill-预算曲线：band 预算 {5,10,15,30,60}s 的 fill_pct 序列，标注饱和点（推荐生产预算）\n\n验收标准：\n- 闸门结论三选一明示：go / go-with-chunks（NFP 不过→US-011 起用 pair-atomic 分块）/ no-go（已决策：直接转 US-015 v1.1 混填料路线，纯腰 v1 不合入）\n- 报告落 out/config_runs/_probes/band_gate_report.json\n- python -m materialsorting.nesting_engine.waist_band_gate 跑通、分层依赖未反向",
-      "passes": false
+      "passes": true
     },
     {
       "id": "US-011",

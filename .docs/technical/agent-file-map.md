@@ -33,7 +33,8 @@ materialSorting-server/
     │   ├── sparrow_baseline.py        基线求解 + ★共享层（被 experiments/export/solver 复用）
     │   ├── sparrow_experiments.py     旋转/重合公差实验
     │   ├── labeling.py                g01+ 编号单一真相源（assign_codes；parse/commit 两管线共用）
-    │   └── waist_band.py              US-009 腰头成带核心（build_band_plan/expand_placements/BandChunk；禁 import web）
+    │   ├── waist_band.py              US-009 腰头成带核心（build_band_plan/expand_placements/BandChunk；禁 import web）
+    │   └── waist_band_gate.py         US-010 go/no-go 试点闸门（三组决策实验 CLI；实测 no-go → 转 v1.1 混填料）
     ├── web/                           FastAPI + WS 工作台（详见 agent-api-reference.md）
         ├── server.py                  app + 路由编排（GET /、/static、POST /export、POST /api/parse-dxf、POST /api/commit-to-nesting、GET /api/ptypes、WS /ws/solve）+ US-020 _PIECES_STATE 可 reload（threading.Lock immutable snapshot）+ US-004 上传解析 + US-010 commit-to-intermediate（commit 后 reload）+ US-022 intermediate 加 label + WS quantities 入参；2026-08-20 拆分后 329 行 = app 创建/静态 mount + 两个上传路由（_commit_to_nesting_sync 留守：测试 monkeypatch server 命名空间）+ include routes_views/routes_ws/strategy；state 与线程池在 runtime.py、re-export 全部拆出符号
         ├── runtime.py                 共享运行时单例（2026-08-20 自 server.py 拆出）：_PIECES_STATE 快照机制（_state_lock/_build_pieces_state/_reload_pieces_state/_get_pieces_state）+ 启动期 reload + 共享 _executor（6 workers）；import 即副作用、先于 app 创建
@@ -323,6 +324,19 @@ parse-dxf 响应（`web/server.py._build_parse_payload`）与 intermediate（`we
 | `BandChunk` | dataclass | `pid/label/polygon(归一化 erode 后)/offset/members(逐副本带内位 size-major 序)/fill_pct/bbox/seed/d_g/tol_g` + `to_dict()`（纯几何 JSON，同 seed 两跑 `json.dumps` 相等 —— 不含 wall-clock） |
 | `band_seed_for` | `(seed, label) → int` | `zlib.crc32(f'{seed}\|{label}')` 派生（勿用 `hash()` —— PYTHONHASHSEED 随机化不可跨进程重放） |
 | `DegenerateBand` / `BandQualityError` | `BandError` 子类 | 退化（总副本 1 / 轮廓 <3 顶点）/ 质量不达标（fill 低 / 守恒失败 / 散落不成块） |
+
+### `waist_band_gate.py` — US-010 go/no-go 试点闸门（三组决策实验 CLI）
+
+UI/协议开发（US-011+）前的决策实验编排，复用 `waist_band` 模块、**不改产品代码**。入口 `python -m materialsorting.nesting_engine.waist_band_gate [--quick]`（`--quick` = 秒级冒烟档，只验证管线）。**分层禁 import web/cli**（AST 守卫在 `tests/test_waist_band_gate.py`）：`build_probe_pid_meta(pieces, *, sizes, per_type, quantities)` 是 `web.solver.build_pid_meta` 的探针同构镜像（两 arm 共享同一镜像 = 同源同构，不跨口径对拍生产 0.9063 基线）；`main_items(pid_meta, *, exclude_label, composite)` 是 `build_instance` 的探针镜像（exclude_label 模拟 US-011 exclude_labels 语义）。**只读** `paths.INTERMEDIATE`（非 5336 母版 fail-fast），产物只落 `out/config_runs/_probes/band_gate_report.json`。
+
+| 函数 | 判据 |
+|------|------|
+| `run_density_ab` | 实验①：5336 P0 同配置（120s、per_type 全表、sizes 31~38、`_prod_quantities()` 同 probe_base.json）band off vs on × seed {0,1,2}，逐 seed `real_density`（`_real_density_pct` = total_area/(width×min(gate,1910))，与 P0 87.45% 同口径）；接受线 = on 的 seed 均值劣化 ≤`DENSITY_ACCEPT_PT`=1.0pt |
+| `run_nfp_bench` | 实验②：主实例（band 成员移出基实例）± comb 组合片（真实 build_band_plan 产物，实测 ~700 顶点 > 预估 500）同预算（60s）帧率对跑（`solve_collect` 帧采集）；吞吐劣化 >`NFP_DEGRADE_ACCEPT_PCT`=30% 判不过；收敛曲线降采样（`_downsample` ≤200 点）随报告落盘 |
+| `run_fill_curve` + `fill_saturation` | 实验③：band 预算 {5,10,15,30,60}s 扫描 fill_pct；饱和点 = 距序列最大 fill ≤`FILL_SATURATION_PT`=0.5pt 的最小预算（最大 fill 恰在最大预算处 → 未饱和注记） |
+| `decide(density_pass, nfp_pass)` | 结论三选一：`go`（双过）/ `go-with-chunks`（仅 NFP 挂 → US-011 pair-atomic 分块）/ `no-go`（密度硬闸门挂 → 转 US-015 v1.1 混填料路线，纯腰 v1 不合入） |
+
+**2026-08-21 实测结论 `no-go`**（报告在案）：① A/B 均值劣化 **1.204pt FAIL**（seed0 +0.19 / seed1 −0.08 / seed2 **+3.49** —— off 臂 seed2 波动到 90.04% 拖垮均值，seed 方差 ≳ 组间差）；② NFP 吞吐劣化 **35.0% FAIL**（27.8 → 18.1 帧/s）；③ fill 曲线 51.8/51.5/**61.1**/54.5/54.8 无稳定平台（15s 局部最优即饱和点，与初值 15s 恰合）。
 
 ## web/ — FastAPI + WebSocket 工作台
 
