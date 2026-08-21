@@ -1,4 +1,47 @@
 {
-  "branchName": "ralph/strategy-se-race-web",
-  "stories": []
+  "branchName": "ralph/waist-band",
+  "stories": [
+    {
+      "id": "US-009",
+      "title": "waist_band 核心模块：带内聚排+组合片+展开",
+      "description": "新建 materialSorting-server/src/materialsorting/nesting_engine/waist_band.py（腰头成带核心模块，单一真相源，不 import web）。机制（依据 .docs/business/腰头成带_落地方案.md）：腰头 g 码裁片在全幅 NEST_GATE_MM 带内独立小求解聚排（禁止窄条带——1161mm 长成员 + grain ±3° 锁定下不可行）→ 裁剪实际占用 bbox → shapely.unary_union（成员原始轮廓@带内位）→ erode(d_g) → sparrow_baseline._clean_polygon → 平移归一化并记录 offset；组合片 demand=1、orientations=[0.,180.]（成带后整块不再旋转，0/180 均严格顺布纹）。\n\n具体任务：\n1. waist_band.py — build_band_plan(pid_meta, pieces_by_id, *, label, seed, gate_nest) / expand_placements / BandChunk / 异常类（DegenerateBand、BandQualityError）\n2. tests/test_waist_band.py — 黄金用例与守恒断言\n\n关键实现要求：\n- 成员 = 该 label 在 quantities 口径下 demand>0 的全部副本，size-major 排序（同码相邻）；默认整带单组合片，顶点超阈值时 simplify(0.05)\n- 成员 Item 用 pid_meta 已腐蚀多边形（不二次腐蚀），orientations=各自 tol 离散角（grain 锁 {0,180}±3°）\n- 展开权威式（黄金单测锁死）：rot_f = m.rot + c.rot；tr_f = R(c.rot)·(m.tr − offset) + c.tr，offset=(minx,miny) 为 union bbox 最小角——注意是减号\n- band seed = zlib.crc32(f'{seed}|{label}') 派生（勿用 hash()）；禁止无声 shelf 兜底，fill<45% 抛 BandQualityError\n\n验收标准：\n- 展开黄金用例 rot=180 + 带偏移成员手算对拍通过；包络断言 union(成员轮廓@展开位) ⊆ composite@主解位 ⊕ d_g（容差 0.5mm）\n- Σ展开成员条数 == Σ demand（5336 g05 → 14/14）；0 副本 ValueError、总副本 1 抛 DegenerateBand\n- 同 seed 两跑 build_band_plan 输出 JSON 相等\n- tests/test_waist_band.py 全绿且既有 pytest 零回归；模块仅依赖 stdlib+shapely+nesting_bounds/nesting_engine，python -c \"import materialsorting.nesting_engine.waist_band\" 跑通、分层依赖未反向",
+      "passes": true
+    },
+    {
+      "id": "US-010",
+      "title": "go/no-go 试点闸门：A/B+NFP 微基准+fill 曲线",
+      "description": "在 UI/协议开发（US-011+）前跑 go/no-go 决策实验，复用 US-009 模块、不改产品代码。产物只落 out/config_runs/（探针惯例），不写 web 事实源目录（out/sparrow_baseline/ 与 out/uploads/）。\n\n具体任务：\n1. 新建 materialSorting-server/src/materialsorting/nesting_engine/waist_band_gate.py — 三组实验编排 + 报告生成\n\n实验内容：\n- 密度 A/B：5336 同配置（120s、per_type g05={d:0.4,tol:3}）band off vs on × seed {0,1,2}，逐 seed real_density 对比表；接受线 = on 的 3 seed 均值劣化 ≤1.0pt\n- NFP 吞吐微基准：主实例含 ~500 顶点 comb 组合片 vs 不含，同预算主解帧数/收敛曲线对比；吞吐劣化 >30% 判不过\n- 带内 fill-预算曲线：band 预算 {5,10,15,30,60}s 的 fill_pct 序列，标注饱和点（推荐生产预算）\n\n验收标准：\n- 闸门结论三选一明示：go / go-with-chunks（NFP 不过→US-011 起用 pair-atomic 分块）/ no-go（已决策：直接转 US-015 v1.1 混填料路线，纯腰 v1 不合入）\n- 报告落 out/config_runs/_probes/band_gate_report.json\n- python -m materialsorting.nesting_engine.waist_band_gate 跑通、分层依赖未反向",
+      "passes": false
+    },
+    {
+      "id": "US-011",
+      "title": "后端编排接线：exclude_labels+帧前展开+stage",
+      "description": "后端编排接线，详见 tasks/prd-waist-band.md US-011。\n\n具体任务：\n1. materialSorting-server/src/materialsorting/web/solver.py — build_instance 加 exclude_labels 参数（Item 构造层跳过 band 成员；禁止用 quantities=0 移除——会连 pid_meta/total_area/manifest 一起抹掉，密度掉 ~12pt）；solve_with_callback_proc 的 drain 循环加 stage 转发分支（现未知 kind 静默丢弃）\n2. materialSorting-server/src/materialsorting/web/solve_worker.py — _emit_placed（单点序列化器，三处发射点 :88/:92/:113 共享）挂组合片展开回成员 placement；band 子求解以线程方式跑在 worker 进程内（routes_ws._terminate_solve_process 的 terminate 不级联孙进程）\n3. materialSorting-server/src/materialsorting/web/routes_ws.py — StartPayload 解析 band 键（quantities 解析区后）+ 服务端校验\n4. 新增 tests/test_waist_band_ws.py（TestClient 套路）\n\n关键实现要求：\n- band 键 {enabled, label, ack?}：缺省/null/{} = 关闭，旧行为不变；label 须匹配 ^g\\d+$ 且存在于当前母版且该 g 码 quantities>0，否则结构化 error 早退；最小边 <60mm 或长宽比 >6 的 label 需显式 ack:true 才执行\n- stage 消息 {'type':'stage','stage':'band', fill_pct, bbox, fallback:false, elapsed} 在 manifest 前发一次；build 失败只投 error 不投 manifest（test_solve_proc.py 既有契约）\n- 组合片 pid（WB_ 前缀）永不出现在 manifest/frame/final；展开后成员 pid 按 demand 出现 N 次（demand 多副本不变量）\n- band 几何工件落 paths.OUT_DIR/band_runs/*.json（分块轮廓+成员带内位+fill+band_elapsed；写失败仅 warn）\n\n验收标准：\n- band 缺省：test_solve_proc.py / test_ws_stop.py 零改动通过；band on/off 下 manifest 的 total_area 与 pieces 列表逐字段一致（一致性单测）\n- band 开启：WS 依序收到 stage → manifest（无 WB_）→ frames/final；band 阶段 stop/断开后无存活 python 子进程（线程化验证用例）\n- tests/test_waist_band_ws.py 全绿；ms-web 启动无回归、分层依赖未反向",
+      "passes": false
+    },
+    {
+      "id": "US-012",
+      "title": "前端参数链路：params/types/useSolveRun 透传",
+      "description": "前端参数链路：把 band 配置从前端表单透传到 WS 并呈现带内进度。详见 tasks/prd-waist-band.md US-012。\n\n具体任务：\n1. materialSorting-web/src/lib/params.ts — FormState 加 band_enabled/band_label；collectStartContext band 三态解析（band 关 / 开但未选编号 → null；开且有效 → {enabled:true,label}）；bandMemberCount 校验函数（missing→1、显式 0、未选码过滤三态，与后端 demand missing→1 口径对齐）\n2. materialSorting-web/src/types/ws.ts — BandConfig + StageMsg 类型；StartPayload 加 band?: BandConfig|null\n3. materialSorting-web/src/hooks/useSolveRun.ts — band 透传 + stage 分支写 rec.stage（run 不 finish）\n4. materialSorting-web/src/components/NestingPage.tsx — onStage → 状态行「腰头成带中…」（秒级提示，不进 phase 五态状态机）\n\n验收标准：\n- StartPayload 序列化：band 关/开未选 → 无 band 键或 null；开且有效 → {enabled:true,label}\n- 收到 stage 消息状态行更新且 run 不 finish；未知消息类型仍 default:break 静默忽略（旧后端不发 stage 也安全）\n- params.test.ts / useSolveRun.test.tsx 扩展用例全绿；npm run build（tsc --noEmit && vite build）通过",
+      "passes": false
+    },
+    {
+      "id": "US-013",
+      "title": "弹窗布局设置 UI+校验+互斥+预览回显",
+      "description": "高级配置弹窗「布局设置」分区 UI + 启动校验 + 策略互斥 + 预求解预览。详见 tasks/prd-waist-band.md US-013。（组件路径以仓库实际位置为准，PerTypeOverridesModal/ControlPanel 预计在 materialSorting-web/src/components/ControlPanel/ 下）\n\n具体任务：\n1. PerTypeOverridesModal.tsx — 新增「布局设置」分区标题；子标题「开启腰头成带」+ 勾选框；右侧子标题「腰头编号」+ 下拉框（值域 = /api/ptypes representatives 动态 g 码，80×80 缩略图 + 徽章复用现有模式，fetch 失败降级纯文字列表不阻塞）；draft+confirm 语义、未勾选禁用下拉，confirm 写回 form.band_*，取消/遮罩/ESC 丢弃草稿（既有双层 modal 约定不破坏）\n2. ControlPanel.tsx — 启动校验（勾选未选编号 / 选中 g 码数量全 0 → 开始求解按钮置灰 + StatusLine 具体文案）；band 开启时「高级运行」入口 disabled + title 说明原因；QtyMatrix 该 g 码某码数量为奇数时警告「该码不成对」\n3. 后端新增 POST /api/band/preview — body 同 band 配置，executor 线程跑 5s 预算 build_band_plan，回显 {fill_pct, bbox} 对照 break-even 参考线（62.4~63.6%）；预览失败不阻塞确认（降级提示）\n4. materialSorting-web/src/style.css — .per-type-band 分区等暗色样式（#26282e 背景 / #2ea06c 强调色系，不引入 CSS 框架，scale(1,-1) 坐标系约定不变）\n5. PerTypeOverridesModal.test.tsx / ControlPanel.test.tsx — vitest 扩展\n\n验收标准：\n- 下拉值域动态、confirm 写回生效；奇数数量码显示不成对警告；band 与策略运行互斥生效\n- vitest 扩展全绿；npm run build 通过\n- 通过浏览器验证：弹窗布局与暗色主题一致、勾选→下拉→确认→求解状态行 stage 提示全链路目检",
+      "passes": false
+    },
+    {
+      "id": "US-014",
+      "title": "A/B 验收与形态判据闭环",
+      "description": "5336 同源同构终验 + 形态判据 + 导出验证 + 文档更新，以可证方式达到验收线后合入。详见 tasks/prd-waist-band.md US-014。\n\n具体任务：\n1. A/B 终验跑批 — band off vs on × seed {0,1,2} 同源同构对照（注意与生产 0.9063 基线不同构：uploads 源、g05 d=0.0、kill 跑法；只与同配置 off 对照）\n2. 形态判据 — 同码成对相邻率（同 pid 副本中心距 ≤ (w_i+w_j)/2+ε）= 100%；带 span 阈值与成簇目测；截图落 .docs/\n3. 导出验证 — PNG/R12-DXF/PLT 三格式成功，后端日志 grep 无「导出跳过：pid」（WB_ 泄漏哨兵）；band 关闭路径产物与 HEAD 行为一致\n4. CLAUDE.md 数据流主线补 band 支线一句 + .docs/business/ A/B 报告落盘\n\n验收标准：\n- 同码成对相邻率 100%；带形态成簇无散落（截图在案）；密度劣化 ≤1.0pt\n- 同 seed 重跑 placed_items/density 序列逐帧相等（非 byte-identity——帧嵌 wall-clock elapsed）；band_runs 工件可回放对拍\n- pytest + npm run build + npm test 全绿",
+      "passes": false
+    },
+    {
+      "id": "US-015",
+      "title": "v1.1 填料混带（任意 g 码多选）",
+      "description": "v1.1 填料混带——唯一实测过 break-even 线的形态（混带 72.5% > 线 62.4~63.6%，纯腰 54.8~60.9% 不过线）。填料进 band 子求解并进 union，填掉封闭肋间内腔（v1 死区，spyrrow 无洞支持）。详见 tasks/prd-waist-band.md US-015。\n\n具体任务：\n1. WS 协议 — band.fillers: [labels]（版师确认无白名单约束：任意 g 码多选，带数量上限，不可选主 g 码）\n2. web 后端 — 填料成员与腰成员同一展开/守恒/泄漏口径；主实例同步扣减（同一 exclude_labels 路径）；band 内 d 适度放大（2~4mm）把肋间切口端部开到小件可入宽度\n3. 前端 — UI 多选（缩略图与腰头编号下拉同源）\n\n验收标准：\n- band.fillers 服务端校验（填料 g 码存在、数量上限、与主 g 码不同）；扣减后 total_area/manifest 与 off 口径一致（一致性单测沿用 US-011）\n- A/B：混带 on 的带区域效率（带板 bbox 内腰+填料面积/占用）≥ break-even 参考线，全局劣化 ≤1.0pt\n- 全量测试零回归 + 浏览器目检多选交互",
+      "passes": false
+    }
+  ]
 }

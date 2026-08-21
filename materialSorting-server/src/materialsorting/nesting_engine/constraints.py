@@ -23,6 +23,35 @@ MAX_OVERLAP_MM = 10.0
 MAX_ROTATION_TOL_DEG = 45.0
 
 
+def discretize_orientations(tol: float):
+    """v0.3 旋转公差 tol(度) → spyrrow 离散角度集。
+
+    spyrrow 的 allowed_orientations 只接受离散列表或 None（不支持连续公差，见 .pyi）；
+    故 v0.3 的「±N° 连续公差」离散化为角度集合。
+
+    tol=0 → [0,180]（严格布纹线，= 阶段 A baseline）。
+    tol>0 → 在 0°/180° 附近 ±tol 内按自适应步进离散：tol≤5 用 1°、否则 5°。
+      例 tol=2 → [0,1,2,178,179,180,181,182,358,359]（10 个，外部片几乎锁布纹线）
+      例 tol=45 → 0/180 附近 ±45°/步进5° ≈ 38 个（接近自由）
+    返回 sorted list[float]，归一化到 [0,360)。实测 spyrrow 对大角度集不敏感（72 角度不报错/不降速）。
+
+    2026-08-21（US-009）自 ``web/solver.py`` 移入：旋转公差离散属约束层职责，且
+    ``nesting_engine/waist_band`` 需要同一口径（成员带内 orientations）但**禁 import
+    web**（分层单向）。``web/solver.py`` re-export 本函数，旧 import 路径零改动。
+    """
+    if tol <= 0:
+        return [0.0, 180.0]
+    step = 1.0 if tol <= 5 else 5.0
+    angs = set()
+    for base in (0.0, 180.0):
+        k = 0
+        while k * step <= tol + 1e-9:
+            for off in (k * step, -k * step):
+                angs.add(round((base + off) % 360.0, 2))
+            k += 1
+    return sorted(angs)
+
+
 def erode_bitmap(bm: np.ndarray, d_pix: int) -> np.ndarray:
     """位图向内腐蚀 d_pix 像素（4 邻域迭代形态学腐蚀）。d_pix<=0 原样返回。
 

@@ -47,7 +47,10 @@ import time
 from .. import paths
 from ..nesting_engine.sparrow_baseline import _clean_polygon, size_color
 from ..nesting_engine.sparrow_experiments import erode_polygon
-from ..nesting_engine.constraints import MAX_OVERLAP_MM, MAX_ROTATION_TOL_DEG
+from ..nesting_engine.constraints import (
+    MAX_OVERLAP_MM, MAX_ROTATION_TOL_DEG,
+    discretize_orientations as _discretize_orientations,
+)
 from ..nesting_bounds.load_pieces import PLOT_SAFE_MAX_Y_MM
 
 DEFAULT_INTERMEDIATE = paths.INTERMEDIATE
@@ -70,28 +73,14 @@ def load_pieces(intermediate_path: str = DEFAULT_INTERMEDIATE):
 
 
 def discretize_orientations(tol: float):
-    """v0.3 旋转公差 tol(度) → spyrrow 离散角度集。
+    """v0.3 旋转公差 tol(度) → spyrrow 离散角度集（re-export 保旧 import 路径）。
 
-    spyrrow 的 allowed_orientations 只接受离散列表或 None（不支持连续公差，见 .pyi）；
-    故 v0.3 的「±N° 连续公差」离散化为角度集合。
-
-    tol=0 → [0,180]（严格布纹线，= 阶段 A baseline）。
-    tol>0 → 在 0°/180° 附近 ±tol 内按自适应步进离散：tol≤5 用 1°、否则 5°。
-      例 tol=2 → [0,1,2,178,179,180,181,182,358,359]（10 个，外部片几乎锁布纹线）
-      例 tol=45 → 0/180 附近 ±45°/步进5° ≈ 38 个（接近自由）
-    返回 sorted list[float]，归一化到 [0,360)。实测 spyrrow 对大角度集不敏感（72 角度不报错/不降速）。
+    US-009（2026-08-21）起真相源在 ``nesting_engine/constraints.py``（旋转公差离散属
+    约束层职责，且 ``nesting_engine/waist_band`` 同口径消费但分层禁 import web）。
+    语义零改动：tol=0 → [0,180]；tol>0 → 0°/180° 附近 ±tol 自适应步进（≤5° 用 1°，
+    否则 5°），返回 sorted list[float] 归一化 [0,360)。
     """
-    if tol <= 0:
-        return [0.0, 180.0]
-    step = 1.0 if tol <= 5 else 5.0
-    angs = set()
-    for base in (0.0, 180.0):
-        k = 0
-        while k * step <= tol + 1e-9:
-            for off in (k * step, -k * step):
-                angs.add(round((base + off) % 360.0, 2))
-            k += 1
-    return sorted(angs)
+    return _discretize_orientations(tol)
 
 
 # ------------------------------------------------ US-006 solver_opts 清洗与换算
