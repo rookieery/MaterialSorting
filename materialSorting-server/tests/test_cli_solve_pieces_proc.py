@@ -151,6 +151,50 @@ def _fake_proc_solver(frames, final=None):
     return _impl
 
 
+# ------------------------------------------------------- band 透传（2026-08-22）
+
+
+def test_solve_pieces_passes_band_worker_form(iso_env, monkeypatch, tmp_path):
+    """cfg.band（config 原形态 {'enabled','label'}）→ solve_with_callback_proc
+    的 worker 形态 ``band={'label': ...}``；无 band → None（现行行为）；显式
+    ``band=`` 参数优先于 cfg.band。"""
+    _, _, run_dir, cfg0 = iso_env
+    captured: dict = {}
+
+    def _impl(pieces, gate_mm, solve_params, *, on_manifest, on_report,
+              on_process=None, band=None, **kw):
+        captured['band'] = band
+        proc = _FakeProc()
+        if on_process is not None:
+            on_process(proc)
+        on_manifest({'pid_meta': {}, 'total_area': 0.0, 'n_eroded': 0,
+                     'gate_mm': float(gate_mm)})
+        fr = _frame(0, 0.5)
+        on_report(dict(fr))
+        final = {'type': 'final', 'density': fr['density'],
+                 'density_sparrow': fr['density_sparrow'],
+                 'width_mm': fr['width_mm'], 'elapsed': fr['elapsed'],
+                 'placed_items': fr['placed_items']}
+        return proc, final, 42.0, None
+
+    monkeypatch.setattr(web_solver, 'solve_with_callback_proc', _impl)
+
+    # ① cfg 无 band 键 → 透传 None（现行行为，零回归锚点）。
+    solve_pieces(cfg0, run_dir, seed=0)
+    assert captured['band'] is None
+
+    # ② cfg.band 开启 → worker 形态（enabled 剥掉，solve_worker 只认 label）。
+    cfg_band = load_config(_write_config(
+        tmp_path / 'cfg_band.json', cfg0.master_dxf,
+        band={'enabled': True, 'label': 'g01'}))
+    solve_pieces(cfg_band, run_dir, seed=0)
+    assert captured['band'] == {'label': 'g01'}
+
+    # ③ 显式 band 参数优先于 cfg.band（calibration 等注入点）。
+    solve_pieces(cfg_band, run_dir, seed=0, band={'label': 'g02'})
+    assert captured['band'] == {'label': 'g02'}
+
+
 # ------------------------------------------------------- AC#3 curve / best_frame
 
 

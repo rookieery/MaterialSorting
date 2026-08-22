@@ -1,9 +1,9 @@
 """配置文件驱动的排料求解 · 配置加载与校验（CLI 第一道闸）。
 
-``load_config(path)`` 读取 7 键 JSON 配置（示例 ``data/configs/5336_coded_sizes32-38.json``），
+``load_config(path)`` 读取 8 键 JSON 配置（示例 ``data/configs/5336_coded_sizes32-38.json``），
 拼写 / 类型 / 路径 / 数值错误在管线启动前就地拦下（中文 ``ConfigError``，消息含字段名）。
 
-7 键 schema（FR-1；除 seeds 外字段名与 WS StartPayload 契约 1:1）：
+8 键 schema（FR-1；除 seeds 外字段名与 WS StartPayload 契约 1:1）：
 
     master_dxf  str    必填。母版 DXF 路径：绝对直用；相对先按 CWD 再按仓库根
                        （paths.REPO_DIR）解析，均失败报错并列出两个候选绝对路径。
@@ -20,6 +20,13 @@
                        label 命中但码号缺 → 0 跳过；label 不在 → 1）。码号键必须为
                        数字字符串或 'null'（求解按 str(size) 查 demand，JSON 数字键
                        查不到）；数量为 JSON 数字 ≥0 的整数（字符串 "1" 报错）。
+    band        dict   可选。腰头成带 ``{'enabled': bool, 'label': g码}``（与 WS
+                       StartPayload.band 1:1，web 策略入口前端直传）。enabled=false
+                       或键缺省 = 关闭（BandConfig 字段恒 None）；enabled=true 时
+                       label 须匹配 ``^g\\d+$``（routes_ws._BAND_LABEL_RE 同口径）。
+                       label 是否存在于母版 / 该 g 码 quantities>0 不在本层校验
+                       （config 加载期无 pieces 事实源）—— 求解期由
+                       ``solve_worker._build_band`` fail-fast（「成带失败」error）。
 
 本模块保持「纯校验」定位：模块级 import 仅标准库（无兄弟包 import、导入无副作用，
 ``python -m materialsorting.cli.config`` 直接运行零输出零副作用）；对 paths /
@@ -36,8 +43,9 @@ from typing import Any, NoReturn
 
 __all__ = ['ConfigError', 'NestRunConfig', 'load_config']
 
-# 7 键 schema（FR-1）。旧 seed / multi_seed / seed_count 不在其中 → 按未知键报错。
-TOP_LEVEL_KEYS = ('master_dxf', 'sizes', 'gate_mm', 'time', 'seeds', 'per_type', 'quantities')
+# 8 键 schema（FR-1）。旧 seed / multi_seed / seed_count 不在其中 → 按未知键报错。
+TOP_LEVEL_KEYS = ('master_dxf', 'sizes', 'gate_mm', 'time', 'seeds', 'per_type',
+                  'quantities', 'band')
 # 必填键：CLI 无 web 的 intermediate 兜底（intermediate 本身由本配置生成）。
 _REQUIRED_KEYS = ('master_dxf', 'gate_mm')
 # 已退役的旧种子字段：未知键报错时附迁移提示（→ seeds 列表）。
@@ -49,6 +57,10 @@ _SIZE_KEY_RE = re.compile(r'^[0-9]+$')
 _NULL_SIZE_KEY = 'null'
 # per_type 值对象仅接受的键（d=重合 mm / tol=旋转公差 °）。
 _PER_TYPE_KEYS = ('d', 'tol')
+# band.label 形（与 routes_ws._BAND_LABEL_RE 同口径：g + 任意位数字，如 g05/g105）。
+_BAND_LABEL_RE = re.compile(r'^g\d+$')
+# band 值对象仅接受的键（与 WS StartPayload.band / 前端 BandConfig 1:1）。
+_BAND_KEYS = ('enabled', 'label')
 
 _DEFAULT_TIME = 300          # 缺省单轮求解时长（秒）
 _DEFAULT_SEEDS = (0,)        # 缺省种子列表
@@ -213,9 +225,33 @@ def _check_quantities(name: str, raw: Any) -> dict[str, dict[str, int]]:
     return out
 
 
+def _check_band(name: str, raw: Any) -> dict | None:
+    """band → ``{'enabled': True, 'label': g码}`` | None（显式关闭与缺省同线）。
+
+    与 WS StartPayload.band 契约 1:1：``enabled=false`` → None（关闭，等价键缺省）；
+    ``enabled=true`` 时 label 须为匹配 ``^g\\d+$`` 的字符串。label 存在性 /
+    quantities>0 不在此层（config 加载期无 pieces 事实源）—— 求解期
+    ``solve_worker._build_band`` fail-fast 兜底。
+    """
+    if not isinstance(raw, dict):
+        _fail(name, f'须为对象 {{enabled, label}}，当前为 {type(raw).__name__}: {raw!r}')
+    unknown = [k for k in raw if k not in _BAND_KEYS]
+    if unknown:
+        _fail(name, f'含未知键 {unknown[0]!r}（仅支持 enabled / label）')
+    enabled = raw.get('enabled')
+    if not isinstance(enabled, bool):
+        _fail(f'{name}.enabled', f'须为 JSON 布尔，当前为 {enabled!r}')
+    if not enabled:
+        return None
+    label = raw.get('label')
+    if not isinstance(label, str) or not _BAND_LABEL_RE.match(label):
+        _fail(f'{name}.label', f'须为 g 码字符串（如 "g05"，匹配 ^g\\d+$），当前为 {label!r}')
+    return {'enabled': True, 'label': label}
+
+
 @dataclass(frozen=True)
 class NestRunConfig:
-    """校验通过的排料运行配置（load_config 的产物，字段与 7 键 schema 一一对应）。"""
+    """校验通过的排料运行配置（load_config 的产物，字段与 8 键 schema 一一对应）。"""
 
     master_dxf: Path                                        # 已解析为存在的绝对路径
     gate_mm: float                                          # 门幅 mm（>0）
@@ -224,6 +260,7 @@ class NestRunConfig:
     seeds: list[int] = field(default_factory=lambda: list(_DEFAULT_SEEDS))
     per_type: dict[str, dict[str, float]] = field(default_factory=dict)
     quantities: dict[str, dict[str, int]] | None = None     # None = 全片 demand=1
+    band: dict | None = None        # None = 关闭；开启 = {'enabled': True, 'label': g码}
 
 
 def load_config(path: str | Path) -> NestRunConfig:
@@ -260,4 +297,5 @@ def load_config(path: str | Path) -> NestRunConfig:
         per_type=_check_per_type('per_type', raw['per_type']) if 'per_type' in raw else {},
         quantities=(_check_quantities('quantities', raw['quantities'])
                     if 'quantities' in raw else None),
+        band=_check_band('band', raw['band']) if 'band' in raw else None,
     )

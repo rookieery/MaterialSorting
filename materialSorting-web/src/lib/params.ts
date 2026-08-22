@@ -300,8 +300,9 @@ export interface StartContext {
   quantities: Record<string, Record<string, number>> | null;
   /**
    * US-012 collectBand 三态解析：关 / 开未选 → null；开且有效 → {enabled:true,label}。
-   * 策略 run（StrategyRunModal.handleExec）只拷白名单键，band 不进 /api/strategy/start
-   * （FR-6 band 与策略运行互斥）；主画布 WS start 全量透传。
+   * 主画布 WS start 与策略 run（StrategyRunModal.handleExec）同源透传
+   * （2026-08-22 解除互斥：band 进 /api/strategy/start → 8 键 config → CLI
+   * solve_worker 进程内成带 + 展开）。
    */
   band: BandConfig | null;
 }

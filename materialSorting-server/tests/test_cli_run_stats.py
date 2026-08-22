@@ -178,6 +178,21 @@ def test_run_stats_class_key_stable_and_sensitive():
         args[0], args[1], {'g01': {'32': 1, '31': 2}}, {'g01': {'d': 2}})
 
 
+def test_run_stats_class_key_band_component():
+    """band 组件（2026-08-22）：None/空 = 旧口径逐字节一致（历史样本继续命中）；
+    band on → 新 key（不与 band off 混同分布）。"""
+    args = ('/m/master.dxf', [31, 32], {'g01': {'31': 2}}, {'g01': {'d': 2}})
+    legacy_key = run_stats_class_key(*args)          # 旧 4 参调用形（默认无 band）
+    # None / 空串不加组件 → 哈希输入与旧公式逐字节一致。
+    assert run_stats_class_key(*args, band_label=None) == legacy_key
+    assert run_stats_class_key(*args, band_label='') == legacy_key
+    # band on → 独立 key；不同 g 码也互不相同。
+    band_key = run_stats_class_key(*args, band_label='g05')
+    assert band_key != legacy_key
+    assert band_key != run_stats_class_key(*args, band_label='g06')
+    assert len(band_key) == 10
+
+
 def test_load_run_stats_tolerates_missing_and_bad_lines(tmp_path):
     """缺文件 → []；坏 JSON 行 / 非 dict 行跳过；空行剔除。"""
     assert load_run_stats(tmp_path / 'nope.jsonl') == []

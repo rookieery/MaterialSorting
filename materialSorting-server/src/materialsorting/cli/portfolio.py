@@ -136,7 +136,8 @@ THETA0_MARGIN = 0.003     # θ₀ = min(target, 历史最大 best_density + marg
 # -------------------------------------------------------------- run 统计库（PC-009）
 
 
-def run_stats_class_key(source, sizes, quantities, per_type) -> str:
+def run_stats_class_key(source, sizes, quantities, per_type,
+                        band_label=None) -> str:
     """实例类指纹：``sha1(规范化 JSON)[:10]``（十六进制短哈希）。
 
     组件 = ``(source, sizes, quantities, per_type)`` —— 母版（绝对路径字符串）+
@@ -144,11 +145,18 @@ def run_stats_class_key(source, sizes, quantities, per_type) -> str:
     dict 组件经 ``sort_keys`` 规范化（键序无关），同输入必同 key。写入侧
     （``run_config`` 结束追加）与读取侧（θ₀ 校准）共用本函数，class 口径单一
     真相源。
+
+    ``band_label``（2026-08-22）：腰头成带 g 码。**None / 空时不加组件** —— 哈希
+    输入与旧口径逐字节一致（band off 的历史样本继续命中）；非空时加 ``'band'``
+    组件成新 key —— band on 的密度整体上移（实测 +2.27pt），与 band off 混同
+    分布会污染 θ₀ 校准的历史最大 best_density 锚。
     """
+    comp = {'source': str(source), 'sizes': sizes, 'quantities': quantities,
+            'per_type': per_type}
+    if band_label:
+        comp['band'] = band_label
     payload = json.dumps(
-        {'source': str(source), 'sizes': sizes, 'quantities': quantities,
-         'per_type': per_type},
-        ensure_ascii=False, sort_keys=True, separators=(',', ':'))
+        comp, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
     return hashlib.sha1(payload.encode('utf-8')).hexdigest()[:10]
 
 

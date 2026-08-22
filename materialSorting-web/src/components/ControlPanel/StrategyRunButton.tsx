@@ -26,11 +26,11 @@ export interface StrategyRunButtonProps {
   buildStartContext: () => StartContext;
   /** US-006 应用到主画布回调（未传 → 应用按钮 disabled）。 */
   onApplyStrategy?: (result: StrategyResult) => void;
-  /** 入口 disabled（solving || 未 commit || band 开启互斥，ControlPanel 计算）。 */
+  /** 入口 disabled（solving || 未 commit，ControlPanel 计算；band 已不互斥）。 */
   disabled?: boolean;
   /**
-   * US-013 置灰原因悬停说明（band 开启互斥时传「腰头成带与策略运行互斥…」；
-   * 缺省不渲染 title —— solving / 未 commit 的既有置灰不加说明）。
+   * 置灰原因悬停说明（缺省不渲染 title —— solving / 未 commit 的既有置灰不加
+   * 说明；band 开启互斥的 title 已随 2026-08-22 解除互斥移除）。
    */
   title?: string;
 }

@@ -208,6 +208,31 @@ def _patch(monkeypatch, traj, *, solve=None, sidecar=False, calls=None):
     return rc_mod, lns_mod
 
 
+# ------------------------------------------------------- band 开启 → LNS 跳过
+
+
+def test_lns_skipped_when_band_enabled(iso_env, capsys, monkeypatch):
+    """band 开启 + --lns → LNS 环节跳过（warn，不拆散版师带形态）：无
+    result_lns.json、result.json 无 lns 段、退出 0、config 段回显 band。"""
+    tmp, runs, master = iso_env
+    cfg_path = _write_config(tmp / 'cfg.json', master,
+                             band={'enabled': True, 'label': 'g01'})
+    _patch(monkeypatch, {0: [(0.5, 'holey')]})
+    rc = main([str(cfg_path), '--time', '2', '--lns', '--lns-time', '3',
+               '--lns-rounds', '2'])
+    assert rc == 0
+    cap = capsys.readouterr()
+    # 启动说明行 + 守卫 warn（stderr）都在场；真正的 LNS 执行行不在。
+    assert 'LNS 后处理: time=3s rounds=2' in cap.out
+    assert 'LNS 后处理跳过' in cap.err and 'g01' in cap.err
+    assert '[LNS] 前' not in cap.out
+    (rd,) = list(runs.iterdir())
+    assert not (rd / 'result_lns.json').exists()
+    doc = json.loads((rd / 'result.json').read_text(encoding='utf-8'))
+    assert 'lns' not in doc
+    assert doc['config']['band'] == {'enabled': True, 'label': 'g01'}
+
+
 # ------------------------------------------------------- AC#1 改进 / 不优路径
 
 

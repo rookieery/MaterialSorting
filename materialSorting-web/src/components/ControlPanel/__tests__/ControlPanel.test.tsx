@@ -655,7 +655,8 @@ describe("ControlPanel start guard (US-003 全 0 拦截)", () => {
 
 // ---------------------------------------------------------------- US-013 band
 // 布局设置接线：弹窗勾选/下拉/确定写回 form.band_* → 启动闸门（置灰 + StatusLine
-// band 段文案）/ 策略互斥（strategy-btn disabled + title）/ start payload band 生效。
+// band 段文案）/ 策略入口不互斥（2026-08-22 解除，band 随 start 载荷透传）/
+// start payload band 生效。
 describe("ControlPanel band 接线 (US-013)", () => {
   /** 2 码母版（28: g01；30: g01+g02），hydrate 默认 1（bandMemberCount 口径对齐）。 */
   function setupBandDoc(): void {
@@ -767,24 +768,17 @@ describe("ControlPanel band 接线 (US-013)", () => {
     expect(cfg.band).toEqual({ enabled: true, label: "g01" });
   });
 
-  it("band 开启 → strategy-btn 置灰 + title 互斥说明；band 关闭恢复可用", async () => {
+  it("band 开启 → strategy-btn 仍可用（2026-08-22 解除互斥，band 随 start 载荷透传）", async () => {
     setupBandDoc();
     renderPanel(() => {});
     // band 关闭：doc 非空 + 非 solving → 可用，无 title
     const strategyBtn = container!.querySelector<HTMLButtonElement>('[data-testid="strategy-btn"]')!;
     expect(strategyBtn.disabled).toBe(false);
     expect(strategyBtn.getAttribute("title")).toBeNull();
+    // band 开启：不再互斥 —— 入口保持可用、无互斥 title
     await enableBandViaModal("g01");
-    expect(strategyBtn.disabled).toBe(true);
-    expect(strategyBtn.getAttribute("title")).toContain("腰头成带与策略运行互斥");
-    // 再经弹窗取消勾选 → 恢复
-    const perTypeBtn = container!.querySelector<HTMLButtonElement>(".per-type-btn")!;
-    act(() => perTypeBtn.click());
-    const check = document.body.querySelector<HTMLInputElement>('[data-testid="band-enabled"]')!;
-    act(() => check.click());   // 取消勾选（草稿 enabled=false）
-    const confirm = document.body.querySelector<HTMLButtonElement>(".per-type-btn-confirm")!;
-    act(() => confirm.click());
     expect(strategyBtn.disabled).toBe(false);
+    expect(strategyBtn.getAttribute("title")).toBeNull();
   });
 
   it("band 关闭（默认）→ strategy-btn 维持既有置灰口径（doc=null 仍置灰、无 title）", () => {

@@ -33,8 +33,9 @@
 //   - 启动闸门：band 开未选编号 / 选中 g 码数量全 0（bandMemberCount 三态，后端 demand
 //     口径对齐）→ 「开始求解」置灰 + StatusLine band 段具体文案 + handleStart 运行时兜底
 //     （与 sizes 空校验同源双保险）；
-//   - 互斥：band 开启时「高级运行」入口 disabled + title 说明原因（FR-6 v1 互斥 ——
-//     strategy_start 只拷白名单键，band 不进 CLI config，前端禁入口是唯一防线）；
+//   - 互斥（已解除）：2026-08-22 起 band 开启可进「高级运行」—— band 随
+//     /api/strategy/start 写进 8 键 config（后端 _parse_band 同一校验点，
+//     CLI solve_worker 进程内成带 + 展开，v2 确定性兼容多 seed 策略）；
 //   - PerTypeOverrides 透传 band/onBandChange（弹窗布局设置分区：开关 + g 码下拉）。
 // 2026-08-22 seed UI 隐藏（界面只支持单 seed 模式）：ParamForm 删 seed 输入行、
 //   MultiSeedControls 不再渲染（组件已删）。form.seed/multi_seed/seed_count 保留恒默认
@@ -215,9 +216,10 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
     bandMissingLabel ||
     bandZeroQty;
 
-  // US-013（FR-6）：band 开启时「高级运行」互斥置灰 + title 说明原因（既有 solving /
-  // 未 commit 置灰不加说明 —— title 仅 band 互斥时给，避免与旧语义混淆）。
-  const strategyBandLocked = form.band_enabled && !solving && doc !== null;
+  // US-013（FR-6 v1 互斥已于 2026-08-22 解除）：band 开启可进「高级运行」——
+  // band 随 /api/strategy/start 写进 8 键 config（cli 8 键 schema + solve_pieces
+  // 透传 solve_worker 进程内成带，v2 构造性链构造确定性兼容多 seed 策略）。
+  // 既有 solving / 未 commit 置灰语义不变。
 
   return (
     <aside className="panel">
@@ -268,18 +270,13 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
           disabled={solving}
         />
         {/* US-005 高级运行入口（策略 run 10/20/30/60min + race/se 双模式）：disabled =
-            solving（互斥防 CPU 竞争）|| doc===null（未 commit 无排料数据）
-            || US-013 band 开启（FR-6 与腰头成带互斥，title 说明原因）。 */}
+            solving（互斥防 CPU 竞争）|| doc===null（未 commit 无排料数据）。
+            2026-08-22 起 band 开启不再互斥（band 随 start 载荷进 config）。 */}
         <StrategyRunButton
           solving={solving}
           buildStartContext={buildStartContext}
           onApplyStrategy={onApplyStrategy}
-          disabled={solving || doc === null || form.band_enabled}
-          title={
-            strategyBandLocked
-              ? '腰头成带与策略运行互斥：请先在高级配置 → 布局设置中关闭腰头成带'
-              : undefined
-          }
+          disabled={solving || doc === null}
         />
       </div>
       {/* US-031：data-tour="start-btn" 锚定 SolveControls 父容器（nestingTour step3 高亮目标）。 */}

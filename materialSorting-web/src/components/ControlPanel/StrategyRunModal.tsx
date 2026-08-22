@@ -266,7 +266,9 @@ function StrategyRunModalInner({
     return () => window.removeEventListener('keydown', onKey);
   }, [closeModal]);
 
-  /** 执行：排料参数与 handleStart 同源；sizes 空（后端 400）由 disabled 兜底。 */
+  /** 执行：排料参数与 handleStart 同源；sizes 空（后端 400）由 disabled 兜底。
+   * band 透传（2026-08-22 解除互斥）：ctx.band 开启时进 /api/strategy/start，
+   * 后端 _parse_band 同一校验点 → 8 键 config → CLI worker 进程内成带。 */
   function handleExec(): void {
     const ctx = buildStartContext();
     void start({
@@ -277,6 +279,7 @@ function StrategyRunModalInner({
       sizes: ctx.sizes,
       per_type: ctx.per_type,
       quantities: ctx.quantities,
+      band: ctx.band,
     });
   }
 

@@ -196,6 +196,41 @@ def test_quantities_errors(base_payload, tmp_path):
     _must_fail({**base_payload, 'quantities': []}, tmp_path, 'quantities')
 
 
+# ------------------------------------------------- band（8 键 schema，2026-08-22）
+
+def test_band_valid_and_disabled(base_payload, tmp_path):
+    """band 开启 → 原样 {'enabled': True, 'label'}；enabled=false / 缺省 → None。"""
+    cfg = load_config(_write_cfg(
+        tmp_path, {**base_payload, 'band': {'enabled': True, 'label': 'g05'}}))
+    assert cfg.band == {'enabled': True, 'label': 'g05'}
+    # 显式关闭 = 缺省（None），与 WS _parse_band 的「enabled falsy → 关闭」同口径
+    cfg = load_config(_write_cfg(
+        tmp_path, {**base_payload, 'band': {'enabled': False, 'label': 'g05'}}))
+    assert cfg.band is None
+    cfg = load_config(_write_cfg(tmp_path, base_payload))
+    assert cfg.band is None
+
+
+def test_band_errors(base_payload, tmp_path):
+    _must_fail({**base_payload, 'band': 'g05'}, tmp_path, 'band')
+    _must_fail({**base_payload, 'band': []}, tmp_path, 'band')
+    # 未知内键
+    _must_fail({**base_payload, 'band': {'enabled': True, 'label': 'g05', 'x': 1}},
+               tmp_path, 'band', 'x')
+    # enabled 非布尔（truthy 1 也不收 —— 严格 bool，与 JSON 布尔语义 1:1）
+    _must_fail({**base_payload, 'band': {'enabled': 1, 'label': 'g05'}},
+               tmp_path, 'band.enabled')
+    _must_fail({**base_payload, 'band': {'label': 'g05'}}, tmp_path, 'band.enabled')
+    # label 非 g 码
+    _must_fail({**base_payload, 'band': {'enabled': True, 'label': 'front'}},
+               tmp_path, 'band.label')
+    _must_fail({**base_payload, 'band': {'enabled': True, 'label': 'G05'}},
+               tmp_path, 'band.label')
+    _must_fail({**base_payload, 'band': {'enabled': True, 'label': 5}},
+               tmp_path, 'band.label')
+    _must_fail({**base_payload, 'band': {'enabled': True}}, tmp_path, 'band.label')
+
+
 def test_gate_mm_errors(base_payload, tmp_path):
     _must_fail({**base_payload, 'gate_mm': 0}, tmp_path, 'gate_mm')
     _must_fail({**base_payload, 'gate_mm': -1980}, tmp_path, 'gate_mm')

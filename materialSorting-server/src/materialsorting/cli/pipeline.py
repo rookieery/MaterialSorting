@@ -41,6 +41,14 @@ US-006（PC-006）：``solve_pieces`` 加可选 ``solver_opts``（spyrrow 求解
 与 ``web.solver.build_instance`` 同形白名单）—— 原样并入 solve_params 透传到子
 进程（全 JSON，Windows spawn 安全），主进程 meta 构造与子进程求解同一清洗口径；
 非空时返回记录附带 ``solver_opts`` 回显（空档不加键，无旗标冒烟零回归）。
+
+band 兼容（2026-08-22，策略模式 + 腰头成带解除互斥）：``cfg.band`` 非空
+（``{'enabled': True, 'label': g码}``，config 8 键 schema 产物）时转 worker
+形态 ``{'label': str}`` 透传 ``solve_with_callback_proc(band=...)`` —— 成带 /
+组合片展开全在 solve_worker 进程内（US-011 既有链路，本函数零新增几何逻辑）。
+demand 守恒兼容性：主进程 meta 按全量 build_instance（含 band 成员）取
+``demand_sum``，band-on 子解 placed 条数 = 其他片 Σdemand + 组合片 1 条展开
+N 成员条 = 全量 Σdemand → 现行 ``n_placed != demand_sum`` 完整性校验天然成立。
 """
 from __future__ import annotations
 
@@ -230,6 +238,7 @@ def _best_frame_record(seed: int, frame_index: int, report: dict) -> dict:
 def solve_pieces(cfg, run_dir, *, seed: int, time_budget: int | None = None,
                  on_progress=None, should_stop=None,
                  solver_opts: dict | None = None,
+                 band: dict | None = None,
                  artifact_suffix: str = '') -> dict:
     """配置驱动的单 seed 求解（PC-001 起进程化 + 帧轨迹落盘 + 可中止）。
 
@@ -279,6 +288,11 @@ def solve_pieces(cfg, run_dir, *, seed: int, time_budget: int | None = None,
         并入 solve_params（全 JSON 可序列化，Windows spawn 安全），清洗与换算在
         ``build_instance`` 内做（主进程 meta 构造与子进程求解同一口径）。None /
         空档 = 现行行为不变；非空时返回记录附带 ``solver_opts`` 回显字段。
+    band : dict | None
+        腰头成带配置（worker 形态 ``{'label': g码}``）。None → 读 ``cfg.band``
+        （config 8 键 schema 产物 ``{'enabled': True, 'label': ...}``，此处转
+        worker 形态）；显式传 ``{'label': ...}`` 直接生效（calibration 等无 cfg
+        band 字段的调用方注入点）。None 且 cfg.band 亦空 = 现行行为（band off）。
     artifact_suffix : str
         轨迹产物文件名后缀（US-002 SE 延长轮传 ``'_ext'``）：curve/best_frame
         写 ``curve_s{seed}{suffix}.json`` / ``best_frame_s{seed}{suffix}.json``，
@@ -306,6 +320,13 @@ def solve_pieces(cfg, run_dir, *, seed: int, time_budget: int | None = None,
     # 延迟 import（约定同 solve_worker）：cli → web.solver 是合规向下依赖，但避免
     # `python -m materialsorting.cli.pipeline` 导入冒烟时拉起 web 包链。
     from ..web.solver import build_instance, load_pieces, solve_with_callback_proc
+
+    # band：显式参数优先（worker 形态 {'label': ...}）；否则读 cfg.band（config
+    # 8 键 schema 产物 {'enabled': True, 'label': ...}）转 worker 形态。enabled=false
+    # 在 config 层已规约为 None，此处只处理「开启」一种非空形态。
+    cfg_band = getattr(cfg, 'band', None)
+    if band is None and isinstance(cfg_band, dict) and cfg_band.get('label'):
+        band = {'label': str(cfg_band['label'])}
 
     seed = int(seed)
     _, gate_mm, pieces = load_pieces(str(Path(run_dir) / 'pieces_intermediate.json'))
@@ -370,7 +391,8 @@ def solve_pieces(cfg, run_dir, *, seed: int, time_budget: int | None = None,
     try:
         _proc, final, elapsed, err = solve_with_callback_proc(
             pieces, gate_mm, solve_params,
-            on_manifest=_on_manifest, on_report=_on_report, on_process=_on_process)
+            on_manifest=_on_manifest, on_report=_on_report, on_process=_on_process,
+            band=band)
     finally:
         # 收口成合法 JSON 数组（KeyboardInterrupt / 求解异常 / killed 路径都走这里，
         # Ctrl-C 不留半截 curve；仅硬崩溃（进程被杀）才可能缺右括号）。

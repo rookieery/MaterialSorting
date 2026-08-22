@@ -286,7 +286,8 @@ def test_start_happy_path_config_marker_spawn_202(strat_env, monkeypatch):
     body = r.json()
     assert body['mode'] == 'se' and body['minutes'] == 20 and body['pid'] == 777
 
-    # config JSON 落盘对拍：7 键 + master_dxf 绝对路径。
+    # config JSON 落盘对拍：7 键（band 未传 → 不写键，与旧版结构一致）+
+    # master_dxf 绝对路径。
     cfg_files = list(uploads.glob('strategy_cfg_*.json'))
     assert len(cfg_files) == 1
     cfg = json.loads(cfg_files[0].read_text(encoding='utf-8'))
@@ -326,6 +327,72 @@ def test_start_happy_path_config_marker_spawn_202(strat_env, monkeypatch):
     assert st['seed'] == 7 and st['gate_mm'] == 1980.0
     assert st['total_budget_sec'] == 1200
     assert len(st['pieces_snapshot']) == 3
+
+
+# ---------------------------------------------------- band（2026-08-22 解除互斥）
+
+
+def _band_start_env(monkeypatch, tmp_path):
+    """band 用例公共环境：state（g01/g02 在场）+ uploads 母版 + spawn 打桩。"""
+    _patch_state(monkeypatch, _fake_state(doc_id='cafe1234'))
+    uploads = Path(paths_mod.OUT_DIR) / 'uploads'
+    uploads.mkdir(parents=True)
+    (uploads / 'cafe1234.dxf').write_bytes(b'DXF')
+    _spawn_capture(monkeypatch, pid=778)
+    return uploads
+
+
+def test_start_band_written_into_config(strat_env, monkeypatch):
+    """band 开启且合法 → config JSON 含 band 键（StartPayload 原形态）。"""
+    uploads = _band_start_env(monkeypatch, strat_env)
+    r = _client().post('/api/strategy/start', json={
+        'mode': 'race', 'minutes': 10, 'band': {'enabled': True, 'label': 'g01'},
+    })
+    assert r.status_code == 202
+    cfg = json.loads(
+        list(uploads.glob('strategy_cfg_*.json'))[0].read_text(encoding='utf-8'))
+    assert cfg['band'] == {'enabled': True, 'label': 'g01'}
+    # 其余 7 键不受扰（time/seeds 由 minutes/seed 派生）。
+    assert cfg['time'] == 600 and cfg['seeds'] == [0]
+
+
+def test_start_band_null_and_disabled_not_written(strat_env, monkeypatch):
+    """band=null / enabled=false → _parse_band 关闭 → config 不写 band 键。"""
+    uploads = _band_start_env(monkeypatch, strat_env)
+    c = _client()
+    for i, band in enumerate((None, {'enabled': False, 'label': 'g01'})):
+        if i:
+            # 前一次 202 已置 starting + 写 marker → 手动清（单例闸门 / orphan 检查）。
+            strategy_mod._STRATEGY_STATE['state'] = 'done'
+            strategy_mod._clear_marker()
+        assert c.post('/api/strategy/start', json={
+            'mode': 'race', 'minutes': 10, 'band': band}).status_code == 202
+        cfg = json.loads(
+            sorted(uploads.glob('strategy_cfg_*.json'))[-1]
+            .read_text(encoding='utf-8'))
+        assert 'band' not in cfg
+
+
+def test_start_band_invalid_400(strat_env, monkeypatch):
+    """band 非法（坏 g 码 / 不存在于母版 / 数量全 0）→ 400 结构化 error，不 spawn config。"""
+    uploads = _band_start_env(monkeypatch, strat_env)
+    c = _client()
+    # 坏 g 码
+    r = c.post('/api/strategy/start', json={
+        'mode': 'race', 'minutes': 10, 'band': {'enabled': True, 'label': 'waist'}})
+    assert r.status_code == 400 and 'g 码' in r.json()['error']
+    # 不存在于当前母版（pieces 只有 g01/g02）
+    r = c.post('/api/strategy/start', json={
+        'mode': 'race', 'minutes': 10, 'band': {'enabled': True, 'label': 'g05'}})
+    assert r.status_code == 400 and '不存在' in r.json()['error']
+    # 该 g 码 quantities 全 0（missing→1 反例：显式全 0）
+    r = c.post('/api/strategy/start', json={
+        'mode': 'race', 'minutes': 10, 'quantities': {'g01': {'28': 0, '30': 0}},
+        'band': {'enabled': True, 'label': 'g01'}})
+    assert r.status_code == 400 and '全为 0' in r.json()['error']
+    # 全部被拒 → 无 config 落盘、无 marker。
+    assert not list(uploads.glob('strategy_cfg_*.json'))
+    assert strategy_mod._read_marker() is None
 
 
 # ------------------------------------------------------------- status

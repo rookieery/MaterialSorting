@@ -40,8 +40,8 @@ const CTX: StartContext = {
   params: { d_ext: 0, d_int: 0, tol_ext: 0, tol_int: 0 },
   per_type: null,
   quantities: { g01: { '30': 2, '32': 1 } },
-  // US-012：band 不进策略 run（FR-6 互斥 —— handleExec 只拷白名单键，即使主画布
-  // band 开启也不透传到 /api/strategy/start）。
+  // 2026-08-22 解除互斥：band 随 handleExec 透传到 /api/strategy/start（ctx.band
+  // 开启 → 载荷带 band；null → 显式 null 键，后端 _parse_band 关闭不写 config）。
   band: null,
 };
 
@@ -239,6 +239,29 @@ describe('StrategyRunModal (US-005)', () => {
       sizes: CTX.sizes,
       per_type: CTX.per_type,
       quantities: CTX.quantities,
+      band: null,
+    });
+  });
+
+  it('band 开启 → start 载荷带 band（ctx.band 同源透传，2026-08-22 解除互斥）', async () => {
+    openModal();
+    const bandedCtx: StartContext = {
+      ...CTX,
+      band: { enabled: true, label: 'g05' },
+    };
+    renderModal(false, bandedCtx);
+    act(() => {
+      (document.body.querySelector('[data-testid="strategy-exec-btn"]') as HTMLButtonElement).click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(startBodies).toHaveLength(1);
+    expect(startBodies[0]).toMatchObject({
+      mode: 'race',
+      minutes: 20,
+      band: { enabled: true, label: 'g05' },
     });
   });
 

@@ -14,6 +14,7 @@
 
 import type { PerTypeOverrides } from './v03';
 import type { PieceInfo, PlacedItem } from './piece';
+import type { BandConfig } from './ws';
 
 /** 策略模式（与 CLI `--strategy` 一致；race = 方案 B 门杀（默认），se = 方案 A 筛延）。 */
 export type StrategyMode = 'se' | 'race';
@@ -45,6 +46,12 @@ export interface StrategyStartPayload {
   per_type?: PerTypeOverrides | null;
   /** per-size demand（label → sizeKey → 数量）；null = 后端全片 demand=1。 */
   quantities?: Record<string, Record<string, number>> | null;
+  /**
+   * 腰头成带（2026-08-22 解除与策略运行互斥）：与 WS StartPayload.band 同形，
+   * collectStartContext 同源产物直传；null / enabled falsy = 不写进 config
+   * （后端 _parse_band 同一校验点，非法 → 400 结构化 error）。
+   */
+  band?: BandConfig | null;
 }
 
 /** strategy.json → plan 摘要（race 带 gate_seconds；se 带 k_screens/screen_s/ext_s）。 */

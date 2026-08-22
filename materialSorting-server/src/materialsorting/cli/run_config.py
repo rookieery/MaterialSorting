@@ -12,7 +12,7 @@ r"""ms-run-config 入口 —— 一条命令跑完「commit → 求解」，无�
                     [--race-budget 180] [--race-gate 0.5]]
     python -m materialsorting.cli.run_config <config.json> --time 5
 
-流程：``load_config``（7 键 schema 校验）→ ``new_run_dir``（时间戳目录保留历史）
+流程：``load_config``（8 键 schema 校验）→ ``new_run_dir``（时间戳目录保留历史）
 → ``commit_from_config``（切片 + intermediate 落 run_dir，**仅一次**）→ 逐 ``seeds``
 元素**经 ``cli.portfolio`` 控制器串行** ``solve_pieces``（每轮重建 build_instance，
 复用同一份 commit 产物）→ ``result.json``（config 回显 + commit 摘要 + solve 指标
@@ -180,7 +180,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         prog='ms-run-config',
         description='配置驱动排料：一条命令跑完「commit → 求解」，输出原面积口径利用率',
     )
-    p.add_argument('config', help='配置文件路径（7 键 JSON schema，见 data/configs/）')
+    p.add_argument('config', help='配置文件路径（8 键 JSON schema，见 data/configs/）')
     p.add_argument('--name', metavar='RUN_NAME',
                    help='覆盖 run_name（缺省 = 配置文件 stem，非法字符清洗）')
     p.add_argument('--time', type=int, metavar='N',
@@ -504,18 +504,26 @@ def main(argv: list[str] | None = None) -> int:
     elif args.rotate_opts:
         print(f'rotate_opts: 内置池 {len(SOLVER_OPTS_POOL)} 档逐 seed 轮换'
               f'（pool[队列序 % {len(SOLVER_OPTS_POOL)}]，池首空档=默认行为）')
-    # PC-008 后处理开关说明（--quiet 也打：改交付物的开关不静默）。
+    # PC-008 后处理开关说明（--quiet 也打：改交付物的开关不静默）。band 开启时
+    # LNS 波段重排会拆散版师带形态（链内贴触 + 开口朝左）→ warn 跳过（求解产物
+    # 不受影响，与「LNS 输入错误降级 warn」同模式）。
     if args.lns:
         print(f'LNS 后处理: time={lns_time}s rounds={lns_rounds}'
               f'（严格更优才回写 result.json，明细写 result_lns.json）')
+        if cfg.band is not None:
+            print(f'  ⚠ 腰头成带已开启（band g 码 {cfg.band["label"]}）：'
+                  '波段重排会拆散带形态，LNS 环节将跳过', file=sys.stderr)
     # PC-009 θ₀ 校准（读 run 统计库，--target 模式才有 kill 门槛可校准）：当前
     # 实例类（class_key）命中且 ≥5 条历史 → θ 初值 = min(target, 历史最大
     # best_density + 0.003)（贴可达性起跑），否则 θ = target。θ₀ 只影响 kill
     # 门槛（R2/R3 判据锚），R0 停止条件恒用 --target 真值；说明行 --quiet 也打
     # （判据变更不静默，同 R3 θ 衰减口径）。统计库缺失 / 坏行由 load_run_stats
     # 容错（→ 无历史 → 不校准），读失败绝不阻断求解。
+    # band label 纳入 class_key（band off → 不加组件 = 与旧口径逐字节一致，历史
+    # 样本继续命中；band on → 新 key，+2pt 级密度差不与 band off 混同分布）。
     stats_class_key = run_stats_class_key(str(cfg.master_dxf), cfg.sizes,
-                                          cfg.quantities, cfg.per_type)
+                                          cfg.quantities, cfg.per_type,
+                                          band_label=(cfg.band or {}).get('label'))
     theta0 = None
     # US-002：策略模式 θ 不维护（R1/R2 不评估），校准无判据可锚 → 跳过。
     if args.target is not None and strategy is None:
@@ -623,6 +631,9 @@ def main(argv: list[str] | None = None) -> int:
                 # US-002 策略回显（旗标未给时不加键：无 --strategy 的 result.json
                 # 与现版逐字节一致；time 字段在策略模式 = 总预算，参数在此回显）。
                 **({'strategy': strategy_echo} if strategy_echo is not None else {}),
+                # band 回显（config 未给 / enabled=false 不加键：与无 band 运行
+                # 逐字节一致，冒烟对拍不受扰）。
+                **({'band': cfg.band} if cfg.band is not None else {}),
             },
             'commit': commit,
             'solve': solves,
@@ -720,7 +731,12 @@ def main(argv: list[str] | None = None) -> int:
     # ---- PC-008 LNS 后处理（--lns）：对 portfolio 最优布局跑 PC-007 波段重排。
     # R0 提前停（queue_stopped）同样走到这里 —— 对达标解也可再压宽度；Ctrl-C 中断
     # 的 run 不做后处理（portfolio 未跑完，按中断路径 130 收口）。
-    if args.lns:
+    # band 开启 → 跳过（启动处已 warn）：波段重排会把落在段内的带成员抽出重排，
+    # 破坏版师带形态（链内贴触 + 开口朝左 + 最大码最右）。
+    if args.lns and cfg.band is not None:
+        print(f'LNS 后处理跳过: 腰头成带已开启（band g 码 {cfg.band["label"]}），'
+              '波段重排会拆散带形态（求解产物不受影响）', file=sys.stderr)
+    elif args.lns:
         try:
             out = postprocess_run_dir(run_dir, time_budget=lns_time,
                                       rounds=lns_rounds,
@@ -781,7 +797,10 @@ def main(argv: list[str] | None = None) -> int:
         'n_killed': sum(1 for e in controller.per_seed if e.get('killed')),
         'elapsed_total': round(time.monotonic() - t_start, 1),
         'config': {'time': time_budget, 'per_type': cfg.per_type,
-                   'quantities': cfg.quantities},
+                   'quantities': cfg.quantities,
+                   # band 回显（None 不加键：历史行结构不变，读侧按 class_key 匹配
+                   # —— band label 已纳入 class_key，同 class 必同 band 态）。
+                   **({'band': cfg.band} if cfg.band is not None else {})},
     })
     print(f"real_density（原面积口径）= {d:.2%} | "
           f"用布长度 = {w:.0f}mm | 片数 = {n_placed} | "
