@@ -4,7 +4,9 @@
 
   - ``POST /api/strategy/start``：校验（单例 409 / _PIECES_STATE 非空且 doc 含
     doc_id 422 / mode ∈ {se,race} / minutes ∈ {10,20,30,60} / band 经
-    ``routes_ws._parse_band`` 同一校验点）→ 写 8 键 config JSON
+    ``routes_ws._parse_band`` 同一校验点）→ **清理上一轮 web 产物**
+    （``_cleanup_stale_web_artifacts``：web_* run 目录 + 旧 cfg + 旧 stderr，
+    磁盘占用收敛到 ≤1 个 run_dir；2026-08-22）→ 写 8 键 config JSON
     到 ``out/uploads/strategy_cfg_<stamp>.json`` → spawn
     ``python -m materialsorting.cli.run_config <cfg> --name web_<mode>_<rand6>
     --strategy <mode> --time <minutes*60> --quiet``（stdout=DEVNULL、stderr=临时文件）
@@ -32,6 +34,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -187,6 +190,43 @@ def _stderr_tail(stderr_path) -> str | None:
         return None
     text = text.strip()
     return text[-_STDERR_TAIL_CHARS:] if text else None
+
+
+# ------------------------------------------------------------- 旧产物清理
+
+
+def _cleanup_stale_web_artifacts() -> None:
+    """清理上一轮 web 策略 run 的落盘产物（best-effort，失败不阻塞 start）。
+
+    仅在 start 通过单例闸门（无 in-flight run / 无 marker）后调用，此刻以下产物
+    均已无人消费（done/stopped 的 result 已被前端拉走或随下次 start 一并作废）：
+
+      - ``out/config_runs/web_*`` run 目录 —— 本模块 spawn 的 run_name 恒为
+        ``web_<mode>_<rand6>`` 前缀，手工 ``ms-run-config`` 的 run 目录不带该
+        前缀，不受影响；
+      - ``out/uploads/strategy_cfg_*.json`` —— start 写给 CLI 的一次性 config；
+      - 系统临时目录 ``web_strategy_err_*.log`` —— spawn stderr 重定向文件
+        （本进程前缀唯一；多实例并跑的活动文件在 Windows 下句柄占用 unlink 自然
+        失败，best-effort 容错）。
+
+    效果：web 策略产物磁盘占用从无限累积收敛到 ≤1 个 run_dir；done → 下一次
+    start 之间 run_dir 仍可被 status/result 复读（页面刷新后重开弹窗拉 result
+    的路径不受影响），与前端「下一次 start 清 result store」时点对齐。清理先于
+    新 cfg / 新 stderr 创建，不会误删本轮文件。
+    """
+    for entry in _config_runs_dir().glob('web_*'):
+        if entry.is_dir():
+            shutil.rmtree(entry, ignore_errors=True)
+    for cfg in _uploads_dir().glob('strategy_cfg_*.json'):
+        try:
+            cfg.unlink()
+        except OSError:
+            pass
+    for err in Path(tempfile.gettempdir()).glob('web_strategy_err_*.log'):
+        try:
+            err.unlink()
+        except OSError:
+            pass
 
 
 def _pieces_state() -> dict:
@@ -435,6 +475,11 @@ async def strategy_start(req: Request):
         cfg_payload['quantities'] = quantities
     if band_cfg is not None:
         cfg_payload['band'] = band_cfg
+
+    # 上一轮 web 策略 run 的产物清理（2026-08-22）：单例闸门已过 → 无 in-flight
+    # run，web_* run 目录 / 旧 cfg / 旧 stderr 均无人消费；清理先于本轮 cfg /
+    # stderr / run_dir 创建，不会误删本轮文件。best-effort，失败不阻塞 start。
+    _cleanup_stale_web_artifacts()
 
     stamp = time.strftime('%Y%m%d-%H%M%S')
     rand6 = uuid.uuid4().hex[:6]

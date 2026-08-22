@@ -1714,38 +1714,3 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
   font-size: 12px;
   line-height: 1.5;
 }
-.strategy-run-dir {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  background: #1c1d22;
-  border: 1px solid #3a3d45;
-  border-radius: 4px;
-  padding: 6px 8px;
-  font-size: 11px;
-  color: #9aa;
-}
-.strategy-run-dir-path {
-  flex: 1;
-  word-break: break-all;
-  font-family: ui-monospace, 'Cascadia Mono', Consolas, monospace;
-}
-.strategy-copy-btn {
-  flex-shrink: 0;
-  padding: 3px 10px;
-  font-size: 11px;
-  background: #34363d;
-  color: #cdd;
-  border: 1px solid #45484f;
-  border-radius: 3px;
-  cursor: pointer;
-  font-family: inherit;
-}
-.strategy-copy-btn:hover:not(:disabled) {
-  background: #3f424a;
-  color: #e6e6e6;
-}
-.strategy-copy-btn:disabled {
-  opacity: 0.45;
-  cursor: default;
-}

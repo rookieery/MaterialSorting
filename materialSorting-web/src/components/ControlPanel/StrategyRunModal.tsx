@@ -27,9 +27,11 @@
 //                     + 最近 1 条事件行 + 终止按钮
 //   结果态 done/stopped/error/orphan
 //                  done：完成 · 最优 X.XX%（seed N · 用布 X.XXm）+ 模式汇总（race：
-//                  M 轮中 K 轮门杀 · 全程 X 分 X 秒 / SE：k 筛 + 冠军延长）+ 运行目录
-//                  （可复制）+ [应用到主画布]（US-006 已接线 —— NestingPage
+//                  M 轮中 K 轮门杀 · 全程 X 分 X 秒 / SE：k 筛 + 冠军延长）+
+//                  [应用到主画布]（US-006 已接线 —— NestingPage
 //                  applyStrategyResult 经 ControlPanel 透传；未传回调时 disabled）。
+//                  2026-08-22 起不展示服务器 run_dir 路径（浏览器端无法使用、泄露
+//                  服务器目录结构；产物由后端在下一次 start 时自动清理）。
 //                  stopped：已终止 · 保留终止前最优 X%（同样给应用按钮）。
 //                  error：错误信息 + 重试（lastStart 在场 → 原载荷重启；否则回配置态）。
 //                  orphan：检测到遗留运行（server 重启后 marker 残留）+ pid/存活 +
@@ -253,7 +255,6 @@ function StrategyRunModalInner({
   // 配置态本地草稿（mount 时初始化；race 默认 = 方案 B，20 分钟 = 增益起点）。
   const [minutes, setMinutes] = useState<StrategyMinutes>(20);
   const [mode, setMode] = useState<StrategyMode>('race');
-  const [copied, setCopied] = useState(false);
 
   // ESC 关闭（仅关弹窗，绝不 stop）。
   useEffect(() => {
@@ -287,15 +288,6 @@ function StrategyRunModalInner({
   function handleRetry(): void {
     if (lastStart !== null) void start(lastStart);
     else reset();
-  }
-
-  async function handleCopy(text: string): Promise<void> {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-    } catch {
-      /* 剪贴板不可用（非安全上下文等）—— 路径文本仍可手动选择 */
-    }
   }
 
   function handleOverlayMouseDown(e: React.MouseEvent): void {
@@ -354,8 +346,6 @@ function StrategyRunModalInner({
             phase={phase}
             status={status}
             result={result}
-            copied={copied}
-            onCopy={(t) => void handleCopy(t)}
             onApplyStrategy={onApplyStrategy}
             onAgain={reset}
           />
@@ -554,8 +544,6 @@ interface ResultStateProps {
   phase: 'done' | 'stopped';
   status: StrategyStatus | null;
   result: StrategyResult | null;
-  copied: boolean;
-  onCopy: (text: string) => void;
   onApplyStrategy?: (result: StrategyResult) => void;
   onAgain: () => void;
 }
@@ -564,8 +552,6 @@ function ResultState({
   phase,
   status,
   result,
-  copied,
-  onCopy,
   onApplyStrategy,
   onAgain,
 }: ResultStateProps): JSX.Element {
@@ -578,7 +564,6 @@ function ResultState({
     );
   }
   const best = result.best;
-  const dir = result.run_dir ?? '';
   // 模式汇总：race = M 轮中 K 轮门杀 · 全程 X 分 X 秒（墙钟 elapsed_sec）；
   // se = k 轮筛选 + 冠军 seed 延长。
   const perSeed = result.summary.per_seed ?? [];
@@ -616,20 +601,6 @@ function ResultState({
           ⚠ {result.warning}
         </div>
       )}
-      <div className="strategy-run-dir" data-testid="strategy-run-dir">
-        <span className="strategy-run-dir-path" title={dir}>
-          {dir || '—'}
-        </span>
-        <button
-          type="button"
-          className="strategy-copy-btn"
-          data-testid="strategy-copy-btn"
-          onClick={() => onCopy(dir)}
-          disabled={!dir}
-        >
-          {copied ? '已复制' : '复制'}
-        </button>
-      </div>
       <div className="strategy-actions">
         <button
           type="button"
@@ -690,7 +661,6 @@ function OrphanState({
   status: StrategyStatus | null;
   onCleanup: () => void;
 }): JSX.Element {
-  const dir = status?.run_dir ?? '';
   return (
     <>
       <div className="strategy-result-head stopped" data-testid="strategy-orphan-head">
@@ -701,13 +671,6 @@ function OrphanState({
         {status?.mode ? ` · 模式 ${status.mode}` : ''}
         {' · '}服务器重启后遗留，可清理后重新启动
       </div>
-      {dir !== '' && (
-        <div className="strategy-run-dir" data-testid="strategy-orphan-dir">
-          <span className="strategy-run-dir-path" title={dir}>
-            {dir}
-          </span>
-        </div>
-      )}
       <div className="strategy-actions">
         <button
           type="button"

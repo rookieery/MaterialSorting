@@ -6,7 +6,8 @@
 //   - ESC / 遮罩 / ✕ 关闭均不触发 stop（关弹窗不终止运行）+ running 态文案
 //   - 进度态五件套（标题/大数字/预算条/阶段行/seed chips+事件行）
 //   - race 门杀瞬间 chip ✕门杀 / SE 延长中阶段行 + 两段式 chips
-//   - 结果态 done/stopped（最优+seed+用布+模式汇总+run_dir+应用按钮 disabled）
+//   - 结果态 done/stopped（最优+seed+用布+模式汇总+应用按钮 disabled；2026-08-22
+//     起不再展示服务器 run_dir 路径）
 //   - error 态错误 + 重试（原载荷重发）/ orphan 态清理（stop 路由）
 
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
@@ -341,7 +342,7 @@ describe('StrategyRunModal (US-005)', () => {
       .toContain('冠军 seed 1 进入延长');
   });
 
-  it('结果态 done：完成·最优 + seed/用布 + race 模式汇总 + 运行目录 + 应用按钮 disabled（US-006 接线前）', async () => {
+  it('结果态 done：完成·最优 + seed/用布 + race 模式汇总 + 不展示 run_dir + 应用按钮 disabled（US-006 接线前）', async () => {
     resultPayload = DONE_RESULT;
     openModal();
     renderModal();
@@ -358,14 +359,11 @@ describe('StrategyRunModal (US-005)', () => {
       .toContain('seed 3 · 用布 7.10m');
     expect(document.body.querySelector('[data-testid="strategy-mode-summary"]')!.textContent)
       .toContain('race：4 轮中 2 轮门杀 · 全程 10 分 5 秒');
-    expect(document.body.querySelector('[data-testid="strategy-run-dir"]')!.textContent)
-      .toContain('web_race_x_1');
+    // 2026-08-22：服务器 run_dir 路径不再上屏（含复制按钮）。
+    expect(document.body.querySelector('[data-testid="strategy-run-dir"]')).toBeNull();
+    expect(document.body.querySelector('[data-testid="strategy-copy-btn"]')).toBeNull();
     const apply = document.body.querySelector('[data-testid="strategy-apply-btn"]') as HTMLButtonElement;
     expect(apply.disabled).toBe(true); // US-006 接线前 disabled
-    // 复制按钮走 clipboard（jsdom 无实现 → catch 静默，不炸）。
-    act(() => {
-      (document.body.querySelector('[data-testid="strategy-copy-btn"]') as HTMLButtonElement).click();
-    });
   });
 
   it('结果态 stopped：已终止 · 保留终止前最优（应用按钮同样在场）', () => {

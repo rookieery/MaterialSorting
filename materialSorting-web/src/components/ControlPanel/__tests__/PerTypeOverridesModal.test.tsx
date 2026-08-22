@@ -15,10 +15,9 @@
 //   AC: editing draft does NOT call onChange immediately
 //   AC: confirm calls onChange + onClose (modal closes)
 //   AC: cancel does not call onChange (draft discarded)
-//   AC: overlay mousedown closes (draft discarded)
+//   AC: overlay mousedown / ESC / ✕ 关闭即保存草稿（2026-08-22，回写前全格 clamp）
 //   AC: ESC closes when previewLabel null（双层独立 AC#10）
 //   AC: ESC does NOT close modal when previewLabel open
-//   AC: close button (✕) closes
 //   AC: clicking thumbnail opens PtypePreviewModal (previewLabel set)
 //   AC: inputs carry global caps d≤10 / t≤45
 //   AC: blur clamps draft into [0, max]
@@ -29,7 +28,8 @@
 //   AC: 未勾选时下拉 disabled；勾选启用；band 草稿初值从 props 读入
 //   AC: 下拉值域 = reps 键动态（fetch 失败降级 values 键纯文字列表不阻塞）
 //   AC: 选中 g 码有 rep → 80×80 缩略图 + 徽章（点击 openPreviewLabel 双层 modal）
-//   AC: confirm 同时回写 per_type + band；取消/遮罩/ESC 丢弃 band 草稿
+//   AC: confirm 同时回写 per_type + band；取消丢弃 band 草稿（遮罩/ESC 同 confirm
+//     回写 —— 关闭即保存）
 
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { StrictMode } from 'react';
@@ -392,27 +392,58 @@ describe('PerTypeOverridesModal (US-018 / US-003 g 码列)', () => {
     expect(useControlPanelStore.getState().modal).toBeNull();
   });
 
-  it('overlay mousedown closes (draft discarded)', () => {
+  it('overlay mousedown saves draft + closes (关闭即保存)', () => {
     const onChange = vi.fn();
     useControlPanelStore.getState().openModal('per_type');
-    renderModal({}, onChange);
+    renderModal({ g01: { d: '0', tol: '0' } }, onChange);
+    const dInput = document.body.querySelector<HTMLInputElement>('[data-testid="d-g01"]')!;
+    act(() => {
+      setInputValue(dInput, '2.5');
+    });
     const overlay = document.body.querySelector('.per-type-overlay') as HTMLDivElement;
     act(() => {
       overlay.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
     });
     expect(useControlPanelStore.getState().modal).toBeNull();
-    expect(onChange).not.toHaveBeenCalled();
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect((onChange.mock.calls[0][0] as Record<string, PerTypeFormValue>)['g01'].d)
+      .toBe('2.5');
   });
 
-  it('ESC closes (draft discarded) when previewLabel is null', () => {
+  it('overlay mousedown 保存路径先 clamp 未规整值（mousedown 先于 blur）', () => {
     const onChange = vi.fn();
     useControlPanelStore.getState().openModal('per_type');
-    renderModal({}, onChange);
+    renderModal({ g01: { d: '0', tol: '0' } }, onChange);
+    const dInput = document.body.querySelector<HTMLInputElement>('[data-testid="d-g01"]')!;
+    const tolInput = document.body.querySelector<HTMLInputElement>('[data-testid="tol-g01"]')!;
+    act(() => {
+      setInputValue(dInput, '99');      // 超 MAX_OVERLAP_MM，未经 blur 规整
+      setInputValue(tolInput, '99');    // 超 MAX_ROTATION_TOL_DEG
+    });
+    const overlay = document.body.querySelector('.per-type-overlay') as HTMLDivElement;
+    act(() => {
+      overlay.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    });
+    const next = onChange.mock.calls[0][0] as Record<string, PerTypeFormValue>;
+    expect(next['g01'].d).toBe(String(MAX_OVERLAP_MM));       // '10'
+    expect(next['g01'].tol).toBe(String(MAX_ROTATION_TOL_DEG)); // '45'
+  });
+
+  it('ESC saves draft + closes when previewLabel is null (关闭即保存)', () => {
+    const onChange = vi.fn();
+    useControlPanelStore.getState().openModal('per_type');
+    renderModal({ g01: { d: '0', tol: '0' } }, onChange);
+    const dInput = document.body.querySelector<HTMLInputElement>('[data-testid="d-g01"]')!;
+    act(() => {
+      setInputValue(dInput, '3');
+    });
     act(() => {
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
     });
     expect(useControlPanelStore.getState().modal).toBeNull();
-    expect(onChange).not.toHaveBeenCalled();
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect((onChange.mock.calls[0][0] as Record<string, PerTypeFormValue>)['g01'].d)
+      .toBe('3');
   });
 
   it('ESC does NOT close modal when previewLabel is open (AC#10 双层独立)', () => {
@@ -442,12 +473,20 @@ describe('PerTypeOverridesModal (US-018 / US-003 g 码列)', () => {
     expect(useControlPanelStore.getState().modal).toBe('per_type');
   });
 
-  it('close button (✕) closes', () => {
+  it('close button (✕) saves draft + closes (关闭即保存)', () => {
+    const onChange = vi.fn();
     useControlPanelStore.getState().openModal('per_type');
-    renderModal();
+    renderModal({ g01: { d: '0', tol: '0' } }, onChange);
+    const dInput = document.body.querySelector<HTMLInputElement>('[data-testid="d-g01"]')!;
+    act(() => {
+      setInputValue(dInput, '4');
+    });
     const closeBtn = document.body.querySelector<HTMLButtonElement>('.per-type-close')!;
     act(() => closeBtn.click());
     expect(useControlPanelStore.getState().modal).toBeNull();
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect((onChange.mock.calls[0][0] as Record<string, PerTypeFormValue>)['g01'].d)
+      .toBe('4');
   });
 
   it('clicking thumbnail opens PtypePreviewModal (previewLabel set)', async () => {
@@ -590,7 +629,7 @@ describe('PerTypeOverridesModal 布局设置分区', () => {
     // reps 成功路径（另行断言，见下用例）值域 = reps ∪ values
   });
 
-  it('confirm 同时回写 per_type + band；取消/遮罩/ESC 丢弃 band 草稿', () => {
+  it('confirm 同时回写 per_type + band；遮罩关闭同样回写 band 草稿（关闭即保存）', async () => {
     const onChange = vi.fn();
     const onBandChange = vi.fn();
     useControlPanelStore.getState().openModal('per_type');
@@ -601,6 +640,20 @@ describe('PerTypeOverridesModal 布局设置分区', () => {
     expect(onChange).toHaveBeenCalledTimes(1);
     expect(onBandChange).toHaveBeenCalledTimes(1);
     expect(onBandChange).toHaveBeenCalledWith({ enabled: true, label: 'g01' });
+    expect(useControlPanelStore.getState().modal).toBeNull();
+
+    // 遮罩路径：重新打开 → 勾选并选码 → 遮罩 mousedown → band 草稿同样回写
+    // （values 带 g02 键保证下拉 option 在场）。
+    const onBandChange2 = vi.fn();
+    useControlPanelStore.getState().openModal('per_type');
+    renderModal({ g02: { d: '0', tol: '0' } }, () => {}, { onBandChange: onBandChange2 });
+    await flushFetch();
+    enableAndSelect('g02');
+    const overlay = document.body.querySelector('.per-type-overlay') as HTMLDivElement;
+    act(() => {
+      overlay.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    });
+    expect(onBandChange2).toHaveBeenCalledWith({ enabled: true, label: 'g02' });
     expect(useControlPanelStore.getState().modal).toBeNull();
   });
 

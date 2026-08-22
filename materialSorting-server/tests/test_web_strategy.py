@@ -79,14 +79,20 @@ def _fake_state(doc_id='deadbeef01', pieces=None, gate_mm=1980.0) -> dict:
 
 @pytest.fixture
 def strat_env(tmp_path, monkeypatch):
-    """隔离环境：CONFIG_RUNS_DIR / OUT_DIR 指到 tmp_path + 状态清零。
+    """隔离环境：CONFIG_RUNS_DIR / OUT_DIR / tempfile.tempdir 指到 tmp_path + 状态清零。
 
     yields (client, tmp_path)；client 走 TestClient（真 FastAPI app），四路由已由
     server.py 文件尾注册。_pieces_state 打桩为可控 fake state（默认 None = 由
-    用例自行 monkeypatch）。
+    用例自行 monkeypatch）。tempdir 一并隔离：start 的 stderr 临时文件与
+    _cleanup_stale_web_artifacts 的清理范围都不触碰真实系统临时目录。
     """
     monkeypatch.setattr(paths_mod, 'CONFIG_RUNS_DIR', str(tmp_path / 'config_runs'))
     monkeypatch.setattr(paths_mod, 'OUT_DIR', str(tmp_path / 'out'))
+    # tempdir 一并隔离（须先建目录：gettempdir 不自动创建，NamedTemporaryFile
+    # 直接在其下 open 会 FileNotFoundError）。
+    tmp_dir = tmp_path / 'tmp'
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(strategy_mod.tempfile, 'tempdir', str(tmp_dir))
     strategy_mod._STRATEGY_STATE.clear()
     yield tmp_path
     strategy_mod._STRATEGY_STATE.clear()
@@ -393,6 +399,38 @@ def test_start_band_invalid_400(strat_env, monkeypatch):
     # 全部被拒 → 无 config 落盘、无 marker。
     assert not list(uploads.glob('strategy_cfg_*.json'))
     assert strategy_mod._read_marker() is None
+
+
+def test_start_cleans_previous_web_artifacts(strat_env, monkeypatch):
+    """start 通过闸门后清理上一轮 web 产物：web_* run 目录 / 旧 cfg / 旧 stderr
+    临时文件全清；非 web_ 前缀目录（手工 ms-run-config run）不受影响（2026-08-22）。"""
+    _patch_state(monkeypatch, _fake_state(doc_id='cafe1234'))
+    uploads = Path(paths_mod.OUT_DIR) / 'uploads'
+    uploads.mkdir(parents=True)
+    (uploads / 'cafe1234.dxf').write_bytes(b'DXF')
+    _spawn_capture(monkeypatch, pid=779)
+
+    # 旧产物在场：web_ run 目录 + 手工 run 目录 + 旧 cfg + 旧 stderr 临时文件
+    # （tempdir 指到 tmp_path，不触碰真实系统临时目录）。
+    base = Path(paths_mod.CONFIG_RUNS_DIR)
+    old_web = base / 'web_race_old_20260820-120000'
+    manual = base / 'manual_20260820-130000'
+    for d in (old_web, manual):
+        d.mkdir(parents=True)
+        (d / 'result.json').write_text('{}', encoding='utf-8')
+    (uploads / 'strategy_cfg_20260801-000000.json').write_text('{}',
+                                                               encoding='utf-8')
+    tmpdir = Path(strategy_mod.tempfile.gettempdir())   # fixture 已隔离 tempdir
+    (tmpdir / 'web_strategy_err_stale.log').write_text('boom', encoding='utf-8')
+
+    r = _client().post('/api/strategy/start', json={'mode': 'race', 'minutes': 10})
+    assert r.status_code == 202
+    assert not old_web.exists()                     # web_ 前缀 run 目录被清
+    assert manual.exists()                          # 手工 run 目录不受影响
+    new_cfgs = list(uploads.glob('strategy_cfg_*.json'))
+    assert len(new_cfgs) == 1                       # 只剩本轮新写的 cfg
+    errs = list(tmpdir.glob('web_strategy_err_*.log'))
+    assert len(errs) == 1                           # 只剩本轮 spawn 的 stderr
 
 
 # ------------------------------------------------------------- status

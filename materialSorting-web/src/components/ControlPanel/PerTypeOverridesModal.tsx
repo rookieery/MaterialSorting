@@ -11,13 +11,16 @@
 //     列表 —— select option 本就是文字，缩略图缺席不阻塞选择）；
 //   - 选中 g 码有 rep 时旁挂 80×80 缩略图 + g 码徽章（QtyMatrix 列头同模式，点击
 //     openPreviewLabel 放大 —— 双层 modal 约定不破坏）；
-//   - 未勾选时下拉 disabled；确定写回 form.band_*，取消/遮罩/ESC 连同 band 草稿一并
-//     丢弃（草稿只在确定路径回写，与 per_type 同一约定）。
+//   - 未勾选时下拉 disabled；确定/遮罩/ESC/✕ 写回 form.band_*（2026-08-22 起
+//     关闭即保存，见下），「取消」丢弃 band 草稿（与 per_type 同一约定）。
 //
 // 声明式受控 Portal（参考 PieceZoomModal）：
 //   - 订阅 controlPanelStore.modal === 'per_type' 自显隐；null 时不挂 DOM。
 //   - Portal 到 document.body（不被 .page overflow/display:none 裁切）。
 //   - 关闭交互（AC#10）：确定 / 取消 / ✕ 按钮 / 遮罩 mousedown / ESC。
+//     2026-08-22 起**关闭即保存**：确定/遮罩/ESC/✕ 四通道统一「clamp 全格 → 回写
+//     per_type + band → 关闭」（saveAndClose 单点）；唯一丢弃通道是显式「取消」
+//     —— 避免误触空白丢工作，也避免「点 ✕ 丢、点空白留」的不对称语义。
 //
 // 表格布局（D10 / AC#3；2026-08-17 编号化 + 全局上限改造）：
 //   - thead 列 = 当前母版 g 码并集（/api/ptypes 键 ∪ form.per_type 已配置键），按
@@ -35,13 +38,17 @@
 //
 // 草稿 + 确定模式（AC#5）：打开时从 form.per_type 读初值进本地 draft（已配置键保留，
 // 空值预填 '0'/'0'）；fetch 到位的 g 码未配置格渲染空串（= 继承默认 0，placeholder 提示）；
-// 编辑仅改 draft；点确定回写 form.per_type + 关闭；取消/遮罩/ESC 仅关 modal、草稿丢弃。
+// 编辑仅改 draft；关闭即保存（2026-08-22）：确定/遮罩/ESC/✕ 回写前对全格 clamp
+// （mousedown 先于焦点转移，正在编辑 input 的 onBlur 规整未必已触发），「取消」
+// 仅关 modal、草稿丢弃。
 //
 // 裁片放大预览（AC#7）：点击 thead 缩略图触发 openPreviewLabel(label)；
 // PtypePreviewModal 叠在本模态之上（z-index 更高）；关闭预览时本模态草稿保留。
 //
 // 关键不变量（AC#10）：两层 modal 各自独立 ESC ——
-//   - 本组件 ESC listener 内判 previewLabel===null 才关闭，避免预览打开时双层同时关闭。
+//   - 本组件 ESC listener 内判 previewLabel===null 且未被消费才关闭，避免预览打开
+//     时双层同时关闭（预览 listener 消费 ESC 时 stopImmediatePropagation，防监听
+//     注册顺序翻转后 previewLabel 已被置 null 的窗口）。
 //   - PtypePreviewModal 自己的 ESC listener 始终只关 previewLabel。
 //
 // 不引入 CSS 框架；.per-type-overlay / .per-type-modal / .per-type-table / .ptype-thumb
@@ -123,7 +130,7 @@ export interface PerTypeOverridesModalProps {
   onChange: (next: Record<string, PerTypeFormValue>) => void;
   /** 布局设置初值（form.band_*；mount 时读入草稿）。 */
   band: BandFormValue;
-  /** 确定时回写 ControlPanel form.band_*（取消/遮罩/ESC 连同草稿丢弃）。 */
+  /** 关闭即保存时回写 ControlPanel form.band_*（确定/遮罩/ESC/✕；「取消」丢弃）。 */
   onBandChange: (next: BandFormValue) => void;
 }
 
@@ -172,7 +179,7 @@ function PerTypeOverridesModalInner({
   // 草稿：mount 时从 values 已配置键初始化。key 强制每次 open 重建（避免残留）。
   const [draft, setDraft] = useState<Record<string, PerTypeFormValue>>(() => initializeDraft(values));
 
-  // 布局设置草稿（同一 mount 生命周期，confirm 是唯一回写路径）。
+  // 布局设置草稿（同一 mount 生命周期，saveAndClose 是唯一回写路径）。
   const [bandEnabled, setBandEnabled] = useState<boolean>(band.enabled);
   const [bandLabel, setBandLabel] = useState<string>(band.label);
 
@@ -221,18 +228,23 @@ function PerTypeOverridesModalInner({
   }, [orderedLabels, bandLabel]);
 
   // ESC 监听（AC#10）：previewLabel !== null 时由 PtypePreviewModal 处理 ESC（双层独立）。
-  // 本 listener 仅在 previewLabel===null 时关 modal，避免双层同时关闭。
+  // 本 listener 仅在 previewLabel===null 时保存并关 modal，避免双层同时关闭。
+  // 双守卫防监听顺序翻转（本组件重渲染会把 listener 挪到注册队尾，放大预览的
+  // listener 可能先执行）：① 顺序在预览前 → previewLabel 仍在场，早退；② 顺序在
+  // 预览后 → 预览 listener 已 stopImmediatePropagation（顶层消费信号），本 listener
+  // 不再收到；defaultPrevented 早退为兜底。
   useEffect(() => {
     function onKey(e: KeyboardEvent): void {
       if (e.key !== 'Escape') return;
       // 双层 modal：放大预览打开时 ESC 只关预览，不关底层高级配置（AC#10 关键约定）
       if (useControlPanelStore.getState().previewLabel !== null) return;
+      if (e.defaultPrevented) return;
       e.preventDefault();
-      onClose();
+      saveAndClose();
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  });
 
   function updateDraft(label: string, key: 'd' | 'tol', v: string): void {
     setDraft((prev) => ({
@@ -241,8 +253,19 @@ function PerTypeOverridesModalInner({
     }));
   }
 
-  function handleConfirm(): void {
-    onChange(draft);
+  /** 保存草稿并关闭（确定 / 遮罩 / ESC / ✕ 四通道共用 —— 关闭即保存）。
+   * 回写前对全格 clamp：遮罩 mousedown 与 ESC 都可能先于正在编辑 input 的
+   * onBlur 规整发生（mousedown 事件先于焦点转移，ESC 不转移焦点），不 clamp
+   * 会把 '99' 这类未规整值写回 —— 等价于替未触发的 blur 补一次规整。 */
+  function saveAndClose(): void {
+    const clamped: Record<string, PerTypeFormValue> = {};
+    for (const [label, v] of Object.entries(draft)) {
+      clamped[label] = {
+        d: clampDraft(v.d, MAX_OVERLAP_MM),
+        tol: clampDraft(v.tol, MAX_ROTATION_TOL_DEG),
+      };
+    }
+    onChange(clamped);
     // band 草稿一并回写（未勾选时 label 原样保留 —— collectBand 对 enabled=false
     // 恒 null，重新勾选时上次选择不丢）。
     onBandChange({ enabled: bandEnabled, label: bandLabel });
@@ -250,8 +273,8 @@ function PerTypeOverridesModalInner({
   }
 
   function handleOverlayMouseDown(e: React.MouseEvent): void {
-    // 仅当 mousedown 落在 overlay 自身（不是冒泡上来的子元素）时关闭
-    if (e.target === e.currentTarget) onClose();
+    // 仅当 mousedown 落在 overlay 自身（不是冒泡上来的子元素）时保存并关闭
+    if (e.target === e.currentTarget) saveAndClose();
   }
 
   function handleModalMouseDown(e: React.MouseEvent): void {
@@ -282,15 +305,15 @@ function PerTypeOverridesModalInner({
             type="button"
             className="per-type-close"
             aria-label="关闭"
-            onClick={onClose}
+            onClick={saveAndClose}
             data-testid="per-type-close"
           >
             ✕
           </button>
         </div>
 
-        {/* 布局设置分区：表格上方独立分区（draft+confirm 同表格语义，取消/遮罩/ESC
-            连同 band 草稿一并丢弃）。值域 = 表格同源 orderedLabels（reps ∪ values 键，
+        {/* 布局设置分区：表格上方独立分区（draft + 关闭即保存同表格语义，仅「取消」
+            丢弃 band 草稿）。值域 = 表格同源 orderedLabels（reps ∪ values 键，
             fetch 失败降级纯文字 option 列表不阻塞）；未勾选禁用下拉。 */}
         <div className="per-type-band" data-testid="per-type-band">
           <div className="per-type-band-title">布局设置</div>
@@ -438,6 +461,9 @@ function PerTypeOverridesModalInner({
           重合 0–{MAX_OVERLAP_MM}mm、旋转 0–{MAX_ROTATION_TOL_DEG}°（全局上限）；默认 0 =
           不重合 / 锁布纹线。空值 = 继承（同 0）。
         </div>
+        <div className="per-type-hint dim small" data-testid="per-type-save-hint">
+          点空白处 / ESC / ✕ 关闭即保存更改；「取消」丢弃更改。
+        </div>
 
         <div className="per-type-actions">
           <button
@@ -451,7 +477,7 @@ function PerTypeOverridesModalInner({
           <button
             type="button"
             className="per-type-btn-confirm"
-            onClick={handleConfirm}
+            onClick={saveAndClose}
             data-testid="per-type-confirm"
           >
             确定

@@ -26,7 +26,10 @@
 // 与 PieceZoomModal 一致；label 传入 → 图上叠印 g 码标注，与上传预览放大同观感）。
 //
 // 关键不变量（AC#10）：ESC 独立 —— 本模态 ESC listener 始终只关 previewLabel，
-// 不触碰 modal（底层高级配置弹窗的 ESC listener 内判 previewLabel===null 才关，双层独立）。
+// 不触碰 modal（底层高级配置弹窗的 ESC listener 内判 previewLabel===null 才关，双层
+// 独立）。本 listener 消费 ESC 时 stopImmediatePropagation()：底层 listener 若因注册
+// 顺序在本模态之后执行（其重渲染会挪动注册位，届时 previewLabel 已被置 null），
+// 被阻断而不误关底层。
 //
 // 不引入 CSS 框架；.ptype-preview-overlay / .ptype-preview-modal / .ptype-preview-close /
 // .ptype-preview-body 全部沿用 style.css 暗背景 + #2ea06c 同色系（与 PieceZoomModal 一致）。
@@ -85,6 +88,11 @@ export function PtypePreviewModal(): JSX.Element | null {
     function onKey(e: KeyboardEvent): void {
       if (e.key === 'Escape') {
         e.preventDefault();
+        // 顶层消费信号：阻断 window 上后注册的底层 per_type ESC listener（其重渲染
+        // 会把 listener 挪到注册队尾，若仅靠 previewLabel 判断，此时已被本函数置
+        // null）。stopImmediatePropagation 不依赖事件 cancelable（jsdom 合成事件
+        // 默认不可取消，preventDefault 不改变 defaultPrevented）。
+        e.stopImmediatePropagation();
         closePreviewLabel();
       }
     }
