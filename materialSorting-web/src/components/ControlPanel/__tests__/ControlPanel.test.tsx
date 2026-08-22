@@ -703,12 +703,6 @@ describe("ControlPanel band 接线 (US-013)", () => {
         setter.call(select, label);
         select.dispatchEvent(new Event("change", { bubbles: true }));
       });
-      // 预演 fetch（/api/band/preview）resolve（mock 返 reps JSON → ok 缺席 → 降级提示，无害）
-      await act(async () => {
-        await Promise.resolve();
-        await Promise.resolve();
-        await Promise.resolve();
-      });
     }
     const confirm = document.body.querySelector<HTMLButtonElement>(".per-type-btn-confirm")!;
     act(() => confirm.click());
@@ -771,73 +765,6 @@ describe("ControlPanel band 接线 (US-013)", () => {
     expect(onStart).toHaveBeenCalledTimes(1);
     const cfg = onStart.mock.calls[0][0] as ControlPanelStartPayload;
     expect(cfg.band).toEqual({ enabled: true, label: "g01" });
-  });
-
-  it("band 硬警告形态 → 弹窗 ack 勾选 → 确定写回 → start payload band 带 ack:true（全链路）", async () => {
-    const onStart = vi.fn();
-    setupBandDoc();
-    renderPanel(onStart);
-    selectAllSizes();
-    // 本用例 mock 按 URL 分流：/api/ptypes 返 reps；/api/band/preview 无 ack → 422
-    // hard_warning，带 ack → 成功（勾选后重试放行口径）。
-    fetchSpy!.mockImplementation((input: unknown, init?: unknown) => {
-      const url = String(input);
-      const headers = { "Content-Type": "application/json" };
-      if (url.includes("/api/band/preview")) {
-        const body = JSON.parse(String((init as RequestInit | undefined)?.body ?? "{}"));
-        if (body?.band?.ack === true) {
-          return Promise.resolve(
-            new Response(
-              JSON.stringify({
-                ok: true, fill_pct: 66.0,
-                bbox: { width_mm: 900, height_mm: 1980 },
-                elapsed: 5.0, break_even: [62.4, 63.6],
-              }),
-              { status: 200, headers },
-            ),
-          );
-        }
-        return Promise.resolve(
-          new Response(
-            JSON.stringify({
-              ok: false,
-              error: "band g 码 g01 长宽比 6.9（>6），属硬警告形态，需显式确认（band.ack=true）",
-              hard_warning: true,
-            }),
-            { status: 422, headers },
-          ),
-        );
-      }
-      return Promise.resolve(
-        new Response(JSON.stringify(TWO_G_REPS), { status: 200, headers }),
-      );
-    });
-    // 勾选 + 选 g01 → 422 hard_warning → ack 勾选框出现
-    mockReps = TWO_G_REPS;
-    const perTypeBtn = container!.querySelector<HTMLButtonElement>(".per-type-btn")!;
-    act(() => perTypeBtn.click());
-    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
-    act(() => document.body.querySelector<HTMLInputElement>('[data-testid="band-enabled"]')!.click());
-    const select = document.body.querySelector<HTMLSelectElement>('[data-testid="band-label-select"]')!;
-    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!;
-    act(() => {
-      setter.call(select, "g01");
-      select.dispatchEvent(new Event("change", { bubbles: true }));
-    });
-    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
-    const ack = document.body.querySelector<HTMLInputElement>('[data-testid="band-ack"]')!;
-    expect(ack).not.toBeNull();
-    // 勾选 ack → 带 ack 重试成功（预演行回显 fill）
-    act(() => ack.click());
-    await act(async () => { await Promise.resolve(); await Promise.resolve(); await Promise.resolve(); });
-    expect(document.body.querySelector('[data-testid="band-preview"]')!.textContent).toContain("66.0");
-    // 确定 → start payload band 带 ack:true（后端 _parse_band 放行硬警告形态）
-    act(() => document.body.querySelector<HTMLButtonElement>(".per-type-btn-confirm")!.click());
-    const btn = container!.querySelector<HTMLButtonElement>("#start")!;
-    expect(btn.disabled).toBe(false);
-    act(() => btn.click());
-    const cfg = onStart.mock.calls[0][0] as ControlPanelStartPayload;
-    expect(cfg.band).toEqual({ enabled: true, label: "g01", ack: true });
   });
 
   it("band 开启 → strategy-btn 置灰 + title 互斥说明；band 关闭恢复可用", async () => {

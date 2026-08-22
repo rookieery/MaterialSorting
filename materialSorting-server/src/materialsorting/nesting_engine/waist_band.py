@@ -1,5 +1,5 @@
-"""腰头成带核心模块（US-009；v2 2026-08-21 构造性链构造重写；US-015 v1.1 混填料）
-—— 链构造 + 填料填充 + 组合片构造 + 展开纯函数。
+"""腰头成带核心模块（US-009；v2 2026-08-21 构造性链构造重写）
+—— 链构造 + 组合片构造 + 展开纯函数。
 
 机制（依据 ``.docs/business/腰头成带_落地方案.md`` §2 + 版师形态指正 2026-08-21）：
 腰头 g 码裁片按「每码第 k 副本」拆成 N 条**单副本异码链**（版师构造：链内片片
@@ -13,15 +13,7 @@
 组合片（``WB_*`` pid）投入主求解；主解帧发射前用 ``expand_placements`` 把组合片
 placement 展开回成员 placement。性质是**业务规则**（确定性聚排形态），不是利用率
 优化器 —— 验收线 = 形态保证（链内贴触 + 开口/码序）+ 密度不显著劣化（实测紧带
-进主解 +1.4pt vs OFF）。
-
-US-015 v1.1 填料混带（唯一实测过 break-even 线的形态：混带 72.5% > 线
-62.4~63.6%，纯腰 54.8~60.9% 不过线 —— US-010 闸门口径）：``fillers`` 指认的
-任意 g 码（版师确认无白名单约束）全部副本在**腰链堆叠完成后**经 ``_fill_gaps``
-贪心塞进带内空隙（v1「封闭肋间内腔死区」的填料回收；v2 链构造下即凹口/链间
-空隙），并进 union/展开/守恒/泄漏全口径；带内成员碰撞口径的 d 抬到
-``BAND_INNER_D_MM``（2~4mm 取保守端 2.0）—— 肋间切口端部被开到小件可入宽度
-（主解 NFP 邻接可深入），原始轮廓间隙 ≥2×2.0mm。
+进主解 +2.27pt vs OFF）。
 
 分层约束：本模块属 ``nesting_engine``，仅 import 标准库 + shapely + 本包兄弟模块
 （``sparrow_baseline`` / ``sparrow_experiments`` / ``constraints``）+ 下层
@@ -42,7 +34,6 @@ from dataclasses import dataclass, field
 from shapely.affinity import rotate, translate
 from shapely.geometry import Polygon
 from shapely.ops import unary_union
-from shapely.prepared import prep
 
 from ..nesting_bounds.load_pieces import NEST_GATE_MM, PLOT_SAFE_MAX_Y_MM
 from .sparrow_baseline import _clean_polygon, _transform_polygon
@@ -58,10 +49,6 @@ COMPOSITE_ORIENTATIONS = (0.0, 180.0)
 # ~500+ 顶点，NFP 代价是 US-010 微基准关注点；0.05mm 偏差 ≪ 包络容差 0.5mm）。
 MAX_COMPOSITE_VERTICES = 600
 SIMPLIFY_TOLERANCE_MM = 0.05
-# 【v1 遗产·deprecated】带内子求解预算：v2 构造性链构造毫秒级完成、无预算依赖。
-# 常量与 ``build_band_plan(time_budget=...)`` 形参保留仅为 ``solve_worker`` /
-# ``routes_band`` / ``band_accept`` / ``waist_band_gate`` 的 import 兼容（接受即忽略）。
-DEFAULT_BAND_TIME_BUDGET_S = 15
 # 带内填充率下限（%）：v2 起降为**灾难形态兜底**（裤耳 g06 类 13% 在此拦截）——
 # 主判据是链内贴触 ``CHAIN_GAP_EPS_MM``（新月片 bbox 空隙是构造性的，版师接受，
 # 弧形腰片实测 fill 63~80% 均合法）。禁止无声 shelf 兜底 —— 异常 fail-fast 抛
@@ -74,10 +61,6 @@ FILL_FLOOR_PCT = 45.0
 WELD_RADIUS_MM = 1.0
 # 焊接半径上限（mm）：超过仍不连通 = 解真正散落（贴触判据理应已拦截），fail-fast。
 WELD_RADIUS_MAX_MM = 512.0
-# 【v1 遗产·deprecated】同码成对相邻判据的边距容差（mm）：v2 链构造不需要成对
-# （版师形态 = 单副本异码链）；常量保留仅为 ``web.band_accept``（US-014 验收
-# 口径）import 兼容。
-PAIR_ADJ_EPS_MM = 10.0
 # ---- v2 构造性链构造参数（exp_band_fill.py / exp_rightband.py 探针标定） ----
 # 链内贴触判据（mm）：每片到最近邻**边距**的最大值上限（碰撞口径 = 已腐蚀轮廓，
 # 实测 0.00；新月片 bbox fill 不是版师验收口径）。
@@ -88,16 +71,6 @@ CHAIN_SLIDE_STEP_MM = 20.0
 CHAIN_BISECT_ITERS = 40
 # 链构造/堆叠的 y 对齐候选（链: 片对已排 union；堆叠: 链对已堆叠 union）。
 CHAIN_Y_ALIGNS = ('bottom', 'mid', 'top', 'b2t', 't2b')
-# US-015 填料滑移二分次数（24 次 ⇒ 收敛精度 2^-24×2000 ≈ 0.0001mm，远小于 0.01mm
-# 贴触判据；填料候选量大（成员边 y 候选 × 双向），比链构造的 40 次省 40% 用时，
-# 实测 5336 g05+g07+g08 28 副本 ~5s）。
-FILLER_BISECT_ITERS = 24
-# US-015 混带带内碰撞 d 下限（mm）：填料开启时全部带成员（腰+填料）的带内碰撞轮廓
-# 在该 label 既有腐蚀（per_type d）之上补腐蚀到此深度 —— 贴触 ⇒ 原始轮廓间隙
-# ≥2×本值，肋间切口端部开到小件可入宽度（PRD「band 内 d 适度放大 2~4mm」取保守
-# 端；纯腰路径不受影响 = v2 行为零回归）。组合片外轮廓 erode 深度仍为 d_g（包络
-# 断言口径不变）。
-BAND_INNER_D_MM = 2.0
 
 
 class BandError(Exception):
@@ -147,12 +120,11 @@ class BandChunk:
     polygon: list                 # 归一化组合片轮廓 [[x,y],...]（erode d_g 后）
     offset: tuple                 # (minx, miny)：成员 union bbox 最小角（展开减号）
     members: list                 # [{'pid','rotation','translation'}] 逐副本带内位（size-major 序）
-    fill_pct: float               # 带内填充率（成员原面积和 / union bbox 面积 ×100；US-015 起含填料面积）
+    fill_pct: float               # 带内填充率（成员原面积和 / union bbox 面积 ×100）
     bbox: dict                    # {'width_mm','height_mm'} union bbox（实际占用，非全幅）
     seed: int                     # 带内子求解实际使用的 seed（crc32 派生，回放对拍用）
     d_g: float                    # 该 g 码重合公差（组合片 erode 深度）
     tol_g: float                  # 该 g 码旋转公差（成员带内离散角）
-    fillers: tuple = ()           # US-015 混带填料 g 码（记录/工件回放；空 = 纯腰 v2）
     n_members: int = field(init=False)
 
     def __post_init__(self):
@@ -160,12 +132,12 @@ class BandChunk:
 
     @property
     def total_demand(self) -> int:
-        """成员副本总数（= Σ pid_meta demand，守恒断言口径；US-015 起含填料副本）。"""
+        """成员副本总数（= Σ pid_meta demand，守恒断言口径）。"""
         return len(self.members)
 
     def to_dict(self) -> dict:
-        """JSON 可序列化 dict（US-011 band_runs 工件 / 确定性对拍用；纯几何不含
-        wall-clock —— 同 seed 两跑 ``json.dumps`` 相等）。"""
+        """JSON 可序列化 dict（确定性对拍用；纯几何不含 wall-clock —— 同 seed
+        两跑 ``json.dumps`` 相等）。"""
         return {
             'pid': self.pid,
             'label': self.label,
@@ -187,7 +159,6 @@ class BandChunk:
             'seed': int(self.seed),
             'd_g': float(self.d_g),
             'tol_g': float(self.tol_g),
-            'fillers': [str(f) for f in self.fillers],
         }
 
 
@@ -301,49 +272,34 @@ def _y_align_off(y_align, pb, gb) -> float:
     return (pb[1] + pb[3]) / 2 - (gb[1] + gb[3]) / 2      # 'mid'
 
 
-def _slide_touch(g_moving, g_fixed, y_offset, from_left=False,
-                 bisect_iters=CHAIN_BISECT_ITERS, prep_fixed=None):
-    """从远端滑到与 g_fixed 首次贴触：粗扫定界 + 二分收敛（默认右侧起步向左）。
+def _slide_touch(g_moving, g_fixed, y_offset):
+    """从右侧远端滑到与 g_fixed 首次贴触：粗扫定界 + 二分收敛。
 
     可行域（不碰撞的 x 区间）非凸 —— 必须从行进方向远端起步找**首个**碰撞界，
     再在 (碰撞, 不碰撞) 区间二分到贴触点；双向起步二分会卡进远端凹口。
-    ``from_left=True``（US-015 填料专用）从左侧远处向右滑 —— 带开口朝左，左起
-    滑移可深入凹口填进空隙（右起滑移会被凸侧先拦住）。
     y_offset = 施加于 g_moving 的 y 平移量。返回 ``(放置几何, dx)``，其中 dx 为
     施加的 x 平移量（``translate(g_moving, dx, y_offset) == 放置几何``）—— 调用方
     按 transform 记账语义直接入 placement，勿再拿「左边缘坐标」当平移量。
-
-    ``bisect_iters`` / ``prep_fixed``（US-015 填料热路径旋钮）：填料候选量大，可
-    降二分精度（``FILLER_BISECT_ITERS``）并传入复用的 prepared 几何（bbox 级快速
-    预筛）提速；缺省即 v2 链构造口径，行为逐字节不变。
     """
     mb = g_moving.bounds
     fb = g_fixed.bounds
     w = mb[2] - mb[0]
-    if from_left:
-        x_start = fb[0] - w - 50.0          # 左侧远处起步
-        x_end = fb[2] + w + 5.0
-        step = CHAIN_SLIDE_STEP_MM
-    else:
-        x_start = fb[2] + w + 50.0          # 右侧远处起步（v2 链构造默认方向）
-        x_end = fb[0] - w - 5.0
-        step = -CHAIN_SLIDE_STEP_MM
+    x_start = fb[2] + w + 50.0              # 右侧远处起步（v2 链构造默认方向）
+    x_end = fb[0] - w - 5.0
+    step = -CHAIN_SLIDE_STEP_MM
 
     def place(x_left):
         return translate(g_moving, xoff=x_left - mb[0], yoff=y_offset)
 
     def collides(x_left):
-        p = place(x_left)
-        if prep_fixed is not None and not prep_fixed.intersects(p):
-            return False                    # bbox 级预筛（prepared，语义同面积测试）
-        return p.intersection(g_fixed).area >= 1e-6
+        return place(x_left).intersection(g_fixed).area >= 1e-6
 
     if collides(x_start):
         return place(x_start), x_start - mb[0]   # 起点就碰（y 对齐重叠）：直接放
     hit = None
     x = x_start
-    while (step > 0 and x < x_end) or (step < 0 and x > x_end):
-        xn = min(x + step, x_end) if step > 0 else max(x + step, x_end)
+    while x > x_end:
+        xn = max(x + step, x_end)
         if collides(xn):
             hit = (xn, x)                   # (碰撞, 不碰撞)
             break
@@ -351,7 +307,7 @@ def _slide_touch(g_moving, g_fixed, y_offset, from_left=False,
     if hit is None:
         return place(x_end), x_end - mb[0]
     a, b = hit
-    for _i in range(int(bisect_iters)):
+    for _i in range(CHAIN_BISECT_ITERS):
         mid = (a + b) / 2.0
         if collides(mid):
             a = mid
@@ -458,61 +414,6 @@ def _stack_chains(chains, polys):
     return placed
 
 
-def _fill_gaps(filler_units, polys, placed):
-    """US-015 填料贪心填充：腰链堆叠完成后，把填料副本逐个塞进带内空隙。
-
-    每副本候选 = rot{0,180} × **成员边 y 候选**（已排 union bbox 上下边 + 每片
-    bbox 上下边，各对齐填料底/顶 —— 凹口/链间空隙都贴着某条成员边，5 个全局
-    y 对齐实测够不着：填料只会堆在带端部把 bbox 撑大、fill 反降）× **双向**
-    （右起 + 左起）滑移贴触 —— 带开口朝左，左起滑移才能深入凹口（v1「封闭
-    肋间内腔」死区在 v2 链构造下即凹口/链间空隙，填料在此回收）；取 union
-    bbox 面积增长最小（解析合并 ``_bbox_area``，与 ``_chain_nest``/``_stack_chains``
-    同一确定性贪心口径，无 RNG；实测 5336 g05 P0 + g07 fill 79.5%→86.5% 且
-    bbox 收窄）。
-
-    ``filler_units`` = 逐副本展开的 pid 序列（调用方按 (g 码, size, pid) 定序保证
-    确定性）；碰撞口径 = ``polys``（混带下已含 ``BAND_INNER_D_MM`` 补腐蚀）。
-    返回填料带内位 list（与 ``placed`` 同 shape，调用方拼接）。
-    """
-    geoms = [_geom_at(polys[m['pid']], m['rotation'], m['translation'])
-             for m in placed]
-    packed = unary_union(geoms)
-    out = []
-    for pid in filler_units:
-        pb = packed.bounds
-        candidates = []
-        for r in (0.0, 180.0):
-            g0 = rotate(_valid_geometry(polys[pid]), r, origin=(0, 0))
-            gb = g0.bounds
-            ys: set = set()
-            for edge in (pb[1], pb[3]):
-                ys.add(round(edge - gb[1], 3))     # 填料底对齐边
-                ys.add(round(edge - gb[3], 3))     # 填料顶对齐边
-            for g in geoms:
-                mb2 = g.bounds
-                for edge in (mb2[1], mb2[3]):
-                    ys.add(round(edge - gb[1], 3))
-                    ys.add(round(edge - gb[3], 3))
-            prepped = prep(packed)                 # 候选共享 prepared 快速预筛
-            for yo in sorted(ys):
-                for from_left in (False, True):
-                    g, dx = _slide_touch(
-                        g0, packed, yo, from_left=from_left,
-                        bisect_iters=FILLER_BISECT_ITERS, prep_fixed=prepped)
-                    candidates.append((g, {'pid': pid, 'rotation': r,
-                                           'translation': [dx, yo]}))
-        best = None
-        for g, meta in candidates:
-            cost = _bbox_area(pb, g.bounds)
-            if best is None or cost < best[0]:
-                best = (cost, g, meta)
-        _, g, meta = best
-        packed = unary_union([packed, g])
-        geoms.append(g)
-        out.append(meta)
-    return out
-
-
 def _chain_gap(placed, polys):
     """链内最大相邻缝隙（mm）：每片到最近其他片**边距**的最大值（0 = 片片贴触）。
 
@@ -543,14 +444,11 @@ def _opening_side(placed, polys, flat_eps=1.0):
 
 def build_band_plan(pid_meta, pieces_by_id, *, label, seed,
                     gate_nest=NEST_GATE_MM, d_g=0.4, tol_g=3.0,
-                    fillers=(), filler_ds=None,
-                    time_budget=DEFAULT_BAND_TIME_BUDGET_S,
                     fill_floor=FILL_FLOOR_PCT) -> BandChunk:
-    """构造性链构造 → 填料填充 → 组合片构造（单一真相源；web 编排在 US-011 接线）。
+    """构造性链构造 → 组合片构造（单一真相源；web 编排在 US-011 接线）。
 
     版师形态（v2，2026-08-21）：每码第 k 副本一条链 → 降序构造+整链翻转（开口
-    朝左、最大码在最右）→ 链间滑移堆叠 → US-015 填料 ``_fill_gaps`` 贪心塞隙 →
-    union/erode/归一化（v1 管线不变）。
+    朝左、最大码在最右）→ 链间滑移堆叠 → union/erode/归一化。
 
     Parameters
     ----------
@@ -575,21 +473,9 @@ def build_band_plan(pid_meta, pieces_by_id, *, label, seed,
     tol_g : float
         该 g 码旋转公差（记录进 chunk；链构造成员朝向恒取 grain 锁 {0,180}，严于
         ``discretize_orientations(tol_g)`` —— FR-8 同口径：工艺公差属裁片不属于带）。
-    fillers : sequence[str]
-        US-015 混带填料 g 码（版师确认无白名单约束；数量上限/存在性/与主 g 码
-        不同由 ``routes_ws._parse_band`` 服务端校验，此处兜底 0 副本 ValueError）。
-        填料全部副本在腰链堆叠后经 ``_fill_gaps`` 塞进带内空隙并进 union/展开/
-        守恒口径；空 = 纯腰 v2 路径（碰撞 d 不放大，行为逐字节不变）。
-    filler_ds : dict | None
-        填料各 label 的重合公差 ``{label: d}``（``_resolve_d_tol`` 逐 label 裁定，
-        由调用方传入；缺省视为 0）—— 混带补腐蚀深度的计算基准（见
-        ``BAND_INNER_D_MM``）。
-    time_budget : int
-        【deprecated no-op】v1 带内子求解预算；构造性链构造毫秒级完成、无预算
-        依赖。形参保留仅为调用方（solve_worker/routes_band/band_accept/gate）兼容。
     fill_floor : float
         带内填充率下限（%），低于即 BandQualityError（灾难形态兜底；主判据是
-        链内贴触 ``CHAIN_GAP_EPS_MM``）。US-015 起分子 = 腰 + 填料面积和。
+        链内贴触 ``CHAIN_GAP_EPS_MM``）。
 
     Returns
     -------
@@ -607,46 +493,20 @@ def build_band_plan(pid_meta, pieces_by_id, *, label, seed,
         raise DegenerateBand(
             f'band label {label!r} 总副本 1 —— 单片无成带意义，直接走主解')
 
-    # US-015 填料成员收集（同一 demand>0 口径；0 副本/与主码同值 fail-fast）。
-    fillers = [str(f) for f in (fillers or []) if str(f)]
-    if label in fillers:
-        raise ValueError(f'band 填料不可与主 g 码相同（{label!r}）')
-    filler_ds = dict(filler_ds or {})
-    filler_members: list = []               # [(label, pid)]，定序保证确定性
-    for f in fillers:
-        f_pids = sorted(
-            (pid for pid, m in pid_meta.items()
-             if m.get('label') == f and int(m.get('demand', 0)) > 0),
-            key=lambda pid: _member_sort_key(pid_meta[pid], pid))
-        if not f_pids:
-            raise ValueError(f'band 填料 {f!r} 无 demand>0 裁片（0 副本，不可混带）')
-        filler_members.extend((f, pid) for pid in f_pids)
-    total_filler = sum(int(pid_meta[pid]['demand']) for _f, pid in filler_members)
-
     # ---- 2) 构造性链构造（v2 版师形态） -------------------------------------
     # 版师构造（2026-08-21 指正）：每码第 k 副本一条链 —— 链内片片贴触、缝隙只在
     # 链间，不需要同码成对。v1 spyrrow strip 带内子求解目标是最短用布 X 而非贴触
     # （产 48% 对角阶梯、预算 ×30 仅 +4.1pt 结构性卡死；US-014 成对重试在单副本
-    # 配置空真失效），整体弃用。碰撞口径 = 已腐蚀轮廓（与 v1 Item 同口径）；US-015
-    # 混带时在该口径上补腐蚀到 BAND_INNER_D_MM（肋间切口端部开到小件可入宽度）。
+    # 配置空真失效），整体弃用。碰撞口径 = 已腐蚀轮廓（与 v1 Item 同口径）。
     band_seed = band_seed_for(seed, label)
-    inner_floor = BAND_INNER_D_MM if fillers else 0.0
 
-    def _member_poly(pid, lbl):
+    def _member_poly(pid):
         poly = _clean_polygon(pid_meta[pid]['polygon'])
         if len(poly) < 3:
             raise DegenerateBand(f'成员 {pid} 腐蚀/清洗后顶点<3，不可成带')
-        base_d = float(d_g) if lbl == label else float(filler_ds.get(lbl, 0.0))
-        extra = max(inner_floor - base_d, 0.0)
-        if extra > 0:
-            deeper = erode_polygon(poly, extra)   # 失败自动回退原轮廓（碰撞超集安全方向）
-            if len(deeper) >= 3:
-                poly = _clean_polygon(deeper)
         return poly
 
-    polys: dict = {pid: _member_poly(pid, label) for pid in member_pids}
-    for f, pid in filler_members:
-        polys[pid] = _member_poly(pid, f)
+    polys: dict = {pid: _member_poly(pid) for pid in member_pids}
     max_demand = max(int(pid_meta[pid]['demand']) for pid in member_pids)
     chains = []
     for k in range(max_demand):
@@ -675,19 +535,6 @@ def build_band_plan(pid_meta, pieces_by_id, *, label, seed,
     if len(placed) != total_demand:
         raise BandQualityError(
             f'链构造副本守恒失败: 放置 {len(placed)} != Σdemand {total_demand}')
-
-    # US-015 填料填充：腰链形态定形后塞隙（填料不进链 —— 链是腰头版师构造；
-    # 填料贴触口径同 polys，逐副本展开保序确定性）。
-    filler_units: list = []
-    for _f, pid in filler_members:
-        filler_units.extend([pid] * int(pid_meta[pid]['demand']))
-    if filler_units:
-        placed = placed + _fill_gaps(filler_units, polys, placed)
-        if len(placed) != total_demand + total_filler:
-            raise BandQualityError(
-                f'混带副本守恒失败: 放置 {len(placed)} != '
-                f'Σdemand {total_demand + total_filler}（腰 {total_demand} + '
-                f'填料 {total_filler}）')
 
     # ---- 3) 原始轮廓@带内位 → union → 焊接连通 → erode(d_g) → clean → 归一化
     footprints = []
@@ -721,8 +568,6 @@ def build_band_plan(pid_meta, pieces_by_id, *, label, seed,
     comp = [[x - offset[0], y - offset[1]] for x, y in comp]   # 平移归一化（减 offset）
 
     # ---- 4) 带内填充率（实际占用 bbox 口径，非全幅）+ 质量下限 --------------
-    # US-015 起分子 = 腰 + 填料面积和（A/B「带区域效率 = 带板 bbox 内腰+填料面积/
-    # 占用」的同一口径）。
     area_sum = sum(float(pid_meta[m['pid']]['area_mm2']) for m in placed)
     bbox_area = bbox['width_mm'] * bbox['height_mm']
     fill_pct = (area_sum / bbox_area * 100.0) if bbox_area > 0 else 0.0
@@ -747,6 +592,5 @@ def build_band_plan(pid_meta, pieces_by_id, *, label, seed,
         seed=band_seed,
         d_g=float(d_g),
         tol_g=float(tol_g),
-        fillers=tuple(fillers),
     )
 

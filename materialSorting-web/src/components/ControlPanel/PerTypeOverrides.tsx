@@ -1,6 +1,6 @@
 // PerTypeOverrides —— 高级「设置算法参数」入口（US-018 改造为按钮触发器；裁片编号化重构
 // US-003 起覆盖键 = 裁片 g 码；2026-08-18 回退 US-004 矩阵化后维持单级 {g 码: {d, tol}}；
-// 2026-08-22 按钮文案「每裁片覆盖」→「设置算法参数」—— 弹窗已含布局设置+填料混带，
+// 2026-08-22 按钮文案「每裁片覆盖」→「设置算法参数」—— 弹窗已含布局设置，
 // 旧名以偏概全）。
 //
 // 更早旧版：`<details>` 折叠面板，内嵌 10 行 d/tol 输入（US-018 已删）。
@@ -10,10 +10,8 @@
 // onChange={(per_type) => patch({ per_type })} />`）；本组件作为入口把 values/onChange
 // 透传给 PerTypeOverridesModal（在按钮旁边挂载）。Modal 草稿 + 确定时调 onChange 回写。
 //
-// US-013：透传扩展 —— band/onBandChange（布局设置分区 form.band_* 草稿/回写）+
-// buildStartContext（预演 POST /api/band/preview 的求解上下文构造器）。
-// US-015：BandFormValue 增 fillers（填料多选草稿随 band 原样透传，形状由
-// PerTypeOverridesModal 定义 —— 本入口不做二次加工）。
+// 布局设置（腰头成带开关 + g 码下拉）：band/onBandChange 透传（形状由
+// PerTypeOverridesModal 的 BandFormValue 定义 —— 本入口不做二次加工）。
 //
 // 关键不变量（AC#6）：与 ControlPanel 的 values/onChange 契约不变；
 // PerTypeOverridesModal 订阅 controlPanelStore.modal 自显隐（声明式受控 Portal）。
@@ -23,7 +21,7 @@
 
 import type { JSX } from 'react';
 import { useControlPanelStore } from '../../store/controlPanelStore';
-import type { PerTypeFormValue, StartContext } from '../../lib/params';
+import type { PerTypeFormValue } from '../../lib/params';
 import { PerTypeOverridesModal, type BandFormValue } from './PerTypeOverridesModal';
 import { PtypePreviewModal } from './PtypePreviewModal';
 
@@ -32,12 +30,10 @@ export interface PerTypeOverridesProps {
   values: Record<string, PerTypeFormValue>;
   /** Modal 确定时回写（label + 'd' | 'tol' + 新字符串）。 */
   onChange: (next: Record<string, PerTypeFormValue>) => void;
-  /** US-013 布局设置初值（form.band_*：enabled/label/ack）。 */
+  /** 布局设置初值（form.band_*：enabled/label）。 */
   band: BandFormValue;
-  /** US-013 确定时回写 form.band_*。 */
+  /** 确定时回写 form.band_*。 */
   onBandChange: (next: BandFormValue) => void;
-  /** US-013 预演 /api/band/preview 的求解上下文构造器。 */
-  buildStartContext: () => StartContext;
   /** US-027 求解中冻结高级配置入口（与 StartButton disabled 同套机制）。 */
   disabled?: boolean;
 }
@@ -47,7 +43,6 @@ export function PerTypeOverrides({
   onChange,
   band,
   onBandChange,
-  buildStartContext,
   disabled = false,
 }: PerTypeOverridesProps): JSX.Element {
   const openModal = useControlPanelStore((s) => s.openModal);
@@ -69,7 +64,6 @@ export function PerTypeOverrides({
         onChange={onChange}
         band={band}
         onBandChange={onBandChange}
-        buildStartContext={buildStartContext}
       />
       <PtypePreviewModal />
     </div>

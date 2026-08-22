@@ -477,7 +477,7 @@ def solve_with_callback_proc(pieces_snapshot, gate_mm, solve_params, *,
     drain_interval : float
         主进程 drain result_queue 的轮询间隔（秒，默认 0.2）。
     band : dict | None
-        **US-011**：腰头成带配置 ``{'label': str, 'time_budget': int|None}``（routes_ws
+        **US-011**：腰头成带配置 ``{'label': str}``（routes_ws
         服务端校验后产物）。原样传给 ``solve_worker`` —— 带内聚排 + 组合片构造 +
         帧前展开都在 worker 进程内做（组合片 ``BandChunk`` 不跨进程）。缺省 None =
         关闭，worker 走原五元路径（manifest → frame* → final/error）。

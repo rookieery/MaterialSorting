@@ -5,32 +5,14 @@
 // 逐格 d/tol）：重合/旋转是片型工艺属性、与码号无关，按码号细分无业务差异，
 // 收敛回 per_type 单级 {g 码: {d, tol}}，与后端 build_instance 同步回单级命中）。
 //
-// US-013 新增「布局设置」分区（表格上方独立分区，draft+confirm 同表格语义）：
+// 「布局设置」分区（表格上方独立分区，draft+confirm 同表格语义）：
 //   - 子标题「开启腰头成带」+ 勾选框；右侧子标题「腰头编号」+ 下拉框（值域 = 表格
 //     同源 orderedLabels = /api/ptypes reps ∪ values 已配置键；fetch 失败降级纯文字
 //     列表 —— select option 本就是文字，缩略图缺席不阻塞选择）；
 //   - 选中 g 码有 rep 时旁挂 80×80 缩略图 + g 码徽章（QtyMatrix 列头同模式，点击
 //     openPreviewLabel 放大 —— 双层 modal 约定不破坏）；
 //   - 未勾选时下拉 disabled；确定写回 form.band_*，取消/遮罩/ESC 连同 band 草稿一并
-//     丢弃（草稿只在确定路径回写，与 per_type 同一约定）；
-//   - 选中有效 g 码即触发 POST /api/band/preview（body = buildStartContext() + band
-//     草稿；5s 预算），回显 fill/bbox 对照盈亏参考线（62.4~63.6% 由响应携带）；
-//     预演失败仅降级提示，**不阻塞确定**（FR-7）；
-//   - 硬警告形态（成员最小边 <60mm 或长宽比 >6，如 5336 g05 长宽比 6.9）预演回 422
-//     ``{error, hard_warning:true}`` → 预演行下方渲染二次确认勾选框「我已确认…仍要
-//     成带」；勾选即带 ``ack:true`` 重试（成带成功才回显 fill），确定时 ack 一并写回
-//     form.band_ack（此后 WS start band 带 ack，后端放行）。切换 g 码 / 关闭成带 →
-//     ack 草稿重置（FR-1：ack 只对当前指认形态生效）。
-//
-// US-015 v1.1 填料混带（「布局设置」第二行）：勾选成带后渲染填料行 —— 缩略图 chip
-// 多选（数据源与腰头编号下拉同源 orderedLabels / representatives，点击切换选中态
-// ``aria-pressed``）：
-//   - 主 g 码（当前 bandLabel）不在候选集（混带填料不可与主 g 码相同，切换腰头编号
-//     时若旧主码在选中集内则剔除 —— 始终满足 ≠ 主码）；
-//   - 数量上限 ``BAND_MAX_FILLERS``（3）：已满且未选中 → chip 置灰（``disabled``），
-//     toggle 函数同步兜底；
-//   - 填料选择变化触发预演重跑（fill_pct 分子 = 腰 + 填料面积和，同后端口径），
-//     确定时随 band 草稿写回 ``form.band_fillers``（取消/遮罩/ESC 一并丢弃）。
+//     丢弃（草稿只在确定路径回写，与 per_type 同一约定）。
 //
 // 声明式受控 Portal（参考 PieceZoomModal）：
 //   - 订阅 controlPanelStore.modal === 'per_type' 自显隐；null 时不挂 DOM。
@@ -66,15 +48,14 @@
 // / .per-type-band 分区全部沿用 style.css 暗背景 #26282e + #2ea06c 同色系（与
 // PieceZoomModal 一致）。
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { JSX } from 'react';
 import { createPortal } from 'react-dom';
 import { MAX_OVERLAP_MM, MAX_ROTATION_TOL_DEG } from '../../constants/v03';
-import { BAND_LABEL_RE, BAND_MAX_FILLERS, type PerTypeFormValue, type StartContext } from '../../lib/params';
+import type { PerTypeFormValue } from '../../lib/params';
 import { useControlPanelStore } from '../../store/controlPanelStore';
 import type { ParsedPiece } from '../../types/parsed';
 import type { PtypeRepresentative, PtypesResponse } from '../../types/ptype';
-import type { BandPreviewResponse } from '../../types/ws';
 import { PiecePreviewSVG } from '../preview/PiecePreviewSVG';
 
 /** ≤ 字符（U+2264）—— 输入框 placeholder 上限提示。 */
@@ -129,14 +110,10 @@ function repToPiece(rep: PtypeRepresentative): ParsedPiece {
   };
 }
 
-/** US-013 布局设置分区草稿/回写形状（= form.band_* 组；ack 仅硬警告形态勾选）。 */
+/** 「布局设置」分区草稿/回写形状（= form.band_* 组）。 */
 export interface BandFormValue {
   enabled: boolean;
   label: string;
-  /** 硬警告形态二次确认位（预演 422 hard_warning 后渲染勾选框置 true）。 */
-  ack: boolean;
-  /** US-015 填料 g 码多选草稿（空数组 = 纯腰 v2；上限 BAND_MAX_FILLERS、不含主码）。 */
-  fillers: string[];
 }
 
 export interface PerTypeOverridesModalProps {
@@ -144,12 +121,10 @@ export interface PerTypeOverridesModalProps {
   values: Record<string, PerTypeFormValue>;
   /** 确定时回写 ControlPanel form.per_type。 */
   onChange: (next: Record<string, PerTypeFormValue>) => void;
-  /** US-013 布局设置初值（form.band_*；mount 时读入草稿）。 */
+  /** 布局设置初值（form.band_*；mount 时读入草稿）。 */
   band: BandFormValue;
   /** 确定时回写 ControlPanel form.band_*（取消/遮罩/ESC 连同草稿丢弃）。 */
   onBandChange: (next: BandFormValue) => void;
-  /** 预演 POST /api/band/preview 的求解上下文构造器（ControlPanel.buildStartContext）。 */
-  buildStartContext: () => StartContext;
 }
 
 export function PerTypeOverridesModal({
@@ -157,7 +132,6 @@ export function PerTypeOverridesModal({
   onChange,
   band,
   onBandChange,
-  buildStartContext,
 }: PerTypeOverridesModalProps): JSX.Element | null {
   const modal = useControlPanelStore((s) => s.modal);
   const closeModal = useControlPanelStore((s) => s.closeModal);
@@ -172,7 +146,6 @@ export function PerTypeOverridesModal({
       onChange={onChange}
       band={band}
       onBandChange={onBandChange}
-      buildStartContext={buildStartContext}
       onClose={closeModal}
       onOpenPreviewLabel={openPreviewLabel}
     />
@@ -184,45 +157,24 @@ interface InnerProps {
   onChange: (next: Record<string, PerTypeFormValue>) => void;
   band: BandFormValue;
   onBandChange: (next: BandFormValue) => void;
-  buildStartContext: () => StartContext;
   onClose: () => void;
   onOpenPreviewLabel: (label: string) => void;
 }
-
-/** US-013 预演请求状态机：idle（未选/未勾）/ loading / ok / fail（降级提示不阻塞；
- * 422 ``hard_warning:true`` 带 hardWarning 标记 → 渲染二次确认勾选框）。 */
-type BandPreviewState =
-  | { state: 'idle' }
-  | { state: 'loading' }
-  | { state: 'ok'; fillPct: number; bbox: { width_mm: number; height_mm: number }; breakEven: [number, number] }
-  | { state: 'fail'; error: string; hardWarning: boolean };
 
 function PerTypeOverridesModalInner({
   values,
   onChange,
   band,
   onBandChange,
-  buildStartContext,
   onClose,
   onOpenPreviewLabel,
 }: InnerProps): JSX.Element {
   // 草稿：mount 时从 values 已配置键初始化。key 强制每次 open 重建（避免残留）。
   const [draft, setDraft] = useState<Record<string, PerTypeFormValue>>(() => initializeDraft(values));
 
-  // US-013 布局设置草稿（同一 mount 生命周期，confirm 是唯一回写路径）。
+  // 布局设置草稿（同一 mount 生命周期，confirm 是唯一回写路径）。
   const [bandEnabled, setBandEnabled] = useState<boolean>(band.enabled);
   const [bandLabel, setBandLabel] = useState<string>(band.label);
-  const [bandAck, setBandAck] = useState<boolean>(band.ack);
-  // US-015 填料草稿：mount 读初值，剔除与当前主码相同的项（≠ 主码不变量）。
-  const [bandFillers, setBandFillers] = useState<string[]>(() =>
-    band.fillers.filter((f) => f !== band.label),
-  );
-  const [preview, setPreview] = useState<BandPreviewState>({ state: 'idle' });
-
-  // buildStartContext 经 ref 取（effect 依赖只锁 band 选择 —— form 其它字段变化
-  // 不重触发 5s 预演；ref.current 每次 render 现取，调用时刻值总是最新）。
-  const buildCtxRef = useRef(buildStartContext);
-  buildCtxRef.current = buildStartContext;
 
   // 缩略图数据：mount 时 fetch GET /api/ptypes（键 = g 码）；loading / error 三态。
   // fetch 失败降级为 {} → 列集退回 values 已配置键（不阻塞重合/旋转配置，AC#4）。
@@ -258,7 +210,7 @@ function PerTypeOverridesModalInner({
     };
   }, []);
 
-  // US-013 下拉值域：表格同源 orderedLabels ∪ 当前选中 g 码 —— 已确认过的 label 在
+  // 下拉值域：表格同源 orderedLabels ∪ 当前选中 g 码 —— 已确认过的 label 在
   // reps/values 均缺席（fetch 失败 / values 未配置）时仍显示为选中项（受控 select 的
   // value 缺 option 会显示空白，band 状态不可见）。
   const bandOptions = useMemo(() => {
@@ -267,67 +219,6 @@ function PerTypeOverridesModalInner({
     }
     return orderedLabels;
   }, [orderedLabels, bandLabel]);
-
-  // US-013 预演：band 草稿为有效 g 码（勾选 + ^g\d+$）时 POST /api/band/preview
-  // （body = buildStartContext() + band 草稿 —— sizes/quantities/per_type/seed 与
-  // 未来 WS start 同源，预演所见即求解所得；ack 草稿为 true 时随 band 带 ack ——
-  // 硬警告形态二次确认后重试放行）。US-015 起填料草稿非空随 band 带 ``fillers``
-  // （fill_pct 分子 = 腰 + 填料面积和，与后端求解同口径）。响应携带盈亏参考线
-  // （后端单一真相源，前端不双写）；失败（含几何失败 ok:false 与网络/4xx）降级
-  // 提示，不阻塞确定（FR-7）。
-  const validBandLabel = bandEnabled && BAND_LABEL_RE.test(bandLabel) ? bandLabel : null;
-  const fillersKey = bandFillers.join(',');
-  useEffect(() => {
-    if (validBandLabel === null) {
-      setPreview({ state: 'idle' });
-      return;
-    }
-    let cancelled = false;
-    setPreview({ state: 'loading' });
-    const ctx = buildCtxRef.current();
-    // fillersKey 稳定字符串依赖（数组引用每次 render 变化会误触发 5s 预演重跑）
-    const fillers = fillersKey === '' ? [] : fillersKey.split(',');
-    const bandPayload: Record<string, unknown> = bandAck
-      ? { enabled: true, label: validBandLabel, ack: true }
-      : { enabled: true, label: validBandLabel };
-    if (fillers.length > 0) bandPayload.fillers = fillers;
-    fetch('/api/band/preview', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        band: bandPayload,
-        sizes: ctx.sizes,
-        seed: ctx.seed,
-        per_type: ctx.per_type,
-        quantities: ctx.quantities,
-      }),
-    })
-      .then((r) => r.json() as Promise<BandPreviewResponse>)
-      .then((data) => {
-        if (cancelled) return;
-        if (data && data.ok && typeof data.fill_pct === 'number' && data.bbox && data.break_even) {
-          setPreview({
-            state: 'ok',
-            fillPct: data.fill_pct,
-            bbox: data.bbox,
-            breakEven: data.break_even,
-          });
-        } else {
-          setPreview({
-            state: 'fail',
-            error: (data && data.error) || '未知错误',
-            hardWarning: !!(data && data.hard_warning),
-          });
-        }
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setPreview({ state: 'fail', error: '网络错误', hardWarning: false });
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [validBandLabel, bandAck, fillersKey]);
 
   // ESC 监听（AC#10）：previewLabel !== null 时由 PtypePreviewModal 处理 ESC（双层独立）。
   // 本 listener 仅在 previewLabel===null 时关 modal，避免双层同时关闭。
@@ -350,22 +241,11 @@ function PerTypeOverridesModalInner({
     }));
   }
 
-  /** US-015 填料切换：选中 → 剔除；未选中 → 追加（上限兜底 —— UI 已置灰，此处防
-   * 事件竞态下超限；主码候选集外，理论上不达此路径）。 */
-  function toggleFiller(label: string): void {
-    setBandFillers((prev) => {
-      if (prev.includes(label)) return prev.filter((f) => f !== label);
-      if (prev.length >= BAND_MAX_FILLERS) return prev;
-      return [...prev, label];
-    });
-  }
-
   function handleConfirm(): void {
     onChange(draft);
-    // US-013：band 草稿一并回写（未勾选时 label 原样保留 —— collectBand 对 enabled=false
-    // 恒 null，重新勾选时上次选择不丢；ack 仅硬警告形态勾选后为 true）。
-    // US-015：fillers 随草稿写回（form.band_fillers；collectBand 清洗后进 WS payload）。
-    onBandChange({ enabled: bandEnabled, label: bandLabel, ack: bandAck, fillers: bandFillers });
+    // band 草稿一并回写（未勾选时 label 原样保留 —— collectBand 对 enabled=false
+    // 恒 null，重新勾选时上次选择不丢）。
+    onBandChange({ enabled: bandEnabled, label: bandLabel });
     onClose();
   }
 
@@ -409,7 +289,7 @@ function PerTypeOverridesModalInner({
           </button>
         </div>
 
-        {/* US-013 布局设置分区：表格上方独立分区（draft+confirm 同表格语义，取消/遮罩/ESC
+        {/* 布局设置分区：表格上方独立分区（draft+confirm 同表格语义，取消/遮罩/ESC
             连同 band 草稿一并丢弃）。值域 = 表格同源 orderedLabels（reps ∪ values 键，
             fetch 失败降级纯文字 option 列表不阻塞）；未勾选禁用下拉。 */}
         <div className="per-type-band" data-testid="per-type-band">
@@ -419,11 +299,7 @@ function PerTypeOverridesModalInner({
               <input
                 type="checkbox"
                 checked={bandEnabled}
-                onChange={(e) => {
-                  setBandEnabled(e.target.checked);
-                  // 关闭成带 → ack 重置（FR-1：ack 只对当前指认形态生效，重开重新确认）
-                  if (!e.target.checked) setBandAck(false);
-                }}
+                onChange={(e) => setBandEnabled(e.target.checked)}
                 data-testid="band-enabled"
               />
               <span>开启腰头成带</span>
@@ -433,13 +309,7 @@ function PerTypeOverridesModalInner({
               <select
                 className="per-type-band-select"
                 value={bandLabel}
-                onChange={(e) => {
-                  setBandLabel(e.target.value);
-                  // 切换 g 码 → ack 重置（形态确认是 per-label 的，FR-1）
-                  setBandAck(false);
-                  // US-015：新主码若在填料选中集内 → 剔除（填料不可与主 g 码相同）
-                  setBandFillers((prev) => prev.filter((f) => f !== e.target.value));
-                }}
+                onChange={(e) => setBandLabel(e.target.value)}
                 disabled={!bandEnabled}
                 data-testid="band-label-select"
                 aria-label="腰头编号"
@@ -468,79 +338,6 @@ function PerTypeOverridesModalInner({
               </button>
             ) : null}
           </div>
-          {/* US-015 填料行：勾选成带后渲染（数据源与腰头编号下拉同源 orderedLabels /
-              representatives）。chip = 缩略图 + g 码徽章，点击切换选中态（aria-pressed）；
-              主 g 码不在候选集；满 BAND_MAX_FILLERS 且未选中 → 置灰。 */}
-          {bandEnabled && (
-            <div className="per-type-band-fillers" data-testid="band-fillers">
-              <span className="per-type-band-subhead">填料（多选 ≤{BAND_MAX_FILLERS}）</span>
-              <div className="per-type-filler-row">
-                {orderedLabels
-                  .filter((label) => label !== bandLabel)
-                  .map((label) => {
-                    const rep = representatives[label];
-                    const on = bandFillers.includes(label);
-                    const capped = !on && bandFillers.length >= BAND_MAX_FILLERS;
-                    return (
-                      <button
-                        type="button"
-                        key={label}
-                        className={`per-type-filler-chip${on ? ' on' : ''}`}
-                        onClick={() => toggleFiller(label)}
-                        disabled={capped}
-                        aria-pressed={on}
-                        aria-label={`填料 ${label}`}
-                        title={`填料 ${label}${on ? '（已选）' : ''}`}
-                        data-testid={`band-filler-${label}`}
-                      >
-                        {rep ? (
-                          <PiecePreviewSVG piece={repToPiece(rep)} compact />
-                        ) : (
-                          <span className="ptype-thumb-placeholder" aria-hidden="true">
-                            {loadingReps ? '…' : label.slice(0, 1)}
-                          </span>
-                        )}
-                        <span className="qty-label-badge">{label}</span>
-                      </button>
-                    );
-                  })}
-                {orderedLabels.filter((label) => label !== bandLabel).length === 0 && (
-                  <span className="per-type-filler-hint">（暂无候选 g 码）</span>
-                )}
-              </div>
-              <div className="per-type-filler-hint">
-                填料副本填充带内空隙（混带 v1.1）；不可选腰头编号本身，最多 {BAND_MAX_FILLERS} 个。
-              </div>
-            </div>
-          )}
-          {/* 预演回显：fill/bbox 对照盈亏参考线（参考线由后端响应携带）；失败降级提示
-              不阻塞确定（FR-7）。硬警告形态（422 hard_warning）追加二次确认勾选框 ——
-              勾选即带 ack 重试预演，确定时随 band 写回。仅在勾选 + 有效 g 码时渲染。 */}
-          {validBandLabel !== null && (
-            <div className="per-type-band-preview" data-testid="band-preview">
-              {preview.state === 'loading' && '带内预演计算中…（约 5s）'}
-              {preview.state === 'ok' &&
-                `带内预演：填充 ${preview.fillPct.toFixed(1)}% · 占用 ${Math.round(
-                  preview.bbox.width_mm,
-                )}×${Math.round(preview.bbox.height_mm)}mm —— ${
-                  preview.fillPct >= preview.breakEven[0] ? '达到' : '低于'
-                }盈亏参考线 ${preview.breakEven[0]}~${preview.breakEven[1]}%`}
-              {preview.state === 'fail' && `带内预演失败（不影响确认）：${preview.error}`}
-              {/* ack 勾选框：422 hard_warning 后出现；勾选（= bandAck true）后保持可见，
-                  用户可反勾撤销（FR-1 ack 只在显式勾选时随 band 发送） */}
-              {bandAck || (preview.state === 'fail' && preview.hardWarning) ? (
-                <label className="per-type-band-ack" data-testid="band-ack-wrap">
-                  <input
-                    type="checkbox"
-                    checked={bandAck}
-                    onChange={(e) => setBandAck(e.target.checked)}
-                    data-testid="band-ack"
-                  />
-                  <span>我已确认该裁片形态特殊（细长 / 小片），仍要成带</span>
-                </label>
-              ) : null}
-            </div>
-          )}
         </div>
 
         {/* 裁片设置分区标题（2026-08-22）：与上方「布局设置」同款 .per-type-band-title

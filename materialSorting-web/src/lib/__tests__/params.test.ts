@@ -308,10 +308,9 @@ describe('serializeQuantities (US-022；US-001 删 global 分支)', () => {
 // US-012 腰头成带：collectBand 三态 + collectStartContext.band + bandMemberCount 三态
 // ============================================================
 describe('collectBand / collectStartContext.band (US-012 三态)', () => {
-  it('DEFAULT_FORM：band_enabled=false / band_label="" / band_ack=false（默认关闭）', () => {
+  it('DEFAULT_FORM：band_enabled=false / band_label=""（默认关闭）', () => {
     expect(DEFAULT_FORM.band_enabled).toBe(false);
     expect(DEFAULT_FORM.band_label).toBe('');
-    expect(DEFAULT_FORM.band_ack).toBe(false);
     // 默认表单 collectStartContext → band null（旧行为：StartPayload band 键恒 null）
     expect(collectStartContext(DEFAULT_FORM, {}).band).toBeNull();
   });
@@ -336,7 +335,7 @@ describe('collectBand / collectStartContext.band (US-012 三态)', () => {
     }
   });
 
-  it('三态③：开且有效 → {enabled:true,label}（首尾空白 trim；不带 ack 键）', () => {
+  it('三态③：开且有效 → {enabled:true,label}（首尾空白 trim；恰两键）', () => {
     const out = collectBand(makeForm({ band_enabled: true, band_label: 'g05' }));
     expect(out).toEqual({ enabled: true, label: 'g05' });
     // trim：' g09 ' → 'g09'
@@ -344,62 +343,8 @@ describe('collectBand / collectStartContext.band (US-012 三态)', () => {
       enabled: true,
       label: 'g09',
     });
-    // 序列化形态：JSON.stringify 后恰两键（ack 缺省不随带）
+    // 序列化形态：JSON.stringify 后恰两键
     expect(JSON.parse(JSON.stringify(out))).toEqual({ enabled: true, label: 'g05' });
-  });
-
-  it('US-013 ack：band_ack=true 且开且有效 → {enabled,label,ack:true}（硬警告形态放行键）', () => {
-    // 弹窗对硬警告形态勾选二次确认后置 true（FR-1：ack 仅显式勾选时随 band 发送）
-    const form = makeForm({ band_enabled: true, band_label: 'g05', band_ack: true });
-    expect(collectBand(form)).toEqual({ enabled: true, label: 'g05', ack: true });
-    expect(collectStartContext(form, {}).band).toEqual({
-      enabled: true, label: 'g05', ack: true,
-    });
-    // band 关（即使 ack 残留 true）→ null（enabled=false 恒 null）
-    expect(collectBand(makeForm({ band_enabled: false, band_label: 'g05', band_ack: true }))).toBeNull();
-  });
-
-  it('US-015 fillers：非空清洗后随 band 带 fillers（trim / 去重 / 剔除主码 / 非 g 码过滤）', () => {
-    // 正常多选：透传（顺序保留）
-    expect(
-      collectBand(makeForm({ band_enabled: true, band_label: 'g05', band_fillers: ['g07', 'g08'] })),
-    ).toEqual({ enabled: true, label: 'g05', fillers: ['g07', 'g08'] });
-    // trim + 去重（Set 保序去重）
-    expect(
-      collectBand(makeForm({ band_enabled: true, band_label: 'g05', band_fillers: [' g07 ', 'g07', 'g08'] })),
-    ).toEqual({ enabled: true, label: 'g05', fillers: ['g07', 'g08'] });
-    // 与主 g 码相同 → 剔除（混带填料不可与主 g 码相同）
-    expect(
-      collectBand(makeForm({ band_enabled: true, band_label: 'g05', band_fillers: ['g05', 'g07'] })),
-    ).toEqual({ enabled: true, label: 'g05', fillers: ['g07'] });
-    // 非 g 码项过滤
-    expect(
-      collectBand(makeForm({ band_enabled: true, band_label: 'g05', band_fillers: ['bad', 'g5x', 'g07'] })),
-    ).toEqual({ enabled: true, label: 'g05', fillers: ['g07'] });
-    // 与 ack 组合
-    expect(
-      collectBand(makeForm({ band_enabled: true, band_label: 'g05', band_ack: true, band_fillers: ['g07'] })),
-    ).toEqual({ enabled: true, label: 'g05', ack: true, fillers: ['g07'] });
-  });
-
-  it('US-015 fillers：清洗后为空 → 不带 fillers 键（payload 形状与旧版逐键一致）', () => {
-    // 空数组 / 全主码 / 全非 g 码 → 无 fillers 键（纯腰 v2）
-    for (const fillers of [[], ['g05'], ['bad', '']]) {
-      const out = collectBand(makeForm({ band_enabled: true, band_label: 'g05', band_fillers: fillers }));
-      expect(out).toEqual({ enabled: true, label: 'g05' });
-      expect(JSON.parse(JSON.stringify(out))).toEqual({ enabled: true, label: 'g05' });
-    }
-    // DEFAULT_FORM.band_fillers = []（默认纯腰）
-    expect(DEFAULT_FORM.band_fillers).toEqual([]);
-  });
-
-  it('US-015 fillers：band 关 → fillers 不进 payload（即使残留非空）', () => {
-    expect(
-      collectBand(makeForm({ band_enabled: false, band_label: 'g05', band_fillers: ['g07'] })),
-    ).toBeNull();
-    expect(
-      collectStartContext(makeForm({ band_enabled: false, band_label: 'g05', band_fillers: ['g07'] }), {}).band,
-    ).toBeNull();
   });
 
   it('collectStartContext.band 与 collectBand 同源（开且有效透传，其余字段不受 band 影响）', () => {

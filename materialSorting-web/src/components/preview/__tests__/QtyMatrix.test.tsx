@@ -23,7 +23,6 @@ import { createRoot, type Root } from 'react-dom/client';
 import { QtyMatrix } from '../QtyMatrix';
 import { useUploadStore } from '../../../store/uploadStore';
 import { useQtyStore } from '../../../store/qtyStore';
-import { useBandStore } from '../../../store/bandStore';
 import type { ParsedDoc, ParsedPiece } from '../../../types/parsed';
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -718,82 +717,5 @@ describe('QtyMatrix (US-002 转置) 列级整列设值（工具条整表重置�
     expect(el.querySelectorAll('.qty-cell.override').length).toBe(1);
     expect(a28.closest('td')!.classList.contains('override')).toBe(true);
     expect(cellInput(el, 'g01', 30).closest('td')!.classList.contains('override')).toBe(false);
-  });
-});
-
-// ---------------------------------------------------------------- US-013 band
-// 不成对警告：bandStore 镜像（ControlPanel form.band_* 单向同步）开启且列 = 腰头
-// g 码时，奇数数量格 .odd + title「该码不成对」+ 列头徽章；警告不拦截编辑。
-describe('QtyMatrix 不成对警告 (US-013)', () => {
-  beforeEach(() => {
-    useBandStore.getState().setBand(false, '');
-  });
-  afterEach(() => {
-    useBandStore.getState().setBand(false, '');
-  });
-
-  function setupStdMatrix(): HTMLElement {
-    const doc = makeStdDoc();
-    useUploadStore.setState({ status: 'done', doc, activeSize: 28 });
-    hydrateDoc(doc);
-    return renderMatrix();
-  }
-
-  it('band 关闭 → 奇数数量无任何警告（默认 hydrate 1 即奇数，.odd/徽章不出现）', () => {
-    const el = setupStdMatrix();
-    expect(el.querySelectorAll('.qty-cell.odd')).toHaveLength(0);
-    expect(el.querySelector('.qty-odd-badge')).toBeNull();
-    // 默认 1 是奇数但 band 关 → g01@28 格 title 不含不成对
-    const a28 = cellInput(el, 'g01', 28);
-    expect(a28.title).not.toContain('不成对');
-  });
-
-  it('band 开启 + 腰头 g01 → 奇数格 .odd + title；偶数格/其它列不告警；列头徽章显示', () => {
-    const el = setupStdMatrix();
-    // g01@28=1（奇数）保持、g01@30 改 2（偶数）
-    act(() => {
-      useQtyStore.getState().setPiecePerSize('g01', 30, 2);
-    });
-    act(() => {
-      useBandStore.getState().setBand(true, 'g01');
-    });
-    const a28 = cellInput(el, 'g01', 28);
-    const a30 = cellInput(el, 'g01', 30);
-    const b28 = cellInput(el, 'g02', 28);
-    expect(a28.closest('td')!.classList.contains('odd')).toBe(true);
-    expect(a28.title).toContain('该码不成对');
-    expect(a30.closest('td')!.classList.contains('odd')).toBe(false);
-    // 其它列（g02@28=1 奇数）不告警 —— 警告只锁定腰头列
-    expect(b28.closest('td')!.classList.contains('odd')).toBe(false);
-    expect(b28.title).not.toContain('不成对');
-    // 列头徽章（该列任一奇数时）
-    expect(el.querySelector('[data-testid="qty-odd-badge-g01"]')!.textContent).toBe('不成对');
-  });
-
-  it('band 列全部偶数 → 无 .odd 格、无列头徽章', () => {
-    const el = setupStdMatrix();
-    act(() => {
-      useQtyStore.getState().setRowAll('g01', [28, 30], 2);
-    });
-    act(() => {
-      useBandStore.getState().setBand(true, 'g01');
-    });
-    expect(el.querySelectorAll('.qty-cell.odd')).toHaveLength(0);
-    expect(el.querySelector('.qty-odd-badge')).toBeNull();
-  });
-
-  it('警告不拦截编辑：.odd 格仍可提交新值（改偶数后警告消失）', () => {
-    const el = setupStdMatrix();
-    act(() => {
-      useBandStore.getState().setBand(true, 'g01');
-    });
-    const a28 = cellInput(el, 'g01', 28);
-    expect(a28.disabled).toBe(false);
-    act(() => {
-      setInputValue(a28, '2');
-      a28.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));   // blur 提交
-    });
-    expect(useQtyStore.getState().quantities.g01.perSize['28']).toBe(2);
-    expect(a28.closest('td')!.classList.contains('odd')).toBe(false);
   });
 });

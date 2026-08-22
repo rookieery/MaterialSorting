@@ -35,25 +35,18 @@
 //     （与 sizes 空校验同源双保险）；
 //   - 互斥：band 开启时「高级运行」入口 disabled + title 说明原因（FR-6 v1 互斥 ——
 //     strategy_start 只拷白名单键，band 不进 CLI config，前端禁入口是唯一防线）；
-//   - PerTypeOverrides 透传 band/onBandChange/buildStartContext（弹窗布局设置分区 +
-//     预演 /api/band/preview）；
-//   - form.band_* → bandStore 单向镜像（useEffect 同步）—— QtyMatrix（上传预览页）跨页
-//     读该镜像做「该码不成对」奇数数量警告，props 无通路。
-// US-015（v1.1 填料混带）：form.band_fillers（弹窗填料行多选）随 band 透传 WS
-//   ``band.fillers``；启动闸门对填料同口径 —— 任一填料所选码数量全 0 → 「开始求解」
-//   置灰 + StatusLine 报首个冒犯 g 码（与后端 _parse_band quantities>0 校验对齐）。
+//   - PerTypeOverrides 透传 band/onBandChange（弹窗布局设置分区：开关 + g 码下拉）。
 // 2026-08-22 seed UI 隐藏（界面只支持单 seed 模式）：ParamForm 删 seed 输入行、
 //   MultiSeedControls 不再渲染（组件已删）。form.seed/multi_seed/seed_count 保留恒默认
 //   （'0'/false/'3'）→ onStart 载荷 seed=0 / seed_count=1 不变；底层多 run 能力不动
 //   （useSolveRun / runRegistry / NestsGrid），恢复 UI 即回多 seed；多种子探索由
 //   「高级运行」（race/SE 后端策略编排）承接。
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { useExport } from '../../hooks/useExport';
 import type { ExportFmt } from '../../lib/download';
 import { useUploadStore } from '../../store/uploadStore';
 import { useQtyStore } from '../../store/qtyStore';
-import { useBandStore } from '../../store/bandStore';
 import { ExportButtons } from './ExportButtons';
 import { ParamForm } from './ParamForm';
 import { PerTypeOverrides } from './PerTypeOverrides';
@@ -128,13 +121,6 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
   // stopped/done/error 态可编辑参数（用户改参数后点「开始求解」→ handleStart 即用新值）。
   const solving = phase === 'running';
 
-  // US-013：form.band_* → bandStore 单向镜像（QtyMatrix「该码不成对」警告的跨页数据源；
-  // form 仍是 WS 载荷单一真相源，store 仅派生镜像）。
-  const setBandMirror = useBandStore((s) => s.setBand);
-  useEffect(() => {
-    setBandMirror(form.band_enabled, form.band_label);
-  }, [form.band_enabled, form.band_label, setBandMirror]);
-
   // US-007：useExport 挂在 ControlPanel 内（form.sizes 与 exportAs 同处）。
   // onStatus 透传到 NestingPage.setStatus → StatusLine（导出中 / 完成 / 失败文案由 useExport 写）。
   const { exportAs, exporting } = useExport({ onStatus });
@@ -157,19 +143,12 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
   // US-013 band 启动闸门（AC#3）：勾选未选编号 / 选中 g 码数量全 0（bandMemberCount
   // 三态：missing→1 / 显 0 / 未选码过滤，后端 _band_demand 口径对齐 —— 后端同条件
   // 会回结构化 error，这里是前置 UI 闸门）。startDisabled 消费 + handleStart 兜底。
-  // US-015：填料同闸门口径（首个数量全 0 的填料报具体 g 码 —— 后端 _parse_band 对
-  // 填料 quantities>0 同校验，此处前置）。
   const bandMissingLabel =
     form.band_enabled && form.band_label.trim() === '';
   const bandZeroQty =
     form.band_enabled &&
     form.band_label.trim() !== '' &&
     bandMemberCount(form, quantities, form.band_label.trim()) === 0;
-  const bandFillerZeroLabel = form.band_enabled
-    ? form.band_fillers.find(
-        (f) => f.trim() !== '' && bandMemberCount(form, quantities, f.trim()) === 0,
-      )
-    : undefined;
 
   function handleStart() {
     if (solving) return;
@@ -185,12 +164,6 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
     if (bandZeroQty) {
       onStatus(
         `腰头 ${form.band_label.trim()} 所选码数量全 0，请先在上传预览页数量矩阵设置数量`,
-      );
-      return;
-    }
-    if (bandFillerZeroLabel !== undefined) {
-      onStatus(
-        `填料 ${bandFillerZeroLabel} 所选码数量全 0，请先在上传预览页数量矩阵设置数量`,
       );
       return;
     }
@@ -220,15 +193,12 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
   }
 
   // US-017：doc=null 时 StatusLine 增提示「请先在上传预览页解析母版」（AC#3）；
-  // US-013：band 闸门态追加 band 段具体文案（与 startDisabled 同源派生）；
-  // US-015：填料数量全 0 同报（首个冒犯 g 码）。
+  // US-013：band 闸门态追加 band 段具体文案（与 startDisabled 同源派生）。
   const bandHint = bandMissingLabel
     ? '已开启腰头成带，请先选择腰头编号（高级配置 → 布局设置）'
     : bandZeroQty
       ? `腰头 ${form.band_label.trim()} 所选码数量全 0，请先在上传预览页数量矩阵设置数量`
-      : bandFillerZeroLabel !== undefined
-        ? `填料 ${bandFillerZeroLabel} 所选码数量全 0，请先在上传预览页数量矩阵设置数量`
-        : '';
+      : '';
   const visibleStatus = [status, doc === null ? '请先在上传预览页解析母版' : '', bandHint]
     .filter(Boolean)
     .join(' — ');
@@ -239,13 +209,11 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
   const partial = phase === 'stopped' || phase === 'error';
 
   // 码号未选时「开始求解」按钮置灰（与 handleStart 内 sizes 非空校验同源；前置 UI 反馈，AC#7）；
-  // US-013：band 闸门（未选编号 / 数量全 0）同置灰（SolveControls 应用到所有非 running 态按钮）；
-  // US-015：填料数量全 0 同置灰。
+  // US-013：band 闸门（未选编号 / 数量全 0）同置灰（SolveControls 应用到所有非 running 态按钮）。
   const startDisabled =
     form.sizes.length === 0 ||
     bandMissingLabel ||
-    bandZeroQty ||
-    bandFillerZeroLabel !== undefined;
+    bandZeroQty;
 
   // US-013（FR-6）：band 开启时「高级运行」互斥置灰 + title 说明原因（既有 solving /
   // 未 commit 置灰不加说明 —— title 仅 band 互斥时给，避免与旧语义混淆）。
@@ -290,18 +258,13 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
           band={{
             enabled: form.band_enabled,
             label: form.band_label,
-            ack: form.band_ack,
-            fillers: form.band_fillers,
           }}
           onBandChange={(band) =>
             patch({
               band_enabled: band.enabled,
               band_label: band.label,
-              band_ack: band.ack,
-              band_fillers: band.fillers,
             })
           }
-          buildStartContext={buildStartContext}
           disabled={solving}
         />
         {/* US-005 高级运行入口（策略 run 10/20/30/60min + race/se 双模式）：disabled =

@@ -47,10 +47,6 @@
 //   - 缩略图点击 openZoom(label, rep.size) 复用 PieceZoomModal（US-013 声明式受控模态，
 //     PreviewPage 顶层单例）。传 rep 自己的码而非 activeSize：所见即所放大，且该 label
 //     不在 activeSize 时（rep 已回退其它码）不会静默失败。
-//   - US-013 腰头成带不成对警告：bandStore 镜像（ControlPanel form.band_* 单向同步）
-//     开启且列 = 腰头 g 码时，奇数数量格显著样式 + title「该码不成对」+ 列头徽章 ——
-//     成带验收线是同码成对相邻（US-014 判据），奇数码必有落单副本，提示版师调数量
-//     （警告不拦截：奇数 demand 后端照常成带，仅形态提示）。
 //   - tour 锚点（矩阵化重构 US-005）：根容器 data-tour="qty-matrix"（previewTour parsed 步，
 //     指引矩阵浏览与列头缩略图放大）；首个码行头 data-tour="qty-rowhead"（set-qty 步，
 //     指引格内编辑 / 整列设值 / 特例高亮）。步骤内容重大变更时 bump TOUR_VERSION
@@ -68,7 +64,6 @@ import { createPortal } from 'react-dom';
 import { PiecePreviewSVG } from './PiecePreviewSVG';
 import { useUploadStore } from '../../store/uploadStore';
 import { clampQty, getPieceDisplay, useQtyStore } from '../../store/qtyStore';
-import { useBandStore } from '../../store/bandStore';
 import type { ParsedPiece } from '../../types/parsed';
 
 /** null 码（通用）的人读文案；与 SizePicker/PreviewPage「通用」同语义。 */
@@ -112,8 +107,6 @@ interface QtyMatrixCellProps {
   value: number;
   /** 特例高亮（值 ≠ baseValue 且整列非全同）。 */
   override: boolean;
-  /** US-013 腰头 g 码不成对警告（奇数数量 → .odd 样式 + title「该码不成对」）。 */
-  oddPair?: boolean;
   /** 平铺格索引 labelIdx-sizeIdx（Enter/Tab 跳格导航用，列优先序）。 */
   cellKey: string;
   /** 提交（值已过 clampQty；与 store 值相同则不触发）。 */
@@ -136,7 +129,6 @@ function QtyMatrixCell({
   size,
   value,
   override,
-  oddPair = false,
   cellKey,
   onCommit,
   onNext,
@@ -160,8 +152,7 @@ function QtyMatrixCell({
       className={
         "qty-cell" +
         (value === 0 ? " zero" : "") +
-        (override ? " override" : "") +
-        (oddPair ? " odd" : "")
+        (override ? " override" : "")
       }
     >
       <input
@@ -174,13 +165,7 @@ function QtyMatrixCell({
         value={draft}
         data-cell={cellKey}
         aria-label={"裁片 " + label + " 码 " + sizeLabel(size) + " 数量"}
-        title={
-          oddPair
-            ? "该码不成对：腰头成带同码成对相邻，奇数数量会有落单副本"
-            : value === 0
-              ? "数量 0：该码不排此裁片"
-              : undefined
-        }
+        title={value === 0 ? "数量 0：该码不排此裁片" : undefined}
         onFocus={(e) => {
           focusedRef.current = true;
           // 全选：直接键入覆盖旧值（点击即编辑，无清空成本）
@@ -320,9 +305,6 @@ export function QtyMatrix(): JSX.Element | null {
   const quantities = useQtyStore((s) => s.quantities);
   const setPiecePerSize = useQtyStore((s) => s.setPiecePerSize);
   const setRowAll = useQtyStore((s) => s.setRowAll);
-  // US-013：band 选择镜像（ControlPanel form.band_* 单向同步；关闭/未选 → null 不警告）。
-  const bandEnabled = useBandStore((s) => s.enabled);
-  const bandLabel = useBandStore((s) => s.label);
 
   // UI 态：整列设值弹层（目标列 + fixed 定位中心点，一次至多一个）。
   const [fill, setFill] = useState<{ label: string; x: number; y: number } | null>(null);
@@ -390,13 +372,6 @@ export function QtyMatrix(): JSX.Element | null {
   }
 
   const cols: MatrixCol[] = labelOrder.map((label) => ({ label, sizes: labelSizes(label) }));
-
-  // US-013 不成对警告：band 列 = 腰头 g 码列；奇数（且 >0）数量格告警。列头徽章
-  // （该列任一奇数时显示）+ 格级 title/样式双通道，警告不拦截编辑。
-  const bandCol = bandEnabled && bandLabel !== "" ? bandLabel : null;
-  const colHasOdd = (label: string): boolean =>
-    bandCol === label &&
-    cols.find((c) => c.label === label)!.sizes.some((s) => cellQty(label, s) % 2 === 1);
 
   // 小计（US-003 起口径 = Σ perSize 数量；一份 = 母版一个轮廓，不合成镜像）。
   //   - labelTotals：每裁片合计（tfoot 底部合计行，按列）。
@@ -499,15 +474,6 @@ export function QtyMatrix(): JSX.Element | null {
                       </button>
                       <div className="qty-colhead-meta">
                         <span className="qty-label-badge">{c.label}</span>
-                        {colHasOdd(c.label) ? (
-                          <span
-                            className="qty-odd-badge"
-                            data-testid={"qty-odd-badge-" + c.label}
-                            title="该码不成对：腰头成带同码成对相邻，奇数数量会有落单副本"
-                          >
-                            不成对
-                          </span>
-                        ) : null}
                         {/* 整列设值 icon：缩略图下方常驻，hover title 提示，点击开居中弹层
                             （类名沿用旧 .qty-rowfill-btn / qty-rowfill-*，转置前 ≡ 在行头） */}
                         <button
@@ -584,7 +550,6 @@ export function QtyMatrix(): JSX.Element | null {
                         size={size}
                         value={v}
                         override={!colAllSame(c.label) && v !== colBase(c.label)}
-                        oddPair={bandCol === c.label && v % 2 === 1}
                         cellKey={cellKey}
                         onCommit={(nv) => setPiecePerSize(c.label, size, nv)}
                         onNext={focusNextCell}

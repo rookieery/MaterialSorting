@@ -5,31 +5,19 @@
 2. band 开启：WS 依序 stage → manifest（无 WB_）→ frames/final（placed 无 WB_、
    成员 pid 按 demand 出现 N 次 —— 副本守恒不变量）；
 3. manifest 一致性：band on/off 的 total_area 与 pieces 列表逐字段一致；
-4. 服务端校验：label 格式 / 不存在 / 数量全 0 / 硬警告形态无 ack → 结构化 error 早退；
-   ack:true 放行；总副本 1 → worker 成带失败只投 error 不投 manifest；
+4. 服务端校验：label 格式 / 不存在 / 数量全 0 → 结构化 error 早退；
+   总副本 1 → worker 成带失败只投 error 不投 manifest；
 5. band 阶段 stop：无存活 python 子进程（进程内线程化模型 —— terminate 不级联孙进程）；
 6. build_instance exclude_labels 只跳 Item 层（pid_meta/total_area 不动，一致性单测）。
 
-US-015（v1.1 填料混带）additions：
-7. ``band.fillers`` 服务端校验矩阵（非数组 / 非 g 码项 / 含主码 / 超上限 / 不存在 /
-   数量全 0 → 结构化 error；重复项静默去重放行）；
-8. 混带 e2e：stage → manifest → final（腰 + 填料成员按 demand 出现 N 次 —— 填料
-   副本同守恒口径）+ band_runs 工件 fillers 记录；
-9. manifest 一致性：混带 on vs off 的 total_area / pieces 逐字段一致（exclude_labels
-   跳 {主码, 填料} 仍只作用于 Item 层）；
-10. 预演 POST /api/band/preview 带 fillers → 200 {ok:true}（fill 分子 = 腰 + 填料）。
-
-合成数据结构同 5336 g05（多码 × demand 2 矩形腰片）+ 硬警告形态 g06（30×559 裤耳类）。
-band_runs 工件经 MS_OUT_DIR 随 spawn 传给子进程，落 tmp 可断言（US-014 回放对拍数据源）。
+合成数据结构同 5336 g05（多码 × demand 2 矩形腰片）+ g06（30×559 裤耳类小片，
+DegenerateBand 用例的主角）。不适合成带的 g 码由 waist_band.FILL_FLOOR_PCT
+灾难守卫在带构造期拦截（fail-fast error，manifest 前）。
 """
 from __future__ import annotations
 
-import json
 import multiprocessing
-import os
 import time
-import zlib
-from pathlib import Path
 
 import pytest
 from starlette.testclient import TestClient
@@ -51,8 +39,7 @@ def _piece(pid, label, size, w, h):
 
 
 def _band_pieces():
-    """合成母版：g05 两码 60×300 腰片（成带主角，最小边 60 / 长宽比 5 —— 无需 ack）、
-    g01 普通大片、g06 30×559 裤耳类（最小边 30 < 60 → 硬警告形态）。"""
+    """合成母版：g05 两码 60×300 腰片（成带主角）、g01 普通大片、g06 30×559 裤耳类。"""
     return [
         _piece('g05_28', 'g05', 28, 60.0, 300.0),
         _piece('g05_29', 'g05', 29, 60.0, 300.0),
@@ -86,13 +73,10 @@ def _drain_until_stopped(ws, timeout=15.0):
 
 
 @pytest.fixture
-def band_client(monkeypatch, tmp_path):
-    """注入合成 pieces state + MS_OUT_DIR 隔离（子进程 band_runs 落 tmp，不污染 out/）。
-
-    _PIECES_STATE 是 runtime 单例 dict —— 原位 clear+update（快照语义与 _reload 一致），
-    teardown 恢复真实 state（test_ws_stop 等兄弟用例依赖真实 intermediate）。
-    """
-    monkeypatch.setenv('MS_OUT_DIR', str(tmp_path))
+def band_client(monkeypatch):
+    """注入合成 pieces state（_PIECES_STATE 是 runtime 单例 dict —— 原位
+    clear+update（快照语义与 _reload 一致），teardown 恢复真实 state
+    （test_ws_stop 等兄弟用例依赖真实 intermediate）。"""
     pieces = _band_pieces()
     state = server_mod._PIECES_STATE
     saved = dict(state)
@@ -131,7 +115,7 @@ def test_band_on_stage_manifest_final_conservation(band_client):
     """band 开启：stage → manifest（无 WB_）→ frames/final；成员 pid 按 demand 出现 N 次。"""
     with band_client.websocket_connect('/ws/solve') as ws:
         ws.send_json(_start(
-            band={'enabled': True, 'label': 'g05', 'time_budget': 2},
+            band={'enabled': True, 'label': 'g05'},
             quantities={'g05': {'28': 2, '29': 2}}, time_budget=2))
 
         # 1) stage 在 manifest 前（FIFO 保证），字段齐全（FR-2）
@@ -172,18 +156,6 @@ def test_band_on_stage_manifest_final_conservation(band_client):
             counts[pi['id']] = counts.get(pi['id'], 0) + 1
         assert counts == {'g05_28': 2, 'g05_29': 2, 'g01_28': 1, 'g06_28': 1}
 
-    # 4) band_runs 工件（US-014 回放对拍数据源；MS_OUT_DIR 随 spawn 传给子进程）
-    band_dir = Path(os.environ['MS_OUT_DIR']) / 'band_runs'
-    files = sorted(band_dir.glob('band_g05_seed1_*.json'))
-    assert files, f'band artifact not written under {band_dir}'
-    doc = json.loads(files[-1].read_text(encoding='utf-8'))
-    assert doc['pid'] == 'WB_g05' and doc['label'] == 'g05'
-    assert doc['main_seed'] == 1
-    assert doc['seed'] == zlib.crc32(b'1|g05')     # crc32 派生（确定性回放口径）
-    assert len(doc['members']) == 4                 # 成员带内位：2 码 × 2 副本
-    assert doc['fill_pct'] > 45.0 and doc['band_elapsed'] > 0
-    assert len(doc['polygon']) >= 3                 # 分块轮廓
-
 
 # --------------------------------------------- AC#1 manifest 一致性（on vs off）
 
@@ -192,8 +164,7 @@ def test_manifest_consistency_band_on_vs_off(band_client):
     """band on/off：manifest total_area 与 pieces 列表逐字段一致（exclude_labels 只跳
     Item 层，pid_meta/total_area 原样 —— AC#1 一致性单测；manifest 后即 stop 提速）。"""
     manifests = {}
-    for key, band in (('off', None),
-                      ('on', {'enabled': True, 'label': 'g05', 'time_budget': 2})):
+    for key, band in (('off', None), ('on', {'enabled': True, 'label': 'g05'})):
         with band_client.websocket_connect('/ws/solve') as ws:
             ws.send_json(_start(band=band,
                                 quantities={'g05': {'28': 2, '29': 2}}, time_budget=60))
@@ -217,7 +188,6 @@ def test_manifest_consistency_band_on_vs_off(band_client):
     ({'enabled': True, 'label': 5}, None, '须为 g 码'),
     ({'enabled': True, 'label': 'g99'}, None, '不存在于当前母版'),
     ({'enabled': True, 'label': 'g05'}, {'g05': {'28': 0, '29': 0}}, '数量全为 0'),
-    ({'enabled': True, 'label': 'g06'}, {'g06': {'28': 2}}, 'ack'),
 ])
 def test_band_validation_structured_error_early_exit(band_client, band, quantities, frag):
     """非法 band → 结构化 error 早退（无 manifest / 无 stage / WS 关闭）。"""
@@ -230,16 +200,16 @@ def test_band_validation_structured_error_early_exit(band_client, band, quantiti
             ws.receive_json()
 
 
-def test_band_ack_true_passes_hard_warning(band_client):
-    """硬警告形态（g06 最小边 30<60）+ 显式 ack:true → 放行成带（stage 正常到达）。"""
-    with band_client.websocket_connect('/ws/solve') as ws:
-        ws.send_json(_start(
-            band={'enabled': True, 'label': 'g06', 'ack': True, 'time_budget': 1},
-            quantities={'g06': {'28': 2}}, time_budget=60))
-        stage = ws.receive_json()
-        assert stage['type'] == 'stage' and stage['stage'] == 'band'
-        ws.send_json({'action': 'stop'})
-        _drain_until_stopped(ws)
+def test_parse_band_returns_label_only():
+    """合法 band → ``{'label': str}``（多余键如 ack/time_budget 不透传、不报错）。"""
+    from materialsorting.web.routes_ws import _parse_band
+
+    pieces = _band_pieces()
+    quantities = {'g05': {'28': 2, '29': 2}}
+    cfg = _parse_band({'enabled': True, 'label': 'g05', 'ack': True,
+                       'time_budget': 2, 'fillers': ['g06']}, pieces, quantities)
+    assert cfg == {'label': 'g05'}
+    assert _parse_band(None, pieces, None) is None
 
 
 def test_band_degenerate_single_copy_worker_error(band_client):
@@ -247,7 +217,7 @@ def test_band_degenerate_single_copy_worker_error(band_client):
     （与 build_instance 抛错同契约，test_solve_proc.py「manifest must NOT be sent」口径）。"""
     with band_client.websocket_connect('/ws/solve') as ws:
         ws.send_json(_start(
-            band={'enabled': True, 'label': 'g06', 'ack': True},
+            band={'enabled': True, 'label': 'g06'},
             quantities={'g06': {'28': 1}}, time_budget=60))
         msg = ws.receive_json()
         assert msg['type'] == 'error', f'expected error, got {msg}'
@@ -301,7 +271,7 @@ def test_stop_during_band_stage_no_live_child(band_client):
     before = len(multiprocessing.active_children())
     with band_client.websocket_connect('/ws/solve') as ws:
         ws.send_json(_start(
-            band={'enabled': True, 'label': 'g05', 'ack': True},   # 弧片长宽比 6.9>6 硬警告形态
+            band={'enabled': True, 'label': 'g05'},
             quantities={'g05': {str(s): 8 for s in sizes}}, time_budget=60))
         # worker spawn+import ≈0.6s、band 构造 ≈2s → 1.3s 落在带构造中段（±0.7s 余量）
         time.sleep(1.3)
@@ -343,249 +313,6 @@ def test_build_instance_exclude_labels_item_layer_only():
     assert area1 == area2
 
 
-def test_parse_band_time_budget_internal_knob():
-    """_parse_band 内部旋钮：time_budget 非法值静默回退 None（= 默认 15s），不报错。
-
-    US-015 起返回 dict 恒含 ``fillers`` 键（缺省 []，旧 payload 无 fillers 行为不变）。"""
-    from materialsorting.web.routes_ws import _parse_band
-
-    pieces = _band_pieces()
-    quantities = {'g05': {'28': 2, '29': 2}}
-    cfg = _parse_band({'enabled': True, 'label': 'g05', 'time_budget': 'x'},
-                      pieces, quantities)
-    assert cfg == {'label': 'g05', 'fillers': [], 'time_budget': None}
-    cfg2 = _parse_band({'enabled': True, 'label': 'g05', 'time_budget': 2},
-                       pieces, quantities)
-    assert cfg2 == {'label': 'g05', 'fillers': [], 'time_budget': 2}
-    assert _parse_band(None, pieces, None) is None
-
-
-# --------------------------------------------- US-015 填料混带（v1.1）
-
-
-@pytest.mark.parametrize('band,quantities,frag', [
-    ({'enabled': True, 'label': 'g05', 'fillers': 'g06'}, None, '须为 g 码数组'),
-    ({'enabled': True, 'label': 'g05', 'fillers': [5]}, None, '须为 g 码'),
-    ({'enabled': True, 'label': 'g05', 'fillers': ['x6']}, None, '须为 g 码'),
-    ({'enabled': True, 'label': 'g05', 'fillers': ['g05']}, None, '不可包含主 g 码'),
-    ({'enabled': True, 'label': 'g05', 'fillers': ['g01', 'g05', 'g06']},
-     None, '不可包含主 g 码'),
-    ({'enabled': True, 'label': 'g05', 'fillers': ['g01', 'g06', 'g97', 'g98']},
-     None, '超上限'),
-    ({'enabled': True, 'label': 'g05', 'fillers': ['g99']},
-     None, '不存在于当前母版'),
-    ({'enabled': True, 'label': 'g05', 'fillers': ['g01', 'g06']},
-     {'g05': {'28': 2, '29': 2}, 'g01': {'28': 0}, 'g06': {'28': 2}},
-     '填料 g 码 g01 数量全为 0'),
-])
-def test_band_fillers_validation_matrix(band_client, band, quantities, frag):
-    """US-015 fillers 服务端校验：非法 → 结构化 error 早退（无 stage / 无 manifest）。"""
-    with band_client.websocket_connect('/ws/solve') as ws:
-        ws.send_json(_start(band=band, quantities=quantities, time_budget=60))
-        msg = ws.receive_json()
-        assert msg['type'] == 'error', f'expected error, got {msg}'
-        assert frag in msg['message']
-        with pytest.raises((WebSocketDisconnect, Exception)):
-            ws.receive_json()
-
-
-def test_band_fillers_dedupe_and_parse_through(band_client):
-    """重复项静默去重（JSON 往返可能重复）+ _parse_band 返回 fillers 清单。"""
-    from materialsorting.web.routes_ws import _parse_band
-
-    pieces = _band_pieces()
-    quantities = {'g05': {'28': 2, '29': 2}, 'g06': {'28': 2}}
-    cfg = _parse_band(
-        {'enabled': True, 'label': 'g05', 'fillers': ['g06', 'g06']}, pieces, quantities)
-    assert cfg['fillers'] == ['g06']            # 去重后 ≤ 上限
-    assert cfg['label'] == 'g05'
-
-
-def test_mixed_band_stage_manifest_final_conservation(band_client):
-    """US-015 混带 e2e：stage → manifest → final；填料成员与腰成员同守恒口径
-    （g06 副本出现在带内展开位、主实例不重复排）+ band_runs 工件记录 fillers。"""
-    with band_client.websocket_connect('/ws/solve') as ws:
-        ws.send_json(_start(
-            band={'enabled': True, 'label': 'g05', 'fillers': ['g06'],
-                  'time_budget': 2},
-            quantities={'g05': {'28': 2, '29': 2}, 'g06': {'28': 2}},
-            time_budget=2))
-
-        stage = ws.receive_json()
-        assert stage['type'] == 'stage' and stage['stage'] == 'band'
-        assert stage['fill_pct'] > 45.0           # 分子 = 腰 + 填料面积和
-        assert stage['bbox']['width_mm'] > 0
-
-        manifest = ws.receive_json()
-        assert manifest['type'] == 'manifest'
-        assert not any(str(p['id']).startswith('WB_') for p in manifest['pieces'])
-        demand = {p['id']: p['demand'] for p in manifest['pieces']}
-        assert demand['g05_28'] == 2 and demand['g05_29'] == 2
-        assert demand['g06_28'] == 2
-
-        final = None
-        last_frame = None
-        deadline = time.time() + 40.0
-        while time.time() < deadline:
-            m = ws.receive_json()
-            if m['type'] == 'frame':
-                assert not any(pi['id'].startswith('WB_') for pi in m['placed_items'])
-                last_frame = m
-            elif m['type'] == 'final':
-                final = m
-                break
-            elif m['type'] == 'error':
-                pytest.fail(f'unexpected error: {m}')
-        assert final is not None and last_frame is not None
-        counts = {}
-        for pi in last_frame['placed_items']:
-            counts[pi['id']] = counts.get(pi['id'], 0) + 1
-        # 守恒：腰 2+2 进带 + 填料 g06 2 副本进带（主实例 exclude {g05,g06} 扣减）
-        assert counts == {'g05_28': 2, 'g05_29': 2, 'g06_28': 2, 'g01_28': 1}
-
-    band_dir = Path(os.environ['MS_OUT_DIR']) / 'band_runs'
-    files = sorted(band_dir.glob('band_g05_seed1_*.json'))
-    assert files, f'band artifact not written under {band_dir}'
-    doc = json.loads(files[-1].read_text(encoding='utf-8'))
-    assert doc['fillers'] == ['g06']              # 工件回放口径（US-014 对拍）
-    assert len(doc['members']) == 6               # 腰 4 + 填料 2
-
-
-def test_manifest_consistency_mixed_band_on_vs_off(band_client):
-    """混带 on（fillers）vs off：manifest total_area 与 pieces 逐字段一致
-    （exclude_labels={主码, 填料} 只跳 Item 层，一致性口径同 US-011 AC#1）。"""
-    quantities = {'g05': {'28': 2, '29': 2}, 'g06': {'28': 2}}
-    manifests = {}
-    for key, band in (('off', None),
-                      ('on', {'enabled': True, 'label': 'g05',
-                              'fillers': ['g06'], 'time_budget': 2})):
-        with band_client.websocket_connect('/ws/solve') as ws:
-            ws.send_json(_start(band=band, quantities=quantities, time_budget=60))
-            if key == 'on':
-                assert ws.receive_json()['type'] == 'stage'
-            m = ws.receive_json()
-            assert m['type'] == 'manifest'
-            manifests[key] = m
-            ws.send_json({'action': 'stop'})
-            _drain_until_stopped(ws)
-    assert manifests['off']['total_area_mm2'] == manifests['on']['total_area_mm2']
-    assert manifests['off']['pieces'] == manifests['on']['pieces']
-    assert manifests['off']['gate_nest_mm'] == manifests['on']['gate_nest_mm']
-
-
-def test_band_preview_with_fillers_ok(band_client):
-    """US-015 预演带 fillers：200 {ok:true}（fill_pct 分子 = 腰 + 填料面积和，
-    与 WS 求解同口径 —— 预演所见即求解所得）。"""
-    r = band_client.post('/api/band/preview', json={
-        'band': {'enabled': True, 'label': 'g05', 'fillers': ['g06'],
-                 'time_budget': 2},
-        'sizes': [], 'seed': 1,
-        'quantities': {'g05': {'28': 2, '29': 2}, 'g06': {'28': 2}}})
-    assert r.status_code == 200
-    data = r.json()
-    assert data['ok'] is True
-    assert data['fill_pct'] > 45.0
-    assert data['bbox']['width_mm'] > 0
-    assert data['break_even'] == [62.4, 63.6]
-
-
-def test_band_preview_fillers_structural_errors(band_client):
-    """预演 fillers 校验失败 → 422 {error}（与 WS 同一 _parse_band 单一真相源）。"""
-    r = band_client.post('/api/band/preview', json={
-        'band': {'enabled': True, 'label': 'g05', 'fillers': ['g05']},
-        'quantities': {'g05': {'28': 2, '29': 2}}})
-    assert r.status_code == 422
-    assert '不可包含主 g 码' in r.json()['error']
-    assert 'hard_warning' not in r.json()          # 填料校验不是硬警告形态
-
-
-# --------------------------------------------- US-013 POST /api/band/preview
-
-
-def test_band_preview_ok(band_client):
-    """US-013 AC#2 预演成功：200 {ok:true, fill_pct, bbox, elapsed, break_even}。"""
-    r = band_client.post('/api/band/preview', json={
-        'band': {'enabled': True, 'label': 'g05', 'time_budget': 2},
-        'sizes': [], 'seed': 1,
-        'quantities': {'g05': {'28': 2, '29': 2}}})
-    assert r.status_code == 200
-    data = r.json()
-    assert data['ok'] is True
-    assert data['fill_pct'] > 45.0
-    assert data['bbox']['width_mm'] > 0 and data['bbox']['height_mm'] > 0
-    # break-even 参考线随响应回传（前端对照展示同源，不前端硬编码两份）
-    assert data['break_even'] == [62.4, 63.6]
-    assert data['elapsed'] > 0
-
-
-def test_band_preview_geometry_failure_ok_false(band_client):
-    """几何失败（总副本 1 DegenerateBand）→ 200 {ok:false, error} —— 预演失败是
-    结果数据（该 g 码不适合成带的量化证据），前端降级提示不阻塞确认（FR-7）。"""
-    r = band_client.post('/api/band/preview', json={
-        'band': {'enabled': True, 'label': 'g06', 'ack': True, 'time_budget': 1},
-        'quantities': {'g06': {'28': 1}}})
-    assert r.status_code == 200
-    data = r.json()
-    assert data['ok'] is False
-    assert '总副本 1' in data['error']
-
-
-@pytest.mark.parametrize('body,status,frag', [
-    ({}, 400, 'band'),                                            # band 键缺席
-    ({'band': {'enabled': False, 'label': 'g05'}}, 400, 'band'),  # enabled falsy
-    ({'band': {'enabled': True, 'label': 'g99'}}, 422, '不存在于当前母版'),
-    ({'band': {'enabled': True, 'label': 'g05'},
-      'quantities': {'g05': {'28': 0, '29': 0}}}, 422, '数量全为 0'),
-    ({'band': {'enabled': True, 'label': 'g06'},
-      'quantities': {'g06': {'28': 2}}}, 422, 'ack'),             # 硬警告形态无 ack
-])
-def test_band_preview_structural_errors(band_client, body, status, frag):
-    """结构错误：band 非法 → 400；校验失败（不存在 / 数量 0 / 需 ack）→ 422 {error}。"""
-    r = band_client.post('/api/band/preview', json=body)
-    assert r.status_code == status
-    assert frag in r.json()['error']
-
-
-def test_band_preview_hard_warning_structured_flag(band_client):
-    """US-013 硬警告形态 422 附 ``hard_warning:true`` 结构化标记（区别于其它 422）——
-    前端弹窗据此渲染二次确认勾选框；带 ``ack:true`` 重试即放行（成带预演成功口径）。"""
-    r = band_client.post('/api/band/preview', json={
-        'band': {'enabled': True, 'label': 'g06'},
-        'quantities': {'g06': {'28': 2}}})
-    assert r.status_code == 422
-    data = r.json()
-    assert data['hard_warning'] is True
-    assert 'ack' in data['error']
-    # 对照：其它 422（如 label 不存在）不带 hard_warning（形状键缺席，前端不误渲染勾选框）
-    r2 = band_client.post('/api/band/preview', json={
-        'band': {'enabled': True, 'label': 'g99'}})
-    assert r2.status_code == 422
-    assert 'hard_warning' not in r2.json()
-    # ack 后重试放行（g06 最小边 30 硬警告 + ack → 预演走几何路径）
-    r3 = band_client.post('/api/band/preview', json={
-        'band': {'enabled': True, 'label': 'g06', 'ack': True, 'time_budget': 2},
-        'quantities': {'g06': {'28': 4}}})
-    assert r3.status_code == 200
-    assert r3.json()['ok'] is True
-
-
-def test_band_preview_empty_state_409(band_client):
-    """pieces state 空（首次启动未 commit）→ 409（与 /ws/solve 空态报错同语义）。"""
-    state = server_mod._PIECES_STATE
-    saved = dict(state)
-    state.clear()
-    state.update({'doc': None, 'gate_mm': 0.0, 'pieces': [], 'pieces_by_id': {}})
-    try:
-        r = band_client.post('/api/band/preview', json={
-            'band': {'enabled': True, 'label': 'g05'}})
-        assert r.status_code == 409
-        assert '排料数据为空' in r.json()['error']
-    finally:
-        state.clear()
-        state.update(saved)
-
-
 if __name__ == '__main__':
     import sys
     sys.exit(pytest.main([__file__, '-v']))
-

@@ -21,8 +21,7 @@ WS 协议（详见 README / 实现计划；US-002 起全 label 键，不再接�
   - ``runtime.py``        pieces state 快照 + 共享 executor（import 即做启动 reload）；
   - ``parse_payload.py``  解析预览 / label 代表裁片纯函数；
   - ``routes_views.py``   GET / 、GET /api/ptypes 、POST /export；
-  - ``routes_ws.py``      WS /ws/solve + 求解子进程终止封装；
-  - ``routes_band.py``    POST /api/band/preview（US-013 腰头成带预演回显）。
+  - ``routes_ws.py``      WS /ws/solve + 求解子进程终止封装。
 """
 from __future__ import annotations
 
@@ -294,11 +293,10 @@ async def commit_to_nesting(req: Request):
 
 
 # ------------------------------------------------- 视图/导出/WS 路由（机械拆出，路由表顺序与拆分前一致）
-from . import routes_band, routes_views, routes_ws  # noqa: E402
+from . import routes_views, routes_ws  # noqa: E402
 
 app.include_router(routes_views.router)
 app.include_router(routes_ws.router)
-app.include_router(routes_band.router)
 # 拆出路由的处理函数与私有符号 re-export（保持 ``from .server import X`` 兼容）：
 from .routes_views import (  # noqa: E402,F401
     _LABEL_REPRESENTATIVE_FIELDS,
@@ -310,11 +308,6 @@ from .routes_ws import (  # noqa: E402,F401
     _SENTINEL,
     _terminate_solve_process,
     ws_solve,
-)
-from .routes_band import (  # noqa: E402,F401
-    BAND_BREAK_EVEN_PCT,
-    BAND_PREVIEW_TIME_BUDGET_S,
-    band_preview,
 )
 
 

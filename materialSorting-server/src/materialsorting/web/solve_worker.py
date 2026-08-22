@@ -12,23 +12,15 @@ US-011（腰头成带编排）：``band`` 配置非空时，本 worker 先在**�
 （``waist_band.build_band_plan`` v2 构造性链构造 —— 不 spawn 孙进程：
 ``routes_ws._terminate_solve_process`` 的 terminate 不级联孙进程，同步调用随本进程
 一并被 OS 回收，stop 后无存活 python 子进程），投 ``{kind:stage}``（manifest 前唯一
-一次）+ 落 ``band_runs`` 工件，随后主实例以 ``exclude_labels={label}`` 构造并把
-组合片（WB_ pid）追加进 items；帧/final 发射经 ``_emit_placed`` **单点**把组合片
-placement 展开回成员 placement（三处发射点共享该序列化器 → WB_ 永不出现在
-manifest/frame/final）。
-
-US-015（v1.1 填料混带）：``band.fillers`` 的填料 g 码在 ``_build_band`` 进
-``build_band_plan(fillers=...)``（同一展开/守恒/泄漏口径 —— 组合片含填料，展开后
-成员 pid 含填料副本）；主实例扣减扩为 ``exclude_labels={label} ∪ fillers``
-（同一 Item 构造层跳过路径，pid_meta/total_area/manifest 仍逐字段不变）。
+一次），随后主实例以 ``exclude_labels={label}`` 构造并把组合片（WB_ pid）追加进
+items；帧/final 发射经 ``_emit_placed`` **单点**把组合片 placement 展开回成员
+placement（三处发射点共享该序列化器 → WB_ 永不出现在 manifest/frame/final）。
 
 **picklable 约束（Windows spawn）**：``solve_worker`` 必须是**顶层函数**、无闭包、参数
 全部 JSON 可序列化（list/dict/float/int/str）。子进程 spawn 时会通过 pickle 重建本函数。
 """
 from __future__ import annotations
 
-import json
-import sys
 import threading
 import time
 
@@ -57,10 +49,9 @@ def solve_worker(pieces_snapshot, gate_mm, solve_params, result_queue, band=None
         - ``{kind:'error', message}`` 异常路径（成带失败 / build_instance 抛错 / solve
           崩溃；band 失败只投 error 不投 manifest，与 build 失败同契约）
     band : dict | None
-        US-011/015 成带配置 ``{'label': str, 'fillers': list[str],
-        'time_budget': int|None}``（routes_ws 服务端校验产物）。None/缺 label =
-        关闭，走原五元路径。``BandChunk`` 只在本进程存活，绝不跨进程（frame/final
-        里的组合片条目已展开成成员 placement —— 含 US-015 填料副本）。
+        US-011 成带配置 ``{'label': str}``（routes_ws 服务端校验产物）。None/缺
+        label = 关闭，走原五元路径。``BandChunk`` 只在本进程存活，绝不跨进程
+        （frame/final 里的组合片条目已展开成成员 placement）。
 
     density 双口径换算（关键不变量 #1）**不在子进程做**：子进程原样透传 sparrow 自报
     density；主进程在处理 frame 时按 ``total_area/(width*gate)`` 换算为原面积口径
@@ -94,9 +85,7 @@ def solve_worker(pieces_snapshot, gate_mm, solve_params, result_queue, band=None
     try:
         instance, config, pid_meta, total_area, n_eroded = build_instance(
             pieces_snapshot, gate_mm,
-            exclude_labels=(
-                {band_chunk.label, *band_chunk.fillers}
-                if band_chunk is not None else None),
+            exclude_labels=({band_chunk.label} if band_chunk is not None else None),
             extra_items=extra_items,
             **solve_params
         )
@@ -179,30 +168,23 @@ def _build_band(pieces_snapshot, gate_mm, solve_params, band, result_queue):
     无存活 python 子进程。
 
     d_g/tol_g 与主实例同源裁定（``_resolve_d_tol`` 单一真相源 —— FR-3 带内 per_type
-    沿用该 g 码的 d/tol；US-015 填料各 label 同法逐个裁定，喂 ``filler_ds`` 计算
-    混带补腐蚀深度）；带高守卫 = min(gate_mm, PLOT_SAFE_MAX_Y_MM)（与主解同口径）。
-    ``band.time_budget`` 为 deprecated no-op（构造性链构造无预算依赖，接受即忽略）。
+    沿用该 g 码的 d/tol）；带高守卫 = min(gate_mm, PLOT_SAFE_MAX_Y_MM)（与主解同口径）。
 
     失败（BandError/ValueError 等）投 ``{kind:error}``（「成带失败」前缀，只投 error
     不投 manifest —— 与 build_instance 抛错同契约）返回 None；成功投 ``{kind:stage}``
-    （fill_pct/bbox/fallback=False/elapsed，manifest 前唯一一次）+ 落 ``band_runs``
-    工件后返回 ``BandChunk``（只在本进程存活，绝不跨队列）。
+    （fill_pct/bbox/fallback=False/elapsed，manifest 前唯一一次）后返回 ``BandChunk``
+    （只在本进程存活，绝不跨队列）。
     """
     from ..nesting_bounds.load_pieces import PLOT_SAFE_MAX_Y_MM
-    from ..nesting_engine.waist_band import (
-        DEFAULT_BAND_TIME_BUDGET_S, BandError, build_band_plan)
+    from ..nesting_engine.waist_band import BandError, build_band_plan
     from .solver import _resolve_d_tol, build_pid_meta
 
     label = str(band['label'])
-    fillers = [str(f) for f in (band.get('fillers') or [])]
     t0 = time.time()
     try:
         pdef = {'d_ext': 0.0, 'd_int': 0.0, 'tol_ext': 0.0, 'tol_int': 0.0}
         pdef.update(solve_params.get('params') or {})
         d_g, tol_g = _resolve_d_tol(label, pdef, solve_params.get('per_type'))
-        filler_ds = {}
-        for f in fillers:
-            filler_ds[f], _tol_f = _resolve_d_tol(f, pdef, solve_params.get('per_type'))
         pid_meta, _area, _n = build_pid_meta(
             pieces_snapshot,
             sizes=solve_params.get('sizes'),
@@ -214,9 +196,7 @@ def _build_band(pieces_snapshot, gate_mm, solve_params, band, result_queue):
             label=label,
             seed=int(solve_params.get('seed', 0)),
             gate_nest=min(float(gate_mm), PLOT_SAFE_MAX_Y_MM),
-            d_g=d_g, tol_g=tol_g,
-            fillers=fillers, filler_ds=filler_ds,
-            time_budget=int(band.get('time_budget') or DEFAULT_BAND_TIME_BUDGET_S))
+            d_g=d_g, tol_g=tol_g)
     except (BandError, ValueError) as e:
         result_queue.put({'kind': 'error', 'message': f'成带失败: {e}'})
         return None
@@ -233,34 +213,7 @@ def _build_band(pieces_snapshot, gate_mm, solve_params, band, result_queue):
         'fallback': False,
         'elapsed': round(elapsed, 2),
     })
-    _write_band_artifact(chunk, int(solve_params.get('seed', 0)), elapsed)
     return chunk
-
-
-def _write_band_artifact(chunk, seed, band_elapsed):
-    """band 几何工件 → ``paths.OUT_DIR/band_runs/*.json``（US-014 回放对拍数据源）。
-
-    内容 = ``BandChunk.to_dict()``（分块轮廓 + 成员带内位 + fill/bbox/派生 seed/
-    d_g/tol_g）+ ``main_seed`` / ``band_elapsed``；写失败仅 warn（band_runs 是对拍
-    工件，不阻塞求解主链路）。OUT_DIR 经环境变量 ``MS_OUT_DIR`` 随 spawn 传递，
-    测试可隔离。
-    """
-    try:
-        from pathlib import Path
-
-        from .. import paths
-        out_dir = Path(paths.OUT_DIR) / 'band_runs'
-        out_dir.mkdir(parents=True, exist_ok=True)
-        doc = chunk.to_dict()
-        doc['main_seed'] = int(seed)
-        doc['band_elapsed'] = round(float(band_elapsed), 3)
-        dest = out_dir / time.strftime(
-            f'band_{chunk.label}_seed{int(seed)}_%Y%m%d_%H%M%S.json')
-        with open(dest, 'w', encoding='utf-8') as f:
-            json.dump(doc, f, ensure_ascii=False)
-    except Exception as e:
-        print(f'[solve_worker] band_runs 工件写失败（仅 warn，不影响求解）: {e}',
-              file=sys.stderr)
 
 
 def _emit_frame(rtype, sol, t0, band=None):

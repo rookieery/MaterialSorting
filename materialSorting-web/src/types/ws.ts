@@ -16,26 +16,13 @@ import type { PerTypeOverrides, SolveParams } from './v03';
  *
  * StartPayload 的 ``band`` 键：缺省 / null / enabled falsy = 关闭（旧行为逐字节不变）；
  * 开启时后端 ``routes_ws._parse_band`` 服务端校验（label ``^g\d+$`` / 存在于母版 /
- * 该 g 码 quantities>0 / 硬警告形态需显式 ack）。
- *
- * US-015（v1.1 填料混带）：``fillers`` 任意 g 码多选（版师确认无白名单约束），
- * 填料副本进带内空隙并同展开/守恒/泄漏口径；服务端校验存在性/数量上限/
- * 与主 g 码不同（``BAND_MAX_FILLERS`` 前端镜像）。
+ * 该 g 码 quantities>0）。不适合成带的 g 码由 waist_band.FILL_FLOOR_PCT 灾难守卫
+ * 在带构造期拦截（结构化 error）。
  */
 export interface BandConfig {
   enabled: boolean;
   /** 腰头 g 码（如 'g05'；跨母版漂移 —— 由用户在高级配置弹窗指认，US-013）。 */
   label: string;
-  /**
-   * 硬警告形态（成员最小边 <60mm 或长宽比 >6）显式确认位；仅确认弹窗（US-013）
-   * 置 true，缺省不随带。后端校验失败回结构化 error 早退。
-   */
-  ack?: boolean;
-  /**
-   * US-015 混带填料 g 码（去重、不含 label 本身；空数组/缺省 = 纯腰成带 v2）。
-   * 非空才随 band 序列化（旧 payload 形状不变）。
-   */
-  fillers?: string[];
 }
 
 /**
@@ -170,28 +157,3 @@ export type ServerMsg =
   | ErrorMsg
   | StoppedMsg
   | StageMsg;
-
-/**
- * US-013（FR-7）POST /api/band/preview 响应（后端 web/routes_band.py；band 契约
- * 集中在本文件）。executor 线程跑 5s 预算 build_band_plan：
- *   - 成功 ``{ok:true, fill_pct, bbox, elapsed, break_even}``（break_even 盈亏参考线
- *     随响应回传，前端展示同源不双写）；
- *   - 几何失败也回 200 ``{ok:false, error}`` —— 预演失败是结果数据，前端降级提示
- *     **不阻塞确认**；结构错误（400/409/422）同 ``{error}`` 形状，其中硬警告形态的
- *     422 附 ``hard_warning:true``（前端渲染二次确认勾选框，勾选后带 ack:true 重试）。
- */
-export interface BandPreviewResponse {
-  ok: boolean;
-  /** 带内填充率（%，实际占用 bbox 口径；成功时存在）。 */
-  fill_pct?: number;
-  /** 带板实际占用 bbox（成功时存在）。 */
-  bbox?: { width_mm: number; height_mm: number };
-  /** 预演耗时 s（成功时存在）。 */
-  elapsed?: number;
-  /** 盈亏参考线 [62.4, 63.6]（成功时存在）。 */
-  break_even?: [number, number];
-  /** 失败原因（ok:false / 结构错误时存在）。 */
-  error?: string;
-  /** 硬警告形态（422 需 ack）标记 —— 前端据此渲染二次确认勾选框。 */
-  hard_warning?: boolean;
-}
