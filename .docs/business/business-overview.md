@@ -26,9 +26,9 @@
 | 可视化工作台（web） | ✅ 落地 | FastAPI + WS，React 18 + TS 5 + Vite 5 前端（US-001~US-028：Tab 框架 + 上传预览 + 5 层渲染 + 求解停止/重启状态机） |
 | 求解停止 / 重启 | ✅ 落地 | US-025 进程化（`solve_with_callback_proc` + `solve_worker`）+ US-026 WS stop 协议 + US-027 phase 五态状态机 + US-028 SolveControls 按钮组 |
 | 导出 PNG / R12-DXF / PLT | ✅ 落地 | 用原始母版轮廓，**US-024 起 5 层叠加**（毛版+净版+内部线+刺口+布纹线），ET2008 兼容；**US-033 起 PLT/HPGL**（WT V8.8 / LIKE 绘图仪原生链路，DXF 在该软件实测无法打印）；**2026-08 撞机修正**：PLT 内容压进绘图仪 Y 可写幅宽 1910 + PD 分块 ≤10点/≤110B + 走纸引导（设备级差异详见 [technical/agent-api-reference.md](../technical/agent-api-reference.md)） |
-| 配置驱动求解 CLI（cli 子包） | ✅ 落地 | 2026-08-19：`ms-run-config <config.json>`（7 键配置：master_dxf/gate_mm 必填 + sizes/time/seeds/per_type/quantities）→ 独立 commit → **串行**多 seed 求解 + best 汇总（real 口径）；产物只落 `out/config_runs/<run>_<时间戳>/`（pieces/ + intermediate + result.json + curve_s\*/best_frame_s\* 逐帧轨迹），物理隔离 web 事实源，与 ms-web 可并行互不干扰，无需浏览器。**PC-001（2026-08-19）起求解进程化**：`solve_pieces` 走多进程 + 逐帧 `should_stop` 中止（terminate 杀子进程、best-so-far 帧交付）+ `curve_s{seed}.json`/`best_frame_s{seed}.json` 落盘（标定/kill 规则数据源），Ctrl-C（退出码 130）不丢已完成轮。**PC-002（2026-08-19）起串行 seed portfolio 控制器**（`cli/portfolio.py`）：逐帧 incumbent banking（`best` 升级为帧级全局最优、含完整布局，被 kill/中断 seed 的最优帧同样参与）+ R0 达标即停（`--target`，任一帧达标 → 当前 seed 被 stop + 剩余队列不启动，退出码 0）+ R4 队列耗尽交付；result.json 新增 `portfolio` 段；`--params` 标定参数文件旗标（PC-003/004 消费）；单 seed 无 `--target` 保持旧 best 语义（冒烟对拍兼容） |
+| 配置驱动求解 CLI（cli 子包） | ✅ 落地 | 2026-08-19：`ms-run-config <config.json>`（**8 键**配置：master_dxf/gate_mm 必填 + sizes/time/seeds/per_type/quantities + band——第 8 键 2026-08-22 起：`band={'enabled':true,'label':g码}` 腰头成带，worker 进程内成带+展开，band on 时 `--lns` 自动 warn 跳过）→ 独立 commit → **串行**多 seed 求解 + best 汇总（real 口径）；产物只落 `out/config_runs/<run>_<时间戳>/`（pieces/ + intermediate + result.json + curve_s\*/best_frame_s\* 逐帧轨迹），物理隔离 web 事实源，与 ms-web 可并行互不干扰，无需浏览器。**PC-001（2026-08-19）起求解进程化**：`solve_pieces` 走多进程 + 逐帧 `should_stop` 中止（terminate 杀子进程、best-so-far 帧交付）+ `curve_s{seed}.json`/`best_frame_s{seed}.json` 落盘（标定/kill 规则数据源），Ctrl-C（退出码 130）不丢已完成轮。**PC-002（2026-08-19）起串行 seed portfolio 控制器**（`cli/portfolio.py`）：逐帧 incumbent banking（`best` 升级为帧级全局最优、含完整布局，被 kill/中断 seed 的最优帧同样参与）+ R0 达标即停（`--target`，任一帧达标 → 当前 seed 被 stop + 剩余队列不启动，退出码 0）+ R4 队列耗尽交付；result.json 新增 `portfolio` 段；`--params` 标定参数文件旗标（PC-003/004 消费）；单 seed 无 `--target` 保持旧 best 语义（冒烟对拍兼容） |
 | 母版编号植入脚本 | ✅ 可用 | 2026-08-18：`python scripts/embed_piece_codes.py <母版.dxf>` 把 g01+ 编号 TEXT 植入母版（与 Web parse 同源 `assign_codes`，幂等 + 自校验）—— 版师在 ET2008 打开母版即可把图面片对上 g 码；`_coded.dxf` 产物可直接再上传 Web，g 码不变 |
-| 腰头成带（waist_band） | ✅ US-015 混带 A/B accept | **US-009 核心模块**（`nesting_engine/waist_band.py`）+ **US-011~013 编排/UI/预演** + **US-014 A/B 终验**（2026-08-21，报告 `.docs/business/腰头成带_AB验收报告_US014.md`）+ **v2 构造性链构造重写**（2026-08-21：N 条单副本异码链降序滑移贴靠 + 整链点对称翻转 ⇒ 开口朝左 + 最大码在最右；替换 v1 spyrrow 带内子求解/US-014 成对重试；贴触口径链内缝隙 0.00mm）+ **US-015 v1.1 填料混带**（2026-08-21，报告 `.docs/business/腰头成带_AB验收报告_US015.md`）：`band.fillers` 任意 g 码多选 ≤3、`_fill_gaps` 贪心塞隙 + `BAND_INNER_D_MM=2.0`；5336 实测 g05+g07 带 fill 79.5%→**86.52%**（bbox 收窄 55mm）、全局 3 seed 均值**提升** 0.534pt（接受线 ≤1.0pt 劣化）、守恒/无 WB_ 泄漏/浏览器 17/17 全过 → **v1.1 合入** |
+| 腰头成带（waist_band） | ✅ v2 纯腰链构造（现行） | **US-009 核心模块**（`nesting_engine/waist_band.py`）+ **US-011~013 编排/UI** + **v2 构造性链构造重写**（2026-08-21：N 条单副本异码链降序滑移贴靠 + 整链点对称翻转 ⇒ 开口朝左 + 最大码在最右；替换 v1 spyrrow 带内子求解/US-014 成对重试；贴触口径链内缝隙 0.00mm）；端到端 A/B **+2.27pt**（ON 88.35% vs OFF 86.08%）。**2026-08-22 简化**：US-015 填料混带 / US-013 预演与 ack 硬警告 / US-010 go-no-go 闸门 / US-014 验收 CLI 整体删除（历史报告 `.docs/business/腰头成带_AB验收报告_US014/US015.md` 留档），band 收敛「勾选 + 选 g 码」极简主流程（`fill<45%` 唯一守门人）；同日 **band×策略解禁**（`/api/strategy/start` 复用 `_parse_band` 单一校验点把 band 写进 8 键 config，worker 进程内成带） |
 | 90% 利用率目标 | 🎯 进行中 | 距 90% 生死线约 4pp，主攻旋转公差 + 内片重合 |
 
 ## 核心业务实体
@@ -94,7 +94,7 @@ out/sparrow_baseline/pieces_intermediate.json   ← 全流程事实源（schema 
    └─ ms-web（启动期 _PIECES_STATE 读取 + commit 后 reload + 实时可视化 5 层 + 导出 PNG/R12-DXF/PLT 5 层）
 ```
 
-> **CLI 平行通道**（2026-08-19）：`ms-run-config <config.json>` 从 `data/configs/` 7 键配置出发，走同一编排链独立 commit 到 `out/config_runs/<run>_<时间戳>/` 再串行多 seed 求解 —— **不经上述 web 事实源**（不写 `out/sparrow_baseline/` 与 `out/uploads/`），可与 ms-web 并行互不干扰。
+> **CLI 平行通道**（2026-08-19）：`ms-run-config <config.json>` 从 `data/configs/` 8 键配置出发，走同一编排链独立 commit 到 `out/config_runs/<run>_<时间戳>/` 再串行多 seed 求解 —— **不经上述 web 事实源**（不写 `out/sparrow_baseline/` 与 `out/uploads/`），可与 ms-web 并行互不干扰。
 
 详细函数链见 [technical/agent-file-map.md](../technical/agent-file-map.md#数据流主线)。
 
@@ -102,10 +102,10 @@ out/sparrow_baseline/pieces_intermediate.json   ← 全流程事实源（schema 
 
 五层单向依赖（`cli → web → nesting_engine → nesting_bounds → dxf_parser`），下层禁 import 上层：
 
-- **cli**：最上层编排者（2026-08-19 新增）。`config`（7 键 JSON 严格校验，中文报错含字段名）、`pipeline`（commit 管线镜像 `server._commit_to_nesting_sync` + `solve_pieces` 求解封装：复用 `web.solver.build_instance` 与 web 同代码路径；PC-001 起多进程求解 + 逐帧 `should_stop` 中止 + curve/best_frame 落盘）、`portfolio`（PC-002 串行 seed 控制器：incumbent banking + R0 达标即停 + R4 队列耗尽）、`run_config`（`ms-run-config` 入口：逐 seeds 经控制器串行多轮 + best/portfolio 汇总，result.json 逐轮重写，`--target`/`--params` 旗标）；绝不 import `web.server`，产物只落 `out/config_runs/`。
+- **cli**：最上层编排者（2026-08-19 新增）。`config`（8 键 JSON 严格校验，中文报错含字段名；2026-08-22 起第 8 键 `band` 腰头成带——与 `--strategy` 策略模式兼容，band on 时 `--lns` 自动跳过）、`pipeline`（commit 管线镜像 `server._commit_to_nesting_sync` + `solve_pieces` 求解封装：复用 `web.solver.build_instance` 与 web 同代码路径；PC-001 起多进程求解 + 逐帧 `should_stop` 中止 + curve/best_frame 落盘）、`portfolio`（PC-002 串行 seed 控制器：incumbent banking + R0 达标即停 + R4 队列耗尽）、`run_config`（`ms-run-config` 入口：逐 seeds 经控制器串行多轮 + best/portfolio 汇总，result.json 逐轮重写，`--target`/`--params` 旗标）；绝不 import `web.server`，产物只落 `out/config_runs/`。
 - **dxf_parser**：底层 DXF 读写。`reader`（ezdxf recover + GBK + R12 POLYLINE）、`geometry`（纯几何）、`model`（PieceOutline，US-002 扩 5 层字段）、`explore`（母版探索）、`collect`（US-003 母版深度解析 5 层 IR）、`export_dxf`（单裁片 5 层导出）。仅 stdlib + ezdxf。
 - **nesting_bounds**：`load_pieces` 把单裁片 → 布纹对齐 → 归一化（US-001 v2 起 manifest 驱动、无 L/R 镜像展开）；US-024 起 `_read_piece` 读 5 层 + notch 法线按 outline 最近边重算。定义 `NestPiece`、`GATE_MM=1980`、`DEFAULT_SIZES`。
-- **nesting_engine**：sparrow 求解。`constraints`（v0.3 常量 + 位图腐蚀 + 校验）、`sparrow_baseline`（基线 + ★共享层）、`sparrow_experiments`（公差实验）、`labeling`（**g 码赋号单一真相源**，US-001 v2：assign_codes + 母版编号复用，无名称映射）。intermediate 由 `web/server._commit_to_nesting_sync` 生成（US-001 v2 label 先行 / US-024 5 层，schema v2）。
+- **nesting_engine**：sparrow 求解。`constraints`（v0.3 常量 + 位图腐蚀 + 校验）、`sparrow_baseline`（基线 + ★共享层）、`sparrow_experiments`（公差实验）、`labeling`（**g 码赋号单一真相源**，US-001 v2：assign_codes + 母版编号复用，无名称映射）、`waist_band`（US-009 腰头成带 v2 构造性链构造；2026-08-22 简化后 `fill<45%` 唯一守门人，禁 import web）。intermediate 由 `web/server._commit_to_nesting_sync` 生成（US-001 v2 label 先行 / US-024 5 层，schema v2）。
 - **web**：`server`（FastAPI + WS + 启动期 `_PIECES_STATE` reload + parse/commit/ptypes 路由 + WS stop 协议）、`solver`（build_instance + demand + 旧 threading / **US-025 多进程** `solve_with_callback_proc`）、`solve_worker`（US-025 子进程入口）、`export`（PNG + R12-DXF marker，US-024 起 5 层叠加）。
 
 文件级细节见 [technical/agent-file-map.md](../technical/agent-file-map.md)；HTTP/WS 契约见 [technical/agent-api-reference.md](../technical/agent-api-reference.md)。
@@ -117,9 +117,9 @@ out/sparrow_baseline/pieces_intermediate.json   ← 全流程事实源（schema 
 1. **上传母版**（上传预览 Tab）：拖拽/点击上传 `.dxf` → `/api/parse-dxf` 深度解析 → 按码分组 + **g 码标注**（g01+，`labeling.py` 单一真相源，无中文名）+ 5 层（毛版/净版/内部线/刺口/布纹线）数据（US-004~008；裁片编号化 US-001~005）。
 2. **编辑数量**（US-011/022；矩阵化重构 + 裁片编号化后 =「码号 × g 码」数量矩阵；图形预览区已拆除）：QtyMatrix 行 = 码号、列 = g 码（列头缩略图 + 序号徽章 + 「≡」整列设值），全部码数量分布一屏看全；格内直接编辑每（g 码 × 码号）排料份数（0 = 该码不排此片）、「≡」整列设统一值（个别码不同 = 应用后单格再改，高亮为特例）；点列头缩略图放大查看裁片图形（US-013 PieceZoomModal，5 层）、点行头（码号）切换列头缩略图显示的码；每码小计/底部合计/总片数 = **Σ 数量口径**（一份 = 母版一个轮廓，引擎不合成镜像）；数量随求解 start payload 按（g 码 × 码号）下发（demand per-size）。
 3. **自动应用**（US-021）：解析成功后台自动 `/api/commit-to-nesting` 把母版转 intermediate（母版全码 110 片，无合成）+ reload 后端 + 解锁超排 Tab（不强制切，用户主动点入）。
-4. **求解配置**（超排 Tab）：SizePicker 从上传 doc 动态读码号（US-017）+ 总裁片数量实时显示（Σ 数量口径）；高级配置弹窗（重合/旋转，US-018；按 g 码逐片 d/tol —— 2026-08-18 回退 US-004 码号矩阵化）+ g 码缩略图/放大预览；时长/种子/多 seed（≤6）。
+4. **求解配置**（超排 Tab）：SizePicker 从上传 doc 动态读码号（US-017）+ 总裁片数量实时显示（Σ 数量口径）；高级配置弹窗（重合/旋转，US-018；按 g 码逐片 d/tol —— 2026-08-18 回退 US-004 码号矩阵化）+ g 码缩略图/放大预览 + **布局设置**（开启腰头成带勾选 + 腰头 g 码下拉；2026-08-22 简化后极简两键，预演/ack/填料已删）；时长输入（**2026-08-22 起 seed/多 seed 控件隐藏**，界面单 seed 模式，多种子探索由「高级运行」承接）。
 5. **求解**（US-025~028）：点"开始求解"→ WS 推 manifest（5 层骨架）→ 持续推 frame（每 ~0.2s，利用率实时爬升）→ final。**可随时"停止"**（后端 terminate 子进程 → `{type:'stopped'}`）→ stopped 态保留中间方案可导出 → "重新开始"用上次参数一键重跑。phase 五态：idle/running/stopped/done/error。
-6. **多 seed 并发对比**（最多 6 路），自动保留最优 run。
+6. **多 seed 并发对比**（最多 6 路），自动保留最优 run（**2026-08-22 起 UI 隐藏**：界面单 seed，底层多 run 能力保留；多种子探索走「高级运行」race/SE 策略编排，后端给定总预算拿更高利用率）。
 7. **回放**：seekbar 拖动看任意时间点布局（US-006）。
 8. **导出最优 run** → PNG（预览）/ R12-DXF（给 ET2008 刻绘，5 层叠加 US-024）/ PLT（US-033，给 WT V8.8 / LIKE 绘图仪，封装口径对齐生产 PLT：PS 纸长 + PW0.08 + PU;PG 收尾 + CRLF；内容压进绘图仪可写幅宽 1910 + PD 分块 ≤10点/≤110B + 走纸引导），文件名 = 上传母版名前缀 + 码号 + 利用率 + 种子（多款号导出凭前缀区分）。
 
