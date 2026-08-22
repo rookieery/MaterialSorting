@@ -1,26 +1,26 @@
-// ParamForm —— 幅宽 / 时长 / base seed 输入（与旧 index.html `<div class="field row">` 等价）。
+// ParamForm —— 幅宽 / 时长输入（与旧 index.html `<div class="field row">` 等价）。
 //
-// 字段按字符串持有（与 input.value 一致），交由 collectParams / parseGate / parseTime / parseSeed 解析。
+// 字段按字符串持有（与 input.value 一致），交由 collectParams / parseGate / parseTime 解析。
 // DOM 沿用旧 style.css `.field.row` / `label` / `input[type=number]`（US-008 前 CSS 不动）。
+//
+// 2026-08-22 seed UI 隐藏（界面只支持单 seed 模式）：删 base seed 输入行 + seed/onSeed
+// props —— FormState.seed 字段保留恒默认 '0'（parseSeed 恒 0，WS StartPayload.seed=0
+// 契约不变）；多 seed 对比开关（MultiSeedControls）同批拆除，见 ControlPanel 注释。
 
 export interface ParamFormProps {
   /** 幅宽（cm）输入值字符串。 */
   gate: string;
   /** 时长（秒）输入值字符串。 */
   time: string;
-  /** base seed 输入值字符串。 */
-  seed: string;
   /** 幅宽输入变化时回调（传入 input.value 字符串）。 */
   onGate: (v: string) => void;
   /** 时长输入变化时回调（传入 input.value 字符串）。 */
   onTime: (v: string) => void;
-  /** seed 输入变化时回调（传入 input.value 字符串）。 */
-  onSeed: (v: string) => void;
-  /** US-027 求解中冻结幅宽 / 时长 / seed 编辑（与 StartButton disabled 同套机制）。 */
+  /** US-027 求解中冻结幅宽 / 时长编辑（与 StartButton disabled 同套机制）。 */
   disabled?: boolean;
 }
 
-export function ParamForm({ gate, time, seed, onGate, onTime, onSeed, disabled = false }: ParamFormProps) {
+export function ParamForm({ gate, time, onGate, onTime, disabled = false }: ParamFormProps) {
   return (
     <>
       <div className="field row">
@@ -45,16 +45,6 @@ export function ParamForm({ gate, time, seed, onGate, onTime, onSeed, disabled =
           max={3600}
           disabled={disabled}
           onChange={(e) => onTime(e.target.value)}
-        />
-      </div>
-      <div className="field row">
-        <label>seed</label>
-        <input
-          id="seed"
-          type="number"
-          value={seed}
-          disabled={disabled}
-          onChange={(e) => onSeed(e.target.value)}
         />
       </div>
     </>

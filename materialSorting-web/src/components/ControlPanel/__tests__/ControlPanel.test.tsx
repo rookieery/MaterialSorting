@@ -1,6 +1,7 @@
 // US-004 ControlPanel integration tests:
 //   AC#1 SizePicker renders 8 size chips, all default-checked
 //   AC#2 defaults match legacy index.html (time=60, seed=0; multi_seed=false, seed_count=3)
+//     ※ 2026-08-22 seed UI 隐藏：#seed/#multi_seed/#seed_count 不再渲染（原 US-005 断言改写）
 //   AC#4 PerTypeOverrides（高级配置按钮）→ modal 列 = /api/ptypes reps 键（g 码，
 //       US-003 起 V03_PTYPES 固定 10 中文列已删）
 //   AC#6 click Start -> onStart fires; payload fields match collectParams
@@ -9,6 +10,7 @@
 // US-005 additions:
 //   AC#1 multi_seed checkbox + seed_count input render with legacy defaults
 //   AC#1 toggle multi_seed + edit seed_count -> onStart.seed_count matches parseSeedCount
+//     ※ 2026-08-22 seed UI 隐藏：以上用例改写为「不渲染 + 载荷恒单 seed」describe
 //
 // US-019 additions:
 //   - 主面板不再渲染 d_ext/d_int/tol_ext/tol_int 输入（内外两档全交高级配置弹窗）。
@@ -115,7 +117,7 @@ describe("ControlPanel (US-004)", () => {
     for (const c of checkboxes) expect(c.checked).toBe(false);
   });
 
-  it("AC#2 defaults match legacy index.html (time=120; seed=0; multi_seed=false; seed_count=3)", () => {
+  it("AC#2 defaults match legacy index.html (time=120)；2026-08-22 seed UI 隐藏（#seed/#multi_seed/#seed_count 不渲染）", () => {
     renderPanel();
     const get = (id: string) => container!.querySelector<HTMLInputElement>("#" + id)!;
     // US-019：d_ext/d_int/tol_ext/tol_int 主面板输入已删除，不应在 DOM 中
@@ -124,10 +126,11 @@ describe("ControlPanel (US-004)", () => {
     expect(container!.querySelector("#tol_ext")).toBeNull();
     expect(container!.querySelector("#tol_int")).toBeNull();
     expect(get("time").value).toBe("120");
-    expect(get("seed").value).toBe("0");
-    // US-005: multi_seed / seed_count defaults
-    expect(get("multi_seed").checked).toBe(false);
-    expect(get("seed_count").value).toBe("3");
+    // 2026-08-22 seed UI 隐藏：seed 输入框 / 多 seed 对比开关 / 数量输入框均不渲染
+    // （form.seed/multi_seed/seed_count 恒默认 → onStart 载荷 seed=0 / seed_count=1 不变）
+    expect(container!.querySelector("#seed")).toBeNull();
+    expect(container!.querySelector("#multi_seed")).toBeNull();
+    expect(container!.querySelector("#seed_count")).toBeNull();
   });
 
   it("US-019 AC#6 主面板不再渲染内外两档输入（d_ext/d_int/tol_ext/tol_int）", () => {
@@ -285,11 +288,8 @@ describe("ControlPanel start flow (US-004)", () => {
     expect(stopBtn).not.toBeNull();
     expect(stopBtn.disabled).toBe(false);
     expect(stopBtn.getAttribute("aria-label")).toBe("停止求解");
-    // 参数编辑控件全部 disabled（与原 StartButton disabled 同套机制）
+    // 参数编辑控件全部 disabled（与原 StartButton disabled 同套机制；seed 控件 2026-08-22 已隐藏）
     expect(container!.querySelector<HTMLInputElement>("#time")!.disabled).toBe(true);
-    expect(container!.querySelector<HTMLInputElement>("#seed")!.disabled).toBe(true);
-    expect(container!.querySelector<HTMLInputElement>("#multi_seed")!.disabled).toBe(true);
-    expect(container!.querySelector<HTMLInputElement>("#seed_count")!.disabled).toBe(true);
     expect(container!.querySelector<HTMLButtonElement>(".per-type-btn")!.disabled).toBe(true);
   });
 
@@ -322,90 +322,24 @@ describe("ControlPanel start flow (US-004)", () => {
   });
 });
 
-describe("ControlPanel multi-seed (US-005)", () => {
-  it("AC#1 renders #multi_seed checkbox + #seed_count input (legacy defaults)", () => {
+describe("ControlPanel seed UI 隐藏（2026-08-22 单 seed 模式）", () => {
+  it("不渲染 seed 输入框 / multi_seed 开关 / seed_count 输入框（MultiSeedControls 已删）", () => {
     renderPanel();
-    const multi = container!.querySelector<HTMLInputElement>("#multi_seed")!;
-    const count = container!.querySelector<HTMLInputElement>("#seed_count")!;
-    expect(multi.type).toBe("checkbox");
-    expect(multi.checked).toBe(false);
-    expect(count.type).toBe("number");
-    expect(count.value).toBe("3");
-    expect(parseInt(count.min, 10)).toBe(2);
-    expect(parseInt(count.max, 10)).toBe(6);
+    expect(container!.querySelector("#seed")).toBeNull();
+    expect(container!.querySelector("#multi_seed")).toBeNull();
+    expect(container!.querySelector("#seed_count")).toBeNull();
   });
 
-  it("AC#1 toggle multi_seed + Start -> onStart.seed_count follows parseSeedCount", () => {
+  it("Start 载荷恒单 seed：seed=0 / seed_count=1（form 字段恒默认，parseSeedCount 恒 1）", () => {
     const onStart = vi.fn();
     renderPanel(onStart);
     // US-017：先勾选一个码号让 Start 校验通过
     const checkboxes = container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]");
     act(() => checkboxes[0].click());
-    const multi = container!.querySelector<HTMLInputElement>("#multi_seed")!;
-    act(() => multi.click());
     const btn = container!.querySelector<HTMLButtonElement>("#start")!;
     act(() => btn.click());
     const cfg = onStart.mock.calls[0][0] as ControlPanelStartPayload;
-    // multi=true, count=default "3" → 3
-    expect(cfg.seed_count).toBe(3);
-  });
-
-  it("AC#1 multi_seed=true + seed_count='10' -> clamp to 6", () => {
-    const onStart = vi.fn();
-    renderPanel(onStart);
-    // US-017：先勾选一个码号
-    const checkboxes = container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]");
-    act(() => checkboxes[0].click());
-    const multi = container!.querySelector<HTMLInputElement>("#multi_seed")!;
-    const count = container!.querySelector<HTMLInputElement>("#seed_count")!;
-    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
-    act(() => {
-      setter.call(count, "10");
-      count.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-    act(() => multi.click());
-    const btn = container!.querySelector<HTMLButtonElement>("#start")!;
-    act(() => btn.click());
-    const cfg = onStart.mock.calls[0][0] as ControlPanelStartPayload;
-    expect(cfg.seed_count).toBe(6);
-  });
-
-  it("AC#1 multi_seed=true + seed_count empty -> fallback 3", () => {
-    const onStart = vi.fn();
-    renderPanel(onStart);
-    // US-017：先勾选一个码号
-    const checkboxes = container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]");
-    act(() => checkboxes[0].click());
-    const multi = container!.querySelector<HTMLInputElement>("#multi_seed")!;
-    const count = container!.querySelector<HTMLInputElement>("#seed_count")!;
-    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
-    act(() => {
-      setter.call(count, "");
-      count.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-    act(() => multi.click());
-    const btn = container!.querySelector<HTMLButtonElement>("#start")!;
-    act(() => btn.click());
-    const cfg = onStart.mock.calls[0][0] as ControlPanelStartPayload;
-    expect(cfg.seed_count).toBe(3);
-  });
-
-  it("AC#1 multi_seed stays false -> seed_count changes ignored (returns 1)", () => {
-    const onStart = vi.fn();
-    renderPanel(onStart);
-    // US-017：先勾选一个码号
-    const checkboxes = container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]");
-    act(() => checkboxes[0].click());
-    const count = container!.querySelector<HTMLInputElement>("#seed_count")!;
-    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
-    act(() => {
-      setter.call(count, "5");
-      count.dispatchEvent(new Event("input", { bubbles: true }));
-    });
-    // multi_seed NOT toggled → still false
-    const btn = container!.querySelector<HTMLButtonElement>("#start")!;
-    act(() => btn.click());
-    const cfg = onStart.mock.calls[0][0] as ControlPanelStartPayload;
+    expect(cfg.seed).toBe(0);
     expect(cfg.seed_count).toBe(1);
   });
 });

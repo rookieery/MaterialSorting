@@ -1,4 +1,5 @@
-// PerTypeOverridesModal —— 高级配置：每裁片（g 码）覆盖弹窗（US-018；裁片编号化重构
+// PerTypeOverridesModal —— 高级配置：设置算法参数弹窗（标题 2026-08-22 前为「每裁片覆盖」；
+// US-018；裁片编号化重构
 // US-003 起 V03_PTYPES 固定 10 中文列删除，列集 = /api/ptypes representatives 键
 // —— 裁片 g 码，动态随当前母版。2026-08-18 回退 US-004 矩阵化（行=码号 × 列=g 码
 // 逐格 d/tol）：重合/旋转是片型工艺属性、与码号无关，按码号细分无业务差异，
@@ -392,11 +393,11 @@ function PerTypeOverridesModalInner({
         className="per-type-modal"
         role="dialog"
         aria-modal="true"
-        aria-label="高级配置：每裁片覆盖"
+        aria-label="高级配置：设置算法参数"
         onMouseDown={handleModalMouseDown}
       >
         <div className="per-type-head">
-          <span className="per-type-title">高级配置：每裁片覆盖</span>
+          <span className="per-type-title">高级配置：设置算法参数</span>
           <button
             type="button"
             className="per-type-close"
@@ -542,6 +543,12 @@ function PerTypeOverridesModalInner({
           )}
         </div>
 
+        {/* 裁片设置分区标题（2026-08-22）：与上方「布局设置」同款 .per-type-band-title
+            （12px + #2ea06c 左缘竖条）；modal 是 flex column + gap:12px，独立标题自动
+            获得与 band 分区的间距，零新 CSS。 */}
+        <div className="per-type-band-title" data-testid="per-type-table-title">
+          裁片设置
+        </div>
         <div className="per-type-table-wrap">
           <table className="per-type-table">
             <thead>

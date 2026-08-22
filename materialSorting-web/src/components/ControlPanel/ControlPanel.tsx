@@ -42,6 +42,11 @@
 // US-015（v1.1 填料混带）：form.band_fillers（弹窗填料行多选）随 band 透传 WS
 //   ``band.fillers``；启动闸门对填料同口径 —— 任一填料所选码数量全 0 → 「开始求解」
 //   置灰 + StatusLine 报首个冒犯 g 码（与后端 _parse_band quantities>0 校验对齐）。
+// 2026-08-22 seed UI 隐藏（界面只支持单 seed 模式）：ParamForm 删 seed 输入行、
+//   MultiSeedControls 不再渲染（组件已删）。form.seed/multi_seed/seed_count 保留恒默认
+//   （'0'/false/'3'）→ onStart 载荷 seed=0 / seed_count=1 不变；底层多 run 能力不动
+//   （useSolveRun / runRegistry / NestsGrid），恢复 UI 即回多 seed；多种子探索由
+//   「高级运行」（race/SE 后端策略编排）承接。
 
 import { useCallback, useEffect, useState } from 'react';
 import { useExport } from '../../hooks/useExport';
@@ -50,7 +55,6 @@ import { useUploadStore } from '../../store/uploadStore';
 import { useQtyStore } from '../../store/qtyStore';
 import { useBandStore } from '../../store/bandStore';
 import { ExportButtons } from './ExportButtons';
-import { MultiSeedControls } from './MultiSeedControls';
 import { ParamForm } from './ParamForm';
 import { PerTypeOverrides } from './PerTypeOverrides';
 import { SizePicker, computeTotalCutPieces } from './SizePicker';
@@ -263,25 +267,23 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
       </div>
       <h2>求解控制</h2>
       <SizePicker selected={form.sizes} onChange={(sizes) => patch({ sizes })} disabled={solving} />
-      {/* US-031 params 步锚点：包裹幅宽/时长/seed（ParamForm）+ multi_seed（MultiSeedControls）
-          + 高级配置（PerTypeOverrides）整个「求解参数」区。码号多选（SizePicker）在其上独立成区不纳入。 */}
+      {/* US-031 params 步锚点：包裹幅宽/时长（ParamForm）+ 高级配置（PerTypeOverrides）
+          整个「求解参数」区（2026-08-22 起 seed/multi_seed 控件已隐藏）。码号多选（SizePicker）
+          在其上独立成区不纳入。 */}
       <div data-tour="param-form">
         <ParamForm
           gate={form.gate}
           time={form.time}
-          seed={form.seed}
           onGate={(gate) => patch({ gate })}
           onTime={(time) => patch({ time })}
-          onSeed={(seed) => patch({ seed })}
           disabled={solving}
         />
-        <MultiSeedControls
-          multi_seed={form.multi_seed}
-          seed_count={form.seed_count}
-          onMulti={(multi_seed) => patch({ multi_seed })}
-          onCount={(seed_count) => patch({ seed_count })}
-          disabled={solving}
-        />
+        {/* 2026-08-22 seed UI 隐藏（单 seed 模式）：MultiSeedControls（多 seed 对比 + 数量）
+            不再渲染、组件文件已删；form.seed/multi_seed/seed_count 字段保留恒默认值
+            （'0'/false/'3'）→ parseSeed 恒 0 / parseSeedCount 恒 1 → NestingPage
+            seed_count 循环自然退化为单 run。底层多 run 能力（useSolveRun / runRegistry /
+            NestsGrid / WS 多连接）不动，恢复 UI 即回多 seed。多 seed 探索需求由
+            「高级运行」（race/SE 后端策略编排）承接。 */}
         <PerTypeOverrides
           values={form.per_type}
           onChange={(per_type) => patch({ per_type })}

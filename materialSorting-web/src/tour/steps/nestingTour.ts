@@ -21,7 +21,7 @@
 //
 // 锚点用 data-tour 解耦 CSS 类名重构（querySelector 命中首个即可）：
 //   - doc-banner  [data-tour="doc-banner"]   （ControlPanel.tsx 当前文件上下文条）
-//   - params      [data-tour="param-form"]   （ControlPanel.tsx 参数区包裹层：ParamForm + MultiSeedControls + PerTypeOverrides）
+//   - params      [data-tour="param-form"]   （ControlPanel.tsx 参数区包裹层：ParamForm + PerTypeOverrides；2026-08-22 起 seed/multi_seed 控件已隐藏）
 //   - solve       [data-tour="start-btn"]    （ControlPanel.tsx SolveControls 父容器）
 //   - result      [data-tour="nest-wrap"]    （NestingPage.tsx 排料卡片网格容器）
 //   - export      [data-tour="export-group"] （ExportButtons.tsx 导出区根）
@@ -63,7 +63,7 @@ export const nestingTour: TourDef = {
       id: 'params',
       selector: '[data-tour="param-form"]',
       title: '设置参数',
-      body: '在「幅宽 / 时长 / seed」调整求解参数；开启 multi_seed 可并行对比多个 seed 的方案；点「高级配置」可按裁片 g 码单独覆盖重合 / 旋转公差。上方码号（多选）勾选要参与排料的尺码。',
+      body: '在「幅宽 / 时长」调整求解参数；点「高级配置」可设置布局与算法参数（腰头成带 / 按裁片 g 码覆盖重合 / 旋转公差）。上方码号（多选）勾选要参与排料的尺码。',
       placement: 'bottom',
       before: ensureNestingTab,
     },

@@ -36,11 +36,20 @@ export interface FormState {
   gate: string;
   /** 时长（秒）字符串。 */
   time: string;
-  /** base seed 字符串。 */
+  /**
+   * base seed 字符串。**2026-08-22 seed UI 隐藏后恒 '0'**（ParamForm 删 seed 输入行，
+   * 无写入方；parseSeed 恒 0，WS StartPayload.seed=0 契约不变）。
+   */
   seed: string;
-  /** 多 seed 对比开关（旧 index.html `#multi_seed` checkbox）。 */
+  /**
+   * 多 seed 对比开关（旧 index.html `#multi_seed` checkbox）。**2026-08-22 UI 隐藏后
+   * 恒 false**（MultiSeedControls 组件已删，无写入方 → parseSeedCount 恒 1）。
+   */
   multi_seed: boolean;
-  /** 多 seed 数量字符串（旧 index.html `#seed_count`，默认 "3"，clamp [2,6]）。 */
+  /**
+   * 多 seed 数量字符串（旧 index.html `#seed_count`，默认 "3"，clamp [2,6]）。
+   * **2026-08-22 UI 隐藏后恒 '3'**（multi_seed 恒 false，该值不再被消费）。
+   */
   seed_count: string;
   /**
    * 每裁片高级覆盖（键 = g01+ 裁片码，d/tol 各一字符串；动态来自高级配置弹窗，

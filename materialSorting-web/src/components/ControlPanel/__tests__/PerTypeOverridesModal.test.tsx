@@ -235,7 +235,9 @@ describe('PerTypeOverridesModal (US-018 / US-003 g 码列)', () => {
     const modal = document.body.querySelector('.per-type-modal');
     expect(overlay).not.toBeNull();
     expect(modal).not.toBeNull();
-    expect(modal!.getAttribute('aria-label')).toContain('高级配置');
+    // 2026-08-22 标题改名「每裁片覆盖」→「设置算法参数」
+    expect(modal!.getAttribute('aria-label')).toBe('高级配置：设置算法参数');
+    expect(modal!.querySelector('.per-type-title')!.textContent).toBe('高级配置：设置算法参数');
     expect(modal!.getAttribute('aria-modal')).toBe('true');
   });
 
@@ -588,6 +590,21 @@ describe('PerTypeOverridesModal 布局设置分区 (US-013)', () => {
     expect(band.querySelector('.per-type-band-check')!.textContent).toContain('开启腰头成带');
     expect(band.querySelector('.per-type-band-subhead')!.textContent).toBe('腰头编号');
     expect(document.body.querySelector('[data-testid="band-label-select"]')).not.toBeNull();
+  });
+
+  it('裁片设置分区标题（2026-08-22）：裁片表格上方「裁片设置」，与「布局设置」同款类名', () => {
+    useControlPanelStore.getState().openModal('per_type');
+    renderModal();
+    const title = document.body.querySelector('[data-testid="per-type-table-title"]')!;
+    expect(title).not.toBeNull();
+    // 同款 .per-type-band-title（12px + #2ea06c 左缘竖条），视觉与「布局设置」一致
+    expect(title.className).toContain('per-type-band-title');
+    expect(title.textContent).toBe('裁片设置');
+    // 位于 band 分区之后、表格容器之前（DOM 顺序断言）
+    const band = document.body.querySelector('[data-testid="per-type-band"]')!;
+    const tableWrap = document.body.querySelector('.per-type-table-wrap')!;
+    expect(band.compareDocumentPosition(title) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(title.compareDocumentPosition(tableWrap) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it('未勾选时下拉 disabled；band 草稿初值从 props 读入（勾选+label 预选）', () => {

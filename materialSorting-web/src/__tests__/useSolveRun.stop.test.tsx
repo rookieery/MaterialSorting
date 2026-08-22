@@ -2,7 +2,8 @@
 //   1) stop() 对每个 open WS 发 {action:"stop"}（非 OPEN 跳过）
 //   2) 收到 {type:"stopped"} 后 finish 触发、rec.stopped===true、onDone 调一次
 //   3) NestingPage phase 转换：running->(stop)->stopped / running->(error)->error / running->(final)->done
-//   4) running 态冻结参数编辑（SizePicker/ParamForm/MultiSeed/PerType 均 disabled）
+//   4) running 态冻结参数编辑（SizePicker/ParamForm/PerType 均 disabled；
+//      2026-08-22 seed UI 隐藏后 MultiSeed 断言改为「不渲染」）
 //
 // 复用 useSolveRun.test.tsx 的 MockWS 模式，额外补 readyState 字段（stop() 仅对 OPEN 发）。
 
@@ -275,10 +276,12 @@ describe('US-027 NestingPage phase 转换', () => {
     expect(statusText()).toContain('78.00%');
   });
 
-  it('3e) done 后切换 multi_seed 再求解 → 读当前 form（回归：曾走 lastStartCfgRef 快照重放，改参数不生效）', () => {
-    // 首次：单 seed（multi_seed 默认 false）→ 1 个 WS
+  it('3e) done 后改参数再求解 → 读当前 form（回归：曾走 lastStartCfgRef 快照重放，改参数不生效）', () => {
+    // 首次：单 seed（2026-08-22 起 seed UI 隐藏，恒单 WS；回归点改用 #time 编辑验证）→ 1 个 WS
     startSolveViaPanel();
     expect(mockInstances).toHaveLength(1);
+    act(() => mockInstances[0].onopen?.());
+    expect(JSON.parse(mockInstances[0].sent[0]).time).toBe(120); // 默认时长
     // 推 final → phase=done（此后 #start 不再渲染，按钮切 #restart）
     const finalMsg: ServerMsg = {
       type: 'final',
@@ -292,27 +295,32 @@ describe('US-027 NestingPage phase 转换', () => {
     act(() => mockInstances[0].onmessage?.({ data: JSON.stringify(finalMsg) }));
     expect(container!.querySelector('#restart')).not.toBeNull();
 
-    // done 态勾选 multi_seed（默认 seed_count=3）→ 点「开始求解」（#restart）
-    const multi = container!.querySelector<HTMLInputElement>('#multi_seed')!;
-    expect(multi.disabled).toBe(false); // 非 running 可编辑
-    act(() => multi.click());
+    // done 态编辑 #time（非 running 可编辑）→ 点「开始求解」（#restart）
+    const timeInput = container!.querySelector<HTMLInputElement>('#time')!;
+    expect(timeInput.disabled).toBe(false);
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
+    act(() => {
+      setter.call(timeInput, '300');
+      timeInput.dispatchEvent(new Event('input', { bubbles: true }));
+    });
     const restartBtn = container!.querySelector<HTMLButtonElement>('#restart')!;
     act(() => restartBtn.click());
 
-    // 修复后：新启动 3 个 WS（seed 0/1/2），StartPayload 反映当前 form；
-    // 修复前：走快照重放只开 1 个 WS（本用例失败 = 回归捕获）
-    expect(mockInstances).toHaveLength(4);
-    const newWs = mockInstances.slice(1);
-    for (const ws of newWs) act(() => ws.onopen?.()); // mock 不自动 onopen，手动触发 onopen 发 StartPayload
-    const seeds = newWs.map((ws) => JSON.parse(ws.sent[0]).seed);
-    expect(seeds).toEqual([0, 1, 2]);
+    // 修复后：新启动 WS 的 StartPayload 反映当前 form（time=300）；
+    // 修复前：走快照重放发旧 time=120（本用例失败 = 回归捕获）
+    expect(mockInstances).toHaveLength(2);
+    const newWs = mockInstances[1];
+    act(() => newWs.onopen?.()); // mock 不自动 onopen，手动触发 onopen 发 StartPayload
+    const payload = JSON.parse(newWs.sent[0]);
+    expect(payload.time).toBe(300);
+    expect(payload.seed).toBe(0); // seed UI 隐藏后恒 0（单 seed 模式）
   });
 
-  it('3d) running 态冻结参数编辑（SizePicker/ParamForm/MultiSeed/PerType 均 disabled）', () => {
+  it('3d) running 态冻结参数编辑（SizePicker/ParamForm/PerType 均 disabled；seed 控件 2026-08-22 已隐藏）', () => {
     expect(container!.querySelector<HTMLInputElement>('#time')!.disabled).toBe(false);
-    expect(container!.querySelector<HTMLInputElement>('#seed')!.disabled).toBe(false);
-    expect(container!.querySelector<HTMLInputElement>('#multi_seed')!.disabled).toBe(false);
-    expect(container!.querySelector<HTMLInputElement>('#seed_count')!.disabled).toBe(false);
+    expect(container!.querySelector<HTMLInputElement>('#seed')).toBeNull(); // UI 已隐藏
+    expect(container!.querySelector<HTMLInputElement>('#multi_seed')).toBeNull();
+    expect(container!.querySelector<HTMLInputElement>('#seed_count')).toBeNull();
     expect(container!.querySelector<HTMLButtonElement>('.per-type-btn')!.disabled).toBe(false);
     const sizeInput = container!.querySelectorAll<HTMLInputElement>('.sizes input[type=checkbox]')[0]!;
     expect(sizeInput.disabled).toBe(false);
@@ -320,9 +328,6 @@ describe('US-027 NestingPage phase 转换', () => {
     startSolveViaPanel();
 
     expect(container!.querySelector<HTMLInputElement>('#time')!.disabled).toBe(true);
-    expect(container!.querySelector<HTMLInputElement>('#seed')!.disabled).toBe(true);
-    expect(container!.querySelector<HTMLInputElement>('#multi_seed')!.disabled).toBe(true);
-    expect(container!.querySelector<HTMLInputElement>('#seed_count')!.disabled).toBe(true);
     expect(container!.querySelector<HTMLButtonElement>('.per-type-btn')!.disabled).toBe(true);
     const sizeInputRunning = container!.querySelectorAll<HTMLInputElement>('.sizes input[type=checkbox]')[0]!;
     expect(sizeInputRunning.disabled).toBe(true);

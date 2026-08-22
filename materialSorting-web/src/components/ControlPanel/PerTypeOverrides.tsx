@@ -1,5 +1,7 @@
-// PerTypeOverrides —— 高级「每裁片覆盖」入口（US-018 改造为按钮触发器；裁片编号化重构
-// US-003 起覆盖键 = 裁片 g 码；2026-08-18 回退 US-004 矩阵化后维持单级 {g 码: {d, tol}}）。
+// PerTypeOverrides —— 高级「设置算法参数」入口（US-018 改造为按钮触发器；裁片编号化重构
+// US-003 起覆盖键 = 裁片 g 码；2026-08-18 回退 US-004 矩阵化后维持单级 {g 码: {d, tol}}；
+// 2026-08-22 按钮文案「每裁片覆盖」→「设置算法参数」—— 弹窗已含布局设置+填料混带，
+// 旧名以偏概全）。
 //
 // 更早旧版：`<details>` 折叠面板，内嵌 10 行 d/tol 输入（US-018 已删）。
 // US-018：改为 `<button class="per-type-btn">` 触发 → PerTypeOverridesModal 弹窗 table。
@@ -59,7 +61,7 @@ export function PerTypeOverrides({
         onClick={() => openModal('per_type')}
         data-testid="per-type-btn"
       >
-        高级配置：每裁片覆盖
+        高级配置：设置算法参数
       </button>
       {/* 模态单例：订阅 controlPanelStore 自显隐；Portal 到 document.body */}
       <PerTypeOverridesModal
