@@ -94,27 +94,20 @@ export interface CollectedParams {
 }
 
 /**
- * 把 FormState 解析为 { params, per_type }。
+ * 把 per_type 草稿字符串表解析为 WS payload 结构（2026-08-24 自 collectParams 提取：
+ * collectStartContext 与成带预览 POST /api/band-preview 两处共用同一解析 —— 预览与
+ * solve 的 d_g 同源，WYSIWYG）。
  *
- * 不变量：
- *   - params：US-019 起永远返回全 0（主面板内外两档输入删除，v0.3 上限交给 per_type 显式
- *     覆盖 + 后端全局上限兜底，2026-08-17 起 min(d,10)/min(tol,45) 不再按片型）。
- *   - per_type：键 = 裁片 g 码（US-003 起动态键，遍历 form.per_type 实际持有的键，无固定
- *     清单）；仅当某 label 的 d 或 tol 至少一档非空时才创建 entry；
- *     d / tol 各自仅当 trim() !== '' 时写入；最终若 per_type 整体为空 → null。
- *   - 整体 trim 在 d/tol 单字段层做（与旧 vanilla 实现 inp.value.trim() !== '' 一致）。
+ * 仅当某 label 的 d 或 tol 至少一档非空时才创建 entry；d / tol 各自仅当
+ * trim() !== '' 时写入；整体为空 → null。整体 trim 在单字段层做（与旧 vanilla
+ * 实现 inp.value.trim() !== '' 一致）。
  */
-export function collectParams(form: FormState): CollectedParams {
-  const params: SolveParams = {
-    d_ext: 0,
-    d_int: 0,
-    tol_ext: 0,
-    tol_int: 0,
-  };
-
+export function collectPerType(
+  values: Record<string, PerTypeFormValue>,
+): PerTypeOverrides | null {
   const per_type: PerTypeOverrides = {};
-  for (const label of Object.keys(form.per_type)) {
-    const vals = form.per_type[label];
+  for (const label of Object.keys(values)) {
+    const vals = values[label];
     if (!vals) continue;
     const dStr = vals.d.trim();
     const tStr = vals.tol.trim();
@@ -125,10 +118,25 @@ export function collectParams(form: FormState): CollectedParams {
       per_type[label] = entry;
     }
   }
-  return {
-    params,
-    per_type: Object.keys(per_type).length ? per_type : null,
+  return Object.keys(per_type).length ? per_type : null;
+}
+
+/**
+ * 把 FormState 解析为 { params, per_type }。
+ *
+ * 不变量：
+ *   - params：US-019 起永远返回全 0（主面板内外两档输入删除，v0.3 上限交给 per_type 显式
+ *     覆盖 + 后端全局上限兜底，2026-08-17 起 min(d,10)/min(tol,45) 不再按片型）。
+ *   - per_type：collectPerType(form.per_type)（单一实现）。
+ */
+export function collectParams(form: FormState): CollectedParams {
+  const params: SolveParams = {
+    d_ext: 0,
+    d_int: 0,
+    tol_ext: 0,
+    tol_int: 0,
   };
+  return { params, per_type: collectPerType(form.per_type) };
 }
 
 /** 解析 base seed（旧 vanilla 实现 `parseInt($('seed').value, 10) || 0`）：失败/空 → 0。 */

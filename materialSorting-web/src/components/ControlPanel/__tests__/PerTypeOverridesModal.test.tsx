@@ -27,7 +27,9 @@
 //   AC: 分区标题「布局设置」+ 勾选框「开启腰头成带」+ 子标题「腰头编号」渲染
 //   AC: 未勾选时下拉 disabled；勾选启用；band 草稿初值从 props 读入
 //   AC: 下拉值域 = reps 键动态（fetch 失败降级 values 键纯文字列表不阻塞）
-//   AC: 选中 g 码有 rep → 80×80 缩略图 + 徽章（点击 openPreviewLabel 双层 modal）
+//   AC: 选中 g 码有 rep → 成带预览缩略（POST /api/band-preview；BandPreviewSVG 尺码
+//       着色 + payload 同源断言；失败 → 可读错误文案前置；点击开 band-zoom 第三层
+//       放大，ESC 独立不级联 —— 2026-08-24 替换原「原始裁片 80×80 缩略」）
 //   AC: confirm 同时回写 per_type + band；取消丢弃 band 草稿（遮罩/ESC 同 confirm
 //     回写 —— 关闭即保存）
 
@@ -38,6 +40,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { PerTypeOverridesModal, type BandFormValue } from '../PerTypeOverridesModal';
 import { PtypePreviewModal } from '../PtypePreviewModal';
 import { useControlPanelStore } from '../../../store/controlPanelStore';
+import type { BandPreviewResponse } from '../../../types/band';
 import type { PtypesResponse } from '../../../types/ptype';
 import type { PerTypeFormValue } from '../../../lib/params';
 import { MAX_OVERLAP_MM, MAX_ROTATION_TOL_DEG } from '../../../constants/v03';
@@ -74,6 +77,48 @@ const TWO_REPS: PtypesResponse = {
   },
 };
 
+/** 成带预览 ok 响应（2 成员 + 组合片轮廓，矩形合成几何）。 */
+const BAND_OK: BandPreviewResponse = {
+  ok: true,
+  label: 'g01',
+  fill_pct: 78.5,
+  bbox: { width_mm: 1200, height_mm: 300 },
+  n_members: 2,
+  members: [
+    {
+      pid: 'g01_28',
+      size: 28,
+      color: '#1f77b4',
+      polygon: [
+        [0, 0],
+        [600, 0],
+        [600, 150],
+        [0, 150],
+      ],
+    },
+    {
+      pid: 'g01_29',
+      size: 29,
+      color: '#ff7f0e',
+      polygon: [
+        [0, 150],
+        [600, 150],
+        [600, 300],
+        [0, 300],
+      ],
+    },
+  ],
+  outline: [
+    [0, 0],
+    [1200, 0],
+    [1200, 300],
+    [0, 300],
+  ],
+};
+
+/** 当前 mock 返回的成带预览数据（按 URL 路由分发，见 beforeEach）。 */
+let mockBandPreview: BandPreviewResponse = BAND_OK;
+
 beforeEach(() => {
   useControlPanelStore.getState().closeModal();
   useControlPanelStore.getState().closePreviewLabel();
@@ -81,16 +126,20 @@ beforeEach(() => {
   document.body.appendChild(container);
   root = createRoot(container);
   mockReps = { representatives: {} };
+  mockBandPreview = BAND_OK;
   // 用 mockImplementation 每次 fetch 创建新 Response（StrictMode 双 mount 会调 2 次 fetch；
   // mockResolvedValue 共享同一 Response 会被首次 .json() 消费完，第二次报 body 已读）。
-  fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(() =>
-    Promise.resolve(
-      new Response(JSON.stringify(mockReps), {
+  // 2026-08-24 起按 URL 路由分发：/api/band-preview（成带预览 POST）↔ 其余（/api/ptypes）。
+  fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((input: unknown) => {
+    const url = typeof input === 'string' ? input : String((input as Request)?.url ?? input);
+    const body = url.includes('/api/band-preview') ? mockBandPreview : mockReps;
+    return Promise.resolve(
+      new Response(JSON.stringify(body), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
       }),
-    ),
-  ) as unknown as MockInstance<(...args: unknown[]) => Promise<Response>>;
+    );
+  }) as unknown as MockInstance<(...args: unknown[]) => Promise<Response>>;
 });
 
 afterEach(() => {
@@ -118,6 +167,8 @@ function renderModal(
   opts: {
     band?: BandFormValue;
     onBandChange?: (next: BandFormValue) => void;
+    sizes?: number[];
+    gateMm?: number;
   } = {},
 ): HTMLElement {
   act(() => {
@@ -128,6 +179,8 @@ function renderModal(
           onChange={onChange}
           band={opts.band ?? { enabled: false, label: '' }}
           onBandChange={opts.onBandChange ?? (() => {})}
+          sizes={opts.sizes ?? [28, 29]}
+          gateMm={opts.gateMm ?? 1980}
         />
       </StrictMode>,
     );
@@ -459,6 +512,8 @@ describe('PerTypeOverridesModal (US-018 / US-003 g 码列)', () => {
               onChange={() => {}}
               band={{ enabled: false, label: '' }}
               onBandChange={() => {}}
+              sizes={[28, 29]}
+              gateMm={1980}
             />
             <PtypePreviewModal />
           </>
@@ -668,7 +723,7 @@ describe('PerTypeOverridesModal 布局设置分区', () => {
     expect(useControlPanelStore.getState().modal).toBeNull();
   });
 
-  it('选中 g 码有 rep → 80×80 缩略图 + 徽章，点击 openPreviewLabel（双层 modal）', async () => {
+  it('选中 g 码 → 成带预览缩略（POST /api/band-preview payload 同源）+ 徽章，点击开 band-zoom（第三层）', async () => {
     mockReps = TWO_REPS;
     useControlPanelStore.getState().openModal('per_type');
     renderModal();
@@ -676,13 +731,76 @@ describe('PerTypeOverridesModal 布局设置分区', () => {
     // 未选 → 无缩略图
     expect(document.body.querySelector('.per-type-band-thumb')).toBeNull();
     enableAndSelect('g01');
+    // loading 占位先渲染（POST 发出）
+    expect(document.body.querySelector('[data-testid="band-thumb-loading"]')).not.toBeNull();
+    await flushFetch();
     const thumb = document.body.querySelector<HTMLButtonElement>('[data-testid="band-thumb-g01"]')!;
     expect(thumb).not.toBeNull();
-    expect(thumb.querySelector('svg.piece-preview-svg')).not.toBeNull();
+    // 2026-08-24：成带形态预览（BandPreviewSVG 尺码着色）替换原始裁片 PiecePreviewSVG
+    expect(thumb.querySelector('svg.band-preview-svg')).not.toBeNull();
+    expect(thumb.querySelector('[data-role="band-member"]')).not.toBeNull();
     expect(thumb.querySelector('.qty-label-badge')!.textContent).toBe('g01');
-    expect(thumb.title).toBe('g01-放大预览');
+    expect(thumb.title).toBe('g01-成带预览放大');
+    // POST payload 与 WS StartPayload 同源字段（band/sizes/gate_mm）
+    const call = fetchSpy!.mock.calls.find((c) => String(c[0]).includes('/api/band-preview'))!;
+    const init = call[1] as RequestInit;
+    expect(init.method).toBe('POST');
+    const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+    expect(body.band).toEqual({ enabled: true, label: 'g01' });
+    expect(body.sizes).toEqual([28, 29]);
+    expect(body.gate_mm).toBe(1980);
+    // 点击 → band-zoom 第三层放大（previewLabel 不动 —— 原始裁片放大已被替换）
     act(() => thumb.click());
-    expect(useControlPanelStore.getState().previewLabel).toBe('g01');
+    expect(document.body.querySelector('[data-testid="band-zoom-overlay"]')).not.toBeNull();
+    expect(useControlPanelStore.getState().previewLabel).toBeNull();
     expect(useControlPanelStore.getState().modal).toBe('per_type');   // 底层保留
+    // 放大层含统计行（填充率 / 带宽×高 / 片数）+ 尺码标注
+    const zoomBody = document.body.querySelector('.band-zoom-body')!;
+    expect(zoomBody.querySelector('[data-role="band-size-label"]')).not.toBeNull();
+    expect(document.body.querySelector('.band-zoom-stats')!.textContent).toContain('78.5');
+    // ✕ 关闭放大层，底层高级配置保留
+    act(() =>
+      (document.body.querySelector('[data-testid="band-zoom-close"]') as HTMLButtonElement).click(),
+    );
+    expect(document.body.querySelector('[data-testid="band-zoom-overlay"]')).toBeNull();
+    expect(useControlPanelStore.getState().modal).toBe('per_type');
+  });
+
+  it('band-zoom ESC 只关放大层（第三层独立，不关底层高级配置）', async () => {
+    useControlPanelStore.getState().openModal('per_type');
+    // values 带 g01 键保证下拉 option 在场（受控 select 值需有 option 可选）
+    renderModal({ g01: { d: '0', tol: '0' } });
+    await flushFetch();
+    enableAndSelect('g01');
+    await flushFetch();
+    act(() =>
+      (document.body.querySelector('[data-testid="band-thumb-g01"]') as HTMLButtonElement).click(),
+    );
+    expect(document.body.querySelector('[data-testid="band-zoom-overlay"]')).not.toBeNull();
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    });
+    expect(document.body.querySelector('[data-testid="band-zoom-overlay"]')).toBeNull();
+    expect(useControlPanelStore.getState().modal).toBe('per_type');   // ESC 未级联关闭底层
+  });
+
+  it('成带预览失败 → 可读错误文案（成带失败前置到选码时刻，无缩略可点）', async () => {
+    mockBandPreview = { ok: false, error: '成带失败: 带内填充率 13.0% < 下限 45.0%（g01 不适合成带或解散落）' };
+    useControlPanelStore.getState().openModal('per_type');
+    // values 带 g01/g02 键保证下拉 option 在场（g02 供网络错误分支切换）
+    renderModal({ g01: { d: '0', tol: '0' }, g02: { d: '0', tol: '0' } });
+    await flushFetch();
+    enableAndSelect('g01');
+    await flushFetch();
+    const err = document.body.querySelector<HTMLElement>('[data-testid="band-thumb-error"]')!;
+    expect(err).not.toBeNull();
+    expect(err.textContent).toContain('填充率 13.0%');
+    expect(document.body.querySelector('[data-testid="band-thumb-g01"]')).toBeNull();
+    // fetch reject（网络错误）同走错误分支（复用同断言路径）
+    fetchSpy!.mockImplementation((_input: unknown) => Promise.reject(new Error('network')));
+    selectLabel('g02');
+    await flushFetch();
+    expect(document.body.querySelector('[data-testid="band-thumb-error"]')!.textContent)
+      .toContain('成带预览不可用');
   });
 });

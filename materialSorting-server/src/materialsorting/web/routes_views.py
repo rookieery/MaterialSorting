@@ -63,6 +63,108 @@ def get_ptypes():
     return {'representatives': representatives}
 
 
+# ------------------------------------------------------- POST /api/band-preview 成带预览
+
+
+@router.post('/api/band-preview')
+async def band_preview(req: Request):
+    """腰头成带预览（高级配置弹窗「布局设置」缩略图数据源，2026-08-24）。
+
+    选中腰头 g 码后，缩略图从「原始代表裁片」（与下方裁片设置表格同源同图，纯
+    冗余）改为**成带形态预览** —— 求解前即可见版师验收判据（链内贴触 / 码序降序
+    / 开口朝左 / 最大码在最右），成带失败（fill 守卫 / 带高超幅等）也从 solve
+    报错前置到选码时刻。
+
+    payload 与 WS StartPayload 同源字段子集（band 校验直接复用 ``_parse_band``
+    单一校验点）：``{band:{enabled,label}, sizes?, quantities?, per_type?,
+    params?, gate_mm?}``。
+
+    主进程同步跑 ``build_pid_meta + build_band_plan``（v2 链构造无 RNG、毫秒级、
+    seed 不影响几何 ⇒ 预览 = 求解时带的精确形态；spyrrow 不参与）。成员 polygon
+    由后端变换到带内归一坐标（减 ``chunk.offset``）返回 —— 前端无码级轮廓
+    （/api/ptypes 每 g 码仅一个代表裁片），无法前端构造；颜色取 pid_meta['color']
+    （``size_color`` 单一真相源，同码同色跨片型，与 manifest/NestSVG 同口径）。
+    **不返回组合片 WB_ pid**（哨兵约定：WB_ 永不出现在前端/manifest/导出）。
+
+    响应（失败也 200、``ok:false`` 包络 —— 选错 g 码是预期内常态而非异常，前端
+    单条路径渲染错误文案，不区分网络/业务错误）::
+
+        {ok:true, label, fill_pct, bbox:{width_mm,height_mm}, n_members,
+         members:[{pid, size, color, polygon:[[x,y],...]}],   # 原始轮廓@带内归一位
+         outline:[[x,y],...]}                                  # erode 后组合片外轮廓
+    """
+    from ..nesting_bounds.load_pieces import NEST_GATE_MM, PLOT_SAFE_MAX_Y_MM
+    from ..nesting_engine.waist_band import BandError, build_band_plan
+    from ..nesting_engine.sparrow_baseline import _transform_polygon
+    from .routes_ws import _parse_band
+    from .solver import _resolve_d_tol, build_pid_meta
+
+    state = _get_pieces_state()
+    payload = await req.json()
+
+    pieces = state.get('pieces') or []
+    if not pieces:
+        return {'ok': False, 'error': '排料数据为空（请先上传母版 commit）'}
+
+    # band 校验：与 WS start 同一检查点（label ^g\d+$ / 存在于母版 / quantities>0）
+    try:
+        band_cfg = _parse_band(payload.get('band'), pieces, payload.get('quantities'))
+    except ValueError as e:
+        return {'ok': False, 'error': str(e)}
+    if band_cfg is None:
+        return {'ok': False, 'error': 'band 未开启或缺腰头编号'}
+    label = band_cfg['label']
+
+    # gate_mm：优先求解口径（前端 parseGate），缺省/非法回退 intermediate（与 /export 同法）
+    gate = float(payload.get('gate_mm') or 0.0) or float(state.get('gate_mm') or 0.0)
+
+    try:
+        pdef = {'d_ext': 0.0, 'd_int': 0.0, 'tol_ext': 0.0, 'tol_int': 0.0}
+        pdef.update(payload.get('params') or {})
+        d_g, tol_g = _resolve_d_tol(label, pdef, payload.get('per_type'))
+        pid_meta, _area, _n = build_pid_meta(
+            pieces,
+            sizes=payload.get('sizes'),
+            per_type=payload.get('per_type'),
+            quantities=payload.get('quantities'),
+            params=payload.get('params'))
+        chunk = build_band_plan(
+            pid_meta, state.get('pieces_by_id') or {},
+            label=label,
+            seed=0,                       # 链构造无 RNG：seed 只进 chunk.seed 记录，几何无关
+            gate_nest=min(gate, PLOT_SAFE_MAX_Y_MM) if gate > 0 else NEST_GATE_MM,
+            d_g=d_g, tol_g=tol_g)
+    except (BandError, ValueError) as e:
+        return {'ok': False, 'error': f'成带失败: {e}'}
+
+    pieces_by_id = state.get('pieces_by_id') or {}
+    ox, oy = chunk.offset
+    members = []
+    for m in chunk.members:
+        meta = pid_meta[m['pid']]
+        # 原始轮廓@带内位 − offset（与 chunk.polygon 同一归一系；原始轮廓缺席时
+        # 回退 erode 后轮廓 —— 与 build_band_plan 的 union 口径一致，包络安全方向）
+        orig = pieces_by_id.get(m['pid'], {}).get('polygon') or meta['polygon']
+        placed = _transform_polygon(orig, m['rotation'], m['translation'])
+        members.append({
+            'pid': m['pid'],
+            'size': meta['size'],
+            'color': meta['color'],
+            'polygon': [[round(x - ox, 2), round(y - oy, 2)] for x, y in placed],
+        })
+
+    return {
+        'ok': True,
+        'label': label,
+        'fill_pct': round(float(chunk.fill_pct), 2),
+        'bbox': {'width_mm': round(float(chunk.bbox['width_mm']), 1),
+                 'height_mm': round(float(chunk.bbox['height_mm']), 1)},
+        'n_members': chunk.n_members,
+        'members': members,
+        'outline': [[round(x, 2), round(y, 2)] for x, y in chunk.polygon],
+    }
+
+
 @router.post('/export')
 async def export(req: Request):
     """导出最优排料方案：前端 POST 最优 run 的最终帧 placed_items → 出 PNG / R12-DXF。

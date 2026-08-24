@@ -772,6 +772,89 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
   height: 80px;
   display: block;
 }
+/* 成带形态预览缩略（2026-08-24 替换原始裁片缩略）：带是宽幅长条 → 宽缩略 200×80
+   （preserveAspectRatio meet 自动按带长宽比 letterbox，不拉伸） */
+.per-type-band-thumb--band svg {
+  width: 200px;
+  height: 80px;
+}
+/* 预览 loading 占位（与缩略同尺寸骨架，避免布局跳动） */
+.per-type-band-thumb-empty {
+  width: 200px;
+  height: 96px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #9aa;
+  font-size: 12px;
+  cursor: default;
+}
+.per-type-band-thumb-empty:hover {
+  border-color: #3a3d45;
+}
+/* 预览失败态：可读错误文案（成带失败前置到选码时刻；红字与 .upload-status.error 同色系） */
+.per-type-band-error {
+  max-width: 240px;
+  padding: 8px 10px;
+  background: #2a1c1c;
+  color: #ff8888;
+  border: 1px solid rgba(255, 68, 68, 0.25);
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  margin-top: 14px;
+}
+
+/* 成带放大层（band-zoom）：z-index 1300（叠在 ptype-preview 1200 之上，第三层 modal） */
+.band-zoom-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1300;
+}
+.band-zoom-modal {
+  position: relative;
+  background: #2a2c32;
+  border: 1px solid #34363d;
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  padding: 18px 20px 14px;
+  max-width: 92vw;
+  max-height: 90vh;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 13px;
+  color: #e6e6e6;
+}
+.band-zoom-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding-right: 28px;
+  flex-shrink: 0;
+}
+.band-zoom-stats {
+  font-size: 12px;
+}
+.band-zoom-body {
+  flex: 1;
+  min-height: 200px;
+  min-width: 0;
+  display: flex;
+}
+.band-zoom-body svg {
+  flex: 1;
+  min-height: 200px;
+}
+.band-zoom-hint {
+  flex-shrink: 0;
+}
 
 /* PtypePreviewModal：z-index 1200（高于 PerTypeOverridesModal 1100，叠在其上） */
 .ptype-preview-overlay {

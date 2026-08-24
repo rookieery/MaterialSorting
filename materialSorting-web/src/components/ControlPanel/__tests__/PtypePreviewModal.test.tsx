@@ -203,6 +203,8 @@ describe('PtypePreviewModal (US-018)', () => {
               onChange={onChange}
               band={{ enabled: false, label: '' }}
               onBandChange={() => {}}
+              sizes={[28, 29]}
+              gateMm={1980}
             />
             <PtypePreviewModal />
           </>

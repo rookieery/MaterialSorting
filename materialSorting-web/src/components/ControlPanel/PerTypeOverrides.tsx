@@ -34,6 +34,10 @@ export interface PerTypeOverridesProps {
   band: BandFormValue;
   /** 确定时回写 form.band_*。 */
   onBandChange: (next: BandFormValue) => void;
+  /** 当前勾选码号（过滤 null；成带预览 payload sizes，2026-08-24）。 */
+  sizes: number[];
+  /** 幅宽 mm（成带预览带高守卫与 solve 同口径，2026-08-24）。 */
+  gateMm: number;
   /** US-027 求解中冻结高级配置入口（与 StartButton disabled 同套机制）。 */
   disabled?: boolean;
 }
@@ -43,6 +47,8 @@ export function PerTypeOverrides({
   onChange,
   band,
   onBandChange,
+  sizes,
+  gateMm,
   disabled = false,
 }: PerTypeOverridesProps): JSX.Element {
   const openModal = useControlPanelStore((s) => s.openModal);
@@ -64,6 +70,8 @@ export function PerTypeOverrides({
         onChange={onChange}
         band={band}
         onBandChange={onBandChange}
+        sizes={sizes}
+        gateMm={gateMm}
       />
       <PtypePreviewModal />
     </div>

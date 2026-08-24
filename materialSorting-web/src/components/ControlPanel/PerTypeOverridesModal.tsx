@@ -9,8 +9,13 @@
 //   - 子标题「开启腰头成带」+ 勾选框；右侧子标题「腰头编号」+ 下拉框（值域 = 表格
 //     同源 orderedLabels = /api/ptypes reps ∪ values 已配置键；fetch 失败降级纯文字
 //     列表 —— select option 本就是文字，缩略图缺席不阻塞选择）；
-//   - 选中 g 码有 rep 时旁挂 80×80 缩略图 + g 码徽章（QtyMatrix 列头同模式，点击
-//     openPreviewLabel 放大 —— 双层 modal 约定不破坏）；
+//   - 选中 g 码后右侧挂**成带形态预览**缩略图（2026-08-24：原「原始代表裁片」
+//     缩略图与下方裁片设置表格同源同图，纯冗余已删）—— POST /api/band-preview
+//     （后端 build_band_plan 同一真相源，v2 链构造无 RNG ⇒ 预览 = 求解时带的精确
+//     形态）；三态：loading 占位 / ok → BandPreviewSVG 尺码着色缩略 / error →
+//     可读错误文案（成带失败前置到选码时刻，如「填充率 13% < 下限」）。点击放大
+//     开**第三层** band-zoom modal（showLabels 尺码标注 + 统计行，本地 state 控制，
+//     ESC 独立消费 —— 与 previewLabel 双层约定同款双守卫）；
 //   - 未勾选时下拉 disabled；确定/遮罩/ESC/✕ 写回 form.band_*（2026-08-22 起
 //     关闭即保存，见下），「取消」丢弃 band 草稿（与 per_type 同一约定）。
 //
@@ -59,10 +64,13 @@ import { useEffect, useMemo, useState } from 'react';
 import type { JSX } from 'react';
 import { createPortal } from 'react-dom';
 import { MAX_OVERLAP_MM, MAX_ROTATION_TOL_DEG } from '../../constants/v03';
-import type { PerTypeFormValue } from '../../lib/params';
+import { collectPerType, serializeQuantities, type PerTypeFormValue } from '../../lib/params';
 import { useControlPanelStore } from '../../store/controlPanelStore';
+import { useQtyStore } from '../../store/qtyStore';
+import type { BandPreviewPayload, BandPreviewResponse } from '../../types/band';
 import type { ParsedPiece } from '../../types/parsed';
 import type { PtypeRepresentative, PtypesResponse } from '../../types/ptype';
+import { BandPreviewSVG } from './BandPreviewSVG';
 import { PiecePreviewSVG } from '../preview/PiecePreviewSVG';
 
 /** ≤ 字符（U+2264）—— 输入框 placeholder 上限提示。 */
@@ -132,6 +140,10 @@ export interface PerTypeOverridesModalProps {
   band: BandFormValue;
   /** 关闭即保存时回写 ControlPanel form.band_*（确定/遮罩/ESC/✕；「取消」丢弃）。 */
   onBandChange: (next: BandFormValue) => void;
+  /** 当前勾选码号（过滤 null；成带预览 payload sizes —— 与 StartPayload 同口径）。 */
+  sizes: number[];
+  /** 幅宽 mm（parseGate；成带预览带高守卫与 solve 同口径）。 */
+  gateMm: number;
 }
 
 export function PerTypeOverridesModal({
@@ -139,6 +151,8 @@ export function PerTypeOverridesModal({
   onChange,
   band,
   onBandChange,
+  sizes,
+  gateMm,
 }: PerTypeOverridesModalProps): JSX.Element | null {
   const modal = useControlPanelStore((s) => s.modal);
   const closeModal = useControlPanelStore((s) => s.closeModal);
@@ -153,6 +167,8 @@ export function PerTypeOverridesModal({
       onChange={onChange}
       band={band}
       onBandChange={onBandChange}
+      sizes={sizes}
+      gateMm={gateMm}
       onClose={closeModal}
       onOpenPreviewLabel={openPreviewLabel}
     />
@@ -164,6 +180,8 @@ interface InnerProps {
   onChange: (next: Record<string, PerTypeFormValue>) => void;
   band: BandFormValue;
   onBandChange: (next: BandFormValue) => void;
+  sizes: number[];
+  gateMm: number;
   onClose: () => void;
   onOpenPreviewLabel: (label: string) => void;
 }
@@ -173,6 +191,8 @@ function PerTypeOverridesModalInner({
   onChange,
   band,
   onBandChange,
+  sizes,
+  gateMm,
   onClose,
   onOpenPreviewLabel,
 }: InnerProps): JSX.Element {
@@ -182,6 +202,73 @@ function PerTypeOverridesModalInner({
   // 布局设置草稿（同一 mount 生命周期，saveAndClose 是唯一回写路径）。
   const [bandEnabled, setBandEnabled] = useState<boolean>(band.enabled);
   const [bandLabel, setBandLabel] = useState<string>(band.label);
+
+  // 成带形态预览（2026-08-24）：bandLabel 变化（含 mount）时 POST /api/band-preview。
+  // 三态：loading / {ok:true,...} / {ok:false,error}（失败也 200 —— 选错 g 码是预期内
+  // 常态，单条路径渲染错误文案）。quantities/sizes 取 fetch 时刻快照（modal 遮罩挡住
+  // 其他 UI，打开期间不会变）；per_type 用本弹窗草稿（collectPerType 与 solve 同源
+  // —— 预览的 d_g 与求解一致，WYSIWYG）。d/tol 编辑**不**触发重取（erode 深度
+  // 0.4mm 级视觉差异，重取噪音大于价值）。
+  const [bandPreview, setBandPreview] = useState<BandPreviewResponse | null>(null);
+  const [bandPreviewLoading, setBandPreviewLoading] = useState<boolean>(false);
+  // 成带放大层（第三层 modal，本地 state —— 不动 controlPanelStore 契约；
+  // 叠序：per_type(1100) < ptype-preview(1200) < band-zoom(1300)，三者互斥打开）。
+  const [bandZoomOpen, setBandZoomOpen] = useState<boolean>(false);
+
+  useEffect(() => {
+    if (bandLabel === '') {
+      setBandPreview(null);
+      setBandPreviewLoading(false);
+      setBandZoomOpen(false);
+      return;
+    }
+    let cancelled = false;
+    setBandPreviewLoading(true);
+    const payload: BandPreviewPayload = {
+      band: { enabled: true, label: bandLabel },
+      sizes,
+      quantities: serializeQuantities(useQtyStore.getState().quantities, sizes),
+      per_type: collectPerType(draft),
+      gate_mm: gateMm,
+    };
+    fetch('/api/band-preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+      .then((r) => r.json() as Promise<BandPreviewResponse>)
+      .then((data) => {
+        if (cancelled) return;
+        setBandPreview(data);
+        setBandPreviewLoading(false);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setBandPreview({ ok: false, error: '成带预览不可用（网络错误）' });
+        setBandPreviewLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // 仅 bandLabel 触发重取：draft/sizes/gateMm/quantities 均取 fetch 时刻快照
+    //（见上注释；显式 omit 避免 exhaustive-deps 逼出重取噪音）。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bandLabel]);
+
+  // 成带放大层 ESC（独立于 per_type / previewLabel 两层）：本层打开时消费 ESC 并
+  // stopImmediatePropagation（顶层消费信号，与 PtypePreviewModal 同款双守卫的另一半 ——
+  // 底层 listener 另有 bandZoomOpen 闭包早退，两道防线不依赖注册顺序）。
+  useEffect(() => {
+    if (!bandZoomOpen) return;
+    function onZoomKey(e: KeyboardEvent): void {
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      setBandZoomOpen(false);
+    }
+    window.addEventListener('keydown', onZoomKey);
+    return () => window.removeEventListener('keydown', onZoomKey);
+  }, [bandZoomOpen]);
 
   // 缩略图数据：mount 时 fetch GET /api/ptypes（键 = g 码）；loading / error 三态。
   // fetch 失败降级为 {} → 列集退回 values 已配置键（不阻塞重合/旋转配置，AC#4）。
@@ -227,16 +314,19 @@ function PerTypeOverridesModalInner({
     return orderedLabels;
   }, [orderedLabels, bandLabel]);
 
-  // ESC 监听（AC#10）：previewLabel !== null 时由 PtypePreviewModal 处理 ESC（双层独立）。
-  // 本 listener 仅在 previewLabel===null 时保存并关 modal，避免双层同时关闭。
-  // 双守卫防监听顺序翻转（本组件重渲染会把 listener 挪到注册队尾，放大预览的
-  // listener 可能先执行）：① 顺序在预览前 → previewLabel 仍在场，早退；② 顺序在
-  // 预览后 → 预览 listener 已 stopImmediatePropagation（顶层消费信号），本 listener
-  // 不再收到；defaultPrevented 早退为兜底。
+  // ESC 监听（AC#10）：previewLabel !== null 时由 PtypePreviewModal 处理 ESC、
+  // bandZoomOpen 时由成带放大层处理（三层独立）。本 listener 仅在两层放大均关闭时
+  // 保存并关 modal，避免多层同时关闭。
+  // 双守卫防监听顺序翻转（本组件重渲染会把 listener 挪到注册队尾，放大层的
+  // listener 可能先执行）：① 顺序在放大层前 → bandZoomOpen/previewLabel 仍在场，
+  // 早退；② 顺序在放大层后 → 放大层 listener 已 stopImmediatePropagation（顶层
+  // 消费信号），本 listener 不再收到；defaultPrevented 早退为兜底。
+  // （listener 每次渲染重注册无 deps —— bandZoomOpen 闭包恒为最新值。）
   useEffect(() => {
     function onKey(e: KeyboardEvent): void {
       if (e.key !== 'Escape') return;
-      // 双层 modal：放大预览打开时 ESC 只关预览，不关底层高级配置（AC#10 关键约定）
+      // 多层 modal：放大层打开时 ESC 只关放大层，不关底层高级配置（AC#10 关键约定）
+      if (bandZoomOpen) return;
       if (useControlPanelStore.getState().previewLabel !== null) return;
       if (e.defaultPrevented) return;
       e.preventDefault();
@@ -286,12 +376,22 @@ function PerTypeOverridesModalInner({
     onOpenPreviewLabel(label);
   }
 
-  return createPortal(
-    <div
-      className="per-type-overlay"
-      onMouseDown={handleOverlayMouseDown}
-      data-testid="per-type-overlay"
-    >
+  function handleZoomOverlayMouseDown(e: React.MouseEvent): void {
+    if (e.target === e.currentTarget) setBandZoomOpen(false);
+  }
+
+  function handleZoomModalMouseDown(e: React.MouseEvent): void {
+    e.stopPropagation();
+  }
+
+  return (
+    <>
+      {createPortal(
+      <div
+        className="per-type-overlay"
+        onMouseDown={handleOverlayMouseDown}
+        data-testid="per-type-overlay"
+      >
       <div
         className="per-type-modal"
         role="dialog"
@@ -345,20 +445,41 @@ function PerTypeOverridesModalInner({
                 ))}
               </select>
             </div>
-            {/* 选中 g 码缩略图 + 徽章（QtyMatrix 列头同模式 80×80；无 rep 时缺席 ——
-                fetch 失败降级纯文字选择不阻塞）；点击放大复用双层 modal 约定 */}
-            {bandLabel !== '' && representatives[bandLabel] ? (
+            {/* 成带形态预览（2026-08-24 替换原「原始代表裁片」缩略图 —— 与下方裁片
+                设置表格同源同图，纯冗余）。三态：loading 占位 / ok → 尺码着色缩略
+                （点击开 band-zoom 放大层）/ error → 可读错误文案（成带失败前置）。
+                宽幅带形 → 宽缩略（.per-type-band-thumb--band 200×80）。 */}
+            {bandLabel !== '' && bandPreviewLoading ? (
+              <div
+                className="per-type-band-thumb per-type-band-thumb-empty"
+                data-testid="band-thumb-loading"
+              >
+                成带预览…
+              </div>
+            ) : bandLabel !== '' && bandPreview?.ok ? (
               <button
                 type="button"
-                className="per-type-band-thumb"
-                onClick={() => handleThumbClick(bandLabel)}
-                aria-label={`${bandLabel}-放大预览`}
-                title={`${bandLabel}-放大预览`}
+                className="per-type-band-thumb per-type-band-thumb--band"
+                onClick={() => setBandZoomOpen(true)}
+                aria-label={`${bandLabel}-成带预览放大`}
+                title={`${bandLabel}-成带预览放大`}
                 data-testid={`band-thumb-${bandLabel}`}
               >
-                <PiecePreviewSVG piece={repToPiece(representatives[bandLabel])} compact />
+                <BandPreviewSVG
+                  members={bandPreview.members ?? []}
+                  outline={bandPreview.outline ?? null}
+                  pad={8}
+                />
                 <span className="qty-label-badge">{bandLabel}</span>
               </button>
+            ) : bandLabel !== '' ? (
+              <div
+                className="per-type-band-error"
+                data-testid="band-thumb-error"
+                title={bandPreview?.error ?? ''}
+              >
+                {bandPreview?.error ?? '成带预览不可用'}
+              </div>
             ) : null}
           </div>
         </div>
@@ -486,5 +607,61 @@ function PerTypeOverridesModalInner({
       </div>
     </div>,
     document.body,
+  )}
+      {/* 成带放大层（第三层 modal，z-index 1300 叠在 ptype-preview 1200 之上；
+          打开条件 = bandZoomOpen 且预览数据 ok —— error 态无放大可开）。 */}
+      {bandZoomOpen && bandPreview?.ok
+        ? createPortal(
+            <div
+              className="band-zoom-overlay"
+              onMouseDown={handleZoomOverlayMouseDown}
+              data-testid="band-zoom-overlay"
+            >
+              <div
+                className="band-zoom-modal"
+                role="dialog"
+                aria-modal="true"
+                aria-label={`${bandLabel}-成带预览放大`}
+                onMouseDown={handleZoomModalMouseDown}
+              >
+                <button
+                  type="button"
+                  className="ptype-preview-close"
+                  aria-label="关闭"
+                  onClick={() => setBandZoomOpen(false)}
+                  data-testid="band-zoom-close"
+                >
+                  ✕
+                </button>
+                <div
+                  className="band-zoom-head"
+                  title={`${bandLabel}-成带预览放大`}
+                >
+                  <span className="piece-card-label">{bandLabel}</span>
+                  <span className="band-zoom-stats dim small">
+                    填充率 {bandPreview.fill_pct ?? '—'}% · 带{' '}
+                    {bandPreview.bbox?.width_mm ?? '—'}×
+                    {bandPreview.bbox?.height_mm ?? '—'} mm ·{' '}
+                    {bandPreview.n_members ?? '—'} 片
+                  </span>
+                </div>
+                <div className="band-zoom-body">
+                  <BandPreviewSVG
+                    members={bandPreview.members ?? []}
+                    outline={bandPreview.outline ?? null}
+                    showLabels
+                    pad={20}
+                  />
+                </div>
+                <div className="band-zoom-hint dim small">
+                  预览 = 求解时带的精确形态（链内贴触 · 码序降序 · 开口朝左 · 最大码在最右）；
+                  虚线 = 组合片外轮廓（主解看到的形状）。
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
+    </>
   );
 }

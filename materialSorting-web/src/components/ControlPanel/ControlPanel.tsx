@@ -59,6 +59,7 @@ import {
   bandMemberCount,
   collectStartContext,
   DEFAULT_FORM,
+  parseGate,
   parseSeedCount,
   type FormState,
 } from '../../lib/params';
@@ -267,6 +268,10 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
               band_label: band.label,
             })
           }
+          sizes={form.sizes.filter(
+            (s: number | null): s is number => s !== null,
+          )}
+          gateMm={parseGate(form)}
           disabled={solving}
         />
         {/* US-005 高级运行入口（策略 run 10/20/30/60min + race/se 双模式）：disabled =
