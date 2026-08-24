@@ -98,13 +98,14 @@ describe("ExportButtons (US-007 下拉框 + 单按钮)", () => {
     expect(container!.querySelectorAll(".export-btns button.export").length).toBe(1);
   });
 
-  it("select has 3 options (DXF/PLT/PNG) and defaults to DXF (US-034)", () => {
+  it("select has 3 options (DXF/PLT/PNG) and defaults to PLT (2026-08-24)", () => {
     // 数据驱动下拉框：EXPORT_FORMATS 扩容后 PLT 自动出现，ExportButtons 零代码改动。
+    // 下拉顺序与默认选中解耦：首项仍 DXF，默认选中改为 PLT（现场绘图仪切绘为主用交付）。
     renderBtns();
     const select = container!.querySelector<HTMLSelectElement>(".export-btns select")!;
     const opts = Array.from(select.options).map((o) => o.value);
     expect(opts).toEqual(["dxf", "plt", "png"]);
-    expect(select.value).toBe("dxf");
+    expect(select.value).toBe("plt");
   });
 
   it("button label is 导出", () => {
@@ -148,13 +149,13 @@ describe("ExportButtons (US-007 下拉框 + 单按钮)", () => {
     expect(exportButton().disabled).toBe(false);
   });
 
-  it("click 导出 (默认 DXF) -> onExport(dxf)", () => {
+  it("click 导出 (默认 PLT) -> onExport(plt)", () => {
     makeRunWithFrame(0);
     const onExport = vi.fn();
     renderBtns({ onExport });
     act(() => exportButton().click());
     expect(onExport).toHaveBeenCalledTimes(1);
-    expect(onExport).toHaveBeenCalledWith("dxf");
+    expect(onExport).toHaveBeenCalledWith("plt");
   });
 
   it("switch select to PNG then click -> onExport(png)", () => {

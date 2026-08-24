@@ -13,9 +13,10 @@ export type ExportFmt = 'png' | 'dxf' | 'plt';
  * 导出格式下拉框选项（与 ExportFmt 同源）。
  * 新增格式只需：往此数组加一项 + 扩 ExportFmt 联合类型 + 后端 /export 路由加分支。
  *
- * 顺序约定：DXF 永远第一项（版师 / ET2008 生产交付主格式，对应 DEFAULT_EXPORT_FMT='dxf'）；
- * US-034 新增 PLT（WT V8.8 / LIKE 绘图仪原生链路），插在 DXF 与 PNG 之间——生产交付格式族
- * （DXF/PLT）相邻，PNG 作为可视化预览格式排末位。
+ * 顺序约定：DXF 永远第一项（版师 / ET2008 生产交付主格式）；US-034 新增 PLT（WT V8.8 /
+ * LIKE 绘图仪原生链路），插在 DXF 与 PNG 之间——生产交付格式族（DXF/PLT）相邻，PNG 作为
+ * 可视化预览格式排末位。下拉顺序与默认选中解耦：2026-08-24 起 DEFAULT_EXPORT_FMT='plt'
+ * （用户要求，现场以绘图仪切绘为主用交付），首项仍为 DXF。
  */
 export const EXPORT_FORMATS: { value: ExportFmt; label: string }[] = [
   { value: 'dxf', label: 'DXF' },
@@ -23,8 +24,8 @@ export const EXPORT_FORMATS: { value: ExportFmt; label: string }[] = [
   { value: 'png', label: 'PNG' },
 ];
 
-/** 默认导出格式：DXF 是版师 / ET2008 生产交付主格式（R12 + POLYLINE）。 */
-export const DEFAULT_EXPORT_FMT: ExportFmt = 'dxf';
+/** 默认导出格式：2026-08-24 起 PLT（现场以绘图仪切绘为主用交付）；DXF 仍为下拉首项。 */
+export const DEFAULT_EXPORT_FMT: ExportFmt = 'plt';
 
 /**
  * 从 Content-Disposition 头解析下载文件名（RFC 5987）。

@@ -1,6 +1,6 @@
 // ExportButtons —— 导出格式下拉框 + 单导出按钮（原 US-007 双按钮重构）。
 //
-// 演进：旧版为「导出 PNG」「导出 DXF」两个并排按钮；现为「格式下拉框（默认 DXF）+ 单导出按钮」，
+// 演进：旧版为「导出 PNG」「导出 DXF」两个并排按钮；现为「格式下拉框（默认 PLT，2026-08-24 起）+ 单导出按钮」，
 // 格式可扩展（新增格式只需扩 download.ts 的 EXPORT_FORMATS + ExportFmt + 后端 /export 路由），
 // 导出按钮交互逻辑与旧双按钮完全一致。
 //
@@ -44,7 +44,8 @@ export function ExportButtons({ solving, exporting, onExport, partial = false }:
   const renderTick = useAppStore((s) => s.renderTick);
   void renderTick;
 
-  // 当前选中的导出格式（组件内 state，默认 DXF）。与 exporting 同为组件内轻量 state，不上推 store。
+  // 当前选中的导出格式（组件内 state，默认 PLT——见 download.ts DEFAULT_EXPORT_FMT）。
+  // 与 exporting 同为组件内轻量 state，不上推 store。
   const [fmt, setFmt] = useState<ExportFmt>(DEFAULT_EXPORT_FMT);
 
   // hasLastFrame = registry 至少有一个 run 推过 frame（与旧 vanilla 实现 updateExportButtons

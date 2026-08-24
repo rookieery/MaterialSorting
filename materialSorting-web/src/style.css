@@ -1473,7 +1473,8 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
 }
 
 /* ---- US-005 StrategyRunButton + StrategyRunModal（高级运行弹窗：暗底 #26282e + #2ea06c 同色系） ---- */
-/* 入口按钮：主面板一行（PerTypeOverrides 之下）；策略运行中挂「运行中」徽标 */
+/* 入口按钮：主面板一行（PerTypeOverrides 之下）；策略运行中挂「运行中」徽标。
+   2026-08-24 起底色对齐 .per-type-btn 高级配置蓝 #2c5d8f（原暗底 #23252b + 绿描边视觉突兀） */
 .strategy-wrapper {
   margin: 8px 0;
 }
@@ -1482,9 +1483,9 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
   padding: 8px 10px;
   font-size: 12px;
   font-weight: 600;
-  background: #23252b;
-  color: #e6e6e6;
-  border: 1px solid #2ea06c;
+  background: #2c5d8f;
+  color: #fff;
+  border: 0;
   border-radius: 4px;
   cursor: pointer;
   font-family: inherit;
@@ -1495,7 +1496,7 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
   transition: background 0.15s;
 }
 .strategy-btn:hover:not(:disabled) {
-  background: #2c2f35;
+  background: #3470ac;
 }
 .strategy-btn:focus-visible {
   outline: 2px solid #2ea06c;
@@ -1504,7 +1505,6 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
 .strategy-btn:disabled {
   opacity: 0.45;
   cursor: default;
-  border-color: #45484f;
 }
 .strategy-badge {
   background: #2ea06c;
