@@ -4,8 +4,9 @@
   - 闭合不变量（polygon PD 末点 = PU 首点，与 DXF POLYLINE 闭合策略一致）
   - 坐标 ×40 缩放（100mm → 4000 HPGL plotter unit）+ X 走纸引导 PLOT_LEAD_X_MM
   - 首条 ``IN;`` 初始化指令（头部四连发合并一行，对齐生产 PLT）
-  - 5 个笔号（SP1-SP5）按**笔分组**输出：每笔只声明一次（门幅框并入 SP1）
-  - 空层跳过（net/internal/notches/grain 空 → 对应 SP 不出现）
+  - **全程单笔 SP1**（2026-08-24 用户要求统一颜色：WT 预览按笔号着色，首版按层
+    分 SP1-SP5 五笔预览呈多色，统一为门幅框蓝色；生产 PLT 实测同样全程仅 SP1）
+  - 空层跳过（net/internal/notches/grain 空 → 该层无笔画）
   - PD 分块：每条 ≤10 点且整行 ≤110B（防设备行缓冲溢出坐标错位乱走）
   - 安全幅面：内容按 y ≤ PLOT_SAFE_MAX_Y_MM(1910) 裁剪削平，全文件 Y 不超程；
     门幅框上沿压进可写幅宽、下沿内缩
@@ -30,7 +31,7 @@ from materialsorting.web.export import (
 
 
 def _full_piece(pid="P1", ptype="qian"):
-    """5 层全有的合成裁片（用于 SP1-SP5 全笔号 + 闭合不变量测试）。"""
+    """5 层全有的合成裁片（用于全层坐标/层序 + 闭合不变量测试）。"""
     return {
         "pid": pid,
         "ptype": ptype,
@@ -64,19 +65,9 @@ def _plt(world_pieces, **kw) -> str:
     return write_marker_plt(world_pieces, **kw).decode("ascii").replace("\r\n", "\n")
 
 
-def _sp_section(lines, pen: int) -> list[str]:
-    """截取 ``SPn;`` 声明行之后到下一 SP 行之前的几何指令行（按笔分组的段）。"""
-    section: list[str] = []
-    in_sec = False
-    for line in lines:
-        if line.startswith("SP"):
-            if in_sec:
-                break
-            in_sec = (line == f"SP{pen};")
-            continue
-        if in_sec:
-            section.append(line)
-    return section
+def _body_section(lines: list[str]) -> list[str]:
+    """头部一行之后的全部指令行（全程单笔 SP1，无按笔分段声明）。"""
+    return lines[1:]
 
 
 def _polylines(section: list[str]) -> list[list[str]]:
@@ -218,22 +209,22 @@ def test_pd_chunks_within_limits():
 
 
 def test_polygon_closed_first_point_equals_last():
-    """闭合不变量：SP1 段（门幅框 + outline）每条折线末点 == 首点。
+    """闭合不变量：层序前两条折线（门幅框 + outline）末点 == 首点。
 
     PUx0,y0;PD...;（可分块）—— 分块续画拼回后 PD 末点必须回到 PU 首点。
     """
     out = _plt([_full_piece()], width_mm=500, gate_mm=1000, title="")
-    polys = _polylines(_sp_section(out.split("\n"), 1))
-    assert len(polys) == 2   # 门幅框 + 毛版 outline
-    for tokens in polys:
+    polys = _polylines(_body_section(out.split("\n")))
+    assert len(polys) >= 2
+    for tokens in polys[:2]:    # 门幅框 + 毛版 outline（层序在前）
         assert tokens[:2] == tokens[-2:], (
             f"closure broken: first={tokens[:2]} last={tokens[-2:]}")
 
 
 def test_border_inset_and_within_safe_area():
-    """门幅框并入 SP1：Y 下沿内缩 5mm、上沿压进可写幅宽（gate=1980 → 顶 1905mm）。"""
+    """门幅框（层序首条折线）：Y 下沿内缩 5mm、上沿压进可写幅宽（gate=1980 → 顶 1905mm）。"""
     out = _plt([_full_piece()], width_mm=500, gate_mm=1980, title="")
-    border = _polylines(_sp_section(out.split("\n"), 1))[0]
+    border = _polylines(_body_section(out.split("\n")))[0]
     xs = [int(border[i]) for i in range(0, len(border), 2)]
     ys = [int(border[i + 1]) for i in range(0, len(border), 2)]
     assert min(ys) == 5 * 40            # 下沿内缩 PLOT_BORDER_MARGIN_Y_MM
@@ -243,34 +234,36 @@ def test_border_inset_and_within_safe_area():
 
 
 def test_border_four_corners_present():
-    """门幅框四角（引导后 800..20800 × 内缩 200..39800）全在 SP1 首条折线中。"""
+    """门幅框四角（引导后 800..20800 × 内缩 200..39800）全在首条折线中。"""
     out = _plt([_full_piece()], width_mm=500, gate_mm=1000, title="")
-    border = ",".join(_polylines(_sp_section(out.split("\n"), 1))[0])
+    border = ",".join(_polylines(_body_section(out.split("\n")))[0])
     for corner in ("800,200", "20800,200", "20800,39800", "800,39800"):
         assert corner in border, f"corner {corner} missing from border {border!r}"
 
 
-# --------------------------------------------- 5 个笔号按笔分组
+# --------------------------------------------- 单笔输出（统一颜色）
 
 
-def test_all_five_pens_present_with_full_data():
-    """5 层全有的裁片 → SP1..SP5 各出现（门幅框并入 SP1，不再有 SP6）。"""
+def test_single_pen_sp1_only_even_with_all_layers():
+    """全文件单笔：5 层全有也只有头部一次 SP1（WT 预览单色 = 门幅框蓝色；
+    生产 PLT 实测全程仅 SP1）。"""
     out = _plt([_full_piece()], width_mm=500, gate_mm=1000, title="hi")
-    for pen in range(1, 6):
-        assert f"SP{pen};" in out, f"SP{pen}; missing"
-    assert "SP6;" not in out
-
-
-def test_empty_layers_skipped():
-    """空层跳过：net/internal/notches/grain 全空 → SP2/3/4/5 不出现（仅 SP1）。"""
-    out = _plt([_bare_piece()], width_mm=100, gate_mm=100, title="")
-    assert "SP1;" in out
-    for pen in range(2, 6):
+    assert out.count("SP1;") == 1
+    for pen in (2, 3, 4, 5, 6):
         assert f"SP{pen};" not in out
 
 
-def test_partial_layers_only_emits_present_pens():
-    """部分层：仅 net + grain → SP1/2/5 出现，SP3/4 不出现。"""
+def test_empty_layers_no_extra_strokes():
+    """空层跳过：net/internal/notches/grain 全空 → 体里只有门幅框 + outline 2 条折线。"""
+    out = _plt([_bare_piece()], width_mm=100, gate_mm=100, title="")
+    assert out.count("SP1;") == 1
+    lines = out.split("\n")
+    assert sum(1 for l in lines if l.startswith("PU") and "," in l) == 2
+    assert sum(1 for l in lines if l.startswith("PD")) == 2
+
+
+def test_partial_layers_present_in_single_pen_body():
+    """部分层：仅 net + grain → 两层笔画都在单笔体里（坐标含 +20mm 引导）。"""
     piece = {
         "pid": "P",
         "ptype": "A",
@@ -281,14 +274,15 @@ def test_partial_layers_only_emits_present_pens():
         "grain_line": (5.0, 5.0, 5.0, 15.0),
     }
     out = _plt([piece], width_mm=100, gate_mm=100, title="")
-    assert "SP2;" in out
-    assert "SP5;" in out
-    assert "SP3;" not in out
-    assert "SP4;" not in out
+    body = "\n".join(_body_section(out.split("\n")))
+    assert "840,40" in body        # net 起点 (1,1) → (840,40)
+    assert "1000,200" in body      # grain A 端 (5,5) → (1000,200)
+    assert "1000,600" in body      # grain B 端 (5,15)
+    assert out.count("SP1;") == 1
 
 
-def test_multi_piece_pen_grouping():
-    """按笔分组：3 片 outline 合并进一次 SP1 声明（不再逐片切笔）。"""
+def test_multi_piece_single_pen_flat_stream():
+    """多片单笔平铺：3 片 outline 连续输出，全文只头部一次 SP1。"""
     pieces = [
         _bare_piece(pid="P1", ptype="A"),
         _bare_piece(pid="P2", ptype="B"),
@@ -296,44 +290,35 @@ def test_multi_piece_pen_grouping():
     ]
     out = _plt(pieces, width_mm=1000, gate_mm=1000, title="")
     lines = out.split("\n")
-    # SP1; 出现 2 次：头部一行里的笔声明 + 分组绘图段声明 1 次
-    assert out.count("SP1;") == 2
+    assert out.count("SP1;") == 1
     # PU/PD 折线各 4 条：门幅框 + 3 片 outline（每片 4 点单块装得下）
     assert sum(1 for l in lines if l.startswith("PU") and "," in l) == 4
     assert sum(1 for l in lines if l.startswith("PD")) == 4
 
 
-# --------------------------------------------- 5 层笔号语义校验（端到端）
+# --------------------------------------------- 5 层坐标/层序校验（端到端）
 
 
-def test_each_layer_uses_correct_pen_number():
-    """5 层各用对应笔号：SP1 门幅框+outline / SP2 net / SP3 internal / SP4 notch / SP5 grain。
-
-    坐标含 +20mm 走纸引导（X 全体 +800u），按笔分组后各层在自己的 SP 段内。
-    """
+def test_all_layers_present_in_dxf_layer_order():
+    """5 层坐标全在单笔体里，层序与 write_marker_dxf 一致：
+    门幅框+outline → net → internal → notch → grain（坐标含 +20mm 走纸引导）。"""
     out = _plt([_full_piece()], width_mm=500, gate_mm=1000, title="")
-    lines = out.split("\n")
+    body = "\n".join(_body_section(out.split("\n")))
 
-    def section_joined(pen):
-        return ",".join(",".join(p) for p in _polylines(_sp_section(lines, pen)))
-
-    # SP1：门幅框角 20800,39800 + outline 角 (100,200)→(4800,8000)
-    sp1 = section_joined(1)
-    assert "4800,8000" in sp1 and "20800,39800" in sp1
-
-    # SP2 net：起点 (10,10) → (1200,400)
-    assert "1200,400" in section_joined(2)
-
-    # SP3 internal：起点 (20,20) → (1600,800)
-    assert "1600,800" in section_joined(3)
-
-    # SP4 notch：(50,±4) → X 2800；y=-4 clamp 到 0
-    sp4 = section_joined(4)
-    assert "2800,160" in sp4 and "2800,0" in sp4
-
-    # SP5 grain：(50,50)→(50,150) → (2800,2000)→(2800,6000)
-    sp5 = section_joined(5)
-    assert "2800,2000" in sp5 and "2800,6000" in sp5
+    # 门幅框角 20800,39800 + outline 角 (100,200)→(4800,8000)
+    assert "4800,8000" in body and "20800,39800" in body
+    # net 起点 (10,10) → (1200,400)
+    assert "1200,400" in body
+    # internal 起点 (20,20) → (1600,800)
+    assert "1600,800" in body
+    # notch：(50,±4) → X 2800；y=-4 clamp 到 0
+    assert "2800,160" in body and "2800,0" in body
+    # grain：(50,50)→(50,150) → (2800,2000)→(2800,6000)
+    assert "2800,2000" in body and "2800,6000" in body
+    # 层序：outline < net < internal < grain（notch 在 internal 与 grain 之间）
+    assert (body.index("4800,8000") < body.index("1200,400")
+            < body.index("1600,800") < body.index("2800,160")
+            < body.index("2800,2000"))
 
 
 # --------------------------------------------- 安全幅面常量（单一事实源）
@@ -372,8 +357,8 @@ def test_content_above_plot_safe_max_clipped():
     assert ymax <= int(PLOT_SAFE_MAX_Y_MM * 40)   # 76400：绝不超可写幅宽
     # 部分越界 polygon 削平到安全线（交点 y=1910mm），不是整片丢弃
     assert "76400" in out
-    # 刺口全越界 → SP4 整层无绘制内容，不声明
-    assert "SP4;" not in out
+    # 刺口全越界 → 整段丢弃无笔画；布纹线跨界截断到 y=1910（(50,1900)→(50,1910)）
+    assert "2800,76000" in out and "2800,76400" in out
 
 
 def test_clip_warning_logged(caplog):
@@ -453,6 +438,157 @@ def test_empty_world_pieces_still_emits_header_and_border():
     assert "SP1;" in out
     for pen in range(2, 6):
         assert f"SP{pen};" not in out
+
+
+# --------------------------------------------- 布纹箭头线 + 尺码×数量标注
+# （2026-08-24，对照生产 PLT data/PC-20250508NJIF*.plt 逆向实测，见 export_plt
+#   模块注释：画向 u=A→B 随片旋转；B 端单头双羽 30mm/15°；标注「尺码*数量」
+#   沿 u 阅读、字顶朝 w=(-uy,ux)（右手系防镜像）、基线离杆 10mm、中心锚 0.85·L；
+#   正向片标注在杆视觉上方、180° 片翻到杆视觉下方且随片倒置）
+
+
+def _piece_with_grain(pid="P1", size=30, grain=(100.0, 50.0, 400.0, 50.0)):
+    """横杆布纹线合成裁片（默认 L→R 画向，size=30 → 标注 "30*1"）。"""
+    return {
+        "pid": pid, "ptype": "A", "size": size,
+        "polygon": [(0.0, 0.0), (500.0, 0.0), (500.0, 100.0), (0.0, 100.0)],
+        "area_mm2": 50000.0,
+        "net_polygon": [], "internal_lines": [], "notches": [],
+        "grain_line": grain,
+    }
+
+
+def _all_pts(out: str) -> list[tuple[int, int]]:
+    """全文件（单笔）全部顶点（PU 坐标对，含 PD 分块续画拼接）。"""
+    return [(int(p[i]), int(p[i + 1]))
+            for p in _polylines(_body_section(out.split("\n")))
+            for i in range(0, len(p), 2)]
+
+
+def _grain_strokes(out: str, n_pieces: int) -> list[list[str]]:
+    """布纹层折线（层序最后一块）：跳过门幅框 + 每片 1 条 outline 的前导折线。"""
+    return _polylines(_body_section(out.split("\n")))[1 + n_pieces:]
+
+
+def _grain_pts(out: str) -> list[tuple[int, int]]:
+    """布纹层顶点（单笔后按层序切片：门幅框+outline 之后即布纹笔画）。"""
+    return [(int(p[i]), int(p[i + 1]))
+            for p in _grain_strokes(out, 1)
+            for i in range(0, len(p), 2)]
+
+
+def test_grain_arrow_single_head_at_destination_end():
+    """箭头线 = 光杆 + **B 端（画向前端）单头对称双羽**——箭头指向原始布纹画向，
+    A 端（尾端）无羽（2026-08-24 用户明确要求单头，非生产 PLT 双端形态）。
+
+    _full_piece 竖杆 A(50,50)→B(50,150)：u=(0,1)、w=(-1,0)（双羽 ±w 对称，
+    坐标与 w 手性无关）。
+    双羽 tip = B − 30·cos15°·u ± 30·sin15°·w = (57.764, 121.022)/(42.236, 121.022)
+    → (3111,4841)/(2489,4841)；A 端箭羽坐标（3111,3159）必须不存在。
+    """
+    out = _plt([_full_piece()], width_mm=500, gate_mm=1000, title="")
+    sp5 = ",".join(f"{x},{y}" for x, y in _all_pts(out))
+    assert "3111,4841" in sp5
+    assert "2489,4841" in sp5
+    assert "3111,3159" not in sp5      # 尾端 A 无羽
+    assert "2800,2000" in sp5 and "2800,6000" in sp5
+
+
+def test_label_side_and_orientation_follow_grain_direction():
+    """标注侧别/正反随画向（w=(-uy,ux) 右手系）：L→R 杆标注在 file +y
+    （基线 60mm/字顶 70mm → y_u 2400..2800，视觉在杆上方、正展示）；R→L 杆
+    翻到 file −y（1200..1600，随片倒置、视觉在杆下方）—— 生产同款。"""
+    l2r = _plt([_piece_with_grain(grain=(100.0, 50.0, 400.0, 50.0))],
+               width_mm=500, gate_mm=1000, title="")
+    r2l = _plt([_piece_with_grain(grain=(400.0, 50.0, 100.0, 50.0))],
+               width_mm=500, gate_mm=1000, title="")
+
+    ys_l2r = [y for _x, y in _grain_pts(l2r)]
+    ys_r2l = [y for _x, y in _grain_pts(r2l)]
+    # L→R：杆 y=2000、B 端头部双羽尖 1689/2311（±w 对称）、标注 2400..2800
+    assert min(ys_l2r) == 1689 and max(ys_l2r) == 2800
+    # R→L：杆 y=2000、B 端（file 左端）头部双羽尖 1689/2311、标注 1200..1600
+    assert max(ys_r2l) == 2311 and min(ys_r2l) == 1200
+
+    # 锚位 0.85·L（画向前端）：L→R 标注中心 x=355 → 标注笔画 x_u ∈ [14000,16000]
+    label_xs = [x for x, y in _grain_pts(l2r) if 2400 <= y <= 2800]
+    assert len(label_xs) > 10, "标注笔画应存在"
+    assert 14000 <= min(label_xs) and max(label_xs) <= 16000
+
+
+def test_label_glyph_chirality_follows_grain_direction():
+    """字形手性（防镜像回归，2026-08-24 用户截图纠正）：'7' 的长横杠在**字顶带**
+    —— L→R 片 y=2800（file +y 视觉上方、正展示）；R→L 片 y=1200（字顶朝
+    file −y，整字随片倒置）。首版 w=(uy,-ux) 左手系时横杠落到基线对侧
+    （L→R 在 1200 / R→L 在 2800），所有文字无论画向全部镜像。"""
+    l2r = _plt([_piece_with_grain(size=7)],                     # 标注 "7*1"
+               width_mm=500, gate_mm=1000, title="")
+    r2l = _plt([_piece_with_grain(size=7, grain=(400.0, 50.0, 100.0, 50.0))],
+               width_mm=500, gate_mm=1000, title="")
+    sp5_l2r = ",".join(f"{x},{y}" for x, y in _grain_pts(l2r))
+    sp5_r2l = ",".join(f"{x},{y}" for x, y in _grain_pts(r2l))
+    # L→R：'7' 字顶横杠两端 (339.7,70)/(346.54,70)mm → (14388,2800)/(14662,2800)
+    assert "14388,2800" in sp5_l2r and "14662,2800" in sp5_l2r
+    assert "14388,1200" not in sp5_l2r     # 镜像（左手系）时横杠在基线对侧
+    # R→L：横杠随片倒置翻到 y=1200；(160.3,30)/(153.46,30)mm → (7212,1200)/(6938,1200)
+    assert "7212,1200" in sp5_r2l and "6938,1200" in sp5_r2l
+    assert "7212,2800" not in sp5_r2l      # 镜像时横杠在杆上侧
+
+
+def test_label_size_and_multiplicity():
+    """标注内容 = 尺码*数量（数量 = 同 pid 副本数，demand>1 时 sparrow 发 N 条
+    placed_items → world_pieces N 行同 pid）。
+
+    笔画数固定可数：杆+双羽 3 笔；'3'2+'0'1+'*'3+'1'2=8 → "30*1" 共 11 笔；
+    "30*2"（'2' 单笔）每片 10 笔，2 副本共 20 笔。
+    """
+    one = _plt([_piece_with_grain()], width_mm=500, gate_mm=1000, title="")
+    two = _plt([_piece_with_grain(), _piece_with_grain()],
+               width_mm=1000, gate_mm=1000, title="")
+    assert len(_grain_strokes(one, 1)) == 11
+    assert len(_grain_strokes(two, 2)) == 20
+
+
+def test_label_skipped_for_missing_or_unsupported_size():
+    """size=None / 字库外字符（"3X"、30.5 带 '.'）→ 整段不标注（all-or-nothing：
+    "30.5" 缺 '.' 会读成 "305"，宁缺勿错），布纹层仅剩箭头线 3 笔。"""
+    for size in (None, "3X", 30.5):
+        piece = _piece_with_grain(size=size)
+        out = _plt([piece], width_mm=500, gate_mm=1000, title="")
+        assert len(_grain_strokes(out, 1)) == 3, f"size={size!r} 应跳过标注"
+
+
+def test_short_shaft_centers_label_and_scales_barbs():
+    """杆短于文本宽 → 标注锚点退回杆中点（防尾端大量溢出）；箭羽按杆长 45% 收缩。"""
+    piece = _piece_with_grain(grain=(100.0, 50.0, 130.0, 50.0))   # 杆长 30mm < W 43.8
+    out = _plt([piece], width_mm=500, gate_mm=1000, title="")
+    pts = _grain_pts(out)
+    label_xs = [x for x, y in pts if 2400 <= y <= 2800]
+    assert 4500 <= min(label_xs) and max(label_xs) <= 6300   # 中心 x=115 → [93,137]mm
+    # 头部双羽收缩到 30·0.45=13.5mm：tips = (130−13.5·cos15°, 50±13.5·sin15°)
+    # = (116.96, 53.49)/(116.96, 46.51) → (5478,2140)/(5478,1860)
+    sp5 = ",".join(f"{x},{y}" for x, y in pts)
+    assert "5478,2140" in sp5 and "5478,1860" in sp5
+
+
+def test_degenerate_zero_length_grain_emits_nothing():
+    """零长布纹线（两端点重合）→ 布纹层无笔画（防御边界：体里仅门幅框+outline）。"""
+    piece = _piece_with_grain(grain=(50.0, 50.0, 50.0, 50.0))
+    out = _plt([piece], width_mm=500, gate_mm=1000, title="")
+    assert len(_polylines(_body_section(out.split("\n")))) == 2
+
+
+def test_label_clipped_at_plot_safe_max():
+    """顶部片标注越过可写幅宽 1910 → 削平不越程（工艺线口径：裁剪不告警、布纹笔画仍在）。"""
+    piece = _piece_with_grain(grain=(50.0, 1900.0, 350.0, 1900.0))   # L→R → 标注在杆上侧越界
+    out = _plt([piece], width_mm=400, gate_mm=1980, title="")
+    ymax = 0
+    for line in out.split("\n"):
+        if line.startswith(("PU", "PD")) and "," in line:
+            ys = [int(t) for t in line[2:].rstrip(";").split(",")][1::2]
+            ymax = max(ymax, max(ys))
+    assert ymax <= int(PLOT_SAFE_MAX_Y_MM * 40)
+    assert len(_grain_strokes(out, 1)) > 0
 
 
 if __name__ == "__main__":
