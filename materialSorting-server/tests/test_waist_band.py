@@ -9,9 +9,13 @@
 5. 确定性：band seed = zlib.crc32 派生（勿用 hash()）、同 seed 两跑 to_dict JSON 相等；
 6. 分层纯度：模块级不 import web（AST 守卫，套路同 test_cli_lns）；
 7. v2 版师形态（真实弧形几何）：链内贴触 ≤ ``CHAIN_GAP_EPS_MM``、开口朝左、
-   最大码在最右（降序构造 + 整链点对称翻转）。
+   最大码在最右（降序构造 + 整链点对称翻转）；
+8. 直腰头平坦模式（2026-08-24 版师指正，882# g01）：判据分离（矩形直条 vs
+   月牙弧）+ 全链路形态（片片 rot=0 无翻转、同底齐平、**多副本单链全局从短到
+   长**（单调阶梯，N 链交叉深谷必挂）、大码最右、带高=最高片、副本数不均匀）。
 
-合成夹具：矩形（结构同 5336 g05：7 码 × demand 2）+ 月牙弧（曲率相近异码嵌套）。
+合成夹具：矩形（结构同 5336 g05：7 码 × demand 2）+ 月牙弧（曲率相近异码嵌套）
++ 异高竖条（882# g01 直腰头同构：10 码 × demand 2，高度互异放大交替翻转让乱象可判）。
 """
 from __future__ import annotations
 
@@ -327,6 +331,119 @@ def test_arc_band_chunk_two_chains():
     polys = {m['pid']: waist_band._clean_polygon(pid_meta[m['pid']]['polygon'])
              for m in chunk.members}
     assert _opening_side(chunk.members, polys) == 'left'
+
+
+# ------------------------------------- 直腰头平坦模式（2026-08-24 版师指正）
+
+def _strip_ctx(label='g01', sizes=(29, 30, 31, 32, 33, 34, 35, 36, 38, 40),
+               demand=2, w=68.0, d_g=0.4):
+    """882# g01 直腰头同构上下文：10 码 × demand 2 = 20 副本，竖条宽 ≈68、
+    高随码递增（999→1351，实测族 999~1286 同构）—— 高度互异使修复前的
+    「交替翻转 + 上下换锚」对角阶梯乱象可被断言判别（等高矩形看不出来）。"""
+    pieces_by_id, pid_meta = {}, {}
+    for s in sizes:
+        h = 999.0 + (float(s) - 29.0) * 32.0
+        pid = f'{label}_{s}'
+        p = _rect_piece(pid, label, s, w, h)
+        pieces_by_id[pid] = p
+        poly = erode_polygon(p['polygon'], d_g) if d_g > 0 else p['polygon']
+        pid_meta[pid] = {
+            'size': s, 'color': '#000000', 'polygon': poly,
+            'area_mm2': p['area_mm2'], 'label': label, 'demand': demand,
+            'net_polygon': [], 'internal_lines': [], 'notches': [],
+            'grain_line': None,
+        }
+    return pid_meta, pieces_by_id
+
+
+def test_flat_detector_separates_rect_from_arc():
+    """``_is_flat_piece`` 判据分离：矩形直条 True（质心短轴偏移 0.00mm）、
+    月牙弧 False（偏移 ~18-22mm）—— 与 882# g01 / 5336 g05 实测分离度 18× 同构。"""
+    from materialsorting.nesting_engine.waist_band import _is_flat_piece
+    rect_meta, _ = _band_ctx(sizes=(28, 29))
+    arc_meta, _ = _arc_ctx(sizes=(28, 29))
+    for pid, m in rect_meta.items():
+        g = waist_band._valid_geometry(waist_band._clean_polygon(m['polygon']))
+        assert _is_flat_piece(g) is True, pid
+    for pid, m in arc_meta.items():
+        g = waist_band._valid_geometry(waist_band._clean_polygon(m['polygon']))
+        assert _is_flat_piece(g) is False, pid
+
+
+def test_flat_band_chunk_form():
+    """直腰头全链路（882# g01 同构，demand=2 = 20 副本单链）：片片 rot=0
+    无翻转 + 全员底边 y=0 同底齐平 + **全局从短到长**（多副本单链单调阶梯，
+    非「每码第 k 副本」N 链并排的交叉深谷）+ 大码最右/小码最左 + 带高=最高
+    单片 + 腐蚀条带宽合计（缝隙 0）—— 版师图2 形态程序化判据。"""
+    from materialsorting.nesting_engine.waist_band import _geom_at
+    pid_meta, pieces = _strip_ctx()
+    chunk = build_band_plan(pid_meta, pieces, label='g01', seed=0)
+    assert chunk.n_members == 20 and chunk.total_demand == 20   # 10 码 × 2 守恒
+    assert chunk.pid == f'{COMPOSITE_PID_PREFIX}g01'
+    assert chunk.fill_pct > 45.0                                # 灾难形态下限
+    polys = {pid: waist_band._clean_polygon(m['polygon'])
+             for pid, m in pid_meta.items()}
+    gs = [(m['pid'], _geom_at(polys[m['pid']], m['rotation'], m['translation']))
+          for m in chunk.members]
+    assert all(m['rotation'] == 0.0 for m in chunk.members)     # 无 180 翻转
+    assert all(abs(g.bounds[1]) < 1e-6 for _pid, g in gs)       # 同底齐平
+    # 全局单调阶梯：按质心 x 升序 ⇔ 码序非降（同码副本相邻）—— 旧 N 链并排
+    # 产出 [29..40, 29..40] 在此断言必挂（链交界「最大|最小」交叉深谷）
+    x_sorted = [pid_meta[pid]['size'] for pid, _g
+                in sorted(gs, key=lambda t: t[1].centroid.x)]
+    assert x_sorted == sorted(x_sorted)
+    # 同底 ⇒ 带高 = 最高单片**原始**轮廓高（组合片 bbox 由原始 union 腐蚀而来，
+    # 成员 polys 已腐蚀矮 2·d_g）—— 顶阶梯而非上下交替的「最高+最低」和
+    orig_h = max(Polygon(pieces[pid]['polygon']).bounds[3] for pid in pieces)
+    assert chunk.bbox['height_mm'] == pytest.approx(orig_h, abs=1.0)
+    # 版师码序：全局升序 ⇒ 最大码最右、最小码最左（两端同码副本）
+    assert max(gs, key=lambda t: t[1].centroid.x)[0] == 'g01_40'
+    assert min(gs, key=lambda t: t[1].centroid.x)[0] == 'g01_29'
+    # 紧排无重叠：union 面积 = Σ 片面积（贴触合法、重叠非法）
+    assert unary_union([g for _pid, g in gs]).area == pytest.approx(
+        sum(g.area for _pid, g in gs), rel=1e-9)
+    # 缝隙 0：带宽 = 20 片 × 腐蚀宽（68−2·d_g）—— 与顺序无关，面积零代价
+    assert chunk.bbox['width_mm'] == pytest.approx(
+        20 * (68.0 - 2 * 0.4), abs=2.0)
+
+
+def test_flat_band_nonuniform_demand():
+    """直腰头副本数不均匀（quantities 矩阵可异码不同副本）：全副本单链全局
+    升序仍成立 —— 每码按 demand 展开、同码相邻、整带单调无交叉深谷。"""
+    from collections import Counter
+
+    from materialsorting.nesting_engine.waist_band import _geom_at
+    demands = {29: 1, 30: 2, 31: 3, 32: 2, 33: 1, 34: 2,
+               35: 1, 36: 2, 38: 1, 40: 2}
+    pid_meta, pieces = _strip_ctx()
+    for pid, m in pid_meta.items():
+        m['demand'] = demands[m['size']]
+    chunk = build_band_plan(pid_meta, pieces, label='g01', seed=0)
+    total = sum(demands.values())
+    assert chunk.n_members == total and chunk.total_demand == total
+    polys = {pid: waist_band._clean_polygon(m['polygon'])
+             for pid, m in pid_meta.items()}
+    gs = sorted(
+        ((_geom_at(polys[m['pid']], m['rotation'],
+                   m['translation']).centroid.x, pid_meta[m['pid']]['size'])
+         for m in chunk.members), key=lambda t: t[0])
+    sizes_seq = [s for _x, s in gs]
+    assert sizes_seq == sorted(sizes_seq)                     # 全局单调
+    assert Counter(sizes_seq) == Counter(demands)             # 副本守恒
+    assert all(m['rotation'] == 0.0 for m in chunk.members)   # 无翻转
+    assert all(abs(_geom_at(polys[m['pid']], m['rotation'],
+                            m['translation']).bounds[1]) < 1e-6
+               for m in chunk.members)                        # 同底齐平
+
+
+def test_flat_band_chunk_deterministic():
+    """直腰头路径确定性：同 seed 两跑 to_dict JSON 逐字节相等（纯几何构造、无 RNG）。"""
+    pid_meta, pieces = _strip_ctx()
+    j1 = json.dumps(build_band_plan(pid_meta, pieces, label='g01', seed=0).to_dict(),
+                    sort_keys=True)
+    j2 = json.dumps(build_band_plan(pid_meta, pieces, label='g01', seed=0).to_dict(),
+                    sort_keys=True)
+    assert j1 == j2
 
 
 # --------------------------------------------------------------- 分层纯度

@@ -15,6 +15,17 @@ placement 展开回成员 placement。性质是**业务规则**（确定性聚�
 优化器 —— 验收线 = 形态保证（链内贴触 + 开口/码序）+ 密度不显著劣化（实测紧带
 进主解 +2.27pt vs OFF）。
 
+直腰头分叉（2026-08-24 版师指正，882# g01）：成员均为**平板直条**（质心短轴
+偏移 < ``FLAT_CENTROID_EPS_MM``）时，贪心的 side-by-side 候选 bbox 面积在端部
+形状互补/浮点噪声级打平（实测六候选互差 <1e-6mm²），严格小于的贪心被逐片翻盘
+⇒ 交替翻转+上下换锚的对角阶梯乱象（用户图1）。直腰头版师形态（图2）= **同底
+齐平、片片同向、无翻转、大码在右** —— 升序构造 + 单候选 (rot0, 'bottom')，
+面积与乱象形态等价（差 <0.1%，纯形态规则）；弧形片（质心偏移 ~18-22mm，判据
+分离度 18×）仍走嵌套贪心，行为不变。多副本（2026-08-24 版师二次指正）不再按
+「每码第 k 副本」拆 N 链并排 —— 链交界会形成「最大码|最小码」的整带高差深谷
+（交叉布局）；**全副本展开为单条全局从短到长**的单调阶梯（同码副本相邻），
+等宽条带并排 bbox 与顺序无关，面积零代价。
+
 分层约束：本模块属 ``nesting_engine``，仅 import 标准库 + shapely + 本包兄弟模块
 （``sparrow_baseline`` / ``sparrow_experiments`` / ``constraints``）+ 下层
 ``nesting_bounds``；**禁 import web**（组合片构造与展开的单一真相源，web 与未来
@@ -71,6 +82,12 @@ CHAIN_SLIDE_STEP_MM = 20.0
 CHAIN_BISECT_ITERS = 40
 # 链构造/堆叠的 y 对齐候选（链: 片对已排 union；堆叠: 链对已堆叠 union）。
 CHAIN_Y_ALIGNS = ('bottom', 'mid', 'top', 'b2t', 't2b')
+# 直腰头（平板直条）判据阈值（mm）：单片质心沿**短轴**相对 bbox 中心的偏移
+# |off| < 阈值 ⇒ 直条（长边平直、质心居中，实测 882# g01 全员 0.00mm）；弧形
+# （新月）腰片质心被凸侧拉偏（实测 5336 g05 -18~-22mm）—— 分离度 18×，阈值
+# 沿用 ``_opening_side`` flat_eps=1.0 口径。沿短轴取偏移：弯曲发生在长轴法向，
+# 端部形状不对称只影响长轴向质心、不干扰本判据。
+FLAT_CENTROID_EPS_MM = 1.0
 
 
 class BandError(Exception):
@@ -322,19 +339,37 @@ def _bbox_area(pb, gb) -> float:
     return (max(pb[2], gb[2]) - min(pb[0], gb[0])) * (max(pb[3], gb[3]) - min(pb[1], gb[1]))
 
 
-def _chain_nest(member_pids, polys):
-    """构造性滑移贴靠贪心：首片锚定原点，后续每片 rot{0,180} × 5 种 y 对齐
+def _is_flat_piece(g, eps=FLAT_CENTROID_EPS_MM) -> bool:
+    """单片是否「平板直条」：质心沿**短轴**相对 bbox 中心的偏移 < eps。
+
+    直腰头长边平直、质心居中（882# g01 实测全员 0.00mm）；弧形（新月）腰片
+    质心被凸侧拉偏（5336 g05 实测 -18~-22mm）—— 判据只看长轴法向（短轴）偏移，
+    端部形状不对称（长轴向质心偏移，882# 实测 -2.31mm）不干扰。
+    """
+    minx, miny, maxx, maxy = g.bounds
+    if (maxy - miny) >= (maxx - minx):          # 长轴纵向 → 弯曲看横向偏移
+        return abs(g.centroid.x - (minx + maxx) / 2) < eps
+    return abs(g.centroid.y - (miny + maxy) / 2) < eps
+
+
+def _chain_nest(member_pids, polys, rots=(0.0, 180.0),
+                y_aligns=CHAIN_Y_ALIGNS):
+    """构造性滑移贴靠贪心：首片锚定原点，后续每片 ``rots`` × ``y_aligns``
     滑移贴触到已排 union，取 union bbox 面积增长最小（确定性、无 RNG）。
 
-    ``member_pids`` 顺序即放置顺序（调用方给 size **降序** —— 与「升序+右滑 =
-    开口朝右」相对，降序构造经 ``_flip_chain`` 后得开口朝左+最大码在右）。
+    ``member_pids`` 顺序即放置顺序（弧形：调用方给 size **降序** —— 与
+    「升序+右滑 = 开口朝右」相对，降序构造经 ``_flip_chain`` 后得开口朝左+
+    最大码在右；直腰头：**升序** + ``rots=(0.0,)`` + ``y_aligns=('bottom',)``
+    单候选 —— 近矩形条带的多候选面积噪声级打平会让贪心交替翻盘产对角阶梯，
+    版师形态（图2）要求同底齐平、片片同向、无翻转；多副本时**含重复 pid**
+    （全副本展开单链，全局从短到长））。
     碰撞口径 = ``polys``（pid_meta 已腐蚀轮廓，与 v1 spyrrow Item 同口径）。
     """
     packed = None
     placed = []
     for pid in member_pids:
         candidates = []
-        for r in (0.0, 180.0):
+        for r in rots:
             g0 = rotate(_valid_geometry(polys[pid]), r, origin=(0, 0))
             gb = g0.bounds
             if packed is None:
@@ -343,7 +378,7 @@ def _chain_nest(member_pids, polys):
                                        'translation': [-gb[0], -gb[1]]}))
                 continue
             pb = packed.bounds
-            for y_align in CHAIN_Y_ALIGNS:
+            for y_align in y_aligns:
                 yo = _y_align_off(y_align, pb, gb)
                 g, dx = _slide_touch(g0, packed, yo)
                 candidates.append((g, {'pid': pid, 'rotation': r,
@@ -385,9 +420,10 @@ def _norm_chain(placed, polys):
             for m in placed]
 
 
-def _stack_chains(chains, polys):
-    """多链堆叠为单成员集：逐链 5 种 y 对齐滑移贴靠到已堆叠 union，取 union
-    bbox 面积增长最小。**不做翻链变体**（翻转会反转开口方向，违反 v2 形态判据）。"""
+def _stack_chains(chains, polys, y_aligns=CHAIN_Y_ALIGNS):
+    """多链堆叠为单成员集（弧形多副本路径）：逐链按 ``y_aligns`` 滑移贴靠到已
+    堆叠 union，取 union bbox 面积增长最小。**不做翻链变体**（翻转会反转开口
+    方向，违反 v2 形态判据）。直腰头不经过本函数（全副本单链，无链间堆叠）。"""
     placed = list(chains[0])
     packed = unary_union([_geom_at(polys[m['pid']], m['rotation'],
                                    m['translation']) for m in placed])
@@ -396,7 +432,7 @@ def _stack_chains(chains, polys):
                                      m['translation']) for m in ch])
         pb, gb = packed.bounds, ch_u.bounds
         best = None
-        for y_align in CHAIN_Y_ALIGNS:
+        for y_align in y_aligns:
             yo = _y_align_off(y_align, pb, gb)
             _, dx = _slide_touch(ch_u, packed, yo)
             cand = [dict(m, translation=[m['translation'][0] + dx,
@@ -507,31 +543,62 @@ def build_band_plan(pid_meta, pieces_by_id, *, label, seed,
         return poly
 
     polys: dict = {pid: _member_poly(pid) for pid in member_pids}
-    max_demand = max(int(pid_meta[pid]['demand']) for pid in member_pids)
-    chains = []
-    for k in range(max_demand):
-        chain_pids = sorted(
-            (pid for pid in member_pids if int(pid_meta[pid]['demand']) > k),
-            key=lambda pid: _member_sort_key(pid_meta[pid], pid),
-            reverse=True)                   # size 降序（版师链序；首锚片=最大码）
-        chain = _norm_chain(_flip_chain(_chain_nest(chain_pids, polys)), polys)
+    # 直腰头分叉（2026-08-24 版师指正，882# g01 图1→图2）：成员均为平板直条时改走
+    # 「同底齐平」构造 —— 近矩形条带的 side-by-side 候选 bbox 面积在端部形状互补/
+    # 浮点噪声级打平（实测 882# g01 六候选互差 <1e-6mm²），严格小于的贪心被逐片
+    # 翻盘 ⇒ 交替翻转+上下换锚的对角阶梯乱象。直腰头版师形态 = 同底齐平、片片
+    # 同向、无翻转、大码在右（面积差 <0.1%，纯形态规则）；弧形片（质心短轴偏移
+    # ~18-22mm，判据分离度 18×）仍走 v2 嵌套贪心，行为逐字节不变。
+    flat = all(_is_flat_piece(_valid_geometry(polys[pid])) for pid in member_pids)
+
+    def _check_chain(chain, rightmost_pid, k=None):
+        """链形态三闸门：贴触 / 开口朝左 / 最右成员 = 最大码（程序自校验）。"""
+        nth = f'第 {k} 链' if k is not None else '单链'
         gap = _chain_gap(chain, polys)
         if gap > CHAIN_GAP_EPS_MM:
             raise BandQualityError(
-                f'链 {label!r} 第 {k} 链贴触失败（最大缝隙 {gap:.2f}mm > '
+                f'链 {label!r} {nth}贴触失败（最大缝隙 {gap:.2f}mm > '
                 f'{CHAIN_GAP_EPS_MM}mm）—— 形态质量悬崖，禁无声降级')
         if _opening_side(chain, polys) == 'right':
             raise BandQualityError(
-                f'链 {label!r} 第 {k} 链开口朝右（降序+翻转构造异常）')
-        # 最大码在最右（降序+翻转构造保证；程序断言自校验 —— 首锚片翻转后落
-        # 最右端，右端成员应即 chain_pids[0]）
-        cx = {m['pid']: _geom_at(polys[m['pid']], m['rotation'],
-                                 m['translation']).centroid.x for m in chain}
-        if max(cx, key=cx.get) != chain_pids[0]:
+                f'链 {label!r} {nth}开口朝右（降序+翻转构造异常）')
+        # 最右成员 = 最大码（含重复 pid 安全：逐成员取 argmax，不做 dict 折叠）
+        cx_pid = max(
+            (_geom_at(polys[m['pid']], m['rotation'],
+                      m['translation']).centroid.x, m['pid'])
+            for m in chain)[1]
+        if cx_pid != rightmost_pid:
             raise BandQualityError(
-                f'链 {label!r} 第 {k} 链最右成员非最大码（降序+翻转构造异常）')
+                f'链 {label!r} {nth}最右成员非最大码（构造异常）')
+
+    chains = []
+    if flat:
+        # 直腰头多副本（2026-08-24 版师二次指正）：N 条「每码第 k 副本」链并排会在
+        # 链交界形成「最大码|最小码」的整带高差深谷（图1 交叉布局）；版师形态 =
+        # **全副本单链全局从短到长**（图2 单调阶梯，同码副本相邻）。等宽条带
+        # flush-bottom 并排的 bbox 宽 = Σ条宽、高 = max 条高，与顺序无关 ——
+        # 面积零代价，纯形态规则。单副本时退化为与旧版逐字节一致的单链升序。
+        copies = [pid for pid in member_pids
+                  for _ in range(int(pid_meta[pid]['demand']))]
+        copies.sort(key=lambda pid: _member_sort_key(pid_meta[pid], pid))
+        chain = _norm_chain(
+            _chain_nest(copies, polys, rots=(0.0,), y_aligns=('bottom',)),
+            polys)
+        _check_chain(chain, rightmost_pid=copies[-1])
         chains.append(chain)
-    placed = chains[0] if len(chains) == 1 else _stack_chains(chains, polys)
+    else:
+        max_demand = max(int(pid_meta[pid]['demand']) for pid in member_pids)
+        for k in range(max_demand):
+            chain_pids = sorted(
+                (pid for pid in member_pids if int(pid_meta[pid]['demand']) > k),
+                key=lambda pid: _member_sort_key(pid_meta[pid], pid),
+                reverse=True)     # 降序构造 + 整链点对称翻转后大码在最右
+            chain = _norm_chain(
+                _flip_chain(_chain_nest(chain_pids, polys)), polys)
+            _check_chain(chain, rightmost_pid=chain_pids[0], k=k)
+            chains.append(chain)
+    placed = (chains[0] if len(chains) == 1
+              else _stack_chains(chains, polys))
     if len(placed) != total_demand:
         raise BandQualityError(
             f'链构造副本守恒失败: 放置 {len(placed)} != Σdemand {total_demand}')
