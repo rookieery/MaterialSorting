@@ -165,6 +165,124 @@ async def band_preview(req: Request):
     }
 
 
+# ---------------------------------------------------- POST /api/prefix-preview 前缀预览
+
+
+@router.post('/api/prefix-preview')
+async def prefix_preview(req: Request):
+    """起始端成套前后幅预览（布局设置 prefix 行缩略图数据源，2026-08-25）。
+
+    与成带预览同套路：选完前/后幅 g 码后不展示两张原始单片缩略（与下方裁片设置
+    表格同源同图，纯冗余），改展示**最终 4 片组合形态**（前×2 + 后×2 同码
+    interleave 竖排贴靠 = 求解时 PS_ 组合片的精确形态），构造失败（无资格码 /
+    竖排超高 / 贴触失败等）也从 solve 报错前置到选码时刻。
+
+    payload 与 WS StartPayload 同源字段子集（prefix 校验直接复用 ``_parse_prefix``
+    单一校验点）：``{prefix:{enabled,front,back}, sizes?, quantities?, per_type?,
+    params?, gate_mm?, seed?}``。seed 缺省 0（界面恒单 seed=0 ⇒ 预览与求解同码；
+    资格码选取是 seeded 随机，跨 seed 形态同构仅码不同）。
+
+    主进程同步跑 ``eligible_sizes → pick_prefix_size → build_prefix_plan``
+    （构造性竖排无 RNG、毫秒级；d_g = max(d_front, d_back) 与 solve_worker
+    ``_build_prefix`` 同式）。成员 polygon 由后端变换到组合片归一坐标（减
+    ``chunk.offset``）返回，``tag`` = 成员 g 码（前后幅区分标注）；颜色取
+    pid_meta['color']（``size_color`` 单一真相源）。**不返回组合片 PS_ pid**
+    （哨兵约定：PS_ 永不出现在前端/manifest/导出）。
+
+    响应（失败也 200、``ok:false`` 包络，band-preview 同约定）::
+
+        {ok:true, front, back, size, fill_pct, bbox:{width_mm,height_mm},
+         n_members, members:[{pid, size, color, tag, polygon:[[x,y],...]}],
+         outline:[[x,y],...]}
+    """
+    from ..nesting_bounds.load_pieces import NEST_GATE_MM, PLOT_SAFE_MAX_Y_MM
+    from ..nesting_engine.prefix import (
+        PrefixError,
+        build_prefix_plan,
+        eligible_sizes,
+        pick_prefix_size,
+    )
+    from ..nesting_engine.sparrow_baseline import _transform_polygon
+    from .routes_ws import _parse_prefix
+    from .solver import _resolve_d_tol, build_pid_meta
+
+    state = _get_pieces_state()
+    payload = await req.json()
+
+    pieces = state.get('pieces') or []
+    if not pieces:
+        return {'ok': False, 'error': '排料数据为空（请先上传母版 commit）'}
+
+    # prefix 校验：与 WS start 同一检查点（g 码格式 / 存在于母版 / front≠back /
+    # ≥1 个 2+2 资格码，sizes = 用户所排尺码过滤）
+    sizes = payload.get('sizes')
+    try:
+        prefix_cfg = _parse_prefix(payload.get('prefix'), pieces,
+                                   payload.get('quantities'), sizes)
+    except ValueError as e:
+        return {'ok': False, 'error': str(e)}
+    if prefix_cfg is None:
+        return {'ok': False, 'error': 'prefix 未开启或缺前/后幅 g 码'}
+    front = prefix_cfg['front']
+    back = prefix_cfg['back']
+
+    # gate_mm：优先求解口径（前端 parseGate），缺省/非法回退 intermediate（band-preview 同法）
+    gate = float(payload.get('gate_mm') or 0.0) or float(state.get('gate_mm') or 0.0)
+
+    try:
+        seed = int(payload.get('seed') or 0)
+        elig = eligible_sizes(payload.get('quantities'), front, back,
+                              sizes=sizes or None)
+        size = pick_prefix_size(elig, seed=seed, front=front, back=back)
+        pdef = {'d_ext': 0.0, 'd_int': 0.0, 'tol_ext': 0.0, 'tol_int': 0.0}
+        pdef.update(payload.get('params') or {})
+        d_front, _tf = _resolve_d_tol(front, pdef, payload.get('per_type'))
+        d_back, _tb = _resolve_d_tol(back, pdef, payload.get('per_type'))
+        pid_meta, _area, _n = build_pid_meta(
+            pieces,
+            sizes=sizes,
+            per_type=payload.get('per_type'),
+            quantities=payload.get('quantities'),
+            params=payload.get('params'))
+        chunk, _gaps, _holes = build_prefix_plan(
+            pid_meta, state.get('pieces_by_id') or {},
+            front_pid=f'{front}_{size}', back_pid=f'{back}_{size}',
+            d_g=max(d_front, d_back),
+            gate_nest=min(gate, PLOT_SAFE_MAX_Y_MM) if gate > 0 else NEST_GATE_MM)
+    except (PrefixError, ValueError) as e:
+        return {'ok': False, 'error': f'前缀构造失败: {e}'}
+
+    pieces_by_id = state.get('pieces_by_id') or {}
+    ox, oy = chunk.offset
+    members = []
+    for m in chunk.members:
+        meta = pid_meta[m['pid']]
+        # 原始轮廓@组合片位 − offset（与 chunk.polygon 同一归一系；原始轮廓缺席时
+        # 回退 erode 后轮廓 —— 与 build_prefix_plan 的 union 口径一致）
+        orig = pieces_by_id.get(m['pid'], {}).get('polygon') or meta['polygon']
+        placed = _transform_polygon(orig, m['rotation'], m['translation'])
+        members.append({
+            'pid': m['pid'],
+            'size': meta['size'],
+            'color': meta['color'],
+            'tag': str(meta.get('label') or m['pid'].split('_')[0]),  # 前/后幅区分标注
+            'polygon': [[round(x - ox, 2), round(y - oy, 2)] for x, y in placed],
+        })
+
+    return {
+        'ok': True,
+        'front': front,
+        'back': back,
+        'size': int(size),
+        'fill_pct': round(float(chunk.fill_pct), 2),
+        'bbox': {'width_mm': round(float(chunk.bbox['width_mm']), 1),
+                 'height_mm': round(float(chunk.bbox['height_mm']), 1)},
+        'n_members': chunk.n_members,
+        'members': members,
+        'outline': [[round(x, 2), round(y, 2)] for x, y in chunk.polygon],
+    }
+
+
 @router.post('/export')
 async def export(req: Request):
     """导出最优排料方案：前端 POST 最优 run 的最终帧 placed_items → 出 PNG / R12-DXF。

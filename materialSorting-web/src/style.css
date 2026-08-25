@@ -823,13 +823,16 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
   font-size: 11px;
   line-height: 1.5;
 }
-/* prefix 前幅/后幅缩略图（80×80 + 徽章，band 下拉同模式）：rep 缺席时置灰降级 */
-.per-type-band-thumb:disabled {
-  opacity: 0.5;
-  cursor: default;
+/* 前缀组合形态预览缩略（2026-08-25 替换前/后幅两张单片 80×80 缩略）：4 片竖排
+   簇 → 高缩略 96×120（preserveAspectRatio meet 自动 letterbox，不拉伸） */
+.per-type-band-thumb--prefix svg {
+  width: 96px;
+  height: 120px;
 }
-.per-type-band-thumb:disabled:hover {
-  border-color: #3a3d45;
+/* prefix 预览 loading 占位（与缩略同尺寸骨架，避免布局跳动；120 svg + 徽章 ≈136） */
+.per-type-band-thumb-empty--prefix {
+  width: 96px;
+  height: 136px;
 }
 
 /* 成带放大层（band-zoom）：z-index 1300（叠在 ptype-preview 1200 之上，第三层 modal） */

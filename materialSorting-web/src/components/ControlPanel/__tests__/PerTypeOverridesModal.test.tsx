@@ -42,7 +42,7 @@ import { PtypePreviewModal } from '../PtypePreviewModal';
 import { useControlPanelStore } from '../../../store/controlPanelStore';
 import { useQtyStore } from '../../../store/qtyStore';
 import { useUploadStore } from '../../../store/uploadStore';
-import type { BandPreviewResponse } from '../../../types/band';
+import type { BandPreviewResponse, PrefixPreviewResponse } from '../../../types/band';
 import type { ParsedDoc, ParsedPiece } from '../../../types/parsed';
 import type { PtypesResponse } from '../../../types/ptype';
 import type { PerTypeFormValue } from '../../../lib/params';
@@ -122,6 +122,31 @@ const BAND_OK: BandPreviewResponse = {
 /** 当前 mock 返回的成带预览数据（按 URL 路由分发，见 beforeEach）。 */
 let mockBandPreview: BandPreviewResponse = BAND_OK;
 
+/** 前缀组合预览 ok 响应（4 成员同码竖排：g02×2 + g03×2 + 组合片轮廓，矩形合成）。 */
+const PREFIX_OK: PrefixPreviewResponse = {
+  ok: true,
+  front: 'g02',
+  back: 'g03',
+  size: 28,
+  fill_pct: 83.3,
+  bbox: { width_mm: 320, height_mm: 1360 },
+  n_members: 4,
+  members: [
+    { pid: 'g02_28', size: 28, color: '#1f77b4', tag: 'g02',
+      polygon: [[0, 0], [300, 0], [300, 350], [0, 350]] },
+    { pid: 'g03_28', size: 28, color: '#1f77b4', tag: 'g03',
+      polygon: [[0, 350], [320, 350], [320, 680], [0, 680]] },
+    { pid: 'g02_28', size: 28, color: '#1f77b4', tag: 'g02',
+      polygon: [[0, 680], [300, 680], [300, 1030], [0, 1030]] },
+    { pid: 'g03_28', size: 28, color: '#1f77b4', tag: 'g03',
+      polygon: [[0, 1030], [320, 1030], [320, 1360], [0, 1360]] },
+  ],
+  outline: [[0, 0], [320, 0], [320, 1360], [0, 1360]],
+};
+
+/** 当前 mock 返回的前缀预览数据（按 URL 路由分发，见 beforeEach）。 */
+let mockPrefixPreview: PrefixPreviewResponse = PREFIX_OK;
+
 beforeEach(() => {
   useControlPanelStore.getState().closeModal();
   useControlPanelStore.getState().closePreviewLabel();
@@ -134,12 +159,18 @@ beforeEach(() => {
   root = createRoot(container);
   mockReps = { representatives: {} };
   mockBandPreview = BAND_OK;
+  mockPrefixPreview = PREFIX_OK;
   // 用 mockImplementation 每次 fetch 创建新 Response（StrictMode 双 mount 会调 2 次 fetch；
   // mockResolvedValue 共享同一 Response 会被首次 .json() 消费完，第二次报 body 已读）。
-  // 2026-08-24 起按 URL 路由分发：/api/band-preview（成带预览 POST）↔ 其余（/api/ptypes）。
+  // 2026-08-24 起按 URL 路由分发：/api/band-preview（成带预览 POST）↔
+  // /api/prefix-preview（前缀组合预览 POST，2026-08-25）↔ 其余（/api/ptypes）。
   fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation((input: unknown) => {
     const url = typeof input === 'string' ? input : String((input as Request)?.url ?? input);
-    const body = url.includes('/api/band-preview') ? mockBandPreview : mockReps;
+    const body = url.includes('/api/band-preview')
+      ? mockBandPreview
+      : url.includes('/api/prefix-preview')
+        ? mockPrefixPreview
+        : mockReps;
     return Promise.resolve(
       new Response(JSON.stringify(body), {
         status: 200,
@@ -821,8 +852,9 @@ describe('PerTypeOverridesModal 布局设置分区', () => {
 });
 
 // ---------------------------------------------------------------- US-004 prefix
-// 「布局设置」第二行：起始端成套前后幅（勾选 + 前幅/后幅下拉 + 缩略图徽章 +
-// 默认预选面积最大两片 + 2+2 资格码本地预检警示 + draft/confirm 语义）。
+// 「布局设置」第二行：起始端成套前后幅（勾选 + 前幅/后幅下拉 + 2026-08-25 起
+// 组合形态预览缩略（POST /api/prefix-preview，替换两张单片原始缩略）+ 默认预选
+// 面积最大两片 + 2+2 资格码本地预检警示 + draft/confirm 语义）。
 describe('PerTypeOverridesModal 布局设置 prefix 分区 (US-004)', () => {
   /** 3 个 g 码代表裁片（front/back 下拉值域 + 缩略图数据源）。 */
   const THREE_REPS: PtypesResponse = {
@@ -962,39 +994,87 @@ describe('PerTypeOverridesModal 布局设置 prefix 分区 (US-004)', () => {
     expect(front.value).toBe('');
   });
 
-  it('选中 g 码 → 80×80 缩略图 + g 码徽章（reps 数据源）；点击 openPreviewLabel 放大', async () => {
+  it('选完前/后幅 → 组合形态预览缩略（POST /api/prefix-preview payload 同源）+ 徽章，点击开 prefix-zoom（第三层）', async () => {
     mockReps = THREE_REPS;
     useControlPanelStore.getState().openModal('per_type');
     renderModal();
     await flushFetch();
-    // 未选 → 无缩略图
+    // 未选 → 无缩略图/预览（单片原始缩略已随 renderPrefixThumb 删除）
     expect(document.body.querySelector('[data-testid^="prefix-thumb-"]')).toBeNull();
     enablePrefix('g02', 'g03');
-    const frontThumb = document.body.querySelector<HTMLButtonElement>('[data-testid="prefix-thumb-g02"]')!;
-    const backThumb = document.body.querySelector<HTMLButtonElement>('[data-testid="prefix-thumb-g03"]')!;
-    expect(frontThumb).not.toBeNull();
-    expect(backThumb).not.toBeNull();
-    // PiecePreviewSVG compact 渲染 + g 码徽章（QtyMatrix 列头同款）
-    expect(frontThumb.querySelector('svg.piece-preview-svg')).not.toBeNull();
-    expect(frontThumb.querySelector('.qty-label-badge')!.textContent).toBe('g02');
-    expect(frontThumb.title).toBe('g02-放大预览');
-    // 点击 → previewLabel 置位（第二层 ptype-preview 放大，表头缩略图同款）
-    act(() => frontThumb.click());
-    expect(useControlPanelStore.getState().previewLabel).toBe('g02');
+    // loading 占位先渲染（POST 发出）
+    expect(document.body.querySelector('[data-testid="prefix-thumb-loading"]')).not.toBeNull();
+    await flushFetch();
+    const thumb = document.body.querySelector<HTMLButtonElement>('[data-testid="prefix-thumb-g02+g03"]')!;
+    expect(thumb).not.toBeNull();
+    // 2026-08-25：组合形态预览（BandPreviewSVG 4 成员竖排）替换两张单片 PiecePreviewSVG
+    expect(thumb.querySelector('svg.band-preview-svg')).not.toBeNull();
+    expect(thumb.querySelectorAll('[data-role="band-member"]')).toHaveLength(4);
+    expect(thumb.querySelector('.qty-label-badge')!.textContent).toBe('g02+g03');
+    expect(thumb.title).toBe('g02+g03-前缀组合预览放大');
+    // POST payload 与 WS StartPayload 同源字段（prefix/sizes/gate_mm）
+    const call = fetchSpy!.mock.calls.find((c) => String(c[0]).includes('/api/prefix-preview'))!;
+    const init = call[1] as RequestInit;
+    expect(init.method).toBe('POST');
+    const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+    expect(body.prefix).toEqual({ enabled: true, front: 'g02', back: 'g03' });
+    expect(body.sizes).toEqual([28, 29]);
+    expect(body.gate_mm).toBe(1980);
+    // 点击 → prefix-zoom 第三层放大（previewLabel 不动，底层高级配置保留）
+    act(() => thumb.click());
+    expect(document.body.querySelector('[data-testid="prefix-zoom-overlay"]')).not.toBeNull();
+    expect(useControlPanelStore.getState().previewLabel).toBeNull();
+    expect(useControlPanelStore.getState().modal).toBe('per_type');   // 底层保留
+    // 放大层统计行（填充率 / 宽×高 / 片数 / 码）+ 成员 g 码标注（tag，前/后幅区分）
+    const zoomBody = document.body.querySelector('.band-zoom-body')!;
+    const labels = zoomBody.querySelectorAll('[data-role="band-size-label"]');
+    expect(labels).toHaveLength(4);
+    expect(Array.from(labels).map((l) => l.textContent).sort())
+      .toEqual(['g02', 'g02', 'g03', 'g03']);
+    const stats = document.body.querySelector('.band-zoom-stats')!.textContent;
+    expect(stats).toContain('83.3');
+    expect(stats).toContain('码 28');
+    // ✕ 关闭放大层，底层高级配置保留
+    act(() =>
+      (document.body.querySelector('[data-testid="prefix-zoom-close"]') as HTMLButtonElement).click(),
+    );
+    expect(document.body.querySelector('[data-testid="prefix-zoom-overlay"]')).toBeNull();
+    expect(useControlPanelStore.getState().modal).toBe('per_type');
+    // 重开 → ESC 只关放大层（第三层独立，不级联关闭底层高级配置）
+    act(() => thumb.click());
+    expect(document.body.querySelector('[data-testid="prefix-zoom-overlay"]')).not.toBeNull();
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    });
+    expect(document.body.querySelector('[data-testid="prefix-zoom-overlay"]')).toBeNull();
+    expect(useControlPanelStore.getState().modal).toBe('per_type');
   });
 
-  it('fetch 失败（reps 空）→ 缩略图降级占位字符且 disabled，下拉仍可选（不阻塞）', async () => {
-    fetchSpy!.mockImplementation((_input: unknown) => Promise.reject(new Error('network')));
+  it('前缀预览失败 → 可读错误文案（构造失败前置到选码时刻），下拉仍可选（不阻塞）', async () => {
+    mockPrefixPreview = {
+      ok: false,
+      error: '前缀构造失败: 无 2+2 资格码（front=g02, back=g03）',
+    };
     useControlPanelStore.getState().openModal('per_type');
+    // values 带 g02/g03 键保证下拉 option 在场（fetch 失败降级路径）
     renderModal({ g02: { d: '0', tol: '0' }, g03: { d: '0', tol: '0' } });
     await flushFetch();
     enablePrefix('g02', 'g03');
-    const thumb = document.body.querySelector<HTMLButtonElement>('[data-testid="prefix-thumb-g02"]')!;
-    expect(thumb.disabled).toBe(true);
-    expect(thumb.querySelector('.ptype-thumb-placeholder')).not.toBeNull();
+    await flushFetch();
+    const err = document.body.querySelector<HTMLElement>('[data-testid="prefix-thumb-error"]')!;
+    expect(err).not.toBeNull();
+    expect(err.textContent).toContain('前缀构造失败');
+    expect(document.body.querySelector('[data-testid="prefix-thumb-g02+g03"]')).toBeNull();
+    // fetch reject（网络错误）同走 catch 分支（切换任一下拉重触发 POST）
+    fetchSpy!.mockImplementation((_input: unknown) => Promise.reject(new Error('network')));
+    selectPrefix('g03', 'g02');
+    await flushFetch();
+    expect(document.body.querySelector('[data-testid="prefix-thumb-error"]')!.textContent)
+      .toContain('前缀预览不可用');
+    // 错误不阻塞配置：下拉仍可选且值正确
     const front = document.body.querySelector<HTMLSelectElement>('[data-testid="prefix-front-select"]')!;
     expect(front.disabled).toBe(false);
-    expect(front.value).toBe('g02');
+    expect(front.value).toBe('g03');
   });
 
   it('front==back → 警示「前幅与后幅须为不同 g 码」', () => {

@@ -19,12 +19,15 @@
 //   - 未勾选时下拉 disabled；确定/遮罩/ESC/✕ 写回 form.band_*（2026-08-22 起
 //     关闭即保存，见下），「取消」丢弃 band 草稿（与 per_type 同一约定）；
 //   - US-004 第二行「起始端成套前后幅」：勾选 + 前幅/后幅两 g 码下拉（band 下拉
-//     同模式 + 80×80 缩略图 + g 码徽章，点击 openPreviewLabel 放大）；勾选且两码
-//     均空时**默认预选 parse doc 面积最大两片**（决策⑤，5336 = g02/g03，用户可改；
-//     defaultPrefixLabels shoelace 口径）；说明文案「满足 2+2 的尺码将自动选取」
-//     （资格码后端 seeded 随机选取、不出 UI —— 决策②）；无任何资格码时警示
-//     「当前数量无 2+2 资格码」（prefixEligibleSizes 与后端 _parse_prefix 同口径
-//     本地预检，不阻塞 band 使用，权威拦截在后端）；front==back 时同位警示。
+//     同模式）；2026-08-25 起两下拉后的展示与 band 行同款换成**组合形态预览**
+//     （POST /api/prefix-preview：前×2 + 后×2 同码 interleave 竖排贴靠 = 求解时
+//     PS_ 组合片的精确形态）—— 原「两码各一张 80×80 原始裁片缩略」与下方裁片
+//     设置表格同源同图，纯冗余已删；勾选且两码均空时**默认预选 parse doc 面积
+//     最大两片**（决策⑤，5336 = g02/g03，用户可改；defaultPrefixLabels shoelace
+//     口径）；说明文案「满足 2+2 的尺码将自动选取」（资格码后端 seeded 随机选取、
+//     不出 UI —— 决策②）；无任何资格码时警示「当前数量无 2+2 资格码」
+//     （prefixEligibleSizes 与后端 _parse_prefix 同口径本地预检，不阻塞 band
+//     使用，权威拦截在后端）；front==back 时同位警示。
 //     确定写回 form.prefix_*，与 band 草稿同一 saveAndClose 通道。
 //
 // 声明式受控 Portal（参考 PieceZoomModal）：
@@ -82,7 +85,12 @@ import {
 import { useControlPanelStore } from '../../store/controlPanelStore';
 import { useQtyStore } from '../../store/qtyStore';
 import { useUploadStore } from '../../store/uploadStore';
-import type { BandPreviewPayload, BandPreviewResponse } from '../../types/band';
+import type {
+  BandPreviewPayload,
+  BandPreviewResponse,
+  PrefixPreviewPayload,
+  PrefixPreviewResponse,
+} from '../../types/band';
 import type { ParsedPiece } from '../../types/parsed';
 import type { PtypeRepresentative, PtypesResponse } from '../../types/ptype';
 import { BandPreviewSVG } from './BandPreviewSVG';
@@ -254,6 +262,15 @@ function PerTypeOverridesModalInner({
   // 叠序：per_type(1100) < ptype-preview(1200) < band-zoom(1300)，三者互斥打开）。
   const [bandZoomOpen, setBandZoomOpen] = useState<boolean>(false);
 
+  // 前缀组合形态预览（2026-08-25，band 预览同款）：front/back 变化（含 mount）时
+  // POST /api/prefix-preview。三态同 band（loading / ok / error 文案）；两码缺一
+  // 或相同（本地已另有警示）→ 清空不发。quantities/sizes/draft 取 fetch 时刻
+  // 快照（同 band 口径，d/tol 编辑不触发重取）。
+  const [prefixPreview, setPrefixPreview] = useState<PrefixPreviewResponse | null>(null);
+  const [prefixPreviewLoading, setPrefixPreviewLoading] = useState<boolean>(false);
+  // 前缀放大层（与 band-zoom 同层互斥 —— 打开一个关另一个，单顶层约定）。
+  const [prefixZoomOpen, setPrefixZoomOpen] = useState<boolean>(false);
+
   useEffect(() => {
     if (bandLabel === '') {
       setBandPreview(null);
@@ -294,20 +311,62 @@ function PerTypeOverridesModalInner({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bandLabel]);
 
-  // 成带放大层 ESC（独立于 per_type / previewLabel 两层）：本层打开时消费 ESC 并
-  // stopImmediatePropagation（顶层消费信号，与 PtypePreviewModal 同款双守卫的另一半 ——
-  // 底层 listener 另有 bandZoomOpen 闭包早退，两道防线不依赖注册顺序）。
+  // 前缀组合形态预览（band 预览同款三态；两码缺一/相同 → 清空不发）。
   useEffect(() => {
-    if (!bandZoomOpen) return;
+    setPrefixZoomOpen(false);
+    if (prefixFront === '' || prefixBack === '' || prefixFront === prefixBack) {
+      setPrefixPreview(null);
+      setPrefixPreviewLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setPrefixPreviewLoading(true);
+    const payload: PrefixPreviewPayload = {
+      prefix: { enabled: true, front: prefixFront, back: prefixBack },
+      sizes,
+      quantities: serializeQuantities(useQtyStore.getState().quantities, sizes),
+      per_type: collectPerType(draft),
+      gate_mm: gateMm,
+    };
+    fetch('/api/prefix-preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+      .then((r) => r.json() as Promise<PrefixPreviewResponse>)
+      .then((data) => {
+        if (cancelled) return;
+        setPrefixPreview(data);
+        setPrefixPreviewLoading(false);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setPrefixPreview({ ok: false, error: '前缀预览不可用（网络错误）' });
+        setPrefixPreviewLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+    // 仅 front/back 触发重取（band 同款快照口径 + eslint omit）。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefixFront, prefixBack]);
+
+  // 放大层 ESC（band-zoom / prefix-zoom 共用，独立于 per_type / previewLabel 两层）：
+  // 本层打开时消费 ESC 并 stopImmediatePropagation（顶层消费信号，与
+  // PtypePreviewModal 同款双守卫的另一半 —— 底层 listener 另有 zoom 闭包早退，
+  // 两道防线不依赖注册顺序）。两放大层互斥打开（打开一个关另一个），双关无歧义。
+  useEffect(() => {
+    if (!bandZoomOpen && !prefixZoomOpen) return;
     function onZoomKey(e: KeyboardEvent): void {
       if (e.key !== 'Escape') return;
       e.preventDefault();
       e.stopImmediatePropagation();
       setBandZoomOpen(false);
+      setPrefixZoomOpen(false);
     }
     window.addEventListener('keydown', onZoomKey);
     return () => window.removeEventListener('keydown', onZoomKey);
-  }, [bandZoomOpen]);
+  }, [bandZoomOpen, prefixZoomOpen]);
 
   // 缩略图数据：mount 时 fetch GET /api/ptypes（键 = g 码）；loading / error 三态。
   // fetch 失败降级为 {} → 列集退回 values 已配置键（不阻塞重合/旋转配置，AC#4）。
@@ -394,18 +453,18 @@ function PerTypeOverridesModalInner({
   }
 
   // ESC 监听（AC#10）：previewLabel !== null 时由 PtypePreviewModal 处理 ESC、
-  // bandZoomOpen 时由成带放大层处理（三层独立）。本 listener 仅在两层放大均关闭时
-  // 保存并关 modal，避免多层同时关闭。
+  // bandZoomOpen / prefixZoomOpen 时由放大层处理（三层独立）。本 listener 仅在
+  // 两层放大均关闭时保存并关 modal，避免多层同时关闭。
   // 双守卫防监听顺序翻转（本组件重渲染会把 listener 挪到注册队尾，放大层的
-  // listener 可能先执行）：① 顺序在放大层前 → bandZoomOpen/previewLabel 仍在场，
+  // listener 可能先执行）：① 顺序在放大层前 → zoom/previewLabel 仍在场，
   // 早退；② 顺序在放大层后 → 放大层 listener 已 stopImmediatePropagation（顶层
   // 消费信号），本 listener 不再收到；defaultPrevented 早退为兜底。
-  // （listener 每次渲染重注册无 deps —— bandZoomOpen 闭包恒为最新值。）
+  // （listener 每次渲染重注册无 deps —— zoom 闭包恒为最新值。）
   useEffect(() => {
     function onKey(e: KeyboardEvent): void {
       if (e.key !== 'Escape') return;
       // 多层 modal：放大层打开时 ESC 只关放大层，不关底层高级配置（AC#10 关键约定）
-      if (bandZoomOpen) return;
+      if (bandZoomOpen || prefixZoomOpen) return;
       if (useControlPanelStore.getState().previewLabel !== null) return;
       if (e.defaultPrevented) return;
       e.preventDefault();
@@ -459,34 +518,10 @@ function PerTypeOverridesModalInner({
   }
 
   function handleZoomOverlayMouseDown(e: React.MouseEvent): void {
-    if (e.target === e.currentTarget) setBandZoomOpen(false);
-  }
-
-  /** US-004 前幅/后幅选中 g 码缩略图（80×80 + 徽章，band 下拉同模式；rep 缺席
-   * （fetch 失败）降级占位字符，点击 openPreviewLabel 放大 —— 表头缩略图同款）。 */
-  function renderPrefixThumb(label: string): JSX.Element | null {
-    if (label === '') return null;
-    const rep = representatives[label];
-    return (
-      <button
-        type="button"
-        className="per-type-band-thumb"
-        onClick={() => handleThumbClick(label)}
-        aria-label={`${label}-放大预览`}
-        title={`${label}-放大预览`}
-        data-testid={`prefix-thumb-${label}`}
-        disabled={!rep}
-      >
-        {rep ? (
-          <PiecePreviewSVG piece={repToPiece(rep)} compact />
-        ) : (
-          <span className="ptype-thumb-placeholder" aria-hidden="true">
-            {loadingReps ? '…' : label.slice(0, 1)}
-          </span>
-        )}
-        <span className="qty-label-badge">{label}</span>
-      </button>
-    );
+    if (e.target === e.currentTarget) {
+      setBandZoomOpen(false);
+      setPrefixZoomOpen(false);
+    }
   }
 
   function handleZoomModalMouseDown(e: React.MouseEvent): void {
@@ -569,7 +604,10 @@ function PerTypeOverridesModalInner({
               <button
                 type="button"
                 className="per-type-band-thumb per-type-band-thumb--band"
-                onClick={() => setBandZoomOpen(true)}
+                onClick={() => {
+                  setPrefixZoomOpen(false);
+                  setBandZoomOpen(true);
+                }}
                 aria-label={`${bandLabel}-成带预览放大`}
                 title={`${bandLabel}-成带预览放大`}
                 data-testid={`band-thumb-${bandLabel}`}
@@ -593,8 +631,11 @@ function PerTypeOverridesModalInner({
           </div>
 
           {/* US-004「起始端成套前后幅」第二行：band 两键之后追加（band 下拉同模式：
-              勾选 + 前幅/后幅两下拉 + 80×80 缩略图徽章）。勾上且两码均空时默认预选
-              parse doc 面积最大两片（handlePrefixToggle）；未勾选两下拉 disabled。
+              勾选 + 前幅/后幅两下拉）。2026-08-25 起两下拉后不再挂单片原始缩略
+              （与裁片设置表格同源同图，纯冗余），改挂**组合形态预览**（POST
+              /api/prefix-preview，求解时 PS_ 组合片精确形态，band 预览同款三态 +
+              点击开 prefix-zoom 放大层）。勾上且两码均空时默认预选 parse doc 面积
+              最大两片（handlePrefixToggle）；未勾选两下拉 disabled。
               说明文案「满足 2+2 的尺码将自动选取」（资格码后端 seeded 随机，决策②）。 */}
           <div className="per-type-band-row" data-testid="per-type-prefix-row">
             <label className="per-type-band-check">
@@ -624,7 +665,6 @@ function PerTypeOverridesModalInner({
                 ))}
               </select>
             </div>
-            {renderPrefixThumb(prefixFront)}
             <div className="per-type-band-select-wrap">
               <span className="per-type-band-subhead">后幅</span>
               <select
@@ -643,7 +683,45 @@ function PerTypeOverridesModalInner({
                 ))}
               </select>
             </div>
-            {renderPrefixThumb(prefixBack)}
+            {/* 组合形态预览（2026-08-25 替换前/后幅两张单片缩略 —— band 预览同款
+                三态：loading 占位 / ok → BandPreviewSVG 组合形态（点击开 prefix-zoom
+                放大层）/ error → 可读错误文案（构造失败前置到选码时刻）。竖排簇 →
+                高缩略（.per-type-band-thumb--prefix）。两码缺一/相同时不渲染。 */}
+            {prefixFront !== '' && prefixBack !== '' && prefixFront !== prefixBack && prefixPreviewLoading ? (
+              <div
+                className="per-type-band-thumb per-type-band-thumb-empty per-type-band-thumb-empty--prefix"
+                data-testid="prefix-thumb-loading"
+              >
+                组合预览…
+              </div>
+            ) : prefixFront !== '' && prefixBack !== '' && prefixFront !== prefixBack && prefixPreview?.ok ? (
+              <button
+                type="button"
+                className="per-type-band-thumb per-type-band-thumb--prefix"
+                onClick={() => {
+                  setBandZoomOpen(false);
+                  setPrefixZoomOpen(true);
+                }}
+                aria-label={`${prefixFront}+${prefixBack}-前缀组合预览放大`}
+                title={`${prefixFront}+${prefixBack}-前缀组合预览放大`}
+                data-testid={`prefix-thumb-${prefixFront}+${prefixBack}`}
+              >
+                <BandPreviewSVG
+                  members={prefixPreview.members ?? []}
+                  outline={prefixPreview.outline ?? null}
+                  pad={8}
+                />
+                <span className="qty-label-badge">{prefixFront}+{prefixBack}</span>
+              </button>
+            ) : prefixFront !== '' && prefixBack !== '' && prefixFront !== prefixBack ? (
+              <div
+                className="per-type-band-error"
+                data-testid="prefix-thumb-error"
+                title={prefixPreview?.error ?? ''}
+              >
+                {prefixPreview?.error ?? '前缀预览不可用'}
+              </div>
+            ) : null}
           </div>
           <div className="per-type-prefix-note" data-testid="per-type-prefix-note">
             满足 2+2 的尺码将自动选取（该码前幅 ×2 + 后幅 ×2 竖排贴靠布头第一列）
@@ -833,6 +911,61 @@ function PerTypeOverridesModalInner({
                 <div className="band-zoom-hint dim small">
                   预览 = 求解时带的精确形态（链内贴触 · 码序降序 · 开口朝左 · 最大码在最右）；
                   虚线 = 组合片外轮廓（主解看到的形状）。
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
+      {/* 前缀组合放大层（与 band-zoom 同层 1300、互斥打开；打开条件 =
+          prefixZoomOpen 且预览数据 ok —— error 态无放大可开）。 */}
+      {prefixZoomOpen && prefixPreview?.ok
+        ? createPortal(
+            <div
+              className="band-zoom-overlay"
+              onMouseDown={handleZoomOverlayMouseDown}
+              data-testid="prefix-zoom-overlay"
+            >
+              <div
+                className="band-zoom-modal"
+                role="dialog"
+                aria-modal="true"
+                aria-label={`${prefixFront}+${prefixBack}-前缀组合预览放大`}
+                onMouseDown={handleZoomModalMouseDown}
+              >
+                <button
+                  type="button"
+                  className="ptype-preview-close"
+                  aria-label="关闭"
+                  onClick={() => setPrefixZoomOpen(false)}
+                  data-testid="prefix-zoom-close"
+                >
+                  ✕
+                </button>
+                <div
+                  className="band-zoom-head"
+                  title={`${prefixFront}+${prefixBack}-前缀组合预览放大`}
+                >
+                  <span className="piece-card-label">{prefixFront}+{prefixBack}</span>
+                  <span className="band-zoom-stats dim small">
+                    填充率 {prefixPreview.fill_pct ?? '—'}% ·{' '}
+                    {prefixPreview.bbox?.width_mm ?? '—'}×
+                    {prefixPreview.bbox?.height_mm ?? '—'} mm ·{' '}
+                    {prefixPreview.n_members ?? '—'} 片 · 码 {prefixPreview.size ?? '—'}
+                  </span>
+                </div>
+                <div className="band-zoom-body">
+                  <BandPreviewSVG
+                    members={prefixPreview.members ?? []}
+                    outline={prefixPreview.outline ?? null}
+                    showLabels
+                    pad={20}
+                  />
+                </div>
+                <div className="band-zoom-hint dim small">
+                  预览 = 求解时前缀组合片的精确形态（4 片同码 interleave 竖排贴靠 ·
+                  头尾相对 180°；标注 = 成员 g 码）；虚线 = 组合片外轮廓（主解看到
+                  的形状）。尺码自 2+2 资格码自动选取（seed=0，与求解一致）。
                 </div>
               </div>
             </div>,

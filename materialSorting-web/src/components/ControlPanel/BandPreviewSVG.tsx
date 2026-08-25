@@ -153,8 +153,10 @@ export function BandPreviewSVG({
       flip.appendChild(env);
     }
 
-    // 4) 尺码标注（屏幕坐标，翻转组外避免镜像；锚点 = 成员 bbox 中心，
-    //    翻转后屏幕 Y = (minY+maxY) − 世界 Y）。字号随带高自适应（mm 用户单位）。
+    // 4) 成员标注（屏幕坐标，翻转组外避免镜像；锚点 = 成员 bbox 中心，翻转后
+    //    屏幕 Y = (minY+maxY) − 世界 Y）。字号随带高自适应（mm 用户单位）。
+    //    文本 = tag ?? 尺码（band 预览标尺码；prefix 预览 4 成员同码，tag =
+    //    成员 g 码区分前/后幅）。
     if (showLabels) {
       const bandH = Math.max(bb.maxY - bb.minY, 1);
       const fontSize = Math.min(Math.max(bandH * 0.12, 8), 60);
@@ -180,7 +182,7 @@ export function BandPreviewSVG({
         text.setAttribute('text-anchor', 'middle');
         text.setAttribute('dominant-baseline', 'middle');
         text.setAttribute('data-role', 'band-size-label');
-        text.textContent = String(m.size);
+        text.textContent = m.tag ?? String(m.size);
         svg.appendChild(text);
       }
     }
