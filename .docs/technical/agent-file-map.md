@@ -33,7 +33,8 @@ materialSorting-server/
     │   ├── sparrow_baseline.py        基线求解 + ★共享层（被 experiments/export/solver 复用）
     │   ├── sparrow_experiments.py     旋转/重合公差实验
     │   ├── labeling.py                g01+ 编号单一真相源（assign_codes；parse/commit 两管线共用）
-    │   └── waist_band.py              US-009 腰头成带核心（build_band_plan/expand_placements/BandChunk；v2 2026-08-21 构造性链构造（US-014 成对重试已删）；fill<45% 唯一守门人 —— US-015 填料混带 2026-08-22 已删；禁 import web；waist_band_gate.py 同期删除）
+    │   ├── waist_band.py              US-009 腰头成带核心（build_band_plan/expand_placements/BandChunk；v2 2026-08-21 构造性链构造（US-014 成对重试已删）；fill<45% 唯一守门人 —— US-015 填料混带 2026-08-22 已删；禁 import web；waist_band_gate.py 同期删除）
+    │   └── prefix.py                  US-001 起始端成套前后幅核心构造（eligible_sizes 2+2 资格码 / pick_prefix_size seeded 随机 / build_prefix_plan 4 片竖排贴靠 PS_* 组合片（BandChunk 同构，直接喂 expand_placements）；interleave 定稿 0 封闭腔；rot180 负坐标记账 tr=(xoff−b0,yoff−b1) 单测锁死；`python -m` 冒烟对拍 P0；禁 import web/cli，AST 守卫在 tests/test_prefix.py）
     ├── web/                           FastAPI + WS 工作台（详见 agent-api-reference.md）
         ├── server.py                  app + 路由编排（GET /、/static、POST /export、POST /api/parse-dxf、POST /api/commit-to-nesting、GET /api/ptypes、WS /ws/solve）+ US-020 _PIECES_STATE 可 reload（threading.Lock immutable snapshot）+ US-004 上传解析 + US-010 commit-to-intermediate（commit 后 reload）+ US-022 intermediate 加 label + WS quantities 入参；2026-08-20 拆分后 329 行 = app 创建/静态 mount + 两个上传路由（_commit_to_nesting_sync 留守：测试 monkeypatch server 命名空间）+ include routes_views/routes_ws/strategy（routes_band 2026-08-22 已删）；state 与线程池在 runtime.py、re-export 全部拆出符号
         ├── runtime.py                 共享运行时单例（2026-08-20 自 server.py 拆出）：_PIECES_STATE 快照机制（_state_lock/_build_pieces_state/_reload_pieces_state/_get_pieces_state）+ 启动期 reload + 共享 _executor（6 workers）；import 即副作用、先于 app 创建
@@ -326,6 +327,23 @@ parse-dxf 响应（`web/server.py._build_parse_payload`）与 intermediate（`we
 | `BandChunk` | dataclass | `pid/label/polygon(归一化 erode 后)/offset/members(逐副本带内位 size-major 序)/fill_pct/bbox/seed/d_g/tol_g` + `to_dict()`（纯几何 JSON，同 seed 两跑 `json.dumps` 相等 —— 不含 wall-clock） |
 | `band_seed_for` | `(seed, label) → int` | `zlib.crc32(f'{seed}\|{label}')` 派生（勿用 `hash()` —— PYTHONHASHSEED 随机化不可跨进程重放） |
 | `DegenerateBand` / `BandQualityError` | `BandError` 子类 | 退化（总副本 1 / 轮廓 <3 顶点）/ 质量不达标（fill 低 / 守恒失败 / 散落不成块） |
+
+### `prefix.py` — US-001 起始端成套前后幅核心构造（资格码 + PS 组合片）
+
+依据 `business/起始端成套前后幅_版师确认清单.md` v3 + P0 探针 `out/tmp_probe/prefix_lib.py` 移植收敛（PRD `tasks/prd-prefix-head-set.md`）。机制：用户指认前/后幅 g 码（5336 = g02/g03），在 **2+2 资格码**（该码 front demand==2 且 back demand==2 —— 版师 P2「总量 2 片或 6 片的码不行」）中 seeded 随机取一（FR-4 不出 UI），4 片（前×2+后×2 同码）构造性竖排贴靠 —— interleave 交错序（前后前后，FR-10 定稿）+ 相邻片头尾相对 180° 交替 + Y 向 `_slide_touch_y` 贴触（粗扫+二分，无 RNG，确定性毫秒级）→ 原始轮廓 union → `_solid_region` 焊接 → `erode(d_g)`（d_g=max(d_front,d_back) 由调用方裁定）→ `_clean_polygon` → 归一化，产 `PS_*` 组合片（**BandChunk 同构，直接喂 `waist_band.expand_placements`**，offset 减号权威式；orientations=`PREFIX_ORIENTATIONS=(0.,180.)` FR-5 决策③）。P0 实测（5336 size34，冒烟 `python -m materialsorting.nesting_engine.prefix` 对拍）：bbox 1155×1458 / fill 83.3% / 贴触 0.00mm / 封闭腔 0（grouped 2 = spyrrow 死区 ⇒ interleave 定稿）。**rot180 负坐标框架坑**（单测锁死）：成员 rot180 后落负坐标区，须先归一原点再候选对齐+滑触，记账 `tr=(xoff−b0, yoff−b1)` —— 缺补偿会片侧移并排。段置换钉位守卫（组合片未锚定布头的兜底）在 US-002 `permute_pin`；web 编排接线（exclude_pids/stage/展开）在 US-003。**禁 import web/cli**（AST 守卫在 `tests/test_prefix.py`，镜像 test_waist_band 套路）。
+
+**模块级常量：** `PREFIX_PID_PREFIX='PS_'`（泄漏哨兵：manifest/frame/final/前端/导出永不允许）/ `PREFIX_ORIENTATIONS=(0.,180.)` / `PREFIX_ORDERS=('interleave','grouped')` / `PREFIX_MEMBER_COUNT=4` / `SLIDE_STEP_MM=20.0` + `BISECT_ITERS=40` + `GAP_EPS_MM=1.0`（贴触判据，镜像 CHAIN_GAP_EPS_MM）。
+
+| 函数 / 类 | 签名 | 说明 |
+|------|------|------|
+| `eligible_sizes` | `(quantities, front_label, back_label, sizes=None) → list[int]` | P2 资格规则逐码校验（两 g 码 demand 均 ==2；0/1/3/缺码不合格）；`sizes` 可选过滤（资格码必须真实进主解实例 —— 5336 quantities 含 37/39/40 demand 2+2 但 sizes 只排 [31..36,38] → {32,33,34,35,38}）；quantities=None/缺码 → 不合格（FR-9 结构化 error 而非静默关闭） |
+| `pick_prefix_size` | `(eligible, *, seed, front, back) → int` | 资格码 seeded 随机取一：`random.Random(zlib.crc32(f'{seed}\|{front}\|{back}'))` 派生（勿用全局 random/hash()），候选排序归一（输入序无关）；空集合 `PrefixError`（文案指路数量矩阵，US-003 复用） |
+| `build_prefix_plan` | `(pid_meta, pieces_by_id, *, front_pid, back_pid, d_g, gate_nest, order='interleave') → (chunk, gaps, holes)` | 4 片竖排贴靠组合片：chunk=BandChunk（pid `PS_{front}+{back}@{size}`）、gaps=相邻成员贴触缝隙（eroded 碰撞口径，版师验收）、holes=封闭腔数（interleave 0）；守卫：order 非法 ValueError、副本不齐 2+2/不同码/竖排高>min(gate_nest,1910)/贴触>1mm `PrefixError`；构造无 RNG，同输入两跑 `to_dict()` JSON 相等 |
+| `prefix_seed_for` | `(seed, front, back) → int` | `zlib.crc32(f'{seed}\|{front}\|{back}')` 派生（band_seed_for 同套路，跨进程可重放） |
+| `PrefixError` | Exception | 前缀构造失败基类（US-003 web 层捕获转结构化 error，band 同契约） |
+| `main` | `python -m materialsorting.nesting_engine.prefix` | 冒烟入口：默认 5336 真实数据（config `data/configs/5336_coded_really.json` + `--intermediate` 指向 commit 产物）打印资格码/seeded 选码/interleave+grouped 两变体直测数字（P0 对拍）；intermediate 缺失提示先 commit |
+
+> 包络断言口径（`tests/test_prefix.py`）：union(成员原轮廓@展开位) ⊆ composite@主解位 ⊕ d_g（容差 0.5mm）—— buffer 须 `join_style=mitre`：d_g=2（5336 前后幅 per_type d）时圆角 join 在 90° 凸角漏 d_g·(√2−1)≈0.83mm（erode⊕dilate=opening ⊂ 原形的数学性质，与单片 `erode_polygon` 同源、非组合片特有），mitre 保真实偏移曲线 ⇒ 断言严格成立（5336 真实数据两朝向实测通过）。
 
 ### `waist_band_gate.py` —（已删 2026-08-22）
 
