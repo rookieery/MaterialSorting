@@ -32,6 +32,7 @@ curl http://127.0.0.1:8000/api/ptypes                                  # US-020 
 | `export_png.py` | **2026-08-20 自 export.py 拆出**。`render_png`（matplotlib Agg）；模块级 `matplotlib.use('Agg')` + CJK rcParams 副作用原样保留 |
 | `export_dxf.py` | **2026-08-20 自 export.py 拆出**。`write_marker_dxf` + `_DXF_LAYER_*`；模块级 ezdxf 警告抑制副作用原样保留；R12 + POLYLINE 写法不动（ET2008 兼容） |
 | `export_plt.py` | **2026-08-20 自 export.py 拆出**。`write_marker_plt` / `_plt_frame_stats` / `_plt_pt` / `_plt_polyline` / `_clip_closed_y` / `_clip_open_y` / `_y_clip_point` + 全部 PLT 常量（2026-08 撞机修正注释块整段搬移）；import `nesting_bounds.load_pieces.PLOT_SAFE_MAX_Y_MM` |
+| `prefix_accept.py` | **US-005 新增**。A/B 验收闭环 CLI（US-014 band_accept.py 同模式）：`python -m materialsorting.web.prefix_accept [--quick/--seeds/--dual-seeds/--time/--report]`。臂编排 = on/off × seeds 主解 A/B + 双开（band_only/dual × dual_seeds，**不置换**只记录带位）+ 同 seed 重跑确定性 + on/off 导出验证；形态判据 `prefix_form`（4 成员识别走**副本守恒不变量**——final placed 中 pid ∈ {front,back}@size 只能来自 PS_ 展开 → 同码 2+2 / min_x≤6mm / 竖排贴触（相邻 y 交集>0 且缝≤1mm）/ rot 交替≈180° 四子判据）；确定性口径 `frame_signature/final_signature`（wall-clock 排除）+ `frame_series_equal`（核心 min(n)-1 帧相等 + 帧数差≤8 容差）+ `artifact_replay_equal`（prefix_runs 工件对拍排除 ts/stage_elapsed）；`export_verify`（PNG/R12-DXF/PLT 三件 + 「导出跳过：pid」warning 哨兵 + DXF bytes AC1009/POLYLINE + PS_ 字节泄漏双查）；报告默认 `out/config_runs/_probes/prefix_accept_report.json`（run_all 冒烟测试 `MS_OUT_DIR` 隔离）。**5336 真实数据结论详见 `.docs/business/起始端成套前后幅_AB验收报告_US005.md`** |
 
 ## US-004 /api/parse-dxf 关键约定（实现方/调用方必读）
 

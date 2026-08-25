@@ -5,7 +5,7 @@
       "id": "US-005",
       "title": "A/B 验收与形态判据闭环",
       "description": "权威 spec：tasks/prd-prefix-head-set.md v2 US-005。前置：US-001~004 全部。\n\n5336 同源同构终验 + 文档更新：\n1. 形态判据：4 成员同码（前 2 后 2）且 min_x(前缀) ≤ 6mm（4/4 seed）；竖排贴触（相邻 y 区间交集>0、缝隙 ≤1mm）；头尾 180° 交替（相邻成员 rot 差 ≈180°）；截图落 .docs/。\n2. 密度 A/B：on/off 60s×seed{0,1,2,3} raw-width（=生产 real 口径 total_area/(width×min(gate,1910))）均值劣化 ≤1.0pt（P0 基准 −0.14pt）；双开档（band+prefix，不置换）另报一列（P0 自由解基准 89.33%/90.05%），带位记录在案。\n3. 确定性：同 seed 重跑资格码选取一致 + placed_items/density 逐帧相等（非 byte-identity，帧含 wall-clock）；prefix_runs 工件可回放对拍。\n4. 导出：PNG/R12-DXF/PLT 三格式成功，后端日志 grep 无「导出跳过：pid」（PS_ 泄漏哨兵）；prefix 关闭路径产物与 HEAD 行为一致。\n5. 文档：CLAUDE.md 数据流主线补 prefix 支线一句 + .docs/business/ A/B 报告落盘 + 确认清单 v4 回写终值 + business-overview 状态表更新。\n\n验收标准：\n- 上述五项全部在案（A/B 报告含逐 seed 表）；pytest + npm run build + npm test 全绿",
-      "passes": false
+      "passes": true
     }
   ]
 }

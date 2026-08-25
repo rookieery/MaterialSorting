@@ -38,7 +38,7 @@ cli  →  web  →  nesting_engine  →  nesting_bounds  →  dxf_parser
 
 ## 数据流主线
 
-上传母版 → `/api/parse-dxf`（解析预览，每片 g 码 label + 5 层字段；「裁片 × 尺码」数量矩阵编辑 quantities，随求解 WS start 按码下发）→ `/api/commit-to-nesting`（US-001 v2：`assign_codes` 最先赋 g 码 → 切单裁片 `{label}_{size}.dxf` + `pieces_manifest.json` 到 `out/uploads/<doc_id>_pieces/` → `load_nest_pieces` manifest 驱动归一化（无镜像）→ 写 `pieces_intermediate.json` 事实源，条数 = 母版轮廓数）→ `ms-sparrow-*` / `ms-web`。求解支线：WS start 带 `band` 时腰头 g 码成员在 worker 进程内聚排成 `WB_*` 组合片（waist_band.build_band_plan，v2 构造性链构造：N 条单副本异码链降序+整链点对称翻转 ⇒ 开口左+最大码右，2026-08-21）→ 主解排除该 label、组合片展开回成员 placement 后才发帧（solve_worker._emit_placed 单点，`WB_` 永不出进程；US-011）。详见 [README.md](README.md)。
+上传母版 → `/api/parse-dxf`（解析预览，每片 g 码 label + 5 层字段；「裁片 × 尺码」数量矩阵编辑 quantities，随求解 WS start 按码下发）→ `/api/commit-to-nesting`（US-001 v2：`assign_codes` 最先赋 g 码 → 切单裁片 `{label}_{size}.dxf` + `pieces_manifest.json` 到 `out/uploads/<doc_id>_pieces/` → `load_nest_pieces` manifest 驱动归一化（无镜像）→ 写 `pieces_intermediate.json` 事实源，条数 = 母版轮廓数）→ `ms-sparrow-*` / `ms-web`。求解支线：WS start 带 `band` 时腰头 g 码成员在 worker 进程内聚排成 `WB_*` 组合片（waist_band.build_band_plan，v2 构造性链构造：N 条单副本异码链降序+整链点对称翻转 ⇒ 开口左+最大码右，2026-08-21）→ 主解排除该 label、组合片展开回成员 placement 后才发帧（solve_worker._emit_placed 单点，`WB_` 永不出进程；US-011）；带 `prefix` 时前/后幅 g 码在资格码（该码 2+2）seeded 随机选码后构造 4 片同码竖排贴靠 `PS_*` 组合片自由进主解（prefix.build_prefix_plan，跨界共同填充），主解 `exclude_pids` pid 级扣减、final 置换挂钩 min_x≤6mm 常态跳过、双开只记录带位（US-001~005，验收报告 `.docs/business/起始端成套前后幅_AB验收报告_US005.md`）。详见 [README.md](README.md)。
 
 ## 运行方式
 

@@ -1125,3 +1125,7 @@ band 配置（用户指认腰头 g 码成带）从表单到 WS 的纯参数链�
 3. **prefix 与 band 可同开**（双开带位只记录不置换是后端 US-003 行为，前端无额外控件）；**prefix 与「高级运行」策略入口 v1 互斥**（/api/strategy/* prefix 支持是二期；band 2026-08-22 已解禁，prefix 仍锁 disabled+title）。
 4. **stage='prefix' 不进 phase 五态** —— 秒级状态行提示（band 同款）；size 由 stage 消息回显（前端无法预知 seeded 随机结果）。
 5. **collectPrefix 无效输入静默降级 null** —— 与 collectBand 同防线语义：ControlPanel 闸门在前，collect 是兜底（后端仍会拦截）。
+
+## US-005 收官：浏览器终验 + P0 口径闭环（2026-08-25，前端零改动）
+
+浏览器验证 `scripts/us005_prefix_verify.mjs` **19/19 PASS**（CDP headless Chrome，无外部依赖；截图 `.docs/business/us005_prefix_final_full.png` / `us005_prefix_head_column.png`；详见 `.docs/business/起始端成套前后幅_AB验收报告_US005.md`）。关键闭环：布局设置弹窗逐码填 P0 per_type（`d-{g}` / `tol-{g}` 输入，React 受控 `__setVal` 助手）后 UI 密度 **88.597% == 验收器 on 臂 seed0 88.597%（Δ0.000pt）** —— 前端 per_type 表 → WS → `_resolve_d_tol` 单一路径与后端验收器口径互证。实测教训（验收口径入档）：**web 全 0 默认口径下 60s 解不收敛**（墙钟截断落点漂移 → 帧数 ±5%、密度噪声 ±0.5pt），终验与对拍一律绑定 P0 口径 per_type。
