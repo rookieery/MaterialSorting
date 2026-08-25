@@ -14,7 +14,8 @@
 
 import type { PerTypeOverrides, PerTypeOverride, SolveParams } from '../types/v03';
 import type { PieceQuantityMap } from '../types/qty';
-import type { BandConfig } from '../types/ws';
+import type { ParsedDoc, ParsedPt } from '../types/parsed';
+import type { BandConfig, PrefixConfig } from '../types/ws';
 
 /** 单片型的两条高级覆盖输入（d / tol 各一字符串，空串 = 继承 v0.3 默认）。 */
 export interface PerTypeFormValue {
@@ -67,6 +68,20 @@ export interface FormState {
    * 三态解析为 null，US-013 前端闸门兜底前的最后防线）。
    */
   band_label: string;
+  /**
+   * US-004 起始端成套前后幅开关（高级配置弹窗「布局设置」分区写回）。false = 关
+   * （默认，WS prefix 键恒 null）；与 band 可同开（双开时带位只记录不置换）。
+   */
+  prefix_enabled: boolean;
+  /**
+   * US-004 前幅 g 码（如 'g02'；空串 = 已勾选但未选 —— collectPrefix 三态解析为
+   * null，ControlPanel 前端闸门兜底前的最后防线）。默认预选母版面积最大片（决策⑤）。
+   */
+  prefix_front: string;
+  /**
+   * US-004 后幅 g 码（如 'g03'；须 front≠back）。默认预选母版面积第二大片。
+   */
+  prefix_back: string;
 }
 
 /**
@@ -84,6 +99,9 @@ export const DEFAULT_FORM: FormState = {
   per_type: {},
   band_enabled: false,
   band_label: '',
+  prefix_enabled: false,
+  prefix_front: '',
+  prefix_back: '',
 };
 
 /** collectParams 输出（与旧 vanilla 实现 collectParams 返回值结构一致）。 */
@@ -280,7 +298,107 @@ export function bandMemberCount(
   return count;
 }
 
-// ------------------------------------------------- US-005 collectStartContext
+// ------------------------------------------------- US-004 prefix 起始端成套参数
+
+/**
+ * US-004 prefix 三态解析（FR-1）：FormState.prefix_* → WS StartPayload.prefix 值。
+ *
+ *   1. prefix 关（prefix_enabled=false）                        → null；
+ *   2. 开但前/后幅未选 / 非 g 码（含空白）/ front==back          → null（「开且未选」
+ *      不冒充有效配置 —— 后端对无效 front/back 会回结构化 error，此处静默降级为关；
+ *      ControlPanel 前置闸门在先，这里是兜底防线）；
+ *   3. 开且有效（两码均 ``^g\d+$`` 且互异）                      → {enabled:true,front,back}。
+ *
+ * g 码是否存在于母版 / 资格码 ≥1 由后端 ``_parse_prefix`` 权威校验（前端弹窗有本地
+ * 预检提示，但不阻塞 —— 后端结构化 error 是唯一权威拦截）。
+ */
+export function collectPrefix(form: FormState): PrefixConfig | null {
+  if (!form.prefix_enabled) return null;
+  const front = form.prefix_front.trim();
+  const back = form.prefix_back.trim();
+  if (!BAND_LABEL_RE.test(front) || !BAND_LABEL_RE.test(back)) return null;
+  if (front === back) return null;
+  return { enabled: true, front, back };
+}
+
+/**
+ * US-004 资格码存在性本地预检（与后端 ``nesting_engine.prefix.eligible_sizes`` /
+ * ``routes_ws._parse_prefix`` 同口径）：在用户所排尺码（sizes 过滤）中，front 与
+ * back 两码 demand 均 ==2 的码集合（2+2 恰用尽 demand —— 版师 P2「总量 2 或 6 片
+ * 的码不行」；0/1/3/缺码均不合格）。
+ *
+ * 口径对齐要点（与 bandMemberCount 的 missing→1 **不同**）：
+ *   - demand 取 qtyStore perSize 值，缺码 → 0（资格要求恰 ==2，缺 0 与显 0 同判
+ *     不合格 —— 后端 ``_demand_of`` ``qmap.get(sk, 0)`` 同口径；quantities=null
+ *     全 demand=1 场景本函数返回空 = 后端 FR-9 结构化 error 同条件）；
+ *   - 'null' 通用码无资格概念（后端 ``int(sk)`` 跳过）；
+ *   - 未勾选码过滤（资格码必须真实进主解实例 —— 后端 sizes 过滤同款）。
+ *
+ * @returns 升序资格码列表（空 = 无资格，调用方提示「当前数量无 2+2 资格码」）。
+ */
+export function prefixEligibleSizes(
+  sizes: number[],
+  quantities: PieceQuantityMap | null,
+  front: string,
+  back: string,
+): number[] {
+  const qf = quantities?.[front]?.perSize ?? {};
+  const qb = quantities?.[back]?.perSize ?? {};
+  const want = new Set(sizes.map((s) => String(s)));
+  const out: number[] = [];
+  for (const sk of new Set([...Object.keys(qf), ...Object.keys(qb)])) {
+    const si = parseInt(sk, 10);
+    if (Number.isNaN(si)) continue; // 'null' 通用码非数字码，无资格概念
+    if (!want.has(sk)) continue; // 未勾选码不进主解，无资格
+    if ((qf[sk] ?? 0) === 2 && (qb[sk] ?? 0) === 2) out.push(si);
+  }
+  return out.sort((a, b) => a - b);
+}
+
+/**
+ * Shoelace 多边形有向面积（母版 polygon 闭合无重复起点，abs/2 即面积 mm²）。
+ * 前端无 shapely，预选启发式只需相对序，不自交假设与母版实际一致。
+ */
+function polygonArea(poly: ParsedPt[]): number {
+  let s = 0;
+  for (let i = 0; i < poly.length; i++) {
+    const [x1, y1] = poly[i];
+    const [x2, y2] = poly[(i + 1) % poly.length];
+    s += x1 * y2 - x2 * y1;
+  }
+  return Math.abs(s) / 2;
+}
+
+/**
+ * US-004 决策⑤默认预选：parse doc 中**面积最大两片**（5336 = g02 前幅 441k mm² /
+ * g03 后幅 350k mm²，次大 g05 腰头 94k —— 前后幅显著大，启发式稳）。
+ *
+ * 口径：每 label 取其全部码片 polygon 面积的最大值（跨码并集取 max —— 片型工艺
+ * 属性与码号无关，最大码面积代表该 g 码量级）；按面积降序、平手按 g 码字典序，
+ * 取前二（front = 最大，back = 第二）。不足两 label / doc=null → null（下拉留空）。
+ * 启发式只是缺省值建议，非识别功能 —— 用户可改（PRD 非目标第 5 条）。
+ */
+export function defaultPrefixLabels(
+  doc: ParsedDoc | null,
+): { front: string; back: string } | null {
+  if (!doc) return null;
+  const maxArea = new Map<string, number>();
+  for (const s of doc.sizes) {
+    for (const p of s.pieces) {
+      if (!p.polygon || p.polygon.length < 3) continue;
+      const a = polygonArea(p.polygon);
+      const prev = maxArea.get(p.label);
+      if (prev === undefined || a > prev) maxArea.set(p.label, a);
+    }
+  }
+  const ranked = Array.from(maxArea.entries())
+    .sort((a, b) => (b[1] - a[1]) !== 0 ? b[1] - a[1] : (a[0] < b[0] ? -1 : 1))
+    .map(([label]) => label);
+  if (ranked.length < 2) return null;
+  return { front: ranked[0], back: ranked[1] };
+}
+
+
 
 /**
  * ControlPanel.handleStart 与 StrategyRunModal「执行」共用的 start 上下文
@@ -313,6 +431,12 @@ export interface StartContext {
    * solve_worker 进程内成带 + 展开）。
    */
   band: BandConfig | null;
+  /**
+   * US-004 collectPrefix 三态解析：关 / 开未选或无效 → null；开且有效 →
+   * {enabled:true,front,back}。**仅主画布 WS start 消费**（prefix 与「高级运行」
+   * 策略入口 v1 互斥 —— /api/strategy/* 的 prefix 支持是二期接口，前端禁入口）。
+   */
+  prefix: PrefixConfig | null;
 }
 
 /** 把 FormState + 数量快照解析为 StartContext（handleStart / strategy start 同源）。 */
@@ -333,5 +457,6 @@ export function collectStartContext(
     per_type,
     quantities: serializeQuantities(quantities, sizes),
     band: collectBand(form),
+    prefix: collectPrefix(form),
   };
 }

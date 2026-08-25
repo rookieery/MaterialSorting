@@ -143,6 +143,8 @@ describe('useSolveRun', () => {
       quantities: null,
       // US-012：band 缺省 → null（后端 _parse_band 见 null = 关闭，旧行为不变）。
       band: null,
+      // US-004：prefix 缺省 → null（后端 _parse_prefix 见 null = 关闭，旧行为不变）。
+      prefix: null,
     });
   });
 
@@ -506,6 +508,130 @@ describe('useSolveRun', () => {
     expect(rec.done).toBe(true);
     // stage 统计保留（信息记录，不被 final 清除）
     expect(rec.stage).not.toBeNull();
+  });
+
+  // ============================================================
+  // US-004 起始端成套前后幅：prefix 透传（StartPayload 序列化，无 size 键）+
+  // stage('prefix') 消息分发（size 回显资格码，run 不 finish）
+  // ============================================================
+  it('US-004 prefix 开且有效 → StartPayload.prefix = {enabled,front,back}（无 size 键）', () => {
+    const startRef = mountHook({});
+    act(() =>
+      startRef.current({
+        sizes: [30],
+        time: 120,
+        seed: 0,
+        gate_mm: 1980,
+        params: { d_ext: 0, d_int: 0, tol_ext: 0, tol_int: 0 },
+        prefix: { enabled: true, front: 'g02', back: 'g03' },
+      }),
+    );
+    const ws = mockInstances[0];
+    act(() => ws.onopen?.());
+    const parsed: StartPayload = JSON.parse(ws.sent[0]);
+    expect(parsed.prefix).toEqual({ enabled: true, front: 'g02', back: 'g03' });
+    // 序列化无 size 键（资格码后端 seeded 随机选取 —— 决策②）
+    expect(Object.keys(JSON.parse(JSON.stringify(parsed.prefix!)))).toEqual(['enabled', 'front', 'back']);
+    // band 与 prefix 可同开（互不干扰，各自独立键）
+  });
+
+  it('US-004 prefix 显式 null → StartPayload.prefix = null（prefix 关，与缺省同线格式）', () => {
+    const startRef = mountHook({});
+    act(() =>
+      startRef.current({
+        sizes: [30],
+        time: 1,
+        seed: 0,
+        gate_mm: 1980,
+        params: { d_ext: 0, d_int: 0, tol_ext: 0, tol_int: 0 },
+        prefix: null,
+      }),
+    );
+    const ws = mockInstances[0];
+    act(() => ws.onopen?.());
+    const parsed: StartPayload = JSON.parse(ws.sent[0]);
+    expect(parsed.prefix).toBeNull();
+  });
+
+  it('US-004 band+prefix 双开 → 两键各自透传（StartPayload 线格式独立）', () => {
+    const startRef = mountHook({});
+    act(() =>
+      startRef.current({
+        sizes: [30],
+        time: 1,
+        seed: 0,
+        gate_mm: 1980,
+        params: { d_ext: 0, d_int: 0, tol_ext: 0, tol_int: 0 },
+        band: { enabled: true, label: 'g05' },
+        prefix: { enabled: true, front: 'g02', back: 'g03' },
+      }),
+    );
+    const ws = mockInstances[0];
+    act(() => ws.onopen?.());
+    const parsed: StartPayload = JSON.parse(ws.sent[0]);
+    expect(parsed.band).toEqual({ enabled: true, label: 'g05' });
+    expect(parsed.prefix).toEqual({ enabled: true, front: 'g02', back: 'g03' });
+  });
+
+  it('US-004 stage(prefix) → rec.stage 落盘 + onStage 回调（size 回显）；run 不 finish', () => {
+    const onStage = vi.fn();
+    const onManifest = vi.fn();
+    const onDone = vi.fn();
+    const startRef = mountHook({ onStage, onManifest, onDone });
+    act(() =>
+      startRef.current({
+        sizes: [30],
+        time: 1,
+        seed: 3,
+        gate_mm: 1980,
+        params: { d_ext: 0, d_int: 0, tol_ext: 0, tol_int: 0 },
+        prefix: { enabled: true, front: 'g02', back: 'g03' },
+      }),
+    );
+    const ws = mockInstances[0];
+
+    // FR-2：stage('prefix') 在 manifest 前唯一一次（双开时 band→prefix 序）；
+    // size 回显后端 seeded 随机选中的资格码（前端无法预知）。
+    const stage: ServerMsg = {
+      type: 'stage',
+      stage: 'prefix',
+      size: 34,
+      fill_pct: 83.6,
+      bbox: { width_mm: 1155, height_mm: 1458 },
+      fallback: false,
+      holes: 0,
+      elapsed: 0.4,
+    };
+    act(() => ws.onmessage?.({ data: JSON.stringify(stage) }));
+
+    expect(onStage).toHaveBeenCalledTimes(1);
+    expect(onStage.mock.calls[0][0]).toMatchObject({
+      type: 'stage',
+      stage: 'prefix',
+      size: 34,
+      holes: 0,
+    });
+    const rec = runRegistry.list()[0];
+    expect(rec.stage).toMatchObject({ type: 'stage', stage: 'prefix', size: 34 });
+    // **run 不 finish**：stage 不是终态 —— done 仍 false、onDone 未触发
+    expect(rec.done).toBe(false);
+    expect(onDone).not.toHaveBeenCalled();
+
+    // 后续 manifest 正常流转（stage 不影响生命周期）
+    act(() =>
+      ws.onmessage?.({
+        data: JSON.stringify({
+          type: 'manifest',
+          gate_mm: 1980,
+          total_area_mm2: 1,
+          n_eroded: 0,
+          pieces: [],
+        }),
+      }),
+    );
+    expect(onManifest).toHaveBeenCalledTimes(1);
+    // rec.stage 保留 prefix 统计（双开时后到的 stage 覆盖 rec.stage，msg 本体经回调判别）
+    expect(rec.stage).toMatchObject({ stage: 'prefix', size: 34 });
   });
 
   it('US-012 未知消息类型仍 default:break 静默忽略（不 throw / 不 finish；旧后端不发 stage 也安全）', () => {

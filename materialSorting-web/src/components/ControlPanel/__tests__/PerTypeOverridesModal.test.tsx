@@ -37,10 +37,13 @@ import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } fr
 import { StrictMode } from 'react';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { PerTypeOverridesModal, type BandFormValue } from '../PerTypeOverridesModal';
+import { PerTypeOverridesModal, type BandFormValue, type PrefixFormValue } from '../PerTypeOverridesModal';
 import { PtypePreviewModal } from '../PtypePreviewModal';
 import { useControlPanelStore } from '../../../store/controlPanelStore';
+import { useQtyStore } from '../../../store/qtyStore';
+import { useUploadStore } from '../../../store/uploadStore';
 import type { BandPreviewResponse } from '../../../types/band';
+import type { ParsedDoc, ParsedPiece } from '../../../types/parsed';
 import type { PtypesResponse } from '../../../types/ptype';
 import type { PerTypeFormValue } from '../../../lib/params';
 import { MAX_OVERLAP_MM, MAX_ROTATION_TOL_DEG } from '../../../constants/v03';
@@ -122,6 +125,10 @@ let mockBandPreview: BandPreviewResponse = BAND_OK;
 beforeEach(() => {
   useControlPanelStore.getState().closeModal();
   useControlPanelStore.getState().closePreviewLabel();
+  // US-004：prefix 默认预选（uploadStore.doc 面积最大两片）与资格码预检（qtyStore）
+  // 都读 store —— beforeEach 重置保证各用例隔离（band 用例不依赖两 store 默认态）。
+  useUploadStore.getState().reset();
+  useQtyStore.getState().resetQuantities();
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -155,6 +162,8 @@ afterEach(() => {
   document.body.innerHTML = '';
   useControlPanelStore.getState().closeModal();
   useControlPanelStore.getState().closePreviewLabel();
+  useUploadStore.getState().reset();
+  useQtyStore.getState().resetQuantities();
   if (fetchSpy) {
     fetchSpy.mockRestore();
     fetchSpy = null;
@@ -167,6 +176,8 @@ function renderModal(
   opts: {
     band?: BandFormValue;
     onBandChange?: (next: BandFormValue) => void;
+    prefix?: PrefixFormValue;
+    onPrefixChange?: (next: PrefixFormValue) => void;
     sizes?: number[];
     gateMm?: number;
   } = {},
@@ -179,6 +190,8 @@ function renderModal(
           onChange={onChange}
           band={opts.band ?? { enabled: false, label: '' }}
           onBandChange={opts.onBandChange ?? (() => {})}
+          prefix={opts.prefix ?? { enabled: false, front: '', back: '' }}
+          onPrefixChange={opts.onPrefixChange ?? (() => {})}
           sizes={opts.sizes ?? [28, 29]}
           gateMm={opts.gateMm ?? 1980}
         />
@@ -512,6 +525,8 @@ describe('PerTypeOverridesModal (US-018 / US-003 g 码列)', () => {
               onChange={() => {}}
               band={{ enabled: false, label: '' }}
               onBandChange={() => {}}
+              prefix={{ enabled: false, front: '', back: '' }}
+              onPrefixChange={() => {}}
               sizes={[28, 29]}
               gateMm={1980}
             />
@@ -802,5 +817,259 @@ describe('PerTypeOverridesModal 布局设置分区', () => {
     await flushFetch();
     expect(document.body.querySelector('[data-testid="band-thumb-error"]')!.textContent)
       .toContain('成带预览不可用');
+  });
+});
+
+// ---------------------------------------------------------------- US-004 prefix
+// 「布局设置」第二行：起始端成套前后幅（勾选 + 前幅/后幅下拉 + 缩略图徽章 +
+// 默认预选面积最大两片 + 2+2 资格码本地预检警示 + draft/confirm 语义）。
+describe('PerTypeOverridesModal 布局设置 prefix 分区 (US-004)', () => {
+  /** 3 个 g 码代表裁片（front/back 下拉值域 + 缩略图数据源）。 */
+  const THREE_REPS: PtypesResponse = {
+    representatives: {
+      g01: { label: 'g01', polygon: [[0, 0], [100, 0], [100, 60], [0, 60]] },
+      g02: { label: 'g02', polygon: [[0, 0], [80, 0], [80, 80], [0, 80]] },
+      g03: { label: 'g03', polygon: [[0, 0], [90, 0], [90, 70], [0, 70]] },
+    },
+  };
+
+  /** 矩形片 helper（shoelace 面积 = w*h；默认预选的面积排名依据）。 */
+  function areaPiece(label: string, w: number, h: number): ParsedPiece {
+    return {
+      label,
+      polygon: [[0, 0], [w, 0], [w, h], [0, h]],
+      internal_lines: [],
+      notches: [],
+      net_polygon: [],
+      grain_line: null,
+    };
+  }
+
+  /** 设置 uploadStore doc（面积 g02 > g03 > g01 的母版，供默认预选）。 */
+  function setupDoc(): void {
+    const doc: ParsedDoc = {
+      doc_id: 'prefix-test',
+      filename: '5336.dxf',
+      sizes: [{
+        size: 28,
+        pieces: [areaPiece('g02', 120, 100), areaPiece('g03', 110, 90), areaPiece('g01', 60, 40)],
+      }],
+    };
+    useUploadStore.setState({ status: 'done', doc, activeSize: 28 });
+  }
+
+  /** 数量矩阵 hydrate（默认全 1）+ 指定 label 行整行设值。 */
+  function setupQty(rows: Record<string, number>, sizes: number[] = [28, 29]): void {
+    const labels = Object.keys(rows);
+    useQtyStore.getState().hydrate(
+      labels.flatMap((label) => sizes.map((size) => ({ label, size }))),
+    );
+    for (const [label, v] of Object.entries(rows)) {
+      useQtyStore.getState().setRowAll(label, sizes, v);
+    }
+  }
+
+  /** 仅切换 prefix 下拉（已勾选场景）。 */
+  function selectPrefix(front: string, back: string): void {
+    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!;
+    const frontSel = document.body.querySelector<HTMLSelectElement>('[data-testid="prefix-front-select"]')!;
+    act(() => {
+      setter.call(frontSel, front);
+      frontSel.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    const backSel = document.body.querySelector<HTMLSelectElement>('[data-testid="prefix-back-select"]')!;
+    act(() => {
+      setter.call(backSel, back);
+      backSel.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+  }
+
+  /** 勾选 prefix（+ 可选选码）。 */
+  function enablePrefix(front = '', back = ''): void {
+    const check = document.body.querySelector<HTMLInputElement>('[data-testid="prefix-enabled"]')!;
+    act(() => check.click());
+    if (front !== '' || back !== '') selectPrefix(front, back);
+  }
+
+  it('分区渲染：第二行「起始端成套前后幅」+ 前幅/后幅两下拉 + 说明文案常驻', () => {
+    useControlPanelStore.getState().openModal('per_type');
+    renderModal();
+    const row = document.body.querySelector('[data-testid="per-type-prefix-row"]')!;
+    expect(row).not.toBeNull();
+    expect(row.querySelector('.per-type-band-check')!.textContent).toContain('起始端成套前后幅');
+    // 前幅/后幅两下拉在场，aria 报位
+    const front = document.body.querySelector<HTMLSelectElement>('[data-testid="prefix-front-select"]')!;
+    const back = document.body.querySelector<HTMLSelectElement>('[data-testid="prefix-back-select"]')!;
+    expect(front.getAttribute('aria-label')).toBe('前幅 g 码');
+    expect(back.getAttribute('aria-label')).toBe('后幅 g 码');
+    // 说明文案常驻（资格码自动选取说明，决策②）
+    const note = document.body.querySelector('[data-testid="per-type-prefix-note"]')!;
+    expect(note.textContent).toContain('满足 2+2 的尺码将自动选取');
+    // 无警示（未勾选不触发预检）
+    expect(document.body.querySelector('[data-testid="per-type-prefix-warn"]')).toBeNull();
+    // 位于 band 行之后（DOM 顺序：布局设置内 band 两键之后追加）
+    const bandRow = document.body.querySelector('.per-type-band-row')!;
+    expect(
+      bandRow.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it('未勾选（默认）→ 两下拉 disabled；勾选后启用', async () => {
+    useControlPanelStore.getState().openModal('per_type');
+    renderModal();
+    const front = document.body.querySelector<HTMLSelectElement>('[data-testid="prefix-front-select"]')!;
+    const back = document.body.querySelector<HTMLSelectElement>('[data-testid="prefix-back-select"]')!;
+    expect(front.disabled).toBe(true);
+    expect(back.disabled).toBe(true);
+    await flushFetch();
+    enablePrefix();
+    expect(front.disabled).toBe(false);
+    expect(back.disabled).toBe(false);
+  });
+
+  it('勾选且两码均空 → 默认预选 parse doc 面积最大两片（决策⑤；g02/g03）', () => {
+    setupDoc(); // g02=12000 > g03=9900 > g01=2400
+    useControlPanelStore.getState().openModal('per_type');
+    renderModal({}, () => {}, { prefix: { enabled: false, front: '', back: '' } });
+    enablePrefix();
+    const front = document.body.querySelector<HTMLSelectElement>('[data-testid="prefix-front-select"]')!;
+    const back = document.body.querySelector<HTMLSelectElement>('[data-testid="prefix-back-select"]')!;
+    expect(front.value).toBe('g02');
+    expect(back.value).toBe('g03');
+  });
+
+  it('props 已带 front/back（上次确认值）→ 草稿初值读入、勾选切换不覆盖', () => {
+    useControlPanelStore.getState().openModal('per_type');
+    renderModal({}, () => {}, {
+      prefix: { enabled: false, front: 'g01', back: 'g02' },
+    });
+    const front = document.body.querySelector<HTMLSelectElement>('[data-testid="prefix-front-select"]')!;
+    const back = document.body.querySelector<HTMLSelectElement>('[data-testid="prefix-back-select"]')!;
+    expect(front.value).toBe('g01');
+    expect(back.value).toBe('g02');
+    // 关→开（front/back 非空）：启发式不覆盖已有选择
+    setupDoc();
+    enablePrefix();
+    expect(front.value).toBe('g01');
+    expect(back.value).toBe('g02');
+  });
+
+  it('doc=null（未解析母版）→ 勾选不预选（两下拉留空，不崩溃）', () => {
+    useControlPanelStore.getState().openModal('per_type');
+    renderModal();
+    enablePrefix();
+    const front = document.body.querySelector<HTMLSelectElement>('[data-testid="prefix-front-select"]')!;
+    expect(front.value).toBe('');
+  });
+
+  it('选中 g 码 → 80×80 缩略图 + g 码徽章（reps 数据源）；点击 openPreviewLabel 放大', async () => {
+    mockReps = THREE_REPS;
+    useControlPanelStore.getState().openModal('per_type');
+    renderModal();
+    await flushFetch();
+    // 未选 → 无缩略图
+    expect(document.body.querySelector('[data-testid^="prefix-thumb-"]')).toBeNull();
+    enablePrefix('g02', 'g03');
+    const frontThumb = document.body.querySelector<HTMLButtonElement>('[data-testid="prefix-thumb-g02"]')!;
+    const backThumb = document.body.querySelector<HTMLButtonElement>('[data-testid="prefix-thumb-g03"]')!;
+    expect(frontThumb).not.toBeNull();
+    expect(backThumb).not.toBeNull();
+    // PiecePreviewSVG compact 渲染 + g 码徽章（QtyMatrix 列头同款）
+    expect(frontThumb.querySelector('svg.piece-preview-svg')).not.toBeNull();
+    expect(frontThumb.querySelector('.qty-label-badge')!.textContent).toBe('g02');
+    expect(frontThumb.title).toBe('g02-放大预览');
+    // 点击 → previewLabel 置位（第二层 ptype-preview 放大，表头缩略图同款）
+    act(() => frontThumb.click());
+    expect(useControlPanelStore.getState().previewLabel).toBe('g02');
+  });
+
+  it('fetch 失败（reps 空）→ 缩略图降级占位字符且 disabled，下拉仍可选（不阻塞）', async () => {
+    fetchSpy!.mockImplementation((_input: unknown) => Promise.reject(new Error('network')));
+    useControlPanelStore.getState().openModal('per_type');
+    renderModal({ g02: { d: '0', tol: '0' }, g03: { d: '0', tol: '0' } });
+    await flushFetch();
+    enablePrefix('g02', 'g03');
+    const thumb = document.body.querySelector<HTMLButtonElement>('[data-testid="prefix-thumb-g02"]')!;
+    expect(thumb.disabled).toBe(true);
+    expect(thumb.querySelector('.ptype-thumb-placeholder')).not.toBeNull();
+    const front = document.body.querySelector<HTMLSelectElement>('[data-testid="prefix-front-select"]')!;
+    expect(front.disabled).toBe(false);
+    expect(front.value).toBe('g02');
+  });
+
+  it('front==back → 警示「前幅与后幅须为不同 g 码」', () => {
+    useControlPanelStore.getState().openModal('per_type');
+    renderModal({ g02: { d: '0', tol: '0' } });
+    enablePrefix('g02', 'g02');
+    const warn = document.body.querySelector<HTMLElement>('[data-testid="per-type-prefix-warn"]')!;
+    expect(warn).not.toBeNull();
+    expect(warn.textContent).toContain('前幅与后幅须为不同 g 码');
+  });
+
+  it('无 2+2 资格码（hydrate 全 1）→ 警示「当前数量无 2+2 资格码」', () => {
+    setupQty({ g02: 1, g03: 1 }); // 全 1 → 无资格（quantities=null 全 demand=1 同判）
+    useControlPanelStore.getState().openModal('per_type');
+    renderModal({ g02: { d: '0', tol: '0' }, g03: { d: '0', tol: '0' } });
+    enablePrefix('g02', 'g03');
+    const warn = document.body.querySelector<HTMLElement>('[data-testid="per-type-prefix-warn"]')!;
+    expect(warn).not.toBeNull();
+    expect(warn.textContent).toContain('当前数量无 2+2 资格码');
+    expect(warn.textContent).toContain('2+2');
+  });
+
+  it('有资格码（2+2）→ 无警示；数量编辑响应式（改 1 → 警示出现）', () => {
+    setupQty({ g02: 2, g03: 2 });
+    useControlPanelStore.getState().openModal('per_type');
+    renderModal({ g02: { d: '0', tol: '0' }, g03: { d: '0', tol: '0' } });
+    enablePrefix('g02', 'g03');
+    expect(document.body.querySelector('[data-testid="per-type-prefix-warn"]')).toBeNull();
+    // 数量矩阵把 g02 两码全改 1 → 无任何码两码双双 ==2 → 警示出现（qtyStore 响应式订阅）
+    act(() => {
+      useQtyStore.getState().setPiecePerSize('g02', 28, 1);
+      useQtyStore.getState().setPiecePerSize('g02', 29, 1);
+    });
+    const warn = document.body.querySelector<HTMLElement>('[data-testid="per-type-prefix-warn"]')!;
+    expect(warn).not.toBeNull();
+  });
+
+  it('confirm 回写 onPrefixChange（与 band 同一 saveAndClose 通道）；取消丢弃', () => {
+    const onPrefixChange = vi.fn();
+    const onBandChange = vi.fn();
+    setupDoc();
+    useControlPanelStore.getState().openModal('per_type');
+    renderModal({}, () => {}, { onPrefixChange, onBandChange });
+    enablePrefix(); // 勾选 → 默认预选 g02/g03
+    const confirm = document.body.querySelector<HTMLButtonElement>('.per-type-btn-confirm')!;
+    act(() => confirm.click());
+    expect(onPrefixChange).toHaveBeenCalledTimes(1);
+    expect(onPrefixChange).toHaveBeenCalledWith({ enabled: true, front: 'g02', back: 'g03' });
+    // band 同通道回写（未勾选 → 原样保留）
+    expect(onBandChange).toHaveBeenCalledWith({ enabled: false, label: '' });
+    expect(useControlPanelStore.getState().modal).toBeNull();
+
+    // 取消路径：重新打开 → 勾选 → 取消 → onPrefixChange 不调用（草稿丢弃）
+    const onPrefixChange2 = vi.fn();
+    useControlPanelStore.getState().openModal('per_type');
+    renderModal({}, () => {}, { onPrefixChange: onPrefixChange2 });
+    enablePrefix();
+    const cancel = document.body.querySelector<HTMLButtonElement>('.per-type-btn-cancel')!;
+    act(() => cancel.click());
+    expect(onPrefixChange2).not.toHaveBeenCalled();
+    expect(useControlPanelStore.getState().modal).toBeNull();
+  });
+
+  it('prefix 区在场不阻塞 band 使用（独立分组，band 下拉/预览互不影响）', async () => {
+    mockReps = THREE_REPS;
+    useControlPanelStore.getState().openModal('per_type');
+    renderModal();
+    await flushFetch();
+    // band 控件照常在场且可用
+    const bandCheck = document.body.querySelector<HTMLInputElement>('[data-testid="band-enabled"]')!;
+    act(() => bandCheck.click());
+    const bandSelect = document.body.querySelector<HTMLSelectElement>('[data-testid="band-label-select"]')!;
+    expect(bandSelect.disabled).toBe(false);
+    // prefix 勾选不改变 band 下拉状态
+    enablePrefix('g02', 'g03');
+    expect(bandSelect.disabled).toBe(false);
   });
 });

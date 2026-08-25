@@ -805,6 +805,32 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
   overflow-wrap: anywhere;
   margin-top: 14px;
 }
+/* US-004 prefix（起始端成套前后幅）第二行：勾选区说明文案 + 本地预检警示。
+   说明文案常驻（dim 小字）；警示仅在 front==back / 无 2+2 资格码时出现
+   （.per-type-band-error 同色系红字警示，宽幅放宽 max-width）。 */
+.per-type-prefix-note {
+  color: #9aa;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.per-type-prefix-warn {
+  max-width: 480px;
+  padding: 6px 10px;
+  background: #2a1c1c;
+  color: #ff8888;
+  border: 1px solid rgba(255, 68, 68, 0.25);
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1.5;
+}
+/* prefix 前幅/后幅缩略图（80×80 + 徽章，band 下拉同模式）：rep 缺席时置灰降级 */
+.per-type-band-thumb:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.per-type-band-thumb:disabled:hover {
+  border-color: #3a3d45;
+}
 
 /* 成带放大层（band-zoom）：z-index 1300（叠在 ptype-preview 1200 之上，第三层 modal） */
 .band-zoom-overlay {

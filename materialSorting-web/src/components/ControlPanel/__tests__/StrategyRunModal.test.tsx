@@ -44,6 +44,8 @@ const CTX: StartContext = {
   // 2026-08-22 解除互斥：band 随 handleExec 透传到 /api/strategy/start（ctx.band
   // 开启 → 载荷带 band；null → 显式 null 键，后端 _parse_band 关闭不写 config）。
   band: null,
+  // US-004：prefix 与策略入口 v1 互斥（ControlPanel 前端禁入口），fixture 恒 null。
+  prefix: null,
 };
 
 const EMPTY_CTX: StartContext = { ...CTX, sizes: [], quantities: null };

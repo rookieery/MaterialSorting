@@ -12,6 +12,8 @@
 //
 // 布局设置（腰头成带开关 + g 码下拉）：band/onBandChange 透传（形状由
 // PerTypeOverridesModal 的 BandFormValue 定义 —— 本入口不做二次加工）。
+// US-004：布局设置第二组（起始端成套前后幅开关 + 前幅/后幅下拉）：prefix/onPrefixChange
+// 同款透传（形状 PrefixFormValue：enabled/front/back）。
 //
 // 关键不变量（AC#6）：与 ControlPanel 的 values/onChange 契约不变；
 // PerTypeOverridesModal 订阅 controlPanelStore.modal 自显隐（声明式受控 Portal）。
@@ -22,7 +24,11 @@
 import type { JSX } from 'react';
 import { useControlPanelStore } from '../../store/controlPanelStore';
 import type { PerTypeFormValue } from '../../lib/params';
-import { PerTypeOverridesModal, type BandFormValue } from './PerTypeOverridesModal';
+import {
+  PerTypeOverridesModal,
+  type BandFormValue,
+  type PrefixFormValue,
+} from './PerTypeOverridesModal';
 import { PtypePreviewModal } from './PtypePreviewModal';
 
 export interface PerTypeOverridesProps {
@@ -34,6 +40,10 @@ export interface PerTypeOverridesProps {
   band: BandFormValue;
   /** 确定时回写 form.band_*。 */
   onBandChange: (next: BandFormValue) => void;
+  /** US-004 布局设置初值（form.prefix_*：enabled/front/back）。 */
+  prefix: PrefixFormValue;
+  /** US-004 确定时回写 form.prefix_*。 */
+  onPrefixChange: (next: PrefixFormValue) => void;
   /** 当前勾选码号（过滤 null；成带预览 payload sizes，2026-08-24）。 */
   sizes: number[];
   /** 幅宽 mm（成带预览带高守卫与 solve 同口径，2026-08-24）。 */
@@ -47,6 +57,8 @@ export function PerTypeOverrides({
   onChange,
   band,
   onBandChange,
+  prefix,
+  onPrefixChange,
   sizes,
   gateMm,
   disabled = false,
@@ -70,6 +82,8 @@ export function PerTypeOverrides({
         onChange={onChange}
         band={band}
         onBandChange={onBandChange}
+        prefix={prefix}
+        onPrefixChange={onPrefixChange}
         sizes={sizes}
         gateMm={gateMm}
       />

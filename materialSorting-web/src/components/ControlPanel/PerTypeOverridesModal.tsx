@@ -17,7 +17,15 @@
 //     开**第三层** band-zoom modal（showLabels 尺码标注 + 统计行，本地 state 控制，
 //     ESC 独立消费 —— 与 previewLabel 双层约定同款双守卫）；
 //   - 未勾选时下拉 disabled；确定/遮罩/ESC/✕ 写回 form.band_*（2026-08-22 起
-//     关闭即保存，见下），「取消」丢弃 band 草稿（与 per_type 同一约定）。
+//     关闭即保存，见下），「取消」丢弃 band 草稿（与 per_type 同一约定）；
+//   - US-004 第二行「起始端成套前后幅」：勾选 + 前幅/后幅两 g 码下拉（band 下拉
+//     同模式 + 80×80 缩略图 + g 码徽章，点击 openPreviewLabel 放大）；勾选且两码
+//     均空时**默认预选 parse doc 面积最大两片**（决策⑤，5336 = g02/g03，用户可改；
+//     defaultPrefixLabels shoelace 口径）；说明文案「满足 2+2 的尺码将自动选取」
+//     （资格码后端 seeded 随机选取、不出 UI —— 决策②）；无任何资格码时警示
+//     「当前数量无 2+2 资格码」（prefixEligibleSizes 与后端 _parse_prefix 同口径
+//     本地预检，不阻塞 band 使用，权威拦截在后端）；front==back 时同位警示。
+//     确定写回 form.prefix_*，与 band 草稿同一 saveAndClose 通道。
 //
 // 声明式受控 Portal（参考 PieceZoomModal）：
 //   - 订阅 controlPanelStore.modal === 'per_type' 自显隐；null 时不挂 DOM。
@@ -64,9 +72,16 @@ import { useEffect, useMemo, useState } from 'react';
 import type { JSX } from 'react';
 import { createPortal } from 'react-dom';
 import { MAX_OVERLAP_MM, MAX_ROTATION_TOL_DEG } from '../../constants/v03';
-import { collectPerType, serializeQuantities, type PerTypeFormValue } from '../../lib/params';
+import {
+  collectPerType,
+  defaultPrefixLabels,
+  prefixEligibleSizes,
+  serializeQuantities,
+  type PerTypeFormValue,
+} from '../../lib/params';
 import { useControlPanelStore } from '../../store/controlPanelStore';
 import { useQtyStore } from '../../store/qtyStore';
+import { useUploadStore } from '../../store/uploadStore';
 import type { BandPreviewPayload, BandPreviewResponse } from '../../types/band';
 import type { ParsedPiece } from '../../types/parsed';
 import type { PtypeRepresentative, PtypesResponse } from '../../types/ptype';
@@ -131,6 +146,13 @@ export interface BandFormValue {
   label: string;
 }
 
+/** US-004「布局设置」prefix 组草稿/回写形状（= form.prefix_* 组）。 */
+export interface PrefixFormValue {
+  enabled: boolean;
+  front: string;
+  back: string;
+}
+
 export interface PerTypeOverridesModalProps {
   /** 每裁片（g 码）的 d/tol 输入字符串（来自 ControlPanel form.per_type）。 */
   values: Record<string, PerTypeFormValue>;
@@ -140,6 +162,10 @@ export interface PerTypeOverridesModalProps {
   band: BandFormValue;
   /** 关闭即保存时回写 ControlPanel form.band_*（确定/遮罩/ESC/✕；「取消」丢弃）。 */
   onBandChange: (next: BandFormValue) => void;
+  /** US-004 布局设置初值（form.prefix_*；mount 时读入草稿）。 */
+  prefix: PrefixFormValue;
+  /** US-004 关闭即保存时回写 ControlPanel form.prefix_*（与 band 同一通道）。 */
+  onPrefixChange: (next: PrefixFormValue) => void;
   /** 当前勾选码号（过滤 null；成带预览 payload sizes —— 与 StartPayload 同口径）。 */
   sizes: number[];
   /** 幅宽 mm（parseGate；成带预览带高守卫与 solve 同口径）。 */
@@ -151,6 +177,8 @@ export function PerTypeOverridesModal({
   onChange,
   band,
   onBandChange,
+  prefix,
+  onPrefixChange,
   sizes,
   gateMm,
 }: PerTypeOverridesModalProps): JSX.Element | null {
@@ -167,6 +195,8 @@ export function PerTypeOverridesModal({
       onChange={onChange}
       band={band}
       onBandChange={onBandChange}
+      prefix={prefix}
+      onPrefixChange={onPrefixChange}
       sizes={sizes}
       gateMm={gateMm}
       onClose={closeModal}
@@ -180,6 +210,8 @@ interface InnerProps {
   onChange: (next: Record<string, PerTypeFormValue>) => void;
   band: BandFormValue;
   onBandChange: (next: BandFormValue) => void;
+  prefix: PrefixFormValue;
+  onPrefixChange: (next: PrefixFormValue) => void;
   sizes: number[];
   gateMm: number;
   onClose: () => void;
@@ -191,6 +223,8 @@ function PerTypeOverridesModalInner({
   onChange,
   band,
   onBandChange,
+  prefix,
+  onPrefixChange,
   sizes,
   gateMm,
   onClose,
@@ -202,6 +236,11 @@ function PerTypeOverridesModalInner({
   // 布局设置草稿（同一 mount 生命周期，saveAndClose 是唯一回写路径）。
   const [bandEnabled, setBandEnabled] = useState<boolean>(band.enabled);
   const [bandLabel, setBandLabel] = useState<string>(band.label);
+
+  // US-004 prefix 草稿（band 同一 mount 生命周期 + saveAndClose 通道）。
+  const [prefixEnabled, setPrefixEnabled] = useState<boolean>(prefix.enabled);
+  const [prefixFront, setPrefixFront] = useState<string>(prefix.front);
+  const [prefixBack, setPrefixBack] = useState<string>(prefix.back);
 
   // 成带形态预览（2026-08-24）：bandLabel 变化（含 mount）时 POST /api/band-preview。
   // 三态：loading / {ok:true,...} / {ok:false,error}（失败也 200 —— 选错 g 码是预期内
@@ -314,6 +353,46 @@ function PerTypeOverridesModalInner({
     return orderedLabels;
   }, [orderedLabels, bandLabel]);
 
+  // US-004 prefix 前幅/后幅下拉值域（band 同款：orderedLabels ∪ 当前选中项）。
+  const prefixFrontOptions = useMemo(() => {
+    if (prefixFront !== '' && !orderedLabels.includes(prefixFront)) {
+      return [...orderedLabels, prefixFront].sort(compareByLabel);
+    }
+    return orderedLabels;
+  }, [orderedLabels, prefixFront]);
+  const prefixBackOptions = useMemo(() => {
+    if (prefixBack !== '' && !orderedLabels.includes(prefixBack)) {
+      return [...orderedLabels, prefixBack].sort(compareByLabel);
+    }
+    return orderedLabels;
+  }, [orderedLabels, prefixBack]);
+
+  // US-004 资格码本地预检（qtyStore 响应式订阅 —— 数量矩阵在弹窗遮罩下不会变，
+  // 但 hydrate 时序可能后于弹窗打开；与后端 _parse_prefix 同口径）：
+  // front==back 优先警示（后端「须为不同 g 码」前置），否则无资格码警示（不阻塞
+  // band 使用 / 不阻塞确定 —— 权威拦截在后端结构化 error）。
+  const quantities = useQtyStore((s) => s.quantities);
+  const prefixSame = prefixEnabled && prefixFront !== '' && prefixBack !== '' && prefixFront === prefixBack;
+  const prefixNoEligible =
+    prefixEnabled &&
+    prefixFront !== '' &&
+    prefixBack !== '' &&
+    !prefixSame &&
+    prefixEligibleSizes(sizes, quantities, prefixFront, prefixBack).length === 0;
+
+  /** US-004 勾选切换：勾上且前/后幅均空时默认预选 parse doc 面积最大两片（决策⑤）。
+   * 已有选择（用户改过 / 上次确认值）不覆盖 —— 启发式只是缺省建议。 */
+  function handlePrefixToggle(next: boolean): void {
+    setPrefixEnabled(next);
+    if (next && prefixFront === '' && prefixBack === '') {
+      const def = defaultPrefixLabels(useUploadStore.getState().doc);
+      if (def) {
+        setPrefixFront(def.front);
+        setPrefixBack(def.back);
+      }
+    }
+  }
+
   // ESC 监听（AC#10）：previewLabel !== null 时由 PtypePreviewModal 处理 ESC、
   // bandZoomOpen 时由成带放大层处理（三层独立）。本 listener 仅在两层放大均关闭时
   // 保存并关 modal，避免多层同时关闭。
@@ -359,6 +438,9 @@ function PerTypeOverridesModalInner({
     // band 草稿一并回写（未勾选时 label 原样保留 —— collectBand 对 enabled=false
     // 恒 null，重新勾选时上次选择不丢）。
     onBandChange({ enabled: bandEnabled, label: bandLabel });
+    // prefix 草稿同通道回写（未勾选时 front/back 原样保留 —— collectPrefix 对
+    // enabled=false 恒 null，重新勾选时上次选择不丢）。
+    onPrefixChange({ enabled: prefixEnabled, front: prefixFront, back: prefixBack });
     onClose();
   }
 
@@ -378,6 +460,33 @@ function PerTypeOverridesModalInner({
 
   function handleZoomOverlayMouseDown(e: React.MouseEvent): void {
     if (e.target === e.currentTarget) setBandZoomOpen(false);
+  }
+
+  /** US-004 前幅/后幅选中 g 码缩略图（80×80 + 徽章，band 下拉同模式；rep 缺席
+   * （fetch 失败）降级占位字符，点击 openPreviewLabel 放大 —— 表头缩略图同款）。 */
+  function renderPrefixThumb(label: string): JSX.Element | null {
+    if (label === '') return null;
+    const rep = representatives[label];
+    return (
+      <button
+        type="button"
+        className="per-type-band-thumb"
+        onClick={() => handleThumbClick(label)}
+        aria-label={`${label}-放大预览`}
+        title={`${label}-放大预览`}
+        data-testid={`prefix-thumb-${label}`}
+        disabled={!rep}
+      >
+        {rep ? (
+          <PiecePreviewSVG piece={repToPiece(rep)} compact />
+        ) : (
+          <span className="ptype-thumb-placeholder" aria-hidden="true">
+            {loadingReps ? '…' : label.slice(0, 1)}
+          </span>
+        )}
+        <span className="qty-label-badge">{label}</span>
+      </button>
+    );
   }
 
   function handleZoomModalMouseDown(e: React.MouseEvent): void {
@@ -482,6 +591,74 @@ function PerTypeOverridesModalInner({
               </div>
             ) : null}
           </div>
+
+          {/* US-004「起始端成套前后幅」第二行：band 两键之后追加（band 下拉同模式：
+              勾选 + 前幅/后幅两下拉 + 80×80 缩略图徽章）。勾上且两码均空时默认预选
+              parse doc 面积最大两片（handlePrefixToggle）；未勾选两下拉 disabled。
+              说明文案「满足 2+2 的尺码将自动选取」（资格码后端 seeded 随机，决策②）。 */}
+          <div className="per-type-band-row" data-testid="per-type-prefix-row">
+            <label className="per-type-band-check">
+              <input
+                type="checkbox"
+                checked={prefixEnabled}
+                onChange={(e) => handlePrefixToggle(e.target.checked)}
+                data-testid="prefix-enabled"
+              />
+              <span>起始端成套前后幅</span>
+            </label>
+            <div className="per-type-band-select-wrap">
+              <span className="per-type-band-subhead">前幅</span>
+              <select
+                className="per-type-band-select"
+                value={prefixFront}
+                onChange={(e) => setPrefixFront(e.target.value)}
+                disabled={!prefixEnabled}
+                data-testid="prefix-front-select"
+                aria-label="前幅 g 码"
+              >
+                <option value="">请选择…</option>
+                {prefixFrontOptions.map((label) => (
+                  <option key={label} value={label}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {renderPrefixThumb(prefixFront)}
+            <div className="per-type-band-select-wrap">
+              <span className="per-type-band-subhead">后幅</span>
+              <select
+                className="per-type-band-select"
+                value={prefixBack}
+                onChange={(e) => setPrefixBack(e.target.value)}
+                disabled={!prefixEnabled}
+                data-testid="prefix-back-select"
+                aria-label="后幅 g 码"
+              >
+                <option value="">请选择…</option>
+                {prefixBackOptions.map((label) => (
+                  <option key={label} value={label}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {renderPrefixThumb(prefixBack)}
+          </div>
+          <div className="per-type-prefix-note" data-testid="per-type-prefix-note">
+            满足 2+2 的尺码将自动选取（该码前幅 ×2 + 后幅 ×2 竖排贴靠布头第一列）
+          </div>
+          {/* 本地预检警示（不阻塞确定 —— 权威拦截在后端 _parse_prefix 结构化 error）：
+              front==back 优先，其次无资格码（指路数量矩阵，与后端文案同向）。 */}
+          {prefixSame ? (
+            <div className="per-type-prefix-warn" data-testid="per-type-prefix-warn">
+              前幅与后幅须为不同 g 码（前/后幅各一），请重新选择
+            </div>
+          ) : prefixNoEligible ? (
+            <div className="per-type-prefix-warn" data-testid="per-type-prefix-warn">
+              当前数量无 2+2 资格码 —— 请在数量矩阵把所选码前后幅配成 2+2
+            </div>
+          ) : null}
         </div>
 
         {/* 裁片设置分区标题（2026-08-22）：与上方「布局设置」同款 .per-type-band-title

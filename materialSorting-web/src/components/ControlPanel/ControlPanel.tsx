@@ -37,6 +37,13 @@
 //     /api/strategy/start 写进 8 键 config（后端 _parse_band 同一校验点，
 //     CLI solve_worker 进程内成带 + 展开，v2 确定性兼容多 seed 策略）；
 //   - PerTypeOverrides 透传 band/onBandChange（弹窗布局设置分区：开关 + g 码下拉）。
+// US-004（起始端成套前后幅接线）：
+//   - 启动闸门：prefix 开未选前/后幅 / front==back → 「开始求解」置灰 + StatusLine
+//     prefix 段具体文案 + handleStart 运行时兜底（band 同款双保险；**无资格码不置灰** ——
+//     弹窗勾选区本地预检提示，开始求解交后端 _parse_prefix 权威校验拦截）；
+//   - prefix 与 band 可同开（双开带位只记录是 US-003 后端行为，前端无额外控件）；
+//   - 与「高级运行」策略入口 v1 互斥（FR-6 band 先例：disabled + title 说明 ——
+//     /api/strategy/* 的 prefix 支持是二期接口备注，前端禁入口是唯一防线）。
 // 2026-08-22 seed UI 隐藏（界面只支持单 seed 模式）：ParamForm 删 seed 输入行、
 //   MultiSeedControls 不再渲染（组件已删）。form.seed/multi_seed/seed_count 保留恒默认
 //   （'0'/false/'3'）→ onStart 载荷 seed=0 / seed_count=1 不变；底层多 run 能力不动
@@ -66,7 +73,7 @@ import {
 import type { PerTypeOverrides as PerTypeOverridesValue, SolveParams } from '../../types/v03';
 import type { StrategyResult } from '../../types/strategy';
 import type { SolvePhase } from '../../types/solvePhase';
-import type { BandConfig } from '../../types/ws';
+import type { BandConfig, PrefixConfig } from '../../types/ws';
 
 /** onStart 透传给 App 的载荷（直接喂给 useSolveRun.start 的 StartConfig 子集）。 */
 export interface ControlPanelStartPayload {
@@ -91,6 +98,12 @@ export interface ControlPanelStartPayload {
    * useSolveRun.start → WS StartPayload.band。
    */
   band: BandConfig | null;
+  /**
+   * US-004 起始端成套前后幅：collectPrefix 三态解析（关 / 开未选或无效 → null；
+   * 开且有效 → {enabled:true,front,back}）。同随 ctx spread 透传到
+   * useSolveRun.start → WS StartPayload.prefix（无 size 键，资格码后端选取）。
+   */
+  prefix: PrefixConfig | null;
 }
 
 export interface ControlPanelProps {
@@ -152,6 +165,17 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
     form.band_label.trim() !== '' &&
     bandMemberCount(form, quantities, form.band_label.trim()) === 0;
 
+  // US-004 prefix 启动闸门（AC#3）：勾选未选前/后幅 → 置灰 + 具体文案；front==back
+  // 拦截（后端 _parse_prefix「须为不同 g 码」同条件前置）。无资格码**不置灰** ——
+  // 弹窗勾选区已有本地预检提示，权威拦截在后端（结构化 error 早退）。
+  const prefixMissingLabel =
+    form.prefix_enabled &&
+    (form.prefix_front.trim() === '' || form.prefix_back.trim() === '');
+  const prefixSameLabel =
+    form.prefix_enabled &&
+    !prefixMissingLabel &&
+    form.prefix_front.trim() === form.prefix_back.trim();
+
   function handleStart() {
     if (solving) return;
     if (form.sizes.length === 0) {
@@ -167,6 +191,15 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
       onStatus(
         `腰头 ${form.band_label.trim()} 所选码数量全 0，请先在上传预览页数量矩阵设置数量`,
       );
+      return;
+    }
+    // US-004：prefix 闸门运行时兜底（按钮已置灰；防御与 band 闸门同源双保险）。
+    if (prefixMissingLabel) {
+      onStatus('已开启起始端成套前后幅，请先选择前幅/后幅 g 码（高级配置 → 布局设置）');
+      return;
+    }
+    if (prefixSameLabel) {
+      onStatus('起始端成套前后幅须为不同 g 码（前/后幅各一），请重新选择');
       return;
     }
     // 矩阵化重构 US-003 全 0 拦截：所选码有效片数 = Σ demand（doc=null 开发模式 fallback
@@ -195,13 +228,24 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
   }
 
   // US-017：doc=null 时 StatusLine 增提示「请先在上传预览页解析母版」（AC#3）；
-  // US-013：band 闸门态追加 band 段具体文案（与 startDisabled 同源派生）。
+  // US-013：band 闸门态追加 band 段具体文案（与 startDisabled 同源派生）；
+  // US-004：prefix 闸门态同追加（band 段之后）。
   const bandHint = bandMissingLabel
     ? '已开启腰头成带，请先选择腰头编号（高级配置 → 布局设置）'
     : bandZeroQty
       ? `腰头 ${form.band_label.trim()} 所选码数量全 0，请先在上传预览页数量矩阵设置数量`
       : '';
-  const visibleStatus = [status, doc === null ? '请先在上传预览页解析母版' : '', bandHint]
+  const prefixHint = prefixMissingLabel
+    ? '已开启起始端成套前后幅，请先选择前幅/后幅 g 码（高级配置 → 布局设置）'
+    : prefixSameLabel
+      ? '起始端成套前后幅须为不同 g 码（前/后幅各一），请重新选择'
+      : '';
+  const visibleStatus = [
+    status,
+    doc === null ? '请先在上传预览页解析母版' : '',
+    bandHint,
+    prefixHint,
+  ]
     .filter(Boolean)
     .join(' — ');
 
@@ -211,16 +255,23 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
   const partial = phase === 'stopped' || phase === 'error';
 
   // 码号未选时「开始求解」按钮置灰（与 handleStart 内 sizes 非空校验同源；前置 UI 反馈，AC#7）；
-  // US-013：band 闸门（未选编号 / 数量全 0）同置灰（SolveControls 应用到所有非 running 态按钮）。
+  // US-013：band 闸门（未选编号 / 数量全 0）同置灰（SolveControls 应用到所有非 running 态按钮）；
+  // US-004：prefix 闸门（未选前/后幅 / front==back）同置灰（无资格码不置灰 —— 后端权威拦截）。
   const startDisabled =
     form.sizes.length === 0 ||
     bandMissingLabel ||
-    bandZeroQty;
+    bandZeroQty ||
+    prefixMissingLabel ||
+    prefixSameLabel;
 
   // US-013（FR-6 v1 互斥已于 2026-08-22 解除）：band 开启可进「高级运行」——
   // band 随 /api/strategy/start 写进 8 键 config（cli 8 键 schema + solve_pieces
   // 透传 solve_worker 进程内成带，v2 构造性链构造确定性兼容多 seed 策略）。
   // 既有 solving / 未 commit 置灰语义不变。
+  // US-004（FR-6 band 先例）：prefix 开启与「高级运行」v1 互斥 —— /api/strategy/*
+  // 的 prefix 支持是二期接口备注（策略 config 不写 prefix 键），前端禁入口是唯一
+  // 防线（disabled + title 说明原因；prefix 与 band 本身可同开不受影响）。
+  const strategyPrefixLocked = form.prefix_enabled && !solving && doc !== null;
 
   return (
     <aside className="panel">
@@ -268,6 +319,18 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
               band_label: band.label,
             })
           }
+          prefix={{
+            enabled: form.prefix_enabled,
+            front: form.prefix_front,
+            back: form.prefix_back,
+          }}
+          onPrefixChange={(prefix) =>
+            patch({
+              prefix_enabled: prefix.enabled,
+              prefix_front: prefix.front,
+              prefix_back: prefix.back,
+            })
+          }
           sizes={form.sizes.filter(
             (s: number | null): s is number => s !== null,
           )}
@@ -276,12 +339,18 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
         />
         {/* US-005 高级运行入口（策略 run 10/20/30/60min + race/se 双模式）：disabled =
             solving（互斥防 CPU 竞争）|| doc===null（未 commit 无排料数据）。
-            2026-08-22 起 band 开启不再互斥（band 随 start 载荷进 config）。 */}
+            2026-08-22 起 band 开启不再互斥（band 随 start 载荷进 config）；
+            US-004 prefix 开启互斥（FR-6 band 先例，title 说明）。 */}
         <StrategyRunButton
           solving={solving}
           buildStartContext={buildStartContext}
           onApplyStrategy={onApplyStrategy}
-          disabled={solving || doc === null}
+          disabled={solving || doc === null || form.prefix_enabled}
+          title={
+            strategyPrefixLocked
+              ? '起始端成套与策略运行互斥：请先在高级配置 → 布局设置中关闭起始端成套前后幅'
+              : undefined
+          }
         />
       </div>
       {/* US-031：data-tour="start-btn" 锚定 SolveControls 父容器（nestingTour step3 高亮目标）。 */}

@@ -353,6 +353,8 @@ done/stopped 可读（running → 409「尚未结束」；idle → 404）。响�
 - `eligible_sizes(quantities, front, back, sizes=sizes)` 须 ≥1 资格码（front 与 back 同码 demand==2 恰好 2+2）；无资格码 → error「当前数量无 2+2 资格码（front/back 各码 demand 须恰为 2）—— 请在数量矩阵把所选码前后幅配成 2+2」；
 - 返回 `{'front': str, 'back': str}` 传 `solve_worker`（载荷多余键如 `size` 静默忽略）。
 
+> **US-004 前端侧（2026-08-25）**：`lib/params.ts collectPrefix` 三态解析（关 / 开未选或 front==back 或非 `^g\d+$` → null；开且有效 → `{enabled:true,front,back}`）；弹窗勾选区有 `prefixEligibleSizes` 本地预检提示（同口径 missing→0、'null' 跳过、sizes 过滤），**只是提示不拦截** —— 上表服务端校验是唯一权威。
+
 ### 1.5 server → stage（band / prefix 开启时 manifest 前**各恰一次**）
 
 ```jsonc

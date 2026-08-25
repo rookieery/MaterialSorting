@@ -3,23 +3,30 @@
 //   2) per_type 解析逻辑保留不变：仅 trim()!=='' 写入；空 → null；任一档非空 → 创建 entry。
 //   3) parseTime / parseSeed / parseSeedCount 与旧 vanilla 实现 `parseInt(...) || fallback` 一致。
 // US-012 band 三态（collectBand / collectStartContext.band）+ bandMemberCount 三态。
+// US-004 prefix 三态（collectPrefix / collectStartContext.prefix）+ prefixEligibleSizes
+//   （2+2 资格码本地预检，与后端 eligible_sizes 同口径）+ defaultPrefixLabels（决策⑤
+//   默认预选面积最大两片）。
 
 import { describe, expect, it } from 'vitest';
 import {
   bandMemberCount,
   collectBand,
   collectParams,
+  collectPrefix,
   collectStartContext,
   DEFAULT_FORM,
+  defaultPrefixLabels,
   parseGate,
   parseSeed,
   parseSeedCount,
   parseTime,
+  prefixEligibleSizes,
   serializeQuantities,
   type FormState,
 } from '../params';
 import type { PerTypeOverrides, SolveParams } from '../../types/v03';
 import type { PieceQuantityMap } from '../../types/qty';
+import type { ParsedDoc, ParsedPiece } from '../../types/parsed';
 
 function makeForm(overrides: Partial<FormState> = {}): FormState {
   return {
@@ -406,5 +413,199 @@ describe('bandMemberCount (US-012 三态：missing→1 / 显式 0 / 未选码过
       g09: { perSize: { '28': 9 }, baseValue: 1 },
     };
     expect(bandMemberCount(makeForm({ sizes: [28] }), two, 'g09')).toBe(9);
+  });
+});
+
+// ============================================================
+// US-004 起始端成套前后幅：collectPrefix 三态 + collectStartContext.prefix
+// + prefixEligibleSizes（2+2 资格码）+ defaultPrefixLabels（决策⑤预选）
+// ============================================================
+describe('collectPrefix / collectStartContext.prefix (US-004 三态)', () => {
+  it('DEFAULT_FORM：prefix_enabled=false / front="" / back=""（默认关闭）', () => {
+    expect(DEFAULT_FORM.prefix_enabled).toBe(false);
+    expect(DEFAULT_FORM.prefix_front).toBe('');
+    expect(DEFAULT_FORM.prefix_back).toBe('');
+    // 默认表单 collectStartContext → prefix null（旧行为：StartPayload prefix 键恒 null）
+    expect(collectStartContext(DEFAULT_FORM, {}).prefix).toBeNull();
+  });
+
+  it('三态①：prefix 关（prefix_enabled=false，即使 front/back 有值）→ null', () => {
+    const form = makeForm({ prefix_enabled: false, prefix_front: 'g02', prefix_back: 'g03' });
+    expect(collectPrefix(form)).toBeNull();
+    expect(collectStartContext(form, {}).prefix).toBeNull();
+  });
+
+  it('三态②：开但前/后幅未选（空串 / 纯空白）→ null', () => {
+    expect(collectPrefix(makeForm({ prefix_enabled: true, prefix_front: '', prefix_back: 'g03' }))).toBeNull();
+    expect(collectPrefix(makeForm({ prefix_enabled: true, prefix_front: 'g02', prefix_back: '' }))).toBeNull();
+    expect(collectPrefix(makeForm({ prefix_enabled: true, prefix_front: '  ', prefix_back: ' ' }))).toBeNull();
+    expect(
+      collectStartContext(makeForm({ prefix_enabled: true, prefix_front: '', prefix_back: '' }), {}).prefix,
+    ).toBeNull();
+  });
+
+  it('三态②（延伸）：开但 front/back 非 g 码模式（^g\\d+$ 镜像后端）→ null 静默降级', () => {
+    for (const bad of ['front', 'g', 'g2x', 'G02', '2', 'g-2']) {
+      expect(
+        collectPrefix(makeForm({ prefix_enabled: true, prefix_front: bad, prefix_back: 'g03' })),
+      ).toBeNull();
+      expect(
+        collectPrefix(makeForm({ prefix_enabled: true, prefix_front: 'g02', prefix_back: bad })),
+      ).toBeNull();
+    }
+  });
+
+  it('三态②（延伸）：front==back → null（后端「须为不同 g 码」同判；UI 闸门在前）', () => {
+    expect(
+      collectPrefix(makeForm({ prefix_enabled: true, prefix_front: 'g02', prefix_back: 'g02' })),
+    ).toBeNull();
+    expect(
+      collectPrefix(makeForm({ prefix_enabled: true, prefix_front: ' g02 ', prefix_back: 'g02' })),
+    ).toBeNull();
+  });
+
+  it('三态③：开且有效 → {enabled:true,front,back}（首尾空白 trim；恰三键、无 size 键）', () => {
+    const out = collectPrefix(makeForm({ prefix_enabled: true, prefix_front: 'g02', prefix_back: 'g03' }));
+    expect(out).toEqual({ enabled: true, front: 'g02', back: 'g03' });
+    // trim：' g02 ' → 'g02'
+    expect(
+      collectPrefix(makeForm({ prefix_enabled: true, prefix_front: ' g02 ', prefix_back: ' g03 ' })),
+    ).toEqual({ enabled: true, front: 'g02', back: 'g03' });
+    // 序列化形态：JSON.stringify 后恰三键（决策② —— 资格码后端选取，无 size 键）
+    expect(Object.keys(JSON.parse(JSON.stringify(out)))).toEqual(['enabled', 'front', 'back']);
+  });
+
+  it('collectStartContext.prefix 与 collectPrefix 同源（开且有效透传，其余字段不受影响）', () => {
+    const q: PieceQuantityMap = {
+      g02: { perSize: { '32': 2 }, baseValue: 1 },
+      g03: { perSize: { '32': 2 }, baseValue: 1 },
+    };
+    const form = makeForm({ prefix_enabled: true, prefix_front: 'g02', prefix_back: 'g03', sizes: [32] });
+    const ctx = collectStartContext(form, q);
+    expect(ctx.prefix).toEqual({ enabled: true, front: 'g02', back: 'g03' });
+    // 既有字段不受影响
+    expect(ctx.sizes).toEqual([32]);
+    expect(ctx.quantities).toEqual({ g02: { '32': 2 }, g03: { '32': 2 } });
+    // 与 band 可同开（互不干扰）
+    const both = makeForm({
+      band_enabled: true, band_label: 'g05',
+      prefix_enabled: true, prefix_front: 'g02', prefix_back: 'g03',
+    });
+    const ctx2 = collectStartContext(both, q);
+    expect(ctx2.band).toEqual({ enabled: true, label: 'g05' });
+    expect(ctx2.prefix).toEqual({ enabled: true, front: 'g02', back: 'g03' });
+  });
+});
+
+describe('prefixEligibleSizes (US-004 2+2 资格码；后端 eligible_sizes 同口径)', () => {
+  /** 5336 镜像 fixture：g02/g03 行，31=1+1、32..35/38=2+2、36=3+3。 */
+  const Q: PieceQuantityMap = {
+    g02: { perSize: { '31': 1, '32': 2, '33': 2, '34': 2, '35': 2, '36': 3, '38': 2 }, baseValue: 1 },
+    g03: { perSize: { '31': 1, '32': 2, '33': 2, '34': 2, '35': 2, '36': 3, '38': 2 }, baseValue: 1 },
+  };
+  const ALL = [31, 32, 33, 34, 35, 36, 38];
+
+  it('两码 demand 均 ==2 → 资格（升序）；1/3 不合格（版师 P2「总量 2 或 6 片不行」）', () => {
+    expect(prefixEligibleSizes(ALL, Q, 'g02', 'g03')).toEqual([32, 33, 34, 35, 38]);
+  });
+
+  it('缺码 → 0（≠2 不合格 —— 与 bandMemberCount 的 missing→1 口径不同）', () => {
+    // g02 有 39 但 g03 行缺 39 → back demand 0 → 不合格；仅 32 双双 ==2
+    const partial: PieceQuantityMap = {
+      g02: { perSize: { '32': 2, '39': 2 }, baseValue: 1 },
+      g03: { perSize: { '32': 2 }, baseValue: 1 },
+    };
+    expect(prefixEligibleSizes([32, 39], partial, 'g02', 'g03')).toEqual([32]);
+  });
+
+  it('quantities=null / 行整缺 → []（后端 quantities=null 全 demand=1 场景同判空）', () => {
+    expect(prefixEligibleSizes(ALL, null, 'g02', 'g03')).toEqual([]);
+    expect(prefixEligibleSizes(ALL, {}, 'g02', 'g03')).toEqual([]);
+    // 只有一行在场：另一行 demand 恒 0 → 无资格
+    const one: PieceQuantityMap = { g02: { perSize: { '32': 2 }, baseValue: 1 } };
+    expect(prefixEligibleSizes([32], one, 'g02', 'g03')).toEqual([]);
+  });
+
+  it('未勾选码过滤（资格码必须真实进主解实例 —— 后端 sizes 过滤同款）', () => {
+    // 用户只排 31（1+1 不合格）+ 34（2+2 合格）→ 仅 34
+    expect(prefixEligibleSizes([31, 34], Q, 'g02', 'g03')).toEqual([34]);
+    // 全不勾 → 空
+    expect(prefixEligibleSizes([], Q, 'g02', 'g03')).toEqual([]);
+  });
+
+  it("'null' 通用码无资格概念（int 解析跳过，后端同款）", () => {
+    const withNull: PieceQuantityMap = {
+      g02: { perSize: { '32': 2, null: 2 }, baseValue: 1 },
+      g03: { perSize: { '32': 2, null: 2 }, baseValue: 1 },
+    };
+    expect(prefixEligibleSizes([32], withNull, 'g02', 'g03')).toEqual([32]);
+  });
+
+  it('front==back 时按两行同源判（demand==2 即资格；UI 另有 same 闸门在前）', () => {
+    expect(prefixEligibleSizes([32], Q, 'g02', 'g02')).toEqual([32]);
+  });
+});
+
+describe('defaultPrefixLabels (US-004 决策⑤：parse doc 面积最大两片)', () => {
+  /** 矩形片 helper（shoelace 面积 = w*h）。 */
+  function piece(label: string, w: number, h: number): ParsedPiece {
+    return {
+      label,
+      polygon: [[0, 0], [w, 0], [w, h], [0, h]],
+      internal_lines: [],
+      notches: [],
+      net_polygon: [],
+      grain_line: null,
+    };
+  }
+
+  it('doc=null / 空母版 → null（下拉留空）', () => {
+    expect(defaultPrefixLabels(null)).toBeNull();
+    expect(defaultPrefixLabels({ doc_id: 'x', filename: 'x.dxf', sizes: [] })).toBeNull();
+  });
+
+  it('不足两 label → null', () => {
+    const doc: ParsedDoc = {
+      doc_id: 'd', filename: 'd.dxf',
+      sizes: [{ size: 28, pieces: [piece('g01', 100, 60)] }],
+    };
+    expect(defaultPrefixLabels(doc)).toBeNull();
+  });
+
+  it('每 label 取跨码最大面积 → top2（front=最大，back=第二；5336 形态 g02/g03）', () => {
+    const doc: ParsedDoc = {
+      doc_id: 'd', filename: '5336.dxf',
+      sizes: [
+        // 28 码：g02 面积 5000 < 34 码 g02 面积 6000 → g02 取跨码 max 6000
+        { size: 28, pieces: [piece('g02', 100, 50), piece('g03', 100, 40), piece('g05', 100, 20)] },
+        { size: 34, pieces: [piece('g02', 120, 50), piece('g03', 110, 40), piece('g05', 100, 25)] },
+      ],
+    };
+    // g02=6000 > g03=4400 > g05=2500 → front=g02, back=g03
+    expect(defaultPrefixLabels(doc)).toEqual({ front: 'g02', back: 'g03' });
+  });
+
+  it('面积平手按 g 码字典序（确定性 tie-break）', () => {
+    const doc: ParsedDoc = {
+      doc_id: 'd', filename: 'd.dxf',
+      sizes: [{ size: 28, pieces: [piece('g05', 100, 50), piece('g02', 100, 50)] }],
+    };
+    expect(defaultPrefixLabels(doc)).toEqual({ front: 'g02', back: 'g05' });
+  });
+
+  it('空 polygon / 少于 3 顶点的片跳过（不参与面积排名）', () => {
+    const doc: ParsedDoc = {
+      doc_id: 'd', filename: 'd.dxf',
+      sizes: [{
+        size: 28,
+        pieces: [
+          { ...piece('g07', 100, 50), polygon: [] },
+          { ...piece('g08', 100, 50), polygon: [[0, 0], [10, 0]] },
+          piece('g02', 100, 50),
+          piece('g03', 90, 50),
+        ],
+      }],
+    };
+    expect(defaultPrefixLabels(doc)).toEqual({ front: 'g02', back: 'g03' });
   });
 });

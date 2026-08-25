@@ -26,6 +26,24 @@ export interface BandConfig {
 }
 
 /**
+ * US-004（prefix FR-1）起始端成套前后幅配置：用户指认前/后幅 g 码后，系统在所排
+ * 尺码中自动选取满足 2+2 的资格码（后端 seeded 随机，**无 size 键** —— 决策②），
+ * 4 片构造性竖排成 `PS_*` 组合片进主解，解后 min_x>6mm 时钉位置换。
+ *
+ * StartPayload 的 ``prefix`` 键：缺省 / null / enabled falsy = 关闭（旧行为逐字节不变）；
+ * 开启时后端 ``routes_ws._parse_prefix`` 服务端校验（front/back ``^g\d+$`` / 存在于
+ * 母版 / front≠back / ≥1 资格码 —— 两码 demand==2 的码，无资格码 = 结构化 error
+ * 早退 + 显式 close，文案指路数量矩阵）。
+ */
+export interface PrefixConfig {
+  enabled: boolean;
+  /** 前幅 g 码（如 'g02'；默认预选母版面积最大片，用户可改 —— 决策⑤）。 */
+  front: string;
+  /** 后幅 g 码（如 'g03'；须 front≠back，各码 2+2 恰用尽 demand）。 */
+  back: string;
+}
+
+/**
  * client → server：启动求解（首条消息，必须 action:'start'）。
  * per_type 空时序列化为 null（同旧 vanilla 实现 collectParams）；键 = 裁片 g 码
  * （裁片编号化重构 US-003 起；后端按 label 命中对该 g 码**全部码号**覆盖，2026-08-18
@@ -54,6 +72,12 @@ export interface StartPayload {
    * 开且有效 → ``{enabled:true,label}``（collectStartContext 三态解析，见 lib/params.ts）。
    */
   band?: BandConfig | null;
+  /**
+   * US-004（prefix FR-1）起始端成套前后幅：缺省 / null / enabled falsy = 关闭
+   * （旧行为不变）；开且有效 → ``{enabled:true,front,back}``（collectPrefix 三态解析，
+   * 与 band 可同开 —— 双开时带位只记录不置换，后端 US-003 行为）。**无 size 键**。
+   */
+  prefix?: PrefixConfig | null;
 }
 
 /**
@@ -134,10 +158,14 @@ export interface StoppedMsg {
  * （solve_worker `_build_band` → routes_ws `on_stage` 转发）。旧前端 default:break
  * 静默忽略，前向兼容；前端收到后状态行提示「腰头成带中…」，**run 不 finish**
  * （不进 phase 五态状态机，秒级提示）。
+ *
+ * US-004 扩展：``stage:'prefix'``（起始端成套构造完成统计，双开时 band→prefix 序、
+ * 各自 manifest 前唯一一次）—— ``size`` 回显后端 seeded 随机选中的资格码（前端无法
+ * 预知，决策②），状态行「起始端成套构造中（尺码 {size}）…」。
  */
 export interface StageMsg {
   type: 'stage';
-  /** 阶段名（目前恒 'band'）。 */
+  /** 阶段名（'band' | 'prefix'）。 */
   stage: string;
   /** 带内填充率（erode 前 union 面积 / 带板 bbox）。 */
   fill_pct?: number | null;
@@ -147,6 +175,10 @@ export interface StageMsg {
   fallback: boolean;
   /** 带内聚排耗时 s。 */
   elapsed?: number | null;
+  /** prefix 专属：选中的资格码（stage='prefix' 时回显，如 34）。 */
+  size?: number | null;
+  /** prefix 专属：组合片封闭腔数（P0 实测 interleave 0 个 = 无 sparrow 死区）。 */
+  holes?: number | null;
 }
 
 /** server → client 判别联合（按 type 字段区分）。 */

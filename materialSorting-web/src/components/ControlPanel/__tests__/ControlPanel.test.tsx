@@ -788,3 +788,201 @@ describe("ControlPanel band 接线 (US-013)", () => {
     expect(strategyBtn.getAttribute("title")).toBeNull();   // band 互斥 title 不出现
   });
 });
+
+// ---------------------------------------------------------------- US-004 prefix
+// 布局设置第二行接线：弹窗勾选/下拉/确定写回 form.prefix_* → 启动闸门（置灰 +
+// StatusLine prefix 段文案）/ 策略入口 v1 互斥（disabled + title，band 先例 FR-6）/
+// start payload prefix 生效 / band+prefix 可同开。
+describe("ControlPanel prefix 接线 (US-004)", () => {
+  /** 2 码母版（28: g01；30: g01+g02）—— polygon 空 → 默认预选不触发（面积无源）。 */
+  function setupPrefixDoc(): void {
+    const doc: ParsedDoc = {
+      doc_id: "prefix-test",
+      filename: "M1787.dxf",
+      sizes: [
+        {
+          size: 28,
+          pieces: [
+            { label: "g01", polygon: [], internal_lines: [], notches: [], net_polygon: [], grain_line: null },
+          ],
+        },
+        {
+          size: 30,
+          pieces: [
+            { label: "g01", polygon: [], internal_lines: [], notches: [], net_polygon: [], grain_line: null },
+            { label: "g02", polygon: [], internal_lines: [], notches: [], net_polygon: [], grain_line: null },
+          ],
+        },
+      ],
+    };
+    useUploadStore.setState({ status: "done", doc, activeSize: 28 });
+    useQtyStore.getState().hydrate(
+      doc.sizes.flatMap((s) => s.pieces.map((p) => ({ label: p.label, size: s.size }))),
+    );
+  }
+
+  /** 经弹窗写回 prefix 草稿（勾选 [+ 选 front/back] → 确定）；'' = 仅勾选不选。 */
+  async function enablePrefixViaModal(front: string, back: string): Promise<void> {
+    mockReps = TWO_G_REPS;
+    const perTypeBtn = container!.querySelector<HTMLButtonElement>(".per-type-btn")!;
+    act(() => perTypeBtn.click());
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const check = document.body.querySelector<HTMLInputElement>('[data-testid="prefix-enabled"]')!;
+    act(() => check.click());
+    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!;
+    for (const [tid, v] of [["prefix-front-select", front], ["prefix-back-select", back]] as const) {
+      if (v === "") continue;
+      const select = document.body.querySelector<HTMLSelectElement>(`[data-testid="${tid}"]`)!;
+      act(() => {
+        setter.call(select, v);
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+    }
+    const confirm = document.body.querySelector<HTMLButtonElement>(".per-type-btn-confirm")!;
+    act(() => confirm.click());
+  }
+
+  /** 勾选全部码号（doc 动态码号 chips）。 */
+  function selectAllSizes(): void {
+    const checkboxes = container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]");
+    act(() => {
+      for (const c of checkboxes) c.click();
+    });
+  }
+
+  it("prefix 开启未选前/后幅 → #start 置灰 + StatusLine prefix 段文案（防御点击不发）", async () => {
+    const onStart = vi.fn();
+    const onStatus = vi.fn();
+    setupPrefixDoc();
+    renderPanel(onStart, { onStatus });
+    selectAllSizes();
+    await enablePrefixViaModal("", "");
+    const btn = container!.querySelector<HTMLButtonElement>("#start")!;
+    expect(btn.disabled).toBe(true);
+    const status = container!.querySelector("#status")!;
+    expect(status.textContent).toContain("已开启起始端成套前后幅，请先选择前幅/后幅");
+    act(() => btn.click());
+    expect(onStart).not.toHaveBeenCalled();
+  });
+
+  it("prefix front==back → #start 置灰 + StatusLine 提示（后端「须为不同 g 码」前置）", async () => {
+    const onStart = vi.fn();
+    setupPrefixDoc();
+    renderPanel(onStart);
+    selectAllSizes();
+    await enablePrefixViaModal("g01", "g01");
+    const btn = container!.querySelector<HTMLButtonElement>("#start")!;
+    expect(btn.disabled).toBe(true);
+    const status = container!.querySelector("#status")!;
+    expect(status.textContent).toContain("起始端成套前后幅须为不同 g 码");
+    act(() => btn.click());
+    expect(onStart).not.toHaveBeenCalled();
+  });
+
+  it("prefix 确定写回 form.prefix_* → start payload prefix = {enabled,front,back}（无资格码不置灰）", async () => {
+    const onStart = vi.fn();
+    setupPrefixDoc();
+    renderPanel(onStart);
+    selectAllSizes();
+    // 数量矩阵默认全 1 → 无 2+2 资格码：前端不置灰（后端 _parse_prefix 权威拦截）
+    await enablePrefixViaModal("g01", "g02");
+    const btn = container!.querySelector<HTMLButtonElement>("#start")!;
+    expect(btn.disabled).toBe(false);
+    act(() => btn.click());
+    expect(onStart).toHaveBeenCalledTimes(1);
+    const cfg = onStart.mock.calls[0][0] as ControlPanelStartPayload;
+    expect(cfg.prefix).toEqual({ enabled: true, front: "g01", back: "g02" });
+  });
+
+  it("prefix 开启 → strategy-btn 置灰 + title 说明（FR-6 v1 互斥，band 先例）；关闭后恢复", async () => {
+    setupPrefixDoc();
+    renderPanel(() => {});
+    const strategyBtn = container!.querySelector<HTMLButtonElement>('[data-testid="strategy-btn"]')!;
+    // 关闭（默认）：doc 非空 + 非 solving → 可用，无 title
+    expect(strategyBtn.disabled).toBe(false);
+    expect(strategyBtn.getAttribute("title")).toBeNull();
+    // 开启：互斥置灰 + title 指路关闭
+    await enablePrefixViaModal("g01", "g02");
+    expect(strategyBtn.disabled).toBe(true);
+    expect(strategyBtn.getAttribute("title")).toContain("起始端成套与策略运行互斥");
+    // 关闭：重新打开弹窗取消勾选 → 恢复可用、无 title
+    mockReps = TWO_G_REPS;
+    const perTypeBtn = container!.querySelector<HTMLButtonElement>(".per-type-btn")!;
+    act(() => perTypeBtn.click());
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const check = document.body.querySelector<HTMLInputElement>('[data-testid="prefix-enabled"]')!;
+    act(() => check.click());
+    const confirm = document.body.querySelector<HTMLButtonElement>(".per-type-btn-confirm")!;
+    act(() => confirm.click());
+    expect(strategyBtn.disabled).toBe(false);
+    expect(strategyBtn.getAttribute("title")).toBeNull();
+  });
+
+  it("band+prefix 双开 → start payload 两键各自生效（可同开，无额外控件）", async () => {
+    const onStart = vi.fn();
+    setupPrefixDoc();
+    renderPanel(onStart);
+    selectAllSizes();
+    mockReps = TWO_G_REPS;
+    // 同一弹窗内先配 band 再配 prefix → 确定
+    const perTypeBtn = container!.querySelector<HTMLButtonElement>(".per-type-btn")!;
+    act(() => perTypeBtn.click());
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const bandCheck = document.body.querySelector<HTMLInputElement>('[data-testid="band-enabled"]')!;
+    act(() => bandCheck.click());
+    const bandSelect = document.body.querySelector<HTMLSelectElement>('[data-testid="band-label-select"]')!;
+    const bandSetter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!;
+    act(() => {
+      bandSetter.call(bandSelect, "g01");
+      bandSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    const prefixCheck = document.body.querySelector<HTMLInputElement>('[data-testid="prefix-enabled"]')!;
+    act(() => prefixCheck.click());
+    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!;
+    const frontSel = document.body.querySelector<HTMLSelectElement>('[data-testid="prefix-front-select"]')!;
+    act(() => {
+      setter.call(frontSel, "g01");
+      frontSel.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    const backSel = document.body.querySelector<HTMLSelectElement>('[data-testid="prefix-back-select"]')!;
+    act(() => {
+      setter.call(backSel, "g02");
+      backSel.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    const confirm = document.body.querySelector<HTMLButtonElement>(".per-type-btn-confirm")!;
+    act(() => confirm.click());
+    const btn = container!.querySelector<HTMLButtonElement>("#start")!;
+    expect(btn.disabled).toBe(false);
+    act(() => btn.click());
+    expect(onStart).toHaveBeenCalledTimes(1);
+    const cfg = onStart.mock.calls[0][0] as ControlPanelStartPayload;
+    expect(cfg.band).toEqual({ enabled: true, label: "g01" });
+    expect(cfg.prefix).toEqual({ enabled: true, front: "g01", back: "g02" });
+  });
+
+  it("prefix 关闭（默认）→ start payload prefix = null + strategy-btn 无互斥 title", () => {
+    const onStart = vi.fn();
+    setupPrefixDoc();
+    renderPanel(onStart);
+    selectAllSizes();
+    const btn = container!.querySelector<HTMLButtonElement>("#start")!;
+    act(() => btn.click());
+    const cfg = onStart.mock.calls[0][0] as ControlPanelStartPayload;
+    expect(cfg.prefix).toBeNull();
+    const strategyBtn = container!.querySelector<HTMLButtonElement>('[data-testid="strategy-btn"]')!;
+    expect(strategyBtn.disabled).toBe(false);
+    expect(strategyBtn.getAttribute("title")).toBeNull();
+  });
+});

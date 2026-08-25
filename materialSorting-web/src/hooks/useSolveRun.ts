@@ -16,6 +16,7 @@ import type {
   FinalMsg,
   FrameMsg,
   ManifestMsg,
+  PrefixConfig,
   ServerMsg,
   StageMsg,
   StartPayload,
@@ -44,6 +45,12 @@ export interface StartConfig {
    * 开且有效 → {enabled:true,label}（collectStartContext 三态解析产物）。
    */
   band?: BandConfig | null;
+  /**
+   * US-004 起始端成套前后幅配置：缺省 / null → 序列化为 null（prefix 关，旧行为
+   * 不变）；开且有效 → {enabled:true,front,back}（collectPrefix 三态解析产物；
+   * **无 size 键** —— 资格码后端 seeded 随机选取，决策②）。
+   */
+  prefix?: PrefixConfig | null;
 }
 
 /** 各类消息的可选回调（订阅层按需注册；不抛错，无返回）。 */
@@ -100,6 +107,8 @@ export function useSolveRun(cb: UseSolveRunCallbacks = {}): {
       quantities: cfg.quantities ?? null,
       // US-012：band 缺省 → null（后端 _parse_band 见 null = 关闭，旧行为不变）。
       band: cfg.band ?? null,
+      // US-004：prefix 缺省 → null（后端 _parse_prefix 见 null = 关闭，旧行为不变）。
+      prefix: cfg.prefix ?? null,
     };
     ws.onopen = () => {
       ws.send(JSON.stringify(payload));
@@ -121,6 +130,8 @@ export function useSolveRun(cb: UseSolveRunCallbacks = {}): {
         case 'stage':
           // US-012：band 带内聚排统计（manifest 前唯一一次）—— 落 rec.stage +
           // onStage 回调，**不 finish**（run 继续；后续 manifest/frames/final 正常走）。
+          // US-004：stage='prefix'（起始端成套构造统计，size 回显资格码）同通道 ——
+          // 双开时 band→prefix 各一条，rec.stage 持最后一条（回调带 msg 本体可判别）。
           rec.stage = msg;
           cbRef.current.onStage?.(msg, rec);
           break;

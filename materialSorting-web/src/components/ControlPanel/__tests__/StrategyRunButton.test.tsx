@@ -21,6 +21,8 @@ const CTX: StartContext = {
   quantities: null,
   // 2026-08-22 解除互斥：band 随 handleExec 透传；本组件不消费 band，fixture 恒 null。
   band: null,
+  // US-004：prefix 与策略入口 v1 互斥（ControlPanel 禁入口），fixture 恒 null。
+  prefix: null,
 };
 
 let container: HTMLDivElement | null = null;
