@@ -16,6 +16,18 @@
 性质是**业务规则**（布头第一列成套形态的构造性保证），不是利用率优化器 ——
 P0 实测密度代价 −0.14pt ≈ 0、组合片 4/4 seed 自然锚定布头。
 
+US-002 增补**段置换钉位 + 驱逐重插**（P5 严格顶零位的守卫路径，探针
+``permute_pin`` / ``reinsert_evicted`` 移植收敛）：组合片未自然锚定布头时
+（P0 实测 4/4 锚定 ⇒ 本路径常态零触发），割线 c1=a 硬性 + c2∈[b0, b0+flex]
+柔性选线（最小化 straddler）→ A/C/B 三组刚体重排（组间 x 区间不相交 ⇒ 无新
+重叠、总长不增）→ straddler 驱逐重插（①随组平移 +x 微调梯回原窝 ②
+``waist_band._slide_touch`` 自右滑触 ③尾端贴触追加兜底）→ ``constraints.validate``
++ y≤1910 全版复检，失败回退置换前布局（LNS 纪律：交付物恒过检）。
+三守卫缺一不可（P0 灾难 −17.72pt 三因）：``skip_at_head=6.0``（常态锚定零
+触发）、``eps=5.0``（≥ erode 包络外凸，防贴墙片误判 straddler）、``flex=400.0``
+（c2 柔性选线最小化驱逐）。编排入口 ``pin_prefix_layout``（纯函数语义，US-003
+final 置换挂钩单点）。
+
 rot180 负坐标框架坑（P0 踩过，单测锁死）：成员关于原点旋转 180° 后落负坐标区，
 必须**先归一到原点**再做候选对齐 + 滑触，记账平移补偿 ``tr = (xoff − b0,
 yoff − b1)``（b0/b1 = 旋转后 bounds 最小角）—— 缺此补偿成员几何会整体侧移
@@ -30,6 +42,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import os
 import random
 import sys
@@ -42,8 +55,17 @@ from shapely.ops import unary_union
 
 from .. import paths
 from ..nesting_bounds.load_pieces import PLOT_SAFE_MAX_Y_MM
-from .constraints import MAX_OVERLAP_MM
-from .sparrow_baseline import _clean_polygon, _transform_polygon
+from .constraints import (
+    MAX_OVERLAP_MM,
+    MAX_ROTATION_TOL_DEG,
+    discretize_orientations,
+    validate,
+)
+from .sparrow_baseline import (
+    _clean_polygon,
+    _transform_polygon,
+    solve_with_progress,
+)
 from .sparrow_experiments import erode_polygon
 from .waist_band import (
     MAX_COMPOSITE_VERTICES,
@@ -51,8 +73,10 @@ from .waist_band import (
     BandChunk,
     BandError,
     _exterior_coords,
+    _slide_touch,
     _solid_region,
     _valid_geometry,
+    expand_placements,
 )
 
 # 前缀组合片 pid 前缀（全链路泄漏哨兵：manifest/frame/final/前端/导出永不允许 PS_）。
@@ -72,6 +96,32 @@ BISECT_ITERS = 40
 # 相邻成员贴触判据（mm，镜像 waist_band.CHAIN_GAP_EPS_MM —— 版师验收口径，
 # 非 bbox fill）。
 GAP_EPS_MM = 1.0
+# ---- US-002 段置换钉位三守卫（P0 灾难 −17.72pt 三因，缺一不可） ----
+# ① 组合片已在布头的跳过阈值（mm）：comp min_x ≤ 此值整体跳过置换（P0 实测
+# 4/4 seed 自然锚定 0.0~0.2mm ⇒ 常态零触发；无此守卫会对已锚定布局无谓重排）。
+PIN_SKIP_AT_HEAD_MM = 6.0
+# ② straddler / 组归属判据容差（mm）：须 ≥ erode 合法外凸深度（2·d 包络，
+# 5336 d_g=2 ⇒ 贴墙片 bd[0] 可低至 −2），防贴墙片误判 straddler 被驱逐；
+# 5.0 ≥ 2·MAX(d)=4（P0 标定）。
+PIN_STRADDLER_EPS_MM = 5.0
+# ③ c2 割线柔性窗口（mm）：c2 ∈ [b0, b0+flex] 内在片棱边候选里柔性选线
+# （最小化 straddler 数、次小 c2）—— c1=a 硬性贴零位，c2 过窄无候选余地、
+# 过宽割进 B 组腹地（400 ≈ 前后幅片长量级）。
+PIN_CUT_FLEX_MM = 400.0
+# 驱逐重插 ②+x 微调梯（mm）：组平移回位失败后逐档右探原窝附近空间。
+PIN_NUDGE_LADDER_MM = (0.0, 1.0, 5.0, 10.0, 20.0, 50.0, 100.0, 200.0, 300.0)
+# 尾端贴触追加兜底的 width_growth 警戒线（mm）：超过仅 warn 不回退（交付物已过
+# validate 复检），记入 stats 供 US-003 prefix_runs 工件审计。
+PIN_WIDTH_GROWTH_WARN_MM = 50.0
+# 重插候选 x 下限容差（mm）：驱逐片新窝 eroded bounds[0] ≥ −0.5（钉位语义
+# x=0 是布头；组员贴零位残差 ≤eps 属构造容差，驱逐片去新窝没有理由越界）。
+PIN_X_FLOOR_TOL_MM = 0.5
+# 全版复检 y 容差（mm）：求解器约束 erode 后形状 ∈ [0, strip_height]，原形可
+# 合法外凸 ≤ MAX_OVERLAP_MM=10 + 数值余量（与 cli.lns_bands.Y_TOLERANCE_MM
+# 同源口径 —— 引擎层禁 import cli，此处镜像）。
+PIN_RECHECK_Y_TOLERANCE_MM = 11.0
+
+_log = logging.getLogger(__name__)
 
 
 class PrefixError(Exception):
@@ -372,6 +422,344 @@ def build_prefix_plan(pid_meta, pieces_by_id, *, front_pid, back_pid, d_g,
     ), gaps, holes)
 
 
+# ------------------------------------------- US-002 段置换钉位 + 驱逐重插
+
+
+def _world_raw_geom(placement, pid_meta, pieces_by_id):
+    """placement → 原始轮廓 shapely 几何（世界系；id 必为真实 pid —— ``PS_``
+    组合片已在上游 ``expand_placements`` 展开，总长/密度按原始轮廓口径）。"""
+    orig = (pieces_by_id.get(placement['id']) or {}).get('polygon') \
+        or pid_meta[placement['id']]['polygon']
+    return _valid_geometry(_transform_polygon(
+        orig, placement['rotation'], placement['translation']))
+
+
+def _eroded_geom(placement, pid_meta):
+    """placement → erode 碰撞轮廓 shapely 几何（求解器合法性口径：eroded 两两
+    不相交即合法 —— 重插碰撞检测同此口径）。"""
+    return _valid_geometry(_transform_polygon(
+        pid_meta[placement['id']]['polygon'], placement['rotation'],
+        placement['translation']))
+
+
+def permute_pin(placements, geoms_raw, geoms_eroded, comp_world, prefix_idx, *,
+                flex=PIN_CUT_FLEX_MM, eps=PIN_STRADDLER_EPS_MM,
+                skip_at_head=PIN_SKIP_AT_HEAD_MM):
+    """段置换钉位：前缀组合片段（x 占据 [a, b0]）平移到 x=0，其余段刚体重排。
+
+    机制（确认清单 §3.3，探针 ``prefix_lib.permute_pin`` 移植）：
+
+    - 组合片已在头部（a ≤ ``skip_at_head``）→ **整体跳过**（E=∅，零代价 ——
+      P0 灾难 −17.72pt 的修复：组合片常态已锚定布头，置换本属多余）；
+    - c1 = a（硬性，组合片贴零位）；c2 在 [b0, b0+``flex``] 柔性选线（片棱边
+      候选中**最小化 straddler 数**、次小 c2 —— 尽量零驱逐）；
+    - A = x-span ⊆ [c1−eps, c2+eps]（前缀成员 + 深窝填充片，**强制含
+      prefix_idx**）；C = max_x ≤ c1+eps（头部左侧段）；B = min_x ≥ c2−eps
+      （割线右侧段）；横跨割线的 straddler 驱逐（``eps`` ≥ d 包络，防贴墙片
+      bd[0]=−2 误判）；
+    - 重排 = A(−a) + C(紧随 A) + B(紧随 C)：组间 x 区间不相交 ⇒ 无新重叠、
+      总长不增（段间隙被压缩，x 刚体平移不动 y）。
+
+    Parameters
+    ----------
+    placements : list[dict]
+        ``{'id','rotation','translation'}``（**已展开**，无 PS_）；**就地修改**
+        （translation[0] += 组平移），geoms 同步平移 —— 纯函数入口见
+        ``pin_prefix_layout``。
+    geoms_raw / geoms_eroded : list[shapely]
+        与 placements 逐条对应的原始/erode 轮廓几何（就地同步平移）。
+    comp_world : shapely geometry
+        组合片 eroded 轮廓@主解世界位（``chunk.polygon`` 施加主解 rotation/
+        translation）。
+    prefix_idx : sequence[int]
+        组合片 4 成员在 placements 中的下标（强制并入 A 组；空序列 ValueError）。
+    flex / eps / skip_at_head : float
+        三守卫参数（模块常量缺省，P0 标定锁死）。
+
+    Returns
+    -------
+    tuple ``(placements, shift, stats)``
+        placements : list[dict] —— 同入参列表（就地修改后返回，链式便利）；
+        shift : dict[int, float] —— 逐片组平移量（index → dx，mm）；
+        stats : dict —— ``skipped`` / ``a`` / ``b0`` / ``c2`` / ``nA`` / ``nC``
+            / ``nB`` / ``n_evicted`` / ``evicted_idx`` / ``group``（idx→'A'/'B'/
+            'C'）。跳过时组字段全零。
+    """
+    if not prefix_idx:
+        raise ValueError('prefix_idx 不能为空（须含组合片展开成员下标）')
+    bounds = [g.bounds for g in geoms_raw]
+    a, b0 = comp_world.bounds[0], comp_world.bounds[2]
+    if a <= skip_at_head:
+        st = {'skipped': True, 'a': round(a, 3), 'b0': round(b0, 3), 'c2': None,
+              'nA': 0, 'nC': 0, 'nB': 0, 'n_evicted': 0, 'evicted_idx': [],
+              'group': {}}
+        return placements, {}, st
+
+    def _straddles(bd, c):
+        return bd[0] < c - eps and bd[2] > c + eps
+
+    c2_cands = {b0}
+    for bd in bounds:
+        for v in (bd[0], bd[2]):
+            if b0 <= v <= b0 + flex:
+                c2_cands.add(v)
+    c2 = min(c2_cands, key=lambda c: (sum(1 for bd in bounds if _straddles(bd, c)), c))
+
+    prefix_set = set(prefix_idx)
+    A = [i for i, bd in enumerate(bounds)
+         if i in prefix_set or (bd[0] >= a - eps and bd[2] <= c2 + eps)]
+    A_set = set(A)
+    C = [i for i, bd in enumerate(bounds)
+         if i not in A_set and bd[2] <= a + eps]
+    B = [i for i, bd in enumerate(bounds)
+         if i not in A_set and bd[0] >= c2 - eps]
+    taken = A_set | set(C) | set(B)
+    E = [i for i in range(len(placements)) if i not in taken]
+
+    group = {i: 'A' for i in A}
+    group.update({i: 'C' for i in C})
+    group.update({i: 'B' for i in B})
+
+    # 段拼接：A 贴零位（−a），C 紧随 A 右缘，B 紧随 C 右缘（组间 x 区间不相交）
+    shift = {}
+    dxA = -a
+    a_max = max(bounds[i][2] for i in A) + dxA
+    if C:
+        c_dx = a_max - min(bounds[i][0] for i in C)
+        for i in C:
+            shift[i] = c_dx
+        c_max = max(bounds[i][2] + c_dx for i in C)
+    else:
+        c_max = a_max
+    if B:
+        b_dx = c_max - min(bounds[i][0] for i in B)
+        for i in B:
+            shift[i] = b_dx
+    for i in A:
+        shift[i] = dxA
+
+    for i, dxi in shift.items():
+        placements[i]['translation'][0] += dxi
+        geoms_raw[i] = translate(geoms_raw[i], xoff=dxi)
+        geoms_eroded[i] = translate(geoms_eroded[i], xoff=dxi)
+
+    stats = {'skipped': False, 'a': round(a, 3), 'b0': round(b0, 3),
+             'c2': round(c2, 3), 'nA': len(A), 'nC': len(C), 'nB': len(B),
+             'n_evicted': len(E), 'evicted_idx': E, 'group': group}
+    return placements, shift, stats
+
+
+def reinsert_evicted(placements, geoms_raw, geoms_eroded, evicted, shift,
+                     pid_meta, *, gate_nest):
+    """驱逐片贪心重插（eroded 碰撞口径 = 求解器合法性），确定性无 RNG。
+
+    三优先序（确认清单 §3.4）：
+
+    1. **原窝回位** —— 原位置施加组平移 dxA/dxC/dxB（凹口随组平移仍在，多数
+       情况下整片仍合法即零代价回位；候选 = shift 值降序）；
+    2. **+x 微调梯** —— ``PIN_NUDGE_LADDER_MM``（0..300mm）逐档右探原窝附近；
+    3. **自右滑触** —— ``waist_band._slide_touch`` 同法（候选 y = 已占棱边 ∪
+       0/gate 底，eroded 碰撞口径，代价 = 全局宽度，平手取先序 y）；全部失败
+       时**尾端贴触追加兜底**（cur_max + 片宽 + 60mm，width_growth 计入 stats，
+       超阈值 warn）。
+
+    逐片按**面积降序**入占（大件先挑窝，小件填缝 —— 平手 tie-break 确定性）；
+    候选统一要求 eroded bounds[0] ≥ −``PIN_X_FLOOR_TOL_MM``（x=0 是布头，
+    驱逐片新窝不越界）。**就地修改** placements/geoms；返回 stats dict
+    （``n_home`` / ``n_nudge`` / ``n_slide`` / ``width_before`` / ``final_width``
+    / ``width_growth`` —— width_before 为**置换后**口径（驱逐片仍在原窝），
+    growth 只度量重插自身足迹影响）。
+    """
+    E_set = set(evicted)
+    placed_idx = [i for i in range(len(placements)) if i not in E_set]
+    # 空占用（全部驱逐，理论不可达）→ unary_union([]) 空 GeometryCollection，
+    # intersection 面积恒 0（一切候选合法），防御性退化安全。
+    occupied = unary_union([geoms_eroded[i] for i in placed_idx])
+    width_before = max((g.bounds[2] for g in geoms_raw), default=0.0)
+    n_home = n_nudge = n_slide = 0
+    group_shift_cands = sorted({s for s in shift.values() if s != 0.0},
+                               reverse=True)
+
+    for e in sorted(evicted, key=lambda i: -float(pid_meta[placements[i]['id']]
+                                                  ['area_mm2'])):
+        ge = geoms_eroded[e]
+        b = ge.bounds
+        w, h = b[2] - b[0], b[3] - b[1]
+        cur_max = max((geoms_raw[i].bounds[2] for i in placed_idx), default=0.0)
+        cand = None
+
+        def _legal(sx):
+            c2_ = translate(ge, xoff=sx)
+            if c2_.bounds[0] < -PIN_X_FLOOR_TOL_MM:
+                return None                      # 布头下限（x=0 语义）
+            return c2_ if c2_.intersection(occupied).area < 1e-6 else None
+
+        # ① 组平移回位 + ② +x 微调梯（tier 显式标记：梯值与组平移值撞车时
+        # 仍按来源计数，勿用值隶属判断）
+        for tier, cands in (('home', group_shift_cands),
+                            ('nudge', PIN_NUDGE_LADDER_MM)):
+            for sx in cands:
+                cand = _legal(sx)
+                if cand is not None:
+                    if tier == 'home':
+                        n_home += 1
+                    else:
+                        n_nudge += 1
+                    break
+            if cand is not None:
+                break
+        # ③ 自右滑触（全部候选失败时尾端贴触追加兜底）
+        if cand is None:
+            g0n = translate(ge, xoff=-b[0], yoff=-b[1])   # 归一到原点
+            # 候选 y = 棱边四类对齐（bottom↔bottom / top↔top / bottom↔top /
+            # top↔bottom）∪ {0, gate 底}。探针只生成前两类 ⇒ 走廊类凹口
+            # （驱逐片底对占用顶）永不可达，此处补全（仍棱边口径，确定性）。
+            ys = {0.0, gate_nest - h}
+            for i in placed_idx + [j for j in evicted if j != e]:
+                bi = geoms_eroded[i].bounds
+                ys |= {bi[1], bi[3], bi[1] - h, bi[3] - h}
+            best = None
+            for y in sorted(ys):
+                if y < -2.0 or y + h > gate_nest + 2.0:
+                    continue
+                g_at = translate(g0n, xoff=cur_max + w + 60.0, yoff=y)
+                geom_t, _dx = _slide_touch(g_at, occupied, 0.0)
+                if geom_t.bounds[0] < -PIN_X_FLOOR_TOL_MM:
+                    # 走廊畅通滑过头 ⇒ 贴 x=0 布头墙（钉位语义：x=0 是布头，
+                    # 探针直接放行负坐标属缺陷，此处钳制后仍过碰撞复检）
+                    geom_t = translate(g0n, xoff=0.0, yoff=y)
+                if geom_t.intersection(occupied).area >= 1e-6:
+                    continue
+                costw = max(cur_max, geom_t.bounds[2])
+                if best is None or costw < best[1]:      # 平手取先序 y（确定性）
+                    best = (geom_t, costw)
+            if best is not None:
+                cand = best[0]
+            else:                                         # 尾端贴触追加兜底
+                cand = translate(ge, xoff=cur_max + w + 60.0 - b[0])
+            n_slide += 1
+
+        delta_x = cand.bounds[0] - b[0]
+        delta_y = cand.bounds[1] - b[1]
+        placements[e]['translation'][0] += delta_x
+        placements[e]['translation'][1] += delta_y
+        geoms_eroded[e] = cand
+        geoms_raw[e] = translate(geoms_raw[e], xoff=delta_x, yoff=delta_y)
+        occupied = unary_union([occupied, cand])
+        placed_idx.append(e)
+
+    width_after = max((g.bounds[2] for g in geoms_raw), default=0.0)
+    min_x = min(min((g.bounds[0] for g in geoms_raw), default=0.0), 0.0)
+    growth = width_after - width_before
+    stats = {'n_home': n_home, 'n_nudge': n_nudge, 'n_slide': n_slide,
+             'width_before': round(width_before, 3),
+             'final_width': round(width_after - min_x, 3),
+             'width_growth': round(growth, 3)}
+    if growth > PIN_WIDTH_GROWTH_WARN_MM and n_slide:
+        _log.warning('前缀驱逐重插含尾端追加（slide 兜底 %d 片）：width_growth '
+                     '%.1fmm 超警戒线 %.0fmm（交付物已过 validate 复检，明细见 stats）',
+                     n_slide, growth, PIN_WIDTH_GROWTH_WARN_MM)
+    return stats
+
+
+def _recheck_layout(placements, geoms_raw, gate_nest):
+    """置换后全版复检：``constraints.validate`` + y ≤ 1910（LNS 纪律）。
+
+    与 ``cli.lns_bands.recheck_layout`` 同源口径（引擎层禁 import cli，此处
+    镜像）：``validate`` 的 x 界检查是老位图引擎的幅宽方向，sparrow 世界坐标
+    Y=门幅 ⇒ 传 **(y, x) 交换**坐标（再整体 + y 容差平移、gate 同步放宽
+    2×容差，容纳 erode 合法外凸），覆盖「数量 / 幅宽向界内 / 用布长度正向」；
+    y 向另按 ``PLOT_SAFE_MAX_Y_MM`` 复检（越界片计数）。``validate`` 只消费
+    点列的 x 极值 ⇒ 每片传 bbox 角点（shapely MultiPolygon 免展开分叉）。
+
+    返回 ``(ok, issues)``。
+    """
+    strip_h = min(float(gate_nest), PLOT_SAFE_MAX_Y_MM)
+    tol = PIN_RECHECK_Y_TOLERANCE_MM
+    width = max((g.bounds[2] for g in geoms_raw), default=0.0)
+    carriers = [_PidCarrier(pl['id']) for pl in placements]
+    swapped = [(carriers[k],
+                [(g.bounds[1] + tol, g.bounds[0]), (g.bounds[3] + tol, g.bounds[0]),
+                 (g.bounds[1] + tol, g.bounds[2]), (g.bounds[3] + tol, g.bounds[2])])
+               for k, g in enumerate(geoms_raw)]
+    ok, issues = validate(swapped, swapped, width, strip_h + 2 * tol, 1.0)
+    y_viol = sum(1 for g in geoms_raw
+                 if g.bounds[3] > PLOT_SAFE_MAX_Y_MM + tol)
+    if y_viol:
+        issues = list(issues) + [
+            f'{y_viol} 片越过绘图仪可写幅宽 y<={PLOT_SAFE_MAX_Y_MM:.0f}mm']
+    return bool(ok and y_viol == 0), list(issues)
+
+
+class _PidCarrier:
+    """``constraints.validate`` 的 piece 载体（只读 ``pid`` 属性）。"""
+
+    __slots__ = ('pid',)
+
+    def __init__(self, pid):
+        self.pid = pid
+
+
+def pin_prefix_layout(placements, pid_meta, pieces_by_id, chunk, comp_rotation,
+                      comp_translation, prefix_idx, *, gate_nest,
+                      flex=PIN_CUT_FLEX_MM, eps=PIN_STRADDLER_EPS_MM,
+                      skip_at_head=PIN_SKIP_AT_HEAD_MM):
+    """置换钉位终检编排（US-003 final 挂钩单点）：permute → reinsert → 复检。
+
+    纯函数语义：**不修改入参 placements**（内部工作副本），恒返回新列表 ——
+    复检失败回退 = 返回置换前布局副本（LNS 纪律：交付物恒过检）。组合片
+    min_x ≤ ``skip_at_head`` 时零触碰直通（P0 常态锚定路径，PIN ≡ FREE）。
+
+    Parameters
+    ----------
+    placements : list[dict]
+        final 布局（**已展开**：PS_ 已替换为 4 成员条目，无组合片条目）。
+    pid_meta / pieces_by_id : dict
+        ``build_pid_meta`` 产物 / intermediate 原始裁片（erode 与原始轮廓口径）。
+    chunk : BandChunk
+        ``build_prefix_plan`` 产物（组合片 polygon）。
+    comp_rotation / comp_translation : float, Sequence[float]
+        组合片在主解 final 的旋转 / 平移（展开所用同一位）。
+    prefix_idx : sequence[int]
+        4 成员在 placements 中的下标。
+    gate_nest : float
+        求解约束幅宽（复检 gate 界，钳 ``min(gate_nest, PLOT_SAFE)``）。
+
+    Returns
+    -------
+    tuple ``(placements, stats)``
+        placements : list[dict] —— 新列表（跳过/回退时为原布局副本）；
+        stats : dict —— ``permute_pin`` stats 平铺 + ``reinsert``（子 dict 或
+            None）+ ``rolled_back`` + ``issues``（US-003 落 prefix_runs 工件）。
+    """
+    backup = [{'id': p['id'], 'rotation': p['rotation'],
+               'translation': [p['translation'][0], p['translation'][1]]}
+              for p in placements]
+    work = [{'id': p['id'], 'rotation': p['rotation'],
+             'translation': [p['translation'][0], p['translation'][1]]}
+            for p in placements]
+    geoms_raw = [_world_raw_geom(p, pid_meta, pieces_by_id) for p in work]
+    geoms_eroded = [_eroded_geom(p, pid_meta) for p in work]
+    comp_world = _valid_geometry(_transform_polygon(
+        chunk.polygon, comp_rotation, comp_translation))
+
+    work, _shift, st = permute_pin(
+        work, geoms_raw, geoms_eroded, comp_world, prefix_idx,
+        flex=flex, eps=eps, skip_at_head=skip_at_head)
+    if st['skipped']:
+        return backup, {**st, 'reinsert': None, 'rolled_back': False, 'issues': []}
+
+    rstats = reinsert_evicted(work, geoms_raw, geoms_eroded,
+                              st['evicted_idx'], _shift, pid_meta,
+                              gate_nest=gate_nest)
+    ok, issues = _recheck_layout(work, geoms_raw, gate_nest)
+    stats = {**st, 'reinsert': rstats, 'rolled_back': not ok, 'issues': issues}
+    if not ok:
+        _log.warning('前缀置换复检失败，回退置换前布局: %s', '; '.join(issues))
+        return backup, stats
+    return work, stats
+
+
 # --------------------------------------------------------------- 冒烟入口
 
 def _smoke_pid_meta(pieces, *, sizes=None, quantities=None, per_type=None) -> dict:
@@ -407,18 +795,118 @@ def _smoke_pid_meta(pieces, *, sizes=None, quantities=None, per_type=None) -> di
     return pid_meta
 
 
+def _pin_demo(pid_meta, pieces_by_id, chunk, per_type, *, gate_nest, seed,
+              time_budget) -> bool:
+    """US-002 置换演示冒烟：组合片自由进解 → 展开置换钉位 → 断言守卫语义。
+
+    5336 真实数据主解（短预算）：PS 组合片 + pid 级扣减构造 spyrrow 实例（探针
+    ``probe2_ab_three_arm.solve_free`` 同构，引擎层不 import web —— item 构造
+    镜像 ``web.solver.build_instance`` 的 Item 层），解后展开 4 成员 →
+    ``pin_prefix_layout`` 终检编排。断言（P0 回归口径）：
+
+    - 组合片自然锚定布头（min_x ≤ 6mm）⇒ 置换跳过、布局逐字节不变（PIN ≡ FREE，
+      密度差 0.00pt —— P0 实测 4/4 seed 行为）；
+    - 未锚定 ⇒ 置换后组合片 min_x ≤ 6mm 且复检通过不回退。
+
+    返回是否全部断言通过。
+    """
+    import spyrrow
+
+    member_pids = {m['pid'] for m in chunk.members}
+    items = []
+    for pid, meta in pid_meta.items():
+        if pid in member_pids:
+            continue
+        tol = float(((per_type or {}).get(meta['label']) or {}).get('tol', 0.0))
+        items.append(spyrrow.Item(
+            id=pid, shape=[(float(x), float(y)) for x, y in meta['polygon']],
+            demand=int(meta['demand']),
+            allowed_orientations=discretize_orientations(min(tol, MAX_ROTATION_TOL_DEG))))
+    items.append(spyrrow.Item(
+        id=chunk.pid, shape=[(float(x), float(y)) for x, y in chunk.polygon],
+        demand=1, allowed_orientations=list(PREFIX_ORIENTATIONS)))
+    inst = spyrrow.StripPackingInstance(
+        name='prefix_pin_demo', strip_height=float(gate_nest), items=items)
+    scfg = spyrrow.StripPackingConfig(
+        total_computation_time=int(time_budget), seed=int(seed),
+        quadtree_depth=4, num_workers=4)
+    sol, _curve, elapsed = solve_with_progress(inst, scfg)
+
+    comp = next((pi for pi in sol.placed_items if pi.id == chunk.pid), None)
+    if comp is None:
+        print(f'FAIL: 主解未放置组合片 {chunk.pid}（placed={len(sol.placed_items)}）')
+        return False
+    members = expand_placements(chunk, comp.rotation, comp.translation)
+    placements = [{'id': pi.id, 'rotation': pi.rotation,
+                   'translation': [pi.translation[0], pi.translation[1]]}
+                  for pi in sol.placed_items if pi.id != chunk.pid]
+    placements += members
+    prefix_idx = list(range(len(placements) - len(members), len(placements)))
+
+    total_area = sum(float(m['area_mm2']) * int(m['demand'])
+                     for m in pid_meta.values())
+
+    def _report(pls):
+        geoms = [_world_raw_geom(p, pid_meta, pieces_by_id) for p in pls]
+        width = max(g.bounds[2] for g in geoms) \
+            - min(min(g.bounds[0] for g in geoms), 0.0)
+        pmin = min(geoms[i].bounds[0] for i in prefix_idx)
+        return width, total_area / (width * gate_nest) * 100.0, pmin
+
+    w0, d0, pmin0 = _report(placements)
+    print(f'  [demo] FREE: width={w0:.0f}mm density={d0:.2f}% '
+          f'comp_min_x={pmin0:.1f}mm（head_already={pmin0 <= PIN_SKIP_AT_HEAD_MM}）'
+          f' {elapsed:.0f}s')
+    out, st = pin_prefix_layout(
+        placements, pid_meta, pieces_by_id, chunk, comp.rotation,
+        comp.translation, prefix_idx, gate_nest=gate_nest)
+    if st['skipped']:
+        same = all(a['translation'] == b['translation'] and a['id'] == b['id']
+                   for a, b in zip(out, placements))
+        w1, d1, pmin1 = _report(out)
+        print(f'  [demo] PIN : skipped=True（组合片已在头部 a={st["a"]}mm）'
+              f' layout_identical={same}')
+        print(f'  [demo] PIN : width={w1:.0f}mm density={d1:.2f}% '
+              f'prefix_min_x={pmin1:.1f}mm Δdensity={d1 - d0:+.2f}pt')
+        if not same or w1 != w0:
+            print('FAIL: 跳过路径不得改动布局（PIN 应逐字节 == FREE）')
+            return False
+        print('  [demo] PASS: 置换跳过，PIN ≡ FREE（P0 常态锚定回归口径）')
+        return True
+
+    r = st.get('reinsert') or {}
+    w1, d1, pmin1 = _report(out)
+    print(f'  [demo] PIN : a={st["a"]} b0={st["b0"]} c2={st["c2"]} '
+          f'A/C/B={st["nA"]}/{st["nC"]}/{st["nB"]} '
+          f'evicted={st["n_evicted"]} (home/nudge/slide='
+          f'{r.get("n_home")}/{r.get("n_nudge")}/{r.get("n_slide")} '
+          f'growth={r.get("width_growth")}mm rolled_back={st["rolled_back"]})')
+    print(f'  [demo] PIN : width={w1:.0f}mm density={d1:.2f}% '
+          f'prefix_min_x={pmin1:.1f}mm Δdensity={d1 - d0:+.2f}pt')
+    if pmin1 > PIN_SKIP_AT_HEAD_MM:
+        print(f'FAIL: 置换后组合片 min_x {pmin1:.1f}mm > {PIN_SKIP_AT_HEAD_MM}mm')
+        return False
+    if st['rolled_back']:
+        print('FAIL: 复检失败被回退（构造性用例不允许）')
+        return False
+    print('  [demo] PASS: 置换钉位 min_x ≤ 6mm 且复检通过')
+    return True
+
+
 def main(argv=None) -> int:
     """冒烟入口：``python -m materialsorting.nesting_engine.prefix``。
 
     默认 5336 真实数据（``data/configs/5336_coded_really.json`` + intermediate）
     对拍 P0 直测数字：interleave bbox 1155×1458 / fill 83.3% / 贴触 0.00mm /
-    封闭腔 0。intermediate 缺失时提示先 commit（ms-run-config 或 web 上传）。
+    封闭腔 0。``--pin-demo`` 追加 US-002 置换演示（构造 + 短预算主解 + 钉位
+    断言）。intermediate 缺失时提示先 commit（ms-run-config 或 web 上传）。
     """
     try:
         sys.stdout.reconfigure(encoding='utf-8')
     except Exception:
         pass
-    ap = argparse.ArgumentParser(description='prefix 前缀组合片构造冒烟（US-001）')
+    ap = argparse.ArgumentParser(
+        description='prefix 前缀组合片构造/置换冒烟（US-001/US-002）')
     ap.add_argument('--intermediate', default=paths.INTERMEDIATE,
                     help='pieces_intermediate.json 路径')
     ap.add_argument(
@@ -428,6 +916,10 @@ def main(argv=None) -> int:
     ap.add_argument('--front', default='g02', help='前幅 g 码')
     ap.add_argument('--back', default='g03', help='后幅 g 码')
     ap.add_argument('--seed', type=int, default=0, help='资格码选取 seed')
+    ap.add_argument('--pin-demo', action='store_true',
+                    help='追加段置换钉位演示（spyrrow 短预算主解 + 守卫断言）')
+    ap.add_argument('--time', type=int, default=5,
+                    help='置换演示主解预算（秒，仅 --pin-demo）')
     args = ap.parse_args(argv)
 
     if not os.path.exists(args.intermediate):
@@ -465,12 +957,16 @@ def main(argv=None) -> int:
                 MAX_OVERLAP_MM),
             min(float((per_type.get(args.back) or {}).get('d', 0.0)),
                 MAX_OVERLAP_MM))
+        pieces_by_id = {p['pid']: p for p in pieces}
+        interleave_chunk = None
         for order in PREFIX_ORDERS:
             chunk, gaps, holes = build_prefix_plan(
-                pid_meta, {p['pid']: p for p in pieces},
+                pid_meta, pieces_by_id,
                 front_pid=f'{args.front}_{size}',
                 back_pid=f'{args.back}_{size}',
                 d_g=d_g, gate_nest=gate_nest, order=order)
+            if order == 'interleave':
+                interleave_chunk = chunk
             print(f'  {order:11}: {chunk.pid} bbox '
                   f'{chunk.bbox["width_mm"]:.0f}x{chunk.bbox["height_mm"]:.0f}mm '
                   f'fill={chunk.fill_pct:.1f}% '
@@ -479,6 +975,12 @@ def main(argv=None) -> int:
     except (PrefixError, ValueError) as e:
         print(f'FAIL {type(e).__name__}: {e}')
         return 1
+    if args.pin_demo:
+        print(f'== prefix 置换演示（{args.time}s 预算主解，US-002 守卫断言）==')
+        if not _pin_demo(pid_meta, pieces_by_id, interleave_chunk, per_type,
+                         gate_nest=gate_nest, seed=args.seed,
+                         time_budget=args.time):
+            return 1
     return 0
 
 
