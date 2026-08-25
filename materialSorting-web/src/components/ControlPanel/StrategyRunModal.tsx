@@ -269,7 +269,9 @@ function StrategyRunModalInner({
 
   /** 执行：排料参数与 handleStart 同源；sizes 空（后端 400）由 disabled 兜底。
    * band 透传（2026-08-22 解除互斥）：ctx.band 开启时进 /api/strategy/start，
-   * 后端 _parse_band 同一校验点 → 8 键 config → CLI worker 进程内成带。 */
+   * 后端 _parse_band 同一校验点 → 9 键 config → CLI worker 进程内成带。
+   * prefix 透传（2026-08-25 解除互斥，band 同款）：ctx.prefix 开启时同入载荷
+   * （_parse_prefix 同一校验点，含 2+2 资格码 start 期拦截）。 */
   function handleExec(): void {
     const ctx = buildStartContext();
     void start({
@@ -281,6 +283,7 @@ function StrategyRunModalInner({
       per_type: ctx.per_type,
       quantities: ctx.quantities,
       band: ctx.band,
+      prefix: ctx.prefix,
     });
   }
 

@@ -193,6 +193,26 @@ def test_run_stats_class_key_band_component():
     assert len(band_key) == 10
 
 
+def test_run_stats_class_key_prefix_component():
+    """prefix 组件（2026-08-25，band 同款）：None/空 = 旧口径逐字节一致；prefix
+    on → 新 key；与 band 组件正交（双开 ≠ 单开）。"""
+    args = ('/m/master.dxf', [31, 32], {'g01': {'31': 2}}, {'g01': {'d': 2}})
+    legacy_key = run_stats_class_key(*args)
+    # None / 空串不加组件 → 与旧公式（含 band 默认参）逐字节一致。
+    assert run_stats_class_key(*args, prefix_labels=None) == legacy_key
+    assert run_stats_class_key(*args, prefix_labels='') == legacy_key
+    # prefix on → 独立 key；不同 g 码对也互不相同。
+    prefix_key = run_stats_class_key(*args, prefix_labels='g02+g03')
+    assert prefix_key != legacy_key
+    assert prefix_key != run_stats_class_key(*args, prefix_labels='g02+g04')
+    assert len(prefix_key) == 10
+    # 与 band 组件正交：双开 ≠ 仅 band ≠ 仅 prefix。
+    both_key = run_stats_class_key(*args, band_label='g05',
+                                   prefix_labels='g02+g03')
+    assert both_key != prefix_key
+    assert both_key != run_stats_class_key(*args, band_label='g05')
+
+
 def test_load_run_stats_tolerates_missing_and_bad_lines(tmp_path):
     """缺文件 → []；坏 JSON 行 / 非 dict 行跳过；空行剔除。"""
     assert load_run_stats(tmp_path / 'nope.jsonl') == []

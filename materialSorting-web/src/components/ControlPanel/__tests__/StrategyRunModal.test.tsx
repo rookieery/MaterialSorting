@@ -44,7 +44,8 @@ const CTX: StartContext = {
   // 2026-08-22 解除互斥：band 随 handleExec 透传到 /api/strategy/start（ctx.band
   // 开启 → 载荷带 band；null → 显式 null 键，后端 _parse_band 关闭不写 config）。
   band: null,
-  // US-004：prefix 与策略入口 v1 互斥（ControlPanel 前端禁入口），fixture 恒 null。
+  // 2026-08-25 解除互斥（band 同款）：prefix 同样随 handleExec 透传；null →
+  // 显式 null 键，后端 _parse_prefix 关闭不写 config。
   prefix: null,
 };
 
@@ -243,6 +244,7 @@ describe('StrategyRunModal (US-005)', () => {
       per_type: CTX.per_type,
       quantities: CTX.quantities,
       band: null,
+      prefix: null,
     });
   });
 
@@ -265,6 +267,28 @@ describe('StrategyRunModal (US-005)', () => {
       mode: 'race',
       minutes: 20,
       band: { enabled: true, label: 'g05' },
+    });
+  });
+
+  it('prefix 开启 → start 载荷带 prefix（ctx.prefix 同源透传，2026-08-25 解除互斥）', async () => {
+    openModal();
+    const prefixedCtx: StartContext = {
+      ...CTX,
+      prefix: { enabled: true, front: 'g02', back: 'g03' },
+    };
+    renderModal(false, prefixedCtx);
+    act(() => {
+      (document.body.querySelector('[data-testid="strategy-exec-btn"]') as HTMLButtonElement).click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(startBodies).toHaveLength(1);
+    expect(startBodies[0]).toMatchObject({
+      mode: 'race',
+      minutes: 20,
+      prefix: { enabled: true, front: 'g02', back: 'g03' },
     });
   });
 

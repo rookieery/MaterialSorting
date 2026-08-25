@@ -401,6 +401,80 @@ def test_start_band_invalid_400(strat_env, monkeypatch):
     assert strategy_mod._read_marker() is None
 
 
+# ------------------------------------------- prefix（2026-08-25 解除互斥，band 同款）
+
+
+def _prefix_qty_2plus2() -> dict:
+    """g01/g02 各 size28 demand=2 —— _synthetic_pieces 两码均有 28 片 → 资格码 [28]。"""
+    return {'g01': {'28': 2}, 'g02': {'28': 2}}
+
+
+def test_start_prefix_written_into_config(strat_env, monkeypatch):
+    """prefix 开启且合法（含 2+2 资格码）→ config JSON 含 prefix 键（原形态）。"""
+    uploads = _band_start_env(monkeypatch, strat_env)
+    r = _client().post('/api/strategy/start', json={
+        'mode': 'race', 'minutes': 10, 'quantities': _prefix_qty_2plus2(),
+        'prefix': {'enabled': True, 'front': 'g01', 'back': 'g02'},
+    })
+    assert r.status_code == 202
+    cfg = json.loads(
+        list(uploads.glob('strategy_cfg_*.json'))[0].read_text(encoding='utf-8'))
+    assert cfg['prefix'] == {'enabled': True, 'front': 'g01', 'back': 'g02'}
+    assert cfg['quantities'] == _prefix_qty_2plus2()
+
+
+def test_start_prefix_null_and_disabled_not_written(strat_env, monkeypatch):
+    """prefix=null / enabled=false → _parse_prefix 关闭 → config 不写 prefix 键。"""
+    uploads = _band_start_env(monkeypatch, strat_env)
+    c = _client()
+    for i, prefix in enumerate((None, {'enabled': False, 'front': 'g01', 'back': 'g02'})):
+        if i:
+            strategy_mod._STRATEGY_STATE['state'] = 'done'
+            strategy_mod._clear_marker()
+        assert c.post('/api/strategy/start', json={
+            'mode': 'race', 'minutes': 10, 'quantities': _prefix_qty_2plus2(),
+            'prefix': prefix}).status_code == 202
+        cfg = json.loads(
+            sorted(uploads.glob('strategy_cfg_*.json'))[-1]
+            .read_text(encoding='utf-8'))
+        assert 'prefix' not in cfg
+
+
+def test_start_prefix_invalid_400(strat_env, monkeypatch):
+    """prefix 非法（坏 g 码 / 不存在 / front==back / 无 2+2 资格码）→ 400 不 spawn。"""
+    uploads = _band_start_env(monkeypatch, strat_env)
+    c = _client()
+    qty = _prefix_qty_2plus2()
+    # 坏 g 码
+    r = c.post('/api/strategy/start', json={
+        'mode': 'race', 'minutes': 10, 'quantities': qty,
+        'prefix': {'enabled': True, 'front': 'front', 'back': 'g02'}})
+    assert r.status_code == 400 and 'g 码' in r.json()['error']
+    # 不存在于当前母版（pieces 只有 g01/g02）
+    r = c.post('/api/strategy/start', json={
+        'mode': 'race', 'minutes': 10, 'quantities': qty,
+        'prefix': {'enabled': True, 'front': 'g01', 'back': 'g03'}})
+    assert r.status_code == 400 and '不存在' in r.json()['error']
+    # front == back
+    r = c.post('/api/strategy/start', json={
+        'mode': 'race', 'minutes': 10, 'quantities': qty,
+        'prefix': {'enabled': True, 'front': 'g01', 'back': 'g01'}})
+    assert r.status_code == 400 and '不同 g 码' in r.json()['error']
+    # 无 2+2 资格码（demand=1 → 不合格；文案指路数量矩阵）
+    r = c.post('/api/strategy/start', json={
+        'mode': 'race', 'minutes': 10,
+        'prefix': {'enabled': True, 'front': 'g01', 'back': 'g02'}})
+    assert r.status_code == 400 and '资格码' in r.json()['error']
+    # 资格码被 sizes 过滤掉（32 不在母版 → 资格码空）
+    r = c.post('/api/strategy/start', json={
+        'mode': 'race', 'minutes': 10, 'sizes': [30], 'quantities': qty,
+        'prefix': {'enabled': True, 'front': 'g01', 'back': 'g02'}})
+    assert r.status_code == 400 and '资格码' in r.json()['error']
+    # 全部被拒 → 无 config 落盘、无 marker。
+    assert not list(uploads.glob('strategy_cfg_*.json'))
+    assert strategy_mod._read_marker() is None
+
+
 def test_start_cleans_previous_web_artifacts(strat_env, monkeypatch):
     """start 通过闸门后清理上一轮 web 产物：web_* run 目录 / 旧 cfg / 旧 stderr
     临时文件全清；非 web_ 前缀目录（手工 ms-run-config run）不受影响（2026-08-22）。"""

@@ -196,7 +196,7 @@ def test_quantities_errors(base_payload, tmp_path):
     _must_fail({**base_payload, 'quantities': []}, tmp_path, 'quantities')
 
 
-# ------------------------------------------------- band（8 键 schema，2026-08-22）
+# ------------------------------------------------- band（9 键 schema，2026-08-22）
 
 def test_band_valid_and_disabled(base_payload, tmp_path):
     """band 开启 → 原样 {'enabled': True, 'label'}；enabled=false / 缺省 → None。"""
@@ -229,6 +229,57 @@ def test_band_errors(base_payload, tmp_path):
     _must_fail({**base_payload, 'band': {'enabled': True, 'label': 5}},
                tmp_path, 'band.label')
     _must_fail({**base_payload, 'band': {'enabled': True}}, tmp_path, 'band.label')
+
+
+# ------------------------------------------- prefix（9 键 schema，2026-08-25）
+
+def test_prefix_valid_and_disabled(base_payload, tmp_path):
+    """prefix 开启 → 原样 {'enabled', 'front', 'back'}；enabled=false / 缺省 → None。"""
+    cfg = load_config(_write_cfg(
+        tmp_path,
+        {**base_payload, 'prefix': {'enabled': True, 'front': 'g02', 'back': 'g03'}}))
+    assert cfg.prefix == {'enabled': True, 'front': 'g02', 'back': 'g03'}
+    # 显式关闭 = 缺省（None），与 WS _parse_prefix 的「enabled falsy → 关闭」同口径
+    cfg = load_config(_write_cfg(
+        tmp_path,
+        {**base_payload, 'prefix': {'enabled': False, 'front': 'g02', 'back': 'g03'}}))
+    assert cfg.prefix is None
+    cfg = load_config(_write_cfg(tmp_path, base_payload))
+    assert cfg.prefix is None
+    # band + prefix 双开（9 键 schema 两键独立）
+    cfg = load_config(_write_cfg(tmp_path, {
+        **base_payload,
+        'band': {'enabled': True, 'label': 'g05'},
+        'prefix': {'enabled': True, 'front': 'g02', 'back': 'g03'}}))
+    assert cfg.band == {'enabled': True, 'label': 'g05'}
+    assert cfg.prefix == {'enabled': True, 'front': 'g02', 'back': 'g03'}
+
+
+def test_prefix_errors(base_payload, tmp_path):
+    _must_fail({**base_payload, 'prefix': 'g02'}, tmp_path, 'prefix')
+    _must_fail({**base_payload, 'prefix': []}, tmp_path, 'prefix')
+    # 未知内键
+    _must_fail(
+        {**base_payload,
+         'prefix': {'enabled': True, 'front': 'g02', 'back': 'g03', 'size': 32}},
+        tmp_path, 'prefix', 'size')
+    # enabled 非布尔（truthy 1 也不收 —— 严格 bool，与 JSON 布尔语义 1:1）
+    _must_fail({**base_payload, 'prefix': {'enabled': 1, 'front': 'g02', 'back': 'g03'}},
+               tmp_path, 'prefix.enabled')
+    _must_fail({**base_payload, 'prefix': {'front': 'g02', 'back': 'g03'}},
+               tmp_path, 'prefix.enabled')
+    # front / back 非 g 码（front==back 是「不同 g 码」错误，不是形态错误）
+    _must_fail({**base_payload, 'prefix': {'enabled': True, 'front': 'front', 'back': 'g03'}},
+               tmp_path, 'prefix.front')
+    _must_fail({**base_payload, 'prefix': {'enabled': True, 'front': 'G02', 'back': 'g03'}},
+               tmp_path, 'prefix.front')
+    _must_fail({**base_payload, 'prefix': {'enabled': True, 'front': 'g02', 'back': 3}},
+               tmp_path, 'prefix.back')
+    _must_fail({**base_payload, 'prefix': {'enabled': True, 'front': 'g02'}},
+               tmp_path, 'prefix.back')
+    # front == back（与 WS _parse_prefix「须为不同 g 码」同条件）
+    _must_fail({**base_payload, 'prefix': {'enabled': True, 'front': 'g02', 'back': 'g02'}},
+               tmp_path, 'prefix', '不同 g 码')
 
 
 def test_gate_mm_errors(base_payload, tmp_path):

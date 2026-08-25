@@ -234,24 +234,15 @@ def test_lns_skipped_when_band_enabled(iso_env, capsys, monkeypatch):
 
 
 def test_lns_skipped_when_prefix_enabled(iso_env, capsys, monkeypatch):
-    """prefix 开启 + --lns → LNS 环节跳过（US-003 预埋，band 同款双 warn 点）。
+    """prefix 开启 + --lns → LNS 环节跳过（band 同款双 warn 点；2026-08-25 起
+    9 键 schema 接入，config 直接写 prefix 键，不再 dataclasses.replace 注入）。
 
-    CLI 9 键 schema prefix 支持是二期（load_config 恒不填 prefix 字段，config
-    文件写 prefix 键仍按未知键报错 fail-loud），本用例经 ``dataclasses.replace``
-    注入 NestRunConfig.prefix 模拟二期 schema 接入后的形态，锁双 warn 点行为：
-    启动 warn（stderr）+ LNS 执行跳过（无 result_lns.json、result.json 无 lns 段、
-    退出 0）。"""
-    import dataclasses
-
-    from materialsorting.cli import run_config as rc_mod
-    from materialsorting.cli.config import load_config
-
+    锁双 warn 点行为：启动 warn（stderr）+ LNS 执行跳过（无 result_lns.json、
+    result.json 无 lns 段、退出 0）+ config 段 prefix 回显。"""
     tmp, runs, master = iso_env
-    cfg_path = _write_config(tmp / 'cfg.json', master)
-    real_cfg = load_config(cfg_path)
-    injected = dataclasses.replace(
-        real_cfg, prefix={'enabled': True, 'front': 'g01', 'back': 'g02'})
-    monkeypatch.setattr(rc_mod, 'load_config', lambda _p: injected)
+    cfg_path = _write_config(
+        tmp / 'cfg.json', master,
+        prefix={'enabled': True, 'front': 'g01', 'back': 'g02'})
     _patch(monkeypatch, {0: [(0.5, 'holey')]})
     rc = main([str(cfg_path), '--time', '2', '--lns', '--lns-time', '3',
                '--lns-rounds', '2'])
@@ -265,18 +256,21 @@ def test_lns_skipped_when_prefix_enabled(iso_env, capsys, monkeypatch):
     assert not (rd / 'result_lns.json').exists()
     doc = json.loads((rd / 'result.json').read_text(encoding='utf-8'))
     assert 'lns' not in doc
+    # prefix 回显（config 段原形态；None 不加键的反面锚点）。
+    assert doc['config']['prefix'] == {'enabled': True, 'front': 'g01',
+                                       'back': 'g02'}
 
 
-def test_config_schema_still_rejects_prefix_key(iso_env):
-    """CLI 8 键 schema 现状锁定：config 文件写 prefix 键按未知键报错（fail-loud，
-    不静默 no-op —— CLI 求解未接入 prefix，写入即应被拦下而非被忽略）。"""
-    from materialsorting.cli.config import ConfigError, load_config
+def test_config_schema_accepts_prefix_key(iso_env):
+    """CLI 9 键 schema（2026-08-25 起）：config 文件写 prefix 键合法加载。"""
+    from materialsorting.cli.config import load_config
 
     tmp, _runs, master = iso_env
-    cfg_path = _write_config(tmp / 'cfg.json', master,
-                             prefix={'enabled': True, 'front': 'g01', 'back': 'g02'})
-    with pytest.raises(ConfigError, match='未知顶层键'):
-        load_config(cfg_path)
+    cfg_path = _write_config(
+        tmp / 'cfg.json', master,
+        prefix={'enabled': True, 'front': 'g01', 'back': 'g02'})
+    cfg = load_config(cfg_path)
+    assert cfg.prefix == {'enabled': True, 'front': 'g01', 'back': 'g02'}
 
 
 # ------------------------------------------------------- AC#1 改进 / 不优路径

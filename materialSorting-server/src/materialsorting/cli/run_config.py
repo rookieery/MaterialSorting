@@ -12,7 +12,7 @@ r"""ms-run-config 入口 —— 一条命令跑完「commit → 求解」，无�
                     [--race-budget 180] [--race-gate 0.5]]
     python -m materialsorting.cli.run_config <config.json> --time 5
 
-流程：``load_config``（8 键 schema 校验）→ ``new_run_dir``（时间戳目录保留历史）
+流程：``load_config``（9 键 schema 校验）→ ``new_run_dir``（时间戳目录保留历史）
 → ``commit_from_config``（切片 + intermediate 落 run_dir，**仅一次**）→ 逐 ``seeds``
 元素**经 ``cli.portfolio`` 控制器串行** ``solve_pieces``（每轮重建 build_instance，
 复用同一份 commit 产物）→ ``result.json``（config 回显 + commit 摘要 + solve 指标
@@ -180,7 +180,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         prog='ms-run-config',
         description='配置驱动排料：一条命令跑完「commit → 求解」，输出原面积口径利用率',
     )
-    p.add_argument('config', help='配置文件路径（8 键 JSON schema，见 data/configs/）')
+    p.add_argument('config', help='配置文件路径（9 键 JSON schema，见 data/configs/）')
     p.add_argument('--name', metavar='RUN_NAME',
                    help='覆盖 run_name（缺省 = 配置文件 stem，非法字符清洗）')
     p.add_argument('--time', type=int, metavar='N',
@@ -513,9 +513,8 @@ def main(argv: list[str] | None = None) -> int:
         if cfg.band is not None:
             print(f'  ⚠ 腰头成带已开启（band g 码 {cfg.band["label"]}）：'
                   '波段重排会拆散带形态，LNS 环节将跳过', file=sys.stderr)
-        # US-003 预埋（双 warn 点之一）：prefix 配置在 CLI 求解暂未接入（9 键
-        # schema 二期），此守卫在 schema 接入后即刻生效（FR-11 —— 波段重排会
-        # 拆钉位：前缀组合片 x=0 锚定 + 段成员刚体关系被段重排破坏）。
+        # US-003 预埋（2026-08-25 起 9 键 schema 接入即刻生效；FR-11 —— 波段重排
+        # 会拆钉位：前缀组合片 x=0 锚定 + 段成员刚体关系被段重排破坏）。
         if cfg.prefix is not None:
             print(f'  ⚠ 起始端成套前后幅已开启（prefix {cfg.prefix.get("front")}'
                   f'/{cfg.prefix.get("back")}）：波段重排会拆布头钉位，'
@@ -528,9 +527,13 @@ def main(argv: list[str] | None = None) -> int:
     # 容错（→ 无历史 → 不校准），读失败绝不阻断求解。
     # band label 纳入 class_key（band off → 不加组件 = 与旧口径逐字节一致，历史
     # 样本继续命中；band on → 新 key，+2pt 级密度差不与 band off 混同分布）。
+    # prefix 同款（2026-08-25）：'g02+g03' 组件（~0.7pt 偏移 > θ₀ margin 0.3pt）。
+    _pf, _pb = (cfg.prefix or {}).get('front'), (cfg.prefix or {}).get('back')
     stats_class_key = run_stats_class_key(str(cfg.master_dxf), cfg.sizes,
                                           cfg.quantities, cfg.per_type,
-                                          band_label=(cfg.band or {}).get('label'))
+                                          band_label=(cfg.band or {}).get('label'),
+                                          prefix_labels=(f'{_pf}+{_pb}'
+                                                         if _pf and _pb else None))
     theta0 = None
     # US-002：策略模式 θ 不维护（R1/R2 不评估），校准无判据可锚 → 跳过。
     if args.target is not None and strategy is None:
@@ -641,6 +644,8 @@ def main(argv: list[str] | None = None) -> int:
                 # band 回显（config 未给 / enabled=false 不加键：与无 band 运行
                 # 逐字节一致，冒烟对拍不受扰）。
                 **({'band': cfg.band} if cfg.band is not None else {}),
+                # prefix 回显（同 band 口径：None 不加键）。
+                **({'prefix': cfg.prefix} if cfg.prefix is not None else {}),
             },
             'commit': commit,
             'solve': solves,
@@ -812,7 +817,9 @@ def main(argv: list[str] | None = None) -> int:
                    'quantities': cfg.quantities,
                    # band 回显（None 不加键：历史行结构不变，读侧按 class_key 匹配
                    # —— band label 已纳入 class_key，同 class 必同 band 态）。
-                   **({'band': cfg.band} if cfg.band is not None else {})},
+                   # prefix 同款（labels 已纳入 class_key）。
+                   **({'band': cfg.band} if cfg.band is not None else {}),
+                   **({'prefix': cfg.prefix} if cfg.prefix is not None else {})},
     })
     print(f"real_density（原面积口径）= {d:.2%} | "
           f"用布长度 = {w:.0f}mm | 片数 = {n_placed} | "

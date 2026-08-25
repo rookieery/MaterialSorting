@@ -4,9 +4,10 @@
 
   - ``POST /api/strategy/start``：校验（单例 409 / _PIECES_STATE 非空且 doc 含
     doc_id 422 / mode ∈ {se,race} / minutes ∈ {10,20,30,60} / band 经
-    ``routes_ws._parse_band`` 同一校验点）→ **清理上一轮 web 产物**
+    ``routes_ws._parse_band`` 同一校验点 / prefix 经 ``routes_ws._parse_prefix``
+    同一校验点）→ **清理上一轮 web 产物**
     （``_cleanup_stale_web_artifacts``：web_* run 目录 + 旧 cfg + 旧 stderr，
-    磁盘占用收敛到 ≤1 个 run_dir；2026-08-22）→ 写 8 键 config JSON
+    磁盘占用收敛到 ≤1 个 run_dir；2026-08-22）→ 写 9 键 config JSON
     到 ``out/uploads/strategy_cfg_<stamp>.json`` → spawn
     ``python -m materialsorting.cli.run_config <cfg> --name web_<mode>_<rand6>
     --strategy <mode> --time <minutes*60> --quiet``（stdout=DEVNULL、stderr=临时文件）
@@ -445,7 +446,7 @@ async def strategy_start(req: Request):
     # 腰头成带（2026-08-22 与策略模式解除互斥）：复用 routes_ws._parse_band 单一
     # 校验点（label ^g\d+$ / 存在于当前母版 / 该 g 码 quantities>0），非法 → 400
     # 结构化早退；合法开启 → 以 StartPayload 原形态写进 config JSON（cli.config
-    # 8 键 schema 的 band 键）。null / enabled falsy → _parse_band 返回 None，
+    # 9 键 schema 的 band 键）。null / enabled falsy → _parse_band 返回 None，
     # 不写键（旧行为）。延迟 import：routes_ws → runtime → server 链若在模块级
     # import 本模块（server.py 文件尾注册路由）之外再正向引用会成环，函数内取用
     # 安全（同 _pieces_state 模式）。
@@ -459,7 +460,26 @@ async def strategy_start(req: Request):
         if worker_band is not None:
             band_cfg = {'enabled': True, 'label': worker_band['label']}
 
-    # 8 键 config JSON（cli.config.load_config 严格校验；可选键仅在有值时写入 ——
+    # 起始端成套前后幅（2026-08-25 与策略模式解除互斥，band 同款）：复用
+    # routes_ws._parse_prefix 单一校验点（front/back ^g\d+$ 且存在于当前母版且
+    # front≠back + **2+2 资格码 ≥1**（sizes = 用户所排尺码过滤）—— start 期
+    # 拦下避免 20 分钟长跑空烧），非法 → 400 结构化早退；合法开启 → 以
+    # StartPayload 原形态写进 config JSON（cli.config 9 键 schema 的 prefix 键）。
+    # null / enabled falsy → _parse_prefix 返回 None，不写键（旧行为）。延迟
+    # import 防成环（同上 _parse_band）。
+    prefix_cfg = None
+    if payload.get('prefix') is not None:
+        from .routes_ws import _parse_prefix
+        try:
+            worker_prefix = _parse_prefix(payload.get('prefix'), pieces,
+                                          quantities, sizes)
+        except ValueError as e:
+            return JSONResponse({'error': str(e)}, status_code=400)
+        if worker_prefix is not None:
+            prefix_cfg = {'enabled': True, 'front': worker_prefix['front'],
+                          'back': worker_prefix['back']}
+
+    # 9 键 config JSON（cli.config.load_config 严格校验；可选键仅在有值时写入 ——
     # None 值会被 load_config 按类型错误拒绝）。
     cfg_payload = {
         'master_dxf': str(master.resolve()),
@@ -475,6 +495,8 @@ async def strategy_start(req: Request):
         cfg_payload['quantities'] = quantities
     if band_cfg is not None:
         cfg_payload['band'] = band_cfg
+    if prefix_cfg is not None:
+        cfg_payload['prefix'] = prefix_cfg
 
     # 上一轮 web 策略 run 的产物清理（2026-08-22）：单例闸门已过 → 无 in-flight
     # run，web_* run 目录 / 旧 cfg / 旧 stderr 均无人消费；清理先于本轮 cfg /

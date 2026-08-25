@@ -791,8 +791,8 @@ describe("ControlPanel band 接线 (US-013)", () => {
 
 // ---------------------------------------------------------------- US-004 prefix
 // 布局设置第二行接线：弹窗勾选/下拉/确定写回 form.prefix_* → 启动闸门（置灰 +
-// StatusLine prefix 段文案）/ 策略入口 v1 互斥（disabled + title，band 先例 FR-6）/
-// start payload prefix 生效 / band+prefix 可同开。
+// StatusLine prefix 段文案）/ 策略入口不互斥（2026-08-25 解除，prefix 随 start
+// 载荷透传）/ start payload prefix 生效 / band+prefix 可同开。
 describe("ControlPanel prefix 接线 (US-004)", () => {
   /** 2 码母版（28: g01；30: g01+g02）—— polygon 空 → 默认预选不触发（面积无源）。 */
   function setupPrefixDoc(): void {
@@ -898,30 +898,16 @@ describe("ControlPanel prefix 接线 (US-004)", () => {
     expect(cfg.prefix).toEqual({ enabled: true, front: "g01", back: "g02" });
   });
 
-  it("prefix 开启 → strategy-btn 置灰 + title 说明（FR-6 v1 互斥，band 先例）；关闭后恢复", async () => {
+  it("prefix 开启 → strategy-btn 仍可用（2026-08-25 解除互斥，prefix 随 start 载荷透传）", async () => {
     setupPrefixDoc();
     renderPanel(() => {});
     const strategyBtn = container!.querySelector<HTMLButtonElement>('[data-testid="strategy-btn"]')!;
     // 关闭（默认）：doc 非空 + 非 solving → 可用，无 title
     expect(strategyBtn.disabled).toBe(false);
     expect(strategyBtn.getAttribute("title")).toBeNull();
-    // 开启：互斥置灰 + title 指路关闭
+    // 开启：不再互斥 —— 入口保持可用、无互斥 title（prefix 随 /api/strategy/start
+    // 写进 9 键 config，后端 _parse_prefix 同一校验点）
     await enablePrefixViaModal("g01", "g02");
-    expect(strategyBtn.disabled).toBe(true);
-    expect(strategyBtn.getAttribute("title")).toContain("起始端成套与策略运行互斥");
-    // 关闭：重新打开弹窗取消勾选 → 恢复可用、无 title
-    mockReps = TWO_G_REPS;
-    const perTypeBtn = container!.querySelector<HTMLButtonElement>(".per-type-btn")!;
-    act(() => perTypeBtn.click());
-    await act(async () => {
-      await Promise.resolve();
-      await Promise.resolve();
-      await Promise.resolve();
-    });
-    const check = document.body.querySelector<HTMLInputElement>('[data-testid="prefix-enabled"]')!;
-    act(() => check.click());
-    const confirm = document.body.querySelector<HTMLButtonElement>(".per-type-btn-confirm")!;
-    act(() => confirm.click());
     expect(strategyBtn.disabled).toBe(false);
     expect(strategyBtn.getAttribute("title")).toBeNull();
   });

@@ -1,9 +1,9 @@
 """配置文件驱动的排料求解 · 配置加载与校验（CLI 第一道闸）。
 
-``load_config(path)`` 读取 8 键 JSON 配置（示例 ``data/configs/5336_coded_sizes32-38.json``），
+``load_config(path)`` 读取 9 键 JSON 配置（示例 ``data/configs/5336_coded_sizes32-38.json``），
 拼写 / 类型 / 路径 / 数值错误在管线启动前就地拦下（中文 ``ConfigError``，消息含字段名）。
 
-8 键 schema（FR-1；除 seeds 外字段名与 WS StartPayload 契约 1:1）：
+9 键 schema（FR-1；除 seeds 外字段名与 WS StartPayload 契约 1:1）：
 
     master_dxf  str    必填。母版 DXF 路径：绝对直用；相对先按 CWD 再按仓库根
                        （paths.REPO_DIR）解析，均失败报错并列出两个候选绝对路径。
@@ -27,6 +27,14 @@
                        label 是否存在于母版 / 该 g 码 quantities>0 不在本层校验
                        （config 加载期无 pieces 事实源）—— 求解期由
                        ``solve_worker._build_band`` fail-fast（「成带失败」error）。
+    prefix      dict   可选。起始端成套前后幅 ``{'enabled': bool, 'front': g码,
+                       'back': g码}``（与 WS StartPayload.prefix 1:1，web 策略入口
+                       前端直传）。enabled=false 或键缺省 = 关闭；enabled=true 时
+                       front/back 须匹配 ``^g\\d+$`` 且 front≠back。存在性 / 2+2
+                       资格码不在此层校验（同 band 分层）—— web 策略入口经
+                       ``routes_ws._parse_prefix`` start 期拦下；手写 config 由
+                       ``solve_worker._build_prefix`` 求解期 fail-fast（「前缀构造
+                       失败」error）兜底。
 
 本模块保持「纯校验」定位：模块级 import 仅标准库（无兄弟包 import、导入无副作用，
 ``python -m materialsorting.cli.config`` 直接运行零输出零副作用）；对 paths /
@@ -43,9 +51,9 @@ from typing import Any, NoReturn
 
 __all__ = ['ConfigError', 'NestRunConfig', 'load_config']
 
-# 8 键 schema（FR-1）。旧 seed / multi_seed / seed_count 不在其中 → 按未知键报错。
+# 9 键 schema（FR-1）。旧 seed / multi_seed / seed_count 不在其中 → 按未知键报错。
 TOP_LEVEL_KEYS = ('master_dxf', 'sizes', 'gate_mm', 'time', 'seeds', 'per_type',
-                  'quantities', 'band')
+                  'quantities', 'band', 'prefix')
 # 必填键：CLI 无 web 的 intermediate 兜底（intermediate 本身由本配置生成）。
 _REQUIRED_KEYS = ('master_dxf', 'gate_mm')
 # 已退役的旧种子字段：未知键报错时附迁移提示（→ seeds 列表）。
@@ -61,6 +69,8 @@ _PER_TYPE_KEYS = ('d', 'tol')
 _BAND_LABEL_RE = re.compile(r'^g\d+$')
 # band 值对象仅接受的键（与 WS StartPayload.band / 前端 BandConfig 1:1）。
 _BAND_KEYS = ('enabled', 'label')
+# prefix 值对象仅接受的键（与 WS StartPayload.prefix / 前端 PrefixConfig 1:1）。
+_PREFIX_KEYS = ('enabled', 'front', 'back')
 
 _DEFAULT_TIME = 300          # 缺省单轮求解时长（秒）
 _DEFAULT_SEEDS = (0,)        # 缺省种子列表
@@ -249,9 +259,40 @@ def _check_band(name: str, raw: Any) -> dict | None:
     return {'enabled': True, 'label': label}
 
 
+def _check_prefix(name: str, raw: Any) -> dict | None:
+    """prefix → ``{'enabled': True, 'front': g码, 'back': g码}`` | None（显式关闭与缺省同线）。
+
+    与 WS StartPayload.prefix 契约 1:1（``_check_band`` 同构，2026-08-25 起接入
+    9 键 schema）：``enabled=false`` → None（关闭，等价键缺省）；``enabled=true``
+    时 front/back 须为匹配 ``^g\\d+$`` 的字符串且 front≠back。存在性 / 2+2 资格码
+    不在此层（config 加载期无 pieces 事实源）—— web 策略入口经
+    ``routes_ws._parse_prefix`` start 期拦下，手写 config 由求解期
+    ``solve_worker._build_prefix`` fail-fast 兜底。
+    """
+    if not isinstance(raw, dict):
+        _fail(name, f'须为对象 {{enabled, front, back}}，当前为 {type(raw).__name__}: {raw!r}')
+    unknown = [k for k in raw if k not in _PREFIX_KEYS]
+    if unknown:
+        _fail(name, f'含未知键 {unknown[0]!r}（仅支持 enabled / front / back）')
+    enabled = raw.get('enabled')
+    if not isinstance(enabled, bool):
+        _fail(f'{name}.enabled', f'须为 JSON 布尔，当前为 {enabled!r}')
+    if not enabled:
+        return None
+    front = raw.get('front')
+    back = raw.get('back')
+    for key, v in (('front', front), ('back', back)):
+        if not isinstance(v, str) or not _BAND_LABEL_RE.match(v):
+            _fail(f'{name}.{key}',
+                  f'须为 g 码字符串（如 "g02"，匹配 ^g\\d+$），当前为 {v!r}')
+    if front == back:
+        _fail(name, f'front 与 back 须为不同 g 码（前/后幅各一），当前同为 {front!r}')
+    return {'enabled': True, 'front': front, 'back': back}
+
+
 @dataclass(frozen=True)
 class NestRunConfig:
-    """校验通过的排料运行配置（load_config 的产物，字段与 8 键 schema 一一对应）。"""
+    """校验通过的排料运行配置（load_config 的产物，字段与 9 键 schema 一一对应）。"""
 
     master_dxf: Path                                        # 已解析为存在的绝对路径
     gate_mm: float                                          # 门幅 mm（>0）
@@ -261,11 +302,7 @@ class NestRunConfig:
     per_type: dict[str, dict[str, float]] = field(default_factory=dict)
     quantities: dict[str, dict[str, int]] | None = None     # None = 全片 demand=1
     band: dict | None = None        # None = 关闭；开启 = {'enabled': True, 'label': g码}
-    # US-003 预埋（prefix PRD 非目标：CLI 9 键 schema prefix 支持为二期）：本字段
-    # load_config 恒不填充（config 文件写 prefix 键仍按未知键报错，fail-loud 不
-    # 静默 no-op），仅供 run_config 的 LNS 互斥 warn 消费 —— 二期 schema 接入后
-    # {'enabled': True, 'front': g码, 'back': g码} 形态即位。
-    prefix: dict | None = None
+    prefix: dict | None = None      # None = 关闭；开启 = {'enabled': True, 'front': g码, 'back': g码}
 
 
 def load_config(path: str | Path) -> NestRunConfig:
@@ -303,4 +340,5 @@ def load_config(path: str | Path) -> NestRunConfig:
         quantities=(_check_quantities('quantities', raw['quantities'])
                     if 'quantities' in raw else None),
         band=_check_band('band', raw['band']) if 'band' in raw else None,
+        prefix=_check_prefix('prefix', raw['prefix']) if 'prefix' in raw else None,
     )

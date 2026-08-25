@@ -195,6 +195,51 @@ def test_solve_pieces_passes_band_worker_form(iso_env, monkeypatch, tmp_path):
     assert captured['band'] == {'label': 'g02'}
 
 
+# ------------------------------------------- prefix 透传（2026-08-25，band 同款）
+
+
+def test_solve_pieces_passes_prefix_worker_form(iso_env, monkeypatch, tmp_path):
+    """cfg.prefix（config 原形态 {'enabled','front','back'}）→
+    solve_with_callback_proc 的 worker 形态 ``prefix={'front','back'}``；无
+    prefix → None（现行行为）；显式 ``prefix=`` 参数优先于 cfg.prefix。"""
+    _, _, run_dir, cfg0 = iso_env
+    captured: dict = {}
+
+    def _impl(pieces, gate_mm, solve_params, *, on_manifest, on_report,
+              on_process=None, prefix=None, **kw):
+        captured['prefix'] = prefix
+        proc = _FakeProc()
+        if on_process is not None:
+            on_process(proc)
+        on_manifest({'pid_meta': {}, 'total_area': 0.0, 'n_eroded': 0,
+                     'gate_mm': float(gate_mm)})
+        fr = _frame(0, 0.5)
+        on_report(dict(fr))
+        final = {'type': 'final', 'density': fr['density'],
+                 'density_sparrow': fr['density_sparrow'],
+                 'width_mm': fr['width_mm'], 'elapsed': fr['elapsed'],
+                 'placed_items': fr['placed_items']}
+        return proc, final, 42.0, None
+
+    monkeypatch.setattr(web_solver, 'solve_with_callback_proc', _impl)
+
+    # ① cfg 无 prefix 键 → 透传 None（现行行为，零回归锚点）。
+    solve_pieces(cfg0, run_dir, seed=0)
+    assert captured['prefix'] is None
+
+    # ② cfg.prefix 开启 → worker 形态（enabled 剥掉，solve_worker 只认 front/back）。
+    cfg_prefix = load_config(_write_config(
+        tmp_path / 'cfg_prefix.json', cfg0.master_dxf,
+        prefix={'enabled': True, 'front': 'g02', 'back': 'g03'}))
+    solve_pieces(cfg_prefix, run_dir, seed=0)
+    assert captured['prefix'] == {'front': 'g02', 'back': 'g03'}
+
+    # ③ 显式 prefix 参数优先于 cfg.prefix。
+    solve_pieces(cfg_prefix, run_dir, seed=0,
+                 prefix={'front': 'g04', 'back': 'g05'})
+    assert captured['prefix'] == {'front': 'g04', 'back': 'g05'}
+
+
 # ------------------------------------------------------- AC#3 curve / best_frame
 
 

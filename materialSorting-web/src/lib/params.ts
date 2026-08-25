@@ -427,14 +427,15 @@ export interface StartContext {
   /**
    * US-012 collectBand 三态解析：关 / 开未选 → null；开且有效 → {enabled:true,label}。
    * 主画布 WS start 与策略 run（StrategyRunModal.handleExec）同源透传
-   * （2026-08-22 解除互斥：band 进 /api/strategy/start → 8 键 config → CLI
+   * （2026-08-22 解除互斥：band 进 /api/strategy/start → 9 键 config → CLI
    * solve_worker 进程内成带 + 展开）。
    */
   band: BandConfig | null;
   /**
    * US-004 collectPrefix 三态解析：关 / 开未选或无效 → null；开且有效 →
-   * {enabled:true,front,back}。**仅主画布 WS start 消费**（prefix 与「高级运行」
-   * 策略入口 v1 互斥 —— /api/strategy/* 的 prefix 支持是二期接口，前端禁入口）。
+   * {enabled:true,front,back}。主画布 WS start 与策略 run 同源透传
+   * （2026-08-25 解除互斥，band 同款：prefix 进 /api/strategy/start → 9 键
+   * config → CLI solve_worker 进程内构造 + 展开，资格码 seeded 选取）。
    */
   prefix: PrefixConfig | null;
 }

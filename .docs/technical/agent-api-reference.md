@@ -25,7 +25,7 @@
 | POST | `/api/parse-dxf` | US-004：multipart 上传母版 DXF → 深度解析 + g 码赋号 JSON | `server.parse_dxf` |
 | POST | `/api/commit-to-nesting` | US-010：把上传母版转排料 intermediate（Path A 全管线，覆盖写回 + .bak）+ US-020 commit 后 reload `_PIECES_STATE` | `server.commit_to_nesting` |
 | GET | `/api/ptypes` | US-020 D10（US-001 v2：键 = g 码 label）：返回当前 `_PIECES_STATE` 下每个 g 码的代表裁片（最小码内 parse 同序首个，含 `label` 编号），供前端高级配置弹窗缩略图/放大预览（D11 layer-aware） | `server.get_ptypes` |
-| POST | `/api/strategy/start` | strategy US-004：spawn `ms-run-config --strategy` 子进程启动双模式长跑（202）；**2026-08-22 起载荷可带 band**（经 `_parse_band` 同一校验点写进 8 键 config，成带与策略模式兼容） | `strategy.strategy_start` |
+| POST | `/api/strategy/start` | strategy US-004：spawn `ms-run-config --strategy` 子进程启动双模式长跑（202）；**2026-08-22 起载荷可带 band**（经 `_parse_band` 同一校验点写进 config，成带与策略模式兼容）；**2026-08-25 起载荷可带 prefix**（经 `_parse_prefix` 同一校验点含 2+2 资格码，非法 → 400 早退，写进 9 键 config） | `strategy.strategy_start` |
 | GET | `/api/strategy/status` | strategy US-004：无状态惰性轮询 run_dir 产物组装进度 | `strategy.strategy_status` |
 | POST | `/api/strategy/stop` | strategy US-004：树杀子进程（taskkill /T /F / killpg）+ 清 marker | `strategy.strategy_stop` |
 | GET | `/api/strategy/result` | strategy US-004：done/stopped run → best + manifest（应用到主画布数据源） | `strategy.strategy_result` |

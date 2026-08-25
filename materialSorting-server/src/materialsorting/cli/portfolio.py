@@ -53,9 +53,10 @@ kill 决策落盘：shadow / on 模式下每个 ``(seed, rule)`` **首次**触�
 PC-009 run 统计库与 θ₀ 校准（``run_config`` 结束时向 ``paths.RUN_STATS_JSONL``
 追加一行，本模块提供读取与校准纯函数）：
 
-  - ``run_stats_class_key(source, sizes, quantities, per_type)``：实例类指纹 =
-    sha1(规范化 JSON) 前 10 位十六进制 —— 同一母版 + 码号集 + 订单配比 + 逐码
-    公差的组合视为同一「实例类」（工艺维度不变、订单漂移内的历史可互相参考）；
+  - ``run_stats_class_key(source, sizes, quantities, per_type, band_label=None,
+    prefix_labels=None)``：实例类指纹 = sha1(规范化 JSON) 前 10 位十六进制 ——
+    同一母版 + 码号集 + 订单配比 + 逐码公差的组合视为同一「实例类」（工艺维度
+    不变、订单漂移内的历史可互相参考；band / prefix 开启时各加组件成新 key）；
   - ``load_run_stats(path)``：读 JSONL → 记录列表（缺文件 / 坏行 / 非 dict 行
     静默跳过 —— 统计库 append-only，坏行不阻断校准）；
   - ``calibrate_theta0(records, class_key, target)``：当前实例类命中且 ≥
@@ -137,7 +138,7 @@ THETA0_MARGIN = 0.003     # θ₀ = min(target, 历史最大 best_density + marg
 
 
 def run_stats_class_key(source, sizes, quantities, per_type,
-                        band_label=None) -> str:
+                        band_label=None, prefix_labels=None) -> str:
     """实例类指纹：``sha1(规范化 JSON)[:10]``（十六进制短哈希）。
 
     组件 = ``(source, sizes, quantities, per_type)`` —— 母版（绝对路径字符串）+
@@ -150,11 +151,18 @@ def run_stats_class_key(source, sizes, quantities, per_type,
     输入与旧口径逐字节一致（band off 的历史样本继续命中）；非空时加 ``'band'``
     组件成新 key —— band on 的密度整体上移（实测 +2.27pt），与 band off 混同
     分布会污染 θ₀ 校准的历史最大 best_density 锚。
+
+    ``prefix_labels``（2026-08-25）：起始端成套前后幅 ``'g02+g03'`` 形态。同款
+    None 不加组件口径；非空时加 ``'prefix'`` 组件 —— prefix on 密度偏移 ~0.7pt
+    量级（US-005 A/B：均值反超 0.675pt / 最差 +0.606pt），大于 θ₀ margin 0.3pt，
+    与 prefix off 混同分布同理污染 θ₀ 锚。
     """
     comp = {'source': str(source), 'sizes': sizes, 'quantities': quantities,
             'per_type': per_type}
     if band_label:
         comp['band'] = band_label
+    if prefix_labels:
+        comp['prefix'] = prefix_labels
     payload = json.dumps(
         comp, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
     return hashlib.sha1(payload.encode('utf-8')).hexdigest()[:10]

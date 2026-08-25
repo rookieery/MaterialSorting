@@ -1092,14 +1092,14 @@ band 配置（用户指认腰头 g 码成带）从表单到 WS 的纯参数链�
 | `src/components/ControlPanel/MultiSeedControls.tsx` | **已删** |
 | `src/components/ControlPanel/ControlPanel.tsx` | band 启动闸门只剩 `bandMissingLabel`/`bandZeroQty` 两态（`bandFillerZeroLabel` 删）；band 开启不再互斥策略（strategy-btn 无 band 维度置灰）；handleStart 载荷 seed=0/seed_count=1 与旧版逐字段一致 |
 | `src/components/ControlPanel/PerTypeOverridesModal.tsx` | 「布局设置」= 开启腰头成带勾选（testid `band-enabled`）+ 腰头编号下拉（`band-label-select`，值域 orderedLabels）+ 80×80 缩略图（`band-thumb-{label}`，点击 openPreviewLabel 双层 modal）三件；`BandFormValue {enabled,label}`；预演 effect/ack 勾选/fillers chip 行全删 |
-| `src/components/ControlPanel/StrategyRunModal.tsx` | `handleExec` 载荷透传 `band: ctx.band`（collectStartContext 同源）→ `/api/strategy/start` 写 8 键 config |
+| `src/components/ControlPanel/StrategyRunModal.tsx` | `handleExec` 载荷透传 `band: ctx.band` / `prefix: ctx.prefix`（collectStartContext 同源）→ `/api/strategy/start` 写 9 键 config |
 | `src/store/bandStore.ts` | **已删**（QtyMatrix 不成对警告 `.qty-cell.odd`/`.qty-odd-badge` 同批拆除，QtyMatrix 回归纯数量矩阵） |
 
 ### 关键不变量（2026-08-22 立，后续故事不得破坏）
 
 1. **band 契约两键纪律** —— 前端只发 `{enabled, label}`；label 存在性/数量>0 由后端 `routes_ws._parse_band` 单一校验点权威判定（WS 与 `/api/strategy/start` 共用），形态守门 = 后端 `FILL_FLOOR_PCT=45` 唯一守门人，前端不再预演、不再 ack 二次确认。
 2. **seed UI 隐藏 ≠ 多 run 能力删除** —— form 三字段冻结默认保证 WS 载荷与旧版逐字段一致（既有 toEqual 护栏继续生效）；useSolveRun/runRegistry/NestsGrid 多 run 底层不动，恢复 UI 即回多 seed；多 seed 探索需求走「高级运行」（race/SE 后端策略编排）。
-3. **band 进策略不进 LNS** —— band 随 start 载荷进 8 键 config（CLI worker 进程内成带+展开，`WB_*` 永不出进程）；CLI 侧 band on 时 `--lns` 自动 warn 跳过（波段重排会拆散带形态），前端无感知。
+3. **band/prefix 进策略不进 LNS** —— band（2026-08-22）/prefix（2026-08-25，前端互斥置灰已删）随 start 载荷进 9 键 config（CLI worker 进程内成带/构造+展开，`WB_*`/`PS_*` 永不出进程）；CLI 侧 band/prefix on 时 `--lns` 自动 warn 跳过（波段重排会拆散带形态/布头钉位），前端无感知。
 
 ## 起始端成套 US-004 落地：前端参数链路 + 布局设置 UI（前后幅下拉）
 

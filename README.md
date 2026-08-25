@@ -79,7 +79,7 @@ ms-run-config data/configs/5336_coded_sizes32-38.json --time 5   # 冒烟：单�
 python -m materialsorting.cli.run_config <config.json> --name demo --quiet   # 等价 python -m 形式
 ```
 
-配置是 **7 键 JSON schema**（除 `seeds` 外字段名与 WS StartPayload 契约 1:1；示例见 `data/configs/`，拼写/类型/路径错误在启动前就地拦下，中文报错含字段名）：
+配置是 **9 键 JSON schema**（除 `seeds` 外字段名与 WS StartPayload 契约 1:1；示例见 `data/configs/`，拼写/类型/路径错误在启动前就地拦下，中文报错含字段名）：
 
 | 键 | 类型 | 必填 | 说明 |
 |---|---|---|---|
@@ -90,6 +90,8 @@ python -m materialsorting.cli.run_config <config.json> --name demo --quiet   # �
 | `seeds` | list | — | **串行**种子列表（非负整数、不重复、非空），缺省 `[0]`；≥2 个时逐 seed 串行求解，`best` 取原面积口径 `real_density` 最大轮（消除单 seed 随机性；种子不要求连续）。取代旧 `seed`/`multi_seed`/`seed_count` 三键（旧键按未知键报错） |
 | `per_type` | dict | — | `{g码: {d?, tol?}}` 逐 g 码公差覆盖（d=重合 mm、tol=旋转公差 °，≥0；超全局上限不报错但被钳制） |
 | `quantities` | dict | — | `{g码: {码号: 数量}}` per-size demand（码号键须数字字符串或 `"null"`，数量 JSON 数字 ≥0 整数） |
+| `band` | dict | — | 腰头成带 `{'enabled': bool, 'label': g码}`（enabled=true 时 label 必填、匹配 `^g\d+$`）；`solve_pieces` 经 `solve_with_callback_proc(band=...)` worker 进程内成带+展开；2026-08-22 起与 `--strategy` 兼容（web 策略入口写进 config）；on 时 `--lns` 自动 warn 跳过 |
+| `prefix` | dict | — | 起始端成套前后幅 `{'enabled': bool, 'front': g码, 'back': g码}`（enabled=true 时 front/back 必填、匹配 `^g\d+$` 且 front≠back）；资格码（该码 front/back demand 均 ==2）存在性由 worker 求解期 fail-fast，web 策略入口经 `_parse_prefix` start 期 400 早退；2026-08-25 起与 `--strategy` 兼容（逐 seed 资格码 seeded 选取确定性重放）；on 时 `--lns` 自动 warn 跳过 |
 
 **产物只落 `out/config_runs/<run_name>_<YYYYMMDD-HHMMSS>/`**（时间戳目录保留历史互不覆盖；`run_name` 缺省 = 配置文件 stem，`--name` 覆盖）：`pieces/`（切单裁片 + manifest）、`pieces_intermediate.json`（本 run 事实源）、`result.json`（config 回显 + commit 摘要 + 逐 seed solve 指标数组 + `best`；**逐轮重写**，Ctrl-C 不丢已完成轮）、`curve_s{seed}.json`（逐帧轨迹 `{elapsed, phase, density, density_sparrow, width_mm}`，不含布局控体积）、`best_frame_s{seed}.json`（该 seed 最优帧完整 `placed_items`）。
 
@@ -154,10 +156,10 @@ ms-run-config data/configs/5336_coded_really.json --time 5 --target 0.5 --lns --
 ms-run-config data/configs/5336_coded_really.json --time 300 --lns --lns-time 60 --lns-rounds 8
 ```
 
-**run 统计库与 θ₀ 校准（PC-009）**：每次 run 结束（含 R0 提前停 / kill 路径）自动追加一行 JSONL 到 `out/run_stats.jsonl`：`{ts, source, sizes, class_key, seeds, target, best_density, n_killed, elapsed_total, config: {time, per_type, quantities}}`，`class_key` = sha1(source+sizes+quantities+per_type) 10 位短哈希（实例类指纹：同母版 + 码号集 + 订单配比 + 逐码公差视为同类）。写盘失败只 stderr warn 不阻塞主流程（统计沉淀是旁路产物）。`--target` 模式启动时读该库做 **θ₀ 校准**：当前 class_key 命中且 ≥5 条历史 → kill 门槛初值 `θ₀ = min(target, 历史最大 best_density + 0.003)`（历史最高 89.6% 的组合不再从 90 起跑 —— 分布越测越准），否则 θ₀ = target；θ₀ **只影响 kill 门槛**（R2/R3 判据锚），R0 停止条件恒用 `--target` 真值，校准说明行 `--quiet` 也打（判据变更不静默）。Ctrl-C / 求解失败的 run 不沉淀（不完整数据会污染历史 max）。
+**run 统计库与 θ₀ 校准（PC-009）**：每次 run 结束（含 R0 提前停 / kill 路径）自动追加一行 JSONL 到 `out/run_stats.jsonl`：`{ts, source, sizes, class_key, seeds, target, best_density, n_killed, elapsed_total, config: {time, per_type, quantities}}`，`class_key` = sha1(source+sizes+quantities+per_type) 10 位短哈希（实例类指纹：同母版 + 码号集 + 订单配比 + 逐码公差视为同类；band/prefix 开启时各追加 label 组件成新 key，避免 ±2pt 级密度差混同 θ₀ 历史分布）。写盘失败只 stderr warn 不阻塞主流程（统计沉淀是旁路产物）。`--target` 模式启动时读该库做 **θ₀ 校准**：当前 class_key 命中且 ≥5 条历史 → kill 门槛初值 `θ₀ = min(target, 历史最大 best_density + 0.003)`（历史最高 89.6% 的组合不再从 90 起跑 —— 分布越测越准），否则 θ₀ = target；θ₀ **只影响 kill 门槛**（R2/R3 判据锚），R0 停止条件恒用 `--target` 真值，校准说明行 `--quiet` 也打（判据变更不静默）。Ctrl-C / 求解失败的 run 不沉淀（不完整数据会污染历史 max）。
 
 **标定管线（PC-004/005）**：`python -m materialsorting.cli.calibration` 四个子命令，为 kill 引擎产出数据依据（`--params` 消费的 `controller_params.json`）并防过拟合单一订单：
-- **batch**：`--config <7键配置> [--tag T] [--short-seeds 20] [--short-time 90] [--full-seeds 8] [--full-time N]`（full-time 缺省用 config 的 `time`）。标定基实例 = `data/configs/5336_coded_really.json`（真实 per_type 公差 + 真实订单配比）。`commit_from_config` 只跑一次，逐 seed 串行 `solve_pieces`；曲线/best 帧落 `out/portfolio_calibration/<tag>/base/{short,full}/`，逐 seed 写 manifest.json（Ctrl-C 安全，重跑跳过已完整 seed）。
+- **batch**：`--config <9键配置> [--tag T] [--short-seeds 20] [--short-time 90] [--full-seeds 8] [--full-time N]`（full-time 缺省用 config 的 `time`）。标定基实例 = `data/configs/5336_coded_really.json`（真实 per_type 公差 + 真实订单配比）。`commit_from_config` 只跑一次，逐 seed 串行 `solve_pieces`；曲线/best 帧落 `out/portfolio_calibration/<tag>/base/{short,full}/`，逐 seed 写 manifest.json（Ctrl-C 安全，重跑跳过已完整 seed）。
 - **variants**：确定性订单邻域变体（seeded RNG，RNG seed=i）—— 只抖 `quantities` 的 (g码, 码∈sizes) 条目 `n' = max(1, n±1)`（保底 1 片；惰性条目不动），per_type/gate_mm/master_dxf/sizes 逐字段固定。产出 `variant_{i}.json`（i=0..3）+ 每变体 6 seed × 90s + 1 × 300s 曲线（共享同一 commit）。
 - **analyze**：`--tag T --target P [--env-quantile 0.25]` 聚合曲线 → `analysis/`：`summary.json`（每 seed 终值/best/收敛平台 + mean/σ/P(≥target)）、`controller_params.json`（成功包络 S(τ)（τ 网格 0.05~1.0 步长 0.05）+ τ0/W/m/ε/δ/m_streak 推荐值；达标 seed <10 或包络格点不足 → `calibrated: false` 拒绝下发）、`generalization.json`（base 包络套用到各变体的误杀率/可迁移判定）。内部含 train/test 误杀回测 + 短/全秩相关 + uplift q50/q95。
 - **simulate**（ETT 离线仿真器）：`--tag T --target P [--budget SEC] [--scenarios 500] [--env-quantile 0.25] [--shadow-log kill_decisions.jsonl]` 用历史轨迹**零求解成本**回放策略网格（单 seed 基线 / 均匀 best-of-k / kill 三档 / θ 衰减两档 / **策略双档 se180·race180**（US-003），**同总预算公平比较** k×B 恒等）→ `analysis/simulation_report.json` + 控制台表格：每策略 ETT（达标 = 首次达标时刻，不可达 = 实际耗时，kill 省时计入）、P(达标|预算内)、误杀率、不可达场景 incumbent 终值（截断轨迹用「kill 时刻 best + 条件期望增量」插值，物理下界 ≥ kill 时刻 best-so-far，无 hindsight）。**策略双档走配对曲线回放**（`base/{short,full}` 同 seed 配对、short 终值 ≥90s 且 full 终值 ≥180s 才合格；跨 fork 诚实口径同现场：筛选读 short 曲线终值、延长/续跑读 full 曲线 180s 帧），judgment 复用 US-001 单一真相源 `decide_race_kill`/`race_plan`/`se_plan`，另出**E[max] 口径**副表（delivered 期望 / 漏 max 率 / 对配对 uniform90 基线的增益）。**变体曲线作 held-out**（kill 包络只源自 base 池、按仿真预算 B 绝对墙钟重采样）：推荐档须 base 与变体 ETT 双不劣于单 seed 基线且两者误杀率 <5%（策略双档同判据纳入候选，`params` 含 `strategy`/`time`/`race_*`/`se_*` 键），`recommendation.params` 键与 controller_params.json 同构可直接抄进 `--params`。场景采样确定性（|pool|^k ≤ 4096 全枚举，否则固定种子 bootstrap）。`--shadow-log` 统计真实 would-kill 决策的假阳性（配同目录 curve_s{seed}.json；决策后才达标 = 假阳性，全程不达标 = 正确 kill）。
