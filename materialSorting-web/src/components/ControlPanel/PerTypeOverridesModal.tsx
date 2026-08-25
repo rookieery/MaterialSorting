@@ -48,9 +48,12 @@
 //   - 表格 overflow-x:auto（多列窄屏溢出）。reps 未到位（loading / 未 commit / fetch
 //     失败）→ 列集退回 values 已配置键（可能为空 → 仅行头，不阻塞）。
 //
-// 缩略图数据源（D10 / AC#4）：挂载时 fetch GET /api/ptypes（US-020）取 representatives
-// （键 = g 码），存本地 state；loading 占位「…」；fetch 失败降级为空 reps（不阻塞）。
-// 缩略图用 PiecePreviewSVG compact 模式渲染 representatives[label]，layer-aware（D11）。
+// 缩略图数据源（D10 / AC#4；2026-08-25 起改 ptypeStore 会话级缓存，旧实现每次
+// 挂载 fetch）：representatives（键 = g 码）在 commit 前完全静态，弹窗开关不重取
+//（零请求零闪烁）；失效挂点 = commit done（useCommitToNesting → invalidate，
+// 后端 _PIECES_STATE 唯一变化点），与 PtypePreviewModal 共享同一份缓存。首次加载
+// / 失效重取期间占位「…」；fetch 失败降级保留旧值（不阻塞）。缩略图用
+// PiecePreviewSVG compact 模式渲染 representatives[label]，layer-aware（D11）。
 //
 // 草稿 + 确定模式（AC#5）：打开时从 form.per_type 读初值进本地 draft（已配置键保留，
 // 空值预填 '0'/'0'）；fetch 到位的 g 码未配置格渲染空串（= 继承默认 0，placeholder 提示）；
@@ -83,6 +86,7 @@ import {
   type PerTypeFormValue,
 } from '../../lib/params';
 import { useControlPanelStore } from '../../store/controlPanelStore';
+import { usePtypeStore } from '../../store/ptypeStore';
 import { useQtyStore } from '../../store/qtyStore';
 import { useUploadStore } from '../../store/uploadStore';
 import type {
@@ -92,7 +96,7 @@ import type {
   PrefixPreviewResponse,
 } from '../../types/band';
 import type { ParsedPiece } from '../../types/parsed';
-import type { PtypeRepresentative, PtypesResponse } from '../../types/ptype';
+import type { PtypeRepresentative } from '../../types/ptype';
 import { BandPreviewSVG } from './BandPreviewSVG';
 import { PiecePreviewSVG } from '../preview/PiecePreviewSVG';
 
@@ -368,10 +372,23 @@ function PerTypeOverridesModalInner({
     return () => window.removeEventListener('keydown', onZoomKey);
   }, [bandZoomOpen, prefixZoomOpen]);
 
-  // 缩略图数据：mount 时 fetch GET /api/ptypes（键 = g 码）；loading / error 三态。
-  // fetch 失败降级为 {} → 列集退回 values 已配置键（不阻塞重合/旋转配置，AC#4）。
-  const [representatives, setRepresentatives] = useState<Record<string, PtypeRepresentative>>({});
-  const [loadingReps, setLoadingReps] = useState<boolean>(true);
+  // 缩略图数据：ptypeStore 会话级缓存（2026-08-25 前每次挂载 fetch）。两个加载
+  // effect（防 error 死循环的分工，见 ptypeStore 文件头）：
+  //   ① mount 无条件 ensureLoaded —— ready/loading 内部跳过；error 态重开弹窗即
+  //      重试一次（fetch 失败降级保留旧值，列集退回 values 已配置键不阻塞，AC#4）；
+  //   ② status 订阅仅在 idle（commit done invalidate 且弹窗开着）时重取 —— 缩略图
+  //      无感刷新（invalidate 保留旧 representatives）。
+  const representatives = usePtypeStore((s) => s.representatives);
+  const repsStatus = usePtypeStore((s) => s.status);
+  const ensureRepsLoaded = usePtypeStore((s) => s.ensureLoaded);
+
+  useEffect(() => {
+    ensureRepsLoaded();
+  }, [ensureRepsLoaded]);
+
+  useEffect(() => {
+    if (repsStatus === 'idle') ensureRepsLoaded();
+  }, [repsStatus, ensureRepsLoaded]);
 
   // 列集 = reps 键（当前母版 g 码并集）∪ values 已配置键（fetch 失败时保留已配置项），
   // 按 compareByLabel 数值序。reps 未到位时先渲染 values 键，fetch 成功后扩列。
@@ -380,27 +397,6 @@ function PerTypeOverridesModalInner({
     for (const k of Object.keys(values)) keys.add(k);
     return Array.from(keys).sort(compareByLabel);
   }, [representatives, values]);
-
-  useEffect(() => {
-    let cancelled = false;
-    setLoadingReps(true);
-    fetch('/api/ptypes')
-      .then((r) => r.json() as Promise<PtypesResponse>)
-      .then((data) => {
-        if (cancelled) return;
-        setRepresentatives(data.representatives ?? {});
-        setLoadingReps(false);
-      })
-      .catch(() => {
-        if (cancelled) return;
-        // 降级：空 representatives，列集退回 values 键（不阻塞重合/旋转配置）
-        setRepresentatives({});
-        setLoadingReps(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   // 下拉值域：表格同源 orderedLabels ∪ 当前选中 g 码 —— 已确认过的 label 在
   // reps/values 均缺席（fetch 失败 / values 未配置）时仍显示为选中项（受控 select 的
@@ -769,7 +765,7 @@ function PerTypeOverridesModalInner({
                           <PiecePreviewSVG piece={repToPiece(rep)} compact />
                         ) : (
                           <span className="ptype-thumb-placeholder" aria-hidden="true">
-                            {loadingReps ? '…' : label.slice(0, 1)}
+                            {repsStatus === 'loading' || repsStatus === 'idle' ? '…' : label.slice(0, 1)}
                           </span>
                         )}
                       </button>

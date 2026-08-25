@@ -10,13 +10,13 @@
 //   - Portal 到 document.body（与 PieceZoomModal/PerTypeOverridesModal 同目标）。
 //   - 关闭交互三方式（AC#10）：✕ / 遮罩 mousedown / ESC（独立于 PerTypeOverridesModal）。
 //
-// 数据源（D10/D11；2026-08-17 修复数据不一致 bug）：**每次打开（previewLabel 变非
-// null）重新 fetch** /api/ptypes —— 旧实现只在应用加载时 fetch 一次，重传母版 commit
-// 后 PerTypeOverridesModal（每次打开都 fetch）缩略图已更新而本模态仍持旧缓存，
-// 同一列两张图对不上。打开期间遮罩挡住上传入口，state 不会再变，两处数据一致。
-// fetch 期间保留上次 reps（不闪 loading）。representatives 键 = 裁片 g 码（v2 起
-// ptype 键已删），representatives[previewLabel] 不存在 → 渲染空体（降级：fetch 失败、
-// 空 state、g 码缺代表裁片，均退化为「无预览」）。
+// 数据源（D10/D11；2026-08-25 起改 ptypeStore 会话级缓存）：representatives 与
+// PerTypeOverridesModal 共享同一份缓存 —— 两处数据恒一致（旧口径是「各自每次
+// 打开都 fetch」，2026-08-17 修缓存不失效 bug 时的权宜）。失效挂点 = commit done
+// （useCommitToNesting → invalidate），覆盖「重传母版后旧缓存」场景：打开期间
+// commit 完成会 invalidate → idle → 本组件 effect 重取，缩略图无感更新。
+// representatives[previewLabel] 不存在 → 渲染空体（降级：fetch 失败、空 state、
+// g 码缺代表裁片，均退化为「无预览」）。
 //
 // 头部：g 码徽章（rep.label 与 Record 键同值，兜底用 previewLabel 键本身）复用
 // .piece-card-label（PieceZoomModal 头部同款）；hover/aria 只报 g 码：
@@ -34,12 +34,13 @@
 // 不引入 CSS 框架；.ptype-preview-overlay / .ptype-preview-modal / .ptype-preview-close /
 // .ptype-preview-body 全部沿用 style.css 暗背景 + #2ea06c 同色系（与 PieceZoomModal 一致）。
 
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import type { JSX } from 'react';
 import { createPortal } from 'react-dom';
 import { useControlPanelStore } from '../../store/controlPanelStore';
+import { usePtypeStore } from '../../store/ptypeStore';
 import type { ParsedPiece } from '../../types/parsed';
-import type { PtypeRepresentative, PtypesResponse } from '../../types/ptype';
+import type { PtypeRepresentative } from '../../types/ptype';
 import { PiecePreviewSVG } from '../preview/PiecePreviewSVG';
 
 /** 把 PtypeRepresentative 扩展为 ParsedPiece（label = 该代表裁片 g 码，图上叠印标注）。 */
@@ -58,28 +59,18 @@ export function PtypePreviewModal(): JSX.Element | null {
   const previewLabel = useControlPanelStore((s) => s.previewLabel);
   const closePreviewLabel = useControlPanelStore((s) => s.closePreviewLabel);
 
-  // 代表裁片缓存：**每次 previewLabel 打开时重新 fetch**（弹窗遮罩挡住上传入口，
-  // 打开期间 state 不会再变 → 与 PerTypeOverridesModal 缩略图数据保证一致）。
-  // fetch 期间保留上次 reps（不闪 loading）；null 时跳过（关闭态不发请求）。
-  const [representatives, setRepresentatives] = useState<Record<string, PtypeRepresentative>>({});
+  // 代表裁片：ptypeStore 会话级缓存（与 PerTypeOverridesModal 共享，见文件头）。
+  // 打开（previewLabel 变非 null）或缓存失效（status==='idle'，commit done 且
+  // 放大层开着）时 ensureLoaded；ready 命中直接用缓存（零请求），loading 期间
+  // 保留旧 reps（不闪 loading）；null 时跳过（关闭态不发请求）。
+  const representatives = usePtypeStore((s) => s.representatives);
+  const repsStatus = usePtypeStore((s) => s.status);
+  const ensureRepsLoaded = usePtypeStore((s) => s.ensureLoaded);
 
   useEffect(() => {
     if (previewLabel === null) return;
-    let cancelled = false;
-    fetch('/api/ptypes')
-      .then((r) => r.json() as Promise<PtypesResponse>)
-      .then((data) => {
-        if (cancelled) return;
-        setRepresentatives(data.representatives ?? {});
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setRepresentatives({});
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [previewLabel]);
+    if (repsStatus === 'idle') ensureRepsLoaded();
+  }, [previewLabel, repsStatus, ensureRepsLoaded]);
 
   // ESC 监听（AC#10）：本模态 ESC 始终只关 previewLabel，不双层关闭。
   // 必须在 hooks 层无条件调用（不能在条件分支里），判 previewLabel!==null 在 listener 内。

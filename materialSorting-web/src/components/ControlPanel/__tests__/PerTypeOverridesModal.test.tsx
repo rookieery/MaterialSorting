@@ -40,6 +40,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { PerTypeOverridesModal, type BandFormValue, type PrefixFormValue } from '../PerTypeOverridesModal';
 import { PtypePreviewModal } from '../PtypePreviewModal';
 import { useControlPanelStore } from '../../../store/controlPanelStore';
+import { usePtypeStore } from '../../../store/ptypeStore';
 import { useQtyStore } from '../../../store/qtyStore';
 import { useUploadStore } from '../../../store/uploadStore';
 import type { BandPreviewResponse, PrefixPreviewResponse } from '../../../types/band';
@@ -152,8 +153,11 @@ beforeEach(() => {
   useControlPanelStore.getState().closePreviewLabel();
   // US-004：prefix 默认预选（uploadStore.doc 面积最大两片）与资格码预检（qtyStore）
   // 都读 store —— beforeEach 重置保证各用例隔离（band 用例不依赖两 store 默认态）。
+  // ptypeStore 会话缓存同款重置：representatives 已 ready 时组件不再 fetch，后续
+  // 用例设置的 mockReps 会失效（2026-08-25 缓存化改造）。
   useUploadStore.getState().reset();
   useQtyStore.getState().resetQuantities();
+  usePtypeStore.getState().reset();
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -195,6 +199,7 @@ afterEach(() => {
   useControlPanelStore.getState().closePreviewLabel();
   useUploadStore.getState().reset();
   useQtyStore.getState().resetQuantities();
+  usePtypeStore.getState().reset();
   if (fetchSpy) {
     fetchSpy.mockRestore();
     fetchSpy = null;
@@ -323,6 +328,35 @@ describe('PerTypeOverridesModal (US-018 / US-003 g 码列)', () => {
     expect(fetchSpy).toHaveBeenCalled();
     const urls = fetchSpy!.mock.calls.map((c: unknown[]) => c[0]);
     expect(urls.some((u: unknown) => String(u).includes('/api/ptypes'))).toBe(true);
+  });
+
+  it('会话缓存：重开弹窗不重取（缓存命中零请求）；invalidate（commit done）后重取', async () => {
+    mockReps = TWO_REPS;
+    useControlPanelStore.getState().openModal('per_type');
+    renderModal();
+    await flushFetch();
+    const callsAfterFirst = fetchSpy!.mock.calls.length;
+    expect(callsAfterFirst).toBeGreaterThanOrEqual(1);
+    expect(document.body.querySelectorAll('.ptype-thumb svg.piece-preview-svg').length).toBe(2);
+
+    // 关闭再开 → ptypeStore 缓存命中：不发新请求，缩略图直接渲染（无「…」闪烁）
+    act(() => {
+      useControlPanelStore.getState().closeModal();
+    });
+    useControlPanelStore.getState().openModal('per_type');
+    // renderModal 用同一 root 重渲染；modal 关闭时 Inner 卸载，重开 = remount
+    renderModal();
+    await flushFetch();
+    expect(fetchSpy!.mock.calls.length).toBe(callsAfterFirst);
+    expect(document.body.querySelectorAll('.ptype-thumb svg.piece-preview-svg').length).toBe(2);
+
+    // commit done → invalidate（status idle，representatives 保留）→ 弹窗开着时
+    // 订阅 idle 的 effect 重取（无感刷新路径）
+    act(() => {
+      usePtypeStore.getState().invalidate();
+    });
+    await flushFetch();
+    expect(fetchSpy!.mock.calls.length).toBeGreaterThan(callsAfterFirst);
   });
 
   it('fetch failure degrades (no crash, 列集退回 values 已配置键)', async () => {

@@ -19,6 +19,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { StrictMode } from 'react';
 import { nestingTour } from '../steps/nestingTour';
 import { runRegistry } from '../../store/runRegistry';
+import { usePtypeStore } from '../../store/ptypeStore';
 import { useUiStore } from '../../store/uiStore';
 import type { FrameMsg } from '../../types/ws';
 
@@ -33,6 +34,8 @@ beforeEach(() => {
   // nestingTour.before 会 setTab('nesting')；nestingEnabled 默认 false 会静默不切。
   // 测 3 需在 nesting tab 渲染，解锁保证 before 副作用生效（与真实流程一致：commit 后才解锁）。
   useUiStore.setState({ activeTab: 'preview', nestingEnabled: true });
+  // ptypeStore 会话缓存重置：已 ready 时 PtypePreviewModal 不再 fetch，stub 失效。
+  usePtypeStore.getState().reset();
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);

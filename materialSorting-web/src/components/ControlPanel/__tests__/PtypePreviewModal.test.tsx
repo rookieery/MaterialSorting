@@ -1,8 +1,9 @@
 // US-018 PtypePreviewModal integration tests（裁片编号化重构 US-003 起：
 // /api/ptypes representatives 键 = 裁片 g 码；store previewPtype→previewLabel）：
-//   AC: previewLabel=null does not render DOM（且不发 fetch —— 2026-08-17 起打开才 fetch）
+//   AC: previewLabel=null does not render DOM（且不发 fetch —— 打开才 ensureLoaded）
 //   AC: previewLabel + fetch success renders overlay + modal + PiecePreviewSVG (svg.piece-preview-svg)
-//   AC: 每次打开重新 fetch（修复与弹窗缩略图数据不一致的旧缓存 bug）
+//   AC: 会话缓存：重开不重取（2026-08-25 起与 PerTypeOverridesModal 共享 ptypeStore，
+//       失效挂点 = commit done invalidate —— 替代旧「每次打开重新 fetch」口径）
 //   AC: 头部 g 码徽章（rep.label；缺 label 兜底 Record 键，键即 g 码）
 //   AC: ✕ button closes
 //   AC: overlay mousedown closes
@@ -17,6 +18,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { PtypePreviewModal } from '../PtypePreviewModal';
 import { PerTypeOverridesModal } from '../PerTypeOverridesModal';
 import { useControlPanelStore } from '../../../store/controlPanelStore';
+import { usePtypeStore } from '../../../store/ptypeStore';
 import type { ParsedPt } from '../../../types/parsed';
 import type { PtypesResponse } from '../../../types/ptype';
 
@@ -45,6 +47,8 @@ const REPS: PtypesResponse = {
 beforeEach(() => {
   useControlPanelStore.getState().closeModal();
   useControlPanelStore.getState().closePreviewLabel();
+  // ptypeStore 会话缓存重置：已 ready 时组件不再 fetch，后续用例的 mockReps 失效。
+  usePtypeStore.getState().reset();
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -74,6 +78,7 @@ afterEach(() => {
   document.body.innerHTML = '';
   useControlPanelStore.getState().closeModal();
   useControlPanelStore.getState().closePreviewLabel();
+  usePtypeStore.getState().reset();
   if (fetchSpy) {
     fetchSpy.mockRestore();
     fetchSpy = null;
@@ -126,23 +131,30 @@ describe('PtypePreviewModal (US-018)', () => {
     expect(modal!.querySelector('.piece-card-label')!.textContent).toBe('g01');
   });
 
-  it('refetches on every open (stale-cache bug fix: 与弹窗缩略图数据保持一致)', async () => {
+  it('会话缓存：重开不重取；invalidate（commit done）后重取（stale-cache 由失效挂点防）', async () => {
     mockReps = REPS;
     useControlPanelStore.getState().openPreviewLabel('g01');
     renderModal();
     await flushFetch();
-    expect(fetchSpy!.mock.calls.length).toBeGreaterThanOrEqual(1);
-    // 关闭再开（换 g 码）→ 再次 fetch
+    const callsAfterFirst = fetchSpy!.mock.calls.length;
+    expect(callsAfterFirst).toBeGreaterThanOrEqual(1);
+    // 关闭再开（换 g 码）→ ptypeStore 缓存命中，不发新请求
     act(() => {
       useControlPanelStore.getState().closePreviewLabel();
     });
     await flushFetch();
-    const callsAfterClose = fetchSpy!.mock.calls.length;
     act(() => {
       useControlPanelStore.getState().openPreviewLabel('g02');
     });
     await flushFetch();
-    expect(fetchSpy!.mock.calls.length).toBeGreaterThan(callsAfterClose);
+    expect(fetchSpy!.mock.calls.length).toBe(callsAfterFirst);
+    // commit done → invalidate → 放大层开着时重取（数据恒与底层弹窗缩略图一致：
+    // 两处共享同一份缓存，而非各自每次拉）
+    act(() => {
+      usePtypeStore.getState().invalidate();
+    });
+    await flushFetch();
+    expect(fetchSpy!.mock.calls.length).toBeGreaterThan(callsAfterFirst);
   });
 
   it('rep 缺 label 字段（旧数据）→ 头部兜底 Record 键本身（键即 g 码）', async () => {

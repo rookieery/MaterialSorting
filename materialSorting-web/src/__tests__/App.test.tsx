@@ -12,6 +12,7 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { App } from '../App';
 import { useUiStore } from '../store/uiStore';
+import { usePtypeStore } from '../store/ptypeStore';
 import { useUploadStore } from '../store/uploadStore';
 import type { ParsedDoc } from '../types/parsed';
 
@@ -56,6 +57,8 @@ beforeEach(() => {
   // US-016：uploadStore 处于 done+doc → PreviewPage 联动 setNestingEnabled(true)。
   // 这样 beforeEach 显式 setTab('nesting') 才不会被 uiStore guard 静默拦截。
   useUploadStore.getState().reset();
+  // ptypeStore 会话缓存重置：已 ready 时 App 内两弹窗不再 fetch，stub 失效。
+  usePtypeStore.getState().reset();
   useUploadStore.setState({ status: 'done', doc: makeParsedDoc() });
   useUiStore.getState().setNestingEnabled(true);
   useUiStore.getState().setTab('nesting');

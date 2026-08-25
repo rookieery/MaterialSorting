@@ -28,6 +28,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { ControlPanel, type ControlPanelStartPayload } from "../ControlPanel";
 import { SIZES } from "../../../constants/sizes";
 import { useQtyStore } from "../../../store/qtyStore";
+import { usePtypeStore } from "../../../store/ptypeStore";
 import { useUploadStore } from "../../../store/uploadStore";
 import type { ParsedDoc } from "../../../types/parsed";
 import type { SolvePhase } from "../../../types/solvePhase";
@@ -57,6 +58,8 @@ beforeEach(() => {
   // beforeEach 重置到默认 idle/doc=null 保证各用例隔离。
   useUploadStore.getState().reset();
   useQtyStore.getState().resetQuantities();
+  // ptypeStore 会话缓存同款重置（已 ready 时 modal 不再 fetch，mockReps 失效）。
+  usePtypeStore.getState().reset();
   mockReps = { representatives: {} };
   fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation((_input: unknown) =>
     Promise.resolve(

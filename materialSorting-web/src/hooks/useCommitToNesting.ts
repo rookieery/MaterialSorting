@@ -29,6 +29,7 @@
 //   - hook 不读 uploadStore.doc（doc_id/filename 由调用方传入，hook 本身不依赖 doc 形状）。
 
 import { useCallback, useRef } from 'react';
+import { usePtypeStore } from '../store/ptypeStore';
 import { useUploadStore, type CommitSummary } from '../store/uploadStore';
 import { useUiStore } from '../store/uiStore';
 
@@ -113,6 +114,11 @@ export function useCommitToNesting(): UseCommitToNestingResult {
           commitError: null,
           commitSummary: summary,
         });
+
+        // commit done = 后端 _PIECES_STATE 唯一变化点 → ptypeStore 代表裁片缓存
+        // 失效（2026-08-25；representatives 只随 commit 变化，此处失效后高级配置
+        // / 放大预览弹窗下次打开 ensureLoaded 重取；弹窗开着则订阅 idle 无感刷新）。
+        usePtypeStore.getState().invalidate();
 
         // D1 闭环（US-021 AC#4）：commit done → 解锁超排 Tab（**不自动切入**）。
         //   - setNestingEnabled(true) 与 PreviewPage subscribe parse done 重复（幂等），

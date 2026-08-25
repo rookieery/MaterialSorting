@@ -19,6 +19,7 @@ import { StrictMode } from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { useCommitToNesting } from "../useCommitToNesting";
+import { usePtypeStore } from "../../store/ptypeStore";
 import { useUploadStore } from "../../store/uploadStore";
 import { useUiStore } from "../../store/uiStore";
 
@@ -35,6 +36,7 @@ let root: Root | null = null;
 
 beforeEach(() => {
   useUploadStore.getState().reset();
+  usePtypeStore.getState().reset();
   useUiStore.getState().setNestingEnabled(false);
   useUiStore.getState().setTab("preview");
   captured = null;
@@ -321,6 +323,26 @@ describe("useCommitToNesting (US-021)", () => {
     // commit done 解锁超排 Tab，但不自动切入（用户主动点击进入）
     expect(useUiStore.getState().nestingEnabled).toBe(true);
     expect(useUiStore.getState().activeTab).toBe("preview");
+  });
+
+  it("commit done -> ptypeStore invalidate；commit fail 不失效（后端 state 未变，2026-08-25）", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(makeCommitResponse());
+    renderProbe();
+    // 预置 ready 缓存（模拟弹窗已拉过代表裁片数据）
+    usePtypeStore.setState({ status: "ready" });
+    await act(async () => {
+      await captured!.commit("deadbeef");
+    });
+    expect(usePtypeStore.getState().status).toBe("idle");
+    // 失败路径：后端 _PIECES_STATE 未变 → 缓存保持 ready 不失效
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      makeCommitResponse({ ok: false, status: 422, json: { error: "commit fail" } }),
+    );
+    usePtypeStore.setState({ status: "ready" });
+    await act(async () => {
+      await captured!.commit("deadbeef");
+    });
+    expect(usePtypeStore.getState().status).toBe("ready");
   });
 
   it("AC#7 commit fail -> does NOT switch tab (D5: Tab stays, user sees error)", async () => {
