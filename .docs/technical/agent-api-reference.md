@@ -5,7 +5,7 @@
 
 ## 状态
 
-单页工作台后端，9 个 HTTP 端点 + 1 条 WS。**US-026 起求解用 `solve_with_callback_proc`（多进程版）**：`ThreadPoolExecutor(max_workers=6)` 跑 `run_solve` → `solve_with_callback_proc` spawn 子进程执行 sparrow solve，主进程 drain `multiprocessing.Queue` 分发 manifest/frame/final（多 seed 最多 6 路并发，seed 间同等 CPU 竞争 → 排名仍公平）。WS 双向并发：write loop drain queue → `ws.send_json`；read loop 持续读客户端消息（`{action:'stop'}` → terminate 子进程 → 发 stopped → 关闭 WS）。**`server.py` 启动期 `_reload_pieces_state()` 读 intermediate 填入 `_PIECES_STATE`**（US-020：commit 后可 reload，allow-empty 不再让 import 崩）。US-004 起 `/api/parse-dxf` 上传解析也复用这个 6-worker 线程池跑 CPU 密集的 DXF 深度解析（`collect_pieces_with_details`）。strategy PRD US-004 起 `/api/strategy/*` 四路由（`web/strategy.py`）spawn `ms-run-config --strategy` 子进程跑双模式长跑（HTTP 轮询 run_dir 产物，无 WS），见下「策略桥接」。
+单页工作台后端，10 个 API 端点（另含 `GET /` 与 `/static` mount）+ 1 条 WS。**US-026 起求解用 `solve_with_callback_proc`（多进程版）**：`ThreadPoolExecutor(max_workers=6)` 跑 `run_solve` → `solve_with_callback_proc` spawn 子进程执行 sparrow solve，主进程 drain `multiprocessing.Queue` 分发 manifest/frame/final（多 seed 最多 6 路并发，seed 间同等 CPU 竞争 → 排名仍公平）。WS 双向并发：write loop drain queue → `ws.send_json`；read loop 持续读客户端消息（`{action:'stop'}` → terminate 子进程 → 发 stopped → 关闭 WS）。**`server.py` 启动期 `_reload_pieces_state()` 读 intermediate 填入 `_PIECES_STATE`**（US-020：commit 后可 reload，allow-empty 不再让 import 崩）。US-004 起 `/api/parse-dxf` 上传解析也复用这个 6-worker 线程池跑 CPU 密集的 DXF 深度解析（`collect_pieces_with_details`）。strategy PRD US-004 起 `/api/strategy/*` 四路由（`web/strategy.py`）spawn `ms-run-config --strategy` 子进程跑双模式长跑（HTTP 轮询 run_dir 产物，无 WS），见下「策略桥接」。
 
 ## 启动约束（重要）
 
@@ -25,6 +25,8 @@
 | POST | `/api/parse-dxf` | US-004：multipart 上传母版 DXF → 深度解析 + g 码赋号 JSON | `server.parse_dxf` |
 | POST | `/api/commit-to-nesting` | US-010：把上传母版转排料 intermediate（Path A 全管线，覆盖写回 + .bak）+ US-020 commit 后 reload `_PIECES_STATE` | `server.commit_to_nesting` |
 | GET | `/api/ptypes` | US-020 D10（US-001 v2：键 = g 码 label）：返回当前 `_PIECES_STATE` 下每个 g 码的代表裁片（最小码内 parse 同序首个，含 `label` 编号），供前端高级配置弹窗缩略图/放大预览（D11 layer-aware） | `server.get_ptypes` |
+| POST | `/api/band-preview` | 2026-08-24 成带形态预览（高级配置弹窗「布局设置」band 行缩略图数据源）：主进程同步 `build_band_plan`，响应无 `WB_`，见下专节 | `routes_views.band_preview` |
+| POST | `/api/prefix-preview` | 2026-08-25 前缀组合形态预览（「布局设置」prefix 行缩略图数据源）：主进程同步 `eligible_sizes→pick_prefix_size→build_prefix_plan`，成员带 `tag`=g 码，响应无 `PS_`，见下专节 | `routes_views.prefix_preview` |
 | POST | `/api/strategy/start` | strategy US-004：spawn `ms-run-config --strategy` 子进程启动双模式长跑（202）；**2026-08-22 起载荷可带 band**（经 `_parse_band` 同一校验点写进 config，成带与策略模式兼容）；**2026-08-25 起载荷可带 prefix**（经 `_parse_prefix` 同一校验点含 2+2 资格码，非法 → 400 早退，写进 9 键 config） | `strategy.strategy_start` |
 | GET | `/api/strategy/status` | strategy US-004：无状态惰性轮询 run_dir 产物组装进度 | `strategy.strategy_status` |
 | POST | `/api/strategy/stop` | strategy US-004：树杀子进程（taskkill /T /F / killpg）+ 清 marker | `strategy.strategy_stop` |
@@ -257,6 +259,52 @@ curl http://127.0.0.1:8000/api/ptypes
 2. **代表选取 + 编号与上传预览同口径（US-001 v2）**：优先取 intermediate `label_representatives`（RAW 原始坐标；键 = g 码，选取 = 按码升序 + 码内 `parse_member_sort_key` 稳定排序，每 label 取**最小码内首个** size≠None 片，与 `/api/parse-dxf` 赋号同键同序 —— 高级配置弹窗编号徽章与上传预览 QtyMatrix 列头指同一片，有 `tests/test_label_representatives.py` 回归）。旧 v1 intermediate 无该字段 → 回退 `pieces` 按 label 分组取首个代表，re-commit 后自动切 RAW 口径。
 3. **M1787 验证**：commit 后返 10 个 g 码（`g01`..`g10`，各 5 层字段全带）。
 4. **响应字段不含 pid / size / area**：仅几何 + label；g 码是 key。前端 polygon 画缩略图、label 画编号徽章。
+
+## POST /api/band-preview + POST /api/prefix-preview — 布局设置形态预览（`routes_views.py`）
+
+「高级配置 → 布局设置」两行（band 2026-08-24 / prefix 2026-08-25）的缩略图数据源。共同思路：选中 g 码后不展示原始代表裁片缩略（与下方裁片设置表格同源同图，纯冗余），改展示**最终组合形态**（带 = WB_ 组合片形态 / 前缀 = 4 片同码 interleave 竖排 = PS_ 组合片精确形态），并把构造失败（fill 守卫 / 无资格码 / 竖排超高 / 贴触失败等）从 solve 报错**前置到选码时刻**。
+
+### 请求（`application/json`；与 WS StartPayload 同源字段子集）
+
+```jsonc
+// /api/band-preview
+{"band": {"enabled": true, "label": "g05"},
+ "sizes": [28, 30], "quantities": {...}, "per_type": {...}, "params": {...}, "gate_mm": 1980}
+
+// /api/prefix-preview（多一个可选 seed）
+{"prefix": {"enabled": true, "front": "g02", "back": "g03"},
+ "sizes": [28, 30], "quantities": {...}, "per_type": {...}, "params": {...},
+ "gate_mm": 1980, "seed": 0}
+```
+
+- band/prefix 校验**复用 WS 同一校验点**（`routes_ws._parse_band` / `_parse_prefix`）—— WS / 策略 start / 预览三处口径恒一。
+- `gate_mm` 优先求解口径（前端 parseGate），缺省/非法回退 intermediate（与 `/export` 同法）；构造约束带 `min(gate, 1910)` 与求解同口径。
+- prefix `seed` 缺省 0：界面恒单 seed=0 ⇒ 预览与求解同码（资格码选取是 seeded 随机，跨 seed 形态同构仅码不同）。
+
+### 响应（失败也 200、`ok:false` 包络 —— 选错 g 码是预期内常态而非异常）
+
+```jsonc
+// /api/band-preview 成功
+{"ok": true, "label": "g05", "fill_pct": 78.19,
+ "bbox": {"width_mm": 60.0, "height_mm": 1534.6}, "n_members": 6,
+ "members": [{"pid": "g05_38", "size": 38, "color": "#...", "polygon": [[x,y],...]}],
+ "outline": [[x,y],...]}
+
+// /api/prefix-preview 成功（成员多一个 tag = g 码，前/后幅区分标注；顶层多 front/back/size）
+{"ok": true, "front": "g02", "back": "g03", "size": 34, "fill_pct": 83.6,
+ "bbox": {"width_mm": 1155.0, "height_mm": 1458.0}, "n_members": 4,
+ "members": [{"pid": "g02_34", "size": 34, "color": "#...", "tag": "g02", "polygon": [[x,y],...]}],
+ "outline": [[x,y],...]}
+```
+
+主进程同步跑构造（v2 链构造 / 构造性竖排均无 RNG、毫秒级，spyrrow 不参与）：band = `build_pid_meta + build_band_plan`；prefix = `eligible_sizes → pick_prefix_size(seed) → build_prefix_plan`（`d_g = max(d_front, d_back)` 与 `solve_worker._build_prefix` 同式）。
+
+### 关键不变量
+
+1. **成员 polygon 是组合片归一坐标**（原始轮廓@带内/组合片位 − `chunk.offset`；原始轮廓缺席回退 erode 后轮廓，与 union 口径一致）—— 前端零变换直接渲染（`BandPreviewSVG`）。颜色 = `pid_meta['color']`（`size_color` 单一真相源，与 manifest/NestSVG 同口径）。
+2. **不返回组合片 pid**（哨兵约定：`WB_` / `PS_` 永不出现在前端/manifest/导出）；`outline` 是 erode 后组合片外轮廓（前端虚线叠加显示「主解看到的形状」）。
+3. **失败也 200**：空 state / 校验失败 / 构造异常统一 `{"ok": false, "error": "<可读文案>"}`，前端单条路径渲染错误文案（不区分网络/业务错误）。
+4. 预览与求解**同真相源**：band 链构造无 RNG（seed 只进 chunk.seed 记录，几何无关）⇒ 预览 = 求解时带的精确形态；prefix 同 seed（缺省 0）同码同形态。
 
 ## 策略桥接（strategy PRD US-004）— `/api/strategy/*` 四路由（`web/strategy.py`）
 
