@@ -13,6 +13,8 @@
     uploads/           web 上传母版 + 切片目录（web 独占写）
     config_runs/      CLI（ms-run-config）专属产物根 —— cli 子包唯一可写目录，
                        **禁止**写 INTERMEDIATE / uploads（web 事实源物理隔离）
+    prefix_runs/      prefix 前缀运行工件（web solve_worker 写：构造/pin/带位
+                       统计 JSON，US-005 A/B 回放对拍数据源）
     portfolio_calibration/  PC-004 标定管线产物根（cli.calibration batch/variants/
                        analyze 的曲线与参数；gitignore 区，与 config_runs 平级）
     run_stats.jsonl   PC-009 run 统计库（OUT_DIR 直下单文件，append-only）：
@@ -30,6 +32,7 @@ OUT_DIR = os.environ.get('MS_OUT_DIR', os.path.join(_SERVER, 'out'))
 SPARROW_DIR = os.path.join(OUT_DIR, 'sparrow_baseline')           # 与原 _output/sparrow_baseline/ 子目录约定一致
 INTERMEDIATE = os.path.join(SPARROW_DIR, 'pieces_intermediate.json')   # 全流程事实源（文件全路径）
 CONFIG_RUNS_DIR = os.path.join(OUT_DIR, 'config_runs')     # CLI（ms-run-config）专属产物根：只此可写，禁写 INTERMEDIATE/uploads
+PREFIX_RUNS_DIR = os.path.join(OUT_DIR, 'prefix_runs')     # US-003 prefix 运行工件（web solve_worker 独占写：资格码/构造/pin/带位回放对拍）
 CALIBRATION_DIR = os.path.join(OUT_DIR, 'portfolio_calibration')   # PC-004 标定管线产物根（batch/variants/analyze，gitignore 区）
 RUN_STATS_JSONL = os.path.join(OUT_DIR, 'run_stats.jsonl')   # PC-009 run 统计库（ms-run-config 追加 / portfolio θ₀ 校准读取）
 MASTER_DXF_GLOB = os.path.join(DATA_DIR, 'M1787*(2).dxf')         # 母版 DXF glob（命中的是 2.9MB 的 (1)(2)）

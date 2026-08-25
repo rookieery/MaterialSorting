@@ -261,6 +261,11 @@ class NestRunConfig:
     per_type: dict[str, dict[str, float]] = field(default_factory=dict)
     quantities: dict[str, dict[str, int]] | None = None     # None = 全片 demand=1
     band: dict | None = None        # None = 关闭；开启 = {'enabled': True, 'label': g码}
+    # US-003 预埋（prefix PRD 非目标：CLI 9 键 schema prefix 支持为二期）：本字段
+    # load_config 恒不填充（config 文件写 prefix 键仍按未知键报错，fail-loud 不
+    # 静默 no-op），仅供 run_config 的 LNS 互斥 warn 消费 —— 二期 schema 接入后
+    # {'enabled': True, 'front': g码, 'back': g码} 形态即位。
+    prefix: dict | None = None
 
 
 def load_config(path: str | Path) -> NestRunConfig:

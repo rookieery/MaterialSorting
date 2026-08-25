@@ -233,6 +233,52 @@ def test_lns_skipped_when_band_enabled(iso_env, capsys, monkeypatch):
     assert doc['config']['band'] == {'enabled': True, 'label': 'g01'}
 
 
+def test_lns_skipped_when_prefix_enabled(iso_env, capsys, monkeypatch):
+    """prefix 开启 + --lns → LNS 环节跳过（US-003 预埋，band 同款双 warn 点）。
+
+    CLI 9 键 schema prefix 支持是二期（load_config 恒不填 prefix 字段，config
+    文件写 prefix 键仍按未知键报错 fail-loud），本用例经 ``dataclasses.replace``
+    注入 NestRunConfig.prefix 模拟二期 schema 接入后的形态，锁双 warn 点行为：
+    启动 warn（stderr）+ LNS 执行跳过（无 result_lns.json、result.json 无 lns 段、
+    退出 0）。"""
+    import dataclasses
+
+    from materialsorting.cli import run_config as rc_mod
+    from materialsorting.cli.config import load_config
+
+    tmp, runs, master = iso_env
+    cfg_path = _write_config(tmp / 'cfg.json', master)
+    real_cfg = load_config(cfg_path)
+    injected = dataclasses.replace(
+        real_cfg, prefix={'enabled': True, 'front': 'g01', 'back': 'g02'})
+    monkeypatch.setattr(rc_mod, 'load_config', lambda _p: injected)
+    _patch(monkeypatch, {0: [(0.5, 'holey')]})
+    rc = main([str(cfg_path), '--time', '2', '--lns', '--lns-time', '3',
+               '--lns-rounds', '2'])
+    assert rc == 0
+    cap = capsys.readouterr()
+    # 双 warn 点：启动说明段 warn + LNS 执行处跳过（均 stderr，含 front/back 回显）
+    assert '起始端成套前后幅已开启' in cap.err and 'g01/g02' in cap.err
+    assert 'LNS 后处理跳过' in cap.err and '钉位' in cap.err
+    assert '[LNS] 前' not in cap.out
+    (rd,) = list(runs.iterdir())
+    assert not (rd / 'result_lns.json').exists()
+    doc = json.loads((rd / 'result.json').read_text(encoding='utf-8'))
+    assert 'lns' not in doc
+
+
+def test_config_schema_still_rejects_prefix_key(iso_env):
+    """CLI 8 键 schema 现状锁定：config 文件写 prefix 键按未知键报错（fail-loud，
+    不静默 no-op —— CLI 求解未接入 prefix，写入即应被拦下而非被忽略）。"""
+    from materialsorting.cli.config import ConfigError, load_config
+
+    tmp, _runs, master = iso_env
+    cfg_path = _write_config(tmp / 'cfg.json', master,
+                             prefix={'enabled': True, 'front': 'g01', 'back': 'g02'})
+    with pytest.raises(ConfigError, match='未知顶层键'):
+        load_config(cfg_path)
+
+
 # ------------------------------------------------------- AC#1 改进 / 不优路径
 
 

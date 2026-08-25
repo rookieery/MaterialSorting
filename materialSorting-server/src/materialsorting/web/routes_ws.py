@@ -9,6 +9,16 @@ US-011（腰头成带）：StartPayload 新增可缺省 ``band`` 键（``{enable
 band 开启时 WS 依序收到 ``stage`` → ``manifest`` → ``frames/final``（组合片 WB_
 pid 在 solve_worker 帧前展开，永不泄漏）。不适合成带的 g 码（裤耳类细长小片）
 由 ``waist_band.FILL_FLOOR_PCT`` 灾难守卫在带构造期拦截（fail-fast error）。
+
+US-003（起始端成套前后幅）：StartPayload 新增可缺省 ``prefix`` 键
+（``{enabled, front, back}`` —— **无 size 键**，资格码由后端 seeded 随机选取，
+决策②），``_parse_prefix`` 单一校验点（``_parse_band`` 同模式）：front/back
+``^g\\d+$`` / 存在于母版 / front≠back / **须存在 ≥1 资格码**（两码 demand==2，
+``eligible_sizes`` 同口径）—— 无资格码（含 quantities=null 全 demand=1）=
+结构化 error 早退 + 显式 close，文案指路数量矩阵。prefix 开启时 WS 依序
+``stage('prefix', {size,...})`` → ``manifest`` → ``frames/final``（PS_ 在
+solve_worker 帧前展开，永不泄漏；final 消息附 ``prefix`` 统计段）。双开时
+stage 两条（band→prefix→manifest）互不干扰，带位只记录不置换（FR-8）。
 """
 from __future__ import annotations
 
@@ -24,7 +34,7 @@ from .solver import solve_with_callback_proc
 router = APIRouter()
 _SENTINEL = object()
 
-# US-011 band 服务端校验常量。
+# US-011 band / US-003 prefix 服务端校验共用常量。
 _BAND_LABEL_RE = re.compile(r'^g\d+$')
 
 
@@ -63,6 +73,40 @@ def _parse_band(raw, pieces, quantities):
     if not members:
         raise ValueError(f'band g 码 {label} 数量全为 0（QtyMatrix 须至少一个码数量 > 0）')
     return {'label': label}
+
+
+def _parse_prefix(raw, pieces, quantities, sizes=None):
+    """StartPayload ``prefix`` 键 → worker 前缀配置 dict | None（单一校验点）。
+
+    规则（FR-1 / AC#3）：非 dict / 无 ``enabled`` / enabled falsy → None（关闭，
+    旧行为）；enabled 时 front/back 须匹配 ``^g\\d+$`` 且存在于当前母版且
+    front≠back；**须存在 ≥1 个资格码**（``eligible_sizes`` 同口径：该码 front
+    demand==2 且 back demand==2，sizes = 用户所排尺码过滤 —— 资格码必须真实进
+    主解实例）—— 无资格码（含 quantities=null 全 demand=1 场景）= 结构化
+    error（文案指路数量矩阵，FR-9）。非法抛 ``ValueError``（调用方转
+    ``{type:error}`` 早退 + 显式 close，不发 manifest）。
+
+    返回 worker 形态 ``{'front': str, 'back': str}``（**无 size 键** —— 资格码
+    在 solve_worker 进程内 seeded 随机选取，决策②；多余键如 size 静默忽略，
+    与 ``_parse_band`` 对 ack/fillers 的处理一致）。
+    """
+    if not isinstance(raw, dict) or not raw.get('enabled'):
+        return None
+    front = raw.get('front')
+    back = raw.get('back')
+    for name, v in (('front', front), ('back', back)):
+        if not isinstance(v, str) or not _BAND_LABEL_RE.match(v):
+            raise ValueError(f'prefix.{name} 须为 g 码（如 g02），收到 {v!r}')
+        if not any(p.get('label') == v for p in pieces):
+            raise ValueError(f'prefix.{name} {v!r} 不存在于当前母版')
+    if front == back:
+        raise ValueError(f'prefix.front 与 prefix.back 须为不同 g 码（前/后幅各一），'
+                         f'收到同为 {front!r}')
+    from ..nesting_engine.prefix import eligible_sizes
+    if not eligible_sizes(quantities, front, back, sizes=sizes or None):
+        raise ValueError('当前数量无 2+2 资格码（front/back 各码 demand 须恰为 2）—— '
+                         '请在数量矩阵把所选码前后幅配成 2+2')
+    return {'front': front, 'back': back}
 
 
 # US-026：process.terminate()+join(timeout=5) 封装 —— read_loop（stop/断开）、write_loop
@@ -153,6 +197,19 @@ async def ws_solve(ws: WebSocket):
             pass
         return
 
+    # US-003：prefix 键解析 + 服务端校验（band 之后，同早退契约）。缺省/null/{}/
+    # 非 dict/enabled falsy = 关闭；无资格码（含 quantities=null 全 demand=1）=
+    # 结构化 error（文案指路数量矩阵）。
+    try:
+        prefix_cfg = _parse_prefix(msg.get('prefix'), pieces, quantities, sizes)
+    except ValueError as e:
+        await ws.send_json({'type': 'error', 'message': str(e)})
+        try:
+            await ws.close()
+        except Exception:
+            pass
+        return
+
     # US-026：pieces_snapshot = 纯 dict 列表（deep copy 防连接内 mutate），连同 solve_params
     # 传给 solve_with_callback_proc → solve_worker 子进程内 build_instance（spyrrow 对象
     # 不可 pickle，主进程不构造 instance）。
@@ -216,19 +273,18 @@ async def ws_solve(ws: WebSocket):
         loop.call_soon_threadsafe(queue.put_nowait, r)
 
     def on_stage(m):
-        """子进程 stage（band 带构造完成统计）→ 前端契约消息（manifest 前唯一一次）。
+        """子进程 stage → 前端契约消息（各自 manifest 前唯一一次）。
 
-        FR-2：``{'type':'stage','stage':'band', fill_pct, bbox, fallback:false, elapsed}``
-        —— 旧前端 default:break 静默忽略，前向兼容。
+        band（US-011 FR-2）：``{'type':'stage','stage':'band', fill_pct, bbox,
+        fallback:false, elapsed}``；prefix（US-003 FR-2）：``{'type':'stage',
+        'stage':'prefix', size, fill_pct, bbox, holes, elapsed}``（size 回显选中
+        资格码）。键白名单并集透传 —— 旧前端 default:break 静默忽略，前向兼容。
         """
-        loop.call_soon_threadsafe(queue.put_nowait, {
-            'type': 'stage',
-            'stage': m.get('stage', 'band'),
-            'fill_pct': m.get('fill_pct'),
-            'bbox': m.get('bbox'),
-            'fallback': bool(m.get('fallback', False)),
-            'elapsed': m.get('elapsed'),
-        })
+        out = {'type': 'stage', 'stage': m.get('stage', 'band')}
+        for k in ('fill_pct', 'bbox', 'fallback', 'elapsed', 'size', 'holes'):
+            if k in m:
+                out[k] = m[k]
+        loop.call_soon_threadsafe(queue.put_nowait, out)
 
     def on_process(proc):
         """子进程 start 后立即回调，把 Process 句柄交给事件循环供 stop/断开 terminate。"""
@@ -239,7 +295,7 @@ async def ws_solve(ws: WebSocket):
         _, final_data, elapsed, err = solve_with_callback_proc(
             pieces_snapshot, gate_mm, solve_params,
             on_manifest=on_manifest, on_report=on_report, on_process=on_process,
-            on_stage=on_stage, band=band_cfg,
+            on_stage=on_stage, band=band_cfg, prefix=prefix_cfg,
         )
         # stopped 标志由 read_loop 在 stop/断开时置 True → 不再投 final/error（避免
         # 与 stopped 消息冲突；客户端只收 stopped 或 final/error，不会同时收）。
@@ -248,7 +304,7 @@ async def ws_solve(ws: WebSocket):
                 loop.call_soon_threadsafe(queue.put_nowait,
                     {'type': 'error', 'message': f'求解失败: {err}'})
             elif final_data is not None:
-                loop.call_soon_threadsafe(queue.put_nowait, {
+                final_msg = {
                     'type': 'final',
                     'density': final_data['density'],
                     'density_sparrow': final_data['density_sparrow'],
@@ -256,7 +312,12 @@ async def ws_solve(ws: WebSocket):
                     'elapsed': round(elapsed, 2),
                     'n_frames': state_box['n_frames'],
                     'n_eroded': state_box['n_eroded'],
-                })
+                }
+                # US-003：prefix 统计段（size/pin/带位记录；prefix 关闭时键缺席 =
+                # 旧消息逐字段不变）。
+                if 'prefix' in final_data:
+                    final_msg['prefix'] = final_data['prefix']
+                loop.call_soon_threadsafe(queue.put_nowait, final_msg)
         loop.call_soon_threadsafe(queue.put_nowait, _SENTINEL)
 
     loop.run_in_executor(_executor, run_solve)

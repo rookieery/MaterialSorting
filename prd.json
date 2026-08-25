@@ -2,16 +2,10 @@
   "branchName": "ralph/prefix-head-set",
   "stories": [
     {
-      "id": "US-002",
-      "title": "段置换钉位 + 驱逐重插模块",
-      "description": "权威 spec：tasks/prd-prefix-head-set.md v2 US-002。前置：US-001。\n\nnesting_engine/prefix.py 增补（探针 prefix_lib.permute_pin / reinsert_evicted 移植）：\n1. permute_pin(placements, geoms_raw, geoms_eroded, comp_world, prefix_idx, *, gate_nest, flex=400.0, eps=5.0, skip_at_head=6.0) — 割线 c1=a 硬性 + c2∈[b,b+flex] 柔性选线（最小化 straddler）；A 组(x-span⊆[a−eps,c2+eps]，强制含 prefix_idx)/C 组(max_x≤a+eps)/B 组(min_x≥c2−eps) 刚体重排；comp min_x ≤ skip_at_head 整体跳过（P0 灾难 −17.72pt 的修复：组合片常态已锚定布头，置换本属多余）；eps=5.0 ≥ d 包络（防贴墙片 bd[0]=−2 误判 straddler）。返回 (placements, shift, stats 含 skipped/nA/nC/nB/n_evicted)。\n2. reinsert_evicted — straddler 驱逐重插三优先序：①组平移回位+{0,1,5..300}mm +x 微调梯回原窝 ②wb._slide_touch 自右滑触（候选 y=棱边∪0/gate 底，eroded 碰撞口径，面积降序 tie-break）③尾端贴触追加兜底（width_growth 计入 stats，超阈值 warn）。\n3. 终检：constraints.validate 全版复检 + y≤1910 复检，失败回退置换前布局（LNS 纪律：交付物恒过检）。\n\n验收标准：\n- 三守卫参数（skip_at_head=6.0/eps=5.0/flex=400.0）与 stats 结构锁进单测\n- 构造性用例：人为把组合片放到版面中部 → 置换后 min_x ≤ 6mm、validate 通过、总长不增（new_L ≤ L+0.5mm）\n- reinsert 三优先序各有单测；确定性（无 RNG）\n- P0 回归：probe2 三臂场景 FREE≈PIN（4/4 seed 置换跳过、密度差 0.00pt）复现为单测或冒烟脚本断言\n- pytest 全绿；python -m 冒烟扩展覆盖置换演示；分层依赖未反向",
-      "passes": true
-    },
-    {
       "id": "US-003",
       "title": "web 编排接线（exclude_pids + 展开 + stage + 带位记录）",
       "description": "权威 spec：tasks/prd-prefix-head-set.md v2 US-003（band US-011 同模式移植）。前置：US-001/002。决策要点：协议无 size 键（资格码后端 seeded 随机选取，决策②）；双开只记录带位不置换（决策④）。\n\n1. web/solver.py build_instance 加 exclude_pids 参数（**pid 级**扣减 {(front,size),(back,size)}——band 的 exclude_labels 是 label 级会连其他码前后幅全丢；与 exclude_labels 并存互不干扰；同样禁 quantities=0 方式，pid_meta/total_area/manifest 逐字段不变）。\n2. web/solve_worker.py 加 prefix 参数（worker 形态 {'front':g码,'back':g码}）：_build_prefix 进程内同步构造（eligible_sizes → pick_prefix_size seeded 随机选码 → build_prefix_plan，失败只投 error 不投 manifest——band 同契约）+ _write_prefix_artifact 落 paths.OUT_DIR/prefix_runs/*.json（写失败仅 warn）+ _emit_placed 展开单点扩展（PS_ 与 WB_ 同一序列化器，帧/final 三处发射点共享）+ final 后置换挂钩：comp min_x>6mm 时 permute+reinsert+validate 复检（失败回退），≤6mm 跳过；帧不置换（常态锚定下帧本在头部，final 为权威布局）。\n3. **双开带位记录（决策④）**：prefix on 且 band on 时把 WB 世界 bbox（min_x/max_x/距布尾 mm）写进 prefix_runs 工件与 final 统计段，布局不动（不置换）；band 单开 / prefix 单开行为与无对方时完全一致。\n4. web/routes_ws.py _parse_prefix 单一校验点（_parse_band 同模式）：front/back 匹配 ^g\\d+$ 且存在于母版且 front≠back；须存在 ≥1 资格码（两码 demand==2 的码），无资格码（含 quantities=null 全 demand=1 场景）= 结构化 error 早退+显式 close，文案指路「请在数量矩阵把所选码前后幅配成 2+2」。\n5. WS StartPayload 新增可缺省 prefix 键 {enabled,front,back}（无 size）；stage('prefix',{size,fill_pct,bbox,holes,elapsed}) 在 manifest 前一次（band 同开时 band→prefix→manifest，size 回显选中资格码）。\n6. CLI 预埋：ms-run-config --lns 遇 prefix 配置 warn 跳过（双 warn 点，band 同款）。\n\n验收标准：\n- prefix 缺省/null：test_solve_proc.py / test_ws_stop.py / test_waist_band_ws.py 零改动通过；prefix on/off manifest total_area 与 pieces 逐字段一致（一致性单测）\n- prefix 开启：WS 依序 stage→manifest（无 PS_）→frames/final（placed_items 无 PS_、4 成员 pid 各 2 条）；band 同开 stage 两条互不干扰，带位记录在案\n- 新增 tests/test_prefix_ws.py（TestClient 套路）全绿；ms-web 启动无回归、分层依赖未反向、pytest 全绿",
-      "passes": false
+      "passes": true
     },
     {
       "id": "US-004",

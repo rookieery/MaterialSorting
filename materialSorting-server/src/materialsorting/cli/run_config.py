@@ -513,6 +513,13 @@ def main(argv: list[str] | None = None) -> int:
         if cfg.band is not None:
             print(f'  ⚠ 腰头成带已开启（band g 码 {cfg.band["label"]}）：'
                   '波段重排会拆散带形态，LNS 环节将跳过', file=sys.stderr)
+        # US-003 预埋（双 warn 点之一）：prefix 配置在 CLI 求解暂未接入（9 键
+        # schema 二期），此守卫在 schema 接入后即刻生效（FR-11 —— 波段重排会
+        # 拆钉位：前缀组合片 x=0 锚定 + 段成员刚体关系被段重排破坏）。
+        if cfg.prefix is not None:
+            print(f'  ⚠ 起始端成套前后幅已开启（prefix {cfg.prefix.get("front")}'
+                  f'/{cfg.prefix.get("back")}）：波段重排会拆布头钉位，'
+                  'LNS 环节将跳过', file=sys.stderr)
     # PC-009 θ₀ 校准（读 run 统计库，--target 模式才有 kill 门槛可校准）：当前
     # 实例类（class_key）命中且 ≥5 条历史 → θ 初值 = min(target, 历史最大
     # best_density + 0.003)（贴可达性起跑），否则 θ = target。θ₀ 只影响 kill
@@ -732,10 +739,15 @@ def main(argv: list[str] | None = None) -> int:
     # R0 提前停（queue_stopped）同样走到这里 —— 对达标解也可再压宽度；Ctrl-C 中断
     # 的 run 不做后处理（portfolio 未跑完，按中断路径 130 收口）。
     # band 开启 → 跳过（启动处已 warn）：波段重排会把落在段内的带成员抽出重排，
-    # 破坏版师带形态（链内贴触 + 开口朝左 + 最大码最右）。
+    # 破坏版师带形态（链内贴触 + 开口朝左 + 最大码最右）。prefix 开启同理跳过
+    # （US-003 预埋，双 warn 点之二：拆布头钉位；FR-11）。
     if args.lns and cfg.band is not None:
         print(f'LNS 后处理跳过: 腰头成带已开启（band g 码 {cfg.band["label"]}），'
               '波段重排会拆散带形态（求解产物不受影响）', file=sys.stderr)
+    elif args.lns and cfg.prefix is not None:
+        print(f'LNS 后处理跳过: 起始端成套前后幅已开启（prefix '
+              f'{cfg.prefix.get("front")}/{cfg.prefix.get("back")}），'
+              '波段重排会拆布头钉位（求解产物不受影响）', file=sys.stderr)
     elif args.lns:
         try:
             out = postprocess_run_dir(run_dir, time_budget=lns_time,

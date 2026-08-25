@@ -40,6 +40,13 @@ US-011（腰头成带编排接线）：``build_instance`` 加 ``exclude_labels``
 ``solve_with_callback_proc`` 加 ``on_stage`` 回调 + ``band`` 透传 —— drain 循环
 显式转发 ``{kind:stage}``（此前未知 kind 静默丢弃），band 子配置原样带给
 ``solve_worker``（带构造在 worker 进程内跑，见其 docstring）。
+
+US-003（起始端成套前后幅编排接线）：``build_instance`` 加 ``exclude_pids`` ——
+**pid 级**扣减（区别 band 的 label 级：prefix 只消耗资格码 2+2 份，同码其他码
+照排；``exclude_labels`` 会把整码前后幅全排除，密度崩）。两参数并存互不干扰
+（band 用 labels、prefix 用 pids）。``solve_with_callback_proc`` 加 ``prefix``
+透传 —— worker 形态 ``{'front': g码, 'back': g码}``（资格码在 worker 进程内
+seeded 随机选取，见 ``solve_worker._build_prefix``）。
 """
 from __future__ import annotations
 
@@ -260,7 +267,7 @@ def build_pid_meta(pieces, *, sizes=None, per_type=None, quantities=None,
 def build_instance(pieces, gate_mm, *, time_budget: int, seed: int,
                    sizes=None, params=None, per_type=None, quantities=None,
                    solver_opts: dict | None = None, exclude_labels=None,
-                   extra_items=None):
+                   exclude_pids=None, extra_items=None):
     """按码号 + v0.3 参数构造 (instance, config, pid_meta, total_area, n_eroded)。
 
     params = {d_ext, d_int, tol_ext, tol_int}（默认全 0 = 阶段A baseline。US-002 起
@@ -287,6 +294,11 @@ def build_instance(pieces, gate_mm, *, time_budget: int, seed: int,
         / manifest 逐字段不变 —— band on/off 的 manifest 一致性即由此保证。
         **禁**用 quantities=0 达成同效：那会在 ``build_pid_meta`` 把 pid_meta /
         total_area / manifest 一起抹掉（密度口径事故，落地方案 §2.2）。
+    exclude_pids = iterable[str] | None（US-003 起始端成套）：**pid 级** Item 层
+        跳过（与 ``exclude_labels`` 同层、并存互不干扰）。prefix 只消耗资格码
+        {(front,size),(back,size)} 两 pid 的 2+2 份 —— 同码其他码照排，故必须
+        pid 级（label 级会把整码前后幅全丢，5336 其他码 10+ 份即密度崩）；
+        同样禁 quantities=0 方式（口径事故同上）。
     extra_items = list[dict] | None（US-011）：构造期追加进 items 的补充 Item
         （JSON 可序列化 dict：``{id, polygon, demand=1, orientations}``）—— 成带
         组合片（WB_ pid）由此进主解。**必须构造期传入**：``instance.items`` 是
@@ -320,6 +332,8 @@ def build_instance(pieces, gate_mm, *, time_budget: int, seed: int,
 
     items = []
     exclude = {str(l) for l in exclude_labels} if exclude_labels else frozenset()
+    # US-003：pid 级排除（与 label 级同层并存；语义见 docstring）。
+    exclude_pid_set = {str(p) for p in exclude_pids} if exclude_pids else frozenset()
     for p in pieces:
         meta = pid_meta.get(p['pid'])
         if meta is None:
@@ -327,6 +341,9 @@ def build_instance(pieces, gate_mm, *, time_budget: int, seed: int,
         # US-011：band 成员只在 Item 层跳过（pid_meta/total_area/manifest 不动 ——
         # 组合片由 solve_worker 追加；quantities=0 移除是口径事故，见 docstring）。
         if p.get('label') in exclude:
+            continue
+        # US-003：prefix 资格码两 pid 同层跳过（2+2 由组合片 PS_ 承载）。
+        if p['pid'] in exclude_pid_set:
             continue
         # tol 与 pid_meta 的 erode 同口径裁定（_resolve_d_tol 单一真相源）→ 离散角度集。
         _d, tol = _resolve_d_tol(p.get('label'), pdef, per_type)
@@ -437,7 +454,7 @@ _JOIN_TIMEOUT_SEC = 5.0
 def solve_with_callback_proc(pieces_snapshot, gate_mm, solve_params, *,
                              on_manifest, on_report, on_process=None,
                              on_stage=None, drain_interval: float = 0.2,
-                             band=None):
+                             band=None, prefix=None):
     """多进程版求解：spawn 子进程跑 ``build_instance + solve``，主进程 drain queue 分发。
 
     与旧 ``solve_with_callback``（threading 版）的关键区别：
@@ -481,6 +498,12 @@ def solve_with_callback_proc(pieces_snapshot, gate_mm, solve_params, *,
         服务端校验后产物）。原样传给 ``solve_worker`` —— 带内聚排 + 组合片构造 +
         帧前展开都在 worker 进程内做（组合片 ``BandChunk`` 不跨进程）。缺省 None =
         关闭，worker 走原五元路径（manifest → frame* → final/error）。
+    prefix : dict | None
+        **US-003**：起始端成套配置 ``{'front': g码, 'back': g码}``（routes_ws
+        ``_parse_prefix`` 服务端校验后产物，**无 size 键** —— 资格码在 worker
+        进程内 seeded 随机选取）。原样传给 ``solve_worker``，构造/展开/final
+        置换守卫都在 worker 进程内做（``BandChunk``/pin stats 不跨进程，工件
+        经 ``prefix_runs`` 落盘）。缺省 None = 关闭。
 
     Returns
     -------
@@ -502,7 +525,7 @@ def solve_with_callback_proc(pieces_snapshot, gate_mm, solve_params, *,
     result_queue: multiprocessing.Queue = multiprocessing.Queue()
     process = multiprocessing.Process(
         target=solve_worker,
-        args=(pieces_snapshot, gate_mm, solve_params, result_queue, band),
+        args=(pieces_snapshot, gate_mm, solve_params, result_queue, band, prefix),
         name='solve_worker',
     )
     process.start()
@@ -552,8 +575,9 @@ def solve_with_callback_proc(pieces_snapshot, gate_mm, solve_params, *,
                 err = msg.get('message', 'unknown error')
                 # error 后子进程会自然退出；继续 drain 残余 frame（如有）直到「进程死 + queue 空」。
             elif kind == 'stage':
-                # US-011：band 带内聚排完成（manifest 前唯一一次）；显式转发，
-                # 无消费方（on_stage=None，CLI 路径）时静默丢弃 = 旧行为。
+                # US-011 band / US-003 prefix 构造完成统计（manifest 前，各自唯一
+                # 一次，band→prefix 序）；显式转发，无消费方（on_stage=None，CLI
+                # 路径）时静默丢弃 = 旧行为。
                 if on_stage is not None:
                     on_stage(msg)
             # 未知 kind 忽略（前向兼容）
