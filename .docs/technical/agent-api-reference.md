@@ -274,6 +274,31 @@ curl -X POST http://127.0.0.1:8000/api/session -H "X-Session-Id: 3f2a...hex"
 8. **前端接入（US-005 已落地，2026-08-27）**：前端 `lib/session.ts` 管 sid（localStorage `ms_sid`，uuid4 hex 32，刷新不变）；`lib/api.ts` `apiFetch` 是**全站唯一裸 fetch 出口**（注入 `X-Session-Id` + 会话先行门：首次调用前置一次 POST /api/session once-promise，防子组件 mount 早于 App 探测的 401 误弹）；本路由 429/401 的 `code` 错误体（或 WS error 帧 `code`）触发前端全局阻断弹窗（阻断式全屏，唯一出口 = 刷新页面，阻断期间后续请求前端拦截不发）；**session_expired 时前端顺手丢弃 ms_sid**（墓碑 1h 拒重建旧 sid —— 刷新必须铸新 sid 才能真正重来），session_limit 保 sid。App 挂载即探测 —— 第 5 个窗口页面加载即弹「用户过多」，无需先上传。
 9. **uploads 磁盘 TTL 清理（US-006 已落地，2026-08-27，`web/diskclean.py`）**：多会话下 `out/uploads/` 只进不出，按 `MS_UPLOAD_TTL_DAYS`（env，缺省 14 天，按 mtime）自动清理 —— 删超龄 `<doc_id>.dxf` + `<doc_id>_pieces/` **成对**目录（混龄对整对保留：commit 重写 pieces 目录但不刷新 dxf 的 mtime）+ 孤儿单边 + 超龄 `strategy_cfg_*.json`；**保护集** = 活跃会话 doc_id（`registry.active_doc_ids()`：`st.doc_id` ∪ 快照 `state['doc']['doc_id']`）∪ `out/config_runs/.web_strategy_active*.json` marker 内 doc_id（**会话已过期但策略 run 仍在跑 → master 不误删**）∪ mtime 未超龄者；非 web 命名文件一律不动。触发 = 进程启动（`server.main()` 起 `start_startup_cleaner` daemon 线程，TestClient 导入 app 不触发）+ 每次 commit 成功后（`trigger_cleanup`，executor 里跑、吞一切异常仅 warn，不影响响应）。冒烟：`python -m materialsorting.web.diskclean`（临时目录场景自检 13 项 + 真实 out **dry-run** 打印将删清单）。
 
+### 多会话 sid 传递与错误码速查（US-007 汇总，2026-08-27）
+
+各端点 sid 通道（缺省一律 → default 会话，行为与单文档时代一致）：
+
+| 端点 | sid 通道 | 会话语义 |
+|------|----------|----------|
+| `POST /api/session` | `X-Session-Id` Header | **唯一注册入口**（`resolve(create=True)`：建会话/幂等刷活性；超限在此把关） |
+| `POST /api/commit-to-nesting` | `X-Session-Id` Header | 写路径 `create=True`（合法未注册 sid 可直接 commit 建会话）；成功后 per-doc 快照挂会话 |
+| `GET /api/ptypes` / `POST /api/band-preview` / `POST /api/prefix-preview` / `POST /export` | `X-Session-Id` Header | 读路径 `create=False`（`routes_views._resolve_session_state` 单一解析点） |
+| `/api/strategy/start·status·stop·result` | `X-Session-Id` Header | `strategy._session_gate`（读路径 `create=False` + 刷 `last_active`，轮询即活性） |
+| `WS /ws/solve` | **`?sid=` query**（浏览器 WS 不能自定义 Header） | `ws_acquire` 钉住 + 回调 `touch` + finally `ws_release` |
+| `GET /` | 无（静态入口） | 响应头 `Cache-Control: no-cache`（防旧 index.html 缓存滞留 default 语义） |
+
+结构化错误码（`SessionError` 族 → `JSONResponse(e.payload(), e.status)` 一行映射；**400 无 `code` 键，401/429 带 `code`**，additive 旧前端可忽略）：
+
+| HTTP | `code` | `error` 文案 | 触发 |
+|------|--------|--------------|------|
+| 400 | （无） | `sid 非法` | sid 不匹配 `SID_RE`（`^[0-9A-Za-z]{1,128}$`） |
+| 401 | `session_expired` | `会话已过期（5 分钟无操作），请刷新页面` | 墓碑命中 / 惰性超时 / 合法但未注册 sid 的读路径（`create=False`，如服务重启丢内存） |
+| 429 | `session_limit` | `当前使用用户过多（最多 4 人同时在线），请稍后尝试`（随 `MS_SESSION_MAX` 插值） | 活跃会话满且 sid 未注册（create 路径） |
+
+WS 侧同语义走 **error 帧**：`{"type":"error","code":"session_expired","message":...}` 后显式 close（`code` 键 additive；`session_limit` 帧格式通用但容量闸门实际由 HTTP 层把关）。前端 `lib/api.ts` / `useSolveRun` 读 `code` 触发全局阻断弹窗（`session_expired` 弃 sid / `session_limit` 保 sid）。
+
+磁盘布局与产物命名（多会话相关）：per-doc intermediate 主写 `out/uploads/<doc_id>_pieces/pieces_intermediate.json`（+ 镜像写全局 `paths.INTERMEDIATE`）；策略 marker `out/config_runs/.web_strategy_active.json`（default）/ `.web_strategy_active_<sid>.json`（sid 会话）；run_name `web_[<sid6>_]<mode>_<rand6>`、cfg `out/uploads/strategy_cfg_[<sid6>_]<stamp>.json`。uploads 磁盘 TTL 清理见生命周期第 9 条（US-006）。
+
 ### 关键不变量
 
 1. `sessions.registry.resolve(None).state is runtime._PIECES_STATE`（is 判等单测锁死 —— default 会话自动跟随 commit 的 clear+update reload）。

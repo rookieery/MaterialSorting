@@ -140,6 +140,16 @@ curl http://127.0.0.1:8000/api/ptypes                                  # US-020 
 
 > **US-013 预演路由（`routes_band.py` POST /api/band/preview）/ US-014 A/B 验收闭环（`band_accept.py`）/ US-015 填料混带（`band.fillers`）已整体删除**：band 主流程收敛为「WS start `band={enabled,label}` → `_build_band` v2 构造性链 → 组合片进主解 → `_emit_placed` 展开」极简链路；不合适 g 码的守卫唯一入口 = `waist_band.FILL_FLOOR_PCT=45`（带内填充率不足 → 「成带失败」error 早退）。v2 链构造机制与实测数据详见 `nesting_engine/AGENTS.md` waist_band.py 行；US-011 关键约定节即现行全部 WS 编排契约。
 
+## 多会话机制总览（US-001~007，2026-08-27 定稿）
+
+> 详尽契约在 `.docs/technical/agent-api-reference.md`「POST /api/session」节；本节是改 web 代码前的速查入口。
+
+- **sid 约定**：前端 `lib/session.ts` 铸 uuid4 hex 存 localStorage（`ms_sid`）；HTTP 一律 `X-Session-Id` Header（`lib/api.ts` apiFetch 唯一裸 fetch 出口注入），WS `/ws/solve` 走 `?sid=` query（浏览器 WS 不能自定义 Header）。后端归属解析只走 `sessions.registry.resolve()`（default 豁免上限/过期/墓碑，state = `runtime._PIECES_STATE` 同一 dict）。
+- **隔离面（端到端对拍 US-007 验收）**：commit per-doc 双写（US-002）→ ptypes/export/band/prefix 预览（US-003）→ WS solve（US-003 钉住）→ 策略四路由（US-004 每会话状态槽 + sid 前缀产物）→ 前端阻断弹窗（US-005）全链路互不串台；一端 commit 不中断另一端在跑的求解，结果仍属原母版。
+- **生命周期**：容量 4 / 空闲 5 分钟过期（墓碑 1h，401 `session_expired` 阻断弹窗，前端弃 sid 刷新重来）/ 429 `session_limit`；**求解中（`ws_open>0`）与策略轮询中（status 即 touch）不被扫描误杀**。
+- **环境变量**（import 时解析，非法 warn 回退缺省）：`MS_SESSION_MAX=4`（并发会话上限，default 不占额）、`MS_SESSION_TTL_SEC=300`（空闲过期秒数）、`MS_UPLOAD_TTL_DAYS=14`（uploads 磁盘 TTL 天数，US-006）。
+- **端到端验收 harness**：`scripts/us007_e2e_verify.mjs`（Playwright 双浏览器对拍；主相位 = 双窗口上传不同母版 → ptypes/求解/停止/导出/高级运行/超限/default 回归；`--expire` 相位需 `MS_SESSION_TTL_SEC=6` 服务器 = 求解中/策略轮询中不误杀 + 空闲过期弹窗 + 刷新干净会话）。
+
 ## 多会话 US-001 关键约定（sessions.py + POST /api/session；2026-08-27）
 
 - **背景**：ms-web 原是「单文档单例」——`_PIECES_STATE` 进程级一份，多端（本地 :5173 / 隧道 8081）同时使用时任一端 commit 即覆盖所有人当前文档（静默串台）。会话 token（sid）机制按端隔离；本 story 只落**注册表与生命周期**，commit 双写（US-002）/ 读路由接入（US-003）/ 策略会话化（US-004）/ 前端接入（US-005）随后。

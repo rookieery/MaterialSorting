@@ -69,6 +69,24 @@ cd ..
 ms-web             # → http://127.0.0.1:8000
 ```
 
+## 多会话机制（web 多端隔离，2026-08-27）
+
+`ms-web` 按 **会话（sid）** 隔离多端数据，解决此前「任一端 commit 即覆盖所有人当前文档」的串台问题：
+
+- **sid 约定**：前端首次加载铸 `uuid4 hex` 存 localStorage（`ms_sid`，刷新不变），全部 HTTP 请求注入 `X-Session-Id` Header，WS `/ws/solve` 走 `?sid=` query（浏览器 WS 不能自定义 Header）。后端各端点经 `sessions.SessionRegistry.resolve()` 单一解析点归属（契约详见 [.docs/technical/agent-api-reference.md](.docs/technical/agent-api-reference.md)）。
+- **隔离面**：每会话一份 pieces 快照（commit 主写 `out/uploads/<doc_id>_pieces/pieces_intermediate.json` per-doc 落盘 + 会话绑定）+ 一份策略长跑状态槽（run_name/cfg/marker 按 sid 前缀互斥）；ptypes / 求解 / 导出 / 高级运行全链路互不串台。
+- **生命周期**：容量上限 4 个并发会话（第 5 端页面加载即弹「用户过多」）；空闲 5 分钟过期（过期墓碑 1h，任一操作弹「已过期」阻断式弹窗，唯一出口 = 刷新页面铸新 sid）；**求解中（WS 钉住）/ 策略轮询中的会话不被误杀**。
+- **无 sid 请求 = default 会话**：豁免上限/过期/墓碑（旧 curl/脚本/单文档时代行为逐字节一致）；`GET /` 响应头 `Cache-Control: no-cache`（防旧 index.html 缓存滞留）。
+- **磁盘兜底**：`out/uploads/` 按 TTL 自动清理（超龄 `<doc_id>.dxf` + `<doc_id>_pieces/` 成对删，活跃会话 / 策略 marker 引用 / 未超龄者保护），commit 后与进程启动时双触发 best-effort。
+
+**环境变量**（非法值 warn 回退缺省）：
+
+| 变量 | 缺省 | 作用 |
+|---|---|---|
+| `MS_SESSION_MAX` | `4` | 并发会话上限（default 不占额；超出 → 429 `session_limit`） |
+| `MS_SESSION_TTL_SEC` | `300` | 空闲过期阈值秒数（惰性检查 + 30s daemon 扫描） |
+| `MS_UPLOAD_TTL_DAYS` | `14` | uploads 磁盘清理 TTL 天数（按 mtime，成对判龄） |
+
 ## 配置驱动求解（ms-run-config，无需浏览器）
 
 评估配置（码号组合 / 公差 / 数量矩阵 / 多 seed）不必开浏览器工作台，一条命令跑完「commit → 求解」：

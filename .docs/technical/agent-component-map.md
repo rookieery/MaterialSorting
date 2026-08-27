@@ -1185,3 +1185,30 @@ band 配置（用户指认腰头 g 码成带）从表单到 WS 的纯参数链�
 ### 测试与浏览器验证
 
 vitest 741 全绿（新增 session.test 6 + api.test 18 + SessionExpiredModal.test 4 + useSolveRun WS 改写；存量 fetch 用例经 `markSessionProbedForTest` 零断言改动）；`npm run build` 通过。浏览器 harness `scripts/us005_session_verify.mjs`（playwright + chrome channel）：主相位 P1-P5 15/15（sid/刷新不变/Header 注入/双窗口上传互不串台三层取证/WS ?sid=/第 5 窗口加载即弹「用户过多」/阻断期间上传 0 请求）+ 过期相位 E1-E5 5/5（TTL=6：静置过期 → 操作 → 「会话已过期」弹窗 → ms_sid=null → 刷新新 sid 干净会话）。
+
+## 多会话 US-007 收官：端到端双浏览器对拍验收 + 契约文档同步（2026-08-27，代码零改动）
+
+US-001~006 全链路的验收 story：不改任何运行时代码，产出 = 验收 harness + 三处文档同步（api-reference 速查节 / README 多会话机制节 / web AGENTS.md 总览节）+ CLAUDE.md web 行收口句。
+
+### 验收 harness（`scripts/us007_e2e_verify.mjs`，Playwright + chrome channel headless）
+
+范本 `us005_session_verify.mjs`（工具函数沿用：dismissTour/modalText/frameText 归一 Playwright 各版本 framereceived 载荷形状）。**前置**：跑前重启 ms-web 保会话注册表干净（P7 需要 4 空席；注册表残留 sid 会让第 4/5 窗口误吃 429）。两相位：
+
+- **主相位（默认 TTL=300 服务器）25 项**：P1 双窗口（独立 browser context 模拟两设备）各自上传不同母版（A=5336 / B=M1787）commit 完成；P2 ptypes 互不串台（响应体对比 + 全部请求带各自 `X-Session-Id` Header 取证）；P3 **B 求解中 A commit 第三母版**（5156）→ B 无 error 收 final、placed pid 全属 B manifest、B ptypes 不漂移、无阻断弹窗；P4 A 求解→停止（stopped reason=user_requested）；P5 B 导出 DXF（200 + sidB + M1787 文件名前缀取证 content-disposition）；P6 高级运行双会话并发（跨会话不 409、A 终止不影响 B）；P7 第 5 窗口页面加载即弹「用户过多」+ 第 3/4 窗口正常；P8 default 回归（无 Header POST /api/session → sid=default、裸 GET /api/ptypes 200、GET / `Cache-Control: no-cache`）。
+- **生命周期相位（`--expire`，`MS_SESSION_TTL_SEC=6` 服务器）9 项**：E1 求解中不误杀（TTL=6 下 20s 求解照常 final —— ws 钉住 + 回调 touch；求解后开高级配置弹窗不弹过期）；E2 策略轮询中不误杀（2s status 轮询即活性，15s 观察仍在进度态，终止得结果态）；E3 空闲 >TTL → 导出操作弹「会话已过期（5 分钟无操作），请刷新页面」→ `ms_sid=null`（弃 sid）→ 刷新 → 新 32hex sid 且无弹窗（干净新会话）。
+
+2026-08-27 实跑：主相位 25/25 + 生命周期 9/9 全绿；全量 pytest 537 绿 + vitest 741 绿 + ms-web 启动冒烟（GET / 200）无回归。
+
+### 关键运维知识（本次验收排障记档）
+
+1. **跑 harness 前先查 :8000 占用与看门狗**：残留的 shell watchdog（`while true; do python -m materialsorting.web.server; sleep 5; done`）会在每次杀服务器后 5s 复活一个 **TTL=300** 的实例 → TTL=6 验证相位的服务器全部 bind 10048 失败、探测打到错误服务器（症状 = 过期相位永远过不了）。清理 = 连 bash 包装进程一起杀（只杀 python 会被复活）。
+2. **`--expire` 相位必须独立服务器**：`MS_SESSION_TTL_SEC=6` 环境变量只在服务器进程启动时读入；对已运行服务器无效。
+
+### 文档同步落点（本 story 三处 + 收口）
+
+| 文件 | 节 | 内容 |
+|------|----|------|
+| `.docs/technical/agent-api-reference.md` | 「多会话 sid 传递与错误码速查（US-007 汇总）」 | 各端点 sid 通道表（HTTP `X-Session-Id` / WS `?sid=` / GET `/` no-cache）+ 401/429 `code` 错误码表（400 无 code）+ WS error 帧 `code` 键 + per-doc intermediate 落盘与 marker/run_name 改名口径。 |
+| `README.md` | 「多会话机制（web 多端隔离）」 | 机制概述（sid 约定/隔离面/生命周期/default 兜底/磁盘兜底）+ 环境变量表 `MS_SESSION_MAX=4` / `MS_SESSION_TTL_SEC=300` / `MS_UPLOAD_TTL_DAYS=14`（非法值 warn 回退缺省）。 |
+| `materialSorting-server/src/materialsorting/web/AGENTS.md` | 「多会话机制总览（US-001~007）」 | 改 web 代码前速查：sid 归属单一解析点 / 隔离面验收结论 / 生命周期要点 / 环境变量 / harness 用法。 |
+| `CLAUDE.md` | web 模块行 | US-001~007 整体落地收口句 + 文档入口指引。 |
