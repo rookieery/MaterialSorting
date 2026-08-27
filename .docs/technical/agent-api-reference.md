@@ -28,10 +28,10 @@
 | GET | `/api/ptypes` | US-020 D10（US-001 v2：键 = g 码 label）：返回每个 g 码的代表裁片（最小码内 parse 同序首个，含 `label` 编号），供前端高级配置弹窗缩略图/放大预览（D11 layer-aware）；**多会话 US-003**：`X-Session-Id` → 该会话快照（缺省 → default `_PIECES_STATE`） | `server.get_ptypes` |
 | POST | `/api/band-preview` | 2026-08-24 成带形态预览（高级配置弹窗「布局设置」band 行缩略图数据源）：主进程同步 `build_band_plan`，响应无 `WB_`，见下专节；**多会话 US-003**：`X-Session-Id` → 该会话快照 | `routes_views.band_preview` |
 | POST | `/api/prefix-preview` | 2026-08-25 前缀组合形态预览（「布局设置」prefix 行缩略图数据源）：主进程同步 `eligible_sizes→pick_prefix_size→build_prefix_plan`，成员带 `tag`=g 码，响应无 `PS_`，见下专节；**多会话 US-003**：`X-Session-Id` → 该会话快照 | `routes_views.prefix_preview` |
-| POST | `/api/strategy/start` | strategy US-004：spawn `ms-run-config --strategy` 子进程启动双模式长跑（202）；**2026-08-22 起载荷可带 band**（经 `_parse_band` 同一校验点写进 config，成带与策略模式兼容）；**2026-08-25 起载荷可带 prefix**（经 `_parse_prefix` 同一校验点含 2+2 资格码，非法 → 400 早退，写进 9 键 config） | `strategy.strategy_start` |
-| GET | `/api/strategy/status` | strategy US-004：无状态惰性轮询 run_dir 产物组装进度 | `strategy.strategy_status` |
-| POST | `/api/strategy/stop` | strategy US-004：树杀子进程（taskkill /T /F / killpg）+ 清 marker | `strategy.strategy_stop` |
-| GET | `/api/strategy/result` | strategy US-004：done/stopped run → best + manifest（应用到主画布数据源） | `strategy.strategy_result` |
+| POST | `/api/strategy/start` | strategy US-004：spawn `ms-run-config --strategy` 子进程启动双模式长跑（202）；**2026-08-22 起载荷可带 band**（经 `_parse_band` 同一校验点写进 config，成带与策略模式兼容）；**2026-08-25 起载荷可带 prefix**（经 `_parse_prefix` 同一校验点含 2+2 资格码，非法 → 400 早退，写进 9 键 config）；**多会话 US-004（2026-08-27）：读 `X-Session-Id`**（缺省 default）—— 每会话 409 单飞、跨会话并发放开、数据源 = 会话快照 | `strategy.strategy_start` |
+| GET | `/api/strategy/status` | strategy US-004：无状态惰性轮询 run_dir 产物组装进度；**多会话 US-004：读 `X-Session-Id`**（status 轮询即活性，长跑会话不被扫描误杀） | `strategy.strategy_status` |
+| POST | `/api/strategy/stop` | strategy US-004：树杀子进程（taskkill /T /F / killpg）+ 清本会话 marker；**多会话 US-004：读 `X-Session-Id`**（只树杀本会话 pid） | `strategy.strategy_stop` |
+| GET | `/api/strategy/result` | strategy US-004：done/stopped run → best + manifest（应用到主画布数据源）；**多会话 US-004：读 `X-Session-Id`**（只读本会话 run_dir） | `strategy.strategy_result` |
 | WS | `/ws/solve` | 排料求解流（manifest → frames → final）；**多会话 US-003**：`?sid=` query（浏览器 WS 不能自定义 Header；缺省 → default 会话），连接钉住 + 回调刷活性，见下专节 | `server.ws_solve` |
 
 > （已删 2026-08-22）`POST /api/band/preview`（US-013 成带预演回显）与 `routes_band.py` 整体移除 —— 预演 / ack 硬警告 / go-no-go 闸门等成带旁路功能退场，band 收敛为「WS StartPayload band = 勾选 + 选 g 码」极简主流程。
@@ -269,6 +269,7 @@ curl -X POST http://127.0.0.1:8000/api/session -H "X-Session-Id: 3f2a...hex"
 4. **合法但未注册 sid 的读路径**（`resolve(create=False)`，服务重启丢内存场景）同过期语义 401；**写路径（US-002 commit）走 `resolve(create=True)`** —— 数据自带（上传母版），合法未注册 sid 可直接 commit 建会话，过期/墓碑/超限仍 401/429。
 5. **会话状态结构**：`SessionState = {sid, state(pieces 快照 dict), doc_id, last_active, ws_open, strategy_busy}`；`state` 由 US-002 commit 填 per-doc 快照（`_build_pieces_state(per-doc 路径)`，`doc_id` 同步绑定）；WS 钉住 API = `ws_acquire/ws_release`（计数），活性刷新 = `touch(sid)`（GIL-safe float 写）。
 6. **读端点接入（US-003 已落地）**：HTTP 读路由（`/api/ptypes` / `/api/band-preview` / `/api/prefix-preview` / `/export`）经 `routes_views._resolve_session_state`（读路径 `create=False`）从 registry 取快照；WS `/ws/solve` 读 `?sid=` query 经 `ws_acquire`/`ws_release` 钉住 + `on_manifest`/`on_report` 回调 `touch` 刷活性（求解期间客户端不发消息也不被扫描误杀）。超限（429 session_limit）只可能出现在 create 路径（POST /api/session / commit）；读路径对未知 sid 一律 401 session_expired（不静默重建、不占新名额）—— WS error 帧格式对 `session_limit` code 通用（白盒锁定），实际把关在 HTTP 层。
+7. **策略四路由接入（US-004 已落地，2026-08-27）**：`/api/strategy/start·status·stop·result` 经 `strategy._session_gate`（读路径 `create=False` + 刷 `last_active` —— **status 轮询即活性**，策略长跑中的会话不被扫描误杀）解析；状态/产物/停止按 sid 隔离（详见上「策略桥接」多会话小节）。会话过期后策略状态槽与 marker 均按 sid 留存（不随逐出清理）—— 同 sid 过墓碑期回来仍能发现/清理自己的遗留 run。
 
 ### 关键不变量
 
@@ -361,49 +362,62 @@ curl http://127.0.0.1:8000/api/ptypes -H "X-Session-Id: <sid>"
 
 ## 策略桥接（strategy PRD US-004）— `/api/strategy/*` 四路由（`web/strategy.py`）
 
-桥接方式 = **spawn `python -m materialsorting.cli.run_config <cfg> --name web_<mode>_<rand6> --strategy <mode> --time <minutes*60> --quiet` 子进程 + HTTP 轮询 run_dir 产物**（分层零违规：进程边界而非 import 边界 —— `strategy.py` 全模块禁 import `..cli.*`，AST 守卫 `tests/test_web_strategy.py`；判据逻辑单一真相源留在 `cli.portfolio`）。子进程经 env 继承拿到与 ms-web 相同的 `paths`（`MS_OUT_DIR` 等环境变量父子同源）。前端消费方 = 策略 PRD US-005 弹窗（`strategyStore` + `useStrategyPoll`，详见 `agent-component-map.md` US-005 专节）：GET status 轮询双档 **弹窗开 2s / 关 15s**（关弹窗由入口徽标维持观测），terminal 态停表；start 载荷 = 面板排料参数 + `{mode, minutes}`；**关闭弹窗（ESC/遮罩/✕）不调 stop** —— 终止唯一入口 = 显式终止/清理按钮。
+桥接方式 = **spawn `python -m materialsorting.cli.run_config <cfg> --name web_[<sid6>_]<mode>_<rand6> --strategy <mode> --time <minutes*60> --quiet` 子进程 + HTTP 轮询 run_dir 产物**（分层零违规：进程边界而非 import 边界 —— `strategy.py` 全模块禁 import `..cli.*`，AST 守卫 `tests/test_web_strategy.py`；判据逻辑单一真相源留在 `cli.portfolio`）。子进程经 env 继承拿到与 ms-web 相同的 `paths`（`MS_OUT_DIR` 等环境变量父子同源）。前端消费方 = 策略 PRD US-005 弹窗（`strategyStore` + `useStrategyPoll`，详见 `agent-component-map.md` US-005 专节）：GET status 轮询双档 **弹窗开 2s / 关 15s**（关弹窗由入口徽标维持观测），terminal 态停表；start 载荷 = 面板排料参数 + `{mode, minutes}`；**关闭弹窗（ESC/遮罩/✕）不调 stop** —— 终止唯一入口 = 显式终止/清理按钮。
 
-状态机：`idle → starting →（run_dir 快照 diff 发现）running → done | stopped | error`；内存态空 + marker 在 → `orphan`。marker = `out/config_runs/.web_strategy_active.json` 恰 5 键 `{pid, run_dir, doc_id, mode, started_at}`（run_dir 初始 null、发现后回写；终态清 marker、内存态 `_STRATEGY_STATE` 保留供 status/result 续读）。
+**多会话 US-004（2026-08-27）：四路由全部读 `X-Session-Id` Header（缺省/空串 → default 会话）**，策略状态/产物/停止按会话隔离：
+
+- **每会话一份状态**：模块级 `_STRATEGY_STATES[sid]`（default 会话 = 旧名 `_STRATEGY_STATE` 同一对象，零 sid 路径行为不变）；会话过期/逐出**不清理**本表 —— 同 sid 回来（墓碑 1h 过龄后可重建）仍能经内存态（本进程未重启）或本 sid marker（重启后 orphan 路径）发现/清理自己的遗留 run。
+- **会话闸门**（`_session_gate`）：非 default sid 走 `resolve(create=False)` —— 未知/过期 → 401 `session_expired`、非法 → 400，先于 409/422/一切校验；顺手刷 `last_active`（**status 轮询即活性**，长跑会话不被扫描线程误杀）。default 豁免（零 sid 行为不变）。
+- **每会话 409 单飞**：同 sid 内存态非终态或本会话 marker 在 → 409；**跨会话完全并发放开**（接受 CPU 争抢，不加全局闸门）。
+- **marker 文件**：default → 旧名 `out/config_runs/.web_strategy_active.json`（路径兼容）；sid 会话 → `.web_strategy_active_<sid>.json`（orphan 检测/清理按会话隔离）。恰 5 键 `{pid, run_dir, doc_id, mode, started_at}` 不变。
+- **run_name / 产物命名**：`web_[<sid6>_]<mode>_<rand6>`（sid6 = sid 前 6 位；default 无 sid 段沿用旧名）；cfg = `out/uploads/strategy_cfg_[<sid6>_]<stamp>.json`；stderr 临时文件前缀 `web_strategy_err_[<sid6>]_`。
+- **run_dir 认领 = 确定性前缀 glob**（`<run_name>_*`）—— run_name 嵌本会话唯一 rand6，完全并发下只可能命中自己 spawn 的 run（旧「目录快照 diff + mtime 最新」在多会话并发 starting 下必互相认错，此为必修 bug 修正；快照 diff 保留为存量内存态回退路径，且回退排除其他会话的 run_name 前缀与已认领 run_dir）。
+- **产物清理按会话**：`_cleanup_stale_web_artifacts(sid)` —— sid 会话只清 `web_<sid6>_*` / `strategy_cfg_<sid6>_*` / `web_strategy_err_<sid6>_*`；default 沿用清全部 `web_*` 但跳过其他会话（`_STRATEGY_STATES` 在册 sid ∪ 磁盘 `.web_strategy_active_*.json` marker sid）的前缀产物。
+
+状态机：`idle → starting →（run_dir 前缀 glob 发现）running → done | stopped | error`；内存态空 + 本会话 marker 在 → `orphan`。终态清本会话 marker、内存态保留供 status/result 续读（下一次 start 覆写）。
 
 ### POST /api/strategy/start — 启动策略 run
 
-请求 `{mode: 'se'|'race', minutes: 10|20|30|60, seed?, gate_mm?, sizes?, per_type?, quantities?, band?}`（sizes/per_type/quantities 与 WS StartPayload 同语义 —— 前端「排料参数取当前面板」；**band 与 WS StartPayload.band 同形**，2026-08-22 解除与策略运行的互斥 —— `collectStartContext` 同源产物直传）。
+请求 `{mode: 'se'|'race', minutes: 10|20|30|60, seed?, gate_mm?, sizes?, per_type?, quantities?, band?}`（sizes/per_type/quantities 与 WS StartPayload 同语义 —— 前端「排料参数取当前面板」；**band 与 WS StartPayload.band 同形**，2026-08-22 解除与策略运行的互斥 —— `collectStartContext` 同源产物直传）。可选 **`X-Session-Id` HTTP Header**（多会话 US-004）：带 sid → 会话闸门（未知/过期 → 401 `session_expired`、非法 → 400）+ 排料数据取**该会话 commit 的快照**；缺省 → default 会话（`_pieces_state()`，行为不变）。
 
-- 409：已有进行中 run（内存态非终态）或 marker 在（含 orphan 遗留，先停止/清理）
-- 422：`_PIECES_STATE` 空；intermediate doc 缺 `doc_id`（旧 intermediate → 「母版信息缺少 doc_id，请重新上传并 commit」）；`uploads/<doc_id>.dxf` 丢失
+- 401/400（sid 会话）：会话解析 fail-fast，先于下列一切校验（不 spawn）
+- 409：**本会话**已有进行中 run（内存态非终态）或本会话 marker 在（含 orphan 遗留，先停止/清理）；跨会话不 409
+- 422：会话 pieces 快照空；intermediate doc 缺 `doc_id`（旧 intermediate → 「母版信息缺少 doc_id，请重新上传并 commit」）；`uploads/<doc_id>.dxf` 丢失
 - 400：mode 非法 / minutes 非法（含字符串）/ seed 非整数 / **band 非法**（复用 `routes_ws._parse_band` 单一校验点：label ^g\d+$ / 存在于当前母版 / 该 g 码 quantities>0；null / enabled falsy → 不写键旧行为）
-- 202：写 **8 键** config JSON 到 `out/uploads/strategy_cfg_<stamp>.json`（`master_dxf` = 母版原件**绝对路径**；`gate_mm` 请求值回退 state；`seeds=[seed]`；band 合法开启 → `{'enabled':true,'label':g码}` 写进 config；可选键 truthy 才写）→ spawn（stdout=DEVNULL、stderr=临时文件）→ 快照 `out/config_runs/`（**先于 spawn**，防 CLI 抢先建目录 diff 扑空）→ 写 marker → `{started, pid, mode, minutes, run_name}`。band on 的策略 run 在 CLI 侧 worker 进程内成带（`--lns` 自动 warn 跳过）
+- 202：清理本会话前缀上一轮产物 → 写 **8 键** config JSON 到 `out/uploads/strategy_cfg_[<sid6>_]<stamp>.json`（`master_dxf` = 母版原件**绝对路径**；`gate_mm` 请求值回退 state；`seeds=[seed]`；band 合法开启 → `{'enabled':true,'label':g码}` 写进 config；可选键 truthy 才写）→ spawn（stdout=DEVNULL、stderr=临时文件前缀 `web_strategy_err_[<sid6>]_`）→ 快照 `out/config_runs/`（**先于 spawn**，回退发现路径防 diff 扑空；主认领路径 = 前缀 glob 不依赖快照）→ 写本会话 marker → `{started, pid, mode, minutes, run_name}`（run_name = `web_[<sid6>_]<mode>_<rand6>`）。band on 的策略 run 在 CLI 侧 worker 进程内成带（`--lns` 自动 warn 跳过）
 
 ### GET /api/strategy/status — 无状态惰性轮询
 
-每次现读产物组装（不缓存中间态）；进度源白名单 `strategy.json` / `result.json` / `best_frame_s*.json` / `kill_decisions.jsonl` —— **绝不读 `curve_s*.json`**（运行中缺右括号非法 JSON）。响应 `{state, mode, total_budget_sec, elapsed_sec(墙钟), run_dir, plan, incumbent, current, per_seed, events, error, exit_code}`：
+可选 `X-Session-Id`（多会话 US-004；sid 过期/未知 → 401、非法 → 400）。每次现读**本会话**产物组装（不缓存中间态）；resolve 顺手刷 `last_active`（轮询即活性）；进度源白名单 `strategy.json` / `result.json` / `best_frame_s*.json` / `kill_decisions.jsonl` —— **绝不读 `curve_s*.json`**（运行中缺右括号非法 JSON）。响应 `{state, mode, total_budget_sec, elapsed_sec(墙钟), run_dir, plan, incumbent, current, per_seed, events, error, exit_code}`：
 
 - `plan`：strategy.json → `{planned_seeds, gate_seconds}`（race）| `{planned_seeds, k_screens, screen_s, ext_s}`（se）
 - `incumbent`：result.json portfolio.incumbent 摘要 `{density, width_mm, seed, frame_index, elapsed}`（**无 placed_items** 控载荷）
 - `current`：最新 mtime `best_frame_s*.json` → `{seed, density, density_sparrow, ext}`（`_ext` 后缀 → ext=true，SE 延长检测）
 - `per_seed`：result.json portfolio.per_seed 透传（含 `phase`: race/screen/extension、`killed`）
 - `events`：kill_decisions R5_race_gate 行（`S_tau` 重载为 bar 参照值）+ extension（`best_frame_s{seed}_ext.json` 在场）+ seed_done（per_seed），只保留尾部 20 条
-- 缺文件一律降级 null / `[]`；run_dir 未发现 + 进程死 + >30s 宽限 → `error`（附 stderr 尾部 2000 字符）；终态顺手清 marker 并把 state 写回内存态
+- 缺文件一律降级 null / `[]`；run_dir（前缀 glob）未发现 + 进程死 + >30s 宽限 → `error`（附 stderr 尾部 2000 字符）；终态顺手清**本会话** marker 并把 state 写回内存态
 
 ### POST /api/strategy/stop — 树杀
 
-Windows `taskkill /PID <pid> /T /F`（`/T` 整树 —— run_config 会 spawn 多进程 solve 孙进程，单杀父进程留孙进程白烧 CPU）；POSIX spawn 带 `start_new_session=True` + `os.killpg`。进行中 → 置 stopped + 清 marker；orphan（内存空 + marker 在）→ pid 存活则树杀 + 清 marker；无活动 → 400。
+可选 `X-Session-Id`（多会话 US-004；sid 过期/未知 → 401）。Windows `taskkill /PID <pid> /T /F`（`/T` 整树 —— run_config 会 spawn 多进程 solve 孙进程，单杀父进程留孙进程白烧 CPU）；POSIX spawn 带 `start_new_session=True` + `os.killpg`。**只树杀本会话 pid**，其他会话的 run 不受影响。进行中 → 置 stopped + 清本会话 marker；orphan（内存空 + 本会话 marker 在）→ pid 存活则树杀 + 清 marker；本会话无活动 → 400（他会有 run 也 400）。
 
 ### GET /api/strategy/result — 最优方案 + manifest（US-006 应用到主画布数据源）
 
-done/stopped 可读（running → 409「尚未结束」；idle → 404）。响应 `{state, mode, run_dir, manifest, best, summary, warning?}`：
+可选 `X-Session-Id`（多会话 US-004；sid 过期/未知 → 401）。本会话 done/stopped 可读（running → 409「尚未结束」；idle → 404）。响应 `{state, mode, run_dir, manifest, best, summary, warning?}`（run_dir / manifest / best 全部来自**本会话**状态槽）：
 
 - `best`：result.json `portfolio.incumbent`（完整 `placed_items`；**无 `density_sparrow`** —— 从 `best_frame_s{seed}.json` 边车补，缺则 null）；stopped 无 result.json → 回落各 `best_frame_s*.json` 取 density 最大
 - `manifest`：`build_pid_meta(start 时快照 pieces, sizes/per_type/quantities 同口径)` → `{gate_mm, gate_nest_mm, total_area_mm2, n_eroded, pieces:[{id,size,color,area_mm2,polygon(erode 后),label,demand,net_polygon,internal_lines,notches,grain_line}]}`（与 /ws/solve manifest.pieces 同形；erode 后几何与 placed_items 对齐、demand 已含 —— 前端 NestSVG 副本池按 demand 建 N 份承接多副本 placement）
 - `summary`：`{per_seed, mode, race?|se?}`（result.json portfolio 模式段透传）
-- `warning`：start 快照 `doc_id` ≠ 当前画布 `doc_id` → 「母版已变更，应用结果可能与当前画布不一致」（导出 pid 失配走既有 400 兜底）
+- `warning`：start 快照 `doc_id` ≠ **本会话当前画布** `doc_id` → 「母版已变更，应用结果可能与当前画布不一致」（导出 pid 失配走既有 400 兜底；default → `_pieces_state()`，sid → 会话快照）
 
 ### 关键不变量
 
 1. **server.py 文件尾** `from .strategy import register_strategy_routes` 注册路由；`strategy.py` 对 server 的依赖走**函数内延迟 import**（`_pieces_state()`）—— 任意 import 顺序不成环。
-2. start 时 `sizes/per_type/quantities/seed/gate_mm/pieces` 快照存模块级 `_STRATEGY_STATE` —— result 组装 manifest 用同口径，不依赖前端二次回传。
+2. start 时 `sizes/per_type/quantities/seed/gate_mm/pieces` 快照存**本会话**状态槽（`_STRATEGY_STATES[sid]`；default = 旧名 `_STRATEGY_STATE` 同一对象）—— result 组装 manifest 用同口径，不依赖前端二次回传。
 3. `_status_from_active` 把解析出的 state **写回** `st['state']`（否则「跑完后从未轮询」内存态永远停在 running，start 单例检查失效）。
-4. orphan `_pid_alive`：Windows `ctypes kernel32.OpenProcess(0x1000)` 句柄探测（非本进程孩子无法 poll）；报 `state:'orphan' + alive` 由前端提供清理动作，不自动接管。
+4. orphan `_pid_alive`：Windows `ctypes kernel32.OpenProcess(0x1000)` 句柄探测（非本进程孩子无法 poll）；报 `state:'orphan' + alive` 由前端提供清理动作，不自动接管。orphan 判定按**本会话 marker**（内存态空 + 本 sid marker 在），他会有遗留 run 不串台。
+5. run_dir 认领主路径 = `<run_name>_*` 前缀 glob（run_name 嵌本会话唯一 rand6）；回退路径（存量内存态）排除其他会话 run_name 前缀与已认领 run_dir —— 完全并发下互不认领。
+6. 产物清理按 sid 前缀互斥（sid 会话只清 `web_<sid6>_*`；default 清全部 `web_*` 但保护其他会话前缀）—— 跨会话并发放开后清理不再有删除竞争。
 
 ## WebSocket /ws/solve — 求解流
 

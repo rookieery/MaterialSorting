@@ -33,6 +33,8 @@ from starlette.testclient import TestClient
 from materialsorting import paths as paths_mod
 from materialsorting.web import strategy as strategy_mod
 from materialsorting.web import server as server_mod
+from materialsorting.web import sessions as sessions_mod
+from materialsorting.web.sessions import _FakeClock
 
 
 # ------------------------------------------------------------- 测试基础设施
@@ -747,6 +749,266 @@ def test_result_rejects_idle_and_running(strat_env):
     _active_state(strat_env, run_dir=None, rc=None)
     r = _client().get('/api/strategy/result')
     assert r.status_code == 409 and '尚未结束' in r.json()['error']
+
+
+# --------------------------------------------------- US-004 多会话（2026-08-27）
+
+SID_A = 'aaaa1111'
+SID_B = 'bbbb2222'
+
+
+@pytest.fixture
+def dual_env(strat_env):
+    """双会话环境：strat_env 之上隔离 SessionRegistry（停扫描 + 前后清零，套路同
+    tests/test_commit_sessions.py）+ 清 ``_STRATEGY_STATES`` 每会话策略状态槽。"""
+    sessions_mod.registry.stop_scanner()
+    sessions_mod.registry.reset()
+    strategy_mod._STRATEGY_STATES.clear()
+    yield strat_env
+    strategy_mod._STRATEGY_STATES.clear()
+    sessions_mod.registry.reset()
+
+
+def _register_session(sid: str, doc_id: str) -> None:
+    """注册会话并注入排料快照（start 的数据源）+ 落 master dxf（422 校验输入）。"""
+    sess = sessions_mod.registry.resolve(sid, create=True)
+    sess.state.update(_fake_state(doc_id=doc_id))
+    uploads = Path(paths_mod.OUT_DIR) / 'uploads'
+    uploads.mkdir(parents=True, exist_ok=True)
+    (uploads / f'{doc_id}.dxf').write_bytes(b'DXF')
+
+
+def _spawn_capture_multi(monkeypatch, pids=(1111, 2222)):
+    """spawn 打桩（多轮）：每轮返回下一个 pid，逐轮记录 cmd + stderr 路径。"""
+    calls = []
+    pids_iter = iter(pids)
+
+    def fake_spawn(cmd, stderr_path):
+        calls.append({'cmd': list(cmd), 'stderr_path': stderr_path})
+        return FakeProc(pid=next(pids_iter))
+
+    monkeypatch.setattr(strategy_mod, '_spawn_run_process', fake_spawn)
+    return calls
+
+
+def test_dual_session_start_and_status_isolated(dual_env, monkeypatch):
+    """AC1/AC2：A、B 先后 start 均 202（跨会话不 409）；run_name 嵌 sid 短缀；
+    status 前缀 glob 认领各自 run_dir（B 目录 mtime 更新也不串台——不依赖 mtime）。"""
+    _register_session(SID_A, 'docaaaa1')
+    _register_session(SID_B, 'docbbbb2')
+    calls = _spawn_capture_multi(monkeypatch, pids=(1111, 2222))
+    c = _client()
+    ra = c.post('/api/strategy/start', json={'mode': 'se', 'minutes': 10},
+                headers={'X-Session-Id': SID_A})
+    assert ra.status_code == 202
+    rb = c.post('/api/strategy/start', json={'mode': 'race', 'minutes': 10},
+                headers={'X-Session-Id': SID_B})
+    assert rb.status_code == 202                    # A in-flight 不拦 B（每会话闸门）
+    name_a, name_b = ra.json()['run_name'], rb.json()['run_name']
+    assert name_a.startswith('web_aaaa11_se_')
+    assert name_b.startswith('web_bbbb22_race_')
+    assert calls[0]['cmd'][calls[0]['cmd'].index('--name') + 1] == name_a
+    assert calls[1]['cmd'][calls[1]['cmd'].index('--name') + 1] == name_b
+
+    # 各自 run_dir：B 的目录 mtime 更新（旧「diff + mtime」口径 A 会误认领 B 的）。
+    dir_a = _write_run_dir(dual_env, name=f'{name_a}_20260827-100000')
+    time.sleep(0.01)
+    dir_b = _write_run_dir(dual_env, name=f'{name_b}_20260827-100001')
+    rj = json.loads((dir_b / 'result.json').read_text(encoding='utf-8'))
+    rj['portfolio']['incumbent']['density'] = 0.91   # B 档可区分密度
+    (dir_b / 'result.json').write_text(json.dumps(rj), encoding='utf-8')
+
+    pa = c.get('/api/strategy/status', headers={'X-Session-Id': SID_A}).json()
+    pb = c.get('/api/strategy/status', headers={'X-Session-Id': SID_B}).json()
+    assert pa['state'] == 'running' and pa['run_dir'] == str(dir_a)
+    assert pb['state'] == 'running' and pb['run_dir'] == str(dir_b)
+    assert pa['incumbent']['density'] == 0.88        # A 读 A 的产物
+    assert pb['incumbent']['density'] == 0.91        # B 读 B 的产物
+    # marker / 状态槽各归各（互不串台）。
+    assert strategy_mod._read_marker(SID_A)['pid'] == 1111
+    assert strategy_mod._read_marker(SID_B)['pid'] == 2222
+    assert strategy_mod._states(SID_A)['doc_id'] == 'docaaaa1'
+    assert strategy_mod._states(SID_B)['doc_id'] == 'docbbbb2'
+
+
+def test_cleanup_scoped_to_own_sid_prefix(dual_env, monkeypatch):
+    """AC3：B start 只清 web_<B_sid6>_* 前缀产物（A 的 run 目录/cfg/stderr 保留）；
+    default start 清 legacy web_* 但保护并行会话前缀（含终态 result 复读窗口）。"""
+    _register_session(SID_A, 'docaaaa1')
+    _register_session(SID_B, 'docbbbb2')
+    _spawn_capture_multi(monkeypatch, pids=(1111, 2222, 3333))
+    base = Path(paths_mod.CONFIG_RUNS_DIR)
+    uploads = Path(paths_mod.OUT_DIR) / 'uploads'
+    legacy = base / 'web_race_legacy_20260827-080000'   # 无 sid 旧产物
+    manual = base / 'manual_20260827-070000'            # 手工 CLI run
+    for d in (legacy, manual):
+        d.mkdir(parents=True)
+        (d / 'result.json').write_text('{}', encoding='utf-8')
+    cfg_legacy = uploads / 'strategy_cfg_20260827-080000.json'
+    cfg_legacy.write_text('{}', encoding='utf-8')
+    tmpdir = Path(strategy_mod.tempfile.gettempdir())
+    err_legacy = tmpdir / 'web_strategy_err_stale.log'
+    err_legacy.write_text('x', encoding='utf-8')
+
+    c = _client()
+    # A start（A 在册 → 之后一切清理跳过 web_aaaa11_* 前缀）。
+    assert c.post('/api/strategy/start', json={'mode': 'se', 'minutes': 10},
+                  headers={'X-Session-Id': SID_A}).status_code == 202
+    cfg_a = list(uploads.glob('strategy_cfg_aaaa11_*.json'))[0]
+    err_a = list(tmpdir.glob('web_strategy_err_aaaa11_*.log'))[0]
+    dir_a = base / f"{strategy_mod._states(SID_A)['run_name']}_20260827-090000"
+    dir_a.mkdir(parents=True)
+    (dir_a / 'result.json').write_text('{}', encoding='utf-8')
+    dir_b = base / 'web_bbbb22_race_222222_20260827-090500'
+    dir_b.mkdir(parents=True)
+    (dir_b / 'result.json').write_text('{}', encoding='utf-8')
+
+    # B start：只清 B 前缀（dir_b 没了；A 的 dir/cfg/err 与 legacy 均保留）。
+    assert c.post('/api/strategy/start', json={'mode': 'race', 'minutes': 10},
+                  headers={'X-Session-Id': SID_B}).status_code == 202
+    assert not dir_b.exists()
+    assert dir_a.exists() and cfg_a.exists() and err_a.exists()
+    assert legacy.exists() and cfg_legacy.exists()      # sid 会话不清 legacy
+    assert manual.exists()
+
+    # default start：清 legacy web_*/旧名 cfg/err，但保护 A/B 的 sid 前缀产物。
+    _patch_state(monkeypatch, _fake_state(doc_id='cafe1234'))
+    (uploads / 'cafe1234.dxf').write_bytes(b'DXF')
+    assert c.post('/api/strategy/start',
+                  json={'mode': 'race', 'minutes': 10}).status_code == 202
+    assert not legacy.exists() and not cfg_legacy.exists() and not err_legacy.exists()
+    assert manual.exists()
+    assert dir_a.exists() and cfg_a.exists() and err_a.exists()   # A 前缀受保护
+
+
+def test_stop_and_result_scoped_per_session(dual_env, monkeypatch):
+    """AC4：A stop 只树杀 A 的 pid（B 的 run/marker 不受影响）；A result 只读 A 的
+    run_dir；B running → result 409。"""
+    _register_session(SID_A, 'docaaaa1')
+    _register_session(SID_B, 'docbbbb2')
+    _spawn_capture_multi(monkeypatch, pids=(1111, 2222))
+    kill_calls = []
+    monkeypatch.setattr(strategy_mod.subprocess, 'run',
+                        lambda cmd, **kw: kill_calls.append(list(cmd)))
+    c = _client()
+    ra = c.post('/api/strategy/start', json={'mode': 'se', 'minutes': 10},
+                headers={'X-Session-Id': SID_A})
+    assert c.post('/api/strategy/start', json={'mode': 'race', 'minutes': 10},
+                  headers={'X-Session-Id': SID_B}).status_code == 202
+    name_a = ra.json()['run_name']
+
+    # A stop：只杀 A 的 pid 1111；B 的 marker 与 running 态原封不动。
+    r = c.post('/api/strategy/stop', headers={'X-Session-Id': SID_A})
+    assert r.status_code == 200 and r.json() == {'stopped': True, 'pid': 1111}
+    if sys.platform == 'win32':
+        assert kill_calls == [['taskkill', '/PID', '1111', '/T', '/F']]
+    assert strategy_mod._read_marker(SID_B)['pid'] == 2222
+    assert c.get('/api/strategy/status',
+                 headers={'X-Session-Id': SID_B}).json()['state'] == 'starting'
+
+    # A result：直装 done + A 的 run_dir → 读 A 的产物；B 仍在跑 → 409。
+    dir_a = _write_run_dir(dual_env, name=f'{name_a}_20260827-110000')
+    st_a = strategy_mod._states(SID_A)
+    st_a['run_dir'] = str(dir_a)
+    st_a['state'] = 'done'
+    pa = c.get('/api/strategy/result', headers={'X-Session-Id': SID_A}).json()
+    assert pa['state'] == 'done' and pa['run_dir'] == str(dir_a)
+    assert pa['best']['density'] == 0.88
+    rb = c.get('/api/strategy/result', headers={'X-Session-Id': SID_B})
+    assert rb.status_code == 409 and '尚未结束' in rb.json()['error']
+
+
+def test_same_sid_second_start_409_cross_session_ok(dual_env, monkeypatch):
+    """AC5：同 sid 二次 start（前场未终态）→ 409；跨会话（B / default）不 409；
+    会话闸门 fail-fast：未知 sid → 401、非法 sid → 400（不 spawn）。"""
+    _register_session(SID_A, 'docaaaa1')
+    _register_session(SID_B, 'docbbbb2')
+    calls = _spawn_capture_multi(monkeypatch, pids=(1111, 2222, 3333))
+    c = _client()
+    ha = {'X-Session-Id': SID_A}
+    assert c.post('/api/strategy/start', json={'mode': 'se', 'minutes': 10},
+                  headers=ha).status_code == 202
+    assert c.post('/api/strategy/start', json={'mode': 'se', 'minutes': 10},
+                  headers=ha).status_code == 409       # 同 sid 二次 → 409
+    assert c.post('/api/strategy/start', json={'mode': 'race', 'minutes': 10},
+                  headers={'X-Session-Id': SID_B}).status_code == 202
+    # default 会话（零 sid）与 sid 会话互不 409。
+    _patch_state(monkeypatch, _fake_state(doc_id='cafe1234'))
+    uploads = Path(paths_mod.OUT_DIR) / 'uploads'
+    uploads.mkdir(parents=True, exist_ok=True)
+    (uploads / 'cafe1234.dxf').write_bytes(b'DXF')
+    assert c.post('/api/strategy/start',
+                  json={'mode': 'race', 'minutes': 10}).status_code == 202
+    # 闸门先于一切：未知 sid → 401（code 键）；非法 sid → 400；均不 spawn。
+    n = len(calls)
+    r = c.post('/api/strategy/start', json={'mode': 'se', 'minutes': 10},
+               headers={'X-Session-Id': 'cccc3333'})
+    assert r.status_code == 401 and r.json()['code'] == 'session_expired'
+    r = c.post('/api/strategy/start', json={'mode': 'se', 'minutes': 10},
+               headers={'X-Session-Id': 'bad-sid!'})
+    assert r.status_code == 400 and r.json() == {'error': 'sid 非法'}
+    assert len(calls) == n
+
+
+def test_orphan_scoped_per_sid_marker(dual_env, monkeypatch):
+    """orphan 检测按本 sid marker：A 的 marker 在（内存空）→ A orphan / B idle；
+    B stop 400（B 视角无 run）；A stop 清理自己的 marker。"""
+    _register_session(SID_A, 'docaaaa1')
+    _register_session(SID_B, 'docbbbb2')
+    monkeypatch.setattr(strategy_mod, '_pid_alive', lambda pid: False)
+    strategy_mod._write_marker({'pid': 999, 'run_dir': None, 'doc_id': 'old0',
+                                'mode': 'se',
+                                'started_at': '2026-08-27T11:00:00'}, SID_A)
+    c = _client()
+    pa = c.get('/api/strategy/status', headers={'X-Session-Id': SID_A}).json()
+    assert pa['state'] == 'orphan' and pa['pid'] == 999 and pa['doc_id'] == 'old0'
+    pb = c.get('/api/strategy/status', headers={'X-Session-Id': SID_B}).json()
+    assert pb['state'] == 'idle'                        # B 无 marker 不串台
+    assert c.post('/api/strategy/stop',
+                  headers={'X-Session-Id': SID_B}).status_code == 400
+    r = c.post('/api/strategy/stop', headers={'X-Session-Id': SID_A})
+    assert r.status_code == 200 and r.json()['orphan'] is True
+    assert strategy_mod._read_marker(SID_A) is None
+    assert c.get('/api/strategy/status',
+                 headers={'X-Session-Id': SID_A}).json()['state'] == 'idle'
+
+
+def test_expired_session_blocks_then_same_sid_recovers(dual_env, monkeypatch):
+    """会话过期 → 四路由 401 fail-fast（闸门先于 409）；墓碑 1h 过龄后同 sid 重建
+    → 内存态仍在（本进程未重启）→ status 继续 starting、stop 可清理（PRD「用户
+    过期后同 sid 回来仍能发现/清理自己的遗留 run」）。"""
+    clk = _FakeClock()
+    monkeypatch.setattr(sessions_mod.registry, 'clock', clk)
+    _register_session(SID_A, 'docaaaa1')
+    _spawn_capture_multi(monkeypatch, pids=(1111,))
+    kill_calls = []
+    monkeypatch.setattr(strategy_mod.subprocess, 'run',
+                        lambda cmd, **kw: kill_calls.append(list(cmd)))
+    c = _client()
+    ha = {'X-Session-Id': SID_A}
+    assert c.post('/api/strategy/start', json={'mode': 'se', 'minutes': 10},
+                  headers=ha).status_code == 202
+    assert strategy_mod._read_marker(SID_A)['pid'] == 1111
+
+    # 过期（惰性逐出为墓碑）：四路由全部 401（start 的 401 证明闸门先于 409 ——
+    # 此刻内存态 starting 本会 409）。
+    clk.advance(sessions_mod.registry.ttl_sec + 1)
+    assert c.get('/api/strategy/status', headers=ha).status_code == 401
+    assert c.post('/api/strategy/start', json={'mode': 'se', 'minutes': 10},
+                  headers=ha).status_code == 401
+    assert c.post('/api/strategy/stop', headers=ha).status_code == 401
+    assert c.get('/api/strategy/result', headers=ha).status_code == 401
+
+    # 墓碑 1h 过龄 → 同 sid 可重建（POST /api/session）；策略状态槽未随会话逐出
+    # 清理 → status 直接回到 starting（内存态优先于 marker 的 orphan 路径），
+    # stop 清理成功。
+    clk.advance(sessions_mod.registry.tombstone_ttl_sec + 1)
+    assert c.post('/api/session', headers=ha).status_code == 200
+    pa = c.get('/api/strategy/status', headers=ha).json()
+    assert pa['state'] == 'starting'
+    r = c.post('/api/strategy/stop', headers=ha)
+    assert r.status_code == 200 and r.json()['pid'] == 1111
+    assert strategy_mod._read_marker(SID_A) is None
 
 
 # ------------------------------------------------------------- 守卫 / 冒烟

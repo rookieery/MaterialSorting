@@ -1,24 +1,28 @@
 """US-004 web 后端策略桥接 —— spawn ``ms-run-config --strategy`` 子进程 + HTTP 轮询。
 
-四路由（``register_strategy_routes(app)`` 由 ``server.py`` 文件尾注册）：
+四路由（``register_strategy_routes(app)`` 由 ``server.py`` 文件尾注册），US-004
+多会话化（2026-08-27）后**全部按 ``X-Session-Id`` 解析**（缺省/空串 → default 会话）：
 
-  - ``POST /api/strategy/start``：校验（单例 409 / _PIECES_STATE 非空且 doc 含
-    doc_id 422 / mode ∈ {se,race} / minutes ∈ {10,20,30,60} / band 经
-    ``routes_ws._parse_band`` 同一校验点 / prefix 经 ``routes_ws._parse_prefix``
-    同一校验点）→ **清理上一轮 web 产物**
-    （``_cleanup_stale_web_artifacts``：web_* run 目录 + 旧 cfg + 旧 stderr，
-    磁盘占用收敛到 ≤1 个 run_dir；2026-08-22）→ 写 9 键 config JSON
-    到 ``out/uploads/strategy_cfg_<stamp>.json`` → spawn
-    ``python -m materialsorting.cli.run_config <cfg> --name web_<mode>_<rand6>
+  - ``POST /api/strategy/start``：会话闸门（sid 过期/非法 → 401/400 先行）→ 校验
+    （**每会话** 409 单飞 / 会话 pieces 快照非空且 doc 含 doc_id 422 / mode ∈
+    {se,race} / minutes ∈ {10,20,30,60} / band 经 ``routes_ws._parse_band`` 同一
+    校验点 / prefix 经 ``routes_ws._parse_prefix`` 同一校验点）→ **清理本会话
+    前缀的上一轮 web 产物**（``_cleanup_stale_web_artifacts(sid)``：sid 会话只清
+    ``web_<sid6>_*``；default 沿用清全部 ``web_*`` 但跳过并行会话前缀）→ 写 9 键
+    config JSON 到 ``out/uploads/strategy_cfg_[<sid6>_]<stamp>.json`` → spawn
+    ``python -m materialsorting.cli.run_config <cfg> --name web_[<sid6>_]<mode>_<rand6>
     --strategy <mode> --time <minutes*60> --quiet``（stdout=DEVNULL、stderr=临时文件）
-    → 快照 ``out/config_runs/`` → 写 marker ``.web_strategy_active.json`` → 202。
-  - ``GET /api/strategy/status``：无状态惰性轮询（不缓存中间态，每次现读 run_dir
-    产物；进度源只用 strategy.json / result.json / best_frame_s*.json /
+    → 快照 ``out/config_runs/`` → 写 marker ``.web_strategy_active[_<sid>].json``
+    → 202。跨会话完全并发放开（接受 CPU 争抢，不加全局闸门）。
+  - ``GET /api/strategy/status``：无状态惰性轮询（不缓存中间态，每次现读本会话
+    run_dir 产物；进度源只用 strategy.json / result.json / best_frame_s*.json /
     kill_decisions.jsonl —— ``curve_s*.json`` 运行中非合法 JSON 缺右括号，不读）。
+    status 即活性：resolve 刷 ``last_active``，长跑轮询中的会话不被扫描线程逐出。
   - ``POST /api/strategy/stop``：树杀（Windows ``taskkill /PID <pid> /T /F``、
     POSIX ``os.killpg`` —— run_config 会再 spawn 多进程 solve 孙进程，单杀父进程
-    会留孙进程白烧 CPU）+ 置 stopped + 清 marker。
-  - ``GET /api/strategy/result``（done/stopped）：读 result.json
+    会留孙进程白烧 CPU）+ 置 stopped + 清**本会话** marker。只杀本会话 pid，其他
+    会话的 run 不受影响。
+  - ``GET /api/strategy/result``（done/stopped）：读本会话 run_dir 的 result.json
     portfolio.incumbent（完整 placed_items；stopped 态缺失回落各 best_frame 取
     最大）+ ``build_pid_meta``（start 时快照口径）组装 manifest。
 
@@ -27,9 +31,14 @@ test_cli_portfolio 写法）；spawn 子进程是**进程边界**，不触发守
 （race 门杀 / se 筛延）单一真相源留在 ``cli.portfolio``，零漂移。
 
 状态机：``idle → starting →(run_dir 发现) running → done | stopped | error``；
-内存态空 + marker 在 → ``orphan``（server 重启后遗留 run：pid 存活探测，由前端
-提供清理动作）。终态（done/stopped/error）清 marker、保留 ``_STRATEGY_STATE``
-供 status/result 续读，下一次 start 覆盖。
+**每会话一份**（``_STRATEGY_STATES[sid]``；default 会话 = 旧名 ``_STRATEGY_STATE``
+同一对象，零 sid 路径行为不变）。run_dir 认领 = 确定性前缀 glob（``run_name_*``，
+run_name 嵌本会话唯一 rand6 —— 完全并发下旧「快照 diff + mtime 最新」必互相认错，
+2026-08-27 修正；存量内存态回退旧 diff 路径但排除其他会话归属）。内存态空 + 本
+sid marker 在 → ``orphan``（server 重启后遗留 run：pid 存活探测，由前端提供清理
+动作；用户过期后同 sid 回来仍能发现/清理自己的遗留 run —— 会话过期只逐出
+registry 内存，策略状态槽与 marker 均按 sid 留存）。终态（done/stopped/error）清
+本会话 marker、保留内存态供 status/result 续读，下一次 start 覆写。
 """
 from __future__ import annotations
 
@@ -50,6 +59,8 @@ from fastapi.responses import JSONResponse
 
 from .. import paths
 from ..nesting_bounds.load_pieces import PLOT_SAFE_MAX_Y_MM
+from .sessions import DEFAULT_SID, SID_RE, SessionError
+from .sessions import registry as session_registry
 from .solver import build_pid_meta
 
 __all__ = ['register_strategy_routes']
@@ -65,11 +76,67 @@ _EVENTS_TAIL = 20
 _STDERR_TAIL_CHARS = 2000
 _TERMINAL_STATES = ('done', 'stopped', 'error')
 
-# 进程级单例状态（模块级，进程生命周期内唯一）。start 覆写、终态保留（status /
-# result 续读）、stop 置 stopped。
-_STRATEGY_STATE: dict = {}
+# 每会话策略状态（US-004 多会话化）：sid → state dict。default 会话的 state 即旧名
+# ``_STRATEGY_STATE``（同一对象 —— 零 sid 路径与既有测试直改 `_STRATEGY_STATE`
+# 完全兼容）。start 覆写、终态保留（status/result 续读）、stop 置 stopped；会话
+# 过期/逐出不清理本表 —— 同 sid 回来（墓碑 1h 过龄后可重建）仍能发现/清理自己的
+# 遗留 run（内存态优先于 marker 的 orphan 路径）。
+_STRATEGY_STATE: dict = {}                # default 会话（旧名单一名，零 sid 兼容）
+_STRATEGY_STATES: dict[str, dict] = {}    # sid → 每会话策略状态
 
 _MARKER_NAME = '.web_strategy_active.json'
+_MARKER_SID_PREFIX = '.web_strategy_active_'
+
+
+def _states(sid: str, *, create: bool = False) -> dict | None:
+    """sid → 本会话策略状态 dict（default → ``_STRATEGY_STATE`` 同一对象）。
+
+    ``create=True`` 未知 sid → 新建空 dict 挂表（start 写路径）；读路径缺省
+    ``create=False`` → None（status 的 idle/orphan 分叉、result 的 404 分叉）。
+    default 恒返回 ``_STRATEGY_STATE``（即使空 —— 与旧 ``if not _STRATEGY_STATE``
+    语义一致，orphan 判定靠 marker 不靠内存态）。
+    """
+    if sid == DEFAULT_SID:
+        _STRATEGY_STATES[DEFAULT_SID] = _STRATEGY_STATE
+        return _STRATEGY_STATE
+    st = _STRATEGY_STATES.get(sid)
+    if st is None and create:
+        st = {}
+        _STRATEGY_STATES[sid] = st
+    return st
+
+
+def _sid6(sid: str) -> str:
+    """sid 短缀（run_name / cfg / stderr / 清理范围共用的命名段）。
+
+    default → 空串（沿用旧命名 ``web_<mode>_<rand6>``，既有测试与零 sid 路径
+    兼容）；sid 会话 → ``<sid[:6]>_``。sid6 截断碰撞（uuid4 hex 前 6 位）概率
+    ~1/16M，PRD 选定口径。
+    """
+    return '' if sid == DEFAULT_SID else f'{sid[:6]}_'
+
+
+def _route_sid(request: Request) -> str:
+    """四路由公共 sid 提取（``X-Session-Id`` 缺省/空串 → default；合法性交 resolve）。"""
+    sid = (request.headers.get('x-session-id') or '').strip()
+    return sid or DEFAULT_SID
+
+
+def _session_gate(sid: str):
+    """四路由公共会话闸门：非 default sid → ``registry.resolve``（create=False ——
+    数据必已由 commit 注册，未知/过期同 401 语义不静默重建；顺手刷 ``last_active``
+    —— status 轮询即活性，长跑会话不被扫描线程误杀）。
+
+    返回 ``(pieces_state, None)``：default → ``(None, None)``（state 由调用方走
+    ``_pieces_state()`` 延迟取用 —— 既有测试 monkeypatch 点）；sid → 会话快照。
+    解析失败 → ``(None, JSONResponse)``（401/400 结构化，401 带 ``code``）。
+    """
+    if sid == DEFAULT_SID:
+        return None, None
+    try:
+        return session_registry.resolve(sid).state, None
+    except SessionError as e:
+        return None, JSONResponse(e.payload(), status_code=e.status)
 
 
 def _config_runs_dir() -> Path:
@@ -77,17 +144,20 @@ def _config_runs_dir() -> Path:
     return Path(paths.CONFIG_RUNS_DIR)
 
 
-def _marker_path() -> Path:
-    return _config_runs_dir() / _MARKER_NAME
+def _marker_path(sid: str = DEFAULT_SID) -> Path:
+    """marker 路径：default → 旧名单一名（既有测试/旧客户端路径兼容）；sid 会话 →
+    ``.web_strategy_active_<sid>.json``（orphan 检测/清理按会话隔离）。"""
+    name = _MARKER_NAME if sid == DEFAULT_SID else f'{_MARKER_SID_PREFIX}{sid}.json'
+    return _config_runs_dir() / name
 
 
 def _uploads_dir() -> Path:
     return Path(paths.OUT_DIR) / 'uploads'
 
 
-def _read_marker() -> dict | None:
-    """读 marker（无 / 坏 JSON → None，容错不抛）。"""
-    p = _marker_path()
+def _read_marker(sid: str = DEFAULT_SID) -> dict | None:
+    """读本会话 marker（无 / 坏 JSON → None，容错不抛）。"""
+    p = _marker_path(sid)
     if not p.is_file():
         return None
     try:
@@ -97,15 +167,15 @@ def _read_marker() -> dict | None:
         return None
 
 
-def _write_marker(payload: dict) -> None:
+def _write_marker(payload: dict, sid: str = DEFAULT_SID) -> None:
     _config_runs_dir().mkdir(parents=True, exist_ok=True)
-    _marker_path().write_text(
+    _marker_path(sid).write_text(
         json.dumps(payload, ensure_ascii=False), encoding='utf-8')
 
 
-def _clear_marker() -> None:
+def _clear_marker(sid: str = DEFAULT_SID) -> None:
     try:
-        _marker_path().unlink(missing_ok=True)
+        _marker_path(sid).unlink(missing_ok=True)
     except OSError:
         pass
 
@@ -196,46 +266,78 @@ def _stderr_tail(stderr_path) -> str | None:
 # ------------------------------------------------------------- 旧产物清理
 
 
-def _cleanup_stale_web_artifacts() -> None:
-    """清理上一轮 web 策略 run 的落盘产物（best-effort，失败不阻塞 start）。
+def _other_sid6s(sid: str) -> set[str]:
+    """其他会话的 sid 短缀集（default 清理 ``web_*`` 全域时的保护集）。
 
-    仅在 start 通过单例闸门（无 in-flight run / 无 marker）后调用，此刻以下产物
-    均已无人消费（done/stopped 的 result 已被前端拉走或随下次 start 一并作废）：
-
-      - ``out/config_runs/web_*`` run 目录 —— 本模块 spawn 的 run_name 恒为
-        ``web_<mode>_<rand6>`` 前缀，手工 ``ms-run-config`` 的 run 目录不带该
-        前缀，不受影响；
-      - ``out/uploads/strategy_cfg_*.json`` —— start 写给 CLI 的一次性 config；
-      - 系统临时目录 ``web_strategy_err_*.log`` —— spawn stderr 重定向文件
-        （本进程前缀唯一；多实例并跑的活动文件在 Windows 下句柄占用 unlink 自然
-        失败，best-effort 容错）。
-
-    效果：web 策略产物磁盘占用从无限累积收敛到 ≤1 个 run_dir；done → 下一次
-    start 之间 run_dir 仍可被 status/result 复读（页面刷新后重开弹窗拉 result
-    的路径不受影响），与前端「下一次 start 清 result store」时点对齐。清理先于
-    新 cfg / 新 stderr 创建，不会误删本轮文件。
+    来源 = ``_STRATEGY_STATES`` 在册 sid（含终态 —— result 仍可复读）∪ 磁盘
+    ``.web_strategy_active_*.json`` marker 的 sid（服务重启后内存态丢、run 可能
+    仍在跑的 orphan）。不含 default（default 产物本就归 default 清理）。
     """
-    for entry in _config_runs_dir().glob('web_*'):
+    sids = {s for s in _STRATEGY_STATES if s != DEFAULT_SID and s != sid}
+    try:
+        for mk in _config_runs_dir().glob(_MARKER_SID_PREFIX + '*.json'):
+            name = mk.name[len(_MARKER_SID_PREFIX):-len('.json')]
+            if name and SID_RE.match(name) and name != sid:
+                sids.add(name)
+    except OSError:
+        pass
+    return {s[:6] for s in sids}
+
+
+def _unlink_scoped(root: Path, pattern: str, protected: tuple[str, ...]) -> None:
+    """按 pattern 清 root 下文件/目录，跳过 protected 前缀（best-effort 容错）。"""
+    try:
+        entries = list(root.glob(pattern))
+    except OSError:
+        return
+    for entry in entries:
+        if any(entry.name.startswith(p) for p in protected):
+            continue
         if entry.is_dir():
             shutil.rmtree(entry, ignore_errors=True)
-    for cfg in _uploads_dir().glob('strategy_cfg_*.json'):
-        try:
-            cfg.unlink()
-        except OSError:
-            pass
-    for err in Path(tempfile.gettempdir()).glob('web_strategy_err_*.log'):
-        try:
-            err.unlink()
-        except OSError:
-            pass
+        else:
+            try:
+                entry.unlink()
+            except OSError:
+                pass
+
+
+def _cleanup_stale_web_artifacts(sid: str = DEFAULT_SID) -> None:
+    """清理本会话上一轮 web 策略 run 的落盘产物（best-effort，失败不阻塞 start）
+    —— US-004 会话化（2026-08-27）后**只清本会话前缀产物**：
+
+      - sid 会话：``web_<sid6>_*`` run 目录 / ``strategy_cfg_<sid6>_*`` /
+        ``web_strategy_err_<sid6>_*`` —— 其他会话的 in-flight run 目录、cfg、
+        stderr 一概不碰（跨会话完全并发放开后，清理是删除竞争的主要来源）；
+      - default（零 sid 旧客户端）：沿用旧「清全部 web_*」口径，但跳过其他会话
+        （``_STRATEGY_STATES`` 在册 sid ∪ 磁盘 marker sid，见 ``_other_sid6s``）
+        的 ``<sid6>`` 前缀产物 —— default 的清理不误删并行会话的活跃 run。
+
+    仅在 start 通过**本会话**单飞闸门后调用：本会话此刻无 in-flight run、本前缀
+    产物均已无人消费；无 sid 旧产物（legacy ``web_<mode>_*``）只被 default 会话
+    的 start 清理（sid 会话职责单一不清 legacy，磁盘累积由 US-006 TTL 兜底）。
+    手工 ``ms-run-config`` 的 run 目录不带 web_ 前缀，不受影响。清理先于本轮
+    cfg / stderr / run_dir 创建，不会误删本轮文件。
+    """
+    s6 = _sid6(sid)
+    others = _other_sid6s(sid) if sid == DEFAULT_SID else set()
+    _unlink_scoped(_config_runs_dir(), f'web_{s6}*' if s6 else 'web_*',
+                   tuple(f'web_{o}_' for o in others))
+    _unlink_scoped(_uploads_dir(), f'strategy_cfg_{s6}*.json' if s6
+                   else 'strategy_cfg_*.json',
+                   tuple(f'strategy_cfg_{o}_' for o in others))
+    _unlink_scoped(Path(tempfile.gettempdir()),
+                   f'web_strategy_err_{s6}*.log' if s6 else 'web_strategy_err_*.log',
+                   tuple(f'web_strategy_err_{o}_' for o in others))
 
 
 def _pieces_state() -> dict:
-    """当前排料裁片状态（对 ``server._get_pieces_state`` 的延迟取用）。
+    """default 会话排料裁片状态（对 ``server._get_pieces_state`` 的延迟取用）。
 
     延迟 import 破环：``server.py`` 在**文件尾**才 import 本模块（注册路由），
     若本模块模块级 import server 则「先 import strategy」路径成环报错；路由调用
-    时 server 必已完整初始化，函数内 import 安全。
+    时 server 必已完整初始化，函数内 import 安全。sid 会话的数据源是
+    ``_session_gate`` 返回的会话快照（commit US-002 注册），不走本函数。
     """
     from .server import _get_pieces_state
     return _get_pieces_state()
@@ -245,7 +347,7 @@ def _pieces_state() -> dict:
 
 
 def _snapshot_config_runs() -> set:
-    """start 时刻 ``out/config_runs/`` 目录名快照（缺目录 → 空集）。"""
+    """start 时刻 ``out/config_runs/`` 目录名快照（缺目录 → 空集；回退发现路径用）。"""
     base = _config_runs_dir()
     try:
         return {e for e in os.listdir(base) if (base / e).is_dir()}
@@ -253,20 +355,53 @@ def _snapshot_config_runs() -> set:
         return set()
 
 
-def _discover_run_dir(snapshot) -> str | None:
-    """快照 diff 发现新 run_dir（忽略 marker 等非目录项；多个新目录取 mtime 最新）。
+def _other_session_claims(st: dict) -> tuple[set[str], set[str]]:
+    """其他会话的 run 归属（回退发现路径的排除集）：run_name 前缀 + 已认领 run_dir。"""
+    prefixes: set[str] = set()
+    claimed: set[str] = set()
+    for other in _STRATEGY_STATES.values():
+        if other is st:
+            continue
+        if other.get('run_name'):
+            prefixes.add(f"{other['run_name']}_")
+        if other.get('run_dir'):
+            claimed.add(str(other['run_dir']))
+    return prefixes, claimed
 
-    spawn 传入 ``--name web_<mode>_<rand6>``，run_dir = ``<name>_<时间戳>`` 由 CLI
-    创建 —— 无法预知时间戳，只能事后 diff。并发手工 CLI run 同期建目录理论上可误
-    认（单用户工作台场景概率可忽略；marker 锁进程级单例已挡住第二次 web run）。
+
+def _discover_run_dir(st: dict) -> str | None:
+    """run_dir 认领：确定性前缀 glob 优先（并发安全），存量内存态回退快照 diff。
+
+    优先路径 —— glob ``<run_name>_*``：run_name 恒含本会话唯一 ``rand6``
+    （sid 会话 ``web_<sid6>_<mode>_<rand6>``；default 无 sid 段 ``web_<mode>_<rand6>``），
+    CLI ``new_run_dir`` 恒以 ``<run_name>_<时间戳>`` 建目录 → glob 只可能命中本会话
+    spawn 的 run。完全并发下（多会话同期 starting）旧的「目录快照 diff + mtime 最新」
+    必互相认错（US-004 会话化必修 bug，2026-08-27 修正）：前缀 glob 从命名上消除
+    歧义，mtime 仅在同前缀多目录（同 run_name 理论重跑）内取最新。
+
+    回退路径 —— run_name 缺失/前缀不匹配（进程内直装的存量内存态）：沿用旧「快照
+    diff + mtime 最新」，但排除**其他会话**的 run_name 前缀与已认领 run_dir（回退
+    不复活跨会话误认领；手工 ``ms-run-config`` run 不带 web_ 前缀不受影响）。
     """
     base = _config_runs_dir()
+    run_name = st.get('run_name')
+    if run_name:
+        try:
+            cands = [e for e in base.glob(f'{run_name}_*') if e.is_dir()]
+        except OSError:
+            cands = []
+        if cands:
+            return str(max(cands, key=lambda p: p.stat().st_mtime))
+    others_prefix, claimed = _other_session_claims(st)
+    snapshot = st.get('snapshot') or set()
     try:
         entries = os.listdir(base)
     except OSError:
         return None
     candidates = [base / e for e in entries
-                  if e not in snapshot and (base / e).is_dir()]
+                  if e not in snapshot and (base / e).is_dir()
+                  and str(base / e) not in claimed
+                  and not any(e.startswith(p) for p in others_prefix)]
     if not candidates:
         return None
     return str(max(candidates, key=lambda p: p.stat().st_mtime))
@@ -377,7 +512,7 @@ def _elapsed_from_iso(started_at):
 
 
 async def strategy_start(req: Request):
-    """启动策略 run（进程级单例；spawn CLI 子进程后立即 202 返回）。"""
+    """启动策略 run（每会话单飞；spawn CLI 子进程后立即 202 返回）。"""
     try:
         payload = await req.json()
     except Exception:
@@ -385,15 +520,25 @@ async def strategy_start(req: Request):
     if not isinstance(payload, dict):
         return JSONResponse({'error': '请求体须为 JSON 对象'}, status_code=400)
 
-    # 进程级单例：内存态非终态（starting/running）或 marker 在（含 orphan 遗留）→ 409。
-    in_flight = _STRATEGY_STATE.get('state') not in (None, *_TERMINAL_STATES)
-    if in_flight or _read_marker() is not None:
+    # 会话闸门先行（US-004 多会话）：sid 过期/未知 → 401、非法 → 400，不跑后续
+    # 校验不 spawn；顺手刷 last_active。default 豁免（零 sid 行为不变）。
+    sid = _route_sid(req)
+    sess_state, err = _session_gate(sid)
+    if err is not None:
+        return err
+
+    # 每会话单飞闸门（跨会话完全并发放开）：本会话内存态非终态（starting/running）
+    # 或本会话 marker 在（含 orphan 遗留）→ 409。
+    st = _states(sid, create=True)
+    in_flight = st.get('state') not in (None, *_TERMINAL_STATES)
+    if in_flight or _read_marker(sid) is not None:
         return JSONResponse(
             {'error': '已有进行中的策略运行（或检测到遗留 marker），请先停止/清理'},
             status_code=409)
 
     # 排料数据校验：state 空 → 422；doc 缺 doc_id（旧 intermediate）→ 422。
-    state = _pieces_state()
+    # sid 会话 → commit（US-002）注册的会话快照；default → _pieces_state()。
+    state = sess_state if sess_state is not None else _pieces_state()
     pieces = state.get('pieces') or []
     gate_state = state.get('gate_mm') or 0.0
     if not pieces or gate_state <= 0:
@@ -498,36 +643,39 @@ async def strategy_start(req: Request):
     if prefix_cfg is not None:
         cfg_payload['prefix'] = prefix_cfg
 
-    # 上一轮 web 策略 run 的产物清理（2026-08-22）：单例闸门已过 → 无 in-flight
-    # run，web_* run 目录 / 旧 cfg / 旧 stderr 均无人消费；清理先于本轮 cfg /
-    # stderr / run_dir 创建，不会误删本轮文件。best-effort，失败不阻塞 start。
-    _cleanup_stale_web_artifacts()
+    # 本会话上一轮 web 策略 run 的产物清理（2026-08-27 会话化）：本会话单飞闸门
+    # 已过 → 本前缀产物无人消费；跨会话产物（sid 前缀互斥 / default 保护集）不
+    # 误删。清理先于本轮 cfg / stderr / run_dir 创建，best-effort 失败不阻塞。
+    _cleanup_stale_web_artifacts(sid)
 
+    s6 = _sid6(sid)
     stamp = time.strftime('%Y%m%d-%H%M%S')
     rand6 = uuid.uuid4().hex[:6]
     _uploads_dir().mkdir(parents=True, exist_ok=True)
-    cfg_path = _uploads_dir() / f'strategy_cfg_{stamp}.json'
+    cfg_path = _uploads_dir() / f'strategy_cfg_{s6}{stamp}.json'
     with open(cfg_path, 'w', encoding='utf-8') as f:
         json.dump(cfg_payload, f, ensure_ascii=False)
 
-    run_name = f'web_{mode}_{rand6}'
+    run_name = f'web_{s6}{mode}_{rand6}'
     stderr_file = tempfile.NamedTemporaryFile(
-        prefix='web_strategy_err_', suffix='.log', delete=False)
+        prefix=f'web_strategy_err_{s6}', suffix='.log', delete=False)
     stderr_file.close()
     cmd = [sys.executable, '-m', 'materialsorting.cli.run_config',
            str(cfg_path), '--name', run_name,
            '--strategy', mode, '--time', str(int(minutes) * 60), '--quiet']
-    # 快照先于 spawn：run_dir 基线 = spawn 决策前的目录集 —— CLI 建 run_dir 再快也
-    # 必然落在基线之后被发现（若快照晚于 spawn，CLI 抢先建目录会让 diff 扑空）。
+    # 快照先于 spawn：回退发现路径的 run_dir 基线 = spawn 决策前的目录集 —— CLI
+    # 建 run_dir 再快也必然落在基线之后被发现（若快照晚于 spawn，CLI 抢先建目录
+    # 会让 diff 扑空）。主认领路径（前缀 glob）不依赖快照。
     snapshot = _snapshot_config_runs()
     proc = _spawn_run_process(cmd, stderr_file.name)
 
     started_at = time.strftime('%Y-%m-%dT%H:%M:%S')
     _write_marker({'pid': proc.pid, 'run_dir': None, 'doc_id': doc_id,
-                   'mode': mode, 'started_at': started_at})
+                   'mode': mode, 'started_at': started_at}, sid)
 
-    _STRATEGY_STATE.clear()
-    _STRATEGY_STATE.update({
+    st.clear()
+    st.update({
+        'sid': sid,
         'state': 'starting',
         'proc': proc,
         'pid': proc.pid,
@@ -559,21 +707,22 @@ async def strategy_start(req: Request):
 
 
 def _status_from_active(st: dict) -> dict:
-    """内存态（start 后）→ status 载荷；终态顺手清 marker（幂等）。"""
+    """内存态（start 后）→ status 载荷；终态顺手清本会话 marker（幂等）。"""
+    sid = st.get('sid') or DEFAULT_SID
     proc = st.get('proc')
     rc = proc.poll() if proc is not None else None
     elapsed = time.time() - float(st.get('started_ts') or time.time())
 
-    # run_dir 发现（starting 期每轮 status 重试 diff；发现后写回 state + marker）。
+    # run_dir 发现（starting 期每轮 status 重试；发现后写回 state + 本会话 marker）。
     run_dir = st.get('run_dir')
     if not run_dir:
-        run_dir = _discover_run_dir(st.get('snapshot') or set())
+        run_dir = _discover_run_dir(st)
         if run_dir:
             st['run_dir'] = run_dir
-            marker = _read_marker()
+            marker = _read_marker(sid)
             if marker is not None:
                 marker['run_dir'] = run_dir
-                _write_marker(marker)
+                _write_marker(marker, sid)
 
     state: str
     error = None
@@ -603,7 +752,7 @@ def _status_from_active(st: dict) -> dict:
     # 则「跑完后从未轮询」的内存态永远停在 running）。
     st['state'] = state
     if state in _TERMINAL_STATES:
-        _clear_marker()
+        _clear_marker(sid)
 
     result_json = (_read_json(Path(run_dir) / 'result.json')
                    if run_dir else None)
@@ -623,14 +772,19 @@ def _status_from_active(st: dict) -> dict:
     }
 
 
-async def strategy_status():
-    """无状态惰性轮询：每次现读 run_dir 产物组装（不缓存中间态）。"""
-    if not _STRATEGY_STATE:
-        marker = _read_marker()
+async def strategy_status(req: Request):
+    """无状态惰性轮询：每次现读本会话 run_dir 产物组装（不缓存中间态）。"""
+    sid = _route_sid(req)
+    _, err = _session_gate(sid)
+    if err is not None:
+        return err
+    st = _states(sid)
+    if not st:
+        marker = _read_marker(sid)
         if marker is None:
             return {'state': 'idle'}
-        # orphan：内存态空 + marker 在（server 重启后的遗留 run）。pid 存活探测；
-        # run_dir 已发现过的（marker 带回）仍可解析产物，前端提供清理动作。
+        # orphan：内存态空 + 本会话 marker 在（server 重启后的遗留 run）。pid 存活
+        # 探测；run_dir 已发现过的（marker 带回）仍可解析产物，前端提供清理动作。
         elapsed = _elapsed_from_iso(marker.get('started_at'))
         run_dir = marker.get('run_dir') or None
         result_json = (_read_json(Path(run_dir) / 'result.json')
@@ -651,32 +805,40 @@ async def strategy_status():
             'error': None,
             'exit_code': None,
         }
-    return _status_from_active(_STRATEGY_STATE)
+    return _status_from_active(st)
 
 
-async def strategy_stop():
-    """树杀进行中的策略 run（或清理 orphan marker）。"""
-    st = _STRATEGY_STATE
-    if st.get('state') in ('starting', 'running'):
+async def strategy_stop(req: Request):
+    """树杀本会话进行中的策略 run（或清理本会话 orphan marker）。"""
+    sid = _route_sid(req)
+    _, err = _session_gate(sid)
+    if err is not None:
+        return err
+    st = _states(sid)
+    if st and st.get('state') in ('starting', 'running'):
         pid = st.get('pid')
         _kill_tree(pid)
         st['state'] = 'stopped'
         st['stopped'] = True
-        _clear_marker()
+        _clear_marker(sid)
         return {'stopped': True, 'pid': pid}
-    marker = _read_marker()
+    marker = _read_marker(sid)
     if marker is not None:
         pid = marker.get('pid')
         if _pid_alive(pid):
             _kill_tree(pid)
-        _clear_marker()
+        _clear_marker(sid)
         return {'stopped': True, 'pid': pid, 'orphan': True}
     return JSONResponse({'error': '没有进行中的策略运行'}, status_code=400)
 
 
-async def strategy_result():
-    """done/stopped run → 最优方案 + manifest（US-006 应用到主画布的数据源）。"""
-    st = _STRATEGY_STATE
+async def strategy_result(req: Request):
+    """本会话 done/stopped run → 最优方案 + manifest（应用到主画布的数据源）。"""
+    sid = _route_sid(req)
+    sess_state, err = _session_gate(sid)
+    if err is not None:
+        return err
+    st = _states(sid)
     if not st or st.get('state') not in ('done', 'stopped'):
         if st and st.get('state') in ('starting', 'running'):
             return JSONResponse({'error': '策略运行尚未结束'}, status_code=409)
@@ -759,9 +921,11 @@ async def strategy_result():
     payload = {'state': st.get('state'), 'mode': st.get('mode'),
                'run_dir': run_dir, 'manifest': manifest,
                'best': best_out, 'summary': summary}
-    # 母版漂移检测：start 快照 doc_id ≠ 当前画布 doc_id → 应用结果可能与当前画布
-    # 不一致（前端结果态展示 warning；导出 pid 失配走既有 400 兜底）。
-    cur_doc_id = (_pieces_state().get('doc') or {}).get('doc_id')
+    # 母版漂移检测：start 快照 doc_id ≠ 本会话当前画布 doc_id → 应用结果可能与
+    # 当前画布不一致（前端结果态展示 warning；导出 pid 失配走既有 400 兜底）。
+    # default → _pieces_state()（既有测试 monkeypatch 点）；sid → 会话快照。
+    cur_state = sess_state if sess_state is not None else _pieces_state()
+    cur_doc_id = (cur_state.get('doc') or {}).get('doc_id')
     if st.get('doc_id') != cur_doc_id:
         payload['warning'] = '母版已变更，应用结果可能与当前画布不一致'
     return payload

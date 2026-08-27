@@ -2,16 +2,10 @@
   "branchName": "ralph/web-multi-session",
   "stories": [
     {
-      "id": "US-003",
-      "title": "读路由与 WS 接入会话",
-      "description": "As a 排料工程师，我希望所有读数据端点按我的 sid 取我的会话快照，以便求解/预览/导出全部对着我自己上传的母版。\n\n具体任务：\n1. materialSorting-server/src/materialsorting/web/routes_views.py — /api/ptypes、/api/band-preview、/api/prefix-preview、/export 加 x-session-id Header 参数（缺省 → default 会话），state 改从 SessionRegistry 解析；GET / 响应头补 Cache-Control: no-cache（防部署后旧 bundle 滞留 default 的迁移窗口，FastAPI FileResponse 缺省不发缓存头）。\n2. materialSorting-server/src/materialsorting/web/routes_ws.py — /ws/solve 读 ?sid= query（浏览器 WS 不能自定义 Header；缺省 → default）：连接建立时 ws_open +=1 钉住会话（finally 减回），on_manifest/on_report 回调顺手刷新 last_active（求解期间客户端不发消息也不误杀，GIL-safe float 写）；会话过期/超限的结构化响应：HTTP 401/429 + {code}，WS 发 {'type':'error','code':'session_expired'|'session_limit','message'} 错误帧后关闭（code 键为 additive，旧前端忽略）。\n\n验收标准：\n- A/B 两会话 commit 不同 doc 后：/api/ptypes 各返自己的 representatives；band-preview/prefix-preview/export 各取各的 pieces_by_id（A 的导出 placed 匹配 A 的轮廓）。\n- /export 带过期 sid → 401 {code:'session_expired'}（JSON 响应非文件流）。\n- WS：合法 sid 求解全流程正常（manifest→frames→final）；过期/超限 sid → 带 code 的 error 帧 + close；求解进行中该会话不被扫描线程逐出；断开后 ws_open 归零。\n- 无 sid（Header/query 缺省）→ default 会话：现有 tests/test_web_routes.py 与 WS 协议测试零改动全绿。\n- 既有不变量保持：WS accept 阶段一次快照整连接不变、density 双口径、导出用原始轮廓非 eroded、stop/断开 terminate 子进程。\n- GET / 响应头含 Cache-Control: no-cache。",
-      "passes": true
-    },
-    {
       "id": "US-004",
       "title": "策略长跑会话化",
       "description": "As a 排料工程师，我希望高级运行（10-60 分钟策略长跑）的状态/结果/停止只属于我的会话，以便多人同时长跑互不覆盖、互不误删产物。\n\n具体任务：\n1. materialSorting-server/src/materialsorting/web/strategy.py — _STRATEGY_STATE 单例 → dict[sid, state]（default 会话沿用无 sid 键）；marker 文件改 .web_strategy_active_<sid>.json（default 会话用旧名 .web_strategy_active.json 保旧测试路径兼容）；run_name 嵌 sid 短缀 web_<sid6>_<mode>_<rand6>；run_dir 认领从「目录快照 diff + mtime 最新」改为确定性前缀 glob（web_<sid6>_<mode>_<rand6>_*）——完全并发下 mtime diff 必互相认错，此为必修 bug 修正；_cleanup_stale_web_artifacts 只清本 sid 前缀产物；409 单飞闸门收窄为每会话（跨会话完全并发放开，接受 CPU 争抢，不加全局闸门）；orphan 检测按本 sid marker（用户过期后同 sid 回来仍能发现/清理自己的遗留 run）；四路由 start/status/stop/result 全部按 X-Session-Id 解析（缺省 default）。\n\n验收标准：\n- A、B 两会话先后 /api/strategy/start → 均 202；各自 status 轮询 run_dir/incumbent/events 互不串台。\n- 并发 start 场景：两会话 run_dir 前缀 glob 认领各自正确（不再依赖 mtime）。\n- B start 不删 A 的 web_<A_sid6>_* run 目录（单测造两前缀目录验证清理范围）。\n- A stop 只树杀 A 的 pid，B 的 run 不受影响；A result 只读 A 的 run_dir。\n- 同 sid 二次 start（前场未终态）→ 409；跨会话不 409。\n- tests/test_web_strategy.py 现有回归零改动全绿（无 sid → default），新增双会话并发用例；strategy.py 仍禁 import ..cli.*（AST 守卫不变）。",
-      "passes": false
+      "passes": true
     },
     {
       "id": "US-005",
