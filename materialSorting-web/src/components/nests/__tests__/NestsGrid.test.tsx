@@ -3,6 +3,7 @@
 //   2) seeds 长度 N → 渲染 N 个 .nest-card；runRegistry 缺失对应 record → 跳过
 //   3) 渲染顺序与 seeds 一致（base, base+1, ...）；key=seed 稳定
 //   4) 重新渲染（seeds 不变）→ 不重复挂载（key=seed 稳定）
+//   5) lastFrame 存在 → NestLabel 追加用布长度（% · 长度 X.X cm，width_mm/10）
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { StrictMode } from "react";
@@ -82,6 +83,18 @@ describe("NestsGrid (US-005)", () => {
     renderGrid([5, 6, 7]);
     const labels = Array.from(container!.querySelectorAll(".nest-label")).map((el) => el.textContent);
     expect(labels).toEqual(["seed 5 · 0 片", "seed 6 · 0 片", "seed 7 · 0 片"]);
+  });
+
+  it("lastFrame 存在 → label 追加用布长度（宽度 mm → cm 1 位小数）", () => {
+    const rec = runRegistry.create(0);
+    rec.manifest = { type: "manifest", gate_mm: 1980, total_area_mm2: 1, n_eroded: 0, pieces: [] };
+    rec.lastFrame = {
+      type: "frame", index: 0, elapsed: 1, phase: "Placing",
+      density: 0.8754, density_sparrow: 0.9, width_mm: 11550, placed_items: [],
+    };
+    renderGrid([0]);
+    const label = container!.querySelector(".nest-label")!.textContent;
+    expect(label).toBe("seed 0 · 87.54% · 长度 1155.0 cm");
   });
 
   it("重新渲染（seeds 不变）→ 不重复挂载（key=seed 稳定）", () => {
