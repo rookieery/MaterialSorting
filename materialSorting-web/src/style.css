@@ -1826,3 +1826,61 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
   font-size: 12px;
   line-height: 1.5;
 }
+
+/* ---- US-005 SessionExpiredModal（会话阻断式全屏模态） ---- */
+/* overlay：fixed 全屏 + 不透明暗遮罩（阻断语义：遮住背后一切 UI，不可交互）；
+   z-index 3000 —— 高于 tour-overlay(2000) / 各业务 modal(1000-1300)，全站最顶层。 */
+.session-block-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.82);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 3000;
+}
+/* modal：暗底圆角卡片（per-type/strategy 同色系）；窄卡居中 —— 阻断提示只需
+   标题 + 一句话 + 唯一出口按钮，无关闭 ✕ / 无 ESC（刷新是唯一出口）。 */
+.session-block-modal {
+  position: relative;
+  background: #26282e;
+  border: 1px solid #34363d;
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  padding: 22px 24px 20px;
+  width: 360px;
+  max-width: 90vw;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  text-align: center;
+  color: #e6e6e6;
+}
+.session-block-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #e08a8a;
+}
+.session-block-text {
+  font-size: 13px;
+  line-height: 1.7;
+  color: #cdd;
+  margin: 0;
+}
+/* 唯一出口按钮：主强调色（#2ea06c 系），明显大于普通操作按钮引导点击。 */
+.session-block-reload {
+  margin-top: 8px;
+  padding: 9px 18px;
+  font-size: 14px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  font-weight: 600;
+  background: #2ea06c;
+  color: #fff;
+  border: 1px solid #36b47a;
+  transition: background 0.15s;
+}
+.session-block-reload:hover {
+  background: #36b47a;
+}

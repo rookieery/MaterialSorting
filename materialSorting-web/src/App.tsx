@@ -11,21 +11,35 @@
 // US-001 把排料状态机（seeds/solving/status/useSolveRun/useRafThrottle/handleStart）
 // 全部下移到 NestingPage；App 仅保留 Tab + 页面容器 + Tooltip。
 //
+// US-005（多会话）：挂载时 probeSession()（POST /api/session）—— 第 5 个窗口
+// 超限 429 / 服务重启丢会话 401（均带 code 错误体）→ apiFetch 触发全局阻断弹窗
+// （页面加载即弹「用户过多」，无需先上传）；200 静默。SessionExpiredModal 单例
+// 挂载（未阻断时渲染 null）。
+//
 // 数据流：
 //   TabBar setTab → uiStore.activeTab → App 重渲染切 .hidden → NestingPage/PreviewPage 不卸载
 
+import { useEffect } from 'react';
 import { Tooltip } from './components/Tooltip';
 import { NestingPage } from './components/NestingPage';
 import { PreviewPage } from './components/preview/PreviewPage';
+import { SessionExpiredModal } from './components/SessionExpiredModal';
 import { TabBar } from './components/TabBar';
 import { TourOverlay } from './tour/TourOverlay';
 import { useTourAutoTrigger } from './tour/useTour';
+import { probeSession } from './lib/api';
 import { useUiStore } from './store/uiStore';
 
 export function App(): React.JSX.Element {
   const activeTab = useUiStore((s) => s.activeTab);
   // US-030：首次进入 Tab 自动触发 tour（subscribe activeTab；独立 hook，App 调用一次）。
   useTourAutoTrigger();
+
+  // US-005：挂载探测会话（幂等建会话/刷活性；429/401 带 code → 阻断弹窗）。
+  // StrictMode 双 mount 会探两次 —— POST /api/session 幂等，无害。
+  useEffect(() => {
+    void probeSession();
+  }, []);
 
   return (
     <div className="app">
@@ -48,6 +62,8 @@ export function App(): React.JSX.Element {
       <Tooltip />
       {/* US-029：TourOverlay 单例（Portal 到 body，z-index 2000），订阅 tourStore 自显隐。 */}
       <TourOverlay />
+      {/* US-005：会话阻断弹窗单例（z-index 3000，高于 tour；未阻断渲染 null）。 */}
+      <SessionExpiredModal />
     </div>
   );
 }

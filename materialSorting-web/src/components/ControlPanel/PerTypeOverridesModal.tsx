@@ -78,6 +78,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { JSX } from 'react';
 import { createPortal } from 'react-dom';
 import { MAX_OVERLAP_MM, MAX_ROTATION_TOL_DEG } from '../../constants/v03';
+import { apiFetch } from '../../lib/api';
 import {
   collectPerType,
   defaultPrefixLabels,
@@ -291,7 +292,7 @@ function PerTypeOverridesModalInner({
       per_type: collectPerType(draft),
       gate_mm: gateMm,
     };
-    fetch('/api/band-preview', {
+    apiFetch('/api/band-preview', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -332,7 +333,7 @@ function PerTypeOverridesModalInner({
       per_type: collectPerType(draft),
       gate_mm: gateMm,
     };
-    fetch('/api/prefix-preview', {
+    apiFetch('/api/prefix-preview', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),

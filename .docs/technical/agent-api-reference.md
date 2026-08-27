@@ -270,6 +270,7 @@ curl -X POST http://127.0.0.1:8000/api/session -H "X-Session-Id: 3f2a...hex"
 5. **会话状态结构**：`SessionState = {sid, state(pieces 快照 dict), doc_id, last_active, ws_open, strategy_busy}`；`state` 由 US-002 commit 填 per-doc 快照（`_build_pieces_state(per-doc 路径)`，`doc_id` 同步绑定）；WS 钉住 API = `ws_acquire/ws_release`（计数），活性刷新 = `touch(sid)`（GIL-safe float 写）。
 6. **读端点接入（US-003 已落地）**：HTTP 读路由（`/api/ptypes` / `/api/band-preview` / `/api/prefix-preview` / `/export`）经 `routes_views._resolve_session_state`（读路径 `create=False`）从 registry 取快照；WS `/ws/solve` 读 `?sid=` query 经 `ws_acquire`/`ws_release` 钉住 + `on_manifest`/`on_report` 回调 `touch` 刷活性（求解期间客户端不发消息也不被扫描误杀）。超限（429 session_limit）只可能出现在 create 路径（POST /api/session / commit）；读路径对未知 sid 一律 401 session_expired（不静默重建、不占新名额）—— WS error 帧格式对 `session_limit` code 通用（白盒锁定），实际把关在 HTTP 层。
 7. **策略四路由接入（US-004 已落地，2026-08-27）**：`/api/strategy/start·status·stop·result` 经 `strategy._session_gate`（读路径 `create=False` + 刷 `last_active` —— **status 轮询即活性**，策略长跑中的会话不被扫描误杀）解析；状态/产物/停止按 sid 隔离（详见上「策略桥接」多会话小节）。会话过期后策略状态槽与 marker 均按 sid 留存（不随逐出清理）—— 同 sid 过墓碑期回来仍能发现/清理自己的遗留 run。
+8. **前端接入（US-005 已落地，2026-08-27）**：前端 `lib/session.ts` 管 sid（localStorage `ms_sid`，uuid4 hex 32，刷新不变）；`lib/api.ts` `apiFetch` 是**全站唯一裸 fetch 出口**（注入 `X-Session-Id` + 会话先行门：首次调用前置一次 POST /api/session once-promise，防子组件 mount 早于 App 探测的 401 误弹）；本路由 429/401 的 `code` 错误体（或 WS error 帧 `code`）触发前端全局阻断弹窗（阻断式全屏，唯一出口 = 刷新页面，阻断期间后续请求前端拦截不发）；**session_expired 时前端顺手丢弃 ms_sid**（墓碑 1h 拒重建旧 sid —— 刷新必须铸新 sid 才能真正重来），session_limit 保 sid。App 挂载即探测 —— 第 5 个窗口页面加载即弹「用户过多」，无需先上传。
 
 ### 关键不变量
 
@@ -433,6 +434,7 @@ ws://127.0.0.1:8000/ws/solve?sid=<sid>     # 缺省/空串 → default 会话（
 - **快照口径**：accept 阶段 state 快照来自**会话**（带 sid = commit 注册的 per-doc 快照；缺省 = default 会话，其 state 即 `runtime._PIECES_STATE` 同一 dict）。会话 state 从不原位 mutate（commit 整体 rebind `st.state`）→ 「整连接一次快照」不变量保持。
 - **活性刷新**：`on_manifest` / `on_report` 回调内 `registry.touch(sid)`（求解期间客户端不发消息，靠回调刷 `last_active`；GIL-safe 单 float 写不加锁）。
 - **会话错误帧**：过期（墓碑/惰性超时/未注册合法 sid）→ 发 `{"type":"error","code":"session_expired","message":"会话已过期（5 分钟无操作），请刷新页面"}` 后**显式 close**（不发 manifest）；非法 sid → `{"type":"error","message":"sid 非法"}`（无 code 键）。`code` 键为 additive —— 旧前端忽略、US-005 前端据此弹阻断弹窗。`session_limit` code 帧格式同样支持（容量闸门实际由 HTTP 层 POST /api/session 把关，读路径 create=False 不触达 429）。
+- **前端侧（US-005 已落地）**：`lib/ws.ts` `solveWsUrl()` 自动拼 `?sid=`；`useSolveRun` case 'error' 读 `msg.code`（session_expired/session_limit）→ 与 HTTP 同一全局阻断弹窗入口 `triggerSessionBlock`。
 
 > US-020：accept 阶段 `state = _get_pieces_state()` 拿一次快照，整连接内 `pieces / gate_mm` 不变（避免求解中途 reload 切数据）。state 空时（首次启动未 commit / intermediate 缺失）直接发 error「排料数据为空」并关闭。**US-003（多会话）后该快照经会话解析取得**（default 会话 state 即 `_PIECES_STATE`，无 sid 行为不变）。
 >

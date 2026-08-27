@@ -34,7 +34,7 @@ cli  →  web  →  nesting_engine  →  nesting_bounds  →  dxf_parser
 - **sparrow 不改源码**：作为 pip 包（spyrrow）引用，v0.3 服装约束（重合/旋转/布纹线）在外层 `constraints.py` + `solver.build_instance` 包装实现。
 - **坐标系**：spyrrow 世界坐标 X=用布长度(0..width)，Y=门幅(0..gate)，Y 向上；前端 SVG `scale(1,-1)` 翻转后与 PNG 一致。
 - **密度口径**：版师/90% 生死线用**原面积·实际幅宽**口径 `real_density = total_area/(width*min(gate_mm, PLOT_SAFE_MAX_Y_MM))`（2026-08-20 起分母与求解约束带同口径，同一布局较旧门幅分母口径 +~3.7pp；单一换算点 `web.solver._apply_density_dual`），erode 后 sparrow 自报密度仅作参考（density_sparrow）。前端 NestSVG 以 manifest `gate_nest_mm` 画红虚线标实际可排边界。
-- **前端已迁移到 React 18 + TypeScript 5 + Vite 5**（US-001~US-008 落地）。源码在 `materialSorting-web/src/`（Zustand 状态管理 + 命令式 SVG 渲染逃逸 React reconciliation），`npm run build` 产出到 `static/`（gitignore，prod 模式前必须先 build）。旧 vanilla 三件套（index.html + 主脚本 + style.css，原 `legacy/` 归档）已删除，React 应用是唯一真相源。**不引入 CSS 框架**（沿用迁移自旧版的 `style.css`）；**坐标系翻转 `scale(1,-1)` 必须保留**，与 PNG / R12-DXF 导出口径一致。
+- **前端已迁移到 React 18 + TypeScript 5 + Vite 5**（US-001~US-008 落地）。源码在 `materialSorting-web/src/`（Zustand 状态管理 + 命令式 SVG 渲染逃逸 React reconciliation），`npm run build` 产出到 `static/`（gitignore，prod 模式前必须先 build）。旧 vanilla 三件套（index.html + 主脚本 + style.css，原 `legacy/` 归档）已删除，React 应用是唯一真相源。**不引入 CSS 框架**（沿用迁移自旧版的 `style.css`）；**坐标系翻转 `scale(1,-1)` 必须保留**，与 PNG / R12-DXF 导出口径一致。**多会话 US-005（2026-08-27）**：HTTP 一律走 `lib/api.ts` `apiFetch`（唯一裸 fetch 点 —— 注入 `X-Session-Id` + 会话先行门 + 401/429 `code` → 全局阻断弹窗，阻断期间请求拦截不发）；sid 由 `lib/session.ts` 管（localStorage `ms_sid`，刷新不变；session_expired 时弃旧 sid 铸新，绕开后端墓碑）；WS 由 `lib/ws.ts` 拼 `?sid=`。
 
 ## 数据流主线
 

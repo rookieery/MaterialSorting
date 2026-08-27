@@ -8,6 +8,8 @@ import { StrictMode, useEffect, type MutableRefObject } from 'react';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { useSolveRun, type StartConfig } from '../hooks/useSolveRun';
+import { getSessionBlock, resetSessionForTest } from '../lib/api';
+import { getSessionId } from '../lib/session';
 import { runRegistry } from '../store/runRegistry';
 import type { ServerMsg, StartPayload } from '../types/ws';
 
@@ -59,6 +61,8 @@ let root: Root | null = null;
 
 beforeEach(() => {
   mockInstances.length = 0;
+  // US-005：会话阻断状态隔离（error 帧 code 用例会触发全局弹窗状态）。
+  resetSessionForTest();
   realWS = globalThis.WebSocket;
   (globalThis as unknown as { WebSocket: typeof WebSocket }).WebSocket =
     MockWebSocketCtor as unknown as typeof WebSocket;
@@ -127,7 +131,7 @@ describe('useSolveRun', () => {
     act(() => startRef.current(cfg));
     expect(mockInstances).toHaveLength(1);
     const ws = mockInstances[0];
-    expect(ws.url).toMatch(/\/ws\/solve$/);
+    expect(ws.url).toMatch(/\/ws\/solve\?sid=[0-9a-f]{32}$/);
     act(() => ws.onopen?.());
     expect(ws.sent).toHaveLength(1);
     const parsed: StartPayload = JSON.parse(ws.sent[0]);
@@ -254,6 +258,48 @@ describe('useSolveRun', () => {
     expect(runRegistry.list()[0].done).toBe(true);
   });
 
+  it('US-005 error 帧带 code=session_expired → 触发全局会话阻断（与 HTTP 同出口）', () => {
+    const startRef = mountHook({});
+    act(() =>
+      startRef.current({
+        sizes: [30],
+        time: 1,
+        seed: 0,
+        gate_mm: 1980,
+        params: { d_ext: 0, d_int: 0, tol_ext: 0, tol_int: 0 },
+      }),
+    );
+    const ws = mockInstances[0];
+    // 业务 error 帧（无 code 键）不影响阻断状态
+    act(() =>
+      ws.onmessage?.({
+        data: JSON.stringify({ type: 'error', message: '构造实例失败: boom' }),
+      }),
+    );
+    expect(getSessionBlock()).toBeNull();
+    // 会话类 error 帧（后端 SessionError additive code 键）→ 阻断码落库
+    act(() =>
+      startRef.current({
+        sizes: [30],
+        time: 1,
+        seed: 1,
+        gate_mm: 1980,
+        params: { d_ext: 0, d_int: 0, tol_ext: 0, tol_int: 0 },
+      }),
+    );
+    const ws2 = mockInstances[1];
+    act(() =>
+      ws2.onmessage?.({
+        data: JSON.stringify({
+          type: 'error',
+          message: '会话已过期，请刷新页面',
+          code: 'session_expired',
+        }),
+      }),
+    );
+    expect(getSessionBlock()).toBe('session_expired');
+  });
+
   it('WS URL 走相对 host（dev/prod 自适配，不被写死成 :8000/:5173）', () => {
     const startRef = mountHook({});
     act(() =>
@@ -266,8 +312,11 @@ describe('useSolveRun', () => {
       }),
     );
     const url = mockInstances[0].url;
-    // proto 与 host 必须从 location 推导，而非硬编码
-    expect(url).toBe(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/solve`);
+    // proto 与 host 必须从 location 推导，而非硬编码；US-005：拼 ?sid=<32hex>
+    //（浏览器 WS 不能自定义 Header，会话标识走 query —— 与 HTTP X-Session-Id 同源）。
+    expect(url).toBe(
+      `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/solve?sid=${getSessionId()}`,
+    );
   });
 
   it('per_type 非空时透传（不抹平为 null）', () => {

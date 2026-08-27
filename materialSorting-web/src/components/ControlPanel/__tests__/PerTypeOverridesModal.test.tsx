@@ -5,7 +5,7 @@
 //   AC: modal='per_type' renders overlay + modal + aria-label
 //   AC: thead 列 = reps 键（g 码徽章）；reps 空 + values 空 → 仅行头列（0 数据列）
 //   AC: tbody renders 2 rows (重合 + 旋转)
-//   AC: mount triggers fetch('/api/ptypes')
+//   AC: mount triggers apiFetch('/api/ptypes')
 //   AC: fetch failure degrades (no crash, 列集退回 values 键)
 //   AC: fetch success renders representatives[label] via PiecePreviewSVG compact
 //   AC: 列序 = compareByLabel 数值序（g01<g02<g99<g100，长度优先防字典序倒挂）
@@ -321,7 +321,7 @@ describe('PerTypeOverridesModal (US-018 / US-003 g 码列)', () => {
     expect(rowHeads).toContain('旋转');
   });
 
-  it('mount triggers fetch("/api/ptypes")', async () => {
+  it('mount triggers apiFetch("/api/ptypes")', async () => {
     useControlPanelStore.getState().openModal('per_type');
     renderModal();
     await flushFetch();

@@ -23,6 +23,7 @@
 // 这里双重防护）。
 
 import { useCallback, useRef, useState } from 'react';
+import { apiFetch } from '../lib/api';
 import type { ExportFmt } from '../lib/download';
 import { downloadBlob, parseContentDisposition } from '../lib/download';
 import { runRegistry } from '../store/runRegistry';
@@ -85,8 +86,9 @@ export function useExport(cb: UseExportCallbacks = {}): UseExportResult {
     setExporting(true);
     exportingRef.current = true;
     try {
-      // AC#3：fetch /export（相对 URL；dev 走 Vite proxy，prod 同源），响应 blob
-      const res = await fetch('/export', {
+      // AC#3：POST /export（相对 URL；dev 走 Vite proxy，prod 同源），响应 blob
+      //（US-005 起经 apiFetch 注入 X-Session-Id —— 会话过期时 export 也是 401 JSON）。
+      const res = await apiFetch('/export', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),

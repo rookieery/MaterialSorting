@@ -142,6 +142,12 @@ export interface FinalMsg {
 export interface ErrorMsg {
   type: 'error';
   message: string;
+  /**
+   * US-005：会话类错误码（'session_expired' | 'session_limit'，后端 routes_ws 对
+   * SessionError 的 additive 键 —— 有 code 才发，旧后端/业务错误无此键）。
+   * useSolveRun 见此键 → lib/api.triggerSessionBlock 全局阻断弹窗（与 HTTP 同出口）。
+   */
+  code?: string;
 }
 
 /**

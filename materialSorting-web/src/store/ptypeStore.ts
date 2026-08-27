@@ -32,6 +32,7 @@
 // 无感刷新路径。
 
 import { create } from 'zustand';
+import { apiFetch } from '../lib/api';
 import type { PtypeRepresentative, PtypesResponse } from '../types/ptype';
 
 /** /api/ptypes 端点（dev 由 Vite proxy 转 :8000；prod 同源）。 */
@@ -59,7 +60,7 @@ export const usePtypeStore = create<PtypeState>((set, get) => ({
     const { status } = get();
     if (status === 'ready' || status === 'loading') return;
     set({ status: 'loading' });
-    fetch(PTYPES_URL)
+    apiFetch(PTYPES_URL)
       .then((r) => r.json() as Promise<PtypesResponse>)
       .then((data) => {
         set({ representatives: data.representatives ?? {}, status: 'ready' });

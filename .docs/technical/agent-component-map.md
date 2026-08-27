@@ -1154,3 +1154,34 @@ band 配置（用户指认腰头 g 码成带）从表单到 WS 的纯参数链�
 3. **ptypeStore 失效唯一挂点 = commit done** —— 其它时点 invalidate 会退化成两个已修 bug 之一（每次都拉 / 永久缓存）；error 态不得自动重试（死循环）。
 4. **三层弹窗叠序互斥** —— per_type < ptype-preview < band-zoom/prefix-zoom；两个 zoom 层互斥（打开一个关另一个，单顶层约定）；ESC 逐层只关最上层。
 5. **预览失败不阻塞确定** —— `ok:false` 单条路径渲染错误文案（选错 g 码是预期内常态而非异常，不区分网络/业务错误）；用户看得见失败原因但仍可确认，权威拦截仍在后端 solve —— 与「构造失败从 solve 报错前置到选码时刻」的目标互补。
+
+## 多会话 US-005 落地：前端会话接入与阻断弹窗（2026-08-27）
+
+后端多会话（sessions.py：容量 4 / TTL 300s / 墓碑 1h）的前端侧整条接入线。上方各节与本节冲突处，以本节为准。
+
+### 新增 / 改造文件
+
+| 文件 | 改动 |
+|------|------|
+| `src/lib/session.ts` | **新建** sid 单一真相源：localStorage 键 `ms_sid`、uuid4 hex 32 位（RFC4122 version/variant 位置位，crypto.getRandomValues 优先 Math.random 降级）、get-or-create（模块缓存 + 非法落盘值重铸、落盘失败静默走内存）；`clearPersistedSessionId()` 墓碑出口（仅 session_expired 时被 api 层调用）；`resetSessionIdForTest()` 只清模块缓存（测试先写库再清缓存模拟刷新）。 |
+| `src/lib/api.ts` | **新建** 全站统一 HTTP 出口（**唯一裸 fetch 点**，`grep 'fetch('` 仅命中本文件）：`apiFetch()` = 阻断检查（blocked → 抛 `SessionBlockedError` 请求不发出）→ 会话先行门（`ensureSession()` once-promise POST /api/session，探测落定后 `probedSettled` 同步直进）→ `fetch` + `mergeSessionHeaders`（Headers/数组/对象归一 plain object + 注入 `X-Session-Id`）→ `inspectSessionError`（401/429 才 `res.clone().json()` 读 `code`，session_expired/session_limit → `triggerSessionBlock`；原 Response 原样交还调用方）。阻断态 = 模块级 pub/sub（lib 不引 zustand）：`getSessionBlock`/`subscribeSessionBlock`/`triggerSessionBlock`（幂等首个 code 定终身；session_expired 顺手弃 sid，session_limit 保 sid）。测试钩子 `markSessionProbedForTest`/`resetSessionForTest`。 |
+| `src/lib/ws.ts` | `solveWsUrl()` 拼 `?sid=<sid>`（浏览器 WS 不能自定义 Header，与后端 US-003 query 口径对应）。 |
+| `src/types/ws.ts` | `ErrorMsg` 加可选 `code?: string`（后端 WS error 帧 additive 键，旧前端忽略语义）。 |
+| `src/components/SessionExpiredModal.tsx` | **新建** 阻断式全屏模态：`useSyncExternalStore(subscribeSessionBlock, getSessionBlock)` 订阅；`.session-block-overlay[role=alertdialog][aria-modal]`（z 3000，盖过 tour 2000/策略 1100）；**不可点遮罩/ESC/✕ 关闭，无关闭回调**，唯一出口 = 「刷新页面」按钮 `location.reload()`；COPY 双码文案与后端 PRD 逐字一致（expired=「会话已过期（5 分钟无操作），请刷新页面」/ limit=「当前使用用户过多（最多 4 人同时在线），请稍后尝试」，不显示上次活动时间）；无阻断码返回 null。 |
+| `src/App.tsx` | mount `useEffect(() => { void probeSession(); }, [])`（探测幂等：ensureSession once，StrictMode 双跑安全）+ `<SessionExpiredModal />` 单例（TourOverlay 之后）。 |
+| `src/hooks/useSolveRun.ts` | case 'error' 前置 `msg.code` 检查：session_expired/session_limit → `triggerSessionBlock(msg.code)`（WS 侧与 HTTP 同入口），再走既有 onError/finish。 |
+| 其余 8 处 fetch 调用点 | `useParseDxf` / `useCommitToNesting` / `useExport` / `ptypeStore` / `strategyStore`×3 / `PerTypeOverridesModal`×2：`fetch` → `apiFetch`，其余逻辑零改动。 |
+| `src/style.css` | `.session-block-overlay/-modal/-title/-text/-reload` 族（fixed inset 0 rgba(0,0,0,0.82) z 3000；360px 暗色卡 #26282e 同策略弹窗系；title #e08a8a；reload 按钮 #2ea06c）。 |
+
+### 关键不变量（多会话 US-005 立，后续故事不得破坏）
+
+1. **apiFetch 是唯一裸 fetch 出口** —— 新增网络请求必须走它（Header 注入 + 会话先行 + 阻断拦截三合一）；绕过 = 会话串台 / mount 竞态 401 / 阻断期间请求泄漏三重回归。
+2. **会话先行门不可拆** —— 任何会话作用域请求结构性晚于 POST /api/session（子组件 mount 早于 App 探测的 React effect 序是常态而非偶然）。
+3. **阻断无解除路径** —— triggerSessionBlock 后页面终态，唯一出口 = 刷新；不得加 ESC/遮罩/✕ 关闭或「继续使用」类旁路（被逐出会话的数据已丢，放行只会回到 default 语义串台）。
+4. **session_expired 必弃 sid** —— 后端墓碑 1h 拒重建旧 sid；保 sid 刷新 = 401 死循环。session_limit 必保 sid。
+5. **lib 层不引 zustand / 不 import store** —— 阻断态模块级 pub/sub + useSyncExternalStore 是既定分层（lib 被 store/组件双向依赖，引 store 即成环）。
+6. **mergeSessionHeaders 返回 plain object** —— 调用方/测试按 Record 属性直取的旧口径（Headers 实例会改键名大小写）。
+
+### 测试与浏览器验证
+
+vitest 741 全绿（新增 session.test 6 + api.test 18 + SessionExpiredModal.test 4 + useSolveRun WS 改写；存量 fetch 用例经 `markSessionProbedForTest` 零断言改动）；`npm run build` 通过。浏览器 harness `scripts/us005_session_verify.mjs`（playwright + chrome channel）：主相位 P1-P5 15/15（sid/刷新不变/Header 注入/双窗口上传互不串台三层取证/WS ?sid=/第 5 窗口加载即弹「用户过多」/阻断期间上传 0 请求）+ 过期相位 E1-E5 5/5（TTL=6：静置过期 → 操作 → 「会话已过期」弹窗 → ms_sid=null → 刷新新 sid 干净会话）。

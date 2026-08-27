@@ -29,6 +29,7 @@
 //   - hook 不读 uploadStore.doc（doc_id/filename 由调用方传入，hook 本身不依赖 doc 形状）。
 
 import { useCallback, useRef } from 'react';
+import { apiFetch } from '../lib/api';
 import { usePtypeStore } from '../store/ptypeStore';
 import { useUploadStore, type CommitSummary } from '../store/uploadStore';
 import { useUiStore } from '../store/uiStore';
@@ -81,7 +82,7 @@ export function useCommitToNesting(): UseCommitToNestingResult {
       });
 
       try {
-        const res = await fetch(COMMIT_TO_NESTING_URL, {
+        const res = await apiFetch(COMMIT_TO_NESTING_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ doc_id, filename }),

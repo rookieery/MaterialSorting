@@ -18,6 +18,7 @@
 //   - fetch 失败静默保留上一状态（网络抖动不炸 UI；jsdom 无后端时同理安全）。
 
 import { create } from 'zustand';
+import { apiFetch } from '../lib/api';
 import type {
   StrategyPhase,
   StrategyResult,
@@ -72,7 +73,7 @@ export const useStrategyStore = create<StrategyState>((set, get) => {
     // 新 run：清上一 run 的 result / 错误（result 常驻仅到下一次 start）。
     set({ result: null, errorMessage: null, lastStart: payload });
     try {
-      const r = await fetch('/api/strategy/start', {
+      const r = await apiFetch('/api/strategy/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
@@ -98,7 +99,7 @@ export const useStrategyStore = create<StrategyState>((set, get) => {
 
   stop: async () => {
     try {
-      await fetch('/api/strategy/stop', { method: 'POST' });
+      await apiFetch('/api/strategy/stop', { method: 'POST' });
     } catch {
       /* 网络错也继续 refresh（本地状态可能与后端不一致，以 refresh 收敛） */
     }
@@ -108,7 +109,7 @@ export const useStrategyStore = create<StrategyState>((set, get) => {
   refresh: async () => {
     const g = gen;
     try {
-      const r = await fetch('/api/strategy/status');
+      const r = await apiFetch('/api/strategy/status');
       if (g !== gen) return; // 在飞期间 start/reset 已接管 → 丢弃过期响应
       if (!r.ok) return;
       const st = (await r.json()) as StrategyStatus | null;
@@ -119,7 +120,7 @@ export const useStrategyStore = create<StrategyState>((set, get) => {
       // result 拉取失败保持 null，下一次 refresh 重试）。
       if ((st.state === 'done' || st.state === 'stopped') && get().result === null) {
         try {
-          const rr = await fetch('/api/strategy/result');
+          const rr = await apiFetch('/api/strategy/result');
           if (g !== gen) return;
           if (rr.ok) {
             set({ result: (await rr.json()) as StrategyResult });

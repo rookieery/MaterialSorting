@@ -1,8 +1,9 @@
 // useParseDxf —— 上传 DXF → POST /api/parse-dxf → 写入 uploadStore（US-005）。
 //
 // 设计要点（参考 useExport 的防连击 + 错误处理模式）：
-//   1. fetch 走相对路径 '/api/parse-dxf'（dev 由 Vite proxy 转 :8000，prod 同源；与 useExport
-//      内 fetch('/export', ...) 同口径，dev/prod 前端代码完全一致）。
+//   1. 请求走相对路径 '/api/parse-dxf'（dev 由 Vite proxy 转 :8000，prod 同源；与 useExport
+//      内 '/export' 同口径，dev/prod 前端代码完全一致；US-005 起统一经 lib/api.apiFetch
+//      注入 X-Session-Id）。
 //   2. multipart/form-data：FormData 仅一个 file 字段（单文件）。Content-Type 由 fetch
 //      自动设 multipart/form-data + boundary，**不能手设**（否则 boundary 丢失导致后端
 //      python-multipart 解析失败）。
@@ -28,6 +29,7 @@
 //     可选 await（如「上传完成后再切 Tab」类用法）。
 
 import { useCallback, useRef } from 'react';
+import { apiFetch } from '../lib/api';
 import { useUploadStore } from '../store/uploadStore';
 import { useCommitToNesting } from './useCommitToNesting';
 import type { ParsedDoc } from '../types/parsed';
@@ -67,7 +69,7 @@ export function useParseDxf(): UseParseDxfResult {
       const fd = new FormData();
       fd.append('file', file);
 
-      const res = await fetch(PARSE_DXF_URL, {
+      const res = await apiFetch(PARSE_DXF_URL, {
         method: 'POST',
         body: fd,
       });

@@ -23,6 +23,7 @@ import type {
 } from '../types/ws';
 import type { PerTypeOverrides, SolveParams } from '../types/v03';
 import { solveWsUrl } from '../lib/ws';
+import { triggerSessionBlock } from '../lib/api';
 import { applyFinal, runRegistry, type RunRecord } from '../store/runRegistry';
 
 /** start(cfg) 入参（外部传纯数据；hook 内部补 action/per_type 默认）。 */
@@ -154,6 +155,11 @@ export function useSolveRun(cb: UseSolveRunCallbacks = {}): {
           break;
         case 'error':
           rec.error = msg.message;
+          // US-005：WS error 帧带 code（session_expired/session_limit，后端 additive
+          // 键）→ 与 HTTP 401/429 同一全局阻断弹窗出口（lib/api）。
+          if (msg.code === 'session_expired' || msg.code === 'session_limit') {
+            triggerSessionBlock(msg.code);
+          }
           cbRef.current.onError?.(msg, rec);
           finish();
           break;

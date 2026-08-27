@@ -19,6 +19,7 @@ import { StrictMode } from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { useCommitToNesting } from "../useCommitToNesting";
+import { markSessionProbedForTest } from "../../lib/api";
 import { usePtypeStore } from "../../store/ptypeStore";
 import { useUploadStore } from "../../store/uploadStore";
 import { useUiStore } from "../../store/uiStore";
@@ -35,6 +36,9 @@ let container: HTMLDivElement | null = null;
 let root: Root | null = null;
 
 beforeEach(() => {
+  // US-005：预置「会话已探测」—— apiFetch 不前置 POST /api/session，fetch
+  // 计数 / 首调 URL 断言与本 story 前完全一致（会话门自身在 lib/api.test 覆盖）。
+  markSessionProbedForTest();
   useUploadStore.getState().reset();
   usePtypeStore.getState().reset();
   useUiStore.getState().setNestingEnabled(false);

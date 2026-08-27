@@ -6,6 +6,7 @@ import { StrictMode } from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { useExport } from "../hooks/useExport";
+import { markSessionProbedForTest } from "../lib/api";
 import { runRegistry, type RunRecord } from "../store/runRegistry";
 import type { FrameMsg, ManifestMsg } from "../types/ws";
 
@@ -21,6 +22,9 @@ let container: HTMLDivElement | null = null;
 let root: Root | null = null;
 
 beforeEach(() => {
+  // US-005：预置「会话已探测」—— apiFetch 不前置 POST /api/session，fetch
+  // 计数 / 首调 URL 断言与本 story 前完全一致（会话门自身在 lib/api.test 覆盖）。
+  markSessionProbedForTest();
   runRegistry.clear();
   captured = null;
   container = document.createElement("div");
