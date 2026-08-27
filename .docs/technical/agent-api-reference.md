@@ -24,7 +24,7 @@
 | mount | `/static/*` | 前端构建产物（JS/CSS/资源） | `StaticFiles(directory=paths.STATIC_DIR)` |
 | POST | `/export` | 导出最优 run → PNG / R12-DXF 附件下载 | `server.export` |
 | POST | `/api/parse-dxf` | US-004：multipart 上传母版 DXF → 深度解析 + g 码赋号 JSON | `server.parse_dxf` |
-| POST | `/api/commit-to-nesting` | US-010：把上传母版转排料 intermediate（Path A 全管线，覆盖写回 + .bak）+ US-020 commit 后 reload `_PIECES_STATE` | `server.commit_to_nesting` |
+| POST | `/api/commit-to-nesting` | US-010：把上传母版转排料 intermediate（Path A 全管线，覆盖写回 + .bak）+ US-020 commit 后 reload `_PIECES_STATE` + US-002 多会话：`X-Session-Id` 双写 per-doc intermediate + 会话快照绑定 | `server.commit_to_nesting` |
 | GET | `/api/ptypes` | US-020 D10（US-001 v2：键 = g 码 label）：返回当前 `_PIECES_STATE` 下每个 g 码的代表裁片（最小码内 parse 同序首个，含 `label` 编号），供前端高级配置弹窗缩略图/放大预览（D11 layer-aware） | `server.get_ptypes` |
 | POST | `/api/band-preview` | 2026-08-24 成带形态预览（高级配置弹窗「布局设置」band 行缩略图数据源）：主进程同步 `build_band_plan`，响应无 `WB_`，见下专节 | `routes_views.band_preview` |
 | POST | `/api/prefix-preview` | 2026-08-25 前缀组合形态预览（「布局设置」prefix 行缩略图数据源）：主进程同步 `eligible_sizes→pick_prefix_size→build_prefix_plan`，成员带 `tag`=g 码，响应无 `PS_`，见下专节 | `routes_views.prefix_preview` |
@@ -165,17 +165,20 @@ key = (group_key, -centroid_y, centroid_x, -area_mm2, block_name, piece_index)
 
 ## POST /api/commit-to-nesting — US-010 上传母版转 intermediate（Path A）
 
-把 US-004 落盘的母版 DXF 转成排料 intermediate（覆盖 `pieces_intermediate.json`），复用 `export_dxf` + `load_nest_pieces` 全管线。**Path A 实现（US-001 v2 重排：g 码先行、零丢片、零合成）**：服务端跑 `collect_pieces_with_details` → `labeling.assign_codes(pieces)`（最先执行、无名称映射参数）→ 逐片 `write_piece_dxf({label}_{size}.dxf)` + 写 `pieces_manifest.json` sidecar（`[{file,label,size}]`；仅 `size=None` 片跳过，无映射组不再 skip）→ `load_nest_pieces(pieces_dir)`（**manifest 驱动**）→ 写回 `paths.INTERMEDIATE`（schema v2：每母版 size≠None 轮廓恰一条）。CPU 密集管线跑在 `loop.run_in_executor(_executor, ...)` 复用 6-worker 线程池（与 `/ws/solve`、`/api/parse-dxf` 同池，防阻塞 WS）。
+把 US-004 落盘的母版 DXF 转成排料 intermediate（覆盖 `pieces_intermediate.json`），复用 `export_dxf` + `load_nest_pieces` 全管线。**Path A 实现（US-001 v2 重排：g 码先行、零丢片、零合成）**：服务端跑 `collect_pieces_with_details` → `labeling.assign_codes(pieces)`（最先执行、无名称映射参数）→ 逐片 `write_piece_dxf({label}_{size}.dxf)` + 写 `pieces_manifest.json` sidecar（`[{file,label,size}]`；仅 `size=None` 片跳过，无映射组不再 skip）→ `load_nest_pieces(pieces_dir)`（**manifest 驱动**）→ **US-002 双写**：主写 per-doc `uploads/<doc_id>_pieces/pieces_intermediate.json` + 镜像写 `paths.INTERMEDIATE`（schema v2：每母版 size≠None 轮廓恰一条；同一 doc dict 两个文件，先 per-doc 后镜像，镜像失败仅 warn）。CPU 密集管线跑在 `loop.run_in_executor(_executor, ...)` 复用 6-worker 线程池（与 `/ws/solve`、`/api/parse-dxf` 同池，防阻塞 WS）。
 
 ### 请求
 
-`application/json`：
+`application/json`（+ 可选 `X-Session-Id` Header，US-002 多会话绑定）：
 
 ```jsonc
 {
   "doc_id": "02a4d4e4f40e423196f026d291a94ea2",  // 必填，US-004 落盘的 uuid（无扩展名）
   "filename": "M1787(1)(2).dxf"                  // 可选，覆盖 intermediate source 字段；缺省用 <doc_id>.dxf
 }
+```
+
+**`X-Session-Id`（US-002）**：带 sid → commit 产物（per-doc 文件 + 会话快照）只归属该会话，**不触碰 default 内存**（别人 commit 不会覆盖我的数据）；无 sid → default 会话（现行为，`tests/test_commit_pipeline.py` 零改动回归）。会话解析在 CPU 管线**之前**（fail-fast：过期/超限/非法 sid 不跑管线不落盘）。
 ```
 
 `doc_id` 仅允许 `[0-9A-Za-z]{1,128}`（regex `_DOC_ID_RE`），防路径逃逸；`uuid.uuid4().hex`（32 位 hex）自然命中。
@@ -198,8 +201,9 @@ curl -X POST http://127.0.0.1:8000/api/commit-to-nesting \
   "n_written_dxf": 110,                 // 切出的单裁片 DXF 数（{label}_{size}.dxf，写入 uploads/<doc_id>_pieces/）
   "n_skipped": 0,                       // 跳过片数（US-001 v2 仅 size=None 会跳过；无映射组不再 skip）
   "skipped": [],                        // 截断的前 10 条跳过原因（排查用）
-  "bak": "D:\\code\\...\\pieces_intermediate.bak",  // 原 intermediate 备份路径
-  "reloaded": true                      // US-020：commit 后 _reload_pieces_state() 是否成功（罕见 I/O 竞态时 false + reload_error 字段）
+  "bak": "D:\\code\\...\\pieces_intermediate.bak",  // 原 intermediate 备份路径（镜像侧）
+  "reloaded": true,                     // US-020/US-002：快照注册是否成功（带 sid=会话快照，无 sid=default reload；罕见 I/O 竞态时 false + reload_error 字段）
+  "mirror_error": "..."                 // 仅镜像写失败时出现（per-doc 已落盘、会话不受影响，additive）
 }
 ```
 
@@ -208,15 +212,19 @@ curl -X POST http://127.0.0.1:8000/api/commit-to-nesting \
 | HTTP | 触发 | body |
 |------|------|------|
 | 400 | 请求体非 JSON / 缺 `doc_id` / 类型错 / `doc_id` 不匹配 `_DOC_ID_RE` | `{"error":"请求体须为 JSON"}` / `{"error":"缺少 doc_id 或类型错误"}` / `{"error":"doc_id 非法（仅允许字母数字，1-128 字符）"}` |
+| 400 | `X-Session-Id` 不匹配 `SID_RE`（US-002） | `{"error":"sid 非法"}` |
+| 401 | sid 命中墓碑 / 惰性超时（US-002，管线不跑不落盘） | `{"code":"session_expired","error":"会话已过期（5 分钟无操作），请刷新页面"}` |
+| 429 | 活跃会话数满且 sid 未注册（US-002） | `{"code":"session_limit","error":"当前使用用户过多（最多 4 人同时在线），请稍后尝试"}` |
 | 404 | `uploads/<doc_id>.dxf` 不存在 | `{"error":"未找到上传文件: <doc_id>"}` |
 | 422 | 全管线抛异常（collect_pieces 空 / write_piece_dxf 全跳过 / load_nest_pieces 空 / JSON 写盘失败） | `{"error":"commit 失败：<异常>"}` |
 
 ### 副作用 + 写盘
 
-1. **临时单裁片目录**：`paths.OUT_DIR/uploads/<doc_id>_pieces/`（`{label}_{size}.dxf` × N + `pieces_manifest.json` sidecar，每次 commit 先 `shutil.rmtree` 再重写，**idempotent**，同 `doc_id` 重跑会覆盖）。文件名仅人读，语义（label/size）全在 manifest —— 旧版目录（无 sidecar）被 `load_nest_pieces` 明确报错「请重新 commit」（FR-9 不静默兼容）。
-2. **intermediate 备份**：写回前 `shutil.copy2(paths.INTERMEDIATE, paths.INTERMEDIATE.with_suffix('.bak'))`。`pieces_intermediate.bak` 是上一次写回前的快照（首次 commit 无原文件则跳过备份）。**只保留一份**（再 commit 会覆盖 `.bak`）。
-3. **intermediate schema v2（US-001）**：`{doc_id(strategy US-004), source, gate_mm, n_pieces, total_area_mm2, pieces[], label_representatives}`；pieces 字段 `{pid, label, size, polygon, bbox, area_mm2, n_verts, allowed_angles, net_polygon(US-024), internal_lines(US-024), notches(US-024), grain_line(US-024)}` —— **无 `ptype`/`side`**（镜像/名称概念删除），`pid = f'{label}_{size}'`。`gate_mm=1980`（`nesting_bounds.load_pieces.GATE_MM`）、`allowed_angles=[0,180]`（v0.3 布纹线）。5 层字段由 `load_nest_pieces` 经 `_read_piece` + `_apply_layer_transforms` 与 polygon 共享 rotate→normalize transform 链后透传。顶层 `label_representatives`（原 `ptype_representatives`）：每 g 码 RAW 代表裁片（原始坐标，与上传预览同朝向）。`doc_id`（strategy US-004 新增）：commit 的母版原件定位键（`uploads/<doc_id>.dxf`，策略 start 的 config `master_dxf` 来源）；**旧 intermediate 无此键 → `/api/strategy/start` 422「母版信息缺少 doc_id，请重新上传并 commit」**。旧 v1 intermediate 被 `solver.load_pieces` 明确拒绝（「intermediate 为旧版 schema v1（含 ptype/side），请重新 commit 母版生成新数据」）。
-4. **commit 后 reload（US-020）**：`_commit_to_nesting_sync` 成功 → 立即调 `_reload_pieces_state()` 重读 intermediate 填入 `_PIECES_STATE`（threading.Lock 保护，原子替换）。下一次 `/ws/solve` / `/export` / `/api/ptypes` 即看到新裁片，**前端无需重启 ms-web**。reload 异常（罕见 I/O 竞态）降级为 `reloaded: false` + `reload_error` 字段，保留旧 state 不半切。
+1. **临时单裁片目录**：`paths.OUT_DIR/uploads/<doc_id>_pieces/`（`{label}_{size}.dxf` × N + `pieces_manifest.json` sidecar + **US-002 起加 `pieces_intermediate.json`（per-doc intermediate 主写点）**，每次 commit 先 `shutil.rmtree` 再重写，**idempotent**，同 `doc_id` 重跑会覆盖）。文件名仅人读，语义（label/size）全在 manifest —— 旧版目录（无 sidecar）被 `load_nest_pieces` 明确报错「请重新 commit」（FR-9 不静默兼容）。
+2. **US-002 双写**：同一 doc dict 写两文件，**顺序先 per-doc 后镜像** —— 主写 `uploads/<doc_id>_pieces/pieces_intermediate.json`（会话快照的数据源，多会话互不覆盖的磁盘锚点），镜像写全局 `paths.INTERMEDIATE`（单文档时代行为的兼容面：无 sid 启动 reload / CLI 工具链 / 人工排查；**带 sid commit 也刷镜像但不刷 default 内存** —— default = 最后无 sid commit 者，镜像 = 最后 commit 者，允许漂移）。镜像写失败仅 warn（stderr + 响应 `mirror_error` 键），不影响 per-doc 落盘与 200 响应。
+3. **intermediate 备份**：写回前 `shutil.copy2(paths.INTERMEDIATE, paths.INTERMEDIATE.with_suffix('.bak'))`（**备份行为保留在镜像侧**，per-doc 不做 .bak —— per-doc 目录本身随 commit 整体重写，天然 idempotent）。`pieces_intermediate.bak` 是上一次写回前的快照（首次 commit 无原文件则跳过备份）。**只保留一份**（再 commit 会覆盖 `.bak`）。
+4. **intermediate schema v2（US-001）**：`{doc_id(strategy US-004), source, gate_mm, n_pieces, total_area_mm2, pieces[], label_representatives}`；pieces 字段 `{pid, label, size, polygon, bbox, area_mm2, n_verts, allowed_angles, net_polygon(US-024), internal_lines(US-024), notches(US-024), grain_line(US-024)}` —— **无 `ptype`/`side`**（镜像/名称概念删除），`pid = f'{label}_{size}'`。`gate_mm=1980`（`nesting_bounds.load_pieces.GATE_MM`）、`allowed_angles=[0,180]`（v0.3 布纹线）。5 层字段由 `load_nest_pieces` 经 `_read_piece` + `_apply_layer_transforms` 与 polygon 共享 rotate→normalize transform 链后透传。顶层 `label_representatives`（原 `ptype_representatives`）：每 g 码 RAW 代表裁片（原始坐标，与上传预览同朝向）。`doc_id`（strategy US-004 新增）：commit 的母版原件定位键（`uploads/<doc_id>.dxf`，策略 start 的 config `master_dxf` 来源）；**旧 intermediate 无此键 → `/api/strategy/start` 422「母版信息缺少 doc_id，请重新上传并 commit」**。旧 v1 intermediate 被 `solver.load_pieces` 明确拒绝（「intermediate 为旧版 schema v1（含 ptype/side），请重新 commit 母版生成新数据」）。
+5. **commit 后快照注册（US-020 + US-002 会话绑定）**：`_commit_to_nesting_sync` 成功 → **带 sid**：`_build_pieces_state(per-doc 路径)` 构建快照挂到该会话（`st.state = 快照`、`st.doc_id = doc_id`，default 内存不动）；**无 sid**：`_reload_pieces_state(paths.INTERMEDIATE)` 重读镜像填入 `_PIECES_STATE`（threading.Lock 保护，原子 clear+update；default 会话 state 即同一 dict，自动跟随 —— 路由显式传 `paths.INTERMEDIATE` 是因为 `_reload_pieces_state` 缺省参数在 import 时绑定，裸调读不到 monkeypatch 后的路径）。下一次 `/ws/solve` / `/export` / `/api/ptypes` 即看到新裁片，**前端无需重启 ms-web**（读路由按 sid 取会话快照为 US-003 范围）。快照构建异常（罕见 I/O 竞态）降级为 `reloaded: false` + `reload_error` 字段，保留旧 state 不半切。
 
 ### 关键不变量
 
@@ -256,8 +264,8 @@ curl -X POST http://127.0.0.1:8000/api/session -H "X-Session-Id: 3f2a...hex"
 1. **容量闸门**：`MS_SESSION_MAX`（env，缺省 4）仅计活跃会话（default 不占额）；已有会话重复 POST 幂等、不受闸门影响。
 2. **空闲过期**：`MS_SESSION_TTL_SEC`（env，缺省 300）双路径检查 —— 请求时惰性检查 + 30s daemon 扫描线程（`ws_open>0` 的会话跳过：WS 连接钉住不误杀；扫描是惰性检查的兜底，已死会话不再发请求，名额只能由扫描回收）。
 3. **墓碑**：超时逐出丢全部状态只留 `{sid, ts}`（FIFO ≤128、存活 1h）；墓碑命中 → 401 不静默重建（防过期 sid 被当新会话）；墓碑 1h 过期或 FIFO 淘汰后该 sid 视为全新可正常新建。
-4. **合法但未注册 sid 的读路径**（`resolve(create=False)`，服务重启丢内存场景）同过期语义 401。
-5. **会话状态结构**：`SessionState = {sid, state(pieces 快照 dict), doc_id, last_active, ws_open, strategy_busy}`；WS 钉住 API = `ws_acquire/ws_release`（计数），活性刷新 = `touch(sid)`（GIL-safe float 写）。
+4. **合法但未注册 sid 的读路径**（`resolve(create=False)`，服务重启丢内存场景）同过期语义 401；**写路径（US-002 commit）走 `resolve(create=True)`** —— 数据自带（上传母版），合法未注册 sid 可直接 commit 建会话，过期/墓碑/超限仍 401/429。
+5. **会话状态结构**：`SessionState = {sid, state(pieces 快照 dict), doc_id, last_active, ws_open, strategy_busy}`；`state` 由 US-002 commit 填 per-doc 快照（`_build_pieces_state(per-doc 路径)`，`doc_id` 同步绑定）；WS 钉住 API = `ws_acquire/ws_release`（计数），活性刷新 = `touch(sid)`（GIL-safe float 写）。
 
 ### 关键不变量
 

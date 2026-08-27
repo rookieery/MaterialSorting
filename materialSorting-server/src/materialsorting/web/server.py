@@ -84,6 +84,21 @@ UPLOADS_DIR = Path(paths.OUT_DIR) / 'uploads'
 # US-010：doc_id 合法字符集 —— 已移至 sessions.SID_RE（doc_id/sid 同规则单一真相源），
 # 本模块经顶部 ``from .sessions import SID_RE as _DOC_ID_RE`` re-export 保旧名。
 
+# US-002（多会话）：per-doc intermediate 文件名（与全局镜像 paths.INTERMEDIATE 同名
+# 同 schema v2），落盘在切片目录内 —— 与 {label}_{size}.dxf / pieces_manifest.json
+# 同源同生命周期（commit 先清空重写整个目录，天然 idempotent）。
+PIECES_INTERMEDIATE_NAME = 'pieces_intermediate.json'
+
+
+def _per_doc_intermediate(doc_id: str) -> Path:
+    """US-002：per-doc intermediate 路径 ``out/uploads/<doc_id>_pieces/pieces_intermediate.json``。
+
+    commit 双写的主写点（会话快照数据源，schema 与全局镜像一致）；后续读路由
+    （US-003）与磁盘清理（US-006）复用同一约定。依赖模块级 ``UPLOADS_DIR``
+    （tests monkeypatch ``server_mod.UPLOADS_DIR`` 经 ``__globals__`` 生效）。
+    """
+    return UPLOADS_DIR / f'{doc_id}_pieces' / PIECES_INTERMEDIATE_NAME
+
 
 # ---------------------------------------------------------------- US-004 上传解析
 
@@ -135,8 +150,10 @@ def _commit_to_nesting_sync(doc_id: str, src_dxf: str, source_name: str) -> dict
     3. ``write_piece_dxf`` 切单裁片 ``{label}_{size}.dxf``（5 层全写出）+ 写
        ``pieces_manifest.json`` sidecar 到 ``paths.OUT_DIR/uploads/<doc_id>_pieces/``；
     4. ``load_nest_pieces(pieces_dir)`` manifest 驱动对齐布纹线 + 归一化（无镜像展开）；
-    5. 备份原 intermediate 为 ``.bak`` 后覆盖写回（schema v2：每母版轮廓恰一条，
-       片内无 ptype/side，顶层 ``label_representatives``）。
+    5. US-002 双写：主写 per-doc ``uploads/<doc_id>_pieces/pieces_intermediate.json``
+       （schema v2：每母版轮廓恰一条，片内无 ptype/side，顶层 ``label_representatives``），
+       镜像写全局 ``paths.INTERMEDIATE``（同一 doc dict 两个文件；顺序先 per-doc 后
+       镜像，镜像失败仅 warn 不影响会话；``.bak`` 备份行为保留在镜像侧）。
 
     未录入名称的组不再 skip（零丢片）；size 为 None 的片仍跳过（无法落
     ``{label}_{size}.dxf`` 文件名，与 parse 响应的 null 码组一致）。
@@ -225,16 +242,30 @@ def _commit_to_nesting_sync(doc_id: str, src_dxf: str, source_name: str) -> dict
         'label_representatives': label_representatives,
     }
 
-    # 备份原 intermediate 为 .bak（首次写回时无原文件 → 不备份）
-    intermediate = Path(paths.INTERMEDIATE)
-    bak_path = intermediate.with_suffix('.bak')
-    intermediate.parent.mkdir(parents=True, exist_ok=True)
-    if intermediate.exists():
-        shutil.copy2(intermediate, bak_path)
-    with open(intermediate, 'w', encoding='utf-8') as f:
+    # US-002 双写（同一 doc dict 写两文件，顺序先 per-doc 后镜像）：
+    #   主写 per-doc —— 会话快照的数据源（多会话互不覆盖的磁盘锚点）；
+    #   镜像写全局 paths.INTERMEDIATE —— 单文档时代行为的兼容面（无 sid 启动 reload
+    #   / CLI 工具链 / 人工排查），失败仅 warn 不影响会话（快照只依赖 per-doc 落盘）。
+    per_doc_path = _per_doc_intermediate(doc_id)
+    with open(per_doc_path, 'w', encoding='utf-8') as f:
         json.dump(doc, f, ensure_ascii=False)
 
-    return {
+    mirror_error: str | None = None
+    # 备份原 intermediate 为 .bak（首次写回时无原文件 → 不备份；备份行为保留在镜像侧）
+    intermediate = Path(paths.INTERMEDIATE)
+    bak_path = intermediate.with_suffix('.bak')
+    try:
+        intermediate.parent.mkdir(parents=True, exist_ok=True)
+        if intermediate.exists():
+            shutil.copy2(intermediate, bak_path)
+        with open(intermediate, 'w', encoding='utf-8') as f:
+            json.dump(doc, f, ensure_ascii=False)
+    except Exception as e:
+        mirror_error = str(e)
+        print(f'[server] intermediate 镜像写失败（不影响会话，per-doc 已落盘）：{e}',
+              file=sys.stderr)
+
+    result = {
         'doc_id': doc_id,
         'source': source_name,
         'sizes': sorted({m['size'] for m in manifest}),
@@ -245,6 +276,9 @@ def _commit_to_nesting_sync(doc_id: str, src_dxf: str, source_name: str) -> dict
         'skipped': skipped[:10],   # 截断，避免响应过大
         'bak': str(bak_path),
     }
+    if mirror_error is not None:
+        result['mirror_error'] = mirror_error
+    return result
 
 
 @app.post('/api/commit-to-nesting')
@@ -261,6 +295,13 @@ async def commit_to_nesting(req: Request):
     US-020：commit 成功后立即 ``_reload_pieces_state()`` —— 下一次 ``/ws/solve`` /
     ``/export`` 路由调用 ``_get_pieces_state()`` 即拿到新 intermediate（前端无需重启
     ``ms-web``）。返回 payload 加 ``reloaded: true`` 标记 reload 已生效。
+
+    US-002（多会话）：读 ``X-Session-Id`` Header —— 带 sid：会话解析先行（fail-fast，
+    过期 401 / 超限 429 / 非法 400，不跑 CPU 管线不落盘），commit 成功后用
+    ``_build_pieces_state(per-doc 路径)`` 构建快照注册进该会话，**不触碰 default 内存**
+    （镜像文件已由 commit_sync 双写刷新，但 default = 最后无 sid commit 者，镜像 =
+    最后 commit 者，允许漂移）；无 sid：default 会话更新（现行为；default 与
+    ``runtime._PIECES_STATE`` 同一 dict，reload 即同步）。
     """
     try:
         payload = await req.json()
@@ -272,6 +313,15 @@ async def commit_to_nesting(req: Request):
         return JSONResponse({'error': '缺少 doc_id 或类型错误'}, status_code=400)
     if not _DOC_ID_RE.match(doc_id):
         return JSONResponse({'error': 'doc_id 非法（仅允许字母数字，1-128 字符）'}, status_code=400)
+
+    sid = (req.headers.get('x-session-id') or '').strip() or None
+    if sid:   # 带 sid：解析先行（刷 last_active；SessionError → 结构化错误早退）
+        try:
+            st = session_registry.resolve(sid, create=True)
+        except SessionError as e:
+            return JSONResponse(e.payload(), status_code=e.status)
+    else:     # 无 sid：default 会话（state = runtime._PIECES_STATE 同一 dict）
+        st = session_registry.resolve(None)
 
     src = UPLOADS_DIR / f'{doc_id}.dxf'
     if not src.exists():
@@ -286,15 +336,25 @@ async def commit_to_nesting(req: Request):
     except Exception as e:
         return JSONResponse({'error': f'commit 失败：{e}'}, status_code=422)
 
-    # US-020：intermediate 已写盘 → 锁内原子重读，下次 /ws/solve 拿到新裁片。
-    # 防御：commit_sync 写盘已成功，正常路径 reload 必成功；若 reload 因罕见的 I/O
-    # 竞态（如并发外部进程改 intermediate）失败，记录日志、保持旧 state、标记
-    # reloaded=false —— 前端 US-021 看到 reloaded=false 可降级提示「需重启 ms-web」。
+    # US-020/US-002：intermediate 已写盘 → 快照注册。
+    #   带 sid：读 per-doc 落盘构建快照挂到该会话（default 内存不动）；
+    #   无 sid：锁内原子重读镜像 → 下次 /ws/solve 拿到新裁片（default 会话 state
+    #   即 runtime._PIECES_STATE 同一 dict，自动跟随）。
+    # 防御：commit_sync 写盘已成功，正常路径必成功；若因罕见 I/O 竞态失败，记录
+    # 日志、保留旧 state、标记 reloaded=false —— 前端 US-021 看到 reloaded=false
+    # 可降级提示「需重启 ms-web」。
     try:
-        _reload_pieces_state()
+        if sid:
+            st.state = _build_pieces_state(str(_per_doc_intermediate(doc_id)))
+        else:
+            # 显式传 paths.INTERMEDIATE（调用时取模块属性）：_reload_pieces_state 的
+            # 缺省参数在 import 时已绑定旧值，monkeypatch paths.INTERMEDIATE 后裸调
+            # 会重读启动期真实路径（测试隔离 + 路径热更都依赖调用时取值）。
+            _reload_pieces_state(paths.INTERMEDIATE)
+        st.doc_id = doc_id
         result['reloaded'] = True
     except Exception as e:
-        print(f'[server] commit 后 reload 失败（保留旧 state）：{e}', file=sys.stderr)
+        print(f'[server] commit 后会话快照构建失败（保留旧 state）：{e}', file=sys.stderr)
         result['reloaded'] = False
         result['reload_error'] = str(e)
     return result

@@ -709,5 +709,22 @@
         "passes": true
       }
     ]
+  },
+  {
+    "branchName": "ralph/web-multi-session",
+    "stories": [
+      {
+        "id": "US-001",
+        "title": "后端会话注册表与生命周期",
+        "description": "As a 排料工程师，我希望后端按 sid 维护独立会话（容量上限 4、5 分钟空闲过期、墓碑可判），以便多端同时使用同一服务器互不干扰且资源占用有界。\n\n具体任务：\n1. 新增 materialSorting-server/src/materialsorting/web/sessions.py — SessionRegistry（OrderedDict[sid → SessionState]，SessionState={doc_id, pieces快照, gate_mm, strategy状态位, last_active, ws_open}）。会话解析收敛到单一 resolve 函数：带合法 sid → 按 sid 归属；不带 → 固定常量键 DEFAULT_SID='default'（default 豁免上限与过期、不占 4 个名额、不参与墓碑；其 state 与 runtime._PIECES_STATE 为同一 dict 对象，uuid4 hex sid 仅含 0-9a-f 与含非 hex 字符的 'default' 结构性不可碰撞）。sid 校验复用 server._DOC_ID_RE（[0-9A-Za-z]{1,128}）。容量闸门：MS_SESSION_MAX=4（仅计活跃会话，超出 → 429 {code:'session_limit', error:'当前使用用户过多（最多 4 人同时在线），请稍后尝试'}）。TTL：MS_SESSION_TTL_SEC=300，请求时惰性检查 + 30s daemon 扫描线程（ws_open>0 跳过）；超时逐出为墓碑 {sid, ts}（丢状态只留 sid，FIFO ≤128、存活 1h），墓碑命中 → 401 {code:'session_expired', error:'会话已过期（5 分钟无操作），请刷新页面'}——保证过期后不被当新 sid 静默重建。提供 ws pin API（acquire/release 计数）与 touch(sid) 刷活性。模块仅标准库 + 同包依赖，不 import server.py（无环）。\n2. materialSorting-server/src/materialsorting/web/server.py — 注册 POST /api/session：读 X-Session-Id Header，合法 → 建会话/幂等刷活性 200 {ok:true, sid}；超限 429；墓碑/过期 401；非法格式 400 {error:'sid 非法'}。runtime.py 的 default 会话 state 与 _PIECES_STATE 保持同一 dict 对象（clear+update 快照模式不变）。\n3. 新增 tests/test_web_sessions.py（TestClient + MS_OUT_DIR 隔离；TTL 用可注入时钟或极短值，不依赖真实墙钟长等待）。\n\n验收标准：\n- POST /api/session 合法 sid 200 且幂等；已有 4 活跃会话时第 5 个新 sid → 429 session_limit；default 不受限不占额。\n- 超时后带 sid 请求 → 401 session_expired 且不静默重建；墓碑 1h 过期或 FIFO 淘汰后该 sid 可正常新建。\n- 扫描线程逐出 ws_open==0 的超时会话为墓碑；ws_open>0 不逐出。\n- sid 格式非法 → 400。\n- tests/test_web_sessions.py 全绿；python -m materialsorting.web.sessions 冒烟（打印配置 + 模拟建会话/过期/超限生命周期）跑通；分层依赖未反向。",
+        "passes": true
+      },
+      {
+        "id": "US-002",
+        "title": "commit 双写与会话绑定",
+        "description": "As a 排料工程师，我希望 commit 的母版写到自己文档的 intermediate 文件并挂到我的会话，以便别人上传母版不会在磁盘或内存覆盖我的数据。\n\n具体任务：\n1. materialSorting-server/src/materialsorting/web/server.py — _commit_to_nesting_sync：intermediate 主写 out/uploads/<doc_id>_pieces/pieces_intermediate.json（schema 不变），全局 paths.INTERMEDIATE 保留镜像写（同一 doc dict 双写两文件，顺序先 per-doc 后镜像，镜像失败仅 warn 不影响会话；.bak 备份行为保留在镜像侧）。\n2. 同文件 commit_to_nesting 路由 — 读 X-Session-Id：带 sid → 用 runtime._build_pieces_state(per-doc 路径)（已参数化签名）构建快照注册进该会话，不触碰 default 内存；无 sid → default 会话更新（现行为；default 与 runtime._PIECES_STATE 同一 dict）。带 sid 的 commit 同时刷新镜像文件但不刷 default 内存（default = 最后无 sid commit 者，镜像 = 最后 commit 者，允许漂移）。\n\n验收标准：\n- 带 sid commit 成功后 out/uploads/<doc_id>_pieces/pieces_intermediate.json 存在且与全局镜像内容逐字段一致（同一 doc dict 双写）。\n- 会话 A、B 先后 commit 不同 doc：A 会话 state（pieces/pieces_by_id/gate_mm）保持自己的 doc 不受 B 影响，两份 per-doc 文件并存。\n- 无 sid commit → default 会话更新：tests/test_commit_pipeline.py 及现有 commit 相关测试零改动全绿。\n- runtime._PIECES_STATE 与 default 会话 state 是同一 dict 对象（is 判等单测锁死）。\n- pytest 新增双会话 commit 隔离用例；python -m materialsorting.web.server import 链无环、分层依赖未反向。",
+        "passes": true
+      }
+    ]
   }
 ]
