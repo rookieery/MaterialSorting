@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import re
 import shutil
 import sys
 import uuid
@@ -66,6 +65,15 @@ from .parse_payload import (
     _build_parse_payload,
     _size_sort_key,
 )
+# US-001（web 多会话）：sessions → runtime 单向依赖（sessions 不 import 本模块，无环）。
+# sid 字符集单一真相源移至 sessions.SID_RE（doc_id/sid 同规则），此处 re-export 为
+# ``_DOC_ID_RE`` 保旧名兼容（US-010 commit 校验继续用）；``session_registry`` 是全
+# 进程唯一 SessionRegistry 单例（POST /api/session + 后续 US-002~004 各入口共用）。
+from .sessions import (  # noqa: E402
+    SID_RE as _DOC_ID_RE,
+    SessionError,
+    registry as session_registry,
+)
 
 app = FastAPI(title='排料可视化工作台')
 app.mount('/static', StaticFiles(directory=STATIC_DIR), name='static')
@@ -73,8 +81,8 @@ app.mount('/static', StaticFiles(directory=STATIC_DIR), name='static')
 # US-004：上传解析配置
 UPLOAD_MAX_BYTES = 20 * 1024 * 1024   # 20MB 上限（实测生产母版 ~3MB，留足余量）
 UPLOADS_DIR = Path(paths.OUT_DIR) / 'uploads'
-# US-010：doc_id 合法字符集（仅允许字母数字，防路径逃逸；uuid.uuid4().hex 自然命中）
-_DOC_ID_RE = re.compile(r'^[0-9A-Za-z]{1,128}$')
+# US-010：doc_id 合法字符集 —— 已移至 sessions.SID_RE（doc_id/sid 同规则单一真相源），
+# 本模块经顶部 ``from .sessions import SID_RE as _DOC_ID_RE`` re-export 保旧名。
 
 
 # ---------------------------------------------------------------- US-004 上传解析
@@ -292,6 +300,30 @@ async def commit_to_nesting(req: Request):
     return result
 
 
+# ---------------------------------------------------------------- US-001 会话注册
+
+@app.post('/api/session')
+async def create_session(request: Request):
+    """US-001：会话注册 / 幂等刷活性。读 ``X-Session-Id`` Header（缺省 → default 会话）。
+
+    - 合法 sid 且容量未满 → 建会话或刷活性，``200 {ok:true, sid}``；
+    - 活跃会话数达 ``MS_SESSION_MAX``（缺省 4，default 不占额）→ ``429
+      {code:'session_limit'}``；
+    - sid 命中墓碑 / 惰性检查发现已超时 → ``401 {code:'session_expired'}``（不静默
+      重建，前端阻断弹窗要求刷新）；
+    - sid 格式非法 → ``400 {error:'sid 非法'}``。
+
+    会话生命周期细节（TTL/墓碑/扫描线程）见 ``sessions.py``；本路由只做
+    Header 解析 + ``resolve(create=True)`` + 异常 → JSONResponse 映射。
+    """
+    sid = (request.headers.get('x-session-id') or '').strip() or None
+    try:
+        st = session_registry.resolve(sid, create=True)
+    except SessionError as e:
+        return JSONResponse(e.payload(), status_code=e.status)
+    return {'ok': True, 'sid': st.sid}
+
+
 # ------------------------------------------------- 视图/导出/WS 路由（机械拆出，路由表顺序与拆分前一致）
 from . import routes_views, routes_ws  # noqa: E402
 
@@ -323,6 +355,10 @@ def main():
 from .strategy import register_strategy_routes   # noqa: E402
 
 register_strategy_routes(app)
+
+# US-001：会话过期 30s daemon 扫描线程 —— 惰性检查的兜底（已死会话不再发请求，
+# 容量名额只能由扫描回收）。daemon=True：进程退出不阻塞；测试经 stop_scanner() 停。
+session_registry.start_scanner()
 
 
 if __name__ == '__main__':

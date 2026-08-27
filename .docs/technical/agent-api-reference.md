@@ -20,6 +20,7 @@
 | 方法 | 路径 | 说明 | 实现 |
 |------|------|------|------|
 | GET | `/` | 返回 `static/index.html`（prod 入口） | `server.index` → `FileResponse` |
+| POST | `/api/session` | 多会话 US-001：会话注册 / 幂等刷活性（读 `X-Session-Id` Header；容量上限 / 空闲过期墓碑判定的唯一注册入口），见下专节 | `server.create_session` → `sessions.registry.resolve(create=True)` |
 | mount | `/static/*` | 前端构建产物（JS/CSS/资源） | `StaticFiles(directory=paths.STATIC_DIR)` |
 | POST | `/export` | 导出最优 run → PNG / R12-DXF 附件下载 | `server.export` |
 | POST | `/api/parse-dxf` | US-004：multipart 上传母版 DXF → 深度解析 + g 码赋号 JSON | `server.parse_dxf` |
@@ -224,6 +225,46 @@ curl -X POST http://127.0.0.1:8000/api/commit-to-nesting \
 3. **NestPiece 5 层全透传**：毛版/净版/内部线/刺口/布纹随 polygon 共享 rotate→normalize 变换链（无 mirror 分支）。
 4. **回归等价（历史口径，v1 时代）**：旧版 commit 产物与历史全码 CLI 管线等价（实测 176/176、零面积 diff）；v2 起验收口径改为「intermediate 条数 = 母版 size≠None 轮廓数 + parse↔intermediate 逐片 label 对齐（AC#5）」，`tests/test_commit_pipeline.py` 覆盖。
 5. **路径一律走 `paths`**：`paths.OUT_DIR/uploads/`、`paths.INTERMEDIATE`、`paths.INTERMEDIATE.with_suffix('.bak')`；不硬编码 `..` 上溯。
+
+## POST /api/session — 多会话 US-001：会话注册 / 幂等刷活性（`sessions.py`）
+
+ms-web 多端串台治理的第一块：后端按 sid 维护独立会话（容量上限 4、5 分钟空闲过期、过期墓碑可判）。本路由是唯一注册入口；sid 校验/归属/过期/超限全部收敛在 `sessions.SessionRegistry.resolve()`（单一解析函数，后续 US-002~004 各端点复用）。
+
+### 请求
+
+无请求体。sid 走 **`X-Session-Id` HTTP Header**（浏览器 fetch 可自定义 Header；WS 因不可自定义 Header 走 `?sid=` query，见 US-003）。
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/session -H "X-Session-Id: 3f2a...hex"
+```
+
+- sid 合法字符集 = `SID_RE`（`^[0-9A-Za-z]{1,128}$`，与 doc_id 同规则；单一真相源在 `sessions.py`，`server._DOC_ID_RE` re-export 同一编译对象）。
+- **缺省 Header**（旧前端 / curl / 现有 pytest）→ `default` 会话：豁免容量上限与空闲过期、不占 `MS_SESSION_MAX` 名额、不参与墓碑；其 pieces 快照 = `runtime._PIECES_STATE` **同一 dict 对象**（行为与单文档时代逐字节一致）。
+
+### 响应
+
+| 场景 | 状态 | 响应体 |
+|------|------|--------|
+| 合法 sid 建会话 / 已存在幂等刷活性 | 200 | `{"ok": true, "sid": "<sid>"}` |
+| 无 Header（→ default 会话） | 200 | `{"ok": true, "sid": "default"}` |
+| 活跃会话数已满（`MS_SESSION_MAX`，缺省 4） | 429 | `{"code": "session_limit", "error": "当前使用用户过多（最多 4 人同时在线），请稍后尝试"}` |
+| sid 命中墓碑 / 惰性检查发现已超时 | 401 | `{"code": "session_expired", "error": "会话已过期（5 分钟无操作），请刷新页面"}` |
+| sid 格式非法 | 400 | `{"error": "sid 非法"}`（无 code 键） |
+
+### 生命周期语义（`sessions.SessionRegistry`，全内存无磁盘态）
+
+1. **容量闸门**：`MS_SESSION_MAX`（env，缺省 4）仅计活跃会话（default 不占额）；已有会话重复 POST 幂等、不受闸门影响。
+2. **空闲过期**：`MS_SESSION_TTL_SEC`（env，缺省 300）双路径检查 —— 请求时惰性检查 + 30s daemon 扫描线程（`ws_open>0` 的会话跳过：WS 连接钉住不误杀；扫描是惰性检查的兜底，已死会话不再发请求，名额只能由扫描回收）。
+3. **墓碑**：超时逐出丢全部状态只留 `{sid, ts}`（FIFO ≤128、存活 1h）；墓碑命中 → 401 不静默重建（防过期 sid 被当新会话）；墓碑 1h 过期或 FIFO 淘汰后该 sid 视为全新可正常新建。
+4. **合法但未注册 sid 的读路径**（`resolve(create=False)`，服务重启丢内存场景）同过期语义 401。
+5. **会话状态结构**：`SessionState = {sid, state(pieces 快照 dict), doc_id, last_active, ws_open, strategy_busy}`；WS 钉住 API = `ws_acquire/ws_release`（计数），活性刷新 = `touch(sid)`（GIL-safe float 写）。
+
+### 关键不变量
+
+1. `sessions.registry.resolve(None).state is runtime._PIECES_STATE`（is 判等单测锁死 —— default 会话自动跟随 commit 的 clear+update reload）。
+2. `'default'` 含非 hex 字符，与 uuid4 hex sid（仅 0-9a-f）结构性不可碰撞。
+3. `sessions.py` 仅标准库 + 同包 `runtime`，不 import `server.py`（server → sessions 单向无环，AST 守卫在 `tests/test_web_sessions.py`）。
+4. 冒烟：`python -m materialsorting.web.sessions`（打印配置 + 私有 registry 模拟建会话/过期/超限/墓碑/ws 钉住全生命周期）。
 
 ## GET /api/ptypes — US-020 裁片 g 码代表（D10/D11；US-001 v2：键 = label）
 
