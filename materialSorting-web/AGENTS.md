@@ -497,7 +497,7 @@ src/
 
 ## 多会话 US-005 关键约定（前端会话接入与阻断弹窗 调用方必读）
 
-后端多会话（sessions.py 注册表：容量 4 / 5 分钟空闲过期 / 过期墓碑 1h）的前端侧接入，2026-08-27 落地。
+后端多会话（sessions.py 注册表：容量 4 / 10 分钟空闲过期 / 过期墓碑 1h）的前端侧接入，2026-08-27 落地。
 
 - **唯一裸 fetch 出口 = `lib/api.ts` 的 `apiFetch`**：全站 HTTP 请求（useParseDxf / useCommitToNesting / useExport / ptypeStore / strategyStore×3 / PerTypeOverridesModal×2）一律走它 —— `grep 'fetch('` 应仅命中 `lib/api.ts`。新增网络请求**必须** apiFetch（结构性带 `X-Session-Id`，不落 default 会话）；裸 fetch 会绕过会话先行门与阻断拦截。
 - **sid 单一真相源 = `lib/session.ts` `getSessionId()`**：localStorage 键 `ms_sid`，uuid4 hex 32 位，get-or-create（非法落盘值重铸），刷新不变。直接 import 仅 `lib/api.ts`（Header 注入）与 `lib/ws.ts`（?sid= 拼接）两处；组件层不碰 sid。

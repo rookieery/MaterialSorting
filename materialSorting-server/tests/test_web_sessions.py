@@ -138,7 +138,7 @@ def test_session_expired_401_and_no_silent_rebuild(client, monkeypatch):
     assert r.status_code == 401
     body = r.json()
     assert body['code'] == 'session_expired'
-    assert body['error'] == '会话已过期（5 分钟无操作），请刷新页面'
+    assert body['error'] == '会话已过期（10 分钟无操作），请刷新页面'
     # 不静默重建：状态已丢、只留墓碑
     assert reg.peek('aaaabbbb') is None
     assert reg.tombstoned('aaaabbbb')

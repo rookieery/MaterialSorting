@@ -3,7 +3,7 @@
 //
 // 前置：ms-web 在 :8000 运行，且会话注册表干净（P7 需要 4 空席；跑前重启 ms-web）。
 //
-//   node scripts/us007_e2e_verify.mjs           # 主相位（默认 TTL=300 服务器）
+//   node scripts/us007_e2e_verify.mjs           # 主相位（默认 TTL=600 服务器）
 //   node scripts/us007_e2e_verify.mjs --expire  # 生命周期相位（需 MS_SESSION_TTL_SEC=6）
 //
 // 主相位（双浏览器 A=5336 / B=M1787 各自上传不同母版）：
@@ -375,7 +375,7 @@ if (!EXPIRE) {
     if (text) break;
     await page.waitForTimeout(1000);
   }
-  check('E3a 空闲 >TTL 后操作弹「会话已过期」', text === '会话已过期（5 分钟无操作），请刷新页面', text || 'no modal');
+  check('E3a 空闲 >TTL 后操作弹「会话已过期」', text === '会话已过期（10 分钟无操作），请刷新页面', text || 'no modal');
   const sidAfter = await page.evaluate(() => localStorage.getItem('ms_sid'));
   check('E3b 弹窗后 ms_sid 已丢弃', sidAfter === null, 'ms_sid=' + sidAfter);
   await page.click('.session-block-reload');

@@ -14,7 +14,7 @@
 //      后续 HTTP 请求不再发出（本组件只负责展示，拦截逻辑在 lib/api）。
 //
 // 文案（PRD US-005 指定）：
-//   session_expired → 「会话已过期（5 分钟无操作），请刷新页面」（不显示上次活动时间）
+//   session_expired → 「会话已过期（10 分钟无操作），请刷新页面」（不显示上次活动时间）
 //   session_limit   → 「当前使用用户过多（最多 4 人同时在线），请稍后尝试」
 //
 // 订阅方式：React 18 useSyncExternalStore（lib/api 的模块级 pub/sub；不引 zustand
@@ -28,7 +28,7 @@ import { getSessionBlock, subscribeSessionBlock, type SessionBlockCode } from '.
 const COPY: Record<SessionBlockCode, { title: string; text: string }> = {
   session_expired: {
     title: '会话已过期',
-    text: '会话已过期（5 分钟无操作），请刷新页面',
+    text: '会话已过期（10 分钟无操作），请刷新页面',
   },
   session_limit: {
     title: '当前使用用户过多',

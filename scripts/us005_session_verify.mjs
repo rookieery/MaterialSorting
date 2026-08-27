@@ -4,7 +4,7 @@
 // 前置：ms-web 在 :8000 运行，且会话注册表干净 —— 运行前重启 ms-web（P4 需要
 // 恰好 4 个空席；任何残留 sid / curl 探测都会让第 3/4 窗口误吃 429）。
 //
-//   node scripts/us005_session_verify.mjs          # 主相位（默认 TTL=300 服务器）
+//   node scripts/us005_session_verify.mjs          # 主相位（默认 TTL=600 服务器）
 //   node scripts/us005_session_verify.mjs --expire  # 过期相位（需 MS_SESSION_TTL_SEC=6）
 //
 // 主相位 P1-P5：sid 落库/刷新不变/Header 注入；双窗口上传互不串台（弹窗徽章 +
@@ -201,7 +201,7 @@ if (!EXPIRE) {
     if (text) break;
     await page.waitForTimeout(1000);
   }
-  check('E2 过期后操作 → 「会话已过期」弹窗', text === '会话已过期（5 分钟无操作），请刷新页面', text || 'no modal');
+  check('E2 过期后操作 → 「会话已过期」弹窗', text === '会话已过期（10 分钟无操作），请刷新页面', text || 'no modal');
   const sidAfter = await page.evaluate(() => localStorage.getItem('ms_sid'));
   check('E3 弹窗后 ms_sid 已丢弃（墓碑出口）', sidAfter === null, 'ms_sid=' + sidAfter);
   await page.click('.session-block-reload');

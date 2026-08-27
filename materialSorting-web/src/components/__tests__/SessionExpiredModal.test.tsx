@@ -1,6 +1,6 @@
 // US-005 SessionExpiredModal 单测：阻断式全屏模态（唯一出口 = 刷新按钮）。
 //   AC1 未阻断 → 渲染 null（零 DOM 开销）。
-//   AC2 session_expired → 「会话已过期（5 分钟无操作），请刷新页面」（不显示上次活动时间）。
+//   AC2 session_expired → 「会话已过期（10 分钟无操作），请刷新页面」（不显示上次活动时间）。
 //   AC3 session_limit → 「当前使用用户过多（最多 4 人同时在线），请稍后尝试」。
 //   AC4 点击「刷新页面」→ location.reload()；无 ✕ / ESC / 遮罩关闭路径。
 
@@ -65,7 +65,7 @@ describe('SessionExpiredModal（US-005）', () => {
     expect(overlay).not.toBeNull();
     expect(overlay!.getAttribute('role')).toBe('alertdialog');
     expect(el.querySelector('.session-block-text')!.textContent).toBe(
-      '会话已过期（5 分钟无操作），请刷新页面',
+      '会话已过期（10 分钟无操作），请刷新页面',
     );
     // 唯一出口：刷新按钮 → location.reload()
     const btn = el.querySelector<HTMLButtonElement>('.session-block-reload');

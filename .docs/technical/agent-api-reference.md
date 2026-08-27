@@ -215,7 +215,7 @@ curl -X POST http://127.0.0.1:8000/api/commit-to-nesting \
 |------|------|------|
 | 400 | 请求体非 JSON / 缺 `doc_id` / 类型错 / `doc_id` 不匹配 `_DOC_ID_RE` | `{"error":"请求体须为 JSON"}` / `{"error":"缺少 doc_id 或类型错误"}` / `{"error":"doc_id 非法（仅允许字母数字，1-128 字符）"}` |
 | 400 | `X-Session-Id` 不匹配 `SID_RE`（US-002） | `{"error":"sid 非法"}` |
-| 401 | sid 命中墓碑 / 惰性超时（US-002，管线不跑不落盘） | `{"code":"session_expired","error":"会话已过期（5 分钟无操作），请刷新页面"}` |
+| 401 | sid 命中墓碑 / 惰性超时（US-002，管线不跑不落盘） | `{"code":"session_expired","error":"会话已过期（10 分钟无操作），请刷新页面"}` |
 | 429 | 活跃会话数满且 sid 未注册（US-002） | `{"code":"session_limit","error":"当前使用用户过多（最多 4 人同时在线），请稍后尝试"}` |
 | 404 | `uploads/<doc_id>.dxf` 不存在 | `{"error":"未找到上传文件: <doc_id>"}` |
 | 422 | 全管线抛异常（collect_pieces 空 / write_piece_dxf 全跳过 / load_nest_pieces 空 / JSON 写盘失败） | `{"error":"commit 失败：<异常>"}` |
@@ -239,7 +239,7 @@ curl -X POST http://127.0.0.1:8000/api/commit-to-nesting \
 
 ## POST /api/session — 多会话 US-001：会话注册 / 幂等刷活性（`sessions.py`）
 
-ms-web 多端串台治理的第一块：后端按 sid 维护独立会话（容量上限 4、5 分钟空闲过期、过期墓碑可判）。本路由是唯一注册入口；sid 校验/归属/过期/超限全部收敛在 `sessions.SessionRegistry.resolve()`（单一解析函数，后续 US-002~004 各端点复用）。
+ms-web 多端串台治理的第一块：后端按 sid 维护独立会话（容量上限 4、10 分钟空闲过期、过期墓碑可判）。本路由是唯一注册入口；sid 校验/归属/过期/超限全部收敛在 `sessions.SessionRegistry.resolve()`（单一解析函数，后续 US-002~004 各端点复用）。
 
 ### 请求
 
@@ -259,13 +259,13 @@ curl -X POST http://127.0.0.1:8000/api/session -H "X-Session-Id: 3f2a...hex"
 | 合法 sid 建会话 / 已存在幂等刷活性 | 200 | `{"ok": true, "sid": "<sid>"}` |
 | 无 Header（→ default 会话） | 200 | `{"ok": true, "sid": "default"}` |
 | 活跃会话数已满（`MS_SESSION_MAX`，缺省 4） | 429 | `{"code": "session_limit", "error": "当前使用用户过多（最多 4 人同时在线），请稍后尝试"}` |
-| sid 命中墓碑 / 惰性检查发现已超时 | 401 | `{"code": "session_expired", "error": "会话已过期（5 分钟无操作），请刷新页面"}` |
+| sid 命中墓碑 / 惰性检查发现已超时 | 401 | `{"code": "session_expired", "error": "会话已过期（10 分钟无操作），请刷新页面"}` |
 | sid 格式非法 | 400 | `{"error": "sid 非法"}`（无 code 键） |
 
 ### 生命周期语义（`sessions.SessionRegistry`，全内存无磁盘态）
 
 1. **容量闸门**：`MS_SESSION_MAX`（env，缺省 4）仅计活跃会话（default 不占额）；已有会话重复 POST 幂等、不受闸门影响。
-2. **空闲过期**：`MS_SESSION_TTL_SEC`（env，缺省 300）双路径检查 —— 请求时惰性检查 + 30s daemon 扫描线程（`ws_open>0` 的会话跳过：WS 连接钉住不误杀；扫描是惰性检查的兜底，已死会话不再发请求，名额只能由扫描回收）。
+2. **空闲过期**：`MS_SESSION_TTL_SEC`（env，缺省 600）双路径检查 —— 请求时惰性检查 + 30s daemon 扫描线程（`ws_open>0` 的会话跳过：WS 连接钉住不误杀；扫描是惰性检查的兜底，已死会话不再发请求，名额只能由扫描回收）。
 3. **墓碑**：超时逐出丢全部状态只留 `{sid, ts}`（FIFO ≤128、存活 1h）；墓碑命中 → 401 不静默重建（防过期 sid 被当新会话）；墓碑 1h 过期或 FIFO 淘汰后该 sid 视为全新可正常新建。
 4. **合法但未注册 sid 的读路径**（`resolve(create=False)`，服务重启丢内存场景）同过期语义 401；**写路径（US-002 commit）走 `resolve(create=True)`** —— 数据自带（上传母版），合法未注册 sid 可直接 commit 建会话，过期/墓碑/超限仍 401/429。
 5. **会话状态结构**：`SessionState = {sid, state(pieces 快照 dict), doc_id, last_active, ws_open, strategy_busy}`；`state` 由 US-002 commit 填 per-doc 快照（`_build_pieces_state(per-doc 路径)`，`doc_id` 同步绑定）；WS 钉住 API = `ws_acquire/ws_release`（计数），活性刷新 = `touch(sid)`（GIL-safe float 写）。
@@ -292,7 +292,7 @@ curl -X POST http://127.0.0.1:8000/api/session -H "X-Session-Id: 3f2a...hex"
 | HTTP | `code` | `error` 文案 | 触发 |
 |------|--------|--------------|------|
 | 400 | （无） | `sid 非法` | sid 不匹配 `SID_RE`（`^[0-9A-Za-z]{1,128}$`） |
-| 401 | `session_expired` | `会话已过期（5 分钟无操作），请刷新页面` | 墓碑命中 / 惰性超时 / 合法但未注册 sid 的读路径（`create=False`，如服务重启丢内存） |
+| 401 | `session_expired` | `会话已过期（10 分钟无操作），请刷新页面` | 墓碑命中 / 惰性超时 / 合法但未注册 sid 的读路径（`create=False`，如服务重启丢内存） |
 | 429 | `session_limit` | `当前使用用户过多（最多 4 人同时在线），请稍后尝试`（随 `MS_SESSION_MAX` 插值） | 活跃会话满且 sid 未注册（create 路径） |
 
 WS 侧同语义走 **error 帧**：`{"type":"error","code":"session_expired","message":...}` 后显式 close（`code` 键 additive；`session_limit` 帧格式通用但容量闸门实际由 HTTP 层把关）。前端 `lib/api.ts` / `useSolveRun` 读 `code` 触发全局阻断弹窗（`session_expired` 弃 sid / `session_limit` 保 sid）。
@@ -460,7 +460,7 @@ ws://127.0.0.1:8000/ws/solve?sid=<sid>     # 缺省/空串 → default 会话（
 - **连接钉住**：accept 后立即 `ws_acquire(sid)`（resolve 语义 + `ws_open += 1`）—— 扫描线程对 `ws_open>0` 的会话跳过逐出（求解 10-60 分钟不被误杀）；任何退出路径（final/error/stop/断开）在 finally `ws_release` 减回（断开后归零）。
 - **快照口径**：accept 阶段 state 快照来自**会话**（带 sid = commit 注册的 per-doc 快照；缺省 = default 会话，其 state 即 `runtime._PIECES_STATE` 同一 dict）。会话 state 从不原位 mutate（commit 整体 rebind `st.state`）→ 「整连接一次快照」不变量保持。
 - **活性刷新**：`on_manifest` / `on_report` 回调内 `registry.touch(sid)`（求解期间客户端不发消息，靠回调刷 `last_active`；GIL-safe 单 float 写不加锁）。
-- **会话错误帧**：过期（墓碑/惰性超时/未注册合法 sid）→ 发 `{"type":"error","code":"session_expired","message":"会话已过期（5 分钟无操作），请刷新页面"}` 后**显式 close**（不发 manifest）；非法 sid → `{"type":"error","message":"sid 非法"}`（无 code 键）。`code` 键为 additive —— 旧前端忽略、US-005 前端据此弹阻断弹窗。`session_limit` code 帧格式同样支持（容量闸门实际由 HTTP 层 POST /api/session 把关，读路径 create=False 不触达 429）。
+- **会话错误帧**：过期（墓碑/惰性超时/未注册合法 sid）→ 发 `{"type":"error","code":"session_expired","message":"会话已过期（10 分钟无操作），请刷新页面"}` 后**显式 close**（不发 manifest）；非法 sid → `{"type":"error","message":"sid 非法"}`（无 code 键）。`code` 键为 additive —— 旧前端忽略、US-005 前端据此弹阻断弹窗。`session_limit` code 帧格式同样支持（容量闸门实际由 HTTP 层 POST /api/session 把关，读路径 create=False 不触达 429）。
 - **前端侧（US-005 已落地）**：`lib/ws.ts` `solveWsUrl()` 自动拼 `?sid=`；`useSolveRun` case 'error' 读 `msg.code`（session_expired/session_limit）→ 与 HTTP 同一全局阻断弹窗入口 `triggerSessionBlock`。
 
 > US-020：accept 阶段 `state = _get_pieces_state()` 拿一次快照，整连接内 `pieces / gate_mm` 不变（避免求解中途 reload 切数据）。state 空时（首次启动未 commit / intermediate 缺失）直接发 error「排料数据为空」并关闭。**US-003（多会话）后该快照经会话解析取得**（default 会话 state 即 `_PIECES_STATE`，无 sid 行为不变）。
