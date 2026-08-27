@@ -12,7 +12,10 @@
    最大码在最右（降序构造 + 整链点对称翻转）；
 8. 直腰头平坦模式（2026-08-24 版师指正，882# g01）：判据分离（矩形直条 vs
    月牙弧）+ 全链路形态（片片 rot=0 无翻转、同底齐平、**多副本单链全局从短到
-   长**（单调阶梯，N 链交叉深谷必挂）、大码最右、带高=最高片、副本数不均匀）。
+   长**（单调阶梯，N 链交叉深谷必挂）、大码最右、带高=最高片、副本数不均匀）；
+9. 镜像弧片手性自适应（2026-08-27，M1787 g10）：凸右弧片与 5336 g05 互为镜像
+   —— v2 旧构造（降序+翻转）开口朝右必挂（根因回归锁），升序+不翻转三闸门
+   全过 + 全链路成带成功（守恒/fill/开口左/确定性）。
 
 合成夹具：矩形（结构同 5336 g05：7 码 × demand 2）+ 月牙弧（曲率相近异码嵌套）
 + 异高竖条（882# g01 直腰头同构：10 码 × demand 2，高度互异放大交替翻转让乱象可判）。
@@ -76,12 +79,15 @@ def _band_ctx(label='g05', sizes=(28, 29, 30, 31, 33, 34, 35), demand=2,
     return pid_meta, pieces_by_id
 
 
-def _arc_piece(pid, label, size, r_in, thick=68.0, half_deg=19.0, n=24):
+def _arc_piece(pid, label, size, r_in, thick=68.0, half_deg=19.0, n=24,
+               mirror_x=False):
     """合成月牙腰片（v2 形态用例）：−X 轴向离散环形扇带，凸侧朝 −X。
 
     默认参数与朝向取 5336 g05 真实几何族（r≈1550+、thick≈68、half≈19°、rot0
     单片质心偏移 −18~−22mm 即凸侧 −X）—— 异码曲率相近、可贴触嵌套；开口方向
     判据 ``_opening_side`` 在此类几何上有信号（对称片返回 'flat'）。
+    ``mirror_x``：逐点 X 取反 ⇒ 凸侧 +X（M1787 g10 镜像朝向族，质心偏移
+    +18~+22mm、单片开口朝左，与 5336 g05 互为镜像）。
     """
     r_out = r_in + thick
     pts = []
@@ -91,6 +97,8 @@ def _arc_piece(pid, label, size, r_in, thick=68.0, half_deg=19.0, n=24):
     for i in range(n + 1):          # 内弧（凹侧）180+half → 180−half
         a = math.radians(180.0 + half_deg - 2.0 * half_deg * i / n)
         pts.append([r_in * math.cos(a), r_in * math.sin(a)])
+    if mirror_x:
+        pts = [[-x, y] for x, y in pts]
     return {
         'pid': pid, 'label': label, 'size': size, 'polygon': pts,
         'area_mm2': Polygon(pts).area,
@@ -98,14 +106,17 @@ def _arc_piece(pid, label, size, r_in, thick=68.0, half_deg=19.0, n=24):
     }
 
 
-def _arc_ctx(label='g05', sizes=(28, 29, 30, 31, 33, 34, 35), demand=2, d_g=0.4):
+def _arc_ctx(label='g05', sizes=(28, 29, 30, 31, 33, 34, 35), demand=2, d_g=0.4,
+             mirror=False):
     """弧形腰片上下文：7 码 × demand 2（同 _band_ctx 结构，r_in=1550+40·(码−28)
-    —— 5336 g05 真实几何族参数，链构造实测片片贴触）。"""
+    —— 5336 g05 真实几何族参数，链构造实测片片贴触；``mirror`` 走 M1787 g10
+    镜像朝向族）。"""
     pieces_by_id = {}
     pid_meta = {}
     for s in sizes:
         pid = f'{label}_{s}'
-        p = _arc_piece(pid, label, s, r_in=1550.0 + (float(s) - 28.0) * 40.0)
+        p = _arc_piece(pid, label, s, r_in=1550.0 + (float(s) - 28.0) * 40.0,
+                       mirror_x=mirror)
         pieces_by_id[pid] = p
         poly = erode_polygon(p['polygon'], d_g) if d_g > 0 else p['polygon']
         pid_meta[pid] = {
@@ -331,6 +342,56 @@ def test_arc_band_chunk_two_chains():
     polys = {m['pid']: waist_band._clean_polygon(pid_meta[m['pid']]['polygon'])
              for m in chunk.members}
     assert _opening_side(chunk.members, polys) == 'left'
+
+
+# ----------------------------------- 镜像弧片手性自适应（2026-08-27，M1787 g10）
+
+def test_arc_mirrored_chain_form_via_ascending_no_flip():
+    """镜像弧片链形态（机制级）：M1787 g10 根因回归 —— v2 旧构造（降序+整链翻转）
+    在镜像朝向上开口朝右必被闸门拒；手性自适应构造（升序+不翻转）三闸门全过。"""
+    from materialsorting.nesting_engine.waist_band import (
+        CHAIN_GAP_EPS_MM, _chain_gap, _chain_nest, _flip_chain, _geom_at,
+        _norm_chain, _opening_side)
+    pid_meta, _pieces = _arc_ctx(demand=1, mirror=True)
+    polys = {pid: waist_band._clean_polygon(m['polygon'])
+             for pid, m in pid_meta.items()}
+    sort = lambda p: waist_band._member_sort_key(pid_meta[p], p)   # noqa: E731
+    # 旧 v2 路径（降序+翻转）在镜像朝向上：单片开口本就朝左，翻转后朝右
+    desc = sorted(pid_meta, key=sort, reverse=True)
+    chain_v2 = _norm_chain(_flip_chain(_chain_nest(desc, polys)), polys)
+    assert _opening_side(chain_v2, polys) == 'right'            # 闸门必拒形态
+    # 手性自适应路径（升序+不翻转）：贴触 + 开口朝左 + 最大码在最右
+    asc = sorted(pid_meta, key=sort)
+    chain = _norm_chain(_chain_nest(asc, polys), polys)
+    assert _chain_gap(chain, polys) <= CHAIN_GAP_EPS_MM         # 片片贴触
+    assert _opening_side(chain, polys) == 'left'                # 开口朝左
+    cx = {m['pid']: _geom_at(polys[m['pid']], m['rotation'],
+                             m['translation']).centroid.x for m in chain}
+    assert max(cx, key=cx.get) == asc[-1]                       # 最大码最右
+
+
+def test_arc_mirrored_band_chunk_two_chains():
+    """镜像弧形全链路（M1787 g10 同构，demand=2 双链）：build_band_plan 手性
+    自适应后成功成带（修复前 BandQualityError「开口朝右」）—— 守恒 14/14 +
+    fill 过下限 + 带高进条带 + 整带开口朝左 + 同 seed 确定性。"""
+    from materialsorting.nesting_bounds.load_pieces import PLOT_SAFE_MAX_Y_MM
+    from materialsorting.nesting_engine.waist_band import _opening_side
+    pid_meta, pieces = _arc_ctx(mirror=True)
+    chunk = build_band_plan(pid_meta, pieces, label='g05', seed=0)
+    assert chunk.n_members == 14 and chunk.total_demand == 14
+    assert chunk.pid == f'{COMPOSITE_PID_PREFIX}g05'
+    assert chunk.fill_pct > 45.0                             # 灾难形态下限
+    assert 0 < chunk.bbox['width_mm']
+    assert chunk.bbox['height_mm'] <= PLOT_SAFE_MAX_Y_MM + 1e-6
+    polys = {m['pid']: waist_band._clean_polygon(pid_meta[m['pid']]['polygon'])
+             for m in chunk.members}
+    assert _opening_side(chunk.members, polys) == 'left'
+    # 确定性：镜像支同 seed 两跑 to_dict JSON 相等（纯几何构造、无 RNG）
+    j1 = json.dumps(chunk.to_dict(), sort_keys=True)
+    j2 = json.dumps(
+        build_band_plan(pid_meta, pieces, label='g05', seed=0).to_dict(),
+        sort_keys=True)
+    assert j1 == j2
 
 
 # ------------------------------------- 直腰头平坦模式（2026-08-24 版师指正）

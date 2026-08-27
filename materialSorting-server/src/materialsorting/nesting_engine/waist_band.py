@@ -6,8 +6,10 @@
 贴触、缝隙只在链间，**不需要同码成对**），构造性滑移贴靠贪心逐链紧排（确定性、
 毫秒级、无预算依赖 —— 替换 v1 的 spyrrow strip 带内子求解：其目标是最短用布 X
 而非贴触，产 48% 对角阶梯，且 US-014 成对重试在单副本配置空真失效）。链构造
-「size 降序 + 整链点对称翻转」⇒ **开口（凹口）朝左、最大码在最右端**（v2 版师
-形态判据；成员各自 rot+180 是合法布纹旋转、无镜像）→ 链间滑移堆叠 → 成员**原始
+按弧片**手性自适应**（2026-08-27，M1787 g10）：凸左弧片（5336 g05 族）「size
+降序 + 整链点对称翻转」、镜像凸右弧片（M1787 g10 族，与 g05 互为镜像）「升序 +
+不翻转」⇒ 终态同为 **开口（凹口）朝左、最大码在最右端**（v2 版师形态判据；翻
+转支成员各自 rot+180 是合法布纹旋转、无镜像）→ 链间滑移堆叠 → 成员**原始
 轮廓**@带内位 ``shapely.unary_union`` → 焊接连通 → ``erode(d_g)`` →
 ``_clean_polygon`` → 平移归一化（记录 offset），整簇 union 外轮廓作为一片虚拟
 组合片（``WB_*`` pid）投入主求解；主解帧发射前用 ``expand_placements`` 把组合片
@@ -357,8 +359,9 @@ def _chain_nest(member_pids, polys, rots=(0.0, 180.0),
     """构造性滑移贴靠贪心：首片锚定原点，后续每片 ``rots`` × ``y_aligns``
     滑移贴触到已排 union，取 union bbox 面积增长最小（确定性、无 RNG）。
 
-    ``member_pids`` 顺序即放置顺序（弧形：调用方给 size **降序** —— 与
+    ``member_pids`` 顺序即放置顺序（弧形凸左：调用方给 size **降序** —— 与
     「升序+右滑 = 开口朝右」相对，降序构造经 ``_flip_chain`` 后得开口朝左+
+    最大码在右；弧形凸右（镜像，M1787 g10）：**升序** + 不翻转即开口朝左+
     最大码在右；直腰头：**升序** + ``rots=(0.0,)`` + ``y_aligns=('bottom',)``
     单候选 —— 近矩形条带的多候选面积噪声级打平会让贪心交替翻盘产对角阶梯，
     版师形态（图2）要求同底齐平、片片同向、无翻转；多副本时**含重复 pid**
@@ -399,8 +402,10 @@ def _chain_nest(member_pids, polys, rots=(0.0, 180.0),
 def _flip_chain(placed):
     """整链点对称翻转（绕原点 180°）：成员各自 (rot+180, tr 取负)。
 
-    合法布纹旋转、无镜像；同时翻转开口方向与 X 向码序 —— 「降序构造 + 本翻转」
-    ⇒ 开口朝左、最大码在最右（v2 版师形态判据的几何根基）。
+    合法布纹旋转、无镜像；同时翻转开口方向与 X 向码序 —— 凸左弧片的「降序构造 +
+    本翻转」⇒ 开口朝左、最大码在最右（v2 版师形态判据的几何根基）。镜像凸右弧片
+    （M1787 g10 族）不经本函数 —— 升序构造+不翻转即达同终态（翻转反而开口朝右
+    被闸门拒，见 ``build_band_plan`` 手性自适应）。
     """
     return [{'pid': m['pid'],
              'rotation': (float(m['rotation']) + 180.0) % 360.0,
@@ -483,8 +488,9 @@ def build_band_plan(pid_meta, pieces_by_id, *, label, seed,
                     fill_floor=FILL_FLOOR_PCT) -> BandChunk:
     """构造性链构造 → 组合片构造（单一真相源；web 编排在 US-011 接线）。
 
-    版师形态（v2，2026-08-21）：每码第 k 副本一条链 → 降序构造+整链翻转（开口
-    朝左、最大码在最右）→ 链间滑移堆叠 → union/erode/归一化。
+    版师形态（v2，2026-08-21；手性自适应 2026-08-27）：每码第 k 副本一条链 →
+    凸左弧片降序构造+整链翻转 / 镜像凸右弧片升序构造不翻转（终态同为开口朝左、
+    最大码在最右）→ 链间滑移堆叠 → union/erode/归一化。
 
     Parameters
     ----------
@@ -548,10 +554,11 @@ def build_band_plan(pid_meta, pieces_by_id, *, label, seed,
     # 浮点噪声级打平（实测 882# g01 六候选互差 <1e-6mm²），严格小于的贪心被逐片
     # 翻盘 ⇒ 交替翻转+上下换锚的对角阶梯乱象。直腰头版师形态 = 同底齐平、片片
     # 同向、无翻转、大码在右（面积差 <0.1%，纯形态规则）；弧形片（质心短轴偏移
-    # ~18-22mm，判据分离度 18×）仍走 v2 嵌套贪心，行为逐字节不变。
+    # ~18-22mm，判据分离度 18×）仍走嵌套贪心（构造方向按手性自适应，见下方
+    # else 分支）。
     flat = all(_is_flat_piece(_valid_geometry(polys[pid])) for pid in member_pids)
 
-    def _check_chain(chain, rightmost_pid, k=None):
+    def _check_chain(chain, rightmost_pid, k=None, ctor='降序+翻转'):
         """链形态三闸门：贴触 / 开口朝左 / 最右成员 = 最大码（程序自校验）。"""
         nth = f'第 {k} 链' if k is not None else '单链'
         gap = _chain_gap(chain, polys)
@@ -561,7 +568,7 @@ def build_band_plan(pid_meta, pieces_by_id, *, label, seed,
                 f'{CHAIN_GAP_EPS_MM}mm）—— 形态质量悬崖，禁无声降级')
         if _opening_side(chain, polys) == 'right':
             raise BandQualityError(
-                f'链 {label!r} {nth}开口朝右（降序+翻转构造异常）')
+                f'链 {label!r} {nth}开口朝右（{ctor}构造异常）')
         # 最右成员 = 最大码（含重复 pid 安全：逐成员取 argmax，不做 dict 折叠）
         cx_pid = max(
             (_geom_at(polys[m['pid']], m['rotation'],
@@ -584,18 +591,34 @@ def build_band_plan(pid_meta, pieces_by_id, *, label, seed,
         chain = _norm_chain(
             _chain_nest(copies, polys, rots=(0.0,), y_aligns=('bottom',)),
             polys)
-        _check_chain(chain, rightmost_pid=copies[-1])
+        _check_chain(chain, rightmost_pid=copies[-1], ctor='升序同底齐平')
         chains.append(chain)
     else:
+        # 手性自适应（2026-08-27，M1787 g10 排查定案）：弧片凹口朝向随母版画法
+        # 可左可右（布纹对齐只做 ±90° 转正、无手性规范化）—— v2「降序构造(开口
+        # 朝右)+整链翻转⇒开口朝左」只对凸左弧片（5336 g05 族，质心偏移 −18~
+        # −22mm）成立；镜像弧片（凸右、单片开口朝左，M1787 g10 实测 +15~+20mm）
+        # 降序构造本就开口朝左，再翻转反而朝右被本闸门拒（99.9% 码组合必挂）——
+        # 改走「升序构造+不翻转」，终态形态同为开口朝左+最大码在最右（实测贴触
+        # 0.00mm / fill 76.8%）。判据 = 逐成员单片开口**全员** 'left' 才走镜像支
+        # （'flat'/混合朝向回退 v2 原路径，既有母版行为不变）。
+        mirrored = all(
+            _opening_side([{'pid': pid, 'rotation': 0.0,
+                            'translation': [0.0, 0.0]}], polys) == 'left'
+            for pid in member_pids)
         max_demand = max(int(pid_meta[pid]['demand']) for pid in member_pids)
         for k in range(max_demand):
             chain_pids = sorted(
                 (pid for pid in member_pids if int(pid_meta[pid]['demand']) > k),
                 key=lambda pid: _member_sort_key(pid_meta[pid], pid),
-                reverse=True)     # 降序构造 + 整链点对称翻转后大码在最右
+                reverse=not mirrored)   # 凸左：降序+翻转后大码最右；镜像：升序即大码最右
             chain = _norm_chain(
-                _flip_chain(_chain_nest(chain_pids, polys)), polys)
-            _check_chain(chain, rightmost_pid=chain_pids[0], k=k)
+                _flip_chain(_chain_nest(chain_pids, polys))
+                if not mirrored else _chain_nest(chain_pids, polys), polys)
+            _check_chain(chain,
+                         rightmost_pid=(chain_pids[-1] if mirrored
+                                        else chain_pids[0]),
+                         k=k, ctor='升序不翻转' if mirrored else '降序+翻转')
             chains.append(chain)
     placed = (chains[0] if len(chains) == 1
               else _stack_chains(chains, polys))
