@@ -1,11 +1,4 @@
 {
   "branchName": "ralph/web-multi-session",
-  "stories": [
-    {
-      "id": "US-007",
-      "title": "端到端验收与文档同步",
-      "description": "As a 项目维护者，我希望多端全链路对拍验收与契约文档同步，以便特性合入后行为可查、后续开发不踩坑。\n\n具体任务：\n1. 双浏览器（普通 + 隐身窗口模拟两设备）全链路对拍：各自上传不同母版 → ptypes/求解/停止/导出/高级运行；生命周期对拍（空闲过期/超限/求解中不误杀）。\n2. .docs/technical/agent-api-reference.md 同步：POST /api/session 契约、各端点 sid 传递方式（X-Session-Id Header / WS ?sid= query）、401/429 + code 错误码表、WS error 帧 code 键、per-doc intermediate 落盘布局、marker 文件改名、index.html no-cache。\n3. README.md 与 materialSorting-server/src/materialsorting/web/AGENTS.md 同步：会话机制概述 + 环境变量 MS_SESSION_MAX（4）/ MS_SESSION_TTL_SEC（300）/ MS_UPLOAD_TTL_DAYS（14）。\n\n验收标准：\n- 双浏览器各自上传不同母版：ptypes/求解/导出/高级运行全程互不串台；一端 commit 时另一端正在跑的求解不中断且结果仍属原母版。\n- 空闲 >TTL → 任一操作弹「已过期」→ 刷新 → 干净新会话；求解中/策略轮询中的会话不被误杀。\n- 单用户旧流程（单窗口上传→求解→导出）与现版无感知差异（default 会话回归）。\n- 全量 pytest + vitest 绿；ms-web 启动冒烟无回归。\n- 文档三处同步完成。",
-      "passes": true
-    }
-  ]
+  "stories": []
 }

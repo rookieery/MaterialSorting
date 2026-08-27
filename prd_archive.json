@@ -748,6 +748,12 @@
         "title": "uploads 磁盘 TTL 清理",
         "description": "As a 运维者，我希望上传目录按 TTL 自动清理且绝不误删在用文档，以便磁盘占用有界、多会话场景下目录不再无限累积。\n\n具体任务：\n1. 新增 materialSorting-server/src/materialsorting/web/diskclean.py — 扫 out/uploads/：删超龄（MS_UPLOAD_TTL_DAYS 缺省 14 天，按 mtime）的 <doc_id>.dxf + <doc_id>_pieces/ 成对目录（孤儿单边——只有 dxf 或只有 pieces 目录——按同 TTL 清理）与超龄 strategy_cfg_*.json。保护集 = SessionRegistry 活跃会话 doc_id ∪ 全部 .web_strategy_active_*.json marker 内 doc_id（进行中策略 run 的 master_dxf）∪ mtime 未超龄者。触发时机：进程启动 + 每次 commit 成功后 best-effort（异常仅 warn 不阻塞主流程）。模块仅标准库 + 同包依赖。\n2. 新增 tests/test_web_diskclean.py（MS_OUT_DIR 临时目录造新旧混合文件验证）。\n\n验收标准：\n- 临时目录造新旧混合文件：超龄对被删、未超龄与保护集内（活跃会话/marker 引用）不删；孤儿单边被清理。\n- 会话 A 活跃 + 会话 B 已过期但 B 的策略 run 仍在跑（marker 在）：B 的 master doc 不被删。\n- 清理失败（目录被占用等）只 warn，commit 响应不受影响。\n- python -m materialsorting.web.diskclean 冒烟（dry-run 打印将删清单）+ tests/test_web_diskclean.py 通过；分层依赖未反向。",
         "passes": true
+      },
+      {
+        "id": "US-007",
+        "title": "端到端验收与文档同步",
+        "description": "As a 项目维护者，我希望多端全链路对拍验收与契约文档同步，以便特性合入后行为可查、后续开发不踩坑。\n\n具体任务：\n1. 双浏览器（普通 + 隐身窗口模拟两设备）全链路对拍：各自上传不同母版 → ptypes/求解/停止/导出/高级运行；生命周期对拍（空闲过期/超限/求解中不误杀）。\n2. .docs/technical/agent-api-reference.md 同步：POST /api/session 契约、各端点 sid 传递方式（X-Session-Id Header / WS ?sid= query）、401/429 + code 错误码表、WS error 帧 code 键、per-doc intermediate 落盘布局、marker 文件改名、index.html no-cache。\n3. README.md 与 materialSorting-server/src/materialsorting/web/AGENTS.md 同步：会话机制概述 + 环境变量 MS_SESSION_MAX（4）/ MS_SESSION_TTL_SEC（300）/ MS_UPLOAD_TTL_DAYS（14）。\n\n验收标准：\n- 双浏览器各自上传不同母版：ptypes/求解/导出/高级运行全程互不串台；一端 commit 时另一端正在跑的求解不中断且结果仍属原母版。\n- 空闲 >TTL → 任一操作弹「已过期」→ 刷新 → 干净新会话；求解中/策略轮询中的会话不被误杀。\n- 单用户旧流程（单窗口上传→求解→导出）与现版无感知差异（default 会话回归）。\n- 全量 pytest + vitest 绿；ms-web 启动冒烟无回归。\n- 文档三处同步完成。",
+        "passes": true
       }
     ]
   }
