@@ -20,6 +20,12 @@
 //   - 全 0 拦截：doc 非空 + 所选码有效片数 0（数量全 0）→ onStart 不发 + onStatus 提示
 //   - 线格式回归：矩阵改 A@28=2 → start payload quantities.g01['28']===2
 //   - doc=null（fallback SIZES 开发模式）→ computeTotalCutPieces=null 不拦截（Start 正常发）
+//
+// 2026-08-27 重传联动 additions:
+//   - doc_id 变化（重传）→ form 整体回 DEFAULT_FORM（码号清空 / band·prefix 关 /
+//     per_type 清空 / 幅宽 198 / 时长 120；经 start payload 公共契约断言）
+//   - doc_id 不变（切 activeSize）→ 不触发重置（用户编辑保留）
+//   - 首次上传（null→doc_id）→ 同样回默认（effect 挂点统一，无特殊分支）
 
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from "vitest";
 import { StrictMode } from "react";
@@ -973,5 +979,160 @@ describe("ControlPanel prefix 接线 (US-004)", () => {
     const strategyBtn = container!.querySelector<HTMLButtonElement>('[data-testid="strategy-btn"]')!;
     expect(strategyBtn.disabled).toBe(false);
     expect(strategyBtn.getAttribute("title")).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------- 2026-08-27 重传联动
+// doc_id 变化（重传新母版 / 首次上传）→ ControlPanel form 整体回 DEFAULT_FORM
+// （与 US-014 数量矩阵「重传清零」同口径）：旧母版的码号 / band / prefix / per_type /
+// 幅宽时长残留会让 band·prefix 旧 g 码看似合法（后端 error 才暴露）、per_type 旧键
+// 混进新母版表格列集。doc_id 不变（切 activeSize 等）不触发。
+describe("ControlPanel 重传联动：doc_id 变化重置 form (2026-08-27)", () => {
+  /** 构造 2 码母版并 hydrate（与 setupBandDoc 同款；doc_id 可指定模拟重传）。 */
+  function setupDoc(docId: string): void {
+    const doc: ParsedDoc = {
+      doc_id: docId,
+      filename: "M1787.dxf",
+      sizes: [
+        {
+          size: 28,
+          pieces: [
+            { label: "g01", polygon: [], internal_lines: [], notches: [], net_polygon: [], grain_line: null },
+          ],
+        },
+        {
+          size: 30,
+          pieces: [
+            { label: "g01", polygon: [], internal_lines: [], notches: [], net_polygon: [], grain_line: null },
+            { label: "g02", polygon: [], internal_lines: [], notches: [], net_polygon: [], grain_line: null },
+          ],
+        },
+      ],
+    };
+    useUploadStore.setState({ status: "done", doc, activeSize: 28 });
+    useQtyStore.getState().hydrate(
+      doc.sizes.flatMap((s) => s.pieces.map((p) => ({ label: p.label, size: s.size }))),
+    );
+  }
+
+  /** 经弹窗写回 band 草稿（勾选 + 选 g01 → 确定；复用 US-013 同款交互）。 */
+  async function enableBandViaModal(label: string): Promise<void> {
+    mockReps = TWO_G_REPS;
+    const perTypeBtn = container!.querySelector<HTMLButtonElement>(".per-type-btn")!;
+    act(() => perTypeBtn.click());
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const check = document.body.querySelector<HTMLInputElement>('[data-testid="band-enabled"]')!;
+    act(() => check.click());
+    if (label !== "") {
+      const select = document.body.querySelector<HTMLSelectElement>('[data-testid="band-label-select"]')!;
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!;
+      act(() => {
+        setter.call(select, label);
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+    }
+    const confirm = document.body.querySelector<HTMLButtonElement>(".per-type-btn-confirm")!;
+    act(() => confirm.click());
+  }
+
+  it("重传（doc_id 变化）→ form 回 DEFAULT_FORM：码号清空 + #start 置灰 + 幅宽/时长回默认 + band 关闭", async () => {
+    const onStart = vi.fn();
+    setupDoc("master-a");
+    renderPanel(onStart);
+    // 旧母版下编辑 form：勾码号 + 开 band 选 g01 + 改幅宽/时长
+    const checkboxes = container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]");
+    act(() => {
+      for (const c of checkboxes) c.click();
+    });
+    const gateInput = container!.querySelector<HTMLInputElement>("#gate")!;
+    const timeInput = container!.querySelector<HTMLInputElement>("#time")!;
+    const numSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    act(() => {
+      numSetter.call(gateInput, "180");
+      gateInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    act(() => {
+      numSetter.call(timeInput, "60");
+      timeInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await enableBandViaModal("g01");
+    expect(container!.querySelector<HTMLInputElement>("#gate")!.value).toBe("180");
+    expect(container!.querySelector<HTMLInputElement>("#time")!.value).toBe("60");
+    // —— 重传新母版（doc_id 变化；hydrate 由 PreviewPage 负责，此处直写 store 模拟
+    //     useParseDxf 成功后的 uploadStore 状态）——
+    act(() => {
+      setupDoc("master-b");
+    });
+    // 码号全清 → #start 置灰（DEFAULT_FORM.sizes=[]）
+    const checkboxesAfter = container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]");
+    for (const c of checkboxesAfter) expect(c.checked).toBe(false);
+    expect(container!.querySelector<HTMLButtonElement>("#start")!.disabled).toBe(true);
+    // 幅宽/时长回默认（用户决策：全部重置，含机器参数）
+    expect(container!.querySelector<HTMLInputElement>("#gate")!.value).toBe("198");
+    expect(container!.querySelector<HTMLInputElement>("#time")!.value).toBe("120");
+    // StatusLine 无 band 闸门文案（band_enabled 已回 false）
+    expect(container!.querySelector("#status")!.textContent).not.toContain("腰头成带");
+  });
+
+  it("重传后重新配置求解 → start payload 无旧母版残留（band/per_type null + 幅宽 1980）", async () => {
+    const onStart = vi.fn();
+    setupDoc("master-a");
+    renderPanel(onStart);
+    const checkboxes = container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]");
+    act(() => {
+      for (const c of checkboxes) c.click();
+    });
+    await enableBandViaModal("g01");
+    act(() => {
+      setupDoc("master-b");
+    });
+    // 新母版下重新勾码号 → 启动 → 载荷无 band（旧 g 码选择已清）、无 per_type、幅宽回 1980
+    const checkboxesAfter = container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]");
+    act(() => {
+      for (const c of checkboxesAfter) c.click();
+    });
+    const btn = container!.querySelector<HTMLButtonElement>("#start")!;
+    act(() => btn.click());
+    expect(onStart).toHaveBeenCalledTimes(1);
+    const cfg = onStart.mock.calls[0][0] as ControlPanelStartPayload;
+    expect(cfg.band).toBeNull();
+    expect(cfg.prefix).toBeNull();
+    expect(cfg.per_type).toBeNull();
+    expect(cfg.gate_mm).toBe(1980);
+  });
+
+  it("doc_id 不变（切 activeSize / doc 引用不变）→ 不触发重置（编辑保留）", () => {
+    setupDoc("master-a");
+    renderPanel();
+    const checkbox = container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]")[0]!;
+    act(() => checkbox.click());
+    const timeInput = container!.querySelector<HTMLInputElement>("#time")!;
+    const numSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    act(() => {
+      numSetter.call(timeInput, "60");
+      timeInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    // 切 activeSize（doc 对象引用不变、doc_id 不变）→ form 编辑保留
+    act(() => {
+      useUploadStore.setState({ activeSize: 30 });
+    });
+    expect(container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]")[0]!.checked).toBe(true);
+    expect(container!.querySelector<HTMLInputElement>("#time")!.value).toBe("60");
+  });
+
+  it("首次上传（doc_id: undefined → id）→ form 同样回默认（挂点统一无特殊分支）", () => {
+    renderPanel(); // doc=null（fallback SIZES chips）
+    const checkbox = container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]")[0]!;
+    act(() => checkbox.click());
+    expect(checkbox.checked).toBe(true);
+    act(() => {
+      setupDoc("first-upload");
+    });
+    // doc_id 从 undefined → 'first-upload'：effect 触发，码号回未勾
+    expect(container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]")[0]!.checked).toBe(false);
   });
 });

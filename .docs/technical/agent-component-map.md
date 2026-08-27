@@ -1212,3 +1212,22 @@ US-001~006 全链路的验收 story：不改任何运行时代码，产出 = 验
 | `README.md` | 「多会话机制（web 多端隔离）」 | 机制概述（sid 约定/隔离面/生命周期/default 兜底/磁盘兜底）+ 环境变量表 `MS_SESSION_MAX=4` / `MS_SESSION_TTL_SEC=300` / `MS_UPLOAD_TTL_DAYS=14`（非法值 warn 回退缺省）。 |
 | `materialSorting-server/src/materialsorting/web/AGENTS.md` | 「多会话机制总览（US-001~007）」 | 改 web 代码前速查：sid 归属单一解析点 / 隔离面验收结论 / 生命周期要点 / 环境变量 / harness 用法。 |
 | `CLAUDE.md` | web 模块行 | US-001~007 整体落地收口句 + 文档入口指引。 |
+
+## 重传联动：doc_id 变化重置超排 form + 清 strategy lastStart（2026-08-27 bug 修复）
+
+用户重传新母版后超排面板残留旧母版选择的 bug 修复。根因：超排表单（码号/band/prefix/per_type/幅宽时长）全部在 ControlPanel 本地 `useState`（不在 zustand），App 双页常驻 DOM（display:none）不卸载 + 无任何 effect 监听 doc_id → 残留必然；US-014「重传清零」当时只覆盖数量矩阵（qtyStore hydrate）。危害不止观感：band/prefix 旧 g 码在弹窗下拉兜底逻辑（orderedLabels ∪ 当前选中项）下仍显示为合法选中，点开始才被后端 `_parse_band`/`_parse_prefix` 结构化 error 拦截；per_type 旧键经列集 `reps ∪ values 已配置键` 混进新母版高级配置表格。
+
+| 文件 | 改动 |
+|------|------|
+| `src/components/ControlPanel/ControlPanel.tsx` | 新增 `useEffect([docId])`：doc_id 变化（首次上传/重传/reset，含 doc→null）→ `setForm(DEFAULT_FORM)` 整体重置（用户决策：全部重置，含幅宽 198/时长 120）。form 是本地 state，状态所有者是唯一挂点（NestingPage 不卸载，无此 effect 必残留） |
+| `src/components/preview/PreviewPage.tsx` | 既有 doc_id subscribe 分支内追加 `useStrategyStore.setState({ lastStart: null })`：防旧母版策略 start 载荷被 error 态「重试」复用（置 null 后重试自动回落 `reset()` 配置态）。phase/status/result **不动**（run 进度/结果常驻是刻意设计）。与 qty/ui 联动同款集成层绑定 |
+| `src/components/ControlPanel/__tests__/ControlPanel.test.tsx` | 新增 4 用例：重传回默认（码号清空/#start 置灰/幅宽时长回 198·120/band 关）/ 重传后 start payload 无旧残留（band·prefix·per_type null + gate_mm 1980）/ 切 activeSize 不触发（编辑保留）/ 首次上传同回默认 |
+| `src/components/preview/__tests__/PreviewPage.test.tsx` | 新增 1 用例：重传清 lastStart + doc_id 不变保留 + phase 不受影响；beforeEach/afterEach 补 strategyStore.reset |
+
+关键不变量：
+1. **重置口径与数量矩阵一致** —— 同在 doc_id 变化时点（parse 成功）触发，覆盖首次上传/重传/reset 三路径；`DEFAULT_FORM` 是模块常量且 `patch` 恒建新对象，共享引用安全。
+2. **doc_id 是 dep（字符串）而非 doc 对象** —— 切 activeSize 等换 store 引用不触发重置。
+3. **求解中重置无风险** —— 求解用 start 载荷快照不回读 form；running 态输入本就 disabled。
+4. **明确不改** —— PerTypeOverridesModal 下拉兜底（服务「fetch 失败但 label 已确认」合法场景，form 重置后自然不显示旧 g 码）；`uploadStore.reset()` 零调用现状（无 UI 入口需求）；NestingPage phase / runRegistry 历史 run（刻意保留）；前端不预判 g 码存在性契约（后端权威校验）。
+
+验证：vitest 747 全绿（含 5 新增）；`npm run build` 零错。

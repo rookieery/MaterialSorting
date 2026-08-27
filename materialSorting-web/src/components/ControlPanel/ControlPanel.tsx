@@ -50,8 +50,14 @@
 //   （'0'/false/'3'）→ onStart 载荷 seed=0 / seed_count=1 不变；底层多 run 能力不动
 //   （useSolveRun / runRegistry / NestsGrid），恢复 UI 即回多 seed；多种子探索由
 //   「高级运行」（race/SE 后端策略编排）承接。
+// 2026-08-27 重传联动：doc_id 变化（重传新母版 / 首次上传 / reset）→ form 整体回
+//   DEFAULT_FORM（码号清空、band/prefix 关闭、per_type 清空、幅宽 198 / 时长 120）。
+//   与 US-014 数量矩阵「重传清零」同口径 —— 旧母版选择残留会使 band/prefix 旧 g 码
+//   在弹窗下拉兜底下看似合法（后端结构化 error 兜底才暴露）、per_type 旧键混进新
+//   母版高级配置表格列集。实现见组件内 useEffect([docId])（form 是本地 state，
+//   状态所有者是唯一挂点；NestingPage 双页常驻不卸载，无此 effect 则必残留）。
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useExport } from '../../hooks/useExport';
 import type { ExportFmt } from '../../lib/download';
 import { useUploadStore } from '../../store/uploadStore';
@@ -129,6 +135,22 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
   const [form, setForm] = useState<FormState>(DEFAULT_FORM);
   // US-017：订阅 uploadStore.doc 判断是否已解析母版（doc=null → StatusLine 增提示）。
   const doc = useUploadStore((s) => s.doc);
+
+  // 重传联动（2026-08-27，与 PreviewPage quantities hydrate 同口径）：doc_id 变化
+  // （首次上传 / 重传 / reset）→ form 整体回 DEFAULT_FORM（「新母版 = 全新表单」，
+  // 含幅宽 198 / 时长 120）。旧母版的码号 / band / prefix / per_type 对新母版可能
+  // 非法 —— band/prefix 旧 g 码在弹窗下拉兜底下仍显示为合法选中项（点开始才被
+  // 后端结构化 error 拦截）、per_type 旧键会混进新母版高级配置表格列集
+  // （orderedLabels = reps ∪ 已配置键）、旧码号残留在 form.sizes。App 双页常驻
+  // DOM 不卸载，form 是本地 state 无 store 归宿，此处（状态所有者）是唯一挂点。
+  // 细节：mount 时 doc=null → docId=undefined，effect 首跑 setForm(DEFAULT_FORM)
+  // 为 no-op；doc 对象因切 activeSize 等换引用但 doc_id 不变时不触发（dep 字符串）；
+  // DEFAULT_FORM 是模块常量且 patch 恒建新对象不原地改，共享引用安全；求解中重置
+  // 无风险（求解用 start 载荷快照不回读 form，running 态输入本就 disabled）。
+  const docId = doc?.doc_id;
+  useEffect(() => {
+    setForm(DEFAULT_FORM);
+  }, [docId]);
   // US-013：订阅 quantities —— band 启动闸门（选中 g 码数量全 0 → 置灰）需要对数量
   // 矩阵编辑**响应式**（handleStart 内仍 getState() 现取快照，口径同源）。
   const quantities = useQtyStore((s) => s.quantities);

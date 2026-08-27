@@ -60,6 +60,7 @@ import { useEffect } from 'react';
 import type { JSX } from 'react';
 import { useUploadStore, type UploadStatus } from '../../store/uploadStore';
 import { useQtyStore } from '../../store/qtyStore';
+import { useStrategyStore } from '../../store/strategyStore';
 import { useUiStore } from '../../store/uiStore';
 import type { ParsedDoc } from '../../types/parsed';
 import { PieceZoomModal } from './PieceZoomModal';
@@ -98,6 +99,14 @@ export function PreviewPage(): JSX.Element {
       if (nextDocId !== prevDocId) {
         prevDocId = nextDocId;
         syncQty(state.doc);
+        // 重传同类残留（2026-08-27）：旧母版的策略 start 载荷在 error 态可被
+        // StrategyRunModal「重试」原样复用（旧 sizes/band/prefix/quantities 对新
+        // 母版非法）。仅清 lastStart（置 null 后重试自动回落 reset() 配置态），
+        // **不动** phase/status/result —— 进行中/已完成 run 的进度与结果是刻意
+        // 常驻设计（与 runRegistry 同性质）。与 qty/ui 联动同款集成层绑定。
+        if (useStrategyStore.getState().lastStart !== null) {
+          useStrategyStore.setState({ lastStart: null });
+        }
       }
     });
     return unsub;

@@ -27,6 +27,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { PreviewPage } from '../PreviewPage';
 import { useUploadStore } from '../../../store/uploadStore';
 import { useQtyStore } from '../../../store/qtyStore';
+import { useStrategyStore } from '../../../store/strategyStore';
 import { useUiStore } from '../../../store/uiStore';
 import type { ParsedDoc, ParsedPiece } from '../../../types/parsed';
 
@@ -41,6 +42,8 @@ let root: Root | null = null;
 beforeEach(() => {
   useUploadStore.getState().reset();
   useQtyStore.getState().resetQuantities();
+  // 2026-08-27 重传联动：strategyStore.lastStart 清除断言依赖干净初值。
+  useStrategyStore.getState().reset();
   // US-016：重置 nestingEnabled 到默认 false（避免前一个测试 setNestingEnabled(true) 残留）
   useUiStore.getState().setNestingEnabled(false);
   useUiStore.getState().setTab('preview');
@@ -62,6 +65,7 @@ afterEach(() => {
   document.body.innerHTML = '';
   useUploadStore.getState().reset();
   useQtyStore.getState().resetQuantities();
+  useStrategyStore.getState().reset();
   useUiStore.getState().setNestingEnabled(false);
   useUiStore.getState().setTab('preview');
   vi.restoreAllMocks();
@@ -271,6 +275,46 @@ describe('PreviewPage (US-014) qtyStore 联动（hydrate 默认 1 / reset 清空
     const map = useQtyStore.getState().quantities;
     expect(map.g01.perSize).toEqual({ '28': 1, '30': 1 });
     expect(map.g02.perSize).toEqual({ '30': 1 });
+  });
+
+  it('重传（doc_id 变化）→ strategyStore.lastStart 清空；doc_id 不变 / phase 不受影响', () => {
+    useUploadStore.setState({
+      status: 'done',
+      doc: makeDoc(),
+      activeSize: 28,
+    });
+    renderPage();
+    // 模拟「旧母版策略 start 载荷在场」（error 态重试数据源）
+    useStrategyStore.setState({
+      lastStart: {
+        mode: 'race',
+        minutes: 20,
+        seed: 0,
+        gate_mm: 1980,
+        sizes: [28, 30],
+        per_type: null,
+        quantities: null,
+        band: null,
+        prefix: null,
+      },
+      phase: 'error',
+    });
+    // 切 activeSize（doc_id 不变）→ lastStart 保留
+    act(() => {
+      useUploadStore.getState().setSize(30);
+    });
+    expect(useStrategyStore.getState().lastStart).not.toBeNull();
+    // 重传：doc_id 变化 → lastStart 清空（防旧母版载荷被「重试」复用）
+    act(() => {
+      useUploadStore.setState({
+        status: 'done',
+        doc: { doc_id: 'newid2', filename: 'M9999.dxf', sizes: makeDoc().sizes },
+        activeSize: 28,
+      });
+    });
+    expect(useStrategyStore.getState().lastStart).toBeNull();
+    // phase/status/result 不动（进行中/已完成 run 的进度展示刻意常驻）
+    expect(useStrategyStore.getState().phase).toBe('error');
   });
 
   it('切 activeSize 不触发 hydrate/reset（doc_id 不变，数量保留）', () => {
