@@ -304,6 +304,26 @@ class SessionRegistry:
         with self._lock:
             return self._active_count_locked()
 
+    def active_doc_ids(self) -> set[str]:
+        """活跃会话已 commit 的 doc_id 集（US-006 磁盘清理保护集消费）。
+
+        取 ``st.doc_id``（commit 路由写入）∪ 会话快照 ``state['doc']['doc_id']``
+        —— 后者覆盖 default 会话启动 reload 场景（``SessionState.doc_id`` 仅
+        commit 路由填写，启动 reload 只填 ``state['doc']``）。锁内快照，与
+        逐出/墓碑的结构性变更互不竞态。
+        """
+        ids: set[str] = set()
+        with self._lock:
+            for st in self._sessions.values():
+                if st.doc_id:
+                    ids.add(st.doc_id)
+                doc = st.state.get('doc') if isinstance(st.state, dict) else None
+                if isinstance(doc, dict):
+                    doc_id = doc.get('doc_id')
+                    if isinstance(doc_id, str) and doc_id:
+                        ids.add(doc_id)
+        return ids
+
     # ------------------------------------------------ 内部（调用方须持 self._lock）
 
     def _ensure_default(self) -> None:

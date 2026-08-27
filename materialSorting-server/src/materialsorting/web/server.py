@@ -21,7 +21,8 @@ WS 协议（详见 README / 实现计划；US-002 起全 label 键，不再接�
   - ``runtime.py``        pieces state 快照 + 共享 executor（import 即做启动 reload）；
   - ``parse_payload.py``  解析预览 / label 代表裁片纯函数；
   - ``routes_views.py``   GET / 、GET /api/ptypes 、POST /export；
-  - ``routes_ws.py``      WS /ws/solve + 求解子进程终止封装。
+  - ``routes_ws.py``      WS /ws/solve + 求解子进程终止封装；
+  - ``diskclean.py``      US-006 uploads TTL 清理（commit 尾触发 + main() 启动触发）。
 """
 from __future__ import annotations
 
@@ -74,6 +75,10 @@ from .sessions import (  # noqa: E402
     SessionError,
     registry as session_registry,
 )
+# US-006（uploads TTL 清理）：diskclean 模块级仅标准库 + paths（sessions/strategy
+# 走函数内延迟 import），禁 import 本模块（无环）；commit 触发点在
+# ``commit_to_nesting`` 尾部、进程启动触发点在 ``main()``。
+from . import diskclean  # noqa: E402
 
 app = FastAPI(title='排料可视化工作台')
 app.mount('/static', StaticFiles(directory=STATIC_DIR), name='static')
@@ -302,6 +307,10 @@ async def commit_to_nesting(req: Request):
     （镜像文件已由 commit_sync 双写刷新，但 default = 最后无 sid commit 者，镜像 =
     最后 commit 者，允许漂移）；无 sid：default 会话更新（现行为；default 与
     ``runtime._PIECES_STATE`` 同一 dict，reload 即同步）。
+
+    US-006：成功响应前 best-effort 触发 ``diskclean.trigger_cleanup``（uploads TTL
+    清理，异常仅 warn 不影响响应；本轮 commit 的产物 mtime 新 + 会话 doc_id 在
+    保护集，天然不被清）。
     """
     try:
         payload = await req.json()
@@ -357,6 +366,16 @@ async def commit_to_nesting(req: Request):
         print(f'[server] commit 后会话快照构建失败（保留旧 state）：{e}', file=sys.stderr)
         result['reloaded'] = False
         result['reload_error'] = str(e)
+
+    # US-006：commit 成功后 best-effort TTL 清理 uploads —— executor 里跑不阻塞
+    # 事件循环；**显式传 ``UPLOADS_DIR``**（本模块常量被测试 monkeypatch 后清理
+    # 范围自动跟随 tmp，不会碰真实 out/）；``trigger_cleanup`` 吞掉一切异常仅
+    # warn，绝不影响响应内容（外层 try 再兜一道防御）。
+    try:
+        await loop.run_in_executor(_executor, diskclean.trigger_cleanup,
+                                   str(UPLOADS_DIR))
+    except Exception as e:
+        print(f'[server] uploads 清理失败（不影响 commit）：{e}', file=sys.stderr)
     return result
 
 
@@ -405,6 +424,9 @@ from .routes_ws import (  # noqa: E402,F401
 
 def main():
     import uvicorn
+    # US-006：进程启动清理一轮超龄 uploads（daemon 线程不阻塞启动）。只在真正
+    # server 进程触发 —— TestClient 测试导入 app 不起线程，不碰真实 out/。
+    diskclean.start_startup_cleaner()
     uvicorn.run(app, host='127.0.0.1', port=8000)
 
 

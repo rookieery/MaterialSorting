@@ -5,7 +5,7 @@
    "id": "US-006",
    "title": "uploads 磁盘 TTL 清理",
    "description": "As a 运维者，我希望上传目录按 TTL 自动清理且绝不误删在用文档，以便磁盘占用有界、多会话场景下目录不再无限累积。\n\n具体任务：\n1. 新增 materialSorting-server/src/materialsorting/web/diskclean.py — 扫 out/uploads/：删超龄（MS_UPLOAD_TTL_DAYS 缺省 14 天，按 mtime）的 <doc_id>.dxf + <doc_id>_pieces/ 成对目录（孤儿单边——只有 dxf 或只有 pieces 目录——按同 TTL 清理）与超龄 strategy_cfg_*.json。保护集 = SessionRegistry 活跃会话 doc_id ∪ 全部 .web_strategy_active_*.json marker 内 doc_id（进行中策略 run 的 master_dxf）∪ mtime 未超龄者。触发时机：进程启动 + 每次 commit 成功后 best-effort（异常仅 warn 不阻塞主流程）。模块仅标准库 + 同包依赖。\n2. 新增 tests/test_web_diskclean.py（MS_OUT_DIR 临时目录造新旧混合文件验证）。\n\n验收标准：\n- 临时目录造新旧混合文件：超龄对被删、未超龄与保护集内（活跃会话/marker 引用）不删；孤儿单边被清理。\n- 会话 A 活跃 + 会话 B 已过期但 B 的策略 run 仍在跑（marker 在）：B 的 master doc 不被删。\n- 清理失败（目录被占用等）只 warn，commit 响应不受影响。\n- python -m materialsorting.web.diskclean 冒烟（dry-run 打印将删清单）+ tests/test_web_diskclean.py 通过；分层依赖未反向。",
-   "passes": false
+   "passes": true
   },
   {
    "id": "US-007",
