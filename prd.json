@@ -5,7 +5,7 @@
       "id": "US-003",
       "title": "读路由与 WS 接入会话",
       "description": "As a 排料工程师，我希望所有读数据端点按我的 sid 取我的会话快照，以便求解/预览/导出全部对着我自己上传的母版。\n\n具体任务：\n1. materialSorting-server/src/materialsorting/web/routes_views.py — /api/ptypes、/api/band-preview、/api/prefix-preview、/export 加 x-session-id Header 参数（缺省 → default 会话），state 改从 SessionRegistry 解析；GET / 响应头补 Cache-Control: no-cache（防部署后旧 bundle 滞留 default 的迁移窗口，FastAPI FileResponse 缺省不发缓存头）。\n2. materialSorting-server/src/materialsorting/web/routes_ws.py — /ws/solve 读 ?sid= query（浏览器 WS 不能自定义 Header；缺省 → default）：连接建立时 ws_open +=1 钉住会话（finally 减回），on_manifest/on_report 回调顺手刷新 last_active（求解期间客户端不发消息也不误杀，GIL-safe float 写）；会话过期/超限的结构化响应：HTTP 401/429 + {code}，WS 发 {'type':'error','code':'session_expired'|'session_limit','message'} 错误帧后关闭（code 键为 additive，旧前端忽略）。\n\n验收标准：\n- A/B 两会话 commit 不同 doc 后：/api/ptypes 各返自己的 representatives；band-preview/prefix-preview/export 各取各的 pieces_by_id（A 的导出 placed 匹配 A 的轮廓）。\n- /export 带过期 sid → 401 {code:'session_expired'}（JSON 响应非文件流）。\n- WS：合法 sid 求解全流程正常（manifest→frames→final）；过期/超限 sid → 带 code 的 error 帧 + close；求解进行中该会话不被扫描线程逐出；断开后 ws_open 归零。\n- 无 sid（Header/query 缺省）→ default 会话：现有 tests/test_web_routes.py 与 WS 协议测试零改动全绿。\n- 既有不变量保持：WS accept 阶段一次快照整连接不变、density 双口径、导出用原始轮廓非 eroded、stop/断开 terminate 子进程。\n- GET / 响应头含 Cache-Control: no-cache。",
-      "passes": false
+      "passes": true
     },
     {
       "id": "US-004",

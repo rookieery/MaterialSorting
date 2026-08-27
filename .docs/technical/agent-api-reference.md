@@ -19,20 +19,20 @@
 
 | 方法 | 路径 | 说明 | 实现 |
 |------|------|------|------|
-| GET | `/` | 返回 `static/index.html`（prod 入口） | `server.index` → `FileResponse` |
+| GET | `/` | 返回 `static/index.html`（prod 入口）；**多会话 US-003 起响应头带 `Cache-Control: no-cache`**（防部署新 bundle 后旧 index 引用已删 hash 资源、旧前端滞留 default 语义的迁移窗口；FastAPI `FileResponse` 缺省不发缓存头） | `server.index` → `FileResponse` |
 | POST | `/api/session` | 多会话 US-001：会话注册 / 幂等刷活性（读 `X-Session-Id` Header；容量上限 / 空闲过期墓碑判定的唯一注册入口），见下专节 | `server.create_session` → `sessions.registry.resolve(create=True)` |
 | mount | `/static/*` | 前端构建产物（JS/CSS/资源） | `StaticFiles(directory=paths.STATIC_DIR)` |
-| POST | `/export` | 导出最优 run → PNG / R12-DXF 附件下载 | `server.export` |
+| POST | `/export` | 导出最优 run → PNG / R12-DXF 附件下载；**多会话 US-003**：`X-Session-Id` → 该会话 `pieces_by_id`（缺省 → default） | `server.export` |
 | POST | `/api/parse-dxf` | US-004：multipart 上传母版 DXF → 深度解析 + g 码赋号 JSON | `server.parse_dxf` |
 | POST | `/api/commit-to-nesting` | US-010：把上传母版转排料 intermediate（Path A 全管线，覆盖写回 + .bak）+ US-020 commit 后 reload `_PIECES_STATE` + US-002 多会话：`X-Session-Id` 双写 per-doc intermediate + 会话快照绑定 | `server.commit_to_nesting` |
-| GET | `/api/ptypes` | US-020 D10（US-001 v2：键 = g 码 label）：返回当前 `_PIECES_STATE` 下每个 g 码的代表裁片（最小码内 parse 同序首个，含 `label` 编号），供前端高级配置弹窗缩略图/放大预览（D11 layer-aware） | `server.get_ptypes` |
-| POST | `/api/band-preview` | 2026-08-24 成带形态预览（高级配置弹窗「布局设置」band 行缩略图数据源）：主进程同步 `build_band_plan`，响应无 `WB_`，见下专节 | `routes_views.band_preview` |
-| POST | `/api/prefix-preview` | 2026-08-25 前缀组合形态预览（「布局设置」prefix 行缩略图数据源）：主进程同步 `eligible_sizes→pick_prefix_size→build_prefix_plan`，成员带 `tag`=g 码，响应无 `PS_`，见下专节 | `routes_views.prefix_preview` |
+| GET | `/api/ptypes` | US-020 D10（US-001 v2：键 = g 码 label）：返回每个 g 码的代表裁片（最小码内 parse 同序首个，含 `label` 编号），供前端高级配置弹窗缩略图/放大预览（D11 layer-aware）；**多会话 US-003**：`X-Session-Id` → 该会话快照（缺省 → default `_PIECES_STATE`） | `server.get_ptypes` |
+| POST | `/api/band-preview` | 2026-08-24 成带形态预览（高级配置弹窗「布局设置」band 行缩略图数据源）：主进程同步 `build_band_plan`，响应无 `WB_`，见下专节；**多会话 US-003**：`X-Session-Id` → 该会话快照 | `routes_views.band_preview` |
+| POST | `/api/prefix-preview` | 2026-08-25 前缀组合形态预览（「布局设置」prefix 行缩略图数据源）：主进程同步 `eligible_sizes→pick_prefix_size→build_prefix_plan`，成员带 `tag`=g 码，响应无 `PS_`，见下专节；**多会话 US-003**：`X-Session-Id` → 该会话快照 | `routes_views.prefix_preview` |
 | POST | `/api/strategy/start` | strategy US-004：spawn `ms-run-config --strategy` 子进程启动双模式长跑（202）；**2026-08-22 起载荷可带 band**（经 `_parse_band` 同一校验点写进 config，成带与策略模式兼容）；**2026-08-25 起载荷可带 prefix**（经 `_parse_prefix` 同一校验点含 2+2 资格码，非法 → 400 早退，写进 9 键 config） | `strategy.strategy_start` |
 | GET | `/api/strategy/status` | strategy US-004：无状态惰性轮询 run_dir 产物组装进度 | `strategy.strategy_status` |
 | POST | `/api/strategy/stop` | strategy US-004：树杀子进程（taskkill /T /F / killpg）+ 清 marker | `strategy.strategy_stop` |
 | GET | `/api/strategy/result` | strategy US-004：done/stopped run → best + manifest（应用到主画布数据源） | `strategy.strategy_result` |
-| WS | `/ws/solve` | 排料求解流（manifest → frames → final） | `server.ws_solve` |
+| WS | `/ws/solve` | 排料求解流（manifest → frames → final）；**多会话 US-003**：`?sid=` query（浏览器 WS 不能自定义 Header；缺省 → default 会话），连接钉住 + 回调刷活性，见下专节 | `server.ws_solve` |
 
 > （已删 2026-08-22）`POST /api/band/preview`（US-013 成带预演回显）与 `routes_band.py` 整体移除 —— 预演 / ack 硬警告 / go-no-go 闸门等成带旁路功能退场，band 收敛为「WS StartPayload band = 勾选 + 选 g 码」极简主流程。
 
@@ -41,6 +41,8 @@
 ## POST /export — 导出
 
 前端把**最优 run 的最终帧 `placed_items`** 回传，服务端用**原始母版轮廓**（`pieces_intermediate.json` 的原始 polygon，**非 eroded**）放到排料变换位，保证 PNG / DXF / PLT 三格式几何一致、可直接裁剪 / 绘图。
+
+**多会话 US-003**：可选 **`X-Session-Id` HTTP Header** —— 带 sid → `pieces_by_id` 取该会话 commit（US-002）注册的 per-doc 快照（A 的 placed 匹配 A 的原始轮廓）；缺省 → default 会话（`_PIECES_STATE`，旧行为）。会话解析先于一切导出逻辑（fail-fast）：过期/未注册 sid → `401 {"code":"session_expired",...}`（**JSON 响应非文件流**）、非法 sid → `400 {"error":"sid 非法"}`、超限 → `429 {"code":"session_limit",...}`（HTTP 层 SessionError 统一映射）。
 
 ### 请求 payload
 
@@ -266,6 +268,7 @@ curl -X POST http://127.0.0.1:8000/api/session -H "X-Session-Id: 3f2a...hex"
 3. **墓碑**：超时逐出丢全部状态只留 `{sid, ts}`（FIFO ≤128、存活 1h）；墓碑命中 → 401 不静默重建（防过期 sid 被当新会话）；墓碑 1h 过期或 FIFO 淘汰后该 sid 视为全新可正常新建。
 4. **合法但未注册 sid 的读路径**（`resolve(create=False)`，服务重启丢内存场景）同过期语义 401；**写路径（US-002 commit）走 `resolve(create=True)`** —— 数据自带（上传母版），合法未注册 sid 可直接 commit 建会话，过期/墓碑/超限仍 401/429。
 5. **会话状态结构**：`SessionState = {sid, state(pieces 快照 dict), doc_id, last_active, ws_open, strategy_busy}`；`state` 由 US-002 commit 填 per-doc 快照（`_build_pieces_state(per-doc 路径)`，`doc_id` 同步绑定）；WS 钉住 API = `ws_acquire/ws_release`（计数），活性刷新 = `touch(sid)`（GIL-safe float 写）。
+6. **读端点接入（US-003 已落地）**：HTTP 读路由（`/api/ptypes` / `/api/band-preview` / `/api/prefix-preview` / `/export`）经 `routes_views._resolve_session_state`（读路径 `create=False`）从 registry 取快照；WS `/ws/solve` 读 `?sid=` query 经 `ws_acquire`/`ws_release` 钉住 + `on_manifest`/`on_report` 回调 `touch` 刷活性（求解期间客户端不发消息也不被扫描误杀）。超限（429 session_limit）只可能出现在 create 路径（POST /api/session / commit）；读路径对未知 sid 一律 401 session_expired（不静默重建、不占新名额）—— WS error 帧格式对 `session_limit` code 通用（白盒锁定），实际把关在 HTTP 层。
 
 ### 关键不变量
 
@@ -276,14 +279,14 @@ curl -X POST http://127.0.0.1:8000/api/session -H "X-Session-Id: 3f2a...hex"
 
 ## GET /api/ptypes — US-020 裁片 g 码代表（D10/D11；US-001 v2：键 = label）
 
-返回当前 `_PIECES_STATE` 下每个 g 码（label）的代表裁片，供前端高级配置弹窗表头缩略图 + 点击放大预览（US-018）。
+返回当前会话下每个 g 码（label）的代表裁片，供前端高级配置弹窗表头缩略图 + 点击放大预览（US-018）。
 
 ### 请求
 
-无入参，GET。响应直接读 `_get_pieces_state()` 内存常量，**不走文件 I/O**（μs 级响应）。
+无入参，GET；可选 **`X-Session-Id` HTTP Header**（多会话 US-003）—— 带 sid → 该会话 commit（US-002）注册的 per-doc 快照的 `label_representatives`；缺省/空串 → default 会话（`runtime._PIECES_STATE` 同一 dict，无 sid 行为逐字节不变）。会话解析失败（过期 401 / 非法 400）返回结构化 JSON，不再返回 representatives。响应直接读内存快照，**不走文件 I/O**（μs 级响应）。
 
 ```bash
-curl http://127.0.0.1:8000/api/ptypes
+curl http://127.0.0.1:8000/api/ptypes -H "X-Session-Id: <sid>"
 ```
 
 ### 响应（200）
@@ -327,6 +330,7 @@ curl http://127.0.0.1:8000/api/ptypes
 ```
 
 - band/prefix 校验**复用 WS 同一校验点**（`routes_ws._parse_band` / `_parse_prefix`）—— WS / 策略 start / 预览三处口径恒一。
+- **多会话 US-003**：可选 `X-Session-Id` Header → 该会话的 `pieces` / `pieces_by_id`（A/B 会话各成各带互不串台）；缺省 → default。sid 过期/非法 → 401/400 结构化 JSON，早于业务校验（`_resolve_session_state` 单一解析点，`/api/ptypes` 同款）。
 - `gate_mm` 优先求解口径（前端 parseGate），缺省/非法回退 intermediate（与 `/export` 同法）；构造约束带 `min(gate, 1910)` 与求解同口径。
 - prefix `seed` 缺省 0：界面恒单 seed=0 ⇒ 预览与求解同码（资格码选取是 seeded 随机，跨 seed 形态同构仅码不同）。
 
@@ -405,7 +409,18 @@ done/stopped 可读（running → 409「尚未结束」；idle → 404）。响�
 
 单条长连接，生命周期：**client 发 start（首条必须）→ server 推 1×manifest → N×frame → 1×final（或 error）；client 可在任意时刻发 stop → server 推 1×stopped → 关闭 WS**。**US-011 band 开启时在 manifest 前多推 1×stage**（腰头成带带内聚排完成统计）；**US-003 prefix 开启时再多推 1×stage('prefix')**（双开序 = band → prefix → manifest）。
 
-> US-020：accept 阶段 `state = _get_pieces_state()` 拿一次快照，整连接内 `pieces / gate_mm` 不变（避免求解中途 reload 切数据）。state 空时（首次启动未 commit / intermediate 缺失）直接发 error「排料数据为空」并关闭。
+**多会话 US-003：`?sid=` query 参数**（浏览器 WS 不能自定义 Header，故 sid 走 query 而非 `X-Session-Id`）：
+
+```bash
+ws://127.0.0.1:8000/ws/solve?sid=<sid>     # 缺省/空串 → default 会话（旧行为不变）
+```
+
+- **连接钉住**：accept 后立即 `ws_acquire(sid)`（resolve 语义 + `ws_open += 1`）—— 扫描线程对 `ws_open>0` 的会话跳过逐出（求解 10-60 分钟不被误杀）；任何退出路径（final/error/stop/断开）在 finally `ws_release` 减回（断开后归零）。
+- **快照口径**：accept 阶段 state 快照来自**会话**（带 sid = commit 注册的 per-doc 快照；缺省 = default 会话，其 state 即 `runtime._PIECES_STATE` 同一 dict）。会话 state 从不原位 mutate（commit 整体 rebind `st.state`）→ 「整连接一次快照」不变量保持。
+- **活性刷新**：`on_manifest` / `on_report` 回调内 `registry.touch(sid)`（求解期间客户端不发消息，靠回调刷 `last_active`；GIL-safe 单 float 写不加锁）。
+- **会话错误帧**：过期（墓碑/惰性超时/未注册合法 sid）→ 发 `{"type":"error","code":"session_expired","message":"会话已过期（5 分钟无操作），请刷新页面"}` 后**显式 close**（不发 manifest）；非法 sid → `{"type":"error","message":"sid 非法"}`（无 code 键）。`code` 键为 additive —— 旧前端忽略、US-005 前端据此弹阻断弹窗。`session_limit` code 帧格式同样支持（容量闸门实际由 HTTP 层 POST /api/session 把关，读路径 create=False 不触达 429）。
+
+> US-020：accept 阶段 `state = _get_pieces_state()` 拿一次快照，整连接内 `pieces / gate_mm` 不变（避免求解中途 reload 切数据）。state 空时（首次启动未 commit / intermediate 缺失）直接发 error「排料数据为空」并关闭。**US-003（多会话）后该快照经会话解析取得**（default 会话 state 即 `_PIECES_STATE`，无 sid 行为不变）。
 >
 > US-026：ws_solve 改为 `solve_with_callback_proc` 进程化求解（build_instance 移入子进程）。write loop 内联 drain asyncio queue → ws.send_json；read loop 后台 task 持续读客户端消息。收到 `{action:'stop'}` → `process.terminate()+join(timeout=5)` → 直发 `{type:'stopped'}` → 关闭 WS。客户端断开（WebSocketDisconnect）→ 同样 terminate+join 防孤儿进程（**修复旧 bug**：旧版 `except:pass` 静默忽略断开，求解线程跑满预算）。
 >

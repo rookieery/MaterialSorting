@@ -1,8 +1,13 @@
-"""页面 / 只读视图 / 导出路由（自 server.py 机械拆出，行为不变）。
+"""页面 / 只读视图 / 导出路由（自 server.py 机械拆出）。
 
 GET ``/``（index.html）、GET ``/api/ptypes``（label 代表裁片）、POST ``/export``
-（PNG / R12-DXF / PLT marker 下载）。pieces state 快照来自 ``web.runtime``；
-导出几何/渲染走 ``web.export`` 门面（路径不变）。
+（PNG / R12-DXF / PLT marker 下载）。导出几何/渲染走 ``web.export`` 门面（路径不变）。
+
+多会话 US-003：全部读数据端点经 ``_resolve_session_state`` 从 SessionRegistry 解析
+pieces state —— ``X-Session-Id`` Header → 该会话 commit（US-002）注册的 per-doc
+快照；缺省 → default 会话（state 即 ``runtime._PIECES_STATE`` 同一 dict，无 sid
+行为不变）。会话过期/超限/非法 → SessionError → 结构化 JSONResponse（401/429 带
+``code`` 键，additive）。
 """
 from __future__ import annotations
 
@@ -14,15 +19,31 @@ from urllib.parse import quote
 
 from .. import paths
 from .export import placed_to_world, render_png, write_marker_dxf, write_marker_plt
-from .runtime import _get_pieces_state
+from .sessions import SessionError, registry as session_registry
 
 router = APIRouter()
 STATIC_DIR = paths.STATIC_DIR
 
 
+def _resolve_session_state(request: Request) -> dict:
+    """US-003：读路由 pieces state 单一解析点（``X-Session-Id`` → SessionRegistry）。
+
+    缺省/空串 → default 会话；带 sid → 该会话快照（commit 双写的主写 per-doc
+    内容）。读路径 ``resolve()`` 缺省 ``create=False``：命中墓碑 / 惰性超时 /
+    合法但未注册（服务重启丢内存）→ ``SessionExpiredError`` 401（不静默重建），
+    满员未知 sid 不占新名额。调用方捕获 ``SessionError`` → ``e.payload()``。
+    """
+    sid = (request.headers.get('x-session-id') or '').strip() or None
+    return session_registry.resolve(sid).state
+
+
 @router.get('/')
 def index():
-    return FileResponse(os.path.join(STATIC_DIR, 'index.html'))
+    # US-003：no-cache —— index.html 必须每次重验证（FastAPI FileResponse 缺省不发
+    # 缓存头，浏览器启发式缓存会让部署新 bundle 后旧 index 引用已删 hash 资源，
+    # 旧前端滞留 default 会话语义的迁移窗口）；带 hash 的 /static 资源自身可长缓存。
+    return FileResponse(os.path.join(STATIC_DIR, 'index.html'),
+                        headers={'Cache-Control': 'no-cache'})
 
 
 # ---------------------------------------------------------------- US-020 GET /api/ptypes
@@ -35,8 +56,8 @@ _LABEL_REPRESENTATIVE_FIELDS = (
 
 
 @router.get('/api/ptypes')
-def get_ptypes():
-    """US-020 D10：返回当前 ``_PIECES_STATE`` 下每个 g 码（label）的代表裁片。
+def get_ptypes(request: Request):
+    """US-020 D10：返回当前会话下每个 g 码（label）的代表裁片。
 
     响应：``{representatives: Record<label, {label, polygon, net_polygon,
     internal_lines, notches, grain_line}>}`` —— 键 = 裁片 g 码（v2 起 ptype 键删除）。
@@ -47,8 +68,14 @@ def get_ptypes():
     坐标口径（US-024fix）：优先返 intermediate ``label_representatives`` —— **RAW 母版
     原始坐标**，与 ``/api/parse-dxf`` 上传预览同朝向（未走布纹对齐旋转），让缩略图与
     上传预览一致、可辨认。无此字段时回退到 ``pieces`` 首个代表（变换后坐标）。
+
+    US-003（多会话）：``X-Session-Id`` → 各会话自己的 representatives；缺省 →
+    default 会话（``_PIECES_STATE``）。sid 过期/非法 → 401/400 结构化 JSON。
     """
-    state = _get_pieces_state()
+    try:
+        state = _resolve_session_state(request)
+    except SessionError as e:
+        return JSONResponse(e.payload(), status_code=e.status)
     reps = (state.get('doc') or {}).get('label_representatives')
     if reps is not None:
         return {'representatives': reps}
@@ -92,6 +119,9 @@ async def band_preview(req: Request):
         {ok:true, label, fill_pct, bbox:{width_mm,height_mm}, n_members,
          members:[{pid, size, color, polygon:[[x,y],...]}],   # 原始轮廓@带内归一位
          outline:[[x,y],...]}                                  # erode 后组合片外轮廓
+
+    US-003（多会话）：``X-Session-Id`` → 该会话的 pieces/pieces_by_id；缺省 →
+    default。sid 过期/非法 → 401/400 结构化 JSON（早于业务校验）。
     """
     from ..nesting_bounds.load_pieces import NEST_GATE_MM, PLOT_SAFE_MAX_Y_MM
     from ..nesting_engine.waist_band import BandError, build_band_plan
@@ -99,7 +129,10 @@ async def band_preview(req: Request):
     from .routes_ws import _parse_band
     from .solver import _resolve_d_tol, build_pid_meta
 
-    state = _get_pieces_state()
+    try:
+        state = _resolve_session_state(req)
+    except SessionError as e:
+        return JSONResponse(e.payload(), status_code=e.status)
     payload = await req.json()
 
     pieces = state.get('pieces') or []
@@ -194,6 +227,9 @@ async def prefix_preview(req: Request):
         {ok:true, front, back, size, fill_pct, bbox:{width_mm,height_mm},
          n_members, members:[{pid, size, color, tag, polygon:[[x,y],...]}],
          outline:[[x,y],...]}
+
+    US-003（多会话）：``X-Session-Id`` → 该会话的 pieces/pieces_by_id；缺省 →
+    default。sid 过期/非法 → 401/400 结构化 JSON（早于业务校验）。
     """
     from ..nesting_bounds.load_pieces import NEST_GATE_MM, PLOT_SAFE_MAX_Y_MM
     from ..nesting_engine.prefix import (
@@ -206,7 +242,10 @@ async def prefix_preview(req: Request):
     from .routes_ws import _parse_prefix
     from .solver import _resolve_d_tol, build_pid_meta
 
-    state = _get_pieces_state()
+    try:
+        state = _resolve_session_state(req)
+    except SessionError as e:
+        return JSONResponse(e.payload(), status_code=e.status)
     payload = await req.json()
 
     pieces = state.get('pieces') or []
@@ -291,8 +330,15 @@ async def export(req: Request):
                placed:[{id,rotation,translation},...], filename?}
     filename 为上传母版名（用作导出文件名前缀，去 .dxf）；缺省回退「排料」。
     返回文件字节流（Content-Disposition 附件下载，中文文件名走 RFC5987）。
+
+    US-003（多会话）：``X-Session-Id`` → 该会话的 ``pieces_by_id``（A 的 placed 匹配
+    A 的原始轮廓）；缺省 → default。sid 过期/超限/非法 → 401/429/400 结构化 JSON
+    响应**非文件流**（会话解析先于一切导出逻辑，fail-fast）。
     """
-    state = _get_pieces_state()
+    try:
+        state = _resolve_session_state(req)
+    except SessionError as e:
+        return JSONResponse(e.payload(), status_code=e.status)
     pieces_by_id = state.get('pieces_by_id') or {}
 
     payload = await req.json()
