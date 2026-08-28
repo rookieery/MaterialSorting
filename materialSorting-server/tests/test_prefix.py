@@ -10,7 +10,7 @@
 3. ``build_prefix_plan``：4 片（前×2+后×2 同码）interleave 竖排贴靠形态、
    **rot180 负坐标框架记账**（tr=(xoff−b0, yoff−b1)，重构几何与放置几何逐点
    一致 —— P0 曾因缺此补偿致片侧移并排）、守卫（order ValueError / 副本不齐
-   2+2 / 不同码 / 竖排超高 min(gate,1910) PrefixError）；
+   2+2 / 不同码 / 竖排超高 gate_nest PrefixError）；
 4. 展开契约黄金用例：组合片 rot=0 与 rot=180 两组手算对拍（复用
    ``waist_band.expand_placements``，offset 减号权威式）；构造 chunk 包络断言
    union(成员原轮廓@展开位) ⊆ composite@主解位 ⊕ d_g（容差 0.5mm）；展开后
@@ -102,7 +102,7 @@ def _prefix_ctx(sizes=(34,), d_g=2.0, demand=2, front='g02', back='g03',
 
     返回 ``(pid_meta, pieces_by_id)``：pid_meta.polygon 为 erode(d_g) 后轮廓
     （build_pid_meta 同口径）；pieces_by_id 存原始轮廓（union/包络断言口径）。
-    h_mul 等比放大高度（竖排超高守卫用例：4 片堆叠 > 1910）。
+    h_mul 等比放大高度（竖排超高守卫用例：4 片堆叠 ≈2333 > 门幅 1980）。
     """
     pieces_by_id = {}
     pid_meta = {}
@@ -124,7 +124,7 @@ def _prefix_ctx(sizes=(34,), d_g=2.0, demand=2, front='g02', back='g03',
 
 
 def _build34(pid_meta, pieces, **kw):
-    kw.setdefault('gate_nest', 1910.0)
+    kw.setdefault('gate_nest', 1980.0)
     return build_prefix_plan(pid_meta, pieces, front_pid='g02_34',
                              back_pid='g03_34', d_g=2.0, **kw)
 
@@ -247,7 +247,7 @@ def test_build_prefix_plan_form_and_rot180_accounting():
 
 def test_build_prefix_plan_guards():
     """守卫：order ValueError / 副本不齐 2+2（1、3、pid 缺失）/ 不同码 /
-    竖排超高（min(gate_nest,1910)，不静默截断）。"""
+    竖排超高（gate_nest，不静默截断）。"""
     pid_meta, pieces = _prefix_ctx()
     with pytest.raises(ValueError, match='order'):
         _build34(pid_meta, pieces, order='weave')
@@ -259,19 +259,22 @@ def test_build_prefix_plan_guards():
             _build34(m, pieces)
     with pytest.raises(PrefixError, match=r'2\+2'):
         build_prefix_plan(pid_meta, pieces, front_pid='g02_99',
-                          back_pid='g03_34', d_g=2.0, gate_nest=1910.0)
+                          back_pid='g03_34', d_g=2.0, gate_nest=1980.0)
 
     m2, p2 = _prefix_ctx(sizes=(34, 35))
     with pytest.raises(PrefixError, match='不同码'):
         build_prefix_plan(m2, p2, front_pid='g02_34', back_pid='g03_35',
-                          d_g=2.0, gate_nest=1910.0)
+                          d_g=2.0, gate_nest=1980.0)
 
-    # 竖排超高：gate_nest 直接钳（800 < 堆叠高）与 gate_nest>1910 钳 PLOT_SAFE
+    # 竖排超高：gate_nest=800 < 堆叠高直接拒；2026-08-28 起不再钳 1910 ——
+    # 超高构造（堆叠 ≈2333）在门幅 1980 仍拒，但 gate_nest=3000 放行（旧口径必拒）
     with pytest.raises(PrefixError, match='竖排高'):
         _build34(pid_meta, pieces, gate_nest=800.0)
-    tall_meta, tall_pieces = _prefix_ctx(h_mul=1.6)    # 4 片堆叠 > 1910
+    tall_meta, tall_pieces = _prefix_ctx(h_mul=1.6)    # 4 片堆叠 ≈2333
     with pytest.raises(PrefixError, match='竖排高'):
-        _build34(tall_meta, tall_pieces, gate_nest=3000.0)
+        _build34(tall_meta, tall_pieces, gate_nest=1980.0)
+    chunk_tall, _gaps, _holes = _build34(tall_meta, tall_pieces, gate_nest=3000.0)
+    assert 1980.0 < chunk_tall.bbox['height_mm'] <= 3000.0   # 无 1910 钳制
 
 
 def test_build_prefix_plan_deterministic_to_dict():
@@ -401,7 +404,7 @@ def test_module_layering_purity():
 
 # --------------------------------------- US-002 段置换钉位 + 驱逐重插
 
-GATE = 1910.0
+GATE = 1980.0   # 2026-08-28 起：输入幅宽 = 实际幅宽（无 1910 钳制）
 
 
 def _filler(pid, x0, y0, x1, y1):
@@ -620,15 +623,15 @@ def test_reinsert_priority_slide():
 
 
 def test_reinsert_tail_fallback_growth_warn(caplog):
-    """③ 兜底：驱逐片高 1950 > gate+2 全部 y 候选失效 ⇒ 尾端贴触追加（+片宽
-    +60mm），width_growth=260 计入 stats 且超 50mm 警戒线 warn。"""
+    """③ 兜底：驱逐片高 2030 > 门幅 1980+容差，全部 y 候选失效 ⇒ 尾端贴触追加
+    （+片宽+60mm），width_growth=260 计入 stats 且超 50mm 警戒线 warn。"""
     pls, gr, ge, pm, _pb = _rect_ctx(
-        [('f_p', 0.0, 0.0, 500.0, 1910.0), ('f_e', 50.0, 0.0, 150.0, 1950.0)])
+        [('f_p', 0.0, 0.0, 500.0, 1910.0), ('f_e', 50.0, 0.0, 150.0, 2030.0)])
     with caplog.at_level(logging.WARNING,
                          logger='materialsorting.nesting_engine.prefix'):
         st = reinsert_evicted(pls, gr, ge, [1], {}, pm, gate_nest=GATE)
     assert st['n_slide'] == 1
-    assert ge[1].bounds == pytest.approx((660.0, 0.0, 760.0, 1950.0))
+    assert ge[1].bounds == pytest.approx((660.0, 0.0, 760.0, 2030.0))
     assert st['width_growth'] == pytest.approx(260.0)
     assert st['width_growth'] > PIN_WIDTH_GROWTH_WARN_MM
     assert any('width_growth' in r.message for r in caplog.records)
@@ -636,9 +639,13 @@ def test_reinsert_tail_fallback_growth_warn(caplog):
 
 def test_reinsert_area_desc_order_multi_evicted():
     """多驱逐片按**面积降序**入占（tie-break 确定性）：大片 e2（14000mm²）先
-    占 y=0 贴触位，小片 e1（4000mm²）后占 y=1710 —— 终位坐标即锁处理序
-    （若误用升序，e1/e2 终位互换即爆）；双跑逐字节一致。"""
-    rects = [('f_p', 0.0, 0.0, 500.0, 1910.0),
+    占 f_p 顶上走廊贴墙位（x=0），小片 e1（4000mm²）后贴 e2 右侧同底 —— 终位
+    坐标即锁处理序（若误用升序，e1/e2 终位互换即爆）；双跑逐字节一致。
+    f_p 高 1500 在顶上留出 480mm 走廊：贴墙候选成本 = max(cur_max, 片宽) =
+    500.0 **精确浮点**（走廊畅通滑过头被钳 x=0），列内贴触候选 ≈570 带二分
+    ~1e-9 噪声但被 max() 丢弃 —— 不再有「靠噪声取胜的平手」（旧全高夹具
+    1910 口径下 y 选择即噪声 Tie，2026-08-28 门幅 1980 已翻案，故重造）。"""
+    rects = [('f_p', 0.0, 0.0, 500.0, 1500.0),
              ('f_e1', 20.0, 400.0, 60.0, 500.0),
              ('f_e2', 10.0, 1400.0, 80.0, 1600.0)]
 
@@ -649,8 +656,9 @@ def test_reinsert_area_desc_order_multi_evicted():
 
     j1, st, b1, b2 = _run()
     assert (st['n_home'], st['n_nudge'], st['n_slide']) == (0, 0, 2)
-    assert b2 == pytest.approx((500.0, 0.0, 570.0, 200.0))    # 大片先占 y=0
-    assert b1 == pytest.approx((500.0, 200.0, 540.0, 300.0))  # 小片叠 e2 顶棱 y=200
+    assert b2 == pytest.approx((0.0, 1500.0, 70.0, 1700.0))    # 大片先占走廊贴墙
+    assert b1 == pytest.approx((70.0, 1500.0, 110.0, 1600.0))  # 小片贴 e2 右侧同底
+    assert st['width_growth'] == pytest.approx(0.0)            # 走廊贴插不增长总长
     j2, st2, b1b, b2b = _run()
     assert j1 == j2 and st2 == st and (b1b, b2b) == (b1, b2)
 
@@ -758,10 +766,10 @@ def test_pin_prefix_layout_head_anchor_skip_p0(head_off):
 
 
 def test_pin_prefix_layout_rollback_on_recheck_fail():
-    """复检失败回退：布局含 y=1950 > 1910+11 越界片（模拟异常解），置换后
+    """复检失败回退：布局含 y=2000 > 1980+11 越界片（模拟异常解），置换后
     y 违例仍在 ⇒ ``rolled_back`` 且返回置换前布局（LNS 纪律：交付物恒过检）。"""
     placements, pid_meta, pieces_by_id, chunk, comp_tr, pidx = _mid_layout()
-    placement, meta, piece = _filler('f_bad', 3800.0, 0.0, 4000.0, 1950.0)
+    placement, meta, piece = _filler('f_bad', 3800.0, 0.0, 4000.0, 2000.0)
     pid_meta['f_bad'] = meta
     pieces_by_id['f_bad'] = piece
     placements.append(placement)

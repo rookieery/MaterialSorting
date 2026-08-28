@@ -16,13 +16,12 @@
 
 三格式统一消费 ``placed_to_world`` 的**真实母版轮廓**（pieces_intermediate.json
 的原始 polygon，非 eroded）放到排料变换位，几何一致、可直接裁剪 / 绘图。格式
-细节与现场撞机修正见各自模块 docstring。依赖方向不变：web → nesting_engine /
-nesting_bounds（颜色 ``size_color``/``SIZE_ANCHOR``、质心 ``centroid``、可写幅宽
-``PLOT_SAFE_MAX_Y_MM`` 单一真相源仍在底层模块，此处仅为旧模块属性保持而 re-export）。
+细节与门幅口径（2026-08-28 起 = 输入门幅单一口径）见各自模块 docstring。依赖
+方向不变：web → nesting_engine / nesting_bounds（颜色 ``size_color``/``SIZE_ANCHOR``、
+质心 ``centroid`` 单一真相源仍在底层模块，此处仅为旧模块属性保持而 re-export）。
 """
 from __future__ import annotations
 
-from ..nesting_bounds.load_pieces import PLOT_SAFE_MAX_Y_MM  # noqa: F401（旧 export 模块属性保持）
 from ..nesting_engine.labeling import centroid  # noqa: F401（同上）
 from ..nesting_engine.sparrow_baseline import SIZE_ANCHOR, size_color  # noqa: F401（同上）
 from .export_dxf import write_marker_dxf

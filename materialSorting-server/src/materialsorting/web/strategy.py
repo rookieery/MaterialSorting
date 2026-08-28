@@ -58,7 +58,6 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 
 from .. import paths
-from ..nesting_bounds.load_pieces import PLOT_SAFE_MAX_Y_MM
 from .sessions import DEFAULT_SID, SID_RE, SessionError
 from .sessions import registry as session_registry
 from .solver import build_pid_meta
@@ -895,7 +894,7 @@ async def strategy_result(req: Request):
     gate_mm = float(st.get('gate_mm') or 0.0)
     manifest = {
         'gate_mm': gate_mm,
-        'gate_nest_mm': min(gate_mm, PLOT_SAFE_MAX_Y_MM),
+        # 2026-08-28 起 gate_nest_mm 字段已删（输入幅宽=实际幅宽单一口径）。
         'total_area_mm2': total_area,
         'n_eroded': n_eroded,
         'pieces': [

@@ -167,7 +167,7 @@ def test_build_instance_quadtree_workers_passthrough(synthetic_pieces):
 
 def test_build_instance_opts_do_not_touch_instance(synthetic_pieces):
     """旋钮只改 config 不改 instance：strip_height / items / pid_meta 与无旋钮一致
-    （求解约束带 = min(gate, PLOT_SAFE) 口径不受 solver_opts 扰动）。"""
+    （求解约束带 = 输入门幅原样，2026-08-28 起单一口径，不受 solver_opts 扰动）。"""
     pieces, gate_mm = synthetic_pieces
     i1, _, meta1, area1, _ = build_instance(pieces, gate_mm, time_budget=30, seed=1)
     i2, _, meta2, area2, _ = build_instance(

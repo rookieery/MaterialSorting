@@ -11,8 +11,8 @@
     seed 两跑 956==956 帧逐帧全等 —— PRD 判据③的「逐帧相等」只在收敛口径
     下物理可达，故终验绑定 P0 口径；
   - **density = raw-width 生产口径**：主进程 ``_apply_density_dual`` 已换算为
-    ``total_area/(width*min(gate,1910))``（90% 生死线口径），本模块直接读
-    final/frame 的 ``density`` 字段。
+    ``total_area/(width*gate)``（输入门幅即实际幅宽，90% 生死线口径），本模块
+    直接读 final/frame 的 ``density`` 字段。
 
 五项判据（tasks/prd-prefix-head-set.md US-005）：
   1. 密度 A/B：off vs on × seed {0,1,2,3}，均值劣化 <=1.0pt（P0 基准 −0.14pt）；

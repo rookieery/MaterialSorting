@@ -11,8 +11,6 @@ import logging
 import math
 from collections import Counter
 
-# 绘图仪可写幅宽（单一事实源：nesting_bounds 定义，web/solver 求解约束同源引用）
-from ..nesting_bounds.load_pieces import PLOT_SAFE_MAX_Y_MM
 from .export_geometry import NOTCH_LEN_MM
 
 
@@ -33,11 +31,11 @@ from .export_geometry import NOTCH_LEN_MM
 #   - 行尾 CRLF（生产文件全 CRLF）
 #   - 不输出 VS 速度 / LB 文字指令（生产文件均无，LB 字库兼容性交给设备端）
 #
-# 现场撞机修正（2026-08，对照生产 PLT 逐项核出的设备级差异）：
-#   - 安全幅面：机器实际可写幅宽 ~1910mm < 求解门幅 1980mm。旧导出把门幅框画在
-#     y=0/1980、顶部刺口伸到 1983.9mm，Y 超程小车撞导轨硬限位（生产 PLT 内容
-#     Y ≤ 1912mm、外框上沿 1895mm）。→ 内容按 y ≤ PLOT_SAFE_MAX_Y_MM 半平面裁剪
-#     （削平不缩放，绝不变形），门幅框上沿压进可写幅宽，越界裁片记 warning。
+# 现场撞机修正（2026-08，对照生产 PLT 逐项核出的设备级差异；幅宽口径 2026-08-28
+# 版师定案后收敛为「输入门幅即实际幅宽」，撞机确认系当时那台机器无法处理 1980
+# 幅宽所致 —— 求解/导出不再扣 70mm，幅宽受限的设备由用户直接输入更小门幅）：
+#   - 门幅框/内容界：按输入 gate_mm 画框（上沿内缩边距）并裁剪（削平不缩放，
+#     绝不变形）。历史上界 1910（PLOT_SAFE_MAX_Y_MM）已随 70mm 钳制整体移除。
 #   - PD 分块：旧导出单条 PD 塞整片轮廓（实测最长 2994B / 229 点），国产 HP-GL
 #     解释器行缓冲普遍仅百余字节，溢出后坐标流错位 → 小车乱走须急停（生产 PLT
 #     单条 ≤11 点 / 行 ≤118B 的刻意分行即为此）。→ ≤10 点/行且 ≤110B 分块续画。
@@ -72,10 +70,8 @@ _LAYER_INTERNAL = 'internal'  # 内部线（DXF layer8）
 _LAYER_NOTCH = 'notch'        # 刺口（DXF layer4）
 _LAYER_GRAIN = 'grain'        # 布纹线（DXF layer7）
 
-# 安全幅面：PLOT_SAFE_MAX_Y_MM（Y 可写幅宽上限，超出裁剪防撞机）已在顶部从
-# nesting_bounds.load_pieces import —— 与求解约束带 NEST_GATE_MM=min(门幅, 该值)
-# 单一事实源，换机器/布幅只改 nesting_bounds 一处。求解已钳制到该值内，这里再
-# 裁剪属二道防线（兜旧 intermediate / 求解 bug）。
+# 门幅框/裁剪界 = 输入 gate_mm（2026-08-28 版师定案：输入幅宽即实际幅宽）。
+# 求解约束带同口径，这里按 gate_mm 裁剪属兜底防线（旧 intermediate / 求解 bug）。
 PLOT_LEAD_X_MM = 20.0          # X 走纸起始引导余量（生产 PLT 内容起画 24mm）
 PLOT_TAIL_X_MM = 10.0          # PS 纸长在内容之后的尾余量（生产 PS−maxX ≈ 10mm）
 PLOT_BORDER_MARGIN_Y_MM = 5.0  # 门幅框 Y 内缩（生产外框下沿 5.1mm；内容 0 起画不内缩）
@@ -139,7 +135,7 @@ def _plt_polyline(closed: bool, points) -> list[str]:
     return lines
 
 
-# ---------- 安全幅面裁剪（y ≤ PLOT_SAFE_MAX_Y_MM 半平面；削平不缩放） ----------
+# ---------- 门幅框裁剪（y ≤ gate_mm 半平面；削平不缩放） ----------
 def _y_clip_point(a, b, ymax: float):
     """线段 ab 与水平线 y=ymax 的交点（a/b 分居两侧时调用）。"""
     t = (ymax - a[1]) / (b[1] - a[1])
@@ -321,13 +317,13 @@ def write_marker_plt(world_pieces, *, width_mm: float, gate_mm: float, title: st
     PU/PD 矢量笔画输出、正反随布纹线画向，见 ``_grain_annotation_strokes``；PNG/DXF
     的逐片 g 码标识仍**不进 PLT**）。
 
-    安全幅面（防撞机，见模块注释「现场撞机修正」）：
-      - 求解侧已把约束带钳到 ``min(门幅, PLOT_SAFE_MAX_Y_MM)``（web/solver
-        ``build_instance``，nesting_bounds 单一事实源）；这里再按 ``y ≤ 1910mm``
-        半平面**裁剪**（削平不缩放）属二道防线。裁到**轮廓层**（polygon/net/
-        internal）说明 marker 不完整（旧 intermediate / 求解 bug），记 warning；
-        刺口/布纹线等工艺线外伸几 mm 属正常，直接削平不告警（生产 PLT 同口径）。
-      - 门幅框上沿压进可写幅宽（min(gate, 1910−边距)），不贴 y=1980 机械边界。
+    门幅框与裁剪界（2026-08-28 版师定案：输入幅宽即实际幅宽，见模块注释）：
+      - 求解约束带 = gate_mm（web/solver ``build_instance`` 同口径）；这里按
+        ``y ≤ gate_mm`` 半平面**裁剪**（削平不缩放）属兜底防线。裁到**轮廓层**
+        （polygon/net/internal）说明 marker 不完整（旧 intermediate / 求解 bug），
+        记 warning；刺口/布纹线等工艺线外伸几 mm 属正常，直接削平不告警
+        （生产 PLT 同口径）。
+      - 门幅框上沿 = gate_mm − 边距内缩，不贴输入门幅边界。
       - 全体 X + ``PLOT_LEAD_X_MM`` 走纸引导；PS 纸长 = 引导 + max(用布长, 内容
         最大 X) + 尾余量，内容全部落在声明纸幅内且留余量。
       - PD 按生产口径分块（≤10 点/行 ≤110B），防设备行缓冲溢出。
@@ -363,22 +359,23 @@ def write_marker_plt(world_pieces, *, width_mm: float, gate_mm: float, title: st
     pid_counts = Counter(pc.get('pid') for pc in world_pieces)
 
     # 门幅/用布边框（层序之首，与生产 PLT 同为 SP1 单笔）——闭合矩形 4 角；Y 上沿
-    # 压进可写幅宽（门幅超出时框住的是可绘区域），下沿内缩，不贴机械边界
-    border_y1 = min(gate_mm, PLOT_SAFE_MAX_Y_MM) - PLOT_BORDER_MARGIN_Y_MM
+    # 按输入门幅内缩边距，下沿内缩，不贴门幅边界
+    border_y1 = float(gate_mm) - PLOT_BORDER_MARGIN_Y_MM
     border = [(0.0, PLOT_BORDER_MARGIN_Y_MM),
               (width_mm, PLOT_BORDER_MARGIN_Y_MM),
               (width_mm, border_y1),
               (0.0, border_y1)]
     layer_lines[_LAYER_OUTLINE].extend(_plt_polyline(closed=True, points=border))
 
-    # 逐片 5 层，全部先过 y ≤ 可写幅宽半平面裁剪（outline → net → internal → notch → grain）
+    # 逐片 5 层，全部先过 y ≤ 输入门幅半平面裁剪（outline → net → internal → notch → grain）
+    gate_f = float(gate_mm)
     for pc in world_pieces:
         pid = pc.get('pid')
 
         # 毛版裁切轮廓（闭合；层序首层）
         poly = pc.get('polygon') or []
         if len(poly) >= 2:
-            clipped, n_above = _clip_closed_y(poly, PLOT_SAFE_MAX_Y_MM)
+            clipped, n_above = _clip_closed_y(poly, gate_f)
             if n_above:
                 clipped_pids.add(pid)
             if len(clipped) >= 2:
@@ -387,7 +384,7 @@ def write_marker_plt(world_pieces, *, width_mm: float, gate_mm: float, title: st
         # 净版 net_polygon（闭合）
         net = pc.get('net_polygon') or []
         if len(net) >= 2:
-            clipped, n_above = _clip_closed_y(net, PLOT_SAFE_MAX_Y_MM)
+            clipped, n_above = _clip_closed_y(net, gate_f)
             if n_above:
                 clipped_pids.add(pid)
             if len(clipped) >= 2:
@@ -397,19 +394,19 @@ def write_marker_plt(world_pieces, *, width_mm: float, gate_mm: float, title: st
         for line in pc.get('internal_lines') or []:
             if len(line) < 2:
                 continue
-            runs, n_above = _clip_open_y(line, PLOT_SAFE_MAX_Y_MM)
+            runs, n_above = _clip_open_y(line, gate_f)
             if n_above:
                 clipped_pids.add(pid)
             for run in runs:
                 layer_lines[_LAYER_INTERNAL].extend(_plt_polyline(closed=False, points=run))
 
         # 刺口 notches（沿法线 NOTCH_LEN_MM 短线段，与 PNG 同口径）。求解已钳制
-        # 在可写幅宽内，刺口 ±half 外伸越线属工艺正常（生产 PLT 内容同样到 1912），
+        # 在门幅内，刺口 ±half 外伸越线属工艺正常（生产 PLT 内容同样越框几 mm），
         # 直接削平、不计入 clipped_pids 告警
         half = NOTCH_LEN_MM / 2.0
         for (x, y, nx, ny) in pc.get('notches') or []:
             seg = [(x - nx * half, y - ny * half), (x + nx * half, y + ny * half)]
-            runs, _n_above = _clip_open_y(seg, PLOT_SAFE_MAX_Y_MM)
+            runs, _n_above = _clip_open_y(seg, gate_f)
             for run in runs:
                 layer_lines[_LAYER_NOTCH].extend(_plt_polyline(closed=False, points=run))
 
@@ -418,16 +415,16 @@ def write_marker_plt(world_pieces, *, width_mm: float, gate_mm: float, title: st
         gl = pc.get('grain_line')
         if gl and len(gl) == 4:
             for stroke in _grain_annotation_strokes(gl, _grain_label_text(pc, pid_counts)):
-                runs, _n_above = _clip_open_y(stroke, PLOT_SAFE_MAX_Y_MM)
+                runs, _n_above = _clip_open_y(stroke, gate_f)
                 for run in runs:
                     layer_lines[_LAYER_GRAIN].extend(_plt_polyline(closed=False, points=run))
 
     if clipped_pids:
         sample = ','.join(sorted(map(str, clipped_pids))[:5])
-        logging.warning('PLT 导出：%d 个裁片的几何越过绘图仪可写幅宽 %.0fmm，超出部分'
-                        '已裁剪不绘制（如 %s…）。求解门幅 %.0fmm 超出可写幅宽，需缩小'
-                        '求解门幅重排才能输出完整 marker', len(clipped_pids),
-                        PLOT_SAFE_MAX_Y_MM, sample, gate_mm)
+        logging.warning('PLT 导出：%d 个裁片的几何越出输入门幅 %.0fmm，超出部分'
+                        '已裁剪不绘制（如 %s…）。求解布局应落在门幅内，请检查'
+                        ' intermediate / 求解链路', len(clipped_pids),
+                        gate_f, sample)
 
     # 头部一行（对齐生产 PLT）：PS 纸长 = 走纸引导 + max(用布长, 内容最大X) + 尾余量
     paper_len = int(round((PLOT_LEAD_X_MM + max(width_mm, max_x) + PLOT_TAIL_X_MM)

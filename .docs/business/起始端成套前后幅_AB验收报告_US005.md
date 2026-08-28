@@ -12,7 +12,7 @@
 | 2 | **为何不用 web 全 0 默认** | 实测（2026-08-25 两次 13 臂全跑）：d=0 实例 60s **不收敛**（无平台期）→ 墙钟截断落点漂移使帧数 ±5% 逐帧不等、密度均值噪声 ±0.5pt（两次跑 +1.056/+1.049pt 均卡线外，off 臂自身跨跑也漂 86.143 vs 86.039）。P0 口径下同 seed 背靠背两跑 **1038==1038 帧逐帧全等** —— PRD 判据③「逐帧相等」只在收敛口径下物理可达，终验绑定 P0 口径 |
 | 3 | **对照臂**：prefix off（同代码 `exclude_pids` 空置）而非「checkout HEAD~ 无 prefix 代码」 | off 臂 = HEAD 主路径（US-003 契约：无 `prefix` 键管线逐字段不变），导出判据另跑 off 臂全管线对照 |
 
-两臂共同配置：sizes 31/32/33/34/35/36/38（P0 表），quantities 31→1、36→3、其余双份 g 码整列 2（g06~g08 单份，Σ=159 片），main 60s，seed ∈ {0,1,2,3}，params 全 0 + per_type 见上，density = raw-width 生产口径 `total_area/(width×min(gate,1910))`。
+两臂共同配置：sizes 31/32/33/34/35/36/38（P0 表），quantities 31→1、36→3、其余双份 g 码整列 2（g06~g08 单份，Σ=159 片），main 60s，seed ∈ {0,1,2,3}，params 全 0 + per_type 见上，density = raw-width 生产口径 `total_area/(width×min(gate,1910))`（验收时幅宽钳制期口径；2026-08-28 起现行 = width×gate，本报告数字跨口径不可直接对比）。
 
 ## 1. 判据① 密度 A/B（接受线：均值劣化 ≤1.0pt；P0 基准 −0.14pt）
 

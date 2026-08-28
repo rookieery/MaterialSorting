@@ -123,7 +123,7 @@ async def band_preview(req: Request):
     US-003（多会话）：``X-Session-Id`` → 该会话的 pieces/pieces_by_id；缺省 →
     default。sid 过期/非法 → 401/400 结构化 JSON（早于业务校验）。
     """
-    from ..nesting_bounds.load_pieces import NEST_GATE_MM, PLOT_SAFE_MAX_Y_MM
+    from ..nesting_bounds.load_pieces import GATE_MM
     from ..nesting_engine.waist_band import BandError, build_band_plan
     from ..nesting_engine.sparrow_baseline import _transform_polygon
     from .routes_ws import _parse_band
@@ -165,7 +165,7 @@ async def band_preview(req: Request):
             pid_meta, state.get('pieces_by_id') or {},
             label=label,
             seed=0,                       # 链构造无 RNG：seed 只进 chunk.seed 记录，几何无关
-            gate_nest=min(gate, PLOT_SAFE_MAX_Y_MM) if gate > 0 else NEST_GATE_MM,
+            gate_nest=float(gate) if gate > 0 else GATE_MM,
             d_g=d_g, tol_g=tol_g)
     except (BandError, ValueError) as e:
         return {'ok': False, 'error': f'成带失败: {e}'}
@@ -231,7 +231,7 @@ async def prefix_preview(req: Request):
     US-003（多会话）：``X-Session-Id`` → 该会话的 pieces/pieces_by_id；缺省 →
     default。sid 过期/非法 → 401/400 结构化 JSON（早于业务校验）。
     """
-    from ..nesting_bounds.load_pieces import NEST_GATE_MM, PLOT_SAFE_MAX_Y_MM
+    from ..nesting_bounds.load_pieces import GATE_MM
     from ..nesting_engine.prefix import (
         PrefixError,
         build_prefix_plan,
@@ -287,7 +287,7 @@ async def prefix_preview(req: Request):
             pid_meta, state.get('pieces_by_id') or {},
             front_pid=f'{front}_{size}', back_pid=f'{back}_{size}',
             d_g=max(d_front, d_back),
-            gate_nest=min(gate, PLOT_SAFE_MAX_Y_MM) if gate > 0 else NEST_GATE_MM)
+            gate_nest=float(gate) if gate > 0 else GATE_MM)
     except (PrefixError, ValueError) as e:
         return {'ok': False, 'error': f'前缀构造失败: {e}'}
 

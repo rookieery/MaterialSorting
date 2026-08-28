@@ -23,7 +23,7 @@ from pathlib import Path
 import pytest
 
 from materialsorting.cli import lns
-from materialsorting.nesting_bounds.load_pieces import NEST_GATE_MM, PLOT_SAFE_MAX_Y_MM
+from materialsorting.nesting_bounds.load_pieces import GATE_MM
 
 # ------------------------------------------------------------ fixture 基元
 
@@ -71,7 +71,7 @@ def _by_id(pieces):
 
 def _column_packer(pieces_subset, gate_mm, params, limit=None):
     """确定性「好」解：副本竖着摞在 x=0（超出 limit 换列）—— span = 最宽列。"""
-    limit = NEST_GATE_MM if limit is None else float(limit)
+    limit = GATE_MM if limit is None else float(limit)
     qty = params.get('quantities') or {}
     placed, x, y, colw = [], 0.0, 0.0, 0.0
     for p in pieces_subset:
@@ -129,9 +129,9 @@ def test_split_bands_slabs_and_density():
     assert b0['positions'] == [0, 1, 2, 3] and b1['positions'] == [4]
     assert b0['m'] == 0.0 and b0['M'] == 2400.0 and b0['span'] == 2400.0
     assert b1['m'] == 2600.0 and b1['M'] == 3300.0 and b1['span'] == 700.0
-    # 局部密度 = 段内片面积和 /（段宽 × NEST_GATE_MM）
-    assert b0['density'] == pytest.approx(1_200_000 / (2000.0 * NEST_GATE_MM))
-    assert b1['density'] == pytest.approx(350_000 / (1300.0 * NEST_GATE_MM))
+    # 局部密度 = 段内片面积和 /（段宽 × 默认门幅）
+    assert b0['density'] == pytest.approx(1_200_000 / (2000.0 * GATE_MM))
+    assert b1['density'] == pytest.approx(350_000 / (1300.0 * GATE_MM))
 
 
 def test_split_bands_pid_group_no_split():
@@ -205,9 +205,9 @@ def test_sub_instance_same_caliber():
         pieces[:1], 1980.0, time_budget=2, seed=1, sizes=[30], per_type=per_type,
         quantities={'g01': {'30': 2}})
 
-    # strip_height 同钳制到 PLOT_SAFE_MAX_Y_MM（gate 1980 > 1910）
-    assert m_inst.strip_height == pytest.approx(NEST_GATE_MM)
-    assert s_inst.strip_height == pytest.approx(NEST_GATE_MM)
+    # strip_height = 输入门幅原样（2026-08-28 起无 1910 钳制），母子同口径
+    assert m_inst.strip_height == pytest.approx(1980.0)
+    assert s_inst.strip_height == pytest.approx(1980.0)
     assert s_inst.strip_height == pytest.approx(m_inst.strip_height)
 
     m_items = {it.id: it for it in m_inst.items}
@@ -301,14 +301,15 @@ def test_budget_exhaustion_skips_solve():
 
 
 def test_y_overflow_reverts_to_input():
-    """y 越界（> PLOT_SAFE_MAX_Y_MM）→ 复检失败回退，输出保持输入。"""
+    """y 越界（> 输入门幅 1980）→ 复检失败回退，输出保持输入。"""
     pieces = [_rect('g01_30', 'g01', 30, 400, 500)]
     layout = [_at('g01_30', 0, 0), _at('g01_30', 600, 0), _at('g01_30', 1200, 0),
               _at('g01_30', 1800, 0), _at('g01_30', 2400, 0)]
     snapshot = json.dumps(layout, ensure_ascii=False)
 
     def tall_packer(pieces_subset, gate_mm, params):
-        # 5 副本竖摞不换列：顶部 2500mm 越界，但 span 400 极优 → 会先被接受再复检回退
+        # 5 副本竖摞不换列：顶部 2500mm 越界（> gate 1980 + 容差），但 span 400
+        # 极优 → 会先被接受再复检回退
         return {'placed_items': [{'id': 'g01_30', 'rotation': 0.0,
                                   'translation': [0.0, float(i * 500)]}
                                  for i in range(5)],
@@ -352,7 +353,7 @@ def test_run_lns_unknown_pid_and_band_width_default():
     pieces, layout = _pieces(), _layout()
     out = lns.run_lns(layout, pieces, 1980.0,
                       time_budget=30.0, rounds=1, solve=_row_packer)
-    assert out['band_width_mm'] == pytest.approx(1.5 * NEST_GATE_MM)
+    assert out['band_width_mm'] == pytest.approx(1.5 * GATE_MM)
     with pytest.raises(lns.LnsError):
         lns.run_lns([_at('nope_30', 0, 0)], pieces, 1980.0)
 

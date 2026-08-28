@@ -217,11 +217,11 @@ def test_build_band_plan_conservation_pid_and_ordering():
 
     # 带内填充率口径：实际占用 bbox（非全幅 1910），矩形紧排应显著高于 45% 下限
     assert chunk.fill_pct > 45.0
-    # US-014：组合片须进主解条带（build_instance strip=min(gate, PLOT_SAFE_MAX_Y_MM)
-    # =1910）—— 带内求解幅宽已同口径钳制，高度 <= 1910（等高合法：主解 y=0 可放）。
-    from materialsorting.nesting_bounds.load_pieces import PLOT_SAFE_MAX_Y_MM
+    # US-014：组合片须进主解条带（build_instance strip=gate_mm；2026-08-28 起
+    # 输入幅宽=实际幅宽单一口径）—— 带高 <= 门幅（等高合法：主解 y=0 可放）。
+    from materialsorting.nesting_bounds.load_pieces import GATE_MM
     assert 0 < chunk.bbox['width_mm']
-    assert chunk.bbox['height_mm'] <= PLOT_SAFE_MAX_Y_MM + 1e-6
+    assert chunk.bbox['height_mm'] <= GATE_MM + 1e-6
 
 
 def test_build_band_plan_envelope_assertion():
@@ -330,7 +330,7 @@ def test_arc_chain_contact_gap_and_form():
 def test_arc_band_chunk_two_chains():
     """弧形全链路（demand=2 → 双链堆叠）：守恒 14/14 + WB_ pid + fill 过灾难下限
     + 带高进主解条带 + 整带开口朝左（链同向、堆叠不翻链）。"""
-    from materialsorting.nesting_bounds.load_pieces import PLOT_SAFE_MAX_Y_MM
+    from materialsorting.nesting_bounds.load_pieces import GATE_MM
     from materialsorting.nesting_engine.waist_band import _opening_side
     pid_meta, pieces = _arc_ctx()
     chunk = build_band_plan(pid_meta, pieces, label='g05', seed=0)
@@ -338,7 +338,7 @@ def test_arc_band_chunk_two_chains():
     assert chunk.pid == f'{COMPOSITE_PID_PREFIX}g05'
     assert chunk.fill_pct > 45.0                             # 灾难形态下限
     assert 0 < chunk.bbox['width_mm']
-    assert chunk.bbox['height_mm'] <= PLOT_SAFE_MAX_Y_MM + 1e-6
+    assert chunk.bbox['height_mm'] <= GATE_MM + 1e-6
     polys = {m['pid']: waist_band._clean_polygon(pid_meta[m['pid']]['polygon'])
              for m in chunk.members}
     assert _opening_side(chunk.members, polys) == 'left'
@@ -374,7 +374,7 @@ def test_arc_mirrored_band_chunk_two_chains():
     """镜像弧形全链路（M1787 g10 同构，demand=2 双链）：build_band_plan 手性
     自适应后成功成带（修复前 BandQualityError「开口朝右」）—— 守恒 14/14 +
     fill 过下限 + 带高进条带 + 整带开口朝左 + 同 seed 确定性。"""
-    from materialsorting.nesting_bounds.load_pieces import PLOT_SAFE_MAX_Y_MM
+    from materialsorting.nesting_bounds.load_pieces import GATE_MM
     from materialsorting.nesting_engine.waist_band import _opening_side
     pid_meta, pieces = _arc_ctx(mirror=True)
     chunk = build_band_plan(pid_meta, pieces, label='g05', seed=0)
@@ -382,7 +382,7 @@ def test_arc_mirrored_band_chunk_two_chains():
     assert chunk.pid == f'{COMPOSITE_PID_PREFIX}g05'
     assert chunk.fill_pct > 45.0                             # 灾难形态下限
     assert 0 < chunk.bbox['width_mm']
-    assert chunk.bbox['height_mm'] <= PLOT_SAFE_MAX_Y_MM + 1e-6
+    assert chunk.bbox['height_mm'] <= GATE_MM + 1e-6
     polys = {m['pid']: waist_band._clean_polygon(pid_meta[m['pid']]['polygon'])
              for m in chunk.members}
     assert _opening_side(chunk.members, polys) == 'left'

@@ -36,7 +36,6 @@ import re
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from ..nesting_bounds.load_pieces import PLOT_SAFE_MAX_Y_MM
 from .runtime import _executor
 from .sessions import SessionError, registry as session_registry
 from .solver import solve_with_callback_proc
@@ -274,9 +273,8 @@ async def ws_solve(ws: WebSocket):
             manifest_msg = {
                 'type': 'manifest',
                 'gate_mm': gate_mm,
-                # 实际排料幅宽（求解约束带口径）：density 分母 + 前端红色虚线（实际范围
-                # 边界）唯一数据源；gate_mm 仍为显示口径（viewBox / 导出外框）。
-                'gate_nest_mm': min(float(gate_mm), PLOT_SAFE_MAX_Y_MM),
+                # 2026-08-28 起 gate_nest_mm 字段已删（输入幅宽=实际幅宽单一口径，
+                # 历史红虚线数据源随之移除）。
                 'total_area_mm2': total_area,
                 'n_eroded': m.get('n_eroded', 0),
                 'pieces': [

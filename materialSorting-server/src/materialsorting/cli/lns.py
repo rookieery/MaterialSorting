@@ -3,7 +3,7 @@ ruin-and-recreate，突破单 seed 收敛分布上限。
 
 用法（console_script 或 ``python -m`` 等价）::
 
-    ms-lns --run-dir <dir> --time 30 --rounds 5 [--band-width 2865]
+    ms-lns --run-dir <dir> --time 30 --rounds 5 [--band-width 2970]
     python -m materialsorting.cli.lns --run-dir <dir> --time 30 --rounds 5
 
 输入：``run_dir`` 内 ``result.json``（布局取 ``portfolio.incumbent.placed_items``，
@@ -12,11 +12,11 @@ ruin-and-recreate，突破单 seed 收敛分布上限。
 ``pieces_intermediate.json``（原始轮廓 / 原面积的单一数据源）。算法（每轮 = 按段
 局部密度升序逐段尝试，首个接受即完成该轮）：
 
-  ① 按 x 切竖直波段（sparrow 世界坐标 X=用布长度；缺省段宽 1.5×NEST_GATE_MM）。
+  ① 按 x 切竖直波段（sparrow 世界坐标 X=用布长度；缺省段宽 1.5×默认门幅）。
      pid 组按**首副本中心**归段 —— demand>1 的 pid 全部副本整段进波段重排（禁止
      拆分；solver 常把同 pid 副本撒满全幅，此时段足迹 [m, M] 跨全宽、重排为
      「子集整体重解」，护栏之下通常无改进空间 → 安全 no-op，见护栏段）。
-  ② 每段局部密度 = 段内片**原面积**和 /（段宽 × NEST_GATE_MM），升序取最差段。
+  ② 每段局部密度 = 段内片**原面积**和 /（段宽 × 输入门幅 gate_mm），升序取最差段。
   ③ 段内裁片构造同口径子实例（``web.solver.build_instance``）：per_type/sizes 按
      result.json config 回显原样透传；quantities 按**段内实际副本数**派生 —— pid ↔
      (label, sizeKey) 一一对应且 pid 组禁止拆分，故派生 demand ≡ 母 quantities 在
@@ -29,7 +29,7 @@ ruin-and-recreate，突破单 seed 收敛分布上限。
      推出 x<0）、总宽缩短；否则拒绝（布局不动，幂等安全 —— 无任何接受时输出 =
      输入列表原对象，逐字节不变）。空段（纯空洞）无需求解即整段让位。
   ⑤ 循环 rounds 直到整轮无段可改进或预算耗尽；结束 ``constraints.validate`` 全版
-     复检 + ``y ≤ PLOT_SAFE_MAX_Y_MM`` 越界复检（容差 Y_TOLERANCE_MM=11mm 容纳
+     复检 + ``y ≤ gate_mm`` 越界复检（容差 Y_TOLERANCE_MM=11mm 容纳
      erode 合法外凸，与 export 削平口径同源），失败回退输入布局（交付物恒过检）。
 
 输出（``run_dir`` 内）：``result_lns.json``（新 placed_items + 前后 density/width
@@ -67,7 +67,6 @@ import sys
 import time
 from pathlib import Path
 
-from ..nesting_bounds.load_pieces import PLOT_SAFE_MAX_Y_MM
 from materialsorting.cli.lns_bands import (ACCEPT_EPS_MM, DEFAULT_BAND_WIDTH,
                                            GUARD_SLACK_MM2, MIN_SUB_TIME_SEC,
                                            Y_TOLERANCE_MM, LnsError,
@@ -127,12 +126,12 @@ def run_lns(placed_items, pieces, gate_mm, *, per_type=None, sizes=None,
     pieces : list[dict]
         intermediate 的 pieces（原始轮廓 / 原面积单一数据源）。
     gate_mm : float
-        门幅（density 分母口径；子求解约束带在 build_instance 内钳
-        ``min(gate_mm, PLOT_SAFE_MAX_Y_MM)``，与母实例同口径）。
+        门幅（density 分母口径；子求解约束带在 build_instance 内 = gate_mm，
+        与母实例同口径）。
     per_type / sizes : result.json ``config`` 段回显的同名求解参数（子实例同口径
         透传：erode/tol/orientations 钳制行为与母实例一致）。
     band_width : float | None
-        波段宽（mm）；None → ``DEFAULT_BAND_WIDTH``（= 1.5×NEST_GATE_MM）。
+        波段宽（mm）；None → ``DEFAULT_BAND_WIDTH``（= 1.5×默认门幅）。
     time_budget : float
         LNS 总预算（秒，墙钟）。子求解按「剩余预算 / 剩余轮数」取整分配（≥1s，
         提前结束的轮把余量让给后续轮）；剩余 < ``MIN_SUB_TIME_SEC`` 即耗尽停。
@@ -175,9 +174,9 @@ def run_lns(placed_items, pieces, gate_mm, *, per_type=None, sizes=None,
     geoms0 = _layout_geometry(placed_items, pieces_by_id)   # 兼验 pid 在场
     total_area = sum(float(pieces_by_id[it['id']]['area_mm2']) for it in placed_items)
     width_before = max(max(g[2] for g in geoms0), 0.0)
-    # 密度分母 = 实际幅宽 min(gate_mm, PLOT_SAFE_MAX_Y_MM)（与 _apply_density_dual 同口径，
-    # 回写 result.json 的 incumbent density 与 solve 段 real_density 保持一致）。
-    density_before = total_area / (width_before * min(float(gate_mm), PLOT_SAFE_MAX_Y_MM))
+    # 密度分母 = 输入门幅（与 _apply_density_dual 同口径，回写 result.json 的
+    # incumbent density 与 solve 段 real_density 保持一致）。
+    density_before = total_area / (width_before * float(gate_mm))
 
     current = list(placed_items)      # 浅拷贝：接受时替换元素为新 dict，绝不动入参
     improved_any = False
@@ -191,7 +190,7 @@ def run_lns(placed_items, pieces, gate_mm, *, per_type=None, sizes=None,
             if remaining < MIN_SUB_TIME_SEC:
                 stop_reason = 'budget_exhausted'
                 break
-            bands = split_bands(current, pieces_by_id, bw)
+            bands = split_bands(current, pieces_by_id, bw, gate_mm=float(gate_mm))
             if not bands:
                 break
             accepted = None
@@ -324,7 +323,7 @@ def run_lns(placed_items, pieces, gate_mm, *, per_type=None, sizes=None,
 
     geoms_f = _layout_geometry(current, pieces_by_id)
     width_after = max(max(g[2] for g in geoms_f), 0.0)
-    density_after = total_area / (width_after * min(float(gate_mm), PLOT_SAFE_MAX_Y_MM))
+    density_after = total_area / (width_after * float(gate_mm))
     ok, issues, y_viol = recheck_layout(current, pieces_by_id, gate_mm)
     reverted = False
     if improved_any and not ok:
@@ -376,7 +375,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument('--rounds', type=int, default=5, metavar='N',
                    help='最大轮数（默认 5；整轮无段可改进提前停）')
     p.add_argument('--band-width', type=float, default=None, metavar='MM',
-                   help='波段宽 mm（缺省 1.5×NEST_GATE_MM≈2865；小段宽 = 更细粒度'
+                   help='波段宽 mm（缺省 1.5×默认门幅≈2970；小段宽 = 更细粒度'
                         '重排）')
     return p.parse_args(argv)
 

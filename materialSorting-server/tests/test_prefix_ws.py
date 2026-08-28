@@ -211,7 +211,9 @@ def test_manifest_consistency_prefix_on_vs_off(prefix_client):
             _drain_until_stopped(ws)
     assert manifests['off']['total_area_mm2'] == manifests['on']['total_area_mm2']
     assert manifests['off']['pieces'] == manifests['on']['pieces']   # dict list 深比较 = 逐字段
-    assert manifests['off']['gate_nest_mm'] == manifests['on']['gate_nest_mm']
+    # 2026-08-28 起 gate_nest_mm 字段已删（输入幅宽 = 实际幅宽单一口径）
+    assert 'gate_nest_mm' not in manifests['off']
+    assert 'gate_nest_mm' not in manifests['on']
 
 
 # --------------------------------------------- AC#3 服务端校验早退

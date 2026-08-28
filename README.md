@@ -102,7 +102,7 @@ python -m materialsorting.cli.run_config <config.json> --name demo --quiet   # �
 | 键 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `master_dxf` | str | ✓ | 母版 DXF 路径；相对路径先按 CWD 再按仓库根解析 |
-| `gate_mm` | num | ✓ | 门幅（mm，>0）；intermediate 口径；密度分母 = min(gate_mm, 1910)（实际幅宽，与求解约束带同口径） |
+| `gate_mm` | num | ✓ | 门幅（mm，>0）；intermediate 口径；密度分母 = gate_mm（2026-08-28 版师定案：输入幅宽即实际幅宽，单一口径，与求解约束带同口径） |
 | `sizes` | list | — | 码号过滤（JSON 整数列表，非空）；缺省 = 全部码号 |
 | `time` | int | — | 单轮求解时长（秒，正整数），缺省 300 |
 | `seeds` | list | — | **串行**种子列表（非负整数、不重复、非空），缺省 `[0]`；≥2 个时逐 seed 串行求解，`best` 取原面积口径 `real_density` 最大轮（消除单 seed 随机性；种子不要求连续）。取代旧 `seed`/`multi_seed`/`seed_count` 三键（旧键按未知键报错） |
@@ -160,10 +160,10 @@ ms-run-config data/configs/5336_coded_really.json --time 5 --solver-opts '{"expl
 ms-run-config data/configs/5336_coded_really.json --time 5 --rotate-opts                                                # 内置池逐 seed 轮换
 ```
 
-**LNS 波段重排后处理（PC-007）**：`ms-lns --run-dir <run目录> --time 30 --rounds 5 [--band-width 2865]` 对该 run 的最优布局（`portfolio.incumbent`，旧式 run 回退 best / 边车 `best_frame_s{seed}.json`）做波段级 ruin-and-recreate，突破单 seed 收敛分布上限。每轮：按 x 切竖直波段（缺省段宽 1.5×NEST_GATE_MM）→ 取局部密度（段内原面积和/(段宽×1910)）最差段 → 段内裁片构造**同口径子实例**（per_type/sizes/quantities 与母实例一致；demand>1 的 pid 全部副本整段重排禁拆分）多进程重解 → 新段跨度严格更窄才接受（新段压回原足迹内、右侧片左移 splice、总宽缩短），否则拒绝（**无改进时输出与输入逐字节不变**）；空段（纯空洞）无需求解直接让位。结束 `constraints.validate` + `y≤1910` 双复检，失败回退输入布局。跨组重叠护栏逐对不劣化（shapely 对比原布局基线，杜绝拼接咬合产生新重叠）。产物落 run_dir：`result_lns.json`（新 placed_items + 前后 width/density 对比 + 逐段明细）+ `lns_compare.svg`（前后双面板对比）。
+**LNS 波段重排后处理（PC-007）**：`ms-lns --run-dir <run目录> --time 30 --rounds 5 [--band-width 2970]` 对该 run 的最优布局（`portfolio.incumbent`，旧式 run 回退 best / 边车 `best_frame_s{seed}.json`）做波段级 ruin-and-recreate，突破单 seed 收敛分布上限。每轮：按 x 切竖直波段（缺省段宽 1.5×默认门幅 1980=2970）→ 取局部密度（段内原面积和/(段宽×该 run 门幅)）最差段 → 段内裁片构造**同口径子实例**（per_type/sizes/quantities 与母实例一致；demand>1 的 pid 全部副本整段重排禁拆分）多进程重解 → 新段跨度严格更窄才接受（新段压回原足迹内、右侧片左移 splice、总宽缩短），否则拒绝（**无改进时输出与输入逐字节不变**）；空段（纯空洞）无需求解直接让位。结束 `constraints.validate` + `y≤该 run 门幅` 双复检，失败回退输入布局。跨组重叠护栏逐对不劣化（shapely 对比原布局基线，杜绝拼接咬合产生新重叠）。产物落 run_dir：`result_lns.json`（新 placed_items + 前后 width/density 对比 + 逐段明细）+ `lns_compare.svg`（前后双面板对比）。
 
 ```bash
-ms-lns --run-dir out/config_runs/<run目录> --time 30 --rounds 5            # 缺省段宽 1.5×门幅有效宽
+ms-lns --run-dir out/config_runs/<run目录> --time 30 --rounds 5            # 缺省段宽 1.5×默认门幅≈2970
 ms-lns --run-dir out/config_runs/<run目录> --time 60 --band-width 1500     # 更细波段粒度
 ```
 

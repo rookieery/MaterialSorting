@@ -75,12 +75,6 @@ export function NestSVG({ run }: NestSVGProps) {
   const bgRef = useRef<SVGRectElement | null>(null);
   const fabRef = useRef<SVGRectElement | null>(null);
   /**
-   * 实际排料边界线（红虚线，根坐标不进翻转组，SVG y = gate_mm − gate_nest_mm）。
-   * 仅当 manifest 带 gate_nest_mm 且 < gate_mm（门幅被绘图仪可写幅宽 1910 钳制）时
-   * 创建；缺字段（旧后端）/门幅未超 1910 → 不画。
-   */
-  const plotLineRef = useRef<SVGLineElement | null>(null);
-  /**
    * id → 该 pid 的 DOM 副本数组（每副本 = 毛版 polygon + 4 层工艺节点），manifest 到达后填充。
    * 长度 = piece.demand（缺省 1）。demand>1 时 solver 给同一 pid 发 N 条 placed_items（同 id、
    * 不同 translation），必须 N 个独立 DOM 副本各承一处 placement —— 否则 N 条共用同一 polygon、
@@ -118,11 +112,9 @@ export function NestSVG({ run }: NestSVGProps) {
         bgRef.current?.remove();
         fabRef.current?.remove();
         flipRef.current.remove();
-        plotLineRef.current?.remove();
         bgRef.current = null;
         fabRef.current = null;
         flipRef.current = null;
-        plotLineRef.current = null;
         piecesRef.current.clear();
       }
       const bg = document.createElementNS(SVGNS, 'rect');
@@ -143,20 +135,6 @@ export function NestSVG({ run }: NestSVGProps) {
       svg.appendChild(bg);
       svg.appendChild(fab);
       svg.appendChild(g);
-
-      // 实际排料边界线（红虚线，展示实际可排范围）：仅当门幅被绘图仪可写幅宽钳制
-      // （gate_nest_mm < gate_mm）时画；append 在翻转组之后 = 最顶层，pointer-events
-      // none 不挡裁片 hover。根坐标（不进翻转组），y 逐帧按 gate - gateNest 定位。
-      const gateNest0 = run.manifest.gate_nest_mm;
-      if (gateNest0 != null && gateNest0 < run.manifest.gate_mm - 1e-6) {
-        const plotLine = document.createElementNS(SVGNS, 'line');
-        plotLine.setAttribute('stroke', '#e53e3e');
-        plotLine.setAttribute('stroke-width', '1.5');
-        plotLine.setAttribute('stroke-dasharray', '8 5');
-        plotLine.style.pointerEvents = 'none';
-        svg.appendChild(plotLine);
-        plotLineRef.current = plotLine;
-      }
 
       bgRef.current = bg;
       fabRef.current = fab;
@@ -206,18 +184,6 @@ export function NestSVG({ run }: NestSVGProps) {
     fab.setAttribute('y', '0');
     fab.setAttribute('width', String(f.width_mm));
     fab.setAttribute('height', String(gate));
-
-    // 实际排料边界线：sparrow y = gate_nest_mm → SVG y = gate − gate_nest（近画布顶部）。
-    // x2 跟 viewBox 稳定锚 W（全宽），不随用布长度收缩抖动。
-    const plotLine = plotLineRef.current;
-    const gateNest = run.manifest.gate_nest_mm;
-    if (plotLine && gateNest != null) {
-      const yLine = gate - gateNest;
-      plotLine.setAttribute('x1', '0');
-      plotLine.setAttribute('x2', String(W));
-      plotLine.setAttribute('y1', String(yLine));
-      plotLine.setAttribute('y2', String(yLine));
-    }
 
     // placed → 显示 + 写 points；未 placed → display:none。
     // demand>1 时同一 pid 在 placed_items 出现 N 次（每副本一条）。piecesRef[pid] 是该 pid 的

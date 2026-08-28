@@ -1,7 +1,7 @@
 """US-008（PC-008）``run_config --lns``：LNS 后处理接入 portfolio 编排测试。
 
 驱动方式：fake ``solve_pieces``（monkeypatch ``rc_mod.solve_pieces``，帧布局按
-用例构造 —— 「人工空洞」布局把末片甩到远端 x，让缺省波段宽（1.5×NEST_GATE_MM）
+用例构造 —— 「人工空洞」布局把末片甩到远端 x，让缺省波段宽（1.5×门幅 1980）
 下必出**纯空洞段**，LNS 空段 splice 无需求解即确定性改进）+ fake ``_solve_band``
 （monkeypatch ``lns_mod._solve_band``，row packer 差解恒拒 —— 改进只来自 splice，
 不依赖真求解器）。覆盖 PRD 验收：
@@ -54,8 +54,8 @@ _SYNTH_BLOCKS = [
 ]
 _N_PIECES = len(_SYNTH_BLOCKS)
 
-# 末片甩到的远端 x（缺省波段宽 1.5×1910=2865：[2865,5730) 成纯空洞段，
-# splice 确定性缩短总宽）。
+# 末片甩到的远端 x（缺省波段宽 1.5×1980=2970：[2970,5940) 成纯空洞段，
+# 末片 6000 落在 [5940,8910)，splice 确定性缩短总宽）。
 _FAR_X = 6000.0
 
 

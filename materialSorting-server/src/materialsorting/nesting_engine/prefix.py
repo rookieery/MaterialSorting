@@ -22,7 +22,7 @@ US-002 增补**段置换钉位 + 驱逐重插**（P5 严格顶零位的守卫路
 柔性选线（最小化 straddler）→ A/C/B 三组刚体重排（组间 x 区间不相交 ⇒ 无新
 重叠、总长不增）→ straddler 驱逐重插（①随组平移 +x 微调梯回原窝 ②
 ``waist_band._slide_touch`` 自右滑触 ③尾端贴触追加兜底）→ ``constraints.validate``
-+ y≤1910 全版复检，失败回退置换前布局（LNS 纪律：交付物恒过检）。
++ y≤gate_nest 全版复检，失败回退置换前布局（LNS 纪律：交付物恒过检）。
 三守卫缺一不可（P0 灾难 −17.72pt 三因）：``skip_at_head=6.0``（常态锚定零
 触发）、``eps=5.0``（≥ erode 包络外凸，防贴墙片误判 straddler）、``flex=400.0``
 （c2 柔性选线最小化驱逐）。编排入口 ``pin_prefix_layout``（纯函数语义，US-003
@@ -54,7 +54,6 @@ from shapely.geometry import Polygon
 from shapely.ops import unary_union
 
 from .. import paths
-from ..nesting_bounds.load_pieces import PLOT_SAFE_MAX_Y_MM
 from .constraints import (
     MAX_OVERLAP_MM,
     MAX_ROTATION_TOL_DEG,
@@ -293,7 +292,7 @@ def build_prefix_plan(pid_meta, pieces_by_id, *, front_pid, back_pid, d_g,
         组合片 erode 深度（= max(d_front, d_back) 保守，由调用方裁定 —— 前后幅
         per_type d 可能不同，取 max 保证重叠公差最严格片不超限）。
     gate_nest : float
-        求解约束幅宽（竖排高上限基准，钳 ``min(gate_nest, PLOT_SAFE_MAX_Y_MM)``）。
+        求解约束幅宽（竖排高上限基准，= 输入门幅即实际幅宽）。
     order : str
         成员交错序（FR-10 定稿 ``'interleave'``；``'grouped'`` 备档）。
 
@@ -377,7 +376,7 @@ def build_prefix_plan(pid_meta, pieces_by_id, *, front_pid, back_pid, d_g,
     minx, miny, maxx, maxy = union.bounds
     offset = (float(minx), float(miny))
     bbox = {'width_mm': float(maxx - minx), 'height_mm': float(maxy - miny)}
-    strip_h = min(float(gate_nest), PLOT_SAFE_MAX_Y_MM)
+    strip_h = float(gate_nest)
     if bbox['height_mm'] > strip_h + 1e-6:
         raise PrefixError(
             f'前缀簇竖排高 {bbox["height_mm"]:.0f}mm > 条带 {strip_h:.0f}mm'
@@ -663,18 +662,18 @@ def reinsert_evicted(placements, geoms_raw, geoms_eroded, evicted, shift,
 
 
 def _recheck_layout(placements, geoms_raw, gate_nest):
-    """置换后全版复检：``constraints.validate`` + y ≤ 1910（LNS 纪律）。
+    """置换后全版复检：``constraints.validate`` + y ≤ gate_nest（LNS 纪律）。
 
     与 ``cli.lns_bands.recheck_layout`` 同源口径（引擎层禁 import cli，此处
     镜像）：``validate`` 的 x 界检查是老位图引擎的幅宽方向，sparrow 世界坐标
     Y=门幅 ⇒ 传 **(y, x) 交换**坐标（再整体 + y 容差平移、gate 同步放宽
     2×容差，容纳 erode 合法外凸），覆盖「数量 / 幅宽向界内 / 用布长度正向」；
-    y 向另按 ``PLOT_SAFE_MAX_Y_MM`` 复检（越界片计数）。``validate`` 只消费
+    y 向另按 ``gate_nest`` 复检（越界片计数）。``validate`` 只消费
     点列的 x 极值 ⇒ 每片传 bbox 角点（shapely MultiPolygon 免展开分叉）。
 
     返回 ``(ok, issues)``。
     """
-    strip_h = min(float(gate_nest), PLOT_SAFE_MAX_Y_MM)
+    strip_h = float(gate_nest)
     tol = PIN_RECHECK_Y_TOLERANCE_MM
     width = max((g.bounds[2] for g in geoms_raw), default=0.0)
     carriers = [_PidCarrier(pl['id']) for pl in placements]
@@ -684,10 +683,10 @@ def _recheck_layout(placements, geoms_raw, gate_nest):
                for k, g in enumerate(geoms_raw)]
     ok, issues = validate(swapped, swapped, width, strip_h + 2 * tol, 1.0)
     y_viol = sum(1 for g in geoms_raw
-                 if g.bounds[3] > PLOT_SAFE_MAX_Y_MM + tol)
+                 if g.bounds[3] > strip_h + tol)
     if y_viol:
         issues = list(issues) + [
-            f'{y_viol} 片越过绘图仪可写幅宽 y<={PLOT_SAFE_MAX_Y_MM:.0f}mm']
+            f'{y_viol} 片越过求解门幅 y<={strip_h:.0f}mm']
     return bool(ok and y_viol == 0), list(issues)
 
 
@@ -723,7 +722,7 @@ def pin_prefix_layout(placements, pid_meta, pieces_by_id, chunk, comp_rotation,
     prefix_idx : sequence[int]
         4 成员在 placements 中的下标。
     gate_nest : float
-        求解约束幅宽（复检 gate 界，钳 ``min(gate_nest, PLOT_SAFE)``）。
+        求解约束幅宽（复检 gate 界，= 输入门幅即实际幅宽）。
 
     Returns
     -------
@@ -931,7 +930,7 @@ def main(argv=None) -> int:
     with open(args.intermediate, encoding='utf-8') as f:
         doc = json.load(f)
     pieces = doc['pieces']
-    gate_nest = min(float(doc['gate_mm']), PLOT_SAFE_MAX_Y_MM)
+    gate_nest = float(doc['gate_mm'])
     cfg = {}
     if os.path.exists(args.config):
         with open(args.config, encoding='utf-8') as f:

@@ -11,9 +11,9 @@ WS 协议（详见 README / 实现计划；US-002 起全 label 键，不再接�
          → {type:frame, density(原面积口径), density_sparrow(erode后口径), ...} 每个中间解
          → {type:final,   ...} 收尾  （或 {type:error, message}）
 
-阶段 B：density 统一用原面积口径 real_density = total_area/(width*min(gate, PLOT_SAFE_MAX_Y_MM))
-        （实际幅宽口径，2026-08-20 起分母与求解约束带同口径），与版师/90%生死线一致；
-        erode 后的 sparrow 自报密度保留为 density_sparrow 供参考。
+阶段 B：density 统一用原面积口径 real_density = total_area/(width*gate_mm)
+        （输入门幅即实际幅宽，2026-08-28 起分母与求解约束带同口径单一化），与
+        版师/90%生死线一致；erode 后的 sparrow 自报密度保留为 density_sparrow 供参考。
 
 模块结构（行为保持拆分）：本文件保留 app 装配 + 上传解析/commit 路由（含
 ``_commit_to_nesting_sync`` —— tests monkeypatch ``server_mod.UPLOADS_DIR`` 后直接
@@ -42,7 +42,7 @@ from ..dxf_parser.collect import collect_pieces_with_details
 from ..dxf_parser.export_dxf import write_piece_dxf
 from ..nesting_bounds.load_pieces import (
     load_nest_pieces,
-    GATE_MM as NEST_GATE_MM,
+    GATE_MM,
     PIECES_MANIFEST_NAME,
 )
 from ..nesting_engine.labeling import assign_codes
@@ -212,7 +212,7 @@ def _commit_to_nesting_sync(doc_id: str, src_dxf: str, source_name: str) -> dict
     doc = {
         'doc_id': doc_id,
         'source': source_name,
-        'gate_mm': NEST_GATE_MM,
+        'gate_mm': GATE_MM,
         'n_pieces': len(nest_pieces),
         'total_area_mm2': round(sum(p.area_mm2 for p in nest_pieces), 1),
         'pieces': [

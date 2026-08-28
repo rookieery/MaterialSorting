@@ -66,7 +66,6 @@ from ..nesting_engine.constraints import (
     MAX_OVERLAP_MM, MAX_ROTATION_TOL_DEG,
     discretize_orientations as _discretize_orientations,
 )
-from ..nesting_bounds.load_pieces import PLOT_SAFE_MAX_Y_MM
 
 DEFAULT_INTERMEDIATE = paths.INTERMEDIATE
 
@@ -307,10 +306,10 @@ def build_instance(pieces, gate_mm, *, time_budget: int, seed: int,
     每片实际 erode = min(申请值, MAX_OVERLAP_MM=10)（全局上限兜底，2026-08 起不再按片型）
     每片实际 tol  = min(申请值, MAX_ROTATION_TOL_DEG=45)
 
-    求解约束带 strip_height = min(gate_mm, PLOT_SAFE_MAX_Y_MM)：gate_mm（门幅，
-    如 1980）只是布幅**显示**口径（viewBox / 导出外框），排料压进绘图仪可写幅宽
-    1910 才能完整打印（顶部 70mm 内部差）。密度分母同取 min(gate_mm, 1910)
-    （实际幅宽口径，见 ``_apply_density_dual``）；导出外框 / 前端 viewBox 仍用 gate_mm。
+    求解约束带 strip_height = gate_mm（2026-08-28 版师定案：输入的幅宽就是实际
+    幅宽，不做缩减；2026-08 曾按绘图仪可写幅宽 1910 钳 min(gate, 1910)，撞机确认
+    系机器问题后已移除）。密度分母同取 gate_mm（见 ``_apply_density_dual``）；
+    导出外框 / 前端 viewBox 同口径。
 
     US-004 起裁片级流水线（sizes/demand/per_type/erode/pid_meta/total_area）委托
     ``build_pid_meta``（单一真相源，见其 docstring）；本函数补 spyrrow 侧构造：
@@ -363,9 +362,8 @@ def build_instance(pieces, gate_mm, *, time_budget: int, seed: int,
             demand=int(ex.get('demand', 1)),
             allowed_orientations=[float(a) for a in ex.get('orientations', (0.0,))],
         ))
-    # 有效排料宽度：求解约束带 = min(门幅, 绘图仪可写幅宽)。门幅超出可写幅宽的部分
-    # （1980−1910=70mm 内部差）求解时直接不排，marker 顶部不再落进行程外。
-    gate_nest = min(float(gate_mm), PLOT_SAFE_MAX_Y_MM)
+    # 有效排料宽度 = 输入门幅（单一口径，不做缩减；历史 1910 钳制已移除，见模块注释）。
+    gate_nest = float(gate_mm)
     instance = spyrrow.StripPackingInstance(
         name='workbench', strip_height=gate_nest, items=items)
     # US-006 求解旋钮：白名单清洗（越界 clamp / 非法忽略）后按需改写 config 构造。
@@ -465,7 +463,7 @@ def solve_with_callback_proc(pieces_snapshot, gate_mm, solve_params, *,
         投回 result_queue；
       - **density 双口径换算在主进程做**（关键不变量 #1）：``total_area`` 由 manifest
         数据带入主进程，``on_report`` 收到 frame 时按
-        ``total_area/(width*min(gate_mm, PLOT_SAFE_MAX_Y_MM))`` 换算（实际幅宽口径，
+        ``total_area/(width*gate_mm)`` 换算（输入门幅即实际幅宽口径，
         见 ``_apply_density_dual``）；``density_sparrow`` 保留 sparrow 自报口径。
 
     Parameters
@@ -632,12 +630,11 @@ def _apply_density_dual(report, total_area, gate_mm):
 
     输入 ``report`` 的 ``density`` 为 sparrow 自报（erode 后面积口径）；本函数：
       - ``density_sparrow`` ← 原 sparrow 自报值；
-      - ``density`` ← 原面积口径 ``total_area/(width*gate_den)``（90% 生死线口径），
-        其中 ``gate_den = min(gate_mm, PLOT_SAFE_MAX_Y_MM)``（实际幅宽：求解约束带
-        钳到 1910，2026-08-20 起密度分母同口径，钳制在函数内 = web/CLI 所有调用方
-        自动一致；gate_mm ≤ 1910 时不放大，即用户门幅即实际幅宽）。
+      - ``density`` ← 原面积口径 ``total_area/(width*gate_mm)``（90% 生死线口径，
+        分母 = 输入门幅即实际幅宽，与求解约束带同口径；2026-08-28 起 1910 钳制
+        已移除，换算集中在函数内 = web/CLI 所有调用方自动一致）。
     """
     w = float(report.get('width_mm', 0.0))
-    gate_den = min(float(gate_mm), PLOT_SAFE_MAX_Y_MM)
+    gate_den = float(gate_mm)
     report['density_sparrow'] = report['density']
     report['density'] = (total_area / (w * gate_den)) if w > 0 else 0.0

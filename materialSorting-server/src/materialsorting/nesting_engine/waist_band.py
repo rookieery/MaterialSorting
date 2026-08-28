@@ -48,7 +48,7 @@ from shapely.affinity import rotate, translate
 from shapely.geometry import Polygon
 from shapely.ops import unary_union
 
-from ..nesting_bounds.load_pieces import NEST_GATE_MM, PLOT_SAFE_MAX_Y_MM
+from ..nesting_bounds.load_pieces import GATE_MM
 from .sparrow_baseline import _clean_polygon, _transform_polygon
 from .sparrow_experiments import erode_polygon
 
@@ -484,7 +484,7 @@ def _opening_side(placed, polys, flat_eps=1.0):
 
 
 def build_band_plan(pid_meta, pieces_by_id, *, label, seed,
-                    gate_nest=NEST_GATE_MM, d_g=0.4, tol_g=3.0,
+                    gate_nest=GATE_MM, d_g=0.4, tol_g=3.0,
                     fill_floor=FILL_FLOOR_PCT) -> BandChunk:
     """构造性链构造 → 组合片构造（单一真相源；web 编排在 US-011 接线）。
 
@@ -507,8 +507,8 @@ def build_band_plan(pid_meta, pieces_by_id, *, label, seed,
         主解 seed；``BandChunk.seed`` = ``band_seed_for(seed, label)``（crc32 派生
         确定性身份标识 —— 链构造无 RNG，同输入即逐字节可重放）。
     gate_nest : float
-        组合片高度上限基准（钳 ``min(gate_nest, PLOT_SAFE_MAX_Y_MM)``：组合片须进
-        主解条带，超幅主解放不下；链构造无 strip 约束，事后显式校验）。
+        组合片高度上限基准（= 输入门幅即实际幅宽：组合片须进主解条带，超幅主解
+        放不下；链构造无 strip 约束，事后显式校验）。
     d_g : float
         该 g 码重合公差（应与构造 pid_meta 时该 label 的 per_type d 同值；组合片
         union 后 erode 深度 —— 使主解其他裁片对带边界保持与单片相同的 d_g 邻接语义）。
@@ -638,7 +638,7 @@ def build_band_plan(pid_meta, pieces_by_id, *, label, seed,
     minx, miny, maxx, maxy = union.bounds
     offset = (float(minx), float(miny))
     bbox = {'width_mm': float(maxx - minx), 'height_mm': float(maxy - miny)}
-    strip_h = float(min(gate_nest, PLOT_SAFE_MAX_Y_MM))
+    strip_h = float(gate_nest)
     if bbox['height_mm'] > strip_h + 1e-6:
         raise BandQualityError(
             f'带高 {bbox["height_mm"]:.0f}mm > 主解条带 {strip_h:.0f}mm'

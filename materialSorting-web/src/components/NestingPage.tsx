@@ -210,7 +210,6 @@ export function NestingPage(): React.JSX.Element {
     const manifest: ManifestMsg = {
       type: 'manifest',
       gate_mm: result.manifest.gate_mm,
-      gate_nest_mm: result.manifest.gate_nest_mm,
       total_area_mm2: result.manifest.total_area_mm2,
       n_eroded: result.manifest.n_eroded,
       pieces: result.manifest.pieces,

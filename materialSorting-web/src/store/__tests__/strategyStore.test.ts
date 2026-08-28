@@ -21,7 +21,7 @@ const RESULT: StrategyResult = {
   state: 'done',
   mode: 'race',
   run_dir: 'out/config_runs/web_race_x_1',
-  manifest: { gate_mm: 1980, gate_nest_mm: 1910, total_area_mm2: 1e6, n_eroded: 0, pieces: [] },
+  manifest: { gate_mm: 1980, total_area_mm2: 1e6, n_eroded: 0, pieces: [] },
   best: {
     seed: 3, frame_index: 5, elapsed: 120.5, density: 0.8838,
     density_sparrow: 0.9, width_mm: 7100.5, placed_items: [],

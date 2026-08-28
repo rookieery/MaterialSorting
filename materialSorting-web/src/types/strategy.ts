@@ -179,8 +179,6 @@ export interface StrategySummary {
 /** result 端点 manifest（与 /ws/solve manifest 同构：start 时快照口径 build_pid_meta）。 */
 export interface StrategyManifest {
   gate_mm: number;
-  /** 实际排料幅宽 = min(gate_mm, 1910)（与 WS ManifestMsg.gate_nest_mm 同口径）。 */
-  gate_nest_mm?: number;
   total_area_mm2: number;
   n_eroded: number;
   pieces: PieceInfo[];

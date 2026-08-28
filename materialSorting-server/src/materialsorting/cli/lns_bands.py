@@ -4,22 +4,22 @@ from __future__ import annotations
 import math
 from types import SimpleNamespace
 
-from ..nesting_bounds.load_pieces import NEST_GATE_MM, PLOT_SAFE_MAX_Y_MM
+from ..nesting_bounds.load_pieces import GATE_MM
 from ..nesting_engine.constraints import validate
 
 # 接受阈值 ε（mm）：新段跨度须比原段跨度窄 ε 以上（消浮点噪声 / 取整抖动）。
 ACCEPT_EPS_MM = 0.5
 # y 越界复检容差（mm）：求解器约束的是 **erode 后** 形状 ∈ [0, strip_height]，原形
 # 可合法外凸 ≤ erode 深度（MAX_OVERLAP_MM=10）+ 数值余量 —— 与生产导出口径同源
-# （export 对 y>1910 削平裁剪而非判废）。LNS 复检只拦**粗暴越界**（子解溢出约束带）。
+# （export 对 y>门幅 削平裁剪而非判废）。LNS 复检只拦**粗暴越界**（子解溢出约束带）。
 Y_TOLERANCE_MM = 11.0
 # 跨组重叠护栏逐对容差（mm²）：任一跨组位置对的交集面积比原布局同对超出此值
 # 即拒绝（防「净增为零、局部恶化」的重叠 redistribution；容差只吸收坐标 rounding）。
 GUARD_SLACK_MM2 = 1.0
 # 最小子求解预算（秒）：剩余预算低于此值视为耗尽（int 秒预算无法有意义分配）。
 MIN_SUB_TIME_SEC = 1.0
-# 缺省波段宽 = 1.5 × NEST_GATE_MM（≈2865mm； Jeans 片长 ~1.3m，段内约两片纵深）。
-DEFAULT_BAND_WIDTH = 1.5 * NEST_GATE_MM
+# 缺省波段宽 = 1.5 × 默认门幅 GATE_MM（≈2970mm；Jeans 片长 ~1.3m，段内约两片纵深）。
+DEFAULT_BAND_WIDTH = 1.5 * GATE_MM
 
 
 class LnsError(ValueError):
@@ -63,7 +63,7 @@ def _layout_geometry(placed_items, pieces_by_id):
 # ---------------------------------------------------------------- 波段切分
 
 
-def split_bands(placed_items, pieces_by_id, band_width):
+def split_bands(placed_items, pieces_by_id, band_width, *, gate_mm=GATE_MM):
     """布局 → 波段列表（index 升序；pid 组按**首个副本**中心整组归段，禁止拆分）。
 
     返回 ``list[dict]``，每段：
@@ -74,11 +74,12 @@ def split_bands(placed_items, pieces_by_id, band_width):
         副本整段进入，demand>1 不拆分）；
       - ``m`` / ``M`` / ``span``：段内片的**实际足迹**（min xmax / max xmax），
         空段退化为 slab 本身（纯空洞，splice 直接整段让位）；
-      - ``density``：段内片**原面积**和 /（slab_width × NEST_GATE_MM）。
+      - ``density``：段内片**原面积**和 /（slab_width × gate_mm，输入门幅口径）。
 
     ``band_width`` 非正抛 ``LnsError``；布局总宽 ≤0（理论不可达，防御）返回 []。
     """
     bw = float(band_width)
+    gate_f = float(gate_mm)
     if bw <= 0:
         raise LnsError(f'band_width 须为正数（mm），当前 {bw}')
     geoms = _layout_geometry(placed_items, pieces_by_id)
@@ -112,7 +113,7 @@ def split_bands(placed_items, pieces_by_id, band_width):
         else:
             m, cap, area = b['x_start'], b['x_end'], 0.0
         out.append({**b, 'slab_width': slab, 'm': m, 'M': cap, 'span': cap - m,
-                    'density': (area / (slab * NEST_GATE_MM)) if slab > 0 else 0.0})
+                    'density': (area / (slab * gate_f)) if slab > 0 else 0.0})
     return out
 
 
@@ -202,25 +203,26 @@ def _cross_overlap_ok(old_polys, new_polys, band_pos, later_pos):
 
 
 def recheck_layout(placed_items, pieces_by_id, gate_mm):
-    """PC-007 ⑤ 全版复检：``constraints.validate`` + ``y ≤ PLOT_SAFE_MAX_Y_MM``。
+    """PC-007 ⑤ 全版复检：``constraints.validate`` + ``y ≤ gate_mm``。
 
     ``validate`` 的 x 界检查是门幅方向（老位图引擎口径 x=幅宽），而 sparrow 世界
     坐标 Y=门幅 → 传 **(y, x) 交换**坐标（再整体 +Y_TOLERANCE_MM 平移、gate 同步
     放宽 2×Y_TOLERANCE_MM，容纳 erode 合法外凸），gate 与求解约束带
-    ``strip_height=min(gate, PLOT_SAFE)`` 同源，覆盖「数量 / 幅宽向界内 / 用布
-    正向」三项；y 向另按 ``PLOT_SAFE_MAX_Y_MM`` 复检（越界片计数，容差
+    ``strip_height=gate_mm`` 同源，覆盖「数量 / 幅宽向界内 / 用布
+    正向」三项；y 向另按 ``gate_mm`` 复检（越界片计数，容差
     ``Y_TOLERANCE_MM``）。返回 ``(ok, issues, y_violations)``。
     """
+    gate_f = float(gate_mm)
     geoms = _layout_geometry(placed_items, pieces_by_id)
     width = max((g[2] for g in geoms), default=0.0)
     carriers = [SimpleNamespace(pid=it['id']) for it in placed_items]
     swapped = [(carriers[k], [(y + Y_TOLERANCE_MM, x) for x, y in geoms[k][0]])
                for k in range(len(geoms))]
     ok, issues = validate(swapped, swapped, width,
-                          NEST_GATE_MM + 2 * Y_TOLERANCE_MM, 1.0)
+                          gate_f + 2 * Y_TOLERANCE_MM, 1.0)
     y_viol = sum(1 for poly, _xm, _mx in geoms
-                 if max(y for _, y in poly) > PLOT_SAFE_MAX_Y_MM + Y_TOLERANCE_MM)
+                 if max(y for _, y in poly) > gate_f + Y_TOLERANCE_MM)
     if y_viol:
         issues = list(issues) + [
-            f'{y_viol} 片越过绘图仪可写幅宽 y<={PLOT_SAFE_MAX_Y_MM:.0f}mm']
+            f'{y_viol} 片越过求解门幅 y<={gate_f:.0f}mm']
     return bool(ok and y_viol == 0), list(issues), y_viol

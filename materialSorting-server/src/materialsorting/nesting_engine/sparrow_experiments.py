@@ -26,7 +26,6 @@ import os
 import sys
 
 from .. import paths
-from ..nesting_bounds.load_pieces import PLOT_SAFE_MAX_Y_MM
 from .sparrow_baseline import (
     _clean_polygon, _write_svg, _plot_curve, solve_with_progress,
 )
@@ -126,15 +125,15 @@ def run_one(doc, gate, exp, erode_d, time_budget, seed, internal_labels=frozense
             demand=1,
             allowed_orientations=m['allowed_orientations'],
         ))
-    # 有效排料宽度 = min(门幅, 绘图仪可写幅宽)（与 web/solver 同口径；密度分母同取该值）
+    # 有效排料宽度 = 输入门幅（单一口径，2026-08-28 起 1910 钳制已移除；密度分母同取该值）
     instance = spyrrow.StripPackingInstance(
-        name=f'm1787_{tag}', strip_height=min(gate, PLOT_SAFE_MAX_Y_MM), items=items)
+        name=f'm1787_{tag}', strip_height=gate, items=items)
     config = spyrrow.StripPackingConfig(
         total_computation_time=time_budget, seed=seed, num_workers=4)
 
     sol, curve, dt = solve_with_progress(instance, config)
     used_mm = float(sol.width)
-    real_density = total_orig / (used_mm * min(gate, PLOT_SAFE_MAX_Y_MM))  # 原面积·实际幅宽口径
+    real_density = total_orig / (used_mm * float(gate))  # 原面积·输入门幅口径
     sparrow_density = float(sol.density)                # 腐蚀后面积口径（sparrow 自报）
 
     print(f'\n== {tag} 结果 ==')

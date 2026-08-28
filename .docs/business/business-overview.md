@@ -25,7 +25,7 @@
 | 求解输入 demand | ✅ 落地 | US-022：per-size 数量编辑（qtyStore），0=该码跳过；前端 qtyStore → WS `quantities` |
 | 可视化工作台（web） | ✅ 落地 | FastAPI + WS，React 18 + TS 5 + Vite 5 前端（US-001~US-028：Tab 框架 + 上传预览 + 5 层渲染 + 求解停止/重启状态机） |
 | 求解停止 / 重启 | ✅ 落地 | US-025 进程化（`solve_with_callback_proc` + `solve_worker`）+ US-026 WS stop 协议 + US-027 phase 五态状态机 + US-028 SolveControls 按钮组 |
-| 导出 PNG / R12-DXF / PLT | ✅ 落地 | 用原始母版轮廓，**US-024 起 5 层叠加**（毛版+净版+内部线+刺口+布纹线），ET2008 兼容；**US-033 起 PLT/HPGL**（WT V8.8 / LIKE 绘图仪原生链路，DXF 在该软件实测无法打印）；**2026-08 撞机修正**：PLT 内容压进绘图仪 Y 可写幅宽 1910 + PD 分块 ≤10点/≤110B + 走纸引导（设备级差异详见 [technical/agent-api-reference.md](../technical/agent-api-reference.md)） |
+| 导出 PNG / R12-DXF / PLT | ✅ 落地 | 用原始母版轮廓，**US-024 起 5 层叠加**（毛版+净版+内部线+刺口+布纹线），ET2008 兼容；**US-033 起 PLT/HPGL**（WT V8.8 / LIKE 绘图仪原生链路，DXF 在该软件实测无法打印）；**2026-08 撞机修正**：PLT 门幅框/内容按输入 gate_mm 裁剪（2026-08-28 起单一幅宽口径，幅宽受限设备直接输入更小门幅）+ PD 分块 ≤10点/≤110B + 走纸引导（设备级差异详见 [technical/agent-api-reference.md](../technical/agent-api-reference.md)） |
 | 配置驱动求解 CLI（cli 子包） | ✅ 落地 | 2026-08-19：`ms-run-config <config.json>`（**9 键**配置：master_dxf/gate_mm 必填 + sizes/time/seeds/per_type/quantities + band——第 8 键 2026-08-22 起：`band={'enabled':true,'label':g码}` 腰头成带，worker 进程内成带+展开 + prefix——第 9 键 2026-08-25 起：`prefix={'enabled':true,'front':g码,'back':g码}` 起始端成套前后幅，worker 进程内构造+展开；band/prefix on 时 `--lns` 自动 warn 跳过）→ 独立 commit → **串行**多 seed 求解 + best 汇总（real 口径）；产物只落 `out/config_runs/<run>_<时间戳>/`（pieces/ + intermediate + result.json + curve_s\*/best_frame_s\* 逐帧轨迹），物理隔离 web 事实源，与 ms-web 可并行互不干扰，无需浏览器。**PC-001（2026-08-19）起求解进程化**：`solve_pieces` 走多进程 + 逐帧 `should_stop` 中止（terminate 杀子进程、best-so-far 帧交付）+ `curve_s{seed}.json`/`best_frame_s{seed}.json` 落盘（标定/kill 规则数据源），Ctrl-C（退出码 130）不丢已完成轮。**PC-002（2026-08-19）起串行 seed portfolio 控制器**（`cli/portfolio.py`）：逐帧 incumbent banking（`best` 升级为帧级全局最优、含完整布局，被 kill/中断 seed 的最优帧同样参与）+ R0 达标即停（`--target`，任一帧达标 → 当前 seed 被 stop + 剩余队列不启动，退出码 0）+ R4 队列耗尽交付；result.json 新增 `portfolio` 段；`--params` 标定参数文件旗标（PC-003/004 消费）；单 seed 无 `--target` 保持旧 best 语义（冒烟对拍兼容） |
 | 母版编号植入脚本 | ✅ 可用 | 2026-08-18：`python scripts/embed_piece_codes.py <母版.dxf>` 把 g01+ 编号 TEXT 植入母版（与 Web parse 同源 `assign_codes`，幂等 + 自校验）—— 版师在 ET2008 打开母版即可把图面片对上 g 码；`_coded.dxf` 产物可直接再上传 Web，g 码不变 |
 | 腰头成带（waist_band） | ✅ v2 纯腰链构造（现行） | **US-009 核心模块**（`nesting_engine/waist_band.py`）+ **US-011~013 编排/UI** + **v2 构造性链构造重写**（2026-08-21：N 条单副本异码链降序滑移贴靠 + 整链点对称翻转 ⇒ 开口朝左 + 最大码在最右；替换 v1 spyrrow 带内子求解/US-014 成对重试；贴触口径链内缝隙 0.00mm）；端到端 A/B **+2.27pt**（ON 88.35% vs OFF 86.08%）。**2026-08-22 简化**：US-015 填料混带 / US-013 预演与 ack 硬警告 / US-010 go-no-go 闸门 / US-014 验收 CLI 整体删除（历史报告 `.docs/business/腰头成带_AB验收报告_US014/US015.md` 留档），band 收敛「勾选 + 选 g 码」极简主流程（`fill<45%` 唯一守门人）；同日 **band×策略解禁**（`/api/strategy/start` 复用 `_parse_band` 单一校验点把 band 写进 8 键 config，worker 进程内成带） |
@@ -61,21 +61,21 @@
 
 > **码号口径（US-001 v2 起）**：工作台上传母版经 `/api/commit-to-nesting`（US-010）取**母版实际全码**（M1787 = 11 码 [28-38]）→ **110 NestPiece**（每码 10 片 × 11 码；= 母版 size≠None 轮廓数，无镜像合成）。前端 SizePicker（US-017）从上传 doc 动态读码号，demand（US-022）按码可设 0 跳过、按（g 码 × 码号）可设 N 份。
 
-### 门幅（双口径，2026-08 绘图仪撞机修正后解耦）
+### 门幅（单一口径，2026-08-28 版师定案）
 
 | 常量 | 值 | 口径 |
 |------|-----|------|
-| `GATE_MM` | 1980 | **布幅显示口径**：UI viewBox / PNG·DXF·PLT 外框 / WS manifest `gate_mm`。不减布边 |
-| `PLOT_SAFE_MAX_Y_MM` | 1910 | **绘图仪 Y 可写幅宽**（LIKE + WT「高速网口输出中心 V8.8」现场口径）。旧口径把门幅框画到 1980、顶部刺口伸到 1983.9mm，Y 超程小车撞导轨硬限位 —— 2026-08 现场撞机根因 |
-| `NEST_GATE_MM` | min(两者)=1910 | **求解约束带**（spyrrow strip 高度上限）+ **密度分母实际幅宽**（2026-08-20 起）：1980−1910=70mm 内部差求解时直接不排、密度也不计入分母。web/solver 与 CLI 引擎（baseline/experiments）同源引用 |
+| `GATE_MM` | 1980 | 缺省门幅。**输入幅宽 = 实际幅宽**：UI viewBox / PNG·DXF·PLT 外框 / WS manifest `gate_mm` / **求解约束带**（spyrrow strip 高度）/**密度分母** 全部同一门幅，不减布边 |
 
-三常量单一事实源在 `nesting_bounds/load_pieces.py`，换机器/换布幅只改一处。PLT 导出内容再按 y≤1910 裁剪属二道防线（削平不缩放）。
+单一事实源在 `nesting_bounds/load_pieces.py`，换布幅改输入值即可。幅宽受限的设备（无法处理 1980）由用户直接输入更小门幅。
+
+> **历史口径迁移记录**：2026-08 撞机后曾引入 `PLOT_SAFE_MAX_Y_MM=1910`（绘图仪 Y 可写幅宽）+ `NEST_GATE_MM=min(两者)`（求解钳制 + 密度分母），70mm 内部差求解不排、PLT 再按 y≤1910 二道裁剪；2026-08-28 版师定案撞机系当时那台机器无法处理 1980 幅宽（机器问题非口径问题），70mm 钳制链（含 PLT 二道防线与前端红虚线）整体移除。同布局密度较钳制期 −~3.5pp（分母 1910→1980），跨口径历史数字不可直接对比。
 
 ### 利用率（双口径，关键）
 
 | 口径 | 公式 | 用途 |
 |------|------|------|
-| **real（原面积·实际幅宽）** | `total_area / (width × min(gate_mm, 1910))` | ★ 90% 生死线判定；导出为 `density`；版师口径。2026-08-20 起分母与求解约束带同口径（同布局较旧门幅分母口径 +~3.7pp；此前按 1980 计的历史数字不可直接对比） |
+| **real（原面积·实际幅宽）** | `total_area / (width × gate_mm)` | ★ 90% 生死线判定；导出为 `density`；版师口径。2026-08-28 起输入幅宽 = 实际幅宽单一口径（分母/求解带/导出同门幅；2026-08-20~27 曾为 min(gate_mm,1910) 分母，同布局口径切换 −~3.5pp，跨口径历史数字不可直接对比） |
 | sparrow（erode 后） | spyrrow 自报 | 仅参考，偏低（erode 缩小了分子） |
 
 **任何对版师的汇报、前端显示、目标判定都用 real 口径。**
@@ -122,7 +122,7 @@ out/sparrow_baseline/pieces_intermediate.json   ← 全流程事实源（schema 
 5. **求解**（US-025~028）：点"开始求解"→ WS 推 manifest（5 层骨架）→ 持续推 frame（每 ~0.2s，利用率实时爬升）→ final。**可随时"停止"**（后端 terminate 子进程 → `{type:'stopped'}`）→ stopped 态保留中间方案可导出 → "重新开始"用上次参数一键重跑。phase 五态：idle/running/stopped/done/error。
 6. **多 seed 并发对比**（最多 6 路），自动保留最优 run（**2026-08-22 起 UI 隐藏**：界面单 seed，底层多 run 能力保留；多种子探索走「高级运行」race/SE 策略编排，后端给定总预算拿更高利用率）。
 7. **回放**：seekbar 拖动看任意时间点布局（US-006）。
-8. **导出最优 run** → PNG（预览）/ R12-DXF（给 ET2008 刻绘，5 层叠加 US-024）/ PLT（US-033，给 WT V8.8 / LIKE 绘图仪，封装口径对齐生产 PLT：PS 纸长 + PW0.08 + PU;PG 收尾 + CRLF；内容压进绘图仪可写幅宽 1910 + PD 分块 ≤10点/≤110B + 走纸引导），文件名 = 上传母版名前缀 + 码号 + 利用率 + 种子（多款号导出凭前缀区分）。
+8. **导出最优 run** → PNG（预览）/ R12-DXF（给 ET2008 刻绘，5 层叠加 US-024）/ PLT（US-033，给 WT V8.8 / LIKE 绘图仪，封装口径对齐生产 PLT：PS 纸长 + PW0.08 + PU;PG 收尾 + CRLF；门幅框/内容按输入 gate_mm 裁剪（2026-08-28 起单一幅宽口径）+ PD 分块 ≤10点/≤110B + 走纸引导），文件名 = 上传母版名前缀 + 码号 + 利用率 + 种子（多款号导出凭前缀区分）。
 
 ## 关键技术决策
 
@@ -134,7 +134,7 @@ out/sparrow_baseline/pieces_intermediate.json   ← 全流程事实源（schema 
 
 ## 验收标准（90% 目标的硬指标）
 
-- ✅ `real_density = total_area/(width×min(gate_mm,1910))` 达到 90%（实际幅宽口径，非 sparrow 自报密度；2026-08-20 起生效）。
+- ✅ `real_density = total_area/(width×gate_mm)` 达到 90%（实际幅宽口径，非 sparrow 自报密度；2026-08-28 起输入幅宽 = 实际幅宽单一口径 —— 2026-08-20~27 曾为 min(gate_mm,1910) 分母，同布局口径切换 −~3.5pp，跨口径历史数字不可直接对比）。
 - ✅ commit-to-nesting 生成的 intermediate 含母版全码 NestPiece（M1787 = 110 片 = 母版 size≠None 轮廓数，无镜像合成；每片 label = g 码）。
 - ✅ 基线对拍（US-005）：同 seed（0）重跑 110 片基线 density 一致；新基线 **real 85.59%** 记录在案（旧 176 片/85.79% 基线随镜像概念归档，不再对拍）。
 - ✅ 导出 DXF 可被 ET2008 正确读出轮廓（R12 + POLYLINE）。

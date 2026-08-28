@@ -8,8 +8,8 @@
     分 SP1-SP5 五笔预览呈多色，统一为门幅框蓝色；生产 PLT 实测同样全程仅 SP1）
   - 空层跳过（net/internal/notches/grain 空 → 该层无笔画）
   - PD 分块：每条 ≤10 点且整行 ≤110B（防设备行缓冲溢出坐标错位乱走）
-  - 安全幅面：内容按 y ≤ PLOT_SAFE_MAX_Y_MM(1910) 裁剪削平，全文件 Y 不超程；
-    门幅框上沿压进可写幅宽、下沿内缩
+  - 门幅边界（2026-08-28 版师定案：输入幅宽 = 实际幅宽）：内容按 y ≤ gate_mm
+    裁剪削平，全文件 Y 不超程；门幅框上沿/下沿各内缩
   - bytes 返回类型 + 全 ASCII + CRLF 行尾
 
 生产 PLT 封装对齐（data/PC-20250508NJIF*.plt 口径）：
@@ -27,7 +27,7 @@ import logging
 import pytest
 
 from materialsorting.web.export import (
-    write_marker_plt, _plt_frame_stats, PLOT_SAFE_MAX_Y_MM, _PLT_PD_MAX_PTS)
+    write_marker_plt, _plt_frame_stats, _PLT_PD_MAX_PTS)
 
 
 def _full_piece(pid="P1", ptype="qian"):
@@ -221,14 +221,14 @@ def test_polygon_closed_first_point_equals_last():
             f"closure broken: first={tokens[:2]} last={tokens[-2:]}")
 
 
-def test_border_inset_and_within_safe_area():
-    """门幅框（层序首条折线）：Y 下沿内缩 5mm、上沿压进可写幅宽（gate=1980 → 顶 1905mm）。"""
+def test_border_inset_and_within_gate():
+    """门幅框（层序首条折线）：Y 下沿内缩 5mm、上沿 = 输入门幅−5（gate=1980 → 顶 1975mm）。"""
     out = _plt([_full_piece()], width_mm=500, gate_mm=1980, title="")
     border = _polylines(_body_section(out.split("\n")))[0]
     xs = [int(border[i]) for i in range(0, len(border), 2)]
     ys = [int(border[i + 1]) for i in range(0, len(border), 2)]
     assert min(ys) == 5 * 40            # 下沿内缩 PLOT_BORDER_MARGIN_Y_MM
-    assert max(ys) == 1905 * 40         # min(1980, 1910-5) = 1905，不贴 y=1980
+    assert max(ys) == 1975 * 40         # 1980 − 5 = 1975（输入幅宽=实际幅宽，不贴 y=1980）
     assert min(xs) == int(20 * 40)      # X 走纸引导
     assert max(xs) == int((20 + 500) * 40)
 
@@ -321,32 +321,18 @@ def test_all_layers_present_in_dxf_layer_order():
             < body.index("2800,2000"))
 
 
-# --------------------------------------------- 安全幅面常量（单一事实源）
+# --------------------------------------------- 门幅裁剪（防御）
 
 
-def test_plot_safe_max_y_single_source():
-    """PLOT_SAFE_MAX_Y_MM 单一事实源：export 与 nesting_bounds 同一对象。
-
-    求解约束带（web/solver strip_height）与 PLT 裁剪都用它 —— 换机器/布幅只改
-    nesting_bounds 一处，NEST_GATE_MM=min(GATE_MM, PLOT_SAFE_MAX_Y_MM) 自动跟随。
-    """
-    from materialsorting.nesting_bounds import load_pieces as _lp
-    assert PLOT_SAFE_MAX_Y_MM is _lp.PLOT_SAFE_MAX_Y_MM
-    assert _lp.NEST_GATE_MM == min(_lp.GATE_MM, _lp.PLOT_SAFE_MAX_Y_MM)
-
-
-# --------------------------------------------- 安全幅面裁剪（防撞机）
-
-
-def test_content_above_plot_safe_max_clipped():
-    """越过可写幅宽 1910mm 的几何被削平/丢弃：全文件 Y ≤ 76400u（1910mm）。"""
+def test_content_above_gate_clipped():
+    """越出输入门幅的几何被削平/丢弃：全文件 Y ≤ 79200u（1980mm）。"""
     piece = {
         "pid": "TOP", "ptype": "A",
-        "polygon": [(0.0, 1850.0), (100.0, 1850.0), (100.0, 1975.0), (0.0, 1975.0)],
+        "polygon": [(0.0, 1950.0), (100.0, 1950.0), (100.0, 2100.0), (0.0, 2100.0)],
         "net_polygon": [],
         "internal_lines": [],
-        "notches": [(50.0, 1970.0, 0.0, 1.0)],          # 两端点 1966/1974 全越界
-        "grain_line": (50.0, 1900.0, 50.0, 1960.0),      # 跨界：画到 1910 截断
+        "notches": [(50.0, 2090.0, 0.0, 1.0)],          # 两端点 2086/2094 全越界
+        "grain_line": (50.0, 1950.0, 50.0, 2050.0),      # 跨界：画到 1980 截断
     }
     out = _plt([piece], width_mm=200, gate_mm=1980, title="")
     ymax = 0
@@ -354,23 +340,23 @@ def test_content_above_plot_safe_max_clipped():
         if line.startswith(("PU", "PD")) and "," in line:
             ys = [int(t) for t in line[2:].rstrip(";").split(",")][1::2]
             ymax = max(ymax, max(ys))
-    assert ymax <= int(PLOT_SAFE_MAX_Y_MM * 40)   # 76400：绝不超可写幅宽
-    # 部分越界 polygon 削平到安全线（交点 y=1910mm），不是整片丢弃
-    assert "76400" in out
-    # 刺口全越界 → 整段丢弃无笔画；布纹线跨界截断到 y=1910（(50,1900)→(50,1910)）
-    assert "2800,76000" in out and "2800,76400" in out
+    assert ymax <= int(1980 * 40)   # 79200：绝不超输入门幅
+    # 部分越界 polygon 削平到门幅线（交点 y=1980mm），不是整片丢弃
+    assert "79200" in out
+    # 刺口全越界 → 整段丢弃无笔画；布纹线跨界截断到 y=1980（(50,1950)→(50,1980)）
+    assert "2800,78000" in out and "2800,79200" in out
 
 
 def test_clip_warning_logged(caplog):
-    """越可写幅宽裁剪时记 warning（提示缩小求解门幅重排，marker 不完整）。"""
+    """越输入门幅裁剪时记 warning（求解布局应落在门幅内，越出 = 链路 bug 线索）。"""
     piece = {
         "pid": "TOP", "ptype": "A",
-        "polygon": [(0.0, 1850.0), (100.0, 1850.0), (100.0, 1975.0), (0.0, 1975.0)],
+        "polygon": [(0.0, 1950.0), (100.0, 1950.0), (100.0, 2100.0), (0.0, 2100.0)],
         "net_polygon": [], "internal_lines": [], "notches": [], "grain_line": None,
     }
     with caplog.at_level(logging.WARNING):
         write_marker_plt([piece], width_mm=200, gate_mm=1980, title="")
-    assert "可写幅宽" in caplog.text
+    assert "越出输入门幅" in caplog.text
 
 
 # --------------------------------------------- 越界校验（防御）
@@ -578,16 +564,16 @@ def test_degenerate_zero_length_grain_emits_nothing():
     assert len(_polylines(_body_section(out.split("\n")))) == 2
 
 
-def test_label_clipped_at_plot_safe_max():
-    """顶部片标注越过可写幅宽 1910 → 削平不越程（工艺线口径：裁剪不告警、布纹笔画仍在）。"""
-    piece = _piece_with_grain(grain=(50.0, 1900.0, 350.0, 1900.0))   # L→R → 标注在杆上侧越界
+def test_label_clipped_at_gate():
+    """顶部片标注越出输入门幅 1980 → 削平不越程（工艺线口径：裁剪不告警、布纹笔画仍在）。"""
+    piece = _piece_with_grain(grain=(50.0, 1960.0, 350.0, 1960.0))   # L→R → 标注在杆上侧越界
     out = _plt([piece], width_mm=400, gate_mm=1980, title="")
     ymax = 0
     for line in out.split("\n"):
         if line.startswith(("PU", "PD")) and "," in line:
             ys = [int(t) for t in line[2:].rstrip(";").split(",")][1::2]
             ymax = max(ymax, max(ys))
-    assert ymax <= int(PLOT_SAFE_MAX_Y_MM * 40)
+    assert ymax <= int(1980 * 40)
     assert len(_grain_strokes(out, 1)) > 0
 
 

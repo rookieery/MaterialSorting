@@ -40,7 +40,6 @@ const APPLY_RESULT: StrategyResult = {
   run_dir: 'out/config_runs/web_race_x_1',
   manifest: {
     gate_mm: 1980,
-    gate_nest_mm: 1910,
     total_area_mm2: 1000000,
     n_eroded: 1,
     pieces: [
@@ -178,7 +177,6 @@ describe('NestingPage.applyStrategyResult (US-006)', () => {
     expect(rec.manifest).not.toBeNull();
     expect(rec.manifest!.type).toBe('manifest');
     expect(rec.manifest!.gate_mm).toBe(1980);
-    expect(rec.manifest!.gate_nest_mm).toBe(1910);
     expect(rec.manifest!.total_area_mm2).toBe(1000000);
     expect(rec.manifest!.n_eroded).toBe(1);
     expect(rec.manifest!.pieces).toHaveLength(1);

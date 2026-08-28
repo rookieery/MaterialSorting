@@ -58,7 +58,6 @@ describe("SizeLegend（尺码图例）", () => {
     const manifest: ManifestMsg = {
       type: "manifest",
       gate_mm: 1980,
-      gate_nest_mm: 1910,
       total_area_mm2: 100000,
       n_eroded: 0,
       pieces: [

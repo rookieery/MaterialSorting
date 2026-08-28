@@ -8,7 +8,7 @@
   V0 基线      : grain 锁 {0,180} × 5 种 bbox y 对齐（现行生产逻辑）
   V1 ±3°离散   : discretize(3) 14 角 × 5 种 y 对齐（第一轮：零变化 —— y 对齐太粗）
   V3 ±3°连续dy : 14 角 × 连续 dy（粗扫 20mm + top3 细化 2mm），cost=bbox 面积
-  V4 ±3°连续dy : 同 V3 但 cost=宽度优先（带高预算富余 1270/1910、带宽才是主解成本）
+  V4 ±3°连续dy : 同 V3 但 cost=宽度优先（带高预算富余 1270/1910（旧口径）、带宽才是主解成本）
   V0t 整带微倾 : V0 构造后整带统一旋转 θ∈[-3°,3°] 0.25° 步取最小 union bbox
                  （相对角度不变 ⇒ 无斜缝；各成员世界角 ≤3° 在 tol 内）
 
@@ -37,7 +37,6 @@ from materialsorting.nesting_engine.waist_band import (  # noqa: E402
     _bbox_area, _chain_gap, _flip_chain, _geom_at, _member_sort_key,
     _norm_chain, _slide_touch, _y_align_off, _valid_geometry,
     build_band_plan, CHAIN_Y_ALIGNS)
-from materialsorting.nesting_bounds.load_pieces import PLOT_SAFE_MAX_Y_MM  # noqa: E402
 from materialsorting.web.solver import build_pid_meta  # noqa: E402
 
 INTERMEDIATE = (ROOT / 'materialSorting-server/out/config_runs/'
@@ -256,7 +255,7 @@ def make_specs(rots3):
 def build_band_plan_call(pid_meta, pieces_by_id):
     return build_band_plan(
         pid_meta, pieces_by_id, label=LABEL, seed=0,
-        gate_nest=min(GATE, PLOT_SAFE_MAX_Y_MM), d_g=D_G, tol_g=TOL_G)
+        gate_nest=GATE, d_g=D_G, tol_g=TOL_G)
 
 
 def run_band_ab():
@@ -347,7 +346,7 @@ def run_band_ab():
 
 def run_solve_ab(records, chunks, pieces, cfg, total_area, budget):
     from materialsorting.web.solver import build_instance, solve_with_callback
-    strip = min(GATE, PLOT_SAFE_MAX_Y_MM)
+    strip = GATE
 
     def one_run(name, chunk):
         inst, conf, _pm, ta, _ne = build_instance(

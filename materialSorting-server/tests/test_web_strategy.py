@@ -700,7 +700,8 @@ def test_result_manifest_parity_with_build_pid_meta(strat_env, monkeypatch):
         assert got['label'] == meta['label']
     assert payload['manifest']['total_area_mm2'] == total_area
     assert payload['manifest']['n_eroded'] == n_eroded
-    assert payload['manifest']['gate_nest_mm'] == 1910.0
+    # 2026-08-28 起 gate_nest_mm 字段已删（输入幅宽 = 实际幅宽单一口径）
+    assert 'gate_nest_mm' not in payload['manifest']
 
     # build_instance 输出一致性（提取前后口径不变 → 三元组与 build_pid_meta 相同）。
     _inst, _cfg, meta2, area2, eroded2 = build_instance(

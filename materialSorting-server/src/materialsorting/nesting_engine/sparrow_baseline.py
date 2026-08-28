@@ -29,7 +29,7 @@ import threading
 import time
 
 from .. import paths
-from ..nesting_bounds.load_pieces import DEFAULT_SIZES, PLOT_SAFE_MAX_Y_MM
+from ..nesting_bounds.load_pieces import DEFAULT_SIZES
 
 # 尺码 → 颜色 16 色循环表（d3 tableau10 + 6 pastel；2026-08-20 起由 g 码换键为尺码，
 # 同码同色跨片型一致，solver / export / 本模块 SVG 三处消费方一律经 ``size_color`` 取色）。
@@ -350,11 +350,11 @@ def main():
         ))
     print(f'构造 {len(items)} 个 item（每片 demand=1，{0}°/{180}° 姿态）')
 
-    # 有效排料宽度：门幅超出绘图仪可写幅宽的部分（内部差）不排 —— 与 web/solver
-    # build_instance 同口径；下方对比目标长度按同一有效幅宽计算（密度实际幅宽口径）
+    # 有效排料宽度 = 输入门幅（单一口径，2026-08-28 起 1910 钳制已移除）—— 与
+    # web/solver build_instance 同口径；下方对比目标长度按同一幅宽计算（密度口径）
     instance = spyrrow.StripPackingInstance(
         name=f'm1787_{"_".join(str(p["size"]) for p in pieces[:1]) or "all"}',
-        strip_height=min(gate, PLOT_SAFE_MAX_Y_MM),
+        strip_height=gate,
         items=items,
     )
     # num_workers（spyrrow 0.9.0 已修正拼写；旧版拼错成 num_wokers）；>4 反而质量更差（issue #113）
@@ -380,8 +380,8 @@ def main():
     print(f'用布长度 = {used_mm/10:.1f} cm')
     print(f'耗时 {dt:.0f}s | anytime 报告 {len(curve)} 条')
 
-    # 对比目标长度按实际幅宽（与求解约束带/密度分母同口径）折算
-    gate_eff = min(gate, PLOT_SAFE_MAX_Y_MM)
+    # 对比目标长度按输入门幅（与求解约束带/密度分母同口径）折算
+    gate_eff = float(gate)
     print(f'\n== 对比 ==')
     print(f'  stage1c(位图+弱SA) : 71.9%')
     print(f'  sparrow(本次)      : {density*100:.2f}%')

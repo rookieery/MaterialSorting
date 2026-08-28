@@ -237,14 +237,13 @@ def _build_band(pieces_snapshot, gate_mm, solve_params, band, result_queue):
     无存活 python 子进程。
 
     d_g/tol_g 与主实例同源裁定（``_resolve_d_tol`` 单一真相源 —— FR-3 带内 per_type
-    沿用该 g 码的 d/tol）；带高守卫 = min(gate_mm, PLOT_SAFE_MAX_Y_MM)（与主解同口径）。
+    沿用该 g 码的 d/tol）；带高守卫界 = gate_mm（输入门幅即实际幅宽，与主解同口径）。
 
     失败（BandError/ValueError 等）投 ``{kind:error}``（「成带失败」前缀，只投 error
     不投 manifest —— 与 build_instance 抛错同契约）返回 None；成功投 ``{kind:stage}``
     （fill_pct/bbox/fallback=False/elapsed，manifest 前唯一一次）后返回 ``BandChunk``
     （只在本进程存活，绝不跨队列）。
     """
-    from ..nesting_bounds.load_pieces import PLOT_SAFE_MAX_Y_MM
     from ..nesting_engine.waist_band import BandError, build_band_plan
     from .solver import _resolve_d_tol, build_pid_meta
 
@@ -264,7 +263,7 @@ def _build_band(pieces_snapshot, gate_mm, solve_params, band, result_queue):
             pid_meta, {p['pid']: p for p in pieces_snapshot},
             label=label,
             seed=int(solve_params.get('seed', 0)),
-            gate_nest=min(float(gate_mm), PLOT_SAFE_MAX_Y_MM),
+            gate_nest=float(gate_mm),
             d_g=d_g, tol_g=tol_g)
     except (BandError, ValueError) as e:
         result_queue.put({'kind': 'error', 'message': f'成带失败: {e}'})
@@ -350,7 +349,6 @@ def _build_prefix(pieces_snapshot, gate_mm, solve_params, prefix, result_queue):
 
     （``BandChunk`` 只在本进程存活，绝不跨队列。）
     """
-    from ..nesting_bounds.load_pieces import PLOT_SAFE_MAX_Y_MM
     from ..nesting_engine.prefix import (
         PrefixError,
         build_prefix_plan,
@@ -384,7 +382,7 @@ def _build_prefix(pieces_snapshot, gate_mm, solve_params, prefix, result_queue):
         chunk, gaps, holes = build_prefix_plan(
             pid_meta, {p['pid']: p for p in pieces_snapshot},
             front_pid=f'{front}_{size}', back_pid=f'{back}_{size}',
-            d_g=d_g, gate_nest=min(float(gate_mm), PLOT_SAFE_MAX_Y_MM))
+            d_g=d_g, gate_nest=float(gate_mm))
     except (PrefixError, ValueError) as e:
         result_queue.put({'kind': 'error', 'message': f'前缀构造失败: {e}'})
         return None
@@ -422,7 +420,6 @@ def _finalize_prefix(sol, prefix_ctx, band_chunk, pid_meta, pieces_snapshot,
     Returns ``(placed_items, width_mm, record)`` —— record 见
     ``_write_prefix_artifact``。
     """
-    from ..nesting_bounds.load_pieces import PLOT_SAFE_MAX_Y_MM
     from ..nesting_engine.prefix import _world_raw_geom, pin_prefix_layout
     from ..nesting_engine.sparrow_baseline import _transform_polygon
     from ..nesting_engine.waist_band import _valid_geometry, expand_placements
@@ -451,7 +448,7 @@ def _finalize_prefix(sol, prefix_ctx, band_chunk, pid_meta, pieces_snapshot,
     pinned, pin_stats = pin_prefix_layout(
         placements, pid_meta, pieces_by_id, chunk,
         float(comp.rotation), [float(comp.translation[0]), float(comp.translation[1])],
-        prefix_idx, gate_nest=min(float(gate_mm), PLOT_SAFE_MAX_Y_MM))
+        prefix_idx, gate_nest=float(gate_mm))
     if not pin_stats['skipped'] and not pin_stats['rolled_back']:
         geoms = [_world_raw_geom(p, pid_meta, pieces_by_id) for p in pinned]
         width = (max(g.bounds[2] for g in geoms)

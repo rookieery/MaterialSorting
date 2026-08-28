@@ -26,7 +26,6 @@ if str(_SRC) not in sys.path:
 
 import materialsorting.web.solver as web_solver
 from materialsorting import paths as paths_mod
-from materialsorting.nesting_bounds.load_pieces import PLOT_SAFE_MAX_Y_MM
 from materialsorting.cli.config import load_config
 from materialsorting.cli.pipeline import commit_from_config, new_run_dir, solve_pieces
 
@@ -415,7 +414,7 @@ def test_real_proc_solve_no_should_stop_smoke(iso_env):
     assert rec['seed'] == 0
     assert rec['n_items'] == _N_PIECES
     assert rec['placed_items'] == _N_PIECES
-    expect = rec['total_area_mm2'] / (rec['width_mm'] * min(cfg.gate_mm, PLOT_SAFE_MAX_Y_MM))
+    expect = rec['total_area_mm2'] / (rec['width_mm'] * cfg.gate_mm)
     assert rec['real_density'] == pytest.approx(expect, abs=1e-4)
     assert rec['density_sparrow'] > 0
     assert 'killed' not in rec

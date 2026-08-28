@@ -22,15 +22,13 @@ from dataclasses import dataclass, field
 
 from ..dxf_parser import reader, geometry, collect as _collect
 
-GATE_MM = 1980.0  # 门幅：布幅**显示**口径（UI viewBox / PNG / DXF / PLT 外框），不扣布边
-# 绘图仪 Y 可写幅宽（LIKE + WT「高速网口输出中心 V8.8」现场口径，设备端最终确认前按 1910）。
-# 布幅与可写幅宽之差（1980−1910=70mm）属内部差：界面/导出仍显示门幅 1980，**求解约束带
-# 压到 1910**（NEST_GATE_MM），否则 marker 顶部落在绘图仪行程外 —— 小车撞导轨，
-# 2026-08 现场撞机根因。2026-08-20 起**密度分母同取 min(gate_mm, 1910)**（实际幅宽口径，
-# 单一换算点 web.solver._apply_density_dual）；前端 NestSVG 以 manifest gate_nest_mm 画
-# 红虚线标实际可排边界。换机器/换布幅只改这两个常量，NEST_GATE_MM 自动跟随。
-PLOT_SAFE_MAX_Y_MM = 1910.0
-NEST_GATE_MM = min(GATE_MM, PLOT_SAFE_MAX_Y_MM)  # 有效排料宽度（求解 strip 高度上限 + 密度分母口径）
+GATE_MM = 1980.0  # 门幅（mm）：web commit 默认门幅 / UI viewBox / 导出外框统一口径
+# 2026-08-28 版师定案：**输入的幅宽就是实际幅宽，不做任何缩减** —— 求解约束带、
+# 密度分母、band/prefix 守卫、PLT 导出边界全部直接用 gate_mm（web/CLI 引擎同口径）。
+# 历史：2026-08 曾因绘图仪可写幅宽 1910 引入 min(gate, 1910) 钳制（NEST_GATE_MM，
+# 1980−1910=70mm 内部差）；后经版师确认当时撞机系那台机器无法处理 1980 幅宽所致
+# （机器问题，非口径问题），钳制逻辑已整体移除。若某台设备幅宽受限，由用户直接
+# 输入更小的门幅解决。
 
 DEFAULT_SIZES = [28, 29, 30, 31, 33, 34, 35, 36]  # 用户需求：8 套，跳过 32
 # 切片目录 sidecar 文件名（加载驱动源；缺失 = 旧版切片目录，明确报错不静默兼容）

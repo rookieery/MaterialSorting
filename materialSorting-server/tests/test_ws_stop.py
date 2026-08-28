@@ -18,7 +18,6 @@ import pytest
 from starlette.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
-from materialsorting.nesting_bounds.load_pieces import PLOT_SAFE_MAX_Y_MM
 from materialsorting.web import server as server_mod
 from materialsorting.web.server import app
 
@@ -151,10 +150,10 @@ def test_normal_solve_without_stop_receives_final(ws_client):
         assert manifest['type'] == 'manifest'
         total_area = manifest['total_area_mm2']
         gate = manifest['gate_mm']
-        # 实际排料幅宽（density 分母口径）：= min(门幅, 绘图仪可写幅宽 1910)
-        gate_nest = manifest['gate_nest_mm']
+        # 2026-08-28 起 gate_nest_mm 字段已删（输入幅宽 = 实际幅宽单一口径，
+        # density 分母 = gate_mm）
         assert total_area > 0 and gate > 0
-        assert gate_nest == pytest.approx(min(gate, PLOT_SAFE_MAX_Y_MM))
+        assert 'gate_nest_mm' not in manifest
 
         final = None
         frame_count = 0
@@ -166,7 +165,7 @@ def test_normal_solve_without_stop_receives_final(ws_client):
                 # density 双口径校验（抽检前 5 帧 + 后 5 帧，避免 800+ 帧全检拖慢）
                 if frame_count <= 5 or frame_count % 100 == 0:
                     w = msg['width_mm']
-                    expected = total_area / (w * gate_nest) if w > 0 else 0.0
+                    expected = total_area / (w * gate) if w > 0 else 0.0
                     assert msg['density'] == pytest.approx(expected, rel=1e-5)
                     assert msg['density_sparrow'] >= 0.0
             elif msg['type'] == 'final':
@@ -181,7 +180,7 @@ def test_normal_solve_without_stop_receives_final(ws_client):
         assert final['n_eroded'] >= 0
         # final density 双口径
         fw = final['width_mm']
-        expected = total_area / (fw * gate_nest) if fw > 0 else 0.0
+        expected = total_area / (fw * gate) if fw > 0 else 0.0
         assert final['density'] == pytest.approx(expected, rel=1e-5)
         assert final['density_sparrow'] >= 0.0
 
