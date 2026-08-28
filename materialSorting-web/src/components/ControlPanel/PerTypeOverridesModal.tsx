@@ -906,7 +906,8 @@ function PerTypeOverridesModalInner({
                   />
                 </div>
                 <div className="band-zoom-hint dim small">
-                  预览 = 求解时带的精确形态（链内贴触 · 码序降序 · 开口朝左 · 最大码在最右）；
+                  预览 = 求解时带的精确形态（链内贴触 · 码序降序 · 大码锚定链端；
+                  弧形腰头开口朝左/最大码最右，横向弯腰头竖排/最大码在底）；
                   虚线 = 组合片外轮廓（主解看到的形状）。
                 </div>
               </div>

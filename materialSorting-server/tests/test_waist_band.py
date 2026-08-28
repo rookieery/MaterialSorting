@@ -15,10 +15,15 @@
    长**（单调阶梯，N 链交叉深谷必挂）、大码最右、带高=最高片、副本数不均匀）；
 9. 镜像弧片手性自适应（2026-08-27，M1787 g10）：凸右弧片与 5336 g05 互为镜像
    —— v2 旧构造（降序+翻转）开口朝右必挂（根因回归锁），升序+不翻转三闸门
-   全过 + 全链路成带成功（守恒/fill/开口左/确定性）。
+   全过 + 全链路成带成功（守恒/fill/开口左/确定性）；
+10. 横向弯腰头 T-转置支（v3 2026-08-28，3069 g11）：长轴横置 ⌣ 扁弧片（布纹沿
+    弧长 0°、开口朝上/下）走「同向逐层竖排 + 大码在底 + 多副本链间互扣」——
+    判据分离（_long_axis_x）+ T 共轭映射（rot 取负、平移交换、{0,180} 自洽）+
+    全链路形态（修复前 11m 双行错切带在带宽断言必挂）+ 镜像 ⌢ 族 + 带高超限。
 
 合成夹具：矩形（结构同 5336 g05：7 码 × demand 2）+ 月牙弧（曲率相近异码嵌套）
-+ 异高竖条（882# g01 直腰头同构：10 码 × demand 2，高度互异放大交替翻转让乱象可判）。
++ 异高竖条（882# g01 直腰头同构：10 码 × demand 2，高度互异放大交替翻转让乱象可判）
++ 横向 ⌣ 弧条（3069 g11 同构：10 码 × demand，r 梯级、flip_y 出 ⌢ 镜像族）。
 """
 from __future__ import annotations
 
@@ -505,6 +510,182 @@ def test_flat_band_chunk_deterministic():
     j2 = json.dumps(build_band_plan(pid_meta, pieces, label='g01', seed=0).to_dict(),
                     sort_keys=True)
     assert j1 == j2
+
+
+# ------------------------------ 横向弯腰头 T-转置支（v3 2026-08-28，3069 g11）
+
+def _smile_piece(pid, label, size, r_in=1450.0, thick=75.0, half_deg=19.0, n=24,
+                 flip_y=False):
+    """合成横向弯腰头（3069 g11 同构）：−Y 轴向离散环形扇带，凸侧朝下（⌣）。
+
+    圆心在片上方、弧带跨 270°±half —— 中段低、两端上翘，长轴横置（宽 =
+    2·r_out·sin(half) ≈ 990+、高 = thick + 矢高 ≈ 153），布纹沿弧长（横向 0°）；
+    默认参数取 3069 g11 真实几何族（975~1272 长 × 156~176 高、单片质心短轴
+    偏移 −13~−17mm 即凸侧朝下）。``flip_y``：逐点 Y 取反 ⇒ ⌢ 凸侧朝上（镜像
+    画法族 —— 横向支无手性分支，两族同走单一朝向竖排）。
+    """
+    r_out = r_in + thick
+    pts = []
+    for i in range(n + 1):          # 外弧（底，凸侧）270−half → 270+half
+        a = math.radians(270.0 - half_deg + 2.0 * half_deg * i / n)
+        pts.append([r_out * math.cos(a), r_out * math.sin(a)])
+    for i in range(n + 1):          # 内弧（顶，凹侧）270+half → 270−half
+        a = math.radians(270.0 + half_deg - 2.0 * half_deg * i / n)
+        pts.append([r_in * math.cos(a), r_in * math.sin(a)])
+    if flip_y:
+        pts = [[x, -y] for x, y in pts]
+    return {
+        'pid': pid, 'label': label, 'size': size, 'polygon': pts,
+        'area_mm2': Polygon(pts).area,
+        'net_polygon': [], 'internal_lines': [], 'notches': [], 'grain_line': None,
+    }
+
+
+def _smile_ctx(label='g11', sizes=(29, 30, 31, 32, 33, 34, 35, 36, 38, 40),
+               demand=1, d_g=0.4, flip=False):
+    """3069 g11 同构上下文：10 码 × demand（r_in=1450+25·(码−29) 梯级 —— 真实
+    几何族 975~1272 长同构，链构造实测片片贴触竖排）。"""
+    pieces_by_id, pid_meta = {}, {}
+    for s in sizes:
+        pid = f'{label}_{s}'
+        p = _smile_piece(pid, label, s,
+                         r_in=1450.0 + (float(s) - 29.0) * 25.0, flip_y=flip)
+        pieces_by_id[pid] = p
+        poly = erode_polygon(p['polygon'], d_g) if d_g > 0 else p['polygon']
+        pid_meta[pid] = {
+            'size': s, 'color': '#000000', 'polygon': poly,
+            'area_mm2': p['area_mm2'], 'label': label, 'demand': demand,
+            'net_polygon': [], 'internal_lines': [], 'notches': [],
+            'grain_line': None,
+        }
+    return pid_meta, pieces_by_id
+
+
+def test_transverse_detector_separates_smile_from_tall_arc():
+    """``_long_axis_x`` 判据分离：横向 ⌣ 弧片 True（宽 990+ > 高 153）、纵置
+    月牙/直条/竖矩形 False —— 分派锁（5336 g05 / 882# g01 / M1787 g10 不进新支）。"""
+    from materialsorting.nesting_engine.waist_band import _long_axis_x
+    smile_meta, _ = _smile_ctx(demand=2)
+    for pid, m in smile_meta.items():
+        g = waist_band._valid_geometry(waist_band._clean_polygon(m['polygon']))
+        assert _long_axis_x(g) is True, pid
+    for ctx in (_arc_ctx(demand=1), _strip_ctx(demand=1), _band_ctx(demand=1)):
+        for pid, m in ctx[0].items():
+            g = waist_band._valid_geometry(waist_band._clean_polygon(m['polygon']))
+            assert _long_axis_x(g) is False, pid
+
+
+def test_transpose_placements_conjugation():
+    """``_transpose_placements`` 共轭映射：T·R(r)·T = R(−r) ⇒ rot 取负、平移交换。
+    rots {0,180} 映射后仍在 {0,180}（布纹合法 —— 90° 旋转 proxy 无此性质）。"""
+    from materialsorting.nesting_engine.waist_band import _transpose_placements
+    out = _transpose_placements([
+        {'pid': 'a', 'rotation': 0.0, 'translation': [3.0, 7.0]},
+        {'pid': 'b', 'rotation': 180.0, 'translation': [-5.0, 11.0]},
+        {'pid': 'c', 'rotation': 90.0, 'translation': [1.0, 2.0]},
+    ])
+    assert out[0] == {'pid': 'a', 'rotation': 0.0, 'translation': [7.0, 3.0]}
+    assert out[1] == {'pid': 'b', 'rotation': 180.0, 'translation': [11.0, -5.0]}
+    # 任意角也满足共轭（90 → 270）：构造虽只用 {0}，映射本身是纯函数恒等式
+    assert out[2]['rotation'] == pytest.approx(270.0)
+    assert out[2]['translation'] == [2.0, 1.0]
+
+
+def test_transverse_band_chunk_form():
+    """横向弯腰头全链路（3069 g11 同构，demand=2 双链互扣）：片片 rot=0 单一朝向
+    + 逐层竖排（带宽 ≈ 最大单片宽而非 Σ、带高 > 带宽 —— 修复前 11m 双行错切带
+    在此必挂）+ 大码在底 + 片片贴触 + 无重叠 + 守恒 20/20 + fill 过下限。"""
+    from materialsorting.nesting_bounds.load_pieces import GATE_MM
+    from materialsorting.nesting_engine.waist_band import (
+        CHAIN_GAP_EPS_MM, _chain_gap, _geom_at)
+    pid_meta, pieces = _smile_ctx(demand=2)
+    chunk = build_band_plan(pid_meta, pieces, label='g11', seed=0)
+    assert chunk.n_members == 20 and chunk.total_demand == 20   # 10 码 × 2 守恒
+    assert chunk.pid == f'{COMPOSITE_PID_PREFIX}g11'
+    assert chunk.fill_pct > 45.0                                # 灾难形态下限
+    assert chunk.bbox['height_mm'] <= GATE_MM + 1e-6
+    polys = {pid: waist_band._clean_polygon(m['polygon'])
+             for pid, m in pid_meta.items()}
+    # 单一朝向：片片 rot=0（无翻转 —— 多朝向候选噪声级打平会产错切带）
+    assert all(m['rotation'] == 0.0 for m in chunk.members)
+    gs = [_geom_at(polys[m['pid']], m['rotation'], m['translation'])
+          for m in chunk.members]
+    # 逐层竖排形态：带宽 ≈ 最大单片宽（居中竖排，非 Σ 宽端对端），带高 > 带宽
+    max_w = max(g.bounds[2] - g.bounds[0] for g in gs)
+    assert chunk.bbox['width_mm'] < 1.25 * max_w
+    assert chunk.bbox['height_mm'] > chunk.bbox['width_mm']
+    # 大码在底（降序构造确定性默认）
+    bottom = min(zip((g.centroid.y for g in gs),
+                     (m['pid'] for m in chunk.members)))[1]
+    assert bottom == 'g11_40'
+    # 片片贴触（版师验收口径）+ 紧排无重叠
+    assert _chain_gap(chunk.members, polys) <= CHAIN_GAP_EPS_MM
+    assert unary_union(gs).area == pytest.approx(sum(g.area for g in gs), rel=1e-9)
+    # 展开黄金性质：守恒 + 包络 ⊆ composite ⊕ d_g（c.rot 0/180 两朝向）
+    for c_rot, c_tr in [(0.0, (700.0, 300.0)), (180.0, (2000.0, 1500.0))]:
+        expanded = expand_placements(chunk, c_rot, c_tr)
+        assert len(expanded) == 20
+        assert all(e['id'] in pid_meta for e in expanded)     # 无 WB_ 泄漏
+        comp_world = Polygon(_transform_polygon(chunk.polygon, c_rot, c_tr))
+        member_union = unary_union([
+            Polygon(_transform_polygon(
+                pieces[e['id']]['polygon'], e['rotation'], e['translation']))
+            for e in expanded])
+        assert comp_world.buffer(chunk.d_g + 0.5).contains(member_union)
+
+
+def test_transverse_single_chain_monotone_stack_and_interlock():
+    """单链（demand=1）逐层单调竖排（底→顶 = 码降序）+ 双链互扣省高（demand=2
+    带高 < 2×单链 —— 链间弧面嵌套下插，参考图「两组互扣」形态）。"""
+    from materialsorting.nesting_engine.waist_band import _geom_at
+    pid_meta, pieces = _smile_ctx(demand=1)
+    chunk = build_band_plan(pid_meta, pieces, label='g11', seed=0)
+    assert chunk.n_members == 10
+    polys = {pid: waist_band._clean_polygon(m['polygon'])
+             for pid, m in pid_meta.items()}
+    rows = sorted(
+        ((_geom_at(polys[m['pid']], m['rotation'],
+                   m['translation']).centroid.y, pid_meta[m['pid']]['size'])
+         for m in chunk.members), key=lambda t: t[0])
+    sizes_seq = [s for _y, s in rows]
+    assert sizes_seq == sorted(sizes_seq, reverse=True)        # 底→顶码降序
+    # 双链互扣：链堆叠滑移贴靠省高（平移堆叠 = 2×单链高，弧面嵌套严格更矮）
+    pid_meta2, pieces2 = _smile_ctx(demand=2)
+    chunk2 = build_band_plan(pid_meta2, pieces2, label='g11', seed=0)
+    assert chunk2.bbox['height_mm'] < 2.0 * chunk.bbox['height_mm']
+    # 确定性：横向支同 seed 两跑 to_dict JSON 相等（纯几何构造、无 RNG）
+    j1 = json.dumps(chunk2.to_dict(), sort_keys=True)
+    j2 = json.dumps(build_band_plan(pid_meta2, pieces2, label='g11', seed=0).to_dict(),
+                    sort_keys=True)
+    assert j1 == j2
+
+
+def test_transverse_mirrored_smile_flip_form():
+    """镜像画法族（⌢ 凸侧朝上）：横向支无手性分支 —— 单一朝向构造同样成功成带
+    （守恒/fill/竖排/大码在底），开口朝向不设闸（母版原向即合法形态）。"""
+    from materialsorting.nesting_engine.waist_band import _geom_at
+    pid_meta, pieces = _smile_ctx(demand=2, flip=True)
+    chunk = build_band_plan(pid_meta, pieces, label='g11', seed=0)
+    assert chunk.n_members == 20 and chunk.fill_pct > 45.0
+    assert all(m['rotation'] == 0.0 for m in chunk.members)
+    assert chunk.bbox['height_mm'] > chunk.bbox['width_mm']    # 仍竖排
+    polys = {pid: waist_band._clean_polygon(m['polygon'])
+             for pid, m in pid_meta.items()}
+    bottom = min(
+        (_geom_at(polys[m['pid']], m['rotation'],
+                  m['translation']).centroid.y, m['pid'])
+        for m in chunk.members)[1]
+    assert bottom == 'g11_40'                                  # 大码在底不变
+
+
+def test_transverse_height_over_gate_raises():
+    """带高超门幅 → BandQualityError（响亮报错、禁无声降级；不自动分列换行 ——
+    既有各族同语义）。gate_nest 显式压小使触发确定且快速。"""
+    pid_meta, pieces = _smile_ctx(demand=2)
+    single = build_band_plan(pid_meta, pieces, label='g11', seed=0)
+    with pytest.raises(BandQualityError, match='带高'):
+        build_band_plan(pid_meta, pieces, label='g11', seed=0,
+                        gate_nest=single.bbox['height_mm'] - 50.0)
 
 
 # --------------------------------------------------------------- 分层纯度

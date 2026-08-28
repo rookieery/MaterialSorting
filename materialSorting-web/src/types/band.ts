@@ -8,7 +8,8 @@
 //
 // 几何口径：members[].polygon 与 outline 均为**带内归一坐标**（后端已减 chunk.offset，
 // min≈0）—— 前端零变换直接渲染；颜色 = size_color 单一真相源（同码同色跨片型，
-// 与 manifest/NestSVG 同口径），「码序降序 + 最大码在最右」一眼可辨。
+// 与 manifest/NestSVG 同口径），「码序降序 + 大码锚定链端」一眼可辨
+// （弧形腰头最右 / 横向弯腰头最底，v3 起族形态后端分派自适应）。
 // 组合片 WB_ pid 按哨兵约定不返回（WB_ 永不出现在前端）。
 
 import type { Polygon } from './piece';

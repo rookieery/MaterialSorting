@@ -28,6 +28,16 @@ placement 展开回成员 placement。性质是**业务规则**（确定性聚�
 （交叉布局）；**全副本展开为单条全局从短到长**的单调阶梯（同码副本相邻），
 等宽条带并排 bbox 与顺序无关，面积零代价。
 
+横向弯腰头分叉（v3 2026-08-28，3069 g11）：成员为**长轴横置的扁弧片**（⌣ 形、
+布纹沿弧长 0°、开口朝上/下，实测 1057×161）时，既有 X 向滑移构造失效（片被迫
+端对端串成 ~11m 双行错切带、fill 44% 撞下限被拒）—— 版师形态（用户参考图）=
+**同向弧片逐层竖排（居中对齐、层距=条厚）、多副本链间互扣**。实现 = 构造帧整体
+**T-转置**（反射 (x,y)→(y,x)）后复用既有贪心/堆叠机器：T·R(r)·T = R(−r) 共轭
+保 proxy 旋转 {0} ⇔ 实空间 {0,180} 布纹合法（90° 旋转做 proxy 已实测否决：映射
+回 ±90° 非法 / 片横躺被迫端对端）。单一朝向构造（母版原向即版师形态，⌣/⌢ 皆
+合法、无手性分支），闸门 = 贴触 + 大码在底 + 旋转合法。实测 3069 g11：10 码
+demand1 = 1270×792mm / fill 77.3% / 贴触 0.00mm；demand2 两链互扣 fill 80.2%。
+
 分层约束：本模块属 ``nesting_engine``，仅 import 标准库 + shapely + 本包兄弟模块
 （``sparrow_baseline`` / ``sparrow_experiments`` / ``constraints``）+ 下层
 ``nesting_bounds``；**禁 import web**（组合片构造与展开的单一真相源，web 与未来
@@ -354,6 +364,32 @@ def _is_flat_piece(g, eps=FLAT_CENTROID_EPS_MM) -> bool:
     return abs(g.centroid.y - (miny + maxy) / 2) < eps
 
 
+def _long_axis_x(g) -> bool:
+    """单片长轴是否横置（bbox 宽 > 高）—— 横向弯腰头（3069 g11 族）判据。
+
+    「非 flat 弧片 + 长轴横置」⇒ 弧面沿 Y 起伏、开口朝上/下 —— 版师形态为逐层
+    竖排（v3 分支）；长轴纵置（5336 g05 / M1787 g10 族）走既有望远镜嵌套不变。
+    腰片长宽比悬殊（1057 vs 161），判据无歧义边界。
+    """
+    minx, miny, maxx, maxy = g.bounds
+    return (maxx - minx) > (maxy - miny)
+
+
+def _transpose_placements(placed):
+    """proxy 帧放置 → 实空间放置（转置反射 T:(x,y)→(y,x) 的共轭映射）。
+
+    proxy 放置几何 = R(r)·Tp + t（p=实空间片），T·R(r)·T = R(−r)（反射共轭
+    反转角度）⇒ 实空间等价放置 = R(−r)·p + Tt：**rot 取负、平移交换分量**。
+    proxy rots {0,180} ⇔ 实空间 {0,180}（布纹合法）；90° 旋转做 proxy 无此
+    性质（映射回 ±90° 非法）—— 勿把 T 换成 R(±90)。
+    """
+    return [{'pid': m['pid'],
+             'rotation': (-float(m['rotation'])) % 360.0,
+             'translation': [float(m['translation'][1]),
+                             float(m['translation'][0])]}
+            for m in placed]
+
+
 def _chain_nest(member_pids, polys, rots=(0.0, 180.0),
                 y_aligns=CHAIN_Y_ALIGNS):
     """构造性滑移贴靠贪心：首片锚定原点，后续每片 ``rots`` × ``y_aligns``
@@ -488,9 +524,11 @@ def build_band_plan(pid_meta, pieces_by_id, *, label, seed,
                     fill_floor=FILL_FLOOR_PCT) -> BandChunk:
     """构造性链构造 → 组合片构造（单一真相源；web 编排在 US-011 接线）。
 
-    版师形态（v2，2026-08-21；手性自适应 2026-08-27）：每码第 k 副本一条链 →
-    凸左弧片降序构造+整链翻转 / 镜像凸右弧片升序构造不翻转（终态同为开口朝左、
-    最大码在最右）→ 链间滑移堆叠 → union/erode/归一化。
+    版师形态（v2，2026-08-21；手性自适应 2026-08-27；横向弯腰头 v3 2026-08-28）：
+    每码第 k 副本一条链 → 凸左弧片降序构造+整链翻转 / 镜像凸右弧片升序构造不翻转
+    （终态同为开口朝左、最大码在最右）→ 链间滑移堆叠 → union/erode/归一化；
+    长轴横置弧片（3069 g11 横向弯腰头）走 T-转置支：同向弧片逐层竖排、大码在底、
+    链间互扣（见模块 docstring 与分支注释）。
 
     Parameters
     ----------
@@ -556,7 +594,14 @@ def build_band_plan(pid_meta, pieces_by_id, *, label, seed,
     # 同向、无翻转、大码在右（面积差 <0.1%，纯形态规则）；弧形片（质心短轴偏移
     # ~18-22mm，判据分离度 18×）仍走嵌套贪心（构造方向按手性自适应，见下方
     # else 分支）。
-    flat = all(_is_flat_piece(_valid_geometry(polys[pid])) for pid in member_pids)
+    member_geoms = {pid: _valid_geometry(polys[pid]) for pid in member_pids}
+    flat = all(_is_flat_piece(g) for g in member_geoms.values())
+    # 横向弯腰头分叉（v3 2026-08-28，3069 g11）：非 flat 弧片且全员长轴横置 ⇒
+    # 开口朝上/下，走 T-转置竖排支（构造帧 = proxy，见下方 elif 分支）。
+    transverse = (not flat) and all(
+        _long_axis_x(g) for g in member_geoms.values())
+    proxy = ({pid: [[y, x] for x, y in polys[pid]] for pid in polys}
+             if transverse else None)
 
     def _check_chain(chain, rightmost_pid, k=None, ctor='降序+翻转'):
         """链形态三闸门：贴触 / 开口朝左 / 最右成员 = 最大码（程序自校验）。"""
@@ -578,6 +623,34 @@ def build_band_plan(pid_meta, pieces_by_id, *, label, seed,
             raise BandQualityError(
                 f'链 {label!r} {nth}最右成员非最大码（构造异常）')
 
+    def _check_chain_y(chain, bottom_pid, k=None):
+        """横向弧片链形态三闸门（实空间口径，chain 须先 ``_transpose_placements``）：
+        贴触 / 最底成员 = 最大码 / 成员旋转 ∈ {0,180}（程序自校验）。
+
+        与 ``_check_chain`` 平行；开口朝向**不设闸** —— 单一朝向构造
+        （rots=(0,)）下开口 = 母版原向，⌣/⌢ 皆为版师合法形态（参考图只要求
+        同向竖排，不规定凹口朝上/朝下）。
+        """
+        nth = f'第 {k} 链' if k is not None else '单链'
+        gap = _chain_gap(chain, polys)
+        if gap > CHAIN_GAP_EPS_MM:
+            raise BandQualityError(
+                f'链 {label!r} {nth}贴触失败（最大缝隙 {gap:.2f}mm > '
+                f'{CHAIN_GAP_EPS_MM}mm）—— 形态质量悬崖，禁无声降级')
+        for m in chain:
+            if float(m['rotation']) % 180.0 != 0.0:
+                raise BandQualityError(
+                    f'链 {label!r} {nth}成员 {m["pid"]} 旋转 '
+                    f'{m["rotation"]:.0f}° 非法（横向支构造保证 0/180°，'
+                    f'映射异常）')
+        cy_pid = min(
+            (_geom_at(polys[m['pid']], m['rotation'],
+                      m['translation']).centroid.y, m['pid'])
+            for m in chain)[1]
+        if cy_pid != bottom_pid:
+            raise BandQualityError(
+                f'链 {label!r} {nth}最底成员非最大码（构造异常）')
+
     chains = []
     if flat:
         # 直腰头多副本（2026-08-24 版师二次指正）：N 条「每码第 k 副本」链并排会在
@@ -593,6 +666,28 @@ def build_band_plan(pid_meta, pieces_by_id, *, label, seed,
             polys)
         _check_chain(chain, rightmost_pid=copies[-1], ctor='升序同底齐平')
         chains.append(chain)
+    elif transverse:
+        # v3 横向弯腰头（3069 g11 族）：长轴横置弧片，版师形态 = 同向弧片逐层
+        # **竖排**（居中、层距=条厚）、多副本链间互扣（用户参考图）。构造帧 =
+        # T-转置 proxy（上方已建）：proxy 内即「长轴纵置弧片 + X 滑嵌套」—— 完整
+        # 复用既有贪心/堆叠机器，proxy-X 滑 ⇔ 实空间 Y 滑（竖排），y_aligns 候选
+        # ⇔ 实空间 X 对齐（'mid'=居中）。**单一朝向 rots=(0,)**：实空间全员
+        # rot 0 = 母版原向（⌣/⌢ 皆合法形态，无需手性分支/翻转 —— 与直腰头分叉
+        # 同理，多朝向候选的 bbox 噪声级打平会让贪心交替翻盘产错切带，实测
+        # rots=(0,180) 时产出 11m 双行错切带 fill 44% 被拒）。降序构造 = 大码
+        # 先放 ⇒ 实空间大码在链底（打底锚，参考图确定性默认）。闸门与尾部
+        # （union/erode/带高/fill）零改动 —— placed 映射回实空间后走共享路径。
+        max_demand = max(int(pid_meta[pid]['demand']) for pid in member_pids)
+        for k in range(max_demand):
+            chain_pids = sorted(
+                (pid for pid in member_pids if int(pid_meta[pid]['demand']) > k),
+                key=lambda pid: _member_sort_key(pid_meta[pid], pid),
+                reverse=True)          # 降序：大码先放 ⇒ T 映射后大码在链底
+            chain = _norm_chain(
+                _chain_nest(chain_pids, proxy, rots=(0.0,)), proxy)
+            _check_chain_y(_transpose_placements(chain),
+                           bottom_pid=chain_pids[0], k=k)
+            chains.append(chain)
     else:
         # 手性自适应（2026-08-27，M1787 g10 排查定案）：弧片凹口朝向随母版画法
         # 可左可右（布纹对齐只做 ±90° 转正、无手性规范化）—— v2「降序构造(开口
@@ -620,8 +715,12 @@ def build_band_plan(pid_meta, pieces_by_id, *, label, seed,
                                         else chain_pids[0]),
                          k=k, ctor='升序不翻转' if mirrored else '降序+翻转')
             chains.append(chain)
+    # 链堆叠须在**构造帧**内滑移（横向支 = proxy，proxy-X 滑 ⇔ 实空间 Y 滑互扣），
+    # 横向支随后一次性映射回实空间（rot 取负、平移交换，见 _transpose_placements）。
     placed = (chains[0] if len(chains) == 1
-              else _stack_chains(chains, polys))
+              else _stack_chains(chains, proxy if transverse else polys))
+    if transverse:
+        placed = _transpose_placements(placed)
     if len(placed) != total_demand:
         raise BandQualityError(
             f'链构造副本守恒失败: 放置 {len(placed)} != Σdemand {total_demand}')
