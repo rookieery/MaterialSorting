@@ -26,7 +26,7 @@
 //                     列逐轮淘汰；SE = k 筛 + 分隔 + 冠军延长条目，两段式结构）
 //                     + 最近 1 条事件行 + 终止按钮
 //   结果态 done/stopped/error/orphan
-//                  done：完成 · 最优 X.XX%（seed N · 用布 X.XXm）+ 模式汇总（race：
+//                  done：完成 · 最优 X.XX%（seed N · 用布 X.XX cm）+ 模式汇总（race：
 //                  M 轮中 K 轮门杀 · 全程 X 分 X 秒 / SE：k 筛 + 冠军延长）+
 //                  [应用到主画布]（US-006 已接线 —— NestingPage
 //                  applyStrategyResult 经 ControlPanel 透传；未传回调时 disabled）。
@@ -99,9 +99,9 @@ export function fmtBudget(sec: number | null | undefined): string {
   return `${Math.round(sec / 60)} 分`;
 }
 
-/** 用布长度 mm → m（两位小数）。 */
-function fmtWidthM(mm: number | null | undefined): string {
-  return mm === null || mm === undefined ? '—' : `${(mm / 1000).toFixed(2)}m`;
+/** 用布长度 mm → cm（两位小数，版师 2026-08-28 cm 口径，与 NestLabel/导出标题一致）。 */
+function fmtWidthCm(mm: number | null | undefined): string {
+  return mm === null || mm === undefined ? '—' : `${(mm / 10).toFixed(2)} cm`;
 }
 
 // ------------------------------------------------------------- seed chips 派生
@@ -594,7 +594,7 @@ function ResultState({
           : `已终止 · 保留终止前最优 ${fmtDensity(best.density)}`}
       </div>
       <div className="strategy-result-detail" data-testid="strategy-result-detail">
-        seed {best.seed ?? '—'} · 用布 {fmtWidthM(best.width_mm)}
+        seed {best.seed ?? '—'} · 用布 {fmtWidthCm(best.width_mm)}
       </div>
       <div className="strategy-result-detail" data-testid="strategy-mode-summary">
         {modeSummary}

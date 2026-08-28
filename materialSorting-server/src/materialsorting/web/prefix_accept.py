@@ -402,7 +402,8 @@ def export_verify(final, pieces_by_id, gate_mm, out_dir, *, seed, stem):
     placed = final['placed_items']
     width_mm = float(final['width_mm'])
     density_pct = float(final['density']) * 100.0
-    title = f'prefix_accept util={density_pct:.2f}% L={width_mm / 10:.1f}cm seed={seed}'
+    # 2026-08-28 版师两位小数 cm 口径（与 /export 标题、前端 NestLabel 同口径）。
+    title = f'prefix_accept util={density_pct:.2f}% L={width_mm / 10:.2f}cm seed={seed}'
 
     ps_ids = sorted({str(it['id']) for it in placed
                      if str(it['id']).startswith(PREFIX_PID_PREFIX)})

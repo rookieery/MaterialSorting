@@ -85,13 +85,13 @@ export interface FormState {
 }
 
 /**
- * 默认值（US-017 起 sizes 默认空数组，强制用户勾选；gate=198cm（=GATE_MM 1980mm），
- * time=120，seed=0；multi_seed 关闭，seed_count=3；per_type 空对象 = 无任何覆盖 =
- * 继承 v0.3 默认 0 —— 裁片键动态出现，仅在弹窗确定后写入）。
+ * 默认值（US-017 起 sizes 默认空数组，强制用户勾选；gate=198.00cm（=GATE_MM 1980mm，
+ * 版师要求两位小数口径），time=120，seed=0；multi_seed 关闭，seed_count=3；per_type
+ * 空对象 = 无任何覆盖 = 继承 v0.3 默认 0 —— 裁片键动态出现，仅在弹窗确定后写入）。
  */
 export const DEFAULT_FORM: FormState = {
   sizes: [],
-  gate: '198',
+  gate: '198.00',
   time: '120',
   seed: '0',
   multi_seed: false,
@@ -171,11 +171,23 @@ export function parseTime(form: FormState): number {
 
 /**
  * 解析幅宽 mm（cm 字符串 ×10）：失败/空/非正 → 1980（=198cm，与 nesting_bounds.GATE_MM 一致）。
- * 输入框 cm 口径（版师习惯），后端 / sparrow 一律 mm，故此处统一换算。
+ * 输入框 cm 口径（版师习惯，2026-08-28 起两位小数 = 0.1mm 分辨率，parseFloat 不截断小数），
+ * 后端 / sparrow 一律 mm，故此处统一换算。
  */
 export function parseGate(form: FormState): number {
-  const v = parseInt(form.gate, 10);
+  const v = parseFloat(form.gate);
   return Number.isNaN(v) || v <= 0 ? 1980 : v * 10;
+}
+
+/**
+ * 幅宽输入失焦归一化（cm 字符串）：非法/空/非正 → '198.00'；合法 → 钳制 [50, 400]
+ * （与输入框 min/max 同界）后格式化两位小数。parseGate 不钳制（求解语义不变），
+ * 钳制只作为输入 UX 在失焦时兜底。
+ */
+export function normalizeGate(v: string): string {
+  const n = parseFloat(v);
+  if (Number.isNaN(n) || n <= 0) return '198.00';
+  return Math.min(400, Math.max(50, n)).toFixed(2);
 }
 
 /**

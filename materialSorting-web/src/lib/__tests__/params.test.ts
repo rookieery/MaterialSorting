@@ -16,6 +16,7 @@ import {
   collectStartContext,
   DEFAULT_FORM,
   defaultPrefixLabels,
+  normalizeGate,
   parseGate,
   parseSeed,
   parseSeedCount,
@@ -229,10 +230,17 @@ describe('parseSeedCount (US-005)', () => {
 
 describe('parseGate', () => {
   // cm 字符串 ×10 → mm；空/非法/非正 → fallback 1980（=198cm，与 nesting_bounds.GATE_MM 一致）。
-  it('默认 198cm → 1980mm；正常值 ×10 换算', () => {
+  // 2026-08-28 起 parseFloat（两位小数 cm 不截断；DEFAULT_FORM.gate='198.00'）。
+  it('默认 198.00cm → 1980mm；正常值 ×10 换算', () => {
     expect(parseGate(DEFAULT_FORM)).toBe(1980);
     expect(parseGate(makeForm({ gate: '150' }))).toBe(1500);
     expect(parseGate(makeForm({ gate: '180' }))).toBe(1800);
+  });
+
+  it('小数 cm 精确换算（parseFloat 不截断，两位小数 = 0.1mm 分辨率）', () => {
+    expect(parseGate(makeForm({ gate: '198.05' }))).toBeCloseTo(1980.5, 10);
+    expect(parseGate(makeForm({ gate: '150.5' }))).toBeCloseTo(1505, 10);
+    expect(parseGate(makeForm({ gate: '198.00' }))).toBe(1980);
   });
 
   it('空串 / 非法 → fallback 1980', () => {
@@ -243,6 +251,28 @@ describe('parseGate', () => {
   it('0 / 负数 → fallback 1980（非正保护）', () => {
     expect(parseGate(makeForm({ gate: '0' }))).toBe(1980);
     expect(parseGate(makeForm({ gate: '-5' }))).toBe(1980);
+  });
+});
+
+describe('normalizeGate（2026-08-28 失焦归一化：两位小数 + [50,400] 钳制）', () => {
+  it('合法整数/小数 → 两位小数格式化', () => {
+    expect(normalizeGate('198')).toBe('198.00');
+    expect(normalizeGate('198.5')).toBe('198.50');
+    expect(normalizeGate('198.05')).toBe('198.05');
+    expect(normalizeGate('150.00')).toBe('150.00');
+  });
+
+  it('越界 → 钳制到 [50, 400]（与输入框 min/max 同界）', () => {
+    expect(normalizeGate('10')).toBe('50.00');
+    expect(normalizeGate('49.9')).toBe('50.00');
+    expect(normalizeGate('500')).toBe('400.00');
+  });
+
+  it('空串 / 非法 / 非正 → 回退默认 198.00', () => {
+    expect(normalizeGate('')).toBe('198.00');
+    expect(normalizeGate('abc')).toBe('198.00');
+    expect(normalizeGate('0')).toBe('198.00');
+    expect(normalizeGate('-5')).toBe('198.00');
   });
 });
 

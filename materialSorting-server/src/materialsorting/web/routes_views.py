@@ -363,18 +363,21 @@ async def export(req: Request):
     pct = density * 100
 
     if fmt == 'png':
+        # 2026-08-28 版师两位小数 cm 口径：用布/门幅均 cm 两位（与前端 NestLabel、DXF/PLT
+        # 标题同口径；此前 m 两位 + 门幅 int mm，int 截断在小数幅宽下会显示错值）。
         title = (f'M1787 直筒 | 码 {sizes_str} | 利用率 {pct:.2f}% | '
-                 f'用布 {width_mm / 1000:.2f} m | 门幅 {int(gate_mm)} mm | seed {seed}')
+                 f'用布 {width_mm / 10:.2f} cm | 门幅 {gate_mm / 10:.2f} cm | seed {seed}')
         data = render_png(world, width_mm=width_mm, gate_mm=gate_mm, title=title)
         media, ext = 'image/png', 'png'
     elif fmt == 'dxf':
-        title = f'M1787 util={pct:.2f}% L={width_mm / 10:.1f}cm gate={int(gate_mm)} seed={seed}'
+        title = f'M1787 util={pct:.2f}% L={width_mm / 10:.2f}cm gate={gate_mm / 10:.2f}cm seed={seed}'
         data = write_marker_dxf(world, width_mm=width_mm, gate_mm=gate_mm, title=title)
         media, ext = 'application/dxf', 'dxf'
     elif fmt == 'plt':
         # US-033：PLT/HPGL 文本导出（LIKE 绘图仪 / WT V8.8 原生链路）；title 复用 DXF 同款
-        # ASCII（格式：M1787 util=<pct>% L=<L>cm gate=<gate> seed=<seed>），避免中文编码风险。
-        title = f'M1787 util={pct:.2f}% L={width_mm / 10:.1f}cm gate={int(gate_mm)} seed={seed}'
+        # ASCII（格式：M1787 util=<pct>% L=<L>cm gate=<gate>cm seed=<seed>，两位小数），
+        # 避免中文编码风险。
+        title = f'M1787 util={pct:.2f}% L={width_mm / 10:.2f}cm gate={gate_mm / 10:.2f}cm seed={seed}'
         data = write_marker_plt(world, width_mm=width_mm, gate_mm=gate_mm, title=title)
         media, ext = 'application/plt', 'plt'
     else:

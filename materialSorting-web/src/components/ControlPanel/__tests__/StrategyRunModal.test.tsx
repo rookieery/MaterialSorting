@@ -382,7 +382,7 @@ describe('StrategyRunModal (US-005)', () => {
     expect(document.body.querySelector('[data-testid="strategy-result-head"]')!.textContent)
       .toBe('完成 · 最优 88.38%');
     expect(document.body.querySelector('[data-testid="strategy-result-detail"]')!.textContent)
-      .toContain('seed 3 · 用布 7.10m');
+      .toContain('seed 3 · 用布 710.05 cm');
     expect(document.body.querySelector('[data-testid="strategy-mode-summary"]')!.textContent)
       .toContain('race：4 轮中 2 轮门杀 · 全程 10 分 5 秒');
     // 2026-08-22：服务器 run_dir 路径不再上屏（含复制按钮）。

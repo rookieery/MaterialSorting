@@ -23,7 +23,7 @@
 //
 // 2026-08-27 重传联动 additions:
 //   - doc_id 变化（重传）→ form 整体回 DEFAULT_FORM（码号清空 / band·prefix 关 /
-//     per_type 清空 / 幅宽 198 / 时长 120；经 start payload 公共契约断言）
+//     per_type 清空 / 幅宽 198.00 / 时长 120；经 start payload 公共契约断言）
 //   - doc_id 不变（切 activeSize）→ 不触发重置（用户编辑保留）
 //   - 首次上传（null→doc_id）→ 同样回默认（effect 挂点统一，无特殊分支）
 
@@ -1071,8 +1071,8 @@ describe("ControlPanel 重传联动：doc_id 变化重置 form (2026-08-27)", ()
     const checkboxesAfter = container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]");
     for (const c of checkboxesAfter) expect(c.checked).toBe(false);
     expect(container!.querySelector<HTMLButtonElement>("#start")!.disabled).toBe(true);
-    // 幅宽/时长回默认（用户决策：全部重置，含机器参数）
-    expect(container!.querySelector<HTMLInputElement>("#gate")!.value).toBe("198");
+    // 幅宽/时长回默认（用户决策：全部重置，含机器参数；幅宽 2026-08-28 起两位小数口径）
+    expect(container!.querySelector<HTMLInputElement>("#gate")!.value).toBe("198.00");
     expect(container!.querySelector<HTMLInputElement>("#time")!.value).toBe("120");
     // StatusLine 无 band 闸门文案（band_enabled 已回 false）
     expect(container!.querySelector("#status")!.textContent).not.toContain("腰头成带");
