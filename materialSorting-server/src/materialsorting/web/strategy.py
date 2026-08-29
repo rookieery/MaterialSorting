@@ -1,5 +1,14 @@
 """US-004 web 后端策略桥接 —— spawn ``ms-run-config --strategy`` 子进程 + HTTP 轮询。
 
+US-002（2026-08-29）起同模块再挂**极限运行四路由** ``/api/extreme/*``（spawn
+``ms-run-config --extreme``，US-001 糖衣旗标）：与策略四路由**共用每会话状态槽
+``_STRATEGY_STATES[sid]`` / marker / 清理 / 发现 / 树杀骨架**（mode 字段区分
+``se|race`` vs ``extreme``），⇒ 同会话「极限运行 ↔ 高级运行」409 单飞互斥零额外
+代码（防双长跑拖垮服务器 CPU），跨会话仍完全独立（多会话 US-004 语义不变）。
+两入口仅 start 校验分叉：极限收 ``time_total_s``（整数秒 905~43200，12h 防呆）
+且**拒 band/prefix**（极限参数迁移性未验证，方案 §5），spawn 尾 ``--extreme
+--time <T> --quiet``；status/stop/result 三路由同槽同构（仅报错文案区分家族）。
+
 四路由（``register_strategy_routes(app)`` 由 ``server.py`` 文件尾注册），US-004
 多会话化（2026-08-27）后**全部按 ``X-Session-Id`` 解析**（缺省/空串 → default 会话）：
 
@@ -66,6 +75,14 @@ __all__ = ['register_strategy_routes']
 
 STRATEGY_MODES = ('se', 'race')
 ALLOWED_MINUTES = (10, 20, 30, 60)
+# US-002 极限运行：mode 值 + time_total_s 值域（秒）。下限 905 = race 门杀 600s
+# 档最低总预算（首轮全程 602.5s + 一轮门段 302.5s，与 cli.portfolio.race_plan
+# 同口径——更小的值 CLI 也会退出 1，web 提前 400 早退）；上限 43200 = 12h 防呆
+# （已确认暂定）。值域镜像 cli.run_config 的 EXTREME_* 常量语义但**不 import**
+# （web 禁 import ..cli.*，AST 守卫；数字改动须两处同步）。
+EXTREME_MODE = 'extreme'
+EXTREME_MIN_TIME_S = 905
+EXTREME_MAX_TIME_S = 43200
 # run_dir 发现宽限（秒）：spawn 后 CLI 先做 config 校验 + commit（秒级）才建
 # run_dir；超过该时长仍未发现且进程已死 → error + stderr 尾部。
 RUN_DIR_GRACE_SEC = 30.0
@@ -507,11 +524,30 @@ def _elapsed_from_iso(started_at):
         return None
 
 
+def _is_integral_number(value) -> bool:
+    """数值是否为整值（int 或整值 float；bool 由调用方先行排除）。
+
+    NaN / Infinity（Python ``json.loads`` 默认接受这两类字面量）经 ``int()`` 会抛
+    ValueError/OverflowError —— 这里吞掉按非整数处理（400 而非 500）。
+    """
+    try:
+        return float(value) == int(value)
+    except (ValueError, OverflowError):
+        return False
+
+
 # ------------------------------------------------------------- 路由 handlers
 
 
-async def strategy_start(req: Request):
-    """启动策略 run（每会话单飞；spawn CLI 子进程后立即 202 返回）。"""
+async def _start_run(req: Request, family: str):
+    """start 公共骨架（family = ``'strategy'`` | ``'extreme'``；US-002 起）。
+
+    会话闸门 / 每会话单飞 / 422 排料校验 / seed·gate_mm·sizes·per_type·
+    quantities 公共载荷校验 / 产物清理 / cfg 落盘 / spawn / marker / 状态槽快照
+    全共享；两 family 仅两处分叉：① 模式与总预算参数（策略 mode+minutes 白名单
+    vs 极限 time_total_s 整数秒区间）+ 极限拒 band/prefix；② spawn cmd 策略段
+    （``--strategy <mode>`` vs ``--extreme``）。
+    """
     try:
         payload = await req.json()
     except Exception:
@@ -526,13 +562,18 @@ async def strategy_start(req: Request):
     if err is not None:
         return err
 
-    # 每会话单飞闸门（跨会话完全并发放开）：本会话内存态非终态（starting/running）
-    # 或本会话 marker 在（含 orphan 遗留）→ 409。
+    # 每会话单飞闸门（跨会话完全并发放开；US-002 起策略/极限共用本槽 → 同会话
+    # 两入口 409 互斥零额外代码）：本会话内存态非终态（starting/running）或本会话
+    # marker 在（含 orphan 遗留）→ 409。文案带在跑的 mode（前端区分对方是高级
+    # 运行还是极限运行；mode 缺失的旧 marker 沿用「策略运行」措辞）。
     st = _states(sid, create=True)
+    marker = _read_marker(sid)
     in_flight = st.get('state') not in (None, *_TERMINAL_STATES)
-    if in_flight or _read_marker(sid) is not None:
+    if in_flight or marker is not None:
+        cur_mode = st.get('mode') if in_flight else (marker or {}).get('mode')
+        what = '极限运行' if cur_mode == EXTREME_MODE else '策略运行'
         return JSONResponse(
-            {'error': '已有进行中的策略运行（或检测到遗留 marker），请先停止/清理'},
+            {'error': f'已有进行中的{what}（或检测到遗留 marker），请先停止/清理'},
             status_code=409)
 
     # 排料数据校验：state 空 → 422；doc 缺 doc_id（旧 intermediate）→ 422。
@@ -549,15 +590,52 @@ async def strategy_start(req: Request):
         return JSONResponse(
             {'error': '母版信息缺少 doc_id，请重新上传并 commit'}, status_code=422)
 
-    mode = payload.get('mode')
-    if mode not in STRATEGY_MODES:
-        return JSONResponse(
-            {'error': f'mode 须为 se 或 race，当前为 {mode!r}'}, status_code=400)
-    minutes = payload.get('minutes')
-    if minutes not in ALLOWED_MINUTES:
-        return JSONResponse(
-            {'error': 'minutes 须为 10/20/30/60 之一，'
-                      f'当前为 {minutes!r}'}, status_code=400)
+    # ---- family 分叉①：模式与总预算。策略 = mode 白名单 + minutes 白名单；极限
+    # = time_total_s 整数秒 ∈ [905, 43200]（缺省/非整数/越界 → 400，值域口径见
+    # 模块级 EXTREME_*_TIME_S 注释）。
+    minutes = None
+    if family == 'extreme':
+        mode = EXTREME_MODE
+        raw_t = payload.get('time_total_s')
+        if raw_t is None:
+            return JSONResponse(
+                {'error': 'time_total_s 必填（总预算秒数，'
+                          f'{EXTREME_MIN_TIME_S}~{EXTREME_MAX_TIME_S}）'},
+                status_code=400)
+        if (isinstance(raw_t, bool) or not isinstance(raw_t, (int, float))
+                or not _is_integral_number(raw_t)):
+            return JSONResponse(
+                {'error': f'time_total_s 须为整数秒，当前为 {raw_t!r}'},
+                status_code=400)
+        total_sec = int(raw_t)
+        if total_sec < EXTREME_MIN_TIME_S:
+            return JSONResponse(
+                {'error': f'time_total_s 不得低于 {EXTREME_MIN_TIME_S} 秒'
+                          f'（race 门杀 600s 档最低总预算），当前 {total_sec}'},
+                status_code=400)
+        if total_sec > EXTREME_MAX_TIME_S:
+            return JSONResponse(
+                {'error': f'time_total_s 不得高于 {EXTREME_MAX_TIME_S} 秒'
+                          f'（12 小时防呆），当前 {total_sec}'},
+                status_code=400)
+        # 极限参数迁移性未验证（方案 §5）：band / prefix 键在场即 400（含
+        # enabled=false —— 「暂不支持」按按键判，不解析内容；null 视同未传）。
+        for key, name in (('band', '腰头成带'), ('prefix', '起始端成套')):
+            if payload.get(key) is not None:
+                return JSONResponse(
+                    {'error': f'极限运行暂不支持{name}（{key} 参数迁移性未验证），'
+                              '请关闭后重试'}, status_code=400)
+    else:
+        mode = payload.get('mode')
+        if mode not in STRATEGY_MODES:
+            return JSONResponse(
+                {'error': f'mode 须为 se 或 race，当前为 {mode!r}'}, status_code=400)
+        minutes = payload.get('minutes')
+        if minutes not in ALLOWED_MINUTES:
+            return JSONResponse(
+                {'error': 'minutes 须为 10/20/30/60 之一，'
+                          f'当前为 {minutes!r}'}, status_code=400)
+        total_sec = int(minutes) * 60
 
     seed = payload.get('seed', 0)
     try:
@@ -593,9 +671,9 @@ async def strategy_start(req: Request):
     # 9 键 schema 的 band 键）。null / enabled falsy → _parse_band 返回 None，
     # 不写键（旧行为）。延迟 import：routes_ws → runtime → server 链若在模块级
     # import 本模块（server.py 文件尾注册路由）之外再正向引用会成环，函数内取用
-    # 安全（同 _pieces_state 模式）。
+    # 安全（同 _pieces_state 模式）。极限运行不进本段（上文已 400 早退）。
     band_cfg = None
-    if payload.get('band') is not None:
+    if family != 'extreme' and payload.get('band') is not None:
         from .routes_ws import _parse_band
         try:
             worker_band = _parse_band(payload.get('band'), pieces, quantities)
@@ -610,9 +688,9 @@ async def strategy_start(req: Request):
     # 拦下避免 20 分钟长跑空烧），非法 → 400 结构化早退；合法开启 → 以
     # StartPayload 原形态写进 config JSON（cli.config 9 键 schema 的 prefix 键）。
     # null / enabled falsy → _parse_prefix 返回 None，不写键（旧行为）。延迟
-    # import 防成环（同上 _parse_band）。
+    # import 防成环（同上 _parse_band）。极限运行不进本段（上文已 400 早退）。
     prefix_cfg = None
-    if payload.get('prefix') is not None:
+    if family != 'extreme' and payload.get('prefix') is not None:
         from .routes_ws import _parse_prefix
         try:
             worker_prefix = _parse_prefix(payload.get('prefix'), pieces,
@@ -624,11 +702,12 @@ async def strategy_start(req: Request):
                           'back': worker_prefix['back']}
 
     # 9 键 config JSON（cli.config.load_config 严格校验；可选键仅在有值时写入 ——
-    # None 值会被 load_config 按类型错误拒绝）。
+    # None 值会被 load_config 按类型错误拒绝）。极限运行无 band/prefix 键（上文
+    # 400 早退保证两 cfg 恒 None）。
     cfg_payload = {
         'master_dxf': str(master.resolve()),
         'gate_mm': float(gate_mm),
-        'time': int(minutes) * 60,
+        'time': total_sec,
         'seeds': [seed],
     }
     if sizes:
@@ -642,9 +721,11 @@ async def strategy_start(req: Request):
     if prefix_cfg is not None:
         cfg_payload['prefix'] = prefix_cfg
 
-    # 本会话上一轮 web 策略 run 的产物清理（2026-08-27 会话化）：本会话单飞闸门
-    # 已过 → 本前缀产物无人消费；跨会话产物（sid 前缀互斥 / default 保护集）不
-    # 误删。清理先于本轮 cfg / stderr / run_dir 创建，best-effort 失败不阻塞。
+    # 本会话上一轮 web 策略/极限 run 的产物清理（2026-08-27 会话化）：本会话单飞
+    # 闸门已过 → 本前缀产物无人消费；跨会话产物（sid 前缀互斥 / default 保护集）
+    # 不误删。前缀口径天然覆盖极限（sid 会话 ``web_<sid6>*`` / default ``web_*``
+    # 均含 ``extreme`` 段）。清理先于本轮 cfg / stderr / run_dir 创建，best-effort
+    # 失败不阻塞。
     _cleanup_stale_web_artifacts(sid)
 
     s6 = _sid6(sid)
@@ -655,13 +736,17 @@ async def strategy_start(req: Request):
     with open(cfg_path, 'w', encoding='utf-8') as f:
         json.dump(cfg_payload, f, ensure_ascii=False)
 
+    # ---- family 分叉②：spawn cmd 策略段。run_name 统一 ``web_[<sid6>_]<mode>_
+    # <rand6>``（极限 mode 段 = extreme）。
     run_name = f'web_{s6}{mode}_{rand6}'
     stderr_file = tempfile.NamedTemporaryFile(
         prefix=f'web_strategy_err_{s6}', suffix='.log', delete=False)
     stderr_file.close()
     cmd = [sys.executable, '-m', 'materialsorting.cli.run_config',
-           str(cfg_path), '--name', run_name,
-           '--strategy', mode, '--time', str(int(minutes) * 60), '--quiet']
+           str(cfg_path), '--name', run_name]
+    cmd += (['--extreme'] if family == 'extreme'
+            else ['--strategy', mode])
+    cmd += ['--time', str(total_sec), '--quiet']
     # 快照先于 spawn：回退发现路径的 run_dir 基线 = spawn 决策前的目录集 —— CLI
     # 建 run_dir 再快也必然落在基线之后被发现（若快照晚于 spawn，CLI 抢先建目录
     # 会让 diff 扑空）。主认领路径（前缀 glob）不依赖快照。
@@ -679,8 +764,8 @@ async def strategy_start(req: Request):
         'proc': proc,
         'pid': proc.pid,
         'mode': mode,
-        'minutes': int(minutes),
-        'total_budget_sec': int(minutes) * 60,
+        'minutes': int(minutes) if minutes is not None else None,
+        'total_budget_sec': total_sec,
         'started_at': started_at,
         'started_ts': time.time(),
         'run_dir': None,
@@ -700,9 +785,23 @@ async def strategy_start(req: Request):
         'exit_code': None,
         'error': None,
     })
-    return JSONResponse({'started': True, 'pid': proc.pid, 'mode': mode,
-                         'minutes': int(minutes), 'run_name': run_name},
-                        status_code=202)
+    body = {'started': True, 'pid': proc.pid, 'mode': mode,
+            'run_name': run_name}
+    if minutes is not None:
+        body['minutes'] = int(minutes)
+    else:
+        body['time_total_s'] = total_sec
+    return JSONResponse(body, status_code=202)
+
+
+async def strategy_start(req: Request):
+    """启动策略 run（每会话单飞；spawn CLI 子进程后立即 202 返回）。"""
+    return await _start_run(req, 'strategy')
+
+
+async def extreme_start(req: Request):
+    """启动极限 run（US-002；与策略 run 同槽单飞，spawn 后立即 202 返回）。"""
+    return await _start_run(req, 'extreme')
 
 
 def _status_from_active(st: dict) -> dict:
@@ -771,8 +870,8 @@ def _status_from_active(st: dict) -> dict:
     }
 
 
-async def strategy_status(req: Request):
-    """无状态惰性轮询：每次现读本会话 run_dir 产物组装（不缓存中间态）。"""
+async def _status_common(req: Request):
+    """status 公共实现（策略/极限同槽同构；mode 字段区分在跑的是哪个入口）。"""
     sid = _route_sid(req)
     _, err = _session_gate(sid)
     if err is not None:
@@ -807,8 +906,19 @@ async def strategy_status(req: Request):
     return _status_from_active(st)
 
 
-async def strategy_stop(req: Request):
-    """树杀本会话进行中的策略 run（或清理本会话 orphan marker）。"""
+async def strategy_status(req: Request):
+    """无状态惰性轮询：每次现读本会话 run_dir 产物组装（不缓存中间态）。"""
+    return await _status_common(req)
+
+
+async def extreme_status(req: Request):
+    """极限运行 status（US-002）：与 strategy 同槽同构，mode 字段透传 'extreme'。"""
+    return await _status_common(req)
+
+
+async def _stop_common(req: Request, label: str):
+    """stop 公共实现（label = 报错文案里的运行名；杀的是本会话槽内 in-flight run
+    —— 单飞闸门保证同会话同时只有一族 run，两入口 stop 等价）。"""
     sid = _route_sid(req)
     _, err = _session_gate(sid)
     if err is not None:
@@ -828,11 +938,21 @@ async def strategy_stop(req: Request):
             _kill_tree(pid)
         _clear_marker(sid)
         return {'stopped': True, 'pid': pid, 'orphan': True}
-    return JSONResponse({'error': '没有进行中的策略运行'}, status_code=400)
+    return JSONResponse({'error': f'没有进行中的{label}'}, status_code=400)
 
 
-async def strategy_result(req: Request):
-    """本会话 done/stopped run → 最优方案 + manifest（应用到主画布的数据源）。"""
+async def strategy_stop(req: Request):
+    """树杀本会话进行中的策略 run（或清理本会话 orphan marker）。"""
+    return await _stop_common(req, '策略运行')
+
+
+async def extreme_stop(req: Request):
+    """极限运行 stop（US-002）：树杀本会话槽内 in-flight run（同 strategy 语义）。"""
+    return await _stop_common(req, '极限运行')
+
+
+async def _result_common(req: Request, label: str):
+    """result 公共实现（label = 报错文案里的运行名；读的是本会话槽内终态 run）。"""
     sid = _route_sid(req)
     sess_state, err = _session_gate(sid)
     if err is not None:
@@ -840,8 +960,8 @@ async def strategy_result(req: Request):
     st = _states(sid)
     if not st or st.get('state') not in ('done', 'stopped'):
         if st and st.get('state') in ('starting', 'running'):
-            return JSONResponse({'error': '策略运行尚未结束'}, status_code=409)
-        return JSONResponse({'error': '暂无已完成的策略运行结果'}, status_code=404)
+            return JSONResponse({'error': f'{label}尚未结束'}, status_code=409)
+        return JSONResponse({'error': f'暂无已完成的{label}结果'}, status_code=404)
 
     run_dir = st.get('run_dir')
     if not run_dir:
@@ -930,10 +1050,29 @@ async def strategy_result(req: Request):
     return payload
 
 
+async def strategy_result(req: Request):
+    """本会话 done/stopped run → 最优方案 + manifest（应用到主画布的数据源）。"""
+    return await _result_common(req, '策略运行')
+
+
+async def extreme_result(req: Request):
+    """极限运行 result（US-002）：best + manifest + 母版漂移 warning（同构组装，
+    mode 字段透传 'extreme'）。"""
+    return await _result_common(req, '极限运行')
+
+
 def register_strategy_routes(app) -> None:
-    """把四路由挂到 FastAPI app（server.py 文件尾调用一次）。"""
+    """把八路由挂到 FastAPI app（server.py 文件尾调用一次）。
+
+    策略四路由（US-004）+ 极限四路由（US-002，与策略同槽同构 —— 同会话单飞互
+    斥、跨会话独立；start 校验与 spawn cmd 分叉见 ``_start_run``）。
+    """
     app.post('/api/strategy/start')(strategy_start)
     app.get('/api/strategy/status')(strategy_status)
     app.post('/api/strategy/stop')(strategy_stop)
     app.get('/api/strategy/result')(strategy_result)
+    app.post('/api/extreme/start')(extreme_start)
+    app.get('/api/extreme/status')(extreme_status)
+    app.post('/api/extreme/stop')(extreme_stop)
+    app.get('/api/extreme/result')(extreme_result)
 

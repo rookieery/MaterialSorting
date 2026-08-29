@@ -1271,3 +1271,52 @@ US-001~006 全链路的验收 story：不改任何运行时代码，产出 = 验
 - **--quiet 口径**：`[extreme]` 标注行与 race 启动行/solver_opts 回显行同为
   「改求解编排/行为的开关不静默」类（--quiet 也打）；web spawn（US-002）将带 --quiet，
   输出仅落 run_dir 产物与启动/终局行。
+
+
+## 极限运行 US-002 落地：web /api/extreme 四路由（2026-08-29）
+
+「极限运行成为与高级运行同级的独立 web 入口」（extreme PRD 第二块）。实现 =
+**泛化优先于复制**：`web/strategy.py` 内加 mode='extreme' 家族分支而非新文件 ——
+`_start_run(req, family)`（'strategy' | 'extreme'）+ `_status_common` /
+`_stop_common(req, label)` / `_result_common(req, label)` 公共实现，`register_strategy_routes`
+挂八路由；状态槽 `_STRATEGY_STATES[sid]` / marker `.web_strategy_active[_<sid>].json` /
+`_cleanup_stale_web_artifacts` / `_discover_run_dir` / `_spawn_run_process` / `_kill_tree`
+骨架全共享 ⇒ **同会话「极限 ↔ 高级」409 单飞互斥零额外代码**（防双长跑拖垮服务器
+CPU），跨会话完全独立（多会话 US-004 语义不变）。
+
+### 改动文件
+
+| 文件 | 改动 |
+|------|------|
+| `materialSorting-server/src/materialsorting/web/strategy.py` | 常量 EXTREME_MODE/EXTREME_MIN_TIME_S=905/EXTREME_MAX_TIME_S=43200；start 重构为家族参数化（分叉①模式与预算校验 + extreme 拒 band/prefix、分叉② spawn cmd）；status/stop/result 抽公共实现 + extreme_* 薄包装（报错文案区分「极限运行/策略运行」）；register 八路由 |
+| `materialSorting-server/src/materialsorting/web/server.py` | 仅文件尾注册注释更新（八路由说明，零逻辑改动） |
+| `materialSorting-server/tests/test_web_extreme.py` | 新文件 13 例（见 tests/AGENTS.md 行） |
+
+### 关键不变量（US-002 立）
+
+1. **同槽单飞互斥** —— 单飞闸门查「本会话内存态非终态 ∨ 本会话 marker 在」与家族
+   无关；任一入口 stop 都能清理本会话槽内 in-flight run（单飞保证同时只有一族）。
+2. **值域口径镜像不 import** —— 905（race 600 档最低总预算 602.5+302.5）与 43200
+   （12h 防呆）在 web 层硬编码（web 禁 import ..cli.*，AST 守卫持续在测）；CLI 侧
+   改值须两处同步。
+3. **band/prefix 按按键判** —— 键在场（非 null）即 400「极限运行暂不支持…」，不解析
+   内容（enabled=false 亦拒；「暂不支持」语义而非「校验失败」）。
+4. **status 进度源白名单不含 curve_s*.json** —— 与策略同口径（运行中非法 JSON）；
+   `--extreme` 内部展开 race 门杀 ⇒ strategy.json race 档 / R5 门杀 events / per_seed
+   killed 天然可读，解析零改动。
+5. **产物清理零新增** —— 前缀口径天然覆盖（sid 会话 `web_<sid6>*` / default `web_*`
+   均含 extreme 段）；cfg 沿用 `strategy_cfg_*` 命名（US-006 TTL 同管道）。
+6. **零回归** —— strategy 四路由行为逐字节不变（35 存量例零改动全绿）；全量 581 绿
+   （+13）。
+
+### 实现要点记档
+
+- **marker 复用而非分文件** —— marker 内 mode 字段本就存在，orphan 检测/清理/US-006
+  diskclean 保护集（glob `.web_strategy_active*.json`）零改动自然覆盖 extreme run。
+- **409 文案带在跑的 mode** ——「已有进行中的策略运行/极限运行（或检测到遗留
+  marker）」：se/race 在跑时与旧文案逐字节一致（存量测试兼容），extreme 在跑时前端
+  可区分对方（US-003 互斥提示）。
+- **真子进程冒烟**（不进套件，MS_OUT_DIR 环境变量父子同源隔离）：202 → status
+  running（run_dir 前缀 glob 发现 `web_extreme_<rand6>_*`、mode/total_budget_sec 透传）
+  → stop 树杀 → stopped；taskkill /F 后 1s 内句柄探测可能仍报存活（终止异步完成，
+  3s 后复查已死），冒烟脚本勿用 1s 窗口断言 child dead。

@@ -430,10 +430,12 @@ def main():
     uvicorn.run(app, host='127.0.0.1', port=8000)
 
 
-# US-004：web 策略桥接四路由（start/status/stop/result）。strategy 模块对本模块
-# 的依赖走函数内延迟 import（本行位于文件尾，此时 server 模块已完整初始化），
-# 模块级无环。strategy **禁 import ..cli.\***（AST 守卫，见 tests/test_web_strategy.py）
-# —— spawn 子进程是进程边界而非 import 边界，判据逻辑单一真相源留在 cli。
+# US-004：web 策略桥接四路由（start/status/stop/result）+ US-002 极限运行四路由
+# （/api/extreme/*，同 strategy.py 内 mode='extreme' 分支、同会话状态槽单飞互斥）。
+# strategy 模块对本模块的依赖走函数内延迟 import（本行位于文件尾，此时 server
+# 模块已完整初始化），模块级无环。strategy **禁 import ..cli.\***（AST 守卫，见
+# tests/test_web_strategy.py）—— spawn 子进程是进程边界而非 import 边界，判据
+# 逻辑单一真相源留在 cli。
 from .strategy import register_strategy_routes   # noqa: E402
 
 register_strategy_routes(app)

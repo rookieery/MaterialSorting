@@ -756,6 +756,16 @@
         "passes": true
       }
     ]
+  },
+  {
+    "branchName": "ralph/extreme-run",
+    "stories": [
+      {
+        "id": "US-001",
+        "title": "CLI --extreme 糖衣旗标",
+        "description": "As a 排料工程师，我要 `ms-run-config <cfg> --extreme [--time T] [--extreme-budget 600|1200]` 一条命令跑「极限参数 + race 门杀」长跑，从而无需手敲 --strategy/--race-budget/--solver-opts 三件套也不会敲错参数。\n\n背景：极限运行功能方案 v1.1（.docs/business/极限运行功能方案_race门杀.md）已确认——极限参数 = exploration_pct 0.7 / early_termination false / num_workers 4 / quadtree_depth 缺省 4（不写键），seed 预算 600s、门位 τ=0.5×600=300s，判杀复用 decide_race_kill/race_plan 零改动。前置：web/solver.py 的 _normalize_solver_opts 白名单已支持 early_termination 透传（2026-08-28 实验已落地，勿重复改）。\n\n具体任务：\n1. materialSorting-server/src/materialsorting/cli/run_config.py — 加 `--extreme`（store_true）与 `--extreme-budget`（int，缺省 600）：内部展开为 strategy='race' + race_budget=<extreme-budget> + race_gate_tau=0.5 + fixed solver_opts={'exploration_pct': 0.7, 'early_termination': False, 'num_workers': 4}（quadtree_depth 不写 = 缺省 4）；复用现行 solver_opts_for fixed 路径（run_config.py:364 现成回调机制）与 race_plan/decide_race_kill。\n2. 同文件从属旗标互斥（run_config.py:388 现有「无 --strategy 给从属旗标」守卫处扩展）——`--extreme` 与 --strategy/--kill/--solver-opts/--rotate-opts/--se-screen/--se-extend/--race-budget/--race-gate 任一同给 → 退出码 1 + 中文报错（糖衣旗标独占策略与旋钮）。\n3. run_stats.jsonl 追加路径（PC-009 现有逻辑处 additive）——config 段加 \"extreme\": {\"budget\": B}；class_key 组成不变（与历史 run 可比）。\n4. tests/ 新增/扩展单测：展开等价性（--extreme 解析后内部参数与手敲三件套组合逐字段一致、opts 无 quadtree_depth 键）、互斥退出码、--extreme-budget 仅收 600/1200。\n\n验收标准：\n- --extreme 与任一策略/旋钮旗标同给 → 退出码 1 + 中文报错\n- --extreme-budget 缺省 600；非 600/1200 → 退出码 1（2400s+ 是门杀失效硬边界）\n- 单测锁死展开等价性与 opts 三键内容（无 quadtree_depth）\n- 总预算 T < 905 → 沿用 race_plan 现行 StrategyBudgetError 报错路径退出 1\n- 最小真跑冒烟（--extreme --time 905，约 15 分钟，一次）：result.json 各 seed solver_opts 三键正确、kill_decisions.jsonl 有 R5_race_gate 行、strategy.json mode=race、run_stats.jsonl 末行 config 段含 extreme 键\n- 无 --extreme 的全部既有路径零回归（现有 pytest 全绿）\n- python -m materialsorting.cli.run_config --help 跑通、分层依赖未反向（不新增 import web）",
+        "passes": true
+      }
+    ]
   }
-  
 ]

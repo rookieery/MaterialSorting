@@ -5,7 +5,7 @@
 
 ## 状态
 
-单页工作台后端，10 个 API 端点（另含 `GET /` 与 `/static` mount）+ 1 条 WS。**US-026 起求解用 `solve_with_callback_proc`（多进程版）**：`ThreadPoolExecutor(max_workers=6)` 跑 `run_solve` → `solve_with_callback_proc` spawn 子进程执行 sparrow solve，主进程 drain `multiprocessing.Queue` 分发 manifest/frame/final（多 seed 最多 6 路并发，seed 间同等 CPU 竞争 → 排名仍公平）。WS 双向并发：write loop drain queue → `ws.send_json`；read loop 持续读客户端消息（`{action:'stop'}` → terminate 子进程 → 发 stopped → 关闭 WS）。**`server.py` 启动期 `_reload_pieces_state()` 读 intermediate 填入 `_PIECES_STATE`**（US-020：commit 后可 reload，allow-empty 不再让 import 崩）。US-004 起 `/api/parse-dxf` 上传解析也复用这个 6-worker 线程池跑 CPU 密集的 DXF 深度解析（`collect_pieces_with_details`）。strategy PRD US-004 起 `/api/strategy/*` 四路由（`web/strategy.py`）spawn `ms-run-config --strategy` 子进程跑双模式长跑（HTTP 轮询 run_dir 产物，无 WS），见下「策略桥接」。
+单页工作台后端，10 个 API 端点（另含 `GET /` 与 `/static` mount）+ 1 条 WS。**US-026 起求解用 `solve_with_callback_proc`（多进程版）**：`ThreadPoolExecutor(max_workers=6)` 跑 `run_solve` → `solve_with_callback_proc` spawn 子进程执行 sparrow solve，主进程 drain `multiprocessing.Queue` 分发 manifest/frame/final（多 seed 最多 6 路并发，seed 间同等 CPU 竞争 → 排名仍公平）。WS 双向并发：write loop drain queue → `ws.send_json`；read loop 持续读客户端消息（`{action:'stop'}` → terminate 子进程 → 发 stopped → 关闭 WS）。**`server.py` 启动期 `_reload_pieces_state()` 读 intermediate 填入 `_PIECES_STATE`**（US-020：commit 后可 reload，allow-empty 不再让 import 崩）。US-004 起 `/api/parse-dxf` 上传解析也复用这个 6-worker 线程池跑 CPU 密集的 DXF 深度解析（`collect_pieces_with_details`）。strategy PRD US-004 起 `/api/strategy/*` 四路由（`web/strategy.py`）spawn `ms-run-config --strategy` 子进程跑双模式长跑（HTTP 轮询 run_dir 产物，无 WS），见下「策略桥接」；extreme PRD US-002 起 `/api/extreme/*` 四路由（同 `web/strategy.py` 内 mode='extreme' 分支）spawn `ms-run-config --extreme` 极限长跑，与策略路由**共用每会话状态槽**（同会话 409 单飞互斥、跨会话独立），见下「极限运行桥接」。
 
 ## 启动约束（重要）
 
@@ -32,6 +32,10 @@
 | GET | `/api/strategy/status` | strategy US-004：无状态惰性轮询 run_dir 产物组装进度；**多会话 US-004：读 `X-Session-Id`**（status 轮询即活性，长跑会话不被扫描误杀） | `strategy.strategy_status` |
 | POST | `/api/strategy/stop` | strategy US-004：树杀子进程（taskkill /T /F / killpg）+ 清本会话 marker；**多会话 US-004：读 `X-Session-Id`**（只树杀本会话 pid） | `strategy.strategy_stop` |
 | GET | `/api/strategy/result` | strategy US-004：done/stopped run → best + manifest（应用到主画布数据源）；**多会话 US-004：读 `X-Session-Id`**（只读本会话 run_dir） | `strategy.strategy_result` |
+| POST | `/api/extreme/start` | extreme US-002：spawn `ms-run-config --extreme` 子进程启动极限长跑（202）；载荷 `{time_total_s, seed?, gate_mm?, sizes?, per_type?, quantities?}`（**无 band/prefix** —— 在场即 400）；**与 /api/strategy/start 同会话状态槽单飞互斥（409 双向）、跨会话独立** | `strategy.extreme_start` |
+| GET | `/api/extreme/status` | extreme US-002：与 /api/strategy/status 同构（同槽轮询，mode 透传 'extreme'；进度源白名单不含 curve_s*.json） | `strategy.extreme_status` |
+| POST | `/api/extreme/stop` | extreme US-002：与 /api/strategy/stop 同构（树杀本会话槽内 in-flight run + 清本会话 marker） | `strategy.extreme_stop` |
+| GET | `/api/extreme/result` | extreme US-002：与 /api/strategy/result 同构（best + manifest + 母版漂移 warning；mode 透传 'extreme'） | `strategy.extreme_result` |
 | WS | `/ws/solve` | 排料求解流（manifest → frames → final）；**多会话 US-003**：`?sid=` query（浏览器 WS 不能自定义 Header；缺省 → default 会话），连接钉住 + 回调刷活性，见下专节 | `server.ws_solve` |
 
 > （已删 2026-08-22）`POST /api/band/preview`（US-013 成带预演回显）与 `routes_band.py` 整体移除 —— 预演 / ack 硬警告 / go-no-go 闸门等成带旁路功能退场，band 收敛为「WS StartPayload band = 勾选 + 选 g 码」极简主流程。
@@ -446,6 +450,33 @@ curl http://127.0.0.1:8000/api/ptypes -H "X-Session-Id: <sid>"
 4. orphan `_pid_alive`：Windows `ctypes kernel32.OpenProcess(0x1000)` 句柄探测（非本进程孩子无法 poll）；报 `state:'orphan' + alive` 由前端提供清理动作，不自动接管。orphan 判定按**本会话 marker**（内存态空 + 本 sid marker 在），他会有遗留 run 不串台。
 5. run_dir 认领主路径 = `<run_name>_*` 前缀 glob（run_name 嵌本会话唯一 rand6）；回退路径（存量内存态）排除其他会话 run_name 前缀与已认领 run_dir —— 完全并发下互不认领。
 6. 产物清理按 sid 前缀互斥（sid 会话只清 `web_<sid6>_*`；default 清全部 `web_*` 但保护其他会话前缀）—— 跨会话并发放开后清理不再有删除竞争。
+
+## 极限运行桥接（extreme PRD US-002）— `/api/extreme/*` 四路由（`web/strategy.py` 内 mode='extreme' 分支）
+
+**设计原则 = 泛化优先于复制**：四路由与策略路由同居 `strategy.py`，start 走 `_start_run(req, family)` 家族参数化、status/stop/result 走 `_status_common` / `_stop_common(req, label)` / `_result_common(req, label)` 公共实现 —— **共用每会话状态槽 `_STRATEGY_STATES[sid]`、marker `.web_strategy_active[_<sid>].json`、`_cleanup_stale_web_artifacts`、`_discover_run_dir`、`_spawn_run_process`、`_kill_tree` 全部骨架**（mode 字段 `se|race` vs `extreme` 区分）⇒ **同会话「极限运行 ↔ 高级运行」409 单飞互斥零额外代码**（防双长跑拖垮服务器 CPU），跨会话完全独立（多会话 US-004 语义不变）。spawn 命令 = `python -m materialsorting.cli.run_config <cfg> --name web_[<sid6>_]extreme_<rand6> --extreme --time <T> --quiet`（进程边界，分层 AST 守卫同策略）。
+
+### POST /api/extreme/start — 启动极限 run
+
+请求 `{time_total_s, seed?, gate_mm?, sizes?, per_type?, quantities?}`（可选 `X-Session-Id`，sid 语义与 strategy 四路由一致：过期/未知 → 401 `session_expired`、非法 → 400、闸门先于一切）。
+
+- 409：**本会话**已有进行中 run（内存态非终态）或本会话 marker 在 —— 无论对方是高级运行还是极限运行（文案带在跑的 mode：「已有进行中的策略运行/极限运行（或检测到遗留 marker），请先停止/清理」）；跨会话不 409
+- 422：会话 pieces 快照空 / doc 缺 `doc_id` / `uploads/<doc_id>.dxf` 丢失（同策略）
+- 400：`time_total_s` 缺省 / 非整数（字符串、非整浮点、bool） / `<905`（race 门杀 600s 档最低总预算 602.5+302.5，与 `cli.portfolio.race_plan` 同口径提前拦） / `>43200`（12h 防呆）；**`band`/`prefix` 键在场即 400**「极限运行暂不支持腰头成带/起始端成套（参数迁移性未验证）」（enabled=false 亦拒 —— 按按键判；null 视同未传）；seed 非整数 / sizes·per_type·quantities 类型错（同策略）
+- 202：清理本会话前缀上一轮产物（`web_<sid6>_*` 天然含 `web_<sid6>_extreme_*`；default `web_*` 含 `web_extreme_*`）→ 写 config JSON（`strategy_cfg_[<sid6>_]<stamp>.json`；键 = `master_dxf` 绝对路径 + `gate_mm` + `time=T` + `seeds=[seed]` + 可选 sizes/per_type/quantities，**恒无 band/prefix 键**）→ spawn（stdout=DEVNULL、stderr 临时文件）→ 写本会话 marker（5 键，mode='extreme'）→ `{started, pid, mode:'extreme', run_name, time_total_s}`（run_name = `web_[<sid6>_]extreme_<rand6>`）
+
+常量 `EXTREME_MIN_TIME_S=905` / `EXTREME_MAX_TIME_S=43200` 镜像 `cli.run_config` 极限语义但**不 import**（web 禁 import ..cli.*；数字改动须两处同步）。
+
+### GET /api/extreme/status / POST /api/extreme/stop / GET /api/extreme/result — 与策略三路由同构
+
+- **status**：无状态惰性轮询同槽产物；`mode` 透传 `'extreme'`、`total_budget_sec=T`。`--extreme` 内部展开 race 门杀 ⇒ strategy.json 是 race 档（`plan.gate_seconds`）、kill_decisions R5 门杀事件行、per_seed `killed` 天然可读；进度源白名单同策略（**绝不读 `curve_s*.json`**）。轮询即活性（刷 `last_active`）。
+- **stop**：树杀本会话槽内 in-flight run（`taskkill /PID /T /F` / killpg；只杀本会话 pid）+ 置 stopped + 清本会话 marker；orphan 同策略；本会话无活动 → 400「没有进行中的极限运行」。
+- **result**：done/stopped → `{state, mode:'extreme', run_dir, manifest, best, summary, warning?}` —— best（incumbent 完整 placed_items + density_sparrow 边车补 / stopped 回落 best_frame 最大）、manifest（start 快照口径 `build_pid_meta`）、母版漂移 warning 全同策略组装；running → 409「极限运行尚未结束」、idle → 404「暂无已完成的极限运行结果」。
+
+### 关键不变量
+
+1. 同会话极限 ↔ 高级互斥 = 共享状态槽的自然结果（单飞闸门查 `st['state']` 非终态 ∨ marker 在，与家族无关）；任一入口的 stop 都能清理本会话槽内 in-flight run（单飞保证同时只有一族）。
+2. 极限 run 的 run_dir 认领 / marker 回写 / 终态清理 / orphan 检测全部走策略既有路径（run_name 前缀 glob，rand6 唯一）。
+3. 前端 US-003 消费方：轮询与结果应用复用策略 PRD US-005 弹窗机制（mode 字段区分入口）。
 
 ## WebSocket /ws/solve — 求解流
 
