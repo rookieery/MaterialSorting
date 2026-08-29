@@ -10,6 +10,7 @@ r"""ms-run-config 入口 —— 一条命令跑完「commit → 求解」，无�
                   [--strategy [se|race] --time 总预算
                     [--se-screen 90] [--se-extend 180]
                     [--race-budget 180] [--race-gate 0.5]]
+                  [--extreme --time 总预算 [--extreme-budget 600|1200]]
     python -m materialsorting.cli.run_config <config.json> --time 5
 
 流程：``load_config``（9 键 schema 校验）→ ``new_run_dir``（时间戳目录保留历史）
@@ -126,6 +127,29 @@ US-002 策略双模式（``--strategy [se|race]``，给定总预算拿更高利�
   - 无 ``--strategy`` 时行为与 result.json 与现版**逐字节一致**（零回归红线，
     portfolio 段不加 mode 键、config 段不加 strategy 键）。
 
+US-001 极限运行糖衣旗标（``--extreme [--extreme-budget 600|1200]``，方案
+``.docs/business/极限运行功能方案_race门杀.md`` v1.1）：一条命令跑「race 门杀 ×
+实验结论极限参数」长跑，目标从「期望最优」换为 best-of-k 右尾最优 ——
+
+  - **展开等价**：内部展开为 ``--strategy race --race-budget <extreme-budget>
+    --race-gate 0.5 --solver-opts '{"exploration_pct": 0.7, "early_termination":
+    false, "num_workers": 4}'``（手敲三件套逐字段等价）；``quadtree_depth``
+    **不写** = 缺省 4（方案 §2.6 A/B：race 语义下 d5 冠军被门杀误杀、交付垫底，
+    调优不成立）。判杀逐字复用 ``decide_race_kill`` / ``race_plan`` / 种子流补齐，
+    零新机制。
+  - **独占互斥**：糖衣旗标独占策略与旋钮 —— 与 ``--strategy`` / ``--kill`` /
+    ``--solver-opts`` / ``--rotate-opts`` / ``--se-screen`` / ``--se-extend`` /
+    ``--race-budget`` / ``--race-gate`` 任一显式同给 → 配置错误退出 1（极限参数
+    是实验结论不是可调项，防「糖衣 + 手敲」双份语义打架）。
+  - ``--extreme-budget`` 是从属旗标（单独给出 = 笔误退出 1），值域仅 **600 /
+    1200** 两档（600 = 门判别力 ρ=0.916 最强 + 吞吐 ×1.7，默认档；2400s+ 门
+    判别力失效是硬边界，方案 §2.3）。最低总预算沿用 ``race_plan`` 报错路径
+    （600 档 = 905s）。
+  - ``--target`` / ``--lns`` 共存行为与现行 ``--strategy`` 相同（R0 达标即停
+    优先 / band·prefix on 时 LNS warn 跳过）；``run_stats.jsonl`` config 段
+    additive 加 ``"extreme": {"budget": B}``（class_key 组成不变，与历史 run
+    可比）。
+
 run_name 缺省 = 配置文件 stem，``--name`` 覆盖；Windows 非法文件名字符
 （``<>:"/\|?*`` 与控制字符）替换 ``_``，清洗后为空回退 ``run``。
 
@@ -164,7 +188,8 @@ from .portfolio import (KILL_MODES, RACE_BUDGET_S, RACE_GATE_TAU, SE_EXT_S,
                         run_serial_portfolio, run_stats_class_key, se_plan,
                         strategy_seed_stream)
 
-__all__ = ['SOLVER_OPTS_POOL', 'rotation_opts_for', 'main']
+__all__ = ['SOLVER_OPTS_POOL', 'rotation_opts_for', 'EXTREME_SOLVER_OPTS',
+           'EXTREME_BUDGET_S', 'EXTREME_BUDGETS', 'main']
 
 # Windows 文件名非法字符 + 控制字符（run_name 进目录名前清洗）。
 _ILLEGAL_NAME_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
@@ -233,6 +258,19 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument('--race-gate', type=float, default=None, metavar='TAU',
                    help='race 门时刻占预算比（默认 0.5，(0,1) 开区间；须与 '
                         '--strategy 同给）')
+    p.add_argument('--extreme', action='store_true',
+                   help='极限运行糖衣旗标（US-001）：一条命令跑「race 门杀 × 实验'
+                        '结论极限参数」长跑 —— 内部展开为 --strategy race + 每 seed '
+                        '预算 --extreme-budget（默认 600s，门时刻 0.5×预算）+ 固定 '
+                        'solver_opts（exploration_pct 0.7 / early_termination false / '
+                        'num_workers 4；quadtree_depth 不写 = 缺省 4）；与 --strategy/'
+                        '--kill/--solver-opts/--rotate-opts 及 4 个策略参数旗标互斥'
+                        '（糖衣旗标独占策略与旋钮）；--time = 总预算秒数必填（600 档'
+                        '最低 905s）')
+    p.add_argument('--extreme-budget', type=int, default=None, metavar='N',
+                   help='极限运行每 seed 求解预算（秒，US-001）：仅收 600 或 1200 '
+                        '两档（2400s+ 门判别力失效是硬边界）；默认 600；须与 '
+                        '--extreme 同给')
     return p.parse_args(argv)
 
 
@@ -257,6 +295,19 @@ SOLVER_OPTS_POOL: list[dict | None] = [
 def rotation_opts_for(seed_index: int) -> dict | None:
     """轮换取档：``SOLVER_OPTS_POOL[seed_index % len]``（seed_index 为 0 起队列序）。"""
     return SOLVER_OPTS_POOL[int(seed_index) % len(SOLVER_OPTS_POOL)]
+
+
+# US-001 极限运行参数（实验结论固化，勿随手调 —— 依据
+# .docs/business/极限运行功能方案_race门杀.md §2：5336 实例 p0.70/et0 相对默认
+# best +0.46pt、25-seed 池 2400s 长跑终局 92.005%）。quadtree_depth 不写 =
+# 缺省 4（§2.6 A/B：race 语义下 d5 冠军被门杀误杀、交付垫底，调优不成立）。
+# 修改本常量 = 实验参数变更，全部 race 标定数据需重测。
+EXTREME_SOLVER_OPTS: dict = {'exploration_pct': 0.7, 'early_termination': False,
+                             'num_workers': 4}
+# 极限运行每 seed 预算档：600（门判别力 ρ=0.916 最强、吞吐 ×1.7，默认档）/
+# 1200；2400s+ 门判别力失效是硬边界（§2.3）—— 非 600/1200 值在 CLI 层拒绝。
+EXTREME_BUDGET_S = 600
+EXTREME_BUDGETS = (600, 1200)
 
 
 def _lns_section(out: dict) -> dict:
@@ -340,6 +391,45 @@ def main(argv: list[str] | None = None) -> int:
         print(f'配置错误: --target 须为 (0,1] 区间内的比例值（如 0.9），'
               f'当前为 {args.target}', file=sys.stderr)
         return _EXIT_CONFIG_OR_COMMIT
+    # ---- US-001 --extreme 糖衣旗标裁决（配置错误在 new_run_dir 之前拦下，不留空
+    # 目录）。糖衣旗标独占策略与旋钮：内部已展开 race 门杀 + 极限参数（实验结论
+    # 固化，不是可调项），与任一策略/旋钮旗标显式同给即参数冲突 → 退出 1（防
+    # 「糖衣 + 手敲」双份语义打架）；--extreme-budget 是从属旗标（单独给出 =
+    # 笔误退出 1，同 --lns-time 口径），值域仅 600/1200 两档（2400s+ 门判别力
+    # 失效是硬边界，方案 §2.3）。
+    if args.extreme:
+        conflicts = [name for name, on in (
+            ('--strategy', args.strategy is not None),
+            ('--kill', args.kill is not None),
+            ('--solver-opts', args.solver_opts is not None),
+            ('--rotate-opts', args.rotate_opts),
+            ('--se-screen', args.se_screen is not None),
+            ('--se-extend', args.se_extend is not None),
+            ('--race-budget', args.race_budget is not None),
+            ('--race-gate', args.race_gate is not None)) if on]
+        if conflicts:
+            print(f'配置错误: --extreme 与 {" / ".join(conflicts)} 互斥（糖衣旗标独占'
+                  '策略与旋钮：内部已展开 race 门杀 + 极限参数）', file=sys.stderr)
+            return _EXIT_CONFIG_OR_COMMIT
+    if args.extreme_budget is not None and not args.extreme:
+        print('配置错误: --extreme-budget 须与 --extreme 同给（极限运行未启用）',
+              file=sys.stderr)
+        return _EXIT_CONFIG_OR_COMMIT
+    extreme_budget = (EXTREME_BUDGET_S if args.extreme_budget is None
+                      else args.extreme_budget)
+    if args.extreme and extreme_budget not in EXTREME_BUDGETS:
+        print(f'配置错误: --extreme-budget 仅收 {" 或 ".join(str(b) for b in EXTREME_BUDGETS)}'
+              f'（秒），当前 {extreme_budget}（2400s+ 门判别力失效是硬边界）',
+              file=sys.stderr)
+        return _EXIT_CONFIG_OR_COMMIT
+    if args.extreme:
+        # 展开 = 手敲三件套逐字段等价（strategy race + 预算档 + τ=0.5），下游
+        # strategy 守卫（--time 必填 / --kill 互斥天然满足）/ race_plan /
+        # decide_race_kill 零改动复用；race_plan 预算不足照常退出 1（600 档
+        # 最低 905s = 首轮全程 602.5 + 一轮门段 302.5）。
+        args.strategy = 'race'
+        args.race_budget = extreme_budget
+        args.race_gate = RACE_GATE_TAU
     # PC-006 solver_opts 旗标裁决（配置错误须在 new_run_dir 之前拦下，不留空目录）：
     # --solver-opts（固定档全 seed 生效）与 --rotate-opts（内置池逐 seed 轮换）互斥；
     # JSON 坏串 / 非 JSON 对象同按配置错误退出 1。旋钮清洗（clamp/白名单）不在 CLI
@@ -350,7 +440,15 @@ def main(argv: list[str] | None = None) -> int:
         return _EXIT_CONFIG_OR_COMMIT
     fixed_solver_opts = None
     solver_opts_for = None
-    if args.solver_opts is not None:
+    if args.extreme:
+        # US-001 极限参数固定档（互斥守卫已保证此分支独占旋钮 —— args.solver_opts
+        # 必为 None、rotate_opts 必为 False）：与手敲 --solver-opts 三键逐字段等价
+        # （quadtree_depth 不写 = 缺省 4）。
+        fixed_solver_opts = dict(EXTREME_SOLVER_OPTS)
+
+        def solver_opts_for(_index, _seed, _fixed=fixed_solver_opts):
+            return _fixed
+    elif args.solver_opts is not None:
         try:
             fixed_solver_opts = json.loads(args.solver_opts)
         except json.JSONDecodeError as e:
@@ -488,6 +586,11 @@ def main(argv: list[str] | None = None) -> int:
                   f'{race_budget:g}s 预算，门时刻 {gate_seconds:g}s'
                   f'（τ={race_gate_tau:g}，严格破纪录才续跑），'
                   f'计划 ≤ {n_rounds} 个 seed（种子流 {strategy_seeds}）')
+            if args.extreme:
+                # US-001 极限运行标注行（--quiet 也打，同策略模式口径）：糖衣展开
+                # 自描述 —— 参数值经下方 solver_opts 回显行完整呈现。
+                print(f'[extreme] 极限运行：race 门杀 × 实验结论参数（预算档 '
+                      f'{extreme_budget:g}s/seed，quadtree_depth 用缺省 4）')
         else:
             print(f'[portfolio] 策略模式 se（筛延）：总预算 {args.time}s = 阶段 1 '
                   f'{n_rounds} × {se_screen:g}s 筛选 + 阶段 2 冠军 {se_ext:g}s 延长'
@@ -819,7 +922,10 @@ def main(argv: list[str] | None = None) -> int:
                    # —— band label 已纳入 class_key，同 class 必同 band 态）。
                    # prefix 同款（labels 已纳入 class_key）。
                    **({'band': cfg.band} if cfg.band is not None else {}),
-                   **({'prefix': cfg.prefix} if cfg.prefix is not None else {})},
+                   **({'prefix': cfg.prefix} if cfg.prefix is not None else {}),
+                   # US-001 极限运行档位回显（additive：class_key 组成不变，与历史
+                   # run 可比；无 --extreme 的行结构不变）。
+                   **({'extreme': {'budget': extreme_budget}} if args.extreme else {})},
     })
     print(f"real_density（原面积口径）= {d:.2%} | "
           f"用布长度 = {w:.0f}mm | 片数 = {n_placed} | "

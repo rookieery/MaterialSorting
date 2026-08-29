@@ -1231,3 +1231,43 @@ US-001~006 全链路的验收 story：不改任何运行时代码，产出 = 验
 4. **明确不改** —— PerTypeOverridesModal 下拉兜底（服务「fetch 失败但 label 已确认」合法场景，form 重置后自然不显示旧 g 码）；`uploadStore.reset()` 零调用现状（无 UI 入口需求）；NestingPage phase / runRegistry 历史 run（刻意保留）；前端不预判 g 码存在性契约（后端权威校验）。
 
 验证：vitest 747 全绿（含 5 新增）；`npm run build` 零错。
+
+## 极限运行 US-001 落地：CLI --extreme 糖衣旗标（2026-08-29）
+
+「高级运行 race 门杀 × 实验结论极限参数」的一条命令封装（best-of-k 右尾最优路径工程化）。方案 =
+[.docs/business/极限运行功能方案_race门杀.md](../business/极限运行功能方案_race门杀.md) v1.1。
+
+### 改动文件
+
+| 文件 | 改动 |
+|------|------|
+| `materialSorting-server/src/materialsorting/cli/run_config.py` | `--extreme`（store_true）+ `--extreme-budget N`（缺省 600）两旗标；裁决块（--target 校验后、PC-006 solver_opts 块前）= 互斥矩阵 + 从属/值域校验 + **args 展开**（strategy='race' / race_budget=档 / race_gate=0.5，下游守卫与 race_plan/decide_race_kill 零改动复用）；PC-006 块 `if args.extreme:` 首分支设固定三键 opts（复用现行 solver_opts_for fixed 回调机制）；模块级常量 `EXTREME_SOLVER_OPTS` / `EXTREME_BUDGET_S` / `EXTREME_BUDGETS`；`[extreme]` 启动标注行（--quiet 也打）；run_stats config 段 additive `extreme:{budget}`；模块 docstring 补 US-001 节 |
+| `materialSorting-server/tests/test_cli_extreme.py` | 新文件 24 例（见 tests/AGENTS.md 行） |
+
+### 关键不变量（US-001 立，后续故事不得破坏）
+
+1. **展开等价性** —— `--extreme --time T [--extreme-budget B]` 与手敲
+   `--strategy race --race-budget B --race-gate 0.5 --solver-opts '{"exploration_pct":
+   0.7, "early_termination": false, "num_workers": 4}' --time T` 的产物（result.json /
+   strategy.json / kill_decisions.jsonl）**逐字段一致**（唯一合法差异 = run_stats 行
+   config.extreme 回显键）；单测锁死（fake solve 对拍，run_dir 内嵌路径归一占位后比较）。
+2. **opts 恰三键无 quadtree_depth** —— 极限参数是实验结论（方案 §2/§2.6），不暴露
+   为可调项；修改 `EXTREME_SOLVER_OPTS` 常量 = 实验参数变更，race 标定数据需全量重测。
+3. **糖衣独占** —— `--extreme` 与 8 个策略/旋钮旗标任一同给 → 退出 1（new_run_dir 前
+   拦下不留空目录）；`--extreme-budget` 值域仅 600/1200（2400s+ 门判别力失效硬边界）。
+4. **预算下限复用** —— T < 905（600 档）走 race_plan 现行 StrategyBudgetError 退出 1，
+   零新报错路径；--extreme 无 --time 走策略模式守卫。
+5. **class_key 不变** —— run_stats 的 extreme 键是 config 段 additive 回显，
+   class_key 组成不含 extreme（与历史 run 可比，θ₀ 校准分布不被割裂）。
+6. **零回归** —— 无 --extreme 全部既有路径行为与产物逐字节不变（现有 568 例全绿）。
+
+### 实现要点记档
+
+- **args 展开而非本地变量分支**：互斥裁决先行（此时 args.strategy 还是用户原值），
+  再原地改写 `args.strategy/race_budget/race_gate` —— 下游全部既有守卫（--time 必填 /
+  --kill 互斥 / race_plan / 种子流 / strategy.json / 门杀接线）零改动自然生效；
+  fixed_solver_opts 借 PC-006 块 `if args.extreme:` 首分支接入（互斥已保证
+  args.solver_opts 为 None、rotate_opts 为 False，不会打架）。
+- **--quiet 口径**：`[extreme]` 标注行与 race 启动行/solver_opts 回显行同为
+  「改求解编排/行为的开关不静默」类（--quiet 也打）；web spawn（US-002）将带 --quiet，
+  输出仅落 run_dir 产物与启动/终局行。
