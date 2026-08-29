@@ -1,4 +1,7 @@
 // US-005 策略运行 HTTP 契约 —— `web/strategy.py`（US-004 四路由）响应/请求体的 TS 镜像。
+// US-003 起同文件再镜像**极限运行四路由** `/api/extreme/*`（US-002 后端，与策略
+// 同槽同构 —— status/result 载荷复用下述类型，mode 字段扩 'extreme'；start 载荷
+// 独立 `ExtremeStartPayload`：time_total_s 秒 + 无 band/prefix）。
 //
 // 四路由（前端只走相对路径，dev 经 Vite proxy 转 :8000）：
 //   POST /api/strategy/start   StrategyStartPayload → 202 {started,pid,mode,minutes,run_name}
@@ -18,6 +21,13 @@ import type { BandConfig, PrefixConfig } from './ws';
 
 /** 策略模式（与 CLI `--strategy` 一致；race = 方案 B 门杀（默认），se = 方案 A 筛延）。 */
 export type StrategyMode = 'se' | 'race';
+
+/**
+ * 运行族（US-003 极限运行前端）：strategy = 高级运行（/api/strategy/*，
+ * se/race 双模式）；extreme = 极限运行（/api/extreme/*，US-002 后端四路由）。
+ * 后端两族共用每会话状态槽 —— 同族/跨族 status 语义见 strategyStore ownsMode。
+ */
+export type RunFamily = 'strategy' | 'extreme';
 
 /** 弹窗时长四档（分钟）→ 后端 `--time` 秒数 = minutes * 60。 */
 export type StrategyMinutes = 10 | 20 | 30 | 60;
@@ -59,6 +69,24 @@ export interface StrategyStartPayload {
    * 资格码 start 期拦截，非法 → 400 结构化 error）。
    */
   prefix?: PrefixConfig | null;
+}
+
+/**
+ * POST /api/extreme/start 请求体（US-002；US-003 前端接入）。
+ * time_total_s = 总预算秒（整数，后端值域 905~43200 —— 前端预设 60/120/240/480
+ * 分钟 + 自定义 16~720 分钟恒在值域内）；**无 band/prefix 键**（后端按键判在场即
+ * 400「暂不支持」—— 前端执行按钮对 band/prefix 开启直接置灰前置拦截）。排料
+ * 参数（seed/gate_mm/sizes/per_type/quantities）与 StrategyStartPayload 同源 ——
+ * collectStartContext 单一实现共用。
+ */
+export interface ExtremeStartPayload {
+  /** 总预算秒（minutes × 60）。 */
+  time_total_s: number;
+  seed: number;
+  gate_mm: number;
+  sizes?: number[];
+  per_type?: PerTypeOverrides | null;
+  quantities?: Record<string, Record<string, number>> | null;
 }
 
 /** strategy.json → plan 摘要（race 带 gate_seconds；se 带 k_screens/screen_s/ext_s）。 */
@@ -123,7 +151,8 @@ export type StrategyEvent =
 /** GET /api/strategy/status 响应（idle 只带 state；orphan 另带 alive/pid/doc_id）。 */
 export interface StrategyStatus {
   state: StrategyPhase;
-  mode?: StrategyMode | null;
+  /** 极限运行（US-002 起）status.mode = 'extreme'（状态槽 mode 透传）。 */
+  mode?: StrategyMode | 'extreme' | null;
   total_budget_sec?: number | null;
   /** 墙钟口径（≈，含启动开销），秒。 */
   elapsed_sec?: number | null;
@@ -190,7 +219,8 @@ export interface StrategyManifest {
  */
 export interface StrategyResult {
   state: 'done' | 'stopped';
-  mode: StrategyMode | null;
+  /** 极限运行 result.mode = 'extreme'（状态槽透传；summary.mode 仍是 'race'）。 */
+  mode: StrategyMode | 'extreme' | null;
   run_dir: string | null;
   manifest: StrategyManifest;
   best: StrategyBest;

@@ -1884,3 +1884,86 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
 .session-block-reload:hover {
   background: #36b47a;
 }
+
+/* ---- US-003 ExtremeRunButton + ExtremeRunModal（极限运行：沿用 .strategy-* 族） ---- */
+/* 双入口并排行：高级运行 / 极限运行各占一半（.strategy-wrapper 自身 margin 归零）。 */
+.strategy-entry-row {
+  display: flex;
+  gap: 8px;
+  margin: 8px 0;
+}
+.strategy-entry-row .strategy-wrapper {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+}
+/* 极限运行入口底色 = 暖琥珀（与高级运行蓝 #2c5d8f 区分；同为实色按钮族）。 */
+.strategy-btn.extreme {
+  background: #8f5d2c;
+}
+.strategy-btn.extreme:hover:not(:disabled) {
+  background: #a76e37;
+}
+
+/* 配置态：总时长四档预设 + 自定义（chip 按钮行，active 绿描边同 .strategy-select 焦点色） */
+.extreme-preset-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.extreme-preset-btn {
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 600;
+  background: #1c1d22;
+  color: #e6e6e6;
+  border: 1px solid #3a3d45;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: border-color 0.15s, color 0.15s;
+}
+.extreme-preset-btn:hover {
+  border-color: #2ea06c;
+}
+.extreme-preset-btn.active {
+  border-color: #2ea06c;
+  color: #2ea06c;
+}
+.extreme-preset-btn:focus-visible {
+  outline: 2px solid #2ea06c;
+  outline-offset: 1px;
+}
+.extreme-custom-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.extreme-custom-input {
+  width: 90px;
+  background: #1c1d22;
+  color: #e6e6e6;
+  border: 1px solid #3a3d45;
+  border-radius: 3px;
+  padding: 6px 8px;
+  font-size: 13px;
+  font-family: inherit;
+}
+.extreme-custom-input:focus {
+  outline: none;
+  border-color: #2ea06c;
+}
+.extreme-custom-unit {
+  color: #9aa;
+  font-size: 12px;
+}
+/* 预计轮数行：比 hint 挖一眼可见（绿色数字口径与密度大数字同色系）。 */
+.extreme-rounds {
+  color: #9aa;
+  font-size: 12px;
+  line-height: 1.6;
+  background: #1f2127;
+  border: 1px solid #31343c;
+  border-radius: 4px;
+  padding: 6px 10px;
+}

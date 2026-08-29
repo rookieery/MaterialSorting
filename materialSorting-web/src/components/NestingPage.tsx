@@ -239,12 +239,18 @@ export function NestingPage(): React.JSX.Element {
     rec.stopped = false;
 
     // 5) 页面状态：seeds 挂 NestCard → done（导出解禁）+ seek 回 live + 状态行汇报。
+    //    （US-003 极限运行 result.mode='extreme' —— 同一 applyStrategyResult 复用，
+    //    状态行区分来源；summary.mode 仍是 'race' 不作判据。）
     clearHovered();
     hideTooltip();
     useAppStore.getState().setSeekTime(-1);
     setSeeds([seed]);
     setPhase('done');
-    setStatus(`策略 run 已应用：seed ${seed} · ${(density * 100).toFixed(2)}%`);
+    setStatus(
+      `${result.mode === 'extreme' ? '极限' : '策略'} run 已应用：seed ${seed} · ${(
+        density * 100
+      ).toFixed(2)}%`,
+    );
   }
 
   return (

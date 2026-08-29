@@ -507,3 +507,17 @@ src/
 - **mergeSessionHeaders 归一普通对象**：调用方 headers（Headers 实例 / 数组 / 对象）合并 sid 后返回 **plain object**（不用 Headers 实例 —— 调用方与测试可按 Record 属性直取的旧口径保持）。
 - **测试钩子**：不关心会话语义的存量用例 beforeEach 调 `markSessionProbedForTest()`（预置已探测，apiFetch 不前置 POST /api/session，fetch 计数 / 首调 URL 断言零改动）；`resetSessionForTest()`（清阻断 + 探测态）；`resetSessionIdForTest()`（仅清 sid 模块缓存，不动 localStorage）。lib 层不引 zustand（阻断态是模块级 pub/sub），组件用 React 18 useSyncExternalStore 订阅。
 - **浏览器验证**：`scripts/us005_session_verify.mjs`（playwright，主相位 P1-P5 + `--expire` 过期相位 E1-E5；主相位前置 = 重启 ms-web 保注册表 4 空席，过期相位前置 = `MS_SESSION_TTL_SEC=6`）。实测 15/15 + 5/5：双窗口上传互不串台三层取证（弹窗 thead 徽章限定 `.per-type-modal` —— 上传预览 QtyMatrix 同名徽章全局选择器会假阳性；ptypes 响应体直取对比；g01 缩略图 polygon 对比）、WS ?sid=、第 5 窗口加载即弹「用户过多」、阻断期间上传 0 请求、过期 → 弹窗 → ms_sid=null → 刷新新 sid 无弹窗。
+
+## 极限运行 US-003 关键约定（双家族 store/轮询 · 极限弹窗 调用方必读）
+
+「极限运行」前端入口（2026-08-29，extreme PRD 第三块）。核心 = **泛化优先于复制**：store 工厂 + 轮询参数化 + 弹窗四态组件导出共享，新增第三/第四个运行家族时按此范式扩。
+
+- **strategyStore = 家族工厂 `createRunStore<P>(spec)`**：`RunFamilySpec{base,ownsMode,netError}` → `useStrategyStore`（/api/strategy）/ `useExtremeStore`（/api/extreme）双实例；改任一家族的 start/stop/refresh/reset 行为改工厂，不要单边 hack。**refresh 家族过滤是命门**：后端两族共享每会话状态槽，本族端点会看到对方家族的 running（mode 透传）—— 只认领 `state==='idle' || spec.ownsMode(st.mode)`（strategy 认 undefined/null/se/race、extreme 只认 'extreme'；idle 恒认领 = stuck 'starting' 的复位出口）。gen 计数器丢弃陈旧在途回包。
+- **useStrategyPoll 参数化 `useStrategyPoll(open, store)`**：store 缺省 useStrategyStore（存量调用零改动）；**每族入口按钮恰挂一实例**、各轮询自己的端点，弹窗自身不挂轮询（防双跑不变量延续）。idle 态轻量（mount/open 翻转各一次 refresh，interval 只在 starting|running）。
+- **StrategyRunModal 四态组件已导出共享**：ProgressState（`modeLabel?` 覆盖标题默认「策略运行」）/ ResultState（`extraHint?` 渲染 `strategy-result-extra-hint`）/ ErrorState / OrphanState。extreme 弹窗只自写配置态；**复用组件的 inner testid 仍 `strategy-*`**（smoke/测试按此断言，勿另起 extreme-progress-* 一套）。
+- **极限载荷 = collectStartContext 同源 + `time_total_s``**：band/prefix **恒不写键**（后端在场即 400）；`ctx.band!==null || ctx.prefix!==null` → 执行按钮前置置灰 + `extreme-layout-warning` 警告行（「暂不支持」语义，引导去高级配置关闭）。409 互斥文案后端已带 mode（「已有进行中的极限运行/策略运行…」），前端 error 态透传即天然区分对方，勿前端改写。
+- **轮数公式镜像常量**：`EXTREME_FIRST_ROUND_S=602.5` / `EXTREME_PER_ROUND_S=347.5`（与 cli.portfolio race_plan 同口径）→ `estimateExtremeRounds(T)=max(1,1+floor((T−602.5)/347.5))`：60min→9 / 120min→19（默认档）/ 240min→40 / 480min→82 / 16min→2。自定义 16~720 整数（`parseCustomMinutes` 越界/非整 → null → 置灰 + 提示）。改后端轮次口径须两处同步。
+- **参数完全隐藏**：弹窗不出现 exploration_pct / early_termination / num_workers / quadtree_depth 字样（无输入无下拉）；结果态只一句「已固化实验参数（按实验结论固定，不可调）」（extraHint）不列值。`result.mode='extreme'` 而 `summary.mode='race'`（CLI --extreme 内部展开 race）—— 判据只用顶层 mode。
+- **结果应用复用 applyStrategyResult**（US-006 约定延续）：ExtremeRunModal 应用按钮 → onApplyExtreme → 同一 NestingPage 函数，合成 RunRecord 链零改动；状态行按 mode 区分「极限/策略 run 已应用」。
+- **smoke：`scripts/smoke-extreme-run.mjs`**（playwright msedge→chrome，范本 smoke-band-preview）三坑记档：① 超排 Tab 解锁联动 **parse done** 非 commit done —— 须等 `[data-testid="commit-status"].done`（`.upload-status.done` 同时命中 parse-done 元素不能只按 class 等）再进 Tab，否则极限 start 吃 422「排料数据为空」；② fresh context = 新 sid（MS_SESSION_MAX=4/TTL 600s）连跑多轮会 429 session_limit → 重启 ms-web 恢复；③ stopped 后 result 拉取异步先闪「正在读取运行结果…」→ 断言等 `strategy-result-head`。US-017 起默认码号空：进 Tab 后先勾 `.sizes .chip input`（id=`sz_<key>`）前两个再执行。
+- **测试基线**：`src/store/__tests__/extremeStore.test.ts` 7 项（载荷契约无 band/prefix / 409 透传 / 家族过滤双向 / result 恰拉一次 / stop / reset）+ `ExtremeRunButton.test.tsx` 4 项 + `ExtremeRunModal.test.tsx` 17 项（公式对拍/预设切换/自定义域/参数隐藏/band 闸门/载荷等值断言/三态渲染/ESC 遮罩 ✕ 不 stop）。改家族工厂或弹窗须同步。

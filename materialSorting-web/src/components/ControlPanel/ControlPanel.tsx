@@ -69,6 +69,7 @@ import { SizePicker, computeTotalCutPieces } from './SizePicker';
 import { SolveControls } from './SolveControls';
 import { StatusLine } from './StatusLine';
 import { StrategyRunButton } from './StrategyRunButton';
+import { ExtremeRunButton } from './ExtremeRunButton';
 import {
   bandMemberCount,
   collectStartContext,
@@ -127,6 +128,8 @@ export interface ControlPanelProps {
   /**
    * US-006 策略 run 应用到主画布回调（StrategyRunModal 结果态按钮）。
    * US-005 仅透传链路（未传 → 应用按钮 disabled）；NestingPage 接线在 US-006。
+   * US-003 起同一回调也透传 ExtremeRunButton（极限运行结果态「应用到主画布」——
+   * result 同形，applyStrategyResult 合成 RunRecord 单一实现复用）。
    */
   onApplyStrategy?: (result: StrategyResult) => void;
 }
@@ -361,13 +364,26 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
         {/* US-005 高级运行入口（策略 run 10/20/30/60min + race/se 双模式）：disabled =
             solving（互斥防 CPU 竞争）|| doc===null（未 commit 无排料数据）。
             2026-08-22 起 band 开启不再互斥（band 随 start 载荷进 config）；
-            2026-08-25 起 prefix 开启同样不再互斥（prefix 同入 config）。 */}
-        <StrategyRunButton
-          solving={solving}
-          buildStartContext={buildStartContext}
-          onApplyStrategy={onApplyStrategy}
-          disabled={solving || doc === null}
-        />
+            2026-08-25 起 prefix 开启同样不再互斥（prefix 同入 config）。
+            US-003 极限运行入口（.strategy-entry-row 并排同级）：60/120/240/480min
+            预设 + 自定义，参数全隐藏；band/prefix 开启由弹窗执行按钮置灰前置拦截
+            （后端 /api/extreme/start 按键判在场即 400「暂不支持」）；同会话与高级
+            运行单飞互斥由后端 409 兜底（文案区分对方）。两族轮询各自单实例
+            （/api/strategy/status 与 /api/extreme/status 互不重叠）。 */}
+        <div className="strategy-entry-row">
+          <StrategyRunButton
+            solving={solving}
+            buildStartContext={buildStartContext}
+            onApplyStrategy={onApplyStrategy}
+            disabled={solving || doc === null}
+          />
+          <ExtremeRunButton
+            solving={solving}
+            buildStartContext={buildStartContext}
+            onApplyExtreme={onApplyStrategy}
+            disabled={solving || doc === null}
+          />
+        </div>
       </div>
       {/* US-031：data-tour="start-btn" 锚定 SolveControls 父容器（nestingTour step3 高亮目标）。 */}
       <div data-tour="start-btn">

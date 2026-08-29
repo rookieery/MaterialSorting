@@ -20,11 +20,11 @@ materialSorting-web/
 │   ├── types/              # US-002：纯数据契约（与 server.py 字段名 1:1）；上传预览 US-005：parsed.ts；上传预览 US-011：qty.ts；US-018：ptype.ts（PtypeRepresentative + PtypesResponse，GET /api/ptypes 契约）；策略 PRD US-005：strategy.ts（/api/strategy/* 四路由响应 TS 镜像：StrategyPhase 七态 / StrategyStatus（全字段可选除 state）/ StrategyResult（manifest 嵌套键）等）；腰头成带：ws.ts BandConfig `{enabled, label}` 两键（**2026-08-22 简化**：ack?/fillers? 已删；US-012 StageMsg 契约不变）；2026-08-24/25 新增 **band.ts**（POST /api/band-preview + /api/prefix-preview 两预览端点契约：`BandPreviewPayload/Response` + `PrefixPreviewPayload/Response`，成员形状 `BandPreviewMember` 两端点共用（prefix 成员带 `tag?` 覆盖标注 = g 码）；失败也 200 `ok:false` 包络；members/outline 均组合片归一坐标前端零变换）
 │   ├── constants/          # US-004：SIZES / PHASE_COLORS / SEED_COLORS + 全局上限 MAX_OVERLAP_MM/MAX_ROTATION_TOL_DEG（US-003 起 V03_PTYPES 固定 10 片型清单已删，高级配置列集改由 /api/ptypes reps 键动态驱动）
 │   ├── lib/                # US-002 起：纯函数工具（ws / geometry / params）；US-007 download；策略 PRD US-005 params.ts 加 collectStartContext（handleStart 与策略 start 载荷同源构造器：sizes 过滤 null/gate_mm/seed/time/params/per_type/quantities 逐字段同一实现，不复制逻辑）；腰头成带：params.ts collectBand 三态解析 `{enabled:true,label}`（**2026-08-22 简化**：band_ack/band_fillers/BAND_MAX_FILLERS 已删；collectStartContext 产 band，**2026-08-22 起随策略 start 载荷同源透传**）；**2026-08-22 seed UI 隐藏**：form.seed/multi_seed/seed_count 字段保留但冻结默认（parseSeed 恒 0 / parseSeedCount 恒 1，无写入方）
-│   ├── store/              # US-002 RunRegistry + US-003 appStore + US-001 uiStore（US-015 扩 nestingEnabled + setNestingEnabled + setTab guard）；上传预览 US-005 uploadStore（US-021 扩 commitStatus/commitError/commitSummary；矩阵化重构 US-003 删 qtyDialog/QtyDialogTarget/openQtyDialog/closeQtyDialog，仅剩 zoom/openZoom/closeZoom + reset/setSize）；上传预览 US-011 qtyStore（矩阵化重构 US-001 简化为 perSize+baseValue 单模式：setPiecePerSize/setRowAll/resetQuantities/hydrate + clampQty/getPieceDisplay 纯函数，双 hydrate 入口已合并、setPieceGlobal 已删）；US-018 controlPanelStore（modal + previewLabel 双显隐字段，两层独立；US-003 起 previewPtype→previewLabel，键 = 裁片 g 码；策略 PRD US-005 扩 ControlPanelModalId 加 'strategy_run'）；策略 PRD US-005 strategyStore（phase 七态 idle|starting|running|done|stopped|error|orphan + status/result/errorMessage/lastStart；actions start/stop/refresh/reset —— refresh 是唯一真相入口（isStrategyState 守卫非法载荷不动 phase），done/stopped 且 result===null 顺手拉 result 每 run 恰一次）；US-013 bandStore **已删（2026-08-22 简化）**——跨页「不成对」警告随 QtyMatrix `.qty-cell.odd`/列头徽章整体退场，form.band_* 仍是 WS payload SSOT；2026-08-25 新增 **ptypeStore**（/api/ptypes 代表裁片会话级缓存：`representatives` + `status: idle|loading|ready|error` 状态机 + `ensureLoaded` 幂等加载（ready/loading 跳过）+ `invalidate`（commit done 失效挂点，representatives 保留无感刷新）+ `reset`（测试隔离）；loading/error 期间保留旧值不闪占位、error 不自动重试防死循环；PerTypeOverridesModal/PtypePreviewModal 两弹窗共享同一份缓存，详见文末专节）
-│   ├── hooks/              # US-002 起：useSolveRun（US-022 StartConfig 加 quantities 透传；US-027 加 stop() + case stopped）/ useRafThrottle；US-007 useExport；上传预览 US-005 useParseDxf（US-021 解析成功自动 void commit）；上传预览 US-021 useCommitToNesting（POST /api/commit-to-nesting + D1 闭环 setNestingEnabled，不自动切 Tab）；策略 PRD US-005 useStrategyPoll（active 态（starting|running）才 setInterval refresh；弹窗开 2s / 关 15s 双档（入口徽标观测）；mount+open 切换立即 refresh 一次；terminal 态停表）
+│   ├── store/              # US-002 RunRegistry + US-003 appStore + US-001 uiStore（US-015 扩 nestingEnabled + setNestingEnabled + setTab guard）；上传预览 US-005 uploadStore（US-021 扩 commitStatus/commitError/commitSummary；矩阵化重构 US-003 删 qtyDialog/QtyDialogTarget/openQtyDialog/closeQtyDialog，仅剩 zoom/openZoom/closeZoom + reset/setSize）；上传预览 US-011 qtyStore（矩阵化重构 US-001 简化为 perSize+baseValue 单模式：setPiecePerSize/setRowAll/resetQuantities/hydrate + clampQty/getPieceDisplay 纯函数，双 hydrate 入口已合并、setPieceGlobal 已删）；US-018 controlPanelStore（modal + previewLabel 双显隐字段，两层独立；US-003 起 previewPtype→previewLabel，键 = 裁片 g 码；策略 PRD US-005 扩 ControlPanelModalId 加 'strategy_run'）；策略 PRD US-005 strategyStore（phase 七态 idle|starting|running|done|stopped|error|orphan + status/result/errorMessage/lastStart；actions start/stop/refresh/reset —— refresh 是唯一真相入口（isStrategyState 守卫非法载荷不动 phase），done/stopped 且 result===null 顺手拉 result 每 run 恰一次）；US-013 bandStore **已删（2026-08-22 简化）**——跨页「不成对」警告随 QtyMatrix `.qty-cell.odd`/列头徽章整体退场，form.band_* 仍是 WS payload SSOT；2026-08-25 新增 **ptypeStore**（/api/ptypes 代表裁片会话级缓存：`representatives` + `status: idle|loading|ready|error` 状态机 + `ensureLoaded` 幂等加载（ready/loading 跳过）+ `invalidate`（commit done 失效挂点，representatives 保留无感刷新）+ `reset`（测试隔离）；loading/error 期间保留旧值不闪占位、error 不自动重试防死循环；PerTypeOverridesModal/PtypePreviewModal 两弹窗共享同一份缓存，详见文末专节）；极限运行 US-003 起 strategyStore 重构为 **createRunStore 家族工厂**（`RunFamilySpec{base,ownsMode,netError}` → `useStrategyStore`（/api/strategy）+ `useExtremeStore`（/api/extreme）双实例；refresh 加**家族过滤** —— status 回 `state!=='idle' && !ownsMode(st.mode)` 直接丢弃（后端两族共享每会话状态槽，本族端点会看到对方家族的 running）；gen 计数器丢弃陈旧在途回包）
+│   ├── hooks/              # US-002 起：useSolveRun（US-022 StartConfig 加 quantities 透传；US-027 加 stop() + case stopped）/ useRafThrottle；US-007 useExport；上传预览 US-005 useParseDxf（US-021 解析成功自动 void commit）；上传预览 US-021 useCommitToNesting（POST /api/commit-to-nesting + D1 闭环 setNestingEnabled，不自动切 Tab）；策略 PRD US-005 useStrategyPoll（active 态（starting|running）才 setInterval refresh；弹窗开 2s / 关 15s 双档（入口徽标观测）；mount+open 切换立即 refresh 一次；terminal 态停表；极限运行 US-003 起参数化 `useStrategyPoll(open, store)` —— store 缺省 useStrategyStore，extreme 入口传 useExtremeStore，**每族入口恰一实例各轮询自己的端点**）
 │   ├── components/
 │   │   ├── TabBar.tsx       # US-001 顶部 Tab（排料/上传预览）；订阅 uiStore.activeTab；US-015 超排 button 在 nestingEnabled===false 时 disabled+.disabled class + aria-disabled；US-029 右上角操作指引入口（.tour-entry + 下拉菜单）；US-030 超排 button 加 data-tour="tab-nesting"（goto-nesting 步锚点）；US-032 下拉菜单两项（replay-preview→start('preview') / replay-nesting→start('nesting')，原 reset 项因 close 统一 markSeen 已移除）+ 每项仅当前 Tab 可点（非当前 Tab 置灰 .disabled+aria-disabled+native disabled + handler 运行时兜底）+ 点外部/ESC 关闭 + toggle
-│   │   ├── NestingPage.tsx  # US-001 排料页（原 App.tsx 业务逻辑外提；持 phase/seeds/useSolveRun；US-027 solving→phase 五态状态机 + handleStop/handleRestart + lastStartCfgRef；US-028 ControlPanel 改收 phase 不再收 solving；US-031 .nest-wrap 加 data-tour="nest-wrap" 锚点；策略 PRD US-006 applyStrategyResult（onApplyStrategy prop 链 ControlPanel→StrategyRunModal 应用按钮）—— runRegistry.clear() 清场 + 合成单条 RunRecord + setSeeds/setPhase('done')/setSeekTime(-1)）
+│   │   ├── NestingPage.tsx  # US-001 排料页（原 App.tsx 业务逻辑外提；持 phase/seeds/useSolveRun；US-027 solving→phase 五态状态机 + handleStop/handleRestart + lastStartCfgRef；US-028 ControlPanel 改收 phase 不再收 solving；US-031 .nest-wrap 加 data-tour="nest-wrap" 锚点；策略 PRD US-006 applyStrategyResult（onApplyStrategy prop 链 ControlPanel→StrategyRunModal 应用按钮）—— runRegistry.clear() 清场 + 合成单条 RunRecord + setSeeds/setPhase('done')/setSeekTime(-1)；极限运行 US-003 起 ExtremeRunModal 结果态同函数复用（onApplyExtreme 同链），状态行按 result.mode 区分「极限/策略 run 已应用」）
 │   │   ├── preview/         # US-001 起：上传预览页（US-006 UploadPanel；US-007 PiecePreviewSVG；US-008 落地容器集成；矩阵化重构 US-003：QtyMatrix 接入 + SizeTabs/PieceQtyDialog/Switch 拆除）
 │   │   │   ├── PreviewPage.tsx  # US-008 容器：左 UploadPanel + 右 QtyMatrix（图形预览区拆除后右侧主体仅矩阵）；status=done+doc 时挂主体，否则 .preview-empty 空态；US-014 顶层模态单例（US-003 后仅剩 PieceZoomModal）+ useEffect subscribe 监听 doc_id 变化联动 qtyStore（有 doc 时 hydrate 默认 1、doc→null 时 resetQuantities；矩阵化重构 US-001 起 hydrate 同时写 baseValue=1）；US-016 加 useEffect subscribe uploadStore.status 按 `status==='done' && doc!==null` 联动 uiStore.setNestingEnabled（Tab 解锁闸，mount 即对齐）
 │   │   │   ├── UploadPanel.tsx  # US-006 左侧上传面板（点击+拖拽+客户端预校验+status 反馈）；US-021 加 commit 状态行；US-030 .drop-zone 加 data-tour="drop-zone"（upload 步锚点）+ commit 行保留 data-testid="commit-status"（committed 步锚点）
@@ -38,7 +38,7 @@ materialSorting-web/
 │   │   │       ├── QtyMatrix.test.tsx        # 矩阵化重构 US-002 单测 + 转置/裁片编号化 US-003 口径改写（38 项 8 组：行列结构 6（行=码号 null 殿后「通用」/列=g 码并集，列头=缩略图+徽章+「≡」/缺片格「—」） + 行头切码 2 + 列头缩略图 openZoom 2（activeSize 版本 / 缺片回退码 rep） + 格内编辑 6（clampQty 上下界/小数截断/Enter/Tab 跳格/末格回卷） + 0 与特例高亮 5 + 小计与总片数 4 + **US-003 数量即一切口径 5（Σ perSize 数量、无任何乘数、不合成镜像；「×2」徽章不渲染）** + 列级整列设值 8（「≡」icon 弹层：开关/初值=baseValue/portal fixed 居中/应用写 setRowAll/Enter 快捷/取消-遮罩-ESC 三路关闭/特例兼容；工具条整表重置已拆））
 │   │   │       └── PieceZoomModal.test.tsx   # US-013 集成（14 项：zoom=null 不渲染 / doc=null 不渲染 / 渲染 overlay+modal+aria / 头部 label 徽章+qty(份)+sizeLabel（**US-003 v2 契约无 name，名称 span 断言不存在**）/ qty 从 qtyStore / null 码「通用」/ body svg.piece-preview-svg / ✕ closeZoom / 遮罩 closeZoom / modal 内不冒泡 / ESC closeZoom / Portal body / label 不存在兜底 / size 不存在兜底）
 │   │   ├── nests/          # US-003 NestSVG/NestCard/NestLabel + US-005 NestsGrid；US-006 NestSVG 加 seek+hover；2026-08-27 NestLabel 标签追加用布长度
-│   │   ├── ControlPanel/   # US-004 8 子组件（US-005 MultiSeedControls 2026-08-22 已删——seed UI 隐藏，ParamForm 亦删 seed 输入行，form 冻结单 seed）；US-007 ExportButtons；US-018 PerTypeOverrides 改按钮 + PerTypeOverridesModal/PtypePreviewModal（高级配置弹窗 + 片型缩略图 + 放大预览；2026-08-18 回退 US-004 矩阵化：列=g 码 × 2 行 d/tol，per_type 单级 {g 码:{d,tol}}）；US-028 SolveControls 替代 StartButton（按 phase 渲染按钮组）+ ExportButtons 加 partial 提示；US-031 加 4 个 data-tour 锚点（doc-banner / param-form 在 SizePicker / start-btn 父容器 / export-group 在 ExportButtons）；策略 PRD US-005 StrategyRunButton（高级运行入口 + 运行中徽标 + 单例 StrategyRunModal，唯一 useStrategyPoll 挂载点）+ StrategyRunModal（三态弹窗：配置/进度五件套/结果+error/orphan）；腰头成带 PerTypeOverridesModal「布局设置」分区 **2026-08-22 简化**为勾选+腰头编号下拉+80×80 缩略图三件（US-013 预演回显/ack 硬警告、US-015 填料 chip 行、ControlPanel bandFillerZeroLabel 闸门均已删；band 启动闸门只剩未选编号/数量全 0 两态）+ band×策略互斥解除（strategy-btn 不再因 band 置灰）；**2026-08-24/25 新增 BandPreviewSVG**（组合形态预览命令式 SVG：成员尺码着色 size_color 半透明+同色实线边 + erode 外轮廓虚线 + showLabels 码号叠印（翻转组外屏幕坐标）；band 缩略/放大与 prefix 缩略/放大四处复用，`member.tag` 覆盖标注时显示 g 码）——「布局设置」band/prefix 两行缩略图均换组合形态预览（详见文末专节）
+│   │   ├── ControlPanel/   # US-004 8 子组件（US-005 MultiSeedControls 2026-08-22 已删——seed UI 隐藏，ParamForm 亦删 seed 输入行，form 冻结单 seed）；US-007 ExportButtons；US-018 PerTypeOverrides 改按钮 + PerTypeOverridesModal/PtypePreviewModal（高级配置弹窗 + 片型缩略图 + 放大预览；2026-08-18 回退 US-004 矩阵化：列=g 码 × 2 行 d/tol，per_type 单级 {g 码:{d,tol}}）；US-028 SolveControls 替代 StartButton（按 phase 渲染按钮组）+ ExportButtons 加 partial 提示；US-031 加 4 个 data-tour 锚点（doc-banner / param-form 在 SizePicker / start-btn 父容器 / export-group 在 ExportButtons）；策略 PRD US-005 StrategyRunButton（高级运行入口 + 运行中徽标 + 单例 StrategyRunModal，唯一 useStrategyPoll 挂载点）+ StrategyRunModal（三态弹窗：配置/进度五件套/结果+error/orphan）；腰头成带 PerTypeOverridesModal「布局设置」分区 **2026-08-22 简化**为勾选+腰头编号下拉+80×80 缩略图三件（US-013 预演回显/ack 硬警告、US-015 填料 chip 行、ControlPanel bandFillerZeroLabel 闸门均已删；band 启动闸门只剩未选编号/数量全 0 两态）+ band×策略互斥解除（strategy-btn 不再因 band 置灰）；**2026-08-24/25 新增 BandPreviewSVG**（组合形态预览命令式 SVG：成员尺码着色 size_color 半透明+同色实线边 + erode 外轮廓虚线 + showLabels 码号叠印（翻转组外屏幕坐标）；band 缩略/放大与 prefix 缩略/放大四处复用，`member.tag` 覆盖标注时显示 g 码）——「布局设置」band/prefix 两行缩略图均换组合形态预览（详见文末专节）；极限运行 US-003 新增 **ExtremeRunButton/ExtremeRunModal**（与 StrategyRunButton 并排同排 .strategy-entry-row；StrategyRunModal 的 ProgressState/ResultState/ErrorState/OrphanState 导出共享 + modeLabel/extraHint 可选参数，inner testid 仍 strategy-*）
 │   │   ├── curve/          # US-005 ConvergenceCurve（命令式 innerHTML）
 │   │   ├── playback/       # US-006 PlaybackBar/Seekbar/SeekReadout
 │   │   ├── Tooltip.tsx     # US-006 片 hover tooltip（Portal 到 body）
@@ -1320,3 +1320,69 @@ CPU），跨会话完全独立（多会话 US-004 语义不变）。
   running（run_dir 前缀 glob 发现 `web_extreme_<rand6>_*`、mode/total_budget_sec 透传）
   → stop 树杀 → stopped；taskkill /F 后 1s 内句柄探测可能仍报存活（终止异步完成，
   3s 后复查已死），冒烟脚本勿用 1s 窗口断言 child dead。
+
+## 极限运行 US-003 落地：前端极限运行按钮与弹窗（2026-08-29）
+
+「主界面独立『极限运行』入口 + 弹窗（时长预设 + 预计轮数，参数全隐藏）」（extreme PRD
+第三块）。实现同样**泛化优先于复制**：strategyStore 重构为 `createRunStore<P>(spec)`
+家族工厂（不复制文件）、`useStrategyPoll(open, store)` 参数化、StrategyRunModal 的
+四态组件（ProgressState/ResultState/ErrorState/OrphanState）导出共享 —— extreme 弹窗
+只写**配置态**（时长预设 + 轮数预估）与**载荷构造**，三态进度/结果/错误/遗留全部复用。
+
+### 改动文件
+
+| 文件 | 改动 |
+|------|------|
+| `src/types/strategy.ts` | `RunFamily = 'strategy' \| 'extreme'`；Status/Result.mode 加 `'extreme'`；新 `ExtremeStartPayload{time_total_s,seed,gate_mm,sizes?,per_type?,quantities?}`（**无 band/prefix 键**） |
+| `src/store/strategyStore.ts` | 重构为 `createRunStore<P>(spec)` 工厂：`RunFamilySpec{base('/api/strategy'\|'/api/extreme'),ownsMode,netError}` → 双实例 `useStrategyStore`/`useExtremeStore`；refresh 加**家族过滤** + gen 计数器（陈旧在途回包丢弃） |
+| `src/hooks/useStrategyPoll.ts` | 参数化 `useStrategyPoll(open, store)`（缺省 strategy，向后兼容）；每族入口恰一实例 |
+| `src/store/controlPanelStore.ts` | ControlPanelModalId 加 `'extreme_run'`（modal 单例互斥） |
+| `src/components/ControlPanel/StrategyRunModal.tsx` | ProgressState/ResultState/ErrorState/OrphanState **导出**；ProgressState 加 `modeLabel?`、ResultState 加 `extraHint?`（渲染 `strategy-result-extra-hint`） |
+| `src/components/ControlPanel/ExtremeRunButton.tsx` | **新建** 入口按钮（`.strategy-btn.extreme` 琥珀色）+ `.strategy-badge` 徽标（testid `extreme-badge`）+ 单例 ExtremeRunModal；`useStrategyPoll(modalOpen, useExtremeStore)` |
+| `src/components/ControlPanel/ExtremeRunModal.tsx` | **新建** 配置态：四档预设 60/**120（默认）**/240/480 分钟 + 自定义 16~720；导出 `EXTREME_FIRST_ROUND_S=602.5`/`EXTREME_PER_ROUND_S=347.5`/`estimateExtremeRounds`/`parseCustomMinutes`；轮数行「预计 N 轮 seed（实际轮数 ≥ 预测，省出预算自动多跑）」 |
+| `src/components/ControlPanel/ControlPanel.tsx` | `.strategy-entry-row` 双按钮并排（strategy + extreme） |
+| `src/components/NestingPage.tsx` | applyStrategyResult 状态行按 `result.mode==='extreme'` 区分「极限/策略 run 已应用」（同一函数复用） |
+| `src/style.css` | `.strategy-entry-row` / `.strategy-btn.extreme` / `.extreme-preset-*` / `.extreme-custom-*` / `.extreme-rounds`（沿 .strategy-* 族，无 CSS 框架） |
+
+### 关键不变量（US-003 立，后续故事不得破坏）
+
+1. **每端点恰一轮询实例** —— useStrategyPoll 参数化后 strategy/extreme 两入口各挂一
+   份、各轮询 `/api/{strategy,extreme}/status`；弹窗自身不挂轮询（防双跑）；idle 态
+   轻量（mount/open 翻转各 refresh 一次，interval 只在 starting/running）。
+2. **start 载荷同源** —— extreme 载荷也出自 `collectStartContext`（单一实现）+ 弹窗
+   时长换算 `time_total_s`；band/prefix **恒不写键**（后端在场即 400）；`ctx.band !==
+   null \|\| ctx.prefix !== null` 时执行按钮前置置灰 + 「⚠ 极限运行暂不支持腰头成带 /
+   起始端成套，请先在高级配置中关闭」警告行。
+3. **家族过滤** —— 后端两族共享每会话状态槽，任一端点的 status 都可能报对方家族的
+   running（mode 透传）；store 只认领 `state==='idle' \|\| spec.ownsMode(st.mode)`
+   （strategy 认 undefined/null/se/race，extreme 只认 'extreme'）⇒ 极限在跑时高级
+   运行入口**不误染徽标**、弹窗停留配置态；idle 恒认领（stuck 'starting' 复位出口）。
+4. **参数完全隐藏** —— 弹窗 UI 与文案不出现 exploration_pct/early_termination/
+   num_workers/quadtree_depth 字样（无输入框无下拉）；结果态仅一句「已固化实验参数
+   （按实验结论固定，不可调）」不列值。
+5. **轮数公式口径** —— `N = max(1, 1 + floor((T − 602.5) / 347.5))`（与 race_plan
+   首轮 602.5s/续轮 347.5s 同口径）：60min→9、120min→19（默认档）、240min→40、
+   480min→82、自定义下限 16min(960s)→2；web 层与弹窗同值镜像不 import。
+6. **零回归** —— strategy 家族行为不变（35 存量 strategy 测试零改动）；vitest 全量
+   775 绿（+28：store 7 + button 4 + modal 17）；npm run build + tsc 零错误。
+
+### 实现要点记档
+
+- **共享组件 testid 不改名** —— extreme 弹窗复用 StrategyRunModal 导出组件，进度/
+  结果/错误态 testid 仍 `strategy-*`（smoke/测试按此断言）；extreme 专属 testid 只
+  有 `extreme-btn`/`extreme-badge`/`extreme-presets`/`extreme-preset-{60|120|240|480}`/
+  `extreme-preset-custom`/`extreme-custom-input`/`extreme-rounds`/`extreme-layout-warning`/
+  `extreme-exec-btn`/`extreme-overlay`/`extreme-close`。
+- **结果应用复用 applyStrategyResult** —— 极限结果态「应用到主画布」走同一合成
+  RunRecord 链（导出三格式兼容）；`result.mode='extreme'` 而 `summary.mode='race'`
+  （CLI --extreme 内部展开 race），判据只用顶层 mode。
+- **smoke 环境坑（`scripts/smoke-extreme-run.mjs` 实跑排障）**：① 超排 Tab 解锁联动
+  是 **parse done**（PreviewPage subscribe）而非 commit done —— commit POST 在途时
+  点极限运行会吃后端 422「排料数据为空」；脚本须等 `[data-testid="commit-status"].done`
+  （注意 `.upload-status.done` 同时命中 parse-done 元素，不能只按 class 等）再进 Tab。
+  ② 每次 Playwright fresh context = 新 sid（MS_SESSION_MAX=4、TTL 600s）—— 连跑多轮
+  冒烟会 429 session_limit，重启 ms-web 清内存注册表即恢复。③ stopped 后 result 拉取
+  异步，会先闪「正在读取运行结果…」瞬态 —— 断言要等 `strategy-result-head` 落地。
+- **409 互斥现场对拍**（一次性脚本，不入库）：极限在跑 → 高级入口无徽标 + 弹窗配置
+  态 → 高级 start → 409「已有进行中的**极限运行**（或检测到遗留 marker）…」（后端
+  US-002 文案带 mode，前端透传即可区分对方）；终止后一切复原。

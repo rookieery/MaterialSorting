@@ -453,15 +453,20 @@ function ConfigState({
 }
 
 // ------------------------------------------------------------- 进度态（五件套）
+// （US-003 起 ProgressState/ResultState/ErrorState/OrphanState 导出复用 ——
+// ExtremeRunModal 同构消费：modeLabel 定标题行、extraHint 补「已固化实验参数」。）
 
-interface ProgressStateProps {
+export interface ProgressStateProps {
   status: StrategyStatus | null;
   onStop: () => void;
+  /** 标题行模式名覆写（缺省按 status.mode 推导：SE 顺延 / race 门杀 / 策略运行）。 */
+  modeLabel?: string;
 }
 
-function ProgressState({ status, onStop }: ProgressStateProps): JSX.Element {
-  const modeLabel =
-    status?.mode === 'se' ? 'SE 顺延' : status?.mode === 'race' ? 'race 门杀' : '策略运行';
+export function ProgressState({ status, onStop, modeLabel }: ProgressStateProps): JSX.Element {
+  const modeLabelResolved =
+    modeLabel ??
+    (status?.mode === 'se' ? 'SE 顺延' : status?.mode === 'race' ? 'race 门杀' : '策略运行');
   const total = status?.total_budget_sec ?? null;
   const elapsed = status?.elapsed_sec ?? null;
   // ② 大数字 = max(incumbent.density, 当前 seed best_frame density)（全局最优）。
@@ -490,7 +495,7 @@ function ProgressState({ status, onStop }: ProgressStateProps): JSX.Element {
   return (
     <>
       <div className="strategy-title-line" data-testid="strategy-progress-title">
-        {modeLabel} · 总预算 {fmtBudget(total)} · 已跑 {fmtElapsed(elapsed)}
+        {modeLabelResolved} · 总预算 {fmtBudget(total)} · 已跑 {fmtElapsed(elapsed)}
       </div>
       <div className="strategy-big-wrap">
         <div className="strategy-big-density" data-testid="strategy-big-density">
@@ -543,20 +548,23 @@ function ProgressState({ status, onStop }: ProgressStateProps): JSX.Element {
 
 // ------------------------------------------------------------- 结果态
 
-interface ResultStateProps {
+export interface ResultStateProps {
   phase: 'done' | 'stopped';
   status: StrategyStatus | null;
   result: StrategyResult | null;
   onApplyStrategy?: (result: StrategyResult) => void;
   onAgain: () => void;
+  /** 追加只读提示行（极限运行：「已固化实验参数」—— 不列参数值）。 */
+  extraHint?: string;
 }
 
-function ResultState({
+export function ResultState({
   phase,
   status,
   result,
   onApplyStrategy,
   onAgain,
+  extraHint,
 }: ResultStateProps): JSX.Element {
   // result 尚未拉到（refresh 网络错重试窗口）→ 降级占位。
   if (result === null) {
@@ -604,6 +612,11 @@ function ResultState({
           ⚠ {result.warning}
         </div>
       )}
+      {extraHint !== undefined && (
+        <div className="strategy-hint" data-testid="strategy-result-extra-hint">
+          {extraHint}
+        </div>
+      )}
       <div className="strategy-actions">
         <button
           type="button"
@@ -634,7 +647,7 @@ function ResultState({
 
 // ------------------------------------------------------------- error / orphan
 
-function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }): JSX.Element {
+export function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }): JSX.Element {
   return (
     <>
       <div className="strategy-result-head error" data-testid="strategy-error-head">
@@ -657,7 +670,7 @@ function ErrorState({ message, onRetry }: { message: string; onRetry: () => void
   );
 }
 
-function OrphanState({
+export function OrphanState({
   status,
   onCleanup,
 }: {
