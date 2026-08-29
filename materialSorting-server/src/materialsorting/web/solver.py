@@ -123,6 +123,8 @@ def _normalize_solver_opts(solver_opts) -> dict:
     - ``exploration_pct``：clamp 到 [0.1, 0.95]；
     - ``quadtree_depth``：clamp 到 [3, 5] 后取整；
     - ``num_workers``：下限 1 后取整（无上限——按机器核数自治）；
+    - ``early_termination``：仅接受严格 bool（2026-08-28 pctgrid 实验新增：600s 预算下
+      4/5 seed 探索段 110~170s 即收敛早停、两段预算不互转——et=False 强制吃满各段预算）；
     - 其余键一律忽略（additive 白名单，未知旋钮不透传给 spyrrow）。
 
     None / 非 dict / 空 dict → ``{}``（= 不改现行行为）。
@@ -139,6 +141,9 @@ def _normalize_solver_opts(solver_opts) -> dict:
     workers = _clamp_finite(solver_opts.get('num_workers'), 1, math.inf)
     if workers is not None:
         out['num_workers'] = int(round(workers))
+    et = solver_opts.get('early_termination')
+    if isinstance(et, bool):
+        out['early_termination'] = et
     return out
 
 
@@ -381,12 +386,14 @@ def build_instance(pieces, gate_mm, *, time_budget: int, seed: int,
             exploration_time=expl, compression_time=cmpr,
             seed=seed,
             quadtree_depth=opts.get('quadtree_depth', 4),
-            num_workers=opts.get('num_workers', 4))
+            num_workers=opts.get('num_workers', 4),
+            early_termination=opts.get('early_termination', True))
     else:
         config = spyrrow.StripPackingConfig(
             total_computation_time=total, seed=seed,
             quadtree_depth=opts.get('quadtree_depth', 4),
-            num_workers=opts.get('num_workers', 4))
+            num_workers=opts.get('num_workers', 4),
+            early_termination=opts.get('early_termination', True))
     return instance, config, pid_meta, total_area, n_eroded
 
 
