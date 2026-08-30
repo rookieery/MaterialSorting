@@ -16,7 +16,9 @@
     / stop 树杀清 marker / result best+manifest+漂移 warning + 404/409 极限文案；
   - sid 语义同 strategy：未知 → 401 code=session_expired、非法 → 400（不 spawn）；
   - 产物清理按会话前缀隔离：本会话 web_<sid6>_extreme_* 旧 run 被清、他会有
-    run 保留。
+    run 保留；
+  - run 存活钉住 + 终态宽限窗（2026-08-30 会话 TTL 豁免）：存活钉住不逐出 /
+    done 后宽限窗内钉住、窗外逐出走墓碑 —— 与策略共用状态槽与同一 alive hook。
 
 AST 守卫（strategy.py 禁 import ..cli.*）由 test_web_strategy.py 存量例持续覆盖
 （本故事改动同一模块）。所有用例隔离 paths.CONFIG_RUNS_DIR / OUT_DIR 到 tmp_path；
@@ -36,6 +38,7 @@ from materialsorting import paths as paths_mod
 from materialsorting.web import strategy as strategy_mod
 from materialsorting.web import server as server_mod
 from materialsorting.web import sessions as sessions_mod
+from materialsorting.web.sessions import _FakeClock
 
 
 # ------------------------------------------------------------- 测试基础设施
@@ -602,6 +605,50 @@ def test_extreme_cleanup_scoped_to_own_sid_prefix(dual_env, monkeypatch):
                   headers={'X-Session-Id': SID_B}).status_code == 202
     assert not dir_b.exists()                        # B 清 B 前缀
     assert legacy.exists() and manual.exists()       # legacy / 手工 run 不受影响
+
+
+# ------------------- run 存活钉住 + 终态宽限窗（共用槽零额外代码，2026-08-30）
+
+def test_extreme_run_alive_pins_session(dual_env, monkeypatch):
+    """极限 run 存活 → 会话钉住：轮询中断（时钟推进远超 TTL）不逐出、status 200
+    （极限与策略共用状态槽与同一 alive hook，钉住零额外代码）。"""
+    clk = _FakeClock()
+    monkeypatch.setattr(sessions_mod.registry, 'clock', clk)
+    _register_session(SID_A, 'docaaaa1')
+    _spawn_capture(monkeypatch, pids=(1111,))
+    c = _client()
+    ha = {'X-Session-Id': SID_A}
+    assert c.post('/api/extreme/start', json={'time_total_s': 905},
+                  headers=ha).status_code == 202
+    clk.advance(sessions_mod.registry.ttl_sec + 300)       # 轮询中断 > TTL + 5min
+    assert sessions_mod.registry.scan_once() == []          # 钉住不逐出
+    r = c.get('/api/extreme/status', headers=ha)            # 惰性路径同豁免
+    assert r.status_code == 200 and r.json()['state'] == 'starting'
+
+
+def test_extreme_dead_grace_window(dual_env, monkeypatch):
+    """极限 run 跑完（done 固化 + marker 清 + 状态槽终态留存）：宽限窗内不逐出、
+    窗外逐出走墓碑（「跑完挂机超 TTL 回来拿不到结果」场景的修复）。"""
+    clk = _FakeClock()
+    monkeypatch.setattr(sessions_mod.registry, 'clock', clk)
+    monkeypatch.setattr(strategy_mod, 'RESULT_GRACE_SEC', 650.0)  # 须 > ttl(600)
+    _register_session(SID_A, 'docaaaa1')
+    _spawn_capture(monkeypatch, pids=(1111,))
+    c = _client()
+    ha = {'X-Session-Id': SID_A}
+    assert c.post('/api/extreme/start', json={'time_total_s': 905},
+                  headers=ha).status_code == 202
+    name = strategy_mod._states(SID_A)['run_name']
+    _write_run_dir(dual_env, name=f'{name}_20260830-100000')
+    st = strategy_mod._states(SID_A)
+    st['proc'] = FakeProc(pid=1111, rc=0)                  # 跑完退出
+    assert c.get('/api/extreme/status', headers=ha).json()['state'] == 'done'
+    assert strategy_mod._read_marker(SID_A) is None        # 终态顺手清 marker
+    clk.advance(sessions_mod.registry.ttl_sec + 10)        # 挂机：TTL 超时、窗未过
+    assert sessions_mod.registry.scan_once() == []         # 宽限窗决定性钉住
+    clk.advance(700.0)                                     # 越过宽限窗
+    assert sessions_mod.registry.scan_once() == [SID_A]
+    assert sessions_mod.registry.tombstoned(SID_A)
 
 
 def test_extreme_routes_present_in_app():

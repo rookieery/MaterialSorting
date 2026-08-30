@@ -68,7 +68,7 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 
 from .. import paths
-from .sessions import DEFAULT_SID, SID_RE, SessionError
+from .sessions import DEFAULT_SID, SID_RE, SessionError, _env_float
 from .sessions import registry as session_registry
 from .solver import build_pid_meta
 
@@ -92,6 +92,17 @@ RUN_DIR_GRACE_SEC = 30.0
 _EVENTS_TAIL = 20
 _STDERR_TAIL_CHARS = 2000
 _TERMINAL_STATES = ('done', 'stopped', 'error')
+# run 存活钉住的滚动豁免窗（秒）：须 > 2×sessions.SCAN_INTERVAL_SEC(30) —— daemon
+# 扫描周期 30s，若窗口 ≤ 周期，下一轮扫描恰好越过 hold_until 边界（判据
+# now >= hold_until）→ 进程活着却被逐出。进程真死时 poll() 立即非 None 走终态
+# 宽限窗分支，滚动窗加长零代价。
+_RUN_ALIVE_HOLD_SEC = 90.0
+# 终态宽限窗（秒）：run 结束（done/stopped/error 或进程死亡被 hook 探测到）后
+# 会话仍保留的时长 —— 「跑完去吃个饭回来再看结果/导出」场景；期间会话仍占
+# MS_SESSION_MAX 名额，用户任何操作（resolve 刷 last_active）即恢复正常空闲
+# 语义。宽限窗外逐出照旧走墓碑（同 sid 回来仍能经本模块状态槽/marker 发现
+# 清理遗留 run）。
+RESULT_GRACE_SEC: float = _env_float('MS_RESULT_GRACE_SEC', 7200.0)
 
 # 每会话策略状态（US-004 多会话化）：sid → state dict。default 会话的 state 即旧名
 # ``_STRATEGY_STATE``（同一对象 —— 零 sid 路径与既有测试直改 `_STRATEGY_STATE`
@@ -154,6 +165,51 @@ def _session_gate(sid: str):
         return session_registry.resolve(sid).state, None
     except SessionError as e:
         return None, JSONResponse(e.payload(), status_code=e.status)
+
+
+def _run_alive_hook(sid: str) -> float | None:
+    """sessions TTL 过期检查的 run 存活豁免（``registry._lock`` 持锁上下文内被调）。
+
+    决策表（详 ``register_alive_hook`` 契约）：无槽/空槽/无 proc 键 → None（宁
+    可不钉）；非终态 + 进程存活 → 滚动短豁免（``clock()+_RUN_ALIVE_HOLD_SEC``，
+    进程真死立即失效）；非终态 + 进程死 → 幂等记 ``proc_dead_ts``（扫描线程首次
+    探测到真死的时刻，早于终态固化）→ 宽限窗；终态 → ``terminal_ts``（set-once，
+    轮询不续期宽限）→ 宽限窗。
+
+    纪律：只做纯内存 dict 读写 + ``Popen.poll()``（waitpid WNOHANG 非阻塞）——
+    禁止文件 IO（终态固化/result.json 解析留给正常 status 轮询路径）、禁止获取
+    任何锁（防与 ``registry._lock`` 互等）。时钟统一 ``session_registry.clock()``
+    （与 TTL 比较同一时钟源，FakeClock 可注入推进）。异常由调用方吞为 None；
+    本体再兜一层 try 以防被测试直接调用。
+    """
+    try:
+        if sid == DEFAULT_SID:
+            return None
+        st = _STRATEGY_STATES.get(sid)
+        if not st:
+            return None
+        now = session_registry.clock()
+        if st.get('state') in _TERMINAL_STATES:
+            ts = st.get('terminal_ts')
+            return None if ts is None else ts + RESULT_GRACE_SEC
+        proc = st.get('proc')
+        if proc is None:
+            return None
+        if proc.poll() is None:
+            return now + _RUN_ALIVE_HOLD_SEC
+        if 'proc_dead_ts' not in st:      # 幂等：首次观测到死亡的时刻（真死时刻）
+            st['proc_dead_ts'] = now
+        return st['proc_dead_ts'] + RESULT_GRACE_SEC
+    except Exception:
+        return None
+
+
+# 模块导入期注册一次（server.py 文件尾 import 本模块时执行，早于 start_scanner
+# —— 即使晚于也无碍，hook 只是查询点）。sessions 不反向 import 本模块，
+# strategy → sessions 单向依赖无环；覆盖式单 slot，重复导入幂等。挂在本模块的
+# 策略/极限 run（共用状态槽）因此钉住会话：run 存活期间 + 终态宽限窗内不被
+# TTL 逐出（睡眠唤醒/关页/跑完挂机等轮询中断场景兜底）。
+session_registry.register_alive_hook(_run_alive_hook)
 
 
 def _config_runs_dir() -> Path:
@@ -845,6 +901,10 @@ def _status_from_active(st: dict) -> dict:
     # 则「跑完后从未轮询」的内存态永远停在 running）。
     st['state'] = state
     if state in _TERMINAL_STATES:
+        if st.get('terminal_ts') is None:    # set-once：宽限窗锚定 run 结束时刻，
+            # 轮询续读不刷新（否则宽限窗被轮询无限续期）；优先 carry-over hook
+            # 在扫描期探测到的真死时刻（proc_dead_ts，无人轮询时远早于本刻）。
+            st['terminal_ts'] = st.get('proc_dead_ts') or session_registry.clock()
         _clear_marker(sid)
 
     result_json = (_read_json(Path(run_dir) / 'result.json')
@@ -924,6 +984,9 @@ async def _stop_common(req: Request, label: str):
         _kill_tree(pid)
         st['state'] = 'stopped'
         st['stopped'] = True
+        if st.get('terminal_ts') is None:    # 同 _status_from_active：set-once 记宽限窗锚点
+            # 树杀后 proc.poll() 可能短暂仍 None（proc_dead_ts 未及记），故取 or clock()。
+            st['terminal_ts'] = st.get('proc_dead_ts') or session_registry.clock()
         _clear_marker(sid)
         return {'stopped': True, 'pid': pid}
     marker = _read_marker(sid)

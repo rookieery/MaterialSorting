@@ -974,26 +974,173 @@ def test_orphan_scoped_per_sid_marker(dual_env, monkeypatch):
                  headers={'X-Session-Id': SID_A}).json()['state'] == 'idle'
 
 
-def test_expired_session_blocks_then_same_sid_recovers(dual_env, monkeypatch):
-    """会话过期 → 四路由 401 fail-fast（闸门先于 409）；墓碑 1h 过龄后同 sid 重建
-    → 内存态仍在（本进程未重启）→ status 继续 starting、stop 可清理（PRD「用户
-    过期后同 sid 回来仍能发现/清理自己的遗留 run」）。"""
+# --------------------------- run 存活钉住 + 终态宽限窗（会话 TTL 豁免，2026-08-30）
+
+def test_run_alive_pins_session_beyond_ttl(dual_env, monkeypatch):
+    """run 存活钉住：A 挂策略 run（进程活）→ 轮询中断（时钟推进远超 TTL）→ 扫描
+    只逐出无 run 的 B；A 的惰性路径同样豁免（status 200）—— 睡眠唤醒/关页场景
+    run 还在跑就会话不丢（结果不因换 sid 永久丢失）。"""
     clk = _FakeClock()
     monkeypatch.setattr(sessions_mod.registry, 'clock', clk)
+    _register_session(SID_A, 'docaaaa1')
+    _register_session(SID_B, 'docbbbb2')          # B：无 run 对照
+    _spawn_capture_multi(monkeypatch, pids=(1111,))
+    c = _client()
+    ha = {'X-Session-Id': SID_A}
+    assert c.post('/api/strategy/start', json={'mode': 'se', 'minutes': 10},
+                  headers=ha).status_code == 202
+    clk.advance(sessions_mod.registry.ttl_sec + 300)     # 轮询中断 > TTL + 5min
+    assert sessions_mod.registry.scan_once() == [SID_B]  # B 逐出、A 钉住
+    r = c.get('/api/strategy/status', headers=ha)        # 惰性路径同豁免
+    assert r.status_code == 200 and r.json()['state'] == 'starting'
+
+
+def test_run_dead_grace_window_then_evict(dual_env, monkeypatch):
+    """进程死 + 终态未固化（无人轮询）：宽限窗内不逐出、窗外逐出走墓碑；
+    ``proc_dead_ts`` 锚定 daemon 首次探测时刻（二次扫描不覆盖）。"""
+    clk = _FakeClock()
+    monkeypatch.setattr(sessions_mod.registry, 'clock', clk)
+    monkeypatch.setattr(strategy_mod, 'RESULT_GRACE_SEC', 60.0)
+    _register_session(SID_A, 'docaaaa1')
+    _spawn_capture_multi(monkeypatch, pids=(1111,))
+    c = _client()
+    ha = {'X-Session-Id': SID_A}
+    assert c.post('/api/strategy/start', json={'mode': 'se', 'minutes': 10},
+                  headers=ha).status_code == 202
+    strategy_mod._states(SID_A)['proc'] = FakeProc(pid=1111, rc=0)  # 死、终态未固化
+    clk.advance(sessions_mod.registry.ttl_sec + 10)
+    assert sessions_mod.registry.scan_once() == []          # 首问记 proc_dead_ts + 钉住
+    st = strategy_mod._states(SID_A)
+    dead_ts = st['proc_dead_ts']
+    assert dead_ts == clk.now
+    clk.advance(30.0)                                       # 仍 < proc_dead_ts + 60
+    assert sessions_mod.registry.scan_once() == []
+    assert st['proc_dead_ts'] == dead_ts                    # 幂等：不覆盖
+    clk.advance(40.0)                                       # 越过宽限窗
+    assert sessions_mod.registry.scan_once() == [SID_A]
+    assert sessions_mod.registry.tombstoned(SID_A)
+
+
+def test_terminal_state_grace_after_status_poll(dual_env, monkeypatch):
+    """done 固化记 terminal_ts（set-once）：TTL 超时但宽限窗内不逐出；轮询续读
+    不刷新 terminal_ts（宽限窗不被轮询无限续期）；窗外照旧逐出。"""
+    clk = _FakeClock()
+    monkeypatch.setattr(sessions_mod.registry, 'clock', clk)
+    monkeypatch.setattr(strategy_mod, 'RESULT_GRACE_SEC', 650.0)  # 须 > ttl(600) 才是决定性判据
+    _register_session(SID_A, 'docaaaa1')
+    _spawn_capture_multi(monkeypatch, pids=(1111,))
+    c = _client()
+    ha = {'X-Session-Id': SID_A}
+    assert c.post('/api/strategy/start', json={'mode': 'se', 'minutes': 10},
+                  headers=ha).status_code == 202
+    name = strategy_mod._states(SID_A)['run_name']
+    _write_run_dir(dual_env, name=f'{name}_20260830-100000')
+    st = strategy_mod._states(SID_A)
+    st['proc'] = FakeProc(pid=1111, rc=0)                  # 跑完退出
+    pa = c.get('/api/strategy/status', headers=ha).json()
+    assert pa['state'] == 'done'                           # 固化 + terminal_ts
+    terminal_ts = st['terminal_ts']
+    assert terminal_ts == clk.now
+    clk.advance(sessions_mod.registry.ttl_sec + 10)        # 挂机：TTL 超时、窗未过
+    assert sessions_mod.registry.scan_once() == []         # 宽限窗决定性钉住
+    pa2 = c.get('/api/strategy/status', headers=ha).json()  # 用户回来看结果（刷活性）
+    assert pa2['state'] == 'done'
+    assert st['terminal_ts'] == terminal_ts                # set-once：轮询不续期
+    clk.advance(sessions_mod.registry.ttl_sec + 10)        # 用户操作后 TTL 重起再超时
+    assert sessions_mod.registry.scan_once() == [SID_A]    # 且 hold 已过 → 逐出
+    assert sessions_mod.registry.tombstoned(SID_A)
+
+
+def test_stop_grace_window(dual_env, monkeypatch):
+    """stop（树杀置 stopped + 记 terminal_ts）：宽限窗内不逐出、窗外逐出。"""
+    clk = _FakeClock()
+    monkeypatch.setattr(sessions_mod.registry, 'clock', clk)
+    monkeypatch.setattr(strategy_mod, 'RESULT_GRACE_SEC', 650.0)
+    _register_session(SID_A, 'docaaaa1')
+    _spawn_capture_multi(monkeypatch, pids=(1111,))
+    monkeypatch.setattr(strategy_mod.subprocess, 'run', lambda cmd, **kw: None)
+    c = _client()
+    ha = {'X-Session-Id': SID_A}
+    assert c.post('/api/strategy/start', json={'mode': 'se', 'minutes': 10},
+                  headers=ha).status_code == 202
+    r = c.post('/api/strategy/stop', headers=ha)
+    assert r.status_code == 200 and r.json()['pid'] == 1111
+    assert strategy_mod._states(SID_A)['terminal_ts'] == clk.now
+    clk.advance(sessions_mod.registry.ttl_sec + 10)        # TTL 超时、窗（650）内
+    assert sessions_mod.registry.scan_once() == []
+    clk.advance(700.0)                                     # 越过宽限窗
+    assert sessions_mod.registry.scan_once() == [SID_A]
+    assert sessions_mod.registry.tombstoned(SID_A)
+
+
+def test_second_start_clears_stale_timestamps(dual_env, monkeypatch):
+    """一轮 done（terminal_ts 在场）→ 二跑 start 覆写状态槽：旧时间戳不残留
+    （宽限窗不继承一轮豁免），新 run 活着重新钉住。"""
+    clk = _FakeClock()
+    monkeypatch.setattr(sessions_mod.registry, 'clock', clk)
+    _register_session(SID_A, 'docaaaa1')
+    _spawn_capture_multi(monkeypatch, pids=(1111, 2222))
+    c = _client()
+    ha = {'X-Session-Id': SID_A}
+    assert c.post('/api/strategy/start', json={'mode': 'se', 'minutes': 10},
+                  headers=ha).status_code == 202
+    name = strategy_mod._states(SID_A)['run_name']
+    _write_run_dir(dual_env, name=f'{name}_20260830-100000')
+    st = strategy_mod._states(SID_A)
+    st['proc'] = FakeProc(pid=1111, rc=0)
+    assert c.get('/api/strategy/status', headers=ha).json()['state'] == 'done'
+    assert 'terminal_ts' in st
+    assert c.post('/api/strategy/start', json={'mode': 'se', 'minutes': 10},
+                  headers=ha).status_code == 202           # done → 允许二跑
+    assert 'terminal_ts' not in st and 'proc_dead_ts' not in st
+    clk.advance(sessions_mod.registry.ttl_sec + 300)       # 新 run（rc=None 存活）钉住
+    assert sessions_mod.registry.scan_once() == []
+
+
+def test_alive_hook_registered_and_defensive(dual_env, monkeypatch):
+    """import 接线守卫：单例 registry 的 hook 即 strategy._run_alive_hook（生产
+    路径必有钉住）；直调防御分支：未知 sid / default / 空槽 / 非终态无 proc 键
+    → 一律 None（宁可不钉）。"""
+    assert sessions_mod.registry._alive_hook is strategy_mod._run_alive_hook
+    assert strategy_mod._run_alive_hook('unknowns') is None
+    assert strategy_mod._run_alive_hook(sessions_mod.DEFAULT_SID) is None
+    st = strategy_mod._STRATEGY_STATES.setdefault('empty000', {})
+    try:
+        assert strategy_mod._run_alive_hook('empty000') is None      # 空槽
+        st.update({'state': 'starting'})
+        assert strategy_mod._run_alive_hook('empty000') is None      # 无 proc 键
+    finally:
+        strategy_mod._STRATEGY_STATES.pop('empty000', None)
+
+
+def test_expired_session_blocks_then_same_sid_recovers(dual_env, monkeypatch):
+    """（改写 2026-08-30）run 已死 + 宽限窗外过期 → 四路由 401 fail-fast（闸门
+    先于 409）；墓碑 1h 过龄后同 sid 重建 → 内存态仍在（status 报 error 终态）
+    → stop 走 orphan 清理（PRD「用户过期后同 sid 回来仍能发现/清理自己的遗留
+    run」）。原口径「TTL+1 即 401」在 run 存活钉住语义下不再成立（存活 run 钉住
+    会话），正面钉住行为由 test_run_alive_pins_session_beyond_ttl 锁定。"""
+    clk = _FakeClock()
+    monkeypatch.setattr(sessions_mod.registry, 'clock', clk)
+    monkeypatch.setattr(strategy_mod, 'RESULT_GRACE_SEC', 5.0)
     _register_session(SID_A, 'docaaaa1')
     _spawn_capture_multi(monkeypatch, pids=(1111,))
     kill_calls = []
     monkeypatch.setattr(strategy_mod.subprocess, 'run',
                         lambda cmd, **kw: kill_calls.append(list(cmd)))
+    monkeypatch.setattr(strategy_mod, '_pid_alive', lambda pid: False)
     c = _client()
     ha = {'X-Session-Id': SID_A}
     assert c.post('/api/strategy/start', json={'mode': 'se', 'minutes': 10},
                   headers=ha).status_code == 202
     assert strategy_mod._read_marker(SID_A)['pid'] == 1111
+    strategy_mod._states(SID_A)['proc'] = FakeProc(pid=1111, rc=1)  # 进程死
 
-    # 过期（惰性逐出为墓碑）：四路由全部 401（start 的 401 证明闸门先于 409 ——
-    # 此刻内存态 starting 本会 409）。
+    # TTL 超时 → daemon 扫描首问记 proc_dead_ts（此刻仍被宽限窗钉住）→ 越过
+    # 宽限窗后逐出：四路由全部 401（start 的 401 证明闸门先于 409 —— 此刻内存
+    # 态 starting 本会 409）。
     clk.advance(sessions_mod.registry.ttl_sec + 1)
+    assert sessions_mod.registry.scan_once() == []          # 宽限窗内：daemon 钉住
+    clk.advance(strategy_mod.RESULT_GRACE_SEC + 1)          # 越过宽限窗
     assert c.get('/api/strategy/status', headers=ha).status_code == 401
     assert c.post('/api/strategy/start', json={'mode': 'se', 'minutes': 10},
                   headers=ha).status_code == 401
@@ -1001,15 +1148,16 @@ def test_expired_session_blocks_then_same_sid_recovers(dual_env, monkeypatch):
     assert c.get('/api/strategy/result', headers=ha).status_code == 401
 
     # 墓碑 1h 过龄 → 同 sid 可重建（POST /api/session）；策略状态槽未随会话逐出
-    # 清理 → status 直接回到 starting（内存态优先于 marker 的 orphan 路径），
-    # stop 清理成功。
+    # 清理 → 内存态仍 starting → stop 直接杀 pid + 清 marker（原意图：用户过期后
+    # 同 sid 回来仍能清理自己的遗留 run）；终态留存续读（status 报 stopped）。
     clk.advance(sessions_mod.registry.tombstone_ttl_sec + 1)
     assert c.post('/api/session', headers=ha).status_code == 200
-    pa = c.get('/api/strategy/status', headers=ha).json()
-    assert pa['state'] == 'starting'
     r = c.post('/api/strategy/stop', headers=ha)
     assert r.status_code == 200 and r.json()['pid'] == 1111
+    assert kill_calls                                 # 真调了树杀（subprocess.run）
     assert strategy_mod._read_marker(SID_A) is None
+    pa = c.get('/api/strategy/status', headers=ha).json()
+    assert pa['state'] == 'stopped'
 
 
 # ------------------------------------------------------------- 守卫 / 冒烟

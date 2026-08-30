@@ -123,7 +123,11 @@ class SessionState:
       ``runtime._PIECES_STATE`` **同一对象**；非 default 会话由 commit（US-002）填
       per-doc 快照，注册期先置空 dict（未 commit 前无数据，不与 default 共享）。
     - ``doc_id``：commit 落盘母版 id（US-002 写入；US-006 磁盘清理保护集消费）。
-    - ``strategy_busy``：策略长跑状态位（US-004 会话化时启用，占位 False）。
+
+    长跑豁免不经由 SessionState 字段：strategy/extreme run 挂在会话上时的 TTL
+    豁免（run 存活钉住 + 终态宽限窗）由 registry 的 alive hook（strategy.py 注册，
+    见 ``register_alive_hook``）在 TTL 命中时询问 —— 单一真相，避免字段与 hook
+    两套口径。
     """
 
     sid: str
@@ -131,7 +135,6 @@ class SessionState:
     doc_id: str | None = None
     last_active: float = 0.0
     ws_open: int = 0
-    strategy_busy: bool = False
 
     @property
     def pieces(self) -> list:
@@ -166,6 +169,7 @@ class SessionRegistry:
         self.clock = clock or time.time
         self._sessions: OrderedDict[str, SessionState] = OrderedDict()
         self._tombstones: deque = deque(maxlen=self.tombstone_max)
+        self._alive_hook: Callable[[str], float | None] | None = None  # run 存活豁免（strategy.py 注册）
         self._lock = threading.Lock()      # 结构性变更（建/逐出/墓碑）串行化
         self._scan_stop = threading.Event()
         self._scan_thread: threading.Thread | None = None
@@ -220,6 +224,22 @@ class SessionRegistry:
         st = self._sessions.get(sid or DEFAULT_SID)
         if st is not None:
             st.last_active = self.clock()
+
+    def register_alive_hook(self, hook: Callable[[str], float | None]) \
+            -> Callable[[str], float | None] | None:
+        """注册「run 存活豁免」钩子（单 slot 覆盖式；返回旧 hook 便于测试恢复）。
+
+        hook 契约：``fn(sid) -> hold_until | None`` —— 返回豁免直到的时间戳；
+        None / 异常 = 无豁免按普通 TTL。在持 ``self._lock`` 上下文内被调
+        （resolve 请求线程 / scan_once daemon 线程）—— 只允许纯内存 dict 读写 +
+        非阻塞探测（如 ``Popen.poll()``），禁止文件 IO / 锁获取 / 长计算；异常由
+        调用方（``_pinned_by_hook``）吞掉按 None 处理。default 会话豁免一切，
+        永不被询问。生产方 = strategy.py（策略/极限 run 存活钉住 + 终态宽限窗）；
+        ``reset()`` 不清 hook（进程级接线，非会话状态）。
+        """
+        old = self._alive_hook
+        self._alive_hook = hook
+        return old
 
     def ws_acquire(self, sid: str | None) -> SessionState:
         """WS 连接钉住会话：resolve 语义（过期/墓碑/非法同抛）+ ``ws_open += 1``。"""
@@ -335,7 +355,24 @@ class SessionRegistry:
         return sum(1 for s in self._sessions if s != DEFAULT_SID)
 
     def _is_expired(self, st: SessionState, now: float) -> bool:
-        return st.ws_open <= 0 and (now - st.last_active) > self.ttl_sec
+        """过期判定：WS 钉住 / TTL 未超 / alive hook 豁免（run 存活钉住 + 终态
+        宽限窗）任一命中即不过期。hook 只在本来就要过期时才被问 —— 新鲜会话零开销。"""
+        if st.ws_open > 0:
+            return False
+        if (now - st.last_active) <= self.ttl_sec:
+            return False
+        return not self._pinned_by_hook(st.sid, now)
+
+    def _pinned_by_hook(self, sid: str, now: float) -> bool:
+        """run 存活钉住：hook 给出 ``hold_until > now`` 即豁免本次逐出（异常当 None）。"""
+        hook = self._alive_hook
+        if hook is None:
+            return False
+        try:
+            hold_until = hook(sid)
+        except Exception:
+            return False
+        return hold_until is not None and now < hold_until
 
     def _evict_locked(self, sid: str, now: float) -> None:
         """逐出：丢 SessionState 全部状态（含 pieces 快照内存负载），只留墓碑。"""
@@ -421,6 +458,19 @@ def _smoke() -> int:
           and evicted == ['aaaa1111'])
     reg.ws_release('cccc3333')
     check('ws_open 归零后扫描逐出 c', reg.scan_once(clk.now) == ['cccc3333'])
+
+    # alive hook：run 存活豁免（hold 在未来 → 超时也不逐出；hold 已过 → 照旧逐出走墓碑）
+    reg.resolve('dddd4444', create=True)
+    hold_until = clk.now + 700.0          # 固定时间戳（闭包捕获；滚动式 hold 永不失效）
+    old_hook = reg.register_alive_hook(
+        lambda sid: hold_until if sid == 'dddd4444' else None)
+    clk.advance(600.0)             # d 龄 600 远超 ttl，但 hook hold 在未来
+    check('alive hook hold 在未来：扫描不逐出 d',
+          reg.scan_once(clk.now) == [] and reg.peek('dddd4444') is not None)
+    clk.advance(101.0)             # 越过 hold_until（now >= hold_until 即失效）
+    check('alive hook hold 已过：逐出 d 且照旧走墓碑',
+          reg.scan_once(clk.now) == ['dddd4444'] and reg.tombstoned('dddd4444'))
+    reg.register_alive_hook(old_hook)
 
     clk.advance(3601.0)            # 墓碑全部超 1h 龄 → 清除
     st_b = reg.resolve('bbbb2222', create=True)

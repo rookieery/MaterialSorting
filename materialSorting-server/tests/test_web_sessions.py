@@ -9,7 +9,9 @@
 5. sid 格式非法 → 400 {error:'sid 非法'}；
 6. default 会话 state 与 ``runtime._PIECES_STATE`` 同一 dict 对象（is 锁死）+ 豁免
    上限/过期/墓碑；
-7. sessions 模块仅标准库 + 同包依赖、不 import server（分层无环，AST 守卫）。
+7. alive hook（run 存活豁免，strategy.py 注册）：hold 在未来不逐出 / 已过照旧走
+   墓碑 / 异常当 None / TTL 内与 default 零调用 / reset 不清；
+8. sessions 模块仅标准库 + 同包依赖、不 import server（分层无环，AST 守卫）。
 
 会话路由不读写磁盘（TTL/墓碑全内存），天然与 out/ 数据隔离，无需 MS_OUT_DIR。
 """
@@ -230,6 +232,97 @@ def test_scanner_thread_evicts_over_interval(monkeypatch):
         assert reg.tombstoned('threadsaa')
     finally:
         reg.stop_scanner()
+
+
+# ------------------------------------------------ AC4b alive hook（run 存活豁免）
+
+def _private_registry(clk: _FakeClock) -> sessions.SessionRegistry:
+    """隔离的私有注册表（不动单例 registry 与其生产 hook，测试完即弃）。"""
+    return sessions.SessionRegistry(ttl_sec=5.0, tombstone_ttl_sec=3600.0, clock=clk)
+
+
+def test_alive_hook_future_hold_prevents_expiry():
+    """hold 在未来（滚动式 = run 存活钉住形态）→ 惰性/扫描两路径都不逐出。"""
+    clk = _FakeClock()
+    reg = _private_registry(clk)
+    reg.resolve('run1aaaa', create=True)
+    reg.register_alive_hook(lambda sid: clk.now + 100.0 if sid == 'run1aaaa' else None)
+    clk.advance(reg.ttl_sec + 10)
+    assert reg.scan_once() == []                      # 扫描路径：TTL 超时但被钉住
+    assert reg.peek('run1aaaa') is not None
+    assert reg.resolve('run1aaaa').sid == 'run1aaaa'  # 惰性路径同豁免（且刷活性）
+
+
+def test_alive_hook_past_hold_evicts_with_tombstone():
+    """hold 已过（宽限窗外）→ 照旧逐出走墓碑（run 豁免不改变过期本质）。"""
+    clk = _FakeClock()
+    reg = _private_registry(clk)
+    reg.resolve('run2aaaa', create=True)
+    hold_until = clk.now + 50.0                       # 固定时间戳（闭包捕获；滚动式永不失效）
+    reg.register_alive_hook(lambda sid: hold_until if sid == 'run2aaaa' else None)
+    clk.advance(reg.ttl_sec + 10)
+    assert reg.scan_once() == []                      # 窗内：不逐出
+    clk.advance(100.0)                                # 越过 hold_until
+    with pytest.raises(sessions.SessionExpiredError):
+        reg.resolve('run2aaaa')
+    assert reg.tombstoned('run2aaaa')
+
+
+def test_alive_hook_exception_treated_as_none():
+    """hook 抛异常 → 按 None 处理照常逐出，不向 resolve/scan_once 调用方泄漏。"""
+    clk = _FakeClock()
+    reg = _private_registry(clk)
+
+    def _boom(sid):
+        raise RuntimeError('hook 崩了')
+
+    reg.resolve('run3aaaa', create=True)
+    reg.register_alive_hook(_boom)
+    clk.advance(reg.ttl_sec + 1)
+    with pytest.raises(sessions.SessionExpiredError):
+        reg.resolve('run3aaaa')
+    assert reg.tombstoned('run3aaaa')
+
+
+def test_alive_hook_none_no_exemption():
+    """hook 显式返 None = 无豁免（纯 TTL 语义回归基准）。"""
+    clk = _FakeClock()
+    reg = _private_registry(clk)
+    reg.resolve('run4aaaa', create=True)
+    reg.register_alive_hook(lambda sid: None)
+    clk.advance(reg.ttl_sec + 1)
+    assert reg.scan_once() == ['run4aaaa']
+
+
+def test_alive_hook_skipped_when_fresh_or_default():
+    """hook 只在「本来就要过期」时才被问：TTL 内 / default 会话零调用（零开销）。"""
+    clk = _FakeClock()
+    reg = _private_registry(clk)
+    calls: list[str] = []
+
+    def _rec(sid):
+        calls.append(sid)
+        return None
+
+    reg.resolve('run5aaaa', create=True)
+    reg.register_alive_hook(_rec)
+    reg.resolve('run5aaaa')                # TTL 内刷新活性 → hook 不触发
+    reg.resolve(None)                      # default 会话 → 不触发
+    reg.scan_once(clk.now)                 # TTL 未超 + default 跳过 → 不触发
+    assert calls == []
+    clk.advance(reg.ttl_sec + 1)
+    reg.scan_once(clk.now)                 # 超时 → hook 被问且返 None → 逐出
+    assert calls == ['run5aaaa']
+    assert reg.tombstoned('run5aaaa')
+
+
+def test_alive_hook_survives_reset():
+    """reset() 清会话/墓碑但不清 hook（进程级接线，非会话状态）。"""
+    clk = _FakeClock()
+    reg = _private_registry(clk)
+    reg.register_alive_hook(lambda sid: None)
+    reg.reset()
+    assert reg._alive_hook is not None
 
 
 # ---------------------------------------------------------------- AC5 sid 格式
