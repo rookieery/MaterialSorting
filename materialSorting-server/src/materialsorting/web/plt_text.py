@@ -1,16 +1,29 @@
-"""PLT 矢量文本引擎：捆绑 OFL 中文字体 → 轮廓展平 → 世界 mm 折线（2026-08-30）。
+"""PLT 矢量文本引擎：单线矢量字（默认）+ 捆绑 OFL 中文轮廓字回退（2026-08-30）。
 
 唛架信息表格（plt_table.py）的中文/ASCII 文字来源。PLT 全程无 LB 文字指令
-（设备兼容口径，export_plt.py 同款），文字 = 字形轮廓的 PU/PD 闭合折线 ——
-与 2026-08-24 起「尺码*数量」标注的矢量笔画同思路，但字库不再手写 11 个字形，
-而是从捆绑字体提取任意字符轮廓（用户手输的排料师/备注可为任意汉字）。
+（设备兼容口径，export_plt.py 同款），文字 = PU/PD 笔画 —— 与 2026-08-24 起
+「尺码*数量」标注的矢量笔画同思路，但字库不再手写 11 个字形，而是捆绑完整
+字库（用户手输的排料师/备注可为任意字符）。
 
-字体（2026-08-30 定案：仓库捆绑完整 OFL 字体）：Noto Sans SC Regular
-（SubsetOTF/SC，~8.3MB，OFL 1.1 许可随包分发，resources/fonts/）。此前评估过
-「子集 + 运行时系统字体回退」与「纯运行时发现链」均否决 —— Ubuntu 服务器是否
-装中文字体不可控（PNG 导出依赖系统 YaHei 的教训），捆绑保证任何汉字 100% 可
-渲染、本机/服务器行为一致。路径经 paths.PLT_FONT_PATH（环境变量 MS_FONT_DIR
-可覆盖）。fontTools 为 ezdxf 既有依赖，本次起 pyproject 显式声明。
+**单线矢量字（v5 2026-08-30，对拍生产件观感）**：生产 PLT（ET2008 等）文字为
+一笔单线字（非轮廓空心）。为「字体尽可能与生产文件一致」，表格文字默认走
+单线渲染：
+
+- **汉字**：`hanzi_medians.txt`（9575 字，Make Me a Hanzi / hanzi-writer-data
+  2.0.1 的笔画中线 medians，em=1024 网格、Arphic 公共许可证随包分发）。
+  原始中线含笔画粗度外溢（全库 y∈[139,1120]），加载时仿射归一到 0.06..0.94em
+  标准排印盒（混排时汉字与 ASCII 基线关系正常）。
+- **ASCII**：`hershey_rowmans.txt`（Hershey Roman Simplex 92 字符，生产 PLT
+  ASCII 同款经典刻字体，Usenet Hershey 许可随数据附致谢文件）。构建时已把
+  y 平移到基线=0、em=cap/0.70（大写字高 0.7em 排印惯例）。
+- 文本先 NFKC 归一（全角字母数字/标点 → 半角，CJK 兼容汉字 → 典型形），残余
+  个别全角符号（—·等）显式映射；两库都未覆盖的字符（生僻符号）回退 Noto
+  轮廓并 warning（每字符每进程一条，不刷屏）。
+
+**Noto Sans SC Regular 轮廓回退**（SubsetOTF/SC，~8.3MB，OFL 1.1 随包分发）：
+单线字资源缺失（安装不全）或字符未覆盖时的兜底，任何汉字 100% 可渲染、
+本机/服务器行为一致。路径经 paths.PLT_FONT_PATH（环境变量 MS_FONT_DIR
+可覆盖）。fontTools 为 ezdxf 既有依赖，显式声明于 pyproject。
 
 轮廓展平：继承 fontTools BasePen（**不要** RecordingPen 手排 —— 预研踩坑：
 '0' 等 TrueType 字形首点是隐含 on-curve、closePath 早于 moveTo 的顺序问题，
@@ -22,9 +35,10 @@ CFF 三次（curveTo）与 TrueType 二次（qCurveTo）双路支持：De Castel
 任意方向文字 = (u, w) 二维基变换（复用 export_plt._grain_annotation_strokes
 已验证机制，2026-08-24 手性 bug 后定稿口径）：u = 书写方向单位向量、
 w = 字顶方向，**(u, w) 必须右手系**（det(u,w) > 0，否则字形镜像 —— text_strokes
-直接 raise 防御，勿改成静默容忍）。字形点 (px, py)（字体单位，基线 y=0、
-字顶 y>0）→ world = origin + (gx + px·s)·u + (py·s)·w（gx = 已累积 advance mm、
-s = 字高/upm）。
+直接 raise 防御，勿改成静默容忍）。字形点 (px, py)（em 单位、基线 y=0、
+字顶 y>0）→ world = origin + (gx + px·s)·u + (py·s)·w（gx = 已累积 advance、
+s = 字高/EM）。text_strokes 返回 ``[(closed, points)]``：单线笔画开放
+（closed=False），轮廓回退闭合（closed=True）。
 
 缺字处理（宁可见勿静默）：cmap 未命中（生僻字/emoji）→ 画空心豆腐框占位
 （0.1em..0.9em × 0..0.8em）+ logging.warning —— 裁剪车间里错漏信息比缺字
@@ -35,6 +49,7 @@ from __future__ import annotations
 import logging
 import math
 import os
+import unicodedata
 from dataclasses import dataclass
 from functools import lru_cache
 
@@ -217,23 +232,142 @@ def _upm(path: str | None) -> int:
     return load_font(path)['head'].unitsPerEm
 
 
+# ===================== 单线矢量字（v5 2026-08-30，默认渲染路径）=====================
+# 统一 em 网格：汉字 medians 原生 1024，Hershey 原始单位按头行 em 缩放到同网格
+_STROKE_EM = 1024.0
+
+# MMaH medians 全库笔画中心线 y（翻转向上后）范围 —— 含笔画粗度外溢，超出
+# 名义 em；仿射归一到标准 CJK 排印盒 [0.06, 0.94]em（汉字与 ASCII 混排时基线
+# 关系正常，对齐常见中文字体的版面位置）
+_HZ_BODY_LO, _HZ_BODY_HI = 139.0, 1120.0
+_HZ_BOX_LO_EM, _HZ_BOX_HI_EM = 0.06, 0.94
+
+# NFKC 后仍残留的全角/异形符号 → Hershey 可画的 ASCII（数据侧实测残留集；
+# '，：；！？' 等 fullwidth form NFKC 自会转换，'。、' 是表意标点不转 → 显式映射）
+_SYMBOL_MAP = {'—': '-', '‐': '-', '−': '-', '·': '.', '・': '.',
+               '。': '.', '、': ','}
+
+
+@dataclass(frozen=True)
+class StrokeGlyph:
+    """单线字形：开放笔画折线（em 单位、基线 y=0、字顶 y>0）+ advance（em）。"""
+
+    strokes: tuple[tuple[tuple[float, float], ...], ...]
+    advance: float
+
+
+def _parse_hanzi_line(a: float, b: float, body: str) -> StrokeGlyph:
+    strokes = []
+    for sp in body.split(';'):
+        pts = []
+        for pt in sp.split(' '):
+            x, y = pt.split(',')
+            pts.append((float(x), a * float(y) + b))
+        strokes.append(tuple(pts))
+    return StrokeGlyph(strokes=tuple(strokes), advance=_STROKE_EM)
+
+
+@lru_cache(maxsize=1)
+def load_stroke_font() -> tuple[dict, dict]:
+    """→ ``(hanzi, ascii)`` 两张 char→StrokeGlyph 表（em=_STROKE_EM 统一网格）。
+
+    资源缺失（安装不全）→ 空表 + warning，调用方回退 Noto 轮廓 —— 单线字是
+    风格增强而非功能底线，缺文件不该硬炸导出（与捆绑 otf 的 fail-fast 口径
+    不同，otf 缺失时轮廓路径也不可用）。
+    """
+    hanzi: dict[str, StrokeGlyph] = {}
+    ascii_: dict[str, StrokeGlyph] = {}
+    hz_path = os.path.join(paths.FONT_DIR, 'hanzi_medians.txt')
+    if os.path.exists(hz_path):
+        span = _HZ_BODY_HI - _HZ_BODY_LO
+        a = (_HZ_BOX_HI_EM - _HZ_BOX_LO_EM) * _STROKE_EM / span
+        b = _HZ_BOX_LO_EM * _STROKE_EM - _HZ_BODY_LO * a
+        with open(hz_path, encoding='utf-8') as f:
+            for ln in f:
+                if ln.startswith('#') or '\t' not in ln:
+                    continue
+                ch, body = ln.rstrip('\n').split('\t', 1)
+                hanzi[ch] = _parse_hanzi_line(a, b, body)
+    asc_path = os.path.join(paths.FONT_DIR, 'hershey_rowmans.txt')
+    if os.path.exists(asc_path):
+        em_units = 1.0
+        with open(asc_path, encoding='utf-8') as f:
+            for ln in f:
+                ln = ln.rstrip('\n')
+                if ln.startswith('#EM'):
+                    em_units = float(ln.split()[1])
+                    k = _STROKE_EM / em_units
+                    continue
+                if not ln or '\t' not in ln:
+                    continue
+                ch, adv, body = ln.split('\t', 2)
+                # 空格等无笔画字符 body 为空；双空格/尾随空格防御性滤掉空 token
+                strokes = tuple(
+                    tuple((float(x) * k, float(y) * k)
+                          for x, y in (tok.split(',') for tok in sp.split(' ') if tok))
+                    for sp in body.split(';') if sp)
+                ascii_[ch] = StrokeGlyph(strokes=strokes, advance=float(adv) * k)
+        # JHF 的 y 自字顶向下增长（y=0 = cap 顶，'H' 竖笔底端 = 基线），统一翻成
+        # 基线=0、y 向上 —— 否则 ASCII 逐字垂直镜像（'L' 横画跑到字顶、'7' 横画
+        # 在底下），与汉字/表格 w=字顶朝向约定相反。基线取 'H' 竖笔最深 y。
+        if ascii_:
+            h_glyph = ascii_.get('H')
+            base = (max(y for sp in h_glyph.strokes for _x, y in sp)
+                    if h_glyph else 0.64 * _STROKE_EM)
+            ascii_ = {
+                ch: StrokeGlyph(
+                    strokes=tuple(tuple((x, base - y) for x, y in sp)
+                                  for sp in sg.strokes),
+                    advance=sg.advance)
+                for ch, sg in ascii_.items()
+            }
+    if not hanzi or not ascii_:
+        logging.warning('PLT 单线字资源缺失（resources/fonts/ 的 hanzi_medians.'
+                        'txt / hershey_rowmans.txt）—— 表格文字回退 Noto 轮廓字体')
+    return hanzi, ascii_
+
+
+def normalize_text(text: str) -> str:
+    """NFKC 归一 + 残留符号映射（全角→半角、CJK 兼容形→典型形、—·→ASCII）。
+
+    单线字两库只收典型形与 ASCII；归一在 text_width / text_strokes 入口统一做，
+    保证测量与渲染看到同一字符串。
+    """
+    text = unicodedata.normalize('NFKC', text)
+    return ''.join(_SYMBOL_MAP.get(ch, ch) for ch in text)
+
+
+_outline_fallback_warned: set[str] = set()
+
+
+def _advance_em(ch: str, path: str | None) -> float:
+    """单字符 advance（em=_STROKE_EM 网格）：单线两库优先，Noto 换算兜底。"""
+    hanzi, ascii_ = load_stroke_font()
+    sg = hanzi.get(ch) or ascii_.get(ch)
+    if sg is not None:
+        return sg.advance
+    return glyph(ch, path).advance / _upm(path) * _STROKE_EM
+
+
 def text_width(text: str, char_h_mm: float, path: str | None = None) -> float:
-    """文本宽度（mm）= advance 累加 ×（字高/upm）。advance 线性随字高缩放，
-    shrink-to-fit 单遍测量即可（无需迭代）。"""
+    """文本宽度（mm）= advance 累加 ×（字高/em）。advance 线性随字高缩放，
+    shrink-to-fit 单遍测量即可（无需迭代）。单线字优先（汉字 1em、Hershey 按
+    字符比例宽），Noto 轮廓换算兜底。"""
     if not text:
         return 0.0
-    upm = _upm(path)
-    adv_units = sum(glyph(ch, path).advance for ch in text)
-    return adv_units / upm * char_h_mm
+    text = normalize_text(text)
+    total_em = math.fsum(_advance_em(ch, path) for ch in text)
+    return total_em / _STROKE_EM * char_h_mm
 
 
 def text_strokes(text: str, *, origin: tuple[float, float],
                  u: tuple[float, float], w: tuple[float, float],
                  char_h_mm: float, fit_width_mm: float | None = None,
                  min_char_h_mm: float = 9.0,
-                 path: str | None = None) -> list[list[tuple[float, float]]]:
-    """文本 → 世界 mm 折线列表（每条 = 一条闭合字形轮廓，末点不重复首点，
-    由调用方以 closed=True 交 _plt_polyline 物理闭合）。
+                 path: str | None = None) -> list[tuple[bool, list[tuple[float, float]]]]:
+    """文本 → 世界 mm 折线 ``[(closed, points)]``：单线字笔画开放
+    （closed=False，一笔中线）、Noto 轮廓回退闭合（closed=True，由调用方交
+    _plt_polyline(closed=True) 物理闭合）。
 
     origin: 基线起点（世界 mm）；u: 书写方向单位向量；w: 字顶方向单位向量
     （(u,w) 必须右手系 det(u,w)>0，左手系 = 镜像字形，直接 raise）。
@@ -241,6 +375,7 @@ def text_strokes(text: str, *, origin: tuple[float, float],
     char_h_eff = max(min_char_h_mm, char_h×fit/实测宽)（只缩不放）；到下限仍
     超宽按 advance 从尾部截断字符（可见截断，绝不静默换行/丢中段）。
     """
+    text = normalize_text(text)
     if not text:
         return []
     ul = math.hypot(*u)
@@ -265,15 +400,31 @@ def text_strokes(text: str, *, origin: tuple[float, float],
                        and text_width(body, char_h_eff, path) > fit_width_mm):
                     body = body[:-1]
 
-    upm = _upm(path)
-    s = char_h_eff / upm
-    strokes: list[list[tuple[float, float]]] = []
+    hanzi, ascii_ = load_stroke_font()
+    s = char_h_eff / _STROKE_EM
+    s_noto = char_h_eff / _upm(path)      # Noto 字体单位 → mm
+    strokes: list[tuple[bool, list[tuple[float, float]]]] = []
     gx = 0.0
     for ch in body:
+        sg = hanzi.get(ch) or ascii_.get(ch)
+        if sg is not None:
+            for poly in sg.strokes:
+                strokes.append((False, [
+                    (origin[0] + (gx + px * s) * ux + (py * s) * wx,
+                     origin[1] + (gx + px * s) * uy + (py * s) * wy)
+                    for px, py in poly]))
+            gx += sg.advance * s
+            continue
+        # 单线两库未覆盖（生僻符号/未收录字）→ Noto 轮廓兜底 + 每字符一次 warning
+        if ch not in _outline_fallback_warned:
+            _outline_fallback_warned.add(ch)
+            logging.warning('PLT 信息表格：字符 %r (U+%04X) 不在单线字库中，'
+                            '以 Noto 轮廓渲染（与单线风格混排）', ch, ord(ch))
         g = glyph(ch, path)
         for contour in g.contours:
-            strokes.append([(origin[0] + (gx + px * s) * ux + (py * s) * wx,
-                             origin[1] + (gx + px * s) * uy + (py * s) * wy)
-                            for px, py in contour])
-        gx += g.advance * s
+            strokes.append((True, [
+                (origin[0] + (gx + px * s_noto) * ux + (py * s_noto) * wx,
+                 origin[1] + (gx + px * s_noto) * uy + (py * s_noto) * wy)
+                for px, py in contour]))
+        gx += g.advance * s_noto
     return strokes

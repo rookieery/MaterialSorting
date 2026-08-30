@@ -31,8 +31,11 @@ ms-lns = "materialsorting.cli.lns:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-# 捆绑 OFL 中文字体（PLT 唛架信息表格矢量文字，2026-08-30）—— 服务器/本机同源
-materialsorting = ["resources/fonts/*.otf", "resources/fonts/OFL.txt"]
+# 捆绑字体资源（PLT 唛架信息表格矢量文字，2026-08-30）：OFL 轮廓回退字体 +
+# 单线矢量字数据（hanzi_medians / hershey_rowmans，2026-08-30 v5）—— 服务器/
+# 本机同源
+materialsorting = ["resources/fonts/*.otf", "resources/fonts/*.txt",
+                   "resources/fonts/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

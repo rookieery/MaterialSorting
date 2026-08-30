@@ -1,34 +1,39 @@
-"""PLT 唛架信息表格（2026-08-30 v3：旋转 90° 生产同款版式）。
+"""PLT 唛架信息表格（2026-08-30 v5：单线字体 + 共线边框 + 3cm 起始 + 单元格居中）。
 
-对齐生产环境 PLT（data/PC-20250508NJIF_noname_28150251.plt 逆向实测，
-2026-08-30 用户图1/图2 对拍定稿；v2 横排版被否，根因 = 文字方向与行堆叠
-轴向都与生产相反）：
+对齐用户 2026-08-30 定稿口径（v4 结构保留，v5 细节四项）：
 
-- **位置**：排料图**外围**——表格区从唛架末端 width_mm + TABLE_GAP_MM 起，
+- **位置**：排料图**外围**——表格区左缘 = 唛架末端 width_mm + TABLE_GAP_MM
+  （v5 = 0：**表格外框左缘与唛架右边框共用一条线**，中间空隙移除，用户定案），
   **不在唛架边框内、不占排料区、不计入用料**（切割时布上没有这块，只在 PLT
-  图纸上展示；PS 纸长仍覆盖表格区防止被 WT 裁掉）。生产实测内容末端→表格
-  起画 ~55mm，这里取 20mm（v2 已定案不动）。
-- **版式（v3 核心）**：**文字旋转 90°**——基线沿世界 +y（门幅方向）、字顶朝
-  世界 −x（朝向唛架），基 ``u=(0,1), w=(-1,0)``（右手系 det=+1，直接过
-  plt_text 防镜像守卫，无需 v2 的 post-flip）。生产排料软件视图里该方向即
-  水平可读（其视图 = 切割视图逆时针旋 90°，x 竖直）；**14 行沿 +x 逐行堆叠**
-  （生产视图里 = 自下而上一行一字段的竖排条），行间沿线分隔线。
-- **行序**：row0 = 方案名称（最靠唛架，生产同款独立大字块，字高
-  PLAN_CHAR_H_MM）→ row13 = 备注（最远端），与用户「从最下面往上 1..14」
-  编号及生产文件 x 序（大字方案块→标签区）双对拍一致。
-- **行距/字高**：生产实测标签字高 ~14-18mm、行距 ~18-25mm、大字方案块
-  ~55-60mm 行带；取 12mm/24mm（用户嫌 v1 的 18mm 偏大）+ 方案名称 36mm/55mm。
-  行沿 x 堆叠 ⇒ 表格宽度与门幅无关；门幅只约束文字长度方向（可用长 =
-  gate − 2×TABLE_TEXT_Y0_MM，超长 shrink 到 7mm 下限后尾部截断）。
-- **外框**：单个闭合矩形 [x0, x0+W]×[0, gate]（生产表格笔画贴满整幅门幅）
-  + 13 条行间分隔线（沿 y 贯穿，生产/用户截图均可见行分隔细线）。
+  图纸上展示；PS 纸长仍覆盖表格区防止被 WT 裁掉）。
+- **起始位置**（v5）：从唛架**右下顶点**（世界 (width_mm, 0)，用户软件视图
+  的右下角）**垂直向上 3cm** —— 列 0（方案名称）自 y=TABLE_Y_START_MM=30mm
+  起沿 +y 排开，不再贴 y=0 布边。
+- **版式（v4 核心）**：**key 行 + value 行的两行网格**（对标前端「裁片设置」
+  表格：第一行 key、第二行 value、行列分隔线、外框）。**文字旋转 90°**——
+  基线沿世界 +y（门幅方向）、字顶朝世界 −x（朝向唛架），基
+  ``u=(0,1), w=(-1,0)``（右手系 det=+1，直接过 plt_text 防镜像守卫）。
+  生产排料软件视图（= 切割视图逆时针旋 90°，x 竖直）里该表格呈现为正常
+  水平可读的两行表：**key 行在上、value 行在下**（世界 −x 侧 = 视图上方 ⇒
+  key 行带最靠唛架），14 字段自下向上 = 世界 +y 顺序排列。
+- **字段 = 列**：14 个字段各占一列，**列宽自适应**
+  = max(key 宽, value 宽) + 2×CELL_PAD_MM（v5 内衬 3→10mm：单元格内容
+  **居中**且离左右边至少 1cm，用户定案）。
+- **字体（v5）**：单线矢量字（plt_text 默认路径：汉字笔画中线 + Hershey
+  Roman Simplex ASCII），对拍生产件一笔单线观感；未覆盖字符 Noto 轮廓回退。
+- **表长自适应**（用户定案：不需要和幅宽等长）：外框
+  [x0, x0+W]×[Y_START, Y_START+L]，L = Σ列宽 ≤ gate − EDGE − Y_START；
+  超限先全表缩字高（12→7mm 下限）再等比压列宽（单元格内 shrink+尾截断
+  兜底），窄门幅记 warning。
+- **字高统一**：全部字段（含方案名称）TABLE_CHAR_H_MM=12mm——v3 的方案
+  名称 36mm 大字被用户否决（「应该和其它字段字体保持一样大」）。
 
-14 字段（row0→row13）与来源：
+14 字段（列 0→列 13）与来源：
 
 =====  ============= ==================================================
-行     标签           来源
+列     标签           来源
 =====  ============= ==================================================
- 0     方案名称       勾选尺码计算（见下；生产 = 独立大字块）
+ 0     方案名称       勾选尺码计算（见下）
  1     床次           手输（默认 A料）
  2     经纱缩水       手输（默认 0.0%）
  3     纬纱缩水       手输（默认 0.0%）
@@ -65,27 +70,25 @@ from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
 
-from .plt_text import text_strokes
+from .plt_text import text_strokes, text_width
 
 
 class TablePayloadError(ValueError):
     """/export payload ``table`` 段非法（路由层转 400 结构化错误）。"""
 
 
-# ===================== 几何常量（v3 旋转 90° 生产同款版式）=====================
-TABLE_GAP_MM = 20.0        # 唛架末端 width_mm → 表格区左缘（世界 +x）
-TABLE_PAD_X_MM = 10.0      # 外框 → row0 文字带
-PLAN_CHAR_H_MM = 36.0      # row0 方案名称字高（生产大字块 ~55-60mm 行带）
-PLAN_ROW_PITCH_MM = 55.0   # row0 行带宽度（沿 x）
-TABLE_CHAR_H_MM = 12.0     # row1-13 字高（生产标签 ~14-18mm，用户嫌 18 偏大）
-TABLE_ROW_PITCH_MM = 24.0  # row1-13 行距（沿 x；生产 ~18-25mm）
-TABLE_CHAR_H_MIN_MM = 7.0  # shrink 下限（文字长度方向超门幅可用长时缩字高）
-TABLE_TEXT_Y0_MM = 40.0    # 每行文字起画离 y=0 布边（生产 ~20-40mm）
-TABLE_TAIL_X_MM = 10.0     # 末行带 → 外框右缘
-N_TABLE_ROWS = 14
-# 表格区总宽（沿 x）= pad + 方案行带 + 13×行距 + tail（纸上元数据，不计入用料）
-TABLE_W_MM = (TABLE_PAD_X_MM + PLAN_ROW_PITCH_MM
-              + (N_TABLE_ROWS - 1) * TABLE_ROW_PITCH_MM + TABLE_TAIL_X_MM)  # = 387
+# ===================== 几何常量（v5 两行网格自适应版式）=====================
+TABLE_GAP_MM = 0.0         # 唛架末端 width_mm → 表格区左缘（v5：0 = 外框左缘
+                           # 与唛架右边框共用一条线，空隙移除，用户定案）
+TABLE_Y_START_MM = 30.0    # 列 0 起始 y：唛架右下顶点 (width,0) 垂直向上 3cm
+TABLE_CHAR_H_MM = 12.0     # 全字段统一字高（含方案名称；用户嫌 18 偏大）
+TABLE_CHAR_H_MIN_MM = 7.0  # 表长超限 shrink 下限
+ROW_BAND_H_MM = 18.0       # 每条行带高（沿 x）= 字高 + 2×3mm 上下衬
+CELL_PAD_MM = 10.0         # 单元格内衬（列宽方向沿 y；v5：≥1cm + 内容居中）
+TABLE_EDGE_PAD_MM = 20.0   # 表长安全余量：Y_START+L ≤ gate − 20
+N_TABLE_ROWS = 14          # 字段数 = 列数
+# 表格区总宽（沿 x）= key 行带 + value 行带（纸上元数据，不计入用料）
+TABLE_W_MM = 2.0 * ROW_BAND_H_MM  # = 36
 
 # 手输字段：payload 键 → (默认值, 截断长度)
 _HAND_FIELDS = {
@@ -100,7 +103,7 @@ _HAND_FIELDS = {
 
 @dataclass(frozen=True)
 class InfoTable:
-    """唛架信息表格内容（手输 6 + 自动 8，渲染口径见 _cell_texts）。"""
+    """唛架信息表格内容（手输 6 + 自动 8，渲染口径见 _row_texts）。"""
 
     # 手输（parse_table_payload 产物直通）
     bed_no: str
@@ -229,9 +232,9 @@ def build_info_table(world_pieces, *, width_mm, gate_mm, density, table_in, now=
     )
 
 
-def _cell_texts(t: InfoTable) -> list:
-    """14 行「标签 值」文本（**row0→row13** = 方案名称..备注，沿 +x 逐行；生产
-    标签值间是空格分隔，非冒号；空值只渲染标签）。"""
+def _row_texts(t: InfoTable) -> list:
+    """14 字段 ``(key, value)`` 对（列 0→13 = 方案名称..备注；value 空 → ''
+    仅渲染 key，不再拼「标签 值」单行——v4 用户定案 key/value 分行）。"""
     util = f'{t.utilization_pct:.2f}%' if t.utilization_pct > 0 else '--'
     per_set = f'{t.per_set_m:.3f}m' if t.sets_count > 0 else '--'
     rows = [
@@ -251,53 +254,92 @@ def _cell_texts(t: InfoTable) -> list:
         ('备注', t.remark),
     ]
     assert len(rows) == N_TABLE_ROWS
-    return [f'{lab} {val}' if val else lab for lab, val in rows]
+    return rows
 
 
-def _row_center_x(table_x0: float, i: int) -> float:
-    """第 i 行文字带中心（世界 x）。row0 = 方案名称大字带，其后 13 行等距。"""
-    if i == 0:
-        return table_x0 + TABLE_PAD_X_MM + PLAN_ROW_PITCH_MM * 0.5
-    return (table_x0 + TABLE_PAD_X_MM + PLAN_ROW_PITCH_MM
-            + (i - 1) * TABLE_ROW_PITCH_MM + TABLE_ROW_PITCH_MM * 0.5)
+def _column_layout(t: InfoTable, *, gate_mm: float):
+    """14 列自适应布局 → ``(pairs, char_h, widths)``。
+
+    列宽 = max(key 宽, value 宽) + 2×CELL_PAD（标称字高下实测）；
+    Σ列宽 > gate − EDGE − Y_START（起始 30mm + 顶部余量）时全表缩字高
+    （advance 随字高严格线性，一遍缩放即贴合；下限 TABLE_CHAR_H_MIN_MM），
+    到下限仍超等比压列宽（渲染层按压缩后列宽 shrink+尾截断兜底）。
+    """
+    pairs = _row_texts(t)
+    req = []
+    for key, val in pairs:
+        w = text_width(key, TABLE_CHAR_H_MM)
+        if val:
+            w = max(w, text_width(val, TABLE_CHAR_H_MM))
+        req.append(w)
+    fixed = 2.0 * CELL_PAD_MM * len(req)
+    max_len = max(float(gate_mm) - TABLE_EDGE_PAD_MM - TABLE_Y_START_MM, 60.0)
+    char_h = TABLE_CHAR_H_MM
+    total_req = math.fsum(req)
+    if total_req + fixed > max_len:
+        char_h = max(TABLE_CHAR_H_MIN_MM,
+                     TABLE_CHAR_H_MM * (max_len - fixed) / total_req)
+        scale = char_h / TABLE_CHAR_H_MM
+        req = [r * scale for r in req]
+        logging.warning('PLT 信息表格：门幅 %.0fmm 偏小，14 列自适应表长超限，'
+                        '字高 %.1f→%.1fmm', float(gate_mm), TABLE_CHAR_H_MM, char_h)
+    widths = [r + 2.0 * CELL_PAD_MM for r in req]
+    total = math.fsum(widths)
+    if total > max_len:  # 字高到 7mm 下限仍超 → 等比压列 + 单元格内截断
+        squeeze = max_len / total
+        widths = [w * squeeze for w in widths]
+        logging.warning('PLT 信息表格：门幅 %.0fmm 偏小，字高已到 %.1fmm 下限仍'
+                        '超限，等比压列宽（长值单元格将尾部截断）',
+                        float(gate_mm), TABLE_CHAR_H_MIN_MM)
+    return pairs, char_h, widths
 
 
 def info_table_polylines(t: InfoTable, *, table_x0: float, gate_mm: float) -> list:
     """表格 → 世界 mm 折线 ``[(closed, points)]``。
 
-    版式（生产逆向，见模块 docstring）：外框 [x0, x0+W]×[0,gate] + 13 条沿 y
-    行间分隔线 + 14 行文字（基线沿 +y、字顶朝 −x，基 u=(0,1)/w=(-1,0) 右手系）。
-    行沿 +x 堆叠 ⇒ 表宽与门幅无关；门幅只限文字长度（可用长 = gate − 2×
-    TABLE_TEXT_Y0_MM，超长 shrink 到 7mm 后尾部截断，窄门幅记 warning）。
+    版式（见模块 docstring）：外框 [x0, x0+W]×[Y0, Y0+L]（Y0 = 30mm 起始、
+    L = Σ列宽自适应，不与幅宽等长）+ 1 条 key|value 行分隔线（沿 y，视图里
+    水平）+ 13 条列分隔线（沿 x，视图里竖直）+ 14 列文字（key 行带最靠唛架、
+    value 行带在外，均基线沿 +y、字顶朝 −x，基 u=(0,1)/w=(-1,0) 右手系，
+    生产视图水平正立；**单元格内居中** = 列方向 (列宽−文宽)/2 起画）。
     **不裁剪**（元数据，裁剪切坏文字）。
     """
-    gate_f = float(gate_mm)
-    fit_len = max(gate_f - 2.0 * TABLE_TEXT_Y0_MM, 60.0)
-    if fit_len < 600.0:
-        logging.warning('PLT 信息表格：门幅 %.0fmm 偏小，文字长度方向可用仅 '
-                        '%.0fmm（超长行将缩字高/截断）', gate_f, fit_len)
+    pairs, char_h, widths = _column_layout(t, gate_mm=gate_mm)
+    total = math.fsum(widths)
+    x1 = table_x0 + TABLE_W_MM
+    xm = table_x0 + ROW_BAND_H_MM              # key|value 行带边界
+    y_start = TABLE_Y_START_MM                 # 右下顶点垂直向上 3cm
 
     out: list = []
-    # 外框：单个闭合矩形，贴满整幅门幅（生产表格笔画 y∈[0,gate]）
-    x1 = table_x0 + TABLE_W_MM
-    out.append((True, [(table_x0, 0.0), (x1, 0.0), (x1, gate_f), (table_x0, gate_f)]))
+    # 外框（自适应表长，自 y_start 起向上排）
+    out.append((True, [(table_x0, y_start), (x1, y_start),
+                       (x1, y_start + total), (table_x0, y_start + total)]))
+    # key|value 行分隔线（沿 y 贯穿表长）
+    out.append((False, [(xm, y_start), (xm, y_start + total)]))
+    # 列分隔线（沿 x 贯穿表宽，列边界 = 起始 + 累计列宽）
+    y_edge = y_start
+    for w in widths[:-1]:
+        y_edge += w
+        out.append((False, [(table_x0, y_edge), (x1, y_edge)]))
 
-    # 行间分隔线（沿 y 贯穿；生产排料视图里 = 每行之间的水平细线）
-    for k in range(N_TABLE_ROWS - 1):
-        xs = table_x0 + TABLE_PAD_X_MM + PLAN_ROW_PITCH_MM + k * TABLE_ROW_PITCH_MM
-        out.append((False, [(xs, 0.0), (xs, gate_f)]))
-
-    # 行文字：u=(0,1) 沿 +y 书写、w=(-1,0) 字顶朝 −x（朝唛架）——生产排料视图
-    # （切割视图逆时针旋 90°）里水平正立可读，与 v2 post-flip 横排版互为镜像定稿
-    for i, text in enumerate(_cell_texts(t)):
-        if not text:
-            continue
-        char_h = PLAN_CHAR_H_MM if i == 0 else TABLE_CHAR_H_MM
-        cx = _row_center_x(table_x0, i)
-        for poly in text_strokes(text, origin=(cx + char_h * 0.5, TABLE_TEXT_Y0_MM),
-                                 u=(0.0, 1.0), w=(-1.0, 0.0),
-                                 char_h_mm=char_h, fit_width_mm=fit_len,
-                                 min_char_h_mm=TABLE_CHAR_H_MIN_MM):
-            if len(poly) >= 2:
-                out.append((True, poly))
+    # 文字：key 行带中心 x0+9 / value 行带中心 x0+27，基线 = 带心 + char_h/2
+    # （字顶朝 −x 延伸）；单元格内**居中**：起画 y = 列左缘 + (列宽−文宽)/2
+    # （文宽按 shrink 后 fit 封顶，压列时段不会越出居中盒），fit = 列宽 − 2×pad
+    base_x_key = table_x0 + ROW_BAND_H_MM * 0.5 + char_h * 0.5
+    base_x_val = table_x0 + ROW_BAND_H_MM * 1.5 + char_h * 0.5
+    y0 = y_start
+    for (key, val), w in zip(pairs, widths):
+        for text, base_x in ((key, base_x_key), (val, base_x_val)):
+            if not text:
+                continue
+            fit = w - 2.0 * CELL_PAD_MM
+            eff = min(text_width(text, char_h), fit)
+            for closed, poly in text_strokes(
+                    text, origin=(base_x, y0 + (w - eff) * 0.5),
+                    u=(0.0, 1.0), w=(-1.0, 0.0),
+                    char_h_mm=char_h, fit_width_mm=fit,
+                    min_char_h_mm=TABLE_CHAR_H_MIN_MM):
+                if len(poly) >= 2:
+                    out.append((closed, poly))
+        y0 += w
     return out

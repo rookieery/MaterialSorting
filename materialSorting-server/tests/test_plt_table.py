@@ -1,4 +1,4 @@
-"""PLT 唛架信息表格构建单测（plt_table v3，2026-08-30 旋转 90° 生产同款版式）。
+"""PLT 唛架信息表格构建单测（plt_table v5，2026-08-30 单线字 + 共线边框版）。
 
 覆盖：
   - parse_table_payload：缺省 None / 非 dict 拒绝 / 非字符串拒绝（数字宽容转
@@ -8,19 +8,23 @@
     计数÷2、同系数全局分组、组间按组内最小码排序
   - build_info_table 数值口径：料长=width/1000 **不含表格**、幅宽/料长/每套
     用料 3 位小数、绘图时间无秒、套数 0 守卫
-  - _cell_texts：14 行序（row0→row13 = 方案名称..备注，沿 +x 逐行）+ 各行
-    格式（标签空格值，生产口径）+ 空值只渲染标签
-  - info_table_polylines v3 几何：外框闭合矩形 [x0,x0+W]×[0,gate]、13 条沿 y
-    行间分隔线、14 行沿 +x 堆叠（row0 方案名称大字带最靠唛架）、文字旋转
-    90°（基线沿 +y、字厚沿 x ≈ 字高）、小门幅文字 shrink + warning
-  - 集成 write_marker_plt(info_table=...)：PS 纸长覆盖表格、**边框恒为
-    width_mm 不延伸**、料长不含表、纯 ASCII、无 LB/VS、info_table=None 与
-    缺省逐字节一致
+  - _row_texts：14 字段序（列 0→13 = 方案名称..备注，沿 +y 逐列）+ 各字段
+    格式（key/value 分离，不再「标签 值」拼单行）+ 空值 value=''
+  - info_table_polylines v5 几何：外框闭合矩形 [x0,x0+36]×[Y0,Y0+L]
+    （**Y0=30mm：唛架右下顶点垂直向上 3cm 起排**，v5 定案；表长 L 自适应 <
+    gate−20−30，不与幅宽等长）、1 条 key|value 行分隔线（沿 y）、13 条列
+    分隔线（沿 x）、key 行带最靠唛架 / value 行带在外、**单元格内容居中且离
+    列边 ≥CELL_PAD=10mm**（v5 定案）、全字段统一字高、文字旋转 90°（基线沿
+    +y、字厚沿 x ≈ 字高）、小门幅缩字高/压列 + warning
+  - 集成 write_marker_plt(info_table=...)：PS 纸长覆盖表格（v5 共线后
+    content_max = width+0+36）、**边框恒为 width_mm 不延伸**、料长不含表、
+    纯 ASCII、无 LB/VS、info_table=None 与缺省逐字节一致
 
 字体未就位（plt_text 依赖捆绑字体）→ skipif 整组跳过。
 """
 from __future__ import annotations
 
+import math
 import os
 from datetime import datetime
 
@@ -28,9 +32,9 @@ import pytest
 
 from materialsorting import paths
 from materialsorting.web.plt_table import (
-    PLAN_CHAR_H_MM, PLAN_ROW_PITCH_MM, TABLE_CHAR_H_MM, TABLE_GAP_MM,
-    TABLE_PAD_X_MM, TABLE_ROW_PITCH_MM, TABLE_TEXT_Y0_MM, TABLE_W_MM,
-    InfoTable, TablePayloadError, _plan_name_and_sets, _row_center_x,
+    CELL_PAD_MM, N_TABLE_ROWS, ROW_BAND_H_MM, TABLE_CHAR_H_MM,
+    TABLE_EDGE_PAD_MM, TABLE_GAP_MM, TABLE_W_MM, TABLE_Y_START_MM, InfoTable,
+    TablePayloadError, _column_layout, _plan_name_and_sets, _row_texts,
     build_info_table, info_table_polylines, parse_table_payload)
 
 _HAS_FONT = os.path.exists(paths.PLT_FONT_PATH)
@@ -168,134 +172,202 @@ def test_build_info_table_zero_sets_guard():
     assert t.per_set_m == 0.0
 
 
-# --------------------------------------------- _cell_texts 行序与格式
+# --------------------------------------------- _row_texts 字段序与格式
 
-def test_cell_texts_rows_and_formats():
-    from materialsorting.web.plt_table import _cell_texts
-    cells = _cell_texts(_table())
-    assert len(cells) == 14
-    assert cells[0] == '方案名称 (28)=1套'             # row0 最靠唛架（生产大字块位）
-    assert cells[1] == '床次 A料'
-    assert cells[2] == '经纱缩水 0.0%'
-    assert cells[3] == '纬纱缩水 0.0%'
-    assert cells[4] == '利用率 84.86%'
-    assert cells[5] == '幅宽 1.480m'
-    assert cells[6] == '料长 0.500m'
-    assert cells[7] == '本床包含套数 1'
-    assert cells[8] == '每套用料 0.500m'               # 0.5÷1，3 位小数
-    assert cells[9] == '片数 3'
-    assert cells[10] == '排料师'                       # 默认空 → 只渲染标签
-    assert cells[11] == '绘图时间 2025-05-08 15:02'
-    assert cells[12] == '样板号 noname'
-    assert cells[13] == '备注'                         # row13 最远端
-
-
-def test_cell_texts_dash_when_empty():
-    from materialsorting.web.plt_table import _cell_texts
-    cells = _cell_texts(_table([], density=0.0))
-    assert cells[0] == '方案名称 --'
-    assert cells[7] == '本床包含套数 0'
-    assert cells[4] == '利用率 --'
-    assert cells[8] == '每套用料 --'
+def test_row_texts_fields_and_formats():
+    """14 字段 (key, value) 对：列 0=方案名称..列 13=备注；key/value 分离。"""
+    rows = _row_texts(_table())
+    assert len(rows) == 14
+    assert rows[0] == ('方案名称', '(28)=1套')          # 列 0（视图最左）
+    assert rows[1] == ('床次', 'A料')
+    assert rows[2] == ('经纱缩水', '0.0%')
+    assert rows[3] == ('纬纱缩水', '0.0%')
+    assert rows[4] == ('利用率', '84.86%')
+    assert rows[5] == ('幅宽', '1.480m')
+    assert rows[6] == ('料长', '0.500m')
+    assert rows[7] == ('本床包含套数', '1')
+    assert rows[8] == ('每套用料', '0.500m')            # 0.5÷1，3 位小数
+    assert rows[9] == ('片数', '3')
+    assert rows[10] == ('排料师', '')                   # 默认空 → value='' 只渲染 key
+    assert rows[11] == ('绘图时间', '2025-05-08 15:02')
+    assert rows[12] == ('样板号', 'noname')
+    assert rows[13] == ('备注', '')                     # 列 13（视图最右）
 
 
-# --------------------------------------------- info_table_polylines v3 几何
+def test_row_texts_dash_when_empty():
+    rows = _row_texts(_table([], density=0.0))
+    assert rows[0] == ('方案名称', '--')
+    assert rows[7] == ('本床包含套数', '0')
+    assert rows[4] == ('利用率', '--')
+    assert rows[8] == ('每套用料', '--')
 
-X0 = 520.0
+
+# --------------------------------------------- _column_layout 自适应列宽
+
+def test_column_layout_adaptive_total_under_gate():
+    """常规门幅：12mm 标称字高不缩，Σ列宽自适应且 ≤ gate − 20 − 30（起始 30mm
+    后的可用表长）。"""
+    _pairs, char_h, widths = _column_layout(_table(_user_example_world()),
+                                            gate_mm=1480.0)
+    assert len(widths) == N_TABLE_ROWS
+    assert char_h == TABLE_CHAR_H_MM                  # 门幅充裕不缩字
+    total = sum(widths)
+    assert total <= 1480.0 - TABLE_EDGE_PAD_MM - TABLE_Y_START_MM + 0.01
+    assert total > 400.0                              # 内容真实存在（自适应非定长）
+    # 方案名称列（value 最长）明显宽于窄列（如 床次）
+    assert widths[0] > widths[1]
+    # v5：列宽含 2×10mm 内衬（内容离列左右边 ≥1cm）
+    assert all(w >= 2.0 * CELL_PAD_MM for w in widths)
+
+
+def test_column_layout_tiny_gate_shrinks_then_squeezes(caplog):
+    """小门幅：先缩字高到 7mm 下限、仍超则等比压列，Σ列宽恒 ≤ gate−20−30。"""
+    with caplog.at_level('WARNING'):
+        _pairs, char_h, widths = _column_layout(_table(_user_example_world()),
+                                                gate_mm=400.0)
+    assert char_h < TABLE_CHAR_H_MM                   # 触发缩字高
+    assert any('门幅' in r.message and '偏小' in r.message for r in caplog.records)
+    assert sum(widths) <= 400.0 - TABLE_EDGE_PAD_MM - TABLE_Y_START_MM + 0.01
+
+
+# --------------------------------------------- info_table_polylines v5 几何
+
+# table_x0 = width_mm + TABLE_GAP_MM(0)：外框左缘与唛架右边框**共用一条线**
+X0 = 500.0 + TABLE_GAP_MM
 GATE = 1480.0
+XM = X0 + ROW_BAND_H_MM          # key|value 行带边界
 
 
 def _split(out):
-    """→ (外框, 分隔线列表, 文本笔画列表)。"""
+    """→ (外框, 分隔线列表, 文本笔画列表)。
+
+    v5 单线字起文字笔画开放（closed=False），与分隔线同旗标 —— 改按几何分类：
+    分隔线 = 2 点轴对齐直线且跨度 ≥20mm（外框沿 x 跨 36mm / 行分隔沿 y 贯穿
+    表长），文字单笔 ≤1 字高（12mm）恒短于 20mm。
+    """
     frame = out[0]
-    seps = [o for o in out[1:] if not o[0]]
-    texts = [o for o in out[1:] if o[0]]
+    seps, texts = [], []
+    for o in out[1:]:
+        pts = o[1]
+        is_sep = (len(pts) == 2
+                  and (abs(pts[0][0] - pts[1][0]) < 1e-6
+                       or abs(pts[0][1] - pts[1][1]) < 1e-6)
+                  and math.hypot(pts[1][0] - pts[0][0],
+                                 pts[1][1] - pts[0][1]) >= 20.0)
+        (seps if is_sep else texts).append(o)
     return frame, seps, texts
 
 
-def test_polylines_frame_and_region():
+def test_polylines_frame_adaptive_length():
+    """外框闭合矩形 [x0, x0+36]×[Y0, Y0+L]：Y0=30mm（右下顶点向上 3cm，v5）、
+    **L 自适应**（top < gate−20，不与幅宽等长）；全部点落在表格区无越界。"""
     out = info_table_polylines(_table(), table_x0=X0, gate_mm=GATE)
     assert out, '应有笔画'
     closed0, pts0 = out[0]
     assert closed0 and len(pts0) == 4
     assert {round(v, 2) for v in (p[0] for p in pts0)} == {X0, X0 + TABLE_W_MM}
-    assert {round(v, 2) for v in (p[1] for p in pts0)} == {0.0, GATE}
-    # 全部点落在表格区 x∈[x0, x0+W]、y∈[0, gate]（无越界，不裁剪口径下自然满足）
+    ys = {round(v, 2) for v in (p[1] for p in pts0)}
+    top = max(ys)
+    assert ys == {TABLE_Y_START_MM, round(top, 2)}    # 底边 = 30mm 起始线
+    assert top < GATE - TABLE_EDGE_PAD_MM + 0.01      # 自适应表长（v3 满门幅已否）
+    assert top > 300.0                                # 14 列内容真实占位
     for _c, pts in out:
         for x, y in pts:
             assert X0 - 0.01 <= x <= X0 + TABLE_W_MM + 0.01
-            assert -0.01 <= y <= GATE + 0.01
+            assert TABLE_Y_START_MM - 0.01 <= y <= top + 0.01
 
 
-def test_polylines_row_separators_along_y():
-    """13 条行间分隔线：沿 y 贯穿 0..gate、x 在行带边界上（生产视图=水平细线）。"""
+def test_polylines_row_divider_and_column_dividers():
+    """1 条 key|value 行分隔线（沿 y 贯穿表长）+ 13 条列分隔线（沿 x 贯穿表宽，
+    y 边界 = 30 + 累计列宽单调递增）。"""
     out = info_table_polylines(_table(), table_x0=X0, gate_mm=GATE)
-    _frame, seps, _texts = _split(out)
-    assert len(seps) == 13
-    for k, (closed, pts) in enumerate(seps):
-        assert not closed and len(pts) == 2
-        xs = {round(p[0], 2) for p in pts}
-        assert xs == {round(X0 + TABLE_PAD_X_MM + PLAN_ROW_PITCH_MM
-                            + k * TABLE_ROW_PITCH_MM, 2)}
-        assert {round(p[1], 2) for p in pts} == {0.0, GATE}
+    frame, seps, _texts = _split(out)
+    top = max(p[1] for p in frame[1])
+    along_y = [s for s in seps if abs(s[1][0][0] - s[1][1][0]) < 1e-6]
+    along_x = [s for s in seps if abs(s[1][0][1] - s[1][1][1]) < 1e-6]
+    assert len(along_y) == 1                          # key|value 行分隔线
+    pts = along_y[0][1]
+    assert {round(p[0], 2) for p in pts} == {round(XM, 2)}
+    assert {round(p[1], 2) for p in pts} == {TABLE_Y_START_MM, round(top, 2)}
+    assert len(along_x) == N_TABLE_ROWS - 1           # 13 条列分隔线
+    edges = [round(s[1][0][1], 2) for s in along_x]
+    assert edges == sorted(edges)
+    assert TABLE_Y_START_MM < min(edges) < max(edges) < top
 
 
-def test_polylines_rows_stack_along_x_plan_name_nearest_marker():
-    """14 行沿 +x 堆叠：row0 方案名称 x 厚 ≈ 36mm（大字带）、其余 ≈ 12mm；
-    行带中心单调递增，行间不串带。"""
+def test_polylines_key_band_nearer_marker_value_band_outer():
+    """key 行带最靠唛架（x ∈ [x0, x0+18]）、value 行带在外（x > 边界），
+    单条文字笔画不跨行带（v4 两行网格核心结构；v5 单线字下降部 ≤0.13em×12
+    ≈1.5mm，key 基线 x0+15 下探后仍不越界）。"""
     out = info_table_polylines(_table(_user_example_world()), table_x0=X0,
                                gate_mm=GATE)
     _frame, _seps, texts = _split(out)
     assert texts, '应有文本笔画'
-    xs_all = [p[0] for _c, pts in texts for p in pts]
-    for i in range(14):
-        cx = _row_center_x(X0, i)
-        band = [p for _c, pts in texts for p in pts
-                if cx - TABLE_ROW_PITCH_MM / 2 <= p[0] < cx + TABLE_ROW_PITCH_MM / 2]
-        assert band, f'第 {i} 行无笔画'
-    # row0 大字：文本笔画 x 跨度 ≈ 36mm 字高级别
-    cx0 = _row_center_x(X0, 0)
-    row0 = [p for _c, pts in texts for p in pts
-            if cx0 - PLAN_ROW_PITCH_MM / 2 <= p[0] < cx0 + PLAN_ROW_PITCH_MM / 2]
-    assert max(p[0] for p in row0) - min(p[0] for p in row0) > 20.0
-    # row1 普通行：x 厚 ≈ 12mm 字高（旋转 90°：字厚沿 x、行文沿 y）
-    cx1 = _row_center_x(X0, 1)
-    row1 = [p for _c, pts in texts for p in pts
-            if cx1 - TABLE_ROW_PITCH_MM / 2 <= p[0] < cx1 + TABLE_ROW_PITCH_MM / 2]
-    assert max(p[0] for p in row1) - min(p[0] for p in row1) <= TABLE_CHAR_H_MM + 2.0
+    key_strokes = [pts for _c, pts in texts
+                   if all(p[0] <= XM + 0.5 for p in pts)]
+    val_strokes = [pts for _c, pts in texts
+                   if all(p[0] >= XM - 0.5 for p in pts)]
+    assert key_strokes and val_strokes                # 两行带均有文字
+    assert len(key_strokes) + len(val_strokes) == len(texts)  # 无跨带笔画
+    # key 行带文字全部落在 [x0, x0+18+0.5]（视图第一行 = key）
+    for pts in key_strokes:
+        assert all(X0 - 0.01 <= p[0] <= XM + 0.5 for p in pts)
+    # value 行带文字全部 ≥ 边界（视图第二行 = value）
+    for pts in val_strokes:
+        assert all(p[0] >= XM - 0.5 for p in pts)
 
 
-def test_polylines_text_rotated_90_reading_plus_y():
-    """文字旋转 90°：基线沿 +y（y 跨度远大于字厚）、起画 y ≈ TABLE_TEXT_Y0_MM、
-    字顶朝 −x（行带内 glyph x 全部 ≤ 基线 origin = cx + h/2）。"""
+def test_polylines_uniform_char_height():
+    """全字段统一字高（v4 定案）：任何文字笔画 x 向厚度 ≤ 12mm+3（v3 方案名称
+    36mm 大字已否决；单线汉字归一盒 0.88em、括号全高 ~0.97em 均在此内）。"""
+    out = info_table_polylines(_table(_user_example_world()), table_x0=X0,
+                               gate_mm=GATE)
+    _frame, _seps, texts = _split(out)
+    for _c, pts in texts:
+        xs = [p[0] for p in pts]
+        assert max(xs) - min(xs) <= TABLE_CHAR_H_MM + 3.0
+
+
+def test_polylines_text_rotated_90_columns_along_y():
+    """文字旋转 90°：基线沿 +y（长值 y 跨度远大于字厚）、**单元格内容居中**——
+    value 为空的列宽 = key 宽 + 2×10mm，key 起画 y ≈ Y0 + CELL_PAD（离列边
+    ≥1cm，v5 定案）、字顶朝 −x（笔画 x ≤ 基线+2）。"""
     out = info_table_polylines(_table(), table_x0=X0, gate_mm=GATE)
     _frame, _seps, texts = _split(out)
-    cx1 = _row_center_x(X0, 1)          # row1 = '床次 A料'
-    row1 = [p for _c, pts in texts for p in pts
-            if cx1 - TABLE_ROW_PITCH_MM / 2 <= p[0] < cx1 + TABLE_ROW_PITCH_MM / 2]
-    ys = [p[1] for p in row1]
-    xs = [p[0] for p in row1]
-    assert min(ys) == pytest.approx(TABLE_TEXT_Y0_MM, abs=1.0)   # 起画贴 TABLE_TEXT_Y0
-    assert max(ys) - min(ys) > 30.0     # '床次 A料' 6 字符 × 12mm ≈ 60mm 沿 y
-    # 字顶朝 −x（基线 origin = cx + h/2 为界，括号等 descender 允许 ~2mm 下探）
-    assert max(xs) <= cx1 + TABLE_CHAR_H_MM / 2 + 2.0
+    all_pts = [p for _c, pts in texts for p in pts]
+    # 最靠下的文字 = 空 value 列的 key，居中后起画 ≈ Y0+CELL_PAD（容差 1.5）
+    assert min(p[1] for p in all_pts) == pytest.approx(
+        TABLE_Y_START_MM + CELL_PAD_MM, abs=1.5)
+    # 任何文字墨迹不侵入单元格左右 10mm 内衬（居中 + fit 封顶共同保证）
+    assert min(p[1] for p in all_pts) >= TABLE_Y_START_MM + CELL_PAD_MM - 0.5
+    # key 行带基线 = x0+9+6 = x0+15：字顶朝 −x；单线 ASCII 下降部（括号
+    # −0.12em）下探 ~1.5mm → 允许到基线+3.5mm（仍在 18mm 行带内）
+    key_pts = [p for _c, pts in texts for p in pts if p[0] <= XM + 0.5]
+    assert max(p[0] for p in key_pts) <= X0 + ROW_BAND_H_MM * 0.5 \
+        + TABLE_CHAR_H_MM * 0.5 + 3.5
+    # 基线沿 +y：文本整体 y 跨度（14 列自适应表长）远大于 x 跨度（36mm 表宽）
+    # —— 文字长轴沿 y 展开（每条折线是单字形轮廓，断言用整体跨度）
+    assert (max(p[1] for p in all_pts) - min(p[1] for p in all_pts)) \
+        > (max(p[0] for p in all_pts) - min(p[0] for p in all_pts)) * 5.0
 
 
-def test_polylines_tiny_gate_shrinks_text_length(caplog):
-    """小门幅：行沿 x 堆叠不受门幅影响（14 行全在）；文字长度方向 shrink，
-    全部点仍 y ≤ gate + warning。"""
+def test_polylines_tiny_gate_no_clip_all_columns_present(caplog):
+    """小门幅：缩字高/压列 + warning，全部点仍 y ≤ gate，14 列文字全在
+    （列结构不因门幅变小而丢字段）。"""
     with caplog.at_level('WARNING'):
         out = info_table_polylines(_table(gate_mm=400.0), table_x0=X0,
                                    gate_mm=400.0)
     assert any('门幅' in r.message and '偏小' in r.message for r in caplog.records)
     ys = [p[1] for _c, pts in out for p in pts]
     assert max(ys) <= 400.0 + 0.01
-    # 行带仍 14 行有笔画（沿 x 堆叠与门幅无关）
     _frame, _seps, texts = _split(out)
-    for i in range(14):
-        cx = _row_center_x(X0, i)
-        assert any(cx - TABLE_ROW_PITCH_MM / 2 <= p[0] < cx + TABLE_ROW_PITCH_MM / 2
-                   for _c, pts in texts for p in pts), f'第 {i} 行无笔画'
+    # 14 列：每列都应有 key 文字（value 空的列只有 key）
+    along_x = [s for s in _seps if abs(s[1][0][1] - s[1][1][1]) < 1e-6]
+    edges = ([TABLE_Y_START_MM] + [s[1][0][1] for s in along_x] + [max(ys)])
+    for i in range(N_TABLE_ROWS):
+        lo, hi = edges[i], edges[i + 1]
+        assert any(lo <= p[1] <= hi for _c, pts in texts for p in pts), \
+            f'第 {i} 列无笔画'
 
 
 # --------------------------------------------- 集成 write_marker_plt
@@ -308,15 +380,18 @@ def test_write_marker_plt_table_paper_border_and_ascii():
                            title='M1787', info_table=t)
     out = raw.decode('ascii')                    # 中文 → 轮廓坐标，全 ASCII
     assert 'LB' not in out and 'VS' not in out
-    # PS 纸长 = (引导 20 + 内容 500+20+387 + 尾 10) × 40 = 37480（覆盖表格区）
-    assert out.split('\r\n')[0] == 'IN;PS37480;SP1;PW0.08;'
-    # 表格外框右缘 x=(20+500+20+387)×40=37080 存在
-    assert '37080,' in out
-    # **边框不延伸**：边框 x1 = width_mm=500 → +引导 = 520×40=20800 竖边存在；
-    # 且不存在旧口径的边框延伸角 44520/44200/47600
+    # PS 纸长 = (引导 20 + 内容 500+0+36 + 尾 10) × 40 = 22640（覆盖表格区；
+    # v5 共线 gap=0，比 v4 的 23440 短 800 = 20mm×40）
+    assert out.split('\r\n')[0] == 'IN;PS22640;SP1;PW0.08;'
+    # 表格外框右缘 x=(20+500+0+36)×40=22240 存在；v4 间隙版角点 23040 不存在
+    assert '22240,' in out
+    assert '23040,' not in out
+    # **边框不延伸**：边框 x1 = width_mm=500 → +引导 = 520×40=20800 竖边存在
+    # （与表格外框左缘共用一条线：500×40+引导 同一 x）
     assert '20800,' in out
     assert '44200,' not in out and '44520,' not in out and '47600,' not in out
-    # 料长不含表格：0.500m（3 位小数）由 _cell_texts 单测锁定，这里锁纸长口径
+    assert '37080,' not in out                   # v3 表宽 387 的外框右缘已废
+    # 料长不含表格：0.500m（3 位小数）由 _row_texts 单测锁定，这里锁纸长口径
 
 
 def test_write_marker_plt_none_equals_omitted():
@@ -337,4 +412,4 @@ def test_write_marker_plt_table_no_y_clipping_on_tiny_gate(caplog):
                                title='t', info_table=_table(gate_mm=400.0))
     out = raw.decode('ascii')
     assert any('门幅' in r.message and '偏小' in r.message for r in caplog.records)
-    assert '37080,' in out                       # 外框右缘完整画出
+    assert '22240,' in out                       # 外框右缘完整画出

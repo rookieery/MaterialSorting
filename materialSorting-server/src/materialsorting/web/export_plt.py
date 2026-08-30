@@ -312,10 +312,10 @@ def write_marker_plt(world_pieces, *, width_mm: float, gate_mm: float, title: st
     """写排料 marker PLT/HPGL 文本（ASCII ``bytes``，安全幅面口径见模块注释）。
 
     ``info_table``（2026-08-30 唛架信息表格，additive 缺省 None 零变化）：
-    给定时在唛架末端外围追加 14 字段标签表（plt_table 构建，v3 旋转 90° 生产
-    同款：文字沿 +y、行沿 +x 堆叠），门幅边框恒为 width_mm 不延伸、表格不占
-    排料区不计入用料，PS 纸长延伸覆盖表格区（防 WT 裁页）。表格笔画追加为独立
-    ``_LAYER_TABLE`` 桶（层序最末）、**不过 y≤gate 裁剪**（元数据保护）。
+    给定时在唛架末端外围追加 14 字段标签表（plt_table 构建，v4 key/value 两行
+    网格：文字沿 +y、字段列自适应表长），门幅边框恒为 width_mm 不延伸、表格
+    不占排料区不计入用料，PS 纸长延伸覆盖表格区（防 WT 裁页）。表格笔画追加为
+    独立 ``_LAYER_TABLE`` 桶（层序最末）、**不过 y≤gate 裁剪**（元数据保护）。
 
     生成 HPGL/HP-GL 指令序列（封装口径对齐生产 PLT）：
     ``IN;PS<纸长>;SP1;PW0.08;`` 头部一行 → **全程单笔 SP1**（2026-08-24 用户要求
@@ -450,8 +450,9 @@ def write_marker_plt(world_pieces, *, width_mm: float, gate_mm: float, title: st
             layer_lines[_LAYER_TABLE].extend(_plt_polyline(closed=closed, points=pts))
 
     # 头部一行（对齐生产 PLT）：PS 纸长 = 走纸引导 + max(用布长, 内容最大X) + 尾余量；
-    # 带信息表格时内容总长 = 用布长 + 表格段（gap+表宽 —— 表格在纸上是元数据、
-    # 不计入用料，但 PS 纸长要覆盖它防 WT 裁页）
+    # 带信息表格时内容总长 = 用布长 + 表格段（v5 gap=0：外框左缘与唛架右边框
+    # 共用一条线，表格段即表宽 36 —— 表格在纸上是元数据、不计入用料，但 PS
+    # 纸长要覆盖它防 WT 裁页）
     content_max = (width_mm + TABLE_GAP_MM + TABLE_W_MM if info_table is not None
                    else width_mm)
     paper_len = int(round((PLOT_LEAD_X_MM + max(content_max, max_x) + PLOT_TAIL_X_MM)
