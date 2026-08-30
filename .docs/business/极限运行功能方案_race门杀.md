@@ -139,6 +139,10 @@ ms-run-config <cfg> --extreme [--time 总预算] [--extreme-budget 600|1200]
 ## 5. 范围外（明确不做）
 
 - se 延长臂 / 2400s+ 冠军冲刺（门杀失效边界，§2.3）；
-- band / prefix on 的极限参数迁移性（实验未覆盖，开启后结论需复验）；
+- band / prefix on 的极限参数迁移性（实验未覆盖，开启后结论需复验）；**【2026-08-30
+  解除**：band/prefix 起与策略族同路径透传（web 高级配置 → `_parse_band`/
+  `_parse_prefix` 校验 → config 写键，CLI 链路本就模式无关）；迁移性复验口径 =
+  960s 最小档真跑跑通端到端，长 AB 留待实际使用观察，极限参数（p0.7/et0/w4/
+  600s）在 band/prefix ON 下的增益结论未复验**】**
 - quadtree_depth 调优（**已 A/B 并关闭**，§2.6：race 回放 d5 冠军被误杀、交付垫底）；
 - num_workers 调优（部署约束维持 4；换值 = 全部 race 标定重测，本机结论亦不可迁移）。

@@ -4,9 +4,12 @@
   - start 202 契约：time_total_s → cfg.time / spawn cmd 尾部 --extreme --time <T>
     --quiet / run_name web_extreme_* / marker 5 键 mode='extreme' / 响应体
     {started, pid, mode:'extreme', run_name, time_total_s} / 状态槽 mode +
-    total_budget_sec（config 无 band/prefix 键）；
+    total_budget_sec（载荷未带 band/prefix → config 无该键）；
   - time_total_s 四种 400：缺省 / 非整数（字符串·非整浮点·bool） / <905 / >43200；
-  - band/prefix 在场 → 400「暂不支持」（null 视同未传 → 202）；
+  - band/prefix 2026-08-30 起与策略族同路径透传（范本 test_web_strategy 同名三
+    例）：合法开启 → config 写键 + spawn cmd 尾不变；null / enabled=false → 不写
+    键；非法（坏 g 码 / 不存在于母版 / 数量全 0 / front==back / 无 2+2 资格码）→
+    400 结构化早退不 spawn；
   - 单飞互斥双向：strategy running → extreme 409（文案点名「策略运行」）；
     extreme running → strategy 409（点名「极限运行」）；跨会话不 409；
   - status/result/stop 同构：starting → running（web_extreme_* 前缀 glob 发现）
@@ -308,33 +311,101 @@ def test_extreme_time_bounds_exact_edges_202(strat_env, monkeypatch):
     assert [calls[0]['cmd'][-2], calls[1]['cmd'][-2]] == ['905', '43200']
 
 
-def test_extreme_band_prefix_rejected_400(strat_env, monkeypatch):
-    """band/prefix 在场 → 400「暂不支持」（enabled=false 亦拒——按按键判）；
-    null 视同未传 → 202 且 config 不写 band/prefix 键。"""
+# ------------------------------------------- band/prefix 透传（2026-08-30 解除拒收）
+
+
+def _extreme_qty_2plus2() -> dict:
+    """g01/g02 各 size28 demand=2 —— _synthetic_pieces 两码均有 28 片 → 资格码 [28]。
+    （与 test_web_strategy._prefix_qty_2plus2 同构，self-contained 不跨文件 import。）"""
+    return {'g01': {'28': 2}, 'g02': {'28': 2}}
+
+
+def test_extreme_band_prefix_written_into_config(strat_env, monkeypatch):
+    """band/prefix 开启且合法 → 202 + config 写键（StartPayload 原形态）+ spawn cmd
+    尾不变（band/prefix 只随 config JSON 走，不进命令行）。"""
     _default_start_env(monkeypatch)
     uploads = Path(paths_mod.OUT_DIR) / 'uploads'
-    calls = _spawn_capture(monkeypatch, pids=(777,))
+    calls = _spawn_capture(monkeypatch, pids=(777, 778))
     c = _client()
     r = c.post('/api/extreme/start', json={
         'time_total_s': 14400, 'band': {'enabled': True, 'label': 'g01'}})
-    assert r.status_code == 400 and '极限运行暂不支持腰头成带' in r.json()['error']
-    r = c.post('/api/extreme/start', json={
-        'time_total_s': 14400,
-        'prefix': {'enabled': True, 'front': 'g01', 'back': 'g02'}})
-    assert r.status_code == 400 and '极限运行暂不支持起始端成套' in r.json()['error']
-    r = c.post('/api/extreme/start', json={
-        'time_total_s': 14400, 'band': {'enabled': False, 'label': 'g01'}})
-    assert r.status_code == 400 and '暂不支持' in r.json()['error']
-    assert not list(uploads.glob('strategy_cfg_*.json'))
-    assert strategy_mod._read_marker() is None
-    assert len(calls) == 0
-    # null 视同未传 → 202，config 不写 band/prefix 键。
-    r = c.post('/api/extreme/start', json={
-        'time_total_s': 14400, 'band': None, 'prefix': None})
     assert r.status_code == 202
     cfg = json.loads(
         list(uploads.glob('strategy_cfg_*.json'))[0].read_text(encoding='utf-8'))
-    assert 'band' not in cfg and 'prefix' not in cfg
+    assert cfg['band'] == {'enabled': True, 'label': 'g01'}
+    assert cfg['time'] == 14400 and cfg['seeds'] == [0]
+    assert calls[0]['cmd'][-1] == '--quiet'      # cmd 尾 --extreme --time <T> --quiet
+    assert '--strategy' not in calls[0]['cmd']
+
+    # 单飞闸门：上一轮 202 已置 starting + 写 marker → 手动清（同策略测试套路）。
+    strategy_mod._STRATEGY_STATE['state'] = 'done'
+    strategy_mod._clear_marker()
+    r = c.post('/api/extreme/start', json={
+        'time_total_s': 14400, 'quantities': _extreme_qty_2plus2(),
+        'prefix': {'enabled': True, 'front': 'g01', 'back': 'g02'}})
+    assert r.status_code == 202
+    cfg2 = json.loads(
+        sorted(uploads.glob('strategy_cfg_*.json'))[-1].read_text(encoding='utf-8'))
+    assert cfg2['prefix'] == {'enabled': True, 'front': 'g01', 'back': 'g02'}
+    assert cfg2['quantities'] == _extreme_qty_2plus2()
+    assert calls[1]['cmd'][-1] == '--quiet'
+
+
+def test_extreme_band_prefix_null_and_disabled_not_written(strat_env, monkeypatch):
+    """band/prefix = null / enabled=false → _parse_* 返回 None → config 不写键
+    （与策略族逐字节同语义）。"""
+    _default_start_env(monkeypatch)
+    uploads = Path(paths_mod.OUT_DIR) / 'uploads'
+    _spawn_capture(monkeypatch, pids=(777,) * 4)
+    c = _client()
+    for i, (band, prefix) in enumerate((
+            (None, None),
+            ({'enabled': False, 'label': 'g01'},
+             {'enabled': False, 'front': 'g01', 'back': 'g02'}))):
+        if i:
+            strategy_mod._STRATEGY_STATE['state'] = 'done'
+            strategy_mod._clear_marker()
+        assert c.post('/api/extreme/start', json={
+            'time_total_s': 14400, 'band': band, 'prefix': prefix,
+            'quantities': _extreme_qty_2plus2()}).status_code == 202
+        cfg = json.loads(
+            sorted(uploads.glob('strategy_cfg_*.json'))[-1]
+            .read_text(encoding='utf-8'))
+        assert 'band' not in cfg and 'prefix' not in cfg
+
+
+def test_extreme_band_prefix_invalid_400(strat_env, monkeypatch):
+    """band/prefix 非法（坏 g 码 / 不存在于母版 / 数量全 0 / front==back / 无 2+2
+    资格码）→ 400 结构化早退（文案与策略族同一校验点逐字一致），不落 config /
+    不写 marker / 不 spawn。"""
+    _default_start_env(monkeypatch)
+    uploads = Path(paths_mod.OUT_DIR) / 'uploads'
+    calls = _spawn_capture(monkeypatch, pids=(777,) * 4)
+    c = _client()
+    qty = _extreme_qty_2plus2()
+    # band：坏 g 码 / 不存在于母版（pieces 只有 g01/g02）/ 数量全 0
+    r = c.post('/api/extreme/start', json={
+        'time_total_s': 14400, 'band': {'enabled': True, 'label': 'waist'}})
+    assert r.status_code == 400 and 'g 码' in r.json()['error']
+    r = c.post('/api/extreme/start', json={
+        'time_total_s': 14400, 'band': {'enabled': True, 'label': 'g05'}})
+    assert r.status_code == 400 and '不存在' in r.json()['error']
+    r = c.post('/api/extreme/start', json={
+        'time_total_s': 14400, 'quantities': {'g01': {'28': 0, '30': 0}},
+        'band': {'enabled': True, 'label': 'g01'}})
+    assert r.status_code == 400 and '全为 0' in r.json()['error']
+    # prefix：front==back / 无 2+2 资格码（g02 demand=1 ≠ 2）
+    r = c.post('/api/extreme/start', json={
+        'time_total_s': 14400, 'quantities': qty,
+        'prefix': {'enabled': True, 'front': 'g01', 'back': 'g01'}})
+    assert r.status_code == 400 and '不同 g 码' in r.json()['error']
+    r = c.post('/api/extreme/start', json={
+        'time_total_s': 14400, 'quantities': {'g01': {'28': 2}, 'g02': {'28': 1}},
+        'prefix': {'enabled': True, 'front': 'g01', 'back': 'g02'}})
+    assert r.status_code == 400 and '2+2 资格码' in r.json()['error']
+    assert not list(uploads.glob('strategy_cfg_*.json'))
+    assert strategy_mod._read_marker() is None
+    assert len(calls) == 0
 
 
 # ------------------------------------------------------------- 单飞互斥

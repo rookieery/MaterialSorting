@@ -34,7 +34,7 @@
 - **Acceptance Criteria**:
   1. `POST /api/extreme/start {time_total_s}` 通过校验后 202 + `{started, pid, mode:'extreme', run_name}`；spawn 命令含 `--extreme --time <T>`；写 9 键 config（`master_dxf` 绝对路径 / `gate_mm` / `time=T` / `seeds=[seed]` / 可选 sizes·per_type·quantities）。
   2. `time_total_s` 校验：缺省 / 非整数 / < 905 / > 43200（12h 防呆上限）→ 400 中文报错。
-  3. 载荷带 `band` 或 `prefix` → 400「极限运行暂不支持腰头成带 / 起始端成套」（方案 §5：极限参数迁移性未验证，v1 明确不支持）。
+  3. 载荷带 `band` 或 `prefix` → 400「极限运行暂不支持腰头成带 / 起始端成套」（方案 §5：极限参数迁移性未验证，v1 明确不支持）。**【2026-08-30 废止**：band/prefix 起与策略族同路径透传（`_parse_band`/`_parse_prefix` 同一校验点），见 `agent-component-map.md`「极限运行 band/prefix 透传」专节**】**
   4. 单飞互斥双向：本会话 strategy starting/running（或其 marker 在）→ extreme start 409；反向 extreme → strategy start 409；**跨会话互不 409**（多会话 US-004 语义不变）。
   5. status / stop / result 与 strategy 四路由同构：无状态惰性轮询（进度源白名单不含 curve_s*.json）、树杀只杀本会话 pid、orphan marker 检测、result 组装 manifest（start 快照口径 `build_pid_meta`）+ best + 母版漂移 warning；mode 字段透传 'extreme'。
   6. sid 会话语义同 strategy：非 default sid 过期/未知 → 401 `session_expired`、非法 → 400、status 轮询刷活性。

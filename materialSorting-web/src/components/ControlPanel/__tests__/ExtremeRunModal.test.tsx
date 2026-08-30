@@ -3,7 +3,8 @@
 //   - 配置态：四档预设 + 默认 120 分钟选中 + 预计轮数随预设实时更新（公式对拍）
 //   - 自定义分钟：16~720 整数（15 / 721 / 非整数置灰 + 轮数行提示）
 //   - 极限参数完全隐藏：弹窗全文不出现四个参数名字样；无模式选择
-//   - band/prefix 开启 → 执行置灰 + 警告行；载荷恒不写 band/prefix 键
+//   - band/prefix 透传（2026-08-30 解除拦截）：开启 → 执行可点 + 只读状态行回显
+//     + 载荷带键；关闭 → 载荷写 null（与高级运行弹窗同款）
 //   - 执行 → POST /api/extreme/start（time_total_s = 分钟×60；collectStartContext 同源）
 //   - 进度态：标题「极限运行」+ 门杀 chips / 大数字 / 预算条
 //   - 结果态：应用按钮 + 「已固化实验参数」提示；再次运行回配置态
@@ -42,13 +43,17 @@ const CTX: StartContext = {
   params: { d_ext: 0, d_int: 0, tol_ext: 0, tol_int: 0 },
   per_type: null,
   quantities: { g01: { '30': 2, '32': 1 } },
-  // 极限运行不透传 band/prefix（后端在场即 400；开启由执行按钮置灰前置拦截）。
+  // band/prefix 2026-08-30 起透传（null = 高级配置未开启，载荷仍写 null 键）。
   band: null,
   prefix: null,
 };
 
 const EMPTY_CTX: StartContext = { ...CTX, sizes: [], quantities: null };
-const BAND_CTX: StartContext = { ...CTX, band: { enabled: true, label: 'g05' } };
+const BAND_PREFIX_CTX: StartContext = {
+  ...CTX,
+  band: { enabled: true, label: 'g05' },
+  prefix: { enabled: true, front: 'g01', back: 'g02' },
+};
 
 beforeEach(() => {
   useControlPanelStore.getState().closeModal();
@@ -252,19 +257,21 @@ describe('ExtremeRunModal (US-003)', () => {
     expect(document.body.querySelector('[data-testid="strategy-mode"]')).toBeNull();
   });
 
-  it('band 开启（ctx.band 非 null）→ 执行置灰 + 警告行；关闭后恢复', () => {
+  it('band/prefix 开启（2026-08-30 透传）→ 执行可点 + 只读状态行回显；关闭后状态行消失', () => {
     openModal();
-    renderModal(false, BAND_CTX);
+    renderModal(false, BAND_PREFIX_CTX);
     const exec = document.body.querySelector('[data-testid="extreme-exec-btn"]') as HTMLButtonElement;
-    expect(exec.disabled).toBe(true);
-    expect(document.body.querySelector('[data-testid="extreme-layout-warning"]')!.textContent)
-      .toContain('暂不支持腰头成带');
+    expect(exec.disabled).toBe(false);
+    const hint = document.body.querySelector('[data-testid="extreme-layout-hint"]')!;
+    expect(hint.textContent).toContain('将随排料参数生效');
+    expect(hint.textContent).toContain('腰头成带 g05');
+    expect(hint.textContent).toContain('起始端成套 g01/g02');
     renderModal(false, CTX);
     expect((document.body.querySelector('[data-testid="extreme-exec-btn"]') as HTMLButtonElement).disabled).toBe(false);
-    expect(document.body.querySelector('[data-testid="extreme-layout-warning"]')).toBeNull();
+    expect(document.body.querySelector('[data-testid="extreme-layout-hint"]')).toBeNull();
   });
 
-  it('执行 click → POST /api/extreme/start：time_total_s = 分钟×60 + collectStartContext 同源字段；无 band/prefix 键', async () => {
+  it('执行 click → POST /api/extreme/start：time_total_s = 分钟×60 + collectStartContext 同源字段（band/prefix null 透传）', async () => {
     openModal();
     renderModal();
     act(() => {
@@ -281,9 +288,28 @@ describe('ExtremeRunModal (US-003)', () => {
       sizes: [30, 32],
       per_type: null,
       quantities: { g01: { '30': 2, '32': 1 } },
+      band: null,
+      prefix: null,
     });
-    expect((startBodies[0] as Record<string, unknown>).band).toBeUndefined();
-    expect((startBodies[0] as Record<string, unknown>).prefix).toBeUndefined();
+  });
+
+  it('band/prefix 开启时执行 → 载荷带 ctx.band / ctx.prefix 原形态（默认 120 分钟档）', async () => {
+    openModal();
+    renderModal(false, BAND_PREFIX_CTX);
+    await act(async () => {
+      (document.body.querySelector('[data-testid="extreme-exec-btn"]') as HTMLButtonElement).click();
+    });
+    expect(startBodies).toHaveLength(1);
+    expect(startBodies[0]).toEqual({
+      time_total_s: 7200,
+      seed: 5,
+      gate_mm: 1980,
+      sizes: [30, 32],
+      per_type: null,
+      quantities: { g01: { '30': 2, '32': 1 } },
+      band: { enabled: true, label: 'g05' },
+      prefix: { enabled: true, front: 'g01', back: 'g02' },
+    });
   });
 
   it('执行 disabled：solving / sizes 空', () => {

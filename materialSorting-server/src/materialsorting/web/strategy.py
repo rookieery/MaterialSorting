@@ -5,9 +5,10 @@ US-002（2026-08-29）起同模块再挂**极限运行四路由** ``/api/extreme
 ``_STRATEGY_STATES[sid]`` / marker / 清理 / 发现 / 树杀骨架**（mode 字段区分
 ``se|race`` vs ``extreme``），⇒ 同会话「极限运行 ↔ 高级运行」409 单飞互斥零额外
 代码（防双长跑拖垮服务器 CPU），跨会话仍完全独立（多会话 US-004 语义不变）。
-两入口仅 start 校验分叉：极限收 ``time_total_s``（整数秒 905~43200，12h 防呆）
-且**拒 band/prefix**（极限参数迁移性未验证，方案 §5），spawn 尾 ``--extreme
---time <T> --quiet``；status/stop/result 三路由同槽同构（仅报错文案区分家族）。
+两入口仅 start 校验分叉：极限收 ``time_total_s``（整数秒 905~43200，12h 防呆），
+band/prefix 2026-08-30 起与策略族**同路径透传**（``_parse_band``/``_parse_prefix``
+校验 + config 写键，方案 §5 范围外条目解除），spawn 尾 ``--extreme --time <T>
+--quiet``；status/stop/result 三路由同槽同构（仅报错文案区分家族）。
 
 四路由（``register_strategy_routes(app)`` 由 ``server.py`` 文件尾注册），US-004
 多会话化（2026-08-27）后**全部按 ``X-Session-Id`` 解析**（缺省/空串 → default 会话）：
@@ -618,13 +619,6 @@ async def _start_run(req: Request, family: str):
                 {'error': f'time_total_s 不得高于 {EXTREME_MAX_TIME_S} 秒'
                           f'（12 小时防呆），当前 {total_sec}'},
                 status_code=400)
-        # 极限参数迁移性未验证（方案 §5）：band / prefix 键在场即 400（含
-        # enabled=false —— 「暂不支持」按按键判，不解析内容；null 视同未传）。
-        for key, name in (('band', '腰头成带'), ('prefix', '起始端成套')):
-            if payload.get(key) is not None:
-                return JSONResponse(
-                    {'error': f'极限运行暂不支持{name}（{key} 参数迁移性未验证），'
-                              '请关闭后重试'}, status_code=400)
     else:
         mode = payload.get('mode')
         if mode not in STRATEGY_MODES:
@@ -665,15 +659,16 @@ async def _start_run(req: Request, family: str):
     if quantities is not None and not isinstance(quantities, dict):
         return JSONResponse({'error': 'quantities 须为对象'}, status_code=400)
 
-    # 腰头成带（2026-08-22 与策略模式解除互斥）：复用 routes_ws._parse_band 单一
-    # 校验点（label ^g\d+$ / 存在于当前母版 / 该 g 码 quantities>0），非法 → 400
-    # 结构化早退；合法开启 → 以 StartPayload 原形态写进 config JSON（cli.config
-    # 9 键 schema 的 band 键）。null / enabled falsy → _parse_band 返回 None，
-    # 不写键（旧行为）。延迟 import：routes_ws → runtime → server 链若在模块级
-    # import 本模块（server.py 文件尾注册路由）之外再正向引用会成环，函数内取用
-    # 安全（同 _pieces_state 模式）。极限运行不进本段（上文已 400 早退）。
+    # 腰头成带（2026-08-22 与策略模式解除互斥；2026-08-30 起极限运行同款透传，
+    # 方案 §5 范围外条目解除）：复用 routes_ws._parse_band 单一校验点（label
+    # ^g\d+$ / 存在于当前母版 / 该 g 码 quantities>0），非法 → 400 结构化早退；
+    # 合法开启 → 以 StartPayload 原形态写进 config JSON（cli.config 9 键 schema
+    # 的 band 键）。null / enabled falsy → _parse_band 返回 None，不写键（旧
+    # 行为）。延迟 import：routes_ws → runtime → server 链若在模块级 import
+    # 本模块（server.py 文件尾注册路由）之外再正向引用会成环，函数内取用安全
+    # （同 _pieces_state 模式）。
     band_cfg = None
-    if family != 'extreme' and payload.get('band') is not None:
+    if payload.get('band') is not None:
         from .routes_ws import _parse_band
         try:
             worker_band = _parse_band(payload.get('band'), pieces, quantities)
@@ -682,15 +677,15 @@ async def _start_run(req: Request, family: str):
         if worker_band is not None:
             band_cfg = {'enabled': True, 'label': worker_band['label']}
 
-    # 起始端成套前后幅（2026-08-25 与策略模式解除互斥，band 同款）：复用
-    # routes_ws._parse_prefix 单一校验点（front/back ^g\d+$ 且存在于当前母版且
-    # front≠back + **2+2 资格码 ≥1**（sizes = 用户所排尺码过滤）—— start 期
-    # 拦下避免 20 分钟长跑空烧），非法 → 400 结构化早退；合法开启 → 以
-    # StartPayload 原形态写进 config JSON（cli.config 9 键 schema 的 prefix 键）。
-    # null / enabled falsy → _parse_prefix 返回 None，不写键（旧行为）。延迟
-    # import 防成环（同上 _parse_band）。极限运行不进本段（上文已 400 早退）。
+    # 起始端成套前后幅（2026-08-25 与策略模式解除互斥；2026-08-30 起极限运行
+    # 同款透传）：复用 routes_ws._parse_prefix 单一校验点（front/back ^g\d+$ 且
+    # 存在于当前母版且 front≠back + **2+2 资格码 ≥1**（sizes = 用户所排尺码
+    # 过滤）—— start 期拦下避免长跑空烧），非法 → 400 结构化早退；合法开启 →
+    # 以 StartPayload 原形态写进 config JSON（cli.config 9 键 schema 的 prefix
+    # 键）。null / enabled falsy → _parse_prefix 返回 None，不写键（旧行为）。
+    # 延迟 import 防成环（同上 _parse_band）。
     prefix_cfg = None
-    if family != 'extreme' and payload.get('prefix') is not None:
+    if payload.get('prefix') is not None:
         from .routes_ws import _parse_prefix
         try:
             worker_prefix = _parse_prefix(payload.get('prefix'), pieces,
@@ -702,8 +697,8 @@ async def _start_run(req: Request, family: str):
                           'back': worker_prefix['back']}
 
     # 9 键 config JSON（cli.config.load_config 严格校验；可选键仅在有值时写入 ——
-    # None 值会被 load_config 按类型错误拒绝）。极限运行无 band/prefix 键（上文
-    # 400 早退保证两 cfg 恒 None）。
+    # None 值会被 load_config 按类型错误拒绝）。band/prefix 两族（strategy /
+    # extreme）共用同一透传路径，下游 CLI/pipeline 模式无关。
     cfg_payload = {
         'master_dxf': str(master.resolve()),
         'gate_mm': float(gate_mm),

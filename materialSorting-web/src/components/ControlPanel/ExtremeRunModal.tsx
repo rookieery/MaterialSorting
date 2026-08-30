@@ -12,9 +12,9 @@
 //      quadtree_depth 是实验结论不是可调项，弹窗 UI 与文案均不出现）。
 //      预计轮数 N = 1 + floor((T - 602.5) / 347.5)（首轮全程 + 后续每轮期望耗时）
 //      随时长实时更新，标注期望口径「实际轮数 >= 预测（省出预算自动多跑）」。
-//   2) band/prefix 前置拦截（后端按按键判在场即 400「暂不支持」—— 面板开启时
-//      执行按钮置灰 + 提示行引导关闭，防「面板看到成带、实际没跑成带」的静默
-//      偏差；载荷恒不写 band/prefix 键）。
+//   2) band/prefix 随排料参数透传（2026-08-30 解除拦截，与高级运行同款）：高级
+//      配置开启时载荷直接带 ctx.band/ctx.prefix（后端 _parse_* 同一校验点），
+//      弹窗内以只读状态行回显当前生效项 —— 参数本体只在高级配置里配。
 //   3) 结果态追加只读提示「已固化实验参数」（不列参数值，2026-08-29 确认）。
 //
 // 进度态 / 结果态 / error / orphan 复用 StrategyRunModal 导出的同构组件
@@ -112,7 +112,8 @@ function ExtremeRunModalInner({
     return () => window.removeEventListener('keydown', onKey);
   }, [closeModal]);
 
-  /** collectStartContext 同源载荷公共段（seed/gate_mm/sizes/per_type/quantities）。 */
+  /** collectStartContext 同源载荷公共段（seed/gate_mm/sizes/per_type/quantities
+   * + band/prefix 透传 —— 与 StrategyRunModal.handleExec 同款，2026-08-30）。 */
   function startPayload(timeTotalS: number) {
     const ctx = buildStartContext();
     return {
@@ -122,11 +123,12 @@ function ExtremeRunModalInner({
       sizes: ctx.sizes,
       per_type: ctx.per_type,
       quantities: ctx.quantities,
+      band: ctx.band,
+      prefix: ctx.prefix,
     };
   }
 
-  /** 执行：排料参数与 handleStart 同源；band/prefix 恒不写键（开启时由执行按钮
-   * 置灰前置拦截 —— 后端按键判在场即 400「暂不支持」）。 */
+  /** 执行：排料参数与 handleStart 同源（band/prefix 随高级配置透传）。 */
   function handleExec(): void {
     if (presetMin === 'custom') {
       const m = parseCustomMinutes(customText);
@@ -245,11 +247,15 @@ function ExtremeConfigState({
   // 未选码号（与 handleStart sizes 非空校验同源 —— 后端对空 sizes 400）。
   const ctx = buildStartContext();
   const sizesEmpty = ctx.sizes.length === 0;
-  // band/prefix 前置拦截（后端按键判在场即 400「暂不支持」—— 面板开启时静默不跑
-  // 成带是 UX 陷阱，这里置灰 + 提示行引导关闭）。
-  const layoutOn = ctx.band !== null || ctx.prefix !== null;
+  // band/prefix 生效项回显（2026-08-30 起透传 —— 只读状态行，参数本体在高级
+  // 配置里配，这里不置灰不拦截，与高级运行弹窗行为一致）。
+  const layoutParts: string[] = [];
+  if (ctx.band !== null) layoutParts.push(`腰头成带 ${ctx.band.label}`);
+  if (ctx.prefix !== null) {
+    layoutParts.push(`起始端成套 ${ctx.prefix.front}/${ctx.prefix.back}`);
+  }
   const customInvalid = presetMin === 'custom' && customMin === null;
-  const execDisabled = solving || sizesEmpty || customInvalid || layoutOn;
+  const execDisabled = solving || sizesEmpty || customInvalid;
   return (
     <>
       <div className="strategy-field">
@@ -303,9 +309,9 @@ function ExtremeConfigState({
           <>预计 {rounds} 轮 seed（实际轮数 ≥ 预测，省出预算自动多跑）</>
         )}
       </div>
-      {layoutOn && (
-        <div className="strategy-warning" data-testid="extreme-layout-warning">
-          ⚠ 极限运行暂不支持腰头成带 / 起始端成套，请先在高级配置中关闭
+      {layoutParts.length > 0 && (
+        <div className="strategy-hint" data-testid="extreme-layout-hint">
+          将随排料参数生效：{layoutParts.join(' · ')}
         </div>
       )}
       <div className="strategy-hint">排料参数取当前面板：码号 / 高级配置 / 数量矩阵</div>
@@ -324,9 +330,7 @@ function ExtremeConfigState({
               ? '请先在面板勾选码号'
               : customInvalid
                 ? `自定义分钟须为 ${EXTREME_CUSTOM_MIN_MINUTES}~${EXTREME_CUSTOM_MAX_MINUTES} 的整数`
-                : layoutOn
-                  ? '请先关闭腰头成带 / 起始端成套'
-                  : undefined
+                : undefined
           }
         >
           执行

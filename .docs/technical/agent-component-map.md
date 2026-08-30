@@ -1288,7 +1288,7 @@ CPU），跨会话完全独立（多会话 US-004 语义不变）。
 
 | 文件 | 改动 |
 |------|------|
-| `materialSorting-server/src/materialsorting/web/strategy.py` | 常量 EXTREME_MODE/EXTREME_MIN_TIME_S=905/EXTREME_MAX_TIME_S=43200；start 重构为家族参数化（分叉①模式与预算校验 + extreme 拒 band/prefix、分叉② spawn cmd）；status/stop/result 抽公共实现 + extreme_* 薄包装（报错文案区分「极限运行/策略运行」）；register 八路由 |
+| `materialSorting-server/src/materialsorting/web/strategy.py` | 常量 EXTREME_MODE/EXTREME_MIN_TIME_S=905/EXTREME_MAX_TIME_S=43200；start 重构为家族参数化（分叉①模式与预算校验 + extreme 拒 band/prefix【2026-08-30 解除 → 同路径透传，见文末专节】、分叉② spawn cmd）；status/stop/result 抽公共实现 + extreme_* 薄包装（报错文案区分「极限运行/策略运行」）；register 八路由 |
 | `materialSorting-server/src/materialsorting/web/server.py` | 仅文件尾注册注释更新（八路由说明，零逻辑改动） |
 | `materialSorting-server/tests/test_web_extreme.py` | 新文件 13 例（见 tests/AGENTS.md 行） |
 
@@ -1299,8 +1299,9 @@ CPU），跨会话完全独立（多会话 US-004 语义不变）。
 2. **值域口径镜像不 import** —— 905（race 600 档最低总预算 602.5+302.5）与 43200
    （12h 防呆）在 web 层硬编码（web 禁 import ..cli.*，AST 守卫持续在测）；CLI 侧
    改值须两处同步。
-3. **band/prefix 按按键判** —— 键在场（非 null）即 400「极限运行暂不支持…」，不解析
-   内容（enabled=false 亦拒；「暂不支持」语义而非「校验失败」）。
+3. **band/prefix 按按键判**（US-002 立法；**2026-08-30 废止** —— 键在场即 400「极限
+   运行暂不支持…」改为与策略族同路径 `_parse_band`/`_parse_prefix` 透传，见文末
+   专节）。
 4. **status 进度源白名单不含 curve_s*.json** —— 与策略同口径（运行中非法 JSON）；
    `--extreme` 内部展开 race 门杀 ⇒ strategy.json race 档 / R5 门杀 events / per_seed
    killed 天然可读，解析零改动。
@@ -1350,9 +1351,8 @@ CPU），跨会话完全独立（多会话 US-004 语义不变）。
    份、各轮询 `/api/{strategy,extreme}/status`；弹窗自身不挂轮询（防双跑）；idle 态
    轻量（mount/open 翻转各 refresh 一次，interval 只在 starting/running）。
 2. **start 载荷同源** —— extreme 载荷也出自 `collectStartContext`（单一实现）+ 弹窗
-   时长换算 `time_total_s`；band/prefix **恒不写键**（后端在场即 400）；`ctx.band !==
-   null \|\| ctx.prefix !== null` 时执行按钮前置置灰 + 「⚠ 极限运行暂不支持腰头成带 /
-   起始端成套，请先在高级配置中关闭」警告行。
+   时长换算 `time_total_s`；band/prefix 2026-08-30 起随 ctx 透传（此前「恒不写键 +
+   置灰警告行」拦截已废止）；开启时弹窗显只读状态行回显生效项（见文末专节）。
 3. **家族过滤** —— 后端两族共享每会话状态槽，任一端点的 status 都可能报对方家族的
    running（mode 透传）；store 只认领 `state==='idle' \|\| spec.ownsMode(st.mode)`
    （strategy 认 undefined/null/se/race，extreme 只认 'extreme'）⇒ 极限在跑时高级
@@ -1371,7 +1371,7 @@ CPU），跨会话完全独立（多会话 US-004 语义不变）。
 - **共享组件 testid 不改名** —— extreme 弹窗复用 StrategyRunModal 导出组件，进度/
   结果/错误态 testid 仍 `strategy-*`（smoke/测试按此断言）；extreme 专属 testid 只
   有 `extreme-btn`/`extreme-badge`/`extreme-presets`/`extreme-preset-{60|120|240|480}`/
-  `extreme-preset-custom`/`extreme-custom-input`/`extreme-rounds`/`extreme-layout-warning`/
+  `extreme-preset-custom`/`extreme-custom-input`/`extreme-rounds`/`extreme-layout-hint`/
   `extreme-exec-btn`/`extreme-overlay`/`extreme-close`。
 - **结果应用复用 applyStrategyResult** —— 极限结果态「应用到主画布」走同一合成
   RunRecord 链（导出三格式兼容）；`result.mode='extreme'` 而 `summary.mode='race'`
@@ -1386,3 +1386,31 @@ CPU），跨会话完全独立（多会话 US-004 语义不变）。
 - **409 互斥现场对拍**（一次性脚本，不入库）：极限在跑 → 高级入口无徽标 + 弹窗配置
   态 → 高级 start → 409「已有进行中的**极限运行**（或检测到遗留 marker）…」（后端
   US-002 文案带 mode，前端透传即可区分对方）；终止后一切复原。
+
+## 极限运行 band/prefix 透传（2026-08-30）
+
+解除 US-002/003 的「暂不支持腰头成带/起始端成套」限制：极限运行与高级运行**同款
+透传**高级配置中的 band/prefix（用户决策：参数本体只在高级配置里配，弹窗只读回显；
+验收口径 = 单测/组件测 + 960s 最小档真跑，不做长 AB —— 极限参数 p0.7/et0/w4/600s
+原在 band/prefix OFF 下标定，迁移性留待实际使用观察）。
+
+### 改动文件
+
+| 文件 | 改动 |
+|------|------|
+| `materialSorting-server/src/materialsorting/web/strategy.py` | 删 extreme 族 band/prefix 400 早退循环；`_parse_band`/`_parse_prefix` 两处守卫去掉 `family != 'extreme'`（两族同路径：非法 → 400 同策略文案、合法 → config 写键、null/enabled falsy → 不写键）；注释/docstring 同步 |
+| `materialSorting-server/tests/test_web_extreme.py` | `test_extreme_band_prefix_rejected_400` 替换为三例（written_into_config / null_and_disabled_not_written / invalid_400，范本 test_web_strategy 同名三例） |
+| `materialSorting-web/src/types/strategy.ts` | `ExtremeStartPayload` 加 `band?`/`prefix?` 可选键 |
+| `materialSorting-web/src/components/ControlPanel/ExtremeRunModal.tsx` | `startPayload()` 透传 `ctx.band`/`ctx.prefix`（镜像 StrategyRunModal）；删 `layoutOn` 置灰拦截与警告行，换只读状态行 `extreme-layout-hint`（「将随排料参数生效：腰头成带 g05 · 起始端成套 g01/g02」） |
+| `materialSorting-web/src/components/ControlPanel/__tests__/ExtremeRunModal.test.tsx` | 置灰/警告用例反转为可点/状态行/载荷带键三例 |
+
+### 关键事实
+
+- **下游零改动**：CLI `--extreme` 展开为 race 后，band/prefix 走 9 键 config JSON →
+  `load_config` → `pipeline.solve_pieces`（cfg→worker 形态）→ `solve_worker` 进程内
+  构造（`WB_*`/`PS_*` 展开后发帧），全链路模式无关 —— 唯一拦截点本就在 web 层。
+- **spawn cmd 不变**：band/prefix 只随 config JSON 走，不进命令行（`--extreme --time
+  <T> --quiet` 尾不变）；config 键数 7↔9 随开启项浮动（off 不写键，与策略族逐字节
+  同语义）。
+- **2+2 资格码 start 期拦截**同样生效于 extreme（防数小时长跑空烧）；`--lns` 与
+  band/prefix 的 warn-skip 语义本就模式无关（web spawn 不带 `--lns`）。

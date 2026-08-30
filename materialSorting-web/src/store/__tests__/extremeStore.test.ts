@@ -1,5 +1,6 @@
 // US-003 extremeStore 单测（族参数化工厂 createRunStore 的极限族实例）：
-//   - start 202 → POST /api/extreme/start（time_total_s 秒载荷；无 band/prefix 键）
+//   - start 202 → POST /api/extreme/start（time_total_s 秒载荷；band/prefix 可选键
+//     由弹窗层组装，2026-08-30 起支持透传，store 层不感知）
 //     + 立即 refresh → running
 //   - start 409 → phase error + 后端 error 文案透传（互斥文案区分对方）
 //   - refresh 族过滤：/api/extreme/status 报对方族 run（mode se/race/缺失）不进
@@ -78,7 +79,7 @@ function resultFetchCount(): number {
 }
 
 describe('extremeStore (US-003)', () => {
-  it('start 202 → POST /api/extreme/start 载荷逐字段（time_total_s 秒；无 band/prefix 键）+ 立即 refresh → running', async () => {
+  it('start 202 → POST /api/extreme/start 载荷逐字段（time_total_s 秒）+ 立即 refresh → running', async () => {
     statusPayload = { state: 'running', mode: 'extreme', total_budget_sec: 7200, elapsed_sec: 3.2 } as StrategyStatus;
     await useExtremeStore.getState().start({
       time_total_s: 7200, seed: 7, gate_mm: 1980,

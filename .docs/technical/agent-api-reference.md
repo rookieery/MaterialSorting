@@ -457,12 +457,12 @@ curl http://127.0.0.1:8000/api/ptypes -H "X-Session-Id: <sid>"
 
 ### POST /api/extreme/start — 启动极限 run
 
-请求 `{time_total_s, seed?, gate_mm?, sizes?, per_type?, quantities?}`（可选 `X-Session-Id`，sid 语义与 strategy 四路由一致：过期/未知 → 401 `session_expired`、非法 → 400、闸门先于一切）。
+请求 `{time_total_s, seed?, gate_mm?, sizes?, per_type?, quantities?, band?, prefix?}`（可选 `X-Session-Id`，sid 语义与 strategy 四路由一致：过期/未知 → 401 `session_expired`、非法 → 400、闸门先于一切）。
 
 - 409：**本会话**已有进行中 run（内存态非终态）或本会话 marker 在 —— 无论对方是高级运行还是极限运行（文案带在跑的 mode：「已有进行中的策略运行/极限运行（或检测到遗留 marker），请先停止/清理」）；跨会话不 409
 - 422：会话 pieces 快照空 / doc 缺 `doc_id` / `uploads/<doc_id>.dxf` 丢失（同策略）
-- 400：`time_total_s` 缺省 / 非整数（字符串、非整浮点、bool） / `<905`（race 门杀 600s 档最低总预算 602.5+302.5，与 `cli.portfolio.race_plan` 同口径提前拦） / `>43200`（12h 防呆）；**`band`/`prefix` 键在场即 400**「极限运行暂不支持腰头成带/起始端成套（参数迁移性未验证）」（enabled=false 亦拒 —— 按按键判；null 视同未传）；seed 非整数 / sizes·per_type·quantities 类型错（同策略）
-- 202：清理本会话前缀上一轮产物（`web_<sid6>_*` 天然含 `web_<sid6>_extreme_*`；default `web_*` 含 `web_extreme_*`）→ 写 config JSON（`strategy_cfg_[<sid6>_]<stamp>.json`；键 = `master_dxf` 绝对路径 + `gate_mm` + `time=T` + `seeds=[seed]` + 可选 sizes/per_type/quantities，**恒无 band/prefix 键**）→ spawn（stdout=DEVNULL、stderr 临时文件）→ 写本会话 marker（5 键，mode='extreme'）→ `{started, pid, mode:'extreme', run_name, time_total_s}`（run_name = `web_[<sid6>_]extreme_<rand6>`）
+- 400：`time_total_s` 缺省 / 非整数（字符串、非整浮点、bool） / `<905`（race 门杀 600s 档最低总预算 602.5+302.5，与 `cli.portfolio.race_plan` 同口径提前拦） / `>43200`（12h 防呆）；seed 非整数 / sizes·per_type·quantities 类型错（同策略）；**band/prefix 非法 → 400 同策略文案**（2026-08-30 起 `_parse_band`/`_parse_prefix` 同一校验点透传：坏 g 码 / 不存在于母版 / 数量全 0 / front==back / 无 2+2 资格码；此前「键在场即 400 暂不支持」已废止；null / enabled falsy 视同关闭不写键）
+- 202：清理本会话前缀上一轮产物（`web_<sid6>_*` 天然含 `web_<sid6>_extreme_*`；default `web_*` 含 `web_extreme_*`）→ 写 config JSON（`strategy_cfg_[<sid6>_]<stamp>.json`；键 = `master_dxf` 绝对路径 + `gate_mm` + `time=T` + `seeds=[seed]` + 可选 sizes/per_type/quantities/**band/prefix（开启时写键，随 config JSON 走不进命令行）**）→ spawn（stdout=DEVNULL、stderr 临时文件）→ 写本会话 marker（5 键，mode='extreme'）→ `{started, pid, mode:'extreme', run_name, time_total_s}`（run_name = `web_[<sid6>_]extreme_<rand6>`）
 
 常量 `EXTREME_MIN_TIME_S=905` / `EXTREME_MAX_TIME_S=43200` 镜像 `cli.run_config` 极限语义但**不 import**（web 禁 import ..cli.*；数字改动须两处同步）。
 

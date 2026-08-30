@@ -1,7 +1,8 @@
 // US-005 策略运行 HTTP 契约 —— `web/strategy.py`（US-004 四路由）响应/请求体的 TS 镜像。
 // US-003 起同文件再镜像**极限运行四路由** `/api/extreme/*`（US-002 后端，与策略
 // 同槽同构 —— status/result 载荷复用下述类型，mode 字段扩 'extreme'；start 载荷
-// 独立 `ExtremeStartPayload`：time_total_s 秒 + 无 band/prefix）。
+// 独立 `ExtremeStartPayload`：time_total_s 秒 + band/prefix 2026-08-30 起与策略
+// 族同路径透传）。
 //
 // 四路由（前端只走相对路径，dev 经 Vite proxy 转 :8000）：
 //   POST /api/strategy/start   StrategyStartPayload → 202 {started,pid,mode,minutes,run_name}
@@ -74,8 +75,9 @@ export interface StrategyStartPayload {
 /**
  * POST /api/extreme/start 请求体（US-002；US-003 前端接入）。
  * time_total_s = 总预算秒（整数，后端值域 905~43200 —— 前端预设 60/120/240/480
- * 分钟 + 自定义 16~720 分钟恒在值域内）；**无 band/prefix 键**（后端按键判在场即
- * 400「暂不支持」—— 前端执行按钮对 band/prefix 开启直接置灰前置拦截）。排料
+ * 分钟 + 自定义 16~720 分钟恒在值域内）。band/prefix 2026-08-30 起透传（此前后端
+ * 按键判在场即 400「暂不支持」已解除）：与 StrategyStartPayload 同款 —— 高级
+ * 配置开启时随排料参数带上，后端 _parse_band/_parse_prefix 同一校验点。排料
  * 参数（seed/gate_mm/sizes/per_type/quantities）与 StrategyStartPayload 同源 ——
  * collectStartContext 单一实现共用。
  */
@@ -87,6 +89,10 @@ export interface ExtremeStartPayload {
   sizes?: number[];
   per_type?: PerTypeOverrides | null;
   quantities?: Record<string, Record<string, number>> | null;
+  /** 腰头成带（2026-08-30 起透传，语义同 StrategyStartPayload.band）。 */
+  band?: BandConfig | null;
+  /** 起始端成套前后幅（2026-08-30 起透传，语义同 StrategyStartPayload.prefix）。 */
+  prefix?: PrefixConfig | null;
 }
 
 /** strategy.json → plan 摘要（race 带 gate_seconds；se 带 k_screens/screen_s/ext_s）。 */
