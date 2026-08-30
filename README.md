@@ -153,6 +153,13 @@ ms-run-config data/configs/5336_coded_really.json --strategy se --time 600 --se-
 
 10min 档三法打平属预期（延长占预算比过高、筛选票过少），20min 起双模式比均分 +0.2pt 量级，1h 达上限 —— 不设 auto 阈值、四档全支持两模式（用户显式选择）。**现场对跑**（live_duel_ab，共享 fresh seed 序列 Random(2026)、同一 commit、各 1200s 名义预算）：**A=B=88.38% 精确平**（冠军 seed221：A 筛选 87.63 → 延长 88.38；B 门值 87.99 → 续跑 88.38，后续 11 seed 全部门杀且事后全部正确；最优帧 88.41% @172s 两臂相同）—— 与确定性重放机制互为印证。
 
+**极限运行（`--extreme`，race 门杀 × 实验结论极限参数）**：一条命令跑 best-of-k 右尾长跑，目标从「期望最优」换为「右尾最优」。内部展开为 `--strategy race --race-budget <extreme-budget> --race-gate 0.5 --solver-opts '{"exploration_pct": 0.7, "early_termination": false, "num_workers": 4}'`（手敲三件套逐字段等价；`quadtree_depth` 不写 = 缺省 4，方案 §2.6 A/B 关闭调优）。**糖衣旗标独占策略与旋钮**：与 `--strategy`/`--kill`/`--solver-opts`/`--rotate-opts` 及 4 个策略参数旗标任一显式同给 → 配置错误退出 1（极限参数是 5336 实验结论固化，不是可调项）；`--extreme-budget` 仅收 **600（默认，门判别力 ρ=0.916 最强、吞吐 ×1.7）/ 1200** 两档（2400s+ 门判别力失效是硬边界）；`--time` = 总预算秒数且必填（600 档最低 905s = 首轮全程 602.5 + 一轮门段 302.5）。门杀判据逐字复用 `decide_race_kill`（门时刻 = 每 seed 预算 × 0.5，严格破纪录才续跑）；`run_stats.jsonl` config 段 additive 加 `"extreme": {"budget": B}`（class_key 组成不变，与历史 run 可比）。Web 端为独立「极限运行」按钮（`/api/extreme/*` 四路由，与高级运行同会话 409 单飞互斥、跨会话独立）。同总预算 4h 三臂对拍验收（extreme vs race 默认档 vs 均分 600s×24）见 [.docs/business/极限运行_AB验收报告.md](.docs/business/极限运行_AB验收报告.md)。
+
+```bash
+ms-run-config data/configs/5336_coded_really.json --extreme --time 7200 --quiet   # 2h 极限长跑（≈20 轮）
+ms-run-config data/configs/5336_coded_really.json --extreme --time 14400          # 4h（验收档）
+```
+
 **solver_opts 透传与配置轮换（PC-006）**：`--solver-opts '<JSON>'`（spyrrow 求解旋钮，**全 seed 生效**）/ `--rotate-opts`（内置 4 档轮换池逐 seed 取档 `pool[队列序 % 4]`，池首空档 = 默认行为）—— 探索/压缩配比（`exploration_pct` 0.1~0.95，换算两段 int 秒与 total_computation_time 互斥）+ 四叉树深度（`quadtree_depth` 3/4/5）+ 并行核数（`num_workers`，默认 4）让不同 seed 搜索行为**去相关**、上尾更易被摸到。白名单外键忽略、越界 clamp（清洗单一真相源 `web.solver._normalize_solver_opts`）；两旗标互斥 / JSON 坏串 / 非对象 → 退出码 1；不传任何旗标 = 现行行为不变（WS 协议与 web 前端零改动）；旗标给了才在 result.json `config` 段回显 `solver_opts` / `rotate_opts`。
 
 ```bash

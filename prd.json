@@ -1,17 +1,4 @@
 {
   "branchName": "ralph/extreme-run",
-  "stories": [
-    {
-      "id": "US-003",
-      "title": "前端极限运行按钮与弹窗",
-      "description": "As a 版师，我要主界面独立「极限运行」按钮 + 弹窗（总时长预设 + 预计轮数展示，参数全隐藏），从而一键发起极限长跑并实时看到进度/门杀事件/结果应用。\n\n实现要点（依赖 US-002 四路由）：泛化优先于复制——useStrategyPoll/strategyStore/types/strategy.ts 加 mode 维度（或参数化 hook），守住两条既有不变量：useStrategyPoll 全应用恰一实例（extreme 入口与 strategy 入口各自持有时需保证不双跑轮询，优先共享同一轮询机制或 idle 态轻量）、start 载荷与主画布 handleStart 同源（collectStartContext 单一实现）。\n\n具体任务：\n1. materialSorting-web/src — 新增 ExtremeRunButton（与 StrategyRunButton 并排同级）+ ExtremeRunModal；controlPanelStore 的 ControlPanelModalId 加 'extreme_run'（modal 单例互斥）。\n2. 弹窗：时长四档预设 60/120（默认）/240/480 分钟 + 自定义 16~720 分钟；预计轮数 N = 1 + floor((T − 602.5) / 347.5) 实时显示，标注期望口径（「实际轮数 ≥ 预测（省出预算自动多跑）」）。\n3. 极限参数完全隐藏：弹窗 UI 与文案不出现 exploration_pct/early_termination/num_workers/quadtree_depth 字样（已确认决策②）。\n4. 409 互斥文案区分对方（「高级运行进行中」/「极限运行进行中」），引导先停止/清理。\n5. 轮询三态进度（per_seed chips 含 killed 配色/门杀 events 行/incumbent 大数字 + 预算条）与结果态「应用到主画布」（复用 applyStrategyResult 合成 RunRecord 模式，导出三格式正常）；结果态含一句「已固化实验参数」只读提示（不列参数值，2026-08-29 确认）。\n6. HTTP 一律走 lib/api.ts apiFetch（X-Session-Id 注入 + 会话先行门），无裸 fetch。\n7. style.css 沿用 .strategy-* 族风格扩展，不引入 CSS 框架。\n8. scripts/ 新增 Playwright 冒烟（模板参考 scripts/smoke-band-preview.mjs）：上传母版 → 打开弹窗 → 预设/轮数对拍（120min→~20 轮、60min→~10 轮、240min→~39 轮）→ 发起 → 轮询出现 starting/running → 停止。\n\n验收标准：\n- 独立按钮与「高级运行」并排同级（不进 race/se 模式选择）；默认选中 120 分钟\n- 预计轮数随时长实时更新且与公式对拍一致\n- 弹窗不出现四个参数名字样\n- 同会话高级运行进行中点极限运行 → 409 互斥文案（反向亦然）；跨会话不受影响\n- 结果态应用主画布 + 导出可用 + 「已固化实验参数」提示在位\n- npm run build 通过、既有前端测试零回退\n- 通过浏览器验证极限运行入口（Playwright 冒烟通过）",
-      "passes": true
-    },
-    {
-      "id": "US-004",
-      "title": "4h 三臂对拍验收与文档",
-      "description": "As a 项目负责人，我要同总预算 4h 三臂对拍（--extreme vs 现行 race 默认档 vs 均分 600s×N seeds）+ 验收报告，从而使极限运行的增益主张有端到端实证入档。\n\n具体任务：\n1. scripts/ — 三臂离线回放脚本（曲线库 = 既有 25-seed 池 + race 回放语义，可复用 scripts/depth_ab_analyze.py 的 load_arm/gate_value 口径）：输出三臂 E[best] + P(≥91.5pt) 表。\n2. 端到端三臂各 4h 真跑（5336 生产配置 data/configs/5336_coded_really.json 口径；extreme 臂 web 入口与 CLI --extreme 两入口至少各验一次成功启动）：\n   - extreme 臂：ms-run-config <cfg> --extreme --time 14400\n   - race 默认臂：--strategy race --time 14400\n   - 均分臂：seeds 串行 600s×24（无门杀无极限参数）\n3. .docs/business/极限运行_AB验收报告.md — 三臂 best real_density 对比表（原面积口径）+ 离线回放表 + 判定结论（若未达标做差距归因并给回滚默认档建议）。\n4. 文档同步：README「配置驱动求解」节补 --extreme 用法；.docs/technical/agent-api-reference.md 补 /api/extreme/* 四路由契约；web/AGENTS.md 补极限运行入口速查。\n\n验收标准：\n- 离线回放表入报告（三臂 E[best] + P(≥91.5pt)）\n- 端到端三臂各 4h 真跑完成，best real_density 对比表入报告\n- 判定：extreme 臂 best ≥ race 默认臂 best（未达标则归因分析入报告 + 回滚建议）\n- README/agent-api-reference/web AGENTS 三处文档同步\n- python -m materialsorting.cli.run_config --help 跑通、分层依赖未反向",
-      "passes": false
-    }
-  ]
+  "stories": []
 }

@@ -521,3 +521,12 @@ src/
 - **结果应用复用 applyStrategyResult**（US-006 约定延续）：ExtremeRunModal 应用按钮 → onApplyExtreme → 同一 NestingPage 函数，合成 RunRecord 链零改动；状态行按 mode 区分「极限/策略 run 已应用」。
 - **smoke：`scripts/smoke-extreme-run.mjs`**（playwright msedge→chrome，范本 smoke-band-preview）三坑记档：① 超排 Tab 解锁联动 **parse done** 非 commit done —— 须等 `[data-testid="commit-status"].done`（`.upload-status.done` 同时命中 parse-done 元素不能只按 class 等）再进 Tab，否则极限 start 吃 422「排料数据为空」；② fresh context = 新 sid（MS_SESSION_MAX=4/TTL 600s）连跑多轮会 429 session_limit → 重启 ms-web 恢复；③ stopped 后 result 拉取异步先闪「正在读取运行结果…」→ 断言等 `strategy-result-head`。US-017 起默认码号空：进 Tab 后先勾 `.sizes .chip input`（id=`sz_<key>`）前两个再执行。
 - **测试基线**：`src/store/__tests__/extremeStore.test.ts` 7 项（载荷契约无 band/prefix / 409 透传 / 家族过滤双向 / result 恰拉一次 / stop / reset）+ `ExtremeRunButton.test.tsx` 4 项 + `ExtremeRunModal.test.tsx` 17 项（公式对拍/预设切换/自定义域/参数隐藏/band 闸门/载荷等值断言/三态渲染/ESC 遮罩 ✕ 不 stop）。改家族工厂或弹窗须同步。
+
+## 极限运行入口速查（US-004 补，2026-08-29）
+
+前端「极限运行」入口三件套与验收锚点，细节约定见上「极限运行 US-003 关键约定」：
+
+- **入口链**：`ExtremeRunButton`（与 StrategyRunButton 并排 `.strategy-entry-row`）→ `modal==='extreme_run'` 单例 → `useExtremeStore`（/api/extreme，家族工厂第二实例）→ 后端 spawn `ms-run-config <cfg> --name web_[<sid6>_]extreme_<rand6> --extreme --time <T> --quiet`。CLI 对应 `ms-run-config <cfg> --extreme --time <T>`（参数展开同源，`--extreme-budget` 仅 600/1200）。
+- **参数固化为黑盒**：p0.70/et0/workers4/depth4（缺省）在 CLI `EXTREME_SOLVER_OPTS` 单点定义，web 无参数透传面；弹窗只收总时长（60/120 默认/240/480 分钟或自定义 16~720）+ seed/gate/码号/配比（collectStartContext 同源）。
+- **轮数预估口径**：`estimateExtremeRounds(T)=1+floor((T−602.5)/347.5)`（首轮全程 602.5s + 每轮 ~0.85 门段 0.15 全程 ≈ 347.5s 期望）；「实际轮数 ≥ 预测（省出预算自动多跑）」。
+- **验收**：同总预算 4h 三臂对拍（--extreme vs --strategy race 默认档 vs 均分 600s×24）报告 `.docs/business/极限运行_AB验收报告.md`；离线回放器 `scripts/extreme_ab_replay.py`（25-seed 池 + race 回放语义）；**长跑互斥的物理根据**：三臂并行实测 solver 帧数 −8%、密度 −0.5pt（墙钟预算被 CPU 争用截断），单飞槽不是形式约束。

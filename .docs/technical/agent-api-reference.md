@@ -477,6 +477,7 @@ curl http://127.0.0.1:8000/api/ptypes -H "X-Session-Id: <sid>"
 1. 同会话极限 ↔ 高级互斥 = 共享状态槽的自然结果（单飞闸门查 `st['state']` 非终态 ∨ marker 在，与家族无关）；任一入口的 stop 都能清理本会话槽内 in-flight run（单飞保证同时只有一族）。
 2. 极限 run 的 run_dir 认领 / marker 回写 / 终态清理 / orphan 检测全部走策略既有路径（run_name 前缀 glob，rand6 唯一）。
 3. 前端 US-003 消费方：轮询与结果应用复用策略 PRD US-005 弹窗机制（mode 字段区分入口）。
+4. 验收（US-004）：同总预算 4h 三臂对拍报告 [.docs/business/极限运行_AB验收报告.md](../business/极限运行_AB验收报告.md)；单飞互斥的物理根据 = 三臂并行实测 solver 帧数 −8%、密度 −0.5pt（墙钟预算被 CPU 争用截断，长跑必须串行/单飞）。
 
 ## WebSocket /ws/solve — 求解流
 
