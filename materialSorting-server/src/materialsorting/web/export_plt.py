@@ -12,6 +12,7 @@ import math
 from collections import Counter
 
 from .export_geometry import NOTCH_LEN_MM
+from .plt_table import TABLE_GAP_MM, TABLE_LEN_MM, InfoTable, info_table_polylines
 
 
 # ===================== PLT/HPGL（LIKE 绘图仪 / WT V8.8）=====================
@@ -69,6 +70,9 @@ _LAYER_NET = 'net'            # 净版（DXF layer14）
 _LAYER_INTERNAL = 'internal'  # 内部线（DXF layer8）
 _LAYER_NOTCH = 'notch'        # 刺口（DXF layer4）
 _LAYER_GRAIN = 'grain'        # 布纹线（DXF layer7）
+# 唛架信息表格（2026-08-30，层序最末）：12 字段标签表 = 文件级元数据，与裁片
+# 几何分离（不进五层口径）；笔画不过 y≤gate 裁剪（裁剪切坏文字），见 plt_table。
+_LAYER_TABLE = 'table'
 
 # 门幅框/裁剪界 = 输入 gate_mm（2026-08-28 版师定案：输入幅宽即实际幅宽）。
 # 求解约束带同口径，这里按 gate_mm 裁剪属兜底防线（旧 intermediate / 求解 bug）。
@@ -303,8 +307,14 @@ def _grain_annotation_strokes(gl, label_text: str | None) -> list[list[tuple[flo
     return strokes
 
 
-def write_marker_plt(world_pieces, *, width_mm: float, gate_mm: float, title: str) -> bytes:
+def write_marker_plt(world_pieces, *, width_mm: float, gate_mm: float, title: str,
+                     info_table: InfoTable | None = None) -> bytes:
     """写排料 marker PLT/HPGL 文本（ASCII ``bytes``，安全幅面口径见模块注释）。
+
+    ``info_table``（2026-08-30 唛架信息表格，additive 缺省 None 零变化）：
+    给定时在唛架末端追加 12 字段标签表（plt_table 构建），门幅边框与 PS 纸长
+    延伸覆盖表格区、表格长度计入用料（生产口径）。表格笔画追加为独立
+    ``_LAYER_TABLE`` 桶（层序最末）、**不过 y≤gate 裁剪**（元数据保护）。
 
     生成 HPGL/HP-GL 指令序列（封装口径对齐生产 PLT）：
     ``IN;PS<纸长>;SP1;PW0.08;`` 头部一行 → **全程单笔 SP1**（2026-08-24 用户要求
@@ -352,18 +362,21 @@ def write_marker_plt(world_pieces, *, width_mm: float, gate_mm: float, title: st
     # 全程仅 SP1 一笔。桶仅作层序分组，不再对应输出笔号。
     layer_lines = {layer: [] for layer in
                    (_LAYER_OUTLINE, _LAYER_NET, _LAYER_INTERNAL, _LAYER_NOTCH,
-                    _LAYER_GRAIN)}
+                    _LAYER_GRAIN, _LAYER_TABLE)}
     clipped_pids: set = set()
     # 标注数量口径：同 pid 副本数（demand>1 时 sparrow 对同 pid 发 N 条
     # placed_items，placed_to_world 即 N 行同 pid —— 计数即需求副本数）
     pid_counts = Counter(pc.get('pid') for pc in world_pieces)
 
     # 门幅/用布边框（层序之首，与生产 PLT 同为 SP1 单笔）——闭合矩形 4 角；Y 上沿
-    # 按输入门幅内缩边距，下沿内缩，不贴门幅边界
+    # 按输入门幅内缩边距，下沿内缩，不贴门幅边界。带信息表格时 X 延伸覆盖表格区
+    # （表格在边框内、长度计入用料 —— 生产 PLT 同口径）。
     border_y1 = float(gate_mm) - PLOT_BORDER_MARGIN_Y_MM
+    border_x1 = (width_mm + TABLE_GAP_MM + TABLE_LEN_MM if info_table is not None
+                 else width_mm)
     border = [(0.0, PLOT_BORDER_MARGIN_Y_MM),
-              (width_mm, PLOT_BORDER_MARGIN_Y_MM),
-              (width_mm, border_y1),
+              (border_x1, PLOT_BORDER_MARGIN_Y_MM),
+              (border_x1, border_y1),
               (0.0, border_y1)]
     layer_lines[_LAYER_OUTLINE].extend(_plt_polyline(closed=True, points=border))
 
@@ -426,15 +439,26 @@ def write_marker_plt(world_pieces, *, width_mm: float, gate_mm: float, title: st
                         ' intermediate / 求解链路', len(clipped_pids),
                         gate_f, sample)
 
-    # 头部一行（对齐生产 PLT）：PS 纸长 = 走纸引导 + max(用布长, 内容最大X) + 尾余量
-    paper_len = int(round((PLOT_LEAD_X_MM + max(width_mm, max_x) + PLOT_TAIL_X_MM)
+    # 唛架信息表格（2026-08-30，层序最末）：文本轮廓 + 分隔线直接进 _LAYER_TABLE
+    # 桶 —— **不过 y≤gate 裁剪**（元数据，裁剪切坏文字；gate 异常小由
+    # info_table_polylines 内 warning 提示），复用 _plt_polyline 分块口径。
+    if info_table is not None:
+        table_x0 = float(width_mm) + TABLE_GAP_MM
+        for closed, pts in info_table_polylines(info_table, table_x0=table_x0):
+            layer_lines[_LAYER_TABLE].extend(_plt_polyline(closed=closed, points=pts))
+
+    # 头部一行（对齐生产 PLT）：PS 纸长 = 走纸引导 + max(用布长, 内容最大X) + 尾余量；
+    # 带信息表格时内容总长 = 用布长 + 表格段（gap+表长，边框/用料同口径延伸）
+    content_max = (width_mm + TABLE_GAP_MM + TABLE_LEN_MM if info_table is not None
+                   else width_mm)
+    paper_len = int(round((PLOT_LEAD_X_MM + max(content_max, max_x) + PLOT_TAIL_X_MM)
                           * _PLT_SCALE))
     cmds: list[str] = [
         f'IN;PS{paper_len};SP{_PLT_PEN};PW{_PLT_PEN_WIDTH_MM};']
     # 单笔输出：头部已声明 SP1，全部层按层序并入同一笔、无 SP 切换（生产 PLT
     # 全程单笔同构；空层桶自然贡献 0 行）
     for layer in (_LAYER_OUTLINE, _LAYER_NET, _LAYER_INTERNAL, _LAYER_NOTCH,
-                  _LAYER_GRAIN):
+                  _LAYER_GRAIN, _LAYER_TABLE):
         cmds.extend(layer_lines[layer])
     cmds.append('PU;PG;')   # 抬笔 + 出纸收尾一行（生产 PLT 以 PU;PG; 结束）
 

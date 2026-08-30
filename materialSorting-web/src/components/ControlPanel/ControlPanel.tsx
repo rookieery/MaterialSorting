@@ -60,9 +60,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useExport } from '../../hooks/useExport';
 import type { ExportFmt } from '../../lib/download';
+import type { ExportTableFields } from '../../lib/exportTable';
+import { useControlPanelStore } from '../../store/controlPanelStore';
 import { useUploadStore } from '../../store/uploadStore';
 import { useQtyStore } from '../../store/qtyStore';
 import { ExportButtons } from './ExportButtons';
+import { ExportInfoModal } from './ExportInfoModal';
 import { ParamForm } from './ParamForm';
 import { PerTypeOverrides } from './PerTypeOverrides';
 import { SizePicker, computeTotalCutPieces } from './SizePicker';
@@ -166,6 +169,10 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
   // onStatus 透传到 NestingPage.setStatus → StatusLine（导出中 / 完成 / 失败文案由 useExport 写）。
   const { exportAs, exporting } = useExport({ onStatus });
 
+  // 2026-08-30：PLT 导出信息表格弹窗（ExportInfoModal 订阅 controlPanelStore 自显隐；
+  // 打开入口在 handleExport 的 fmt==='plt' 分流）。
+  const openModal = useControlPanelStore((s) => s.openModal);
+
   /** 通用 patch 更新（部分字段）。 */
   function patch(p: Partial<FormState>) {
     setForm((prev) => ({ ...prev, ...p }));
@@ -245,12 +252,26 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
     onStart({ ...ctx, seed_count: parseSeedCount(form) });
   }
 
-  /** 导出按钮回调 —— 透传 form.sizes（过滤 null）给 useExport.exportAs（与旧 vanilla 实现 `sizes: selectedSizes()` 一致）。 */
+  /** form.sizes 过滤 null（通用码）—— handleExport / handlePltConfirm 同源复用。 */
+  const filterSizes = useCallback(
+    (): number[] => form.sizes.filter((s: number | null): s is number => s !== null),
+    [form.sizes],
+  );
+
+  /** 导出按钮回调 —— 透传 form.sizes（过滤 null）给 useExport.exportAs（与旧 vanilla
+   *  实现 `sizes: selectedSizes()` 一致）。PLT 分流到信息表格弹窗（2026-08-30：先填
+   *  床次/层数等 6 手输字段再导出，生产 PLT 同款表格附在唛架末端）；PNG/DXF 直通。 */
   function handleExport(fmt: ExportFmt): void {
-    const sizesNum: number[] = form.sizes.filter(
-      (s: number | null): s is number => s !== null,
-    );
-    void exportAs(fmt, sizesNum, doc?.filename);
+    if (fmt === 'plt') {
+      openModal('export_info');
+      return;
+    }
+    void exportAs(fmt, filterSizes(), doc?.filename);
+  }
+
+  /** PLT 信息表格弹窗确认 —— 携手输字段导出（唯一提交路径，ExportInfoModal 内已落盘记忆）。 */
+  function handlePltConfirm(fields: ExportTableFields): void {
+    void exportAs('plt', filterSizes(), doc?.filename, fields);
   }
 
   // US-017：doc=null 时 StatusLine 增提示「请先在上传预览页解析母版」（AC#3）；
@@ -391,6 +412,8 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
       </div>
       <StatusLine text={visibleStatus} />
       <ExportButtons solving={solving} exporting={exporting} onExport={handleExport} partial={partial} />
+      {/* PLT 导出信息表格弹窗单例（订阅 controlPanelStore 自显隐；Portal 到 body）。 */}
+      <ExportInfoModal exporting={exporting} onConfirm={handlePltConfirm} />
     </aside>
   );
 }

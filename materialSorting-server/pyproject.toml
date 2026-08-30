@@ -9,6 +9,7 @@ description = "牛仔裤排料（marker making）引擎与可视化工作台"
 requires-python = ">=3.10"
 dependencies = [
     "ezdxf>=1.1",     # DXF 读写（R12 POLYLINE，ET 兼容）
+    "fonttools>=4.40",  # PLT 信息表格矢量文字（捆绑 Noto Sans SC 轮廓展平；此前仅 ezdxf 传递依赖）
     "numpy",          # 约束层位图腐蚀
     "shapely",        # 裁片向内腐蚀（erode）
     "spyrrow",        # 排料求解器主体（pip 包，不改源码；非 PyPI 主流，装不上需手动处理）
@@ -28,6 +29,10 @@ ms-lns = "materialsorting.cli.lns:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+# 捆绑 OFL 中文字体（PLT 唛架信息表格矢量文字，2026-08-30）—— 服务器/本机同源
+materialsorting = ["resources/fonts/*.otf", "resources/fonts/OFL.txt"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

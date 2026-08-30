@@ -1637,6 +1637,27 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
   outline: none;
   border-color: #2ea06c;
 }
+/* 导出信息表格弹窗（2026-08-30）：文本输入 + 备注 textarea（沿用 select 视觉） */
+.strategy-text-input,
+.strategy-textarea {
+  background: #1c1d22;
+  color: #e6e6e6;
+  border: 1px solid #3a3d45;
+  border-radius: 3px;
+  padding: 7px 8px;
+  font-size: 13px;
+  font-family: inherit;
+}
+.strategy-text-input:focus,
+.strategy-textarea:focus {
+  outline: none;
+  border-color: #2ea06c;
+}
+.strategy-textarea {
+  resize: vertical;
+  min-height: 3em;
+  line-height: 1.5;
+}
 .strategy-mode-desc {
   color: #9aa;
   font-size: 12px;

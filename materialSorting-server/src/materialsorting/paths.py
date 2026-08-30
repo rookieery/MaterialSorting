@@ -7,6 +7,7 @@
     MS_DATA_DIR    原始数据目录（母版 DXF）
     MS_OUT_DIR     运行产物目录（intermediate / SVG / PNG / 曲线）
     MS_STATIC_DIR  前端静态文件目录（FastAPI mount 用）
+    MS_FONT_DIR    捆绑字体目录（PLT 信息表格矢量文字，缺省包内 resources/fonts）
 
 子目录约定：
     sparrow_baseline/  web 事实源（pieces_intermediate.json，web commit 独占写）
@@ -38,3 +39,5 @@ RUN_STATS_JSONL = os.path.join(OUT_DIR, 'run_stats.jsonl')   # PC-009 run 统计
 MASTER_DXF_GLOB = os.path.join(DATA_DIR, 'M1787*(2).dxf')         # 母版 DXF glob（命中的是 2.9MB 的 (1)(2)）
 STATIC_DIR = os.environ.get('MS_STATIC_DIR',
                             os.path.join(REPO_DIR, 'materialSorting-web', 'static'))
+FONT_DIR = os.environ.get('MS_FONT_DIR', os.path.join(_PKG, 'resources', 'fonts'))
+PLT_FONT_PATH = os.path.join(FONT_DIR, 'NotoSansSC-Regular.otf')   # PLT 信息表格矢量文字（OFL，随包分发）

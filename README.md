@@ -88,6 +88,16 @@ ms-web             # → http://127.0.0.1:8000
 | `MS_RESULT_GRACE_SEC` | `7200` | 策略/极限 run 终态后会话宽限秒数（run 存活期间滚动钉住不逐出；期间会话仍占名额） |
 | `MS_UPLOAD_TTL_DAYS` | `14` | uploads 磁盘清理 TTL 天数（按 mtime，成对判龄） |
 
+## 导出与 PLT 唛架信息表格（2026-08-30）
+
+工作台「导出」支持 PNG / R12-DXF / PLT 三格式。**PLT 导出前弹「唛架信息表格」填写窗**（纯取消型：ESC/遮罩/取消只关窗，唯一提交路径 = 「导出 PLT」），与生产 PLT（`data/PC-20250508NJIF*.plt`）同款：12 字段标签表附在唛架末端、旋转 90°、长度 565mm **计入用料**、边框延伸覆盖。
+
+- **手输 6 字段**（弹窗填写，localStorage `ms_export_table` 跨导出记忆排料师/床次等；默认：铺布层数=1、拉布方式=单向、排料师=noname、其余空）：床次 / 铺布层数（1~999 整数，非法前端先拦后端 400）/ 拉布方式 / 排料师 / 款式号 / 备注。
+- **自动 6 字段**（后端按当前方案计算）：用料（米）= 唛架总长含表格（2 位小数）；幅宽 = gate_mm；面料利用率 = real_density×100（2 位 + %）；单耗（米）= 用料 ÷ 每层件数（3 位）；共 N 件 = 每层件数 × 铺布层数；日期时间 = 服务端导出时刻。
+- **字体**：矢量笔画文本（fontTools 贝塞尔展平，PU/PD 折线，全文仍 ASCII、无 LB/VS 指令——「PLT 不加文字」口径指 g 码不进 PLT，表格是文件级元数据）；捆绑 Noto Sans SC Regular（OFL 许可，`resources/fonts/` 内含 `OFL.txt`），任何手输汉字 100% 可渲染、Windows/Ubuntu 渲染一致；cmap 未命中画豆腐框 + 日志 warn。长值自动缩字号（下限 9mm）仍超则尾部截断。
+- **零回归**：不带 `table` 键（旧前端 / 直接 POST）导出的 PLT 与旧版逐字节一致；PNG/DXF 载荷忽略 `table` 键。
+- 载荷契约（`POST /export` 的可选 `table` 对象，snake_case）：`bed_no` / `ply_count` / `lay_method` / `planner` / `style_no` / `remark`，详见 [.docs/technical/agent-api-reference.md](.docs/technical/agent-api-reference.md)。
+
 ## 配置驱动求解（ms-run-config，无需浏览器）
 
 评估配置（码号组合 / 公差 / 数量矩阵 / 多 seed）不必开浏览器工作台，一条命令跑完「commit → 求解」：
@@ -212,7 +222,7 @@ python -m materialsorting.cli.calibration simulate --tag 5336_coded_really --tar
        ├─ load_nest_pieces（manifest 驱动布纹对齐 + 归一化，无镜像展开）
        └─ 写回 out/sparrow_baseline/pieces_intermediate.json（事实源，.bak 备份）
    ↓ ms-sparrow-baseline / ms-sparrow-exp（sparrow 求解）
-   ↓ ms-web（工作台读取 + 可视化 + 导出 PNG/R12-DXF）
+   ↓ ms-web（工作台读取 + 可视化 + 导出 PNG/R12-DXF/PLT）
 
 ms-run-config <config.json>（CLI 平行通道，不经过 web）
    └─ load_config 校验 → 独立时间戳 run_dir 内同口径 commit（切片 + intermediate 落 out/config_runs/）
@@ -235,7 +245,7 @@ ms-run-config <config.json>（CLI 平行通道，不经过 web）
 
 ## 路径覆盖
 
-`materialsorting/paths.py` 的数据/产物/前端目录均可通过环境变量覆盖：`MS_DATA_DIR`、`MS_OUT_DIR`、`MS_STATIC_DIR`（默认指向 `materialSorting-web/static/`，dev 模式下无需 override，前端由 Vite 直接 serve）。
+`materialsorting/paths.py` 的数据/产物/前端目录均可通过环境变量覆盖：`MS_DATA_DIR`、`MS_OUT_DIR`、`MS_STATIC_DIR`（默认指向 `materialSorting-web/static/`，dev 模式下无需 override，前端由 Vite 直接 serve）、`MS_FONT_DIR`（PLT 表格字体目录，默认包内 `resources/fonts/`）。
 
 ## 架构与约定
 

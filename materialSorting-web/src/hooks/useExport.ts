@@ -26,6 +26,8 @@ import { useCallback, useRef, useState } from 'react';
 import { apiFetch } from '../lib/api';
 import type { ExportFmt } from '../lib/download';
 import { downloadBlob, parseContentDisposition } from '../lib/download';
+import type { ExportTableFields } from '../lib/exportTable';
+import { toExportTablePayload } from '../lib/exportTable';
 import { runRegistry } from '../store/runRegistry';
 
 /** 父级回调：导出开始 / 完成 / 失败时把状态文案透传给 StatusLine（AC#6）。 */
@@ -35,8 +37,11 @@ export interface UseExportCallbacks {
 
 export interface UseExportResult {
   /** 触发导出（取 bestRun → POST /export → blob 下载）。sizes = ControlPanel form.sizes；
-   *  filename = 上传母版名（透传作导出文件名前缀，与界面「当前文件」同源）。 */
-  exportAs: (fmt: ExportFmt, sizes: number[], filename?: string) => Promise<void>;
+   *  filename = 上传母版名（透传作导出文件名前缀，与界面「当前文件」同源）；
+   *  table = PLT 唛架信息表格手输字段（2026-08-30，仅 fmt='plt' 消费 —— 后端
+   *  转 12 字段标签表附在唛架末端；undefined 时 payload 不带 table 键）。 */
+  exportAs: (fmt: ExportFmt, sizes: number[], filename?: string,
+             table?: ExportTableFields) => Promise<void>;
   /** 是否正在导出（按钮 disabled + 状态行 正在生成…）。 */
   exporting: boolean;
 }
@@ -57,7 +62,8 @@ export function useExport(cb: UseExportCallbacks = {}): UseExportResult {
   // ref 同步 state，async 流程内读到最新值（防连击：state 异步生效，ref 立即生效）。
   const exportingRef = useRef(false);
 
-  const exportAs = useCallback(async (fmt: ExportFmt, sizes: number[], filename?: string): Promise<void> => {
+  const exportAs = useCallback(async (fmt: ExportFmt, sizes: number[], filename?: string,
+                                       table?: ExportTableFields): Promise<void> => {
     // 1) bestRun（AC#1）：lastFrame 存在且 finalDensity 最高的 run
     const run = runRegistry.bestRun();
     if (!run || !run.lastFrame) {
@@ -69,6 +75,8 @@ export function useExport(cb: UseExportCallbacks = {}): UseExportResult {
 
     // 2) ExportPayload（AC#2，逐字段与旧 vanilla 实现 一致）
     //    gate_mm 来自 manifest（与旧 vanilla 实现 `gateH = m.gate_mm` 同源；所有 run 共享）。
+    //    table（2026-08-30）：PLT 唛架信息表格手输字段（JSON.stringify 自动剔除
+    //    undefined —— PNG/DXF 载荷与旧版逐字节一致）。
     const gate_mm = run.manifest?.gate_mm ?? 0;
     const payload = {
       fmt,
@@ -79,6 +87,7 @@ export function useExport(cb: UseExportCallbacks = {}): UseExportResult {
       density: run.finalDensity,
       placed: run.lastFrame.placed_items,
       filename,
+      table: table ? toExportTablePayload(table) : undefined,
     };
 
     // 3) 状态行：正在生成 PNG/DXF…（AC#6）

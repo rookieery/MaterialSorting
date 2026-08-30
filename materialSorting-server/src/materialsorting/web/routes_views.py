@@ -18,7 +18,15 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from urllib.parse import quote
 
 from .. import paths
-from .export import placed_to_world, render_png, write_marker_dxf, write_marker_plt
+from .export import (
+    placed_to_world,
+    parse_table_payload,
+    build_info_table,
+    render_png,
+    write_marker_dxf,
+    write_marker_plt,
+)
+from .plt_table import TablePayloadError
 from .sessions import SessionError, registry as session_registry
 
 router = APIRouter()
@@ -378,7 +386,19 @@ async def export(req: Request):
         # ASCII（格式：M1787 util=<pct>% L=<L>cm gate=<gate>cm seed=<seed>，两位小数），
         # 避免中文编码风险。
         title = f'M1787 util={pct:.2f}% L={width_mm / 10:.2f}cm gate={gate_mm / 10:.2f}cm seed={seed}'
-        data = write_marker_plt(world, width_mm=width_mm, gate_mm=gate_mm, title=title)
+        # 唛架信息表格（2026-08-30）：payload 可选 table 对象（前端导出弹窗 6 手输
+        # 字段）→ 系统补全自动字段后随 PLT 输出（缺省不带表格，旧前端零变化）。
+        info_table = None
+        if payload.get('table') is not None:
+            try:
+                table_in = parse_table_payload(payload.get('table'))
+            except TablePayloadError as e:
+                return JSONResponse({'error': f'信息表格字段非法：{e}'},
+                                    status_code=400)
+            info_table = build_info_table(world, width_mm=width_mm, gate_mm=gate_mm,
+                                          density=density, table_in=table_in)
+        data = write_marker_plt(world, width_mm=width_mm, gate_mm=gate_mm, title=title,
+                                info_table=info_table)
         media, ext = 'application/plt', 'plt'
     else:
         return JSONResponse({'error': f'未知格式 {fmt}'}, status_code=400)

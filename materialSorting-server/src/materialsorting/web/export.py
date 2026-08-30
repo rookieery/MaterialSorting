@@ -12,7 +12,10 @@
 - ``export_dxf``：``write_marker_dxf``（R12 + POLYLINE，ET2008 兼容，禁
   LWPOLYLINE；模块级 ezdxf 警告抑制副作用随 import 生效）；
 - ``export_plt``：``write_marker_plt``（HPGL/HP-GL 纯文本，LIKE 绘图仪 / WT
-  V8.8 安全幅面口径；``_plt_frame_stats`` / 分块常量供单测取用）。
+  V8.8 安全幅面口径；``_plt_frame_stats`` / 分块常量供单测取用）；
+- ``plt_text`` / ``plt_table``（2026-08-30）：PLT 唛架信息表格 —— 捆绑
+  Noto Sans SC 矢量字形引擎 + 12 字段表格构建（``InfoTable`` /
+  ``parse_table_payload`` / ``build_info_table``，供 /export 路由与单测取用）。
 
 三格式统一消费 ``placed_to_world`` 的**真实母版轮廓**（pieces_intermediate.json
 的原始 polygon，非 eroded）放到排料变换位，几何一致、可直接裁剪 / 绘图。格式
@@ -43,4 +46,11 @@ from .export_plt import (
     PLOT_LEAD_X_MM,
     PLOT_TAIL_X_MM,
     write_marker_plt,
+)
+from .plt_table import (  # noqa: F401（门面 re-export，见模块 docstring）
+    TABLE_GAP_MM,
+    TABLE_LEN_MM,
+    InfoTable,
+    build_info_table,
+    parse_table_payload,
 )
