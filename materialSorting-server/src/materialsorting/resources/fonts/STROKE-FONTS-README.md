@@ -5,7 +5,7 @@
 
 | 文件 | 内容 | 许可 |
 |---|---|---|
-| `hanzi_medians.txt` | 汉字笔画中线（9575 字，em=1024、y 向上） | Arphic Public License（`ARPHICPL.txt`）|
+| `hanzi_medians.txt` | 汉字笔画中线（9575 字，em=1024）。**文件保留 MMaH 源坐标：y 自字顶向下增长（与 hershey JHF 同款约定），引擎加载期在身体范围 [139,1120] 内镜像翻 y 到基线=0**（不翻则汉字逐字上下镜像，「上」长横底画跑到字顶；回归锁 tests/test_plt_text.py 语义探针） | Arphic Public License（`ARPHICPL.txt`）|
 | `hershey_rowmans.txt` | Hershey Roman Simplex ASCII 单线体（92 字符，生产 PLT ASCII 同款风格）。**文件保留 JHF 原始坐标口径：y 自字顶向下增长（y=0 = cap 顶、'H' 竖笔底 = 基线），引擎加载期整体翻 y 到基线=0**（不翻则 ASCII 逐字垂直镜像） | Usenet Hershey 许可（`HERSHEY-LICENSE.txt`，任意用途可用、须随数据附致谢） |
 | `NotoSansSC-Regular.otf` | 轮廓回退字体 | SIL OFL 1.1（`OFL.txt`） |
 

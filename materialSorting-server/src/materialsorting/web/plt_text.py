@@ -236,9 +236,11 @@ def _upm(path: str | None) -> int:
 # 统一 em 网格：汉字 medians 原生 1024，Hershey 原始单位按头行 em 缩放到同网格
 _STROKE_EM = 1024.0
 
-# MMaH medians 全库笔画中心线 y（翻转向上后）范围 —— 含笔画粗度外溢，超出
-# 名义 em；仿射归一到标准 CJK 排印盒 [0.06, 0.94]em（汉字与 ASCII 混排时基线
-# 关系正常，对齐常见中文字体的版面位置）
+# MMaH medians 全库笔画中心线 y 范围 —— 含笔画粗度外溢，超出名义 em；仿射
+# 归一到标准 CJK 排印盒 [0.06, 0.94]em（汉字与 ASCII 混排时基线关系正常，
+# 对齐常见中文字体的版面位置）。文件保留 MMaH 源坐标（y 自字顶向下，与
+# Hershey JHF 同款约定），加载期在 [_HZ_BODY_LO, _HZ_BODY_HI] 内镜像翻成
+# 基线 y=0 向上 —— 不翻则汉字逐字上下镜像（「上」长横底画跑到字顶）
 _HZ_BODY_LO, _HZ_BODY_HI = 139.0, 1120.0
 _HZ_BOX_LO_EM, _HZ_BOX_HI_EM = 0.06, 0.94
 
@@ -262,7 +264,8 @@ def _parse_hanzi_line(a: float, b: float, body: str) -> StrokeGlyph:
         pts = []
         for pt in sp.split(' '):
             x, y = pt.split(',')
-            pts.append((float(x), a * float(y) + b))
+            y_up = (_HZ_BODY_LO + _HZ_BODY_HI) - float(y)
+            pts.append((float(x), a * y_up + b))
         strokes.append(tuple(pts))
     return StrokeGlyph(strokes=tuple(strokes), advance=_STROKE_EM)
 

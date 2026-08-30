@@ -152,6 +152,23 @@ def test_hanzi_normalized_to_typographic_box():
 
 
 @pytest.mark.skipif(not _HAS_STROKE, reason='单线字资源未就位（hanzi_medians/hershey）')
+def test_hanzi_orientation_semantic_probes():
+    """汉字方向回归锁（2026-08-30 v5 用户报告汉字颠倒）：MMaH medians 文件保留
+    源 y 向下坐标，引擎加载期在身体范围 [139,1120] 内镜像翻成 y 向上 —— 不翻则
+    逐字上下镜像。用类型无关语义判据锁：「上」最宽笔（长横底画）必须在盒下半、
+    「下」最宽笔（顶横）必须在盒上半（已与 Noto 轮廓同探针对拍同侧）。"""
+    hanzi, _ascii = load_stroke_font()
+    em_mid = 0.5 * plt_text._STROKE_EM
+    for ch, half in (('上', 'bottom'), ('下', 'top')):
+        g = hanzi[ch]
+        widest = max(g.strokes, key=lambda sp: max(p[0] for p in sp) - min(p[0] for p in sp))
+        y_mid = sum(p[1] for p in widest) / len(widest)
+        assert max(p[0] for p in widest) - min(p[0] for p in widest) > 0.7 * plt_text._STROKE_EM  # 探针自证：确是长横
+        assert (y_mid < em_mid) if half == 'bottom' else (y_mid > em_mid), \
+            f'{ch!r} 长横 y 中心 {y_mid:.0f} 应在盒{"下" if half == "bottom" else "上"}半'
+
+
+@pytest.mark.skipif(not _HAS_STROKE, reason='单线字资源未就位（hanzi_medians/hershey）')
 def test_noto_fallback_closed_outline_and_warning(caplog):
     """两库未覆盖字符（希腊 Ω）→ Noto 轮廓回退 closed=True + warning（每字符一次）。"""
     with caplog.at_level('WARNING'):
