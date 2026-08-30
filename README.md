@@ -90,13 +90,14 @@ ms-web             # → http://127.0.0.1:8000
 
 ## 导出与 PLT 唛架信息表格（2026-08-30）
 
-工作台「导出」支持 PNG / R12-DXF / PLT 三格式。**PLT 导出前弹「唛架信息表格」填写窗**（纯取消型：ESC/遮罩/取消只关窗，唯一提交路径 = 「导出 PLT」），与生产 PLT（`data/PC-20250508NJIF*.plt`）同款：12 字段标签表附在唛架末端、旋转 90°、长度 565mm **计入用料**、边框延伸覆盖。
+工作台「导出」支持 PNG / R12-DXF / PLT 三格式。**PLT 导出前弹「唛架信息表格」填写窗**（纯取消型：ESC/遮罩/取消只关窗，唯一提交路径 = 「导出 PLT」）。信息表格 14 字段、**生产同款旋转 90° 版式**（文字基线沿门幅方向书写、14 行沿用布方向逐行堆叠，row0=方案名称大字块最靠唛架；逆向对拍 `data/PC-20250508NJIF*.plt` 定稿），附在排料图**外围**（唛架边框右侧、间隔 20mm、宽 387mm）——**不占排料区、不计入用料**（仅在 PLT 图纸上展示排料信息，实际裁 cutting 时不处理这块内容；PS 纸长覆盖表格区）。
 
-- **手输 6 字段**（弹窗填写，localStorage `ms_export_table` 跨导出记忆排料师/床次等；默认：铺布层数=1、拉布方式=单向、排料师=noname、其余空）：床次 / 铺布层数（1~999 整数，非法前端先拦后端 400）/ 拉布方式 / 排料师 / 款式号 / 备注。
-- **自动 6 字段**（后端按当前方案计算）：用料（米）= 唛架总长含表格（2 位小数）；幅宽 = gate_mm；面料利用率 = real_density×100（2 位 + %）；单耗（米）= 用料 ÷ 每层件数（3 位）；共 N 件 = 每层件数 × 铺布层数；日期时间 = 服务端导出时刻。
-- **字体**：矢量笔画文本（fontTools 贝塞尔展平，PU/PD 折线，全文仍 ASCII、无 LB/VS 指令——「PLT 不加文字」口径指 g 码不进 PLT，表格是文件级元数据）；捆绑 Noto Sans SC Regular（OFL 许可，`resources/fonts/` 内含 `OFL.txt`），任何手输汉字 100% 可渲染、Windows/Ubuntu 渲染一致；cmap 未命中画豆腐框 + 日志 warn。长值自动缩字号（下限 9mm）仍超则尾部截断。
-- **零回归**：不带 `table` 键（旧前端 / 直接 POST）导出的 PLT 与旧版逐字节一致；PNG/DXF 载荷忽略 `table` 键。
-- 载荷契约（`POST /export` 的可选 `table` 对象，snake_case）：`bed_no` / `ply_count` / `lay_method` / `planner` / `style_no` / `remark`，详见 [.docs/technical/agent-api-reference.md](.docs/technical/agent-api-reference.md)。
+- **手输 6 字段**（弹窗填写，localStorage `ms_export_table` 跨导出记忆排料师/床次等；默认：床次=A料、经纱缩水=0.0%、纬纱缩水=0.0%、排料师=空、样板号=noname、备注=空；全自由字符串，超长后端截断 + warn）：床次 / 经纱缩水 / 纬纱缩水 / 排料师 / 样板号 / 备注。
+- **自动 8 字段**（后端按当前方案计算，`web/plt_table.py`）：方案名称（勾选尺码按系数分组拼式，如 `(30+34+35)+(31+32+33)*1.5+(36)*0.5=8套`；每码系数 = 该码**面积最大裁片**的 pid 计数 ÷2 —— 前后幅数量恒相等，取最大片即前/后幅套数）；本床包含套数（方案名称求和）；利用率 = real_density×100（2 位 + %）；幅宽（m）= gate_mm÷1000；料长（m）= width_mm÷1000 **不含表格**；每套用料（m）= 料长 ÷ 套数；片数 = 总裁片数；绘图时间 = 导出时刻 `YYYY-MM-DD HH:MM`（无秒）。幅宽/料长/每套用料均 3 位小数。
+- **行序**（row0→row13 沿远离唛架方向 = 生产视图自下而上）：方案名称 / 床次 / 经纱缩水 / 纬纱缩水 / 利用率 / 幅宽 / 料长 / 本床包含套数 / 每套用料 / 片数 / 排料师 / 绘图时间 / 样板号 / 备注。
+- **字体/几何**：矢量笔画文本（fontTools 贝塞尔展平，PU/PD 折线，全文仍 ASCII、无 LB/VS 指令——「PLT 不加文字」口径指 g 码不进 PLT，表格是文件级元数据）；捆绑 Noto Sans SC Regular（OFL 许可，`resources/fonts/` 内含 `OFL.txt`），任何手输汉字 100% 可渲染、Windows/Ubuntu 渲染一致；cmap 未命中画豆腐框 + 日志 warn。方案名称大字 36mm（55mm 行带）、其余 13 行字高 12mm/行距 24mm，行间沿门幅方向分隔线、外框贴满整幅门幅；文字基 `u=(0,1)/w=(-1,0)` 右手系直接生成，生产排料视图里水平正立可读。行沿用布方向堆叠 ⇒ 表宽与门幅无关，门幅只限文字长度（可用长 = 门幅−80mm，超长自动缩字号下限 7mm 仍超则尾部截断，可用长 <600mm 记 warn）。
+- **零回归**：不带 `table` 键（旧前端 / 直接 POST）导出的 PLT 与旧版逐字节一致（边框恒到 width_mm、纸长不含表格）；PNG/DXF 载荷忽略 `table` 键。
+- 载荷契约（`POST /export` 的可选 `table` 对象，snake_case）：`bed_no` / `warp_shrink` / `weft_shrink` / `planner` / `style_no` / `remark`，详见 [.docs/technical/agent-api-reference.md](.docs/technical/agent-api-reference.md)。
 
 ## 配置驱动求解（ms-run-config，无需浏览器）
 

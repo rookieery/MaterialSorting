@@ -1,9 +1,10 @@
-// exportTable.ts —— PLT 导出「唛架信息表格」的手输字段（2026-08-30）。
+// exportTable.ts —— PLT 导出「唛架信息表格」的手输字段（2026-08-30 v2 重写）。
 //
-// 生产 PLT（data/PC-20250508NJIF*.plt）在唛架末端带 12 字段文件信息表格；其中
-// 6 个生产计划字段（床次/铺布层数/拉布方式/排料师/款式号/备注）系统里没有，
-// 由导出弹窗（ExportInfoModal）填写，其余 6 个（用料/幅宽/利用率/单耗/件数/
-// 日期时间）由后端按当前方案自动计算（web/plt_table.py 口径）。
+// 生产环境新代软件的 PLT 信息表共 14 字段（横排竖直堆叠、排料图外围）；其中
+// 6 个手输（床次/经纱缩水/纬纱缩水/排料师/样板号/备注）系统里没有，由导出弹窗
+// （ExportInfoModal）填写，其余 8 个（方案名称/套数/利用率/幅宽/料长/每套用料/
+// 片数/绘图时间）由后端按当前方案自动计算（web/plt_table.py 口径 —— 方案名称
+// 由勾选尺码的面积最大裁片数量÷2 算系数求和）。
 //
 // 字段持久化：localStorage 键 ``ms_export_table``（排料师名/床次等跨导出记忆，
 // 参照 lib/session.ts 的 try/catch 降级模式）。刻意**不进 FormState** ——
@@ -11,36 +12,33 @@
 // 具体母版无关，放表单会被连带清空。
 //
 // 后端契约：POST /export payload 的可选 table 对象（snake_case，缺省不带表格，
-// 旧后端忽略未知键）；ply_count 非法（非 1..999 整数）后端 400，前端
-// validateExportTable 先拦（错误文案直接上按钮 title）。
+// 旧后端忽略未知键）；v2 起全字段自由字符串（默认 A料/0.0%/0.0%/空/noname/空），
+// 无格式校验，超长由后端截断 + warn。
 
-/** 手输字段草稿（全字符串持有 —— 输入框受控值；plyCount 提交时统一 parse）。 */
+/** 手输字段草稿（全字符串持有 —— 输入框受控值，提交时 trim）。 */
 export interface ExportTableFields {
   bedNo: string;
-  plyCount: string;
-  layMethod: string;
+  warpShrink: string;
+  weftShrink: string;
   planner: string;
   styleNo: string;
   remark: string;
 }
 
-/** 约定默认值（2026-08-30 用户确认：层数 1 / 单向 / noname，其余空）。 */
+/** 约定默认值（2026-08-30 用户确认：A料 / 0.0% / 0.0% / 空 / noname / 空）。 */
 export const DEFAULT_EXPORT_TABLE: ExportTableFields = {
-  bedNo: '',
-  plyCount: '1',
-  layMethod: '单向',
-  planner: 'noname',
-  styleNo: '',
+  bedNo: 'A料',
+  warpShrink: '0.0%',
+  weftShrink: '0.0%',
+  planner: '',
+  styleNo: 'noname',
   remark: '',
 };
 
 /** localStorage 键名。 */
 export const EXPORT_TABLE_STORAGE_KEY = 'ms_export_table';
 
-/** 铺布层数上限（与后端 plt_table._PLY_MAX 同口径）。 */
-export const PLY_COUNT_MAX = 999;
-
-/** 读取记忆值：损坏 / 缺字段 → 与默认值 merge（缺什么补什么，不整体丢弃）。 */
+/** 读取记忆值：损坏 / 缺字段 → 与默认值 merge（缺什么补什么，不整体丢弃；v1 存量键 plyCount/layMethod 自然忽略）。 */
 export function loadExportTable(): ExportTableFields {
   let raw: unknown = null;
   try {
@@ -66,31 +64,22 @@ export function saveExportTable(fields: ExportTableFields): void {
   }
 }
 
-/** 校验：铺布层数须为 1..999 整数 → 错误文案 | null（通过）。 */
-export function validateExportTable(fields: ExportTableFields): string | null {
-  const t = fields.plyCount.trim();
-  if (!/^\d+$/.test(t)) return '铺布层数须为整数';
-  const n = Number(t);
-  if (n < 1 || n > PLY_COUNT_MAX) return `铺布层数须在 1~${PLY_COUNT_MAX}`;
-  return null;
-}
-
 /** /export payload 的 table 对象（snake_case；由 useExport.exportAs 透传）。 */
 export interface ExportTablePayload {
   bed_no: string;
-  ply_count: number;
-  lay_method: string;
+  warp_shrink: string;
+  weft_shrink: string;
   planner: string;
   style_no: string;
   remark: string;
 }
 
-/** 草稿 → payload（plyCount 此处 parse —— 调用前已过 validate）。 */
+/** 草稿 → payload（全字符串直传 trim，无格式转换）。 */
 export function toExportTablePayload(fields: ExportTableFields): ExportTablePayload {
   return {
     bed_no: fields.bedNo.trim(),
-    ply_count: Number(fields.plyCount.trim()),
-    lay_method: fields.layMethod.trim(),
+    warp_shrink: fields.warpShrink.trim(),
+    weft_shrink: fields.weftShrink.trim(),
     planner: fields.planner.trim(),
     style_no: fields.styleNo.trim(),
     remark: fields.remark.trim(),

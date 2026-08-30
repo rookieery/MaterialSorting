@@ -65,17 +65,23 @@
   "filename": "M1787.dxf",        // 可选：上传母版名（uploadStore.doc.filename 前端透传），
                                   //   作导出文件名前缀（去 .dxf）；缺省回退「排料」/nesting
   "table": {                      // 可选（2026-08-30，仅 fmt='plt' 消费，PNG/DXF 忽略）：
-                                  //   唛架信息表格手输字段，带此键 → PLT 末端附 12 字段
-                                  //   标签表（生产 PLT 同款，旋转 90°、565mm 计入用料）；
-                                  //   缺省不带表格（输出与旧版逐字节一致）
-    "bed_no": "153",              // 床次（≤20 字符，超长截断 + warn）
-    "ply_count": 8,               // 铺布层数（1..999 整数，非法 → 400）
-    "lay_method": "单向",          // 拉布方式（≤10 字符）
-    "planner": "noname",          // 排料师（≤20 字符）
-    "style_no": "FC721200B00NIF", // 款式号（≤30 字符）
-    "remark": ""                  // 备注（≤60 字符）
-  }                               // 其余 6 字段后端自动算（web/plt_table.py）：
-                                  //   用料/幅宽/利用率/单耗/共N件/日期时间
+                                  //   唛架信息表格手输字段，带此键 → PLT 排料图外围附
+                                  //   14 字段标签表（v3 生产同款旋转 90°：文字沿门幅
+                                  //   方向、行沿用布方向堆叠；不占排料区不计入用料，
+                                  //   PS 纸长覆盖表格区）；缺省不带表格（输出与旧版
+                                  //   逐字节一致）
+    "bed_no": "153",              // 床次（默认 A料，≤20 字符，超长截断 + warn）
+    "warp_shrink": "1.5%",        // 经纱缩水（默认 0.0%，≤12 字符）
+    "weft_shrink": "2.0%",        // 纬纱缩水（默认 0.0%，≤12 字符）
+    "planner": "张三",             // 排料师（默认空，≤20 字符）
+    "style_no": "FC721200B00NIF", // 样板号（默认 noname，≤30 字符）
+    "remark": ""                  // 备注（默认空，≤60 字符）
+  }                               // v2 起全字段自由字符串（数字宽容转 str、null → 空、
+                                  //   非字符串标量/数组/布尔 → 400）；其余 8 字段后端
+                                  //   自动算（web/plt_table.py）：方案名称（勾选尺码按
+                                  //   系数分组，每码系数 = 面积最大裁片 pid 计数÷2）/
+                                  //   本床包含套数/利用率/幅宽(m)/料长(m，不含表格)/
+                                  //   每套用料(m)/片数/绘图时间（YYYY-MM-DD HH:MM）
 }
 ```
 
@@ -88,7 +94,7 @@
   - PNG：`media_type=image/png`，`render_png`（matplotlib Agg，标题 + 类型图例）
   - DXF：`media_type=application/dxf`，`write_marker_dxf`（R12 + POLYLINE，ACI 上色 + ASCII 标题）
   - PLT：`media_type=application/plt`，`write_marker_plt`（US-033；HPGL/HP-GL 文本，封装口径对齐生产 PLT `data/PC-20250508NJIF*.plt`：头部 `IN;PS<纸长>;SP1;PW0.08;` + 5 层 SP1-SP5 笔号（门幅框并入 SP1）+ 尾部 `PU;PG;`，CRLF 行尾，无 VS/LB；喂 WT V8.8 + LIKE 绘图仪原生 PLT 链路；**2026-08 现场撞机修正**：门幅框/内容按输入 gate_mm 画框裁剪（2026-08-28 起单一幅宽口径，越界裁片记 warning 兜布局/变换 bug）、PD 分块 ≤10 点/行 ≤110B、全体 X 加走纸引导 `PLOT_LEAD_X_MM=20`，详见下表）
-- 400：`width_mm<=0` 或 `placed` 空 → `{"error":"无可导出的方案（width=0 或无裁片）"}`；`placed` 的 pid 全匹配不到 → `{"error":"导出失败：placed 的 pid 均未匹配到原始轮廓"}`；未知 fmt → `{"error":"未知格式 <fmt>"}`；`table` 非对象或 `ply_count` 非 1..999 整数 → `{"error":"信息表格字段非法：<原因>"}`（2026-08-30，`plt_table.parse_table_payload` / `TablePayloadError`）。
+- 400：`width_mm<=0` 或 `placed` 空 → `{"error":"无可导出的方案（width=0 或无裁片）"}`；`placed` 的 pid 全匹配不到 → `{"error":"导出失败：placed 的 pid 均未匹配到原始轮廓"}`；未知 fmt → `{"error":"未知格式 <fmt>"}`；`table` 非对象或字段值非字符串标量（数组/对象/布尔）→ `{"error":"信息表格字段非法：<原因>"}`（2026-08-30，`plt_table.parse_table_payload` / `TablePayloadError`；v1 的 `ply_count` 整数校验已随字段集更换删除）。
 
 ### 导出关键函数（`web/export.py` 门面；2026-08-20 拆分后实现在 `export_geometry/png/dxf/plt` 四模块，门面 re-export 全部旧符号，import 路径不变）
 
@@ -98,12 +104,12 @@
 | `placed_to_world` | `(placed, pieces_by_id) → [{pid,size,polygon,color,area_mm2,label,...}]` | pid 查 `_get_pieces_state()['pieces_by_id']`（US-020）取**原始** polygon → 世界坐标（直查 intermediate，零重放）；查不到的跳过并 warning。US-002：输出无 `ptype` 键，`color = size_color(size)`（尺码 16 色循环表，2026-08-20 起同码同色跨片型，与求解屏幕同色） |
 | `render_png` | `(world_pieces, *, width_mm, gate_mm, title) → bytes` | matplotlib Agg，dpi=200，配色 `size_color`（尺码 16 色循环表），图例条目 = 本次 placed 的尺码并集（数值序），标题「尺码」 |
 | `write_marker_dxf` | `(world_pieces, *, width_mm, gate_mm, title) → bytes` | ezdxf R12 + 闭合 POLYLINE（首尾补点），ACI = `size_aci(size)` = `((size - 28) % 24) + 1`（非数字兜底 7），ASCII 标题；**不用 LWPOLYLINE**（ET2008 轮廓消失坑） |
-| `write_marker_plt` | `(world_pieces, *, width_mm, gate_mm, title, info_table: InfoTable \| None = None) → bytes` | US-033 HPGL/HP-GL 纯文本，**封装口径对齐生产 PLT**（`data/PC-20250508NJIF*.plt`）：头部 `IN;PS<纸长>;SP1;PW0.08;`（PS 纸长 = 走纸引导 + max(用布长度, 内容最大X 含刺口延伸) + 尾余量，×40；无 PS 时 WT 按默认 A0/A3 页幅裁切 7m+ marker）→ 逐片 SP1-SP5 → 尾部 `PU;PG;` 出纸；**CRLF 行尾**；**无 VS/LB 指令**（`title` 仅保签名不输出）；坐标=mm×40 round 取整，5 层笔号 SP1=outline+门幅框/SP2=net/SP3=internal/SP4=notch/SP5=grain；空层跳过；纯 ASCII bytes（无临时文件，无新 pip 依赖）；与 DXF 同闭合策略。**2026-08 现场撞机修正（对照生产 PLT 逐项核出的设备级差异；幅宽口径 2026-08-28 版师定案后收敛单一）**：① 安全幅面 —— 门幅框按输入 `gate_mm` 画（上沿 Y 内缩 `PLOT_BORDER_MARGIN_Y_MM=5`）、内容按 `y ≤ gate_mm` 半平面裁剪（**削平不缩放**，绝不变形），越界裁片记 warning（兜旧 intermediate/求解/变换 bug；撞机根因确认系当时那台机器无法处理 1980 幅宽，旧 `PLOT_SAFE_MAX_Y_MM=1910` 钳制与「二道防线」已随单一口径整体移除，幅宽受限设备由用户输入更小门幅）；② PD 分块 —— `_plt_polyline` 单条 PD ≤10 点（`_PLT_PD_MAX_PTS`）且整行 ≤110B（`_PLT_LINE_MAX_BYTES`）续画（对齐 ET 生产 ≤11 点/≤118B；国产 HP-GL 解释器行缓冲仅百余字节，超长单条溢出后坐标流错位 → 小车乱走须急停）；③ 走纸引导 —— 全体 X + `PLOT_LEAD_X_MM=20`（生产 PLT 内容 24mm 起画，贴 0 起画无定位余量），Y 不平移；HPGL 坐标非负整数，clamp 兜底取整负值。**2026-08-30 唛架信息表格（additive）**：`info_table` 非 None → 门幅框 x1 延伸到 `width+TABLE_GAP_MM+TABLE_LEN_MM`、PS 纸长含表格、新层桶 SP1 追加表格折线（`plt_table.info_table_polylines`）；表格笔画**不走 y≤gate 裁剪**（文件级元数据）；`info_table=None`（不带 `table` 键）输出与旧版**逐字节一致**（零回归红线，测试锁死） |
+| `write_marker_plt` | `(world_pieces, *, width_mm, gate_mm, title, info_table: InfoTable \| None = None) → bytes` | US-033 HPGL/HP-GL 纯文本，**封装口径对齐生产 PLT**（`data/PC-20250508NJIF*.plt`）：头部 `IN;PS<纸长>;SP1;PW0.08;`（PS 纸长 = 走纸引导 + max(用布长度, 内容最大X 含刺口延伸) + 尾余量，×40；无 PS 时 WT 按默认 A0/A3 页幅裁切 7m+ marker）→ 逐片 SP1-SP5 → 尾部 `PU;PG;` 出纸；**CRLF 行尾**；**无 VS/LB 指令**（`title` 仅保签名不输出）；坐标=mm×40 round 取整，5 层笔号 SP1=outline+门幅框/SP2=net/SP3=internal/SP4=notch/SP5=grain；空层跳过；纯 ASCII bytes（无临时文件，无新 pip 依赖）；与 DXF 同闭合策略。**2026-08 现场撞机修正（对照生产 PLT 逐项核出的设备级差异；幅宽口径 2026-08-28 版师定案后收敛单一）**：① 安全幅面 —— 门幅框按输入 `gate_mm` 画（上沿 Y 内缩 `PLOT_BORDER_MARGIN_Y_MM=5`）、内容按 `y ≤ gate_mm` 半平面裁剪（**削平不缩放**，绝不变形），越界裁片记 warning（兜旧 intermediate/求解/变换 bug；撞机根因确认系当时那台机器无法处理 1980 幅宽，旧 `PLOT_SAFE_MAX_Y_MM=1910` 钳制与「二道防线」已随单一口径整体移除，幅宽受限设备由用户输入更小门幅）；② PD 分块 —— `_plt_polyline` 单条 PD ≤10 点（`_PLT_PD_MAX_PTS`）且整行 ≤110B（`_PLT_LINE_MAX_BYTES`）续画（对齐 ET 生产 ≤11 点/≤118B；国产 HP-GL 解释器行缓冲仅百余字节，超长单条溢出后坐标流错位 → 小车乱走须急停）；③ 走纸引导 —— 全体 X + `PLOT_LEAD_X_MM=20`（生产 PLT 内容 24mm 起画，贴 0 起画无定位余量），Y 不平移；HPGL 坐标非负整数，clamp 兜底取整负值。**2026-08-30 唛架信息表格（additive，v3 旋转 90° 生产同款）**：`info_table` 非 None → 表格画在边框**右侧外围**（`table_x0 = width+TABLE_GAP_MM=20`、宽 `TABLE_W_MM=387`），**边框恒到 width_mm 不延伸**、料长不含表格，PS 纸长覆盖表格区（`(引导+width+20+387+尾)×40`）、SP1 层桶追加表格折线（`plt_table.info_table_polylines`：闭合外框 [x0,x0+387]×[0,gate] + 13 条沿 y 行间分隔线 + 14 行文字沿 +x 堆叠、基线沿 +y 字顶朝 −x（基 `u=(0,1)/w=(-1,0)` 右手系直接生成，生产排料视图里水平正立）、row0=方案名称 36mm 大字带最靠唛架）；表格笔画**不走 y≤gate 裁剪**（文件级元数据；行沿 +x 堆叠 ⇒ 表宽与门幅无关，门幅只限文字长度，可用长=gate−80 超长 shrink 到 7mm 后截断、<600mm warn）；`info_table=None`（不带 `table` 键）输出与旧版**逐字节一致**（零回归红线，测试锁死） |
 | `_plt_frame_stats` | `(world_pieces, *, width_mm, gate_mm) → (n_out, max_x)` | 越界防御 + PS 纸长取值：全层顶点 + notch 点须在门幅框内（容差 0.5mm），非 0 记 warning（曾因 notch 未随片旋转产生 600 越界点把 WT 预览拉变形）；notch 沿法线 ±`NOTCH_LEN_MM/2` 端点外伸属工艺正常，只计入 max_x（PS 取值）不告警 |
 
 `size_aci(size)`（2026-08-20 起尺码键，取代 US-002 的 `label_aci` g 码公式；更早的 `TYPE_ACI` 中文名色表 US-002 已删）：尺码 → ACI 色号 `((size - SIZE_ANCHOR) % 24) + 1`（28→1、51→24、52→1 循环；非数字/None 兜底 7）。配色单一真相源 `sparrow_baseline.size_color`（`SIZE_PALETTE` 16 色 d3 系循环表，`size_color(size) = PALETTE[(size - SIZE_ANCHOR) % 16]`，锚点 `SIZE_ANCHOR=DEFAULT_SIZES[0]=28` 稳定绝对映射、同码同色跨片型），solver manifest / PNG / DXF ACI / CLI SVG 四处同源取色。PNG/DXF 每片 g 码文字叠印不变（颜色=尺码、文字=片型互补编码）。
 
-**2026-08-30 新模块（PLT 表格支线，`web/export.py` 门面 re-export `InfoTable`/`build_info_table`/`parse_table_payload`/`TABLE_GAP_MM`/`TABLE_LEN_MM`）**：`web/plt_text.py` 矢量文本引擎（fontTools `BasePen` 子类展平 CFF 三次/TTF 二次贝塞尔 → 折线，De Casteljau 递归、容差 2 字体单位；`(u,w)` 基变换强制右手系 det>0 否则 raise 防镜像文字；cmap 未命中画豆腐框 + warn；字体 = 仓库捆绑 Noto Sans SC Regular OFL `resources/fonts/`，`paths.PLT_FONT_PATH`，环境变量 `MS_FONT_DIR` 重定位，pip 依赖显式加 `fonttools>=4.40`）；`web/plt_table.py` 表格构建（`parse_table_payload` 载荷校验 → `TablePayloadError` → 路由 400；`build_info_table` 补自动 6 字段（用料=总长含表格/幅宽=gate/利用率=real_density/单耗=用料÷每层件数/共N件=每层件数×层数/日期时间）；`info_table_polylines` → (closed, points) 折线；几何常量 2 列×150mm/行距 75mm/字高 18mm 下限 9mm shrink）。表格文字是 PU/PD 笔画矢量轮廓，「PLT 无 LB/VS 指令」口径不变；历史「PLT 永不加文字」指 g 码不进 PLT，表格是文件级元数据，与此不冲突。
+**2026-08-30 新模块（PLT 表格支线，`web/export.py` 门面 re-export `InfoTable`/`build_info_table`/`parse_table_payload`/`TABLE_GAP_MM`/`TABLE_W_MM`）**：`web/plt_text.py` 矢量文本引擎（fontTools `BasePen` 子类展平 CFF 三次/TTF 二次贝塞尔 → 折线，De Casteljau 递归、容差 2 字体单位；`(u,w)` 基变换强制右手系 det>0 否则 raise 防镜像文字；cmap 未命中画豆腐框 + warn；字体 = 仓库捆绑 Noto Sans SC Regular OFL `resources/fonts/`，`paths.PLT_FONT_PATH`，环境变量 `MS_FONT_DIR` 重定位，pip 依赖显式加 `fonttools>=4.40`）；`web/plt_table.py` 表格构建 v3（`parse_table_payload` 载荷校验 → `TablePayloadError` → 路由 400；`_plan_name_and_sets` 方案名称（每码系数 = 面积最大裁片 pid 计数÷2，同系数全局分组、组间按最小码升序）；`build_info_table` 补自动 8 字段（料长(m)=width/1000 不含表格/幅宽(m)=gate/1000/利用率=real_density/套数/每套用料=料长÷套数/片数/绘图时间无秒）；`info_table_polylines` → (closed, points) 折线（v3 旋转 90° 生产同款：闭合外框 [x0,x0+387]×[0,gate] + 13 条沿 y 分隔线 + 14 行沿 +x 堆叠（row0=方案名称 36mm 大字带最靠唛架、余 13 行 12mm/24mm）、文字基线沿 +y 字顶朝 −x——基 u=(0,1)/w=(-1,0) 右手系**直接生成**（v2 的 post-flip 已删）；行沿 +x ⇒ 表宽与门幅无关，门幅只限文字长度（可用长=gate−80，shrink 下限 7mm 后尾截断，<600mm warn）））。表格文字是 PU/PD 笔画矢量轮廓，「PLT 无 LB/VS 指令」口径不变；历史「PLT 永不加文字」指 g 码不进 PLT，表格是文件级元数据，与此不冲突。
 
 ## POST /api/parse-dxf — US-004 母版上传解析
 

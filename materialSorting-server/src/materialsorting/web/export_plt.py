@@ -12,7 +12,7 @@ import math
 from collections import Counter
 
 from .export_geometry import NOTCH_LEN_MM
-from .plt_table import TABLE_GAP_MM, TABLE_LEN_MM, InfoTable, info_table_polylines
+from .plt_table import TABLE_GAP_MM, TABLE_W_MM, InfoTable, info_table_polylines
 
 
 # ===================== PLT/HPGL（LIKE 绘图仪 / WT V8.8）=====================
@@ -312,8 +312,9 @@ def write_marker_plt(world_pieces, *, width_mm: float, gate_mm: float, title: st
     """写排料 marker PLT/HPGL 文本（ASCII ``bytes``，安全幅面口径见模块注释）。
 
     ``info_table``（2026-08-30 唛架信息表格，additive 缺省 None 零变化）：
-    给定时在唛架末端追加 12 字段标签表（plt_table 构建），门幅边框与 PS 纸长
-    延伸覆盖表格区、表格长度计入用料（生产口径）。表格笔画追加为独立
+    给定时在唛架末端外围追加 14 字段标签表（plt_table 构建，v3 旋转 90° 生产
+    同款：文字沿 +y、行沿 +x 堆叠），门幅边框恒为 width_mm 不延伸、表格不占
+    排料区不计入用料，PS 纸长延伸覆盖表格区（防 WT 裁页）。表格笔画追加为独立
     ``_LAYER_TABLE`` 桶（层序最末）、**不过 y≤gate 裁剪**（元数据保护）。
 
     生成 HPGL/HP-GL 指令序列（封装口径对齐生产 PLT）：
@@ -369,11 +370,10 @@ def write_marker_plt(world_pieces, *, width_mm: float, gate_mm: float, title: st
     pid_counts = Counter(pc.get('pid') for pc in world_pieces)
 
     # 门幅/用布边框（层序之首，与生产 PLT 同为 SP1 单笔）——闭合矩形 4 角；Y 上沿
-    # 按输入门幅内缩边距，下沿内缩，不贴门幅边界。带信息表格时 X 延伸覆盖表格区
-    # （表格在边框内、长度计入用料 —— 生产 PLT 同口径）。
+    # 按输入门幅内缩边距，下沿内缩，不贴门幅边界。恒为 width_mm：信息表格在排料
+    # 图外围（2026-08-30 v2：不占排料区、不计入用料，切割时布上无此内容）。
     border_y1 = float(gate_mm) - PLOT_BORDER_MARGIN_Y_MM
-    border_x1 = (width_mm + TABLE_GAP_MM + TABLE_LEN_MM if info_table is not None
-                 else width_mm)
+    border_x1 = width_mm
     border = [(0.0, PLOT_BORDER_MARGIN_Y_MM),
               (border_x1, PLOT_BORDER_MARGIN_Y_MM),
               (border_x1, border_y1),
@@ -439,17 +439,20 @@ def write_marker_plt(world_pieces, *, width_mm: float, gate_mm: float, title: st
                         ' intermediate / 求解链路', len(clipped_pids),
                         gate_f, sample)
 
-    # 唛架信息表格（2026-08-30，层序最末）：文本轮廓 + 分隔线直接进 _LAYER_TABLE
-    # 桶 —— **不过 y≤gate 裁剪**（元数据，裁剪切坏文字；gate 异常小由
-    # info_table_polylines 内 warning 提示），复用 _plt_polyline 分块口径。
+    # 唛架信息表格（2026-08-30 v3，层序最末）：外框 + 行间分隔线 + 14 行旋转
+    # 90° 文本笔画直接进 _LAYER_TABLE 桶 —— **不过 y≤gate 裁剪**（元数据，
+    # 裁剪切坏文字；gate 偏小由 info_table_polylines 内 warning 提示），复用
+    # _plt_polyline 分块口径。
     if info_table is not None:
         table_x0 = float(width_mm) + TABLE_GAP_MM
-        for closed, pts in info_table_polylines(info_table, table_x0=table_x0):
+        for closed, pts in info_table_polylines(info_table, table_x0=table_x0,
+                                                gate_mm=gate_f):
             layer_lines[_LAYER_TABLE].extend(_plt_polyline(closed=closed, points=pts))
 
     # 头部一行（对齐生产 PLT）：PS 纸长 = 走纸引导 + max(用布长, 内容最大X) + 尾余量；
-    # 带信息表格时内容总长 = 用布长 + 表格段（gap+表长，边框/用料同口径延伸）
-    content_max = (width_mm + TABLE_GAP_MM + TABLE_LEN_MM if info_table is not None
+    # 带信息表格时内容总长 = 用布长 + 表格段（gap+表宽 —— 表格在纸上是元数据、
+    # 不计入用料，但 PS 纸长要覆盖它防 WT 裁页）
+    content_max = (width_mm + TABLE_GAP_MM + TABLE_W_MM if info_table is not None
                    else width_mm)
     paper_len = int(round((PLOT_LEAD_X_MM + max(content_max, max_x) + PLOT_TAIL_X_MM)
                           * _PLT_SCALE))

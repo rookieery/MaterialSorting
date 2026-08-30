@@ -1,258 +1,303 @@
-"""PLT 唛架末端「文件信息表格」构建（2026-08-30）。
+"""PLT 唛架信息表格（2026-08-30 v3：旋转 90° 生产同款版式）。
 
-生产 PLT（data/PC-20250508NJIF*.plt，ET 排料软件产出）在唛架末端带 12 字段
-两列标签表：旋转 90°、贴 y=0 布边、占末端 ~565mm×~300mm、在门幅边框内且
-长度计入用料（生产件 bbox 10058.9mm ≈ 表内用料 10.06m 已对拍）。本模块按
-逆向测量规格重建该表格，文字来自 plt_text 矢量引擎（捆绑 Noto Sans SC 轮廓，
-无 LB 指令口径不变）。
+对齐生产环境 PLT（data/PC-20250508NJIF_noname_28150251.plt 逆向实测，
+2026-08-30 用户图1/图2 对拍定稿；v2 横排版被否，根因 = 文字方向与行堆叠
+轴向都与生产相反）：
 
-字段来源（2026-08-30 与用户确认）：
-  - 手输 6 字段（前端导出弹窗，localStorage 记忆）：床次/铺布层数/拉布方式/
-    排料师/款式号/备注 —— 系统里没有的生产计划信息
-  - 系统自动 6 字段：
-      用料(m)   = (width_mm + GAP + LEN)/1000，2 位小数 —— 含表格段（生产口径）
-      幅宽      = gate_mm 整数
-      利用率    = real_density×100，2 位 + '%'（density≤0 → '--'）
-      单耗(m)   = 用料 ÷ 每层件数，3 位小数（生产 10.06/80=0.126 已对拍）
-      共N件     = 每层件数 × 层数（640=80×8 已对拍）；每层件数 = len(world_pieces)
-                  （placed 已含 demand 多副本）
-      日期时间  = 导出时刻（服务端生成，'YYYY-MM-DD HH:MM:SS'）
+- **位置**：排料图**外围**——表格区从唛架末端 width_mm + TABLE_GAP_MM 起，
+  **不在唛架边框内、不占排料区、不计入用料**（切割时布上没有这块，只在 PLT
+  图纸上展示；PS 纸长仍覆盖表格区防止被 WT 裁掉）。生产实测内容末端→表格
+  起画 ~55mm，这里取 20mm（v2 已定案不动）。
+- **版式（v3 核心）**：**文字旋转 90°**——基线沿世界 +y（门幅方向）、字顶朝
+  世界 −x（朝向唛架），基 ``u=(0,1), w=(-1,0)``（右手系 det=+1，直接过
+  plt_text 防镜像守卫，无需 v2 的 post-flip）。生产排料软件视图里该方向即
+  水平可读（其视图 = 切割视图逆时针旋 90°，x 竖直）；**14 行沿 +x 逐行堆叠**
+  （生产视图里 = 自下而上一行一字段的竖排条），行间沿线分隔线。
+- **行序**：row0 = 方案名称（最靠唛架，生产同款独立大字块，字高
+  PLAN_CHAR_H_MM）→ row13 = 备注（最远端），与用户「从最下面往上 1..14」
+  编号及生产文件 x 序（大字方案块→标签区）双对拍一致。
+- **行距/字高**：生产实测标签字高 ~14-18mm、行距 ~18-25mm、大字方案块
+  ~55-60mm 行带；取 12mm/24mm（用户嫌 v1 的 18mm 偏大）+ 方案名称 36mm/55mm。
+  行沿 x 堆叠 ⇒ 表格宽度与门幅无关；门幅只约束文字长度方向（可用长 =
+  gate − 2×TABLE_TEXT_Y0_MM，超长 shrink 到 7mm 下限后尾部截断）。
+- **外框**：单个闭合矩形 [x0, x0+W]×[0, gate]（生产表格笔画贴满整幅门幅）
+  + 13 条行间分隔线（沿 y 贯穿，生产/用户截图均可见行分隔细线）。
 
-层序：表格笔画在 export_plt 五层（outline→net→internal→notch→grain）之后
-追加为独立 _LAYER_TABLE 桶（元数据与裁片几何分离）；**不过 y≤gate 裁剪**
-（裁剪切坏文字；gate 异常小时仅 warning）。
+14 字段（row0→row13）与来源：
+
+=====  ============= ==================================================
+行     标签           来源
+=====  ============= ==================================================
+ 0     方案名称       勾选尺码计算（见下；生产 = 独立大字块）
+ 1     床次           手输（默认 A料）
+ 2     经纱缩水       手输（默认 0.0%）
+ 3     纬纱缩水       手输（默认 0.0%）
+ 4     利用率         real_density×100，2 位小数 + %
+ 5     幅宽           gate_mm/1000，3 位小数 + m
+ 6     料长           width_mm/1000，3 位小数 + m（**不含表格/引导**）
+ 7     本床包含套数   方案名称算出的套数
+ 8     每套用料       料长÷套数，3 位小数 + m
+ 9     片数           len(world_pieces)（placed 已含 demand 多副本）
+10     排料师         手输（默认空）
+11     绘图时间       算法出结果时刻 ``%Y-%m-%d %H:%M``（无秒）
+12     样板号         手输（默认 noname）
+13     备注           手输（默认空）
+=====  ============= ==================================================
+
+方案名称口径（用户例：``(30+34+35)+(31+32+33)*1.5+(36)*0.5=8套``）：
+
+- 每码系数 = 该码**面积最大裁片**的同 pid 计数 ÷ 2（前/后幅数量永远相等，
+  取面积最大者最有代表性；demand 多副本在 world_pieces 里逐条展开，计数
+  即需求副本数）；
+- 同系数码括号分组、组内码升序 '+' 连接，组间按组内最小码排序；系数 1 无
+  后缀，其余 ``*1.5`` 式（数值去尾零）；
+- 套数 = Σ系数（去尾零 + ``套``）。
+
+零回归红线：``write_marker_plt(info_table=None)`` 输出逐字节不变（表格是
+纯 additive 外挂层）。文字是文件级元数据 PU/PD 笔画，「PLT 永不加文字」
+口径指 g 码不进 PLT，与此不冲突且仍无 LB/VS 指令。
 """
 from __future__ import annotations
 
 import logging
+import math
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
 
-from .plt_text import text_strokes, text_width
-
-# ---- 几何常量（生产件逆向测量，E2E 目检后如需微调只动这里） ----
-TABLE_GAP_MM = 20.0    # 唛架末端 width_mm → 表格区起点间隙（裁切分离）
-TABLE_LEN_MM = 565.0   # 表格区总长 = PAD_X 55 + 6×ROW_PITCH 75 + TAIL 60（计入用料）
-TABLE_PAD_X_MM = 55.0  # 表格起点 → 第 0 行行带中心
-TABLE_TAIL_X_MM = 60.0  # 末行行带中心 → 表格终点
-ROW_PITCH_MM = 75.0    # 行距（生产实测 2500-3000u 取整）
-TABLE_COL_W_MM = 150.0  # 每列宽（沿 y）：列1 y∈[0,150]、列2 y∈[150,300]
-TABLE_PAD_Y_MM = 12.0  # 列内文字离列边（shrink 可用宽 = 150-2×12 = 126mm）
-TABLE_CHAR_H_MM = 18.0   # 标称字高（生产 18-20mm；Noto em 全宽，长格自动 shrink）
-TABLE_CHAR_H_MIN_MM = 9.0   # shrink-to-fit 下限（低于此不可读，改为尾部截断）
-TABLE_LABEL_GAP_MM = 15.0   # 标签到值的间隙（生产观感 ~0.75 字高）
-TABLE_SEP_LINE_Y_MM = 150.0  # 列分隔细单线（y=150 横贯表格区）
-# 文字方向：False = u=(0,1) 沿 +y 阅读（生产同款，cw 旋转渲染后水平可读）；
-# True = u=(0,-1)。字顶 w=(-uy,ux) 恒右手系（plt_text 手性防御）。
-TABLE_TEXT_FLIP = False
-# 行序：True = row 0（备注）靠唛架一侧（生产同款）；False = 反序
-TABLE_ROW_ORDER_FROM_MARKER = True
-
-# 手输字段长度上限（超长截断 + warning；弹窗层另有软上限，这里兜底）与
-# 缺省值（2026-08-30 用户确认：层数 1 / 单向 / noname，其余空）
-_MAX_LEN = {'bed_no': 20, 'lay_method': 10, 'planner': 20, 'style_no': 30,
-            'remark': 60}
-_STR_DEFAULTS = {'bed_no': '', 'lay_method': '单向', 'planner': 'noname',
-                 'style_no': '', 'remark': ''}
-_PLY_MAX = 999   # 铺布层数上限（防 0/负数/离谱值进生产文件）
-
-_COL1_FIELDS = ('备注', '排料师', '款式', '日期时间', '床次', '面料利用率', '幅宽')
-_COL2_FIELDS = ('单耗（米）', '铺布层数', '拉布方式', '用料（米）')
+from .plt_text import text_strokes
 
 
 class TablePayloadError(ValueError):
-    """/export payload 的 table 对象非法（路由转 400 结构化 JSON）。"""
+    """/export payload ``table`` 段非法（路由层转 400 结构化错误）。"""
+
+
+# ===================== 几何常量（v3 旋转 90° 生产同款版式）=====================
+TABLE_GAP_MM = 20.0        # 唛架末端 width_mm → 表格区左缘（世界 +x）
+TABLE_PAD_X_MM = 10.0      # 外框 → row0 文字带
+PLAN_CHAR_H_MM = 36.0      # row0 方案名称字高（生产大字块 ~55-60mm 行带）
+PLAN_ROW_PITCH_MM = 55.0   # row0 行带宽度（沿 x）
+TABLE_CHAR_H_MM = 12.0     # row1-13 字高（生产标签 ~14-18mm，用户嫌 18 偏大）
+TABLE_ROW_PITCH_MM = 24.0  # row1-13 行距（沿 x；生产 ~18-25mm）
+TABLE_CHAR_H_MIN_MM = 7.0  # shrink 下限（文字长度方向超门幅可用长时缩字高）
+TABLE_TEXT_Y0_MM = 40.0    # 每行文字起画离 y=0 布边（生产 ~20-40mm）
+TABLE_TAIL_X_MM = 10.0     # 末行带 → 外框右缘
+N_TABLE_ROWS = 14
+# 表格区总宽（沿 x）= pad + 方案行带 + 13×行距 + tail（纸上元数据，不计入用料）
+TABLE_W_MM = (TABLE_PAD_X_MM + PLAN_ROW_PITCH_MM
+              + (N_TABLE_ROWS - 1) * TABLE_ROW_PITCH_MM + TABLE_TAIL_X_MM)  # = 387
+
+# 手输字段：payload 键 → (默认值, 截断长度)
+_HAND_FIELDS = {
+    'bed_no': ('A料', 20),
+    'warp_shrink': ('0.0%', 12),
+    'weft_shrink': ('0.0%', 12),
+    'planner': ('', 20),
+    'style_no': ('noname', 30),
+    'remark': ('', 60),
+}
 
 
 @dataclass(frozen=True)
 class InfoTable:
-    """表格字段全集（手输 6 + 自动 6；渲染口径见模块 docstring）。"""
+    """唛架信息表格内容（手输 6 + 自动 8，渲染口径见 _cell_texts）。"""
 
-    # 手输（导出弹窗）
-    bed_no: str = ''
-    ply_count: int = 1
-    lay_method: str = '单向'
-    planner: str = 'noname'
-    style_no: str = ''
-    remark: str = ''
-    # 系统自动（build_info_table 补全）
-    fabric_len_m: float = 0.0       # 用料(m) 含表格段
-    gate_mm: float = 0.0            # 幅宽
-    utilization_pct: float = 0.0    # 利用率（百分比数值；≤0 渲染 '--'）
-    per_layer_pieces: int = 0       # 每层件数 = len(world_pieces)
-    unit_consumption_m: float = 0.0  # 单耗(m) = 用料 ÷ 每层件数
-    datetime_str: str = ''          # 导出时刻
+    # 手输（parse_table_payload 产物直通）
+    bed_no: str
+    warp_shrink: str
+    weft_shrink: str
+    planner: str
+    style_no: str
+    remark: str
+    # 自动
+    plan_name: str          # 方案名称（勾选尺码计算式）
+    sets_count: float       # 本床包含套数 = Σ每码系数
+    utilization_pct: float  # 利用率（real_density×100）
+    gate_m: float           # 幅宽（m）
+    fabric_len_m: float     # 料长（m，不含表格/引导）
+    per_set_m: float        # 每套用料（m；套数 0 时无意义，渲染 '--'）
+    total_pieces: int       # 片数 = len(world_pieces)
+    draw_time_str: str      # 绘图时间 '%Y-%m-%d %H:%M'
 
 
-def parse_table_payload(raw) -> dict | None:
-    """/export payload 的 table 对象 → 规范化 dict（build_info_table 的 table_in）。
+def _fold_ws(s: str) -> str:
+    """内部连续空白折叠单空格（防手输换行/多空格撑爆列宽）。"""
+    return ' '.join(s.split())
 
-    None / 非 dict → None（不带表格，旧调用零变化）；字段缺省取默认（层数 1 /
-    单向 / noname / 其余空）。字符串清洗：strip + 换行制表折成空格 + 超长截断
-    （warning）；ply_count 非正整数或 >999 → TablePayloadError。
+
+def _fmt_num(x: float) -> str:
+    """数值去尾零（1.0→'1'，7.5→'7.5'，0.5→'0.5'）。"""
+    s = f'{x:.3f}'.rstrip('0').rstrip('.')
+    return s if s else '0'
+
+
+def parse_table_payload(raw):
+    """校验 /export payload 的 ``table`` 段 → 手输字段 dict（None → None）。
+
+    全字段可选字符串，缺省取默认值（A料/0.0%/0.0%/空/noname/空）；int/float
+    宽容转 str（API 调用者传裸数字不炸）；strip + 内部空白折叠 + 超长截断
+    （截断记 warning，不静默）。非 dict / 字段非字符串抛
+    :class:`TablePayloadError`（路由层 400）。
     """
     if raw is None:
         return None
     if not isinstance(raw, dict):
-        raise TablePayloadError(f'table 需为对象，got {type(raw).__name__}')
-
-    out: dict = {}
-
-    def _clean_str(key: str) -> str:
-        if key not in raw:
-            return _STR_DEFAULTS[key]      # 键缺省 → 约定默认（单向/noname/…）
-        v = raw[key]
-        if v is None:
-            return ''    # 显式 null/空串 = 用户清空（不回填默认）
-        if v is None:
-            return ''
-        if isinstance(v, (int, float)) and not isinstance(v, bool):
-            v = str(v)
-        if not isinstance(v, str):
-            raise TablePayloadError(f'{key} 需为字符串，got {type(v).__name__}')
-        v = ' '.join(v.split())   # 折叠换行/制表/连续空白（表格单行渲染）
-        limit = _MAX_LEN[key]
-        if len(v) > limit:
-            logging.warning('PLT 信息表格：字段 %s 超长（%d 字符），截断为 %d',
-                            key, len(v), limit)
-            v = v[:limit]
-        return v
-
-    for key in _MAX_LEN:
-        out[key] = _clean_str(key)
-
-    ply = raw.get('ply_count', 1)
-    if ply is None:
-        ply = 1
-    if isinstance(ply, bool) or not isinstance(ply, (int, float)):
-        raise TablePayloadError(f'ply_count 需为整数，got {type(ply).__name__}')
-    if isinstance(ply, float):
-        if not ply.is_integer():
-            raise TablePayloadError(f'ply_count 需为整数，got {ply}')
-        ply = int(ply)
-    if not (1 <= ply <= _PLY_MAX):
-        raise TablePayloadError(f'ply_count 需在 1..{_PLY_MAX}，got {ply}')
-    out['ply_count'] = ply
+        raise TablePayloadError('信息表格 table 段必须是对象')
+    out = {}
+    for key, (default, cap) in _HAND_FIELDS.items():
+        val = raw.get(key, default)
+        if val is None:
+            val = ''
+        if isinstance(val, bool):
+            raise TablePayloadError(f'信息表格字段 {key} 必须是字符串')
+        if isinstance(val, (int, float)):
+            val = str(val)
+        if not isinstance(val, str):
+            raise TablePayloadError(f'信息表格字段 {key} 必须是字符串')
+        val = _fold_ws(val.strip())
+        if len(val) > cap:
+            logging.warning('PLT 信息表格字段 %s 超长（%d 字符），截断到 %d',
+                            key, len(val), cap)
+            val = val[:cap]
+        out[key] = val
     return out
 
 
-def build_info_table(world_pieces, *, width_mm: float, gate_mm: float,
-                     density: float, table_in: dict,
-                     now: datetime | None = None) -> InfoTable:
-    """规范化的手输字段 + 求解上下文 → InfoTable（补全系统自动字段）。
+def _size_key(s):
+    """尺码排序键：数值码按数值升序，非数值垫后按字典序。"""
+    try:
+        return (0, float(s), '')
+    except (TypeError, ValueError):
+        return (1, 0.0, str(s))
 
-    每层件数 = len(world_pieces)（placed_to_world 已含 demand 多副本，
-    同 pid N 行 = N 件）。
+
+def _plan_name_and_sets(world_pieces):
+    """方案名称 + 套数（口径见模块 docstring）。
+
+    返回 ``(plan_name, sets)``；world_pieces 为空 → ``('--', 0.0)``。
     """
-    per_layer = len(world_pieces)
-    fabric_len_m = (float(width_mm) + TABLE_GAP_MM + TABLE_LEN_MM) / 1000.0
-    unit = fabric_len_m / per_layer if per_layer > 0 else 0.0
-    dt = (now or datetime.now()).strftime('%Y-%m-%d %H:%M:%S')
+    if not world_pieces:
+        return '--', 0.0
+    cnt = Counter(pc.get('pid') for pc in world_pieces)
+    # 每码面积最大裁片的 pid（前/后幅数量恒等，面积最大者代表该码数量）
+    largest = {}
+    for pc in world_pieces:
+        size = pc.get('size')
+        area = float(pc.get('area_mm2') or 0.0)
+        prev = largest.get(size)
+        if prev is None or area > prev[1]:
+            largest[size] = (pc.get('pid'), area)
+    coeff = {size: cnt.get(pid, 0) / 2.0 for size, (pid, _a) in largest.items()}
+    sizes = sorted(largest, key=_size_key)
+    # 同系数全局分组（非相邻分组：用户例 30/34/35 同组与 31-33 穿插），
+    # 组内码升序，组间按组内最小码排序
+    by_coeff = {}
+    for s in sizes:
+        by_coeff.setdefault(coeff[s], []).append(s)
+    groups = sorted(by_coeff.items(), key=lambda kv: _size_key(kv[1][0]))
+    parts = []
+    for c, ss in groups:
+        part = '(' + '+'.join(str(s) for s in ss) + ')'
+        if c != 1:
+            part += f'*{_fmt_num(c)}'
+        parts.append(part)
+    sets = math.fsum(coeff[s] for s in sizes)
+    return '+'.join(parts) + f'={_fmt_num(sets)}套', sets
+
+
+def build_info_table(world_pieces, *, width_mm, gate_mm, density, table_in, now=None):
+    """补自动字段 → :class:`InfoTable`（手输 6 字段从 table_in 直通）。"""
+    dt = datetime.now() if now is None else now
+    plan_name, sets = _plan_name_and_sets(world_pieces)
+    fabric_len_m = float(width_mm) / 1000.0
+    per_set_m = fabric_len_m / sets if sets > 0 else 0.0
     return InfoTable(
-        bed_no=table_in.get('bed_no', ''),
-        ply_count=int(table_in.get('ply_count', 1)),
-        lay_method=table_in.get('lay_method', '单向'),
-        planner=table_in.get('planner', 'noname'),
-        style_no=table_in.get('style_no', ''),
-        remark=table_in.get('remark', ''),
-        fabric_len_m=fabric_len_m,
-        gate_mm=float(gate_mm),
+        bed_no=table_in['bed_no'],
+        warp_shrink=table_in['warp_shrink'],
+        weft_shrink=table_in['weft_shrink'],
+        planner=table_in['planner'],
+        style_no=table_in['style_no'],
+        remark=table_in['remark'],
+        plan_name=plan_name,
+        sets_count=sets,
         utilization_pct=float(density) * 100.0,
-        per_layer_pieces=per_layer,
-        unit_consumption_m=unit,
-        datetime_str=dt,
+        gate_m=float(gate_mm) / 1000.0,
+        fabric_len_m=fabric_len_m,
+        per_set_m=per_set_m,
+        total_pieces=len(world_pieces),
+        draw_time_str=dt.strftime('%Y-%m-%d %H:%M'),
     )
 
 
-def _cell_texts(t: InfoTable) -> list[tuple[list[str], list[float]]]:
-    """12 格 → [(该格文本段列表, 段后间隙列表)]。每段 = label / value / 注记。"""
+def _cell_texts(t: InfoTable) -> list:
+    """14 行「标签 值」文本（**row0→row13** = 方案名称..备注，沿 +x 逐行；生产
+    标签值间是空格分隔，非冒号；空值只渲染标签）。"""
     util = f'{t.utilization_pct:.2f}%' if t.utilization_pct > 0 else '--'
-    unit = f'{t.unit_consumption_m:.3f}' if t.per_layer_pieces > 0 else '--'
-    col1_vals = (t.remark, t.planner, t.style_no, t.datetime_str, t.bed_no,
-                 util, str(int(round(t.gate_mm))))
-    col2_vals = (unit, str(t.ply_count), t.lay_method, f'{t.fabric_len_m:.2f}')
-
-    cells: list[tuple[list[str], list[float]]] = []
-    for label, val in zip(_COL1_FIELDS, col1_vals):
-        # 空值 → 仅渲染标签（生产件「备注」空行同款）
-        segs = [label] + ([val] if val else [])
-        gaps = [TABLE_LABEL_GAP_MM] * (len(segs) - 1)
-        cells.append((segs, gaps))
-    for label, val in zip(_COL2_FIELDS, col2_vals):
-        segs = [label] + ([val] if val else [])
-        gaps = [TABLE_LABEL_GAP_MM] * (len(segs) - 1)
-        cells.append((segs, gaps))
-    # 列2 末行：共N件注记（生产同款整句、无 label:value 结构）
-    cells.append(([f'共{t.per_layer_pieces * t.ply_count}件'], []))
-    return cells
-
-
-def _cell_strokes(segs: list[str], gaps: list[float], *, row_cx: float,
-                  y0: float) -> list[list[tuple[float, float]]]:
-    """一格（label + gap + value）→ 世界 mm 折线。整格 shrink-to-fit（长值如
-    「面料利用率 84.86%」按 Noto em 全宽计 165mm > 126mm 可用宽，统一缩到
-    ~13.7mm 而非混排两号字）；压到下限仍超由 text_strokes 尾部截断。"""
-    fit_w = TABLE_COL_W_MM - 2 * TABLE_PAD_Y_MM
-    char_h = TABLE_CHAR_H_MM
-    total = (sum(text_width(s, char_h) for s in segs) + sum(gaps)) if segs else 0.0
-    if total > fit_w > 0:
-        char_h = max(TABLE_CHAR_H_MIN_MM, char_h * fit_w / total)
-    ux, uy = (0.0, -1.0) if TABLE_TEXT_FLIP else (0.0, 1.0)
-    wx, wy = -uy, ux                      # 右手系字顶方向（plt_text 防御同款）
-    baseline_x = row_cx + char_h / 2.0    # 基线在行带中心 +h/2，字顶向 −x
-    strokes: list[list[tuple[float, float]]] = []
-    y = y0
-    for i, s in enumerate(segs):
-        if s:
-            budget = fit_w - (y - y0)
-            strokes.extend(text_strokes(
-                s, origin=(baseline_x, y), u=(ux, uy), w=(wx, wy),
-                char_h_mm=char_h, fit_width_mm=budget if budget > 0 else None))
-            y += text_width(s, char_h)
-        if i < len(gaps):
-            y += gaps[i]
-    return strokes
+    per_set = f'{t.per_set_m:.3f}m' if t.sets_count > 0 else '--'
+    rows = [
+        ('方案名称', t.plan_name),
+        ('床次', t.bed_no),
+        ('经纱缩水', t.warp_shrink),
+        ('纬纱缩水', t.weft_shrink),
+        ('利用率', util),
+        ('幅宽', f'{t.gate_m:.3f}m'),
+        ('料长', f'{t.fabric_len_m:.3f}m'),
+        ('本床包含套数', _fmt_num(t.sets_count)),
+        ('每套用料', per_set),
+        ('片数', str(t.total_pieces)),
+        ('排料师', t.planner),
+        ('绘图时间', t.draw_time_str),
+        ('样板号', t.style_no),
+        ('备注', t.remark),
+    ]
+    assert len(rows) == N_TABLE_ROWS
+    return [f'{lab} {val}' if val else lab for lab, val in rows]
 
 
-def info_table_polylines(t: InfoTable, *,
-                         table_x0: float) -> list[tuple[bool, list]]:
-    """InfoTable → [(closed, points)] 世界 mm 折线（文本轮廓 closed=True、
-    分隔线 closed=False），交 export_plt._plt_polyline 输出。
+def _row_center_x(table_x0: float, i: int) -> float:
+    """第 i 行文字带中心（世界 x）。row0 = 方案名称大字带，其后 13 行等距。"""
+    if i == 0:
+        return table_x0 + TABLE_PAD_X_MM + PLAN_ROW_PITCH_MM * 0.5
+    return (table_x0 + TABLE_PAD_X_MM + PLAN_ROW_PITCH_MM
+            + (i - 1) * TABLE_ROW_PITCH_MM + TABLE_ROW_PITCH_MM * 0.5)
 
-    table_x0 = 表格区起点 x（= width_mm + TABLE_GAP_MM，由调用方传入，本模块
-    不依赖求解宽度）。全部点落在 [table_x0, table_x0+565]×[0,300]（元数据，
-    不过 y≤gate 裁剪；gate 异常小仅 warning）。
+
+def info_table_polylines(t: InfoTable, *, table_x0: float, gate_mm: float) -> list:
+    """表格 → 世界 mm 折线 ``[(closed, points)]``。
+
+    版式（生产逆向，见模块 docstring）：外框 [x0, x0+W]×[0,gate] + 13 条沿 y
+    行间分隔线 + 14 行文字（基线沿 +y、字顶朝 −x，基 u=(0,1)/w=(-1,0) 右手系）。
+    行沿 +x 堆叠 ⇒ 表宽与门幅无关；门幅只限文字长度（可用长 = gate − 2×
+    TABLE_TEXT_Y0_MM，超长 shrink 到 7mm 后尾部截断，窄门幅记 warning）。
+    **不裁剪**（元数据，裁剪切坏文字）。
     """
-    if t.gate_mm and t.gate_mm < 2 * TABLE_COL_W_MM + 20:
-        logging.warning('PLT 信息表格：门幅 %.0fmm 小于表格宽度 ~%dmm，'
-                        '表格可能压门幅上边框（不裁剪文字，按原样输出）',
-                        t.gate_mm, 2 * TABLE_COL_W_MM)
+    gate_f = float(gate_mm)
+    fit_len = max(gate_f - 2.0 * TABLE_TEXT_Y0_MM, 60.0)
+    if fit_len < 600.0:
+        logging.warning('PLT 信息表格：门幅 %.0fmm 偏小，文字长度方向可用仅 '
+                        '%.0fmm（超长行将缩字高/截断）', gate_f, fit_len)
 
-    out: list[tuple[bool, list]] = []
-    n_rows_col1 = len(_COL1_FIELDS)   # 7
-    n_rows_col2 = len(_COL2_FIELDS) + 1   # 5（含共N件注记行）
+    out: list = []
+    # 外框：单个闭合矩形，贴满整幅门幅（生产表格笔画 y∈[0,gate]）
+    x1 = table_x0 + TABLE_W_MM
+    out.append((True, [(table_x0, 0.0), (x1, 0.0), (x1, gate_f), (table_x0, gate_f)]))
 
-    def _row_cx(col: int, row: int, n_rows: int) -> float:
-        idx = row if TABLE_ROW_ORDER_FROM_MARKER else (n_rows - 1 - row)
-        return table_x0 + TABLE_PAD_X_MM + idx * ROW_PITCH_MM
+    # 行间分隔线（沿 y 贯穿；生产排料视图里 = 每行之间的水平细线）
+    for k in range(N_TABLE_ROWS - 1):
+        xs = table_x0 + TABLE_PAD_X_MM + PLAN_ROW_PITCH_MM + k * TABLE_ROW_PITCH_MM
+        out.append((False, [(xs, 0.0), (xs, gate_f)]))
 
-    cells = _cell_texts(t)
-    for col, n_rows in ((0, n_rows_col1), (1, n_rows_col2)):
-        for row in range(n_rows):
-            segs, gaps = cells[row if col == 0 else n_rows_col1 + row]
-            out.extend(
-                (True, st) for st in _cell_strokes(
-                    segs, gaps, row_cx=_row_cx(col, row, n_rows),
-                    y0=col * TABLE_COL_W_MM + TABLE_PAD_Y_MM))
-
-    # 分隔线：列间细单线（y=150 横贯）+ 各列行间细分线（行带中心之间）
-    out.append((False, [(table_x0, TABLE_SEP_LINE_Y_MM),
-                        (table_x0 + TABLE_LEN_MM, TABLE_SEP_LINE_Y_MM)]))
-    for col, n_rows in ((0, n_rows_col1), (1, n_rows_col2)):
-        y0, y1 = col * TABLE_COL_W_MM, (col + 1) * TABLE_COL_W_MM
-        for i in range(n_rows - 1):
-            cx_a = _row_cx(col, i, n_rows)
-            cx_b = _row_cx(col, i + 1, n_rows)
-            xm = (cx_a + cx_b) / 2.0
-            out.append((False, [(xm, y0), (xm, y1)]))
+    # 行文字：u=(0,1) 沿 +y 书写、w=(-1,0) 字顶朝 −x（朝唛架）——生产排料视图
+    # （切割视图逆时针旋 90°）里水平正立可读，与 v2 post-flip 横排版互为镜像定稿
+    for i, text in enumerate(_cell_texts(t)):
+        if not text:
+            continue
+        char_h = PLAN_CHAR_H_MM if i == 0 else TABLE_CHAR_H_MM
+        cx = _row_center_x(table_x0, i)
+        for poly in text_strokes(text, origin=(cx + char_h * 0.5, TABLE_TEXT_Y0_MM),
+                                 u=(0.0, 1.0), w=(-1.0, 0.0),
+                                 char_h_mm=char_h, fit_width_mm=fit_len,
+                                 min_char_h_mm=TABLE_CHAR_H_MIN_MM):
+            if len(poly) >= 2:
+                out.append((True, poly))
     return out

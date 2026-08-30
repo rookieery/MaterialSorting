@@ -1,14 +1,16 @@
-// ExportInfoModal —— 「导出 PLT · 唛架信息表格」填写弹窗（2026-08-30）。
+// ExportInfoModal —— 「导出 PLT · 唛架信息表格」填写弹窗（2026-08-30 v2 重写）。
 //
-// 生产 PLT 在唛架末端带 12 字段文件信息表格（旋转 90°、计入用料）；6 个生产
-// 计划字段系统里没有，导出 PLT 前在此填写（其余 6 个后端自动算）。范本
-// ExtremeRunModal 的**纯取消型**骨架：ESC / 遮罩 / ✕ / 取消 = 只关弹窗不导出，
-// 「导出 PLT」= 唯一提交路径（生产信息是裁剪车间凭据，误触导出比多点一步贵）。
+// 生产环境 PLT 在排料图外围带 14 字段信息表格（横排竖直堆叠、不占排料区）；
+// 6 个手输字段系统里没有，导出 PLT 前在此填写（其余 8 个后端自动算 —— 方案名称/
+// 套数/利用率/幅宽/料长/每套用料/片数/绘图时间）。范本 ExtremeRunModal 的
+// **纯取消型**骨架：ESC / 遮罩 / ✕ / 取消 = 只关弹窗不导出，「导出 PLT」=
+// 唯一提交路径（生产信息是裁剪车间凭据，误触导出比多点一步贵）。
 //
 // 声明式受控 Portal：订阅 controlPanelStore.modal === 'export_info' 自显隐
 // （与其他弹窗单例互斥）；草稿 mount 时从 localStorage 记忆值初始化（跨导出
 // 记住排料师/床次等，lib/exportTable.ts），确认时落盘 + 回调 onConfirm 后关闭。
 // 打开入口：ControlPanel.handleExport fmt==='plt' 分流（PNG/DXF 直通不弹窗）。
+// v2 全字段自由字符串无校验（默认 A料/0.0%/0.0%/空/noname/空）。
 
 import { useEffect, useState } from 'react';
 import type { JSX } from 'react';
@@ -17,7 +19,6 @@ import {
   type ExportTableFields,
   loadExportTable,
   saveExportTable,
-  validateExportTable,
 } from '../../lib/exportTable';
 import { useControlPanelStore } from '../../store/controlPanelStore';
 
@@ -52,15 +53,13 @@ function ExportInfoModalInner({ exporting, onConfirm }: ExportInfoModalProps): J
     return () => window.removeEventListener('keydown', onKey);
   }, [closeModal]);
 
-  const validationError = validateExportTable(fields);
-
   function patch(p: Partial<ExportTableFields>): void {
     setFields((prev) => ({ ...prev, ...p }));
   }
 
   /** 唯一提交路径：落盘记忆 + 回调导出 + 关闭。 */
   function handleConfirm(): void {
-    if (exporting || validationError !== null) return; // 按钮已置灰，兜底
+    if (exporting) return; // 按钮已置灰，兜底
     saveExportTable(fields);
     onConfirm(fields);
     closeModal();
@@ -108,35 +107,32 @@ function ExportInfoModalInner({ exporting, onConfirm }: ExportInfoModalProps): J
             className="strategy-text-input"
             data-testid="export-info-bed-no"
             value={fields.bedNo}
-            placeholder="如 153（可空）"
+            placeholder="默认 A料"
             onChange={(e) => patch({ bedNo: e.target.value })}
           />
         </div>
         <div className="strategy-field">
-          <label htmlFor="export-info-ply-count">铺布层数</label>
+          <label htmlFor="export-info-warp-shrink">经纱缩水</label>
           <input
-            id="export-info-ply-count"
-            type="number"
+            id="export-info-warp-shrink"
+            type="text"
             className="strategy-text-input"
-            data-testid="export-info-ply-count"
-            inputMode="numeric"
-            min={1}
-            max={999}
-            step={1}
-            value={fields.plyCount}
-            onChange={(e) => patch({ plyCount: e.target.value })}
+            data-testid="export-info-warp-shrink"
+            value={fields.warpShrink}
+            placeholder="默认 0.0%"
+            onChange={(e) => patch({ warpShrink: e.target.value })}
           />
         </div>
         <div className="strategy-field">
-          <label htmlFor="export-info-lay-method">拉布方式</label>
+          <label htmlFor="export-info-weft-shrink">纬纱缩水</label>
           <input
-            id="export-info-lay-method"
+            id="export-info-weft-shrink"
             type="text"
             className="strategy-text-input"
-            data-testid="export-info-lay-method"
-            value={fields.layMethod}
-            placeholder="如 单向 / 双向"
-            onChange={(e) => patch({ layMethod: e.target.value })}
+            data-testid="export-info-weft-shrink"
+            value={fields.weftShrink}
+            placeholder="默认 0.0%"
+            onChange={(e) => patch({ weftShrink: e.target.value })}
           />
         </div>
         <div className="strategy-field">
@@ -147,18 +143,19 @@ function ExportInfoModalInner({ exporting, onConfirm }: ExportInfoModalProps): J
             className="strategy-text-input"
             data-testid="export-info-planner"
             value={fields.planner}
+            placeholder="可空"
             onChange={(e) => patch({ planner: e.target.value })}
           />
         </div>
         <div className="strategy-field">
-          <label htmlFor="export-info-style-no">款式号</label>
+          <label htmlFor="export-info-style-no">样板号</label>
           <input
             id="export-info-style-no"
             type="text"
             className="strategy-text-input"
             data-testid="export-info-style-no"
             value={fields.styleNo}
-            placeholder="如 FC721200B00NIF（可空）"
+            placeholder="默认 noname"
             onChange={(e) => patch({ styleNo: e.target.value })}
           />
         </div>
@@ -171,14 +168,14 @@ function ExportInfoModalInner({ exporting, onConfirm }: ExportInfoModalProps): J
             rows={2}
             maxLength={60}
             value={fields.remark}
-            placeholder="面料备注等（可空）"
+            placeholder="可空"
             onChange={(e) => patch({ remark: e.target.value })}
           />
         </div>
 
         <div className="strategy-hint" data-testid="export-info-auto-hint">
-          其余字段系统自动计算：用料 / 幅宽 / 利用率 / 单耗 / 共N件 / 日期时间
-          （表格附在唛架末端、旋转 90°，长度计入用料 —— 与生产 PLT 一致）
+          其余字段系统自动计算：方案名称 / 套数 / 利用率 / 幅宽 / 料长 / 每套用料 /
+          片数 / 绘图时间（表格附在排料图外围，不占排料区、不计入用料）
         </div>
 
         <div className="strategy-actions">
@@ -194,9 +191,9 @@ function ExportInfoModalInner({ exporting, onConfirm }: ExportInfoModalProps): J
             type="button"
             className="strategy-btn-exec"
             data-testid="export-info-confirm"
-            disabled={exporting || validationError !== null}
+            disabled={exporting}
             onClick={handleConfirm}
-            title={validationError ?? (exporting ? '正在导出…' : undefined)}
+            title={exporting ? '正在导出…' : undefined}
           >
             导出 PLT
           </button>

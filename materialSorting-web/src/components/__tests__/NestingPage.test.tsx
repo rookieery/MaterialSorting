@@ -7,8 +7,9 @@
 //   2. apply → phase==='done'：状态行「策略 run 已应用：seed N · X.XX%」+
 //      SolveControls 渲染 #restart（开始求解）+ PlaybackBar seekbar 解禁
 //   3. apply → ExportButtons 非 disabled + NestSVG 渲染多副本（demand=2 → 2 个可见 polygon）
-//   4. apply → 点导出 → POST /export 载荷 = 合成帧（bestRun() 零改动选中；placed 含
-//      demand 多副本 N 条 placement；pid `{label}_{size}` 与后端 placed_to_world 同规则）
+//   4. apply → 点导出（默认 PLT 分流 ExportInfoModal）→ 确认 → POST /export 载荷 =
+//      合成帧（bestRun() 零改动选中；placed 含 demand 多副本 N 条 placement；pid
+//      `{label}_{size}` 与后端 placed_to_world 同规则）+ table 6 手输字段
 //   5. 未 apply（仅 done 态弹窗开着）→ registry 不变（显式按钮不自动应用）
 
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
@@ -246,7 +247,7 @@ describe('NestingPage.applyStrategyResult (US-006)', () => {
     expect(container!.querySelector<HTMLButtonElement>('.export-btns button.export')!.disabled).toBe(false);
   });
 
-  it('apply 后点导出 → POST /export 载荷 = 合成帧（seed/width/density/placed 多副本，导出链路零改动）', async () => {
+  it('apply 后点导出（PLT 分流弹窗确认）→ POST /export 载荷 = 合成帧 + table 手输字段', async () => {
     vi.stubGlobal('URL', {
       ...(globalThis.URL as object),
       createObjectURL: vi.fn(() => 'blob:fake://1'),
@@ -258,8 +259,18 @@ describe('NestingPage.applyStrategyResult (US-006)', () => {
     openResultState();
     clickApply();
 
+    // 默认 fmt=plt → ControlPanel 分流打开 ExportInfoModal（portal 到 body），不直接 POST
     await act(async () => {
       container!.querySelector<HTMLButtonElement>('.export-btns button.export')!.click();
+      await Promise.resolve();
+    });
+    expect(exportBodies).toHaveLength(0);
+    const confirmBtn = document.querySelector<HTMLButtonElement>(
+      '[data-testid=export-info-confirm]',
+    );
+    expect(confirmBtn).not.toBeNull();
+    await act(async () => {
+      confirmBtn!.click();
       await Promise.resolve();
       await Promise.resolve();
       await Promise.resolve();
@@ -268,7 +279,9 @@ describe('NestingPage.applyStrategyResult (US-006)', () => {
     const body = exportBodies[0] as {
       fmt: string; seed: number; gate_mm: number; width_mm: number;
       density: number; placed: { id: string; rotation: number; translation: number[] }[];
+      table: Record<string, string>;
     };
+    expect(body.fmt).toBe('plt');
     expect(body.seed).toBe(3);
     expect(body.gate_mm).toBe(1980);
     expect(body.width_mm).toBe(7100.5);
@@ -277,6 +290,11 @@ describe('NestingPage.applyStrategyResult (US-006)', () => {
       { id: 'g01_30', rotation: 0, translation: [0, 0] },
       { id: 'g01_30', rotation: 180, translation: [500, 300] },
     ]);
+    // table 6 手输字段随载荷下发（默认 A料/0.0%/0.0%/空/noname/空）
+    expect(body.table).toEqual({
+      bed_no: 'A料', warp_shrink: '0.0%', weft_shrink: '0.0%',
+      planner: '', style_no: 'noname', remark: '',
+    });
     // 状态行汇报导出完成（useExport → onStatus）
     expect(container!.querySelector('#status')!.textContent).toContain('已导出');
     vi.unstubAllGlobals();

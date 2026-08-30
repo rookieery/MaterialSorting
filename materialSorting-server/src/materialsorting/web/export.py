@@ -49,7 +49,7 @@ from .export_plt import (
 )
 from .plt_table import (  # noqa: F401（门面 re-export，见模块 docstring）
     TABLE_GAP_MM,
-    TABLE_LEN_MM,
+    TABLE_W_MM,
     InfoTable,
     build_info_table,
     parse_table_payload,
