@@ -1449,3 +1449,40 @@ CPU），跨会话完全独立（多会话 US-004 语义不变）。
   复制改 `noname..29` → `noname.坏块名标注`，6 处 INSERT 同步改名）→ toast 弹出
   文案命中 + ✕ 可关；超排页码号区 28..38 共 11 chip 无「通用」无 `#sz_null`；
   正常母版（882）反向对照无 toast。10/10 PASS。
+
+## 码号区全选框：标题行 tri-state checkbox（2026-08-31）
+
+### 背景
+
+用户需求：码号（多选）标题后加「全选」勾选框 —— 勾选 → 下方全部尺码勾上；
+取消 → 全清；默认不勾选；下方尺码全勾/全不勾时全选框及时联动。8~11 码套排是
+主场景（90%+ 利用率靠多码套），逐个点 chip 属高频重复操作。
+
+### 关键事实（改动依据）
+
+- **勾选态纯派生，零新增状态存储**：SizePicker 本就是受控组件（selected 由
+  ControlPanel form.sizes 持有），`allChecked = chipSizes.every(∈ selected)`
+  派生即得「及时联动」——React 受控数据流天然保证，不存在失同步路径。
+- **`indeterminate` 是 DOM property 非 HTML 属性**：React 无对应 prop，须经
+  inline ref callback 每次渲染设置（语句块无返回值，防 React 19 把返回值当
+  cleanup 的坑提前规避）；部分勾选显示「未勾」有歧义，故补半选态。
+- **全选集 = chip 数字码全集（null 不入集）**：与 WS/export 过滤 null 同口径
+  （通用片从不参与求解）；全勾替换 selected 顺带清掉防御性残留的 null。
+- **边界**：chip 列表为空（母版只有 null 通用码）→ 禁用；`disabled`（求解中
+  running 态冻结）随 chip 一起生效；重传母版 form 回 DEFAULT_FORM（sizes=[]）
+  → 全选框自动复位未勾选。
+- ControlPanel.test.tsx 选择器全部锁 `.sizes` chip 区内，标题行 checkbox
+  （`#sz_all`）不与其相交，零回归。
+
+### 改动文件
+
+| 文件 | 改动 |
+|------|------|
+| `materialSorting-web/src/components/ControlPanel/SizePicker.tsx` | 标题行改 `.field-label.sizes-label`（flex 两端分布）：左「码号（多选）」+ 右 `<label class="select-all">` 内 `#sz_all` checkbox —— `checked={allChecked}`（派生，`chipSizes.length>0 && every`）+ ref callback 设 `indeterminate = !allChecked && some` + `onChange(allChecked ? [] : [...chipSizes])` + `disabled={disabled \|\| chipSizes.length===0}` |
+| `materialSorting-web/src/style.css` | 加 `.sizes-label`（flex 两端）/ `.sizes-label .select-all`（inline-flex，#aab 12px）/ `.select-all input`（与 `.chip input` 同款 width:auto）三段 |
+| 测试 | SizePicker.test.tsx 新增「SizePicker 全选框」describe 8 项：默认未勾非半选 / 派生三态（全勾·退一半选·全空）/ 点全选收数字码全集（null 不入集）/ 全勾点全清 / 部分勾选点全选补齐全集 / 空 chip 列表禁用 / disabled 冻结 / PassThrough 端到端受控回路（勾 chip → 半选 → 点全选 → 全集勾上 → 再点全清） |
+
+### 验证
+
+- typecheck 干净；vitest 全量 52 文件 799 测试全过（791 → 799，+8）；
+  ControlPanel 47 项无回归（选择器不交叠）。后端零改动。

@@ -89,6 +89,14 @@ body {
   border: 1px solid #3a3d45; border-radius: 4px;
 }
 .sizes { display: flex; flex-wrap: wrap; gap: 6px; }
+/* 码号（多选）标题行全选框（2026-08-31）：标题与「全选」两端分布；
+   全选 = tri-state（全勾 ✓ / 部分勾半选 / 全空 □），点击全选⇄全清。 */
+.sizes-label { display: flex; align-items: center; justify-content: space-between; }
+.sizes-label .select-all {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 12px; color: #aab; cursor: pointer;
+}
+.sizes-label .select-all input { width: auto; margin: 0; cursor: pointer; }
 .chip {
   display: inline-flex; align-items: center; gap: 4px;
   background: #34363d; padding: 3px 8px; border-radius: 14px;

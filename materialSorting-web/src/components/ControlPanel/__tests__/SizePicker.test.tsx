@@ -298,6 +298,118 @@ describe("SizePicker (US-017)", () => {
   });
 });
 
+// 全选框（2026-08-31）：标题行 tri-state checkbox —— 勾选态纯派生（不新增状态存储），
+// 部分勾选 → indeterminate 半选；点击 = 全勾⇄全清 / 部分勾选补齐全集；空 chip 列表禁用。
+describe("SizePicker 全选框 (2026-08-31)", () => {
+  function getSelectAll(): HTMLInputElement | null {
+    return container!.querySelector<HTMLInputElement>("#sz_all");
+  }
+
+  it("默认（selected=[]）→ 全选未勾选、非半选", () => {
+    renderPicker();
+    const all = getSelectAll()!;
+    expect(all).not.toBeNull();
+    expect(all.checked).toBe(false);
+    expect(all.indeterminate).toBe(false);
+  });
+
+  it("勾选态纯派生：chip 全勾 → checked；退一个 → unchecked + 半选；全空 → 非半选", () => {
+    useUploadStore.setState({ status: "done", doc: makeDoc11() });
+    const all10 = [28, 29, 30, 31, 32, 33, 34, 35, 36, 38];
+    // 全勾 → 全选框勾选
+    renderPicker(all10);
+    expect(getSelectAll()!.checked).toBe(true);
+    expect(getSelectAll()!.indeterminate).toBe(false);
+    // 退一个（36）→ 未勾 + 半选（下方 chip 变化 → 全选框及时联动）
+    renderPicker(all10.filter((s) => s !== 36));
+    expect(getSelectAll()!.checked).toBe(false);
+    expect(getSelectAll()!.indeterminate).toBe(true);
+    // 全空 → 未勾 + 非半选
+    renderPicker([]);
+    expect(getSelectAll()!.checked).toBe(false);
+    expect(getSelectAll()!.indeterminate).toBe(false);
+  });
+
+  it("点全选 → onChange 收到全部数字码（10 码；null 通用码不入集，与 WS/export 口径一致）", () => {
+    useUploadStore.setState({ status: "done", doc: makeDoc11() });
+    const onChange = vi.fn();
+    renderPicker([], onChange);
+    act(() => getSelectAll()!.click());
+    expect(onChange).toHaveBeenLastCalledWith([28, 29, 30, 31, 32, 33, 34, 35, 36, 38]);
+  });
+
+  it("全勾态点全选 → onChange([]) 全清", () => {
+    useUploadStore.setState({ status: "done", doc: makeDocWithPieces() });
+    const onChange = vi.fn();
+    renderPicker([28, 29, 30], onChange);
+    act(() => getSelectAll()!.click());
+    expect(onChange).toHaveBeenLastCalledWith([]);
+  });
+
+  it("部分勾选态点全选 → onChange 收到全集（补齐而非清空）", () => {
+    useUploadStore.setState({ status: "done", doc: makeDocWithPieces() });
+    const onChange = vi.fn();
+    renderPicker([29], onChange);
+    act(() => getSelectAll()!.click());
+    expect(onChange).toHaveBeenLastCalledWith([28, 29, 30]);
+  });
+
+  it("chip 列表为空（母版只有 null 通用码）→ 全选禁用且未勾选", () => {
+    useUploadStore.setState({
+      status: "done",
+      doc: { doc_id: "doc-null-only", filename: "null-only.dxf", sizes: [{ size: null, pieces: [] }] },
+    });
+    renderPicker();
+    const all = getSelectAll()!;
+    expect(all.checked).toBe(false);
+    expect(all.disabled).toBe(true);
+  });
+
+  it("disabled（求解中）→ 全选框随 chip 一起冻结", () => {
+    act(() => {
+      root!.render(
+        <StrictMode>
+          <SizePicker selected={[]} onChange={() => {}} disabled />
+        </StrictMode>,
+      );
+    });
+    expect(getSelectAll()!.disabled).toBe(true);
+  });
+
+  it("端到端受控回路：勾 1 chip → 半选；点全选 → 全集且框勾上；再点 → 全清", () => {
+    useUploadStore.setState({ status: "done", doc: makeDocWithPieces() });
+    const onChange = vi.fn();
+    function PassThrough() {
+      const [selected, setSelected] = useState<(number | null)[]>([]);
+      const handleChange = (next: (number | null)[]) => {
+        onChange(next);
+        setSelected(next);
+      };
+      return <SizePicker selected={selected} onChange={handleChange} />;
+    }
+    act(() => {
+      root!.render(
+        <StrictMode>
+          <PassThrough />
+        </StrictMode>,
+      );
+    });
+    // 勾 28（index=0）→ 部分勾选 → 半选
+    act(() => getChips()[0].click());
+    expect(getSelectAll()!.checked).toBe(false);
+    expect(getSelectAll()!.indeterminate).toBe(true);
+    // 点全选 → 全集（受控回写后全选框勾上、半选消失）
+    act(() => getSelectAll()!.click());
+    expect(onChange).toHaveBeenLastCalledWith([28, 29, 30]);
+    expect(getSelectAll()!.checked).toBe(true);
+    expect(getSelectAll()!.indeterminate).toBe(false);
+    // 再点 → 全清
+    act(() => getSelectAll()!.click());
+    expect(onChange).toHaveBeenLastCalledWith([]);
+    expect(getSelectAll()!.checked).toBe(false);
+  });
+});
+
 // 纯函数单测：computeTotalCutPieces / effectiveDemand（不挂 React，直接验证口径）。
 describe("computeTotalCutPieces / effectiveDemand", () => {
   const doc = makeDocWithPieces(); // 28:[A,B] 29:[A,B,C] 30:[A]
