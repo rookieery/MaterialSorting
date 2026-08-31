@@ -42,7 +42,6 @@ from .export_png import render_png
 from .export_plt import (
     _PLT_PD_MAX_PTS,
     _plt_frame_stats,
-    PLOT_BORDER_MARGIN_Y_MM,
     PLOT_LEAD_X_MM,
     PLOT_TAIL_X_MM,
     write_marker_plt,

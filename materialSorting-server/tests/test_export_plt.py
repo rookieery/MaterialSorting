@@ -9,7 +9,8 @@
   - 空层跳过（net/internal/notches/grain 空 → 该层无笔画）
   - PD 分块：每条 ≤10 点且整行 ≤110B（防设备行缓冲溢出坐标错位乱走）
   - 门幅边界（2026-08-28 版师定案：输入幅宽 = 实际幅宽）：内容按 y ≤ gate_mm
-    裁剪削平，全文件 Y 不超程；门幅框上沿/下沿各内缩
+    裁剪削平，全文件 Y 不超程；门幅框满幅 [0, gate]（2026-08-31 撤销旧 Y 双边
+    内缩 5mm：贴边裁片穿框被切割软件读作越界布料，框=裁剪界=求解带三口径合一）
   - bytes 返回类型 + 全 ASCII + CRLF 行尾
 
 生产 PLT 封装对齐（data/PC-20250508NJIF*.plt 口径）：
@@ -152,9 +153,9 @@ def test_coordinate_scaled_by_40_with_lead_shift():
     assert "4800,0" in out
     assert "4800,8000" in out
     assert "800,8000" in out
-    # 门幅框：x 0..500 → 800..20800，y 5..995 → 200..39800
-    assert "20800,200" in out
-    assert "20800,39800" in out
+    # 门幅框：x 0..500 → 800..20800，y 满幅 0..1000 → 0..40000
+    assert "20800,0" in out
+    assert "20800,40000" in out
 
 
 def test_x_lead_shift_no_content_at_paper_origin():
@@ -221,23 +222,24 @@ def test_polygon_closed_first_point_equals_last():
             f"closure broken: first={tokens[:2]} last={tokens[-2:]}")
 
 
-def test_border_inset_and_within_gate():
-    """门幅框（层序首条折线）：Y 下沿内缩 5mm、上沿 = 输入门幅−5（gate=1980 → 顶 1975mm）。"""
+def test_border_full_band_no_inset():
+    """门幅框（层序首条折线）满幅 [0, gate]：2026-08-31 撤销 Y 双边内缩 5mm —— 贴边
+    裁片精确贴求解约束带 0/gate，框=裁剪界=求解带三口径合一（gate=1980 → 顶 1980mm）。"""
     out = _plt([_full_piece()], width_mm=500, gate_mm=1980, title="")
     border = _polylines(_body_section(out.split("\n")))[0]
     xs = [int(border[i]) for i in range(0, len(border), 2)]
     ys = [int(border[i + 1]) for i in range(0, len(border), 2)]
-    assert min(ys) == 5 * 40            # 下沿内缩 PLOT_BORDER_MARGIN_Y_MM
-    assert max(ys) == 1975 * 40         # 1980 − 5 = 1975（输入幅宽=实际幅宽，不贴 y=1980）
+    assert min(ys) == 0                 # 下沿贴 y=0（满幅，无内缩）
+    assert max(ys) == 1980 * 40         # 上沿贴 y=1980（输入幅宽=实际幅宽）
     assert min(xs) == int(20 * 40)      # X 走纸引导
     assert max(xs) == int((20 + 500) * 40)
 
 
 def test_border_four_corners_present():
-    """门幅框四角（引导后 800..20800 × 内缩 200..39800）全在首条折线中。"""
+    """门幅框四角（引导后 800..20800 × 满幅 0..40000）全在首条折线中。"""
     out = _plt([_full_piece()], width_mm=500, gate_mm=1000, title="")
     border = ",".join(_polylines(_body_section(out.split("\n")))[0])
-    for corner in ("800,200", "20800,200", "20800,39800", "800,39800"):
+    for corner in ("800,0", "20800,0", "20800,40000", "800,40000"):
         assert corner in border, f"corner {corner} missing from border {border!r}"
 
 
@@ -305,8 +307,8 @@ def test_all_layers_present_in_dxf_layer_order():
     out = _plt([_full_piece()], width_mm=500, gate_mm=1000, title="")
     body = "\n".join(_body_section(out.split("\n")))
 
-    # 门幅框角 20800,39800 + outline 角 (100,200)→(4800,8000)
-    assert "4800,8000" in body and "20800,39800" in body
+    # 门幅框角 20800,40000 + outline 角 (100,200)→(4800,8000)
+    assert "4800,8000" in body and "20800,40000" in body
     # net 起点 (10,10) → (1200,400)
     assert "1200,400" in body
     # internal 起点 (20,20) → (1600,800)

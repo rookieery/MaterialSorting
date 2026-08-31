@@ -35,7 +35,8 @@ from .plt_table import TABLE_GAP_MM, TABLE_W_MM, InfoTable, info_table_polylines
 # 现场撞机修正（2026-08，对照生产 PLT 逐项核出的设备级差异；幅宽口径 2026-08-28
 # 版师定案后收敛为「输入门幅即实际幅宽」，撞机确认系当时那台机器无法处理 1980
 # 幅宽所致 —— 求解/导出不再扣 70mm，幅宽受限的设备由用户直接输入更小门幅）：
-#   - 门幅框/内容界：按输入 gate_mm 画框（上沿内缩边距）并裁剪（削平不缩放，
+#   - 门幅框/内容界：按输入 gate_mm 满幅画框 [0, gate]（2026-08-31 撤销旧 Y 双边
+#     内缩 5mm——贴边裁片穿框 5mm 被切割软件读作越界布料）并裁剪（削平不缩放，
 #     绝不变形）。历史上界 1910（PLOT_SAFE_MAX_Y_MM）已随 70mm 钳制整体移除。
 #   - PD 分块：旧导出单条 PD 塞整片轮廓（实测最长 2994B / 229 点），国产 HP-GL
 #     解释器行缓冲普遍仅百余字节，溢出后坐标流错位 → 小车乱走须急停（生产 PLT
@@ -78,7 +79,11 @@ _LAYER_TABLE = 'table'
 # 求解约束带同口径，这里按 gate_mm 裁剪属兜底防线（旧 intermediate / 求解 bug）。
 PLOT_LEAD_X_MM = 20.0          # X 走纸起始引导余量（生产 PLT 内容起画 24mm）
 PLOT_TAIL_X_MM = 10.0          # PS 纸长在内容之后的尾余量（生产 PS−maxX ≈ 10mm）
-PLOT_BORDER_MARGIN_Y_MM = 5.0  # 门幅框 Y 内缩（生产外框下沿 5.1mm；内容 0 起画不内缩）
+# 门幅框 Y 满幅 [0, gate]，无内缩（2026-08-31 定案：旧 PLOT_BORDER_MARGIN_Y_MM=5
+# 抄的是生产件「外框下沿 5.1mm」的框位置，却没抄生产软件「内容不越框」规则——贴边
+# 裁片精确贴求解约束带 0/gate 时视觉穿框 5mm，切割软件把框线当布料范围即成"越界
+# 布料"。撤销内缩后框=裁剪界=求解带三口径合一，裁片平切框线与生产件观感一致；
+# 需物理留边（布边不裁）由用户按 2026-08-28 定案机制直接输更小门幅，全链路一致）
 # ET 生产分块口径：单条 PD ≤11 点 / 行 ≤118B；取更紧的 10 点 / 110B
 _PLT_PD_MAX_PTS = 10
 _PLT_LINE_MAX_BYTES = 110
@@ -334,7 +339,8 @@ def write_marker_plt(world_pieces, *, width_mm: float, gate_mm: float, title: st
         （polygon/net/internal）说明 marker 不完整（旧 intermediate / 求解 bug），
         记 warning；刺口/布纹线等工艺线外伸几 mm 属正常，直接削平不告警
         （生产 PLT 同口径）。
-      - 门幅框上沿 = gate_mm − 边距内缩，不贴输入门幅边界。
+      - 门幅框满幅 [0, gate_mm]，与裁剪界/求解约束带同口径（2026-08-31 撤销
+        Y 双边内缩 5mm：内缩框致贴边裁片视觉穿框，切割软件把框线当布料范围）。
       - 全体 X + ``PLOT_LEAD_X_MM`` 走纸引导；PS 纸长 = 引导 + max(用布长, 内容
         最大 X) + 尾余量，内容全部落在声明纸幅内且留余量。
       - PD 按生产口径分块（≤10 点/行 ≤110B），防设备行缓冲溢出。
@@ -369,13 +375,15 @@ def write_marker_plt(world_pieces, *, width_mm: float, gate_mm: float, title: st
     # placed_items，placed_to_world 即 N 行同 pid —— 计数即需求副本数）
     pid_counts = Counter(pc.get('pid') for pc in world_pieces)
 
-    # 门幅/用布边框（层序之首，与生产 PLT 同为 SP1 单笔）——闭合矩形 4 角；Y 上沿
-    # 按输入门幅内缩边距，下沿内缩，不贴门幅边界。恒为 width_mm：信息表格在排料
-    # 图外围（2026-08-30 v2：不占排料区、不计入用料，切割时布上无此内容）。
-    border_y1 = float(gate_mm) - PLOT_BORDER_MARGIN_Y_MM
+    # 门幅/用布边框（层序之首，与生产 PLT 同为 SP1 单笔）——闭合矩形 4 角，满幅
+    # [0, gate] 不内缩（2026-08-31 撤销 Y 双边内缩 5mm：贴边裁片精确贴求解约束带
+    # 0/gate，内缩框在切割软件里被当布料范围即成"越界"；框=裁剪界=求解带三口径
+    # 合一）。恒为 width_mm：信息表格在排料图外围（2026-08-30 v2：不占排料区、
+    # 不计入用料，切割时布上无此内容）。
+    border_y1 = float(gate_mm)
     border_x1 = width_mm
-    border = [(0.0, PLOT_BORDER_MARGIN_Y_MM),
-              (border_x1, PLOT_BORDER_MARGIN_Y_MM),
+    border = [(0.0, 0.0),
+              (border_x1, 0.0),
               (border_x1, border_y1),
               (0.0, border_y1)]
     layer_lines[_LAYER_OUTLINE].extend(_plt_polyline(closed=True, points=border))
