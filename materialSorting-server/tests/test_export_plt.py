@@ -3,14 +3,17 @@
 覆盖 spec AC#13 + 现场撞机修正（2026-08，对照生产 PLT data/PC-20250508NJIF*.plt）：
   - 闭合不变量（polygon PD 末点 = PU 首点，与 DXF POLYLINE 闭合策略一致）
   - 坐标 ×40 缩放（100mm → 4000 HPGL plotter unit）+ X 走纸引导 PLOT_LEAD_X_MM
+    + Y 绘制平移 PLOT_LEAD_Y_MM=TABLE_W_MM=36（2026-08-31 用户定案：整张图纸一起
+    离图纸原点 36mm=表格宽，首版 5mm 被反馈太短；纯绘制层位移，框内相对几何不变）
   - 首条 ``IN;`` 初始化指令（头部四连发合并一行，对齐生产 PLT）
   - **全程单笔 SP1**（2026-08-24 用户要求统一颜色：WT 预览按笔号着色，首版按层
     分 SP1-SP5 五笔预览呈多色，统一为门幅框蓝色；生产 PLT 实测同样全程仅 SP1）
   - 空层跳过（net/internal/notches/grain 空 → 该层无笔画）
   - PD 分块：每条 ≤10 点且整行 ≤110B（防设备行缓冲溢出坐标错位乱走）
   - 门幅边界（2026-08-28 版师定案：输入幅宽 = 实际幅宽）：内容按 y ≤ gate_mm
-    裁剪削平，全文件 Y 不超程；门幅框满幅 [0, gate]（2026-08-31 撤销旧 Y 双边
-    内缩 5mm：贴边裁片穿框被切割软件读作越界布料，框=裁剪界=求解带三口径合一）
+    裁剪削平（世界坐标层，裁剪后再 +Y 平移 → 绘制顶 = (gate+36)×40）；门幅框
+    满幅 [0, gate]（2026-08-31 撤销旧 Y 双边内缩 5mm：贴边裁片穿框被切割软件
+    读作越界布料，框=裁剪界=求解带三口径合一）；绘制层全体 Y + PLOT_LEAD_Y_MM
   - bytes 返回类型 + 全 ASCII + CRLF 行尾
 
 生产 PLT 封装对齐（data/PC-20250508NJIF*.plt 口径）：
@@ -145,24 +148,25 @@ def test_ends_with_pen_up_and_page_feed():
 
 
 def test_coordinate_scaled_by_40_with_lead_shift():
-    """世界坐标(mm) ×40 round：X 另加走纸引导 PLOT_LEAD_X_MM=20mm（生产内容 24mm 起画）。
+    """世界坐标(mm) ×40 round：X 另加走纸引导 PLOT_LEAD_X_MM=20mm（生产内容 24mm 起画），
+    Y 另加绘制平移 PLOT_LEAD_Y_MM=36mm=表格宽（2026-08-31 用户定案）。
 
-    polygon 顶点 (100,0)→(4800,0); (100,200)→(4800,8000)；门幅框 500 宽 → 800..20800。
+    polygon 顶点 (100,0)→(4800,1440); (100,200)→(4800,9440)；门幅框 500 宽 → 800..20800。
     """
     out = _plt([_full_piece()], width_mm=500, gate_mm=1000, title="")
-    assert "4800,0" in out
-    assert "4800,8000" in out
-    assert "800,8000" in out
-    # 门幅框：x 0..500 → 800..20800，y 满幅 0..1000 → 0..40000
-    assert "20800,0" in out
-    assert "20800,40000" in out
+    assert "4800,1440" in out
+    assert "4800,9440" in out
+    assert "800,9440" in out
+    # 门幅框：x 0..500 → 800..20800，y 满幅 0..1000 → +36mm 平移后 1440..41440
+    assert "20800,1440" in out
+    assert "20800,41440" in out
 
 
 def test_x_lead_shift_no_content_at_paper_origin():
-    """X 引导后不再有任何 PU 贴纸原点 0 起画（走纸定位余量）。"""
+    """X 引导 + Y 平移后不再有任何 PU 贴纸原点 0 起画（走纸/幅宽向定位余量）。"""
     out = _plt([_full_piece()], width_mm=500, gate_mm=1000, title="")
     lines = out.split("\n")
-    assert "PU800,0;" in lines           # outline 起点 (0,0) → +20mm
+    assert "PU800,1440;" in lines        # outline 起点 (0,0) → +20mm/+36mm
     assert not any(l.startswith("PU0,") for l in lines)
 
 
@@ -223,23 +227,26 @@ def test_polygon_closed_first_point_equals_last():
 
 
 def test_border_full_band_no_inset():
-    """门幅框（层序首条折线）满幅 [0, gate]：2026-08-31 撤销 Y 双边内缩 5mm —— 贴边
-    裁片精确贴求解约束带 0/gate，框=裁剪界=求解带三口径合一（gate=1980 → 顶 1980mm）。"""
+    """门幅框（层序首条折线）世界坐标满幅 [0, gate]：2026-08-31 撤销 Y 双边内缩 5mm
+    —— 贴边裁片精确贴求解约束带 0/gate，框=裁剪界=求解带三口径合一。绘制层全体
+    +PLOT_LEAD_Y_MM=36mm 平移后画在 [36, gate+36]（gate=1980 → 顶 2016mm）——纯
+    位移，跨度恰 = gate 证明满幅未内缩。"""
     out = _plt([_full_piece()], width_mm=500, gate_mm=1980, title="")
     border = _polylines(_body_section(out.split("\n")))[0]
     xs = [int(border[i]) for i in range(0, len(border), 2)]
     ys = [int(border[i + 1]) for i in range(0, len(border), 2)]
-    assert min(ys) == 0                 # 下沿贴 y=0（满幅，无内缩）
-    assert max(ys) == 1980 * 40         # 上沿贴 y=1980（输入幅宽=实际幅宽）
-    assert min(xs) == int(20 * 40)      # X 走纸引导
+    assert min(ys) == int(36 * 40)              # 下沿离图纸原点 36mm=表格宽（绘制平移）
+    assert max(ys) == int((36 + 1980) * 40)     # 上沿 = 平移 + 输入幅宽 1980
+    assert max(ys) - min(ys) == 1980 * 40       # 跨度恰满幅（无内缩）
+    assert min(xs) == int(20 * 40)              # X 走纸引导
     assert max(xs) == int((20 + 500) * 40)
 
 
 def test_border_four_corners_present():
-    """门幅框四角（引导后 800..20800 × 满幅 0..40000）全在首条折线中。"""
+    """门幅框四角（X 引导后 800..20800 × Y 平移后 1440..41440）全在首条折线中。"""
     out = _plt([_full_piece()], width_mm=500, gate_mm=1000, title="")
     border = ",".join(_polylines(_body_section(out.split("\n")))[0])
-    for corner in ("800,0", "20800,0", "20800,40000", "800,40000"):
+    for corner in ("800,1440", "20800,1440", "20800,41440", "800,41440"):
         assert corner in border, f"corner {corner} missing from border {border!r}"
 
 
@@ -277,9 +284,9 @@ def test_partial_layers_present_in_single_pen_body():
     }
     out = _plt([piece], width_mm=100, gate_mm=100, title="")
     body = "\n".join(_body_section(out.split("\n")))
-    assert "840,40" in body        # net 起点 (1,1) → (840,40)
-    assert "1000,200" in body      # grain A 端 (5,5) → (1000,200)
-    assert "1000,600" in body      # grain B 端 (5,15)
+    assert "840,1480" in body      # net 起点 (1,1) → +20/+36mm → (840,1480)
+    assert "1000,1640" in body     # grain A 端 (5,5) → (1000,1640)
+    assert "1000,2040" in body     # grain B 端 (5,15)
     assert out.count("SP1;") == 1
 
 
@@ -303,31 +310,33 @@ def test_multi_piece_single_pen_flat_stream():
 
 def test_all_layers_present_in_dxf_layer_order():
     """5 层坐标全在单笔体里，层序与 write_marker_dxf 一致：
-    门幅框+outline → net → internal → notch → grain（坐标含 +20mm 走纸引导）。"""
+    门幅框+outline → net → internal → notch → grain（坐标含 +20mm 走纸引导
+    + 36mm Y 绘制平移）。"""
     out = _plt([_full_piece()], width_mm=500, gate_mm=1000, title="")
     body = "\n".join(_body_section(out.split("\n")))
 
-    # 门幅框角 20800,40000 + outline 角 (100,200)→(4800,8000)
-    assert "4800,8000" in body and "20800,40000" in body
-    # net 起点 (10,10) → (1200,400)
-    assert "1200,400" in body
-    # internal 起点 (20,20) → (1600,800)
-    assert "1600,800" in body
-    # notch：(50,±4) → X 2800；y=-4 clamp 到 0
-    assert "2800,160" in body and "2800,0" in body
-    # grain：(50,50)→(50,150) → (2800,2000)→(2800,6000)
-    assert "2800,2000" in body and "2800,6000" in body
+    # 门幅框角 20800,41440 + outline 角 (100,200)→(4800,9440)
+    assert "4800,9440" in body and "20800,41440" in body
+    # net 起点 (10,10) → +36mm → (1200,1840)
+    assert "1200,1840" in body
+    # internal 起点 (20,20) → (1600,2240)
+    assert "1600,2240" in body
+    # notch：(50,±4) → X 2800；y=4 → 1600、y=-4 → 1280（+36mm 后不再触 clamp）
+    assert "2800,1600" in body and "2800,1280" in body
+    # grain：(50,50)→(50,150) → (2800,3440)→(2800,7440)
+    assert "2800,3440" in body and "2800,7440" in body
     # 层序：outline < net < internal < grain（notch 在 internal 与 grain 之间）
-    assert (body.index("4800,8000") < body.index("1200,400")
-            < body.index("1600,800") < body.index("2800,160")
-            < body.index("2800,2000"))
+    assert (body.index("4800,9440") < body.index("1200,1840")
+            < body.index("1600,2240") < body.index("2800,1600")
+            < body.index("2800,3440"))
 
 
 # --------------------------------------------- 门幅裁剪（防御）
 
 
 def test_content_above_gate_clipped():
-    """越出输入门幅的几何被削平/丢弃：全文件 Y ≤ 79200u（1980mm）。"""
+    """越出输入门幅的几何被削平/丢弃：裁剪在世界坐标层 y ≤ 1980mm，绘制再 +36mm
+    平移 → 全文件 Y ≤ 80640u（2016mm）。"""
     piece = {
         "pid": "TOP", "ptype": "A",
         "polygon": [(0.0, 1950.0), (100.0, 1950.0), (100.0, 2100.0), (0.0, 2100.0)],
@@ -342,11 +351,11 @@ def test_content_above_gate_clipped():
         if line.startswith(("PU", "PD")) and "," in line:
             ys = [int(t) for t in line[2:].rstrip(";").split(",")][1::2]
             ymax = max(ymax, max(ys))
-    assert ymax <= int(1980 * 40)   # 79200：绝不超输入门幅
-    # 部分越界 polygon 削平到门幅线（交点 y=1980mm），不是整片丢弃
-    assert "79200" in out
+    assert ymax <= int((36 + 1980) * 40)   # 80640：裁剪界 1980 + 平移 36mm
+    # 部分越界 polygon 削平到门幅线（交点 y=1980mm + 平移），不是整片丢弃
+    assert "80640" in out
     # 刺口全越界 → 整段丢弃无笔画；布纹线跨界截断到 y=1980（(50,1950)→(50,1980)）
-    assert "2800,78000" in out and "2800,79200" in out
+    assert "2800,79440" in out and "2800,80640" in out
 
 
 def test_clip_warning_logged(caplog):
@@ -472,20 +481,20 @@ def test_grain_arrow_single_head_at_destination_end():
     _full_piece 竖杆 A(50,50)→B(50,150)：u=(0,1)、w=(-1,0)（双羽 ±w 对称，
     坐标与 w 手性无关）。
     双羽 tip = B − 30·cos15°·u ± 30·sin15°·w = (57.764, 121.022)/(42.236, 121.022)
-    → (3111,4841)/(2489,4841)；A 端箭羽坐标（3111,3159）必须不存在。
+    → +20/+36mm 平移后 (3111,6281)/(2489,6281)；A 端箭羽坐标（3111,4599）必须不存在。
     """
     out = _plt([_full_piece()], width_mm=500, gate_mm=1000, title="")
     sp5 = ",".join(f"{x},{y}" for x, y in _all_pts(out))
-    assert "3111,4841" in sp5
-    assert "2489,4841" in sp5
-    assert "3111,3159" not in sp5      # 尾端 A 无羽
-    assert "2800,2000" in sp5 and "2800,6000" in sp5
+    assert "3111,6281" in sp5
+    assert "2489,6281" in sp5
+    assert "3111,4599" not in sp5      # 尾端 A 无羽
+    assert "2800,3440" in sp5 and "2800,7440" in sp5
 
 
 def test_label_side_and_orientation_follow_grain_direction():
     """标注侧别/正反随画向（w=(-uy,ux) 右手系）：L→R 杆标注在 file +y
-    （基线 60mm/字顶 70mm → y_u 2400..2800，视觉在杆上方、正展示）；R→L 杆
-    翻到 file −y（1200..1600，随片倒置、视觉在杆下方）—— 生产同款。"""
+    （基线 60mm/字顶 70mm → +36mm 平移后 y_u 3840..4240，视觉在杆上方、正展示）；
+    R→L 杆翻到 file −y（2640..3040，随片倒置、视觉在杆下方）—— 生产同款。"""
     l2r = _plt([_piece_with_grain(grain=(100.0, 50.0, 400.0, 50.0))],
                width_mm=500, gate_mm=1000, title="")
     r2l = _plt([_piece_with_grain(grain=(400.0, 50.0, 100.0, 50.0))],
@@ -493,34 +502,34 @@ def test_label_side_and_orientation_follow_grain_direction():
 
     ys_l2r = [y for _x, y in _grain_pts(l2r)]
     ys_r2l = [y for _x, y in _grain_pts(r2l)]
-    # L→R：杆 y=2000、B 端头部双羽尖 1689/2311（±w 对称）、标注 2400..2800
-    assert min(ys_l2r) == 1689 and max(ys_l2r) == 2800
-    # R→L：杆 y=2000、B 端（file 左端）头部双羽尖 1689/2311、标注 1200..1600
-    assert max(ys_r2l) == 2311 and min(ys_r2l) == 1200
+    # L→R：杆 y=3440、B 端头部双羽尖 3129/3751（±w 对称）、标注 3840..4240
+    assert min(ys_l2r) == 3129 and max(ys_l2r) == 4240
+    # R→L：杆 y=3440、B 端（file 左端）头部双羽尖 3129/3751、标注 2640..3040
+    assert max(ys_r2l) == 3751 and min(ys_r2l) == 2640
 
     # 锚位 0.85·L（画向前端）：L→R 标注中心 x=355 → 标注笔画 x_u ∈ [14000,16000]
-    label_xs = [x for x, y in _grain_pts(l2r) if 2400 <= y <= 2800]
+    label_xs = [x for x, y in _grain_pts(l2r) if 3840 <= y <= 4240]
     assert len(label_xs) > 10, "标注笔画应存在"
     assert 14000 <= min(label_xs) and max(label_xs) <= 16000
 
 
 def test_label_glyph_chirality_follows_grain_direction():
     """字形手性（防镜像回归，2026-08-24 用户截图纠正）：'7' 的长横杠在**字顶带**
-    —— L→R 片 y=2800（file +y 视觉上方、正展示）；R→L 片 y=1200（字顶朝
-    file −y，整字随片倒置）。首版 w=(uy,-ux) 左手系时横杠落到基线对侧
-    （L→R 在 1200 / R→L 在 2800），所有文字无论画向全部镜像。"""
+    —— L→R 片 y=4240（file +y 视觉上方、正展示；含 +36mm 平移）；R→L 片 y=2640
+    （字顶朝 file −y，整字随片倒置）。首版 w=(uy,-ux) 左手系时横杠落到基线对侧
+    （L→R 在 2640 / R→L 在 4240），所有文字无论画向全部镜像。"""
     l2r = _plt([_piece_with_grain(size=7)],                     # 标注 "7*1"
                width_mm=500, gate_mm=1000, title="")
     r2l = _plt([_piece_with_grain(size=7, grain=(400.0, 50.0, 100.0, 50.0))],
                width_mm=500, gate_mm=1000, title="")
     sp5_l2r = ",".join(f"{x},{y}" for x, y in _grain_pts(l2r))
     sp5_r2l = ",".join(f"{x},{y}" for x, y in _grain_pts(r2l))
-    # L→R：'7' 字顶横杠两端 (339.7,70)/(346.54,70)mm → (14388,2800)/(14662,2800)
-    assert "14388,2800" in sp5_l2r and "14662,2800" in sp5_l2r
-    assert "14388,1200" not in sp5_l2r     # 镜像（左手系）时横杠在基线对侧
-    # R→L：横杠随片倒置翻到 y=1200；(160.3,30)/(153.46,30)mm → (7212,1200)/(6938,1200)
-    assert "7212,1200" in sp5_r2l and "6938,1200" in sp5_r2l
-    assert "7212,2800" not in sp5_r2l      # 镜像时横杠在杆上侧
+    # L→R：'7' 字顶横杠两端 (339.7,70)/(346.54,70)mm → (14388,4240)/(14662,4240)
+    assert "14388,4240" in sp5_l2r and "14662,4240" in sp5_l2r
+    assert "14388,2640" not in sp5_l2r     # 镜像（左手系）时横杠在基线对侧
+    # R→L：横杠随片倒置翻到 y=2640；(160.3,30)/(153.46,30)mm → (7212,2640)/(6938,2640)
+    assert "7212,2640" in sp5_r2l and "6938,2640" in sp5_r2l
+    assert "7212,4240" not in sp5_r2l      # 镜像时横杠在杆上侧
 
 
 def test_label_size_and_multiplicity():
@@ -551,12 +560,12 @@ def test_short_shaft_centers_label_and_scales_barbs():
     piece = _piece_with_grain(grain=(100.0, 50.0, 130.0, 50.0))   # 杆长 30mm < W 43.8
     out = _plt([piece], width_mm=500, gate_mm=1000, title="")
     pts = _grain_pts(out)
-    label_xs = [x for x, y in pts if 2400 <= y <= 2800]
+    label_xs = [x for x, y in pts if 3840 <= y <= 4240]
     assert 4500 <= min(label_xs) and max(label_xs) <= 6300   # 中心 x=115 → [93,137]mm
     # 头部双羽收缩到 30·0.45=13.5mm：tips = (130−13.5·cos15°, 50±13.5·sin15°)
-    # = (116.96, 53.49)/(116.96, 46.51) → (5478,2140)/(5478,1860)
+    # = (116.96, 53.49)/(116.96, 46.51) → +36mm 平移 (5478,3580)/(5478,3300)
     sp5 = ",".join(f"{x},{y}" for x, y in pts)
-    assert "5478,2140" in sp5 and "5478,1860" in sp5
+    assert "5478,3580" in sp5 and "5478,3300" in sp5
 
 
 def test_degenerate_zero_length_grain_emits_nothing():
@@ -567,7 +576,8 @@ def test_degenerate_zero_length_grain_emits_nothing():
 
 
 def test_label_clipped_at_gate():
-    """顶部片标注越出输入门幅 1980 → 削平不越程（工艺线口径：裁剪不告警、布纹笔画仍在）。"""
+    """顶部片标注越出输入门幅 1980 → 削平不越程（工艺线口径：裁剪不告警、布纹笔画
+    仍在；裁剪在世界坐标层，绘制含 +36mm 平移 → 上界 (1980+36)×40）。"""
     piece = _piece_with_grain(grain=(50.0, 1960.0, 350.0, 1960.0))   # L→R → 标注在杆上侧越界
     out = _plt([piece], width_mm=400, gate_mm=1980, title="")
     ymax = 0
@@ -575,7 +585,7 @@ def test_label_clipped_at_gate():
         if line.startswith(("PU", "PD")) and "," in line:
             ys = [int(t) for t in line[2:].rstrip(";").split(",")][1::2]
             ymax = max(ymax, max(ys))
-    assert ymax <= int(1980 * 40)
+    assert ymax <= int((36 + 1980) * 40)
     assert len(_grain_strokes(out, 1)) > 0
 
 
