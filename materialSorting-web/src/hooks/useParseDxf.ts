@@ -17,6 +17,9 @@
 //   6. US-021 D1：解析成功后自动触发 commit（后台副作用，不阻塞预览渲染）。
 //      doc/status 先进 store（UI 立即渲染预览），commit 再后台跑（commitStatus 独立字段）。
 //      commit 失败不影响 parse done（预览已可用）；commit 成功仅解锁超排 Tab（不自动切入）。
+//   7. 解析成功且 doc.sizes 含 null 码（块名末尾带不出码号的裁片）→ toast 提示
+//      （2026-08-31）：超排页码号区已不渲染该组 chip（通用片不参与求解），toast 引导
+//      用户检查母版命名；具体是哪些片看预览页 QtyMatrix「通用」行。
 //
 // 调用方约定：
 //   const { upload } = useParseDxf();
@@ -30,6 +33,7 @@
 
 import { useCallback, useRef } from 'react';
 import { apiFetch } from '../lib/api';
+import { useToastStore } from '../store/toastStore';
 import { useUploadStore } from '../store/uploadStore';
 import { useCommitToNesting } from './useCommitToNesting';
 import type { ParsedDoc } from '../types/parsed';
@@ -96,6 +100,17 @@ export function useParseDxf(): UseParseDxfResult {
         activeSize: initialSize,
         error: null,
       });
+
+      // 解析成功且含 null 通用码（块名末尾带不出码号的裁片）→ toast 提示检查母版命名。
+      // 超排页码号区不渲染该组（通用片不参与求解，WS 载荷过滤 null），预览页 QtyMatrix
+      // 「通用」行是唯一排查入口 —— 文案里点名去向。
+      if (doc.sizes.some((s) => s.size === null)) {
+        useToastStore
+          .getState()
+          .pushToast(
+            '当前 DXF 文件存在一批块名末尾带不出码号的裁片，已归入上传预览页「通用」分组（不参与排料），请检查母版命名',
+          );
+      }
 
       // US-021 D1：解析成功 → 自动触发 commit（后台副作用，不阻塞预览）。
       //   - doc/status 已进 store（上一行 setState 同步生效），UI 立即渲染预览；

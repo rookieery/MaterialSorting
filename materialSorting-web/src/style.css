@@ -1906,6 +1906,52 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
   background: #36b47a;
 }
 
+/* ---- Toast（全局轻提示，非阻断） ---- */
+/* 栈：fixed 右上角，无遮罩不挡交互；z-index 1500 —— 高于业务 modal(1000-1300)、
+   低于 tour(2000)/session-block(3000)（阻断层级永远压过告知层级）。 */
+.toast-stack {
+  position: fixed;
+  top: 14px;
+  right: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 1500;
+  max-width: min(420px, 86vw);
+}
+/* 单条：暗底卡片（session-block 同色系）+ 左侧警示描边（数据异常告知，非报错红）。 */
+.toast-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background: #26282e;
+  border: 1px solid #34363d;
+  border-left: 3px solid #d9a44a;
+  border-radius: 8px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+  padding: 12px 14px;
+  color: #e6e6e6;
+}
+.toast-msg {
+  font-size: 13px;
+  line-height: 1.65;
+  color: #cdd;
+  overflow-wrap: anywhere;
+}
+.toast-close {
+  flex: none;
+  background: none;
+  border: none;
+  color: #8a8d96;
+  font-size: 13px;
+  line-height: 1.65;
+  padding: 0;
+  cursor: pointer;
+}
+.toast-close:hover {
+  color: #e6e6e6;
+}
+
 /* ---- US-003 ExtremeRunButton + ExtremeRunModal（极限运行：沿用 .strategy-* 族） ---- */
 /* 双入口并排行：高级运行 / 极限运行各占一半（.strategy-wrapper 自身 margin 归零）。 */
 .strategy-entry-row {

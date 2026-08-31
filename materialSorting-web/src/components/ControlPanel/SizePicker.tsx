@@ -4,8 +4,12 @@
 //   - chip 列表来自 `useUploadStore(s=>s.doc)`：doc 非空 → `doc.sizes.map(s=>s.size)`
 //     （后端已按 _size_sort_key 排序，前端不二次排序）；doc=null → fallback
 //     `constants/sizes.ts:SIZES`（保后端开发模式下排料页可用）。
-//   - null 码 chip 文案显示「通用」（与 QtyMatrix 列头「通用」同语义）。
-//   - selected 类型扩为 `(number | null)[]`（doc 可能含 null 通用码）。
+//   - selected 类型扩为 `(number | null)[]`（FormState 契约；doc 可能含 null 通用码）。
+//
+// null 通用码不渲染 chip（2026-08-31）：null 组 = 块名末尾带不出码号的裁片，大概率
+// 母版命名有问题；且下游 WS/export 载荷本就过滤 null（collectStartContext /
+// filterSizes，「通用」片从不参与求解），渲染 chip 只会让「总裁片数量」虚高误导。
+// 改为解析完成时 toast 提示（useParseDxf），排查入口保留在预览页 QtyMatrix「通用」行。
 //
 // 总裁片数量（chip 下方实时展示；裁片编号化重构 US-003 起 = Σ 所选码号每片有效数量）：
 //   - 数量来自 qtyStore.quantities（perSize，与 serializeQuantities 同口径）；
@@ -14,6 +18,8 @@
 //     demand=1 一致；故未 hydrate 也能正确显示 = 裁片数）。
 //   - 订阅 quantities：数量在预览页改过后，回到排料页即正确反映（排料页本身不改数量）。
 //   - doc=null（fallback SIZES，无裁片数据）→ null，UI 显示「—」。
+//   - selected 残留 null 跳过不计（与 WS/export 过滤 null 同口径；UI 上已无入口，
+//     纯防御 —— 外部直接调 computeTotalCutPieces 传 null 时总数不虚高）。
 //
 // 受控：父级（ControlPanel form.sizes）持有 selected 数组，toggle 时回调 onChange。
 // DOM 沿用 style.css `.sizes` / `.chip` / `.chip input` / `.field-label` / `.sizes-total` 类。
@@ -25,17 +31,15 @@ import { useUploadStore } from '../../store/uploadStore';
 import type { ParsedDoc } from '../../types/parsed';
 import type { PieceQuantityMap } from '../../types/qty';
 
-/** null 码（母版中代表「通用/不分码」）的人读文案（与 QtyMatrix 列头「通用」同语义）。 */
-const NULL_SIZE_LABEL = '通用';
-
-/** chip 的稳定 key（null → 'null'，number → String(n)）；用于 React key / DOM id。 */
+/** perSize 键口径（number → String(n)，null → 'null'；与 qtyStore/serializeQuantities 一致，
+ * effectiveDemand 查 perSize 仍需 'null' 键空间）。 */
 function sizeKey(s: number | null): string {
   return s === null ? 'null' : String(s);
 }
 
-/** chip 的人读文案（null →「通用」，number → String(n)）。 */
-function sizeLabel(s: number | null): string {
-  return s === null ? NULL_SIZE_LABEL : String(s);
+/** chip 的人读文案（number → String(n)；chip 列表已过滤 null）。 */
+function sizeLabel(s: number): string {
+  return String(s);
 }
 
 /**
@@ -75,6 +79,8 @@ export function computeTotalCutPieces(
   if (!doc) return null;
   let total = 0;
   for (const sizeVal of selected) {
+    // null 通用码不计（与 WS/export 载荷过滤 null 同口径；UI 已无勾选入口，纯防御）。
+    if (sizeVal === null) continue;
     const entry = doc.sizes.find((sz) => sz.size === sizeVal);
     if (!entry) continue;
     for (const piece of entry.pieces) {
@@ -99,8 +105,8 @@ export function SizePicker({ selected, onChange, disabled = false }: SizePickerP
   // 订阅 quantities：数量变化（预览页编辑）→ 总数实时重算。SizePicker 是排料页叶子组件，
   // 订阅仅重渲染自身（排料页不改数量，实际触发频率低）。
   const quantities = useQtyStore((s) => s.quantities);
-  const chipSizes: (number | null)[] = doc
-    ? doc.sizes.map((s) => s.size)
+  const chipSizes: number[] = doc
+    ? doc.sizes.map((s) => s.size).filter((s): s is number => s !== null)
     : [...SIZES];
   const selectedSet = new Set(selected);
 

@@ -24,6 +24,7 @@ import { Tooltip } from './components/Tooltip';
 import { NestingPage } from './components/NestingPage';
 import { PreviewPage } from './components/preview/PreviewPage';
 import { SessionExpiredModal } from './components/SessionExpiredModal';
+import { Toast } from './components/Toast';
 import { TabBar } from './components/TabBar';
 import { TourOverlay } from './tour/TourOverlay';
 import { useTourAutoTrigger } from './tour/useTour';
@@ -64,6 +65,8 @@ export function App(): React.JSX.Element {
       <TourOverlay />
       {/* US-005：会话阻断弹窗单例（z-index 3000，高于 tour；未阻断渲染 null）。 */}
       <SessionExpiredModal />
+      {/* 全局轻提示单例（非阻断，z-index 1500；空队列渲染 null）。 */}
+      <Toast />
     </div>
   );
 }

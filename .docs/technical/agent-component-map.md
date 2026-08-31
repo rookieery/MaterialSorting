@@ -1414,3 +1414,38 @@ CPU），跨会话完全独立（多会话 US-004 语义不变）。
   同语义）。
 - **2+2 资格码 start 期拦截**同样生效于 extreme（防数小时长跑空烧）；`--lns` 与
   band/prefix 的 warn-skip 语义本就模式无关（web spawn 不带 `--lns`）。
+
+## 通用标识优化：null 码 chip 隐藏 + 解析完成 toast（2026-08-31）
+
+用户反馈：超排页码号多选区出现「通用」chip 有歧义（易被当成功能按钮）；该组 =
+块名末尾带不出码号的裁片（`parse_size` 正则 `[-._](\d+)$` 未命中 → size=None），
+大概率母版命名有问题。改为：**码号区不渲染 null chip + 解析完成 toast 提示**。
+
+### 关键事实（改动依据）
+
+- **「通用」chip 本就是误导控件**：下游 WS/export 载荷早已过滤 null
+  （`lib/params.ts collectStartContext` / ControlPanel `filterSizes`），通用片
+  **从不参与求解** —— 勾选它唯一效果是让「总裁片数量」虚高（与实际求解不符）。
+- **预览页 QtyMatrix「通用」行 / PieceZoomModal「码 通用」保留不动**：是唯一排查
+  入口（toast 只说"存在一批"，具体哪些片要去预览页看）。
+- 后端零改动：parse-dxf 照旧返回 null 码组（预览页要用）。
+
+### 改动文件
+
+| 文件 | 改动 |
+|------|------|
+| `materialSorting-web/src/store/toastStore.ts` | **新建** zustand 全局轻提示队列：`pushToast(message)`（追加 + **同文案去重**）+ `dismissToast(id)`（✕ 点击）+ `__resetToastsForTest`。**同日修订：不自动消失** —— 数据异常告知不能被错过，唯一出口 = 用户手动 ✕；去重因此是必须（防重传同一坏母版反复叠条永不消散），无定时器 |
+| `materialSorting-web/src/components/Toast.tsx` | **新建** 单例组件（App 挂载）：`.toast-stack`（fixed 右上，无遮罩不挡交互，z-index 1500 低于 tour 2000/session-block 3000）+ 每条 `.toast-item`（警示色左边框）+ ✕；空队列渲染 null |
+| `materialSorting-web/src/components/ControlPanel/SizePicker.tsx` | `chipSizes` 过滤 null（`sz_null` DOM id 消失）；`computeTotalCutPieces` 跳过 selected 残留 null（与 WS/export 口径一致，防御性）；`sizeLabel` 收窄 number |
+| `materialSorting-web/src/hooks/useParseDxf.ts` | 解析成功且 `doc.sizes.some(s=>s.size===null)` → `pushToast`（文案：「当前 DXF 文件存在一批块名末尾带不出码号的裁片，已归入上传预览页「通用」分组（不参与排料），请检查母版命名」） |
+| `materialSorting-web/src/App.tsx` | 挂 `<Toast />` 单例（SessionExpiredModal 之后） |
+| `materialSorting-web/src/style.css` | 加 `.toast-stack`/`.toast-item`/`.toast-msg`/`.toast-close` 族（session-block 同色系 #26282e） |
+| 测试 | SizePicker.test.tsx 改写 null 用例 4 项（不渲染/无入口/防御/计数跳过）+ ControlPanel.test.tsx US-017 渲染用例改 2 chip；**新增** toastStore.test.ts 6 项 + Toast.test.tsx 4 项 + useParseDxf.test.tsx null-size toast 3 项（beforeEach/afterEach 加 `__resetToastsForTest` 防定时器跨测试污染） |
+
+### 验证
+
+- typecheck 干净；vitest 52 文件 790 测试全过；`npm run build` 过。
+- 浏览器 E2E（chrome channel + 真实后端，一次性脚本已删）：坏块名母版（M1787
+  复制改 `noname..29` → `noname.坏块名标注`，6 处 INSERT 同步改名）→ toast 弹出
+  文案命中 + ✕ 可关；超排页码号区 28..38 共 11 chip 无「通用」无 `#sz_null`；
+  正常母版（882）反向对照无 toast。10/10 PASS。

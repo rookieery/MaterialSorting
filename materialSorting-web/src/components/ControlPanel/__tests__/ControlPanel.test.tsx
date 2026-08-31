@@ -459,7 +459,7 @@ describe("ControlPanel StatusLine hint (US-017)", () => {
     expect(chips).toHaveLength(SIZES.length);
   });
 
-  it("AC#3 doc 非空 → SizePicker 渲染 doc.sizes（不是 fallback SIZES）", () => {
+  it("AC#3 doc 非空 → SizePicker 渲染 doc.sizes 数字码（不是 fallback SIZES；null 通用码不渲染）", () => {
     useUploadStore.setState({
       status: "done",
       doc: {
@@ -474,15 +474,14 @@ describe("ControlPanel StatusLine hint (US-017)", () => {
     });
     renderPanel();
     const chips = container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]");
-    // doc.sizes 长度=3（不是 SIZES 的 8）
-    expect(chips).toHaveLength(3);
-    // null 码 chip 存在
-    expect(container!.querySelector("#sz_null")).not.toBeNull();
-    // 通用 文案在末尾
+    // doc.sizes 数字码 2 个（不是 SIZES 的 8）；null 通用码不渲染 chip
+    //（2026-08-31 起：通用片不参与求解，提示走解析完成 toast，排查在预览页「通用」行）
+    expect(chips).toHaveLength(2);
+    expect(container!.querySelector("#sz_null")).toBeNull();
     const labels = Array.from(container!.querySelectorAll<HTMLLabelElement>(".sizes .chip label")).map(
       (l) => l.textContent ?? "",
     );
-    expect(labels[labels.length - 1]).toBe("通用");
+    expect(labels).toEqual(["28", "30"]);
   });
 });
 

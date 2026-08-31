@@ -1,10 +1,11 @@
 // US-017 SizePicker 单测：
 //   AC#1 doc=null → fallback constants/sizes.ts:SIZES 渲染全量 chip
-//   AC#1 doc 有 11 码（含 null 通用码）→ 渲染全 11 chip
-//   AC#3 null 码 chip 显示「通用」（与 QtyMatrix 列头「通用」同语义）
+//   AC#1 doc 有 11 码（含 null 通用码）→ 渲染 10 chip（null 不渲染，2026-08-31 起）
+//   null 通用码不渲染 chip（sz_null 不存在）：通用片不参与求解（WS 载荷过滤 null），
+//     排查入口 = 预览页 QtyMatrix「通用」行 + 解析完成 toast（useParseDxf 触发）
 //   AC#1 切 doc（null → 非空）→ 自动重渲染（订阅 uploadStore.doc）
-//   补充：chip 勾选 → onChange 收到对应值；null chip 勾选 → onChange 收到 null
-//   补充：key/id 用 sizeKey（number → String(n)，null → 'null'）—— 无 key 冲突
+//   补充：chip 勾选 → onChange 收到对应值
+//   补充：key/id 用 sizeKey（number → String(n)）—— 无 key 冲突
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { StrictMode, useState } from "react";
@@ -75,19 +76,23 @@ function makeDoc11(): ParsedDoc {
   };
 }
 
-/**
- * 构造 3 码母版（带不同裁片数，用于总裁片数量累加测试）：
- * 28 → 2 片，29 → 3 片，30 → 1 片。pieces 内容仅需占位（总裁片数量只读 label）。
- */
-function makeDocWithPieces(): ParsedDoc {
-  const piece = (label: string) => ({
+/** 占位裁片（总裁片数量只读 label，几何字段留空）。 */
+function piece(label: string) {
+  return {
     label,
     polygon: [],
     internal_lines: [],
     notches: [],
     net_polygon: [],
     grain_line: null,
-  });
+  };
+}
+
+/**
+ * 构造 3 码母版（带不同裁片数，用于总裁片数量累加测试）：
+ * 28 → 2 片，29 → 3 片，30 → 1 片。pieces 内容仅需占位（总裁片数量只读 label）。
+ */
+function makeDocWithPieces(): ParsedDoc {
   return {
     doc_id: "doc-pieces",
     filename: "M1787-pieces.dxf",
@@ -127,37 +132,35 @@ describe("SizePicker (US-017)", () => {
     expect(labels).toEqual(SIZES.map((s) => String(s)));
   });
 
-  it("AC#1 doc 有 11 码 → 渲染全 11 chip（数量=11，值=doc.sizes 顺序）", () => {
+  it("AC#1 doc 有 11 码（含 null）→ 渲染 10 chip（null 通用码不渲染，值=doc.sizes 顺序）", () => {
     useUploadStore.setState({ status: "done", doc: makeDoc11() });
     renderPicker();
     const chips = getChips();
-    expect(chips).toHaveLength(11);
-    // doc.sizes.map(s=>s.size) 顺序：28,29,...,36,38,null
+    // 10 个数字码 chip；null 组不渲染（通用片不参与求解，提示走 toast）
+    expect(chips).toHaveLength(10);
     const keys = chips.map((c) => c.value);
-    expect(keys).toEqual(["28", "29", "30", "31", "32", "33", "34", "35", "36", "38", "null"]);
+    expect(keys).toEqual(["28", "29", "30", "31", "32", "33", "34", "35", "36", "38"]);
   });
 
-  it('AC#3 null 码 chip 显示「通用」（与 QtyMatrix 列头「通用」同语义）', () => {
+  it("null 通用码不渲染 chip（无「通用」文案、无 sz_null 元素）", () => {
     useUploadStore.setState({ status: "done", doc: makeDoc11() });
     renderPicker();
+    // 无「通用」文案 chip
     const labels = getLabels();
-    // 最后一个是 null 码 → 通用
-    expect(labels[labels.length - 1]).toBe("通用");
-    // id 规范：sz_null（不与数字码冲突）
-    const nullInput = container!.querySelector<HTMLInputElement>("#sz_null");
-    expect(nullInput).not.toBeNull();
-    expect(nullInput!.value).toBe("null");
+    expect(labels).not.toContain("通用");
+    // 无 sz_null 元素（React key / DOM id 均不存在）
+    expect(container!.querySelector("#sz_null")).toBeNull();
   });
 
   it("AC#1 切 doc（null → 11 码）→ SizePicker 自动重渲染（订阅 uploadStore.doc）", () => {
     // 初始 doc=null → 8 chip
     renderPicker();
     expect(getChips()).toHaveLength(SIZES.length);
-    // 切到 doc 非空（11 码）→ 自动重渲染 11 chip
+    // 切到 doc 非空（11 码，含 null 不渲染）→ 自动重渲染 10 chip
     act(() => {
       useUploadStore.setState({ status: "done", doc: makeDoc11() });
     });
-    expect(getChips()).toHaveLength(11);
+    expect(getChips()).toHaveLength(10);
   });
 
   it("toggle 数字 chip → onChange 收到 [number]（按 chip 列表原顺序，不二次排序）", () => {
@@ -186,32 +189,35 @@ describe("SizePicker (US-017)", () => {
     expect(onChange).toHaveBeenLastCalledWith([31, 28]);
   });
 
-  it("toggle null chip → onChange 收到 [null]（null 能正确进 selected）", () => {
+  it("无 null chip 可 toggle（onChange 只可能收到 number 数组）", () => {
     const onChange = vi.fn();
     useUploadStore.setState({ status: "done", doc: makeDoc11() });
     renderPicker([], onChange);
     const chips = getChips();
-    // 最后一个是 null chip
-    const nullChip = chips[chips.length - 1];
-    act(() => nullChip.click());
-    expect(onChange).toHaveBeenLastCalledWith([null]);
+    // 全部 10 个 chip 均为数字码 —— 点击任一都产出 number
+    for (const chip of chips) {
+      expect(chip.value).not.toBe("null");
+    }
+    act(() => chips[0].click());
+    expect(onChange).toHaveBeenLastCalledWith([28]);
   });
 
-  it("selected 含 null → 对应 null chip 渲染为 checked", () => {
+  it("selected 残留 null → 不渲染 checked 的 null chip（UI 无入口，纯防御不崩）", () => {
     useUploadStore.setState({ status: "done", doc: makeDoc11() });
-    renderPicker([null]);
-    const nullInput = container!.querySelector<HTMLInputElement>("#sz_null");
-    expect(nullInput!.checked).toBe(true);
+    // 外部直接传含 null 的 selected（正常 UI 流不可能，防御渲染不崩 + 无 null chip）
+    renderPicker([28, null]);
+    expect(container!.querySelector("#sz_null")).toBeNull();
+    expect(container!.querySelector<HTMLInputElement>("#sz_28")!.checked).toBe(true);
   });
 
-  it("key/id 用 sizeKey —— number → String(n)，null → 'null'（无 key 冲突）", () => {
+  it("key/id 用 sizeKey —— number → String(n)（无 key 冲突）", () => {
     useUploadStore.setState({ status: "done", doc: makeDoc11() });
     renderPicker();
-    // 所有 chip id 唯一
+    // 所有 chip id 唯一（10 个数字码）
     const ids = new Set(getChips().map((c) => c.id));
-    expect(ids.size).toBe(11);
-    // null chip id 存在
-    expect(container!.querySelector("#sz_null")).not.toBeNull();
+    expect(ids.size).toBe(10);
+    // null chip id 不存在
+    expect(container!.querySelector("#sz_null")).toBeNull();
     // 28 chip id 存在
     expect(container!.querySelector("#sz_28")).not.toBeNull();
   });
@@ -308,6 +314,20 @@ describe("computeTotalCutPieces / effectiveDemand", () => {
 
   it("selected 含 doc 没有的码 → 该码跳过（不计入）", () => {
     expect(computeTotalCutPieces(doc, [999], {})).toBe(0);
+  });
+
+  it("selected 残留 null 通用码 → 跳过不计（与 WS/export 过滤 null 同口径，总数不虚高）", () => {
+    // null 组即使有裁片也不计（chip 已隐藏，UI 无入口；防御外部直传）
+    const docWithNull: ParsedDoc = {
+      doc_id: "doc-null",
+      filename: "null.dxf",
+      sizes: [
+        { size: 28, pieces: [piece("g01"), piece("g02")] },
+        { size: null, pieces: [piece("g09")] },
+      ],
+    };
+    expect(computeTotalCutPieces(docWithNull, [28, null], {})).toBe(2);
+    expect(computeTotalCutPieces(docWithNull, [null], {})).toBe(0);
   });
 
   it("per-size demand 按 (label,size) 精确生效", () => {

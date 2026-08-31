@@ -12,6 +12,10 @@
 // US-021：解析成功自动触发 commit（void commit(doc_id, filename)），成功路径的 fetch
 // 调用次数翻倍（parse + commit），且 commit 会写 uiStore（setNestingEnabled，不自动切 Tab）。
 // beforeEach/afterEach 加 uiStore reset 防 commit 副作用跨测试污染；fetch 计数断言同步更新。
+//
+// 2026-08-31 null 通用码 toast：解析成功且 doc.sizes 含 null → pushToast（超排页码号区
+// 不再渲染该组 chip，toast 是唯一主动提示；不自动消失，✕ 手动关）。beforeEach/
+// afterEach 加 toastStore reset 防队列状态跨测试污染（toast 不自动消失，残留必清）。
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { StrictMode } from "react";
@@ -19,6 +23,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { useParseDxf } from "../useParseDxf";
 import { markSessionProbedForTest } from "../../lib/api";
+import { __resetToastsForTest, useToastStore } from "../../store/toastStore";
 import { useUploadStore } from "../../store/uploadStore";
 import { useUiStore } from "../../store/uiStore";
 import type { ParsedDoc } from "../../types/parsed";
@@ -39,6 +44,7 @@ beforeEach(() => {
   // 计数 / 首调 URL 断言与本 story 前完全一致（会话门自身在 lib/api.test 覆盖）。
   markSessionProbedForTest();
   useUploadStore.getState().reset();
+  __resetToastsForTest();
   // US-021：commit 副作用会写 uiStore（setNestingEnabled+setTab），reset 防跨测试污染。
   useUiStore.getState().setNestingEnabled(false);
   useUiStore.getState().setTab("preview");
@@ -60,6 +66,8 @@ afterEach(() => {
   // US-021：commit 异步 resolve 可能在 afterEach 触发 setTab，reset 防下一个测试污染。
   useUiStore.getState().setNestingEnabled(false);
   useUiStore.getState().setTab("preview");
+  // 清 toast 队列（toast 不自动消失，残留条目会污染下一个测试的断言）。
+  __resetToastsForTest();
   vi.restoreAllMocks();
 });
 
@@ -517,5 +525,51 @@ describe("useParseDxf (US-021) auto-commit integration", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(useUploadStore.getState().status).toBe("error");
     expect(useUploadStore.getState().commitStatus).toBe("idle");
+  });
+});
+
+// 2026-08-31 null 通用码 toast：解析成功且 doc.sizes 含 null（块名末尾带不出码号的
+// 裁片组）→ pushToast 一条；无 null / 解析失败不推。超排页码号区不渲染该组 chip，
+// toast 是用户感知该异常的唯一主动通道。
+describe("useParseDxf (null-size toast)", () => {
+  it("parse done + doc 含 null 码 → pushToast 一条（文案含「带不出码号」）", async () => {
+    const doc = makeDoc([
+      { size: 28, pieces: [] },
+      { size: null, pieces: [] },
+    ]);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(makeResponse({ json: doc }));
+    renderProbe();
+    await act(async () => {
+      await captured!.upload(makeFile());
+    });
+    const toasts = useToastStore.getState().toasts;
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0].message).toContain("带不出码号");
+    expect(toasts[0].message).toContain("通用");
+  });
+
+  it("parse done + doc 无 null 码 → 不推 toast", async () => {
+    const doc = makeDoc([
+      { size: 28, pieces: [] },
+      { size: 30, pieces: [] },
+    ]);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(makeResponse({ json: doc }));
+    renderProbe();
+    await act(async () => {
+      await captured!.upload(makeFile());
+    });
+    expect(useToastStore.getState().toasts).toHaveLength(0);
+  });
+
+  it("parse fail（422）→ 不推 toast（只走 error 状态）", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      makeResponse({ ok: false, status: 422, json: { error: "DXF 解析失败" } }),
+    );
+    renderProbe();
+    await act(async () => {
+      await captured!.upload(makeFile());
+    });
+    expect(useToastStore.getState().toasts).toHaveLength(0);
+    expect(useUploadStore.getState().status).toBe("error");
   });
 });
