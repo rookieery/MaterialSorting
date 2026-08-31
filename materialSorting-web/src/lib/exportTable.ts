@@ -14,6 +14,9 @@
 // 后端契约：POST /export payload 的可选 table 对象（snake_case，缺省不带表格，
 // 旧后端忽略未知键）；v2 起全字段自由字符串（默认 A料/0.0%/0.0%/空/noname/空），
 // 无格式校验，超长由后端截断 + warn。
+//
+// 2026-08-31 v3：PltPreviewRow —— 导出弹窗 14 字段全展示的预览行类型
+// （POST /api/plt-table-preview 取回，列序权威在后端 _row_texts）。
 
 /** 手输字段草稿（全字符串持有 —— 输入框受控值，提交时 trim）。 */
 export interface ExportTableFields {
@@ -84,4 +87,18 @@ export function toExportTablePayload(fields: ExportTableFields): ExportTablePayl
     style_no: fields.styleNo.trim(),
     remark: fields.remark.trim(),
   };
+}
+
+/**
+ * /api/plt-table-preview 响应行（2026-08-31）：14 行按最终表格列序返回。
+ * 列序/格式权威 = 后端 plt_table._row_texts 单一真相源 —— 前端零公式镜像
+ * （方案名称/套数/demand 多副本计数不在 TS 复刻），manual=false 行的 value
+ * 即成品字符串只读展示；manual=true 行的 value = 手输默认值（仅供参考，
+ * 弹窗实际渲染本地草稿输入框）。
+ */
+export interface PltPreviewRow {
+  key: string;
+  label: string;
+  value: string;
+  manual: boolean;
 }

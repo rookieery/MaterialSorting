@@ -359,6 +359,8 @@ src/
 - **DOM id `export_png`/`export_dxf` 沿用 legacy CSS 选择器**：保留便于测试 + US-008 清理时一并去除。改 id 同步 `ExportButtons.test.tsx` + `ControlPanel.test.tsx` US-007 用例。
 - **服务端文件名 `pct` 而非 `%`**：`server.py export` 拼 `排料_码{sizes_str}_{pct:.2f}pct_seed{seed}.{ext}`（不是 `88.42%`）。AC#5 字面写 `%` 是文档误差；实际下载 `排料_码28-30-32_88.42pct_seed0.png`。改格式需同步 server.py + useExport.test.tsx CN decode 用例。
 - **jsdom 测试需 stub URL.createObjectURL + <a>.click()**：jsdom 不实现 `URL.createObjectURL`、`<a>.click()` 触发 navigation 警告。在 beforeEach 全局 stub，afterEach 调 `vi.unstubAllGlobals()` 还原（见 `__tests__/useExport.test.tsx`）。
+- **PLT 导出前弹 ExportInfoModal（2026-08-30 v2 / 2026-08-31 v3）**：`ControlPanel.handleExport` fmt==='plt' 分流（PNG/DXF 直通不弹窗）；纯取消型（ESC/遮罩/✕/取消只关窗，「导出 PLT」唯一提交路径），手输草稿 localStorage `ms_export_table` 跨导出记忆（`lib/exportTable.ts`，刻意不进 FormState——form 随 doc_id 重置会连带清空）。**v3 全 14 字段预览**：mount 时 POST `/api/plt-table-preview`（bestRun 几何子集，与 /export 同源字段）→ 响应 14 行**按服务端返回列序（= 最终表格列序）交错渲染**——自动字段只读行 `.export-ro-row`（`data-testid="export-info-auto-{key}"`），手输槽位经 `KEY_TO_FIELD`（snake→camel）渲染本地草稿输入框（不消费服务端 value；未知 manual key 跳过防御）；列序/格式权威在后端 `_row_texts` 单一真相源，前端零公式镜像。
+- **预览优雅降级（v3 约定）**：预览 null（加载中/网络错/rows 缺失/无 bestRun）→ v2 形态（6 手输 + `export-info-auto-hint` 提示行），确认导出**永不被预览阻塞**（导出时后端照算）；迟到响应经 `alive` flag 丢弃（弹窗先关不复活）。改输入框 id（kebab-case 契约 `export-info-bed-no` 等）/行为须同步 `ExportInfoModal.test.tsx` + `NestingPage.test.tsx` 弹窗流程用例 + `scripts/smoke_plt_table_preview.mjs`（浏览器冒烟 harness）。
 
 ## US-006 关键约定（回放 seek / Tooltip 调用方必读）
 

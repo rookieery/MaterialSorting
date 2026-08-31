@@ -257,6 +257,30 @@ def _row_texts(t: InfoTable) -> list:
     return rows
 
 
+# 槽位元数据：(key, manual) 与 _row_texts 渲序一一对齐（标签从 _row_texts 取
+# 不重复维护；长度 assert + 测试标签对齐双锁）。preview_rows 消费——前端导出
+# 弹窗只读展示 8 自动字段用（2026-08-31），列序权威恒在本模块。
+_ROW_META = (
+    ('plan_name', False), ('bed_no', True), ('warp_shrink', True),
+    ('weft_shrink', True), ('utilization', False), ('gate', False),
+    ('fabric_len', False), ('sets', False), ('per_set', False),
+    ('pieces', False), ('planner', True), ('draw_time', False),
+    ('style_no', True), ('remark', True),
+)
+assert len(_ROW_META) == N_TABLE_ROWS
+
+
+def preview_rows(t: InfoTable) -> list:
+    """14 行 ``[{key, label, value, manual}]``（顺序/格式 = _row_texts 同一真相源）。
+
+    供 ``/api/plt-table-preview`` 端点返回给前端导出弹窗：manual 行渲染手输
+    输入框（值取前端本地草稿，此处 value = 默认值仅供参考），非 manual 行
+    只读展示 value 成品字符串（前端零公式镜像）。
+    """
+    return [{'key': k, 'label': label, 'value': val, 'manual': m}
+            for (k, m), (label, val) in zip(_ROW_META, _row_texts(t))]
+
+
 def _column_layout(t: InfoTable, *, gate_mm: float):
     """14 列自适应布局 → ``(pairs, char_h, widths)``。
 

@@ -1,7 +1,8 @@
 """页面 / 只读视图 / 导出路由（自 server.py 机械拆出）。
 
 GET ``/``（index.html）、GET ``/api/ptypes``（label 代表裁片）、POST ``/export``
-（PNG / R12-DXF / PLT marker 下载）。导出几何/渲染走 ``web.export`` 门面（路径不变）。
+（PNG / R12-DXF / PLT marker 下载）、POST ``/api/plt-table-preview``（PLT 唛架
+信息表格 14 字段预览，2026-08-31）。导出几何/渲染走 ``web.export`` 门面（路径不变）。
 
 多会话 US-003：全部读数据端点经 ``_resolve_session_state`` 从 SessionRegistry 解析
 pieces state —— ``X-Session-Id`` Header → 该会话 commit（US-002）注册的 per-doc
@@ -22,6 +23,7 @@ from .export import (
     placed_to_world,
     parse_table_payload,
     build_info_table,
+    preview_rows,
     render_png,
     write_marker_dxf,
     write_marker_plt,
@@ -417,3 +419,52 @@ async def export(req: Request):
     cd = f"attachment; filename=\"{fname_ascii}\"; filename*=UTF-8''{quote(fname_cn)}"
     return Response(content=data, media_type=media,
                     headers={'Content-Disposition': cd})
+
+
+# ------------------------------------------- POST /api/plt-table-preview 表格预览
+
+
+@router.post('/api/plt-table-preview')
+async def plt_table_preview(req: Request):
+    """PLT 唛架信息表格 14 字段预览（导出弹窗只读展示，2026-08-31）。
+
+    前端 ExportInfoModal 打开时 POST 最优 run 的几何子集，取回 14 行成品
+    字符串按最终表格列序展示（8 自动只读 + 6 手输可编辑交错）——列序/格式
+    权威在 ``plt_table._row_texts`` 单一真相源，前端零公式镜像（方案名称/
+    套数/demand 多副本计数不在 TS 复刻）。
+
+    payload = ``/export`` 几何子集 ``{gate_mm, width_mm, density, placed}``
+    （前端 bestRun 同源；gate_mm 缺省回退 intermediate，与 /export 同口径）。
+    响应 ``{rows: [{key, label, value, manual}]}`` —— manual 行 value = 默认
+    值仅供参考（弹窗手输由前端本地草稿渲染，预览不消费）；绘图时间 = 本次
+    请求时刻，最终 PLT 以导出时刻重算（分钟精度通常一致）。
+
+    US-003（多会话）：``X-Session-Id`` → 该会话 pieces_by_id（与 /export 同源
+    fail-fast）；sid 过期/超限/非法 → 401/429/400 结构化 JSON。
+    """
+    try:
+        state = _resolve_session_state(req)
+    except SessionError as e:
+        return JSONResponse(e.payload(), status_code=e.status)
+    pieces_by_id = state.get('pieces_by_id') or {}
+
+    payload = await req.json()
+    placed = payload.get('placed') or []
+    width_mm = float(payload.get('width_mm') or 0.0)
+    gate_mm = float(payload.get('gate_mm') or 0.0) or (state.get('gate_mm') or 0.0)
+    density = float(payload.get('density') or 0.0)
+
+    if width_mm <= 0 or not placed:
+        return JSONResponse({'error': '无可预览的方案（width=0 或无裁片）'},
+                            status_code=400)
+
+    world = placed_to_world(placed, pieces_by_id)
+    if not world:
+        return JSONResponse({'error': '预览失败：placed 的 pid 均未匹配到原始轮廓'},
+                            status_code=400)
+
+    # 手输用默认值（弹窗手输 = 前端本地草稿，预览端点不消费）；自动字段与
+    # /export 完全同一代码路径（build_info_table → _row_texts）。
+    info = build_info_table(world, width_mm=width_mm, gate_mm=gate_mm,
+                            density=density, table_in=parse_table_payload({}))
+    return {'rows': preview_rows(info)}

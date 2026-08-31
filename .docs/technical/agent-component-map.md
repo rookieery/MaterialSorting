@@ -1486,3 +1486,41 @@ CPU），跨会话完全独立（多会话 US-004 语义不变）。
 
 - typecheck 干净；vitest 全量 52 文件 799 测试全过（791 → 799，+8）；
   ControlPanel 47 项无回归（选择器不交叠）。后端零改动。
+
+## ExportInfoModal v3 修订：全 14 字段预览（2026-08-31）
+
+用户需求：把 PLT 唛架信息表格的 8 个自动字段也展示进导出弹窗（不可编辑），
+整弹窗按最终表格列序排列（手动/自动交错，手输槽位位置随最终表格重排）。
+
+### 关键事实（改动依据）
+
+- **列序权威在后端，前端零顺序知识**：预览响应 14 行自带 `manual` 标记、按
+  `_row_texts` 列序返回，前端纯 map 渲染——后端改列序弹窗自动跟。否决 TS 镜像
+  计算公式（方案名称系数分组 / demand 多副本计数 / `'--'` 回退）——第二真相源
+  与项目文化相悖，且有 demand 去重丢副本前科。
+- **手输槽位渲染本地草稿而非服务端 value**：服务端对 manual 行只能回默认值
+  （`parse_table_payload({})`），用户 localStorage 记忆（`ms_export_table`）必须
+  优先——`KEY_TO_FIELD` snake→camel 映射绑定草稿；后端新增手输 key 未映射时
+  该行跳过（导出时后端取默认值，不致崩）。
+- **优雅降级 = v2 形态原样保留**：预览 null（加载中/网络错/rows 缺失/无
+  bestRun）渲染 6 手输 + 提示行；确认导出永不被预览阻塞（导出时后端照算）。
+  迟到响应经 `alive` flag 丢弃（弹窗先关不复活）。
+- 输入框 id/placeholder/data-testid 与 v2 逐一保持（kebab-case 契约
+  `export-info-bed-no` 等），`MANUAL_META` 模块级表显式持有；NestingPage 弹窗
+  流程用例零改动通过（其 fetch spy 对新端点落 catch-all → 弹窗走降级形态，
+  /export 断言不变）。
+
+### 改动文件
+
+| 文件 | 改动 |
+|------|------|
+| `src/lib/exportTable.ts` | 加 `PltPreviewRow` 类型（`{key,label,value,manual}`，注释注明列序权威在 `_row_texts`） |
+| `src/components/ControlPanel/ExportInfoModal.tsx` | v3 重构：mount effect `runRegistry.bestRun()` 守卫 + `apiFetch POST /api/plt-table-preview`（载荷 `{gate_mm,width_mm,density,placed}` 与 /export 同源字段；`!run?.lastFrame` 不发请求）→ 双形态渲染（`previewRows===null` 走 v2 降级；就绪则按服务端序 map：auto → `.export-ro-row` 只读行、manual → `KEY_TO_FIELD` 草稿输入框）；`handleConfirm`/ESC/遮罩/localStorage 逻辑零改动 |
+| `src/style.css` | 加 `.export-ro-row`（flex 两端）/`.export-ro-label`（#9aa 12px）/`.export-ro-value`（亮色 12.5px tabular-nums 右对齐）三段，暗色同系手写 |
+| 测试 | 新建 `__tests__/ExportInfoModal.test.tsx` 7 项：mount 载荷 = bestRun 几何子集 / 14 行按服务端列序交错 + autos 只读 + manual 取本地草稿 / 编辑→confirm 载荷 / 预览失败（网络错·rows 缺失）双参数化降级 / 无 bestRun 零请求 / 弹窗先关迟到响应丢弃。后端配套：`preview_rows` + `_ROW_META`（`web/plt_table.py`）、`POST /api/plt-table-preview`（`routes_views.py`）、`web/export.py` 门面 re-export |
+
+### 验证
+
+- 后端定向 43 项 + 全量 654 全过；前端 typecheck 干净 + vitest 全量 806 全过
+  （799 → 806，+7）+ build 过；浏览器端到端冒烟 `scripts/smoke_plt_table_preview.mjs`
+  17/17（上传 882 → 求解 → 弹窗 14 行列序/成品串格式/手输编辑/导出 200/拦断预览降级仍可导出）。

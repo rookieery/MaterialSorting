@@ -35,7 +35,7 @@ from materialsorting.web.plt_table import (
     CELL_PAD_MM, N_TABLE_ROWS, ROW_BAND_H_MM, TABLE_CHAR_H_MM,
     TABLE_EDGE_PAD_MM, TABLE_GAP_MM, TABLE_W_MM, TABLE_Y_START_MM, InfoTable,
     TablePayloadError, _column_layout, _plan_name_and_sets, _row_texts,
-    build_info_table, info_table_polylines, parse_table_payload)
+    build_info_table, info_table_polylines, parse_table_payload, preview_rows)
 
 _HAS_FONT = os.path.exists(paths.PLT_FONT_PATH)
 
@@ -200,6 +200,30 @@ def test_row_texts_dash_when_empty():
     assert rows[7] == ('本床包含套数', '0')
     assert rows[4] == ('利用率', '--')
     assert rows[8] == ('每套用料', '--')
+
+
+# --------------------------------------------- preview_rows 预览行（弹窗端点消费）
+
+def test_preview_rows_order_flags_and_alignment():
+    """preview_rows（/api/plt-table-preview 消费，2026-08-31）：key 序 / manual
+    标记序锁 _ROW_META（列序权威），(label, value) 逐槽 == _row_texts ——
+    preview_rows 不自带第二份文案，防槽位元数据与渲染序脱钩。"""
+    t = _table(_user_example_world())
+    rows = preview_rows(t)
+    assert [r['key'] for r in rows] == [
+        'plan_name', 'bed_no', 'warp_shrink', 'weft_shrink', 'utilization',
+        'gate', 'fabric_len', 'sets', 'per_set', 'pieces', 'planner',
+        'draw_time', 'style_no', 'remark']
+    assert [r['manual'] for r in rows] == [
+        False, True, True, True, False, False, False, False, False, False,
+        True, False, True, True]
+    assert [(r['label'], r['value']) for r in rows] == _row_texts(t)
+    assert rows[0]['value'] == '(30+34+35)+(31+32+33)*1.5+(36)*0.5=8套'
+    assert rows[4]['value'] == '84.86%'
+    assert rows[9]['value'] == str(len(_user_example_world()))
+    # manual 行 value = 手输默认值（弹窗手输由前端本地草稿渲染，仅供参考）
+    assert rows[1]['value'] == 'A料'
+    assert rows[12]['value'] == 'noname'
 
 
 # --------------------------------------------- _column_layout 自适应列宽

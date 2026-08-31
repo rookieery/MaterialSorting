@@ -1676,6 +1676,29 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
   font-size: 11px;
   line-height: 1.5;
 }
+/* 导出信息表格弹窗 v3（2026-08-31）：8 自动字段只读行 —— 紧凑单行（label 左
+   #9aa 同 .strategy-field label / 成品串右亮色右对齐 tabular-nums），与 6 手输
+   输入块按最终表格列序交错；方案名称等长值 overflow-wrap 防撑爆弹窗 */
+.export-ro-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding: 3px 2px;
+  border-bottom: 1px solid #2c2e35;
+}
+.export-ro-label {
+  color: #9aa;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.export-ro-value {
+  color: #d6dae2;
+  font-size: 12.5px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
 
 /* 操作区按钮族（执行=绿主按钮 / 终止=红 / 再次运行=次级 / 应用=绿主按钮） */
 .strategy-actions {

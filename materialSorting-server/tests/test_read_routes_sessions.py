@@ -2,6 +2,7 @@
 
 覆盖（PRD web 多会话 US-003 验收）：
 1. ``/api/ptypes`` / ``/api/band-preview`` / ``/api/prefix-preview`` / ``/export``
+   / ``/api/plt-table-preview``（2026-08-31 表格预览）
    按 ``X-Session-Id`` 取各会话快照：A/B 双会话互不串台（各返自己的
    representatives / pieces_by_id），缺省 → default 会话（``_PIECES_STATE`` 回归）；
 2. ``/export`` 过期 sid → 401 ``{code:'session_expired'}``（JSON 响应非文件流）、
@@ -209,10 +210,73 @@ def test_export_per_session(client):
     assert ea.status_code == 200 and ea.headers['content-type'].startswith('image/png')
     assert eb.status_code == 200 and eb.headers['content-type'].startswith('image/png')
     assert len(ea.content) > 0 and ea.content != eb.content       # 两档渲染不同
-    # pid 只存在于会话（default 无此 pid）→ 无 sid 导出 400「均未匹配」
-    e0 = client.post('/export', json=body)
+    # pid 只存在于会话（default 无此 pid）→ 无 sid 导出 400「均未匹配」。
+    # ghost pid 防环境依赖：本机 out/ 真实 intermediate 可能恰含 g05_28（default
+    # 非空时原 body 误匹配 → 200），2026-08-31 在真实 M1787 数据下实测翻车。
+    e0 = client.post('/export', json={**body, 'placed': [
+        {'id': 'ghost_pid_28', 'rotation': 0, 'translation': [0, 0]}]})
     assert e0.status_code == 400
     assert '均未匹配到原始轮廓' in e0.json()['error']
+
+
+def test_plt_table_preview_per_session(client):
+    """/api/plt-table-preview：14 行成品串（列序/格式 = plt_table._row_texts 单一
+    真相源），pieces_by_id 按 sid 解析（无 sid 且 pid 不在 default → 400 同 /export）。"""
+    _inject_session(_SID_A, _band_pieces(scale=1.0), doc_id='docA')
+    _inject_session(_SID_B, _band_pieces(scale=1.4), doc_id='docB')
+    # g01_28 两副本（28 码面积最大 → 系数 1）+ g05_28 一副本 → 方案 (28)=1套、片数 3
+    body = {'width_mm': 2000.0, 'gate_mm': 1980.0, 'density': 0.5,
+            'placed': [
+                {'id': 'g01_28', 'rotation': 0, 'translation': [100, 100]},
+                {'id': 'g01_28', 'rotation': 0, 'translation': [600, 100]},
+                {'id': 'g05_28', 'rotation': 0, 'translation': [1100, 100]},
+            ]}
+
+    r = client.post('/api/plt-table-preview', json=body,
+                    headers={'X-Session-Id': _SID_A})
+    assert r.status_code == 200
+    rows = r.json()['rows']
+    assert len(rows) == 14
+    assert [row['key'] for row in rows] == [
+        'plan_name', 'bed_no', 'warp_shrink', 'weft_shrink', 'utilization',
+        'gate', 'fabric_len', 'sets', 'per_set', 'pieces', 'planner',
+        'draw_time', 'style_no', 'remark']
+    by_key = {row['key']: row['value'] for row in rows}
+    assert by_key['plan_name'] == '(28)=1套'
+    assert by_key['utilization'] == '50.00%'
+    assert by_key['gate'] == '1.980m'
+    assert by_key['fabric_len'] == '2.000m'          # 不含表格/引导
+    assert by_key['sets'] == '1'
+    assert by_key['per_set'] == '2.000m'
+    assert by_key['pieces'] == '3'
+    assert by_key['draw_time']                       # 请求时刻，非空即可
+    # manual 行 value = 默认值（A料/noname）；manual 标记序 = 6 手输槽位
+    assert rows[1]['manual'] is True and rows[1]['value'] == 'A料'
+    assert [row['manual'] for row in rows].count(True) == 6
+    # B 会话同 body 同样 200（各会话自己的 pieces_by_id 匹配）
+    assert client.post('/api/plt-table-preview', json=body,
+                       headers={'X-Session-Id': _SID_B}).status_code == 200
+    # pid 只在会话（default 无）→ 无 sid 400「均未匹配」（与 /export 同口径；
+    # ghost pid 防本机真实 intermediate 恰含 g05_28 的环境依赖）
+    r0 = client.post('/api/plt-table-preview', json={
+        **body, 'placed': [{'id': 'ghost_pid_28', 'rotation': 0,
+                            'translation': [0, 0]}]})
+    assert r0.status_code == 400
+    assert '均未匹配到原始轮廓' in r0.json()['error']
+
+
+def test_plt_table_preview_bad_geometry_400(client):
+    """/api/plt-table-preview 几何校验：width=0 / 空 placed → 400。"""
+    _inject_session(_SID_A, _band_pieces(scale=1.0), doc_id='docA')
+    base = {'gate_mm': 1980.0, 'density': 0.5,
+            'placed': [{'id': 'g01_28', 'rotation': 0, 'translation': [100, 100]}]}
+    r1 = client.post('/api/plt-table-preview', json={**base, 'width_mm': 0.0},
+                     headers={'X-Session-Id': _SID_A})
+    assert r1.status_code == 400 and '无可预览' in r1.json()['error']
+    r2 = client.post('/api/plt-table-preview', json={**base, 'width_mm': 100.0,
+                                                     'placed': []},
+                     headers={'X-Session-Id': _SID_A})
+    assert r2.status_code == 400 and '无可预览' in r2.json()['error']
 
 
 # ---------------------------------------------------------------- AC2 sid 错误分支
@@ -236,7 +300,8 @@ def test_export_expired_sid_401_json(client, monkeypatch):
 def test_read_routes_unregistered_and_invalid_sid(client):
     """未注册合法 sid（服务重启丢内存）→ 401 不静默重建；非法 sid → 400。"""
     for path, method in (('/api/ptypes', 'get'), ('/api/band-preview', 'post'),
-                         ('/api/prefix-preview', 'post'), ('/export', 'post')):
+                         ('/api/prefix-preview', 'post'), ('/export', 'post'),
+                         ('/api/plt-table-preview', 'post')):
         kwargs = {'json': {}} if method == 'post' else {}
         r401 = getattr(client, method)(path, **kwargs, headers={'X-Session-Id': 'ghostsid0'})
         assert r401.status_code == 401 and r401.json()['code'] == 'session_expired', path

@@ -15,7 +15,8 @@
   V8.8 安全幅面口径；``_plt_frame_stats`` / 分块常量供单测取用）；
 - ``plt_text`` / ``plt_table``（2026-08-30）：PLT 唛架信息表格 —— 捆绑
   Noto Sans SC 矢量字形引擎 + 12 字段表格构建（``InfoTable`` /
-  ``parse_table_payload`` / ``build_info_table``，供 /export 路由与单测取用）。
+  ``parse_table_payload`` / ``build_info_table``，供 /export 路由与单测取用；
+  ``preview_rows`` 2026-08-31 供 /api/plt-table-preview 预览端点取用）。
 
 三格式统一消费 ``placed_to_world`` 的**真实母版轮廓**（pieces_intermediate.json
 的原始 polygon，非 eroded）放到排料变换位，几何一致、可直接裁剪 / 绘图。格式
@@ -52,4 +53,5 @@ from .plt_table import (  # noqa: F401（门面 re-export，见模块 docstring�
     InfoTable,
     build_info_table,
     parse_table_payload,
+    preview_rows,
 )

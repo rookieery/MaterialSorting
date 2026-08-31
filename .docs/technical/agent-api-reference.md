@@ -28,6 +28,7 @@
 | GET | `/api/ptypes` | US-020 D10（US-001 v2：键 = g 码 label）：返回每个 g 码的代表裁片（最小码内 parse 同序首个，含 `label` 编号），供前端高级配置弹窗缩略图/放大预览（D11 layer-aware）；**多会话 US-003**：`X-Session-Id` → 该会话快照（缺省 → default `_PIECES_STATE`） | `server.get_ptypes` |
 | POST | `/api/band-preview` | 2026-08-24 成带形态预览（高级配置弹窗「布局设置」band 行缩略图数据源）：主进程同步 `build_band_plan`，响应无 `WB_`，见下专节；**多会话 US-003**：`X-Session-Id` → 该会话快照 | `routes_views.band_preview` |
 | POST | `/api/prefix-preview` | 2026-08-25 前缀组合形态预览（「布局设置」prefix 行缩略图数据源）：主进程同步 `eligible_sizes→pick_prefix_size→build_prefix_plan`，成员带 `tag`=g 码，响应无 `PS_`，见下专节；**多会话 US-003**：`X-Session-Id` → 该会话快照 | `routes_views.prefix_preview` |
+| POST | `/api/plt-table-preview` | 2026-08-31 导出弹窗唛架表格 14 字段预览（ExportInfoModal 全字段展示数据源）：`build_info_table` + `preview_rows` 同一真相源返 14 行（列序 = 最终表格列序、带 `manual` 标记），见下专节；**多会话 US-003**：`X-Session-Id` → 该会话快照 | `routes_views.plt_table_preview` |
 | POST | `/api/strategy/start` | strategy US-004：spawn `ms-run-config --strategy` 子进程启动双模式长跑（202）；**2026-08-22 起载荷可带 band**（经 `_parse_band` 同一校验点写进 config，成带与策略模式兼容）；**2026-08-25 起载荷可带 prefix**（经 `_parse_prefix` 同一校验点含 2+2 资格码，非法 → 400 早退，写进 9 键 config）；**多会话 US-004（2026-08-27）：读 `X-Session-Id`**（缺省 default）—— 每会话 409 单飞、跨会话并发放开、数据源 = 会话快照 | `strategy.strategy_start` |
 | GET | `/api/strategy/status` | strategy US-004：无状态惰性轮询 run_dir 产物组装进度；**多会话 US-004：读 `X-Session-Id`**（status 轮询即活性，长跑会话不被扫描误杀） | `strategy.strategy_status` |
 | POST | `/api/strategy/stop` | strategy US-004：树杀子进程（taskkill /T /F / killpg）+ 清本会话 marker；**多会话 US-004：读 `X-Session-Id`**（只树杀本会话 pid） | `strategy.strategy_stop` |
@@ -114,6 +115,31 @@
 `size_aci(size)`（2026-08-20 起尺码键，取代 US-002 的 `label_aci` g 码公式；更早的 `TYPE_ACI` 中文名色表 US-002 已删）：尺码 → ACI 色号 `((size - SIZE_ANCHOR) % 24) + 1`（28→1、51→24、52→1 循环；非数字/None 兜底 7）。配色单一真相源 `sparrow_baseline.size_color`（`SIZE_PALETTE` 16 色 d3 系循环表，`size_color(size) = PALETTE[(size - SIZE_ANCHOR) % 16]`，锚点 `SIZE_ANCHOR=DEFAULT_SIZES[0]=28` 稳定绝对映射、同码同色跨片型），solver manifest / PNG / DXF ACI / CLI SVG 四处同源取色。PNG/DXF 每片 g 码文字叠印不变（颜色=尺码、文字=片型互补编码）。
 
 **2026-08-30 新模块（PLT 表格支线，`web/export.py` 门面 re-export `InfoTable`/`build_info_table`/`parse_table_payload`/`TABLE_GAP_MM`/`TABLE_W_MM`）**：`web/plt_text.py` 矢量文本引擎（**v5 起单线字默认路径**：`load_stroke_font` 汉字笔画中线 `hanzi_medians.txt`（hanzi-writer-data 9574 字，Arphic PL；**文件保留 MMaH y 向下源坐标、加载期镜像翻 y** + 仿射归一 [0.06,0.94]em 盒——不翻则汉字逐字上下镜像，v5 上线首日用户报告即此因已修，test_plt_text 语义探针回归锁）+ ASCII `hershey_rowmans.txt`（Hershey Roman Simplex 92 字符；**JHF y 自字顶向下增长，加载期以 'H' 竖笔底为基线整体翻 y**——不翻则 ASCII 逐字垂直镜像，v5 目检对拍发现已修）；`normalize_text` NFKC 全角→半角 + —·。、→ASCII 在 width/strokes 入口统一；两库未覆盖字符回退 Noto 轮廓（fontTools `BasePen` 子类展平 CFF 三次/TTF 二次贝塞尔 → 折线，De Casteljau 递归、容差 2 字体单位；cmap 未命中豆腐框 + warn）+ 每字符一次 warn；`(u,w)` 基变换强制右手系 det>0 否则 raise 防镜像文字；shrink-to-fit 后 advance 尾截断；单线笔画开放 closed=False / 轮廓回退 closed=True；缺资源降级空表 + warn 回退 Noto 不硬炸导出；字体 = 仓库捆绑 `resources/fonts/`（Noto Sans SC Regular OFL + 两单线库 + 双许可证，`paths.FONT_DIR`，环境变量 `MS_FONT_DIR` 重定位，pip 依赖显式加 `fonttools>=4.40`））；`web/plt_table.py` 表格构建 v5（`parse_table_payload` 载荷校验 → `TablePayloadError` → 路由 400；`_plan_name_and_sets` 方案名称（每码系数 = 面积最大裁片 pid 计数÷2，同系数全局分组、组间按最小码升序）；`build_info_table` 补自动 8 字段（料长(m)=width/1000 不含表格/幅宽(m)=gate/1000/利用率=real_density/套数/每套用料=料长÷套数/片数/绘图时间无秒）；`info_table_polylines` → (closed, points) 折线（v5 = v4 key/value 两行网格 + 共线边框 gap=0 + 列 0 自右下顶点垂直向上 3cm（y=30mm）起 + 单元格居中 10mm 内衬 + 单线矢量字：闭合外框 [x0,x0+36]×[30,30+Σ列宽] + 1 条沿 y key\|value 行分隔线 + 13 条沿 x 列分隔线 + 14 列沿 +y 自适应排开、文字基线沿 +y 字顶朝 −x——基 u=(0,1)/w=(-1,0) 右手系**直接生成**（v2 的 post-flip 已删）；表宽 36mm 与门幅无关，门幅只限表长（30+Σ列宽 ≤ gate−20，超限先缩字高 12→7mm 下限再等比压列宽 + 单元格尾截断兜底）））。表格文字是 PU/PD 笔画（v5 单线），「PLT 无 LB/VS 指令」口径不变；历史「PLT 永不加文字」指 g 码不进 PLT，表格是文件级元数据，与此不冲突。
+
+## POST /api/plt-table-preview — 导出弹窗唛架表格 14 字段预览（2026-08-31）
+
+ExportInfoModal v3「按最终表格列序展示全部 14 字段（8 自动只读 + 6 手输可编辑）」的数据源。**列序/格式权威在后端**：`build_info_table` → `_row_texts` → `preview_rows`（`_ROW_META` 槽位元数据与 `_row_texts` 渲序一一对齐、长度 assert + 测试标签对齐双锁），前端零公式镜像（方案名称系数/demand 多副本计数/`'--'` 回退不在 TS 复刻），后端改列序弹窗自动跟。**零回归红线不动**：`/export` 载荷与 PLT 字节完全不受影响（纯 additive 端点）。
+
+### 请求（`application/json`；= `/export` 的几何子集，前端 mount 时取 `runRegistry.bestRun()`）
+
+```jsonc
+{
+  "gate_mm": 1980,     // 缺省 0 → 回退会话 state['gate_mm']（与 /export 同口径）
+  "width_mm": 5157.57, // <=0 → 400
+  "density": 0.8808,   // real_density（原面积·输入幅宽口径）
+  "placed": [...]      // lastFrame.placed_items；空 → 400
+}
+```
+
+### 响应（200）
+
+```jsonc
+{ "rows": [ { "key": "plan_name", "label": "方案名称", "value": "(29+30)*0.5=1套", "manual": false }, /* …14 行，列序 = _row_texts（方案名称/床次/经纱缩水/纬纱缩水/利用率/幅宽/料长/本床包含套数/每套用料/片数/排料师/绘图时间/样板号/备注），manual=true 恰 6 行 */ ] }
+```
+
+- `manual=true` 行的 `value` = 手输**默认值**（端点用 `parse_table_payload({})`，弹窗手输由前端本地草稿渲染输入框，不消费该 value）。
+- **绘图时间口径**：预览 = 请求时刻；最终 PLT = 导出点击时刻重算（分钟精度通常一致）。
+- 400（`width_mm<=0` 或 `placed` 空 / pid 全不匹配）：`{"error": "无可预览的方案（width=0 或无裁片）"}` / `{"error": "预览失败：placed 的 pid 均未匹配到原始轮廓"}`；前端对任何失败**静默降级** v2 形态（6 手输 + 提示行），确认导出永不被预览阻塞。
 
 ## POST /api/parse-dxf — US-004 母版上传解析
 
@@ -297,7 +323,7 @@ curl -X POST http://127.0.0.1:8000/api/session -H "X-Session-Id: 3f2a...hex"
 3. **墓碑**：超时逐出丢全部状态只留 `{sid, ts}`（FIFO ≤128、存活 1h）；墓碑命中 → 401 不静默重建（防过期 sid 被当新会话）；墓碑 1h 过期或 FIFO 淘汰后该 sid 视为全新可正常新建。
 4. **合法但未注册 sid 的读路径**（`resolve(create=False)`，服务重启丢内存场景）同过期语义 401；**写路径（US-002 commit）走 `resolve(create=True)`** —— 数据自带（上传母版），合法未注册 sid 可直接 commit 建会话，过期/墓碑/超限仍 401/429。
 5. **会话状态结构**：`SessionState = {sid, state(pieces 快照 dict), doc_id, last_active, ws_open}`；`state` 由 US-002 commit 填 per-doc 快照（`_build_pieces_state(per-doc 路径)`，`doc_id` 同步绑定）；WS 钉住 API = `ws_acquire/ws_release`（计数），活性刷新 = `touch(sid)`（GIL-safe float 写）。长跑豁免不经由 SessionState 字段（原 `strategy_busy` 占位已删）—— 由 registry 的 alive hook（strategy.py 注册）在 TTL 命中时询问，单一真相。
-6. **读端点接入（US-003 已落地）**：HTTP 读路由（`/api/ptypes` / `/api/band-preview` / `/api/prefix-preview` / `/export`）经 `routes_views._resolve_session_state`（读路径 `create=False`）从 registry 取快照；WS `/ws/solve` 读 `?sid=` query 经 `ws_acquire`/`ws_release` 钉住 + `on_manifest`/`on_report` 回调 `touch` 刷活性（求解期间客户端不发消息也不被扫描误杀）。超限（429 session_limit）只可能出现在 create 路径（POST /api/session / commit）；读路径对未知 sid 一律 401 session_expired（不静默重建、不占新名额）—— WS error 帧格式对 `session_limit` code 通用（白盒锁定），实际把关在 HTTP 层。
+6. **读端点接入（US-003 已落地）**：HTTP 读路由（`/api/ptypes` / `/api/band-preview` / `/api/prefix-preview` / `/api/plt-table-preview` / `/export`）经 `routes_views._resolve_session_state`（读路径 `create=False`）从 registry 取快照；WS `/ws/solve` 读 `?sid=` query 经 `ws_acquire`/`ws_release` 钉住 + `on_manifest`/`on_report` 回调 `touch` 刷活性（求解期间客户端不发消息也不被扫描误杀）。超限（429 session_limit）只可能出现在 create 路径（POST /api/session / commit）；读路径对未知 sid 一律 401 session_expired（不静默重建、不占新名额）—— WS error 帧格式对 `session_limit` code 通用（白盒锁定），实际把关在 HTTP 层。
 7. **策略四路由接入（US-004 已落地，2026-08-27）**：`/api/strategy/start·status·stop·result` 经 `strategy._session_gate`（读路径 `create=False` + 刷 `last_active` —— **status 轮询即活性**，策略长跑中的会话不被扫描误杀；**轮询中断（睡眠/关页/跑完挂机）由 `_run_alive_hook` 钉住兜底（2026-08-30）**：run 存活滚动钉住 + 终态 `terminal_ts`（set-once，轮询不续期）起 `MS_RESULT_GRACE_SEC` 宽限窗，进程死由 daemon 扫描 `poll()` 探测记 `proc_dead_ts`）解析；状态/产物/停止按 sid 隔离（详见上「策略桥接」多会话小节）。会话过期后策略状态槽与 marker 均按 sid 留存（不随逐出清理）—— 同 sid 过墓碑期回来仍能发现/清理自己的遗留 run；宽限窗外逐出照旧走墓碑。
 8. **前端接入（US-005 已落地，2026-08-27）**：前端 `lib/session.ts` 管 sid（localStorage `ms_sid`，uuid4 hex 32，刷新不变）；`lib/api.ts` `apiFetch` 是**全站唯一裸 fetch 出口**（注入 `X-Session-Id` + 会话先行门：首次调用前置一次 POST /api/session once-promise，防子组件 mount 早于 App 探测的 401 误弹）；本路由 429/401 的 `code` 错误体（或 WS error 帧 `code`）触发前端全局阻断弹窗（阻断式全屏，唯一出口 = 刷新页面，阻断期间后续请求前端拦截不发）；**session_expired 时前端顺手丢弃 ms_sid**（墓碑 1h 拒重建旧 sid —— 刷新必须铸新 sid 才能真正重来），session_limit 保 sid。App 挂载即探测 —— 第 5 个窗口页面加载即弹「用户过多」，无需先上传。
 9. **uploads 磁盘 TTL 清理（US-006 已落地，2026-08-27，`web/diskclean.py`）**：多会话下 `out/uploads/` 只进不出，按 `MS_UPLOAD_TTL_DAYS`（env，缺省 14 天，按 mtime）自动清理 —— 删超龄 `<doc_id>.dxf` + `<doc_id>_pieces/` **成对**目录（混龄对整对保留：commit 重写 pieces 目录但不刷新 dxf 的 mtime）+ 孤儿单边 + 超龄 `strategy_cfg_*.json`；**保护集** = 活跃会话 doc_id（`registry.active_doc_ids()`：`st.doc_id` ∪ 快照 `state['doc']['doc_id']`）∪ `out/config_runs/.web_strategy_active*.json` marker 内 doc_id（**会话已过期但策略 run 仍在跑 → master 不误删**）∪ mtime 未超龄者；非 web 命名文件一律不动。触发 = 进程启动（`server.main()` 起 `start_startup_cleaner` daemon 线程，TestClient 导入 app 不触发）+ 每次 commit 成功后（`trigger_cleanup`，executor 里跑、吞一切异常仅 warn，不影响响应）。冒烟：`python -m materialsorting.web.diskclean`（临时目录场景自检 13 项 + 真实 out **dry-run** 打印将删清单）。
@@ -310,7 +336,7 @@ curl -X POST http://127.0.0.1:8000/api/session -H "X-Session-Id: 3f2a...hex"
 |------|----------|----------|
 | `POST /api/session` | `X-Session-Id` Header | **唯一注册入口**（`resolve(create=True)`：建会话/幂等刷活性；超限在此把关） |
 | `POST /api/commit-to-nesting` | `X-Session-Id` Header | 写路径 `create=True`（合法未注册 sid 可直接 commit 建会话）；成功后 per-doc 快照挂会话 |
-| `GET /api/ptypes` / `POST /api/band-preview` / `POST /api/prefix-preview` / `POST /export` | `X-Session-Id` Header | 读路径 `create=False`（`routes_views._resolve_session_state` 单一解析点） |
+| `GET /api/ptypes` / `POST /api/band-preview` / `POST /api/prefix-preview` / `POST /api/plt-table-preview` / `POST /export` | `X-Session-Id` Header | 读路径 `create=False`（`routes_views._resolve_session_state` 单一解析点） |
 | `/api/strategy/start·status·stop·result`、`/api/extreme/start·status·stop·result` | `X-Session-Id` Header | `strategy._session_gate`（读路径 `create=False` + 刷 `last_active`，轮询即活性；run 存活/终态宽限窗由 alive hook 钉住兜底） |
 | `WS /ws/solve` | **`?sid=` query**（浏览器 WS 不能自定义 Header） | `ws_acquire` 钉住 + 回调 `touch` + finally `ws_release` |
 | `GET /` | 无（静态入口） | 响应头 `Cache-Control: no-cache`（防旧 index.html 缓存滞留 default 语义） |
