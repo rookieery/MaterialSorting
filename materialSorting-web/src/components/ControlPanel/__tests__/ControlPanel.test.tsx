@@ -427,6 +427,116 @@ describe("ControlPanel export wiring (US-007)", () => {
     vi.unstubAllGlobals();
     runRegistry.clear();
   });
+
+  it("PLT 毛版分流（2026-08-31）：选 PLT（毛版）→ 点导出先开弹窗（毛版文案），confirm 后 POST /export fmt='plt-clean'", async () => {
+    const { runRegistry } = await import("../../../store/runRegistry");
+    const { useAppStore } = await import("../../../store/appStore");
+    const { markSessionProbedForTest, resetSessionForTest } = await import("../../../lib/api");
+    markSessionProbedForTest();
+    useAppStore.setState({ renderTick: 0, seekTime: -1 });
+    const rec = runRegistry.create(0);
+    rec.manifest = {
+      type: "manifest", gate_mm: 1980, total_area_mm2: 100000, n_eroded: 0, pieces: [],
+    };
+    rec.frames.push({
+      type: "frame", index: 0, elapsed: 1, phase: "final",
+      density: 0.5, density_sparrow: 0.5, width_mm: 1000, placed_items: [],
+    });
+    rec.lastFrame = rec.frames[0];
+    rec.finalDensity = 0.5;
+    rec.done = true;
+
+    const exportBodies: unknown[] = [];
+    fetchSpy!.mockImplementation(((input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/export")) {
+        exportBodies.push(init?.body ? JSON.parse(String(init.body)) : null);
+        return Promise.resolve(
+          new Response(new Blob([new Uint8Array([1])], { type: "application/plt" }), {
+            status: 200, headers: { "Content-Disposition": 'attachment; filename="x_clean.plt"' },
+          }),
+        );
+      }
+      // /api/plt-table-preview → rows 缺失（降级形态；confirm 照常导出）
+      return Promise.resolve(new Response(JSON.stringify({}), {
+        status: 200, headers: { "Content-Type": "application/json" },
+      }));
+    }) as unknown as (...args: unknown[]) => Promise<Response>);
+    vi.stubGlobal("URL", {
+      ...(globalThis.URL as object),
+      createObjectURL: vi.fn(() => "blob:fake://1"),
+      revokeObjectURL: vi.fn(),
+    });
+    const clickSpy = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+
+    renderPanel(() => {});
+    act(() => useAppStore.getState().bumpRenderTick());
+
+    // 切下拉到 PLT（毛版，亦为默认格式）→ 点导出：不直接 POST /export，先开 export_info 弹窗
+    const select = container!.querySelector<HTMLSelectElement>(".export-btns select")!;
+    act(() => {
+      select.value = "plt-clean";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await act(async () => {
+      container!.querySelector<HTMLButtonElement>(".export-btns button.export")!.click();
+      await Promise.resolve();
+    });
+    expect(exportBodies).toHaveLength(0);
+    const modal = document.querySelector(".strategy-modal")!;
+    expect(modal).not.toBeNull();
+    expect(modal.querySelector(".strategy-title")!.textContent).toContain("毛版");
+
+    // 弹窗确认（手输字段留默认）→ POST /export 载荷 fmt='plt-clean'
+    await act(async () => {
+      modal.querySelector<HTMLButtonElement>('[data-testid="export-info-confirm"]')!.click();
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(exportBodies).toHaveLength(1);
+    expect(exportBodies[0]).toMatchObject({ fmt: "plt-clean" });
+    expect(fetchSpy).toHaveBeenCalled();
+
+    clickSpy.mockRestore();
+    vi.unstubAllGlobals();
+    resetSessionForTest();
+    runRegistry.clear();
+  });
+
+  it("全量 PLT 分流回归锁：选 PLT → 点导出同样先开弹窗（无毛版文案）", async () => {
+    const { runRegistry } = await import("../../../store/runRegistry");
+    const { useAppStore } = await import("../../../store/appStore");
+    useAppStore.setState({ renderTick: 0, seekTime: -1 });
+    const rec = runRegistry.create(0);
+    rec.manifest = {
+      type: "manifest", gate_mm: 1980, total_area_mm2: 100000, n_eroded: 0, pieces: [],
+    };
+    rec.frames.push({
+      type: "frame", index: 0, elapsed: 1, phase: "final",
+      density: 0.5, density_sparrow: 0.5, width_mm: 1000, placed_items: [],
+    });
+    rec.lastFrame = rec.frames[0];
+    rec.finalDensity = 0.5;
+    rec.done = true;
+
+    renderPanel(() => {});
+    act(() => useAppStore.getState().bumpRenderTick());
+    // 2026-08-31 起 DEFAULT_EXPORT_FMT='plt-clean'（毛版）—— 全量版需显式切回 plt
+    act(() => {
+      const select = container!.querySelector<HTMLSelectElement>(".export-btns select")!;
+      select.value = "plt";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await act(async () => {
+      container!.querySelector<HTMLButtonElement>(".export-btns button.export")!.click();
+      await Promise.resolve();
+    });
+    const modal = document.querySelector(".strategy-modal")!;
+    expect(modal).not.toBeNull();
+    expect(modal.querySelector(".strategy-title")!.textContent).not.toContain("毛版");
+    runRegistry.clear();
+  });
 });
 
 describe("ControlPanel StatusLine hint (US-017)", () => {

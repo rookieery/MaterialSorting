@@ -6,8 +6,11 @@
 //   3. 兜底：nesting.<fmt>
 //   4. <a download> + URL.createObjectURL + 10s revoke（与旧 vanilla 实现 setTimeout 10000 一致）
 
-/** 导出格式（与后端 server.py export 路由的 fmt 字段对齐）。 */
-export type ExportFmt = 'png' | 'dxf' | 'plt';
+/** 导出格式（与后端 server.py export 路由的 fmt 字段对齐）。
+ * 'plt-clean' = PLT 毛版变体（2026-08-31：裁片只画最外层毛版轮廓 + 尺码*数量标注，
+ * 唛架左右两端各一份同内容信息表格；后端 /export clean=True 分支。命名与裁片
+ * layer1「毛版轮廓」同口径，当日由「净版」更名；协议值 'plt-clean' 不随更名变）。 */
+export type ExportFmt = 'png' | 'dxf' | 'plt' | 'plt-clean';
 
 /**
  * 导出格式下拉框选项（与 ExportFmt 同源）。
@@ -16,16 +19,19 @@ export type ExportFmt = 'png' | 'dxf' | 'plt';
  * 顺序约定：DXF 永远第一项（版师 / ET2008 生产交付主格式）；US-034 新增 PLT（WT V8.8 /
  * LIKE 绘图仪原生链路），插在 DXF 与 PNG 之间——生产交付格式族（DXF/PLT）相邻，PNG 作为
  * 可视化预览格式排末位。下拉顺序与默认选中解耦：2026-08-24 起 DEFAULT_EXPORT_FMT='plt'
- * （用户要求，现场以绘图仪切绘为主用交付），首项仍为 DXF。
+ * （用户要求，现场以绘图仪切绘为主用交付），2026-08-31 起 'plt-clean'（毛版，用户要求
+ * 毛版为现场主交付）；首项仍为 DXF。
  */
 export const EXPORT_FORMATS: { value: ExportFmt; label: string }[] = [
   { value: 'dxf', label: 'DXF' },
   { value: 'plt', label: 'PLT' },
+  { value: 'plt-clean', label: 'PLT（毛版）' },
   { value: 'png', label: 'PNG' },
 ];
 
-/** 默认导出格式：2026-08-24 起 PLT（现场以绘图仪切绘为主用交付）；DXF 仍为下拉首项。 */
-export const DEFAULT_EXPORT_FMT: ExportFmt = 'plt';
+/** 默认导出格式：2026-08-31 起 PLT 毛版（用户要求，现场以毛版切绘为主用交付；
+ * 此前 2026-08-24~08-30 为 'plt' 全量）；DXF 仍为下拉首项。 */
+export const DEFAULT_EXPORT_FMT: ExportFmt = 'plt-clean';
 
 /**
  * 从 Content-Disposition 头解析下载文件名（RFC 5987）。
@@ -50,8 +56,8 @@ export function parseContentDisposition(cd: string, fmt: ExportFmt): string {
   // 2) filename="xxx" 或 filename=xxx（ASCII fallback；与旧 vanilla 实现 同兜底语义）
   const quoted = /filename="?([^";]+)"?/i.exec(cd);
   if (quoted && quoted[1]) return quoted[1];
-  // 3) 兜底
-  return `nesting.${fmt}`;
+  // 3) 兜底（'plt-clean' 去变体后缀还原 .plt 扩展名 —— 仅 CD 头缺失的极端路径会走到）
+  return `nesting.${fmt.replace(/-clean$/, '')}`;
 }
 
 /**

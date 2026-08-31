@@ -37,8 +37,11 @@ import { runRegistry } from '../../store/runRegistry';
 export interface ExportInfoModalProps {
   /** 是否导出中（useExport.exporting —— 提交按钮互斥防连击）。 */
   exporting: boolean;
-  /** 确认导出：携带手输字段（ControlPanel.handlePltConfirm → exportAs('plt', …, table)）。 */
+  /** 确认导出：携带手输字段（ControlPanel.handlePltConfirm → exportAs(variant, …, table)）。 */
   onConfirm: (fields: ExportTableFields) => void;
+  /** PLT 变体（2026-08-31）：'plt-clean' 毛版只改弹窗文案，字段填写流程与全量版共用
+   *  （同一份 14 字段 → 毛版唛架左右两表同内容）。 */
+  variant?: 'plt' | 'plt-clean';
 }
 
 /** manual 槽位：预览行 snake_case key → 草稿字段（camelCase）。后端新增手输
@@ -75,7 +78,11 @@ export function ExportInfoModal(props: ExportInfoModalProps): JSX.Element | null
   return <ExportInfoModalInner key="export-info-modal" {...props} />;
 }
 
-function ExportInfoModalInner({ exporting, onConfirm }: ExportInfoModalProps): JSX.Element {
+function ExportInfoModalInner({
+  exporting,
+  onConfirm,
+  variant = 'plt',
+}: ExportInfoModalProps): JSX.Element {
   const closeModal = useControlPanelStore((s) => s.closeModal);
 
   // 草稿 local state（mount 初始化自 localStorage 记忆值；不进 FormState ——
@@ -209,11 +216,13 @@ function ExportInfoModalInner({ exporting, onConfirm }: ExportInfoModalProps): J
         className="strategy-modal"
         role="dialog"
         aria-modal="true"
-        aria-label="导出 PLT 唛架信息表格"
+        aria-label={variant === 'plt-clean' ? '导出 PLT（毛版）唛架信息表格' : '导出 PLT 唛架信息表格'}
         onMouseDown={handleModalMouseDown}
       >
         <div className="strategy-head">
-          <span className="strategy-title">导出 PLT · 唛架信息表格</span>
+          <span className="strategy-title">
+            {variant === 'plt-clean' ? '导出 PLT（毛版）· 唛架信息表格' : '导出 PLT · 唛架信息表格'}
+          </span>
           <button
             type="button"
             className="strategy-close"
@@ -239,7 +248,9 @@ function ExportInfoModalInner({ exporting, onConfirm }: ExportInfoModalProps): J
                 ? '其余字段（方案名称 / 套数 / 利用率 / 幅宽 / 料长 / 每套用料 / 片数 / 绘图时间）'
                   + '导出时由系统自动计算，当前预览不可用'
                 : '正在计算其余自动字段（方案名称 / 套数 / 利用率 / 幅宽 / 料长 / 每套用料 / 片数 / 绘图时间）…'}
-              （表格附在排料图外围，不占排料区、不计入用料）
+              {variant === 'plt-clean'
+                ? '（毛版在排料图左右两端各附一份同内容表格，不占排料区、不计入用料）'
+                : '（表格附在排料图外围，不占排料区、不计入用料）'}
             </div>
           </>
         ) : (
@@ -252,8 +263,11 @@ function ExportInfoModalInner({ exporting, onConfirm }: ExportInfoModalProps): J
               return field ? renderManualField(field) : null;
             })}
             <div className="strategy-hint">
-              信息表格附在排料图外围（不占排料区、不计入用料）；自动字段在导出时
-              以最新解重算（绘图时间为导出时刻）
+              {variant === 'plt-clean'
+                ? '毛版在排料图左右两端各附一份同内容表格（不占排料区、不计入用料）；'
+                  + '裁片只画最外层毛版轮廓与尺码*数量标注；'
+                : '信息表格附在排料图外围（不占排料区、不计入用料）；'}
+              自动字段在导出时以最新解重算（绘图时间为导出时刻）
             </div>
           </>
         )}
@@ -275,7 +289,7 @@ function ExportInfoModalInner({ exporting, onConfirm }: ExportInfoModalProps): J
             title={exporting ? '正在导出…' : undefined}
             data-testid="export-info-confirm"
           >
-            导出 PLT
+            {variant === 'plt-clean' ? '导出 PLT（毛版）' : '导出 PLT'}
           </button>
         </div>
       </div>

@@ -56,6 +56,8 @@ describe('parseContentDisposition (US-007 AC#4)', () => {
     expect(parseContentDisposition('', 'dxf')).toBe('nesting.dxf');
     // US-034：PLT 兜底（与 png/dxf 同语义，喂 WT V8.8 / LIKE 绘图仪）
     expect(parseContentDisposition('', 'plt')).toBe('nesting.plt');
+    // 2026-08-31 毛版：变体后缀去掉还原 .plt 扩展名（仅 CD 头缺失的极端兜底路径）
+    expect(parseContentDisposition('', 'plt-clean')).toBe('nesting.plt');
   });
 
   it('无 filename 字段 → nesting.<fmt> 兜底', () => {

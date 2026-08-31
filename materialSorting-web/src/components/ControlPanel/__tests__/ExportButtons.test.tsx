@@ -98,14 +98,19 @@ describe("ExportButtons (US-007 下拉框 + 单按钮)", () => {
     expect(container!.querySelectorAll(".export-btns button.export").length).toBe(1);
   });
 
-  it("select has 3 options (DXF/PLT/PNG) and defaults to PLT (2026-08-24)", () => {
-    // 数据驱动下拉框：EXPORT_FORMATS 扩容后 PLT 自动出现，ExportButtons 零代码改动。
-    // 下拉顺序与默认选中解耦：首项仍 DXF，默认选中改为 PLT（现场绘图仪切绘为主用交付）。
+  it("select has 4 options (DXF/PLT/毛版PLT/PNG) and defaults to PLT（毛版）(2026-08-31)", () => {
+    // 数据驱动下拉框：EXPORT_FORMATS 扩容后 PLT/毛版自动出现，ExportButtons 零代码改动。
+    // 下拉顺序与默认选中解耦：首项仍 DXF；默认选中 2026-08-31 起 PLT（毛版）——
+    // 用户要求毛版为现场主交付（此前 2026-08-24~08-30 默认 'plt' 全量）。
     renderBtns();
     const select = container!.querySelector<HTMLSelectElement>(".export-btns select")!;
     const opts = Array.from(select.options).map((o) => o.value);
-    expect(opts).toEqual(["dxf", "plt", "png"]);
-    expect(select.value).toBe("plt");
+    expect(opts).toEqual(["dxf", "plt", "plt-clean", "png"]);
+    expect(select.value).toBe("plt-clean");
+    // 毛版项 label（2026-08-31：裁片只画最外层轮廓 + 尺码*数量，唛架左右各一份表格；
+    // 命名与裁片 layer1「毛版轮廓」同口径，当日由「净版」更名）
+    const cleanOpt = Array.from(select.options).find((o) => o.value === "plt-clean")!;
+    expect(cleanOpt.textContent).toBe("PLT（毛版）");
   });
 
   it("button label is 导出", () => {
@@ -149,13 +154,13 @@ describe("ExportButtons (US-007 下拉框 + 单按钮)", () => {
     expect(exportButton().disabled).toBe(false);
   });
 
-  it("click 导出 (默认 PLT) -> onExport(plt)", () => {
+  it("click 导出 (默认 PLT 毛版) -> onExport(plt-clean)（2026-08-31 默认值切换）", () => {
     makeRunWithFrame(0);
     const onExport = vi.fn();
     renderBtns({ onExport });
     act(() => exportButton().click());
     expect(onExport).toHaveBeenCalledTimes(1);
-    expect(onExport).toHaveBeenCalledWith("plt");
+    expect(onExport).toHaveBeenCalledWith("plt-clean");
   });
 
   it("switch select to PNG then click -> onExport(png)", () => {

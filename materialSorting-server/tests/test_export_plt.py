@@ -589,6 +589,66 @@ def test_label_clipped_at_gate():
     assert len(_grain_strokes(out, 1)) > 0
 
 
+# --------------------------------------------- 毛版变体 clean=True（2026-08-31）
+# 对齐生产参考件 data/PC-20250508NJIF_5028-1#_29223513.plt：裁片只画最外层毛版
+# 轮廓 + 尺码*数量标注（净版线/内部线/刀口/布纹杆羽不画）；带表格时唛架左端再画
+# 一份同内容表格（左表集成断言在 test_plt_table.py，此处锁裁片层口径）。
+
+
+def test_clean_default_false_byte_identical():
+    """clean 缺省与显式 False 逐字节一致（additive 红线：全量导出零变化）。"""
+    kw = {"width_mm": 500, "gate_mm": 1000, "title": ""}
+    assert write_marker_plt([_full_piece()], **kw) \
+        == write_marker_plt([_full_piece()], clean=False, **kw)
+
+
+def test_clean_polygon_and_label_only():
+    """毛版裁片层 = 门幅框 + 毛版轮廓 + 标注，标注笔画与全量版逐折线相同。
+
+    _full_piece 层序 polylines = [门幅框, polygon, net, internal, notch, 杆, 羽,
+    羽, 标注×8]；clean = [门幅框, polygon, 标注×8] —— 全量布纹段去杆+双羽后与
+    毛版剩余笔画**逐折线相等**（_label_strokes 与 _grain_annotation_strokes 共用
+    _grain_frame，落点恒一致）。"30*1" 标注 = 3(2笔)+0(1)+*(3)+1(2) = 8 折线。
+    """
+    kw = {"width_mm": 500, "gate_mm": 1000, "title": ""}
+    full = _plt([_full_piece()], **kw)
+    clean = _plt([_full_piece()], clean=True, **kw)
+    full_polys = _polylines(_body_section(full.split("\n")))
+    clean_polys = _polylines(_body_section(clean.split("\n")))
+    assert len(full_polys) == 8 + 8            # 门幅框+轮廓+net+internal+notch+杆+双羽 + 标注×8
+    assert len(clean_polys) == 2 + 8           # 门幅框+轮廓 + 标注×8
+    assert clean_polys[2:] == full_polys[5 + 3:]   # 标注逐笔同坐标（= 布纹段去杆+双羽）
+    # 门幅框 + 毛版轮廓原样保留（clean 无表格 → 引导仍 20，与全量首两折线一致）
+    assert clean_polys[:2] == full_polys[:2]
+    # 各工艺层起笔确不在毛版：net(10,10)/internal(20,20)/notch(50,4)/杆(50,50)
+    # → +20 引导 +36 平移 → ×40
+    for tok in ("PU1200,1840;", "PU2800,2240;", "PU2800,1600;", "PU2800,3440;"):
+        assert tok not in clean
+    assert "PU800,1440;" in clean              # 毛版轮廓起笔 (0,0) 原样在
+
+
+def test_clean_without_table_paper_size_same_as_full():
+    """毛版不带表格：无左表 → X 引导仍 20，PS 纸长与全量版逐字节同头。"""
+    kw = {"width_mm": 500, "gate_mm": 1000, "title": ""}
+    full = _plt([_full_piece()], **kw)
+    clean = _plt([_full_piece()], clean=True, **kw)
+    assert clean.split("\n")[0] == full.split("\n")[0] == "IN;PS21200;SP1;PW0.08;"
+
+
+def test_clean_label_goes_through_same_clip_pipeline():
+    """毛版标注走同一套 y≤gate 裁剪管线（顶部贴边片标注不越程，与全量版同守卫）。"""
+    piece = _piece_with_grain(grain=(50.0, 1960.0, 350.0, 1960.0))
+    out = _plt([piece], width_mm=400, gate_mm=1980, title="", clean=True)
+    ymax = 0
+    for line in out.split("\n"):
+        if line.startswith(("PU", "PD")) and "," in line:
+            ys = [int(t) for t in line[2:].rstrip(";").split(",")][1::2]
+            ymax = max(ymax, max(ys))
+    assert ymax <= int((36 + 1980) * 40)
+    # 毛版全文件只剩 门幅框+轮廓+标注×8（杆羽不画）
+    assert len(_polylines(_body_section(out.split("\n")))) == 2 + 8
+
+
 if __name__ == "__main__":
     import sys
     sys.exit(pytest.main([__file__, "-v"]))

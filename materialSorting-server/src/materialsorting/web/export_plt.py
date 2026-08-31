@@ -68,6 +68,23 @@ from .plt_table import TABLE_GAP_MM, TABLE_W_MM, InfoTable, info_table_polylines
 #   - 生产文件全程**无 LB 文字指令**：文字 = PU/PD 矢量笔画（ET 矢量字库），
 #     设备无关。本导出同款：内置数字 0-9 + '*' 单笔矢量小字库（笔画输出），
 #     字库外字符（非数字尺码）整段跳过不标注（all-or-nothing，防丢字歧义）。
+#
+# 毛版变体 clean=True（2026-08-31，对齐生产毛版件 data/PC-20250508NJIF_5028-1#_
+# 29223513.plt 实测）：
+#   - 裁片只画**最外层毛版轮廓 polygon** + 尺码*数量标注 —— 净版线/内部线/刀口/
+#     布纹杆羽全部不画。参考件正文 65 个闭合轮廓相邻贴合 gap=0.00mm ⇒ 画的是
+#     毛版嵌套几何本体（非缝份内缩的净样线——那会隔 2×缝份），且无任何工艺线、
+#     仅剩沿布纹方向的文字簇。标注笔画与全量版逐点相同（_label_strokes 同一
+#     几何：沿画向 u、字顶朝 w、基线离杆 10mm、锚 0.85·L），只是不画杆+箭羽。
+#   - 左下角表格副本：clean 且带 info_table 时，同一份表格在唛架**左端**世界
+#     x∈[−(gap+W), 0] 再画一份（value 带外缘与门幅左边框共用一条线，参考件同构：
+#     其左表 x[0,24] 贴框 x=24）。info_table_polylines 的 key 带恒在 table_x0 起
+#     的小 x 侧 ⇒ 左表 key 带在外侧，生产视图里两表 key 行都在上、阅读方向一致，
+#     文字朝向与世界坐标同向**无需镜像**（参考件实测两表键带都在各自小 x 侧）。
+#   - X 引导相应扩为 lead_x = PLOT_LEAD_X_MM + gap + W（=56mm：20 纸边引导 +
+#     36 表宽），左表最左绘制 x=20 ≥0（HPGL 坐标非负；参考件左表贴纸 x=0 起画，
+#     这里更保守留走纸余量）。仅毛版自身坐标系位移；全量版（clean=False）X 引导
+#     仍 20、输出逐字节不变。
 _PLT_SCALE = 40          # 1mm = 40 HPGL 绘图单位（0.025mm）
 _PLT_PEN_WIDTH_MM = 0.08 # PW 笔宽 mm（与生产 PLT 一致的细线宽）
 _PLT_PEN = 1             # 全文件唯一笔号（单色导出，见模块注释；生产 PLT 同款仅 SP1）
@@ -109,22 +126,24 @@ _LABEL_BASELINE_OFF_MM = 10.0      # 基线离杆距离（沿 w；生产簇心 ~
 _LABEL_ANCHOR_FRAC = 0.85          # 标注中心锚在杆上的位置（生产簇心中位数 0.85·L）
 
 
-def _plt_pt(x: float, y: float) -> str:
+def _plt_pt(x: float, y: float, lead_x: float = PLOT_LEAD_X_MM) -> str:
     """世界坐标 (mm) → HPGL 整数坐标字符串 ``"x,y"``（×40 round，clamp 非负）。
 
-    X 统一加走纸引导余量 PLOT_LEAD_X_MM（生产 PLT 内容 24mm 起画，贴 0 起画无
-    定位余量）；Y 统一加绘制平移 PLOT_LEAD_Y_MM=TABLE_W_MM=36mm（2026-08-31 用户
-    定案：整张图纸——门幅框/裁片/表格——一起离图纸原点 36mm=表格宽，首版 5mm
-    被反馈太短；纯绘制层位移，不动世界坐标层的求解带/裁剪界/利用率口径，框内
-    相对几何零变化）。HPGL 坐标必须是非负整数；clamp 防御 placed_to_world 极端
-    边界返回负值（实测 placed 全在门幅内 ≥0，但取整后 -0.0 / 极小负值 → 0 兜底）。
+    X 统一加走纸引导余量（缺省 PLOT_LEAD_X_MM=20：生产 PLT 内容 24mm 起画，贴 0
+    起画无定位余量）；毛版带左表时传扩量 lead_x=56（左表占世界 x∈[−36,0]，20mm
+    纸边引导 + 36mm 表宽，见模块注释「毛版变体」）。Y 统一加绘制平移
+    PLOT_LEAD_Y_MM=TABLE_W_MM=36mm（2026-08-31 用户定案：整张图纸——门幅框/
+    裁片/表格——一起离图纸原点 36mm=表格宽，首版 5mm 被反馈太短；纯绘制层位移，
+    不动世界坐标层的求解带/裁剪界/利用率口径，框内相对几何零变化）。HPGL 坐标
+    必须是非负整数；clamp 防御 placed_to_world 极端边界返回负值（实测 placed 全
+    在门幅内 ≥0，但取整后 -0.0 / 极小负值 → 0 兜底）。
     """
-    ix = max(0, round((float(x) + PLOT_LEAD_X_MM) * _PLT_SCALE))
+    ix = max(0, round((float(x) + lead_x) * _PLT_SCALE))
     iy = max(0, round((float(y) + PLOT_LEAD_Y_MM) * _PLT_SCALE))
     return f'{ix},{iy}'
 
 
-def _plt_polyline(closed: bool, points) -> list[str]:
+def _plt_polyline(closed: bool, points, lead_x: float = PLOT_LEAD_X_MM) -> list[str]:
     """多边形/折线 → 分块指令行列表：``PU`` 首点一行 + ``PD`` 每 ≤10 点且 ≤110B 一行。
 
     对齐 ET 生产 PLT 分块口径（单条 PD ≤11 点 / 行 ≤118B）：国产 HP-GL 解释器
@@ -134,6 +153,7 @@ def _plt_polyline(closed: bool, points) -> list[str]:
     points: list[(x, y)] 世界坐标 mm，至少 2 点。
     closed: True → PD 末尾追加首点（物理闭合，与 DXF POLYLINE 闭合策略一致）；
             False → 仅画到末点（线段 / 折线 / 内部线 / 布纹线）。
+    lead_x: X 走纸引导（透传 _plt_pt；毛版左表时为扩量 56，见模块注释）。
 
     返回指令行列表（空层返回 []，调用方 extend 进 cmds）。
     """
@@ -142,10 +162,10 @@ def _plt_polyline(closed: bool, points) -> list[str]:
     rest = list(points[1:])
     if closed:
         rest.append(points[0])
-    lines = [f'PU{_plt_pt(*points[0])};']
+    lines = [f'PU{_plt_pt(*points[0], lead_x)};']
     chunk: list[str] = []
     for p in rest:
-        s = _plt_pt(*p)
+        s = _plt_pt(*p, lead_x)
         # 'PD' + payload + ';' 整行 ≤ _PLT_LINE_MAX_BYTES；不足则先 flushed 再续
         if chunk and (len(chunk) >= _PLT_PD_MAX_PTS
                       or len(','.join(chunk + [s])) + 3 > _PLT_LINE_MAX_BYTES):
@@ -275,6 +295,55 @@ def _grain_label_text(pc, pid_counts: Counter) -> str | None:
     return text
 
 
+def _grain_frame(gl):
+    """布纹线 ``(x1,y1,x2,y2)`` → ``(A, u, w, L)`` 帧向量（退化线 L<1e-6 → None）。
+
+    ``u = A→B 单位向量``（grain_line 两端点随片旋转/平移变换，方向即母版原始
+    布纹画向）；``w = (-uy, ux)`` 为字顶方向（画向左法线）。字顶方向取画向左
+    法线：(u, w) 必须右手系（det>0），否则字形映射是镜像，无论画向正反文字
+    全部"反"（首版 w=(uy,-ux) 左手系即此 bug，用户截图纠正）。杆/箭羽与标注
+    共用同一帧（毛版拆画时两处落点才恒一致）。
+    """
+    ax_, ay_, bx_, by_ = (float(gl[i]) for i in range(4))
+    dx, dy = bx_ - ax_, by_ - ay_
+    length = math.hypot(dx, dy)
+    if length < 1e-6:
+        return None
+    ux, uy = dx / length, dy / length
+    return (ax_, ay_), (ux, uy), (-uy, ux), length
+
+
+def _label_strokes(gl, label_text: str | None) -> list[list[tuple[float, float]]]:
+    """布纹线 + 标注文本 → **纯文字笔画**（不含杆/箭羽；毛版变体专用，2026-08-31）。
+
+    几何与全量版标注逐点相同（自 _grain_annotation_strokes 拆出、共用
+    _grain_frame，单一真相源）：沿画向 u 阅读、字顶朝 w、基线离杆 10mm（字顶
+    离杆 ~20mm）、中心锚 0.85·L 画向前端（文本宽于杆时退回杆中点）。毛版不画
+    布纹杆，标注仍以（隐形的）杆位置定位 —— 与全量版同片标注落点一致。
+    """
+    if not label_text:
+        return []
+    frame = _grain_frame(gl)
+    if frame is None:
+        return []
+    (ax_, ay_), (ux, uy), (wx, wy), length = frame
+    width = (len(label_text) - 1 + 0.65) * _LABEL_PITCH_MM
+    t = 0.5 * length if width > length else _LABEL_ANCHOR_FRAC * length
+    cx = ax_ + t * ux + _LABEL_BASELINE_OFF_MM * wx
+    cy = ay_ + t * uy + _LABEL_BASELINE_OFF_MM * wy
+    x0 = -width / 2.0
+    strokes: list[list[tuple[float, float]]] = []
+    for i, char_strokes in enumerate(_LABEL_GLYPHS[ch] for ch in label_text):
+        for pts in char_strokes:
+            strokes.append([
+                (cx + (x0 + (i + gx) * _LABEL_PITCH_MM) * ux
+                     + gy * _LABEL_CHAR_H_MM * wx,
+                 cy + (x0 + (i + gx) * _LABEL_PITCH_MM) * uy
+                     + gy * _LABEL_CHAR_H_MM * wy)
+                for gx, gy in pts])
+    return strokes
+
+
 def _grain_annotation_strokes(gl, label_text: str | None) -> list[list[tuple[float, float]]]:
     """布纹线 (x1,y1,x2,y2) + 标注文本 → 世界坐标笔画列表（调用方逐笔过 Y 裁剪）。
 
@@ -290,15 +359,12 @@ def _grain_annotation_strokes(gl, label_text: str | None) -> list[list[tuple[flo
       180° 片 u 反向 ⇒ 箭头与标注一齐翻向/翻侧倒置（视觉在杆下方）——
       字体正反随布纹线方向，片相对、生产同款。
     """
-    ax_, ay_, bx_, by_ = (float(gl[i]) for i in range(4))
-    dx, dy = bx_ - ax_, by_ - ay_
-    length = math.hypot(dx, dy)
-    if length < 1e-6:
+    frame = _grain_frame(gl)
+    if frame is None:
         return []
-    ux, uy = dx / length, dy / length
-    # 字顶方向取画向左法线：(u, w) 必须右手系（det>0），否则字形映射是镜像，
-    # 无论画向正反文字全部"反"（首版 w=(uy,-ux) 左手系即此 bug，用户截图纠正）
-    wx, wy = -uy, ux
+    (ax_, ay_), (ux, uy), (wx, wy), length = frame
+    bx_ = ax_ + length * ux
+    by_ = ay_ + length * uy
 
     strokes: list[list[tuple[float, float]]] = [[(ax_, ay_), (bx_, by_)]]
     barb = min(_GRAIN_BARB_LEN_MM, _GRAIN_BARB_MAX_SHAFT_FRAC * length)
@@ -307,27 +373,23 @@ def _grain_annotation_strokes(gl, label_text: str | None) -> list[list[tuple[flo
     # B 端单头双羽：从杆端向画向反侧收拢（±w 对称），箭头指向 u 方向
     strokes.append([(bx_, by_), (bx_ - fb * ux + sb * wx, by_ - fb * uy + sb * wy)])
     strokes.append([(bx_, by_), (bx_ - fb * ux - sb * wx, by_ - fb * uy - sb * wy)])
-
-    if label_text:
-        width = (len(label_text) - 1 + 0.65) * _LABEL_PITCH_MM
-        t = 0.5 * length if width > length else _LABEL_ANCHOR_FRAC * length
-        cx = ax_ + t * ux + _LABEL_BASELINE_OFF_MM * wx
-        cy = ay_ + t * uy + _LABEL_BASELINE_OFF_MM * wy
-        x0 = -width / 2.0
-        for i, char_strokes in enumerate(_LABEL_GLYPHS[ch] for ch in label_text):
-            for pts in char_strokes:
-                strokes.append([
-                    (cx + (x0 + (i + gx) * _LABEL_PITCH_MM) * ux
-                         + gy * _LABEL_CHAR_H_MM * wx,
-                     cy + (x0 + (i + gx) * _LABEL_PITCH_MM) * uy
-                         + gy * _LABEL_CHAR_H_MM * wy)
-                    for gx, gy in pts])
+    strokes.extend(_label_strokes(gl, label_text))
     return strokes
 
 
 def write_marker_plt(world_pieces, *, width_mm: float, gate_mm: float, title: str,
-                     info_table: InfoTable | None = None) -> bytes:
+                     info_table: InfoTable | None = None,
+                     clean: bool = False) -> bytes:
     """写排料 marker PLT/HPGL 文本（ASCII ``bytes``，安全幅面口径见模块注释）。
+
+    ``clean``（2026-08-31 毛版变体，additive 缺省 False 零变化，对齐生产毛版件
+    data/PC-20250508NJIF_5028-1#_29223513.plt）：True 时裁片只画**最外层毛版
+    轮廓 polygon + 尺码×数量标注**（净版线/内部线/刀口/布纹杆羽全不画；标注
+    笔画与全量版逐点同几何，见 ``_label_strokes``），且带 ``info_table`` 时在
+    唛架**左端**再画一份同内容表格（世界 x∈[−(gap+W), 0]，value 带外缘与门幅
+    左边框共线，与右表同构无镜像），X 走纸引导扩为
+    ``PLOT_LEAD_X_MM + TABLE_GAP_MM + TABLE_W_MM``（左表绘制坐标非负）。见模块
+    注释「毛版变体」。
 
     ``info_table``（2026-08-30 唛架信息表格，additive 缺省 None 零变化）：
     给定时在唛架末端外围追加 14 字段标签表（plt_table 构建，v4 key/value 两行
@@ -392,6 +454,12 @@ def write_marker_plt(world_pieces, *, width_mm: float, gate_mm: float, title: st
     # placed_items，placed_to_world 即 N 行同 pid —— 计数即需求副本数）
     pid_counts = Counter(pc.get('pid') for pc in world_pieces)
 
+    # X 走纸引导：缺省 PLOT_LEAD_X_MM=20；毛版带左表时左表占世界 x∈[−(gap+W), 0]
+    # （HPGL 坐标非负），引导扩为 20 + gap + W = 56mm（20 纸边引导 + 36 表宽，
+    # 参考件左表贴纸 x=0 起画、这里更保守；全量版恒 20，输出逐字节不变）。
+    lead_x = (PLOT_LEAD_X_MM + TABLE_GAP_MM + TABLE_W_MM
+              if clean and info_table is not None else PLOT_LEAD_X_MM)
+
     # 门幅/用布边框（层序之首，与生产 PLT 同为 SP1 单笔）——闭合矩形 4 角，满幅
     # [0, gate] 不内缩（2026-08-31 撤销 Y 双边内缩 5mm：贴边裁片精确贴求解约束带
     # 0/gate，内缩框在切割软件里被当布料范围即成"越界"；框=裁剪界=求解带三口径
@@ -406,7 +474,8 @@ def write_marker_plt(world_pieces, *, width_mm: float, gate_mm: float, title: st
               (border_x1, 0.0),
               (border_x1, border_y1),
               (0.0, border_y1)]
-    layer_lines[_LAYER_OUTLINE].extend(_plt_polyline(closed=True, points=border))
+    layer_lines[_LAYER_OUTLINE].extend(_plt_polyline(closed=True, points=border,
+                                                     lead_x=lead_x))
 
     # 逐片 5 层，全部先过 y ≤ 输入门幅半平面裁剪（outline → net → internal → notch → grain）
     gate_f = float(gate_mm)
@@ -420,7 +489,23 @@ def write_marker_plt(world_pieces, *, width_mm: float, gate_mm: float, title: st
             if n_above:
                 clipped_pids.add(pid)
             if len(clipped) >= 2:
-                layer_lines[_LAYER_OUTLINE].extend(_plt_polyline(closed=True, points=clipped))
+                layer_lines[_LAYER_OUTLINE].extend(_plt_polyline(closed=True, points=clipped,
+                                                                 lead_x=lead_x))
+
+        # 毛版变体（2026-08-31）：裁片只画最外层毛版轮廓 + 尺码*数量标注——净版线/
+        # 内部线/刀口/布纹杆羽全部不画（参考件实测：相邻片轮廓贴合 0.00mm = 毛版
+        # 嵌套本体，正文无任何工艺线）。标注与全量版逐点同几何（_label_strokes
+        # 与 _grain_annotation_strokes 共用 _grain_frame），仅去杆+箭羽。
+        if clean:
+            gl = pc.get('grain_line')
+            label = _grain_label_text(pc, pid_counts)
+            if gl and len(gl) == 4 and label:
+                for stroke in _label_strokes(gl, label):
+                    runs, _n_above = _clip_open_y(stroke, gate_f)
+                    for run in runs:
+                        layer_lines[_LAYER_GRAIN].extend(
+                            _plt_polyline(closed=False, points=run, lead_x=lead_x))
+            continue
 
         # 净版 net_polygon（闭合）
         net = pc.get('net_polygon') or []
@@ -429,7 +514,8 @@ def write_marker_plt(world_pieces, *, width_mm: float, gate_mm: float, title: st
             if n_above:
                 clipped_pids.add(pid)
             if len(clipped) >= 2:
-                layer_lines[_LAYER_NET].extend(_plt_polyline(closed=True, points=clipped))
+                layer_lines[_LAYER_NET].extend(_plt_polyline(closed=True, points=clipped,
+                                                             lead_x=lead_x))
 
         # 内部线 internal_lines（逐条不闭合，裁剪后可能裂成多段）
         for line in pc.get('internal_lines') or []:
@@ -439,7 +525,8 @@ def write_marker_plt(world_pieces, *, width_mm: float, gate_mm: float, title: st
             if n_above:
                 clipped_pids.add(pid)
             for run in runs:
-                layer_lines[_LAYER_INTERNAL].extend(_plt_polyline(closed=False, points=run))
+                layer_lines[_LAYER_INTERNAL].extend(_plt_polyline(closed=False, points=run,
+                                                                  lead_x=lead_x))
 
         # 刺口 notches（沿法线 NOTCH_LEN_MM 短线段，与 PNG 同口径）。求解已钳制
         # 在门幅内，刺口 ±half 外伸越线属工艺正常（生产 PLT 内容同样越框几 mm），
@@ -449,7 +536,8 @@ def write_marker_plt(world_pieces, *, width_mm: float, gate_mm: float, title: st
             seg = [(x - nx * half, y - ny * half), (x + nx * half, y + ny * half)]
             runs, _n_above = _clip_open_y(seg, gate_f)
             for run in runs:
-                layer_lines[_LAYER_NOTCH].extend(_plt_polyline(closed=False, points=run))
+                layer_lines[_LAYER_NOTCH].extend(_plt_polyline(closed=False, points=run,
+                                                               lead_x=lead_x))
 
         # 布纹线 grain_line：单头箭头线（指向原始画向 B 端）+ 尺码*数量标注
         # （几何规则见 _grain_annotation_strokes）。同为工艺线，越线削平不告警
@@ -458,7 +546,8 @@ def write_marker_plt(world_pieces, *, width_mm: float, gate_mm: float, title: st
             for stroke in _grain_annotation_strokes(gl, _grain_label_text(pc, pid_counts)):
                 runs, _n_above = _clip_open_y(stroke, gate_f)
                 for run in runs:
-                    layer_lines[_LAYER_GRAIN].extend(_plt_polyline(closed=False, points=run))
+                    layer_lines[_LAYER_GRAIN].extend(_plt_polyline(closed=False, points=run,
+                                                                   lead_x=lead_x))
 
     if clipped_pids:
         sample = ','.join(sorted(map(str, clipped_pids))[:5])
@@ -475,15 +564,29 @@ def write_marker_plt(world_pieces, *, width_mm: float, gate_mm: float, title: st
         table_x0 = float(width_mm) + TABLE_GAP_MM
         for closed, pts in info_table_polylines(info_table, table_x0=table_x0,
                                                 gate_mm=gate_f):
-            layer_lines[_LAYER_TABLE].extend(_plt_polyline(closed=closed, points=pts))
+            layer_lines[_LAYER_TABLE].extend(_plt_polyline(closed=closed, points=pts,
+                                                           lead_x=lead_x))
+        # 毛版左表副本（2026-08-31，参考件同构：其左表 x[0,24] 贴门幅框 x=24）：
+        # 同一份表格在唛架左端世界 x∈[−(gap+W), 0] 再画一份。info_table_polylines
+        # 的 key 带恒在 table_x0 起的小 x 侧 ⇒ 这里 key 带在外侧 [−36,−18]、value
+        # 带外缘 x=0 与门幅左边框共用一条线；文字朝向与世界坐标同向（生产视图里
+        # 两表 key 行都在上、阅读方向一致，参考件实测两表键带都在各自小 x 侧，
+        # 无需镜像）。同内容 → _column_layout 布局与右表完全一致。
+        if clean:
+            left_x0 = -(TABLE_GAP_MM + TABLE_W_MM)
+            for closed, pts in info_table_polylines(info_table, table_x0=left_x0,
+                                                    gate_mm=gate_f):
+                layer_lines[_LAYER_TABLE].extend(_plt_polyline(closed=closed, points=pts,
+                                                               lead_x=lead_x))
 
     # 头部一行（对齐生产 PLT）：PS 纸长 = 走纸引导 + max(用布长, 内容最大X) + 尾余量；
     # 带信息表格时内容总长 = 用布长 + 表格段（v5 gap=0：外框左缘与唛架右边框
     # 共用一条线，表格段即表宽 36 —— 表格在纸上是元数据、不计入用料，但 PS
-    # 纸长要覆盖它防 WT 裁页）
+    # 纸长要覆盖它防 WT 裁页）。毛版左表在引导侧（lead_x 已含表宽），不进
+    # content_max。
     content_max = (width_mm + TABLE_GAP_MM + TABLE_W_MM if info_table is not None
                    else width_mm)
-    paper_len = int(round((PLOT_LEAD_X_MM + max(content_max, max_x) + PLOT_TAIL_X_MM)
+    paper_len = int(round((lead_x + max(content_max, max_x) + PLOT_TAIL_X_MM)
                           * _PLT_SCALE))
     cmds: list[str] = [
         f'IN;PS{paper_len};SP{_PLT_PEN};PW{_PLT_PEN_WIDTH_MM};']

@@ -336,9 +336,11 @@ async def prefix_preview(req: Request):
 async def export(req: Request):
     """导出最优排料方案：前端 POST 最优 run 的最终帧 placed_items → 出 PNG / R12-DXF。
 
-    payload = {fmt:'png'|'dxf', sizes:[..], seed, gate_mm, width_mm, density,
-               placed:[{id,rotation,translation},...], filename?}
+    payload = {fmt:'png'|'dxf'|'plt'|'plt-clean', sizes:[..], seed, gate_mm, width_mm,
+               density, placed:[{id,rotation,translation},...], filename?, table?}
     filename 为上传母版名（用作导出文件名前缀，去 .dxf）；缺省回退「排料」。
+    fmt='plt-clean'（2026-08-31 毛版，命名与裁片 layer1「毛版轮廓」同口径）：裁片仅最外层毛版轮廓 + 尺码*数量标注、
+    带表格时唛架左右两端各一份同内容表格（详见 export_plt 模块注释）。
     返回文件字节流（Content-Disposition 附件下载，中文文件名走 RFC5987）。
 
     US-003（多会话）：``X-Session-Id`` → 该会话的 ``pieces_by_id``（A 的 placed 匹配
@@ -383,10 +385,15 @@ async def export(req: Request):
         title = f'M1787 util={pct:.2f}% L={width_mm / 10:.2f}cm gate={gate_mm / 10:.2f}cm seed={seed}'
         data = write_marker_dxf(world, width_mm=width_mm, gate_mm=gate_mm, title=title)
         media, ext = 'application/dxf', 'dxf'
-    elif fmt == 'plt':
+    elif fmt in ('plt', 'plt-clean'):
         # US-033：PLT/HPGL 文本导出（LIKE 绘图仪 / WT V8.8 原生链路）；title 复用 DXF 同款
         # ASCII（格式：M1787 util=<pct>% L=<L>cm gate=<gate>cm seed=<seed>，两位小数），
         # 避免中文编码风险。
+        # fmt='plt-clean'（2026-08-31 毛版变体，对齐生产参考件 PC-20250508NJIF_5028-
+        # 1#_29223513.plt）：裁片只画最外层毛版轮廓 + 尺码*数量标注（净版线/内部线/
+        # 刀口/布纹杆羽不画），带表格时唛架左端再画一份同内容表格（文件名加 _clean/
+        # 毛版 后缀防与全量版混淆；前端格式下拉「PLT（毛版）」直传此值）。
+        clean = fmt == 'plt-clean'
         title = f'M1787 util={pct:.2f}% L={width_mm / 10:.2f}cm gate={gate_mm / 10:.2f}cm seed={seed}'
         # 唛架信息表格（2026-08-30）：payload 可选 table 对象（前端导出弹窗 6 手输
         # 字段）→ 系统补全自动字段后随 PLT 输出（缺省不带表格，旧前端零变化）。
@@ -400,7 +407,7 @@ async def export(req: Request):
             info_table = build_info_table(world, width_mm=width_mm, gate_mm=gate_mm,
                                           density=density, table_in=table_in)
         data = write_marker_plt(world, width_mm=width_mm, gate_mm=gate_mm, title=title,
-                                info_table=info_table)
+                                info_table=info_table, clean=clean)
         media, ext = 'application/plt', 'plt'
     else:
         return JSONResponse({'error': f'未知格式 {fmt}'}, status_code=400)
@@ -414,8 +421,12 @@ async def export(req: Request):
     # ASCII fallback（filename="..."，老浏览器不支持 filename* 时显示）：文件名纯 ASCII 时
     # 直接用，含中文则回退 nesting（避免 fallback 名出现未编码中文）。
     prefix_ascii = stem if stem and stem.isascii() else 'nesting'
-    fname_ascii = f'{prefix_ascii}_{sizes_str}_{pct:.2f}pct_seed{seed}.{ext}'
-    fname_cn = f'{prefix_cn}_码{sizes_str}_{pct:.2f}pct_seed{seed}.{ext}'
+    # 毛版后缀（2026-08-31；当日由「净版」更名，与裁片毛版轮廓口径统一）：同一方案
+    # 常先后导出全量/毛版两份，后缀防同名覆盖（ascii 侧沿用 _clean 与 fmt 值一致）
+    suffix_ascii = '_clean' if fmt == 'plt-clean' else ''
+    suffix_cn = '_毛版' if fmt == 'plt-clean' else ''
+    fname_ascii = f'{prefix_ascii}_{sizes_str}_{pct:.2f}pct_seed{seed}{suffix_ascii}.{ext}'
+    fname_cn = f'{prefix_cn}_码{sizes_str}_{pct:.2f}pct_seed{seed}{suffix_cn}.{ext}'
     cd = f"attachment; filename=\"{fname_ascii}\"; filename*=UTF-8''{quote(fname_cn)}"
     return Response(content=data, media_type=media,
                     headers={'Content-Disposition': cd})

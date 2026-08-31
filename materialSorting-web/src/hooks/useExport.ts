@@ -38,8 +38,8 @@ export interface UseExportCallbacks {
 export interface UseExportResult {
   /** 触发导出（取 bestRun → POST /export → blob 下载）。sizes = ControlPanel form.sizes；
    *  filename = 上传母版名（透传作导出文件名前缀，与界面「当前文件」同源）；
-   *  table = PLT 唛架信息表格手输字段（2026-08-30，仅 fmt='plt' 消费 —— 后端
-   *  转 12 字段标签表附在唛架末端；undefined 时 payload 不带 table 键）。 */
+   *  table = PLT 唛架信息表格手输字段（2026-08-30，仅 fmt='plt'/'plt-clean' 消费 ——
+   *  后端转 14 字段表格附在唛架外围（毛版左右各一份）；undefined 时 payload 不带 table 键）。 */
   exportAs: (fmt: ExportFmt, sizes: number[], filename?: string,
              table?: ExportTableFields) => Promise<void>;
   /** 是否正在导出（按钮 disabled + 状态行 正在生成…）。 */
@@ -90,8 +90,9 @@ export function useExport(cb: UseExportCallbacks = {}): UseExportResult {
       table: table ? toExportTablePayload(table) : undefined,
     };
 
-    // 3) 状态行：正在生成 PNG/DXF…（AC#6）
-    cbRef.current.onStatus?.(`正在生成 ${fmt.toUpperCase()} …`);
+    // 3) 状态行：正在生成 PNG/DXF/PLT…（AC#6；毛版显示中文变体名）
+    cbRef.current.onStatus?.(
+      `正在生成 ${fmt === 'plt-clean' ? 'PLT（毛版）' : fmt.toUpperCase()} …`);
     setExporting(true);
     exportingRef.current = true;
     try {

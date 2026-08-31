@@ -437,3 +437,68 @@ def test_write_marker_plt_table_no_y_clipping_on_tiny_gate(caplog):
     out = raw.decode('ascii')
     assert any('门幅' in r.message and '偏小' in r.message for r in caplog.records)
     assert '22240,' in out                       # 外框右缘完整画出
+
+
+# --------------------------------------------- 毛版左表副本（clean=True，2026-08-31）
+
+
+def _pu_polys(out: str) -> list[list[str]]:
+    """PLT 文本 → PU 起笔折线坐标 token 流（PD 分块续画拼回，同 test_export_plt）。"""
+    polys, cur = [], None
+    for line in out.split('\r\n'):
+        if line.startswith('PU') and ',' in line:
+            if cur:
+                polys.append(cur)
+            cur = line[2:].rstrip(';').split(',')
+        elif line.startswith('PD'):
+            cur.extend(line[2:].rstrip(';').split(','))
+    if cur:
+        polys.append(cur)
+    return polys
+
+
+def test_write_marker_plt_clean_left_table_copy():
+    """毛版 + 表格：唛架左端再画一份同内容表格（对齐生产参考件左表结构）。
+
+    - X 引导扩为 20+0+36=56：PS = (56 + 536 + 10)×40 = 24080；
+    - 左表三竖缘 = 外框左 (−36+56)×40=800、key|value 分隔 1520、value 带外缘
+      (0+56)×40=2240 **与门幅框左缘共线**（参考件 x=24 处 n=2 同构）；
+    - 左右两表**逐折线全等**（+500mm=+20000u 位移）：同 info_table → 同
+      _column_layout 布局，文字朝向与世界坐标同向（无镜像）。
+    """
+    from materialsorting.web.export import write_marker_plt
+    world = _user_example_world()
+    t = _table(world, table_in=parse_table_payload({'bed_no': '153'}) or {})
+    raw = write_marker_plt(world, width_mm=500.0, gate_mm=1480.0, title='',
+                           info_table=t, clean=True)
+    out = raw.decode('ascii')
+    assert out.split('\r\n')[0] == 'IN;PS24080;SP1;PW0.08;'
+    # 左表外框左下角 (−36, 30)、分隔线下端 (−18, 30) → +56 引导 +36 平移 → ×40
+    assert 'PU800,2640;' in out and 'PU1520,2640;' in out
+    # 门幅框左下角 (0,0) → 2240,1440：与左表 value 带外缘共用一条竖线
+    assert 'PU2240,1440;' in out
+    # 右表原样：左缘 (500+56)×40=22240 起画、外缘 (536+56)×40=23680
+    assert 'PU22240,2640;' in out and '23680,' in out
+    # 左右两表折线集全等（模 500mm 位移）：门幅框 x∈[2240,22240] 与裁片
+    # x∈[2240,2640] 按区间排除后，左表 = max_x≤2240、右表 = min_x≥22240
+    polys = _pu_polys(out)
+    xtok = lambda p: [int(p[i]) for i in range(0, len(p), 2)]
+    left = [p for p in polys if max(xtok(p)) <= 2240]
+    right = [p for p in polys if min(xtok(p)) >= 22240]
+    # 两表 x0 差 = width−(−(gap+W)) = 536mm = 21440u（左表 x0=−36、右表 x0=+500）
+    shift = lambda p: [str(int(p[i]) + 21440) if i % 2 == 0 else p[i]
+                       for i in range(len(p))]
+    assert left and right
+    assert sorted(map(tuple, map(shift, left))) == sorted(map(tuple, right))
+
+
+def test_write_marker_plt_full_has_no_left_table():
+    """全量版（clean=False）带表格：只有右表，无左表（X 引导仍 20）。"""
+    from materialsorting.web.export import write_marker_plt
+    world = _user_example_world()
+    t = _table(world, table_in=parse_table_payload({'bed_no': '153'}) or {})
+    out = write_marker_plt(world, width_mm=500.0, gate_mm=1480.0, title='',
+                           info_table=t).decode('ascii')
+    assert out.split('\r\n')[0] == 'IN;PS22640;SP1;PW0.08;'   # (20+536+10)×40
+    assert 'PU800,2640;' not in out                            # 无左表角点
+    assert 'PU1520,2640;' not in out

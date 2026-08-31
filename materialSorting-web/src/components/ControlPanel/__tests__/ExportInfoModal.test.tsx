@@ -116,9 +116,12 @@ function seedBestRun(): RunRecord {
   return rec;
 }
 
-function renderModal(onConfirm: (f: ExportTableFields) => void = vi.fn()): void {
+function renderModal(
+  onConfirm: (f: ExportTableFields) => void = vi.fn(),
+  variant?: 'plt' | 'plt-clean',
+): void {
   act(() => {
-    root!.render(<ExportInfoModal exporting={false} onConfirm={onConfirm} />);
+    root!.render(<ExportInfoModal exporting={false} onConfirm={onConfirm} variant={variant} />);
   });
 }
 
@@ -309,5 +312,39 @@ describe('ExportInfoModal v3 全 14 字段预览', () => {
       await Promise.resolve();
     });
     expect(document.querySelector('.strategy-modal')).toBeNull();
+  });
+});
+
+describe('ExportInfoModal 毛版变体 variant（2026-08-31；当日由「净版」更名）', () => {
+  it("variant='plt-clean' → 标题/aria/确认按钮带毛版文案；14 字段流程与全量版共用", async () => {
+    seedBestRun();
+    const onConfirm = vi.fn();
+    renderModal(onConfirm, 'plt-clean');
+    openModal();
+    await flush();
+    expect(modal().querySelector('.strategy-title')!.textContent).toContain('导出 PLT（毛版）');
+    expect(modal().getAttribute('aria-label')).toBe('导出 PLT（毛版）唛架信息表格');
+    const btn = modal().querySelector<HTMLButtonElement>('[data-testid="export-info-confirm"]')!;
+    expect(btn.textContent).toContain('导出 PLT（毛版）');
+    // 字段流程共用：14 行预览照常按服务端列序交错（手输草稿 + 只读行）
+    expect(rowOrder()).toHaveLength(14);
+    // 提示行说明毛版双表形态
+    expect(modal().textContent).toContain('左右两端');
+    await act(async () => {
+      btn.click();
+      await Promise.resolve();
+    });
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+  });
+
+  it('缺省 variant（全量）→ 文案无毛版字样（回归锁）', async () => {
+    seedBestRun();
+    renderModal();
+    openModal();
+    await flush();
+    expect(modal().querySelector('.strategy-title')!.textContent).not.toContain('毛版');
+    expect(modal().querySelector('[data-testid="export-info-confirm"]')!.textContent)
+      .not.toContain('毛版');
+    expect(modal().textContent).not.toContain('左右两端');
   });
 });

@@ -173,6 +173,10 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
   // 打开入口在 handleExport 的 fmt==='plt' 分流）。
   const openModal = useControlPanelStore((s) => s.openModal);
 
+  // 2026-08-31：弹窗打开时的 PLT 变体（'plt' 全量 / 'plt-clean' 毛版）—— handleExport
+  // 分流时记下，handlePltConfirm 按它调 exportAs；默认 'plt'（弹窗永不因非导出路径打开）。
+  const [pendingPltFmt, setPendingPltFmt] = useState<'plt' | 'plt-clean'>('plt');
+
   /** 通用 patch 更新（部分字段）。 */
   function patch(p: Partial<FormState>) {
     setForm((prev) => ({ ...prev, ...p }));
@@ -259,19 +263,22 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
   );
 
   /** 导出按钮回调 —— 透传 form.sizes（过滤 null）给 useExport.exportAs（与旧 vanilla
-   *  实现 `sizes: selectedSizes()` 一致）。PLT 分流到信息表格弹窗（2026-08-30：先填
-   *  床次/层数等 6 手输字段再导出，生产 PLT 同款表格附在唛架末端）；PNG/DXF 直通。 */
+   *  实现 `sizes: selectedSizes()` 一致）。PLT 两变体分流到信息表格弹窗（2026-08-30：
+   *  先填床次/层数等 6 手输字段再导出，生产 PLT 同款表格附在唛架末端；2026-08-31 起
+   *  'plt-clean' 毛版同款分流（默认导出格式），两变体共用一份表格字段）；PNG/DXF 直通。 */
   function handleExport(fmt: ExportFmt): void {
-    if (fmt === 'plt') {
+    if (fmt === 'plt' || fmt === 'plt-clean') {
+      setPendingPltFmt(fmt);
       openModal('export_info');
       return;
     }
     void exportAs(fmt, filterSizes(), doc?.filename);
   }
 
-  /** PLT 信息表格弹窗确认 —— 携手输字段导出（唯一提交路径，ExportInfoModal 内已落盘记忆）。 */
+  /** PLT 信息表格弹窗确认 —— 携手输字段按打开时的变体导出（唯一提交路径，
+   *  ExportInfoModal 内已落盘记忆；pendingPltFmt 由 handleExport 分流时写入）。 */
   function handlePltConfirm(fields: ExportTableFields): void {
-    void exportAs('plt', filterSizes(), doc?.filename, fields);
+    void exportAs(pendingPltFmt, filterSizes(), doc?.filename, fields);
   }
 
   // US-017：doc=null 时 StatusLine 增提示「请先在上传预览页解析母版」（AC#3）；
@@ -413,7 +420,7 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
       <StatusLine text={visibleStatus} />
       <ExportButtons solving={solving} exporting={exporting} onExport={handleExport} partial={partial} />
       {/* PLT 导出信息表格弹窗单例（订阅 controlPanelStore 自显隐；Portal 到 body）。 */}
-      <ExportInfoModal exporting={exporting} onConfirm={handlePltConfirm} />
+      <ExportInfoModal exporting={exporting} onConfirm={handlePltConfirm} variant={pendingPltFmt} />
     </aside>
   );
 }

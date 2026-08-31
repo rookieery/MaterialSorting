@@ -445,3 +445,36 @@ def test_ws_pinned_session_survives_scan(client, monkeypatch):
 
     assert _wait_ws_open(_SID_A, 0) == 0                    # 断开后 ws_open 归零
     assert sessions.registry.scan_once(clk.now) == [_SID_A]  # 此后才可被逐出
+
+
+def test_export_plt_clean_variant(client):
+    """/export fmt='plt-clean'（2026-08-31 毛版）：200 PLT、文件名 _clean/_毛版 后缀、
+    带表格时唛架左端出现同内容表格副本（X 引导扩 56 → 左表外框左缘 (56−36)×40=800、
+    起画 y=30 → 2640）；全量 'plt' 同载荷无左表、无后缀（零回归）。"""
+    _inject_session(_SID_A, _band_pieces(scale=1.0), doc_id='docA')
+    body = {'width_mm': 2000.0, 'gate_mm': 1980.0, 'density': 0.5, 'seed': 1,
+            'sizes': [28],
+            'placed': [{'id': 'g01_28', 'rotation': 0, 'translation': [100, 100]}],
+            'table': {'bed_no': '153'}}
+
+    r = client.post('/export', json={**body, 'fmt': 'plt-clean'},
+                    headers={'X-Session-Id': _SID_A})
+    assert r.status_code == 200
+    assert r.headers['content-type'].startswith('application/plt')
+    cd = r.headers['content-disposition']
+    assert '_clean.plt' in cd
+    assert '%E6%AF%9B%E7%89%88' in cd                    # 毛版（RFC5987 编码；当日由「净版」更名）
+    txt = r.content.decode('ascii')
+    assert txt.startswith('IN;PS') and 'LB' not in txt
+    assert 'PU800,2640;' in txt                           # 毛版左表外框左下角
+    # 毛版 X 引导 56：PS = (56 + 2000+0+36 + 10)×40 = 84080
+    assert txt.split('\r\n')[0] == 'IN;PS84080;SP1;PW0.08;'
+
+    # 全量 'plt' 同载荷：右表照常、无左表、文件名无后缀（既有行为零变化）
+    r2 = client.post('/export', json={**body, 'fmt': 'plt'},
+                     headers={'X-Session-Id': _SID_A})
+    assert r2.status_code == 200
+    txt2 = r2.content.decode('ascii')
+    assert 'PU800,2640;' not in txt2
+    assert txt2.split('\r\n')[0] == 'IN;PS82640;SP1;PW0.08;'   # (20+2036+10)×40
+    assert '_clean' not in r2.headers['content-disposition']

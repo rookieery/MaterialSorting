@@ -7,7 +7,7 @@
 //   2. apply → phase==='done'：状态行「策略 run 已应用：seed N · X.XX%」+
 //      SolveControls 渲染 #restart（开始求解）+ PlaybackBar seekbar 解禁
 //   3. apply → ExportButtons 非 disabled + NestSVG 渲染多副本（demand=2 → 2 个可见 polygon）
-//   4. apply → 点导出（默认 PLT 分流 ExportInfoModal）→ 确认 → POST /export 载荷 =
+//   4. apply → 点导出（显式选 PLT 全量分流 ExportInfoModal）→ 确认 → POST /export 载荷 =
 //      合成帧（bestRun() 零改动选中；placed 含 demand 多副本 N 条 placement；pid
 //      `{label}_{size}` 与后端 placed_to_world 同规则）+ table 6 手输字段
 //   5. 未 apply（仅 done 态弹窗开着）→ registry 不变（显式按钮不自动应用）
@@ -259,7 +259,13 @@ describe('NestingPage.applyStrategyResult (US-006)', () => {
     openResultState();
     clickApply();
 
-    // 默认 fmt=plt → ControlPanel 分流打开 ExportInfoModal（portal 到 body），不直接 POST
+    // 显式切回全量 PLT（2026-08-31 起默认已是 PLT 毛版）→ ControlPanel 分流打开
+    // ExportInfoModal（portal 到 body），不直接 POST
+    act(() => {
+      const select = container!.querySelector<HTMLSelectElement>('.export-btns select')!;
+      select.value = 'plt';
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
     await act(async () => {
       container!.querySelector<HTMLButtonElement>('.export-btns button.export')!.click();
       await Promise.resolve();
