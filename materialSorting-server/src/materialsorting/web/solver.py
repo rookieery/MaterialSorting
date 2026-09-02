@@ -437,10 +437,14 @@ def solve_with_callback(instance, config, on_report, *, drain_interval: float = 
     t0 = time.time()
 
     def _solve():
+        # BaseException：pyo3 PanicException（Rust panic）不是 Exception 子类，
+        # except Exception 捕不住会静默杀线程 ⇒ 误报「solver 返回 None」
+        # （同 solve_worker._solve 2026-09-02 修复；本函数为兼容保留的
+        # threading 版，现行调用方走 solve_with_callback_proc）。
         try:
             holder['sol'] = instance.solve(config, progress=queue)
-        except Exception as e:
-            holder['err'] = e
+        except BaseException as e:            # noqa: BLE001 见上注
+            holder['err'] = f'{type(e).__name__}: {e}'
 
     def _emit(rtype, sol):
         placed = []

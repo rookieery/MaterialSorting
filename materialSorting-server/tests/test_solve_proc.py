@@ -158,6 +158,49 @@ def test_build_instance_error_returns_error_message(synthetic_pieces):
     assert "构造实例失败" in err, f"err should mention build failure, got: {err!r}"
 
 
+# ------------------------- Rust panic 透传（2026-09-02 修复回归锁）
+
+
+def test_solve_rust_panic_surfaces_as_error(synthetic_pieces):
+    """spyrrow Rust panic（pyo3 PanicException = BaseException 子类）→ err
+    透传 panic 真因，而非误导性「solver 返回 None」。
+
+    触发：单片段高 2200 > 条带 1000（strip packing 无限长但片高必须 < 条带，
+    否则放置器宽度跑飞 → Rust panic ``strip-width is running away``）。
+    2026-09-02 事故：worker ``_solve`` 只 ``except Exception`` 捕不住
+    PanicException，线程静默死亡、holder 空 → 兜底消息「solver 返回 None」
+    掩盖真实原因。修复后 ``except BaseException`` 字符串化（带异常类型）。
+    """
+    pieces, _gate = synthetic_pieces
+    tall = [{
+        **pieces[0],
+        "polygon": [[0.0, 0.0], [100.0, 0.0], [100.0, 2200.0], [0.0, 2200.0]],
+        "bbox": [0.0, 0.0, 100.0, 2200.0],
+        "area_mm2": 220000.0,
+    }]
+
+    received_manifest = {"v": False}
+
+    t0 = time.time()
+    proc, final, elapsed, err = solve_with_callback_proc(
+        tall, 1000.0,
+        {"time_budget": 2, "seed": 0},
+        on_manifest=lambda m: received_manifest.update(v=True),
+        on_report=lambda r: None,
+    )
+    dt = time.time() - t0
+
+    assert dt < 30.0, f"solve took too long: {dt:.2f}s"
+    assert final is None
+    assert err is not None
+    # 修复断言：panic 真因可见（异常类型 + Rust 消息），不再是误导性兜底文案
+    assert "solver 返回 None" not in err, f"err still masks panic: {err!r}"
+    assert "PanicException" in err, f"err should name the panic: {err!r}"
+    assert "strip-width" in err, f"err should carry rust message: {err!r}"
+    # manifest 正常投递（build_instance 本身成功，panic 在 solve 期）
+    assert received_manifest["v"] is True
+
+
 # --------------------------------------------- AC#7-(4) 子进程被外部 kill
 
 

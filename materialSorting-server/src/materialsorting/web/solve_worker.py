@@ -179,10 +179,15 @@ def solve_worker(pieces_snapshot, gate_mm, solve_params, result_queue, band=None
     t0 = time.time()
 
     def _solve():
+        # BaseException：spyrrow Rust panic 抛 pyo3 PanicException（BaseException
+        # 子类，非 Exception）—— except Exception 捕不住会静默杀死本线程，holder
+        # 保持空 ⇒ 对外误报「solver 返回 None」（2026-09-02 无 per_type prefix
+        # 组合片贴线事故）。daemon 求解线程收不到 KeyboardInterrupt（信号只投
+        # 主线程），此处捕 BaseException 不吞 Ctrl-C。
         try:
             holder['sol'] = instance.solve(config, progress=progress)
-        except Exception as e:
-            holder['err'] = e
+        except BaseException as e:            # noqa: BLE001 见上注
+            holder['err'] = f'{type(e).__name__}: {e}'
 
     th = threading.Thread(target=_solve, daemon=True)
     th.start()
@@ -205,7 +210,9 @@ def solve_worker(pieces_snapshot, gate_mm, solve_params, result_queue, band=None
 
     sol = holder.get('sol')
     if sol is None:
-        # 理论上不可达（err 为 None 则 sol 必被赋值）；防御性兜底。
+        # 防御性兜底：2026-09-02 起 _solve 捕 BaseException（含 pyo3
+        # PanicException），err=None 则 sol 必被赋值 —— 真正到达此处只剩
+        # solve 正常返回 None（未见先例）。
         result_queue.put({'kind': 'error', 'message': '求解失败: solver 返回 None'})
         return
 

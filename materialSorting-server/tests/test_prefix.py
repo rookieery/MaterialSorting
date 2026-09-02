@@ -69,6 +69,7 @@ from materialsorting.nesting_engine.prefix import (
     PIN_SKIP_AT_HEAD_MM,
     PIN_STRADDLER_EPS_MM,
     PIN_WIDTH_GROWTH_WARN_MM,
+    PREFIX_GATE_MARGIN_MM,
     PREFIX_MEMBER_COUNT,
     PREFIX_ORIENTATIONS,
     PREFIX_PID_PREFIX,
@@ -962,6 +963,60 @@ def test_select_prefix_plan_fallback_parity():
                     'height_mm': ref.bbox['height_mm'],
                     'residual_mm': 1250.0 - ref.bbox['height_mm'],
                     'fallback': True, 'n_candidates': 4}
+
+
+def test_select_prefix_plan_gate_margin_rejects_fitline():
+    """门幅安全余量（2026-09-02 修复回归锁）：H ∈ (gate−MARGIN, gate] 的贴线
+    组合判不可行 —— 5336 无 per_type 事故（residual 0.307mm 组合片在主解条带
+    放不下 ⇒ spyrrow panic「strip-width is running away」被误报为「solver
+    返回 None」）不再复发；次高安全候选胜出且 residual ≥ MARGIN 恒成立。
+
+    H 手算（gate=1980，安全线 1970）：A38+g03@36 = 1975 贴线（旧口径 1980
+    放行且为最高者）→ 拒；A38+g02@36 = 1960 → 胜；A36+g02@38 = 2050 /
+    A36+g03@38 = 1990 超线。
+    """
+    pid_meta, pieces = _stack_ctx(
+        {('g02', 38): 420.0, ('g03', 38): 360.0,     # 基座(38)=1560
+         ('g02', 36): 400.0, ('g03', 36): 415.0})    # 基座(36)=1630
+    trace = []
+    chunk, _gaps, _holes, info = _select(pid_meta, pieces, trace=trace)
+    assert info['fallback'] is False
+    assert info['size'] == 38
+    assert info['extra']['pid'] == 'g02_36'          # 贴线 g03@36 被余量拦下
+    assert info['height_mm'] == pytest.approx(1960.0, abs=0.5)
+    # 收敛不变量：胜者到门幅的残余 ≥ 安全余量（贴线组合永不入选）
+    assert info['residual_mm'] >= PREFIX_GATE_MARGIN_MM - 1e-6
+    fitline = [r for r in trace
+               if r['extra_size'] == 36 and r['label'] == 'g03']
+    assert fitline and all(not r['feasible'] for r in fitline)
+    assert all(r['reason'] == '竖排超高' for r in fitline)
+
+
+def test_select_prefix_plan_all_fitline_falls_back():
+    """全部组合贴线（唯一异码 g03@36：1560+415=1975 > 1970）→ 兜底 4 片
+    （用户定案①路径；兜底基座 1560 ≤ 安全线放行）。"""
+    pid_meta, pieces = _stack_ctx(
+        {('g02', 38): 420.0, ('g03', 38): 360.0, ('g03', 36): 415.0})
+    chunk, _gaps, _holes, info = _select(pid_meta, pieces)
+    assert info['fallback'] is True
+    assert info['extra'] is None
+    assert info['size'] == 38                        # elig 唯一码（36 缺 2+2）
+    assert len(chunk.members) == 4
+    assert info['height_mm'] == pytest.approx(1560.0, abs=0.5)
+    assert info['residual_mm'] >= PREFIX_GATE_MARGIN_MM - 1e-6
+
+
+def test_build_prefix_plan_fitline_base_rejected():
+    """兜底路径守卫同口径：基座自身贴线（4 片堆叠 1975，gate=1980 余 5mm <
+    MARGIN）→ PrefixError「安全条带界」；同基座在 gate=2000（余 25mm）放行
+    —— 守卫相对门幅，非绝对高度。"""
+    pid_meta, pieces = _stack_ctx({('g02', 34): 495.0, ('g03', 34): 492.5})
+    with pytest.raises(PrefixError, match='安全条带界'):
+        build_prefix_plan(pid_meta, pieces, front_pid='g02_34',
+                          back_pid='g03_34', d_g=0.0, gate_nest=1980.0)
+    chunk, _g, _h = build_prefix_plan(pid_meta, pieces, front_pid='g02_34',
+                                      back_pid='g03_34', d_g=0.0, gate_nest=2000.0)
+    assert chunk.bbox['height_mm'] == pytest.approx(1975.0, abs=0.5)
 
 
 def test_extra_rot180_accounting_and_envelope():

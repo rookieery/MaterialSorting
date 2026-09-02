@@ -40,8 +40,10 @@ yoff − b1)``（b0/b1 = 旋转后 bounds 最小角）—— 缺此补偿成员�
 ``EXTRA_ROT_CANDIDATES`` 取 union bbox 面积增长最小、平手取 0.0）；
 ``select_prefix_plan`` 把选码从 seeded 随机升级为**近满幅联合几何搜索** ——
 遍历 (套装码 A × 片型 × 异码码 B × rot)，取 5 片原始轮廓 union bbox 总高
-H ≤ gate_nest 的最大者（平手按迭代序确定性裁决，全流程无 RNG；seed 只在
-兜底路径消费），web 求解与预览共用的单一真相源。
+H ≤ gate_nest − ``PREFIX_GATE_MARGIN_MM`` 的最大者（安全余量 10mm：贴线
+组合在主解条带放不下 ⇒ spyrrow 放置器 panic，2026-09-02 residual 0.307mm
+事故修复；平手按迭代序确定性裁决，全流程无 RNG；seed 只在兜底路径消费），
+web 求解与预览共用的单一真相源。
 
 分层约束：本模块属 ``nesting_engine``，仅 import 标准库 + shapely + 本包兄弟
 模块（``constraints`` / ``sparrow_baseline`` / ``sparrow_experiments`` /
@@ -102,6 +104,14 @@ PREFIX_MEMBER_COUNT = 4
 # ``build_prefix_plan`` 直调（extra_rot=None）按 union bbox 面积增长择优、
 # 平手取 0.0；``select_prefix_plan`` 搜索时逐 rot 显式展开（平手裁决 rot0 先）。
 EXTRA_ROT_CANDIDATES = (0.0, 180.0)
+# 近满幅可行性安全余量（mm，2026-09-02 修复）：组合片高度逼近求解条带（残余
+# <10mm）时 spyrrow 放置器无解，Rust 侧 panic ``strip-width is running away``
+# （实测 5336 无 per_type（d_g=0）选码 residual 0.307mm 必炸；panic 抛出的
+# PanicException 是 BaseException 子类，worker 的 except Exception 捕不住，
+# 对外误报「solver 返回 None」）。留 10mm 稳定可行（占 1980 门幅 0.5%，近满幅
+# 形态无感）。H 判据统一收紧、兜底 4 片竖排高守卫同口径 —— d_g>0 时 erode 对
+# 非水平边缘的收缩 < 2·d_g，余量同样不保证，故不按 d_g 折算。
+PREFIX_GATE_MARGIN_MM = 10.0
 # Y 向滑移粗扫步进（mm，镜像 waist_band.CHAIN_SLIDE_STEP_MM）。
 SLIDE_STEP_MM = 20.0
 # 滑移二分次数（40 次 ⇒ 收敛精度 ~2^-40×扫描区间，远小于 0.01mm）。
@@ -452,7 +462,8 @@ def build_prefix_plan(pid_meta, pieces_by_id, *, front_pid, back_pid, d_g,
         组合片 erode 深度（= max(d_front, d_back) 保守，由调用方裁定 —— 前后幅
         per_type d 可能不同，取 max 保证重叠公差最严格片不超限）。
     gate_nest : float
-        求解约束幅宽（竖排高上限基准，= 输入门幅即实际幅宽）。
+        求解约束幅宽（竖排高上限基准 = 输入门幅 − ``PREFIX_GATE_MARGIN_MM``
+        安全余量，2026-09-02 起与 ``select_prefix_plan`` 的可行线同口径）。
     order : str
         成员交错序（FR-10 定稿 ``'interleave'``；``'grouped'`` 备档）。
     extra_pid : str, optional
@@ -530,13 +541,18 @@ def build_prefix_plan(pid_meta, pieces_by_id, *, front_pid, back_pid, d_g,
     minx, miny, maxx, maxy = union.bounds
     offset = (float(minx), float(miny))
     bbox = {'width_mm': float(maxx - minx), 'height_mm': float(maxy - miny)}
-    strip_h = float(gate_nest)
+    # 安全条带界 = 门幅 − PREFIX_GATE_MARGIN_MM（与 select_prefix_plan 的
+    # limit 同口径，2026-09-02 修复）：兜底 4 片路径同样不许贴线（d_g=0 时
+    # 组合片碰撞轮廓 == 原始 union，残余 <margin 在主解条带放不下 ⇒ spyrrow
+    # panic「strip-width is running away」）。
+    strip_h = float(gate_nest) - PREFIX_GATE_MARGIN_MM
     if bbox['height_mm'] > strip_h + 1e-6:
         cnt_txt = '5 片（4 同码 + 异码补片）' if extra_pid is not None \
             else '4 片同码'
         raise PrefixError(
-            f'前缀簇竖排高 {bbox["height_mm"]:.0f}mm > 条带 {strip_h:.0f}mm'
-            f'（{cnt_txt}竖排超高，组合片主解放不下）')
+            f'前缀簇竖排高 {bbox["height_mm"]:.0f}mm > 安全条带界 '
+            f'{strip_h:.0f}mm（门幅 {float(gate_nest):.0f} − 余量 '
+            f'{PREFIX_GATE_MARGIN_MM:.0f}；{cnt_txt}竖排超高，组合片主解放不下）')
 
     try:
         solid = _solid_region(union)
@@ -588,11 +604,13 @@ def select_prefix_plan(pid_meta, pieces_by_id, *, front_label, back_label,
     异码前/后幅，整列近满幅）：遍历 (套装码 A × 片型 × 异码码 B × rot) ——
     对每组合构造性滑移贴触（``_place_members``，eroded 碰撞口径），H = 5 片
     **原始轮廓** union bbox 高度（与竖排高守卫同口径），可行 = H ≤ gate_nest
-    +1e-6 且贴触缝隙 ≤ ``GAP_EPS_MM``；**取 H 最大者**（最接近门幅，不设缝隙
-    阈值 —— 残余交主解 NFP 填小片，用户定案 2026-09-02 ②），平手按迭代序
-    ``(A 升序, front 先于 back, B 升序, rot0 先)`` 确定性裁决 —— **全流程无
-    RNG**（``seed`` 只在兜底路径消费）。基座自身超高/贴触失败的 A 直接跳过
-    （补片只会更高）。
+    − ``PREFIX_GATE_MARGIN_MM``（安全余量：组合片碰撞轮廓（d_g=0 时即原始
+    union）贴到条带时 spyrrow 放置器 panic，2026-09-02 residual 0.307mm
+    事故起因）且贴触缝隙 ≤ ``GAP_EPS_MM``；**取 H 最大者**（最接近安全线，
+    不设缝隙阈值 —— 残余交主解 NFP 填小片，用户定案 2026-09-02 ②），平手
+    按迭代序 ``(A 升序, front 先于 back, B 升序, rot0 先)`` 确定性裁决 ——
+    **全流程无 RNG**（``seed`` 只在兜底路径消费）。基座自身超高/贴触失败的
+    A 直接跳过（补片只会更高）。
 
     兜底（用户定案 ①）：全无可行组合 → ``pick_prefix_size``（crc32 seeded，
     含资格码为空时 PrefixError 现行文案）+ 4 片 ``build_prefix_plan``，与
@@ -625,7 +643,9 @@ def select_prefix_plan(pid_meta, pieces_by_id, *, front_label, back_label,
     """
     elig = eligible_sizes(quantities, front_label, back_label, sizes=sizes)
     cands = _extra_candidates(pid_meta, front_label, back_label)
-    limit = float(gate_nest) + 1e-6
+    # 安全余量（PREFIX_GATE_MARGIN_MM，2026-09-02 修复）：见常量注释 —— 贴线
+    # 组合（残余 <10mm）在主解条带放不下 ⇒ spyrrow panic。
+    limit = float(gate_nest) - PREFIX_GATE_MARGIN_MM
     best = None            # (H, A, label, extra_pid, rot)
     n_candidates = 0
     for A in sorted(elig):
