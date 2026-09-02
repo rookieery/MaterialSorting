@@ -1,35 +1,29 @@
 {
-  "branchName": "ralph/prefix-extra-piece",
-  "stories": [
-    {
-      "id": "US-001",
-      "title": "prefix 核心选码搜索 + 顶部异码补片构造",
-      "description": "As a developer, I want 在 materialSorting-server/src/materialsorting/nesting_engine/prefix.py 实现近满幅联合选码与第 5 片补片构造 so that「4 片套装总高 + 顶部异码片 ≈ 门幅」成为布头第一列的构造性保证（单一真相源，web 求解与预览共用）。\n\n具体任务：\n1. materialSorting-server/src/materialsorting/nesting_engine/prefix.py — 把 build_prefix_plan 的成员放置循环抽为内部函数 _place_members（4 片路径逻辑不变）；签名 additive 加 extra_pid=None（异码补片 pid）：补片 = 第 5 成员，同款候选 x 集合 {0, ub[0], ub[2]−w, pb[0], pb[2]−w} + _slide_touch_y 滑到与已占 union 首次贴触（eroded 碰撞口径），rot 遍历新常量 EXTRA_ROT_CANDIDATES=(0.0,180.0) 取 union bbox 面积增长最小、平手取 0.0；记账同权威式 tr=(xoff−b0, yoff−b1)（rot180 负坐标补偿）；gaps 扩 4 条（GAP_EPS_MM=1.0 守卫沿用）、members 5 条、chunk.pid 追加 +{extra_label}@{extra_size}（如 PS_g02+g03@34+g02@32）、竖排高守卫 H ≤ gate_nest 沿用\n2. 同文件新增 select_prefix_plan(pid_meta, pieces_by_id, *, front_label, back_label, quantities, sizes, d_g, gate_nest, seed, order='interleave') → (chunk, gaps, holes, info)：elig=eligible_sizes（空抛 PrefixError 现行文案）→ 逐 A ∈ sorted(elig) 跑 _place_members 基座（套装自身超高/贴触失败的 A 跳过）→ 补片候选池从 pid_meta 派生（label∈{front,back}、数字码、≠A、demand≥1）→ 逐 (片型,B,rot) 滑移 → H = 5 片原始轮廓 union bbox 高度 → 可行 = H ≤ gate_nest+1e-6 且缝隙达标 → 取 H 最大者，平手按 (A 升序, front 先于 back, B 升序, rot0 先) 确定性裁决，全流程无 RNG；全无可行组合 → 兜底 = pick_prefix_size(elig,seed,...) + 4 片 build_prefix_plan（与现行行为完全一致，info.fallback=True）；胜者跑一次完整管线（union→_solid_region 焊接→erode(d_g)→clean→归一化）\n3. info = {'size':A, 'extra':{'pid','label','size','rotation'}|None, 'height_mm', 'residual_mm', 'fallback':bool, 'n_candidates':int}\n4. materialSorting-server/tests/test_prefix.py — 新增「选码搜索（顶部异码补片）」describe：最优拟合选取（_prefix_ctx(h_mul=...) 造已知高度，set@A+front@B 恰 1975/1980 最小残差 → 断言 A/B/片型、members=5、第 5 成员在顶、贴触≤1mm、H≤gate、residual=gate−H）；候选池排除 B==A 与 demand<1；两可行组合取 H 大者；兜底 chunk 与现行 pick_prefix_size+build_prefix_plan 产物一致 + info.fallback=True；补片 rot180 记账权威式单测；5 成员展开黄金用例（offset 减号，镜像 _hand_ps_chunk 手算，rot0/rot180 两朝向）；双跑确定性 to_dict() 全等\n5. prefix.py main() 冒烟入口升级：python -m materialsorting.nesting_engine.prefix 打印候选表 + 选定组合 + residual（5336 真实 intermediate）\n\n验收标准：\n- extra_pid=None 时既有 test_prefix.py 用例零改动全绿（= 4 片构造逐字节回归红线）\n- 选码搜索确定性：同输入双跑选码组合一致、to_dict 全等；全流程无 RNG（兜底路径才用 crc32 seeded）\n- 补片与顶片贴触缝隙 ≤1mm、H ≤ gate、候选池资格规则（≠A、demand≥1、数字码）单测覆盖\n- 分层纯度不变：prefix.py 禁 import web/cli（AST 守卫既有用例）；python -m materialsorting.nesting_engine.prefix 冒烟跑通\n- pytest 全量绿",
-      "passes": true
-    },
-    {
-      "id": "US-002",
-      "title": "demand 部分扣减 + worker/WS 接线",
-      "description": "As a user, I want web 求解链路支持 5 片前缀组合片且异码片余量照排主解 so that placed 条数守恒 = 全量 Σdemand、stage/final/工件回显选定组合。\n\n具体任务：\n1. materialSorting-server/src/materialsorting/web/solver.py — build_instance 的 exclude_pids 升级双形态：iterable[str] = 现行整 pid 跳过（逐字节不变）；Mapping[str,int] = 每 pid 扣 n 份（Item demand = meta['demand']−n，≤0 跳过）；pid_meta/total_area/manifest 逐字段不动（禁 quantities=0 口径事故防线沿用）；docstring 同步\n2. materialSorting-server/src/materialsorting/web/solve_worker.py — _build_prefix 改调 select_prefix_plan（eligible→pick→build 三步内聚）；:136 接线 exclude_pids 改 Counter(m['pid'] for m in prefix_chunk.members)；prefix_ctx 增 extra/residual_mm/fallback；stage 消息 additive 加 extra_label/extra_size/residual_mm（兜底路径 fallback 置 True）；_prefix_record 增 extra/residual_mm/fallback（final 消息 prefix 段随 record 整体透传）\n3. materialSorting-server/src/materialsorting/web/routes_ws.py — on_stage 键白名单（:319）加 extra_label/extra_size/residual_mm\n4. materialSorting-server/src/materialsorting/web/prefix_accept.py — :265/:274 len(stack)==4 / len(rows)==4 放宽为 in (4,5)（US-005 回放护栏兼容新形态）\n5. materialSorting-server/tests/test_prefix_ws.py — 扩展：stage 新键透传 / placed 守恒 5 成员版（= Σdemand）/ PS_ 哨兵\n\n验收标准：\n- Mapping 形态：{pid:n} → Item demand=N−n、≤0 跳过；iterable 形态回归不变；pid_meta/total_area/manifest 不变（单测双形态对拍）\n- 4 牔时 Counter={front_A:2,back_A:2} 与现行集合跳过等价；5 片时异码 pid 扣 1 余量照排；placed 条数 = 全量 Σdemand\n- manifest/frame/final 无 PS_（_emit_placed 展开单点不变）；_finalize_prefix/permute_pin/reinsert_evicted/_recheck_layout 长度无关零改动\n- prefix 缺省路径既有测试（test_solve_proc/test_ws_stop/test_waist_band_ws 等）零改动通过；tests/test_prefix_ws.py 全绿\n- ms-web 启动无回归、分层依赖未反向",
-      "passes": false
-    },
-    {
-      "id": "US-003",
-      "title": "prefix-preview 换选码真相源 + 线程池 + 响应扩展",
-      "description": "As a 版师, I want POST /api/prefix-preview 展示 5 片近满幅形态与残余缝隙 so that 选码时刻即可预知求解时第一列的精确形态（预览=求解同函数）。\n\n具体任务：\n1. materialSorting-server/src/materialsorting/web/routes_views.py — prefix_preview（:214-330）构造段从 eligible→pick→build 换成 select_prefix_plan（与求解同一真相；docstring 的 seed 说明改写：选码确定性化后不再依赖 seed 对齐）；构造段挪 await run_in_threadpool(...)（选码搜索秒级，防阻塞事件循环——多会话并发下主进程卡顿；会话解析仍主线程先行，401/400 早退语义不变）\n2. 响应 additive：extra:{label,size}|null、residual_mm、gate_mm、fallback；members 列表天然带第 5 片（pid/size/color/tag/polygon 泛型）；不返回 PS_ pid 哨兵不变；失败包络不变（200 + ok:false）\n3. materialSorting-server/tests/test_prefix_preview_api.py — 扩展：新字段 / 兜底形态（extra=null、fallback=true）/ 预览与求解同选对拍（同 payload 直调 select_prefix_plan 一致）\n\n验收标准：\n- 预览与求解同选：同 payload 下 preview 的 (A/片型/B) 与 select_prefix_plan 直调一致\n- 构造段在线程池执行；既有用例兼容零改动、新增用例全绿\n- 性能红线：5336 规模（~120 组合）preview 构造段实测 <5s（超线再优化：rot0 先筛、缓存 pid×rot eroded 几何，优化不得改变确定性结果）\n- pytest 全量绿",
-      "passes": false
-    },
-    {
-      "id": "US-004",
-      "title": "前端类型 + 状态行 + 预览放大层文案",
-      "description": "As a 版师, I want 求解状态行与预览放大层显示选定的异码组合 so that 我在两处都能看到「尺码 A ＋ 顶部异码片 B·余 X mm 近满幅」。\n\n具体任务：\n1. materialSorting-web/src/types/ws.ts — StageMsg 加可选 extra_label/extra_size/residual_mm（注释更新：选码改为几何搜索近满幅）\n2. materialSorting-web/src/types/band.ts — PrefixPreviewResponse 加 extra/residual_mm/gate_mm/fallback 可选字段；n_members 注释「恒 4」→「4（兜底）或 5（补片）」\n3. materialSorting-web/src/components/NestingPage.tsx — :66 状态行：有补片时「起始端成套构造中（尺码 {size}＋{extra_label}@{extra_size}）…」，无补片维持现行文案\n4. materialSorting-web/src/components/ControlPanel/PerTypeOverridesModal.tsx — :964 放大层文案：有补片时追加「＋ 顶部 {extra_label}@{extra_size} 异码片 · 余 {residual_mm}mm 近满幅」\n5. 对应 vitest 扩展（NestingPage 状态行双形态 / PerTypeOverridesModal 文案双形态 / types 编译）\n\n验收标准：\n- 协议向后兼容：新键全部可选，旧后端（无键）前端不炸、文案回落现行形态\n- 预览缩略 5 片自动渲染（BandPreviewMember 泛型零改动），异码片颜色 = size_color(B) 同码同色跨片型\n- params.ts/collectPrefix/ControlPanel 闸门零改动（协议无新键）\n- npm run typecheck 干净 + vitest 全绿 + npm run build 过\n- 通过浏览器验证：布局设置开 prefix → 预览缩略 5 片 + 放大层异码标注 → 求解状态行含异码码 → final 第一列形态目检（4 同码 + 顶异码、近满幅、相切）",
-      "passes": false
-    },
-    {
-      "id": "US-005",
-      "title": "端到端验收与文档闭环",
-      "description": "As a 项目负责人, I want 5336 端到端冒烟（形态判据 + 守恒 + 导出）+ 文档同步 so that 异码补片以可证方式落地合入。\n\n具体任务：\n1. scripts/smoke_prefix_extra.mjs（模板 scripts/smoke-band-preview.mjs 套路）— 上传 → 布局设置开 prefix → 预览 5 片 + 异码标注 → 求解 → 状态行 → 导出 PLT 无 PS_\n2. 形态判据验收：5 成员（4 同码 + 顶异码）、相邻贴触缝隙 ≤1mm、组合片 H 近满幅（residual 打点在案）、组合片 min_x ≤ 6mm 锚定（或置换钉位路径正常）\n3. 密度 sanity：同源短预算 on/off 对拍不显著劣化（≤1.0pt 线；形态规则非优化器定位）；确定性：同输入双跑选码组合一致 + chunk.to_dict() 全等\n4. 文档同步：CLAUDE.md（prefix.py 条目 + 数据流主线 prefix 段）、README 起始端成套节、.docs/business/起始端成套前后幅_版师确认清单.md 追加 §9（异码补片需求 + 2026-09-02 三项定案：兜底退回 4 片 / 不设缝隙阈值 / 保留 0°/180°）、.docs/technical/agent-api-reference（prefix-preview 响应 + on_stage 白名单）、agent-file-map、web/AGENTS、tests/AGENTS、memory 新条目（选码口径沿革：近满幅几何搜索取代 seeded 随机）\n\n验收标准：\n- 冒烟脚本全过（预览/求解/导出三环节 + PS_ 零泄漏）\n- 形态判据逐项在案；on/off 对拍 ≤1.0pt 劣化线\n- 后端 pytest 全量绿 + 前端 vitest 全绿 + build 过\n- python -m materialsorting.nesting_engine.prefix 冒烟跑通、分层依赖未反向\n- 文档八处同步完成",
-      "passes": false
-    }
-  ]
+ "branchName": "ralph/prefix-extra-piece",
+ "stories": [
+  {
+   "id": "US-002",
+   "title": "demand 部分扣减 + worker/WS 接线",
+   "description": "As a user, I want web 求解链路支持 5 片前缀组合片且异码片余量照排主解 so that placed 条数守恒 = 全量 Σdemand、stage/final/工件回显选定组合。\n\n具体任务：\n1. materialSorting-server/src/materialsorting/web/solver.py — build_instance 的 exclude_pids 升级双形态：iterable[str] = 现行整 pid 跳过（逐字节不变）；Mapping[str,int] = 每 pid 扣 n 份（Item demand = meta['demand']−n，≤0 跳过）；pid_meta/total_area/manifest 逐字段不动（禁 quantities=0 口径事故防线沿用）；docstring 同步\n2. materialSorting-server/src/materialsorting/web/solve_worker.py — _build_prefix 改调 select_prefix_plan（eligible→pick→build 三步内聚）；:136 接线 exclude_pids 改 Counter(m['pid'] for m in prefix_chunk.members)；prefix_ctx 增 extra/residual_mm/fallback；stage 消息 additive 加 extra_label/extra_size/residual_mm（兜底路径 fallback 置 True）；_prefix_record 增 extra/residual_mm/fallback（final 消息 prefix 段随 record 整体透传）\n3. materialSorting-server/src/materialsorting/web/routes_ws.py — on_stage 键白名单（:319）加 extra_label/extra_size/residual_mm\n4. materialSorting-server/src/materialsorting/web/prefix_accept.py — :265/:274 len(stack)==4 / len(rows)==4 放宽为 in (4,5)（US-005 回放护栏兼容新形态）\n5. materialSorting-server/tests/test_prefix_ws.py — 扩展：stage 新键透传 / placed 守恒 5 成员版（= Σdemand）/ PS_ 哨兵\n\n验收标准：\n- Mapping 形态：{pid:n} → Item demand=N−n、≤0 跳过；iterable 形态回归不变；pid_meta/total_area/manifest 不变（单测双形态对拍）\n- 4 牔时 Counter={front_A:2,back_A:2} 与现行集合跳过等价；5 片时异码 pid 扣 1 余量照排；placed 条数 = 全量 Σdemand\n- manifest/frame/final 无 PS_（_emit_placed 展开单点不变）；_finalize_prefix/permute_pin/reinsert_evicted/_recheck_layout 长度无关零改动\n- prefix 缺省路径既有测试（test_solve_proc/test_ws_stop/test_waist_band_ws 等）零改动通过；tests/test_prefix_ws.py 全绿\n- ms-web 启动无回归、分层依赖未反向",
+   "passes": true
+  },
+  {
+   "id": "US-003",
+   "title": "prefix-preview 换选码真相源 + 线程池 + 响应扩展",
+   "description": "As a 版师, I want POST /api/prefix-preview 展示 5 片近满幅形态与残余缝隙 so that 选码时刻即可预知求解时第一列的精确形态（预览=求解同函数）。\n\n具体任务：\n1. materialSorting-server/src/materialsorting/web/routes_views.py — prefix_preview（:214-330）构造段从 eligible→pick→build 换成 select_prefix_plan（与求解同一真相；docstring 的 seed 说明改写：选码确定性化后不再依赖 seed 对齐）；构造段挪 await run_in_threadpool(...)（选码搜索秒级，防阻塞事件循环——多会话并发下主进程卡顿；会话解析仍主线程先行，401/400 早退语义不变）\n2. 响应 additive：extra:{label,size}|null、residual_mm、gate_mm、fallback；members 列表天然带第 5 片（pid/size/color/tag/polygon 泛型）；不返回 PS_ pid 哨兵不变；失败包络不变（200 + ok:false）\n3. materialSorting-server/tests/test_prefix_preview_api.py — 扩展：新字段 / 兜底形态（extra=null、fallback=true）/ 预览与求解同选对拍（同 payload 直调 select_prefix_plan 一致）\n\n验收标准：\n- 预览与求解同选：同 payload 下 preview 的 (A/片型/B) 与 select_prefix_plan 直调一致\n- 构造段在线程池执行；既有用例兼容零改动、新增用例全绿\n- 性能红线：5336 规模（~120 组合）preview 构造段实测 <5s（超线再优化：rot0 先筛、缓存 pid×rot eroded 几何，优化不得改变确定性结果）\n- pytest 全量绿",
+   "passes": false
+  },
+  {
+   "id": "US-004",
+   "title": "前端类型 + 状态行 + 预览放大层文案",
+   "description": "As a 版师, I want 求解状态行与预览放大层显示选定的异码组合 so that 我在两处都能看到「尺码 A ＋ 顶部异码片 B·余 X mm 近满幅」。\n\n具体任务：\n1. materialSorting-web/src/types/ws.ts — StageMsg 加可选 extra_label/extra_size/residual_mm（注释更新：选码改为几何搜索近满幅）\n2. materialSorting-web/src/types/band.ts — PrefixPreviewResponse 加 extra/residual_mm/gate_mm/fallback 可选字段；n_members 注释「恒 4」→「4（兜底）或 5（补片）」\n3. materialSorting-web/src/components/NestingPage.tsx — :66 状态行：有补片时「起始端成套构造中（尺码 {size}＋{extra_label}@{extra_size}）…」，无补片维持现行文案\n4. materialSorting-web/src/components/ControlPanel/PerTypeOverridesModal.tsx — :964 放大层文案：有补片时追加「＋ 顶部 {extra_label}@{extra_size} 异码片 · 余 {residual_mm}mm 近满幅」\n5. 对应 vitest 扩展（NestingPage 状态行双形态 / PerTypeOverridesModal 文案双形态 / types 编译）\n\n验收标准：\n- 协议向后兼容：新键全部可选，旧后端（无键）前端不炸、文案回落现行形态\n- 预览缩略 5 片自动渲染（BandPreviewMember 泛型零改动），异码片颜色 = size_color(B) 同码同色跨片型\n- params.ts/collectPrefix/ControlPanel 闸门零改动（协议无新键）\n- npm run typecheck 干净 + vitest 全绿 + npm run build 过\n- 通过浏览器验证：布局设置开 prefix → 预览缩略 5 片 + 放大层异码标注 → 求解状态行含异码码 → final 第一列形态目检（4 同码 + 顶异码、近满幅、相切）",
+   "passes": false
+  },
+  {
+   "id": "US-005",
+   "title": "端到端验收与文档闭环",
+   "description": "As a 项目负责人, I want 5336 端到端冒烟（形态判据 + 守恒 + 导出）+ 文档同步 so that 异码补片以可证方式落地合入。\n\n具体任务：\n1. scripts/smoke_prefix_extra.mjs（模板 scripts/smoke-band-preview.mjs 套路）— 上传 → 布局设置开 prefix → 预览 5 片 + 异码标注 → 求解 → 状态行 → 导出 PLT 无 PS_\n2. 形态判据验收：5 成员（4 同码 + 顶异码）、相邻贴触缝隙 ≤1mm、组合片 H 近满幅（residual 打点在案）、组合片 min_x ≤ 6mm 锚定（或置换钉位路径正常）\n3. 密度 sanity：同源短预算 on/off 对拍不显著劣化（≤1.0pt 线；形态规则非优化器定位）；确定性：同输入双跑选码组合一致 + chunk.to_dict() 全等\n4. 文档同步：CLAUDE.md（prefix.py 条目 + 数据流主线 prefix 段）、README 起始端成套节、.docs/business/起始端成套前后幅_版师确认清单.md 追加 §9（异码补片需求 + 2026-09-02 三项定案：兜底退回 4 片 / 不设缝隙阈值 / 保留 0°/180°）、.docs/technical/agent-api-reference（prefix-preview 响应 + on_stage 白名单）、agent-file-map、web/AGENTS、tests/AGENTS、memory 新条目（选码口径沿革：近满幅几何搜索取代 seeded 随机）\n\n验收标准：\n- 冒烟脚本全过（预览/求解/导出三环节 + PS_ 零泄漏）\n- 形态判据逐项在案；on/off 对拍 ≤1.0pt 劣化线\n- 后端 pytest 全量绿 + 前端 vitest 全绿 + build 过\n- python -m materialsorting.nesting_engine.prefix 冒烟跑通、分层依赖未反向\n- 文档八处同步完成",
+   "passes": false
+  }
+ ]
 }

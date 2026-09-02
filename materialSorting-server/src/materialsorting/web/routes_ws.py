@@ -313,10 +313,14 @@ async def ws_solve(ws: WebSocket):
             band（US-011 FR-2）：``{'type':'stage','stage':'band', fill_pct, bbox,
             fallback:false, elapsed}``；prefix（US-003 FR-2）：``{'type':'stage',
             'stage':'prefix', size, fill_pct, bbox, holes, elapsed}``（size 回显选中
-            资格码）。键白名单并集透传 —— 旧前端 default:break 静默忽略，前向兼容。
+            资格码；2026-09-02 异码补片 additive：fallback / extra_label /
+            extra_size / residual_mm —— 兜底 4 片形态 fallback=True、补片在案时
+            extra_label/extra_size 非 None）。键白名单并集透传 —— 旧前端
+            default:break 静默忽略，前向兼容。
             """
             out = {'type': 'stage', 'stage': m.get('stage', 'band')}
-            for k in ('fill_pct', 'bbox', 'fallback', 'elapsed', 'size', 'holes'):
+            for k in ('fill_pct', 'bbox', 'fallback', 'elapsed', 'size', 'holes',
+                      'extra_label', 'extra_size', 'residual_mm'):
                 if k in m:
                     out[k] = m[k]
             loop.call_soon_threadsafe(queue.put_nowait, out)

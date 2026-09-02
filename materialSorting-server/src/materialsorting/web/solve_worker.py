@@ -17,14 +17,21 @@ items；帧/final 发射经 ``_emit_placed`` **单点**把组合片 placement �
 placement（三处发射点共享该序列化器 → WB_ 永不出现在 manifest/frame/final）。
 
 US-003（起始端成套前后幅编排）：``prefix`` 配置（worker 形态 ``{'front','back'}``，
-无 size —— 资格码此处 seeded 随机选取）非空时，band 之后同样**进程内**同步构造
-（``eligible_sizes → pick_prefix_size → build_prefix_plan``），投 ``{kind:stage,
-stage:'prefix', size, ...}``；主实例以 ``exclude_pids={front_pid, back_pid}``
-**pid 级**扣减（同码其他码照排）+ PS_ 组合片进 extra_items。final 后置换挂钩
-（FR-7）：组合片 min_x > 6mm 时 ``pin_prefix_layout`` 置换 + 复检（失败回退），
-≤6mm 跳过（P0 常态锚定）；帧不置换（final 为权威布局）。双开（band+prefix）
-时 WB 带位只记录不置换（FR-8）：世界 bbox（min_x/max_x/距布尾）写进
-``prefix_runs`` 工件与 final 统计段。
+无 size —— 选码此处确定）非空时，band 之后同样**进程内**同步构造，投
+``{kind:stage, stage:'prefix', size, ...}``；主实例以 ``exclude_pids`` **pid 级**
+扣减 + PS_ 组合片进 extra_items。final 后置换挂钩（FR-7）：组合片 min_x > 6mm 时
+``pin_prefix_layout`` 置换 + 复检（失败回退），≤6mm 跳过（P0 常态锚定）；帧不置换
+（final 为权威布局）。双开（band+prefix）时 WB 带位只记录不置换（FR-8）：世界
+bbox（min_x/max_x/距布尾）写进 ``prefix_runs`` 工件与 final 统计段。
+
+2026-09-02（异码补片，US-002）：``_build_prefix`` 选码换 ``select_prefix_plan``
+（eligible→pick→build 三步内聚的单一真相源，与预览同函数）—— 近满幅几何搜索
+产 5 片组合片（4 同码基座 + 顶部异码补片，全流程无 RNG；seed 仅兜底路径消费），
+全无可行组合时兜底 4 片 seeded 构造（与旧行为完全一致，``fallback=True``）。
+``exclude_pids`` 接线升级 ``Counter(m['pid'] for m in members)``（Mapping 形态
+部分扣减）：4 片时 {front:2, back:2} 与集合跳过等价；5 片时异码 pid 扣 1 份、
+余量照排主解 ⇒ placed 条数守恒 = 全量 Σdemand。stage/final/工件 additive 回显
+选定组合（extra_label/extra_size/residual_mm + extra/residual_mm/fallback）。
 
 **picklable 约束（Windows spawn）**：``solve_worker`` 必须是**顶层函数**、无闭包、参数
 全部 JSON 可序列化（list/dict/float/int/str）。子进程 spawn 时会通过 pickle 重建本函数。
@@ -36,6 +43,7 @@ import logging
 import os
 import threading
 import time
+from collections import Counter
 
 _log = logging.getLogger(__name__)
 
@@ -59,8 +67,11 @@ def solve_worker(pieces_snapshot, gate_mm, solve_params, result_queue, band=None
         子进程 → 主进程的消息队列。投递内容全部 JSON 可序列化，spyrrow 对象绝不跨进程：
         - ``{kind:'stage', stage, fill_pct, bbox, fallback, elapsed}``（US-011：band
           开启时 manifest 前唯一一次，带内聚排完成统计）
-        - ``{kind:'stage', stage:'prefix', size, fill_pct, bbox, holes, elapsed}``
-          （US-003：prefix 开启时 manifest 前唯一一次；双开时 band→prefix 序）
+        - ``{kind:'stage', stage:'prefix', size, fill_pct, bbox, holes, fallback,
+          extra_label, extra_size, residual_mm, elapsed}``（US-003：prefix 开启时
+          manifest 前唯一一次；双开时 band→prefix 序；2026-09-02 异码补片 additive
+          —— extra_label/extra_size 仅补片在案时非 None，fallback=True 即兜底
+          4 片形态）
         - ``{kind:'manifest', pid_meta, total_area, n_eroded, gate_mm}``
         - ``{kind:'frame', report}`` 每个 sparrow 中间解（report 内含 density/width_mm/placed_items）
         - ``{kind:'final', final}`` 末态解（同 frame 但 type=final、无 phase；prefix
@@ -75,9 +86,10 @@ def solve_worker(pieces_snapshot, gate_mm, solve_params, result_queue, band=None
     prefix : dict | None
         US-003 起始端成套配置 ``{'front': g码, 'back': g码}``（routes_ws
         ``_parse_prefix`` 服务端校验产物，**无 size 键**）。None/缺键 = 关闭。
-        资格码在本进程内 seeded 随机选取（``pick_prefix_size``，FR-4），构造/
-        展开/final 置换守卫全在本进程（``BandChunk``/pin stats 不跨进程，回放
-        工件经 ``_write_prefix_artifact`` 落 ``paths.PREFIX_RUNS_DIR``）。
+        选码在本进程内经 ``select_prefix_plan`` 确定（2026-09-02 起近满幅几何
+        搜索 + 兜底 seeded，见 ``_build_prefix``），构造/展开/final 置换守卫全在
+        本进程（``BandChunk``/pin stats 不跨进程，回放工件经
+        ``_write_prefix_artifact`` 落 ``paths.PREFIX_RUNS_DIR``）。
 
     density 双口径换算（关键不变量 #1）**不在子进程做**：子进程原样透传 sparrow 自报
     density；主进程在处理 frame 时按 ``total_area/(width*gate)`` 换算为原面积口径
@@ -133,7 +145,10 @@ def solve_worker(pieces_snapshot, gate_mm, solve_params, result_queue, band=None
             exclude_labels=({band_chunk.label} if band_chunk is not None else None),
             # US-003：pid 级扣减 —— {(front,size),(back,size)} 两 pid 的 2+2 份由
             # PS_ 组合片承载（同码其他码照排；label 级会连其他码全丢）。
-            exclude_pids=({m['pid'] for m in prefix_chunk.members}
+            # 2026-09-02 Mapping 形态（成员计数 Counter）：4 片时 {front:2,back:2}
+            # 与集合跳过等价；5 片时异码 pid 扣 1 份、余量照排主解（placed 守恒
+            # = 全量 Σdemand）。
+            exclude_pids=(Counter(m['pid'] for m in prefix_chunk.members)
                           if prefix_chunk is not None else None),
             extra_items=extra_items,
             **solve_params
@@ -211,6 +226,11 @@ def solve_worker(pieces_snapshot, gate_mm, solve_params, result_queue, band=None
                 'pid': prefix_record['pid'],
                 'pin': prefix_record['pin'],
                 'band_pos': prefix_record['band_pos'],
+                # 2026-09-02 异码补片 additive（随 record 整体透传，routes_ws
+                # final 段原样转发）：extra=None 即兜底 4 片形态。
+                'extra': prefix_record['extra'],
+                'residual_mm': prefix_record['residual_mm'],
+                'fallback': prefix_record['fallback'],
             },
         }
         _write_prefix_artifact(prefix_record)
@@ -334,27 +354,28 @@ def _emit_placed(placed_items, band=None, prefix=None):
 def _build_prefix(pieces_snapshot, gate_mm, solve_params, prefix, result_queue):
     """前缀构造（US-003 编排层）：本进程内同步跑构造管线（确定性毫秒级）。
 
-    管线（FR-3/FR-4）：``eligible_sizes``（P2 资格规则，sizes 过滤 = 用户所排
-    尺码口径，空列表视为不过滤与 ``build_pid_meta`` 一致）→ ``pick_prefix_size``
-    seeded 随机选码（``prefix_seed_for`` 派生，同 seed 确定性重放）→
-    ``build_prefix_plan`` 构造 PS_ 组合片。d_g = max(d_front, d_back)
-    （``_resolve_d_tol`` 单一真相源，前后幅 per_type d 可能不同取保守端）。
+    管线（2026-09-02 起三步内聚为 ``select_prefix_plan`` 单一真相源，与
+    /api/prefix-preview 预览同函数）：资格码 → 近满幅组合搜索（4 片同码基座 +
+    顶部异码补片，全流程无 RNG，取 H 最大者）→ ``build_prefix_plan`` 构造 PS_
+    组合片；全无可行组合时兜底 ``pick_prefix_size`` seeded 选码 + 4 片构造
+    （与旧行为完全一致，``info['fallback']=True``；``seed`` 仅此路径消费）。
+    d_g = max(d_front, d_back)（``_resolve_d_tol`` 单一真相源，前后幅 per_type
+    d 可能不同取保守端）。
 
     失败（PrefixError/ValueError 等）投 ``{kind:error}``（「前缀构造失败」前缀，
     只投 error 不投 manifest —— 与 ``_build_band`` 同契约）返回 None；成功投
-    ``{kind:stage, stage:'prefix', size, fill_pct, bbox, holes, elapsed}``
-    （manifest 前唯一一次，size 回显选中资格码）后返回上下文 dict::
+    ``{kind:stage, stage:'prefix', size, fill_pct, bbox, holes, fallback,
+    extra_label, extra_size, residual_mm, elapsed}``（manifest 前唯一一次，
+    size 回显选中资格码；2026-09-02 additive —— 补片在案时 extra_label/
+    extra_size 非 None、residual_mm = gate − 组合片高、兜底路径 fallback=True）
+    后返回上下文 dict::
 
-        {'chunk', 'size', 'gaps', 'holes', 'd_g', 'elapsed'}
+        {'chunk', 'front', 'back', 'size', 'gaps', 'holes', 'd_g', 'elapsed',
+         'extra', 'residual_mm', 'fallback'}
 
     （``BandChunk`` 只在本进程存活，绝不跨队列。）
     """
-    from ..nesting_engine.prefix import (
-        PrefixError,
-        build_prefix_plan,
-        eligible_sizes,
-        pick_prefix_size,
-    )
+    from ..nesting_engine.prefix import PrefixError, select_prefix_plan
     from .solver import _resolve_d_tol, build_pid_meta
 
     front = str(prefix['front'])
@@ -365,9 +386,6 @@ def _build_prefix(pieces_snapshot, gate_mm, solve_params, prefix, result_queue):
         # eligible_sizes 的 None 语义同效）。
         sizes = solve_params.get('sizes') or None
         quantities = solve_params.get('quantities')
-        elig = eligible_sizes(quantities, front, back, sizes=sizes)
-        size = pick_prefix_size(elig, seed=int(solve_params.get('seed', 0)),
-                                front=front, back=back)
         pdef = {'d_ext': 0.0, 'd_int': 0.0, 'tol_ext': 0.0, 'tol_int': 0.0}
         pdef.update(solve_params.get('params') or {})
         d_front, _tf = _resolve_d_tol(front, pdef, solve_params.get('per_type'))
@@ -379,10 +397,12 @@ def _build_prefix(pieces_snapshot, gate_mm, solve_params, prefix, result_queue):
             per_type=solve_params.get('per_type'),
             quantities=quantities,
             params=solve_params.get('params'))
-        chunk, gaps, holes = build_prefix_plan(
+        chunk, gaps, holes, info = select_prefix_plan(
             pid_meta, {p['pid']: p for p in pieces_snapshot},
-            front_pid=f'{front}_{size}', back_pid=f'{back}_{size}',
-            d_g=d_g, gate_nest=float(gate_mm))
+            front_label=front, back_label=back,
+            quantities=quantities, sizes=sizes,
+            d_g=d_g, gate_nest=float(gate_mm),
+            seed=int(solve_params.get('seed', 0)))
     except (PrefixError, ValueError) as e:
         result_queue.put({'kind': 'error', 'message': f'前缀构造失败: {e}'})
         return None
@@ -391,18 +411,30 @@ def _build_prefix(pieces_snapshot, gate_mm, solve_params, prefix, result_queue):
         return None
 
     elapsed = time.time() - t0
+    extra = info['extra']
     result_queue.put({
         'kind': 'stage', 'stage': 'prefix',
-        'size': int(size),
+        'size': int(info['size']),
         'fill_pct': round(float(chunk.fill_pct), 2),
         'bbox': {'width_mm': float(chunk.bbox['width_mm']),
                  'height_mm': float(chunk.bbox['height_mm'])},
         'holes': int(holes),
+        # 2026-09-02 异码补片 additive：fallback=True 即兜底 4 片形态；
+        # extra_label/extra_size 仅补片在案时非 None（routes_ws on_stage 白名单
+        # 同步放行三键）。
+        'fallback': bool(info['fallback']),
+        'extra_label': (extra or {}).get('label'),
+        'extra_size': (extra or {}).get('size'),
+        'residual_mm': round(float(info['residual_mm']), 3),
         'elapsed': round(elapsed, 2),
     })
-    return {'chunk': chunk, 'front': front, 'back': back, 'size': int(size),
+    return {'chunk': chunk, 'front': front, 'back': back,
+            'size': int(info['size']),
             'gaps': gaps, 'holes': int(holes), 'd_g': float(d_g),
-            'elapsed': round(elapsed, 2)}
+            'elapsed': round(elapsed, 2),
+            'extra': extra,
+            'residual_mm': float(info['residual_mm']),
+            'fallback': bool(info['fallback'])}
 
 
 def _finalize_prefix(sol, prefix_ctx, band_chunk, pid_meta, pieces_snapshot,
@@ -474,7 +506,11 @@ def _finalize_prefix(sol, prefix_ctx, band_chunk, pid_meta, pieces_snapshot,
 
 
 def _prefix_record(prefix_ctx, pin_stats, band_pos, width):
-    """prefix_runs 工件 + final 统计段的记录体（纯 JSON；US-005 回放对拍数据源）。"""
+    """prefix_runs 工件 + final 统计段的记录体（纯 JSON；US-005 回放对拍数据源）。
+
+    2026-09-02 异码补片 additive：``extra``（{'pid','label','size','rotation'} |
+    None）/ ``residual_mm`` / ``fallback`` —— 工件与 final 统计段同源回显选定
+    组合（extra=None 即兜底 4 片形态）。"""
     chunk = prefix_ctx['chunk']
     return {
         'ts': time.strftime('%Y-%m-%dT%H:%M:%S'),
@@ -489,6 +525,11 @@ def _prefix_record(prefix_ctx, pin_stats, band_pos, width):
         'gaps': [round(float(g), 3) for g in prefix_ctx['gaps']],
         'd_g': float(prefix_ctx['d_g']),
         'stage_elapsed': float(prefix_ctx['elapsed']),
+        # 2026-09-02 异码补片：选定组合回显（final 统计段经 solve_worker 主体
+        # 同键透传；工件对拍排除 wall-clock 后含此三键）。
+        'extra': prefix_ctx['extra'],
+        'residual_mm': round(float(prefix_ctx['residual_mm']), 3),
+        'fallback': bool(prefix_ctx['fallback']),
         'chunk': chunk.to_dict(),          # 构造全量（polygon/members/offset）回放用
         'pin': pin_stats,
         'band_pos': band_pos,

@@ -434,7 +434,7 @@ curl http://127.0.0.1:8000/api/ptypes -H "X-Session-Id: <sid>"
  "outline": [[x,y],...]}
 ```
 
-主进程同步跑构造（v2 链构造 / 构造性竖排均无 RNG、毫秒级，spyrrow 不参与）：band = `build_pid_meta + build_band_plan`；prefix = `eligible_sizes → pick_prefix_size(seed) → build_prefix_plan`（`d_g = max(d_front, d_back)` 与 `solve_worker._build_prefix` 同式）。
+主进程同步跑构造（v2 链构造 / 构造性竖排均无 RNG、毫秒级，spyrrow 不参与）：band = `build_pid_meta + build_band_plan`；prefix = `eligible_sizes → pick_prefix_size(seed) → build_prefix_plan`（`d_g = max(d_front, d_back)` 与 `solve_worker._build_prefix` 同式）。**2026-09-02 注**：求解侧 `_build_prefix` 已切 `select_prefix_plan`（近满幅 5 片搜索，见 §1.5/§4）—— 预览端点本表形态暂为 4 片 seeded（与求解选码暂不同源），**US-003 将把预览换同一 `select_prefix_plan` + 线程池**。
 
 ### 关键不变量
 
@@ -552,7 +552,7 @@ ws://127.0.0.1:8000/ws/solve?sid=<sid>     # 缺省/空串 → default 会话（
 >
 > US-011（腰头成带）：StartPayload 可缺省 `band` 键。开启时 `solve_worker` 先在**本进程内**跑带内聚排（不 spawn 孙进程 —— terminate 即整进程回收），成功投 stage（见 1.5）+ 落 `out/band_runs/*.json` 工件；主实例以 `exclude_labels={label}` 跳过 band 成员（pid_meta/total_area/manifest 逐字段不变）并把组合片（`WB_*` pid）经 `extra_items` 构造期进 items；帧/final 发射经 `_emit_placed` 单点展开回成员 placement —— **WB_ 永不出现在 manifest/frame/final**。成带失败（0 副本/总副本 1/fill 下限等）只投 error 不投 manifest（与 build 失败同契约）。**2026-08-22 简化**：band 契约收敛为 `{enabled, label}` 两键（ack 硬警告 / fillers 填料混带已删，fill<45% 是唯一守门人）。
 >
-> US-003（起始端成套前后幅）：StartPayload 可缺省 `prefix` 键 `{enabled, front, back}`（**无 size** —— 选码是 `pick_prefix_size` seeded 随机，FR-4 不出 UI）。开启时 `solve_worker` 在本进程内同步构造（`_build_prefix`：资格码 → seeded 选码 → `build_prefix_plan`），成功投 stage('prefix')（见 1.5）+ 落 `paths.PREFIX_RUNS_DIR/*.json` 工件（构造/pin/带位完整回放，US-005 A/B 数据源；写失败仅 warn）；主实例以 `exclude_pids={front_size, back_size}` **pid 级**跳过 4 片成员（与 exclude_labels 并存互不干扰；pid_meta/total_area/manifest 逐字段不变）并把组合片（`PS_{front}+{back}@{size}`，orientations=`PREFIX_ORIENTATIONS=(0,180)`）经 `extra_items` 构造期进 items；帧发射经 `_emit_placed` 展开（PS_ 永不出现在 manifest/frame/final）；**final 单独置换挂钩** `_finalize_prefix`：组合片 min_x≤6mm 已锚定跳过（P0 常态）、>6mm → `pin_prefix_layout` 置换+复检失败回退（帧不置换）；final 消息带 `prefix: {size, pid, pin, band_pos}`。前缀构造失败只投 error 不投 manifest。
+> US-003（起始端成套前后幅）：StartPayload 可缺省 `prefix` 键 `{enabled, front, back}`（**无 size** —— 选码后端确定，不出 UI）。开启时 `solve_worker` 在本进程内同步构造（`_build_prefix`：**2026-09-02 起 `select_prefix_plan` 单一真相源** —— 近满幅几何搜索产 5 片组合片（4 同码基座 + 顶部异码补片，无 RNG），全无可行组合兜底 `pick_prefix_size` seeded 选码 + 4 片构造（旧行为，`fallback=True`；seed 仅此路径消费）），成功投 stage('prefix')（见 1.5）+ 落 `paths.PREFIX_RUNS_DIR/*.json` 工件（构造/pin/带位完整回放，US-005 A/B 数据源；写失败仅 warn）；主实例以 `exclude_pids=Counter(成员 pid 计数)` **pid 级扣减**（4 片时 {front:2,back:2} 与整 pid 跳过等价；5 片时异码 pid 扣 1 份余量照排 ⇒ placed 守恒 = 全量 Σdemand；与 exclude_labels 并存互不干扰；pid_meta/total_area/manifest 逐字段不变）并把组合片（`PS_{front}+{back}@{size}`，5 片形态 pid 追加 `+{label}@{B}`；orientations=`PREFIX_ORIENTATIONS=(0,180)`）经 `extra_items` 构造期进 items；帧发射经 `_emit_placed` 展开（PS_ 永不出现在 manifest/frame/final）；**final 单独置换挂钩** `_finalize_prefix`：组合片 min_x≤6mm 已锚定跳过（P0 常态）、>6mm → `pin_prefix_layout` 置换+复检失败回退（帧不置换）；final 消息带 `prefix: {size, pid, pin, band_pos, extra, residual_mm, fallback}`。前缀构造失败只投 error 不投 manifest。
 
 ### 1. 握手（client → server，**首条必须 action:'start'**；后续可发 action:'stop'）
 
@@ -601,14 +601,17 @@ ws://127.0.0.1:8000/ws/solve?sid=<sid>     # 缺省/空串 → default 会话（
   "stage": "band",               // 'band'（带内聚排完成）或 'prefix'（前缀构造完成）
   "fill_pct": 78.19,             // 带内填充率（%，成员原面积和 / 实际占用 bbox 面积）；prefix = 组合片填充率
   "bbox": {"width_mm": 60.0, "height_mm": 1534.6},  // 实际占用 bbox（非全幅）
-  "fallback": false,             // band 专属（v1 恒 false，键为协议稳定性保留）；prefix stage 无此键
+  "fallback": false,             // band v1 构造恒 false；prefix 2026-09-02 起回显兜底形态（True = 4 片 seeded 兜底、无补片）
   "elapsed": 15.3,               // 构造 wall-clock 秒
-  "size": 38,                    // prefix 专属：seeded 选中的资格码；band stage 无此键
-  "holes": 0                     // prefix 专属：封闭腔数（interleave 定稿 0）；band stage 无此键
+  "size": 38,                    // prefix 专属：选定的套装码 A；band stage 无此键
+  "holes": 0,                    // prefix 专属：封闭腔数（interleave 定稿 0）；band stage 无此键
+  "extra_label": "g02",          // prefix 专属（2026-09-02 异码补片）：顶部补片 g 码；无补片（兜底）= null；band stage 无此键
+  "extra_size": 31,              // prefix 专属（2026-09-02）：顶部补片尺码 B（≠A）；无补片 = null；band stage 无此键
+  "residual_mm": 1189.4          // prefix 专属（2026-09-02）：gate − 组合片高（近满幅判据）；band stage 无此键
 }
 ```
 
-仅对应 StartPayload 开关开启时出现，在 manifest 前各发一次（双开序 = band → prefix → manifest）。`on_stage` 回调泛化为键白名单转发（fill_pct/bbox/fallback/elapsed/size/holes）。旧前端 default:break 静默忽略（前向兼容）；前端 US-012 起在状态行呈现「腰头成带中…」（秒级提示，不进 phase 五态状态机）。
+仅对应 StartPayload 开关开启时出现，在 manifest 前各发一次（双开序 = band → prefix → manifest）。`on_stage` 回调泛化为键白名单转发（fill_pct/bbox/fallback/elapsed/size/holes/extra_label/extra_size/residual_mm）。旧前端 default:break 静默忽略（前向兼容）；前端 US-012 起在状态行呈现「腰头成带中…」（秒级提示，不进 phase 五态状态机）。
 
 ### 2. server → manifest（**一次**，握手后立即发）
 
@@ -667,18 +670,23 @@ ws://127.0.0.1:8000/ws/solve?sid=<sid>     # 缺省/空串 → default 会话（
   "n_frames": <发出的 frame 总数>,
   "n_eroded": <被 erode 的片数>,
   "prefix": {                     // US-003：仅 StartPayload prefix.enabled 时出现
-    "size": 38,                   // seeded 选中的资格码
-    "pid": "PS_g02+g03@38",       // 组合片 pid（不与 placed 混排，成员已展开）
+    "size": 38,                   // 选定的套装码 A
+    "pid": "PS_g02+g03@38",       // 组合片 pid（不与 placed 混排，成员已展开）；5 片形态追加 +{label}@{B}（如 PS_g02+g03@38+g02@31）
     "pin": {"skipped": true, ...},// US-002 pin_prefix_layout stats（skipped/rolled_back/…）
     "band_pos": {                 // 双开（band+prefix）时 WB 组合片世界 bbox 带位记录；否则 null
       "pid": "WB_g05", "min_x": <mm>, "max_x": <mm>,
       "min_y": <mm>, "max_y": <mm>, "dist_to_tail_mm": <width−max_x>
-    }
+    },
+    "extra": {                    // 2026-09-02 异码补片：选定顶部补片（与 stage 同源）；兜底 4 片 = null
+      "pid": "g02_31", "label": "g02", "size": 31, "rotation": 0.0
+    },
+    "residual_mm": 1189.4,        // 2026-09-02：gate − 组合片高（与 stage 同值）
+    "fallback": false             // 2026-09-02：True = 全无可行组合退回 4 片 seeded 兜底
   }
 }
 ```
 
-prefix 关闭时 final **无 `prefix` 键**（逐字段零回归）；`width_mm` 口径：pin skipped/回退 = solver 原值，置换成功 = 原始轮廓世界几何重算。
+prefix 关闭时 final **无 `prefix` 键**（逐字段零回归）；`width_mm` 口径：pin skipped/回退 = solver 原值，置换成功 = 原始轮廓世界几何重算。2026-09-02 起 `extra`/`residual_mm`/`fallback` 三键 additive（旧前端忽略不炸；`prefix_runs` 工件同三键回显，US-005 回放对拍数据源）。
 
 ### 5. server → error（异常时）
 
@@ -703,7 +711,7 @@ prefix 关闭时 final **无 `prefix` 键**（逐字段零回归）；`width_mm`
 | `load_pieces` | `(intermediate_path=paths.INTERMEDIATE) → (doc, gate_mm, pieces)` | 读 `pieces_intermediate.json` |
 | `build_pid_meta` | `(pieces, *, sizes=None, per_type=None, quantities=None, params=None) → (pid_meta, total_area, n_eroded)` | **strategy US-004 自 `build_instance` 提取**的裁片级流水线（**不 import spyrrow、不构造求解对象** —— `/api/strategy/result` 组装 manifest 直接用）：sizes 过滤 → demand 判定（quantities 按 `(label, str(size))` 查 N，0=跳过；缺 label→1）→ per_type 覆盖 + 全局上限钳制（`_resolve_d_tol` 单一真相源，与 `build_instance` 的 Item orientations 同口径）→ erode/清洗（<3 顶点跳过）→ pid_meta 条目（US-024 5 层 + label/color/demand）→ `total_area=Σ(area×demand)`。对拍单测（`test_web_strategy.py`）保证提取前后 `build_instance` 输出逐字段一致 |
 | `discretize_orientations` | `(tol: float) → list[float]` | v0.3 连续旋转公差 → spyrrow 离散角度集。`tol=0→[0,180]`；`tol≤5` 步进 1°；否则 5°。归一化到 [0,360) |
-| `build_instance` | `(pieces, gate_mm, *, time_budget, seed, sizes=None, params=None, per_type=None, quantities=None, solver_opts=None, exclude_labels=None, exclude_pids=None, extra_items=None) → (instance, config, pid_meta, total_area, n_eroded)` | strategy US-004 起裁片级流水线（sizes/demand/per_type/erode/pid_meta/total_area）**委托 `build_pid_meta`**（单一真相源），本函数补 spyrrow 侧构造：`Item`（shape 用 pid_meta 的 erode 后 polygon、orientations 用同口径 `_resolve_d_tol` 的 tol 离散化）。按 sizes 过滤 → US-022 按 `(label, sizeKey)` 查 quantities 定 demand（0 跳过；缺 label → 1） → US-002 起 `per_type[label]` 命中即覆盖 d/tol（2026-08-18 回退 US-004 后 label 单级，命中即对该 g 码全部码号生效；未命中/缺维度回退 `params.d_ext/tol_ext`；旧 ptype / 旧两级键 no-op；internal 概念已删，`d_int`/`tol_int` 仍被接受但无消费方） → 每片 `erode=min(申请d, MAX_OVERLAP_MM=10)`、`tol=min(申请tol, MAX_ROTATION_TOL_DEG=45)`（**2026-08-17 起全局上限，不再按片型**） → erode+clean → 构造 `spyrrow.Item` + `StripPackingInstance(strip_height=gate_mm)` + `StripPackingConfig`；pid_meta 含 US-024 5 层字段 + `label`/`color=size_color(size)`（2026-08-20 尺码键）/`demand`（`.get()` 向后兼容）。**求解约束带 = 输入门幅原样**（2026-08-28 版师定案起单一幅宽口径：旧 min(gate_mm, 1910) 钳制已删，manifest 的 gate_mm / 密度分母 / 导出外框 / 求解带全部同门幅）。**US-006（PC-006）`solver_opts`**（additive 白名单 exploration_pct/quadtree_depth/num_workers/**early_termination** 四键，越界 clamp、非数值/未知键忽略、不传=现行行为；`early_termination` 仅接受严格 bool、2026-08-29 入白名单并显式透传 spyrrow（缺省 True 行为不变；`--extreme` 用它固定 false 吃满各段预算，见极限利用率实验报告））：`exploration_pct∈[0.1,0.95]` 把 time_budget 换算为 exploration_time/compression_time 两段 int 秒（各 ≥1s、和≈budget，**与 total_computation_time 互斥** —— spyrrow 的 total 键缺省 600 非 None，两段模式必须显式传 total_computation_time=None，否则 not-all-3 ValueError）；quadtree_depth∈[3,5]（缺省 4）、num_workers≥1（缺省 4）。清洗单一真相源 `_normalize_solver_opts`。**US-011 `exclude_labels`**（iterable[str]）：该 label 集合只在 **Item 构造层**跳过（pid_meta/total_area/manifest 逐字段不变 —— band on/off manifest 一致性由此保证；**禁** quantities=0 移除：连 pid_meta/total_area 一起抹掉，密度掉 ~12pt）；**US-003 `exclude_pids`**（iterable[str]）：pid 集合（prefix PS 成员 {(front,size),(back,size)}）同只在 Item 构造层跳过，**与 exclude_labels 并存互不干扰**（双开时两参同传；pid_meta/total_area/manifest 逐字段不变，prefix on/off 一致性由此保证）；**US-011 `extra_items`**（list[{id,polygon,demand=1,orientations}]）：构造期追加进 items 的补充 Item（成带组合片 WB_ pid / 前缀组合片 PS_ pid）—— **必须构造期传入**，spyrrow `instance.items` 是 Rust 侧暴露的副本 list，构造后 append 不生效（实测组合片整解缺席） |
+| `build_instance` | `(pieces, gate_mm, *, time_budget, seed, sizes=None, params=None, per_type=None, quantities=None, solver_opts=None, exclude_labels=None, exclude_pids=None, extra_items=None) → (instance, config, pid_meta, total_area, n_eroded)` | strategy US-004 起裁片级流水线（sizes/demand/per_type/erode/pid_meta/total_area）**委托 `build_pid_meta`**（单一真相源），本函数补 spyrrow 侧构造：`Item`（shape 用 pid_meta 的 erode 后 polygon、orientations 用同口径 `_resolve_d_tol` 的 tol 离散化）。按 sizes 过滤 → US-022 按 `(label, sizeKey)` 查 quantities 定 demand（0 跳过；缺 label → 1） → US-002 起 `per_type[label]` 命中即覆盖 d/tol（2026-08-18 回退 US-004 后 label 单级，命中即对该 g 码全部码号生效；未命中/缺维度回退 `params.d_ext/tol_ext`；旧 ptype / 旧两级键 no-op；internal 概念已删，`d_int`/`tol_int` 仍被接受但无消费方） → 每片 `erode=min(申请d, MAX_OVERLAP_MM=10)`、`tol=min(申请tol, MAX_ROTATION_TOL_DEG=45)`（**2026-08-17 起全局上限，不再按片型**） → erode+clean → 构造 `spyrrow.Item` + `StripPackingInstance(strip_height=gate_mm)` + `StripPackingConfig`；pid_meta 含 US-024 5 层字段 + `label`/`color=size_color(size)`（2026-08-20 尺码键）/`demand`（`.get()` 向后兼容）。**求解约束带 = 输入门幅原样**（2026-08-28 版师定案起单一幅宽口径：旧 min(gate_mm, 1910) 钳制已删，manifest 的 gate_mm / 密度分母 / 导出外框 / 求解带全部同门幅）。**US-006（PC-006）`solver_opts`**（additive 白名单 exploration_pct/quadtree_depth/num_workers/**early_termination** 四键，越界 clamp、非数值/未知键忽略、不传=现行行为；`early_termination` 仅接受严格 bool、2026-08-29 入白名单并显式透传 spyrrow（缺省 True 行为不变；`--extreme` 用它固定 false 吃满各段预算，见极限利用率实验报告））：`exploration_pct∈[0.1,0.95]` 把 time_budget 换算为 exploration_time/compression_time 两段 int 秒（各 ≥1s、和≈budget，**与 total_computation_time 互斥** —— spyrrow 的 total 键缺省 600 非 None，两段模式必须显式传 total_computation_time=None，否则 not-all-3 ValueError）；quadtree_depth∈[3,5]（缺省 4）、num_workers≥1（缺省 4）。清洗单一真相源 `_normalize_solver_opts`。**US-011 `exclude_labels`**（iterable[str]）：该 label 集合只在 **Item 构造层**跳过（pid_meta/total_area/manifest 逐字段不变 —— band on/off manifest 一致性由此保证；**禁** quantities=0 移除：连 pid_meta/total_area 一起抹掉，密度掉 ~12pt）；**US-003 `exclude_pids`（2026-09-02 双形态）**：pid 级 Item 层扣减，**与 exclude_labels 并存互不干扰**（双开时两参同传；pid_meta/total_area/manifest 逐字段不变，prefix on/off 一致性由此保证）—— iterable[str] = 整 pid 跳过（US-003 原语义逐字节不变）；`Mapping[str,int]`（如 `Counter`，`solve_worker` 按 PS_ 成员计数传入）= 每 pid 扣 n 份（`Item.demand = meta['demand'] − n`，≤0 才跳过 —— 5 片组合片下异码补片 pid 扣 1 份余量照排主解，placed 守恒 = 全量 Σdemand）；**US-011 `extra_items`**（list[{id,polygon,demand=1,orientations}]）：构造期追加进 items 的补充 Item（成带组合片 WB_ pid / 前缀组合片 PS_ pid）—— **必须构造期传入**，spyrrow `instance.items` 是 Rust 侧暴露的副本 list，构造后 append 不生效（实测组合片整解缺席） |
 | `solve_with_callback` | `(instance, config, on_report, *, drain_interval=0.2) → (final_sol, elapsed_sec, err)` | **旧 threading 版（保留）**。子线程 `instance.solve(config, progress=queue)`，主线程 `queue.drain()` 每 0.2s 取中间解 → `on_report({type:frame,...})`。US-026 起 `ws_solve` 切换到 `solve_with_callback_proc`，本函数不删（过渡期） |
 | `solve_with_callback_proc` | `(pieces_snapshot, gate_mm, solve_params, *, on_manifest, on_report, on_process=None, on_stage=None, drain_interval=0.2, band=None, prefix=None) → (process, final_data, elapsed, err)` | **US-025 多进程版**。spawn 子进程跑 `solve_worker`（在子进程内 `build_instance + solve`，spyrrow 对象不可 pickle 故不跨进程），主进程 drain `multiprocessing.Queue` 分发：manifest → `on_manifest`、frame → `on_report`（density 双口径换算在主进程做）、final/error 记录。**US-026 新增 `on_process` 回调**：子进程 `start()` 后立即回调一次，把 `Process` 句柄交给调用方供 WS stop / 断开时 `terminate()`。**US-011 新增 `on_stage` 回调 + `band` 透传**：drain 循环显式转发 `{kind:stage}`（此前未知 kind 静默丢弃；`on_stage=None` = 丢弃 = CLI 路径旧行为）；`band` 原样带给 `solve_worker`（BandChunk 不跨进程）。**US-003 `prefix` 同透传**（worker 形态 `{'front','back'}`）。返回 `process` 句柄可 `terminate()`；terminate 后 `cancel_join_thread + 限时 drain(≤50ms) + join(timeout=5)` 防死锁；子进程 crash 未投 error 时 `err='worker process exited unexpectedly (code=<exitcode>)'` |
 
@@ -711,7 +719,7 @@ prefix 关闭时 final **无 `prefix` 键**（逐字段零回归）；`width_mm`
 
 | 函数 | 签名 | 说明 |
 |------|------|------|
-| `solve_worker` | `(pieces_snapshot, gate_mm, solve_params, result_queue, band=None, prefix=None)` | **子进程入口（顶层函数，Windows spawn 可 pickle）**。子进程内 `build_instance(pieces_snapshot, gate_mm, **solve_params)` → 投递 `{kind:manifest, pid_meta, total_area, n_eroded, gate_mm}` → `instance.solve(config, progress=ProgressQueue)` → drain 出的中间解投递 `{kind:frame, report}` → 末尾投递 `{kind:final, final}` 或 `{kind:error, message}`。所有投递纯 JSON 可序列化，spyrrow 对象绝不跨进程。**US-011 `band`**（worker 形态 `{'label': g码}`，2026-08-22 简化后单键）：先 `_build_band`（本进程内同步 `build_band_plan`，d_g/tol_g 与主实例同源 `_resolve_d_tol`、带内 gate=gate_mm 原样（2026-08-28 起单一口径））→ 成功投 `{kind:stage}`（manifest 前一次）→ 主实例 `exclude_labels={label}` + 组合片 `extra_items`（demand=1、orientations=[0,180] FR-8）→ 帧/final 经 `_emit_placed(sol.placed_items, band_chunk)` **单点展开** WB_ 条目回成员 placement（`expand_placements` 权威式）；失败（BandError/ValueError/几何异常）投 `{kind:error,'成带失败: …'}` 只投 error 不投 manifest。**US-003 `prefix`**（worker 形态 `{'front':g码,'back':g码}`）：`_build_prefix`（本进程内同步构造：`eligible_sizes`（尊重 solve_params.sizes）→ `pick_prefix_size(seed=solve_params.seed, front, back)` → `build_prefix_plan`（d_g=max(d_front,d_back) 经 `_resolve_d_tol`、gate_nest=gate_mm 原样（2026-08-28 起单一口径）））→ 成功投 `{kind:stage,stage:'prefix',size,fill_pct,bbox,holes,elapsed}`（manifest 前一次，band 之后）+ `_write_prefix_artifact` 落 `paths.PREFIX_RUNS_DIR/<ts>_<pid>.json`（chunk.to_dict() 完整回放 + pin stats + band_pos，写失败仅 warn）→ 主实例 `exclude_pids={PS 成员 4 pid}` + PS_ 组合片 `extra_items`（demand=1、orientations=`PREFIX_ORIENTATIONS`）→ final 前 `_finalize_prefix` 置换挂钩（pin_prefix_layout；帧不置换）→ 帧/final 经 `_emit_placed(…, band, prefix)` 同单点展开；失败（PrefixError/ValueError/几何异常）投 `{kind:error,'前缀构造失败: …'}` 只投 error 不投 manifest |
+| `solve_worker` | `(pieces_snapshot, gate_mm, solve_params, result_queue, band=None, prefix=None)` | **子进程入口（顶层函数，Windows spawn 可 pickle）**。子进程内 `build_instance(pieces_snapshot, gate_mm, **solve_params)` → 投递 `{kind:manifest, pid_meta, total_area, n_eroded, gate_mm}` → `instance.solve(config, progress=ProgressQueue)` → drain 出的中间解投递 `{kind:frame, report}` → 末尾投递 `{kind:final, final}` 或 `{kind:error, message}`。所有投递纯 JSON 可序列化，spyrrow 对象绝不跨进程。**US-011 `band`**（worker 形态 `{'label': g码}`，2026-08-22 简化后单键）：先 `_build_band`（本进程内同步 `build_band_plan`，d_g/tol_g 与主实例同源 `_resolve_d_tol`、带内 gate=gate_mm 原样（2026-08-28 起单一口径））→ 成功投 `{kind:stage}`（manifest 前一次）→ 主实例 `exclude_labels={label}` + 组合片 `extra_items`（demand=1、orientations=[0,180] FR-8）→ 帧/final 经 `_emit_placed(sol.placed_items, band_chunk)` **单点展开** WB_ 条目回成员 placement（`expand_placements` 权威式）；失败（BandError/ValueError/几何异常）投 `{kind:error,'成带失败: …'}` 只投 error 不投 manifest。**US-003 `prefix`**（worker 形态 `{'front':g码,'back':g码}`）：`_build_prefix`（本进程内同步构造，**2026-09-02 起 `select_prefix_plan` 单一真相源**：`eligible_sizes`（尊重 solve_params.sizes）→ 近满幅组合搜索（4 同码基座 + 顶部异码补片，无 RNG）→ `build_prefix_plan`（d_g=max(d_front,d_back) 经 `_resolve_d_tol`、gate_nest=gate_mm 原样（2026-08-28 起单一口径））；全无可行组合兜底 seeded `pick_prefix_size` + 4 片构造（旧行为，seed 仅此路径消费））→ 成功投 `{kind:stage,stage:'prefix',size,fill_pct,bbox,holes,fallback,extra_label,extra_size,residual_mm,elapsed}`（manifest 前一次，band 之后）+ `_write_prefix_artifact` 落 `paths.PREFIX_RUNS_DIR/<ts>_<pid>.json`（chunk.to_dict() 完整回放 + pin stats + band_pos + extra/residual_mm/fallback，写失败仅 warn）→ 主实例 `exclude_pids=Counter(PS 成员 pid 计数)`（Mapping 部分扣减）+ PS_ 组合片 `extra_items`（demand=1、orientations=`PREFIX_ORIENTATIONS`）→ final 前 `_finalize_prefix` 置换挂钩（pin_prefix_layout；帧不置换；长度无关，5 片形态同路径）→ 帧/final 经 `_emit_placed(…, band, prefix)` 同单点展开；失败（PrefixError/ValueError/几何异常）投 `{kind:error,'前缀构造失败: …'}` 只投 error 不投 manifest |
 | `_build_band` | `(pieces_snapshot, gate_mm, solve_params, band, result_queue) → BandChunk \| None` | **进程内**带内聚排编排（不 spawn 孙进程 —— terminate 即随本进程回收，band 阶段 stop 无孤儿）；`build_pid_meta` 建成员 meta、`_resolve_d_tol` 裁定 d_g/tol_g、`build_band_plan` 构造性链构造 |
 | `_build_prefix` | `(pieces_snapshot, gate_mm, solve_params, prefix, result_queue) → dict \| None` | **进程内**前缀构造编排（同 `_build_band` 进程模型）：资格码 → seeded 选码 → `build_prefix_plan`；返回 ctx（chunk/front/back/size/gaps/holes/d_g/elapsed），失败投 error 后返回 None |
 | `_finalize_prefix` | `(sol, prefix_ctx, band_chunk, pid_meta, pieces_snapshot, gate_mm) → (placed_final, width_final, prefix_record)` | final 置换挂钩：base = `_emit_placed(其余 placed)`（**含 WB_ 展开** —— 双开时漏展开即 KeyError 'WB_*'，已修+锁死）；`pin_prefix_layout`（min_x≤6mm skip / 失败回退 rolled_back）；width 口径 skip/回退=solver 原值、置换成功=原始轮廓世界重算；band_pos（双开）= WB chunk @ 主解位世界 bbox |
@@ -727,7 +735,7 @@ _parse_band(msg.band, pieces, quantities)            # US-011 服务端校验；
   ↓
 solve_with_callback_proc(pieces_snapshot, ..., band=band_cfg)  # executor 线程，阻塞跑
   on_process(proc): state_box['process'] = proc      # 子进程 start 后回调，存句柄
-  on_stage(m): → queue.put(stage_msg)                # US-011 band 开启时 manifest 前一次
+  on_stage(m): → queue.put(stage_msg)                # US-011 band / US-003 prefix 开启时 manifest 前各一次（键白名单含 2026-09-02 extra_label/extra_size/residual_mm）
   on_manifest(m): → queue.put(manifest_msg)          # 子进程 → 主进程回调
   on_report(r): r['index']=N; → queue.put(r)         # density 双口径已在 proc 版换算
   → return (process, final_data, elapsed, err)

@@ -12,11 +12,17 @@
    对方时完全一致（band 单开无 prefix 键、prefix 单开 band_pos=None）；
 6. final 置换挂钩 + prefix_runs 工件（solve_with_callback_proc 进程级：无 PS_ 泄漏、
    pin stats 结构、工件落 MS_OUT_DIR 隔离目录、stage size == final size == 工件 size）；
-7. build_instance exclude_pids 只跳 Item 层（pid_meta/total_area 不动，一致性单测）。
+7. build_instance exclude_pids 只跳 Item 层（pid_meta/total_area 不动，一致性单测）；
+8. 2026-09-02 异码补片（US-002 接线）：exclude_pids Mapping 双形态单测（部分扣减 /
+   过量扣减 / Counter≡集合等价）；兜底 4 片形态 stage/final 新键（fallback=True、
+   extra_label=None）；5 片形态全链路（gate 2100 下确定性选码 A=28+顶部 g03_29，
+   stage 新键透传、placed 守恒 = 全量 Σdemand、PS_ 哨兵、工件 5 成员回显）。
 
 合成数据结构同 5336（前后幅 g 码 + 2+2 数量矩阵）：g02/g03 两码 28/29 均 2+2
-（资格码 {28,29}，seeded 随机取一 —— 守恒断言与选取无关）、g01 普通大片、
-g05 腰片（双开用例的 band 主角，60x300 矩形）。
+（资格码 {28,29}）、g01 普通大片、g05 腰片（双开用例的 band 主角，60x300 矩形）。
+矩形竖排高手算：4 片基座 = 400+420+400+420 = 1640mm —— gate 1980 下任何 5 片
+组合（≥1640+400）竖排超高 ⇒ 必兜底；gate 2100 下最大 H = 1640+420(g03) = 2060
+⇒ 确定性选定 套装@28 + 顶部 g03_29（residual 40mm）。
 """
 from __future__ import annotations
 
@@ -490,6 +496,154 @@ def test_proc_prefix_final_no_leak_pin_stats_and_artifact(tmp_path, monkeypatch)
     assert len(art['chunk']['members']) == 4
     assert 'pin' in art and art['band_pos'] is None
     assert art['chunk']['members'][0]['pid'] == f'g02_{size}'
+
+
+# --------------------- 2026-09-02 异码补片（US-002 demand 部分扣减 + 接线）
+
+
+def test_build_instance_exclude_pids_mapping_partial_deduction():
+    """exclude_pids Mapping 形态：每 pid 扣 n 份（Item demand = demand−n，≤0 跳过）；
+    pid_meta/total_area 与不扣减逐字段一致（manifest 口径事故防线）；4 片 Counter
+    （2+2 全扣）与现行集合跳过等价（US-002 验收第 2 条前半）。"""
+    from collections import Counter
+
+    from materialsorting.web.solver import build_instance
+
+    pieces = _prefix_pieces()
+    args = dict(time_budget=1, seed=0, quantities=_QTY)
+    _i0, _c0, meta0, area0, _n0 = build_instance(pieces, 1980.0, **args)
+
+    # Mapping：g02_28 扣 1（demand 2→1 余量照排）、g03_28 扣 2（→0 跳过）
+    _i1, _c1, meta1, area1, _n1 = build_instance(
+        pieces, 1980.0, exclude_pids={'g02_28': 1, 'g03_28': 2}, **args)
+    dem = {it.id: it.demand for it in _i1.items}
+    assert dem['g02_28'] == 1
+    assert 'g03_28' not in dem
+    assert dem['g02_29'] == 2 and dem['g03_29'] == 2 and dem['g01_28'] == 1
+    # manifest 数据源（pid_meta/total_area）与不扣减逐字段一致
+    assert meta1 == meta0
+    assert area1 == area0
+
+    # 过量扣减（n > demand）→ demand−n ≤ 0 跳过（不 clamp 出负 demand）
+    _i2, _c2, meta2, area2, _n2 = build_instance(
+        pieces, 1980.0, exclude_pids={'g02_28': 5}, **args)
+    assert 'g02_28' not in {it.id for it in _i2.items}
+    assert meta2 == meta0 and area2 == area0
+
+    # 4 牔 Counter（成员计数全扣）与现行集合跳过等价：Item (id, demand) 全等
+    _i3, _c3, _m3, _a3, _n3 = build_instance(
+        pieces, 1980.0, exclude_pids=Counter({'g02_28': 2, 'g03_28': 2}), **args)
+    _i4, _c4, _m4, _a4, _n4 = build_instance(
+        pieces, 1980.0, exclude_pids={'g02_28', 'g03_28'}, **args)
+    assert {it.id: it.demand for it in _i3.items} == \
+        {it.id: it.demand for it in _i4.items}
+
+
+def test_prefix_fallback_stage_and_final_new_keys(prefix_client):
+    """兜底 4 片形态（gate 1980 下任一 5 片组合竖排超高）：stage/final additive
+    新键在案 —— fallback=True、extra_label/extra_size=None、residual_mm =
+    gate − 基座高（1980−1640=340）。"""
+    with prefix_client.websocket_connect('/ws/solve') as ws:
+        ws.send_json(_start(prefix={'enabled': True, 'front': 'g02', 'back': 'g03'},
+                            time_budget=2))
+        stage = ws.receive_json()
+        assert stage['type'] == 'stage' and stage['stage'] == 'prefix'
+        assert stage['fallback'] is True
+        assert stage['extra_label'] is None and stage['extra_size'] is None
+        assert stage['residual_mm'] == pytest.approx(340.0, abs=1.0)
+        assert ws.receive_json()['type'] == 'manifest'
+
+        final = None
+        deadline = time.time() + 40.0
+        while time.time() < deadline:
+            m = ws.receive_json()
+            if m['type'] == 'final':
+                final = m
+                break
+            if m['type'] == 'error':
+                pytest.fail(f'unexpected error: {m}')
+        assert final is not None
+        assert final['prefix']['fallback'] is True
+        assert final['prefix']['extra'] is None
+        assert final['prefix']['residual_mm'] == pytest.approx(340.0, abs=1.0)
+
+
+def test_prefix_extra_piece_stage_final_conservation(prefix_client, monkeypatch,
+                                                      tmp_path):
+    """5 片组合片全链路（gate 2100 使异码补片可行）：stage 回显选定组合
+    （fallback=False、extra_label/extra_size/residual_mm）、placed 守恒 = 全量
+    Σdemand（异码 pid 扣 1 份余量照排：g03_29 = 主解 1 + 组合片展开 1）、
+    manifest/frame/final 无 PS_（哨兵）、prefix_runs 工件 5 成员 + 组合三键回显。"""
+    monkeypatch.setenv('MS_OUT_DIR', str(tmp_path))   # 工件隔离（spawn 子进程继承 env）
+    state = server_mod._PIECES_STATE
+    state['gate_mm'] = 2100.0     # 1640(基座)+420(g03 补片)=2060 ≤ 2100；1980 下必兜底
+    try:
+        with prefix_client.websocket_connect('/ws/solve') as ws:
+            ws.send_json(_start(prefix={'enabled': True, 'front': 'g02', 'back': 'g03'},
+                                time_budget=2))
+            # stage：确定性选码（搜索无 RNG、与 seed 无关）—— 套装@28 + 顶部
+            # g03_29（H=2060 为全部 8 组合中最大），residual = 2100−2060 = 40
+            stage = ws.receive_json()
+            assert stage['type'] == 'stage' and stage['stage'] == 'prefix'
+            assert stage['size'] == 28
+            assert stage['fallback'] is False
+            assert stage['extra_label'] == 'g03' and stage['extra_size'] == 29
+            assert stage['residual_mm'] == pytest.approx(40.0, abs=1.0)
+
+            # manifest：无 PS_ 泄漏；demand 全量透传（Item 层扣减不动 manifest）
+            manifest = ws.receive_json()
+            assert manifest['type'] == 'manifest'
+            assert not any(str(p['id']).startswith('PS_') for p in manifest['pieces'])
+            demand = {p['id']: p['demand'] for p in manifest['pieces']}
+            assert demand == {'g02_28': 2, 'g03_28': 2, 'g02_29': 2, 'g03_29': 2,
+                              'g01_28': 1}
+
+            final = None
+            last_frame = None
+            deadline = time.time() + 40.0
+            while time.time() < deadline:
+                m = ws.receive_json()
+                if m['type'] == 'frame':
+                    assert not any(pi['id'].startswith('PS_') for pi in m['placed_items'])
+                    last_frame = m
+                elif m['type'] == 'final':
+                    final = m
+                    break
+                elif m['type'] == 'error':
+                    pytest.fail(f'unexpected error: {m}')
+            assert final is not None and last_frame is not None
+
+            # placed 守恒 = 全量 Σdemand（9 条，末帧口径 —— WS final 消息不带
+            # placed_items）：基座两 pid demand 2−2=0 全由组合片承载；异码
+            # g03_29 主解排 2−1=1 + 组合片展开 1
+            placed = last_frame['placed_items']
+            assert not any(pi['id'].startswith('PS_') for pi in placed)
+            counts = {}
+            for pi in placed:
+                counts[pi['id']] = counts.get(pi['id'], 0) + 1
+            assert counts == {'g02_28': 2, 'g03_28': 2, 'g02_29': 2,
+                              'g03_29': 2, 'g01_28': 1}
+            assert len(placed) == sum(demand.values()) == 9
+
+            # final 统计段回显选定组合（extra dict + residual_mm + fallback）
+            fp = final['prefix']
+            assert fp['size'] == 28 and fp['fallback'] is False
+            assert fp['pid'].startswith('PS_') and '+g03@29' in fp['pid']
+            assert fp['extra']['pid'] == 'g03_29'
+            assert fp['extra']['label'] == 'g03' and fp['extra']['size'] == 29
+            assert fp['residual_mm'] == pytest.approx(40.0, abs=1.0)
+
+        # prefix_runs 工件（US-005 回放数据源）：5 成员 + 组合三键回显
+        run_dir = tmp_path / 'prefix_runs'
+        files = list(run_dir.glob('*.json')) if run_dir.exists() else []
+        assert files, f'prefix_runs 工件应写入 {run_dir}'
+        art = json.loads(files[0].read_text(encoding='utf-8'))
+        assert len(art['chunk']['members']) == 5
+        assert art['size'] == 28
+        assert art['fallback'] is False and art['extra']['pid'] == 'g03_29'
+        assert art['residual_mm'] == pytest.approx(40.0, abs=1.0)
+    finally:
+        state['gate_mm'] = 1980.0   # fixture teardown 亦恢复；防御性双保险
 
 
 if __name__ == '__main__':

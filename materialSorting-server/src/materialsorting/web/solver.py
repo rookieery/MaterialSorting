@@ -47,6 +47,13 @@ US-003（起始端成套前后幅编排接线）：``build_instance`` 加 ``excl
 （band 用 labels、prefix 用 pids）。``solve_with_callback_proc`` 加 ``prefix``
 透传 —— worker 形态 ``{'front': g码, 'back': g码}``（资格码在 worker 进程内
 seeded 随机选取，见 ``solve_worker._build_prefix``）。
+
+2026-09-02（异码补片，US-002）：``exclude_pids`` 升级**双形态** —— iterable[str]
+= 整 pid 跳过（US-003 现行语义，逐字节不变）；``Mapping[str, int]``（worker 传
+``Counter(m['pid'] for m in members)``）= 每 pid 扣 n 份（Item demand =
+``meta['demand'] − n``，≤0 才跳过）—— 5 片组合片下异码补片 pid 只扣占用的
+1 份，余量照排主解，placed 条数守恒 = 全量 Σdemand。pid_meta / total_area /
+manifest 逐字段不动（禁 quantities=0 口径事故防线沿用）。
 """
 from __future__ import annotations
 
@@ -58,6 +65,7 @@ import queue as _queue_mod
 import sys
 import threading
 import time
+from collections.abc import Mapping
 
 from .. import paths
 from ..nesting_engine.sparrow_baseline import _clean_polygon, size_color
@@ -298,11 +306,16 @@ def build_instance(pieces, gate_mm, *, time_budget: int, seed: int,
         / manifest 逐字段不变 —— band on/off 的 manifest 一致性即由此保证。
         **禁**用 quantities=0 达成同效：那会在 ``build_pid_meta`` 把 pid_meta /
         total_area / manifest 一起抹掉（密度口径事故，落地方案 §2.2）。
-    exclude_pids = iterable[str] | None（US-003 起始端成套）：**pid 级** Item 层
-        跳过（与 ``exclude_labels`` 同层、并存互不干扰）。prefix 只消耗资格码
-        {(front,size),(back,size)} 两 pid 的 2+2 份 —— 同码其他码照排，故必须
-        pid 级（label 级会把整码前后幅全丢，5336 其他码 10+ 份即密度崩）；
-        同样禁 quantities=0 方式（口径事故同上）。
+    exclude_pids = iterable[str] | Mapping[str, int] | None（US-003 起始端成套，
+        2026-09-02 双形态）：**pid 级** Item 层扣减（与 ``exclude_labels`` 同层、
+        并存互不干扰）。prefix 只消耗资格码 {(front,size),(back,size)} 两 pid 的
+        2+2 份 —— 同码其他码照排，故必须 pid 级（label 级会把整码前后幅全丢，
+        5336 其他码 10+ 份即密度崩）；同样禁 quantities=0 方式（口径事故同上）。
+        - iterable[str]：整 pid 跳过（US-003 现行语义，逐字节不变）；
+        - Mapping[str, int]（如 ``Counter``）：每 pid 扣 n 份 —— Item demand =
+          ``meta['demand'] − n``，≤0 才跳过（5 片组合片下异码补片 pid 扣 1 份、
+          余量照排主解；``solve_worker`` 按成员计数传入）。
+        两形态下 ``pid_meta`` / ``total_area`` / manifest 均逐字段不变。
     extra_items = list[dict] | None（US-011）：构造期追加进 items 的补充 Item
         （JSON 可序列化 dict：``{id, polygon, demand=1, orientations}``）—— 成带
         组合片（WB_ pid）由此进主解。**必须构造期传入**：``instance.items`` 是
@@ -337,7 +350,13 @@ def build_instance(pieces, gate_mm, *, time_budget: int, seed: int,
     items = []
     exclude = {str(l) for l in exclude_labels} if exclude_labels else frozenset()
     # US-003：pid 级排除（与 label 级同层并存；语义见 docstring）。
-    exclude_pid_set = {str(p) for p in exclude_pids} if exclude_pids else frozenset()
+    # 2026-09-02 双形态：Mapping（如 Counter）→ 部分扣减表；iterable → 整 pid 跳过集。
+    if isinstance(exclude_pids, Mapping):
+        exclude_pid_map = {str(k): int(v) for k, v in exclude_pids.items()}
+        exclude_pid_set = frozenset()
+    else:
+        exclude_pid_map = None
+        exclude_pid_set = {str(p) for p in exclude_pids} if exclude_pids else frozenset()
     for p in pieces:
         meta = pid_meta.get(p['pid'])
         if meta is None:
@@ -346,16 +365,23 @@ def build_instance(pieces, gate_mm, *, time_budget: int, seed: int,
         # 组合片由 solve_worker 追加；quantities=0 移除是口径事故，见 docstring）。
         if p.get('label') in exclude:
             continue
-        # US-003：prefix 资格码两 pid 同层跳过（2+2 由组合片 PS_ 承载）。
+        # US-003：prefix 资格码两 pid 同层跳过（2+2 由组合片 PS_ 承载）；
+        # 2026-09-02 Mapping 形态：逐 pid 扣 n 份（Item demand = demand−n，≤0 才跳过
+        # —— 5 片组合片下异码补片 pid 扣 1 份，余量照排主解，placed 守恒 = Σdemand）。
+        demand = int(meta['demand'])
         if p['pid'] in exclude_pid_set:
             continue
+        if exclude_pid_map is not None and p['pid'] in exclude_pid_map:
+            demand -= exclude_pid_map[p['pid']]
+            if demand <= 0:
+                continue
         # tol 与 pid_meta 的 erode 同口径裁定（_resolve_d_tol 单一真相源）→ 离散角度集。
         _d, tol = _resolve_d_tol(p.get('label'), pdef, per_type)
         orientations = discretize_orientations(tol)
         items.append(spyrrow.Item(
             id=p['pid'],
             shape=[(float(x), float(y)) for x, y in meta['polygon']],
-            demand=meta['demand'],
+            demand=demand,
             allowed_orientations=orientations,
         ))
     # US-011：补充 Item（成带组合片等）必须**构造期**进 items —— instance.items 是

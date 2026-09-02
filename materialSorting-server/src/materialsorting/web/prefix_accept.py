@@ -217,8 +217,10 @@ def prefix_form(placed, pieces_by_id, front, back, size, *,
     """US-005 判据②形态：4 成员同码 + 锚定布头 + 竖排贴触 + 头尾 180° 交替。
 
     成员识别 = pid ∈ ``{f'{front}_{size}', f'{back}_{size}'}``（主实例
-    ``exclude_pids`` 已扣减该两 pid 全部副本 ⇒ final 中这 4 条**只能**来自
-    ``PS_`` 组合片展开 —— 计数即守恒口径）。子判据（PRD 逐字）：
+    ``exclude_pids`` 已扣减该两 pid 的成员计数份数 ⇒ final 中这 4 条**只能**来自
+    ``PS_`` 组合片展开 —— 计数即守恒口径。2026-09-02 异码补片：``stack_ok`` /
+    ``interleave`` 长度口径放宽 in (4,5) 兼容第 5 片（顶部异码，不属 want 集合、
+    不参与 same_code 2+2 计数 —— US-005 回放护栏新形态）。子判据（PRD 逐字）：
 
     - ``same_code``：前 2 后 2 恰 4 条；
     - ``head_ok``：成员原始轮廓世界 bbox ``min_x`` <= 6mm（版师 P5「严格顶到
@@ -262,7 +264,10 @@ def prefix_form(placed, pieces_by_id, front, back, size, *,
         gaps.append(round(a['geom'].distance(b['geom']), 3))
         d = abs((a['rot'] - b['rot']) % 360.0)
         rot_diffs.append(round(min(d, 360.0 - d), 2))
-    stack_ok = (len(stack) == 4
+    # 2026-09-02 异码补片：长度口径放宽 in (4,5) —— 4 = 基座成员，5 = 调用方
+    # 把顶部异码补片并入成员集时（US-005 回放护栏兼容新形态）；same_code 仍按
+    # want 集合 2+2 计数不受影响。
+    stack_ok = (len(stack) in (4, 5)
                 and all(ov > 0.0 for ov in y_overlaps)
                 and all(g <= gap_eps_mm for g in gaps))
     rot_ok = (len(rot_diffs) == 3
@@ -271,7 +276,7 @@ def prefix_form(placed, pieces_by_id, front, back, size, *,
     def _is_front(r):
         return r['pid'].startswith(f'{front}_')
 
-    interleave = (len(rows) == 4
+    interleave = (len(rows) in (4, 5)
                   and all((_is_front(a) != _is_front(b))
                           for a, b in zip(rows, rows[1:])))
     return {
