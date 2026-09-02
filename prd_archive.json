@@ -812,6 +812,12 @@
         "title": "前端类型 + 状态行 + 预览放大层文案",
         "description": "As a 版师, I want 求解状态行与预览放大层显示选定的异码组合 so that 我在两处都能看到「尺码 A ＋ 顶部异码片 B·余 X mm 近满幅」。\n\n具体任务：\n1. materialSorting-web/src/types/ws.ts — StageMsg 加可选 extra_label/extra_size/residual_mm（注释更新：选码改为几何搜索近满幅）\n2. materialSorting-web/src/types/band.ts — PrefixPreviewResponse 加 extra/residual_mm/gate_mm/fallback 可选字段；n_members 注释「恒 4」→「4（兜底）或 5（补片）」\n3. materialSorting-web/src/components/NestingPage.tsx — :66 状态行：有补片时「起始端成套构造中（尺码 {size}＋{extra_label}@{extra_size}）…」，无补片维持现行文案\n4. materialSorting-web/src/components/ControlPanel/PerTypeOverridesModal.tsx — :964 放大层文案：有补片时追加「＋ 顶部 {extra_label}@{extra_size} 异码片 · 余 {residual_mm}mm 近满幅」\n5. 对应 vitest 扩展（NestingPage 状态行双形态 / PerTypeOverridesModal 文案双形态 / types 编译）\n\n验收标准：\n- 协议向后兼容：新键全部可选，旧后端（无键）前端不炸、文案回落现行形态\n- 预览缩略 5 片自动渲染（BandPreviewMember 泛型零改动），异码片颜色 = size_color(B) 同码同色跨片型\n- params.ts/collectPrefix/ControlPanel 闸门零改动（协议无新键）\n- npm run typecheck 干净 + vitest 全绿 + npm run build 过\n- 通过浏览器验证：布局设置开 prefix → 预览缩略 5 片 + 放大层异码标注 → 求解状态行含异码码 → final 第一列形态目检（4 同码 + 顶异码、近满幅、相切）",
         "passes": true
+      },
+      {
+        "id": "US-005",
+        "title": "端到端验收与文档闭环",
+        "description": "As a 项目负责人, I want 5336 端到端冒烟（形态判据 + 守恒 + 导出）+ 文档同步 so that 异码补片以可证方式落地合入。\n\n具体任务：\n1. scripts/smoke_prefix_extra.mjs（模板 scripts/smoke-band-preview.mjs 套路）— 上传 → 布局设置开 prefix → 预览 5 片 + 异码标注 → 求解 → 状态行 → 导出 PLT 无 PS_\n2. 形态判据验收：5 成员（4 同码 + 顶异码）、相邻贴触缝隙 ≤1mm、组合片 H 近满幅（residual 打点在案）、组合片 min_x ≤ 6mm 锚定（或置换钉位路径正常）\n3. 密度 sanity：同源短预算 on/off 对拍不显著劣化（≤1.0pt 线；形态规则非优化器定位）；确定性：同输入双跑选码组合一致 + chunk.to_dict() 全等\n4. 文档同步：CLAUDE.md（prefix.py 条目 + 数据流主线 prefix 段）、README 起始端成套节、.docs/business/起始端成套前后幅_版师确认清单.md 追加 §9（异码补片需求 + 2026-09-02 三项定案：兜底退回 4 片 / 不设缝隙阈值 / 保留 0°/180°）、.docs/technical/agent-api-reference（prefix-preview 响应 + on_stage 白名单）、agent-file-map、web/AGENTS、tests/AGENTS、memory 新条目（选码口径沿革：近满幅几何搜索取代 seeded 随机）\n\n验收标准：\n- 冒烟脚本全过（预览/求解/导出三环节 + PS_ 零泄漏）\n- 形态判据逐项在案；on/off 对拍 ≤1.0pt 劣化线\n- 后端 pytest 全量绿 + 前端 vitest 全绿 + build 过\n- python -m materialsorting.nesting_engine.prefix 冒烟跑通、分层依赖未反向\n- 文档八处同步完成",
+        "passes": true
       }
     ]
   }
