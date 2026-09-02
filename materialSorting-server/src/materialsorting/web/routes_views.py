@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 
 from fastapi import APIRouter, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, JSONResponse, Response
 from urllib.parse import quote
 
@@ -216,38 +217,43 @@ async def prefix_preview(req: Request):
     """起始端成套前后幅预览（布局设置 prefix 行缩略图数据源，2026-08-25）。
 
     与成带预览同套路：选完前/后幅 g 码后不展示两张原始单片缩略（与下方裁片设置
-    表格同源同图，纯冗余），改展示**最终 4 片组合形态**（前×2 + 后×2 同码
-    interleave 竖排贴靠 = 求解时 PS_ 组合片的精确形态），构造失败（无资格码 /
-    竖排超高 / 贴触失败等）也从 solve 报错前置到选码时刻。
+    表格同源同图，纯冗余），改展示**求解时 PS_ 组合片的精确形态**（4 片同码
+    interleave 竖排贴靠，或 2026-09-02 选码搜索加顶部异码补片的 5 片近满幅
+    形态），构造失败（无资格码 / 竖排超高 / 贴触失败等）也从 solve 报错前置
+    到选码时刻。
 
     payload 与 WS StartPayload 同源字段子集（prefix 校验直接复用 ``_parse_prefix``
     单一校验点）：``{prefix:{enabled,front,back}, sizes?, quantities?, per_type?,
-    params?, gate_mm?, seed?}``。seed 缺省 0（界面恒单 seed=0 ⇒ 预览与求解同码；
-    资格码选取是 seeded 随机，跨 seed 形态同构仅码不同）。
+    params?, gate_mm?, seed?}``。选码确定性化（``select_prefix_plan`` 近满幅
+    几何搜索，无 RNG，2026-09-02）后预览**不再依赖 seed 对齐** —— 搜索路径与
+    seed 无关恒与求解同选；seed 仅兜底 4 片路径的 ``pick_prefix_size`` 消费
+    （缺省 0 = 与求解同参同选）。
 
-    主进程同步跑 ``eligible_sizes → pick_prefix_size → build_prefix_plan``
-    （构造性竖排无 RNG、毫秒级；d_g = max(d_front, d_back) 与 solve_worker
-    ``_build_prefix`` 同式）。成员 polygon 由后端变换到组合片归一坐标（减
-    ``chunk.offset``）返回，``tag`` = 成员 g 码（前后幅区分标注）；颜色取
-    pid_meta['color']（``size_color`` 单一真相源）。**不返回组合片 PS_ pid**
-    （哨兵约定：PS_ 永不出现在前端/manifest/导出）。
+    构造段（``build_pid_meta`` → ``select_prefix_plan``，与 solve_worker
+    ``_build_prefix`` 同一真相源；选码搜索秒级 —— 5336 规模 ~120 组合实测
+    ~4.3s < 5s 红线）经 ``run_in_threadpool`` 在工作线程执行，防阻塞事件循环
+    （多会话并发下主进程卡顿）；会话解析/校验仍主线程先行（401/400 早退语义
+    不变）。成员 polygon 由后端变换到组合片归一坐标（减 ``chunk.offset``）
+    返回，``tag`` = 成员 g 码（前后幅区分标注）；颜色取 pid_meta['color']
+    （``size_color`` 单一真相源）。**不返回组合片 PS_ pid**（哨兵约定：PS_
+    永不出现在前端/manifest/导出）。
 
     响应（失败也 200、``ok:false`` 包络，band-preview 同约定）::
 
         {ok:true, front, back, size, fill_pct, bbox:{width_mm,height_mm},
-         n_members, members:[{pid, size, color, tag, polygon:[[x,y],...]}],
+         n_members,                    # 4（兜底）或 5（顶部异码补片，2026-09-02）
+         members:[{pid, size, color, tag, polygon:[[x,y],...]}],
+         extra:{label,size}|null,      # 补片在案时非 null（兜底 4 片 = null）
+         residual_mm,                  # gate_mm − 组合片高（近满幅残余缝隙）
+         gate_mm,                      # 实际参与构造的门幅（payload > intermediate 回退）
+         fallback,                     # true = 无可行 5 片组合 → 兜底 4 片 seeded
          outline:[[x,y],...]}
 
     US-003（多会话）：``X-Session-Id`` → 该会话的 pieces/pieces_by_id；缺省 →
     default。sid 过期/非法 → 401/400 结构化 JSON（早于业务校验）。
     """
     from ..nesting_bounds.load_pieces import GATE_MM
-    from ..nesting_engine.prefix import (
-        PrefixError,
-        build_prefix_plan,
-        eligible_sizes,
-        pick_prefix_size,
-    )
+    from ..nesting_engine.prefix import PrefixError, select_prefix_plan
     from ..nesting_engine.sparrow_baseline import _transform_polygon
     from .routes_ws import _parse_prefix
     from .solver import _resolve_d_tol, build_pid_meta
@@ -277,30 +283,39 @@ async def prefix_preview(req: Request):
 
     # gate_mm：优先求解口径（前端 parseGate），缺省/非法回退 intermediate（band-preview 同法）
     gate = float(payload.get('gate_mm') or 0.0) or float(state.get('gate_mm') or 0.0)
+    gate_nest = float(gate) if gate > 0 else GATE_MM
+    quantities = payload.get('quantities')
+    per_type = payload.get('per_type')
+    params = payload.get('params')
+    seed = int(payload.get('seed') or 0)
 
-    try:
-        seed = int(payload.get('seed') or 0)
-        elig = eligible_sizes(payload.get('quantities'), front, back,
-                              sizes=sizes or None)
-        size = pick_prefix_size(elig, seed=seed, front=front, back=back)
+    def _construct():
+        # 构造段（选码搜索秒级）整体入工作线程（US-003 线程池化）：与
+        # solve_worker._build_prefix 同参同源 —— 同 payload ⇒ 与求解同选
+        # （A/片型/B/rot），预览 = 求解时第一列的精确形态。
         pdef = {'d_ext': 0.0, 'd_int': 0.0, 'tol_ext': 0.0, 'tol_int': 0.0}
-        pdef.update(payload.get('params') or {})
-        d_front, _tf = _resolve_d_tol(front, pdef, payload.get('per_type'))
-        d_back, _tb = _resolve_d_tol(back, pdef, payload.get('per_type'))
+        pdef.update(params or {})
+        d_front, _tf = _resolve_d_tol(front, pdef, per_type)
+        d_back, _tb = _resolve_d_tol(back, pdef, per_type)
         pid_meta, _area, _n = build_pid_meta(
             pieces,
             sizes=sizes,
-            per_type=payload.get('per_type'),
-            quantities=payload.get('quantities'),
-            params=payload.get('params'))
-        chunk, _gaps, _holes = build_prefix_plan(
+            per_type=per_type,
+            quantities=quantities,
+            params=params)
+        chunk, gaps, holes, info = select_prefix_plan(
             pid_meta, state.get('pieces_by_id') or {},
-            front_pid=f'{front}_{size}', back_pid=f'{back}_{size}',
-            d_g=max(d_front, d_back),
-            gate_nest=float(gate) if gate > 0 else GATE_MM)
+            front_label=front, back_label=back,
+            quantities=quantities, sizes=sizes or None,
+            d_g=max(d_front, d_back), gate_nest=gate_nest, seed=seed)
+        return pid_meta, chunk, gaps, holes, info
+
+    try:
+        pid_meta, chunk, _gaps, _holes, info = await run_in_threadpool(_construct)
     except (PrefixError, ValueError) as e:
         return {'ok': False, 'error': f'前缀构造失败: {e}'}
 
+    size = int(info['size'])
     pieces_by_id = state.get('pieces_by_id') or {}
     ox, oy = chunk.offset
     members = []
@@ -318,15 +333,23 @@ async def prefix_preview(req: Request):
             'polygon': [[round(x - ox, 2), round(y - oy, 2)] for x, y in placed],
         })
 
+    extra = info.get('extra')
     return {
         'ok': True,
         'front': front,
         'back': back,
-        'size': int(size),
+        'size': size,
         'fill_pct': round(float(chunk.fill_pct), 2),
         'bbox': {'width_mm': round(float(chunk.bbox['width_mm']), 1),
                  'height_mm': round(float(chunk.bbox['height_mm']), 1)},
         'n_members': chunk.n_members,
+        # 2026-09-02 US-003 additive：选码搜索结果回显（旧前端零消费零变化；
+        # PS_ 哨兵不变 —— extra 只带 label/size，组合片 pid 永不出前端契约）。
+        'extra': ({'label': extra['label'], 'size': extra['size']}
+                  if extra else None),
+        'residual_mm': round(float(info['residual_mm']), 3),
+        'gate_mm': gate_nest,
+        'fallback': bool(info['fallback']),
         'members': members,
         'outline': [[round(x, 2), round(y, 2)] for x, y in chunk.polygon],
     }

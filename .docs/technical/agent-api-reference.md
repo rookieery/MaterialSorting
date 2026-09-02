@@ -27,7 +27,7 @@
 | POST | `/api/commit-to-nesting` | US-010：把上传母版转排料 intermediate（Path A 全管线，覆盖写回 + .bak）+ US-020 commit 后 reload `_PIECES_STATE` + US-002 多会话：`X-Session-Id` 双写 per-doc intermediate + 会话快照绑定 | `server.commit_to_nesting` |
 | GET | `/api/ptypes` | US-020 D10（US-001 v2：键 = g 码 label）：返回每个 g 码的代表裁片（最小码内 parse 同序首个，含 `label` 编号），供前端高级配置弹窗缩略图/放大预览（D11 layer-aware）；**多会话 US-003**：`X-Session-Id` → 该会话快照（缺省 → default `_PIECES_STATE`） | `server.get_ptypes` |
 | POST | `/api/band-preview` | 2026-08-24 成带形态预览（高级配置弹窗「布局设置」band 行缩略图数据源）：主进程同步 `build_band_plan`，响应无 `WB_`，见下专节；**多会话 US-003**：`X-Session-Id` → 该会话快照 | `routes_views.band_preview` |
-| POST | `/api/prefix-preview` | 2026-08-25 前缀组合形态预览（「布局设置」prefix 行缩略图数据源）：主进程同步 `eligible_sizes→pick_prefix_size→build_prefix_plan`，成员带 `tag`=g 码，响应无 `PS_`，见下专节；**多会话 US-003**：`X-Session-Id` → 该会话快照 | `routes_views.prefix_preview` |
+| POST | `/api/prefix-preview` | 2026-08-25 前缀组合形态预览（「布局设置」prefix 行缩略图数据源）：**2026-09-02 US-003 起选码换 `select_prefix_plan` 真相源**（与 solve_worker `_build_prefix` 同函数，4 片兜底或 5 片顶部异码补片；构造段 `run_in_threadpool` 线程池化），成员带 `tag`=g 码，响应 additive `extra`/`residual_mm`/`gate_mm`/`fallback`，无 `PS_`，见下专节；**多会话 US-003**：`X-Session-Id` → 该会话快照 | `routes_views.prefix_preview` |
 | POST | `/api/plt-table-preview` | 2026-08-31 导出弹窗唛架表格 14 字段预览（ExportInfoModal 全字段展示数据源）：`build_info_table` + `preview_rows` 同一真相源返 14 行（列序 = 最终表格列序、带 `manual` 标记），见下专节；**多会话 US-003**：`X-Session-Id` → 该会话快照 | `routes_views.plt_table_preview` |
 | POST | `/api/strategy/start` | strategy US-004：spawn `ms-run-config --strategy` 子进程启动双模式长跑（202）；**2026-08-22 起载荷可带 band**（经 `_parse_band` 同一校验点写进 config，成带与策略模式兼容）；**2026-08-25 起载荷可带 prefix**（经 `_parse_prefix` 同一校验点含 2+2 资格码，非法 → 400 早退，写进 9 键 config）；**多会话 US-004（2026-08-27）：读 `X-Session-Id`**（缺省 default）—— 每会话 409 单飞、跨会话并发放开、数据源 = 会话快照 | `strategy.strategy_start` |
 | GET | `/api/strategy/status` | strategy US-004：无状态惰性轮询 run_dir 产物组装进度；**多会话 US-004：读 `X-Session-Id`**（status 轮询即活性，长跑会话不被扫描误杀） | `strategy.strategy_status` |
@@ -416,7 +416,7 @@ curl http://127.0.0.1:8000/api/ptypes -H "X-Session-Id: <sid>"
 - band/prefix 校验**复用 WS 同一校验点**（`routes_ws._parse_band` / `_parse_prefix`）—— WS / 策略 start / 预览三处口径恒一。
 - **多会话 US-003**：可选 `X-Session-Id` Header → 该会话的 `pieces` / `pieces_by_id`（A/B 会话各成各带互不串台）；缺省 → default。sid 过期/非法 → 401/400 结构化 JSON，早于业务校验（`_resolve_session_state` 单一解析点，`/api/ptypes` 同款）。
 - `gate_mm` 优先求解口径（前端 parseGate），缺省/非法回退 intermediate（与 `/export` 同法）；构造约束带即 `gate_mm` 原样（2026-08-28 起单一幅宽口径）与求解同口径。
-- prefix `seed` 缺省 0：界面恒单 seed=0 ⇒ 预览与求解同码（资格码选取是 seeded 随机，跨 seed 形态同构仅码不同）。
+- prefix `seed` 缺省 0：**选码确定性化（2026-09-02 `select_prefix_plan` 近满幅几何搜索，无 RNG）后预览不再依赖 seed 对齐** —— 搜索路径与 seed 无关恒与求解同选；seed 仅兜底 4 片路径的 `pick_prefix_size` 消费（缺省 0 = 与求解同参同选）。
 
 ### 响应（失败也 200、`ok:false` 包络 —— 选错 g 码是预期内常态而非异常）
 
@@ -427,21 +427,26 @@ curl http://127.0.0.1:8000/api/ptypes -H "X-Session-Id: <sid>"
  "members": [{"pid": "g05_38", "size": 38, "color": "#...", "polygon": [[x,y],...]}],
  "outline": [[x,y],...]}
 
-// /api/prefix-preview 成功（成员多一个 tag = g 码，前/后幅区分标注；顶层多 front/back/size）
-{"ok": true, "front": "g02", "back": "g03", "size": 34, "fill_pct": 83.6,
- "bbox": {"width_mm": 1155.0, "height_mm": 1458.0}, "n_members": 4,
- "members": [{"pid": "g02_34", "size": 34, "color": "#...", "tag": "g02", "polygon": [[x,y],...]}],
+// /api/prefix-preview 成功（成员多一个 tag = g 码，前/后幅区分标注；顶层多 front/back/size；
+// 2026-09-02 US-003 起 additive：n_members=4（兜底）或 5（顶部异码补片）+ 四个新键）
+{"ok": true, "front": "g02", "back": "g03", "size": 38, "fill_pct": 82.0,
+ "bbox": {"width_mm": 1175.0, "height_mm": 1978.4}, "n_members": 5,
+ "members": [{"pid": "g02_38", "size": 38, "color": "#...", "tag": "g02", "polygon": [[x,y],...]}],
+ "extra": {"label": "g02", "size": 32},   // 补片在案时非 null（兜底 4 片 = null）
+ "residual_mm": 1.55,                      // gate_mm − 组合片高（近满幅残余缝隙）
+ "gate_mm": 1980.0,                        // 实际参与构造的门幅（payload > intermediate 回退）
+ "fallback": false,                        // true = 无可行 5 片组合 → 兜底 4 片 seeded
  "outline": [[x,y],...]}
 ```
 
-主进程同步跑构造（v2 链构造 / 构造性竖排均无 RNG、毫秒级，spyrrow 不参与）：band = `build_pid_meta + build_band_plan`；prefix = `eligible_sizes → pick_prefix_size(seed) → build_prefix_plan`（`d_g = max(d_front, d_back)` 与 `solve_worker._build_prefix` 同式）。**2026-09-02 注**：求解侧 `_build_prefix` 已切 `select_prefix_plan`（近满幅 5 片搜索，见 §1.5/§4）—— 预览端点本表形态暂为 4 片 seeded（与求解选码暂不同源），**US-003 将把预览换同一 `select_prefix_plan` + 线程池**。
+构造执行模型：band = 主进程同步 `build_pid_meta + build_band_plan`（v2 链构造无 RNG、毫秒级，spyrrow 不参与）；prefix（2026-09-02 US-003 起）= `build_pid_meta → select_prefix_plan`（与 `solve_worker._build_prefix` 同一真相源、同参同选；`d_g = max(d_front, d_back)` 同式）**构造段整体经 `run_in_threadpool` 在工作线程执行** —— 选码搜索秒级（5336 规模 ~120 组合实测 ~4.45s < 5s 红线），防阻塞事件循环（多会话并发下主进程卡顿）；会话解析/校验仍主线程先行（401/400 早退语义不变）。
 
 ### 关键不变量
 
 1. **成员 polygon 是组合片归一坐标**（原始轮廓@带内/组合片位 − `chunk.offset`；原始轮廓缺席回退 erode 后轮廓，与 union 口径一致）—— 前端零变换直接渲染（`BandPreviewSVG`）。颜色 = `pid_meta['color']`（`size_color` 单一真相源，与 manifest/NestSVG 同口径）。
-2. **不返回组合片 pid**（哨兵约定：`WB_` / `PS_` 永不出现在前端/manifest/导出）；`outline` 是 erode 后组合片外轮廓（前端虚线叠加显示「主解看到的形状」）。
+2. **不返回组合片 pid**（哨兵约定：`WB_` / `PS_` 永不出现在前端/manifest/导出）；`outline` 是 erode 后组合片外轮廓（前端虚线叠加显示「主解看到的形状」）；prefix 的 `extra` 只带 `label`/`size`（补片真实 pid 在 `members` 里自然可见，组合片 `PS_` pid 永不出前端契约）。
 3. **失败也 200**：空 state / 校验失败 / 构造异常统一 `{"ok": false, "error": "<可读文案>"}`，前端单条路径渲染错误文案（不区分网络/业务错误）。
-4. 预览与求解**同真相源**：band 链构造无 RNG（seed 只进 chunk.seed 记录，几何无关）⇒ 预览 = 求解时带的精确形态；prefix 同 seed（缺省 0）同码同形态。
+4. 预览与求解**同真相源**：band 链构造无 RNG（seed 只进 chunk.seed 记录，几何无关）⇒ 预览 = 求解时带的精确形态；prefix 走 `select_prefix_plan` 同函数同参（搜索路径无 RNG）⇒ 同 payload 恒与求解同选（A/片型/B/rot；`tests/test_prefix_preview_api.py` 直调对拍锁定）。
 
 ## 策略桥接（strategy PRD US-004）— `/api/strategy/*` 四路由（`web/strategy.py`）
 
