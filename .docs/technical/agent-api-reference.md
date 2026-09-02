@@ -616,7 +616,7 @@ ws://127.0.0.1:8000/ws/solve?sid=<sid>     # 缺省/空串 → default 会话（
 }
 ```
 
-仅对应 StartPayload 开关开启时出现，在 manifest 前各发一次（双开序 = band → prefix → manifest）。`on_stage` 回调泛化为键白名单转发（fill_pct/bbox/fallback/elapsed/size/holes/extra_label/extra_size/residual_mm）。旧前端 default:break 静默忽略（前向兼容）；前端 US-012 起在状态行呈现「腰头成带中…」（秒级提示，不进 phase 五态状态机）。
+仅对应 StartPayload 开关开启时出现，在 manifest 前各发一次（双开序 = band → prefix → manifest）。`on_stage` 回调泛化为键白名单转发（fill_pct/bbox/fallback/elapsed/size/holes/extra_label/extra_size/residual_mm）。旧前端 default:break 静默忽略（前向兼容）；前端 US-012 起在状态行呈现「腰头成带中…」（秒级提示，不进 phase 五态状态机）；**起始端成套补片 US-004（2026-09-02）起 prefix stage 状态行双形态**——extra 在案 →「起始端成套构造中（尺码 A＋g@B）…」，兜底/旧后端回落现行形态（`/api/prefix-preview` 的 `extra`/`residual_mm` 同日入前端类型，放大层 hint 追加「＋ 顶部 g@B 异码片 · 余 Xmm 近满幅」）。
 
 ### 2. server → manifest（**一次**，握手后立即发）
 

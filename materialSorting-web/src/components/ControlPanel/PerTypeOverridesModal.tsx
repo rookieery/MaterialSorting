@@ -24,8 +24,10 @@
 //     PS_ 组合片的精确形态）—— 原「两码各一张 80×80 原始裁片缩略」与下方裁片
 //     设置表格同源同图，纯冗余已删；勾选且两码均空时**默认预选 parse doc 面积
 //     最大两片**（决策⑤，5336 = g02/g03，用户可改；defaultPrefixLabels shoelace
-//     口径）；说明文案「满足 2+2 的尺码将自动选取」（资格码后端 seeded 随机选取、
-//     不出 UI —— 决策②）；无任何资格码时警示「当前数量无 2+2 资格码」
+//     口径）；说明文案「满足 2+2 的尺码将自动选取」（资格码后端近满幅几何搜索
+//     确定性选定、不出 UI —— 决策②；2026-09-02 起取代 seeded 随机，可行时顶部
+//     补 1 片异码近满幅 —— 预览缩略 5 片、放大层文案追加「＋ 顶部 B@码 异码片」）；
+//     无任何资格码时警示「当前数量无 2+2 资格码」
 //     （prefixEligibleSizes 与后端 _parse_prefix 同口径本地预检，不阻塞 band
 //     使用，权威拦截在后端）；front==back 时同位警示。
 //     确定写回 form.prefix_*，与 band 草稿同一 saveAndClose 通道。
@@ -633,7 +635,8 @@ function PerTypeOverridesModalInner({
               /api/prefix-preview，求解时 PS_ 组合片精确形态，band 预览同款三态 +
               点击开 prefix-zoom 放大层）。勾上且两码均空时默认预选 parse doc 面积
               最大两片（handlePrefixToggle）；未勾选两下拉 disabled。
-              说明文案「满足 2+2 的尺码将自动选取」（资格码后端 seeded 随机，决策②）。 */}
+              说明文案「满足 2+2 的尺码将自动选取」（资格码后端近满幅几何搜索
+              确定性选定，决策②）。 */}
           <div className="per-type-band-row" data-testid="per-type-prefix-row">
             <label className="per-type-band-check">
               <input
@@ -962,8 +965,15 @@ function PerTypeOverridesModalInner({
                 </div>
                 <div className="band-zoom-hint dim small">
                   预览 = 求解时前缀组合片的精确形态（4 片同码 interleave 竖排贴靠 ·
-                  头尾相对 180°；标注 = 成员 g 码）；虚线 = 组合片外轮廓（主解看到
-                  的形状）。尺码自 2+2 资格码自动选取（seed=0，与求解一致）。
+                  头尾相对 180°；标注 = 成员 g 码）
+                  {/* 2026-09-02 异码补片：extra 在案 → 追加「＋ 顶部 B@码 异码片 ·
+                      余 X mm 近满幅」（近满幅语义只随补片段出现，无补片形态不残留）；
+                      兜底 / 旧后端（键缺席）→ 现行形态 */}
+                  {prefixPreview.extra != null
+                    ? `＋ 顶部 ${prefixPreview.extra.label}@${prefixPreview.extra.size} 异码片 · 余 ${prefixPreview.residual_mm ?? '—'}mm 近满幅`
+                    : ''}
+                  ；虚线 = 组合片外轮廓（主解看到的形状）。尺码自 2+2 资格码
+                  几何搜索自动选取（与求解同源一致）。
                 </div>
               </div>
             </div>,

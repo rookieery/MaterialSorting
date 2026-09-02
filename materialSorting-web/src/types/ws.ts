@@ -27,8 +27,9 @@ export interface BandConfig {
 
 /**
  * US-004（prefix FR-1）起始端成套前后幅配置：用户指认前/后幅 g 码后，系统在所排
- * 尺码中自动选取满足 2+2 的资格码（后端 seeded 随机，**无 size 键** —— 决策②），
- * 4 片构造性竖排成 `PS_*` 组合片进主解，解后 min_x>6mm 时钉位置换。
+ * 尺码中自动选取满足 2+2 的资格码（后端近满幅几何搜索确定性选码，**无 size 键**
+ * —— 决策②；2026-09-02 起取代 seeded 随机），4 片构造性竖排 + 可行时顶部补 1 片
+ * 异码近满幅成 `PS_*` 组合片进主解，解后 min_x>6mm 时钉位置换。
  *
  * StartPayload 的 ``prefix`` 键：缺省 / null / enabled falsy = 关闭（旧行为逐字节不变）；
  * 开启时后端 ``routes_ws._parse_prefix`` 服务端校验（front/back ``^g\d+$`` / 存在于
@@ -160,8 +161,10 @@ export interface StoppedMsg {
  * （不进 phase 五态状态机，秒级提示）。
  *
  * US-004 扩展：``stage:'prefix'``（起始端成套构造完成统计，双开时 band→prefix 序、
- * 各自 manifest 前唯一一次）—— ``size`` 回显后端 seeded 随机选中的资格码（前端无法
- * 预知，决策②），状态行「起始端成套构造中（尺码 {size}）…」。
+ * 各自 manifest 前唯一一次）—— ``size`` 回显后端选中的资格码（近满幅几何搜索
+ * 确定性选定，前端无法预知，决策②），状态行「起始端成套构造中（尺码 {size}…）…」；
+ * 2026-09-02 异码补片 additive：``extra_label``/``extra_size`` 仅补片在案时非
+ * null（兜底 4 片 / 无补片 = null），状态行双形态「尺码 A＋{extra_label}@{extra_size}」。
  */
 export interface StageMsg {
   type: 'stage';
@@ -171,7 +174,7 @@ export interface StageMsg {
   fill_pct?: number | null;
   /** 带板实际占用 bbox（裁剪后）。 */
   bbox?: { width_mm: number; height_mm: number } | null;
-  /** 兜底标记（当前恒 false；保留协议位）。 */
+  /** 兜底标记（band 恒 false；prefix true = 无可行 5 片组合 → 兜底 4 片构造）。 */
   fallback: boolean;
   /** 带内聚排耗时 s。 */
   elapsed?: number | null;
@@ -179,6 +182,16 @@ export interface StageMsg {
   size?: number | null;
   /** prefix 专属：组合片封闭腔数（P0 实测 interleave 0 个 = 无 sparrow 死区）。 */
   holes?: number | null;
+  /**
+   * prefix 专属（2026-09-02 异码补片 additive）：顶部异码补片 g 码（如 'g02'）。
+   * 仅补片在案时非 null（兜底 / 无补片 = null）；旧后端无此键 → undefined 与
+   * null 同走无补片文案分支（协议向后兼容，文案回落现行形态）。
+   */
+  extra_label?: string | null;
+  /** prefix 专属：补片尺码（extra_label 在案时非 null）。 */
+  extra_size?: number | null;
+  /** prefix 专属：gate − 组合片高（近满幅残余缝隙，round 3；兜底路径同样回显）。 */
+  residual_mm?: number | null;
 }
 
 /** server → client 判别联合（按 type 字段区分）。 */

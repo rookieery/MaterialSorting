@@ -334,6 +334,82 @@ describe('US-027 NestingPage phase 转换', () => {
   });
 });
 
+describe('起始端成套 US-004 prefix stage → 状态行双形态（2026-09-02 异码补片 additive）', () => {
+  beforeEach(() => {
+    useUploadStore.getState().reset();
+    mountNestingPage();
+  });
+
+  it('有补片（extra_label/extra_size 在案）→ 状态行「尺码 38＋g02@32」+ run 不 finish + rec.stage 持新键', () => {
+    startSolveViaPanel();
+    const ws = mockInstances[0];
+
+    const stage: ServerMsg = {
+      type: 'stage',
+      stage: 'prefix',
+      size: 38,
+      fallback: false,
+      extra_label: 'g02',
+      extra_size: 32,
+      residual_mm: 1.55,
+      elapsed: 4.3,
+    };
+    act(() => ws.onmessage?.({ data: JSON.stringify(stage) }));
+
+    // 双形态文案：尺码 A ＋ 顶部异码片 B@码（全角＋与既有风格一致）
+    expect(statusText()).toContain('起始端成套构造中（尺码 38＋g02@32）…');
+    // **不进 phase 五态状态机**：仍 running（#stop 在场），run 未 finish
+    expect(container!.querySelector('#stop')).not.toBeNull();
+    expect(runRegistry.list()[0].done).toBe(false);
+    // rec.stage 透传新键（回放/导出口径）
+    expect(runRegistry.list()[0].stage).toMatchObject({
+      type: 'stage',
+      stage: 'prefix',
+      extra_label: 'g02',
+      extra_size: 32,
+      residual_mm: 1.55,
+    });
+  });
+
+  it('兜底 4 片（extra_label=null / fallback=true）→ 状态行回落现行形态「尺码 28」', () => {
+    startSolveViaPanel();
+    const ws = mockInstances[0];
+
+    const stage: ServerMsg = {
+      type: 'stage',
+      stage: 'prefix',
+      size: 28,
+      fallback: true,
+      extra_label: null,
+      extra_size: null,
+      residual_mm: 240,
+    };
+    act(() => ws.onmessage?.({ data: JSON.stringify(stage) }));
+
+    expect(statusText()).toContain('起始端成套构造中（尺码 28）…');
+    expect(statusText()).not.toContain('＋');
+    expect(runRegistry.list()[0].done).toBe(false);
+  });
+
+  it('旧后端（无 extra_* 新键）→ 前端不炸、状态行现行形态（协议向后兼容）', () => {
+    startSolveViaPanel();
+    const ws = mockInstances[0];
+
+    // 旧后端消息形状：无 extra_label/extra_size/residual_mm（undefined 与 null 同判）
+    const stage: ServerMsg = {
+      type: 'stage',
+      stage: 'prefix',
+      size: 34,
+      fallback: false,
+    };
+    act(() => ws.onmessage?.({ data: JSON.stringify(stage) }));
+
+    expect(statusText()).toContain('起始端成套构造中（尺码 34）…');
+    expect(statusText()).not.toContain('＋');
+    expect(runRegistry.list()[0].done).toBe(false);
+  });
+});
+
 describe('US-012 NestingPage band stage → 状态行（秒级提示，不进 phase 五态状态机）', () => {
   beforeEach(() => {
     useUploadStore.getState().reset();

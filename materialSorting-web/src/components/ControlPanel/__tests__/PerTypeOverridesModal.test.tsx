@@ -145,6 +145,38 @@ const PREFIX_OK: PrefixPreviewResponse = {
   outline: [[0, 0], [320, 0], [320, 1360], [0, 1360]],
 };
 
+/**
+ * 5 片补片形态预览 ok 响应（2026-09-02 异码补片）：4 同码基座@28 + 顶部异码补片
+ * g02@29 —— extra 只带 label/size 两键；补片 color = size_color(29)（同码同色
+ * 跨片型，≠ 基座 28 色）；residual_mm = gate 2400 − 组合片高 2190 = 210。
+ */
+const PREFIX_EXTRA_OK: PrefixPreviewResponse = {
+  ok: true,
+  front: 'g02',
+  back: 'g03',
+  size: 28,
+  fill_pct: 91.4,
+  bbox: { width_mm: 320, height_mm: 2190 },
+  n_members: 5,
+  members: [
+    { pid: 'g02_28', size: 28, color: '#1f77b4', tag: 'g02',
+      polygon: [[0, 0], [300, 0], [300, 350], [0, 350]] },
+    { pid: 'g03_28', size: 28, color: '#1f77b4', tag: 'g03',
+      polygon: [[0, 350], [320, 350], [320, 680], [0, 680]] },
+    { pid: 'g02_28', size: 28, color: '#1f77b4', tag: 'g02',
+      polygon: [[0, 680], [300, 680], [300, 1030], [0, 1030]] },
+    { pid: 'g03_28', size: 28, color: '#1f77b4', tag: 'g03',
+      polygon: [[0, 1030], [320, 1030], [320, 1360], [0, 1360]] },
+    { pid: 'g02_29', size: 29, color: '#ff7f0e', tag: 'g02',
+      polygon: [[0, 1360], [320, 1360], [320, 2190], [0, 2190]] },
+  ],
+  outline: [[0, 0], [320, 0], [320, 2190], [0, 2190]],
+  extra: { label: 'g02', size: 29 },
+  residual_mm: 210,
+  gate_mm: 2400,
+  fallback: false,
+};
+
 /** 当前 mock 返回的前缀预览数据（按 URL 路由分发，见 beforeEach）。 */
 let mockPrefixPreview: PrefixPreviewResponse = PREFIX_OK;
 
@@ -1082,6 +1114,60 @@ describe('PerTypeOverridesModal 布局设置 prefix 分区 (US-004)', () => {
     });
     expect(document.body.querySelector('[data-testid="prefix-zoom-overlay"]')).toBeNull();
     expect(useControlPanelStore.getState().modal).toBe('per_type');
+  });
+
+  it('有补片（5 片）→ 缩略 5 成员自动渲染 + 异码色 size_color(29) + 放大层文案追加「＋ 顶部 g02@29 异码片 · 余 210mm 近满幅」', async () => {
+    mockPrefixPreview = PREFIX_EXTRA_OK;
+    mockReps = THREE_REPS;
+    useControlPanelStore.getState().openModal('per_type');
+    renderModal();
+    await flushFetch();
+    enablePrefix('g02', 'g03');
+    await flushFetch();
+    const thumb = document.body.querySelector<HTMLButtonElement>('[data-testid="prefix-thumb-g02+g03"]')!;
+    expect(thumb).not.toBeNull();
+    // 缩略 5 片自动渲染（BandPreviewMember 泛型零改动 —— members 多 1 片即多画 1 片）
+    const members = thumb.querySelectorAll('[data-role="band-member"]');
+    expect(members).toHaveLength(5);
+    // 顶部第 5 片 = 异码补片 g02@29：fill = size_color(29) 同码同色跨片型（≠ 基座 28 色）
+    const extraPoly = members[4] as SVGPolygonElement;
+    expect(extraPoly.getAttribute('data-size')).toBe('29');
+    expect(extraPoly.getAttribute('fill')).toBe('#ff7f0e');
+
+    // 放大层文案双形态：追加「＋ 顶部 B@码 异码片 · 余 X mm 近满幅」
+    act(() => thumb.click());
+    const hint = document.body.querySelector('.band-zoom-hint')!.textContent!;
+    expect(hint).toContain('＋ 顶部 g02@29 异码片 · 余 210mm 近满幅');
+    expect(hint).toContain('4 片同码 interleave 竖排贴靠');
+    expect(hint).toContain('虚线 = 组合片外轮廓');
+    // 放大层标注 5 片（顶部异码片 tag = 补片 g 码 g02）
+    const labels = document.body.querySelectorAll('[data-role="band-size-label"]');
+    expect(labels).toHaveLength(5);
+    expect(Array.from(labels).map((l) => l.textContent).sort())
+      .toEqual(['g02', 'g02', 'g02', 'g03', 'g03']);
+    act(() =>
+      (document.body.querySelector('[data-testid="prefix-zoom-close"]') as HTMLButtonElement).click(),
+    );
+    expect(document.body.querySelector('[data-testid="prefix-zoom-overlay"]')).toBeNull();
+  });
+
+  it('无补片 / 旧后端（extra 等新键缺席）→ 放大层文案现行形态（不追加异码段，协议向后兼容）', async () => {
+    // PREFIX_OK 不含 extra/residual_mm/gate_mm/fallback 键 = 旧后端响应形状
+    mockPrefixPreview = PREFIX_OK;
+    mockReps = THREE_REPS;
+    useControlPanelStore.getState().openModal('per_type');
+    renderModal();
+    await flushFetch();
+    enablePrefix('g02', 'g03');
+    await flushFetch();
+    const thumb = document.body.querySelector<HTMLButtonElement>('[data-testid="prefix-thumb-g02+g03"]')!;
+    expect(thumb.querySelectorAll('[data-role="band-member"]')).toHaveLength(4);
+    act(() => thumb.click());
+    const hint = document.body.querySelector('.band-zoom-hint')!.textContent!;
+    expect(hint).toContain('4 片同码 interleave 竖排贴靠');
+    expect(hint).not.toContain('＋ 顶部');
+    expect(hint).not.toContain('近满幅');
+    expect(hint).toContain('虚线 = 组合片外轮廓');
   });
 
   it('前缀预览失败 → 可读错误文案（构造失败前置到选码时刻），下拉仍可选（不阻塞）', async () => {

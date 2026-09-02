@@ -49,7 +49,7 @@ export interface StartConfig {
   /**
    * US-004 起始端成套前后幅配置：缺省 / null → 序列化为 null（prefix 关，旧行为
    * 不变）；开且有效 → {enabled:true,front,back}（collectPrefix 三态解析产物；
-   * **无 size 键** —— 资格码后端 seeded 随机选取，决策②）。
+   * **无 size 键** —— 资格码后端选码（近满幅几何搜索，seed 仅兜底路径），决策②）。
    */
   prefix?: PrefixConfig | null;
 }

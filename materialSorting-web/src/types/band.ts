@@ -69,7 +69,8 @@ export interface PrefixPreviewPayload {
   per_type: Record<string, { d?: number; tol?: number }> | null;
   /** 幅宽 mm（parseGate；竖排高守卫与 solve 同口径）。 */
   gate_mm: number;
-  /** 资格码选取 seed（缺省 0 —— 界面恒单 seed=0 ⇒ 预览与求解同码）。 */
+  /** 选码 seed（缺省 0 —— 选码确定性化后仅兜底路径消费；近满幅搜索与 seed 无关，
+   *  同 payload ⇒ 预览与求解恒同选，见后端 select_prefix_plan 单一真相源）。 */
   seed?: number;
 }
 
@@ -80,15 +81,26 @@ export interface PrefixPreviewResponse {
   error?: string;
   front?: string;
   back?: string;
-  /** 资格码中 seeded 随机选中的尺码（4 成员同码）。 */
+  /** 资格码中选中的尺码（近满幅几何搜索确定性选定，2026-09-02 起取代 seeded 随机）。 */
   size?: number;
   /** 组合片 bbox 填充率 %。 */
   fill_pct?: number;
   /** 组合片实际占用 bbox（mm）。 */
   bbox?: { width_mm: number; height_mm: number };
-  /** 成员数（恒 4 = 前×2 + 后×2）。 */
+  /** 成员数 = 4（兜底 / 无补片：前×2 + 后×2）或 5（顶部异码补片）。 */
   n_members?: number;
   members?: BandPreviewMember[];
   /** erode 后组合片外轮廓（虚线叠加显示「主解看到的形状」；PS_ pid 不返回）。 */
   outline?: Polygon;
+  /**
+   * 顶部异码补片在案时非 null（只带 label/size 两键 —— 补片真实 pid 在 members
+   * 自然可见，PS_ 哨兵不变）；兜底 4 片 = null（2026-09-02 异码补片 additive）。
+   */
+  extra?: { label: string; size: number } | null;
+  /** gate_mm − 组合片高（近满幅残余缝隙，round 3；兜底路径同样回显）。 */
+  residual_mm?: number;
+  /** 实际参与构造的门幅（payload gate_mm > intermediate 回退后值）。 */
+  gate_mm?: number;
+  /** true = 无可行 5 片组合 → 兜底 4 片 seeded 构造（旧行为）。 */
+  fallback?: boolean;
 }

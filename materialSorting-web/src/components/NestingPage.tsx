@@ -22,8 +22,9 @@
 //   onStage 回调（band 带内聚排统计，manifest 前唯一一次）→ 状态行「腰头成带中：带内聚排…」
 //   秒级提示（**不进 phase 五态状态机**，run 不 finish；后续 manifest/frames 正常流转）。
 // US-004（起始端成套前后幅）：handleStart 透传 cfg.prefix（与 band 可同开）；onStage 分支
-//   stage='prefix' → 状态行「起始端成套构造中（尺码 {size}）…」（size 回显后端 seeded
-//   随机选中的资格码，不进 phase 五态状态机）。
+//   stage='prefix' → 状态行「起始端成套构造中（尺码 {size}）…」（size 回显后端近满幅
+//   几何搜索选中的资格码，不进 phase 五态状态机；2026-09-02 异码补片双形态 ——
+//   extra 在案 →「尺码 {size}＋{extra_label}@{extra_size}」）。
 //
 // Tooltip 仍由父 App 渲染（全局单例，不能多挂）；本页只渲染业务区，不挂 Tooltip。
 
@@ -60,10 +61,19 @@ export function NestingPage(): React.JSX.Element {
     // **不进 phase 五态状态机**（run 不 finish；后续 manifest/frames/final 正常流转，
     // 全部 done 后 onDone 统一切 phase）。旧后端不发 stage → 回调不触发，安全。
     // US-004 prefix stage：构造完成统计 →「起始端成套构造中（尺码 {size}）…」
-    // （size 由 stage 消息回显后端 seeded 随机选中的资格码，前端无法预知 —— 决策②）。
+    // （size 由 stage 消息回显后端选中的资格码 —— 近满幅几何搜索确定性选定，
+    // 前端无法预知，决策②）。2026-09-02 异码补片双形态：extra_label/extra_size
+    // 在案 →「尺码 {size}＋{extra_label}@{extra_size}」（＋号全角与文案风格一致）；
+    // 兜底 / 无补片 / 旧后端（键缺席）→ 现行形态（null 与 undefined 同判）。
     onStage: (m) => {
       if (m.stage === 'prefix') {
-        setStatus(`起始端成套构造中（尺码 ${m.size ?? '—'}）…`);
+        if (m.extra_label != null && m.extra_size != null) {
+          setStatus(
+            `起始端成套构造中（尺码 ${m.size ?? '—'}＋${m.extra_label}@${m.extra_size}）…`,
+          );
+        } else {
+          setStatus(`起始端成套构造中（尺码 ${m.size ?? '—'}）…`);
+        }
       } else {
         setStatus('腰头成带中：带内聚排…');
       }
@@ -164,7 +174,8 @@ export function NestingPage(): React.JSX.Element {
         // band seed 由 zlib.crc32(f'{seed}|{label}') 派生保证确定性）。
         band: cfg.band,
         // US-004：起始端成套前后幅透传（与 band 可同开 —— 双开时带位只记录不置换；
-        // 资格码在各 run 后端 seeded 随机选取，zlib.crc32(f'{seed}|{front}|{back}') 派生）。
+        // 资格码后端近满幅几何搜索确定性选定（全 run 同选，2026-09-02 起取代
+        // seeded 随机），可行时顶部补 1 片异码近满幅，seed 仅兜底路径消费）。
         prefix: cfg.prefix,
       });
     }
