@@ -446,7 +446,7 @@ curl http://127.0.0.1:8000/api/ptypes -H "X-Session-Id: <sid>"
 1. **成员 polygon 是组合片归一坐标**（原始轮廓@带内/组合片位 − `chunk.offset`；原始轮廓缺席回退 erode 后轮廓，与 union 口径一致）—— 前端零变换直接渲染（`BandPreviewSVG`）。颜色 = `pid_meta['color']`（`size_color` 单一真相源，与 manifest/NestSVG 同口径）。
 2. **不返回组合片 pid**（哨兵约定：`WB_` / `PS_` 永不出现在前端/manifest/导出）；`outline` 是 erode 后组合片外轮廓（前端虚线叠加显示「主解看到的形状」）；prefix 的 `extra` 只带 `label`/`size`（补片真实 pid 在 `members` 里自然可见，组合片 `PS_` pid 永不出前端契约）。
 3. **失败也 200**：空 state / 校验失败 / 构造异常统一 `{"ok": false, "error": "<可读文案>"}`，前端单条路径渲染错误文案（不区分网络/业务错误）。
-4. 预览与求解**同真相源**：band 链构造无 RNG（seed 只进 chunk.seed 记录，几何无关）⇒ 预览 = 求解时带的精确形态；prefix 走 `select_prefix_plan` 同函数同参（搜索路径无 RNG）⇒ 同 payload 恒与求解同选（A/片型/B/rot；`tests/test_prefix_preview_api.py` 直调对拍锁定）。
+4. 预览与求解**同真相源**：band 链构造无 RNG（seed 只进 chunk.seed 记录，几何无关）⇒ 预览 = 求解时带的精确形态；prefix 走 `select_prefix_plan` 同函数同参（搜索路径无 RNG）⇒ 同 payload 恒与求解同选（A/片型/B/rot；`tests/test_prefix_preview_api.py` 直调对拍锁定；US-005 冒烟实测预览↔求解同选 @38+g02@32 residual 1.55mm，`scripts/smoke_prefix_extra.mjs`）。
 
 ## 策略桥接（strategy PRD US-004）— `/api/strategy/*` 四路由（`web/strategy.py`）
 
@@ -616,7 +616,7 @@ ws://127.0.0.1:8000/ws/solve?sid=<sid>     # 缺省/空串 → default 会话（
 }
 ```
 
-仅对应 StartPayload 开关开启时出现，在 manifest 前各发一次（双开序 = band → prefix → manifest）。`on_stage` 回调泛化为键白名单转发（fill_pct/bbox/fallback/elapsed/size/holes/extra_label/extra_size/residual_mm）。旧前端 default:break 静默忽略（前向兼容）；前端 US-012 起在状态行呈现「腰头成带中…」（秒级提示，不进 phase 五态状态机）；**起始端成套补片 US-004（2026-09-02）起 prefix stage 状态行双形态**——extra 在案 →「起始端成套构造中（尺码 A＋g@B）…」，兜底/旧后端回落现行形态（`/api/prefix-preview` 的 `extra`/`residual_mm` 同日入前端类型，放大层 hint 追加「＋ 顶部 g@B 异码片 · 余 Xmm 近满幅」）。
+仅对应 StartPayload 开关开启时出现，在 manifest 前各发一次（双开序 = band → prefix → manifest）。`on_stage` 回调泛化为键白名单转发（fill_pct/bbox/fallback/elapsed/size/holes/extra_label/extra_size/residual_mm）。旧前端 default:break 静默忽略（前向兼容）；前端 US-012 起在状态行呈现「腰头成带中…」（秒级提示，不进 phase 五态状态机）；**起始端成套补片 US-004（2026-09-02）起 prefix stage 状态行双形态**——extra 在案 →「起始端成套构造中（尺码 A＋g@B）…」，兜底/旧后端回落现行形态（`/api/prefix-preview` 的 `extra`/`residual_mm` 同日入前端类型，放大层 hint 追加「＋ 顶部 g@B 异码片 · 余 Xmm 近满幅」）。**US-005 端到端验收（2026-09-02 收官）**：UI 冒烟 `materialSorting-web/scripts/smoke_prefix_extra.mjs` 29/29 覆盖本节全部消息形态（stage 双形态/final prefix 段/末帧 placed 守恒/`PS_` 零泄漏），业务定案见 `.docs/business/起始端成套前后幅_版师确认清单.md` §9。
 
 ### 2. server → manifest（**一次**，握手后立即发）
 

@@ -498,6 +498,7 @@ src/
 - **prefix×策略互斥（v1）**：prefix 开启 → strategy-btn `disabled` + `title="起始端成套与策略运行互斥：请先在高级配置 → 布局设置中关闭起始端成套前后幅"`（/api/strategy/* 的 prefix 支持是二期接口备注；band 2026-08-22 已解禁，prefix 仍锁）。
 - **stage='prefix' 状态行不进 phase 五态**：NestingPage onStage 分支 →「起始端成套构造中（尺码 {size}）…」秒级提示（size 由 stage 消息回显，前端无法预知几何搜索结果）；**2026-09-02 补片双形态**——extra_label/extra_size 在案 →「…（尺码 A＋{extra_label}@{extra_size}）…」（＋全角；null 与键缺席同判回落现行形态，旧后端安全）；rec.stage 持最后一条（双开时 band→prefix 序，回调带 msg 本体判别，extra_*/residual_mm 随本体透传）。
 - **测试基线**：params.test.ts（collectPrefix 三态 + prefixEligibleSizes 2+2 五态 + defaultPrefixLabels 面积预选/平手字典序/不足两 label + collectStartContext.prefix）；useSolveRun.test.tsx（prefix 透传三态 + 双开独立键 + stage(prefix) 分发不 finish）；PerTypeOverridesModal.test.tsx prefix 分区（勾选预选/警示两态/取消丢弃/confirm 回写/未勾选 disabled）；ControlPanel.test.tsx prefix 接线（闸门两态置灰文案 / payload prefix 三键 / 策略互斥 title）。浏览器 28/28：scripts/us004_prefix_verify.mjs（CDP harness，截图 out/us004_prefix_verify/）。
+- **US-005 端到端验收冒烟（2026-09-02 收官，prd-prefix-extra-piece）**：`scripts/smoke_prefix_extra.mjs`（CDP 全链路，模板 smoke-band-preview；29/29 PASS，报告 `out/smoke_prefix_extra/report.json`）——上传 5336 → 数量矩阵 Σ105 → per_type g02/g03 d=2/tol=1 → 开 prefix → 预览 5 片 + hint「＋ 顶部 g02@32 异码片 · 余 1.55mm 近满幅」→ 求解状态行「尺码 38＋g02@32」→ 形态判据（贴触/interleave/近满幅/min_x 锚定）→ final 无 placed_items 键 + 末帧 placed=105 守恒 + `PS_` 零泄漏 → 导出 PLT（fetch 抓包字节 grep b'PS_' 缺席）→ prefix_runs 工件 5 成员快照。改 prefix UI 链路（预览缩略/状态行/导出）后应复跑本脚本回归。
 
 ## 多会话 US-005 关键约定（前端会话接入与阻断弹窗 调用方必读）
 

@@ -1159,10 +1159,11 @@ band 配置（用户指认腰头 g 码成带）从表单到 WS 的纯参数链�
 | `src/hooks/useCommitToNesting.ts` | commit 成功分支调 `usePtypeStore.getState().invalidate()`（仅 ready/error → idle 才产生订阅通知，同态 set 不通知）。 |
 | `src/style.css` | 预览缩略容器 / 放大层 / 统计行样式微调（band 与 prefix 同款复用）。 |
 | `scripts/smoke-prefix-preview.mjs` / `scripts/smoke-ptype-cache.mjs` | 浏览器冒烟脚本（CDP：prefix 预览三态 + ptype 缓存「开弹窗零请求 / commit done 失效重拉」）。 |
+| `scripts/smoke_prefix_extra.mjs` | **新建（2026-09-02，US-005 端到端验收）** 异码补片全链路 CDP 冒烟（模板 smoke-band-preview.mjs 套路，29 检查全过）：上传 5336#老六订单 → 数量矩阵 7 码 Σ105 → per_type g02/g03 d=2/tol=1 → 开 prefix 预览 5 片 + 「＋ 顶部 g02@32 异码片 · 余 1.55mm 近满幅」标注 → 求解状态行「尺码 38＋g02@32」→ 形态判据（贴触 gaps / interleave 交替 / 近满幅 residual / min_x 锚定）→ final 无 placed_items 键 + 末帧 placed=105 守恒 + `PS_` 零泄漏 → 导出 PLT（fetch 抓包字节 grep b'PS_' 缺席）→ prefix_runs 工件快照 5 成员；报告落 `out/smoke_prefix_extra/report.json`。 |
 
 ### 关键不变量（2026-08-25 立，后续故事不得破坏）
 
-1. **预览与求解同真相源** —— 预览端点在后端主进程同步跑 `build_band_plan` / `eligible_sizes→pick_prefix_size→build_prefix_plan`（无 RNG 毫秒级，spyrrow 不参与），前端只渲染不改几何；band/prefix 校验三处（WS / 策略 start / 预览）共用 `routes_ws._parse_band` / `_parse_prefix` 单一校验点。
+1. **预览与求解同真相源** —— 预览端点跑 `build_band_plan`（无 RNG 毫秒级）与 `select_prefix_plan`（US-003 起：构造段整体入 `run_in_threadpool` 工作线程，选码搜索秒级防阻塞事件循环；与求解 worker 同函数同参同选，spyrrow 不参与），前端只渲染不改几何；band/prefix 校验三处（WS / 策略 start / 预览）共用 `routes_ws._parse_band` / `_parse_prefix` 单一校验点。
 2. **组合片 pid 哨兵约定延伸到预览** —— 前端预览拿到的 members 永远是展开成员（无 `WB_`/`PS_`）；组合片 pid 只存在于求解 worker 进程内。
 3. **ptypeStore 失效唯一挂点 = commit done** —— 其它时点 invalidate 会退化成两个已修 bug 之一（每次都拉 / 永久缓存）；error 态不得自动重试（死循环）。
 4. **三层弹窗叠序互斥** —— per_type < ptype-preview < band-zoom/prefix-zoom；两个 zoom 层互斥（打开一个关另一个，单顶层约定）；ESC 逐层只关最上层。
