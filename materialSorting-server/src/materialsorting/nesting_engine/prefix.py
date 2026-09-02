@@ -39,7 +39,10 @@ yoff − b1)``（b0/b1 = 旋转后 bounds 最小角）—— 缺此补偿成员�
 （异码前/后幅，同款候选 x + ``_slide_touch_y`` 贴触滑移，rot 遍历
 ``EXTRA_ROT_CANDIDATES`` 取 union bbox 面积增长最小、平手取 0.0）；
 ``select_prefix_plan`` 把选码从 seeded 随机升级为**近满幅联合几何搜索** ——
-遍历 (套装码 A × 片型 × 异码码 B × rot)，取 5 片原始轮廓 union bbox 总高
+遍历 (套装码 A × 片型 × 异码码 B)，每组合补片朝向委派上述 FR-3 规则内定
+（**需求2「弧线相切」当日修复**：此前搜索层显式枚举 rot 再按 max-H 排序，
+嵌入贴合使 H 变矮、被近满幅判据反向惩罚 ⇒ 系统性选中浅搁弧峰朝向留楔形
+空隙；委派后每组合即自身最贴合朝向），取 5 片原始轮廓 union bbox 总高
 H ≤ gate_nest − ``PREFIX_GATE_MARGIN_MM`` 的最大者（安全余量 10mm：贴线
 组合在主解条带放不下 ⇒ spyrrow 放置器 panic，2026-09-02 residual 0.307mm
 事故修复；平手按迭代序确定性裁决，全流程无 RNG；seed 只在兜底路径消费），
@@ -322,6 +325,18 @@ def _place_next(placed, occupied, pid, rot, g_rot):
     return unary_union([occupied, geom])
 
 
+def _assert_touch_gaps(placed):
+    """相邻成员贴触缝隙守卫（> ``GAP_EPS_MM`` 即形态质量悬崖，禁无声降级 ——
+    从 ``_place_members`` 尾部抽出，2026-09-02：补片 rot 候选循环内也要逐 rot
+    校验，贴触不合格的朝向没有候选资格）。"""
+    gaps = [float(placed[i - 1][3].distance(placed[i][3]))
+            for i in range(1, len(placed))]
+    if gaps and max(gaps) > GAP_EPS_MM:
+        raise PrefixError(
+            f'前缀成员贴触失败（最大缝隙 {max(gaps):.2f}mm > {GAP_EPS_MM}mm）—— '
+            f'形态质量悬崖，禁无声降级')
+
+
 def _place_members(pid_meta, front_pid, back_pid, order, extra_pid=None,
                    extra_rot=None):
     """构造性竖排贴靠成员放置（``build_prefix_plan`` 步骤 2 抽出的单一实现，
@@ -331,8 +346,10 @@ def _place_members(pid_meta, front_pid, back_pid, order, extra_pid=None,
     与抽出前**逐字节一致**；``extra_pid`` 给定时追加第 5 成员 = **顶部异码
     补片**：同款候选 x 集合 + ``_slide_touch_y`` 滑到与已占 union 首次贴触
     （eroded 碰撞口径）；``extra_rot=None`` 时遍历 ``EXTRA_ROT_CANDIDATES``
-    取 union bbox 面积增长最小（平手取 0.0），显式给定时只试该朝向
-    （``select_prefix_plan`` 逐 (片型,B,rot) 搜索/胜者重建用）。
+    逐 rot 放置 + 贴触校验（单 rot 失败只记错误不炸整组合，全败才 raise ——
+    2026-09-02「任一 rot 可行即组合可行」语义），可行者中取 union bbox 面积
+    增长最小（平手取 0.0，FR-3 = 弧线相切嵌入形态自动胜出），显式给定时只试
+    该朝向（``select_prefix_plan`` 胜者重建 / 单测用）。
 
     Returns
     -------
@@ -361,21 +378,25 @@ def _place_members(pid_meta, front_pid, back_pid, order, extra_pid=None,
         rot_cands = EXTRA_ROT_CANDIDATES if extra_rot is None \
             else (float(extra_rot),)
         best = None       # (union bbox 面积, placed 副本, occupied) —— 平手取先序
+        first_err = None
         for rot in rot_cands:
             trial = list(placed)                          # 基座列表不被污染
-            occ = _place_next(trial, occupied, extra_pid, rot,
-                              _eroded_at_rot(pid_meta[extra_pid]['polygon'], rot))
+            try:
+                occ = _place_next(trial, occupied, extra_pid, rot,
+                                  _eroded_at_rot(pid_meta[extra_pid]['polygon'],
+                                                 rot))
+                _assert_touch_gaps(trial)     # rot 候选资格：贴触合格才算数
+            except PrefixError as e:          # 单 rot 失败不炸整组合 → 试下一 rot
+                first_err = first_err or e
+                continue
             nb = occ.bounds
             area = (nb[2] - nb[0]) * (nb[3] - nb[1])
             if best is None or area < best[0] - 1e-9:     # 平手取先序 rot（0.0）
                 best = (area, trial, occ)
+        if best is None:                      # 全 rot 皆败 → 透传首个错误（现行文案）
+            raise first_err
         _area, placed, occupied = best
-    gaps = [float(placed[i - 1][3].distance(placed[i][3]))
-            for i in range(1, len(placed))]
-    if gaps and max(gaps) > GAP_EPS_MM:
-        raise PrefixError(
-            f'前缀成员贴触失败（最大缝隙 {max(gaps):.2f}mm > {GAP_EPS_MM}mm）—— '
-            f'形态质量悬崖，禁无声降级')
+    _assert_touch_gaps(placed)
     return placed
 
 
@@ -601,16 +622,20 @@ def select_prefix_plan(pid_meta, pieces_by_id, *, front_label, back_label,
     """近满幅联合选码搜索（单一真相源：web 求解与预览共用；取代 seeded 随机）。
 
     机制（prd-prefix-extra-piece，生产参考件形态：4 片同码套装 + 顶部 1 片
-    异码前/后幅，整列近满幅）：遍历 (套装码 A × 片型 × 异码码 B × rot) ——
-    对每组合构造性滑移贴触（``_place_members``，eroded 碰撞口径），H = 5 片
+    异码前/后幅，整列近满幅）：遍历 (套装码 A × 片型 × 异码码 B) —— 对每组
+    合构造性滑移贴触（``_place_members``，eroded 碰撞口径），补片朝向由其
+    内置 **FR-3 规则**择优（union bbox 面积增长最小、平手取 0.0 = 弧线相切
+    嵌入形态胜出；2026-09-02 需求2 修复 —— 此前搜索层显式枚举 rot 再按
+    max-H 排序，会系统性选中「浅搁弧峰」朝向、留下楔形空隙），H = 5 片
     **原始轮廓** union bbox 高度（与竖排高守卫同口径），可行 = H ≤ gate_nest
     − ``PREFIX_GATE_MARGIN_MM``（安全余量：组合片碰撞轮廓（d_g=0 时即原始
     union）贴到条带时 spyrrow 放置器 panic，2026-09-02 residual 0.307mm
-    事故起因）且贴触缝隙 ≤ ``GAP_EPS_MM``；**取 H 最大者**（最接近安全线，
-    不设缝隙阈值 —— 残余交主解 NFP 填小片，用户定案 2026-09-02 ②），平手
-    按迭代序 ``(A 升序, front 先于 back, B 升序, rot0 先)`` 确定性裁决 ——
-    **全流程无 RNG**（``seed`` 只在兜底路径消费）。基座自身超高/贴触失败的
-    A 直接跳过（补片只会更高）。
+    事故起因）且贴触缝隙 ≤ ``GAP_EPS_MM``；**组合间取 H 最大者**（最接近
+    安全线，不设缝隙阈值 —— 残余交主解 NFP 填小片，用户定案 2026-09-02 ②
+    —— 每组合已是自身最贴合朝向，取高者与相切嵌合并行不悖），平手按迭代
+    序 ``(A 升序, front 先于 back, B 升序)`` 确定性裁决 —— **全流程无 RNG**
+    （``seed`` 只在兜底路径消费）。基座自身超高/贴触失败的 A 直接跳过（补片
+    只会更高）。
 
     兜底（用户定案 ①）：全无可行组合 → ``pick_prefix_size``（crc32 seeded，
     含资格码为空时 PrefixError 现行文案）+ 4 片 ``build_prefix_plan``，与
@@ -631,15 +656,17 @@ def select_prefix_plan(pid_meta, pieces_by_id, *, front_label, back_label,
     seed : int
         仅兜底路径的 ``pick_prefix_size`` 消费（搜索路径确定性、与 seed 无关）。
     trace : list, optional
-        给定时逐候选 append ``{'size','label','extra_size','rotation',
-        'height_mm'|None,'feasible','reason'}``（冒烟候选表用；不影响选码）。
+        给定时逐候选 append ``{'size','label','extra_size','rotation'|None,
+        'height_mm'|None,'feasible','reason'}``（冒烟候选表用；不影响选码；
+        rotation = FR-3 择优朝向，不可行时 None）。
 
     Returns
     -------
     tuple ``(chunk, gaps, holes, info)``
         info : dict —— ``{'size': A, 'extra': {'pid','label','size','rotation'}
         | None, 'height_mm', 'residual_mm' (= gate_nest − H), 'fallback': bool,
-        'n_candidates': int (实际尝试的 (A,片型,B,rot) 组合数，含不可行)}。
+        'n_candidates': int (实际尝试的 (A,片型,B) 组合数，含不可行；rot 不
+        枚举 —— 每组合由 FR-3 内定一个)}。
     """
     elig = eligible_sizes(quantities, front_label, back_label, sizes=sizes)
     cands = _extra_candidates(pid_meta, front_label, back_label)
@@ -661,28 +688,32 @@ def select_prefix_plan(pid_meta, pieces_by_id, *, front_label, back_label,
         for _label, B, epid in cands:
             if B == A:
                 continue                # 异码 ≠A（同码 pid 即基座成员，demand 守恒会破）
-            for rot in EXTRA_ROT_CANDIDATES:
-                n_candidates += 1
-                row = {'size': A, 'label': _label, 'extra_size': B,
-                       'rotation': float(rot), 'height_mm': None,
-                       'feasible': False, 'reason': ''}
-                if trace is not None:
-                    trace.append(row)
-                try:
-                    placed = _place_members(
-                        pid_meta, fpid, bpid, order,
-                        extra_pid=epid, extra_rot=rot)
-                except PrefixError as e:
-                    row['reason'] = f'贴触失败({e})'
-                    continue
-                H = _stack_height(placed, pid_meta, pieces_by_id)
-                row['height_mm'] = round(float(H), 3)
-                if H > limit:
-                    row['reason'] = '竖排超高'
-                    continue
-                row['feasible'] = True
-                if best is None or H > best[0] + 1e-9:    # 平手取先序（确定性裁决）
-                    best = (H, A, _label, epid, float(rot))
+            n_candidates += 1
+            row = {'size': A, 'label': _label, 'extra_size': B,
+                   'rotation': None, 'height_mm': None,
+                   'feasible': False, 'reason': ''}
+            if trace is not None:
+                trace.append(row)
+            try:
+                # rot 不在搜索层枚举（2026-09-02 需求2「弧线相切」修复）：显式
+                # 枚举 + max-H 判据会系统性选中「浅搁」朝向 —— 嵌入贴合使 H 变
+                # 矮、恰好被近满幅判据反向惩罚。委派 _place_members 的 FR-3 规
+                # 则（union bbox 面积增长最小、平手取 0.0）= 自动选相切嵌入。
+                placed = _place_members(
+                    pid_meta, fpid, bpid, order, extra_pid=epid)
+            except PrefixError as e:
+                row['reason'] = f'贴触失败({e})'
+                continue
+            rot = float(placed[-1][1])                    # FR-3 选定朝向（回收）
+            H = _stack_height(placed, pid_meta, pieces_by_id)
+            row['rotation'] = rot
+            row['height_mm'] = round(float(H), 3)
+            if H > limit:
+                row['reason'] = '竖排超高'
+                continue
+            row['feasible'] = True
+            if best is None or H > best[0] + 1e-9:    # 平手取先序（确定性裁决）
+                best = (H, A, _label, epid, rot)
     if best is None:
         # 兜底（用户定案①）：与现行行为完全一致（含 elig 空 → PrefixError 文案）
         size = pick_prefix_size(elig, seed=seed, front=front_label,
@@ -1283,8 +1314,10 @@ def main(argv=None) -> int:
         for row in trace:
             hs = f'{row["height_mm"]:8.1f}' if row['height_mm'] is not None \
                 else '     n/a'
+            rs = f'rot{row["rotation"]:.0f}' if row['rotation'] is not None \
+                else 'rot-'
             print(f'    A@{row["size"]:<3} + {row["label"]}@'
-                  f'{row["extra_size"]:<3} rot{row["rotation"]:.0f}: '
+                  f'{row["extra_size"]:<3} {rs}: '
                   f'H={hs} {"可行" if row["feasible"] else "否(" + row["reason"] + ")"}')
     if sel_info['fallback']:
         print(f'  无可行 5 片组合 → 兜底 4 片 seeded（size={sel_info["size"]}，'

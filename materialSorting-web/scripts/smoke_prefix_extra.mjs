@@ -352,11 +352,22 @@ try {
     Math.abs(colResidual - stageMsg?.residual_mm) <= 8, 'colResidual=' + colResidual);
   const baseMinY0 = Math.min(...geo.base.map(b => b.y0));
   const baseMaxY1 = Math.max(...geo.base.map(b => b.y1));
+  const colX0 = Math.min(...geo.base.map(b => b.x0));
+  const colX1 = Math.max(...geo.base.map(b => b.x1));
+  // 2026-09-02 修复②回归：异码补片取嵌入朝向后，同 (label,size) 的免费副本
+  // 常被主解贴列端 y 带、贴列右缘打包（跨界共同填充）—— 候补须有 ≥50% 宽度
+  // 落在基座列 x 区间内（组合片成员整片在列内；贴列旁的免费副本只蹭 bbox
+  // 边缘 ~1% 宽，不算「在簇端」）。
+  const xOverlapFrac = (b) => (Math.min(b.x1, colX1) - Math.max(b.x0, colX0))
+    / (b.x1 - b.x0);
   const touching = (b) => geo.base.some(x => b.y0 <= x.y1 && b.y1 >= x.y0);
-  const atEnd = geo.extra.filter(b => (b.y0 <= baseMinY0 || b.y1 >= baseMaxY1) && touching(b));
+  const atEnd = geo.extra.filter(b => (b.y0 <= baseMinY0 || b.y1 >= baseMaxY1)
+    && xOverlapFrac(b) >= 0.5 && touching(b));
   check('5h 形态·异码补片在簇端（顶或底）+ 与基座列贴触（组合片可整体 180° 翻转）',
-    atEnd.length === 1, 'endCandidates=' + JSON.stringify(atEnd.map(b => [b.y0, b.y1])) +
-    ' base[' + baseMinY0.toFixed(1) + ',' + baseMaxY1.toFixed(1) + ']');
+    atEnd.length === 1, 'endCandidates=' +
+    JSON.stringify(atEnd.map(b => [+b.x0.toFixed(1), +b.y0.toFixed(1), +b.y1.toFixed(1)])) +
+    ' base[y ' + baseMinY0.toFixed(1) + ',' + baseMaxY1.toFixed(1) + ' | x ' +
+    colX0.toFixed(1) + ',' + colX1.toFixed(1) + ']');
   report.form = {
     order: chunkSeq.map(p => p.id), rots: chunkSeq.map(p => Math.round(p.rotation)),
     interleave: interleaveOk, rot_alt: rotOk, dom_gaps_mm: gaps, span_y_mm: +spanY.toFixed(1),

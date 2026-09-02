@@ -882,8 +882,9 @@ def test_select_prefix_plan_best_fit():
     assert info['height_mm'] == pytest.approx(1960.0, abs=0.5)   # 同口径
     assert info['height_mm'] <= 1980.0
     assert info['residual_mm'] == pytest.approx(20.0, abs=0.5)   # gate − H
-    # 候选表：6 pid 池 − 每 A 2 个 B==A × 3 A × 2 rot = 24 次尝试（含不可行）
-    assert len(trace) == info['n_candidates'] == 24
+    # 候选表：6 pid 池 − 每 A 2 个 B==A × 3 A = 12 次尝试（含不可行；rot 不
+    # 枚举 —— 每组合由 FR-3 面积增长最小内定一个，2026-09-02 需求2 修复）
+    assert len(trace) == info['n_candidates'] == 12
     feas = [r for r in trace if r['feasible']]
     assert len(feas) >= 2                          # 两可行组合取 H 大者（AC#3）
     assert max(r['height_mm'] for r in feas) == pytest.approx(1960.0, abs=0.5)
@@ -910,15 +911,18 @@ def test_extra_pool_eligibility():
     assert info['size'] == 38
     assert info['extra']['pid'] == 'g03_36'        # ≠A 且 demand≥1 的唯一者
     assert chunk.members[-1]['pid'] == 'g03_36'
-    assert info['n_candidates'] == 2               # (g03,36) × 2 rot（余 B==A 排除）
+    assert info['n_candidates'] == 1               # 唯一 (g03,36)（余 B==A 排除）
     assert info['height_mm'] == pytest.approx(1910.0, abs=0.5)
 
 
 def test_select_prefix_plan_tie_break_and_determinism():
     """平手裁决 + 双跑确定性：L 形同构两码全组合 H 恒等（g02 补片 2094 /
-    g03 补片 1974 两档，跨 A/rot 精确平手）⇒ 按迭代序 (A 升序, front 先于
-    back, B 升序, rot0 先) 取 (A=34, g02@36, rot0)；同输入双跑
-    (to_dict, gaps, holes, info) 全等且搜索路径与 seed 无关。"""
+    g03 补片 1974 两档，跨 A 精确平手）⇒ 按迭代序 (A 升序, front 先于 back,
+    B 升序) 取 (A=34, g02@36)；同输入双跑 (to_dict, gaps, holes, info) 全等
+    且搜索路径与 seed 无关。补片朝向 = FR-3 内定（union bbox 面积增长最小）：
+    L 形 rot180 窄边朝外包络更紧 ⇒ 面积更小 ⇒ 180.0 胜（2026-09-02 需求2
+    修复后 rot 不再按 max-H 枚举 —— 旧口径 H 平手时 rot0 先，行为可观察变迁
+    已由本断言重锁）。"""
     pid_meta, pieces = _prefix_ctx(sizes=(34, 36))
     kw = dict(front_label='g02', back_label='g03',
               quantities=_qty_of(pid_meta), sizes=[34, 36], d_g=2.0,
@@ -930,11 +934,11 @@ def test_select_prefix_plan_tie_break_and_determinism():
     assert ga == gb and ha == hb and ia == ib      # 双跑全等（无 RNG）
     assert ia['size'] == 34                        # 平手 A 升序
     assert ia['extra'] == {'pid': 'g02_36', 'label': 'g02', 'size': 36,
-                           'rotation': 0.0}        # front 先于 back + rot0 先
+                           'rotation': 180.0}      # front 先于 back；rot=FR-3 内定
     assert ia['fallback'] is False
     assert ia['height_mm'] == pytest.approx(2094.0, abs=1.0)
     assert ia['residual_mm'] == pytest.approx(106.0, abs=1.0)   # 2200 − 2094
-    assert ia['n_candidates'] == 8                 # 2 A × (2 异码 × 2 rot)
+    assert ia['n_candidates'] == 4                 # 2 A × 2 异码（rot 不枚举）
     assert len(ca.members) == 5 and max(ga) <= GAP_EPS_MM
 
 
@@ -962,7 +966,7 @@ def test_select_prefix_plan_fallback_parity():
     assert info == {'size': 34, 'extra': None,
                     'height_mm': ref.bbox['height_mm'],
                     'residual_mm': 1250.0 - ref.bbox['height_mm'],
-                    'fallback': True, 'n_candidates': 4}
+                    'fallback': True, 'n_candidates': 2}
 
 
 def test_select_prefix_plan_gate_margin_rejects_fitline():
@@ -1004,6 +1008,48 @@ def test_select_prefix_plan_all_fitline_falls_back():
     assert len(chunk.members) == 4
     assert info['height_mm'] == pytest.approx(1560.0, abs=0.5)
     assert info['residual_mm'] >= PREFIX_GATE_MARGIN_MM - 1e-6
+
+
+def test_select_prefix_plan_fr3_rot_nesting():
+    """FR-3 朝向委派回归锁（2026-09-02 需求2「弧线相切」修复）：搜索层不再
+    按 max-H 枚举补片 rot —— 旧口径系统性选中「浅搁凸峰」朝向（H 大但留楔形
+    空隙），委派 _place_members 面积增长最小后嵌入朝向胜出。
+
+    夹具（d_g=0，矩形基座 + 凸台/凹腔，全部同宽 ⇒ x 候选塌缩 {0}，精确手算）：
+    g03@34 rot0 底面挂 40 宽凸台（interleave 下成员 2/4 转 180° ⇒ 凸台朝上）；
+    g02@36 rot0 底面开同宽凹腔（深 40）。补片 rot0 = 凹腔罩住凸台嵌入（顶片
+    凸台顶 1220 ↔ 凹腔底 1180+40 贴触，H=1320、嵌入 40mm）；rot180 = 平底
+    搁凸峰顶（H=1360、嵌入 0）。旧 max-H 取 rot180=1360，FR-3 取 rot0=1320。
+    """
+    pid_meta, pieces = _stack_ctx(
+        {('g02', 34): 300.0, ('g03', 34): 250.0, ('g02', 36): 140.0})
+    tab_pts = [[0.0, 0.0], [80.0, 0.0], [80.0, -60.0], [120.0, -60.0],
+               [120.0, 0.0], [200.0, 0.0], [200.0, 250.0], [0.0, 250.0]]
+    cap_pts = [[0.0, 0.0], [80.0, 0.0], [80.0, 40.0], [120.0, 40.0],
+               [120.0, 0.0], [200.0, 0.0], [200.0, 140.0], [0.0, 140.0]]
+    for pid, pts in (('g03_34', tab_pts), ('g02_36', cap_pts)):
+        p = _panel_piece(pid, 'g03' if pid.startswith('g03') else 'g02',
+                         34 if pid.endswith('34') else 36, pts)
+        pieces[pid] = p
+        pid_meta[pid]['polygon'] = [list(pt) for pt in pts]
+        pid_meta[pid]['area_mm2'] = p['area_mm2']
+    chunk, gaps, holes, info = _select(pid_meta, pieces)
+    assert info['fallback'] is False
+    assert [m['pid'] for m in chunk.members] == ['g02_34', 'g03_34',
+                                                 'g02_34', 'g03_34', 'g02_36']
+    assert info['extra'] == {'pid': 'g02_36', 'label': 'g02', 'size': 36,
+                             'rotation': 0.0}        # FR-3 = 嵌入朝向（旧口径 180）
+    assert info['n_candidates'] == 1
+    assert info['height_mm'] == pytest.approx(1320.0, abs=0.5)   # 非 1360（浅搁）
+    assert info['residual_mm'] == pytest.approx(660.0, abs=0.5)
+    assert max(gaps) <= GAP_EPS_MM and holes == 0
+    # 嵌入形态实证：第 5 成员实体底面（1180）低于第 4 成员凸台顶（1220）40mm
+    geoms = [Polygon(_transform_polygon(pieces[m['pid']]['polygon'],
+                                        m['rotation'], m['translation']))
+             for m in chunk.members]
+    assert geoms[3].bounds[3] == pytest.approx(1220.0, abs=0.5)  # 顶片凸台顶
+    assert geoms[4].bounds[1] == pytest.approx(1180.0, abs=0.5)  # 补片实体最低
+    assert geoms[4].bounds[1] < geoms[3].bounds[3] - 30.0         # 嵌入 ≥30mm
 
 
 def test_build_prefix_plan_fitline_base_rejected():
