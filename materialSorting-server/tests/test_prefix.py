@@ -26,12 +26,21 @@
    确定性（面积降序、无 RNG）；
 9. ``pin_prefix_layout`` 终检编排（US-002/US-003 单点）：构造性用例（min_x
    ≤ 6mm、validate 通过不回退、new_L ≤ L+0.5mm、入参不被修改）+ P0 回归
-   （4 头部位姿全部跳过、PIN ≡ FREE 密度差 0.00pt）+ 复检失败回退置换前布局。
+   （4 头部位姿全部跳过、PIN ≡ FREE 密度差 0.00pt）+ 复检失败回退置换前布局；
+10. **选码搜索（顶部异码补片，2026-09-02 prd-prefix-extra-piece）**：
+    ``select_prefix_plan`` 近满幅联合几何搜索 —— 最优拟合（矩形竖排夹具 H
+    精确手算，多可行取 H 最大者）、候选池资格（demand<1/非数字码不入池、
+    B==A 搜索层排除，泄漏即夺魁的可观察证伪）、平手确定性裁决（L 形同构两
+    码全组合 H 恒等 ⇒ (A 升序, front 先, B 升序, rot0 先)）+ 双跑 to_dict/
+    info 全等且与 seed 无关、兜底与现行 pick+build 逐字节一致（fallback=True）、
+    补片 rot180 记账权威式 + 5 片两朝向展开包络、补片直调守卫（demand<1/
+    同码/非前后幅/竖排超高）、5 成员展开黄金用例（offset 减号手算 rot0/180）。
 
 合成夹具：5336 g02/g03 前后幅同构 L 形/阶梯形（非中心对称 —— rot180 框架坑
 对拍敏感；1153×484 / 1155×360 两大片量级），d_g=2.0 与 5336 per_type 同值；
 置换用例以矩形填充片 + 真实构造 chunk 组版（d=0 填充片 erode==raw ⇒ bbox
-不相交 ⇔ 布局合法，组归属手算可验）。
+不相交 ⇔ 布局合法，组归属手算可验）；选码搜索用矩形竖排夹具（同宽 ⇒ 候选
+x 全塌缩 {0} ⇒ H = Σ高 精确可手算，d_g=0 ⇒ erode==raw）。
 """
 from __future__ import annotations
 
@@ -53,6 +62,7 @@ from materialsorting.nesting_engine import waist_band as wb
 from materialsorting.nesting_engine.sparrow_baseline import _transform_polygon
 from materialsorting.nesting_engine.sparrow_experiments import erode_polygon
 from materialsorting.nesting_engine.prefix import (
+    EXTRA_ROT_CANDIDATES,
     GAP_EPS_MM,
     PIN_CUT_FLEX_MM,
     PIN_NUDGE_LADDER_MM,
@@ -70,6 +80,7 @@ from materialsorting.nesting_engine.prefix import (
     pin_prefix_layout,
     prefix_seed_for,
     reinsert_evicted,
+    select_prefix_plan,
 )
 
 
@@ -782,3 +793,287 @@ def test_pin_prefix_layout_rollback_on_recheck_fail():
     assert any('幅' in i for i in st['issues'])
     assert out == snapshot                                     # 回退 = 原布局
     assert placements == snapshot                             # 入参亦不被修改
+
+
+# --------------------------- 选码搜索（顶部异码补片，2026-09-02 需求）
+
+
+def _stack_ctx(heights, *, demands=None, width=200.0):
+    """矩形竖排夹具（选码搜索用）：``heights = {(label, size): 高}``，
+    ``demands`` 覆写 ``{(label, size): N}``（缺省 2 = 2+2 资格）。矩形同宽 ⇒
+    候选 x 全塌缩 {0} ⇒ 纯竖排 H = Σ高（d_g=0 ⇒ erode==raw，精确可手算）。"""
+    demands = demands or {}
+    pieces_by_id, pid_meta = {}, {}
+    for (label, size), h in heights.items():
+        pid = f'{label}_{size}'
+        pts = [[0.0, 0.0], [width, 0.0], [width, h], [0.0, h]]
+        p = _panel_piece(pid, label, size, pts)
+        pieces_by_id[pid] = p
+        pid_meta[pid] = {
+            'size': size, 'color': '#000000', 'polygon': [list(pt) for pt in pts],
+            'area_mm2': p['area_mm2'], 'label': label,
+            'demand': int(demands.get((label, size), 2)),
+            'net_polygon': [], 'internal_lines': [], 'notches': [],
+            'grain_line': None,
+        }
+    return pid_meta, pieces_by_id
+
+
+def _qty_of(pid_meta):
+    """pid_meta → quantities 矩阵（``{label: {sizeKey: demand}}``，sizeKey 口径
+    与 build_pid_meta / eligible_sizes 一致：number→str、None→'null'）。"""
+    q = {}
+    for m in pid_meta.values():
+        if m['label'] is None:
+            continue
+        sk = 'null' if m['size'] is None else str(m['size'])
+        q.setdefault(m['label'], {})[sk] = m['demand']
+    return q
+
+
+def _select(pid_meta, pieces, **kw):
+    """select_prefix_plan 测试速记（g02/g03 + pid_meta 派生 quantities/sizes）。"""
+    kw.setdefault('gate_nest', 1980.0)
+    kw.setdefault('d_g', 0.0)
+    kw.setdefault('seed', 0)
+    return select_prefix_plan(
+        pid_meta, pieces, front_label='g02', back_label='g03',
+        quantities=_qty_of(pid_meta),
+        sizes=sorted({m['size'] for m in pid_meta.values()
+                      if m['size'] is not None}), **kw)
+
+
+_BEST_FIT = {('g02', 34): 300.0, ('g03', 34): 250.0,     # 基座(34)=1100
+             ('g02', 36): 400.0, ('g03', 36): 350.0,     # 基座(36)=1500
+             ('g02', 38): 420.0, ('g03', 38): 360.0}     # 基座(38)=1560
+
+
+def test_extra_rot_candidates_locked():
+    """补片朝向候选锁死：(0.0, 180.0) 均严格顺布纹（2026-09-02 定案③ 保留
+    翻转自由度）；组合片主解朝向 PREFIX_ORIENTATIONS 同口径不变。"""
+    assert EXTRA_ROT_CANDIDATES == (0.0, 180.0)
+    assert tuple(PREFIX_ORIENTATIONS) == (0.0, 180.0)
+
+
+def test_select_prefix_plan_best_fit():
+    """最优拟合：H 手算 —— A@38 基座 1560 + g02@36 补片 400 = 1960 为全场
+    最大可行（次高 A@36+g02@38=1920）⇒ 取 H 最大者；断言 A/片型/B/members=5
+    （4 同码 + 顶异码）/第 5 成员在顶/贴触 ≤1mm/H ≤ gate/residual=gate−H/
+    pid 追加段/候选表计数。"""
+    pid_meta, pieces = _stack_ctx(_BEST_FIT)
+    trace = []
+    chunk, gaps, holes, info = _select(pid_meta, pieces, trace=trace)
+    assert info['fallback'] is False
+    assert info['size'] == 38
+    assert info['extra'] == {'pid': 'g02_36', 'label': 'g02', 'size': 36,
+                             'rotation': 0.0}    # 矩形 rot180 同高 ⇒ 平手 rot0 先
+    assert chunk.pid == 'PS_g02+g03@38+g02@36'
+    assert chunk.n_members == 5
+    assert [m['pid'] for m in chunk.members] == ['g02_38', 'g03_38',
+                                                 'g02_38', 'g03_38', 'g02_36']
+    assert len(gaps) == 4 and max(gaps) <= GAP_EPS_MM and holes == 0
+    # 第 5 成员在顶（权威式记账重构 eroded 几何，底边搭基座顶）
+    geoms = [Polygon(_transform_polygon(pid_meta[m['pid']]['polygon'],
+                                        m['rotation'], m['translation']))
+             for m in chunk.members]
+    assert geoms[4].bounds[1] >= max(g.bounds[3] for g in geoms[:4]) - 0.5
+    assert chunk.bbox['height_mm'] == pytest.approx(1960.0, abs=0.5)
+    assert info['height_mm'] == pytest.approx(1960.0, abs=0.5)   # 同口径
+    assert info['height_mm'] <= 1980.0
+    assert info['residual_mm'] == pytest.approx(20.0, abs=0.5)   # gate − H
+    # 候选表：6 pid 池 − 每 A 2 个 B==A × 3 A × 2 rot = 24 次尝试（含不可行）
+    assert len(trace) == info['n_candidates'] == 24
+    feas = [r for r in trace if r['feasible']]
+    assert len(feas) >= 2                          # 两可行组合取 H 大者（AC#3）
+    assert max(r['height_mm'] for r in feas) == pytest.approx(1960.0, abs=0.5)
+
+
+def test_extra_pool_eligibility():
+    """候选池资格（FR-2）：demand<1、非数字码（size=None 通用码）不入池、
+    B==A 搜索层排除 —— 唯一可用异码 g03@36 胜出（H=1910）；demand=0 的
+    g02@36 与 400mm null 码片若泄漏将以 1960 夺魁，可观察证伪。"""
+    pid_meta, pieces = _stack_ctx(
+        {('g02', 38): 420.0, ('g03', 38): 360.0,
+         ('g02', 36): 400.0, ('g03', 36): 350.0},
+        demands={('g02', 36): 0})                  # g02@36 demand 0 → 不入池
+    pid_meta['g02_null'] = {                       # null 通用码 → 非数字码不入池
+        'size': None, 'color': '#000000',
+        'polygon': [[0.0, 0.0], [200.0, 0.0], [200.0, 400.0], [0.0, 400.0]],
+        'area_mm2': 80000.0, 'label': 'g02', 'demand': 2,
+        'net_polygon': [], 'internal_lines': [], 'notches': [], 'grain_line': None}
+    assert prefix._extra_candidates(pid_meta, 'g02', 'g03') == [
+        ('g02', 38, 'g02_38'), ('g03', 36, 'g03_36'), ('g03', 38, 'g03_38')]
+    chunk, _gaps, _holes, info = _select(pid_meta, pieces)
+    assert eligible_sizes(_qty_of(pid_meta), 'g02', 'g03',
+                          sizes=[36, 38]) == [38]  # 36 缺 g02 2+2 资格
+    assert info['size'] == 38
+    assert info['extra']['pid'] == 'g03_36'        # ≠A 且 demand≥1 的唯一者
+    assert chunk.members[-1]['pid'] == 'g03_36'
+    assert info['n_candidates'] == 2               # (g03,36) × 2 rot（余 B==A 排除）
+    assert info['height_mm'] == pytest.approx(1910.0, abs=0.5)
+
+
+def test_select_prefix_plan_tie_break_and_determinism():
+    """平手裁决 + 双跑确定性：L 形同构两码全组合 H 恒等（g02 补片 2094 /
+    g03 补片 1974 两档，跨 A/rot 精确平手）⇒ 按迭代序 (A 升序, front 先于
+    back, B 升序, rot0 先) 取 (A=34, g02@36, rot0)；同输入双跑
+    (to_dict, gaps, holes, info) 全等且搜索路径与 seed 无关。"""
+    pid_meta, pieces = _prefix_ctx(sizes=(34, 36))
+    kw = dict(front_label='g02', back_label='g03',
+              quantities=_qty_of(pid_meta), sizes=[34, 36], d_g=2.0,
+              gate_nest=2200.0)                    # 2094/1974 均可行
+    ca, ga, ha, ia = select_prefix_plan(pid_meta, pieces, seed=0, **kw)
+    cb, gb, hb, ib = select_prefix_plan(pid_meta, pieces, seed=7, **kw)
+    assert json.dumps(ca.to_dict(), sort_keys=True) \
+        == json.dumps(cb.to_dict(), sort_keys=True)
+    assert ga == gb and ha == hb and ia == ib      # 双跑全等（无 RNG）
+    assert ia['size'] == 34                        # 平手 A 升序
+    assert ia['extra'] == {'pid': 'g02_36', 'label': 'g02', 'size': 36,
+                           'rotation': 0.0}        # front 先于 back + rot0 先
+    assert ia['fallback'] is False
+    assert ia['height_mm'] == pytest.approx(2094.0, abs=1.0)
+    assert ia['residual_mm'] == pytest.approx(106.0, abs=1.0)   # 2200 − 2094
+    assert ia['n_candidates'] == 8                 # 2 A × (2 异码 × 2 rot)
+    assert len(ca.members) == 5 and max(ga) <= GAP_EPS_MM
+
+
+def test_select_prefix_plan_fallback_parity():
+    """兜底（用户定案①）：全无可行组合（gate=1250：基座 1100 可容、任何补片
+    ≥250 超高；g03@36 demand 3 ⇒ elig={34}）→ pick_prefix_size +
+    build_prefix_plan 与现行逐字节一致（to_dict/gaps/holes 全等）+
+    info.fallback=True/extra=None（seed 只在兜底路径消费）。"""
+    pid_meta, pieces = _stack_ctx(
+        {('g02', 34): 300.0, ('g03', 34): 250.0,
+         ('g02', 36): 400.0, ('g03', 36): 350.0},
+        demands={('g03', 36): 3})                  # 36 失 2+2 资格（在池可当补片）
+    q = _qty_of(pid_meta)
+    assert eligible_sizes(q, 'g02', 'g03', sizes=[34, 36]) == [34]
+    chunk, gaps, holes, info = select_prefix_plan(
+        pid_meta, pieces, front_label='g02', back_label='g03', quantities=q,
+        sizes=[34, 36], d_g=0.0, gate_nest=1250.0, seed=5)
+    ref, ref_gaps, ref_holes = build_prefix_plan(
+        pid_meta, pieces, front_pid='g02_34', back_pid='g03_34',
+        d_g=0.0, gate_nest=1250.0)
+    assert json.dumps(chunk.to_dict(), sort_keys=True) \
+        == json.dumps(ref.to_dict(), sort_keys=True)
+    assert gaps == ref_gaps and holes == ref_holes
+    assert len(chunk.members) == 4                 # 兜底恒 4 片
+    assert info == {'size': 34, 'extra': None,
+                    'height_mm': ref.bbox['height_mm'],
+                    'residual_mm': 1250.0 - ref.bbox['height_mm'],
+                    'fallback': True, 'n_candidates': 4}
+
+
+def test_extra_rot180_accounting_and_envelope():
+    """补片 rot180 记账权威式（镜像 form_and_rot180_accounting）+ 5 片两朝向
+    展开包络：显式 extra_rot=180 构造 —— 第 5 成员 tr 复现放置几何（负坐标
+    补偿缺失即侧移爆缝）、gaps 4 条全 ≤1mm、第 5 成员在顶、
+    union(成员原轮廓@展开位) ⊆ composite ⊕ d_g。"""
+    pid_meta, pieces = _prefix_ctx(sizes=(34, 36))
+    chunk, gaps, holes = build_prefix_plan(
+        pid_meta, pieces, front_pid='g02_34', back_pid='g03_34', d_g=2.0,
+        gate_nest=2200.0, extra_pid='g02_36', extra_rot=180.0)
+    assert chunk.pid == 'PS_g02+g03@34+g02@36'
+    assert chunk.n_members == 5
+    assert chunk.members[-1]['pid'] == 'g02_36'
+    assert chunk.members[-1]['rotation'] == 180.0
+    assert len(gaps) == 4 and max(gaps) <= GAP_EPS_MM and holes == 0
+    # 记账权威式重构放置几何（eroded 碰撞口径）
+    geoms = [Polygon(_transform_polygon(pid_meta[m['pid']]['polygon'],
+                                        m['rotation'], m['translation']))
+             for m in chunk.members]
+    for i in range(4):
+        assert geoms[i].distance(geoms[i + 1]) <= GAP_EPS_MM, i
+    assert geoms[4].bounds[1] == pytest.approx(
+        max(g.bounds[3] for g in geoms[:4]), abs=0.5)   # 第 5 成员在顶
+    assert chunk.bbox['height_mm'] == pytest.approx(2094.0, abs=1.0)
+    for c_rot, c_tr in [(0.0, (700.0, 300.0)), (180.0, (2000.0, 1500.0))]:
+        expanded = wb.expand_placements(chunk, c_rot, c_tr)
+        assert len(expanded) == 5                       # 恰 5 条（2+2+补片）
+        assert all(e['id'] in pid_meta for e in expanded)   # 无 PS_ 泄漏
+        comp_world = Polygon(_transform_polygon(chunk.polygon, c_rot, c_tr))
+        member_union = unary_union([
+            Polygon(_transform_polygon(
+                pieces[e['id']]['polygon'], e['rotation'], e['translation']))
+            for e in expanded])
+        # ⊕ d_g（join_style=mitre 保真实偏移曲线，同 4 片包络用例口径）
+        assert comp_world.buffer(chunk.d_g + 0.5, join_style=2).contains(
+            member_union), (c_rot, c_tr)
+
+
+def test_build_prefix_plan_extra_guards():
+    """补片直调守卫：pid 缺失/demand<1 → PrefixError（候选资格文案）；与套装
+    同码（B==A）拒；片型非前/后幅 g 码拒；5 片竖排超高守卫沿用（基座 1628
+    ≤1980 可容、+补片 2094 >1980 拒 —— 不设缝隙阈值也不放宽门幅界）。"""
+    pid_meta, pieces = _prefix_ctx(sizes=(34, 36))
+    m0 = dict(pid_meta)
+    m0['g02_36'] = {**pid_meta['g02_36'], 'demand': 0}
+    with pytest.raises(PrefixError, match='无可用副本'):
+        build_prefix_plan(m0, pieces, front_pid='g02_34', back_pid='g03_34',
+                          d_g=2.0, gate_nest=1980.0, extra_pid='g02_36')
+    with pytest.raises(PrefixError, match='无可用副本'):
+        build_prefix_plan(pid_meta, pieces, front_pid='g02_34',
+                          back_pid='g03_34', d_g=2.0, gate_nest=1980.0,
+                          extra_pid='g02_99')       # pid 不在 pid_meta
+    with pytest.raises(PrefixError, match='同码'):
+        build_prefix_plan(pid_meta, pieces, front_pid='g02_34',
+                          back_pid='g03_34', d_g=2.0, gate_nest=1980.0,
+                          extra_pid='g03_34')
+    p5 = _panel_piece('g05_36', 'g05', 36, _back_pts())
+    m5 = dict(pid_meta)
+    m5['g05_36'] = {'size': 36, 'color': '#000',
+                    'polygon': erode_polygon(p5['polygon'], 2.0),
+                    'area_mm2': p5['area_mm2'], 'label': 'g05', 'demand': 1,
+                    'net_polygon': [], 'internal_lines': [], 'notches': [],
+                    'grain_line': None}
+    with pytest.raises(PrefixError, match='非前/后幅'):
+        build_prefix_plan(m5, pieces, front_pid='g02_34', back_pid='g03_34',
+                          d_g=2.0, gate_nest=1980.0, extra_pid='g05_36')
+    with pytest.raises(PrefixError, match='竖排高'):
+        build_prefix_plan(pid_meta, pieces, front_pid='g02_34',
+                          back_pid='g03_34', d_g=2.0, gate_nest=1980.0,
+                          extra_pid='g02_36')
+
+
+def _hand_ps_chunk5():
+    """5 成员黄金 chunk（镜像 _hand_ps_chunk + 3 条成员；offset=(10,20) 非零
+    对「减号」错误最敏感；rot/片型混排覆盖 rot_f 取模与跨片型补片位）。"""
+    return wb.BandChunk(
+        pid='PS_g02+g03@34+g02@32', label='g02',
+        polygon=[[0.0, 0.0], [120.0, 0.0], [120.0, 260.0], [0.0, 260.0]],
+        offset=(10.0, 20.0),
+        members=[
+            {'pid': 'g02_34', 'rotation': 0.0, 'translation': [15.0, 25.0]},
+            {'pid': 'g03_34', 'rotation': 180.0, 'translation': [115.0, 125.0]},
+            {'pid': 'g02_34', 'rotation': 180.0, 'translation': [65.0, 85.0]},
+            {'pid': 'g03_34', 'rotation': 0.0, 'translation': [95.0, 45.0]},
+            {'pid': 'g02_32', 'rotation': 180.0, 'translation': [55.0, 165.0]},
+        ],
+        fill_pct=80.0, bbox={'width_mm': 120.0, 'height_mm': 260.0},
+        seed=0, d_g=2.0, tol_g=0.0,
+    )
+
+
+def test_expand_golden_5members_rot0_hand_computed():
+    """rot=0 手算对拍（5 条）：tr_f = m.tr − offset + c.tr ⇒
+    (105,55)/(205,155)/(155,115)/(185,75)/(145,195)。offset 误用加号即整体
+    +(20,40) 爆。"""
+    out = wb.expand_placements(_hand_ps_chunk5(), 0.0, (100.0, 50.0))
+    assert [e['id'] for e in out] == ['g02_34', 'g03_34', 'g02_34', 'g03_34',
+                                      'g02_32']
+    assert [e['rotation'] for e in out] == [0.0, 180.0, 180.0, 0.0, 180.0]
+    want = [[105.0, 55.0], [205.0, 155.0], [155.0, 115.0], [185.0, 75.0],
+            [145.0, 195.0]]
+    assert all(e['translation'] == pytest.approx(w, abs=1e-9)
+               for e, w in zip(out, want))
+
+
+def test_expand_golden_5members_rot180_hand_computed():
+    """rot=180 手算对拍（R(180)=diag(−1,−1)）：−(m.tr−offset)+(1000,500) ⇒
+    (995,495)/(895,395)/(945,435)/(915,475)/(955,355)；rot_f=(m.rot+180)%360。"""
+    out = wb.expand_placements(_hand_ps_chunk5(), 180.0, (1000.0, 500.0))
+    assert [e['rotation'] for e in out] == [180.0, 0.0, 0.0, 180.0, 0.0]
+    want = [[995.0, 495.0], [895.0, 395.0], [945.0, 435.0], [915.0, 475.0],
+            [955.0, 355.0]]
+    assert all(e['translation'] == pytest.approx(w, abs=1e-9)
+               for e, w in zip(out, want))
