@@ -21,3 +21,6 @@ materialSorting-web/static/
 .all_done
 .last-branch
 archive/
+
+# 后端启动日志（本地重定向产物，勿入库）
+.backend.log
