@@ -41,7 +41,15 @@ yoff − b1)``（b0/b1 = 旋转后 bounds 最小角）—— 缺此补偿成员�
 残余细隙被 ``_solid_region`` closing 焊接封口成封闭腔死区（主解永不可填）——
 ``select_prefix_plan`` info additive ``dead_area_mm2`` 如实观测（只落工件与
 冒烟输出，不进 WS stage 白名单），全局净效应由 prefix_accept on/on' A/B
-≤1.0pt 门线定生死。interleave（FR-10 旧定稿）/ grouped 备档 order 值保留
+≤1.0pt 门线定生死。**US-002 定案（2026-09-03，同会话背靠背 --seeds 0,1
+--time 30）**：on/on' 均值 = paired 88.820% vs interleave 88.223%，劣化
+**−0.597pt（paired 更优）PASS 合入**；双开 band+prefix −0.313pt 反超 band_only
+（interleave 同场 1.466pt FAIL 的短预算漂移被 paired 顺带修复）。确定性边界：
+主解帧轨迹在 ``num_workers=4`` 下随 spyrrow 并行 merge 序漂移（组合片更大
+1175×1513 + 3 封闭腔 vs interleave 1155×1458 + 0 腔 ⇒ 并列候选竞速概率上升；
+``num_workers=1`` 时 798==798 逐帧全等、构造层 chunk.to_dict/工件回放/选码
+恒确定），best 密度带宽 0.02~0.27pt 与既有「跨会话漂移 ±0.2~5pt」同桶备案。
+interleave（FR-10 旧定稿）/ grouped 备档 order 值保留
 （行为逐字节不变，回滚与对照零成本）；等价性陷阱：4 片级 BBFF ≡ grouped
 整体翻转，但带顶部补片不等价（补片蹬 F@180 vs B@180）⇒ 必须显式 BBFF 序。
 

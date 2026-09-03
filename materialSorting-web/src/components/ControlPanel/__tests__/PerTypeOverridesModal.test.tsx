@@ -1138,7 +1138,7 @@ describe('PerTypeOverridesModal 布局设置 prefix 分区 (US-004)', () => {
     act(() => thumb.click());
     const hint = document.body.querySelector('.band-zoom-hint')!.textContent!;
     expect(hint).toContain('＋ 顶部 g02@29 异码片 · 余 210mm 近满幅');
-    expect(hint).toContain('4 片同码 interleave 竖排贴靠');
+    expect(hint).toContain('4 片同码 paired 同型成对竖排贴靠');
     expect(hint).toContain('虚线 = 组合片外轮廓');
     // 放大层标注 5 片（顶部异码片 tag = 补片 g 码 g02）
     const labels = document.body.querySelectorAll('[data-role="band-size-label"]');
@@ -1164,7 +1164,7 @@ describe('PerTypeOverridesModal 布局设置 prefix 分区 (US-004)', () => {
     expect(thumb.querySelectorAll('[data-role="band-member"]')).toHaveLength(4);
     act(() => thumb.click());
     const hint = document.body.querySelector('.band-zoom-hint')!.textContent!;
-    expect(hint).toContain('4 片同码 interleave 竖排贴靠');
+    expect(hint).toContain('4 片同码 paired 同型成对竖排贴靠');
     expect(hint).not.toContain('＋ 顶部');
     expect(hint).not.toContain('近满幅');
     expect(hint).toContain('虚线 = 组合片外轮廓');

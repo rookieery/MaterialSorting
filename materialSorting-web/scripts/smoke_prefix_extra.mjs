@@ -1,5 +1,7 @@
 // US-005（2026-09-02 异码补片）端到端 UI 冒烟 —— 上传 → 布局设置开 prefix →
 // 预览 5 片 + 异码标注 → 求解 → 状态行 → final 形态判据 → 导出 PLT 无 PS_。
+// 2026-09-03 prd-prefix-member-order US-002：判据 5a 随成员序改判 paired
+//（后后前前同型成对堆叠，prd-prefix-member-order US-001）+ 4a 加前端 DOM PS_ 探针。
 // 套路范本 scripts/smoke-band-preview.mjs（playwright 流程骨架）+ out/us004_extra_verify
 // /verify.mjs（CDP headless 实装，Node >=22 原生 WebSocket，零额外依赖）。
 // 前置：ms-web 在 :8000 运行（static/ 已 npm run build；intermediate 由本脚本上传
@@ -25,6 +27,10 @@ const CHROME = 'C:/Program Files/Google/Chrome/Application/chrome.exe';
 const ELIGIBLE = [32, 33, 34, 35, 38];
 const PICK_SIZES = [31, 32, 33, 34, 35, 36, 38];
 const FULL_LABELS = ['g01', 'g02', 'g03', 'g04', 'g05'];
+// P0 数量表镜像（_MAIN_QTY）：顶异码守恒口径 = 矩阵量（补片吃 1 份、主解排余量；
+// 2026-09-03 paired 胜者补片 g02@36 矩阵量 3 → placed 3，旧断言硬编码 2 只对
+// qty=2 的码成立）。
+const SIZE_QTY = { 31: 1, 32: 2, 33: 2, 34: 2, 35: 2, 36: 3, 38: 2 };
 const SOLVE_TIME = 60;
 const EXPECT_TOTAL = 105; // 5x14 + 5x7（5336_coded_really 限 7 码 Sdemand）
 
@@ -278,7 +284,8 @@ try {
     `preview=${extraLabelPreview}@${extraSizeFromHint} stage=${stageMsg?.extra_label}@${stageMsg?.extra_size}`);
   const extraLabel = stageMsg?.extra_label, extraSize = stageMsg?.extra_size;
 
-  // ---- PS_ 零泄漏（manifest + 帧序列 + final）-----------------------------
+  // ---- PS_ 零泄漏（manifest + 帧序列 + final + 前端 DOM）--------------------
+  await sleep(400); // 等 renderTick（~10fps 节流闸）把末帧刷进 DOM 再探
   const leakProbe = await evalJs(`(() => {
     const man = window.__wsMsgs.filter(x=>x.type==='manifest')[0];
     const pids = ((man && man.pieces) || []).map(p => p.pid || p.id || '').join(',');
@@ -286,34 +293,44 @@ try {
     // final 帧协议上不带 placed_items（密度/宽/prefix 统计段；prefix.pid 是回显键
     // 属设计而非泄漏）—— 判据 = final 无 placed_items 键（组合片条目无处可藏）。
     const finalHasPlaced = window.__wsMsgs.filter(x=>x.type==='final').some(f => 'placed_items' in f);
-    return { man: pids.includes('PS_'), frames: frameIds.includes('PS_'), final_has_placed: finalHasPlaced };
+    // 前端渲染层：polygon data-label 由 manifest pid 派生，泄漏即出现 PS_ 标签。
+    const dom = Array.from(document.querySelectorAll('.nest-card svg polygon')).some(p => (p.dataset.label || '').includes('PS_'));
+    return { man: pids.includes('PS_'), frames: frameIds.includes('PS_'), final_has_placed: finalHasPlaced, dom };
   })()`);
   report.ps_leak = leakProbe;
-  check('4a PS_ 组合片零泄漏（manifest + 帧序列 + final 无 placed 键）',
-    !leakProbe.man && !leakProbe.frames && !leakProbe.final_has_placed, JSON.stringify(leakProbe));
+  check('4a PS_ 组合片零泄漏（manifest + 帧序列 + final 无 placed 键 + 前端 DOM）',
+    !leakProbe.man && !leakProbe.frames && !leakProbe.final_has_placed && !leakProbe.dom,
+    JSON.stringify(leakProbe));
 
   // ---- 守恒：4 基座 + 顶异码按矩阵量 + placed = Sdemand --------------------
   const frontN = placedFinal.filter(p => p.id === 'g02_' + size).length;
   const backN = placedFinal.filter(p => p.id === 'g03_' + size).length;
   const extraN = placedFinal.filter(p => p.id === extraLabel + '_' + extraSize).length;
   report.conservation = { front: frontN, back: backN, extra: extraN, total: placedFinal.length, expect: EXPECT_TOTAL };
-  check('4b 4 基座守恒（g02x2 + g03x2 @码' + size + '）+ 顶异码片按矩阵量（2）',
-    frontN === 2 && backN === 2 && extraN === 2,
-    'front=' + frontN + ' back=' + backN + ' extra=' + extraN);
+  const extraQty = SIZE_QTY[extraSize] ?? 2;
+  check('4b 4 基座守恒（g02x2 + g03x2 @码' + size + '）+ 顶异码片按矩阵量（' + extraQty + '）',
+    frontN === 2 && backN === 2 && extraN === extraQty,
+    'front=' + frontN + ' back=' + backN + ' extra=' + extraN + ' expect=' + extraQty);
   check('4c placed 守恒 = Sdemand（' + EXPECT_TOTAL + '，部分扣减不丢片）',
     placedFinal.length === EXPECT_TOTAL, 'placed=' + placedFinal.length);
 
   // ---- 形态判据（帧序 = 求解器放置序，组合片展开在位）---------------------
+  // 2026-09-03 paired 定案（prd-prefix-member-order）：成员序 [后@0,后@180,前@0,
+  // 前@180] 自下而上 —— 判据 5a 改「先序后段精确分段」（帧序前 4 = expand_placements
+  // 展开序，恰为 后后前前），强度不放松（非弱化为「同型相邻允许」）。
   const placed = placedFinal;
   const chunkSeq = placed.slice(0, 5);
   const isFront = (p) => p.id.startsWith('g02_');
   const base4 = chunkSeq.slice(0, 4);
-  const interleaveOk = base4.length === 4 && base4.slice(1).every((p, i) => isFront(p) !== isFront(base4[i]));
+  const flags4 = base4.map(isFront);
+  const pairedOk = base4.length === 4
+    && flags4[0] === false && flags4[1] === false
+    && flags4[2] === true && flags4[3] === true;
   const rotOk = base4.slice(1).every((p, i) => {
     const d = Math.abs(((p.rotation - base4[i].rotation) % 360 + 360) % 360);
     return Math.min(d, 360 - d) >= 175;
   });
-  check('5a 形态·interleave 交错序（前后前后）', interleaveOk, base4.map(p => p.id).join(' -> '));
+  check('5a 形态·paired 同型成对序（后后前前）', pairedOk, base4.map(p => p.id).join(' -> '));
   check('5b 形态·头尾 180° 交替', rotOk, base4.map(p => p.id + '@' + Math.round(p.rotation) + '°').join(' -> '));
   check('5c 形态·5 成员（4 同码基座 + 顶异码 ' + extraLabel + '_' + extraSize + '）',
     chunkSeq[4]?.id === extraLabel + '_' + extraSize, chunkSeq.map(p => p.id).join(' -> '));
@@ -370,7 +387,7 @@ try {
     colX0.toFixed(1) + ',' + colX1.toFixed(1) + ']');
   report.form = {
     order: chunkSeq.map(p => p.id), rots: chunkSeq.map(p => Math.round(p.rotation)),
-    interleave: interleaveOk, rot_alt: rotOk, dom_gaps_mm: gaps, span_y_mm: +spanY.toFixed(1),
+    member_order: pairedOk, rot_alt: rotOk, dom_gaps_mm: gaps, span_y_mm: +spanY.toFixed(1),
     col_residual_mm: colResidual, stage_residual_mm: stageMsg?.residual_mm,
     min_x_mm: +minX.toFixed(2), anchored, pin, at_end: atEnd.length === 1,
   };

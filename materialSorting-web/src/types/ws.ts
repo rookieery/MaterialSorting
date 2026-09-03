@@ -180,7 +180,7 @@ export interface StageMsg {
   elapsed?: number | null;
   /** prefix 专属：选中的资格码（stage='prefix' 时回显，如 34）。 */
   size?: number | null;
-  /** prefix 专属：组合片封闭腔数（P0 实测 interleave 0 个 = 无 sparrow 死区）。 */
+  /** prefix 专属：组合片封闭腔数（interleave 序 0 腔；2026-09-03 paired 定案实测 3 腔死区，如实报告不设闸）。 */
   holes?: number | null;
   /**
    * prefix 专属（2026-09-02 异码补片 additive）：顶部异码补片 g 码（如 'g02'）。
