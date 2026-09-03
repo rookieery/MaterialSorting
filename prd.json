@@ -1,11 +1,4 @@
 {
   "branchName": "ralph/prefix-extra-piece",
-  "stories": [
-    {
-      "id": "US-002",
-      "title": "paired 成员序端到端 A/B 验收 + 文档闭环",
-      "description": "背景：US-001 已把 prefix 套装成员序切为 paired 同型成对堆叠（局部 fill +2.3~3.4pt 但引入封闭腔死区 ≈47k mm²）。全局净效应（死区 vs 楔隙消除 vs 选码胜者漂移）必须以端到端 A/B 定论，且文档把「FR-10 interleave 定稿 → 2026-09-03 用户依生产件改判 paired」的沿革写清。PRD：tasks/prd-prefix-member-order.md（已决策②：A/B 劣化 >1.0pt 不备案直接合入，先触发 _place_next 贴触代价加封闭腔惩罚的后备优化再一轮）。\n\n具体任务：\n1. A/B 对拍 — 同会话 stash 背靠背套路：新代码 prefix=on vs 旧代码 prefix=on（git stash 对照或 worktree），python -m materialsorting.web.prefix_accept --seeds 0,1 --time 30 同源短预算；判据①-④逐行核对 + on/on' 均值劣化 ≤1.0pt PASS；若劣化超线：不修改验收门线，回报用户并转入后备优化（_place_next 代价函数加封闭腔惩罚）再一轮，优化不得改变确定性结果。\n2. UI 冒烟 — materialSorting-web/scripts/smoke_prefix_extra.mjs 29/29：形态判据按新序核对（4 同码 + 顶异码、贴触、近满幅、锚定；判据若涉 F/B 顺序则按新形态更新，不放松判据强度）。\n3. 守恒/哨兵复验 — placed 条数 = 全量 Σdemand；PS_ 五处零泄漏（manifest/frame/final/前端/导出）；导出 PLT 无 PS_。\n4. 文档五处 + 记录 — CLAUDE.md（prefix 条目成员序描述 + FR-10 沿革注记 + 数据流主线 prefix 段）、prefix.py 模块 docstring、.docs/business/起始端成套前后幅_版师确认清单.md 追加 §10（新形态定案 + 四项决策）、README 起始端成套节、memory 更新（成员序沿革：BBFF 定案、grouped 等价性发现、死区权衡）；progress.txt 记条。\n\n验收标准：\n- prefix_accept on/on' 背靠背均值劣化 ≤1.0pt（或超线时已转入后备优化并双达标）；判据①-④逐行 PASS 在案\n- UI 冒烟 29/29；守恒 + PS_ 零泄漏复验在案\n- 后端 pytest 全量绿 + 前端 vitest 全绿 + npm run build 过（前端零改动即过）\n- 文档五处 + memory + progress.txt 同步完成",
-      "passes": true
-    }
-  ]
+  "stories": []
 }
