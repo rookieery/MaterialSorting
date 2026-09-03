@@ -33,6 +33,18 @@ rot180 负坐标框架坑（P0 踩过，单测锁死）：成员关于原点旋�
 yoff − b1)``（b0/b1 = 旋转后 bounds 最小角）—— 缺此补偿成员几何会整体侧移
 并排、贴触形态全毁。
 
+2026-09-03 改判**成员序 paired 同型成对堆叠**（prd-prefix-member-order，用户
+依生产参考件改判 FR-10 interleave 定稿）：4 片自下而上 ``[后@0, 后@180, 前@0,
+前@180]`` —— 同型对内部曲率 180° 自吻合互锁（凸弧嵌凹弧），3 条拼接缝从
+「全异型（前↔后曲率不匹配 → 开放楔形空隙）」变「2 同型 + 1 异型」，5336 实测
+同组合 bbox 浪费 −63k mm²、全量选码 fill +3.42pt。**代价** = 同型深互锁的
+残余细隙被 ``_solid_region`` closing 焊接封口成封闭腔死区（主解永不可填）——
+``select_prefix_plan`` info additive ``dead_area_mm2`` 如实观测（只落工件与
+冒烟输出，不进 WS stage 白名单），全局净效应由 prefix_accept on/on' A/B
+≤1.0pt 门线定生死。interleave（FR-10 旧定稿）/ grouped 备档 order 值保留
+（行为逐字节不变，回滚与对照零成本）；等价性陷阱：4 片级 BBFF ≡ grouped
+整体翻转，但带顶部补片不等价（补片蹬 F@180 vs B@180）⇒ 必须显式 BBFF 序。
+
 2026-09-02 增补**顶部异码补片 + 联合选码搜索**（prd-prefix-extra-piece，
 三项定案：无可行退回 4 片 / 不设缝隙阈值永远取最接近门幅者 / 保留 0°/180°
 翻转自由度）：``build_prefix_plan`` additive ``extra_pid`` 追加第 5 成员
@@ -98,9 +110,10 @@ PREFIX_PID_PREFIX = 'PS_'
 # 组合片在主解的允许朝向（FR-5 决策③ 2026-08-25：版师认可整列头尾调换，0°/180°
 # 均严格顺布纹；与 waist_band.COMPOSITE_ORIENTATIONS 同口径，主解 Item 构造用）。
 PREFIX_ORIENTATIONS = (0.0, 180.0)
-# 成员交错序合法值（FR-10 定稿 interleave：前后前后；grouped 备档 —— P0 实测 2
-# 封闭腔 = spyrrow 死区，如未来否决只切 build_prefix_plan 默认值一行）。
-PREFIX_ORDERS = ('interleave', 'grouped')
+# 成员序合法值（2026-09-03 paired 定案：同型成对堆叠 [后,后,前,前]，生产参考件
+# 互锁形态，默认值；interleave = FR-10 2026-08 版师定稿备档（前后前后，全开放缝
+# 零封闭腔）；grouped 备档（前前后后）—— 两者行为逐字节不变，回滚/对照零成本）。
+PREFIX_ORDERS = ('paired', 'grouped', 'interleave')
 # 成员数（前×2 + 后×2，恰用尽资格码 demand；extra_pid 补片时为 5）。
 PREFIX_MEMBER_COUNT = 4
 # 异码补片朝向候选（2026-09-02 需求：补片头尾双向，均严格顺布纹）。
@@ -237,10 +250,17 @@ def pick_prefix_size(eligible, *, seed, front, back) -> int:
 
 
 def _member_spec(front_pid, back_pid, order) -> list:
-    """4 片成员序列 ``[(pid, rot), ...]``：interleave=前后前后 / grouped=前前
-    后后；rot 交替 0/180（相邻片头尾相对，版师 P1 参照形态）。order 非法抛
-    ``ValueError``。"""
-    if order == 'interleave':
+    """4 片成员序列 ``[(pid, rot), ...]``（自下而上）：paired=后后前前（同型
+    成对 180° 互锁，2026-09-03 生产参考件定案默认）/ grouped=前前后后（备档）/
+    interleave=前后前后（FR-10 旧定稿备档）；rot 交替 0/180（相邻片头尾相对，
+    版师 P1 参照形态）。order 非法抛 ``ValueError``。
+
+    等价性陷阱（PRD 技术考虑）：4 片级 BBFF ≡ grouped(FFBB) 整体翻转，但带
+    顶部补片时**不等价**（补片蹬的成员不同：F@180 vs B@180，实测 fill 83.33%
+    vs 82.86%）⇒ 必须显式 BBFF 序，不可复用 grouped 分支翻转凑数。"""
+    if order == 'paired':
+        seq = [back_pid, back_pid, front_pid, front_pid]
+    elif order == 'interleave':
         seq = [front_pid, back_pid, front_pid, back_pid]
     elif order == 'grouped':
         seq = [front_pid, front_pid, back_pid, back_pid]
@@ -417,6 +437,26 @@ def _stack_height(placed, pid_meta, pieces_by_id):
     return float(b[3] - b[1])
 
 
+def _dead_area_of(union) -> float:
+    """封闭腔死区面积（mm²）= 焊接外环面积 − solid 面积（2026-09-03 paired
+    成员序观测字段，与 ``build_prefix_plan`` 的 holes 同源口径 —— closing 焊接
+    封口的腔内空气计入组合片声明占用、主解永不可填，如实报告不设闸）。"""
+    solid = _solid_region(union)
+    if not solid.interiors:
+        return 0.0
+    return float(Polygon(_exterior_coords(solid)).area - solid.area)
+
+
+def _dead_area_of_chunk(chunk, pid_meta, pieces_by_id) -> float:
+    """chunk 成员 → 封闭腔死区面积（``_raw_union`` 原始轮廓口径 + ``_solid_region``
+    焊接，与 ``build_prefix_plan`` 的 solid 同一几何 → 同一值；``select_prefix_plan``
+    info / 冒烟消费，不影响构造）。"""
+    placed = [(m['pid'], float(m['rotation']),
+               (float(m['translation'][0]), float(m['translation'][1])), None)
+              for m in chunk.members]
+    return _dead_area_of(_raw_union(placed, pid_meta, pieces_by_id))
+
+
 def _extra_candidates(pid_meta, front_label, back_label):
     """补片候选池（FR-2，从 pid_meta 派生 —— sizes/quantities 过滤已内含）：
     label ∈ {front, back}、size 数字码、demand ≥ 1（≠A 在搜索层按 A 过滤）。
@@ -449,7 +489,7 @@ def _extra_candidates(pid_meta, front_label, back_label):
 
 
 def build_prefix_plan(pid_meta, pieces_by_id, *, front_pid, back_pid, d_g,
-                      gate_nest, order='interleave', extra_pid=None,
+                      gate_nest, order='paired', extra_pid=None,
                       extra_rot=None):
     """构造前缀 4 片竖排贴靠组合片（版师 P1 形态，单一真相源；US-003 编排接线）。
 
@@ -460,7 +500,8 @@ def build_prefix_plan(pid_meta, pieces_by_id, *, front_pid, back_pid, d_g,
     （既有用例零改动 = 回归红线）。联合选码入口见 ``select_prefix_plan``。
 
     构造管线（探针 ``prefix_lib.build_prefix_plan`` 移植收敛）：
-    1. 成员序 interleave（前后前后）+ rot 交替 0/180（头尾相对）；
+    1. 成员序 paired（后后前前，同型成对 180° 互锁）+ rot 交替 0/180（头尾
+       相对）；
     2. 逐成员 Y 向 ``_slide_touch_y`` 贴触滑移（``_place_members``，候选 x 对齐
        = 0 / 已排 bbox 左右缘 / 前成员左右缘，粗扫 + 二分，无 RNG），取 union
        bbox 面积增长最小（平手取先序候选 —— 确定性）；
@@ -486,7 +527,9 @@ def build_prefix_plan(pid_meta, pieces_by_id, *, front_pid, back_pid, d_g,
         求解约束幅宽（竖排高上限基准 = 输入门幅 − ``PREFIX_GATE_MARGIN_MM``
         安全余量，2026-09-02 起与 ``select_prefix_plan`` 的可行线同口径）。
     order : str
-        成员交错序（FR-10 定稿 ``'interleave'``；``'grouped'`` 备档）。
+        成员序（默认 ``'paired'`` = 同型成对堆叠 [后,后,前,前]，2026-09-03
+        生产参考件改判；``'interleave'`` = FR-10 旧定稿备档、``'grouped'``
+        备档，行为逐字节不变）。
     extra_pid : str, optional
         顶部异码补片 pid（第 5 成员；候选资格 = label∈{front,back}、数字码、
         ≠套装码、demand≥1 —— ``select_prefix_plan`` 的派生池同规则）。
@@ -502,7 +545,9 @@ def build_prefix_plan(pid_meta, pieces_by_id, *, front_pid, back_pid, d_g,
             直接喂 ``waist_band.expand_placements``，offset 减号权威式）；
         gaps : list[float] —— 相邻成员贴触缝隙（mm，eroded 碰撞口径，版师
             验收口径；4 片 3 条 / 5 片 4 条含补片↔顶片）；
-        holes : int —— 组合片外轮廓封闭腔数（P0 实测：interleave 0 / grouped 2）。
+        holes : int —— 组合片外轮廓封闭腔数（paired 同型互锁的残余细隙被焊接
+            封口 ⇒ 常态 ≥1，死区面积见 ``_dead_area_of_chunk``；interleave 0 /
+            grouped ≥1）。
 
     Raises
     ------
@@ -618,7 +663,7 @@ def build_prefix_plan(pid_meta, pieces_by_id, *, front_pid, back_pid, d_g,
 
 def select_prefix_plan(pid_meta, pieces_by_id, *, front_label, back_label,
                        quantities, sizes, d_g, gate_nest, seed,
-                       order='interleave', trace=None):
+                       order='paired', trace=None):
     """近满幅联合选码搜索（单一真相源：web 求解与预览共用；取代 seeded 随机）。
 
     机制（prd-prefix-extra-piece，生产参考件形态：4 片同码套装 + 顶部 1 片
@@ -635,7 +680,8 @@ def select_prefix_plan(pid_meta, pieces_by_id, *, front_label, back_label,
     —— 每组合已是自身最贴合朝向，取高者与相切嵌合并行不悖），平手按迭代
     序 ``(A 升序, front 先于 back, B 升序)`` 确定性裁决 —— **全流程无 RNG**
     （``seed`` 只在兜底路径消费）。基座自身超高/贴触失败的 A 直接跳过（补片
-    只会更高）。
+    只会更高）。基座成员序 = ``order``（默认 paired，2026-09-03 生产参考件
+    改判）。
 
     兜底（用户定案 ①）：全无可行组合 → ``pick_prefix_size``（crc32 seeded，
     含资格码为空时 PrefixError 现行文案）+ 4 片 ``build_prefix_plan``，与
@@ -666,7 +712,9 @@ def select_prefix_plan(pid_meta, pieces_by_id, *, front_label, back_label,
         info : dict —— ``{'size': A, 'extra': {'pid','label','size','rotation'}
         | None, 'height_mm', 'residual_mm' (= gate_nest − H), 'fallback': bool,
         'n_candidates': int (实际尝试的 (A,片型,B) 组合数，含不可行；rot 不
-        枚举 —— 每组合由 FR-3 内定一个)}。
+        枚举 —— 每组合由 FR-3 内定一个), 'dead_area_mm2': float (封闭腔死区
+        面积，2026-09-03 paired additive —— 只落 prefix_runs 工件与冒烟输出，
+        不进 WS stage 白名单；旧消费方零感知)}。
     """
     elig = eligible_sizes(quantities, front_label, back_label, sizes=sizes)
     cands = _extra_candidates(pid_meta, front_label, back_label)
@@ -725,7 +773,9 @@ def select_prefix_plan(pid_meta, pieces_by_id, *, front_label, back_label,
         info = {'size': int(size), 'extra': None,
                 'height_mm': float(chunk.bbox['height_mm']),
                 'residual_mm': float(gate_nest) - float(chunk.bbox['height_mm']),
-                'fallback': True, 'n_candidates': n_candidates}
+                'fallback': True, 'n_candidates': n_candidates,
+                'dead_area_mm2': round(
+                    _dead_area_of_chunk(chunk, pid_meta, pieces_by_id), 1)}
         return chunk, gaps, holes, info
     H, A, label, epid, rot = best
     chunk, gaps, holes = build_prefix_plan(
@@ -738,7 +788,9 @@ def select_prefix_plan(pid_meta, pieces_by_id, *, front_label, back_label,
                       'size': em.get('size'), 'rotation': float(rot)},
             'height_mm': float(chunk.bbox['height_mm']),
             'residual_mm': float(gate_nest) - float(chunk.bbox['height_mm']),
-            'fallback': False, 'n_candidates': n_candidates}
+            'fallback': False, 'n_candidates': n_candidates,
+            'dead_area_mm2': round(
+                _dead_area_of_chunk(chunk, pid_meta, pieces_by_id), 1)}
     return chunk, gaps, holes, info
 
 
@@ -1217,11 +1269,15 @@ def main(argv=None) -> int:
     """冒烟入口：``python -m materialsorting.nesting_engine.prefix``。
 
     默认 5336 真实数据（``data/configs/5336_coded_really.json`` + intermediate）
-    对拍 P0 直测数字：interleave bbox 1155×1458 / fill 83.3% / 贴触 0.00mm /
-    封闭腔 0。2026-09-02 起追加**选码搜索段**（``select_prefix_plan``）：打印
-    候选表（逐 (A,片型,B,rot) 的 H 与可行性）+ 选定组合 + residual。``--pin-demo``
-    追加 US-002 置换演示（构造 + 短预算主解 + 钉位断言）。intermediate 缺失时
-    提示先 commit（ms-run-config 或 web 上传）。
+    直测数字（2026-09-03 paired 成员序，prd-prefix-member-order）：seeded 4 片
+    @38 paired bbox 1175×1513 / fill 86.0% / 贴触 0.00mm / 封闭腔 2 死区
+    45,811mm²（interleave 备档 1175×1556 / 83.6% / 0 腔；grouped ≈ paired 同
+    形态构造噪声）；选码搜索段（2026-09-02 起）胜者 = 套装@38 + 顶部 g02@36
+    rot0 H=1956.2 / residual 23.8 / fill 84.4% / 贴触 0.00 / 封闭腔 3 死区
+    47,236mm²（``dead_area_mm2``）。打印候选表（逐 (A,片型,B) 的 H 与可行性）
+    + 选定组合 + residual。``--pin-demo`` 追加 US-002 置换演示（paired 默认序
+    构造 + 短预算主解 + 钉位断言）。intermediate 缺失时提示先 commit
+    （ms-run-config 或 web 上传）。
     """
     try:
         sys.stdout.reconfigure(encoding='utf-8')
@@ -1280,19 +1336,20 @@ def main(argv=None) -> int:
         size = pick_prefix_size(elig, seed=args.seed,
                                 front=args.front, back=args.back)
         print(f'  seeded 随机选取: size {size}（seed={args.seed}，确定性）')
-        interleave_chunk = None
+        default_chunk = None
         for order in PREFIX_ORDERS:
             chunk, gaps, holes = build_prefix_plan(
                 pid_meta, pieces_by_id,
                 front_pid=f'{args.front}_{size}',
                 back_pid=f'{args.back}_{size}',
                 d_g=d_g, gate_nest=gate_nest, order=order)
-            if order == 'interleave':
-                interleave_chunk = chunk
+            if order == 'paired':
+                default_chunk = chunk        # --pin-demo 用默认成员序构造
             print(f'  {order:11}: {chunk.pid} bbox '
                   f'{chunk.bbox["width_mm"]:.0f}x{chunk.bbox["height_mm"]:.0f}mm '
                   f'fill={chunk.fill_pct:.1f}% '
                   f'gaps={["%.2f" % g for g in gaps]} holes={holes} '
+                  f'dead={_dead_area_of_chunk(chunk, pid_meta, pieces_by_id):.0f}mm² '
                   f'verts={len(chunk.polygon)}')
     except (PrefixError, ValueError) as e:
         print(f'FAIL {type(e).__name__}: {e}')
@@ -1333,11 +1390,12 @@ def main(argv=None) -> int:
               f'{sel_chunk.bbox["height_mm"]:.0f}mm '
               f'fill={sel_chunk.fill_pct:.1f}% '
               f'gaps={["%.2f" % g for g in sel_gaps]} holes={sel_holes} '
+              f'dead={sel_info["dead_area_mm2"]:.0f}mm² '
               f'members={len(sel_chunk.members)} '
               f'verts={len(sel_chunk.polygon)}')
     if args.pin_demo:
         print(f'== prefix 置换演示（{args.time}s 预算主解，US-002 守卫断言）==')
-        if not _pin_demo(pid_meta, pieces_by_id, interleave_chunk, per_type,
+        if not _pin_demo(pid_meta, pieces_by_id, default_chunk, per_type,
                          gate_nest=gate_nest, seed=args.seed,
                          time_budget=args.time):
             return 1

@@ -154,9 +154,10 @@ def test_prefix_preview_extra_piece_five_members(prefix_client):
     assert r1['fallback'] is False
     assert r1['residual_mm'] == pytest.approx(210.0, abs=1e-6)
     assert r1['gate_mm'] == pytest.approx(2400.0)
-    # 5 成员 = 4 同码基座（前×2 + 后×2 @28）+ 顶部异码 g02@29；bbox 高 = H
+    # 5 成员 = 4 同码基座（paired 序：后×2 + 前×2 @28，2026-09-03 改判）+
+    # 顶部异码 g02@29；bbox 高 = H
     pids = [m['pid'] for m in r1['members']]
-    assert pids == ['g02_28', 'g03_28', 'g02_28', 'g03_28', 'g02_29']
+    assert pids == ['g03_28', 'g03_28', 'g02_28', 'g02_28', 'g02_29']
     tags = [m['tag'] for m in r1['members']]
     assert tags.count('g02') == 3 and tags.count('g03') == 2
     assert r1['bbox']['height_mm'] == pytest.approx(2190.0, abs=0.2)

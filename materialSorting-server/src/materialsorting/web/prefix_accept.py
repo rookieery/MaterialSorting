@@ -219,7 +219,7 @@ def prefix_form(placed, pieces_by_id, front, back, size, *,
     成员识别 = pid ∈ ``{f'{front}_{size}', f'{back}_{size}'}``（主实例
     ``exclude_pids`` 已扣减该两 pid 的成员计数份数 ⇒ final 中这 4 条**只能**来自
     ``PS_`` 组合片展开 —— 计数即守恒口径。2026-09-02 异码补片：``stack_ok`` /
-    ``interleave`` 长度口径放宽 in (4,5) 兼容第 5 片（顶部异码，不属 want 集合、
+    ``member_order`` 长度口径放宽 in (4,5) 兼容第 5 片（顶部异码，不属 want 集合、
     不参与 same_code 2+2 计数 —— US-005 回放护栏新形态）。子判据（PRD 逐字）：
 
     - ``same_code``：前 2 后 2 恰 4 条；
@@ -233,8 +233,10 @@ def prefix_form(placed, pieces_by_id, front, back, size, *,
     - ``rot_ok``：相邻对 rot 差（mod 360）≈180°（头尾相对，版师 P1 参照图；
       阈值 ±5° 吸收朝向离散化噪声）。
 
-    另随报告输出 interleave 交错序（placed 构造序 = ``expand_placements``
-    展开序，前后交替）供形态审计。``pass`` = 四子判据全真；无成员（off 臂 /
+    另随报告输出 ``member_order`` 成员序（placed 构造序 = ``expand_placements``
+    展开序，2026-09-03 paired 定案 = 后后前前同型成对；旧 interleave「前后
+    交替」判据随成员序改判 —— 强度不放松：先序后段精确分段，非弱化为「同型
+    相邻允许」）供形态审计。``pass`` = 四子判据全真；无成员（off 臂 /
     size 不符）时四项全 False 不误报。
     """
     want = {f'{front}_{size}', f'{back}_{size}'}
@@ -276,9 +278,10 @@ def prefix_form(placed, pieces_by_id, front, back, size, *,
     def _is_front(r):
         return r['pid'].startswith(f'{front}_')
 
-    interleave = (len(rows) in (4, 5)
-                  and all((_is_front(a) != _is_front(b))
-                          for a, b in zip(rows, rows[1:])))
+    flags = [_is_front(r) for r in rows]
+    member_order = (len(rows) in (4, 5)
+                    and flags[:2] == [False, False]
+                    and all(flags[2:]))
     return {
         'size': size, 'n_front': n_front, 'n_back': n_back,
         'same_code': same_code,
@@ -286,7 +289,7 @@ def prefix_form(placed, pieces_by_id, front, back, size, *,
         'y_overlap_mm': y_overlaps, 'gaps_mm': gaps,
         'stack_ok': stack_ok,
         'rot_diff_deg': rot_diffs, 'rot_ok': rot_ok,
-        'interleave': interleave,
+        'member_order': member_order,
         'order': [r['pid'] for r in rows],
         'pass': bool(same_code and head_ok and stack_ok and rot_ok),
     }

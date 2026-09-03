@@ -7,10 +7,12 @@
    sizes 过滤缺一不可 —— quantities 含 37/39/40 demand 2+2 但不在所排尺码）；
 2. ``pick_prefix_size``：seeded 随机确定性（crc32 派生 + 排序归一，勿用全局
    random/hash()）、输入序无关、空集合 PrefixError（文案指路数量矩阵）；
-3. ``build_prefix_plan``：4 片（前×2+后×2 同码）interleave 竖排贴靠形态、
-   **rot180 负坐标框架记账**（tr=(xoff−b0, yoff−b1)，重构几何与放置几何逐点
-   一致 —— P0 曾因缺此补偿致片侧移并排）、守卫（order ValueError / 副本不齐
-   2+2 / 不同码 / 竖排超高 gate_nest PrefixError）；
+3. ``build_prefix_plan``：4 片（前×2+后×2 同码）paired 竖排贴靠形态（2026-09-03
+   生产参考件改判：后后前前同型成对 180° 互锁，默认序；interleave=FR-10 旧定稿
+   / grouped 备档行为逐字节不变）、**rot180 负坐标框架记账**（tr=(xoff−b0,
+   yoff−b1)，重构几何与放置几何逐点一致 —— P0 曾因缺此补偿致片侧移并排）、
+   守卫（order ValueError / 副本不齐 2+2 / 不同码 / 竖排超高 gate_nest
+   PrefixError）；
 4. 展开契约黄金用例：组合片 rot=0 与 rot=180 两组手算对拍（复用
    ``waist_band.expand_placements``，offset 减号权威式）；构造 chunk 包络断言
    union(成员原轮廓@展开位) ⊆ composite@主解位 ⊕ d_g（容差 0.5mm）；展开后
@@ -202,6 +204,26 @@ def test_pick_prefix_size_empty_raises():
 
 # --------------------------------------------------- build_prefix_plan
 
+def test_prefix_orders_locked_and_default():
+    """成员序三值锁定（2026-09-03 paired 定案，prd-prefix-member-order）：
+    ``_member_spec('paired')`` = [(后,0),(后,180),(前,0),(前,180)] 自下而上
+    同型成对 180° 互锁（等价性陷阱：4 片级 ≡ grouped 翻转、带补片不等价 ⇒
+    必须显式 BBFF）；interleave（FR-10 旧定稿）/ grouped 备档保留、行为逐字节
+    不变；``build_prefix_plan`` / ``select_prefix_plan`` 默认 order 双切 paired
+    （web 求解/预览/CLI 单点自动继承，协议零改动）。"""
+    assert prefix.PREFIX_ORDERS == ('paired', 'grouped', 'interleave')
+    assert prefix._member_spec('F', 'B', 'paired') \
+        == [('B', 0.0), ('B', 180.0), ('F', 0.0), ('F', 180.0)]
+    assert prefix._member_spec('F', 'B', 'interleave') \
+        == [('F', 0.0), ('B', 180.0), ('F', 0.0), ('B', 180.0)]
+    assert prefix._member_spec('F', 'B', 'grouped') \
+        == [('F', 0.0), ('F', 180.0), ('B', 0.0), ('B', 180.0)]
+    assert inspect.signature(
+        prefix.build_prefix_plan).parameters['order'].default == 'paired'
+    assert inspect.signature(
+        prefix.select_prefix_plan).parameters['order'].default == 'paired'
+
+
 def test_build_prefix_plan_form_and_rot180_accounting():
     """形态 + rot180 记账权威式：tr 复现放置几何（P0 负坐标坑锁死）。
 
@@ -212,9 +234,9 @@ def test_build_prefix_plan_form_and_rot180_accounting():
     pid_meta, pieces = _prefix_ctx()
     chunk, gaps, holes = _build34(pid_meta, pieces)
 
-    # 4 成员 interleave 序（前后前后）+ rot 交替 0/180（头尾相对）
+    # 4 成员 paired 序（后后前前，同型成对 180° 互锁）+ rot 交替 0/180（头尾相对）
     assert [m['pid'] for m in chunk.members] \
-        == ['g02_34', 'g03_34', 'g02_34', 'g03_34']
+        == ['g03_34', 'g03_34', 'g02_34', 'g02_34']
     assert [m['rotation'] for m in chunk.members] == [0.0, 180.0, 0.0, 180.0]
     assert chunk.pid == f'{PREFIX_PID_PREFIX}g02+g03@34'
     assert chunk.n_members == PREFIX_MEMBER_COUNT == 4
@@ -300,13 +322,18 @@ def test_build_prefix_plan_deterministic_to_dict():
 
 
 def test_interleave_order_no_closed_cavities():
-    """FR-10 定稿依据：interleave 交错序封闭腔 0（缺口全开放，无 spyrrow 死区）；
-    grouped 备档在同类几何下产生封闭腔（5336 真实数据 P0 实测 2，合成同构 1）。"""
+    """FR-10 备档依据：interleave 交错序封闭腔 0（缺口全开放，无 spyrrow 死区）；
+    grouped 备档在同类几何下产生封闭腔（5336 真实数据 P0 实测 2，合成同构 1）；
+    paired 默认序（2026-09-03 生产参考件改判）同型对互锁残余细隙被焊接封口 ⇒
+    封闭腔 1（合成同构实测定数；5336 真实数据选码胜者 3 腔死区 ≈47k mm² 进
+    冒烟对拍）。"""
     pid_meta, pieces = _prefix_ctx()
     _c, _g, holes_inter = _build34(pid_meta, pieces, order='interleave')
     _c2, _g2, holes_grouped = _build34(pid_meta, pieces, order='grouped')
+    _c3, _g3, holes_paired = _build34(pid_meta, pieces)
     assert holes_inter == 0
     assert holes_grouped >= 1
+    assert holes_paired == 1
 
 
 # ------------------------------------------------- 展开契约（黄金用例）
@@ -870,8 +897,8 @@ def test_select_prefix_plan_best_fit():
                              'rotation': 0.0}    # 矩形 rot180 同高 ⇒ 平手 rot0 先
     assert chunk.pid == 'PS_g02+g03@38+g02@36'
     assert chunk.n_members == 5
-    assert [m['pid'] for m in chunk.members] == ['g02_38', 'g03_38',
-                                                 'g02_38', 'g03_38', 'g02_36']
+    assert [m['pid'] for m in chunk.members] == ['g03_38', 'g03_38',
+                                                 'g02_38', 'g02_38', 'g02_36']
     assert len(gaps) == 4 and max(gaps) <= GAP_EPS_MM and holes == 0
     # 第 5 成员在顶（权威式记账重构 eroded 几何，底边搭基座顶）
     geoms = [Polygon(_transform_polygon(pid_meta[m['pid']]['polygon'],
@@ -916,17 +943,17 @@ def test_extra_pool_eligibility():
 
 
 def test_select_prefix_plan_tie_break_and_determinism():
-    """平手裁决 + 双跑确定性：L 形同构两码全组合 H 恒等（g02 补片 2094 /
-    g03 补片 1974 两档，跨 A 精确平手）⇒ 按迭代序 (A 升序, front 先于 back,
-    B 升序) 取 (A=34, g02@36)；同输入双跑 (to_dict, gaps, holes, info) 全等
-    且搜索路径与 seed 无关。补片朝向 = FR-3 内定（union bbox 面积增长最小）：
-    L 形 rot180 窄边朝外包络更紧 ⇒ 面积更小 ⇒ 180.0 胜（2026-09-02 需求2
-    修复后 rot 不再按 max-H 枚举 —— 旧口径 H 平手时 rot0 先，行为可观察变迁
-    已由本断言重锁）。"""
+    """平手裁决 + 双跑确定性：L 形同构两码全组合 H 恒等（paired 基座下 g02 补片
+    1882.5 / g03 补片 1762.5 两档，跨 A 精确平手）⇒ 按迭代序 (A 升序, front
+    先于 back, B 升序) 取 (A=34, g02@36)；同输入双跑 (to_dict, gaps, holes,
+    info) 全等且搜索路径与 seed 无关。补片朝向 = FR-3 内定（union bbox 面积
+    增长最小）：基座顶成员 F@180（paired 序）+ L 形补片 rot180 窄边朝外包络
+    更紧 ⇒ 面积更小 ⇒ 180.0 胜（2026-09-02 需求2 修复后 rot 不再按 max-H
+    枚举 —— 旧口径 H 平手时 rot0 先，行为可观察变迁已由本断言重锁）。"""
     pid_meta, pieces = _prefix_ctx(sizes=(34, 36))
     kw = dict(front_label='g02', back_label='g03',
               quantities=_qty_of(pid_meta), sizes=[34, 36], d_g=2.0,
-              gate_nest=2200.0)                    # 2094/1974 均可行
+              gate_nest=2200.0)                    # 1882.5/1762.5 均可行
     ca, ga, ha, ia = select_prefix_plan(pid_meta, pieces, seed=0, **kw)
     cb, gb, hb, ib = select_prefix_plan(pid_meta, pieces, seed=7, **kw)
     assert json.dumps(ca.to_dict(), sort_keys=True) \
@@ -936,8 +963,8 @@ def test_select_prefix_plan_tie_break_and_determinism():
     assert ia['extra'] == {'pid': 'g02_36', 'label': 'g02', 'size': 36,
                            'rotation': 180.0}      # front 先于 back；rot=FR-3 内定
     assert ia['fallback'] is False
-    assert ia['height_mm'] == pytest.approx(2094.0, abs=1.0)
-    assert ia['residual_mm'] == pytest.approx(106.0, abs=1.0)   # 2200 − 2094
+    assert ia['height_mm'] == pytest.approx(1882.5, abs=1.0)
+    assert ia['residual_mm'] == pytest.approx(317.5, abs=1.0)   # 2200 − 1882.5
     assert ia['n_candidates'] == 4                 # 2 A × 2 异码（rot 不枚举）
     assert len(ca.members) == 5 and max(ga) <= GAP_EPS_MM
 
@@ -963,10 +990,12 @@ def test_select_prefix_plan_fallback_parity():
         == json.dumps(ref.to_dict(), sort_keys=True)
     assert gaps == ref_gaps and holes == ref_holes
     assert len(chunk.members) == 4                 # 兜底恒 4 片
+    # 矩形夹具无封闭腔 ⇒ dead_area_mm2=0.0（paired additive 字段随兜底路径在案）
     assert info == {'size': 34, 'extra': None,
                     'height_mm': ref.bbox['height_mm'],
                     'residual_mm': 1250.0 - ref.bbox['height_mm'],
-                    'fallback': True, 'n_candidates': 2}
+                    'fallback': True, 'n_candidates': 2,
+                    'dead_area_mm2': 0.0}
 
 
 def test_select_prefix_plan_gate_margin_rejects_fitline():
@@ -1015,28 +1044,29 @@ def test_select_prefix_plan_fr3_rot_nesting():
     按 max-H 枚举补片 rot —— 旧口径系统性选中「浅搁凸峰」朝向（H 大但留楔形
     空隙），委派 _place_members 面积增长最小后嵌入朝向胜出。
 
-    夹具（d_g=0，矩形基座 + 凸台/凹腔，全部同宽 ⇒ x 候选塌缩 {0}，精确手算）：
-    g03@34 rot0 底面挂 40 宽凸台（interleave 下成员 2/4 转 180° ⇒ 凸台朝上）；
-    g02@36 rot0 底面开同宽凹腔（深 40）。补片 rot0 = 凹腔罩住凸台嵌入（顶片
-    凸台顶 1220 ↔ 凹腔底 1180+40 贴触，H=1320、嵌入 40mm）；rot180 = 平底
-    搁凸峰顶（H=1360、嵌入 0）。旧 max-H 取 rot180=1360，FR-3 取 rot0=1320。
+    夹具（d_g=0，矩形基座 + 凸台/凹腔，全部同宽 ⇒ x 候选塌缩 {0}，精确手算；
+    2026-09-03 paired 序重造 —— 凸台朝向随成员序变化：interleave 下顶片 = 后幅
+    @180，paired 下顶片 = 前幅@180 ⇒ 凸台改挂 g02@34 前幅）：g02@34 rot0 底面
+    挂 40 宽凸台（成员 4 = F@180 ⇒ 凸台朝上，深 60）；g02@36 rot0 底面开同宽
+    凹腔（深 40）。补片 rot0 = 凹腔罩住凸台嵌入（顶片凸台顶 1220 ↔ 凹腔底
+    1180+40 贴触，H=1320、嵌入 40mm）；rot180 = 平底搁凸峰顶（H=1360、嵌入
+    0）。旧 max-H 取 rot180=1360，FR-3 取 rot0=1320。
     """
     pid_meta, pieces = _stack_ctx(
         {('g02', 34): 300.0, ('g03', 34): 250.0, ('g02', 36): 140.0})
     tab_pts = [[0.0, 0.0], [80.0, 0.0], [80.0, -60.0], [120.0, -60.0],
-               [120.0, 0.0], [200.0, 0.0], [200.0, 250.0], [0.0, 250.0]]
+               [120.0, 0.0], [200.0, 0.0], [200.0, 300.0], [0.0, 300.0]]
     cap_pts = [[0.0, 0.0], [80.0, 0.0], [80.0, 40.0], [120.0, 40.0],
                [120.0, 0.0], [200.0, 0.0], [200.0, 140.0], [0.0, 140.0]]
-    for pid, pts in (('g03_34', tab_pts), ('g02_36', cap_pts)):
-        p = _panel_piece(pid, 'g03' if pid.startswith('g03') else 'g02',
-                         34 if pid.endswith('34') else 36, pts)
+    for pid, pts in (('g02_34', tab_pts), ('g02_36', cap_pts)):
+        p = _panel_piece(pid, 'g02', 34 if pid.endswith('34') else 36, pts)
         pieces[pid] = p
         pid_meta[pid]['polygon'] = [list(pt) for pt in pts]
         pid_meta[pid]['area_mm2'] = p['area_mm2']
     chunk, gaps, holes, info = _select(pid_meta, pieces)
     assert info['fallback'] is False
-    assert [m['pid'] for m in chunk.members] == ['g02_34', 'g03_34',
-                                                 'g02_34', 'g03_34', 'g02_36']
+    assert [m['pid'] for m in chunk.members] == ['g03_34', 'g03_34',
+                                                 'g02_34', 'g02_34', 'g02_36']
     assert info['extra'] == {'pid': 'g02_36', 'label': 'g02', 'size': 36,
                              'rotation': 0.0}        # FR-3 = 嵌入朝向（旧口径 180）
     assert info['n_candidates'] == 1
@@ -1069,7 +1099,9 @@ def test_extra_rot180_accounting_and_envelope():
     """补片 rot180 记账权威式（镜像 form_and_rot180_accounting）+ 5 片两朝向
     展开包络：显式 extra_rot=180 构造 —— 第 5 成员 tr 复现放置几何（负坐标
     补偿缺失即侧移爆缝）、gaps 4 条全 ≤1mm、第 5 成员在顶、
-    union(成员原轮廓@展开位) ⊆ composite ⊕ d_g。"""
+    union(成员原轮廓@展开位) ⊆ composite ⊕ d_g。paired 序（2026-09-03 重锁）：
+    基座更紧（1416.5 vs interleave 1628）+ 补片 1882.5；同型对互锁细隙被焊接
+    封口 ⇒ holes=1（死区面积观测字段进 select info，构造口径只报腔数）。"""
     pid_meta, pieces = _prefix_ctx(sizes=(34, 36))
     chunk, gaps, holes = build_prefix_plan(
         pid_meta, pieces, front_pid='g02_34', back_pid='g03_34', d_g=2.0,
@@ -1078,7 +1110,7 @@ def test_extra_rot180_accounting_and_envelope():
     assert chunk.n_members == 5
     assert chunk.members[-1]['pid'] == 'g02_36'
     assert chunk.members[-1]['rotation'] == 180.0
-    assert len(gaps) == 4 and max(gaps) <= GAP_EPS_MM and holes == 0
+    assert len(gaps) == 4 and max(gaps) <= GAP_EPS_MM and holes == 1
     # 记账权威式重构放置几何（eroded 碰撞口径）
     geoms = [Polygon(_transform_polygon(pid_meta[m['pid']]['polygon'],
                                         m['rotation'], m['translation']))
@@ -1087,7 +1119,7 @@ def test_extra_rot180_accounting_and_envelope():
         assert geoms[i].distance(geoms[i + 1]) <= GAP_EPS_MM, i
     assert geoms[4].bounds[1] == pytest.approx(
         max(g.bounds[3] for g in geoms[:4]), abs=0.5)   # 第 5 成员在顶
-    assert chunk.bbox['height_mm'] == pytest.approx(2094.0, abs=1.0)
+    assert chunk.bbox['height_mm'] == pytest.approx(1882.5, abs=1.0)
     for c_rot, c_tr in [(0.0, (700.0, 300.0)), (180.0, (2000.0, 1500.0))]:
         expanded = wb.expand_placements(chunk, c_rot, c_tr)
         assert len(expanded) == 5                       # 恰 5 条（2+2+补片）
@@ -1104,8 +1136,10 @@ def test_extra_rot180_accounting_and_envelope():
 
 def test_build_prefix_plan_extra_guards():
     """补片直调守卫：pid 缺失/demand<1 → PrefixError（候选资格文案）；与套装
-    同码（B==A）拒；片型非前/后幅 g 码拒；5 片竖排超高守卫沿用（基座 1628
-    ≤1980 可容、+补片 2094 >1980 拒 —— 不设缝隙阈值也不放宽门幅界）。"""
+    同码（B==A）拒；片型非前/后幅 g 码拒；5 片竖排超高守卫沿用（paired 基座
+    1416.5 ≤ 安全线 1880 可容（gate 1890）、+补片 1882.5 > 1880 拒 —— 不设
+    缝隙阈值也不放宽门幅界；2026-09-03 paired 序重锁：interleave 基座 1628 +
+    补片 2094 在 gate 1980 拒，paired 更紧同语义换档）。"""
     pid_meta, pieces = _prefix_ctx(sizes=(34, 36))
     m0 = dict(pid_meta)
     m0['g02_36'] = {**pid_meta['g02_36'], 'demand': 0}
@@ -1130,9 +1164,15 @@ def test_build_prefix_plan_extra_guards():
     with pytest.raises(PrefixError, match='非前/后幅'):
         build_prefix_plan(m5, pieces, front_pid='g02_34', back_pid='g03_34',
                           d_g=2.0, gate_nest=1980.0, extra_pid='g05_36')
+    # 5 片竖排超高（gate 1890：安全线 1880 —— paired 基座 1416.5 放行、
+    # +补片 1882.5 拦下）
+    chunk_b, _gb, _hb = build_prefix_plan(pid_meta, pieces, front_pid='g02_34',
+                                          back_pid='g03_34', d_g=2.0,
+                                          gate_nest=1890.0)
+    assert chunk_b.bbox['height_mm'] == pytest.approx(1416.5, abs=1.0)
     with pytest.raises(PrefixError, match='竖排高'):
         build_prefix_plan(pid_meta, pieces, front_pid='g02_34',
-                          back_pid='g03_34', d_g=2.0, gate_nest=1980.0,
+                          back_pid='g03_34', d_g=2.0, gate_nest=1890.0,
                           extra_pid='g02_36')
 
 

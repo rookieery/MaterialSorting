@@ -495,7 +495,11 @@ def test_proc_prefix_final_no_leak_pin_stats_and_artifact(tmp_path, monkeypatch)
     assert art['pid'].startswith('PS_')
     assert len(art['chunk']['members']) == 4
     assert 'pin' in art and art['band_pos'] is None
-    assert art['chunk']['members'][0]['pid'] == f'g02_{size}'
+    # paired 成员序（2026-09-03 改判）：首个成员 = 后幅（构造展开序 后后前前）
+    assert art['chunk']['members'][0]['pid'] == f'g03_{size}'
+    # 2026-09-03 additive：死区观测字段只落工件（矩形基座无封闭腔 ⇒ 0.0；
+    # WS stage 白名单不含此键 —— 上面 stage 断言即防泄漏口径）
+    assert art['dead_area_mm2'] == 0.0
 
 
 # --------------------- 2026-09-02 异码补片（US-002 demand 部分扣减 + 接线）

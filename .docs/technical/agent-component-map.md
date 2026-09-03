@@ -1159,7 +1159,7 @@ band 配置（用户指认腰头 g 码成带）从表单到 WS 的纯参数链�
 | `src/hooks/useCommitToNesting.ts` | commit 成功分支调 `usePtypeStore.getState().invalidate()`（仅 ready/error → idle 才产生订阅通知，同态 set 不通知）。 |
 | `src/style.css` | 预览缩略容器 / 放大层 / 统计行样式微调（band 与 prefix 同款复用）。 |
 | `scripts/smoke-prefix-preview.mjs` / `scripts/smoke-ptype-cache.mjs` | 浏览器冒烟脚本（CDP：prefix 预览三态 + ptype 缓存「开弹窗零请求 / commit done 失效重拉」）。 |
-| `scripts/smoke_prefix_extra.mjs` | **新建（2026-09-02，US-005 端到端验收）** 异码补片全链路 CDP 冒烟（模板 smoke-band-preview.mjs 套路，29 检查全过）：上传 5336#老六订单 → 数量矩阵 7 码 Σ105 → per_type g02/g03 d=2/tol=1 → 开 prefix 预览 5 片 + 「＋ 顶部 g02@32 异码片 · 余 1.55mm 近满幅」标注 → 求解状态行「尺码 38＋g02@32」→ 形态判据（贴触 gaps / interleave 交替 / 近满幅 residual / min_x 锚定）→ final 无 placed_items 键 + 末帧 placed=105 守恒 + `PS_` 零泄漏 → 导出 PLT（fetch 抓包字节 grep b'PS_' 缺席）→ prefix_runs 工件快照 5 成员；报告落 `out/smoke_prefix_extra/report.json`。 |
+| `scripts/smoke_prefix_extra.mjs` | **新建（2026-09-02，US-005 端到端验收）** 异码补片全链路 CDP 冒烟（模板 smoke-band-preview.mjs 套路，29 检查全过）：上传 5336#老六订单 → 数量矩阵 7 码 Σ105 → per_type g02/g03 d=2/tol=1 → 开 prefix 预览 5 片 + 「＋ 顶部 g02@32 异码片 · 余 1.55mm 近满幅」标注 → 求解状态行「尺码 38＋g02@32」→ 形态判据（贴触 gaps / interleave 交替 / 近满幅 residual / min_x 锚定；**2026-09-03 prefix 引擎成员序改判 paired 后后前前后，判据 5a「interleave 交替」暂失配，随 prd-prefix-member-order US-002 更新脚本判据并复跑**）→ final 无 placed_items 键 + 末帧 placed=105 守恒 + `PS_` 零泄漏 → 导出 PLT（fetch 抓包字节 grep b'PS_' 缺席）→ prefix_runs 工件快照 5 成员；报告落 `out/smoke_prefix_extra/report.json`。 |
 
 ### 关键不变量（2026-08-25 立，后续故事不得破坏）
 

@@ -435,13 +435,15 @@ def _build_prefix(pieces_snapshot, gate_mm, solve_params, prefix, result_queue):
         'residual_mm': round(float(info['residual_mm']), 3),
         'elapsed': round(elapsed, 2),
     })
+    # dead_area_mm2（2026-09-03 paired additive）不进 stage 白名单，只落工件。
     return {'chunk': chunk, 'front': front, 'back': back,
             'size': int(info['size']),
             'gaps': gaps, 'holes': int(holes), 'd_g': float(d_g),
             'elapsed': round(elapsed, 2),
             'extra': extra,
             'residual_mm': float(info['residual_mm']),
-            'fallback': bool(info['fallback'])}
+            'fallback': bool(info['fallback']),
+            'dead_area_mm2': float(info.get('dead_area_mm2', 0.0))}
 
 
 def _finalize_prefix(sol, prefix_ctx, band_chunk, pid_meta, pieces_snapshot,
@@ -537,6 +539,10 @@ def _prefix_record(prefix_ctx, pin_stats, band_pos, width):
         'extra': prefix_ctx['extra'],
         'residual_mm': round(float(prefix_ctx['residual_mm']), 3),
         'fallback': bool(prefix_ctx['fallback']),
+        # 2026-09-03 paired 成员序 additive：封闭腔死区面积（主解永不可填）——
+        # 只落工件与冒烟输出，不进 WS stage 白名单 / final 统计段（旧消费方
+        # 零感知，协议 additive）。
+        'dead_area_mm2': round(float(prefix_ctx.get('dead_area_mm2', 0.0)), 1),
         'chunk': chunk.to_dict(),          # 构造全量（polygon/members/offset）回放用
         'pin': pin_stats,
         'band_pos': band_pos,

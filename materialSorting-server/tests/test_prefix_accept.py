@@ -41,34 +41,37 @@ _BY_ID = {
 
 
 def _stack_placements(dx=0.0):
-    """交错咬合竖排 4 成员（前 2 后 2 同码 34、相邻 y 交集 40mm、rot 0/180 交替）。
+    """同型成对咬合竖排 4 成员（后 2 前 2 同码 34、构造序 = paired 后后前前、
+    相邻 y 交集 40mm、rot 0/180 交替 —— 2026-09-03 paired 定案形态）。
 
-    世界 bbox 链（min_y 序）：g02[0,400] / g03[380,800] / g02[760,1160] /
-    g03[1120,1540] —— 相邻对 y 交集均 40mm 且 2D 重叠（gaps=0）；rot 沿竖排
-    序 0/180/0/180。
+    世界 bbox 链（min_y 序 = 构造序）：g03[0,420] / g03[380,800] / g02[760,1160] /
+    g02[1120,1520] —— 相邻对 y 交集均 40mm 且 2D 重叠（gaps=0）；rot 沿竖排
+    序 0/180/0/180（@180 成员负坐标框架：平移后带同区间）。
     """
     return [
-        _place('g02_34', 0 + dx, 0, rot=0.0),
+        _place('g03_34', 0 + dx, 0, rot=0.0),
         _place('g03_34', 500 + dx, 800, rot=180.0),
         _place('g02_34', 100 + dx, 760, rot=0.0),
-        _place('g03_34', 500 + dx, 1540, rot=180.0),
+        _place('g02_34', 400 + dx, 1520, rot=180.0),
         _place('g01_34', 900 + dx, 0),            # 干扰片（非成员，须被过滤）
     ]
 
 
 # ------------------------------------------------------------- prefix_form
 
-def test_prefix_form_pass_interleaved_stack():
-    """四子判据全真：同码 2+2 / min_x<=6 / 相邻 y 交集>0 且缝隙<=1mm / rot 差≈180°。"""
+def test_prefix_form_pass_paired_stack():
+    """四子判据全真：同码 2+2 / min_x<=6 / 相邻 y 交集>0 且缝隙<=1mm / rot 差≈180°；
+    member_order = 构造展开序后后前前（2026-09-03 paired 定案；旧 interleave
+    交错序判据随成员序改判，强度不放松：先序后段精确分段）。"""
     r = pa.prefix_form(_stack_placements(), _BY_ID, 'g02', 'g03', 34)
     assert r['same_code'] is True and r['n_front'] == 2 and r['n_back'] == 2
     assert r['head_ok'] is True and r['min_x_mm'] <= pa.HEAD_EPS_MM
     assert r['stack_ok'] is True
-    assert r['y_overlap_mm'] == [20.0, 40.0, 40.0]   # g03 高 420：首对 400-380=20
+    assert r['y_overlap_mm'] == [40.0, 40.0, 40.0]   # 同型对咬合交集均 40
     assert r['gaps_mm'] == [0.0, 0.0, 0.0]
     assert r['rot_ok'] is True and r['rot_diff_deg'] == [180.0, 180.0, 180.0]
-    assert r['interleave'] is True
-    assert r['order'] == ['g02_34', 'g03_34', 'g02_34', 'g03_34']  # 构造序保留
+    assert r['member_order'] is True
+    assert r['order'] == ['g03_34', 'g03_34', 'g02_34', 'g02_34']  # 构造序保留
     assert r['pass'] is True
 
 
@@ -83,7 +86,7 @@ def test_prefix_form_head_offset_fails():
 def test_prefix_form_scattered_member_fails():
     """末成员散落 4000mm 外 -> y 交集<0 且缝隙超限 -> stack_ok False。"""
     placed = _stack_placements()
-    placed[3] = _place('g03_34', 500, 5400, rot=180.0)
+    placed[3] = _place('g02_34', 400, 5400, rot=180.0)
     r = pa.prefix_form(placed, _BY_ID, 'g02', 'g03', 34)
     assert r['same_code'] is True and r['head_ok'] is True
     assert r['stack_ok'] is False
@@ -276,7 +279,7 @@ def test_run_all_quick_smoke(accept_env, tmp_path):
     assert 'error' not in rows[0]['off'] and 'error' not in rows[0]['on']
     assert rows[0]['on']['size'] in (28, 29)
     form = report['form']['per_seed'][0]
-    assert form['same_code'] and form['rot_ok'] and form['interleave'] is True
+    assert form['same_code'] and form['rot_ok'] and form['member_order'] is True
     # 合成矩形数据贴触形态 = y 恰好邻接（交集 0，真实 5336 几何为交错咬合 >0，
     # 见纯函数用例与 US-005 真实报告）；缝隙与刚性子判据仍须全过。
     assert all(g <= pa.GAP_EPS for g in form['gaps_mm'])
