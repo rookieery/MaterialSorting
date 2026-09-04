@@ -28,6 +28,7 @@ import { createPortal } from 'react-dom';
 import { useControlPanelStore } from '../../store/controlPanelStore';
 import { computeLayoutStats, itemsEqual, useEditStore } from '../../store/editStore';
 import { runRegistry } from '../../store/runRegistry';
+import { EDIT_HOLD_INTERVAL_MS, refreshEditHold } from '../../lib/editHold';
 import { EditCanvas, type EditViewMode } from './EditCanvas';
 import { EditConfirmLayer } from './EditConfirmLayer';
 
@@ -59,6 +60,16 @@ function EditLayoutModalInner(): JSX.Element {
     }
     open(best);
   }, [open, invalidate]);
+
+  // 会话钉住心跳（2026-09-04）：编辑纯前端无任何请求，后端 10min 空闲过期会在
+  // 长编辑中逐出会话 → 保存后导出 401 全丢。弹窗打开期间滚动续期 POST
+  // /api/edit-hold（后端 2h 钉住 + 关窗后自然宽限，镜像高级运行语义；失败静默
+  // 详见 lib/editHold.ts）。
+  useEffect(() => {
+    void refreshEditHold();
+    const id = window.setInterval(() => void refreshEditHold(), EDIT_HOLD_INTERVAL_MS);
+    return () => window.clearInterval(id);
+  }, []);
 
   // 状态条：computeLayoutStats 单一真相源（与 save/reset 写回同公式 = ceil(包络) 口径，
   // US-003 起料长 = ceil(当前包络 maxX) 实时刷新）。注意 solver 原始 width_mm 可为小数

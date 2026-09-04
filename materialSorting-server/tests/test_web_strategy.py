@@ -1098,10 +1098,17 @@ def test_second_start_clears_stale_timestamps(dual_env, monkeypatch):
 
 
 def test_alive_hook_registered_and_defensive(dual_env, monkeypatch):
-    """import 接线守卫：单例 registry 的 hook 即 strategy._run_alive_hook（生产
-    路径必有钉住）；直调防御分支：未知 sid / default / 空槽 / 非终态无 proc 键
-    → 一律 None（宁可不钉）。"""
-    assert sessions_mod.registry._alive_hook is strategy_mod._run_alive_hook
+    """import 接线守卫：单例 registry 的 hook 覆盖 strategy._run_alive_hook 的
+    豁免语义（生产路径必有钉住）；直调防御分支：未知 sid / default / 空槽 /
+    非终态无 proc 键 → 一律 None（宁可不钉）。
+
+    2026-09-04 起单 slot 持有的是 edit_hold.install 的组合体（编辑钉住 + 本
+    hook 委派保留 —— 身份断言改口径；run 钉住行为由
+    test_run_alive_pins_session_beyond_ttl 锁定，组合结构哨兵在
+    tests/test_web_edit_hold.py::test_singleton_hook_is_composed）。"""
+    assert sessions_mod.registry._alive_hook is not strategy_mod._run_alive_hook
+    # 组合体对未知 sid（编辑源无钉 + run 源 None）与直调原 hook 同为 None
+    assert sessions_mod.registry._alive_hook('unknowns') is None
     assert strategy_mod._run_alive_hook('unknowns') is None
     assert strategy_mod._run_alive_hook(sessions_mod.DEFAULT_SID) is None
     st = strategy_mod._STRATEGY_STATES.setdefault('empty000', {})

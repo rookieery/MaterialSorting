@@ -79,6 +79,10 @@ from .sessions import (  # noqa: E402
 # 走函数内延迟 import），禁 import 本模块（无环）；commit 触发点在
 # ``commit_to_nesting`` 尾部、进程启动触发点在 ``main()``。
 from . import diskclean  # noqa: E402
+# 编辑排料会话钉住（2026-09-04）：edit_hold → sessions 单向依赖，禁 import 本模块
+# （无环，AST 守卫见 tests/test_web_edit_hold.py）。模块级无副作用（install 在
+# 文件尾 strategy 注册之后显式调用 —— 单 slot 覆盖式，顺序反了会被覆写丢组合）。
+from . import edit_hold  # noqa: E402
 
 app = FastAPI(title='排料可视化工作台')
 app.mount('/static', StaticFiles(directory=STATIC_DIR), name='static')
@@ -403,6 +407,31 @@ async def create_session(request: Request):
     return {'ok': True, 'sid': st.sid}
 
 
+@app.post('/api/edit-hold')
+async def post_edit_hold(request: Request):
+    """编辑排料会话钉住心跳（2026-09-04）：前端编辑弹窗打开期间滚动调用。
+
+    编辑排料纯前端（拖动/旋转/保存不发任何请求），长编辑（> ``MS_SESSION_TTL_SEC``
+    缺省 10min）会被空闲过期逐出 → 保存后导出 401 全局阻断 → 刷新丢全部编辑成果。
+    本端点把会话钉住到 ``now + MS_EDIT_HOLD_SEC``（缺省 2h，镜像策略 run 终态宽限
+    语义 —— 编辑中睡眠 ≤2h 唤醒恢复、关窗后自然留 2h 宽限；宽限内仍占
+    ``MS_SESSION_MAX`` 名额，与策略宽限口径一致）。
+
+    - 无 sid（default 会话）→ ``200 {ok:true}`` no-op（default 豁免一切过期）；
+    - 带合法 sid → ``resolve()`` 会话闸门（顺手刷 ``last_active``；过期/墓碑 →
+      ``401 {code:'session_expired'}`` 不给死会话续命、非法 → 400）+ 续期钉住表。
+    """
+    sid = (request.headers.get('x-session-id') or '').strip() or None
+    if sid is None:
+        return {'ok': True}
+    try:
+        session_registry.resolve(sid)
+    except SessionError as e:
+        return JSONResponse(e.payload(), status_code=e.status)
+    edit_hold.refresh(sid, session_registry.clock())
+    return {'ok': True}
+
+
 # ------------------------------------------------- 视图/导出/WS 路由（机械拆出，路由表顺序与拆分前一致）
 from . import routes_views, routes_ws  # noqa: E402
 
@@ -439,6 +468,13 @@ def main():
 from .strategy import register_strategy_routes   # noqa: E402
 
 register_strategy_routes(app)
+
+# 编辑排料会话钉住（2026-09-04）：把 edit_hold 的编辑豁免与上面 strategy 注册的
+# run 钉住 hook 组合成单 slot 唯一 hook（任一豁免源给出未来时间戳即不逐出）。
+# **必须在 register_strategy_routes 之后**（strategy import 时覆写式注册自己的
+# hook —— 先装组合体会被覆写丢编辑豁免）；幂等，晚于 start_scanner 也无碍
+# （hook 只是逐出前的查询点）。
+edit_hold.install(session_registry)
 
 # US-001：会话过期 30s daemon 扫描线程 —— 惰性检查的兜底（已死会话不再发请求，
 # 容量名额只能由扫描回收）。daemon=True：进程退出不阻塞；测试经 stop_scanner() 停。
