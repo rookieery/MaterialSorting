@@ -8,6 +8,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { useExport } from "../hooks/useExport";
 import { markSessionProbedForTest } from "../lib/api";
 import { runRegistry, type RunRecord } from "../store/runRegistry";
+import { useEditStore } from "../store/editStore";
 import type { FrameMsg, ManifestMsg } from "../types/ws";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -26,6 +27,7 @@ beforeEach(() => {
   // 计数 / 首调 URL 断言与本 story 前完全一致（会话门自身在 lib/api.test 覆盖）。
   markSessionProbedForTest();
   runRegistry.clear();
+  useEditStore.getState().invalidate();
   captured = null;
   container = document.createElement("div");
   document.body.appendChild(container);
@@ -49,6 +51,7 @@ afterEach(() => {
   container?.remove();
   container = null;
   runRegistry.clear();
+  useEditStore.getState().invalidate();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -297,5 +300,97 @@ describe("useExport (US-007)", () => {
     const init = fetchSpy.mock.calls[0][1] as RequestInit;
     const body = JSON.parse(init.body as string) as { seed: number };
     expect(body.seed).toBe(0);
+  });
+});
+
+// ============================================================
+// 编辑排料 US-004 导出闭环：editStore.save() 写回 bestRun().lastFrame 后，
+// useExport（与 ExportInfoModal 的 /api/plt-table-preview 同源读法）的 placed 与
+// density 自动反映编辑后值 —— 前端导出链路零改动继承。
+// ============================================================
+
+describe("useExport 编辑排料闭环 (US-004)", () => {
+  /** gate 1000 · 两 500×500 方 @ [0,0]/[600,0] → 包络 1100；total_area 500000。 */
+  function seedEditableRun(): RunRecord {
+    const rec = runRegistry.create(0);
+    rec.manifest = {
+      type: "manifest",
+      gate_mm: 1000,
+      total_area_mm2: 500000,
+      n_eroded: 0,
+      pieces: [
+        {
+          id: "a_28", label: "g01", size: 28, color: "#ff0000", area_mm2: 250000,
+          polygon: [[0, 0], [500, 0], [500, 500], [0, 500]],
+        },
+        {
+          id: "b_30", label: "g02", size: 30, color: "#00ff00", area_mm2: 250000,
+          polygon: [[0, 0], [500, 0], [500, 500], [0, 500]],
+        },
+      ],
+    };
+    const density = 500000 / (1100 * 1000);
+    const f: FrameMsg = {
+      type: "frame", index: 0, elapsed: 5, phase: "final",
+      density, density_sparrow: 0.6, width_mm: 1100,
+      placed_items: [
+        { id: "a_28", rotation: 0, translation: [0, 0] },
+        { id: "b_30", rotation: 0, translation: [600, 0] },
+      ],
+    };
+    rec.frames.push(f);
+    rec.lastFrame = f;
+    rec.finalDensity = density;
+    rec.done = true;
+    return rec;
+  }
+
+  it("save() 后 payload 的 placed / width_mm / density 反映编辑后值（density_sparrow 不动）", async () => {
+    const run = seedEditableRun();
+    // 编辑会话：拖 b 右移 600（→[1200,0]，包络 1700）+ 保存写回
+    expect(useEditStore.getState().open(run)).toBe(true);
+    useEditStore.getState().setWorkingItem(1, { translation: [1200, 0] });
+    expect(useEditStore.getState().save()).toBe(true);
+    // 写回即导出输入：lastFrame 是 useExport 唯一数据源（零改动继承）
+    const onStatus = vi.fn();
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      makeResponse(undefined, { cd: "attachment; filename=x.png" }),
+    );
+    renderProbe(onStatus);
+    await act(async () => { await captured!.exportAs("png", [28]); });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const init = fetchSpy.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(init.body as string) as {
+      width_mm: number;
+      density: number;
+      placed: { id: string; rotation: number; translation: number[] }[];
+    };
+    // 双向伸缩：料长 1700；real 口径密度 = 500000/(1700×1000)
+    expect(body.width_mm).toBe(1700);
+    expect(body.density).toBeCloseTo(500000 / (1700 * 1000), 12);
+    expect(body.placed.length).toBe(2);
+    expect(body.placed[1].id).toBe("b_30");
+    expect(body.placed[1].translation).toEqual([1200, 0]);
+    // density_sparrow 恒不动（solver erode 参考值与编辑无关）
+    expect(run.lastFrame!.density_sparrow).toBe(0.6);
+  });
+
+  it("缩短场景：左移腾空尾部 → width/density 同口径收缩后导出", async () => {
+    const run = seedEditableRun();
+    useEditStore.getState().open(run);
+    // b 左移到 [0,500]（与 a 竖排，不重合）：包络 = max(a 500, b 500) = 500
+    useEditStore.getState().setWorkingItem(1, { translation: [0, 500] });
+    useEditStore.getState().save();
+    const onStatus = vi.fn();
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(makeResponse());
+    renderProbe(onStatus);
+    await act(async () => { await captured!.exportAs("png", [28]); });
+    const init = fetchSpy.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(init.body as string) as {
+      width_mm: number; density: number; placed: { translation: number[] }[];
+    };
+    expect(body.width_mm).toBe(500);
+    expect(body.density).toBeCloseTo(500000 / (500 * 1000), 12);
+    expect(body.placed[1].translation).toEqual([0, 500]);
   });
 });

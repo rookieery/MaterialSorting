@@ -1655,3 +1655,44 @@ US-001 计算地基之上的 UI 面：大弹窗全量展示排料布局 + 顶部
   红色/0.0°）+ 红色交集高亮 polygon + 脚注算法碰撞口径；左移腾空尾部（右缘 2 片
   同 ceil 桶 —— 须逐片拖，实测教训）6149→6095/84.33%/Δ +0.74pt；✕ 重开恢复基线。
   验收后浏览器关闭、ms-web/vite 进程已杀。
+
+## 编辑排料 US-004 落地：保存/✕关闭/重置与主界面集成 + 导出闭环（2026-09-04）
+
+编辑排料收口：主面板「编辑排料」区块（编辑/重置两按钮）+ 保存/✕ 关闭接线 +
+重解/策略应用编辑态失效挂点。**导出闭环零后端零前端改动** —— useExport 与
+ExportInfoModal 均读 bestRun().lastFrame，save 写回后 placed/density 自动继承。
+
+| 文件 | 职责 |
+| --- | --- |
+| `src/components/ControlPanel/EditLayoutControls.tsx`（新） | 主面板区块（.edit-controls，StatusLine 与 ExportButtons 之间 =「导出最优方案」上方）：`.field-label` 标题「编辑排料」+ 编辑/重置两按钮。激活口径与导出一致 = `runRegistry.list().some(r => r.lastFrame !== null) && phase !== 'running'`（含 stopped best-so-far 与策略/极限合成 record）；**三层 disabled 防御**（TabBar 同款）：native disabled → onClick guard → store 自守卫（open 无 lastFrame 返 false / reset 校验 run 仍在 registry + baseline 在案）。编辑 = openModal('edit_layout')；重置 = EditConfirmLayer（PRD 原文文案）确认后 editStore.reset()。订阅 renderTick（ExportButtons 同款 —— lastFrame 是 mutable 引用，靠 bump 重算 hasResult）。 |
+| `src/components/edit/EditConfirmLayer.tsx`（新） | 自定义暗色小确认层（**不用 window.confirm**）：纯受控（message + onConfirm/onCancel + 可选按钮文案），Portal 到 body（逃逸 edit-layout-modal overflow:hidden），z-index 1350 = 全栈最上（edit-layout 1250 / band-zoom 1300 之上）。无 ESC / 遮罩点击关闭（显式按钮唯一路径，编辑弹窗同哲学）。两处复用：主面板重置 confirm + 弹窗 ✕ dirty 确认。 |
+| `src/components/edit/EditLayoutModal.tsx`（扩） | ✕ 接 dirty 二次确认：dirty = `!itemsEqual(working, run.lastFrame.placed_items)`（**≠ 基线** —— save 写回精确拷贝 ⇒ 保存后必非 dirty，✕ 直接关）→ EditConfirmLayer「放弃未保存的修改？」确认弃稿关窗（working 不写回，下次 open 重新快照）/ 取消留在弹窗。保存路径自 US-001 落地（save + close）。ESC/遮罩仍永不关闭。 |
+| `src/store/editStore.ts`（扩） | ①`itemsEqual(a,b)` 导出纯函数：dirty 判定单一真相源（长度 + id + rot/translation ε=1e-9，FLOAT_EPS 与 computeLayoutStats 同口径 —— 拖回原位 ~1e-13 残差不算修改）；②**基线锚定口径（行为变更）**：open 同一 run 重复调用**不换锚**（基线恒 = 本会话首次 open 的算法布局，invalidate/换 run 重新锚定），working 恒从当前 lastFrame 深拷贝（承接已保存编辑），savedDirty 重算 = lastFrame 是否偏离基线 —— 「重置回初始布局」的「初始」即此（两轮 拖→存 后重置仍回算法布局，US-005 冒烟口径）。 |
+| `src/components/ControlPanel/ControlPanel.tsx`（扩） | 挂 `<EditLayoutControls phase={phase} />` 于 StatusLine 与 ExportButtons 之间。 |
+| `src/components/NestingPage.tsx`（扩） | handleStart 与 applyStrategyResult 各加 `useEditStore.getState().invalidate()`（清场挂点 —— 陈旧 run 的 save/reset 已被 registry 校验拒绝，此处同步清 working/baseline 不残留；弹窗开着时 overlay 阻断主界面、registry 无人写，下标安全）。 |
+| `src/style.css`（扩） | `.edit-controls`（.export-group 同款分隔形态）+ `button.edit-controls-btn`（蓝 #2c5d8f 同导出）+ `--reset` 变体（中性描边，hover 警示琥珀）；`.edit-confirm-overlay`(z 1350)/`-modal`(暗色 #26282e)/`-message`/`-actions`/`-cancel`(描边)/`-ok`(strategy stop 红 #8a3b3b)。 |
+| 测试 | EditConfirmLayer.test 新建 4（Portal body/文案透传/双回调/ESC+遮罩无动作）；EditLayoutControls.test 新建 **11**（结构/无结果置灰/非 running 四态可点含 stopped+合成 record/running 置灰/renderTick bump 解禁/编辑 openModal/二层删属性旁路 no-op/三层 store 守卫/confirm 文案+取消/确认恢复基线全套/无会话幂等）；EditLayoutModal.test 14→**20**（✕ 未编辑直关/dirty 确认层+取消留窗/确认弃稿 lastFrame 不动/保存后直关/保存再拖 dirty 复现/确认层显隐期间 ESC+遮罩仍不关）；NestingPage.test +**3**（handleStart 两例含幂等 + applyStrategyResult 编辑态失效，局部 MockWS）；useExport.test +**2**（save 后 payload placed/width/density 反映编辑值 + density_sparrow 不动；缩短场景同口径收缩）；ControlPanel.test +1（区块 DOM 序位于 .status 与 .export-group 之间）；editStore.test +**5**（基线不换锚/两轮存后重置回算法布局/重置后重开幂等/换 run 重新锚定/itemsEqual ε 口径）。 |
+
+### 关键不变量（US-004 立，后续故事不得破坏）
+
+- **dirty 判定 = working vs lastFrame（非基线）**：itemsEqual ε=1e-9 单一真相源；保存后必非 dirty（applyToRun 精确拷贝）。改 dirty 语义必须同步 EditLayoutModal ✕ 测试三态（未编辑直关/dirty 确认/保存后直关）。
+- **基线锚定不换锚**：同一 run 重复 open 基线保持首次算法布局；「重置回初始布局」恒指算法原始结果（两轮 拖→存 后重置仍全量回滚）。invalidate（重解/策略应用）是唯一换锚时机。
+- **编辑区块激活口径 = 导出口径**（some(lastFrame) && !running），不得引入 savedDirty 等额外条件；三层 disabled 防御同 TabBar 惯例（native → handler guard → store 自守卫）。
+- **确认层只有按钮一条路**：EditConfirmLayer 无 ESC/遮罩关闭（与编辑弹窗同哲学）；z-index 1350 恒在全栈之上。
+- **invalidate 双挂点**：handleStart 与 applyStrategyResult 清场后必须同步 useEditStore.getState().invalidate()（下挂点前 registry 校验兜底但会残留 working/baseline）。
+- **导出闭环零改动**：/export 与 /api/plt-table-preview 均读 bestRun().lastFrame —— 编辑保存后的 placed/density/width 自动继承；任何「导出前单独取编辑态」的实现都是违约。
+
+### 验证
+
+- 前端门全过：vitest 全量 **936 passed**（904 → 936，+32）/ `npm run typecheck` 干净 /
+  `npm run build` 过（bundle 296.59KB gzip 96.89KB）。
+- 浏览器验收（prod :8000 静态构建，DOM/路由抓包断言不依赖 store import）：**29/29**
+  （`out/us004_browser_verify/` verify.mjs + report.json + 4 截图）—— 882 母版 3 码 20s
+  → final 83.60% / 90 片 / 6149mm：区块位置（.status 与 .export-group 之间）+ 求解前/
+  running 置灰 → final 解禁；编辑按钮开弹窗；拖片右移 300mm 保存 → 主视图**恰一片
+  points 重绘**（其余 89 片逐字节不动）+ NestLabel 83.60%→79.70% / 614.84→644.90cm +
+  viewBox/fab 6449 扩张（cm = width/10 对拍）；POST /export 抓包 placed 与 solver 终帧
+  diff 非空 + width 6449/density 79.70%；✕ dirty 确认层文案/取消留窗/确认弃稿主视图
+  不动；尾片左移 700mm 保存 → 79.70%→83.59% / viewBox 收缩 6449→6149；弹窗外重置
+  confirm → NestLabel/viewBox(fab)/全 90 片 points 逐一回算法基线。验收后浏览器关闭、
+  ms-web 进程已杀。

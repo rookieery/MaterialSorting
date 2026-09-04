@@ -2320,3 +2320,81 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
 .edit-rotate-handle:active {
   cursor: grabbing;
 }
+
+/* ============================================================
+ * 编辑排料 US-004：主面板「编辑排料」区块（.edit-controls-*，.export-group
+ * 同款分隔形态 —— StatusLine 与导出之间）+ 自定义暗色小确认层
+ * （.edit-confirm-*，主面板重置 confirm 与弹窗 ✕ dirty 确认共用 EditConfirmLayer）。
+ * ============================================================ */
+.edit-controls { margin-top: 14px; padding-top: 12px; border-top: 1px solid #34363d; }
+.edit-controls-btns { display: flex; gap: 8px; margin: 6px 0 4px; }
+/* 编辑按钮：与 button.export 同款蓝（「拿到解之后」动作组同视觉层级） */
+button.edit-controls-btn {
+  flex: 1; padding: 8px 6px; font-size: 13px; font-weight: 600;
+  background: #2c5d8f; color: #fff; border: 0; border-radius: 6px; cursor: pointer;
+  font-family: inherit;
+}
+button.edit-controls-btn:hover:not(:disabled) { background: #3470ac; }
+button.edit-controls-btn:disabled { background: #444; color: #888; cursor: default; }
+/* 重置按钮：中性暗底描边（弃稿回退语义，不作主色强调；hover 警示琥珀） */
+button.edit-controls-btn--reset {
+  background: #1f2127; color: #cdd; border: 1px solid #3a3d45;
+}
+button.edit-controls-btn--reset:hover:not(:disabled) {
+  background: #1f2127; border-color: #d9a05b; color: #d9a05b;
+}
+button.edit-controls-btn--reset:disabled {
+  background: #444; color: #888; border-color: transparent; cursor: default;
+}
+/* 确认层：z-index 1350 = edit-layout(1250)/band-zoom(1300) 之上 —— 确认门
+ * 活跃期间盖住一切；不挂遮罩点击关闭（显式按钮唯一路径，同编辑弹窗哲学）。 */
+.edit-confirm-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1350;
+}
+.edit-confirm-modal {
+  background: #26282e;
+  border: 1px solid #34363d;
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  max-width: 380px;
+  padding: 16px 18px;
+  font-size: 13px;
+  color: #e6e6e6;
+}
+.edit-confirm-message {
+  line-height: 1.6;
+  margin-bottom: 14px;
+}
+.edit-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.edit-confirm-cancel {
+  padding: 7px 16px; font-size: 13px; font-weight: 600;
+  background: #1f2127; color: #cdd;
+  border: 1px solid #3a3d45; border-radius: 4px;
+  cursor: pointer; font-family: inherit;
+  transition: border-color 0.15s, color 0.15s;
+}
+.edit-confirm-cancel:hover { border-color: #2ea06c; color: #2ea06c; }
+/* 确认 = 破坏性/弃稿动作：strategy stop-btn 同款红 */
+.edit-confirm-ok {
+  padding: 7px 16px; font-size: 13px; font-weight: 600;
+  background: #8a3b3b; color: #fff;
+  border: 1px solid #8a3b3b; border-radius: 4px;
+  cursor: pointer; font-family: inherit;
+  transition: background 0.15s, border-color 0.15s;
+}
+.edit-confirm-ok:hover { background: #a34848; border-color: #a34848; }
+.edit-confirm-cancel:focus-visible,
+.edit-confirm-ok:focus-visible {
+  outline: 2px solid #7fd4a8;
+  outline-offset: 1px;
+}

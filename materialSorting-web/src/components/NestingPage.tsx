@@ -38,6 +38,7 @@ import { useRafThrottle } from '../hooks/useRafThrottle';
 import { useSolveRun } from '../hooks/useSolveRun';
 import { maxElapsed } from '../lib/seek';
 import { useAppStore } from '../store/appStore';
+import { useEditStore } from '../store/editStore';
 import { runRegistry } from '../store/runRegistry';
 import type { StrategyResult } from '../types/strategy';
 import type { SolvePhase } from '../types/solvePhase';
@@ -143,6 +144,10 @@ export function NestingPage(): React.JSX.Element {
     if (phase === 'running') return;
     // 清旧 run（关 WS + 清数组）—— 与旧 vanilla 实现 startSolve 内 runs=[] 等价
     runRegistry.clear();
+    // 编辑排料 US-004：重解清场 → 编辑态失效（save/reset 的 registry 校验已拒陈旧
+    // run，此处同步清 working/baseline —— 编辑弹窗开着时全屏 overlay 阻断主界面，
+    // registry 无人写、下标安全；挂点防御「下次求解前旧编辑会话残留」）。
+    useEditStore.getState().invalidate();
     doneCountRef.current = 0;
     totalSeedsRef.current = cfg.seed_count;
 
@@ -212,8 +217,10 @@ export function NestingPage(): React.JSX.Element {
     const densitySparrow = best.density_sparrow ?? 0;
     const widthMm = best.width_mm ?? 0;
 
-    // 1) 清场（与 handleStart 同口径）：关旧 WS + 清 registry + 计数 ref 重置。
+    // 1) 清场（与 handleStart 同口径）：关旧 WS + 清 registry + 计数 ref 重置；
+    //    编辑排料 US-004：编辑态一并失效（旧编辑会话对合成 record 的基线无意义）。
     runRegistry.clear();
+    useEditStore.getState().invalidate();
     doneCountRef.current = 0;
     totalSeedsRef.current = 1;
 

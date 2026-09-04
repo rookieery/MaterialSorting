@@ -33,6 +33,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { ControlPanel, type ControlPanelStartPayload } from "../ControlPanel";
 import { SIZES } from "../../../constants/sizes";
+import { runRegistry } from "../../../store/runRegistry";
 import { useQtyStore } from "../../../store/qtyStore";
 import { usePtypeStore } from "../../../store/ptypeStore";
 import { useUploadStore } from "../../../store/uploadStore";
@@ -1243,5 +1244,33 @@ describe("ControlPanel 重传联动：doc_id 变化重置 form (2026-08-27)", ()
     });
     // doc_id 从 undefined → 'first-upload'：effect 触发，码号回未勾
     expect(container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]")[0]!.checked).toBe(false);
+  });
+});
+
+// ============================================================
+// 编辑排料 US-004：「编辑排料」区块插入位置（StatusLine 与 ExportButtons 之间，
+// 「导出最优方案」上方）—— 组件行为细节在 EditLayoutControls.test。
+// ============================================================
+
+describe("ControlPanel 编辑排料区块位置 (US-004)", () => {
+  beforeEach(() => {
+    runRegistry.clear();
+  });
+  afterEach(() => {
+    runRegistry.clear();
+  });
+
+  it(".edit-controls 位于 StatusLine(.status) 之后、ExportButtons(.export-group) 之前", () => {
+    renderPanel();
+    const panel = container!.querySelector("aside.panel")!;
+    const status = panel.querySelector(".status")!;
+    const editControls = panel.querySelector(".edit-controls")!;
+    const exportGroup = panel.querySelector(".export-group")!;
+    expect(editControls).not.toBeNull();
+    // DOM 序断言：status < edit-controls < export-group（compareDocumentPosition
+    // 4 = FOLLOWING，即 a 在 b 前）
+    expect(status.compareDocumentPosition(editControls) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(editControls.compareDocumentPosition(exportGroup) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(editControls.querySelector(".field-label")!.textContent).toBe("编辑排料");
   });
 });

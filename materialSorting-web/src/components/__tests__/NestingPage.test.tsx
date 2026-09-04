@@ -16,7 +16,8 @@ import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } fr
 import { createRoot, type Root } from 'react-dom/client';
 import { act } from 'react';
 import { NestingPage } from '../NestingPage';
-import { runRegistry } from '../../store/runRegistry';
+import { runRegistry, type RunRecord } from '../../store/runRegistry';
+import { useEditStore } from '../../store/editStore';
 import { useAppStore } from '../../store/appStore';
 import { useControlPanelStore } from '../../store/controlPanelStore';
 import { useStrategyStore } from '../../store/strategyStore';
@@ -318,5 +319,119 @@ describe('NestingPage.applyStrategyResult (US-006)', () => {
     // 主画布 phase 仍 idle（#start 按钮在场，非 done 的 #restart）
     expect(container!.querySelector('#start')).not.toBeNull();
     expect(container!.querySelector('#restart')).toBeNull();
+  });
+});
+
+// ============================================================
+// 编辑排料 US-004：handleStart / applyStrategyResult 双挂点 invalidate
+// （编辑态对重解与策略应用的结果不再有效 —— 陈旧 run 的 save/reset 已被
+// registry 校验拒绝，此处断言编辑态被同步清空不残留）。
+// ============================================================
+
+describe('NestingPage 编辑排料 invalidate 挂点 (US-004)', () => {
+  // handleStart 会 new WebSocket —— 本 describe 局部 stub（App.test 同款）。
+  class MockWS {
+    url: string;
+    constructor(url: string) {
+      this.url = url;
+    }
+    close() {}
+  }
+  let realWS: typeof WebSocket | undefined;
+
+  beforeEach(() => {
+    useEditStore.getState().invalidate();
+    realWS = globalThis.WebSocket;
+    (globalThis as unknown as { WebSocket: typeof WebSocket }).WebSocket =
+      MockWS as unknown as typeof WebSocket;
+  });
+
+  afterEach(() => {
+    (globalThis as unknown as { WebSocket: typeof WebSocket }).WebSocket = realWS!;
+    useEditStore.getState().invalidate();
+  });
+
+  /** 造一个可编辑 run 并 open 快照（编辑态在场：run/baseline/working 非空）。 */
+  function seedEditSession(): RunRecord {
+    const run = runRegistry.create(0);
+    run.manifest = {
+      type: 'manifest',
+      gate_mm: 1000,
+      total_area_mm2: 500000,
+      n_eroded: 0,
+      pieces: [
+        {
+          id: 'a_28',
+          label: 'g01',
+          size: 28,
+          color: '#ff0000',
+          area_mm2: 250000,
+          polygon: [[0, 0], [500, 0], [500, 500], [0, 500]],
+        },
+      ],
+    };
+    const frame: FrameMsg = {
+      type: 'frame',
+      index: 0,
+      elapsed: 1,
+      phase: 'final',
+      density: 0.5,
+      density_sparrow: 0.5,
+      width_mm: 500,
+      placed_items: [{ id: 'a_28', rotation: 0, translation: [0, 0] }],
+    };
+    run.frames.push(frame);
+    run.lastFrame = frame;
+    run.finalDensity = 0.5;
+    expect(useEditStore.getState().open(run)).toBe(true);
+    return run;
+  }
+
+  it('handleStart（点开始求解）→ 编辑态失效（run/baseline/working 清空）', () => {
+    const run = seedEditSession();
+    expect(useEditStore.getState().run).not.toBeNull();
+    renderPage();
+    // 选一个码号（doc=null → SizePicker fallback SIZES）+ 点开始求解
+    act(() => {
+      (document.querySelector('#sz_28') as HTMLInputElement).click();
+    });
+    act(() => {
+      (document.querySelector('#start') as HTMLButtonElement).click();
+    });
+    const st = useEditStore.getState();
+    expect(st.run).toBeNull();
+    expect(st.baseline).toBeNull();
+    expect(st.working).toEqual([]);
+    expect(st.savedDirty).toBe(false);
+    // 旧 run 已被 clear（旧引用不再 registry —— 陈旧保存防御同源）
+    expect(runRegistry.list().includes(run)).toBe(false);
+  });
+
+  it('handleStart 无编辑会话 → invalidate 幂等（不炸、状态保持空）', () => {
+    renderPage();
+    act(() => {
+      (document.querySelector('#sz_28') as HTMLInputElement).click();
+    });
+    act(() => {
+      (document.querySelector('#start') as HTMLButtonElement).click();
+    });
+    const st = useEditStore.getState();
+    expect(st.run).toBeNull();
+    expect(st.baseline).toBeNull();
+  });
+
+  it('applyStrategyResult（应用到主画布）→ 编辑态失效', () => {
+    seedEditSession();
+    renderPage();
+    openResultState();
+    clickApply();
+    const st = useEditStore.getState();
+    expect(st.run).toBeNull();
+    expect(st.baseline).toBeNull();
+    expect(st.working).toEqual([]);
+    expect(st.savedDirty).toBe(false);
+    // 应用后的合成 record 是新会话对象（重开编辑弹窗重新快照，不残留旧基线）
+    expect(runRegistry.list().length).toBe(1);
+    expect(runRegistry.list()[0].lastFrame).not.toBeNull();
   });
 });

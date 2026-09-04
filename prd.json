@@ -2,16 +2,10 @@
   "branchName": "ralph/edit-nesting-layout",
   "stories": [
     {
-      "id": "US-003",
-      "title": "拖动、旋转与重合指标（含实时利用率状态条）",
-      "description": "As a 版师, I want 拖动/旋转单个裁片并实时看到重合区域、重合量、布纹角度与利用率变化 so that 我能安全地微调每片的位置与姿态并直观感受用料代价（PRD US-003）。\n\n具体任务：\n1. materialSorting-web/src/components/edit/EditCanvas.tsx 扩展 — 拖动：毛版 polygon pointerdown + setPointerCapture → pointermove 只 setAttribute 被拖片 5 层节点 → working 下标项 translation 更新；Y 硬钳制 [0, gate]（按被拖片 bbox，gate = manifest.gate_mm）、x<0 钳 0、x 超原布局右界自由拖（保存时双向伸缩 width_mm）；被拖片渲染提层置顶\n2. 旋转 — 选中片质心上方显示旋转手柄，拖柄转角；自由角度、不做 0°/180° 吸附（2026-09-04 定案）；布纹线随片同步旋转\n3. 重合指标（rAF 节流，消费 US-001 overlap.ts）— bbox 相交邻居渲染红色半透明交集 polygon；画布右上固定指标面板：重合面积 mm²（括注 cm²，÷100 站内惯例）+ 最大穿透深度 mm + 旋转偏离角 °（= 相对 {0°,180°} 最小偏差 min(|rot|,|rot−180|,|rot−360|)）；阈值着色：深度 ≤10mm 琥珀 / >10mm 红（MAX_OVERLAP_MM=10 口径）、偏离角 >45° 红（MAX_ROTATION_TOL_DEG）——既有布局合法含 ≤10mm 重合，口径 = 如实展示 + 阈值着色不报警\n4. 顶部状态条实时更新 — 料长 = ceil(当前包络 maxX)、利用率 = total_area/(料长×gate)、Δ 相对基线，与保存口径同真相源（computeLayoutStats），rAF 同帧刷新；包络 maxX 复用 overlap 预计算 bbox 增量更新被拖片一项\n5. 口径与降级 — 指标基于 manifest（erode 后）多边形（与 solver 碰撞判定同口径），面板脚注注明「按算法碰撞口径」；布尔交异常降级「bbox 交高亮 + 面积按 bbox 估算」不阻塞拖动\n\n验收标准：\n- 拖动/旋转后 working 下标项 translation/rotation 精确断言（jsdom PointerEvent polyfill：window.PointerEvent = class extends MouseEvent {}，beforeEach 一行）\n- 拖动中交集高亮出现、指标面板三值正确（合成夹具精确值断言）、阈值着色正确（≤10 琥珀 / >10 红 / >45° 红）\n- 拖片右移超界 → 状态条料长增/利用率降；左移腾空尾部 → 料长缩/利用率升（与保存同公式同真相源）\n- Y 越界钳制、x<0 钳 0 生效（单测）\n- 通过浏览器验证拖动流畅、指标与状态条实时性；vitest + npm run typecheck + npm run build 通过",
-      "passes": true
-    },
-    {
       "id": "US-004",
       "title": "保存/✕关闭/重置与主界面集成+导出闭环",
       "description": "As a 版师, I want 保存把微调（布局+料长+利用率）同步到主视图与导出、✕ 关闭弃稿、重置一键回算法结果 so that 编辑始终可控可逆（PRD US-004）。\n\n具体任务：\n1. materialSorting-web/src/components/ControlPanel/EditLayoutControls.tsx（新）— 「编辑排料」标题区块（.field-label 标题 + 编辑/重置两按钮，三层 disabled 防御同站内惯例），插 ControlPanel.tsx:420-421 StatusLine 与 ExportButtons 之间（导出最优方案上方）；激活口径与导出按钮一致：runRegistry.list().some(r => r.lastFrame !== null) && phase !== 'running'（含 stopped best-so-far 与策略/极限合成 record）；重置 = 自定义暗色 confirm（文案「确认将当前更新后的排料布局重置回初始布局」）→ 确认后 editStore.reset()（恢复基线全套 + bump）\n2. materialSorting-web/src/components/edit/EditLayoutModal.tsx 接线 — 保存按钮 → editStore.save()（placed_items 原地保序写回 + width_mm = ceil(包络 maxX) 双向伸缩 + lastFrame.density / run.finalDensity 重算（real 口径 total_area/(width×gate)）+ run.viewBoxMaxW 跟随 + bumpRenderTick，density_sparrow 不动）；右上 ✕ → dirty（working ≠ 已保存布局）时自定义小确认层「放弃未保存的修改？」确认后弃稿关窗，非 dirty 直接关；确认层与重置 confirm 同组件复用\n3. materialSorting-web/src/NestingPage.tsx — handleStart（重解，:142-146 附近）与 applyStrategyResult（策略/极限结果应用，:216 附近）各加 useEditStore.getState().invalidate()（弹窗打开期间全屏 overlay 阻断主界面，registry 无人写，下标安全）\n4. 导出闭环验证 — useExport.exportAs 与 ExportInfoModal 的 /api/plt-table-preview 均读 bestRun().lastFrame，保存后 placed 与 density 自动继承（后端零改动）\n\n验收标准：\n- 区块位置/激活口径正确：有结果可点、无结果/求解中置灰（单测 + 浏览器验证）\n- 保存后主视图被拖片重绘、NestLabel 利用率与长度同步变化（扩长降/缩短升）、画布随 viewBoxMaxW 收缩；density_sparrow 不变\n- useExport POST /export payload 的 placed 与 density 反映编辑后值（useExport.test.tsx 集成断言）\n- ✕ 关闭 dirty 二次确认 / 非 dirty 直接关；ESC 与遮罩仍永不关闭（单测）\n- 重置 confirm 后恢复基线全套（placed/width/density/viewBoxMaxW）；无编辑时幂等\n- handleStart / applyStrategyResult 后编辑态失效（单测覆盖两挂点 + 陈旧 run 保存拒绝）；刷新后无编辑残留\n- 通过浏览器验证保存后主视图同步（布局+利用率+料长）；vitest + npm run typecheck + npm run build 通过",
-      "passes": false
+      "passes": true
     },
     {
       "id": "US-005",

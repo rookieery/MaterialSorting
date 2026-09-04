@@ -22,7 +22,22 @@ import type { ManifestMsg } from '../types/ws';
 import { runRegistry, type RunRecord } from './runRegistry';
 import { useAppStore } from './appStore';
 
-/** open 时刻的不可变基线（reset 恢复全套的唯一真相源；深拷贝与 run 解耦）。 */
+/**
+ * 数值比较 ε（US-004 dirty 判定与 computeLayoutStats 共用同口径）：
+ * sub-nm 级（< 1e-9）float 噪声不算修改 —— 拖回原位产生的 ~1e-13 残差不触发
+ * 「放弃未保存的修改？」误确认（工程定案同 US-001：sub-nm 是噪声非物理）。
+ */
+const FLOAT_EPS = 1e-9;
+
+/**
+ * 本编辑会话的不可变基线（reset 恢复全套的唯一真相源；深拷贝与 run 解耦）。
+ *
+ * **基线锚定口径（US-004/005）**：同一 run 重复 open（保存后重开弹窗）**不换锚** ——
+ * 基线恒 = 本会话首次 open 时刻的算法布局（invalidate / 换 run 后重新锚定），
+ * 「重置回初始布局」的「初始」即此（US-005 冒烟：两轮 拖→存 后重置仍回算法布局，
+ * placed/density diff 回零）。working 则每次 open 都从当前 lastFrame 深拷贝
+ * （承接已保存编辑继续微调）。
+ */
 export interface EditBaseline {
   /** lastFrame.placed_items 深拷贝（算法原始布局）。 */
   placedItems: PlacedItem[];
@@ -71,9 +86,29 @@ export function computeLayoutStats(
       if (x > maxX) maxX = x;
     }
   }
-  const widthMm = Math.max(1, Math.ceil(maxX - 1e-9));
+  const widthMm = Math.max(1, Math.ceil(maxX - FLOAT_EPS));
   const density = manifest.total_area_mm2 / (widthMm * manifest.gate_mm);
   return { widthMm, density };
+}
+
+/**
+ * 布局逐项相等比较（US-004 dirty 判定单一真相源）：
+ * dirty = working ≠ 已保存布局（run.lastFrame.placed_items）—— 长度一致 + 逐项
+ * id 相同 + rotation / translation 差 < FLOAT_EPS。save 写回是逐字段精确拷贝 ⇒
+ * 保存后必相等（✕ 直接关不误弹确认）；open 快照亦深拷贝 ⇒ 未编辑时恒非 dirty。
+ */
+export function itemsEqual(a: readonly PlacedItem[], b: readonly PlacedItem[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i].id !== b[i].id) return false;
+    if (Math.abs(a[i].rotation - b[i].rotation) > FLOAT_EPS) return false;
+    const ta = a[i].translation;
+    const tb = b[i].translation;
+    if (Math.abs(ta[0] - tb[0]) > FLOAT_EPS || Math.abs(ta[1] - tb[1]) > FLOAT_EPS) {
+      return false;
+    }
+  }
+  return true;
 }
 
 /** PlacedItem 深拷贝（translation 是数组引用，必须逐项拷断与 lastFrame/baseline 的耦合）。 */
@@ -123,6 +158,8 @@ export interface EditState {
   savedDirty: boolean;
   /**
    * 打开编辑：快照不可变基线全套 + working 深拷贝草稿。
+   * 同一 run 重复 open 基线不换锚（见 EditBaseline 基线锚定口径），working 从当前
+   * lastFrame 深拷贝；savedDirty 重算 = lastFrame 是否已偏离基线（保存过 → true）。
    * @returns false = run 无 lastFrame（无可编辑布局），态保持清空。
    */
   open: (run: RunRecord) => boolean;
@@ -156,18 +193,26 @@ export const useEditStore = create<EditState>((set, get) => ({
       set({ run: null, baseline: null, working: [], savedDirty: false });
       return false;
     }
-    set({
-      run,
-      baseline: {
+    // 基线锚定：同一 run 且已有基线 → 保持（保存后重开不换锚，重置恒回算法初始布局）；
+    // 新 run / invalidate 后 → 全新快照。working 恒从当前 lastFrame 深拷贝。
+    const { run: curRun, baseline: curBaseline } = get();
+    const sticky = curRun === run && curBaseline !== null ? curBaseline : null;
+    const baseline =
+      sticky ??
+      {
         placedItems: deepCopyItems(f.placed_items),
         frameIndex: f.index,
         widthMm: f.width_mm,
         density: f.density,
         finalDensity: run.finalDensity,
         viewBoxMaxW: run.viewBoxMaxW,
-      },
+      };
+    set({
+      run,
+      baseline,
       working: deepCopyItems(f.placed_items),
-      savedDirty: false,
+      // 会话内重开：lastFrame 已偏离基线（保存过）则保持 dirty 态语义。
+      savedDirty: !itemsEqual(f.placed_items, baseline.placedItems),
     });
     return true;
   },

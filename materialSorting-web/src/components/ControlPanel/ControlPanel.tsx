@@ -67,8 +67,11 @@ import { useQtyStore } from '../../store/qtyStore';
 import { ExportButtons } from './ExportButtons';
 import { ExportInfoModal } from './ExportInfoModal';
 // 编辑排料 US-002：编辑弹窗单例（订阅 controlPanelStore 自显隐；Portal 到 body）。
-// 打开入口 = US-004 主界面「编辑排料」区块（本 story store 驱动 + 单测直开）。
+// 打开入口 = US-004 主界面「编辑排料」区块（EditLayoutControls）。
 import { EditLayoutModal } from '../edit/EditLayoutModal';
+// 编辑排料 US-004：主面板「编辑排料」区块（编辑入口 + 重置 confirm），插在
+// StatusLine 与 ExportButtons 之间（「导出最优方案」上方）—— 激活口径与导出一致。
+import { EditLayoutControls } from './EditLayoutControls';
 import { ParamForm } from './ParamForm';
 import { PerTypeOverrides } from './PerTypeOverrides';
 import { SizePicker, computeTotalCutPieces } from './SizePicker';
@@ -421,6 +424,9 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
         <SolveControls phase={phase} onStart={handleStart} onStop={onStop} startDisabled={startDisabled} />
       </div>
       <StatusLine text={visibleStatus} />
+      {/* 编辑排料 US-004：主界面入口区块（StatusLine 与导出之间 ——「导出最优方案」上方；
+          编辑 = 打开 EditLayoutModal，重置 = confirm 后 editStore.reset() 回算法基线）。 */}
+      <EditLayoutControls phase={phase} />
       <ExportButtons solving={solving} exporting={exporting} onExport={handleExport} partial={partial} />
       {/* PLT 导出信息表格弹窗单例（订阅 controlPanelStore 自显隐；Portal 到 body）。 */}
       <ExportInfoModal exporting={exporting} onConfirm={handlePltConfirm} variant={pendingPltFmt} />

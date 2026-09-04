@@ -12,7 +12,7 @@
 //   - setWorkingItem：下标寻址更新（US-003 消费口径），越界 no-op
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { computeLayoutStats, useEditStore } from '../editStore';
+import { computeLayoutStats, itemsEqual, useEditStore } from '../editStore';
 import { runRegistry } from '../runRegistry';
 import { useAppStore } from '../appStore';
 import type { RunRecord } from '../runRegistry';
@@ -276,5 +276,93 @@ describe('invalidate / setWorkingItem', () => {
     useEditStore.getState().invalidate();
     useEditStore.getState().setWorkingItem(0, { rotation: 1 });
     expect(useEditStore.getState().working).toEqual([]);
+  });
+});
+
+// ============================================================
+// US-004：基线锚定口径 —— 同一 run 重复 open 不换锚（保存后重开，重置恒回
+// 算法初始布局；US-005 冒烟「两轮 拖→存 后重置 placed/density diff 回零」的地基）。
+// ============================================================
+
+describe('open 基线锚定（US-004）', () => {
+  it('保存后重开：基线不换锚（仍算法布局）、working 承接已保存编辑、savedDirty 保持 true', () => {
+    const rec = mkRun();
+    useEditStore.getState().open(rec);
+    useEditStore.getState().setWorkingItem(1, { translation: [1200, 0] });
+    useEditStore.getState().save();
+    expect(rec.lastFrame!.placed_items[1].translation).toEqual([1200, 0]);
+    // 重开（同 run）：基线仍 = 算法布局快照（b@[600,0] / width 1100）
+    useEditStore.getState().open(rec);
+    const s = useEditStore.getState();
+    expect(s.baseline!.placedItems[1]).toEqual(item('b_28', 0, 600, 0));
+    expect(s.baseline!.widthMm).toBe(1100);
+    // working 从当前 lastFrame 深拷贝（承接已保存编辑继续微调）
+    expect(s.working[1]).toEqual(item('b_28', 0, 1200, 0));
+    expect(s.savedDirty).toBe(true);
+  });
+
+  it('两轮 拖→存 后重置 → 回算法初始布局（非第一轮保存态）', () => {
+    const rec = mkRun();
+    useEditStore.getState().open(rec);
+    // 第一轮：右移扩长 + 保存
+    useEditStore.getState().setWorkingItem(1, { translation: [1200, 0] });
+    useEditStore.getState().save();
+    // 第二轮：重开（不换锚）+ 再编辑 + 保存
+    useEditStore.getState().open(rec);
+    useEditStore.getState().setWorkingItem(0, { translation: [0, 500] });
+    useEditStore.getState().save();
+    expect(rec.lastFrame!.placed_items[0].translation).toEqual([0, 500]);
+    // 重置 → 算法初始布局（两轮编辑全部回滚）
+    useEditStore.getState().reset();
+    expect(rec.lastFrame!.placed_items).toEqual([item('a_28', 0, 0, 0), item('b_28', 0, 600, 0)]);
+    expect(rec.lastFrame!.width_mm).toBe(1100);
+    expect(rec.lastFrame!.density).toBeCloseTo(500_000 / (1100 * 1000), 12);
+    expect(rec.finalDensity).toBeCloseTo(500_000 / (1100 * 1000), 12);
+    expect(rec.viewBoxMaxW).toBe(1100);
+    expect(useEditStore.getState().savedDirty).toBe(false);
+  });
+
+  it('重置后重开：savedDirty false、Δ 基线一致（幂等续会话）', () => {
+    const rec = mkRun();
+    useEditStore.getState().open(rec);
+    useEditStore.getState().setWorkingItem(1, { translation: [1200, 0] });
+    useEditStore.getState().save();
+    useEditStore.getState().reset();
+    useEditStore.getState().open(rec);
+    const s = useEditStore.getState();
+    expect(s.savedDirty).toBe(false);
+    expect(s.working).toEqual([item('a_28', 0, 0, 0), item('b_28', 0, 600, 0)]);
+    expect(s.baseline!.placedItems[1]).toEqual(item('b_28', 0, 600, 0));
+  });
+
+  it('换 run / invalidate 后 open → 全新锚定（旧基线不跨 run）', () => {
+    const rec1 = mkRun();
+    useEditStore.getState().open(rec1);
+    useEditStore.getState().setWorkingItem(1, { translation: [1200, 0] });
+    useEditStore.getState().save();
+    // invalidate（重解/策略应用挂点同款）→ 新 run 全新快照
+    useEditStore.getState().invalidate();
+    const rec2 = mkRun();
+    useEditStore.getState().open(rec2);
+    const s = useEditStore.getState();
+    expect(s.run).toBe(rec2);
+    expect(s.baseline!.placedItems[1]).toEqual(item('b_28', 0, 600, 0));
+    expect(s.savedDirty).toBe(false);
+  });
+
+  it('itemsEqual：长度/旋转/平移逐项 ε=1e-9 比较（sub-nm 残差不算修改）', () => {
+    const a = [item('a', 0, 0, 0), item('b', 90, 100, 200)];
+    expect(itemsEqual(a, [item('a', 0, 0, 0), item('b', 90, 100, 200)])).toBe(true);
+    // 拖回原位 ~1e-13 残差 → 仍相等
+    expect(
+      itemsEqual(a, [
+        item('a', 0, 1e-13, 0),
+        item('b', 90.0000000000001, 100, 200 + 1e-13),
+      ]),
+    ).toBe(true);
+    expect(itemsEqual(a, [item('a', 0, 0, 0)])).toBe(false); // 长度
+    expect(itemsEqual(a, [item('a', 0, 0, 0), item('c', 90, 100, 200)])).toBe(false); // id
+    expect(itemsEqual(a, [item('a', 45, 0, 0), item('b', 90, 100, 200)])).toBe(false); // rot
+    expect(itemsEqual(a, [item('a', 0, 0.5, 0), item('b', 90, 100, 200)])).toBe(false); // tx
   });
 });

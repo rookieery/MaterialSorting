@@ -1,15 +1,19 @@
 // EditLayoutModal —— 编辑排料大弹窗（US-002：全量渲染 + 缩放平移查看；
-// 拖动/旋转在 EditCanvas 内叠加（US-003）、保存/✕ dirty 确认/重置接线（US-004））。
+// 拖动/旋转在 EditCanvas 内叠加（US-003）；US-004 ✕ dirty 二次确认接线，保存路径
+// editStore.save() 自 US-001 落地 —— placed 原地保序写回 + width/density 族同真相源
+// 重算 + viewBoxMaxW 跟随 + bumpRenderTick，density_sparrow 恒不动）。
 //
 // 声明式受控 Portal（范本 ExportInfoModal）：外层订阅 controlPanelStore.modal ===
 // 'edit_layout' 自显隐，Portal 到 document.body，Inner 带 key（关闭→重开重挂载 =
-// open() 重新快照基线）。打开入口：US-004 主界面「编辑排料」区块（本 story 仅 store
-// 驱动 + 单测/浏览器 evaluate 直开）。
+// open() 重新快照基线）。打开入口：主界面「编辑排料」区块（EditLayoutControls）。
 //
 // **有意偏离全站 ESC/遮罩关闭惯例**（controlPanelStore 注释同款口径）：编辑草稿不可
 // 被误触丢弃 —— 不挂 ESC keydown listener、遮罩 mousedown 不调 close。唯一关闭路径：
-//   1. 右上 ✕（US-002 直接关；US-004 接 dirty 二次确认）
-//   2. 右下「保存当前布局」（editStore.save() 写回 + 关窗）
+//   1. 右上 ✕（US-004：dirty = working ≠ 已保存布局（itemsEqual，ε=1e-9 同口径）
+//      → 自定义小确认层「放弃未保存的修改？」（EditConfirmLayer，与主面板重置
+//      confirm 同组件复用）确认后弃稿关窗；非 dirty（未编辑 / 已保存）直接关）
+//   2. 右下「保存当前布局」（editStore.save() 写回 + 关窗 —— 保存后 working 与
+//      lastFrame 逐项相等 ⇒ ✕ 不再确认）
 // PRD AC：单测 dispatch ESC keydown 与遮罩 mousedown 断言弹窗仍在。
 //
 // 结构：顶部状态条（料长 mm + 利用率 % + 相对基线 Δpt，computeLayoutStats 单一真相源
@@ -22,9 +26,10 @@ import { useEffect, useState } from 'react';
 import type { JSX } from 'react';
 import { createPortal } from 'react-dom';
 import { useControlPanelStore } from '../../store/controlPanelStore';
-import { computeLayoutStats, useEditStore } from '../../store/editStore';
+import { computeLayoutStats, itemsEqual, useEditStore } from '../../store/editStore';
 import { runRegistry } from '../../store/runRegistry';
 import { EditCanvas, type EditViewMode } from './EditCanvas';
+import { EditConfirmLayer } from './EditConfirmLayer';
 
 export function EditLayoutModal(): JSX.Element | null {
   const modal = useControlPanelStore((s) => s.modal);
@@ -41,6 +46,8 @@ function EditLayoutModalInner(): JSX.Element {
   const working = useEditStore((s) => s.working);
   const baseline = useEditStore((s) => s.baseline);
   const [mode, setMode] = useState<EditViewMode>('full');
+  // ✕ dirty 二次确认层显隐（US-004）。
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
 
   // mount 一次性快照基线（ExportInfoModal 先例：自 bestRun() 取目标 run）。
   // open 内部防御：run 无 lastFrame → 清态返回 false（弹窗显示空态）。
@@ -77,6 +84,21 @@ function EditLayoutModalInner(): JSX.Element {
     closeModal();
   }
 
+  // US-004 ✕ 关闭口径：dirty = working ≠ 已保存布局（run.lastFrame.placed_items；
+  // save 写回是精确拷贝 ⇒ 保存后必相等，open 快照深拷贝 ⇒ 未编辑恒非 dirty）。
+  // dirty → 弹 EditConfirmLayer「放弃未保存的修改？」确认后弃稿关窗（working 草稿
+  // 不写回，下次 open 重新快照 lastFrame）；非 dirty 直接关。
+  const savedItems = run?.lastFrame?.placed_items ?? null;
+  const dirty = !!(run && savedItems && !itemsEqual(working, savedItems));
+
+  function handleClose(): void {
+    if (dirty) {
+      setConfirmDiscard(true);
+      return;
+    }
+    closeModal();
+  }
+
   return createPortal(
     <div className="edit-layout-overlay" data-testid="edit-layout-overlay">
       <div
@@ -102,7 +124,7 @@ function EditLayoutModalInner(): JSX.Element {
             className="edit-layout-close"
             aria-label="关闭"
             title="关闭"
-            onClick={closeModal}
+            onClick={handleClose}
             data-testid="edit-layout-close"
           >
             ✕
@@ -141,6 +163,17 @@ function EditLayoutModalInner(): JSX.Element {
           </button>
         </div>
       </div>
+      {/* ✕ dirty 确认层（Portal 到 body，z-index 1350 盖住编辑弹窗自身） */}
+      {confirmDiscard && (
+        <EditConfirmLayer
+          message="放弃未保存的修改？"
+          onConfirm={() => {
+            setConfirmDiscard(false);
+            closeModal();
+          }}
+          onCancel={() => setConfirmDiscard(false)}
+        />
+      )}
     </div>,
     document.body,
   );

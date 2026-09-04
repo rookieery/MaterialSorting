@@ -409,3 +409,172 @@ describe('EditLayoutModal 状态条实时刷新 (US-003)', () => {
     expect(run.lastFrame!.density).toBeCloseTo(500000 / (1700 * 1000), 12);
   });
 });
+
+// ============================================================
+// US-004：✕ 关闭 dirty 二次确认（working ≠ 已保存布局，itemsEqual ε=1e-9）
+// ============================================================
+
+describe('EditLayoutModal ✕ dirty 确认 (US-004)', () => {
+  it('未编辑 ✕ → 直接关（无确认层）', () => {
+    openEditLayout(seedBestRun());
+    act(() => {
+      (
+        document.querySelector('[data-testid="edit-layout-close"]') as HTMLButtonElement
+      ).click();
+    });
+    expect(document.querySelector('[data-testid="edit-confirm-overlay"]')).toBeNull();
+    expect(overlay()).toBeNull();
+    expect(useControlPanelStore.getState().modal).toBeNull();
+  });
+
+  it('拖动后（dirty）✕ → 确认层「放弃未保存的修改？」；取消 → 留在弹窗', () => {
+    const run = seedBestRun();
+    openEditLayout(run);
+    const svg = document.querySelector('svg.edit-layout-svg') as SVGSVGElement;
+    mockRect(svg, 550, 500);
+    const b = roughB(svg);
+    act(() => {
+      firePointer(b, 'pointerdown', 100, 100);
+      firePointer(b, 'pointermove', 400, 100); // b@[1200,0] → dirty
+      firePointer(b, 'pointerup', 400, 100);
+    });
+    act(() => {
+      (
+        document.querySelector('[data-testid="edit-layout-close"]') as HTMLButtonElement
+      ).click();
+    });
+    // 弹窗仍在 + 确认层出现（文案）
+    expect(overlay()).not.toBeNull();
+    const confirm = document.querySelector('[data-testid="edit-confirm-overlay"]');
+    expect(confirm).not.toBeNull();
+    expect(
+      document.querySelector('[data-testid="edit-confirm-message"]')!.textContent,
+    ).toBe('放弃未保存的修改？');
+    act(() => {
+      (
+        document.querySelector('[data-testid="edit-confirm-cancel"]') as HTMLButtonElement
+      ).click();
+    });
+    // 取消 → 确认层消失、弹窗仍在（草稿保真，可继续编辑/保存）
+    expect(document.querySelector('[data-testid="edit-confirm-overlay"]')).toBeNull();
+    expect(overlay()).not.toBeNull();
+    expect(run.lastFrame!.placed_items[1].translation).toEqual([600, 0]); // 未写回
+  });
+
+  it('dirty ✕ 确认 → 弃稿关窗（lastFrame 不动、未保存丢弃）', () => {
+    const run = seedBestRun();
+    openEditLayout(run);
+    const svg = document.querySelector('svg.edit-layout-svg') as SVGSVGElement;
+    mockRect(svg, 550, 500);
+    const b = roughB(svg);
+    act(() => {
+      firePointer(b, 'pointerdown', 100, 100);
+      firePointer(b, 'pointermove', 400, 100);
+      firePointer(b, 'pointerup', 400, 100);
+    });
+    act(() => {
+      (
+        document.querySelector('[data-testid="edit-layout-close"]') as HTMLButtonElement
+      ).click();
+    });
+    act(() => {
+      (
+        document.querySelector('[data-testid="edit-confirm-ok"]') as HTMLButtonElement
+      ).click();
+    });
+    expect(overlay()).toBeNull();
+    expect(useControlPanelStore.getState().modal).toBeNull();
+    // 弃稿：lastFrame 保持算法基线（编辑未写回）
+    expect(run.lastFrame!.placed_items[1].translation).toEqual([600, 0]);
+    expect(run.lastFrame!.width_mm).toBe(1100);
+    expect(useEditStore.getState().savedDirty).toBe(false);
+  });
+
+  it('保存后 ✕ → 直接关（save 写回后 working 与 lastFrame 逐项相等 → 非 dirty）', () => {
+    const run = seedBestRun();
+    // 第一轮：拖动 + 保存（关窗）
+    openEditLayout(run);
+    let svg = document.querySelector('svg.edit-layout-svg') as SVGSVGElement;
+    mockRect(svg, 550, 500);
+    let b = roughB(svg);
+    act(() => {
+      firePointer(b, 'pointerdown', 100, 100);
+      firePointer(b, 'pointermove', 400, 100);
+      firePointer(b, 'pointerup', 400, 100);
+    });
+    act(() => {
+      (
+        document.querySelector('[data-testid="edit-layout-save"]') as HTMLButtonElement
+      ).click();
+    });
+    expect(overlay()).toBeNull();
+    // 第二轮：重开（快照 = 已保存布局）→ 未再编辑 ✕ 直接关，无确认层
+    openEditLayout(null);
+    act(() => {
+      (
+        document.querySelector('[data-testid="edit-layout-close"]') as HTMLButtonElement
+      ).click();
+    });
+    expect(document.querySelector('[data-testid="edit-confirm-overlay"]')).toBeNull();
+    expect(overlay()).toBeNull();
+  });
+
+  it('保存后继续拖动再 ✕ → dirty 复现（working ≠ 已保存布局）', () => {
+    const run = seedBestRun();
+    openEditLayout(run);
+    const svg = document.querySelector('svg.edit-layout-svg') as SVGSVGElement;
+    mockRect(svg, 550, 500);
+    const b = roughB(svg);
+    act(() => {
+      firePointer(b, 'pointerdown', 100, 100);
+      firePointer(b, 'pointermove', 400, 100);
+      firePointer(b, 'pointerup', 400, 100);
+    });
+    // 保存（写回 + 关窗）→ 重开 → 再拖一段
+    act(() => {
+      (
+        document.querySelector('[data-testid="edit-layout-save"]') as HTMLButtonElement
+      ).click();
+    });
+    openEditLayout(null);
+    const svg2 = document.querySelector('svg.edit-layout-svg') as SVGSVGElement;
+    mockRect(svg2, 550, 500);
+    const b2 = roughB(svg2);
+    act(() => {
+      firePointer(b2, 'pointerdown', 100, 100);
+      firePointer(b2, 'pointermove', 0, 100); // 左移 -200mm
+      firePointer(b2, 'pointerup', 0, 100);
+    });
+    act(() => {
+      (
+        document.querySelector('[data-testid="edit-layout-close"]') as HTMLButtonElement
+      ).click();
+    });
+    expect(document.querySelector('[data-testid="edit-confirm-overlay"]')).not.toBeNull();
+    expect(overlay()).not.toBeNull();
+  });
+
+  it('确认层显隐期间 ESC 与遮罩 mousedown 仍不关弹窗（双重禁关闭叠加）', () => {
+    seedBestRun();
+    openEditLayout(null);
+    const svg = document.querySelector('svg.edit-layout-svg') as SVGSVGElement;
+    mockRect(svg, 550, 500);
+    const b = roughB(svg);
+    act(() => {
+      firePointer(b, 'pointerdown', 100, 100);
+      firePointer(b, 'pointermove', 400, 100);
+      firePointer(b, 'pointerup', 400, 100);
+    });
+    act(() => {
+      (
+        document.querySelector('[data-testid="edit-layout-close"]') as HTMLButtonElement
+      ).click();
+    });
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+      overlay()!.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    });
+    expect(overlay()).not.toBeNull();
+    expect(document.querySelector('[data-testid="edit-confirm-overlay"]')).not.toBeNull();
+  });
+});
