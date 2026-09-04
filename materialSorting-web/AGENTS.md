@@ -535,3 +535,15 @@ src/
 - **参数固化为黑盒**：p0.70/et0/workers4/depth4（缺省）在 CLI `EXTREME_SOLVER_OPTS` 单点定义，web 无参数透传面；弹窗只收总时长（60/120 默认/240/480 分钟或自定义 16~720）+ seed/gate/码号/配比（collectStartContext 同源）。
 - **轮数预估口径**：`estimateExtremeRounds(T)=1+floor((T−602.5)/347.5)`（首轮全程 602.5s + 每轮 ~0.85 门段 0.15 全程 ≈ 347.5s 期望）；「实际轮数 ≥ 预测（省出预算自动多跑）」。
 - **验收**：同总预算 4h 三臂对拍（--extreme vs --strategy race 默认档 vs 均分 600s×24）报告 `.docs/business/极限运行_AB验收报告.md`；离线回放器 `scripts/extreme_ab_replay.py`（25-seed 池 + race 回放语义）；**长跑互斥的物理根据**：三臂并行实测 solver 帧数 −8%、密度 −0.5pt（墙钟预算被 CPU 争用截断），单飞槽不是形式约束。
+
+## 编辑排料 US-001 关键约定（editGeometry / overlap / editStore 地基 调用方必读）
+
+「编辑排料」（prd-edit-nesting-layout，2026-09-04）计算与状态地基。三模块零后端改动；渲染/交互（US-002/003）与保存接线（US-004）在其上叠加。
+
+- **依赖方向**：`editStore → lib/overlap → lib/editGeometry → lib/params`（shoelace 单 ring 复用；params.ts 私有 `polygonArea` 已导出）；`polygon-clipping`（Martinez 纯 TS，MIT，^0.15.7）是编辑排料唯一新依赖 —— 输入输出 `number[][]` 与本仓 `Polygon=[number,number][]` 零适配，**输出 ring 首点重复闭合**，`overlap.openRing` 统一剥回「无重复起点」口径。
+- **transformPolygon = 计算出口、pointsStr = 渲染出口**：同一公式（`x'=x·c−y·s+tx`）逐点一致（单测对拍锁死），但 transformPolygon **全精度不 r2** —— 布尔交/bbox/穿透深度对舍入敏感。改公式须与 pointsStr / 后端 `_transform_polygon` 三方锁步。
+- **穿透深度口径（PRD 定义）**：A 内顶点落入 B / B 内顶点落入 A 的点到对方**边界**（各边最近距）的最大值；十字交叉（边交但顶点互不落入）如实低估为 0 —— 面积指标（布尔交精确）与之互补，不互相补正。
+- **多副本寻址**：编辑 key = `lastFrame.placed_items` **数组下标**（同 pid 第 k 次出现 = 第 k 副本，与 NestSVG「出现序」副本池同语义）；`precomputeEditPieces` 按下标展开，`save` 原地保序写回（`placed_items` 数组身份不变，`frames[]` 内同一 FrameMsg 引用一致）⇒ 副本映射稳定。
+- **computeLayoutStats 单一真相源**：`width = ceil(包络 maxX − 1e-9)`（ε 抵 90° 旋转 ~3e-14 float 噪声防未编辑即 +1mm；下限 1mm）+ `density = total_area_mm2/(width×gate_mm)`（real 口径）；弹窗实时显示与 save 写回同函数，**不许**在组件里另写密度公式。
+- **save/reset 防御**：写回前校验 `runRegistry.list().includes(run)`（重解/策略应用 clear 后旧引用拒绝）+ `lastFrame`/`manifest` 非空；`viewBoxMaxW = 新料长` 双向伸缩（NestSVG `W=max(viewBoxMaxW, f.width_mm)` 随之收缩，回放 seek 帧用各自 f.width_mm 自守恒）；**density_sparrow 恒不动**（solver erode 参考值）。
+- **clientToWorld 必须走 CTM 矩阵**（`flipGroup.getScreenCTM().inverse()` + `svg.createSVGPoint()`）：自动涵盖 xMinYMid meet letterbox + `scale(1,-1)` 翻转；手写 `gate−y` 会漏 letterbox 偏移。jsdom 无 CTM → 返回 null（测试 mock 见 editGeometry.test.ts）。

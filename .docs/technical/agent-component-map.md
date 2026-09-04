@@ -1538,3 +1538,36 @@ CPU），跨会话完全独立（多会话 US-004 语义不变）。
 - 后端定向 43 项 + 全量 654 全过；前端 typecheck 干净 + vitest 全量 806 全过
   （799 → 806，+7）+ build 过；浏览器端到端冒烟 `scripts/smoke_plt_table_preview.mjs`
   17/17（上传 882 → 求解 → 弹窗 14 行列序/成品串格式/手输编辑/导出 200/拦断预览降级仍可导出）。
+
+## 编辑排料 US-001 落地：editGeometry / overlap / editStore 计算与状态地基（2026-09-04）
+
+「编辑排料」（prd-edit-nesting-layout：版师对求解结果做单片级拖动/旋转微调，
+保存同步主视图与导出，重置回算法基线）三件套地基 —— 纯函数库 + 重合计算器 +
+编辑态 store，零后端改动；渲染（US-002）/拖动指标（US-003）/保存接线（US-004）/
+冒烟（US-005）在其上叠加。
+
+### 新增 / 改造文件
+
+| 文件 | 改动 |
+|------|------|
+| `materialSorting-web/package.json` | + `polygon-clipping` ^0.15.7（Martinez–Rueda 纯 TS，MIT；裁片凹多边形布尔交，Sutherland–Hodgman 凸-凸不可用、clipper 系整数坐标需缩放均否决）—— 唯一新依赖 |
+| `src/lib/editGeometry.ts`（新） | 编辑几何纯函数库：`transformPolygon(poly,rot,tr)` 数组版（与 `lib/geometry.ts` `pointsStr` 同公式逐点一致、全精度不 r2 —— 单测对拍）、`polygonArea(rings)` 多 ring 求和（复用 `params.ts` 导出的 shoelace 单 ring）、`bboxOf`/`bboxIntersect`（含边界接触，预筛宁多勿漏）、`pointInPolygon`（PNPOLY 偶奇射线，凹形正确）、`penetrationDepth`（A 内顶点落入 B / B 内顶点落入 A 的点到对方边界最近距最大值；十字交叉顶点互不落入如实低估 0）、`clientToWorld`（`flipGroup.getScreenCTM().inverse()` + `svg.createSVGPoint()` 矩阵通路，自动涵盖 xMinYMid meet letterbox + `scale(1,-1)` 翻转；CTM 不可得 → null） |
+| `src/lib/overlap.ts`（新） | 重合计算器：`precomputeEditPieces(manifest,frame)` 按 `placed_items` **数组下标**展开 `{key,pid,rot,tr,basePolygon,worldPolygon,bbox}`（多副本同 pid 第 k 次 = 第 k 副本，与 NestSVG「出现序」副本池同语义；manifest 缺片防御跳过）；`computeOverlap(dragged,others)` bbox 预筛 → polygon-clipping intersection → 交集外环（渲染）+ 面积（外环 − 孔）+ 最大穿透深度；`openRing` 剥 polygon-clipping 闭合尾点回项目「无重复起点」口径；布尔交异常上抛（US-003 组件层降级 bbox 估算） |
+| `src/store/editStore.ts`（新） | 编辑态 Zustand store：`open(run)` 快照不可变基线全套（placed_items 深拷贝 + frameIndex/widthMm/density/finalDensity/viewBoxMaxW；translation 逐项拷断别名）；`computeLayoutStats(working,manifest)` 纯函数单一真相源 = `width=ceil(包络 maxX−1e-9)`（ε 抵 90° 旋转 float 噪声防未编辑即 +1mm，下限 1mm）+ `density=total_area/(width×gate)`（real 口径）；`save` 原地保序写回（placed_items 数组身份不变 → frames[] 同 FrameMsg 引用一致）+ width_mm/density/finalDensity/viewBoxMaxW 重算 + `bumpRenderTick` + savedDirty；`reset` 恢复基线全套；`invalidate` 清态；`setWorkingItem`（US-003 消费）；save/reset 防御校验 `runRegistry.list().includes(run)`（陈旧 run 拒绝） |
+| `src/lib/params.ts` | 私有 `polygonArea`（shoelace 单 ring）导出复用（editGeometry 消费）—— 唯一存量文件改动，行为零变化 |
+| 测试 | 新建三套 44 项：`lib/__tests__/editGeometry.test.ts` 18 项（pointsStr 对拍 + 全精度 + 多 ring + bbox 边界接触 + 凹形 point-in-poly + 穿透深度矩形/三角/凹形手算 + 十字交叉如实 0 + clientToWorld mock CTM 复合矩阵（letterbox+Y 翻转）精确取回）、`lib/__tests__/overlap.test.ts` 9 项（下标展开/旋转变换对拍/缺片跳过/两矩形交 350 精确值/预筛相离跳过/bbox 触但几何不交/多邻居面积累加/凹形梳 3 离散环面积 12 穿透 2/自身跳过）、`store/__tests__/editStore.test.ts` 17 项（快照全套 + 深拷贝解耦 + 拒开/统计 ceil·ε·旋转包络·空布局下限/save 扩长降·缩短升·原地写回·density_sparrow 不动·bump/陈旧 run 拒绝/reset 恢复全套·幂等/invalidate/setWorkingItem 越界 no-op） |
+
+### 关键不变量（编辑排料 US-001 立，后续故事不得破坏）
+
+- **依赖方向**：`editStore → lib/overlap → lib/editGeometry → lib/params`；`polygon-clipping` 只在 `overlap.ts` 出现（组件不得直 import，换库只动一处）。
+- **transformPolygon 全精度、pointsStr r2 截断**：同一公式两出口（计算 vs 渲染），改公式须三方锁步（含后端 `_transform_polygon`）。
+- **多副本 key = placed_items 数组下标**：保存原地保序写回 ⇒ 副本映射稳定；NestSVG「出现序」副本池同语义。
+- **computeLayoutStats 是密度/料长唯一真相源**：US-002 状态条实时显示与 US-004 save 写回必须同函数调用，组件内不得另写公式；**density_sparrow 恒不动**（solver erode 参考值与编辑无关）。
+- **save/reset 三重防御**：基线在册（store 态）+ run 在 registry（陈旧引用拒绝）+ lastFrame/manifest 非空；弹窗打开期间 overlay 阻断主界面，registry 无人写，下标安全（US-004 的 invalidate 挂点是双保险）。
+- **穿透深度/面积是顶点采样与布尔交的互补近似**：如实展示不互相补正（指标口径 PRD 认可；阈值着色在 US-003）。
+
+### 验证
+
+- 前端门全过：vitest 全量 **859 passed**（815 → 859，+44）/ `npm run typecheck` 干净 /
+  `npm run build` 过（bundle 248KB gzip 81KB，polygon-clipping 增量符合 ~10KB 预期）；
+  后端零改动。浏览器验证与冒烟归 US-002+（本 story 无 UI 面）。

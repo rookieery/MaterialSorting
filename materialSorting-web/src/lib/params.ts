@@ -370,8 +370,10 @@ export function prefixEligibleSizes(
 /**
  * Shoelace 多边形有向面积（母版 polygon 闭合无重复起点，abs/2 即面积 mm²）。
  * 前端无 shapely，预选启发式只需相对序，不自交假设与母版实际一致。
+ *
+ * 编辑排料 US-001 起导出复用（lib/editGeometry.ts polygonArea 多 ring 版的单 ring 基元）。
  */
-function polygonArea(poly: ParsedPt[]): number {
+export function polygonArea(poly: ParsedPt[]): number {
   let s = 0;
   for (let i = 0; i < poly.length; i++) {
     const [x1, y1] = poly[i];
