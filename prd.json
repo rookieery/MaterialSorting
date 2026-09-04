@@ -1,11 +1,4 @@
 {
   "branchName": "ralph/edit-nesting-layout",
-  "stories": [
-    {
-      "id": "US-005",
-      "title": "端到端冒烟与文档闭环",
-      "description": "As a developer, I want 浏览器冒烟覆盖 上传→求解→编辑→保存→导出→重置 全链路 + 文档红线入册 so that 功能被回归锁死（PRD US-005）。\n\n具体任务：\n1. scripts/smoke_edit_layout.mjs（新，repo 根，范本 scripts/smoke_plt_table_preview.mjs，Edge/chrome channel）— 链路：上传 5336 → 短求解 final → 编辑弹窗打开（完整版 5 层/毛板纯轮廓两形态断言 + 顶部状态条初值 = 主视图利用率）→ 拖动一片右移超界 + 旋转 → 指标面板出现（面积/深度/角度）+ 状态条料长增/利用率降 → 保存 → 主视图被拖片 points 变化 + NestLabel 利用率/长度同步 → 导出 PLT 抓包 placed 与 density 均与基线 diff 非空 → ✕ 重开弹窗拖片左移腾空 → 状态条料长缩/利用率升 → 保存 → 弹窗外重置 → 恢复算法布局与基线利用率（placed/density diff 回零）\n2. 报告落 out/smoke_edit_layout/report.json，退出码 0 = 全 PASS\n3. materialSorting-web/AGENTS.md — 新增「编辑排料关键约定」节，四条红线：①禁 ESC/遮罩关闭（唯一关闭路径 = 右上 ✕ 与保存，与全站弹窗惯例的有意偏离）②多副本按 placed_items 数组寻址保序写回 ③width_mm 随编辑包络双向伸缩 + density 族同口径重算（real 口径 total_area/(width×gate) 单一真相源；density_sparrow 不动；PLT 表格/导出标题 pct 自动跟随）④重合指标按 erode 几何口径（物理毛版重合最多大 ~2·d_g）\n4. .docs/technical/agent-component-map.md 补组件条目；progress.txt 记条\n\n验收标准：\n- 冒烟全链路 PASS（含双向伸缩场景与重置恢复断言），report.json 落盘，退出码 0\n- AGENTS.md「编辑排料关键约定」四条红线入册；agent-component-map.md 补记\n- 前端门：vitest 全绿 + npm run build 通过 + npm run typecheck 通过；progress.txt 记条",
-      "passes": true
-    }
-  ]
+  "stories": []
 }
