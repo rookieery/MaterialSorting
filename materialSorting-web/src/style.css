@@ -2261,3 +2261,62 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
   outline: 2px solid #7fd4a8;
   outline-offset: 1px;
 }
+
+/* ============================================================
+ * 编辑排料 US-003：重合指标面板（画布右上固定）+ 旋转手柄。
+ * 阈值着色：穿透 ≤MAX_OVERLAP_MM(10) 琥珀 / >10 红（#d9a05b/#e06666）；
+ * 旋转偏离 >MAX_ROTATION_TOL_DEG(45) 红。如实展示 + 着色，不报警弹层。
+ * ============================================================ */
+.edit-metrics {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 1;
+  min-width: 210px;
+  background: #1f2127;
+  border: 1px solid #31343c;
+  border-radius: 4px;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #e6e6e6;
+  pointer-events: none; /* 指标只读 —— 不挡画布拖动/平移命中 */
+}
+.edit-metrics-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+  color: #cdd;
+}
+.edit-metrics-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  white-space: nowrap;
+}
+.edit-metrics-label {
+  color: #9aa;
+}
+.edit-metrics-val {
+  font-variant-numeric: tabular-nums;
+}
+.edit-metrics-val--warn {
+  color: #d9a05b;
+}
+.edit-metrics-val--danger {
+  color: #e06666;
+}
+.edit-metrics-foot {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid #31343c;
+  color: #778;
+  font-size: 11px;
+}
+/* 旋转手柄（世界坐标 circle，命令式建节；cursor grab 提示可拖） */
+.edit-rotate-handle {
+  cursor: grab;
+}
+.edit-rotate-handle:active {
+  cursor: grabbing;
+}

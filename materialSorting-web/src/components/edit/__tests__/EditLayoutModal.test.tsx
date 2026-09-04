@@ -1,4 +1,4 @@
-// 编辑排料 US-002 EditLayoutModal 单测：
+// 编辑排料 US-002 EditLayoutModal 单测 + US-003 状态条实时刷新：
 //   1) 声明式受控：modal!==null 不渲染；openModal('edit_layout') → Portal 挂 body
 //   2) mount 自 bestRun() 快照基线 → 状态条初值 = 主视图利用率/料长（同一真相源），
 //      Δ 初值 = +0.00pt（working = 基线）
@@ -8,6 +8,8 @@
 //      lastFrame 数值不变）+ 关窗
 //   5) 形态 select：完整版 → 毛板 → 画布 4 层工艺隐藏（即时切换可恢复）
 //   6) 无 bestRun → 空态提示（edit-layout-empty）
+//   US-003：7) 拖片右移超界 → 料长增/利用率降/Δ 负；左移腾空尾部 → 料长缩/利用率升
+//           （computeLayoutStats 与保存同公式同真相源 —— pointer 拖动直接驱动）
 //
 // 套路同 ExportInfoModal 既有用例：createRoot + act + data-testid；不包 StrictMode。
 
@@ -306,5 +308,104 @@ describe('EditLayoutModal 关闭路径 (US-002)', () => {
     expect(run.lastFrame!.width_mm).toBe(1100);
     expect(run.lastFrame!.density).toBeCloseTo(densityBefore, 12);
     expect(run.lastFrame!.placed_items.length).toBe(2);
+  });
+});
+
+// ============================================================
+// 状态条实时刷新（US-003）：拖动直接驱动，与保存同公式同真相源
+// ============================================================
+
+function mockRect(svg: SVGSVGElement, width: number, height: number): void {
+  (svg as unknown as { getBoundingClientRect: () => DOMRect }).getBoundingClientRect = () =>
+    ({ width, height, x: 0, y: 0, top: 0, left: 0, right: width, bottom: height }) as DOMRect;
+}
+
+function firePointer(
+  el: Element,
+  type: 'pointerdown' | 'pointermove' | 'pointerup',
+  clientX: number,
+  clientY: number,
+): void {
+  el.dispatchEvent(
+    new PointerEvent(type, { bubbles: true, cancelable: true, pointerId: 1, clientX, clientY }),
+  );
+}
+
+/** 画布内 b 片毛版（stroke 尺码色 #00ff00）。 */
+function roughB(svg: SVGSVGElement): SVGPolygonElement {
+  return svg.querySelector(':scope g > polygon[stroke="#00ff00"]') as SVGPolygonElement;
+}
+
+describe('EditLayoutModal 状态条实时刷新 (US-003)', () => {
+  it('拖片右移超界 → 料长增 / 利用率降 / Δ 转负（未保存前 lastFrame 不动）', () => {
+    const run = seedBestRun();
+    openEditLayout(run);
+    const svg = document.querySelector('svg.edit-layout-svg') as SVGSVGElement;
+    mockRect(svg, 550, 500); // meet s = 0.5 px/mm
+    const b = roughB(svg);
+    act(() => {
+      firePointer(b, 'pointerdown', 100, 100);
+      firePointer(b, 'pointermove', 400, 100); // dx=300px → +600mm → b@[1200,0]
+      firePointer(b, 'pointerup', 400, 100);
+    });
+    // 包络 maxX = 1700 → 料长 1700；利用率 500000/(1700×1000) = 29.41%
+    expect(
+      document.querySelector('[data-testid="edit-layout-width"]')!.textContent,
+    ).toContain('1700');
+    expect(
+      document.querySelector('[data-testid="edit-layout-density"]')!.textContent,
+    ).toContain('29.41');
+    // Δ = 29.4118 − 45.4545 = −16.04pt
+    expect(
+      document.querySelector('[data-testid="edit-layout-delta"]')!.textContent,
+    ).toContain('-16.04pt');
+    // 未保存：lastFrame 仍是算法基线（编辑态与保存解耦）
+    expect(run.lastFrame!.width_mm).toBe(1100);
+    expect(run.lastFrame!.placed_items[1].translation).toEqual([600, 0]);
+    expect(useEditStore.getState().working[1].translation[0]).toBeCloseTo(1200, 10);
+  });
+
+  it('拖片左移腾空尾部 → 料长缩 / 利用率升 / Δ 正', () => {
+    seedBestRun();
+    openEditLayout(null);
+    const svg = document.querySelector('svg.edit-layout-svg') as SVGSVGElement;
+    mockRect(svg, 550, 500);
+    const b = roughB(svg);
+    act(() => {
+      firePointer(b, 'pointerdown', 100, 100);
+      firePointer(b, 'pointermove', 0, 100); // dx=-100px → -200mm → b@[400,0]
+      firePointer(b, 'pointerup', 0, 100);
+    });
+    // 包络 maxX = max(a 500, b 900) = 900 → 料长 900；利用率 55.56%；Δ +10.10pt
+    expect(
+      document.querySelector('[data-testid="edit-layout-width"]')!.textContent,
+    ).toContain('900');
+    expect(
+      document.querySelector('[data-testid="edit-layout-density"]')!.textContent,
+    ).toContain('55.56');
+    expect(
+      document.querySelector('[data-testid="edit-layout-delta"]')!.textContent,
+    ).toContain('+10.10pt');
+  });
+
+  it('编辑后保存 → lastFrame 继承编辑值（同一真相源落地）', () => {
+    const run = seedBestRun();
+    openEditLayout(run);
+    const svg = document.querySelector('svg.edit-layout-svg') as SVGSVGElement;
+    mockRect(svg, 550, 500);
+    const b = roughB(svg);
+    act(() => {
+      firePointer(b, 'pointerdown', 100, 100);
+      firePointer(b, 'pointermove', 400, 100);
+      firePointer(b, 'pointerup', 400, 100);
+    });
+    act(() => {
+      (
+        document.querySelector('[data-testid="edit-layout-save"]') as HTMLButtonElement
+      ).click();
+    });
+    expect(run.lastFrame!.width_mm).toBe(1700);
+    expect(run.lastFrame!.placed_items[1].translation).toEqual([1200, 0]);
+    expect(run.lastFrame!.density).toBeCloseTo(500000 / (1700 * 1000), 12);
   });
 });

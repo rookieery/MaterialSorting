@@ -12,12 +12,23 @@
 // 几何口径：manifest.pieces[].polygon = erode 后几何 = 与 solver 碰撞判定同口径；
 // 物理毛版重合比显示值最多大 ~2·d_g（弹窗脚注注明）。
 
-import { intersection } from 'polygon-clipping';
+import * as polygonClipping from 'polygon-clipping';
 import { polygonArea as shoelaceArea } from './params';
 import { bboxIntersect, bboxOf, penetrationDepth, transformPolygon } from './editGeometry';
 import type { BBox } from './editGeometry';
 import type { PlacedItem, Polygon, Pt } from '../types/piece';
 import type { FrameMsg, ManifestMsg } from '../types/ws';
+
+/**
+ * polygon-clipping 双产物互操作解析（US-003 起随 EditCanvas 进生产包发现）：
+ * ESM dist（vite build/rollup 解析）**只导出 default**（default.intersection），
+ * CJS/UMD（vitest deps 预打包解析）具名导出 —— 具名 import 在 rollup 下直接
+ * 构建报错「"intersection" is not exported」。namespace 导入 + default 优先回退，
+ * 两种解析形态都拿到 intersection；类型取 .d.ts 具名声明（三方一致）。
+ */
+const intersection: typeof polygonClipping.intersection = (
+  (polygonClipping as unknown as { default?: typeof polygonClipping }).default ?? polygonClipping
+).intersection;
 
 /** 展开后的可编辑裁片（世界坐标快照 + 预筛盒）。 */
 export interface EditPiece {
@@ -42,10 +53,23 @@ export interface EditPiece {
  * 与 placed_items 保序写回口径一致）。
  */
 export function precomputeEditPieces(manifest: ManifestMsg, frame: FrameMsg): EditPiece[] {
+  return precomputeEditPiecesFromItems(manifest, frame.placed_items);
+}
+
+/**
+ * precomputeEditPieces 的 PlacedItem[] 直入口（US-003 编辑画布消费）。
+ *
+ * 编辑画布的池源 = editStore.working（编辑草稿，非 lastFrame —— 保存前两者可有偏差）；
+ * 展开语义 / 防御与 precomputeEditPieces 完全一致（frame 版仅薄委托）。
+ */
+export function precomputeEditPiecesFromItems(
+  manifest: ManifestMsg,
+  items: readonly PlacedItem[],
+): EditPiece[] {
   const byId = new Map<string, (typeof manifest.pieces)[number]>();
   for (const p of manifest.pieces) byId.set(p.id, p);
   const out: EditPiece[] = [];
-  frame.placed_items.forEach((it: PlacedItem, idx: number) => {
+  items.forEach((it: PlacedItem, idx: number) => {
     const info = byId.get(it.id);
     if (!info) return;
     const world = transformPolygon(info.polygon, it.rotation, it.translation);
@@ -60,6 +84,20 @@ export function precomputeEditPieces(manifest: ManifestMsg, frame: FrameMsg): Ed
     });
   });
   return out;
+}
+
+/**
+ * 池内单片**原地**增量更新（US-003 拖动/旋转帧专用 —— 其余片零成本保持）。
+ *
+ * 拖动帧只重算被拖片一项：worldPolygon / bbox / rot / tr 覆写为最新值后即可直接
+ * computeOverlap（PRD「预计算 bbox 增量更新被拖片一项」口径）。调用方保证 ep 来自
+ * precomputeEditPieces* 展开池（basePolygon 引用 manifest 只读共享）。
+ */
+export function applyEditPlacement(ep: EditPiece, rot: number, tr: Pt): void {
+  ep.rot = rot;
+  ep.tr = [tr[0], tr[1]];
+  ep.worldPolygon = transformPolygon(ep.basePolygon, rot, tr);
+  ep.bbox = bboxOf(ep.worldPolygon);
 }
 
 /** computeOverlap 结果（渲染 + 三指标数据源）。 */

@@ -1,5 +1,5 @@
-// EditCanvas —— 编辑排料弹窗中心画布（US-002：全量渲染 + 缩放平移查看；
-// 拖动/旋转/重合指标在 US-003 叠加）。
+// EditCanvas —— 编辑排料弹窗中心画布（US-002 全量渲染 + 缩放平移查看；
+// US-003 拖动/旋转 + 重合指标实时面板）。
 //
 // 命令式范式与 NestSVG 同款（AGENTS.md 关键约定 #2/#3）：
 //   - React 只渲染骨架（svg + 视图工具按钮）；5 层裁片节点 / bg / fab / 翻转组全部
@@ -20,14 +20,42 @@
 //     viewBox（无限画布感），fab（用布矩形）世界锚定（宽 = computeLayoutStats 料长，
 //     与状态条同一真相源）；
 //   - 毛板模式（mode='rough'）：4 层工艺节点 display:none，毛版 polygon + 尺码色保留。
+//
+// US-003 交互（pointer effect 内闭包 —— 监听器只挂一次，状态一律走 ref /
+// editStore.getState()，不闭包 props/state）：
+//   - 拖动：毛版 polygon pointerdown（选中 + 提层置顶）→ pointermove 经 rAF 节流成帧
+//     （多 move 事件合一帧）→ 帧内只 setAttribute 被拖片 5 层 + setWorkingItem 更新
+//     working 下标项（顶部状态条 / fab / 保存同真相源同帧刷新）；Y 硬钳制 [0,gate]
+//     （按被拖片 bbox）、x<0 钳 0、右界自由拖（保存时 width_mm 双向伸缩）。
+//   - 旋转：选中片质心上方常显旋转手柄；拖柄 = 绕**质心**自由转角（不做 0°/180° 吸附），
+//     translation 按质心 pivot 公式随动（片原地转不漂移），布纹线随 5 层同步旋转。
+//   - 重合指标：rAF 帧内消费 lib/overlap（precomputeEditPiecesFromItems 一次展开 +
+//     applyEditPlacement 增量覆写被拖片一项 → computeOverlap bbox 预筛 + 布尔交）；
+//     交集红色半透明高亮层 + 画布右上固定指标面板（面积 mm²/cm² + 最大穿透 + 旋转
+//     偏离角，阈值着色 ≤10mm 琥珀 / >10mm 红 / >45° 红）；布尔交异常降级 bbox 交
+//     高亮 + 面积按 bbox 估算（不阻塞拖动）。
+//   - 空白 pointerdown 仍为平移；空白**点击**（位移 <3px 的 down-up）= 取消选中。
 
-import { useEffect, useRef } from 'react';
-import { clientToWorld } from '../../lib/editGeometry';
+import { useEffect, useRef, useState } from 'react';
+import {
+  clientToWorld,
+  bboxIntersect,
+  bboxOf,
+  penetrationDepth,
+  transformPolygon,
+} from '../../lib/editGeometry';
+import {
+  applyEditPlacement,
+  computeOverlap,
+  precomputeEditPiecesFromItems,
+  type EditPiece,
+} from '../../lib/overlap';
 import { pointsStr } from '../../lib/geometry';
 import { computeLayoutStats, useEditStore } from '../../store/editStore';
 import { createPieceEntry, SVGNS, type PieceEntry } from '../nests/pieceDom';
+import { MAX_OVERLAP_MM, MAX_ROTATION_TOL_DEG } from '../../constants/v03';
 import { NOTCH_LEN_MM } from '../../constants/colors';
-import type { Notch, Pt } from '../../types/piece';
+import type { Notch, PlacedItem, Polygon, Pt } from '../../types/piece';
 import type { ManifestMsg } from '../../types/ws';
 
 /** 画布形态：'full' 完整版（5 层全量）/ 'rough' 毛板（仅毛版轮廓 + 尺码色）。 */
@@ -39,12 +67,54 @@ const ZOOM_STEP = 1.25;
 const MIN_VB_W = 20;
 const MAX_VB_SCALE = 40;
 
+/** 空白 down→up 判定为「点击」（取消选中）的屏幕位移阈值（px）。 */
+const CLICK_SLOP_PX = 3;
+/** 旋转手柄世界半径（mm，随视图宽比例 + 钳制；柄心 = 质心上方 r×3）。 */
+const HANDLE_R_MIN = 4;
+const HANDLE_R_MAX = 30;
+
 /** viewBox（SVG 用户空间 = 翻转组变换之外的 viewBox 坐标系）。 */
 interface ViewBox {
   x: number;
   y: number;
   w: number;
   h: number;
+}
+
+/** 拖动会话（pointerdown 起至 pointerup/cancel；move/rotate 两模式互斥）。 */
+interface MoveDrag {
+  mode: 'move';
+  pointerId: number;
+  /** 被拖片 working 下标。 */
+  index: number;
+  /** pointerdown 客户端坐标（viewScale 差分锚 —— letterbox 偏移在差分中抵消）。 */
+  startClient: Pt;
+  rot0: number;
+  tr0: Pt;
+}
+interface RotateDrag {
+  mode: 'rotate';
+  pointerId: number;
+  index: number;
+  /** 旋转 pivot = 起手时被选片世界多边形质心（顶点均值；绕质心转片不漂移）。 */
+  pivot: Pt;
+  /** pointerdown 时指针绕 pivot 的方位角（°）。 */
+  ang0: number;
+  rot0: number;
+  tr0: Pt;
+}
+type DragState = MoveDrag | RotateDrag;
+
+/** 重合指标面板数据（refreshMetrics 单一产出口）。 */
+interface EditMetrics {
+  /** 交并总面积 mm²（degraded 时为 bbox 交面积估算）。 */
+  areaMm2: number;
+  /** 最大穿透深度 mm（顶点采样口径，与 overlap.ts 同源）。 */
+  penetrationMm: number;
+  /** 旋转偏离角 °（相对 {0°,180°} 最小偏差）。 */
+  rotDevDeg: number;
+  /** 布尔交异常降级（bbox 估算口径）。 */
+  degraded: boolean;
 }
 
 export interface EditCanvasProps {
@@ -64,15 +134,43 @@ export function EditCanvas({ mode }: EditCanvasProps) {
   const vbRef = useRef<ViewBox | null>(null);
   /** 初始视图（重置视图锚点）。 */
   const vb0Ref = useRef<ViewBox | null>(null);
-  /** 平移拖拽态（pointerId + 起点客户端坐标 + 起点 viewBox 快照）。 */
-  const panRef = useRef<{ pointerId: number; startX: number; startY: number; vb: ViewBox } | null>(null);
+  /** 平移拖拽态（pointerId + 起点客户端坐标 + 点击判定 + 起点 viewBox 快照）。 */
+  const panRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startY: number;
+    moved: boolean;
+    vb: ViewBox;
+  } | null>(null);
+
+  // ---- US-003：选中 / 拖动 / 重合指标态（sel/metrics 用 state 驱动 React 指标
+  // 面板；其余全 ref —— pointer 监听器只挂一次，不闭包 props/state）----
+  const modeRef = useRef<EditViewMode>(mode);
+  modeRef.current = mode;
+  const selRef = useRef<number | null>(null);
+  const [sel, setSel] = useState<number | null>(null);
+  const [metrics, setMetrics] = useState<EditMetrics | null>(null);
+  /** 重合计算池（选中时自 working 全量展开一次；拖动帧只增量覆写被拖片一项）。 */
+  const poolRef = useRef<EditPiece[] | null>(null);
+  /** UI 覆盖层（翻转组内世界坐标）：交集高亮 g + 旋转手柄 g，置顶于全部裁片。 */
+  const uiLayerRef = useRef<SVGGElement | null>(null);
+  const overlapGRef = useRef<SVGGElement | null>(null);
+  const handleGRef = useRef<SVGGElement | null>(null);
+  const handleLineRef = useRef<SVGLineElement | null>(null);
+  const handleCircleRef = useRef<SVGCircleElement | null>(null);
+  /** 每下标已应用的放置签名（mode|rot|tr）—— working 变化只碰签名变了的片 5 层。 */
+  const lastSigRef = useRef<string[]>([]);
+  const dragRef = useRef<DragState | null>(null);
+  const rafRef = useRef<number | null>(null);
+  const pendingMoveRef = useRef<Pt | null>(null);
 
   const run = useEditStore((s) => s.run);
   const working = useEditStore((s) => s.working);
 
   /**
-   * 主渲染 effect：manifest/pid 序列变化 → 重建骨架（bg + fab + 翻转组 + N×5 层）；
-   * working / mode 变化 → setAttribute 更新（不重建 DOM，与 NestSVG 性能保护同款）。
+   * 主渲染 effect：manifest/pid 序列变化 → 重建骨架（bg + fab + 翻转组 + N×5 层 +
+   * 清选中/池/UI 层）；working / mode 变化 → 签名跳过式 setAttribute（拖动帧外只有
+   * 被改片签名变化 → 只碰该片 5 层；mode 前缀使形态切换全量重应用显隐）。
    */
   useEffect(() => {
     const svg = svgRef.current;
@@ -89,6 +187,17 @@ export function EditCanvas({ mode }: EditCanvasProps) {
         flipRef.current = null;
         entriesRef.current = [];
       }
+      // US-003：骨架重建 → 选中/池/UI 覆盖层/签名全部作废（UI 层随翻转组拆除）。
+      selRef.current = null;
+      setSel(null);
+      setMetrics(null);
+      poolRef.current = null;
+      uiLayerRef.current = null;
+      overlapGRef.current = null;
+      handleGRef.current = null;
+      handleLineRef.current = null;
+      handleCircleRef.current = null;
+      lastSigRef.current = [];
 
       const bg = document.createElementNS(SVGNS, 'rect');
       bg.setAttribute('fill', '#eef0f3');
@@ -132,10 +241,14 @@ export function EditCanvas({ mode }: EditCanvasProps) {
     }
     applyView(svg, vbRef.current, stats.widthMm, gate);
 
-    // 5 层按 working 更新（mode 决定 4 层工艺显隐；毛版恒显）。
+    // 5 层按 working 更新（mode 决定 4 层工艺显隐；毛版恒显）—— 签名跳过：
+    // 拖动帧内已即时应用的片签名相同 → 零 setAttribute；reset 等全量变化自然全应用。
     working.forEach((it, i) => {
       const entry = entriesRef.current[i];
       if (!entry || entry.piece.id !== it.id) return; // 防御：池与 working 错位
+      const sig = placementSig(mode, it.rotation, it.translation);
+      if (lastSigRef.current[i] === sig) return;
+      lastSigRef.current[i] = sig;
       applyPlacement(entry, it.rotation, it.translation, mode);
     });
   }, [run, working, mode]);
@@ -173,16 +286,353 @@ export function EditCanvas({ mode }: EditCanvasProps) {
   }, []);
 
   /**
-   * 空白处拖动平移：pointerdown 落在裁片 polygon 上（毛版 = 未来 US-003 拖动目标；
-   * 4 层工艺节点 pointer-events:none 不会成为 target）→ 不起平移；空白（svg 自身 /
-   * bg / fab）→ setPointerCapture 后拖动平移 viewBox。
+   * 指针交互（US-002 平移 + US-003 拖动/旋转/选中，单一 effect 内分层分发）：
+   *   pointerdown target ∈ 旋转手柄 → 绕质心旋转拖柄；
+   *   pointerdown target ∈ 毛版 polygon → 选中 + 提层 + 平移拖片；
+   *   空白（svg/bg/fab）→ 平移（位移 <3px 的 down-up = 点击取消选中）。
+   *
+   * 拖动帧 rAF 节流：pointermove 只记最新坐标 + 调度一帧；帧内算钳制后放置 →
+   * 只 setAttribute 被拖片 5 层 + setWorkingItem（状态条同帧刷新）+ 池内增量覆写
+   * 被拖片 + 重合指标/手柄刷新。pointerup 先同步落帧（悬空 rAF 不丢尾帧）。
    */
   useEffect(() => {
     const svg = svgRef.current;
     if (!svg) return;
+    // 非空别名（function 声明有提升，捕获变量不保留 const 收窄 → 显式别名定宽）。
+    const svgEl: SVGSVGElement = svg;
+
+    // ---- 选中 / UI 覆盖层 / 指标（闭包内定义，仅经 refs/store 读写状态）----
+
+    /** 建（或复用）UI 覆盖层：交集高亮 g（pointer-events:none）+ 旋转手柄 g。 */
+    function ensureUiLayers(): void {
+      const g = flipRef.current;
+      if (!g) return;
+      if (uiLayerRef.current) {
+        if (handleGRef.current) handleGRef.current.style.display = '';
+        return;
+      }
+      const layer = document.createElementNS(SVGNS, 'g');
+      const overlapG = document.createElementNS(SVGNS, 'g');
+      overlapG.style.pointerEvents = 'none';
+      const handleG = document.createElementNS(SVGNS, 'g');
+      // 手柄 = 质心→柄心连线（不可抓）+ 实心圆（可抓，rotate 拖柄目标）。
+      const line = document.createElementNS(SVGNS, 'line');
+      line.setAttribute('stroke', '#2ea06c');
+      line.setAttribute('stroke-width', '1.5');
+      line.setAttribute('stroke-dasharray', '4 3');
+      line.style.pointerEvents = 'none';
+      const circle = document.createElementNS(SVGNS, 'circle');
+      circle.setAttribute('fill', '#2ea06c');
+      circle.setAttribute('fill-opacity', '0.9');
+      circle.setAttribute('stroke', '#fff');
+      circle.setAttribute('stroke-width', '1');
+      circle.setAttribute('data-edit-role', 'rotate'); // 行为锚（pointerdown 分发用）
+      circle.setAttribute('data-testid', 'edit-rotate-handle');
+      circle.classList.add('edit-rotate-handle');
+      handleG.appendChild(line);
+      handleG.appendChild(circle);
+      layer.appendChild(overlapG);
+      layer.appendChild(handleG);
+      g.appendChild(layer);
+      uiLayerRef.current = layer;
+      overlapGRef.current = overlapG;
+      handleGRef.current = handleG;
+      handleLineRef.current = line;
+      handleCircleRef.current = circle;
+    }
+
+    /** 被选中/被拖片 5 层节点移动到全部裁片之上（UI 覆盖层之下）。 */
+    function raiseEntry(entry: PieceEntry): void {
+      const g = flipRef.current;
+      if (!g) return;
+      const anchor = uiLayerRef.current;
+      const nodes: SVGElement[] = [entry.el];
+      if (entry.netEl) nodes.push(entry.netEl);
+      nodes.push(...entry.internalEls, ...entry.notchEls);
+      if (entry.grainEl) nodes.push(entry.grainEl);
+      for (const n of nodes) g.insertBefore(n, anchor); // anchor null → 追加到末尾
+    }
+
+    /** 自 working 全量展开重合池（选中时一次；拖动帧不再全量重算）。 */
+    function ensurePool(): void {
+      const manifest = manifestRef.current;
+      if (!manifest) return;
+      poolRef.current = precomputeEditPiecesFromItems(
+        manifest,
+        useEditStore.getState().working as readonly PlacedItem[],
+      );
+    }
+
+    /** 世界多边形质心（顶点均值 —— 手柄/pivot 的 UI 近似，非度量口径）。 */
+    function centroidOf(poly: readonly Pt[]): Pt {
+      let x = 0;
+      let y = 0;
+      for (const p of poly) {
+        x += p[0];
+        y += p[1];
+      }
+      const n = Math.max(1, poly.length);
+      return [x / n, y / n];
+    }
+
+    /** 旋转手柄位置/尺寸刷新（世界坐标；尺寸随视图宽比例，钳制到 mm 级可抓）。 */
+    function updateHandle(index: number): void {
+      const ep = poolRef.current?.find((p) => p.key === index);
+      const line = handleLineRef.current;
+      const circle = handleCircleRef.current;
+      if (!ep || !line || !circle) return;
+      const c = centroidOf(ep.worldPolygon);
+      const vb = vbRef.current;
+      const r = vb ? Math.min(HANDLE_R_MAX, Math.max(HANDLE_R_MIN, vb.w * 0.015)) : 12;
+      const off = r * 3; // 质心上方（世界 +Y = 翻转组内屏幕上方）
+      line.setAttribute('x1', String(r6(c[0])));
+      line.setAttribute('y1', String(r6(c[1])));
+      line.setAttribute('x2', String(r6(c[0])));
+      line.setAttribute('y2', String(r6(c[1] + off)));
+      circle.setAttribute('cx', String(r6(c[0])));
+      circle.setAttribute('cy', String(r6(c[1] + off)));
+      circle.setAttribute('r', String(r6(r)));
+    }
+
+    /** 交集高亮层清空。 */
+    function clearHighlight(): void {
+      const g = overlapGRef.current;
+      if (!g) return;
+      while (g.firstChild) g.removeChild(g.firstChild);
+    }
+
+    /** 高亮层加一个红色半透明多边形（世界坐标 ring）。 */
+    function appendHighlight(ring: Polygon): void {
+      const g = overlapGRef.current;
+      if (!g) return;
+      const poly = document.createElementNS(SVGNS, 'polygon');
+      poly.setAttribute('fill', 'rgba(255, 64, 64, 0.42)');
+      poly.setAttribute('stroke', '#ff4040');
+      poly.setAttribute('stroke-width', '1');
+      poly.setAttribute('points', pointsStr(ring, 0, [0, 0]));
+      g.appendChild(poly);
+    }
+
+    /** 重合指标计算 + 高亮渲染 + 面板数据（选中与拖动帧的唯一产出口）。 */
+    function refreshMetrics(index: number): void {
+      const pool = poolRef.current;
+      if (!pool) return;
+      const dragged = pool.find((p) => p.key === index);
+      if (!dragged) return;
+      clearHighlight();
+      let m: EditMetrics;
+      try {
+        const res = computeOverlap(dragged, pool);
+        for (const ring of res.intersections) appendHighlight(ring);
+        m = {
+          areaMm2: res.areaMm2,
+          penetrationMm: res.penetrationMm,
+          rotDevDeg: rotationDeviationDeg(dragged.rot),
+          degraded: false,
+        };
+      } catch {
+        // 布尔交异常降级（PRD 口径）：bbox 交高亮 + 面积按 bbox 估算，不阻塞拖动。
+        // 穿透深度是独立纯函数（顶点采样，无布尔交）—— 继续如实计算。
+        let area = 0;
+        let pen = 0;
+        for (const o of pool) {
+          if (o.key === index) continue;
+          if (!bboxIntersect(dragged.bbox, o.bbox)) continue;
+          const minX = Math.max(dragged.bbox.minX, o.bbox.minX);
+          const minY = Math.max(dragged.bbox.minY, o.bbox.minY);
+          const maxX = Math.min(dragged.bbox.maxX, o.bbox.maxX);
+          const maxY = Math.min(dragged.bbox.maxY, o.bbox.maxY);
+          if (maxX <= minX || maxY <= minY) continue;
+          area += (maxX - minX) * (maxY - minY);
+          appendHighlight([
+            [minX, minY],
+            [maxX, minY],
+            [maxX, maxY],
+            [minX, maxY],
+          ]);
+          pen = Math.max(pen, penetrationDepth(dragged.worldPolygon, o.worldPolygon));
+        }
+        m = {
+          areaMm2: area,
+          penetrationMm: pen,
+          rotDevDeg: rotationDeviationDeg(dragged.rot),
+          degraded: true,
+        };
+      }
+      setMetrics(m);
+    }
+
+    /** 选中片（pointerdown on 毛版）：UI 层 + 提层 + 建池 + 指标 + 手柄。 */
+    function selectPiece(index: number): void {
+      const entry = entriesRef.current[index];
+      if (!entry) return;
+      selRef.current = index;
+      setSel(index);
+      ensureUiLayers();
+      raiseEntry(entry);
+      ensurePool();
+      refreshMetrics(index);
+      updateHandle(index);
+    }
+
+    /** 取消选中（空白点击）：清池/高亮/手柄；指标面板随 sel=null 卸下。 */
+    function deselect(): void {
+      selRef.current = null;
+      setSel(null);
+      setMetrics(null);
+      poolRef.current = null;
+      clearHighlight();
+      if (handleGRef.current) handleGRef.current.style.display = 'none';
+    }
+
+    /** 帧内落笔单片放置：5 层 setAttribute + 签名登记（主渲染 effect 同帧跳过该片）。 */
+    function applyEntryPlacement(index: number, entry: PieceEntry, rot: number, tr: Pt): void {
+      applyPlacement(entry, rot, tr, modeRef.current);
+      lastSigRef.current[index] = placementSig(modeRef.current, rot, tr);
+    }
+
+    /** 拖动帧共同落笔：被拖片 DOM + working（真相源）+ 池增量 + 指标 + 手柄。 */
+    function commitDragPlacement(index: number, entry: PieceEntry, rot: number, tr: Pt): void {
+      applyEntryPlacement(index, entry, rot, tr);
+      useEditStore.getState().setWorkingItem(index, { rotation: rot, translation: tr });
+      const ep = poolRef.current?.find((p) => p.key === index);
+      if (ep) applyEditPlacement(ep, rot, tr); // 预计算池增量：只重算被拖片一项
+      refreshMetrics(index);
+      updateHandle(index);
+    }
+
+    /** 平移拖片帧（viewScale 差分 → 起始 tr + 位移 → 钳制 → 落笔）。 */
+    function applyMoveFrame(st: MoveDrag, clientX: number, clientY: number): void {
+      const manifest = manifestRef.current;
+      const entry = entriesRef.current[st.index];
+      const vb = vbRef.current;
+      if (!manifest || !entry || !vb) return;
+      const s = viewScale(svgEl, vb);
+      if (s <= 0) return; // 未布局（零尺寸 rect）→ 本帧丢弃
+      // 屏幕位移 → 世界位移（meet 等比 s = px/mm；翻转组 scale(1,-1) → dy 取反；
+      // letterbox 偏移在差分中抵消，与空白平移同款口径）。
+      const dx = (clientX - st.startClient[0]) / s;
+      const dy = -(clientY - st.startClient[1]) / s;
+      const tr = clampPlacement(
+        entry.piece.polygon,
+        st.rot0,
+        [st.tr0[0] + dx, st.tr0[1] + dy],
+        manifest.gate_mm,
+      );
+      commitDragPlacement(st.index, entry, st.rot0, tr);
+    }
+
+    /** 旋转拖柄帧（指针绕 pivot 方位角差 → 自由转角；pivot 公式随动 translation）。 */
+    function applyRotateFrame(st: RotateDrag, clientX: number, clientY: number): void {
+      const manifest = manifestRef.current;
+      const flip = flipRef.current;
+      const entry = entriesRef.current[st.index];
+      if (!manifest || !flip || !entry) return;
+      const w = clientToWorld(svgEl, flip, clientX, clientY);
+      if (!w) return; // CTM 不可得 → 旋转无意义（起手即校验，此为防御）
+      const ang = (Math.atan2(w[1] - st.pivot[1], w[0] - st.pivot[0]) * 180) / Math.PI;
+      const dAng = wrapDeg180(ang - st.ang0);
+      const rot = st.rot0 + dAng; // 自由角度，无 0°/180° 吸附（2026-09-04 定案）
+      const tr = clampPlacement(
+        entry.piece.polygon,
+        rot,
+        pivotTranslate(st.pivot, dAng, st.tr0),
+        manifest.gate_mm,
+      );
+      commitDragPlacement(st.index, entry, rot, tr);
+    }
+
+    function applyDragFrame(clientX: number, clientY: number): void {
+      const st = dragRef.current;
+      if (!st) return;
+      if (st.mode === 'move') applyMoveFrame(st, clientX, clientY);
+      else applyRotateFrame(st, clientX, clientY);
+    }
+
+    /** rAF 节流：多个 pointermove 合一帧（rAF 缺席的降级环境同步直跑）。 */
+    function scheduleFrame(): void {
+      if (rafRef.current != null) return;
+      const run = (): void => {
+        rafRef.current = null;
+        const p = pendingMoveRef.current;
+        pendingMoveRef.current = null;
+        if (p && dragRef.current) applyDragFrame(p[0], p[1]);
+      };
+      if (typeof requestAnimationFrame === 'function') {
+        rafRef.current = requestAnimationFrame(run);
+      } else {
+        run();
+      }
+    }
+
+    /** 同步落帧（pointerup 先于 rAF 触发时保尾帧；测试确定性路径）。 */
+    function flushFrame(): void {
+      if (rafRef.current != null) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+      const p = pendingMoveRef.current;
+      pendingMoveRef.current = null;
+      if (p && dragRef.current) applyDragFrame(p[0], p[1]);
+    }
+
+    // ---- 事件分发 ----
+
     const onPointerDown = (e: PointerEvent): void => {
       const target = e.target as Element | null;
-      if (target?.closest?.('polygon')) return; // 裁片上不起平移（US-003 拖动接管）
+      // 1) 旋转手柄（选中片常显）→ 绕质心旋转拖柄。
+      if (target?.closest?.('[data-edit-role="rotate"]')) {
+        const index = selRef.current;
+        const flip = flipRef.current;
+        const entry = index != null ? entriesRef.current[index] : null;
+        if (index == null || !flip || !entry) return;
+        const ep = poolRef.current?.find((p) => p.key === index);
+        const w = ep ? clientToWorld(svg, flip, e.clientX, e.clientY) : null;
+        if (!ep || !w) return; // CTM 不可得 → 不起旋转（世界方位角无从计算）
+        const pivot = centroidOf(ep.worldPolygon);
+        const it = useEditStore.getState().working[index];
+        dragRef.current = {
+          mode: 'rotate',
+          pointerId: e.pointerId,
+          index,
+          pivot,
+          ang0: (Math.atan2(w[1] - pivot[1], w[0] - pivot[0]) * 180) / Math.PI,
+          rot0: it.rotation,
+          tr0: [it.translation[0], it.translation[1]],
+        };
+        try {
+          handleCircleRef.current?.setPointerCapture?.(e.pointerId);
+        } catch {
+          /* 捕获失败不影响旋转 —— move/up 监听挂 svg 自身 */
+        }
+        svg.style.cursor = 'grabbing';
+        return;
+      }
+      // 2) 毛版 polygon → 选中 + 提层 + 平移拖片（4 层工艺 / 交集高亮层均
+      //    pointer-events:none，不会成为 target）。
+      const poly = target?.closest?.('polygon');
+      if (poly) {
+        const index = entriesRef.current.findIndex((en) => en != null && en.el === poly);
+        if (index < 0) return; // 非裁片毛版 polygon（防御）
+        selectPiece(index);
+        const it = useEditStore.getState().working[index];
+        dragRef.current = {
+          mode: 'move',
+          pointerId: e.pointerId,
+          index,
+          startClient: [e.clientX, e.clientY],
+          rot0: it.rotation,
+          tr0: [it.translation[0], it.translation[1]],
+        };
+        try {
+          (poly as SVGPolygonElement).setPointerCapture?.(e.pointerId);
+        } catch {
+          /* 捕获失败不影响拖动 —— move/up 监听挂 svg 自身 */
+        }
+        svg.style.cursor = 'move';
+        return;
+      }
+      // 3) 空白（svg/bg/fab）→ 平移（位移 <3px 的 down-up = 点击取消选中）。
       const vb = vbRef.current;
       if (!vb) return;
       try {
@@ -190,12 +640,28 @@ export function EditCanvas({ mode }: EditCanvasProps) {
       } catch {
         /* 捕获失败不影响平移 —— move/up 监听本就挂 svg 自身 */
       }
-      panRef.current = { pointerId: e.pointerId, startX: e.clientX, startY: e.clientY, vb: { ...vb } };
+      panRef.current = {
+        pointerId: e.pointerId,
+        startX: e.clientX,
+        startY: e.clientY,
+        moved: false,
+        vb: { ...vb },
+      };
       svg.style.cursor = 'grabbing';
     };
+
     const onPointerMove = (e: PointerEvent): void => {
+      const d = dragRef.current;
+      if (d && e.pointerId === d.pointerId) {
+        pendingMoveRef.current = [e.clientX, e.clientY];
+        scheduleFrame();
+        return;
+      }
       const p = panRef.current;
       if (!p || e.pointerId !== p.pointerId) return;
+      if (!p.moved && Math.hypot(e.clientX - p.startX, e.clientY - p.startY) > CLICK_SLOP_PX) {
+        p.moved = true;
+      }
       const s = viewScale(svg, p.vb);
       if (s <= 0) return; // 未布局（零尺寸 rect）→ 不平移
       const cur = vbRef.current;
@@ -209,21 +675,58 @@ export function EditCanvas({ mode }: EditCanvasProps) {
       };
       writeViewBox(svg, vbRef.current);
     };
-    const endPan = (e: PointerEvent): void => {
-      if (panRef.current && e.pointerId === panRef.current.pointerId) {
-        panRef.current = null;
-        svg.style.cursor = '';
-      }
+
+    const endDrag = (e: PointerEvent): void => {
+      const d = dragRef.current;
+      if (!d || e.pointerId !== d.pointerId) return;
+      flushFrame(); // 悬空 rAF 落帧（move 后立即 up 不丢尾帧）
+      dragRef.current = null;
+      svg.style.cursor = '';
     };
+
+    const endPan = (e: PointerEvent): void => {
+      const p = panRef.current;
+      if (!p || e.pointerId !== p.pointerId) return;
+      panRef.current = null;
+      svg.style.cursor = '';
+      if (!p.moved && selRef.current != null) deselect(); // 空白点击 = 取消选中
+    };
+
+    const onPointerUp = (e: PointerEvent): void => {
+      endDrag(e);
+      endPan(e);
+    };
+
+    const onPointerCancel = (e: PointerEvent): void => {
+      // 手势中止：丢弃未落帧的 pending（已落帧的 working 保留 —— 草稿不回滚），态复位。
+      const d = dragRef.current;
+      if (d && e.pointerId === d.pointerId) {
+        if (rafRef.current != null) {
+          cancelAnimationFrame(rafRef.current);
+          rafRef.current = null;
+        }
+        pendingMoveRef.current = null;
+        dragRef.current = null;
+        svg.style.cursor = '';
+        return;
+      }
+      endPan(e);
+    };
+
     svg.addEventListener('pointerdown', onPointerDown);
     svg.addEventListener('pointermove', onPointerMove);
-    svg.addEventListener('pointerup', endPan);
-    svg.addEventListener('pointercancel', endPan);
+    svg.addEventListener('pointerup', onPointerUp);
+    svg.addEventListener('pointercancel', onPointerCancel);
     return () => {
       svg.removeEventListener('pointerdown', onPointerDown);
       svg.removeEventListener('pointermove', onPointerMove);
-      svg.removeEventListener('pointerup', endPan);
-      svg.removeEventListener('pointercancel', endPan);
+      svg.removeEventListener('pointerup', onPointerUp);
+      svg.removeEventListener('pointercancel', onPointerCancel);
+      if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+      pendingMoveRef.current = null;
+      dragRef.current = null;
+      panRef.current = null;
     };
   }, []);
 
@@ -283,8 +786,102 @@ export function EditCanvas({ mode }: EditCanvasProps) {
           重置视图
         </button>
       </div>
+      {/* 选中片重合指标面板（画布右上固定；未选中不渲染）。 */}
+      {sel !== null && metrics !== null && (
+        <div
+          className="edit-metrics"
+          data-testid="edit-metrics"
+          data-degraded={metrics.degraded ? '1' : '0'}
+        >
+          <div className="edit-metrics-title">重合指标（选中片）</div>
+          <div className="edit-metrics-row">
+            <span className="edit-metrics-label">重合面积</span>
+            <span className="edit-metrics-val" data-testid="edit-metrics-area">
+              {metrics.areaMm2.toFixed(1)} mm²（{(metrics.areaMm2 / 100).toFixed(2)} cm²）
+              {metrics.degraded ? ' · bbox 估算' : ''}
+            </span>
+          </div>
+          <div className="edit-metrics-row">
+            <span className="edit-metrics-label">最大穿透</span>
+            <span
+              className={
+                metrics.penetrationMm > MAX_OVERLAP_MM
+                  ? 'edit-metrics-val edit-metrics-val--danger'
+                  : metrics.penetrationMm > 0
+                    ? 'edit-metrics-val edit-metrics-val--warn'
+                    : 'edit-metrics-val'
+              }
+              data-testid="edit-metrics-depth"
+            >
+              {metrics.penetrationMm.toFixed(1)} mm
+            </span>
+          </div>
+          <div className="edit-metrics-row">
+            <span className="edit-metrics-label">旋转偏离</span>
+            <span
+              className={
+                metrics.rotDevDeg > MAX_ROTATION_TOL_DEG
+                  ? 'edit-metrics-val edit-metrics-val--danger'
+                  : 'edit-metrics-val'
+              }
+              data-testid="edit-metrics-rot"
+            >
+              {metrics.rotDevDeg.toFixed(1)}°
+            </span>
+          </div>
+          <div className="edit-metrics-foot">按算法碰撞口径</div>
+        </div>
+      )}
     </div>
   );
+}
+
+/** 放置签名（mode|rot|tr）—— 主渲染 effect「该片是否需要重写 5 层」的判据。 */
+function placementSig(mode: EditViewMode, rot: number, tr: Pt): string {
+  return `${mode}|${rot}|${tr[0]}|${tr[1]}`;
+}
+
+/**
+ * 旋转偏离角（°）= 相对 {0°,180°} 的最小偏差 min(|rot|,|rot−180|,|rot−360|)。
+ * 先归一到 [0,360)（负角 / >360° 输入等价处理），PRD US-003 口径。
+ */
+function rotationDeviationDeg(rot: number): number {
+  const r = ((rot % 360) + 360) % 360;
+  return Math.min(Math.abs(r), Math.abs(r - 180), Math.abs(r - 360));
+}
+
+/** 角度差归一到 (−180,180]（旋转拖柄自由转角差；跨 ±180 边界连续）。 */
+function wrapDeg180(d: number): number {
+  return ((d + 180) % 360 + 360) % 360 - 180;
+}
+
+/**
+ * 放置钳制（US-003 口径）：按被操作片世界 bbox —— minY<0 上抬 / maxY>gate 下压
+ * （高于门幅的片后置 minY 生效 = 贴底）、minX<0 右推；x 右界**不钳**（拖出原布局
+ * 右界自由，保存时 width_mm = ceil(包络) 双向伸缩）。gate = manifest.gate_mm。
+ */
+function clampPlacement(basePoly: Polygon, rot: number, tr: Pt, gate: number): Pt {
+  const world = transformPolygon(basePoly, rot, tr);
+  const b = bboxOf(world);
+  let tx = tr[0];
+  let ty = tr[1];
+  if (b.minX < 0) tx += -b.minX;
+  if (b.maxY > gate) ty -= b.maxY - gate;
+  if (b.minY < 0) ty += -b.minY;
+  return [tx, ty];
+}
+
+/**
+ * 绕 pivot 旋转 dAng 后的等价 placement translation（片原地转不漂移）：
+ *   q = R(θ)p + t → q' = pivot + R(dθ)(q − pivot) = R(θ+dθ)p + [pivot + R(dθ)(t − pivot)]
+ */
+function pivotTranslate(pivot: Pt, dAngDeg: number, tr: Pt): Pt {
+  const r = (dAngDeg * Math.PI) / 180;
+  const c = Math.cos(r);
+  const s = Math.sin(r);
+  const dx = tr[0] - pivot[0];
+  const dy = tr[1] - pivot[1];
+  return [pivot[0] + dx * c - dy * s, pivot[1] + dx * s + dy * c];
 }
 
 /**
@@ -401,7 +998,7 @@ function applyPlacement(entry: PieceEntry, rot: number, tr: Pt, mode: EditViewMo
     notchEl.setAttribute('y2', String(b[1]));
     notchEl.style.display = showCraft ? '' : 'none';
   }
-  // layer7 布纹线 line
+  // layer7 布纹线 line（随片同步旋转 —— 旋转偏离角指标的物理依据）
   if (entry.grainEl && entry.piece.grain_line) {
     const [x1, y1, x2, y2] = entry.piece.grain_line;
     const a = transformPt([x1, y1], rot, tr);

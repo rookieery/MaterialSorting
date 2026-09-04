@@ -5,7 +5,13 @@
 //      （相离邻居零成本跳过、bbox 相交但几何不相交邻居计入）/ 穿透深度 / 自身跳过
 
 import { describe, expect, it } from 'vitest';
-import { computeOverlap, precomputeEditPieces, type EditPiece } from '../overlap';
+import {
+  applyEditPlacement,
+  computeOverlap,
+  precomputeEditPieces,
+  precomputeEditPiecesFromItems,
+  type EditPiece,
+} from '../overlap';
 import { bboxOf } from '../editGeometry';
 import type { ManifestMsg, FrameMsg } from '../../types/ws';
 import type { PlacedItem, Polygon } from '../../types/piece';
@@ -191,5 +197,53 @@ describe('computeOverlap', () => {
     const r = computeOverlap(dragged, [dragged]);
     expect(r.neighborCount).toBe(0);
     expect(r.areaMm2).toBe(0);
+  });
+});
+
+// ============================================================
+// US-003：PlacedItem[] 直入口 + 池内单片原地增量更新
+// ============================================================
+
+describe('precomputeEditPiecesFromItems / applyEditPlacement (US-003)', () => {
+  it('FromItems 与 frame 版同展开（key/pid/世界多边形逐项一致）—— 编辑画布池源 = working', () => {
+    const manifest = mkManifest();
+    const items: PlacedItem[] = [
+      item('a_28', 0, 0, 0),
+      item('b_28', 90, 500, 200),
+      item('a_28', 0, 900, 0),
+    ];
+    const fromFrame = precomputeEditPieces(manifest, mkFrame(items, 1000));
+    const fromItems = precomputeEditPiecesFromItems(manifest, items);
+    expect(fromItems.map((e) => e.key)).toEqual([0, 1, 2]);
+    expect(fromItems.map((e) => e.pid)).toEqual(['a_28', 'b_28', 'a_28']);
+    fromItems.forEach((e, i) => {
+      expect(e.worldPolygon).toEqual(fromFrame[i].worldPolygon);
+      expect(e.bbox).toEqual(fromFrame[i].bbox);
+      expect(e.rot).toBe(fromFrame[i].rot);
+      expect(e.tr).toEqual(fromFrame[i].tr);
+    });
+  });
+
+  it('applyEditPlacement 原地覆写 rot/tr/worldPolygon/bbox（basePolygon 引用不动）', () => {
+    const manifest = mkManifest();
+    const [ep] = precomputeEditPiecesFromItems(manifest, [item('a_28', 0, 10, 20)]);
+    const base = ep.basePolygon;
+    applyEditPlacement(ep, 90, [500, 100]);
+    expect(ep.rot).toBe(90);
+    expect(ep.tr).toEqual([500, 100]);
+    expect(ep.basePolygon).toBe(base); // 只读共享引用不被替换
+    // R(90)：(x,y)->(-y,x)+t —— (0,0)->(500,100)，(100,0)->(500,200)，
+    // (100,100)->(400,200)，(0,100)->(400,100) -> bbox [400,100]x[500,200]
+    expect(ep.worldPolygon).toEqual([
+      [500, 100],
+      [500, 200],
+      [400, 200],
+      [400, 100],
+    ]);
+    expect(ep.bbox).toEqual({ minX: 400, minY: 100, maxX: 500, maxY: 200 });
+    // 增量结果与全量重展开一致（拖动帧「只重算被拖片」的等价性）
+    const [fresh] = precomputeEditPiecesFromItems(manifest, [item('a_28', 90, 500, 100)]);
+    expect(fresh.worldPolygon).toEqual(ep.worldPolygon);
+    expect(fresh.bbox).toEqual(ep.bbox);
   });
 });

@@ -1,4 +1,4 @@
-// 编辑排料 US-002 EditCanvas 单测：
+// 编辑排料 US-002 EditCanvas 单测 + US-003 拖动/旋转/重合指标：
 //   1) 全量渲染骨架：bg / fab / 翻转组（translate(0 gate) scale(1 -1)）+ 5 层节点
 //      （每 working 下标一份，与主视图 NestSVG 同构 —— points / 配色逐属性一致）
 //   2) demand 多副本「出现序」：同 pid 两条 working → 两个独立 DOM 副本各承一处
@@ -8,6 +8,10 @@
 //   5) CTM 不可得 → 视图中心锚退化
 //   6) 空白拖动平移（mock getBoundingClientRect）；毛版 polygon pointerdown 不起平移
 //   7) ＋/－/重置视图按钮（中心锚）+ MIN_VB_W 钳制
+//   US-003：8) 拖动（translation 精确值 / 提层 / 多副本 / fab 伸缩）
+//           9) 钳制（Y 下界上界按被拖片 bbox / x<0 钳 0 / 右界自由）
+//          10) 旋转（手柄绕质心自由角 + pivot 随动 + 布纹线随转 / 空白点击取消选中）
+//          11) 重合指标（三值精确 / ≤10 琥珀 / >10 红 / >45° 红 / 拖动中 rAF 实时）
 //
 // jsdom 缺口：PointerEvent 未实现（beforeEach polyfill）；getScreenCTM/createSVGPoint
 // 缺失（mock 复合矩阵，同 editGeometry.test 套路）。
@@ -477,7 +481,7 @@ describe('EditCanvas 平移与视图工具 (US-002)', () => {
     });
   });
 
-  it('毛版 polygon pointerdown 不起平移（US-003 拖动接管预留）', () => {
+  it('毛版 polygon pointerdown 不起平移（归 US-003 拖动接管 —— viewBox 不动）', () => {
     const svg = mountCanvas('full', seedRun(PLACED_AB));
     const { g } = skeleton(svg);
     mockRect(svg, 440, 400);
@@ -524,5 +528,318 @@ describe('EditCanvas 平移与视图工具 (US-002)', () => {
     const vb = svg.getAttribute('viewBox')!;
     const w = Number(vb.split(' ')[2]);
     expect(w).toBe(20);
+  });
+});
+
+// ============================================================
+// 拖动（US-003）：translation 精确断言 / 提层 / 多副本 / fab 伸缩
+// ============================================================
+
+/** 拖动夹具比尺：rect 550×500 · viewBox 1100×1000 → meet s = 0.5 px/mm（整除友好）。 */
+
+function roughPolyOf(svg: SVGSVGElement, stroke: string): SVGPolygonElement {
+  const el = svg.querySelector(`:scope g > polygon[stroke="${stroke}"]`);
+  if (!el) throw new Error(`rough polygon ${stroke} not found`);
+  return el as SVGPolygonElement;
+}
+
+describe('EditCanvas 拖动 (US-003)', () => {
+  it('拖动更新 working 下标项 translation（精确值）+ 被拖片 points + fab 随包络伸缩', () => {
+    const svg = mountCanvas('full', seedRun(PLACED_AB));
+    mockRect(svg, 550, 500); // s = 0.5
+    const roughB = roughPolyOf(svg, '#00ff00');
+    act(() => {
+      firePointer(roughB, 'pointerdown', 100, 100);
+      firePointer(roughB, 'pointermove', 200, 50); // dClient (100,-50) → world (200,+100)
+      firePointer(roughB, 'pointerup', 200, 50);
+    });
+    const w = useEditStore.getState().working;
+    expect(w[1].rotation).toBe(0);
+    expect(w[1].translation[0]).toBeCloseTo(800, 10);
+    expect(w[1].translation[1]).toBeCloseTo(100, 10);
+    expect(w[0].translation).toEqual([0, 0]); // 其余片不动
+    expect(roughB.getAttribute('points')).toBe('800,100 1300,100 1300,600 800,600');
+    const fab = svg.childNodes[1] as SVGRectElement;
+    expect(fab.getAttribute('width')).toBe('1300'); // maxX 1300（右界自由拖）
+  });
+
+  it('被拖片提层置顶（5 层节点移到全部裁片之上、UI 覆盖层之下）+ 手柄出现', () => {
+    const svg = mountCanvas('full', seedRun(PLACED_AB));
+    const { g } = skeleton(svg);
+    const roughA = g.childNodes[0] as SVGPolygonElement;
+    act(() => {
+      firePointer(roughA, 'pointerdown', 10, 10);
+      firePointer(roughA, 'pointerup', 10, 10);
+    });
+    // 原 [a×5, b] → 提层后 [b, a×5, uiLayer]
+    expect(g.childNodes.length).toBe(7);
+    expect((g.childNodes[0] as SVGPolygonElement).getAttribute('fill')).toBe('#00ff00');
+    expect(g.childNodes[0]).not.toBe(roughA);
+    const uiLayer = g.childNodes[6] as SVGGElement;
+    expect(uiLayer.childNodes.length).toBe(2); // overlapG + handleG
+    expect(document.querySelector('[data-testid="edit-rotate-handle"]')).not.toBeNull();
+  });
+
+  it('多副本：同 pid 两条 working，拖第 2 副本只动下标 1（出现序寻址）', () => {
+    const placed: PlacedItem[] = [
+      { id: 'a_28', rotation: 0, translation: [0, 0] },
+      { id: 'a_28', rotation: 0, translation: [600, 0] },
+    ];
+    const svg = mountCanvas('full', seedRun(placed));
+    mockRect(svg, 550, 500);
+    const copies = Array.from(
+      svg.querySelectorAll(':scope g > polygon[stroke="#ff0000"]'),
+    ) as SVGPolygonElement[];
+    expect(copies.length).toBe(2);
+    act(() => {
+      firePointer(copies[1], 'pointerdown', 100, 100);
+      firePointer(copies[1], 'pointermove', 150, 100); // dx=50px → +100mm
+      firePointer(copies[1], 'pointerup', 150, 100);
+    });
+    const w = useEditStore.getState().working;
+    expect(w[0].translation).toEqual([0, 0]);
+    expect(w[1].translation[0]).toBeCloseTo(700, 10);
+    expect(w[1].translation[1]).toBeCloseTo(0, 10);
+  });
+});
+
+// ============================================================
+// 拖动钳制（US-003）：Y ∈ [0,gate] 按被拖片 bbox / x<0 钳 0 / 右界自由
+// ============================================================
+
+describe('EditCanvas 拖动钳制 (US-003)', () => {
+  it('Y 下界：被拖片 bbox minY<0 上抬至 0', () => {
+    const placed: PlacedItem[] = [
+      { id: 'a_28', rotation: 0, translation: [0, 0] },
+      { id: 'b_30', rotation: 0, translation: [600, 100] },
+    ];
+    const svg = mountCanvas('full', seedRun(placed));
+    mockRect(svg, 550, 500);
+    const roughB = roughPolyOf(svg, '#00ff00');
+    act(() => {
+      firePointer(roughB, 'pointerdown', 100, 100);
+      firePointer(roughB, 'pointermove', 100, 300); // dy_world=-400 → 候选 ty=-300
+      firePointer(roughB, 'pointerup', 100, 300);
+    });
+    const w = useEditStore.getState().working;
+    expect(w[1].translation[1]).toBeCloseTo(0, 9); // 钳到 0（未钳为 -300）
+    expect(w[1].translation[0]).toBeCloseTo(600, 10);
+  });
+
+  it('Y 上界：被拖片 bbox maxY>gate 下压至 gate（gate=1000）', () => {
+    const placed: PlacedItem[] = [
+      { id: 'a_28', rotation: 0, translation: [0, 0] },
+      { id: 'b_30', rotation: 0, translation: [600, 600] },
+    ];
+    const svg = mountCanvas('full', seedRun(placed));
+    mockRect(svg, 550, 500);
+    const roughB = roughPolyOf(svg, '#00ff00');
+    act(() => {
+      firePointer(roughB, 'pointerdown', 100, 100);
+      firePointer(roughB, 'pointermove', 100, 20); // dy_world=+160 → 候选 ty=760、maxY=1260
+      firePointer(roughB, 'pointerup', 100, 20);
+    });
+    const w = useEditStore.getState().working;
+    expect(w[1].translation[1]).toBeCloseTo(500, 9); // maxY 1260→1000：ty 760→500
+  });
+
+  it('x<0 钳 0；x 右界不钳（自由拖出原布局）', () => {
+    const placed: PlacedItem[] = [
+      { id: 'a_28', rotation: 0, translation: [100, 0] },
+      { id: 'b_30', rotation: 0, translation: [600, 0] },
+    ];
+    const svg = mountCanvas('full', seedRun(placed));
+    mockRect(svg, 550, 500);
+    const roughA = roughPolyOf(svg, '#ff0000');
+    act(() => {
+      firePointer(roughA, 'pointerdown', 100, 100);
+      firePointer(roughA, 'pointermove', 0, 100); // dx_world=-200 → 候选 tx=-100
+      firePointer(roughA, 'pointerup', 0, 100);
+    });
+    expect(useEditStore.getState().working[0].translation[0]).toBeCloseTo(0, 9); // 钳 0
+
+    act(() => {
+      firePointer(roughA, 'pointerdown', 100, 100);
+      firePointer(roughA, 'pointermove', 400, 100); // dx_world=+600 → 0+600=600（右界无钳）
+      firePointer(roughA, 'pointerup', 400, 100);
+    });
+    expect(useEditStore.getState().working[0].translation[0]).toBeCloseTo(600, 10);
+  });
+});
+
+// ============================================================
+// 旋转（US-003）：选中片质心上方手柄，拖柄绕质心自由转角
+// ============================================================
+
+describe('EditCanvas 旋转 (US-003)', () => {
+  it('拖旋转手柄：绕质心转 90°（自由角，无吸附）+ translation pivot 随动 + 布纹线随转', () => {
+    const svg = mountCanvas('full', seedRun(PLACED_AB));
+    const { g } = skeleton(svg);
+    // CTM mock：world = (2.5·cx, 1000 − 2.5·cy)
+    mockCTM(svg, g, mockMat(0.4, 0, 0, -0.4, 0, 400));
+    // 先选中 a（质心 (250,250)，grain (100,250)-(400,250)）
+    const roughA = g.childNodes[0] as SVGPolygonElement;
+    act(() => {
+      firePointer(roughA, 'pointerdown', 10, 10);
+      firePointer(roughA, 'pointerup', 10, 10);
+    });
+    const handle = document.querySelector(
+      '[data-testid="edit-rotate-handle"]',
+    ) as SVGCircleElement;
+    // 起手 world (625,625)：绕质心方位角 45°；收手 world (-125,625)：方位角 135° → dAng=+90
+    act(() => {
+      firePointer(handle, 'pointerdown', 250, 150);
+      firePointer(handle, 'pointermove', -50, 150);
+      firePointer(handle, 'pointerup', -50, 150);
+    });
+    const w = useEditStore.getState().working;
+    expect(w[0].rotation).toBeCloseTo(90, 6);
+    // pivot 公式：t' = (250,250) + R(90)((0,0)-(250,250)) = (500,0)；方块绕质心转 90°
+    // 足印不变（[0,500]²）→ 无钳制介入
+    expect(w[0].translation[0]).toBeCloseTo(500, 6);
+    expect(w[0].translation[1]).toBeCloseTo(0, 6);
+    // 布纹线随片同步旋转：(100,250)→(250,100)、(400,250)→(250,400)（r2 截断字符串）
+    const grainA = svg.querySelector(':scope g > line[stroke="#e53e3e"]') as SVGLineElement;
+    expect(grainA.getAttribute('x1')).toBe('250');
+    expect(grainA.getAttribute('y1')).toBe('100');
+    expect(grainA.getAttribute('x2')).toBe('250');
+    expect(grainA.getAttribute('y2')).toBe('400');
+    // 毛版 points：R(90) (x,y)→(−y,x) + (500,0) —— 顶点序重排但足印同方 [0,500]²
+    expect(roughA.getAttribute('points')).toBe('500,0 500,500 0,500 0,0');
+  });
+
+  it('手柄只对选中片出现（质心上方）；空白点击取消选中', () => {
+    const svg = mountCanvas('full', seedRun(PLACED_AB));
+    expect(document.querySelector('[data-testid="edit-rotate-handle"]')).toBeNull();
+    expect(document.querySelector('[data-testid="edit-metrics"]')).toBeNull();
+    const roughB = roughPolyOf(svg, '#00ff00');
+    act(() => {
+      firePointer(roughB, 'pointerdown', 10, 10);
+      firePointer(roughB, 'pointerup', 10, 10);
+    });
+    const handle = document.querySelector(
+      '[data-testid="edit-rotate-handle"]',
+    ) as SVGCircleElement;
+    expect(handle).not.toBeNull();
+    // b@[600,0] 质心 (850,250)：手柄在质心正上方（世界 +Y = 翻转组内屏幕上方）
+    expect(Number(handle.getAttribute('cx'))).toBeCloseTo(850, 6);
+    expect(Number(handle.getAttribute('cy'))).toBeGreaterThan(250);
+    expect(document.querySelector('[data-testid="edit-metrics"]')).not.toBeNull();
+    // 空白点击（无位移 down-up）→ 取消选中
+    act(() => {
+      firePointer(svg, 'pointerdown', 5, 5);
+      firePointer(svg, 'pointerup', 5, 5);
+    });
+    expect(document.querySelector('[data-testid="edit-metrics"]')).toBeNull();
+    const handleG = handle.parentNode as SVGGElement;
+    expect(handleG.style.display).toBe('none');
+  });
+});
+
+// ============================================================
+// 重合指标（US-003）：三值精确 / 阈值着色 / 高亮 / 拖动中实时
+// ============================================================
+
+function metricsText(id: string): string {
+  const el = document.querySelector(`[data-testid="${id}"]`);
+  if (!el) throw new Error(`metrics ${id} not found`);
+  return el.textContent ?? '';
+}
+
+function metricsClass(id: string): string {
+  const el = document.querySelector(`[data-testid="${id}"]`);
+  if (!el) throw new Error(`metrics ${id} not found`);
+  return (el as HTMLElement).className;
+}
+
+/** 选中并收手（无拖动位移）。 */
+function selectPiece(svg: SVGSVGElement, stroke: string): void {
+  act(() => {
+    const p = roughPolyOf(svg, stroke);
+    firePointer(p, 'pointerdown', 10, 10);
+    firePointer(p, 'pointerup', 10, 10);
+  });
+}
+
+describe('EditCanvas 重合指标 (US-003)', () => {
+  it('无重合：面积 0 / 穿透 0（中性色）/ 偏离 0°，无交集高亮；脚注注明算法碰撞口径', () => {
+    const svg = mountCanvas('full', seedRun(PLACED_AB)); // a/b 相离
+    selectPiece(svg, '#00ff00');
+    expect(metricsText('edit-metrics-area')).toBe('0.0 mm²（0.00 cm²）');
+    expect(metricsText('edit-metrics-depth')).toBe('0.0 mm');
+    expect(metricsClass('edit-metrics-depth')).not.toContain('warn');
+    expect(metricsClass('edit-metrics-depth')).not.toContain('danger');
+    expect(metricsText('edit-metrics-rot')).toBe('0.0°');
+    expect(svg.querySelectorAll('polygon[fill="rgba(255, 64, 64, 0.42)"]').length).toBe(0);
+    expect(document.querySelector('[data-testid="edit-metrics"]')!.textContent).toContain(
+      '按算法碰撞口径',
+    );
+  });
+
+  it('重合精确值：面积 50×450=22500 mm²（225.00 cm²）、穿透 50.0 mm → >10 红', () => {
+    const placed: PlacedItem[] = [
+      { id: 'a_28', rotation: 0, translation: [0, 0] },
+      { id: 'b_30', rotation: 0, translation: [450, 50] },
+    ];
+    const svg = mountCanvas('full', seedRun(placed));
+    selectPiece(svg, '#00ff00');
+    expect(metricsText('edit-metrics-area')).toBe('22500.0 mm²（225.00 cm²）');
+    expect(metricsText('edit-metrics-depth')).toBe('50.0 mm');
+    expect(metricsClass('edit-metrics-depth')).toContain('danger');
+    expect(metricsClass('edit-metrics-depth')).not.toContain('warn');
+    // bbox 相交邻居渲染红色半透明交集 polygon（一个邻居 ≥1 环）
+    expect(
+      svg.querySelectorAll('polygon[fill="rgba(255, 64, 64, 0.42)"]').length,
+    ).toBeGreaterThan(0);
+  });
+
+  it('穿透 ≤10mm 琥珀：b@[495,50] 交 5×450、穿透 5.0', () => {
+    const placed: PlacedItem[] = [
+      { id: 'a_28', rotation: 0, translation: [0, 0] },
+      { id: 'b_30', rotation: 0, translation: [495, 50] },
+    ];
+    const svg = mountCanvas('full', seedRun(placed));
+    selectPiece(svg, '#00ff00');
+    expect(metricsText('edit-metrics-area')).toBe('2250.0 mm²（22.50 cm²）');
+    expect(metricsText('edit-metrics-depth')).toBe('5.0 mm');
+    expect(metricsClass('edit-metrics-depth')).toContain('warn');
+    expect(metricsClass('edit-metrics-depth')).not.toContain('danger');
+  });
+
+  it('旋转偏离 >45° 红：b rot 90（面积 400×450=180000、穿透 50）', () => {
+    const placed: PlacedItem[] = [
+      { id: 'a_28', rotation: 0, translation: [0, 0] },
+      { id: 'b_30', rotation: 90, translation: [600, 50] },
+    ];
+    const svg = mountCanvas('full', seedRun(placed));
+    selectPiece(svg, '#00ff00');
+    expect(metricsText('edit-metrics-area')).toBe('180000.0 mm²（1800.00 cm²）');
+    expect(metricsText('edit-metrics-depth')).toBe('50.0 mm');
+    expect(metricsText('edit-metrics-rot')).toBe('90.0°');
+    expect(metricsClass('edit-metrics-rot')).toContain('danger');
+  });
+
+  it('拖动中（rAF 帧）指标实时刷新 —— 无需抬手', async () => {
+    const svg = mountCanvas('full', seedRun(PLACED_AB));
+    mockRect(svg, 550, 500);
+    const roughB = roughPolyOf(svg, '#00ff00');
+    act(() => {
+      firePointer(roughB, 'pointerdown', 100, 100);
+    });
+    expect(metricsText('edit-metrics-area')).toBe('0.0 mm²（0.00 cm²）'); // 起手无重合
+    act(() => {
+      firePointer(roughB, 'pointermove', 25, 75); // dClient(-75,-25) → world(-150,+50) → b@[450,50]
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 30)); // 等 rAF 帧落（拖动未抬手）
+    });
+    expect(metricsText('edit-metrics-area')).toBe('22500.0 mm²（225.00 cm²）');
+    expect(metricsText('edit-metrics-depth')).toBe('50.0 mm');
+    expect(
+      svg.querySelectorAll('polygon[fill="rgba(255, 64, 64, 0.42)"]').length,
+    ).toBeGreaterThan(0);
+    act(() => {
+      firePointer(roughB, 'pointerup', 25, 75);
+    });
   });
 });

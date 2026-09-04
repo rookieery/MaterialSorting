@@ -2,16 +2,10 @@
   "branchName": "ralph/edit-nesting-layout",
   "stories": [
     {
-      "id": "US-002",
-      "title": "编辑弹窗渲染与查看（完整版/毛板+缩放平移+禁关闭）",
-      "description": "As a 版师, I want 一个大弹窗全量展示当前排料布局、顶部实时显示料长与利用率、可切完整版/毛板、可缩放平移 so that 我能先看清再动手微调（PRD US-002）。\n\n具体任务：\n1. materialSorting-web/src/components/nests/pieceDom.ts（新）— 自 NestSVG.tsx:273-347 机械提取 createPieceEntry + 相关常量（5 层节点构建：毛版 polygon/净版/内部线/刀口/布纹线），NestSVG 改 import——纯机械搬移零行为变化，唯一动现有渲染代码的点，靠 NestSVG 现有单测（渲染/seek 系列）锁回归\n2. materialSorting-web/src/store/controlPanelStore.ts — ControlPanelModalId 联合类型加 'edit_layout'\n3. materialSorting-web/src/components/edit/EditLayoutModal.tsx（新）— 声明式受控 Portal（订阅 controlPanelStore.modal==='edit_layout'，范本 ExportInfoModal）；结构 = 顶部状态条（料长 mm + 利用率 % + 相对基线 Δpt，初值 = 基线，经 US-001 computeLayoutStats 同一真相源）+ 右上角 ✕ 关闭按钮 + 中心画布 + 左下形态 select（完整版/毛板）+ 右下仅「保存当前布局」单按钮（取消按钮已废弃）；z-index 1250；全屏 overlay 阻断主界面；不挂 ESC listener、遮罩 mousedown 不调 close\n4. materialSorting-web/src/components/edit/EditCanvas.tsx（新）— 命令式 SVG 画布：复用 pieceDom 渲染 5 层全量（scale(1,-1) 翻转组 + setAttribute 命令式范式原样保留），demand 多副本按「出现序」渲染（与 NestSVG.tsx:188-199 reached 计数器同语义）；毛板模式 = 4 层工艺节点 display 切换隐藏、毛版 polygon + 尺码色保留；缩放平移 = 滚轮以指针为锚缩放 viewBox + 按住空白处拖动平移 + 重置视图/± 按钮；指针→世界坐标走 clientToWorld\n5. materialSorting-web/src/style.css — .edit-layout-* 样式族（暗色同款观感）\n\n验收标准：\n- pieceDom 提取后 NestSVG 现有单测全绿（零行为变化）\n- 弹窗完整版与主视图同构同观感（5 层 + 尺码色），毛板仅毛版轮廓 + 色，两形态即时切换可恢复\n- 顶部状态条初值 = 主视图利用率与料长\n- 滚轮缩放（指针锚）+ 空白平移 + 重置视图可用；clientToWorld 在 viewBox 变化下世界坐标取值正确（单测锁）\n- ESC keydown 与遮罩 mousedown 均不关闭（单测 dispatch 断言弹窗仍在）；关闭仅两条路径 = 右上 ✕（本 story 仅渲染，dirty 确认接线在 US-004）与右下保存\n- 通过浏览器验证排料渲染（完整版/毛板与主视图布局一致性）；vitest + npm run typecheck + npm run build 通过",
-      "passes": true
-    },
-    {
       "id": "US-003",
       "title": "拖动、旋转与重合指标（含实时利用率状态条）",
       "description": "As a 版师, I want 拖动/旋转单个裁片并实时看到重合区域、重合量、布纹角度与利用率变化 so that 我能安全地微调每片的位置与姿态并直观感受用料代价（PRD US-003）。\n\n具体任务：\n1. materialSorting-web/src/components/edit/EditCanvas.tsx 扩展 — 拖动：毛版 polygon pointerdown + setPointerCapture → pointermove 只 setAttribute 被拖片 5 层节点 → working 下标项 translation 更新；Y 硬钳制 [0, gate]（按被拖片 bbox，gate = manifest.gate_mm）、x<0 钳 0、x 超原布局右界自由拖（保存时双向伸缩 width_mm）；被拖片渲染提层置顶\n2. 旋转 — 选中片质心上方显示旋转手柄，拖柄转角；自由角度、不做 0°/180° 吸附（2026-09-04 定案）；布纹线随片同步旋转\n3. 重合指标（rAF 节流，消费 US-001 overlap.ts）— bbox 相交邻居渲染红色半透明交集 polygon；画布右上固定指标面板：重合面积 mm²（括注 cm²，÷100 站内惯例）+ 最大穿透深度 mm + 旋转偏离角 °（= 相对 {0°,180°} 最小偏差 min(|rot|,|rot−180|,|rot−360|)）；阈值着色：深度 ≤10mm 琥珀 / >10mm 红（MAX_OVERLAP_MM=10 口径）、偏离角 >45° 红（MAX_ROTATION_TOL_DEG）——既有布局合法含 ≤10mm 重合，口径 = 如实展示 + 阈值着色不报警\n4. 顶部状态条实时更新 — 料长 = ceil(当前包络 maxX)、利用率 = total_area/(料长×gate)、Δ 相对基线，与保存口径同真相源（computeLayoutStats），rAF 同帧刷新；包络 maxX 复用 overlap 预计算 bbox 增量更新被拖片一项\n5. 口径与降级 — 指标基于 manifest（erode 后）多边形（与 solver 碰撞判定同口径），面板脚注注明「按算法碰撞口径」；布尔交异常降级「bbox 交高亮 + 面积按 bbox 估算」不阻塞拖动\n\n验收标准：\n- 拖动/旋转后 working 下标项 translation/rotation 精确断言（jsdom PointerEvent polyfill：window.PointerEvent = class extends MouseEvent {}，beforeEach 一行）\n- 拖动中交集高亮出现、指标面板三值正确（合成夹具精确值断言）、阈值着色正确（≤10 琥珀 / >10 红 / >45° 红）\n- 拖片右移超界 → 状态条料长增/利用率降；左移腾空尾部 → 料长缩/利用率升（与保存同公式同真相源）\n- Y 越界钳制、x<0 钳 0 生效（单测）\n- 通过浏览器验证拖动流畅、指标与状态条实时性；vitest + npm run typecheck + npm run build 通过",
-      "passes": false
+      "passes": true
     },
     {
       "id": "US-004",
