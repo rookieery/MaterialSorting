@@ -66,6 +66,9 @@ import { useUploadStore } from '../../store/uploadStore';
 import { useQtyStore } from '../../store/qtyStore';
 import { ExportButtons } from './ExportButtons';
 import { ExportInfoModal } from './ExportInfoModal';
+// 编辑排料 US-002：编辑弹窗单例（订阅 controlPanelStore 自显隐；Portal 到 body）。
+// 打开入口 = US-004 主界面「编辑排料」区块（本 story store 驱动 + 单测直开）。
+import { EditLayoutModal } from '../edit/EditLayoutModal';
 import { ParamForm } from './ParamForm';
 import { PerTypeOverrides } from './PerTypeOverrides';
 import { SizePicker, computeTotalCutPieces } from './SizePicker';
@@ -421,6 +424,8 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
       <ExportButtons solving={solving} exporting={exporting} onExport={handleExport} partial={partial} />
       {/* PLT 导出信息表格弹窗单例（订阅 controlPanelStore 自显隐；Portal 到 body）。 */}
       <ExportInfoModal exporting={exporting} onConfirm={handlePltConfirm} variant={pendingPltFmt} />
+      {/* 编辑排料弹窗单例（US-002；打开入口在 US-004 EditLayoutControls）。 */}
+      <EditLayoutModal />
     </aside>
   );
 }

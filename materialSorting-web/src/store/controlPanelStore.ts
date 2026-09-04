@@ -21,8 +21,16 @@
 import { create } from 'zustand';
 
 /** 当前激活的模态（US-005 起 'per_type' | 'strategy_run'；US-003 加 'extreme_run'；
- * 2026-08-30 加 'export_info' —— PLT 导出前的唛架信息表格填写弹窗）。 */
-export type ControlPanelModalId = 'per_type' | 'strategy_run' | 'extreme_run' | 'export_info';
+ * 2026-08-30 加 'export_info' —— PLT 导出前的唛架信息表格填写弹窗；
+ * 编辑排料 US-002（2026-09-04）加 'edit_layout' —— 排料结果手工微调大弹窗，
+ * **有意偏离全站 ESC/遮罩关闭惯例**：编辑草稿不可被误触丢弃，唯一关闭路径 =
+ * 右上 ✕ 与右下保存（见 EditLayoutModal））。 */
+export type ControlPanelModalId =
+  | 'per_type'
+  | 'strategy_run'
+  | 'extreme_run'
+  | 'export_info'
+  | 'edit_layout';
 
 export interface ControlPanelState {
   /** 高级配置弹窗显隐；null = 关闭。 */

@@ -2065,3 +2065,199 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
   border-radius: 4px;
   padding: 6px 10px;
 }
+
+/* ============================================================
+ * 编辑排料弹窗（US-002，.edit-layout-* 家族）。
+ * z-index 1250 —— ptype-preview(1200) 之上、band-zoom(1300) 之下：
+ * 编辑弹窗盖住裁片预览、让位成带放大镜。
+ * 全屏 overlay 阻断主界面；**有意不挂遮罩点击关闭**（编辑草稿不可误触丢弃，
+ * 唯一关闭 = 右上 ✕ / 右下保存 —— CSS 层无 pointer-events 例外，遮罩无 cursor 变化）。
+ * ============================================================ */
+.edit-layout-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1250;
+}
+.edit-layout-modal {
+  position: relative;
+  background: #26282e;
+  border: 1px solid #34363d;
+  border-radius: 8px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  width: 92vw;
+  height: 92vh;
+  overflow: hidden; /* 圆角裁切（body 内画布不外溢） */
+  display: flex;
+  flex-direction: column;
+  font-size: 13px;
+  color: #e6e6e6;
+}
+/* 顶部状态条：料长 / 利用率 / Δ 三指标 + 右上 ✕（唯一关闭路径之一） */
+.edit-layout-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid #34363d;
+  flex-shrink: 0;
+}
+.edit-layout-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.edit-layout-stat {
+  background: #1f2127;
+  border: 1px solid #31343c;
+  border-radius: 4px;
+  padding: 5px 10px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #e6e6e6;
+  white-space: nowrap;
+}
+.edit-layout-close {
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: #cdd;
+  border: 0;
+  border-radius: 4px;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s, color 0.15s;
+  flex-shrink: 0;
+}
+.edit-layout-close:hover {
+  background: #3f424a;
+  color: #2ea06c;
+}
+.edit-layout-close:focus-visible {
+  outline: 2px solid #2ea06c;
+  outline-offset: 1px;
+}
+/* 中心画布：flex 1 占满；EditCanvas 命令式 svg 铺满 */
+.edit-layout-body {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  background: #1a1c21;
+}
+.edit-layout-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #9aa;
+  font-size: 14px;
+}
+.edit-layout-canvas-wrap {
+  position: absolute;
+  inset: 0;
+}
+.edit-layout-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  cursor: grab;
+  touch-action: none; /* 指针交互归 pointer events（pan/US-003 拖动），禁浏览器手势 */
+}
+.edit-layout-svg:active {
+  cursor: grabbing;
+}
+/* 视图工具（左上竖排：＋/－/重置视图；右上留给 US-003 指标面板） */
+.edit-layout-canvas-tools {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  z-index: 1;
+}
+.edit-layout-tool {
+  min-width: 32px;
+  height: 30px;
+  padding: 0 8px;
+  background: #1f2127;
+  color: #e6e6e6;
+  border: 1px solid #3a3d45;
+  border-radius: 4px;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  font-family: inherit;
+  transition: border-color 0.15s, color 0.15s;
+}
+.edit-layout-tool:hover {
+  border-color: #2ea06c;
+  color: #2ea06c;
+}
+.edit-layout-tool:focus-visible {
+  outline: 2px solid #2ea06c;
+  outline-offset: 1px;
+}
+.edit-layout-tool-reset {
+  font-size: 12px;
+  font-weight: 600;
+}
+/* 底部条：左下形态 select（完整版/毛板）+ 右下唯一「保存当前布局」 */
+.edit-layout-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-top: 1px solid #34363d;
+  flex-shrink: 0;
+}
+.edit-layout-mode {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #9aa;
+  font-size: 12px;
+}
+.edit-layout-mode select {
+  background: #1c1d22;
+  color: #e6e6e6;
+  border: 1px solid #3a3d45;
+  border-radius: 3px;
+  padding: 5px 8px;
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.edit-layout-mode select:focus {
+  outline: none;
+  border-color: #2ea06c;
+}
+.edit-layout-save {
+  background: #2ea06c;
+  color: #fff;
+  border: 1px solid #2ea06c;
+  border-radius: 4px;
+  padding: 7px 18px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s, border-color 0.15s;
+}
+.edit-layout-save:hover {
+  background: #35b57d;
+  border-color: #35b57d;
+}
+.edit-layout-save:focus-visible {
+  outline: 2px solid #7fd4a8;
+  outline-offset: 1px;
+}

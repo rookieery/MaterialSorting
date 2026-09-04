@@ -67,4 +67,13 @@ describe('controlPanelStore US-018', () => {
     expect(useControlPanelStore.getState().previewLabel).toBeNull();
     expect(useControlPanelStore.getState().modal).toBe('per_type');
   });
+
+  // 编辑排料 US-002：'edit_layout' 入联合类型 —— closeModal 通用关闭（弹窗自身不挂
+  // ESC/遮罩路径，但 store 层 openModal/closeModal 语义与其他 id 一致）。
+  it('openModal(edit_layout) / closeModal 切换 modal（编辑排料弹窗，US-002）', () => {
+    useControlPanelStore.getState().openModal('edit_layout');
+    expect(useControlPanelStore.getState().modal).toBe('edit_layout');
+    useControlPanelStore.getState().closeModal();
+    expect(useControlPanelStore.getState().modal).toBeNull();
+  });
 });

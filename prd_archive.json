@@ -832,5 +832,16 @@
         "passes": true
       }
     ]
+  },
+  {
+    "branchName": "ralph/edit-nesting-layout",
+    "stories": [
+      {
+        "id": "US-001",
+        "title": "编辑几何与状态基础（几何库+重合计算+editStore）",
+        "description": "As a developer, I want 多边形变换/布尔交/穿透深度纯函数库 + 重合计算器 + 编辑态 store so that 编辑弹窗有计算与状态地基（PRD: tasks/prd-edit-nesting-layout.md US-001）。\n\n具体任务：\n1. materialSorting-web/package.json — 引入 polygon-clipping（Martinez–Rueda 纯 TS，MIT），不引入其它新依赖\n2. materialSorting-web/src/lib/editGeometry.ts（新）— transformPolygon(poly, rot, tr) 数组版（与 src/lib/geometry.ts:30-43 pointsStr 同公式逐点一致）、polygonArea 多 ring 求和版（src/lib/params.ts:374-382 私有实现导出复用）、bboxOf / bboxIntersect、pointInPolygon、penetrationDepth（A 内顶点落入 B / B 内顶点落入 A 的点到对方各边距离最大值）、clientToWorld（flipGroup.getScreenCTM().inverse() + svg.createSVGPoint()，涵盖 meet letterbox + scale(1,-1) 翻转）\n3. materialSorting-web/src/lib/overlap.ts（新）— precomputeEditPieces(manifest, frame)：全部 placed 片按 placed_items 数组下标展开为 {key, pid, rot, tr, basePolygon, worldPolygon, bbox}（多副本 = 同 pid 第 k 次出现 = 第 k 副本）；computeOverlap(dragged, others)：bbox 预筛（只对相交邻居）→ polygon-clipping intersection → 交集 MultiPolygon（渲染用）+ 面积（shoelace 各 ring 取和）+ 最大穿透深度\n4. materialSorting-web/src/store/editStore.ts（新）— open 快照不可变基线全套（placed_items 深拷贝 + frameIndex / widthMm / density / finalDensity / viewBoxMaxW）；computeLayoutStats(working, manifest) 纯函数 = width = ceil(全布局包络 maxX)（下限 1mm，双向伸缩）+ density = manifest.total_area_mm2/(width×gate_mm)（real 口径）；save = 原地写回指定 RunRecord.lastFrame.placed_items（下标保序）+ lastFrame.width_mm / lastFrame.density / run.finalDensity / run.viewBoxMaxW 按 computeLayoutStats 重算 + bumpRenderTick() + savedDirty=true，防御校验 run 仍在 runRegistry.list()（陈旧 run 拒绝）；reset = 恢复基线全套；invalidate = 清态\n\n验收标准：\n- transformPolygon 与 lib/geometry.ts pointsStr 同公式逐点一致（单测对拍）\n- computeOverlap：两矩形交面积精确值、凹多边形交 ring 数、bbox 预筛行为、穿透深度——矩形/三角/凹形夹具单测锁死\n- editStore：save 原地写回与密度重算（扩长降/缩短升双向用例）、reset 恢复全套、invalidate 清态、陈旧 run 保存拒绝，store 级单测覆盖\n- computeLayoutStats 与保存/实时显示同真相源（同一函数）\n- 前端门：vitest 新增套件全绿 + npm run typecheck + npm run build 通过（后端零改动）",
+        "passes": true
+      }
+    ]
   }
 ]
