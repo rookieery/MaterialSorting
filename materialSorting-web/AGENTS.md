@@ -586,3 +586,14 @@ src/
 - **invalidate 双挂点**：NestingPage.handleStart 与 applyStrategyResult 清场（runRegistry.clear()）后必须同步 `useEditStore.getState().invalidate()` —— registry 校验能拒绝陈旧 save/reset，但 working/baseline 会残留（下标错位隐患）；挂点幂等。
 - **导出闭环零改动红线**：/export 与 /api/plt-table-preview 的几何输入只从 bestRun().lastFrame 取 —— 保存（editStore.save 写回 width/density/placed + viewBoxMaxW 跟随 + bumpRenderTick）后自动继承；任何「导出前单独读编辑态」的实现都是违约。density_sparrow 恒不动。
 - **测试套路**：confirm 层交互 = 先 act 点触发钮、再 act 点确认/取消（同一 act 内两连点会因 React 批处理读不到层节点）；handleStart 集成测 = 局部 MockWS（App.test 同款）+ 点 #sz_* 与 #start；fixture 记得设 `run.viewBoxMaxW`（useSolveRun 逐帧维护，手造 run 缺省 0 会让 reset 恢复断言误判）。
+
+## 编辑排料关键约定（US-005 端到端红线四条 调用方必读）
+
+全链路（上传→求解→编辑→保存→导出→重置）冒烟锁死于 `scripts/smoke_edit_layout.mjs`（2026-09-04，repo 根；范本 scripts/smoke_plt_table_preview.mjs，Playwright + chrome channel，prod :8000 真打后端，报告落 `out/smoke_edit_layout/report.json`、退出码 0 = 全 PASS）。四条红线任何一条被破坏，冒烟即红：
+
+- **① 禁 ESC/遮罩关闭**：编辑弹窗与其确认层的唯一关闭路径 = 右上 ✕（dirty 二次确认）与右下保存 —— 与全站弹窗「ESC/遮罩可关」惯例的**有意偏离**（半屏 overlay 下误触丢草稿不可逆）；ESC 与遮罩点击在 modal 与 confirm 层均不挂监听，改回惯例前先改冒烟与三态单测。
+- **② 多副本按 placed_items 数组寻址保序写回**：同一 pid 出现 k 次 = k 副本，身份是 **working/lastFrame.placed_items 的数组下标**（出现序），不是 pid —— save 原地保序写回、EditCanvas 每下标一份 5 层节点；提层置顶只重排 DOM 文档序（跨渲染寻址用毛版 points 字符串当片身份），任何「按 pid 找片」的实现都会写错副本。
+- **③ width_mm 随编辑包络双向伸缩 + density 族同口径重算**：料长 = `ceil(当前包络 maxX)`（`computeLayoutStats` 单一真相源：状态条/保存/重置/NestLabel/viewBoxMaxW 同公式），density = real 口径 `total_area/(width×gate)` 重算、**density_sparrow 恒不动**；PLT 表格预览与导出标题 pct 读 bestRun().lastFrame 自动跟随 —— 导出侧零改动是验收断言（smoke S5/S7d 抓 POST /export 对拍 placed/density 与 solver 基线 diff 非空/回零）。
+- **④ 重合指标按 erode 几何口径**：面积/穿透/交集高亮基于 manifest erode 后轮廓（= solver 碰撞口径，`precomputeEditPiecesFromItems` 池），面板脚注「按算法碰撞口径」；物理毛版（未 erode）实际重合最多大 ~2·d_g（d_g=per_type 间距，默认 0）—— 指标只对算法口径负责，不许改报物理轮廓值。
+
+冒烟口径备注：5336 母版 3 码（32/33/34）30 片 20s 短求解；「完整版 5 层/毛板纯轮廓」两形态按 stroke 色（净版 #33cc33/内部线 #ff8c1a/刺口 #ffd700/布纹线 #e53e3e）+ display 断言；状态条初值 vs 主视图利用率按 ceil 取整伪影上界（density×≤1mm/料长）对拍；右缘多片同 ceil 桶须逐片左移包络才回缩（US-003 教训，smoke S6 循环拖）。

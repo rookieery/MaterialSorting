@@ -1696,3 +1696,32 @@ ExportInfoModal 均读 bestRun().lastFrame，save 写回后 placed/density 自�
   不动；尾片左移 700mm 保存 → 79.70%→83.59% / viewBox 收缩 6449→6149；弹窗外重置
   confirm → NestLabel/viewBox(fab)/全 90 片 points 逐一回算法基线。验收后浏览器关闭、
   ms-web 进程已杀。
+
+## 编辑排料 US-005 落地：端到端冒烟与文档闭环（2026-09-04）
+
+编辑排料 PRD 收官：不新增组件，全链路（上传→求解→编辑→保存→导出→重置）用一条
+冒烟锁死回归；四条红线入册 `materialSorting-web/AGENTS.md`「编辑排料关键约定」节。
+
+| 文件 | 职责 |
+| --- | --- |
+| `scripts/smoke_edit_layout.mjs`（新，repo 根） | 端到端冒烟 harness（范本 scripts/smoke_plt_table_preview.mjs，Playwright + chrome channel headless，prod :8000 真打后端，断言全走 DOM/路由抓包不依赖 store import）。27 检查：S1 上传 5336 → commit（g01..g10）→ 3 码（32/33/34）20s 短求解 30 片 final（84.60%/1868mm）+ 基线三锚（solver 终帧 placed / final.density / 主视图快照 NestLabel+points+viewBox）；S2 完整版 5 层（毛版/净版 #33cc33/内部线 #ff8c1a/刺口 #ffd700/布纹线 #e53e3e 按 stroke 色 + display 可见性断言）↔ 毛板纯轮廓（4 工艺层全 none、毛版恒显）可逆切换 + 状态条初值 = 主视图利用率（ceil 取整伪影上界 = density×≤1mm/料长 对拍）+ Δ +0.00pt；S3 拖右端片 +300mm 超界（料长 1869→2169 / 72.88%）+ 点选另一片拖柄旋转（points/布纹线端点变化）→ 指标面板三值（area/depth/rot=73.3°）+ 脚注算法碰撞口径；S4 保存 → 主视图**恰两片** points 重绘（被拖片 maxX 增 + 旋转片）+ NestLabel 同步 + viewBox/fab = 保存料长；S5 导出 PLT（默认 plt-clean 毛版）POST /export 200 抓包：placed 与基线 diff=2/30 非空 + density 72.88%<84.60% 非空；S6 ✕ 直关（非 dirty 无确认层）→ 重开右缘逐片左移腾空（US-003 同 ceil 桶教训循环拖）→ 74.77%/2114mm 保存收缩；S7 弹窗外重置（confirm 原文案）→ NestLabel/全片 points/viewBox 逐一回算法基线 → 再导出抓包 **placed diff 回零（0/30 逐片 ε 对拍）+ density == final.density（1e-9）**。报告落 `out/smoke_edit_layout/report.json`，退出码 0 = 全 PASS。 |
+
+### 关键不变量（US-005 立，后续故事不得破坏）
+
+- **冒烟是四条红线的执行器**：①禁 ESC/遮罩关闭（唯一关闭 = ✕/保存）②多副本按
+  placed_items 数组寻址保序写回 ③width_mm 随编辑包络双向伸缩 + density 族 real 口径
+  total_area/(width×gate) 同源重算（density_sparrow 不动、PLT 表格/导出标题自动跟随）
+  ④重合指标按 erode 几何口径 —— 改其中任一行为必须先改冒烟判据（详见
+  materialSorting-web/AGENTS.md「编辑排料关键约定」节）。
+- **导出 fmt 断言口径**：默认导出 fmt = `plt-clean`（PLT 毛版，2026-08-31 起现场主交付），
+  冒烟按 `plt || plt-clean` 断言（同族）；Content-Disposition 均 .plt 附件。
+- **基线三锚**：solver 终帧 placed_items（WS frame 抓包）、final.density、主视图快照
+  （NestLabel/points/viewBox）—— S5 的「diff 非空」与 S7 的「diff 回零」都以三锚对拍，
+  重置恢复断言强于肉眼比对（points 逐串相等 + 密度 1e-9）。
+
+### 验证
+
+- 冒烟 **27/27 PASS**（`out/smoke_edit_layout/report.json` + 5 截图，退出码 0）。
+- 前端门：vitest 全量 **936 passed**（61 文件，零新增用例 —— 本故事无组件改动）/
+  `npm run typecheck` 干净 / `npm run build` 过（296.59KB gzip 96.89KB）。
+- 验收后浏览器关闭（Playwright browser.close()）、ms-web 进程已杀（port 8000 free）。
