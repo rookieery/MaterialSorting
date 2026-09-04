@@ -12,7 +12,7 @@ sidecar → load_nest_pieces → intermediate 落盘」全管线，产出与 web
     **不写 .bak**（时间戳 run_dir 天然全新，无旧产物可备份/清理）；
   - 顶层省略 web 专属 ``label_representatives``（GET /api/ptypes 缩略图用，CLI 无消费方）；
   - ``gate_mm`` 写 ``cfg.gate_mm``（配置驱动，与该 run 求解密度分母同源；web commit
-    固定写 ``GATE_MM=1980`` 显示常量 —— 示例配置 gate_mm=1980 时两者同值）。
+    固定写 ``GATE_MM=1750`` 显示常量，2026-09-04 起默认 175cm）。
 
 镜像维护约定：``server._commit_to_nesting_sync`` 的 piece schema（pid/label/size/
 polygon/bbox/area_mm2/n_verts/allowed_angles + 5 层透传 + rounding 位数）变更时，

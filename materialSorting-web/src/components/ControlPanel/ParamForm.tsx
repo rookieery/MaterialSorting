@@ -4,7 +4,7 @@
 // DOM 沿用旧 style.css `.field.row` / `label` / `input[type=number]`（US-008 前 CSS 不动）。
 //
 // 2026-08-28 版师要求幅宽两位小数口径：step=0.01 支持小数步进（parseGate parseFloat），
-// 失焦 normalizeGate 归一化（两位小数 + [50,400] 钳制），默认显示 198.00。
+// 失焦 normalizeGate 归一化（两位小数 + [50,400] 钳制），默认显示 175.00。
 
 import { normalizeGate } from '../../lib/params';
 //

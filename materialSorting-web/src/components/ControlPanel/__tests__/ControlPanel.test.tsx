@@ -23,7 +23,7 @@
 //
 // 2026-08-27 重传联动 additions:
 //   - doc_id 变化（重传）→ form 整体回 DEFAULT_FORM（码号清空 / band·prefix 关 /
-//     per_type 清空 / 幅宽 198.00 / 时长 120；经 start payload 公共契约断言）
+//     per_type 清空 / 幅宽 175.00 / 时长 120；经 start payload 公共契约断言）
 //   - doc_id 不变（切 activeSize）→ 不触发重置（用户编辑保留）
 //   - 首次上传（null→doc_id）→ 同样回默认（effect 挂点统一，无特殊分支）
 
@@ -1181,13 +1181,13 @@ describe("ControlPanel 重传联动：doc_id 变化重置 form (2026-08-27)", ()
     for (const c of checkboxesAfter) expect(c.checked).toBe(false);
     expect(container!.querySelector<HTMLButtonElement>("#start")!.disabled).toBe(true);
     // 幅宽/时长回默认（用户决策：全部重置，含机器参数；幅宽 2026-08-28 起两位小数口径）
-    expect(container!.querySelector<HTMLInputElement>("#gate")!.value).toBe("198.00");
+    expect(container!.querySelector<HTMLInputElement>("#gate")!.value).toBe("175.00");
     expect(container!.querySelector<HTMLInputElement>("#time")!.value).toBe("120");
     // StatusLine 无 band 闸门文案（band_enabled 已回 false）
     expect(container!.querySelector("#status")!.textContent).not.toContain("腰头成带");
   });
 
-  it("重传后重新配置求解 → start payload 无旧母版残留（band/per_type null + 幅宽 1980）", async () => {
+  it("重传后重新配置求解 → start payload 无旧母版残留（band/per_type null + 幅宽 1750）", async () => {
     const onStart = vi.fn();
     setupDoc("master-a");
     renderPanel(onStart);
@@ -1199,7 +1199,7 @@ describe("ControlPanel 重传联动：doc_id 变化重置 form (2026-08-27)", ()
     act(() => {
       setupDoc("master-b");
     });
-    // 新母版下重新勾码号 → 启动 → 载荷无 band（旧 g 码选择已清）、无 per_type、幅宽回 1980
+    // 新母版下重新勾码号 → 启动 → 载荷无 band（旧 g 码选择已清）、无 per_type、幅宽回 1750
     const checkboxesAfter = container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]");
     act(() => {
       for (const c of checkboxesAfter) c.click();
@@ -1211,7 +1211,7 @@ describe("ControlPanel 重传联动：doc_id 变化重置 form (2026-08-27)", ()
     expect(cfg.band).toBeNull();
     expect(cfg.prefix).toBeNull();
     expect(cfg.per_type).toBeNull();
-    expect(cfg.gate_mm).toBe(1980);
+    expect(cfg.gate_mm).toBe(1750);
   });
 
   it("doc_id 不变（切 activeSize / doc 引用不变）→ 不触发重置（编辑保留）", () => {

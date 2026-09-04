@@ -56,7 +56,7 @@ curl http://127.0.0.1:8000/api/ptypes                                  # US-020 
 - **临时单裁片目录**：`UPLOADS_DIR / f'{doc_id}_pieces'` = `{label}_{size}.dxf` × N + `pieces_manifest.json`。每次 commit 先 `shutil.rmtree` 再重写（**idempotent**，同 doc_id 重跑覆盖）。旧版切片目录（无 manifest sidecar）被 `load_nest_pieces` 明确报错「请重新 commit」（FR-9 不静默兼容）。
 - **备份**：写回前 `shutil.copy2(paths.INTERMEDIATE, paths.INTERMEDIATE.with_suffix('.bak'))`（首次 commit 无原文件则跳过）。`.bak` 只保留一份（再 commit 覆盖）。
 - **错误码**：请求体非 JSON / 缺 doc_id / 类型错 / `_DOC_ID_RE` 不中 → **400**；`uploads/<doc_id>.dxf` 不存在 → **404**；管线异常（collect 空 / write 全跳过 / load_nest_pieces 空 / 写盘失败）→ **422**。全部 JSONResponse。
-- **`GATE_MM` 导入**：`from ..nesting_bounds.load_pieces import GATE_MM`（写回新 intermediate 用源常量 1980，避免与既有 intermediate 的可能脏值扩散；2026-08-28 起直接用本名，旧 `as NEST_GATE_MM` 别名已随单一幅宽口径删除）。
+- **`GATE_MM` 导入**：`from ..nesting_bounds.load_pieces import GATE_MM`（写回新 intermediate 用源常量 1750（2026-09-04 起，旧值 1980），避免与既有 intermediate 的可能脏值扩散；2026-08-28 起直接用本名，旧 `as NEST_GATE_MM` 别名已随单一幅宽口径删除）。
 - **commit 后 reload（US-020；US-002 起按 sid 分叉）**：`_commit_to_nesting_sync` 成功后 —— 带 sid：`_build_pieces_state(str(_per_doc_intermediate(doc_id)))` 快照挂到该会话（`st.state`/`st.doc_id`，default 内存不动）；无 sid：`_reload_pieces_state(paths.INTERMEDIATE)`（**必须显式传参**：缺省参数在 import 时绑定，裸调读不到 monkeypatch 后的路径），下一次 `/ws/solve` / `/export` / `/api/ptypes` 即看到新裁片（前端无需重启 ms-web）。返回 payload 加 `reloaded: true`；快照构建异常（罕见 I/O 竞态）降级为 `reloaded: false` + `reload_error` 字段，保留旧 state 不半切。
 - **回归等价（历史口径，v1 时代）**：旧版（176 片镜像合成）commit 产物与历史 CLI 管线完全等价（实测 176/176、零面积 diff）。US-001 v2 起口径改为「intermediate 条数 = 母版 size≠None 轮廓数」（M1787 = 110），同 doc_id 重跑 idempotent（`total_area_mm2` 稳定）。
 

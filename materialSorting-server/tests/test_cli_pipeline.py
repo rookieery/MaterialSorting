@@ -28,7 +28,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 from materialsorting import paths as paths_mod
 from materialsorting.cli.config import NestRunConfig
 from materialsorting.cli.pipeline import commit_from_config, new_run_dir
-from materialsorting.nesting_bounds.load_pieces import PIECES_MANIFEST_NAME
+from materialsorting.nesting_bounds.load_pieces import GATE_MM, PIECES_MANIFEST_NAME
 from materialsorting.web import server as server_mod
 from materialsorting.web.server import _commit_to_nesting_sync
 from materialsorting.web.solver import load_pieces as solver_load_pieces
@@ -169,7 +169,9 @@ def test_cli_matches_web_commit_field_by_field(iso_env):
     tmp, _, web_inter, runs, master = iso_env
     web_result = _commit_to_nesting_sync('deadbeef', str(master), master.name)
     run_dir = runs / 'duel'
-    cli_result = commit_from_config(_cfg(master), run_dir)
+    # gate 对齐：web commit 固定写 GATE_MM（2026-09-04 起 1750），CLI 写 cfg.gate_mm
+    # —— 对拍用同值（GATE_MM 变更时本用例自动跟随，不再隐式依赖旧默认 1980）。
+    cli_result = commit_from_config(_cfg(master, gate_mm=GATE_MM), run_dir)
 
     web_doc = json.loads(web_inter.read_text(encoding='utf-8'))
     cli_doc = json.loads((run_dir / 'pieces_intermediate.json').read_text(encoding='utf-8'))

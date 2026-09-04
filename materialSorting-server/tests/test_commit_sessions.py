@@ -135,7 +135,7 @@ def test_sid_commit_double_writes_per_doc_and_mirror(client, commit_env):
     assert st.state['doc'] == doc_per
     assert {p['pid'] for p in st.state['pieces']} == _A_PIDS
     assert set(st.state['pieces_by_id']) == _A_PIDS
-    assert st.state['gate_mm'] == 1980.0
+    assert st.state['gate_mm'] == 1750.0
 
 
 # ---------------------------------------------------------------- AC2 双会话隔离
@@ -155,7 +155,7 @@ def test_dual_session_commit_isolation(client, commit_env):
     assert {p['pid'] for p in a.state['pieces']} == _A_PIDS     # A 不受 B 影响
     assert set(a.state['pieces_by_id']) == _A_PIDS
     assert {p['pid'] for p in b.state['pieces']} == _B_PIDS
-    assert a.state['gate_mm'] == b.state['gate_mm'] == 1980.0
+    assert a.state['gate_mm'] == b.state['gate_mm'] == 1750.0
     assert a.state['doc']['total_area_mm2'] != b.state['doc']['total_area_mm2']
 
     # 两份 per-doc 文件并存；镜像 = 最后 commit 者（B），漂移允许

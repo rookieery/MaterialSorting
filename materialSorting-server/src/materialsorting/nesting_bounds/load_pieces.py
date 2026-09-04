@@ -22,7 +22,8 @@ from dataclasses import dataclass, field
 
 from ..dxf_parser import reader, geometry, collect as _collect
 
-GATE_MM = 1980.0  # 门幅（mm）：web commit 默认门幅 / UI viewBox / 导出外框统一口径
+GATE_MM = 1750.0  # 门幅（mm）：web commit 默认门幅 / UI viewBox / 导出外框统一口径
+# 2026-09-04 默认值 1980→1750（=175cm，用户改判；仅默认，仍可任意输入）。
 # 2026-08-28 版师定案：**输入的幅宽就是实际幅宽，不做任何缩减** —— 求解约束带、
 # 密度分母、band/prefix 守卫、PLT 导出边界全部直接用 gate_mm（web/CLI 引擎同口径）。
 # 历史：2026-08 曾因绘图仪可写幅宽 1910 引入 min(gate, 1910) 钳制（NEST_GATE_MM，

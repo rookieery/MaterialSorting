@@ -182,10 +182,10 @@ ms-run-config data/configs/5336_coded_really.json --time 5 --solver-opts '{"expl
 ms-run-config data/configs/5336_coded_really.json --time 5 --rotate-opts                                                # 内置池逐 seed 轮换
 ```
 
-**LNS 波段重排后处理（PC-007）**：`ms-lns --run-dir <run目录> --time 30 --rounds 5 [--band-width 2970]` 对该 run 的最优布局（`portfolio.incumbent`，旧式 run 回退 best / 边车 `best_frame_s{seed}.json`）做波段级 ruin-and-recreate，突破单 seed 收敛分布上限。每轮：按 x 切竖直波段（缺省段宽 1.5×默认门幅 1980=2970）→ 取局部密度（段内原面积和/(段宽×该 run 门幅)）最差段 → 段内裁片构造**同口径子实例**（per_type/sizes/quantities 与母实例一致；demand>1 的 pid 全部副本整段重排禁拆分）多进程重解 → 新段跨度严格更窄才接受（新段压回原足迹内、右侧片左移 splice、总宽缩短），否则拒绝（**无改进时输出与输入逐字节不变**）；空段（纯空洞）无需求解直接让位。结束 `constraints.validate` + `y≤该 run 门幅` 双复检，失败回退输入布局。跨组重叠护栏逐对不劣化（shapely 对比原布局基线，杜绝拼接咬合产生新重叠）。产物落 run_dir：`result_lns.json`（新 placed_items + 前后 width/density 对比 + 逐段明细）+ `lns_compare.svg`（前后双面板对比）。
+**LNS 波段重排后处理（PC-007）**：`ms-lns --run-dir <run目录> --time 30 --rounds 5 [--band-width 2625]` 对该 run 的最优布局（`portfolio.incumbent`，旧式 run 回退 best / 边车 `best_frame_s{seed}.json`）做波段级 ruin-and-recreate，突破单 seed 收敛分布上限。每轮：按 x 切竖直波段（缺省段宽 1.5×默认门幅 1750=2625）→ 取局部密度（段内原面积和/(段宽×该 run 门幅)）最差段 → 段内裁片构造**同口径子实例**（per_type/sizes/quantities 与母实例一致；demand>1 的 pid 全部副本整段重排禁拆分）多进程重解 → 新段跨度严格更窄才接受（新段压回原足迹内、右侧片左移 splice、总宽缩短），否则拒绝（**无改进时输出与输入逐字节不变**）；空段（纯空洞）无需求解直接让位。结束 `constraints.validate` + `y≤该 run 门幅` 双复检，失败回退输入布局。跨组重叠护栏逐对不劣化（shapely 对比原布局基线，杜绝拼接咬合产生新重叠）。产物落 run_dir：`result_lns.json`（新 placed_items + 前后 width/density 对比 + 逐段明细）+ `lns_compare.svg`（前后双面板对比）。
 
 ```bash
-ms-lns --run-dir out/config_runs/<run目录> --time 30 --rounds 5            # 缺省段宽 1.5×默认门幅≈2970
+ms-lns --run-dir out/config_runs/<run目录> --time 30 --rounds 5            # 缺省段宽 1.5×默认门幅≈2625
 ms-lns --run-dir out/config_runs/<run目录> --time 60 --band-width 1500     # 更细波段粒度
 ```
 

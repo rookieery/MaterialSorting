@@ -56,7 +56,7 @@
   "fmt": "png" | "dxf" | "plt" | "plt-clean",  // 必填（US-033 新增 plt；2026-08-31 新增 'plt-clean' 毛版变体——当日由「净版」更名、与裁片 layer1「毛版轮廓」命名统一，见响应节）
   "sizes": [28, 30, 32],          // 码号列表（文件名用，排序后 '-' 拼接；空 → "all"）
   "seed": 0,                      // 文件名标注用
-  "gate_mm": 1980,                // run.manifest.gate_mm（多 run 共享）
+  "gate_mm": 1750,                // run.manifest.gate_mm（多 run 共享）
   "width_mm": 7058.0,             // run.lastFrame.width_mm（用布长度 mm）
   "density": 0.8983,              // run.finalDensity（原面积口径，0..1）
   "placed": [                     // run.lastFrame.placed_items
@@ -125,7 +125,7 @@ ExportInfoModal v3「按最终表格列序展示全部 14 字段（8 自动只�
 
 ```jsonc
 {
-  "gate_mm": 1980,     // 缺省 0 → 回退会话 state['gate_mm']（与 /export 同口径）
+  "gate_mm": 1750,     // 缺省 0 → 回退会话 state['gate_mm']（与 /export 同口径）
   "width_mm": 5157.57, // <=0 → 400
   "density": 0.8808,   // real_density（原面积·输入幅宽口径）
   "placed": [...]      // lastFrame.placed_items；空 → 400
@@ -280,7 +280,7 @@ curl -X POST http://127.0.0.1:8000/api/commit-to-nesting \
 1. **临时单裁片目录**：`paths.OUT_DIR/uploads/<doc_id>_pieces/`（`{label}_{size}.dxf` × N + `pieces_manifest.json` sidecar + **US-002 起加 `pieces_intermediate.json`（per-doc intermediate 主写点）**，每次 commit 先 `shutil.rmtree` 再重写，**idempotent**，同 `doc_id` 重跑会覆盖）。文件名仅人读，语义（label/size）全在 manifest —— 旧版目录（无 sidecar）被 `load_nest_pieces` 明确报错「请重新 commit」（FR-9 不静默兼容）。
 2. **US-002 双写**：同一 doc dict 写两文件，**顺序先 per-doc 后镜像** —— 主写 `uploads/<doc_id>_pieces/pieces_intermediate.json`（会话快照的数据源，多会话互不覆盖的磁盘锚点），镜像写全局 `paths.INTERMEDIATE`（单文档时代行为的兼容面：无 sid 启动 reload / CLI 工具链 / 人工排查；**带 sid commit 也刷镜像但不刷 default 内存** —— default = 最后无 sid commit 者，镜像 = 最后 commit 者，允许漂移）。镜像写失败仅 warn（stderr + 响应 `mirror_error` 键），不影响 per-doc 落盘与 200 响应。
 3. **intermediate 备份**：写回前 `shutil.copy2(paths.INTERMEDIATE, paths.INTERMEDIATE.with_suffix('.bak'))`（**备份行为保留在镜像侧**，per-doc 不做 .bak —— per-doc 目录本身随 commit 整体重写，天然 idempotent）。`pieces_intermediate.bak` 是上一次写回前的快照（首次 commit 无原文件则跳过备份）。**只保留一份**（再 commit 会覆盖 `.bak`）。
-4. **intermediate schema v2（US-001）**：`{doc_id(strategy US-004), source, gate_mm, n_pieces, total_area_mm2, pieces[], label_representatives}`；pieces 字段 `{pid, label, size, polygon, bbox, area_mm2, n_verts, allowed_angles, net_polygon(US-024), internal_lines(US-024), notches(US-024), grain_line(US-024)}` —— **无 `ptype`/`side`**（镜像/名称概念删除），`pid = f'{label}_{size}'`。`gate_mm=1980`（`nesting_bounds.load_pieces.GATE_MM`）、`allowed_angles=[0,180]`（v0.3 布纹线）。5 层字段由 `load_nest_pieces` 经 `_read_piece` + `_apply_layer_transforms` 与 polygon 共享 rotate→normalize transform 链后透传。顶层 `label_representatives`（原 `ptype_representatives`）：每 g 码 RAW 代表裁片（原始坐标，与上传预览同朝向）。`doc_id`（strategy US-004 新增）：commit 的母版原件定位键（`uploads/<doc_id>.dxf`，策略 start 的 config `master_dxf` 来源）；**旧 intermediate 无此键 → `/api/strategy/start` 422「母版信息缺少 doc_id，请重新上传并 commit」**。旧 v1 intermediate 被 `solver.load_pieces` 明确拒绝（「intermediate 为旧版 schema v1（含 ptype/side），请重新 commit 母版生成新数据」）。
+4. **intermediate schema v2（US-001）**：`{doc_id(strategy US-004), source, gate_mm, n_pieces, total_area_mm2, pieces[], label_representatives}`；pieces 字段 `{pid, label, size, polygon, bbox, area_mm2, n_verts, allowed_angles, net_polygon(US-024), internal_lines(US-024), notches(US-024), grain_line(US-024)}` —— **无 `ptype`/`side`**（镜像/名称概念删除），`pid = f'{label}_{size}'`。`gate_mm=1750`（`nesting_bounds.load_pieces.GATE_MM`，2026-09-04 起默认 175cm；旧 intermediate 为 1980，重传 commit 后更新）、`allowed_angles=[0,180]`（v0.3 布纹线）。5 层字段由 `load_nest_pieces` 经 `_read_piece` + `_apply_layer_transforms` 与 polygon 共享 rotate→normalize transform 链后透传。顶层 `label_representatives`（原 `ptype_representatives`）：每 g 码 RAW 代表裁片（原始坐标，与上传预览同朝向）。`doc_id`（strategy US-004 新增）：commit 的母版原件定位键（`uploads/<doc_id>.dxf`，策略 start 的 config `master_dxf` 来源）；**旧 intermediate 无此键 → `/api/strategy/start` 422「母版信息缺少 doc_id，请重新上传并 commit」**。旧 v1 intermediate 被 `solver.load_pieces` 明确拒绝（「intermediate 为旧版 schema v1（含 ptype/side），请重新 commit 母版生成新数据」）。
 5. **commit 后快照注册（US-020 + US-002 会话绑定）**：`_commit_to_nesting_sync` 成功 → **带 sid**：`_build_pieces_state(per-doc 路径)` 构建快照挂到该会话（`st.state = 快照`、`st.doc_id = doc_id`，default 内存不动）；**无 sid**：`_reload_pieces_state(paths.INTERMEDIATE)` 重读镜像填入 `_PIECES_STATE`（threading.Lock 保护，原子 clear+update；default 会话 state 即同一 dict，自动跟随 —— 路由显式传 `paths.INTERMEDIATE` 是因为 `_reload_pieces_state` 缺省参数在 import 时绑定，裸调读不到 monkeypatch 后的路径）。下一次 `/ws/solve` / `/export` / `/api/ptypes` 即看到新裁片，**前端无需重启 ms-web**（读路由按 sid 取会话快照为 US-003 范围）。快照构建异常（罕见 I/O 竞态）降级为 `reloaded: false` + `reload_error` 字段，保留旧 state 不半切。
 6. **commit 成功后触发 uploads TTL 清理（US-006）**：路由尾 `run_in_executor(diskclean.trigger_cleanup, str(UPLOADS_DIR))` —— best-effort（异常仅 warn，响应体无新键）；显式传模块常量 `UPLOADS_DIR`，测试 monkeypatch 后清理范围自动跟随 tmp。本轮 commit 的母版/切片天然不被清（mtime 新 + 会话 doc_id 在保护集）。
 
@@ -405,12 +405,12 @@ curl http://127.0.0.1:8000/api/ptypes -H "X-Session-Id: <sid>"
 ```jsonc
 // /api/band-preview
 {"band": {"enabled": true, "label": "g05"},
- "sizes": [28, 30], "quantities": {...}, "per_type": {...}, "params": {...}, "gate_mm": 1980}
+ "sizes": [28, 30], "quantities": {...}, "per_type": {...}, "params": {...}, "gate_mm": 1750}
 
 // /api/prefix-preview（多一个可选 seed）
 {"prefix": {"enabled": true, "front": "g02", "back": "g03"},
  "sizes": [28, 30], "quantities": {...}, "per_type": {...}, "params": {...},
- "gate_mm": 1980, "seed": 0}
+ "gate_mm": 1750, "seed": 0}
 ```
 
 - band/prefix 校验**复用 WS 同一校验点**（`routes_ws._parse_band` / `_parse_prefix`）—— WS / 策略 start / 预览三处口径恒一。
@@ -434,7 +434,7 @@ curl http://127.0.0.1:8000/api/ptypes -H "X-Session-Id: <sid>"
  "members": [{"pid": "g02_38", "size": 38, "color": "#...", "tag": "g02", "polygon": [[x,y],...]}],
  "extra": {"label": "g02", "size": 32},   // 补片在案时非 null（兜底 4 片 = null）
  "residual_mm": 1.55,                      // gate_mm − 组合片高（近满幅残余缝隙）
- "gate_mm": 1980.0,                        // 实际参与构造的门幅（payload > intermediate 回退）
+ "gate_mm": 1750.0,                        // 实际参与构造的门幅（payload > intermediate 回退）
  "fallback": false,                        // true = 无可行 5 片组合 → 兜底 4 片 seeded
  "outline": [[x,y],...]}
 ```
@@ -623,7 +623,7 @@ ws://127.0.0.1:8000/ws/solve?sid=<sid>     # 缺省/空串 → default 会话（
 ```jsonc
 {
   "type": "manifest",
-  "gate_mm": 1980,
+  "gate_mm": 1750,
   "total_area_mm2": <原面积之和，含缝份>,
   "n_eroded": <被 erode 的片数>,
   "pieces": [

@@ -51,7 +51,7 @@
 //   （useSolveRun / runRegistry / NestsGrid），恢复 UI 即回多 seed；多种子探索由
 //   「高级运行」（race/SE 后端策略编排）承接。
 // 2026-08-27 重传联动：doc_id 变化（重传新母版 / 首次上传 / reset）→ form 整体回
-//   DEFAULT_FORM（码号清空、band/prefix 关闭、per_type 清空、幅宽 198.00 / 时长 120）。
+//   DEFAULT_FORM（码号清空、band/prefix 关闭、per_type 清空、幅宽 175.00 / 时长 120）。
 //   与 US-014 数量矩阵「重传清零」同口径 —— 旧母版选择残留会使 band/prefix 旧 g 码
 //   在弹窗下拉兜底下看似合法（后端结构化 error 兜底才暴露）、per_type 旧键混进新
 //   母版高级配置表格列集。实现见组件内 useEffect([docId])（form 是本地 state，
@@ -144,7 +144,7 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
 
   // 重传联动（2026-08-27，与 PreviewPage quantities hydrate 同口径）：doc_id 变化
   // （首次上传 / 重传 / reset）→ form 整体回 DEFAULT_FORM（「新母版 = 全新表单」，
-  // 含幅宽 198.00 / 时长 120）。旧母版的码号 / band / prefix / per_type 对新母版可能
+  // 含幅宽 175.00 / 时长 120）。旧母版的码号 / band / prefix / per_type 对新母版可能
   // 非法 —— band/prefix 旧 g 码在弹窗下拉兜底下仍显示为合法选中项（点开始才被
   // 后端结构化 error 拦截）、per_type 旧键会混进新母版高级配置表格列集
   // （orderedLabels = reps ∪ 已配置键）、旧码号残留在 form.sizes。App 双页常驻
