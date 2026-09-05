@@ -1747,6 +1747,13 @@ testid/DOM containment（按钮在 .edit-layout-canvas-tools 内、checkbox 在
 pointer-events:none，native title 在卡内元素上不触发，必须放可悬停的按钮上）；
 `.edit-polish-foot` 删除，单测/冒烟改锁按钮 title 文案（卡内不再含口径字样）。
 
+**2026-09-05 四轮 UI 迭代（用户验收后）**：①形态 select 的「形态」标题文案删除
+（select 裸留；label 容器与 testid/DOM containment 不变，`.edit-layout-mode` 原
+label 文案的 gap/color/font-size 死亡样式随删）；②操作指南删「形态」「保存」两行
+（七行减五）—— 形态即眼前 select 自明、保存是 footer 按钮非画布手势，指南只留
+画布内交互。EditCanvas.test 工具区用例改锁：五条手势关键词在场 + 「形态」「保存」
+反向锁不回潮 + label 无文本节点。
+
 | 文件 | 职责 |
 | --- | --- |
 | `src/lib/editPolish.ts`（新） | 纯数据组装 + 单一请求出口（几何真相源留 Python）：`parsePrefixMemberPids(pid,size,extra)` 组合片 pid → 成员 pid 集合（`PS_{front}+{back}@{size}(+{extra}@{extra_size})` 权威式 —— **front 段是裸 label 无 @size**，size 取 stats.size 补全；畸形段/无从补全静默跳过 = best-effort；extra.pid 直收去重）；`buildExclude(run)`（band enabled+label → labels / RunRecord.prefix → pids / 皆无 → undefined 载荷省略键 —— 策略合成 run 无 WS final.prefix 记录自然省略）；`buildPolishPayload(working,run)`（placed 逐字段拷贝 translation 拷断引用 + gate_mm 取 manifest + exclude；无 manifest/working 空 → null 不发请求）；`postEditPolish(payload)`（apiFetch POST，!res.ok 透传服务端 error 前缀「微调失败：」/网络层 Error 直抛；401 session code 由 apiFetch 拦截走全局阻断 = 正确行为）。PolishMetrics/PolishReport 类型镜像引擎 _diagnose 七指标（density ×100 百分数） |

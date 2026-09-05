@@ -34,6 +34,9 @@
 // 定案太占空间）—— 解释锚点收进「智能微调」按钮 title 悬浮（卡体整体
 // pointer-events:none，native title 在其上不触发，锚点必须在可悬停的按钮上），
 // .edit-polish-foot 删除，单测/冒烟改锁按钮 title 文案。
+// 同日四轮：①形态 select 的「形态」标题文案删除（select 裸留，label 容器与
+// testid/DOM containment 不变）；②操作指南删「形态」「保存」两行（七行减五 ——
+// 形态即眼前 select 自明、保存是 footer 按钮非画布交互，指南只留画布手势）。
 //
 // US-003 交互（pointer effect 内闭包 —— 监听器只挂一次，状态一律走 ref /
 // editStore.getState()，不闭包 props/state）：
@@ -785,8 +788,9 @@ export function EditCanvas({ mode, onModeChange, polish }: EditCanvasProps) {
       {/* 骨架 svg：preserveAspectRatio 静态属性走 JSX；viewBox/子节点全部 imperative。 */}
       <svg ref={svgRef} xmlns={SVGNS} className="edit-layout-svg" preserveAspectRatio="xMinYMid meet" />
       {/* 视图工具（左上横排，2026-09-05 二轮迭代竖改横）：全览按钮 + 形态 select
-          （2026-09-05 自 footer 移入）+ 智能微调按钮（edit-polish US-003）。
-          右上留给 US-003 指标面板、左下微调对比卡、右下指南卡 —— 均悬浮不挡画布。 */}
+          （2026-09-05 自 footer 移入；同日四轮「形态」标题文案删除 —— select 裸留）
+          + 智能微调按钮（edit-polish US-003）。右上留给 US-003 指标面板、左下微调
+          对比卡、右下指南卡 —— 均悬浮不挡画布。 */}
       <div className="edit-layout-canvas-tools">
         <button
           type="button"
@@ -798,7 +802,6 @@ export function EditCanvas({ mode, onModeChange, polish }: EditCanvasProps) {
           全览
         </button>
         <label className="edit-layout-mode">
-          形态
           <select
             value={mode}
             onChange={(e) => onModeChange?.(e.target.value as EditViewMode)}
@@ -903,7 +906,9 @@ export function EditCanvas({ mode, onModeChange, polish }: EditCanvasProps) {
         </div>
       )}
       {/* 操作指南（画布右下、保存按钮上方；与指标面板同款悬浮卡不挡交互）。
-          行式 = 左对齐自然换行（.edit-guide-row），非指标面板的两端对齐 nowrap。 */}
+          行式 = 左对齐自然换行（.edit-guide-row），非指标面板的两端对齐 nowrap。
+          2026-09-05 四轮：删「形态」「保存」两行（七减五）—— 形态即眼前 select
+          自明、保存是 footer 按钮非画布手势，指南只留画布内交互。 */}
       <div className="edit-guide" data-testid="edit-guide">
       <div className="edit-metrics-title">操作指南</div>
       <div className="edit-guide-row">
@@ -920,12 +925,6 @@ export function EditCanvas({ mode, onModeChange, polish }: EditCanvasProps) {
       </div>
       <div className="edit-guide-row">
         <span className="edit-metrics-label">取消选中：</span>单击空白处
-      </div>
-      <div className="edit-guide-row">
-        <span className="edit-metrics-label">形态：</span>左上下拉切换 完整版 / 毛板
-      </div>
-      <div className="edit-guide-row">
-        <span className="edit-metrics-label">保存：</span>右下「保存当前布局」；✕ 关闭（有改动先确认）
       </div>
       <div className="edit-guide-foot">拖动自动限制在门幅内（上下不出布边）</div>
       </div>

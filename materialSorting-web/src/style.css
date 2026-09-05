@@ -2242,12 +2242,11 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
   border-top: 1px solid #34363d;
   flex-shrink: 0;
 }
+/* 形态 select 容器（2026-09-05 四轮：「形态」标题文案删除 —— 原 label 文案的
+   gap/color/font-size 死亡样式随删，类保留作 select 后代选择器锚点）。 */
 .edit-layout-mode {
   display: flex;
   align-items: center;
-  gap: 8px;
-  color: #9aa;
-  font-size: 12px;
 }
 .edit-layout-mode select {
   background: #1c1d22;

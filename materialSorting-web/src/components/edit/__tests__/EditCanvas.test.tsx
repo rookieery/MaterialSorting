@@ -8,7 +8,8 @@
 //   5) CTM 不可得 → 视图中心锚退化
 //   6) 空白拖动平移（mock getBoundingClientRect）；毛版 polygon pointerdown 不起平移
 //   7) 滚轮中心锚缩放（CTM 缺席退化）+「全览」按钮复位 + MIN_VB_W 钳制
-//      （± 放缩按钮 2026-09-05 删除 —— 滚轮唯一缩放入口；指南卡片/工具区形态 select 同日加）
+//      （± 放缩按钮 2026-09-05 删除 —— 滚轮唯一缩放入口；指南卡片/工具区形态 select 同日加；
+//       同日四轮：形态标题文案删 + 指南「形态/保存」两行删，反向锁见工具区用例）
 //   US-003：8) 拖动（translation 精确值 / 提层 / 多副本 / fab 伸缩）
 //           9) 钳制（Y 下界上界按被拖片 bbox / x<0 钳 0 / 右界自由）
 //          10) 旋转（手柄绕质心自由角 + pivot 随动 + 布纹线随转 / 空白点击取消选中）
@@ -536,18 +537,27 @@ describe('EditCanvas 平移与视图工具 (US-002)', () => {
     expect(w).toBe(20);
   });
 
-  it('工具区 =「全览」+ 形态 select（2026-09-05 自 footer 移入）+ 操作指南卡片常驻', () => {
+  it('工具区 =「全览」+ 形态 select（无标题文案，四轮删）+ 操作指南卡片常驻（五条手势）', () => {
     mountCanvas('full', seedRun(PLACED_AB));
-    // 形态 select 在画布左上工具区内（footer 仅存保存按钮）
-    expect(
-      document.querySelector('.edit-layout-canvas-tools [data-testid="edit-layout-mode"]'),
-    ).not.toBeNull();
-    // 操作指南（画布右下）：七条交互说明逐关键词在场
+    // 形态 select 在画布左上工具区内（footer 仅存保存按钮）；2026-09-05 四轮起
+    // 「形态」标题文案删除 —— label 内不得再有文本节点（option 文案在 select 内）。
+    const modeLabel = document.querySelector('.edit-layout-canvas-tools .edit-layout-mode');
+    expect(modeLabel?.querySelector('[data-testid="edit-layout-mode"]')).not.toBeNull();
+    const labelOwnText = Array.from(modeLabel?.childNodes ?? [])
+      .filter((n) => n.nodeType === Node.TEXT_NODE)
+      .map((n) => n.textContent?.trim() ?? '')
+      .join('');
+    expect(labelOwnText).toBe('');
+    // 操作指南（画布右下）：五条画布手势逐关键词在场；四轮删的「形态」「保存」
+    // 两行不得回潮（反向锁）。
     const guide = document.querySelector('[data-testid="edit-guide"]');
     expect(guide).not.toBeNull();
     const text = guide?.textContent ?? '';
-    for (const kw of ['拖动裁片', '旋转', '滚轮', '平移', '取消选中', '保存']) {
+    for (const kw of ['拖动裁片', '旋转', '滚轮', '平移', '取消选中']) {
       expect(text).toContain(kw);
+    }
+    for (const gone of ['形态', '保存']) {
+      expect(text).not.toContain(gone);
     }
   });
 });
