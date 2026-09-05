@@ -2,16 +2,10 @@
   "branchName": "ralph/edit-polish",
   "stories": [
     {
-      "id": "US-002",
-      "title": "POST /api/edit-polish 会话族端点",
-      "description": "As a 前端编辑弹窗, I want 一个会话族端点接收当前编辑 placements 返回微调结果 so that 几何真相源留在 Python 且多会话隔离。详见 tasks/prd-edit-polish.md US-002。前置：US-001。\n\n具体任务：\n1. materialSorting-server/src/materialsorting/web/server.py — 新增 POST /api/edit-polish 路由，紧邻 /api/edit-hold（server.py:410）同款样板：读 X-Session-Id（缺省 → default 会话）→ session_registry.resolve(create=False)（过期/墓碑 → 401 session_expired、非法 → 400，SessionError 统一 JSONResponse(e.payload(), e.status)）→ 会话 pieces_by_id 取物理毛版轮廓（原始 polygon 非 eroded，/export 关键不变量 #2 同源）→ polish 构造段经 run_in_threadpool 执行（prefix-preview 先例，防阻塞事件循环）→ 顺手 edit_hold.refresh(sid)（编辑钉住与心跳同语义）。\n2. 请求 {placed: [{id,rotation,translation},...], gate_mm?, exclude?: {labels?: [g码], pids?: [pid]}, compact?}（placements 随 body 带上 = /export routes_views.py:381 同款模式——后端不存布局态，唯一存储在前端 runRegistry）；响应 {ok: true, placed, report}（placed 条数与 pid 多重集与输入相等）。\n3. pid 全匹配才跑：任一 pid 未匹配会话 pieces_by_id → 400（文案提示「母版已变更？请重新求解/上传」，不做部分降级）；placed 空 → 400。\n4. gate_mm 缺省回退会话 state['gate_mm']（与 /export、/api/plt-table-preview 同法）；exclude 透传引擎（labels/pids 双键，缺省 None）；compact 缺省 false = US-001 行为逐字节不变。\n5. 新增 materialSorting-server/tests/test_web_edit_polish.py。\n\n验收标准：\n- 200：TestClient 带 default 会话 state → 响应结构完整、placed 守恒（条数 + pid 多重集）、report 含 before/after/moves/residual 四段\n- 401/400：sid 过期/墓碑 → 401 code=session_expired；sid 非法 → 400（结构化 JSON，对齐 /api/edit-hold 用例）\n- 400：placed 空 / pid 未匹配（「母版已变更？请重新求解/上传」）\n- gate_mm 缺省回退会话 state；exclude 透传引擎\n- polish 在 run_in_threadpool 内执行（代码级断言）\n- python -m materialsorting.web.server 可启动（路由注册无 import 错）；pytest 全量通过",
-      "passes": true
-    },
-    {
       "id": "US-003",
       "title": "前端「智能微调」按钮+对比卡+一级撤销",
       "description": "As a 版师, I want 编辑弹窗里一键智能微调并看到前后对比、不满意可撤销 so that 手动微调工作量大幅下降且结果可控。详见 tasks/prd-edit-polish.md US-003。前置：US-002。\n\n具体任务：\n1. materialSorting-web/src/components/edit/EditLayoutModal.tsx — 画布左上工具区（「全览」按钮/形态 select 同区竖排）新增「智能微调」按钮：点击 → lib/api.ts apiFetch POST /api/edit-polish（载荷 = 当前 working placements + run.manifest.gate_mm + exclude best-effort 组装：run 记录有 band 配置 → {labels:[band.label]}；final 带 prefix.pid/prefix.extra → 成员 pid 集合；无记录省略键）→ 成功后 editStore 新 action 把返回 placed 写入 working（不调用 save、不自动保存，✕ 关窗即弃的既有语义不变）。按钮 loading 态期间禁用重复点击。\n2. 对比卡：右下 .edit-metrics 同款悬浮卡样式（同盒观感、卡体可交互不遮画布拖动热区），展示前后五指标（重叠对数/最大穿透 mm/旋转偏差片数与 Σ偏差/料长 mm/密度 %）+ 口径脚注「物理毛版轮廓口径（与导出一致；画布红字为腐蚀后轮廓口径，数值可能偏小）」+「撤销微调」按钮。微调后常驻显示直到关闭/再次微调/撤销清空。\n3. 一级撤销：modal state 存 pre-polish working 快照（再次微调覆盖、关闭/重置清空）；「撤销微调」仅在快照在案时可见。\n4. 失败（网络/4xx）→ 卡内错误文案、working 不变、编辑态不炸（401 session code 走既有全局阻断弹窗，正确行为）。\n5. materialSorting-web/src/style.css — 对比卡样式沿用 .edit-metrics 族观感，不引入 CSS 框架。\n6. 新建/扩展 materialSorting-web/src/components/edit/__tests__/ 相关测试。\n\n验收标准：\n- vitest：点击微调 → 请求载荷形态正确（placed/gate_mm/exclude）→ 成功后 working 替换、画布数据源更新；loading 态禁用重复点击\n- vitest：撤销微调恢复快照 working；再次微调覆盖快照；关闭/重置后快照清空（撤销按钮消失）\n- vitest：接口失败 → 错误文案进卡、working 逐字段不变\n- exclude 组装：run 带 band → labels 命中；run 带 prefix → pids 命中（front/back/extra 成员 pid）；两者皆无 → 载荷无 exclude 键\n- vitest 全量 + npm run build（tsc+vite）通过\n- 通过浏览器验证编辑弹窗微调交互（按钮/报告卡数值/撤销/失败文案，截图目检）",
-      "passes": false
+      "passes": true
     },
     {
       "id": "US-004",

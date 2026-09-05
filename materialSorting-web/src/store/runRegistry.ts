@@ -7,7 +7,7 @@
 // 生命周期：useSolveRun.start(seed) → create(seed) → WS onmessage 推 frame → push(frame)。
 // 新一次 start / cleanup → clear() 关闭所有 WS 并清空。
 
-import type { FinalMsg, FrameMsg, ManifestMsg, StageMsg } from '../types/ws';
+import type { BandConfig, FinalMsg, FinalPrefixStats, FrameMsg, ManifestMsg, StageMsg } from '../types/ws';
 
 /** 单个 run 的全部上下文（高频字段 frames/lastFrame 直接 mutate）。 */
 export interface RunRecord {
@@ -21,6 +21,18 @@ export interface RunRecord {
    * 仅信息记录（状态行「腰头成带中…」由 onStage 回调驱动），不影响 phase / done。
    */
   stage: StageMsg | null;
+  /**
+   * 本次求解的 band 配置（useSolveRun.start 落笔；未开 band / 策略合成 run → null）。
+   * edit-polish US-003（2026-09-05）起作微调 exclude 组装的 best-effort 数据源 ——
+   * 带形态区域（腰头 g 码成员）微调永不动。仅信息记录，渲染/导出零消费。
+   */
+  band: BandConfig | null;
+  /**
+   * final.prefix 统计段（applyFinal 落笔；prefix 关闭 → 恒 null）。edit-polish
+   * US-003（2026-09-05）起作微调 exclude 组装的 best-effort 数据源 —— pid/extra
+   * 解析成员 pid 集合（成套起始端微调永不动）。仅信息记录。
+   */
+  prefix: FinalPrefixStats | null;
   /** 所有中间解帧（mutable 数组，hook 直接 push）。 */
   frames: FrameMsg[];
   /** 最新一帧（= frames[frames.length-1]，缓存便于渲染层 O(1) 取）。 */
@@ -50,6 +62,8 @@ export const runRegistry = {
       ws: null,
       manifest: null,
       stage: null,
+      band: null,
+      prefix: null,
       frames: [],
       lastFrame: null,
       finalDensity: 0,
@@ -99,9 +113,10 @@ export const runRegistry = {
   },
 };
 
-/** 在 final 到达后更新 record（density 双口径）。 */
+/** 在 final 到达后更新 record（density 双口径；prefix 统计段落 RunRecord.prefix）。 */
 export function applyFinal(rec: RunRecord, m: FinalMsg): void {
   rec.finalDensity = m.density;
   rec.finalDensitySparrow = m.density_sparrow;
+  rec.prefix = m.prefix ?? null;
   if (rec.frames.length > 0) rec.lastFrame = rec.frames[rec.frames.length - 1];
 }

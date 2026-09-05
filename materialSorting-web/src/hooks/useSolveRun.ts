@@ -88,8 +88,10 @@ export function useSolveRun(cb: UseSolveRunCallbacks = {}): {
   const [isStarted, setStarted] = useState(false);
 
   const start = useCallback((cfg: StartConfig) => {
-    // 1) Registry 创建 record
+    // 1) Registry 创建 record（band 配置同步落笔 —— edit-polish US-003 起微调
+    //    exclude 组装的 best-effort 数据源，带形态区域微调永不动）。
     const rec = runRegistry.create(cfg.seed);
+    rec.band = cfg.band ?? null;
 
     // 2) 显式 new WebSocket（不在 effect 里）
     const ws = new WebSocket(solveWsUrl());

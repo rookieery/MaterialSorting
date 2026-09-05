@@ -19,9 +19,9 @@ materialSorting-web/
 │   ├── vite-env.d.ts        # vite/client 类型引用
 │   ├── types/              # US-002：纯数据契约（与 server.py 字段名 1:1）；上传预览 US-005：parsed.ts；上传预览 US-011：qty.ts；US-018：ptype.ts（PtypeRepresentative + PtypesResponse，GET /api/ptypes 契约）；策略 PRD US-005：strategy.ts（/api/strategy/* 四路由响应 TS 镜像：StrategyPhase 七态 / StrategyStatus（全字段可选除 state）/ StrategyResult（manifest 嵌套键）等）；腰头成带：ws.ts BandConfig `{enabled, label}` 两键（**2026-08-22 简化**：ack?/fillers? 已删；US-012 StageMsg 契约不变）；2026-08-24/25 新增 **band.ts**（POST /api/band-preview + /api/prefix-preview 两预览端点契约：`BandPreviewPayload/Response` + `PrefixPreviewPayload/Response`，成员形状 `BandPreviewMember` 两端点共用（prefix 成员带 `tag?` 覆盖标注 = g 码）；失败也 200 `ok:false` 包络；members/outline 均组合片归一坐标前端零变换；2026-09-02 起始端成套补片 US-004 ✅ PrefixPreviewResponse additive `extra?:{label,size}|null`（只两键，兜底 4 片=null）/`residual_mm?`/`gate_mm?`/`fallback?`，n_members 4（兜底）或 5（补片）——members 多一片自动渲染（BandPreviewSVG 泛型零改动，异码片 size_color(B) 同码同色跨片型））
 │   ├── constants/          # US-004：SIZES / PHASE_COLORS / SEED_COLORS + 全局上限 MAX_OVERLAP_MM/MAX_ROTATION_TOL_DEG（US-003 起 V03_PTYPES 固定 10 片型清单已删，高级配置列集改由 /api/ptypes reps 键动态驱动）
-│   ├── lib/                # US-002 起：纯函数工具（ws / geometry / params）；US-007 download；策略 PRD US-005 params.ts 加 collectStartContext（handleStart 与策略 start 载荷同源构造器：sizes 过滤 null/gate_mm/seed/time/params/per_type/quantities 逐字段同一实现，不复制逻辑）；腰头成带：params.ts collectBand 三态解析 `{enabled:true,label}`（**2026-08-22 简化**：band_ack/band_fillers/BAND_MAX_FILLERS 已删；collectStartContext 产 band，**2026-08-22 起随策略 start 载荷同源透传**）；**2026-08-22 seed UI 隐藏**：form.seed/multi_seed/seed_count 字段保留但冻结默认（parseSeed 恒 0 / parseSeedCount 恒 1，无写入方）
-│   ├── store/              # US-002 RunRegistry + US-003 appStore + US-001 uiStore（US-015 扩 nestingEnabled + setNestingEnabled + setTab guard）；上传预览 US-005 uploadStore（US-021 扩 commitStatus/commitError/commitSummary；矩阵化重构 US-003 删 qtyDialog/QtyDialogTarget/openQtyDialog/closeQtyDialog，仅剩 zoom/openZoom/closeZoom + reset/setSize）；上传预览 US-011 qtyStore（矩阵化重构 US-001 简化为 perSize+baseValue 单模式：setPiecePerSize/setRowAll/resetQuantities/hydrate + clampQty/getPieceDisplay 纯函数，双 hydrate 入口已合并、setPieceGlobal 已删）；US-018 controlPanelStore（modal + previewLabel 双显隐字段，两层独立；US-003 起 previewPtype→previewLabel，键 = 裁片 g 码；策略 PRD US-005 扩 ControlPanelModalId 加 'strategy_run'）；策略 PRD US-005 strategyStore（phase 七态 idle|starting|running|done|stopped|error|orphan + status/result/errorMessage/lastStart；actions start/stop/refresh/reset —— refresh 是唯一真相入口（isStrategyState 守卫非法载荷不动 phase），done/stopped 且 result===null 顺手拉 result 每 run 恰一次）；US-013 bandStore **已删（2026-08-22 简化）**——跨页「不成对」警告随 QtyMatrix `.qty-cell.odd`/列头徽章整体退场，form.band_* 仍是 WS payload SSOT；2026-08-25 新增 **ptypeStore**（/api/ptypes 代表裁片会话级缓存：`representatives` + `status: idle|loading|ready|error` 状态机 + `ensureLoaded` 幂等加载（ready/loading 跳过）+ `invalidate`（commit done 失效挂点，representatives 保留无感刷新）+ `reset`（测试隔离）；loading/error 期间保留旧值不闪占位、error 不自动重试防死循环；PerTypeOverridesModal/PtypePreviewModal 两弹窗共享同一份缓存，详见文末专节）；极限运行 US-003 起 strategyStore 重构为 **createRunStore 家族工厂**（`RunFamilySpec{base,ownsMode,netError}` → `useStrategyStore`（/api/strategy）+ `useExtremeStore`（/api/extreme）双实例；refresh 加**家族过滤** —— status 回 `state!=='idle' && !ownsMode(st.mode)` 直接丢弃（后端两族共享每会话状态槽，本族端点会看到对方家族的 running）；gen 计数器丢弃陈旧在途回包）
-│   ├── hooks/              # US-002 起：useSolveRun（US-022 StartConfig 加 quantities 透传；US-027 加 stop() + case stopped）/ useRafThrottle；US-007 useExport；上传预览 US-005 useParseDxf（US-021 解析成功自动 void commit）；上传预览 US-021 useCommitToNesting（POST /api/commit-to-nesting + D1 闭环 setNestingEnabled，不自动切 Tab）；策略 PRD US-005 useStrategyPoll（active 态（starting|running）才 setInterval refresh；弹窗开 2s / 关 15s 双档（入口徽标观测）；mount+open 切换立即 refresh 一次；terminal 态停表；极限运行 US-003 起参数化 `useStrategyPoll(open, store)` —— store 缺省 useStrategyStore，extreme 入口传 useExtremeStore，**每族入口恰一实例各轮询自己的端点**）
+│   ├── lib/                # US-002 起：纯函数工具（ws / geometry / params）；US-007 download；策略 PRD US-005 params.ts 加 collectStartContext（handleStart 与策略 start 载荷同源构造器：sizes 过滤 null/gate_mm/seed/time/params/per_type/quantities 逐字段同一实现，不复制逻辑）；腰头成带：params.ts collectBand 三态解析 `{enabled:true,label}`（**2026-08-22 简化**：band_ack/band_fillers/BAND_MAX_FILLERS 已删；collectStartContext 产 band，**2026-08-22 起随策略 start 载荷同源透传**）；**2026-08-22 seed UI 隐藏**：form.seed/multi_seed/seed_count 字段保留但冻结默认（parseSeed 恒 0 / parseSeedCount 恒 1，无写入方）；2026-09-04 **editHold.ts**（编辑弹窗会话钉住心跳 refreshEditHold，失败静默）；edit-polish US-003（2026-09-05）**editPolish.ts**（智能微调接线库：parsePrefixMemberPids 组合片 pid→成员 pid 集合（**front 段是裸 label 无 @size**，size 取 stats.size 补全）/ buildExclude best-effort（band→labels / final.prefix→pids / 皆无省略键）/ buildPolishPayload（placed+gate_mm+exclude）/ postEditPolish（apiFetch POST /api/edit-polish，失败抛 Error 中文直显卡内），详见文末 edit-polish US-003 节）
+│   ├── store/              # US-002 RunRegistry + US-003 appStore + US-001 uiStore（US-015 扩 nestingEnabled + setNestingEnabled + setTab guard）；上传预览 US-005 uploadStore（US-021 扩 commitStatus/commitError/commitSummary；矩阵化重构 US-003 删 qtyDialog/QtyDialogTarget/openQtyDialog/closeQtyDialog，仅剩 zoom/openZoom/closeZoom + reset/setSize）；上传预览 US-011 qtyStore（矩阵化重构 US-001 简化为 perSize+baseValue 单模式：setPiecePerSize/setRowAll/resetQuantities/hydrate + clampQty/getPieceDisplay 纯函数，双 hydrate 入口已合并、setPieceGlobal 已删）；US-018 controlPanelStore（modal + previewLabel 双显隐字段，两层独立；US-003 起 previewPtype→previewLabel，键 = 裁片 g 码；策略 PRD US-005 扩 ControlPanelModalId 加 'strategy_run'）；策略 PRD US-005 strategyStore（phase 七态 idle|starting|running|done|stopped|error|orphan + status/result/errorMessage/lastStart；actions start/stop/refresh/reset —— refresh 是唯一真相入口（isStrategyState 守卫非法载荷不动 phase），done/stopped 且 result===null 顺手拉 result 每 run 恰一次）；US-013 bandStore **已删（2026-08-22 简化）**——跨页「不成对」警告随 QtyMatrix `.qty-cell.odd`/列头徽章整体退场，form.band_* 仍是 WS payload SSOT；2026-08-25 新增 **ptypeStore**（/api/ptypes 代表裁片会话级缓存：`representatives` + `status: idle|loading|ready|error` 状态机 + `ensureLoaded` 幂等加载（ready/loading 跳过）+ `invalidate`（commit done 失效挂点，representatives 保留无感刷新）+ `reset`（测试隔离）；loading/error 期间保留旧值不闪占位、error 不自动重试防死循环；PerTypeOverridesModal/PtypePreviewModal 两弹窗共享同一份缓存，详见文末专节）；极限运行 US-003 起 strategyStore 重构为 **createRunStore 家族工厂**（`RunFamilySpec{base,ownsMode,netError}` → `useStrategyStore`（/api/strategy）+ `useExtremeStore`（/api/extreme）双实例；refresh 加**家族过滤** —— status 回 `state!=='idle' && !ownsMode(st.mode)` 直接丢弃（后端两族共享每会话状态槽，本族端点会看到对方家族的 running）；gen 计数器丢弃陈旧在途回包）；edit-polish US-003（2026-09-05）：ws.ts **FinalMsg 扩 additive `prefix?: FinalPrefixStats`**（{size,pid,extra:{pid,label,size,rotation}|null,residual_mm,fallback}——引擎 final 消息的组合片统计段，前端记录进 RunRecord.prefix 供 exclude 组装）
+│   ├── hooks/              # US-002 起：useSolveRun（US-022 StartConfig 加 quantities 透传；US-027 加 stop() + case stopped）/ useRafThrottle；US-007 useExport；上传预览 US-005 useParseDxf（US-021 解析成功自动 void commit）；上传预览 US-021 useCommitToNesting（POST /api/commit-to-nesting + D1 闭环 setNestingEnabled，不自动切 Tab）；策略 PRD US-005 useStrategyPoll（active 态（starting|running）才 setInterval refresh；弹窗开 2s / 关 15s 双档（入口徽标观测）；mount+open 切换立即 refresh 一次；terminal 态停表；极限运行 US-003 起参数化 `useStrategyPoll(open, store)` —— store 缺省 useStrategyStore，extreme 入口传 useExtremeStore，**每族入口恰一实例各轮询自己的端点**）；edit-polish US-003（2026-09-05）：runRegistry **RunRecord 扩 `band: BandConfig|null`（useSolveRun.start 自 cfg 记录）+ `prefix: FinalPrefixStats|null`（applyFinal 自 final WS 消息 additive 段记录）** —— exclude best-effort 的两个数据源，策略合成 run 天然无记录；editStore **扩 `replaceWorking(items)`**（pid 逐位守恒闸：条数+逐下标 id 全等才整体深拷贝替换 working，false = 调用方按失败处理；微调落 working/一级撤销共用入口，不 save 不 bump lastFrame）
 │   ├── components/
 │   │   ├── TabBar.tsx       # US-001 顶部 Tab（排料/上传预览）；订阅 uiStore.activeTab；US-015 超排 button 在 nestingEnabled===false 时 disabled+.disabled class + aria-disabled；US-029 右上角操作指引入口（.tour-entry + 下拉菜单）；US-030 超排 button 加 data-tour="tab-nesting"（goto-nesting 步锚点）；US-032 下拉菜单两项（replay-preview→start('preview') / replay-nesting→start('nesting')，原 reset 项因 close 统一 markSeen 已移除）+ 每项仅当前 Tab 可点（非当前 Tab 置灰 .disabled+aria-disabled+native disabled + handler 运行时兜底）+ 点外部/ESC 关闭 + toggle
 │   │   ├── NestingPage.tsx  # US-001 排料页（原 App.tsx 业务逻辑外提；持 phase/seeds/useSolveRun；US-027 solving→phase 五态状态机 + handleStop/handleRestart + lastStartCfgRef；US-028 ControlPanel 改收 phase 不再收 solving；US-031 .nest-wrap 加 data-tour="nest-wrap" 锚点；策略 PRD US-006 applyStrategyResult（onApplyStrategy prop 链 ControlPanel→StrategyRunModal 应用按钮）—— runRegistry.clear() 清场 + 合成单条 RunRecord + setSeeds/setPhase('done')/setSeekTime(-1)；极限运行 US-003 起 ExtremeRunModal 结果态同函数复用（onApplyExtreme 同链），状态行按 result.mode 区分「极限/策略 run 已应用」）
@@ -1725,3 +1725,57 @@ ExportInfoModal 均读 bestRun().lastFrame，save 写回后 placed/density 自�
 - 前端门：vitest 全量 **936 passed**（61 文件，零新增用例 —— 本故事无组件改动）/
   `npm run typecheck` 干净 / `npm run build` 过（296.59KB gzip 96.89KB）。
 - 验收后浏览器关闭（Playwright browser.close()）、ms-web 进程已杀（port 8000 free）。
+
+## 编辑排料 edit-polish US-003 落地：智能微调按钮 + 前后对比卡 + 一级撤销（2026-09-05）
+
+编辑弹窗接上 US-002 的 POST /api/edit-polish：工具区「智能微调」按钮 → 成功
+replaceWorking 写 working（**不自动保存**，✕ 弃稿语义不变）+ 右下对比卡六指标
+（前 → 后）+ 一级撤销；失败错误文案进卡 working 逐字段不变。零后端改动。
+
+| 文件 | 职责 |
+| --- | --- |
+| `src/lib/editPolish.ts`（新） | 纯数据组装 + 单一请求出口（几何真相源留 Python）：`parsePrefixMemberPids(pid,size,extra)` 组合片 pid → 成员 pid 集合（`PS_{front}+{back}@{size}(+{extra}@{extra_size})` 权威式 —— **front 段是裸 label 无 @size**，size 取 stats.size 补全；畸形段/无从补全静默跳过 = best-effort；extra.pid 直收去重）；`buildExclude(run)`（band enabled+label → labels / RunRecord.prefix → pids / 皆无 → undefined 载荷省略键 —— 策略合成 run 无 WS final.prefix 记录自然省略）；`buildPolishPayload(working,run)`（placed 逐字段拷贝 translation 拷断引用 + gate_mm 取 manifest + exclude；无 manifest/working 空 → null 不发请求）；`postEditPolish(payload)`（apiFetch POST，!res.ok 透传服务端 error 前缀「微调失败：」/网络层 Error 直抛；401 session code 由 apiFetch 拦截走全局阻断 = 正确行为）。PolishMetrics/PolishReport 类型镜像引擎 _diagnose 七指标（density ×100 百分数） |
+| `src/store/editStore.ts`（扩） | `replaceWorking(items)`：条数 + 逐下标 id 全等守恒闸通过才深拷贝整体替换 working（false = 形态异常，调用方按失败处理）；**不 save 不 bumpRenderTick 不动 lastFrame** —— 微调结果只是编辑草稿 |
+| `src/store/runRegistry.ts`（扩） | RunRecord 加 `band: BandConfig\|null`（create 默认 null）+ `prefix: FinalPrefixStats\|null`（applyFinal `rec.prefix = m.prefix ?? null`）—— exclude 两个 best-effort 数据源 |
+| `src/hooks/useSolveRun.ts`（扩） | start() `rec.band = cfg.band ?? null`（WS StartConfig 本就带 band，此前只发不存） |
+| `src/types/ws.ts`（扩） | `FinalPrefixStats` 接口 + `FinalMsg.prefix?`（additive，旧后端缺省 undefined → null） |
+| `src/components/edit/EditLayoutModal.tsx`（扩） | 智能微调 state 机（busy/report/error/prePolish 四态，生命周期 = modal state —— 关窗 Inner 卸载自然清零）：handlePolish（busy 闸 + payload null 不发 → postEditPolish → **replaceWorking 失败按失败处理（不留孤儿快照）→ 成功才 setPrePolish(点击前 working 拷贝)+setReport**；catch 统一补「微调失败」前缀 —— postEditPolish 错误已带前缀直显、fetch 网络层 TypeError（"Failed to fetch"）等浏览器英文文案补前缀保卡内可读）；handleUndoPolish（replaceWorking(prePolish) + 清三态）。经 `polish` prop 受控下发 EditCanvas（onModeChange 同款模式，单测不传 no-op） |
+| `src/components/edit/EditCanvas.tsx`（扩） | 可选 `polish?: EditPolishUi` prop：工具区（全览/形态 select 之下）「智能微调」按钮（testid edit-polish-btn；busy 禁用 + 文案「微调中…」；title 说明口径与不自动保存语义）；右下 `.edit-br-stack` 卡栈（绝对锚点自 .edit-guide 上提，指南卡零位移）内 `.edit-polish-card` 对比卡（report\|\|error 时渲染）：六指标行「重叠对数/最大穿透 mm/旋转偏差片/Σ旋转偏差°/料长 mm/密度 %」前 → 后（testid edit-polish-{overlap,depth,rot,rotsum,width,density}；fmt NaN→'—'）+ 错误文案行（white-space normal）+ 口径脚注「物理毛版轮廓口径（与导出一致；画布红字为腐蚀后轮廓口径，数值可能偏小）」+ 撤销按钮（canUndo 时） |
+| `src/style.css`（扩） | `.edit-layout-tool:disabled` 灰态；`.edit-polish-btn` 绿强调 hover 反白；`.edit-br-stack`（bottom/right 10 竖排右对齐 gap 8 max-width 380 **整栈 pointer-events:none 不挡画布拖动热区**）；`.edit-guide` 去 absolute 只留盒样式（锚点上提）；`.edit-polish-card/-row/-val(tabular-nums)/-error/-foot` + `.edit-polish-undo`（**栈内唯一 pointer-events:auto 交互点**，hover 警示红） |
+| 测试 | 新建两套 **22 项**：`lib/__tests__/editPolish.test.ts` 11（parsePrefixMemberPids 四片/size-null 只收带@段/五片/extra 去重/畸形；buildExclude band/prefix/双开/皆无；buildPolishPayload 逐字段+拷断引用+null 案）+ `components/edit/__tests__/EditLayoutModal.polish.test.tsx` 11（只 mock lib/api：载荷形态无 exclude 键/band labels/prefix pids、成功 working 替换+lastFrame 不动+polygon points 跟随+卡六指标+脚注+撤销+状态条 1160、loading 禁重复零新增、撤销恢复+卡清空、再微调快照覆盖（撤销回上一次前非最初）、关窗 dirty 确认弃稿重开清零+working 回基线、400 error 透传+working 逐字段不变、网络错+UI 不炸、placed 错位按失败） |
+
+### 关键不变量（edit-polish US-003 立，后续故事不得破坏）
+
+- **微调不自动保存**：replaceWorking 只写 working 草稿，lastFrame/savedDirty/viewBoxMaxW
+  全不动 —— ✕ 关窗即弃、保存才写回（dirty 判定自然覆盖微调改动）。任何「顺手 save」
+  的实现都是违约。
+- **快照在守恒闸之后落**：setPrePolish 必须在 replaceWorking 成功后才调（失败路径不
+  留孤儿快照 —— 撤销按钮不得出现在 working 未变时）；快照 = 点击微调前的 working
+  （含此前手动拖动的中间态），再次微调覆盖（撤销恒回最近一次微调前）。
+- **exclude 是 best-effort**：band/prefix 记录缺失 → 载荷省略 exclude 键（引擎全量参与
+  微调，over-conservative 可接受）；**不因记录缺失阻断微调**。front 裸 label 段必须用
+  stats.size 补全（组合片权威式 `PS_{front}+{back}@{size}`）。
+- **对比卡口径脚注必须出现**：报告七指标是物理毛版轮廓口径（/export 同源），画布红字
+  告警是 erode 后口径 —— 两套数值并存是设计非 bug，删脚注 = 口径歧义回归。
+- **卡栈透点**：.edit-br-stack/.edit-polish-card 均 pointer-events:none，撤销按钮是栈内
+  唯一 pointer-events:auto 交互点 —— 新增卡内交互控件必须显式开 auto，不得整卡开。
+- **pid 逐位守恒闸**：replaceWorking 条数 + 逐下标 id 全等才替换；微调响应 placed 错位
+  = 形态异常按失败处理（错误文案进卡），不得部分应用。
+
+### 验证
+
+- 前端门全过：vitest 全量 **962 passed**（940 → 962，+22；64 文件）/ `npm run build` 过
+  （bundle 302.70KB gzip 98.86KB）。
+- 浏览器验收（prod :8000 静态构建 + Playwright chrome headless，5336 母版 3 码 +
+  高级配置 d=3/tol=30 制造工艺余量 → 20s 短求解 30 片）：**12/12**（`out/us003_edit_polish_verify/`
+  verify.mjs + report.json + 4 截图）—— 工具区按钮在案可点；微调请求 200 载荷
+  placed=30/gate_mm/无 exclude 键 + 报告四段（overlap 48→44、rotΣ 200→170、width/density
+  守恒、moves=4）；loading 态捕获；对比卡六指标+脚注+撤销按钮渲染；画布 points 变化
+  片数 = moves 数；守恒不等式（width 不增/density 不降）；未保存语义（✕ dirty 确认）；
+  撤销 points 逐片回微调前 + 卡清空；再微调+保存 placed 守恒 30；网络失败注入
+  （page.route abort）→ 「微调失败：Failed to fetch」进卡、弹窗不炸、按钮恢复。
+  另 DOM bbox 几何目检（visual_check.mjs）：按钮在工具区 mode select 之下、对比卡在
+  .edit-br-stack（指标面板/工具区/指南卡/foot 零交集、卡上 guide 下 8px 栈距）、撤销
+  按钮 card 内右对齐唯一 pointer-events:auto。验收后浏览器关闭（browser.close()）、
+  ms-web 进程已杀（port 8000 free；中途 429 会话超限 = edit-hold 钉住会话滞留，
+  重启服务清会话表后复跑）。

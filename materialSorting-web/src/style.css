@@ -2207,9 +2207,27 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
   outline: 2px solid #2ea06c;
   outline-offset: 1px;
 }
+.edit-layout-tool:disabled {
+  border-color: #3a3d45;
+  color: #778;
+  cursor: not-allowed;
+  opacity: 0.65;
+}
 .edit-layout-tool-reset {
   font-size: 12px;
   font-weight: 600;
+}
+/* 智能微调按钮（edit-polish US-003）：工具区同款，绿色强调（一键算法动作）；
+   loading 态（disabled）沿用上方 :disabled 灰态。 */
+.edit-polish-btn {
+  font-size: 12px;
+  font-weight: 600;
+  border-color: #2ea06c;
+  color: #2ea06c;
+}
+.edit-polish-btn:hover:not(:disabled) {
+  background: #2ea06c;
+  color: #fff;
 }
 /* 底部条：仅右下「保存当前布局」（形态 select 2026-09-05 移入画布左上工具区 →
    单子元素 flex-end 恒右对齐，空态同样成立） */
@@ -2318,15 +2336,12 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
   color: #778;
   font-size: 11px;
 }
-/* 操作指南（2026-09-05）：画布右下固定（保存按钮上方）、与 .edit-metrics 同款悬浮卡
+/* 操作指南（2026-09-05）：画布右下（保存按钮上方）、与 .edit-metrics 同款悬浮卡
    （同盒样式 + pointer-events:none 不挡画布拖动命中）；行式 = 左对齐自然换行，
    非指标面板的两端对齐 nowrap。标题/灰标签复用 .edit-metrics-* 子类、脚注专属
-   .edit-guide-foot（见上）。 */
+   .edit-guide-foot（见上）。edit-polish US-003 起绝对锚点上提到 .edit-br-stack
+   栈容器（微调对比卡出现在其上方，既有卡零位移），自身只留盒样式。 */
 .edit-guide {
-  position: absolute;
-  bottom: 10px;
-  right: 10px;
-  z-index: 1;
   max-width: 340px;
   background: #1f2127;
   border: 1px solid #31343c;
@@ -2339,6 +2354,82 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
 }
 .edit-guide-row {
   margin: 1px 0;
+}
+/* ============================================================
+ * 编辑排料 edit-polish US-003（2026-09-05）：右下卡栈 + 智能微调前后对比卡。
+ * 栈容器绝对锚点 bottom/right（原 .edit-guide 锚点上提至此），竖排右对齐 ——
+ * 对比卡在案时出现在指南卡上方。整栈 pointer-events:none 不挡画布拖动热区，
+ * 唯一可交互点 = 对比卡内「撤销微调」按钮（pointer-events:auto）。
+ * ============================================================ */
+.edit-br-stack {
+  position: absolute;
+  bottom: 10px;
+  right: 10px;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  max-width: 380px;
+  pointer-events: none;
+}
+.edit-polish-card {
+  min-width: 250px;
+  max-width: 340px;
+  background: #1f2127;
+  border: 1px solid #31343c;
+  border-radius: 4px;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #e6e6e6;
+  pointer-events: none; /* 卡体透点（不遮画布拖动热区）；撤销按钮单独开交互 */
+}
+.edit-polish-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  white-space: nowrap;
+}
+.edit-polish-val {
+  font-variant-numeric: tabular-nums;
+}
+.edit-polish-error {
+  color: #e06666;
+  margin: 2px 0 4px;
+  white-space: normal; /* 错误文案可换行（服务端文案长度不可控） */
+}
+.edit-polish-foot {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid #31343c;
+  color: #778;
+  font-size: 11px;
+  white-space: normal; /* 口径脚注较长，允许换行 */
+}
+.edit-polish-undo {
+  display: block;
+  margin-top: 6px;
+  margin-left: auto;
+  padding: 4px 12px;
+  background: #26282e;
+  color: #e6e6e6;
+  border: 1px solid #3a3d45;
+  border-radius: 4px;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  pointer-events: auto; /* 栈内唯一交互点：撤销按钮可点，卡体其余透点 */
+  transition: border-color 0.15s, color 0.15s;
+}
+.edit-polish-undo:hover {
+  border-color: #e06666;
+  color: #e06666;
+}
+.edit-polish-undo:focus-visible {
+  outline: 2px solid #e06666;
+  outline-offset: 1px;
 }
 /* 旋转手柄（世界坐标 circle，命令式建节；cursor grab 提示可拖） */
 .edit-rotate-handle {

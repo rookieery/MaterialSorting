@@ -58,6 +58,7 @@ import {
 } from '../../lib/overlap';
 import { pointsStr } from '../../lib/geometry';
 import { computeLayoutStats, useEditStore } from '../../store/editStore';
+import type { PolishReport } from '../../lib/editPolish';
 import { createPieceEntry, SVGNS, type PieceEntry } from '../nests/pieceDom';
 import { MAX_OVERLAP_MM, MAX_ROTATION_TOL_DEG } from '../../constants/v03';
 import { NOTCH_LEN_MM } from '../../constants/colors';
@@ -129,9 +130,29 @@ export interface EditCanvasProps {
   /** 形态 select 变更回调（select 渲染在画布左上工具区，state 属 EditLayoutModal；
    *  直挂 EditCanvas 的单测不传 → no-op）。 */
   onModeChange?: (mode: EditViewMode) => void;
+  /**
+   * 智能微调 UI 受控接口（edit-polish US-003，2026-09-05）：按钮渲染在左上工具区、
+   * 前后对比卡在右下卡栈（指南卡上方）。state 属 EditLayoutModal；直挂 EditCanvas
+   * 的单测不传 → 按钮/卡不渲染（零改动兼容）。
+   */
+  polish?: EditPolishUi;
 }
 
-export function EditCanvas({ mode, onModeChange }: EditCanvasProps) {
+/** 智能微调受控接口（EditLayoutModal → EditCanvas；字段语义见 EditLayoutModal 注释）。 */
+export interface EditPolishUi {
+  /** 请求在飞（按钮 loading 态，禁重复点击）。 */
+  busy: boolean;
+  /** 最近一次失败文案（卡内显示；null = 无）。 */
+  error: string | null;
+  /** 最近一次成功的前后对比报告（卡数据源；null = 未成功过）。 */
+  report: PolishReport | null;
+  /** 快照在案（「撤销微调」按钮显隐）。 */
+  canUndo: boolean;
+  onPolish: () => void;
+  onUndo: () => void;
+}
+
+export function EditCanvas({ mode, onModeChange, polish }: EditCanvasProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const flipRef = useRef<SVGGElement | null>(null);
   const bgRef = useRef<SVGRectElement | null>(null);
@@ -751,8 +772,9 @@ export function EditCanvas({ mode, onModeChange }: EditCanvasProps) {
     <div className="edit-layout-canvas-wrap">
       {/* 骨架 svg：preserveAspectRatio 静态属性走 JSX；viewBox/子节点全部 imperative。 */}
       <svg ref={svgRef} xmlns={SVGNS} className="edit-layout-svg" preserveAspectRatio="xMinYMid meet" />
-      {/* 视图工具（左上竖排）：全览按钮 + 形态 select（2026-09-05 自 footer 移入）。
-          右上留给 US-003 指标面板、右下操作指南卡 —— 均悬浮不挡画布。 */}
+      {/* 视图工具（左上竖排）：全览按钮 + 形态 select（2026-09-05 自 footer 移入）+
+          智能微调按钮（edit-polish US-003）。右上留给 US-003 指标面板、右下卡栈 ——
+          均悬浮不挡画布。 */}
       <div className="edit-layout-canvas-tools">
         <button
           type="button"
@@ -774,10 +796,92 @@ export function EditCanvas({ mode, onModeChange }: EditCanvasProps) {
             <option value="rough">毛板</option>
           </select>
         </label>
+        {polish && (
+          <button
+            type="button"
+            className="edit-layout-tool edit-polish-btn"
+            onClick={polish.onPolish}
+            disabled={polish.busy}
+            title="自动清理可解的重合与可回正的旋转（物理毛版口径；料长不增、密度不降；应用后不自动保存，可撤销）"
+            data-testid="edit-polish-btn"
+          >
+            {polish.busy ? '微调中…' : '智能微调'}
+          </button>
+        )}
       </div>
-      {/* 操作指南（画布右下固定、保存按钮上方；与指标面板同款悬浮卡不挡交互）。
-          行式 = 左对齐自然换行（.edit-guide-row），非指标面板的两端对齐 nowrap。 */}
-      <div className="edit-guide" data-testid="edit-guide">
+      {/* 右下卡栈（edit-polish US-003 起）：微调对比卡（在案时）+ 操作指南卡同锚竖排 ——
+          对比卡出现在指南卡上方（既有卡零位移）；栈容器 pointer-events:none，仅对比卡
+          撤销按钮 auto（可交互不挡画布拖动热区）。 */}
+      <div className="edit-br-stack">
+        {polish && (polish.report || polish.error) && (
+          <div className="edit-polish-card" data-testid="edit-polish-card">
+            <div className="edit-metrics-title">智能微调（前 → 后）</div>
+            {polish.error && (
+              <div className="edit-polish-error" data-testid="edit-polish-error">
+                {polish.error}
+              </div>
+            )}
+            {polish.report && (
+              <>
+                <div className="edit-polish-row">
+                  <span className="edit-metrics-label">重叠对数</span>
+                  <span className="edit-polish-val" data-testid="edit-polish-overlap">
+                    {polish.report.before.overlap_pairs} → {polish.report.after.overlap_pairs}
+                  </span>
+                </div>
+                <div className="edit-polish-row">
+                  <span className="edit-metrics-label">最大穿透</span>
+                  <span className="edit-polish-val" data-testid="edit-polish-depth">
+                    {fmt(polish.report.before.max_penetration_mm, 2)} →{' '}
+                    {fmt(polish.report.after.max_penetration_mm, 2)} mm
+                  </span>
+                </div>
+                <div className="edit-polish-row">
+                  <span className="edit-metrics-label">旋转偏差片</span>
+                  <span className="edit-polish-val" data-testid="edit-polish-rot">
+                    {polish.report.before.rotated_pieces} → {polish.report.after.rotated_pieces}
+                  </span>
+                </div>
+                <div className="edit-polish-row">
+                  <span className="edit-metrics-label">Σ旋转偏差</span>
+                  <span className="edit-polish-val" data-testid="edit-polish-rotsum">
+                    {fmt(polish.report.before.rotation_dev_sum_deg, 1)} →{' '}
+                    {fmt(polish.report.after.rotation_dev_sum_deg, 1)}°
+                  </span>
+                </div>
+                <div className="edit-polish-row">
+                  <span className="edit-metrics-label">料长</span>
+                  <span className="edit-polish-val" data-testid="edit-polish-width">
+                    {fmt(polish.report.before.width_mm, 1)} → {fmt(polish.report.after.width_mm, 1)}{' '}
+                    mm
+                  </span>
+                </div>
+                <div className="edit-polish-row">
+                  <span className="edit-metrics-label">密度</span>
+                  <span className="edit-polish-val" data-testid="edit-polish-density">
+                    {fmt(polish.report.before.density, 2)} → {fmt(polish.report.after.density, 2)} %
+                  </span>
+                </div>
+                <div className="edit-polish-foot">
+                  物理毛版轮廓口径（与导出一致；画布红字为腐蚀后轮廓口径，数值可能偏小）
+                </div>
+              </>
+            )}
+            {polish.canUndo && (
+              <button
+                type="button"
+                className="edit-polish-undo"
+                onClick={polish.onUndo}
+                data-testid="edit-polish-undo"
+              >
+                撤销微调
+              </button>
+            )}
+          </div>
+        )}
+        {/* 操作指南（画布右下、保存按钮上方；与指标面板同款悬浮卡不挡交互）。
+            行式 = 左对齐自然换行（.edit-guide-row），非指标面板的两端对齐 nowrap。 */}
+        <div className="edit-guide" data-testid="edit-guide">
         <div className="edit-metrics-title">操作指南</div>
         <div className="edit-guide-row">
           <span className="edit-metrics-label">拖动裁片：</span>按住裁片拖动（自动选中置顶）
@@ -801,6 +905,7 @@ export function EditCanvas({ mode, onModeChange }: EditCanvasProps) {
           <span className="edit-metrics-label">保存：</span>右下「保存当前布局」；✕ 关闭（有改动先确认）
         </div>
         <div className="edit-guide-foot">拖动自动限制在门幅内（上下不出布边）</div>
+        </div>
       </div>
       {/* 选中片重合指标面板（画布右上固定；未选中不渲染）。 */}
       {sel !== null && metrics !== null && (
@@ -855,6 +960,11 @@ export function EditCanvas({ mode, onModeChange }: EditCanvasProps) {
 /** 放置签名（mode|rot|tr）—— 主渲染 effect「该片是否需要重写 5 层」的判据。 */
 function placementSig(mode: EditViewMode, rot: number, tr: Pt): string {
   return `${mode}|${rot}|${tr[0]}|${tr[1]}`;
+}
+
+/** 数值定长显示（对比卡前后值；NaN/缺键防御显示 '—'）。 */
+function fmt(v: number | undefined, digits: number): string {
+  return typeof v === 'number' && Number.isFinite(v) ? v.toFixed(digits) : '—';
 }
 
 /**

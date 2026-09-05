@@ -131,6 +131,32 @@ export interface FinalMsg {
   elapsed: number;
   n_frames: number;
   n_eroded: number;
+  /**
+   * prefix 统计段（起始端成套开启时后端 additive 附带；键缺席 = prefix 关闭，旧消息
+   * 逐字段不变）。前端原只透传展示，2026-09-05 edit-polish US-003 起作为微调
+   * exclude 组装的 best-effort 数据源 —— pid/extra 解析成员 pid 集合（成套起始端
+   * 微调永不动）。applyFinal 落 RunRecord.prefix。
+   */
+  prefix?: FinalPrefixStats;
+}
+
+/**
+ * final 附带的 prefix 统计段（后端 solve_worker _prefix_record 子集：size/pid/
+ * extra/residual_mm/fallback + 工件级 pin/band_pos —— 前端不消费，unknown 透传）。
+ */
+export interface FinalPrefixStats {
+  /** 选中的资格码（如 34）。 */
+  size: number | null;
+  /** 组合片 pid（如 'PS_g02+g03@34+g02@32'；PS_ 永不泄漏进 placed_items）。 */
+  pid: string;
+  /** 顶部异码补片回显（兜底 4 片形态 = null）。 */
+  extra: { pid: string; label: string | null; size: number | null; rotation: number } | null;
+  /** pin 置换统计（工件级）。 */
+  pin?: unknown;
+  /** 双开带位记录（工件级）。 */
+  band_pos?: unknown;
+  residual_mm?: number | null;
+  fallback?: boolean;
 }
 
 /** error：构造 / 求解失败。 */

@@ -166,6 +166,13 @@ export interface EditState {
   /** 更新 working 下标项（US-003 拖动 / 旋转消费；越界 / 未打开防御 no-op）。 */
   setWorkingItem: (index: number, patch: { rotation?: number; translation?: Pt }) => void;
   /**
+   * 整体替换 working（edit-polish US-003「智能微调」应用结果 / 撤销恢复快照的唯一
+   * 消费路径；不写回 run —— 不调用 save、不自动保存，✕ 关窗即弃语义不变）。
+   * 防御：未打开 / 条数不一致 / 逐位 pid 不一致 → 拒绝替换返回 false（引擎出口
+   * Counter 终检 + 端点 pid 全匹配双保险后的第三道前端闸，错位结果绝不写脏草稿）。
+   */
+  replaceWorking: (items: readonly PlacedItem[]) => boolean;
+  /**
    * 保存：placed_items 原地保序写回 + width_mm / density / finalDensity / viewBoxMaxW
    * 按 computeLayoutStats 重算 + bumpRenderTick + savedDirty=true。
    * @returns false = 未打开 / 陈旧 run（已 clear 出 registry）/ lastFrame 缺失，拒绝写回。
@@ -231,6 +238,17 @@ export const useEditStore = create<EditState>((set, get) => ({
           : [cur.translation[0], cur.translation[1]],
     };
     set({ working: next });
+  },
+
+  replaceWorking: (items) => {
+    const { run, working } = get();
+    if (!run || items.length === 0 || items.length !== working.length) return false;
+    // 逐位 pid 一致（微调引擎保序出口 —— 下标寻址/副本映射稳定的地基）。
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].id !== working[i].id) return false;
+    }
+    set({ working: deepCopyItems(items) });
+    return true;
   },
 
   save: () => {
