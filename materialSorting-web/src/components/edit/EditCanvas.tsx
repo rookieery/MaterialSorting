@@ -16,10 +16,16 @@
 //   - 数据源 = editStore.working（编辑草稿），非 run.frames / renderTick —— working
 //     引用变化（setWorkingItem / reset）即重渲染；
 //   - viewBox 可变（缩放平移）：滚轮以指针为锚缩放（clientToWorld CTM 矩阵通路，
-//     涵盖 letterbox + Y 翻转）、按住空白处拖动平移、重置视图/± 按钮；bg 跟随
-//     viewBox（无限画布感），fab（用布矩形）世界锚定（宽 = computeLayoutStats 料长，
-//     与状态条同一真相源）；
+//     涵盖 letterbox + Y 翻转）、按住空白处拖动平移、「全览」按钮复位到初始适配视图；
+//     bg 跟随 viewBox（无限画布感），fab（用布矩形）世界锚定（宽 = computeLayoutStats
+//     料长，与状态条同一真相源）；
 //   - 毛板模式（mode='rough'）：4 层工艺节点 display:none，毛版 polygon + 尺码色保留。
+//
+// 2026-09-05 UI 优化（用户验收后迭代）：± 放缩按钮删除（滚轮唯一缩放入口）；
+// 「重置视图」改名「全览」（只复位缩放/平移，不还原编辑草稿 —— 与主面板「重置」
+// = editStore.reset() 回算法基线的语义彻底区分）；形态 select 自 footer 移入左上
+// 工具区（state 仍在 EditLayoutModal，经 onModeChange 受控）；右下新增「操作指南」
+// 卡片（.edit-guide，同 .edit-metrics 悬浮卡模式 pointer-events:none 不挡画布）。
 //
 // US-003 交互（pointer effect 内闭包 —— 监听器只挂一次，状态一律走 ref /
 // editStore.getState()，不闭包 props/state）：
@@ -120,9 +126,12 @@ interface EditMetrics {
 export interface EditCanvasProps {
   /** 渲染形态（完整版/毛板，即时切换可恢复）。 */
   mode: EditViewMode;
+  /** 形态 select 变更回调（select 渲染在画布左上工具区，state 属 EditLayoutModal；
+   *  直挂 EditCanvas 的单测不传 → no-op）。 */
+  onModeChange?: (mode: EditViewMode) => void;
 }
 
-export function EditCanvas({ mode }: EditCanvasProps) {
+export function EditCanvas({ mode, onModeChange }: EditCanvasProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const flipRef = useRef<SVGGElement | null>(null);
   const bgRef = useRef<SVGRectElement | null>(null);
@@ -730,21 +739,7 @@ export function EditCanvas({ mode }: EditCanvasProps) {
     };
   }, []);
 
-  /** 视图工具按钮（React 受控；画布右上留给 US-003 指标面板，工具置左上）。 */
-  function handleZoomIn(): void {
-    const vb = vbRef.current;
-    const svg = svgRef.current;
-    if (!vb || !svg) return;
-    zoomBy(svg, vbRef, 1 / ZOOM_STEP, [vb.x + vb.w / 2, vb.y + vb.h / 2]);
-  }
-
-  function handleZoomOut(): void {
-    const vb = vbRef.current;
-    const svg = svgRef.current;
-    if (!vb || !svg) return;
-    zoomBy(svg, vbRef, ZOOM_STEP, [vb.x + vb.w / 2, vb.y + vb.h / 2]);
-  }
-
+  /** 「全览」：缩放/平移一步复位到初始适配视图（vb0）—— 不还原已编辑布局。 */
   function handleResetView(): void {
     const svg = svgRef.current;
     if (!svg || !vb0Ref.current) return;
@@ -756,35 +751,56 @@ export function EditCanvas({ mode }: EditCanvasProps) {
     <div className="edit-layout-canvas-wrap">
       {/* 骨架 svg：preserveAspectRatio 静态属性走 JSX；viewBox/子节点全部 imperative。 */}
       <svg ref={svgRef} xmlns={SVGNS} className="edit-layout-svg" preserveAspectRatio="xMinYMid meet" />
+      {/* 视图工具（左上竖排）：全览按钮 + 形态 select（2026-09-05 自 footer 移入）。
+          右上留给 US-003 指标面板、右下操作指南卡 —— 均悬浮不挡画布。 */}
       <div className="edit-layout-canvas-tools">
-        <button
-          type="button"
-          className="edit-layout-tool"
-          onClick={handleZoomIn}
-          title="放大"
-          aria-label="放大"
-          data-testid="edit-zoom-in"
-        >
-          ＋
-        </button>
-        <button
-          type="button"
-          className="edit-layout-tool"
-          onClick={handleZoomOut}
-          title="缩小"
-          aria-label="缩小"
-          data-testid="edit-zoom-out"
-        >
-          －
-        </button>
         <button
           type="button"
           className="edit-layout-tool edit-layout-tool-reset"
           onClick={handleResetView}
+          title="缩放与平移复位到全布局（不还原已编辑布局）"
           data-testid="edit-zoom-reset"
         >
-          重置视图
+          全览
         </button>
+        <label className="edit-layout-mode">
+          形态
+          <select
+            value={mode}
+            onChange={(e) => onModeChange?.(e.target.value as EditViewMode)}
+            data-testid="edit-layout-mode"
+          >
+            <option value="full">完整版</option>
+            <option value="rough">毛板</option>
+          </select>
+        </label>
+      </div>
+      {/* 操作指南（画布右下固定、保存按钮上方；与指标面板同款悬浮卡不挡交互）。
+          行式 = 左对齐自然换行（.edit-guide-row），非指标面板的两端对齐 nowrap。 */}
+      <div className="edit-guide" data-testid="edit-guide">
+        <div className="edit-metrics-title">操作指南</div>
+        <div className="edit-guide-row">
+          <span className="edit-metrics-label">拖动裁片：</span>按住裁片拖动（自动选中置顶）
+        </div>
+        <div className="edit-guide-row">
+          <span className="edit-metrics-label">旋转：</span>拖动选中片上方绿色圆点，绕中心自由旋转
+        </div>
+        <div className="edit-guide-row">
+          <span className="edit-metrics-label">缩放：</span>鼠标滚轮（以指针为中心）
+        </div>
+        <div className="edit-guide-row">
+          <span className="edit-metrics-label">平移：</span>按住空白处拖动
+        </div>
+        <div className="edit-guide-row">
+          <span className="edit-metrics-label">取消选中：</span>单击空白处
+        </div>
+        <div className="edit-guide-row">
+          <span className="edit-metrics-label">形态：</span>左上下拉切换 完整版 / 毛板
+        </div>
+        <div className="edit-guide-row">
+          <span className="edit-metrics-label">保存：</span>右下「保存当前布局」；✕ 关闭（有改动先确认）
+        </div>
+        <div className="edit-guide-foot">拖动自动限制在门幅内（上下不出布边）</div>
       </div>
       {/* 选中片重合指标面板（画布右上固定；未选中不渲染）。 */}
       {sel !== null && metrics !== null && (

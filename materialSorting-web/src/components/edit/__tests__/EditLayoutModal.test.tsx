@@ -216,7 +216,7 @@ describe('EditLayoutModal 状态条与结构 (US-002)', () => {
     ).toContain('+0.00pt');
   });
 
-  it('中心画布渲染 5 层（与主视图同构：毛版 + 净版可见）+ 底部形态 select + 保存按钮', () => {
+  it('中心画布渲染 5 层（与主视图同构：毛版 + 净版可见）+ 工具区形态 select（2026-09-05 自 footer 移入）+ 保存按钮', () => {
     openEditLayout(seedBestRun());
     const svg = document.querySelector('svg.edit-layout-svg') as SVGSVGElement;
     expect(svg).not.toBeNull();
@@ -232,7 +232,7 @@ describe('EditLayoutModal 状态条与结构 (US-002)', () => {
     expect(
       document.querySelector('[data-testid="edit-layout-save"]')!.textContent,
     ).toContain('保存当前布局');
-    // 取消按钮已废弃 —— footer 只有 select 与保存
+    // 取消按钮已废弃、形态 select 移入画布工具区 —— footer 只剩保存
     const footBtns = Array.from(
       document.querySelectorAll('.edit-layout-foot button'),
     );

@@ -290,6 +290,21 @@ check('S2a 完整版 5 层：毛版/净版/内部线/刺口/布纹线五类节�
   && s2full.grain === 30 && s2full.grainVis === 30,
   JSON.stringify(s2full));
 
+// 视图工具优化（2026-09-05）：± 缩放按钮删除（滚轮唯一入口）、「重置视图」→「全览」、
+// 形态 select 自 footer 移入左上工具区、右下新增 操作指南 卡片。
+const uiShape = await page.evaluate(() => ({
+  zoomIn: document.querySelector('[data-testid=edit-zoom-in]') !== null,
+  zoomOut: document.querySelector('[data-testid=edit-zoom-out]') !== null,
+  reset: document.querySelector('[data-testid=edit-zoom-reset]')?.textContent || '',
+  modeInTools: document.querySelector(
+    '.edit-layout-canvas-tools [data-testid=edit-layout-mode]') !== null,
+  guide: document.querySelector('[data-testid=edit-guide]')?.textContent || '',
+}));
+check('S2a2 视图工具：± 已删、全览按钮 + 工具区形态 select + 操作指南卡',
+  !uiShape.zoomIn && !uiShape.zoomOut && uiShape.reset.includes('全览')
+  && uiShape.modeInTools && uiShape.guide.includes('滚轮'),
+  'reset="' + uiShape.reset.trim() + '" guide=' + uiShape.guide.length + 'chars');
+
 await page.selectOption('[data-testid=edit-layout-mode]', 'rough');
 await sleep(300);
 const s2rough = await layerCensus();
@@ -364,7 +379,8 @@ const metrics = await page.evaluate(() => ({
   area: document.querySelector('[data-testid=edit-metrics-area]')?.textContent || '',
   depth: document.querySelector('[data-testid=edit-metrics-depth]')?.textContent || '',
   rot: document.querySelector('[data-testid=edit-metrics-rot]')?.textContent || '',
-  foot: document.querySelector('.edit-metrics-foot')?.textContent || '',
+  foot: document.querySelector('[data-testid=edit-metrics] .edit-metrics-foot')
+    ?.textContent || '',
 }));
 const rotVal = Number((metrics.rot.match(/([\d.]+)°/) || [0, 0])[1]);
 const areaVal = Number((metrics.area.match(/([\d.]+) mm/) || [0, 0])[1]);

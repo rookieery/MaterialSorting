@@ -7,7 +7,8 @@
 //      陷阱锁死；viewBox 变化后 clientToWorld 仍取回同一世界点（AC）
 //   5) CTM 不可得 → 视图中心锚退化
 //   6) 空白拖动平移（mock getBoundingClientRect）；毛版 polygon pointerdown 不起平移
-//   7) ＋/－/重置视图按钮（中心锚）+ MIN_VB_W 钳制
+//   7) 滚轮中心锚缩放（CTM 缺席退化）+「全览」按钮复位 + MIN_VB_W 钳制
+//      （± 放缩按钮 2026-09-05 删除 —— 滚轮唯一缩放入口；指南卡片/工具区形态 select 同日加）
 //   US-003：8) 拖动（translation 精确值 / 提层 / 多副本 / fab 伸缩）
 //           9) 钳制（Y 下界上界按被拖片 bbox / x<0 钳 0 / 右界自由）
 //          10) 旋转（手柄绕质心自由角 + pivot 随动 + 布纹线随转 / 空白点击取消选中）
@@ -493,24 +494,28 @@ describe('EditCanvas 平移与视图工具 (US-002)', () => {
     expect(svg.getAttribute('viewBox')).toBe('0 0 1100 1000');
   });
 
-  it('＋/－ 按钮中心锚缩放、重置视图回初始', () => {
+  it('滚轮中心锚缩放（CTM 缺席退化）+「全览」复位初始；± 按钮已删除（2026-09-05）', () => {
     const svg = mountCanvas('full', seedRun(PLACED_AB));
-    const zoomIn = document.querySelector('[data-testid="edit-zoom-in"]') as HTMLButtonElement;
-    const zoomOut = document.querySelector('[data-testid="edit-zoom-out"]') as HTMLButtonElement;
+    const { g } = skeleton(svg);
+    // CTM 缺席 → 滚轮锚退化视图中心（与旧 ± 按钮同数学：k=0.8/1.25 中心锚）
+    (g as unknown as { getScreenCTM: () => null }).getScreenCTM = () => null;
     const reset = document.querySelector('[data-testid="edit-zoom-reset"]') as HTMLButtonElement;
+    expect(reset.textContent).toContain('全览');
+    expect(document.querySelector('[data-testid="edit-zoom-in"]')).toBeNull();
+    expect(document.querySelector('[data-testid="edit-zoom-out"]')).toBeNull();
 
     act(() => {
-      zoomIn.click();
+      fireWheel(svg, 176, 120, -100); // deltaY<0 → 放大 k=0.8（中心 (550,500)）
     });
     expect(svg.getAttribute('viewBox')).toBe('110 100 880 800');
     act(() => {
-      zoomOut.click(); // 中心 (550,500) ×1.25 → 恰回初始
+      fireWheel(svg, 176, 120, 100); // deltaY>0 → 缩小 k=1.25 → 恰回初始
     });
     expect(svg.getAttribute('viewBox')).toBe('0 0 1100 1000');
 
     act(() => {
-      zoomIn.click();
-      zoomIn.click();
+      fireWheel(svg, 176, 120, -100);
+      fireWheel(svg, 176, 120, -100);
     });
     expect(svg.getAttribute('viewBox')).toBe('198 180 704 640');
     act(() => {
@@ -519,15 +524,31 @@ describe('EditCanvas 平移与视图工具 (US-002)', () => {
     expect(svg.getAttribute('viewBox')).toBe('0 0 1100 1000');
   });
 
-  it('连续放大钳制 MIN_VB_W=20（刀口级下限）', () => {
+  it('连续滚轮放大钳制 MIN_VB_W=20（刀口级下限）', () => {
     const svg = mountCanvas('full', seedRun(PLACED_AB));
-    const zoomIn = document.querySelector('[data-testid="edit-zoom-in"]') as HTMLButtonElement;
+    const { g } = skeleton(svg);
+    (g as unknown as { getScreenCTM: () => null }).getScreenCTM = () => null;
     act(() => {
-      for (let i = 0; i < 25; i++) zoomIn.click();
+      for (let i = 0; i < 25; i++) fireWheel(svg, 176, 120, -100);
     });
     const vb = svg.getAttribute('viewBox')!;
     const w = Number(vb.split(' ')[2]);
     expect(w).toBe(20);
+  });
+
+  it('工具区 =「全览」+ 形态 select（2026-09-05 自 footer 移入）+ 操作指南卡片常驻', () => {
+    mountCanvas('full', seedRun(PLACED_AB));
+    // 形态 select 在画布左上工具区内（footer 仅存保存按钮）
+    expect(
+      document.querySelector('.edit-layout-canvas-tools [data-testid="edit-layout-mode"]'),
+    ).not.toBeNull();
+    // 操作指南（画布右下）：七条交互说明逐关键词在场
+    const guide = document.querySelector('[data-testid="edit-guide"]');
+    expect(guide).not.toBeNull();
+    const text = guide?.textContent ?? '';
+    for (const kw of ['拖动裁片', '旋转', '滚轮', '平移', '取消选中', '保存']) {
+      expect(text).toContain(kw);
+    }
   });
 });
 

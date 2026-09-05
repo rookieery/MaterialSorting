@@ -18,9 +18,10 @@
 //
 // 结构：顶部状态条（料长 mm + 利用率 % + 相对基线 Δpt，computeLayoutStats 单一真相源
 // —— 初值 = 基线即主视图利用率/料长，US-003 拖动起实时刷新）+ 右上 ✕ + 中心 EditCanvas
-// + 左下形态 select（完整版/毛板，即时切换可恢复）+ 右下仅「保存当前布局」单按钮
-// （取消按钮已废弃）。全屏 overlay 阻断主界面（z-index 1250，ptype-preview 1200 与
-// band-zoom 1300 之间 —— 编辑弹窗盖住预览、让位放大镜）。
+// + 右下仅「保存当前布局」单按钮（取消按钮已废弃）。全屏 overlay 阻断主界面（z-index
+// 1250，ptype-preview 1200 与 band-zoom 1300 之间 —— 编辑弹窗盖住预览、让位放大镜）。
+// 形态 select（完整版/毛板，即时切换可恢复）2026-09-05 自 footer 移入画布左上工具区
+// （EditCanvas 渲染，state 仍在本组件、经 onModeChange 受控 —— ± 放缩按钮同日删除）。
 
 import { useEffect, useState } from 'react';
 import type { JSX } from 'react';
@@ -144,7 +145,7 @@ function EditLayoutModalInner(): JSX.Element {
 
         {run && manifest ? (
           <div className="edit-layout-body">
-            <EditCanvas mode={mode} />
+            <EditCanvas mode={mode} onModeChange={setMode} />
           </div>
         ) : (
           <div className="edit-layout-body edit-layout-empty" data-testid="edit-layout-empty">
@@ -152,18 +153,8 @@ function EditLayoutModalInner(): JSX.Element {
           </div>
         )}
 
+        {/* footer 仅存保存按钮（形态 select 2026-09-05 移入画布左上工具区）。 */}
         <div className="edit-layout-foot">
-          <label className="edit-layout-mode">
-            形态
-            <select
-              value={mode}
-              onChange={(e) => setMode(e.target.value as EditViewMode)}
-              data-testid="edit-layout-mode"
-            >
-              <option value="full">完整版</option>
-              <option value="rough">毛板</option>
-            </select>
-          </label>
           <button
             type="button"
             className="edit-layout-save"
