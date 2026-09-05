@@ -34,7 +34,9 @@ materialSorting-server/
     │   ├── sparrow_experiments.py     旋转/重合公差实验
     │   ├── labeling.py                g01+ 编号单一真相源（assign_codes；parse/commit 两管线共用）
     │   ├── waist_band.py              US-009 腰头成带核心（build_band_plan/expand_placements/BandChunk；v2 2026-08-21 构造性链构造（US-014 成对重试已删）；fill<45% 唯一守门人 —— US-015 填料混带 2026-08-22 已删；禁 import web；waist_band_gate.py 同期删除）
-    │   └── prefix.py                  US-001 起始端成套前后幅核心构造（eligible_sizes 2+2 资格码 / pick_prefix_size seeded 随机 / build_prefix_plan 4 片竖排贴靠 PS_* 组合片（BandChunk 同构，直接喂 expand_placements）；成员序 2026-09-03 改判 paired 后后前前（interleave/grouped 备档逐字节不变；US-002 定案 on/on' A/B −0.597pt paired 更优合入）；rot180 负坐标记账 tr=(xoff−b0,yoff−b1) 单测锁死；`python -m` 冒烟对拍 P0；禁 import web/cli，AST 守卫在 tests/test_prefix.py）+ US-002 段置换钉位/驱逐重插（permute_pin A/C/B 刚性重组三守卫 skip_at_head=6/eps=5/flex=400、reinsert_evicted 三优先序 home→nudge→slide→尾追加、pin_prefix_layout 编排含 validate 复检+回滚；P0 回归 4/4 seed 跳过 0.00pt）+ 2026-09-02 顶部异码补片与联合选码（build_prefix_plan additive extra_pid/extra_rot 第 5 成员贴触滑移、select_prefix_plan 近满幅几何搜索取代 seeded 随机 —— 遍历 (A×片型×B) 取 H=5 片原始轮廓 union bbox 高 ≤ gate−10 最大者（rot 委派 FR-3 内定），无 RNG；全无可行兜底回 4 片 seeded；成员放置循环抽出 _place_members 单一实现，extra_pid=None 逐字节不变）；US-005 收官验收（2026-09-02）全绿：UI 冒烟 smoke_prefix_extra.mjs 29/29 + prefix_accept 短预算 accept 0.556pt
+    │   ├── prefix.py                  US-001 起始端成套前后幅核心构造（eligible_sizes 2+2 资格码 / pick_prefix_size seeded 随机 / build_prefix_plan 4 片竖排贴靠 PS_* 组合片（BandChunk 同构，直接喂 expand_placements）；成员序 2026-09-03 改判 paired 后后前前（interleave/grouped 备档逐字节不变；US-002 定案 on/on' A/B −0.597pt paired 更优合入）；rot180 负坐标记账 tr=(xoff−b0,yoff−b1) 单测锁死；`python -m` 冒烟对拍 P0；禁 import web/cli，AST 守卫在 tests/test_prefix.py）+ US-002 段置换钉位/驱逐重插（permute_pin A/C/B 刚性重组三守卫 skip_at_head=6/eps=5/flex=400、reinsert_evicted 三优先序 home→nudge→slide→尾追加、pin_prefix_layout 编排含 validate 复检+回滚；P0 回归 4/4 seed 跳过 0.00pt）+ 2026-09-02 顶部异码补片与联合选码（build_prefix_plan additive extra_pid/extra_rot 第 5 成员贴触滑移、select_prefix_plan 近满幅几何搜索取代 seeded 随机 —— 遍历 (A×片型×B) 取 H=5 片原始轮廓 union bbox 高 ≤ gate−10 最大者（rot 委派 FR-3 内定），无 RNG；全无可行兜底回 4 片 seeded；成员放置循环抽出 _place_members 单一实现，extra_pid=None 逐字节不变）；US-005 收官验收（2026-09-02）全绿：UI 冒烟 smoke_prefix_extra.mjs 29/29 + prefix_accept 短预算 accept 0.556pt
+    │   └── polish.py                  prd-edit-polish US-001 编辑排料「智能微调」引擎层确定性后处理（polish_layout 纯函数无 RNG：诊断+去旋转+去重叠+报告，物理毛版轮廓口径与 /export 同源；逐 move 五道守卫 + 无改进返回输入 list 原对象；compact=US-005 预留键位恒 no-op；`python -m` 冒烟合成夹具八项 + --demo 真实几何；禁 import web/cli，AST 守卫在 tests/test_polish.py）
+
     ├── web/                           FastAPI + WS 工作台（详见 agent-api-reference.md）
         ├── server.py                  app + 路由编排（GET /、/static、POST /export、POST /api/parse-dxf、POST /api/commit-to-nesting、POST /api/session（多会话 US-001：Header 解析 + resolve(create=True) + SessionError→JSONResponse）、GET /api/ptypes、WS /ws/solve）+ US-020 _PIECES_STATE 可 reload（threading.Lock immutable snapshot）+ US-004 上传解析 + US-010 commit-to-intermediate（commit 后 reload）+ US-022 intermediate 加 label + WS quantities 入参；2026-08-20 拆分后 = app 创建/静态 mount + 两个上传路由（_commit_to_nesting_sync 留守：测试 monkeypatch server 命名空间）+ include routes_views/routes_ws/strategy（routes_band 2026-08-22 已删）；state 与线程池在 runtime.py、re-export 全部拆出符号；2026-08-27 文件尾加 session_registry.start_scanner()（会话过期 daemon 扫描）、_DOC_ID_RE 改自 sessions.SID_RE re-export（同一编译对象）；**US-002（2026-08-27）commit 双写与会话绑定**：`_per_doc_intermediate(doc_id)` per-doc intermediate 路径约定 + `_commit_to_nesting_sync` 双写（主写 per-doc → 镜像写 paths.INTERMEDIATE，.bak 留镜像侧，镜像失败仅 warn）+ commit 路由读 X-Session-Id（带 sid：解析先行 fail-fast + `_build_pieces_state(per-doc)` 快照挂会话不碰 default；无 sid：显式传 `paths.INTERMEDIATE` reload default）；**US-006（2026-08-27）**：commit 路由尾 `run_in_executor(diskclean.trigger_cleanup, str(UPLOADS_DIR))` best-effort TTL 清理（显式传模块常量——测试 monkeypatch 后清理范围自动跟随 tmp）+ `main()` 起 `diskclean.start_startup_cleaner()`（daemon 线程，只在真 server 进程触发）
         ├── runtime.py                 共享运行时单例（2026-08-20 自 server.py 拆出）：_PIECES_STATE 快照机制（_state_lock/_build_pieces_state/_reload_pieces_state/_get_pieces_state）+ 启动期 reload + 共享 _executor（6 workers）；import 即副作用、先于 app 创建
@@ -355,6 +357,34 @@ parse-dxf 响应（`web/server.py._build_parse_payload`）与 intermediate（`we
 | `main` | `python -m materialsorting.nesting_engine.prefix` | 冒烟入口：默认 5336 真实数据（config `data/configs/5336_coded_really.json` + `--intermediate` 指向 commit 产物）打印资格码/seeded 选码/paired+grouped+interleave 三序直测数字（2026-09-03 起 paired 默认：@38 bbox 1175×1513/fill 86.0%/2 腔死区 45,811mm²；选码胜者 套装@38+g02@36 rot0 H=1956.2/fill 84.4%/3 腔死区 47,236mm²）+ 2026-09-02 **选码搜索段**（select_prefix_plan 逐组合候选表 H/可行/reason + 选定组合线 套装@A + 顶部 label@B（rot）H/residual/gate（N 组合，无 RNG）+ chunk 细节）；`--pin-demo --time N` 加跑 FREE vs PIN 四段演示（solve_with_progress 主解 + pin_prefix_layout），P0 回归口径 = 组合片常态已锚定布头 ⇒ skipped=True、layout_identical、Δdensity +0.00pt；intermediate 缺失提示先 commit |
 
 > 包络断言口径（`tests/test_prefix.py`）：union(成员原轮廓@展开位) ⊆ composite@主解位 ⊕ d_g（容差 0.5mm）—— buffer 须 `join_style=mitre`：d_g=2（5336 前后幅 per_type d）时圆角 join 在 90° 凸角漏 d_g·(√2−1)≈0.83mm（erode⊕dilate=opening ⊂ 原形的数学性质，与单片 `erode_polygon` 同源、非组合片特有），mitre 保真实偏移曲线 ⇒ 断言严格成立（5336 真实数据两朝向实测通过）。
+
+### `polish.py` — 编辑排料「智能微调」引擎层确定性后处理（prd-edit-polish US-001，2026-09-05）
+
+终局布局解抛光：spyrrow 目标只有料长，重合（per_type d 腐蚀放行的工艺余量）与旋转（离散角度集）只是可行性维度 —— 终态「旁边有空位却不回正/不分离」的负面重合与旋转由 polish 清洗（版师手动局部微调的结构性缺口）。**物理毛版轮廓口径**（`pieces_by_id` 原始 polygon，与 /export `placed_to_world` 同源、非 eroded —— 编辑画布红字是腐蚀口径数值可能偏小，口径差是文档级约定）；无 RNG、排序平手一律按下标裁决、无改进返回输入 list 原对象（LNS 同款逐字节不变量）；`compact` 为 US-005 压缩回收档预留键位（实现前恒 no-op）。逐 move 五道守卫：①y∈[0,gate] ②全图物理包络不增（width ≤ before+0.5mm，minX<0 布头外凸同计）③位移片 vs 全图零新重合（交集面积 ≤0.1mm²，shapely 精确复核）④pid 多重集守恒（同 pid N 条**按数组下标**逐实例寻址绝不 pid 去重，与前端 editStore「同 pid 第 k 次出现 = 第 k 副本」同口径，出口终检）⑤exclude 命中实例（labels/pids 双键、over-conservative 同 pid 全副本）永不动仍作障碍。实测 110 片 0.5s（预算 ≤5s）。禁 import web/cli（AST 守卫 `tests/test_polish.py`）。
+
+**模块级常量：**
+
+```
+OVERLAP_AREA_EPS_MM2 = 0.1    # 「重合」面积阈值：诊断计数与守卫复核同口径
+COLLIDE_AREA_EPS_MM2 = 1e-9   # 分离二分碰撞判定（比 _slide_touch 的 1e-6 更紧）
+SEP_NUDGE_MM         = 1e-9   # 分离终点 1nm 防贴死微抬 ⇒ 终态交集面积精确 0
+WIDTH_TOL_MM         = 0.5    # 包络守卫容差（守卫②）
+GATE_EPS_MM          = 1e-6   # y∈[0,gate] 数值容差（守卫①）
+DEV_EPS_DEG          = 1e-9   # 旋转偏差非零判定
+BISECT_ITERS         = 40     # 分离二分次数（_slide_touch 同款）
+NEIGHBOR_MARGIN_MM   = 50.0   # 去旋转邻域候选障碍筛选扩张
+```
+
+| 函数 | 签名 | 说明 |
+|------|------|------|
+| `polish_layout` | `(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False) → (placed_new, report)` | 主入口纯函数：①诊断（bbox 预筛两两重合 + 旋转偏差审计 dev=min(rot mod 180, 180−rot mod 180)）②去旋转（dev 降序平手下标，`_derotate_ladder` 沿 discretize_orientations 同款离散集向最近基线步进先试基线；质心锚定 `t'=c_world−R(rot')·c_local` + 邻域候选（质心原位+障碍/门幅棱边对齐）按位移升序取首个过守卫位）③去重叠（穿透深度降序平手 (i,j)，`_sep_translate` 最小分离 ±y 优先/−x 次之，一片失败换动另一片，都失败记 residual）④报告。placed_new 无 move 时 = 输入 list 原对象；report = before/after 七指标（overlap_pairs/max_penetration_mm/total_overlap_area_mm2/rotated_pieces/rotation_dev_sum_deg/width_mm/density；density=real 口径 Σ(原面积×副本数)/(width×gate) 百分数）+ moves（index/pid/kind('derotate'/'separate')/from/to/detail）+ residual（终态重合对 + 旋转残留如实上报）+ excluded（命中下标）+ elapsed_sec |
+| `_rotation_dev` | `(rot) → float` | 相对布纹基线 {0°,180°} 偏差 ∈[0,90]（180° 布纹等价合法） |
+| `_derotate_ladder` | `(rot) → list[float]` | 候选角阶梯：当前 dev 充当 tol 调 `discretize_orientations`（同 1°/5° 步进规则），只取最近基线一侧且 dev 严格下降，按 (dev, 角度) 升序 |
+| `_penetration_depth` | `(ga, gb) → float` | 穿透深度 = 深入方采样点（顶点+边中点，共边平贴退化补中点）到对方边界最大距离（与前端 editGeometry.penetrationDepth 同语义） |
+| `_sep_translate` | `(g_moving, g_other, axis, sign) → (dx, dy, t) \| None` | 最小分离平移：镜像 `_slide_touch` 二分（lo 恒碰撞/hi bbox 分离界恒自由）+ 1nm 微抬 |
+| `_diagnose` | `(geoms, items, total_area, gate_mm) → (summary, pairs)` | 全图诊断七指标 + 重合对明细（i<j） |
+| `PolishError` | Exception | 输入 pid 未匹配 / 内部不变量失败（US-002 web 层捕获转结构化 error） |
+| `main` | `python -m materialsorting.nesting_engine.polish` | 冒烟：默认合成夹具八项自检（斜片回正/重合分离/紧密 no-op/守卫越门幅/守卫包络/多副本 index 寻址/排除集障碍/确定性双跑）exit 0；`--demo [--demo-pieces N]` 追加真实母版几何演示（intermediate 前 N 片确定性带病布局 → 前后对比 + 双跑全等断言，无 spyrrow 依赖） |
 
 ### `waist_band_gate.py` —（已删 2026-08-22）
 
