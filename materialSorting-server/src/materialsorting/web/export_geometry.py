@@ -43,25 +43,42 @@ NOTCH_LEN_MM = 8.0
 
 
 # ===================== 几何 =====================
-def apply_transform(polygon, rotation_deg: float, translation):
-    """二维旋转 + 平移：world = R(θ)·(x,y) + (tx,ty)（与前端 pointsStr 同公式）。"""
+def apply_transform(polygon, rotation_deg: float, translation, mirror: bool = False):
+    """二维旋转 + 平移：world = R(θ)·(x,y) + (tx,ty)（与前端 pointsStr 同公式）。
+
+    mirror=True（edit-keyboard US-004，缺省 false 逐字节不变）：局部 x 先取负再
+    旋转 ``world = R(θ)·diag(−1,1)·(x,y) + t``，展开
+    ``x' = −x·c − y·s + tx / y' = −x·s + y·c + ty`` —— 与前端
+    ``editGeometry.transformPolygon`` mirror 分支同输入输出逐点相等（单测对拍
+    锁死）。缺省 false / 显式 false 与旧实现逐字节一致。
+    """
     r = math.radians(rotation_deg)
     c, s = math.cos(r), math.sin(r)
     tx, ty = float(translation[0]), float(translation[1])
-    return [(x * c - y * s + tx, x * s + y * c + ty) for x, y in polygon]
+    out = []
+    for x, y in polygon:
+        x0 = -x if mirror else x
+        out.append((x0 * c - y * s + tx, x0 * s + y * c + ty))
+    return out
 
 
-def _transform_normal(nx: float, ny: float, rotation_deg: float) -> tuple[float, float]:
-    """旋转法线向量（无平移）——notch 法线随裁片姿态旋转。"""
+def _transform_normal(nx: float, ny: float, rotation_deg: float,
+                      mirror: bool = False) -> tuple[float, float]:
+    """旋转法线向量（无平移）——notch 法线随裁片姿态旋转。
+
+    mirror=True（US-004）：法线是**向量**，反射下 x 分量先取负再旋转
+    （``R(θ)·diag(−1,1)·(nx,ny)``；点变换同公式但无平移项）。
+    """
     r = math.radians(rotation_deg)
     c, s = math.cos(r), math.sin(r)
-    return (c * nx - s * ny, s * nx + c * ny)
+    x0 = -nx if mirror else nx
+    return (c * x0 - s * ny, s * x0 + c * ny)
 
 
 def placed_to_world(placed, pieces_by_id):
     """把 placed_items 转成世界坐标裁片列表（含 5 层，US-024）。
 
-    placed: [{id, rotation, translation:[tx,ty]}, ...]
+    placed: [{id, rotation, translation:[tx,ty], mirror?}, ...]
     pieces_by_id: {pid: piece_dict}（intermediate 直查，零重放；piece_dict 含原始
                   polygon/label/size/area_mm2 + US-024 5 层字段 net_polygon/
                   internal_lines/notches/grain_line）
@@ -74,6 +91,11 @@ def placed_to_world(placed, pieces_by_id):
       - polygon / net_polygon / internal_lines 顶点 → ``apply_transform``（点变换）
       - notch (x, y, nx, ny)：点变换 (x,y) + 法线旋转变换 (nx,ny)
       - grain_line [x1,y1,x2,y2]：两端点变换
+
+    mirror（edit-keyboard US-004，omit-when-false 可选键）：``it.get('mirror')
+    is True`` → 5 层全部走 mirror 分支（毛版/净版/内部线/布纹线点变换 + notch
+    法线按向量镜像）；缺省/False 与无该键逐字节相同（/export 路由零改动，
+    placed 键直通）。
     """
     out = []
     for it in placed:
@@ -84,7 +106,8 @@ def placed_to_world(placed, pieces_by_id):
             continue
         rot = float(it.get('rotation', 0.0))
         tr = it.get('translation', [0, 0])
-        world_poly = apply_transform(p['polygon'], rot, tr)
+        mirror = it.get('mirror') is True
+        world_poly = apply_transform(p['polygon'], rot, tr, mirror)
 
         # US-024 5 层：从 intermediate 透传 + 同步 placement 变换
         net_raw = p.get('net_polygon') or []
@@ -92,18 +115,20 @@ def placed_to_world(placed, pieces_by_id):
         notches_raw = p.get('notches') or []
         grain_raw = p.get('grain_line')
 
-        world_net = apply_transform(net_raw, rot, tr) if net_raw else []
-        world_internal = [apply_transform(line, rot, tr) for line in internal_raw]
-        # notch: (x, y, nx, ny) → 旋转点 + 旋转法线（无平移）
+        world_net = apply_transform(net_raw, rot, tr, mirror) if net_raw else []
+        world_internal = [apply_transform(line, rot, tr, mirror)
+                          for line in internal_raw]
+        # notch: (x, y, nx, ny) → 旋转点 + 旋转法线（无平移；镜像时 nx 取负）
         world_notches = []
         for x, y, nx, ny in notches_raw:
-            wx, wy = apply_transform([(x, y)], rot, tr)[0]
-            wnx, wny = _transform_normal(nx, ny, rot)
+            wx, wy = apply_transform([(x, y)], rot, tr, mirror)[0]
+            wnx, wny = _transform_normal(nx, ny, rot, mirror)
             world_notches.append((wx, wy, wnx, wny))
         world_grain = None
         if grain_raw and len(grain_raw) == 4:
             (gx1, gy1), (gx2, gy2) = apply_transform(
-                [(grain_raw[0], grain_raw[1]), (grain_raw[2], grain_raw[3])], rot, tr)
+                [(grain_raw[0], grain_raw[1]), (grain_raw[2], grain_raw[3])],
+                rot, tr, mirror)
             world_grain = (gx1, gy1, gx2, gy2)
 
         # US-002：label 键直取（TEXT/质心叠印随 g 码不变）；颜色 2026-08-20 起随尺码

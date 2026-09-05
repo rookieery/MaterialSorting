@@ -41,6 +41,16 @@ exclude 集片永不被移动（仍作为障碍参与他人检查）。
 **无改进时返回输入 list 原对象**（逐字节不变量，LNS 同款哲学：无严格改进
 不回写）。确定性：无 RNG、排序平手一律按下标裁决、同输入同输出。
 
+**mirror 镜像片（edit-keyboard US-004，omit-when-false 可选键）**：
+``placed`` 条目可带 ``mirror: true``（局部 x 翻转 ``world = R(rot)·diag(−1,1)·p + t``，
+与前端 transformPolygon / 后端 export_geometry.apply_transform 同一约定）——
+诊断/pass ③分离/pass ④compact 全部按镜像后的正确几何计算（``_world_geom``
+与 derotate 共用「local = [(-x, y)] 预处理 + 标准变换」实现，t' 质心补偿公式
+不变）；items 重建（compact 快照/出口）omit-when-false 透传 mirror；无改进
+路径返回输入 list 原对象（含 mirror）逐字节不变。derotate 基线集 {0°,180°}
+不受影响 —— diag(−1,1) 保持 x 轴方向，布纹合法性与 mirror 无关。缺省
+False：所有既有路径键集与行为逐字节不变（additive 零回归）。
+
 分层约束：本模块属 ``nesting_engine``，仅 import 标准库 + shapely + 本包兄弟
 模块（``constraints`` / ``sparrow_baseline`` / ``waist_band``）+ 父包 ``paths``；
 **禁 import web/cli**（AST 守卫在 tests/test_polish.py）。``compact`` 旗标为
@@ -140,15 +150,38 @@ def _derotate_ladder(rot: float) -> list:
 
 def _world_geom(placement, pieces_by_id):
     """placement → 物理毛版轮廓 shapely 几何（世界系；与 /export 同口径：
-    ``pieces_by_id`` 原始 polygon 施加 rotation+translation，非 eroded）。"""
+    ``pieces_by_id`` 原始 polygon 施加 rotation+translation，非 eroded）。
+
+    mirror（edit-keyboard US-004）：``placement.get('mirror') is True`` → 局部
+    x 先取负预处理（``local = [(-x, y)]``）再走标准 ``_transform_polygon``，
+    等价 ``R(rot)·diag(−1,1)·p + t``（与前端 transformPolygon / 后端
+    apply_transform 同一约定，缺省 False 逐字节不变）。
+    """
     piece = pieces_by_id.get(placement['id'])
     if piece is None or not piece.get('polygon'):
         raise PolishError(
             f"placed pid {placement['id']!r} 不在 pieces_by_id（母版已变更？"
             f"请重新求解/上传）")
+    local = piece['polygon']
+    if placement.get('mirror') is True:
+        local = [(-x, y) for x, y in local]
     return _valid_geometry(_transform_polygon(
-        piece['polygon'], float(placement.get('rotation', 0.0)),
+        local, float(placement.get('rotation', 0.0)),
         placement.get('translation', (0.0, 0.0))))
+
+
+def _rebuild_item(it):
+    """items 条目 → 出口/快照重建 dict（US-004 mirror omit-when-false 透传）。
+
+    compact 快照与最终出口共用：``{id, rotation, translation}`` 逐字段重建 +
+    ``mirror: True`` 只在镜像片携带（缺省无键 —— 与前端 PlacedItem 序列化
+    「有镜像才带键」同口径，恒发 mirror:false 会红掉前端精确锁键集用例）。
+    """
+    out = {'id': it['id'], 'rotation': it['rotation'],
+           'translation': [it['translation'][0], it['translation'][1]]}
+    if it.get('mirror') is True:
+        out['mirror'] = True
+    return out
 
 
 def _bbox_overlaps(ba, bb) -> bool:
@@ -327,8 +360,10 @@ def polish_layout(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False)
     Parameters
     ----------
     placed : list[dict]
-        ``[{'id', 'rotation', 'translation':[tx,ty]}, ...]`` —— 同 pid 多副本
-        按**数组下标**逐实例寻址（绝不 pid 去重，与前端 editStore 同口径）。
+        ``[{'id', 'rotation', 'translation':[tx,ty], 'mirror'?: true}, ...]``
+        —— 同 pid 多副本按**数组下标**逐实例寻址（绝不 pid 去重，与前端
+        editStore 同口径）；``mirror`` 为 omit-when-false 可选键（US-004：
+        局部 x 翻转，出口同口径透传，缺省/False 与无该键逐字节相同）。
     pieces_by_id : dict
         ``{pid: piece_dict}``（intermediate 直查；取原始 polygon = 物理毛版
         轮廓口径，与 /export ``placed_to_world`` 同源）。
@@ -366,9 +401,14 @@ def polish_layout(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False)
                 f'请重新求解/上传）')
         if pid in ex_pids or piece.get('label') in ex_labels:
             excluded.add(i)
-        items.append({'id': pid, 'rotation': float(p.get('rotation', 0.0)),
-                      'translation': [float(p['translation'][0]),
-                                      float(p['translation'][1])]})
+        # US-004：mirror omit-when-false 透传（items 内部与出口一致 —— mirror 只在
+        # True 时带键，缺省/False 与旧键集逐字节相同）。
+        item = {'id': pid, 'rotation': float(p.get('rotation', 0.0)),
+                'translation': [float(p['translation'][0]),
+                                float(p['translation'][1])]}
+        if p.get('mirror') is True:
+            item['mirror'] = True
+        items.append(item)
         geoms.append(_world_geom(p, pieces_by_id))
 
     # real 口径密度分母：Σ(原面积 × 副本数)（demand 多副本按出现次数计）。
@@ -434,6 +474,10 @@ def polish_layout(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False)
         if _rotation_dev(rot_cur) <= DEV_EPS_DEG:
             continue
         local = pieces_by_id[items[i]['id']]['polygon']
+        # US-004：镜像片 derotate 同一预处理 —— local x 先取负（c_local 用镜像后
+        # 多边形质心），t' 补偿公式不变（mirror 不改 rot'，只改局部几何形状）。
+        if items[i].get('mirror') is True:
+            local = [(-x, y) for x, y in local]
         c_local = Polygon(local).centroid
         # 质心锚定：c_world = R(rot)·c_local + t（仿射保质心 ⇒ 世界几何质心即锚）
         c_world = geoms[i].centroid
@@ -513,8 +557,7 @@ def polish_layout(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False)
 
     # ---- pass ④ 压缩回收（compact=True；自布头方向逐片 −x 滑贴收空隙）----
     if compact:
-        snap_items = [{'id': it['id'], 'rotation': it['rotation'],
-                       'translation': list(it['translation'])} for it in items]
+        snap_items = [_rebuild_item(it) for it in items]
         snap_geoms = list(geoms)
         snap_bounds = list(bounds)
         snap_nmoves = len(moves)
@@ -567,9 +610,7 @@ def polish_layout(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False)
         return placed, report
     if Counter(p['id'] for p in items) != multiplicity:   # 守卫④ 终检
         raise PolishError('pid 多重集守恒失败（内部不变量被破坏）')
-    out = [{'id': it['id'], 'rotation': it['rotation'],
-            'translation': [it['translation'][0], it['translation'][1]]}
-           for it in items]
+    out = [_rebuild_item(it) for it in items]
     return out, report
 
 
@@ -584,15 +625,31 @@ def _rect_piece(pid, w, h, label='g01', size=28):
             'grain_line': None}
 
 
-def _pl(pid, rot, tx, ty):
-    """placement 夹具构造。"""
-    return {'id': pid, 'rotation': float(rot), 'translation': [float(tx), float(ty)]}
+def _l_piece(pid, label='g09', size=28):
+    """冒烟/夹具用 L 形非对称裁片（US-004 镜像判别性夹具：镜像前后空缺角
+    互换 —— 右上空缺镜像后到左上，镜像与否几何/包络可判别）。"""
+    poly = [[0.0, 0.0], [200.0, 0.0], [200.0, 60.0], [60.0, 60.0],
+            [60.0, 150.0], [0.0, 150.0]]          # 面积 200×60 + 60×90 = 17400
+    return {'pid': pid, 'label': label, 'size': size, 'polygon': poly,
+            'bbox': [0.0, 0.0, 200.0, 150.0], 'area_mm2': 17400.0,
+            'n_verts': 6, 'net_polygon': [], 'internal_lines': [], 'notches': [],
+            'grain_line': None}
 
 
-def _world_polygon(pid, pieces_by_id, rot, tr):
-    """夹具断言用世界坐标 shapely Polygon（与 _world_geom 同变换口径）。"""
-    return Polygon(_transform_polygon(
-        pieces_by_id[pid]['polygon'], float(rot), tr))
+def _pl(pid, rot, tx, ty, mirror=False):
+    """placement 夹具构造（mirror=True 带 omit-when-false 可选键，US-004）。"""
+    it = {'id': pid, 'rotation': float(rot), 'translation': [float(tx), float(ty)]}
+    if mirror:
+        it['mirror'] = True
+    return it
+
+
+def _world_polygon(pid, pieces_by_id, rot, tr, mirror=False):
+    """夹具断言用世界坐标 shapely Polygon（与 _world_geom 同变换口径含镜像）。"""
+    poly = pieces_by_id[pid]['polygon']
+    if mirror:
+        poly = [(-x, y) for x, y in poly]
+    return Polygon(_transform_polygon(poly, float(rot), tr))
 
 
 def _smoke_fixtures() -> bool:
@@ -743,6 +800,30 @@ def _smoke_fixtures() -> bool:
     r0.pop('elapsed_sec')
     r1.pop('elapsed_sec')
     _check('compact 无空隙逐元素相同', o0 == o1 and r0 == r1)
+
+    # ⑪ 镜像斜片（US-004）：L 形非对称镜像片 25° 居空场 → 回正 + mirror 透传
+    #    + 质心锚定（c_local 用镜像后多边形质心，t' 补偿公式不变）
+    pieces = {'g09_30': _l_piece('g09_30')}
+    placed = [_pl('g09_30', 25, 600, 600, mirror=True)]
+    out, rep = polish_layout(placed, pieces, 2000.0)
+    g0 = _world_polygon('g09_30', pieces, placed[0]['rotation'],
+                        placed[0]['translation'], mirror=True)
+    g1 = _world_polygon('g09_30', pieces, out[0]['rotation'],
+                        out[0]['translation'], mirror=True)
+    _check('镜像斜片 derotate', out[0].get('mirror') is True
+           and _rotation_dev(out[0]['rotation']) == 0.0
+           and g0.centroid.distance(g1.centroid) < 1e-6,
+           f'rot={out[0]["rotation"]:.1f} moves={len(rep["moves"])}')
+
+    # ⑫ 镜像片 no-op（US-004）：紧凑含镜像片（分离方向全被守卫拒）→ 输入 list
+    #     原对象（mirror 键原样保留，逐字节不变量）
+    pieces = {'g01_30': _rect_piece('g01_30', 100, 160),
+              'g02_30': _rect_piece('g02_30', 100, 160, label='g02')}
+    placed = [_pl('g01_30', 0, 0, 0), _pl('g02_30', 0, 98, 0, mirror=True)]
+    out, rep = polish_layout(placed, pieces, 160.0)
+    _check('镜像片 no-op 原对象', out is placed and rep['moves'] == []
+           and placed[1].get('mirror') is True,
+           f'moves={len(rep["moves"])} residual={len(rep["residual"])}')
     return ok
 
 
@@ -819,9 +900,10 @@ def _demo(intermediate_path, n_pieces) -> bool:
 def main(argv=None) -> int:
     """冒烟入口：``python -m materialsorting.nesting_engine.polish``。
 
-    默认合成夹具自检（AC 十项口径：斜片回正/重合分离/紧密 no-op/守卫×2/
+    默认合成夹具自检（AC 十二项口径：斜片回正/重合分离/紧密 no-op/守卫×2/
     多副本 index 寻址/排除集障碍/确定性双跑/compact 回收/compact 无空隙
-    逐元素相同），全过打印 PASS、exit 0。
+    逐元素相同/镜像斜片 derotate+透传/镜像片 no-op 原对象），全过打印
+    PASS、exit 0。
     ``--demo`` 追加真实母版几何演示（intermediate 前 N 片确定性带病布局 →
     polish 前后对比，形态对齐 prefix ``--pin-demo`` 先例；无 spyrrow 依赖）。
     intermediate 缺失时 ``--demo`` 提示先 commit（默认合成夹具不受影响照常自检）。

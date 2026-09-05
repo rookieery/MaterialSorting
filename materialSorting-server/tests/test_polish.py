@@ -32,12 +32,28 @@ def _piece(pid, w, h, label=None):
             'notches': [], 'grain_line': None}
 
 
-def _pl(pid, rot, tx, ty):
-    return {'id': pid, 'rotation': float(rot), 'translation': [float(tx), float(ty)]}
+def _l_piece(pid, label=None):
+    """L 形非对称裁片（US-004 镜像判别性夹具）：右上空缺镜像后到左上 ——
+    镜像与否几何/包络可判别（矩形镜像后平移可等价，判别力不足）。"""
+    return {'pid': pid, 'label': label or pid.split('_')[0], 'size': 28,
+            'polygon': [[0.0, 0.0], [200.0, 0.0], [200.0, 60.0], [60.0, 60.0],
+                        [60.0, 150.0], [0.0, 150.0]],
+            'area_mm2': 17400.0, 'net_polygon': [], 'internal_lines': [],
+            'notches': [], 'grain_line': None}
 
 
-def _world(pid, pieces, rot, tr):
-    return Polygon(_transform_polygon(pieces[pid]['polygon'], rot, tr))
+def _pl(pid, rot, tx, ty, mirror=False):
+    it = {'id': pid, 'rotation': float(rot), 'translation': [float(tx), float(ty)]}
+    if mirror:
+        it['mirror'] = True
+    return it
+
+
+def _world(pid, pieces, rot, tr, mirror=False):
+    poly = pieces[pid]['polygon']
+    if mirror:
+        poly = [(-x, y) for x, y in poly]
+    return Polygon(_transform_polygon(poly, rot, tr))
 
 
 def _snapshot(placed):
@@ -372,6 +388,122 @@ def test_compact_entangled_piece_skipped():
     out, rep = polish_layout(placed, pieces, 160.0, compact=True)
     assert out is placed and rep['moves'] == []
     assert len(rep['residual']) == 1
+
+
+# --------------------------------------------------- US-004 镜像片（edit-keyboard）
+
+def test_mirror_world_geom_hand_computed():
+    """US-004：``_world_geom`` 镜像片世界多边形手算对拍 —— 先局部 x 取负再旋转
+    （``R(rot)·diag(−1,1)·p + t``），rot=0 精确 / rot=90 浮点近似逐点相等。"""
+    pieces = {'gL_30': _l_piece('gL_30')}
+    # rot=0, tr=(1000,500)：x' = −x+1000, y' = y+500（c=1,s=0 精确）
+    g = polish._world_geom(
+        {'id': 'gL_30', 'rotation': 0.0, 'translation': [1000.0, 500.0],
+         'mirror': True}, pieces)
+    expect0 = [(-x + 1000.0, y + 500.0) for x, y in pieces['gL_30']['polygon']]
+    assert list(g.exterior.coords)[:-1] == expect0
+    # rot=90, tr=(1000,500)：x' = −y+1000, y' = −x+500（c=cos90°≈6.1e-17 近似）
+    g = polish._world_geom(
+        {'id': 'gL_30', 'rotation': 90.0, 'translation': [1000.0, 500.0],
+         'mirror': True}, pieces)
+    expect90 = [(-y + 1000.0, -x + 500.0) for x, y in pieces['gL_30']['polygon']]
+    assert list(g.exterior.coords)[:-1] == pytest.approx(expect90, abs=1e-9)
+
+
+def test_mirror_tilted_derotate_passthrough_centroid_anchored():
+    """US-004：镜像 L 形斜片 25° 居空场 → derotate 回正、mirror 透传、质心锚定
+    （c_local 用镜像后多边形质心，t' 补偿公式不变 —— 镜像几何质心零漂移）。"""
+    pieces = {'gL_30': _l_piece('gL_30')}
+    placed = [_pl('gL_30', 25, 600, 600, mirror=True)]
+    snap = _snapshot(placed)
+    out, rep = polish_layout(placed, pieces, 2000.0)
+
+    assert _rotation_dev(out[0]['rotation']) == 0.0
+    assert out[0]['rotation'] in (0.0, 180.0)
+    assert out[0].get('mirror') is True                 # omit-when-false 透传
+    assert len(rep['moves']) == 1 and rep['moves'][0]['kind'] == 'derotate'
+    g0 = _world('gL_30', pieces, placed[0]['rotation'],
+                placed[0]['translation'], mirror=True)
+    g1 = _world('gL_30', pieces, out[0]['rotation'],
+                out[0]['translation'], mirror=True)
+    assert g0.centroid.distance(g1.centroid) < 1e-6     # 质心锚定不漂移
+    assert rep['after']['overlap_pairs'] == 0
+    assert _snapshot(placed) == snap                    # 纯函数不改入参
+
+
+def test_mirror_diagnosis_and_separation_on_mirrored_geometry():
+    """US-004 判别性夹具：小方块落在「镜像后才有材料」的 L 空缺角对侧 ——
+    诊断/分离必须按镜像几何算（漏 mirror 则 overlap_pairs=0、零 move），
+    分离终态按镜像世界几何交集面积精确 0，mirror 在 move 后仍透传。"""
+    pieces = {'gL_30': _l_piece('gL_30'), 'gS_30': _piece('gS_30', 40, 40,
+                                                          label='gS')}
+    # 镜像 L @ (200,0)：立柱占 x∈[140,200]×y∈[60,150]（未镜像时该区为空缺角）
+    placed = [_pl('gL_30', 0, 200, 0, mirror=True),
+              _pl('gS_30', 0, 150, 70)]
+    out, rep = polish_layout(placed, pieces, 1000.0)
+
+    assert rep['before']['overlap_pairs'] == 1
+    assert rep['before']['total_overlap_area_mm2'] == pytest.approx(1600.0)
+    assert rep['after']['overlap_pairs'] == 0
+    assert [m['kind'] for m in rep['moves']] == ['separate']
+    # 镜像片被动分离后 mirror 仍在、未镜像片无键（omit-when-false 双向）
+    assert out[0].get('mirror') is True
+    assert 'mirror' not in out[1]
+    gl = _world('gL_30', pieces, out[0]['rotation'],
+                out[0]['translation'], mirror=True)
+    gs = _world('gS_30', pieces, out[1]['rotation'], out[1]['translation'])
+    assert gl.intersection(gs).area == 0.0
+
+
+def test_mirror_noop_returns_input_object():
+    """US-004 无改进不变量：含镜像片的紧凑纠缠布局（分离方向全被守卫拒）→
+    输出 = 输入 list 原对象（mirror 键逐字节保留），moves==[]。"""
+    pieces = {'g01_30': _piece('g01_30', 100, 160),
+              'g02_30': _piece('g02_30', 100, 160, label='g02')}
+    placed = [_pl('g01_30', 0, 0, 0), _pl('g02_30', 0, 98, 0, mirror=True)]
+    out, rep = polish_layout(placed, pieces, 160.0)
+
+    assert out is placed                       # 原对象（含 mirror）逐字节不变
+    assert placed[1].get('mirror') is True
+    assert rep['moves'] == []
+    assert [r['kind'] for r in rep['residual']] == ['overlap']
+
+
+def test_mirror_compact_preserves_mirror():
+    """US-004：compact −x 滑贴按镜像世界几何（镜像片贴真实右缘）+ 落位手算，
+    move 后 mirror 透传。"""
+    pieces = {'g01_30': _piece('g01_30', 100, 160),
+              'g02_30': _piece('g02_30', 100, 160, label='g02')}
+    # 镜像 g02 @ tx=230 → x∈[130,230]，与 g01 右缘 x=100 留 30mm 空隙
+    placed = [_pl('g01_30', 0, 0, 0), _pl('g02_30', 0, 230, 0, mirror=True)]
+    out, rep = polish_layout(placed, pieces, 160.0, compact=True)
+
+    assert [m['kind'] for m in rep['moves']] == ['compact']
+    assert rep['moves'][0]['index'] == 1
+    assert out[1].get('mirror') is True
+    assert out[1]['translation'][0] == pytest.approx(200.0, abs=1e-3)
+    g2 = _world('g02_30', pieces, out[1]['rotation'],
+                out[1]['translation'], mirror=True)
+    assert g2.bounds[0] == pytest.approx(100.0, abs=1e-3)   # 贴 g01 真实右缘
+    assert rep['after']['width_mm'] == pytest.approx(200.0, abs=1e-3)
+
+
+def test_mirror_compact_rollback_preserves_mirror():
+    """US-004：compact 回滚路径（maxX 不减）经 items 快照重建 —— mirror 若不在
+    快照里会被静默蒸发；锁「回滚后 mirror 仍在 + 与非 compact 档逐元素相同」。"""
+    pieces = {'g01_30': _piece('g01_30', 100, 160),
+              'g02_30': _piece('g02_30', 100, 160, label='g02'),
+              'g03_30': _piece('g03_30', 100, 160, label='g03')}
+    placed = [_pl('g01_30', 0, 0, 0), _pl('g02_30', 0, 230, 0, mirror=True),
+              _pl('g03_30', 0, 360, 0)]
+    kw = {'exclude': {'labels': ['g03']}}
+    o0, r0 = polish_layout(placed, pieces, 160.0, **kw)
+    o1, r1 = polish_layout(placed, pieces, 160.0, compact=True, **kw)
+    r0.pop('elapsed_sec')
+    r1.pop('elapsed_sec')
+    assert o0 == o1 and r0 == r1                 # 回滚 = 非 compact 档逐元素相同
+    assert o1[1].get('mirror') is True           # 回滚不蒸发镜像标志
+    assert o1[1]['translation'] == placed[1]['translation']   # 滑移被回滚
 
 
 # --------------------------------------------------------------- 单元算子

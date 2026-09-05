@@ -63,7 +63,12 @@
   "density": 0.8983,              // run.finalDensity（原面积口径，0..1）
   "placed": [                     // run.lastFrame.placed_items
     {"id": "...", "rotation": 0.0, "translation": [x, y]},
-    ...
+    ...                           // 可选 "mirror": true（edit-keyboard US-004，2026-09-05）：
+                                  //   镜像片标志 —— 局部 x 翻转 world=R(rot)·diag(−1,1)·p+t，
+                                  //   placed_to_world 5 层几何（毛版/净版/内部线/刺口点+法线/
+                                  //   布纹线）全部按镜像变换；omit-when-false —— 前端编辑保存
+                                  //   只在 true 时带键，solver 原生帧永无此键 → 缺省路径逐字节
+                                  //   不变（路由零改动，placed 键直通）
   ],
   "filename": "M1787.dxf",        // 可选：上传母版名（uploadStore.doc.filename 前端透传），
                                   //   作导出文件名前缀（去 .dxf）；缺省回退「排料」/nesting
@@ -108,8 +113,9 @@
 
 | 函数 | 签名 | 说明 |
 |------|------|------|
-| `apply_transform` | `(polygon, rotation_deg: float, translation) → [(x,y)...]` | `world = R(θ)·(x,y)+(tx,ty)`，与前端 `pointsStr` 同公式 |
-| `placed_to_world` | `(placed, pieces_by_id) → [{pid,size,polygon,color,area_mm2,label,...}]` | pid 查 `_get_pieces_state()['pieces_by_id']`（US-020）取**原始** polygon → 世界坐标（直查 intermediate，零重放）；查不到的跳过并 warning。US-002：输出无 `ptype` 键，`color = size_color(size)`（尺码 16 色循环表，2026-08-20 起同码同色跨片型，与求解屏幕同色） |
+| `apply_transform` | `(polygon, rotation_deg: float, translation, mirror: bool = False) → [(x,y)...]` | `world = R(θ)·(x,y)+(tx,ty)`，与前端 `pointsStr` 同公式；**2026-09-05 edit-keyboard US-004 加 `mirror` 缺省 False 第 4 参**：局部 x 先取负再旋转 `world = R(θ)·diag(−1,1)·(x,y)+t`（展开 `x'=−x·c−y·s+tx / y'=−x·s+y·c+ty`，与前端 `editGeometry.transformPolygon` mirror 分支同输入输出逐点相等，单测对拍锁死）；缺省/显式 False 与旧实现逐字节一致（零回归红线） |
+| `_transform_normal` | `(nx, ny, rotation_deg, mirror: bool = False) → (nx', ny')` | notch 法线旋转变换（无平移）；**US-004 mirror**：法线是**向量**，反射下 x 分量先取负再旋转（`R(θ)·diag(−1,1)·n`）；缺省逐字节不变 |
+| `placed_to_world` | `(placed, pieces_by_id) → [{pid,size,polygon,color,area_mm2,label,...}]` | pid 查 `_get_pieces_state()['pieces_by_id']`（US-020）取**原始** polygon → 世界坐标（直查 intermediate，零重放）；查不到的跳过并 warning。US-002：输出无 `ptype` 键，`color = size_color(size)`（尺码 16 色循环表，2026-08-20 起同码同色跨片型，与求解屏幕同色）。**US-004（2026-09-05）**：读 `it.get('mirror') is True` 贯穿全部 5 层（毛版/净版/内部线点变换 + notch 点按点变换·法线按向量镜像 + 布纹线两端点），`/export` 路由零改动（placed 键直通） |
 | `render_png` | `(world_pieces, *, width_mm, gate_mm, title) → bytes` | matplotlib Agg，dpi=200，配色 `size_color`（尺码 16 色循环表），图例条目 = 本次 placed 的尺码并集（数值序），标题「尺码」 |
 | `write_marker_dxf` | `(world_pieces, *, width_mm, gate_mm, title) → bytes` | ezdxf R12 + 闭合 POLYLINE（首尾补点），ACI = `size_aci(size)` = `((size - 28) % 24) + 1`（非数字兜底 7），ASCII 标题；**不用 LWPOLYLINE**（ET2008 轮廓消失坑） |
 | `write_marker_plt` | `(world_pieces, *, width_mm, gate_mm, title, info_table: InfoTable \| None = None, clean: bool = False) → bytes` | US-033 HPGL/HP-GL 纯文本，**封装口径对齐生产 PLT**（`data/PC-20250508NJIF*.plt`）：头部 `IN;PS<纸长>;SP1;PW0.08;`（PS 纸长 = 走纸引导 + max(用布长度, 内容最大X 含刺口延伸) + 尾余量，×40；无 PS 时 WT 按默认 A0/A3 页幅裁切 7m+ marker）→ 逐片 SP1-SP5 → 尾部 `PU;PG;` 出纸；**CRLF 行尾**；**无 VS/LB 指令**（`title` 仅保签名不输出）；坐标=mm×40 round 取整，5 层笔号 SP1=outline+门幅框/SP2=net/SP3=internal/SP4=notch/SP5=grain；空层跳过；纯 ASCII bytes（无临时文件，无新 pip 依赖）；与 DXF 同闭合策略。**2026-08 现场撞机修正（对照生产 PLT 逐项核出的设备级差异；幅宽口径 2026-08-28 版师定案后收敛单一）**：① 安全幅面 —— 门幅框按输入 `gate_mm` 满幅画 `[0, gate]`（**2026-08-31 撤销 Y 双边内缩 5mm**：旧内缩抄的是生产件「外框下沿 5.1mm」框位置而未抄其「内容不越框」规则，贴边裁片穿框 5mm 被切割软件当布料范围读作越界布料；常量 `PLOT_BORDER_MARGIN_Y_MM` 已删，需物理留边由用户输更小门幅）、内容按 `y ≤ gate_mm` 半平面裁剪（**削平不缩放**，绝不变形），越界裁片记 warning（兜旧 intermediate/求解/变换 bug；撞机根因确认系当时那台机器无法处理 1980 幅宽，旧 `PLOT_SAFE_MAX_Y_MM=1910` 钳制与「二道防线」已随单一口径整体移除，幅宽受限设备由用户输入更小门幅）；② PD 分块 —— `_plt_polyline` 单条 PD ≤10 点（`_PLT_PD_MAX_PTS`）且整行 ≤110B（`_PLT_LINE_MAX_BYTES`）续画（对齐 ET 生产 ≤11 点/≤118B；国产 HP-GL 解释器行缓冲仅百余字节，超长单条溢出后坐标流错位 → 小车乱走须急停）；③ 走纸引导 —— 全体 X + `PLOT_LEAD_X_MM=20`（生产 PLT 内容 24mm 起画，贴 0 起画无定位余量），Y 不平移；HPGL 坐标非负整数，clamp 兜底取整负值。**2026-08-30 唛架信息表格（additive，v5 定稿）**：`info_table` 非 None → 表格画在边框**右侧外围**（`table_x0 = width+TABLE_GAP_MM=0` **共线**（外框左缘与唛架右边框共用一条线）、宽 `TABLE_W_MM=36` = key/value 两条 18mm 行带），**边框恒到 width_mm 不延伸**、料长不含表格，PS 纸长覆盖表格区（`(引导+width+0+36+尾)×40=(width+66)×40`）、SP1 层桶追加表格折线（`plt_table.info_table_polylines`：闭合外框 [x0,x0+36]×[30,30+Σ列宽] + 1 条沿 y key\|value 行分隔线 + 13 条沿 x 列分隔线 + 14 列文字**自唛架右下顶点垂直向上 3cm（y=30mm）**起沿 +y 排开、基线沿 +y 字顶朝 −x（基 `u=(0,1)/w=(-1,0)` 右手系直接生成，生产排料视图里水平正立、key 上 value 下，已与生产件并排对拍验证）、key 行带最靠唛架、全字段统一 12mm 字高、单元格内容居中（列宽 = max(key,value)+2×10mm 内衬）、表长 = Σ列宽 ≤ gate−20−30 超限先缩字高下限 7mm 再等比压列宽）；表格笔画**不走 y≤gate 裁剪**（文件级元数据）；`info_table=None`（不带 `table` 键）输出与旧版**逐字节一致**（零回归红线，测试锁死；2026-08-31 门幅框满幅化 + Y 平移两改后逐字节基线以当日最终版为界）；坐标映射全体 X +`PLOT_LEAD_X_MM=20`、Y +`PLOT_LEAD_Y_MM=TABLE_W_MM=36`（`_plt_pt` 单点，绘制层整体平移=表格宽）。**2026-08-31 毛版变体 `clean=True`（fmt='plt-clean'，additive；当日由「净版」更名——与裁片「毛版轮廓」命名统一，协议值/ascii 后缀 `_clean` 不变）**：`_plt_pt/_plt_polyline` 的 lead_x 参数化（模块内私有无外部调用者），带表格时 X 引导扩 `PLOT_LEAD_X_MM+TABLE_GAP_MM+TABLE_W_MM=56` → 左表 `info_table_polylines(info_table, table_x0=-(gap+36))` 画在世界 x∈[−36,0]（key 带小 x 侧、value 带外缘与门幅左边框共线，与右表同构无镜像）；逐片只画 polygon（SP1，照旧 `_clip_closed_y`）+ 尺码\*数量标注（`_label_strokes`，自 `_grain_annotation_strokes` 拆出的纯文字笔画，几何/字高与全量版全同）进 `_LAYER_GRAIN` 桶，跳过 net/internal/notch/grain 杆羽；`clean=False`（含缺省）逐字节不变 |
@@ -379,7 +385,7 @@ WS 侧同语义走 **error 帧**：`{"type":"error","code":"session_expired","me
 
 ```json
 {
-  "placed":  [{"id": "g01_30", "rotation": 25.0, "translation": [50.0, 50.0]}, ...],
+  "placed":  [{"id": "g01_30", "rotation": 25.0, "translation": [50.0, 50.0], "mirror": true}, ...],
   "gate_mm": 1750.0,
   "exclude": {"labels": ["g01"], "pids": ["PS_xxx"]},
   "compact": false
@@ -387,6 +393,7 @@ WS 侧同语义走 **error 帧**：`{"type":"error","code":"session_expired","me
 ```
 
 - `placed`（必填，空/缺/非列表 → 400）：同 pid 多副本按**数组下标**逐实例寻址（绝不 pid 去重，与前端 editStore 同口径）；条目缺 `id` / `translation` 非 2 元 → 400。
+- `mirror`（可选，omit-when-false 布尔键，**edit-keyboard US-004 2026-09-05**）：条目级镜像片标志（局部 x 翻转 `world = R(rot)·diag(−1,1)·p + t`，与前端 `PlacedItem.mirror` / `/export` placed 同一约定）—— 键直通引擎按**镜像几何**微调：`_world_geom` 与 derotate 共用「local = [(-x, y)] 预处理 + 标准变换」（c_local 用镜像后多边形质心，t' 质心补偿公式不变），诊断/pass ③分离/pass ④compact 全部基于正确镜像几何；响应 placed 同口径 omit-when-false 透传（无改进返回输入 list 原对象亦含该键；恒发 `mirror:false` 会红掉前端精确锁键集用例）。校验逻辑宽松（键直通，路由无代码改动）；缺省/无键 = 非镜像，既有路径逐字节不变（745 pytest 全绿零回归）。
 - `gate_mm`（可选）：优先求解口径（前端 `run.manifest.gate_mm`）；缺省/非法回退会话 `state['gate_mm']`（与 `/export`、`/api/plt-table-preview` 同法）；两处皆无 → 400 fail-fast（守卫 y∈[0,gate] 无从谈起）。
 - `exclude`（可选，缺省 None 透传引擎）：`{labels?: [g码], pids?: [pid]}` 双键 —— 命中实例永不被移动仍作障碍（v1 over-conservative 同 pid 全副本，FR-8；band 成员 g 码 / prefix 成员 pid 由前端 best-effort 组装）。非 dict → 400。
 - `compact`（可选，缺省 false）：US-005 压缩回收档（2026-09-05 落地）—— true 时引擎追加 pass ④：自布头方向逐片 −x 滑贴收空隙进料长（20mm 粗扫+二分贴触、级联左片先贴），每 move 走同款五道守卫（kind=compact）+ pass 级「全图 maxX 严格变小否则整体回滚」；无空隙可收时输出与 compact=false 逐元素相同（additive）。前端入口 = 对比卡内「回收空隙缩短料长」checkbox（默认不勾，随下次微调请求发出）。
@@ -417,7 +424,7 @@ WS 侧同语义走 **error 帧**：`{"type":"error","code":"session_expired","me
 1. polish 构造段经 `run_in_threadpool` 执行（prefix-preview 先例，防阻塞事件循环；测试 = 线程级断言：引擎执行线程 ≠ 事件循环线程）。
 2. 成功请求顺手 `edit_hold.refresh(sid)`（编辑钉住与 `/api/edit-hold` 心跳同语义；default 不进钉住表；失败请求不续期）。
 3. 布局态零落盘：请求/响应全走 body，无新会话状态、无新磁盘产物。
-4. 测试：`tests/test_web_edit_polish.py`（15 例：200 全链路守恒/会话隔离/sid 闸门/载荷校验/gate 回退/exclude·compact 透传/线程池执行/钉住续期/US-005 compact=True 全链路回收）。
+4. 测试：`tests/test_web_edit_polish.py`（20 例：200 全链路守恒/会话隔离/sid 闸门/载荷校验/gate 回退/exclude·compact 透传/线程池执行/钉住续期/US-005 compact=True 全链路回收 + US-004 mirror no-op 逐位透传/镜像几何判别夹具/export 侧 `apply_transform`·`_transform_normal`·`placed_to_world` mirror 对拍 4 例）。
 
 ## GET /api/ptypes — US-020 裁片 g 码代表（D10/D11；US-001 v2：键 = label）
 

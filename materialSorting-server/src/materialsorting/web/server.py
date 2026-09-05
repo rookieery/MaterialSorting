@@ -443,9 +443,16 @@ async def post_edit_polish(request: Request):
     ``pieces_by_id`` 原始 polygon / /export 同源），多会话经 ``X-Session-Id``
     隔离（编辑 A 的 placed 匹配 A 的母版轮廓）。
 
-    请求 ``{placed:[{id,rotation,translation},...], gate_mm?, exclude?:{labels?,
+    请求 ``{placed:[{id,rotation,translation,mirror?},...], gate_mm?, exclude?:{labels?,
     pids?}, compact?}``；响应 ``{ok:true, placed, report}``（placed 条数与 pid
     多重集与输入相等 —— polish 出口 Counter 终检 + 本路由入口 pid 全匹配双保险）。
+
+    - ``mirror``（edit-keyboard US-004，omit-when-false 可选布尔键）：镜像片
+      标志（局部 x 翻转 ``world = R(rot)·diag(−1,1)·p + t``，与前端
+      PlacedItem.mirror / /export placed 同一约定）—— 键直通引擎按镜像几何
+      微调（诊断/分离/compact），响应 placed 同口径 omit-when-false 透传
+      （无改进返回输入原对象亦含该键）；缺省/无键 = 非镜像（校验逻辑宽松，
+      本路由无代码改动）。
 
     - sid：缺省 → default 会话；``resolve()`` 闸门（``create=False`` 缺省）：
       过期/墓碑 → ``401 {code:'session_expired'}``、非法 → 400（``SessionError``

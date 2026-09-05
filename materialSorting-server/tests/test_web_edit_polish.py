@@ -13,13 +13,17 @@
 6. polish 在 run_in_threadpool 内执行（运行时线程级断言：引擎执行线程 ≠ 事件循环
    线程 + spy 目击调用经 server 命名空间 run_in_threadpool）；
 7. sid 会话状态隔离（sid 的 pieces_by_id 与 default 互不串台）+ 成功请求顺手
-   edit_hold.refresh（default 不进钉住表，/api/edit-hold 同口径）。
+   edit_hold.refresh（default 不进钉住表，/api/edit-hold 同口径）；
+8. edit-keyboard US-004：mirror 载荷 → 响应 placed 逐位透传（no-op 原对象 +
+   真引擎 move 路径按镜像几何）；export 侧 apply_transform/_transform_normal/
+   placed_to_world mirror 对拍（与前端 transformPolygon 公式三方锁步）。
 
 合成数据：g01_30/g02_30 各 200×150 矩形，叠 5mm 且上方有空位（test_polish
 AC#2 同构夹具）→ polish 必产出 1 条 separate move，报告前后指标可硬断言。
 """
 from __future__ import annotations
 
+import math
 import threading
 from collections import Counter
 
@@ -28,6 +32,11 @@ from starlette.testclient import TestClient
 
 from materialsorting.nesting_engine import polish as polish_mod
 from materialsorting.web import edit_hold, server as server_mod, sessions
+from materialsorting.web.export_geometry import (
+    _transform_normal,
+    apply_transform,
+    placed_to_world,
+)
 from materialsorting.web.sessions import _FakeClock
 from materialsorting.web.server import app
 
@@ -58,6 +67,15 @@ def _overlap_placed():
         {'id': 'g01_30', 'rotation': 0.0, 'translation': [100.0, 100.0]},
         {'id': 'g02_30', 'rotation': 0.0, 'translation': [100.0, 245.0]},
     ]
+
+
+def _l_piece(pid, label=None):
+    """L 形非对称裁片（US-004 镜像判别性夹具，test_polish 同构）。"""
+    return {'pid': pid, 'label': label or pid.split('_')[0], 'size': 28,
+            'polygon': [[0.0, 0.0], [200.0, 0.0], [200.0, 60.0], [60.0, 60.0],
+                        [60.0, 150.0], [0.0, 150.0]],
+            'area_mm2': 17400.0, 'net_polygon': [], 'internal_lines': [],
+            'notches': [], 'grain_line': None}
 
 
 @pytest.fixture(autouse=True)
@@ -373,3 +391,148 @@ def test_edit_polish_runs_in_threadpool(polish_client, monkeypatch):
     r = polish_client.post('/api/edit-polish', json={'placed': _overlap_placed()})
     assert r.status_code == 200
     assert threads['polish'] is not threads['loop']     # 工作线程 ≠ 事件循环线程
+
+
+# ------------------------------------------- US-004 镜像片（edit-keyboard）
+
+def test_edit_polish_mirror_noop_passthrough_bit_for_bit(polish_client):
+    """US-004：mirror 载荷无改进路径（无重合无偏差 → 引擎返回输入 list 原对象）
+    → 响应 placed 逐位透传：镜像片 mirror:true 原样回显、未镜像片无键
+    （omit-when-false —— 恒发 mirror:false 会红掉前端精确锁键集用例）。"""
+    placed_in = [
+        {'id': 'g01_30', 'rotation': 0.0, 'translation': [0.0, 0.0],
+         'mirror': True},
+        {'id': 'g02_30', 'rotation': 0.0, 'translation': [500.0, 0.0]},
+    ]
+    r = polish_client.post('/api/edit-polish', json={'placed': placed_in})
+    assert r.status_code == 200
+    out = r.json()['placed']
+    assert len(out) == 2
+    assert out[0] == {'id': 'g01_30', 'rotation': 0.0,
+                      'translation': [0.0, 0.0], 'mirror': True}
+    assert out[1] == {'id': 'g02_30', 'rotation': 0.0,
+                      'translation': [500.0, 0.0]}
+    assert r.json()['report']['moves'] == []
+
+
+def test_edit_polish_mirror_moves_on_mirrored_geometry(polish_client):
+    """US-004 判别性夹具（test_polish 同构）：小方块落「镜像后才有材料」的 L
+    空缺角对侧 → 诊断按镜像几何（before overlap=1，漏 mirror 则 0 零 move）、
+    分离后 mirror 仍在、响应 placed 键集 omit-when-false 双向。"""
+    state = server_mod._PIECES_STATE
+    saved = dict(state)
+    lp = _l_piece('gL_30', label='gL')
+    sp = _piece('gS_30', 40, 40, label='gS')
+    state.clear()
+    state.update({'doc': {'source': 'synthetic_polish_mirror.dxf'},
+                  'gate_mm': 1000.0, 'pieces': [lp, sp],
+                  'pieces_by_id': {'gL_30': lp, 'gS_30': sp}})
+    try:
+        placed_in = [
+            {'id': 'gL_30', 'rotation': 0.0, 'translation': [200.0, 0.0],
+             'mirror': True},
+            {'id': 'gS_30', 'rotation': 0.0, 'translation': [150.0, 70.0]},
+        ]
+        r = polish_client.post('/api/edit-polish', json={'placed': placed_in})
+        assert r.status_code == 200
+        body = r.json()
+        rep = body['report']
+        assert rep['before']['overlap_pairs'] == 1       # 镜像几何参与诊断
+        assert rep['before']['total_overlap_area_mm2'] == pytest.approx(1600.0)
+        assert rep['after']['overlap_pairs'] == 0
+        assert [m['kind'] for m in rep['moves']] == ['separate']
+        out = body['placed']
+        assert out[0]['id'] == 'gL_30' and out[0].get('mirror') is True
+        assert out[0]['translation'] != placed_in[0]['translation']  # 镜像片被动分离
+        assert 'mirror' not in out[1]
+        assert out[1]['translation'] == placed_in[1]['translation']
+    finally:
+        state.clear()
+        state.update(saved)
+
+
+# --------------------------------------- export 侧 mirror 对拍（US-004）
+
+_L_POLY = [(0.0, 0.0), (200.0, 0.0), (200.0, 60.0), (60.0, 60.0),
+           (60.0, 150.0), (0.0, 150.0)]
+
+
+def test_export_apply_transform_mirror_formula_and_default_identical():
+    """US-004：apply_transform(mirror=True) 与前端 transformPolygon mirror 分支
+    同输入输出逐点相等（公式 ``x'=−x·c−y·s+tx / y'=−x·s+y·c+ty`` 手算对拍）；
+    缺省 = 显式 False = 旧公式（x'=x·c−y·s+tx）逐字节不变（零回归红线）。"""
+    cases = ((0.0, (100.0, 50.0)), (90.0, (1000.0, 500.0)),
+             (25.0, (33.3, 44.4)), (155.0, (0.0, 0.0)), (-30.0, (7.5, -2.5)))
+    for rot, (tx, ty) in cases:
+        rad = math.radians(rot)
+        c, s = math.cos(rad), math.sin(rad)
+        mirror_expect = [(-x * c - y * s + tx, -x * s + y * c + ty)
+                         for x, y in _L_POLY]
+        assert apply_transform(_L_POLY, rot, (tx, ty), True) == \
+            pytest.approx(mirror_expect, abs=1e-9)
+        old_expect = [(x * c - y * s + tx, x * s + y * c + ty)
+                      for x, y in _L_POLY]
+        assert apply_transform(_L_POLY, rot, (tx, ty)) == old_expect
+        assert apply_transform(_L_POLY, rot, (tx, ty), False) == old_expect
+
+
+def test_export_transform_normal_mirror():
+    """US-004：notch 法线镜像 = 向量反射（nx 先取负再旋转，无平移项）；
+    缺省路径与旧实现逐字节相同。"""
+    for rot in (0.0, 30.0, 90.0, 180.0):
+        rad = math.radians(rot)
+        c, s = math.cos(rad), math.sin(rad)
+        for nx, ny in ((0.0, -1.0), (-1.0, 0.0), (0.6, 0.8)):
+            assert _transform_normal(nx, ny, rot, True) == pytest.approx(
+                (c * -nx - s * ny, s * -nx + c * ny), abs=1e-12)
+            assert _transform_normal(nx, ny, rot) == \
+                (c * nx - s * ny, s * nx + c * ny)
+
+
+def test_export_placed_to_world_mirror_5_layers():
+    """US-004：placed_to_world 读 it.get('mirror') 贯穿 5 层 —— rot=90+mirror
+    手算对拍（点 (x,y)→(−y+1000,−x+500)；notch 点变换 + 法线向量镜像）；
+    无 mirror 键与显式 mirror=False 输出全等（缺省逐字节不变）。"""
+    pieces_by_id = {'gR_30': {
+        'pid': 'gR_30', 'label': 'gR', 'size': 28, 'area_mm2': 17400.0,
+        'polygon': [list(p) for p in _L_POLY],
+        'net_polygon': [[10.0, 10.0], [190.0, 10.0], [190.0, 50.0],
+                        [10.0, 50.0]],
+        'internal_lines': [[[20.0, 20.0], [20.0, 140.0]],
+                           [[30.0, 20.0], [30.0, 140.0]]],
+        'notches': [(50.0, 0.0, 0.0, -1.0), (0.0, 80.0, -1.0, 0.0)],
+        'grain_line': [100.0, 10.0, 100.0, 140.0],
+    }}
+    placed = [{'id': 'gR_30', 'rotation': 90.0, 'translation': [1000.0, 500.0],
+               'mirror': True}]
+    w = placed_to_world(placed, pieces_by_id)[0]
+
+    def pt(x, y):                       # rot=90 + mirror：c=cos90°≈6.1e-17
+        return (-y + 1000.0, -x + 500.0)
+
+    assert w['polygon'] == pytest.approx(
+        [pt(x, y) for x, y in _L_POLY], abs=1e-9)
+    assert w['net_polygon'] == pytest.approx(
+        [pt(10.0, 10.0), pt(190.0, 10.0), pt(190.0, 50.0), pt(10.0, 50.0)],
+        abs=1e-9)
+    assert w['internal_lines'] == [
+        pytest.approx([pt(20.0, 20.0), pt(20.0, 140.0)], abs=1e-9),
+        pytest.approx([pt(30.0, 20.0), pt(30.0, 140.0)], abs=1e-9)]
+    # notch：点按点变换、法线按向量镜像（nx 取负再旋转：90° → (−ny·1, x0·1)）
+    assert w['notches'][0] == pytest.approx(
+        (pt(50.0, 0.0) + (1.0, 0.0)), abs=1e-9)      # n(0,−1)→rot90→(1,0)
+    assert w['notches'][1] == pytest.approx(
+        (pt(0.0, 80.0) + (0.0, 1.0)), abs=1e-9)      # n(−1,0)→镜像→(1,0)→rot90→(0,1)
+    assert w['grain_line'] == pytest.approx(
+        (*pt(100.0, 10.0), *pt(100.0, 140.0)), abs=1e-9)
+
+    # 缺省红线：无 mirror 键 == 显式 mirror=False（逐字节）
+    base = placed_to_world(
+        [{'id': 'gR_30', 'rotation': 90.0, 'translation': [1000.0, 500.0]}],
+        pieces_by_id)
+    off = placed_to_world(
+        [{'id': 'gR_30', 'rotation': 90.0, 'translation': [1000.0, 500.0],
+          'mirror': False}], pieces_by_id)
+    assert base == off
+    # 镜像输出 ≠ 非镜像输出（判别力：L 非对称）
+    assert w['polygon'] != base[0]['polygon']
