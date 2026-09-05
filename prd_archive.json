@@ -894,6 +894,12 @@
         "title": "端到端冒烟与文档闭环",
         "description": "As a 项目维护者, I want 端到端冒烟与文档同步 so that 智能微调整条链路可回归验证、口径差异留档。详见 tasks/prd-edit-polish.md US-004。前置：US-001~003。\n\n具体任务：\n1. 新增 materialSorting-web/scripts/smoke_edit_polish.mjs（playwright Edge 通道，模板对齐 smoke_edit_layout.mjs/smoke_prefix_extra.mjs）：上传真实母版（data/ 5336）→ 高级配置 per_type 放开 d/tol（制造重合与旋转）→ 短时求解 → 打开编辑弹窗 → 触发智能微调 → 断言：report.after.overlap_pairs < report.before.overlap_pairs（或布局可解时 =0）、rotation_dev_sum_deg 下降、after.width_mm ≤ before.width_mm、after.density ≥ before.density − 1e-6 → 撤销恢复 → 再微调 + 保存 → 导出 DXF/PLT placed 条数守恒（=Σdemand）；连跑两次微调结果一致（确定性）。\n2. band on 场景抽验（冒烟或手工）：exclude 生效，带形态区域 bbox 前后不变。\n3. 文档同步五处：.docs/technical/agent-api-reference.md（新端点节 + 会话速查表加行 + 红字口径差异注记：编辑画布 = erode 后轮廓、polish 报告 = 物理毛版）、agent-file-map.md（polish.py 行 + 补 edit 树缺行）、agent-component-map.md（EditLayoutModal 微调区 dated 注记）、materialSorting-server/src/materialsorting/web/AGENTS.md（文件分工表/端点）、CLAUDE.md（nesting_engine 模块清单 polish.py 行）。\n\n验收标准：\n- 冒烟脚本全 PASS（含撤销路径与导出守恒断言 + 确定性双跑），report 落盘，退出码 0\n- band on 场景 exclude 生效抽验在案（带形态区域 bbox 前后不变）\n- 文档五处同步完成，红字口径注记在案\n- pytest 全量 + vitest 全量 + npm run build 通过；python -m materialsorting.nesting_engine.polish 冒烟 exit 0",
         "passes": true
+      },
+      {
+        "id": "US-005",
+        "title": "压缩回收档（compact pass，可选低优先级）",
+        "description": "As a 排料工程师, I want 微调可选「回收空隙缩短料长」档 so that 去旋释放的空隙收进料长、密度不降反升。详见 tasks/prd-edit-polish.md US-005。前置：US-002（compact 键已入端点契约）。**本 Story 独立低优先级，验收前可整体砍掉、不影响 US-001~004**（2026-09-05 用户定案）。\n\n具体任务：\n1. materialSorting-server/src/materialsorting/nesting_engine/polish.py — 引擎 pass ④ 压缩回收：自布头方向逐片滑贴（_slide_touch 粗扫+二分，−x 方向），接受条件 = 全图物理包络 maxX 严格变小且零新重合（五道守卫沿用）；无改进逐字节不变。compact=True 才启用。\n2. 端点 compact 旗标 additive（US-002 已预埋键位）：缺省 false = US-001 行为逐字节不变。\n3. 前端对比卡内「回收空隙缩短料长」checkbox（默认不勾，随下次微调请求发出）。\n4. 冒烟脚本补 compact 分支断言（width ≤ 非 compact 档）。\n\n验收标准：\n- 夹具：去旋后留 ≥30mm 横向空隙 → compact 后包络减少 ≥29mm、零新重合\n- 夹具：无空隙可收 → compact=true 输出与 compact=false 逐元素相同\n- 端点/前端旗标 additive：缺省路径回归零变化（既有用例不改全过）\n- 冒烟脚本 compact 分支断言在案\n- pytest/vitest/build 全绿",
+        "passes": true
       }
     ]
   }

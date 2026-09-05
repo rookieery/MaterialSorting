@@ -1,11 +1,4 @@
 {
   "branchName": "ralph/edit-polish",
-  "stories": [
-    {
-      "id": "US-005",
-      "title": "压缩回收档（compact pass，可选低优先级）",
-      "description": "As a 排料工程师, I want 微调可选「回收空隙缩短料长」档 so that 去旋释放的空隙收进料长、密度不降反升。详见 tasks/prd-edit-polish.md US-005。前置：US-002（compact 键已入端点契约）。**本 Story 独立低优先级，验收前可整体砍掉、不影响 US-001~004**（2026-09-05 用户定案）。\n\n具体任务：\n1. materialSorting-server/src/materialsorting/nesting_engine/polish.py — 引擎 pass ④ 压缩回收：自布头方向逐片滑贴（_slide_touch 粗扫+二分，−x 方向），接受条件 = 全图物理包络 maxX 严格变小且零新重合（五道守卫沿用）；无改进逐字节不变。compact=True 才启用。\n2. 端点 compact 旗标 additive（US-002 已预埋键位）：缺省 false = US-001 行为逐字节不变。\n3. 前端对比卡内「回收空隙缩短料长」checkbox（默认不勾，随下次微调请求发出）。\n4. 冒烟脚本补 compact 分支断言（width ≤ 非 compact 档）。\n\n验收标准：\n- 夹具：去旋后留 ≥30mm 横向空隙 → compact 后包络减少 ≥29mm、零新重合\n- 夹具：无空隙可收 → compact=true 输出与 compact=false 逐元素相同\n- 端点/前端旗标 additive：缺省路径回归零变化（既有用例不改全过）\n- 冒烟脚本 compact 分支断言在案\n- pytest/vitest/build 全绿",
-      "passes": true
-    }
-  ]
+  "stories": []
 }
