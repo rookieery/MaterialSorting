@@ -366,7 +366,14 @@ WS 侧同语义走 **error 帧**：`{"type":"error","code":"session_expired","me
 
 ## POST /api/edit-polish — 编辑排料「智能微调」（prd-edit-polish US-002，2026-09-05）
 
-编辑弹窗「智能微调」按钮的数据源：前端把**当前编辑 placements 随 body 带上**（后端不存布局态，唯一存储在前端 runRegistry —— `/export` routes_views.py 同模式），后端跑引擎层确定性后处理 `nesting_engine/polish_layout`（US-001）返回微调后 placements + 前后对比报告。几何真相源留在 Python：**物理毛版轮廓口径**（会话 `pieces_by_id` 原始 polygon，与 `/export placed_to_world` 同源、非 eroded —— 编辑画布红字告警是腐蚀后口径，数值可能偏小，口径差是文档级约定）。
+> ⚠️ **口径差异（红字注记，US-004 立档）**：**编辑画布 = erode 后轮廓、polish 报告 = 物理毛版**。
+> 编辑弹窗画布的重合红字/三指标（editGeometry overlap 池）按 per_type d **腐蚀后**轮廓计算
+> （碰撞可行性口径）；polish 报告七指标与守卫全部按**物理毛版轮廓**（会话 `pieces_by_id`
+> 原始 polygon，与 `/export` 导出真相同源）。同一布局两套数值并存是**设计非 bug**：
+> 腐蚀口径数值恒 ≤ 物理口径（d 内缩），版师看到对比卡与画布红字不一致时以本注记为
+> 解释锚点（前端对比卡脚注同文案）。本期不切换画布口径（PRD 非目标）。
+
+编辑弹窗「智能微调」按钮的数据源：前端把**当前编辑 placements 随 body 带上**（后端不存布局态，唯一存储在前端 runRegistry —— `/export` routes_views.py 同模式），后端跑引擎层确定性后处理 `nesting_engine/polish_layout`（US-001）返回微调后 placements + 前后对比报告。几何真相源留在 Python：**物理毛版轮廓口径**（会话 `pieces_by_id` 原始 polygon，与 `/export placed_to_world` 同源、非 eroded —— 编辑画布红字告警是腐蚀后口径，数值可能偏小，口径差是文档级约定）。端到端回归冒烟 `materialSorting-web/scripts/smoke_edit_polish.mjs`（US-004，24 检查：微调四守恒/撤销/确定性双跑/PLT+DXF 导出 placed 守恒/band exclude 抽验）。
 
 ### 请求（`application/json`）
 

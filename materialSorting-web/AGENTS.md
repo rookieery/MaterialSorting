@@ -627,3 +627,24 @@ src/
   TypeError "Failed to fetch" 等浏览器英文文案）handlePolish catch 统一补前缀 —— 卡内
   文案可读性约定。401 session code 由 apiFetch 拦截走全局阻断弹窗（fail-fast 正确行为），
   卡内照常落文案无害（遮罩下不可见）。
+
+## edit-polish US-004 端到端冒烟（2026-09-05 收官）
+
+`materialSorting-web/scripts/smoke_edit_polish.mjs`（Playwright Edge 通道 Chrome 兜底，
+prod :8000 真打后端；模板 scripts/smoke_edit_layout.mjs 骨架 + smoke_prefix_extra
+per_type 写值套路）—— 24 检查全 PASS，报告落 `out/smoke_edit_polish/report.json`：
+
+- **S1** 上传 5336 → per_type 全 g 码 d=3/tol=30（制造工艺余量重合与旋转）→ 3 码 20s 求解 30 片（Σdemand）。
+- **S2** 微调：请求 200 载荷形态（placed 30/gate_mm/无 exclude 键）+ 报告四段 + 四守恒
+  （overlap 42→38 严格下降 / rotΣ 210→190 / width ≤ before / density ≥ before−1e-6）+ 对比卡渲染。
+- **S3** 撤销：points 逐片回微调前 + 卡清空；**S4** 再微调确定性双跑（placed 深相等 + report 除 elapsed_sec 全等）。
+- **S5** 保存 → 导出 PLT（plt-clean 走 ExportInfoModal 确认）+ DXF（直发无弹窗）：
+  payload placed 条数 = Σdemand 且与微调响应 placed 深相等；DXF 正文 R12 POLYLINE 无 LWPOLYLINE。
+- **S6** band on 抽验：开腰头成带 g05 重解 → 微调请求带 `exclude.labels=['g05']` +
+  带形态区域（g05 全部毛版）points 前后不变 + report.excluded 恰 = g05 实例下标。
+
+改 polish 引擎 / /api/edit-polish / editPolish.ts / EditLayoutModal 微调区 / 导出链路后
+应复跑本脚本回归（US-001 单测 + US-003 vitest 之外的第三层端到端门）。两处实现坑备档：
+① /export 响应正文捕获须页内 fetch 包装（`res.clone().arrayBuffer()`）—— Playwright
+网络层对 fetch→blob 消费后的附件 body 常拿不到；② 求解后重解按钮 done 相位是
+`#restart` 非 `#start`（SolveControls 五态钩子）。

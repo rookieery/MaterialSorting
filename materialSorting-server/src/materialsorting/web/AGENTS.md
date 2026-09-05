@@ -11,6 +11,10 @@ ms-web                                                                 # 启动 
 python -m materialsorting.web.server                                   # 等价（无 console_script 也能跑）
 curl -X POST http://127.0.0.1:8000/api/parse-dxf -F "file=@<dxf>"      # US-004 上传解析
 curl http://127.0.0.1:8000/api/ptypes                                  # US-020 裁片 g 码代表（US-001 v2 键 = label）
+curl -X POST http://127.0.0.1:8000/api/edit-polish -H "Content-Type: application/json" \
+     -H "X-Session-Id: <sid>" -d '{"placed":[{"id":"g01_30","rotation":0,"translation":[0,0]}]}' \
+                                                                      # prd-edit-polish US-002 编辑「智能微调」（placed 随 body；报告口径 = 物理毛版
+                                                                      # 轮廓 ≠ 画布 erode 红字口径，差异注记见 agent-api-reference.md 专节 ⚠️）
 ```
 
 > **intermediate 由 Web 上传母版 commit 生成**（`server.py` 启动期 `_reload_pieces_state()` 在 import 时读 `pieces_intermediate.json`；缺失不崩但 `_PIECES_STATE` 为空 dict，`/ws/solve` 报「排料数据为空」、`/api/ptypes` 返回 `{representatives:{}}`，前端上传母版 commit 成功后自动 reload 填入）。`materialSorting-web/static/` 也需 `npm run build` 一次让 mount 不空（dev 模式 Vite proxy 不依赖 build 产物，但 FastAPI mount 空目录会报错）。
