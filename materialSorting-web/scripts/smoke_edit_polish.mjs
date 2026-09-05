@@ -271,17 +271,21 @@ check('S2e 料长不增（after.width ≤ before.width）',
 check('S2f 密度不降（after ≥ before − 1e-6）',
   rep1.after?.density >= rep1.before?.density - 1e-6,
   rep1.before?.density + ' -> ' + rep1.after?.density + '%');
-check('S2g 对比卡渲染（六指标前→后 + 口径脚注 + 撤销按钮）',
+check('S2g 对比卡渲染（六指标前→后 + 撤销按钮 + 按钮title口径注记）',
   await page.evaluate(() => {
     const card = document.querySelector('[data-testid=edit-polish-card]');
     if (!card) return false;
     const ids = ['edit-polish-overlap', 'edit-polish-depth', 'edit-polish-rot',
       'edit-polish-rotsum', 'edit-polish-width', 'edit-polish-density'];
+    // 口径注记 2026-09-05 三轮迭代起在按钮 title 悬浮（卡内可见脚注已移除不占空间）
+    const btnTitle = document.querySelector('[data-testid=edit-polish-btn]')
+      ?.getAttribute('title') || '';
     return ids.every((id) => {
         const el = card.querySelector('[data-testid=' + id + ']');
         return el && el.textContent.includes('→');
       })
-      && card.textContent.includes('物理毛版轮廓口径')
+      && !card.textContent.includes('物理毛版轮廓口径')
+      && btnTitle.includes('物理毛版轮廓口径')
       && !!card.querySelector('[data-testid=edit-polish-undo]');
   }));
 await page.screenshot({ path: OUT + '/s2_polish_report.png' });

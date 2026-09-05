@@ -1732,6 +1732,21 @@ ExportInfoModal 均读 bestRun().lastFrame，save 写回后 placed/density 自�
 replaceWorking 写 working（**不自动保存**，✕ 弃稿语义不变）+ 右下对比卡六指标
 （前 → 后）+ 一级撤销；失败错误文案进卡 working 逐字段不变。零后端改动。
 
+**2026-09-05 二轮 UI 迭代（用户验收后）**：左上工具区竖排改横排（全览/形态/
+智能微调一行，row + align-items:center）；对比卡自右下 `.edit-br-stack` 卡栈
+（与指南卡叠置，挡排料尾部主视图）迁画布左下独立锚点 —— `.edit-br-stack`
+删除、`.edit-guide` 绝对锚点（bottom/right 10）下放回自身，与右下指南卡水平
+对称。四角分布 = 左上工具/右上指标面板/左下对比卡/右下指南。行为零变化：
+testid/DOM containment（按钮在 .edit-layout-canvas-tools 内、checkbox 在
+.edit-polish-card 内）不变，单测与冒烟零改动；下表「右下卡栈」描述为 US-003
+落地时形态，以本注记为准。
+
+**2026-09-05 三轮 UI 迭代（用户验收后）**：对比卡口径脚注「物理毛版轮廓口径（与
+导出一致；画布红字为腐蚀后轮廓口径，数值可能偏小）」自卡内可见行移除（用户定案
+太占空间）—— 解释锚点收进「智能微调」按钮 title 悬浮（卡体整体
+pointer-events:none，native title 在卡内元素上不触发，必须放可悬停的按钮上）；
+`.edit-polish-foot` 删除，单测/冒烟改锁按钮 title 文案（卡内不再含口径字样）。
+
 | 文件 | 职责 |
 | --- | --- |
 | `src/lib/editPolish.ts`（新） | 纯数据组装 + 单一请求出口（几何真相源留 Python）：`parsePrefixMemberPids(pid,size,extra)` 组合片 pid → 成员 pid 集合（`PS_{front}+{back}@{size}(+{extra}@{extra_size})` 权威式 —— **front 段是裸 label 无 @size**，size 取 stats.size 补全；畸形段/无从补全静默跳过 = best-effort；extra.pid 直收去重）；`buildExclude(run)`（band enabled+label → labels / RunRecord.prefix → pids / 皆无 → undefined 载荷省略键 —— 策略合成 run 无 WS final.prefix 记录自然省略）；`buildPolishPayload(working,run)`（placed 逐字段拷贝 translation 拷断引用 + gate_mm 取 manifest + exclude；无 manifest/working 空 → null 不发请求）；`postEditPolish(payload)`（apiFetch POST，!res.ok 透传服务端 error 前缀「微调失败：」/网络层 Error 直抛；401 session code 由 apiFetch 拦截走全局阻断 = 正确行为）。PolishMetrics/PolishReport 类型镜像引擎 _diagnose 七指标（density ×100 百分数） |
@@ -1755,10 +1770,14 @@ replaceWorking 写 working（**不自动保存**，✕ 弃稿语义不变）+ �
 - **exclude 是 best-effort**：band/prefix 记录缺失 → 载荷省略 exclude 键（引擎全量参与
   微调，over-conservative 可接受）；**不因记录缺失阻断微调**。front 裸 label 段必须用
   stats.size 补全（组合片权威式 `PS_{front}+{back}@{size}`）。
-- **对比卡口径脚注必须出现**：报告七指标是物理毛版轮廓口径（/export 同源），画布红字
-  告警是 erode 后口径 —— 两套数值并存是设计非 bug，删脚注 = 口径歧义回归。
-- **卡栈透点**：.edit-br-stack/.edit-polish-card 均 pointer-events:none，撤销按钮是栈内
-  唯一 pointer-events:auto 交互点 —— 新增卡内交互控件必须显式开 auto，不得整卡开。
+- **口径注记锚点 = 按钮title**：报告七指标是物理毛版轮廓口径（/export 同源），画布红字
+  告警是 erode 后口径 —— 两套数值并存是设计非 bug；2026-09-05 三轮迭代起卡内可见脚注
+  移除（用户定案太占空间），解释锚点 = 「智能微调」按钮 title（卡体
+  pointer-events:none 上 native title 不触发），单测/冒烟锁 title 文案。
+- **卡栈透点**：.edit-polish-card（2026-09-05 二轮迭代起画布左下独立锚点，原
+  .edit-br-stack 卡栈已删除）整体 pointer-events:none，撤销按钮与 compact
+  checkbox 行是卡内仅有的 pointer-events:auto 交互点 —— 新增卡内交互控件必须
+  显式开 auto，不得整卡开。
 - **pid 逐位守恒闸**：replaceWorking 条数 + 逐下标 id 全等才替换；微调响应 placed 错位
   = 形态异常按失败处理（错误文案进卡），不得部分应用。
 

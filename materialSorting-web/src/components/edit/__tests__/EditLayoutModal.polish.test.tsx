@@ -240,7 +240,7 @@ describe('EditLayoutModal 智能微调 (edit-polish US-003)', () => {
     expect(body.exclude).toEqual({ pids: ['g02_34', 'g03_34', 'g02_32'] });
   });
 
-  it('成功后 working 替换 + 画布数据源更新 + 对比卡六指标/脚注/撤销按钮渲染', async () => {
+  it('成功后 working 替换 + 画布数据源更新 + 对比卡六指标/撤销按钮渲染（口径注记在按钮 title）', async () => {
     const run = seedBestRun();
     apiFetchMock.mockImplementation(async (url) =>
       url === '/api/edit-polish' ? polishResponse(660) : (undefined as unknown as Response),
@@ -252,7 +252,8 @@ describe('EditLayoutModal 智能微调 (edit-polish US-003)', () => {
     expect(run.lastFrame!.placed_items[1].translation).toEqual([600, 0]);
     // 画布数据源更新（命令式 polygon points 跟随）
     expect(roughB().getAttribute('points')!.startsWith('660,0')).toBe(true);
-    // 对比卡：六指标 + 口径脚注 + 撤销按钮
+    // 对比卡：六指标 + 撤销按钮（口径注记 2026-09-05 三轮迭代起在按钮 title 悬浮，
+    // 卡内可见脚注已移除）
     const card = document.querySelector('[data-testid="edit-polish-card"]');
     expect(card).not.toBeNull();
     expect(
@@ -273,8 +274,11 @@ describe('EditLayoutModal 智能微调 (edit-polish US-003)', () => {
     expect(
       document.querySelector('[data-testid="edit-polish-density"]')!.textContent,
     ).toContain('45.45 → 45.45 %');
-    expect(card!.textContent).toContain('物理毛版轮廓口径');
-    expect(card!.textContent).toContain('腐蚀后轮廓口径');
+    expect(card!.textContent).not.toContain('物理毛版轮廓口径'); // 可见脚注已移除（不占卡内空间）
+    const polishBtnTitle =
+      document.querySelector('[data-testid="edit-polish-btn"]')?.getAttribute('title') ?? '';
+    expect(polishBtnTitle).toContain('物理毛版轮廓口径');
+    expect(polishBtnTitle).toContain('腐蚀后轮廓口径');
     expect(
       document.querySelector('[data-testid="edit-polish-undo"]')!.textContent,
     ).toContain('撤销微调');

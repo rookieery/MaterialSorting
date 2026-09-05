@@ -4,7 +4,8 @@
 // 重算 + viewBoxMaxW 跟随 + bumpRenderTick，density_sparrow 恒不动）。
 //
 // edit-polish US-003（2026-09-05）：「智能微调」state 机在本组件（快照生命周期 =
-// modal state）—— 按钮与对比卡渲染在 EditCanvas（工具区/右下卡栈），经 polish
+// modal state）—— 按钮与对比卡渲染在 EditCanvas（左上工具区/画布左下对比卡，同日
+// 二轮迭代后的角落分布），经 polish
 // prop 受控下发（onModeChange 同款模式）。成功 → replaceWorking 写 working（**不
 // 调用 save、不自动保存**，✕ 关窗即弃既有语义不变）；失败（网络/4xx）→ 错误文案
 // 进卡、working 逐字段不变；一级撤销 = pre-polish working 快照（再次微调覆盖、

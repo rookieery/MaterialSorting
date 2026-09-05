@@ -26,6 +26,14 @@
 // = editStore.reset() 回算法基线的语义彻底区分）；形态 select 自 footer 移入左上
 // 工具区（state 仍在 EditLayoutModal，经 onModeChange 受控）；右下新增「操作指南」
 // 卡片（.edit-guide，同 .edit-metrics 悬浮卡模式 pointer-events:none 不挡画布）。
+// 同日二轮 UI 迭代：左上工具区竖排改横排（全览/形态/智能微调一行）；微调对比卡自
+// 右下卡栈迁画布左下（.edit-br-stack 拆除、.edit-guide 锚点下放回自身右下）—— 右下
+// 双卡叠置挡排料尾部主视图，迁后四角各一元素（左上工具/右上指标/左下对比卡/右下
+// 指南）与指南卡水平对称；testid/DOM containment 不变，单测与冒烟零改动。
+// 同日三轮：对比卡口径脚注（物理毛版 vs 画布红字腐蚀口径）自卡内可见行移除（用户
+// 定案太占空间）—— 解释锚点收进「智能微调」按钮 title 悬浮（卡体整体
+// pointer-events:none，native title 在其上不触发，锚点必须在可悬停的按钮上），
+// .edit-polish-foot 删除，单测/冒烟改锁按钮 title 文案。
 //
 // US-003 交互（pointer effect 内闭包 —— 监听器只挂一次，状态一律走 ref /
 // editStore.getState()，不闭包 props/state）：
@@ -132,8 +140,8 @@ export interface EditCanvasProps {
   onModeChange?: (mode: EditViewMode) => void;
   /**
    * 智能微调 UI 受控接口（edit-polish US-003，2026-09-05）：按钮渲染在左上工具区、
-   * 前后对比卡在右下卡栈（指南卡上方）。state 属 EditLayoutModal；直挂 EditCanvas
-   * 的单测不传 → 按钮/卡不渲染（零改动兼容）。
+   * 前后对比卡在画布左下（同日二轮迭代自右下卡栈迁入，与右下指南卡对称）。state 属
+   * EditLayoutModal；直挂 EditCanvas 的单测不传 → 按钮/卡不渲染（零改动兼容）。
    */
   polish?: EditPolishUi;
 }
@@ -776,9 +784,9 @@ export function EditCanvas({ mode, onModeChange, polish }: EditCanvasProps) {
     <div className="edit-layout-canvas-wrap">
       {/* 骨架 svg：preserveAspectRatio 静态属性走 JSX；viewBox/子节点全部 imperative。 */}
       <svg ref={svgRef} xmlns={SVGNS} className="edit-layout-svg" preserveAspectRatio="xMinYMid meet" />
-      {/* 视图工具（左上竖排）：全览按钮 + 形态 select（2026-09-05 自 footer 移入）+
-          智能微调按钮（edit-polish US-003）。右上留给 US-003 指标面板、右下卡栈 ——
-          均悬浮不挡画布。 */}
+      {/* 视图工具（左上横排，2026-09-05 二轮迭代竖改横）：全览按钮 + 形态 select
+          （2026-09-05 自 footer 移入）+ 智能微调按钮（edit-polish US-003）。
+          右上留给 US-003 指标面板、左下微调对比卡、右下指南卡 —— 均悬浮不挡画布。 */}
       <div className="edit-layout-canvas-tools">
         <button
           type="button"
@@ -806,124 +814,120 @@ export function EditCanvas({ mode, onModeChange, polish }: EditCanvasProps) {
             className="edit-layout-tool edit-polish-btn"
             onClick={polish.onPolish}
             disabled={polish.busy}
-            title="自动清理可解的重合与可回正的旋转（物理毛版口径；料长不增、密度不降；应用后不自动保存，可撤销）"
+            title="自动清理可解的重合与可回正的旋转（报告为物理毛版轮廓口径、与导出一致，画布红字为腐蚀后轮廓口径数值可能偏小；料长不增、密度不降；应用后不自动保存，可撤销）"
             data-testid="edit-polish-btn"
           >
             {polish.busy ? '微调中…' : '智能微调'}
           </button>
         )}
       </div>
-      {/* 右下卡栈（edit-polish US-003 起）：微调对比卡（在案时）+ 操作指南卡同锚竖排 ——
-          对比卡出现在指南卡上方（既有卡零位移）；栈容器 pointer-events:none，仅对比卡
-          撤销按钮 + compact checkbox 行 auto（可交互不挡画布拖动热区）。 */}
-      <div className="edit-br-stack">
-        {polish && (polish.report || polish.error) && (
-          <div className="edit-polish-card" data-testid="edit-polish-card">
-            <div className="edit-metrics-title">智能微调（前 → 后）</div>
-            {polish.error && (
-              <div className="edit-polish-error" data-testid="edit-polish-error">
-                {polish.error}
+      {/* 智能微调对比卡（edit-polish US-003；2026-09-05 二轮迭代自右下卡栈迁画布左下、
+          与右下指南卡水平对称 —— 原右下双卡叠置挡排料尾部主视图）。卡体
+          pointer-events:none，仅撤销按钮 + compact checkbox 行 auto（可交互不挡画布
+          拖动热区）。 */}
+      {polish && (polish.report || polish.error) && (
+        <div className="edit-polish-card" data-testid="edit-polish-card">
+          <div className="edit-metrics-title">智能微调（前 → 后）</div>
+          {polish.error && (
+            <div className="edit-polish-error" data-testid="edit-polish-error">
+              {polish.error}
+            </div>
+          )}
+          {polish.report && (
+            <>
+              <div className="edit-polish-row">
+                <span className="edit-metrics-label">重叠对数</span>
+                <span className="edit-polish-val" data-testid="edit-polish-overlap">
+                  {polish.report.before.overlap_pairs} → {polish.report.after.overlap_pairs}
+                </span>
               </div>
-            )}
-            {polish.report && (
-              <>
-                <div className="edit-polish-row">
-                  <span className="edit-metrics-label">重叠对数</span>
-                  <span className="edit-polish-val" data-testid="edit-polish-overlap">
-                    {polish.report.before.overlap_pairs} → {polish.report.after.overlap_pairs}
-                  </span>
-                </div>
-                <div className="edit-polish-row">
-                  <span className="edit-metrics-label">最大穿透</span>
-                  <span className="edit-polish-val" data-testid="edit-polish-depth">
-                    {fmt(polish.report.before.max_penetration_mm, 2)} →{' '}
-                    {fmt(polish.report.after.max_penetration_mm, 2)} mm
-                  </span>
-                </div>
-                <div className="edit-polish-row">
-                  <span className="edit-metrics-label">旋转偏差片</span>
-                  <span className="edit-polish-val" data-testid="edit-polish-rot">
-                    {polish.report.before.rotated_pieces} → {polish.report.after.rotated_pieces}
-                  </span>
-                </div>
-                <div className="edit-polish-row">
-                  <span className="edit-metrics-label">Σ旋转偏差</span>
-                  <span className="edit-polish-val" data-testid="edit-polish-rotsum">
-                    {fmt(polish.report.before.rotation_dev_sum_deg, 1)} →{' '}
-                    {fmt(polish.report.after.rotation_dev_sum_deg, 1)}°
-                  </span>
-                </div>
-                <div className="edit-polish-row">
-                  <span className="edit-metrics-label">料长</span>
-                  <span className="edit-polish-val" data-testid="edit-polish-width">
-                    {fmt(polish.report.before.width_mm, 1)} → {fmt(polish.report.after.width_mm, 1)}{' '}
-                    mm
-                  </span>
-                </div>
-                <div className="edit-polish-row">
-                  <span className="edit-metrics-label">密度</span>
-                  <span className="edit-polish-val" data-testid="edit-polish-density">
-                    {fmt(polish.report.before.density, 2)} → {fmt(polish.report.after.density, 2)} %
-                  </span>
-                </div>
-                {/* US-005 压缩回收档：默认不勾，勾选后随下次微调请求发出
-                    （compact:true → 引擎 pass ④ 自布头滑贴收空隙）。 */}
-                <label
-                  className="edit-polish-opt"
-                  title="勾选后下次微调附带压缩回收：去旋/分离释放的空隙自布头滑贴收进料长（包络严格变小且零新重合才接受，可撤销）"
-                >
-                  <input
-                    type="checkbox"
-                    checked={polish.compact}
-                    onChange={(e) => polish.onCompactChange(e.target.checked)}
-                    data-testid="edit-polish-compact"
-                  />
-                  回收空隙缩短料长（下次微调生效）
-                </label>
-                <div className="edit-polish-foot">
-                  物理毛版轮廓口径（与导出一致；画布红字为腐蚀后轮廓口径，数值可能偏小）
-                </div>
-              </>
-            )}
-            {polish.canUndo && (
-              <button
-                type="button"
-                className="edit-polish-undo"
-                onClick={polish.onUndo}
-                data-testid="edit-polish-undo"
+              <div className="edit-polish-row">
+                <span className="edit-metrics-label">最大穿透</span>
+                <span className="edit-polish-val" data-testid="edit-polish-depth">
+                  {fmt(polish.report.before.max_penetration_mm, 2)} →{' '}
+                  {fmt(polish.report.after.max_penetration_mm, 2)} mm
+                </span>
+              </div>
+              <div className="edit-polish-row">
+                <span className="edit-metrics-label">旋转偏差片</span>
+                <span className="edit-polish-val" data-testid="edit-polish-rot">
+                  {polish.report.before.rotated_pieces} → {polish.report.after.rotated_pieces}
+                </span>
+              </div>
+              <div className="edit-polish-row">
+                <span className="edit-metrics-label">Σ旋转偏差</span>
+                <span className="edit-polish-val" data-testid="edit-polish-rotsum">
+                  {fmt(polish.report.before.rotation_dev_sum_deg, 1)} →{' '}
+                  {fmt(polish.report.after.rotation_dev_sum_deg, 1)}°
+                </span>
+              </div>
+              <div className="edit-polish-row">
+                <span className="edit-metrics-label">料长</span>
+                <span className="edit-polish-val" data-testid="edit-polish-width">
+                  {fmt(polish.report.before.width_mm, 1)} → {fmt(polish.report.after.width_mm, 1)}{' '}
+                  mm
+                </span>
+              </div>
+              <div className="edit-polish-row">
+                <span className="edit-metrics-label">密度</span>
+                <span className="edit-polish-val" data-testid="edit-polish-density">
+                  {fmt(polish.report.before.density, 2)} → {fmt(polish.report.after.density, 2)} %
+                </span>
+              </div>
+              {/* US-005 压缩回收档：默认不勾，勾选后随下次微调请求发出
+                  （compact:true → 引擎 pass ④ 自布头滑贴收空隙）。 */}
+              <label
+                className="edit-polish-opt"
+                title="勾选后下次微调附带压缩回收：去旋/分离释放的空隙自布头滑贴收进料长（包络严格变小且零新重合才接受，可撤销）"
               >
-                撤销微调
-              </button>
-            )}
-          </div>
-        )}
-        {/* 操作指南（画布右下、保存按钮上方；与指标面板同款悬浮卡不挡交互）。
-            行式 = 左对齐自然换行（.edit-guide-row），非指标面板的两端对齐 nowrap。 */}
-        <div className="edit-guide" data-testid="edit-guide">
-        <div className="edit-metrics-title">操作指南</div>
-        <div className="edit-guide-row">
-          <span className="edit-metrics-label">拖动裁片：</span>按住裁片拖动（自动选中置顶）
+                <input
+                  type="checkbox"
+                  checked={polish.compact}
+                  onChange={(e) => polish.onCompactChange(e.target.checked)}
+                  data-testid="edit-polish-compact"
+                />
+                回收空隙缩短料长（下次微调生效）
+              </label>
+            </>
+          )}
+          {polish.canUndo && (
+            <button
+              type="button"
+              className="edit-polish-undo"
+              onClick={polish.onUndo}
+              data-testid="edit-polish-undo"
+            >
+              撤销微调
+            </button>
+          )}
         </div>
-        <div className="edit-guide-row">
-          <span className="edit-metrics-label">旋转：</span>拖动选中片上方绿色圆点，绕中心自由旋转
-        </div>
-        <div className="edit-guide-row">
-          <span className="edit-metrics-label">缩放：</span>鼠标滚轮（以指针为中心）
-        </div>
-        <div className="edit-guide-row">
-          <span className="edit-metrics-label">平移：</span>按住空白处拖动
-        </div>
-        <div className="edit-guide-row">
-          <span className="edit-metrics-label">取消选中：</span>单击空白处
-        </div>
-        <div className="edit-guide-row">
-          <span className="edit-metrics-label">形态：</span>左上下拉切换 完整版 / 毛板
-        </div>
-        <div className="edit-guide-row">
-          <span className="edit-metrics-label">保存：</span>右下「保存当前布局」；✕ 关闭（有改动先确认）
-        </div>
-        <div className="edit-guide-foot">拖动自动限制在门幅内（上下不出布边）</div>
-        </div>
+      )}
+      {/* 操作指南（画布右下、保存按钮上方；与指标面板同款悬浮卡不挡交互）。
+          行式 = 左对齐自然换行（.edit-guide-row），非指标面板的两端对齐 nowrap。 */}
+      <div className="edit-guide" data-testid="edit-guide">
+      <div className="edit-metrics-title">操作指南</div>
+      <div className="edit-guide-row">
+        <span className="edit-metrics-label">拖动裁片：</span>按住裁片拖动（自动选中置顶）
+      </div>
+      <div className="edit-guide-row">
+        <span className="edit-metrics-label">旋转：</span>拖动选中片上方绿色圆点，绕中心自由旋转
+      </div>
+      <div className="edit-guide-row">
+        <span className="edit-metrics-label">缩放：</span>鼠标滚轮（以指针为中心）
+      </div>
+      <div className="edit-guide-row">
+        <span className="edit-metrics-label">平移：</span>按住空白处拖动
+      </div>
+      <div className="edit-guide-row">
+        <span className="edit-metrics-label">取消选中：</span>单击空白处
+      </div>
+      <div className="edit-guide-row">
+        <span className="edit-metrics-label">形态：</span>左上下拉切换 完整版 / 毛板
+      </div>
+      <div className="edit-guide-row">
+        <span className="edit-metrics-label">保存：</span>右下「保存当前布局」；✕ 关闭（有改动先确认）
+      </div>
+      <div className="edit-guide-foot">拖动自动限制在门幅内（上下不出布边）</div>
       </div>
       {/* 选中片重合指标面板（画布右上固定；未选中不渲染）。 */}
       {sel !== null && metrics !== null && (
