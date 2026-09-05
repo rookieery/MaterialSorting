@@ -27,6 +27,13 @@
 //   S7 compact 压缩回收档（US-005）：对比卡内勾选「回收空隙缩短料长」→ 再微调
 //      → 请求带 compact:true + width ≤ 非 compact 档（S6 结果）+ 密度不降 +
 //      重合对不增 + placed 守恒。
+//   S8 键盘/镜像段（edit-keyboard US-007）：S7 compact 结果保存 → 导出镜像前基线
+//      DXF → 重开 → 合成 pointerdown 选中一片（按 points 内容寻址）→ O 键镜像
+//      （DOM 恰改一片 + 质心锚定反射对拍）→ 保存 → 导出 PLT/DXF：placed 恰一项
+//      mirror:true（其余 29 项逐位不动）+ **正文几何镜像坐标对拍**（镜像前 DXF
+//      layer1 轮廓经 R·M·R⁻¹ 复合 = 镜像后正文轮廓，PLT ±2 HPGL unit / DXF
+//      ±0.05mm，且非镜像反事实远离 = mirror 键真实驱动几何）→ 重开承接镜像片 →
+//      微调 mirror 逐位透传 → R 键重置该片 points 逐字节回算法基线。
 //
 // 报告落 out/smoke_edit_polish/report.json；退出码 0 = 全 PASS。
 import { writeFileSync, mkdirSync } from 'node:fs';
@@ -116,6 +123,148 @@ const labelPoints = (label) => page.evaluate((lb) => {
     .filter((p) => p.getAttribute('fill-opacity') === '0.55' && p.dataset.label === lb)
     .map((p) => p.getAttribute('points'));
 }, label);
+// ---------- edit-keyboard US-007 S8 段共用算子（纯 Node 侧，零页面依赖） ----------
+/** r2/pointsStr：lib/geometry.ts 逐字节复刻（prod 构建无法页面内 import 源码模块；
+ *  Math.round(x*100)/100 + V8 Number→string 与前端同引擎同语义）—— 用于按 points
+ *  内容寻址毛版 polygon（working 下标 ↔ DOM 元素，提层置顶后 DOM 序不可用）与
+ *  R 键基线串对拍。 */
+const r2 = (x) => Math.round(x * 100) / 100;
+const pointsStrJs = (poly, rot, tr, mirror = false) => {
+  const r = (rot * Math.PI) / 180;
+  const c = Math.cos(r);
+  const s = Math.sin(r);
+  let out = '';
+  for (let i = 0; i < poly.length; i++) {
+    const x = mirror ? -poly[i][0] : poly[i][0];
+    const y = poly[i][1];
+    out += (i ? ' ' : '') + r2(x * c - y * s + tr[0]) + ',' + r2(x * s + y * c + tr[1]);
+  }
+  return out;
+};
+/** points 串 → [[x,y],...]（世界坐标；EditCanvas 顶点均值质心同款累加顺序）。 */
+const parsePts = (s) => s.trim().split(/\s+/).map((p) => p.split(',').map(Number));
+const centroidMean = (pts) => {
+  let x = 0;
+  let y = 0;
+  for (const p of pts) {
+    x += p[0];
+    y += p[1];
+  }
+  const n = Math.max(1, pts.length);
+  return [x / n, y / n];
+};
+const rotCs = (deg) => {
+  const r = (deg * Math.PI) / 180;
+  return [Math.cos(r), Math.sin(r)];
+};
+/** 反射矩阵 H = R(θ)·diag(−1,1)·R(−θ)（O 键镜面在世界系的表达；det=−1）。 */
+const reflH = (rot) => {
+  const [c, s] = rotCs(rot);
+  return [[s * s - c * c, -2 * c * s], [-2 * c * s, c * c - s * s]];
+};
+/** 排序串数组的鲁棒多重集差（O 键/R 键「恰改一片」判据）。 */
+function multisetDiff(aSorted, bSorted) {
+  const removed = [];
+  const added = [];
+  let i = 0;
+  let j = 0;
+  while (i < aSorted.length && j < bSorted.length) {
+    if (aSorted[i] === bSorted[j]) {
+      i++;
+      j++;
+    } else if (aSorted[i] < bSorted[j]) {
+      removed.push(aSorted[i]);
+      i++;
+    } else {
+      added.push(bSorted[j]);
+      j++;
+    }
+  }
+  while (i < aSorted.length) removed.push(aSorted[i++]);
+  while (j < bSorted.length) added.push(bSorted[j++]);
+  return { removed, added };
+}
+/** R12 ASCII DXF → layer '1' 闭合 POLYLINE 顶点列（placed 序；门幅边框无 layer 键
+ *  落缺省 '0' 不入列，净版 14/内部线 8 同理过滤）。整文件 code/value 严格成对
+ *  （含 SECTION 头），ENTITIES 段起两两步进。 */
+function parseDxfOutlines(text) {
+  const lines = text.split(/\r\n|\r|\n/);
+  let start = 0;
+  for (let i = 0; i + 1 < lines.length; i += 2) {
+    if (lines[i].trim() === '0' && lines[i + 1].trim() === 'ENTITIES') {
+      start = i + 2;
+      break;
+    }
+  }
+  const outlines = [];
+  let cur = null;
+  for (let i = start; i + 1 < lines.length; i += 2) {
+    const code = lines[i].trim();
+    const val = lines[i + 1].trim();
+    if (code === '0') {
+      if (val === 'POLYLINE') cur = { layer: null, verts: [] };
+      else if (val === 'VERTEX' && cur) cur.verts.push(null);
+      else if ((val === 'SEQEND' || val === 'ENDSEC') && cur) {
+        if (cur.layer === '1' && cur.verts.length) outlines.push(cur.verts);
+        cur = null;
+        if (val === 'ENDSEC') break;
+      } else if (val !== 'VERTEX') {
+        cur = null; // TEXT/LINE/POINT 等实体头（毛版 POLYLINE 已 SEQEND 收口）
+      }
+    } else if (cur) {
+      if (code === '8') cur.layer = val;
+      else if (code === '10' && cur.verts.length && cur.verts[cur.verts.length - 1] === null) {
+        cur.verts[cur.verts.length - 1] = [parseFloat(val), null];
+      } else if (code === '20' && cur.verts.length) {
+        const last = cur.verts[cur.verts.length - 1];
+        if (Array.isArray(last) && last[1] === null) last[1] = parseFloat(val);
+      }
+    }
+  }
+  return outlines;
+}
+/** PLT/HPGL 正文 → 笔画列表（PU 起新笔、PD 续画；毛版 clean 版层序 = 门幅框 +
+ *  30 片毛版轮廓（placed 序）在前，标注笔画/表格在后 ⇒ stroke[0]=边框、
+ *  stroke[k+1]=placed[k] 毛版轮廓，PD ≤10 点分块自动拼接）。 */
+function parsePltStrokes(text) {
+  const strokes = [];
+  let cur = null;
+  for (const raw of text.split(/\r\n|\r|\n/)) {
+    const line = raw.trim();
+    if (/^PU-?\d/.test(line)) {
+      const m = line.slice(2).replace(/;$/, '').split(',');
+      cur = [[parseInt(m[0], 10), parseInt(m[1], 10)]];
+      strokes.push(cur);
+    } else if (/^PD-?\d/.test(line) && cur) {
+      const nums = line.slice(2).replace(/;$/, '').split(',').map(Number);
+      for (let i = 0; i + 1 < nums.length; i += 2) cur.push([nums[i], nums[i + 1]]);
+    }
+  }
+  return strokes;
+}
+/** 按 points 内容寻址选中（合成 pointerdown 直发毛版 polygon + up 冒泡 svg ——
+ *  真实 hit-testing 会被叠片抢 target，usk006 verify 同款确定性寻址）。 */
+const selectByPoints = (want) => page.evaluate((want) => {
+  const svg = document.querySelector('svg.edit-layout-svg');
+  if (!svg) return false;
+  const poly = Array.from(svg.querySelectorAll('g > polygon'))
+    .filter((p) => p.getAttribute('fill-opacity') === '0.55')
+    .find((p) => p.getAttribute('points') === want);
+  if (!poly) return false;
+  const r = svg.getBoundingClientRect();
+  poly.dispatchEvent(new PointerEvent('pointerdown',
+    { bubbles: true, pointerId: 11, clientX: r.x + 40, clientY: r.y + 40 }));
+  svg.dispatchEvent(new PointerEvent('pointerup',
+    { bubbles: true, pointerId: 11, clientX: r.x + 40, clientY: r.y + 40 }));
+  return true;
+}, want);
+/** 键盘前置：blur 聚焦控件（按钮点击后 activeElement=BUTTON 会命中守卫②全键禁用）。 */
+const blurActive = () => page.evaluate(() => {
+  if (document.activeElement && document.activeElement !== document.body) {
+    document.activeElement.blur();
+  }
+  return true;
+});
 /** 抓一次微调：点击按钮 → 等待 /api/edit-polish 响应（请求载荷 + body 双捕获）。 */
 async function polishOnce() {
   let reqBody = null;
@@ -368,6 +517,9 @@ await page.waitForSelector('[data-testid=edit-layout-overlay]', { timeout: 5000 
 const bandBefore = await labelPoints(BAND_LABEL);
 check('S6b 编辑弹窗内带形态区域快照（g05 毛版 ' + bandBefore.length + ' 片在案）',
   bandBefore.length === bandCount, 'n=' + bandBefore.length);
+// S8 备档：首开时刻全量毛版 points 多重集（= 算法基线渲染；R 键重置的「回基线」
+// 逐字节判据之一 —— 重置后的 points 串必在本快照内）。
+const m6Points = await roughPoints();
 const p3 = await polishOnce();
 const rep3 = p3.respBody?.report || {};
 check('S6c 微调请求带 exclude.labels=[' + BAND_LABEL + ']（band 记录 → labels 键）',
@@ -416,6 +568,299 @@ check('S7e compact 守恒不等式（本轮 width 不增 / 密度不降 / 重合
     + ' density ' + rep4.before?.density + '->' + rep4.after?.density);
 await page.screenshot({ path: OUT + '/s7_compact.png' });
 
+// ---------- S8 键盘/镜像段（edit-keyboard US-007）：O 镜像 → 保存 → 导出几何
+// 对拍 → 微调透传 → R 重置。S7 结束态 = 弹窗在案（compact 微调结果未保存），
+// 先保存落 lastFrame 再导出「镜像前基线」DXF —— 镜像几何对拍的两端：
+//   期望(k) = R(θ1)·M·R(−θ0)·(oldDXF顶点 − t0) + t1（θ/t 取两次导出 POST placed[k]，
+//   oldDXF = 镜像前导出 layer1 轮廓[k] = R(θ0)·p_raw + t0 的 0.01mm 舍入值）
+// —— 与后端 export_geometry.apply_transform mirror 分支同公式，不依赖 intermediate
+//    磁盘文件（会话几何真相随请求走），同时算「非镜像反事实」证明 mirror 键真实
+//    驱动几何（不是任何平移都能凑上的平凡匹配）。
+await page.click('[data-testid=edit-layout-save]');
+await page.waitForSelector('[data-testid=edit-layout-overlay]', { state: 'detached', timeout: 5000 });
+check('S8a S7 compact 结果保存（弹窗关闭，lastFrame = 微调末态）', true);
+const expPre = await exportOnce('dxf', 'S8b');
+const preEqual = JSON.stringify(expPre.reqBody?.placed) === JSON.stringify(p4.respBody?.placed);
+check('S8c 镜像前基线导出 placed 守恒（= S7 compact 微调响应 placed 深相等）',
+  expPre.reqBody?.placed?.length === EXPECT_TOTAL && preEqual,
+  'len=' + expPre.reqBody?.placed?.length + ' deepEqual=' + preEqual);
+const outlinesPre = parseDxfOutlines(expPre.respBody || '');
+check('S8d 镜像前 DXF layer1 闭合轮廓在案（恰 30 片毛版 placed 序；边框落缺省 layer0）',
+  outlinesPre.length === EXPECT_TOTAL, 'n=' + outlinesPre.length);
+
+// 选片 k：镜像预测不触门幅（raw 毛版留 ≥2mm —— PLT y≤gate 裁剪/前端 clamp 双防线）
+// + 镜像可辨位移 ≥20mm（反事实远离）+ 非带排除片（g05 在微调 exclude 集内，透传
+// 断言走非排除路径更有区分度）。预测锚 = eroded 质心（O 键 cWorld 同源），
+// newRaw = cWorld + H·(oldRaw − cWorld)（H = R(θ)·M·R(−θ)，θ = placed rotation）。
+const manifestS6 = cap.msgs.filter((x) => x && x.type === 'manifest').slice(-1)[0] || null;
+const polyByPid = new Map((manifestS6?.pieces || []).map((p) => [p.id, p.polygon]));
+const gateS8 = expPre.reqBody?.gate_mm || 0;
+const placedPre = expPre.reqBody?.placed || [];
+let pickK = -1;
+let pickMargin = -1e9;
+let pickInfo = 'none';
+for (const relax of [false, true]) {
+  for (let i = 0; i < placedPre.length && i < outlinesPre.length; i++) {
+    const pts = outlinesPre[i];
+    const poly = polyByPid.get(placedPre[i]?.id);
+    if (!pts || pts.length < 4 || !poly) continue;
+    // eroded 质心（世界系）：O 键 applyKeyTransform 的 cWorld 同源（顶点均值）
+    const [ca, sa] = rotCs(placedPre[i].rotation);
+    const cw = centroidMean(poly.map((p) => [
+      p[0] * ca - p[1] * sa + placedPre[i].translation[0],
+      p[0] * sa + p[1] * ca + placedPre[i].translation[1],
+    ]));
+    const H = reflH(placedPre[i].rotation);
+    let yMin = 1e9;
+    let yMax = -1e9;
+    let xMin = 1e9;
+    let disp = 0;
+    for (const v of pts) {
+      const dx = v[0] - cw[0];
+      const dy = v[1] - cw[1];
+      const rx = cw[0] + H[0][0] * dx + H[0][1] * dy;
+      const ry = cw[1] + H[1][0] * dx + H[1][1] * dy;
+      yMin = Math.min(yMin, ry);
+      yMax = Math.max(yMax, ry);
+      xMin = Math.min(xMin, rx);
+      disp = Math.max(disp, Math.hypot(rx - v[0], ry - v[1]));
+    }
+    const margin = Math.min(yMin, gateS8 - yMax, xMin);
+    const band = String(placedPre[i]?.id || '').startsWith(BAND_LABEL + '_');
+    if (band && !relax) continue;
+    if (margin < (relax ? 0.2 : 2) || disp < (relax ? 5 : 20)) continue;
+    if (margin > pickMargin) {
+      pickMargin = margin;
+      pickK = i;
+      pickInfo = 'k=' + i + ' ' + placedPre[i].id + ' margin=' + margin.toFixed(1)
+        + 'mm disp=' + disp.toFixed(0) + 'mm rot=' + placedPre[i].rotation + '°';
+    }
+  }
+  if (pickK >= 0) break;
+}
+check('S8e 镜像选片决策在案（eroded 质心锚定预测不触门幅 ≥2mm + 镜像可辨 ≥20mm + 非带排除片）',
+  pickK >= 0 && !!manifestS6, pickInfo);
+
+// 重开承接 → 按 points 内容寻址选中 → O 键镜像（trusted keydown）。
+await page.click('[data-testid=edit-controls-edit]');
+await page.waitForSelector('[data-testid=edit-layout-overlay]', { timeout: 5000 });
+const pidK = placedPre[pickK]?.id || '';
+const polyK = polyByPid.get(pidK) || null;
+const wantPre = polyK && placedPre[pickK]
+  ? pointsStrJs(polyK, placedPre[pickK].rotation, placedPre[pickK].translation, false)
+  : null;
+const roughBeforeO = (await roughPoints()).slice().sort();
+check('S8f 重开弹窗承接 compact 保存态（选中片 points 内容匹配恰 1 片）',
+  !!wantPre && roughBeforeO.filter((s) => s === wantPre).length === 1,
+  'pid=' + pidK + ' match=' + roughBeforeO.filter((s) => s === wantPre).length);
+const selOk1 = wantPre ? await selectByPoints(wantPre) : false;
+await sleep(300);
+check('S8g 合成 pointerdown 选中（重合指标面板在案）',
+  selOk1 === true && await page.evaluate(() =>
+    document.querySelector('[data-testid=edit-metrics]') !== null));
+await blurActive();
+await page.keyboard.press('o');
+await sleep(300);
+const roughAfterO = (await roughPoints()).slice().sort();
+const diffO = multisetDiff(roughBeforeO, roughAfterO);
+const oldO = diffO.removed[0] || '';
+const newO = diffO.added[0] || '';
+let reflErr = 1e9;
+if (diffO.removed.length === 1 && diffO.added.length === 1) {
+  const a = parsePts(oldO);
+  const b = parsePts(newO);
+  if (a.length === b.length && a.length > 0) {
+    const c = centroidMean(a); // eroded 世界顶点均值 = O 键锚（画布渲染即 eroded 轮廓）
+    const H = reflH(placedPre[pickK].rotation);
+    reflErr = 0;
+    for (let i = 0; i < a.length; i++) {
+      const dx = a[i][0] - c[0];
+      const dy = a[i][1] - c[1];
+      reflErr = Math.max(reflErr, Math.hypot(
+        c[0] + H[0][0] * dx + H[0][1] * dy - b[i][0],
+        c[1] + H[1][0] * dx + H[1][1] * dy - b[i][1]));
+    }
+  }
+}
+check('S8h O 键镜像恰改一片（多重集差 1 出 1 进 + 新 points = 质心锚定反射对拍 θ=rot）',
+  diffO.removed.length === 1 && diffO.added.length === 1 && oldO === wantPre && reflErr <= 0.05,
+  'out/in=' + diffO.removed.length + '/' + diffO.added.length
+    + ' reflErr=' + reflErr.toFixed(4) + 'mm');
+await page.screenshot({ path: OUT + '/s8_o_mirrored.png' });
+await page.click('[data-testid=edit-layout-save]');
+await page.waitForSelector('[data-testid=edit-layout-overlay]', { state: 'detached', timeout: 5000 });
+
+// 导出 PLT（毛版 clean）+ DXF：placed 恰一项 mirror:true + 正文几何镜像坐标对拍。
+const expMirPlt = await exportOnce('plt-clean', 'S8i');
+const expMirDxf = await exportOnce('dxf', 'S8j');
+const placedPlt = expMirPlt.reqBody?.placed || [];
+const placedDxf = expMirDxf.reqBody?.placed || [];
+const mirIdxPlt = placedPlt.map((p, i) => (p.mirror === true ? i : -1)).filter((i) => i >= 0);
+const mirIdxDxf = placedDxf.map((p, i) => (p.mirror === true ? i : -1)).filter((i) => i >= 0);
+// 质心锚定补偿对拍（eroded 口径与 O 键 applyKeyTransform 同源：t' = cWorld − R·M·cLocal）
+let anchorErr = 1e9;
+if (polyK && placedPre[pickK] && placedPlt[pickK]) {
+  const it0 = placedPre[pickK];
+  const it1 = placedPlt[pickK];
+  const [ca, sa] = rotCs(it0.rotation);
+  const cw = centroidMean(polyK.map((p) => [
+    p[0] * ca - p[1] * sa + it0.translation[0],
+    p[0] * sa + p[1] * ca + it0.translation[1],
+  ]));
+  const [cb, sb] = rotCs(it1.rotation);
+  const cl = centroidMean(polyK.map((p) => [-p[0] * cb - p[1] * sb, -p[0] * sb + p[1] * cb]));
+  anchorErr = Math.max(
+    Math.abs(cw[0] - cl[0] - it1.translation[0]),
+    Math.abs(cw[1] - cl[1] - it1.translation[1]));
+}
+const othersEqual = placedPlt.length === EXPECT_TOTAL && pickK >= 0
+  && placedPlt.every((p, i) => i === pickK || JSON.stringify(p) === JSON.stringify(placedPre[i]));
+check('S8k 导出 placed 恰一项 mirror:true（下标=选中片 + rot 不变 + 质心锚定补偿 ≤1e-6 + 其余 29 项与镜像前逐位全等 + PLT/DXF 载荷一致）',
+  mirIdxPlt.length === 1 && mirIdxPlt[0] === pickK
+    && mirIdxDxf.length === 1 && mirIdxDxf[0] === pickK
+    && placedPlt[pickK]?.id === pidK
+    && placedPlt[pickK]?.rotation === placedPre[pickK]?.rotation
+    && anchorErr <= 1e-6 && othersEqual
+    && JSON.stringify(placedPlt) === JSON.stringify(placedDxf),
+  'k=' + pickK + '/' + mirIdxPlt.join(',') + ' anchorErr=' + anchorErr.toExponential(1)
+    + ' others=' + othersEqual + ' tr ' + placedPre[pickK]?.translation.map((v) => v.toFixed(1))
+    + '->' + placedPlt[pickK]?.translation.map((v) => v.toFixed(1)));
+
+// PLT 正文几何镜像对拍（±2 unit ≈ 0.05mm；lead 自门幅框 stroke 首点推导）。
+const strokesMir = parsePltStrokes(expMirPlt.respBody || '');
+let pltErr = 1e9;
+let pltCounter = 0;
+let pltInfo = 'n/a';
+if (strokesMir.length >= EXPECT_TOTAL + 1 && outlinesPre.length > pickK
+    && placedPlt[pickK] && placedPre[pickK]) {
+  const border = strokesMir[0];
+  const leadX = border[0][0] / 40;
+  const leadY = border[0][1] / 40;
+  const strokeK = strokesMir[pickK + 1];
+  const it0 = placedPre[pickK];
+  const it1 = placedPlt[pickK];
+  const [c0, s0] = rotCs(-it0.rotation);
+  const [c1, s1] = rotCs(it1.rotation);
+  const expMir = [];
+  const expNo = [];
+  for (const v of outlinesPre[pickK]) {
+    const dx = v[0] - it0.translation[0];
+    const dy = v[1] - it0.translation[1];
+    const px = dx * c0 - dy * s0;
+    const py = dx * s0 + dy * c0;
+    for (const mir of [true, false]) {
+      const mx = mir ? -px : px;
+      (mir ? expMir : expNo).push([
+        Math.max(0, Math.round((mx * c1 - py * s1 + it1.translation[0] + leadX) * 40)),
+        Math.max(0, Math.round((mx * s1 + py * c1 + it1.translation[1] + leadY) * 40)),
+      ]);
+    }
+  }
+  if (strokeK && strokeK.length === expMir.length) {
+    pltErr = 0;
+    for (let i = 0; i < expMir.length; i++) {
+      pltErr = Math.max(pltErr, Math.hypot(expMir[i][0] - strokeK[i][0], expMir[i][1] - strokeK[i][1]));
+      pltCounter = Math.max(pltCounter, Math.hypot(expNo[i][0] - strokeK[i][0], expNo[i][1] - strokeK[i][1]));
+    }
+  }
+  pltInfo = 'strokes=' + strokesMir.length + ' lead=' + leadX + '/' + leadY
+    + 'mm pts=' + (strokeK || []).length + '/' + expMir.length;
+}
+check('S8l PLT 正文几何镜像对拍（毛版闭合轮廓逐顶点 = R·M·p+t 转 HPGL ≤2unit；非镜像反事实 ≥40unit）',
+  pltErr <= 2 && pltCounter >= 40,
+  pltInfo + ' err=' + (pltErr === 1e9 ? 'n/a' : pltErr.toFixed(2)) + 'unit'
+    + ' counter=' + pltCounter.toFixed(0) + 'unit');
+
+// DXF 正文几何镜像对拍（±0.05mm 舍入口径）。
+const outlinesMir = parseDxfOutlines(expMirDxf.respBody || '');
+let dxfErr = 1e9;
+let dxfCounter = 0;
+let dxfInfo = 'n/a';
+if (outlinesMir.length === EXPECT_TOTAL && outlinesPre.length > pickK
+    && placedPlt[pickK] && placedPre[pickK]) {
+  const newPts = outlinesMir[pickK];
+  const it0 = placedPre[pickK];
+  const it1 = placedPlt[pickK];
+  const [c0, s0] = rotCs(-it0.rotation);
+  const [c1, s1] = rotCs(it1.rotation);
+  if (newPts && newPts.length === outlinesPre[pickK].length) {
+    dxfErr = 0;
+    for (let i = 0; i < newPts.length; i++) {
+      const v = outlinesPre[pickK][i];
+      const dx = v[0] - it0.translation[0];
+      const dy = v[1] - it0.translation[1];
+      const px = dx * c0 - dy * s0;
+      const py = dx * s0 + dy * c0;
+      for (const mir of [true, false]) {
+        const mx = mir ? -px : px;
+        const d = Math.hypot(
+          mx * c1 - py * s1 + it1.translation[0] - newPts[i][0],
+          mx * s1 + py * c1 + it1.translation[1] - newPts[i][1]);
+        if (mir) dxfErr = Math.max(dxfErr, d);
+        else dxfCounter = Math.max(dxfCounter, d);
+      }
+    }
+  }
+  dxfInfo = 'outlines=' + outlinesMir.length + ' verts=' + (newPts || []).length;
+}
+check('S8m DXF 正文几何镜像对拍（layer1 闭合 POLYLINE 逐顶点 ≤0.05mm；非镜像反事实 ≥1mm）',
+  dxfErr <= 0.05 && dxfCounter >= 1,
+  dxfInfo + ' err=' + (dxfErr === 1e9 ? 'n/a' : dxfErr.toFixed(4)) + 'mm'
+    + ' counter=' + dxfCounter.toFixed(1) + 'mm');
+
+// 重开承接已保存镜像片 → 复选 → 微调（mirror 逐位透传）→ R 键重置回算法基线。
+await page.click('[data-testid=edit-controls-edit]');
+await page.waitForSelector('[data-testid=edit-layout-overlay]', { timeout: 5000 });
+const itMir = placedPlt[pickK] || null;
+const wantMir = itMir && polyK
+  ? pointsStrJs(polyK, itMir.rotation, itMir.translation, true)
+  : null;
+const roughReopen = (await roughPoints()).slice().sort();
+check('S8n 重开弹窗承接已保存镜像片（按镜像 points 内容匹配恰 1 片）',
+  !!wantMir && roughReopen.filter((s) => s === wantMir).length === 1,
+  'match=' + roughReopen.filter((s) => s === wantMir).length);
+const selOk2 = wantMir ? await selectByPoints(wantMir) : false;
+await sleep(300);
+check('S8o 镜像片复选（重合指标面板在案）',
+  selOk2 === true && await page.evaluate(() =>
+    document.querySelector('[data-testid=edit-metrics]') !== null));
+const p5 = await polishOnce();
+const req5 = p5.reqBody?.placed || [];
+const resp5 = p5.respBody?.placed || [];
+const mirReq = req5.map((p, i) => (p.mirror === true ? i : -1)).filter((i) => i >= 0);
+const mirResp = resp5.map((p, i) => (p.mirror === true ? i : -1)).filter((i) => i >= 0);
+check('S8p 微调 mirror 逐位透传（请求/响应恰一项 mirror:true 同下标同 pid；其余 29 项无 mirror 键）',
+  p5.respBody?.ok === true && mirReq.length === 1 && mirReq[0] === pickK
+    && mirResp.length === 1 && mirResp[0] === pickK
+    && req5[pickK]?.id === pidK && resp5[pickK]?.id === pidK
+    && resp5.every((p, i) => i === pickK || p.mirror === undefined),
+  'req@' + pickK + '=' + (req5[pickK]?.mirror === true)
+    + ' resp@' + pickK + '=' + (resp5[pickK]?.mirror === true)
+    + ' rot ' + req5[pickK]?.rotation + '->' + resp5[pickK]?.rotation + '°'
+    + ' byteEqual=' + (JSON.stringify(req5[pickK]) === JSON.stringify(resp5[pickK])));
+await page.screenshot({ path: OUT + '/s8_polish_mirror.png' });
+// R 前快照须在微调结果渲染落定后取（响应捕获与页面 replaceWorking+重渲染有微竞态，
+// 稳等 500ms —— 否则 R 的「恰改一片」判据会混入微调移动片）。
+await sleep(500);
+const roughBeforeR = (await roughPoints()).slice().sort();
+await blurActive();
+await page.keyboard.press('r');
+await sleep(300);
+const roughAfterR = (await roughPoints()).slice().sort();
+const diffR = multisetDiff(roughBeforeR, roughAfterR);
+const baseIt = solverPlaced2[pickK] || null;
+const basePoly = polyByPid.get(baseIt?.id) || null;
+const wantBase = baseIt && basePoly
+  ? pointsStrJs(basePoly, baseIt.rotation, baseIt.translation, false)
+  : null;
+check('S8q R 键重置回算法基线（恰改一片 + points 逐字节 = S6 末帧 placement 基线串且 ∈ 首开快照 + 基线 pid 对位）',
+  diffR.removed.length === 1 && diffR.added.length === 1 && !!wantBase
+    && diffR.added[0] === wantBase && m6Points.includes(wantBase) && baseIt?.id === pidK,
+  'out/in=' + diffR.removed.length + '/' + diffR.added.length
+    + ' baseMatch=' + (diffR.added[0] === wantBase)
+    + ' inM6=' + m6Points.includes(wantBase));
+await page.screenshot({ path: OUT + '/s8_r_reset.png' });
+
 // ---------- 汇总 ----------
 writeFileSync(OUT + '/report.json', JSON.stringify({
   at: new Date().toISOString(),
@@ -432,6 +877,18 @@ writeFileSync(OUT + '/report.json', JSON.stringify({
   compact: { requested: p4.reqBody?.compact === true,
     widthVsNonCompact: { compact: rep4.after?.width_mm, plain: rep3.after?.width_mm },
     report: { before: rep4.before, after: rep4.after }, moves: rep4.moves?.length },
+  mirror: {
+    pieceIndex: pickK, pid: pidK, pick: pickInfo,
+    domReflectionErrMm: reflErr < 1e9 ? reflErr : null,
+    anchorErr: anchorErr < 1e9 ? anchorErr : null,
+    translation: { before: placedPre[pickK]?.translation, after: placedPlt[pickK]?.translation },
+    plt: { errUnits: pltErr < 1e9 ? pltErr : null, counterUnits: pltCounter },
+    dxf: { errMm: dxfErr < 1e9 ? dxfErr : null, counterMm: dxfCounter },
+    polishPassthrough: { req: req5[pickK]?.mirror === true, resp: resp5[pickK]?.mirror === true,
+      rotAfter: resp5[pickK]?.rotation,
+      byteEqual: JSON.stringify(req5[pickK]) === JSON.stringify(resp5[pickK]) },
+    resetToBaseline: diffR.added.length === 1 && diffR.added[0] === wantBase,
+  },
   results,
 }, null, 2));
 const failed = results.filter((r) => !r.ok);

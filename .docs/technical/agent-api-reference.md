@@ -68,7 +68,14 @@
                                   //   placed_to_world 5 层几何（毛版/净版/内部线/刺口点+法线/
                                   //   布纹线）全部按镜像变换；omit-when-false —— 前端编辑保存
                                   //   只在 true 时带键，solver 原生帧永无此键 → 缺省路径逐字节
-                                  //   不变（路由零改动，placed 键直通）
+                                  //   不变（路由零改动，placed 键直通）。
+                                  //   **edit-keyboard US-007（2026-09-05）端到端几何对拍**：
+                                  //   smoke_edit_polish.mjs S8 段锁「正文几何随 mirror 键翻转」
+                                  //   —— 期望 = R(θ₁)·M·R(−θ₀)·(镜像前 DXF layer1 顶点−t₀)+t₁
+                                  //   （θ/t 取两次导出 POST placed[k]），PLT ≤2 HPGL unit /
+                                  //   DXF ≤0.05mm，非镜像反事实 ≥40unit/≥1mm（反证键真实
+                                  //   驱动几何）；导出 placed 恰一项 mirror:true 且其余 29 项
+                                  //   与镜像前逐位全等。改 apply_transform mirror 分支即红。
   ],
   "filename": "M1787.dxf",        // 可选：上传母版名（uploadStore.doc.filename 前端透传），
                                   //   作导出文件名前缀（去 .dxf）；缺省回退「排料」/nesting
@@ -379,7 +386,7 @@ WS 侧同语义走 **error 帧**：`{"type":"error","code":"session_expired","me
 > 腐蚀口径数值恒 ≤ 物理口径（d 内缩），版师看到对比卡与画布红字不一致时以本注记为
 > 解释锚点（前端对比卡脚注同文案）。本期不切换画布口径（PRD 非目标）。
 
-编辑弹窗「智能微调」按钮的数据源：前端把**当前编辑 placements 随 body 带上**（后端不存布局态，唯一存储在前端 runRegistry —— `/export` routes_views.py 同模式），后端跑引擎层确定性后处理 `nesting_engine/polish_layout`（US-001）返回微调后 placements + 前后对比报告。几何真相源留在 Python：**物理毛版轮廓口径**（会话 `pieces_by_id` 原始 polygon，与 `/export placed_to_world` 同源、非 eroded —— 编辑画布红字告警是腐蚀后口径，数值可能偏小，口径差是文档级约定）。端到端回归冒烟 `materialSorting-web/scripts/smoke_edit_polish.mjs`（US-004 24 检查 + US-005 S7 compact 档 5 检查 = 29：微调四守恒/撤销/确定性双跑/PLT+DXF 导出 placed 守恒/band exclude 抽验/compact:true 载荷+width ≤ 非 compact 档+守恒不等式）。
+编辑弹窗「智能微调」按钮的数据源：前端把**当前编辑 placements 随 body 带上**（后端不存布局态，唯一存储在前端 runRegistry —— `/export` routes_views.py 同模式），后端跑引擎层确定性后处理 `nesting_engine/polish_layout`（US-001）返回微调后 placements + 前后对比报告。几何真相源留在 Python：**物理毛版轮廓口径**（会话 `pieces_by_id` 原始 polygon，与 `/export placed_to_world` 同源、非 eroded —— 编辑画布红字告警是腐蚀后口径，数值可能偏小，口径差是文档级约定）。端到端回归冒烟 `materialSorting-web/scripts/smoke_edit_polish.mjs`（US-004 24 检查 + US-005 S7 compact 档 5 检查 + edit-keyboard US-007 S8 键盘/镜像段 17 检查 = 46：微调四守恒/撤销/确定性双跑/PLT+DXF 导出 placed 守恒/band exclude 抽验/compact:true 载荷+width ≤ 非 compact 档+守恒不等式/O 镜像→导出 placed mirror:true + 正文几何镜像坐标对拍/mirror 逐位透传/R 键重置回基线）。
 
 ### 请求（`application/json`）
 
@@ -393,7 +400,7 @@ WS 侧同语义走 **error 帧**：`{"type":"error","code":"session_expired","me
 ```
 
 - `placed`（必填，空/缺/非列表 → 400）：同 pid 多副本按**数组下标**逐实例寻址（绝不 pid 去重，与前端 editStore 同口径）；条目缺 `id` / `translation` 非 2 元 → 400。
-- `mirror`（可选，omit-when-false 布尔键，**edit-keyboard US-004 2026-09-05**）：条目级镜像片标志（局部 x 翻转 `world = R(rot)·diag(−1,1)·p + t`，与前端 `PlacedItem.mirror` / `/export` placed 同一约定）—— 键直通引擎按**镜像几何**微调：`_world_geom` 与 derotate 共用「local = [(-x, y)] 预处理 + 标准变换」（c_local 用镜像后多边形质心，t' 质心补偿公式不变），诊断/pass ③分离/pass ④compact 全部基于正确镜像几何；响应 placed 同口径 omit-when-false 透传（无改进返回输入 list 原对象亦含该键；恒发 `mirror:false` 会红掉前端精确锁键集用例）。校验逻辑宽松（键直通，路由无代码改动）；缺省/无键 = 非镜像，既有路径逐字节不变（745 pytest 全绿零回归）。
+- `mirror`（可选，omit-when-false 布尔键，**edit-keyboard US-004 2026-09-05**）：条目级镜像片标志（局部 x 翻转 `world = R(rot)·diag(−1,1)·p + t`，与前端 `PlacedItem.mirror` / `/export` placed 同一约定）—— 键直通引擎按**镜像几何**微调：`_world_geom` 与 derotate 共用「local = [(-x, y)] 预处理 + 标准变换」（c_local 用镜像后多边形质心，t' 质心补偿公式不变），诊断/pass ③分离/pass ④compact 全部基于正确镜像几何；响应 placed 同口径 omit-when-false 透传（无改进返回输入 list 原对象亦含该键；恒发 `mirror:false` 会红掉前端精确锁键集用例）。校验逻辑宽松（键直通，路由无代码改动）；缺省/无键 = 非镜像，既有路径逐字节不变（745 pytest 全绿零回归）。**edit-keyboard US-007（2026-09-05）端到端透传锁**：smoke_edit_polish.mjs S8p 段实证 O 键镜像片随本请求发出 → 请求/响应恰一项 `mirror:true` 同下标同 pid、其余 29 项无 mirror 键（请求项与响应项逐位 byteEqual）—— 改 buildPolishPayload / 引擎透传任一处即红。
 - `gate_mm`（可选）：优先求解口径（前端 `run.manifest.gate_mm`）；缺省/非法回退会话 `state['gate_mm']`（与 `/export`、`/api/plt-table-preview` 同法）；两处皆无 → 400 fail-fast（守卫 y∈[0,gate] 无从谈起）。
 - `exclude`（可选，缺省 None 透传引擎）：`{labels?: [g码], pids?: [pid]}` 双键 —— 命中实例永不被移动仍作障碍（v1 over-conservative 同 pid 全副本，FR-8；band 成员 g 码 / prefix 成员 pid 由前端 best-effort 组装）。非 dict → 400。
 - `compact`（可选，缺省 false）：US-005 压缩回收档（2026-09-05 落地）—— true 时引擎追加 pass ④：自布头方向逐片 −x 滑贴收空隙进料长（20mm 粗扫+二分贴触、级联左片先贴），每 move 走同款五道守卫（kind=compact）+ pass 级「全图 maxX 严格变小否则整体回滚」；无空隙可收时输出与 compact=false 逐元素相同（additive）。前端入口 = 对比卡内「回收空隙缩短料长」checkbox（默认不勾，随下次微调请求发出）。
