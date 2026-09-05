@@ -1936,3 +1936,36 @@ prd-edit-keyboard-transform（键盘变换 L/K/空格/O/I + R 片级重置）的
   （tsc+vite）过（302.72KB gzip 99.02KB）、static/ 已重建；零组件/后端改动，
   浏览器验证与冒烟归 US-003/US-005/US-007（本 story 无 UI 面，纯函数缺省路径
   逐字节不变）。
+
+## 编辑排料 edit-keyboard US-002 落地：editStore mirror 贯穿与 resetItem（2026-09-05）
+
+US-001 立数据模型后的 store 层接线：editStore 此前五处**显式字段 map**（逐字段重建
+对象，新增字段会被静默丢弃）全部补 `PlacedItem.mirror` 透传；新增片级重置 action
+`resetItem`（US-006 R 键的 store 侧地基）。重置语义定案（2026-09-05）：恢复**算法
+基线**（本会话首次 open 的算法原始布局，与全局 reset 同锚点 ⇒ 会抹掉该片已保存的
+编辑；mirror 随基线天然清零/回填）。
+
+| 文件 | 改动 |
+| --- | --- |
+| `src/store/editStore.ts` | ①`deepCopyItems`：`...(it.mirror === true ? { mirror: true } : {})` omit-when-false（open 快照 / replaceWorking / reset working 共用路径）；②`itemsEqual`：`(a[i].mirror === true) !== (b[i].mirror === true)` 归一布尔比较（undefined/false 同义，布尔差异 → dirty，open 的 savedDirty 重算自动继承）；③`applyToRun`：save/reset 落盘同款 spread（对象整体重建 ⇒ 工作稿关镜像保存后 lastFrame 旧键自然消失）；④`setWorkingItem`：`cur.mirror` 透传（rotation/translation 增量更新不掉镜像标志）；⑤`computeLayoutStats`：`transformPolygon(poly, rot, tr, it.mirror === true)` —— 镜像改变包络 maxX，料长/密度统计对镜像片正确；⑥新增 `resetItem(index): boolean`：守卫链 = baseline 在案 + 下标双侧（working/baseline）在界 + `baseline.placedItems[index].id === working[index].id`（同 pid 多副本绝不按 pid 寻址，下标对齐防御）→ 命中 = working[index] ← 基线项深拷贝（`deepCopyItems([base[index]])[0]` 复用）、**只写 working 草稿不写 run**、不 bumpRenderTick；miss = false 且 working 原样 |
+| 测试 | `editStore.test.ts` +13 项（24→35）：mirror 贯穿 8（open 快照透传 / save 写回 mirror===true + 无镜像项无键 / 关镜像保存清键 / setWorkingItem 透传 / replaceWorking 透传 / reset 全局落盘 / itemsEqual 布尔差异与 false 同义 / computeLayoutStats 三角形不对称夹具 maxX 800→500 手算对拍）；resetItem 5（正常恢复只写 working + 深拷贝解耦 / 镜像标志随基线清零与回填双向 / 越界三态拒绝 / id 错位拒绝（swapped 草稿防御）/ baseline 缺席拒绝不炸） |
+
+### 关键不变量（edit-keyboard US-002 立，后续故事不得破坏）
+
+- **store 序列化 omit-when-false**：deepCopyItems / applyToRun / setWorkingItem 三处
+  重建对象一律 `mirror === true` 才带键（与 US-001 wire 口径一致；恒发 mirror:false
+  会红掉精确锁键集用例）。
+- **setWorkingItem 透传（非覆写）**：镜像片拖动/键盘增量更新不掉 mirror；US-005
+  翻转 mirror 的写入入口本故事未建（届时扩 patch 或走 replaceWorking）。
+- **resetItem 只写 working 不写 run**：片级重置后必须 save 才落盘（✕ 弃稿语义
+  不变）；守卫 miss 绝不静默按 pid 找同名项。
+- **resetItem 与全局 reset 同锚点**：基线 = 会话首次 open 的算法布局（US-004 锚定
+  口径），片级重置同样会抹掉已保存编辑（定案接受，安全网 = ✕ dirty 确认 + 全局
+  重置 + 片级重置）。
+
+### 验证
+
+- vitest 全量 **994 passed**（981+13，64 文件；既有用例零改动——editStore.test diff
+  全为纯新增）/ `npm run build`（tsc+vite）过（303.08KB gzip 99.11KB）、static/ 已
+  重建；零组件/零后端改动，浏览器验证与冒烟归 US-003/US-005/US-007（store 缺省
+  路径无 UI 面，mirror 键缺席时五处透传均为 no-op spread）。

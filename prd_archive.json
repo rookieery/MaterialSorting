@@ -902,5 +902,16 @@
         "passes": true
       }
     ]
+  },
+  {
+    "branchName": "ralph/edit-keyboard-transform",
+    "stories": [
+      {
+        "id": "US-001",
+        "title": "mirror 数据模型与前端纯函数层",
+        "description": "镜像（det=−1 反射）无法由 {id, rotation, translation} 表达，本 story 打地基：PlacedItem 加 additive 可选字段 mirror?: boolean，语义 = 局部坐标系 x 翻转，变换式 world = R(rot)·diag(−1,1)·p + t（展开：x' = −c·x − s·y + tx；y' = −s·x + c·y + ty，c=cos(rot) s=sin(rot)）。实现约定：所有变换函数加可选参数 mirror=false，函数体内在旋转前加一行式取负（const x0 = mirror ? -x : x），缺省 false 路径输出与现状逐字节一致（零回归红线）。\n\n具体任务：\n1. materialSorting-web/src/types/piece.ts — PlacedItem 接口加 mirror?: boolean（可选，不带镜像时不出现该键）。\n2. materialSorting-web/src/lib/geometry.ts — pointsStr(poly, rot, tr) 加第 4 参 mirror=false，镜像时顶点 x 先取负再旋转变换。\n3. materialSorting-web/src/lib/editGeometry.ts — transformPolygon 同款加 mirror 参数，公式与 pointsStr 完全一致。\n4. materialSorting-web/src/lib/overlap.ts — EditPiece 类型携带 mirror；applyEditPlacement(ep, rot, tr, mirror) 支持增量覆写 mirror；precomputeEditPiecesFromItems 读 it.mirror === true 初始化。\n5. materialSorting-web/src/lib/__tests__/ 三个测试文件各加 mirror 分支用例（含 mirror=false 回归对拍：与旧输出逐字节相同）。\n\n验收标准：\n- pointsStr(poly, rot, tr, true) 输出 = 无镜像输出的 x 分量取负（手算方块用例锁死）；transformPolygon mirror 用例与 pointsStr 逐点对拍相等\n- mirror 缺省 false 时两函数输出与改动前逐字节一致（既有 lib 单测零改动全绿）\n- precomputeEditPiecesFromItems 读 it.mirror === true；applyEditPlacement 增量覆写正确\n- cd materialSorting-web && npx vitest run 全过 + npm run build（tsc+vite）过",
+        "passes": true
+      }
+    ]
   }
 ]

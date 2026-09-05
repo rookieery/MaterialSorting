@@ -14,6 +14,12 @@
 //   - **陈旧 run 防御**：save/reset 校验 run 仍在 runRegistry.list()（重解 clear() 后
 //     旧引用拒绝写回）；弹窗打开期间 overlay 阻断主界面，registry 无人写，下标安全。
 //   - 编辑态纯前端内存，刷新 / 切会话自然消失（不持久化、不落盘）。
+//   - **mirror 贯穿**（edit-keyboard US-002，2026-09-05）：deepCopyItems / itemsEqual /
+//     applyToRun / setWorkingItem / computeLayoutStats 五处显式字段 map 全部透传
+//     PlacedItem.mirror，序列化一律 **omit-when-false**（`mirror === true` 才带键，
+//     false/缺省不带 —— 精确锁键集用例防线）；itemsEqual 按 `=== true` 归一布尔比较。
+//   - **resetItem 片级重置**（edit-keyboard US-002）：working[index] 恢复基线对应项
+//     深拷贝，只写草稿不写 run；下标 + id 对齐双守卫（同 pid 多副本绝不按 pid 寻址）。
 
 import { create } from 'zustand';
 import { transformPolygon } from '../lib/editGeometry';
@@ -81,7 +87,7 @@ export function computeLayoutStats(
   for (const it of working) {
     const p = byId.get(it.id);
     if (!p) continue;
-    const world = transformPolygon(p.polygon, it.rotation, it.translation);
+    const world = transformPolygon(p.polygon, it.rotation, it.translation, it.mirror === true);
     for (const [x] of world) {
       if (x > maxX) maxX = x;
     }
@@ -94,8 +100,10 @@ export function computeLayoutStats(
 /**
  * 布局逐项相等比较（US-004 dirty 判定单一真相源）：
  * dirty = working ≠ 已保存布局（run.lastFrame.placed_items）—— 长度一致 + 逐项
- * id 相同 + rotation / translation 差 < FLOAT_EPS。save 写回是逐字段精确拷贝 ⇒
- * 保存后必相等（✕ 直接关不误弹确认）；open 快照亦深拷贝 ⇒ 未编辑时恒非 dirty。
+ * id 相同 + rotation / translation 差 < FLOAT_EPS + mirror 布尔一致（edit-keyboard
+ * US-002：`=== true` 归一比较，undefined/false 同义 —— 键在与否不算差异）。
+ * save 写回是逐字段精确拷贝 ⇒ 保存后必相等（✕ 直接关不误弹确认）；open 快照亦
+ * 深拷贝 ⇒ 未编辑时恒非 dirty。
  */
 export function itemsEqual(a: readonly PlacedItem[], b: readonly PlacedItem[]): boolean {
   if (a.length !== b.length) return false;
@@ -107,16 +115,22 @@ export function itemsEqual(a: readonly PlacedItem[], b: readonly PlacedItem[]): 
     if (Math.abs(ta[0] - tb[0]) > FLOAT_EPS || Math.abs(ta[1] - tb[1]) > FLOAT_EPS) {
       return false;
     }
+    if ((a[i].mirror === true) !== (b[i].mirror === true)) return false;
   }
   return true;
 }
 
-/** PlacedItem 深拷贝（translation 是数组引用，必须逐项拷断与 lastFrame/baseline 的耦合）。 */
+/**
+ * PlacedItem 深拷贝（translation 是数组引用，必须逐项拷断与 lastFrame/baseline 的耦合）。
+ * mirror omit-when-false 透传（edit-keyboard US-002）：`mirror === true` 才带键，
+ * false/缺省不带 —— 键集与 wire 口径一致（精确锁键集用例防线）。
+ */
 function deepCopyItems(items: readonly PlacedItem[]): PlacedItem[] {
   return items.map((it) => ({
     id: it.id,
     rotation: it.rotation,
     translation: [it.translation[0], it.translation[1]] as Pt,
+    ...(it.mirror === true ? { mirror: true } : {}),
   }));
 }
 
@@ -138,6 +152,9 @@ function applyToRun(
       id: items[i].id,
       rotation: items[i].rotation,
       translation: [items[i].translation[0], items[i].translation[1]] as Pt,
+      // mirror omit-when-false（edit-keyboard US-002）：对象整体重建 ⇒ 原键有、
+      // 新值无镜像时键自然消失（关闭镜像保存后 lastFrame 不残留 mirror）。
+      ...(items[i].mirror === true ? { mirror: true } : {}),
     };
   }
   f.placed_items.length = items.length;
@@ -165,6 +182,16 @@ export interface EditState {
   open: (run: RunRecord) => boolean;
   /** 更新 working 下标项（US-003 拖动 / 旋转消费；越界 / 未打开防御 no-op）。 */
   setWorkingItem: (index: number, patch: { rotation?: number; translation?: Pt }) => void;
+  /**
+   * 片级重置（edit-keyboard US-002，US-006 R 键消费）：working[index] 恢复为基线
+   * 对应项深拷贝 —— 语义 = 恢复算法基线（本会话首次 open 的算法原始布局，与全局
+   * reset 同锚点 ⇒ 会抹掉该片已保存的编辑；mirror 随基线天然清零/回填）。
+   * **只写 working 草稿不写 run**（保存才落盘）。守卫（任一命中 → false 且 working
+   * 原样）：baseline 缺席 / 下标越界（working 或 baseline 任一侧）/ id 错位
+   * （baseline.placedItems[index].id ≠ working[index].id，下标对齐防御 ——
+   * 同 pid 多副本绝不按 pid 寻址）。
+   */
+  resetItem: (index: number) => boolean;
   /**
    * 整体替换 working（edit-polish US-003「智能微调」应用结果 / 撤销恢复快照的唯一
    * 消费路径；不写回 run —— 不调用 save、不自动保存，✕ 关窗即弃语义不变）。
@@ -236,8 +263,30 @@ export const useEditStore = create<EditState>((set, get) => ({
         patch.translation !== undefined
           ? [patch.translation[0], patch.translation[1]]
           : [cur.translation[0], cur.translation[1]],
+      // mirror 透传（edit-keyboard US-002）：rotation/translation 增量更新不掉镜像
+      // 标志（对象整体重建必须显式携带；omit-when-false 同 deepCopyItems）。
+      ...(cur.mirror === true ? { mirror: true } : {}),
     };
     set({ working: next });
+  },
+
+  resetItem: (index) => {
+    const { baseline, working } = get();
+    // 守卫链（任一命中 → false 且 working 原样不动）：基线缺席（未打开 / invalidate 后）
+    // / 下标越界（working 与 baseline 双侧校验）/ id 错位 —— 同 pid 多副本绝不能按
+    // pid 寻址（仓库红线），基线与草稿按数组下标对齐，id 不齐 = 错位防御拒绝。
+    if (!baseline) return false;
+    if (index < 0 || index >= working.length || index >= baseline.placedItems.length) {
+      return false;
+    }
+    if (baseline.placedItems[index].id !== working[index].id) return false;
+    // 命中：working[index] ← 基线对应项深拷贝（恢复算法基线，mirror 天然清零/回填）。
+    // 只写 working 草稿不写 run（保存才落盘，✕ 弃稿语义不变）；不 bumpRenderTick
+    // （working 引用变化即重渲染，与 setWorkingItem 同款）。
+    const next = working.slice();
+    next[index] = deepCopyItems([baseline.placedItems[index]])[0];
+    set({ working: next });
+    return true;
   },
 
   replaceWorking: (items) => {

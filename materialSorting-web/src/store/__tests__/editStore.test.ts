@@ -10,6 +10,10 @@
 //     基线 + savedDirty=false；无编辑时幂等
 //   - invalidate：清态（run/baseline/working/savedDirty 全空）
 //   - setWorkingItem：下标寻址更新（US-003 消费口径），越界 no-op
+//   - mirror 贯穿（edit-keyboard US-002）：open/save/setWorkingItem/replaceWorking/
+//     reset/itemsEqual/computeLayoutStats 七消费路径 omit-when-false 透传 + 布尔差异
+//   - resetItem（edit-keyboard US-002）：片级重置只写 working；越界 / id 错位 /
+//     baseline 缺席三态守卫
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { computeLayoutStats, itemsEqual, useEditStore } from '../editStore';
@@ -17,7 +21,7 @@ import { runRegistry } from '../runRegistry';
 import { useAppStore } from '../appStore';
 import type { RunRecord } from '../runRegistry';
 import type { ManifestMsg, FrameMsg } from '../../types/ws';
-import type { PlacedItem, Polygon } from '../../types/piece';
+import type { PlacedItem, Polygon, Pt } from '../../types/piece';
 
 /** 500x500 方形毛版。 */
 const HALF_SQUARE: Polygon = [
@@ -364,5 +368,219 @@ describe('open 基线锚定（US-004）', () => {
     expect(itemsEqual(a, [item('a', 0, 0, 0), item('c', 90, 100, 200)])).toBe(false); // id
     expect(itemsEqual(a, [item('a', 45, 0, 0), item('b', 90, 100, 200)])).toBe(false); // rot
     expect(itemsEqual(a, [item('a', 0, 0.5, 0), item('b', 90, 100, 200)])).toBe(false); // tx
+  });
+});
+
+// ============================================================
+// edit-keyboard US-002：mirror 贯穿（五处显式字段 map，omit-when-false）
+// + resetItem 片级重置（只写 working，下标 + id 对齐双守卫）。
+// ============================================================
+
+/** 直角三角形毛版（不对称 —— mirror 改变包络 maxX，供 computeLayoutStats 传参验证）。 */
+const TRIANGLE: Polygon = [
+  [0, 0],
+  [300, 0],
+  [0, 400],
+];
+
+const TRI_MANIFEST: ManifestMsg = {
+  type: 'manifest',
+  gate_mm: 1000,
+  total_area_mm2: 60_000,
+  n_eroded: 0,
+  pieces: [{ id: 't_28', size: 28, color: '#111111', area_mm2: 60_000, polygon: TRIANGLE }],
+};
+
+/** 算法帧本身带 mirror:true 项的 run（a 镜像 + b 常规）。 */
+function mkMirrorRun(): RunRecord {
+  const rec = runRegistry.create(4);
+  rec.manifest = MANIFEST;
+  const frame: FrameMsg = {
+    type: 'frame',
+    index: 7,
+    elapsed: 10,
+    phase: 'final',
+    density: 500_000 / (1100 * 1000),
+    density_sparrow: 0.51,
+    width_mm: 1100,
+    placed_items: [
+      { id: 'a_28', rotation: 0, translation: [0, 0], mirror: true },
+      item('b_28', 0, 600, 0),
+    ],
+  };
+  rec.frames.push(frame);
+  rec.lastFrame = frame;
+  rec.finalDensity = frame.density;
+  rec.viewBoxMaxW = 1100;
+  return rec;
+}
+
+describe('mirror 贯穿（US-002：五处字段 map，omit-when-false）', () => {
+  it('open 快照（deepCopyItems）：基线与 working 均透传 mirror:true；缺省项不带键', () => {
+    const rec = mkMirrorRun();
+    useEditStore.getState().open(rec);
+    const s = useEditStore.getState();
+    expect(s.baseline!.placedItems[0].mirror).toBe(true);
+    expect(s.working[0].mirror).toBe(true);
+    expect('mirror' in s.baseline!.placedItems[1]).toBe(false);
+    expect('mirror' in s.working[1]).toBe(false);
+    // 深拷贝解耦：working 镜像项与 lastFrame 项是独立对象
+    expect(s.working[0]).not.toBe(rec.lastFrame!.placed_items[0]);
+  });
+
+  it('save 写回（applyToRun）：mirror:true → lastFrame.placed_items[i].mirror === true；无镜像项写回仍无该键', () => {
+    const rec = mkMirrorRun();
+    useEditStore.getState().open(rec);
+    useEditStore.getState().setWorkingItem(1, { rotation: 30, translation: [700, 10] });
+    expect(useEditStore.getState().save()).toBe(true);
+    const items = rec.lastFrame!.placed_items;
+    expect(items[0]).toEqual({ id: 'a_28', rotation: 0, translation: [0, 0], mirror: true });
+    expect(items[0].mirror).toBe(true);
+    expect(items[1]).toEqual(item('b_28', 30, 700, 10));
+    expect('mirror' in items[1]).toBe(false);
+  });
+
+  it('save 落盘清键：working 项 mirror 缺省（如 replaceWorking 关镜像后）写回不残留 mirror 键', () => {
+    const rec = mkMirrorRun();
+    useEditStore.getState().open(rec);
+    expect(
+      useEditStore.getState().replaceWorking([item('a_28', 0, 0, 0), item('b_28', 0, 600, 0)]),
+    ).toBe(true);
+    expect(useEditStore.getState().save()).toBe(true);
+    expect('mirror' in rec.lastFrame!.placed_items[0]).toBe(false);
+  });
+
+  it('setWorkingItem 透传 mirror：rotation/translation 增量更新不掉镜像标志；无镜像项更新后仍不带键', () => {
+    const rec = mkMirrorRun();
+    useEditStore.getState().open(rec);
+    useEditStore.getState().setWorkingItem(0, { rotation: 90, translation: [10, 20] });
+    useEditStore.getState().setWorkingItem(1, { rotation: 45 });
+    const w = useEditStore.getState().working;
+    expect(w[0]).toEqual({ id: 'a_28', rotation: 90, translation: [10, 20], mirror: true });
+    expect('mirror' in w[1]).toBe(false);
+  });
+
+  it('replaceWorking（deepCopyItems 路径）透传 mirror：true 项带键 / 缺省项不带键', () => {
+    const rec = mkRun();
+    useEditStore.getState().open(rec);
+    expect(
+      useEditStore.getState().replaceWorking([
+        { id: 'a_28', rotation: 10, translation: [1, 2], mirror: true },
+        item('b_28', 5, 3, 4),
+      ]),
+    ).toBe(true);
+    const w = useEditStore.getState().working;
+    expect(w[0].mirror).toBe(true);
+    expect('mirror' in w[1]).toBe(false);
+  });
+
+  it('reset 全局重置写回基线：基线 mirror 项同样 omit-when-false 落盘', () => {
+    const rec = mkMirrorRun();
+    useEditStore.getState().open(rec);
+    useEditStore.getState().setWorkingItem(0, { rotation: 90 });
+    useEditStore.getState().save();
+    expect(useEditStore.getState().reset()).toBe(true);
+    expect(rec.lastFrame!.placed_items[0].mirror).toBe(true);
+    expect('mirror' in rec.lastFrame!.placed_items[1]).toBe(false);
+  });
+
+  it('itemsEqual：mirror 布尔差异 → false（undefined 与 false 同义，只看归一布尔）', () => {
+    const noKey = [item('a', 0, 0, 0)];
+    const mirrored = [{ id: 'a', rotation: 0, translation: [0, 0] as Pt, mirror: true }];
+    expect(itemsEqual(noKey, [{ id: 'a', rotation: 0, translation: [0, 0], mirror: false }])).toBe(
+      true,
+    ); // 缺省 vs 显式 false 同义
+    expect(itemsEqual(noKey, mirrored)).toBe(false); // 布尔差异
+    expect(itemsEqual(mirrored, mirrored)).toBe(true);
+    expect(itemsEqual(mirrored, noKey)).toBe(false); // 对称
+  });
+
+  it('computeLayoutStats 传 mirror：镜像改变包络 maxX（三角形 x 取负手算对拍）', () => {
+    // TRIANGLE x∈{0,300}，tr=[500,0]：无镜像 x' = 500+x → maxX 800
+    const no = computeLayoutStats([item('t_28', 0, 500, 0)], TRI_MANIFEST);
+    expect(no.widthMm).toBe(800);
+    // 镜像 x' = 500−x → {500,200,500} → maxX 500（若 store 漏传 mirror 会仍得 800）
+    const mi = computeLayoutStats(
+      [{ id: 't_28', rotation: 0, translation: [500, 0], mirror: true }],
+      TRI_MANIFEST,
+    );
+    expect(mi.widthMm).toBe(500);
+  });
+});
+
+describe('resetItem（US-002：片级重置，只写 working）', () => {
+  it('正常恢复：working[index] 回基线深拷贝，其余项 / baseline / lastFrame 均不动', () => {
+    const rec = mkRun();
+    useEditStore.getState().open(rec);
+    useEditStore.getState().setWorkingItem(0, { rotation: 90, translation: [123, 456] });
+    useEditStore.getState().setWorkingItem(1, { translation: [900, 10] });
+    expect(useEditStore.getState().resetItem(0)).toBe(true);
+    const s = useEditStore.getState();
+    expect(s.working[0]).toEqual(item('a_28', 0, 0, 0));
+    expect(s.working[1]).toEqual(item('b_28', 0, 900, 10)); // 其余片不动
+    expect(s.baseline!.placedItems).toEqual([item('a_28', 0, 0, 0), item('b_28', 0, 600, 0)]);
+    // 只写 working 草稿不写 run（保存才落盘）
+    expect(rec.lastFrame!.placed_items).toEqual([item('a_28', 0, 0, 0), item('b_28', 0, 600, 0)]);
+    // 深拷贝：与基线项引用解耦（后续编辑不穿基线）
+    expect(s.working[0].translation).not.toBe(s.baseline!.placedItems[0].translation);
+  });
+
+  it('镜像标志随基线恢复：working 置 mirror:true → 回基线无键；基线镜像项 → 恢复带键', () => {
+    // ① 基线无镜像（算法原始布局），working 被置镜像 → 重置后 mirror 清零
+    const rec = mkRun();
+    useEditStore.getState().open(rec);
+    expect(
+      useEditStore.getState().replaceWorking([
+        { id: 'a_28', rotation: 30, translation: [5, 5], mirror: true },
+        item('b_28', 0, 600, 0),
+      ]),
+    ).toBe(true);
+    expect(useEditStore.getState().resetItem(0)).toBe(true);
+    expect(useEditStore.getState().working[0]).toEqual(item('a_28', 0, 0, 0));
+    expect('mirror' in useEditStore.getState().working[0]).toBe(false);
+    // ② 基线本身带 mirror（算法帧镜像项），编辑后重置 → mirror 回填 true
+    const rec2 = mkMirrorRun();
+    useEditStore.getState().open(rec2);
+    useEditStore.getState().setWorkingItem(0, { rotation: 45, translation: [9, 9] });
+    expect(useEditStore.getState().resetItem(0)).toBe(true);
+    expect(useEditStore.getState().working[0]).toEqual({
+      id: 'a_28',
+      rotation: 0,
+      translation: [0, 0],
+      mirror: true,
+    });
+  });
+
+  it('越界拒绝：负下标 / 超界（working 侧或 baseline 侧）→ false 且 working 原样', () => {
+    const rec = mkRun();
+    useEditStore.getState().open(rec);
+    useEditStore.getState().setWorkingItem(1, { translation: [900, 0] });
+    const before = useEditStore.getState().working;
+    expect(useEditStore.getState().resetItem(-1)).toBe(false);
+    expect(useEditStore.getState().resetItem(2)).toBe(false);
+    // baseline 侧越界：人为构造 working 比 baseline 长（防御病态草稿）
+    useEditStore.setState({ working: [...before, item('c_28', 0, 0, 0)] });
+    expect(useEditStore.getState().resetItem(2)).toBe(false);
+    expect(useEditStore.getState().working).toEqual([...before, item('c_28', 0, 0, 0)]);
+  });
+
+  it('id 错位拒绝：working 与 baseline 同下标 id 不齐 → false 且 working 原样（不按 pid 寻址）', () => {
+    const rec = mkRun();
+    useEditStore.getState().open(rec);
+    // 人为构造错位草稿（同 pid 多副本场景下错位 = 绝不能静默按 pid 找同名项重置）
+    const swapped = [item('b_28', 0, 1, 1), item('a_28', 0, 2, 2)];
+    useEditStore.setState({ working: swapped });
+    expect(useEditStore.getState().resetItem(0)).toBe(false);
+    expect(useEditStore.getState().resetItem(1)).toBe(false);
+    expect(useEditStore.getState().working).toEqual(swapped);
+  });
+
+  it('baseline 缺席拒绝：未打开 / invalidate 后 → false 不炸、working 原样', () => {
+    expect(useEditStore.getState().resetItem(0)).toBe(false);
+    const rec = mkRun();
+    useEditStore.getState().open(rec);
+    useEditStore.getState().invalidate();
+    expect(useEditStore.getState().resetItem(0)).toBe(false);
+    expect(useEditStore.getState().working).toEqual([]);
   });
 });
