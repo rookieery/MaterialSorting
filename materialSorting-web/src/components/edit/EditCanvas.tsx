@@ -65,8 +65,11 @@
 // 守卫链：interactionEnabled=false（EditLayoutModal 确认层打开）→ 表单控件聚焦
 // （INPUT/SELECT/TEXTAREA/BUTTON/contentEditable —— 键盘归控件）→ 无选中片，任一
 // 命中零变换。键分发（选中片）：L=+1° / K=−1°（Shift ±10°，e.repeat 放行 = 按住
-// auto-repeat 连转）、空格=rot+180（preventDefault 防 body 滚动；幂等键忽略
-// e.repeat 防抖动）、O=toggle mirror（rot 不变）、I=toggle mirror+rot+180
+// auto-repeat 连转）、空格=四态翻转循环「原始→垂直镜像→180°→水平镜像→原始」
+// （preventDefault 防 body 滚动；幂等键忽略 e.repeat 防抖动；2026-09-05 用户定案
+// 取代旧 rot+180 两态掉头 —— Klein 四元群 {I,Mx,My,R180} 的 Gray 码序，每按恰
+// 一次单轴翻转，四按回原始；中间三态与 I 键/旧空格/O 键产物逐一同一数据形态，
+// 全链路零新形态）、O=toggle mirror（rot 不变）、I=toggle mirror+rot+180
 // （diag(1,−1)=R(180°)·diag(−1,1) 复合律，共用单 mirror 标志）。
 // 变换一律质心锚定不漂移：t' = c_world − R(rot')·M(m')·c_local（c_local/c_world =
 // base/当前世界多边形顶点均值，M=diag(−1,1) when mirror），随后 clampPlacement
@@ -922,7 +925,22 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
       }
       if (k === ' ') {
         e.preventDefault(); // 防 body 滚动（聚焦按钮激活已被守卫②排除）
-        applyKeyTransform(index, it.rotation + 180, curMirror);
+        // 四态翻转循环（2026-09-05 用户定案，取代旧 rot+180 两态掉头）：
+        // 原始 → 垂直镜像 → 180° → 水平镜像 → 原始。态 = mirror 位 + half 位
+        // （rotation 相对 0° 的 180° 偏移：((rot%360)+360)%360 ≥ 180）：
+        // 0=原始、1=水平镜像、2=180°、3=垂直镜像 —— Klein 四元群 {I,Mx,My,R180}
+        // 的 Gray 码序（每按恰一次单轴翻转：上翻→左翻→上翻→左翻，视觉连续）。
+        // 转移 (state+3)%4 即 0→3→2→1→0；rot 仅在 half 翻转处 ±180（L/K 微调
+        // 残余角保留：任意 r 循环保持 r ↔ r+180 交替、四按回原始）。
+        const half = (((it.rotation % 360) + 360) % 360) >= 180;
+        const state = (curMirror ? 1 : 0) + (half ? 2 : 0);
+        const next = (state + 3) % 4;
+        const nextHalf = (next & 2) === 2;
+        applyKeyTransform(
+          index,
+          nextHalf === half ? it.rotation : it.rotation + (half ? -180 : 180),
+          (next & 1) === 1,
+        );
         return;
       }
       if (k === 'o') {
@@ -1109,9 +1127,10 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
       </div>
       {/* edit-keyboard US-005：六键语义一行（Shift+L/K ±10° 略 —— 微转步长属于
           进阶细节，按钮区已有 title 悬浮惯例可后续补；文案不得含「形态」「保存」
-          （EditCanvas.test 反向锁）。 */}
+          （EditCanvas.test 反向锁）。空格 2026-09-05 升级四态翻转循环
+          （原始→垂直镜像→180°→水平镜像→原始），文案「四态翻转」概言之。 */}
       <div className="edit-guide-row">
-        <span className="edit-metrics-label">键盘：</span>L/K 微转 · 空格 180° · O 水平镜像 · I 垂直镜像 · R 重置此片
+        <span className="edit-metrics-label">键盘：</span>L/K 微转 · 空格 四态翻转 · O 水平镜像 · I 垂直镜像 · R 重置此片
       </div>
       <div className="edit-guide-foot">拖动自动限制在门幅内（上下不出布边）</div>
       </div>

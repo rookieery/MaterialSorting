@@ -771,7 +771,13 @@ EditCanvas 渲染链 / NestSVG frame 路径 / EditLayoutModal 微调 state 机 /
 ## edit-keyboard US-005 关键约定（编辑键盘变换 L/K/空格/O/I；2026-09-05）
 
 六键定案（已定案 2026-09-05）：L=顺时针 +1°、K=逆时针 −1°、Shift+L/K=±10°、
-空格=180° 掉头、O=水平镜像=toggle mirror（rot 不变）、I=垂直镜像=toggle
+空格=四态翻转循环「原始→垂直镜像→180°→水平镜像→原始」（同日用户定案升级，
+取代旧 rot+180 两态掉头 —— Klein 四元群 {I,Mx,My,R180} 的 Gray 码序，每按恰
+一次单轴翻转、四按回原始；中间三态与 I 键/旧空格/O 键产物逐一**同一数据形态**，
+全链路零新形态。实现 = 态位编码 `mirror 位 + half 位`（half = rotation 相对
+0° 的 180° 偏移，`((rot%360)+360)%360 ≥ 180`），转移 `(state+3)%4` 即
+0→3→2→1→0，rot 仅在 half 翻转处 ±180 —— L/K 微调残余角 r 循环保持 r↔r+180
+交替精确回原始）、O=水平镜像=toggle mirror（rot 不变）、I=垂直镜像=toggle
 mirror + rot+180（`diag(1,−1)=R(180°)·diag(−1,1)` 复合律，共用单 mirror
 标志 —— 不引入第二标志位）。R 键分支已随 US-006 接线（见文末「edit-keyboard
 US-006 关键约定」；resetItem 已在 US-002 落地）。零后端改动、零渲染公式改动
@@ -805,7 +811,7 @@ describe 10 项）与 `store/__tests__/editStore.test.ts`（patch.mirror 1 项�
 - **commitDragPlacement 可选 mirrorPatch**：缺省 undefined = patch 不含
   mirror 键（指针拖动会话零回归）；键盘 O/I 显式传目标值。store patch 三态：
   显式 true 带键 / 显式 false 键消失 / 缺省保持现值。
-- **指南卡键盘行文案**：「键盘：L/K 微转 · 空格 180° · O 水平镜像 · I 垂直
+- **指南卡键盘行文案**：「键盘：L/K 微转 · 空格 四态翻转 · O 水平镜像 · I 垂直
   镜像 · R 重置此片」—— 不得含「形态」「保存」（四轮定案反向锁，
   EditCanvas.test 工具区用例双向锁）。
 - 验证门 = vitest 全量 **1016 passed**（1005+11）+ `npm run build` 过、
@@ -850,8 +856,10 @@ R = 片级重置交互入口（已定案 2026-09-05：R 键非右键菜单；重
 冒烟 US-007 各节是分故事明细，本节是改任何一键一镜前的必读索引）：
 
 - **六键语义（EditCanvas window keydown，选中片分发）**：L=顺时针 +1°、K=逆时针
-  −1°（Shift+L/K=±10°；L/K **放行 e.repeat** = 按住连转）、空格=180° 掉头
-  （preventDefault 防 body 滚动；幂等键忽略 repeat）、**O=水平镜像 = toggle
+  −1°（Shift+L/K=±10°；L/K **放行 e.repeat** = 按住连转）、空格=四态翻转循环
+  「原始→垂直镜像→180°→水平镜像→原始」（2026-09-05 升级定案；preventDefault
+  防 body 滚动；幂等键忽略 repeat；态位编码与中间态数据形态见 US-005 节）、
+  **O=水平镜像 = toggle
   mirror（rot 不变）**、I=垂直镜像 = toggle mirror + rot+180（diag(1,−1) =
   R(180°)·diag(−1,1) 复合律，共用单 mirror 标志）、R=片级重置。守卫链任一命中
   零变换：interactionEnabled=false（✕ dirty 确认层）→ 表单控件聚焦

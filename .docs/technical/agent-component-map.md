@@ -2016,17 +2016,18 @@ prePolish 撤销快照四处全贯穿。零后端改动；既有精确锁键集�
 ## 编辑排料 edit-keyboard US-005 落地：编辑键盘变换 L/K/空格/O/I（2026-09-05）
 
 US-001~003 mirror 地基之上的**键盘交互层**：选中片上六键变换（L=顺时针 +1°、
-K=逆时针 −1°、Shift+L/K=±10°、空格=180° 掉头、O=水平镜像=toggle mirror、
+K=逆时针 −1°、Shift+L/K=±10°、空格=四态翻转循环「原始→垂直镜像→180°→水平
+镜像→原始」、O=水平镜像=toggle mirror、
 I=垂直镜像=toggle mirror+rot+180 —— `diag(1,−1)=R(180°)·diag(−1,1)` 复合律
 共用单 mirror 标志）；R 分支留 US-006 片级重置接线。零后端改动、零渲染公式
 改动（全部复用 US-003 落地的 applyPlacement/clampPlacement/池增量链路）。
 
 | 文件 | 改动 |
 | --- | --- |
-| `src/components/edit/EditCanvas.tsx` | ①window keydown 挂**指针交互同一 effect**（复用闭包 commitDragPlacement/refreshMetrics/updateHandle；监听器仍只挂一次）；②守卫链三段（任一命中零变换）：`interactionRef.current` false（确认层打开）→ target ∈ INPUT/SELECT/TEXTAREA/BUTTON 或 isContentEditable（键盘归表单控件，含画布左上形态 select）→ 无选中片（selRef null）；③单字符键统一小写（Shift+L 的 e.key='L' 同键命中，CapsLock 布局同样）；L/K 放行 e.repeat（按住 auto-repeat 连转）、幂等键（空格/O/I）`e.repeat` 忽略防抖、空格 preventDefault 防 body 滚动；④`applyKeyTransform(index, rot, mirror)` 质心锚定：`t' = c_world − R(rot')·M(m')·c_local`（c_local/c_world = base/当前世界多边形顶点均值，M=diag(−1,1) when mirror；质心是仿射量 ⇒ 零平移变换后质心恰 = R·M·c_local，片原地变换不漂移）→ clampPlacement（带 mirror 参，Y∈[0,gate]/minX≥0 与拖动同口径，右界不钳）；⑤commitDragPlacement 加可选 `mirrorPatch?: boolean`（缺省 undefined = 不改 mirror，指针会话零回归；键盘 O/I 显式传目标值走 store patch.mirror）；⑥新 prop `interactionEnabled?: boolean`（缺省 true；`interactionRef` 渲染期回写 —— keydown 监听器不重挂、prop 即时生效）；⑦指南卡新增键盘行（六键语义一行，文案避开「形态」「保存」反向锁） |
+| `src/components/edit/EditCanvas.tsx` | ①window keydown 挂**指针交互同一 effect**（复用闭包 commitDragPlacement/refreshMetrics/updateHandle；监听器仍只挂一次）；②守卫链三段（任一命中零变换）：`interactionRef.current` false（确认层打开）→ target ∈ INPUT/SELECT/TEXTAREA/BUTTON 或 isContentEditable（键盘归表单控件，含画布左上形态 select）→ 无选中片（selRef null）；③单字符键统一小写（Shift+L 的 e.key='L' 同键命中，CapsLock 布局同样）；L/K 放行 e.repeat（按住 auto-repeat 连转）、幂等键（空格/O/I）`e.repeat` 忽略防抖、空格 preventDefault 防 body 滚动；④`applyKeyTransform(index, rot, mirror)` 质心锚定：`t' = c_world − R(rot')·M(m')·c_local`（c_local/c_world = base/当前世界多边形顶点均值，M=diag(−1,1) when mirror；质心是仿射量 ⇒ 零平移变换后质心恰 = R·M·c_local，片原地变换不漂移）→ clampPlacement（带 mirror 参，Y∈[0,gate]/minX≥0 与拖动同口径，右界不钳）；⑤commitDragPlacement 加可选 `mirrorPatch?: boolean`（缺省 undefined = 不改 mirror，指针会话零回归；键盘空格/O/I 显式传目标值走 store patch.mirror）；⑥新 prop `interactionEnabled?: boolean`（缺省 true；`interactionRef` 渲染期回写 —— keydown 监听器不重挂、prop 即时生效）；⑦指南卡新增键盘行（六键语义一行，文案避开「形态」「保存」反向锁）；⑧空格四态循环（2026-09-05 同日升级定案，取代旧 rot+180 两态掉头）：态位编码 = mirror 位 + half 位（half = `((rot%360)+360)%360 ≥ 180` 的 180° 偏移；0=原始、1=水平镜像、2=180°、3=垂直镜像），转移 `(state+3)%4` 即 0→3→2→1→0（Klein 四元群 Gray 码序，每按恰一次单轴翻转），rot 仅在 half 翻转处 ±180 —— L/K 微调残余角 r 循环保持 r↔r+180 交替四按回原始；中间三态与 I/旧空格/O 键产物逐一同一数据形态（全链路零新形态，US-003 链路原样复用） |
 | `src/components/edit/EditLayoutModal.tsx` | EditCanvas 传 `interactionEnabled={!confirmDiscard}` —— ✕ dirty 确认层打开 = 画布全键禁用（确认层按钮/回车不被画布键劫持）；指针交互不受影响（确认层 overlay 已挡 pointer 热区）；编辑弹窗仍**不挂 ESC 关闭**（仓库红线不变） |
 | `src/store/editStore.ts` | `setWorkingItem` patch 扩可选 `mirror?: boolean`：显式 true 带键 / 显式 false 键消失（omit-when-false）/ 缺省保持现值 —— 键盘 O/I 翻转镜像的 store 写入口（AGENTS.md US-002 节预告的「扩 patch」落地）；指针拖动会话不传 = 会话内恒定既有口径零回归 |
-| 测试 | +11 项（1005→1016）：`EditCanvas.test` 键盘 describe 10（L/K/Shift 精确值 + 质心不漂移 + DOM points 手算 r2 对拍 + 整型往返回原 / clamp 两界 + 手柄同帧刷新 / 空格 180 preventDefault / O toggle 双向 + 键消失 / I 复合律 / 池增量实时指标 164000→200000 / e.repeat 规则 / 守卫链四条（表单控件五类含真实形态 select、无选中、interactionEnabled=false + 恢复））；`editStore.test` patch.mirror 三态 1 |
+| 测试 | +11 项（1005→1016）：`EditCanvas.test` 键盘 describe 10（L/K/Shift 精确值 + 质心不漂移 + DOM points 手算 r2 对拍 + 整型往返回原 / clamp 两界 + 手柄同帧刷新 / 空格四态循环逐态精确值（原始→垂直镜像→180°→水平镜像→原始 + 微调残余角 37°↔217° 交替 + preventDefault）/ O toggle 双向 + 键消失 / I 复合律 / 池增量实时指标 164000→200000 / e.repeat 规则 / 守卫链四条（表单控件五类含真实形态 select、无选中、interactionEnabled=false + 恢复））；`editStore.test` patch.mirror 三态 1 |
 
 ### 关键不变量（edit-keyboard US-005 立，后续故事不得破坏）
 
@@ -2039,6 +2040,10 @@ I=垂直镜像=toggle mirror+rot+180 —— `diag(1,−1)=R(180°)·diag(−1,1)
   （防 body 滚动；聚焦按钮激活已被表单守卫排除）。
 - **质心锚定公式是唯一变换出口**：一切键盘变换经 applyKeyTransform（锚定 →
   clamp → commitDragPlacement 泛化路径），不得绕开 store 直改 DOM。
+- **空格四态循环不得回退为纯 rot+180**（2026-09-05 升级定案）：态判定必须
+  同时消费 mirror 位与 half 位（rot 的 180° 偏移），且中间三态 = I 键 / 旧
+  空格 / O 键产物（同数据形态）—— 若只翻 rot 不动 mirror 或只翻 mirror 不动
+  half，循环退化为两态、四按回原始断言即红。
 - **store patch.mirror 三态语义**：显式 true/false/缺省（保持现值）——
   omit-when-false 序列化口径跨 store/wire 不变。
 

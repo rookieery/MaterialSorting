@@ -1039,7 +1039,9 @@ describe('EditCanvas 镜像渲染 (edit-keyboard US-003)', () => {
 // ============================================================
 // 键盘变换（edit-keyboard US-005）：window keydown 守卫链（表单控件 /
 // 无选中 / interactionEnabled=false）+ L/K/Shift/空格/O/I 逐键精确值 +
-// 质心锚定片不漂移 + clampPlacement + e.repeat 规则。
+// 质心锚定片不漂移 + clampPlacement + e.repeat 规则。空格 2026-09-05 起
+// 四态翻转循环（原始→垂直镜像→180°→水平镜像→原始，中间态与 I/旧空格/O 键
+// 产物逐一同一数据形态；×L/K 微调残余角 r 保持 r↔r+180 交替四按回原始）。
 //
 // 数学锚点（手算 + node 对拍锁死）：a_28 方块 c_local=(250,250)；
 // t' = c_world − R(rot')·M(m')·c_local；R(1°)·c_local =
@@ -1145,23 +1147,93 @@ describe('EditCanvas 键盘变换 (edit-keyboard US-005)', () => {
     expect(w2[0].translation[1]).toBeCloseTo(500 - 250 * (Math.sin(r1) + Math.cos(r1)), 9);
   });
 
-  it('空格 = rot+180（质心锚定 (1100,750)）+ preventDefault；mirror 不动', () => {
+  it('空格四态循环：原始→垂直镜像→180°→水平镜像→原始（逐态精确值 + 四按回原始 + preventDefault）', () => {
     const svg = mountCanvas('full', seedRun(KB_PLACED));
     selectPiece(svg, '#ff0000');
+    const roughA = roughPolyOf(svg, '#ff0000');
     let ev: KeyboardEvent | null = null;
+    // 按①：原始 → 垂直镜像（= I 键同款态 mirror+rot180）：
+    // t' = c_world − R(180°)·M·c_local = (850,500) − (250,−250) = (600,750)
     act(() => {
       ev = fireKey(window, ' ');
     });
     expect(ev!.defaultPrevented).toBe(true); // 防 body 滚动
-    const w = useEditStore.getState().working;
+    let w = useEditStore.getState().working;
     expect(w[0].rotation).toBe(180);
-    // R(180°)·c_local ≈ (−250,−250)（sin π ~1e-16 噪声）→ t' = (850,500)+(250,250)
+    expect(w[0].mirror).toBe(true);
+    expect(w[0].translation[0]).toBeCloseTo(600, 9);
+    expect(w[0].translation[1]).toBeCloseTo(750, 9);
+    expect(roughA.getAttribute('points')).toBe('600,750 1100,750 1100,250 600,250');
+    // 按②：垂直镜像 → 180°（= 旧空格掉头态）：mirror off、rot 不变；
+    // t' = (850,500) − R(180°)·c_local = (850,500)+(250,250) = (1100,750)
+    act(() => {
+      fireKey(window, ' ');
+    });
+    w = useEditStore.getState().working;
+    expect(w[0].rotation).toBe(180);
+    expect(w[0].mirror).toBeUndefined();
     expect(w[0].translation[0]).toBeCloseTo(1100, 9);
     expect(w[0].translation[1]).toBeCloseTo(750, 9);
-    expect(w[0].mirror).toBeUndefined();
-    // 掉头后同足印（世界 bbox [600,1100]×[250,750] 不变）
-    const roughA = roughPolyOf(svg, '#ff0000');
     expect(roughA.getAttribute('points')).toBe('1100,750 600,750 600,250 1100,250');
+    // 按③：180° → 水平镜像（= O 键同款态）：mirror on、rot−180 归回 0 基线；
+    // t' = (850,500) − M·c_local = (850,500)+(250,−250) = (1100,250)
+    act(() => {
+      fireKey(window, ' ');
+    });
+    w = useEditStore.getState().working;
+    expect(w[0].rotation).toBe(0);
+    expect(w[0].mirror).toBe(true);
+    expect(w[0].translation[0]).toBeCloseTo(1100, 9);
+    expect(w[0].translation[1]).toBeCloseTo(250, 9);
+    expect(roughA.getAttribute('points')).toBe('1100,250 600,250 600,750 1100,750');
+    // 按④：水平镜像 → 原始：mirror 键消失（omit-when-false）、rot 0、
+    // translation 回 (600,250)（质心锚定浮点噪声 ~1e-9 内精确回原）
+    act(() => {
+      fireKey(window, ' ');
+    });
+    w = useEditStore.getState().working;
+    expect('mirror' in w[0]).toBe(false);
+    expect(w[0].rotation).toBe(0);
+    expect(w[0].translation[0]).toBeCloseTo(600, 9);
+    expect(w[0].translation[1]).toBeCloseTo(250, 9);
+    expect(roughA.getAttribute('points')).toBe('600,250 1100,250 1100,750 600,750');
+  });
+
+  it('空格四态循环 × L/K 微调残余角：37° 基线下 rot 37↔217 交替、mirror 独立翻转、四按回原始', () => {
+    // 循环按 (mirror, half=rot 的 180° 偏移位) 判态：任意微调角 r 保持 r ↔ r+180
+    // 交替（half 翻转处 ±180），mirror 位独立翻转 —— 精确回到 (37°, 非镜像)。
+    const placed: PlacedItem[] = [
+      { id: 'a_28', rotation: 37, translation: [600, 250] },
+      { id: 'b_30', rotation: 0, translation: [1600, 250] },
+    ];
+    const svg = mountCanvas('full', seedRun(placed));
+    selectPiece(svg, '#ff0000');
+    // 按①②：(F,37°) → (T,217°) → (F,217°)（a 旋转/镜像 y 包络 ⊂ [150,850]，零钳）
+    act(() => {
+      fireKey(window, ' ');
+    });
+    let w = useEditStore.getState().working;
+    expect(w[0].rotation).toBe(217);
+    expect(w[0].mirror).toBe(true);
+    act(() => {
+      fireKey(window, ' ');
+    });
+    w = useEditStore.getState().working;
+    expect(w[0].rotation).toBe(217);
+    expect(w[0].mirror).toBeUndefined();
+    // 按③：(F,217°) → (T,37°)：half 归 0 → rot−180；按④ → (F,37°) 回原始
+    act(() => {
+      fireKey(window, ' ');
+    });
+    w = useEditStore.getState().working;
+    expect(w[0].rotation).toBe(37);
+    expect(w[0].mirror).toBe(true);
+    act(() => {
+      fireKey(window, ' ');
+    });
+    w = useEditStore.getState().working;
+    expect(w[0].rotation).toBe(37);
+    expect(w[0].mirror).toBeUndefined();
   });
 
   it('O = toggle mirror（rot 不变）：水平镜像绕质心竖轴翻转；再按回非镜像（omit-when-false 键消失）', () => {
