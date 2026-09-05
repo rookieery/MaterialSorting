@@ -148,8 +148,12 @@ export interface EditPolishUi {
   report: PolishReport | null;
   /** 快照在案（「撤销微调」按钮显隐）。 */
   canUndo: boolean;
+  /** US-005 压缩回收档勾选态（对比卡内 checkbox，随下次微调请求发出）。 */
+  compact: boolean;
   onPolish: () => void;
   onUndo: () => void;
+  /** compact 勾选态变更回调（state 属 EditLayoutModal 受控下发）。 */
+  onCompactChange: (v: boolean) => void;
 }
 
 export function EditCanvas({ mode, onModeChange, polish }: EditCanvasProps) {
@@ -811,7 +815,7 @@ export function EditCanvas({ mode, onModeChange, polish }: EditCanvasProps) {
       </div>
       {/* 右下卡栈（edit-polish US-003 起）：微调对比卡（在案时）+ 操作指南卡同锚竖排 ——
           对比卡出现在指南卡上方（既有卡零位移）；栈容器 pointer-events:none，仅对比卡
-          撤销按钮 auto（可交互不挡画布拖动热区）。 */}
+          撤销按钮 + compact checkbox 行 auto（可交互不挡画布拖动热区）。 */}
       <div className="edit-br-stack">
         {polish && (polish.report || polish.error) && (
           <div className="edit-polish-card" data-testid="edit-polish-card">
@@ -862,6 +866,20 @@ export function EditCanvas({ mode, onModeChange, polish }: EditCanvasProps) {
                     {fmt(polish.report.before.density, 2)} → {fmt(polish.report.after.density, 2)} %
                   </span>
                 </div>
+                {/* US-005 压缩回收档：默认不勾，勾选后随下次微调请求发出
+                    （compact:true → 引擎 pass ④ 自布头滑贴收空隙）。 */}
+                <label
+                  className="edit-polish-opt"
+                  title="勾选后下次微调附带压缩回收：去旋/分离释放的空隙自布头滑贴收进料长（包络严格变小且零新重合才接受，可撤销）"
+                >
+                  <input
+                    type="checkbox"
+                    checked={polish.compact}
+                    onChange={(e) => polish.onCompactChange(e.target.checked)}
+                    data-testid="edit-polish-compact"
+                  />
+                  回收空隙缩短料长（下次微调生效）
+                </label>
                 <div className="edit-polish-foot">
                   物理毛版轮廓口径（与导出一致；画布红字为腐蚀后轮廓口径，数值可能偏小）
                 </div>

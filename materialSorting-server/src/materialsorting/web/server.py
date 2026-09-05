@@ -454,8 +454,8 @@ async def post_edit_polish(request: Request):
       「母版已变更？请重新求解/上传」，不做部分降级）；``placed`` 空 → 400；
     - ``gate_mm`` 缺省回退会话 ``state['gate_mm']``（与 /export、
       /api/plt-table-preview 同法）；
-    - ``exclude`` 透传引擎（labels/pids 双键，缺省 None）；``compact`` = US-005
-      预留键位（缺省 false）；
+    - ``exclude`` 透传引擎（labels/pids 双键，缺省 None）；``compact`` 透传
+      引擎压缩回收档（US-005：缺省 false = 与无该键行为逐字节相同，additive）；
     - polish 构造段经 ``run_in_threadpool`` 执行（prefix-preview 先例，防阻塞
       事件循环）；顺手 ``edit_hold.refresh(sid)``（编辑钉住与心跳同语义，default
       不进钉住表 —— /api/edit-hold 同口径）。

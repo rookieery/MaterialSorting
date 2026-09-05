@@ -19,6 +19,7 @@ from materialsorting.nesting_engine.polish import (
     _derotate_ladder,
     _rotation_dev,
     _sep_translate,
+    _slide_west_touch,
     _transform_polygon,
     polish_layout,
 )
@@ -279,15 +280,98 @@ def test_input_never_mutated():
 
 
 def test_compact_kwarg_accepted_additive():
-    """compact 键位为 US-005 预留：实现前 compact=True 与缺省逐元素相同。"""
-    pieces = {'g01_30': _piece('g01_30', 300, 100),
-              'g02_30': _piece('g02_30', 200, 150, label='g02')}
-    placed = [_pl('g01_30', 25, 100, 100), _pl('g02_30', 0, 280, 100)]
-    o0, r0 = polish_layout(placed, pieces, 1000.0)
-    o1, r1 = polish_layout(placed, pieces, 1000.0, compact=True)
+    """US-005 落地后 additive 口径（AC#2）：无空隙可收夹具下 compact=True 与
+    缺省逐元素相同（紧密链全纠缠 → pass ④ 零 move + maxX 不变不回滚留痕）。"""
+    pieces = {'g01_30': _piece('g01_30', 100, 160),
+              'g02_30': _piece('g02_30', 100, 160, label='g02'),
+              'g03_30': _piece('g03_30', 100, 160, label='g03')}
+    placed = [_pl('g01_30', 0, 0, 0), _pl('g02_30', 0, 98, 0),
+              _pl('g03_30', 0, 196, 0)]
+    o0, r0 = polish_layout(placed, pieces, 160.0)
+    o1, r1 = polish_layout(placed, pieces, 160.0, compact=True)
     r0.pop('elapsed_sec')
     r1.pop('elapsed_sec')
     assert o0 == o1 and r0 == r1
+
+
+# --------------------------------------------------- US-005 压缩回收档
+
+def test_compact_reclaims_gap_envelope_shrinks():
+    """AC#1：横排留 ≥30mm 空隙 → compact 包络减少 ≥29mm、零新重合（几何级）。
+
+    三片横排各留 30mm 空隙：g01 已贴布头不动；g02 滑 30mm 贴 g01；g03 级联
+    滑 60mm 贴 g02 新位 → 包络 360→300（−60 ≥ 29）。
+    """
+    pieces = {'g01_30': _piece('g01_30', 100, 160),
+              'g02_30': _piece('g02_30', 100, 160, label='g02'),
+              'g03_30': _piece('g03_30', 100, 160, label='g03')}
+    placed = [_pl('g01_30', 0, 0, 0), _pl('g02_30', 0, 130, 0),
+              _pl('g03_30', 0, 260, 0)]
+    out, rep = polish_layout(placed, pieces, 160.0, compact=True)
+    assert rep['after']['width_mm'] <= rep['before']['width_mm'] - 29.0
+    assert rep['after']['overlap_pairs'] == 0
+    assert rep['after']['density'] >= rep['before']['density'] - 1e-6
+    assert [m['index'] for m in rep['moves']] == [1, 2]
+    assert all(m['kind'] == 'compact' for m in rep['moves'])
+    # 落位精确：g02 贴 g01 右缘（x=100）、g03 级联贴 g02 新右缘（x=200）
+    assert out[1]['translation'][0] == pytest.approx(100.0, abs=1e-3)
+    assert out[2]['translation'][0] == pytest.approx(200.0, abs=1e-3)
+    assert out[0]['translation'] == placed[0]['translation']   # 未动片逐字段不变
+    # 零新重合（物理毛版轮廓两两交集面积精确 0）
+    geoms = [_world(p['id'], pieces, p['rotation'], p['translation']) for p in out]
+    for i in range(3):
+        for j in range(i + 1, 3):
+            assert geoms[i].intersection(geoms[j]).area == 0.0
+    # 确定性：compact 档同输入双跑全等（elapsed_sec 除外）
+    out2, rep2 = polish_layout(placed, pieces, 160.0, compact=True)
+    rep2.pop('elapsed_sec')
+    rep_d = {k: v for k, v in rep.items() if k != 'elapsed_sec'}
+    assert out == out2 and rep_d == rep2
+
+
+def test_compact_excluded_immovable_but_obstacle():
+    """exclude 命中片零压缩移动，但仍作障碍：右侧片 −x 滑贴它停下（不撞布头墙）。"""
+    pieces = {'g01_30': _piece('g01_30', 100, 160),
+              'g02_30': _piece('g02_30', 100, 160, label='g02')}
+    placed = [_pl('g01_30', 0, 50, 0), _pl('g02_30', 0, 200, 0)]
+    out, rep = polish_layout(placed, pieces, 160.0, compact=True,
+                             exclude={'labels': ['g01']})
+    assert rep['excluded'] == [0]
+    assert all(m['index'] != 0 for m in rep['moves'])
+    assert out[0]['translation'] == placed[0]['translation']
+    # g02 滑贴 g01 右缘 x=150（障碍语义：无它本应滑到布头 x=0）
+    assert out[1]['translation'][0] == pytest.approx(150.0, abs=1e-3)
+    assert rep['after']['width_mm'] == pytest.approx(250.0, abs=1e-3)
+    assert any(m['kind'] == 'compact' for m in rep['moves'])
+
+
+def test_compact_rollback_when_no_envelope_gain():
+    """中段片可滑但 maxX 不减（右缘片 excluded 不可动）→ 整段回滚：
+    输出与 moves与非 compact 档逐元素相同（无改进逐字节不变）。"""
+    pieces = {'g01_30': _piece('g01_30', 100, 160),
+              'g02_30': _piece('g02_30', 100, 160, label='g02'),
+              'g03_30': _piece('g03_30', 100, 160, label='g03')}
+    placed = [_pl('g01_30', 0, 0, 0), _pl('g02_30', 0, 150, 0),
+              _pl('g03_30', 0, 280, 0)]
+    kw = {'exclude': {'labels': ['g03']}}
+    o0, r0 = polish_layout(placed, pieces, 160.0, **kw)
+    o1, r1 = polish_layout(placed, pieces, 160.0, compact=True, **kw)
+    r0.pop('elapsed_sec')
+    r1.pop('elapsed_sec')
+    assert o0 == o1 and r0 == r1
+    assert o1[1]['translation'] == placed[1]['translation']   # g02 滑移被回滚
+
+
+def test_compact_entangled_piece_skipped():
+    """残留重合纠缠片（当前位已碰撞）不参与压缩滑移（交给 residual 口径，
+    不强行撕开版师 per_type d 工艺余量内的必要贴触）。"""
+    pieces = {'g01_30': _piece('g01_30', 100, 160),
+              'g02_30': _piece('g02_30', 100, 160, label='g02')}
+    # 紧密叠 2mm 对（d 余量形态）：无空位可分离 → residual；compact 不动它们
+    placed = [_pl('g01_30', 0, 0, 0), _pl('g02_30', 0, 98, 0)]
+    out, rep = polish_layout(placed, pieces, 160.0, compact=True)
+    assert out is placed and rep['moves'] == []
+    assert len(rep['residual']) == 1
 
 
 # --------------------------------------------------------------- 单元算子
@@ -319,6 +403,24 @@ def test_sep_translate_x_negative_direction():
     assert t == pytest.approx(2.0, abs=0.01)
     moved = Polygon([(dx, dy), (100 + dx, dy), (100 + dx, 100 + dy), (dx, 100 + dy)])
     assert moved.intersection(gb).area == 0.0
+
+
+def test_slide_west_touch_variants():
+    """US-005 单元算子 ``_slide_west_touch``：当前位碰撞 → 0 / 全程自由 → 贴
+    x=0 布头墙 / 障碍在途 → 二分贴触 + 1nm 回退（终态交集面积精确 0）。"""
+    mover = Polygon([(150, 0), (250, 0), (250, 100), (150, 100)])
+    # ① 当前位已碰撞（叠 2mm）→ 0（纠缠片不可滑）
+    blocker = Polygon([(148, 0), (248, 0), (248, 100), (148, 100)])
+    assert _slide_west_touch(mover, [blocker], 150.0) == 0.0
+    # ② 全程自由（障碍在上方 y 带外）→ 贴布头墙（t = t_wall = 150）
+    far = Polygon([(0, 200), (100, 200), (100, 300), (0, 300)])
+    assert _slide_west_touch(mover, [far], 150.0) == 150.0
+    # ③ 障碍在途（左邻 x∈[0,100]）→ 二分贴触：滑 ~50mm 到 x=100，回退 1nm
+    left = Polygon([(0, 0), (100, 0), (100, 100), (0, 100)])
+    t = _slide_west_touch(mover, [left], 150.0)
+    assert t == pytest.approx(50.0, abs=1e-3)
+    moved = [(x - t, y) for x, y in mover.exterior.coords]
+    assert Polygon(moved).intersection(left).area == 0.0
 
 
 # --------------------------------------------------------------- 分层纯度

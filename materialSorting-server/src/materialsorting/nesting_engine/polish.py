@@ -20,7 +20,13 @@ d 腐蚀位图放行的工艺余量）与旋转（离散角度集 ±45°）只�
   二分到贴触 + 1nm 防贴死微抬），方向优先 ±y、−x 不增料长；一片失败换动
   另一片；都失败记 residual —— **只在「免费」时做**（不增料长、零新重合），
   版师 per_type d 工艺余量语义不受影响（不强行动归零 d 预算内的必要贴触）；
-- ④ **报告**：before/after 七指标（重叠对数/最大穿透/总重合面积/旋转偏差片数/
+- ④ **压缩回收**（``compact=True`` 才启用，US-005）：自布头方向（minX 升序、
+  平手下标）逐片 ``−x`` 滑贴（``_slide_west_touch`` 粗扫+二分到与全图障碍或
+  x=0 布头墙首次贴触 + 1nm 回退，镜像 ``waist_band._slide_touch`` 机器）——
+  左片先贴、右片随后贴新位，级联把去旋/分离释放的空隙收进料长；**接受条件 =
+  全图物理包络 maxX 严格变小**（终检不过整段回滚 —— 无改进逐字节不变，
+  compact=true 输出与非 compact 档全等）；
+- ⑤ **报告**：before/after 七指标（重叠对数/最大穿透/总重合面积/旋转偏差片数/
   Σ偏差/料长/密度）+ moves 逐条明细 + residual（终态重合对 + 旋转残留如实
   上报，不硬凑零）+ excluded + elapsed_sec；density = real 口径
   ``Σ(area×multiplicity)/(width×gate)``（原面积，非 erode）。
@@ -38,7 +44,8 @@ exclude 集片永不被移动（仍作为障碍参与他人检查）。
 分层约束：本模块属 ``nesting_engine``，仅 import 标准库 + shapely + 本包兄弟
 模块（``constraints`` / ``sparrow_baseline`` / ``waist_band``）+ 父包 ``paths``；
 **禁 import web/cli**（AST 守卫在 tests/test_polish.py）。``compact`` 旗标为
-US-005 压缩回收档预留键位（实现前恒 no-op，缺省 false = 本模块行为逐字节不变）。
+US-005 压缩回收档（additive：缺省 false = pass ④ 整段跳过，US-001~003 行为
+逐字节不变）。
 """
 from __future__ import annotations
 
@@ -77,6 +84,12 @@ BISECT_ITERS = 40
 # 去旋转邻域候选的障碍筛选扩张（mm）：候选只对 bbox 距离在此范围内的片生成
 # （远片的对齐位必然远超位移最小候选，剪枝省守卫开销）。
 NEIGHBOR_MARGIN_MM = 50.0
+# 压缩回收粗扫步长（mm）：``waist_band.CHAIN_SLIDE_STEP_MM`` 同款（−x 滑贴
+# 首个碰撞界的定界扫描）。
+COMPACT_SCAN_STEP_MM = 20.0
+# 压缩回收「包络 maxX 严格变小」判定阈值（mm）：小于此视为数值噪声 → 整段
+# 回滚（无改进逐字节不变）。
+COMPACT_GAIN_EPS_MM = 1e-6
 
 
 class PolishError(Exception):
@@ -261,6 +274,51 @@ def _sep_translate(g_moving, g_other, axis, sign):
     return dx, dy, t
 
 
+def _slide_west_touch(g_moving, obstacles, t_wall):
+    """自当前位沿 ``−x`` 滑到与 ``obstacles`` 首次贴触或 x=0 布头墙（US-005）。
+
+    ``waist_band._slide_touch`` 同款「粗扫定界 + 二分收敛」机器的 −x 向变体
+    （可行域非凸，须从当前位起步找**首个**碰撞界）。``obstacles`` 为调用方
+    预筛后的滑移路径相关障碍（y 带重叠 + x 可达）；``t_wall`` = 布头墙限
+    （滑移量上限，到 x=0 为止）。返回滑移量 t ∈ [0, t_wall]：
+
+    - 当前位已碰撞（残留重合纠缠，pass ③ 未解的必要贴触）→ 0（不可滑，
+      交给 residual 口径，不强行撕开）；
+    - 全程自由 → ``t_wall``（贴 x=0 布头墙，回收布头空隙）；
+    - 否则二分到首个贴触点后回退 1nm（``SEP_NUDGE_MM``，终态与障碍交集
+      面积精确 0 —— 与 ``_sep_translate`` 防贴死同口径）。
+    """
+    def _collides(t):
+        moved = translate(g_moving, xoff=-t)
+        mb = moved.bounds
+        for g2 in obstacles:
+            if _bbox_overlaps(mb, g2.bounds) and \
+                    moved.intersection(g2).area >= COLLIDE_AREA_EPS_MM2:
+                return True
+        return False
+
+    if _collides(0.0):
+        return 0.0
+    t_free, t_hit, t = 0.0, None, 0.0
+    while t < t_wall:
+        tn = min(t + COMPACT_SCAN_STEP_MM, t_wall)
+        if _collides(tn):
+            t_hit = tn
+            break
+        t_free = tn
+        t = tn
+    if t_hit is None:
+        return t_wall                      # 全程自由 → 贴 x=0 布头墙
+    a, b = t_free, t_hit                   # a 自由 / b 碰撞（首个碰撞界）
+    for _ in range(BISECT_ITERS):
+        mid = (a + b) / 2.0
+        if _collides(mid):
+            b = mid
+        else:
+            a = mid
+    return max(a - SEP_NUDGE_MM, 0.0)      # 贴触位回退 1nm（自由侧）
+
+
 # --------------------------------------------------------------- 主入口
 
 def polish_layout(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False):
@@ -280,7 +338,9 @@ def polish_layout(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False)
         ``{'labels': [g码], 'pids': [pid]}`` —— 命中实例永不被移动，仍作为
         障碍参与他人检查（v1 over-conservative：同 pid 全部副本，FR-8）。
     compact : bool
-        US-005 压缩回收档预留键位（实现前恒 no-op；缺省 false）。
+        US-005 压缩回收档（缺省 false）：pass ④ 自布头逐片 −x 滑贴收空隙，
+        接受条件 = 全图物理包络 maxX 严格变小（不过则整段回滚 —— additive，
+        false 时本段跳过、行为与 US-001 逐字节不变）。
 
     Returns
     -------
@@ -451,7 +511,45 @@ def polish_layout(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False)
             if done:
                 break
 
-    # ---- pass ④ 报告（终态重算；residual 如实上报不硬凑零）----
+    # ---- pass ④ 压缩回收（compact=True；自布头方向逐片 −x 滑贴收空隙）----
+    if compact:
+        snap_items = [{'id': it['id'], 'rotation': it['rotation'],
+                       'translation': list(it['translation'])} for it in items]
+        snap_geoms = list(geoms)
+        snap_bounds = list(bounds)
+        snap_nmoves = len(moves)
+        max_x_head = max((b[2] for b in bounds), default=0.0)
+        # 自布头方向（minX 升序、平手下标）：左片先贴新位、右片随后贴它 —— 级联
+        # 把去旋/分离释放的空隙收进料长（单趟有序扫描即稳定：左侧贴定后不再动）。
+        for k in sorted((k for k in range(n) if k not in excluded),
+                        key=lambda k: (bounds[k][0], k)):
+            t_wall = bounds[k][0]
+            if t_wall <= COMPACT_GAIN_EPS_MM:
+                continue                 # 已贴布头（或 minX≤0 外凸）：不可再滑
+            b_k = bounds[k]
+            obstacles = [geoms[m] for m in range(n)
+                         if m != k
+                         and bounds[m][0] < b_k[2]            # 滑移路径 x 可达
+                         and bounds[m][2] > 0.0               # 布头墙左侧不可达
+                         and not (bounds[m][3] < b_k[1] or b_k[3] < bounds[m][1])]
+            t = _slide_west_touch(geoms[k], obstacles, t_wall)
+            if t <= COMPACT_GAIN_EPS_MM:
+                continue
+            tr = (items[k]['translation'][0] - t, items[k]['translation'][1])
+            g = translate(geoms[k], xoff=-t)
+            if _move_ok(k, g):
+                _apply(k, items[k]['rotation'], tr, g, 'compact',
+                       f'−x 滑贴回收空隙 {t:.2f}mm')
+        max_x_tail = max((b[2] for b in bounds), default=0.0)
+        if not max_x_tail < max_x_head - COMPACT_GAIN_EPS_MM:
+            # 包络 maxX 未严格变小：整段回滚（无改进逐字节不变 —— 输出与非
+            # compact 档全等，moves/residual 不留孤儿记录）。
+            items = snap_items
+            geoms = snap_geoms
+            bounds = snap_bounds
+            del moves[snap_nmoves:]
+
+    # ---- pass ⑤ 报告（终态重算；residual 如实上报不硬凑零）----
     after, final_pairs = _diagnose(geoms, items, total_area, gate)
     residual = [{'kind': 'overlap', 'indices': [p['i'], p['j']],
                  'pids': [items[p['i']]['id'], items[p['j']]['id']],
@@ -614,6 +712,37 @@ def _smoke_fixtures() -> bool:
     r1.pop('elapsed_sec')
     r2.pop('elapsed_sec')
     _check('确定性双跑全等', o1 == o2 and r1 == r2)
+
+    # ⑨ compact 回收（US-005）：横排留 ≥30mm 空隙 → 包络减少 ≥29mm、零新重合
+    pieces = {'g01_30': _rect_piece('g01_30', 100, 160),
+              'g02_30': _rect_piece('g02_30', 100, 160, label='g02'),
+              'g03_30': _rect_piece('g03_30', 100, 160, label='g03')}
+    placed = [_pl('g01_30', 0, 0, 0), _pl('g02_30', 0, 130, 0),
+              _pl('g03_30', 0, 260, 0)]
+    out, rep = polish_layout(placed, pieces, 160.0, compact=True)
+    geoms = [_world_polygon(p['id'], pieces, p['rotation'], p['translation'])
+             for p in out]
+    zero_overlap = all(geoms[i].intersection(geoms[j]).area == 0.0
+                       for i in range(3) for j in range(i + 1, 3))
+    _check('compact 回收空隙',
+           rep['after']['width_mm'] <= rep['before']['width_mm'] - 29.0
+           and rep['after']['overlap_pairs'] == 0 and zero_overlap
+           and [m['index'] for m in rep['moves']] == [1, 2]
+           and all(m['kind'] == 'compact' for m in rep['moves']),
+           f'width {rep["before"]["width_mm"]}→{rep["after"]["width_mm"]} '
+           f'moves={[m["index"] for m in rep["moves"]]}')
+
+    # ⑩ compact 无空隙可收（US-005）：紧凑链（同 ③）→ 与非 compact 档逐元素相同
+    pieces = {'g01_30': _rect_piece('g01_30', 100, 160),
+              'g02_30': _rect_piece('g02_30', 100, 160, label='g02'),
+              'g03_30': _rect_piece('g03_30', 100, 160, label='g03')}
+    placed = [_pl('g01_30', 0, 0, 0), _pl('g02_30', 0, 98, 0),
+              _pl('g03_30', 0, 196, 0)]
+    o0, r0 = polish_layout(placed, pieces, 160.0)
+    o1, r1 = polish_layout(placed, pieces, 160.0, compact=True)
+    r0.pop('elapsed_sec')
+    r1.pop('elapsed_sec')
+    _check('compact 无空隙逐元素相同', o0 == o1 and r0 == r1)
     return ok
 
 
@@ -690,8 +819,9 @@ def _demo(intermediate_path, n_pieces) -> bool:
 def main(argv=None) -> int:
     """冒烟入口：``python -m materialsorting.nesting_engine.polish``。
 
-    默认合成夹具自检（AC 八项口径：斜片回正/重合分离/紧密 no-op/守卫×2/
-    多副本 index 寻址/排除集障碍/确定性双跑），全过打印 PASS、exit 0。
+    默认合成夹具自检（AC 十项口径：斜片回正/重合分离/紧密 no-op/守卫×2/
+    多副本 index 寻址/排除集障碍/确定性双跑/compact 回收/compact 无空隙
+    逐元素相同），全过打印 PASS、exit 0。
     ``--demo`` 追加真实母版几何演示（intermediate 前 N 片确定性带病布局 →
     polish 前后对比，形态对齐 prefix ``--pin-demo`` 先例；无 spyrrow 依赖）。
     intermediate 缺失时 ``--demo`` 提示先 commit（默认合成夹具不受影响照常自检）。

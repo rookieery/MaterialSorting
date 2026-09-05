@@ -130,6 +130,40 @@ def test_edit_polish_200_full_chain(polish_client):
     assert out[0]['rotation'] == 0.0 and out[1]['rotation'] == 0.0
 
 
+def test_edit_polish_compact_true_reclaims_gap(polish_client):
+    """US-005：compact:true 端到端（真引擎）—— 三片横排各留 30mm 空隙 →
+    包络 360→300（−60 ≥ 29）、零新重合、moves 全 kind=compact、placed 下标序
+    守恒。additive 口径（缺省 false 与无该键逐元素相同）在 test_polish AC#2 锁。"""
+    state = server_mod._PIECES_STATE
+    saved = dict(state)
+    three = [_piece('g01_30', 100, 160), _piece('g02_30', 100, 160, label='g02'),
+             _piece('g03_30', 100, 160, label='g03')]
+    state.clear()
+    state.update({'doc': {'source': 'synthetic_polish_compact.dxf'},
+                  'gate_mm': 160.0, 'pieces': three,
+                  'pieces_by_id': {p['pid']: p for p in three}})
+    try:
+        placed_in = [
+            {'id': 'g01_30', 'rotation': 0.0, 'translation': [0.0, 0.0]},
+            {'id': 'g02_30', 'rotation': 0.0, 'translation': [130.0, 0.0]},
+            {'id': 'g03_30', 'rotation': 0.0, 'translation': [260.0, 0.0]},
+        ]
+        r = polish_client.post('/api/edit-polish',
+                               json={'placed': placed_in, 'gate_mm': 160.0,
+                                     'compact': True})
+        assert r.status_code == 200
+        body = r.json()
+        assert body['ok'] is True
+        rep = body['report']
+        assert rep['after']['width_mm'] <= rep['before']['width_mm'] - 29.0
+        assert rep['after']['overlap_pairs'] == 0
+        assert rep['moves'] and all(m['kind'] == 'compact' for m in rep['moves'])
+        assert [p['id'] for p in body['placed']] == [p['id'] for p in placed_in]
+    finally:
+        state.clear()
+        state.update(saved)
+
+
 def test_edit_polish_multi_copy_pid_multiset_conserved(polish_client):
     """多副本 pid 多重集守恒：g01×2 + g02×1（demand>1 同 pid 按下标寻址）。"""
     placed_in = _overlap_placed() + [

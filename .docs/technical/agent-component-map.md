@@ -1819,3 +1819,56 @@ exclude labels 组装）。
   用例 —— 本故事无组件改动）；`npm run build` 过（302.70KB gzip 98.86KB）。
 - 验收后浏览器关闭（Playwright browser.close()）、ms-web 已杀（port 8000 无
   LISTENING；残余 chrome 为用户默认会话不动）。
+
+## 编辑排料 edit-polish US-005 落地：compact 压缩回收档（2026-09-05）
+
+可选低优先级收官：引擎 pass ④ 压缩回收（自布头方向逐片 −x 滑贴收空隙进料长）+
+端点 compact 旗标（US-002 已预埋键位，本故事补齐引擎侧语义）+ 前端对比卡内
+checkbox。**全链 additive**：缺省 false = US-001~004 行为逐字节不变（载荷省略
+compact 键 = 服务端 `bool(payload.get('compact') or False)` 同值）。
+
+**引擎**（`nesting_engine/polish.py`）：compact=True 才跑 pass ④ —— 按 (minX,下标)
+升序级联（左片先贴墙、右片贴新位），每片 `_slide_west_touch`（20mm 粗扫
+`COMPACT_SCAN_STEP_MM` + 40 轮二分到首个碰撞界 + 1nm 回退自由侧 = 贴触零交，
+滑程墙 = 自身 minX 到布头 x=0）逐 move 走同款五道守卫（kind='compact'）+
+**pass 级守卫**：收尾全图 maxX 严格变小才接受（`COMPACT_GAIN_EPS_MM`=1e-6），
+否则整体回滚（items/geoms/bounds/moves 四快照恢复 = 无改进逐字节不变）。
+AC 口径：留 ≥30mm 横向空隙 → 回收后包络减少 ≥29mm 零新重合；无空隙 →
+compact=true 输出与 false 逐元素相同。
+
+| 文件 | 职责 |
+| --- | --- |
+| `nesting_engine/polish.py` | pass ④ 压缩回收 + `_slide_west_touch` + 两常量；冒烟夹具 ⑨⑩（三片 30mm 缝 → width 360→300 / 紧密链逐元素相同），十项自检 |
+| `web/server.py` | 端点 docstring 补 compact 语义注记（接线 US-002 已在：`payload.get('compact')` 透传） |
+| `src/lib/editPolish.ts` | `PolishPayload.compact?: boolean` + `buildPolishPayload(working, run, compact=false)` 第三参 —— false 省略键、true 才发 `compact:true` |
+| `src/components/edit/EditCanvas.tsx` | `EditPolishUi` 扩 `compact`/`onCompactChange`；对比卡内 checkbox（density 行与 foot 之间，label 文案「回收空隙缩短料长（下次微调生效）」+ title 悬浮说明，testid `edit-polish-compact`） |
+| `src/components/edit/EditLayoutModal.tsx` | `polishCompact` state（默认 false）受控下发；`buildPolishPayload(working, run, polishCompact)`；勾选态跨多次微调保持、关窗清零 |
+| `src/style.css` | `.edit-polish-opt`（inline-flex · pointer-events:auto 卡内交互点 · input accent #3f8f5f · 11px #aab） |
+| `scripts/smoke_edit_polish.mjs` | S7 相位 5 检查（checkbox 默认不勾 → 勾选 → compact:true 载荷 + placed 守恒 + width ≤ 非 compact 档 + 本轮守恒不等式）+ s7_compact.png + report.json compact 段 |
+| `tests/test_polish.py` | +6 例（AC 两口径/exclude 障碍/无增益回滚/纠缠跳过/`_slide_west_touch` 单元三态），25 项 |
+| `tests/test_web_edit_polish.py` | +1 例 compact=True 全链路（`_PIECES_STATE` 换三片带缝夹具 try/finally），15 例 |
+
+### 关键不变量（edit-polish US-005 立，后续故事不得破坏）
+
+- **additive 缺省路径零变化**：compact 键缺省省略（前端）/`bool(...or False)`（服务端）/
+  pass ④ 整段跳过（引擎）三层同值 —— 任何「缺省 true」或「省略键改行为」都是回归。
+- **pass 级 maxX 严格变小守卫**：单 move 守卫（五道）不够 —— 整体无包络收益时四快照
+  回滚逐字节不变（无空隙 AC 的实现根基）；「严格」= COMPACT_GAIN_EPS_MM 阈下不算。
+- **checkbox 生命周期 = 对比卡**：未微调（卡不在）→ checkbox 不在；撤销/关窗随卡清零
+  （重开回默认不勾）；勾选不立即发请求（「下次微调生效」文案即契约）。
+
+### 验证
+
+- 引擎冒烟十项自检 exit 0（⑨ width 360→300 + moves 全 kind=compact + 两两交集面积
+  精确 0；⑩ 紧密链逐元素相同）；pytest 全量 **734 passed**（728+6；全量须
+  `PYTHONDONTWRITEBYTECODE=1 ... -B` 跑 —— pytest 9.1.1 断言重写 .pyc 缓存 +
+  hash-seed 在 `test_cli_strategy::test_replay_regression_t3600_gain_and_miss_max`
+  的环境级预存 flake，git stash 干净基树同样复现、`--assert=plain`/`-p no:cacheprovider`
+  亦绿，与 US-005 改动无关）；vitest 全量 **966 passed**（962+4）；`npm run build` 过
+  （303.04KB gzip 99.08KB）。
+- 端到端冒烟 **29/29 PASS**（24+S7 5 检查；compact=true 请求落定、width 1748.918 ≤
+  非 compact 档 1748.918 —— 该 band 布局本无空隙可收，相等即 AC 不等式成立）。
+- 浏览器 DOM bbox 几何目检 PASS（checkbox 在卡内 density 行下 foot 上、与撤销按钮/
+  foot/指南卡零交集、pointer-events:auto、点击受控切换）—— Read 工具读截图仅回
+  CDN 链接不可直读，以 Playwright bbox 断言替代目检；验收后 browser.close() +
+  ms-web 已杀（port 8000 free）、throwaway 脚本已删。

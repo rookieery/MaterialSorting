@@ -24,6 +24,9 @@
 //   S6 band on 场景抽验：per_type 开腰头成带 g05 → 重解 → 编辑弹窗微调 →
 //      请求带 exclude.labels=['g05'] + 带形态区域（g05 全部毛版）points 前后不变
 //      + report.excluded 恰覆盖 g05 实例。
+//   S7 compact 压缩回收档（US-005）：对比卡内勾选「回收空隙缩短料长」→ 再微调
+//      → 请求带 compact:true + width ≤ 非 compact 档（S6 结果）+ 密度不降 +
+//      重合对不增 + placed 守恒。
 //
 // 报告落 out/smoke_edit_polish/report.json；退出码 0 = 全 PASS。
 import { writeFileSync, mkdirSync } from 'node:fs';
@@ -380,6 +383,35 @@ check('S6e report.excluded 恰覆盖 g05 实例（引擎排除语义对拍）',
   'excluded=' + JSON.stringify(excludedIdx) + ' expected=' + JSON.stringify(expectedExcluded));
 await page.screenshot({ path: OUT + '/s6_band_exclude.png' });
 
+// ---------- S7 compact 压缩回收档（US-005）：勾选 checkbox → 再微调 ----------
+// S6 微调后对比卡在案（checkbox 随卡渲染，默认不勾）；勾选 → compact:true 随
+// 下次微调请求发出。断言（AC 口径）：width ≤ 非 compact 档（rep3.after，同一
+// working 上的非 compact 微调结果）+ 本轮守恒不等式（width 不增/密度不降/
+// 重合对不增）+ placed 条数守恒。
+const cbBefore = await page.isChecked('[data-testid="edit-polish-compact"]');
+check('S7a compact checkbox 随对比卡渲染且默认不勾', cbBefore === false);
+await page.check('[data-testid="edit-polish-compact"]');
+check('S7b 勾选态受控在案', await page.isChecked('[data-testid="edit-polish-compact"]') === true);
+const p4 = await polishOnce();
+const rep4 = p4.respBody?.report || {};
+check('S7c compact 微调请求 200 + 载荷 compact:true + placed 守恒',
+  p4.respBody?.ok === true && p4.reqBody?.compact === true
+    && p4.respBody?.placed?.length === EXPECT_TOTAL,
+  'compact=' + p4.reqBody?.compact + ' placed=' + p4.respBody?.placed?.length
+    + ' width ' + rep4.before?.width_mm + '->' + rep4.after?.width_mm
+    + ' density ' + rep4.before?.density + '->' + rep4.after?.density
+    + ' overlap ' + rep4.before?.overlap_pairs + '->' + rep4.after?.overlap_pairs);
+check('S7d compact 后料长 ≤ 非 compact 档（width ≤ S6 微调结果）',
+  rep4.after?.width_mm <= rep3.after?.width_mm + 1e-6,
+  'compact=' + rep4.after?.width_mm + ' vs 非 compact=' + rep3.after?.width_mm + 'mm');
+check('S7e compact 守恒不等式（本轮 width 不增 / 密度不降 / 重合对不增）',
+  rep4.after?.width_mm <= rep4.before?.width_mm + 1e-9
+    && rep4.after?.density >= rep4.before?.density - 1e-6
+    && rep4.after?.overlap_pairs <= rep4.before?.overlap_pairs,
+  'width ' + rep4.before?.width_mm + '->' + rep4.after?.width_mm
+    + ' density ' + rep4.before?.density + '->' + rep4.after?.density);
+await page.screenshot({ path: OUT + '/s7_compact.png' });
+
 // ---------- 汇总 ----------
 writeFileSync(OUT + '/report.json', JSON.stringify({
   at: new Date().toISOString(),
@@ -393,6 +425,9 @@ writeFileSync(OUT + '/report.json', JSON.stringify({
   },
   band: { label: BAND_LABEL, pieces: bandCount, excluded: excludedIdx,
     unchanged: bandUnchanged, report: { before: rep3.before, after: rep3.after } },
+  compact: { requested: p4.reqBody?.compact === true,
+    widthVsNonCompact: { compact: rep4.after?.width_mm, plain: rep3.after?.width_mm },
+    report: { before: rep4.before, after: rep4.after }, moves: rep4.moves?.length },
   results,
 }, null, 2));
 const failed = results.filter((r) => !r.ok);

@@ -1,9 +1,10 @@
-// editPolish.ts 纯函数单测（edit-polish US-003，2026-09-05）：
+// editPolish.ts 纯函数单测（edit-polish US-003，2026-09-05；US-005 补 compact 档）：
 //   1) parsePrefixMemberPids：组合片 pid（含 5 片补片形态）→ 成员 pid 集合；
 //      extra.pid 直收去重；非 PS_ 前缀 / 畸形段静默跳过（best-effort）。
 //   2) buildExclude：band → labels；final.prefix → pids；双开双键；皆无 → undefined。
 //   3) buildPolishPayload：placed 逐字段拷贝（translation 拷断引用）+ gate_mm 取
-//      manifest + exclude 组装；无 manifest / working 空 → null。
+//      manifest + exclude 组装 + compact 档（US-005：缺省 false 省略键 additive）；
+//      无 manifest / working 空 → null。
 // postEditPolish 的 HTTP 行为在 EditLayoutModal.polish.test 组件级覆盖（apiFetch mock）。
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -136,5 +137,20 @@ describe('buildPolishPayload', () => {
     run.manifest = makeManifest();
     expect(buildPolishPayload([], run)).toBeNull();
     expect(buildPolishPayload(working, null)).toBeNull();
+  });
+
+  // ---- US-005 compact 压缩回收档（additive：false 省略键）----
+
+  it('compact 缺省/false → 载荷省略 compact 键（服务端缺省同值 additive）', () => {
+    const run = runRegistry.create(0);
+    run.manifest = makeManifest();
+    expect('compact' in buildPolishPayload(working, run)!).toBe(false);
+    expect('compact' in buildPolishPayload(working, run, false)!).toBe(false);
+  });
+
+  it('compact=true → compact:true 随载荷发出', () => {
+    const run = runRegistry.create(0);
+    run.manifest = makeManifest();
+    expect(buildPolishPayload(working, run, true)!.compact).toBe(true);
   });
 });

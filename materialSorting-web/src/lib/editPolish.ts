@@ -1,4 +1,5 @@
-// editPolish.ts —— 编辑排料「智能微调」前端接线库（prd-edit-polish US-003，2026-09-05）。
+// editPolish.ts —— 编辑排料「智能微调」前端接线库（prd-edit-polish US-003，2026-09-05；
+// US-005 补 compact 压缩回收档载荷键）。
 //
 // 职责（纯数据组装 + 单一请求出口，几何真相源留在 Python）：
 //   1. buildPolishPayload：当前 working placements + run.manifest.gate_mm + exclude
@@ -8,7 +9,9 @@
 //        - final 带 prefix 统计段（RunRecord.prefix）→ exclude.pids = 组合片 pid
 //          解析出的成员 pid 集合（成套起始端 4+1 片，微调永不动）；
 //        - 两者皆无（含策略合成 run —— 无 WS final.prefix 记录）→ 载荷省略 exclude
-//          键（best-effort，over-conservative 可接受：同 pid 其他副本一并跳过）。
+//          键（best-effort，over-conservative 可接受：同 pid 其他副本一并跳过）；
+//        - compact（US-005 压缩回收档）：勾选时 compact:true 随下次微调请求发出，
+//          未勾选省略键（服务端缺省 false，additive）。
 //   2. postEditPolish：apiFetch POST /api/edit-polish（会话族端点 US-002 成品），
 //      失败抛 Error（message 中文可直显进对比卡：网络错 / 4xx error 文案透传）；
 //      401 session code 由 apiFetch 拦截触发全局阻断弹窗（fail-fast 正确行为），
@@ -49,6 +52,8 @@ export interface PolishPayload {
   placed: { id: string; rotation: number; translation: [number, number] }[];
   gate_mm: number;
   exclude?: { labels?: string[]; pids?: string[] };
+  /** US-005 压缩回收档（false 省略键 = 服务端缺省同值，additive）。 */
+  compact?: boolean;
 }
 
 /** POST /api/edit-polish 成功响应（ok 键已校验剥离）。 */
@@ -114,12 +119,14 @@ export function buildExclude(
 }
 
 /**
- * 组装微调载荷（working placements + manifest.gate_mm + exclude）。
+ * 组装微调载荷（working placements + manifest.gate_mm + exclude + compact）。
+ * @param compact US-005 压缩回收档（缺省 false = 省略键，服务端缺省同值 additive）。
  * @returns null = run 无 manifest / working 空（不可微调，调用方不应发请求）。
  */
 export function buildPolishPayload(
   working: readonly PlacedItem[],
   run: RunRecord | null,
+  compact = false,
 ): PolishPayload | null {
   const manifest = run?.manifest ?? null;
   if (!manifest || working.length === 0) return null;
@@ -133,6 +140,7 @@ export function buildPolishPayload(
   };
   const exclude = buildExclude(run);
   if (exclude) payload.exclude = exclude;
+  if (compact) payload.compact = true;
   return payload;
 }
 

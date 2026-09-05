@@ -314,6 +314,57 @@ describe('EditLayoutModal 智能微调 (edit-polish US-003)', () => {
   });
 
   // ============================================================
+  // US-005：compact 压缩回收档 checkbox（对比卡内，默认不勾、随下次请求发出）
+  // ============================================================
+
+  it('US-005 compact checkbox 随对比卡渲染且默认不勾 → 载荷省略 compact 键', async () => {
+    apiFetchMock.mockImplementation(async (url) =>
+      url === '/api/edit-polish' ? polishResponse(660) : (undefined as unknown as Response),
+    );
+    await openEditLayout();
+    // 微调前卡未渲染 → checkbox 不在
+    expect(document.querySelector('[data-testid="edit-polish-compact"]')).toBeNull();
+    await clickPolish();
+    const body = JSON.parse((polishCalls()[0][1]?.body as string) ?? '{}');
+    expect('compact' in body).toBe(false);
+    const cb = document.querySelector(
+      '[data-testid="edit-polish-compact"]',
+    ) as HTMLInputElement;
+    expect(cb).not.toBeNull();
+    expect(cb.checked).toBe(false);
+    expect(cb.closest('.edit-polish-card')).not.toBeNull();   // 卡内（PRD：报告卡内）
+  });
+
+  it('US-005 勾选 compact → 下次微调请求 compact:true；撤销卡清空后 checkbox 消失、勾选态受控保持', async () => {
+    apiFetchMock.mockImplementation(async (url) =>
+      url === '/api/edit-polish' ? polishResponse(660) : (undefined as unknown as Response),
+    );
+    await openEditLayout();
+    await clickPolish();                                        // 首次：无 compact 键
+    await act(async () => {
+      (
+        document.querySelector('[data-testid="edit-polish-compact"]') as HTMLInputElement
+      ).click();
+    });
+    await clickPolish();                                        // 第二次：compact:true
+    const calls = polishCalls();
+    const body0 = JSON.parse((calls[0][1]?.body as string) ?? '{}');
+    const body1 = JSON.parse((calls[1][1]?.body as string) ?? '{}');
+    expect('compact' in body0).toBe(false);
+    expect(body1.compact).toBe(true);
+    // 受控勾选态跨次微调保持（卡随新报告重渲染不丢）
+    expect(
+      (document.querySelector('[data-testid="edit-polish-compact"]') as HTMLInputElement)
+        .checked,
+    ).toBe(true);
+    // 撤销 → 卡整体清空 → checkbox 随之消失
+    await act(async () => {
+      (document.querySelector('[data-testid="edit-polish-undo"]') as HTMLButtonElement).click();
+    });
+    expect(document.querySelector('[data-testid="edit-polish-compact"]')).toBeNull();
+  });
+
+  // ============================================================
   // AC2：一级撤销 / 快照覆盖 / 关闭清空
   // ============================================================
 

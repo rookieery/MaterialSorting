@@ -373,7 +373,7 @@ WS 侧同语义走 **error 帧**：`{"type":"error","code":"session_expired","me
 > 腐蚀口径数值恒 ≤ 物理口径（d 内缩），版师看到对比卡与画布红字不一致时以本注记为
 > 解释锚点（前端对比卡脚注同文案）。本期不切换画布口径（PRD 非目标）。
 
-编辑弹窗「智能微调」按钮的数据源：前端把**当前编辑 placements 随 body 带上**（后端不存布局态，唯一存储在前端 runRegistry —— `/export` routes_views.py 同模式），后端跑引擎层确定性后处理 `nesting_engine/polish_layout`（US-001）返回微调后 placements + 前后对比报告。几何真相源留在 Python：**物理毛版轮廓口径**（会话 `pieces_by_id` 原始 polygon，与 `/export placed_to_world` 同源、非 eroded —— 编辑画布红字告警是腐蚀后口径，数值可能偏小，口径差是文档级约定）。端到端回归冒烟 `materialSorting-web/scripts/smoke_edit_polish.mjs`（US-004，24 检查：微调四守恒/撤销/确定性双跑/PLT+DXF 导出 placed 守恒/band exclude 抽验）。
+编辑弹窗「智能微调」按钮的数据源：前端把**当前编辑 placements 随 body 带上**（后端不存布局态，唯一存储在前端 runRegistry —— `/export` routes_views.py 同模式），后端跑引擎层确定性后处理 `nesting_engine/polish_layout`（US-001）返回微调后 placements + 前后对比报告。几何真相源留在 Python：**物理毛版轮廓口径**（会话 `pieces_by_id` 原始 polygon，与 `/export placed_to_world` 同源、非 eroded —— 编辑画布红字告警是腐蚀后口径，数值可能偏小，口径差是文档级约定）。端到端回归冒烟 `materialSorting-web/scripts/smoke_edit_polish.mjs`（US-004 24 检查 + US-005 S7 compact 档 5 检查 = 29：微调四守恒/撤销/确定性双跑/PLT+DXF 导出 placed 守恒/band exclude 抽验/compact:true 载荷+width ≤ 非 compact 档+守恒不等式）。
 
 ### 请求（`application/json`）
 
@@ -389,7 +389,7 @@ WS 侧同语义走 **error 帧**：`{"type":"error","code":"session_expired","me
 - `placed`（必填，空/缺/非列表 → 400）：同 pid 多副本按**数组下标**逐实例寻址（绝不 pid 去重，与前端 editStore 同口径）；条目缺 `id` / `translation` 非 2 元 → 400。
 - `gate_mm`（可选）：优先求解口径（前端 `run.manifest.gate_mm`）；缺省/非法回退会话 `state['gate_mm']`（与 `/export`、`/api/plt-table-preview` 同法）；两处皆无 → 400 fail-fast（守卫 y∈[0,gate] 无从谈起）。
 - `exclude`（可选，缺省 None 透传引擎）：`{labels?: [g码], pids?: [pid]}` 双键 —— 命中实例永不被移动仍作障碍（v1 over-conservative 同 pid 全副本，FR-8；band 成员 g 码 / prefix 成员 pid 由前端 best-effort 组装）。非 dict → 400。
-- `compact`（可选，缺省 false）：US-005 压缩回收档预留键位（实现前引擎恒 no-op）。
+- `compact`（可选，缺省 false）：US-005 压缩回收档（2026-09-05 落地）—— true 时引擎追加 pass ④：自布头方向逐片 −x 滑贴收空隙进料长（20mm 粗扫+二分贴触、级联左片先贴），每 move 走同款五道守卫（kind=compact）+ pass 级「全图 maxX 严格变小否则整体回滚」；无空隙可收时输出与 compact=false 逐元素相同（additive）。前端入口 = 对比卡内「回收空隙缩短料长」checkbox（默认不勾，随下次微调请求发出）。
 
 ### 响应（200）
 
@@ -398,7 +398,7 @@ WS 侧同语义走 **error 帧**：`{"type":"error","code":"session_expired","me
 ```
 
 - `placed`：条数与 pid 多重集与输入相等（引擎出口 Counter 终检 + 路由入口 pid 全匹配双保险）；无任何 move 时引擎返回输入 list 原对象（逐字节不变量）。
-- `report`：`{before, after, moves, residual, excluded, elapsed_sec}` —— before/after 各七指标（`overlap_pairs` / `max_penetration_mm` / `total_overlap_area_mm2` / `rotated_pieces` / `rotation_dev_sum_deg` / `width_mm` / `density`，density = real 口径 `Σ(原面积×副本数)/(width×gate)` 百分数）+ `moves` 逐条明细（index/pid/kind `derotate|separate`/from/to/detail）+ `residual`（终态重合对 + 旋转残留如实上报，不硬凑零）。
+- `report`：`{before, after, moves, residual, excluded, elapsed_sec}` —— before/after 各七指标（`overlap_pairs` / `max_penetration_mm` / `total_overlap_area_mm2` / `rotated_pieces` / `rotation_dev_sum_deg` / `width_mm` / `density`，density = real 口径 `Σ(原面积×副本数)/(width×gate)` 百分数）+ `moves` 逐条明细（index/pid/kind `derotate|separate|compact`/from/to/detail）+ `residual`（终态重合对 + 旋转残留如实上报，不硬凑零）。
 
 ### 错误响应（结构化 JSON）
 
@@ -417,7 +417,7 @@ WS 侧同语义走 **error 帧**：`{"type":"error","code":"session_expired","me
 1. polish 构造段经 `run_in_threadpool` 执行（prefix-preview 先例，防阻塞事件循环；测试 = 线程级断言：引擎执行线程 ≠ 事件循环线程）。
 2. 成功请求顺手 `edit_hold.refresh(sid)`（编辑钉住与 `/api/edit-hold` 心跳同语义；default 不进钉住表；失败请求不续期）。
 3. 布局态零落盘：请求/响应全走 body，无新会话状态、无新磁盘产物。
-4. 测试：`tests/test_web_edit_polish.py`（14 例：200 全链路守恒/会话隔离/sid 闸门/载荷校验/gate 回退/exclude·compact 透传/线程池执行/钉住续期）。
+4. 测试：`tests/test_web_edit_polish.py`（15 例：200 全链路守恒/会话隔离/sid 闸门/载荷校验/gate 回退/exclude·compact 透传/线程池执行/钉住续期/US-005 compact=True 全链路回收）。
 
 ## GET /api/ptypes — US-020 裁片 g 码代表（D10/D11；US-001 v2：键 = label）
 

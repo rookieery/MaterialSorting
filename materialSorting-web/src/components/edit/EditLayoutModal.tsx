@@ -9,6 +9,8 @@
 // 调用 save、不自动保存**，✕ 关窗即弃既有语义不变）；失败（网络/4xx）→ 错误文案
 // 进卡、working 逐字段不变；一级撤销 = pre-polish working 快照（再次微调覆盖、
 // 关闭/重置清空 —— 关窗即 Inner 整树卸载，快照自然清零）。
+// edit-polish US-005（2026-09-05）：polishCompact 勾选态（对比卡内 checkbox，默认
+// 不勾）→ 勾选后随下次微调请求发出 compact:true（引擎 pass ④ 压缩回收档）。
 //
 // 声明式受控 Portal（范本 ExportInfoModal）：外层订阅 controlPanelStore.modal ===
 // 'edit_layout' 自显隐，Portal 到 document.body，Inner 带 key（关闭→重开重挂载 =
@@ -63,10 +65,13 @@ function EditLayoutModalInner(): JSX.Element {
   // busy = 请求在飞（按钮 loading 态禁重复点击）；report = 最近一次成功的前后对比
   // （对比卡数据源）；error = 最近一次失败文案（卡内显示）；prePolish = 一级撤销
   // 快照（成功落 working 前拷贝；再次微调覆盖、撤销/关窗清空）。
+  // US-005：polishCompact = 压缩回收档勾选态（对比卡内 checkbox，默认不勾、
+  // 勾选后随**下次**微调请求发出 compact:true；关窗 Inner 卸载自然回 false）。
   const [polishBusy, setPolishBusy] = useState(false);
   const [polishReport, setPolishReport] = useState<PolishReport | null>(null);
   const [polishError, setPolishError] = useState<string | null>(null);
   const [prePolish, setPrePolish] = useState<PlacedItem[] | null>(null);
+  const [polishCompact, setPolishCompact] = useState(false);
 
   // mount 一次性快照基线（ExportInfoModal 先例：自 bestRun() 取目标 run）。
   // open 内部防御：run 无 lastFrame → 清态返回 false（弹窗显示空态）。
@@ -123,7 +128,11 @@ function EditLayoutModalInner(): JSX.Element {
   async function handlePolish(): Promise<void> {
     if (polishBusy || !manifest || working.length === 0) return;
     const run = useEditStore.getState().run;
-    const payload = buildPolishPayload(useEditStore.getState().working, run);
+    const payload = buildPolishPayload(
+      useEditStore.getState().working,
+      run,
+      polishCompact,
+    );
     if (!payload) return;
     setPolishBusy(true);
     setPolishError(null);
@@ -219,8 +228,10 @@ function EditLayoutModalInner(): JSX.Element {
                 error: polishError,
                 report: polishReport,
                 canUndo: prePolish !== null,
+                compact: polishCompact,
                 onPolish: () => void handlePolish(),
                 onUndo: handleUndoPolish,
+                onCompactChange: setPolishCompact,
               }}
             />
           </div>

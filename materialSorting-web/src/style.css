@@ -2359,7 +2359,8 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
  * 编辑排料 edit-polish US-003（2026-09-05）：右下卡栈 + 智能微调前后对比卡。
  * 栈容器绝对锚点 bottom/right（原 .edit-guide 锚点上提至此），竖排右对齐 ——
  * 对比卡在案时出现在指南卡上方。整栈 pointer-events:none 不挡画布拖动热区，
- * 唯一可交互点 = 对比卡内「撤销微调」按钮（pointer-events:auto）。
+ * 可交互点 = 对比卡内「撤销微调」按钮 + US-005 compact checkbox 行
+ * （.edit-polish-opt，均 pointer-events:auto）。
  * ============================================================ */
 .edit-br-stack {
   position: absolute;
@@ -2407,6 +2408,29 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
   color: #778;
   font-size: 11px;
   white-space: normal; /* 口径脚注较长，允许换行 */
+}
+/* US-005 压缩回收档 checkbox 行（对比卡内、指标行与口径脚注之间）：
+ * inline-flex 收窄到内容宽（不占满卡宽），pointer-events:auto 与撤销按钮
+ * 同为卡内交互点（卡体其余透点不挡画布拖动）。 */
+.edit-polish-opt {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  width: fit-content;
+  margin: 4px 0 0;
+  color: #aab;
+  font-size: 11px;
+  white-space: normal;
+  cursor: pointer;
+  pointer-events: auto;
+}
+.edit-polish-opt:hover {
+  color: #e6e6e6;
+}
+.edit-polish-opt input[type='checkbox'] {
+  margin: 0;
+  cursor: pointer;
+  accent-color: #3f8f5f;
 }
 .edit-polish-undo {
   display: block;
