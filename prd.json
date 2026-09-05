@@ -1,11 +1,4 @@
 {
   "branchName": "ralph/edit-keyboard-transform",
-  "stories": [
-    {
-      "id": "US-007",
-      "title": "端到端冒烟扩展与文档同步",
-      "description": "把键盘/镜像/重置的新不变量锁进 E2E 冒烟回归，并按仓库 dated fragment 惯例同步技术文档（改前端后 docs 同步是本仓库闭环要求）。\n\n具体任务：\n1. materialSorting-web/scripts/smoke_edit_polish.mjs — 新增键盘/镜像段（建议 S8）：O 镜像一片（dispatchEvent keydown）→ 保存 → 导出 PLT 与 DXF 的 POST placed 含 mirror:true 且导出正文几何为镜像（坐标对拍）→ 微调请求/响应 mirror 逐位透传 → R 键重置该片 points 回基线。既有 29 检查（US-004 24 项 + US-005 compact 5 项）复跑全绿 = mirror=false 路径零回归门。\n2. materialSorting-web/AGENTS.md — dated fragment（2026-09-05 之后）：edit/ 组件树注记 + 「编辑键盘/镜像关键约定」节（六键语义、质心锚定、omit-when-false、resetItem 下标守卫）。\n3. .docs/technical/agent-component-map.md — 编辑弹窗节 dated 注记。\n4. .docs/technical/agent-api-reference.md — /api/edit-polish 专节补 mirror 键说明 + /export placed 条目 mirror 说明。\n\n验收标准：\n- 冒烟新增段全 PASS：O 镜像→保存→导出 placed 含 mirror:true 且正文几何镜像对拍、微调 mirror 逐位透传、R 键重置 points 回基线\n- 既有 29 检查复跑全绿（mirror=false 路径零回归）\n- 三份文档含 2026-09-05 之后 dated fragment，与实现一致\n- 全量回归：cd materialSorting-web && npx vitest run 全过 + cd materialSorting-server && python -m pytest 全过 + npm run build 过、static/ 已重建",
-      "passes": true
-    }
-  ]
+  "stories": []
 }
