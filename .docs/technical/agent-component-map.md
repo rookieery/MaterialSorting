@@ -1969,3 +1969,46 @@ US-001 立数据模型后的 store 层接线：editStore 此前五处**显式字
   全为纯新增）/ `npm run build`（tsc+vite）过（303.08KB gzip 99.11KB）、static/ 已
   重建；零组件/零后端改动，浏览器验证与冒烟归 US-003/US-005/US-007（store 缺省
   路径无 UI 面，mirror 键缺席时五处透传均为 no-op spread）。
+
+## 编辑排料 edit-keyboard US-003 落地：画布与主视图镜像渲染贯穿（2026-09-05）
+
+US-001 纯函数层 + US-002 store 之后的**渲染/载荷接线**：镜像片所见即所得 ——
+编辑画布 5 层（EditCanvas）/ 主视图 NestSVG frame 路径 / 微调载荷 placed /
+prePolish 撤销快照四处全贯穿。零后端改动；既有精确锁键集用例
+（`EditLayoutModal.polish.test` 的 `toEqual([{id,rotation,translation}])`）零改动
+保持绿是验收项。
+
+| 文件 | 改动 |
+| --- | --- |
+| `src/components/edit/EditCanvas.tsx` | ①主渲染 effect：读 working 项 `it.mirror === true` → `placementSig(mode, rot, tr, mirror)`（签名加 mirror 段 —— replaceWorking 翻转镜像同 rot/tr 也必须重写 5 层）→ `applyPlacement(entry, rot, tr, mode, mirror)`；②`applyPlacement`/`applyEntryPlacement`/`commitDragPlacement` 加**必填** mirror 形参（内部链路漏传编译红）：5 层 pointsStr / notch·grain transformPt 第 4 参 x 取负；③`transformPt(pt, rot, tr, mirror=false)`（x = mirror ? −pt[0] : pt[0]，缺省路径逐字节不变）；④`clampPlacement(basePoly, rot, tr, gate, mirror=false)` —— 钳制按**镜像 bbox**（镜像片 x 取负后 minX/maxX 与非镜像不同，测试用非镜像钳不住/镜像钳得住的判别性夹具）；⑤MoveDrag/RotateDrag 会话快照 `mirror0: it.mirror === true`（setWorkingItem patch 不改 mirror ⇒ 会话内恒定），帧内三处透传：clampPlacement / DOM 5 层 / `applyEditPlacement(ep, rot, tr, mirror)` 池增量（US-001 覆写语义：缺省覆回 false → 重合指标按错几何算，精确面积断言锁死） |
+| `src/components/nests/NestSVG.tsx` | frame 循环 `const mirror = it.mirror === true` → 5 层 pointsStr/transformPt 透传；transformPt 加 mirror 缺省参。solver 原生帧永无 mirror 键 → 缺省路径**逐字节不变**（回归锁）；编辑保存写回 lastFrame 的镜像副本在主视图所见即所得 |
+| `src/components/edit/EditLayoutModal.tsx` | prePolish 快照显式字段 map 补 `...(it.mirror === true ? { mirror: true } : {})` —— 逐字段重建漏键 = 撤销微调静默丢镜像标志；快照语义不变（覆盖/关窗清空） |
+| `src/lib/editPolish.ts` | `PolishPayload.placed` 项类型加 `mirror?: boolean`；buildPolishPayload placed map 同款 omit-when-false spread |
+| 测试 | +11 项（994→1005）：`EditCanvas.test` 镜像 describe 5（毛版/净版/内部线/刺口/布纹 5 层手算对拍 + mirror+rot90 复合 + 签名双向翻转重写 + 镜像 bbox 钳制判别 + 镜像片拖动池增量精确面积 196000.0mm²/10.0mm）；`NestSVG.test` mirror 帧 3（5 层手算 + mirror+rot90 + solver 原生回归锁）；`editPolish.test` 2（精确键集 toEqual + mirror:false 省略键）；`EditLayoutModal.polish.test` 1（已保存镜像布局 → 载荷恰一项带键 / 引擎关镜像 → working 镜像消失 / 撤销 → 快照恢复 mirror + 画布毛版 points x 取负对拍） |
+
+### 关键不变量（edit-keyboard US-003 立，后续故事不得破坏）
+
+- **内部链路 mirror 形参必填、外部接口缺省 false**：applyPlacement 家族漏传 =
+  编译红；pointsStr/transformPt/clampPlacement 缺省路径逐字节不变是零回归红线
+  （US-005 键盘帧复用 commitDragPlacement，镜像标志从 working 项读出透传，
+  不得依赖缺省值）。
+- **placementSig 必须含 mirror 段**：签名跳过的前提是「同 rot/tr 即同放置」，
+  mirror 翻转改变世界几何 —— 漏段 = replaceWorking 翻转镜像后画布陈旧。
+- **拖动帧的 mirror 是会话快照不是实时读**：pointerdown 时定格 mirror0，会话
+  内恒定（防拖动中 store 竞态）；钳制/渲染/池增量三处共用同一快照值。
+- **omit-when-false 覆盖所有序列化出口**：store 写回（US-002）/ prePolish 快照 /
+  微调载荷 placed —— 恒发 mirror:false 会红掉精确锁键集用例。
+
+### 验证
+
+- vitest 全量 **1005 passed**（994+11，64 文件）/ `npm run build`（tsc+vite）过
+  （303.36KB gzip 99.23KB）、static/ 已重建。
+- **浏览器 dev 模式 15/15**（`out/usk003_mirror_verify/verify.mjs` + report.json +
+  3 截图）：P1 上传 5336 → 3 码 30 片短求解 + solver 原生帧无 mirror 键 + 画布
+  基线 points 与页面内 pointsStr 直算逐字节一致；P2 `page.evaluate` 动态
+  `import('/src/store/editStore.ts')` replaceWorking 翻转片 K mirror（故事 AC 认可
+  的「人为改 store」——US-005 键盘未落地）→ 画布 points = pointsStr(mirror)
+  直算 + 其余 29 片逐字节不变 + 镜像片拖动一帧不炸（clamp 按镜像几何）；P3 保存
+  → lastFrame[K].mirror=true 写回 + 主视图恰 1 片 points 变化且与直算一致；P4 重开
+  弹窗镜像保持 + 微调请求载荷恰一项 mirror:true。DOM↔纯函数逐字节对拍（比目测
+  截图更强的几何断言，截图归档备查）。

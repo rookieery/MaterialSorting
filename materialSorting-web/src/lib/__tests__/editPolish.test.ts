@@ -153,4 +153,30 @@ describe('buildPolishPayload', () => {
     run.manifest = makeManifest();
     expect(buildPolishPayload(working, run, true)!.compact).toBe(true);
   });
+
+  // ---- edit-keyboard US-003：placed 项 mirror omit-when-false 透传 ----
+
+  it('mirror:true 项带键、无镜像项不带键（精确键集 toEqual）', () => {
+    const run = runRegistry.create(0);
+    run.manifest = makeManifest();
+    const wk: PlacedItem[] = [
+      { id: 'a_28', rotation: 0, translation: [0, 0], mirror: true },
+      { id: 'b_30', rotation: 25, translation: [600, 10] },
+    ];
+    const p = buildPolishPayload(wk, run)!;
+    // toEqual 精确锁键集：镜像项恰 {id,rotation,translation,mirror}、无镜像项恰三键
+    expect(p.placed).toEqual([
+      { id: 'a_28', rotation: 0, translation: [0, 0], mirror: true },
+      { id: 'b_30', rotation: 25, translation: [600, 10] },
+    ]);
+  });
+
+  it('mirror:false 显式值 → 载荷省略键（undefined/false 同义，omit-when-false）', () => {
+    const run = runRegistry.create(0);
+    run.manifest = makeManifest();
+    const wk: PlacedItem[] = [{ id: 'a_28', rotation: 0, translation: [0, 0], mirror: false }];
+    const p = buildPolishPayload(wk, run)!;
+    expect(p.placed).toEqual([{ id: 'a_28', rotation: 0, translation: [0, 0] }]);
+    expect('mirror' in p.placed[0]).toBe(false);
+  });
 });

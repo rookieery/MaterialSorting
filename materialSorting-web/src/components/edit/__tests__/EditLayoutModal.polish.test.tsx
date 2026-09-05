@@ -504,4 +504,46 @@ describe('EditLayoutModal 智能微调 (edit-polish US-003)', () => {
     expect(workingSnapshot()).toBe(before);
     expect(document.querySelector('[data-testid="edit-polish-undo"]')).toBeNull();
   });
+
+  // ============================================================
+  // edit-keyboard US-003（2026-09-05）：镜像片微调 —— 载荷 placed 带 mirror:true
+  // （omit-when-false：无镜像项不带键）、prePolish 快照显式字段 map 补 mirror
+  // （撤销微调不丢镜像标志）。
+  // ============================================================
+
+  it('US-003 镜像片：载荷 placed 带 mirror、撤销微调恢复镜像标志（快照含 mirror）', async () => {
+    // 已保存的镜像布局：a_28 mirror（模拟 US-005 键盘镜像 + 保存后的 lastFrame）
+    const run = seedBestRun();
+    run.lastFrame!.placed_items[0] = {
+      id: 'a_28',
+      rotation: 0,
+      translation: [0, 0],
+      mirror: true,
+    };
+    apiFetchMock.mockImplementation(async (url) =>
+      url === '/api/edit-polish' ? polishResponse(660) : (undefined as unknown as Response),
+    );
+    await act(async () => {
+      root!.render(<EditLayoutModal />);
+      useControlPanelStore.getState().openModal('edit_layout');
+    });
+    expect(useEditStore.getState().working[0].mirror).toBe(true); // open 深拷贝透传（US-002）
+    await clickPolish();
+    // 载荷 placed：镜像项带 mirror:true、无镜像项不带键（buildPolishPayload omit-when-false）
+    const body = JSON.parse((polishCalls()[0][1]?.body as string) ?? '{}');
+    expect(body.placed[0]).toEqual({ id: 'a_28', rotation: 0, translation: [0, 0], mirror: true });
+    expect(body.placed[1]).toEqual({ id: 'b_30', rotation: 0, translation: [600, 0] });
+    // 引擎响应无 mirror 键（= 关镜像结果）→ working[0] 镜像消失
+    expect(useEditStore.getState().working[0].mirror).toBeUndefined();
+    // 撤销 → prePolish 快照恢复（快照显式字段 map 补 mirror 的行为锁 —— 漏键则这里 undefined）
+    await act(async () => {
+      (document.querySelector('[data-testid="edit-polish-undo"]') as HTMLButtonElement).click();
+    });
+    expect(useEditStore.getState().working[0].mirror).toBe(true);
+    expect(useEditStore.getState().working[0].translation).toEqual([0, 0]);
+    // 画布数据源跟随快照恢复：镜像形态 a 片毛版 points（x 取负 + tr0）
+    const svg = document.querySelector('svg.edit-layout-svg') as SVGSVGElement;
+    const roughA = svg.querySelector(':scope g > polygon[stroke="#ff0000"]') as SVGPolygonElement;
+    expect(roughA.getAttribute('points')).toBe('0,0 -500,0 -500,500 0,500');
+  });
 });

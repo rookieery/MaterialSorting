@@ -723,3 +723,105 @@ describe("NestSVG demand>1 (多副本渲染)", () => {
     expect(polys[1].getAttribute("points")).toBe("100,200 110,200 110,210 100,210");
   });
 });
+
+// ============================================================
+// edit-keyboard US-003（2026-09-05）：mirror 帧渲染 —— 编辑保存写回 lastFrame 的
+// 副本可带 mirror:true（局部 x 翻转，x′ = −x·c − y·s + tx）→ 5 层 x 取负；
+// solver 原生帧（无 mirror 键）缺省路径逐字节不变（回归锁）。
+// ============================================================
+
+describe("NestSVG mirror 帧 (edit-keyboard US-003)", () => {
+  it("placed_items 带 mirror:true → 5 层 x 取负（x′ = −x+tx 手算对拍）", () => {
+    const run = runRegistry.create(0);
+    run.manifest = makeManifest5Layers();
+    const ref = mountNestSVG(run);
+    const g = ref.current!.childNodes[2] as SVGGElement;
+
+    const frame: FrameMsg = {
+      type: "frame",
+      index: 0,
+      elapsed: 0.5,
+      phase: "final",
+      density: 0.5,
+      density_sparrow: 0.5,
+      width_mm: 1000,
+      placed_items: [{ id: "p1", rotation: 0, translation: [100, 200], mirror: true }],
+    };
+    run.frames.push(frame);
+    run.lastFrame = frame;
+    act(() => useAppStore.getState().bumpRenderTick());
+
+    // 毛版 [[0,0],[10,0],[10,10],[0,10]] → x 取负 +100、y+200：
+    // (100,200)(90,200)(90,210)(100,210)（顶点序镜像反转，足印对称）
+    const roughP1 = g.childNodes[0] as SVGPolygonElement;
+    expect(roughP1.getAttribute("points")).toBe("100,200 90,200 90,210 100,210");
+    // 净版 [[1,1],[9,1],[9,9],[1,9]] → (99,201)(91,201)(91,209)(99,209)
+    const netP1 = g.childNodes[1] as SVGPolygonElement;
+    expect(netP1.getAttribute("points")).toBe("99,201 91,201 91,209 99,209");
+    // 内部线 [[2,2],[8,8]] → (98,202)-(92,208)
+    const internal1 = g.childNodes[2] as SVGPolylineElement;
+    expect(internal1.getAttribute("points")).toBe("98,202 92,208");
+    // 刺口 [5,0,0,-1] 端点 (5,4)/(5,-4) → (95,204)/(95,196)
+    const notch1 = g.childNodes[4] as SVGLineElement;
+    expect(notch1.getAttribute("x1")).toBe("95");
+    expect(notch1.getAttribute("y1")).toBe("204");
+    expect(notch1.getAttribute("x2")).toBe("95");
+    expect(notch1.getAttribute("y2")).toBe("196");
+    // 布纹线 [3,5,7,5] → (97,205)-(93,205)
+    const grain = g.childNodes[6] as SVGLineElement;
+    expect(grain.getAttribute("x1")).toBe("97");
+    expect(grain.getAttribute("y1")).toBe("205");
+    expect(grain.getAttribute("x2")).toBe("93");
+    expect(grain.getAttribute("y2")).toBe("205");
+  });
+
+  it("mirror + rotation 90 复合（x 取负在旋转前）：x′ = −y+tx、y′ = −x+ty", () => {
+    const run = runRegistry.create(0);
+    run.manifest = makeManifest5Layers();
+    const ref = mountNestSVG(run);
+    const g = ref.current!.childNodes[2] as SVGGElement;
+
+    const frame: FrameMsg = {
+      type: "frame",
+      index: 0,
+      elapsed: 0.5,
+      phase: "final",
+      density: 0.5,
+      density_sparrow: 0.5,
+      width_mm: 1000,
+      placed_items: [{ id: "p1", rotation: 90, translation: [50, 70], mirror: true }],
+    };
+    run.frames.push(frame);
+    run.lastFrame = frame;
+    act(() => useAppStore.getState().bumpRenderTick());
+
+    // (0,0)→(50,70)；(10,0)→(50,60)；(10,10)→(40,60)；(0,10)→(40,70)
+    const roughP1 = g.childNodes[0] as SVGPolygonElement;
+    expect(roughP1.getAttribute("points")).toBe("50,70 50,60 40,60 40,70");
+  });
+
+  it("solver 原生帧（无 mirror 键）逐字节不变 —— 缺省路径回归锁", () => {
+    const run = runRegistry.create(0);
+    run.manifest = makeManifest5Layers();
+    const ref = mountNestSVG(run);
+    const g = ref.current!.childNodes[2] as SVGGElement;
+
+    // 同 rot/tr 不带 mirror 键 → points 与既有路径逐字节一致（x 不取负）
+    const frame: FrameMsg = {
+      type: "frame",
+      index: 0,
+      elapsed: 0.5,
+      phase: "final",
+      density: 0.5,
+      density_sparrow: 0.5,
+      width_mm: 1000,
+      placed_items: [{ id: "p1", rotation: 0, translation: [100, 200] }],
+    };
+    run.frames.push(frame);
+    run.lastFrame = frame;
+    act(() => useAppStore.getState().bumpRenderTick());
+
+    const roughP1 = g.childNodes[0] as SVGPolygonElement;
+    expect(roughP1.getAttribute("points")).toBe("100,200 110,200 110,210 100,210");
+  });
+});

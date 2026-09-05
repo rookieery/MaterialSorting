@@ -1,5 +1,5 @@
 // editPolish.ts —— 编辑排料「智能微调」前端接线库（prd-edit-polish US-003，2026-09-05；
-// US-005 补 compact 压缩回收档载荷键）。
+// US-005 补 compact 压缩回收档载荷键；edit-keyboard US-003 补 placed 项 mirror 键）。
 //
 // 职责（纯数据组装 + 单一请求出口，几何真相源留在 Python）：
 //   1. buildPolishPayload：当前 working placements + run.manifest.gate_mm + exclude
@@ -49,7 +49,11 @@ export interface PolishReport {
 
 /** POST /api/edit-polish 请求载荷。 */
 export interface PolishPayload {
-  placed: { id: string; rotation: number; translation: [number, number] }[];
+  /**
+   * placed 项 mirror（edit-keyboard US-003，omit-when-false）：镜像片带 mirror:true，
+   * 无镜像项不带键（后端按镜像几何微调并透传回响应）。
+   */
+  placed: { id: string; rotation: number; translation: [number, number]; mirror?: boolean }[];
   gate_mm: number;
   exclude?: { labels?: string[]; pids?: string[] };
   /** US-005 压缩回收档（false 省略键 = 服务端缺省同值，additive）。 */
@@ -131,10 +135,13 @@ export function buildPolishPayload(
   const manifest = run?.manifest ?? null;
   if (!manifest || working.length === 0) return null;
   const payload: PolishPayload = {
+    // mirror omit-when-false 透传（edit-keyboard US-003）：恒发 mirror:false 会红掉
+    // EditLayoutModal.polish 精确锁键集用例 —— 「有镜像才带键」。
     placed: working.map((it) => ({
       id: it.id,
       rotation: it.rotation,
       translation: [it.translation[0], it.translation[1]],
+      ...(it.mirror === true ? { mirror: true } : {}),
     })),
     gate_mm: manifest.gate_mm,
   };

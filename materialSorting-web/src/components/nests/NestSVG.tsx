@@ -30,6 +30,9 @@
 //      setAttribute('display'/'points'/'x1'/'y1'/'x2'/'y2'/'transform')，不重建 DOM；128 片 ×
 //      5 节点 ~10fps 可承受（AC#5）。
 //   9. 关键不变量：求解碰撞仍只用毛版 polygon（sparrow NFP，已 erode）；其余 4 层仅渲染透传。
+//  10. edit-keyboard US-003（2026-09-05）：frame placed item 透传 mirror（编辑保存写回
+//      lastFrame 可带 mirror:true → 该副本渲染为镜像形态，pointsStr/transformPt 第 4 参
+//      x 取负）；solver 原生帧永无此键，`it.mirror === true` 缺省 false 路径逐字节不变。
 
 import { useEffect, useRef } from 'react';
 import { useAppStore } from '../../store/appStore';
@@ -179,12 +182,15 @@ export function NestSVG({ run }: NestSVGProps) {
       const entry = copies[k];
       const rot = it.rotation;
       const tr = it.translation;
+      // edit-keyboard US-003：编辑保存写回 lastFrame 的副本可带 mirror:true（局部 x 翻转）；
+      // solver 原生帧永无此键 → 缺省 false 路径逐字节不变。
+      const mirror = it.mirror === true;
       // layer1 毛版 polygon
-      entry.el.setAttribute('points', pointsStr(entry.piece.polygon, rot, tr));
+      entry.el.setAttribute('points', pointsStr(entry.piece.polygon, rot, tr, mirror));
       entry.el.style.display = '';
       // US-024 layer14 净版 polygon
       if (entry.netEl && entry.piece.net_polygon) {
-        entry.netEl.setAttribute('points', pointsStr(entry.piece.net_polygon, rot, tr));
+        entry.netEl.setAttribute('points', pointsStr(entry.piece.net_polygon, rot, tr, mirror));
         entry.netEl.style.display = '';
       }
       // US-024 layer8 内部线 polyline 列表
@@ -193,7 +199,7 @@ export function NestSVG({ run }: NestSVGProps) {
         const lineEl = entry.internalEls[i];
         const line = internalLines[i];
         if (!line) continue;
-        lineEl.setAttribute('points', pointsStr(line, rot, tr));
+        lineEl.setAttribute('points', pointsStr(line, rot, tr, mirror));
         lineEl.style.display = '';
       }
       // US-024 layer4 刺口 line（沿法线 NOTCH_LEN_MM/2 两端）
@@ -204,10 +210,10 @@ export function NestSVG({ run }: NestSVGProps) {
         const n: Notch | undefined = notches[i];
         if (!n) continue;
         // 毛版 polygon 用 pointsStr 整体旋转；notch 端点需独立旋转 + 平移（双端点不一致平移）
-        // 简化：把 (x±nx*half, y±ny*half) 视作两个点，各按 rot+tr 变换
+        // 简化：把 (x±nx*half, y±ny*half) 视作两个点，各按 rot+tr（+mirror）变换
         const [px, py, nx, ny] = n;
-        const a = transformPt([px - nx * half, py - ny * half], rot, tr);
-        const b = transformPt([px + nx * half, py + ny * half], rot, tr);
+        const a = transformPt([px - nx * half, py - ny * half], rot, tr, mirror);
+        const b = transformPt([px + nx * half, py + ny * half], rot, tr, mirror);
         notchEl.setAttribute('x1', String(a[0]));
         notchEl.setAttribute('y1', String(a[1]));
         notchEl.setAttribute('x2', String(b[0]));
@@ -217,8 +223,8 @@ export function NestSVG({ run }: NestSVGProps) {
       // US-024 layer7 布纹线 line
       if (entry.grainEl && entry.piece.grain_line) {
         const [x1, y1, x2, y2] = entry.piece.grain_line;
-        const a = transformPt([x1, y1], rot, tr);
-        const b = transformPt([x2, y2], rot, tr);
+        const a = transformPt([x1, y1], rot, tr, mirror);
+        const b = transformPt([x2, y2], rot, tr, mirror);
         entry.grainEl.setAttribute('x1', String(a[0]));
         entry.grainEl.setAttribute('y1', String(a[1]));
         entry.grainEl.setAttribute('x2', String(b[0]));
@@ -248,12 +254,19 @@ export function NestSVG({ run }: NestSVGProps) {
  *
  * 用于刺口 line 端点 / 布纹线端点 —— pointsStr 一次性输出整段字符串适用于多边形/polyline；
  * 单点变换用于 line 元素的 x1/y1/x2/y2 独立属性写入。
+ * mirror=true（edit-keyboard US-003 起，缺省 false 零回归）：旋转前一行式 x 取负，
+ * 与 pointsStr mirror 分支同公式。
  */
-function transformPt(pt: [number, number], rot: number, tr: [number, number]): [number, number] {
+function transformPt(
+  pt: [number, number],
+  rot: number,
+  tr: [number, number],
+  mirror = false,
+): [number, number] {
   const r = (rot * Math.PI) / 180;
   const c = Math.cos(r);
   const s = Math.sin(r);
-  const x = pt[0];
+  const x = mirror ? -pt[0] : pt[0];
   const y = pt[1];
   // r2 截断与 lib/geometry.ts r2 一致（pointsStr 输出字节级一致性的保证）
   const rx = Math.round((x * c - y * s + tr[0]) * 100) / 100;

@@ -145,11 +145,14 @@ function EditLayoutModalInner(): JSX.Element {
       }
       // 快照仅在校验通过、working 已替换后落（失败路径不留孤儿快照 —— 撤销按钮
       // 不出现；快照 = 点击微调前的 working，手动拖动后的中间态一并入照）。
+      // mirror 显式字段 map 透传（edit-keyboard US-003，omit-when-false）：逐字段重建
+      // 漏键 = 撤销微调静默丢镜像标志。
       setPrePolish(
         before.map((it) => ({
           id: it.id,
           rotation: it.rotation,
           translation: [it.translation[0], it.translation[1]] as PlacedItem['translation'],
+          ...(it.mirror === true ? { mirror: true } : {}),
         })),
       );
       setPolishReport(report);

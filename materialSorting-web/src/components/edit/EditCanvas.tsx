@@ -52,6 +52,13 @@
 //     偏离角，阈值着色 ≤10mm 琥珀 / >10mm 红 / >45° 红）；布尔交异常降级 bbox 交
 //     高亮 + 面积按 bbox 估算（不阻塞拖动）。
 //   - 空白 pointerdown 仍为平移；空白**点击**（位移 <3px 的 down-up）= 取消选中。
+//
+// edit-keyboard US-003（2026-09-05）mirror 渲染贯穿：working 项 mirror === true →
+// applyPlacement 5 层（pointsStr/transformPt 第 4 参 x 取负）+ placementSig 加 mirror
+// 段（同 rot/tr 翻转镜像必须重写 5 层）+ clampPlacement mirror 参（按镜像 bbox 钳制）；
+// 拖动/旋转会话起手快照 mirror0（setWorkingItem 不改 mirror ⇒ 会话内恒定），帧内
+// commitDragPlacement 透传 DOM 5 层 + applyEditPlacement 池增量（US-001 覆写语义：
+// 镜像片增量必须显式传标志，缺省覆回 false）。
 
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -109,6 +116,8 @@ interface MoveDrag {
   startClient: Pt;
   rot0: number;
   tr0: Pt;
+  /** 起手镜像标志（edit-keyboard US-003）：setWorkingItem 不改 mirror ⇒ 会话内恒定。 */
+  mirror0: boolean;
 }
 interface RotateDrag {
   mode: 'rotate';
@@ -120,6 +129,8 @@ interface RotateDrag {
   ang0: number;
   rot0: number;
   tr0: Pt;
+  /** 起手镜像标志（edit-keyboard US-003）：会话内恒定（同 MoveDrag 注记）。 */
+  mirror0: boolean;
 }
 type DragState = MoveDrag | RotateDrag;
 
@@ -288,13 +299,15 @@ export function EditCanvas({ mode, onModeChange, polish }: EditCanvasProps) {
 
     // 5 层按 working 更新（mode 决定 4 层工艺显隐；毛版恒显）—— 签名跳过：
     // 拖动帧内已即时应用的片签名相同 → 零 setAttribute；reset 等全量变化自然全应用。
+    // mirror 进签名（edit-keyboard US-003）：同 rot/tr 翻转镜像改变世界几何 → 必须重写。
     working.forEach((it, i) => {
       const entry = entriesRef.current[i];
       if (!entry || entry.piece.id !== it.id) return; // 防御：池与 working 错位
-      const sig = placementSig(mode, it.rotation, it.translation);
+      const mirror = it.mirror === true; // omit-when-false：undefined/false 同义无镜像
+      const sig = placementSig(mode, it.rotation, it.translation, mirror);
       if (lastSigRef.current[i] === sig) return;
       lastSigRef.current[i] = sig;
-      applyPlacement(entry, it.rotation, it.translation, mode);
+      applyPlacement(entry, it.rotation, it.translation, mode, mirror);
     });
   }, [run, working, mode]);
 
@@ -531,17 +544,33 @@ export function EditCanvas({ mode, onModeChange, polish }: EditCanvasProps) {
     }
 
     /** 帧内落笔单片放置：5 层 setAttribute + 签名登记（主渲染 effect 同帧跳过该片）。 */
-    function applyEntryPlacement(index: number, entry: PieceEntry, rot: number, tr: Pt): void {
-      applyPlacement(entry, rot, tr, modeRef.current);
-      lastSigRef.current[index] = placementSig(modeRef.current, rot, tr);
+    function applyEntryPlacement(
+      index: number,
+      entry: PieceEntry,
+      rot: number,
+      tr: Pt,
+      mirror: boolean,
+    ): void {
+      applyPlacement(entry, rot, tr, modeRef.current, mirror);
+      lastSigRef.current[index] = placementSig(modeRef.current, rot, tr, mirror);
     }
 
-    /** 拖动帧共同落笔：被拖片 DOM + working（真相源）+ 池增量 + 指标 + 手柄。 */
-    function commitDragPlacement(index: number, entry: PieceEntry, rot: number, tr: Pt): void {
-      applyEntryPlacement(index, entry, rot, tr);
+    /**
+     * 拖动帧共同落笔：被拖片 DOM + working（真相源）+ 池增量 + 指标 + 手柄。
+     * mirror 显式透传（edit-keyboard US-003）：applyEditPlacement 是覆写语义（US-001），
+     * 缺省 false 会把池内镜像片静默覆回非镜像 → 重合指标按错几何算。
+     */
+    function commitDragPlacement(
+      index: number,
+      entry: PieceEntry,
+      rot: number,
+      tr: Pt,
+      mirror: boolean,
+    ): void {
+      applyEntryPlacement(index, entry, rot, tr, mirror);
       useEditStore.getState().setWorkingItem(index, { rotation: rot, translation: tr });
       const ep = poolRef.current?.find((p) => p.key === index);
-      if (ep) applyEditPlacement(ep, rot, tr); // 预计算池增量：只重算被拖片一项
+      if (ep) applyEditPlacement(ep, rot, tr, mirror); // 预计算池增量：只重算被拖片一项
       refreshMetrics(index);
       updateHandle(index);
     }
@@ -563,8 +592,9 @@ export function EditCanvas({ mode, onModeChange, polish }: EditCanvasProps) {
         st.rot0,
         [st.tr0[0] + dx, st.tr0[1] + dy],
         manifest.gate_mm,
+        st.mirror0,
       );
-      commitDragPlacement(st.index, entry, st.rot0, tr);
+      commitDragPlacement(st.index, entry, st.rot0, tr, st.mirror0);
     }
 
     /** 旋转拖柄帧（指针绕 pivot 方位角差 → 自由转角；pivot 公式随动 translation）。 */
@@ -583,8 +613,9 @@ export function EditCanvas({ mode, onModeChange, polish }: EditCanvasProps) {
         rot,
         pivotTranslate(st.pivot, dAng, st.tr0),
         manifest.gate_mm,
+        st.mirror0,
       );
-      commitDragPlacement(st.index, entry, rot, tr);
+      commitDragPlacement(st.index, entry, rot, tr, st.mirror0);
     }
 
     function applyDragFrame(clientX: number, clientY: number): void {
@@ -644,6 +675,7 @@ export function EditCanvas({ mode, onModeChange, polish }: EditCanvasProps) {
           ang0: (Math.atan2(w[1] - pivot[1], w[0] - pivot[0]) * 180) / Math.PI,
           rot0: it.rotation,
           tr0: [it.translation[0], it.translation[1]],
+          mirror0: it.mirror === true,
         };
         try {
           handleCircleRef.current?.setPointerCapture?.(e.pointerId);
@@ -668,6 +700,7 @@ export function EditCanvas({ mode, onModeChange, polish }: EditCanvasProps) {
           startClient: [e.clientX, e.clientY],
           rot0: it.rotation,
           tr0: [it.translation[0], it.translation[1]],
+          mirror0: it.mirror === true,
         };
         try {
           (poly as SVGPolygonElement).setPointerCapture?.(e.pointerId);
@@ -978,9 +1011,13 @@ export function EditCanvas({ mode, onModeChange, polish }: EditCanvasProps) {
   );
 }
 
-/** 放置签名（mode|rot|tr）—— 主渲染 effect「该片是否需要重写 5 层」的判据。 */
-function placementSig(mode: EditViewMode, rot: number, tr: Pt): string {
-  return `${mode}|${rot}|${tr[0]}|${tr[1]}`;
+/**
+ * 放置签名（mode|rot|tr|mirror）—— 主渲染 effect「该片是否需要重写 5 层」的判据。
+ * mirror 段（edit-keyboard US-003）：镜像翻转改变世界几何（x 取负），同 rot/tr 不同
+ * mirror 是不同放置 —— 签名缺席会把 replaceWorking 翻转镜像误判为无变化 → 画布陈旧。
+ */
+function placementSig(mode: EditViewMode, rot: number, tr: Pt, mirror: boolean): string {
+  return `${mode}|${rot}|${tr[0]}|${tr[1]}|${mirror ? 1 : 0}`;
 }
 
 /** 数值定长显示（对比卡前后值；NaN/缺键防御显示 '—'）。 */
@@ -1006,9 +1043,12 @@ function wrapDeg180(d: number): number {
  * 放置钳制（US-003 口径）：按被操作片世界 bbox —— minY<0 上抬 / maxY>gate 下压
  * （高于门幅的片后置 minY 生效 = 贴底）、minX<0 右推；x 右界**不钳**（拖出原布局
  * 右界自由，保存时 width_mm = ceil(包络) 双向伸缩）。gate = manifest.gate_mm。
+ *
+ * mirror（edit-keyboard US-003 起，缺省 false 零回归）：镜像片世界 bbox 与非镜像不同
+ * （x 取负），钳制必须按镜像几何算；US-005 键盘变换路径同参复用。
  */
-function clampPlacement(basePoly: Polygon, rot: number, tr: Pt, gate: number): Pt {
-  const world = transformPolygon(basePoly, rot, tr);
+function clampPlacement(basePoly: Polygon, rot: number, tr: Pt, gate: number, mirror = false): Pt {
+  const world = transformPolygon(basePoly, rot, tr, mirror);
   const b = bboxOf(world);
   let tx = tr[0];
   let ty = tr[1];
@@ -1108,16 +1148,24 @@ function viewScale(svg: SVGSVGElement, vb: ViewBox): number {
 }
 
 /**
- * 单片 5 层按 rot/tr 更新（与 NestSVG frame 渲染逐属性同款；mode 决定 4 层工艺显隐）。
+ * 单片 5 层按 rot/tr/mirror 更新（与 NestSVG frame 渲染逐属性同款；mode 决定 4 层工艺
+ * 显隐）。mirror（edit-keyboard US-003）：5 层 points/端点全部 x 取负（pointsStr/
+ * transformPt 第 4 参 —— 局部 x 翻转 → 旋转 → 平移）。
  */
-function applyPlacement(entry: PieceEntry, rot: number, tr: Pt, mode: EditViewMode): void {
+function applyPlacement(
+  entry: PieceEntry,
+  rot: number,
+  tr: Pt,
+  mode: EditViewMode,
+  mirror: boolean,
+): void {
   const showCraft = mode === 'full';
   // layer1 毛版 polygon（恒显 —— 毛板模式唯一可见层）
-  entry.el.setAttribute('points', pointsStr(entry.piece.polygon, rot, tr));
+  entry.el.setAttribute('points', pointsStr(entry.piece.polygon, rot, tr, mirror));
   entry.el.style.display = '';
   // layer14 净版 polygon
   if (entry.netEl && entry.piece.net_polygon) {
-    entry.netEl.setAttribute('points', pointsStr(entry.piece.net_polygon, rot, tr));
+    entry.netEl.setAttribute('points', pointsStr(entry.piece.net_polygon, rot, tr, mirror));
     entry.netEl.style.display = showCraft ? '' : 'none';
   }
   // layer8 内部线 polyline 列表
@@ -1126,7 +1174,7 @@ function applyPlacement(entry: PieceEntry, rot: number, tr: Pt, mode: EditViewMo
     const lineEl = entry.internalEls[i];
     const line = internalLines[i];
     if (!line) continue;
-    lineEl.setAttribute('points', pointsStr(line, rot, tr));
+    lineEl.setAttribute('points', pointsStr(line, rot, tr, mirror));
     lineEl.style.display = showCraft ? '' : 'none';
   }
   // layer4 刺口 line（沿法线 NOTCH_LEN_MM/2 两端，端点独立变换）
@@ -1137,8 +1185,8 @@ function applyPlacement(entry: PieceEntry, rot: number, tr: Pt, mode: EditViewMo
     const n: Notch | undefined = notches[i];
     if (!n) continue;
     const [px, py, nx, ny] = n;
-    const a = transformPt([px - nx * half, py - ny * half], rot, tr);
-    const b = transformPt([px + nx * half, py + ny * half], rot, tr);
+    const a = transformPt([px - nx * half, py - ny * half], rot, tr, mirror);
+    const b = transformPt([px + nx * half, py + ny * half], rot, tr, mirror);
     notchEl.setAttribute('x1', String(a[0]));
     notchEl.setAttribute('y1', String(a[1]));
     notchEl.setAttribute('x2', String(b[0]));
@@ -1148,8 +1196,8 @@ function applyPlacement(entry: PieceEntry, rot: number, tr: Pt, mode: EditViewMo
   // layer7 布纹线 line（随片同步旋转 —— 旋转偏离角指标的物理依据）
   if (entry.grainEl && entry.piece.grain_line) {
     const [x1, y1, x2, y2] = entry.piece.grain_line;
-    const a = transformPt([x1, y1], rot, tr);
-    const b = transformPt([x2, y2], rot, tr);
+    const a = transformPt([x1, y1], rot, tr, mirror);
+    const b = transformPt([x2, y2], rot, tr, mirror);
     entry.grainEl.setAttribute('x1', String(a[0]));
     entry.grainEl.setAttribute('y1', String(a[1]));
     entry.grainEl.setAttribute('x2', String(b[0]));
@@ -1161,12 +1209,19 @@ function applyPlacement(entry: PieceEntry, rot: number, tr: Pt, mode: EditViewMo
 /**
  * 单点 rotation + translation 变换（与 NestSVG.transformPt / lib/geometry.ts pointsStr
  * 同公式 + r2 截断 —— line 元素 x1/y1/x2/y2 独立属性写入需要单点版）。
+ * mirror=true（edit-keyboard US-003 起，缺省 false 零回归）：旋转前一行式 x 取负，
+ * 与 pointsStr mirror 分支同公式。
  */
-function transformPt(pt: [number, number], rot: number, tr: [number, number]): [number, number] {
+function transformPt(
+  pt: [number, number],
+  rot: number,
+  tr: [number, number],
+  mirror = false,
+): [number, number] {
   const r = (rot * Math.PI) / 180;
   const c = Math.cos(r);
   const s = Math.sin(r);
-  const x = pt[0];
+  const x = mirror ? -pt[0] : pt[0];
   const y = pt[1];
   const rx = Math.round((x * c - y * s + tr[0]) * 100) / 100;
   const ry = Math.round((x * s + y * c + tr[1]) * 100) / 100;

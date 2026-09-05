@@ -127,6 +127,9 @@ function seedRun(placed: PlacedItem[], manifest: ManifestMsg = makeManifest()): 
       id: it.id,
       rotation: it.rotation,
       translation: [it.translation[0], it.translation[1]] as [number, number],
+      // edit-keyboard US-003：镜像夹具透传（omit-when-false —— 无镜像项零键，既有
+      // 用例 placed 项无 mirror → 字节级不变）。
+      ...(it.mirror === true ? { mirror: true } : {}),
     })),
   };
   run.frames.push(frame);
@@ -872,5 +875,123 @@ describe('EditCanvas 重合指标 (US-003)', () => {
     act(() => {
       firePointer(roughB, 'pointerup', 25, 75);
     });
+  });
+});
+
+// ============================================================
+// 镜像渲染（edit-keyboard US-003）：working 项 mirror:true → 5 层 points/端点
+// 全部 x 取负（局部 x 翻转 → 旋转 → 平移，x′ = −x·c − y·s + tx）；placementSig
+// 含 mirror 段；拖动帧 clamp/池增量/DOM 同口径透传（applyEditPlacement 覆写语义）。
+// ============================================================
+
+describe('EditCanvas 镜像渲染 (edit-keyboard US-003)', () => {
+  it('mirror:true 5 层 points 全部 x 取负（手算对拍）；无镜像片逐字节不变', () => {
+    const placed: PlacedItem[] = [
+      { id: 'a_28', rotation: 0, translation: [600, 0], mirror: true },
+      { id: 'b_30', rotation: 0, translation: [600, 0] },
+    ];
+    const svg = mountCanvas('full', seedRun(placed));
+    const { g } = skeleton(svg);
+    // 毛版 [[0,0],[500,0],[500,500],[0,500]]：x′ = −x + 600
+    const roughA = g.childNodes[0] as SVGPolygonElement;
+    expect(roughA.getAttribute('points')).toBe('600,0 100,0 100,500 600,500');
+    // 净版 [[50,50],[450,50],[450,450],[50,450]] → (550,50)(150,50)(150,450)(550,450)
+    const netA = g.childNodes[1] as SVGPolygonElement;
+    expect(netA.getAttribute('points')).toBe('550,50 150,50 150,450 550,450');
+    // 内部线 [[100,100],[400,100]] → (500,100)-(200,100)
+    const internalA = g.childNodes[2] as SVGPolylineElement;
+    expect(internalA.getAttribute('points')).toBe('500,100 200,100');
+    // 刺口 [250,0,0,-1] 端点 (250,4)/(250,-4) → x 取负 +600 = (350,±4)
+    const notchA = g.childNodes[3] as SVGLineElement;
+    expect(notchA.getAttribute('x1')).toBe('350');
+    expect(notchA.getAttribute('y1')).toBe('4');
+    expect(notchA.getAttribute('x2')).toBe('350');
+    expect(notchA.getAttribute('y2')).toBe('-4');
+    // 布纹线 [100,250,400,250] → (500,250)-(200,250)
+    const grainA = g.childNodes[4] as SVGLineElement;
+    expect(grainA.getAttribute('x1')).toBe('500');
+    expect(grainA.getAttribute('y1')).toBe('250');
+    expect(grainA.getAttribute('x2')).toBe('200');
+    expect(grainA.getAttribute('y2')).toBe('250');
+    // 同帧无镜像片走缺省路径（x 不取负）
+    const roughB = g.childNodes[5] as SVGPolygonElement;
+    expect(roughB.getAttribute('points')).toBe('600,0 1100,0 1100,500 600,500');
+  });
+
+  it('mirror + rot 90 复合（x 取负在旋转前）：x′ = −y+tx、y′ = −x+ty', () => {
+    const placed: PlacedItem[] = [
+      { id: 'a_28', rotation: 90, translation: [600, 500], mirror: true },
+    ];
+    const svg = mountCanvas('full', seedRun(placed));
+    const { g } = skeleton(svg);
+    const roughA = g.childNodes[0] as SVGPolygonElement;
+    // (0,0)→(600,500)；(500,0)→(600,0)；(500,500)→(100,0)；(0,500)→(100,500)
+    expect(roughA.getAttribute('points')).toBe('600,500 600,0 100,0 100,500');
+  });
+
+  it('placementSig 含 mirror 段：replaceWorking 翻转 mirror（同 rot/tr）→ 5 层重写', () => {
+    const placed: PlacedItem[] = [
+      { id: 'a_28', rotation: 0, translation: [600, 0], mirror: true },
+    ];
+    const svg = mountCanvas('full', seedRun(placed));
+    const { g } = skeleton(svg);
+    const roughA = g.childNodes[0] as SVGPolygonElement;
+    expect(roughA.getAttribute('points')).toBe('600,0 100,0 100,500 600,500');
+    // 关镜像（同 rot/tr）：签名含 mirror 段 → 重写；缺席则误判无变化 → 画布陈旧
+    act(() => {
+      useEditStore.getState().replaceWorking([{ id: 'a_28', rotation: 0, translation: [600, 0] }]);
+    });
+    expect(roughA.getAttribute('points')).toBe('600,0 1100,0 1100,500 600,500');
+    // 开回镜像：再重写（双向翻转都生效）
+    act(() => {
+      useEditStore.getState().replaceWorking([
+        { id: 'a_28', rotation: 0, translation: [600, 0], mirror: true },
+      ]);
+    });
+    expect(roughA.getAttribute('points')).toBe('600,0 100,0 100,500 600,500');
+  });
+
+  it('拖动镜像片：clampPlacement 按镜像 bbox 钳制（minX<0 右推）、working 不掉镜像标志', () => {
+    // 镜像 a_28 @ tr[600,0]：世界 x ∈ [100,600]。左拖候选 tx=100 → 镜像 minX=−400 <0
+    // → 钳到 minX=0（tx=500）；若按非镜像 bbox 算（x∈[100,600] 不越界）则不钳 —— 本
+    // 断言即锁 clampPlacement 的 mirror 参按镜像几何生效。
+    const placed: PlacedItem[] = [
+      { id: 'a_28', rotation: 0, translation: [600, 0], mirror: true },
+    ];
+    const svg = mountCanvas('full', seedRun(placed));
+    mockRect(svg, 550, 500); // s = 0.5
+    const roughA = roughPolyOf(svg, '#ff0000');
+    act(() => {
+      firePointer(roughA, 'pointerdown', 100, 100);
+      firePointer(roughA, 'pointermove', -150, 100); // dx=−500mm → 候选 tx=100
+      firePointer(roughA, 'pointerup', -150, 100);
+    });
+    const w = useEditStore.getState().working;
+    expect(w[0].mirror).toBe(true); // setWorkingItem 增量更新不掉标志（US-002 透传）
+    expect(w[0].translation[0]).toBeCloseTo(500, 9); // 镜像 minX −400 → 钳 0
+    expect(roughA.getAttribute('points')).toBe('500,0 0,0 0,500 500,500');
+  });
+
+  it('拖动帧池增量透传 mirror：镜像 b(+100mm) 与 a 交 490×400（丢镜像则 0）', () => {
+    // a@[0,0]（x∈[0,500]²）；镜像 b@[410,100]（x∈[−90,410]，y∈[100,600]）右拖 +100mm
+    // → tr[510,100]：镜像世界 x∈[10,510] → 与 a 交 x[10,500]×y[100,500] = 490×400；
+    // 若 applyEditPlacement 帧内覆回非镜像（x∈[510,1010]）→ 与 a 分离面积 0 —— 精确
+    // 值断言锁「池增量显式传 mirror」接线。
+    const placed: PlacedItem[] = [
+      { id: 'a_28', rotation: 0, translation: [0, 0] },
+      { id: 'b_30', rotation: 0, translation: [410, 100], mirror: true },
+    ];
+    const svg = mountCanvas('full', seedRun(placed));
+    mockRect(svg, 550, 500);
+    const roughB = roughPolyOf(svg, '#00ff00');
+    act(() => {
+      firePointer(roughB, 'pointerdown', 100, 100);
+      firePointer(roughB, 'pointermove', 150, 100); // dx=+100mm → tr[510,100]
+      firePointer(roughB, 'pointerup', 150, 100);
+    });
+    expect(useEditStore.getState().working[1].mirror).toBe(true);
+    expect(metricsText('edit-metrics-area')).toBe('196000.0 mm²（1960.00 cm²）');
+    // 穿透：镜像 b 顶点 (10,100) 严格落入 a，到 a 边界最近距离 10（x 距左界 10）
+    expect(metricsText('edit-metrics-depth')).toBe('10.0 mm');
   });
 });
