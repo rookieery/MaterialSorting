@@ -16,6 +16,10 @@
 //          11) 重合指标（三值精确 / ≤10 琥珀 / >10 红 / >45° 红 / 拖动中 rAF 实时）
 //   edit-keyboard US-005：12) 键盘变换（L/K/Shift/空格/O/I 逐键精确值 + 质心锚定
 //              片不漂移 + clamp + e.repeat 规则 + 守卫链逐条：表单控件/无选中/禁用）
+//   edit-keyboard US-006：13) R 键片级重置（拖动+L 旋转+O 镜像后按 R 逐字段回算法
+//              基线（mirror 清零）、其余片与 lastFrame 不动、5 层 points + 指标/手柄
+//              同帧回基线；e.repeat 忽略 + 守卫链：未选中/确认层打开/resetItem
+//              守卫 false 静默不动不炸）
 //
 // jsdom 缺口：PointerEvent 未实现（beforeEach polyfill）；getScreenCTM/createSVGPoint
 // 缺失（mock 复合矩阵，同 editGeometry.test 套路）。
@@ -1309,5 +1313,178 @@ describe('EditCanvas 键盘变换 (edit-keyboard US-005)', () => {
       fireKey(window, 'l');
     });
     expect(useEditStore.getState().working[0].rotation).toBe(1);
+  });
+});
+
+// ============================================================
+// R 键片级重置（edit-keyboard US-006）：resetItem 恢复算法基线（= 会话首次 open
+// 的算法原始布局，R 会连已保存编辑一起抹掉 —— 定案接受）+ refreshPieceView 单点
+// 同帧刷新（DOM 5 层 + 池增量 + 指标/手柄）。
+//
+// 数学锚点（手算锁死）：基线 a@[600,250] + b@[1000,250]（初始包络 maxX 1500 →
+// vb 1500×1000，mockRect 750×500 → meet s=0.5）；基线重合 = [1000,1100]×[250,750]
+// = 100×500 = 50000 mm²（R 后池增量必须按基线几何重算的判别值 —— 池陈旧则值错）；
+// 手柄 r = clamp(1500×0.015)=22.5、off=3r=67.5 → 基线质心 (850,500) 上方 cy=567.5。
+// ============================================================
+
+describe('EditCanvas R 键片级重置 (edit-keyboard US-006)', () => {
+  /** 基线：a@[600,250] 与 b@[1000,250] 基线交 100×500=50000（R 后判别值）。 */
+  const RST_PLACED: PlacedItem[] = [
+    { id: 'a_28', rotation: 0, translation: [600, 250] },
+    { id: 'b_30', rotation: 0, translation: [1000, 250] },
+  ];
+
+  it('正常恢复：拖动 + L 旋转 + O 镜像后按 R → 逐字段回基线（mirror 清零）、其余片与 lastFrame 不动、5 层 points + 指标/手柄同帧回基线', () => {
+    const run = seedRun(RST_PLACED);
+    const svg = mountCanvas('full', run);
+    mockRect(svg, 750, 500); // vb 1500×1000 → meet s = 0.5
+    const roughA = roughPolyOf(svg, '#ff0000');
+    const roughB = roughPolyOf(svg, '#00ff00');
+    const handle = () =>
+      document.querySelector('[data-testid="edit-rotate-handle"]') as SVGCircleElement;
+    selectPiece(svg, '#ff0000');
+    expect(metricsText('edit-metrics-area')).toBe('50000.0 mm²（500.00 cm²）'); // 基线交
+
+    // ① 拖动：dClient (+300,−100) → world (+600,+200) → a@[1200,450]（与 b 交 300×300）
+    act(() => {
+      firePointer(roughA, 'pointerdown', 100, 100);
+      firePointer(roughA, 'pointermove', 400, 0);
+      firePointer(roughA, 'pointerup', 400, 0);
+    });
+    expect(metricsText('edit-metrics-area')).toBe('90000.0 mm²（900.00 cm²）');
+    // ② L 旋转 +1°（质心锚定）+ ③ O 水平镜像 —— R 前置编辑态
+    act(() => {
+      fireKey(window, 'l');
+      fireKey(window, 'o');
+    });
+    let w = useEditStore.getState().working;
+    expect(w[0].rotation).toBe(1);
+    expect(w[0].mirror).toBe(true);
+    expect(metricsText('edit-metrics-rot')).toBe('1.0°');
+    expect(Number(handle().getAttribute('cy'))).toBeCloseTo(767.5, 6); // 质心 (1450,700)
+
+    // ④ R：working[0] 逐字段回基线（mirror 键消失）、其余片与 lastFrame 不动
+    act(() => {
+      fireKey(window, 'r');
+    });
+    w = useEditStore.getState().working;
+    expect(w[0]).toEqual({ id: 'a_28', rotation: 0, translation: [600, 250] });
+    expect('mirror' in w[0]).toBe(false); // omit-when-false：基线无镜像 → 键消失
+    expect(w[1]).toEqual({ id: 'b_30', rotation: 0, translation: [1000, 250] });
+    // 只写 working 草稿不写 run（保存才落盘 —— resetItem 语义，R 链路不得旁路）
+    expect(run.lastFrame!.placed_items).toEqual([
+      { id: 'a_28', rotation: 0, translation: [600, 250] },
+      { id: 'b_30', rotation: 0, translation: [1000, 250] },
+    ]);
+    // 画布 5 层回基线值（毛版 points 手算）+ 其余片 DOM 不动
+    expect(roughA.getAttribute('points')).toBe('600,250 1100,250 1100,750 600,750');
+    expect(roughB.getAttribute('points')).toBe('1000,250 1500,250 1500,750 1000,750');
+    // 指标/手柄同帧刷新（refreshPieceView 接线锁：面积按基线几何重算 + 质心回基线；
+    // 主渲染 effect 不触指标/手柄 —— 漏调用则面板停在编辑态旧值）
+    expect(metricsText('edit-metrics-area')).toBe('50000.0 mm²（500.00 cm²）');
+    expect(metricsText('edit-metrics-rot')).toBe('0.0°');
+    expect(handle().getAttribute('cy')).toBe('567.5');
+  });
+
+  it('e.repeat 忽略：按住 R（auto-repeat）零动作；抬手单击正常重置（幂等键防抖）', () => {
+    const svg = mountCanvas('full', seedRun(RST_PLACED));
+    selectPiece(svg, '#ff0000');
+    act(() => {
+      fireKey(window, 'l');
+    });
+    expect(useEditStore.getState().working[0].rotation).toBe(1);
+    act(() => {
+      fireKey(window, 'r', { repeat: true });
+      fireKey(window, 'r', { repeat: true });
+    });
+    expect(useEditStore.getState().working[0].rotation).toBe(1); // repeat 全忽略
+    act(() => {
+      fireKey(window, 'r');
+    });
+    expect(useEditStore.getState().working[0].rotation).toBe(0); // 非 repeat 生效
+  });
+
+  it('守卫链：未选中片（空白点击取消选中后）→ R 无效；重新选中后 R 生效', () => {
+    const svg = mountCanvas('full', seedRun(RST_PLACED));
+    selectPiece(svg, '#ff0000');
+    act(() => {
+      fireKey(window, 'l');
+      fireKey(window, 'o');
+    });
+    // 空白点击（无位移 down-up）→ 取消选中（守卫③拦截 R）
+    act(() => {
+      firePointer(svg, 'pointerdown', 5, 5);
+      firePointer(svg, 'pointerup', 5, 5);
+    });
+    expect(document.querySelector('[data-testid="edit-metrics"]')).toBeNull();
+    act(() => {
+      fireKey(window, 'r');
+    });
+    let w = useEditStore.getState().working;
+    expect(w[0].rotation).toBe(1); // 无选中 → R 无效
+    expect(w[0].mirror).toBe(true);
+    // 重新选中 → R 生效
+    selectPiece(svg, '#ff0000');
+    act(() => {
+      fireKey(window, 'r');
+    });
+    w = useEditStore.getState().working;
+    expect(w[0]).toEqual({ id: 'a_28', rotation: 0, translation: [600, 250] });
+  });
+
+  it('守卫链：确认层打开（interactionEnabled=false）→ R 禁用；恢复 true 后 R 生效（ref 读现值）', () => {
+    const svg = mountCanvas('full', seedRun(RST_PLACED));
+    selectPiece(svg, '#ff0000');
+    act(() => {
+      fireKey(window, 'l');
+      fireKey(window, 'o');
+    });
+    // 确认层打开（EditLayoutModal 传 !confirmDiscard）：监听器不重挂，interactionRef 生效
+    act(() => {
+      root!.render(<EditCanvas mode="full" interactionEnabled={false} />);
+    });
+    act(() => {
+      fireKey(window, 'r');
+    });
+    let w = useEditStore.getState().working;
+    expect(w[0].rotation).toBe(1); // 总闸拦截
+    expect(w[0].mirror).toBe(true);
+    // 确认层关闭：恢复 true 后同键生效
+    act(() => {
+      root!.render(<EditCanvas mode="full" interactionEnabled />);
+    });
+    act(() => {
+      fireKey(window, 'r');
+    });
+    w = useEditStore.getState().working;
+    expect(w[0]).toEqual({ id: 'a_28', rotation: 0, translation: [600, 250] });
+    expect('mirror' in w[0]).toBe(false);
+  });
+
+  it('resetItem 返回 false（id 错位守卫命中）→ 静默不动不炸（不按 pid 寻址）', () => {
+    const run = seedRun(RST_PLACED);
+    const svg = mountCanvas('full', run);
+    selectPiece(svg, '#ff0000');
+    // 人为制造 id 错位（working 的 pidSeq 不变 → 不触发骨架重建/清选中，R 链路直达
+    // resetItem 的 id 对齐守卫）：baseline[0].id ≠ working[0].id —— 同 pid 多副本
+    // 下标错位防御的等价形态，store 层拒绝且绝不静默按 pid 找同名项。
+    const bl = useEditStore.getState().baseline!;
+    act(() => {
+      useEditStore.setState({
+        baseline: {
+          ...bl,
+          placedItems: [{ id: 'zz_28', rotation: 5, translation: [7, 8] }, bl.placedItems[1]],
+        },
+      });
+    });
+    const before = useEditStore.getState().working[0];
+    expect(() => {
+      act(() => {
+        fireKey(window, 'r');
+      });
+    }).not.toThrow();
+    expect(useEditStore.getState().working[0]).toBe(before); // 静默不动（原引用原样）
+    const roughA = roughPolyOf(svg, '#ff0000');
+    expect(roughA.getAttribute('points')).toBe('600,250 1100,250 1100,750 600,750'); // DOM 不动
   });
 });

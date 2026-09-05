@@ -67,10 +67,18 @@
 // 命中零变换。键分发（选中片）：L=+1° / K=−1°（Shift ±10°，e.repeat 放行 = 按住
 // auto-repeat 连转）、空格=rot+180（preventDefault 防 body 滚动；幂等键忽略
 // e.repeat 防抖动）、O=toggle mirror（rot 不变）、I=toggle mirror+rot+180
-// （diag(1,−1)=R(180°)·diag(−1,1) 复合律，共用单 mirror 标志）；R 分支留 US-006。
+// （diag(1,−1)=R(180°)·diag(−1,1) 复合律，共用单 mirror 标志）。
 // 变换一律质心锚定不漂移：t' = c_world − R(rot')·M(m')·c_local（c_local/c_world =
 // base/当前世界多边形顶点均值，M=diag(−1,1) when mirror），随后 clampPlacement
 // （带 mirror 参）Y∈[0,gate] 与 minX<0 钳制（与拖动同口径，右界永不钳）。
+//
+// edit-keyboard US-006（2026-09-05）R 键片级重置：幂等键（忽略 e.repeat），守卫链
+// 与 US-005 六键同链（总闸/表单控件/无选中任一命中无效）。R = editStore
+// resetItem(selRef 下标)（恢复算法基线 —— 同 pid 多副本按下标寻址绝不按 pid；
+// store 层 baseline/越界/id 错位三守卫，返回 false 静默不动）。成功后重读草稿项按
+// 基线值走 refreshPieceView 单点刷新（DOM 5 层 + 池增量 + 指标/手柄同帧 —— store
+// 写入已由 resetItem 承担，不重复 setWorkingItem；refreshPieceView 与
+// commitDragPlacement 共用同一条「同帧刷新」路径）。
 
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -580,9 +588,29 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
     }
 
     /**
-     * 拖动帧共同落笔：被拖片 DOM + working（真相源）+ 池增量 + 指标 + 手柄。
+     * 帧内视图落笔单片（不含 store 写入）：DOM 5 层 + 预计算池增量 + 指标 + 手柄。
+     * edit-keyboard US-006：R 键片级重置复用 —— store 写入由 resetItem 承担（reset 后
+     * 不重复 setWorkingItem），视图侧与拖动帧共用同一条「同帧刷新」路径。
      * mirror 显式透传（edit-keyboard US-003）：applyEditPlacement 是覆写语义（US-001），
      * 缺省 false 会把池内镜像片静默覆回非镜像 → 重合指标按错几何算。
+     */
+    function refreshPieceView(
+      index: number,
+      entry: PieceEntry,
+      rot: number,
+      tr: Pt,
+      mirror: boolean,
+    ): void {
+      applyEntryPlacement(index, entry, rot, tr, mirror);
+      const ep = poolRef.current?.find((p) => p.key === index);
+      if (ep) applyEditPlacement(ep, rot, tr, mirror); // 预计算池增量：只重算单片一项
+      refreshMetrics(index);
+      updateHandle(index);
+    }
+
+    /**
+     * 拖动帧共同落笔：working（真相源，setWorkingItem）+ refreshPieceView（DOM 5 层 +
+     * 池增量 + 指标 + 手柄）。
      * mirrorPatch（edit-keyboard US-005，缺省 undefined = 不改 mirror —— 指针拖动会话
      * 内 mirror 恒定走缺省）：键盘 O/I 翻转镜像时显式传目标值（store patch.mirror）。
      */
@@ -594,17 +622,13 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
       mirror: boolean,
       mirrorPatch?: boolean,
     ): void {
-      applyEntryPlacement(index, entry, rot, tr, mirror);
       const patch: { rotation: number; translation: Pt; mirror?: boolean } = {
         rotation: rot,
         translation: tr,
       };
       if (mirrorPatch !== undefined) patch.mirror = mirrorPatch;
       useEditStore.getState().setWorkingItem(index, patch);
-      const ep = poolRef.current?.find((p) => p.key === index);
-      if (ep) applyEditPlacement(ep, rot, tr, mirror); // 预计算池增量：只重算被拖片一项
-      refreshMetrics(index);
-      updateHandle(index);
+      refreshPieceView(index, entry, rot, tr, mirror);
     }
 
     /**
@@ -852,10 +876,11 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
     };
 
     /**
-     * 键盘变换（edit-keyboard US-005；window keydown —— 画布无 tabIndex 不抢焦点，
-     * target = body/最近聚焦元素）。守卫链任一命中零变换：①interactionEnabled=false
-     * （确认层打开）②表单控件聚焦（INPUT/SELECT/TEXTAREA/BUTTON/contentEditable ——
-     * 键盘归控件，含画布左上形态 select）③无选中片。分发见组件头注 US-005 段。
+     * 键盘变换（edit-keyboard US-005 + US-006 R 键；window keydown —— 画布无
+     * tabIndex 不抢焦点，target = body/最近聚焦元素）。守卫链任一命中零变换：
+     * ①interactionEnabled=false（确认层打开）②表单控件聚焦
+     * （INPUT/SELECT/TEXTAREA/BUTTON/contentEditable —— 键盘归控件，含画布左上形态
+     * select）③无选中片。分发见组件头注 US-005/US-006 段。
      */
     const onKeyDown = (e: KeyboardEvent): void => {
       if (!interactionRef.current) return; // 守卫①：确认层打开 → 全键禁用
@@ -880,11 +905,21 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
         applyKeyTransform(index, it.rotation + step, curMirror);
         return;
       }
-      if (k === 'r') {
-        return; // R 片级重置 —— US-006 接线（本 story 留分支）
-      }
-      // 幂等键（空格/O/I）忽略 e.repeat：一次 keydown 一次变换，按住不抖动。
+      // 幂等键（空格/O/I/R）忽略 e.repeat：一次 keydown 一次变换，按住不抖动。
       if (e.repeat) return;
+      if (k === 'r') {
+        // R 片级重置（US-006）：恢复算法基线 = editStore.resetItem（按下标寻址 ——
+        // 同 pid 多副本绝不按 pid；store 层 baseline/越界/id 错位三守卫，返回 false =
+        // 守卫命中 → 静默不动不炸）。成功后重读草稿项按基线值单点刷新视图（store
+        // 写入已由 resetItem 承担，不重复 setWorkingItem）。
+        if (!useEditStore.getState().resetItem(index)) return;
+        const rst = useEditStore.getState().working[index];
+        const entry = entriesRef.current[index];
+        if (rst && entry) {
+          refreshPieceView(index, entry, rst.rotation, rst.translation, rst.mirror === true);
+        }
+        return;
+      }
       if (k === ' ') {
         e.preventDefault(); // 防 body 滚动（聚焦按钮激活已被守卫②排除）
         applyKeyTransform(index, it.rotation + 180, curMirror);
