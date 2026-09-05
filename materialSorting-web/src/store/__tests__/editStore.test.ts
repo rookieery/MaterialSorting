@@ -460,6 +460,32 @@ describe('mirror 贯穿（US-002：五处字段 map，omit-when-false）', () =>
     expect('mirror' in w[1]).toBe(false);
   });
 
+  it('setWorkingItem patch.mirror（edit-keyboard US-005 键盘 O/I）：显式 true 带键 / 显式 false 键消失 / 缺省保持现值', () => {
+    const rec = mkMirrorRun();
+    useEditStore.getState().open(rec);
+    // 显式 true：无镜像项开镜像（O/I 翻转「开」侧）。
+    useEditStore.getState().setWorkingItem(1, { mirror: true, rotation: 15 });
+    expect(useEditStore.getState().working[1]).toEqual({
+      id: 'b_28',
+      rotation: 15,
+      translation: [600, 0],
+      mirror: true,
+    });
+    // 显式 false：镜像项关镜像 —— 键按 omit-when-false 消失（O/I 翻转「关」侧）。
+    useEditStore.getState().setWorkingItem(0, { mirror: false });
+    expect(useEditStore.getState().working[0]).toEqual({
+      id: 'a_28',
+      rotation: 0,
+      translation: [0, 0],
+    });
+    expect('mirror' in useEditStore.getState().working[0]).toBe(false);
+    // 缺省不传 = 保持现值（指针拖动会话内恒定不传的既有口径零回归）。
+    useEditStore.getState().setWorkingItem(1, { rotation: 45 });
+    expect(useEditStore.getState().working[1].mirror).toBe(true);
+    useEditStore.getState().setWorkingItem(0, { translation: [9, 9] });
+    expect('mirror' in useEditStore.getState().working[0]).toBe(false);
+  });
+
   it('replaceWorking（deepCopyItems 路径）透传 mirror：true 项带键 / 缺省项不带键', () => {
     const rec = mkRun();
     useEditStore.getState().open(rec);

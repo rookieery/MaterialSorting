@@ -59,6 +59,18 @@
 // 拖动/旋转会话起手快照 mirror0（setWorkingItem 不改 mirror ⇒ 会话内恒定），帧内
 // commitDragPlacement 透传 DOM 5 层 + applyEditPlacement 池增量（US-001 覆写语义：
 // 镜像片增量必须显式传标志，缺省覆回 false）。
+//
+// edit-keyboard US-005（2026-09-05）键盘变换：window keydown（挂在指针交互同一
+// effect 内 —— 复用 commitDragPlacement/refreshMetrics/updateHandle 闭包助手）。
+// 守卫链：interactionEnabled=false（EditLayoutModal 确认层打开）→ 表单控件聚焦
+// （INPUT/SELECT/TEXTAREA/BUTTON/contentEditable —— 键盘归控件）→ 无选中片，任一
+// 命中零变换。键分发（选中片）：L=+1° / K=−1°（Shift ±10°，e.repeat 放行 = 按住
+// auto-repeat 连转）、空格=rot+180（preventDefault 防 body 滚动；幂等键忽略
+// e.repeat 防抖动）、O=toggle mirror（rot 不变）、I=toggle mirror+rot+180
+// （diag(1,−1)=R(180°)·diag(−1,1) 复合律，共用单 mirror 标志）；R 分支留 US-006。
+// 变换一律质心锚定不漂移：t' = c_world − R(rot')·M(m')·c_local（c_local/c_world =
+// base/当前世界多边形顶点均值，M=diag(−1,1) when mirror），随后 clampPlacement
+// （带 mirror 参）Y∈[0,gate] 与 minX<0 钳制（与拖动同口径，右界永不钳）。
 
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -149,6 +161,12 @@ interface EditMetrics {
 export interface EditCanvasProps {
   /** 渲染形态（完整版/毛板，即时切换可恢复）。 */
   mode: EditViewMode;
+  /**
+   * 键盘/指针交互总闸（edit-keyboard US-005，缺省 true）：false = 键盘变换全键禁用
+   * （EditLayoutModal ✕ dirty 确认层打开时传 !confirmDiscard —— 确认层的按钮/回车
+   * 不被画布键劫持）。指针交互不受影响（确认层 overlay 已挡住画布 pointer 命中区）。
+   */
+  interactionEnabled?: boolean;
   /** 形态 select 变更回调（select 渲染在画布左上工具区，state 属 EditLayoutModal；
    *  直挂 EditCanvas 的单测不传 → no-op）。 */
   onModeChange?: (mode: EditViewMode) => void;
@@ -178,7 +196,7 @@ export interface EditPolishUi {
   onCompactChange: (v: boolean) => void;
 }
 
-export function EditCanvas({ mode, onModeChange, polish }: EditCanvasProps) {
+export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: EditCanvasProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const flipRef = useRef<SVGGElement | null>(null);
   const bgRef = useRef<SVGRectElement | null>(null);
@@ -203,6 +221,10 @@ export function EditCanvas({ mode, onModeChange, polish }: EditCanvasProps) {
   // 面板；其余全 ref —— pointer 监听器只挂一次，不闭包 props/state）----
   const modeRef = useRef<EditViewMode>(mode);
   modeRef.current = mode;
+  /** 键盘交互总闸 ref（edit-keyboard US-005）：keydown 监听器只挂一次，prop 经
+   *  ref 读现值 —— 确认层开关即时生效无需重挂监听。 */
+  const interactionRef = useRef(true);
+  interactionRef.current = interactionEnabled !== false;
   const selRef = useRef<number | null>(null);
   const [sel, setSel] = useState<number | null>(null);
   const [metrics, setMetrics] = useState<EditMetrics | null>(null);
@@ -344,7 +366,9 @@ export function EditCanvas({ mode, onModeChange, polish }: EditCanvasProps) {
   }, []);
 
   /**
-   * 指针交互（US-002 平移 + US-003 拖动/旋转/选中，单一 effect 内分层分发）：
+   * 指针交互（US-002 平移 + US-003 拖动/旋转/选中，单一 effect 内分层分发；edit-keyboard
+   * US-005 起同 effect 兼挂 window keydown —— 键盘变换落笔复用本闭包的
+   * commitDragPlacement/refreshMetrics/updateHandle，见组件头注 US-005 段）：
    *   pointerdown target ∈ 旋转手柄 → 绕质心旋转拖柄；
    *   pointerdown target ∈ 毛版 polygon → 选中 + 提层 + 平移拖片；
    *   空白（svg/bg/fab）→ 平移（位移 <3px 的 down-up = 点击取消选中）。
@@ -559,6 +583,8 @@ export function EditCanvas({ mode, onModeChange, polish }: EditCanvasProps) {
      * 拖动帧共同落笔：被拖片 DOM + working（真相源）+ 池增量 + 指标 + 手柄。
      * mirror 显式透传（edit-keyboard US-003）：applyEditPlacement 是覆写语义（US-001），
      * 缺省 false 会把池内镜像片静默覆回非镜像 → 重合指标按错几何算。
+     * mirrorPatch（edit-keyboard US-005，缺省 undefined = 不改 mirror —— 指针拖动会话
+     * 内 mirror 恒定走缺省）：键盘 O/I 翻转镜像时显式传目标值（store patch.mirror）。
      */
     function commitDragPlacement(
       index: number,
@@ -566,13 +592,47 @@ export function EditCanvas({ mode, onModeChange, polish }: EditCanvasProps) {
       rot: number,
       tr: Pt,
       mirror: boolean,
+      mirrorPatch?: boolean,
     ): void {
       applyEntryPlacement(index, entry, rot, tr, mirror);
-      useEditStore.getState().setWorkingItem(index, { rotation: rot, translation: tr });
+      const patch: { rotation: number; translation: Pt; mirror?: boolean } = {
+        rotation: rot,
+        translation: tr,
+      };
+      if (mirrorPatch !== undefined) patch.mirror = mirrorPatch;
+      useEditStore.getState().setWorkingItem(index, patch);
       const ep = poolRef.current?.find((p) => p.key === index);
       if (ep) applyEditPlacement(ep, rot, tr, mirror); // 预计算池增量：只重算被拖片一项
       refreshMetrics(index);
       updateHandle(index);
+    }
+
+    /**
+     * 键盘变换统一出口（edit-keyboard US-005；L/K/Shift/空格/O/I 共用）：按目标
+     * (rot', m') 质心锚定算 translation —— t' = c_world − R(rot')·M(m')·c_local
+     * （c_local/c_world = base/当前世界多边形顶点均值；质心是仿射量 ⇒ 零平移变换
+     * 后的质心恰 = R(rot')·M(m')·c_local，片原地变换不漂移）—— 再 clampPlacement
+     * （Y∈[0,gate] / minX≥0，右界不钳，与拖动同口径）+ commitDragPlacement 泛化
+     * 路径（DOM 5 层 + working（含 mirror patch）+ 池增量 + 指标/手柄，O(单片)）。
+     */
+    function applyKeyTransform(index: number, rot: number, mirror: boolean): void {
+      const manifest = manifestRef.current;
+      const entry = entriesRef.current[index];
+      if (!manifest || !entry) return;
+      const it = useEditStore.getState().working[index];
+      if (!it) return; // 防御：选中下标与 working 错位（骨架重建清选中，理论不达）
+      const base = entry.piece.polygon;
+      const curMirror = it.mirror === true;
+      const cWorld = centroidOf(transformPolygon(base, it.rotation, it.translation, curMirror));
+      const cLocalNew = centroidOf(transformPolygon(base, rot, [0, 0], mirror));
+      const tr = clampPlacement(
+        base,
+        rot,
+        [cWorld[0] - cLocalNew[0], cWorld[1] - cLocalNew[1]],
+        manifest.gate_mm,
+        mirror,
+      );
+      commitDragPlacement(index, entry, rot, tr, mirror, mirror);
     }
 
     /** 平移拖片帧（viewScale 差分 → 起始 tr + 位移 → 钳制 → 落笔）。 */
@@ -791,15 +851,67 @@ export function EditCanvas({ mode, onModeChange, polish }: EditCanvasProps) {
       endPan(e);
     };
 
+    /**
+     * 键盘变换（edit-keyboard US-005；window keydown —— 画布无 tabIndex 不抢焦点，
+     * target = body/最近聚焦元素）。守卫链任一命中零变换：①interactionEnabled=false
+     * （确认层打开）②表单控件聚焦（INPUT/SELECT/TEXTAREA/BUTTON/contentEditable ——
+     * 键盘归控件，含画布左上形态 select）③无选中片。分发见组件头注 US-005 段。
+     */
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (!interactionRef.current) return; // 守卫①：确认层打开 → 全键禁用
+      const t = e.target as Element | null; // 守卫②：表单控件聚焦
+      if (t) {
+        const tag = typeof t.tagName === 'string' ? t.tagName.toUpperCase() : '';
+        if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA' || tag === 'BUTTON') {
+          return;
+        }
+        if ((t as HTMLElement).isContentEditable) return;
+      }
+      const index = selRef.current; // 守卫③：无选中片
+      if (index == null) return;
+      const it = useEditStore.getState().working[index];
+      if (!it) return;
+      // 单字符键统一小写（Shift+L 的 e.key='L'，CapsLock 布局同样命中）。
+      const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
+      const curMirror = it.mirror === true;
+      if (k === 'l' || k === 'k') {
+        // L/K 放行 e.repeat（浏览器 auto-repeat = 按住连转）；Shift 步长 ±10°。
+        const step = (e.shiftKey ? 10 : 1) * (k === 'l' ? 1 : -1);
+        applyKeyTransform(index, it.rotation + step, curMirror);
+        return;
+      }
+      if (k === 'r') {
+        return; // R 片级重置 —— US-006 接线（本 story 留分支）
+      }
+      // 幂等键（空格/O/I）忽略 e.repeat：一次 keydown 一次变换，按住不抖动。
+      if (e.repeat) return;
+      if (k === ' ') {
+        e.preventDefault(); // 防 body 滚动（聚焦按钮激活已被守卫②排除）
+        applyKeyTransform(index, it.rotation + 180, curMirror);
+        return;
+      }
+      if (k === 'o') {
+        // 水平镜像 = toggle mirror（rot 不变）。
+        applyKeyTransform(index, it.rotation, !curMirror);
+        return;
+      }
+      if (k === 'i') {
+        // 垂直镜像 = toggle mirror + rot+180（diag(1,−1)=R(180°)·diag(−1,1)，共用单标志）。
+        applyKeyTransform(index, it.rotation + 180, !curMirror);
+      }
+    };
+
     svg.addEventListener('pointerdown', onPointerDown);
     svg.addEventListener('pointermove', onPointerMove);
     svg.addEventListener('pointerup', onPointerUp);
     svg.addEventListener('pointercancel', onPointerCancel);
+    window.addEventListener('keydown', onKeyDown);
     return () => {
       svg.removeEventListener('pointerdown', onPointerDown);
       svg.removeEventListener('pointermove', onPointerMove);
       svg.removeEventListener('pointerup', onPointerUp);
       svg.removeEventListener('pointercancel', onPointerCancel);
+      window.removeEventListener('keydown', onKeyDown);
       if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
       pendingMoveRef.current = null;
@@ -941,7 +1053,8 @@ export function EditCanvas({ mode, onModeChange, polish }: EditCanvasProps) {
       {/* 操作指南（画布右下、保存按钮上方；与指标面板同款悬浮卡不挡交互）。
           行式 = 左对齐自然换行（.edit-guide-row），非指标面板的两端对齐 nowrap。
           2026-09-05 四轮：删「形态」「保存」两行（七减五）—— 形态即眼前 select
-          自明、保存是 footer 按钮非画布手势，指南只留画布内交互。 */}
+          自明、保存是 footer 按钮非画布手势，指南只留画布内交互；edit-keyboard
+          US-005 同日补键盘行（键盘也是画布内交互，六键语义一行）。 */}
       <div className="edit-guide" data-testid="edit-guide">
       <div className="edit-metrics-title">操作指南</div>
       <div className="edit-guide-row">
@@ -958,6 +1071,12 @@ export function EditCanvas({ mode, onModeChange, polish }: EditCanvasProps) {
       </div>
       <div className="edit-guide-row">
         <span className="edit-metrics-label">取消选中：</span>单击空白处
+      </div>
+      {/* edit-keyboard US-005：六键语义一行（Shift+L/K ±10° 略 —— 微转步长属于
+          进阶细节，按钮区已有 title 悬浮惯例可后续补；文案不得含「形态」「保存」
+          （EditCanvas.test 反向锁）。 */}
+      <div className="edit-guide-row">
+        <span className="edit-metrics-label">键盘：</span>L/K 微转 · 空格 180° · O 水平镜像 · I 垂直镜像 · R 重置此片
       </div>
       <div className="edit-guide-foot">拖动自动限制在门幅内（上下不出布边）</div>
       </div>

@@ -180,8 +180,15 @@ export interface EditState {
    * @returns false = run 无 lastFrame（无可编辑布局），态保持清空。
    */
   open: (run: RunRecord) => boolean;
-  /** 更新 working 下标项（US-003 拖动 / 旋转消费；越界 / 未打开防御 no-op）。 */
-  setWorkingItem: (index: number, patch: { rotation?: number; translation?: Pt }) => void;
+  /**
+   * 更新 working 下标项（US-003 拖动 / 旋转消费；越界 / 未打开防御 no-op）。
+   * patch.mirror（edit-keyboard US-005 键盘 O/I 消费，缺省不传 = 保持现值 ——
+   * 指针拖动会话内 mirror 恒定不传）：显式 false = 关镜像（键按 omit-when-false 消失）。
+   */
+  setWorkingItem: (
+    index: number,
+    patch: { rotation?: number; translation?: Pt; mirror?: boolean },
+  ) => void;
   /**
    * 片级重置（edit-keyboard US-002，US-006 R 键消费）：working[index] 恢复为基线
    * 对应项深拷贝 —— 语义 = 恢复算法基线（本会话首次 open 的算法原始布局，与全局
@@ -256,6 +263,9 @@ export const useEditStore = create<EditState>((set, get) => ({
     if (index < 0 || index >= working.length) return;
     const next = working.slice();
     const cur = next[index];
+    // mirror（edit-keyboard US-002 透传 / US-005 可写）：patch 显式带 mirror 时按其值
+    // 落（false → 键消失，omit-when-false）；缺省保持现值（指针拖动会话内恒定不传）。
+    const mirror = patch.mirror !== undefined ? patch.mirror === true : cur.mirror === true;
     next[index] = {
       id: cur.id,
       rotation: patch.rotation !== undefined ? patch.rotation : cur.rotation,
@@ -263,9 +273,7 @@ export const useEditStore = create<EditState>((set, get) => ({
         patch.translation !== undefined
           ? [patch.translation[0], patch.translation[1]]
           : [cur.translation[0], cur.translation[1]],
-      // mirror 透传（edit-keyboard US-002）：rotation/translation 增量更新不掉镜像
-      // 标志（对象整体重建必须显式携带；omit-when-false 同 deepCopyItems）。
-      ...(cur.mirror === true ? { mirror: true } : {}),
+      ...(mirror ? { mirror: true } : {}),
     };
     set({ working: next });
   },

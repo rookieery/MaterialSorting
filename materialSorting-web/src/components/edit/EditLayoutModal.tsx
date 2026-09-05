@@ -12,6 +12,9 @@
 // 关闭/重置清空 —— 关窗即 Inner 整树卸载，快照自然清零）。
 // edit-polish US-005（2026-09-05）：polishCompact 勾选态（对比卡内 checkbox，默认
 // 不勾）→ 勾选后随下次微调请求发出 compact:true（引擎 pass ④ 压缩回收档）。
+// edit-keyboard US-005（2026-09-05）：EditCanvas 键盘变换（L/K/空格/O/I，六键语义
+// 见 EditCanvas 头注）经 interactionEnabled={!confirmDiscard} 联动 ✕ 确认层 ——
+// 确认层打开 = 画布全键禁用。编辑弹窗仍**不挂 ESC 关闭**（仓库红线不变）。
 //
 // 声明式受控 Portal（范本 ExportInfoModal）：外层订阅 controlPanelStore.modal ===
 // 'edit_layout' 自显隐，Portal 到 document.body，Inner 带 key（关闭→重开重挂载 =
@@ -60,7 +63,9 @@ function EditLayoutModalInner(): JSX.Element {
   const working = useEditStore((s) => s.working);
   const baseline = useEditStore((s) => s.baseline);
   const [mode, setMode] = useState<EditViewMode>('full');
-  // ✕ dirty 二次确认层显隐（US-004）。
+  // ✕ dirty 二次确认层显隐（US-004）。edit-keyboard US-005：打开时经
+  // interactionEnabled={!confirmDiscard} 禁用画布键盘变换（确认层按钮/回车不被
+  // 画布键劫持；EditCanvas prop 缺省 true，单测直挂不受影响）。
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   // ---- edit-polish US-003（2026-09-05）：智能微调 state 机 ----
   // busy = 请求在飞（按钮 loading 态禁重复点击）；report = 最近一次成功的前后对比
@@ -226,6 +231,7 @@ function EditLayoutModalInner(): JSX.Element {
           <div className="edit-layout-body">
             <EditCanvas
               mode={mode}
+              interactionEnabled={!confirmDiscard}
               onModeChange={setMode}
               polish={{
                 busy: polishBusy,

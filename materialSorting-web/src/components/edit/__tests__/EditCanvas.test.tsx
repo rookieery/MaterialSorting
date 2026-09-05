@@ -14,6 +14,8 @@
 //           9) 钳制（Y 下界上界按被拖片 bbox / x<0 钳 0 / 右界自由）
 //          10) 旋转（手柄绕质心自由角 + pivot 随动 + 布纹线随转 / 空白点击取消选中）
 //          11) 重合指标（三值精确 / ≤10 琥珀 / >10 红 / >45° 红 / 拖动中 rAF 实时）
+//   edit-keyboard US-005：12) 键盘变换（L/K/Shift/空格/O/I 逐键精确值 + 质心锚定
+//              片不漂移 + clamp + e.repeat 规则 + 守卫链逐条：表单控件/无选中/禁用）
 //
 // jsdom 缺口：PointerEvent 未实现（beforeEach polyfill）；getScreenCTM/createSVGPoint
 // 缺失（mock 复合矩阵，同 editGeometry.test 套路）。
@@ -24,7 +26,8 @@ import { createRoot, type Root } from 'react-dom/client';
 import { EditCanvas, type EditViewMode } from '../EditCanvas';
 import { useEditStore } from '../../../store/editStore';
 import { runRegistry, type RunRecord } from '../../../store/runRegistry';
-import type { PlacedItem } from '../../../types/piece';
+import { transformPolygon } from '../../../lib/editGeometry';
+import type { PlacedItem, Pt } from '../../../types/piece';
 import type { FrameMsg, ManifestMsg } from '../../../types/ws';
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -138,12 +141,16 @@ function seedRun(placed: PlacedItem[], manifest: ManifestMsg = makeManifest()): 
   return run;
 }
 
-function mountCanvas(mode: EditViewMode, run: RunRecord): SVGSVGElement {
+function mountCanvas(
+  mode: EditViewMode,
+  run: RunRecord,
+  interactionEnabled = true,
+): SVGSVGElement {
   act(() => {
     useEditStore.getState().open(run);
   });
   act(() => {
-    root!.render(<EditCanvas mode={mode} />);
+    root!.render(<EditCanvas mode={mode} interactionEnabled={interactionEnabled} />);
   });
   return document.querySelector('svg.edit-layout-svg') as SVGSVGElement;
 }
@@ -234,6 +241,35 @@ function firePointer(
   el.dispatchEvent(
     new PointerEvent(type, { bubbles: true, cancelable: true, pointerId: 1, clientX, clientY }),
   );
+}
+
+/** 键盘变换（edit-keyboard US-005）：target 上派发 keydown（window = 画布常规路径；
+ *  控件元素 = 守卫链用例 —— bubbles 到 window 时 target 是控件本身）。 */
+function fireKey(
+  target: EventTarget,
+  key: string,
+  opts?: { shiftKey?: boolean; repeat?: boolean },
+): KeyboardEvent {
+  const ev = new KeyboardEvent('keydown', {
+    key,
+    bubbles: true,
+    cancelable: true,
+    shiftKey: opts?.shiftKey ?? false,
+    repeat: opts?.repeat ?? false,
+  });
+  target.dispatchEvent(ev);
+  return ev;
+}
+
+/** 世界多边形顶点均值（质心锚定「片不漂移」断言用，与组件 centroidOf 同式）。 */
+function polyCentroid(poly: readonly Pt[]): Pt {
+  let x = 0;
+  let y = 0;
+  for (const p of poly) {
+    x += p[0];
+    y += p[1];
+  }
+  return [x / poly.length, y / poly.length];
 }
 
 // ============================================================
@@ -540,7 +576,7 @@ describe('EditCanvas 平移与视图工具 (US-002)', () => {
     expect(w).toBe(20);
   });
 
-  it('工具区 =「全览」+ 形态 select（无标题文案，四轮删）+ 操作指南卡片常驻（五条手势）', () => {
+  it('工具区 =「全览」+ 形态 select（无标题文案，四轮删）+ 操作指南卡片常驻（五条手势 + 键盘行）', () => {
     mountCanvas('full', seedRun(PLACED_AB));
     // 形态 select 在画布左上工具区内（footer 仅存保存按钮）；2026-09-05 四轮起
     // 「形态」标题文案删除 —— label 内不得再有文本节点（option 文案在 select 内）。
@@ -551,12 +587,12 @@ describe('EditCanvas 平移与视图工具 (US-002)', () => {
       .map((n) => n.textContent?.trim() ?? '')
       .join('');
     expect(labelOwnText).toBe('');
-    // 操作指南（画布右下）：五条画布手势逐关键词在场；四轮删的「形态」「保存」
-    // 两行不得回潮（反向锁）。
+    // 操作指南（画布右下）：五条画布手势 + edit-keyboard US-005 键盘行逐关键词在场；
+    // 四轮删的「形态」「保存」两行不得回潮（反向锁 —— 键盘行文案同样避开二词）。
     const guide = document.querySelector('[data-testid="edit-guide"]');
     expect(guide).not.toBeNull();
     const text = guide?.textContent ?? '';
-    for (const kw of ['拖动裁片', '旋转', '滚轮', '平移', '取消选中']) {
+    for (const kw of ['拖动裁片', '旋转', '滚轮', '平移', '取消选中', '键盘']) {
       expect(text).toContain(kw);
     }
     for (const gone of ['形态', '保存']) {
@@ -993,5 +1029,285 @@ describe('EditCanvas 镜像渲染 (edit-keyboard US-003)', () => {
     expect(metricsText('edit-metrics-area')).toBe('196000.0 mm²（1960.00 cm²）');
     // 穿透：镜像 b 顶点 (10,100) 严格落入 a，到 a 边界最近距离 10（x 距左界 10）
     expect(metricsText('edit-metrics-depth')).toBe('10.0 mm');
+  });
+});
+
+// ============================================================
+// 键盘变换（edit-keyboard US-005）：window keydown 守卫链（表单控件 /
+// 无选中 / interactionEnabled=false）+ L/K/Shift/空格/O/I 逐键精确值 +
+// 质心锚定片不漂移 + clampPlacement + e.repeat 规则。
+//
+// 数学锚点（手算 + node 对拍锁死）：a_28 方块 c_local=(250,250)；
+// t' = c_world − R(rot')·M(m')·c_local；R(1°)·c_local =
+// (250(cos1−sin1), 250(sin1+cos1))。
+// ============================================================
+
+describe('EditCanvas 键盘变换 (edit-keyboard US-005)', () => {
+  /** 精确值夹具：a@[600,250]（c_world=(850,500)）+ b 远置 —— ±11° 内零钳制干扰。 */
+  const KB_PLACED: PlacedItem[] = [
+    { id: 'a_28', rotation: 0, translation: [600, 250] },
+    { id: 'b_30', rotation: 0, translation: [1600, 250] },
+  ];
+  const SQ: Pt[] = [
+    [0, 0],
+    [500, 0],
+    [500, 500],
+    [0, 500],
+  ];
+
+  it('L=+1° / K=−1° / Shift ±10°：rotation + 质心锚定 translation 精确值；片不漂移；整型往返回原位', () => {
+    const svg = mountCanvas('full', seedRun(KB_PLACED));
+    selectPiece(svg, '#ff0000');
+    // L 一次：t' = (850,500) − R(1°)·(250,250)，±11° 范围零钳制（锚定通式原样落）
+    const r1 = Math.PI / 180;
+    const c1 = Math.cos(r1);
+    const s1 = Math.sin(r1);
+    act(() => {
+      fireKey(window, 'l');
+    });
+    let w = useEditStore.getState().working;
+    expect(w[0].rotation).toBe(1);
+    expect(w[0].translation[0]).toBeCloseTo(850 - 250 * (c1 - s1), 9);
+    expect(w[0].translation[1]).toBeCloseTo(500 - 250 * (s1 + c1), 9);
+    expect(w[0].mirror).toBeUndefined();
+    // 片不漂移：变换后世界多边形顶点均值仍 = c_world (850,500)
+    let c = polyCentroid(transformPolygon(SQ, w[0].rotation, w[0].translation));
+    expect(c[0]).toBeCloseTo(850, 9);
+    expect(c[1]).toBeCloseTo(500, 9);
+    // DOM 5 层同帧落笔（毛版 points 手算 r2 对拍）
+    const roughA = roughPolyOf(svg, '#ff0000');
+    expect(roughA.getAttribute('points')).toBe(
+      '604.4,245.67 1104.33,254.4 1095.6,754.33 595.67,745.6',
+    );
+
+    // Shift+L（e.key='L' 大写同键命中）步长 10° → 11°（c_world 未漂 ⇒ 同锚点通式）
+    const r11 = (11 * Math.PI) / 180;
+    act(() => {
+      fireKey(window, 'L', { shiftKey: true });
+    });
+    w = useEditStore.getState().working;
+    expect(w[0].rotation).toBe(11);
+    expect(w[0].translation[0]).toBeCloseTo(850 - 250 * (Math.cos(r11) - Math.sin(r11)), 9);
+    expect(w[0].translation[1]).toBeCloseTo(500 - 250 * (Math.sin(r11) + Math.cos(r11)), 9);
+
+    // K −1° → 10°；Shift+K −10° → 0°：整型往返，translation 回 (600,250)
+    act(() => {
+      fireKey(window, 'k');
+      fireKey(window, 'K', { shiftKey: true });
+    });
+    w = useEditStore.getState().working;
+    expect(w[0].rotation).toBe(0);
+    expect(w[0].translation[0]).toBeCloseTo(600, 9);
+    expect(w[0].translation[1]).toBeCloseTo(250, 9);
+    expect(w[0].mirror).toBeUndefined();
+  });
+
+  it('变换后 clampPlacement：Y 下界（minY<0 上抬至 0）+ minX<0 右推 + 旋转手柄随帧刷新', () => {
+    // a@[600,0] 按 L：未钳 t'y = 250−250(sin1+cos1) = −4.325 → 上抬至 0；x 无钳。
+    const placed: PlacedItem[] = [
+      { id: 'a_28', rotation: 0, translation: [600, 0] },
+      { id: 'b_30', rotation: 0, translation: [1600, 0] },
+    ];
+    const svg = mountCanvas('full', seedRun(placed));
+    selectPiece(svg, '#ff0000');
+    const handle = document.querySelector(
+      '[data-testid="edit-rotate-handle"]',
+    ) as SVGCircleElement;
+    const cyBefore = Number(handle.getAttribute('cy'));
+    const r1 = Math.PI / 180;
+    const lift = 250 * (Math.sin(r1) + Math.cos(r1)) - 250; // 质心被钳上抬量 4.3250…
+    act(() => {
+      fireKey(window, 'l');
+    });
+    const w = useEditStore.getState().working;
+    expect(w[0].rotation).toBe(1);
+    expect(w[0].translation[1]).toBeCloseTo(0, 9); // 未钳为 −4.325 → 钳 0
+    expect(w[0].translation[0]).toBeCloseTo(850 - 250 * (Math.cos(r1) - Math.sin(r1)), 9); // x 无钳
+    // 手柄同帧刷新：cy 随质心上移 4.325mm（updateHandle 接线锁）
+    expect(Number(handle.getAttribute('cy')) - cyBefore).toBeCloseTo(lift, 5);
+
+    // a@[0,250] 按 L：minX = −4.325 → 右推，代数闭式恰 tx = 500·sin(1°)；y 无钳
+    const placed2: PlacedItem[] = [
+      { id: 'a_28', rotation: 0, translation: [0, 250] },
+      { id: 'b_30', rotation: 0, translation: [1600, 250] },
+    ];
+    const svg2 = mountCanvas('full', seedRun(placed2));
+    selectPiece(svg2, '#ff0000');
+    act(() => {
+      fireKey(window, 'l');
+    });
+    const w2 = useEditStore.getState().working;
+    expect(w2[0].translation[0]).toBeCloseTo(500 * Math.sin(r1), 9); // 8.7262（未钳 4.4012）
+    expect(w2[0].translation[1]).toBeCloseTo(500 - 250 * (Math.sin(r1) + Math.cos(r1)), 9);
+  });
+
+  it('空格 = rot+180（质心锚定 (1100,750)）+ preventDefault；mirror 不动', () => {
+    const svg = mountCanvas('full', seedRun(KB_PLACED));
+    selectPiece(svg, '#ff0000');
+    let ev: KeyboardEvent | null = null;
+    act(() => {
+      ev = fireKey(window, ' ');
+    });
+    expect(ev!.defaultPrevented).toBe(true); // 防 body 滚动
+    const w = useEditStore.getState().working;
+    expect(w[0].rotation).toBe(180);
+    // R(180°)·c_local ≈ (−250,−250)（sin π ~1e-16 噪声）→ t' = (850,500)+(250,250)
+    expect(w[0].translation[0]).toBeCloseTo(1100, 9);
+    expect(w[0].translation[1]).toBeCloseTo(750, 9);
+    expect(w[0].mirror).toBeUndefined();
+    // 掉头后同足印（世界 bbox [600,1100]×[250,750] 不变）
+    const roughA = roughPolyOf(svg, '#ff0000');
+    expect(roughA.getAttribute('points')).toBe('1100,750 600,750 600,250 1100,250');
+  });
+
+  it('O = toggle mirror（rot 不变）：水平镜像绕质心竖轴翻转；再按回非镜像（omit-when-false 键消失）', () => {
+    const svg = mountCanvas('full', seedRun(KB_PLACED));
+    selectPiece(svg, '#ff0000');
+    const roughA = roughPolyOf(svg, '#ff0000');
+    act(() => {
+      fireKey(window, 'o');
+    });
+    let w = useEditStore.getState().working;
+    expect(w[0].rotation).toBe(0);
+    expect(w[0].mirror).toBe(true);
+    // t' = c_world − M·c_local = (850,500) − (−250,250) = (1100,250)
+    expect(w[0].translation[0]).toBeCloseTo(1100, 9);
+    expect(w[0].translation[1]).toBeCloseTo(250, 9);
+    expect(roughA.getAttribute('points')).toBe('1100,250 600,250 600,750 1100,750');
+    // 大写 O（Shift 的 e.key='O'）同键命中；toggle 回非镜像 —— mirror 键消失
+    act(() => {
+      fireKey(window, 'O');
+    });
+    w = useEditStore.getState().working;
+    expect('mirror' in w[0]).toBe(false);
+    expect(w[0].translation[0]).toBeCloseTo(600, 9);
+    expect(w[0].translation[1]).toBeCloseTo(250, 9);
+    expect(roughA.getAttribute('points')).toBe('600,250 1100,250 1100,750 600,750');
+  });
+
+  it('I = toggle mirror + rot+180：垂直镜像（diag(1,−1)=R(180°)·diag(−1,1) 复合律，共用单标志）', () => {
+    const svg = mountCanvas('full', seedRun(KB_PLACED));
+    selectPiece(svg, '#ff0000');
+    const roughA = roughPolyOf(svg, '#ff0000');
+    act(() => {
+      fireKey(window, 'i');
+    });
+    const w = useEditStore.getState().working;
+    expect(w[0].mirror).toBe(true);
+    expect(w[0].rotation).toBe(180);
+    // t' = c_world − R(180°)·M·c_local = (850,500) − (250,−250) = (600,750)：
+    // 足印同 bbox 绕质心横轴上下翻转（y 250..750 关于 500 镜像）
+    expect(w[0].translation[0]).toBeCloseTo(600, 9);
+    expect(w[0].translation[1]).toBeCloseTo(750, 9);
+    expect(roughA.getAttribute('points')).toBe('600,750 1100,750 1100,250 600,250');
+  });
+
+  it('键盘 O 池增量 + 指标实时：镜像 b 关镜像 → 质心锚定 + minX 钳 0 → 与 a 交 500×400', () => {
+    // a@[0,0]；镜像 b@[410,100]（世界 x∈[−90,410]）与 a 交 410×400=164000。按 O：
+    // 锚定 t'=(−90,100) → minX 钳 0 → b@[0,100] 非镜像（x∈[0,500]）与 a 交
+    // 500×400=200000 —— 若池增量沿用旧 mirror（true）则指标停在 164000（锁接线）。
+    const placed: PlacedItem[] = [
+      { id: 'a_28', rotation: 0, translation: [0, 0] },
+      { id: 'b_30', rotation: 0, translation: [410, 100], mirror: true },
+    ];
+    const svg = mountCanvas('full', seedRun(placed));
+    selectPiece(svg, '#00ff00');
+    expect(metricsText('edit-metrics-area')).toBe('164000.0 mm²（1640.00 cm²）');
+    act(() => {
+      fireKey(window, 'o');
+    });
+    const w = useEditStore.getState().working;
+    expect(w[1].mirror).toBeUndefined();
+    expect(w[1].translation[0]).toBeCloseTo(0, 9); // 锚定 −90 → 钳 0
+    expect(w[1].translation[1]).toBeCloseTo(100, 9);
+    expect(metricsText('edit-metrics-area')).toBe('200000.0 mm²（2000.00 cm²）');
+  });
+
+  it('e.repeat：L 放行连发（auto-repeat 每击 +1°）；空格/O/I 忽略 repeat（幂等键防抖动）', () => {
+    const svg = mountCanvas('full', seedRun(KB_PLACED));
+    selectPiece(svg, '#ff0000');
+    act(() => {
+      fireKey(window, 'l', { repeat: true });
+      fireKey(window, 'l', { repeat: true });
+    });
+    expect(useEditStore.getState().working[0].rotation).toBe(2);
+    act(() => {
+      fireKey(window, ' ', { repeat: true });
+      fireKey(window, 'o', { repeat: true });
+      fireKey(window, 'i', { repeat: true });
+    });
+    const w = useEditStore.getState().working;
+    expect(w[0].rotation).toBe(2); // 三幂等键 repeat 全忽略
+    expect(w[0].mirror).toBeUndefined();
+  });
+
+  it('守卫链：表单控件聚焦（INPUT/SELECT/TEXTAREA/BUTTON/contentEditable）零变换 —— 形态 select 按 L/空格无效', () => {
+    const svg = mountCanvas('full', seedRun(KB_PLACED));
+    selectPiece(svg, '#ff0000');
+    // 画布左上形态 select（真实控件）：键盘归控件 —— 冒泡到 window 时 target=select
+    const modeSelect = document.querySelector('[data-testid="edit-layout-mode"]') as Element;
+    act(() => {
+      fireKey(modeSelect, 'l');
+      fireKey(modeSelect, ' ');
+    });
+    let w = useEditStore.getState().working;
+    expect(w[0].rotation).toBe(0);
+    expect(w[0].translation).toEqual([600, 250]);
+    // 其余四类控件同守卫（挂 container 内冒泡到 window，target = 控件自身；
+    // jsdom 不解析 contenteditable 属性 → 直接锁 isContentEditable 属性值）
+    const input = document.createElement('input');
+    const textarea = document.createElement('textarea');
+    const button = document.createElement('button');
+    const editable = document.createElement('div');
+    Object.defineProperty(editable, 'isContentEditable', { value: true });
+    for (const el of [input, textarea, button, editable]) container!.appendChild(el);
+    act(() => {
+      fireKey(input, 'l');
+      fireKey(textarea, ' ');
+      fireKey(button, 'o');
+      fireKey(editable, 'i');
+    });
+    w = useEditStore.getState().working;
+    expect(w[0]).toEqual({ id: 'a_28', rotation: 0, translation: [600, 250] });
+  });
+
+  it('守卫链：无选中片 → 全键零变换', () => {
+    mountCanvas('full', seedRun(KB_PLACED));
+    act(() => {
+      fireKey(window, 'l');
+      fireKey(window, ' ');
+      fireKey(window, 'o');
+      fireKey(window, 'i');
+    });
+    expect(useEditStore.getState().working[0]).toEqual({
+      id: 'a_28',
+      rotation: 0,
+      translation: [600, 250],
+    });
+  });
+
+  it('守卫链：interactionEnabled=false（确认层打开）→ 全键禁用；恢复 true 后同键生效（ref 读现值）', () => {
+    const run = seedRun(KB_PLACED);
+    const svg = mountCanvas('full', run, false);
+    selectPiece(svg, '#ff0000'); // 指针选中不受键盘总闸影响（确认层挡 pointer 热区）
+    act(() => {
+      fireKey(window, 'l');
+      fireKey(window, ' ');
+      fireKey(window, 'o');
+      fireKey(window, 'i');
+    });
+    expect(useEditStore.getState().working[0]).toEqual({
+      id: 'a_28',
+      rotation: 0,
+      translation: [600, 250],
+    });
+    // 确认层关闭（EditLayoutModal 传回 true）：监听器未重挂，经 interactionRef 生效
+    act(() => {
+      root!.render(<EditCanvas mode="full" interactionEnabled />);
+    });
+    act(() => {
+      fireKey(window, 'l');
+    });
+    expect(useEditStore.getState().working[0].rotation).toBe(1);
   });
 });
