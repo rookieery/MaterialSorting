@@ -38,9 +38,15 @@ export interface EditPiece {
   pid: string;
   rot: number;
   tr: Pt;
+  /**
+   * 局部 x 翻转（水平镜像；edit-keyboard US-001 起）。内部计算池用明确 boolean
+   * （PlacedItem.mirror 的 omit-when-false 只约束 wire/store 键集，不约束本结构）；
+   * 源头 `it.mirror === true` 判定 → undefined/false 同义无镜像。
+   */
+  mirror: boolean;
   /** base 多边形（manifest erode 几何，共享引用不拷贝 —— 只读）。 */
   basePolygon: Polygon;
-  /** rot+tr 变换后的世界坐标多边形（全精度）。 */
+  /** rot+tr（+mirror）变换后的世界坐标多边形（全精度）。 */
   worldPolygon: Polygon;
   /** worldPolygon 的包围盒（bbox 预筛）。 */
   bbox: BBox;
@@ -72,12 +78,14 @@ export function precomputeEditPiecesFromItems(
   items.forEach((it: PlacedItem, idx: number) => {
     const info = byId.get(it.id);
     if (!info) return;
-    const world = transformPolygon(info.polygon, it.rotation, it.translation);
+    const mirror = it.mirror === true;
+    const world = transformPolygon(info.polygon, it.rotation, it.translation, mirror);
     out.push({
       key: idx,
       pid: it.id,
       rot: it.rotation,
       tr: [it.translation[0], it.translation[1]],
+      mirror,
       basePolygon: info.polygon,
       worldPolygon: world,
       bbox: bboxOf(world),
@@ -89,14 +97,18 @@ export function precomputeEditPiecesFromItems(
 /**
  * 池内单片**原地**增量更新（US-003 拖动/旋转帧专用 —— 其余片零成本保持）。
  *
- * 拖动帧只重算被拖片一项：worldPolygon / bbox / rot / tr 覆写为最新值后即可直接
+ * 拖动帧只重算被拖片一项：worldPolygon / bbox / rot / tr / mirror 覆写为最新值后即可直接
  * computeOverlap（PRD「预计算 bbox 增量更新被拖片一项」口径）。调用方保证 ep 来自
  * precomputeEditPieces* 展开池（basePolygon 引用 manifest 只读共享）。
+ *
+ * mirror（edit-keyboard US-001 起，缺省 false）：调用方（拖动/键盘变换帧）把 working 项
+ * 的镜像标志一并传入，避免镜像片在拖动/变换帧静默丢镜像。
  */
-export function applyEditPlacement(ep: EditPiece, rot: number, tr: Pt): void {
+export function applyEditPlacement(ep: EditPiece, rot: number, tr: Pt, mirror = false): void {
   ep.rot = rot;
   ep.tr = [tr[0], tr[1]];
-  ep.worldPolygon = transformPolygon(ep.basePolygon, rot, tr);
+  ep.mirror = mirror;
+  ep.worldPolygon = transformPolygon(ep.basePolygon, rot, tr, mirror);
   ep.bbox = bboxOf(ep.worldPolygon);
 }
 

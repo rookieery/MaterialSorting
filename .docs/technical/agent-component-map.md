@@ -1898,3 +1898,41 @@ compact=true 输出与 false 逐元素相同。
   foot/指南卡零交集、pointer-events:auto、点击受控切换）—— Read 工具读截图仅回
   CDN 链接不可直读，以 Playwright bbox 断言替代目检；验收后 browser.close() +
   ms-web 已杀（port 8000 free）、throwaway 脚本已删。
+
+## 编辑排料 edit-keyboard US-001 落地：mirror 数据模型与前端纯函数层（2026-09-05）
+
+prd-edit-keyboard-transform（键盘变换 L/K/空格/O/I + R 片级重置）的地基故事：
+镜像（det=−1 反射，无法由 {id,rotation,translation} 表达）进入数据模型与纯函数层。
+`PlacedItem` 扩 additive 可选键 `mirror?: boolean`，语义 = 局部坐标系 x 翻转
+`world = R(rot)·diag(−1,1)·p + t`（展开 `x'=−c·x−s·y+tx`；`y'=−s·x+c·y+ty`，
+实现 = 旋转前一行式 `const x = mirror ? -p[0] : p[0]`）。**omit-when-false 硬约束**：
+不带镜像的项不出现该键（wire/store 写回「有镜像才带键」；solver 原生帧永无此键）；
+消费方统一按 `it.mirror === true` 判定。缺省 false 路径输出与改动前逐字节一致
+（零回归红线：既有 lib 单测零改动全绿）。
+
+| 文件 | 改动 |
+| --- | --- |
+| `src/types/piece.ts` | `PlacedItem` 加 `mirror?: boolean`（additive；omit-when-false + `=== true` 判定口径写入 docstring） |
+| `src/lib/geometry.ts` | `pointsStr(poly, rot, tr, mirror=false)` 第 4 参 —— 渲染出口；mirror=true 等价「base 顶点 x 预取负再走无镜像变换」 |
+| `src/lib/editGeometry.ts` | `transformPolygon(poly, rot, tr, mirror=false)` 同款（全精度计算出口；与 pointsStr mirror 分支同公式对拍锁死）；头注公式注记 |
+| `src/lib/overlap.ts` | `EditPiece` 扩必填 `mirror: boolean`（内部计算池用明确 boolean，omit-when-false 只约束 wire/store 键集）；`precomputeEditPieces(FromItems)` 读 `it.mirror === true` 初始化 + 镜像几何展开；`applyEditPlacement(ep, rot, tr, mirror=false)` 增量覆写（调用方须显式传当前镜像标志，缺省覆回 false） |
+| 测试 | 三套 +15 项：`geometry.test.ts` +4（手算方块 x 取负 / rot=90 公式手算 / x-预取负逐字节等价 6 组 / mirror=false 显式=缺省=legacy 三方对拍）；`editGeometry.test.ts` +5（手算方块 / 与 pointsStr mirror 逐点对拍 7 组 / x-预取负全精度逐点相等 / 全精度+不改入参 / mirror=false 显式=缺省）；`overlap.test.ts` +6（FromItems 读键+镜像几何手算 / mirror+rot90 手算（同 tr 落点与无镜像不同 —— 质心锚定补偿的根因注记）/ 缺省与 mirror:false 同构零回归 / frame 版同读键 / applyEditPlacement 覆写三态 / 镜像片照常参与 computeOverlap） |
+
+### 关键不变量（edit-keyboard US-001 立，后续故事不得破坏）
+
+- **mirror 公式三方锁步**：`pointsStr` mirror 分支 / `transformPolygon` mirror 分支 /
+  后端 `apply_transform`（US-004 落地）同输入逐点相等 —— 单测对拍锁死；改公式三方同步。
+- **omit-when-false**：PlacedItem 序列化（store 写回 / 微调载荷 / 导出载荷）只在
+  mirror=true 时带键；恒发 mirror:false 会红掉 EditLayoutModal.polish 的精确锁键集用例。
+- **EditPiece.mirror 是内部计算字段**：必填 boolean（非可选），源头 `it.mirror === true`；
+  applyEditPlacement 缺省参数 = false（覆写语义，防镜像片拖动帧冒镜像，也要求调用方
+  US-003/US-005 显式传标志防丢镜像）。
+- **mirror=true 等价「x 预取负再无镜像变换」**：R·diag(−1,1) = 先翻转后旋转，测试用
+  该恒等式做独立实现互证（不依赖被测代码自身算路径）。
+
+### 验证
+
+- vitest 全量 **981 passed**（966+15，64 文件；既有用例零改动）/ `npm run build`
+  （tsc+vite）过（302.72KB gzip 99.02KB）、static/ 已重建；零组件/后端改动，
+  浏览器验证与冒烟归 US-003/US-005/US-007（本 story 无 UI 面，纯函数缺省路径
+  逐字节不变）。

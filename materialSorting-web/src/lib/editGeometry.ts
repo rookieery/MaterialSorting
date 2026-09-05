@@ -5,6 +5,8 @@
 //   editGeometry      —— 计算出口（数组 + 全精度，供布尔交 / bbox / 穿透深度 / 密度重算消费）。
 //   两者共用同一变换公式（单测对拍锁死）：rad = rot·π/180; c = cos(rad); s = sin(rad)
 //     x' = x·c − y·s + tx；y' = x·s + y·c + ty
+//     mirror=true 时顶点 x 先取负再旋转（world = R·diag(−1,1)·p + t；edit-keyboard US-001，
+//     两函数 mirror 分支同公式对拍锁死，缺省 false 与旧实现逐字节一致）。
 //
 // 坐标系约定（CLAUDE.md / lib/geometry.ts 同款）：sparrow 世界坐标 X=用布长度(0..width)、
 // Y=门幅(0..gate)、Y 向上；SVG 经 flipGroup translate(0 gate) scale(1 -1) 翻转后显示。
@@ -30,12 +32,19 @@ export interface BBox {
  * 逐点相等），但保留全精度（不 r2）—— 布尔交 / bbox / 穿透深度对舍入敏感，渲染出口
  * 才截断。修改公式须与 pointsStr / 后端 _transform_polygon 三方锁步。
  *
- * @param poly base 多边形顶点（manifest.pieces[].polygon 同口径，闭合无重复起点）
- * @param rot  旋转角度（°；与 frame.placed_items[].rotation 一致）
- * @param tr   平移 [tx, ty]（与 frame.placed_items[].translation 一致）
+ * mirror=true（edit-keyboard US-001 起，缺省 false 零回归）：局部坐标系 x 翻转
+ * （`world = R·diag(−1,1)·p + t`），等价于旋转前对顶点 x 取负：
+ *   x' = −x*c − y*s + tx；y' = −x*s + y*c + ty
+ * 与 pointsStr 的 mirror 分支同公式（单测 mirror 对拍锁死）。缺省 false / 显式 false
+ * 路径与旧实现逐字节一致。
+ *
+ * @param poly   base 多边形顶点（manifest.pieces[].polygon 同口径，闭合无重复起点）
+ * @param rot    旋转角度（°；与 frame.placed_items[].rotation 一致）
+ * @param tr     平移 [tx, ty]（与 frame.placed_items[].translation 一致）
+ * @param mirror true = 局部 x 翻转（水平镜像；PlacedItem.mirror，缺省 false）
  * @returns 新数组（顶点数与输入一致；不修改入参）
  */
-export function transformPolygon(poly: readonly Pt[], rot: number, tr: Pt): Polygon {
+export function transformPolygon(poly: readonly Pt[], rot: number, tr: Pt, mirror = false): Polygon {
   const r = (rot * Math.PI) / 180;
   const c = Math.cos(r);
   const s = Math.sin(r);
@@ -43,7 +52,7 @@ export function transformPolygon(poly: readonly Pt[], rot: number, tr: Pt): Poly
   const ty = tr[1];
   const out: Polygon = new Array(poly.length);
   for (let i = 0; i < poly.length; i++) {
-    const x = poly[i][0];
+    const x = mirror ? -poly[i][0] : poly[i][0];
     const y = poly[i][1];
     out[i] = [x * c - y * s + tx, x * s + y * c + ty];
   }

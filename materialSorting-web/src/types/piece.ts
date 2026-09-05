@@ -50,9 +50,20 @@ export interface PieceInfo {
   grain_line?: GrainLine | null;
 }
 
-/** frame.placed_items[] —— 已放置裁片的变换（与后端 solver._emit placed 一致）。 */
+/**
+ * frame.placed_items[] —— 已放置裁片的变换（与后端 solver._emit placed 一致）。
+ *
+ * mirror（edit-keyboard US-001 起，additive 可选）：局部坐标系 x 翻转（det=−1 反射，无法由
+ * rotation+translation 表达）。语义 = `world = R(rot)·diag(−1,1)·p + t`，展开：
+ *   x' = −c·x − s·y + tx；y' = −s·x + c·y + ty（c=cos(rot)，s=sin(rot)）
+ * —— 与「先对 base 顶点 x 取负、再走原旋转变换」逐点等价。**omit-when-false**：不带镜像
+ * 的项不出现该键（wire/store 写回一律「有镜像才带键」，solver 原生帧永无此键 → 缺省路径
+ * 零回归）；消费方统一按 `it.mirror === true` 判定（undefined/false 同义）。
+ */
 export interface PlacedItem {
   id: string;
   rotation: number;
   translation: Pt;
+  /** true = 局部 x 翻转（水平镜像）；缺省/false = 无镜像。只带 true（omit-when-false）。 */
+  mirror?: boolean;
 }

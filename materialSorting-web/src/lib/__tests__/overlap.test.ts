@@ -3,6 +3,8 @@
 //      worldPolygon 变换正确、bbox 正确、manifest 缺片防御跳过
 //   2) computeOverlap：两矩形交面积精确值 / 凹形离散多 ring 交（3 环）/ bbox 预筛行为
 //      （相离邻居零成本跳过、bbox 相交但几何不相交邻居计入）/ 穿透深度 / 自身跳过
+//   3) edit-keyboard US-001 mirror：precomputeEditPieces(FromItems) 读 it.mirror === true
+//      初始化 + 镜像几何手算；applyEditPlacement 增量覆写 mirror（缺省 false 回归）
 
 import { describe, expect, it } from 'vitest';
 import {
@@ -245,5 +247,103 @@ describe('precomputeEditPiecesFromItems / applyEditPlacement (US-003)', () => {
     const [fresh] = precomputeEditPiecesFromItems(manifest, [item('a_28', 90, 500, 100)]);
     expect(fresh.worldPolygon).toEqual(ep.worldPolygon);
     expect(fresh.bbox).toEqual(ep.bbox);
+  });
+});
+
+// ============================================================
+// edit-keyboard US-001：mirror 贯穿（EditPiece 携带 + 展开读键 + 增量覆写）
+// ============================================================
+
+describe('mirror (edit-keyboard US-001)', () => {
+  /** 带 mirror 的 placed item。 */
+  function mitem(id: string, rot: number, tx: number, ty: number): PlacedItem {
+    return { id, rotation: rot, translation: [tx, ty], mirror: true };
+  }
+
+  it('precomputeEditPiecesFromItems 读 it.mirror === true：EditPiece.mirror + 镜像几何手算对拍', () => {
+    // base [0,100]^2 + mirror + rot0 + tr(100,0)：x' = −x+100 —— 顶点序随之反转
+    // (0,0)->(100,0)；(100,0)->(0,0)；(100,100)->(0,100)；(0,100)->(100,100)
+    const [e] = precomputeEditPiecesFromItems(mkManifest(), [mitem('a_28', 0, 100, 0)]);
+    expect(e.mirror).toBe(true);
+    expect(e.worldPolygon).toEqual([
+      [100, 0],
+      [0, 0],
+      [0, 100],
+      [100, 100],
+    ]);
+    expect(e.bbox).toEqual({ minX: 0, minY: 0, maxX: 100, maxY: 100 });
+  });
+
+  it('mirror + rot90 手算：x\'=−y+tx，y\'=−x+ty（同 tr 落点与无镜像 rot90 不同 —— y 向下翻）', () => {
+    // c=0,s=1：(0,0)->(500,200)；(100,0)->(500,100)；(100,100)->(400,100)；(0,100)->(400,200)
+    const [e] = precomputeEditPiecesFromItems(mkManifest(), [mitem('a_28', 90, 500, 200)]);
+    expect(e.worldPolygon).toEqual([
+      [500, 200],
+      [500, 100],
+      [400, 100],
+      [400, 200],
+    ]);
+    expect(e.bbox).toEqual({ minX: 400, minY: 100, maxX: 500, maxY: 200 });
+    // 同 rot+tr 无镜像帧（既有用例口径）占 y[200,300]；镜像帧占 y[100,200] —— tr 不补偿时
+    // 镜像必然挪位（这就是键盘变换需质心锚定补偿的根因，US-005 落地）。
+    const [plain] = precomputeEditPieces(mkManifest(), mkFrame([item('a_28', 90, 500, 200)], 800));
+    expect(plain.bbox).toEqual({ minX: 400, minY: 200, maxX: 500, maxY: 300 });
+    expect(e.worldPolygon).not.toEqual(plain.worldPolygon);
+  });
+
+  it('mirror 缺省 / mirror:false 项：EditPiece.mirror=false + 几何与旧输出一致（零回归）', () => {
+    const manifest = mkManifest();
+    const [noKey] = precomputeEditPiecesFromItems(manifest, [item('a_28', 90, 500, 200)]);
+    const [explicitFalse] = precomputeEditPiecesFromItems(manifest, [
+      { id: 'a_28', rotation: 90, translation: [500, 200], mirror: false },
+    ]);
+    expect(noKey.mirror).toBe(false);
+    expect(explicitFalse.mirror).toBe(false);
+    expect(explicitFalse.worldPolygon).toEqual(noKey.worldPolygon);
+    expect(explicitFalse.bbox).toEqual(noKey.bbox);
+  });
+
+  it('frame 版 precomputeEditPieces 同读 mirror 键', () => {
+    const [e] = precomputeEditPieces(mkManifest(), mkFrame([mitem('a_28', 0, 100, 0)], 200));
+    expect(e.mirror).toBe(true);
+    expect(e.worldPolygon[0]).toEqual([100, 0]);
+    expect(e.worldPolygon[1]).toEqual([0, 0]);
+  });
+
+  it('applyEditPlacement 增量覆写 mirror：true 覆写镜像几何，缺省参数覆回 false（防拖动帧丢/冒镜像）', () => {
+    const manifest = mkManifest();
+    // 无镜像展开后增量覆写为镜像
+    const [ep] = precomputeEditPiecesFromItems(manifest, [item('a_28', 0, 10, 20)]);
+    applyEditPlacement(ep, 90, [500, 200], true);
+    expect(ep.mirror).toBe(true);
+    expect(ep.worldPolygon).toEqual([
+      [500, 200],
+      [500, 100],
+      [400, 100],
+      [400, 200],
+    ]);
+    expect(ep.bbox).toEqual({ minX: 400, minY: 100, maxX: 500, maxY: 200 });
+    // 增量结果与全量重展开（mirror:true item）一致
+    const [fresh] = precomputeEditPiecesFromItems(manifest, [mitem('a_28', 90, 500, 200)]);
+    expect(fresh.worldPolygon).toEqual(ep.worldPolygon);
+    expect(fresh.mirror).toBe(ep.mirror);
+    // 镜像片再走缺省参数（不传 mirror）→ 覆回 false（调用方须显式传当前镜像标志）
+    applyEditPlacement(ep, 0, [10, 20]);
+    expect(ep.mirror).toBe(false);
+    expect(ep.worldPolygon[0]).toEqual([10, 20]);
+    expect(ep.worldPolygon[1]).toEqual([110, 20]);
+  });
+
+  it('镜像片照常参与 computeOverlap（镜像几何口径的重合计算）', () => {
+    // dragged = 镜像方（world x[0,100]）vs 邻居 [95,195]x[30,130]：与非镜像同盒对称情形
+    // 交 [95,100]x[30,100] = 350 mm^2 —— 镜像几何进入布尔交无特判。
+    const manifest = mkManifest();
+    const [dragged] = precomputeEditPiecesFromItems(manifest, [mitem('a_28', 0, 100, 0)]);
+    const [otherEp] = precomputeEditPiecesFromItems(manifest, [item('b_28', 0, 95, 30)]);
+    const other = { ...otherEp, key: 1 }; // 独立展开 key 同为 0 —— computeOverlap 按 key 跳「自身」
+    const r = computeOverlap(dragged, [other]);
+    expect(r.neighborCount).toBe(1);
+    expect(r.areaMm2).toBeCloseTo(350, 10);
+    expect(r.penetrationMm).toBeCloseTo(5, 10);
   });
 });

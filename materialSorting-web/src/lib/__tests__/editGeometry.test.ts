@@ -7,6 +7,8 @@
 //   6) penetrationDepth（矩形 / 三角 / 凹形夹具手算锁死 + 已知近似边界如实断言）
 //   7) clientToWorld（mock CTM：letterbox 偏移 + scale(1,-1) 翻转的复合矩阵逆变换；
 //      CTM 不可得 -> null）
+//   8) edit-keyboard US-001 mirror 分支：手算方块 / 与 pointsStr mirror 对拍 / x 预取负
+//      等价（全精度）/ mirror=false 显式 = 缺省零回归
 
 import { describe, expect, it } from 'vitest';
 import { pointsStr, r2 } from '../geometry';
@@ -73,6 +75,90 @@ describe('transformPolygon', () => {
     ];
     const snapshot = src.map((p) => [...p] as Pt);
     transformPolygon(src, 90, [10, 10]);
+    expect(src).toEqual(snapshot);
+  });
+
+  it('mirror=false 显式传参与缺省不传逐点相同（零回归红线）', () => {
+    for (const rot of [0, 33.3, 90, 180, 270]) {
+      for (const tr of [[0, 0], [100.5, -200.25]] as Pt[]) {
+        expect(transformPolygon(SQUARE, rot, tr, false)).toEqual(transformPolygon(SQUARE, rot, tr));
+      }
+    }
+  });
+});
+
+// ============================================================
+// edit-keyboard US-001：transformPolygon mirror 分支
+// ============================================================
+
+describe('transformPolygon mirror (edit-keyboard US-001)', () => {
+  it('手算：SQUARE rot=0 + tr(10,20) + mirror -> x 分量取负（(100,0)->(-90,20) 等）', () => {
+    // mirror + rot0：x' = −x + 10；y' = y + 20
+    // (0,0)->(10,20)；(100,0)->(−90,20)；(100,100)->(−90,120)；(0,100)->(10,120)
+    expect(transformPolygon(SQUARE, 0, [10, 20], true)).toEqual([
+      [10, 20],
+      [-90, 20],
+      [-90, 120],
+      [10, 120],
+    ]);
+  });
+
+  it('mirror 与 pointsStr 同公式逐点一致（r2 截断后对拍；多组含任意角度/平移）', () => {
+    const cases: Array<{ poly: number[][]; rot: number; tr: [number, number] }> = [
+      { poly: SQUARE, rot: 0, tr: [0, 0] },
+      { poly: SQUARE, rot: 0, tr: [1234.5, 987.6] },
+      { poly: [[1, 0], [0, 1]], rot: 90, tr: [10, 20] },
+      { poly: [[10, 0], [10, 10], [0, 10]], rot: 45, tr: [0, 0] },
+      { poly: [[1.23456, 2.34567], [-3.45678, 4.56789]], rot: 33.3, tr: [100.5, 200.5] },
+      { poly: [[0, 0], [5, 0], [2.5, 4.33]], rot: 270, tr: [0, 0] },
+      {
+        poly: Array.from({ length: 12 }, (_, i) => [
+          100 * Math.cos((i / 12) * 2 * Math.PI),
+          100 * Math.sin((i / 12) * 2 * Math.PI),
+        ]),
+        rot: 17.5,
+        tr: [1234.5, 6789],
+      },
+    ];
+    for (const { poly, rot, tr } of cases) {
+      const arr = transformPolygon(poly as Pt[], rot, tr as Pt, true);
+      const fromStr = pointsStr(poly as Polygon, rot, tr as Pt, true)
+        .split(' ')
+        .map((p) => p.split(',').map(Number) as [number, number]);
+      expect(arr.length).toBe(fromStr.length);
+      for (let i = 0; i < arr.length; i++) {
+        // +0 归一化：r2 可产 -0，而 String(-0)='0' 回解析为 +0（Object.is 区分 ±0）
+        expect(r2(arr[i][0]) + 0).toBe(fromStr[i][0] + 0);
+        expect(r2(arr[i][1]) + 0).toBe(fromStr[i][1] + 0);
+      }
+    }
+  });
+
+  it('mirror=true 与「x 预取负 poly 的无镜像变换」全精度逐点相等（同一算术序）', () => {
+    const poly: Polygon = [
+      [1.23456, 2.34567],
+      [-3.45678, 4.56789],
+      [10, -20],
+    ];
+    const xNeg: Polygon = poly.map((p) => [-p[0], p[1]] as Pt);
+    for (const rot of [0, 17.5, 90, 180, 337]) {
+      for (const tr of [[0, 0], [-500.25, 1234.5]] as Pt[]) {
+        expect(transformPolygon(poly, rot, tr, true)).toEqual(transformPolygon(xNeg, rot, tr));
+      }
+    }
+  });
+
+  it('mirror 保留全精度 + 返回新数组不修改入参', () => {
+    const out = transformPolygon([[1, 0]], 30, [0, 0], true);
+    // mirror+rot30：x' = −cos30 ≈ −0.8660254（全精度不截断）
+    expect(out[0][0]).toBeCloseTo(-Math.cos(Math.PI / 6), 12);
+    expect(out[0][1]).toBeCloseTo(-Math.sin(Math.PI / 6), 12);
+    const src: Polygon = [
+      [1, 2],
+      [3, 4],
+    ];
+    const snapshot = src.map((p) => [...p] as Pt);
+    transformPolygon(src, 90, [10, 10], true);
     expect(src).toEqual(snapshot);
   });
 });
