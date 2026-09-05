@@ -34,6 +34,7 @@ import uuid
 from pathlib import Path
 
 from fastapi import FastAPI, Request, UploadFile, File
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -430,6 +431,101 @@ async def post_edit_hold(request: Request):
         return JSONResponse(e.payload(), status_code=e.status)
     edit_hold.refresh(sid, session_registry.clock())
     return {'ok': True}
+
+
+@app.post('/api/edit-polish')
+async def post_edit_polish(request: Request):
+    """编辑排料「智能微调」会话族端点（prd-edit-polish US-002，2026-09-05）。
+
+    前端编辑弹窗「智能微调」按钮 POST 当前编辑 placements（布局态后端不存、随
+    body 带上 = /export 同模式，唯一存储在前端 runRegistry），取回确定性后处理
+    结果 + 前后对比报告 —— 几何真相源留在 Python（物理毛版轮廓口径与会话
+    ``pieces_by_id`` 原始 polygon / /export 同源），多会话经 ``X-Session-Id``
+    隔离（编辑 A 的 placed 匹配 A 的母版轮廓）。
+
+    请求 ``{placed:[{id,rotation,translation},...], gate_mm?, exclude?:{labels?,
+    pids?}, compact?}``；响应 ``{ok:true, placed, report}``（placed 条数与 pid
+    多重集与输入相等 —— polish 出口 Counter 终检 + 本路由入口 pid 全匹配双保险）。
+
+    - sid：缺省 → default 会话；``resolve()`` 闸门（``create=False`` 缺省）：
+      过期/墓碑 → ``401 {code:'session_expired'}``、非法 → 400（``SessionError``
+      统一 ``JSONResponse(e.payload(), e.status)``，/api/edit-hold 同款）；
+    - pid 全匹配才跑：任一 pid 未匹配会话 ``pieces_by_id`` → 400（文案提示
+      「母版已变更？请重新求解/上传」，不做部分降级）；``placed`` 空 → 400；
+    - ``gate_mm`` 缺省回退会话 ``state['gate_mm']``（与 /export、
+      /api/plt-table-preview 同法）；
+    - ``exclude`` 透传引擎（labels/pids 双键，缺省 None）；``compact`` = US-005
+      预留键位（缺省 false）；
+    - polish 构造段经 ``run_in_threadpool`` 执行（prefix-preview 先例，防阻塞
+      事件循环）；顺手 ``edit_hold.refresh(sid)``（编辑钉住与心跳同语义，default
+      不进钉住表 —— /api/edit-hold 同口径）。
+    """
+    from ..nesting_engine.polish import PolishError, polish_layout
+
+    sid = (request.headers.get('x-session-id') or '').strip() or None
+    try:
+        st = session_registry.resolve(sid)   # create=False 缺省：不给未知 sid 建会话
+    except SessionError as e:
+        return JSONResponse(e.payload(), status_code=e.status)
+
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({'error': '请求体必须是 JSON'}, status_code=400)
+    if not isinstance(payload, dict):
+        return JSONResponse({'error': '请求体必须是 JSON 对象'}, status_code=400)
+
+    placed = payload.get('placed')
+    if not isinstance(placed, list) or not placed:
+        return JSONResponse({'error': 'placed 不能为空（无微调输入）'}, status_code=400)
+    for i, p in enumerate(placed):
+        if (not isinstance(p, dict) or not p.get('id')
+                or not isinstance(p.get('translation'), (list, tuple))
+                or len(p['translation']) != 2):
+            return JSONResponse(
+                {'error': f'placed[{i}] 形态非法（需 {{id,rotation,translation}}）'},
+                status_code=400)
+
+    pieces_by_id = st.state.get('pieces_by_id') or {}
+    unmatched = [p['id'] for p in placed if p['id'] not in pieces_by_id]
+    if unmatched:
+        return JSONResponse(
+            {'error': f'pid {unmatched[0]!r} 不在会话 pieces_by_id'
+                      f'（母版已变更？请重新求解/上传）'},
+            status_code=400)
+
+    # gate_mm：优先求解口径（前端 manifest.gate_mm），缺省/非法回退会话 state
+    # （/export 同法）；两处皆无 → 400（守卫 y∈[0,gate] 无从谈起，fail-fast）。
+    try:
+        gate_mm = float(payload.get('gate_mm') or 0.0) \
+            or float(st.state.get('gate_mm') or 0.0)
+    except (TypeError, ValueError):
+        return JSONResponse({'error': 'gate_mm 非法'}, status_code=400)
+    if not gate_mm > 0.0:      # NaN 也拦（NaN > 0 恒 False）
+        return JSONResponse(
+            {'error': 'gate_mm 无效（payload 与会话 state 均未提供）'},
+            status_code=400)
+
+    exclude = payload.get('exclude')
+    if exclude is not None and not isinstance(exclude, dict):
+        return JSONResponse(
+            {'error': 'exclude 必须是 {labels?, pids?} 对象'}, status_code=400)
+    compact = bool(payload.get('compact') or False)
+
+    def _polish():
+        return polish_layout(placed, pieces_by_id, gate_mm,
+                             exclude=exclude, compact=compact)
+
+    try:
+        placed_new, report = await run_in_threadpool(_polish)
+    except (PolishError, ValueError, TypeError) as e:
+        # PolishError：引擎不变量（pid 守恒终检等）；ValueError/TypeError：placed
+        # 数值字段（rotation/translation 分量）非法 —— 都结构化 400 不炸 500。
+        return JSONResponse({'error': f'微调失败：{e}'}, status_code=400)
+
+    if sid:   # default 豁免一切过期，不进钉住表（/api/edit-hold 同口径）
+        edit_hold.refresh(sid, session_registry.clock())
+    return {'ok': True, 'placed': placed_new, 'report': report}
 
 
 # ------------------------------------------------- 视图/导出/WS 路由（机械拆出，路由表顺序与拆分前一致）

@@ -29,6 +29,8 @@
 | POST | `/api/band-preview` | 2026-08-24 成带形态预览（高级配置弹窗「布局设置」band 行缩略图数据源）：主进程同步 `build_band_plan`，响应无 `WB_`，见下专节；**多会话 US-003**：`X-Session-Id` → 该会话快照 | `routes_views.band_preview` |
 | POST | `/api/prefix-preview` | 2026-08-25 前缀组合形态预览（「布局设置」prefix 行缩略图数据源）：**2026-09-02 US-003 起选码换 `select_prefix_plan` 真相源**（与 solve_worker `_build_prefix` 同函数，4 片兜底或 5 片顶部异码补片；构造段 `run_in_threadpool` 线程池化），成员带 `tag`=g 码，响应 additive `extra`/`residual_mm`/`gate_mm`/`fallback`，无 `PS_`，见下专节；**多会话 US-003**：`X-Session-Id` → 该会话快照 | `routes_views.prefix_preview` |
 | POST | `/api/plt-table-preview` | 2026-08-31 导出弹窗唛架表格 14 字段预览（ExportInfoModal 全字段展示数据源）：`build_info_table` + `preview_rows` 同一真相源返 14 行（列序 = 最终表格列序、带 `manual` 标记），见下专节；**多会话 US-003**：`X-Session-Id` → 该会话快照 | `routes_views.plt_table_preview` |
+| POST | `/api/edit-hold` | **2026-09-04 编辑排料会话钉住心跳**：编辑弹窗纯前端无请求，长编辑中途空闲过期会被逐出 → 保存后导出 401 丢成果；`resolve()` 闸门（过期 401 不给死会话续命）+ `edit_hold.refresh` 滚动续期（`MS_EDIT_HOLD_SEC` 缺省 2h）；无 sid（default）→ 200 no-op；**多会话**：`X-Session-Id` → 该会话 | `server.post_edit_hold` |
+| POST | `/api/edit-polish` | **prd-edit-polish US-002（2026-09-05）编辑排料「智能微调」**：POST 当前编辑 placements（布局态后端不存、随 body = /export 同模式）→ 确定性后处理 `polish_layout` 结果 + 前后对比报告；pid 全匹配才跑（否则 400「母版已变更」）、`run_in_threadpool` 执行 + 顺手 `edit_hold.refresh`，见下专节；**多会话**：`X-Session-Id` → 该会话 `pieces_by_id` | `server.post_edit_polish` |
 | POST | `/api/strategy/start` | strategy US-004：spawn `ms-run-config --strategy` 子进程启动双模式长跑（202）；**2026-08-22 起载荷可带 band**（经 `_parse_band` 同一校验点写进 config，成带与策略模式兼容）；**2026-08-25 起载荷可带 prefix**（经 `_parse_prefix` 同一校验点含 2+2 资格码，非法 → 400 早退，写进 9 键 config）；**多会话 US-004（2026-08-27）：读 `X-Session-Id`**（缺省 default）—— 每会话 409 单飞、跨会话并发放开、数据源 = 会话快照 | `strategy.strategy_start` |
 | GET | `/api/strategy/status` | strategy US-004：无状态惰性轮询 run_dir 产物组装进度；**多会话 US-004：读 `X-Session-Id`**（status 轮询即活性，长跑会话不被扫描误杀） | `strategy.strategy_status` |
 | POST | `/api/strategy/stop` | strategy US-004：树杀子进程（taskkill /T /F / killpg）+ 清本会话 marker；**多会话 US-004：读 `X-Session-Id`**（只树杀本会话 pid） | `strategy.strategy_stop` |
@@ -338,6 +340,7 @@ curl -X POST http://127.0.0.1:8000/api/session -H "X-Session-Id: 3f2a...hex"
 | `POST /api/session` | `X-Session-Id` Header | **唯一注册入口**（`resolve(create=True)`：建会话/幂等刷活性；超限在此把关） |
 | `POST /api/commit-to-nesting` | `X-Session-Id` Header | 写路径 `create=True`（合法未注册 sid 可直接 commit 建会话）；成功后 per-doc 快照挂会话 |
 | `GET /api/ptypes` / `POST /api/band-preview` / `POST /api/prefix-preview` / `POST /api/plt-table-preview` / `POST /export` | `X-Session-Id` Header | 读路径 `create=False`（`routes_views._resolve_session_state` 单一解析点） |
+| `POST /api/edit-hold` / `POST /api/edit-polish` | `X-Session-Id` Header | 读路径 `create=False`（server.py 直连 `session_registry.resolve`）；edit-hold 无 sid default → 200 no-op；edit-polish 成功顺手 `edit_hold.refresh(sid)` 编辑钉住（default 不进钉住表） |
 | `/api/strategy/start·status·stop·result`、`/api/extreme/start·status·stop·result` | `X-Session-Id` Header | `strategy._session_gate`（读路径 `create=False` + 刷 `last_active`，轮询即活性；run 存活/终态宽限窗由 alive hook 钉住兜底） |
 | `WS /ws/solve` | **`?sid=` query**（浏览器 WS 不能自定义 Header） | `ws_acquire` 钉住 + 回调 `touch` + finally `ws_release` |
 | `GET /` | 无（静态入口） | 响应头 `Cache-Control: no-cache`（防旧 index.html 缓存滞留 default 语义） |
@@ -360,6 +363,54 @@ WS 侧同语义走 **error 帧**：`{"type":"error","code":"session_expired","me
 2. `'default'` 含非 hex 字符，与 uuid4 hex sid（仅 0-9a-f）结构性不可碰撞。
 3. `sessions.py` 仅标准库 + 同包 `runtime`，不 import `server.py`（server → sessions 单向无环，AST 守卫在 `tests/test_web_sessions.py`）。
 4. 冒烟：`python -m materialsorting.web.sessions`（打印配置 + 私有 registry 模拟建会话/过期/超限/墓碑/ws 钉住全生命周期）。
+
+## POST /api/edit-polish — 编辑排料「智能微调」（prd-edit-polish US-002，2026-09-05）
+
+编辑弹窗「智能微调」按钮的数据源：前端把**当前编辑 placements 随 body 带上**（后端不存布局态，唯一存储在前端 runRegistry —— `/export` routes_views.py 同模式），后端跑引擎层确定性后处理 `nesting_engine/polish_layout`（US-001）返回微调后 placements + 前后对比报告。几何真相源留在 Python：**物理毛版轮廓口径**（会话 `pieces_by_id` 原始 polygon，与 `/export placed_to_world` 同源、非 eroded —— 编辑画布红字告警是腐蚀后口径，数值可能偏小，口径差是文档级约定）。
+
+### 请求（`application/json`）
+
+```json
+{
+  "placed":  [{"id": "g01_30", "rotation": 25.0, "translation": [50.0, 50.0]}, ...],
+  "gate_mm": 1750.0,
+  "exclude": {"labels": ["g01"], "pids": ["PS_xxx"]},
+  "compact": false
+}
+```
+
+- `placed`（必填，空/缺/非列表 → 400）：同 pid 多副本按**数组下标**逐实例寻址（绝不 pid 去重，与前端 editStore 同口径）；条目缺 `id` / `translation` 非 2 元 → 400。
+- `gate_mm`（可选）：优先求解口径（前端 `run.manifest.gate_mm`）；缺省/非法回退会话 `state['gate_mm']`（与 `/export`、`/api/plt-table-preview` 同法）；两处皆无 → 400 fail-fast（守卫 y∈[0,gate] 无从谈起）。
+- `exclude`（可选，缺省 None 透传引擎）：`{labels?: [g码], pids?: [pid]}` 双键 —— 命中实例永不被移动仍作障碍（v1 over-conservative 同 pid 全副本，FR-8；band 成员 g 码 / prefix 成员 pid 由前端 best-effort 组装）。非 dict → 400。
+- `compact`（可选，缺省 false）：US-005 压缩回收档预留键位（实现前引擎恒 no-op）。
+
+### 响应（200）
+
+```json
+{"ok": true, "placed": [...同输入形态...], "report": {...}}
+```
+
+- `placed`：条数与 pid 多重集与输入相等（引擎出口 Counter 终检 + 路由入口 pid 全匹配双保险）；无任何 move 时引擎返回输入 list 原对象（逐字节不变量）。
+- `report`：`{before, after, moves, residual, excluded, elapsed_sec}` —— before/after 各七指标（`overlap_pairs` / `max_penetration_mm` / `total_overlap_area_mm2` / `rotated_pieces` / `rotation_dev_sum_deg` / `width_mm` / `density`，density = real 口径 `Σ(原面积×副本数)/(width×gate)` 百分数）+ `moves` 逐条明细（index/pid/kind `derotate|separate`/from/to/detail）+ `residual`（终态重合对 + 旋转残留如实上报，不硬凑零）。
+
+### 错误响应（结构化 JSON）
+
+| 场景 | 状态 | 说明 |
+|------|------|------|
+| sid 过期/墓碑/合法未注册 | 401 | `{"code": "session_expired", ...}`（`resolve(create=False)` 闸门先行，同会话族速查表） |
+| sid 格式非法 | 400 | `{"error": "sid 非法"}` |
+| `placed` 空/缺/非列表/条目形态非法 | 400 | fail-fast，不跑引擎 |
+| 任一 pid 未匹配会话 `pieces_by_id` | 400 | `pid 全匹配才跑`（不做部分降级），文案含「母版已变更？请重新求解/上传」 |
+| `gate_mm` 非法 / 两处皆无 | 400 | fail-fast |
+| `exclude` 非 dict | 400 | fail-fast |
+| 引擎 `PolishError` / 数值字段非法 | 400 | `{"error": "微调失败：..."}`（不炸 500） |
+
+### 关键不变量
+
+1. polish 构造段经 `run_in_threadpool` 执行（prefix-preview 先例，防阻塞事件循环；测试 = 线程级断言：引擎执行线程 ≠ 事件循环线程）。
+2. 成功请求顺手 `edit_hold.refresh(sid)`（编辑钉住与 `/api/edit-hold` 心跳同语义；default 不进钉住表；失败请求不续期）。
+3. 布局态零落盘：请求/响应全走 body，无新会话状态、无新磁盘产物。
+4. 测试：`tests/test_web_edit_polish.py`（14 例：200 全链路守恒/会话隔离/sid 闸门/载荷校验/gate 回退/exclude·compact 透传/线程池执行/钉住续期）。
 
 ## GET /api/ptypes — US-020 裁片 g 码代表（D10/D11；US-001 v2：键 = label）
 
