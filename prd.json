@@ -1,11 +1,4 @@
 {
   "branchName": "ralph/edit-drag-snap",
-  "stories": [
-    {
-      "id": "US-004",
-      "title": "冒烟脚本与文档同步",
-      "description": "端到端回归护栏 + 文档闭环：吸附功能与左键零回归双护栏。\n\n具体任务：\n1. 新建 materialSorting-web/scripts/smoke_drag_snap.mjs — playwright + Edge 通道冒烟（模板 scripts/smoke_edit_polish.mjs / smoke-band-preview.mjs 套路；addInitScript 预置 ms.tour.* 防 tour-overlay 拦截）≥25 检查点：真实母版上传 → 打开编辑弹窗 → 右键（button:2）pointer 序列把片推向邻居/留小缝松手 → 断言 DOM points 与期望吸附坐标（复用键盘用例数学锚点法）/ 指标面板重叠 0.00 / 右键继续拖离恢复自由 / 左键拖动压线落点原样零吸附（回归红线断言）/ 右键拖动中无 contextmenu / 保存后 placed translation 等于吸附值（全精度）/ 导出 PLT 回读无回归。\n2. materialSorting-web/AGENTS.md — 吸附语义节：右键会话触发、松手时一次、只改 translation、左键/键盘/旋转柄永不吸附、ATTRACT_MAX_GAP_MM=10、erode 口径脚注沿用 overlap.ts 现有脚注原文引用（2026-09-06 定案，避免两处文案漂移）。\n3. .docs/technical/agent-component-map.md — EditCanvas/snap.ts 条目同步吸附语义（右键触发、snap 标志、lastSafeTr 免费跟踪、伙伴高亮层）。\n\n验收标准：\n- smoke_drag_snap.mjs ≥25 检查点全过（含左键零回归红线断言与全精度贯通断言）\n- AGENTS.md / agent-component-map.md 含吸附语义与 erode 口径脚注（沿用 overlap.ts 引用）\n- npm run build 干净 + 既有 vitest 全量通过 + 零后端改动",
-      "passes": true
-    }
-  ]
+  "stories": []
 }

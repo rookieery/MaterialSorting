@@ -970,6 +970,12 @@
         "title": "EditCanvas 右键会话接线与视觉反馈",
         "description": "把吸附引擎接进编辑画布：右键拖动 = 贴附模式（MoveDrag 带 snap 标志，松手单次求解），左键拖动保持现状零改动（回归红线）。\n\n具体任务：\n1. materialSorting-web/src/components/edit/EditCanvas.tsx — onPointerDown 增 e.button 门控（现行无门控，EditCanvas.tsx:744 已核实）：button===2 且命中毛版 polygon → MoveDrag 带 snap:true；button===0 → 现行 MoveDrag 路径零改动；其余非主键（中键等）不起旋转/平移会话（顺手修掉「右键也能拖片/平移/转柄」隐性怪癖）。\n2. 同文件 — svg 上 contextmenu preventDefault（工具型画布无自定义右键菜单，右键已被贴附手势占用）。\n3. 同文件 — 右键会话 pointerup：clamp → computeSnapCorrection（US-002）→ 结果经 commitDragPlacement 唯一落笔出口写入；吸附只改 translation 永不动 rot/mirror；吸附引擎只被 snap:true 会话的 pointerup 调用——左键拖动、键盘变换（L/K/空格/O/I/R）与旋转拖柄永不吸附，applyKeyTransform/applyRotateFrame 与左键路径逐字节不变。\n4. 同文件 — lastSafeTr 跟踪：由既有 refreshMetrics 的 computeOverlap 结果顺带更新（所有会话免费跟踪，仅右键会话消费），rAF 合帧管线不变、拖动帧零新增计算。\n5. 同文件 — 吸附瞬间伙伴片高亮（复用 ensureUiLayers 增一层，样式与主题一致、松手后短时消退）+ 指标面板重合 0.00 自证（erode 口径与红字告警同真相源）+ 指南卡新增一行「右键拖动松手贴附」文案。\n6. 测试 — 右键会话（button:2）吸附路径、左键路径逐字节回归锁、伙伴高亮与指南卡文案断言。\n\n验收标准：\n- button===2 命中毛版 → snap 会话；button===0 路径逐字节不变；非主键不起会话\n- 右键拖动中无 contextmenu 弹出\n- 吸附结果经 commitDragPlacement 唯一出口、只改 translation\n- 左键/键盘/旋转柄永不吸附（回归红线）\n- 拖动帧零新增计算（lastSafeTr 借既有 refreshMetrics）\n- 通过浏览器验证编辑排料渲染（右键拖动→松手吸附→高亮→左键拖离恢复自由→撤销路径不炸）\n- npm run build 干净 + 既有 vitest 全量通过 + 零后端改动",
         "passes": true
+      },
+      {
+        "id": "US-004",
+        "title": "冒烟脚本与文档同步",
+        "description": "端到端回归护栏 + 文档闭环：吸附功能与左键零回归双护栏。\n\n具体任务：\n1. 新建 materialSorting-web/scripts/smoke_drag_snap.mjs — playwright + Edge 通道冒烟（模板 scripts/smoke_edit_polish.mjs / smoke-band-preview.mjs 套路；addInitScript 预置 ms.tour.* 防 tour-overlay 拦截）≥25 检查点：真实母版上传 → 打开编辑弹窗 → 右键（button:2）pointer 序列把片推向邻居/留小缝松手 → 断言 DOM points 与期望吸附坐标（复用键盘用例数学锚点法）/ 指标面板重叠 0.00 / 右键继续拖离恢复自由 / 左键拖动压线落点原样零吸附（回归红线断言）/ 右键拖动中无 contextmenu / 保存后 placed translation 等于吸附值（全精度）/ 导出 PLT 回读无回归。\n2. materialSorting-web/AGENTS.md — 吸附语义节：右键会话触发、松手时一次、只改 translation、左键/键盘/旋转柄永不吸附、ATTRACT_MAX_GAP_MM=10、erode 口径脚注沿用 overlap.ts 现有脚注原文引用（2026-09-06 定案，避免两处文案漂移）。\n3. .docs/technical/agent-component-map.md — EditCanvas/snap.ts 条目同步吸附语义（右键触发、snap 标志、lastSafeTr 免费跟踪、伙伴高亮层）。\n\n验收标准：\n- smoke_drag_snap.mjs ≥25 检查点全过（含左键零回归红线断言与全精度贯通断言）\n- AGENTS.md / agent-component-map.md 含吸附语义与 erode 口径脚注（沿用 overlap.ts 引用）\n- npm run build 干净 + 既有 vitest 全量通过 + 零后端改动",
+        "passes": true
       }
     ]
   }
