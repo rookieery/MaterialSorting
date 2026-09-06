@@ -41,8 +41,10 @@ const BISECT_ITERS = 14;
 /** 分离二分后防贴死微退 / 微抬（mm，1nm —— 后端 polish.py SEP_NUDGE_MM 同口径）。 */
 const SEP_NUDGE_MM = 1e-9;
 
-/** 「碰撞」判定面积阈值（mm² —— 后端 polish.py COLLIDE_AREA_EPS_MM2 同名同口径）。 */
-const COLLIDE_AREA_EPS_MM2 = 1e-9;
+/** 「碰撞」判定面积阈值（mm² —— 后端 polish.py COLLIDE_AREA_EPS_MM2 同名同口径）。
+ *  导出供 US-003 EditCanvas 的 lastSafeTr 跟踪谓词同口径消费（两处判定必须同 eps，
+ *  否则跟踪位可能落在引擎谓词的违例侧 → 引擎防御性 fail-open 白白退化吸附效果）。 */
+export const COLLIDE_AREA_EPS_MM2 = 1e-9;
 
 /** clamp 不变量浮点容差（mm —— 后端 polish.py GATE_EPS_MM 同口径，吸变换噪声 ~1e-13 级）。 */
 const CLAMP_EPS_MM = 1e-6;

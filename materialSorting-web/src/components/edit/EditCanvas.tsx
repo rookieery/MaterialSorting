@@ -82,6 +82,19 @@
 // 基线值走 refreshPieceView 单点刷新（DOM 5 层 + 池增量 + 指标/手柄同帧 —— store
 // 写入已由 resetItem 承担，不重复 setWorkingItem；refreshPieceView 与
 // commitDragPlacement 共用同一条「同帧刷新」路径）。
+//
+// edit-drag-snap US-003（2026-09-06）右键贴附会话：onPointerDown 按键门控 ——
+// button===0 左键既有会话零改动（拖片/平移/转柄，回归红线）；button===2 且命中
+// 毛版 polygon → MoveDrag 带 snap:true（贴附拖动，松手单次求解）；其余非主键
+// （中键等）不起任何会话（顺手修掉「非主键也能拖片/平移/转柄」隐性怪癖）。
+// svg contextmenu preventDefault（工具型画布无自定义右键菜单，右键已被贴附手势
+// 占用）。贴附会话 pointerup：clamp → lib/snap computeSnapCorrection（US-002 引擎）
+// → 结果经 commitDragPlacement 唯一落笔出口写入（只改 translation，rot/mirror
+// 原值透传）+ 伙伴片高亮闪烁（ensureUiLayers 第三子层，短时淡出）。lastSafeTr
+// 由 refreshMetrics 的既有 computeOverlap 结果顺带续写（会话首帧落起手基线；
+// 谓词 = 总面积 ≤ 基线 + COLLIDE_AREA_EPS_MM2 与引擎同口径）—— 拖动帧零新增
+// 计算、rAF 合帧管线不变，仅 snap:true 会话消费；左键拖动 / 键盘变换（L/K/空格/
+// O/I/R）与旋转拖柄永不吸附。
 
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -97,6 +110,7 @@ import {
   precomputeEditPiecesFromItems,
   type EditPiece,
 } from '../../lib/overlap';
+import { COLLIDE_AREA_EPS_MM2, computeSnapCorrection, type SnapSession } from '../../lib/snap';
 import { pointsStr } from '../../lib/geometry';
 import { computeLayoutStats, useEditStore } from '../../store/editStore';
 import type { PolishReport } from '../../lib/editPolish';
@@ -121,6 +135,10 @@ const CLICK_SLOP_PX = 3;
 const HANDLE_R_MIN = 4;
 const HANDLE_R_MAX = 30;
 
+/** 伙伴片高亮常驻 / 淡出时长（ms，edit-drag-snap US-003 吸附瞬间视觉反馈）。 */
+const PARTNER_FLASH_MS = 900;
+const PARTNER_FADE_MS = 300;
+
 /** viewBox（SVG 用户空间 = 翻转组变换之外的 viewBox 坐标系）。 */
 interface ViewBox {
   x: number;
@@ -141,6 +159,12 @@ interface MoveDrag {
   tr0: Pt;
   /** 起手镜像标志（edit-keyboard US-003）：setWorkingItem 不改 mirror ⇒ 会话内恒定。 */
   mirror0: boolean;
+  /**
+   * 右键贴附会话（edit-drag-snap US-003）：pointerdown button===2 起 true ——
+   * pointerup 单次吸附求解（endDrag → applySnapOnRelease）；左键恒 false
+   * （既有自由拖动路径零改动，松手永不吸附）。
+   */
+  snap: boolean;
 }
 interface RotateDrag {
   mode: 'rotate';
@@ -252,6 +276,15 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
   const dragRef = useRef<DragState | null>(null);
   const rafRef = useRef<number | null>(null);
   const pendingMoveRef = useRef<Pt | null>(null);
+  /**
+   * 贴附会话态（edit-drag-snap US-003）：右键 pointerdown 起会话、pointerup 求解后
+   * 清空（pointercancel / 骨架重建 / 卸载同步作废）。refreshMetrics 每帧顺带续写
+   * lastSafeTr（拖动帧零新增计算）；左键/键盘/旋转会话恒 null 不消费。
+   */
+  const snapSessRef = useRef<SnapSession | null>(null);
+  /** 伙伴片高亮层（UI 覆盖层第三子层）+ 淡出双段计时器。 */
+  const partnerGRef = useRef<SVGGElement | null>(null);
+  const partnerTimerRef = useRef<number | null>(null);
 
   const run = useEditStore((s) => s.run);
   const working = useEditStore((s) => s.working);
@@ -286,6 +319,12 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
       handleGRef.current = null;
       handleLineRef.current = null;
       handleCircleRef.current = null;
+      partnerGRef.current = null;
+      snapSessRef.current = null;
+      if (partnerTimerRef.current != null) {
+        window.clearTimeout(partnerTimerRef.current);
+        partnerTimerRef.current = null;
+      }
       lastSigRef.current = [];
 
       const bg = document.createElementNS(SVGNS, 'rect');
@@ -396,7 +435,7 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
 
     // ---- 选中 / UI 覆盖层 / 指标（闭包内定义，仅经 refs/store 读写状态）----
 
-    /** 建（或复用）UI 覆盖层：交集高亮 g（pointer-events:none）+ 旋转手柄 g。 */
+    /** 建（或复用）UI 覆盖层：伙伴片高亮 g + 交集高亮 g + 旋转手柄 g（均不挡交互）。 */
     function ensureUiLayers(): void {
       const g = flipRef.current;
       if (!g) return;
@@ -405,6 +444,9 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
         return;
       }
       const layer = document.createElementNS(SVGNS, 'g');
+      // 伙伴片高亮 g（edit-drag-snap US-003：吸附瞬间伙伴轮廓闪烁，第三子层）。
+      const partnerG = document.createElementNS(SVGNS, 'g');
+      partnerG.style.pointerEvents = 'none';
       const overlapG = document.createElementNS(SVGNS, 'g');
       overlapG.style.pointerEvents = 'none';
       const handleG = document.createElementNS(SVGNS, 'g');
@@ -424,10 +466,12 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
       circle.classList.add('edit-rotate-handle');
       handleG.appendChild(line);
       handleG.appendChild(circle);
+      layer.appendChild(partnerG);
       layer.appendChild(overlapG);
       layer.appendChild(handleG);
       g.appendChild(layer);
       uiLayerRef.current = layer;
+      partnerGRef.current = partnerG;
       overlapGRef.current = overlapG;
       handleGRef.current = handleG;
       handleLineRef.current = line;
@@ -506,6 +550,54 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
       g.appendChild(poly);
     }
 
+    /** 伙伴片高亮清除（淡出完成 / 取消选中 / 骨架重建 —— 幂等）。 */
+    function clearPartner(): void {
+      const g = partnerGRef.current;
+      if (!g) return;
+      while (g.firstChild) g.removeChild(g.firstChild);
+    }
+
+    /**
+     * 吸附瞬间伙伴片高亮（edit-drag-snap US-003）：伙伴轮廓绿色虚线 + 淡填充
+     * （主题绿 = 旋转手柄同款辅助色，与红色重合告警语义区分），PARTNER_FLASH_MS
+     * 后 PARTNER_FADE_MS 淡出再移除；重复吸附重置计时。pointer-events:none 不挡
+     * 画布交互（用户可立即继续拖动）。
+     */
+    function flashPartner(key: number | null): void {
+      const g = partnerGRef.current;
+      if (!g || key == null) return;
+      const ep = poolRef.current?.find((p) => p.key === key);
+      if (!ep) return;
+      clearPartner();
+      const poly = document.createElementNS(SVGNS, 'polygon');
+      poly.setAttribute('points', pointsStr(ep.worldPolygon, 0, [0, 0]));
+      poly.setAttribute('fill', 'rgba(46, 160, 108, 0.12)');
+      poly.setAttribute('stroke', '#2ea06c');
+      poly.setAttribute('stroke-width', '2');
+      poly.setAttribute('stroke-dasharray', '6 3');
+      poly.setAttribute('data-testid', 'edit-snap-partner');
+      poly.style.opacity = '1';
+      poly.style.transition = `opacity ${PARTNER_FADE_MS}ms ease-out`;
+      g.appendChild(poly);
+      if (partnerTimerRef.current != null) window.clearTimeout(partnerTimerRef.current);
+      partnerTimerRef.current = window.setTimeout(() => {
+        poly.style.opacity = '0'; // 常驻结束 → 淡出（transition 动画）
+        partnerTimerRef.current = window.setTimeout(() => {
+          partnerTimerRef.current = null;
+          clearPartner();
+        }, PARTNER_FADE_MS);
+      }, PARTNER_FLASH_MS);
+    }
+
+    /** 取消进行中的伙伴高亮计时并清层（deselect / 骨架重建 / 卸载清理）。 */
+    function cancelPartnerFlash(): void {
+      if (partnerTimerRef.current != null) {
+        window.clearTimeout(partnerTimerRef.current);
+        partnerTimerRef.current = null;
+      }
+      clearPartner();
+    }
+
     /** 重合指标计算 + 高亮渲染 + 面板数据（选中与拖动帧的唯一产出口）。 */
     function refreshMetrics(index: number): void {
       const pool = poolRef.current;
@@ -523,9 +615,24 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
           rotDevDeg: rotationDeviationDeg(dragged.rot),
           degraded: false,
         };
+        // edit-drag-snap US-003：贴附会话免费跟踪（复用本次 computeOverlap，拖动帧
+        // 零新增计算）—— 会话首帧（lastSafeTr 尚空）落起手基线，此后谓词成立
+        // （总面积 ≤ 基线 + COLLIDE_AREA_EPS_MM2，与 snap.ts 引擎同口径同 eps）时
+        // 续写 lastSafeTr = 当前帧位。仅 snap:true 会话消费；左键/键盘会话本 ref
+        // 恒 null（endDrag 不读）。
+        const sess = snapSessRef.current;
+        if (sess) {
+          if (sess.lastSafeTr === null) sess.startOverlapMm2 = res.areaMm2;
+          if (res.areaMm2 <= sess.startOverlapMm2 + COLLIDE_AREA_EPS_MM2) {
+            sess.lastSafeTr = [dragged.tr[0], dragged.tr[1]];
+          }
+        }
       } catch {
         // 布尔交异常降级（PRD 口径）：bbox 交高亮 + 面积按 bbox 估算，不阻塞拖动。
         // 穿透深度是独立纯函数（顶点采样，无布尔交）—— 继续如实计算。
+        // edit-drag-snap US-003：degraded 帧保守跳过 lastSafeTr 续写（布尔交口径
+        // 缺失，锚点停在末个好帧 —— 会话全程 degraded 则无锚点，retreat fail-open
+        // 回 raw，与不吸附一致）。
         let area = 0;
         let pen = 0;
         for (const o of pool) {
@@ -575,6 +682,7 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
       setMetrics(null);
       poolRef.current = null;
       clearHighlight();
+      cancelPartnerFlash();
       if (handleGRef.current) handleGRef.current.style.display = 'none';
     }
 
@@ -632,6 +740,40 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
       if (mirrorPatch !== undefined) patch.mirror = mirrorPatch;
       useEditStore.getState().setWorkingItem(index, patch);
       refreshPieceView(index, entry, rot, tr, mirror);
+    }
+
+    /**
+     * 右键贴附会话松手单次求解（edit-drag-snap US-003）：endDrag 在 flushFrame 之后
+     * 调用 —— working / 池 / DOM 已是末帧 clamp 落点位。流程：再 clamp（幂等防御）
+     * → computeSnapCorrection（US-002 引擎，free/retreat/attract）→ kind ≠ free 且
+     * translation 实变时经 commitDragPlacement **唯一落笔出口**写入（只改
+     * translation；rot/mirror 读 working 现值原样透传，永不触碰）+ 伙伴片高亮闪烁。
+     * 会话态先取后清 —— 落笔触发的 refreshMetrics 不再续写 lastSafeTr（会话已结束）。
+     * 引擎只被 snap:true 会话的 pointerup 调用（左键 / 键盘 / 旋转柄路径零吸附）。
+     */
+    function applySnapOnRelease(st: MoveDrag): void {
+      const sess = snapSessRef.current;
+      snapSessRef.current = null;
+      const manifest = manifestRef.current;
+      const entry = entriesRef.current[st.index];
+      const pool = poolRef.current;
+      if (!sess || !manifest || !entry || !pool) return;
+      const it = useEditStore.getState().working[st.index];
+      if (!it) return; // 防御：选中下标与 working 错位（骨架重建清选中，理论不达）
+      const dragged = pool.find((p) => p.key === st.index);
+      if (!dragged) return;
+      const mirror = it.mirror === true;
+      const rawTr = clampPlacement(
+        entry.piece.polygon,
+        it.rotation,
+        it.translation,
+        manifest.gate_mm,
+        mirror,
+      );
+      const res = computeSnapCorrection(dragged, rawTr, sess, pool, { gate: manifest.gate_mm });
+      if (res.kind === 'free') return; // 无吸附 / fail-open —— 末帧落点原样保留
+      commitDragPlacement(st.index, entry, it.rotation, res.tr, mirror);
+      flashPartner(res.partnerKey);
     }
 
     /**
@@ -742,9 +884,14 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
     // ---- 事件分发 ----
 
     const onPointerDown = (e: PointerEvent): void => {
+      // edit-drag-snap US-003 按键门控：0 = 左键（全部既有会话零改动）/ 2 = 右键
+      // （仅毛版 polygon 贴附会话）/ 其余非主键（中键 1、后退 3、前进 4）不起任何
+      // 会话 —— 右键贴附手势占用后顺手修掉「非主键也能拖片/平移/转柄」隐性怪癖。
+      if (e.button !== 0 && e.button !== 2) return;
       const target = e.target as Element | null;
-      // 1) 旋转手柄（选中片常显）→ 绕质心旋转拖柄。
+      // 1) 旋转手柄（选中片常显）→ 绕质心旋转拖柄（仅左键；右键贴附不转柄）。
       if (target?.closest?.('[data-edit-role="rotate"]')) {
+        if (e.button !== 0) return;
         const index = selRef.current;
         const flip = flipRef.current;
         const entry = index != null ? entriesRef.current[index] : null;
@@ -773,11 +920,22 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
         return;
       }
       // 2) 毛版 polygon → 选中 + 提层 + 平移拖片（4 层工艺 / 交集高亮层均
-      //    pointer-events:none，不会成为 target）。
+      //    pointer-events:none，不会成为 target）。左键 = 自由拖动（snap:false，
+      //    既有路径零改动）；右键 = 贴附会话（snap:true，松手单次求解）。
       const poly = target?.closest?.('polygon');
       if (poly) {
         const index = entriesRef.current.findIndex((en) => en != null && en.el === poly);
         if (index < 0) return; // 非裁片毛版 polygon（防御）
+        const snap = e.button === 2;
+        if (snap) {
+          // 贴附会话态起手：基线先置 Infinity（恒安全占位）—— 紧随的 selectPiece →
+          // refreshMetrics 首帧把真实起手总面积落进基线并续写 lastSafeTr 起手位
+          // （见 refreshMetrics 内 US-003 分节；首帧 degraded 则沿用 Infinity =
+          // attract-only fail-open）。
+          snapSessRef.current = { lastSafeTr: null, startOverlapMm2: Infinity };
+        } else {
+          snapSessRef.current = null; // 左键会话不消费跟踪（防御清残值）
+        }
         selectPiece(index);
         const it = useEditStore.getState().working[index];
         dragRef.current = {
@@ -788,6 +946,7 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
           rot0: it.rotation,
           tr0: [it.translation[0], it.translation[1]],
           mirror0: it.mirror === true,
+          snap,
         };
         try {
           (poly as SVGPolygonElement).setPointerCapture?.(e.pointerId);
@@ -798,6 +957,8 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
         return;
       }
       // 3) 空白（svg/bg/fab）→ 平移（位移 <3px 的 down-up = 点击取消选中）。
+      //    仅左键 —— 右键空白无会话（不平移、不取消选中；contextmenu 已被吞）。
+      if (e.button !== 0) return;
       const vb = vbRef.current;
       if (!vb) return;
       try {
@@ -847,6 +1008,8 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
       flushFrame(); // 悬空 rAF 落帧（move 后立即 up 不丢尾帧）
       dragRef.current = null;
       svg.style.cursor = '';
+      // edit-drag-snap US-003：右键贴附会话松手单次求解（左键 / 旋转柄会话不进）。
+      if (d.mode === 'move' && d.snap) applySnapOnRelease(d);
     };
 
     const endPan = (e: PointerEvent): void => {
@@ -872,10 +1035,19 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
         }
         pendingMoveRef.current = null;
         dragRef.current = null;
+        snapSessRef.current = null; // edit-drag-snap US-003：贴附会话随手势中止作废（不求解）
         svg.style.cursor = '';
         return;
       }
       endPan(e);
+    };
+
+    /**
+     * 右键菜单吞除（edit-drag-snap US-003）：工具型画布无自定义右键菜单 —— 右键
+     * 已被贴附手势占用（右键拖动中 / 右键空白处均不弹系统菜单）。
+     */
+    const onContextMenu = (e: MouseEvent): void => {
+      e.preventDefault();
     };
 
     /**
@@ -958,18 +1130,22 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
     svg.addEventListener('pointermove', onPointerMove);
     svg.addEventListener('pointerup', onPointerUp);
     svg.addEventListener('pointercancel', onPointerCancel);
+    svg.addEventListener('contextmenu', onContextMenu);
     window.addEventListener('keydown', onKeyDown);
     return () => {
       svg.removeEventListener('pointerdown', onPointerDown);
       svg.removeEventListener('pointermove', onPointerMove);
       svg.removeEventListener('pointerup', onPointerUp);
       svg.removeEventListener('pointercancel', onPointerCancel);
+      svg.removeEventListener('contextmenu', onContextMenu);
       window.removeEventListener('keydown', onKeyDown);
       if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
       pendingMoveRef.current = null;
       dragRef.current = null;
       panRef.current = null;
+      snapSessRef.current = null; // edit-drag-snap US-003：卸载时会话/高亮计时一并清理
+      cancelPartnerFlash();
     };
   }, []);
 
@@ -1112,6 +1288,11 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
       <div className="edit-metrics-title">操作指南</div>
       <div className="edit-guide-row">
         <span className="edit-metrics-label">拖动裁片：</span>按住裁片拖动（自动选中置顶）
+      </div>
+      {/* edit-drag-snap US-003：右键贴附手势一行（文案不含「形态」「保存」——
+          EditCanvas.test 反向锁同guide其余行）。 */}
+      <div className="edit-guide-row">
+        <span className="edit-metrics-label">贴附：</span>右键拖动松手贴附
       </div>
       <div className="edit-guide-row">
         <span className="edit-metrics-label">旋转：</span>拖动选中片上方绿色圆点，绕中心自由旋转

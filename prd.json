@@ -2,16 +2,10 @@
   "branchName": "ralph/edit-drag-snap",
   "stories": [
     {
-      "id": "US-002",
-      "title": "松手吸附引擎纯函数（retreat + attract）",
-      "description": "新文件承载吸附引擎纯函数：P0 retreat（沿拖动路径粗扫+二分回退到首触点）+ P1 attract（解析首触距离吸拢）+ fail-open 守卫。触发与否是调用方（UI 会话）职责，引擎不感知按键。全程序确定、无 RNG。\n\n具体任务：\n1. 新建 materialSorting-web/src/lib/snap.ts — 常量收口顶部：ATTRACT_MAX_GAP_MM = 10（2026-09-06 定案）、粗扫步 20mm、二分 ≤14 轮、SEP_NUDGE_MM = 1e-9、COLLIDE_AREA_EPS_MM2 = 1e-9（对齐后端 polish.py 同名常量口径）。\n2. 同文件 — `computeSnapCorrection(dragged, rawTr, sess, others, opts)` 返回 `{tr, kind:'free'|'retreat'|'attract', partnerKey}`：retreat 以 lo = 会话内最后安全位（sess.lastSafeTr）/ hi = 落点，粗扫 20mm 步（防窄障碍隧道穿越——凹形使自由区间不连通时朴素二分会跳过）括出首个穿越小段再二分 + 1nm 微退；attract 用 US-001 的 firstContactDistance 沿末帧拖动位移方向（零位移帧退化质心连线）取 ≤10mm 吸到触点 −1nm，多邻居取接触距离最小者、平手取数组下标小。\n3. 同文件 — SnapSession 会话态 `{lastSafeTr, startOverlapMm2}`；谓词 = 全邻居总重叠面积 ≤ 起手基线 + 1e-9（复用 overlap.ts computeOverlap 作 oracle；起手存量重叠——solver 全局容差 MAX_OVERLAP_MM=10 构造的布局——不恶化、不误清）。\n4. 新建 materialSorting-web/src/lib/snap.test.ts — 用例：重叠夹具 retreat 后全邻居布尔交面积 ≤1e-9 mm² 且分离 ≥1e-9 mm、回退量与解析值对拍（容差 0.01mm）；粗扫隧道穿越夹具；基线不恶化；attract 间隙 6mm（<10mm）吸附后布尔交 ≤1e-9 / 间隙 15mm（>阈值）不动 / 零位移质心退化 / 多邻居平手下标裁决；吸附结果违反 clamp 不变量（y∈[0,gate]、minX≥0）弃用回落 raw；内部异常 fail-open 返回 raw；确定性双跑逐位全等；邻居寻址全程 EditPiece.key 数组下标、同 pid 多副本绝不 pid 去重（仓库红线，测试加锁）。\n\n验收标准：\n- P0 retreat 夹具：布尔交 ≤1e-9 mm² + 分离 ≥1e-9 mm + 回退量对拍 0.01mm\n- 隧道穿越夹具通过（粗扫路径）\n- 谓词不恶化起手基线（存量重叠不清不增）\n- attract 6mm 吸 / 15mm 不动 / 零位移退化 / 平手下标裁决\n- clamp 违反与内部异常均回落 raw（fail-open）\n- 确定性双跑逐位全等；EditPiece.key 下标寻址多副本锁\n- npm run build 干净 + 既有 vitest 全量通过 + 零后端改动",
-      "passes": true
-    },
-    {
       "id": "US-003",
       "title": "EditCanvas 右键会话接线与视觉反馈",
       "description": "把吸附引擎接进编辑画布：右键拖动 = 贴附模式（MoveDrag 带 snap 标志，松手单次求解），左键拖动保持现状零改动（回归红线）。\n\n具体任务：\n1. materialSorting-web/src/components/edit/EditCanvas.tsx — onPointerDown 增 e.button 门控（现行无门控，EditCanvas.tsx:744 已核实）：button===2 且命中毛版 polygon → MoveDrag 带 snap:true；button===0 → 现行 MoveDrag 路径零改动；其余非主键（中键等）不起旋转/平移会话（顺手修掉「右键也能拖片/平移/转柄」隐性怪癖）。\n2. 同文件 — svg 上 contextmenu preventDefault（工具型画布无自定义右键菜单，右键已被贴附手势占用）。\n3. 同文件 — 右键会话 pointerup：clamp → computeSnapCorrection（US-002）→ 结果经 commitDragPlacement 唯一落笔出口写入；吸附只改 translation 永不动 rot/mirror；吸附引擎只被 snap:true 会话的 pointerup 调用——左键拖动、键盘变换（L/K/空格/O/I/R）与旋转拖柄永不吸附，applyKeyTransform/applyRotateFrame 与左键路径逐字节不变。\n4. 同文件 — lastSafeTr 跟踪：由既有 refreshMetrics 的 computeOverlap 结果顺带更新（所有会话免费跟踪，仅右键会话消费），rAF 合帧管线不变、拖动帧零新增计算。\n5. 同文件 — 吸附瞬间伙伴片高亮（复用 ensureUiLayers 增一层，样式与主题一致、松手后短时消退）+ 指标面板重合 0.00 自证（erode 口径与红字告警同真相源）+ 指南卡新增一行「右键拖动松手贴附」文案。\n6. 测试 — 右键会话（button:2）吸附路径、左键路径逐字节回归锁、伙伴高亮与指南卡文案断言。\n\n验收标准：\n- button===2 命中毛版 → snap 会话；button===0 路径逐字节不变；非主键不起会话\n- 右键拖动中无 contextmenu 弹出\n- 吸附结果经 commitDragPlacement 唯一出口、只改 translation\n- 左键/键盘/旋转柄永不吸附（回归红线）\n- 拖动帧零新增计算（lastSafeTr 借既有 refreshMetrics）\n- 通过浏览器验证编辑排料渲染（右键拖动→松手吸附→高亮→左键拖离恢复自由→撤销路径不炸）\n- npm run build 干净 + 既有 vitest 全量通过 + 零后端改动",
-      "passes": false
+      "passes": true
     },
     {
       "id": "US-004",

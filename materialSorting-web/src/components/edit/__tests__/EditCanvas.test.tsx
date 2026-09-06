@@ -20,6 +20,9 @@
 //              基线（mirror 清零）、其余片与 lastFrame 不动、5 层 points + 指标/手柄
 //              同帧回基线；e.repeat 忽略 + 守卫链：未选中/确认层打开/resetItem
 //              守卫 false 静默不动不炸）
+//   edit-drag-snap US-003：14) 右键贴附会话（button:2 吸附 attract/retreat/free 逐
+//              分支 + 指标 0.00 自证 + 伙伴高亮及短时消退 + 左键零吸附回归红线 +
+//              非主键门控 + contextmenu 吞除 + 指南卡文案）
 //
 // jsdom 缺口：PointerEvent 未实现（beforeEach polyfill）；getScreenCTM/createSVGPoint
 // 缺失（mock 复合矩阵，同 editGeometry.test 套路）。
@@ -241,9 +244,18 @@ function firePointer(
   type: 'pointerdown' | 'pointermove' | 'pointerup',
   clientX: number,
   clientY: number,
+  /** 按键（edit-drag-snap US-003）：0=左键（缺省，既有用例零改动）/2=右键贴附。 */
+  button = 0,
 ): void {
   el.dispatchEvent(
-    new PointerEvent(type, { bubbles: true, cancelable: true, pointerId: 1, clientX, clientY }),
+    new PointerEvent(type, {
+      bubbles: true,
+      cancelable: true,
+      pointerId: 1,
+      clientX,
+      clientY,
+      button,
+    }),
   );
 }
 
@@ -650,7 +662,8 @@ describe('EditCanvas 拖动 (US-003)', () => {
     expect((g.childNodes[0] as SVGPolygonElement).getAttribute('fill')).toBe('#00ff00');
     expect(g.childNodes[0]).not.toBe(roughA);
     const uiLayer = g.childNodes[6] as SVGGElement;
-    expect(uiLayer.childNodes.length).toBe(2); // overlapG + handleG
+    // edit-drag-snap US-003 起 UI 覆盖层三个子层：partnerG（伙伴高亮）+ overlapG + handleG
+    expect(uiLayer.childNodes.length).toBe(3);
     expect(document.querySelector('[data-testid="edit-rotate-handle"]')).not.toBeNull();
   });
 
@@ -1558,5 +1571,254 @@ describe('EditCanvas R 键片级重置 (edit-keyboard US-006)', () => {
     expect(useEditStore.getState().working[0]).toBe(before); // 静默不动（原引用原样）
     const roughA = roughPolyOf(svg, '#ff0000');
     expect(roughA.getAttribute('points')).toBe('600,250 1100,250 1100,750 600,750'); // DOM 不动
+  });
+});
+
+// ============================================================
+// 右键贴附会话（edit-drag-snap US-003）：button===2 命中毛版 → MoveDrag
+// snap:true，pointerup flushFrame → clamp → computeSnapCorrection →
+// commitDragPlacement 唯一落笔出口（只改 translation，rot/mirror 原值透传）+
+// 伙伴片高亮；左键 / 键盘 / 旋转柄永不吸附（回归红线）；非主键不起会话；
+// contextmenu 吞除。
+//
+// 数学锚点（手算 + US-002 引擎语义锁死）：a 500² @[0,0]（x∈[0,500]）+
+// b 500² @[600,0]（x∈[600,1100]），初始缝 100mm；mockRect 550×500 → s=0.5
+// px/mm（dx_world = 2·dx_px）。质心连线方向 = (−1,0)（y 带重叠 [0,500]）：
+// 留 6mm 缝松手 → attract 吸到 500+1e-9（触点 −1nm）；拖入重叠松手 →
+// retreat 回首触界 500+1e-9；两帧拖动（中途 [500,0] 安全帧被 refreshMetrics
+// 跟踪为锚点）→ retreat tStar=0 恰回 [500,0] 精确。
+// ============================================================
+
+describe('EditCanvas 右键贴附会话 (edit-drag-snap US-003)', () => {
+  it('右键拖动留 6mm 缝松手 → attract 吸到触点+1nm（x≈500）+ 指标归 0.00 + 伙伴高亮 + 只改 translation', () => {
+    const svg = mountCanvas('full', seedRun(PLACED_AB));
+    mockRect(svg, 550, 500); // s = 0.5
+    const roughB = roughPolyOf(svg, '#00ff00');
+    act(() => {
+      firePointer(roughB, 'pointerdown', 147, 100, 2);
+      firePointer(roughB, 'pointermove', 100, 100, 2); // dClient −47px → −94mm → b@[506,0]
+      firePointer(roughB, 'pointerup', 100, 100, 2);
+    });
+    const w = useEditStore.getState().working;
+    // attract：质心连线方向 (−1,0) 首触 t=6 ≤ 10 → 吸到 506−(6−1nm) = 500+1e-9
+    expect(w[1].translation[0]).toBeCloseTo(500, 8);
+    expect(w[1].translation[1]).toBeCloseTo(0, 9);
+    expect(w[1].rotation).toBe(0); // 只改 translation：rot/mirror 原值透传
+    expect(w[1].mirror).toBeUndefined();
+    expect(w[0].translation).toEqual([0, 0]); // 其余片不动
+    // DOM 5 层同帧落笔（r2 截断：500+1e-9 → '500'）
+    expect(roughB.getAttribute('points')).toBe('500,0 1000,0 1000,500 500,500');
+    // 指标面板重合 0.00 自证（erode 口径与红字告警同真相源 computeOverlap）
+    expect(metricsText('edit-metrics-area')).toBe('0.0 mm²（0.00 cm²）');
+    expect(metricsText('edit-metrics-depth')).toBe('0.0 mm');
+    // 伙伴片高亮：partnerKey=0（a）世界轮廓（绿色虚线主题辅助色）
+    const partner = document.querySelector('[data-testid="edit-snap-partner"]');
+    expect(partner).not.toBeNull();
+    expect(partner!.getAttribute('points')).toBe('0,0 500,0 500,500 0,500');
+    expect(partner!.getAttribute('stroke')).toBe('#2ea06c');
+  });
+
+  it('右键拖入重叠（b→[400,0] 交 100×500）松手 → retreat 回首触界 + 违例落点被纠正归 0', async () => {
+    const svg = mountCanvas('full', seedRun(PLACED_AB));
+    mockRect(svg, 550, 500);
+    const roughB = roughPolyOf(svg, '#00ff00');
+    act(() => {
+      firePointer(roughB, 'pointerdown', 200, 100, 2);
+      firePointer(roughB, 'pointermove', 100, 100, 2); // −100px → −200mm → b@[400,0]
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 30)); // 拖动中（未抬手）违例如实显示
+    });
+    expect(metricsText('edit-metrics-area')).toBe('50000.0 mm²（500.00 cm²）');
+    act(() => {
+      firePointer(roughB, 'pointerup', 100, 100, 2);
+    });
+    // retreat：锚点 = 起手位 [600,0]，粗扫+二分回首触界 x=500（自由侧 −1nm）
+    const w = useEditStore.getState().working;
+    expect(w[1].translation[0]).toBeCloseTo(500, 8);
+    expect(w[1].translation[1]).toBeCloseTo(0, 9);
+    expect(metricsText('edit-metrics-area')).toBe('0.0 mm²（0.00 cm²）');
+    expect(document.querySelector('[data-testid="edit-snap-partner"]')).not.toBeNull();
+  });
+
+  it('两帧拖动：中途 [500,0] 安全帧被 refreshMetrics 跟踪为锚点 → 松手恰回 [500,0] 精确（lastSafeTr 借既有指标更新锁）', async () => {
+    const svg = mountCanvas('full', seedRun(PLACED_AB));
+    mockRect(svg, 550, 500);
+    const roughB = roughPolyOf(svg, '#00ff00');
+    act(() => {
+      firePointer(roughB, 'pointerdown', 150, 100, 2);
+      firePointer(roughB, 'pointermove', 100, 100, 2); // −50px → −100mm → b@[500,0]（贴合安全帧）
+    });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 30)); // rAF 落帧 → lastSafeTr 续写 [500,0]
+    });
+    expect(useEditStore.getState().working[1].translation[0]).toBeCloseTo(500, 10);
+    act(() => {
+      firePointer(roughB, 'pointermove', 50, 100, 2); // 再 −50px → b@[400,0]（违例帧）
+      firePointer(roughB, 'pointerup', 50, 100, 2);
+    });
+    // retreat 锚点 = 末安全帧 [500,0]（非起手 [600,0]）：边界即锚点 → tStar=0 精确回锚
+    const w = useEditStore.getState().working;
+    expect(w[1].translation[0]).toBe(500);
+    expect(w[1].translation[1]).toBe(0);
+    expect(roughB.getAttribute('points')).toBe('500,0 1000,0 1000,500 500,500');
+  });
+
+  it('缝 60mm > ATTRACT_MAX_GAP_MM(10) → free 不吸附（落点原样保留、无伙伴高亮）', () => {
+    const svg = mountCanvas('full', seedRun(PLACED_AB));
+    mockRect(svg, 550, 500);
+    const roughB = roughPolyOf(svg, '#00ff00');
+    act(() => {
+      firePointer(roughB, 'pointerdown', 120, 100, 2);
+      firePointer(roughB, 'pointermove', 100, 100, 2); // −20px → −40mm → b@[560,0]（缝 60）
+      firePointer(roughB, 'pointerup', 100, 100, 2);
+    });
+    const w = useEditStore.getState().working;
+    expect(w[1].translation[0]).toBeCloseTo(560, 10);
+    expect(w[1].translation[1]).toBeCloseTo(0, 10);
+    expect(document.querySelector('[data-testid="edit-snap-partner"]')).toBeNull();
+    expect(metricsText('edit-metrics-area')).toBe('0.0 mm²（0.00 cm²）');
+  });
+
+  it('左键拖入重叠松手 → 原样 [400,0] 零吸附（回归红线：左键路径永不吸附）', () => {
+    const svg = mountCanvas('full', seedRun(PLACED_AB));
+    mockRect(svg, 550, 500);
+    const roughB = roughPolyOf(svg, '#00ff00');
+    act(() => {
+      firePointer(roughB, 'pointerdown', 200, 100); // button 0（缺省）
+      firePointer(roughB, 'pointermove', 100, 100);
+      firePointer(roughB, 'pointerup', 100, 100);
+    });
+    const w = useEditStore.getState().working;
+    expect(w[1].translation[0]).toBeCloseTo(400, 10); // 违例落点原样（不 retreat）
+    expect(w[1].translation[1]).toBeCloseTo(0, 10);
+    expect(metricsText('edit-metrics-area')).toBe('50000.0 mm²（500.00 cm²）');
+    expect(document.querySelector('[data-testid="edit-snap-partner"]')).toBeNull();
+  });
+
+  it('吸附后左键拖离恢复自由：留 6mm 缝松手不回吸（左键会话不消费 snap）', () => {
+    const svg = mountCanvas('full', seedRun(PLACED_AB));
+    mockRect(svg, 550, 500);
+    const roughB = roughPolyOf(svg, '#00ff00');
+    // ① 右键吸附到触点 x≈500
+    act(() => {
+      firePointer(roughB, 'pointerdown', 147, 100, 2);
+      firePointer(roughB, 'pointermove', 100, 100, 2);
+      firePointer(roughB, 'pointerup', 100, 100, 2);
+    });
+    expect(useEditStore.getState().working[1].translation[0]).toBeCloseTo(500, 8);
+    // ② 左键右拖 +6mm 留 6mm 缝松手 → 原样 ≈506（若左键也吸附会回 500）
+    act(() => {
+      firePointer(roughB, 'pointerdown', 100, 100);
+      firePointer(roughB, 'pointermove', 103, 100); // +3px → +6mm
+      firePointer(roughB, 'pointerup', 103, 100);
+    });
+    expect(useEditStore.getState().working[1].translation[0]).toBeCloseTo(506, 6);
+  });
+
+  it('rot 180° + mirror 片右键吸附：只改 translation（rot/mirror 原值透传）', () => {
+    // mirror+rot180 复合 = (x,y)↦(x,−y)：b 足印 x∈[600,1100]、y∈[250,750] —— 与
+    // a@[0,250]（x∈[0,500]、y∈[250,750]）同 y 带 → 质心连线方向恰 (−1,0)，锚点
+    // 数学与首例同构（缝 100、拖 94 留 6 → 吸到 500+1e-9）。
+    const placed: PlacedItem[] = [
+      { id: 'a_28', rotation: 0, translation: [0, 250] },
+      { id: 'b_30', rotation: 180, translation: [600, 750], mirror: true },
+    ];
+    const svg = mountCanvas('full', seedRun(placed));
+    mockRect(svg, 550, 500);
+    const roughB = roughPolyOf(svg, '#00ff00');
+    act(() => {
+      firePointer(roughB, 'pointerdown', 147, 100, 2);
+      firePointer(roughB, 'pointermove', 100, 100, 2);
+      firePointer(roughB, 'pointerup', 100, 100, 2);
+    });
+    const w = useEditStore.getState().working;
+    expect(w[1].rotation).toBe(180); // rot/mirror 不被吸附触碰
+    expect(w[1].mirror).toBe(true);
+    expect(w[1].translation[0]).toBeCloseTo(500, 8);
+    expect(w[1].translation[1]).toBeCloseTo(750, 9);
+  });
+
+  it('非主键门控：中键不起拖动/旋转、右键空白不起平移（viewBox 不动、选中保留）', () => {
+    const svg = mountCanvas('full', seedRun(PLACED_AB));
+    mockRect(svg, 550, 500);
+    const roughB = roughPolyOf(svg, '#00ff00');
+    // 中键按下毛版 → 无会话（不选中也无拖动）
+    act(() => {
+      firePointer(roughB, 'pointerdown', 100, 100, 1);
+      firePointer(roughB, 'pointermove', 50, 100, 1);
+      firePointer(roughB, 'pointerup', 50, 100, 1);
+    });
+    expect(useEditStore.getState().working[1].translation[0]).toBeCloseTo(600, 10);
+    expect(document.querySelector('[data-testid="edit-rotate-handle"]')).toBeNull();
+    // 左键选中后中键按旋转柄 → 不起旋转
+    act(() => {
+      firePointer(roughB, 'pointerdown', 10, 10);
+      firePointer(roughB, 'pointerup', 10, 10);
+    });
+    const handle = document.querySelector(
+      '[data-testid="edit-rotate-handle"]',
+    ) as SVGCircleElement;
+    act(() => {
+      firePointer(handle, 'pointerdown', 250, 150, 1);
+      firePointer(handle, 'pointermove', -50, 150, 1);
+      firePointer(handle, 'pointerup', -50, 150, 1);
+    });
+    expect(useEditStore.getState().working[1].rotation).toBe(0);
+    // 右键空白 → 不平移（viewBox 不动）、不取消选中（手柄仍在）
+    act(() => {
+      firePointer(svg, 'pointerdown', 5, 5, 2);
+      firePointer(svg, 'pointermove', 60, 60, 2);
+      firePointer(svg, 'pointerup', 60, 60, 2);
+    });
+    expect(svg.getAttribute('viewBox')).toBe('0 0 1100 1000');
+    expect(document.querySelector('[data-testid="edit-rotate-handle"]')).not.toBeNull();
+  });
+
+  it('contextmenu 吞除：svg 与裁片上右键均不弹菜单（preventDefault）', () => {
+    const svg = mountCanvas('full', seedRun(PLACED_AB));
+    const ev = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+    svg.dispatchEvent(ev);
+    expect(ev.defaultPrevented).toBe(true);
+    const roughB = roughPolyOf(svg, '#00ff00');
+    const ev2 = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
+    roughB.dispatchEvent(ev2); // 裁片上右键冒泡到 svg 同样吞
+    expect(ev2.defaultPrevented).toBe(true);
+  });
+
+  it('伙伴片高亮短时消退（900ms 常驻 + 300ms 淡出后移除）', async () => {
+    const svg = mountCanvas('full', seedRun(PLACED_AB));
+    mockRect(svg, 550, 500);
+    const roughB = roughPolyOf(svg, '#00ff00');
+    act(() => {
+      firePointer(roughB, 'pointerdown', 147, 100, 2);
+      firePointer(roughB, 'pointermove', 100, 100, 2);
+      firePointer(roughB, 'pointerup', 100, 100, 2);
+    });
+    expect(document.querySelector('[data-testid="edit-snap-partner"]')).not.toBeNull();
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 1400)); // > 900 + 300
+    });
+    expect(document.querySelector('[data-testid="edit-snap-partner"]')).toBeNull();
+  });
+
+  it('右键点击（无位移）→ 同款选中提层（手柄/指标出现）；远邻不吸附落点原样', () => {
+    const svg = mountCanvas('full', seedRun(PLACED_AB));
+    const roughB = roughPolyOf(svg, '#00ff00');
+    act(() => {
+      firePointer(roughB, 'pointerdown', 10, 10, 2);
+      firePointer(roughB, 'pointerup', 10, 10, 2);
+    });
+    expect(document.querySelector('[data-testid="edit-rotate-handle"]')).not.toBeNull();
+    expect(document.querySelector('[data-testid="edit-metrics"]')).not.toBeNull();
+    // 初始缝 100mm > 10 → free：translation 原样
+    expect(useEditStore.getState().working[1].translation[0]).toBeCloseTo(600, 10);
+  });
+
+  it('指南卡新增「右键拖动松手贴附」行（贴附手势文案在场）', () => {
+    mountCanvas('full', seedRun(PLACED_AB));
+    const text = document.querySelector('[data-testid="edit-guide"]')!.textContent ?? '';
+    expect(text).toContain('右键拖动松手贴附');
+    expect(text).toContain('贴附');
   });
 });
