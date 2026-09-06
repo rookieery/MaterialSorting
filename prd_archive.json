@@ -949,5 +949,16 @@
         "passes": true
       }
     ]
+  },
+  {
+    "branchName": "ralph/edit-drag-snap",
+    "stories": [
+      {
+        "id": "US-001",
+        "title": "吸附几何算子（contactT + firstContactDistance）",
+        "description": "为「编辑弹窗拖动紧贴吸附」功能提供精确解析的首触距离算子（PRD tasks/prd-edit-drag-snap.md，纯前端零后端改动）。\n\n具体任务：\n1. materialSorting-web/src/lib/editGeometry.ts — 新增 `contactT(v, dir, a, b)`：顶点 v 沿单位方向 dir 平移到线段 ab 上的参数 t 解（叉积线性解；方向与线段近平行时返回 null 不抛异常）。\n2. 同文件 — 新增 `firstContactDistance(moved, obstacle, dir)`：两多边形沿方向 dir 的首触距离 = moved 全部顶点×obstacle 全边、obstacle 全部顶点×moved 全边两向取最小正 t（精确解析、无迭代；无交点返回 null）。\n3. materialSorting-web/src/lib/editGeometry.test.ts（或同目录既有测试文件惯例）— 新增用例：矩形夹具解析精确 t（±1e-9）；凹形 L 夹具首触点落在凹口内角；近平行弧段密集顶点（牛仔裤弧片实况）返回 null 不抛异常；镜像+旋转片 vs 直接构造的同物理形态片同 t（口径无关性锁——吸附数学只发生在 worldPolygon 上，与 rot/mirror 无关）。\n\n验收标准：\n- firstContactDistance 对矩形夹具返回与手算一致的精确 t（±1e-9）\n- 凹形 L 夹具首触点落在凹口内角；近平行顶点返回 null 不抛异常\n- 镜像+旋转与直接构造同形态片同 t\n- npm run build 干净 + 既有 vitest 全量（64 文件 1022 用例）通过 + 零后端改动",
+        "passes": true
+      }
+    ]
   }
 ]
