@@ -234,6 +234,42 @@ describe("NestSVG (US-003)", () => {
     expect(poly1.getAttribute("points")).toBe("50,70 50,80 40,80 40,70");
   });
 
+  it("物理毛版口径（2026-09-06）：layer1 points = raw_polygon + collideEl 灰虚线（erode）恒显", () => {
+    // raw 20² / erode 后 18²（d=1）：主视图画 raw（与 /export 同源），erode 降级参考线。
+    const manifest = makeManifest();
+    manifest.pieces[0].polygon = [[1, 1], [19, 1], [19, 19], [1, 19]] as [number, number][];
+    manifest.pieces[0].raw_polygon = [[0, 0], [20, 0], [20, 20], [0, 20]] as [number, number][];
+    manifest.pieces[0].d_mm = 1;
+    const run = runRegistry.create(0);
+    run.manifest = manifest;
+    const ref = mountNestSVG(run);
+    const g = ref.current!.childNodes[2] as SVGGElement;
+    // p1：毛版 polygon + collideEl 两节点（p2 无 d_mm 仍单节点）
+    const poly1 = g.childNodes[0] as SVGPolygonElement;
+    const collide1 = g.childNodes[1] as SVGPolygonElement;
+    expect(collide1.getAttribute("stroke")).toBe("#8a8f98");
+    expect(collide1.getAttribute("stroke-dasharray")).toBe("3 2");
+
+    const frame = makeFrame(["p1"], 800);
+    run.frames.push(frame);
+    run.lastFrame = frame;
+    act(() => useAppStore.getState().bumpRenderTick());
+
+    // p1 @tr (0,0)：layer1 = raw 20²、collideEl = erode 18²，主视图无形态概念恒显
+    expect(poly1.getAttribute("points")).toBe("0,0 20,0 20,20 0,20");
+    expect(collide1.getAttribute("points")).toBe("1,1 19,1 19,19 1,19");
+    expect(poly1.style.display).toBe("");
+    expect(collide1.style.display).toBe("");
+
+    // 未 placed → 两者都隐藏
+    const f2 = makeFrame(["p2"], 850);
+    run.frames.push(f2);
+    run.lastFrame = f2;
+    act(() => useAppStore.getState().bumpRenderTick());
+    expect(poly1.style.display).toBe("none");
+    expect(collide1.style.display).toBe("none");
+  });
+
   it("未 placed → placed 切换：display 跟着翻", () => {
     const run = runRegistry.create(0);
     run.manifest = makeManifest();

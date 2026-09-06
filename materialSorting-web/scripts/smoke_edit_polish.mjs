@@ -426,15 +426,17 @@ check('S2g 对比卡渲染（六指标前→后 + 撤销按钮 + 按钮title口�
     if (!card) return false;
     const ids = ['edit-polish-overlap', 'edit-polish-depth', 'edit-polish-rot',
       'edit-polish-rotsum', 'edit-polish-width', 'edit-polish-density'];
-    // 口径注记 2026-09-05 三轮迭代起在按钮 title 悬浮（卡内可见脚注已移除不占空间）
+    // 口径注记 2026-09-05 三轮迭代起在按钮 title 悬浮（卡内可见脚注已移除不占空间）；
+    // 2026-09-06 口径统一起文案 = 画布红字与报告同为毛版轮廓口径（与导出一致）
     const btnTitle = document.querySelector('[data-testid=edit-polish-btn]')
       ?.getAttribute('title') || '';
     return ids.every((id) => {
         const el = card.querySelector('[data-testid=' + id + ']');
         return el && el.textContent.includes('→');
       })
-      && !card.textContent.includes('物理毛版轮廓口径')
-      && btnTitle.includes('物理毛版轮廓口径')
+      && !card.textContent.includes('毛版轮廓口径')
+      && btnTitle.includes('毛版轮廓口径')
+      && btnTitle.includes('与导出一致')
       && !!card.querySelector('[data-testid=edit-polish-undo]');
   }));
 await page.screenshot({ path: OUT + '/s2_polish_report.png' });
@@ -590,10 +592,15 @@ check('S8d 镜像前 DXF layer1 闭合轮廓在案（恰 30 片毛版 placed 序
 
 // 选片 k：镜像预测不触门幅（raw 毛版留 ≥2mm —— PLT y≤gate 裁剪/前端 clamp 双防线）
 // + 镜像可辨位移 ≥20mm（反事实远离）+ 非带排除片（g05 在微调 exclude 集内，透传
-// 断言走非排除路径更有区分度）。预测锚 = eroded 质心（O 键 cWorld 同源），
-// newRaw = cWorld + H·(oldRaw − cWorld)（H = R(θ)·M·R(−θ)，θ = placed rotation）。
+// 断言走非排除路径更有区分度）。预测锚 = raw 质心（2026-09-06 物理口径，O 键
+// cWorld 同源），newRaw = cWorld + H·(oldRaw − cWorld)（H = R(θ)·M·R(−θ)，θ = placed rotation）。
 const manifestS6 = cap.msgs.filter((x) => x && x.type === 'manifest').slice(-1)[0] || null;
-const polyByPid = new Map((manifestS6?.pieces || []).map((p) => [p.id, p.polygon]));
+// 物理毛版口径（2026-09-06 统一）：质心锚定预测 / DOM points 数学锚点与画布同源
+// 切 raw_polygon（raw ?? polygon 老后端回退）—— O 键 applyKeyTransform 的
+// cWorld/cLocal 与 layer1 points 均为 raw。
+const polyByPid = new Map((manifestS6?.pieces || []).map((p) => [
+  p.id, p.raw_polygon && p.raw_polygon.length >= 3 ? p.raw_polygon : p.polygon,
+]));
 const gateS8 = expPre.reqBody?.gate_mm || 0;
 const placedPre = expPre.reqBody?.placed || [];
 let pickK = -1;
@@ -670,7 +677,7 @@ if (diffO.removed.length === 1 && diffO.added.length === 1) {
   const a = parsePts(oldO);
   const b = parsePts(newO);
   if (a.length === b.length && a.length > 0) {
-    const c = centroidMean(a); // eroded 世界顶点均值 = O 键锚（画布渲染即 eroded 轮廓）
+    const c = centroidMean(a); // raw 世界顶点均值 = O 键锚（画布 layer1 渲染即物理毛版）
     const H = reflH(placedPre[pickK].rotation);
     reflErr = 0;
     for (let i = 0; i < a.length; i++) {
@@ -697,7 +704,7 @@ const placedPlt = expMirPlt.reqBody?.placed || [];
 const placedDxf = expMirDxf.reqBody?.placed || [];
 const mirIdxPlt = placedPlt.map((p, i) => (p.mirror === true ? i : -1)).filter((i) => i >= 0);
 const mirIdxDxf = placedDxf.map((p, i) => (p.mirror === true ? i : -1)).filter((i) => i >= 0);
-// 质心锚定补偿对拍（eroded 口径与 O 键 applyKeyTransform 同源：t' = cWorld − R·M·cLocal）
+// 质心锚定补偿对拍（raw 物理口径与 O 键 applyKeyTransform 同源：t' = cWorld − R·M·cLocal）
 let anchorErr = 1e9;
 if (polyK && placedPre[pickK] && placedPlt[pickK]) {
   const it0 = placedPre[pickK];

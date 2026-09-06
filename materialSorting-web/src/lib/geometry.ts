@@ -6,11 +6,23 @@
 //
 // pointsStr 输出与旧 vanilla 前身 字节级一致（单测对比同输入）；任何修改需同步后端 _transform_polygon。
 
-import type { Polygon, Pt } from '../types/piece';
+import type { PieceInfo, Polygon, Pt } from '../types/piece';
 
 /** 四舍五入到 2 位小数（与旧 vanilla 实现 `r2` 一致）。 */
 export function r2(x: number): number {
   return Math.round(x * 100) / 100;
+}
+
+/**
+ * 画布物理口径单一真相源：取「原始毛版轮廓」（raw_polygon，与 /export PLT/PNG/DXF、
+ * polish 报告同源）——2026-09-06 口径统一（此前画布直接用 erode 后 polygon，物理
+ * 毛版重合比显示值最多大 ~2·d_g，画布「不重合」而 PLT 重合）。
+ *
+ * 老后端 manifest 无 raw_polygon → 回退 polygon（d=0 时代两者等价，安全降级）。
+ * 画布填充/红字重合指标/吸附贴触/钳制 bbox/料长包络一律经本函数取轮廓。
+ */
+export function physicalPolygon(p: PieceInfo): Polygon {
+  return p.raw_polygon && p.raw_polygon.length >= 3 ? p.raw_polygon : p.polygon;
 }
 
 /**

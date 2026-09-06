@@ -23,6 +23,7 @@
 
 import { create } from 'zustand';
 import { transformPolygon } from '../lib/editGeometry';
+import { physicalPolygon } from '../lib/geometry';
 import type { Pt, PlacedItem } from '../types/piece';
 import type { ManifestMsg } from '../types/ws';
 import { runRegistry, type RunRecord } from './runRegistry';
@@ -87,7 +88,10 @@ export function computeLayoutStats(
   for (const it of working) {
     const p = byId.get(it.id);
     if (!p) continue;
-    const world = transformPolygon(p.polygon, it.rotation, it.translation, it.mirror === true);
+    // 物理毛版口径包络（2026-09-06 统一）：与 /export 导出轮廓同源 —— 料长含压线
+    // 外扩的真实用布，erode 轮廓（小 d/边）不再低估包络。老后端回退 polygon。
+    const world = transformPolygon(
+      physicalPolygon(p), it.rotation, it.translation, it.mirror === true);
     for (const [x] of world) {
       if (x > maxX) maxX = x;
     }

@@ -696,6 +696,10 @@ def test_result_manifest_parity_with_build_pid_meta(strat_env, monkeypatch):
         got = pieces[pid]
         assert got['color'] == meta['color']
         assert got['polygon'] == meta['polygon']      # erode 后几何与 placement 对齐
+        # 2026-09-06 口径统一 additive：原始毛版轮廓（与 /export 同源）+ 实际腐蚀距离
+        # 透传（本用例 per_type g01 d=2 → g01 片 d_mm=2、polygon 收边而 raw 不收）。
+        assert got['raw_polygon'] == meta['raw_polygon']
+        assert got['d_mm'] == meta['d_mm']
         assert got['demand'] == meta['demand']
         assert got['label'] == meta['label']
     assert payload['manifest']['total_area_mm2'] == total_area

@@ -8,6 +8,8 @@
 // 真实引擎（src/lib/snap.ts + overlap.ts + editGeometry.ts）在 WS 帧数据上
 // 预计算 —— 浏览器 DOM points 串复用键盘用例数学锚点法（lib/geometry pointsStr
 // 的 r2 复刻）逐字节对拍，不是脚本自算自证。
+// 物理毛版口径（2026-09-06 统一）：画布 layer1/指标/吸附全切 raw_polygon —— 脚本
+// 侧锚点（physOf）与 DOM/引擎同源；d=0 布局两者天然一致，d>0 布局按 raw 对拍。
 //
 // 前置：ms-web 在 :8000 运行 + 新 static 构建（prod 模式）。
 //
@@ -397,9 +399,13 @@ await page.screenshot({ path: OUT + '/s2_edit_open.png' });
 
 const EPS = ENG.COLLIDE_AREA_EPS_MM2;
 const byId = new Map(manifest.pieces.map((p) => [p.id, p]));
+// 物理毛版口径（2026-09-06 统一）：脚本侧一切几何锚（选片 bbox / DOM points 数学
+// 锚点串）与画布同源切 raw_polygon（raw ?? polygon 老后端回退）；引擎 bundle 打包
+// 当前源码自动跟随（overlap 池 = raw）。
+const physOf = (p) => (p.raw_polygon && p.raw_polygon.length >= 3 ? p.raw_polygon : p.polygon);
 const items = solverPlaced;
 const worlds = items.map((it) => ENG.transformPolygon(
-  byId.get(it.id).polygon, it.rotation, it.translation, it.mirror === true));
+  physOf(byId.get(it.id)), it.rotation, it.translation, it.mirror === true));
 const boxes = worlds.map(bboxOfJs);
 const pool0 = ENG.precomputeEditPiecesFromItems(manifest, items);
 
@@ -486,7 +492,7 @@ if (!pick) {
   process.exit(1);
 }
 const KI = pick.k;
-const kBase = byId.get(items[KI].id).polygon;
+const kBase = physOf(byId.get(items[KI].id)); // 物理毛版（画布 layer1 points 同源）
 const expPts = (tr) => pointsStrJs(kBase, pick.rotK, tr, pick.mirK);
 const kh = await page.evaluateHandle((want) => {
   const svg = document.querySelector('svg.edit-layout-svg');

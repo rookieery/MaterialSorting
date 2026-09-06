@@ -202,7 +202,11 @@ def build_pid_meta(pieces, *, sizes=None, per_type=None, quantities=None,
     （{d_ext, tol_ext, ...}，缺省全 0），语义与 ``build_instance`` 同名参数一致。
 
     返回：pid_meta = {pid: {size, color, polygon(erode后), area_mm2, label, demand,
-    net_polygon, internal_lines, notches, grain_line}}。
+    net_polygon, internal_lines, notches, grain_line, raw_polygon, d_mm}}。
+    raw_polygon/d_mm（2026-09-06 口径统一）：**原始毛版轮廓**（intermediate polygon
+    原样透传，与 /export placed_to_world 同源）+ 该片实际腐蚀距离 d。前端画布
+    填充/重合指标/吸附自此按 raw_polygon 物理口径渲染（所见即 PLT 所得），
+    polygon（erode 后）降级为碰撞参考线；缺省回退 polygon（老消费方零变化）。
     """
     pdef = {'d_ext': 0.0, 'd_int': 0.0, 'tol_ext': 0.0, 'tol_int': 0.0}
     if params:
@@ -258,6 +262,11 @@ def build_pid_meta(pieces, *, sizes=None, per_type=None, quantities=None,
             # NestSVG fill / 导出 PNG 同源；旧 g 码配色 2026-08-20 换键为尺码）。
             'color': size_color(p['size']),
             'polygon': poly,                 # erode 后 base 多边形（与 placement 一致）
+            # 原始毛版轮廓（未腐蚀未 clean，与 /export placed_to_world / polish 同源）
+            # + 该片实际腐蚀距离 —— 2026-09-06 口径统一 additive 字段，前端画布
+            # 填充/红字重合/吸附切物理口径，erode polygon 退居碰撞参考线。
+            'raw_polygon': p['polygon'],
+            'd_mm': d,
             'area_mm2': p['area_mm2'],
             # g 码裁片标识（intermediate label 透传 → manifest → 前端 NestSVG tooltip /
             # 导出逐片叠印；旧 intermediate 无 label → None，消费方按缺席降级）。

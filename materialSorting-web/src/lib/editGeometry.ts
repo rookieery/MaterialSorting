@@ -11,8 +11,10 @@
 // 坐标系约定（CLAUDE.md / lib/geometry.ts 同款）：sparrow 世界坐标 X=用布长度(0..width)、
 // Y=门幅(0..gate)、Y 向上；SVG 经 flipGroup translate(0 gate) scale(1 -1) 翻转后显示。
 //
-// 指标几何口径：manifest.pieces[].polygon = erode 后几何（与 solver 碰撞判定同口径）；
-// 物理毛版重合比显示值最多大 ~2·d_g（per_type d≤10，默认 0~2mm），编辑弹窗脚注注明。
+// 指标几何口径（2026-09-06 统一）：编辑指标 / 吸附 / 料长包络消费的 base 几何 =
+// physicalPolygon(piece)（manifest raw_polygon 物理毛版，与 /export、polish 同源），
+// 画布所见即导出所得；manifest.pieces[].polygon（erode 后）仅作 solver 碰撞参考线
+// （画布灰虚线）与压线额度（d_mm）的来源，不再进任何数值口径。
 //
 // edit-drag-snap US-001 起追加吸附几何算子（contactT / firstContactDistance，见文件
 // 中段「edit-drag-snap US-001」分节头）—— 松手贴附的解析地基，零迭代零 RNG。

@@ -29,7 +29,10 @@
 //   8. 性能保护：5 层节点只在 manifest 到达时建一次（与 polygon 同位置），frame 切换只
 //      setAttribute('display'/'points'/'x1'/'y1'/'x2'/'y2'/'transform')，不重建 DOM；128 片 ×
 //      5 节点 ~10fps 可承受（AC#5）。
-//   9. 关键不变量：求解碰撞仍只用毛版 polygon（sparrow NFP，已 erode）；其余 4 层仅渲染透传。
+//   9. 关键不变量：求解碰撞仍只用 erode polygon（sparrow NFP）；其余 4 层仅渲染透传。
+//      2026-09-06 口径统一：**渲染** layer1 改画 physicalPolygon（= raw_polygon 原始
+//      毛版，与 /export PLT 同源 —— 画布所见即导出所得）；erode polygon 降级为
+//      collideEl 灰虚线碰撞参考线（d_mm>0 才有节点，主视图恒显，差 = 压线区可视化）。
 //  10. edit-keyboard US-003（2026-09-05）：frame placed item 透传 mirror（编辑保存写回
 //      lastFrame 可带 mirror:true → 该副本渲染为镜像形态，pointsStr/transformPt 第 4 参
 //      x 取负）；solver 原生帧永无此键，`it.mirror === true` 缺省 false 路径逐字节不变。
@@ -39,7 +42,7 @@ import { useAppStore } from '../../store/appStore';
 import type { RunRecord } from '../../store/runRegistry';
 import type { Notch, Polygon } from '../../types/piece';
 import type { FrameMsg, ManifestMsg } from '../../types/ws';
-import { pointsStr } from '../../lib/geometry';
+import { physicalPolygon, pointsStr } from '../../lib/geometry';
 import { frameAtTime } from '../../lib/seek';
 import { clearHovered, hideTooltip, setHovered, showTooltip } from '../Tooltip';
 import { NOTCH_LEN_MM } from '../../constants/colors';
@@ -185,9 +188,16 @@ export function NestSVG({ run }: NestSVGProps) {
       // edit-keyboard US-003：编辑保存写回 lastFrame 的副本可带 mirror:true（局部 x 翻转）；
       // solver 原生帧永无此键 → 缺省 false 路径逐字节不变。
       const mirror = it.mirror === true;
-      // layer1 毛版 polygon
-      entry.el.setAttribute('points', pointsStr(entry.piece.polygon, rot, tr, mirror));
+      // layer1 毛版 polygon —— 物理毛版口径（2026-09-06 统一）：points 取
+      // physicalPolygon(piece)（= raw_polygon，与 /export PLT 同源），erode 后 polygon
+      // 降级为 collideEl 碰撞参考线（灰虚线，与 layer1 的差 = 压线区；主视图无形态
+      // 概念恒显）。
+      entry.el.setAttribute('points', pointsStr(physicalPolygon(entry.piece), rot, tr, mirror));
       entry.el.style.display = '';
+      if (entry.collideEl) {
+        entry.collideEl.setAttribute('points', pointsStr(entry.piece.polygon, rot, tr, mirror));
+        entry.collideEl.style.display = '';
+      }
       // US-024 layer14 净版 polygon
       if (entry.netEl && entry.piece.net_polygon) {
         entry.netEl.setAttribute('points', pointsStr(entry.piece.net_polygon, rot, tr, mirror));
@@ -242,6 +252,7 @@ export function NestSVG({ run }: NestSVGProps) {
         for (const ie of entry.internalEls) ie.style.display = 'none';
         for (const ne of entry.notchEls) ne.style.display = 'none';
         if (entry.grainEl) entry.grainEl.style.display = 'none';
+        if (entry.collideEl) entry.collideEl.style.display = 'none';
       }
     }
   }, [renderTick, seekTime, run]);

@@ -37,7 +37,8 @@ function rect(x0: number, y0: number, x1: number, y1: number): Polygon {
   ];
 }
 
-/** EditPiece 直造夹具（worldPolygon/bbox 由 transformPolygon/bboxOf 正规计算）。 */
+/** EditPiece 直造夹具（worldPolygon/bbox 由 transformPolygon/bboxOf 正规计算）。
+ *  dMm 缺省 0（本套夹具全 d=0 —— 吸附引擎不消费压线额度，物理口径=夹具多边形本身）。 */
 function mkEp(
   key: number,
   pid: string,
@@ -54,6 +55,7 @@ function mkEp(
     tr: [tr[0], tr[1]],
     mirror,
     basePolygon: poly,
+    dMm: 0,
     worldPolygon: world,
     bbox: bboxOf(world),
   };

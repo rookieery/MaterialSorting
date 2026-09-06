@@ -387,9 +387,9 @@ const areaVal = Number((metrics.area.match(/([\d.]+) mm/) || [0, 0])[1]);
 const depthVal = Number((metrics.depth.match(/([\d.]+)/) || [0, 0])[1]);
 check('S3c 拖柄旋转生效（片 points 变化 + 布纹线端点随片）',
   rotAfter !== rotBefore && grainBefore !== grainAfter);
-check('S3d 指标面板三值（面积/深度/角度）+ 旋转偏离 >10° + 脚注算法碰撞口径',
+check('S3d 指标面板三值（面积/深度/角度）+ 旋转偏离 >10° + 脚注毛版轮廓口径（2026-09-06 统一）',
   metrics.area.includes('mm²') && metrics.depth.includes('mm') && metrics.rot.includes('°')
-  && rotVal > 10 && metrics.foot.includes('按算法碰撞口径'),
+  && rotVal > 10 && metrics.foot.includes('按毛版轮廓口径') && metrics.foot.includes('与导出一致'),
   'area=' + areaVal.toFixed(1) + 'mm² depth=' + depthVal.toFixed(1)
     + 'mm rot=' + rotVal.toFixed(1) + '°');
 await page.screenshot({ path: OUT + '/s3_drag_rotate_metrics.png' });

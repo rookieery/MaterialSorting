@@ -144,6 +144,27 @@ describe('computeLayoutStats（保存与实时显示同一真相源）', () => {
     expect(stats.widthMm).toBe(1);
     expect(stats.density).toBe(500_000 / 1000);
   });
+
+  it('物理毛版口径（2026-09-06）：包络 maxX 按 raw_polygon（erode 旧口径会低估 5mm/片）', () => {
+    // raw 500² / erode 490²（d=5）：a@[100,0] raw maxX = 600（erode 口径 595）
+    const manifest: ManifestMsg = {
+      ...MANIFEST,
+      pieces: MANIFEST.pieces.map((p) => ({
+        ...p,
+        polygon: [
+          [5, 5],
+          [495, 5],
+          [495, 495],
+          [5, 495],
+        ] as Polygon,
+        raw_polygon: HALF_SQUARE,
+        d_mm: 5,
+      })),
+    };
+    const stats = computeLayoutStats([item('a_28', 0, 100, 0)], manifest);
+    expect(stats.widthMm).toBe(600);
+    expect(stats.density).toBeCloseTo(500_000 / (600 * 1000), 12);
+  });
 });
 
 describe('save（原地保序写回 + 密度族重算）', () => {

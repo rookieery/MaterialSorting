@@ -594,7 +594,7 @@ src/
 - **① 禁 ESC/遮罩关闭**：编辑弹窗与其确认层的唯一关闭路径 = 右上 ✕（dirty 二次确认）与右下保存 —— 与全站弹窗「ESC/遮罩可关」惯例的**有意偏离**（半屏 overlay 下误触丢草稿不可逆）；ESC 与遮罩点击在 modal 与 confirm 层均不挂监听，改回惯例前先改冒烟与三态单测。
 - **② 多副本按 placed_items 数组寻址保序写回**：同一 pid 出现 k 次 = k 副本，身份是 **working/lastFrame.placed_items 的数组下标**（出现序），不是 pid —— save 原地保序写回、EditCanvas 每下标一份 5 层节点；提层置顶只重排 DOM 文档序（跨渲染寻址用毛版 points 字符串当片身份），任何「按 pid 找片」的实现都会写错副本。
 - **③ width_mm 随编辑包络双向伸缩 + density 族同口径重算**：料长 = `ceil(当前包络 maxX)`（`computeLayoutStats` 单一真相源：状态条/保存/重置/NestLabel/viewBoxMaxW 同公式），density = real 口径 `total_area/(width×gate)` 重算、**density_sparrow 恒不动**；PLT 表格预览与导出标题 pct 读 bestRun().lastFrame 自动跟随 —— 导出侧零改动是验收断言（smoke S5/S7d 抓 POST /export 对拍 placed/density 与 solver 基线 diff 非空/回零）。
-- **④ 重合指标按 erode 几何口径**：面积/穿透/交集高亮基于 manifest erode 后轮廓（= solver 碰撞口径，`precomputeEditPiecesFromItems` 池），面板脚注「按算法碰撞口径」；物理毛版（未 erode）实际重合最多大 ~2·d_g（d_g=per_type 间距，默认 0）—— 指标只对算法口径负责，不许改报物理轮廓值。
+- **④ 重合指标按物理毛版口径（2026-09-06 统一）**：面积/穿透/交集高亮基于 manifest `raw_polygon`（物理毛版 = /export 同源，`precomputeEditPiecesFromItems` 池经 physicalPolygon 取形），面板脚注「按毛版轮廓口径（与导出一致）」；穿透 ≤ 压线额度（相邻片 d_i+d_j）= 琥珀（设计允许的压线），超出才红；erode 轮廓降级为画布灰虚线参考线（collideEl）。改回 erode 数值口径 = 复活「画布显 0 重合而 PLT 有重合」bug（回归锁 overlap.test「腐蚀轮廓不相交但物理相交」）。
 
 冒烟口径备注：5336 母版 3 码（32/33/34）30 片 20s 短求解；「完整版 5 层/毛板纯轮廓」两形态按 stroke 色（净版 #33cc33/内部线 #ff8c1a/刺口 #ffd700/布纹线 #e53e3e）+ display 断言；状态条初值 vs 主视图利用率按 ceil 取整伪影上界（density×≤1mm/料长）对拍；右缘多片同 ceil 桶须逐片左移包络才回缩（US-003 教训，smoke S6 循环拖）。
 
@@ -619,11 +619,10 @@ src/
   （over-conservative 可接受）。gate_mm 取 run.manifest.gate_mm；无 manifest/working 空
   不发请求。
 - **口径注记锚点 = 「智能微调」按钮 title 悬浮**（2026-09-05 三轮迭代用户定案：卡内可见
-  脚注太占空间已移除）：title 含「报告为物理毛版轮廓口径、与导出一致，画布红字为腐蚀后
-  轮廓口径数值可能偏小」—— 报告七指标与 /export 同源（原始 polygon），画布红字告警按
-  erode 后轮廓，两套数值并存是设计非 bug。注意卡体整体 pointer-events:none，native
-  title 在卡内元素上不触发 —— 口径锚点必须放可悬停的按钮（或其他 pointer-events:auto
-  元素）上，放回卡内 = 静默失效。
+  脚注太占空间已移除）：title 含「画布红字与微调报告同为毛版轮廓口径、与导出一致」——
+  2026-09-06 物理口径统一后画布红字与报告同源（原始 polygon），无「两套数值」歧义。
+  注意卡体整体 pointer-events:none，native title 在卡内元素上不触发 —— 口径锚点必须放
+  可悬停的按钮（或其他 pointer-events:auto 元素）上，放回卡内 = 静默失效。
 - **对比卡透点**：.edit-polish-card（2026-09-05 二轮迭代起画布左下独立锚点，原 .edit-br-stack
   卡栈已删除）整体 pointer-events:none（不遮画布拖动热区），撤销按钮与 compact checkbox
   行是卡内仅有的 pointer-events:auto 交互点；新增卡内交互控件必须显式开 auto。
@@ -943,12 +942,16 @@ R = 片级重置交互入口（已定案 2026-09-05：R 键非右键菜单；重
 - **ATTRACT_MAX_GAP_MM = 10**（2026-09-06 定案，`src/lib/snap.ts` 导出常量，
   冒烟 S2a 检查点 import 锁值）：attract 只吸首触距离 ≤10mm 的邻居，吸附位 =
   落点 + (t − 1nm)·方向（SEP_NUDGE_MM 与后端 polish.py 同名常量同口径）。
-- **erode 口径脚注 = 引用 overlap.ts 文件头原文**（2026-09-06 定案：脚注单一
+- **几何口径脚注 = 引用 overlap.ts 文件头原文**（2026-09-06 定案：脚注单一
   真相源在 `src/lib/overlap.ts`，本节与 agent-component-map 只引用不复制，避免
-  两处文案漂移）。原文：
+  两处文案漂移；同日物理口径统一后原文已更新）。原文：
 
-  > 几何口径：manifest.pieces[].polygon = erode 后几何 = 与 solver 碰撞判定同口径；
-  > 物理毛版重合比显示值最多大 ~2·d_g（弹窗脚注注明）。
+  > 几何口径（2026-09-06 统一）：本计算器一律按**物理毛版轮廓**（physicalPolygon =
+  > raw_polygon，与 /export PLT/PNG/DXF、polish 报告同源）计算 —— 画布红字数值 =
+  > 导出真相，所见即所得。erode 后 polygon（solver 碰撞口径）降级为画布虚线参考线，
+  > 不再进任何数值口径；老后端无 raw_polygon 时 physicalPolygon 回退 polygon
+  > （d=0 时代两者等价）。相邻两片「压线额度」= d_i + d_j（两片 per_type 腐蚀距离
+  > 之和），穿透 ≤ 额度 = 设计允许的压线重合。
 
 ### 冒烟脚本（scripts/smoke_drag_snap.mjs，31 检查点）
 

@@ -19,7 +19,7 @@ export type Notch = [number, number, number, number];
 /** 布纹线两端点 [x1, y1, x2, y2]（与 ParsedGrainLine 同结构）。 */
 export type GrainLine = [number, number, number, number];
 
-/** manifest 推送的单片几何 + 元信息（erode 后的 base 多边形）。 */
+/** manifest 推送的单片几何 + 元信息（polygon = erode 后碰撞轮廓；raw_polygon = 物理毛版）。 */
 export interface PieceInfo {
   /** pid = `{label}_{size}`（v2 无 side 后缀；如 `g03_28`）。 */
   id: string;
@@ -30,7 +30,21 @@ export interface PieceInfo {
   size: number;
   color: string;
   area_mm2: number;
+  /**
+   * erode 后碰撞轮廓（solver NFP 判定用，per_type d 向内腐蚀 + clean）。
+   * 2026-09-06 口径统一起：画布填充/重合指标/吸附改按 raw_polygon（物理毛版），
+   * 本字段退居「碰撞参考线」（d>0 时画布叠一条细虚线）+ 引擎层消费。
+   */
   polygon: Polygon;
+  /**
+   * 原始毛版轮廓（未腐蚀未 clean，与 /export placed_to_world / polish / PLT 同源）
+   * —— 2026-09-06 口径统一 additive 字段。画布所见即导出所得；老后端不分发时
+   * 消费方经 physicalPolygon() 回退 polygon（d=0 时代两者等价，安全降级）。
+   */
+  raw_polygon?: Polygon;
+  /** 该片实际腐蚀距离 mm（per_type d 已按 MAX_OVERLAP_MM=10 钳制；缺省/老后端 = 0）。
+   * 用途：红字「压线额度」= 相邻两片 d_i+d_j（穿透 ≤ 额度 = 设计允许压线）。 */
+  d_mm?: number;
   /**
    * 该 pid 进 sparrow 的**副本数**（= quantities[label][sizeKey]；缺省/未分发 → 1）。
    *

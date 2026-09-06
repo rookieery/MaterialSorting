@@ -274,11 +274,13 @@ describe('EditLayoutModal 智能微调 (edit-polish US-003)', () => {
     expect(
       document.querySelector('[data-testid="edit-polish-density"]')!.textContent,
     ).toContain('45.45 → 45.45 %');
-    expect(card!.textContent).not.toContain('物理毛版轮廓口径'); // 可见脚注已移除（不占卡内空间）
+    expect(card!.textContent).not.toContain('毛版轮廓口径'); // 可见脚注已移除（不占卡内空间）
     const polishBtnTitle =
       document.querySelector('[data-testid="edit-polish-btn"]')?.getAttribute('title') ?? '';
-    expect(polishBtnTitle).toContain('物理毛版轮廓口径');
-    expect(polishBtnTitle).toContain('腐蚀后轮廓口径');
+    // 2026-09-06 口径统一：画布红字与报告同为毛版轮廓口径（旧「画布为腐蚀口径数值
+    // 可能偏小」注记随双口径消除而废）。
+    expect(polishBtnTitle).toContain('毛版轮廓口径');
+    expect(polishBtnTitle).toContain('与导出一致');
     expect(
       document.querySelector('[data-testid="edit-polish-undo"]')!.textContent,
     ).toContain('撤销微调');

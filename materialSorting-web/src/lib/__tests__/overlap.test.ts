@@ -5,6 +5,9 @@
 //      （相离邻居零成本跳过、bbox 相交但几何不相交邻居计入）/ 穿透深度 / 自身跳过
 //   3) edit-keyboard US-001 mirror：precomputeEditPieces(FromItems) 读 it.mirror === true
 //      初始化 + 镜像几何手算；applyEditPlacement 增量覆写 mirror（缺省 false 回归）
+//   4) 物理毛版口径（2026-09-06 统一）：raw_polygon 消费 / dMm 透传 / 压线额度
+//      allowanceMm（max(d_i+d_j)）/「腐蚀不相交但物理相交」回归锁（画布显 0 重合
+//      而导出 PLT 有重合 —— 用户 2026-09-06 报 bug 的本体）
 
 import { describe, expect, it } from 'vitest';
 import {
@@ -345,5 +348,103 @@ describe('mirror (edit-keyboard US-001)', () => {
     expect(r.neighborCount).toBe(1);
     expect(r.areaMm2).toBeCloseTo(350, 10);
     expect(r.penetrationMm).toBeCloseTo(5, 10);
+  });
+});
+
+// ============================================================
+// 物理毛版口径（2026-09-06 统一）：raw_polygon 消费 + dMm 透传 + 压线额度
+// ============================================================
+
+describe('物理毛版口径 (2026-09-06)', () => {
+  /** 双片夹具：raw 100x100（[0,100]^2）/ erode 后 90x90（[5,95]^2，d=5）—— 双片同款。 */
+  function mkCaliberManifest(draggedD = 5, otherD = 5): ManifestMsg {
+    return {
+      type: 'manifest',
+      gate_mm: 1000,
+      total_area_mm2: 20000,
+      n_eroded: 2,
+      pieces: [
+        {
+          id: 'a_28',
+          size: 28,
+          color: '#111111',
+          area_mm2: 10000,
+          polygon: [
+            [5, 5],
+            [95, 5],
+            [95, 95],
+            [5, 95],
+          ],
+          raw_polygon: UNIT_SQUARE,
+          d_mm: draggedD,
+        },
+        {
+          id: 'b_28',
+          size: 28,
+          color: '#222222',
+          area_mm2: 10000,
+          polygon: [
+            [5, 5],
+            [95, 5],
+            [95, 95],
+            [5, 95],
+          ],
+          raw_polygon: UNIT_SQUARE,
+          d_mm: otherD,
+        },
+      ],
+    };
+  }
+
+  it('precomputeEditPiecesFromItems 消费 raw_polygon 为 basePolygon + dMm 透传；老后端无 raw 回退 polygon', () => {
+    const [a] = precomputeEditPiecesFromItems(mkCaliberManifest(), [item('a_28', 0, 0, 0)]);
+    expect(a.basePolygon).toBe(UNIT_SQUARE); // raw（物理毛版），非 erode 90²
+    expect(a.dMm).toBe(5);
+    // 老后端（无 raw_polygon/d_mm）：回退 polygon、dMm=0（既有夹具即此形态）
+    const [legacy] = precomputeEditPiecesFromItems(mkManifest(), [item('a_28', 0, 0, 0)]);
+    expect(legacy.basePolygon).toBe(UNIT_SQUARE);
+    expect(legacy.dMm).toBe(0);
+  });
+
+  it('腐蚀轮廓不相交但物理相交：交面积按 raw 计算（旧口径此值为 0 —— bug 回归锁）', () => {
+    // erode 双片 [5,95]^2：a@[0,0] 占 [5,95]，b@[95,10] 占 [100,190]x[15,105] ——
+    // x 方向 5mm 缝隙不相交；raw 双片 [0,100]^2：a 占 [0,100]，b 占 [95,195]x[10,110]
+    // —— 交 [95,100]x[10,100] = 5x90 = 450 mm²、穿透 5mm（b 顶点 (95,10) 落入 a 距
+    // x=100 边 5；= 压线额度 5+5 内）。画布旧口径显示 0 → 导出 PLT 有重合（用户
+    // 2026-09-06 报的 bug 本体）。
+    const manifest = mkCaliberManifest();
+    const [dragged, other] = precomputeEditPiecesFromItems(manifest, [
+      item('a_28', 0, 0, 0),
+      item('b_28', 0, 95, 10),
+    ]);
+    const r = computeOverlap(dragged, [other]);
+    expect(r.areaMm2).toBeCloseTo(450, 10);
+    expect(r.penetrationMm).toBeCloseTo(5, 10);
+  });
+
+  it('allowanceMm = 实际相交邻居 max(d_i+d_j)：d=5+5 → 10；bbox 相交但不相交的邻居不计入', () => {
+    const manifest = mkCaliberManifest(5, 3);
+    const [dragged, other] = precomputeEditPiecesFromItems(manifest, [
+      item('a_28', 0, 0, 0),
+      item('b_28', 0, 95, 0),
+    ]);
+    const r = computeOverlap(dragged, [other]);
+    expect(r.allowanceMm).toBe(8); // 5+3
+    // 角碰邻居（bbox 相交、面积 0）不得贡献额度
+    const [d2] = precomputeEditPiecesFromItems(mkCaliberManifest(), [item('a_28', 0, 0, 0)]);
+    const [o2] = precomputeEditPiecesFromItems(mkCaliberManifest(), [item('b_28', 0, 100, 100)]);
+    const r2 = computeOverlap(d2, [{ ...o2, key: 1 }]);
+    expect(r2.areaMm2).toBe(0);
+    expect(r2.allowanceMm).toBe(0);
+  });
+
+  it('无 d_mm（老后端）：物理相交但额度 0 —— 任何穿透都按超限（红）', () => {
+    const [dragged, other] = precomputeEditPiecesFromItems(mkManifest(), [
+      item('a_28', 0, 0, 0),
+      item('b_28', 0, 95, 0),
+    ]);
+    const r = computeOverlap(dragged, [other]);
+    expect(r.areaMm2).toBeCloseTo(500, 10);
+    expect(r.allowanceMm).toBe(0);
   });
 });

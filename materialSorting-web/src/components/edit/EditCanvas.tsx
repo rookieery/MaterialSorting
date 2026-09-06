@@ -95,6 +95,16 @@
 // 谓词 = 总面积 ≤ 基线 + COLLIDE_AREA_EPS_MM2 与引擎同口径）—— 拖动帧零新增
 // 计算、rAF 合帧管线不变，仅 snap:true 会话消费；左键拖动 / 键盘变换（L/K/空格/
 // O/I/R）与旋转拖柄永不吸附。
+//
+// 物理毛版口径统一（2026-09-06，修「画布显示无重合 / 导出 PLT 有重合、切毛板
+// 裁片变小」双口径 bug）：画布一切几何消费切换 physicalPolygon(piece)（=
+// manifest raw_polygon，与 /export PLT/PNG/DXF、polish 报告同源）—— ①layer1
+// 毛版填充 + collideEl（新灰虚线 = erode 后 polygon，d_mm>0 才建节点，完整版
+// 显示/毛板隐藏，与 layer1 的差 = 压线区可视化）；②clampPlacement 的 base 几何
+// （拖动/键盘/旋转/松手吸附四处，钳制按物理外缘）；③红字指标（overlap.ts 池）
+// 与吸附引擎（snap.ts 复用同池自动跟随）。红字着色改压线额度制：穿透 ≤
+// allowanceMm（相交邻居 max(d_i+d_j)，per_type 腐蚀距离之和）= 琥珀（设计允许
+// 压线），超出 = 红 —— solver 按 erode 轮廓排料的合法压线不再误红/误零。
 
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -111,11 +121,11 @@ import {
   type EditPiece,
 } from '../../lib/overlap';
 import { COLLIDE_AREA_EPS_MM2, computeSnapCorrection, type SnapSession } from '../../lib/snap';
-import { pointsStr } from '../../lib/geometry';
+import { physicalPolygon, pointsStr } from '../../lib/geometry';
 import { computeLayoutStats, useEditStore } from '../../store/editStore';
 import type { PolishReport } from '../../lib/editPolish';
 import { createPieceEntry, SVGNS, type PieceEntry } from '../nests/pieceDom';
-import { MAX_OVERLAP_MM, MAX_ROTATION_TOL_DEG } from '../../constants/v03';
+import { MAX_ROTATION_TOL_DEG } from '../../constants/v03';
 import { NOTCH_LEN_MM } from '../../constants/colors';
 import type { Notch, PlacedItem, Polygon, Pt } from '../../types/piece';
 import type { ManifestMsg } from '../../types/ws';
@@ -187,6 +197,12 @@ interface EditMetrics {
   areaMm2: number;
   /** 最大穿透深度 mm（顶点采样口径，与 overlap.ts 同源）。 */
   penetrationMm: number;
+  /**
+   * 压线额度 mm（相交邻居 max(d_i+d_j)；2026-09-06 口径统一起红字按物理毛版口径，
+   * pen ≤ 额度 = 设计允许的压线重合 → 琥珀，超出 → 红）。degraded 时按 bbox 相交
+   * 邻居的 d_i+d_j 最大值近似。
+   */
+  allowanceMm: number;
   /** 旋转偏离角 °（相对 {0°,180°} 最小偏差）。 */
   rotDevDeg: number;
   /** 布尔交异常降级（bbox 估算口径）。 */
@@ -487,6 +503,7 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
       if (entry.netEl) nodes.push(entry.netEl);
       nodes.push(...entry.internalEls, ...entry.notchEls);
       if (entry.grainEl) nodes.push(entry.grainEl);
+      if (entry.collideEl) nodes.push(entry.collideEl); // 碰撞参考线随片提层（2026-09-06）
       for (const n of nodes) g.insertBefore(n, anchor); // anchor null → 追加到末尾
     }
 
@@ -612,6 +629,7 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
         m = {
           areaMm2: res.areaMm2,
           penetrationMm: res.penetrationMm,
+          allowanceMm: res.allowanceMm,
           rotDevDeg: rotationDeviationDeg(dragged.rot),
           degraded: false,
         };
@@ -635,6 +653,7 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
         // 回 raw，与不吸附一致）。
         let area = 0;
         let pen = 0;
+        let allowance = 0;
         for (const o of pool) {
           if (o.key === index) continue;
           if (!bboxIntersect(dragged.bbox, o.bbox)) continue;
@@ -651,10 +670,14 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
             [minX, maxY],
           ]);
           pen = Math.max(pen, penetrationDepth(dragged.worldPolygon, o.worldPolygon));
+          // 压线额度近似（bbox 相交邻居的 d_i+d_j 最大值 —— 布尔交缺席无法按实际
+          // 轮廓相交筛选，degraded 短暂帧取保守偏大估计即可）。
+          allowance = Math.max(allowance, dragged.dMm + o.dMm);
         }
         m = {
           areaMm2: area,
           penetrationMm: pen,
+          allowanceMm: allowance,
           rotDevDeg: rotationDeviationDeg(dragged.rot),
           degraded: true,
         };
@@ -764,7 +787,7 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
       if (!dragged) return;
       const mirror = it.mirror === true;
       const rawTr = clampPlacement(
-        entry.piece.polygon,
+        physicalPolygon(entry.piece),
         it.rotation,
         it.translation,
         manifest.gate_mm,
@@ -790,7 +813,7 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
       if (!manifest || !entry) return;
       const it = useEditStore.getState().working[index];
       if (!it) return; // 防御：选中下标与 working 错位（骨架重建清选中，理论不达）
-      const base = entry.piece.polygon;
+      const base = physicalPolygon(entry.piece);
       const curMirror = it.mirror === true;
       const cWorld = centroidOf(transformPolygon(base, it.rotation, it.translation, curMirror));
       const cLocalNew = centroidOf(transformPolygon(base, rot, [0, 0], mirror));
@@ -817,7 +840,7 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
       const dx = (clientX - st.startClient[0]) / s;
       const dy = -(clientY - st.startClient[1]) / s;
       const tr = clampPlacement(
-        entry.piece.polygon,
+        physicalPolygon(entry.piece),
         st.rot0,
         [st.tr0[0] + dx, st.tr0[1] + dy],
         manifest.gate_mm,
@@ -838,7 +861,7 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
       const dAng = wrapDeg180(ang - st.ang0);
       const rot = st.rot0 + dAng; // 自由角度，无 0°/180° 吸附（2026-09-04 定案）
       const tr = clampPlacement(
-        entry.piece.polygon,
+        physicalPolygon(entry.piece),
         rot,
         pivotTranslate(st.pivot, dAng, st.tr0),
         manifest.gate_mm,
@@ -1191,7 +1214,7 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
             className="edit-layout-tool edit-polish-btn"
             onClick={polish.onPolish}
             disabled={polish.busy}
-            title="自动清理可解的重合与可回正的旋转（报告为物理毛版轮廓口径、与导出一致，画布红字为腐蚀后轮廓口径数值可能偏小；料长不增、密度不降；应用后不自动保存，可撤销）"
+            title="自动清理可解的重合与可回正的旋转（画布红字与微调报告同为毛版轮廓口径、与导出一致；料长不增、密度不降；应用后不自动保存，可撤销）"
             data-testid="edit-polish-btn"
           >
             {polish.busy ? '微调中…' : '智能微调'}
@@ -1334,13 +1357,18 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
             <span className="edit-metrics-label">最大穿透</span>
             <span
               className={
-                metrics.penetrationMm > MAX_OVERLAP_MM
+                metrics.penetrationMm > metrics.allowanceMm + 1e-9
                   ? 'edit-metrics-val edit-metrics-val--danger'
                   : metrics.penetrationMm > 0
                     ? 'edit-metrics-val edit-metrics-val--warn'
                     : 'edit-metrics-val'
               }
               data-testid="edit-metrics-depth"
+              title={
+                metrics.allowanceMm > 0
+                  ? `压线额度 ${metrics.allowanceMm.toFixed(1)} mm（相邻片腐蚀距离 d_i+d_j）：穿透 ≤ 额度 = 设计允许的压线重合（琥珀），超出 = 红`
+                  : '相邻片无压线额度（d=0）：任何穿透都按超限（红）'
+              }
             >
               {metrics.penetrationMm.toFixed(1)} mm
             </span>
@@ -1358,7 +1386,9 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
               {metrics.rotDevDeg.toFixed(1)}°
             </span>
           </div>
-          <div className="edit-metrics-foot">按算法碰撞口径</div>
+          <div className="edit-metrics-foot">
+            按毛版轮廓口径（与导出一致）· 穿透≤压线额度为琥珀
+          </div>
         </div>
       )}
     </div>
@@ -1514,9 +1544,18 @@ function applyPlacement(
   mirror: boolean,
 ): void {
   const showCraft = mode === 'full';
-  // layer1 毛版 polygon（恒显 —— 毛板模式唯一可见层）
-  entry.el.setAttribute('points', pointsStr(entry.piece.polygon, rot, tr, mirror));
+  // layer1 毛版 polygon（恒显 —— 毛板模式唯一可见层）。物理毛版口径（2026-09-06
+  // 统一）：points 取 raw_polygon（与 /export PLT 同源，画布所见即导出所得）；
+  // erode 后 polygon 降级为碰撞参考线（下方 collideEl，灰虚线）。
+  entry.el.setAttribute('points', pointsStr(physicalPolygon(entry.piece), rot, tr, mirror));
   entry.el.style.display = '';
+  // 碰撞参考线（灰虚线 = erode 后 polygon，solver 排料口径）：与 layer1 的差 =
+  // 压线区（解释「红字有穿透但 solver 合法」）。随片同步变换；完整版显示、毛板
+  // 隐藏（毛板聚焦物理毛版本身）。d_mm>0 才有节点（d=0 两者重合无需画）。
+  if (entry.collideEl) {
+    entry.collideEl.setAttribute('points', pointsStr(entry.piece.polygon, rot, tr, mirror));
+    entry.collideEl.style.display = showCraft ? '' : 'none';
+  }
   // layer14 净版 polygon
   if (entry.netEl && entry.piece.net_polygon) {
     entry.netEl.setAttribute('points', pointsStr(entry.piece.net_polygon, rot, tr, mirror));

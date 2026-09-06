@@ -6,9 +6,11 @@
 //
 // 关键约定（与 NestSVG / AGENTS.md US-024 一致）：
 //   - layer1 毛版 polygon 用尺码配色（manifest p.color 透传后端 size_color，同码同色
-//     跨片型）；tooltip / 命中判定走 dataset.label（g 码）。
+//     跨片型）；tooltip / 命中判定走 dataset.label（g 码）。2026-09-06 口径统一起
+//     layer1 的 points 取 physicalPolygon(piece)（raw_polygon 原始毛版，与 /export
+//     PLT 同源 —— 画布所见即导出所得）；写入处在各视图的 applyPlacement/frame 路径。
 //   - 其余 4 层用工艺色 constants/colors.ts LAYER5_COLORS，pointerEvents='none'
-//     （事件只落在毛版 polygon 上）。
+//     （事件只落在毛版 polygon 上）；d_mm>0 时附加碰撞参考线（灰虚线 = erode polygon）。
 //   - 所有节点初始 display:none（等 frame / working 到达再显），layer-aware：
 //     数据缺失的层不建节点（null / 空数组）。
 
@@ -25,7 +27,7 @@ export const SVGNS = 'http://www.w3.org/2000/svg';
  * - 所有节点在 manifest 到达时一次性创建，frame 切换只 setAttribute。
  */
 export interface PieceEntry {
-  /** 毛版 polygon（layer1）。 */
+  /** 毛版 polygon（layer1，物理口径 = raw_polygon，与 PLT 导出同源）。 */
   el: SVGPolygonElement;
   /** 净版 polygon（layer14，绿虚线）；无数据时 null。 */
   netEl: SVGPolygonElement | null;
@@ -35,6 +37,12 @@ export interface PieceEntry {
   notchEls: SVGLineElement[];
   /** 布纹线 line（layer7，红虚线）；无数据时 null。 */
   grainEl: SVGLineElement | null;
+  /**
+   * 碰撞参考线 polygon（灰虚线 = erode 后 polygon；2026-09-06 口径统一起 layer1
+   * 改画 raw_polygon，本线让「压线区」可视 —— 求解器按它排料所以能排更紧）。
+   * d_mm>0（该 片实际腐蚀）才建节点；老后端 / d=0 → null。
+   */
+  collideEl: SVGPolygonElement | null;
   piece: PieceInfo;
 }
 
@@ -118,5 +126,20 @@ export function createPieceEntry(p: PieceInfo, g: SVGGElement): PieceEntry {
     g.appendChild(grainEl);
   }
 
-  return { el: poly, netEl, internalEls, notchEls, grainEl, piece: p };
+  // 碰撞参考线（erode 后 polygon，灰 dashed；d_mm>0 才建 —— layer1 物理毛版与它的
+  // 差 = 压线区，解释「为什么求解器能排这么紧」）。points 由 applyPlacement 随 5 层
+  // 同步写入（entry.piece.polygon 即 erode 几何，本节点不消费 raw_polygon）。
+  let collideEl: SVGPolygonElement | null = null;
+  if (p.d_mm != null && p.d_mm > 0 && p.polygon && p.polygon.length >= 3) {
+    collideEl = document.createElementNS(SVGNS, 'polygon');
+    collideEl.setAttribute('fill', 'none');
+    collideEl.setAttribute('stroke', '#8a8f98');
+    collideEl.setAttribute('stroke-width', '0.8');
+    collideEl.setAttribute('stroke-dasharray', '3 2');
+    collideEl.style.display = 'none';
+    collideEl.style.pointerEvents = 'none';
+    g.appendChild(collideEl);
+  }
+
+  return { el: poly, netEl, internalEls, notchEls, grainEl, collideEl, piece: p };
 }

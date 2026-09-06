@@ -34,7 +34,7 @@ import { EditCanvas, type EditViewMode } from '../EditCanvas';
 import { useEditStore } from '../../../store/editStore';
 import { runRegistry, type RunRecord } from '../../../store/runRegistry';
 import { transformPolygon } from '../../../lib/editGeometry';
-import type { PlacedItem, Pt } from '../../../types/piece';
+import type { PlacedItem, Polygon, Pt } from '../../../types/piece';
 import type { FrameMsg, ManifestMsg } from '../../../types/ws';
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -110,6 +110,58 @@ function makeManifest(): ManifestMsg {
         polygon: [
           [0, 0], [500, 0], [500, 500], [0, 500],
         ],
+      },
+    ],
+  };
+}
+
+/**
+ * 口径统一夹具（2026-09-06）：raw 500×500 / erode 后 490×490（d=5），a/b 双片同款 ——
+ * 锁「erode 轮廓不相交但物理毛版相交（压线额度内琥珀）」与 collideEl 灰虚线参考线。
+ * a_28 保留 5 层工艺（渲染层与 erode/raw 无关）；b_30 仅毛版。
+ */
+function makeManifestCaliber(): ManifestMsg {
+  const raw: Polygon = [
+    [0, 0], [500, 0], [500, 500], [0, 500],
+  ];
+  const eroded: Polygon = [
+    [5, 5], [495, 5], [495, 495], [5, 495],
+  ];
+  return {
+    type: 'manifest',
+    gate_mm: GATE,
+    total_area_mm2: 500000,
+    n_eroded: 2,
+    pieces: [
+      {
+        id: 'a_28',
+        label: 'g01',
+        size: 28,
+        color: '#ff0000',
+        area_mm2: 250000,
+        polygon: eroded,
+        raw_polygon: raw,
+        d_mm: 5,
+        net_polygon: [
+          [50, 50], [450, 50], [450, 450], [50, 450],
+        ],
+        internal_lines: [
+          [[100, 100], [400, 100]],
+        ],
+        notches: [
+          [250, 0, 0, -1],
+        ],
+        grain_line: [100, 250, 400, 250],
+      },
+      {
+        id: 'b_30',
+        label: 'g02',
+        size: 30,
+        color: '#00ff00',
+        area_mm2: 250000,
+        polygon: eroded,
+        raw_polygon: raw,
+        d_mm: 5,
       },
     ],
   };
@@ -404,6 +456,42 @@ describe('EditCanvas 全量渲染 (US-002)', () => {
     // fab 宽随包络伸缩（maxX 1200）—— 与状态条同一真相源
     const fab = svg.childNodes[1] as SVGRectElement;
     expect(fab.getAttribute('width')).toBe('1200');
+  });
+
+  it('物理毛版口径（2026-09-06）：layer1 points = raw_polygon + collideEl 灰虚线（erode）；毛板模式隐藏 collideEl', () => {
+    const svg = mountCanvas('full', seedRun(PLACED_AB, makeManifestCaliber()));
+    const { g } = skeleton(svg);
+    // a（5 层 + collideEl）6 节点 + b（毛版 + collideEl）2 节点 = 8
+    expect(g.childNodes.length).toBe(8);
+    // layer1 毛版 points = raw 500²（与 /export 同源 —— 画布所见即导出所得）
+    const roughA = g.childNodes[0] as SVGPolygonElement;
+    expect(roughA.getAttribute('points')).toBe('0,0 500,0 500,500 0,500');
+    // collideEl = erode 后 490²（灰虚线碰撞参考线，与 layer1 的差 = 压线区）
+    const collideA = g.childNodes[5] as SVGPolygonElement;
+    expect(collideA.getAttribute('stroke')).toBe('#8a8f98');
+    expect(collideA.getAttribute('stroke-dasharray')).toBe('3 2');
+    expect(collideA.getAttribute('fill')).toBe('none');
+    expect(collideA.getAttribute('points')).toBe('5,5 495,5 495,495 5,495');
+    expect(collideA.style.display).toBe(''); // 完整版显示
+    // b：毛版（raw）+ collideEl（erode 平移 600）
+    const roughB = g.childNodes[6] as SVGPolygonElement;
+    expect(roughB.getAttribute('points')).toBe('600,0 1100,0 1100,500 600,500');
+    const collideB = g.childNodes[7] as SVGPolygonElement;
+    expect(collideB.getAttribute('points')).toBe('605,5 1095,5 1095,495 605,495');
+    expect(collideB.style.display).toBe('');
+    // 毛板模式：collideEl 隐藏（毛板聚焦物理毛版本身），layer1 仍为 raw
+    rerender('rough');
+    expect(collideA.style.display).toBe('none');
+    expect(collideB.style.display).toBe('none');
+    expect(roughA.getAttribute('points')).toBe('0,0 500,0 500,500 0,500');
+  });
+
+  it('d_mm=0（老后端 / 无腐蚀）：不建 collideEl 节点（raw 与 erode 重合无需画）', () => {
+    const svg = mountCanvas('full', seedRun(PLACED_AB));
+    const { g } = skeleton(svg);
+    // 默认夹具无 raw_polygon/d_mm → physicalPolygon 回退 polygon 且无 collideEl：6 节点（既有口径零回归）
+    expect(g.childNodes.length).toBe(6);
+    expect(g.querySelectorAll('polygon[stroke="#8a8f98"]').length).toBe(0);
   });
 });
 
@@ -849,7 +937,7 @@ function selectPiece(svg: SVGSVGElement, stroke: string): void {
 }
 
 describe('EditCanvas 重合指标 (US-003)', () => {
-  it('无重合：面积 0 / 穿透 0（中性色）/ 偏离 0°，无交集高亮；脚注注明算法碰撞口径', () => {
+  it('无重合：面积 0 / 穿透 0（中性色）/ 偏离 0°，无交集高亮；脚注注明毛版轮廓口径', () => {
     const svg = mountCanvas('full', seedRun(PLACED_AB)); // a/b 相离
     selectPiece(svg, '#00ff00');
     expect(metricsText('edit-metrics-area')).toBe('0.0 mm²（0.00 cm²）');
@@ -859,7 +947,7 @@ describe('EditCanvas 重合指标 (US-003)', () => {
     expect(metricsText('edit-metrics-rot')).toBe('0.0°');
     expect(svg.querySelectorAll('polygon[fill="rgba(255, 64, 64, 0.42)"]').length).toBe(0);
     expect(document.querySelector('[data-testid="edit-metrics"]')!.textContent).toContain(
-      '按算法碰撞口径',
+      '按毛版轮廓口径（与导出一致）',
     );
   });
 
@@ -880,17 +968,38 @@ describe('EditCanvas 重合指标 (US-003)', () => {
     ).toBeGreaterThan(0);
   });
 
-  it('穿透 ≤10mm 琥珀：b@[495,50] 交 5×450、穿透 5.0', () => {
+  it('压线额度内琥珀：caliber 夹具 b@[495,50] erode 不相交但物理交 5×450、穿透 5.0 ≤ 额度 10', () => {
+    // 2026-09-06 口径统一：琥珀判据 = 穿透 ≤ 压线额度（d_i+d_j）。本用例换 caliber
+    // 夹具（双片 d=5 → 额度 10）：erode 轮廓不相交（缝隙 5mm）但物理毛版相交 ——
+    // 旧口径显示 0（bug 本体），现按 raw 计 2250 / 5.0 琥珀。
+
     const placed: PlacedItem[] = [
       { id: 'a_28', rotation: 0, translation: [0, 0] },
       { id: 'b_30', rotation: 0, translation: [495, 50] },
     ];
-    const svg = mountCanvas('full', seedRun(placed));
+    const svg = mountCanvas('full', seedRun(placed, makeManifestCaliber()));
     selectPiece(svg, '#00ff00');
     expect(metricsText('edit-metrics-area')).toBe('2250.0 mm²（22.50 cm²）');
     expect(metricsText('edit-metrics-depth')).toBe('5.0 mm');
     expect(metricsClass('edit-metrics-depth')).toContain('warn');
     expect(metricsClass('edit-metrics-depth')).not.toContain('danger');
+    // 额度提示（title 悬浮）：额度 10.0 = 5+5
+    const depthEl = document.querySelector('[data-testid="edit-metrics-depth"]')!;
+    expect(depthEl.getAttribute('title')).toContain('压线额度 10.0');
+    expect(svg.querySelectorAll('polygon[fill="rgba(255, 64, 64, 0.42)"]').length).toBeGreaterThan(0);
+  });
+
+  it('穿透超压线额度红：caliber 夹具 b@[450,50] 穿透 50 > 额度 10（额度内琥珀 / 超额度红的边界锁）', () => {
+    const placed: PlacedItem[] = [
+      { id: 'a_28', rotation: 0, translation: [0, 0] },
+      { id: 'b_30', rotation: 0, translation: [450, 50] },
+    ];
+    const svg = mountCanvas('full', seedRun(placed, makeManifestCaliber()));
+    selectPiece(svg, '#00ff00');
+    expect(metricsText('edit-metrics-area')).toBe('22500.0 mm²（225.00 cm²）');
+    expect(metricsText('edit-metrics-depth')).toBe('50.0 mm');
+    expect(metricsClass('edit-metrics-depth')).toContain('danger');
+    expect(metricsClass('edit-metrics-depth')).not.toContain('warn');
   });
 
   it('旋转偏离 >45° 红：b rot 90（面积 400×450=180000、穿透 50）', () => {

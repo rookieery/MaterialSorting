@@ -18,6 +18,10 @@
 // 布尔交），「安全」= 总重叠面积 ≤ sess.startOverlapMm2 + COLLIDE_AREA_EPS_MM2 ——
 // 起手存量重叠（solver 全局容差 MAX_OVERLAP_MM=10 构造的布局）不恶化、不误清。
 //
+// 几何口径（2026-09-06 统一）：引擎消费的 basePolygon/worldPolygon 全部来自
+// overlap.ts 展开池 = **物理毛版轮廓**（raw_polygon，与 /export 同源）—— 吸附贴触/
+// 回退边界因此就是毛版相切（与 polish.py 去重叠同口径），不再需要按 d_g 补偿。
+//
 // 邻居寻址（仓库红线）：全程 EditPiece.key（placed_items 数组下标）逐个枚举，
 // 绝不按 pid 建 Map 去重 —— 同 pid 多副本是独立邻居（单测加锁）。
 //

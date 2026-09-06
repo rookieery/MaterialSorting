@@ -283,6 +283,12 @@ async def ws_solve(ws: WebSocket):
                     {'id': pid, 'size': meta['size'],
                      'color': meta['color'],
                      'area_mm2': meta['area_mm2'], 'polygon': meta['polygon'],
+                     # 2026-09-06 口径统一 additive：原始毛版轮廓（与 /export 同源）
+                     # + 实际腐蚀距离 d —— 前端画布填充/重合指标/吸附按 raw_polygon
+                     # 物理口径渲染（所见即 PLT 所得），polygon（erode）作碰撞参考线。
+                     # 缺键回退 polygon（老 worker / 测试桩兼容）。
+                     'raw_polygon': meta.get('raw_polygon') or meta['polygon'],
+                     'd_mm': meta.get('d_mm', 0.0),
                      # g 码裁片标识（intermediate label 经 build_instance 透传；旧
                      # intermediate 无 → None，前端 NestSVG tooltip 按缺席降级不显示）。
                      'label': meta.get('label'),

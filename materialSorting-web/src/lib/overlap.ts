@@ -9,12 +9,17 @@
 // 多副本寻址（PRD 技术考虑）：编辑 key = placed_items 数组下标（同 pid 第 k 次出现 =
 // 第 k 副本，与 NestSVG「出现序」副本池同语义）；保存原地保序写回 ⇒ 副本映射稳定。
 //
-// 几何口径：manifest.pieces[].polygon = erode 后几何 = 与 solver 碰撞判定同口径；
-// 物理毛版重合比显示值最多大 ~2·d_g（弹窗脚注注明）。
+// 几何口径（2026-09-06 统一）：本计算器一律按**物理毛版轮廓**（physicalPolygon =
+// raw_polygon，与 /export PLT/PNG/DXF、polish 报告同源）计算 —— 画布红字数值 =
+// 导出真相，所见即所得。erode 后 polygon（solver 碰撞口径）降级为画布虚线参考线，
+// 不再进任何数值口径；老后端无 raw_polygon 时 physicalPolygon 回退 polygon
+// （d=0 时代两者等价）。相邻两片「压线额度」= d_i + d_j（两片 per_type 腐蚀距离
+// 之和），穿透 ≤ 额度 = 设计允许的压线重合。
 
 import * as polygonClipping from 'polygon-clipping';
 import { polygonArea as shoelaceArea } from './params';
 import { bboxIntersect, bboxOf, penetrationDepth, transformPolygon } from './editGeometry';
+import { physicalPolygon } from './geometry';
 import type { BBox } from './editGeometry';
 import type { PlacedItem, Polygon, Pt } from '../types/piece';
 import type { FrameMsg, ManifestMsg } from '../types/ws';
@@ -44,8 +49,10 @@ export interface EditPiece {
    * 源头 `it.mirror === true` 判定 → undefined/false 同义无镜像。
    */
   mirror: boolean;
-  /** base 多边形（manifest erode 几何，共享引用不拷贝 —— 只读）。 */
+  /** base 多边形（物理毛版 = physicalPolygon(piece)，共享引用不拷贝 —— 只读）。 */
   basePolygon: Polygon;
+  /** 该片 per_type 腐蚀距离 mm（压线额度 = 相邻两片 dMm 之和；缺省 0）。 */
+  dMm: number;
   /** rot+tr（+mirror）变换后的世界坐标多边形（全精度）。 */
   worldPolygon: Polygon;
   /** worldPolygon 的包围盒（bbox 预筛）。 */
@@ -79,14 +86,17 @@ export function precomputeEditPiecesFromItems(
     const info = byId.get(it.id);
     if (!info) return;
     const mirror = it.mirror === true;
-    const world = transformPolygon(info.polygon, it.rotation, it.translation, mirror);
+    // 物理口径：raw_polygon（与 /export 同源）；老后端回退 erode polygon。
+    const base = physicalPolygon(info);
+    const world = transformPolygon(base, it.rotation, it.translation, mirror);
     out.push({
       key: idx,
       pid: it.id,
       rot: it.rotation,
       tr: [it.translation[0], it.translation[1]],
       mirror,
-      basePolygon: info.polygon,
+      basePolygon: base,
+      dMm: info.d_mm ?? 0,
       worldPolygon: world,
       bbox: bboxOf(world),
     });
@@ -122,6 +132,12 @@ export interface OverlapResult {
   areaMm2: number;
   /** 最大穿透深度 mm（被拖片 vs 各相交邻居的顶点采样最大值）。 */
   penetrationMm: number;
+  /**
+   * 压线额度 mm = 实际相交邻居中 max(d_i + d_j)（两片 per_type 腐蚀距离之和）。
+   * penetrationMm ≤ allowanceMm → 设计允许的压线重合（琥珀提示）；超出 → 红。
+   * 无相交邻居 / 老后端无 d_mm → 0（任何穿透都按超限红）。
+   */
+  allowanceMm: number;
 }
 
 /** polygon-clipping 输出 ring（首点重复闭合）→ 项目 Polygon 口径（无重复起点）。 */
@@ -151,19 +167,31 @@ function polyArea(outer: Polygon, holes: Polygon[]): number {
  * @param others  其余全部片（含被拖片自身时按 key 跳过）
  */
 export function computeOverlap(dragged: EditPiece, others: readonly EditPiece[]): OverlapResult {
-  const result: OverlapResult = { neighborCount: 0, intersections: [], areaMm2: 0, penetrationMm: 0 };
+  const result: OverlapResult = {
+    neighborCount: 0,
+    intersections: [],
+    areaMm2: 0,
+    penetrationMm: 0,
+    allowanceMm: 0,
+  };
   for (const o of others) {
     if (o.key === dragged.key) continue;
     if (!bboxIntersect(dragged.bbox, o.bbox)) continue;
     result.neighborCount += 1;
     const mp = intersection([dragged.worldPolygon], [o.worldPolygon]);
+    let areaNeighbor = 0;
     for (const poly of mp) {
       if (poly.length === 0) continue;
       const outer = openRing(poly[0]);
       const holes: Polygon[] = [];
       for (let h = 1; h < poly.length; h++) holes.push(openRing(poly[h]));
       result.intersections.push(outer);
-      result.areaMm2 += polyArea(outer, holes);
+      areaNeighbor += polyArea(outer, holes);
+    }
+    result.areaMm2 += areaNeighbor;
+    // 实际相交的邻居才计入压线额度（d_i + d_j；bbox 相交但轮廓不相交者不算）。
+    if (areaNeighbor > 1e-9) {
+      result.allowanceMm = Math.max(result.allowanceMm, dragged.dMm + o.dMm);
     }
     result.penetrationMm = Math.max(
       result.penetrationMm,

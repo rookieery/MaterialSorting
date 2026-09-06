@@ -1078,6 +1078,10 @@ async def _result_common(req: Request, label: str):
         'pieces': [
             {'id': pid, 'size': meta['size'], 'color': meta['color'],
              'area_mm2': meta['area_mm2'], 'polygon': meta['polygon'],
+             # 2026-09-06 口径统一 additive（routes_ws on_manifest 同款）：
+             # raw_polygon = 原始毛版（与 /export 同源）+ d_mm = 实际腐蚀距离。
+             'raw_polygon': meta.get('raw_polygon') or meta['polygon'],
+             'd_mm': meta.get('d_mm', 0.0),
              'label': meta.get('label'), 'demand': meta.get('demand', 1),
              'net_polygon': meta.get('net_polygon', []),
              'internal_lines': meta.get('internal_lines', []),

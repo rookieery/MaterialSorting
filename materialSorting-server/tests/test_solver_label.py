@@ -131,6 +131,39 @@ def test_per_type_clamped_by_global_caps():
     assert MAX_OVERLAP_MM == 10.0 and MAX_ROTATION_TOL_DEG == 45.0   # 上限口径锁定
 
 
+# --------------------------- raw_polygon / d_mm（2026-09-06 口径统一 additive）
+
+def test_pid_meta_raw_polygon_and_d_mm():
+    """raw_polygon = intermediate 原始毛版逐点透传（未腐蚀未 clean，与 /export
+    placed_to_world 同源）+ d_mm = 实际腐蚀距离（含 10mm 钳制）：d>0 时 polygon
+    收边而 raw 不变 —— 前端画布自此按 raw 物理口径渲染（所见即 PLT 所得）。"""
+    pieces = [_piece('g01_28', 'g01', 28), _piece('g02_28', 'g02', 28)]
+    _inst, _cfg, meta, _area, _n = _build(
+        pieces, per_type={'g01': {'d': 2.0}, 'g02': {'d': 99.0}})
+
+    g01 = meta['g01_28']
+    assert g01['d_mm'] == 2.0
+    assert g01['raw_polygon'] == pieces[0]['polygon']          # 逐点 = 原始毛版
+    assert max(p[0] for p in g01['polygon']) < 500.0           # polygon 腐蚀收边
+    assert max(p[0] for p in g01['raw_polygon']) == 500.0      # raw bbox 不收
+
+    g02 = meta['g02_28']
+    assert g02['d_mm'] == 10.0                                 # min(申请, MAX_OVERLAP_MM)
+    assert g02['raw_polygon'] == pieces[1]['polygon']
+
+
+def test_pid_meta_raw_polygon_d_zero_passthrough():
+    """d=0（缺省/未配置）→ raw_polygon 仍透传原始轮廓、d_mm=0、polygon 不腐蚀
+    （前端老后端回退与物理口径回退在此口径下重合，安全）。"""
+    pieces = [_piece('g01_28', 'g01', 28)]
+    _inst, _cfg, meta, _area, n_eroded = _build(pieces)
+    assert n_eroded == 0
+    m = meta['g01_28']
+    assert m['d_mm'] == 0.0
+    assert m['raw_polygon'] == pieces[0]['polygon']
+    assert max(p[0] for p in m['polygon']) == 500.0            # 未腐蚀
+
+
 # --------------------------------------------- build_instance quantities demand
 
 def test_quantities_demand_translation():

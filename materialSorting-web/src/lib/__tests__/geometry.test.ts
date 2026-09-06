@@ -5,9 +5,11 @@
 //   4) 单点 / 三点 / 多点 边界
 //   5) edit-keyboard US-001 mirror 分支：手算方块（x 取负）/ 公式手算（rot=90）/
 //      「x 预取负再无镜像变换」逐字节等价 / mirror=false 显式 = 缺省零回归
+//   6) physicalPolygon（2026-09-06 物理口径统一）：raw 优先 / 老后端回退 /
+//      退化 raw（<3 顶点）回退
 
 import { describe, expect, it } from 'vitest';
-import { pointsStr, r2 } from '../geometry';
+import { physicalPolygon, pointsStr, r2 } from '../geometry';
 import type { Polygon, Pt } from '../../types/piece';
 
 // 旧 vanilla 实现 pointsStr 副本（参考实现，用于字节级对比）。
@@ -171,5 +173,34 @@ describe('pointsStr mirror (edit-keyboard US-001)', () => {
         pointsStr(xNeg as Polygon, rot, tr as Pt),
       );
     }
+  });
+});
+
+// ============================================================
+// 物理毛版口径 helper（2026-09-06 统一）
+// ============================================================
+
+describe('physicalPolygon (2026-09-06)', () => {
+  const RAW: Polygon = [[0, 0], [500, 0], [500, 500], [0, 500]];
+  const ERODED: Polygon = [[5, 5], [495, 5], [495, 495], [5, 495]];
+
+  it('有 raw_polygon → 返回 raw（物理毛版，与 /export 同源）', () => {
+    const p = {
+      id: 'a_28',
+      size: 28,
+      color: '#111',
+      area_mm2: 250000,
+      polygon: ERODED,
+      raw_polygon: RAW,
+      d_mm: 5,
+    };
+    expect(physicalPolygon(p)).toBe(RAW); // 引用共享不拷贝
+  });
+
+  it('无 raw_polygon（老后端）→ 回退 polygon；退化 raw（<3 顶点）同回退', () => {
+    const legacy = { id: 'a_28', size: 28, color: '#111', area_mm2: 1, polygon: ERODED };
+    expect(physicalPolygon(legacy)).toBe(ERODED);
+    const degenerate = { ...legacy, raw_polygon: [[0, 0], [1, 1]] as Polygon, d_mm: 2 };
+    expect(physicalPolygon(degenerate)).toBe(ERODED);
   });
 });

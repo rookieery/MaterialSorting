@@ -386,14 +386,15 @@ WS 侧同语义走 **error 帧**：`{"type":"error","code":"session_expired","me
 
 ## POST /api/edit-polish — 编辑排料「智能微调」（prd-edit-polish US-002，2026-09-05）
 
-> ⚠️ **口径差异（红字注记，US-004 立档）**：**编辑画布 = erode 后轮廓、polish 报告 = 物理毛版**。
-> 编辑弹窗画布的重合红字/三指标（editGeometry overlap 池）按 per_type d **腐蚀后**轮廓计算
-> （碰撞可行性口径）；polish 报告七指标与守卫全部按**物理毛版轮廓**（会话 `pieces_by_id`
-> 原始 polygon，与 `/export` 导出真相同源）。同一布局两套数值并存是**设计非 bug**：
-> 腐蚀口径数值恒 ≤ 物理口径（d 内缩），版师看到对比卡与画布红字不一致时以本注记为
-> 解释锚点（前端对比卡脚注同文案）。本期不切换画布口径（PRD 非目标）。
+> ⚠️ **口径注记（2026-09-06 物理毛版口径统一，取代 US-004 时代的「两套数值」注记）**：
+> **编辑画布与 polish 报告同为物理毛版口径**。2026-09-06 前画布重合红字按 per_type d
+> **腐蚀后**轮廓计算（数值恒 ≤ 物理口径），与 polish 报告/导出分裂 —— 用户报
+> 「画布显 0 重合而导出 PLT 有重合」即此因，已全端统一：manifest 增发
+> `raw_polygon`/`d_mm`，画布渲染/红字/吸附/料长全切 `physicalPolygon`；穿透 ≤ 压线额度
+> （相邻片 d_i+d_j）= 琥珀（设计允许的压线重合）、超出才红；erode 轮廓降级为画布灰虚线
+> 参考线。sparrow 求解照旧吃 erode 轮廓，压线排料行为零改动。
 
-编辑弹窗「智能微调」按钮的数据源：前端把**当前编辑 placements 随 body 带上**（后端不存布局态，唯一存储在前端 runRegistry —— `/export` routes_views.py 同模式），后端跑引擎层确定性后处理 `nesting_engine/polish_layout`（US-001）返回微调后 placements + 前后对比报告。几何真相源留在 Python：**物理毛版轮廓口径**（会话 `pieces_by_id` 原始 polygon，与 `/export placed_to_world` 同源、非 eroded —— 编辑画布红字告警是腐蚀后口径，数值可能偏小，口径差是文档级约定）。端到端回归冒烟 `materialSorting-web/scripts/smoke_edit_polish.mjs`（US-004 24 检查 + US-005 S7 compact 档 5 检查 + edit-keyboard US-007 S8 键盘/镜像段 17 检查 = 46：微调四守恒/撤销/确定性双跑/PLT+DXF 导出 placed 守恒/band exclude 抽验/compact:true 载荷+width ≤ 非 compact 档+守恒不等式/O 镜像→导出 placed mirror:true + 正文几何镜像坐标对拍/mirror 逐位透传/R 键重置回基线）。
+编辑弹窗「智能微调」按钮的数据源：前端把**当前编辑 placements 随 body 带上**（后端不存布局态，唯一存储在前端 runRegistry —— `/export` routes_views.py 同模式），后端跑引擎层确定性后处理 `nesting_engine/polish_layout`（US-001）返回微调后 placements + 前后对比报告。几何真相源留在 Python：**物理毛版轮廓口径**（会话 `pieces_by_id` 原始 polygon，与 `/export placed_to_world` 同源、非 eroded —— 2026-09-06 起画布红字同口径，两套数值分裂已消除）。端到端回归冒烟 `materialSorting-web/scripts/smoke_edit_polish.mjs`（US-004 24 检查 + US-005 S7 compact 档 5 检查 + edit-keyboard US-007 S8 键盘/镜像段 17 检查 = 46：微调四守恒/撤销/确定性双跑/PLT+DXF 导出 placed 守恒/band exclude 抽验/compact:true 载荷+width ≤ 非 compact 档+守恒不等式/O 镜像→导出 placed mirror:true + 正文几何镜像坐标对拍/mirror 逐位透传/R 键重置回基线）。
 
 ### 请求（`application/json`）
 
@@ -573,7 +574,7 @@ curl http://127.0.0.1:8000/api/ptypes -H "X-Session-Id: <sid>"
 可选 `X-Session-Id`（多会话 US-004；sid 过期/未知 → 401）。本会话 done/stopped 可读（running → 409「尚未结束」；idle → 404）。响应 `{state, mode, run_dir, manifest, best, summary, warning?}`（run_dir / manifest / best 全部来自**本会话**状态槽）：
 
 - `best`：result.json `portfolio.incumbent`（完整 `placed_items`；**无 `density_sparrow`** —— 从 `best_frame_s{seed}.json` 边车补，缺则 null）；stopped 无 result.json → 回落各 `best_frame_s*.json` 取 density 最大
-- `manifest`：`build_pid_meta(start 时快照 pieces, sizes/per_type/quantities 同口径)` → `{gate_mm, total_area_mm2, n_eroded, pieces:[{id,size,color,area_mm2,polygon(erode 后),label,demand,net_polygon,internal_lines,notches,grain_line}]}`（与 /ws/solve manifest.pieces 同形；erode 后几何与 placed_items 对齐、demand 已含 —— 前端 NestSVG 副本池按 demand 建 N 份承接多副本 placement；旧 `gate_nest_mm` 键 2026-08-28 起已删）
+- `manifest`：`build_pid_meta(start 时快照 pieces, sizes/per_type/quantities 同口径)` → `{gate_mm, total_area_mm2, n_eroded, pieces:[{id,size,color,area_mm2,polygon(erode 后),raw_polygon,d_mm,label,demand,net_polygon,internal_lines,notches,grain_line}]}`（与 /ws/solve manifest.pieces 同形；erode 后几何与 placed_items 对齐、demand 已含 —— 前端 NestSVG 副本池按 demand 建 N 份承接多副本 placement；raw_polygon/d_mm 2026-09-06 起 additive 物理毛版口径；旧 `gate_nest_mm` 键 2026-08-28 起已删）
 - `summary`：`{per_seed, mode, race?|se?}`（result.json portfolio 模式段透传）
 - `warning`：start 快照 `doc_id` ≠ **本会话当前画布** `doc_id` → 「母版已变更，应用结果可能与当前画布不一致」（导出 pid 失配走既有 400 兜底；default → `_pieces_state()`，sid → 会话快照）
 
@@ -710,6 +711,11 @@ ws://127.0.0.1:8000/ws/solve?sid=<sid>     # 缺省/空串 → default 会话（
       // US-002：全 label 键（无 ptype）；color = size_color(size)（2026-08-20 尺码键）
       "id": "g03_30", "label": "g03", "size": 30, "color": "#...", "area_mm2": <int>,
       "polygon": [[x,y]...],          // 毛版外轮廓（erode 后，参与 sparrow NFP 碰撞）
+      "raw_polygon": [[x,y]...],      // 物理毛版原始轮廓（2026-09-06 起 additive；= 腐蚀前 + _clean_polygon 前
+                                       //   的原始 polygon，前端 physicalPolygon 优先消费 —— 编辑画布渲染/红字/
+                                       //   吸附/料长包络与 /export 同口径；老后端无此键回退 polygon）
+      "d_mm": <float>,                // 本片腐蚀距离（per_type d；2026-09-06 起 additive，缺省 0.0）——
+                                       //   相邻片压线额度 = d_i+d_j（穿透 ≤ 额度 = 设计允许的压线重合）
       "net_polygon": [[x,y]...],      // US-024 净版（仅渲染透传，不参与碰撞；缺省 []）
       "internal_lines": [[[x,y],...]],// US-024 内部线多条（缺省 []）
       "notches": [[x,y,nx,ny],...],   // US-024 刺口点 + 单位法线（缺省 []）
@@ -720,7 +726,7 @@ ws://127.0.0.1:8000/ws/solve?sid=<sid>     # 缺省/空串 → default 会话（
 }
 ```
 
-`polygon` 是 **erode 后**的 base 多边形（与后续 placement 一致，**唯一参与 sparrow NFP 碰撞**）。前端据此一次性建 SVG 骨架 + N 个 `<polygon>`。US-024 新增 4 层（net_polygon/internal_lines/notches/grain_line）**仅渲染/导出透传**，不进碰撞；后端 pid_meta / intermediate / manifest 同字段名透传，前端 layer-aware 渲染（缺字段跳过该层，向后兼容旧 intermediate）。
+`polygon` 是 **erode 后**的 base 多边形（与后续 placement 一致，**唯一参与 sparrow NFP 碰撞**）。前端据此一次性建 SVG 骨架 + N 个 `<polygon>`。US-024 新增 4 层（net_polygon/internal_lines/notches/grain_line）**仅渲染/导出透传**，不进碰撞；后端 pid_meta / intermediate / manifest 同字段名透传，前端 layer-aware 渲染（缺字段跳过该层，向后兼容旧 intermediate）。**2026-09-06 物理毛版口径统一**：前端编辑画布/主视图一切数值与渲染口径改按 `raw_polygon`（`physicalPolygon` 单一真相源，raw ?? polygon 老后端回退），`polygon`（erode）降级为画布灰虚线参考线（d_mm>0 才建）—— 画布所见 = 导出真相（此前画布吃 erode 轮廓致「显 0 重合而 PLT 有重合」的口径分裂已消除）；sparrow 求解照旧吃 erode 轮廓，压线排料行为零改动。
 
 ### 3. server → frame（**每个中间解**，~5fps 由 `drain_interval=0.2` 决定）
 
@@ -793,7 +799,7 @@ prefix 关闭时 final **无 `prefix` 键**（逐字段零回归）；`width_mm`
 | 函数 | 签名 | 说明 |
 |------|------|------|
 | `load_pieces` | `(intermediate_path=paths.INTERMEDIATE) → (doc, gate_mm, pieces)` | 读 `pieces_intermediate.json` |
-| `build_pid_meta` | `(pieces, *, sizes=None, per_type=None, quantities=None, params=None) → (pid_meta, total_area, n_eroded)` | **strategy US-004 自 `build_instance` 提取**的裁片级流水线（**不 import spyrrow、不构造求解对象** —— `/api/strategy/result` 组装 manifest 直接用）：sizes 过滤 → demand 判定（quantities 按 `(label, str(size))` 查 N，0=跳过；缺 label→1）→ per_type 覆盖 + 全局上限钳制（`_resolve_d_tol` 单一真相源，与 `build_instance` 的 Item orientations 同口径）→ erode/清洗（<3 顶点跳过）→ pid_meta 条目（US-024 5 层 + label/color/demand）→ `total_area=Σ(area×demand)`。对拍单测（`test_web_strategy.py`）保证提取前后 `build_instance` 输出逐字段一致 |
+| `build_pid_meta` | `(pieces, *, sizes=None, per_type=None, quantities=None, params=None) → (pid_meta, total_area, n_eroded)` | **strategy US-004 自 `build_instance` 提取**的裁片级流水线（**不 import spyrrow、不构造求解对象** —— `/api/strategy/result` 组装 manifest 直接用）：sizes 过滤 → demand 判定（quantities 按 `(label, str(size))` 查 N，0=跳过；缺 label→1）→ per_type 覆盖 + 全局上限钳制（`_resolve_d_tol` 单一真相源，与 `build_instance` 的 Item orientations 同口径）→ erode/清洗（<3 顶点跳过）→ pid_meta 条目（US-024 5 层 + label/color/demand；**2026-09-06 起 additive 增发 `raw_polygon`（腐蚀前原始轮廓快照）+ `d_mm`（本片腐蚀距离）—— 前端物理毛版口径数据源**）→ `total_area=Σ(area×demand)`。对拍单测（`test_web_strategy.py`）保证提取前后 `build_instance` 输出逐字段一致 |
 | `discretize_orientations` | `(tol: float) → list[float]` | v0.3 连续旋转公差 → spyrrow 离散角度集。`tol=0→[0,180]`；`tol≤5` 步进 1°；否则 5°。归一化到 [0,360) |
 | `build_instance` | `(pieces, gate_mm, *, time_budget, seed, sizes=None, params=None, per_type=None, quantities=None, solver_opts=None, exclude_labels=None, exclude_pids=None, extra_items=None) → (instance, config, pid_meta, total_area, n_eroded)` | strategy US-004 起裁片级流水线（sizes/demand/per_type/erode/pid_meta/total_area）**委托 `build_pid_meta`**（单一真相源），本函数补 spyrrow 侧构造：`Item`（shape 用 pid_meta 的 erode 后 polygon、orientations 用同口径 `_resolve_d_tol` 的 tol 离散化）。按 sizes 过滤 → US-022 按 `(label, sizeKey)` 查 quantities 定 demand（0 跳过；缺 label → 1） → US-002 起 `per_type[label]` 命中即覆盖 d/tol（2026-08-18 回退 US-004 后 label 单级，命中即对该 g 码全部码号生效；未命中/缺维度回退 `params.d_ext/tol_ext`；旧 ptype / 旧两级键 no-op；internal 概念已删，`d_int`/`tol_int` 仍被接受但无消费方） → 每片 `erode=min(申请d, MAX_OVERLAP_MM=10)`、`tol=min(申请tol, MAX_ROTATION_TOL_DEG=45)`（**2026-08-17 起全局上限，不再按片型**） → erode+clean → 构造 `spyrrow.Item` + `StripPackingInstance(strip_height=gate_mm)` + `StripPackingConfig`；pid_meta 含 US-024 5 层字段 + `label`/`color=size_color(size)`（2026-08-20 尺码键）/`demand`（`.get()` 向后兼容）。**求解约束带 = 输入门幅原样**（2026-08-28 版师定案起单一幅宽口径：旧 min(gate_mm, 1910) 钳制已删，manifest 的 gate_mm / 密度分母 / 导出外框 / 求解带全部同门幅）。**US-006（PC-006）`solver_opts`**（additive 白名单 exploration_pct/quadtree_depth/num_workers/**early_termination** 四键，越界 clamp、非数值/未知键忽略、不传=现行行为；`early_termination` 仅接受严格 bool、2026-08-29 入白名单并显式透传 spyrrow（缺省 True 行为不变；`--extreme` 用它固定 false 吃满各段预算，见极限利用率实验报告））：`exploration_pct∈[0.1,0.95]` 把 time_budget 换算为 exploration_time/compression_time 两段 int 秒（各 ≥1s、和≈budget，**与 total_computation_time 互斥** —— spyrrow 的 total 键缺省 600 非 None，两段模式必须显式传 total_computation_time=None，否则 not-all-3 ValueError）；quadtree_depth∈[3,5]（缺省 4）、num_workers≥1（缺省 4）。清洗单一真相源 `_normalize_solver_opts`。**US-011 `exclude_labels`**（iterable[str]）：该 label 集合只在 **Item 构造层**跳过（pid_meta/total_area/manifest 逐字段不变 —— band on/off manifest 一致性由此保证；**禁** quantities=0 移除：连 pid_meta/total_area 一起抹掉，密度掉 ~12pt）；**US-003 `exclude_pids`（2026-09-02 双形态）**：pid 级 Item 层扣减，**与 exclude_labels 并存互不干扰**（双开时两参同传；pid_meta/total_area/manifest 逐字段不变，prefix on/off 一致性由此保证）—— iterable[str] = 整 pid 跳过（US-003 原语义逐字节不变）；`Mapping[str,int]`（如 `Counter`，`solve_worker` 按 PS_ 成员计数传入）= 每 pid 扣 n 份（`Item.demand = meta['demand'] − n`，≤0 才跳过 —— 5 片组合片下异码补片 pid 扣 1 份余量照排主解，placed 守恒 = 全量 Σdemand）；**US-011 `extra_items`**（list[{id,polygon,demand=1,orientations}]）：构造期追加进 items 的补充 Item（成带组合片 WB_ pid / 前缀组合片 PS_ pid）—— **必须构造期传入**，spyrrow `instance.items` 是 Rust 侧暴露的副本 list，构造后 append 不生效（实测组合片整解缺席） |
 | `solve_with_callback` | `(instance, config, on_report, *, drain_interval=0.2) → (final_sol, elapsed_sec, err)` | **旧 threading 版（保留）**。子线程 `instance.solve(config, progress=queue)`，主线程 `queue.drain()` 每 0.2s 取中间解 → `on_report({type:frame,...})`。US-026 起 `ws_solve` 切换到 `solve_with_callback_proc`，本函数不删（过渡期） |
