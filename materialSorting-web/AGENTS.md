@@ -919,3 +919,65 @@ R = 片级重置交互入口（已定案 2026-09-05：R 键非右键菜单；重
 - **伙伴片高亮（flashPartner）**：UI 覆盖层第三子层 partnerG（`ensureUiLayers` 子层序 [partnerG, overlapG, handleG]；partner-events:none）内 polygon —— 主题绿 `#2ea06c` 虚线（stroke-dasharray 6 3）+ 淡填充 rgba(46,160,108,0.12)、`data-testid="edit-snap-partner"`、`PARTNER_FLASH_MS(900)` 常驻 → opacity transition `PARTNER_FADE_MS(300)` 淡出 → 移除；重复吸附重置计时；clearPartner/cancelPartnerFlash（deselect/骨架重建/卸载清理）。points = 伙伴 EditPiece.worldPolygon（伙伴片不被吸附触碰，恒原位）。
 - **指南卡**：新增行 `贴附：右键拖动松手贴附`（文案不含「形态」「保存」—— 反向锁与其余行一致）。
 - **改本接线必须同步** `src/components/edit/__tests__/EditCanvas.test.tsx` 右键贴附 describe（12 项）与 `firePointer` 的 button 参（缺省 0 = 既有用例零改动）；UI 覆盖层子层数断言 `childNodes.length === 3`。
+
+## edit-drag-snap US-004 关键约定（吸附语义单一真相 + 端到端冒烟 调用方必读；2026-09-06）
+
+右键拖动松手贴附收官故事：吸附语义文档化 + `scripts/smoke_drag_snap.mjs` 双护栏
+冒烟（吸附功能护栏 + 左键零回归红线护栏）。改吸附引擎/接线/导出链前先读本节。
+
+### 吸附语义（六条单一真相，与 US-002/003 节互为索引）
+
+- **触发 = 仅右键贴附会话**：`EditCanvas.onPointerDown` 毛版 polygon 分支
+  `button === 2` 才起 `MoveDrag{snap:true}` + `snapSessRef` 会话；其余按键门控
+  见 US-003 节（左键 0 = 既有拖片/平移/转柄路径逐字节零改动，非主键不起会话）。
+- **求解时机 = 松手时一次**：pointerup → flushFrame 落末帧 → `applySnapOnRelease`
+  恰一次引擎调用（`computeSnapCorrection`）；拖动帧只由 refreshMetrics 顺带续写
+  `lastSafeTr`（免费跟踪，零新增计算），不做任何纠正 —— 吸附不是拖动帧行为。
+- **效果 = 只改 translation**：结果 `{tr, kind:'free'|'retreat'|'attract',
+  partnerKey}` 经 `commitDragPlacement` 唯一落笔出口写入；rot/mirror 读 working
+  现值原样透传永不触碰；`free` = 未施加纠正（含一切 fail-open，落点原样保留）。
+- **永不吸附路径（回归红线）**：左键拖动 / 键盘变换（L/K/Shift/空格/O/I/R）/
+  旋转拖柄 —— 引擎只被 `snap:true` 会话的 pointerup 调用；smoke 的 R1/R2 两档
+  左键红线断言（深叠压线落点原样重叠 >1000mm² 如实保留 + 小缝落点原样 attract
+  永不发生）是本红线的端到端门。
+- **ATTRACT_MAX_GAP_MM = 10**（2026-09-06 定案，`src/lib/snap.ts` 导出常量，
+  冒烟 S2a 检查点 import 锁值）：attract 只吸首触距离 ≤10mm 的邻居，吸附位 =
+  落点 + (t − 1nm)·方向（SEP_NUDGE_MM 与后端 polish.py 同名常量同口径）。
+- **erode 口径脚注 = 引用 overlap.ts 文件头原文**（2026-09-06 定案：脚注单一
+  真相源在 `src/lib/overlap.ts`，本节与 agent-component-map 只引用不复制，避免
+  两处文案漂移）。原文：
+
+  > 几何口径：manifest.pieces[].polygon = erode 后几何 = 与 solver 碰撞判定同口径；
+  > 物理毛版重合比显示值最多大 ~2·d_g（弹窗脚注注明）。
+
+### 冒烟脚本（scripts/smoke_drag_snap.mjs，31 检查点）
+
+- **运行**：前置 ms-web :8000 + 新构建 `static/`（prod 模式），然后
+  `node materialSorting-web/scripts/smoke_drag_snap.mjs`；报告落
+  `out/smoke_drag_snap/report.json`（含选片对/引擎预测 vs 导出值/逐检查点），
+  退出码 0 = 全 PASS。改 snap.ts / EditCanvas 贴附接线 / 保存与导出链路后必复跑。
+- **相位**：S1 上传 5336 → 20s 求解 30 片 → 基线 PLT 导出（placed 与 WS 末帧
+  逐位全等 = 对拍基准端）；S2 编辑弹窗 + 真实引擎预模拟选片对（esbuild 即时
+  bundle src/lib/{snap,overlap,editGeometry}.ts，attract/trusted-click/far-free/
+  retreat/final-attract 五路全预测通过才采用 —— 全流程确定性不靠碰运气）；B 右键
+  pointer 序列行为段（attract DOM points == 引擎 tr / 伙伴高亮轮廓 == partnerKey
+  世界轮廓 / 指标 0.0 / 高亮淡出 / trusted 右键 contextmenu 被吞 + 无位移 /
+  拖动中合成 contextmenu 被吞 / 拖离远端 free / 深叠 retreat + 独立布尔交复核）；
+  R 左键红线两档；C 末次 attract 回贴 → 保存 → 导出 placed 全精度贯通
+  （translation |Δ|≤1e-6（x/y）+ 亚 0.01mm 精度未截断 + 终态接触几何首触 ≈1nm/
+  全邻居布尔交 = 0 + 其余 29 项与求解末帧逐位全等）+ PLT 回读（未动片轮廓区
+  逐位全等 + 被拖片轮廓 = 基线平移吸附位移 ±2 HPGL unit）。
+- **期望值口径 = 引擎自己的答案**：Node 侧 predictSnap(S,R) 单跳会话模型（与
+  浏览器事件流逐帧一致：落点安全则 lastSafeTr=R（零位移退化 attract），否则
+  锚点停 S（retreat））；浏览器 DOM points 串用 pointsStr 的 r2 复刻（键盘用例
+  数学锚点法）逐字节对拍，脚本绝不自算吸附坐标。
+- **实现坑备档（三处，复跑排障先看）**：① attract 沿质心连线方向（y 分量非 0）
+  —— 多次吸附链上的期望坐标必须继承上次吸附终点的 y（写死起手 t0[1] 会让后续
+  全部检查点错位，首跑实锤）；② PLT 笔画数漂移属预期差分（门幅框随料长伸缩、
+  被拖片标注随动、右侧表格 x 随 width_mm 平移且数值字宽可变）—— 未动片轮廓区
+  （stroke[0]=门幅框、stroke[k+1]=placed[k]，PU+PD 分块并入单笔）逐位全等才是
+  零回归判据，整文笔画数只做 |Δ|≤12 宽松带；③ 连跑多轮冒烟 = 每轮新 sid，撞
+  MS_SESSION_MAX=4 / TTL 10min 会 429 session_limit（上传卡死 tab 不解锁）——
+  重启 ms-web 恢复（极限冒烟同款坑，AGENTS 极限运行节有档）。
+- **零后端改动 / 零 src 改动**：本故事只新增 scripts/ 冒烟与文档；验证门 =
+  tsc 干净 + vitest 1072 全量 + `npm run build` 过（static/ 重建）+ 冒烟 31/31。

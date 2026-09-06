@@ -76,6 +76,13 @@
                                   //   DXF ≤0.05mm，非镜像反事实 ≥40unit/≥1mm（反证键真实
                                   //   驱动几何）；导出 placed 恰一项 mirror:true 且其余 29 项
                                   //   与镜像前逐位全等。改 apply_transform mirror 分支即红。
+                                  //   **edit-drag-snap US-004（2026-09-06）全精度贯通锁**：
+                                  //   smoke_drag_snap.mjs C 段锁「编辑吸附保存 → 导出
+                                  //   placed[KI].translation 与前端引擎吸附值 |Δ|≤1e-6
+                                  //   双轴 + 亚 0.01mm 精度未截断 + 其余 29 项与求解末帧
+                                  //   逐位全等 + PLT 未动片轮廓区逐位全等/被拖片轮廓 =
+                                  //   基线平移 ±2 HPGL unit」—— 编辑草稿→保存→导出链
+                                  //   一字不丢。
   ],
   "filename": "M1787.dxf",        // 可选：上传母版名（uploadStore.doc.filename 前端透传），
                                   //   作导出文件名前缀（去 .dxf）；缺省回退「排料」/nesting
