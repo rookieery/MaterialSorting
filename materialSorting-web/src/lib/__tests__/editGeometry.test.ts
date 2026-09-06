@@ -9,6 +9,11 @@
 //      CTM 不可得 -> null）
 //   8) edit-keyboard US-001 mirror 分支：手算方块 / 与 pointsStr mirror 对拍 / x 预取负
 //      等价（全精度）/ mirror=false 显式 = 缺省零回归
+//   9) edit-drag-snap US-001 吸附几何算子：contactT 单位解（垂直/斜向精确 t、延长线
+//      miss、近平行与零长边 null 不抛异常、负 t 原样返回、端点命中含端）+
+//      firstContactDistance（矩形夹具解析精确 t、斜向两向枚举、凹形 L 首触点落凹口
+//      内角、近平行弧段密集顶点 null 不抛异常 / 跳过后照常得手算值、无交点 null、
+//      镜像+旋转 vs 直接构造同形态同 t 口径无关性锁）
 
 import { describe, expect, it } from 'vitest';
 import { pointsStr, r2 } from '../geometry';
@@ -16,6 +21,8 @@ import {
   bboxIntersect,
   bboxOf,
   clientToWorld,
+  contactT,
+  firstContactDistance,
   penetrationDepth,
   pointInPolygon,
   polygonArea,
@@ -384,5 +391,239 @@ describe('clientToWorld', () => {
     const g = document.createElementNS(NS, 'g') as unknown as SVGGElement;
     (g as unknown as { getScreenCTM: () => null }).getScreenCTM = () => null;
     expect(clientToWorld(svg, g, 0, 0)).toBeNull();
+  });
+});
+
+// ============================================================
+// edit-drag-snap US-001：吸附几何算子（contactT + firstContactDistance）
+// ============================================================
+
+describe('contactT (edit-drag-snap US-001)', () => {
+  it('垂直命中：v(0,0) 沿 +x 到竖边 x=100（y∈[−10,50]）-> 精确 t=100（±1e-9）', () => {
+    const t = contactT([0, 0], [1, 0], [100, -10], [100, 50]);
+    expect(t).not.toBeNull();
+    expect(Math.abs((t as number) - 100)).toBeLessThanOrEqual(1e-9);
+  });
+
+  it('斜向命中：v(0,0) 沿 (√2/2,√2/2) 到竖边 x=50 -> 精确 t=50√2（±1e-9）', () => {
+    const inv = 1 / Math.SQRT2;
+    const t = contactT([0, 0], [inv, inv], [50, 0], [50, 100]);
+    expect(t).not.toBeNull();
+    expect(Math.abs((t as number) - 50 * Math.SQRT2)).toBeLessThanOrEqual(1e-9);
+  });
+
+  it('顶点扫过所在直线但错过线段本体（延长线命中）-> null', () => {
+    // 射线 y=0 永远够不到 y∈[10,110] 的竖边
+    expect(contactT([0, 0], [1, 0], [100, 10], [100, 110])).toBeNull();
+    // 斜向射线 (0.6,0.8) 过直线 x=50 时 y=50/0.6·0.8=66.7 ∉ [70,100] —— foot 在线段外
+    expect(contactT([0, 0], [0.6, 0.8], [50, 70], [50, 100])).toBeNull();
+  });
+
+  it('近平行（弧片密集顶点实况）：斜率 1e-12 与恰共线 -> null 不抛异常', () => {
+    // d=(100,−2e-12)：|cross(dir,d)|=2e-12 ≤ 1e-9·|d|≈1e-7 -> 近平行
+    expect(contactT([0, 0], [1, 0], [100, 1e-12], [200, -1e-12])).toBeNull();
+    // 恰共线（cross 恰 0，无 eps 会除零产 ±Infinity/NaN）
+    expect(contactT([0, 0], [1, 0], [100, 5], [200, 5])).toBeNull();
+  });
+
+  it('触点在身后（负 t）原样返回 —— 过滤正 t 是调用方职责', () => {
+    // v(0,0) 沿 +x：触点 x=−50 在身后 -> t=−50（命中点在线段 y∈[−10,10] 内）
+    expect(contactT([0, 0], [1, 0], [-50, -10], [-50, 10])).toBe(-50);
+  });
+
+  it('端点命中含端（s=0/s=1 闭区间）', () => {
+    // 命中点恰为线段起点 (100,0)
+    expect(contactT([0, 0], [1, 0], [100, 0], [100, 100])).toBe(100);
+    // 命中点恰为线段终点 (100,0)
+    expect(contactT([0, 0], [1, 0], [100, 100], [100, 0])).toBe(100);
+  });
+
+  it('零长退化边 -> null（防御，不抛异常）', () => {
+    expect(contactT([0, 0], [1, 0], [100, 0], [100, 0])).toBeNull();
+  });
+});
+
+describe('firstContactDistance (edit-drag-snap US-001)', () => {
+  const BAR: Polygon = [
+    [50, 40],
+    [150, 40],
+    [150, 60],
+    [50, 60],
+  ];
+  const RECT: Polygon = [
+    [300, 0],
+    [400, 0],
+    [400, 100],
+    [300, 100],
+  ];
+
+  it('矩形夹具：横条 vs 矩形沿 +x -> 解析精确 t=150（±1e-9）', () => {
+    const t = firstContactDistance(BAR, RECT, [1, 0]);
+    expect(t).not.toBeNull();
+    expect(Math.abs((t as number) - 150)).toBeLessThanOrEqual(1e-9);
+  });
+
+  it('矩形夹具斜向 (0.6,0.8)：两向枚举同值 -> 精确 t=250/3（±1e-9）', () => {
+    // 方块 [0,50]² 沿 3-4-5 方向撞大矩形 [100,300]x[100,200]：
+    // ① moved 顶点 (50,50) 撞西墙 x=100：0.6t=50 -> t=250/3、y=50+0.8t=116.7 ∈ [100,200]；
+    // ② obstacle 顶点 (100,100) 沿 −dir 撞 moved 东边 x=50：同 t=250/3（y=100−0.8t=33.3 ∈ [0,50]）。
+    const sq: Polygon = [
+      [0, 0],
+      [50, 0],
+      [50, 50],
+      [0, 50],
+    ];
+    const big: Polygon = [
+      [100, 100],
+      [300, 100],
+      [300, 200],
+      [100, 200],
+    ];
+    const t = firstContactDistance(sq, big, [0.6, 0.8]);
+    expect(t).not.toBeNull();
+    expect(Math.abs((t as number) - 250 / 3)).toBeLessThanOrEqual(1e-9);
+  });
+
+  it('凹形 L 夹具：首触点恰落凹口内角 (50,50)，t=10 精确', () => {
+    // L 形障碍（右上 50x50 缺口，凹口内角 = 反射顶点 (50,50)）；三角 moved 最西顶点
+    // (60,50) 沿 −x 贴入：唯一 argmin 对 = (60,50) × 凹口西墙 (50,50)-(50,100) 的端点命中。
+    const l: Polygon = [
+      [0, 0],
+      [100, 0],
+      [100, 50],
+      [50, 50],
+      [50, 100],
+      [0, 100],
+    ];
+    const tri: Polygon = [
+      [60, 50],
+      [90, 60],
+      [65, 70],
+    ];
+    const t = firstContactDistance(tri, l, [-1, 0]);
+    expect(t).toBe(10); // 整数算术全精确
+    // 首触点重构：最西顶点 + t·dir = (50,50) —— 凹口内角
+    const px = 60 + (t as number) * -1;
+    const py = 50 + (t as number) * 0;
+    expect(px).toBe(50);
+    expect(py).toBe(50);
+    // moved 底边与凹口底边 y=50 共线（近平行对）：跳过不抛异常，否则此处早已 ±Infinity 污染
+  });
+
+  it('近平行弧段密集顶点（弧片实况）：两向全无良态交点 -> null 不抛异常', () => {
+    // 障碍 = 浅弧顶链（弦斜率 1e-10/10，|sinθ|≈1e-11 < 1e-9 全近平行）+ 东西竖壁 + 底边；
+    // moved = 同款浅弧链抬高 5mm + 竖壁 —— 所有顶点射线要么撞近平行边（跳过）、要么
+    // foot 落在竖壁 y 区间外（miss），两向枚举全 null。
+    const arcObs: Polygon = [
+      [300, 0],
+      [310, 1e-10],
+      [320, 2e-10],
+      [330, 3e-10],
+      [340, 4e-10],
+      [350, 5e-10],
+      [350, -50],
+      [300, -50],
+    ];
+    const arcMov: Polygon = [
+      [180, 5],
+      [190, 5 + 1e-10],
+      [200, 5 + 2e-10],
+      [210, 5 + 3e-10],
+      [220, 5 + 4e-10],
+      [230, 5 + 5e-10],
+      [230, 25],
+      [180, 25],
+    ];
+    expect(firstContactDistance(arcMov, arcObs, [1, 0])).toBeNull();
+  });
+
+  it('近平行弧段在场但真触点良态：跳过后照常返回手算值 t=40', () => {
+    // 同一弧障碍 vs 西侧方块（y∈[−20,−5]，全部落在障碍西壁 y∈[−50,0] 内）：
+    // 近平行弧弦对被跳过（无 eps 时恰共线的水平底边会产 ±Infinity），真触点 =
+    // 方块东边 x=260 撞西壁 x=300 -> t=40 精确。
+    const arcObs: Polygon = [
+      [300, 0],
+      [310, 1e-10],
+      [320, 2e-10],
+      [330, 3e-10],
+      [340, 4e-10],
+      [350, 5e-10],
+      [350, -50],
+      [300, -50],
+    ];
+    const sq: Polygon = [
+      [200, -20],
+      [260, -20],
+      [260, -5],
+      [200, -5],
+    ];
+    expect(firstContactDistance(sq, arcObs, [1, 0])).toBe(40);
+  });
+
+  it('前方无交点（障碍在身后 / 射线错过）-> null', () => {
+    const far: Polygon = [
+      [-300, -100],
+      [-100, -100],
+      [-100, 100],
+      [-300, 100],
+    ];
+    expect(firstContactDistance(BAR, far, [1, 0])).toBeNull(); // 障碍全在西，+x 远离
+    expect(firstContactDistance(BAR, RECT, [0, -1])).toBeNull(); // 竖直向下错过（x 错位）
+  });
+
+  it('空多边形防御 -> null 不抛异常', () => {
+    expect(firstContactDistance([], RECT, [1, 0])).toBeNull();
+    expect(firstContactDistance(BAR, [], [1, 0])).toBeNull();
+  });
+
+  it('镜像+旋转 vs 直接构造同物理形态片同 t（口径无关性锁 —— 只读 worldPolygon）', () => {
+    // 非对称五边形 base：镜像确实改变形态（fixture 有效性自证）
+    const base: Polygon = [
+      [0, 0],
+      [80, 0],
+      [100, 30],
+      [40, 90],
+      [-10, 40],
+    ];
+    const wall: Polygon = [
+      [800, 300],
+      [900, 300],
+      [900, 500],
+      [800, 500],
+    ];
+    // w1 = mirror+rot37：最东顶点 = 原 (0,0) -> (600,400)，撞墙 x=800 -> t=200 精确
+    const w1 = transformPolygon(base, 37, [600, 400], true);
+    const t1 = firstContactDistance(w1, wall, [1, 0]);
+    expect(t1).toBe(200);
+    // 直接构造同物理形态（x 预取负 + 无镜像 —— 既有恒等式同算术序）-> 逐位同 t
+    const baseNeg: Polygon = base.map(([x, y]) => [-x, y] as Pt);
+    expect(firstContactDistance(transformPolygon(baseNeg, 37, [600, 400]), wall, [1, 0])).toBe(t1);
+    // 顶点序无关（逆序 / 换起点）-> 同 t（min 与枚举序无关）
+    expect(firstContactDistance([...w1].reverse() as Polygon, wall, [1, 0])).toBe(t1);
+    expect(
+      firstContactDistance([...w1.slice(2), ...w1.slice(0, 2)] as Polygon, wall, [1, 0]),
+    ).toBe(t1);
+    // 无镜像片最东顶点 = (80,0) 变换后 -> t = 200−80·cos37° ≈ 136.11 ≠ 200（形态确实不同）
+    const tPlain = firstContactDistance(transformPolygon(base, 37, [600, 400]), wall, [1, 0]);
+    expect(tPlain).not.toBe(t1);
+    expect(tPlain).toBeCloseTo(200 - 80 * Math.cos((37 * Math.PI) / 180), 9);
+  });
+
+  it('确定性：同输入双跑逐位全等（无 RNG）', () => {
+    const l: Polygon = [
+      [0, 0],
+      [100, 0],
+      [100, 50],
+      [50, 50],
+      [50, 100],
+      [0, 100],
+    ];
+    const tri: Polygon = [
+      [60, 50],
+      [90, 60],
+      [65, 70],
+    ];
+    expect(firstContactDistance(tri, l, [-1, 0])).toBe(firstContactDistance(tri, l, [-1, 0]));
+    expect(firstContactDistance(BAR, RECT, [1, 0])).toBe(firstContactDistance(BAR, RECT, [1, 0]));
   });
 });

@@ -13,6 +13,9 @@
 //
 // 指标几何口径：manifest.pieces[].polygon = erode 后几何（与 solver 碰撞判定同口径）；
 // 物理毛版重合比显示值最多大 ~2·d_g（per_type d≤10，默认 0~2mm），编辑弹窗脚注注明。
+//
+// edit-drag-snap US-001 起追加吸附几何算子（contactT / firstContactDistance，见文件
+// 中段「edit-drag-snap US-001」分节头）—— 松手贴附的解析地基，零迭代零 RNG。
 
 import { polygonArea as shoelaceArea } from './params';
 import type { Polygon, Pt } from '../types/piece';
@@ -159,6 +162,99 @@ export function penetrationDepth(a: readonly Pt[], b: readonly Pt[]): number {
     }
   }
   return depth;
+}
+
+// ============================================================
+// edit-drag-snap US-001 —— 吸附几何算子（右键拖动松手贴附的解析地基）
+//
+// 与后端 polish（nesting_engine/polish.py _slide_west_touch 的数值扫线）不同，这里
+// 全部**解析**求解（叉积线性方程，零迭代零 RNG）：松手吸附引擎（US-002 snap.ts 的
+// retreat/attract）只消费 firstContactDistance 的单一标量 t。
+// ============================================================
+
+/** 近平行判定阈值（相对边长的 |sinθ| 口径）：|cross(dir, 边向量)| ≤ 阈值·|边| → 近平行。 */
+const EDGE_PARALLEL_EPS = 1e-9;
+
+/** 命中点落线段参数区间的端点容差（归一前 s ∈ [−tol·len², len²·(1+tol)]，吸收恰落端点的浮点噪声）。 */
+const SEG_ENDPOINT_TOL = 1e-9;
+
+/**
+ * 顶点 v 沿单位方向 dir 平移、恰好落在线段 ab 上时的参数 t 解（edit-drag-snap US-001）。
+ *
+ * 叉积线性解：命中点 p = v + t·dir 落在 ab 所在直线上 ⟺ cross(p − a, b − a) = 0，该式
+ * 对 t 线性 ⟹ t = −cross(v − a, b − a) / cross(dir, b − a)；再要求 p 落在线段本体
+ * [a, b] 的参数区间内（含端点，端点容差吸收浮点噪声）。
+ *
+ * 返回 null（不抛异常）的三种情形：
+ *   1. ab 零长退化边（闭合环不应出现，防御）；
+ *   2. dir 与 ab 近平行（|cross(dir, d)| ≤ EDGE_PARALLEL_EPS·|d|，即 |sinθ| ≤ 1e-9）
+ *      —— 线性方程病态：解是数十米外的浮点噪声（牛仔裤弧片密集顶点实况），且 cross
+ *      恰为 0 时除零产 ±Infinity/NaN 会污染最小值；近共线擦过的真实触点发生在线段
+ *      **端点**上，由相邻边（与 dir 不近平行）的端点命中覆盖；
+ *   3. 命中点在线段延长线上（顶点扫过所在直线但错过线段本体）。
+ *
+ * t 的符号语义：返回原始解，可为负（触点在起身后方，如已交叠回看）—— 过滤正 t 是
+ * 调用方（firstContactDistance）的职责。dir 须为单位向量（t 即 mm 距离）；零向量
+ * dir 对一切边近平行 → 恒 null，安全不炸。
+ *
+ * @param v   平移起始顶点（世界坐标）
+ * @param dir 单位方向（t = mm 的前提）
+ * @param a   线段起点
+ * @param b   线段终点
+ */
+export function contactT(v: Pt, dir: Pt, a: Pt, b: Pt): number | null {
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  const len2 = dx * dx + dy * dy;
+  if (len2 === 0) return null;
+  const denom = dir[0] * dy - dir[1] * dx; // cross(dir, d)
+  if (Math.abs(denom) <= EDGE_PARALLEL_EPS * Math.sqrt(len2)) return null;
+  const t = -((v[0] - a[0]) * dy - (v[1] - a[1]) * dx) / denom; // −cross(v−a, d)/cross(dir, d)
+  const s = (v[0] + t * dir[0] - a[0]) * dx + (v[1] + t * dir[1] - a[1]) * dy; // dot(p−a, d)
+  if (s < -SEG_ENDPOINT_TOL * len2 || s > len2 * (1 + SEG_ENDPOINT_TOL)) return null;
+  return t;
+}
+
+/**
+ * 两多边形沿方向 dir 的首触距离（edit-drag-snap US-001）：moved 平移 t·dir 后与
+ * obstacle 恰好接触的**最小正 t**（mm），解析求解零迭代；前方无交点返回 null。
+ *
+ * 顶点-边两向枚举（凸/凹多边形通吃的完备接触枚举）：
+ *   ① moved 全部顶点 × obstacle 全部边：moved 顶点沿 dir 前进撞上 obstacle 边；
+ *   ② obstacle 全部顶点 × moved 全部边：相对运动视角 —— moved 前进 ⟺ obstacle 沿
+ *      −dir 后退，obstacle 顶点撞上 moved 边（contactT 传反方向）。
+ * 顶点-顶点接触由「顶点命中邻边端点」覆盖。取全部**正** t 的严格最小（`<` 比较保留
+ * 首遇，平手时值相等 → 结果与枚举序无关）；已交叠产生的负 t 解（触点在身后）排除，
+ * 返回值恒为「沿 dir 前方的下一次接触」。
+ *
+ * 全程序确定（无 RNG、固定枚举序）；近平行对由 contactT 返回 null 跳过，不抛异常。
+ * 吸附数学只发生在世界坐标 worldPolygon 上 —— 与 rot/mirror 口径无关（单测口径
+ * 无关性锁：镜像+旋转片 vs 直接构造的同物理形态片同 t）。空多边形安全返回 null。
+ *
+ * @param moved    平移方世界坐标多边形（如被拖片 worldPolygon）
+ * @param obstacle 静止方世界坐标多边形（如邻居片 worldPolygon）
+ * @param dir      单位方向（t = mm 的前提）
+ */
+export function firstContactDistance(
+  moved: readonly Pt[],
+  obstacle: readonly Pt[],
+  dir: Pt,
+): number | null {
+  let best: number | null = null;
+  for (const v of moved) {
+    for (let i = 0, j = obstacle.length - 1; i < obstacle.length; j = i++) {
+      const t = contactT(v, dir, obstacle[j], obstacle[i]);
+      if (t !== null && t > 0 && (best === null || t < best)) best = t;
+    }
+  }
+  const neg: Pt = [-dir[0], -dir[1]]; // 相对运动：obstacle 顶点沿 −dir 扫过 moved 边
+  for (const v of obstacle) {
+    for (let i = 0, j = moved.length - 1; i < moved.length; j = i++) {
+      const t = contactT(v, neg, moved[j], moved[i]);
+      if (t !== null && t > 0 && (best === null || t < best)) best = t;
+    }
+  }
+  return best;
 }
 
 /**
