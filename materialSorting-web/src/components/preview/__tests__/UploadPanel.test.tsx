@@ -140,7 +140,7 @@ describe('UploadPanel (US-006) structure and AC#1 interactions', () => {
     expect(el.querySelector('.drop-zone')).not.toBeNull();
     const input = el.querySelector<HTMLInputElement>('input[type=file].upload-input-hidden');
     expect(input).not.toBeNull();
-    expect(input!.getAttribute('accept')).toBe('.dxf');
+    expect(input!.getAttribute('accept')).toBe('.dxf,.msn');
     expect(el.querySelector('button.upload-btn')).not.toBeNull();
   });
 
@@ -262,6 +262,46 @@ describe('UploadPanel (US-006) AC#2 client-side validation', () => {
     // US-021：解析成功后自动 commit 触发第二次 fetch（POST /api/commit-to-nesting）。
     expect(fetchSpy).toHaveBeenCalledTimes(2);
     expect(fetchSpy.mock.calls[0][0]).toBe('/api/parse-dxf');
+  });
+
+  it('AC#2 状态文件 US-003：.msn 过客户端校验 → 触发 upload（fetch /api/state-restore）', async () => {
+    // .dxf/.msn 双扩展名放行；恢复分流在 useParseDxf（mock fetch 拦 restore 端点计数）
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url: unknown) => {
+      const u = String(url);
+      if (u.includes('/api/state-restore')) {
+        return makeResponse({
+          doc_id: 'r1', filename: 'M.dxf', parse: makeDoc(), manifest: {},
+          final: null, placed: null, run: null, form: {}, quantities: {},
+        });
+      }
+      return makeResponse(makeDoc());
+    });
+    const el = renderPanel();
+    await act(async () => {
+      el.querySelector<HTMLElement>('.upload-panel')!.dispatchEvent(
+        makeDropEvent('drop', [makeFile('M1787_状态_1.msn', 100)]),
+      );
+    });
+    // 恢复路径无 commit（fetch 仅 1 次且指向 state-restore）
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(String(fetchSpy.mock.calls[0][0])).toBe('/api/state-restore');
+    expect(el.querySelector('.upload-status.error')).toBeNull();
+  });
+
+  it('AC#2 .MSN 大写后缀同样过校验（小写比较）', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      makeResponse({
+        doc_id: 'r1', filename: 'M.dxf', parse: makeDoc(), manifest: {},
+        final: null, placed: null, run: null, form: {}, quantities: {},
+      }),
+    );
+    const el = renderPanel();
+    await act(async () => {
+      el.querySelector<HTMLElement>('.upload-panel')!.dispatchEvent(
+        makeDropEvent('drop', [makeFile('SNAPSHOT.MSN', 100)]),
+      );
+    });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
   it('AC#2 valid pick clears stale localError', async () => {

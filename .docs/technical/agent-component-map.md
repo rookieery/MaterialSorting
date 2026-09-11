@@ -2308,3 +2308,57 @@ tsc 干净 + build 过；浏览器冒烟三脚本全绿 —— `smoke_edit_layou
 数学锚点切 raw）、`smoke_drag_snap` 31/31（脚本侧 physOf 锚点 + 引擎 bundle 自动跟随）。
 **本节以前各节中「按算法碰撞口径 / erode 几何口径 / 画布红字为腐蚀后轮廓数值可能
 偏小」等表述均为历史形态，以本节为准。**
+
+## 状态文件 US-003 落地（formStore 重构与保存/恢复前端入口；2026-09-11）
+
+**范围**：前端保存/恢复入口（后端 `/api/state-save`/`/api/state-restore` 已于
+US-001/US-002 落地，见 agent-api-reference.md 两专节）。FormState 从 ControlPanel
+useState 外提 formStore（hydrate 水合语义为 US-004 applyRestorePayload 预留）、导出
+下拉新增「状态文件（.msn）」（唯一不走 `/export` 的格式）、上传口 .msn 分流恢复
+端点（本 Story 成功最小处理：toast「恢复编排将在下一 Story 落地」—— 编排属
+US-004）。设计全文 `.docs/business/状态文件保存恢复_落地方案.md` §六。
+
+### 文件
+
+| 文件 | 改动 |
+|------|------|
+| `src/store/formStore.ts`（新） | FormState 13 字段模块级 zustand 单例：`patch` 合并 / `hydrate(form, token)`（`{...DEFAULT_FORM, ...form}` 缺省合并 + 记 token）/ `resetForDoc(docId)`（token 匹配 → 保留 form 不消费（水合优先 + StrictMode 双 effect 幂等）；否则 DEFAULT_FORM + 清 token）/ `reset` |
+| `src/types/stateFile.ts`（新） | .msn 契约类型：`RunProvenanceKind`/`RunProvenance`/`RunOrigin`/`StateRunFinal`/`StateSaveRun`/`StateSavePayload`/`StateRestoreResponse`（manifest `Omit<ManifestMsg,'type'>` 与后端恢复响应同形） |
+| `src/lib/stateFile.ts`（新） | `buildSavePayload(): {form, quantities, run?}` —— form ← formStore 原样；quantities ← qtyStore **全量扁平化不按码选过滤**（与 WS serializeQuantities 有意分歧，跨机完整还原未勾码数量；空 → null）；run 仅 `done && lastFrame` 的 bestRun（placed 深拷贝原序 / translation 数组拷断 / `mirror===true` 才带键（editStore.deepCopyItems 同口径）/ origin 缺席不写 provenance 键 / final 摘要 n_frames=frames.length、n_eroded=manifest?n_eroded:0） |
+| `src/store/runRegistry.ts`（扩） | `RunRecord` 增可选 `origin?: RunOrigin`（US-003 仅类型；写入方 = US-004 applyStrategyResult/applyRestorePayload） |
+| `src/lib/download.ts`（扩） | `ExportFmt` 增 `'state'`；EXPORT_FORMATS 追加 `{value:'state', label:'状态文件（.msn）'}` 排 PNG 后；DEFAULT_EXPORT_FMT 不动（仍 'plt-clean'）；parseContentDisposition fallback `'state' → nesting.msn`（state 是唯一走独立 `/api/state-save` 不进 `/export` 路由族的格式） |
+| `src/hooks/useExport.ts`（扩） | `saveState()`：无参（文件名后端从会话 doc.source 生成 `<母版名去.dxf>_状态_<ts>.msn`）；body = `JSON.stringify(buildSavePayload())` 原样；与 exportAs 共用 exporting state/ref 单一防连击旗（互斥）；StatusLine 三态同一 onStatus |
+| `src/components/ControlPanel/ControlPanel.tsx`（改） | `useState<FormState>` → `useFormStore((s)=>s.form)`；`useEffect([docId])` → `resetForDoc(docId)`（重传/首传重置、切 activeSize 保留 —— 表单行为与重构前一致，既有 vitest 全绿）；handleExport 增 `fmt==='state'` → `void saveState(); return`（不进 openModal('export_info')） |
+| `src/components/ControlPanel/ExportButtons.tsx`（扩） | fmt==='state' 底部说明行切换保存范围文案（partial 警示优先级更高）；disabled 沿用 hasLastFrame 同口径 |
+| `src/hooks/useParseDxf.ts`（改） | `upload` 分流：`.msn`（小写比较）→ `restoreStateFile(file)` POST `/api/state-restore`（multipart，apiFetch 注 sid）→ 成功 toast + 回 idle（doc 不写 / commit 不触发 / 错误走 toast 不进 uploadStore.error）；`.dxf` → `uploadDxf(file, commit)` 原逻辑独立成函数行级零变化；防连击 uploadingRef 共用 |
+| `src/components/preview/UploadPanel.tsx`（扩） | accept `.dxf,.msn`；校验/文案双扩展名放行（大小写容错同 .DXF 先例） |
+
+### 关键不变量（US-003 立，US-004 恢复编排前必读）
+
+1. **表单行为硬红线**：ControlPanel 迁 formStore 后既有 vitest 全绿（零改动通过）；
+   重置语义 token 化 —— US-004 applyRestorePayload 必须先 `resetForDoc` 语义下的
+   hydrate（restore 响应 doc_id 作 token，每次 mint 新 id 无误匹配）。
+2. **quantities 全量口径**：状态文件存完整矩阵（未勾码数量也随文件走）；后端按
+   form.sizes 自行过滤 demand —— 前端不要在 buildSavePayload 里复刻 WS 载荷过滤。
+3. **run 键 omit-when-empty**：无 done run → 整键缺席（纯配置档，后端
+   build_state_document 同语义）；provenance/mirror 同 omit 口径，undefined/false
+   不写键。
+4. **'state' 是 /export 例外**：EXPORT_FORMATS 扩格式的既有约定「后端 /export 加
+   路由分支」对 state **不成立** —— 它走独立 `/api/state-save`；改 /export 路由
+   分发时勿把 state 误接进去。
+5. **恢复提示通道 = toast**：.msn 失败不进 uploadStore.error 红字（不与 .dxf 路径
+   互斥展示语义耦合）；US-004 若改 UI 通道需两路径同步。
+
+### 验证
+
+- `npx tsc --noEmit` 干净 + vitest 全量 **1125 passed**（67 文件，+44：formStore 8 /
+  stateFile 12 / download +4 / ExportButtons +3 / ControlPanel state 分支 3 /
+  useParseDxf .msn 分流 7 / UploadPanel .msn 校验 2，另有 2 处既有断言随
+  options/accept 扩容更新）+ `npm run build` 过（313.53KB / gzip 102.75KB）。
+- 浏览器冒烟 `scripts/smoke-state-file.mjs` **8/8 PASS**（Playwright Edge 通道，
+  dev :5173 → 真 ms-web :8000）：上传 5336_coded → 5s 短求解 → state 说明行切换 →
+  下载 `5336#老六订单14%7%围加9_coded_状态_20260911-233916.msn`（母版名+状态+时间
+  戳）+ StatusLine「已导出 …」+ 无 ExportInfoModal → 回传该 .msn toast「状态文件
+  校验通过，恢复编排将在下一 Story 落地」→ .dxf 重传 parse+commit 回归。验证后
+  ms-web 已杀（:8000 释放）。
+- 后端零改动；pytest 全量 818 passed 复跑确认无回归。

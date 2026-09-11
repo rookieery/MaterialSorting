@@ -41,7 +41,7 @@ npm run test               # vitest run（US-002 起会有用例）
 - **不引入 CSS 框架**：`.tour-reduced-motion .tour-spotlight, .tour-reduced-motion .tour-bubble { transition: none !important; }` 沿用 style.css（与 .tour-spotlight/.tour-bubble 暗背景 #26282e + #2ea06c 同色系）。无其它新 CSS。
 - **未做浏览器验证（chrome-devtools-mcp 不在本会话工具集）**：本 Story 无 SVG/坐标变换（仅 DOM overlay 关闭交互 + matchMedia + scrollIntoView + CSS class），核心逻辑用新单测覆盖（TourOverlay 6 项：ESC/遮罩/bubble/skip/reduced-motion×2；TabBar 9 项：菜单展开两项/两项 action/点外关/ESC关/toggle/置灰×2/点置灰兜底；useTour 2 项：skip markSeen+close / skip 从等待态清轮询；tourStore 3 项：version 同步写/bump 清 seen/resetSeen 不影响 version）。浏览器端到端回归留作整体回归。
 
-## 文件分工（US-001 Tab 框架 + US-002~US-008 全部落地；上传预览 US-005 状态层 + US-006 UploadPanel + US-007 PiecePreviewSVG + US-008 容器集成 + 上传预览 US-011 qtyStore 数量状态 + 上传预览 US-013 PieceZoomModal 放大预览模态 + 上传预览 US-014 卡片头改造+模态集成 + US-015 uiStore 扩 nestingEnabled + TabBar 置灰 + US-016 PreviewPage 联动 setNestingEnabled + US-017 SizePicker 动态读码号 + DEFAULT_FORM.sizes=[] + US-018 PerTypeOverridesModal/PtypePreviewModal 高级配置弹窗+片型缩略图+放大预览 + US-021 useCommitToNesting 解析成功自动 commit+D1 闭环 + US-022 求解输入数量 demand per-size + US-024 NestSVG 5 层渲染+共享 LAYER5_COLORS + US-027 NestingPage phase 状态机+useSolveRun.stop()+running 态冻结参数编辑 + US-029 操作指引基础设施 tourStore+TourOverlay+useTour+TabBar 右上角入口 + US-030 previewTour 5 步+advance-on-ready+首次自动触发 + US-031 nestingTour 5 步+runRegistry 帧快照联动推进 + US-032 手动入口完善+关闭交互打磨+reduced-motion+scrollIntoView+完整单测 + 矩阵化重构 US-001 qtyStore 数据层简化（删 global 模式；PieceQuantity={perSize,baseValue}；setRowAll 整行填充；hydrate 单一入口；serializeQuantities 删 global 分支线格式不变）+ 矩阵化重构 US-002 QtyMatrix 数量矩阵组件（裁片×尺码矩阵）+ 矩阵化重构 US-003 拆除旧交互+预览页集成+全 0 拦截（SizeTabs/PieceQtyDialog/Switch 删除；uploadStore 删 qtyDialog；ParsedPiecesView 只读「N份」+区标题；ControlPanel 全 0 拦截）+ 矩阵化重构 US-004 parse 透传 ptype/paired+物理片数口径（parsed.ts 可选 ptype?/paired?；QtyMatrix ×2 徽章+物理口径小计；SizePicker.computeTotalCutPieces 同口径缺字段 ×1 兜底）+ 矩阵化重构 US-005 tour 锚点迁矩阵+文档同步（previewTour parsed/set-qty 锚点→QtyMatrix qty-matrix/qty-rowhead；TOUR_VERSION '1'→'2' bump；previewTour.test.tsx 新建 5 项）+ 裁片编号化重构 US-003 前端契约与显示层去名称化（2026-08-18：ParsedPiece 删 name/ptype/paired；V03_PTYPES 删→高级配置列集 = /api/ptypes reps 键动态；controlPanelStore previewPtype→previewLabel；QtyMatrix/SizePicker 小计/总片数 Σ 数量口径（配对 ×2 删）；PieceZoomModal/PtypePreviewModal 头部只显 g 码；NestSVG dataset.label + tooltip「g03 · 码28」；TOUR_VERSION '6'→'7'）+ 高级配置矩阵化 US-004 PerTypeOverridesModal 矩阵重构（2026-08-18：行=码号 × 列=g 码 矩阵、格=(g 码,码号) d/tol 双输入（空=继承默认）；per_type 两级嵌套 {label:{sizeKey:{d,tol}}} + perTypeSizeKey 单一口径；「≡」整列设值弹层（QtyMatrix 范式）；URL 分享 perTypeToUrlParam/perTypeFromUrlParam；三层独立 ESC）+ 高级配置矩阵回退（2026-08-18：US-004 矩阵化整体回退——per_type 收敛回单级 {g 码:{d,tol}}、弹窗回 列=g 码×2 行 d/tol、删「≡」整列设值/缺片格/URL 分享函数；后端 build_instance 同步回 label 单级命中） + 策略 PRD US-005 高级运行弹窗三态进度 UI（strategyStore/useStrategyPoll/StrategyRunButton/StrategyRunModal —— HTTP 轮询 /api/strategy/*，弹窗开 2s/关 15s；关闭三通道均不终止运行）+ 策略 PRD US-006 应用到主画布与导出闭环（NestingPage.applyStrategyResult —— 弹窗结果态显式按钮清场置换合成 RunRecord（manifest/frames 与 WS 消息同形），ExportButtons/useExport//export 导出链路零改动）+ 腰头成带 US-012 前端参数链路（FormState.band_* + collectBand 三态 + bandMemberCount 三态 + StartPayload.band 透传 + case stage 写 rec.stage/onStage 不 finish + NestingPage 状态行「腰头成带中」秒级提示）+ 腰头成带 US-013 弹窗布局设置 UI（PerTypeOverridesModal「布局设置」分区：成带勾选+腰头编号下拉（reps 动态值域+80×80 缩略图+fetch 失败降级）；ControlPanel band 启动闸门（未选编号/数量全 0 置灰+StatusLine 文案）+ band×策略互斥（strategy-btn disabled+title）；**2026-08-22 简化**：/api/band/preview 预演回显、ack 硬警告二次确认、US-015 填料混带、bandStore 单向镜像与 QtyMatrix「不成对」警告已整体删除 —— band = 勾选+选 g 码极简主流程，BandConfig 恰 {enabled,label}）。+ 起始端成套 US-004 前端参数链路+布局设置 UI（FormState.prefix_* + collectPrefix 三态 + prefixEligibleSizes 2+2 本地预检 + defaultPrefixLabels 面积预选（决策⑤）+ PrefixConfig/StageMsg 扩 'prefix' + useSolveRun prefix 透传 + PerTypeOverridesModal「起始端成套前后幅」勾选+前/后幅下拉（**2026-08-25 起下拉后挂组合形态预览缩略**——POST /api/prefix-preview：4 片同码 interleave 竖排 = 求解时 PS_ 组合片精确形态，band 预览同款三态 + prefix-zoom 第三层放大；前/后幅两张单片 80×80 缩略已删；无尺码下拉——资格码后端选定（2026-08-25 seeded 随机决策②；2026-09-02 起几何搜索））+ ControlPanel prefix 闸门/策略互斥 + NestingPage stage='prefix' 状态行「起始端成套构造中（尺码 N）…」（2026-09-02 起双形态：补片在案显「尺码 A＋g@B」））+ 多会话 US-005 前端会话接入与阻断弹窗（2026-08-27：lib/session.ts sid get-or-create + lib/api.ts apiFetch 全站统一 HTTP 出口（唯一裸 fetch 点）+ lib/ws.ts ?sid= + SessionExpiredModal 阻断弹窗 + App 挂载探测；8 处裸 fetch 全部换 apiFetch）。+ 起始端成套补片 US-004 前端类型+状态行/放大层双形态（2026-09-02 prd-prefix-extra-piece：StageMsg extra_label/extra_size/residual_mm + PrefixPreviewResponse extra/residual_mm/gate_mm/fallback 全可选、旧后端回落现行形态；5 片缩略自动渲染（n_members=5 补片）；params.ts/collectPrefix/ControlPanel 闸门零改动；vitest 810→815 + typecheck/build 过 + 浏览器 25/25；详见 .docs/technical/agent-component-map.md 同日补记）。
+## 文件分工（US-001 Tab 框架 + US-002~US-008 全部落地；上传预览 US-005 状态层 + US-006 UploadPanel + US-007 PiecePreviewSVG + US-008 容器集成 + 上传预览 US-011 qtyStore 数量状态 + 上传预览 US-013 PieceZoomModal 放大预览模态 + 上传预览 US-014 卡片头改造+模态集成 + US-015 uiStore 扩 nestingEnabled + TabBar 置灰 + US-016 PreviewPage 联动 setNestingEnabled + US-017 SizePicker 动态读码号 + DEFAULT_FORM.sizes=[] + US-018 PerTypeOverridesModal/PtypePreviewModal 高级配置弹窗+片型缩略图+放大预览 + US-021 useCommitToNesting 解析成功自动 commit+D1 闭环 + US-022 求解输入数量 demand per-size + US-024 NestSVG 5 层渲染+共享 LAYER5_COLORS + US-027 NestingPage phase 状态机+useSolveRun.stop()+running 态冻结参数编辑 + US-029 操作指引基础设施 tourStore+TourOverlay+useTour+TabBar 右上角入口 + US-030 previewTour 5 步+advance-on-ready+首次自动触发 + US-031 nestingTour 5 步+runRegistry 帧快照联动推进 + US-032 手动入口完善+关闭交互打磨+reduced-motion+scrollIntoView+完整单测 + 矩阵化重构 US-001 qtyStore 数据层简化（删 global 模式；PieceQuantity={perSize,baseValue}；setRowAll 整行填充；hydrate 单一入口；serializeQuantities 删 global 分支线格式不变）+ 矩阵化重构 US-002 QtyMatrix 数量矩阵组件（裁片×尺码矩阵）+ 矩阵化重构 US-003 拆除旧交互+预览页集成+全 0 拦截（SizeTabs/PieceQtyDialog/Switch 删除；uploadStore 删 qtyDialog；ParsedPiecesView 只读「N份」+区标题；ControlPanel 全 0 拦截）+ 矩阵化重构 US-004 parse 透传 ptype/paired+物理片数口径（parsed.ts 可选 ptype?/paired?；QtyMatrix ×2 徽章+物理口径小计；SizePicker.computeTotalCutPieces 同口径缺字段 ×1 兜底）+ 矩阵化重构 US-005 tour 锚点迁矩阵+文档同步（previewTour parsed/set-qty 锚点→QtyMatrix qty-matrix/qty-rowhead；TOUR_VERSION '1'→'2' bump；previewTour.test.tsx 新建 5 项）+ 裁片编号化重构 US-003 前端契约与显示层去名称化（2026-08-18：ParsedPiece 删 name/ptype/paired；V03_PTYPES 删→高级配置列集 = /api/ptypes reps 键动态；controlPanelStore previewPtype→previewLabel；QtyMatrix/SizePicker 小计/总片数 Σ 数量口径（配对 ×2 删）；PieceZoomModal/PtypePreviewModal 头部只显 g 码；NestSVG dataset.label + tooltip「g03 · 码28」；TOUR_VERSION '6'→'7'）+ 高级配置矩阵化 US-004 PerTypeOverridesModal 矩阵重构（2026-08-18：行=码号 × 列=g 码 矩阵、格=(g 码,码号) d/tol 双输入（空=继承默认）；per_type 两级嵌套 {label:{sizeKey:{d,tol}}} + perTypeSizeKey 单一口径；「≡」整列设值弹层（QtyMatrix 范式）；URL 分享 perTypeToUrlParam/perTypeFromUrlParam；三层独立 ESC）+ 高级配置矩阵回退（2026-08-18：US-004 矩阵化整体回退——per_type 收敛回单级 {g 码:{d,tol}}、弹窗回 列=g 码×2 行 d/tol、删「≡」整列设值/缺片格/URL 分享函数；后端 build_instance 同步回 label 单级命中） + 策略 PRD US-005 高级运行弹窗三态进度 UI（strategyStore/useStrategyPoll/StrategyRunButton/StrategyRunModal —— HTTP 轮询 /api/strategy/*，弹窗开 2s/关 15s；关闭三通道均不终止运行）+ 策略 PRD US-006 应用到主画布与导出闭环（NestingPage.applyStrategyResult —— 弹窗结果态显式按钮清场置换合成 RunRecord（manifest/frames 与 WS 消息同形），ExportButtons/useExport//export 导出链路零改动）+ 腰头成带 US-012 前端参数链路（FormState.band_* + collectBand 三态 + bandMemberCount 三态 + StartPayload.band 透传 + case stage 写 rec.stage/onStage 不 finish + NestingPage 状态行「腰头成带中」秒级提示）+ 腰头成带 US-013 弹窗布局设置 UI（PerTypeOverridesModal「布局设置」分区：成带勾选+腰头编号下拉（reps 动态值域+80×80 缩略图+fetch 失败降级）；ControlPanel band 启动闸门（未选编号/数量全 0 置灰+StatusLine 文案）+ band×策略互斥（strategy-btn disabled+title）；**2026-08-22 简化**：/api/band/preview 预演回显、ack 硬警告二次确认、US-015 填料混带、bandStore 单向镜像与 QtyMatrix「不成对」警告已整体删除 —— band = 勾选+选 g 码极简主流程，BandConfig 恰 {enabled,label}）。+ 起始端成套 US-004 前端参数链路+布局设置 UI（FormState.prefix_* + collectPrefix 三态 + prefixEligibleSizes 2+2 本地预检 + defaultPrefixLabels 面积预选（决策⑤）+ PrefixConfig/StageMsg 扩 'prefix' + useSolveRun prefix 透传 + PerTypeOverridesModal「起始端成套前后幅」勾选+前/后幅下拉（**2026-08-25 起下拉后挂组合形态预览缩略**——POST /api/prefix-preview：4 片同码 interleave 竖排 = 求解时 PS_ 组合片精确形态，band 预览同款三态 + prefix-zoom 第三层放大；前/后幅两张单片 80×80 缩略已删；无尺码下拉——资格码后端选定（2026-08-25 seeded 随机决策②；2026-09-02 起几何搜索））+ ControlPanel prefix 闸门/策略互斥 + NestingPage stage='prefix' 状态行「起始端成套构造中（尺码 N）…」（2026-09-02 起双形态：补片在案显「尺码 A＋g@B」））+ 多会话 US-005 前端会话接入与阻断弹窗（2026-08-27：lib/session.ts sid get-or-create + lib/api.ts apiFetch 全站统一 HTTP 出口（唯一裸 fetch 点）+ lib/ws.ts ?sid= + SessionExpiredModal 阻断弹窗 + App 挂载探测；8 处裸 fetch 全部换 apiFetch）。+ 起始端成套补片 US-004 前端类型+状态行/放大层双形态（2026-09-02 prd-prefix-extra-piece：StageMsg extra_label/extra_size/residual_mm + PrefixPreviewResponse extra/residual_mm/gate_mm/fallback 全可选、旧后端回落现行形态；5 片缩略自动渲染（n_members=5 补片）；params.ts/collectPrefix/ControlPanel 闸门零改动；vitest 810→815 + typecheck/build 过 + 浏览器 25/25；详见 .docs/technical/agent-component-map.md 同日补记）。+ 状态文件 US-003 前端保存/恢复入口（2026-09-11 prd 状态文件保存恢复：store/formStore.ts FormState 外提（hydrate/resetForDoc token 水合优先语义）+ types/stateFile.ts 契约 + lib/stateFile.ts buildSavePayload（quantities 全量矩阵/run 仅 done bestRun/placed 深拷贝 mirror omit-when-false/provenance omit-when-absent）+ ExportFmt 'state'（唯一不走 /export 的格式 → /api/state-save）+ useExport.saveState（共用 exporting 旗）+ UploadPanel .msn accept/分流 → /api/state-restore（成功 toast「下一 Story 落地」最小处理，applyRestorePayload 属 US-004）；详见文末「状态文件 US-003 关键约定」节）。
 
 ```
 src/
@@ -984,3 +984,67 @@ R = 片级重置交互入口（已定案 2026-09-05：R 键非右键菜单；重
   重启 ms-web 恢复（极限冒烟同款坑，AGENTS 极限运行节有档）。
 - **零后端改动 / 零 src 改动**：本故事只新增 scripts/ 冒烟与文档；验证门 =
   tsc 干净 + vitest 1072 全量 + `npm run build` 过（static/ 重建）+ 冒烟 31/31。
+
+## 状态文件 US-003 关键约定（formStore 重构与保存/恢复前端入口 调用方必读；2026-09-11）
+
+工作台状态 .msn 保存/恢复的前端入口故事：FormState 从 ControlPanel useState 外提
+formStore（hydrate 水合语义为 US-004 恢复编排预留）、导出下拉新增「状态文件（.msn）」
+走独立 /api/state-save、上传口 .msn 分流 /api/state-restore（成功仅 toast「恢复编排
+将在下一 Story 落地」—— applyRestorePayload 编排属 US-004）。改表单状态 / 导出 /
+上传分流前先读本节。
+
+### formStore（src/store/formStore.ts，模块级单例 store）
+
+- **FormState 13 字段全量外提**：ControlPanel 原 `useState<FormState>(DEFAULT_FORM)`
+  换 `useFormStore((s) => s.form)`；表单行为与重构前完全一致（既有 vitest 全绿是
+  硬红线，ControlPanel.test 零改动通过）。
+- **resetForDoc(docId) token 语义**：`docId === hydratedToken` → 保留 form 仅返回
+  （水合优先于重置，且不消费 token —— StrictMode 双 effect 幂等）；否则回
+  DEFAULT_FORM + 清 token。ControlPanel `useEffect([docId])` 挂点统一：重传 / 首传
+  （undefined→id）都触发重置，切 activeSize（docId 不变）不触发。
+- **hydrate(form, token)**：`{...DEFAULT_FORM, ...form}` 合并缺省（后端恢复的 form
+  只带已知键）+ 记 token。US-004 applyRestorePayload 将以 restore 响应的
+  doc_id 作 token 调它（恢复 mint 新 doc_id 每次不同，无误匹配）。
+
+### buildSavePayload（src/lib/stateFile.ts）
+
+- **quantities 全量矩阵**：qtyStore 扁平化不按 form.sizes 过滤（与 WS
+  serializeQuantities 的有意分歧 —— 状态文件要跨机完整还原未勾码数量；后端按
+  form.sizes 自行过滤 demand）；空矩阵 → null。
+- **run 仅 done 态 bestRun 入块**：`run && run.lastFrame && run.done`（stopped 的
+  done=true 也保存，与中间方案导出同先例；running 中不保存）→ 无 run 整键缺席
+  （纯配置档）。placed 深拷贝原序（同 pid 多副本多条）、translation 数组拷断不
+  别名、`mirror === true` 才带键（editStore.deepCopyItems 同口径）。
+- **provenance omit-when-absent**：RunRecord.origin 缺席（WS 普通求解）→ 不写
+  provenance 键（后端缺省 'solve'，老文件零惩罚）；在场 → {kind, config?}（config
+  缺席不带键）。origin 字段 US-003 只加类型（runRegistry.RunRecord 可选），写入方
+  是 US-004（applyStrategyResult/applyRestorePayload）。
+
+### 导出链（ExportFmt 'state' 是唯一不走 /export 的格式）
+
+- **download.ts**：EXPORT_FORMATS 追加 `{value:'state', label:'状态文件（.msn）'}`
+  排 PNG 后；DEFAULT_EXPORT_FMT 不动（仍 'plt-clean'）；parseContentDisposition
+  fallback 'state' → nesting.msn。
+- **useExport.saveState()**：无参数（文件名由后端从会话 doc.source 生成
+  `<母版名去.dxf>_状态_<ts>.msn`，与 exportAs 的 filename 载荷键不同）；body =
+  `JSON.stringify(buildSavePayload())` 原样；与 PNG/DXF/PLT 共用 exporting
+  state/ref 单一防连击旗（互斥）；StatusLine 三态同一 onStatus（正在生成 状态文件
+  …/已导出 xxx.msn/导出失败：{error}）。
+- **ControlPanel.handleExport**：`fmt === 'state'` → `void saveState(); return;`
+  不进 openModal('export_info')（14 字段手输面板对状态文件不打开 —— 手输字段是
+  本机记忆不入文件）。ExportButtons：fmt==='state' 说明行切换保存范围文案
+  （partial 警示优先级更高）；disabled 沿用 hasLastFrame 同口径（「纯配置档」UI
+  不可达，端点层仍容忍无 run）。
+
+### 上传分流（useParseDxf.upload）
+
+- **.msn 后缀（小写比较，MIME 不判）**：POST /api/state-restore（multipart file
+  字段，apiFetch 注 sid）→ 成功 toast「状态文件校验通过，恢复编排将在下一 Story
+  落地」+ status 回 idle（doc 不写、commit 不触发、错误走 toast 不进
+  uploadStore.error 红字 —— toast 是该路径统一提示通道）；失败 toast
+  「状态文件恢复失败：{error}」。uploading 期间清 commit 残留字段；防连击旗
+  （uploadingRef）与 .dxf 共用。
+- **.dxf 原路径零变化**：分流分支在 parse 请求之前；.dxf 流程独立成
+  uploadDxf(file, commit) 函数，行级等价（首调 /api/parse-dxf 回归锁在
+  useParseDxf.test）。UploadPanel accept=".dxf,.msn"，校验/文案双扩展名放行
+  （大小写容错同 .DXF 先例）。

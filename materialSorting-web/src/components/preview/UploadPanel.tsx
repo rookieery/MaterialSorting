@@ -1,9 +1,10 @@
 // UploadPanel —— DXF 上传预览页左侧面板（US-006）。
 //
 // 职责：
-//   1. 点击按钮 / 拖拽落区 → 触发隐藏 `<input type=file accept=".dxf">` → 调 useParseDxf.upload。
-//   2. 客户端预校验：.dxf 后缀（MIME 容错，仅看后缀）+ 单文件 + 20MB 上限。
-//      失败 → 红字提示，**不发请求**（AC#2）。
+//   1. 点击按钮 / 拖拽落区 → 触发隐藏 `<input type=file accept=".dxf,.msn">` → 调 useParseDxf.upload。
+//   2. 客户端预校验：.dxf / .msn 后缀（MIME 容错，仅看后缀）+ 单文件 + 20MB 上限。
+//      失败 → 红字提示，**不发请求**（AC#2）；.msn 分流（POST /api/state-restore）
+//      在 useParseDxf 内按扩展名判定（状态文件 US-003）。
 //   3. 从 uploadStore 读 status/error：uploading 显示加载态、done 显示文件名 + 码数概览、
 //      error 显示后端返回的红字消息（AC#3）；客户端校验失败显示本地红字（与 store.error 互斥展示）。
 //   4. US-021：从 uploadStore 读 commitStatus/commitError/commitSummary —— 解析成功后
@@ -42,15 +43,16 @@ interface ValidateResult {
   error?: string;
 }
 
-/** 校验 .dxf 后缀（MIME 容错）+ 单文件 + 大小上限。 */
+/** 校验后缀（MIME 容错：.dxf 母版 / .msn 状态文件，状态文件 US-003 起分流恢复）+ 单文件 + 大小上限。 */
 function validateFiles(files: File[]): ValidateResult {
   if (files.length === 0) return { error: '未选择文件' };
-  if (files.length > 1) return { error: '一次只能上传一个 DXF 文件' };
+  if (files.length > 1) return { error: '一次只能上传一个文件' };
   const f = files[0];
   // MIME 容错：file.type 可能是 ''、'application/dxf'、'application/octet-stream' 等，
   // 仅按后缀判定（生产环境 Windows 下文件 MIME 经常缺失或五花八门）。
-  if (!f.name.toLowerCase().endsWith('.dxf')) {
-    return { error: '仅支持 .dxf 文件' };
+  const name = f.name.toLowerCase();
+  if (!name.endsWith('.dxf') && !name.endsWith('.msn')) {
+    return { error: '仅支持 .dxf / .msn 文件' };
   }
   if (f.size > MAX_UPLOAD_BYTES) {
     return { error: `文件大小超过上限 ${MAX_UPLOAD_BYTES / 1024 / 1024}MB` };
@@ -207,15 +209,16 @@ export function UploadPanel(): JSX.Element {
           }
         }}
       >
-        <div className="drop-zone-text">{dragOver ? '松开以上传' : '拖拽 DXF 到此'}</div>
+        <div className="drop-zone-text">{dragOver ? '松开以上传' : '拖拽母版 / 状态文件到此'}</div>
         <div className="drop-zone-hint">或点击下方按钮选择文件</div>
       </div>
 
-      {/* 隐藏 input + 显式按钮（AC#1 点击上传按钮，与 drop-zone 双入口） */}
+      {/* 隐藏 input + 显式按钮（AC#1 点击上传按钮，与 drop-zone 双入口）；
+          状态文件 US-003：accept 增 .msn（useParseDxf 按扩展名分流恢复端点）。 */}
       <input
         ref={inputRef}
         type="file"
-        accept=".dxf"
+        accept=".dxf,.msn"
         className="upload-input-hidden"
         onChange={handleInputChange}
       />
@@ -225,11 +228,11 @@ export function UploadPanel(): JSX.Element {
         onClick={handlePickClick}
         disabled={status === 'uploading'}
       >
-        {status === 'done' ? '重新上传' : '选择 DXF 文件'}
+        {status === 'done' ? '重新上传' : '选择文件'}
       </button>
 
       <div className="hint">
-        仅支持 .dxf 母版文件；单文件，最大 {MAX_UPLOAD_BYTES / 1024 / 1024}MB。
+        上传母版 (.dxf) 或状态文件 (.msn)；单文件，最大 {MAX_UPLOAD_BYTES / 1024 / 1024}MB。
       </div>
     </aside>
   );

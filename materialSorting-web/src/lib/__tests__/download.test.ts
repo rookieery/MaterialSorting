@@ -58,6 +58,8 @@ describe('parseContentDisposition (US-007 AC#4)', () => {
     expect(parseContentDisposition('', 'plt')).toBe('nesting.plt');
     // 2026-08-31 毛版：变体后缀去掉还原 .plt 扩展名（仅 CD 头缺失的极端兜底路径）
     expect(parseContentDisposition('', 'plt-clean')).toBe('nesting.plt');
+    // 状态文件 US-003：'state' 扩展名映射 .msn（走独立 /api/state-save 的唯一例外格式）
+    expect(parseContentDisposition('', 'state')).toBe('nesting.msn');
   });
 
   it('无 filename 字段 → nesting.<fmt> 兜底', () => {
@@ -84,6 +86,33 @@ describe('parseContentDisposition (US-007 AC#4)', () => {
   it('正则大小写不敏感（FILENAME*= 也匹配）', () => {
     const cd = "attachment; FILENAME*=UTF-8''ascii.png";
     expect(parseContentDisposition(cd, 'png')).toBe('ascii.png');
+  });
+});
+
+// 状态文件 US-003：EXPORT_FORMATS 追加 state 项（排 PNG 后）+ 默认值不动 + RFC5987
+// 中文文件名解析复用（后端 /api/state-save 命名 <母版名去 .dxf>_状态_<ts>.msn）。
+describe('EXPORT_FORMATS / DEFAULT_EXPORT_FMT（状态文件 US-003）', () => {
+  it('EXPORT_FORMATS 含「状态文件（.msn）」排 PNG 后', async () => {
+    const { EXPORT_FORMATS } = await import('../download');
+    const idx = EXPORT_FORMATS.findIndex((f) => f.value === 'state');
+    expect(idx).toBe(EXPORT_FORMATS.length - 1);
+    expect(EXPORT_FORMATS[idx].label).toBe('状态文件（.msn）');
+    const pngIdx = EXPORT_FORMATS.findIndex((f) => f.value === 'png');
+    expect(pngIdx).toBe(idx - 1);
+  });
+
+  it('DEFAULT_EXPORT_FMT 仍为 plt-clean（默认选中不动）', async () => {
+    const { DEFAULT_EXPORT_FMT } = await import('../download');
+    expect(DEFAULT_EXPORT_FMT).toBe('plt-clean');
+  });
+
+  it('状态文件 RFC5987 中文文件名解析（_状态_ 命名 round-trip）', () => {
+    const fname = '5336订单_状态_20260911-103000.msn';
+    const cd = `attachment; filename="nesting_state_20260911-103000.msn"; filename*=UTF-8''${
+      // encodeURIComponent 与后端 urllib.parse.quote 中文同编码口径
+      encodeURIComponent(fname).replace(/[!'()*]/g, (c) => '%' + c.charCodeAt(0).toString(16).toUpperCase())
+    }`;
+    expect(parseContentDisposition(cd, 'state')).toBe(fname);
   });
 });
 

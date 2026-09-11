@@ -8,6 +8,7 @@
 // 新一次 start / cleanup → clear() 关闭所有 WS 并清空。
 
 import type { BandConfig, FinalMsg, FinalPrefixStats, FrameMsg, ManifestMsg, StageMsg } from '../types/ws';
+import type { RunOrigin } from '../types/stateFile';
 
 /** 单个 run 的全部上下文（高频字段 frames/lastFrame 直接 mutate）。 */
 export interface RunRecord {
@@ -49,6 +50,14 @@ export interface RunRecord {
   viewBoxMaxW: number;
   /** US-027：用户 stop 触发的结束（收到 {type:'stopped'} 置 true；用于 phase 状态机区分 stopped/done/error）。 */
   stopped: boolean;
+  /**
+   * 结果来源（additive 可选，状态文件 US-003）：WS 普通求解不设（undefined =
+   * 'solve'，保存端 buildSavePayload 不写 provenance 键 —— 老文件零惩罚）；
+   * US-004 起 applyStrategyResult（StrategyResult.mode + summary 记入）与恢复端
+   * applyRestorePayload（run.provenance 透传）同款写回。纯展示级 —— 状态文件
+   * 的 run-provenance 来源小字消费，渲染/导出零消费。
+   */
+  origin?: RunOrigin;
 }
 
 /** 模块级 mutable 数组 —— 跨 hook 实例共享。 */

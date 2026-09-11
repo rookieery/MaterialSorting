@@ -20,6 +20,10 @@
 //   7. 解析成功且 doc.sizes 含 null 码（块名末尾带不出码号的裁片）→ toast 提示
 //      （2026-08-31）：超排页码号区已不渲染该组 chip（通用片不参与求解），toast 引导
 //      用户检查母版命名；具体是哪些片看预览页 QtyMatrix「通用」行。
+//   8. 状态文件 US-003：上传分流 —— 扩展名 .msn → POST /api/state-restore（multipart，
+//      不经 parse-dxf/commit）：uploading 反馈期间走独立校验链，成功最小处理（toast
+//      「恢复编排将在下一 Story 落地」+ 回 idle —— applyRestorePayload 编排属 US-004）、
+//      失败 toast 后端结构化错误信息；.dxf 原路径零变化（分支在 parse 请求之前）。
 //
 // 调用方约定：
 //   const { upload } = useParseDxf();
@@ -37,9 +41,16 @@ import { useToastStore } from '../store/toastStore';
 import { useUploadStore } from '../store/uploadStore';
 import { useCommitToNesting } from './useCommitToNesting';
 import type { ParsedDoc } from '../types/parsed';
+import type { StateRestoreResponse } from '../types/stateFile';
 
 /** 解析端点（dev 由 Vite proxy 转 :8000；prod 同源）。 */
 const PARSE_DXF_URL = '/api/parse-dxf';
+
+/** 状态文件恢复端点（US-003 上传分流；multipart，与 parse-dxf 同走 apiFetch 注 sid）。 */
+const STATE_RESTORE_URL = '/api/state-restore';
+
+/** 状态文件扩展名（与后端 STATE_EXTENSION 同源；accept/分流判定用，小写比较）。 */
+const STATE_FILE_EXT = '.msn';
 
 export interface UseParseDxfResult {
   /** 触发上传（防连击：uploading 中重复触发静默忽略）。客户端预校验应由调用方完成。 */
@@ -59,19 +70,89 @@ export function useParseDxf(): UseParseDxfResult {
     if (useUploadStore.getState().status === 'uploading') return;
 
     uploadingRef.current = true;
-    // 进入 uploading 时清掉旧的 error（避免 UI 残留上次失败的红字），doc/activeSize 保留。
-    // 同步清 commit 字段（US-021）：重传时旧 commit 摘要 / 错误不再适用，避免 UI 误导。
-    useUploadStore.setState({
-      status: 'uploading',
-      error: null,
-      commitStatus: 'idle',
-      commitError: null,
-      commitSummary: null,
-    });
-
     try {
-      const fd = new FormData();
-      fd.append('file', file);
+      // 状态文件 US-003：按扩展名分流（分支在 parse 请求之前，.dxf 流程逐行为旧代码）。
+      // .msn → 恢复端点（不经 parse-dxf / commit）；大小写容错（仅看后缀，MIME 同理不判）。
+      if (file.name.toLowerCase().endsWith(STATE_FILE_EXT)) {
+        await restoreStateFile(file);
+        return;
+      }
+      await uploadDxf(file, commit);
+    } finally {
+      uploadingRef.current = false;
+    }
+  }, [commit]);
+
+  return { upload };
+}
+
+/**
+ * .msn 状态文件恢复分流（US-003 最小处理）：POST /api/state-restore（multipart）
+ * → 成功 toast「恢复编排将在下一 Story 落地」、失败 toast 后端结构化错误信息。
+ * uploading 期间给 UploadPanel「上传中…」反馈；结束回 idle（旧 doc 展示随会话
+ * 覆盖语义失效，US-004 applyRestorePayload 接线后改为 done + 恢复 doc）。
+ * 错误不进 uploadStore.error：toast 是状态文件路径的统一提示通道（不与 .dxf
+ * 路径的红字互斥展示语义耦合）。
+ */
+async function restoreStateFile(file: File): Promise<void> {
+  useUploadStore.setState({
+    status: 'uploading',
+    error: null,
+    commitStatus: 'idle',
+    commitError: null,
+    commitSummary: null,
+  });
+  try {
+    const fd = new FormData();
+    fd.append('file', file);
+    const res = await apiFetch(STATE_RESTORE_URL, {
+      method: 'POST',
+      body: fd,
+    });
+    if (!res.ok) {
+      // 校验链错误（400/413）/ 会话错误（401/429）全走 JSONResponse { error }（中文消息）
+      let msg = res.statusText;
+      try {
+        const err = (await res.json()) as { error?: string };
+        msg = err.error || msg;
+      } catch {
+        // 非 JSON 响应 —— 用 statusText 兜底
+      }
+      useToastStore.getState().pushToast(`状态文件恢复失败：${msg}`);
+      return;
+    }
+    // RestorePayload —— US-004 applyRestorePayload 编排接线（本 story 仅校验通过提示）
+    await res.json() as StateRestoreResponse;
+    useToastStore
+      .getState()
+      .pushToast('状态文件校验通过，恢复编排将在下一 Story 落地');
+  } catch (e) {
+    // 网络错 / SessionBlockedError —— toast 统一提示（不抛、不 rethrow）
+    const msg = e instanceof Error ? e.message : String(e);
+    useToastStore.getState().pushToast(`状态文件恢复失败：${msg}`);
+  } finally {
+    useUploadStore.setState({ status: 'idle' });
+  }
+}
+
+/** .dxf 母版解析路径（US-005 原实现，US-003 分流后独立成函数 —— 行为零变化）。 */
+async function uploadDxf(
+  file: File,
+  commit: (docId: string, filename?: string) => Promise<unknown>,
+): Promise<void> {
+  // 进入 uploading 时清掉旧的 error（避免 UI 残留上次失败的红字），doc/activeSize 保留。
+  // 同步清 commit 字段（US-021）：重传时旧 commit 摘要 / 错误不再适用，避免 UI 误导。
+  useUploadStore.setState({
+    status: 'uploading',
+    error: null,
+    commitStatus: 'idle',
+    commitError: null,
+    commitSummary: null,
+  });
+
+  try {
+    const fd = new FormData();
+    fd.append('file', file);
 
       const res = await apiFetch(PARSE_DXF_URL, {
         method: 'POST',
@@ -122,10 +203,5 @@ export function useParseDxf(): UseParseDxfResult {
       // 网络错 / JSON 解析错 —— 统一进 error 状态（不抛、不 rethrow）
       const msg = e instanceof Error ? e.message : String(e);
       useUploadStore.setState({ status: 'error', error: msg });
-    } finally {
-      uploadingRef.current = false;
     }
-  }, [commit]);
-
-  return { upload };
 }

@@ -56,12 +56,18 @@
 //   在弹窗下拉兜底下看似合法（后端结构化 error 兜底才暴露）、per_type 旧键混进新
 //   母版高级配置表格列集。实现见组件内 useEffect([docId])（form 是本地 state，
 //   状态所有者是唯一挂点；NestingPage 双页常驻不卸载，无此 effect 则必残留）。
+// 状态文件 US-003：form 自本地 useState 上提 formStore（保存读 form / 恢复注 form
+//   的跨模块地基），useEffect([docId]) 挂点改为 formStore.resetForDoc —— 「有本
+//   docId 的水合载荷 → 保留，否则 DEFAULT_FORM」，docId 变更重置语义与本地 state
+//   时代完全一致（行为不变是硬红线；水合载荷 US-004 恢复编排才写入）。同 Story：
+//   handleExport 增 fmt==='state' 分支 → useExport.saveState（不进 ExportInfoModal）。
 
 import { useCallback, useEffect, useState } from 'react';
 import { useExport } from '../../hooks/useExport';
 import type { ExportFmt } from '../../lib/download';
 import type { ExportTableFields } from '../../lib/exportTable';
 import { useControlPanelStore } from '../../store/controlPanelStore';
+import { useFormStore } from '../../store/formStore';
 import { useUploadStore } from '../../store/uploadStore';
 import { useQtyStore } from '../../store/qtyStore';
 import { ExportButtons } from './ExportButtons';
@@ -82,7 +88,6 @@ import { ExtremeRunButton } from './ExtremeRunButton';
 import {
   bandMemberCount,
   collectStartContext,
-  DEFAULT_FORM,
   parseGate,
   parseSeedCount,
   type FormState,
@@ -144,7 +149,8 @@ export interface ControlPanelProps {
 }
 
 export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApplyStrategy }: ControlPanelProps) {
-  const [form, setForm] = useState<FormState>(DEFAULT_FORM);
+  // 状态文件 US-003：form 由 formStore 持有（原本地 useState；行为等价迁移）。
+  const form = useFormStore((s) => s.form);
   // US-017：订阅 uploadStore.doc 判断是否已解析母版（doc=null → StatusLine 增提示）。
   const doc = useUploadStore((s) => s.doc);
 
@@ -154,14 +160,16 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
   // 非法 —— band/prefix 旧 g 码在弹窗下拉兜底下仍显示为合法选中项（点开始才被
   // 后端结构化 error 拦截）、per_type 旧键会混进新母版高级配置表格列集
   // （orderedLabels = reps ∪ 已配置键）、旧码号残留在 form.sizes。App 双页常驻
-  // DOM 不卸载，form 是本地 state 无 store 归宿，此处（状态所有者）是唯一挂点。
-  // 细节：mount 时 doc=null → docId=undefined，effect 首跑 setForm(DEFAULT_FORM)
-  // 为 no-op；doc 对象因切 activeSize 等换引用但 doc_id 不变时不触发（dep 字符串）；
-  // DEFAULT_FORM 是模块常量且 patch 恒建新对象不原地改，共享引用安全；求解中重置
-  // 无风险（求解用 start 载荷快照不回读 form，running 态输入本就 disabled）。
+  // DOM 不卸载，此处（状态所有者）是唯一挂点 —— US-003 起状态归宿是 formStore，
+  // effect 内改调 resetForDoc（无水合载荷 → DEFAULT_FORM，语义与 setForm 等价）。
+  // 细节：mount 时 doc=null → docId=undefined，effect 首跑 resetForDoc(undefined)
+  // = 回 DEFAULT_FORM（幂等 no-op）；doc 对象因切 activeSize 等换引用但 doc_id
+  // 不变时不触发（dep 字符串）；DEFAULT_FORM 是模块常量且 patch 恒建新对象不
+  // 原地改，共享引用安全；求解中重置无风险（求解用 start 载荷快照不回读 form，
+  // running 态输入本就 disabled）。
   const docId = doc?.doc_id;
   useEffect(() => {
-    setForm(DEFAULT_FORM);
+    useFormStore.getState().resetForDoc(docId);
   }, [docId]);
   // US-013：订阅 quantities —— band 启动闸门（选中 g 码数量全 0 → 置灰）需要对数量
   // 矩阵编辑**响应式**（handleStart 内仍 getState() 现取快照，口径同源）。
@@ -173,7 +181,8 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
 
   // US-007：useExport 挂在 ControlPanel 内（form.sizes 与 exportAs 同处）。
   // onStatus 透传到 NestingPage.setStatus → StatusLine（导出中 / 完成 / 失败文案由 useExport 写）。
-  const { exportAs, exporting } = useExport({ onStatus });
+  // 状态文件 US-003：saveState（fmt='state' 分支消费）与 exportAs 共用 exporting 防连击旗。
+  const { exportAs, saveState, exporting } = useExport({ onStatus });
 
   // 2026-08-30：PLT 导出信息表格弹窗（ExportInfoModal 订阅 controlPanelStore 自显隐；
   // 打开入口在 handleExport 的 fmt==='plt' 分流）。
@@ -183,9 +192,9 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
   // 分流时记下，handlePltConfirm 按它调 exportAs；默认 'plt'（弹窗永不因非导出路径打开）。
   const [pendingPltFmt, setPendingPltFmt] = useState<'plt' | 'plt-clean'>('plt');
 
-  /** 通用 patch 更新（部分字段）。 */
+  /** 通用 patch 更新（部分字段）—— formStore.patch（浅合并建新对象，同旧 setForm 语义）。 */
   function patch(p: Partial<FormState>) {
-    setForm((prev) => ({ ...prev, ...p }));
+    useFormStore.getState().patch(p);
   }
 
   /**
@@ -271,11 +280,18 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
   /** 导出按钮回调 —— 透传 form.sizes（过滤 null）给 useExport.exportAs（与旧 vanilla
    *  实现 `sizes: selectedSizes()` 一致）。PLT 两变体分流到信息表格弹窗（2026-08-30：
    *  先填床次/层数等 6 手输字段再导出，生产 PLT 同款表格附在唛架末端；2026-08-31 起
-   *  'plt-clean' 毛版同款分流（默认导出格式），两变体共用一份表格字段）；PNG/DXF 直通。 */
+   *  'plt-clean' 毛版同款分流（默认导出格式），两变体共用一份表格字段）；PNG/DXF 直通；
+   *  状态文件 US-003：'state' 分流 → saveState（独立 /api/state-save，不进
+   *  ExportInfoModal —— 14 字段表格面板对状态文件无意义，根本不打开；保存范围
+   *  说明由 ExportButtons 底部说明行切换承载）。 */
   function handleExport(fmt: ExportFmt): void {
     if (fmt === 'plt' || fmt === 'plt-clean') {
       setPendingPltFmt(fmt);
       openModal('export_info');
+      return;
+    }
+    if (fmt === 'state') {
+      void saveState();
       return;
     }
     void exportAs(fmt, filterSizes(), doc?.filename);

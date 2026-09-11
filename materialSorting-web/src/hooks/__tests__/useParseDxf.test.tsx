@@ -528,6 +528,137 @@ describe("useParseDxf (US-021) auto-commit integration", () => {
   });
 });
 
+// 状态文件 US-003：上传分流 —— .msn → POST /api/state-restore（multipart，不经
+// parse-dxf / commit）；成功 toast「校验通过…下一 Story 落地」+ 回 idle（doc 不写，
+// applyRestorePayload 属 US-004）；失败 toast 后端结构化 error；.dxf 原路径零回归。
+describe("useParseDxf (US-003 .msn 分流)", () => {
+  /** 最小 RestoreResponse 夹具（字段契约见 types/stateFile；本 story 仅 json 消费）。 */
+  function makeRestoreJson(): Record<string, unknown> {
+    return {
+      doc_id: "restored-1",
+      filename: "M1787.dxf",
+      parse: makeDoc(),
+      manifest: { gate_mm: 1750, total_area_mm2: 100, n_eroded: 0, pieces: [] },
+      final: null,
+      placed: null,
+      run: null,
+      form: {},
+      quantities: {},
+    };
+  }
+
+  it(".msn → POST /api/state-restore（FormData file 字段），不经 parse-dxf/commit（fetch 仅 1 次）", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(makeResponse({ json: makeRestoreJson() }));
+    renderProbe();
+    await act(async () => {
+      await captured!.upload(makeFile("M1787_状态_1.msn"));
+    });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(fetchSpy.mock.calls[0][0]).toBe("/api/state-restore");
+    const init = fetchSpy.mock.calls[0][1] as RequestInit;
+    expect(init.method).toBe("POST");
+    expect(init.body).toBeInstanceOf(FormData);
+    expect((init.body as FormData).get("file")).toBeInstanceOf(File);
+  });
+
+  it(".MSN 大写后缀同样分流（小写比较，MIME 不判）", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(makeResponse({ json: makeRestoreJson() }));
+    renderProbe();
+    await act(async () => {
+      await captured!.upload(makeFile("SNAPSHOT.MSN"));
+    });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(fetchSpy.mock.calls[0][0]).toBe("/api/state-restore");
+  });
+
+  it("恢复成功 → toast「校验通过…下一 Story 落地」+ status 回 idle（doc 不写、commit 不触发）", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(makeResponse({ json: makeRestoreJson() }));
+    renderProbe();
+    await act(async () => {
+      await captured!.upload(makeFile("a.msn"));
+    });
+    const toasts = useToastStore.getState().toasts;
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0].message).toContain("状态文件校验通过");
+    expect(toasts[0].message).toContain("下一 Story");
+    const s = useUploadStore.getState();
+    expect(s.status).toBe("idle");
+    expect(s.doc).toBeNull();
+    expect(s.commitStatus).toBe("idle");
+    expect(useUiStore.getState().nestingEnabled).toBe(false);
+  });
+
+  it("恢复失败（400 校验链错误）→ toast 后端结构化 error，不进 uploadStore.error 红字", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      makeResponse({ ok: false, status: 400, statusText: "Bad Request", json: { error: "状态文件已损坏：schema_version 不支持" } }),
+    );
+    renderProbe();
+    await act(async () => {
+      await captured!.upload(makeFile("bad.msn"));
+    });
+    const toasts = useToastStore.getState().toasts;
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0].message).toBe("状态文件恢复失败：状态文件已损坏：schema_version 不支持");
+    expect(useUploadStore.getState().status).toBe("idle");
+    expect(useUploadStore.getState().error).toBeNull();
+  });
+
+  it("网络错 → toast（fetch reject message），status 回 idle", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new TypeError("Failed to fetch"));
+    renderProbe();
+    await act(async () => {
+      await captured!.upload(makeFile("a.msn"));
+    });
+    const toasts = useToastStore.getState().toasts;
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0].message).toContain("状态文件恢复失败：Failed to fetch");
+    expect(useUploadStore.getState().status).toBe("idle");
+  });
+
+  it("进入 uploading 清 commit 残留（重传前旧摘要/错误不适用）+ uploadingRef 复位（.dxf 可续传）", async () => {
+    // 预置旧 commit 残留 → .msn uploading 期间应清
+    useUploadStore.setState({ commitStatus: "done", commitError: "old", commitSummary: { sizes: [], n_pieces: 1, total_area_mm2: 1 } });
+    let resolveRes!: (r: Response) => void;
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation((url: unknown) => {
+      const u = String(url);
+      if (u.includes("/api/state-restore")) {
+        return new Promise<Response>((res) => { resolveRes = res; });
+      }
+      return Promise.resolve(makeResponse());
+    });
+    renderProbe();
+    act(() => {
+      void captured!.upload(makeFile("a.msn"));
+    });
+    await act(async () => { await Promise.resolve(); });
+    expect(useUploadStore.getState().status).toBe("uploading");
+    expect(useUploadStore.getState().commitStatus).toBe("idle");
+    expect(useUploadStore.getState().commitError).toBeNull();
+    // resolve 挂起请求，防 afterEach 泄漏
+    await act(async () => {
+      resolveRes(makeResponse({ json: makeRestoreJson() }));
+      await Promise.resolve();
+    });
+    // uploadingRef 已复位：续传 .dxf 正常走 parse-dxf（零回归）
+    await act(async () => {
+      await captured!.upload(makeFile());
+    });
+    const urls = fetchSpy.mock.calls.map((c) => String(c[0]));
+    expect(urls.some((u) => u.includes("/api/parse-dxf"))).toBe(true);
+  });
+
+  it(".dxf 零回归：.dxf 后缀不进 state-restore（首调 parse-dxf）", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(makeResponse());
+    renderProbe();
+    await act(async () => {
+      await captured!.upload(makeFile("M1787.dxf"));
+    });
+    const urls = fetchSpy.mock.calls.map((c) => String(c[0]));
+    expect(urls.some((u) => u.includes("/api/state-restore"))).toBe(false);
+    expect(urls[0]).toBe("/api/parse-dxf");
+  });
+});
+
 // 2026-08-31 null 通用码 toast：解析成功且 doc.sizes 含 null（块名末尾带不出码号的
 // 裁片组）→ pushToast 一条；无 null / 解析失败不推。超排页码号区不渲染该组 chip，
 // toast 是用户感知该异常的唯一主动通道。

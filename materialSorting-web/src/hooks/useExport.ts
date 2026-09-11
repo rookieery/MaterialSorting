@@ -21,6 +21,11 @@
 //
 // 防连击：exportingRef 与 exporting state 同步，导出中再次触发 → 静默忽略（旧版用 disabled 间接防，
 // 这里双重防护）。
+//
+// 状态文件 US-003：新增 saveState() —— fmt='state' 分支（独立 /api/state-save，
+// 不进 /export 路由族）；body = lib/stateFile.buildSavePayload()，下载文件名由
+// 后端 Content-Disposition 给出（<母版名去 .dxf>_状态_<时间戳>.msn）；与
+// exportAs 共用 exporting 单一防连击旗（PNG/DXF/PLT/状态文件互斥）。
 
 import { useCallback, useRef, useState } from 'react';
 import { apiFetch } from '../lib/api';
@@ -28,6 +33,7 @@ import type { ExportFmt } from '../lib/download';
 import { downloadBlob, parseContentDisposition } from '../lib/download';
 import type { ExportTableFields } from '../lib/exportTable';
 import { toExportTablePayload } from '../lib/exportTable';
+import { buildSavePayload } from '../lib/stateFile';
 import { runRegistry } from '../store/runRegistry';
 
 /** 父级回调：导出开始 / 完成 / 失败时把状态文案透传给 StatusLine（AC#6）。 */
@@ -42,6 +48,14 @@ export interface UseExportResult {
    *  后端转 14 字段表格附在唛架外围（毛版左右各一份）；undefined 时 payload 不带 table 键）。 */
   exportAs: (fmt: ExportFmt, sizes: number[], filename?: string,
              table?: ExportTableFields) => Promise<void>;
+  /**
+   * 保存状态文件（状态文件 US-003，fmt='state' 分支）：POST /api/state-save
+   * （body = buildSavePayload()）→ blob → parseContentDisposition → downloadBlob。
+   * 与 PNG/DXF/PLT 共用 exporting state/ref 单一防连击旗（互斥）；文件名由后端从
+   * 会话 doc.source 生成（<母版名去 .dxf>_状态_<时间戳>.msn），无需前端提示 ——
+   * 与 exportAs 的 filename 载荷键不同。StatusLine 三态走同一 onStatus。
+   */
+  saveState: () => Promise<void>;
   /** 是否正在导出（按钮 disabled + 状态行 正在生成…）。 */
   exporting: boolean;
 }
@@ -132,5 +146,46 @@ export function useExport(cb: UseExportCallbacks = {}): UseExportResult {
     }
   }, []);
 
-  return { exportAs, exporting };
+  // 状态文件 US-003：保存工作台状态（.msn）。防连击与 exportAs 共用同一
+  // exportingRef（互斥：保存中点 PNG/DXF/PLT 或反向均静默忽略）。
+  const saveState = useCallback(async (): Promise<void> => {
+    if (exportingRef.current) return;
+    cbRef.current.onStatus?.('正在生成 状态文件 …');
+    setExporting(true);
+    exportingRef.current = true;
+    try {
+      const res = await apiFetch('/api/state-save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(buildSavePayload()),
+      });
+      if (!res.ok) {
+        // 后端结构化 JSON {error}（保存期守恒 fail-fast 指路文案 / 会话 401/422 等）
+        let msg = res.statusText;
+        try {
+          const err = (await res.json()) as { error?: string };
+          msg = err.error || msg;
+        } catch {
+          // 非 JSON 响应 —— 用 statusText 兜底
+        }
+        cbRef.current.onStatus?.(`导出失败：${msg}`);
+        return;
+      }
+      const blob = await res.blob();
+      // Content-Disposition 中文/ASCII 双写（/export 同法），RFC5987 解析复用；
+      // fallback 扩展名 'state' → nesting.msn（仅 CD 头缺失的极端路径）。
+      const cd = res.headers.get('Content-Disposition') || '';
+      const name = parseContentDisposition(cd, 'state');
+      downloadBlob(blob, name);
+      cbRef.current.onStatus?.(`已导出 ${name}`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      cbRef.current.onStatus?.(`导出失败：${msg}`);
+    } finally {
+      setExporting(false);
+      exportingRef.current = false;
+    }
+  }, []);
+
+  return { exportAs, saveState, exporting };
 }

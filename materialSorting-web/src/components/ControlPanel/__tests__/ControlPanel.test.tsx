@@ -1248,6 +1248,198 @@ describe("ControlPanel 重传联动：doc_id 变化重置 form (2026-08-27)", ()
 });
 
 // ============================================================
+// 状态文件 US-003：导出弹窗「状态文件（.msn）」分支 —— fmt='state' →
+// useExport.saveState（POST /api/state-save，body=buildSavePayload），不进
+// ExportInfoModal（14 字段表格面板对状态文件不打开）；StatusLine 三态与
+// PNG/DXF/PLT 走同一 onStatus；exporting 单一防连击旗互斥。
+// ============================================================
+describe("ControlPanel 状态文件导出分支 (US-003)", () => {
+  beforeEach(() => {
+    runRegistry.clear();
+  });
+  afterEach(() => {
+    runRegistry.clear();
+  });
+
+  /** done 态 run + fetch mock（state-save 捕获 body 到 bodies）+ URL/anchor stub。
+   *  调用方需先 useAppStore.setState({ renderTick: 0, seekTime: -1 })。 */
+  function setupForStateExport(bodies: unknown[]): void {
+    const rec = runRegistry.create(0);
+    rec.manifest = {
+      type: "manifest", gate_mm: 1980, total_area_mm2: 100000, n_eroded: 0, pieces: [],
+    };
+    rec.frames.push({
+      type: "frame", index: 0, elapsed: 1, phase: "final",
+      density: 0.5, density_sparrow: 0.5, width_mm: 1000,
+      placed_items: [{ id: "g01_28", rotation: 0, translation: [1, 2] }],
+    });
+    rec.lastFrame = rec.frames[0];
+    rec.finalDensity = 0.5;
+    rec.done = true;
+    fetchSpy!.mockImplementation(((input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/api/state-save")) {
+        if (init?.body) bodies.push(JSON.parse(String(init.body)));
+        return Promise.resolve(
+          new Response(new Blob([new Uint8Array([1])], { type: "application/gzip" }), {
+            status: 200,
+            headers: { "Content-Disposition": 'attachment; filename="x_state_1.msn"' },
+          }),
+        );
+      }
+      // 其余（/api/ptypes 等）兜底 reps JSON
+      return Promise.resolve(new Response(JSON.stringify(mockReps), {
+        status: 200, headers: { "Content-Type": "application/json" },
+      }));
+    }) as unknown as (...args: unknown[]) => Promise<Response>);
+    vi.stubGlobal("URL", {
+      ...(globalThis.URL as object),
+      createObjectURL: vi.fn(() => "blob:fake://1"),
+      revokeObjectURL: vi.fn(),
+    });
+    vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+  }
+
+  it("选「状态文件」点导出 → POST /api/state-save（body=buildSavePayload），不走 /export、不弹 ExportInfoModal", async () => {
+    const { markSessionProbedForTest, resetSessionForTest } = await import("../../../lib/api");
+    const { useAppStore } = await import("../../../store/appStore");
+    markSessionProbedForTest();
+    const bodies: unknown[] = [];
+    useAppStore.setState({ renderTick: 0, seekTime: -1 });
+    setupForStateExport(bodies);
+    const onStatus = vi.fn();
+
+    renderPanel(() => {}, { onStatus });
+    act(() => useAppStore.getState().bumpRenderTick());
+    act(() => {
+      const select = container!.querySelector<HTMLSelectElement>(".export-btns select")!;
+      select.value = "state";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await act(async () => {
+      container!.querySelector<HTMLButtonElement>(".export-btns button.export")!.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // 路由定论：/api/state-save（独立端点），无 /export 调用、无 export_info 弹窗
+    const urls = fetchSpy!.mock.calls.map((c) => String(c[0]));
+    expect(urls.some((u) => u.includes("/api/state-save"))).toBe(true);
+    expect(urls.some((u) => u.includes("/export"))).toBe(false);
+    expect(document.querySelector(".strategy-modal")).toBeNull();
+    // body = buildSavePayload：form（DEFAULT_FORM 全量）+ quantities + run（placed 原序）
+    expect(bodies).toHaveLength(1);
+    const body = bodies[0] as {
+      form: { gate: string }; quantities: Record<string, Record<string, number>> | null;
+      run: { placed: { id: string }[] };
+    };
+    expect(body.form.gate).toBe("175.00");
+    expect(body.quantities).toBeNull();
+    expect(body.run.placed.map((it) => it.id)).toEqual(["g01_28"]);
+
+    // StatusLine 三态（useExport 同一 onStatus）
+    expect(onStatus).toHaveBeenCalledWith("正在生成 状态文件 …");
+    expect(onStatus).toHaveBeenCalledWith("已导出 x_state_1.msn");
+
+    vi.unstubAllGlobals();
+    resetSessionForTest();
+  });
+
+  it("state-save 失败 → StatusLine 导出失败：后端结构化 error 文案", async () => {
+    const { markSessionProbedForTest, resetSessionForTest } = await import("../../../lib/api");
+    const { useAppStore } = await import("../../../store/appStore");
+    markSessionProbedForTest();
+    useAppStore.setState({ renderTick: 0, seekTime: -1 });
+    const rec = runRegistry.create(0);
+    rec.manifest = { type: "manifest", gate_mm: 1980, total_area_mm2: 100000, n_eroded: 0, pieces: [] };
+    rec.frames.push({
+      type: "frame", index: 0, elapsed: 1, phase: "final",
+      density: 0.5, density_sparrow: 0.5, width_mm: 1000, placed_items: [],
+    });
+    rec.lastFrame = rec.frames[0];
+    rec.finalDensity = 0.5;
+    rec.done = true;
+    vi.spyOn(globalThis, "fetch").mockImplementation(((input: unknown) => {
+      const url = String(input);
+      if (url.includes("/api/state-save")) {
+        return Promise.resolve(new Response(JSON.stringify({ error: "数量矩阵/尺码选择与当前结果不一致" }), {
+          status: 400, headers: { "Content-Type": "application/json" },
+        })) as unknown as Promise<Response>;
+      }
+      return Promise.resolve(new Response(JSON.stringify(mockReps), { status: 200 })) as unknown as Promise<Response>;
+    }) as unknown as (...args: unknown[]) => Promise<Response>);
+    const onStatus = vi.fn();
+    renderPanel(() => {}, { onStatus });
+    act(() => useAppStore.getState().bumpRenderTick());
+    act(() => {
+      const select = container!.querySelector<HTMLSelectElement>(".export-btns select")!;
+      select.value = "state";
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await act(async () => {
+      container!.querySelector<HTMLButtonElement>(".export-btns button.export")!.click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(onStatus).toHaveBeenCalledWith("导出失败：数量矩阵/尺码选择与当前结果不一致");
+    resetSessionForTest();
+  });
+
+  it("保存期间 exporting 互斥：state 在飞时点 PNG 不发第二个请求（单一防连击旗）", async () => {
+    const { markSessionProbedForTest, resetSessionForTest } = await import("../../../lib/api");
+    markSessionProbedForTest();
+    const { useAppStore } = await import("../../../store/appStore");
+    useAppStore.setState({ renderTick: 0, seekTime: -1 });
+    const rec = runRegistry.create(0);
+    rec.manifest = { type: "manifest", gate_mm: 1980, total_area_mm2: 100000, n_eroded: 0, pieces: [] };
+    rec.frames.push({
+      type: "frame", index: 0, elapsed: 1, phase: "final",
+      density: 0.5, density_sparrow: 0.5, width_mm: 1000, placed_items: [],
+    });
+    rec.lastFrame = rec.frames[0];
+    rec.finalDensity = 0.5;
+    rec.done = true;
+    const urls: string[] = [];
+    vi.spyOn(globalThis, "fetch").mockImplementation(((input: unknown) => {
+      const url = String(input);
+      urls.push(url);
+      if (url.includes("/api/state-save")) {
+        // 永不 resolve —— 保持 exporting 中
+        return new Promise<Response>(() => {}) as unknown as Promise<Response>;
+      }
+      return Promise.resolve(new Response(JSON.stringify(mockReps), { status: 200 })) as unknown as Promise<Response>;
+    }) as unknown as (...args: unknown[]) => Promise<Response>);
+    vi.stubGlobal("URL", {
+      ...(globalThis.URL as object),
+      createObjectURL: vi.fn(() => "blob:fake://1"),
+      revokeObjectURL: vi.fn(),
+    });
+    renderPanel(() => {});
+    act(() => useAppStore.getState().bumpRenderTick());
+    const select = () => container!.querySelector<HTMLSelectElement>(".export-btns select")!;
+    const exportBtn = () => container!.querySelector<HTMLButtonElement>(".export-btns button.export")!;
+    act(() => {
+      select().value = "state";
+      select().dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await act(async () => {
+      exportBtn().click();
+      await Promise.resolve();
+    });
+    // state-save 发出后按钮因 exporting 置灰；防御：直接再切 PNG 点击也不发 /export
+    expect(exportBtn().disabled).toBe(true);
+    act(() => {
+      select().value = "png";
+      select().dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    act(() => exportBtn().click());
+    expect(urls.some((u) => u.includes("/export"))).toBe(false);
+    vi.unstubAllGlobals();
+    resetSessionForTest();
+  });
+});
+
+// ============================================================
 // 编辑排料 US-004：「编辑排料」区块插入位置（StatusLine 与 ExportButtons 之间，
 // 「导出最优方案」上方）—— 组件行为细节在 EditLayoutControls.test。
 // ============================================================
