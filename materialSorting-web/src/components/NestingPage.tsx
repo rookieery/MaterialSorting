@@ -13,10 +13,14 @@
 //   快照重放路径导致改参数不生效，已删除，见 SolveControls 注释）。
 //
 // US-006（策略 se/race）：applyStrategyResult(result) 把策略 run 终局最优一键应用到主画布 ——
+//   核心已抽成共享 applySyntheticRun（store/synthRunStore，状态文件 US-004）：
 //   runRegistry.clear() 清场后合成单条 RunRecord（manifest = result 端点 build_pid_meta 快照
 //   口径，与 /ws/solve manifest 同形；frames = [best 帧]，FrameMsg 字段同形），NestSVG /
 //   ConvergenceCurve / PlaybackBar / ExportButtons 零改动兼容。应用是显式按钮（弹窗结果态），
 //   不自动应用 —— 会清掉主画布现有对比 run；result 常驻 strategyStore，关弹窗再开仍可应用。
+//   状态文件 US-004：应用时经 originOfStrategyResult 记 RunRecord.origin（provenance 取数
+//   中转 —— mode 定族/kind、本族 lastStart 补 config），主画布 run-provenance 来源小字常驻
+//   回显；同一 applySyntheticRun 也被 lib/stateFile.applyRestorePayload（恢复编排）消费。
 //
 // US-012（腰头成带）：handleStart 透传 cfg.band → useSolveRun.start → WS StartPayload.band；
 //   onStage 回调（band 带内聚排统计，manifest 前唯一一次）→ 状态行「腰头成带中：带内聚排…」
@@ -28,7 +32,7 @@
 //
 // Tooltip 仍由父 App 渲染（全局单例，不能多挂）；本页只渲染业务区，不挂 Tooltip。
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ConvergenceCurve } from './curve/ConvergenceCurve';
 import { ControlPanel, type ControlPanelStartPayload } from './ControlPanel/ControlPanel';
 import { NestsGrid } from './nests/NestsGrid';
@@ -40,9 +44,42 @@ import { maxElapsed } from '../lib/seek';
 import { useAppStore } from '../store/appStore';
 import { useEditStore } from '../store/editStore';
 import { runRegistry } from '../store/runRegistry';
+import {
+  applySyntheticRun,
+  provenanceText,
+  useSynthRunStore,
+} from '../store/synthRunStore';
+import { useExtremeStore, useStrategyStore } from '../store/strategyStore';
+import type { RunOrigin } from '../types/stateFile';
 import type { StrategyResult } from '../types/strategy';
 import type { SolvePhase } from '../types/solvePhase';
 import type { FrameMsg, ManifestMsg } from '../types/ws';
+
+/**
+ * StrategyResult → RunOrigin（provenance 写回，US-004）：
+ * - mode 定族定 kind（'extreme' → extreme 族；'se'/'race' → strategy 族）；
+ * - config 从**本族** strategyStore.lastStart 补（策略族 minutes / 极限族
+ *   time_total_s —— start 载荷快照；页面刷新后 store 重置 lastStart=null →
+ *   origin 无 config 段，来源小字不渲染括号段 = 可接受的降级）；
+ * - mode 缺席（null，旧后端）→ undefined（= 'solve' 口径，保存端不写 provenance 键）。
+ */
+function originOfStrategyResult(result: StrategyResult): RunOrigin | undefined {
+  if (result.mode === 'extreme') {
+    const t = useExtremeStore.getState().lastStart?.time_total_s;
+    return {
+      kind: 'extreme',
+      ...(typeof t === 'number' ? { config: { time_total_s: t } } : {}),
+    };
+  }
+  if (result.mode === 'se' || result.mode === 'race') {
+    const m = useStrategyStore.getState().lastStart?.minutes;
+    return {
+      kind: result.mode === 'se' ? 'strategy_se' : 'strategy_race',
+      ...(typeof m === 'number' ? { config: { minutes: m } } : {}),
+    };
+  }
+  return undefined;
+}
 
 export function NestingPage(): React.JSX.Element {
   /** 已 start 的 seed 列表（base+i, i=0..N-1）。仅用于触发首次挂载 NestsGrid 内 NestCard。 */
@@ -51,6 +88,12 @@ export function NestingPage(): React.JSX.Element {
   const [phase, setPhase] = useState<SolvePhase>('idle');
   /** 状态行文案（ControlPanel / useSolveRun 回调都能写）。 */
   const [status, setStatus] = useState('就绪');
+  /**
+   * 结果来源小字（US-004 run-provenance）：合成 run（策略/极限应用 / 状态文件恢复）
+   * 信号携带的 origin + seed；WS 普通求解恒 null（handleStart 清场）。纯展示级 ——
+   * 渲染为 ControlPanel StatusLine 下方一行 dim 小字（provenanceText 组装文案）。
+   */
+  const [provenance, setProvenance] = useState<{ origin: RunOrigin; seed: number } | null>(null);
 
   /** 已 done 的 run 计数（ref 避免闭包陈旧；与 totalSeedsRef 配合判定 all-done）。 */
   const doneCountRef = useRef(0);
@@ -140,6 +183,30 @@ export function NestingPage(): React.JSX.Element {
   // 注：求解结束后仍持续 bump（seeds 不清空），让曲线 / NestLabel 显示最终态。
   useRafThrottle(seeds.length > 0);
 
+  // 合成 run 信号消费（US-004）：applySyntheticRun（策略/极限应用 / 状态文件恢复，
+  // registry 已在信号发出前落笔）→ 本 effect 把页面本地状态对齐到合成 done 态 ——
+  // seeds 挂 NestCard、phase 切 done（导出解禁）、状态行汇报、计数 ref 重置（防残留
+  // onDone 闭包误判）、清 tooltip/hover 残留（旧 applyStrategyResult 的收尾动作随核心
+  // 一并下沉至此，两条路径同口径）、provenance 记录（origin 缺席 = WS 口径 → 清空）。
+  // lastTokenRef 只消费**挂载后新到**的信号：重挂载（测试隔离 / 未来路由恢复）不重放
+  // 历史信号（registry 可能已被后续 start 清场，旧 seed 无对应 record）。
+  // 幂等：React 18 StrictMode 双跑 effect 时 ref 已对齐 → 第二跳直接跳过。
+  const synthToken = useSynthRunStore((s) => s.token);
+  const lastSynthTokenRef = useRef(synthToken);
+  useEffect(() => {
+    if (synthToken === lastSynthTokenRef.current) return; // 无新信号（含挂载初跑）
+    lastSynthTokenRef.current = synthToken;
+    const { seed, note, origin } = useSynthRunStore.getState();
+    doneCountRef.current = 0;
+    totalSeedsRef.current = 1;
+    clearHovered();
+    hideTooltip();
+    setSeeds([seed]);
+    setPhase('done');
+    if (note !== '') setStatus(note);
+    setProvenance(origin !== undefined ? { origin, seed } : null);
+  }, [synthToken]);
+
   function handleStart(cfg: ControlPanelStartPayload) {
     if (phase === 'running') return;
     // 清旧 run（关 WS + 清数组）—— 与旧 vanilla 实现 startSolve 内 runs=[] 等价
@@ -150,6 +217,8 @@ export function NestingPage(): React.JSX.Element {
     useEditStore.getState().invalidate();
     doneCountRef.current = 0;
     totalSeedsRef.current = cfg.seed_count;
+    // US-004：新一次 WS 求解 = 全新结果（origin 不设口径），来源小字随清场退场。
+    setProvenance(null);
 
     // US-006：重置回 live（NestSVG 显示 lastFrame）；同时清 tooltip / hover 残留。
     // 与旧 vanilla 实现 startSolve 内 `$('seek').disabled=true; max=0; value=0; hoveredEl=null; tooltipEl.style.display='none'` 等价。
@@ -195,16 +264,14 @@ export function NestingPage(): React.JSX.Element {
   /**
    * US-006 策略 run 结果应用到主画布（弹窗结果态「应用到主画布」显式按钮触发，不自动应用）。
    *
-   * 应用语义 = 显式清场 + 合成单条 RunRecord：
-   *   - runRegistry.clear()（关旧 WS —— 主画布现有对比 run 被清掉，破坏性操作由用户点击确认）
-   *     + 计数 ref 重置（totalSeeds=1，防残留 onDone 闭包误判）；
-   *   - manifest = result.manifest（result 端点 build_pid_meta 快照口径 —— erode 后几何与
-   *     placed_items 对齐、demand 已含，NestSVG 副本池按 demand 建 N 份承接多副本 placement）；
-   *   - frames = [合成帧]、lastFrame = 同帧（FrameMsg 形状：type:'frame'/index=best.frame_index/
-   *     elapsed/phase:'final'/density 双口径/width_mm/placed_items）—— 与 WS 帧同形，
-   *     NestSVG / ConvergenceCurve / PlaybackBar / ExportButtons/useExport/bestRun() 零改动兼容；
-   *   - 页面状态：setSeeds([best.seed]) + setPhase('done') + setSeekTime(-1)（回 live）+
-   *     setStatus('策略 run 已应用：seed N · X.XX%')。
+   * 应用语义 = 显式清场 + 合成单条 RunRecord —— 核心（清场/registry 落笔/seek 回 live/
+   * placed 深拷贝/信号）已抽成共享 applySyntheticRun（store/synthRunStore，US-004），
+   * 本函数只组装 result → manifest/帧/origin/note 后委托；页面状态对齐（setSeeds/
+   * setPhase('done')/setStatus/计数 ref/provenance）由 NestingPage 的信号 effect 统一
+   * 消费（恢复路径同款）。manifest = result.manifest（build_pid_meta 快照口径 —— erode
+   * 后几何与 placed_items 对齐、demand 已含，NestSVG 副本池按 demand 建 N 份承接多副本
+   * placement）；frames = [合成帧]（FrameMsg 形状）—— 与 WS 帧同形，NestSVG /
+   * ConvergenceCurve / PlaybackBar / ExportButtons/useExport/bestRun() 零改动兼容。
    *
    * result 常驻 strategyStore（关弹窗再开仍可应用）；母版变更场景导出 pid 失配走既有 400 兜底。
    */
@@ -217,14 +284,7 @@ export function NestingPage(): React.JSX.Element {
     const densitySparrow = best.density_sparrow ?? 0;
     const widthMm = best.width_mm ?? 0;
 
-    // 1) 清场（与 handleStart 同口径）：关旧 WS + 清 registry + 计数 ref 重置；
-    //    编辑排料 US-004：编辑态一并失效（旧编辑会话对合成 record 的基线无意义）。
-    runRegistry.clear();
-    useEditStore.getState().invalidate();
-    doneCountRef.current = 0;
-    totalSeedsRef.current = 1;
-
-    // 2) 合成 manifest（result 端点 StrategyManifest → WS ManifestMsg 同形，补 type 判别键）。
+    // 1) 合成 manifest（result 端点 StrategyManifest → WS ManifestMsg 同形，补 type 判别键）。
     const manifest: ManifestMsg = {
       type: 'manifest',
       gate_mm: result.manifest.gate_mm,
@@ -232,7 +292,8 @@ export function NestingPage(): React.JSX.Element {
       n_eroded: result.manifest.n_eroded,
       pieces: result.manifest.pieces,
     };
-    // 3) 合成终局帧（FrameMsg 同形；phase='final' 与求解收尾帧口径一致）。
+    // 2) 合成终局帧（FrameMsg 同形；phase='final' 与求解收尾帧口径一致；placed 深拷贝
+    //    在 applySyntheticRun 内统一 —— 源 result.best.placed_items 不被后续编辑写回穿透）。
     const frame: FrameMsg = {
       type: 'frame',
       index: best.frame_index ?? 0,
@@ -244,27 +305,14 @@ export function NestingPage(): React.JSX.Element {
       placed_items: best.placed_items ?? [],
     };
 
-    // 4) 置换单条 RunRecord（导出链路 bestRun() 直接选中；ws=null 无 WS 可关）。
-    const rec = runRegistry.create(seed);
-    rec.manifest = manifest;
-    rec.frames.push(frame);
-    rec.lastFrame = frame;
-    rec.finalDensity = density;
-    rec.finalDensitySparrow = densitySparrow;
-    rec.viewBoxMaxW = widthMm;
-    rec.done = true;
-    rec.error = null;
-    rec.stopped = false;
-
-    // 5) 页面状态：seeds 挂 NestCard → done（导出解禁）+ seek 回 live + 状态行汇报。
-    //    （US-003 极限运行 result.mode='extreme' —— 同一 applyStrategyResult 复用，
-    //    状态行区分来源；summary.mode 仍是 'race' 不作判据。）
-    clearHovered();
-    hideTooltip();
-    useAppStore.getState().setSeekTime(-1);
-    setSeeds([seed]);
-    setPhase('done');
-    setStatus(
+    // 3) 委托共享落笔 + 信号（US-004 origin 记入；状态行区分来源 —— US-003 极限运行
+    //    result.mode='extreme' 同一 applyStrategyResult 复用，summary.mode 仍是 'race'
+    //    不作判据）。
+    applySyntheticRun(
+      manifest,
+      frame,
+      seed,
+      originOfStrategyResult(result),
       `${result.mode === 'extreme' ? '极限' : '策略'} run 已应用：seed ${seed} · ${(
         density * 100
       ).toFixed(2)}%`,
@@ -280,6 +328,9 @@ export function NestingPage(): React.JSX.Element {
         status={status}
         onStatus={setStatus}
         onApplyStrategy={applyStrategyResult}
+        runProvenance={
+          provenance !== null ? provenanceText(provenance.origin, provenance.seed) : undefined
+        }
       />
 
       <main className="main">

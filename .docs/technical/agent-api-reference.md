@@ -493,7 +493,7 @@ gzip JSON（`application/gzip`，gzip 恒开 + 魔数 `1f 8b`），顶层 `{sche
 
 ## POST /api/state-restore — 状态文件恢复（状态文件 PRD US-002，2026-09-11）
 
-上传 `.msn`（或 `.json`）→ 校验链 → **纯内存重建当前会话** + manifest 确定性重算。另一台机器/浏览器会话凭文件还原完整工作台（两 Tab 数据 + 已保存编辑 + 重解/导出能力；前端编排 `applyRestorePayload` 属 US-004）。与 `/api/state-save` 同住 `web/statefile.py`，`parse_state_document` 校验链 + `check_placed_conservation` 守恒终检（同一判定函数）。
+上传 `.msn`（或 `.json`）→ 校验链 → **纯内存重建当前会话** + manifest 确定性重算。另一台机器/浏览器会话凭文件还原完整工作台（两 Tab 数据 + 已保存编辑 + 重解/导出能力；前端编排 `lib/stateFile.applyRestorePayload` 已于 US-004 落地，见 agent-component-map.md 专节）。与 `/api/state-save` 同住 `web/statefile.py`，`parse_state_document` 校验链 + `check_placed_conservation` 守恒终检（同一判定函数）。
 
 ### 请求（multipart/form-data）
 
@@ -546,11 +546,11 @@ curl -X POST http://127.0.0.1:8000/api/state-restore -H "X-Session-Id: <sid>" -F
 1. **解析在 threadpool 执行**：`run_in_threadpool(parse_state_document)`（解压 + json + 校验链 CPU 密集，防阻塞事件循环；测试白盒 spy 断言）。
 2. **纯内存重建、不落盘**：sid 会话 `st.state = _state_from_doc(doc)`（doc_id 铸新 uuid、源文件名保留 doc.source）；default 走 runtime 锁内 clear+update 原子重绑。**不镜像写 `paths.INTERMEDIATE`、不落盘 uploads**（他人文件不污染本机事实源，与 commit 双写有意分歧 —— 设计 §一.7，pytest 字节不变断言）。
 3. **覆盖语义 = 再上传母版 commit**：恢复写入当前 sid（不铸新会话、不占 `MS_SESSION_MAX` 名额）；同会话并发 restore 以后到者为准。
-4. **manifest 重算确定性**：`build_pid_meta(doc.pieces, sizes, per_type, quantities)` 纯函数无 RNG（策略 result 同先例）—— 同 form 重算与原解逐字段一致；含 raw_polygon/d_mm 物理毛版口径（2026-09-06 统一）。
+4. **manifest 重算确定性**：`build_pid_meta(doc.pieces, sizes, per_type, quantities)` 纯函数无 RNG（策略 result 同先例）—— 同 form 重算与原解逐字段一致；含 raw_polygon/d_mm 物理毛版口径（2026-09-06 统一）；**`gate_mm` 取 `form.gate`（cm 字符串 ×10，`_form_gate_mm` 与求解路径 parseGate/前端 gate_mm 覆盖同口径），缺省/非法/非正回退 doc.gate_mm**（2026-09-11 E2E 冒烟实测：180cm 求解 + 175cm 母版快照 → 恢复 manifest 须 1800 非 1750，否则导出幅宽与布局错位）；**per_type 字符串形态容错**（前端 form 按 input.value 原样入档 `{g码:{d:'1',tol:''}}`，solver `_pf`：''/None/非数值 → 继承全局档 —— 保存守恒与恢复重算不再 ValueError → 400，与前端 collectPerType「空串 = 继承不写键」同口径，手改文件非法值同 no-op）。
 5. **parse 载荷复用**：`_DocPieceView` 以 doc piece dict 喂 `_build_parse_payload`（block_name = 已存 label → `assign_codes` 母版码复用模式必中）—— parse 载荷 label 与 doc/manifest/quantities 键同源零漂移（校验链保证 label gNN 形态）；码内展示顺序与原上传预览可能不同（展示级差异不承重）。
 6. 恢复后该 sid 的 `/api/ptypes`（label_representatives 透传）、`/export`、`/api/edit-polish` 立即可用（pytest 端到端断言 placed 守恒）；成功 `edit_hold.refresh(sid)`（编辑钉住，default 豁免）。
 7. 链式传递：save→restore→save→restore 二次往返逐字段一致（doc_id/saved_at 除外）；文件自包含无 lineage 依赖。
-8. 测试：`tests/test_web_statefile.py` US-002 47 例（200 完整载荷 / manifest 与 build_pid_meta 逐字段对拍 + per_type erode raw_polygon / 纯 JSON + 纯配置档 / 校验链全家桶 400·413 / threadpool spy / default 不落盘字节断言 / 满员不占名额 / sid 隔离 / ptypes·export·edit-polish 端到端 / 链式二次往返）。
+8. 测试：`tests/test_web_statefile.py` 共 72 例（US-001 23 + US-002 47 + 2026-09-11 E2E 冒烟回归 2：字符串 per_type 保存/恢复双端 200 容错、manifest gate 取 form.gate 非 doc.gate_mm）。
 
 ## GET /api/ptypes — US-020 裁片 g 码代表（D10/D11；US-001 v2：键 = label）
 

@@ -528,9 +528,10 @@ describe("useParseDxf (US-021) auto-commit integration", () => {
   });
 });
 
-// 状态文件 US-003：上传分流 —— .msn → POST /api/state-restore（multipart，不经
-// parse-dxf / commit）；成功 toast「校验通过…下一 Story 落地」+ 回 idle（doc 不写，
-// applyRestorePayload 属 US-004）；失败 toast 后端结构化 error；.dxf 原路径零回归。
+// 状态文件 US-003 上传分流 + US-004 恢复编排：.msn → POST /api/state-restore
+// （multipart，不经 parse-dxf / commit）；成功 applyRestorePayload 五 store 落笔
+// （doc 就绪 status=done）+ toast「状态文件已恢复」（run 块缺席 → 无「含排料结果」
+// 后缀、不切 Tab）；失败 toast 后端结构化 error；.dxf 原路径零回归。
 describe("useParseDxf (US-003 .msn 分流)", () => {
   /** 最小 RestoreResponse 夹具（字段契约见 types/stateFile；本 story 仅 json 消费）。 */
   function makeRestoreJson(): Record<string, unknown> {
@@ -571,7 +572,7 @@ describe("useParseDxf (US-003 .msn 分流)", () => {
     expect(fetchSpy.mock.calls[0][0]).toBe("/api/state-restore");
   });
 
-  it("恢复成功 → toast「校验通过…下一 Story 落地」+ status 回 idle（doc 不写、commit 不触发）", async () => {
+  it("恢复成功（run 块缺席）→ applyRestorePayload 落笔：toast「状态文件已恢复」+ status=done + doc 写入（parse 载荷）", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(makeResponse({ json: makeRestoreJson() }));
     renderProbe();
     await act(async () => {
@@ -579,13 +580,18 @@ describe("useParseDxf (US-003 .msn 分流)", () => {
     });
     const toasts = useToastStore.getState().toasts;
     expect(toasts).toHaveLength(1);
-    expect(toasts[0].message).toContain("状态文件校验通过");
-    expect(toasts[0].message).toContain("下一 Story");
+    // run=null → 无「（含排料结果）」后缀；filename 为状态文件记录的母版名。
+    expect(toasts[0].message).toBe("状态文件已恢复：M1787.dxf");
     const s = useUploadStore.getState();
-    expect(s.status).toBe("idle");
-    expect(s.doc).toBeNull();
+    expect(s.status).toBe("done");
+    // doc = res.parse（doc_id 铸新）；activeSize 同 .dxf 口径取最小码。
+    expect(s.doc).not.toBeNull();
+    expect(s.doc!.doc_id).toBe("deadbeef");
+    expect(s.activeSize).toBe(28);
+    // 恢复无 commit 相位；无 run → 不解锁超排 Tab、不切 Tab。
     expect(s.commitStatus).toBe("idle");
     expect(useUiStore.getState().nestingEnabled).toBe(false);
+    expect(useUiStore.getState().activeTab).toBe("preview");
   });
 
   it("恢复失败（400 校验链错误）→ toast 后端结构化 error，不进 uploadStore.error 红字", async () => {

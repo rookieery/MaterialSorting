@@ -169,12 +169,27 @@ def _split_time_budget(total: int, pct: float) -> tuple[int, int]:
     return expl, max(1, total - expl)
 
 
+def _pf(v, base: float) -> float:
+    """per_type d/tol 容错解析：''/None/非数值 → base（= 继承全局档）。
+
+    与前端 collectPerType「空串 = 继承（不写键）」同口径：状态文件（US-004）form
+    块按 input.value 字符串原样入档（``{g码:{d:'1', tol:''}}``，tol 空串常见），
+    保存/恢复端守恒校验与 manifest 重算直接消费该块 —— 容错解析使其等价于
+    collectPerType 产出的数值形态（空 → 回退全局档），手改文件的非法值同 no-op。
+    """
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return base
+
+
 def _resolve_d_tol(label, pdef: dict, per_type) -> tuple[float, float]:
     """单片的 (d, tol) 裁定：params 全局档 → per_type 按 label 覆盖 → 全局上限钳制。
 
     ``build_pid_meta``（pid_meta 构造，erode 用 d）与 ``build_instance``（spyrrow
     ``Item.allowed_orientations`` 用 tol）两处共用的单一真相源 —— US-004 提取时
-    保证两处口径一致（对拍护栏的前提）。
+    保证两处口径一致（对拍护栏的前提）。per_type 值容错（US-004 状态文件字符串
+    形态）：``_pf`` 空串/非法 → 全局档。
     """
     base_d = float(pdef['d_ext'])
     base_tol = float(pdef['tol_ext'])
@@ -182,8 +197,8 @@ def _resolve_d_tol(label, pdef: dict, per_type) -> tuple[float, float]:
     if per_type and label is not None and label in per_type:
         over = per_type[label]
         if isinstance(over, dict):
-            d = float(over.get('d', base_d))
-            tol = float(over.get('tol', base_tol))
+            d = _pf(over.get('d', base_d), base_d)
+            tol = _pf(over.get('tol', base_tol), base_tol)
     return min(d, MAX_OVERLAP_MM), min(tol, MAX_ROTATION_TOL_DEG)
 
 

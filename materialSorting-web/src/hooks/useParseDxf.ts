@@ -20,10 +20,11 @@
 //   7. 解析成功且 doc.sizes 含 null 码（块名末尾带不出码号的裁片）→ toast 提示
 //      （2026-08-31）：超排页码号区已不渲染该组 chip（通用片不参与求解），toast 引导
 //      用户检查母版命名；具体是哪些片看预览页 QtyMatrix「通用」行。
-//   8. 状态文件 US-003：上传分流 —— 扩展名 .msn → POST /api/state-restore（multipart，
-//      不经 parse-dxf/commit）：uploading 反馈期间走独立校验链，成功最小处理（toast
-//      「恢复编排将在下一 Story 落地」+ 回 idle —— applyRestorePayload 编排属 US-004）、
-//      失败 toast 后端结构化错误信息；.dxf 原路径零变化（分支在 parse 请求之前）。
+//   8. 状态文件 US-003 上传分流 + US-004 恢复编排接线：扩展名 .msn → POST
+//      /api/state-restore（multipart，不经 parse-dxf/commit）：uploading 反馈期间走
+//      独立校验链，成功 → applyRestorePayload(res)（lib/stateFile：五 store 落笔 +
+//      run 合成 + 切超排 Tab）+ toast「状态文件已恢复」；失败 toast 后端结构化错误
+//      信息；.dxf 原路径零变化（分支在 parse 请求之前）。
 //
 // 调用方约定：
 //   const { upload } = useParseDxf();
@@ -37,6 +38,7 @@
 
 import { useCallback, useRef } from 'react';
 import { apiFetch } from '../lib/api';
+import { applyRestorePayload } from '../lib/stateFile';
 import { useToastStore } from '../store/toastStore';
 import { useUploadStore } from '../store/uploadStore';
 import { useCommitToNesting } from './useCommitToNesting';
@@ -87,12 +89,12 @@ export function useParseDxf(): UseParseDxfResult {
 }
 
 /**
- * .msn 状态文件恢复分流（US-003 最小处理）：POST /api/state-restore（multipart）
- * → 成功 toast「恢复编排将在下一 Story 落地」、失败 toast 后端结构化错误信息。
- * uploading 期间给 UploadPanel「上传中…」反馈；结束回 idle（旧 doc 展示随会话
- * 覆盖语义失效，US-004 applyRestorePayload 接线后改为 done + 恢复 doc）。
- * 错误不进 uploadStore.error：toast 是状态文件路径的统一提示通道（不与 .dxf
- * 路径的红字互斥展示语义耦合）。
+ * .msn 状态文件恢复分流（US-003 分流 + US-004 编排接线）：POST /api/state-restore
+ * （multipart）→ 成功 applyRestorePayload(res)（doc/qty/form/ptype 落笔 + run 合成
+ * + 有 run 时切超排 Tab；status 置 done）+ toast「状态文件已恢复」；失败 toast
+ * 后端结构化错误信息。错误不进 uploadStore.error：toast 是状态文件路径的统一
+ * 提示通道（不与 .dxf 路径的红字互斥展示语义耦合）；失败/网络错回 idle（无半
+ * 恢复态 —— 旧 doc 展示随会话覆盖语义失效，用户重传即重新开始）。
  */
 async function restoreStateFile(file: File): Promise<void> {
   useUploadStore.setState({
@@ -121,17 +123,21 @@ async function restoreStateFile(file: File): Promise<void> {
       useToastStore.getState().pushToast(`状态文件恢复失败：${msg}`);
       return;
     }
-    // RestorePayload —— US-004 applyRestorePayload 编排接线（本 story 仅校验通过提示）
-    await res.json() as StateRestoreResponse;
-    useToastStore
-      .getState()
-      .pushToast('状态文件校验通过，恢复编排将在下一 Story 落地');
+    // 恢复编排（US-004）：五 store 落笔 + run 合成 + provenance 写回 + 切超排 Tab。
+    const payload = (await res.json()) as StateRestoreResponse;
+    applyRestorePayload(payload);
+    useToastStore.getState().pushToast(
+      `状态文件已恢复：${payload.filename}${payload.run ? '（含排料结果）' : ''}`,
+    );
   } catch (e) {
     // 网络错 / SessionBlockedError —— toast 统一提示（不抛、不 rethrow）
     const msg = e instanceof Error ? e.message : String(e);
     useToastStore.getState().pushToast(`状态文件恢复失败：${msg}`);
   } finally {
-    useUploadStore.setState({ status: 'idle' });
+    // 成功路径 applyRestorePayload 已置 status='done'（doc 就绪）；失败/网络错回 idle。
+    if (useUploadStore.getState().status === 'uploading') {
+      useUploadStore.setState({ status: 'idle' });
+    }
   }
 }
 

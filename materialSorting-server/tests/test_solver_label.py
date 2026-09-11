@@ -131,6 +131,23 @@ def test_per_type_clamped_by_global_caps():
     assert MAX_OVERLAP_MM == 10.0 and MAX_ROTATION_TOL_DEG == 45.0   # 上限口径锁定
 
 
+def test_per_type_string_form_tolerant_parse():
+    """per_type 字符串形态（状态文件 US-004 form 块按 input.value 原样入档）：
+    '2.0' 正常解析、''（= 继承全局档，与前端 collectPerType 空串不写键同口径）/
+    非数值 → 回退全局默认，不再 ValueError 打穿守恒校验（保存/恢复 400 根因）。"""
+    pieces = [_piece('g01_28', 'g01', 28), _piece('g02_28', 'g02', 28)]
+    # d='2.0' 字符串 → 正常 erode；tol='' → 继承 0（锁布纹线）
+    inst, _cfg, _meta, _area, n1 = _build(
+        pieces, per_type={'g01': {'d': '2.0', 'tol': ''}})
+    assert n1 == 1
+    items = {it.id: it for it in inst.items}
+    assert list(items['g01_28'].allowed_orientations) == [0.0, 180.0]
+    # 非数值（手改文件）→ no-op 回退默认，不炸
+    _inst, _cfg, _meta, _area, n2 = _build(
+        pieces, per_type={'g01': {'d': 'x', 'tol': None}})
+    assert n2 == 0
+
+
 # --------------------------- raw_polygon / d_mm（2026-09-06 口径统一 additive）
 
 def test_pid_meta_raw_polygon_and_d_mm():

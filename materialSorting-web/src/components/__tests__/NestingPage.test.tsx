@@ -20,8 +20,14 @@ import { runRegistry, type RunRecord } from '../../store/runRegistry';
 import { useEditStore } from '../../store/editStore';
 import { useAppStore } from '../../store/appStore';
 import { useControlPanelStore } from '../../store/controlPanelStore';
-import { useStrategyStore } from '../../store/strategyStore';
-import type { StrategyResult, StrategyStatus } from '../../types/strategy';
+import { useStrategyStore, useExtremeStore } from '../../store/strategyStore';
+import { useSynthRunStore } from '../../store/synthRunStore';
+import type {
+  ExtremeStartPayload,
+  StrategyResult,
+  StrategyStartPayload,
+  StrategyStatus,
+} from '../../types/strategy';
 import type { FrameMsg } from '../../types/ws';
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -90,7 +96,11 @@ const DONE_STATUS: StrategyStatus = {
 beforeEach(() => {
   useControlPanelStore.getState().closeModal();
   useStrategyStore.getState().reset();
+  useExtremeStore.getState().reset();
   useAppStore.setState({ renderTick: 0, seekTime: -1 });
+  // US-004：合成 run 信号 store 模块级常驻 —— 逐测重置（token=0 为初始态；
+  // NestingPage 信号 effect 带 lastTokenRef 只消费挂载后新到信号，双保险隔离）。
+  useSynthRunStore.setState({ token: 0, seed: 0, note: '', origin: undefined });
   runRegistry.clear();
   exportBodies = [];
   container = document.createElement('div');
@@ -123,6 +133,7 @@ afterEach(() => {
   document.body.innerHTML = '';
   useControlPanelStore.getState().closeModal();
   useStrategyStore.getState().reset();
+  useExtremeStore.getState().reset();
   runRegistry.clear();
   fetchSpy?.mockRestore();
   fetchSpy = null;
@@ -134,13 +145,14 @@ function renderPage(): void {
   });
 }
 
-/** 打开弹窗 + 置 done 结果态（模拟 useStrategyPoll refresh 拉到的 status/result）。 */
-function openResultState(): void {
+/** 打开弹窗 + 置 done 结果态（模拟 useStrategyPoll refresh 拉到的 status/result）。
+ * US-004 provenance 用例可覆写 result（mode 切换 extreme / null）。 */
+function openResultState(result: StrategyResult = APPLY_RESULT): void {
   act(() => {
     useControlPanelStore.getState().openModal('strategy_run');
   });
   act(() => {
-    useStrategyStore.setState({ phase: 'done', status: DONE_STATUS, result: APPLY_RESULT });
+    useStrategyStore.setState({ phase: 'done', status: DONE_STATUS, result });
   });
 }
 
@@ -433,5 +445,62 @@ describe('NestingPage 编辑排料 invalidate 挂点 (US-004)', () => {
     // 应用后的合成 record 是新会话对象（重开编辑弹窗重新快照，不残留旧基线）
     expect(runRegistry.list().length).toBe(1);
     expect(runRegistry.list()[0].lastFrame).not.toBeNull();
+  });
+});
+
+// ============================================================
+// 状态文件 US-004：origin 写回 + run-provenance 来源小字。
+// originOfStrategyResult（mode 定族 + 本族 lastStart 补 config）→ 合成
+// RunRecord.origin → ControlPanel 来源小字渲染；WS 普通求解（mode null /
+// handleStart）→ origin 缺席 / 小字退场。
+// ============================================================
+
+describe('NestingPage run-provenance (US-004)', () => {
+  it('apply race 结果（strategyStore.lastStart.minutes=20 在场）→ origin={strategy_race,{minutes:20}} + 小字「策略运行·race(20min)」', () => {
+    useStrategyStore.setState({
+      lastStart: { mode: 'race', minutes: 20, seed: 0, gate_mm: 1750 } as StrategyStartPayload,
+    });
+    renderPage();
+    openResultState();
+    clickApply();
+
+    expect(runRegistry.list()[0].origin).toEqual({ kind: 'strategy_race', config: { minutes: 20 } });
+    const prov = container!.querySelector('[data-testid="run-provenance"]');
+    expect(prov).not.toBeNull();
+    expect(prov!.textContent).toBe('来源：策略运行·race(20min) · seed 3');
+  });
+
+  it('apply extreme 结果（extremeStore.lastStart.time_total_s=600）→ origin={extreme,{time_total_s:600}} + 小字「极限运行(600s)」', () => {
+    useExtremeStore.setState({
+      lastStart: { time_total_s: 600, seed: 0, gate_mm: 1750 } as ExtremeStartPayload,
+    });
+    renderPage();
+    openResultState({ ...APPLY_RESULT, mode: 'extreme' });
+    clickApply();
+
+    expect(runRegistry.list()[0].origin).toEqual({ kind: 'extreme', config: { time_total_s: 600 } });
+    expect(container!.querySelector('[data-testid="run-provenance"]')!.textContent).toBe(
+      '来源：极限运行(600s) · seed 3',
+    );
+  });
+
+  it('mode null（旧后端）→ origin 缺席 → 不渲染小字（= WS 普通求解口径，保存端不写 provenance 键）', () => {
+    renderPage();
+    openResultState({ ...APPLY_RESULT, mode: null });
+    clickApply();
+
+    expect(runRegistry.list()[0].origin).toBeUndefined();
+    expect(container!.querySelector('[data-testid="run-provenance"]')).toBeNull();
+  });
+
+  it('页面刷新形态：lastStart=null（store 重置）→ origin 无 config 段，小字无括号', () => {
+    renderPage();
+    openResultState(); // mode='race' 但 strategyStore.lastStart=null（beforeEach reset 清空）
+    clickApply();
+
+    expect(runRegistry.list()[0].origin).toEqual({ kind: 'strategy_race' });
+    expect(container!.querySelector('[data-testid="run-provenance"]')!.textContent).toBe(
+      '来源：策略运行·race · seed 3',
+    );
   });
 });

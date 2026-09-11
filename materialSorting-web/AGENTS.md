@@ -1048,3 +1048,64 @@ formStore（hydrate 水合语义为 US-004 恢复编排预留）、导出下拉�
   uploadDxf(file, commit) 函数，行级等价（首调 /api/parse-dxf 回归锁在
   useParseDxf.test）。UploadPanel accept=".dxf,.msn"，校验/文案双扩展名放行
   （大小写容错同 .DXF 先例）。
+
+## 状态文件 US-004 关键约定（恢复编排 + run-provenance 来源小字 调用方必读；2026-09-11）
+
+恢复编排落地故事：`/api/state-restore` 成功响应 → `lib/stateFile.applyRestorePayload`
+五 store 落笔 + run 合成 + 切超排 Tab；策略/极限「应用到主画布」与恢复共用
+`applySyntheticRun` 共享落笔（synthRunStore）；RunRecord.origin 展示消费 =
+run-provenance 来源小字。改恢复链 / 合成 run / 来源小字前先读本节。详细模块表见
+`.docs/technical/agent-component-map.md`「状态文件 US-004 落地」。
+
+### synthRunStore（src/store/synthRunStore.ts，新）
+
+- **两层拆分**：`applySyntheticRun(manifest, frameLike, seed, origin?, note?)` 模块级
+  落笔（清场 runRegistry.clear + editStore.invalidate + seek −1 → 深拷贝 placed →
+  单条 done RunRecord → `signal()` bump token）不依赖组件挂载；NestingPage
+  `useEffect([synthToken])` 消费信号 setSeeds/setPhase('done')/setStatus/ref 重置。
+  seeds/phase/status 是 NestingPage 本地 state，跨模块只能走信号。
+- **lastSynthTokenRef 守卫**：token 未变（含挂载初跑）即 return —— store 模块级
+  常驻，无守卫会重放陈旧信号（phase 误置 done；单测互相污染的根因）。
+- **深拷贝防别名**：合成帧 placed 必须 `deepCopyPlaced`（translation 拷断 +
+  mirror omit-when-false；保存侧 buildSavePayload 同实现）—— editStore.applyToRun
+  原地写回不穿透策略 store / 恢复响应。
+- **origin 三写入方**：WS 普通求解不设（保存不写 provenance 键，老文件零惩罚）；
+  `originOfStrategyResult`（mode 定族 + 本族 lastStart 补 config）与恢复透传
+  （`run.provenance ?? {kind:'solve'}`）两方写入；`provenanceText` 小字纯展示。
+
+### applyRestorePayload（lib/stateFile.ts）顺序敏感
+
+1. uploadStore.setState（done/doc=parse 载荷/activeSize=最小码/commit idle）；
+2. qtyStore.hydrate 默认物化 → hydrateFlat 实值覆盖（**顺序不可倒**；hydrateFlat
+   多出 label 不新建行 —— 矩阵行集以 doc 为准）；
+3. formStore.hydrate(form, token=res.doc_id)（先于 React 提交，ControlPanel
+   resetForDoc 匹配 token → 水合保留）；
+4. ptypeStore.invalidate()（commit-done 同口径）；
+5. run 块在场 → applySyntheticRun + setNestingEnabled(true) + setTab('nesting')；
+   无 run 纯配置档不合成不切 Tab（留预览页核对矩阵）。`run.final` 缺席（手改文件）
+   → finalizeFromLayout 客户端现算（computeLayoutStats 物理口径）。
+
+### useParseDxf .msn 成功路径（改动了 US-003 占位）
+
+成功 → `applyRestorePayload(res)` + toast「状态文件已恢复：{源名}（含排料结果）」
+（US-003 的「恢复编排将在下一 Story 落地」占位已删）；status=done（非 idle ——
+doc 已写入）。失败 toast 通道不变。
+
+### 冒烟（scripts/smoke_state_file.mjs，33 检查端到端）
+
+- **流程**：上传 5336 → 矩阵 g01@30=2 → gate 180 + per_type d=1 + band g05 → 5s
+  求解 → 编辑拖片 +40mm 保存 → 导出 .msn（Node gunzip 断言：schema 顶层键
+  `app='materialsorting'`/无 provenance/恰 1 条移动/form/quantities/final）→ 全新
+  context 恢复 → toast/来源小字/nest-label 全等/毛版 polygon=placed/预览 Tab 矩阵
+  实值/表单回填/编辑基线料长全等/PLT 导出 placed 深全等（gate=1800）/重解零回归。
+- **踩坑备档**：① toast 不自动消失且右上栈拦截 overlay 按钮 —— 读断言后逐条 ✕
+  关掉；② 数量矩阵 data-cell="列-行"按码集动态（5336 首行=30 非 32，总片数 110
+  默认）；③ 主画布毛版 polygon 数用 `polygon[data-label]`（net/collide 层同标签
+  名无 data-label；erode 片另有 collide 灰虚线层）；④ 恢复导出 gate 断言 = form
+  gate ×10（后端 manifest 重算取 form.gate，2026-09-11 修复）。
+
+### 后端配套（本故事 E2E 发现的修复，pytest 821）
+
+- `solver._pf`：per_type 字符串形态容错（'{d:'1',tol:''}' 保存/恢复不再 400）；
+- `statefile._form_gate_mm`：恢复 manifest gate 取 form.gate cm×10（缺省回退
+  doc.gate_mm），与求解路径 parseGate 同口径。

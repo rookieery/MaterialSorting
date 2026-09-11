@@ -90,6 +90,23 @@ class StateConservationError(StateFileError):
         self.detail = detail
 
 
+def _form_gate_mm(form: dict, doc_gate: float) -> float:
+    """恢复端 manifest 幅宽（mm）：``form.gate``（cm 字符串 ×10）优先，缺省/非法/
+    非正回退 doc.gate_mm。
+
+    与求解路径同口径（routes_ws：前端 ``gate_mm = parseGate(form)`` cm×10 覆盖
+    intermediate 默认门幅；lib/params.ts parseGate 同式）—— 保存会话若改过幅宽再
+    求解，doc.gate_mm（母版 commit 时快照）与实际求解幅宽已分歧，manifest 重算取
+    form 侧才与 run.final 密度/PLT 导出幅宽一致（2026-09-11 E2E 冒烟实测：gate
+    180cm 求解 + 175cm 母版 → 恢复 manifest 1750 导致导出幅宽 1750 ≠ 布局实际 1800）。
+    """
+    try:
+        v = float(form.get('gate'))
+    except (TypeError, ValueError):
+        return float(doc_gate)
+    return v * 10.0 if v > 0 else float(doc_gate)
+
+
 # ---------------------------------------------------------------- 纯逻辑（构建/序列化）
 
 def build_state_document(state: dict, form: dict, quantities, run) -> dict:
@@ -472,7 +489,9 @@ async def state_restore(request: Request, file: UploadFile = File(...)):
        uploads**（他人文件不污染本机事实源，设计 §一.7）；
     4. ``build_pid_meta(doc.pieces, sizes, per_type, quantities)`` 确定性重算 manifest
        （params 缺省全 0 = web 口径；含 raw_polygon/d_mm 物理毛版，routes_ws.on_manifest
-       / strategy result 同形）；``_build_parse_payload`` 经 ``_DocPieceView`` 组 parse
+       / strategy result 同形）；``gate_mm`` 取 ``form.gate``（cm×10，与求解路径
+       parseGate/前端覆盖同口径，缺省回退 doc.gate_mm —— 见 ``_form_gate_mm``）；
+       ``_build_parse_payload`` 经 ``_DocPieceView`` 组 parse
        载荷（PreviewPage 零解析改动）；
     5. 成功 ``edit_hold.refresh(sid)``（编辑钉住与 /api/edit-polish 同口径；default
        豁免不进钉住表）。
@@ -528,7 +547,7 @@ async def state_restore(request: Request, file: UploadFile = File(...)):
         doc['pieces'], sizes=form.get('sizes'), per_type=form.get('per_type'),
         quantities=quantities)
     manifest = {
-        'gate_mm': state['gate_mm'],
+        'gate_mm': _form_gate_mm(form, state['gate_mm']),
         'total_area_mm2': total_area,
         'n_eroded': n_eroded,
         'pieces': [

@@ -146,9 +146,15 @@ export interface ControlPanelProps {
    * result 同形，applyStrategyResult 合成 RunRecord 单一实现复用）。
    */
   onApplyStrategy?: (result: StrategyResult) => void;
+  /**
+   * 结果来源小字文案（状态文件 US-004）：合成 run（策略/极限应用 / 状态文件恢复）
+   * 的 provenance 展示（如「来源：极限运行(600s) · seed 0」），NestingPage 经
+   * provenanceText 组装传入；undefined（WS 普通求解 / 无 run）→ 不渲染该行。
+   */
+  runProvenance?: string;
 }
 
-export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApplyStrategy }: ControlPanelProps) {
+export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApplyStrategy, runProvenance }: ControlPanelProps) {
   // 状态文件 US-003：form 由 formStore 持有（原本地 useState；行为等价迁移）。
   const form = useFormStore((s) => s.form);
   // US-017：订阅 uploadStore.doc 判断是否已解析母版（doc=null → StatusLine 增提示）。
@@ -440,6 +446,13 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
         <SolveControls phase={phase} onStart={handleStart} onStop={onStop} startDisabled={startDisabled} />
       </div>
       <StatusLine text={visibleStatus} />
+      {/* 状态文件 US-004：结果来源小字（合成 run 的 provenance 常驻回显 —— 区别于
+          StatusLine 瞬态文案；WS 普通求解 / 无 run 时不渲染）。 */}
+      {runProvenance !== undefined && (
+        <div className="dim small run-provenance" data-testid="run-provenance">
+          {runProvenance}
+        </div>
+      )}
       {/* 编辑排料 US-004：主界面入口区块（StatusLine 与导出之间 ——「导出最优方案」上方；
           编辑 = 打开 EditLayoutModal，重置 = confirm 后 editStore.reset() 回算法基线）。 */}
       <EditLayoutControls phase={phase} />

@@ -22,7 +22,8 @@ US-002（恢复端）覆盖：
 7. 200 完整载荷：{doc_id(铸新)/filename/parse/manifest/final/placed/run/form/
    quantities}；manifest 与 build_pid_meta 同 form 重算逐字段一致（含 per_type
    erode 的 raw_polygon/d_mm 物理毛版口径）；parse 载荷 label 与 doc 同源、
-   5 层透传；纯 JSON（无 gzip）/无 run 纯配置档同通过；
+   5 层透传；纯 JSON（无 gzip）/无 run 纯配置档同通过；字符串 per_type 形态
+   （前端 input.value 入档，``_pf`` 容错）保存/恢复双端 200；
 8. 校验链全 fail-fast 400/413：坏 gzip/坏 JSON/schema_version 缺失·非 int·过新
    （文案含双版本号）/解压后与裸上传双超限/doc 块逐片形态（polygon 顶点/NaN/
    gate/pid 重复/label 非法）/run.placed 条目形态（含 mirror 非布尔）/placed
@@ -516,6 +517,47 @@ def test_restore_manifest_per_type_erode_raw_polygon(client):
     assert mp['g02_30']['d_mm'] == 0.0
     assert mp['g02_30']['raw_polygon'] == raw['g02_30']
     assert man['n_eroded'] == 1
+
+
+def test_state_file_string_per_type_save_and_restore(client):
+    """字符串 per_type 形态（US-004 前端 form 按 input.value 原样入档）：
+    ``{g01: {d: '2', tol: ''}}`` 保存守恒 200（form 原样落文件）+ 恢复 manifest
+    重算容错解析（``_pf``：'2' → erode 2mm、'' → 继承全局档 0）—— 不再
+    ValueError 打穿 400「形态非法」（2026-09-11 E2E 冒烟实测根因）。"""
+    form = _form()
+    form['per_type'] = {'g01': {'d': '2', 'tol': ''}}
+    r = client.post('/api/state-save',
+                    json={'form': form, 'quantities': _quantities(), 'run': _run()})
+    assert r.status_code == 200, r.text          # 守恒通过（tol='' 不再炸）
+    saved = json.loads(gzip.decompress(r.content))
+    assert saved['form']['per_type'] == {'g01': {'d': '2', 'tol': ''}}   # 原样入档
+
+    r2 = _restore(client, r.content)
+    assert r2.status_code == 200, r2.text
+    man = r2.json()['manifest']
+    mp = {p['id']: p for p in man['pieces']}
+    assert mp['g01_30']['d_mm'] == 2.0                      # '2' 字符串 → 正常 erode
+    assert mp['g01_30']['polygon'] != mp['g01_30']['raw_polygon']
+    assert mp['g02_30']['d_mm'] == 0.0                      # 未命中 → 全局缺省
+    assert man['n_eroded'] == 1
+
+
+def test_restore_manifest_gate_from_form_not_doc(client):
+    """恢复 manifest 幅宽取 form.gate（cm×10，求解路径 parseGate 同口径）而非
+    doc.gate_mm（母版 commit 快照）：改幅宽求解后保存 → 恢复 manifest/导出幅宽与
+    布局一致（180cm 求解 + 175cm 母版 → 1800 非 1750）；form.gate 缺席/非法/非正
+    → 回退 doc.gate_mm（2026-09-11 E2E 冒烟实测口径）。"""
+    msn = _save_msn(client)                       # form.gate='175.00' doc.gate=1750
+    edited = _edit_msn(msn, lambda d: d['form'].__setitem__('gate', '180.00'))
+    r = _restore(client, edited)
+    assert r.status_code == 200
+    assert r.json()['manifest']['gate_mm'] == 1800.0
+
+    for bad in (None, 'abc', '0', '-5'):
+        broken = _edit_msn(msn, lambda d: d['form'].__setitem__('gate', bad))  # noqa: B023
+        r2 = _restore(client, broken)
+        assert r2.status_code == 200
+        assert r2.json()['manifest']['gate_mm'] == 1750.0   # 回退 doc.gate_mm
 
 
 def test_restore_plain_json_and_pure_config(client):

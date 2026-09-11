@@ -70,6 +70,16 @@ export interface QtyState {
    * 构造，故本 store 仍不依赖 parsed 类型，与 uploadStore 完全解耦。
    */
   hydrate: (entries: ReadonlyArray<{ label: string; size: number | null }>) => void;
+  /**
+   * 状态文件恢复（US-004）：{label:{sizeKey:N}} 扁平实值覆盖 —— 在 hydrate 物化
+   * （默认 1）之上按值覆写，doc 未覆盖的 sizeKey 保留默认 1（手改文件缺键容错）；
+   * flat 多出的 label/sizeKey 并入（无害：QtyMatrix 只渲染 doc (label,size) 格，
+   * WS/保存按 sizes 过滤）。数值经 clampQty 归整（线格式契约 0-99 整数）；
+   * baseValue 保留物化值 1（状态文件不含 baseValue —— 特例高亮基准与「每码每片
+   * 默认 1」初始态同锚）。null → no-op（纯配置档无 quantities 块 = 后端 demand
+   * 全 1 口径，默认 1 即终态）。
+   */
+  hydrateFlat: (flat: Record<string, Record<string, number>> | null) => void;
 }
 
 export const useQtyStore = create<QtyState>((set) => ({
@@ -110,5 +120,24 @@ export const useQtyStore = create<QtyState>((set) => ({
         map[label] = q;
       }
       return { quantities: map };
+    }),
+  hydrateFlat: (flat) =>
+    set((s) => {
+      // null / 空对象 → no-op（纯配置档；zustand set({}) 不触发订阅通知）。
+      if (!flat || Object.keys(flat).length === 0) return {};
+      const quantities: PieceQuantityMap = {};
+      for (const [label, q] of Object.entries(s.quantities)) {
+        const row = flat[label];
+        quantities[label] = {
+          // doc 物化键集为底 + flat 实值覆盖（同键以 flat 为准，doc 有而 flat 缺 → 默认 1）。
+          perSize: row
+            ? Object.fromEntries(
+                Object.entries({ ...q.perSize, ...row }).map(([k, v]) => [k, clampQty(v)]),
+              )
+            : { ...q.perSize },
+          baseValue: q.baseValue,
+        };
+      }
+      return { quantities };
     }),
 }));

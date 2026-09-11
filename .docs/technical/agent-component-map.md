@@ -2362,3 +2362,69 @@ US-004）。设计全文 `.docs/business/状态文件保存恢复_落地方案.m
   校验通过，恢复编排将在下一 Story 落地」→ .dxf 重传 parse+commit 回归。验证后
   ms-web 已杀（:8000 释放）。
 - 后端零改动；pytest 全量 818 passed 复跑确认无回归。
+
+## 状态文件 US-004 落地（恢复编排 + run-provenance 来源小字 + 端到端冒烟；2026-09-11）
+
+**范围**：`/api/state-restore` 成功响应的前端恢复编排（五 store 落笔 + run 合成 +
+切超排 Tab）、策略/极限「应用到主画布」与恢复两路共用的合成 run 抽取
+（`applySyntheticRun`）、run-provenance 来源小字（`RunRecord.origin` 的展示消费），
+以及全链端到端冒烟 `scripts/smoke_state_file.mjs`（保存→编辑→导出→恢复→导出守恒→
+重解，33 检查）。设计 `.docs/business/状态文件保存恢复_落地方案.md` §六。
+
+### 文件
+
+| 文件 | 改动 |
+|------|------|
+| `src/store/synthRunStore.ts`（新） | 合成 run 信号 store + 共享落笔：`applySyntheticRun(manifest, frameLike, seed, origin?, note?)` —— 清场（`runRegistry.clear()` 关旧 WS + `editStore.invalidate()` + `setSeekTime(-1)`）→ 深拷贝 placed（`deepCopyPlaced`：translation 拷断 + mirror omit-when-false，US-003 起保存侧同实现）→ 单条 done RunRecord（frames=[合成帧] / lastFrame 同帧 / 双口径密度 / viewBoxMaxW / origin）→ `signal(seed, note, origin)` bump token。`provenanceText(origin, seed)` → 「来源：普通求解/策略运行·SE/策略运行·race/极限运行(Ns/Nmin) · seed N」 |
+| `src/lib/stateFile.ts`（扩） | `applyRestorePayload(res)` 恢复编排单一实现：① `uploadStore.setState`（done/doc=parse 载荷/activeSize=最小码/commit 回 idle）② `qtyStore.hydrate(entries)` 默认物化 → `hydrateFlat(res.quantities)` 实值覆盖 ③ `formStore.hydrate(res.form, token=res.doc_id)`（token 先于 ControlPanel resetForDoc 匹配 → 水合保留）④ `ptypeStore.invalidate()` ⑤ run 块在场 → manifest（`{type:'manifest', ...res.manifest}`）+ 单帧 phase='final'（`run.final` 缺席走 `finalizeFromLayout` 客户端现算兜底：computeLayoutStats 物理口径，density_sparrow/elapsed=0 展示参考）+ origin = `run.provenance ?? {kind:'solve'}` → `applySyntheticRun` + `setNestingEnabled(true)` + `setTab('nesting')`；无 run 纯配置档不合成不切 Tab |
+| `src/store/qtyStore.ts`（扩） | `hydrateFlat(flat)`：`{label:{sizeKey:N}}` 实值覆盖既有行（clampQty 归整/非法→baseValue 保留）；null/空对象 no-op；多出 sizeKey 并入、多出 label 不新建行（守恒 = 矩阵行集以 doc 为准） |
+| `src/hooks/useParseDxf.ts`（改） | .msn 分流成功路径：`applyRestorePayload(res)` + toast「状态文件已恢复：{源名}（含排料结果）」（取代 US-003 的「下一 Story」占位）；失败 toast 不变 |
+| `src/components/NestingPage.tsx`（改） | ① `applyStrategyResult` 改为委派 `applySyntheticRun`（清场/落笔/信号三段共享；origin 经 `originOfStrategyResult(result)`：mode 定族 kind、本族 lastStart 补 config —— race/se→strategyStore.lastStart.minutes、extreme→extremeStore.lastStart.time_total_s；mode null / lastStart null → 无 config 段）② 信号消费 `useEffect([synthToken])` 带 `lastSynthTokenRef` 守卫（**只消费挂载后新到信号** —— 挂载初跑 token 未变即跳过，修 stale-token 重放 + StrictMode 幂等）：setSeeds([seed]) / setPhase('done') / note 非空才 setStatus / doneCount·totalSeeds ref 重置 / `setProvenance({origin, seed})` ③ `handleStart` 先 `setProvenance(null)`（WS 普通求解小字退场） |
+| `src/components/ControlPanel/ControlPanel.tsx`（扩） | 可选 prop `runProvenance?: string`（undefined 不渲染）；StatusLine 上方 `div.run-provenance[data-testid=run-provenance]` 小字（文案由 NestingPage `provenanceText` 组装传入） |
+
+### 关键不变量（US-004 立，改合成 run / 恢复链路前必读）
+
+1. **store-signal 两层拆分**：RunRecord 落笔是模块级操作（applySyntheticRun 不依赖
+   组件挂载 —— 恢复在上传回调里完整落笔，NestingPage 未挂载时信号只是无人消费）；
+   seeds/phase/status 是 NestingPage 本地 state，只能经信号 effect 消费。信号只载
+   UI 参数（seed/note/origin），几何真相在 runRegistry。
+2. **lastSynthTokenRef 守卫**：`token === ref.current`（含挂载初跑）即 return ——
+   模块级 store 跨测试/跨页面常驻，无守卫会重放陈旧信号（phase 误置 done）。新信号
+   = token 递增；消费后 ref 同步。
+3. **深拷贝防别名**：合成帧 placed_items 必须 `deepCopyPlaced`（源 = 策略
+   result.best / 恢复响应 res.placed）—— editStore.applyToRun 原地写回会穿透共享
+   引用污染来源 store（旧 applyStrategyResult 直 bug：编辑保存后重应用同一 result
+   不回 pristine）。
+4. **origin 三写入方 / 一消费方**：WS 普通求解不设（undefined，保存端不写
+   provenance 键 —— 老文件零惩罚）；策略/极限应用与恢复透传两方写入；run-provenance
+   小字纯展示（渲染/导出零消费）。恢复缺省 `{kind:'solve'}` —— 恢复的普通求解结果
+   也回显来源。
+5. **恢复编排顺序敏感**：hydrate(默认物化) 必须先于 hydrateFlat(实值覆盖)；
+   formStore.hydrate 必须先于 React 提交（ControlPanel resetForDoc 匹配 token 保
+   留水合）；run 合成必须最后（applySyntheticRun 清场不吞前面落笔）。
+6. **冒烟 toast 坑**：toast 不自动消失（2026-08-31 修订），右上栈会拦截编辑弹窗
+   关闭按钮 —— 脚本读断言后逐条 ✕ 关掉再操作 overlay 按钮。
+
+### 验证
+
+- vitest 全量 **1150 passed**（68 文件）：synthRunStore.test 8 新建（applySyntheticRun
+  清场/深拷贝/信号、deepCopyPlaced、provenanceText）/ stateFile.test 20（+8
+  applyRestorePayload 全量编排·纯配置档·provenance 缺省·深拷贝解耦 + finalizeFromLayout
+  兜底）/ qtyStore.test 32（+6 hydrateFlat）/ NestingPage.test 12（+4 run-provenance
+  四形态）/ useParseDxf.test 32（恢复成功断言重写：toast + doc 写入 + idle commit）。
+  `npx tsc --noEmit` 干净 + `npm run build` 过。
+- 后端配套修复（E2E 冒烟实测根因）：① `solver._resolve_d_tol` 经 `_pf` 容错解析
+  per_type 字符串形态（前端 form 按 input.value 入档 `{g码:{d:'1',tol:''}}`，''/None/
+  非法 → 继承全局档，不再 ValueError 打穿保存/恢复 400）② `statefile._form_gate_mm`
+  恢复 manifest gate 取 `form.gate`（cm×10，与求解路径 parseGate 同口径）而非
+  doc.gate_mm —— 改幅宽求解后保存的文件恢复导出幅宽与布局一致。pytest 全量
+  **821 passed**（+3：solver 字符串容错 / statefile 字符串 per_type 往返 / manifest
+  gate 取 form）。
+- E2E 冒烟 `scripts/smoke_state_file.mjs` **33/33 SMOKE PASS**（prod :8000）：上传
+  5336 → 数量矩阵 g01@30=2（总 111）→ gate 180 + per_type d=1 + band g05 → 5s 求解
+  final（placed 30 守恒）→ 编辑弹窗拖片 +40mm 保存 → 导出 .msn（gunzip 断言 schema/
+  无 provenance/恰 1 条移动 +40mm/form/quantities/final 摘要）→ 全新 context 恢复
+  （toast/来源小字「来源：普通求解 · seed 0」/nest-label 全等/毛版 polygon=30/预览
+  Tab 矩阵 111+5 层/表单回填/编辑基线料长全等/PLT 导出 placed 深全等+gate 1800/重解
+  新 final+小字退场）；最小冒烟 `smoke-state-file.mjs` 9/9（dev :5173）。报告
+  `out/smoke_state_file/report.json`；验证后 ms-web 已杀。

@@ -224,9 +224,10 @@ describe('hydrate (解析后默认数量 + baseValue=1)', () => {
 
 describe('store independence (US-011)', () => {
   it('qtyStore and uploadStore fields do not overlap', () => {
-    // qtyStore only holds quantities + 4 actions（US-001 合并 hydrate 双入口 + setRowAll）
+    // qtyStore only holds quantities + 5 actions（US-001 合并 hydrate 双入口 + setRowAll；
+    // US-004 状态文件恢复 hydrateFlat 扁平实值覆盖）
     const qKeys = Object.keys(useQtyStore.getState()).filter((k) => k !== 'quantities');
-    expect(qKeys.sort()).toEqual(['hydrate', 'resetQuantities', 'setPiecePerSize', 'setRowAll']);
+    expect(qKeys.sort()).toEqual(['hydrate', 'hydrateFlat', 'resetQuantities', 'setPiecePerSize', 'setRowAll']);
     // uploadStore does not hold quantities
     expect(useUploadStore.getState()).not.toHaveProperty('quantities');
   });
@@ -244,5 +245,62 @@ describe('store independence (US-011)', () => {
     useUploadStore.getState().reset();
     expect(useQtyStore.getState().quantities.g02).toBeDefined();
     expect(useUploadStore.getState().status).toBe('idle');
+  });
+});
+
+// ============================================================
+// hydrateFlat（状态文件 US-004）：{label:{sizeKey:N}} 扁平实值覆盖 ——
+// 恢复编排 applyRestorePayload 在 hydrate（默认 1 物化）之后调用。
+// ============================================================
+describe('hydrateFlat (US-004 状态文件恢复)', () => {
+  it('实值覆盖：hydrate 物化的默认 1 被 flat 实值覆写，flat 缺键保留 1', () => {
+    useQtyStore.getState().hydrate([
+      { label: 'g01', size: 28 },
+      { label: 'g01', size: 30 },
+      { label: 'g02', size: 28 },
+    ]);
+    useQtyStore.getState().hydrateFlat({ g01: { '28': 3, '30': 0 } });
+    const map = useQtyStore.getState().quantities;
+    // g01: 28 码覆写 3、30 码覆写 0（显式 0 = 排除语义可追溯）；g02 未入 flat → 默认 1。
+    expect(map.g01).toEqual({ perSize: { '28': 3, '30': 0 }, baseValue: 1 });
+    expect(map.g02).toEqual({ perSize: { '28': 1 }, baseValue: 1 });
+  });
+
+  it('null / 空对象 → no-op（纯配置档 = 后端 demand 全 1 口径，默认 1 即终态）', () => {
+    useQtyStore.getState().hydrate([{ label: 'g01', size: 28 }]);
+    useQtyStore.getState().hydrateFlat(null);
+    expect(useQtyStore.getState().quantities.g01.perSize['28']).toBe(1);
+    useQtyStore.getState().hydrateFlat({});
+    expect(useQtyStore.getState().quantities.g01.perSize['28']).toBe(1);
+  });
+
+  it('flat 多出的 sizeKey 并入（手改文件补键无害：QtyMatrix 只渲染 doc 格）', () => {
+    useQtyStore.getState().hydrate([{ label: 'g01', size: 28 }]);
+    useQtyStore.getState().hydrateFlat({ g01: { '28': 2, '99': 7 } });
+    expect(useQtyStore.getState().quantities.g01.perSize).toEqual({ '28': 2, '99': 7 });
+  });
+
+  it('flat 多出的 label 不新建行（无 baseValue 锚，避免幽灵行）', () => {
+    useQtyStore.getState().hydrate([{ label: 'g01', size: 28 }]);
+    useQtyStore.getState().hydrateFlat({ g01: { '28': 2 }, gX: { '28': 5 } });
+    const map = useQtyStore.getState().quantities;
+    expect(Object.keys(map).sort()).toEqual(['g01']);
+  });
+
+  it('数值经 clampQty 归整（线格式契约 0-99 整数：小数截断 / 越界钳制 / 非数归 0）', () => {
+    useQtyStore.getState().hydrate([{ label: 'g01', size: 28 }]);
+    useQtyStore.getState().hydrateFlat({ g01: { '28': 3.9 } });
+    expect(useQtyStore.getState().quantities.g01.perSize['28']).toBe(3);
+    useQtyStore.getState().hydrateFlat({ g01: { '28': 150 } });
+    expect(useQtyStore.getState().quantities.g01.perSize['28']).toBe(99);
+    // 'x' 模拟手改文件的非法值（线格式契约外输入，clampQty 归 0）
+    useQtyStore.getState().hydrateFlat({ g01: { '28': 'x' as unknown as number } });
+    expect(useQtyStore.getState().quantities.g01.perSize['28']).toBe(0);
+  });
+
+  it('baseValue 保留物化值 1（状态文件不含 baseValue —— 特例高亮基准与初始态同锚）', () => {
+    useQtyStore.getState().hydrate([{ label: 'g01', size: 28 }]);
+    useQtyStore.getState().hydrateFlat({ g01: { '28': 5 } });
+    expect(useQtyStore.getState().quantities.g01.baseValue).toBe(1);
   });
 });

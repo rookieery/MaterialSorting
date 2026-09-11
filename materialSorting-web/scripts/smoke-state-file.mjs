@@ -1,9 +1,12 @@
-// 状态文件 US-003 冒烟（playwright，手动脚本不入 vitest；2026-09-11）：
+// 状态文件 US-003 保存 + US-004 恢复最小冒烟（playwright，手动脚本不入 vitest；
+// 端到端全链路断言见 scripts/smoke_state_file.mjs）：
 //   1. 上传 5336 母版 → commit → 切超排 → 5s 短求解
 //   2. 导出格式切「状态文件（.msn）」→ 底部说明行切换保存范围文案（不弹 ExportInfoModal）
 //   3. 点导出 → 下载 .msn（文件名含「状态」+ 时间戳）+ StatusLine「已导出 …」
-//   4. 回预览页上传该 .msn → toast「状态文件校验通过，恢复编排将在下一 Story 落地」
-//   5. .dxf 原路径回归：重传 .dxf → parse+commit 正常
+//   4. 回预览页上传该 .msn → toast「状态文件已恢复…（含排料结果）」+ 自动切超排
+//      Tab + run-provenance 来源小字「来源：普通求解 · seed 0」（WS 普通求解保存
+//      不写 provenance 键 → 恢复端缺省 'solve' 口径）
+//   5. .dxf 原路径回归：回预览页重传 .dxf → parse+commit 正常
 import { chromium } from 'playwright';
 
 let browser;
@@ -63,15 +66,25 @@ const statusText = await page.locator('#status').innerText();
 check(statusText.includes('已导出') && statusText.includes('.msn'), `StatusLine 已导出: ${statusText}`);
 check((await page.locator('.strategy-modal').count()) === 0, 'no ExportInfoModal for state');
 
-// ⑤ 回预览页上传 .msn → toast 校验通过
+// ⑤ 回预览页上传 .msn → 恢复编排（US-004）：toast「状态文件已恢复（含排料结果）」
+//    + 自动切超排 Tab + provenance 小字（WS 普通求解 → 恢复缺省 'solve' 口径）
 await page.locator('button.tab', { hasText: '预览' }).first().click();
 await fileInput.setInputFiles(savedPath);
 await page.waitForSelector('.toast-msg', { timeout: 15000 });
 const toasts = await page.locator('.toast-msg').allInnerTexts();
-const okToast = toasts.some((t) => t.includes('状态文件校验通过') && t.includes('下一 Story'));
+const okToast = toasts.some((t) => t.includes('状态文件已恢复') && t.includes('含排料结果'));
 check(okToast, `restore toast: ${toasts.join(' | ').slice(0, 60)}`);
+// 自动切超排 + 来源小字
+await page.locator('[data-testid="run-provenance"]').waitFor({ timeout: 10000 });
+const prov = await page.locator('[data-testid="run-provenance"]').innerText();
+check(prov === '来源：普通求解 · seed 0', `run-provenance: ${prov}`);
+// 恢复后求解 done 态（#restart 在场 = phase done，导出解禁）
+await page.locator('#restart').waitFor({ timeout: 10000 });
+await page.locator('.export-btns button.export:not([disabled])').waitFor({ timeout: 10000 });
+log('5 restore applied (tab switched + provenance + done phase)');
 
-// ⑥ .dxf 原路径回归：重传母版 → parse + commit 正常
+// ⑥ .dxf 原路径回归：回预览页重传母版 → parse + commit 正常（恢复切走的 Tab 先切回）
+await page.locator('button.tab', { hasText: '预览' }).first().click();
 await fileInput.setInputFiles('../data/5336#老六订单14%7%围加9_coded.dxf');
 await page.waitForSelector('[data-testid="commit-status"].done', { timeout: 60000 });
 check(true, 'dxf re-upload parse+commit ok (regression)');
