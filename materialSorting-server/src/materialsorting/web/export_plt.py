@@ -71,8 +71,14 @@ from .plt_table import TABLE_GAP_MM, TABLE_W_MM, InfoTable, info_table_polylines
 #
 # 毛版变体 clean=True（2026-08-31，对齐生产毛版件 data/PC-20250508NJIF_5028-1#_
 # 29223513.plt 实测）：
-#   - 裁片只画**最外层毛版轮廓 polygon** + 尺码*数量标注 —— 净版线/内部线/刀口/
-#     布纹杆羽全部不画。参考件正文 65 个闭合轮廓相邻贴合 gap=0.00mm ⇒ 画的是
+#   - 裁片只画**最外层毛版轮廓 polygon** + 尺码*数量标注 + **最外层刀口**（均
+#     2026-09-11 按用户需求加入；刀口画法与全量版同款 _notch_lines 单一真相源，
+#     但仅画**贴毛版外轮廓**的裁剪对位刀口——notch 点距 polygon 边界
+#     ≤ _NOTCH_EDGE_MAX_MM=2mm 才画，净版边定位剪口（距边 = 缝份 5~20mm）与
+#     片内剪口不画：五母版实测双峰 ≤0.062mm vs ≥3.17mm、分离带 1~3mm 取 2，
+#     毛版只展示最外层形状 ⇒ 内部刀口无处依附；参考件正文无任何工艺线属其
+#     自身口径，此处主动演进）—— 净版线/内部线/布纹杆羽不画。
+#     参考件正文 65 个闭合轮廓相邻贴合 gap=0.00mm ⇒ 画的是
 #     毛版嵌套几何本体（非缝份内缩的净样线——那会隔 2×缝份），且无任何工艺线、
 #     仅剩沿布纹方向的文字簇。标注笔画与全量版逐点相同（_label_strokes 同一
 #     几何：沿画向 u、字顶朝 w、基线离杆 10mm、锚 0.85·L），只是不画杆+箭羽。
@@ -124,6 +130,11 @@ _LABEL_CHAR_H_MM = 10.0            # 标注字高（生产数字簇高 ~10mm）
 _LABEL_PITCH_MM = 12.0             # 字距 cell（生产 "30*2" ~50mm/4 字 ≈ 1.2×字高）
 _LABEL_BASELINE_OFF_MM = 10.0      # 基线离杆距离（沿 w；生产簇心 ~15mm/簇高 ~10）
 _LABEL_ANCHOR_FRAC = 0.85          # 标注中心锚在杆上的位置（生产簇心中位数 0.85·L）
+# 毛版口径「最外层刀口」判定阈值：notch 点距毛版 polygon 边界 ≤ 此值才算贴边
+# 裁剪对位刀口（edge_only）。五母版（3069/5156/5336/882/M1787）实测 notch-边界
+# 距离双峰：贴边桶 ≤0.062mm / 净版边与片内桶 ≥3.17mm，1~3mm 近乎真空 ⇒ 取 2.0
+# 两侧余量 >30 倍。世界坐标判定与 placement 无关（旋转/平移/镜像均保距）。
+_NOTCH_EDGE_MAX_MM = 2.0
 
 
 def _plt_pt(x: float, y: float, lead_x: float = PLOT_LEAD_X_MM) -> str:
@@ -377,6 +388,53 @@ def _grain_annotation_strokes(gl, label_text: str | None) -> list[list[tuple[flo
     return strokes
 
 
+def _pt_to_boundary_dist(pt, poly) -> float:
+    """点到闭合折线边界的最短距离（逐边投影 clamp 到线段内，与 dxf_parser.collect
+    ``_nearest_edge_with_normal`` 同款算子；纯数学零依赖，web 不跨包 import）。"""
+    x, y = pt
+    best = float('inf')
+    n = len(poly)
+    for i in range(n):
+        x1, y1 = poly[i]
+        x2, y2 = poly[(i + 1) % n]
+        dx, dy = x2 - x1, y2 - y1
+        seg_len2 = dx * dx + dy * dy
+        if seg_len2 < 1e-12:
+            t = 0.0
+        else:
+            t = max(0.0, min(1.0, ((x - x1) * dx + (y - y1) * dy) / seg_len2))
+        d = math.hypot(x - (x1 + t * dx), y - (y1 + t * dy))
+        if d < best:
+            best = d
+    return best
+
+
+def _notch_lines(pc, gate_f: float, lead_x: float, *,
+                 edge_only: bool = False) -> list[str]:
+    """刺口 notches → 指令行列表（沿法线 NOTCH_LEN_MM 短线段，与 PNG 同口径）。
+
+    全量版与毛版变体共用（2026-09-11 起毛版也画刀口，画法同款单一真相源）。
+    ``edge_only``（毛版口径）：只画**贴毛版外轮廓**的裁剪对位刀口——notch 点距
+    ``pc['polygon']`` 边界 ≤ ``_NOTCH_EDGE_MAX_MM``；净版边定位剪口（距边 = 缝份）
+    与片内剪口不画（毛版只展示最外层形状，内部刀口无处依附，见模块注释「毛版
+    变体」）。polygon 缺失/退化时该组刀口全部不画（无最外层轮廓可依附）。
+    求解已钳制在门幅内，刺口 ±half 外伸越线属工艺正常（生产 PLT 内容同样越框
+    几 mm），直接削平、不计入 clipped_pids 告警。
+    """
+    half = NOTCH_LEN_MM / 2.0
+    poly = pc.get('polygon') or []
+    lines: list[str] = []
+    for (x, y, nx, ny) in pc.get('notches') or []:
+        if edge_only and (len(poly) < 2
+                          or _pt_to_boundary_dist((x, y), poly) > _NOTCH_EDGE_MAX_MM):
+            continue
+        seg = [(x - nx * half, y - ny * half), (x + nx * half, y + ny * half)]
+        runs, _n_above = _clip_open_y(seg, gate_f)
+        for run in runs:
+            lines.extend(_plt_polyline(closed=False, points=run, lead_x=lead_x))
+    return lines
+
+
 def write_marker_plt(world_pieces, *, width_mm: float, gate_mm: float, title: str,
                      info_table: InfoTable | None = None,
                      clean: bool = False) -> bytes:
@@ -384,8 +442,12 @@ def write_marker_plt(world_pieces, *, width_mm: float, gate_mm: float, title: st
 
     ``clean``（2026-08-31 毛版变体，additive 缺省 False 零变化，对齐生产毛版件
     data/PC-20250508NJIF_5028-1#_29223513.plt）：True 时裁片只画**最外层毛版
-    轮廓 polygon + 尺码×数量标注**（净版线/内部线/刀口/布纹杆羽全不画；标注
-    笔画与全量版逐点同几何，见 ``_label_strokes``），且带 ``info_table`` 时在
+    轮廓 polygon + 尺码×数量标注 + 最外层刀口**（净版线/内部线/布纹杆羽全不画；
+    刀口 2026-09-11 起按用户需求加入，画法与全量版同款 ``_notch_lines`` 但
+    ``edge_only`` 过滤——仅 notch 点贴毛版外轮廓 ≤2mm 的裁剪对位刀口，净版边
+    定位剪口/片内剪口不画，见 ``_NOTCH_EDGE_MAX_MM``；参考件正文无任何工艺线
+    属其自身口径；标注笔画与全量版逐点同几何，见 ``_label_strokes``），
+    且带 ``info_table`` 时在
     唛架**左端**再画一份同内容表格（世界 x∈[−(gap+W), 0]，value 带外缘与门幅
     左边框共线，与右表同构无镜像），X 走纸引导扩为
     ``PLOT_LEAD_X_MM + TABLE_GAP_MM + TABLE_W_MM``（左表绘制坐标非负）。见模块
@@ -492,11 +554,16 @@ def write_marker_plt(world_pieces, *, width_mm: float, gate_mm: float, title: st
                 layer_lines[_LAYER_OUTLINE].extend(_plt_polyline(closed=True, points=clipped,
                                                                  lead_x=lead_x))
 
-        # 毛版变体（2026-08-31）：裁片只画最外层毛版轮廓 + 尺码*数量标注——净版线/
-        # 内部线/刀口/布纹杆羽全部不画（参考件实测：相邻片轮廓贴合 0.00mm = 毛版
-        # 嵌套本体，正文无任何工艺线）。标注与全量版逐点同几何（_label_strokes
-        # 与 _grain_annotation_strokes 共用 _grain_frame），仅去杆+箭羽。
+        # 毛版变体（2026-08-31）：裁片只画最外层毛版轮廓 + 尺码*数量标注 + 最外层
+        # 刀口——净版线/内部线/布纹杆羽不画（参考件实测：相邻片轮廓贴合 0.00mm =
+        # 毛版嵌套本体，正文无任何工艺线；刀口 2026-09-11 起按用户需求加入，画法
+        # 与全量版同款 _notch_lines 但 edge_only 过滤——只画贴毛版外轮廓的刀口，
+        # 内部/净版边定位剪口不画，见模块注释「毛版变体」；输出层序经 _LAYER_NOTCH
+        # 桶仍在轮廓后标注前）。标注与全量版逐点同几何（_label_strokes 与
+        # _grain_annotation_strokes 共用 _grain_frame），仅去杆+箭羽。
         if clean:
+            layer_lines[_LAYER_NOTCH].extend(_notch_lines(pc, gate_f, lead_x,
+                                                          edge_only=True))
             gl = pc.get('grain_line')
             label = _grain_label_text(pc, pid_counts)
             if gl and len(gl) == 4 and label:
@@ -528,16 +595,11 @@ def write_marker_plt(world_pieces, *, width_mm: float, gate_mm: float, title: st
                 layer_lines[_LAYER_INTERNAL].extend(_plt_polyline(closed=False, points=run,
                                                                   lead_x=lead_x))
 
-        # 刺口 notches（沿法线 NOTCH_LEN_MM 短线段，与 PNG 同口径）。求解已钳制
-        # 在门幅内，刺口 ±half 外伸越线属工艺正常（生产 PLT 内容同样越框几 mm），
-        # 直接削平、不计入 clipped_pids 告警
-        half = NOTCH_LEN_MM / 2.0
-        for (x, y, nx, ny) in pc.get('notches') or []:
-            seg = [(x - nx * half, y - ny * half), (x + nx * half, y + ny * half)]
-            runs, _n_above = _clip_open_y(seg, gate_f)
-            for run in runs:
-                layer_lines[_LAYER_NOTCH].extend(_plt_polyline(closed=False, points=run,
-                                                               lead_x=lead_x))
+        # 刺口 notches（沿法线 NOTCH_LEN_MM 短线段，与 PNG 同口径；_notch_lines
+        # 与毛版变体共用单一真相源）。求解已钳制在门幅内，刺口 ±half 外伸越线
+        # 属工艺正常（生产 PLT 内容同样越框几 mm），直接削平、不计入 clipped_pids
+        # 告警
+        layer_lines[_LAYER_NOTCH].extend(_notch_lines(pc, gate_f, lead_x))
 
         # 布纹线 grain_line：单头箭头线（指向原始画向 B 端）+ 尺码*数量标注
         # （几何规则见 _grain_annotation_strokes）。同为工艺线，越线削平不告警

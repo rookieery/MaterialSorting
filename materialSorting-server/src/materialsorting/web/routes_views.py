@@ -362,8 +362,8 @@ async def export(req: Request):
     payload = {fmt:'png'|'dxf'|'plt'|'plt-clean', sizes:[..], seed, gate_mm, width_mm,
                density, placed:[{id,rotation,translation},...], filename?, table?}
     filename 为上传母版名（用作导出文件名前缀，去 .dxf）；缺省回退「排料」。
-    fmt='plt-clean'（2026-08-31 毛版，命名与裁片 layer1「毛版轮廓」同口径）：裁片仅最外层毛版轮廓 + 尺码*数量标注、
-    带表格时唛架左右两端各一份同内容表格（详见 export_plt 模块注释）。
+    fmt='plt-clean'（2026-08-31 毛版，命名与裁片 layer1「毛版轮廓」同口径）：裁片仅最外层毛版轮廓 + 尺码*数量标注 + 最外层刀口
+    （2026-09-11 起，画法与全量版同款但仅贴毛版边的刀口）、带表格时唛架左右两端各一份同内容表格（详见 export_plt 模块注释）。
     返回文件字节流（Content-Disposition 附件下载，中文文件名走 RFC5987）。
 
     US-003（多会话）：``X-Session-Id`` → 该会话的 ``pieces_by_id``（A 的 placed 匹配
@@ -413,9 +413,11 @@ async def export(req: Request):
         # ASCII（格式：M1787 util=<pct>% L=<L>cm gate=<gate>cm seed=<seed>，两位小数），
         # 避免中文编码风险。
         # fmt='plt-clean'（2026-08-31 毛版变体，对齐生产参考件 PC-20250508NJIF_5028-
-        # 1#_29223513.plt）：裁片只画最外层毛版轮廓 + 尺码*数量标注（净版线/内部线/
-        # 刀口/布纹杆羽不画），带表格时唛架左端再画一份同内容表格（文件名加 _clean/
-        # 毛版 后缀防与全量版混淆；前端格式下拉「PLT（毛版）」直传此值）。
+        # 1#_29223513.plt）：裁片只画最外层毛版轮廓 + 尺码*数量标注 + 最外层刀口
+        # （2026-09-11 起，画法与全量版同款 _notch_lines 但 edge_only——仅 notch 点
+        # 贴毛版外轮廓 ≤2mm 的裁剪对位刀口，内部/净版边定位剪口不画；净版线/
+        # 内部线/布纹杆羽不画），带表格时唛架左端再画一份同内容表格（文件名加
+        # _clean/毛版 后缀防与全量版混淆；前端格式下拉「PLT（毛版）」直传此值）。
         clean = fmt == 'plt-clean'
         title = f'M1787 util={pct:.2f}% L={width_mm / 10:.2f}cm gate={gate_mm / 10:.2f}cm seed={seed}'
         # 唛架信息表格（2026-08-30）：payload 可选 table 对象（前端导出弹窗 6 手输

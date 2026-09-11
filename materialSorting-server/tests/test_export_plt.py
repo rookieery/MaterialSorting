@@ -591,8 +591,9 @@ def test_label_clipped_at_gate():
 
 # --------------------------------------------- 毛版变体 clean=True（2026-08-31）
 # 对齐生产参考件 data/PC-20250508NJIF_5028-1#_29223513.plt：裁片只画最外层毛版
-# 轮廓 + 尺码*数量标注（净版线/内部线/刀口/布纹杆羽不画）；带表格时唛架左端再画
-# 一份同内容表格（左表集成断言在 test_plt_table.py，此处锁裁片层口径）。
+# 轮廓 + 尺码*数量标注 + 刀口（2026-09-11 起按用户需求加入，画法与全量版同款
+# _notch_lines；净版线/内部线/布纹杆羽不画）；带表格时唛架左端再画一份同内容
+# 表格（左表集成断言在 test_plt_table.py，此处锁裁片层口径）。
 
 
 def test_clean_default_false_byte_identical():
@@ -603,11 +604,12 @@ def test_clean_default_false_byte_identical():
 
 
 def test_clean_polygon_and_label_only():
-    """毛版裁片层 = 门幅框 + 毛版轮廓 + 标注，标注笔画与全量版逐折线相同。
+    """毛版裁片层 = 门幅框 + 毛版轮廓 + 刀口 + 标注，标注笔画与全量版逐折线相同。
 
     _full_piece 层序 polylines = [门幅框, polygon, net, internal, notch, 杆, 羽,
-    羽, 标注×8]；clean = [门幅框, polygon, 标注×8] —— 全量布纹段去杆+双羽后与
-    毛版剩余笔画**逐折线相等**（_label_strokes 与 _grain_annotation_strokes 共用
+    羽, 标注×8]；clean = [门幅框, polygon, notch, 标注×8] —— 刀口与全量版同款
+    （_notch_lines 单一真相源），全量布纹段去杆+双羽后与毛版剩余标注笔画
+    **逐折线相等**（_label_strokes 与 _grain_annotation_strokes 共用
     _grain_frame，落点恒一致）。"30*1" 标注 = 3(2笔)+0(1)+*(3)+1(2) = 8 折线。
     """
     kw = {"width_mm": 500, "gate_mm": 1000, "title": ""}
@@ -616,15 +618,17 @@ def test_clean_polygon_and_label_only():
     full_polys = _polylines(_body_section(full.split("\n")))
     clean_polys = _polylines(_body_section(clean.split("\n")))
     assert len(full_polys) == 8 + 8            # 门幅框+轮廓+net+internal+notch+杆+双羽 + 标注×8
-    assert len(clean_polys) == 2 + 8           # 门幅框+轮廓 + 标注×8
-    assert clean_polys[2:] == full_polys[5 + 3:]   # 标注逐笔同坐标（= 布纹段去杆+双羽）
+    assert len(clean_polys) == 3 + 8           # 门幅框+轮廓+notch + 标注×8
+    assert clean_polys[2] == full_polys[4]     # 刀口折线与全量版逐坐标相同（2026-09-11）
+    assert clean_polys[3:] == full_polys[5 + 3:]   # 标注逐笔同坐标（= 布纹段去杆+双羽）
     # 门幅框 + 毛版轮廓原样保留（clean 无表格 → 引导仍 20，与全量首两折线一致）
     assert clean_polys[:2] == full_polys[:2]
-    # 各工艺层起笔确不在毛版：net(10,10)/internal(20,20)/notch(50,4)/杆(50,50)
+    # 各工艺层起笔确不在毛版：net(10,10)/internal(20,20)/杆(50,50)
     # → +20 引导 +36 平移 → ×40
-    for tok in ("PU1200,1840;", "PU2800,2240;", "PU2800,1600;", "PU2800,3440;"):
+    for tok in ("PU1200,1840;", "PU2800,2240;", "PU2800,3440;"):
         assert tok not in clean
     assert "PU800,1440;" in clean              # 毛版轮廓起笔 (0,0) 原样在
+    assert "PU2800,1600;" in clean             # 刀口起笔 (50,4) 在毛版（2026-09-11）
 
 
 def test_clean_without_table_paper_size_same_as_full():
@@ -645,8 +649,38 @@ def test_clean_label_goes_through_same_clip_pipeline():
             ys = [int(t) for t in line[2:].rstrip(";").split(",")][1::2]
             ymax = max(ymax, max(ys))
     assert ymax <= int((36 + 1980) * 40)
-    # 毛版全文件只剩 门幅框+轮廓+标注×8（杆羽不画）
+    # 毛版全文件只剩 门幅框+轮廓+标注×8（杆羽不画；该片 notches 空 → 刀口层空）
     assert len(_polylines(_body_section(out.split("\n")))) == 2 + 8
+
+
+def test_clean_notch_same_geometry_as_full():
+    """毛版刀口 = 全量版同款画法，但仅画贴毛版外轮廓的「最外层刀口」（2026-09-11）。
+
+    _notch_lines 单一真相源 + edge_only 过滤：notch 点距 polygon 边界
+    ≤ _NOTCH_EDGE_MAX_MM=2mm 的裁剪对位刀口照画（与全量版逐坐标相同，含越
+    gate 削平路径），更远的内部/净版边定位剪口不画（毛版只展示最外层形状）；
+    全量版不受过滤影响全画。
+    """
+    kw = {"width_mm": 500, "gate_mm": 1000, "title": ""}
+    piece = _full_piece()
+    piece["polygon"] = [(0.0, 0.0), (100.0, 0.0), (100.0, 1000.0), (0.0, 1000.0)]
+    # 贴边×2：底边中央（d=0）+ 顶边精确贴边（d=0，线段 (50,996)-(50,1004) 越
+    # gate=1000 上端削平）；内部×1：(50,100) 距边界 50mm（净版边定位剪口形态）
+    piece["notches"] = [(50.0, 0.0, 0.0, -1.0), (50.0, 1000.0, 0.0, 1.0),
+                        (50.0, 100.0, 0.0, 1.0)]
+    full = _plt([piece], **kw)
+    clean = _plt([piece], clean=True, **kw)
+    full_polys = _polylines(_body_section(full.split("\n")))
+    clean_polys = _polylines(_body_section(clean.split("\n")))
+    assert len(full_polys) == 10 + 8           # 框+轮廓+net+internal+notch×3+杆+双羽 + 标注×8
+    assert len(clean_polys) == 4 + 8           # 框+轮廓+notch×2（内部那条滤掉） + 标注×8
+    assert clean_polys[2:4] == full_polys[4:6]  # 两条贴边刀口与全量版逐坐标相同（含削平段）
+    # 内部刀口（全量 notch 段末条，起笔 (50,96)）在全量版画、毛版确不在
+    assert full_polys[6] not in clean_polys
+    assert "PU2800,5280;" in full
+    assert "PU2800,5280;" not in clean
+    ymax = max(int(t) for p in clean_polys[2:4] for t in p[1::2])
+    assert ymax <= int((1000 + 36) * 40)       # 削平后不越绘制界（gate+平移36）×40
 
 
 if __name__ == "__main__":
