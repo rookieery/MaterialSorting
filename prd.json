@@ -1,11 +1,4 @@
 {
   "branchName": "ralph/state-file-save-restore",
-  "stories": [
-    {
-      "id": "US-005",
-      "title": "CLI intermediate 入口打通策略重跑",
-      "description": "As a 版师，I want 在恢复的会话上直接重新发起策略/极限运行 so that 不必重传母版也能继续算法调优。\n\n设计依据（已实证）：策略族 solve 阶段只吃 run_dir/pieces_intermediate.json（pipeline.py:358）、DXF 仅在 commit 阶段被消费一次（pipeline.py:147 collect_pieces_with_details）——给 CLI 一个「现成 intermediate」入口短路 commit 即可，无需母版。\n\n具体任务：\n1. materialSorting-server/src/materialsorting/cli/config.py — TOP_LEVEL_KEYS（:55-56）增第 10 键 intermediate（str 路径，与 master_dxf 二选一：都给/都不给 → ConfigError 消息含两键名；相对路径 CWD→仓库根双候选解析同 master_dxf 口径；docstring 同步 9 键 → 10 键）。\n2. cli/pipeline.py — commit_from_config 短路分支：cfg.intermediate 在案时跳过 collect_pieces_with_details parse/切片，把源 intermediate 校验（可解析、pieces 非空）后落 run_dir/pieces_intermediate.json；commit 摘要 source 取 doc.source；pieces/ 目录的下游消费面实施期核验（无消费者则不生成）；solve/LNS 段零改动（本就读 run_dir intermediate）。\n3. web/strategy.py — start 分支（strategy start 处 :645 master 解析附近）：out/uploads/<doc_id>.dxf 缺盘但会话 state 有 doc（恢复会话特征）→ 把 state['doc'] 以 intermediate schema 落 run_dir 产物区、spawn config 写 intermediate 键替代 master_dxf（不写 uploads、不碰本机事实源）；正常 commit 会话（母版在盘）零变化仍走 master_dxf。\n\n验收标准：\n- config 带 intermediate（无 master_dxf）跑通策略/极限全管线，run_dir 产物结构与 master_dxf 路径同构（result.json/strategy.json/best_frame 等）；master_dxf 与 intermediate 都给或都不给 → ConfigError（消息含两键名）。\n- 恢复会话（无母版在盘）经 /api/strategy/start 与 /api/extreme/start 发起 run → 200 正常执行至 done、结果可应用回主画布；正常 commit 会话路径零回归；run_stats.jsonl 的 class_key 口径与母版路径跑法一致（source 字符串同源）。\n- pytest：手写 intermediate config 短路用例、恢复会话发起策略 run 端到端、双键冲突/双缺 ConfigError、既有 CLI/策略用例零回归。\n- ms-run-config 带 intermediate 配置跑通（python -m materialsorting.cli.run_config 链路）、分层依赖未反向（cli 层不 import web.server）。",
-      "passes": true
-    }
-  ]
+  "stories": []
 }
