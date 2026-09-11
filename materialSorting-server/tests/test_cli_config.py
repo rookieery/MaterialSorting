@@ -282,6 +282,77 @@ def test_prefix_errors(base_payload, tmp_path):
                tmp_path, 'prefix', '不同 g 码')
 
 
+# ------------------------------------------- intermediate（10 键 schema，US-005）
+
+def test_intermediate_key_loads(base_payload, tmp_path):
+    """intermediate（无 master_dxf）合法：解析为存在的绝对路径、master_dxf=None。"""
+    src = tmp_path / 'pieces_intermediate.json'
+    src.write_text('{"pieces": []}', encoding='utf-8')
+    payload = {k: v for k, v in base_payload.items() if k != 'master_dxf'}
+    payload['intermediate'] = str(src)
+    cfg = load_config(_write_cfg(tmp_path, payload))
+    assert cfg.intermediate == src.resolve()
+    assert cfg.intermediate.is_file()
+    assert cfg.master_dxf is None                      # 二选一：另一键缺位
+    # 其余键不受影响（sizes/gate_mm/seeds/per_type/quantities 全部照常生效）
+    assert cfg.sizes == [32, 33] and cfg.gate_mm == 1980 and cfg.seeds == [0]
+
+
+def test_intermediate_relative_resolution_cwd_then_repo_root(tmp_path, monkeypatch):
+    """相对路径解析与 master_dxf 同口径：CWD 命中 → 仓库根兜底 → 均失败列双候选。"""
+    (tmp_path / 'run_a').mkdir()
+    (tmp_path / 'run_a' / 'pieces_intermediate.json').write_text('{}', encoding='utf-8')
+    monkeypatch.chdir(tmp_path)
+    cfg = load_config(_write_cfg(
+        tmp_path, {'intermediate': 'run_a/pieces_intermediate.json', 'gate_mm': 1980}))
+    assert cfg.intermediate == (tmp_path / 'run_a' / 'pieces_intermediate.json').resolve()
+
+    # CWD 下无 data/… 但仓库根有（与 master_dxf 同一兜底口径；config 层只验路径
+    # 存在、不验内容 —— intermediate 内容校验在 commit 短路段）→ 仓库根候选兜底
+    cfg = load_config(_write_cfg(
+        tmp_path, {'intermediate': 'data/configs/5336_coded_sizes32-38.json',
+                   'gate_mm': 1980}))
+    assert cfg.intermediate == (_REPO_ROOT / 'data' / 'configs' /
+                                '5336_coded_sizes32-38.json').resolve()
+
+    # 两候选均失败 → 报错列出两个候选绝对路径
+    with pytest.raises(ConfigError) as ei:
+        load_config(_write_cfg(
+            tmp_path, {'intermediate': 'out/不存在_intermediate.json',
+                       'gate_mm': 1980}))
+    msg = str(ei.value)
+    assert 'intermediate' in msg
+    assert str((tmp_path / 'out' / '不存在_intermediate.json').resolve()) in msg
+    assert str((_REPO_ROOT / 'out' / '不存在_intermediate.json').resolve()) in msg
+
+
+def test_intermediate_master_dxf_mutual_exclusion(base_payload, tmp_path):
+    """二选一互斥：两键同给 / 同缺 → ConfigError 且消息含两键名（同缺含「必填」）。"""
+    src = tmp_path / 'pieces_intermediate.json'
+    src.write_text('{}', encoding='utf-8')
+    # 两键同给 → 语义打架
+    with pytest.raises(ConfigError) as ei:
+        load_config(_write_cfg(tmp_path, {**base_payload, 'intermediate': str(src)}))
+    msg = str(ei.value)
+    assert 'master_dxf' in msg and 'intermediate' in msg and '互斥' in msg
+    # 同缺 → 无数据源
+    neither = {k: v for k, v in base_payload.items() if k != 'master_dxf'}
+    with pytest.raises(ConfigError) as ei:
+        load_config(_write_cfg(tmp_path, neither))
+    msg = str(ei.value)
+    assert 'master_dxf' in msg and 'intermediate' in msg and '必填' in msg
+
+
+def test_intermediate_errors(base_payload, tmp_path):
+    """intermediate 形态错误：非字符串 / 绝对路径不存在（报该路径）。"""
+    payload = {k: v for k, v in base_payload.items() if k != 'master_dxf'}
+    _must_fail({**payload, 'intermediate': 123}, tmp_path, 'intermediate')
+    _must_fail({**payload, 'intermediate': ''}, tmp_path, 'intermediate')
+    gone = tmp_path / 'gone_intermediate.json'
+    text = _must_fail({**payload, 'intermediate': str(gone)}, tmp_path, 'intermediate')
+    assert str(gone) in text
+
+
 def test_gate_mm_errors(base_payload, tmp_path):
     _must_fail({**base_payload, 'gate_mm': 0}, tmp_path, 'gate_mm')
     _must_fail({**base_payload, 'gate_mm': -1980}, tmp_path, 'gate_mm')

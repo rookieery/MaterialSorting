@@ -18,12 +18,17 @@ band/prefix 2026-08-30 起与策略族**同路径透传**（``_parse_band``/``_p
     {se,race} / minutes ∈ {10,20,30,60} / band 经 ``routes_ws._parse_band`` 同一
     校验点 / prefix 经 ``routes_ws._parse_prefix`` 同一校验点）→ **清理本会话
     前缀的上一轮 web 产物**（``_cleanup_stale_web_artifacts(sid)``：sid 会话只清
-    ``web_<sid6>_*``；default 沿用清全部 ``web_*`` 但跳过并行会话前缀）→ 写 9 键
+    ``web_<sid6>_*``；default 沿用清全部 ``web_*`` 但跳过并行会话前缀）→ 写 10 键
     config JSON 到 ``out/uploads/strategy_cfg_[<sid6>_]<stamp>.json`` → spawn
     ``python -m materialsorting.cli.run_config <cfg> --name web_[<sid6>_]<mode>_<rand6>
     --strategy <mode> --time <minutes*60> --quiet``（stdout=DEVNULL、stderr=临时文件）
     → 快照 ``out/config_runs/`` → 写 marker ``.web_strategy_active[_<sid>].json``
-    → 202。跨会话完全并发放开（接受 CPU 争抢，不加全局闸门）。
+    → 202。跨会话完全并发放开（接受 CPU 争抢，不加全局闸门）。US-005 数据源二
+    选一：恢复会话（``out/uploads/<doc_id>.dxf`` 缺盘但会话 doc 带 pieces）→ 会话
+    doc 以 intermediate schema 落 ``out/config_runs/web_[<sid6>_]int_<stamp>_
+    <rand6>.json``（web_ 前缀入清理面；不写 uploads、不碰 ``paths.INTERMEDIATE``
+    本机事实源），config 写 ``intermediate`` 键替代 ``master_dxf``（CLI commit 短路）；
+    正常 commit 会话（母版在盘）零变化仍走 ``master_dxf``。
   - ``GET /api/strategy/status``：无状态惰性轮询（不缓存中间态，每次现读本会话
     run_dir 产物；进度源只用 strategy.json / result.json / best_frame_s*.json /
     kill_decisions.jsonl —— ``curve_s*.json`` 运行中非合法 JSON 缺右括号，不读）。
@@ -641,9 +646,22 @@ async def _start_run(req: Request, family: str):
     if not pieces or gate_state <= 0:
         return JSONResponse(
             {'error': '排料数据为空（请先上传解析母版并 commit）'}, status_code=422)
-    doc_id = (state.get('doc') or {}).get('doc_id')
+    # 数据源二选一（US-005 状态文件恢复会话重跑）：正常 commit 会话 → 母版在盘
+    # （out/uploads/<doc_id>.dxf）→ spawn config 写 master_dxf（零变化）；恢复会话
+    # 特征 = 母版缺盘但会话 doc 带 pieces（.msn 重建，statefile 校验链保证 doc 即
+    # intermediate schema v2 全量）→ doc 以 intermediate 落 run_dir 产物区
+    # （out/config_runs/web_[<sid6>_]int_<stamp>_<rand6>.json，web_ 前缀入
+    # _cleanup_stale_web_artifacts 清理面；不写 uploads、不碰 paths.INTERMEDIATE
+    # 本机事实源），spawn config 写 intermediate 键（cli.config 10 键 schema 二选一）。
+    # 两者皆无（旧 intermediate 无 doc_id / doc 无 pieces）→ 422 原文案。
+    doc = state.get('doc') or {}
+    doc_id = doc.get('doc_id')
     master = _uploads_dir() / f'{doc_id}.dxf' if doc_id else None
-    if not doc_id or master is None or not master.is_file():
+    if master is not None and master.is_file():
+        intermediate_doc = None        # 正常 commit 会话：母版在盘 → master_dxf
+    elif doc.get('pieces'):
+        intermediate_doc = doc         # 恢复会话：doc 即 intermediate schema
+    else:
         return JSONResponse(
             {'error': '母版信息缺少 doc_id，请重新上传并 commit'}, status_code=422)
 
@@ -718,7 +736,7 @@ async def _start_run(req: Request, family: str):
     # 腰头成带（2026-08-22 与策略模式解除互斥；2026-08-30 起极限运行同款透传，
     # 方案 §5 范围外条目解除）：复用 routes_ws._parse_band 单一校验点（label
     # ^g\d+$ / 存在于当前母版 / 该 g 码 quantities>0），非法 → 400 结构化早退；
-    # 合法开启 → 以 StartPayload 原形态写进 config JSON（cli.config 9 键 schema
+    # 合法开启 → 以 StartPayload 原形态写进 config JSON（cli.config 10 键 schema
     # 的 band 键）。null / enabled falsy → _parse_band 返回 None，不写键（旧
     # 行为）。延迟 import：routes_ws → runtime → server 链若在模块级 import
     # 本模块（server.py 文件尾注册路由）之外再正向引用会成环，函数内取用安全
@@ -737,7 +755,7 @@ async def _start_run(req: Request, family: str):
     # 同款透传）：复用 routes_ws._parse_prefix 单一校验点（front/back ^g\d+$ 且
     # 存在于当前母版且 front≠back + **2+2 资格码 ≥1**（sizes = 用户所排尺码
     # 过滤）—— start 期拦下避免长跑空烧），非法 → 400 结构化早退；合法开启 →
-    # 以 StartPayload 原形态写进 config JSON（cli.config 9 键 schema 的 prefix
+    # 以 StartPayload 原形态写进 config JSON（cli.config 10 键 schema 的 prefix
     # 键）。null / enabled falsy → _parse_prefix 返回 None，不写键（旧行为）。
     # 延迟 import 防成环（同上 _parse_band）。
     prefix_cfg = None
@@ -752,15 +770,27 @@ async def _start_run(req: Request, family: str):
             prefix_cfg = {'enabled': True, 'front': worker_prefix['front'],
                           'back': worker_prefix['back']}
 
-    # 9 键 config JSON（cli.config.load_config 严格校验；可选键仅在有值时写入 ——
+    # 命名段先行（cfg / intermediate / run_name / stderr 共用；US-005 起 intermediate
+    # 落点也用 stamp+rand6，须在 cfg_payload 组装前可用）。
+    s6 = _sid6(sid)
+    stamp = time.strftime('%Y%m%d-%H%M%S')
+    rand6 = uuid.uuid4().hex[:6]
+
+    # 10 键 config JSON（cli.config.load_config 严格校验；可选键仅在有值时写入 ——
     # None 值会被 load_config 按类型错误拒绝）。band/prefix 两族（strategy /
-    # extreme）共用同一透传路径，下游 CLI/pipeline 模式无关。
+    # extreme）共用同一透传路径，下游 CLI/pipeline 模式无关。数据源键二选一
+    # （US-005）：恢复会话 → intermediate（会话 doc 落 run_dir 产物区后按路径引用）；
+    # 正常 commit 会话 → master_dxf（零变化）。
     cfg_payload = {
-        'master_dxf': str(master.resolve()),
         'gate_mm': float(gate_mm),
         'time': total_sec,
         'seeds': [seed],
     }
+    if intermediate_doc is not None:
+        cfg_payload['intermediate'] = str(
+            _config_runs_dir() / f'web_{s6}int_{stamp}_{rand6}.json')
+    else:
+        cfg_payload['master_dxf'] = str(master.resolve())
     if sizes:
         cfg_payload['sizes'] = sizes
     if per_type:
@@ -776,12 +806,20 @@ async def _start_run(req: Request, family: str):
     # 闸门已过 → 本前缀产物无人消费；跨会话产物（sid 前缀互斥 / default 保护集）
     # 不误删。前缀口径天然覆盖极限（sid 会话 ``web_<sid6>*`` / default ``web_*``
     # 均含 ``extreme`` 段）。清理先于本轮 cfg / stderr / run_dir 创建，best-effort
-    # 失败不阻塞。
+    # 失败不阻塞。US-005：恢复会话的 ``web_[<sid6>_]int_*`` 临时 intermediate 同在
+    # 清理面（故其写入必须晚于本调用 —— 先写会被本轮清理误删）。
     _cleanup_stale_web_artifacts(sid)
 
-    s6 = _sid6(sid)
-    stamp = time.strftime('%Y%m%d-%H%M%S')
-    rand6 = uuid.uuid4().hex[:6]
+    if intermediate_doc is not None:
+        # 恢复会话 doc → intermediate 落盘（web_ 前缀入下轮清理面；spawn 的 CLI
+        # 子进程 load_config 期即读它，写盘须先于 spawn）。gate 保持 doc 原值 ——
+        # 求解幅宽由 cfg_payload['gate_mm'] 在 CLI 短路 commit 覆盖（改幅宽重跑是
+        # 状态文件恢复的既有场景）。
+        intermediate_path = Path(cfg_payload['intermediate'])
+        _config_runs_dir().mkdir(parents=True, exist_ok=True)
+        with open(intermediate_path, 'w', encoding='utf-8') as f:
+            json.dump(intermediate_doc, f, ensure_ascii=False)
+
     _uploads_dir().mkdir(parents=True, exist_ok=True)
     cfg_path = _uploads_dir() / f'strategy_cfg_{s6}{stamp}.json'
     with open(cfg_path, 'w', encoding='utf-8') as f:

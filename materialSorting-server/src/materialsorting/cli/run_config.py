@@ -13,11 +13,19 @@ r"""ms-run-config 入口 —— 一条命令跑完「commit → 求解」，无�
                   [--extreme --time 总预算 [--extreme-budget 600|1200]]
     python -m materialsorting.cli.run_config <config.json> --time 5
 
-流程：``load_config``（9 键 schema 校验）→ ``new_run_dir``（时间戳目录保留历史）
+流程：``load_config``（10 键 schema 校验）→ ``new_run_dir``（时间戳目录保留历史）
 → ``commit_from_config``（切片 + intermediate 落 run_dir，**仅一次**）→ 逐 ``seeds``
 元素**经 ``cli.portfolio`` 控制器串行** ``solve_pieces``（每轮重建 build_instance，
 复用同一份 commit 产物）→ ``result.json``（config 回显 + commit 摘要 + solve 指标
 数组 + **best** + **portfolio** 段）→ stdout 末行人类可读汇总。
+
+US-005（状态文件恢复会话重跑策略）：config 的数据源键 ``master_dxf`` / ``intermediate``
+**二选一** —— ``intermediate`` 给现成 ``pieces_intermediate.json`` 路径时 commit 短路
+（不 parse 母版不切片，源文件校验后落 run_dir；见 ``pipeline._commit_from_intermediate``），
+solve / 策略 / 极限段零改动（本就读 run_dir intermediate）。``run_stats.jsonl`` 的
+source/class_key：母版路径 = master_dxf 绝对路径（历史口径逐字节不变）；intermediate
+路径 = ``doc.source`` 母版身份字符串（与 commit 摘要同源 —— web 恢复会话每次 run 的
+临时 intermediate 路径含 stamp+rand6 唯一，取路径会让 class_key 无法跨 run 积累）。
 
 多 seed 语义（US-004；PC-002 起经 portfolio 控制器转发）：seeds 列表 ≥2 个时自动
 串行逐 seed 求解并汇总最优；种子不要求连续（``[0, 42]`` 合法）；**只做串行，不做
@@ -205,7 +213,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         prog='ms-run-config',
         description='配置驱动排料：一条命令跑完「commit → 求解」，输出原面积口径利用率',
     )
-    p.add_argument('config', help='配置文件路径（9 键 JSON schema，见 data/configs/）')
+    p.add_argument('config', help='配置文件路径（10 键 JSON schema，见 data/configs/）')
     p.add_argument('--name', metavar='RUN_NAME',
                    help='覆盖 run_name（缺省 = 配置文件 stem，非法字符清洗）')
     p.add_argument('--time', type=int, metavar='N',
@@ -616,7 +624,7 @@ def main(argv: list[str] | None = None) -> int:
         if cfg.band is not None:
             print(f'  ⚠ 腰头成带已开启（band g 码 {cfg.band["label"]}）：'
                   '波段重排会拆散带形态，LNS 环节将跳过', file=sys.stderr)
-        # US-003 预埋（2026-08-25 起 9 键 schema 接入即刻生效；FR-11 —— 波段重排
+        # US-003 预埋（2026-08-25 起 10 键 schema 接入即刻生效；FR-11 —— 波段重排
         # 会拆钉位：前缀组合片 x=0 锚定 + 段成员刚体关系被段重排破坏）。
         if cfg.prefix is not None:
             print(f'  ⚠ 起始端成套前后幅已开启（prefix {cfg.prefix.get("front")}'
@@ -631,13 +639,32 @@ def main(argv: list[str] | None = None) -> int:
     # band label 纳入 class_key（band off → 不加组件 = 与旧口径逐字节一致，历史
     # 样本继续命中；band on → 新 key，+2pt 级密度差不与 band off 混同分布）。
     # prefix 同款（2026-08-25）：'g02+g03' 组件（~0.7pt 偏移 > θ₀ margin 0.3pt）。
+    # US-005：intermediate 路径的 source = doc.source（commit 摘要同源，母版身份
+    # 字符串）—— web 恢复会话每次 run 的临时 intermediate 路径含 stamp+rand6 唯一，
+    # 若取路径会把 class_key 撕成每 run 唯一，θ₀ 校准历史无法积累；master_dxf
+    # 路径 source 仍为绝对路径（历史口径逐字节不变，存量统计行继续命中）。class_key
+    # 计算挪到 commit 之后（doc.source 来自 commit 产物，纯读取无副作用，位置无行为
+    # 影响）。
+    theta0 = None
+    stats_source = None
+    stats_class_key = None
+
+    try:
+        commit = commit_from_config(cfg, run_dir)
+    except Exception as e:
+        print(f'commit 管线失败: {e}', file=sys.stderr)
+        return _EXIT_CONFIG_OR_COMMIT
+    print(f"commit: n_pieces={commit['n_pieces']} "
+          f"total_area={commit['total_area_mm2']:,.1f}mm² "
+          f"sizes={commit['sizes']} skipped={commit['n_skipped']}")
+    stats_source = (str(cfg.master_dxf) if cfg.master_dxf is not None
+                    else str(commit.get('source') or cfg.intermediate))
     _pf, _pb = (cfg.prefix or {}).get('front'), (cfg.prefix or {}).get('back')
-    stats_class_key = run_stats_class_key(str(cfg.master_dxf), cfg.sizes,
+    stats_class_key = run_stats_class_key(stats_source, cfg.sizes,
                                           cfg.quantities, cfg.per_type,
                                           band_label=(cfg.band or {}).get('label'),
                                           prefix_labels=(f'{_pf}+{_pb}'
                                                          if _pf and _pb else None))
-    theta0 = None
     # US-002：策略模式 θ 不维护（R1/R2 不评估），校准无判据可锚 → 跳过。
     if args.target is not None and strategy is None:
         theta0, info = calibrate_theta0(load_run_stats(paths.RUN_STATS_JSONL),
@@ -649,15 +676,6 @@ def main(argv: list[str] | None = None) -> int:
                   f'θ 初值={theta0:.2%}'
                   f'（= min(target, 历史最高 + {THETA0_MARGIN * 100:.2f}pt)；'
                   f'只影响 kill 门槛，R0 停止条件恒用 --target）')
-
-    try:
-        commit = commit_from_config(cfg, run_dir)
-    except Exception as e:
-        print(f'commit 管线失败: {e}', file=sys.stderr)
-        return _EXIT_CONFIG_OR_COMMIT
-    print(f"commit: n_pieces={commit['n_pieces']} "
-          f"total_area={commit['total_area_mm2']:,.1f}mm² "
-          f"sizes={commit['sizes']} skipped={commit['n_skipped']}")
 
     # US-002 R1 增量（US-004 web 桥接前置）：策略模式 commit 完成后、首轮求解前
     # 写 strategy.json —— run 一启动即暴露模式 / 计划轮数 / 种子流（result.json
@@ -729,7 +747,12 @@ def main(argv: list[str] | None = None) -> int:
         result = {
             'config': {
                 'path': str(Path(args.config).resolve()),
-                'master_dxf': str(cfg.master_dxf),
+                # US-005：数据源键二选一（与 config 文件同形）—— master_dxf 路径
+                # 逐字节不变（存量 result 对拍零回归）；intermediate 路径写源文件
+                # 绝对路径、不写 master_dxf 键。
+                **({'master_dxf': str(cfg.master_dxf)}
+                   if cfg.master_dxf is not None
+                   else {'intermediate': str(cfg.intermediate)}),
                 'sizes': cfg.sizes,
                 'gate_mm': cfg.gate_mm,
                 # time 回显「实际生效值」（--time 覆盖后的），run 可复现优先于原文件字面。
@@ -906,7 +929,9 @@ def main(argv: list[str] | None = None) -> int:
     # （LNS 改进已并入 best）。写侧失败在 _append_run_stats 内降级 warn。
     _append_run_stats({
         'ts': time.strftime('%Y-%m-%dT%H:%M:%S'),
-        'source': str(cfg.master_dxf),
+        # US-005：与 stats_class_key 同一 source（master_dxf 路径 = 绝对路径不变；
+        # intermediate 路径 = doc.source 母版身份，同 commit 摘要）。
+        'source': stats_source,
         'sizes': cfg.sizes,
         'class_key': stats_class_key,
         # US-002：策略模式记计划种子流（strategy_seed_stream 产物，config 原值在

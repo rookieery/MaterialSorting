@@ -228,5 +228,93 @@ def test_run_as_module_no_side_effects():
     assert r.stderr == b''
 
 
+# ------------------------------------------- US-005 intermediate 短路 commit
+
+
+def _int_cfg(intermediate, gate_mm=1500.0) -> NestRunConfig:
+    """intermediate 数据源配置（与 master_dxf 二选一的另一臂）。"""
+    return NestRunConfig(intermediate=Path(intermediate), gate_mm=gate_mm)
+
+
+def test_commit_short_circuit_from_intermediate(iso_env):
+    """US-005：cfg.intermediate 在案 → 跳过 parse/切片，源 doc 校验后落 run_dir。
+
+    摘要 source 取 doc.source；gate 由 cfg 覆盖（solve 阶段 gate 取自 run_dir
+    intermediate 而非 config）；pieces/ 目录不生成（无下游消费面）；源文件不改写。
+    """
+    tmp, _, _, runs, master = iso_env
+    # 源 intermediate：先走一遍母版路径 commit 产物（真实 schema v2）
+    src_run = runs / 'src_run'
+    commit_from_config(_cfg(master), src_run)
+    src_inter = src_run / 'pieces_intermediate.json'
+    src_bytes = src_inter.read_bytes()
+
+    run_dir = runs / 'short_run'
+    summary = commit_from_config(_int_cfg(src_inter, gate_mm=1500.0), run_dir)
+
+    written = json.loads((run_dir / 'pieces_intermediate.json').read_text(encoding='utf-8'))
+    src_doc = json.loads(src_bytes)
+    # pieces 原样、gate 被 cfg 覆盖、source 保留母版名
+    assert written['pieces'] == src_doc['pieces']
+    assert written['gate_mm'] == 1500.0
+    assert written['source'] == master.name
+    # 摘要：与母版路径同构（10 键），短路特有值 = 无单裁片产出
+    assert summary['source'] == master.name
+    assert summary['run_dir'] == str(run_dir)
+    assert summary['intermediate'] == str(run_dir / 'pieces_intermediate.json')
+    assert summary['pieces_dir'] is None
+    assert summary['n_written_dxf'] == 0
+    assert summary['n_skipped'] == 0 and summary['skipped'] == []
+    assert summary['n_pieces'] == _N_OUTLINES_SIZED == len(written['pieces'])
+    assert summary['sizes'] == [28, 29]
+    assert summary['total_area_mm2'] == round(
+        sum(p['area_mm2'] for p in src_doc['pieces']), 1)
+    # pieces/ 目录不生成；源文件原样不改写（copy 语义）
+    assert not (run_dir / 'pieces').exists()
+    assert src_inter.read_bytes() == src_bytes
+
+
+def test_commit_intermediate_bad_source(iso_env, tmp_path):
+    """源 intermediate 不可读 / 非法 JSON / pieces 空 → RuntimeError。"""
+    _, _, _, runs, _ = iso_env
+    bad_json = tmp_path / 'bad.json'
+    bad_json.write_text('{"pieces": [}', encoding='utf-8')
+    empty = tmp_path / 'empty.json'
+    empty.write_text('{"source": "x", "gate_mm": 1, "pieces": []}', encoding='utf-8')
+    gone = tmp_path / 'gone.json'
+    for src in (bad_json, empty, gone):
+        with pytest.raises(RuntimeError, match='intermediate'):
+            commit_from_config(_int_cfg(src), runs / f'run_{src.stem}')
+
+
+def test_solve_pieces_runs_off_short_circuit(iso_env):
+    """短路产物可被 solve_pieces 直接消费（策略族 solve 只吃 run_dir intermediate）。
+
+    同源数据 vs 母版路径：同 gate/seed 下 n_items/total_area/n_eroded 逐字段一致
+    —— 短路是纯数据搬运，求解行为零漂移。
+    """
+    from materialsorting.cli.pipeline import solve_pieces
+
+    tmp, _, _, runs, master = iso_env
+    src_run = runs / 'src_run2'
+    commit_from_config(_cfg(master), src_run)
+    src_inter = src_run / 'pieces_intermediate.json'
+
+    run_master = runs / 'solve_master'
+    cfg_m = _cfg(master, gate_mm=1980.0)
+    commit_from_config(cfg_m, run_master)
+    rec_m = solve_pieces(cfg_m, run_master, seed=0, time_budget=2)
+
+    run_short = runs / 'solve_short'
+    cfg_i = _int_cfg(src_inter, gate_mm=1980.0)
+    commit_from_config(cfg_i, run_short)
+    rec_i = solve_pieces(cfg_i, run_short, seed=0, time_budget=2)
+
+    assert rec_i['n_items'] == rec_m['n_items']
+    assert rec_i['total_area_mm2'] == rec_m['total_area_mm2']
+    assert rec_i['n_eroded'] == rec_m['n_eroded'] == 0
+    assert rec_i['placed_items'] == rec_m['placed_items'] == _N_OUTLINES_SIZED
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

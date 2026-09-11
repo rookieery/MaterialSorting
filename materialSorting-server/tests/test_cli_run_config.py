@@ -472,5 +472,93 @@ def test_layering_pipeline_web_solver_lazy_only():
     assert len(lazy) == 1                              # solve_pieces 内唯一延迟 import
 
 
+# ------------------------------------------------ US-005 intermediate 数据源
+
+
+def test_main_intermediate_config_end_to_end(iso_env, capsys, monkeypatch):
+    """US-005：intermediate（无 master_dxf）跑通全管线，产物结构与母版路径同构。
+
+    config 回显数据源键互换（intermediate 在 / master_dxf 缺）；commit.source =
+    doc.source；run_stats 行 source 与 class_key 同源（doc.source，非临时路径）。
+    """
+    from materialsorting.cli.portfolio import run_stats_class_key
+
+    tmp, runs, inter, uploads, master = iso_env
+    stats = tmp / 'run_stats.jsonl'
+    monkeypatch.setattr(paths_mod, 'RUN_STATS_JSONL', str(stats))
+
+    # 源 intermediate：母版路径先跑一轮（真实 schema v2 产物）
+    rc_src = main([str(_write_config(tmp / 'cfg_src.json', master)),
+                   '--name', 'int_src', '--time', '2', '--quiet'])
+    assert rc_src == 0
+    capsys.readouterr()
+    (src_rd,) = [d for d in runs.iterdir() if d.name.startswith('int_src_')]
+    src_inter = src_rd / 'pieces_intermediate.json'
+
+    # intermediate 配置（数据源二选一的另一臂，gate 换值验证覆盖语义）
+    cfg_path = tmp / 'cfg_int.json'
+    cfg_path.write_text(json.dumps(
+        {'intermediate': str(src_inter), 'gate_mm': 1500, 'time': 2},
+        ensure_ascii=False), encoding='utf-8')
+    rc = main([str(cfg_path), '--name', 'int_run', '--time', '2'])
+    assert rc == 0
+    capsys.readouterr()
+
+    (rd,) = [d for d in runs.iterdir() if d.name.startswith('int_run_')]
+    result = json.loads((rd / 'result.json').read_text(encoding='utf-8'))
+    # config 回显：intermediate 在、master_dxf 缺
+    assert 'intermediate' in result['config']
+    assert result['config']['intermediate'] == str(src_inter.resolve())
+    assert 'master_dxf' not in result['config']
+    # commit 摘要：source 取 doc.source（母版文件名）；无单裁片产出
+    assert result['commit']['source'] == master.name
+    assert result['commit']['pieces_dir'] is None
+    assert result['commit']['n_written_dxf'] == 0
+    assert result['commit']['n_pieces'] == _N_PIECES
+    # run_dir 产物结构同构（母版路径的 solve/best 段全在）
+    assert len(result['solve']) == 1
+    assert result['solve'][0]['placed_items'] == _N_PIECES
+    assert (rd / 'best_frame_s0.json').is_file()
+    assert (rd / 'curve_s0.json').is_file()
+    assert (rd / 'pieces_intermediate.json').is_file()
+    written = json.loads((rd / 'pieces_intermediate.json').read_text(encoding='utf-8'))
+    assert written['gate_mm'] == 1500.0                     # cfg 覆盖源文件 gate
+    # run_stats：source/class_key 同源 doc.source（非临时 intermediate 路径）
+    rows = [json.loads(x) for x in
+            stats.read_text(encoding='utf-8').strip().splitlines()]
+    assert rows[-1]['source'] == master.name
+    assert rows[-1]['class_key'] == run_stats_class_key(
+        master.name, rows[-1]['sizes'], rows[-1]['config']['quantities'],
+        rows[-1]['config']['per_type'])
+
+
+def test_main_master_dxf_stats_source_unchanged(iso_env, capsys, monkeypatch):
+    """母版路径 run_stats source 仍为 master_dxf 绝对路径（历史口径零回归）。"""
+    tmp, runs, _, _, master = iso_env
+    stats = tmp / 'run_stats.jsonl'
+    monkeypatch.setattr(paths_mod, 'RUN_STATS_JSONL', str(stats))
+    rc = main([str(_write_config(tmp / 'cfg_m.json', master)), '--time', '2', '--quiet'])
+    assert rc == 0
+    capsys.readouterr()
+    (row,) = [json.loads(x) for x in
+              stats.read_text(encoding='utf-8').strip().splitlines()]
+    assert row['source'] == str(master.resolve())
+
+
+def test_main_intermediate_master_mutual_exclusion_exit_1(iso_env, capsys, tmp_path):
+    """master_dxf / intermediate 同给 → load_config ConfigError → 退出码 1。"""
+    _, runs, _, _, master = iso_env
+    cfg_path = tmp_path / 'cfg_bad.json'
+    cfg_path.write_text(json.dumps(
+        {'master_dxf': str(master),
+         'intermediate': str(tmp_path / 'nonexistent.json'),
+         'gate_mm': 1980}, ensure_ascii=False), encoding='utf-8')
+    rc = main([str(cfg_path), '--time', '2'])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert 'master_dxf' in err and 'intermediate' in err and '互斥' in err
+    assert list(runs.iterdir()) == []                      # 不留空 run_dir
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

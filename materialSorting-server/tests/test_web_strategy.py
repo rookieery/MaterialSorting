@@ -1200,6 +1200,148 @@ def test_web_app_strategy_routes_present():
                 '/api/strategy/stop', '/api/strategy/result'} <= paths
 
 
+# --------------------------------------- US-005 恢复会话 intermediate 数据源
+
+
+def _restored_state(doc_id='cafe1234', pieces=None, gate_mm=1980.0) -> dict:
+    """恢复会话特征 state：doc 即 intermediate schema v2（doc_id + source + gate_mm
+    + pieces —— statefile 校验链保证恢复会话 doc 恒带全量 pieces）。"""
+    pieces = _synthetic_pieces() if pieces is None else pieces
+    doc = {'doc_id': doc_id, 'source': 'm.dxf', 'gate_mm': gate_mm, 'pieces': pieces}
+    return {'doc': doc, 'gate_mm': gate_mm, 'pieces': pieces,
+            'pieces_by_id': {p['pid']: p for p in pieces}}
+
+
+def test_start_restored_session_writes_intermediate(strat_env, monkeypatch):
+    """恢复会话（母版缺盘、doc 带 pieces）→ 202；config 写 intermediate 无
+    master_dxf；doc 落 config_runs/web_int_*.json；不写 uploads、不碰事实源。"""
+    _patch_state(monkeypatch, _restored_state())
+    calls = _spawn_capture(monkeypatch, pid=790)
+
+    r = _client().post('/api/strategy/start', json={'mode': 'race', 'minutes': 10,
+                                                    'gate_mm': 1800})
+    assert r.status_code == 202
+
+    # config JSON：数据源键互换（intermediate 在 / master_dxf 缺），gate 取请求覆盖
+    uploads = Path(paths_mod.OUT_DIR) / 'uploads'
+    cfg = json.loads(next(iter(uploads.glob('strategy_cfg_*.json')))
+                     .read_text(encoding='utf-8'))
+    assert 'intermediate' in cfg and 'master_dxf' not in cfg
+    assert cfg['gate_mm'] == 1800.0 and cfg['time'] == 600 and cfg['seeds'] == [0]
+
+    # doc 落 run_dir 产物区（web_int_* 与 config 引用同一路径）
+    int_files = list(Path(paths_mod.CONFIG_RUNS_DIR).glob('web_int_*.json'))
+    assert len(int_files) == 1
+    assert cfg['intermediate'] == str(int_files[0])
+    written = json.loads(int_files[0].read_text(encoding='utf-8'))
+    assert written['source'] == 'm.dxf'
+    assert written['doc_id'] == 'cafe1234'
+    assert len(written['pieces']) == 3
+    assert written['gate_mm'] == 1980.0            # doc 原值；求解 gate 由 cfg 覆盖
+
+    # 不写 uploads 母版、不落盘 INTERMEDIATE 事实源
+    assert list(uploads.glob('*.dxf')) == []
+    assert not (Path(paths_mod.OUT_DIR) / 'sparrow_baseline' /
+                'pieces_intermediate.json').exists()
+
+    # spawn cmd 形不变（config 路径 + --strategy race --time 600 --quiet）
+    cmd = calls['cmd']
+    assert cmd[1:3] == ['-m', 'materialsorting.cli.run_config']
+    assert cmd[cmd.index('--strategy') + 1] == 'race'
+    assert cmd[cmd.index('--time') + 1] == '600'
+
+
+def test_start_restored_extreme_family_intermediate(strat_env, monkeypatch):
+    """极限族共用分支：/api/extreme/start 恢复会话 → 202 + intermediate config。"""
+    _patch_state(monkeypatch, _restored_state(doc_id='beef5678'))
+    _spawn_capture(monkeypatch, pid=791)
+
+    r = _client().post('/api/extreme/start', json={'time_total_s': 905})
+    assert r.status_code == 202
+    assert r.json()['mode'] == 'extreme' and r.json()['time_total_s'] == 905
+
+    cfg = json.loads(next(iter((Path(paths_mod.OUT_DIR) / 'uploads')
+                               .glob('strategy_cfg_*.json'))).read_text(encoding='utf-8'))
+    assert 'intermediate' in cfg and 'master_dxf' not in cfg and cfg['time'] == 905
+    assert len(list(Path(paths_mod.CONFIG_RUNS_DIR).glob('web_int_*.json'))) == 1
+
+
+def test_start_restored_sid_prefix_and_cleanup(dual_env, monkeypatch):
+    """sid 会话恢复态：int 文件带 ``web_<sid6>_`` 前缀入清理面 —— 下一轮 start
+    清掉上一轮 int 文件（单飞闸门保证旧文件无人消费）。"""
+    sess = sessions_mod.registry.resolve(SID_A, create=True)
+    sess.state = _restored_state(doc_id='cafe4242')
+    calls = _spawn_capture_multi(monkeypatch, pids=(1111, 2222))
+    c = _client()
+
+    ra = c.post('/api/strategy/start', json={'mode': 'race', 'minutes': 10},
+                headers={'X-Session-Id': SID_A})
+    assert ra.status_code == 202
+    ints = list(Path(paths_mod.CONFIG_RUNS_DIR).glob('web_aaaa11_int_*.json'))
+    assert len(ints) == 1
+
+    # 终态化 + 清 marker（模拟上一轮 done）→ 二次 start：旧 int 文件被清理
+    st = strategy_mod._states(SID_A)
+    st['state'] = 'done'
+    strategy_mod._clear_marker(SID_A)
+    rb = c.post('/api/strategy/start', json={'mode': 'race', 'minutes': 10},
+                headers={'X-Session-Id': SID_A})
+    assert rb.status_code == 202
+    ints2 = list(Path(paths_mod.CONFIG_RUNS_DIR).glob('web_aaaa11_int_*.json'))
+    assert len(ints2) == 1 and ints2[0] != ints[0]
+    # 其他会话前缀不受 default 清理面波及（dual_env 内无 default start，此处只验证
+    # 本会话清理自洽：config_runs 下 web_int 计数即全部 int 文件数）
+    assert len(list(Path(paths_mod.CONFIG_RUNS_DIR).glob('web_int_*.json'))) == 0
+
+
+def test_restore_session_start_to_result_e2e(dual_env, monkeypatch):
+    """端到端：上传 .msn 恢复会话 → 策略 start（无母版在盘）→ status done →
+    result 200（manifest 来自 start 时快照，与恢复 doc 同源）。"""
+    from materialsorting.web.statefile import build_state_document, serialize_state
+
+    # 构造 .msn：doc = 校验链可过的 schema v2（_synthetic_pieces 3 片）
+    pieces = _synthetic_pieces()
+    doc = {'source': '订单A.dxf', 'gate_mm': 1980.0, 'n_pieces': 3,
+           'total_area_mm2': round(sum(p['area_mm2'] for p in pieces), 1),
+           'pieces': pieces}
+    state = {'doc': doc, 'gate_mm': 1980.0, 'pieces': pieces,
+             'pieces_by_id': {p['pid']: p for p in pieces}}
+    msn = serialize_state(build_state_document(state, {'gate': '198'}, None, None))
+
+    c = _client()
+    r = c.post('/api/state-restore',
+               files={'file': ('work.msn', msn, 'application/gzip')},
+               headers={'X-Session-Id': SID_B})
+    assert r.status_code == 200
+    restored = r.json()
+    doc_id = restored['doc_id']
+    # 恢复语义：doc_id 铸新且无母版落盘
+    assert not (Path(paths_mod.OUT_DIR) / 'uploads' / f'{doc_id}.dxf').exists()
+
+    _spawn_capture_multi(monkeypatch, pids=(3111,))
+    rs = c.post('/api/strategy/start', json={'mode': 'se', 'minutes': 10},
+                headers={'X-Session-Id': SID_B})
+    assert rs.status_code == 202
+    cfg = json.loads(next(iter((Path(paths_mod.OUT_DIR) / 'uploads')
+                               .glob('strategy_cfg_*.json'))).read_text(encoding='utf-8'))
+    assert 'intermediate' in cfg and 'master_dxf' not in cfg
+    int_doc = json.loads(Path(cfg['intermediate']).read_text(encoding='utf-8'))
+    assert int_doc['doc_id'] == doc_id and int_doc['source'] == '订单A.dxf'
+
+    # 模拟 CLI 产出 run_dir + 子进程退出（rc=0）→ status 收 done → result 200
+    st = strategy_mod._states(SID_B)
+    st['proc'] = FakeProc(pid=3111, rc=0)
+    run_name = rs.json()['run_name']
+    rd = _write_run_dir(dual_env, name=f'{run_name}_20260912-010000')
+    ps = c.get('/api/strategy/status', headers={'X-Session-Id': SID_B}).json()
+    assert ps['state'] == 'done' and ps['run_dir'] == str(rd)
+    rr = c.get('/api/strategy/result', headers={'X-Session-Id': SID_B})
+    assert rr.status_code == 200
+    body = rr.json()
+    assert body['manifest']['pieces'][0]['id'] == 'g01_28'   # 快照 = 恢复 doc 同源
+    assert body['manifest']['gate_mm'] == 1980.0
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
 

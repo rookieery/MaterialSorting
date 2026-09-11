@@ -6,6 +6,11 @@ sidecar → load_nest_pieces → intermediate 落盘」全管线，产出与 web
 的排料输入（schema v2），但**不触碰 web 事实源**（``paths.INTERMEDIATE`` 与
 ``out/uploads/``，FR-5：cli 子包唯一可写目录是 ``paths.CONFIG_RUNS_DIR``）。
 
+US-005（状态文件恢复会话重跑策略）：``cfg.intermediate`` 在案（与 master_dxf 二选一，
+``cli.config`` 10 键 schema）时 commit 短路 —— 现成 ``pieces_intermediate.json``
+校验后直接落 run_dir，不 parse 母版不切片（``_commit_from_intermediate``）；solve /
+LNS 段零改动（本就只读 run_dir intermediate）。
+
 与 web commit 的刻意差异（其余逐字段一致，含 rounding 位数）：
 
   - intermediate 落 ``run_dir/pieces_intermediate.json``（非 ``paths.INTERMEDIATE``），
@@ -43,7 +48,7 @@ US-006（PC-006）：``solve_pieces`` 加可选 ``solver_opts``（spyrrow 求解
 非空时返回记录附带 ``solver_opts`` 回显（空档不加键，无旗标冒烟零回归）。
 
 band 兼容（2026-08-22，策略模式 + 腰头成带解除互斥）：``cfg.band`` 非空
-（``{'enabled': True, 'label': g码}``，config 9 键 schema 产物）时转 worker
+（``{'enabled': True, 'label': g码}``，config 10 键 schema 产物）时转 worker
 形态 ``{'label': str}`` 透传 ``solve_with_callback_proc(band=...)`` —— 成带 /
 组合片展开全在 solve_worker 进程内（US-011 既有链路，本函数零新增几何逻辑）。
 demand 守恒兼容性：主进程 meta 按全量 build_instance（含 band 成员）取
@@ -52,7 +57,7 @@ N 成员条 = 全量 Σdemand → 现行 ``n_placed != demand_sum`` 完整性校
 
 prefix 兼容（2026-08-25，策略模式 + 起始端成套前后幅解除互斥，band 同款）：
 ``cfg.prefix`` 非空（``{'enabled': True, 'front': g码, 'back': g码}``，config
-9 键 schema 产物）时转 worker 形态 ``{'front': str, 'back': str}`` 透传
+10 键 schema 产物）时转 worker 形态 ``{'front': str, 'back': str}`` 透传
 ``solve_with_callback_proc(prefix=...)`` —— 资格码 seeded 选码 / PS_ 组合片构造 /
 exclude_pids 扣减 / 帧前展开 / final 置换全在 solve_worker 进程内（US-003 既有
 链路，本函数零新增几何逻辑）。多 seed 策略确定性：资格码由 ``pick_prefix_size``
@@ -122,6 +127,12 @@ def _piece_record(p) -> dict:
 def commit_from_config(cfg, run_dir) -> dict:
     """配置驱动的独立 commit 管线：切片 + manifest + intermediate 全落 ``run_dir``。
 
+    ``cfg.intermediate`` 在案（US-005，与 master_dxf 二选一）时**短路**：跳过
+    parse / g 码赋号 / 切片（``_commit_from_intermediate``）—— 策略族 solve 阶段
+    只吃 ``run_dir/pieces_intermediate.json``，母版 DXF 仅在 commit 阶段被消费
+    一次，给现成 intermediate 即可全管线重跑，无需母版。其余字段口径与母版
+    路径一致（gate 由 config 驱动覆盖源文件 gate）。
+
     编排镜像 ``web/server._commit_to_nesting_sync``（同一 ``collect_pieces_with_details``
     → ``assign_codes`` → ``write_piece_dxf`` → ``load_nest_pieces`` 链路，AC#5 同
     ``(block_name, size, piece_index)`` 必得同 g 码）：
@@ -142,7 +153,10 @@ def commit_from_config(cfg, run_dir) -> dict:
         commit 摘要：``source`` / ``run_dir`` / ``pieces_dir`` / ``intermediate`` /
         ``sizes`` / ``n_pieces`` / ``total_area_mm2`` / ``n_written_dxf`` /
         ``n_skipped`` / ``skipped``（US-003 result.json 的 commit 段数据源）。
+        短路路径 ``pieces_dir=None`` / ``n_written_dxf=0``（无单裁片产出）。
     """
+    if getattr(cfg, 'intermediate', None) is not None:
+        return _commit_from_intermediate(cfg, run_dir)
     run_dir = Path(run_dir)
     pieces = collect_pieces_with_details(Path(cfg.master_dxf))
     if not pieces:
@@ -201,6 +215,72 @@ def commit_from_config(cfg, run_dir) -> dict:
         'n_written_dxf': len(manifest),
         'n_skipped': len(skipped),
         'skipped': skipped,
+    }
+
+
+def _commit_from_intermediate(cfg, run_dir) -> dict:
+    """US-005 短路 commit：现成 intermediate 校验后落 ``run_dir``（不碰母版）。
+
+    ``cfg.intermediate`` 指向 ``pieces_intermediate.json``（schema v2；commit 产物
+    或状态文件恢复会话的 doc 块同 schema）。设计依据（已实证）：策略族 solve 阶段
+    只读 ``run_dir/pieces_intermediate.json``，DXF 仅在 commit 阶段被消费一次 ——
+    给 CLI 一个「现成 intermediate」入口短路 commit 即可，无需母版。
+
+    与母版路径的刻意差异（其余同构）：
+
+      - 源文件校验降为「可解析 + pieces 非空」两项（schema 细节交
+        ``web.solver.load_pieces`` / ``build_instance`` 在 solve 期把关 —— 与
+        母版路径「parse 失败才报」的分层同款）；
+      - ``gate_mm`` 以 ``cfg.gate_mm`` 覆盖（母版路径同口径：commit 写
+        ``cfg.gate_mm``；solve 阶段 gate 取自 run_dir intermediate 而非 config，
+        不覆盖会让 config 的门幅静默失效）；
+      - ``pieces_dir`` 不生成（``None``）：母版路径的单裁片 ``run_dir/pieces/``
+        产物无下游消费面（solve/LNS/策略族全部只读 intermediate + result 边车，
+        实施期已核验），短路路径不造无人读的目录；
+      - commit 摘要 ``source`` 取 ``doc.source``（母版文件名，与源 run 的
+        ``run_stats`` source 身份同源），无 source 键回退源文件名。
+
+    Raises
+    ------
+    RuntimeError
+        源文件不可读 / 非法 JSON / pieces 缺失或为空（run_config 按退出码 1 呈现）。
+    """
+    src = Path(cfg.intermediate)
+    try:
+        with open(src, encoding='utf-8') as f:
+            doc = json.load(f)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as e:
+        raise RuntimeError(f'intermediate 文件不可读（{src}）: {e}')
+    pieces = doc.get('pieces') if isinstance(doc, dict) else None
+    if not isinstance(pieces, list) or not pieces:
+        raise RuntimeError(f'intermediate 无裁片（pieces 缺失或为空）: {src}')
+
+    # 浅拷贝改写汇总键（不动源文件内存外的对象）；n_pieces/total_area 按 pieces
+    # 现算 —— 源 doc 的数字可能陈旧（手改文件），求解消费的是 pieces 列表本身。
+    doc = dict(doc)
+    doc['gate_mm'] = float(cfg.gate_mm)
+    doc['n_pieces'] = len(pieces)
+    doc['total_area_mm2'] = round(
+        sum(float(p.get('area_mm2') or 0.0) for p in pieces), 1)
+
+    run_dir = Path(run_dir)
+    run_dir.mkdir(parents=True, exist_ok=True)   # 母版路径经 pieces_dir.mkdir 隐式建
+    intermediate_path = run_dir / 'pieces_intermediate.json'
+    _dump_json(intermediate_path, doc)
+
+    return {
+        'source': str(doc.get('source') or src.name),
+        'run_dir': str(run_dir),
+        'pieces_dir': None,
+        'intermediate': str(intermediate_path),
+        'sizes': sorted({p['size'] for p in pieces
+                         if isinstance(p.get('size'), int)
+                         and not isinstance(p['size'], bool)}),
+        'n_pieces': len(pieces),
+        'total_area_mm2': doc['total_area_mm2'],
+        'n_written_dxf': 0,
+        'n_skipped': 0,
+        'skipped': [],
     }
 
 
@@ -301,12 +381,12 @@ def solve_pieces(cfg, run_dir, *, seed: int, time_budget: int | None = None,
         空档 = 现行行为不变；非空时返回记录附带 ``solver_opts`` 回显字段。
     band : dict | None
         腰头成带配置（worker 形态 ``{'label': g码}``）。None → 读 ``cfg.band``
-        （config 9 键 schema 产物 ``{'enabled': True, 'label': ...}``，此处转
+        （config 10 键 schema 产物 ``{'enabled': True, 'label': ...}``，此处转
         worker 形态）；显式传 ``{'label': ...}`` 直接生效（calibration 等无 cfg
         band 字段的调用方注入点）。None 且 cfg.band 亦空 = 现行行为（band off）。
     prefix : dict | None
         起始端成套配置（worker 形态 ``{'front': g码, 'back': g码}``，band 同款）。
-        None → 读 ``cfg.prefix``（config 9 键 schema 产物 ``{'enabled': True,
+        None → 读 ``cfg.prefix``（config 10 键 schema 产物 ``{'enabled': True,
         'front': ..., 'back': ...}``，此处转 worker 形态）；显式传
         ``{'front': ..., 'back': ...}`` 直接生效。None 且 cfg.prefix 亦空 = 现行
         行为（prefix off）。
@@ -346,7 +426,7 @@ def solve_pieces(cfg, run_dir, *, seed: int, time_budget: int | None = None,
         band = {'label': str(cfg_band['label'])}
 
     # prefix（2026-08-25 接入，band 同款）：显式参数优先（worker 形态
-    # {'front': ..., 'back': ...}）；否则读 cfg.prefix（config 9 键 schema 产物
+    # {'front': ..., 'back': ...}）；否则读 cfg.prefix（config 10 键 schema 产物
     # {'enabled': True, 'front': ..., 'back': ...}）转 worker 形态。
     cfg_prefix = getattr(cfg, 'prefix', None)
     if prefix is None and isinstance(cfg_prefix, dict) \

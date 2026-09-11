@@ -1,12 +1,19 @@
 """配置文件驱动的排料求解 · 配置加载与校验（CLI 第一道闸）。
 
-``load_config(path)`` 读取 9 键 JSON 配置（示例 ``data/configs/5336_coded_sizes32-38.json``），
+``load_config(path)`` 读取 10 键 JSON 配置（示例 ``data/configs/5336_coded_sizes32-38.json``），
 拼写 / 类型 / 路径 / 数值错误在管线启动前就地拦下（中文 ``ConfigError``，消息含字段名）。
 
-9 键 schema（FR-1；除 seeds 外字段名与 WS StartPayload 契约 1:1）：
+10 键 schema（FR-1；除 seeds 外字段名与 WS StartPayload 契约 1:1）：
 
-    master_dxf  str    必填。母版 DXF 路径：绝对直用；相对先按 CWD 再按仓库根
-                       （paths.REPO_DIR）解析，均失败报错并列出两个候选绝对路径。
+    master_dxf  str    与 intermediate **二选一**。母版 DXF 路径：绝对直用；相对先按
+                       CWD 再按仓库根（paths.REPO_DIR）解析，均失败报错并列出两个
+                       候选绝对路径。两键同给 / 同缺 → ConfigError（消息含两键名）。
+    intermediate str   与 master_dxf **二选一**（US-005）。现成 ``pieces_intermediate.
+                       json``（schema v2，commit 产物 / 状态文件 doc 块同 schema）路径：
+                       路径解析口径与 master_dxf 完全一致（绝对直用；相对 CWD →
+                       仓库根双候选）。给定后 commit 阶段短路（不再 parse 母版 / 切片，
+                       直接校验源文件可解析且 pieces 非空后落入 run_dir）—— 策略族
+                       solve 只吃 run_dir intermediate，母版仅 commit 阶段消费一次。
     sizes       list   可选。码号过滤（JSON 整数列表，非空）；缺省 = 不过滤（全部码号）。
     gate_mm     num    必填。门幅（mm，JSON 数字 >0）；intermediate 与密度分母口径。
     time        int    可选。单轮求解时长（秒，正整数），缺省 300。
@@ -51,11 +58,13 @@ from typing import Any, NoReturn
 
 __all__ = ['ConfigError', 'NestRunConfig', 'load_config']
 
-# 9 键 schema（FR-1）。旧 seed / multi_seed / seed_count 不在其中 → 按未知键报错。
-TOP_LEVEL_KEYS = ('master_dxf', 'sizes', 'gate_mm', 'time', 'seeds', 'per_type',
-                  'quantities', 'band', 'prefix')
-# 必填键：CLI 无 web 的 intermediate 兜底（intermediate 本身由本配置生成）。
-_REQUIRED_KEYS = ('master_dxf', 'gate_mm')
+# 10 键 schema（FR-1 + US-005 intermediate）。旧 seed / multi_seed / seed_count 不在
+# 其中 → 按未知键报错。
+TOP_LEVEL_KEYS = ('master_dxf', 'intermediate', 'sizes', 'gate_mm', 'time', 'seeds',
+                  'per_type', 'quantities', 'band', 'prefix')
+# 必填键（master_dxf / intermediate 二选一互斥，单独在 load_config 里裁决 —— 消息
+# 须含两键名）。
+_REQUIRED_KEYS = ('gate_mm',)
 # 已退役的旧种子字段：未知键报错时附迁移提示（→ seeds 列表）。
 _RETIRED_SEED_KEYS = ('seed', 'multi_seed', 'seed_count')
 # g 码键形（与 labeling.assign_codes 产出一致：g01 / g10 / g100 …）。
@@ -99,8 +108,8 @@ def _global_caps() -> tuple[float, float]:
     return float(MAX_OVERLAP_MM), float(MAX_ROTATION_TOL_DEG)
 
 
-def _resolve_master_dxf(name: str, raw: Any) -> Path:
-    """master_dxf → 已存在的绝对路径（FR-2）。
+def _resolve_input_path(name: str, raw: Any) -> Path:
+    """master_dxf / intermediate → 已存在的绝对路径（FR-2；US-005 两键同口径）。
 
     绝对路径直用；相对路径先试 CWD 再试仓库根（paths.REPO_DIR），均失败报错
     并列出两个候选绝对路径。
@@ -263,7 +272,7 @@ def _check_prefix(name: str, raw: Any) -> dict | None:
     """prefix → ``{'enabled': True, 'front': g码, 'back': g码}`` | None（显式关闭与缺省同线）。
 
     与 WS StartPayload.prefix 契约 1:1（``_check_band`` 同构，2026-08-25 起接入
-    9 键 schema）：``enabled=false`` → None（关闭，等价键缺省）；``enabled=true``
+    10 键 schema）：``enabled=false`` → None（关闭，等价键缺省）；``enabled=true``
     时 front/back 须为匹配 ``^g\\d+$`` 的字符串且 front≠back。存在性 / 2+2 资格码
     不在此层（config 加载期无 pieces 事实源）—— web 策略入口经
     ``routes_ws._parse_prefix`` start 期拦下，手写 config 由求解期
@@ -292,10 +301,11 @@ def _check_prefix(name: str, raw: Any) -> dict | None:
 
 @dataclass(frozen=True)
 class NestRunConfig:
-    """校验通过的排料运行配置（load_config 的产物，字段与 9 键 schema 一一对应）。"""
+    """校验通过的排料运行配置（load_config 的产物，字段与 10 键 schema 一一对应）。"""
 
-    master_dxf: Path                                        # 已解析为存在的绝对路径
-    gate_mm: float                                          # 门幅 mm（>0）
+    master_dxf: Path | None = None                          # 已解析为存在的绝对路径
+    intermediate: Path | None = None                        # 同上（US-005，与 master_dxf 二选一）
+    gate_mm: float = 0.0                                    # 门幅 mm（>0）
     sizes: list[int] | None = None                          # None = 不过滤（全部码号）
     time: int = _DEFAULT_TIME                               # 单轮求解时长（秒）
     seeds: list[int] = field(default_factory=lambda: list(_DEFAULT_SEEDS))
@@ -330,8 +340,25 @@ def load_config(path: str | Path) -> NestRunConfig:
         raise ConfigError(
             f'缺少必填键 {", ".join(missing)}（合法键: {", ".join(TOP_LEVEL_KEYS)}）')
 
+    # master_dxf / intermediate 二选一（US-005）：两键同给 → 语义打架；同缺 → 无数据
+    # 源。两种形态的消息都含两键名（指路明确），load_config 层 fail-fast 早于
+    # new_run_dir（不留空 run 目录）。
+    has_master, has_inter = 'master_dxf' in raw, 'intermediate' in raw
+    if has_master and has_inter:
+        raise ConfigError(
+            'master_dxf 与 intermediate 互斥（二选一）：master_dxf=母版 DXF（commit 阶段'
+            ' parse + 切片），intermediate=现成 pieces_intermediate.json（commit 短路），'
+            '两键同时给出无法判定数据源')
+    if not has_master and not has_inter:
+        raise ConfigError(
+            '缺少必填键 master_dxf / intermediate（二选一：母版 DXF 或现成 '
+            'pieces_intermediate.json；合法键: ' + ', '.join(TOP_LEVEL_KEYS) + '）')
+
     return NestRunConfig(
-        master_dxf=_resolve_master_dxf('master_dxf', raw['master_dxf']),
+        master_dxf=(_resolve_input_path('master_dxf', raw['master_dxf'])
+                    if has_master else None),
+        intermediate=(_resolve_input_path('intermediate', raw['intermediate'])
+                      if has_inter else None),
         gate_mm=_check_gate_mm('gate_mm', raw['gate_mm']),
         sizes=_check_sizes('sizes', raw['sizes']) if 'sizes' in raw else None,
         time=_check_time('time', raw['time']) if 'time' in raw else _DEFAULT_TIME,

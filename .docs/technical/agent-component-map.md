@@ -1420,7 +1420,7 @@ CPU），跨会话完全独立（多会话 US-004 语义不变）。
 
 ### 关键事实
 
-- **下游零改动**：CLI `--extreme` 展开为 race 后，band/prefix 走 9 键 config JSON →
+- **下游零改动**：CLI `--extreme` 展开为 race 后，band/prefix 走 config JSON（2026-09-12 起 10 键 schema，数据源键 master_dxf/intermediate 二选一）→
   `load_config` → `pipeline.solve_pieces`（cfg→worker 形态）→ `solve_worker` 进程内
   构造（`WB_*`/`PS_*` 展开后发帧），全链路模式无关 —— 唯一拦截点本就在 web 层。
 - **spawn cmd 不变**：band/prefix 只随 config JSON 走，不进命令行（`--extreme --time

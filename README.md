@@ -113,11 +113,12 @@ ms-run-config data/configs/5336_coded_sizes32-38.json --time 5   # 冒烟：单�
 python -m materialsorting.cli.run_config <config.json> --name demo --quiet   # 等价 python -m 形式
 ```
 
-配置是 **9 键 JSON schema**（除 `seeds` 外字段名与 WS StartPayload 契约 1:1；示例见 `data/configs/`，拼写/类型/路径错误在启动前就地拦下，中文报错含字段名）：
+配置是 **10 键 JSON schema**（除 `seeds`/`intermediate` 外字段名与 WS StartPayload 契约 1:1；示例见 `data/configs/`，拼写/类型/路径错误在启动前就地拦下，中文报错含字段名）：
 
 | 键 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `master_dxf` | str | ✓ | 母版 DXF 路径；相对路径先按 CWD 再按仓库根解析 |
+| `master_dxf` | str | ✓* | 母版 DXF 路径；相对路径先按 CWD 再按仓库根解析；与 `intermediate` **二选一互斥**（同给/同缺 → 配置错误） |
+| `intermediate` | str | ✓* | 现成 `pieces_intermediate.json`（schema v2）路径，相对路径双候选解析同 `master_dxf`；在案时 commit 短路 —— 校验（可解析 + pieces 非空）后直接落 `run_dir/pieces_intermediate.json`，跳过 parse/切片，不生成 `pieces/` 目录；`gate_mm` 以 config 值覆盖源文件 gate（solve 阶段 gate 取自 run_dir intermediate 而非 config）；web 状态文件恢复会话的策略/极限 start 自动走此入口（2026-09-12 状态文件 US-005）。**`master_dxf`/`intermediate` 恰需其一（✓* 表示二选一必填）** |
 | `gate_mm` | num | ✓ | 门幅（mm，>0）；intermediate 口径；密度分母 = gate_mm（2026-08-28 版师定案：输入幅宽即实际幅宽，单一口径，与求解约束带同口径） |
 | `sizes` | list | — | 码号过滤（JSON 整数列表，非空）；缺省 = 全部码号 |
 | `time` | int | — | 单轮求解时长（秒，正整数），缺省 300 |
@@ -200,7 +201,7 @@ ms-run-config data/configs/5336_coded_really.json --time 300 --lns --lns-time 60
 **run 统计库与 θ₀ 校准（PC-009）**：每次 run 结束（含 R0 提前停 / kill 路径）自动追加一行 JSONL 到 `out/run_stats.jsonl`：`{ts, source, sizes, class_key, seeds, target, best_density, n_killed, elapsed_total, config: {time, per_type, quantities}}`，`class_key` = sha1(source+sizes+quantities+per_type) 10 位短哈希（实例类指纹：同母版 + 码号集 + 订单配比 + 逐码公差视为同类；band/prefix 开启时各追加 label 组件成新 key，避免 ±2pt 级密度差混同 θ₀ 历史分布）。写盘失败只 stderr warn 不阻塞主流程（统计沉淀是旁路产物）。`--target` 模式启动时读该库做 **θ₀ 校准**：当前 class_key 命中且 ≥5 条历史 → kill 门槛初值 `θ₀ = min(target, 历史最大 best_density + 0.003)`（历史最高 89.6% 的组合不再从 90 起跑 —— 分布越测越准），否则 θ₀ = target；θ₀ **只影响 kill 门槛**（R2/R3 判据锚），R0 停止条件恒用 `--target` 真值，校准说明行 `--quiet` 也打（判据变更不静默）。Ctrl-C / 求解失败的 run 不沉淀（不完整数据会污染历史 max）。
 
 **标定管线（PC-004/005）**：`python -m materialsorting.cli.calibration` 四个子命令，为 kill 引擎产出数据依据（`--params` 消费的 `controller_params.json`）并防过拟合单一订单：
-- **batch**：`--config <9键配置> [--tag T] [--short-seeds 20] [--short-time 90] [--full-seeds 8] [--full-time N]`（full-time 缺省用 config 的 `time`）。标定基实例 = `data/configs/5336_coded_really.json`（真实 per_type 公差 + 真实订单配比）。`commit_from_config` 只跑一次，逐 seed 串行 `solve_pieces`；曲线/best 帧落 `out/portfolio_calibration/<tag>/base/{short,full}/`，逐 seed 写 manifest.json（Ctrl-C 安全，重跑跳过已完整 seed）。
+- **batch**：`--config <10键配置> [--tag T] [--short-seeds 20] [--short-time 90] [--full-seeds 8] [--full-time N]`（full-time 缺省用 config 的 `time`）。标定基实例 = `data/configs/5336_coded_really.json`（真实 per_type 公差 + 真实订单配比）。`commit_from_config` 只跑一次，逐 seed 串行 `solve_pieces`；曲线/best 帧落 `out/portfolio_calibration/<tag>/base/{short,full}/`，逐 seed 写 manifest.json（Ctrl-C 安全，重跑跳过已完整 seed）。
 - **variants**：确定性订单邻域变体（seeded RNG，RNG seed=i）—— 只抖 `quantities` 的 (g码, 码∈sizes) 条目 `n' = max(1, n±1)`（保底 1 片；惰性条目不动），per_type/gate_mm/master_dxf/sizes 逐字段固定。产出 `variant_{i}.json`（i=0..3）+ 每变体 6 seed × 90s + 1 × 300s 曲线（共享同一 commit）。
 - **analyze**：`--tag T --target P [--env-quantile 0.25]` 聚合曲线 → `analysis/`：`summary.json`（每 seed 终值/best/收敛平台 + mean/σ/P(≥target)）、`controller_params.json`（成功包络 S(τ)（τ 网格 0.05~1.0 步长 0.05）+ τ0/W/m/ε/δ/m_streak 推荐值；达标 seed <10 或包络格点不足 → `calibrated: false` 拒绝下发）、`generalization.json`（base 包络套用到各变体的误杀率/可迁移判定）。内部含 train/test 误杀回测 + 短/全秩相关 + uplift q50/q95。
 - **simulate**（ETT 离线仿真器）：`--tag T --target P [--budget SEC] [--scenarios 500] [--env-quantile 0.25] [--shadow-log kill_decisions.jsonl]` 用历史轨迹**零求解成本**回放策略网格（单 seed 基线 / 均匀 best-of-k / kill 三档 / θ 衰减两档 / **策略双档 se180·race180**（US-003），**同总预算公平比较** k×B 恒等）→ `analysis/simulation_report.json` + 控制台表格：每策略 ETT（达标 = 首次达标时刻，不可达 = 实际耗时，kill 省时计入）、P(达标|预算内)、误杀率、不可达场景 incumbent 终值（截断轨迹用「kill 时刻 best + 条件期望增量」插值，物理下界 ≥ kill 时刻 best-so-far，无 hindsight）。**策略双档走配对曲线回放**（`base/{short,full}` 同 seed 配对、short 终值 ≥90s 且 full 终值 ≥180s 才合格；跨 fork 诚实口径同现场：筛选读 short 曲线终值、延长/续跑读 full 曲线 180s 帧），judgment 复用 US-001 单一真相源 `decide_race_kill`/`race_plan`/`se_plan`，另出**E[max] 口径**副表（delivered 期望 / 漏 max 率 / 对配对 uniform90 基线的增益）。**变体曲线作 held-out**（kill 包络只源自 base 池、按仿真预算 B 绝对墙钟重采样）：推荐档须 base 与变体 ETT 双不劣于单 seed 基线且两者误杀率 <5%（策略双档同判据纳入候选，`params` 含 `strategy`/`time`/`race_*`/`se_*` 键），`recommendation.params` 键与 controller_params.json 同构可直接抄进 `--params`。场景采样确定性（|pool|^k ≤ 4096 全枚举，否则固定种子 bootstrap）。`--shadow-log` 统计真实 would-kill 决策的假阳性（配同目录 curve_s{seed}.json；决策后才达标 = 假阳性，全程不达标 = 正确 kill）。
