@@ -5,7 +5,7 @@
 
 ## 状态
 
-单页工作台后端，19 个 API 端点（另含 `GET /` 与 `/static` mount）+ 1 条 WS。**US-026 起求解用 `solve_with_callback_proc`（多进程版）**：`ThreadPoolExecutor(max_workers=6)` 跑 `run_solve` → `solve_with_callback_proc` spawn 子进程执行 sparrow solve，主进程 drain `multiprocessing.Queue` 分发 manifest/frame/final（多 seed 最多 6 路并发，seed 间同等 CPU 竞争 → 排名仍公平）。WS 双向并发：write loop drain queue → `ws.send_json`；read loop 持续读客户端消息（`{action:'stop'}` → terminate 子进程 → 发 stopped → 关闭 WS）。**`server.py` 启动期 `_reload_pieces_state()` 读 intermediate 填入 `_PIECES_STATE`**（US-020：commit 后可 reload，allow-empty 不再让 import 崩）。US-004 起 `/api/parse-dxf` 上传解析也复用这个 6-worker 线程池跑 CPU 密集的 DXF 深度解析（`collect_pieces_with_details`）。strategy PRD US-004 起 `/api/strategy/*` 四路由（`web/strategy.py`）spawn `ms-run-config --strategy` 子进程跑双模式长跑（HTTP 轮询 run_dir 产物，无 WS），见下「策略桥接」；extreme PRD US-002 起 `/api/extreme/*` 四路由（同 `web/strategy.py` 内 mode='extreme' 分支）spawn `ms-run-config --extreme` 极限长跑，与策略路由**共用每会话状态槽**（同会话 409 单飞互斥、跨会话独立），见下「极限运行桥接」；状态文件 PRD US-001（2026-09-11）起 `POST /api/state-save`（`web/statefile.py`）把当前会话工作台状态聚合序列化为 gzip JSON `.msn` 附件，见下「状态文件保存」。
+单页工作台后端，20 个 API 端点（另含 `GET /` 与 `/static` mount）+ 1 条 WS。**US-026 起求解用 `solve_with_callback_proc`（多进程版）**：`ThreadPoolExecutor(max_workers=6)` 跑 `run_solve` → `solve_with_callback_proc` spawn 子进程执行 sparrow solve，主进程 drain `multiprocessing.Queue` 分发 manifest/frame/final（多 seed 最多 6 路并发，seed 间同等 CPU 竞争 → 排名仍公平）。WS 双向并发：write loop drain queue → `ws.send_json`；read loop 持续读客户端消息（`{action:'stop'}` → terminate 子进程 → 发 stopped → 关闭 WS）。**`server.py` 启动期 `_reload_pieces_state()` 读 intermediate 填入 `_PIECES_STATE`**（US-020：commit 后可 reload，allow-empty 不再让 import 崩）。US-004 起 `/api/parse-dxf` 上传解析也复用这个 6-worker 线程池跑 CPU 密集的 DXF 深度解析（`collect_pieces_with_details`）。strategy PRD US-004 起 `/api/strategy/*` 四路由（`web/strategy.py`）spawn `ms-run-config --strategy` 子进程跑双模式长跑（HTTP 轮询 run_dir 产物，无 WS），见下「策略桥接」；extreme PRD US-002 起 `/api/extreme/*` 四路由（同 `web/strategy.py` 内 mode='extreme' 分支）spawn `ms-run-config --extreme` 极限长跑，与策略路由**共用每会话状态槽**（同会话 409 单飞互斥、跨会话独立），见下「极限运行桥接」；状态文件 PRD US-001（2026-09-11）起 `POST /api/state-save`（`web/statefile.py`）把当前会话工作台状态聚合序列化为 gzip JSON `.msn` 附件，见下「状态文件保存」；US-002（同日）起 `POST /api/state-restore` 上传 `.msn` 校验重建当前会话 + manifest 确定性重算，见下「状态文件恢复」。
 
 ## 启动约束（重要）
 
@@ -32,6 +32,7 @@
 | POST | `/api/edit-hold` | **2026-09-04 编辑排料会话钉住心跳**：编辑弹窗纯前端无请求，长编辑中途空闲过期会被逐出 → 保存后导出 401 丢成果；`resolve()` 闸门（过期 401 不给死会话续命）+ `edit_hold.refresh` 滚动续期（`MS_EDIT_HOLD_SEC` 缺省 2h）；无 sid（default）→ 200 no-op；**多会话**：`X-Session-Id` → 该会话 | `server.post_edit_hold` |
 | POST | `/api/edit-polish` | **prd-edit-polish US-002（2026-09-05）编辑排料「智能微调」**：POST 当前编辑 placements（布局态后端不存、随 body = /export 同模式）→ 确定性后处理 `polish_layout` 结果 + 前后对比报告；pid 全匹配才跑（否则 400「母版已变更」）、`run_in_threadpool` 执行 + 顺手 `edit_hold.refresh`，见下专节；**多会话**：`X-Session-Id` → 该会话 `pieces_by_id` | `server.post_edit_polish` |
 | POST | `/api/state-save` | **状态文件 US-001（2026-09-11）工作台状态保存**：当前会话 doc（含 5 层）+ 前端回传 form/quantities/run → gzip JSON `.msn` 附件下载（Content-Disposition 中文/ASCII 双名）；run 在场做保存期守恒校验（placed 与 demand 不守恒 → 400 指路文案），见下专节；**多会话**：`X-Session-Id` → 该会话快照（`_resolve_session_state` 读路由同口径） | `statefile.state_save`（server.py 文件尾 `register_statefile_routes`） |
+| POST | `/api/state-restore` | **状态文件 US-002（2026-09-11）会话恢复**：multipart 上传 `.msn`/`.json` → `parse_state_document` 校验链（threadpool）→ 纯内存重建**当前 sid** 会话（doc_id 铸新、不落盘）+ `build_pid_meta` manifest 确定性重算 + parse 载荷，见下专节；**多会话**：`resolve(sid, create=True)`（commit 同语义、不占新名额） | `statefile.state_restore`（同上注册） |
 | POST | `/api/strategy/start` | strategy US-004：spawn `ms-run-config --strategy` 子进程启动双模式长跑（202）；**2026-08-22 起载荷可带 band**（经 `_parse_band` 同一校验点写进 config，成带与策略模式兼容）；**2026-08-25 起载荷可带 prefix**（经 `_parse_prefix` 同一校验点含 2+2 资格码，非法 → 400 早退，写进 9 键 config）；**多会话 US-004（2026-08-27）：读 `X-Session-Id`**（缺省 default）—— 每会话 409 单飞、跨会话并发放开、数据源 = 会话快照 | `strategy.strategy_start` |
 | GET | `/api/strategy/status` | strategy US-004：无状态惰性轮询 run_dir 产物组装进度；**多会话 US-004：读 `X-Session-Id`**（status 轮询即活性，长跑会话不被扫描误杀） | `strategy.strategy_status` |
 | POST | `/api/strategy/stop` | strategy US-004：树杀子进程（taskkill /T /F / killpg）+ 清本会话 marker；**多会话 US-004：读 `X-Session-Id`**（只树杀本会话 pid） | `strategy.strategy_stop` |
@@ -486,9 +487,70 @@ gzip JSON（`application/gzip`，gzip 恒开 + 魔数 `1f 8b`），顶层 `{sche
 2. **守恒校验单一真相**：`check_placed_conservation(placed, pieces, sizes, per_type, quantities)`（内部 `build_pid_meta` 同口径 demand：sizes 过滤 + `(label, str(size))` 查 N、缺省 1、0 跳过、erode 退化石两侧一致）—— 保存端（本路由）与恢复端终检（US-002 `parse_state_document`）复用同一函数，`StateConservationError.kind` ∈ `unknown_pid|count_mismatch` 区分两文案。
 3. doc 块原样透传（不复制不改写）：`doc.pieces` 与会话 intermediate 逐字段一致（含 net_polygon/internal_lines/notches/grain_line 五层 + label_representatives）；quantities 原样嵌入（null 保留旧语义）。
 4. 常量：`STATE_SCHEMA_VERSION=1` / `STATE_MAX_BYTES=20MB`（对齐 `server.UPLOAD_MAX_BYTES`，恢复端核解压后大小）/ `STATE_EXTENSION='.msn'`（恢复端也接受 `.json`）。
-5. 分层：`web/statefile.py` 仅 import web 兄弟模块（solver/routes_views/sessions），`server.py` 文件尾 `register_statefile_routes(app)` 一行（strategy 同模式）；`python -m materialsorting.web.statefile` 合成夹具自检（build→serialize→gunzip 往返 + 守恒三路）。
+5. 分层：`web/statefile.py` 仅 import web 兄弟模块（solver/routes_views/sessions/parse_payload/runtime/edit_hold），`server.py` 文件尾 `register_statefile_routes(app)` 一行（strategy 同模式）；`python -m materialsorting.web.statefile` 合成夹具自检（build→serialize→gunzip 往返 + 守恒三路 + US-002 恢复链 parse/重算）。
 6. `runtime._state_from_doc(doc_dict)`（US-001 自 `_build_pieces_state` 提取）：doc dict → pieces state 的纯内存构建（路径读取与 dict 构建解耦，两路共享，行为零变化）—— US-002 恢复端重建会话复用。
-7. 测试：`tests/test_web_statefile.py`（23 例：200 往返 5 层逐字段 + 双名 CD + 无 run 纯配置档 / 422 空态 / 401·400 sid 闸门 / 守恒三路 400 + 多副本精确通过 / 载荷校验全家桶 / `_state_from_doc` 提取回归 / 守恒函数单元）。
+7. 测试：`tests/test_web_statefile.py`（US-001 23 例 + US-002 47 例，见下节）。
+
+## POST /api/state-restore — 状态文件恢复（状态文件 PRD US-002，2026-09-11）
+
+上传 `.msn`（或 `.json`）→ 校验链 → **纯内存重建当前会话** + manifest 确定性重算。另一台机器/浏览器会话凭文件还原完整工作台（两 Tab 数据 + 已保存编辑 + 重解/导出能力；前端编排 `applyRestorePayload` 属 US-004）。与 `/api/state-save` 同住 `web/statefile.py`，`parse_state_document` 校验链 + `check_placed_conservation` 守恒终检（同一判定函数）。
+
+### 请求（multipart/form-data）
+
+- `file`：状态文件字节（扩展名 `.msn` / `.json`；纯 JSON 也接受 —— gzip 魔数 `1f 8b` 嗅探，开发期手改友好）；裸上传 >20MB → 413。
+- **`X-Session-Id` HTTP Header**：恢复写入**当前 sid**（`resolve(sid, create=True)`，commit 同语义覆盖 + 不占 `MS_SESSION_MAX` 新名额；过期 401 / 超限 429 / 非法 400 结构化 JSON）。缺省 → default 会话（走 `runtime` 锁内原子重绑，等价 `_reload_pieces_state` 但不读盘）。
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/state-restore -H "X-Session-Id: <sid>" -F "file=@排料_状态_20260911-100000.msn"
+```
+
+### 响应（200）
+
+```jsonc
+{
+  "doc_id": "<铸新 uuid hex>",          // 每次恢复铸新文档身份（链式传递无原文件依赖）
+  "filename": "5336#老六订单14%7%围加9.dxf",   // = doc.source（缺省回退上传文件名）
+  "parse": { /* _build_parse_payload 同构：{doc_id, filename, sizes:[{size, pieces:[{label, polygon, 5 层}]}]}，
+                经 _DocPieceView 属性视图复用（label 与 doc 同源）—— PreviewPage 零解析改动 */ },
+  "manifest": { /* routes_ws.on_manifest / strategy result 同形：{gate_mm, total_area_mm2,
+                   n_eroded, pieces:[{id, size, color, area_mm2, polygon, raw_polygon,
+                   d_mm, label, demand, 5 层}]} = build_pid_meta(doc.pieces, form.sizes,
+                   per_type, quantities) 确定性重算（params 缺省全 0 = web 口径） */ },
+  "final": { /* run.final 原样（只读展示；编辑后前端 computeLayoutStats 重算） */ },
+  "placed": [ /* run.placed 原序深拷贝（含 mirror omit-when-false） */ ],
+  "run": { /* additive 整块透传（seed/provenance 供前端 US-004 来源写回）；无 run → null */ },
+  "form": { }, "quantities": { }
+}
+```
+
+响应内几何三份（parse + manifest + placed，~2-3MB，本机/局域部署可接受）—— 文件本身仍单份几何，manifest 不入文件故无漂移。
+
+### 错误响应（`parse_state_document` 校验链，全 fail-fast 结构化 JSON）
+
+| 场景 | 状态 | 说明 |
+|------|------|------|
+| 扩展名非 .msn/.json | 400 | `{"error":"仅支持 .msn / .json 状态文件"}` |
+| 裸上传 >20MB / 解压后 >20MB | 413 | gzip 炸弹防线（前者未解压先拦，同 parse-dxf 口径） |
+| 坏 gzip / 坏 JSON / 顶层非对象 / 深嵌套 RecursionError | 400 | `状态文件损坏…`（json.loads 容错，不炸 500） |
+| schema_version 缺失/非 int/v<1 | 400 | `状态文件损坏（schema_version 缺失或非法…）` |
+| **版本过新** | 400 | `状态文件版本过新（v99，本程序支持至 v1）` —— 文案含双版本号（老读新明确报错不猜测；v1 内未知顶层键忽略、可选块缺席容忍） |
+| doc 块形态（缺 doc/gate_mm≤0/pieces 空/逐片 pid 空·重复·label 非 gNN·size 非整·polygon <3 顶点或 NaN·bbox·area_mm2） | 400 | `状态文件损坏…` |
+| form/quantities/run 块形态 / run.placed 逐条（id/rotation/translation/mirror/final/provenance） | 400 | `状态文件损坏…`（config 形态宽松纯展示不承重） |
+| **placed 引用母版外裁片** | 400 | pid 未命中 doc.pieces（先查母版身份），或未命中重算 demand（码选过滤/退化石）—— `状态文件内部不一致：placed 引用母版外裁片…` |
+| **副本数 ≠ demand** | 400 | `状态文件内部不一致：placed 副本数与数量矩阵不符（pid: placed=N demand=M…）`（手改文件终检） |
+| provenance.kind 非四值枚举 | 400 | `solve`/`strategy_se`/`strategy_race`/`extreme` 之外拒收（v1 可省 provenance 键 = 缺省 solve） |
+| sid 过期/超限/非法 | 401/429/400 | 解析**之后**才 `resolve(create=True)` —— 坏文件不建会话名额（SessionError 统一映射） |
+
+### 关键不变量
+
+1. **解析在 threadpool 执行**：`run_in_threadpool(parse_state_document)`（解压 + json + 校验链 CPU 密集，防阻塞事件循环；测试白盒 spy 断言）。
+2. **纯内存重建、不落盘**：sid 会话 `st.state = _state_from_doc(doc)`（doc_id 铸新 uuid、源文件名保留 doc.source）；default 走 runtime 锁内 clear+update 原子重绑。**不镜像写 `paths.INTERMEDIATE`、不落盘 uploads**（他人文件不污染本机事实源，与 commit 双写有意分歧 —— 设计 §一.7，pytest 字节不变断言）。
+3. **覆盖语义 = 再上传母版 commit**：恢复写入当前 sid（不铸新会话、不占 `MS_SESSION_MAX` 名额）；同会话并发 restore 以后到者为准。
+4. **manifest 重算确定性**：`build_pid_meta(doc.pieces, sizes, per_type, quantities)` 纯函数无 RNG（策略 result 同先例）—— 同 form 重算与原解逐字段一致；含 raw_polygon/d_mm 物理毛版口径（2026-09-06 统一）。
+5. **parse 载荷复用**：`_DocPieceView` 以 doc piece dict 喂 `_build_parse_payload`（block_name = 已存 label → `assign_codes` 母版码复用模式必中）—— parse 载荷 label 与 doc/manifest/quantities 键同源零漂移（校验链保证 label gNN 形态）；码内展示顺序与原上传预览可能不同（展示级差异不承重）。
+6. 恢复后该 sid 的 `/api/ptypes`（label_representatives 透传）、`/export`、`/api/edit-polish` 立即可用（pytest 端到端断言 placed 守恒）；成功 `edit_hold.refresh(sid)`（编辑钉住，default 豁免）。
+7. 链式传递：save→restore→save→restore 二次往返逐字段一致（doc_id/saved_at 除外）；文件自包含无 lineage 依赖。
+8. 测试：`tests/test_web_statefile.py` US-002 47 例（200 完整载荷 / manifest 与 build_pid_meta 逐字段对拍 + per_type erode raw_polygon / 纯 JSON + 纯配置档 / 校验链全家桶 400·413 / threadpool spy / default 不落盘字节断言 / 满员不占名额 / sid 隔离 / ptypes·export·edit-polish 端到端 / 链式二次往返）。
 
 ## GET /api/ptypes — US-020 裁片 g 码代表（D10/D11；US-001 v2：键 = label）
 

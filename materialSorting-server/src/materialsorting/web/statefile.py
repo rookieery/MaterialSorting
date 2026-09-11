@@ -1,9 +1,11 @@
-"""工作台状态文件（.msn）保存：序列化模块 + POST /api/state-save（prd 状态文件 US-001）。
+"""工作台状态文件（.msn）保存/恢复：序列化 + POST /api/state-save、POST /api/state-restore
+（prd 状态文件 US-001/US-002）。
 
 状态文件 = 版师工作台**运行状态**的可传递快照（非导出产物）：后端出 doc 块（会话
 ``state['doc']`` 原样，含 5 层渲染字段 = 与 /export、edit-polish、求解同一真相源），
-前端回传 form/quantities/run 三块，本模块聚合并 gzip 序列化。恢复端（/api/state-restore
-+ 校验链，US-002）与本保存端复用同一守恒校验函数 ``check_placed_conservation``。
+前端回传 form/quantities/run 三块，本模块聚合并 gzip 序列化。恢复端
+（``parse_state_document`` 校验链 + 纯内存会话重建 + manifest 确定性重算）与本
+保存端复用同一守恒校验函数 ``check_placed_conservation``。
 
 schema v1（设计 §四，.docs/business/状态文件保存恢复_落地方案.md）：
   {schema_version, app, saved_at, doc, form, quantities, run?}
@@ -13,22 +15,31 @@ schema v1（设计 §四，.docs/business/状态文件保存恢复_落地方案.
     单份几何。
 
 分层：web 层兄弟模块，仅 import .solver（build_pid_meta）/.routes_views
-（_resolve_session_state）/.sessions（SessionError），无反向依赖。
+（_resolve_session_state）/.parse_payload（_build_parse_payload）/.runtime
+（_state_from_doc/_PIECES_STATE/_state_lock）/.sessions/.edit_hold，无反向依赖。
 """
 from __future__ import annotations
 
 import gzip
 import json
+import math
+import re
 import sys
+import uuid
+import zlib
 from collections import Counter
 from datetime import datetime
 from urllib.parse import quote
 
-from fastapi import Request
+from fastapi import File, Request, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse, Response
 
+from . import edit_hold
+from .parse_payload import _build_parse_payload
 from .routes_views import _resolve_session_state
-from .sessions import SessionError
+from .runtime import _PIECES_STATE, _state_from_doc, _state_lock
+from .sessions import SessionError, registry as session_registry
 from .solver import build_pid_meta
 
 __all__ = [
@@ -40,8 +51,10 @@ __all__ = [
     'build_state_document',
     'check_placed_conservation',
     'expected_demand_map',
+    'parse_state_document',
     'register_statefile_routes',
     'serialize_state',
+    'state_restore',
     'state_save',
 ]
 
@@ -148,6 +161,209 @@ def check_placed_conservation(placed, pieces, *, sizes=None, per_type=None,
         raise StateConservationError('count_mismatch', '; '.join(diffs[:5]))
 
 
+# ---------------------------------------------------------------- 恢复端校验链（US-002）
+
+# provenance.kind 四值枚举（设计 §四：'solve'|'strategy_se'|'strategy_race'|'extreme'）。
+# v1 内 run 块可省 provenance 键 = 缺省 'solve'（向后兼容手改文件）；config 形态
+# 宽松纯展示不承重（策略族 {minutes} / 极限族 {time_total_s}，仅来源小字回显）。
+_PROVENANCE_KINDS = frozenset({'solve', 'strategy_se', 'strategy_race', 'extreme'})
+# doc.pieces[].label 形态 = label_for 产物 gNN（1-3 位数字）。既挡手改乱码，更保证
+# _DocPieceView 的 parse 载荷复用走 assign_codes 母版码模式必中（label 即 g 码），
+# parse 载荷 label 与 doc/manifest/quantities 键同源零漂移（4 位以上数字母版码正则
+# 不识别 → 顺序重排赋号，会让预览 Tab label 与数量矩阵键错位，故 fail-fast）。
+_G_LABEL_RE = re.compile(r'g\d{1,3}')
+
+
+def _finite(x) -> bool:
+    """数值形态判据：int/float（bool 除外）且有限（NaN/±Inf 拒收，防几何污染）。"""
+    return isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x)
+
+
+def _validate_doc_block(doc) -> None:
+    """doc 块逐片形态校验（设计 §五.4）：违者 StateFileError 400「状态文件损坏」。"""
+    if not isinstance(doc, dict):
+        raise StateFileError('状态文件损坏（缺少 doc 块）')
+    gate = doc.get('gate_mm')
+    if not _finite(gate) or gate <= 0:
+        raise StateFileError('状态文件损坏（gate_mm 须为正数）')
+    pieces = doc.get('pieces')
+    if not isinstance(pieces, list) or not pieces:
+        raise StateFileError('状态文件损坏（doc.pieces 不能为空）')
+    seen: set[str] = set()
+    for i, p in enumerate(pieces):
+        if not isinstance(p, dict):
+            raise StateFileError(f'状态文件损坏（pieces[{i}] 须为对象）')
+        pid = p.get('pid')
+        if not isinstance(pid, str) or not pid:
+            raise StateFileError(f'状态文件损坏（pieces[{i}].pid 须为非空字符串）')
+        if pid in seen:
+            raise StateFileError(f'状态文件损坏（pieces[{i}].pid 重复：{pid}）')
+        seen.add(pid)
+        label = p.get('label')
+        if not isinstance(label, str) or not _G_LABEL_RE.fullmatch(label):
+            raise StateFileError(f'状态文件损坏（pieces[{i}].label 须为 gNN 码）')
+        size = p.get('size')
+        if not isinstance(size, int) or isinstance(size, bool):
+            raise StateFileError(f'状态文件损坏（pieces[{i}].size 须为整数码号）')
+        poly = p.get('polygon')
+        if (not isinstance(poly, list) or len(poly) < 3
+                or not all(isinstance(pt, (list, tuple)) and len(pt) == 2
+                           and _finite(pt[0]) and _finite(pt[1]) for pt in poly)):
+            raise StateFileError(
+                f'状态文件损坏（pieces[{i}].polygon 须为 ≥3 个有限数值顶点）')
+        bbox = p.get('bbox')
+        if (not isinstance(bbox, (list, tuple)) or len(bbox) != 4
+                or not all(_finite(v) for v in bbox)):
+            raise StateFileError(f'状态文件损坏（pieces[{i}].bbox 须为 4 个有限数值）')
+        if not _finite(p.get('area_mm2')):
+            raise StateFileError(f'状态文件损坏（pieces[{i}].area_mm2 须为有限数值）')
+
+
+def _validate_run_block(run: dict, pieces, *, form: dict, quantities) -> None:
+    """run 块校验：placed 逐条形态 → pid 全命中 doc → 守恒终检 → provenance 枚举。
+
+    pid 全命中与守恒 unknown_pid 文案不同（前者「母版外」、后者码选过滤/退化石
+    也算未排料），按故事口径分别给文案；守恒与保存端复用同一判定函数。
+    """
+    placed = run.get('placed')
+    if not isinstance(placed, list) or not placed:
+        raise StateFileError('状态文件损坏（run.placed 不能为空）')
+    for i, item in enumerate(placed):
+        if not isinstance(item, dict):
+            raise StateFileError(f'状态文件损坏（run.placed[{i}] 须为对象）')
+        if not isinstance(item.get('id'), str) or not item['id']:
+            raise StateFileError(
+                f'状态文件损坏（run.placed[{i}].id 须为非空字符串）')
+        if not _finite(item.get('rotation')):
+            raise StateFileError(f'状态文件损坏（run.placed[{i}].rotation 须为数值）')
+        tr = item.get('translation')
+        if (not isinstance(tr, (list, tuple)) or len(tr) != 2
+                or not _finite(tr[0]) or not _finite(tr[1])):
+            raise StateFileError(
+                f'状态文件损坏（run.placed[{i}].translation 须为 [x,y] 数值对）')
+        if 'mirror' in item and not isinstance(item['mirror'], bool):
+            raise StateFileError(f'状态文件损坏（run.placed[{i}].mirror 须为布尔）')
+    # pid 全命中 doc.pieces（镜像 edit-polish 语义：先查母版身份，再谈守恒）。
+    pids = {p['pid'] for p in pieces}
+    miss = [it['id'] for it in placed if it['id'] not in pids]
+    if miss:
+        raise StateFileError(
+            f'状态文件内部不一致：placed 引用母版外裁片（pid {miss[0]!r} 不在 doc.pieces）')
+    final = run.get('final')
+    if final is not None and not isinstance(final, dict):
+        raise StateFileError('状态文件损坏（run.final 须为对象）')
+    provenance = run.get('provenance')
+    if provenance is not None:
+        if not isinstance(provenance, dict):
+            raise StateFileError('状态文件损坏（run.provenance 须为对象）')
+        kind = provenance.get('kind')
+        if kind not in _PROVENANCE_KINDS:
+            raise StateFileError(
+                f'状态文件损坏（run.provenance.kind 非法：{kind!r}；'
+                f'须为 solve/strategy_se/strategy_race/extreme 之一）')
+    # 副本守恒终检（manifest 重算后 demand 口径；保存端同一函数 —— 手改文件让
+    # placed ≠ demand 在此拦下，不让内部不一致布局进入恢复会话）。
+    try:
+        check_placed_conservation(placed, pieces, sizes=form.get('sizes'),
+                                  per_type=form.get('per_type'),
+                                  quantities=quantities)
+    except StateConservationError as e:
+        if e.kind == 'unknown_pid':
+            # pid 在 doc 但不在重算 demand（码选过滤 / erode 退化石）—— 同属
+            # 「引用未排料裁片」的内部不一致，文案沿用母版外口径 + detail。
+            raise StateFileError(
+                f'状态文件内部不一致：placed 引用母版外裁片（{e.detail}）')
+        raise StateFileError(
+            f'状态文件内部不一致：placed 副本数与数量矩阵不符（{e.detail}）')
+    except (ValueError, TypeError) as e:
+        raise StateFileError(f'状态文件损坏（form/quantities 形态非法：{e}）')
+
+
+def parse_state_document(raw: bytes) -> dict:
+    """状态文件字节 → 校验通过的顶层 document dict（恢复端校验链单一真相，US-002）。
+
+    纯函数（无会话/无 I/O），handler 经 ``run_in_threadpool`` 调用防阻塞事件循环。
+    全 fail-fast（``StateFileError`` 400/413，路由层转结构化 JSON）：
+
+    1. gzip 魔数 ``1f 8b`` 嗅探（纯 JSON 也接受，开发期手改友好）；坏 gzip → 400；
+    2. 解压后 > ``STATE_MAX_BYTES`` → 413（gzip 炸弹防线）；
+    3. ``json.loads`` 容错（DecodeError/Unicode/RecursionError → 400「状态文件损坏」）；
+    4. ``schema_version`` 缺失/非 int/过新 → 400（文案含双版本号；v1 内未知顶层
+       键忽略、可选块缺席容忍 —— 新读老宽松，老读新明确报错）；
+    5. form/quantities 块形态（doc/run 前置：守恒校验消费这两块）；
+    6. doc 块逐片形态（``_validate_doc_block``）；
+    7. run 块（在场时：``_validate_run_block``）。
+
+    返回 document 本体（doc_id 由 handler 铸新后原位改写；调用方接管所有权）。
+    """
+    if raw[:2] == b'\x1f\x8b':
+        try:
+            raw = gzip.decompress(raw)
+        except (OSError, EOFError, zlib.error):
+            raise StateFileError('状态文件损坏（gzip 解压失败）')
+    if len(raw) > STATE_MAX_BYTES:
+        raise StateFileError(
+            f'状态文件解压后超过上限 {STATE_MAX_BYTES // (1024 * 1024)}MB',
+            status=413)
+    try:
+        document = json.loads(raw)
+    except (ValueError, RecursionError):
+        raise StateFileError('状态文件损坏（JSON 解析失败）')
+    if not isinstance(document, dict):
+        raise StateFileError('状态文件损坏（顶层须为 JSON 对象）')
+
+    v = document.get('schema_version')
+    if not isinstance(v, int) or isinstance(v, bool) or v < 1:
+        raise StateFileError(
+            f'状态文件损坏（schema_version 缺失或非法，本程序支持至'
+            f' v{STATE_SCHEMA_VERSION}）')
+    if v > STATE_SCHEMA_VERSION:
+        raise StateFileError(
+            f'状态文件版本过新（v{v}，本程序支持至 v{STATE_SCHEMA_VERSION}）')
+
+    form = document.get('form')
+    if not isinstance(form, dict):
+        raise StateFileError('状态文件损坏（缺少 form 或类型错误）')
+    quantities = document.get('quantities')
+    if quantities is not None and not isinstance(quantities, dict):
+        raise StateFileError('状态文件损坏（quantities 须为 {label:{sizeKey:N}} 对象）')
+
+    _validate_doc_block(document.get('doc'))
+    if run := document.get('run'):
+        if not isinstance(run, dict):
+            raise StateFileError('状态文件损坏（run 须为对象）')
+        _validate_run_block(run, document['doc']['pieces'],
+                            form=form, quantities=quantities)
+    return document
+
+
+class _DocPieceView:
+    """doc piece dict → collect_pieces_with_details 属性视图（parse 载荷复用适配器）。
+
+    ``_build_parse_payload`` 消费 PieceOutline 属性（polygon_mm/5 层/size 等）并经
+    ``assign_codes`` 赋 g 码 —— 恢复端没有 PieceOutline，用本视图以 doc piece dict
+    喂同一函数。**block_name = 已存 label**（校验链保证 gNN 形态）→ ``assign_codes``
+    走母版码复用模式必中且码内唯一（pid = {label}_{size} 唯一 → 码内 label 唯一），
+    parse 载荷 label 与 doc/manifest/quantities 键同源零漂移；排序键
+    （centroid/area/block_name/piece_index）仅决定码内展示顺序（与原上传预览可能
+    不同序，展示级差异不承重）。
+    """
+    __slots__ = ('size', 'polygon_mm', 'area_mm2', 'net_polygon', 'internal_lines',
+                 'notches', 'grain_line', 'block_name', 'piece_index', 'group_key')
+
+    def __init__(self, p: dict):
+        self.size = p['size']
+        self.polygon_mm = p['polygon']
+        self.area_mm2 = p['area_mm2']
+        self.net_polygon = p.get('net_polygon') or []
+        self.internal_lines = p.get('internal_lines') or []
+        self.notches = p.get('notches') or []
+        self.grain_line = p.get('grain_line')
+        self.block_name = p['label']
+        self.piece_index = 0
+        self.group_key = p['label']
+
+
 # ---------------------------------------------------------------- POST /api/state-save
 
 async def state_save(request: Request):
@@ -238,9 +454,119 @@ async def state_save(request: Request):
                     headers={'Content-Disposition': cd})
 
 
+# ---------------------------------------------------------------- POST /api/state-restore
+
+async def state_restore(request: Request, file: UploadFile = File(...)):
+    """POST /api/state-restore：上传 .msn → 校验 → 纯内存重建当前会话 + manifest 重算。
+
+    multipart 收文件（扩展名 .msn/.json；纯 JSON 也接受）。流程（设计 §五.6/§七）：
+    1. 扩展名/大小（raw > 20MB → 413）→ ``run_in_threadpool(parse_state_document)``
+       （解压+json+校验链 CPU 密集，不阻塞事件循环；解析在会话解析**之前** —— 坏
+       文件不新建会话名额）；
+    2. ``registry.resolve(sid, create=True)``（commit 先例：恢复写入**当前 sid**，
+       等价「再上传母版 commit」覆盖语义、不占 ``MS_SESSION_MAX`` 名额；过期 401 /
+       超限 429 / 非法 400 结构化 JSON）；
+    3. 纯内存重建 state：doc_id 铸新 uuid、源文件名保留 doc.source —— sid 会话
+       ``st.state = 新 dict``、default 会话走 runtime 等价原子重绑（锁内 clear+update，
+       ``_reload_pieces_state`` 同法但不读盘）；**不镜像写 paths.INTERMEDIATE、不落盘
+       uploads**（他人文件不污染本机事实源，设计 §一.7）；
+    4. ``build_pid_meta(doc.pieces, sizes, per_type, quantities)`` 确定性重算 manifest
+       （params 缺省全 0 = web 口径；含 raw_polygon/d_mm 物理毛版，routes_ws.on_manifest
+       / strategy result 同形）；``_build_parse_payload`` 经 ``_DocPieceView`` 组 parse
+       载荷（PreviewPage 零解析改动）；
+    5. 成功 ``edit_hold.refresh(sid)``（编辑钉住与 /api/edit-polish 同口径；default
+       豁免不进钉住表）。
+
+    响应 ``{doc_id, filename, parse, manifest, final, placed, run?, form,
+    quantities}``：final/placed = run 块摘出（无 run → None 纯配置档）；``run`` 块
+    additive 整块透传（seed/provenance 供前端 US-004 恢复编排写回来源，无 run 时
+    为 None）。错误契约：校验链失败 → 400/413 ``{error}``（StateFileError 全结构化
+    JSON，不炸 500）。
+    """
+    fname = file.filename or ''
+    if not (fname.lower().endswith(STATE_EXTENSION) or fname.lower().endswith('.json')):
+        return JSONResponse({'error': '仅支持 .msn / .json 状态文件'}, status_code=400)
+    data = await file.read()
+    if len(data) > STATE_MAX_BYTES:
+        return JSONResponse(
+            {'error': f'文件大小超过上限 {STATE_MAX_BYTES // (1024 * 1024)}MB'},
+            status_code=413)
+
+    # 解析先行（threadpool）：坏文件不触发会话解析/名额。
+    try:
+        document = await run_in_threadpool(parse_state_document, data)
+    except StateFileError as e:
+        return JSONResponse({'error': e.message}, status_code=e.status)
+
+    sid = (request.headers.get('x-session-id') or '').strip() or None
+    try:
+        st = session_registry.resolve(sid, create=True)
+    except SessionError as e:
+        return JSONResponse(e.payload(), status_code=e.status)
+
+    doc = document['doc']
+    doc_id = uuid.uuid4().hex      # 每次恢复铸新文档身份（链式传递无原文件依赖）
+    doc['doc_id'] = doc_id
+    state = _state_from_doc(doc)
+    if sid:
+        st.state = state           # 覆盖语义 = 再上传母版 commit（server.py 先例）
+    else:
+        # default 会话：st.state 即 runtime._PIECES_STATE 同一 dict —— 走 runtime
+        # 等价原子重绑（锁内 clear+update；不读盘不写盘 = 与 commit 双写有意分歧）。
+        with _state_lock:
+            _PIECES_STATE.clear()
+            _PIECES_STATE.update(state)
+    st.doc_id = doc_id
+
+    form = document['form']
+    quantities = document.get('quantities')
+    run = document.get('run') or None
+
+    # manifest 确定性重算（与保存会话同 form → 与原解 manifest 逐字段一致；纯函数
+    # 无 RNG，策略 result 端点同一先例）。on_manifest 同形含 raw_polygon/d_mm。
+    pid_meta, total_area, n_eroded = build_pid_meta(
+        doc['pieces'], sizes=form.get('sizes'), per_type=form.get('per_type'),
+        quantities=quantities)
+    manifest = {
+        'gate_mm': state['gate_mm'],
+        'total_area_mm2': total_area,
+        'n_eroded': n_eroded,
+        'pieces': [
+            {'id': pid, 'size': meta['size'], 'color': meta['color'],
+             'area_mm2': meta['area_mm2'], 'polygon': meta['polygon'],
+             'raw_polygon': meta.get('raw_polygon') or meta['polygon'],
+             'd_mm': meta.get('d_mm', 0.0),
+             'label': meta.get('label'), 'demand': meta.get('demand', 1),
+             'net_polygon': meta.get('net_polygon', []),
+             'internal_lines': meta.get('internal_lines', []),
+             'notches': meta.get('notches', []),
+             'grain_line': meta.get('grain_line')}
+            for pid, meta in pid_meta.items()
+        ],
+    }
+    filename = doc.get('source') or fname
+    parse = _build_parse_payload(doc_id, filename,
+                                 [_DocPieceView(p) for p in doc['pieces']])
+
+    if sid:   # default 豁免一切过期，不进钉住表（/api/edit-hold 同口径）
+        edit_hold.refresh(sid, session_registry.clock())
+    return {
+        'doc_id': doc_id,
+        'filename': filename,
+        'parse': parse,
+        'manifest': manifest,
+        'final': (run or {}).get('final'),
+        'placed': (run or {}).get('placed'),
+        'run': run,
+        'form': form,
+        'quantities': quantities,
+    }
+
+
 def register_statefile_routes(app) -> None:
     """把状态文件路由挂到 FastAPI app（server.py 文件尾调用一次；strategy 同模式）。"""
     app.post('/api/state-save')(state_save)
+    app.post('/api/state-restore')(state_restore)
 
 
 # ---------------------------------------------------------------- __main__ 自检
@@ -260,12 +586,15 @@ def _smoke_piece(pid, w, h):
 
 
 def _smoke() -> int:
-    """``python -m materialsorting.web.statefile``：合成夹具 build→serialize→parse 往返自检。
+    """``python -m materialsorting.web.statefile``：合成夹具 save/restore 全链自检。
 
     纯函数链（不经 HTTP/会话）：_state_from_doc 构建 state → build_state_document
     （带 run / 不带 run 双路）→ serialize_state（gzip 魔数）→ gunzip+json.loads
-    逐字段对拍（doc 含 5 层）→ 守恒校验通过/篡改 quantities 必败两路。
+    逐字段对拍（doc 含 5 层）→ 守恒校验通过/篡改 quantities 必败两路 → US-002
+    恢复链：parse_state_document（gzip/纯 JSON 双嗅探 + 校验链必败四路）→
+    _DocPieceView 组 parse 载荷（label 同源）+ build_pid_meta manifest 重算。
     """
+    from .parse_payload import _build_parse_payload
     from .runtime import _state_from_doc
 
     pieces = [_smoke_piece('g01_30', 200, 150), _smoke_piece('g02_30', 180, 120)]
@@ -291,6 +620,14 @@ def _smoke() -> int:
 
     def check(name: str, cond: bool) -> None:
         results.append((name, bool(cond)))
+
+    def expect_error(name: str, fn, *, want: str, status: int = 400) -> None:
+        try:
+            fn()
+        except StateFileError as e:
+            check(name, want in e.message and e.status == status)
+        else:
+            check(name, False)
 
     with_run = build_state_document(state, form, quantities, run)
     check('顶层键齐（schema_version=1/app/saved_at/doc/form/quantities/run）',
@@ -331,6 +668,67 @@ def _smoke() -> int:
     except StateConservationError as e:
         check('守恒校验：placed 引用母版外 pid → unknown_pid 必败',
               e.kind == 'unknown_pid')
+
+    # ------------------------------------------------ US-002 恢复链（parse/重算）
+    restored = parse_state_document(data)
+    check('parse_state_document：gzip 文件解析 → 与原件逐字段一致',
+          {k: restored[k] for k in ('doc', 'form', 'quantities', 'run')}
+          == {k: parsed[k] for k in ('doc', 'form', 'quantities', 'run')})
+    plain = json.dumps(with_run, ensure_ascii=False).encode('utf-8')
+    check('parse_state_document：纯 JSON（无 gzip）同通过',
+          parse_state_document(plain)['run']['placed'] == placed)
+    check('parse_state_document：无 run 纯配置档同通过',
+          'run' not in parse_state_document(
+              serialize_state(build_state_document(state, form, quantities, None))))
+    expect_error('恢复校验：坏 gzip → 400 状态文件损坏',
+                 lambda: parse_state_document(b'\x1f\x8b' + b'garbage!'),
+                 want='状态文件损坏')
+    expect_error('恢复校验：坏 JSON → 400 状态文件损坏',
+                 lambda: parse_state_document(b'not-json'), want='状态文件损坏')
+
+    def _bump_version(v):
+        d = json.loads(gzip.decompress(data))
+        d['schema_version'] = v
+        return gzip.compress(json.dumps(d, ensure_ascii=False).encode('utf-8'))
+
+    expect_error('恢复校验：版本过新 v99 → 400 文案含双版本号',
+                 lambda: parse_state_document(_bump_version(99)),
+                 want='v99，本程序支持至 v1')
+
+    def _tamper(fn):
+        d = json.loads(gzip.decompress(data))
+        fn(d)
+        return gzip.compress(json.dumps(d, ensure_ascii=False).encode('utf-8'))
+
+    expect_error('恢复校验：placed 引用母版外 pid → 400 内部不一致',
+                 lambda: parse_state_document(
+                     _tamper(lambda d: d['run']['placed'][2].__setitem__('id', 'zz_99'))),
+                 want='placed 引用母版外裁片')
+    expect_error('恢复校验：副本数 ≠ demand → 400 内部不一致',
+                 lambda: parse_state_document(
+                     _tamper(lambda d: d['quantities']['g01'].__setitem__('30', 5))),
+                 want='副本数与数量矩阵不符')
+    expect_error('恢复校验：provenance.kind 非法 → 400',
+                 lambda: parse_state_document(_tamper(
+                     lambda d: d['run'].__setitem__(
+                         'provenance', {'kind': 'magic'}))),
+                 want='provenance.kind 非法')
+
+    parse_payload = _build_parse_payload(
+        'newdoc0001', doc['source'], [_DocPieceView(p) for p in doc['pieces']])
+    labels = [pc['label'] for s in parse_payload['sizes'] for pc in s['pieces']]
+    check('恢复 parse 载荷：_DocPieceView 复用赋号（label 与 doc 同源 + 5 层透传）',
+          sorted(labels) == ['g01', 'g02']
+          and parse_payload['sizes'][0]['pieces'][0]['net_polygon']
+          == pieces[0]['net_polygon']
+          and parse_payload['sizes'][0]['pieces'][0]['grain_line']
+          == pieces[0]['grain_line'])
+    pid_meta, total_area, n_eroded = build_pid_meta(
+        doc['pieces'], sizes=form['sizes'], per_type=form['per_type'],
+        quantities=quantities)
+    check('manifest 重算：demand（g01×2/g02×1）+ total_area 含 demand 乘数 + 无腐蚀',
+          pid_meta['g01_30']['demand'] == 2 and pid_meta['g02_30']['demand'] == 1
+          and total_area == 2 * 200 * 150 + 1 * 180 * 120 and n_eroded == 0)
 
     n_pass = sum(1 for _, ok in results if ok)
     for name, ok in results:
