@@ -572,6 +572,13 @@ from .strategy import register_strategy_routes   # noqa: E402
 
 register_strategy_routes(app)
 
+# 状态文件 US-001：POST /api/state-save（工作台状态 → gzip JSON .msn 附件；恢复端
+# /api/state-restore 见 US-002）。statefile 只依赖 web 兄弟模块（solver/routes_views/
+# sessions），模块级无环；文件尾注册一行（strategy.py 同模式）。
+from .statefile import register_statefile_routes   # noqa: E402
+
+register_statefile_routes(app)
+
 # 编辑排料会话钉住（2026-09-04）：把 edit_hold 的编辑豁免与上面 strategy 注册的
 # run 钉住 hook 组合成单 slot 唯一 hook（任一豁免源给出未来时间戳即不逐出）。
 # **必须在 register_strategy_routes 之后**（strategy import 时覆写式注册自己的

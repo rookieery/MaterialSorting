@@ -5,7 +5,7 @@
 
 ## 状态
 
-单页工作台后端，15 个 API 端点（另含 `GET /` 与 `/static` mount）+ 1 条 WS。**US-026 起求解用 `solve_with_callback_proc`（多进程版）**：`ThreadPoolExecutor(max_workers=6)` 跑 `run_solve` → `solve_with_callback_proc` spawn 子进程执行 sparrow solve，主进程 drain `multiprocessing.Queue` 分发 manifest/frame/final（多 seed 最多 6 路并发，seed 间同等 CPU 竞争 → 排名仍公平）。WS 双向并发：write loop drain queue → `ws.send_json`；read loop 持续读客户端消息（`{action:'stop'}` → terminate 子进程 → 发 stopped → 关闭 WS）。**`server.py` 启动期 `_reload_pieces_state()` 读 intermediate 填入 `_PIECES_STATE`**（US-020：commit 后可 reload，allow-empty 不再让 import 崩）。US-004 起 `/api/parse-dxf` 上传解析也复用这个 6-worker 线程池跑 CPU 密集的 DXF 深度解析（`collect_pieces_with_details`）。strategy PRD US-004 起 `/api/strategy/*` 四路由（`web/strategy.py`）spawn `ms-run-config --strategy` 子进程跑双模式长跑（HTTP 轮询 run_dir 产物，无 WS），见下「策略桥接」；extreme PRD US-002 起 `/api/extreme/*` 四路由（同 `web/strategy.py` 内 mode='extreme' 分支）spawn `ms-run-config --extreme` 极限长跑，与策略路由**共用每会话状态槽**（同会话 409 单飞互斥、跨会话独立），见下「极限运行桥接」。
+单页工作台后端，19 个 API 端点（另含 `GET /` 与 `/static` mount）+ 1 条 WS。**US-026 起求解用 `solve_with_callback_proc`（多进程版）**：`ThreadPoolExecutor(max_workers=6)` 跑 `run_solve` → `solve_with_callback_proc` spawn 子进程执行 sparrow solve，主进程 drain `multiprocessing.Queue` 分发 manifest/frame/final（多 seed 最多 6 路并发，seed 间同等 CPU 竞争 → 排名仍公平）。WS 双向并发：write loop drain queue → `ws.send_json`；read loop 持续读客户端消息（`{action:'stop'}` → terminate 子进程 → 发 stopped → 关闭 WS）。**`server.py` 启动期 `_reload_pieces_state()` 读 intermediate 填入 `_PIECES_STATE`**（US-020：commit 后可 reload，allow-empty 不再让 import 崩）。US-004 起 `/api/parse-dxf` 上传解析也复用这个 6-worker 线程池跑 CPU 密集的 DXF 深度解析（`collect_pieces_with_details`）。strategy PRD US-004 起 `/api/strategy/*` 四路由（`web/strategy.py`）spawn `ms-run-config --strategy` 子进程跑双模式长跑（HTTP 轮询 run_dir 产物，无 WS），见下「策略桥接」；extreme PRD US-002 起 `/api/extreme/*` 四路由（同 `web/strategy.py` 内 mode='extreme' 分支）spawn `ms-run-config --extreme` 极限长跑，与策略路由**共用每会话状态槽**（同会话 409 单飞互斥、跨会话独立），见下「极限运行桥接」；状态文件 PRD US-001（2026-09-11）起 `POST /api/state-save`（`web/statefile.py`）把当前会话工作台状态聚合序列化为 gzip JSON `.msn` 附件，见下「状态文件保存」。
 
 ## 启动约束（重要）
 
@@ -31,6 +31,7 @@
 | POST | `/api/plt-table-preview` | 2026-08-31 导出弹窗唛架表格 14 字段预览（ExportInfoModal 全字段展示数据源）：`build_info_table` + `preview_rows` 同一真相源返 14 行（列序 = 最终表格列序、带 `manual` 标记），见下专节；**多会话 US-003**：`X-Session-Id` → 该会话快照 | `routes_views.plt_table_preview` |
 | POST | `/api/edit-hold` | **2026-09-04 编辑排料会话钉住心跳**：编辑弹窗纯前端无请求，长编辑中途空闲过期会被逐出 → 保存后导出 401 丢成果；`resolve()` 闸门（过期 401 不给死会话续命）+ `edit_hold.refresh` 滚动续期（`MS_EDIT_HOLD_SEC` 缺省 2h）；无 sid（default）→ 200 no-op；**多会话**：`X-Session-Id` → 该会话 | `server.post_edit_hold` |
 | POST | `/api/edit-polish` | **prd-edit-polish US-002（2026-09-05）编辑排料「智能微调」**：POST 当前编辑 placements（布局态后端不存、随 body = /export 同模式）→ 确定性后处理 `polish_layout` 结果 + 前后对比报告；pid 全匹配才跑（否则 400「母版已变更」）、`run_in_threadpool` 执行 + 顺手 `edit_hold.refresh`，见下专节；**多会话**：`X-Session-Id` → 该会话 `pieces_by_id` | `server.post_edit_polish` |
+| POST | `/api/state-save` | **状态文件 US-001（2026-09-11）工作台状态保存**：当前会话 doc（含 5 层）+ 前端回传 form/quantities/run → gzip JSON `.msn` 附件下载（Content-Disposition 中文/ASCII 双名）；run 在场做保存期守恒校验（placed 与 demand 不守恒 → 400 指路文案），见下专节；**多会话**：`X-Session-Id` → 该会话快照（`_resolve_session_state` 读路由同口径） | `statefile.state_save`（server.py 文件尾 `register_statefile_routes`） |
 | POST | `/api/strategy/start` | strategy US-004：spawn `ms-run-config --strategy` 子进程启动双模式长跑（202）；**2026-08-22 起载荷可带 band**（经 `_parse_band` 同一校验点写进 config，成带与策略模式兼容）；**2026-08-25 起载荷可带 prefix**（经 `_parse_prefix` 同一校验点含 2+2 资格码，非法 → 400 早退，写进 9 键 config）；**多会话 US-004（2026-08-27）：读 `X-Session-Id`**（缺省 default）—— 每会话 409 单飞、跨会话并发放开、数据源 = 会话快照 | `strategy.strategy_start` |
 | GET | `/api/strategy/status` | strategy US-004：无状态惰性轮询 run_dir 产物组装进度；**多会话 US-004：读 `X-Session-Id`**（status 轮询即活性，长跑会话不被扫描误杀） | `strategy.strategy_status` |
 | POST | `/api/strategy/stop` | strategy US-004：树杀子进程（taskkill /T /F / killpg）+ 清本会话 marker；**多会话 US-004：读 `X-Session-Id`**（只树杀本会话 pid） | `strategy.strategy_stop` |
@@ -440,6 +441,54 @@ WS 侧同语义走 **error 帧**：`{"type":"error","code":"session_expired","me
 2. 成功请求顺手 `edit_hold.refresh(sid)`（编辑钉住与 `/api/edit-hold` 心跳同语义；default 不进钉住表；失败请求不续期）。
 3. 布局态零落盘：请求/响应全走 body，无新会话状态、无新磁盘产物。
 4. 测试：`tests/test_web_edit_polish.py`（20 例：200 全链路守恒/会话隔离/sid 闸门/载荷校验/gate 回退/exclude·compact 透传/线程池执行/钉住续期/US-005 compact=True 全链路回收 + US-004 mirror no-op 逐位透传/镜像几何判别夹具/export 侧 `apply_transform`·`_transform_normal`·`placed_to_world` mirror 对拍 4 例）。
+
+## POST /api/state-save — 状态文件保存（状态文件 PRD US-001，2026-09-11）
+
+工作台**运行状态**（非导出产物）的可传递快照：后端出 doc 块（会话 `state['doc']` 原样，含 5 层渲染字段 —— 与 `/export`、`/api/edit-polish`、求解同一真相源），前端回传 form/quantities/run 三块（`lib/stateFile.buildSavePayload`，US-003），`web/statefile.py` 聚合并 gzip 序列化。恢复端 `/api/state-restore`（US-002）与本端复用同一守恒校验函数 `check_placed_conservation`。设计全文 `.docs/business/状态文件保存恢复_落地方案.md`（§四 schema / §五 后端改动点）。
+
+### 请求（`application/json`）
+
+```jsonc
+{
+  "form": { /* FormState 全量原样：sizes/gate/time/seed/multi_seed/seed_count/
+               per_type/band_enabled/band_label/prefix_enabled/prefix_front/prefix_back */ },
+  "quantities": { "g02": { "30": 2, "34": 1 } },   // qtyStore 原生形态；null = 旧语义 demand 全 1
+  "run": {                                          // 可选整块：仅 done 态 bestRun；缺席/{} → 文件无 run 键
+    "seed": 0,
+    "provenance": { "kind": "extreme", "config": { "time_total_s": 600 } },  // 可选，纯展示
+    "final": { "density": 0.8835, "density_sparrow": 0.8612, "width_mm": 7523.0,
+               "elapsed": 121.4, "n_frames": 87, "n_eroded": 12 },
+    "placed": [ {"id": "g02_38", "rotation": 0.0, "translation": [-1.01, 16.22], "mirror": true}, ... ]
+  }
+}
+```
+
+- `placed` = lastFrame.placed_items（已含保存的编辑）；**同 pid 多副本 = 数组多条，绝不 pid 去重**；`mirror` 按 omit-when-false（editStore / `/api/edit-polish` 同口径）。条目缺 `id` / 非 dict → 400。
+- manifest 不入文件：恢复端用 `build_pid_meta` 确定性重算（无 RNG），文件只存单份几何。
+
+### 响应（200 附件）
+
+gzip JSON（`application/gzip`，gzip 恒开 + 魔数 `1f 8b`），顶层 `{schema_version:1, app:'materialsorting', saved_at, doc, form, quantities, run?}`。文件名 `<source 去 .dxf>_状态_<yyyymmdd-HHMMSS>.msn`，Content-Disposition 中文/ASCII 双写（`filename="nesting_state_...msn"; filename*=UTF-8''<percent-encoded 中文>`，/export 同法：source 含中文时 ASCII 侧回退 `nesting` 前缀）。
+
+### 错误响应（结构化 JSON，非文件流）
+
+| 场景 | 状态 | 说明 |
+|------|------|------|
+| sid 过期/墓碑/合法未注册 | 401 | `{"code":"session_expired",...}`（`_resolve_session_state` 读路由同口径闸门先行） |
+| sid 格式非法 | 400 | `{"error":"sid 非法"}` |
+| 会话空（无 doc/pieces，未 commit） | 422 | `{"error":"排料数据为空（请先上传解析母版并 commit）"}` |
+| body 非 JSON / form 缺失 / quantities·run·placed 形态非法 | 400 | fail-fast，不产文件 |
+| **保存期守恒失败**（run 在场：placed pid 越界会话 pieces，或 `Counter(placed) ≠ demand(form.sizes × quantities)` —— 改数量/码选未重解、母版已变更） | 400 | `{"error":"数量矩阵/尺码选择与当前结果不一致，请先重新求解或改回数量再保存"}`（fail-fast 防 A 产出他人无法恢复的内部不一致文件） |
+
+### 关键不变量
+
+1. **契约注记：端点容忍无 run（纯配置档），但 UI 不可达** —— 前端入口在导出弹窗（US-003），经 `hasLastFrame` 门槛必已有解；端点层留「会话存档」契约口子。改此语义须 bump `STATE_SCHEMA_VERSION`。
+2. **守恒校验单一真相**：`check_placed_conservation(placed, pieces, sizes, per_type, quantities)`（内部 `build_pid_meta` 同口径 demand：sizes 过滤 + `(label, str(size))` 查 N、缺省 1、0 跳过、erode 退化石两侧一致）—— 保存端（本路由）与恢复端终检（US-002 `parse_state_document`）复用同一函数，`StateConservationError.kind` ∈ `unknown_pid|count_mismatch` 区分两文案。
+3. doc 块原样透传（不复制不改写）：`doc.pieces` 与会话 intermediate 逐字段一致（含 net_polygon/internal_lines/notches/grain_line 五层 + label_representatives）；quantities 原样嵌入（null 保留旧语义）。
+4. 常量：`STATE_SCHEMA_VERSION=1` / `STATE_MAX_BYTES=20MB`（对齐 `server.UPLOAD_MAX_BYTES`，恢复端核解压后大小）/ `STATE_EXTENSION='.msn'`（恢复端也接受 `.json`）。
+5. 分层：`web/statefile.py` 仅 import web 兄弟模块（solver/routes_views/sessions），`server.py` 文件尾 `register_statefile_routes(app)` 一行（strategy 同模式）；`python -m materialsorting.web.statefile` 合成夹具自检（build→serialize→gunzip 往返 + 守恒三路）。
+6. `runtime._state_from_doc(doc_dict)`（US-001 自 `_build_pieces_state` 提取）：doc dict → pieces state 的纯内存构建（路径读取与 dict 构建解耦，两路共享，行为零变化）—— US-002 恢复端重建会话复用。
+7. 测试：`tests/test_web_statefile.py`（23 例：200 往返 5 层逐字段 + 双名 CD + 无 run 纯配置档 / 422 空态 / 401·400 sid 闸门 / 守恒三路 400 + 多副本精确通过 / 载荷校验全家桶 / `_state_from_doc` 提取回归 / 守恒函数单元）。
 
 ## GET /api/ptypes — US-020 裁片 g 码代表（D10/D11；US-001 v2：键 = label）
 

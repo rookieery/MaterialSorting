@@ -28,6 +28,23 @@ _state_lock = threading.Lock()
 _PIECES_STATE: dict = {}
 
 
+def _state_from_doc(doc_dict: dict) -> dict:
+    """doc dict（intermediate schema v2）→ pieces state 快照（纯内存，无路径读取）。
+
+    状态文件 US-001 提取：``_build_pieces_state`` 的「读 JSON 文件」与「构建 state
+    dict」两步解耦 —— 恢复端（.msn 重建会话，US-002）用本函数直接从内存 doc dict
+    构建同构快照，两路共享同一构建逻辑。gate_mm/pieces 取自 doc（与 load_pieces
+    返回值同源同值）。
+    """
+    pieces = doc_dict.get('pieces') or []
+    return {
+        'doc': doc_dict,
+        'gate_mm': float(doc_dict['gate_mm']),
+        'pieces': pieces,
+        'pieces_by_id': {p['pid']: p for p in pieces},
+    }
+
+
 def _build_pieces_state(intermediate_path: str = paths.INTERMEDIATE) -> dict:
     """从 intermediate JSON 构建 pieces state 快照（不在锁内调用，可重入）。
 
@@ -35,13 +52,8 @@ def _build_pieces_state(intermediate_path: str = paths.INTERMEDIATE) -> dict:
     intermediate 缺失或解析异常时返回空 state（{n:0,...}）—— 启动期 allow-empty 由
     `_init_pieces_state()` 决定，本函数纯粹做读取 + 索引。
     """
-    doc, gate_mm, pieces = load_pieces(intermediate_path)
-    return {
-        'doc': doc,
-        'gate_mm': gate_mm,
-        'pieces': pieces,
-        'pieces_by_id': {p['pid']: p for p in pieces},
-    }
+    doc, _, _ = load_pieces(intermediate_path)
+    return _state_from_doc(doc)
 
 
 def _reload_pieces_state(intermediate_path: str = paths.INTERMEDIATE) -> dict:
