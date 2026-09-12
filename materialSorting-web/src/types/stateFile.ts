@@ -4,6 +4,9 @@
 // `.docs/business/状态文件保存恢复_落地方案.md` §四 schema v1 对齐：
 //   - form 块 = FormState 全量原样入文件（lib/params 同构）；
 //   - quantities = {label:{sizeKey:N}} 原生扁平形态（qtyStore 序列化口径）；
+//   - quantities_base = {label:N} 整列设值基准（qtyStore baseValue；省键式：
+//     只存 ≠1 的行，缺席 = 全 1 默认 = 旧文件口径，additive 不 bump v1，
+//     2026-09-12）；
 //   - run 块仅 done 态入文件（缺席 = 纯配置档，端点容忍但 UI 经 lastFrame
 //     门槛不可达 —— 契约注记见 agent-api-reference）；
 //   - placed 同 pid 多副本 = 数组多条（绝不 pid 去重）；mirror omit-when-false
@@ -64,6 +67,8 @@ export interface StateSavePayload {
   form: FormState;
   /** qtyStore 扁平化 {label:{sizeKey:N}}；空矩阵 → null（后端 demand 全 1 口径）。 */
   quantities: Record<string, Record<string, number>> | null;
+  /** qtyStore baseValue 收集 {label:N}（省键式：只收 ≠1 的行，全 1 → 整键缺席）。 */
+  quantities_base?: Record<string, number>;
   /** 仅 done 态 bestRun 入；无 run 时整键缺席（纯配置档）。 */
   run?: StateSaveRun;
 }
@@ -85,4 +90,6 @@ export interface StateRestoreResponse {
   run: StateSaveRun | null;
   form: FormState;
   quantities: Record<string, Record<string, number>> | null;
+  /** 整列设值基准回传（省键式文件缺席 → null → hydrateFlat no-op 保持默认 1）。 */
+  quantities_base: Record<string, number> | null;
 }

@@ -97,7 +97,7 @@ src/
 - **label 跨码匹配同一片型**：数量 map 以 label（**g 码 g01+**，裁片编号化 US-003 起取代 A/B/C）为 key，跨码语义同片型。依赖后端 `labeling.sequential_sort_key`（group_key 前置保跨码同号 + 几何稳定序）在码间稳定（M1787 结构款成立）。v2 契约已无 name 字段（去名称化删除，不存在「用 name 做 key」问题）。
 - **`getPieceDisplay` 是 UI 消费的唯一入口**：三分支严格固定 —— （a）label 未在 map → `{qty:0, editable:true}`；（b）perSize 缺 sizeKey（=该码无此裁片）→ `{qty:0, editable:false}`；（c）正常 → `{qty: perSize[sizeKey] ?? 0, editable:true}`。qty=0 是显式「该码不排此片」，仍 editable=true（区别于缺片「—」）。QtyMatrix（US-002 起）/PieceZoomModal 都调此 selector，不直接读 quantities[label]。
 - **`clampQty` 是数量值唯一规整入口**：`Math.max(0, Math.min(99, Math.trunc(Number(v) || 0)))`。负数/NaN/非数字→0；小数→截断（非四舍五入）；>99→99；字符串数字→对应整数。setPiecePerSize / setRowAll 内部统一走 clampQty，调用方传入原值即可。
-- **baseValue 仅 UI 特例高亮基准，不参与序列化**：hydrate 写 1、setRowAll 写填充值、setPiecePerSize 新建 label 兜底 1 且格内编辑不动它。把 baseValue 混进 serializeQuantities 会污染 WS 线格式。
+- **baseValue 仅 UI 基准（整列设值弹层初值 + 特例高亮），不参与 WS 线格式**：hydrate 写 1、setRowAll 写填充值、setPiecePerSize 新建 label 兜底 1 且格内编辑不动它。把 baseValue 混进 serializeQuantities 会污染 WS 线格式；状态文件走独立顶层 `quantities_base` 键持久化（省键式只存 ≠1 行，2026-09-12，`hydrateFlat(flat, bases)` 恢复写回）。
 - **setRowAll 非破坏合并**：sizes 列表外的既有 perSize 键保留（整行填充只覆盖所列码）；value 经 clampQty 后同时写 perSize 与 baseValue。
 - **hydrate 全量重建 + 单一入口**：旧 hydrateDefault/hydrateDefaults 双入口已删（grep 0）；每 (label,sizeKey)=1 且 baseValue=1，旧值整体替换。新增初始化路径一律走 hydrate，不再加第二入口。
 - **null 码 sizeKey 口径**：`sizeKey(null)='null'`（perSize key 空间，与 number 区分）；人读「通用」文案由各组件自查（qtyStore 内 sizeLabel 已随 reason 删除）。
@@ -1076,8 +1076,10 @@ run-provenance 来源小字。改恢复链 / 合成 run / 来源小字前先读�
 ### applyRestorePayload（lib/stateFile.ts）顺序敏感
 
 1. uploadStore.setState（done/doc=parse 载荷/activeSize=最小码/commit idle）；
-2. qtyStore.hydrate 默认物化 → hydrateFlat 实值覆盖（**顺序不可倒**；hydrateFlat
-   多出 label 不新建行 —— 矩阵行集以 doc 为准）；
+2. qtyStore.hydrate 默认物化 → hydrateFlat(flat, bases) 实值 + 整列设值基准覆盖
+   （**顺序不可倒**；多出 label 不新建行 —— 矩阵行集以 doc 为准；bases =
+   `quantities_base` 回传，2026-09-12：命中行写回 baseValue（弹层初值/特例
+   高亮基准），缺席 → null → no-op 保持 1）；
 3. formStore.hydrate(form, token=res.doc_id)（先于 React 提交，ControlPanel
    resetForDoc 匹配 token → 水合保留）；
 4. ptypeStore.invalidate()（commit-done 同口径）；
@@ -1091,13 +1093,16 @@ run-provenance 来源小字。改恢复链 / 合成 run / 来源小字前先读�
 （US-003 的「恢复编排将在下一 Story 落地」占位已删）；status=done（非 idle ——
 doc 已写入）。失败 toast 通道不变。
 
-### 冒烟（scripts/smoke_state_file.mjs，33 检查端到端）
+### 冒烟（scripts/smoke_state_file.mjs，44 检查端到端）
 
 - **流程**：上传 5336 → 矩阵 g01@30=2 → gate 180 + per_type d=1 + band g05 → 5s
   求解 → 编辑拖片 +40mm 保存 → 导出 .msn（Node gunzip 断言：schema 顶层键
   `app='materialsorting'`/无 provenance/恰 1 条移动/form/quantities/final）→ 全新
   context 恢复 → toast/来源小字/nest-label 全等/毛版 polygon=placed/预览 Tab 矩阵
-  实值/表单回填/编辑基线料长全等/PLT 导出 placed 深全等（gate=1800）/重解零回归。
+  实值/表单回填/编辑基线料长全等/PLT 导出 placed 深全等（gate=1800）/重解零回归；
+  **S5（2026-09-12）**：g02 整列设值 2（UI 弹层路径）→ 重解 placed 30→33 → 再存
+  省键式断言（quantities_base 只含 g02，逐格改的 g01 不入）→ 再恢复后 g02 弹层
+  初值 = '2'（baseValue 跨机还原）+ 对照 g01 = '1'。
 - **踩坑备档**：① toast 不自动消失且右上栈拦截 overlay 按钮 —— 读断言后逐条 ✕
   关掉；② 数量矩阵 data-cell="列-行"按码集动态（5336 首行=30 非 32，总片数 110
   默认）；③ 主画布毛版 polygon 数用 `polygon[data-label]`（net/collide 层同标签

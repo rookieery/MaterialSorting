@@ -82,6 +82,21 @@ describe('buildSavePayload：form / quantities（US-003）', () => {
   it('空数量矩阵 → quantities=null（后端 demand 全 1 口径）', () => {
     expect(buildSavePayload().quantities).toBeNull();
   });
+
+  it('quantities_base ← baseValue 收集（省键式：只收 ≠1 的行，全 1 → 整键缺席）', () => {
+    // 全默认（只逐格改 / hydrate 物化）→ 整键缺席（旧文件口径零迁移）
+    useQtyStore.getState().setPiecePerSize('g01', 30, 2);   // 逐格改不动 baseValue
+    expect('quantities_base' in buildSavePayload()).toBe(false);
+
+    // 整列设值 3（setRowAll 写 baseValue）→ 收集该行；g02 未设 → 省键
+    useQtyStore.getState().setRowAll('g01', [30, 34], 3);
+    const p = buildSavePayload();
+    expect(p.quantities_base).toEqual({ g01: 3 });
+
+    // baseValue 回 1（整列设值 1）→ 再省键
+    useQtyStore.getState().setRowAll('g01', [30, 34], 1);
+    expect('quantities_base' in buildSavePayload()).toBe(false);
+  });
 });
 
 describe('buildSavePayload：run 块（US-003）', () => {
@@ -238,6 +253,8 @@ function makeRestore(over: Partial<StateRestoreResponse> = {}): StateRestoreResp
     },
     form: { ...DEFAULT_FORM, sizes: [28, 30], gate: '180.00', time: '60' },
     quantities: { g01: { '28': 3, '30': 0 }, g02: { '30': 5 } },
+    // g01 整列设值 3 后 30 码手改 0（base=3）；g02 未设 → 省键式缺席
+    quantities_base: { g01: 3 },
     ...over,
   };
 }
@@ -266,9 +283,12 @@ describe('applyRestorePayload（US-004 恢复编排）', () => {
     expect(up.error).toBeNull();
 
     // 2) qtyStore：默认物化之上 flat 实值覆盖（g01@28=3 / g01@30=0 / g02@30=5）
+    //    + quantities_base 写回行基准（g01=3 命中覆写；g02 省键 → 保持物化 1）
     const qty = useQtyStore.getState().quantities;
     expect(qty.g01.perSize).toEqual({ '28': 3, '30': 0 });
     expect(qty.g02.perSize).toEqual({ '30': 5 });
+    expect(qty.g01.baseValue).toBe(3);
+    expect(qty.g02.baseValue).toBe(1);
 
     // 3) formStore 水合 + token = 恢复响应新 doc_id
     const fs = useFormStore.getState();

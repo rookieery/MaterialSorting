@@ -24,6 +24,10 @@
 //      编辑弹窗开即已编辑布局（料长 = .msn final.width_mm）；PLT 导出 POST
 //      placed 与 .msn placed 深全等（后端守恒）；重解一次出新 final +
 //      来源小字退场（WS 求解 origin 清场）。
+//   S5 整列设值基准（quantities_base，2026-09-12）：g02 整列设值 2（UI 弹层）→
+//      重解守恒（placed 30→33）→ 再存 .msn 省键式断言（g02=2 入档 / 只逐格改的
+//      g01 不入）→ 全新 context 恢复后弹层初值 = 2（用户报障场景：修复前回 1）+
+//      对照 g01 弹层初值 = 1。
 //
 // 报告落 out/smoke_state_file/report.json；退出码 0 = 全 PASS。
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
@@ -461,6 +465,93 @@ const label2 = await page2.locator('.nest-label').first().innerText();
 check('S4s 重解后 nest-label 更新（新密度上屏）',
   label2.includes((final2.density * 100).toFixed(2) + '%'), label2.trim());
 await page2.screenshot({ path: OUT + '/s4t_resolved.png' });
+
+// ---------- S5 整列设值基准（quantities_base）持久化 → 跨机还原 ----------
+// 场景 = 用户报障正面复现：A 整列设值 g02=2 → 保存 → B 恢复后重开弹层初值须为 2
+//（修复前回默认 1；同时锁省键式 —— 只逐格改过的 g01 不入 quantities_base）。
+const COL_LABEL = 'g02';
+const EXPECT_TOTAL_S5 = EXPECT_TOTAL + 11; // 111 + g02 全 11 码 1→2
+const EXPECT_PLACED_S5 = solveCount + SIZES.length; // 30 + g02@三勾选码各 +1 = 33
+
+// S5a 预览 Tab：g02 整列设值 2（走 UI 弹层 = 功能路径，非逐格 fill）
+await page2.locator('button.tab:has-text("预览")').first().click();
+await page2.locator('[data-testid="qty-matrix"]').waitFor({ timeout: 10000 });
+await page2.click('[data-testid="qty-rowfill-' + COL_LABEL + '"]');
+await page2.locator('[data-testid="qty-fill-input"]').waitFor({ timeout: 5000 });
+const fillBaseBefore = await page2.locator('[data-testid="qty-fill-input"]').inputValue();
+check('S5a1 整列设值弹层初值 = 当前行基准（恢复态 g02 base=1）', fillBaseBefore === '1', fillBaseBefore);
+await page2.locator('[data-testid="qty-fill-input"]').fill('2');
+await page2.click('.qty-fill-apply');
+await sleep(400);
+const qtS5 = (await page2.locator('[data-testid="qty-total"]').innerText()).trim();
+check('S5a2 g02 整列设值 2 → 总片数 ' + EXPECT_TOTAL_S5, qtS5 === String(EXPECT_TOTAL_S5), qtS5);
+
+// S5b 重解（改数量不重解 → 保存期守恒 400，必经）：placed = 30+3 = 33
+await page2.locator('button.tab:has-text("超排")').first().click();
+await sleep(600);
+const finalsBefore = cap2.msgs.filter((x) => x && x.type === 'final').length;
+await page2.click('#restart');
+let final3 = null;
+for (let i = 0; i < 240; i++) {
+  const finals = cap2.msgs.filter((x) => x && x.type === 'final');
+  if (finals.length > finalsBefore) { final3 = finals[finals.length - 1]; break; }
+  await sleep(500);
+}
+const s5Placed = cap2.msgs.filter((x) => x && x.type === 'frame').slice(-1)[0]?.placed_items || [];
+check('S5b 整列设值后重解：placed = ' + EXPECT_PLACED_S5 + '（勾选码 Σdemand 守恒）',
+  !!final3 && s5Placed.length === EXPECT_PLACED_S5,
+  'placed=' + s5Placed.length + (final3 ? ' density=' + final3.density.toFixed(4) : ' no final'));
+await page2.locator('#restart').waitFor({ timeout: 60000 });
+
+// S5c 再存 .msn：quantities_base 省键式入档（g02=2 在 / g01 逐格改不入）
+await page2.selectOption('select.export-fmt', 'state');
+const dlP5 = page2.waitForEvent('download', { timeout: 30000 }).then((d) => d).catch(() => null);
+await page2.click('button.export');
+const dl5 = await dlP5;
+check('S5c1 再存 .msn 附件', !!dl5 && dl5.suggestedFilename().endsWith('.msn'), dl5 ? dl5.suggestedFilename() : 'no download');
+const msnPathS5 = OUT + '/saved_s5.msn';
+if (dl5) await dl5.saveAs(msnPathS5);
+const docS5 = dl5 ? JSON.parse(gunzipSync(readFileSync(msnPathS5)).toString('utf-8')) : {};
+check('S5c2 quantities_base 省键式入档：g02=2 在 / g01（只逐格改，base 仍 1）不入',
+  docS5.quantities_base?.[COL_LABEL] === 2 && !('g01' in (docS5.quantities_base || {})),
+  JSON.stringify(docS5.quantities_base || null));
+check('S5c3 quantities 实值入档：g02@32=2（g02 全码 ×2）',
+  docS5.quantities?.[COL_LABEL]?.['32'] === 2 && docS5.quantities?.[COL_LABEL]?.['30'] === 2);
+
+// S5d/S5e 全新 context 恢复：弹层初值跨机还原（核心断言 + 对照）
+const ctx3 = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
+await ctx3.addInitScript(() => {
+  localStorage.setItem('ms.tour.version', '7');
+  localStorage.setItem('ms.tour.seen.preview', '1');
+  localStorage.setItem('ms.tour.seen.nesting', '1');
+});
+const page3 = await ctx3.newPage();
+await page3.goto(BASE, { waitUntil: 'networkidle' });
+await page3.locator('input[type=file]').first().setInputFiles(msnPathS5);
+await page3.waitForSelector('.toast-msg', { timeout: 30000 });
+for (let i = 0; i < 5; i++) {
+  if ((await page3.locator('.toast-close').count()) === 0) break;
+  await page3.locator('.toast-close').first().click();
+  await sleep(150);
+}
+await page3.locator('button.tab:has-text("预览")').first().click();
+await page3.locator('[data-testid="qty-matrix"]').waitFor({ timeout: 10000 });
+const qtS5d = (await page3.locator('[data-testid="qty-total"]').innerText()).trim();
+check('S5d1 恢复后总片数 ' + EXPECT_TOTAL_S5 + '（矩阵实值还原）', qtS5d === String(EXPECT_TOTAL_S5), qtS5d);
+await page3.click('[data-testid="qty-rowfill-' + COL_LABEL + '"]');
+await page3.locator('[data-testid="qty-fill-input"]').waitFor({ timeout: 5000 });
+const fillV = await page3.locator('[data-testid="qty-fill-input"]').inputValue();
+check('S5d2 恢复后 g02 整列设值弹层初值 = 2（quantities_base 写回 baseValue，用户报障场景）',
+  fillV === '2', fillV);
+await page3.click('.qty-fill-cancel');
+await sleep(200);
+await page3.click('[data-testid="qty-rowfill-g01"]');
+await page3.locator('[data-testid="qty-fill-input"]').waitFor({ timeout: 5000 });
+const fillV2 = await page3.locator('[data-testid="qty-fill-input"]').inputValue();
+check('S5e 对照：g01（从未整列设值，省键式缺席）恢复后弹层初值 = 1', fillV2 === '1', fillV2);
+await page3.click('.qty-fill-cancel');
+await page3.screenshot({ path: OUT + '/s5_restored_base.png' });
+await ctx3.close();
 await ctx2.close();
 
 writeFileSync(OUT + '/report.json', JSON.stringify({ at: new Date().toISOString(), results }, null, 2));

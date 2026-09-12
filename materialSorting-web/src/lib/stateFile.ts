@@ -6,6 +6,9 @@
 //     原生形态。与 WS start 载荷（serializeQuantities 按码选过滤）有意分歧 ——
 //     状态文件要跨机完整还原数量矩阵（未勾选码的数量也随文件走），后端守恒
 //     校验自按 form.sizes 过滤 demand，多带的 sizeKey 无害；
+//   - quantities_base ← qtyStore baseValue 收集 {label:N}（2026-09-12）：整列
+//     设值弹层初值/特例高亮基准跨机还原。省键式 = 只收 ≠1 的行，全 1 → 整键
+//     缺席（与 run/provenance 缺省先例同构，旧文件零迁移）；
 //   - run ← bestRun() 仅 done 态（无 lastFrame / 未结束 → 整键缺席 = 纯配置
 //     档；经导出入口保存被 ExportButtons hasLastFrame 门槛天然拦截，端点层仍
 //     容忍无 run 为未来「会话存档」入口留契约）。final 摘要取 RunRecord 当前
@@ -64,6 +67,20 @@ function flattenQuantities(
 }
 
 /**
+ * qtyStore baseValue → {label:N}（省键式：只收 ≠1 的行；全 1 → null = 整键缺席，
+ * 与 run/provenance 缺省先例同构，旧文件零迁移）。baseValue 恒 0-99（store 写入
+ * 路径全经 clampQty / hydrate bases 归整），无需再归整。
+ */
+function flattenBaseValues(map: PieceQuantityMap): Record<string, number> | null {
+  const out: Record<string, number> = {};
+  for (const label of Object.keys(map)) {
+    const q = map[label];
+    if (q && q.baseValue !== 1) out[label] = q.baseValue;
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+/**
  * PlacedItem 深拷贝 = synthRunStore.deepCopyPlaced（US-004 起共享单一实现：
  * 保序 + translation 逐项拷断 + mirror omit-when-false，保存/合成/编辑三侧同口径）。
  */
@@ -79,14 +96,21 @@ function provenanceOf(origin: RunOrigin | undefined): RunProvenance | undefined 
 }
 
 /**
- * 组装保存载荷（{form, quantities, run?}）：run 仅 done 态 bestRun 入块。
- * 深拷贝保证：payload 与 stores 当前态解耦（发送期间用户编辑不影响已序列化体）。
+ * 组装保存载荷（{form, quantities, quantities_base?, run?}）：run 仅 done 态
+ * bestRun 入块。深拷贝保证：payload 与 stores 当前态解耦（发送期间用户编辑不
+ * 影响已序列化体）。
  */
 export function buildSavePayload(): StateSavePayload {
   const form = useFormStore.getState().form;
   const quantities = flattenQuantities(useQtyStore.getState().quantities);
+  const quantities_base = flattenBaseValues(useQtyStore.getState().quantities);
   const run = buildRunBlock(runRegistry.bestRun());
-  return { form, quantities, ...(run ? { run } : {}) };
+  return {
+    form,
+    quantities,
+    ...(quantities_base ? { quantities_base } : {}),
+    ...(run ? { run } : {}),
+  };
 }
 
 /** bestRun → run 块（无 lastFrame / 未结束 → undefined = 整块缺席）。 */
@@ -142,7 +166,7 @@ function finalizeFromLayout(
  *     + strategyStore.lastStart 清空（旧 start 载荷对新 doc 非法，commit 同口径）。
  *  2. qtyStore —— hydrate（doc 全码全片默认 1 物化，与 PreviewPage 订阅同构：
  *     显式重放使编排不依赖组件挂载时序 / 订阅顺序）→ hydrateFlat（状态文件实值
- *     覆盖，null = 纯配置档保持默认 1）。
+ *     覆盖 + quantities_base 写回行基准，null = 纯配置档保持默认 1）。
  *  3. formStore.hydrate(form, token=res.doc_id) —— ControlPanel useEffect([docId])
  *     在 React 提交后才跑 resetForDoc(新 docId)，届时 token 已匹配 → 水合表单保留
  *     （水合优先于 docId 变更重置；token 单射 + 恢复每次铸新 id 无假匹配面）。
@@ -170,12 +194,13 @@ export function applyRestorePayload(res: StateRestoreResponse): void {
     commitSummary: null,
   });
 
-  // 2) qtyStore：默认物化（幂等）→ 状态文件实值覆盖。
+  // 2) qtyStore：默认物化（幂等）→ 状态文件实值覆盖（perSize + 整列设值基准
+  //    baseValue；quantities_base 缺席 = 省键式全 1/旧文件 → 保持物化 1）。
   const entries = res.parse.sizes.flatMap((s) =>
     s.pieces.map((p) => ({ label: p.label, size: s.size })),
   );
   useQtyStore.getState().hydrate(entries);
-  useQtyStore.getState().hydrateFlat(res.quantities);
+  useQtyStore.getState().hydrateFlat(res.quantities, res.quantities_base);
 
   // 3) formStore 水合（token = 恢复响应新 doc_id）。
   useFormStore.getState().hydrate(res.form, res.doc_id);

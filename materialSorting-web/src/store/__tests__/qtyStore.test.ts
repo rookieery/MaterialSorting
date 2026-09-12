@@ -298,9 +298,52 @@ describe('hydrateFlat (US-004 状态文件恢复)', () => {
     expect(useQtyStore.getState().quantities.g01.perSize['28']).toBe(0);
   });
 
-  it('baseValue 保留物化值 1（状态文件不含 baseValue —— 特例高亮基准与初始态同锚）', () => {
+  it('不带 bases → baseValue 保留物化值 1（旧文件/省键式全 1：特例高亮基准与初始态同锚）', () => {
     useQtyStore.getState().hydrate([{ label: 'g01', size: 28 }]);
     useQtyStore.getState().hydrateFlat({ g01: { '28': 5 } });
+    expect(useQtyStore.getState().quantities.g01.baseValue).toBe(1);
+  });
+
+  it('bases 命中 label → baseValue 覆写（clampQty 归整越界钳制；非数类型忽略）', () => {
+    useQtyStore.getState().hydrate([{ label: 'g01', size: 28 }, { label: 'g02', size: 28 }]);
+    useQtyStore.getState().hydrateFlat(
+      { g01: { '28': 2 }, g02: { '28': 1 } },
+      { g01: 2, g02: 150 },
+    );
+    const map = useQtyStore.getState().quantities;
+    expect(map.g01.baseValue).toBe(2);
+    expect(map.g02.baseValue).toBe(99);
+    // 非数类型 → typeof 守卫忽略（保留先前基准；后端 _valid_base_map 已挡
+    // 非 int，此处纯防御 —— base 无 perSize「0-99 线格式契约」压力，不归 0）
+    useQtyStore.getState().hydrateFlat(
+      { g01: { '28': 2 }, g02: { '28': 1 } },
+      { g01: 'x' as unknown as number },
+    );
+    expect(useQtyStore.getState().quantities.g01.baseValue).toBe(2);
+  });
+
+  it('bases label 缺席 → 该行保持物化 1（省键式：只存 ≠1 的行）', () => {
+    useQtyStore.getState().hydrate([{ label: 'g01', size: 28 }, { label: 'g02', size: 28 }]);
+    useQtyStore.getState().hydrateFlat(
+      { g01: { '28': 2 }, g02: { '28': 2 } },
+      { g01: 2 },
+    );
+    const map = useQtyStore.getState().quantities;
+    expect(map.g01.baseValue).toBe(2);
+    expect(map.g02.baseValue).toBe(1);
+  });
+
+  it('bases 多出 label 忽略（不新建行，与 flat 多出 label 同口径）', () => {
+    useQtyStore.getState().hydrate([{ label: 'g01', size: 28 }]);
+    useQtyStore.getState().hydrateFlat({ g01: { '28': 2 } }, { g01: 2, gX: 5 });
+    expect(Object.keys(useQtyStore.getState().quantities).sort()).toEqual(['g01']);
+  });
+
+  it('flat null/空 → 整体 no-op 时 bases 一并忽略（base 是行属性从属实值）', () => {
+    useQtyStore.getState().hydrate([{ label: 'g01', size: 28 }]);
+    useQtyStore.getState().hydrateFlat(null, { g01: 2 });
+    expect(useQtyStore.getState().quantities.g01.baseValue).toBe(1);
+    useQtyStore.getState().hydrateFlat({}, { g01: 2 });
     expect(useQtyStore.getState().quantities.g01.baseValue).toBe(1);
   });
 });

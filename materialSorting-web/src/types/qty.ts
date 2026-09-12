@@ -3,8 +3,10 @@
 // 数量以片型 label（g01+ 裁片码）为 key —— 按 label 跨码匹配同一片型，每码独立持有数量
 // （perSize 用 sizeKey 索引：number->String、null->'null'）。
 //
-// baseValue：该行的「基准值」，仅 UI 特例高亮用（格子值 ≠ baseValue 且整行非全同 → 高亮），
-// 不参与序列化 / WS 线格式。来源：hydrate 写 1（默认基准）、setRowAll 写填充值、
+// baseValue：该行的「基准值」，仅 UI 特例高亮 + 整列设值弹层初值用（格子值 ≠
+// baseValue 且整行非全同 → 高亮），不参与 WS 线格式（serializeQuantities 只读
+// perSize）；状态文件经顶层 quantities_base 键持久化（省键式：只存 ≠1 的行，
+// 2026-09-12）。来源：hydrate 写 1（默认基准）、setRowAll 写填充值、
 // setPiecePerSize 新建 label 时兜底 1（纯逐格手改场景高亮以 1 为基准）。
 //
 // 与 uploadStore 完全解耦：uploadStore 管 doc/activeSize，本 store 独立管数量。
@@ -14,7 +16,7 @@
 export interface PieceQuantity {
   /** 码号 -> 数量 映射；key 用 sizeKey（String(size) 或 'null'）。 */
   perSize: Record<string, number>;
-  /** 行基准值（UI 特例高亮基准；不参与序列化）。 */
+  /** 行基准值（UI 特例高亮/整列设值初值基准；状态文件经 quantities_base 持久化）。 */
   baseValue: number;
 }
 

@@ -3,14 +3,17 @@
 
 状态文件 = 版师工作台**运行状态**的可传递快照（非导出产物）：后端出 doc 块（会话
 ``state['doc']`` 原样，含 5 层渲染字段 = 与 /export、edit-polish、求解同一真相源），
-前端回传 form/quantities/run 三块，本模块聚合并 gzip 序列化。恢复端
+前端回传 form/quantities/quantities_base/run 四块，本模块聚合并 gzip 序列化。恢复端
 （``parse_state_document`` 校验链 + 纯内存会话重建 + manifest 确定性重算）与本
 保存端复用同一守恒校验函数 ``check_placed_conservation``。
 
 schema v1（设计 §四，.docs/business/状态文件保存恢复_落地方案.md）：
-  {schema_version, app, saved_at, doc, form, quantities, run?}
+  {schema_version, app, saved_at, doc, form, quantities, quantities_base?, run?}
   - run 仅 done 态入文件（body 无 run → 整块省略）；placed 同 pid 多副本 = 数组
     多条，绝不 pid 去重；mirror 按 omit-when-false（editStore 同口径）。
+  - quantities_base = {label:整数} 整列设值基准（qtyStore baseValue，2026-09-12
+    additive）：省键式 —— 只存 ≠1 的行，缺席 = 全 1 默认；不参与守恒/manifest
+    （纯 UI 基准），无需 bump v1。
   - manifest 不入文件：恢复端用 build_pid_meta 确定性重算（无 RNG），文件只存
     单份几何。
 
@@ -109,11 +112,14 @@ def _form_gate_mm(form: dict, doc_gate: float) -> float:
 
 # ---------------------------------------------------------------- 纯逻辑（构建/序列化）
 
-def build_state_document(state: dict, form: dict, quantities, run) -> dict:
+def build_state_document(state: dict, form: dict, quantities, run,
+                         quantities_base=None) -> dict:
     """聚合保存载荷 → 状态文件顶层 dict（doc 块取 state['doc'] 原样含 5 层）。
 
     - ``form`` / ``quantities``：前端回传原样嵌入（quantities 可为 None = 求解
       未带数量矩阵的旧语义，demand 全 1 —— 与 build_pid_meta 缺省口径一致）；
+    - ``quantities_base``：整列设值基准 {label:整数}，None → 整块省略（省键式：
+      前端只回传 ≠1 的行，缺席 = 全 1 默认 = 旧文件口径零迁移）；
     - ``run``：None/空 → 整块省略（纯配置档：端点容忍，UI 经 lastFrame 门槛
       不可达 —— 契约注记见 agent-api-reference）。
     """
@@ -125,6 +131,8 @@ def build_state_document(state: dict, form: dict, quantities, run) -> dict:
         'form': form,
         'quantities': quantities,
     }
+    if quantities_base is not None:
+        document['quantities_base'] = quantities_base
     if run:
         document['run'] = run
     return document
@@ -194,6 +202,15 @@ _G_LABEL_RE = re.compile(r'g\d{1,3}')
 def _finite(x) -> bool:
     """数值形态判据：int/float（bool 除外）且有限（NaN/±Inf 拒收，防几何污染）。"""
     return isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x)
+
+
+def _valid_base_map(v) -> bool:
+    """quantities_base 形态判据：{label: 整数}（bool 除外，doc.pieces[].size 同款
+    整数判据）。UI 基准值不承重（不参与守恒/manifest），但无后端消费方兜底 ——
+    逐值 fail-fast 挡手改乱值，前端 hydrateFlat 另有 clampQty 防御纵深。"""
+    return (isinstance(v, dict)
+            and all(isinstance(x, int) and not isinstance(x, bool)
+                    for x in v.values()))
 
 
 def _validate_doc_block(doc) -> None:
@@ -307,7 +324,8 @@ def parse_state_document(raw: bytes) -> dict:
     3. ``json.loads`` 容错（DecodeError/Unicode/RecursionError → 400「状态文件损坏」）；
     4. ``schema_version`` 缺失/非 int/过新 → 400（文案含双版本号；v1 内未知顶层
        键忽略、可选块缺席容忍 —— 新读老宽松，老读新明确报错）；
-    5. form/quantities 块形态（doc/run 前置：守恒校验消费这两块）；
+    5. form/quantities/quantities_base 块形态（doc/run 前置：守恒校验消费
+       form/quantities 这两块；quantities_base 纯 UI 基准缺席容忍）；
     6. doc 块逐片形态（``_validate_doc_block``）；
     7. run 块（在场时：``_validate_run_block``）。
 
@@ -344,6 +362,9 @@ def parse_state_document(raw: bytes) -> dict:
     quantities = document.get('quantities')
     if quantities is not None and not isinstance(quantities, dict):
         raise StateFileError('状态文件损坏（quantities 须为 {label:{sizeKey:N}} 对象）')
+    if (quantities_base := document.get('quantities_base')) is not None \
+            and not _valid_base_map(quantities_base):
+        raise StateFileError('状态文件损坏（quantities_base 须为 {label:整数} 对象）')
 
     _validate_doc_block(document.get('doc'))
     if run := document.get('run'):
@@ -386,17 +407,18 @@ class _DocPieceView:
 async def state_save(request: Request):
     """POST /api/state-save：当前会话工作台状态 → gzip JSON 附件（.msn 下载）。
 
-    请求 ``{form, quantities, run?}``（前端 buildSavePayload，US-003）：form =
-    FormState 全量原样入文件；run 仅 done 态（body 无 run → 文件无 run 键）。
-    响应 200 附件（Content-Disposition 中文/ASCII 双写，/export 同法），文件名
-    ``<source 去 .dxf>_状态_<yyyymmdd-HHMMSS>.msn``。
+    请求 ``{form, quantities, quantities_base?, run?}``（前端 buildSavePayload，
+    US-003）：form = FormState 全量原样入文件；quantities_base = 整列设值基准
+    {label:整数}（省键式，body 无 → 文件无键）；run 仅 done 态（body 无 run →
+    文件无 run 键）。响应 200 附件（Content-Disposition 中文/ASCII 双写，/export
+    同法），文件名 ``<source 去 .dxf>_状态_<yyyymmdd-HHMMSS>.msn``。
 
     错误契约（全部结构化 JSON，非文件流）：
     - sid 过期/墓碑 → 401 ``{code:'session_expired'}``、非法 → 400（SessionError
       统一映射，_resolve_session_state 同 routes_views 读路由口径）；
     - 会话空（无 doc/pieces，未 commit）→ 422；
-    - body 非 JSON / form 缺失 / quantities·run 形态非法 / run.placed 条目形态
-      非法 → 400；
+    - body 非 JSON / form 缺失 / quantities·quantities_base·run 形态非法 /
+      run.placed 条目形态非法 → 400；
     - 保存期守恒校验（run 在场：placed pid 全命中会话 pieces + Counter ==
       demand(form.sizes × quantities)，改数量/码选未重解 → 400 指路文案）。
     """
@@ -425,6 +447,10 @@ async def state_save(request: Request):
     if quantities is not None and not isinstance(quantities, dict):
         return JSONResponse(
             {'error': 'quantities 须为 {label:{sizeKey:N}} 对象'}, status_code=400)
+    quantities_base = payload.get('quantities_base')
+    if quantities_base is not None and not _valid_base_map(quantities_base):
+        return JSONResponse(
+            {'error': 'quantities_base 须为 {label:整数} 对象'}, status_code=400)
     run = payload.get('run')
     if run is not None and not isinstance(run, dict):
         return JSONResponse({'error': 'run 须为对象'}, status_code=400)
@@ -453,7 +479,7 @@ async def state_save(request: Request):
                 {'error': 'form.sizes/per_type/quantities 形态非法，无法核对数量守恒'},
                 status_code=400)
 
-    document = build_state_document(state, form, quantities, run)
+    document = build_state_document(state, form, quantities, run, quantities_base)
     data = serialize_state(document)
 
     # 文件名前缀取 doc.source（母版原上传名，commit 时入 intermediate），去 .dxf
@@ -497,10 +523,11 @@ async def state_restore(request: Request, file: UploadFile = File(...)):
        豁免不进钉住表）。
 
     响应 ``{doc_id, filename, parse, manifest, final, placed, run?, form,
-    quantities}``：final/placed = run 块摘出（无 run → None 纯配置档）；``run`` 块
-    additive 整块透传（seed/provenance 供前端 US-004 恢复编排写回来源，无 run 时
-    为 None）。错误契约：校验链失败 → 400/413 ``{error}``（StateFileError 全结构化
-    JSON，不炸 500）。
+    quantities, quantities_base}``：final/placed = run 块摘出（无 run → None 纯
+    配置档）；``run`` 块 additive 整块透传（seed/provenance 供前端 US-004 恢复编排
+    写回来源，无 run 时为 None）；``quantities_base`` = 整列设值基准回传（省键式
+    文件缺席 → None → 前端 no-op 保持默认 1）。错误契约：校验链失败 → 400/413
+    ``{error}``（StateFileError 全结构化 JSON，不炸 500）。
     """
     fname = file.filename or ''
     if not (fname.lower().endswith(STATE_EXTENSION) or fname.lower().endswith('.json')):
@@ -539,6 +566,7 @@ async def state_restore(request: Request, file: UploadFile = File(...)):
 
     form = document['form']
     quantities = document.get('quantities')
+    quantities_base = document.get('quantities_base')
     run = document.get('run') or None
 
     # manifest 确定性重算（与保存会话同 form → 与原解 manifest 逐字段一致；纯函数
@@ -577,6 +605,7 @@ async def state_restore(request: Request, file: UploadFile = File(...)):
         'final': (run or {}).get('final'),
         'placed': (run or {}).get('placed'),
         'run': run,
+        'quantities_base': quantities_base,
         'form': form,
         'quantities': quantities,
     }
@@ -626,6 +655,7 @@ def _smoke() -> int:
             'band_enabled': False, 'band_label': '', 'prefix_enabled': False,
             'prefix_front': '', 'prefix_back': ''}
     quantities = {'g01': {'30': 2}, 'g02': {'30': 1}}
+    quantities_base = {'g01': 2}   # g01 整列设值 2 场景（g02 未设 → 省键）
     placed = [
         {'id': 'g01_30', 'rotation': 0.0, 'translation': [0.0, 0.0]},
         {'id': 'g01_30', 'rotation': 180.0, 'translation': [500.0, 10.0]},
@@ -648,20 +678,28 @@ def _smoke() -> int:
         else:
             check(name, False)
 
-    with_run = build_state_document(state, form, quantities, run)
-    check('顶层键齐（schema_version=1/app/saved_at/doc/form/quantities/run）',
+    with_run = build_state_document(state, form, quantities, run, quantities_base)
+    check('顶层键齐（schema_version=1/app/saved_at/doc/form/quantities/'
+          'quantities_base/run）',
           set(with_run) == {'schema_version', 'app', 'saved_at', 'doc', 'form',
-                            'quantities', 'run'}
+                            'quantities', 'quantities_base', 'run'}
           and with_run['schema_version'] == STATE_SCHEMA_VERSION)
     check('body 无 run → 文件无 run 键（纯配置档）',
           'run' not in build_state_document(state, form, quantities, None))
+    check('quantities_base None/缺席 → 省键（省键式，全 1 默认口径）',
+          'quantities_base' not in build_state_document(
+              state, form, quantities, None, None)
+          and 'quantities_base' not in build_state_document(
+              state, form, quantities, None))
 
     data = serialize_state(with_run)
     check('serialize 为 gzip（魔数 1f 8b）', data[:2] == b'\x1f\x8b')
     parsed = json.loads(gzip.decompress(data))
-    check('往返逐字段一致（doc 5 层原样 / form / quantities / run.placed 原序）',
+    check('往返逐字段一致（doc 5 层原样 / form / quantities / quantities_base / '
+          'run.placed 原序）',
           parsed['doc'] == doc and parsed['form'] == form
           and parsed['quantities'] == quantities
+          and parsed['quantities_base'] == quantities_base
           and parsed['run']['placed'] == placed)
 
     try:
@@ -691,8 +729,10 @@ def _smoke() -> int:
     # ------------------------------------------------ US-002 恢复链（parse/重算）
     restored = parse_state_document(data)
     check('parse_state_document：gzip 文件解析 → 与原件逐字段一致',
-          {k: restored[k] for k in ('doc', 'form', 'quantities', 'run')}
-          == {k: parsed[k] for k in ('doc', 'form', 'quantities', 'run')})
+          {k: restored[k] for k in ('doc', 'form', 'quantities',
+                                    'quantities_base', 'run')}
+          == {k: parsed[k] for k in ('doc', 'form', 'quantities',
+                                     'quantities_base', 'run')})
     plain = json.dumps(with_run, ensure_ascii=False).encode('utf-8')
     check('parse_state_document：纯 JSON（无 gzip）同通过',
           parse_state_document(plain)['run']['placed'] == placed)
@@ -732,6 +772,10 @@ def _smoke() -> int:
                      lambda d: d['run'].__setitem__(
                          'provenance', {'kind': 'magic'}))),
                  want='provenance.kind 非法')
+    expect_error('恢复校验：quantities_base 值非整数 → 400',
+                 lambda: parse_state_document(_tamper(
+                     lambda d: d.__setitem__('quantities_base', {'g01': 'x'}))),
+                 want='quantities_base')
 
     parse_payload = _build_parse_payload(
         'newdoc0001', doc['source'], [_DocPieceView(p) for p in doc['pieces']])

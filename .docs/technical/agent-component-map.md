@@ -2428,3 +2428,34 @@ US-004）。设计全文 `.docs/business/状态文件保存恢复_落地方案.m
   Tab 矩阵 111+5 层/表单回填/编辑基线料长全等/PLT 导出 placed 深全等+gate 1800/重解
   新 final+小字退场）；最小冒烟 `smoke-state-file.mjs` 9/9（dev :5173）。报告
   `out/smoke_state_file/report.json`；验证后 ms-web 已杀。
+
+## 状态文件 补丁（整列设值基准 quantities_base 持久化；2026-09-12）
+
+**范围**：用户报障修复 —— A 整列设值 2 → 保存 .msn → B 恢复后矩阵值正确但
+「整列设值」弹层初值回默认 1（且值 2 的格子被误高亮为特例）。根因 = baseValue
+存于 qtyStore `PieceQuantity` 但保存链 `flattenQuantities` 只序列化 perSize、
+恢复链 `hydrateFlat` 不回写。修法 = .msn 顶层并列新键 `quantities_base`
+（`{label:整数}`，**省键式**只存 ≠1 行、全 1 → 整键缺席 = 旧文件零迁移；
+schema v1 不 bump ——「v1 内未知顶层键忽略」本就是设计明文）；纯 UI 基准
+不参与守恒/manifest（后端 opaque 透传 + `_valid_base_map` 逐值 int 校验）。
+
+### 文件
+
+| 文件 | 改动 |
+|------|------|
+| `src/types/stateFile.ts`（扩） | `StateSavePayload.quantities_base?: Record<string, number>`（省键可选）/ `StateRestoreResponse.quantities_base: Record<string, number> \| null`（必选，缺席 → null → 前端 no-op） |
+| `src/store/qtyStore.ts`（扩） | `hydrateFlat(flat, bases?)` 加第二参：行 baseValue 命中覆写（clampQty 归整）／缺席保持物化 1／非数忽略；flat null/空整体 no-op 时 bases 一并忽略（base 从属实值）；文件头与 jsdoc「状态文件不含 baseValue」表述更新 |
+| `src/lib/stateFile.ts`（扩） | 私有 `flattenBaseValues`（只收 ≠1 行 → null = 省键）+ `buildSavePayload` 组装 `...(quantities_base ? {} : …)`；`applyRestorePayload` 改 `hydrateFlat(res.quantities, res.quantities_base)` |
+| 后端 `web/statefile.py` | `build_state_document(..., quantities_base=None)` None 省键；save 端非 None 且非 `{label:整数}` → 400；restore 校验链同判据 + 响应透传回传 `quantities_base`（缺席 → null）；`_smoke` 20 项（+2：省键检查/坏值 tamper） |
+| 零改动 | `QtyMatrix.tsx`（colBase/弹层初值/特例高亮自动生效）、`useExport.ts`、`useParseDxf.ts`、`lib/params.ts`（serializeQuantities 只读 perSize，WS 线格式不变） |
+
+### 验证
+
+- vitest 全量 **1155 passed**（+5：qtyStore bases 命中/省键/非数/多出 label/
+  no-op 忽略 + stateFile 省键收集三态/编排 baseValue 断言）；`npm run build` 过。
+- pytest `tests/test_web_statefile.py` **79 passed**（+7：save 入档/省键对拍、
+  restore 透传、两端非法形态 400 参数化、链式往返键集）；后端 `_smoke` 20/20。
+- E2E 冒烟 `scripts/smoke_state_file.mjs` **44/44 SMOKE PASS**（新增 S5 段 9 检查：
+  g02 整列设值 2 → 重解 placed 30→33 → 再存省键式断言（g02 入档/g01 逐格改不入）
+  → 全新 context 恢复后 g02 弹层初值 = '2'（报障正面复现，修复前回 '1'）+
+  对照 g01 = '1'）。

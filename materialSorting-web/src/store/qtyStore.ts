@@ -1,7 +1,8 @@
 // QtyState —— 裁片数量状态 store（US-011；矩阵化重构 US-001 简化 + setRowAll）。
 //
 // 单一真相源：以片型 label（g01+ 裁片码）为 key，跨码匹配同一片型。每码独立持有数量
-// （perSize[sizeKey]）；baseValue 是该行的基准值，仅 UI 特例高亮用，不参与序列化。
+// （perSize[sizeKey]）；baseValue 是该行的基准值，仅 UI 特例高亮/整列设值初值用 ——
+// 不参与 WS 线格式（serializeQuantities），状态文件经顶层 quantities_base 键持久化。
 //
 // 与 uploadStore 完全解耦：本 store 仅管数量，不依赖 React（纯 Zustand），便于纯函数测试。
 // US-011 仅前端 UI，不进 commit / 排料；WS 线格式由 lib/params.serializeQuantities 扁平化。
@@ -74,12 +75,16 @@ export interface QtyState {
    * 状态文件恢复（US-004）：{label:{sizeKey:N}} 扁平实值覆盖 —— 在 hydrate 物化
    * （默认 1）之上按值覆写，doc 未覆盖的 sizeKey 保留默认 1（手改文件缺键容错）；
    * flat 多出的 label/sizeKey 并入（无害：QtyMatrix 只渲染 doc (label,size) 格，
-   * WS/保存按 sizes 过滤）。数值经 clampQty 归整（线格式契约 0-99 整数）；
-   * baseValue 保留物化值 1（状态文件不含 baseValue —— 特例高亮基准与「每码每片
-   * 默认 1」初始态同锚）。null → no-op（纯配置档无 quantities 块 = 后端 demand
-   * 全 1 口径，默认 1 即终态）。
+   * WS/保存按 sizes 过滤）。数值经 clampQty 归整（线格式契约 0-99 整数）。
+   * bases（quantities_base，2026-09-12）：可选写回行基准 baseValue —— label
+   * 命中 → clampQty 归整覆写；缺席/旧文件省键式全 1 → 保留物化 1。null → no-op
+   * （纯配置档无 quantities 块 = 后端 demand 全 1 口径，默认 1 即终态；base 是
+   * 行属性从属实值 —— flat 整体 no-op 时 bases 一并忽略，bases 多出 label 忽略）。
    */
-  hydrateFlat: (flat: Record<string, Record<string, number>> | null) => void;
+  hydrateFlat: (
+    flat: Record<string, Record<string, number>> | null,
+    bases?: Record<string, number> | null,
+  ) => void;
 }
 
 export const useQtyStore = create<QtyState>((set) => ({
@@ -121,7 +126,7 @@ export const useQtyStore = create<QtyState>((set) => ({
       }
       return { quantities: map };
     }),
-  hydrateFlat: (flat) =>
+  hydrateFlat: (flat, bases) =>
     set((s) => {
       // null / 空对象 → no-op（纯配置档；zustand set({}) 不触发订阅通知）。
       if (!flat || Object.keys(flat).length === 0) return {};
@@ -135,7 +140,12 @@ export const useQtyStore = create<QtyState>((set) => ({
                 Object.entries({ ...q.perSize, ...row }).map(([k, v]) => [k, clampQty(v)]),
               )
             : { ...q.perSize },
-          baseValue: q.baseValue,
+          // quantities_base 写回行基准：命中 → clampQty 归整；缺席（省键式全 1 /
+          // 旧文件）→ 保留物化 1。bases 多出 label 天然不进循环（忽略）。
+          baseValue:
+            bases && typeof bases[label] === 'number'
+              ? clampQty(bases[label])
+              : q.baseValue,
         };
       }
       return { quantities };

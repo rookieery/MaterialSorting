@@ -215,6 +215,22 @@ def test_save_without_run_omits_run_key(client):
     assert 'run' not in json.loads(gzip.decompress(r2.content))
 
 
+def test_save_quantities_base_round_trip(client):
+    """quantities_base（整列设值基准，2026-09-12 additive）：body 带 → 原样入档；
+    body 不带 → 整键省略（省键式：全 1 默认 = 旧文件口径，锁键集不膨胀）。"""
+    r = client.post('/api/state-save', json={
+        'form': _form(), 'quantities': _quantities(),
+        'quantities_base': {'g01': 2}, 'run': _run()})
+    assert r.status_code == 200
+    doc = json.loads(gzip.decompress(r.content))
+    assert doc['quantities_base'] == {'g01': 2}
+
+    r2 = client.post('/api/state-save',
+                     json={'form': _form(), 'quantities': _quantities()})
+    assert r2.status_code == 200
+    assert 'quantities_base' not in json.loads(gzip.decompress(r2.content))
+
+
 def test_save_ascii_source_uses_stem_in_both_names(client):
     """ASCII source → 双名同前缀（无中文回退）。"""
     d = _doc()
@@ -330,6 +346,11 @@ def test_save_conservation_multi_copy_exact_pass(client):
 @pytest.mark.parametrize('payload, want', [
     ({'quantities': {}}, '缺少 form'),
     ({'form': _form(), 'quantities': []}, 'quantities 须为'),
+    ({'form': _form(), 'quantities': {}, 'quantities_base': []}, 'quantities_base 须为'),
+    ({'form': _form(), 'quantities': {}, 'quantities_base': {'g01': '2'}},
+     'quantities_base 须为'),
+    ({'form': _form(), 'quantities': {}, 'quantities_base': {'g01': True}},
+     'quantities_base 须为'),
     ({'form': _form(), 'quantities': {}, 'run': []}, 'run 须为对象'),
     ({'form': _form(), 'quantities': {}, 'run': {'placed': []}}, 'run.placed 不能为空'),
     ({'form': _form(), 'quantities': {}, 'run': {'placed': [{'rotation': 0}]}},
@@ -404,20 +425,27 @@ def test_conservation_kinds():
 
 
 def test_build_state_document_run_omitted_when_falsy():
-    """run=None/{} → 文件无 run 键；quantities=None 原样入文件。"""
+    """run=None/{} → 文件无 run 键；quantities=None 原样入文件；quantities_base
+    None/缺席 → 省键、非 None → 入档（省键式与 run 同法）。"""
     doc = build_state_document(_state(), _form(), None, None)
     assert 'run' not in doc and doc['quantities'] is None
+    assert 'quantities_base' not in doc
     assert 'run' not in build_state_document(_state(), _form(), {}, {})
+    assert 'quantities_base' not in build_state_document(_state(), _form(), {}, {})
+    with_base = build_state_document(_state(), _form(), None, None, {'g02': 3})
+    assert with_base['quantities_base'] == {'g02': 3}
     assert serialize_state(doc)[:2] == b'\x1f\x8b'
 
 
 # ================================================================ US-002 恢复端
 
-def _save_msn(client, headers=None, with_run=True):
+def _save_msn(client, headers=None, with_run=True, quantities_base=None):
     """default（或指定 sid）会话 → .msn 字节（守恒通过的合法文件）。"""
     body = {'form': _form(), 'quantities': _quantities()}
     if with_run:
         body['run'] = _run()
+    if quantities_base is not None:
+        body['quantities_base'] = quantities_base
     r = client.post('/api/state-save', headers=headers or {}, json=body)
     assert r.status_code == 200, r.text
     return r.content
@@ -447,7 +475,7 @@ def test_restore_200_full_payload(client):
     assert r.status_code == 200, r.text
     res = r.json()
     assert set(res) >= {'doc_id', 'filename', 'parse', 'manifest', 'final',
-                        'placed', 'run', 'form', 'quantities'}
+                        'placed', 'run', 'form', 'quantities', 'quantities_base'}
     assert res['doc_id'] != 'docabc01' and re.fullmatch(r'[0-9a-f]{32}', res['doc_id'])
     assert res['filename'] == '5336测试母版.dxf'
     assert res['form'] == _form()
@@ -468,6 +496,22 @@ def test_restore_200_full_payload(client):
     assert by_label['g01']['internal_lines'] == p0['internal_lines']
     assert by_label['g01']['notches'] == p0['notches']
     assert by_label['g01']['grain_line'] == p0['grain_line']
+
+
+def test_restore_quantities_base_passthrough(client):
+    """quantities_base 恢复响应原样回传（带 → dict；不带 → None = 前端 no-op
+    保持默认 1）；不参与 manifest/守恒（纯 UI 基准，demand 断言不变）。"""
+    msn = _save_msn(client, quantities_base={'g01': 2})
+    r = _restore(client, msn)
+    assert r.status_code == 200
+    res = r.json()
+    assert res['quantities_base'] == {'g01': 2}
+    assert {p['id']: p['demand'] for p in res['manifest']['pieces']} == \
+        {'g01_30': 2, 'g02_30': 1}            # base 不进 demand 口径
+
+    r2 = _restore(client, _save_msn(client))  # 旧式文件（无键）
+    assert r2.status_code == 200
+    assert r2.json()['quantities_base'] is None
 
 
 def test_restore_manifest_recompute_matches_build_pid_meta(client):
@@ -596,9 +640,12 @@ def test_restore_bad_json_400(client):
     (lambda d: d.__setitem__('schema_version', 99), '版本过新'),
     (lambda d: d.pop('form'), '缺少 form'),
     (lambda d: d.__setitem__('quantities', []), 'quantities 须为'),
+    (lambda d: d.__setitem__('quantities_base', {'g01': 'x'}), 'quantities_base 须为'),
+    (lambda d: d.__setitem__('quantities_base', 5), 'quantities_base 须为'),
 ])
 def test_restore_schema_and_blocks_400(client, fn, want):
-    """schema_version 缺失/非 int/过新 + form/quantities 块缺失 → 400。"""
+    """schema_version 缺失/非 int/过新 + form/quantities/quantities_base 块
+    形态非法 → 400。"""
     msn = _save_msn(client)
     r = _restore(client, _edit_msn(msn, fn))
     assert r.status_code == 400
@@ -866,17 +913,17 @@ def test_restore_then_ptypes_export_polish_e2e(client):
 
 def test_restore_chain_second_round_identical(client):
     """AC#4：save→restore→save→restore 二次往返逐字段一致（模拟 A 改完传 B；
-    doc_id 每次铸新、saved_at 时间戳不计）。"""
-    msn1 = _save_msn(client)
+    doc_id 每次铸新、saved_at 时间戳不计；quantities_base 同链透传）。"""
+    msn1 = _save_msn(client, quantities_base={'g01': 2})
     r1 = _restore(client, msn1)
     assert r1.status_code == 200
-    msn2 = _save_msn(client)                   # 恢复会话上再保存
+    msn2 = _save_msn(client, quantities_base={'g01': 2})   # 恢复会话上再保存
     r2 = _restore(client, msn2)
     assert r2.status_code == 200
 
     d1 = json.loads(gzip.decompress(msn1))
     d2 = json.loads(gzip.decompress(msn2))
-    for k in ('form', 'quantities', 'run'):
+    for k in ('form', 'quantities', 'quantities_base', 'run'):
         assert d1[k] == d2[k], k
     e1, e2 = dict(d1['doc']), dict(d2['doc'])
     assert e1.pop('doc_id') != e2.pop('doc_id')   # 每次恢复铸新文档身份
