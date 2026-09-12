@@ -14,9 +14,9 @@ try {
   browser = await chromium.launch({ channel: 'chrome' });
 }
 const context = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
-// 预置引导层已读（TOUR_VERSION='7'），避免 tour-overlay 拦截点击
+// 预置引导层已读（TOUR_VERSION='8'），避免 tour-overlay 拦截点击
 await context.addInitScript(() => {
-  localStorage.setItem('ms.tour.version', '7');
+  localStorage.setItem('ms.tour.version', '8');
   localStorage.setItem('ms.tour.seen.preview', '1');
   localStorage.setItem('ms.tour.seen.nesting', '1');
 });

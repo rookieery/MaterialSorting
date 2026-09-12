@@ -34,6 +34,12 @@
 //   '6' → '7'（裁片编号化重构 US-003）：总片数口径从「配对 ×2」改为「Σ 数量（每份
 //         对应母版一个轮廓，不合成镜像）」，set-qty 步文案同口径改写；committed 步
 //         「按片型」改「按裁片 g 码」—— 被指引的数量语义重大变更，bump 强制老用户重看。
+//   '7' → '8'（2026-09-12 编辑排料 / 保存当前方案补位）：nestingTour 从 5 步扩为
+//         7 步，result 与 export 之间插入 edit（编辑排料，edit-controls 锚点）与
+//         save（保存当前方案，save-state-group 锚点）—— 两功能为 2026-09 新增且关键
+//         交互不可自我发现（右键拖动吸附 / .msn 上传即恢复），锚点虽已随组件预埋但
+//         此前无步骤引用；export 步文案同步对齐现行四格式下拉（原仅提 DXF/PNG）。
+//         增删步骤属重大变更，bump 强制老用户重看（preview 指引随之重放一次，既有惯例）。
 //
 // Partial 而非完整 Record<TabId, TourDef>：保留未来新增 Tab 时不必同步补 tour 的灵活性；
 // auto-trigger 对无指引的 Tab（TOURS[tab]===undefined）直接跳过，不报错。
@@ -44,12 +50,13 @@ import { nestingTour } from './nestingTour';
 import { previewTour } from './previewTour';
 
 /** Tour 内容版本号。bump 触发条件：仅步骤内容重大变更时 bump（强制老用户重看）。版本历史见文件头注释。 */
-export const TOUR_VERSION = '7';
+export const TOUR_VERSION = '8';
 
 /**
  * 按 TabId 注册的指引序列。
  * preview：5 步上传预览指引（US-030）。
- * nesting：5 步超排指引（US-031，result/export 步用 runRegistry 帧快照联动推进）。
+ * nesting：7 步超排指引（US-031；2026-09-12 扩 edit/save 两步，result/edit/save/export
+ *          四步用 runRegistry 帧快照联动推进）。
  */
 export const TOURS: Partial<Record<TabId, TourDef>> = {
   preview: previewTour,

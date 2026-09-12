@@ -48,9 +48,9 @@ materialSorting-web/
 │   │   ├── TourOverlay.tsx  # 高亮引擎（Portal 到 body，z-index 2000；spotlight box-shadow 镂空 + bubble 按 placement 定位 + 零尺寸居中兜底）；US-032 加 ESC/遮罩/skip 关闭 + reduced-motion class + scrollIntoView
 │   │   ├── useTour.ts       # 控制器 hook（US-030 完整 advance-on-ready：检查当前步 ready + 200ms 轮询自动推进；next/prev/close/skip + before 副作用 + 等待态）+ useTourAutoTrigger（首次进入 Tab 自动启动）；US-032 加 skip（markSeen+close）
 │   │   ├── steps/           # tour 步骤定义（TOURS:Partial<Record<TabId,TourDef>>，US-030 注册 preview / US-031 注册 nesting）
-│   │   │   ├── index.ts     # TOUR_VERSION='7'（'2'←矩阵化重构 US-005 锚点迁矩阵 / '3'←图形预览区拆除 / '4'←矩阵行头简化 / '5'←行级整行设值回归 / '6'←数量矩阵行列转置 / '7'←裁片编号化 US-003 总片数 Σ 口径改写；完整版本历史见文件头注释）+ TOURS:Partial<Record<TabId,TourDef>>（preview + nesting 均注册）
-│   │   │   ├── previewTour.ts # US-030 5 步 preview tour（upload/parsed/set-qty/committed/goto-nesting；联动步读 uploadStore/uiStore 快照；矩阵化重构 US-005 parsed/set-qty 锚点迁矩阵 qty-matrix/qty-rowhead + 文案改矩阵操作描述；行头简化/整行设值回归两次同步文案，见 TOUR_VERSION '4'/'5'）
-│   │   │   └── nestingTour.ts # US-031 5 步 nesting tour（doc-banner/params/solve/result/export；result/export 联动步读 runRegistry.list().some(r=>r.lastFrame!==null) 帧快照）
+│   │   │   ├── index.ts     # TOUR_VERSION='8'（'2'←矩阵化重构 US-005 锚点迁矩阵 / '3'←图形预览区拆除 / '4'←矩阵行头简化 / '5'←行级整行设值回归 / '6'←数量矩阵行列转置 / '7'←裁片编号化 US-003 总片数 Σ 口径改写 / '8'←2026-09-12 nesting 扩 edit/save 两步 + export 步文案对齐四格式；完整版本历史见文件头注释）+ TOURS:Partial<Record<TabId,TourDef>>（preview + nesting 均注册）
+│   │   │   ├── previewTour.ts # US-030 5 步 preview tour（upload/parsed/set-qty/committed/goto-nesting；联动步读 uploadStore/uiStore 快照；矩阵化重构 US-005 parsed/set-qty 锚点迁矩阵 qty-matrix/qty-rowhead + 文案改矩阵操作描述；行头简化/整列设值回归两次同步文案，见 TOUR_VERSION '4'/'5'）
+│   │   │   └── nestingTour.ts # US-031 7 步 nesting tour（doc-banner/params/solve/result/edit/save/export；2026-09-12 插 edit（edit-controls）/save（save-state-group）两步 —— 编辑排料与保存当前方案两大新功能补位，与面板区块顺序一致；result/edit/save/export 联动步读 runRegistry.list().some(r=>r.lastFrame!==null) 帧快照）
 │   │   └── __tests__/
 │   │       ├── TourOverlay.test.tsx # US-029/030 6 项（null 不渲染 / 激活渲染 / spotlight 贴 rect / 零尺寸居中 / 步骤切换跟随 / US-030 等待态 readyHint+disabled）+ US-032 6 项（ESC 关闭 / 遮罩关闭 / bubble 不关闭 / skip markSeen+close / reduced-motion true 加 class / reduced-motion false 不加 class）
 │   │       ├── useTour.test.tsx     # US-030 5 项 advance-on-ready（告知型直接推进 / 等待态 / 轮询自动推进+停 / before 副作用 / close 无残留定时器）+ US-032 2 项（skip markSeen+close / skip 从等待态清轮询+markSeen+close）

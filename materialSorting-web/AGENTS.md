@@ -82,9 +82,9 @@ src/
 │   ├── TourOverlay.tsx   # US-029 ✅ 高亮引擎（Portal body z=2000；spotlight box-shadow 镂空 + bubble placement 定位 + 零尺寸居中兜底 + useLayoutEffect imperative 定位）+ US-032 ✅ ESC/遮罩/skip 关闭 + reduced-motion class + scrollIntoView
 │   ├── useTour.ts        # US-029 ✅ 控制器 hook + US-030 ✅ advance-on-ready 完整轮询 + useTourAutoTrigger（首次进 Tab 自动触发）+ US-032 ✅ skip()=markSeen+close
 │   ├── steps/
-│   │   ├── index.ts      # US-029 ✅ TOUR_VERSION='7'（'2'←矩阵化重构 US-005 锚点迁矩阵 / '3'←图形预览区拆除 / '4'←矩阵行头简化 / '5'←行级整行设值回归 / '6'←数量矩阵行列转置 / '7'←裁片编号化 US-003 Σ 口径；完整版本历史见文件头注释）+ TOURS: Partial<Record<TabId,TourDef>>（US-030 注册 preview / US-031 注册 nesting）
+│   │   ├── index.ts      # US-029 ✅ TOUR_VERSION='8'（'2'←矩阵化重构 US-005 锚点迁矩阵 / '3'←图形预览区拆除 / '4'←矩阵行头简化 / '5'←行级整行设值回归 / '6'←数量矩阵行列转置 / '7'←裁片编号化 US-003 Σ 口径 / '8'←2026-09-12 nesting 扩 edit/save 两步；完整版本历史见文件头注释）+ TOURS: Partial<Record<TabId,TourDef>>（US-030 注册 preview / US-031 注册 nesting）
 │   │   ├── previewTour.ts # US-030 ✅ 上传预览 5 步（upload/parsed/set-qty/committed/goto-nesting；联动步读 uploadStore/uiStore 快照）；矩阵化重构 US-005 ✅ parsed/set-qty 锚点迁矩阵（qty-matrix/qty-rowhead）+ 文案改矩阵操作描述（图形预览区拆除后不再指引图形预览区）
-│   │   └── nestingTour.ts # US-031 ✅ 超排 5 步（doc-banner/params/solve/result/export；result/export 联动步读 runRegistry.list().some(r=>r.lastFrame!==null) 帧快照）
+│   │   └── nestingTour.ts # US-031 ✅ 超排 7 步（doc-banner/params/solve/result/edit/save/export；2026-09-12 插 edit/save 两步补位编辑排料与保存当前方案两大功能；result/edit/save/export 联动步读 runRegistry.list().some(r=>r.lastFrame!==null) 帧快照）
 │   └── __tests__/
 │       ├── TourOverlay.test.tsx # US-029 ✅ 5 项基础 + US-030 ✅ 1 项等待态 + US-032 ✅ 6 项（ESC/遮罩/bubble/skip/reduced-motion×2）
 │       ├── useTour.test.tsx     # US-030 ✅ 5 项 + US-032 ✅ 2 项（skip markSeen+close / skip 从等待态清轮询）

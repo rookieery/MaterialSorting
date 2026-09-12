@@ -101,14 +101,15 @@ describe('previewTour 步骤结构（矩阵化重构 US-005）', () => {
     expect(previewTour.steps[4].selector).toBe('[data-tour="tab-nesting"]');
   });
 
-  it('3. TOUR_VERSION bump 为 7（步骤内容重大变更强制老用户重看）', () => {
+  it('3. TOUR_VERSION bump 为 8（步骤内容重大变更强制老用户重看）', () => {
     // '1'（US-030 首次落地）→ '2'（矩阵化重构 US-005 锚点迁移）
     // → '3'（图形预览区拆除：parsed 步旧文案指引的「下方图形预览」已不存在）
     // → '4'（矩阵行头简化：set-qty 步旧文案指引的「行头填充 / ×2 徽章」已拆除）
     // → '5'（行级整行设值回归 + 整表重置拆除：set-qty 步重新指引行级批量设值）
     // → '6'（数量矩阵行列转置：整行设值 → 整列设值，列头/行头方位互换）
     // → '7'（裁片编号化重构 US-003：总片数口径 Σ 数量 / 不合成镜像，配对 ×2 概念删）
-    expect(TOUR_VERSION).toBe('7');
+    // → '8'（2026-09-12 nestingTour 扩 edit/save 两步 + export 步文案对齐四格式 —— preview 步骤未变）
+    expect(TOUR_VERSION).toBe('8');
     // 版本号策略不变量：与旧版本不一致时 tourStore init 清 seen（行为级断言见 tourStore.test.ts）
   });
 

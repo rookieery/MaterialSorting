@@ -19,7 +19,7 @@ try {
 }
 const context = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
 await context.addInitScript(() => {
-  localStorage.setItem('ms.tour.version', '7');
+  localStorage.setItem('ms.tour.version', '8');
   localStorage.setItem('ms.tour.seen.preview', '1');
   localStorage.setItem('ms.tour.seen.nesting', '1');
 });

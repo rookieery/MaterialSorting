@@ -175,7 +175,7 @@ try {
 // ---------- S1 上传 5336 + 数量/表单定制 + 5s 求解 ----------
 const ctx1 = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
 await ctx1.addInitScript(() => {
-  localStorage.setItem('ms.tour.version', '7');
+  localStorage.setItem('ms.tour.version', '8');
   localStorage.setItem('ms.tour.seen.preview', '1');
   localStorage.setItem('ms.tour.seen.nesting', '1');
 });
@@ -364,7 +364,7 @@ log('S3 .msn 落盘 + 断言完成（' + msnPlaced.length + ' 条 placed）');
 // ---------- S4 全新 context（新 sid）上传 .msn → 恢复编排全链 ----------
 const ctx2 = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
 await ctx2.addInitScript(() => {
-  localStorage.setItem('ms.tour.version', '7');
+  localStorage.setItem('ms.tour.version', '8');
   localStorage.setItem('ms.tour.seen.preview', '1');
   localStorage.setItem('ms.tour.seen.nesting', '1');
 });
@@ -540,7 +540,7 @@ check('S5c3 quantities 实值入档：g02@32=2（g02 全码 ×2）',
 // S5d/S5e 全新 context 恢复：弹层初值跨机还原（核心断言 + 对照）
 const ctx3 = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
 await ctx3.addInitScript(() => {
-  localStorage.setItem('ms.tour.version', '7');
+  localStorage.setItem('ms.tour.version', '8');
   localStorage.setItem('ms.tour.seen.preview', '1');
   localStorage.setItem('ms.tour.seen.nesting', '1');
 });
