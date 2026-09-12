@@ -58,9 +58,13 @@ check((await saveBtn.textContent()) === '保存', 'save button label 保存');
 await page.locator('.export-btns button.export:not([disabled])').waitFor({ timeout: 10000 });
 check(!(await saveBtn.isDisabled()), 'save enabled (与导出按钮同口径)');
 
-// ④ 点保存 → 下载 .msn
+// ④ 点保存 → 2026-09-12 文件名弹窗（预填名称主体，无扩展名）→ 确认 → 后端补 .msn 下载
 const downloadPromise = page.waitForEvent('download', { timeout: 30000 });
 await saveBtn.click();
+await page.locator('[data-testid="save-name-overlay"]').waitFor({ timeout: 5000 });
+const prefill = await page.locator('[data-testid="save-name-input"]').inputValue();
+check(/_状态_\d{8}-\d{6}$/.test(prefill), `prefill default name (no ext): ${prefill}`);
+await page.locator('[data-testid="save-name-confirm"]').click();
 const download = await downloadPromise;
 const fname = download.suggestedFilename();
 check(fname.endsWith('.msn'), `download filename .msn: ${fname}`);

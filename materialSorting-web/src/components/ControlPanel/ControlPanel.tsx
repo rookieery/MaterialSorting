@@ -67,14 +67,18 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useExport } from '../../hooks/useExport';
-import type { ExportFmt } from '../../lib/download';
+import { defaultExportFilename, defaultStateFilename, type ExportFmt } from '../../lib/download';
 import type { ExportTableFields } from '../../lib/exportTable';
 import { useControlPanelStore } from '../../store/controlPanelStore';
 import { useFormStore } from '../../store/formStore';
+import { runRegistry } from '../../store/runRegistry';
 import { useUploadStore } from '../../store/uploadStore';
 import { useQtyStore } from '../../store/qtyStore';
 import { ExportButtons } from './ExportButtons';
 import { ExportInfoModal } from './ExportInfoModal';
+// 2026-09-12 文件名需求 1：保存 / DXF·PNG 导出的「文件名」确认弹窗（本地条件渲染，
+// 不进 controlPanelStore —— 打开时刻面板被遮罩挡住，不可能与其他 store 弹窗共存）。
+import { FileNameModal } from './FileNameModal';
 // 编辑排料 US-002：编辑弹窗单例（订阅 controlPanelStore 自显隐；Portal 到 body）。
 // 打开入口 = US-004 主界面「编辑排料」区块（EditLayoutControls）。
 import { EditLayoutModal } from '../edit/EditLayoutModal';
@@ -206,6 +210,13 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
   // 分流时记下，handlePltConfirm 按它调 exportAs；默认 'plt'（弹窗永不因非导出路径打开）。
   const [pendingPltFmt, setPendingPltFmt] = useState<'plt' | 'plt-clean'>('plt');
 
+  // 2026-09-12 文件名弹窗（需求 1）：pending 目标 —— 保存（.msn）与导出 DXF/PNG
+  // （无自有弹窗的直通格式）点击后先经 FileNameModal 确认文件名；null = 关闭。
+  // PLT 两变体不经此（需求 2：文件名区嵌在 ExportInfoModal 顶部）。
+  const [pendingNameTarget, setPendingNameTarget] = useState<
+    { kind: 'export'; fmt: 'dxf' | 'png' } | { kind: 'state' } | null
+  >(null);
+
   /** 通用 patch 更新（部分字段）—— formStore.patch（浅合并建新对象，同旧 setForm 语义）。 */
   function patch(p: Partial<FormState>) {
     useFormStore.getState().patch(p);
@@ -294,21 +305,48 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
   /** 导出按钮回调 —— 透传 form.sizes（过滤 null）给 useExport.exportAs（与旧 vanilla
    *  实现 `sizes: selectedSizes()` 一致）。PLT 两变体分流到信息表格弹窗（2026-08-30：
    *  先填床次/层数等 6 手输字段再导出，生产 PLT 同款表格附在唛架末端；2026-08-31 起
-   *  'plt-clean' 毛版同款分流（默认导出格式），两变体共用一份表格字段）；PNG/DXF 直通。
-   *  （状态文件 .msn 2026-09-12 起不经此路径 —— 保存入口独立为 SaveStateControls。） */
+   *  'plt-clean' 毛版同款分流（默认导出格式），两变体共用一份表格字段；2026-09-12 起
+   *  弹窗顶部兼收文件名）；PNG/DXF 2026-09-12 起先经 FileNameModal 确认文件名。
+   *  （状态文件 .msn 不经此路径 —— 保存入口独立为 SaveStateControls。） */
   function handleExport(fmt: ExportFmt): void {
     if (fmt === 'plt' || fmt === 'plt-clean') {
       setPendingPltFmt(fmt);
       openModal('export_info');
       return;
     }
-    void exportAs(fmt, filterSizes(), doc?.filename);
+    // DXF/PNG：无自有弹窗 → FileNameModal（预填合成默认名；确认才导出）。
+    // 'state' 已不入下拉（2026-09-12 入口改判），类型上仍可能 → 防御性忽略。
+    // bestRun 防御性判空（导出按钮 hasLastFrame 门槛已拦截，双保险同 ExportInfoModal）。
+    if (fmt !== 'dxf' && fmt !== 'png') return;
+    if (!runRegistry.bestRun()?.lastFrame) return;
+    setPendingNameTarget({ kind: 'export', fmt });
   }
 
-  /** PLT 信息表格弹窗确认 —— 携手输字段按打开时的变体导出（唯一提交路径，
-   *  ExportInfoModal 内已落盘记忆；pendingPltFmt 由 handleExport 分流时写入）。 */
-  function handlePltConfirm(fields: ExportTableFields): void {
-    void exportAs(pendingPltFmt, filterSizes(), doc?.filename, fields);
+  /** 保存按钮回调 —— 2026-09-12 起先经 FileNameModal 确认文件名（预填名称主体
+   *  <母版名去.dxf>_状态_<时间戳>，无扩展名、后端补 .msn）再 saveState；
+   *  SaveStateControls 仍纯 onSave。 */
+  function handleSaveState(): void {
+    setPendingNameTarget({ kind: 'state' });
+  }
+
+  /** FileNameModal 确认 —— 按 pending 目标分发（保存 / DXF·PNG 导出），
+   *  saveAs = 用户确认的名称主体（无扩展名；后端清洗 + 按格式补后缀后覆盖合成名）。 */
+  function handleSaveNameConfirm(name: string): void {
+    const target = pendingNameTarget;
+    setPendingNameTarget(null);
+    if (!target) return;
+    if (target.kind === 'state') {
+      void saveState(name);
+    } else {
+      void exportAs(target.fmt, filterSizes(), doc?.filename, undefined, name);
+    }
+  }
+
+  /** PLT 信息表格弹窗确认 —— 携手输字段 + 文件名按打开时的变体导出（唯一提交
+   *  路径，ExportInfoModal 内已落盘表格记忆；pendingPltFmt 由 handleExport 分流时
+   *  写入；saveAs = 弹窗顶部文件名区确认值，2026-09-12）。 */
+  function handlePltConfirm(fields: ExportTableFields, saveAs: string): void {
+    void exportAs(pendingPltFmt, filterSizes(), doc?.filename, fields, saveAs);
   }
 
   // US-017：doc=null 时 StatusLine 增提示「请先在上传预览页解析母版」（AC#3）；
@@ -460,17 +498,49 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
       <EditLayoutControls phase={phase} />
       {/* 状态文件 2026-09-12 入口改判：保存工作台状态（.msn）独立区块（「编辑排料」与
           「导出最优方案」之间）；按钮状态与导出按钮同公式同数据源（solving/exporting/
-          hasLastFrame；exporting 为 saveState/exportAs 共享防连击旗 → 双向联动）。 */}
+          hasLastFrame；exporting 为 saveState/exportAs 共享防连击旗 → 双向联动）。
+          同日起点击先经 FileNameModal 确认文件名（handleSaveState）。 */}
       <SaveStateControls
         solving={solving}
         exporting={exporting}
-        onSave={() => {
-          void saveState();
-        }}
+        onSave={handleSaveState}
       />
       <ExportButtons solving={solving} exporting={exporting} onExport={handleExport} partial={partial} />
-      {/* PLT 导出信息表格弹窗单例（订阅 controlPanelStore 自显隐；Portal 到 body）。 */}
-      <ExportInfoModal exporting={exporting} onConfirm={handlePltConfirm} variant={pendingPltFmt} />
+      {/* 2026-09-12 需求 1：保存 / DXF·PNG 文件名确认弹窗（pendingNameTarget 非空时
+          挂载；默认名在此刻合成 —— 打开时 bestRun/表单快照即预填值所见）。 */}
+      {pendingNameTarget !== null && (
+        <FileNameModal
+          defaultName={
+            pendingNameTarget.kind === 'state'
+              ? defaultStateFilename(doc?.filename)
+              : defaultExportFilename(
+                  doc?.filename,
+                  pendingNameTarget.fmt,
+                  filterSizes(),
+                  runRegistry.bestRun()?.finalDensity ?? 0,
+                  runRegistry.bestRun()?.seed ?? 0,
+                )
+          }
+          exporting={exporting}
+          onConfirm={handleSaveNameConfirm}
+          onCancel={() => setPendingNameTarget(null)}
+        />
+      )}
+      {/* PLT 导出信息表格弹窗单例（订阅 controlPanelStore 自显隐；Portal 到 body；
+          defaultName = 打开时刻合成的预填文件名（需求 2，2026-09-12）—— ControlPanel
+          订阅 openModal，openModal('export_info') 触发重渲染时现算，弹窗 mount 固化）。 */}
+      <ExportInfoModal
+        exporting={exporting}
+        onConfirm={handlePltConfirm}
+        variant={pendingPltFmt}
+        defaultName={defaultExportFilename(
+          doc?.filename,
+          pendingPltFmt,
+          filterSizes(),
+          runRegistry.bestRun()?.finalDensity ?? 0,
+          runRegistry.bestRun()?.seed ?? 0,
+        )}
+      />
       {/* 编辑排料弹窗单例（US-002；打开入口在 US-004 EditLayoutControls）。 */}
       <EditLayoutModal />
     </aside>

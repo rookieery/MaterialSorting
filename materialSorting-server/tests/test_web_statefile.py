@@ -246,6 +246,40 @@ def test_save_ascii_source_uses_stem_in_both_names(client):
         .startswith('plain_master_状态_')
 
 
+def test_save_as_override(client):
+    """save_as（2026-09-12 弹窗）：整名覆盖 CD（补 .msn 扩展名）、不入档（文件键集
+    不含 save_as）、清洗为空 → 合成名旧行为。"""
+    # ASCII 整名（无扩展名 → 自动补 .msn，双写同名）
+    r = client.post('/api/state-save', json={
+        'form': _form(), 'quantities': _quantities(),
+        'save_as': 'my-workbench-snapshot'})
+    assert r.status_code == 200
+    cd = r.headers['content-disposition']
+    assert 'filename="my-workbench-snapshot.msn"' in cd
+    assert unquote(re.search(r"filename\*=UTF-8''([^;]+)", cd).group(1)) \
+        == 'my-workbench-snapshot.msn'
+    # save_as 不入档（schema v1 键集不变）
+    assert 'save_as' not in json.loads(gzip.decompress(r.content))
+
+    # 中文整名 + 非法字符清洗（:? → _）；含中文 → ascii fallback 维持合成名
+    r2 = client.post('/api/state-save', json={
+        'form': _form(), 'quantities': _quantities(),
+        'save_as': '工作台:0729?.msn'})
+    assert r2.status_code == 200
+    cd2 = r2.headers['content-disposition']
+    assert unquote(re.search(r"filename\*=UTF-8''([^;]+)", cd2).group(1)) \
+        == '工作台_0729_.msn'
+    assert re.search(r'filename="nesting_state_\d{8}-\d{6}\.msn"', cd2)
+
+    # 纯空白 → 视同缺席（<source>_状态_<ts>.msn 旧行为）
+    r3 = client.post('/api/state-save', json={
+        'form': _form(), 'quantities': _quantities(), 'save_as': '  '})
+    assert r3.status_code == 200
+    cd3 = r3.headers['content-disposition']
+    assert re.fullmatch(r'5336测试母版_状态_\d{8}-\d{6}\.msn',
+                        unquote(re.search(r"filename\*=UTF-8''([^;]+)", cd3).group(1)))
+
+
 # ---------------------------------------------------------------- AC3 会话闸门/空态
 
 def test_save_empty_session_422():

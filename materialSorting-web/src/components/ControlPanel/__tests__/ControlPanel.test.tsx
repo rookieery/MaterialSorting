@@ -416,14 +416,38 @@ describe("ControlPanel export wiring (US-007)", () => {
       select.dispatchEvent(new Event("change", { bubbles: true }));
     });
 
+    // 2026-09-12 文件名需求 1：DXF/PNG 直通格式点导出先开「文件名」弹窗（不直接 fetch）
+    let exportBody: unknown = null;
+    fetchSpy.mockImplementation(((input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes("/export") && init?.body) {
+        exportBody = JSON.parse(String(init.body));
+      }
+      return Promise.resolve(
+        new Response(new Blob([new Uint8Array([1])], { type: "image/png" }), {
+          status: 200, headers: { "Content-Disposition": 'attachment; filename="x.png"' },
+        }),
+      );
+    }) as unknown as (...args: unknown[]) => Promise<Response>);
     await act(async () => {
       container!.querySelector<HTMLButtonElement>(".export-btns button.export")!.click();
-      // 让 fetch + microtasks 跑完
+      await Promise.resolve();
+    });
+    // 不直接 POST /export（策略/极限入口的 mount 轮询照常，与导出无关）
+    expect(fetchSpy.mock.calls.some((c) => String(c[0]).includes("/export"))).toBe(false);
+    const nameModal = document.querySelector('[data-testid="save-name-overlay"]');
+    expect(nameModal).not.toBeNull();
+    // 确认（预填合成默认名，无扩展名）→ POST /export 载荷带 save_as（名称主体回传）
+    await act(async () => {
+      nameModal!.querySelector<HTMLButtonElement>('[data-testid="save-name-confirm"]')!.click();
       await Promise.resolve();
       await Promise.resolve();
     });
     expect(onStatus).toHaveBeenCalledWith("正在生成 PNG …");
     expect(fetchSpy).toHaveBeenCalled();
+    expect(exportBody).toMatchObject({ fmt: "png" });
+    expect((exportBody as { save_as?: string } | null)?.save_as)
+      .toMatch(/^排料_码all_50\.00pct_seed0$/);
     fetchSpy.mockRestore();
     vi.unstubAllGlobals();
     runRegistry.clear();
@@ -1315,8 +1339,16 @@ describe("ControlPanel 状态文件保存入口（US-003 + 2026-09-12 入口改�
 
     renderPanel(() => {}, { onStatus });
     act(() => useAppStore.getState().bumpRenderTick());
+    // 2026-09-12 文件名需求 1：点保存先开「文件名」弹窗（预填合成默认名），确认才发请求
     await act(async () => {
       container!.querySelector<HTMLButtonElement>('[data-testid="save-state-btn"]')!.click();
+      await Promise.resolve();
+    });
+    expect(document.querySelector('[data-testid="save-name-overlay"]')).not.toBeNull();
+    const prefill = document.querySelector<HTMLInputElement>('[data-testid="save-name-input"]')!;
+    expect(prefill.value).toMatch(/^排料_状态_\d{8}-\d{6}$/);
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('[data-testid="save-name-confirm"]')!.click();
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -1327,14 +1359,16 @@ describe("ControlPanel 状态文件保存入口（US-003 + 2026-09-12 入口改�
     expect(urls.some((u) => u.includes("/export"))).toBe(false);
     expect(document.querySelector(".strategy-modal")).toBeNull();
     // body = buildSavePayload：form（DEFAULT_FORM 全量）+ quantities + run（placed 原序）
+    //        + save_as（弹窗确认的整名 = 预填默认名，2026-09-12）
     expect(bodies).toHaveLength(1);
     const body = bodies[0] as {
       form: { gate: string }; quantities: Record<string, Record<string, number>> | null;
-      run: { placed: { id: string }[] };
+      run: { placed: { id: string }[] }; save_as?: string;
     };
     expect(body.form.gate).toBe("175.00");
     expect(body.quantities).toBeNull();
     expect(body.run.placed.map((it) => it.id)).toEqual(["g01_28"]);
+    expect(body.save_as).toBe(prefill.value);
 
     // StatusLine 三态（useExport 同一 onStatus）
     expect(onStatus).toHaveBeenCalledWith("正在生成 状态文件 …");
@@ -1372,6 +1406,11 @@ describe("ControlPanel 状态文件保存入口（US-003 + 2026-09-12 入口改�
     act(() => useAppStore.getState().bumpRenderTick());
     await act(async () => {
       container!.querySelector<HTMLButtonElement>('[data-testid="save-state-btn"]')!.click();
+      await Promise.resolve();
+    });
+    // 2026-09-12：过「文件名」弹窗确认
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('[data-testid="save-name-confirm"]')!.click();
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -1415,6 +1454,11 @@ describe("ControlPanel 状态文件保存入口（US-003 + 2026-09-12 入口改�
     const saveBtn = () => container!.querySelector<HTMLButtonElement>('[data-testid="save-state-btn"]')!;
     await act(async () => {
       saveBtn().click();
+      await Promise.resolve();
+    });
+    // 2026-09-12：过「文件名」弹窗确认 → state-save 才发出（pending promise 保持 exporting）
+    await act(async () => {
+      document.querySelector<HTMLButtonElement>('[data-testid="save-name-confirm"]')!.click();
       await Promise.resolve();
     });
     // state-save 发出后两按钮因共享 exporting 置灰（保存⇄导出双向联动）；

@@ -110,6 +110,21 @@
                                   //   系数分组，每码系数 = 面积最大裁片 pid 计数÷2）/
                                   //   本床包含套数/利用率/幅宽(m)/料长(m，不含表格)/
                                   //   每套用料(m)/片数/绘图时间（YYYY-MM-DD HH:MM）
+  ,
+  "save_as": "夏季新款_30-32"      // 可选（2026-09-12 文件名弹窗）：用户确认的**名称
+                                  //   主体（无扩展名 —— 用户定案：格式已知、后缀不经
+                                  //   手用户，弹窗预填/输入均不带后缀）**，在场即整名
+                                  //   覆盖响应合成名（不是只改前缀）。经
+                                  //   sanitize_download_name（web/download_name.py）
+                                  //   清洗：`\/:*?"<>|` 与控制字符→`_`、空白折叠、去尾
+                                  //   点/空格、≤120 截断、**不以正确 .ext 结尾（大小写
+                                  //   不敏感）自动补全**（无后缀输入的常规路径；带同名
+                                  //   后缀的输入保持原样）；清洗后为空 → 视同缺席。纯
+                                  //   ASCII 时 filename/filename* 双写同名，含中文时
+                                  //   ascii 侧维持旧合成名（浏览器兼容口径同前缀规
+                                  //   则）；缺席 → 合成名旧行为逐字节不变。前端弹窗预
+                                  //   填默认名由 lib/download.defaultExportFilename 合
+                                  //   成（同样无扩展名，仅预填）
 }
 ```
 
@@ -119,6 +134,7 @@
   - 文件名前缀 = payload `filename` 去扩展名（多个款号同时排料导出凭前缀区分）；缺省回退 `排料`（中文）/`nesting`（ascii）。ascii fallback 前缀仅在前缀纯 ASCII 时用，含中文回退 `nesting`
   - ascii 名：`<prefix_ascii>_<sizes>_<pct>.2fpct_seed<seed>.<ext>`（前缀缺省 `nesting`）
   - 中文名：`<prefix_cn>_码<sizes>_<pct>.2fpct_seed<seed>.<ext>`（前缀缺省 `排料`；走 RFC 5987 `filename*=UTF-8''` + `urllib.parse.quote`；**文件名用 `pct` 不用 `%`**）
+  - **save_as 覆盖（2026-09-12）**：payload 带 `save_as`（弹窗确认的名称主体，预填/输入均无扩展名）→ 清洗 + 自动补正确后缀后整名替换上述合成名；`filename`/`sizes`/`seed` 等合成入参仍须在场（合法导出载荷校验不变，仅文件名不再消费它们）。DXF/PNG 由独立「文件名」确认弹窗（FileNameModal）发出，PLT 两变体嵌在唛架信息表格弹窗顶部（export-info-name 输入框）
   - PNG：`media_type=image/png`，`render_png`（matplotlib Agg，标题 + 类型图例）
   - DXF：`media_type=application/dxf`，`write_marker_dxf`（R12 + POLYLINE，ACI 上色 + ASCII 标题）
   - PLT：`media_type=application/plt`，`write_marker_plt`（US-033；HPGL/HP-GL 文本，封装口径对齐生产 PLT `data/PC-20250508NJIF*.plt`：头部 `IN;PS<纸长>;SP1;PW0.08;` + 5 层 SP1-SP5 笔号（门幅框并入 SP1）+ 尾部 `PU;PG;`，CRLF 行尾，无 VS/LB；喂 WT V8.8 + LIKE 绘图仪原生 PLT 链路；**2026-08 现场撞机修正**：门幅框满幅 [0, gate]/内容按输入 gate_mm 裁剪（2026-08-28 起单一幅宽口径；2026-08-31 撤销框 Y 双边内缩 5mm——贴边裁片穿框被切割软件读作越界布料；越界裁片记 warning 兜布局/变换 bug）、PD 分块 ≤10 点/行 ≤110B、全体 X 加走纸引导 `PLOT_LEAD_X_MM=20`、全体 Y 加绘制平移 `PLOT_LEAD_Y_MM=TABLE_W_MM=36`（2026-08-31 用户定案：整张图纸一起离图纸原点 36mm=表格宽、框线左侧留等宽空纸边，首版 5mm 被反馈太短；纯绘制层位移不动求解带/裁剪界/密度口径），详见下表）
@@ -464,7 +480,14 @@ WS 侧同语义走 **error 帧**：`{"type":"error","code":"session_expired","me
     "final": { "density": 0.8835, "density_sparrow": 0.8612, "width_mm": 7523.0,
                "elapsed": 121.4, "n_frames": 87, "n_eroded": 12 },
     "placed": [ {"id": "g02_38", "rotation": 0.0, "translation": [-1.01, 16.22], "mirror": true}, ... ]
-  }
+  },
+  "save_as": "快照_0729"            // 可选（2026-09-12 文件名弹窗）：确认的名称主体
+                                    //   （无扩展名，同 /export 用户定案：后缀不经手用户）
+                                    //   —— 仅影响响应 Content-Disposition（sanitize_
+                                    //   download_name 同 /export：清洗 + 自动补 .msn），
+                                    //   **不入档**（build_state_document 不透传，schema
+                                    //   v1 不动）；缺席 → <source 去 .dxf>_状态_<ts>.msn
+                                    //   旧行为
 }
 ```
 
@@ -473,7 +496,7 @@ WS 侧同语义走 **error 帧**：`{"type":"error","code":"session_expired","me
 
 ### 响应（200 附件）
 
-gzip JSON（`application/gzip`，gzip 恒开 + 魔数 `1f 8b`），顶层 `{schema_version:1, app:'materialsorting', saved_at, doc, form, quantities, quantities_base?, run?}`。`quantities_base` 同 run 的省键先例：非 None 才落键（全 1 基准不写），schema v1 不 bump（v1 内未知顶层键忽略本就是设计明文）。文件名 `<source 去 .dxf>_状态_<yyyymmdd-HHMMSS>.msn`，Content-Disposition 中文/ASCII 双写（`filename="nesting_state_...msn"; filename*=UTF-8''<percent-encoded 中文>`，/export 同法：source 含中文时 ASCII 侧回退 `nesting` 前缀）。
+gzip JSON（`application/gzip`，gzip 恒开 + 魔数 `1f 8b`），顶层 `{schema_version:1, app:'materialsorting', saved_at, doc, form, quantities, quantities_base?, run?}`。`quantities_base` 同 run 的省键先例：非 None 才落键（全 1 基准不写），schema v1 不 bump（v1 内未知顶层键忽略本就是设计明文）。文件名 `<source 去 .dxf>_状态_<yyyymmdd-HHMMSS>.msn`，Content-Disposition 中文/ASCII 双写（`filename="nesting_state_...msn"; filename*=UTF-8''<percent-encoded 中文>`，/export 同法：source 含中文时 ASCII 侧回退 `nesting` 前缀）。**save_as 覆盖（2026-09-12）**：payload 带 `save_as`（名称主体，无扩展名）→ 清洗 + 补 `.msn` 后整名替换（只改响应 CD，文件内容/schema 零变化）—— 前端弹窗预填默认名由 `lib/download.defaultStateFilename` 合成（同样无扩展名）。
 
 ### 错误响应（结构化 JSON，非文件流）
 

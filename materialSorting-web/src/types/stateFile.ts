@@ -71,6 +71,12 @@ export interface StateSavePayload {
   quantities_base?: Record<string, number>;
   /** 仅 done 态 bestRun 入；无 run 时整键缺席（纯配置档）。 */
   run?: StateSaveRun;
+  /**
+   * 弹窗确认的名称主体（2026-09-12，无扩展名）：后端清洗 + 补 .msn 后覆盖响应
+   * Content-Disposition，**不入档**；缺省不带键 = 后端合成名旧行为（前端弹窗
+   * 预填 defaultStateFilename，同样无扩展名）。
+   */
+  save_as?: string;
 }
 
 /**

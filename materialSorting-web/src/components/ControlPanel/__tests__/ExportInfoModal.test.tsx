@@ -40,6 +40,10 @@ function json(obj: unknown, status = 200): Response {
   return new Response(JSON.stringify(obj), { status });
 }
 
+/** 文件名区预填默认名 fixture（ControlPanel 传 defaultExportFilename 合成值，
+ *  名称主体无扩展名 —— 2026-09-12 用户定案：后缀由后端按格式自动附加）。 */
+const DEFAULT_NAME = 'M1787_码30_88.38pct_seed3';
+
 /** 14 行 fixture：与后端 _row_texts 列序同构（手输/自动交错）。 */
 const PREVIEW_ROWS: PltPreviewRow[] = [
   { key: 'plan_name', label: '方案名称', value: '(30+34+35)+(31+32+33)*1.5+(36)*0.5=8套', manual: false },
@@ -117,11 +121,18 @@ function seedBestRun(): RunRecord {
 }
 
 function renderModal(
-  onConfirm: (f: ExportTableFields) => void = vi.fn(),
+  onConfirm: (f: ExportTableFields, saveAs: string) => void = vi.fn(),
   variant?: 'plt' | 'plt-clean',
 ): void {
   act(() => {
-    root!.render(<ExportInfoModal exporting={false} onConfirm={onConfirm} variant={variant} />);
+    root!.render(
+      <ExportInfoModal
+        exporting={false}
+        onConfirm={onConfirm}
+        variant={variant}
+        defaultName={DEFAULT_NAME}
+      />,
+    );
   });
 }
 
@@ -250,6 +261,8 @@ describe('ExportInfoModal v3 全 14 字段预览', () => {
       styleNo: 'noname',
       remark: '',
     });
+    // 文件名未编辑 → confirm 携预填默认名（名称主体回传，2026-09-12）
+    expect(onConfirm.mock.calls[0][1]).toBe(DEFAULT_NAME);
   });
 
   it.each([
@@ -346,5 +359,73 @@ describe('ExportInfoModal 毛版变体 variant（2026-08-31；当日由「净版
     expect(modal().querySelector('[data-testid="export-info-confirm"]')!.textContent)
       .not.toContain('毛版');
     expect(modal().textContent).not.toContain('左右两端');
+  });
+});
+
+describe('ExportInfoModal 文件名区（2026-09-12 需求 2）', () => {
+  it('置顶渲染「文件名」标题 + 预填 defaultName 输入框（在 14 字段之上、不在槽位序内）', async () => {
+    seedBestRun();
+    renderModal();
+    openModal();
+    await flush();
+    const block = modal().querySelector('[data-testid="export-info-name-block"]')!;
+    expect(block.querySelector('.export-name-title')!.textContent).toBe('文件名');
+    const input = modal().querySelector<HTMLInputElement>('[data-testid="export-info-name"]')!;
+    expect(input.value).toBe(DEFAULT_NAME);
+    // 文件名输入框不混入 14 槽位序（id 用 export-filename 前缀）
+    expect(rowOrder()).toHaveLength(14);
+    expect(rowOrder()).not.toContain('export-filename');
+  });
+
+  it('文件名可编辑 → confirm 第二参携编辑后名字（trim 空白）', async () => {
+    seedBestRun();
+    const onConfirm = vi.fn();
+    renderModal(onConfirm);
+    openModal();
+    await flush();
+    setInputValue(
+      modal().querySelector<HTMLInputElement>('[data-testid="export-info-name"]')!,
+      '  夏季新款_30-32  ',
+    );
+    await act(async () => {
+      modal().querySelector<HTMLButtonElement>('[data-testid="export-info-confirm"]')!.click();
+      await Promise.resolve();
+    });
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+    expect(onConfirm.mock.calls[0][1]).toBe('夏季新款_30-32');
+  });
+
+  it('文件名清空 → 确认按钮置灰（不静默回退默认名）', async () => {
+    seedBestRun();
+    renderModal();
+    openModal();
+    await flush();
+    const confirmBtn = modal().querySelector<HTMLButtonElement>(
+      '[data-testid="export-info-confirm"]')!;
+    expect(confirmBtn.disabled).toBe(false);
+    setInputValue(
+      modal().querySelector<HTMLInputElement>('[data-testid="export-info-name"]')!,
+      '   ',
+    );
+    expect(confirmBtn.disabled).toBe(true);
+  });
+
+  it('重开弹窗 → 文件名重新预填 defaultName（用户上次编辑不残留）', async () => {
+    seedBestRun();
+    renderModal();
+    openModal();
+    await flush();
+    setInputValue(
+      modal().querySelector<HTMLInputElement>('[data-testid="export-info-name"]')!,
+      '旧编辑',
+    );
+    act(() => {
+      useControlPanelStore.getState().closeModal();
+    });
+    expect(document.querySelector('.strategy-modal')).toBeNull();
+    openModal();
+    await flush();
+    const input = modal().querySelector<HTMLInputElement>('[data-testid="export-info-name"]')!;
+    expect(input.value).toBe(DEFAULT_NAME);
   });
 });

@@ -20,6 +20,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from urllib.parse import quote
 
 from .. import paths
+from .download_name import sanitize_download_name
 from .export import (
     placed_to_world,
     parse_table_payload,
@@ -360,8 +361,12 @@ async def export(req: Request):
     """导出最优排料方案：前端 POST 最优 run 的最终帧 placed_items → 出 PNG / R12-DXF。
 
     payload = {fmt:'png'|'dxf'|'plt'|'plt-clean', sizes:[..], seed, gate_mm, width_mm,
-               density, placed:[{id,rotation,translation},...], filename?, table?}
+               density, placed:[{id,rotation,translation},...], filename?, table?,
+               save_as?}
     filename 为上传母版名（用作导出文件名前缀，去 .dxf）；缺省回退「排料」。
+    save_as（2026-09-12 导出文件名弹窗）= 前端确认的**名称主体（无扩展名 —— 用户
+    定案：格式已知后缀不经手用户）**：清洗 + 自动补 .{ext} 后整名替换合成名；
+    缺席 → 合成名旧行为。
     fmt='plt-clean'（2026-08-31 毛版，命名与裁片 layer1「毛版轮廓」同口径）：裁片仅最外层毛版轮廓 + 尺码*数量标注 + 最外层刀口
     （2026-09-11 起，画法与全量版同款但仅贴毛版边的刀口）、带表格时唛架左右两端各一份同内容表格（详见 export_plt 模块注释）。
     返回文件字节流（Content-Disposition 附件下载，中文文件名走 RFC5987）。
@@ -452,6 +457,16 @@ async def export(req: Request):
     suffix_cn = '_毛版' if fmt == 'plt-clean' else ''
     fname_ascii = f'{prefix_ascii}_{sizes_str}_{pct:.2f}pct_seed{seed}{suffix_ascii}.{ext}'
     fname_cn = f'{prefix_cn}_码{sizes_str}_{pct:.2f}pct_seed{seed}{suffix_cn}.{ext}'
+    # 2026-09-12 导出文件名弹窗：save_as = 前端弹窗确认的名称主体（无扩展名；
+    # 预填默认 = 前端镜像本合成式去后缀）。清洗（非法字符/头注入）+ 自动补 .{ext}
+    # 后非空 → 整名覆盖（ASCII 时 fallback 同用；含中文时 ascii fallback 维持
+    # 合成名，防未编码中文）；缺席/清洗为空 → 逐字节走上方合成名（旧前端/旧路径
+    # 零变化）。
+    save_as = sanitize_download_name(str(payload.get('save_as') or ''), ext)
+    if save_as:
+        fname_cn = save_as
+        if save_as.isascii():
+            fname_ascii = save_as
     cd = f"attachment; filename=\"{fname_ascii}\"; filename*=UTF-8''{quote(fname_cn)}"
     return Response(content=data, media_type=media,
                     headers={'Content-Disposition': cd})

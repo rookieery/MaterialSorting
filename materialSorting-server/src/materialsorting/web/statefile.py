@@ -39,6 +39,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse, Response
 
 from . import edit_hold
+from .download_name import sanitize_download_name
 from .parse_payload import _build_parse_payload
 from .routes_views import _resolve_session_state
 from .runtime import _PIECES_STATE, _state_from_doc, _state_lock
@@ -407,11 +408,13 @@ class _DocPieceView:
 async def state_save(request: Request):
     """POST /api/state-save：当前会话工作台状态 → gzip JSON 附件（.msn 下载）。
 
-    请求 ``{form, quantities, quantities_base?, run?}``（前端 buildSavePayload，
-    US-003）：form = FormState 全量原样入文件；quantities_base = 整列设值基准
-    {label:整数}（省键式，body 无 → 文件无键）；run 仅 done 态（body 无 run →
-    文件无 run 键）。响应 200 附件（Content-Disposition 中文/ASCII 双写，/export
-    同法），文件名 ``<source 去 .dxf>_状态_<yyyymmdd-HHMMSS>.msn``。
+    请求 ``{form, quantities, quantities_base?, run?, save_as?}``（前端
+    buildSavePayload，US-003）：form = FormState 全量原样入文件；quantities_base =
+    整列设值基准 {label:整数}（省键式，body 无 → 文件无键）；run 仅 done 态
+    （body 无 run → 文件无 run 键）；save_as（2026-09-12 弹窗）= 确认的名称主体
+    （无扩展名 —— /export 同口径用户定案），清洗 + 补 .msn 后覆盖，只影响响应
+    CD 不入档。响应 200 附件（Content-Disposition 中文/ASCII
+    双写，/export 同法），文件名 ``<source 去 .dxf>_状态_<yyyymmdd-HHMMSS>.msn``。
 
     错误契约（全部结构化 JSON，非文件流）：
     - sid 过期/墓碑 → 401 ``{code:'session_expired'}``、非法 → 400（SessionError
@@ -492,6 +495,15 @@ async def state_save(request: Request):
     ts = datetime.now().strftime('%Y%m%d-%H%M%S')
     fname_cn = f'{prefix_cn}_状态_{ts}{STATE_EXTENSION}'
     fname_ascii = f'{prefix_ascii}_state_{ts}{STATE_EXTENSION}'
+    # 2026-09-12 导出文件名弹窗：save_as = 前端弹窗确认的名称主体（无扩展名；
+    # /export 同法）。只影响响应 CD，**不入档**（build_state_document 不透传，
+    # schema v1 不动）；清洗（非法字符）+ 自动补 .msn 后为空 → 逐字节走上方合成名。
+    save_as = sanitize_download_name(str(payload.get('save_as') or ''),
+                                     STATE_EXTENSION.lstrip('.'))
+    if save_as:
+        fname_cn = save_as
+        if save_as.isascii():
+            fname_ascii = save_as
     cd = f"attachment; filename=\"{fname_ascii}\"; filename*=UTF-8''{quote(fname_cn)}"
     return Response(content=data, media_type='application/gzip',
                     headers={'Content-Disposition': cd})

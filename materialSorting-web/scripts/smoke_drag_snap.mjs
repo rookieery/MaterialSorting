@@ -317,6 +317,10 @@ async function exportOnce(fmt, tag) {
     await page.waitForSelector('[data-testid=export-info-overlay]', { timeout: 15000 });
     await page.waitForSelector('.export-ro-row', { timeout: 15000 });
     await page.click('[data-testid=export-info-confirm]');
+  } else {
+    // 2026-09-12 文件名弹窗：DXF/PNG 点导出先确认预填名（save-name-confirm）
+    await page.waitForSelector('[data-testid=save-name-overlay]', { timeout: 15000 });
+    await page.click('[data-testid=save-name-confirm]');
   }
   for (let i = 0; i < 60; i++) {
     const n = await page.evaluate(() => (window.__exportCaps || []).length);

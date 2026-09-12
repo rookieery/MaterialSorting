@@ -21,7 +21,9 @@ clear+update + teardown 恢复（套路同 test_band_preview_api）。单例注�
 """
 from __future__ import annotations
 
+import re
 import time
+from urllib.parse import unquote
 
 import pytest
 from starlette.testclient import TestClient
@@ -478,3 +480,52 @@ def test_export_plt_clean_variant(client):
     assert 'PU800,2640;' not in txt2
     assert txt2.split('\r\n')[0] == 'IN;PS82640;SP1;PW0.08;'   # (20+2036+10)×40
     assert '_clean' not in r2.headers['content-disposition']
+
+
+# ------------------------------------------------- save_as 文件名覆盖（2026-09-12 弹窗）
+
+def _cd_cn(cd: str) -> str:
+    """Content-Disposition 的 filename*（RFC5987）中文段解回明文。"""
+    return unquote(re.search(r"filename\*=UTF-8''([^;]+)", cd).group(1))
+
+
+def test_export_save_as_override(client):
+    """/export save_as（2026-09-12 导出文件名弹窗）：整名覆盖合成名、缺扩展名自动补、
+    非法字符清洗；缺席 → 逐字节合成名旧行为。"""
+    _inject_session(_SID_A, _band_pieces(scale=1.0), doc_id='docA')
+    body = {'fmt': 'png', 'width_mm': 2000.0, 'density': 0.5, 'seed': 1, 'sizes': [28],
+            'filename': 'M1787.dxf',
+            'placed': [{'id': 'g01_28', 'rotation': 0, 'translation': [100, 100]}]}
+
+    # 缺席 → 合成名旧行为（M1787_码28_50.00pct_seed1.png）
+    r0 = client.post('/export', json=body, headers={'X-Session-Id': _SID_A})
+    assert r0.status_code == 200
+    assert _cd_cn(r0.headers['content-disposition']) == 'M1787_码28_50.00pct_seed1.png'
+
+    # ASCII 整名无扩展名 → 自动补 .png，双写（filename= 与 filename*=）同名
+    r1 = client.post('/export', json={**body, 'save_as': 'my-plan'},
+                     headers={'X-Session-Id': _SID_A})
+    assert r1.status_code == 200
+    cd1 = r1.headers['content-disposition']
+    assert 'filename="my-plan.png"' in cd1
+    assert _cd_cn(cd1) == 'my-plan.png'
+
+    # 中文整名 + Windows 非法字符/路径分隔符清洗（: / → _）；含中文 → ascii fallback
+    # 维持合成名（防未编码中文）
+    r2 = client.post('/export', json={**body, 'save_as': '方案:五/裁床.png'},
+                     headers={'X-Session-Id': _SID_A})
+    assert r2.status_code == 200
+    cd2 = r2.headers['content-disposition']
+    assert _cd_cn(cd2) == '方案_五_裁床.png'
+    assert 'filename="M1787_28_50.00pct_seed1.png"' in cd2   # fallback 仍是合成 ascii 名
+
+    # 纯空白 → 视同缺席（合成名）
+    r3 = client.post('/export', json={**body, 'save_as': '   '},
+                     headers={'X-Session-Id': _SID_A})
+    assert _cd_cn(r3.headers['content-disposition']) == 'M1787_码28_50.00pct_seed1.png'
+
+    # plt-clean 扩展名口径 = plt（save_as 补 .plt 而非 .plt-clean）
+    r4 = client.post('/export', json={**body, 'fmt': 'plt-clean', 'save_as': '毛版交付'},
+                     headers={'X-Session-Id': _SID_A})
+    assert r4.status_code == 200
+    assert _cd_cn(r4.headers['content-disposition']) == '毛版交付.plt'

@@ -93,3 +93,51 @@ export function downloadBlob(blob: Blob, filename: string): void {
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 10000);
 }
+
+// ============================================================
+// 导出文件名弹窗（2026-09-12）：默认名合成 —— 镜像后端合成式，仅作弹窗预填值
+// ============================================================
+
+/** 上传母版名去 .dxf 扩展名（后端 /export 的 stem 同法）；空 → ''（调用方兜底「排料」）。 */
+function stemOf(uploadName: string | undefined | null): string {
+  const n = (uploadName || '').trim();
+  return n.toLowerCase().endsWith('.dxf') ? n.slice(0, -4) : n;
+}
+
+/**
+ * /export 弹窗预填默认名（**名称主体，无扩展名** —— 2026-09-12 用户定案：格式已知、
+ * 后缀无需用户经手，后端 save_as 清洗时按 fmt 自动附加）：
+ * `{母版名去.dxf}_码{码号-连}_{利用率}pct_seed{N}{_毛版?}`
+ *
+ * **仅作弹窗预填默认值**（单一回传方向）：后端 routes_views.export 合成式的去后缀
+ * 镜像（sizes 升序连字符 / 'all' 兜底 / pct 两位 / plt-clean → _毛版）。用户确认后
+ * 的名字以 save_as 回传、后端清洗 + 补正确扩展名 —— 最终下载名 = 名称主体 + 后缀。
+ */
+export function defaultExportFilename(
+  uploadName: string | undefined | null,
+  fmt: 'png' | 'dxf' | 'plt' | 'plt-clean',
+  sizes: number[],
+  density: number,
+  seed: number,
+): string {
+  const stem = stemOf(uploadName) || '排料';
+  const sizesStr = sizes.length > 0 ? [...sizes].sort((a, b) => a - b).join('-') : 'all';
+  const pct = (density * 100).toFixed(2);
+  const suffix = fmt === 'plt-clean' ? '_毛版' : '';
+  return `${stem}_码${sizesStr}_${pct}pct_seed${seed}${suffix}`;
+}
+
+/** yyyymmdd-HHMMSS（与后端 state-save 时间戳同格式，本地时区）。 */
+function stateTimestamp(d: Date): string {
+  const p = (n: number, w = 2): string => String(n).padStart(w, '0');
+  return `${p(d.getFullYear(), 4)}${p(d.getMonth() + 1)}${p(d.getDate())}`
+    + `-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+}
+
+/**
+ * /api/state-save 弹窗预填默认名（名称主体，无扩展名，同上后端补 .msn）：
+ * `{母版名去.dxf}_状态_{yyyymmdd-HHMMSS}`（后端合成式的去后缀镜像，仅作预填）。
+ */
+export function defaultStateFilename(uploadName: string | undefined | null): string {
+  return `${stemOf(uploadName) || '排料'}_状态_${stateTimestamp(new Date())}`;
+}

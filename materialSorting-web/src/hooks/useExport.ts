@@ -45,17 +45,20 @@ export interface UseExportResult {
   /** 触发导出（取 bestRun → POST /export → blob 下载）。sizes = ControlPanel form.sizes；
    *  filename = 上传母版名（透传作导出文件名前缀，与界面「当前文件」同源）；
    *  table = PLT 唛架信息表格手输字段（2026-08-30，仅 fmt='plt'/'plt-clean' 消费 ——
-   *  后端转 14 字段表格附在唛架外围（毛版左右各一份）；undefined 时 payload 不带 table 键）。 */
+   *  后端转 14 字段表格附在唛架外围（毛版左右各一份）；undefined 时 payload 不带 table 键）；
+   *  saveAs = 文件名弹窗确认的名称主体（2026-09-12，**无扩展名** —— 后端清洗时
+   *  按 fmt 自动补正确后缀后整名覆盖合成名；undefined 时 payload 不带 save_as 键
+   *  = 合成名旧行为）。 */
   exportAs: (fmt: ExportFmt, sizes: number[], filename?: string,
-             table?: ExportTableFields) => Promise<void>;
+             table?: ExportTableFields, saveAs?: string) => Promise<void>;
   /**
    * 保存状态文件（状态文件 US-003，fmt='state' 分支）：POST /api/state-save
-   * （body = buildSavePayload()）→ blob → parseContentDisposition → downloadBlob。
-   * 与 PNG/DXF/PLT 共用 exporting state/ref 单一防连击旗（互斥）；文件名由后端从
-   * 会话 doc.source 生成（<母版名去 .dxf>_状态_<时间戳>.msn），无需前端提示 ——
-   * 与 exportAs 的 filename 载荷键不同。StatusLine 三态走同一 onStatus。
+   * （body = buildSavePayload(saveAs)）→ blob → parseContentDisposition → downloadBlob。
+   * 与 PNG/DXF/PLT 共用 exporting state/ref 单一防连击旗（互斥）；saveAs（2026-09-12
+   * 弹窗）= 确认的名称主体（无扩展名，后端补 .msn；缺省 → 后端从会话 doc.source
+   * 生成 <母版名去 .dxf>_状态_<时间戳>.msn）。StatusLine 三态走同一 onStatus。
    */
-  saveState: () => Promise<void>;
+  saveState: (saveAs?: string) => Promise<void>;
   /** 是否正在导出（按钮 disabled + 状态行 正在生成…）。 */
   exporting: boolean;
 }
@@ -77,7 +80,8 @@ export function useExport(cb: UseExportCallbacks = {}): UseExportResult {
   const exportingRef = useRef(false);
 
   const exportAs = useCallback(async (fmt: ExportFmt, sizes: number[], filename?: string,
-                                       table?: ExportTableFields): Promise<void> => {
+                                       table?: ExportTableFields,
+                                       saveAs?: string): Promise<void> => {
     // 1) bestRun（AC#1）：lastFrame 存在且 finalDensity 最高的 run
     const run = runRegistry.bestRun();
     if (!run || !run.lastFrame) {
@@ -89,8 +93,9 @@ export function useExport(cb: UseExportCallbacks = {}): UseExportResult {
 
     // 2) ExportPayload（AC#2，逐字段与旧 vanilla 实现 一致）
     //    gate_mm 来自 manifest（与旧 vanilla 实现 `gateH = m.gate_mm` 同源；所有 run 共享）。
-    //    table（2026-08-30）：PLT 唛架信息表格手输字段（JSON.stringify 自动剔除
-    //    undefined —— PNG/DXF 载荷与旧版逐字节一致）。
+    //    table（2026-08-30）：PLT 唛架信息表格手输字段；save_as（2026-09-12 弹窗）：
+    //    确认的名称主体，无扩展名（JSON.stringify 自动剔除 undefined —— PNG/DXF/PLT
+    //    载荷与旧版逐字节一致，带 save_as 时后端清洗 + 按 fmt 补后缀后整名覆盖合成名）。
     const gate_mm = run.manifest?.gate_mm ?? 0;
     const payload = {
       fmt,
@@ -102,6 +107,7 @@ export function useExport(cb: UseExportCallbacks = {}): UseExportResult {
       placed: run.lastFrame.placed_items,
       filename,
       table: table ? toExportTablePayload(table) : undefined,
+      save_as: (saveAs || '').trim() || undefined,
     };
 
     // 3) 状态行：正在生成 PNG/DXF/PLT…（AC#6；毛版显示中文变体名）
@@ -148,7 +154,8 @@ export function useExport(cb: UseExportCallbacks = {}): UseExportResult {
 
   // 状态文件 US-003：保存工作台状态（.msn）。防连击与 exportAs 共用同一
   // exportingRef（互斥：保存中点 PNG/DXF/PLT 或反向均静默忽略）。
-  const saveState = useCallback(async (): Promise<void> => {
+  // saveAs（2026-09-12 弹窗）= 确认的名称主体，无扩展名（trim 后为空同缺省）。
+  const saveState = useCallback(async (saveAs?: string): Promise<void> => {
     if (exportingRef.current) return;
     cbRef.current.onStatus?.('正在生成 状态文件 …');
     setExporting(true);
@@ -157,7 +164,7 @@ export function useExport(cb: UseExportCallbacks = {}): UseExportResult {
       const res = await apiFetch('/api/state-save', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(buildSavePayload()),
+        body: JSON.stringify(buildSavePayload(saveAs)),
       });
       if (!res.ok) {
         // 后端结构化 JSON {error}（保存期守恒 fail-fast 指路文案 / 会话 401/422 等）

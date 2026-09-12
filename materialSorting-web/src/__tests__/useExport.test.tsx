@@ -301,6 +301,48 @@ describe("useExport (US-007)", () => {
     const body = JSON.parse(init.body as string) as { seed: number };
     expect(body.seed).toBe(0);
   });
+
+  // ------------------------------------------------- 2026-09-12 文件名弹窗 save_as
+  it("exportAs 第 5 参 saveAs -> /export body.save_as 名称主体回传（trim；无扩展名，后端补）", async () => {
+    makeDoneRun(0, 0.5);
+    const onStatus = vi.fn();
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(makeResponse());
+    renderProbe(onStatus);
+    await act(async () => { await captured!.exportAs("png", [28], undefined, undefined, "  夏季新款  "); });
+    const init = fetchSpy.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(init.body as string) as { save_as?: string };
+    expect(body.save_as).toBe("夏季新款");
+  });
+
+  it("exportAs 不传 saveAs -> body 无 save_as 键（旧载荷逐字节不变）", async () => {
+    makeDoneRun(0, 0.5);
+    const onStatus = vi.fn();
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(makeResponse());
+    renderProbe(onStatus);
+    await act(async () => { await captured!.exportAs("png", [28]); });
+    const init = fetchSpy.mock.calls[0][1] as RequestInit;
+    const body = JSON.parse(init.body as string) as { save_as?: string };
+    expect("save_as" in body).toBe(false);
+  });
+
+  it("saveState(saveAs) -> /api/state-save body.save_as；缺省不带键", async () => {
+    makeDoneRun(0, 0.5);
+    const onStatus = vi.fn();
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(((input: unknown) => {
+      const url = String(input);
+      return Promise.resolve(makeResponse(undefined, {
+        cd: url.includes("/api/state-save") ? 'attachment; filename="x.msn"' : "attachment; filename=x.png",
+      }));
+    }) as unknown as (...args: unknown[]) => Promise<Response>);
+    renderProbe(onStatus);
+    await act(async () => { await captured!.saveState("快照_0729"); });
+    expect(fetchSpy.mock.calls[0][0]).toBe("/api/state-save");
+    const first = JSON.parse((fetchSpy.mock.calls[0][1] as RequestInit).body as string) as { save_as?: string };
+    expect(first.save_as).toBe("快照_0729");
+    await act(async () => { await captured!.saveState(); });
+    const second = JSON.parse((fetchSpy.mock.calls[1][1] as RequestInit).body as string) as { save_as?: string };
+    expect("save_as" in second).toBe(false);
+  });
 });
 
 // ============================================================

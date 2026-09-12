@@ -1711,6 +1711,21 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
 }
+/* 导出信息表格弹窗「文件名」区（2026-09-12 需求 2）：置顶、标题与弹窗大标题
+   （.strategy-head 内 .strategy-title）同级排版（14px/600），下接整宽输入框。 */
+.export-name-block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #2c2e35;
+  flex-shrink: 0;
+}
+.export-name-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #e6e6e6;
+}
 
 /* 操作区按钮族（执行=绿主按钮 / 终止=红 / 再次运行=次级 / 应用=绿主按钮） */
 .strategy-actions {

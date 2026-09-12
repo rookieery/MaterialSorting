@@ -1,4 +1,7 @@
-// ExportInfoModal —— 「导出 PLT · 唛架信息表格」弹窗（2026-08-31 v3 全 14 字段展示）。
+// ExportInfoModal —— 「导出 PLT · 唛架信息表格」弹窗（2026-08-31 v3 全 14 字段展示；
+// 2026-09-12 顶部增「文件名」区 —— 需求 2：与弹窗大标题同级排版 + 预填合成默认名
+// （名称主体，无扩展名 —— 后端按 fmt 补后缀）的输入框，确认时随 save_as 回传后端，
+// 取消/确认共用本弹窗既有按钮）。
 //
 // 生产环境 PLT 在排料图外围带 14 字段信息表格（横排竖直堆叠、不占排料区）；
 // 6 个手输字段系统里没有，导出 PLT 前在此填写。v3 起弹窗**按最终表格列序展示
@@ -37,11 +40,17 @@ import { runRegistry } from '../../store/runRegistry';
 export interface ExportInfoModalProps {
   /** 是否导出中（useExport.exporting —— 提交按钮互斥防连击）。 */
   exporting: boolean;
-  /** 确认导出：携带手输字段（ControlPanel.handlePltConfirm → exportAs(variant, …, table)）。 */
-  onConfirm: (fields: ExportTableFields) => void;
+  /** 确认导出：携带手输字段 + 文件名（ControlPanel.handlePltConfirm →
+   *  exportAs(variant, …, table, saveAs) —— saveAs 为弹窗确认的名称主体（无
+   *  扩展名），2026-09-12 文件名需求 2；非空保证由本组件禁用空名确认兜底）。 */
+  onConfirm: (fields: ExportTableFields, saveAs: string) => void;
   /** PLT 变体（2026-08-31）：'plt-clean' 毛版只改弹窗文案，字段填写流程与全量版共用
    *  （同一份 14 字段 → 毛版唛架左右两表同内容）。 */
   variant?: 'plt' | 'plt-clean';
+  /** 文件名预填默认名（2026-09-12 需求 2）：ControlPanel 在打开时刻按
+   *  defaultExportFilename 合成（bestRun 密度/seed + form.sizes + 母版名）；
+   *  名称主体无扩展名 —— 后端按 fmt 自动补后缀。 */
+  defaultName: string;
 }
 
 /** manual 槽位：预览行 snake_case key → 草稿字段（camelCase）。后端新增手输
@@ -82,12 +91,18 @@ function ExportInfoModalInner({
   exporting,
   onConfirm,
   variant = 'plt',
+  defaultName,
 }: ExportInfoModalProps): JSX.Element {
   const closeModal = useControlPanelStore((s) => s.closeModal);
 
   // 草稿 local state（mount 初始化自 localStorage 记忆值；不进 FormState ——
   // form 在 doc_id 变化时整体重置，生产信息与母版无关）。
   const [fields, setFields] = useState<ExportTableFields>(() => loadExportTable());
+
+  // 文件名草稿（2026-09-12 需求 2）：mount 预填合成默认名；每次打开弹窗重新
+  // mount（ExportInfoModal 条件渲染）→ 重开重预填，编辑中不被父级重渲染覆盖。
+  const [name, setName] = useState(defaultName);
+  const trimmedName = name.trim();
 
   // v3：14 字段预览行（null = 加载中/失败/无解 → v2 降级形态）。失败仅置标记
   // 换提示文案，确认导出不受影响（导出时后端照算）。
@@ -148,11 +163,11 @@ function ExportInfoModalInner({
     setFields((prev) => ({ ...prev, ...p }));
   }
 
-  /** 唯一提交路径：落盘记忆 + 回调导出 + 关闭。 */
+  /** 唯一提交路径：落盘记忆 + 回调导出（手输字段 + 文件名）+ 关闭。 */
   function handleConfirm(): void {
-    if (exporting) return; // 按钮已置灰，兜底
+    if (exporting || trimmedName === '') return; // 按钮已置灰，兜底
     saveExportTable(fields);
-    onConfirm(fields);
+    onConfirm(fields, trimmedName);
     closeModal();
   }
 
@@ -234,6 +249,24 @@ function ExportInfoModalInner({
           </button>
         </div>
 
+        {/* 2026-09-12 需求 2：文件名区置顶（标题与弹窗大标题同级排版，下接输入框；
+            取消/确认共用本弹窗底部按钮 —— 与需求 1 的独立 FileNameModal 分工：
+            PLT 两变体自带信息表格弹窗，不再叠一层文件名弹窗）。id 用 export-filename
+            前缀（非 export-info-）—— 它不是 14 字段表格槽位，rowOrder 类选择器不捞。 */}
+        <div className="export-name-block" data-testid="export-info-name-block">
+          <span className="export-name-title">文件名</span>
+          <input
+            id="export-filename"
+            type="text"
+            className="strategy-text-input"
+            data-testid="export-info-name"
+            value={name}
+            placeholder="输入导出文件名"
+            spellCheck={false}
+            onChange={(e) => setName(e.target.value)}
+          />
+        </div>
+
         {previewRows === null ? (
           // 降级形态（加载中/失败/无解）= v2：6 手输 + 提示行，导出照常
           <>
@@ -284,7 +317,7 @@ function ExportInfoModalInner({
           <button
             type="button"
             className="strategy-btn-exec"
-            disabled={exporting}
+            disabled={exporting || trimmedName === ''}
             onClick={handleConfirm}
             title={exporting ? '正在导出…' : undefined}
             data-testid="export-info-confirm"

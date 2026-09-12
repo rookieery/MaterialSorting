@@ -115,6 +115,45 @@ describe('EXPORT_FORMATS / DEFAULT_EXPORT_FMT（状态文件）', () => {
   });
 });
 
+// 2026-09-12 文件名弹窗：默认名合成式镜像（**名称主体，无扩展名** —— 后端 save_as
+// 清洗时按格式自动补后缀；确认后实际名以 save_as 回传为准，见 hooks/useExport）。
+describe('defaultExportFilename / defaultStateFilename（2026-09-12 弹窗预填）', () => {
+  it('镜像 /export 合成式（去后缀）：{stem}_码{码号-连}_{pct}pct_seed{N}', async () => {
+    const { defaultExportFilename } = await import('../download');
+    expect(defaultExportFilename('M1787.dxf', 'png', [28, 30, 32], 0.8842, 0))
+      .toBe('M1787_码28-30-32_88.42pct_seed0');
+  });
+
+  it('码号空 → all 兜底；乱序入参 → 升序排', async () => {
+    const { defaultExportFilename } = await import('../download');
+    expect(defaultExportFilename('5336.dxf', 'dxf', [], 0.5, 3))
+      .toBe('5336_码all_50.00pct_seed3');
+    expect(defaultExportFilename('M.dxf', 'png', [32, 28, 30], 0.5, 0))
+      .toBe('M_码28-30-32_50.00pct_seed0');
+  });
+
+  it("plt-clean → _毛版 后缀（格式差异只在后端补后缀时体现）", async () => {
+    const { defaultExportFilename } = await import('../download');
+    expect(defaultExportFilename('M1787.dxf', 'plt-clean', [30], 0.8838, 1))
+      .toBe('M1787_码30_88.38pct_seed1_毛版');
+    expect(defaultExportFilename('M1787.dxf', 'plt', [30], 0.8838, 1))
+      .toBe('M1787_码30_88.38pct_seed1');
+  });
+
+  it('母版名缺失 → 排料 兜底 stem；无 .dxf 扩展名原样用', async () => {
+    const { defaultExportFilename } = await import('../download');
+    expect(defaultExportFilename(undefined, 'png', [], 0.5, 0)).toBe('排料_码all_50.00pct_seed0');
+    expect(defaultExportFilename(null, 'png', [], 0.5, 0)).toBe('排料_码all_50.00pct_seed0');
+    expect(defaultExportFilename('5336', 'png', [28], 0.5, 0)).toBe('5336_码28_50.00pct_seed0');
+  });
+
+  it('defaultStateFilename：{stem}_状态_{yyyymmdd-HHMMSS}（无扩展名）；缺省 stem 兜底 排料', async () => {
+    const { defaultStateFilename } = await import('../download');
+    expect(defaultStateFilename('M1787.dxf')).toMatch(/^M1787_状态_\d{8}-\d{6}$/);
+    expect(defaultStateFilename(undefined)).toMatch(/^排料_状态_\d{8}-\d{6}$/);
+  });
+});
+
 describe('downloadBlob (US-007 AC#5)', () => {
   // jsdom `<a>.click()` 会触发 navigation 报「Not implemented」—— 我们只关心副作用（download 属性、
   // href、appendChild、remove、revokeObjectURL），不模拟真实下载。stub click 到 no-op。

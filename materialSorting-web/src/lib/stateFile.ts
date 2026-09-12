@@ -96,20 +96,23 @@ function provenanceOf(origin: RunOrigin | undefined): RunProvenance | undefined 
 }
 
 /**
- * 组装保存载荷（{form, quantities, quantities_base?, run?}）：run 仅 done 态
- * bestRun 入块。深拷贝保证：payload 与 stores 当前态解耦（发送期间用户编辑不
- * 影响已序列化体）。
+ * 组装保存载荷（{form, quantities, quantities_base?, run?, save_as?}）：run 仅 done
+ * 态 bestRun 入块。saveAs（2026-09-12 弹窗）= 确认的名称主体（无扩展名，后端补
+ * .msn；省键式：缺省不带键 → 后端合成名旧行为，trim 后为空同缺省）。深拷贝保证：
+ * payload 与 stores 当前态解耦（发送期间用户编辑不影响已序列化体）。
  */
-export function buildSavePayload(): StateSavePayload {
+export function buildSavePayload(saveAs?: string): StateSavePayload {
   const form = useFormStore.getState().form;
   const quantities = flattenQuantities(useQtyStore.getState().quantities);
   const quantities_base = flattenBaseValues(useQtyStore.getState().quantities);
   const run = buildRunBlock(runRegistry.bestRun());
+  const name = (saveAs || '').trim();
   return {
     form,
     quantities,
     ...(quantities_base ? { quantities_base } : {}),
     ...(run ? { run } : {}),
+    ...(name ? { save_as: name } : {}),
   };
 }
 

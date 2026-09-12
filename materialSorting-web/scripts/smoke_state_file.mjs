@@ -142,6 +142,10 @@ async function exportOnce(page, fmt, tag) {
     await page.waitForSelector('[data-testid=export-info-overlay]', { timeout: 15000 });
     await page.waitForSelector('.export-ro-row', { timeout: 15000 });
     await page.click('[data-testid=export-info-confirm]');
+  } else {
+    // 2026-09-12 文件名弹窗：DXF/PNG 点导出先确认预填名（save-name-confirm）
+    await page.waitForSelector('[data-testid=save-name-overlay]', { timeout: 15000 });
+    await page.click('[data-testid=save-name-confirm]');
   }
   let n = 0;
   for (; n < 40; n++) {
@@ -276,10 +280,20 @@ log('S2 编辑保存完成（料长 ' + editedWidthMm + 'mm）');
 await page.screenshot({ path: OUT + '/s2_edited.png' });
 
 // ---------- S3 保存 .msn（独立保存按钮，2026-09-12 入口改判）+ Node gunzip 断言 ----------
+// 2026-09-12 文件名弹窗：点保存先开「文件名」确认弹窗 —— 预填**名称主体（无扩展
+// 名，用户定案：格式已知后缀不经手用户）**，改名后确认 → save_as 回传，后端清洗 +
+// 自动补 .msn，下载附件名 = 改后名 + .msn（本步顺带端到端验证改名与补后缀生效）。
+const RENAME_BASE = '5336_状态_冒烟改名';
 let dl = null;
 {
   const dlP = page.waitForEvent('download', { timeout: 30000 }).then((d) => d).catch(() => null);
   await page.click('[data-testid="save-state-btn"]');
+  await page.waitForSelector('[data-testid="save-name-overlay"]', { timeout: 5000 });
+  const prefill = await page.inputValue('[data-testid="save-name-input"]');
+  check('S3-名 预填默认名 = 名称主体（<stem>_状态_<yyyymmdd-HHMMSS>，无扩展名）',
+    /_状态_\d{8}-\d{6}$/.test(prefill), prefill);
+  await page.fill('[data-testid="save-name-input"]', RENAME_BASE);
+  await page.click('[data-testid="save-name-confirm"]');
   dl = await dlP;
   if (!dl) {
     // 诊断：toast / 状态行 / 按钮态（保存失败走 toast 不产附件）
@@ -292,7 +306,8 @@ let dl = null;
     console.log('DIAG state export:', JSON.stringify(dg));
   }
 }
-check('S3a 下载 .msn 附件（文件名含「状态」）', !!dl && dl.suggestedFilename().endsWith('.msn') && dl.suggestedFilename().includes('状态'),
+check('S3a 下载 .msn 附件（弹窗改名生效 = 名称主体 + 后端自动补 .msn）',
+  !!dl && dl.suggestedFilename() === RENAME_BASE + '.msn',
   dl ? dl.suggestedFilename() : 'no download');
 const msnPath = OUT + '/saved.msn';
 if (dl) await dl.saveAs(msnPath);
@@ -508,6 +523,9 @@ await page2.locator('#restart').waitFor({ timeout: 60000 });
 //（2026-09-12 入口改判：独立保存按钮，不再走导出下拉 state 项）
 const dlP5 = page2.waitForEvent('download', { timeout: 30000 }).then((d) => d).catch(() => null);
 await page2.click('[data-testid="save-state-btn"]');
+// 2026-09-12 文件名弹窗：直接确认预填默认名
+await page2.waitForSelector('[data-testid="save-name-overlay"]', { timeout: 5000 });
+await page2.click('[data-testid="save-name-confirm"]');
 const dl5 = await dlP5;
 check('S5c1 再存 .msn 附件', !!dl5 && dl5.suggestedFilename().endsWith('.msn'), dl5 ? dl5.suggestedFilename() : 'no download');
 const msnPathS5 = OUT + '/saved_s5.msn';
