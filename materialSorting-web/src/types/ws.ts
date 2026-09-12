@@ -92,7 +92,7 @@ export interface StopPayload {
 /** client → server 判别联合（按 action 字段区分）。 */
 export type ClientMsg = StartPayload | StopPayload;
 
-/** sparrow 求解阶段（与 rtype.phase_name() 对应；旧 vanilla 实现 PHASE_COLORS keys）。 */
+/** sparrow 求解阶段（与 rtype.phase_name() 对应；曲线配色已随曲线功能移除，类型保留供帧字段）。 */
 export type Phase = 'exploring' | 'compressing' | 'final';
 
 /** manifest：base 几何（erode 后）+ 颜色，每个 run 仅推一次。 */

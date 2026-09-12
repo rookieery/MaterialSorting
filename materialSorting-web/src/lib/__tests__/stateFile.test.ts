@@ -206,7 +206,6 @@ describe('buildSavePayload：form 原样（FormState 全量）', () => {
 // ============================================================
 
 import { applyRestorePayload } from '../stateFile';
-import { useAppStore } from '../../store/appStore';
 import { useEditStore } from '../../store/editStore';
 import { usePtypeStore } from '../../store/ptypeStore';
 import { useSynthRunStore } from '../../store/synthRunStore';
@@ -266,7 +265,6 @@ describe('applyRestorePayload（US-004 恢复编排）', () => {
     usePtypeStore.getState().reset();
     useSynthRunStore.setState({ token: 0, seed: 0, note: '', origin: undefined });
     useEditStore.getState().invalidate();
-    useAppStore.setState({ seekTime: -1 });
   });
 
   it('全量编排（含 run）：五 store 落笔 + run 合成 + 切超排 Tab', () => {
@@ -357,7 +355,7 @@ describe('applyRestorePayload（US-004 恢复编排）', () => {
     expect(frame.placed_items[0].translation[0]).toBe(10);
   });
 
-  it('清场语义：旧 run / 编辑态 / seek 随合成清空（恢复 = 显式覆盖当前工作台）', () => {
+  it('清场语义：旧 run / 编辑态随合成清空（恢复 = 显式覆盖当前工作台）', () => {
     const stale = runRegistry.create(9);
     stale.done = true;
     const editable = runRegistry.create(0);
@@ -367,7 +365,6 @@ describe('applyRestorePayload（US-004 恢复编排）', () => {
     editable.lastFrame = f;
     editable.finalDensity = 0.5;
     expect(useEditStore.getState().open(editable)).toBe(true);
-    useAppStore.setState({ seekTime: 30 });
     useUiStore.setState({ nestingEnabled: true });
 
     applyRestorePayload(makeRestore());
@@ -376,7 +373,6 @@ describe('applyRestorePayload（US-004 恢复编排）', () => {
     const st = useEditStore.getState();
     expect(st.run).toBeNull();
     expect(st.baseline).toBeNull();
-    expect(useAppStore.getState().seekTime).toBe(-1);
   });
 });
 

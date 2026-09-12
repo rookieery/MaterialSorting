@@ -25,7 +25,7 @@
 //     结果的别名问题（重新应用同一 result 现恒回 pristine 布局）；
 //   - finalDensity/finalDensitySparrow ← 帧 density 双口径、viewBoxMaxW ← 帧
 //     width_mm、done=true / error=null / stopped=false —— NestSVG /
-//     ConvergenceCurve / PlaybackBar / ExportButtons / bestRun() 零改动兼容；
+//     NestSVG / ExportButtons / bestRun() 零改动兼容（曲线/回放已于 2026-09-12 移除）；
 //   - origin（RunRecord additive 可选字段）：WS 普通求解不设（undefined = 'solve'，
 //     保存端 buildSavePayload 不写 provenance 键 —— 老文件零惩罚）；策略/极限应用
 //     从 StrategyResult.mode + 本族 lastStart 记入（NestingPage.originOfStrategyResult）；
@@ -33,7 +33,6 @@
 //     run-provenance 来源小字消费，渲染/导出零消费。
 
 import { create } from 'zustand';
-import { useAppStore } from './appStore';
 import { useEditStore } from './editStore';
 import { runRegistry, type RunRecord } from './runRegistry';
 import type { Pt, PlacedItem } from '../types/piece';
@@ -100,10 +99,10 @@ export function applySyntheticRun(
   origin?: RunOrigin,
   note = '',
 ): RunRecord {
-  // 1) 清场：关旧 WS + 清 registry + 编辑态失效 + seek 回 live（NestSVG 显示 lastFrame）。
+  // 1) 清场：关旧 WS + 清 registry + 编辑态失效（seekTime 回 live 随回放功能移除，
+  //    NestSVG 本就恒渲染 lastFrame）。
   runRegistry.clear();
   useEditStore.getState().invalidate();
-  useAppStore.getState().setSeekTime(-1);
 
   // 2) 深拷贝 placed（见文件头共享口径 —— 源数组不被 applyToRun 写回穿透）。
   const frame: FrameMsg = {

@@ -6,7 +6,7 @@
 // 设计：
 //   - 测 1/2 直接调 nestingTour.steps[i].ready()（读 runRegistry 模块级单例快照），
 //     不挂 React 组件 —— ready 谓词是纯 store 快照读取，无需 DOM。
-//   - 测 3 挂载 NestingPage（含 ControlPanel + NestsGrid + ConvergenceCurve + PlaybackBar），
+//   - 测 3 挂载 NestingPage（含 ControlPanel + NestsGrid），
 //     stub fetch 防 PtypePreviewModal 的 /api/ptypes 触发 act warning；
 //     NestingPage 初 mount 时 seeds=[] → useRafThrottle(false) 不启动 rAF、useSolveRun 不连 WS。
 //

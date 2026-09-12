@@ -2,7 +2,7 @@
 // deepCopyPlaced 深拷贝口径 + provenanceText 文案 + 信号 store。
 //
 // 覆盖面（设计 §十 前端 vitest）：
-//   - 清场：旧 run（含 WS 引用）被清、editStore 编辑态失效、seekTime 回 live；
+//   - 清场：旧 run（含 WS 引用）被清、editStore 编辑态失效；
 //   - 合成 RunRecord 字段：frames=[帧] / lastFrame / finalDensity 双口径 /
 //     viewBoxMaxW / done/error/stopped / ws=null / origin 设与不设；
 //   - placed 深拷贝解耦：合成后 mutate 源数组（模拟 editStore.applyToRun 原地
@@ -44,7 +44,7 @@ function makeFrame(): FrameMsg {
 beforeEach(() => {
   runRegistry.clear();
   useEditStore.getState().invalidate();
-  useAppStore.setState({ seekTime: -1, renderTick: 0 });
+  useAppStore.setState({ renderTick: 0 });
   useSynthRunStore.setState({ token: 0, seed: 0, note: '', origin: undefined });
 });
 
@@ -74,8 +74,8 @@ describe('applySyntheticRun（合成落笔，US-004）', () => {
     expect(rec.ws).toBeNull(); // 合成 run 无 WS
   });
 
-  it('清场副作用：editStore 编辑态失效 + seekTime 回 live（-1）', () => {
-    // 预置编辑会话在场 + seek 到中间帧
+  it('清场副作用：editStore 编辑态失效', () => {
+    // 预置编辑会话在场
     const run = runRegistry.create(0);
     run.manifest = makeManifest();
     const f = makeFrame();
@@ -84,7 +84,6 @@ describe('applySyntheticRun（合成落笔，US-004）', () => {
     run.finalDensity = 0.8;
     run.done = true;
     expect(useEditStore.getState().open(run)).toBe(true);
-    useAppStore.setState({ seekTime: 42 });
 
     applySyntheticRun(makeManifest(), makeFrame(), 0);
 
@@ -92,7 +91,6 @@ describe('applySyntheticRun（合成落笔，US-004）', () => {
     expect(st.run).toBeNull();
     expect(st.baseline).toBeNull();
     expect(st.working).toEqual([]);
-    expect(useAppStore.getState().seekTime).toBe(-1);
   });
 
   it('placed 深拷贝解耦：合成后原地 mutate 源数组不动 registry 帧（editStore.applyToRun 别名修复）', () => {

@@ -5,7 +5,7 @@
 //      manifest（build_pid_meta 快照口径 + demand 副本）/ frames=[合成帧]（FrameMsg 同形）/
 //      lastFrame/finalDensity 双口径/viewBoxMaxW/done/ws=null/stopped=false
 //   2. apply → phase==='done'：状态行「策略 run 已应用：seed N · X.XX%」+
-//      SolveControls 渲染 #restart（开始求解）+ PlaybackBar seekbar 解禁
+//      SolveControls 渲染 #restart（开始求解）
 //   3. apply → ExportButtons 非 disabled + NestSVG 渲染多副本（demand=2 → 2 个可见 polygon）
 //   4. apply → 点导出（显式选 PLT 全量分流 ExportInfoModal）→ 确认 → POST /export 载荷 =
 //      合成帧（bestRun() 零改动选中；placed 含 demand 多副本 N 条 placement；pid
@@ -97,7 +97,7 @@ beforeEach(() => {
   useControlPanelStore.getState().closeModal();
   useStrategyStore.getState().reset();
   useExtremeStore.getState().reset();
-  useAppStore.setState({ renderTick: 0, seekTime: -1 });
+  useAppStore.setState({ renderTick: 0 });
   // US-004：合成 run 信号 store 模块级常驻 —— 逐测重置（token=0 为初始态；
   // NestingPage 信号 effect 带 lastTokenRef 只消费挂载后新到信号，双保险隔离）。
   useSynthRunStore.setState({ token: 0, seed: 0, note: '', origin: undefined });
@@ -233,10 +233,6 @@ describe('NestingPage.applyStrategyResult (US-006)', () => {
     // phase=done → SolveControls 渲染 #restart（开始求解），非 #stop
     expect(container!.querySelector('#restart')).not.toBeNull();
     expect(container!.querySelector('#stop')).toBeNull();
-    // PlaybackBar：全部 done → seekbar 解禁（max = ceil(120.5) = 121）
-    const seek = container!.querySelector<HTMLInputElement>('#seek')!;
-    expect(seek.disabled).toBe(false);
-    expect(parseInt(seek.max, 10)).toBe(121);
   });
 
   it('apply → ExportButtons 非 disabled + NestSVG 多副本渲染（demand=2 → 2 个可见 polygon）', () => {

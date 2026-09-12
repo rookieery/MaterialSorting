@@ -378,7 +378,7 @@ describe("ControlPanel export wiring (US-007)", () => {
     // 准备：一个已 done 的 run + fetch mock
     const { runRegistry } = await import("../../../store/runRegistry");
     const { useAppStore } = await import("../../../store/appStore");
-    useAppStore.setState({ renderTick: 0, seekTime: -1 });
+    useAppStore.setState({ renderTick: 0 });
     const rec = runRegistry.create(0);
     rec.manifest = {
       type: "manifest", gate_mm: 1980, total_area_mm2: 100000, n_eroded: 0, pieces: [],
@@ -458,7 +458,7 @@ describe("ControlPanel export wiring (US-007)", () => {
     const { useAppStore } = await import("../../../store/appStore");
     const { markSessionProbedForTest, resetSessionForTest } = await import("../../../lib/api");
     markSessionProbedForTest();
-    useAppStore.setState({ renderTick: 0, seekTime: -1 });
+    useAppStore.setState({ renderTick: 0 });
     const rec = runRegistry.create(0);
     rec.manifest = {
       type: "manifest", gate_mm: 1980, total_area_mm2: 100000, n_eroded: 0, pieces: [],
@@ -532,7 +532,7 @@ describe("ControlPanel export wiring (US-007)", () => {
   it("全量 PLT 分流回归锁：选 PLT → 点导出同样先开弹窗（无毛版文案）", async () => {
     const { runRegistry } = await import("../../../store/runRegistry");
     const { useAppStore } = await import("../../../store/appStore");
-    useAppStore.setState({ renderTick: 0, seekTime: -1 });
+    useAppStore.setState({ renderTick: 0 });
     const rec = runRegistry.create(0);
     rec.manifest = {
       type: "manifest", gate_mm: 1980, total_area_mm2: 100000, n_eroded: 0, pieces: [],
@@ -1290,7 +1290,7 @@ describe("ControlPanel 状态文件保存入口（US-003 + 2026-09-12 入口改�
   });
 
   /** done 态 run + fetch mock（state-save 捕获 body 到 bodies）+ URL/anchor stub。
-   *  调用方需先 useAppStore.setState({ renderTick: 0, seekTime: -1 })。 */
+   *  调用方需先 useAppStore.setState({ renderTick: 0 })。 */
   function setupForStateExport(bodies: unknown[]): void {
     const rec = runRegistry.create(0);
     rec.manifest = {
@@ -1333,7 +1333,7 @@ describe("ControlPanel 状态文件保存入口（US-003 + 2026-09-12 入口改�
     const { useAppStore } = await import("../../../store/appStore");
     markSessionProbedForTest();
     const bodies: unknown[] = [];
-    useAppStore.setState({ renderTick: 0, seekTime: -1 });
+    useAppStore.setState({ renderTick: 0 });
     setupForStateExport(bodies);
     const onStatus = vi.fn();
 
@@ -1382,7 +1382,7 @@ describe("ControlPanel 状态文件保存入口（US-003 + 2026-09-12 入口改�
     const { markSessionProbedForTest, resetSessionForTest } = await import("../../../lib/api");
     const { useAppStore } = await import("../../../store/appStore");
     markSessionProbedForTest();
-    useAppStore.setState({ renderTick: 0, seekTime: -1 });
+    useAppStore.setState({ renderTick: 0 });
     const rec = runRegistry.create(0);
     rec.manifest = { type: "manifest", gate_mm: 1980, total_area_mm2: 100000, n_eroded: 0, pieces: [] };
     rec.frames.push({
@@ -1422,7 +1422,7 @@ describe("ControlPanel 状态文件保存入口（US-003 + 2026-09-12 入口改�
     const { markSessionProbedForTest, resetSessionForTest } = await import("../../../lib/api");
     markSessionProbedForTest();
     const { useAppStore } = await import("../../../store/appStore");
-    useAppStore.setState({ renderTick: 0, seekTime: -1 });
+    useAppStore.setState({ renderTick: 0 });
     const rec = runRegistry.create(0);
     rec.manifest = { type: "manifest", gate_mm: 1980, total_area_mm2: 100000, n_eroded: 0, pieces: [] };
     rec.frames.push({

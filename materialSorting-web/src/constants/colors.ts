@@ -1,25 +1,12 @@
-// 颜色常量（与旧 vanilla 实现 PHASE_COLORS / SEED_COLORS 一致）。
-//
-// PHASE_COLORS：单 seed 收敛曲线按 sparrow phase_name() 着色散点（exploring/compressing/final）。
-// SEED_COLORS：多 seed 收敛曲线按 run 序号着色路径（最多 6 seed）。
-//
-// 注：US-005 ConvergenceCurve 会消费这两个常量，US-004 仅落地数据，不动渲染。
+// 颜色常量。
 //
 // US-024 起 LAYER5_COLORS：5 层裁片配色（毛版/净版/内部线/刺口/布纹线），由
 // PiecePreviewSVG / NestSVG 共享，保证预览页/排料页/导出 PNG 视觉一致（与后端
 // web/export.py LAYER5_COLOR_* 字面量同口径）。排料页毛版用尺码配色（后端
 // size_color，尺码 → 16 色循环表，2026-08-20 起同码同色跨片型一致；画布图例见
 // SizeLegend.tsx）；其余 4 层用工艺色（与版师认知一致）。
-
-/** sparrow phase → 散点颜色。 */
-export const PHASE_COLORS = {
-  exploring: '#1f77b4',
-  compressing: '#ff7f0e',
-  final: '#2ca02c',
-} as const;
-
-/** 多 seed 时 run 序号 → 路径颜色（最多 6 个）。与旧 vanilla 实现 SEED_COLORS 字面量一致。 */
-export const SEED_COLORS = ['#1f77b4', '#d62728', '#2ca02c', '#ff7f0e', '#9467bd', '#17becf'];
+//
+// 注：PHASE_COLORS / SEED_COLORS（收敛曲线专用配色）随曲线功能于 2026-09-12 一并移除。
 
 /**
  * US-024 5 层裁片配色（毛版 + 净版 + 内部线 + 刺口 + 布纹线）。

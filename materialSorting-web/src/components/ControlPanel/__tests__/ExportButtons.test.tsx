@@ -24,7 +24,7 @@ let root: Root | null = null;
 
 beforeEach(() => {
   runRegistry.clear();
-  useAppStore.setState({ renderTick: 0, seekTime: -1 });
+  useAppStore.setState({ renderTick: 0 });
   container = document.createElement("div");
   document.body.appendChild(container);
   root = createRoot(container);

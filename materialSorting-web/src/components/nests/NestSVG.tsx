@@ -13,13 +13,13 @@
 //   3. pointsStr(poly, rot, tr) 输出与旧 vanilla 实现 字节级一致（lib/geometry.ts 单测覆盖）。
 //   4. 未 placed 的 polygon display:none；placed 的 display:''（与旧 vanilla 实现 一致）。
 //
-// US-006 增量：
-//   5. 回放感知：seekTime >= 0 时改用 frameAtTime(run, seekTime)（二分，lib/seek.ts）；
-//      seekTime = -1 时维持 live（lastFrame）。effect deps 加 seekTime，拖动时立即重绘。
-//   6. flipGroup 上事件委托 mousemove + mouseleave（AC#4）：e.target.closest('polygon') +
+// US-006 增量（2026-09-12 回放功能移除后仅存 hover）：
+//   5. flipGroup 上事件委托 mousemove + mouseleave（AC#4）：e.target.closest('polygon') +
 //      dataset.label（裁片 g 码，US-003 起 manifest 唯一标识）→ Tooltip 显示
 //      `g03 · 码28` + 面积(cm²)；切换 polygon 时旧高亮 class 自动移除（AC#6）。
 //      高频 mousemove 直接 mutate Tooltip DOM（imperative，不进 React state）。
+//      （原第 5 条「回放感知 seekTime/frameAtTime」随回放 UI 一并移除 —— 恒渲染
+//      run.lastFrame，live 口径。）
 //
 // US-024 增量（5 层渲染）：
 //   7. 毛版 polygon（既有）之上叠加 net_polygon（绿 dashed polygon）+ internal_lines（橙 polyline）+
@@ -43,7 +43,6 @@ import type { RunRecord } from '../../store/runRegistry';
 import type { Notch, Polygon } from '../../types/piece';
 import type { FrameMsg, ManifestMsg } from '../../types/ws';
 import { physicalPolygon, pointsStr } from '../../lib/geometry';
-import { frameAtTime } from '../../lib/seek';
 import { clearHovered, hideTooltip, setHovered, showTooltip } from '../Tooltip';
 import { NOTCH_LEN_MM } from '../../constants/colors';
 // 编辑排料 US-002：5 层节点构建（SVGNS / PieceEntry / createPieceEntry）机械提取到
@@ -79,8 +78,6 @@ export function NestSVG({ run }: NestSVGProps) {
 
   // 订阅 renderTick —— bump 触发 effect 重跑（imperative 更新 DOM）。
   const renderTick = useAppStore((s) => s.renderTick);
-  // US-006：订阅 seekTime，拖动时立即切到 frameAtTime(run, seekTime)。
-  const seekTime = useAppStore((s) => s.seekTime);
 
   useEffect(() => {
     const svg = svgRef.current;
@@ -146,14 +143,14 @@ export function NestSVG({ run }: NestSVGProps) {
     }
 
     // 2) 渲染当前帧（imperative setAttribute —— 不触发 React reconciliation）。
-    //    US-006：seekTime >= 0 → frameAtTime(run, seekTime)；否则 lastFrame（live）。
+    //    恒 live 口径：run.lastFrame（回放 seekTime/frameAtTime 分支随回放功能移除）。
     const flip = flipRef.current;
     const bg = bgRef.current;
     const fab = fabRef.current;
     if (!flip || !bg || !fab) return;
     if (!run.manifest) return;
 
-    const f: FrameMsg | null = seekTime >= 0 ? frameAtTime(run, seekTime) : run.lastFrame;
+    const f: FrameMsg | null = run.lastFrame;
     if (!f) return;
 
     const gate = run.manifest.gate_mm;
@@ -255,7 +252,7 @@ export function NestSVG({ run }: NestSVGProps) {
         if (entry.collideEl) entry.collideEl.style.display = 'none';
       }
     }
-  }, [renderTick, seekTime, run]);
+  }, [renderTick, run]);
 
   return <svg ref={svgRef} xmlns={SVGNS} />;
 }

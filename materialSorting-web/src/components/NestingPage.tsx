@@ -1,7 +1,7 @@
 // NestingPage —— 排料工作台页（US-001 把原 App.tsx 排料逻辑外提）。
 //
 // 职责：持有 phase / status / seeds 状态 + doneCountRef/totalSeedsRef，挂载
-//   ControlPanel + NestsGrid + ConvergenceCurve + PlaybackBar，跑 useRafThrottle 节流闸。
+//   ControlPanel + NestsGrid，跑 useRafThrottle 节流闸。
 // 与原 App.tsx（US-005 多 seed + US-006 seek/tooltip + US-007 导出）逻辑字节级一致，
 //   仅容器由 `<div className="app">` 改为 `<div className="page nesting-page">`，
 //   由父 App 据 uiStore.activeTab 切 display:none（AC#4 不卸载、求解/WS/seek 全保留）。
@@ -16,7 +16,7 @@
 //   核心已抽成共享 applySyntheticRun（store/synthRunStore，状态文件 US-004）：
 //   runRegistry.clear() 清场后合成单条 RunRecord（manifest = result 端点 build_pid_meta 快照
 //   口径，与 /ws/solve manifest 同形；frames = [best 帧]，FrameMsg 字段同形），NestSVG /
-//   ConvergenceCurve / PlaybackBar / ExportButtons 零改动兼容。应用是显式按钮（弹窗结果态），
+//   ExportButtons 零改动兼容。应用是显式按钮（弹窗结果态），
 //   不自动应用 —— 会清掉主画布现有对比 run；result 常驻 strategyStore，关弹窗再开仍可应用。
 //   状态文件 US-004：应用时经 originOfStrategyResult 记 RunRecord.origin（provenance 取数
 //   中转 —— mode 定族/kind、本族 lastStart 补 config），主画布 run-provenance 来源小字常驻
@@ -33,15 +33,11 @@
 // Tooltip 仍由父 App 渲染（全局单例，不能多挂）；本页只渲染业务区，不挂 Tooltip。
 
 import { useEffect, useRef, useState } from 'react';
-import { ConvergenceCurve } from './curve/ConvergenceCurve';
 import { ControlPanel, type ControlPanelStartPayload } from './ControlPanel/ControlPanel';
 import { NestsGrid } from './nests/NestsGrid';
-import { PlaybackBar } from './playback/PlaybackBar';
 import { clearHovered, hideTooltip } from './Tooltip';
 import { useRafThrottle } from '../hooks/useRafThrottle';
 import { useSolveRun } from '../hooks/useSolveRun';
-import { maxElapsed } from '../lib/seek';
-import { useAppStore } from '../store/appStore';
 import { useEditStore } from '../store/editStore';
 import { runRegistry } from '../store/runRegistry';
 import {
@@ -144,11 +140,8 @@ export function NestingPage(): React.JSX.Element {
         setPhase('done');
       }
 
-      // US-006 AC#1：全部完成时 seekbar 启用，value 默认到末尾 = ceil(maxElapsed)。
-      // setSeekTime(me) 后 NestSVG 切到 frameAtTime(run, me)（= 末帧，与 lastFrame 等价），
-      // Seekbar 受控 value 跟着到末尾，SeekReadout 显示末帧密度。
-      const me = Math.ceil(maxElapsed(runs));
-      useAppStore.getState().setSeekTime(me);
+      // US-006 AC#1（2026-09-12 曲线/回放功能移除）：setSeekTime 到末帧的逻辑随回放 UI
+      // 一并删除 —— live 画布本就显示 lastFrame（= 末帧），行为无差异。
 
       const summary = runs
         .map((r) => `s${r.seed} ${(r.finalDensity * 100).toFixed(2)}%`)
@@ -179,8 +172,8 @@ export function NestingPage(): React.JSX.Element {
   });
 
   // 全局 ~10fps 节流闸 —— seeds.length > 0 期间持续 bump renderTick，
-  // NestSVG / NestLabel / ConvergenceCurve 订阅后 imperative 重绘。
-  // 注：求解结束后仍持续 bump（seeds 不清空），让曲线 / NestLabel 显示最终态。
+  // NestSVG / NestLabel 订阅后 imperative 重绘。
+  // 注：求解结束后仍持续 bump（seeds 不清空），让 NestLabel 显示最终态。
   useRafThrottle(seeds.length > 0);
 
   // 合成 run 信号消费（US-004）：applySyntheticRun（策略/极限应用 / 状态文件恢复，
@@ -220,9 +213,8 @@ export function NestingPage(): React.JSX.Element {
     // US-004：新一次 WS 求解 = 全新结果（origin 不设口径），来源小字随清场退场。
     setProvenance(null);
 
-    // US-006：重置回 live（NestSVG 显示 lastFrame）；同时清 tooltip / hover 残留。
-    // 与旧 vanilla 实现 startSolve 内 `$('seek').disabled=true; max=0; value=0; hoveredEl=null; tooltipEl.style.display='none'` 等价。
-    useAppStore.getState().setSeekTime(-1);
+    // 清 tooltip / hover 残留（与旧 vanilla 实现 startSolve 内 `hoveredEl=null;
+    // tooltipEl.style.display='none'` 等价；seekbar 重置随回放功能一并移除）。
     clearHovered();
     hideTooltip();
 
@@ -271,7 +263,7 @@ export function NestingPage(): React.JSX.Element {
    * 消费（恢复路径同款）。manifest = result.manifest（build_pid_meta 快照口径 —— erode
    * 后几何与 placed_items 对齐、demand 已含，NestSVG 副本池按 demand 建 N 份承接多副本
    * placement）；frames = [合成帧]（FrameMsg 形状）—— 与 WS 帧同形，NestSVG /
-   * ConvergenceCurve / PlaybackBar / ExportButtons/useExport/bestRun() 零改动兼容。
+   * ExportButtons/useExport/bestRun() 零改动兼容。
    *
    * result 常驻 strategyStore（关弹窗再开仍可应用）；母版变更场景导出 pid 失配走既有 400 兜底。
    */
@@ -336,13 +328,6 @@ export function NestingPage(): React.JSX.Element {
       <main className="main">
         <div className="nest-wrap" data-tour="nest-wrap">
           <NestsGrid seeds={seeds} />
-        </div>
-
-        <div className="bottom">
-          <div className="curve-wrap">
-            <ConvergenceCurve />
-          </div>
-          <PlaybackBar />
         </div>
       </main>
     </>

@@ -29,8 +29,7 @@
 // before 副作用：5 步均 ensureNestingTab（用户从 preview Tab 用菜单「查看超排指引」
 // 触发时需切回 nesting；defensive + 幂等）。
 //
-// 收敛曲线并入 result 步气泡附带提及（不单独高亮、不单独锚点）。
-// 回放（PlaybackBar）非主流程不单独成步。
+// （收敛曲线 / 回放条已于 2026-09-12 移除 —— result 步气泡文案同步去掉相关提及。）
 
 import type { TourDef } from '../types';
 import { useUiStore } from '../../store/uiStore';
@@ -79,7 +78,7 @@ export const nestingTour: TourDef = {
       id: 'result',
       selector: '[data-tour="nest-wrap"]',
       title: '查看排料结果',
-      body: '求解启动后，右侧排料卡片实时显示每个 seed 的排料方案与利用率。右上角收敛曲线展示求解过程利用率爬升。下方播放条可在求解结束后拖动回放中间帧。',
+      body: '求解启动后，右侧排料卡片实时显示每个 seed 的排料方案与利用率，实时跟随求解过程刷新至最终最优方案。',
       placement: 'right',
       before: ensureNestingTab,
       ready: hasProducedFrame,
