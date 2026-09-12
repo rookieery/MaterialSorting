@@ -15,7 +15,7 @@
 //
 // 文案（PRD US-005 指定）：
 //   session_expired → 「会话已过期（10 分钟无操作），请刷新页面」（不显示上次活动时间）
-//   session_limit   → 「当前使用用户过多（最多 4 人同时在线），请稍后尝试」
+//   session_limit   → 「当前使用用户过多（最多 6 人同时在线），请稍后尝试」
 //
 // 订阅方式：React 18 useSyncExternalStore（lib/api 的模块级 pub/sub；不引 zustand
 // —— lib 不依赖 store 层，组件侧零额外状态）。code === null 时渲染 null（零开销）。
@@ -32,7 +32,7 @@ const COPY: Record<SessionBlockCode, { title: string; text: string }> = {
   },
   session_limit: {
     title: '当前使用用户过多',
-    text: '当前使用用户过多（最多 4 人同时在线），请稍后尝试',
+    text: '当前使用用户过多（最多 6 人同时在线），请稍后尝试',
   },
 };
 

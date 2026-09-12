@@ -22,10 +22,9 @@
 // （AC#3：明确告知用户导出的是停止/出错时刻的中间方案，非最终最优解）。
 // 文件名仍按当前 density 命名（真实口径，反映该中间方案利用率），不加 _partial 后缀。
 //
-// 状态文件 US-003：fmt='state'（状态文件 .msn）时底部说明行切换为保存范围文案
-//（partial 警示优先级更高 —— 停止/出错态保存的同样是中间方案）；disabled 联动
-// 沿用 hasLastFrame 与其他格式同口径（「纯配置档」UI 不可达 = 契约注记，
-// 端点层仍容忍无 run）。
+// 状态文件 2026-09-12 入口改判：'state'（状态文件 .msn）自 EXPORT_FORMATS 移除
+//（2026-09-11 US-003 曾为下拉第 5 项 + 底部说明行切保存范围文案）—— 保存入口
+// 独立为 SaveStateControls 区块（本组件紧上方），本组件回归纯生产交付格式族。
 
 import { useState } from 'react';
 import { useAppStore } from '../../store/appStore';
@@ -82,12 +81,6 @@ export function ExportButtons({ solving, exporting, onExport, partial = false }:
       {partial ? (
         <div className="dim small warn">
           导出的是停止 / 出错时刻的中间方案，非最终最优解。
-        </div>
-      ) : fmt === 'state' ? (
-        // 状态文件 US-003：选中「状态文件（.msn）」时说明行切换为保存范围文案
-        //（导出表格 6 手输字段不入文件 = 操作者本机属性，跨机不应泄漏他人排料师名）。
-        <div className="dim small">
-          保存母版快照+全部配置+当前最优方案（含编辑），可在其他电脑恢复继续；不含导出表格手输字段（本机记忆）。
         </div>
       ) : (
         <div className="dim small">默认导出利用率最高的 seed 的最终方案。</div>

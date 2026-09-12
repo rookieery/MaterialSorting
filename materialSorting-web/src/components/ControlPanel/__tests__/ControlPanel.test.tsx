@@ -1248,12 +1248,16 @@ describe("ControlPanel 重传联动：doc_id 变化重置 form (2026-08-27)", ()
 });
 
 // ============================================================
-// 状态文件 US-003：导出弹窗「状态文件（.msn）」分支 —— fmt='state' →
-// useExport.saveState（POST /api/state-save，body=buildSavePayload），不进
-// ExportInfoModal（14 字段表格面板对状态文件不打开）；StatusLine 三态与
-// PNG/DXF/PLT 走同一 onStatus；exporting 单一防连击旗互斥。
+// 状态文件：保存入口（2026-09-11 US-003 落地为导出格式下拉第 5 项 'state' 分支；
+// 2026-09-12 入口改判拆出为独立区块 SaveStateControls —— 「编辑排料」与
+// 「导出最优方案」之间，标题「保存当前方案状态（.msn）」+ 单「保存」按钮，
+// 按钮状态与导出按钮同公式同数据源严格一致）。点「保存」→ useExport.saveState
+//（POST /api/state-save，body=buildSavePayload），不进 /export、不弹
+// ExportInfoModal；StatusLine 三态与 PNG/DXF/PLT 走同一 onStatus；exporting
+// 单一防连击旗互斥。组件行为细节（结构/disabled 口径/双层防御）在
+// SaveStateControls.test。
 // ============================================================
-describe("ControlPanel 状态文件导出分支 (US-003)", () => {
+describe("ControlPanel 状态文件保存入口（US-003 + 2026-09-12 入口改判）", () => {
   beforeEach(() => {
     runRegistry.clear();
   });
@@ -1300,7 +1304,7 @@ describe("ControlPanel 状态文件导出分支 (US-003)", () => {
     vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
   }
 
-  it("选「状态文件」点导出 → POST /api/state-save（body=buildSavePayload），不走 /export、不弹 ExportInfoModal", async () => {
+  it("点「保存」按钮 → POST /api/state-save（body=buildSavePayload），不走 /export、不弹 ExportInfoModal", async () => {
     const { markSessionProbedForTest, resetSessionForTest } = await import("../../../lib/api");
     const { useAppStore } = await import("../../../store/appStore");
     markSessionProbedForTest();
@@ -1311,13 +1315,8 @@ describe("ControlPanel 状态文件导出分支 (US-003)", () => {
 
     renderPanel(() => {}, { onStatus });
     act(() => useAppStore.getState().bumpRenderTick());
-    act(() => {
-      const select = container!.querySelector<HTMLSelectElement>(".export-btns select")!;
-      select.value = "state";
-      select.dispatchEvent(new Event("change", { bubbles: true }));
-    });
     await act(async () => {
-      container!.querySelector<HTMLButtonElement>(".export-btns button.export")!.click();
+      container!.querySelector<HTMLButtonElement>('[data-testid="save-state-btn"]')!.click();
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -1371,13 +1370,8 @@ describe("ControlPanel 状态文件导出分支 (US-003)", () => {
     const onStatus = vi.fn();
     renderPanel(() => {}, { onStatus });
     act(() => useAppStore.getState().bumpRenderTick());
-    act(() => {
-      const select = container!.querySelector<HTMLSelectElement>(".export-btns select")!;
-      select.value = "state";
-      select.dispatchEvent(new Event("change", { bubbles: true }));
-    });
     await act(async () => {
-      container!.querySelector<HTMLButtonElement>(".export-btns button.export")!.click();
+      container!.querySelector<HTMLButtonElement>('[data-testid="save-state-btn"]')!.click();
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -1418,22 +1412,23 @@ describe("ControlPanel 状态文件导出分支 (US-003)", () => {
     act(() => useAppStore.getState().bumpRenderTick());
     const select = () => container!.querySelector<HTMLSelectElement>(".export-btns select")!;
     const exportBtn = () => container!.querySelector<HTMLButtonElement>(".export-btns button.export")!;
-    act(() => {
-      select().value = "state";
-      select().dispatchEvent(new Event("change", { bubbles: true }));
-    });
+    const saveBtn = () => container!.querySelector<HTMLButtonElement>('[data-testid="save-state-btn"]')!;
     await act(async () => {
-      exportBtn().click();
+      saveBtn().click();
       await Promise.resolve();
     });
-    // state-save 发出后按钮因 exporting 置灰；防御：直接再切 PNG 点击也不发 /export
+    // state-save 发出后两按钮因共享 exporting 置灰（保存⇄导出双向联动）；
+    // 防御：直接再切 PNG 点击也不发 /export、保存按钮旁路再点也不发第二个 state-save
+    expect(saveBtn().disabled).toBe(true);
     expect(exportBtn().disabled).toBe(true);
     act(() => {
       select().value = "png";
       select().dispatchEvent(new Event("change", { bubbles: true }));
     });
     act(() => exportBtn().click());
+    act(() => saveBtn().click());
     expect(urls.some((u) => u.includes("/export"))).toBe(false);
+    expect(urls.filter((u) => u.includes("/api/state-save"))).toHaveLength(1);
     vi.unstubAllGlobals();
     resetSessionForTest();
   });

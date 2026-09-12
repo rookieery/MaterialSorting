@@ -247,6 +247,18 @@ button.export:disabled { background: #444; color: #888; cursor: default; }
 /* US-028 中间方案导出提示：stopped/error（有帧）态显示在导出按钮下方，警示橙黄色（区别于默认灰提示）。 */
 .dim.small.warn { color: #d8a23a; font-weight: 600; }
 
+/* ---- 保存当前方案状态（.msn）：独立区块（2026-09-12 从导出格式下拉拆出）。
+   .export-group / .edit-controls 同款分隔形态与按钮视觉（「拿到解之后」动作组）。 ---- */
+.save-state-group { margin-top: 14px; padding-top: 12px; border-top: 1px solid #34363d; }
+.save-state-btns { display: flex; gap: 8px; margin: 6px 0 4px; }
+button.save-state-btn {
+  flex: 1; padding: 8px 6px; font-size: 13px; font-weight: 600;
+  background: #2c5d8f; color: #fff; border: 0; border-radius: 6px; cursor: pointer;
+  font-family: inherit;
+}
+button.save-state-btn:hover:not(:disabled) { background: #3470ac; }
+button.save-state-btn:disabled { background: #444; color: #888; cursor: default; }
+
 /* ---- US-006 UploadPanel（DXF 上传预览左侧，沿用 .panel 同色系） ---- */
 .upload-panel { display: flex; flex-direction: column; gap: 12px; }
 .upload-panel h2 + .hint { margin-top: 0; }

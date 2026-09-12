@@ -12,7 +12,8 @@
 //      （g01 重合 d=1 + 腰头成带 g05）→ 3 码 5s 求解（Σdemand 31 → placed 条数
 //      按 band 置换口径，守恒断言不硬编码）。
 //   S2 编辑弹窗左键拖片 +40mm → 保存（.msn 的 run 将携带编辑后布局）。
-//   S3 导出「状态文件」下载 .msn → Node gunzip + JSON 断言：schema 顶层键齐 /
+//   S3 点独立「保存」按钮（保存当前方案状态（.msn）区块，2026-09-12 入口改判；
+//      此前为导出下拉 state 项）下载 .msn → Node gunzip + JSON 断言：schema 顶层键齐 /
 //      run 无 provenance 键（WS 普通求解口径）/ placed 与 WS 末帧条数守恒且
 //      恰 1 条被移动 ≈+40mm / form（sizes/gate/time/per_type/band）与
 //      quantities 实值入档。
@@ -274,18 +275,18 @@ await page.waitForSelector('[data-testid="edit-layout-overlay"]', { state: 'deta
 log('S2 编辑保存完成（料长 ' + editedWidthMm + 'mm）');
 await page.screenshot({ path: OUT + '/s2_edited.png' });
 
-// ---------- S3 导出 .msn + Node gunzip 断言 ----------
-await page.selectOption('select.export-fmt', 'state');
+// ---------- S3 保存 .msn（独立保存按钮，2026-09-12 入口改判）+ Node gunzip 断言 ----------
 let dl = null;
 {
   const dlP = page.waitForEvent('download', { timeout: 30000 }).then((d) => d).catch(() => null);
-  await page.click('button.export');
+  await page.click('[data-testid="save-state-btn"]');
   dl = await dlP;
   if (!dl) {
     // 诊断：toast / 状态行 / 按钮态（保存失败走 toast 不产附件）
     const dg = await page.evaluate(() => ({
       toasts: Array.from(document.querySelectorAll('.toast-msg')).map((t) => t.textContent),
       status: document.querySelector('#status')?.textContent || '',
+      saveDisabled: (document.querySelector('[data-testid="save-state-btn"]') || {}).disabled,
       exportDisabled: Array.from(document.querySelectorAll('.export-btns button.export')).map((b) => b.disabled),
     }));
     console.log('DIAG state export:', JSON.stringify(dg));
@@ -504,9 +505,9 @@ check('S5b 整列设值后重解：placed = ' + EXPECT_PLACED_S5 + '（勾选码
 await page2.locator('#restart').waitFor({ timeout: 60000 });
 
 // S5c 再存 .msn：quantities_base 省键式入档（g02=2 在 / g01 逐格改不入）
-await page2.selectOption('select.export-fmt', 'state');
+//（2026-09-12 入口改判：独立保存按钮，不再走导出下拉 state 项）
 const dlP5 = page2.waitForEvent('download', { timeout: 30000 }).then((d) => d).catch(() => null);
-await page2.click('button.export');
+await page2.click('[data-testid="save-state-btn"]');
 const dl5 = await dlP5;
 check('S5c1 再存 .msn 附件', !!dl5 && dl5.suggestedFilename().endsWith('.msn'), dl5 ? dl5.suggestedFilename() : 'no download');
 const msnPathS5 = OUT + '/saved_s5.msn';

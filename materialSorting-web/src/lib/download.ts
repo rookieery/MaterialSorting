@@ -12,28 +12,30 @@
  * layer1「毛版轮廓」同口径，当日由「净版」更名；协议值 'plt-clean' 不随更名变）。
  * 'state' = 状态文件（.msn，状态文件 US-003）—— **唯一例外**：走独立
  * /api/state-save（会话 doc + form + quantities 整块），不加 /export 路由分支
- * （/export 是 placed 几何态且有字节级回归基线，「并入导出弹窗」纯是 UI 入口
- * 复用，不是路由复用）。 */
+ * （/export 是 placed 几何态且有字节级回归基线）。2026-09-12 起 UI 入口从导出
+ * 格式下拉拆出为主面板独立「保存当前方案状态（.msn）」区块（SaveStateControls），
+ * 不再出现在 EXPORT_FORMATS —— 联合类型成员保留：useExport.saveState 的
+ * parseContentDisposition(fmt='state') 仍消费。 */
 export type ExportFmt = 'png' | 'dxf' | 'plt' | 'plt-clean' | 'state';
 
 /**
  * 导出格式下拉框选项（与 ExportFmt 同源）。
- * 新增格式只需：往此数组加一项 + 扩 ExportFmt 联合类型 + 后端 /export 路由加分支
- * （例外：'state' 走独立 /api/state-save，见 ExportFmt 注释）。
+ * 新增格式只需：往此数组加一项 + 扩 ExportFmt 联合类型 + 后端 /export 路由加分支。
  *
  * 顺序约定：DXF 永远第一项（版师 / ET2008 生产交付主格式）；US-034 新增 PLT（WT V8.8 /
  * LIKE 绘图仪原生链路），插在 DXF 与 PNG 之间——生产交付格式族（DXF/PLT）相邻，PNG 作为
- * 可视化预览格式；状态文件 US-003 追加「状态文件（.msn）」排 PNG 后（工作台快照非
- * 生产交付格式）。下拉顺序与默认选中解耦：2026-08-24 起 DEFAULT_EXPORT_FMT='plt'
+ * 可视化预览格式。下拉顺序与默认选中解耦：2026-08-24 起 DEFAULT_EXPORT_FMT='plt'
  * （用户要求，现场以绘图仪切绘为主用交付），2026-08-31 起 'plt-clean'（毛版，用户要求
  * 毛版为现场主交付）；首项仍为 DXF。
+ * 2026-09-12（用户要求）：状态文件（.msn）自此移出下拉（2026-09-11 曾短暂为
+ * 第 5 项「状态文件（.msn）」）—— 工作台快照非生产交付格式，入口改为主面板独立
+ * 「保存当前方案状态（.msn）」区块（SaveStateControls，激活口径与导出按钮一致）。
  */
 export const EXPORT_FORMATS: { value: ExportFmt; label: string }[] = [
   { value: 'dxf', label: 'DXF' },
   { value: 'plt', label: 'PLT' },
   { value: 'plt-clean', label: 'PLT（毛版）' },
   { value: 'png', label: 'PNG' },
-  { value: 'state', label: '状态文件（.msn）' },
 ];
 
 /** 默认导出格式：2026-08-31 起 PLT 毛版（用户要求，现场以毛版切绘为主用交付；

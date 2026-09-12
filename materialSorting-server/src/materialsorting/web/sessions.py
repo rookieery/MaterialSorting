@@ -10,7 +10,7 @@ ms-web 此前是「单文档单例」：``runtime._PIECES_STATE`` 进程级全�
   ``MS_SESSION_MAX`` 名额、不参与墓碑；其 pieces 快照与 ``runtime._PIECES_STATE``
   是**同一 dict 对象**（runtime 只原位 clear+update 从不 rebind，commit 自动同步；
   uuid4 hex sid 仅含 0-9a-f，与含非 hex 字符的 ``'default'`` 结构性不可碰撞）。
-- **容量闸门**：``MS_SESSION_MAX``（缺省 4）仅计活跃会话，超出 → 429
+- **容量闸门**：``MS_SESSION_MAX``（缺省 6）仅计活跃会话，超出 → 429
   ``{code:'session_limit'}``。
 - **空闲过期**：``MS_SESSION_TTL_SEC``（缺省 600）请求时惰性检查 + 30s daemon 扫描
   线程（``ws_open>0`` 的会话跳过 —— WS 连接钉住不误杀）。超时逐出为墓碑
@@ -61,7 +61,7 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
-SESSION_MAX: int = _env_int('MS_SESSION_MAX', 4)             # 活跃会话上限（default 豁免不占额）
+SESSION_MAX: int = _env_int('MS_SESSION_MAX', 6)             # 活跃会话上限（default 豁免不占额）
 SESSION_TTL_SEC: float = _env_float('MS_SESSION_TTL_SEC', 600.0)   # 空闲过期阈值（秒）
 TOMBSTONE_TTL_SEC: float = 3600.0    # 墓碑存活 1h：超龄/FIFO 淘汰前该 sid 不可重建
 TOMBSTONE_MAX: int = 128             # 墓碑 FIFO 容量上限

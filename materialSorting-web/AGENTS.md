@@ -525,7 +525,7 @@ src/
 - **轮数公式镜像常量**：`EXTREME_FIRST_ROUND_S=602.5` / `EXTREME_PER_ROUND_S=347.5`（与 cli.portfolio race_plan 同口径）→ `estimateExtremeRounds(T)=max(1,1+floor((T−602.5)/347.5))`：60min→9 / 120min→19（默认档）/ 240min→40 / 480min→82 / 16min→2。自定义 16~720 整数（`parseCustomMinutes` 越界/非整 → null → 置灰 + 提示）。改后端轮次口径须两处同步。
 - **参数完全隐藏**：弹窗不出现 exploration_pct / early_termination / num_workers / quadtree_depth 字样（无输入无下拉）；结果态只一句「已固化实验参数（按实验结论固定，不可调）」（extraHint）不列值。`result.mode='extreme'` 而 `summary.mode='race'`（CLI --extreme 内部展开 race）—— 判据只用顶层 mode。
 - **结果应用复用 applyStrategyResult**（US-006 约定延续）：ExtremeRunModal 应用按钮 → onApplyExtreme → 同一 NestingPage 函数，合成 RunRecord 链零改动；状态行按 mode 区分「极限/策略 run 已应用」。
-- **smoke：`scripts/smoke-extreme-run.mjs`**（playwright msedge→chrome，范本 smoke-band-preview）三坑记档：① 超排 Tab 解锁联动 **parse done** 非 commit done —— 须等 `[data-testid="commit-status"].done`（`.upload-status.done` 同时命中 parse-done 元素不能只按 class 等）再进 Tab，否则极限 start 吃 422「排料数据为空」；② fresh context = 新 sid（MS_SESSION_MAX=4/TTL 600s）连跑多轮会 429 session_limit → 重启 ms-web 恢复；③ stopped 后 result 拉取异步先闪「正在读取运行结果…」→ 断言等 `strategy-result-head`。US-017 起默认码号空：进 Tab 后先勾 `.sizes .chip input`（id=`sz_<key>`）前两个再执行。
+- **smoke：`scripts/smoke-extreme-run.mjs`**（playwright msedge→chrome，范本 smoke-band-preview）三坑记档：① 超排 Tab 解锁联动 **parse done** 非 commit done —— 须等 `[data-testid="commit-status"].done`（`.upload-status.done` 同时命中 parse-done 元素不能只按 class 等）再进 Tab，否则极限 start 吃 422「排料数据为空」；② fresh context = 新 sid（MS_SESSION_MAX=6/TTL 600s）连跑多轮会 429 session_limit → 重启 ms-web 恢复；③ stopped 后 result 拉取异步先闪「正在读取运行结果…」→ 断言等 `strategy-result-head`。US-017 起默认码号空：进 Tab 后先勾 `.sizes .chip input`（id=`sz_<key>`）前两个再执行。
 - **测试基线**：`src/store/__tests__/extremeStore.test.ts` 7 项（载荷契约无 band/prefix / 409 透传 / 家族过滤双向 / result 恰拉一次 / stop / reset）+ `ExtremeRunButton.test.tsx` 4 项 + `ExtremeRunModal.test.tsx` 17 项（公式对拍/预设切换/自定义域/参数隐藏/band 闸门/载荷等值断言/三态渲染/ESC 遮罩 ✕ 不 stop）。改家族工厂或弹窗须同步。
 
 ## 极限运行入口速查（US-004 补，2026-08-29）
@@ -980,7 +980,7 @@ R = 片级重置交互入口（已定案 2026-09-05：R 键非右键菜单；重
   被拖片标注随动、右侧表格 x 随 width_mm 平移且数值字宽可变）—— 未动片轮廓区
   （stroke[0]=门幅框、stroke[k+1]=placed[k]，PU+PD 分块并入单笔）逐位全等才是
   零回归判据，整文笔画数只做 |Δ|≤12 宽松带；③ 连跑多轮冒烟 = 每轮新 sid，撞
-  MS_SESSION_MAX=4 / TTL 10min 会 429 session_limit（上传卡死 tab 不解锁）——
+  MS_SESSION_MAX=6 / TTL 10min 会 429 session_limit（上传卡死 tab 不解锁）——
   重启 ms-web 恢复（极限冒烟同款坑，AGENTS 极限运行节有档）。
 - **零后端改动 / 零 src 改动**：本故事只新增 scripts/ 冒烟与文档；验证门 =
   tsc 干净 + vitest 1072 全量 + `npm run build` 过（static/ 重建）+ 冒烟 31/31。

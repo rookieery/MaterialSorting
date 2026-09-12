@@ -89,16 +89,15 @@ describe('parseContentDisposition (US-007 AC#4)', () => {
   });
 });
 
-// 状态文件 US-003：EXPORT_FORMATS 追加 state 项（排 PNG 后）+ 默认值不动 + RFC5987
-// 中文文件名解析复用（后端 /api/state-save 命名 <母版名去 .dxf>_状态_<ts>.msn）。
-describe('EXPORT_FORMATS / DEFAULT_EXPORT_FMT（状态文件 US-003）', () => {
-  it('EXPORT_FORMATS 含「状态文件（.msn）」排 PNG 后', async () => {
+// 状态文件：2026-09-11 US-003 曾把 state 追加进 EXPORT_FORMATS（排 PNG 后）；
+// 2026-09-12 入口改判移出下拉（保存入口独立为 SaveStateControls），ExportFmt
+// 联合类型保留 'state' —— RFC5987 中文文件名解析复用（后端 /api/state-save
+// 命名 <母版名去 .dxf>_状态_<ts>.msn）。
+describe('EXPORT_FORMATS / DEFAULT_EXPORT_FMT（状态文件）', () => {
+  it('EXPORT_FORMATS 不含 state（2026-09-12 移出下拉；纯生产交付格式族 4 项）', async () => {
     const { EXPORT_FORMATS } = await import('../download');
-    const idx = EXPORT_FORMATS.findIndex((f) => f.value === 'state');
-    expect(idx).toBe(EXPORT_FORMATS.length - 1);
-    expect(EXPORT_FORMATS[idx].label).toBe('状态文件（.msn）');
-    const pngIdx = EXPORT_FORMATS.findIndex((f) => f.value === 'png');
-    expect(pngIdx).toBe(idx - 1);
+    expect(EXPORT_FORMATS.map((f) => f.value)).toEqual(['dxf', 'plt', 'plt-clean', 'png']);
+    expect(EXPORT_FORMATS.some((f) => f.value === 'state')).toBe(false);
   });
 
   it('DEFAULT_EXPORT_FMT 仍为 plt-clean（默认选中不动）', async () => {

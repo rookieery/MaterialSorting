@@ -98,24 +98,21 @@ describe("ExportButtons (US-007 下拉框 + 单按钮)", () => {
     expect(container!.querySelectorAll(".export-btns button.export").length).toBe(1);
   });
 
-  it("select has 5 options (DXF/PLT/毛版PLT/PNG/状态文件) and defaults to PLT（毛版）(2026-08-31)", () => {
+  it("select has 4 options (DXF/PLT/毛版PLT/PNG) and defaults to PLT（毛版）(2026-08-31)", () => {
     // 数据驱动下拉框：EXPORT_FORMATS 扩容后 PLT/毛版自动出现，ExportButtons 零代码改动。
     // 下拉顺序与默认选中解耦：首项仍 DXF；默认选中 2026-08-31 起 PLT（毛版）——
     // 用户要求毛版为现场主交付（此前 2026-08-24~08-30 默认 'plt' 全量）。
-    // 状态文件 US-003：追加「状态文件（.msn）」排 PNG 后（工作台快照非生产交付格式），
-    // 默认选中不动（仍 'plt-clean'）。
+    // 2026-09-12：状态文件（.msn）移出下拉（US-003 曾为第 5 项）—— 保存入口独立为
+    // SaveStateControls 区块（行为细节在其测试），本组件回归纯生产交付格式族。
     renderBtns();
     const select = container!.querySelector<HTMLSelectElement>(".export-btns select")!;
     const opts = Array.from(select.options).map((o) => o.value);
-    expect(opts).toEqual(["dxf", "plt", "plt-clean", "png", "state"]);
+    expect(opts).toEqual(["dxf", "plt", "plt-clean", "png"]);
     expect(select.value).toBe("plt-clean");
     // 毛版项 label（2026-08-31：裁片只画最外层轮廓 + 尺码*数量，唛架左右各一份表格；
     // 命名与裁片 layer1「毛版轮廓」同口径，当日由「净版」更名）
     const cleanOpt = Array.from(select.options).find((o) => o.value === "plt-clean")!;
     expect(cleanOpt.textContent).toBe("PLT（毛版）");
-    // 状态文件项 label（状态文件 US-003）
-    const stateOpt = Array.from(select.options).find((o) => o.value === "state")!;
-    expect(stateOpt.textContent).toBe("状态文件（.msn）");
   });
 
   it("button label is 导出", () => {
@@ -135,32 +132,9 @@ describe("ExportButtons (US-007 下拉框 + 单按钮)", () => {
     expect(hint).toContain("导出的是停止 / 出错时刻的中间方案");
   });
 
-  it("状态文件 US-003：选「状态文件」→ 说明行切换为保存范围文案（含「不含导出表格手输字段」）", () => {
-    renderBtns();
-    selectFmt("state");
-    const hint = container!.querySelector(".export-group .dim.small")!.textContent;
-    expect(hint).toContain("保存母版快照+全部配置+当前最优方案（含编辑）");
-    expect(hint).toContain("不含导出表格手输字段");
-    // 非 warn 样式（partial 优先级测试见下）
-    expect(container!.querySelector(".export-group .dim.small.warn")).toBeNull();
-  });
-
-  it("状态文件 US-003：partial=true 优先于 state 文案（中间方案警示仍最高优先）", () => {
-    renderBtns({ partial: true });
-    selectFmt("state");
-    const hint = container!.querySelector(".export-group .dim.small.warn")!.textContent;
-    expect(hint).toContain("中间方案");
-    expect(hint).not.toContain("保存母版快照");
-  });
-
-  it("状态文件 US-003：disabled 沿用 hasLastFrame 同口径（state 选中无 lastFrame 仍置灰）", () => {
-    renderBtns(); // 无 run → disabled
-    selectFmt("state");
-    expect(exportButton().disabled).toBe(true);
-    makeRunWithFrame(0);
-    act(() => useAppStore.getState().bumpRenderTick());
-    expect(exportButton().disabled).toBe(false);
-  });
+  // 2026-09-12 状态文件入口改判：原「选状态文件 → 说明行切换保存范围文案」「partial
+  // 优先于 state 文案」「state 选中 disabled 口径」三用例随下拉项移除而删 —— 保存
+  // 入口行为由 SaveStateControls.test 承接（标题/按钮/同口径 disabled）。
 
   it("AC#6 no lastFrame run -> button disabled（select 仍可选）", () => {
     renderBtns();

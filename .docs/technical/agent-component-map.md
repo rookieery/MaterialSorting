@@ -1181,7 +1181,7 @@ band 配置（用户指认腰头 g 码成带）从表单到 WS 的纯参数链�
 | `src/lib/api.ts` | **新建** 全站统一 HTTP 出口（**唯一裸 fetch 点**，`grep 'fetch('` 仅命中本文件）：`apiFetch()` = 阻断检查（blocked → 抛 `SessionBlockedError` 请求不发出）→ 会话先行门（`ensureSession()` once-promise POST /api/session，探测落定后 `probedSettled` 同步直进）→ `fetch` + `mergeSessionHeaders`（Headers/数组/对象归一 plain object + 注入 `X-Session-Id`）→ `inspectSessionError`（401/429 才 `res.clone().json()` 读 `code`，session_expired/session_limit → `triggerSessionBlock`；原 Response 原样交还调用方）。阻断态 = 模块级 pub/sub（lib 不引 zustand）：`getSessionBlock`/`subscribeSessionBlock`/`triggerSessionBlock`（幂等首个 code 定终身；session_expired 顺手弃 sid，session_limit 保 sid）。测试钩子 `markSessionProbedForTest`/`resetSessionForTest`。 |
 | `src/lib/ws.ts` | `solveWsUrl()` 拼 `?sid=<sid>`（浏览器 WS 不能自定义 Header，与后端 US-003 query 口径对应）。 |
 | `src/types/ws.ts` | `ErrorMsg` 加可选 `code?: string`（后端 WS error 帧 additive 键，旧前端忽略语义）。 |
-| `src/components/SessionExpiredModal.tsx` | **新建** 阻断式全屏模态：`useSyncExternalStore(subscribeSessionBlock, getSessionBlock)` 订阅；`.session-block-overlay[role=alertdialog][aria-modal]`（z 3000，盖过 tour 2000/策略 1100）；**不可点遮罩/ESC/✕ 关闭，无关闭回调**，唯一出口 = 「刷新页面」按钮 `location.reload()`；COPY 双码文案与后端 PRD 逐字一致（expired=「会话已过期（10 分钟无操作），请刷新页面」/ limit=「当前使用用户过多（最多 4 人同时在线），请稍后尝试」，不显示上次活动时间）；无阻断码返回 null。 |
+| `src/components/SessionExpiredModal.tsx` | **新建** 阻断式全屏模态：`useSyncExternalStore(subscribeSessionBlock, getSessionBlock)` 订阅；`.session-block-overlay[role=alertdialog][aria-modal]`（z 3000，盖过 tour 2000/策略 1100）；**不可点遮罩/ESC/✕ 关闭，无关闭回调**，唯一出口 = 「刷新页面」按钮 `location.reload()`；COPY 双码文案与后端 PRD 逐字一致（expired=「会话已过期（10 分钟无操作），请刷新页面」/ limit=「当前使用用户过多（最多 6 人同时在线），请稍后尝试」，不显示上次活动时间）；无阻断码返回 null。 |
 | `src/App.tsx` | mount `useEffect(() => { void probeSession(); }, [])`（探测幂等：ensureSession once，StrictMode 双跑安全）+ `<SessionExpiredModal />` 单例（TourOverlay 之后）。 |
 | `src/hooks/useSolveRun.ts` | case 'error' 前置 `msg.code` 检查：session_expired/session_limit → `triggerSessionBlock(msg.code)`（WS 侧与 HTTP 同入口），再走既有 onError/finish。 |
 | 其余 8 处 fetch 调用点 | `useParseDxf` / `useCommitToNesting` / `useExport` / `ptypeStore` / `strategyStore`×3 / `PerTypeOverridesModal`×2：`fetch` → `apiFetch`，其余逻辑零改动。 |
@@ -1223,7 +1223,7 @@ US-001~006 全链路的验收 story：不改任何运行时代码，产出 = 验
 | 文件 | 节 | 内容 |
 |------|----|------|
 | `.docs/technical/agent-api-reference.md` | 「多会话 sid 传递与错误码速查（US-007 汇总）」 | 各端点 sid 通道表（HTTP `X-Session-Id` / WS `?sid=` / GET `/` no-cache）+ 401/429 `code` 错误码表（400 无 code）+ WS error 帧 `code` 键 + per-doc intermediate 落盘与 marker/run_name 改名口径。 |
-| `README.md` | 「多会话机制（web 多端隔离）」 | 机制概述（sid 约定/隔离面/生命周期/default 兜底/磁盘兜底）+ 环境变量表 `MS_SESSION_MAX=4` / `MS_SESSION_TTL_SEC=300` / `MS_UPLOAD_TTL_DAYS=14`（非法值 warn 回退缺省）。 |
+| `README.md` | 「多会话机制（web 多端隔离）」 | 机制概述（sid 约定/隔离面/生命周期/default 兜底/磁盘兜底）+ 环境变量表 `MS_SESSION_MAX=6` / `MS_SESSION_TTL_SEC=300` / `MS_UPLOAD_TTL_DAYS=14`（非法值 warn 回退缺省）。 |
 | `materialSorting-server/src/materialsorting/web/AGENTS.md` | 「多会话机制总览（US-001~007）」 | 改 web 代码前速查：sid 归属单一解析点 / 隔离面验收结论 / 生命周期要点 / 环境变量 / harness 用法。 |
 | `CLAUDE.md` | web 模块行 | US-001~007 整体落地收口句 + 文档入口指引。 |
 
@@ -1394,7 +1394,7 @@ CPU），跨会话完全独立（多会话 US-004 语义不变）。
   是 **parse done**（PreviewPage subscribe）而非 commit done —— commit POST 在途时
   点极限运行会吃后端 422「排料数据为空」；脚本须等 `[data-testid="commit-status"].done`
   （注意 `.upload-status.done` 同时命中 parse-done 元素，不能只按 class 等）再进 Tab。
-  ② 每次 Playwright fresh context = 新 sid（MS_SESSION_MAX=4、TTL 600s）—— 连跑多轮
+  ② 每次 Playwright fresh context = 新 sid（MS_SESSION_MAX=6、TTL 600s）—— 连跑多轮
   冒烟会 429 session_limit，重启 ms-web 清内存注册表即恢复。③ stopped 后 result 拉取
   异步，会先闪「正在读取运行结果…」瞬态 —— 断言要等 `strategy-result-head` 落地。
 - **409 互斥现场对拍**（一次性脚本，不入库）：极限在跑 → 高级入口无徽标 + 弹窗配置
@@ -2254,8 +2254,8 @@ US-005 键盘层的收官键：R = 片级重置交互入口（定案 2026-09-05�
    截断）+ 在**导出值**上复核终态接触几何（firstContactDistance 沿质心方向 ≈1nm、
    全邻居布尔交 = 0）+ rot/mirror 原样 + 其余 29 项与求解末帧逐位全等 —— 编辑草稿
    → 保存 → 导出链一字不丢。
-6. **会话注册表坑（复跑前置）**：每轮冒烟 = fresh context = 新 sid，连跑 >4 轮撞
-   MS_SESSION_MAX=4 / TTL 600s → 429 session_limit（上传卡死、超排 Tab 永不解锁）——
+6. **会话注册表坑（复跑前置）**：每轮冒烟 = fresh context = 新 sid，连跑 >6 轮撞
+   MS_SESSION_MAX=6 / TTL 600s → 429 session_limit（上传卡死、超排 Tab 永不解锁）——
    重启 ms-web 恢复（极限冒烟同款坑）；solver 墙钟终止非确定 → 布局每轮不同，
    选片循环自适应（末次 attract 推距梯度搜索，不能写死步长）。
 
@@ -2310,6 +2310,11 @@ tsc 干净 + build 过；浏览器冒烟三脚本全绿 —— `smoke_edit_layou
 偏小」等表述均为历史形态，以本节为准。**
 
 ## 状态文件 US-003 落地（formStore 重构与保存/恢复前端入口；2026-09-11）
+
+> **2026-09-12 改判注记**：本节「导出下拉新增状态文件项 / handleExport state 分支 /
+> 说明行文案」的入口形态已按用户要求改为独立 SaveStateControls 区块（见文末
+> 「状态文件保存入口改判」节）；formStore / stateFile / useParseDxf 分流 / useExport
+> 等其余内容仍有效。
 
 **范围**：前端保存/恢复入口（后端 `/api/state-save`/`/api/state-restore` 已于
 US-001/US-002 落地，见 agent-api-reference.md 两专节）。FormState 从 ControlPanel
@@ -2459,3 +2464,34 @@ schema v1 不 bump ——「v1 内未知顶层键忽略」本就是设计明文�
   g02 整列设值 2 → 重解 placed 30→33 → 再存省键式断言（g02 入档/g01 逐格改不入）
   → 全新 context 恢复后 g02 弹层初值 = '2'（报障正面复现，修复前回 '1'）+
   对照 g01 = '1'）。
+
+## 状态文件保存入口改判（独立 SaveStateControls 区块；2026-09-12）
+
+**范围**：保存入口 UI 重排（用户要求）—— `.msn` 自导出格式下拉第 5 项拆出，
+主面板「导出最优方案」上方独立区块「保存当前方案状态（.msn）」+ 单「保存」按钮。
+按钮状态与导出按钮**严格一致**（同需求原文：导出按钮高亮可点击时保存按钮才可点）。
+后端 `/api/state-save` 零改动；`useExport.saveState` / `buildSavePayload` / 恢复链路
+全部不动。纯 UI 入口重排，非路由/协议变更。
+
+### 文件
+
+| 文件 | 改动 |
+|------|------|
+| `src/components/ControlPanel/SaveStateControls.tsx`（新） | 独立区块组件（仿 EditLayoutControls 模式）：标题 + 单「保存」按钮（`data-testid="save-state-btn"`）+ **无说明行**（用户定案——原下拉选中时的保存范围文案随之删除）；`disabled = solving \|\| exporting \|\| !hasLastFrame`（与 ExportButtons 同公式同数据源；hasLastFrame 同源判式含 stopped best-so-far 与合成 record）；双层防御 native disabled + onClick guard；renderTick 订阅同款 |
+| `src/components/ControlPanel/ControlPanel.tsx`（改） | `<SaveStateControls>` 插在 EditLayoutControls 与 ExportButtons 之间，onSave 直连 `void saveState()`；handleExport 删 `fmt==='state'` 分支 |
+| `src/lib/download.ts`（改） | EXPORT_FORMATS 移除 `{value:'state',…}`（回 4 项生产交付格式族）；`ExportFmt` 联合类型**保留** `'state'`（saveState 的 parseContentDisposition(fmt='state') 仍消费）；DEFAULT_EXPORT_FMT 不动 |
+| `src/components/ControlPanel/ExportButtons.tsx`（改） | 删 `fmt==='state'` 说明行分支（partial 警示/默认文案两态保留） |
+| `src/style.css`（扩） | `.save-state-group` / `.save-state-btns` / `button.save-state-btn`（export-group 同款分隔形态 + button.export 同款蓝） |
+| 冒烟 `scripts/smoke_state_file.mjs` / `smoke-state-file.mjs`（改） | S3/S5c 由「selectOption('state') + 点导出」改为点 `[data-testid="save-state-btn"]`；最小冒烟 ③ 段说明行断言删除、改为区块标题 + 按钮状态与导出按钮一致断言 |
+
+### 关键不变量
+
+1. **按钮状态联动的实现基础**：`exporting` 本就是 useExport 内 saveState/exportAs
+   共享的单一防连击旗 —— 导出在飞 → 保存置灰、保存在飞 → 导出置灰，双向联动零
+   新增机制；两按钮 disabled 公式逐字相同。
+2. **'state' 不在下拉但仍在类型**：`ExportFmt` 含 `'state'` 是 saveState/文件名解析
+   的需要；EXPORT_FORMATS 扩格式约定（「后端 /export 加路由分支」）对 state 依旧
+   **不成立**（US-003 不变量 #4 延续）。
+3. **说明行删除的取舍**：原「不含导出表格手输字段（本机记忆）」提示不再上屏
+   （决策 #9 的说明承载消失——文件行为不变，手输字段仍不入档）；用户拍板
+   「不放说明行」，如需恢复提示应加回 SaveStateControls 而非回塞下拉。

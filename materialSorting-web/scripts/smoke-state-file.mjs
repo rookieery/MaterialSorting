@@ -1,8 +1,10 @@
 // 状态文件 US-003 保存 + US-004 恢复最小冒烟（playwright，手动脚本不入 vitest；
 // 端到端全链路断言见 scripts/smoke_state_file.mjs）：
 //   1. 上传 5336 母版 → commit → 切超排 → 5s 短求解
-//   2. 导出格式切「状态文件（.msn）」→ 底部说明行切换保存范围文案（不弹 ExportInfoModal）
-//   3. 点导出 → 下载 .msn（文件名含「状态」+ 时间戳）+ StatusLine「已导出 …」
+//   2. 独立保存区块（2026-09-12 入口改判：标题「保存当前方案状态（.msn）」+ 单
+//      「保存」按钮，位于「导出最优方案」上方；此前为导出下拉 state 项）在场，
+//      按钮状态与导出按钮一致（求解后均可点）
+//   3. 点保存 → 下载 .msn（文件名含「状态」+ 时间戳）+ StatusLine「已导出 …」
 //   4. 回预览页上传该 .msn → toast「状态文件已恢复…（含排料结果）」+ 自动切超排
 //      Tab + run-provenance 来源小字「来源：普通求解 · seed 0」（WS 普通求解保存
 //      不写 provenance 键 → 恢复端缺省 'solve' 口径）
@@ -47,14 +49,18 @@ await page.locator('#restart').waitFor({ timeout: 60000 });
 await page.locator('.export-btns button.export:not([disabled])').waitFor({ timeout: 10000 });
 log('2 solve done, export enabled');
 
-// ③ 格式切「状态文件」→ 说明行切换 + 无 ExportInfoModal
-await page.locator('.export-fmt').selectOption('state');
-const hint = await page.locator('.export-group .dim.small').innerText();
-check(hint.includes('保存母版快照') && hint.includes('不含导出表格手输字段'), `state hint switched: ${hint.slice(0, 30)}…`);
+// ③ 独立保存区块（2026-09-12 入口改判）：标题在场 + 按钮状态与导出按钮一致
+const saveBtn = page.locator('[data-testid="save-state-btn"]');
+const groupLabel = await page.locator('.save-state-group .field-label').innerText();
+check(groupLabel.trim() === '保存当前方案状态（.msn）', `group label: ${groupLabel.trim()}`);
+check((await saveBtn.textContent()) === '保存', 'save button label 保存');
+// 求解 done 后导出按钮可点 → 保存按钮同口径可点（用户需求的状态联动）
+await page.locator('.export-btns button.export:not([disabled])').waitFor({ timeout: 10000 });
+check(!(await saveBtn.isDisabled()), 'save enabled (与导出按钮同口径)');
 
-// ④ 点导出 → 下载 .msn
+// ④ 点保存 → 下载 .msn
 const downloadPromise = page.waitForEvent('download', { timeout: 30000 });
-await page.locator('.export-btns button.export').click();
+await saveBtn.click();
 const download = await downloadPromise;
 const fname = download.suggestedFilename();
 check(fname.endsWith('.msn'), `download filename .msn: ${fname}`);

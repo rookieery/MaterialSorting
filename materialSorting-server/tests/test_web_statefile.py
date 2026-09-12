@@ -822,7 +822,7 @@ def test_restore_default_rebinds_runtime_no_disk_write(client):
 
 
 def test_restore_writes_current_sid_no_extra_slot(client):
-    """AC#3：恢复写入当前 sid（覆盖旧 state/doc_id）；满员（MS_SESSION_MAX=4）
+    """AC#3：恢复写入当前 sid（覆盖旧 state/doc_id）；满员（MS_SESSION_MAX 上限）
     时不占新名额 → 200 非 429（等价再 commit 语义）。"""
     reg = sessions.registry
     sids = [f'rstfull0{i}' for i in range(reg.max_sessions)]

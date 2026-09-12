@@ -83,7 +83,7 @@ ms-web             # → http://127.0.0.1:8000
 
 | 变量 | 缺省 | 作用 |
 |---|---|---|
-| `MS_SESSION_MAX` | `4` | 并发会话上限（default 不占额；超出 → 429 `session_limit`） |
+| `MS_SESSION_MAX` | `6` | 并发会话上限（default 不占额；超出 → 429 `session_limit`） |
 | `MS_SESSION_TTL_SEC` | `600` | 空闲过期阈值秒数（惰性检查 + 30s daemon 扫描） |
 | `MS_RESULT_GRACE_SEC` | `7200` | 策略/极限 run 终态后会话宽限秒数（run 存活期间滚动钉住不逐出；期间会话仍占名额） |
 | `MS_EDIT_HOLD_SEC` | `7200` | 编辑排料会话钉住滚动窗秒数（编辑弹窗打开期间前端每 4min 续期；关窗后自然留同款宽限，2026-09-04） |

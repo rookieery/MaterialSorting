@@ -2,7 +2,7 @@
 
 覆盖（PRD web 多会话 US-001 验收）：
 1. POST /api/session 合法 sid 200 且幂等（重复仅刷 last_active）；
-2. 容量闸门：4 活跃 + 第 5 个新 sid → 429 session_limit；default 豁免不占额；
+2. 容量闸门：满员 + 溢出第 max_sessions+1 个新 sid → 429 session_limit；default 豁免不占额；
 3. TTL（注入 ``_FakeClock``，不依赖真实墙钟）：超时 → 401 session_expired 且不静默
    重建；墓碑 1h 过期 / FIFO 淘汰后该 sid 可正常新建；
 4. 扫描：``ws_open==0`` 超时逐出为墓碑、``ws_open>0`` 不逐出；daemon 线程路径冒烟；
@@ -92,13 +92,13 @@ def test_session_register_no_header_defaults(client):
 
 # ---------------------------------------------------------------- AC2 容量闸门
 
-def test_session_limit_fifth_sid_429(client):
+def test_session_limit_overflow_sid_429(client):
     max_n = sessions.registry.max_sessions
     for i in range(max_n):
         r = client.post('/api/session', headers={'X-Session-Id': f'user{i}zz'})
         assert r.status_code == 200, i
     assert sessions.registry.active_count == max_n
-    r5 = client.post('/api/session', headers={'X-Session-Id': 'user4zz'})
+    r5 = client.post('/api/session', headers={'X-Session-Id': f'user{max_n}zz'})
     assert r5.status_code == 429
     body = r5.json()
     assert body['code'] == 'session_limit'
@@ -119,12 +119,12 @@ def test_session_limit_slot_freed_after_expiry(client, monkeypatch):
     max_n = reg.max_sessions
     for i in range(max_n):
         client.post('/api/session', headers={'X-Session-Id': f'user{i}zz'})
-    r5 = client.post('/api/session', headers={'X-Session-Id': 'user4zz'})
+    r5 = client.post('/api/session', headers={'X-Session-Id': f'user{max_n}zz'})
     assert r5.status_code == 429
     clk.advance(reg.ttl_sec + 1)
     with pytest.raises(sessions.SessionExpiredError):
         reg.resolve('user0zz')          # 惰性逐出 user0zz → 腾 1 名额
-    r_new = client.post('/api/session', headers={'X-Session-Id': 'user4zz'})
+    r_new = client.post('/api/session', headers={'X-Session-Id': f'user{max_n}zz'})
     assert r_new.status_code == 200
 
 

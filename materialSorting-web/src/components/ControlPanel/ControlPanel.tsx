@@ -59,8 +59,11 @@
 // 状态文件 US-003：form 自本地 useState 上提 formStore（保存读 form / 恢复注 form
 //   的跨模块地基），useEffect([docId]) 挂点改为 formStore.resetForDoc —— 「有本
 //   docId 的水合载荷 → 保留，否则 DEFAULT_FORM」，docId 变更重置语义与本地 state
-//   时代完全一致（行为不变是硬红线；水合载荷 US-004 恢复编排才写入）。同 Story：
-//   handleExport 增 fmt==='state' 分支 → useExport.saveState（不进 ExportInfoModal）。
+//   时代完全一致（行为不变是硬红线；水合载荷 US-004 恢复编排才写入）。保存入口
+//   2026-09-12 改判（用户要求）：从导出格式下拉第 5 项拆出为独立区块
+//   SaveStateControls（「编辑排料」与「导出最优方案」之间，标题「保存当前方案
+//   状态（.msn）」+ 单「保存」按钮，按钮状态与导出按钮同公式同数据源严格一致；
+//   原下拉选中时的保存范围说明行随之删除）。
 
 import { useCallback, useEffect, useState } from 'react';
 import { useExport } from '../../hooks/useExport';
@@ -78,6 +81,10 @@ import { EditLayoutModal } from '../edit/EditLayoutModal';
 // 编辑排料 US-004：主面板「编辑排料」区块（编辑入口 + 重置 confirm），插在
 // StatusLine 与 ExportButtons 之间（「导出最优方案」上方）—— 激活口径与导出一致。
 import { EditLayoutControls } from './EditLayoutControls';
+// 状态文件 2026-09-12 入口改判：保存入口独立区块（「编辑排料」与「导出最优方案」
+// 之间）—— saveState 直连（不再经导出格式下拉 state 项）；按钮状态与导出按钮
+// 同公式同数据源严格一致（exporting 共享单一防连击旗）。
+import { SaveStateControls } from './SaveStateControls';
 import { ParamForm } from './ParamForm';
 import { PerTypeOverrides } from './PerTypeOverrides';
 import { SizePicker, computeTotalCutPieces } from './SizePicker';
@@ -187,7 +194,8 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
 
   // US-007：useExport 挂在 ControlPanel 内（form.sizes 与 exportAs 同处）。
   // onStatus 透传到 NestingPage.setStatus → StatusLine（导出中 / 完成 / 失败文案由 useExport 写）。
-  // 状态文件 US-003：saveState（fmt='state' 分支消费）与 exportAs 共用 exporting 防连击旗。
+  // 状态文件：saveState（SaveStateControls 保存按钮消费，2026-09-12 前为导出下拉
+  // state 项分支）与 exportAs 共用 exporting 防连击旗。
   const { exportAs, saveState, exporting } = useExport({ onStatus });
 
   // 2026-08-30：PLT 导出信息表格弹窗（ExportInfoModal 订阅 controlPanelStore 自显隐；
@@ -286,18 +294,12 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
   /** 导出按钮回调 —— 透传 form.sizes（过滤 null）给 useExport.exportAs（与旧 vanilla
    *  实现 `sizes: selectedSizes()` 一致）。PLT 两变体分流到信息表格弹窗（2026-08-30：
    *  先填床次/层数等 6 手输字段再导出，生产 PLT 同款表格附在唛架末端；2026-08-31 起
-   *  'plt-clean' 毛版同款分流（默认导出格式），两变体共用一份表格字段）；PNG/DXF 直通；
-   *  状态文件 US-003：'state' 分流 → saveState（独立 /api/state-save，不进
-   *  ExportInfoModal —— 14 字段表格面板对状态文件无意义，根本不打开；保存范围
-   *  说明由 ExportButtons 底部说明行切换承载）。 */
+   *  'plt-clean' 毛版同款分流（默认导出格式），两变体共用一份表格字段）；PNG/DXF 直通。
+   *  （状态文件 .msn 2026-09-12 起不经此路径 —— 保存入口独立为 SaveStateControls。） */
   function handleExport(fmt: ExportFmt): void {
     if (fmt === 'plt' || fmt === 'plt-clean') {
       setPendingPltFmt(fmt);
       openModal('export_info');
-      return;
-    }
-    if (fmt === 'state') {
-      void saveState();
       return;
     }
     void exportAs(fmt, filterSizes(), doc?.filename);
@@ -456,6 +458,16 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
       {/* 编辑排料 US-004：主界面入口区块（StatusLine 与导出之间 ——「导出最优方案」上方；
           编辑 = 打开 EditLayoutModal，重置 = confirm 后 editStore.reset() 回算法基线）。 */}
       <EditLayoutControls phase={phase} />
+      {/* 状态文件 2026-09-12 入口改判：保存工作台状态（.msn）独立区块（「编辑排料」与
+          「导出最优方案」之间）；按钮状态与导出按钮同公式同数据源（solving/exporting/
+          hasLastFrame；exporting 为 saveState/exportAs 共享防连击旗 → 双向联动）。 */}
+      <SaveStateControls
+        solving={solving}
+        exporting={exporting}
+        onSave={() => {
+          void saveState();
+        }}
+      />
       <ExportButtons solving={solving} exporting={exporting} onExport={handleExport} partial={partial} />
       {/* PLT 导出信息表格弹窗单例（订阅 controlPanelStore 自显隐；Portal 到 body）。 */}
       <ExportInfoModal exporting={exporting} onConfirm={handlePltConfirm} variant={pendingPltFmt} />
