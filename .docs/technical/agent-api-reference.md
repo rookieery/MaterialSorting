@@ -642,6 +642,8 @@ body = `/api/state-save` 同形 `{form, quantities, quantities_base?, run?, save
 6. **single-use**（US-002）：恢复成功即删该 checkpoint 条目 —— 旧 sid 已入墓碑永不复用，防多 Tab 反复恢复放大名额占用；双次恢复第二次 404（pytest）。
 7. 分层：`web/checkpoint.py` 仅 import `sessions`/`statefile`，禁 import server（AST 守卫 `tests/test_web_checkpoint.py`，含 fastapi.concurrency/asyncio 白名单）；`register_checkpoint_routes(app)` server.py 文件尾注册（statefile 同模式）；`python -m materialsorting.web.checkpoint` 冒烟 29 项（store 假时钟生命周期 + 写入内核全路径 + recover 全链：_FakeRequest 驱动真实 async handler）。
 8. 测试：`tests/test_web_checkpoint.py` 共 39 例（store 单元 6 + peek 口径 3 + 写入往返 5 + empty 1 + conservation last-good 3 + 闸门/载荷 2 + DELETE 4 + 路由/env/AST 守卫 3 + `rebuild_session_from_document` 直接单元 1 + US-002 recover 11：真实 commit 全链 / 404×2 / 双次 404 / 429 条目保留 / 坏 from_sid 400 / 坏快照不占名额 / 墓碑 401 / threadpool spy / default 会话 / 路由白盒）。
+9. **前端消费链（US-003/US-004，2026-09-13）**：写入 = `lib/sessionCheckpoint` 自动调度（form/qty 去抖 3s + run done/编辑保存立即 + hidden flush + pagehide keepalive，一律 apiFetch 统一出口）；恢复 = `lib/sessionRecovery` 启动期编排（探测 401 → peek 旧 sid → 铸新 → 裸 fetch recover → 200 `applyRestorePayload` 复用 state-restore 前端 / 404·网络错静默新会话 toast / 429 session_limit 阻断弹窗）；启动清理 = 会话存活刷新 DELETE（F5 干净重置）、探测 401/阻断不清（快照留给恢复消费）。
+10. **端到端冒烟（US-005，2026-09-13）**：`materialSorting-web/scripts/smoke_session_recovery.mjs` 自举起服（:8010，`MS_SESSION_TTL_SEC=60 MS_SESSION_MAX=1 MS_EDIT_HOLD_SEC=5`）覆盖五路径 —— 停留期引导弹窗（新文案 + 不自动恢复）→ 弹窗刷新恢复对拍 / 直接 F5 无弹窗恢复 / F5 存活 DELETE 清理 / 无 checkpoint 404 静默新会话 / `MS_SESSION_MAX=1` 双客户端 429 弹窗 + 名额释放后 recover 200（checkpoint 不删证明；skip-if-flaky）。
 
 ## GET /api/ptypes — US-020 裁片 g 码代表（D10/D11；US-001 v2：键 = label）
 

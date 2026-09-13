@@ -1034,6 +1034,12 @@
         "title": "前端启动期恢复与停留期引导弹窗",
         "description": "会话过期后刷新页面时启动探测走恢复流程回到过期前状态；过期后不刷新只交互时弹窗告知「刷新后将恢复」。恢复只由用户刷新触发，页面停留期间绝不自动恢复、不自动新建会话、不发请求风暴（用户定案：自动恢复变相保活会话、浪费资源）。\n\n具体任务（materialSorting-web/src/）：\n1. lib/session.ts：加非铸造只读辅助（现 getSessionId 会 lazy mint，直接调会铸新丢旧值——启动期须先取旧 sid 再 clear）。\n2. lib/api.ts + 新建 lib/sessionRecovery.ts：恢复逻辑挂接 ensureSession once-probe / App probeSession 的 401 分支（天然 single-flight）：401 session_expired → 捕获旧 sid（非铸造读取）→ clearPersistedSessionId() → 铸新 sid → 裸 fetch POST /api/state-recover {from_sid}（ensureSession 先例，绕 apiFetch 防递归）。\n   - recover 200：applyRestorePayload(res)（lib/stateFile.ts 既有编排零改动）+ toast「工作状态已恢复」→ 用新 sid 重试 probe（200）→ ensureSession 放行，原请求带新 sid 正常发出（请求在 probe 门后从未发出，无需重放机制）；\n   - recover 404 / 网络失败：静默（新会话已就绪）+ toast「上次会话已过期，已开启新会话」→ probe 重试放行；\n   - recover 429：既有阻断弹窗（文案不变）。\n3. 停留期 401（api.ts triggerSessionBlock / useSolveRun WS error 帧 code=session_expired）：不自动恢复、不再 clearPersistedSessionId()（旧 sid 留给刷新后启动期恢复作 from_sid）→ SessionExpiredModal 保留但文案改为「会话已过期，刷新页面后将恢复工作状态」（按钮 location.reload() 不变）；session_limit 分支文案与保 sid 语义不变。\n4. 启动恢复期间「正在恢复工作状态…」轻加载态（恢复 <2s 防空白闪屏）；toast 沿用既有提示机制，若无则新增 uiStore 轻 toast（不引组件库）。\n\n验收标准：\n- npm run build 通过 + vitest 全绿：启动 401 三分支（200 恢复 / 404 兜底 / 429 弹窗）/ 旧 sid 非铸造捕获时序 / 停留期不清 sid / 弹窗文案分流 / once-probe 并发收敛。\n- 通过浏览器验证恢复流程（恢复后母版/数量矩阵/布局回显 + 切超排 Tab）。",
         "passes": true
+      },
+      {
+        "id": "US-004",
+        "title": "前端自动 checkpoint 调度与启动清理",
+        "description": "前端在工作台状态变更时自动打 checkpoint（无需手动保存），过期时刻快照足够新（丢失窗口 ≤ 3s 去抖）；会话存活时 F5 仍是干净重置。\n\n具体任务（materialSorting-web/src/）：\n1. 自动触发点：formStore/qtyStore 变更订阅 + runRegistry bestRun 达 done（求解完成立即 checkpoint——价值最高时刻，不等去抖）+ editStore.save（编辑保存后），统一经 buildSavePayload()（lib/stateFile.ts，不带 save_as）POST /api/state-checkpoint，去抖 3s（常量可调，2026-09-13 定案暂定 3s）；visibilitychange → hidden 立即 flush 清空去抖；pagehide best-effort（keepalive fetch）。\n2. 未 commit（无 doc）时调度静默跳过（后端 empty 响应容忍，不报错不重试风暴）；调度一律走 peek 口径端点，不刷新会话活性。\n3. App 启动 probeSession 探测会话存活 → DELETE /api/state-checkpoint（F5 = 干净重置：旧 checkpoint 不残留，防「稍后再过期恢复出 F5 前旧状态」幽灵回潮）；探测 401 则不清（留给启动期恢复消费）。\n\n验收标准：\n- 通过浏览器验证：上传母版 → 改数量 → 网络面板断言 POST /api/state-checkpoint 200 stored:true → F5 刷新 → 干净重置 + DELETE 已发 → 数量矩阵为默认值（非恢复态）。\n- npm run build 通过 + vitest 全绿（去抖合并多次变更 / hidden 立即 flush / doc 空跳过 / 存活清理时序）。",
+        "passes": true
       }
     ]
   }

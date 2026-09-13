@@ -2,16 +2,10 @@
   "branchName": "ralph/session-expiry-auto-recovery",
   "stories": [
     {
-      "id": "US-004",
-      "title": "前端自动 checkpoint 调度与启动清理",
-      "description": "前端在工作台状态变更时自动打 checkpoint（无需手动保存），过期时刻快照足够新（丢失窗口 ≤ 3s 去抖）；会话存活时 F5 仍是干净重置。\n\n具体任务（materialSorting-web/src/）：\n1. 自动触发点：formStore/qtyStore 变更订阅 + runRegistry bestRun 达 done（求解完成立即 checkpoint——价值最高时刻，不等去抖）+ editStore.save（编辑保存后），统一经 buildSavePayload()（lib/stateFile.ts，不带 save_as）POST /api/state-checkpoint，去抖 3s（常量可调，2026-09-13 定案暂定 3s）；visibilitychange → hidden 立即 flush 清空去抖；pagehide best-effort（keepalive fetch）。\n2. 未 commit（无 doc）时调度静默跳过（后端 empty 响应容忍，不报错不重试风暴）；调度一律走 peek 口径端点，不刷新会话活性。\n3. App 启动 probeSession 探测会话存活 → DELETE /api/state-checkpoint（F5 = 干净重置：旧 checkpoint 不残留，防「稍后再过期恢复出 F5 前旧状态」幽灵回潮）；探测 401 则不清（留给启动期恢复消费）。\n\n验收标准：\n- 通过浏览器验证：上传母版 → 改数量 → 网络面板断言 POST /api/state-checkpoint 200 stored:true → F5 刷新 → 干净重置 + DELETE 已发 → 数量矩阵为默认值（非恢复态）。\n- npm run build 通过 + vitest 全绿（去抖合并多次变更 / hidden 立即 flush / doc 空跳过 / 存活清理时序）。",
-      "passes": true
-    },
-    {
       "id": "US-005",
       "title": "端到端冒烟验收与文档闭环",
       "description": "UI 冒烟脚本覆盖「过期 → 刷新 → 启动期恢复」全链路，三端点契约/环境变量写入文档。\n\n具体任务：\n1. 新建 materialSorting-web/scripts/smoke_session_recovery.mjs（playwright 套路同 smoke_state_file.mjs）：极短 MS_SESSION_TTL_SEC env 起 dev → 上传母版 → 改数量矩阵 → 短求解 done → 等 TTL 过期 → 覆盖五条路径：\n   - 停留期交互路径：触发任一 API 请求 → 断言引导刷新弹窗（新文案「刷新页面后将恢复工作状态」）且未自动恢复 → 点弹窗刷新按钮 → 启动期恢复 → 数量矩阵/表单/布局与过期前对拍 + toast 在场；\n   - 直接 F5 路径：过期后 page.reload() → 无弹窗直接恢复；\n   - F5 存活清理路径：未过期刷新 → 干净重置 + checkpoint DELETE；\n   - 无 checkpoint 兜底路径：DELETE 后再过期 → 刷新 → 静默新会话 + toast、无弹窗；\n   - 429 路径弹窗仍在（借 MS_SESSION_MAX=1 双客户端模拟，允许 skip-if-flaky）。\n2. 文档：.docs/technical/agent-api-reference.md 增 POST /api/state-checkpoint / DELETE /api/state-checkpoint / POST /api/state-recover 专节（错误码表 + 生命周期语义 + 与 state-save/restore 复用关系 + 恢复窗口 = 过期后墓碑 1h 说明）；README「多会话机制」+ web/AGENTS.md 补 MS_CHECKPOINT_TTL_SEC / MS_CHECKPOINT_MAX 环境变量；agent-file-map.md 补 checkpoint.py 行。\n\n验收标准：\n- 冒烟脚本全绿（五条路径断言如上）。\n- 全量回归：后端 pytest 全绿（含既有 statefile/sessions/edit_hold 用例零回归）、前端 vitest 全绿、npm run build 通过。\n- python -m materialsorting.web.checkpoint 跑通、分层依赖未反向。",
-      "passes": false
+      "passes": true
     }
   ]
 }

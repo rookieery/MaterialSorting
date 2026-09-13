@@ -1234,3 +1234,41 @@ api.ts 探测分支 / sid 生命周期 / 弹窗文案前先读本节。
   数量去抖 stored:true → 求解完成立即含 run → F5 存活 DELETE → 重传默认矩阵
   （非恢复态）。生产实拍注记：上传 hydrate 也排去抖，commit 未完成时该发落
   `{stored:false,reason:'empty'}`（PRD 既定容忍）—— 断言按「改数量那一发」锚定。
+
+## 会话过期自动恢复 US-005 关键约定（端到端冒烟与文档闭环；2026-09-13）
+
+- **端到端冒烟 `scripts/smoke_session_recovery.mjs`**（playwright，手动脚本不入
+  vitest）：**自举起服** —— spawn `.venv/Scripts/python.exe` 起 FastAPI 于 :8010
+  （避开常驻 ms-web :8000），env = `MS_SESSION_TTL_SEC=60`（极短 TTL；**须 > 深度
+  解析+commit 单程 ~40s**，否则上传中途 401 卡死 —— 实测 45s 会竞态翻车）/
+  `MS_SESSION_MAX=1`（429 相位双客户端模拟）/ `MS_EDIT_HOLD_SEC=5`（**必带** ——
+  /api/state-recover 共享 rebuild 给新会话挂 MS_EDIT_HOLD_SEC 钉住，生产 2h 会挡
+  住「恢复后再过期」相位）；退出 taskkill /T 树杀。前置 =
+  `materialSorting-web/static/` 为 `npm run build` 产物（GET / 直接 serve）。
+- **五路径与 sid 链**（A→B→C→D→E，顺序按「checkpoint 在场时机」编排）：S1 上传 +
+  改数量 + 5s 求解 + US-004 自动 checkpoint + 过期前快照（数量/表单/布局三面）→
+  P1 停留期交互（触发 /api/ptypes → 401 引导弹窗新文案 + 不自动恢复 + sid 未清 →
+  点刷新 → 启动期恢复对拍）/ P2 直接 F5（无弹窗恢复对拍；前置断言恢复态自动重落
+  checkpoint[B] —— US-004 恢复链自我延续）/ P3 F5 存活清理（DELETE 恰一次 + 干净
+  重置 sid 不变）/ P4 无 checkpoint 兜底（recover 404 → toast 新会话 + 无弹窗）/
+  P5 429（`MS_SESSION_MAX=1` + Node fetch 第二客户端占满名额 → recover 429 弹窗
+  在场；名额释放后 Node 直连 recover(from_sid) 200 = checkpoint 不删证明；前置
+  不成立记 **skip 不计失败**，PRD 允许 skip-if-flaky）。
+- **时序坑记档**：① 第二客户端建会话前必须等 **30s daemon 扫描器**真正逐出旧会话
+  （活跃计数含未扫描的僵尸 —— resolve(create) 查 dict 计数而非惰性过期；等
+  TTL+扫描余量 95s + 429 重试兜底）；② `__netLog` 经 addInitScript 每次导航重置，
+  跨 reload 断言按新日志口径；③ 求解完成 checkpoint 在探测 promise 内排队（恢复
+  链），落定后即发 —— 断言前 waitCheckpoint 轮询前置门而非 sleep 硬等；④ **短
+  TTL 下重传母版前必须显式 POST /api/session 续命**（us003 A2 同款）—— 深度解析
+  ~40s 无任何请求不刷 touch，前一相位断言耗时会吃掉 TTL 预算 → commit 中途 401
+  阻断 → commit-status 永不 done；⑤ 状态快照采集（captureState）收尾停在预览
+  Tab —— 后续点击超排 Tab 内控件前必须先切回（双 .page 容器 display:none，
+  Playwright 对隐藏元素 click 超时）。
+- **环境变量速查**（服务端 ms-web；详见 README「多会话机制」）：
+  `MS_CHECKPOINT_TTL_SEC=7200`（checkpoint 惰性 TTL = 恢复窗「过期后墓碑 1h +
+  会话 TTL 10min + 余量」，超窗无消费方）/ `MS_CHECKPOINT_MAX=16`（FIFO 条数上限
+  ≈3MB 内存，纯内存不落盘 —— 服务重启 = 丢快照 = 前端静默兜底路径）；
+  `MS_SESSION_TTL_SEC` / `MS_SESSION_MAX` / `MS_EDIT_HOLD_SEC` 见 README 同表。
+- 改 sessionRecovery / sessionCheckpoint / api.ts 探测分支 / SessionExpiredModal /
+  checkpoint.py 任一处后应复跑本冒烟回归（报告
+  `out/smoke_session_recovery/report.txt`）。
