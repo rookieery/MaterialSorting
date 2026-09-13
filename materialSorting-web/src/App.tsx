@@ -16,6 +16,11 @@
 // （页面加载即弹「用户过多」，无需先上传）；200 静默。SessionExpiredModal 单例
 // 挂载（未阻断时渲染 null）。
 //
+// 会话过期自动恢复（US-003）：import './lib/sessionRecovery' 完成启动期恢复钩子
+// 注册（模块求值序结构性先于任何 effect 发请求）；探测 401 session_expired →
+// 恢复流程（换新 sid + POST /api/state-recover + applyRestorePayload 回显）。
+// SessionRecoveryNotice 单例 = 恢复期间「正在恢复工作状态…」轻加载态。
+//
 // 数据流：
 //   TabBar setTab → uiStore.activeTab → App 重渲染切 .hidden → NestingPage/PreviewPage 不卸载
 
@@ -24,11 +29,15 @@ import { Tooltip } from './components/Tooltip';
 import { NestingPage } from './components/NestingPage';
 import { PreviewPage } from './components/preview/PreviewPage';
 import { SessionExpiredModal } from './components/SessionExpiredModal';
+import { SessionRecoveryNotice } from './components/SessionRecoveryNotice';
 import { Toast } from './components/Toast';
 import { TabBar } from './components/TabBar';
 import { TourOverlay } from './tour/TourOverlay';
 import { useTourAutoTrigger } from './tour/useTour';
 import { probeSession } from './lib/api';
+// US-003：模块求值即注册启动期恢复钩子（须先于任何 effect 的 apiFetch ——
+// 静态 import 保证注册在渲染/副作用之前完成）。
+import './lib/sessionRecovery';
 import { useUiStore } from './store/uiStore';
 
 export function App(): React.JSX.Element {
@@ -65,6 +74,8 @@ export function App(): React.JSX.Element {
       <TourOverlay />
       {/* US-005：会话阻断弹窗单例（z-index 3000，高于 tour；未阻断渲染 null）。 */}
       <SessionExpiredModal />
+      {/* US-003：启动期恢复轻加载态单例（非阻断，z-index 1400；空态渲染 null）。 */}
+      <SessionRecoveryNotice />
       {/* 全局轻提示单例（非阻断，z-index 1500；空队列渲染 null）。 */}
       <Toast />
     </div>

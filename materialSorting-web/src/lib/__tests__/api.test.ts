@@ -7,6 +7,10 @@
 //   AC5 非 401/429 / 无 code / 非 JSON —— 不触发阻断。
 //   AC6 triggerSessionBlock 幂等（首个 code 定终身）+ 订阅通知。
 //   AC7 probeSession：200 静默；429 code → 阻断（第 5 窗口页面加载即弹）。
+//   AC8（US-003 改版）停留期 session_expired 不再清 sid —— 旧 sid 留给刷新后
+//      启动期恢复作 from_sid；session_limit 保 sid 语义不变。
+//   US-003 补：探测 401 session_expired 无恢复钩子（本文件不 import
+//      sessionRecovery）→ 落回老路径阻断；探测 401 无 code → 不恢复不阻断。
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -190,7 +194,7 @@ describe('apiFetch 会话阻断拦截（US-005 AC3-AC5）', () => {
     unsub();
   });
 
-  it('AC8 session_expired 丢弃 sid（墓碑 1h 拒重建 —— 刷新换新 sid 才是出口）', async () => {
+  it('AC8 session_expired 保留 sid（US-003：停留期过期旧 sid 留给刷新后启动期恢复作 from_sid）', async () => {
     const sidBefore = getSessionId();
     expect(localStorage.getItem('ms_sid')).toBe(sidBefore);
     mockFetchRoute({
@@ -198,10 +202,9 @@ describe('apiFetch 会话阻断拦截（US-005 AC3-AC5）', () => {
     });
     await apiFetch('/api/ptypes');
     expect(getSessionBlock()).toBe('session_expired');
-    // ms_sid 已清：下一次 getSessionId（= 刷新后的新页面）铸造全新 sid
-    expect(localStorage.getItem('ms_sid')).toBeNull();
-    expect(getSessionId()).not.toBe(sidBefore);
-    expect(getSessionId()).toMatch(/^[0-9a-f]{32}$/);
+    // ms_sid 不再被清：刷新后启动期恢复 peek 到旧 sid 作 from_sid
+    expect(localStorage.getItem('ms_sid')).toBe(sidBefore);
+    expect(getSessionId()).toBe(sidBefore);
   });
 
   it('AC8 session_limit 保留 sid（会话仍有效 —— 稍后重试原会话续用）', async () => {
@@ -236,5 +239,32 @@ describe('probeSession（US-005 AC7）', () => {
     vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('Failed to fetch'));
     await expect(probeSession()).resolves.toBeUndefined();
     expect(getSessionBlock()).toBeNull();
+  });
+
+  it('探测 401 session_expired 未注册恢复钩子（US-003）→ 落回老路径阻断弹窗', async () => {
+    // 本测试文件不 import sessionRecovery —— 钩子槽恒 null（防御装载序缺口）。
+    const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(((input: unknown) =>
+      Promise.resolve(
+        String(input).includes('/api/session')
+          ? json({ code: 'session_expired', error: '会话已过期' }, 401)
+          : json({ ok: true }),
+      )) as unknown as typeof fetch);
+    await expect(apiFetch('/api/strategy/status')).rejects.toBeInstanceOf(SessionBlockedError);
+    expect(getSessionBlock()).toBe('session_expired');
+    // 无恢复 → 无重探（恰好一次 /api/session），业务请求被 swallow
+    expect(spy.mock.calls.map((c) => String(c[0]))).toEqual(['/api/session']);
+  });
+
+  it('探测 401 无 code（非结构化错误体）→ 不阻断不恢复，探测落定放行', async () => {
+    const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(((input: unknown) =>
+      Promise.resolve(
+        String(input).includes('/api/session')
+          ? json({ error: 'no code' }, 401)
+          : json({ ok: true }),
+      )) as unknown as typeof fetch);
+    const res = await apiFetch('/api/ptypes');
+    expect(res.ok).toBe(true);
+    expect(getSessionBlock()).toBeNull();
+    expect(spy.mock.calls.map((c) => String(c[0]))).toEqual(['/api/session', '/api/ptypes']);
   });
 });

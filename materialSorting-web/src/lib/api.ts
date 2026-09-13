@@ -1,6 +1,8 @@
 // api.ts —— 全站统一 HTTP 出口（US-005 多会话前端接入）。
 //
-// 职责（三合一，本文件是**唯一**裸 fetch 调用点 —— grep 'fetch(' 应仅命中此处）：
+// 职责（三合一；裸 fetch 仅两处特权点 —— 本文件探测 POST /api/session 与
+// lib/sessionRecovery 的 POST /api/state-recover（US-003 恢复先例，均绕
+// apiFetch 防递归），其余请求一律 apiFetch）：
 //   1. 注入 ``X-Session-Id`` Header（sid 来自 lib/session.getSessionId，真实用户
 //      请求结构性必带 sid，不落 default 会话）；
 //   2. 拦截响应 ``code=session_expired / session_limit``（后端 401/429 结构化错误体）
@@ -14,16 +16,23 @@
 // 统一 ``await ensureSession()``：首次调用触发一次 POST /api/session（模块级
 // once-promise，并发共享、失败静默不重试），任何会话作用域请求结构性晚于建会话。
 //
+// 启动期会话过期自动恢复（US-003）：探测 401 ``session_expired`` 不再直接弹阻断
+// —— 先走注册的恢复钩子（lib/sessionRecovery 注入：peek 旧 sid → clear → 铸新
+// sid → 裸 fetch POST /api/state-recover {from_sid}，恢复成功 applyRestorePayload
+// / 404·网络失败兜底新会话 / 429 阻断弹窗），未阻断则用新 sid 重探一次放行。
+// 钩子槽是依赖倒置：本模块保持 store 零依赖（恢复实现要碰 store 层），App.tsx
+// 静态 import sessionRecovery 完成注册（模块求值序先于任何 effect 发请求）。
+//
 // 阻断状态：模块级单例 + 订阅列表（不引 zustand —— lib 不依赖 store 层；组件用
 // React 18 useSyncExternalStore 订阅）。幂等：首个 code 定终身（过期后超限等
-// 竞态以先到者为准；刷新后页面重载自然清零）。session_expired 触发时顺手丢弃
-// 当前 sid —— 后端墓碑（US-001）1h 拒重建过期 sid，刷新带旧 sid 只会 401 死循环；
-// 清 sid 后 reload 铸造全新会话，「刷新页面」按钮才是真出口。
+// 竞态以先到者为准；刷新后页面重载自然清零）。**US-003 起 triggerSessionBlock
+// 不再清 sid**（停留期过期把旧 sid 留给刷新后启动期恢复作 from_sid —— 刷新 =
+// 恢复而不是丢数据；旧 sid 只在启动期恢复流程内部被 clear+重铸）。
 //
 // WS 侧同口径：lib/ws.solveWsUrl() 拼 ``?sid=``，useSolveRun 对 error 帧
 // ``code`` 键调 triggerSessionBlock —— HTTP / WS 两个入口共用本状态。
 
-import { clearPersistedSessionId, getSessionId } from './session';
+import { getSessionId } from './session';
 
 /** 会话 Header 名（与后端各路由 ``request.headers.get('x-session-id')`` 对应）。 */
 export const SESSION_HEADER = 'X-Session-Id';
@@ -64,13 +73,12 @@ export function subscribeSessionBlock(fn: () => void): () => void {
  * 触发全局阻断弹窗（HTTP 401/429 code 响应与 WS error 帧 code 共用入口）。
  * 幂等：已阻断时静默忽略（首个 code 定终身）。
  *
- * session_expired 同时丢弃当前 sid（后端墓碑 1h 拒重建旧 sid —— 刷新后必须换新
- * sid 才能真正「重来」，否则探测 401 死循环）；session_limit 保留 sid（会话本身
- * 仍有效，稍后重试可原会话续用）。
+ * **US-003 起不再清 sid**（停留期过期语义）：旧 sid 留给用户刷新后的启动期恢复
+ * 作 from_sid（sessionRecovery peek 捕获）—— 弹窗文案「刷新页面后将恢复工作
+ * 状态」由此成立；session_limit 本就保 sid（会话仍有效，稍后重试可续）。
  */
 export function triggerSessionBlock(code: SessionBlockCode): void {
   if (blocked) return;
-  if (code === 'session_expired') clearPersistedSessionId();
   blocked = code;
   for (const fn of listeners) fn();
 }
@@ -106,27 +114,51 @@ let sessionProbe: Promise<void> | null = null;
 /** 探测已落定（成功/失败皆算）—— 置位后 apiFetch 不再 await（同步进 fetch，行为与旧裸 fetch 逐字节一致）。 */
 let probedSettled = false;
 
+/**
+ * 启动期恢复钩子槽（US-003，依赖倒置）：探测吃 401 ``session_expired`` 时调用。
+ * 实现由 lib/sessionRecovery 注册（要碰 store 层 —— 本模块保持 store 零依赖）；
+ * 约定实现**永不 reject**（内部全兜底），落定只两种：新会话就绪（探测应重试）
+ * 或已触发阻断。null（未注册，如单测只 import api）→ 走老路径阻断弹窗。
+ */
+export type StartupSessionRecovery = () => Promise<void>;
+let startupRecovery: StartupSessionRecovery | null = null;
+
+/** 注册/注销启动期恢复钩子（sessionRecovery 模块求值时调用一次）。 */
+export function registerStartupSessionRecovery(fn: StartupSessionRecovery | null): void {
+  startupRecovery = fn;
+}
+
 function isBlockCode(v: unknown): v is SessionBlockCode {
   return v === 'session_expired' || v === 'session_limit';
 }
 
-/** 401/429 响应尝试读 ``code`` 键触发阻断（非 JSON / fake Response 无 clone → 忽略）。 */
-async function inspectSessionError(res: Response): Promise<void> {
-  if (res.ok || (res.status !== 401 && res.status !== 429)) return;
+/** 401/429 响应读 ``code`` 键（非 JSON / fake Response 无 clone → null）。 */
+async function readSessionErrorCode(res: Response): Promise<SessionBlockCode | null> {
+  if (res.ok || (res.status !== 401 && res.status !== 429)) return null;
   try {
     const cloned = typeof res.clone === 'function' ? res.clone() : null;
     const data = cloned ? ((await cloned.json()) as { code?: unknown } | null) : null;
     if (data && typeof data === 'object' && isBlockCode(data.code)) {
-      triggerSessionBlock(data.code);
+      return data.code;
     }
   } catch {
     // 非 JSON 错误体 / clone 失败 —— 忽略（原响应照常返回给调用方）
   }
+  return null;
+}
+
+/** 401/429 响应尝试读 ``code`` 键触发阻断（非 JSON / fake Response 无 clone → 忽略）。 */
+async function inspectSessionError(res: Response): Promise<void> {
+  const code = await readSessionErrorCode(res);
+  if (code) triggerSessionBlock(code);
 }
 
 /**
  * 确保会话已注册（once）：首次调用发 ``POST /api/session``（裸 fetch —— 不经
- * apiFetch 防递归），并发调用共享同一 promise；429/401 带 code 由
+ * apiFetch 防递归），并发调用共享同一 promise。探测 401 ``session_expired`` 且
+ * 已注册恢复钩子（US-003）→ 钩子内换新 sid + POST /api/state-recover，未阻断
+ * 则用新 sid 重探一次（恢复全程在 once-promise 内 = 天然 single-flight，并发
+ * apiFetch 等到的已是「恢复完成 + 新会话」终态）；其余 429/401 带 code 由
  * inspectSessionError 触发阻断；网络错静默（后续请求自身错误路径兜底）。
  */
 export function ensureSession(): Promise<void> {
@@ -134,10 +166,21 @@ export function ensureSession(): Promise<void> {
     sessionProbe = (async () => {
       try {
         if (blocked) return;
-        const res = await fetch('/api/session', {
+        let res = await fetch('/api/session', {
           method: 'POST',
           headers: mergeSessionHeaders(),
         });
+        if (res.status === 401 && startupRecovery) {
+          const code = await readSessionErrorCode(res);
+          if (code === 'session_expired') {
+            await startupRecovery();
+            if (blocked) return; // 恢复 429 → 阻断弹窗已触发，业务请求被拦截
+            res = await fetch('/api/session', {
+              method: 'POST',
+              headers: mergeSessionHeaders(), // 新 sid（钩子内已 clear+重铸）
+            });
+          }
+        }
         await inspectSessionError(res);
       } catch {
         // 网络错（后端未起）—— 静默；probePromise 缓存失败态，后续请求不再重探

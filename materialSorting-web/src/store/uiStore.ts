@@ -1,11 +1,15 @@
 // UiState —— 顶部 Tab 切换（US-001）+ 超排 Tab 解锁闸（US-015）。
 //
-// 持两个语义字段：
+// 持三个语义字段：
 //   activeTab       'nesting'（超排页）/ 'preview'（上传预览页），默认 'preview'。
 //                   业务流程先上传母版解析、再进超排，首页落在上传预览 Tab。
 //   nestingEnabled  超排 Tab 是否可进入，默认 false。
 //                   由 PreviewPage 联动 setNestingEnabled(true)（US-016）——
 //                   用户上传解析成功后解锁；reset/error/重传重锁。
+//   sessionRecovering 会话过期自动恢复（US-003）启动期恢复进行中，默认 false。
+//                   lib/sessionRecovery 恢复流程起止置位/复位 —— App 顶层
+//                   SessionRecoveryNotice 订阅渲染「正在恢复工作状态…」轻加载
+//                   态（非阻断 pointer-events:none，恢复 <2s 防空白闪屏）。
 // 切页不卸载组件（display:none 由 App 的 .hidden class 控制），所以这里只关心
 // 当前激活 Tab；求解 / WS / seek 等业务状态仍在各 page 内自行管理，互不干扰。
 //
@@ -25,15 +29,20 @@ export interface UiState {
   activeTab: TabId;
   /** 超排 Tab 是否可进入；默认 false，由 PreviewPage 联动 setNestingEnabled（US-016）。 */
   nestingEnabled: boolean;
+  /** 启动期会话恢复进行中（US-003）；lib/sessionRecovery 起止置位/复位。 */
+  sessionRecovering: boolean;
   /** 切换 Tab；nestingEnabled===false 时 setTab('nesting') 静默不切（关键不变量）。 */
   setTab: (tab: TabId) => void;
   /** 解锁/锁定超排 Tab；PreviewPage 监听 uploadStore.status 调用（US-016）。 */
   setNestingEnabled: (b: boolean) => void;
+  /** 启动期恢复轻加载态起止（US-003）；SessionRecoveryNotice 订阅渲染。 */
+  setSessionRecovering: (b: boolean) => void;
 }
 
 export const useUiStore = create<UiState>((set, get) => ({
   activeTab: 'preview',
   nestingEnabled: false,
+  sessionRecovering: false,
   setTab: (tab) => {
     // 关键不变量：nestingEnabled===false 时 setTab('nesting') 静默不切（US-015）。
     // preview Tab 永远允许（用户随时可回上传预览页，不受解锁闸影响）。
@@ -41,4 +50,5 @@ export const useUiStore = create<UiState>((set, get) => ({
     set({ activeTab: tab });
   },
   setNestingEnabled: (b) => set({ nestingEnabled: b }),
+  setSessionRecovering: (b) => set({ sessionRecovering: b }),
 }));

@@ -2537,3 +2537,25 @@ button.edit-controls-btn--reset:disabled {
   outline: 2px solid #7fd4a8;
   outline-offset: 1px;
 }
+
+/* ---- US-003 SessionRecoveryNotice（启动期会话恢复轻加载态） ---- */
+/* 顶部居中单条状态告知：恢复是预期内短过渡（<2s），非阻断 —— 无遮罩、
+   pointer-events:none（恢复期间用户不可点也不需要点），防「刷新后白屏一瞬」
+   的茫然。z-index 1400 —— 低于 toast(1500)（恢复 toast 是恢复流程的结论层）。 */
+.session-recovery-notice {
+  position: fixed;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1400;
+  background: #26282e;
+  border: 1px solid #34363d;
+  border-left: 3px solid #2ea06c;
+  border-radius: 8px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+  padding: 10px 16px;
+  color: #e6e6e6;
+  font-size: 13px;
+  line-height: 1.65;
+  pointer-events: none;
+}

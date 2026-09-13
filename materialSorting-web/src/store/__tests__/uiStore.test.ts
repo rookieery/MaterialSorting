@@ -88,3 +88,16 @@ describe('uiStore US-015 nestingEnabled', () => {
     expect(useUiStore.getState().activeTab).toBe('preview');
   });
 });
+
+describe('uiStore US-003 sessionRecovering（启动期恢复轻加载态）', () => {
+  it('默认 sessionRecovering === false', () => {
+    expect(useUiStore.getState().sessionRecovering).toBe(false);
+  });
+
+  it('setSessionRecovering 起止置位/复位', () => {
+    useUiStore.getState().setSessionRecovering(true);
+    expect(useUiStore.getState().sessionRecovering).toBe(true);
+    useUiStore.getState().setSessionRecovering(false);
+    expect(useUiStore.getState().sessionRecovering).toBe(false);
+  });
+});

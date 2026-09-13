@@ -10,7 +10,8 @@
 //     会话粘性不影响功能）。
 //
 // 消费方：lib/api.ts（X-Session-Id Header 注入）、lib/ws.ts（?sid= query）、
-// App 挂载探测（probeSession）。模块级缓存避免每次请求都读 localStorage。
+// App 挂载探测（probeSession）、lib/sessionRecovery.ts（peek 旧 sid 作恢复
+// from_sid）。模块级缓存避免每次请求都读 localStorage。
 
 /** localStorage 键名（PRD US-005 指定）。 */
 const SID_KEY = 'ms_sid';
@@ -65,10 +66,30 @@ export function getSessionId(): string {
 }
 
 /**
+ * 非铸造只读（会话过期自动恢复 US-003）：返回「当前持有的 sid」—— 模块缓存 →
+ * localStorage，无合法值 → null。**绝不生成/落盘**（与 getSessionId 的 lazy-mint
+ * 相对：直接调 getSessionId 会铸造新 sid 覆盖旧值 —— 启动期恢复必须先经本函数
+ * 取到旧 sid 作为 from_sid，再 clear + 重铸新 sid）。
+ */
+export function peekPersistedSessionId(): string | null {
+  if (cached && SID_RE.test(cached)) return cached;
+  try {
+    const sid = localStorage.getItem(SID_KEY);
+    if (sid && SID_RE.test(sid)) return sid;
+  } catch {
+    // localStorage 不可用 —— 无持久 sid 可言
+  }
+  return null;
+}
+
+/**
  * 丢弃当前 sid（US-005）：仅在后端宣判 ``session_expired`` 时调用 —— 后端墓碑
  * （US-001）保证过期 sid 1h 内不可重建，若刷新后仍带旧 sid，探测将持续 401 弹窗
  * 死循环；清掉 ms_sid 后刷新即铸造全新 sid 获得干净会话（「刷新重来」唯一通路）。
  * ``session_limit`` **不**清（sid 仍有效，稍后重试原会话可续）。
+ *
+ * US-003 起唯一调用方 = 启动期恢复（lib/sessionRecovery）：停留期 401 不再清
+ * sid —— 旧 sid 留作刷新后启动期恢复的 from_sid。
  */
 export function clearPersistedSessionId(): void {
   cached = null;
