@@ -1,11 +1,4 @@
 {
   "branchName": "ralph/session-expiry-auto-recovery",
-  "stories": [
-    {
-      "id": "US-005",
-      "title": "端到端冒烟验收与文档闭环",
-      "description": "UI 冒烟脚本覆盖「过期 → 刷新 → 启动期恢复」全链路，三端点契约/环境变量写入文档。\n\n具体任务：\n1. 新建 materialSorting-web/scripts/smoke_session_recovery.mjs（playwright 套路同 smoke_state_file.mjs）：极短 MS_SESSION_TTL_SEC env 起 dev → 上传母版 → 改数量矩阵 → 短求解 done → 等 TTL 过期 → 覆盖五条路径：\n   - 停留期交互路径：触发任一 API 请求 → 断言引导刷新弹窗（新文案「刷新页面后将恢复工作状态」）且未自动恢复 → 点弹窗刷新按钮 → 启动期恢复 → 数量矩阵/表单/布局与过期前对拍 + toast 在场；\n   - 直接 F5 路径：过期后 page.reload() → 无弹窗直接恢复；\n   - F5 存活清理路径：未过期刷新 → 干净重置 + checkpoint DELETE；\n   - 无 checkpoint 兜底路径：DELETE 后再过期 → 刷新 → 静默新会话 + toast、无弹窗；\n   - 429 路径弹窗仍在（借 MS_SESSION_MAX=1 双客户端模拟，允许 skip-if-flaky）。\n2. 文档：.docs/technical/agent-api-reference.md 增 POST /api/state-checkpoint / DELETE /api/state-checkpoint / POST /api/state-recover 专节（错误码表 + 生命周期语义 + 与 state-save/restore 复用关系 + 恢复窗口 = 过期后墓碑 1h 说明）；README「多会话机制」+ web/AGENTS.md 补 MS_CHECKPOINT_TTL_SEC / MS_CHECKPOINT_MAX 环境变量；agent-file-map.md 补 checkpoint.py 行。\n\n验收标准：\n- 冒烟脚本全绿（五条路径断言如上）。\n- 全量回归：后端 pytest 全绿（含既有 statefile/sessions/edit_hold 用例零回归）、前端 vitest 全绿、npm run build 通过。\n- python -m materialsorting.web.checkpoint 跑通、分层依赖未反向。",
-      "passes": true
-    }
-  ]
+  "stories": []
 }
