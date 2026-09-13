@@ -75,7 +75,7 @@ ms-web             # → http://127.0.0.1:8000
 
 - **sid 约定**：前端首次加载铸 `uuid4 hex` 存 localStorage（`ms_sid`，刷新不变），全部 HTTP 请求注入 `X-Session-Id` Header，WS `/ws/solve` 走 `?sid=` query（浏览器 WS 不能自定义 Header）。后端各端点经 `sessions.SessionRegistry.resolve()` 单一解析点归属（契约详见 [.docs/technical/agent-api-reference.md](.docs/technical/agent-api-reference.md)）。
 - **隔离面**：每会话一份 pieces 快照（commit 主写 `out/uploads/<doc_id>_pieces/pieces_intermediate.json` per-doc 落盘 + 会话绑定）+ 一份策略长跑状态槽（run_name/cfg/marker 按 sid 前缀互斥）；ptypes / 求解 / 导出 / 高级运行全链路互不串台。
-- **生命周期**：容量上限 4 个并发会话（第 5 端页面加载即弹「用户过多」）；空闲 10 分钟过期（过期墓碑 1h，任一操作弹「已过期」阻断式弹窗，唯一出口 = 刷新页面铸新 sid）；**求解中（WS 钉住）/ 策略轮询中的会话不被误杀**；**高级/极限运行存活期间与会话终态后宽限窗（缺省 2h，2026-08-30）内同样不逐出** —— 睡眠唤醒、关页、跑完挂机等轮询中断场景不丢结果，宽限窗内任何操作即恢复正常空闲语义（被钉住的会话仍占名额）；**编辑排料弹窗打开期间同样钉住（2026-09-04）** —— 编辑纯前端无任何请求，弹窗打开期间每 4min 滚动 `POST /api/edit-hold` 续期（钉住窗缺省 2h，编辑中睡眠 ≤2h 唤醒恢复、关窗后自然留同款宽限），防长编辑（>10min）中途会话被逐出、保存后导出 401 丢全部编辑成果。
+- **生命周期**：容量上限 6 个并发会话（2026-09-12 起，原 4；第 7 端页面加载即弹「用户过多」）；空闲 10 分钟过期（过期墓碑 1h，任一操作弹「已过期」阻断式弹窗，唯一出口 = 刷新页面铸新 sid）；**求解中（WS 钉住）/ 策略轮询中的会话不被误杀**；**高级/极限运行存活期间与会话终态后宽限窗（缺省 600s，2026-08-30 引入、2026-09-13 由 2h 收敛对齐会话 TTL —— checkpoint 恢复兜底落地）内同样不逐出** —— 睡眠唤醒、关页、跑完挂机等轮询中断场景不丢结果，宽限窗内任何操作即恢复正常空闲语义（被钉住的会话仍占名额）；**编辑排料弹窗打开期间同样钉住（2026-09-04）** —— 编辑纯前端无任何请求，弹窗打开期间每 4min 滚动 `POST /api/edit-hold` 续期（钉住窗缺省 600s，2026-09-13 由 2h 收敛；4min 心跳 ≪ 600s 窗持续续命，关窗后自然留同款宽限），防长编辑（>10min）中途会话被逐出、保存后导出 401 丢全部编辑成果。
 - **无 sid 请求 = default 会话**：豁免上限/过期/墓碑（旧 curl/脚本/单文档时代行为逐字节一致）；`GET /` 响应头 `Cache-Control: no-cache`（防旧 index.html 缓存滞留）。
 - **磁盘兜底**：`out/uploads/` 按 TTL 自动清理（超龄 `<doc_id>.dxf` + `<doc_id>_pieces/` 成对删，活跃会话 / 策略 marker 引用 / 未超龄者保护），commit 后与进程启动时双触发 best-effort。
 - **过期自动恢复（2026-09-13，会话过期自动恢复 PRD）**：前端把工作台状态（数量矩阵/表单/布局）自动打服务端**内存 checkpoint**（改数量去抖 3s + 求解完成/编辑保存立即；`POST /api/state-checkpoint`，peek 口径不刷活性不建名额）—— 会话过期后**刷新页面即恢复过期前工作状态**（启动期探测 401 自动 `POST /api/state-recover` 换新 sid 恢复；快照不在 → 静默新会话）；页面停留期间**绝不自动恢复**（401 走阻断弹窗「刷新页面后将恢复工作状态」，点刷新 = 恢复入口）；会话存活的 F5 = 干净重置（启动清理 `DELETE /api/state-checkpoint` 防幽灵回潮）。恢复窗 = 过期后墓碑 1h + 会话 TTL + 余量（checkpoint 惰性 TTL 缺省 7200s 对齐）；三端点契约详见 [.docs/technical/agent-api-reference.md](.docs/technical/agent-api-reference.md) 专节，端到端冒烟 `materialSorting-web/scripts/smoke_session_recovery.mjs`。
@@ -86,8 +86,8 @@ ms-web             # → http://127.0.0.1:8000
 |---|---|---|
 | `MS_SESSION_MAX` | `6` | 并发会话上限（default 不占额；超出 → 429 `session_limit`） |
 | `MS_SESSION_TTL_SEC` | `600` | 空闲过期阈值秒数（惰性检查 + 30s daemon 扫描） |
-| `MS_RESULT_GRACE_SEC` | `7200` | 策略/极限 run 终态后会话宽限秒数（run 存活期间滚动钉住不逐出；期间会话仍占名额） |
-| `MS_EDIT_HOLD_SEC` | `7200` | 编辑排料会话钉住滚动窗秒数（编辑弹窗打开期间前端每 4min 续期；关窗后自然留同款宽限，2026-09-04） |
+| `MS_RESULT_GRACE_SEC` | `600` | 策略/极限 run 终态后会话宽限秒数（run 存活期间滚动钉住不逐出；期间会话仍占名额；2026-09-13 由 7200 收敛 10min 与 TTL 统一 —— checkpoint 恢复兜底） |
+| `MS_EDIT_HOLD_SEC` | `600` | 编辑排料会话钉住滚动窗秒数（编辑弹窗打开期间前端每 4min 续期；关窗后自然留同款宽限，2026-09-04；2026-09-13 由 7200 收敛 10min 与 TTL 统一） |
 | `MS_UPLOAD_TTL_DAYS` | `14` | uploads 磁盘清理 TTL 天数（按 mtime，成对判龄） |
 | `MS_CHECKPOINT_TTL_SEC` | `7200` | 过期恢复内存 checkpoint 惰性 TTL 秒数 = 恢复窗（过期后墓碑 1h + 会话 TTL 10min + 余量；超窗无消费方，2026-09-13） |
 | `MS_CHECKPOINT_MAX` | `16` | checkpoint FIFO 条数上限（逐出最旧；≈3MB 内存，纯内存不落盘，2026-09-13） |

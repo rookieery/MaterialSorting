@@ -2,7 +2,8 @@
 
 背景：编辑排料纯前端无请求，``MS_SESSION_TTL_SEC``（缺省 600s）空闲过期会在长编辑
 中途逐出会话 → 保存后导出 401 全丢。edit_hold 提供滚动钉住（缺省
-``MS_EDIT_HOLD_SEC`` 2h，镜像策略 run 终态宽限）+ alive hook 组合注册。
+``MS_EDIT_HOLD_SEC`` 600s，2026-09-13 由 2h 收敛对齐 TTL —— checkpoint 保存兜底
+落地；镜像策略 run 终态宽限）+ alive hook 组合注册。
 
 覆盖：
 1. 钉住语义（私有注册表 + FakeClock）：refresh 后 TTL 远超（30min）不逐出；
@@ -62,14 +63,18 @@ def _private_registry(clk: _FakeClock) -> sessions.SessionRegistry:
 # ---------------------------------------------------------------- 钉住语义
 
 def test_refresh_pins_session_beyond_ttl(monkeypatch):
-    """refresh 后 TTL 远超（30min = 版师长编辑场景）→ 惰性/扫描两路径都不逐出。"""
+    """4min 心跳链（≪ EDIT_HOLD_SEC 窗）下 30min 长编辑全程不被逐出 —— 惰性/扫描
+    两路径都不逐出。2026-09-13 缺省 7200→600 后长编辑安全性 = 心跳滚动续命而非
+    单次 refresh 长宽限（无心跳超窗 → 过期，checkpoint 恢复兜底）。"""
     monkeypatch.setattr(edit_hold, '_installed', False)   # 私有表上独立接线
     clk = _FakeClock()
     reg = _private_registry(clk)
     reg.resolve('editaaaa', create=True)
     edit_hold.install(reg)
-    edit_hold.refresh('editaaaa', clk.now)
-    clk.advance(30 * 60.0)
+    for _ in range(7):                   # 7 跳 × 4min ≈ 28min 版师长编辑
+        clk.advance(4 * 60.0)
+        edit_hold.refresh('editaaaa', clk.now)
+    clk.advance(edit_hold.EDIT_HOLD_SEC - 10.0)  # 末跳后的窗内（仍超 TTL）
     assert reg.scan_once() == []                       # 扫描路径：超 TTL 但被钉住
     assert reg.peek('editaaaa') is not None
     assert reg.resolve('editaaaa').sid == 'editaaaa'   # 惰性路径同豁免
@@ -150,15 +155,16 @@ def test_install_idempotent(monkeypatch):
 # ---------------------------------------------------------------- 路由
 
 def test_edit_hold_route_pins_session(client, monkeypatch):
-    """/api/edit-hold 200 后 30min 扫描存活 —— 端到端：路由续期 → 单例组合 hook
-    豁免（server 接线真实生效，非仅私有表行为）。"""
+    """/api/edit-hold 200 后钉住窗内扫描存活 —— 端到端：路由续期 → 单例组合 hook
+    豁免（server 接线真实生效，非仅私有表行为）。缺省 600s（2026-09-13 由 2h 收敛）：
+    窗内不逐出；前端 4min 心跳滚动续命。"""
     clk = _fake_clock(monkeypatch)
     sid = 'holdddddd'
     assert client.post('/api/session', headers={'X-Session-Id': sid}).status_code == 200
     r = client.post('/api/edit-hold', headers={'X-Session-Id': sid})
     assert r.status_code == 200 and r.json() == {'ok': True}
     assert edit_hold.hold_until(sid) == pytest.approx(clk.now + edit_hold.EDIT_HOLD_SEC)
-    clk.advance(30 * 60.0)
+    clk.advance(edit_hold.EDIT_HOLD_SEC - 10.0)   # 窗内（超 TTL=600）
     assert sessions.registry.scan_once() == []
     assert sessions.registry.peek(sid) is not None
 

@@ -8,10 +8,14 @@ HTTP/WS；求解已结束（无 WS 钉住）、无策略轮询（无 touch），
 
 **方案**（镜像 strategy.py 的 run 存活钉住 + 终态宽限语义）：前端编辑弹窗打开期间
 滚动 ``POST /api/edit-hold`` 续期本表（``sid → hold_until = clock()+EDIT_HOLD_SEC``，
-缺省 2h）；关窗不显式释放 —— 最后一次心跳 + 2h 自然宽限（保存后去吃饭回来导出
-不丢，同「跑完挂机不丢结果」语义；宽限内会话仍占 ``MS_SESSION_MAX`` 名额，与策略
-宽限口径一致）。编辑中机器睡眠 ≤2h 唤醒后续期恢复也兜得住（纯 ``last_active``
-心跳兜不住睡眠：睡眠期间无请求，唤醒前已被逐出）。
+缺省 600s）；关窗不显式释放 —— 最后一次心跳 + 600s 自然宽限（宽限内会话仍占
+``MS_SESSION_MAX`` 名额，与策略宽限口径一致）。编辑中机器睡眠 ≤10min 唤醒后续期
+恢复也兜得住（纯 ``last_active`` 心跳兜不住睡眠：睡眠期间无请求，唤醒前已被逐出）。
+
+**2026-09-13 宽限 2h → 10min**（用户定案，会话过期自动恢复 PRD 落地后）：编辑弹窗
+打开期间心跳持续续期（4min 间隔 ≪ 600s 窗）不受影响；关窗/保存后的长宽限不再
+必要 —— 过期即丢的状态已有服务端 checkpoint 兜底（`web/checkpoint.py` US-001/004
+自动快照 + 刷新恢复），「保存后挂机再回来」走恢复路径而非 2h 硬钉住。
 
 **接线**：sessions 的 alive hook 是单 slot 覆盖式、既有生产方 = strategy.py；
 ``install()`` 在 server.py 文件尾（strategy 注册**之后**）把既有 hook 包一层组合体
@@ -31,10 +35,11 @@ from typing import Callable
 
 from .sessions import DEFAULT_SID, _env_float
 
-# 编辑钉住滚动窗（秒）：前端心跳间隔 4min 的 30 倍 —— 任意 2h 窗内一次成功心跳
-# 即续命（容忍网络抖动 / 短睡眠）；关窗后同款窗自然宽限。缺省与
-# ``MS_RESULT_GRACE_SEC``（策略终态宽限）对齐 = 2h。
-EDIT_HOLD_SEC: float = _env_float('MS_EDIT_HOLD_SEC', 7200.0)
+# 编辑钉住滚动窗（秒）：缺省与 ``MS_SESSION_TTL_SEC`` / ``MS_RESULT_GRACE_SEC``
+# 对齐 = 600s（2026-09-13 用户定案：checkpoint 保存兜底落地，2h 钉住统一收敛
+# 10min）。前端心跳间隔 4min ≪ 600s 窗 —— 弹窗打开期间一次成功心跳即续命
+# （容忍网络抖动 / 短睡眠）；关窗后同款窗自然宽限。
+EDIT_HOLD_SEC: float = _env_float('MS_EDIT_HOLD_SEC', 600.0)
 
 # sid → hold_until（``registry.clock()`` 时间戳，与 TTL 比较同一时钟源可注入推进）。
 # 模块级单表：进程级接线（reset / 会话逐出不清理 —— hold 过期自然失效，refresh

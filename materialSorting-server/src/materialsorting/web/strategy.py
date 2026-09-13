@@ -103,11 +103,13 @@ _TERMINAL_STATES = ('done', 'stopped', 'error')
 # 宽限窗分支，滚动窗加长零代价。
 _RUN_ALIVE_HOLD_SEC = 90.0
 # 终态宽限窗（秒）：run 结束（done/stopped/error 或进程死亡被 hook 探测到）后
-# 会话仍保留的时长 —— 「跑完去吃个饭回来再看结果/导出」场景；期间会话仍占
+# 会话仍保留的时长 —— 「跑完离开片刻回来看结果/导出」场景；期间会话仍占
 # MS_SESSION_MAX 名额，用户任何操作（resolve 刷 last_active）即恢复正常空闲
 # 语义。宽限窗外逐出照旧走墓碑（同 sid 回来仍能经本模块状态槽/marker 发现
-# 清理遗留 run）。
-RESULT_GRACE_SEC: float = _env_float('MS_RESULT_GRACE_SEC', 7200.0)
+# 清理遗留 run）。2026-09-13 用户定案 7200 → 600（与 MS_SESSION_TTL_SEC /
+# MS_EDIT_HOLD_SEC 统一 10min）：checkpoint 保存兜底落地，超窗回来走刷新恢复，
+# 不再需要 2h 硬钉住。
+RESULT_GRACE_SEC: float = _env_float('MS_RESULT_GRACE_SEC', 600.0)
 
 # 每会话策略状态（US-004 多会话化）：sid → state dict。default 会话的 state 即旧名
 # ``_STRATEGY_STATE``（同一对象 —— 零 sid 路径与既有测试直改 `_STRATEGY_STATE`

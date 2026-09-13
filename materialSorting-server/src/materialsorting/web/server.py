@@ -414,9 +414,10 @@ async def post_edit_hold(request: Request):
 
     编辑排料纯前端（拖动/旋转/保存不发任何请求），长编辑（> ``MS_SESSION_TTL_SEC``
     缺省 10min）会被空闲过期逐出 → 保存后导出 401 全局阻断 → 刷新丢全部编辑成果。
-    本端点把会话钉住到 ``now + MS_EDIT_HOLD_SEC``（缺省 2h，镜像策略 run 终态宽限
-    语义 —— 编辑中睡眠 ≤2h 唤醒恢复、关窗后自然留 2h 宽限；宽限内仍占
-    ``MS_SESSION_MAX`` 名额，与策略宽限口径一致）。
+    本端点把会话钉住到 ``now + MS_EDIT_HOLD_SEC``（缺省 600s，镜像策略 run 终态宽限
+    语义 —— 弹窗打开期间 4min 心跳持续续命、编辑中睡眠 ≤10min 唤醒恢复、关窗后
+    自然留同款宽限；宽限内仍占 ``MS_SESSION_MAX`` 名额，与策略宽限口径一致。
+    2026-09-13 起 2h → 10min：checkpoint 保存兜底落地，超窗回来走刷新恢复）。
 
     - 无 sid（default 会话）→ ``200 {ok:true}`` no-op（default 豁免一切过期）；
     - 带合法 sid → ``resolve()`` 会话闸门（顺手刷 ``last_active``；过期/墓碑 →
