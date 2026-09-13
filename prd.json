@@ -1,11 +1,4 @@
 {
- "branchName": "ralph/strategy-pending-result-checkpoint",
- "stories": [
-  {
-   "id": "US-003",
-   "title": "端到端冒烟验收与文档闭环",
-   "description": "As a 项目维护者, I want UI 冒烟覆盖「跑完不确认 → 过期 → 刷新恢复 → 弹窗重现 → 应用 → 导出」全链并把槽契约写进文档，so that 本功能与既有会话恢复体系一起有回归守卫。\n\n具体任务：\n1. materialSorting-web/scripts/smoke_session_recovery.mjs 扩展（playwright 套路同既有）主路径：极短 MS_SESSION_TTL_SEC 起 dev → 上传母版 → 启动策略 run（短预算）→ 不确认、等 run 完成 + 宽限窗外过期 → 刷新 → 启动期恢复 → 断言：对应族弹窗自动打开且为结果态（密度与过期前对拍）→ 点应用 → 主画布 placed 逐条对拍 → 导出 PLT 守恒。\n2. 冒烟续段三路径：极限运行同款；应用后再过期（恢复已应用 run、弹窗不开、无双份数据）；run 中改数量未重解（checkpoint last-good：恢复改前完整快照而非半态）；另加无 pending 老快照恢复行为对拍不变。\n3. 文档：.docs/technical/agent-api-reference.md 的 /api/state-save、/api/state-restore、/api/state-checkpoint+/api/state-recover 专节各补 pending_strategy_result 键（形态/省键/守恒语义/manifest 不入档理由/仅 done 态）；CLAUDE.md statefile.py/checkpoint.py 相关行补一句口径。\n\n验收标准：\n- 冒烟脚本全绿（主路径 + 三续段路径断言如上）。\n- 全量回归：后端 pytest 全绿、前端 vitest 全绿、npm run build 通过、既有 smoke_state_file.mjs 全绿（无 pending 路径对拍不变）。\n- python -m materialsorting.web.statefile 与 python -m materialsorting.web.checkpoint 跑通、分层依赖未反向。",
-   "passes": true
-  }
- ]
+  "branchName": "ralph/strategy-pending-result-checkpoint",
+  "stories": []
 }
