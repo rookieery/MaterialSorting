@@ -2,16 +2,10 @@
   "branchName": "ralph/session-expiry-auto-recovery",
   "stories": [
     {
-      "id": "US-001",
-      "title": "后端 checkpoint 内存存储与写入/清除端点",
-      "description": "服务端按 sid 维护工作台状态的内存快照（复用 .msn 管线），并把 statefile.state_restore 内联的会话重建段抽取为共享函数（行为零变更重构），为后续恢复端点提供基础。\n\n背景：多会话工作台 10 分钟空闲过期后是「阻断弹窗 + 强制刷新 + 数据全丢」。本 PRD 用服务端内存 checkpoint + 刷新触发恢复解决；求解/编辑/策略长跑由既有钉住机制（WS pin / edit_hold / alive hook）保证不触发过期，不在范围内。完整 PRD 见 tasks/prd-session-expiry-auto-recovery.md。\n\n具体任务：\n1. 新建 materialSorting-server/src/materialsorting/web/checkpoint.py：\n   - _CheckpointStore（OrderedDict[sid → {data: gzip bytes, ts}] + threading.Lock + 惰性 TTL 清理 + FIFO 容量上限；时钟可注入测试）；\n   - env MS_CHECKPOINT_TTL_SEC（缺省 7200，对齐恢复窗 = 墓碑 1h + 会话 TTL 10min + 余量）/ MS_CHECKPOINT_MAX（缺省 16），_env_int/_env_float 容错回退（sessions.py 同款）；\n   - POST /api/state-checkpoint（X-Session-Id；body = state-save 同形 {form, quantities, quantities_base?, run?}，save_as 键容忍忽略）：经 registry.peek(sid) 读会话快照【绝不 resolve——不刷 last_active、不建会话】；会话空（无 doc/pieces）→ 200 {stored:false, reason:'empty'}；run 守恒校验失败（复用 statefile.check_placed_conservation）→ 200 {stored:false, reason:'conservation'} 且先前好快照字节不变（last-good）；成功 → build_state_document + serialize_state 入库 → 200 {stored:true}；\n   - DELETE /api/state-checkpoint（同 sid）：幂等清除（条目不存在也 200 {ok:true}）；\n   - register_checkpoint_routes(app)（statefile/strategy 同模式，server.py 文件尾注册）；模块禁 import server（AST 守卫）；__main__ 冒烟自检。\n2. materialSorting-server/src/materialsorting/web/statefile.py：把 state_restore 中内联重建段（约 565-611 行：doc_id 铸新 + _state_from_doc + sid/default 双分支写入 + build_pid_meta manifest 重算（_form_gate_mm 口径）+ _DocPieceView parse 载荷 + edit_hold.refresh + 响应组装）抽取为共享函数 rebuild_session_from_document(document, sid, *, filename_fallback='') -> dict；state_restore 改调它，行为零变更。\n\n验收标准：\n- peek 口径单测：写入 checkpoint 后会话 last_active 不变（假时钟断言）；不建新会话名额。\n- empty / conservation last-good（先前快照字节不变）/ TTL 惰性清理 / FIFO 逐出 / DELETE 幂等全覆盖（tests/test_web_checkpoint.py）。\n- state_restore 重构零回归：既有 tests/test_web_statefile.py 全绿 + 成功响应逐字段对拍。\n- python -m materialsorting.web.checkpoint 冒烟跑通（合成夹具：写入→读回 gunzip 对拍 + 生命周期全路径）；分层依赖未反向（AST 守卫）。",
-      "passes": true
-    },
-    {
       "id": "US-002",
       "title": "后端恢复端点 /api/state-recover",
       "description": "刷新后启动期用新 sid + 旧 sid 引用把 checkpoint 恢复成当前会话，返回与 /api/state-restore 同形的响应，前端直接复用 applyRestorePayload 重建 UI。\n\n具体任务（materialSorting-server/src/materialsorting/web/checkpoint.py，US-001 已建模块 + statefile.rebuild_session_from_document 共享函数）：\n1. POST /api/state-recover：X-Session-Id = 新 sid（前端铸新后携带）；body {from_sid: 旧sid}；from_sid 过 sessions.SID_RE 校验（非法 400）。\n2. checkpoint 不在 / 超 TTL → 404 {code:'checkpoint_not_found', error:...} 结构化 JSON；解析在会话 resolve 之前（run_in_threadpool(parse_state_document)，坏数据不占名额，与 state_restore 同序）；校验链失败 → 400/413 同 state_restore 契约。\n3. registry.resolve(new_sid, create=True)（commit 先例）；429 session_limit 结构化透传（前端回退阻断弹窗）；成功走共享重建函数 + edit_hold.refresh(new_sid)；响应 = state-restore 成功响应同形（{doc_id, filename, parse, manifest, final, placed, run, quantities_base, form, quantities}）+ additive recovered_from: from_sid 键（冒烟断言锚点）。\n4. 恢复成功即删该 checkpoint 条目（single-use：旧 sid 已入墓碑永不复用，防多 Tab 反复恢复放大名额占用）。\n\n验收标准：\n- pytest 全链（TestClient，扩展 tests/test_web_checkpoint.py）：真实 commit 会话 → checkpoint → 会话过期逐出 → 新 sid recover → 新会话 pieces/manifest 与快照逐字段一致 + 守恒通过 + recovered_from 回显 + checkpoint 已删。\n- 404 / 429 / 坏 from_sid / 双次恢复（第二次 404）四路错误路径。\n- python -m materialsorting.web.checkpoint 冒烟跑通、分层依赖未反向。",
-      "passes": false
+      "passes": true
     },
     {
       "id": "US-003",

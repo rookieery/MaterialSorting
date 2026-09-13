@@ -1,5 +1,5 @@
-"""POST/DELETE /api/state-checkpoint 内存快照端点测试（prd 会话过期自动恢复
-US-001）。
+"""POST/DELETE /api/state-checkpoint + POST /api/state-recover 内存快照端点测试
+（prd 会话过期自动恢复 US-001/US-002）。
 
 覆盖（AC 六项）：
 1. peek 口径：POST 后会话 ``last_active`` 不变（FakeClock 断言）+ 不建会话名额
@@ -14,6 +14,20 @@ US-001）。
    刷新新鲜度 / DELETE 幂等 / reset；
 6. DELETE 路由幂等（条目不在也 ``200 {ok:true}``）+ 路由注册白盒 + env 容错
    回退（reload 口径）+ AST 分层守卫（禁 import server，sessions 同款）。
+
+US-002（恢复端点）覆盖：
+7. 全链（真实 commit：ezdxf 合成母版 → /api/commit-to-nesting → checkpoint →
+   FakeClock 过期逐出 → 新 sid recover 200）：新会话 pieces/manifest 与快照
+   逐字段一致（build_pid_meta 同 form 重算对拍）+ 守恒通过 + recovered_from
+   回显 + edit_hold 生效 + checkpoint 已删（single-use）；
+8. 错误路径五路：不在 404 / 超 TTL 404（store 惰性清除）/ 双次恢复第二次 404 /
+   满员 429（checkpoint 不删可重试）/ 坏 from_sid 400（缺失·非字符串·非法
+   字符·非 JSON body）；
+9. 闸门序：坏快照字节 → 400 且不建会话名额（解析在 resolve 之前）+ 条目不删；
+   解析经 run_in_threadpool（白盒 spy）；
+10. 会话语义：新 sid 命中墓碑（误带旧 sid）→ 401 结构化；无 sid 头 → default
+    会话 runtime 原子重绑（state_restore 同语义）+ 响应键集同形 + additive
+    recovered_from；路由接线白盒（仅 POST）。
 
 会话快照直接注入（registry.resolve + st.state = 合成 state，套路同
 test_web_statefile）；另含 statefile ``rebuild_session_from_document`` 抽取的
@@ -483,7 +497,7 @@ def test_checkpoint_module_layering_purity():
     延迟 import，strategy 禁 cli 同写法）。"""
     src = Path(checkpoint_mod.__file__).read_text(encoding='utf-8')
     tree = ast.parse(src)
-    allowed = {'__future__', 'gzip', 'json', 'sys', 'threading', 'time',
+    allowed = {'__future__', 'asyncio', 'gzip', 'json', 'sys', 'threading', 'time',
                'collections', 'typing', 'fastapi', 'materialsorting'}
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -521,3 +535,282 @@ def test_rebuild_session_from_document_shape():
     assert res['run']['placed'] == _placed()
     assert res['quantities_base'] == {'g01': 2}
     assert sessions.registry.peek(sid).state['doc']['doc_id'] == res['doc_id']
+
+
+# ---------------------------------------------------------------- US-002 /api/state-recover
+
+@pytest.fixture
+def commit_env(tmp_path, monkeypatch):
+    """commit 隔离环境：UPLOADS_DIR 与 paths.INTERMEDIATE 指到 tmp_path
+    （套路同 tests/test_commit_sessions.py，真实 commit 全链测试用）。"""
+    from materialsorting import paths as paths_mod
+    uploads = tmp_path / 'uploads'
+    uploads.mkdir()
+    monkeypatch.setattr(server_mod, 'UPLOADS_DIR', uploads)
+    monkeypatch.setattr(paths_mod, 'INTERMEDIATE', str(tmp_path / 'mirror.json'))
+    return uploads
+
+
+def _make_master_dxf(path):
+    """合成母版（单码 30 × 2 有码号 block；ezdxf R12 闭合 POLYLINE，套路同
+    test_commit_sessions._make_master_dxf）。"""
+    import ezdxf
+    from ezdxf.lldxf.const import POLYLINE_CLOSED
+    doc = ezdxf.new('R12')
+    for name, (x, y, w, h) in (('blk x', (0, 0, 400, 700)), ('zz 9', (10, 10, 200, 90))):
+        blk = doc.blocks.new(name=f'{name}.30')
+        poly = blk.add_polyline2d(
+            [(x, y), (x + w, y), (x + w, y + h), (x, y + h)],
+            dxfattribs={'layer': '1'})
+        poly.dxf.flags = poly.dxf.flags | POLYLINE_CLOSED
+        blk.add_line((x + 10, y + h / 2), (x + w - 10, y + h / 2),
+                     dxfattribs={'layer': '7'})
+    doc.saveas(str(path))
+    return path
+
+
+def test_recover_full_chain_after_real_commit(client, commit_env, monkeypatch):
+    """AC 全链：真实 commit 会话 → checkpoint → 会话过期逐出 → 新 sid recover →
+    新会话 pieces/manifest 与快照逐字段一致 + 守恒通过 + recovered_from 回显 +
+    checkpoint 已删（single-use）。"""
+    from materialsorting.web import edit_hold
+    from materialsorting.web.solver import build_pid_meta
+    from materialsorting.web.statefile import (
+        check_placed_conservation, expected_demand_map)
+
+    doc_id = 'recovdoc1'
+    _make_master_dxf(commit_env / f'{doc_id}.dxf')
+    sid_old = 'recov0001'
+    r = client.post('/api/commit-to-nesting',
+                    json={'doc_id': doc_id, 'filename': '5336恢复母版.dxf'},
+                    headers={'X-Session-Id': sid_old})
+    assert r.status_code == 200, r.text
+    st_old = sessions.registry.peek(sid_old)
+    assert st_old.pieces                            # 真实 commit 快照在场
+
+    form, quantities = _form(), _quantities()
+    demand = expected_demand_map(st_old.pieces, sizes=form['sizes'],
+                                 per_type=form['per_type'], quantities=quantities)
+    assert set(demand) == {'g01_30', 'g02_30'} and sum(demand.values()) == 3
+    placed = [{'id': pid, 'rotation': 0.0, 'translation': [float(i * 10), 0.0]}
+              for i, (pid, n) in enumerate(demand.items()) for _ in range(n)]
+    run = {'seed': 0, 'final': {'density': 0.84, 'width_mm': 7523.0},
+           'placed': placed}
+    rc = client.post('/api/state-checkpoint', headers={'X-Session-Id': sid_old},
+                     json={'form': form, 'quantities': quantities, 'run': run})
+    assert rc.status_code == 200 and rc.json() == {'stored': True}
+    snap_bytes = checkpoint_mod.store.get(sid_old)
+
+    # 会话过期逐出（FakeClock：重定基 last_active → 推进超 TTL → 扫描墓碑）
+    clk = _FakeClock()
+    monkeypatch.setattr(sessions.registry, 'clock', clk)
+    st_old.last_active = clk()
+    clk.advance(sessions.registry.ttl_sec + 1.0)
+    assert sid_old in sessions.registry.scan_once()
+    assert sessions.registry.tombstoned(sid_old)
+    assert checkpoint_mod.store.get(sid_old) == snap_bytes   # 快照不受逐出影响
+
+    sid_new = 'recov0002'
+    rr = client.post('/api/state-recover', headers={'X-Session-Id': sid_new},
+                     json={'from_sid': sid_old})
+    assert rr.status_code == 200, rr.text
+    res = rr.json()
+    assert res['recovered_from'] == sid_old          # additive 来源回显
+
+    snap = parse_state_document(snap_bytes)
+    st_new = sessions.registry.peek(sid_new)
+    assert st_new is not None
+    assert st_new.state['pieces'] == snap['doc']['pieces']          # 逐字段一致
+    assert st_new.state['pieces_by_id'].keys() == \
+        {p['pid'] for p in snap['doc']['pieces']}
+    assert st_new.doc_id == res['doc_id'] != doc_id                  # 身份铸新
+    assert res['filename'] == '5336恢复母版.dxf'
+    assert res['form'] == form and res['quantities'] == quantities
+    assert res['run'] == run and res['placed'] == placed
+
+    pid_meta, total_area, n_eroded = build_pid_meta(
+        snap['doc']['pieces'], sizes=snap['form']['sizes'],
+        per_type=snap['form']['per_type'], quantities=snap['quantities'])
+    man = res['manifest']
+    assert man['gate_mm'] == 1750.0                                 # form 口径
+    assert man['total_area_mm2'] == total_area and man['n_eroded'] == n_eroded
+    assert {p['id']: p['demand'] for p in man['pieces']} == \
+        {pid: m['demand'] for pid, m in pid_meta.items()}
+    for piece in man['pieces']:
+        meta = pid_meta[piece['id']]
+        assert piece['polygon'] == meta['polygon']
+        assert piece['raw_polygon'] == meta['raw_polygon']
+        assert piece['area_mm2'] == meta['area_mm2']
+        assert piece['label'] == meta['label']
+
+    check_placed_conservation(res['placed'], st_new.pieces,
+                              sizes=snap['form']['sizes'],
+                              per_type=snap['form']['per_type'],
+                              quantities=snap['quantities'])        # 守恒通过
+    assert checkpoint_mod.store.get(sid_old) is None                # single-use 已删
+    assert edit_hold.hold_until(sid_new) is not None                # rebuild 内含 refresh
+
+
+def test_recover_not_found_404(client):
+    """AC 错误路径：checkpoint 不在（从未写入）→ 404 {code:'checkpoint_not_found'}
+    结构化 JSON，且不建会话。"""
+    r = client.post('/api/state-recover', headers={'X-Session-Id': 'recov0101'},
+                    json={'from_sid': 'never0001'})
+    assert r.status_code == 404
+    assert r.json()['code'] == 'checkpoint_not_found'
+    assert r.json()['error']
+    assert sessions.registry.peek('recov0101') is None
+
+
+def test_recover_ttl_expired_404(client, monkeypatch):
+    """AC 错误路径：checkpoint 超 TTL（store 惰性清除）→ 同 404（get→None 单一判据）。"""
+    clk = _FakeClock()                 # 先挂假时钟：条目 ts 与推进同基线
+    monkeypatch.setattr(checkpoint_mod.store, 'clock', clk)
+    sid_old = 'recov0110'
+    _sid_session(sid_old)
+    r = client.post('/api/state-checkpoint', headers={'X-Session-Id': sid_old},
+                    json={'form': _form(), 'quantities': _quantities()})
+    assert r.json() == {'stored': True}
+    assert checkpoint_mod.store.get(sid_old) is not None
+    clk.advance(checkpoint_mod.store.ttl_sec + 1.0)
+    r2 = client.post('/api/state-recover', headers={'X-Session-Id': 'recov0111'},
+                     json={'from_sid': sid_old})
+    assert r2.status_code == 404 and r2.json()['code'] == 'checkpoint_not_found'
+
+
+def test_recover_double_recovery_second_404(client):
+    """AC 错误路径：双次恢复 → 第二次 404（single-use：条目已删）。"""
+    sid_old = 'recov0120'
+    _sid_session(sid_old)
+    client.post('/api/state-checkpoint', headers={'X-Session-Id': sid_old},
+                json={'form': _form(), 'quantities': _quantities(), 'run': _run()})
+    r1 = client.post('/api/state-recover', headers={'X-Session-Id': 'recov0121'},
+                     json={'from_sid': sid_old})
+    assert r1.status_code == 200 and r1.json()['recovered_from'] == sid_old
+    r2 = client.post('/api/state-recover', headers={'X-Session-Id': 'recov0122'},
+                     json={'from_sid': sid_old})
+    assert r2.status_code == 404 and r2.json()['code'] == 'checkpoint_not_found'
+
+
+def test_recover_session_limit_429_checkpoint_kept(client):
+    """AC 错误路径：满员 resolve(新 sid) → 429 {code:'session_limit'} 结构化透传，
+    且 checkpoint 不删（名额腾出后重试仍可恢复）。"""
+    reg = sessions.registry
+    sid_old = 'recov0130'
+    _sid_session(sid_old)
+    for i in range(reg.max_sessions - 1):
+        client.post('/api/session', headers={'X-Session-Id': f'recovfull{i}'})
+    assert reg.active_count == reg.max_sessions
+    rc = client.post('/api/state-checkpoint', headers={'X-Session-Id': sid_old},
+                     json={'form': _form(), 'quantities': _quantities(),
+                           'run': _run()})
+    assert rc.json() == {'stored': True}
+    snap = checkpoint_mod.store.get(sid_old)
+    r = client.post('/api/state-recover', headers={'X-Session-Id': 'recov0131'},
+                    json={'from_sid': sid_old})
+    assert r.status_code == 429
+    assert r.json()['code'] == 'session_limit'
+    assert checkpoint_mod.store.get(sid_old) == snap      # 未删（可重试）
+    assert reg.peek('recov0131') is None                  # 未建会话
+
+
+def test_recover_bad_from_sid_400(client):
+    """AC 错误路径：坏 from_sid（非法字符 / 缺失 / 非字符串 / 非 JSON body）→ 400。"""
+    h = {'X-Session-Id': 'recov0140'}
+    r = client.post('/api/state-recover', headers=h, json={'from_sid': 'bad-sid!'})
+    assert r.status_code == 400 and r.json() == {'error': 'from_sid 非法'}
+    r = client.post('/api/state-recover', headers=h, json={})
+    assert r.status_code == 400
+    r = client.post('/api/state-recover', headers=h, json={'from_sid': 123})
+    assert r.status_code == 400
+    r = client.post('/api/state-recover', headers=h, content='not-json')
+    assert r.status_code == 400
+
+
+def test_recover_corrupt_snapshot_400_no_slot(client):
+    """AC：坏快照字节 → 400（校验链同 state_restore 契约）；解析在会话 resolve
+    之前 —— 坏数据不占会话名额；条目不删。"""
+    sid_old = 'recov0150'
+    _sid_session(sid_old)
+    checkpoint_mod.store.put(sid_old, b'corrupt-not-gzip-json')
+    n_active = sessions.registry.active_count
+    r = client.post('/api/state-recover', headers={'X-Session-Id': 'recov0151'},
+                    json={'from_sid': sid_old})
+    assert r.status_code == 400 and '状态文件损坏' in r.json()['error']
+    assert sessions.registry.active_count == n_active
+    assert sessions.registry.peek('recov0151') is None
+    assert checkpoint_mod.store.get(sid_old) == b'corrupt-not-gzip-json'
+
+
+def test_recover_into_tombstoned_new_sid_401(client, monkeypatch):
+    """新 sid 命中墓碑（前端误带旧 sid 恢复）→ 401 {code:'session_expired'}；
+    checkpoint 不删。"""
+    clk = _FakeClock()
+    monkeypatch.setattr(sessions.registry, 'clock', clk)
+    sid_old = 'recov0180'
+    st = _sid_session(sid_old)
+    client.post('/api/state-checkpoint', headers={'X-Session-Id': sid_old},
+                json={'form': _form(), 'quantities': _quantities(), 'run': _run()})
+    clk.advance(sessions.registry.ttl_sec + 1.0)
+    assert sid_old in sessions.registry.scan_once()       # 旧 sid 入墓碑
+    r = client.post('/api/state-recover', headers={'X-Session-Id': sid_old},
+                    json={'from_sid': sid_old})
+    assert r.status_code == 401 and r.json()['code'] == 'session_expired'
+    assert checkpoint_mod.store.get(sid_old) is not None
+
+
+def test_recover_parse_runs_in_threadpool(client, monkeypatch):
+    """解析经 run_in_threadpool（不阻塞事件循环；白盒 spy，state_restore 同款）。"""
+    calls: list[str] = []
+    orig = checkpoint_mod.run_in_threadpool
+
+    async def _spy(func, *args, **kwargs):
+        calls.append(getattr(func, '__name__', str(func)))
+        return await orig(func, *args, **kwargs)
+
+    monkeypatch.setattr(checkpoint_mod, 'run_in_threadpool', _spy)
+    sid_old = 'recov0160'
+    _sid_session(sid_old)
+    client.post('/api/state-checkpoint', headers={'X-Session-Id': sid_old},
+                json={'form': _form(), 'quantities': _quantities()})
+    r = client.post('/api/state-recover', headers={'X-Session-Id': 'recov0161'},
+                    json={'from_sid': sid_old})
+    assert r.status_code == 200
+    assert calls == ['parse_state_document']
+
+
+def test_recover_default_session_and_response_shape(client):
+    """无 sid 头 → default 会话（runtime 原子重绑，state_restore 同语义）+
+    recovered_from 回显；响应键集 = state-restore 成功响应同形 + additive 一键。"""
+    state = server_mod._PIECES_STATE
+    saved = dict(state)
+    state.clear()
+    state.update(_state())
+    try:
+        sid_old = 'recov0170'
+        _sid_session(sid_old)
+        client.post('/api/state-checkpoint', headers={'X-Session-Id': sid_old},
+                    json={'form': _form(), 'quantities': _quantities(),
+                          'quantities_base': {'g01': 2}, 'run': _run()})
+        r = client.post('/api/state-recover', json={'from_sid': sid_old})
+        assert r.status_code == 200
+        res = r.json()
+        assert set(res) == {'doc_id', 'filename', 'parse', 'manifest', 'final',
+                            'placed', 'run', 'quantities_base', 'form',
+                            'quantities', 'recovered_from'}
+        assert res['recovered_from'] == sid_old
+        assert res['quantities_base'] == {'g01': 2}
+        assert sessions.registry.resolve(None).state is state
+        assert state['doc']['doc_id'] == res['doc_id']
+        assert checkpoint_mod.store.get(sid_old) is None
+    finally:
+        state.clear()
+        state.update(saved)
+
+
+def test_recover_route_registered():
+    """路由接线白盒：/api/state-recover 在场且仅 POST。"""
+    hits = [rt for rt in server_mod.app.routes
+            if getattr(rt, 'path', '') == '/api/state-recover']
+    assert hits
+    assert set().union(*(rt.methods for rt in hits)) == {'POST'}

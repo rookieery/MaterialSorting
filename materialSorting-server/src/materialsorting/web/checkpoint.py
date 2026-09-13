@@ -21,6 +21,18 @@ tasks/prd-session-expiry-auto-recovery.md FR-3）。
   （last-good，FR-2：自动后台任务不打扰用户）；成功 → ``200 {stored:true}``。
 - ``DELETE /api/state-checkpoint``：幂等清除（条目不存在也 ``200 {ok:true}``；
   F5 干净重置防「稍后再过期恢复出 F5 前旧状态」幽灵回潮，US-004 消费）。
+- ``POST /api/state-recover``（US-002）：刷新后启动期恢复 —— 前端铸新 sid 放
+  ``X-Session-Id``，body ``{from_sid: 旧sid}``。闸门序（与 state_restore 同序）：
+  from_sid 过 ``SID_RE``（非法/缺失 → 400）→ ``store.get(from_sid)`` 不在 / 超
+  TTL → ``404 {code:'checkpoint_not_found'}`` → ``run_in_threadpool(
+  parse_state_document)``（解析在会话 resolve **之前**，坏数据不占会话名额；
+  校验链失败 → 400/413 同 state_restore 契约）→ ``registry.resolve(new_sid,
+  create=True)``（commit 先例；429 session_limit 结构化透传，**checkpoint 不删**
+  留待重试）→ ``statefile.rebuild_session_from_document`` 共享重建（sid 在场时
+  内含 ``edit_hold.refresh(new_sid)``）+ additive ``recovered_from: from_sid``
+  键（响应与 state-restore 成功响应同形，前端直接复用 applyRestorePayload）→
+  **恢复成功即删该 checkpoint 条目**（single-use：旧 sid 已入墓碑永不复用，
+  防多 Tab 反复恢复放大名额占用）。
 
 env：``MS_CHECKPOINT_TTL_SEC``（缺省 7200，对齐恢复窗 = 过期后墓碑 1h + 会话
 TTL 10min + 余量 —— 超窗 checkpoint 无消费方，纯内存浪费）/ ``MS_CHECKPOINT_MAX``
@@ -31,6 +43,7 @@ sessions.py 同款先例）。
 """
 from __future__ import annotations
 
+import asyncio
 import gzip
 import json
 import sys
@@ -40,12 +53,14 @@ from collections import OrderedDict
 from typing import Callable
 
 from fastapi import Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 
 from .sessions import (
     DEFAULT_SID,
     SID_RE,
     InvalidSidError,
+    SessionError,
     SessionExpiredError,
     _env_float,
     _env_int,
@@ -53,10 +68,12 @@ from .sessions import (
 )
 from .statefile import (
     StateConservationError,
+    StateFileError,
     _valid_base_map,
     build_state_document,
     check_placed_conservation,
     parse_state_document,
+    rebuild_session_from_document,
     serialize_state,
 )
 
@@ -64,6 +81,7 @@ __all__ = [
     'CHECKPOINT_MAX',
     'CHECKPOINT_TTL_SEC',
     'register_checkpoint_routes',
+    'state_recover',
     'store',
 ]
 
@@ -249,14 +267,97 @@ async def checkpoint_delete(request: Request):
     return {'ok': True}
 
 
+# ---------------------------------------------------------------- POST /api/state-recover（US-002）
+
+# 404 文案：快照不在（从未写入 / TTL 惰性清除 / 已被恢复消费）与超 TTL 同走
+# store.get → None 单一判据，语义上都是「无可恢复工作状态」。
+_CHECKPOINT_NOT_FOUND_MESSAGE = '未找到可恢复的工作状态（快照不存在或已过期）'
+
+
+def _recover_session(sid: str | None, from_sid: str, document: dict) -> tuple[dict, int]:
+    """恢复内核（解析后段；handler 委派，测试/__main__ 冒烟直调）。
+
+    ``document`` 已过 ``parse_state_document`` 校验链（handler 经 threadpool
+    解析后传入）。流程 = ``registry.resolve(sid, create=True)``（commit 先例：
+    恢复写入**当前（新）sid**，等价「再上传母版 commit」覆盖语义；过期 401 /
+    超限 429 / 非法 400 结构化透传 —— 429 时 **checkpoint 不删**，名额腾出后
+    重试仍可恢复）→ ``rebuild_session_from_document`` 共享重建（响应与
+    state-restore 成功响应同形；sid 在场时内含 ``edit_hold.refresh(sid)``）→
+    additive ``recovered_from: from_sid`` → 恢复成功即删该 checkpoint 条目
+    （single-use：防多 Tab 反复恢复放大名额占用）。
+    """
+    try:
+        session_registry.resolve(sid, create=True)
+    except SessionError as e:
+        return e.payload(), e.status
+    res = rebuild_session_from_document(document, sid)
+    res['recovered_from'] = from_sid      # additive：state-restore 同形 + 来源回显
+    store.delete(from_sid)                # single-use：成功消费即删
+    return res, 200
+
+
+async def state_recover(request: Request):
+    """POST /api/state-recover：旧 sid 的 checkpoint → 恢复成当前（新）会话。
+
+    请求 ``X-Session-Id = 新 sid``（前端铸新后携带；缺省 → default 会话，
+    state_restore 同语义）+ body ``{from_sid: 旧sid}``。闸门序（state_restore
+    同序，详见模块 docstring）：from_sid 校验 → checkpoint 查找 → threadpool
+    解析（坏数据不占会话名额）→ 会话 resolve → 共享重建 + 删条目。成功响应 =
+    state-restore 成功响应同形 + ``recovered_from``；404/400/413/401/429 全
+    结构化 JSON。
+    """
+    sid = (request.headers.get('x-session-id') or '').strip() or None
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = None   # 非 JSON body → from_sid 缺失分支 400
+    from_sid = payload.get('from_sid') if isinstance(payload, dict) else None
+    if not isinstance(from_sid, str) or not SID_RE.match(from_sid):
+        return JSONResponse({'error': 'from_sid 非法'}, status_code=400)
+
+    raw = store.get(from_sid)   # 不在 / 超 TTL（惰性清除）→ None 单一判据
+    if raw is None:
+        return JSONResponse(
+            {'code': 'checkpoint_not_found', 'error': _CHECKPOINT_NOT_FOUND_MESSAGE},
+            status_code=404)
+
+    # 解析先行（threadpool，state_restore 同序）：坏快照不触发会话 resolve、
+    # 不建会话名额（快照由本服务 serialize_state 产出，校验链失败 ≈ 内存损坏，
+    # 但闸门序保证失败路径零副作用）。
+    try:
+        document = await run_in_threadpool(parse_state_document, raw)
+    except StateFileError as e:
+        return JSONResponse({'error': e.message}, status_code=e.status)
+
+    body, status = _recover_session(sid, from_sid, document)
+    return JSONResponse(body, status_code=status)
+
+
 def register_checkpoint_routes(app) -> None:
     """把 checkpoint 路由挂到 FastAPI app（server.py 文件尾调用一次；statefile/
     strategy 同模式）。"""
     app.post('/api/state-checkpoint')(state_checkpoint)
     app.delete('/api/state-checkpoint')(checkpoint_delete)
+    app.post('/api/state-recover')(state_recover)
 
 
 # ---------------------------------------------------------------- __main__ 自检
+
+class _FakeRequest:
+    """最小 Request 桩（__main__ 冒烟驱动 async handler：headers + json body）。"""
+
+    def __init__(self, headers: dict, json_body):
+        self.headers = headers
+        self._json_body = json_body
+
+    async def json(self):
+        if self._json_body is _NOT_JSON:
+            raise ValueError('not json')
+        return self._json_body
+
+
+_NOT_JSON = object()
+
 
 def _smoke_doc():
     """合成会话 state（statefile._smoke_piece 同款 5 层全量裁片夹具）。"""
@@ -273,12 +374,15 @@ def _smoke_doc():
 def _smoke() -> int:
     """``python -m materialsorting.web.checkpoint``：合成夹具全链自检。
 
-    两段：① ``_CheckpointStore`` 单元生命周期（假时钟：写入→读回逐字节对拍 /
+    三段：① ``_CheckpointStore`` 单元生命周期（假时钟：写入→读回逐字节对拍 /
     TTL 惰性清理 / FIFO 逐出 / 重复 put 刷新 / DELETE 幂等）；②
     ``_store_checkpoint`` 端点内核全路径（私有会话注入单例 registry：
     stored:true → gunzip + parse_state_document 对拍 / empty / conservation
     last-good / 非法 sid 400 / 死会话 401 / save_as 容忍 / peek 不刷 last_active
-    / DELETE 生命周期）。
+    / DELETE 生命周期）；③ ``state_recover`` 全链（真实 handler 经 _FakeRequest：
+    过期逐出 → 新 sid 恢复 200 同形响应 + recovered_from + 守恒 + single-use 删
+    条目 + edit_hold 生效；双次恢复 404 / 坏 from_sid 400 / 不在 404 / 坏快照
+    400 不占名额）。
     """
     from .sessions import _FakeClock
 
@@ -315,7 +419,7 @@ def _smoke() -> int:
     reg.reset()
     store.reset()
     real_clock = reg.clock
-    reg.clock = _FakeClock()
+    reg.clock = clk          # 复用①的假时钟（③ recover 过期链同一时钟推进）
     try:
         doc, state = _smoke_doc()
         form = {'sizes': [30], 'gate': '175.00', 'time': '120', 'seed': '0',
@@ -390,6 +494,73 @@ def _smoke() -> int:
 
         check('DELETE：在场删除后读回 None，再次 DELETE 幂等',
               store.delete(sid) is True and store.get(sid) is None)
+
+        # ------------------------------------------------ ③ recover 全链（US-002）
+        from . import edit_hold
+
+        sid_old = 'ckpts010'
+        st_old = reg.resolve(sid_old, create=True)
+        st_old.state = state
+        _store_checkpoint(sid_old, {'form': form, 'quantities': quantities,
+                                    'run': run})
+        snap_bytes = store.get(sid_old)
+        clk.advance(reg.ttl_sec + 1.0)       # 会话超 TTL（checkpoint 不受影响）
+        check('recover 前置：过期扫描逐出旧 sid 为墓碑，checkpoint 字节不受会话'
+              '逐出影响',
+              sid_old in reg.scan_once() and reg.tombstoned(sid_old)
+              and reg.peek(sid_old) is None and store.get(sid_old) == snap_bytes)
+
+        sid_new = 'ckpts011'
+        resp = asyncio.run(state_recover(
+            _FakeRequest({'x-session-id': sid_new}, {'from_sid': sid_old})))
+        res = json.loads(resp.body)
+        check('recover：过期会话 → 新 sid 恢复 200', resp.status_code == 200)
+        check('recover：响应 = state-restore 成功响应同形 + additive recovered_from',
+              set(res) == {'doc_id', 'filename', 'parse', 'manifest', 'final',
+                           'placed', 'run', 'quantities_base', 'form',
+                           'quantities', 'recovered_from'}
+              and res['recovered_from'] == sid_old)
+        check('recover：新会话 pieces/pieces_by_id 与快照逐字段一致',
+              reg.peek(sid_new).state['pieces'] == doc['pieces']
+              and set(reg.peek(sid_new).state['pieces_by_id']) == {'g01_30', 'g02_30'})
+        check('recover：form/quantities/run 逐字段回显',
+              res['form'] == form and res['quantities'] == quantities
+              and res['run']['placed'] == placed)
+        try:
+            check_placed_conservation(
+                res['placed'], reg.peek(sid_new).state['pieces'],
+                sizes=form.get('sizes'), per_type=form.get('per_type'),
+                quantities=quantities)
+            check('recover：守恒通过（placed == demand 重算口径）', True)
+        except StateConservationError:
+            check('recover：守恒通过（placed == demand 重算口径）', False)
+        check('recover：checkpoint 已删（single-use）', store.get(sid_old) is None)
+        check('recover：edit_hold.refresh(new_sid) 已生效（rebuild 内含）',
+              edit_hold.hold_until(sid_new) is not None)
+
+        resp2 = asyncio.run(state_recover(
+            _FakeRequest({'x-session-id': 'ckpts012'}, {'from_sid': sid_old})))
+        check('recover：双次恢复第二次 → 404 {code:checkpoint_not_found}',
+              resp2.status_code == 404
+              and json.loads(resp2.body)['code'] == 'checkpoint_not_found')
+        resp3 = asyncio.run(state_recover(
+            _FakeRequest({'x-session-id': 'ckpts013'}, {'from_sid': 'bad!'})))
+        check('recover：坏 from_sid → 400 {error:from_sid 非法}',
+              resp3.status_code == 400
+              and json.loads(resp3.body) == {'error': 'from_sid 非法'})
+        resp4 = asyncio.run(state_recover(
+            _FakeRequest({'x-session-id': 'ckpts014'}, {'from_sid': 'neverreg1'})))
+        check('recover：checkpoint 不在（从未写入）→ 404',
+              resp4.status_code == 404
+              and json.loads(resp4.body)['code'] == 'checkpoint_not_found')
+        store.put('ckpts015', b'corrupt-bytes')   # 直接注入坏快照字节
+        n_before = reg.active_count
+        resp5 = asyncio.run(state_recover(
+            _FakeRequest({'x-session-id': 'ckpts016'}, {'from_sid': 'ckpts015'})))
+        check('recover：坏快照 → 400 状态文件损坏 且不建会话名额（解析在 resolve 前）',
+              resp5.status_code == 400
+              and '状态文件损坏' in json.loads(resp5.body)['error']
+              and reg.active_count == n_before and reg.peek('ckpts016') is None)
     finally:
         reg.clock = real_clock
         store.reset()
