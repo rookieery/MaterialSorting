@@ -1315,3 +1315,41 @@ api.ts 探测分支 / sid 生命周期 / 弹窗文案前先读本节。
   应用不自动关弹窗（显式按钮语义）—— 冒烟切 Tab 前须先点 strategy-close。改
   strategyStore / stateFile / sessionCheckpoint / NestingPage.applyStrategyResult /
   statefile.py 任一处后应复跑。
+
+## 策略待确认结果 US-003 关键约定（端到端冒烟验收与文档闭环；2026-09-13）
+
+- **主冒烟扩展 `scripts/smoke_session_recovery.mjs`**（US-005 五路径脚本原地扩展，
+  报告 `out/smoke_session_recovery/report.txt`）：三相位结构，命令行可传逗号子集
+  分段复跑（`node scripts/smoke_session_recovery.mjs pending,extreme,legacy`，
+  缺省全量；**验收口径 = 缺省全量一跑全绿**，分段仅定位切片、段间 sid 链不连续
+  属预期）。
+- **起服 env 四件套**：`MS_SESSION_TTL_SEC=60`（极短 TTL；须 > 深度解析+commit
+  单程 ~40s）/ `MS_SESSION_MAX=1`（legacy P5 429 双客户端）/ `MS_EDIT_HOLD_SEC=5`
+  （recover 给新会话挂 edit_hold 钉住，生产缺省 600s 会挡后续过期相位）/
+  **`MS_RESULT_GRACE_SEC=3`（US-003 新增）** —— 策略/极限 run 终态宽限窗收敛，
+  「跑完不确认 → 宽限窗外过期」相位只等 75s（TTL 60 + 余量）而非生产 600s。
+- **pending 段（M1-M7，US-003 主路径 + 续段②③）sid 链 A→B→C→D**：race 10min
+  （UI 最短档，early_termination 收敛即提前完）不确认 → M3 槽落 checkpoint 断言
+  （stored:true + mode=race + **无 run 块**：未应用 ⇒ 槽独占）→ M4 过期刷新恢复：
+  recover 200 响应回传 pending（mode/密度/placed 逐条守恒 + run=null 无双份数据）+
+  **对应族弹窗自动打开且为结果态**（密度与过期前对拍）→ M5 待确认期改数量
+  （g01×32，**必须改勾选码号内尺寸** —— 改 g01@30 不进 demand、守恒不红）未重解
+  → checkpoint 200 `{stored:false,reason:'conservation'}`（被拒载荷确为半态）→
+  再过期恢复**改前完整快照**（数量矩阵回 1/总 111 + 弹窗重现 + 恢复态重落 checkpoint
+  自我延续）→ M6 应用（run 块入档槽退场 → 主画布 polygon 数 = 槽 placed 条数 +
+  状态行/来源小字 + **导出 PLT：POST /export placed 与过期前槽逐条一致**）→
+  M7 应用后再过期：已应用 run 恢复 + `pending=null` + **任何族弹窗不开**
+  （无 pending 老快照行为与 US-004/005 时代对拍不变）。
+- **extreme 段（X1-X4，续段①）**：极限运行弹窗自定义 16min（UI 下限 960s ≥ 后端
+  905s 下限；early_termination 固化 False 全预算 ~905s+）同款 —— mode=extreme 槽、
+  与已应用 run 块**并存**、恢复后极限族弹窗自动开（策略族 overlay 计数 0 不串台）、
+  应用后来源小字「极限运行」。全量跑总时长 ~40min（race 收敛 + extreme 905s +
+  6×75s 过期相位）。
+- **legacy 段（S1+P1-P5，US-005 原样回归锁）**：重铺 5s 求解后再跑五路径。
+  **S1c 改「#start 前后 checkpoint 索引」探测**（cpCount0 之后的 POST）——
+  pending/extreme 已应用过 run 时保存按钮恒解锁，旧 waitSolveDone 探测会瞬间
+  假通过；P1-P5 断言与 US-005 版逐字一致。
+- **改这些后必复跑**：strategyStore / stateFile(buildPendingBlock·applyRestorePayload) /
+  sessionCheckpoint / NestingPage.applyStrategyResult / checkpoint.py·statefile.py /
+  strategy.py（RESULT_GRACE 语义）任一处；以及本脚本自身改动。复跑顺序建议
+  `legacy`（~8min 快速锁基础设施）→ `pending` → `extreme` → 缺省全量定稿。

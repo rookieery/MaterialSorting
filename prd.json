@@ -1,17 +1,11 @@
 {
-  "branchName": "ralph/strategy-pending-result-checkpoint",
-  "stories": [
-    {
-      "id": "US-002",
-      "title": "前端：拉取即落快照与恢复还原弹窗态",
-      "description": "As a 排料工程师, I want done 结果拉取落定瞬间即随 checkpoint 落快照、应用后自动退出该槽；过期刷新恢复（或 .msn 恢复）后待确认结果写回对应族 store 并自动打开弹窗落在结果态，so that 我看到「上次的运行结果还在等确认」，一键应用即可，不需要知道发生过期。\n\n用户定案（2026-09-13）：恢复后自动打开弹窗（不做 toast+徽标降级）；该槽进手动 .msn（单一 buildSavePayload 路径天然携带，不剔除）。\n\n具体任务：\n1. materialSorting-web/src/store/strategyStore.ts（createRunStore 工厂，strategy/extreme 两族同改）— state 增 resultApplied: boolean（初值 false；start/reset 随 result:null 一起清）+ action markResultApplied()；materialSorting-web/src/components/NestingPage.tsx 的 applyStrategyResult 委托 applySyntheticRun 后按 result 归属族调用置位。\n2. materialSorting-web/src/lib/stateFile.ts — buildSavePayload 增发 pending_strategy_result（省键式）：取两族 store 中 result !== null && !resultApplied 者（双族 409 单飞 ⇒ 至多一个在场），best.placed_items 经 deepCopyPlaced 深拷贝（载荷与 store 解耦既有约定）；types/stateFile.ts 增槽类型并让 StateSavePayload/StateRestoreResponse 对齐。\n3. materialSorting-web/src/lib/sessionCheckpoint.ts — 触发面增订阅两族 store：result null→非空（done 结果落定 = 价值最高时刻）→ 立即 flushCheckpoint（不等去抖）；resultApplied false→true → 立即 flush（与 markRunDone 观察者 flush 经 sendQueued 合并语义天然一发）；既有五触发面（form/qty/run done/edit save/hidden/pagehide）不变——载荷发送时刻现取，该槽自然随行。\n4. materialSorting-web/src/lib/stateFile.ts applyRestorePayload — 增第 6 步：res.pending_strategy_result 在场 → 按 mode 路由（'extreme' → useExtremeStore；'se'/'race' → useStrategyStore）setState：phase:'done'、status:null、result:{state:'done', mode, run_dir:null, manifest:{...res.manifest}（恢复端重算值）, best, summary}、errorMessage:null、lastStart:null、resultApplied:false；随后 useControlPanelStore.getState().openModal(mode==='extreme' ? 'extreme_run' : 'strategy_run') 自动打开对应弹窗（写回为 store 直写、不依赖组件挂载时序；.msn 手动恢复与 sessionRecovery 启动期恢复两条路径同享）。\n5. strategyStore.refresh idle 采纳守卫（两族同改，恢复路径成立的必要条件）：st.state==='idle' 且 get().result !== null && get().phase==='done'（恢复写回态）→ 不降级 phase——新 sid 后端状态槽为空、现行 set({status, phase: st.state}) 恒采纳 idle 会把恢复态打回 idle 抹掉弹窗结果态；result===null 的 stuck starting → idle 既有恢复出口不变。\n6. 弹窗结果态完整可用：summary（race 门杀/se 筛延文案）/best 密度渲染与正常路径一致；「应用到主画布」走既有 applyStrategyResult 零改动链路（清场 + applySyntheticRun + provenance）；恢复后应用 → placed 与过期前 result 逐条一致（translation/rotation/mirror）→ /api/edit-polish 与 /export 正常（pid 命中恢复会话 pieces）。\n\n验收标准：\n- vitest：拉取落定即 flush / applied 后载荷不含该槽 / 无 result 载荷无该键（旧口径对拍）/ 恢复写回字段对拍 / idle 守卫（恢复态 refresh 不降级、stuck starting 出口不变）/ mode 路由两族 / openModal 调用。\n- npm run build 通过；通过浏览器验证恢复弹窗结果态 → 应用 → 布局渲染正确。",
-      "passes": true
-    },
-    {
-      "id": "US-003",
-      "title": "端到端冒烟验收与文档闭环",
-      "description": "As a 项目维护者, I want UI 冒烟覆盖「跑完不确认 → 过期 → 刷新恢复 → 弹窗重现 → 应用 → 导出」全链并把槽契约写进文档，so that 本功能与既有会话恢复体系一起有回归守卫。\n\n具体任务：\n1. materialSorting-web/scripts/smoke_session_recovery.mjs 扩展（playwright 套路同既有）主路径：极短 MS_SESSION_TTL_SEC 起 dev → 上传母版 → 启动策略 run（短预算）→ 不确认、等 run 完成 + 宽限窗外过期 → 刷新 → 启动期恢复 → 断言：对应族弹窗自动打开且为结果态（密度与过期前对拍）→ 点应用 → 主画布 placed 逐条对拍 → 导出 PLT 守恒。\n2. 冒烟续段三路径：极限运行同款；应用后再过期（恢复已应用 run、弹窗不开、无双份数据）；run 中改数量未重解（checkpoint last-good：恢复改前完整快照而非半态）；另加无 pending 老快照恢复行为对拍不变。\n3. 文档：.docs/technical/agent-api-reference.md 的 /api/state-save、/api/state-restore、/api/state-checkpoint+/api/state-recover 专节各补 pending_strategy_result 键（形态/省键/守恒语义/manifest 不入档理由/仅 done 态）；CLAUDE.md statefile.py/checkpoint.py 相关行补一句口径。\n\n验收标准：\n- 冒烟脚本全绿（主路径 + 三续段路径断言如上）。\n- 全量回归：后端 pytest 全绿、前端 vitest 全绿、npm run build 通过、既有 smoke_state_file.mjs 全绿（无 pending 路径对拍不变）。\n- python -m materialsorting.web.statefile 与 python -m materialsorting.web.checkpoint 跑通、分层依赖未反向。",
-      "passes": false
-    }
-  ]
+ "branchName": "ralph/strategy-pending-result-checkpoint",
+ "stories": [
+  {
+   "id": "US-003",
+   "title": "端到端冒烟验收与文档闭环",
+   "description": "As a 项目维护者, I want UI 冒烟覆盖「跑完不确认 → 过期 → 刷新恢复 → 弹窗重现 → 应用 → 导出」全链并把槽契约写进文档，so that 本功能与既有会话恢复体系一起有回归守卫。\n\n具体任务：\n1. materialSorting-web/scripts/smoke_session_recovery.mjs 扩展（playwright 套路同既有）主路径：极短 MS_SESSION_TTL_SEC 起 dev → 上传母版 → 启动策略 run（短预算）→ 不确认、等 run 完成 + 宽限窗外过期 → 刷新 → 启动期恢复 → 断言：对应族弹窗自动打开且为结果态（密度与过期前对拍）→ 点应用 → 主画布 placed 逐条对拍 → 导出 PLT 守恒。\n2. 冒烟续段三路径：极限运行同款；应用后再过期（恢复已应用 run、弹窗不开、无双份数据）；run 中改数量未重解（checkpoint last-good：恢复改前完整快照而非半态）；另加无 pending 老快照恢复行为对拍不变。\n3. 文档：.docs/technical/agent-api-reference.md 的 /api/state-save、/api/state-restore、/api/state-checkpoint+/api/state-recover 专节各补 pending_strategy_result 键（形态/省键/守恒语义/manifest 不入档理由/仅 done 态）；CLAUDE.md statefile.py/checkpoint.py 相关行补一句口径。\n\n验收标准：\n- 冒烟脚本全绿（主路径 + 三续段路径断言如上）。\n- 全量回归：后端 pytest 全绿、前端 vitest 全绿、npm run build 通过、既有 smoke_state_file.mjs 全绿（无 pending 路径对拍不变）。\n- python -m materialsorting.web.statefile 与 python -m materialsorting.web.checkpoint 跑通、分层依赖未反向。",
+   "passes": true
+  }
+ ]
 }
