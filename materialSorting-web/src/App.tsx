@@ -21,6 +21,11 @@
 // 恢复流程（换新 sid + POST /api/state-recover + applyRestorePayload 回显）。
 // SessionRecoveryNotice 单例 = 恢复期间「正在恢复工作状态…」轻加载态。
 //
+// 自动 checkpoint（US-004）：import './lib/sessionCheckpoint' 完成调度接线
+// （form/qty 变更去抖 3s + 求解完成/编辑保存/hidden 立即 + pagehide keepalive，
+// 全部 POST /api/state-checkpoint）；探测落定后 clearCheckpointAfterProbe ——
+// 会话存活即 DELETE 旧快照（F5 = 干净重置，防幽灵回潮）。
+//
 // 数据流：
 //   TabBar setTab → uiStore.activeTab → App 重渲染切 .hidden → NestingPage/PreviewPage 不卸载
 
@@ -38,6 +43,10 @@ import { probeSession } from './lib/api';
 // US-003：模块求值即注册启动期恢复钩子（须先于任何 effect 的 apiFetch ——
 // 静态 import 保证注册在渲染/副作用之前完成）。
 import './lib/sessionRecovery';
+// US-004：模块求值即接线自动 checkpoint 调度（须先于任何 store 变更 —— 静态
+// import 保证订阅/监听在渲染/副作用之前完成；sessionRecovery 同款先例）。
+import './lib/sessionCheckpoint';
+import { clearCheckpointAfterProbe } from './lib/sessionCheckpoint';
 import { useUiStore } from './store/uiStore';
 
 export function App(): React.JSX.Element {
@@ -47,8 +56,13 @@ export function App(): React.JSX.Element {
 
   // US-005：挂载探测会话（幂等建会话/刷活性；429/401 带 code → 阻断弹窗）。
   // StrictMode 双 mount 会探两次 —— POST /api/session 幂等，无害。
+  // US-004：探测落定后启动清理 —— 存活 → DELETE 旧 checkpoint（F5 = 干净重置）；
+  // 401（恢复分支）→ 不清（快照留给启动期恢复消费）。幂等：双 mount 两次 DELETE
+  // 后端容忍（200 {ok:true}）。
   useEffect(() => {
-    void probeSession();
+    void probeSession().then(() => {
+      void clearCheckpointAfterProbe();
+    });
   }, []);
 
   return (

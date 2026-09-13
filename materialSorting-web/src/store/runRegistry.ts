@@ -6,6 +6,11 @@
 //
 // 生命周期：useSolveRun.start(seed) → create(seed) → WS onmessage 推 frame → push(frame)。
 // 新一次 start / cleanup → clear() 关闭所有 WS 并清空。
+//
+// run 达 done 的观察者（会话过期自动恢复 US-004）：markRunDone 是「run 结束」的
+// 单一出口（useSolveRun.finish / synthRunStore.applySyntheticRun 两处调用），
+// 除置 done 外同步通知订阅者 —— lib/sessionCheckpoint 据此在求解完成时刻立即
+// checkpoint（价值最高时刻，不等去抖）。观察者异常被吞（不破坏调用方状态机）。
 
 import type { BandConfig, FinalMsg, FinalPrefixStats, FrameMsg, ManifestMsg, StageMsg } from '../types/ws';
 import type { RunOrigin } from '../types/stateFile';
@@ -62,6 +67,36 @@ export interface RunRecord {
 
 /** 模块级 mutable 数组 —— 跨 hook 实例共享。 */
 const _runs: RunRecord[] = [];
+
+// ---------------------------------------------------------------- done 观察者（US-004）
+
+/** run 达 done 的订阅者（收到已置 done 的 RunRecord；markRunDone 同步通知）。 */
+export type RunDoneListener = (run: RunRecord) => void;
+const _doneListeners = new Set<RunDoneListener>();
+
+/** 订阅 run 达 done（返回退订函数；sessionCheckpoint 模块装载时注册，App 生命周期单例）。 */
+export function subscribeRunDone(fn: RunDoneListener): () => void {
+  _doneListeners.add(fn);
+  return () => {
+    _doneListeners.delete(fn);
+  };
+}
+
+/**
+ * 标记 run 结束并通知观察者（单一出口）：幂等（已 done → no-op）。done 置位与
+ * 通知原子发生 —— 观察者读到的 run 恒已 done（lastFrame/frames 等几何真相已就位）。
+ */
+export function markRunDone(rec: RunRecord): void {
+  if (rec.done) return;
+  rec.done = true;
+  for (const fn of _doneListeners) {
+    try {
+      fn(rec);
+    } catch {
+      // 观察者异常不破坏调用方（useSolveRun 状态机 / 合成落笔）—— 吞。
+    }
+  }
+}
 
 export const runRegistry = {
   /** 创建一个新 run（push 进数组，返回引用以便 hook mutate）。 */

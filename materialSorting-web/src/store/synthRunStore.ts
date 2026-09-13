@@ -34,7 +34,7 @@
 
 import { create } from 'zustand';
 import { useEditStore } from './editStore';
-import { runRegistry, type RunRecord } from './runRegistry';
+import { markRunDone, runRegistry, type RunRecord } from './runRegistry';
 import type { Pt, PlacedItem } from '../types/piece';
 import type { RunOrigin } from '../types/stateFile';
 import type { FrameMsg, ManifestMsg } from '../types/ws';
@@ -110,7 +110,8 @@ export function applySyntheticRun(
     placed_items: deepCopyPlaced(frameLike.placed_items),
   };
 
-  // 3) 置换单条 RunRecord。
+  // 3) 置换单条 RunRecord（字段全落位后才 markRunDone —— done 观察者（US-004
+  //    checkpoint）读到的是终态 run；registry 只此一条，bestRun 必命中）。
   const rec = runRegistry.create(seed);
   rec.manifest = manifest;
   rec.frames.push(frame);
@@ -118,10 +119,10 @@ export function applySyntheticRun(
   rec.finalDensity = frame.density;
   rec.finalDensitySparrow = frame.density_sparrow;
   rec.viewBoxMaxW = frame.width_mm;
-  rec.done = true;
   rec.error = null;
   rec.stopped = false;
   if (origin !== undefined) rec.origin = origin;
+  markRunDone(rec);
 
   // 4) 信号 → NestingPage 消费（setSeeds/setPhase('done')/setStatus/ref 重置/provenance）。
   useSynthRunStore.getState().signal(seed, note, origin);

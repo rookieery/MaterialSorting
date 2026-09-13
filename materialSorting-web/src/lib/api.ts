@@ -113,6 +113,9 @@ export function mergeSessionHeaders(headers?: HeadersInit): Record<string, strin
 let sessionProbe: Promise<void> | null = null;
 /** 探测已落定（成功/失败皆算）—— 置位后 apiFetch 不再 await（同步进 fetch，行为与旧裸 fetch 逐字节一致）。 */
 let probedSettled = false;
+/** 启动探测吃过 401 session_expired（走了恢复分支，US-004）：会话已死 —— 启动清理
+ *  checkpoint 时据此跳过 DELETE（快照留给恢复消费/已被恢复 single-use 删除）。 */
+let probeExpired = false;
 
 /**
  * 启动期恢复钩子槽（US-003，依赖倒置）：探测吃 401 ``session_expired`` 时调用。
@@ -173,6 +176,7 @@ export function ensureSession(): Promise<void> {
         if (res.status === 401 && startupRecovery) {
           const code = await readSessionErrorCode(res);
           if (code === 'session_expired') {
+            probeExpired = true; // US-004：旧会话已死（恢复分支接管）—— 启动清理跳过
             await startupRecovery();
             if (blocked) return; // 恢复 429 → 阻断弹窗已触发，业务请求被拦截
             res = await fetch('/api/session', {
@@ -226,11 +230,17 @@ export async function probeSession(): Promise<void> {
 
 // ---------------------------------------------------------------- 测试隔离
 
+/** 启动探测结局读取（US-004）：true = 探测吃过 401 session_expired（恢复分支跑过）。 */
+export function wasStartupProbeExpired(): boolean {
+  return probeExpired;
+}
+
 /** 测试隔离：清阻断 + 探测状态（下一测首次 apiFetch 会重新探测一次）。 */
 export function resetSessionForTest(): void {
   blocked = null;
   sessionProbe = null;
   probedSettled = false;
+  probeExpired = false;
 }
 
 /**

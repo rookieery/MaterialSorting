@@ -24,7 +24,7 @@ import type {
 import type { PerTypeOverrides, SolveParams } from '../types/v03';
 import { solveWsUrl } from '../lib/ws';
 import { triggerSessionBlock } from '../lib/api';
-import { applyFinal, runRegistry, type RunRecord } from '../store/runRegistry';
+import { applyFinal, markRunDone, runRegistry, type RunRecord } from '../store/runRegistry';
 
 /** start(cfg) 入参（外部传纯数据；hook 内部补 action/per_type 默认）。 */
 export interface StartConfig {
@@ -170,10 +170,11 @@ export function useSolveRun(cb: UseSolveRunCallbacks = {}): {
       }
     };
 
-    // 5) onclose / onerror → onDone（done flag 防重复触发；不重连）
+    // 5) onclose / onerror → onDone（done flag 防重复触发；不重连）。markRunDone
+    //    置 done + 通知 done 观察者（US-004 checkpoint 立即调度），再跑本 hook 回调。
     function finish() {
       if (rec.done) return;
-      rec.done = true;
+      markRunDone(rec);
       cbRef.current.onDone?.(rec);
     }
     ws.onclose = () => finish();
