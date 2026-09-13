@@ -1048,5 +1048,16 @@
         "passes": true
       }
     ]
+  },
+  {
+    "branchName": "ralph/strategy-pending-result-checkpoint",
+    "stories": [
+      {
+        "id": "US-001",
+        "title": "后端 done 结果槽与恢复响应回传",
+        "description": "As a 排料工程师, I want 保存/恢复/checkpoint 管线认识「待确认的策略/极限 done 结果」槽 pending_strategy_result（省键式 additive，schema v1 不 bump），so that 前端把它随载荷带上即被快照与恢复端点原样回传，坏数据与 run 块同一套 fail-fast 拦截。\n\n范围锚定（用户定案）：仅处理 done 态——运行中被 alive hook 滚动钉住不会过期、终止（stopped）是人为操作基本不撞自动过期，两态均不入案，槽内无 state 字段（恒 done）。\n\n具体任务：\n1. materialSorting-server/src/materialsorting/web/statefile.py — build_state_document 增 additive 参数 pending_strategy_result=None（None → 整块省略）；槽形态 = {mode:'se'|'race'|'extreme', best:{seed, frame_index, elapsed, density, density_sparrow, width_mm, placed_items}, summary:{...}}。manifest/run_dir 不入档：恢复端 rebuild_session_from_document 已用 build_pid_meta 确定性重算 manifest 并随响应回传（单份几何），run_dir 前端不展示。\n2. 同文件 parse_state_document 校验链增槽（在场时）：mode 枚举 fail-fast（400「状态文件损坏」，文案风格同 run 块）；best.placed_items 逐条形态与 run.placed 同一判据（id 非空 str / rotation 有限数值 / translation [x,y] / mirror 可选 bool）；placed 全命中 doc.pieces + check_placed_conservation 守恒终检（form/quantities 同口径、同「内部不一致」文案）；summary 在场须为 dict（展示级宽松）；best 其余数值键有限数值。缺席 = 旧文件零迁移；schema_version 不 bump（v1 内未知顶层键忽略 = 老程序读新文件不炸）。\n3. 同文件 state_save handler — body 增 pending_strategy_result 键（形态/守恒校验镜像 run 块分叉；守恒失败 → 400 与 run 块同文案「数量矩阵/尺码选择与当前结果不一致，请先重新求解或改回数量再保存」——改数量未重解场景 run 块与该槽同生共死，用户视角一个错）。\n4. materialSorting-server/src/materialsorting/web/checkpoint.py — _store_checkpoint 同镜像：该槽守恒失败 → 200 {stored:false, reason:'conservation'} last-good（先前好快照字节不变）。\n5. statefile.py rebuild_session_from_document — 响应 additive pending_strategy_result = document.get('pending_strategy_result') or None，/api/state-restore 与 /api/state-recover 成功响应同形增益（共享函数免费）。\n6. 测试 — tests/test_web_statefile.py / tests/test_web_checkpoint.py 增用例：带槽往返逐字段对拍 / 缺席省键 / mode 枚举必败 / placed 守恒必败（unknown_pid + count_mismatch 两款）/ checkpoint last-good / 恢复响应回传键；两个模块 __main__ 冒烟各增带槽路径检查。\n\n验收标准：\n- pytest 新用例全绿、既有用例零回归；无 pending 的载荷/快照/.msn 逐字节不变。\n- python -m materialsorting.web.statefile 与 python -m materialsorting.web.checkpoint 跑通、分层依赖未反向。",
+        "passes": true
+      }
+    ]
   }
 ]

@@ -9,6 +9,10 @@
 //     2026-09-12）；
 //   - run 块仅 done 态入文件（缺席 = 纯配置档，端点容忍但 UI 经 lastFrame
 //     门槛不可达 —— 契约注记见 agent-api-reference）；
+//   - pending_strategy_result = 待确认的策略/极限 done 结果槽（US-002 省键式
+//     additive：两族 store 无「result 在场且未应用」的 done 结果 → 整键缺席，
+//     旧载荷零迁移）；manifest/run_dir 不入档（恢复端 build_pid_meta 确定性
+//     重算 manifest 随响应回传，单份几何；run_dir 前端不展示）；
 //   - placed 同 pid 多副本 = 数组多条（绝不 pid 去重）；mirror omit-when-false
 //     （editStore.deepCopyItems 同口径）。
 //
@@ -17,6 +21,7 @@
 import type { FormState } from '../lib/params';
 import type { ParsedDoc } from './parsed';
 import type { PlacedItem } from './piece';
+import type { StrategyBest, StrategyMode, StrategySummary } from './strategy';
 import type { ManifestMsg } from './ws';
 
 /** provenance.kind 四值枚举（后端 statefile._PROVENANCE_KINDS 同源）。 */
@@ -71,12 +76,28 @@ export interface StateSavePayload {
   quantities_base?: Record<string, number>;
   /** 仅 done 态 bestRun 入；无 run 时整键缺席（纯配置档）。 */
   run?: StateSaveRun;
+  /** 待确认 done 结果槽（US-002 省键式：无「在场且未应用」done 结果 → 整键缺席）。 */
+  pending_strategy_result?: StatePendingStrategyResult;
   /**
    * 弹窗确认的名称主体（2026-09-12，无扩展名）：后端清洗 + 补 .msn 后覆盖响应
    * Content-Disposition，**不入档**；缺省不带键 = 后端合成名旧行为（前端弹窗
    * 预填 defaultStateFilename，同样无扩展名）。
    */
   save_as?: string;
+}
+
+/**
+ * pending_strategy_result 槽（US-002，与后端 `_PENDING_MODES`/`_check_pending_save`
+ * 对齐）：done 结果端点响应的最小面 —— mode（恢复路由键：'extreme' → 极限族
+ * store、'se'/'race' → 策略族）+ best（含完整 placed_items）+ summary（弹窗
+ * 结果态文案）。槽内无 state 字段 —— 恒 done（后端 US-001 契约：running 被
+ * alive hook 钉住不会过期、stopped 是人为操作，两态均不入案）。best/summary
+ * 复用 types/strategy 端点契约类型（type-only import，编译期擦除）。
+ */
+export interface StatePendingStrategyResult {
+  mode: StrategyMode | 'extreme';
+  best: StrategyBest;
+  summary: StrategySummary;
 }
 
 /**
@@ -98,4 +119,6 @@ export interface StateRestoreResponse {
   quantities: Record<string, Record<string, number>> | null;
   /** 整列设值基准回传（省键式文件缺席 → null → hydrateFlat no-op 保持默认 1）。 */
   quantities_base: Record<string, number> | null;
+  /** 待确认 done 结果槽 additive 回传（US-002：省键式文件缺席 → null 不路由）。 */
+  pending_strategy_result: StatePendingStrategyResult | null;
 }

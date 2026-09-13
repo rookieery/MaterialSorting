@@ -27,6 +27,7 @@ import { useEditStore } from '../../store/editStore';
 import { useFormStore } from '../../store/formStore';
 import { useQtyStore } from '../../store/qtyStore';
 import { markRunDone, runRegistry, type RunRecord } from '../../store/runRegistry';
+import { useExtremeStore, useStrategyStore } from '../../store/strategyStore';
 import { useUploadStore } from '../../store/uploadStore';
 import type { ParsedDoc } from '../../types/parsed';
 import type { FrameMsg, ManifestMsg } from '../../types/ws';
@@ -167,6 +168,8 @@ beforeEach(() => {
   runRegistry.clear();
   useUploadStore.getState().reset();
   useEditStore.getState().invalidate();
+  useStrategyStore.getState().reset();
+  useExtremeStore.getState().reset();
   // store 复位触发的调度（resetQuantities 换引用）在此清掉 —— 防跨用例定时器污染。
   resetCheckpointForTest();
 });
@@ -376,6 +379,97 @@ describe('阻断吞错（停留期过期后调度静默）', () => {
     useQtyStore.getState().setPiecePerSize('g01', 30, 2);
     await vi.advanceTimersByTimeAsync(CHECKPOINT_DEBOUNCE_MS + 10);
     expect(spy.mock.calls.length).toBe(0); // 请求不发出
+  });
+});
+
+describe('策略/极限 done 结果落定与应用立即 checkpoint（US-002 pending 槽）', () => {
+  /** done result 夹具（strategy 族 race）。 */
+  function pendingResult() {
+    return {
+      state: 'done' as const,
+      mode: 'race' as const,
+      run_dir: 'out/config_runs/web_race_x_1',
+      manifest: { gate_mm: 1750, total_area_mm2: 500000, n_eroded: 0, pieces: [] },
+      best: {
+        seed: 7, frame_index: 42, elapsed: 311.2, density: 0.861,
+        density_sparrow: 0.843, width_mm: 7310.5,
+        placed_items: [{ id: 'g01_30', rotation: 0, translation: [10, 20] as [number, number] }],
+      },
+      summary: { per_seed: [], mode: 'race' as const },
+    };
+  }
+
+  it('done 结果拉取落定（result null→非空）→ 立即一发且载荷含 pending_strategy_result', async () => {
+    const spy = mockRoute();
+    setDoc();
+
+    // refresh 内部 set({result}) 同构：null→非空即价值最高时刻
+    useStrategyStore.setState({ phase: 'done', result: pendingResult(), resultApplied: false });
+    await tick();
+
+    const posts = cpPosts(spy.mock.calls);
+    expect(posts.length).toBe(1); // 立即（不等去抖 —— 无变更无定时器）
+    const body = JSON.parse(String((posts[0][1] as RequestInit).body));
+    expect(body.pending_strategy_result.mode).toBe('race');
+    expect(body.pending_strategy_result.best.placed_items[0].id).toBe('g01_30');
+    expect(body.pending_strategy_result.best.placed_items[0].translation).toEqual([10, 20]);
+  });
+
+  it('应用落定（resultApplied false→true）→ 立即一发且载荷不含该槽（已应用由 run 块承载）', async () => {
+    const spy = mockRoute();
+    setDoc();
+    useStrategyStore.setState({ phase: 'done', result: pendingResult(), resultApplied: false });
+    await tick(); // 落定那一发
+    expect(cpPosts(spy.mock.calls).length).toBe(1);
+
+    useStrategyStore.getState().markResultApplied();
+    await tick();
+    const posts = cpPosts(spy.mock.calls);
+    expect(posts.length).toBe(2);
+    const body = JSON.parse(String((posts[1][1] as RequestInit).body));
+    expect('pending_strategy_result' in body).toBe(false);
+  });
+
+  it('应用全链合并：markRunDone + markResultApplied 同任务 → 恰一发（sendQueued 合并语义）', async () => {
+    const spy = mockRoute();
+    setDoc();
+    useStrategyStore.setState({ phase: 'done', result: pendingResult(), resultApplied: false });
+
+    // applyStrategyResult 内部时序同构：applySyntheticRun（→markRunDone）后置位
+    const rec = makeRun(7, 0.861);
+    markRunDone(rec);
+    useStrategyStore.getState().markResultApplied();
+    await tick();
+
+    const posts = cpPosts(spy.mock.calls);
+    expect(posts.length).toBe(1); // 两个触发面合并为一发
+    const body = JSON.parse(String((posts[0][1] as RequestInit).body));
+    expect('pending_strategy_result' in body).toBe(false); // 载荷发送时刻现取：槽已退
+    expect(body.run.seed).toBe(7); // run 块已入
+  });
+
+  it('无 result 的既有口径对拍：变更去抖载荷无该键（旧文件零迁移）', async () => {
+    vi.useFakeTimers();
+    const spy = mockRoute();
+    setDoc();
+    useQtyStore.getState().setPiecePerSize('g01', 30, 2);
+    await vi.advanceTimersByTimeAsync(CHECKPOINT_DEBOUNCE_MS + 10);
+    const posts = cpPosts(spy.mock.calls);
+    expect(posts.length).toBe(1);
+    expect('pending_strategy_result' in JSON.parse(String((posts[0][1] as RequestInit).body))).toBe(false);
+  });
+
+  it('start/reset 清 result（非空→null）不触发；极限族 result 同触发', async () => {
+    const spy = mockRoute();
+    setDoc();
+
+    useExtremeStore.setState({ phase: 'done', result: { ...pendingResult(), mode: 'extreme' }, resultApplied: false });
+    await tick();
+    expect(cpPosts(spy.mock.calls).length).toBe(1); // 极限族落定同发
+
+    useExtremeStore.getState().reset(); // result 清（不触发）
+    await tick();
+    expect(cpPosts(spy.mock.calls).length).toBe(1);
   });
 });
 

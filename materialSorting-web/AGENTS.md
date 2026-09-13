@@ -1272,3 +1272,46 @@ api.ts 探测分支 / sid 生命周期 / 弹窗文案前先读本节。
 - 改 sessionRecovery / sessionCheckpoint / api.ts 探测分支 / SessionExpiredModal /
   checkpoint.py 任一处后应复跑本冒烟回归（报告
   `out/smoke_session_recovery/report.txt`）。
+
+## 策略待确认结果 US-002 关键约定（拉取即落快照与恢复还原弹窗态 调用方必读；2026-09-13）
+
+- **pending 槽口径**：`buildSavePayload` 携 `pending_strategy_result`
+  `{mode:'se'|'race'|'extreme', best, summary}`（后端 US-001 契约：槽恒 done、
+  manifest/run_dir 不入档 —— 恢复端 `build_pid_meta` 重算 manifest 随响应回传 =
+  单份几何）。前端产方 = `lib/stateFile.buildPendingBlock`：轮询
+  `[useStrategyStore, useExtremeStore]`，`result` 非空且未 `resultApplied` 且
+  `state==='done'` 且 mode 三枚举才入槽（stopped 人为操作/已应用均不入）；
+  `best.placed_items` 经 `deepCopyPlaced` 深拷贝（translation 拷断 + mirror
+  omit-when-false，与 run.placed 单一实现）。改判据须与后端 `_check_pending_save`
+  双侧同步。
+- **resultApplied 生命周期**（createRunStore 两族同享）：done 结果拉取落定**仍
+  false**（落定 ≠ 应用）；`markResultApplied()` 置位幂等 —— 唯一调用方 =
+  NestingPage.applyStrategyResult（applySyntheticRun 之后按 result.mode 委托：
+  extreme → useExtremeStore / se·race → useStrategyStore）；start/reset 随
+  `result:null` 同清。应用后槽退场，已应用结果由 run 块承载（无双份数据）。
+- **checkpoint 触发面 #4**（sessionCheckpoint；原 hidden→#5、pagehide→#6 顺延）：
+  两族 store subscribe —— `result null→非空`（拉取落定 / .msn 与 checkpoint 恢复
+  写回同触发）或 `resultApplied false→true`（应用落定）→ 立即 `flushCheckpoint()`；
+  清 result（start/reset）不触发。应用链 markRunDone + markResultApplied 同任务
+  → sendQueued 合并**恰一发**（载荷发送时刻现取：run 块在场、槽已退）。
+- **恢复第 6 步**（applyRestorePayload 尾段）：响应 `pending_strategy_result` 在场
+  → 按路由写回族 store（extreme → useExtremeStore / se·race → useStrategyStore）：
+  `setState({phase:'done', status:null, result:{state:'done', mode, run_dir:null,
+  manifest:{...res.manifest}, best, summary}, resultApplied:false, errorMessage:null,
+  lastStart:null})` + `openModal(mode==='extreme'?'extreme_run':'strategy_run')`
+  自动开弹窗在结果态；**只动归属族**（对方族保持 idle，双弹窗不串台）；槽缺席
+  no-op（旧文件零迁移）。
+- **refresh idle 采纳守卫**（strategyStore 家族过滤后）：`st.state==='idle' &&
+  result!==null && phase==='done'` → 直接 return（idle 载荷不写回、不拉 result）。
+  存在理由：新 sid 后端状态槽恒空 → 恢复弹窗打开/挂载即 refresh 恒见 idle，无守卫
+  会被立刻打回 idle。**窄门不得放宽**：result===null（stuck starting 恢复出口）与
+  phase!=='done'（stopped 常驻）照常采纳 idle。
+- **冒烟 `scripts/us002_pending_verify.mjs`**（21 检查，报告
+  `out/us002_pending_verify/report.json`）：:8020 自起，env **必须**
+  `MS_SESSION_TTL_SEC=60` + `MS_EDIT_HOLD_SEC=5`（state-restore 会给新会话挂
+  edit_hold 钉住 —— 默认 600s 会挡住「恢复后再过期」相位，US-005 同坑）；Python
+  铸带槽 .msn（spawnSync .venv python -c 走 build_state_document）→ 上传恢复弹窗
+  自动开 → 过期刷新启动期恢复弹窗重现（密度对拍）→ 应用布局/PLT placed 逐条对拍。
+  应用不自动关弹窗（显式按钮语义）—— 冒烟切 Tab 前须先点 strategy-close。改
+  strategyStore / stateFile / sessionCheckpoint / NestingPage.applyStrategyResult /
+  statefile.py 任一处后应复跑。

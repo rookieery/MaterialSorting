@@ -76,6 +76,7 @@ function makeRestore(withRun = false): StateRestoreResponse {
     form: { ...DEFAULT_FORM, sizes: [28], gate: '175.00' },
     quantities: { g01: { '28': 3 } },
     quantities_base: null,
+    pending_strategy_result: null,
   };
   if (!withRun) return base;
   const fin = {

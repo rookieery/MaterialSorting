@@ -16,15 +16,26 @@
 //     placed = lastFrame.placed_items 深拷贝原序（同 pid 多副本 = 数组多条），
 //     mirror 按 omit-when-false 只在 true 时带键（deepCopyPlaced 单一实现，
 //     synthRunStore 导出共享）；origin 缺席（WS 普通求解）→ 不写 provenance 键，
-//     在场 → 映射 {kind, config?}。
+//     在场 → 映射 {kind, config?}；
+//   - pending_strategy_result（US-002 省键式）← 两族 strategyStore 中「result
+//     在场、未应用（resultApplied false）、state='done' 且 mode 可路由」者（双族
+//     409 单飞 ⇒ 至多一个在场）：待确认 done 结果随 checkpoint/.msn 走 —— done
+//     结果落定后未应用即过期/保存时，恢复端重现弹窗结果态一键应用。stopped
+//     结果不入槽（槽恒 done，后端 US-001 契约）；applied 后不入（已应用结果由
+//     run 块承载，无双份数据）。best.placed_items 深拷贝（载荷与 store 解耦，
+//     deepCopyPlaced 同一实现）。
 //
 // applyRestorePayload（US-004）= POST /api/state-restore 成功响应的恢复编排单一
 // 实现（useParseDxf .msn 分流成功路径消费）：uploadStore doc 就绪 → qtyStore 实值
 // 水合 → formStore 水合（token=新 docId）→ ptypeStore 失效 → 有 run 块时切超排
-// Tab + applySyntheticRun 合成（manifest 重算 + 单帧 final + provenance 写回）。
+// Tab + applySyntheticRun 合成（manifest 重算 + 单帧 final + provenance 写回）；
+// US-002 起第 6 步：pending_strategy_result 槽在场 → 按 mode 路由写回对应族
+// strategyStore 弹窗结果态 + 自动打开对应弹窗（.msn 手动恢复与 sessionRecovery
+// 启动期恢复两条路径同享）。
 // 顺序细节见函数头注释 —— 两处 store 联动（PreviewPage 订阅 / ControlPanel docId
 // effect）都在 setState 同步或 React 提交后触发，与本编排的写序收敛一致。
 
+import { useControlPanelStore } from '../store/controlPanelStore';
 import { useFormStore } from '../store/formStore';
 import { usePtypeStore } from '../store/ptypeStore';
 import { useQtyStore } from '../store/qtyStore';
@@ -33,6 +44,7 @@ import {
   applySyntheticRun,
   deepCopyPlaced,
 } from '../store/synthRunStore';
+import { useExtremeStore, useStrategyStore } from '../store/strategyStore';
 import { computeLayoutStats } from '../store/editStore';
 import { useUiStore } from '../store/uiStore';
 import { useUploadStore } from '../store/uploadStore';
@@ -41,6 +53,7 @@ import type { PlacedItem } from '../types/piece';
 import type {
   RunOrigin,
   RunProvenance,
+  StatePendingStrategyResult,
   StateRestoreResponse,
   StateRunFinal,
   StateSavePayload,
@@ -96,24 +109,55 @@ function provenanceOf(origin: RunOrigin | undefined): RunProvenance | undefined 
 }
 
 /**
- * 组装保存载荷（{form, quantities, quantities_base?, run?, save_as?}）：run 仅 done
- * 态 bestRun 入块。saveAs（2026-09-12 弹窗）= 确认的名称主体（无扩展名，后端补
- * .msn；省键式：缺省不带键 → 后端合成名旧行为，trim 后为空同缺省）。深拷贝保证：
- * payload 与 stores 当前态解耦（发送期间用户编辑不影响已序列化体）。
+ * 组装保存载荷（{form, quantities, quantities_base?, run?, pending_strategy_result?,
+ * save_as?}）：run 仅 done 态 bestRun 入块；pending 槽取两族 store 待确认 done 结果。
+ * saveAs（2026-09-12 弹窗）= 确认的名称主体（无扩展名，后端补 .msn；省键式：
+ * 缺省不带键 → 后端合成名旧行为，trim 后为空同缺省）。深拷贝保证：payload 与
+ * stores 当前态解耦（发送期间用户编辑不影响已序列化体）。
  */
 export function buildSavePayload(saveAs?: string): StateSavePayload {
   const form = useFormStore.getState().form;
   const quantities = flattenQuantities(useQtyStore.getState().quantities);
   const quantities_base = flattenBaseValues(useQtyStore.getState().quantities);
   const run = buildRunBlock(runRegistry.bestRun());
+  const pending = buildPendingBlock();
   const name = (saveAs || '').trim();
   return {
     form,
     quantities,
     ...(quantities_base ? { quantities_base } : {}),
     ...(run ? { run } : {}),
+    ...(pending ? { pending_strategy_result: pending } : {}),
     ...(name ? { save_as: name } : {}),
   };
+}
+
+/**
+ * 两族 strategyStore → pending_strategy_result 槽（US-002）：取「result 在场、
+ * resultApplied=false、state='done' 且 mode 三枚举可路由」者；双族后端 409 单飞
+ * ⇒ 至多一个在场（防御性遍历两族，先策略后极限）。排除项：stopped 结果（槽恒
+ * done —— 后端 US-001 契约：running 被 alive 钉住不会过期、stopped 是人为操作，
+ * 两态均不入案）；mode null（旧后端无路由键，恢复端无法分发）。best.placed_items
+ * 深拷贝（deepCopyPlaced —— 载荷与 store 解耦既有约定，deepCopyItems 同口径）。
+ */
+function buildPendingBlock(): StatePendingStrategyResult | undefined {
+  for (const store of [useStrategyStore, useExtremeStore]) {
+    const { result, resultApplied } = store.getState();
+    if (result === null || resultApplied) continue;
+    if (result.state !== 'done') continue;
+    if (result.mode !== 'se' && result.mode !== 'race' && result.mode !== 'extreme') {
+      continue;
+    }
+    return {
+      mode: result.mode,
+      best: {
+        ...result.best,
+        placed_items: deepCopyPlaced(result.best.placed_items),
+      },
+      summary: result.summary,
+    };
+  }
+  return undefined;
 }
 
 /** bestRun → run 块（无 lastFrame / 未结束 → undefined = 整块缺席）。 */
@@ -182,6 +226,14 @@ function finalizeFromLayout(
  *     setNestingEnabled(true) 显式先行（useCommitToNesting D1 闭环同款，不依赖
  *     PreviewPage 订阅时序）+ setTab('nesting') 展示布局。无 run（纯配置档）→
  *     不切 Tab（留在预览页核对数量矩阵，求解入口由用户主动进）。
+ *  6. pending_strategy_result 槽在场（US-002）→ 按 mode 路由族 store（'extreme' →
+ *     useExtremeStore；'se'/'race' → useStrategyStore）直写弹窗结果态（phase=
+ *     'done'、status=null、result 按槽 + 恢复端重算 manifest 重组（run_dir=null
+ *     前端不展示）、lastStart=null（旧 start 载荷对新 doc 非法）、resultApplied=
+ *     false）+ openModal 对应弹窗自动打开 —— 用户看到「上次的运行结果还在等
+ *     确认」，一键应用（走 applyStrategyResult 既有链路零改动）。store 直写不
+ *     依赖组件挂载时序；新 sid 后端状态槽恒空，refresh idle 采纳守卫
+ *     （strategyStore US-002）保证该写回态不被打回。
  */
 export function applyRestorePayload(res: StateRestoreResponse): void {
   // 1) uploadStore doc 就绪（status done —— UploadPanel done 态 / PreviewPage QtyMatrix 渲染）。
@@ -236,5 +288,31 @@ export function applyRestorePayload(res: StateRestoreResponse): void {
     );
     useUiStore.getState().setNestingEnabled(true);
     useUiStore.getState().setTab('nesting');
+  }
+
+  // 6) pending_strategy_result 槽在场 → 恢复弹窗结果态 + 自动打开对应弹窗（US-002）。
+  //    manifest = 恢复端重算值（上方 res.manifest —— build_pid_meta 单份几何，
+  //    与 result 端点 start 快照口径同形）；run_dir 前端不展示 → null。
+  const pending = res.pending_strategy_result;
+  if (pending) {
+    const store = pending.mode === 'extreme' ? useExtremeStore : useStrategyStore;
+    store.setState({
+      phase: 'done',
+      status: null,
+      result: {
+        state: 'done',
+        mode: pending.mode,
+        run_dir: null,
+        manifest: { ...res.manifest },
+        best: pending.best,
+        summary: pending.summary,
+      },
+      resultApplied: false,
+      errorMessage: null,
+      lastStart: null,
+    });
+    useControlPanelStore
+      .getState()
+      .openModal(pending.mode === 'extreme' ? 'extreme_run' : 'strategy_run');
   }
 }

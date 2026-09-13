@@ -13,9 +13,14 @@
 //      = 价值最高时刻，不等去抖；非 best 的晚到 run 跳过 —— 内容与上次快照一致）；
 //   3. editStore.save 落定（savedDirty false→true 且 working 引用未换 = save 专属
 //      写序，open 重开不误触）→ 立即 flush；
-//   4. visibilitychange → hidden 立即 flush 并清空去抖（切 Tab / 最小化 = 用户
+//   4. strategy/extreme 两族 store 订阅（US-002 pending 槽）：done 结果拉取落定
+//      （result null→非空 —— 恢复写回同触发，恢复态重落快照自我延续）→ 立即
+//      flush（价值最高时刻，不等去抖）；应用落定（resultApplied false→true）→
+//      立即 flush（与 applySyntheticRun → markRunDone 观察者 flush 同任务发 —
+//      sendQueued 合并语义天然一发，载荷现取时 pending 槽已退、run 块已入）；
+//   5. visibilitychange → hidden 立即 flush 并清空去抖（切 Tab / 最小化 = 用户
 //      可能一去不回，快照尽量新）；
-//   5. pagehide → best-effort keepalive fetch（卸载后请求仍送达；不等 sendChain
+//   6. pagehide → best-effort keepalive fetch（卸载后请求仍送达；不等 sendChain
 //      串行 —— 微任务在卸载期不可靠，直接同步发起）。
 //
 // 发送统一：POST /api/state-checkpoint，body = buildSavePayload()（不带 save_as，
@@ -55,6 +60,7 @@ import { useEditStore } from '../store/editStore';
 import { useFormStore } from '../store/formStore';
 import { useQtyStore } from '../store/qtyStore';
 import { runRegistry, subscribeRunDone } from '../store/runRegistry';
+import { useExtremeStore, useStrategyStore } from '../store/strategyStore';
 import { useUploadStore } from '../store/uploadStore';
 
 /** 去抖窗口（ms，2026-09-13 定案暂定 3s；常量可调）。 */
@@ -187,12 +193,24 @@ function wireSessionCheckpoint(): void {
     }
   });
 
-  // 4) 切后台/最小化 → 立即 flush 清空去抖。
+  // 4) 策略/极限两族 store（US-002 pending 槽）：done 结果落定（result null→
+  //    非空 = 价值最高时刻）与应用落定（resultApplied false→true）→ 立即。
+  //    start/reset 清 result（非空→null）与重复 markResultApplied（true→true）
+  //    均不触发；恢复写回（applyRestorePayload setState result null→非空）同
+  //    触发 —— 恢复态在新会话重落快照（US-004 恢复链自我延续同款）。
+  for (const store of [useStrategyStore, useExtremeStore]) {
+    store.subscribe((state, prev) => {
+      if (prev.result === null && state.result !== null) void flushCheckpoint();
+      else if (!prev.resultApplied && state.resultApplied) void flushCheckpoint();
+    });
+  }
+
+  // 5) 切后台/最小化 → 立即 flush 清空去抖。
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') void flushCheckpoint();
   });
 
-  // 5) 卸载/导航 → best-effort keepalive。
+  // 6) 卸载/导航 → best-effort keepalive。
   window.addEventListener('pagehide', sendCheckpointKeepalive);
 }
 

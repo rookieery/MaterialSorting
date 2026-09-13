@@ -266,6 +266,8 @@ export function NestingPage(): React.JSX.Element {
    * ExportButtons/useExport/bestRun() 零改动兼容。
    *
    * result 常驻 strategyStore（关弹窗再开仍可应用）；母版变更场景导出 pid 失配走既有 400 兜底。
+   * US-002：应用落定后按归属族 markResultApplied —— pending_strategy_result 槽自此
+   * 退出 checkpoint/.msn 载荷（已应用结果由 run 块承载）。
    */
   function applyStrategyResult(result: StrategyResult) {
     // 防御：主画布 running 禁应用（入口按钮本就互斥 disabled，此处兜底弹窗滞留的极端时序）。
@@ -309,6 +311,16 @@ export function NestingPage(): React.JSX.Element {
         density * 100
       ).toFixed(2)}%`,
     );
+
+    // 4) 应用落定 → 归属族 resultApplied 置位（US-002）：pending_strategy_result 槽
+    //    自此退出 checkpoint/.msn 载荷 —— 已应用结果由 run 块（registry bestRun）
+    //    承载，恢复不出现双份数据。mode 路由与恢复端同判（'extreme' → 极限族；
+    //    'se'/'race'/null（旧后端兜底）→ 策略族）。
+    if (result.mode === 'extreme') {
+      useExtremeStore.getState().markResultApplied();
+    } else {
+      useStrategyStore.getState().markResultApplied();
+    }
   }
 
   return (

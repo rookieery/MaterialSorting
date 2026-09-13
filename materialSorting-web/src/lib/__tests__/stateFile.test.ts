@@ -11,7 +11,7 @@
 //   - final 摘要取 RunRecord 当前值（n_frames = frames.length、
 //     n_eroded = manifest.n_eroded、manifest 缺席兜底 0）。
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_FORM } from '../../lib/params';
 import { buildSavePayload } from '../stateFile';
 import { useFormStore } from '../../store/formStore';
@@ -254,6 +254,7 @@ function makeRestore(over: Partial<StateRestoreResponse> = {}): StateRestoreResp
     quantities: { g01: { '28': 3, '30': 0 }, g02: { '30': 5 } },
     // g01 整列设值 3 后 30 码手改 0（base=3）；g02 未设 → 省键式缺席
     quantities_base: { g01: 3 },
+    pending_strategy_result: null,
     ...over,
   };
 }
@@ -414,5 +415,193 @@ describe('applyRestorePayload：run.final 缺席兜底（US-004 手改文件容�
     // density_sparrow/elapsed 客户端不可知 → 0（展示级参考值）
     expect(rec.finalDensitySparrow).toBe(0);
     expect(rec.lastFrame!.elapsed).toBe(0);
+  });
+});
+
+// ============================================================
+// US-002：pending_strategy_result 槽 —— buildSavePayload 组装 + applyRestorePayload
+// 第 6 步（mode 路由两族 + openModal 自动开弹窗）
+// ============================================================
+
+import { useControlPanelStore } from '../../store/controlPanelStore';
+import { useExtremeStore, useStrategyStore } from '../../store/strategyStore';
+import type { StrategyResult } from '../../types/strategy';
+import type { StatePendingStrategyResult } from '../../types/stateFile';
+
+/** done 结果夹具（placed_items 与 makeFrame 同构 + race summary）。 */
+function makeDoneResult(mode: 'se' | 'race' | 'extreme' = 'race'): StrategyResult {
+  return {
+    state: 'done',
+    mode,
+    run_dir: 'out/config_runs/web_race_x_1',
+    manifest: { gate_mm: 1750, total_area_mm2: 500000, n_eroded: 0, pieces: [] },
+    best: {
+      seed: 7, frame_index: 42, elapsed: 311.2, density: 0.861,
+      density_sparrow: 0.843, width_mm: 7310.5,
+      placed_items: [
+        { id: 'g01_30', rotation: 0, translation: [-1.01, 16.22] },
+        { id: 'g03_30', rotation: 90, translation: [260, 40], mirror: true },
+      ],
+    },
+    summary: {
+      per_seed: [], mode: 'race',
+      race: { gate_seconds: 90, kept_seeds: [7], gated_seeds: [1, 2] },
+    },
+  };
+}
+
+describe('buildSavePayload：pending_strategy_result 槽（US-002）', () => {
+  beforeEach(() => {
+    useStrategyStore.getState().reset();
+    useExtremeStore.getState().reset();
+  });
+  afterEach(() => {
+    useStrategyStore.getState().reset();
+    useExtremeStore.getState().reset();
+  });
+
+  it('两族无 result → 整键缺席（旧口径对拍：无 pending 载荷零迁移）', () => {
+    expect('pending_strategy_result' in buildSavePayload()).toBe(false);
+  });
+
+  it('done 结果在场未应用 → 槽入载荷（mode/best/summary 逐字段；不含 state/run_dir/manifest）', () => {
+    useStrategyStore.setState({ phase: 'done', result: makeDoneResult('race'), resultApplied: false });
+    const slot = buildSavePayload().pending_strategy_result!;
+    expect(slot).toBeDefined();
+    expect(slot.mode).toBe('race');
+    expect(slot.best).toEqual({
+      seed: 7, frame_index: 42, elapsed: 311.2, density: 0.861,
+      density_sparrow: 0.843, width_mm: 7310.5,
+      placed_items: [
+        { id: 'g01_30', rotation: 0, translation: [-1.01, 16.22] },
+        { id: 'g03_30', rotation: 90, translation: [260, 40], mirror: true },
+      ],
+    });
+    expect(slot.summary.race).toEqual({ gate_seconds: 90, kept_seeds: [7], gated_seeds: [1, 2] });
+    // 槽不带 state/run_dir/manifest（后端契约最小面）
+    expect('state' in slot).toBe(false);
+    expect('run_dir' in slot).toBe(false);
+    expect('manifest' in slot).toBe(false);
+  });
+
+  it('极限族（extreme）result 同入槽（mode 路由键透传）', () => {
+    useExtremeStore.setState({ phase: 'done', result: makeDoneResult('extreme'), resultApplied: false });
+    expect(buildSavePayload().pending_strategy_result!.mode).toBe('extreme');
+  });
+
+  it('应用后（resultApplied）→ 整键缺席（已应用结果由 run 块承载，无双份数据）', () => {
+    useStrategyStore.setState({ phase: 'done', result: makeDoneResult(), resultApplied: true });
+    expect('pending_strategy_result' in buildSavePayload()).toBe(false);
+  });
+
+  it('stopped 结果不入槽（槽恒 done —— 后端 US-001 契约）', () => {
+    const stopped: StrategyResult = { ...makeDoneResult(), state: 'stopped' };
+    useStrategyStore.setState({ phase: 'stopped', result: stopped, resultApplied: false });
+    expect('pending_strategy_result' in buildSavePayload()).toBe(false);
+  });
+
+  it('placed 深拷贝解耦：mutate 载荷不动 store result', () => {
+    useStrategyStore.setState({ phase: 'done', result: makeDoneResult(), resultApplied: false });
+    const p = buildSavePayload();
+    p.pending_strategy_result!.best.placed_items[0].translation[0] = 99999;
+    expect(useStrategyStore.getState().result!.best.placed_items[0].translation[0]).toBe(-1.01);
+    // 再次构建不受污染
+    expect(buildSavePayload().pending_strategy_result!.best.placed_items[0].translation[0]).toBe(-1.01);
+  });
+
+  it('mirror omit-when-false 同口径（deepCopyPlaced 单一实现）', () => {
+    const r = makeDoneResult();
+    r.best.placed_items[1] = { id: 'g03_30', rotation: 90, translation: [1, 2], mirror: false };
+    useStrategyStore.setState({ phase: 'done', result: r, resultApplied: false });
+    const placed = buildSavePayload().pending_strategy_result!.best.placed_items;
+    expect('mirror' in placed[0]).toBe(false);
+    expect('mirror' in placed[1]).toBe(false);
+  });
+});
+
+describe('applyRestorePayload：pending_strategy_result 第 6 步（US-002）', () => {
+  beforeEach(() => {
+    useUploadStore.getState().reset();
+    useUiStore.setState({ activeTab: 'preview', nestingEnabled: false });
+    usePtypeStore.getState().reset();
+    useSynthRunStore.setState({ token: 0, seed: 0, note: '', origin: undefined });
+    useEditStore.getState().invalidate();
+    useStrategyStore.getState().reset();
+    useExtremeStore.getState().reset();
+    useControlPanelStore.getState().closeModal();
+  });
+  afterEach(() => {
+    useStrategyStore.getState().reset();
+    useExtremeStore.getState().reset();
+    useControlPanelStore.getState().closeModal();
+  });
+
+  /** 槽夹具（与后端 US-001 __main__ 夹具同构）。 */
+  function makePending(mode: 'se' | 'race' | 'extreme' = 'race'): StatePendingStrategyResult {
+    const r = makeDoneResult(mode);
+    return { mode, best: r.best, summary: r.summary };
+  }
+
+  it("mode='race' → 策略族写回弹窗结果态逐字段 + openModal('strategy_run')；极限族不动", () => {
+    applyRestorePayload(makeRestore({ pending_strategy_result: makePending('race') }));
+
+    const s = useStrategyStore.getState();
+    expect(s.phase).toBe('done');
+    expect(s.status).toBeNull();
+    expect(s.resultApplied).toBe(false);
+    expect(s.errorMessage).toBeNull();
+    expect(s.lastStart).toBeNull();
+    const r = s.result!;
+    expect(r.state).toBe('done');
+    expect(r.mode).toBe('race');
+    expect(r.run_dir).toBeNull();
+    // manifest = 恢复端重算值透传（res.manifest 同源单份几何）
+    expect(r.manifest).toEqual({ gate_mm: 1750, total_area_mm2: 500000, n_eroded: 2, pieces: [] });
+    expect(r.best.seed).toBe(7);
+    expect(r.best.placed_items.map((it) => it.id)).toEqual(['g01_30', 'g03_30']);
+    expect(r.summary.race!.kept_seeds).toEqual([7]);
+    // 弹窗自动打开（结果态 = phase done + result 在场，Modal 直接渲染结果面板）
+    expect(useControlPanelStore.getState().modal).toBe('strategy_run');
+    // 对方族不受扰（恢复只路由归属族）
+    expect(useExtremeStore.getState().phase).toBe('idle');
+    expect(useExtremeStore.getState().result).toBeNull();
+  });
+
+  it("mode='extreme' → 极限族写回 + openModal('extreme_run')；策略族不动", () => {
+    applyRestorePayload(makeRestore({ pending_strategy_result: makePending('extreme') }));
+    const s = useExtremeStore.getState();
+    expect(s.phase).toBe('done');
+    expect(s.result!.mode).toBe('extreme');
+    expect(s.result!.manifest.gate_mm).toBe(1750);
+    expect(useControlPanelStore.getState().modal).toBe('extreme_run');
+    expect(useStrategyStore.getState().phase).toBe('idle');
+    expect(useStrategyStore.getState().result).toBeNull();
+  });
+
+  it("mode='se' → 策略族（se/race 同族同路由）", () => {
+    applyRestorePayload(makeRestore({ pending_strategy_result: makePending('se') }));
+    expect(useStrategyStore.getState().result!.mode).toBe('se');
+    expect(useControlPanelStore.getState().modal).toBe('strategy_run');
+  });
+
+  it('槽缺席 → 两族 store 保持 idle、弹窗不开（旧文件零迁移）', () => {
+    applyRestorePayload(makeRestore()); // pending_strategy_result: null
+    expect(useStrategyStore.getState().phase).toBe('idle');
+    expect(useExtremeStore.getState().phase).toBe('idle');
+    expect(useControlPanelStore.getState().modal).toBeNull();
+  });
+
+  it('恢复写回态 refresh 不降级（idle 守卫端到端闭环：新 sid 后端槽空）', async () => {
+    const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(
+      () => Promise.resolve(new Response(JSON.stringify({ state: 'idle' }), { status: 200 })),
+    );
+    try {
+      applyRestorePayload(makeRestore({ pending_strategy_result: makePending('race') }));
+      await useStrategyStore.getState().refresh(); // 弹窗打开/挂载即 refresh → idle
+      expect(useStrategyStore.getState().phase).toBe('done'); // 守卫生效
+      expect(useStrategyStore.getState().result).not.toBeNull();
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

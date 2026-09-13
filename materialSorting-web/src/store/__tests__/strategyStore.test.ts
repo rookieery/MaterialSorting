@@ -183,3 +183,81 @@ describe('strategyStore (US-005)', () => {
     expect(s.result).toBeNull(); // 连带 result 拉取也被代际号挡住
   });
 });
+
+// ============================================================
+// US-002：resultApplied 生命周期 + refresh idle 采纳守卫（恢复路径必要条件）
+// ============================================================
+
+describe('strategyStore：resultApplied 生命周期（US-002）', () => {
+  it('初值 false；done 结果拉取落定后仍 false；markResultApplied 置位', async () => {
+    expect(useStrategyStore.getState().resultApplied).toBe(false);
+    resultPayload = RESULT;
+    statusPayload = { state: 'done', mode: 'race' } as StrategyStatus;
+    await useStrategyStore.getState().refresh();
+    expect(useStrategyStore.getState().resultApplied).toBe(false); // 落定 ≠ 应用
+    useStrategyStore.getState().markResultApplied();
+    expect(useStrategyStore.getState().resultApplied).toBe(true);
+    // 重复置位幂等
+    useStrategyStore.getState().markResultApplied();
+    expect(useStrategyStore.getState().resultApplied).toBe(true);
+  });
+
+  it('start 清 resultApplied（随 result:null 一起）；reset 同清', async () => {
+    resultPayload = RESULT;
+    statusPayload = { state: 'done', mode: 'race' } as StrategyStatus;
+    await useStrategyStore.getState().refresh();
+    useStrategyStore.getState().markResultApplied();
+
+    // 新 run 后端槽已空（新 run 进行中/已结束由后续 status 决定 —— 此处 idle 即
+    // 「start 清 result」的最小验证面）
+    statusPayload = { state: 'idle' };
+    await useStrategyStore.getState().start({ mode: 'race', minutes: 10, seed: 0, gate_mm: 1980 });
+    expect(useStrategyStore.getState().result).toBeNull();
+    expect(useStrategyStore.getState().resultApplied).toBe(false);
+
+    useStrategyStore.getState().reset();
+    expect(useStrategyStore.getState().result).toBeNull();
+    expect(useStrategyStore.getState().resultApplied).toBe(false);
+  });
+});
+
+describe('strategyStore：refresh idle 采纳守卫（US-002 恢复写回态）', () => {
+  it('恢复态（result 在场 + phase=done）→ idle 不降级（新 sid 后端槽空恒见 idle）', async () => {
+    // 模拟 applyRestorePayload 第 6 步写回（store 直写，恢复路径同构）
+    useStrategyStore.setState({
+      phase: 'done',
+      status: null,
+      result: RESULT,
+      resultApplied: false,
+      errorMessage: null,
+      lastStart: null,
+    });
+    statusPayload = { state: 'idle' };
+    await useStrategyStore.getState().refresh();
+    const s = useStrategyStore.getState();
+    // 不被 idle 打回：弹窗结果态保住
+    expect(s.phase).toBe('done');
+    expect(s.result).toEqual(RESULT);
+    expect(s.status).toBeNull(); // idle 载荷不写回（status null = 结果态渲染不受扰）
+    // 也不触发 result 重复拉取（恢复写回的 result 即真相）
+    expect(resultFetchCount()).toBe(0);
+  });
+
+  it('result===null 的 stuck starting → idle 既有恢复出口不变（守卫只护 result 在场者）', async () => {
+    useStrategyStore.setState({ phase: 'starting', status: null, result: null });
+    statusPayload = { state: 'idle' };
+    await useStrategyStore.getState().refresh();
+    expect(useStrategyStore.getState().phase).toBe('idle');
+  });
+
+  it('result 在场但 phase≠done（stopped 常驻）→ idle 照常采纳（守卫窄门：仅恢复写回态）', async () => {
+    useStrategyStore.setState({
+      phase: 'stopped',
+      status: null,
+      result: { ...RESULT, state: 'stopped' },
+    });
+    statusPayload = { state: 'idle' };
+    await useStrategyStore.getState().refresh();
+    expect(useStrategyStore.getState().phase).toBe('idle');
+  });
+});

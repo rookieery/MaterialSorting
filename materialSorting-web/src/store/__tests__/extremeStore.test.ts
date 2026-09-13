@@ -181,3 +181,52 @@ describe('extremeStore (US-003)', () => {
     expect(s.lastStart).toBeNull();
   });
 });
+
+// ============================================================
+// US-002：resultApplied 生命周期 + refresh idle 采纳守卫（极限族同构）
+// ============================================================
+
+describe('extremeStore：resultApplied 生命周期（US-002）', () => {
+  it('done 结果拉取落定仍 false；markResultApplied 置位；start/reset 随 result 清', async () => {
+    expect(useExtremeStore.getState().resultApplied).toBe(false);
+    resultPayload = RESULT;
+    statusPayload = { state: 'done', mode: 'extreme' } as StrategyStatus;
+    await useExtremeStore.getState().refresh();
+    expect(useExtremeStore.getState().resultApplied).toBe(false);
+    useExtremeStore.getState().markResultApplied();
+    expect(useExtremeStore.getState().resultApplied).toBe(true);
+
+    statusPayload = { state: 'idle' };
+    await useExtremeStore.getState().start({ time_total_s: 1200, seed: 0, gate_mm: 1980 });
+    expect(useExtremeStore.getState().result).toBeNull();
+    expect(useExtremeStore.getState().resultApplied).toBe(false);
+
+    useExtremeStore.getState().reset();
+    expect(useExtremeStore.getState().result).toBeNull();
+    expect(useExtremeStore.getState().resultApplied).toBe(false);
+  });
+});
+
+describe('extremeStore：refresh idle 采纳守卫（US-002 恢复写回态）', () => {
+  it('恢复态（result 在场 + phase=done）→ idle 不降级', async () => {
+    useExtremeStore.setState({
+      phase: 'done',
+      status: null,
+      result: RESULT,
+      resultApplied: false,
+      errorMessage: null,
+      lastStart: null,
+    });
+    statusPayload = { state: 'idle' };
+    await useExtremeStore.getState().refresh();
+    expect(useExtremeStore.getState().phase).toBe('done');
+    expect(useExtremeStore.getState().result).toEqual(RESULT);
+  });
+
+  it('result===null 的 stuck starting → idle 既有恢复出口不变', async () => {
+    useExtremeStore.setState({ phase: 'starting', status: null, result: null });
+    statusPayload = { state: 'idle' };
+    await useExtremeStore.getState().refresh();
+    expect(useExtremeStore.getState().phase).toBe('idle');
+  });
+});

@@ -464,7 +464,7 @@ WS 侧同语义走 **error 帧**：`{"type":"error","code":"session_expired","me
 
 ## POST /api/state-save — 状态文件保存（状态文件 PRD US-001，2026-09-11）
 
-工作台**运行状态**（非导出产物）的可传递快照：后端出 doc 块（会话 `state['doc']` 原样，含 5 层渲染字段 —— 与 `/export`、`/api/edit-polish`、求解同一真相源），前端回传 form/quantities/quantities_base/run 四块（`lib/stateFile.buildSavePayload`，US-003；quantities_base = 整列设值基准，2026-09-12 additive），`web/statefile.py` 聚合并 gzip 序列化。恢复端 `/api/state-restore`（US-002）与本端复用同一守恒校验函数 `check_placed_conservation`。设计全文 `.docs/business/状态文件保存恢复_落地方案.md`（§四 schema / §五 后端改动点）。
+工作台**运行状态**（非导出产物）的可传递快照：后端出 doc 块（会话 `state['doc']` 原样，含 5 层渲染字段 —— 与 `/export`、`/api/edit-polish`、求解同一真相源），前端回传 form/quantities/quantities_base/run/pending_strategy_result 五块（`lib/stateFile.buildSavePayload`，US-003；quantities_base = 整列设值基准，2026-09-12 additive；pending_strategy_result = 待确认策略/极限 done 结果槽，前端产 US-002 2026-09-13），`web/statefile.py` 聚合并 gzip 序列化。恢复端 `/api/state-restore`（US-002）与本端复用同一守恒校验函数 `check_placed_conservation`。设计全文 `.docs/business/状态文件保存恢复_落地方案.md`（§四 schema / §五 后端改动点）。
 
 ### 请求（`application/json`）
 
@@ -506,6 +506,7 @@ WS 侧同语义走 **error 帧**：`{"type":"error","code":"session_expired","me
 
 - `placed` = lastFrame.placed_items（已含保存的编辑）；**同 pid 多副本 = 数组多条，绝不 pid 去重**；`mirror` 按 omit-when-false（editStore / `/api/edit-polish` 同口径）。条目缺 `id` / 非 dict → 400。
 - `pending_strategy_result.best.placed_items` 逐条与 run.placed 同判据（保存端校验 id、恢复端全量形态）；守恒与 run 块同一函数/同文案 —— 改数量未重解场景 run 块与该槽同生共死，用户视角一个错。
+- `pending_strategy_result` **前端产方（US-002，2026-09-13）**：`lib/stateFile.buildPendingBlock` 轮询两族 store（useStrategyStore → useExtremeStore）—— `result` 非空且未 `resultApplied` 且 `state==='done'` 且 mode 三枚举才入槽；应用落定（`markResultApplied`）后整键缺席（已应用结果由 run 块承载，无双份数据）；`best.placed_items` 经 `deepCopyPlaced` 深拷贝（translation 拷断 + mirror omit-when-false，run.placed 同口径）。
 - manifest 不入文件：恢复端用 `build_pid_meta` 确定性重算（无 RNG），文件只存单份几何。
 
 ### 响应（200 附件）
@@ -563,7 +564,12 @@ curl -X POST http://127.0.0.1:8000/api/state-restore -H "X-Session-Id: <sid>" -F
   "pending_strategy_result": { /* 2026-09-13 additive 回传：待确认策略/极限 done 结果槽
                                    原样（mode/best/summary，校验链已过；恢复端 manifest 已确定性
                                    重算入响应 = 槽内不存 manifest 的单份几何口径）；省键式文件
-                                   缺席 → null → 前端 no-op */ },
+                                   缺席 → null → 前端 no-op；前端消费 = applyRestorePayload
+                                   第 6 步（US-002）：按 mode 路由写回族 store（extreme→极限 /
+                                   se·race→策略；合成 result={state:'done', mode, run_dir:null,
+                                   manifest:本响应重算值, best, summary} + resultApplied:false）+
+                                   openModal 自动开弹窗在结果态（refresh idle 采纳守卫防新 sid
+                                   空槽打回） */ },
   "form": { }, "quantities": { },
   "quantities_base": { "g02": 2 }    // 2026-09-12 透传回传（前端写回 baseValue = 整列设值弹层初值/
                                       // 特例高亮基准）；省键式文件缺席 → null → 前端 no-op 保持默认 1
@@ -615,7 +621,7 @@ curl -X POST http://127.0.0.1:8000/api/state-recover -H "X-Session-Id: <新sid>"
 
 ### 请求（POST）
 
-body = `/api/state-save` 同形 `{form, quantities, quantities_base?, run?, save_as?, pending_strategy_result?}`（**save_as 键容忍忽略** —— 仅影响 save 的响应 CD，快照不含；`pending_strategy_result` 槽省键式随载荷自然携带，前端 done 结果落定即打 checkpoint 即入档）；`X-Session-Id` 同其余端点（无 sid → default 会话，存储键 `'default'`）。
+body = `/api/state-save` 同形 `{form, quantities, quantities_base?, run?, save_as?, pending_strategy_result?}`（**save_as 键容忍忽略** —— 仅影响 save 的响应 CD，快照不含；`pending_strategy_result` 槽省键式随载荷自然携带，前端 done 结果拉取落定/应用落定即立即 flush（US-002 触发面 #4：两族 store `result null→非空` 或 `resultApplied false→true`），应用后载荷发送时刻现取 → 槽退场由 run 块承载）；`X-Session-Id` 同其余端点（无 sid → default 会话，存储键 `'default'`）。
 
 ### 响应（POST）
 
@@ -658,7 +664,7 @@ body = `/api/state-save` 同形 `{form, quantities, quantities_base?, run?, save
 6. **single-use**（US-002）：恢复成功即删该 checkpoint 条目 —— 旧 sid 已入墓碑永不复用，防多 Tab 反复恢复放大名额占用；双次恢复第二次 404（pytest）。
 7. 分层：`web/checkpoint.py` 仅 import `sessions`/`statefile`，禁 import server（AST 守卫 `tests/test_web_checkpoint.py`，含 fastapi.concurrency/asyncio 白名单）；`register_checkpoint_routes(app)` server.py 文件尾注册（statefile 同模式）；`python -m materialsorting.web.checkpoint` 冒烟 34 项（store 假时钟生命周期 + 写入内核全路径 + 2026-09-13 pending 槽入档/守恒 last-good/mode 非法 + recover 全链：_FakeRequest 驱动真实 async handler，带槽快照恢复响应回传对拍）。
 8. 测试：`tests/test_web_checkpoint.py` 共 47 例（store 单元 6 + peek 口径 3 + 写入往返 5 + empty 1 + conservation last-good 3 + 闸门/载荷 2 + DELETE 4 + 路由/env/AST 守卫 3 + `rebuild_session_from_document` 直接单元 1 + US-002 recover 11：真实 commit 全链 / 404×2 / 双次 404 / 429 条目保留 / 坏 from_sid 400 / 坏快照不占名额 / 墓碑 401 / threadpool spy / default 会话 / 路由白盒 + 2026-09-13 pending 槽 8：写入往返对拍（mode=extreme+无槽省键）/ 槽守恒 last-good（无 run 独立触发）/ 槽形态 400 参数化 5 / recover 响应回传）。
-9. **前端消费链（US-003/US-004，2026-09-13）**：写入 = `lib/sessionCheckpoint` 自动调度（form/qty 去抖 3s + run done/编辑保存立即 + hidden flush + pagehide keepalive，一律 apiFetch 统一出口）；恢复 = `lib/sessionRecovery` 启动期编排（探测 401 → peek 旧 sid → 铸新 → 裸 fetch recover → 200 `applyRestorePayload` 复用 state-restore 前端 / 404·网络错静默新会话 toast / 429 session_limit 阻断弹窗）；启动清理 = 会话存活刷新 DELETE（F5 干净重置）、探测 401/阻断不清（快照留给恢复消费）。
+9. **前端消费链（US-003/US-004，2026-09-13；US-002 同日补触发面）**：写入 = `lib/sessionCheckpoint` 自动调度（form/qty 去抖 3s + run done/编辑保存/策略·极限结果落定·应用立即（US-002 触发面 #4 两族 store result null→非空 / resultApplied false→true）+ hidden flush + pagehide keepalive，一律 apiFetch 统一出口）；恢复 = `lib/sessionRecovery` 启动期编排（探测 401 → peek 旧 sid → 铸新 → 裸 fetch recover → 200 `applyRestorePayload` 复用 state-restore 前端 / 404·网络错静默新会话 toast / 429 session_limit 阻断弹窗）；启动清理 = 会话存活刷新 DELETE（F5 干净重置）、探测 401/阻断不清（快照留给恢复消费）。
 10. **端到端冒烟（US-005，2026-09-13）**：`materialSorting-web/scripts/smoke_session_recovery.mjs` 自举起服（:8010，`MS_SESSION_TTL_SEC=60 MS_SESSION_MAX=1 MS_EDIT_HOLD_SEC=5`）覆盖五路径 —— 停留期引导弹窗（新文案 + 不自动恢复）→ 弹窗刷新恢复对拍 / 直接 F5 无弹窗恢复 / F5 存活 DELETE 清理 / 无 checkpoint 404 静默新会话 / `MS_SESSION_MAX=1` 双客户端 429 弹窗 + 名额释放后 recover 200（checkpoint 不删证明；skip-if-flaky）。
 
 ## GET /api/ptypes — US-020 裁片 g 码代表（D10/D11；US-001 v2：键 = label）

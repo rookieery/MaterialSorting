@@ -24,6 +24,15 @@
 //     本地写 errorMessage）。start 被拒时无新 run —— phase 停留 error 展示 + 重试。
 //   - result 常驻（done/stopped 后不清）：关弹窗再开仍可应用（US-006）；
 //     下一次 start / reset 才清。
+//   - resultApplied（US-002 pending 槽门控）：done 结果被应用到主画布后置位
+//     （NestingPage.applyStrategyResult 委托 applySyntheticRun 后按归属族调用
+//     markResultApplied），下一次 start/reset 随 result 清。lib/stateFile
+//     buildSavePayload 据此决定 pending_strategy_result 槽是否随载荷走。
+//   - refresh idle 采纳守卫（US-002 恢复路径必要条件）：st.state==='idle' 且
+//     result 在场 + phase==='done'（恢复写回态，见 lib/stateFile.applyRestorePayload
+//     第 6 步）→ 不降级 —— 新 sid 后端状态槽恒空，无守卫则 set({status, phase})
+//     恒采纳 idle 会把恢复态打回 idle 抹掉弹窗结果态；result===null 的 stuck
+//     starting → idle 既有恢复出口不受影响（守卫只护 result 在场者）。
 //   - fetch 失败静默保留上一状态（网络抖动不炸 UI；jsdom 无后端时同理安全）。
 
 import { create } from 'zustand';
@@ -68,6 +77,11 @@ export interface RunState<P> {
   status: StrategyStatus | null;
   /** done/stopped 后 result 端点响应（常驻到下一次 start/reset；US-006 应用数据源）。 */
   result: StrategyResult | null;
+  /**
+   * result 是否已被应用到主画布（US-002）：false = 待确认（pending 槽随
+   * checkpoint/.msn 载荷走）；markResultApplied 置位，start/reset 随 result 清。
+   */
+  resultApplied: boolean;
   /** start 被拒（400/409/422/网络错）时的本地错误文案（与 status.error 区分来源）。 */
   errorMessage: string | null;
   /** 上一次 start 载荷（error 态「重试」复用；idle 清空）。 */
@@ -78,6 +92,8 @@ export interface RunState<P> {
   stop: () => Promise<void>;
   /** GET <base>/status（活性轮询唯一入口；done/stopped 顺手拉 result 一次）。 */
   refresh: () => Promise<void>;
+  /** 应用落定置位 resultApplied（applyStrategyResult 委托 applySyntheticRun 后调用）。 */
+  markResultApplied: () => void;
   /** 全清回 idle（测试 / 用户显式重置用；正常流转不需要）。 */
   reset: () => void;
 }
@@ -100,6 +116,7 @@ function createRunStore<P>(spec: RunFamilySpec) {
   phase: 'idle',
   status: null,
   result: null,
+  resultApplied: false,
   errorMessage: null,
   lastStart: null,
 
@@ -107,7 +124,7 @@ function createRunStore<P>(spec: RunFamilySpec) {
     gen += 1;
     const g = gen;
     // 新 run：清上一 run 的 result / 错误（result 常驻仅到下一次 start）。
-    set({ result: null, errorMessage: null, lastStart: payload });
+    set({ result: null, resultApplied: false, errorMessage: null, lastStart: payload });
     try {
       const r = await apiFetch(`${spec.base}/start`, {
         method: 'POST',
@@ -154,6 +171,11 @@ function createRunStore<P>(spec: RunFamilySpec) {
       // 族过滤（US-003）：对方族 run（后端同槽可见）不进本族 phase；idle 恒采纳
       // （server 重启槽空后，stuck starting 态的唯一恢复出口）。
       if (st.state !== 'idle' && !spec.ownsMode(st.mode)) return;
+      // idle 采纳守卫（US-002）：恢复写回的 done 结果态（result 在场 + phase=done，
+      // lib/stateFile.applyRestorePayload 第 6 步）不被 idle 打回 —— 新 sid 后端
+      // 状态槽恒空，refresh 恒见 idle，无守卫则弹窗结果态被抹成配置态。
+      // result===null 时守卫不生效 → stuck starting → idle 出口不变。
+      if (st.state === 'idle' && get().result !== null && get().phase === 'done') return;
       set({ status: st, phase: st.state });
       // done/stopped → 拉 result 一次（每 run 恰一次：result 非 null 跳过；
       // result 拉取失败保持 null，下一次 refresh 重试）。
@@ -173,9 +195,13 @@ function createRunStore<P>(spec: RunFamilySpec) {
     }
   },
 
+  markResultApplied: () => {
+    set({ resultApplied: true });
+  },
+
   reset: () => {
     gen += 1;
-    set({ phase: 'idle', status: null, result: null, errorMessage: null, lastStart: null });
+    set({ phase: 'idle', status: null, result: null, resultApplied: false, errorMessage: null, lastStart: null });
   },
   };
   });
