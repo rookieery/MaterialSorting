@@ -5,7 +5,7 @@
 
 ## 状态
 
-单页工作台后端，20 个 API 端点（另含 `GET /` 与 `/static` mount）+ 1 条 WS。**US-026 起求解用 `solve_with_callback_proc`（多进程版）**：`ThreadPoolExecutor(max_workers=6)` 跑 `run_solve` → `solve_with_callback_proc` spawn 子进程执行 sparrow solve，主进程 drain `multiprocessing.Queue` 分发 manifest/frame/final（多 seed 最多 6 路并发，seed 间同等 CPU 竞争 → 排名仍公平）。WS 双向并发：write loop drain queue → `ws.send_json`；read loop 持续读客户端消息（`{action:'stop'}` → terminate 子进程 → 发 stopped → 关闭 WS）。**`server.py` 启动期 `_reload_pieces_state()` 读 intermediate 填入 `_PIECES_STATE`**（US-020：commit 后可 reload，allow-empty 不再让 import 崩）。US-004 起 `/api/parse-dxf` 上传解析也复用这个 6-worker 线程池跑 CPU 密集的 DXF 深度解析（`collect_pieces_with_details`）。strategy PRD US-004 起 `/api/strategy/*` 四路由（`web/strategy.py`）spawn `ms-run-config --strategy` 子进程跑双模式长跑（HTTP 轮询 run_dir 产物，无 WS），见下「策略桥接」；extreme PRD US-002 起 `/api/extreme/*` 四路由（同 `web/strategy.py` 内 mode='extreme' 分支）spawn `ms-run-config --extreme` 极限长跑，与策略路由**共用每会话状态槽**（同会话 409 单飞互斥、跨会话独立），见下「极限运行桥接」；状态文件 PRD US-001（2026-09-11）起 `POST /api/state-save`（`web/statefile.py`）把当前会话工作台状态聚合序列化为 gzip JSON `.msn` 附件，见下「状态文件保存」；US-002（同日）起 `POST /api/state-restore` 上传 `.msn` 校验重建当前会话 + manifest 确定性重算，见下「状态文件恢复」。
+单页工作台后端，22 个 API 端点（另含 `GET /` 与 `/static` mount）+ 1 条 WS。**US-026 起求解用 `solve_with_callback_proc`（多进程版）**：`ThreadPoolExecutor(max_workers=6)` 跑 `run_solve` → `solve_with_callback_proc` spawn 子进程执行 sparrow solve，主进程 drain `multiprocessing.Queue` 分发 manifest/frame/final（多 seed 最多 6 路并发，seed 间同等 CPU 竞争 → 排名仍公平）。WS 双向并发：write loop drain queue → `ws.send_json`；read loop 持续读客户端消息（`{action:'stop'}` → terminate 子进程 → 发 stopped → 关闭 WS）。**`server.py` 启动期 `_reload_pieces_state()` 读 intermediate 填入 `_PIECES_STATE`**（US-020：commit 后可 reload，allow-empty 不再让 import 崩）。US-004 起 `/api/parse-dxf` 上传解析也复用这个 6-worker 线程池跑 CPU 密集的 DXF 深度解析（`collect_pieces_with_details`）。strategy PRD US-004 起 `/api/strategy/*` 四路由（`web/strategy.py`）spawn `ms-run-config --strategy` 子进程跑双模式长跑（HTTP 轮询 run_dir 产物，无 WS），见下「策略桥接」；extreme PRD US-002 起 `/api/extreme/*` 四路由（同 `web/strategy.py` 内 mode='extreme' 分支）spawn `ms-run-config --extreme` 极限长跑，与策略路由**共用每会话状态槽**（同会话 409 单飞互斥、跨会话独立），见下「极限运行桥接」；状态文件 PRD US-001（2026-09-11）起 `POST /api/state-save`（`web/statefile.py`）把当前会话工作台状态聚合序列化为 gzip JSON `.msn` 附件，见下「状态文件保存」；US-002（同日）起 `POST /api/state-restore` 上传 `.msn` 校验重建当前会话 + manifest 确定性重算（重建段 2026-09-13 抽取共享函数 `rebuild_session_from_document`，行为零变更），见下「状态文件恢复」；会话过期自动恢复 PRD US-001（2026-09-13）起 `POST`/`DELETE /api/state-checkpoint`（`web/checkpoint.py`）服务端内存快照 peek 口径写入/幂等清除（恢复端点 `/api/state-recover` 见 US-002），见下「会话 checkpoint 内存快照」。
 
 ## 启动约束（重要）
 
@@ -33,6 +33,8 @@
 | POST | `/api/edit-polish` | **prd-edit-polish US-002（2026-09-05）编辑排料「智能微调」**：POST 当前编辑 placements（布局态后端不存、随 body = /export 同模式）→ 确定性后处理 `polish_layout` 结果 + 前后对比报告；pid 全匹配才跑（否则 400「母版已变更」）、`run_in_threadpool` 执行 + 顺手 `edit_hold.refresh`，见下专节；**多会话**：`X-Session-Id` → 该会话 `pieces_by_id` | `server.post_edit_polish` |
 | POST | `/api/state-save` | **状态文件 US-001（2026-09-11）工作台状态保存**：当前会话 doc（含 5 层）+ 前端回传 form/quantities/quantities_base（2026-09-12 整列设值基准，省键式）/run → gzip JSON `.msn` 附件下载（Content-Disposition 中文/ASCII 双名）；run 在场做保存期守恒校验（placed 与 demand 不守恒 → 400 指路文案），见下专节；**多会话**：`X-Session-Id` → 该会话快照（`_resolve_session_state` 读路由同口径） | `statefile.state_save`（server.py 文件尾 `register_statefile_routes`） |
 | POST | `/api/state-restore` | **状态文件 US-002（2026-09-11）会话恢复**：multipart 上传 `.msn`/`.json` → `parse_state_document` 校验链（threadpool）→ 纯内存重建**当前 sid** 会话（doc_id 铸新、不落盘）+ `build_pid_meta` manifest 确定性重算 + parse 载荷，见下专节；**多会话**：`resolve(sid, create=True)`（commit 同语义、不占新名额） | `statefile.state_restore`（同上注册） |
+| POST | `/api/state-checkpoint` | **会话过期自动恢复 US-001（2026-09-13）内存快照写入（peek 口径）**：body = state-save 同形（save_as 容忍忽略）→ 复用 .msn 管线 gzip 入内存 checkpoint 存储（**不刷会话活性、不建名额**）；会话空 → `200 {stored:false,reason:'empty'}`、守恒失败 → `200 {stored:false,reason:'conservation'}`（last-good），见下专节；**多会话**：`registry.peek(sid)`（绝不 resolve，FR-1） | `checkpoint.state_checkpoint`（server.py 文件尾 `register_checkpoint_routes`） |
+| DELETE | `/api/state-checkpoint` | **会话过期自动恢复 US-001（2026-09-13）内存快照幂等清除**：条目不在也 `200 {ok:true}`（F5 干净重置防幽灵回潮，前端 US-004 启动清理消费）；不触碰会话注册表 | `checkpoint.checkpoint_delete`（同上注册） |
 | POST | `/api/strategy/start` | strategy US-004：spawn `ms-run-config --strategy` 子进程启动双模式长跑（202）；**2026-08-22 起载荷可带 band**（经 `_parse_band` 同一校验点写进 config，成带与策略模式兼容）；**2026-08-25 起载荷可带 prefix**（经 `_parse_prefix` 同一校验点含 2+2 资格码，非法 → 400 早退，写进 9 键 config）；**多会话 US-004（2026-08-27）：读 `X-Session-Id`**（缺省 default）—— 每会话 409 单飞、跨会话并发放开、数据源 = 会话快照；**状态文件 US-005（2026-09-12）恢复会话数据源**：母版失盘 + doc 带 pieces（状态文件恢复会话）→ config 写 `intermediate` 键（doc 落 `config_runs/web_[<sid6>_]int_<stamp>_<rand6>.json`）替代 `master_dxf`，不写 uploads | `strategy.strategy_start` |
 | GET | `/api/strategy/status` | strategy US-004：无状态惰性轮询 run_dir 产物组装进度；**多会话 US-004：读 `X-Session-Id`**（status 轮询即活性，长跑会话不被扫描误杀） | `strategy.strategy_status` |
 | POST | `/api/strategy/stop` | strategy US-004：树杀子进程（taskkill /T /F / killpg）+ 清本会话 marker；**多会话 US-004：读 `X-Session-Id`**（只树杀本会话 pid） | `strategy.strategy_stop` |
@@ -580,6 +582,45 @@ curl -X POST http://127.0.0.1:8000/api/state-restore -H "X-Session-Id: <sid>" -F
 6. 恢复后该 sid 的 `/api/ptypes`（label_representatives 透传）、`/export`、`/api/edit-polish` 立即可用（pytest 端到端断言 placed 守恒）；成功 `edit_hold.refresh(sid)`（编辑钉住，default 豁免）。
 7. 链式传递：save→restore→save→restore 二次往返逐字段一致（doc_id/saved_at 除外）；文件自包含无 lineage 依赖。
 8. 测试：`tests/test_web_statefile.py` 共 79 例（US-001 23 + US-002 47 + 2026-09-11 E2E 冒烟回归 2 + 2026-09-12 quantities_base 7：save 入档/省键对拍、restore 透传回传、两端非法形态 400 参数化）。
+
+## POST/DELETE /api/state-checkpoint — 会话 checkpoint 内存快照（会话过期自动恢复 US-001，2026-09-13）
+
+会话过期（10 分钟空闲）后刷新页面即恢复过期前工作状态的**服务端内存快照**基础：按 sid 维护工作台状态 gzip 快照（复用 `statefile` 的 `build_state_document` + `serialize_state` .msn 管线，同一 `parse_state_document` 校验链消费方 = US-002 恢复端点 `POST /api/state-recover`）。恢复只由用户刷新触发，页面停留期间绝不自动恢复（用户定案 FR-3）。模块 `web/checkpoint.py`。
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/state-checkpoint -H "X-Session-Id: <sid>" \
+     -H "Content-Type: application/json" \
+     -d '{"form": {...}, "quantities": {...}, "quantities_base": {"g01": 2}, "run": {...}}'
+curl -X DELETE http://127.0.0.1:8000/api/state-checkpoint -H "X-Session-Id: <sid>"
+```
+
+### 请求（POST）
+
+body = `/api/state-save` 同形 `{form, quantities, quantities_base?, run?, save_as?}`（**save_as 键容忍忽略** —— 仅影响 save 的响应 CD，快照不含）；`X-Session-Id` 同其余端点（无 sid → default 会话，存储键 `'default'`）。
+
+### 响应（POST）
+
+| 场景 | 状态 | 响应 |
+| --- | --- | --- |
+| 成功入库 | 200 | `{"stored": true}` |
+| 会话空（无 doc/pieces，未 commit） | 200 | `{"stored": false, "reason": "empty"}` |
+| run 守恒校验失败（`check_placed_conservation` 复用：改数量未重解中间态） | 200 | `{"stored": false, "reason": "conservation"}`（**先前好快照字节不变 = last-good**） |
+| sid 非法 | 400 | `{"error": "sid 非法"}` |
+| 会话不在（peek None：过期逐出/从未注册） | 401 | `{"code": "session_expired", "error": ...}` |
+| body 非 JSON / form 缺失 / quantities·quantities_base·run 形态非法 | 400 | 与 state-save 同文案同判据 |
+
+### 响应（DELETE）
+
+恒 `200 {"ok": true}`（幂等：条目不存在同响应）；sid 非法 → 400。不触碰会话注册表（死会话残留快照同样该清）。
+
+### 关键不变量
+
+1. **peek 口径绝不 resolve**（FR-1）：经 `registry.peek(sid)` 读会话快照 —— 不刷 `last_active`、不建会话名额（否则常开 Tab 永不过期，破坏 `MS_SESSION_MAX` 容量回收；FakeClock 单测断言）；惰性逐出前（超龄未被请求/扫描触发）peek 仍命中 → 照常快照（更接近过期时刻）。
+2. **last-good**（FR-2）：守恒失败不覆盖上一份好快照（put 未发生，字节级断言）、返回 `stored:false` 而非报错 —— 自动后台任务不打扰用户。
+3. **纯内存不落盘**（FR-12）：服务重启 = 丢快照 = 前端静默兜底（新会话 + toast，US-003）；单条 ≈ gzip 后 100–200KB，16 条上限 ≈ 3MB。
+4. **生命周期 env 可调**：`MS_CHECKPOINT_TTL_SEC`（缺省 7200 = 恢复窗：过期后墓碑 1h + 会话 TTL 10min + 余量，超窗无消费方）/ `MS_CHECKPOINT_MAX`（缺省 16，FIFO 逐出最旧）；TTL 惰性清理（put/get 入口，无 daemon 线程）。
+5. 分层：`web/checkpoint.py` 仅 import `sessions`/`statefile`，禁 import server（AST 守卫 `tests/test_web_checkpoint.py`）；`register_checkpoint_routes(app)` server.py 文件尾注册（statefile 同模式）；`python -m materialsorting.web.checkpoint` 冒烟 17 项（store 假时钟生命周期 + 内核全路径）。
+6. 测试：`tests/test_web_checkpoint.py` 共 28 例（store 单元 6 + peek 口径 3 + 写入往返 5 + empty 1 + conservation last-good 3 + 闸门/载荷 2 + DELETE 4 + 路由/env/AST 守卫 3 + `rebuild_session_from_document` 直接单元 1）。
 
 ## GET /api/ptypes — US-020 裁片 g 码代表（D10/D11；US-001 v2：键 = label）
 

@@ -579,6 +579,14 @@ from .statefile import register_statefile_routes   # noqa: E402
 
 register_statefile_routes(app)
 
+# 会话过期自动恢复 US-001：POST/DELETE /api/state-checkpoint（工作台状态内存快照
+# peek 口径写入/幂等清除；恢复端点 /api/state-recover 见 US-002）。checkpoint 只
+# 依赖 web 兄弟模块（sessions/statefile），禁 import 本模块（AST 守卫，sessions
+# 同款先例）；文件尾注册（statefile.py 同模式）。
+from .checkpoint import register_checkpoint_routes   # noqa: E402
+
+register_checkpoint_routes(app)
+
 # 编辑排料会话钉住（2026-09-04）：把 edit_hold 的编辑豁免与上面 strategy 注册的
 # run 钉住 hook 组合成单 slot 唯一 hook（任一豁免源给出未来时间戳即不逐出）。
 # **必须在 register_strategy_routes 之后**（strategy import 时覆写式注册自己的

@@ -57,6 +57,7 @@ __all__ = [
     'expected_demand_map',
     'parse_state_document',
     'register_statefile_routes',
+    'rebuild_session_from_document',
     'serialize_state',
     'state_restore',
     'state_save',
@@ -511,57 +512,30 @@ async def state_save(request: Request):
 
 # ---------------------------------------------------------------- POST /api/state-restore
 
-async def state_restore(request: Request, file: UploadFile = File(...)):
-    """POST /api/state-restore：上传 .msn → 校验 → 纯内存重建当前会话 + manifest 重算。
+def rebuild_session_from_document(document: dict, sid: str | None,
+                                  *, filename_fallback: str = '') -> dict:
+    """纯内存重建会话 + manifest 确定性重算 + 响应组装（US-001 抽取共享函数）。
 
-    multipart 收文件（扩展名 .msn/.json；纯 JSON 也接受）。流程（设计 §五.6/§七）：
-    1. 扩展名/大小（raw > 20MB → 413）→ ``run_in_threadpool(parse_state_document)``
-       （解压+json+校验链 CPU 密集，不阻塞事件循环；解析在会话解析**之前** —— 坏
-       文件不新建会话名额）；
-    2. ``registry.resolve(sid, create=True)``（commit 先例：恢复写入**当前 sid**，
-       等价「再上传母版 commit」覆盖语义、不占 ``MS_SESSION_MAX`` 名额；过期 401 /
-       超限 429 / 非法 400 结构化 JSON）；
-    3. 纯内存重建 state：doc_id 铸新 uuid、源文件名保留 doc.source —— sid 会话
-       ``st.state = 新 dict``、default 会话走 runtime 等价原子重绑（锁内 clear+update，
-       ``_reload_pieces_state`` 同法但不读盘）；**不镜像写 paths.INTERMEDIATE、不落盘
-       uploads**（他人文件不污染本机事实源，设计 §一.7）；
-    4. ``build_pid_meta(doc.pieces, sizes, per_type, quantities)`` 确定性重算 manifest
-       （params 缺省全 0 = web 口径；含 raw_polygon/d_mm 物理毛版，routes_ws.on_manifest
-       / strategy result 同形）；``gate_mm`` 取 ``form.gate``（cm×10，与求解路径
-       parseGate/前端覆盖同口径，缺省回退 doc.gate_mm —— 见 ``_form_gate_mm``）；
-       ``_build_parse_payload`` 经 ``_DocPieceView`` 组 parse
-       载荷（PreviewPage 零解析改动）；
-    5. 成功 ``edit_hold.refresh(sid)``（编辑钉住与 /api/edit-polish 同口径；default
-       豁免不进钉住表）。
+    ``state_restore`` 内联重建段原样抽取（行为零变更重构）；checkpoint 恢复端点
+    （US-002 ``/api/state-recover``）同复用。前置契约：
 
-    响应 ``{doc_id, filename, parse, manifest, final, placed, run?, form,
-    quantities, quantities_base}``：final/placed = run 块摘出（无 run → None 纯
-    配置档）；``run`` 块 additive 整块透传（seed/provenance 供前端 US-004 恢复编排
-    写回来源，无 run 时为 None）；``quantities_base`` = 整列设值基准回传（省键式
-    文件缺席 → None → 前端 no-op 保持默认 1）。错误契约：校验链失败 → 400/413
-    ``{error}``（StateFileError 全结构化 JSON，不炸 500）。
+    - ``document`` 已过 ``parse_state_document`` 校验链（doc_id 由本函数铸新后
+      原位改写；调用方接管所有权）；
+    - ``sid`` 已过 ``registry.resolve(sid, create=True)``（本函数经 ``peek`` 取
+      回同一 ``SessionState`` —— 调用方刚 resolve 过，peek 必命中）。
+
+    重建五步（= state_restore 原内联序）：doc_id 铸新 uuid + ``_state_from_doc``
+    + sid/default 双分支写入（sid → ``st.state = state`` 覆盖语义 = 再上传母版
+    commit；default → runtime 等价原子重绑，锁内 clear+update 不读盘不写盘）+
+    ``build_pid_meta`` manifest 重算（``gate_mm`` 取 ``_form_gate_mm`` form 口径）
+    + ``_build_parse_payload`` 经 ``_DocPieceView`` 组 parse 载荷 + sid 在场
+    ``edit_hold.refresh``（default 豁免不进钉住表）。
+
+    响应 dict 与 ``/api/state-restore`` 成功响应同形（US-002 恢复端点 additive
+    ``recovered_from`` 键由调用方补）：``{doc_id, filename, parse, manifest,
+    final, placed, run, quantities_base, form, quantities}``。
     """
-    fname = file.filename or ''
-    if not (fname.lower().endswith(STATE_EXTENSION) or fname.lower().endswith('.json')):
-        return JSONResponse({'error': '仅支持 .msn / .json 状态文件'}, status_code=400)
-    data = await file.read()
-    if len(data) > STATE_MAX_BYTES:
-        return JSONResponse(
-            {'error': f'文件大小超过上限 {STATE_MAX_BYTES // (1024 * 1024)}MB'},
-            status_code=413)
-
-    # 解析先行（threadpool）：坏文件不触发会话解析/名额。
-    try:
-        document = await run_in_threadpool(parse_state_document, data)
-    except StateFileError as e:
-        return JSONResponse({'error': e.message}, status_code=e.status)
-
-    sid = (request.headers.get('x-session-id') or '').strip() or None
-    try:
-        st = session_registry.resolve(sid, create=True)
-    except SessionError as e:
-        return JSONResponse(e.payload(), status_code=e.status)
-
+    st = session_registry.peek(sid)
     doc = document['doc']
     doc_id = uuid.uuid4().hex      # 每次恢复铸新文档身份（链式传递无原文件依赖）
     doc['doc_id'] = doc_id
@@ -603,7 +577,7 @@ async def state_restore(request: Request, file: UploadFile = File(...)):
             for pid, meta in pid_meta.items()
         ],
     }
-    filename = doc.get('source') or fname
+    filename = doc.get('source') or filename_fallback
     parse = _build_parse_payload(doc_id, filename,
                                  [_DocPieceView(p) for p in doc['pieces']])
 
@@ -621,6 +595,65 @@ async def state_restore(request: Request, file: UploadFile = File(...)):
         'form': form,
         'quantities': quantities,
     }
+
+
+async def state_restore(request: Request, file: UploadFile = File(...)):
+    """POST /api/state-restore：上传 .msn → 校验 → 纯内存重建当前会话 + manifest 重算。
+
+    multipart 收文件（扩展名 .msn/.json；纯 JSON 也接受）。流程（设计 §五.6/§七）：
+    1. 扩展名/大小（raw > 20MB → 413）→ ``run_in_threadpool(parse_state_document)``
+       （解压+json+校验链 CPU 密集，不阻塞事件循环；解析在会话解析**之前** —— 坏
+       文件不新建会话名额）；
+    2. ``registry.resolve(sid, create=True)``（commit 先例：恢复写入**当前 sid**，
+       等价「再上传母版 commit」覆盖语义、不占 ``MS_SESSION_MAX`` 名额；过期 401 /
+       超限 429 / 非法 400 结构化 JSON）；
+    3. ``rebuild_session_from_document``（US-001 抽取共享函数，checkpoint 恢复
+       端点同复用）—— 纯内存重建 state：doc_id 铸新 uuid、源文件名保留
+       doc.source —— sid 会话
+       ``st.state = 新 dict``、default 会话走 runtime 等价原子重绑（锁内 clear+update，
+       ``_reload_pieces_state`` 同法但不读盘）；**不镜像写 paths.INTERMEDIATE、不落盘
+       uploads**（他人文件不污染本机事实源，设计 §一.7）；
+    4. ``build_pid_meta(doc.pieces, sizes, per_type, quantities)`` 确定性重算 manifest
+       （params 缺省全 0 = web 口径；含 raw_polygon/d_mm 物理毛版，routes_ws.on_manifest
+       / strategy result 同形）；``gate_mm`` 取 ``form.gate``（cm×10，与求解路径
+       parseGate/前端覆盖同口径，缺省回退 doc.gate_mm —— 见 ``_form_gate_mm``）；
+       ``_build_parse_payload`` 经 ``_DocPieceView`` 组 parse
+       载荷（PreviewPage 零解析改动）；
+    5. 成功 ``edit_hold.refresh(sid)``（编辑钉住与 /api/edit-polish 同口径；default
+       豁免不进钉住表）。
+
+    响应 ``{doc_id, filename, parse, manifest, final, placed, run?, form,
+    quantities, quantities_base}``：final/placed = run 块摘出（无 run → None 纯
+    配置档）；``run`` 块 additive 整块透传（seed/provenance 供前端 US-004 恢复编排
+    写回来源，无 run 时为 None）；``quantities_base`` = 整列设值基准回传（省键式
+    文件缺席 → None → 前端 no-op 保持默认 1）。错误契约：校验链失败 → 400/413
+    ``{error}``（StateFileError 全结构化 JSON，不炸 500）。
+    """
+    fname = file.filename or ''
+    if not (fname.lower().endswith(STATE_EXTENSION) or fname.lower().endswith('.json')):
+        return JSONResponse({'error': '仅支持 .msn / .json 状态文件'}, status_code=400)
+    data = await file.read()
+    if len(data) > STATE_MAX_BYTES:
+        return JSONResponse(
+            {'error': f'文件大小超过上限 {STATE_MAX_BYTES // (1024 * 1024)}MB'},
+            status_code=413)
+
+    # 解析先行（threadpool）：坏文件不触发会话解析/名额。
+    try:
+        document = await run_in_threadpool(parse_state_document, data)
+    except StateFileError as e:
+        return JSONResponse({'error': e.message}, status_code=e.status)
+
+    sid = (request.headers.get('x-session-id') or '').strip() or None
+    try:
+        session_registry.resolve(sid, create=True)
+    except SessionError as e:
+        return JSONResponse(e.payload(), status_code=e.status)
+
+    # 重建 + manifest 重算 + 响应组装（US-001 抽取共享函数 —— 行为零变更；
+    # checkpoint 恢复端点 /api/state-recover US-002 同复用）。
+    return rebuild_session_from_document(document, sid,
+                                         filename_fallback=fname)
 
 
 def register_statefile_routes(app) -> None:
