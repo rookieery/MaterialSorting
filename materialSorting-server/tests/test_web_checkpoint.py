@@ -33,6 +33,14 @@ US-002（恢复端点）覆盖：
 test_web_statefile）；另含 statefile ``rebuild_session_from_document`` 抽取的
 直接单元（响应同形 / peek 复用），state_restore 零回归由既有
 test_web_statefile.py 全绿保证。
+
+US-001（pending_strategy_result 槽，prd strategy-pending-result-checkpoint）覆盖：
+11. 写入带槽 → stored:true 且快照 parse 对拍槽逐字段（省键式：无槽载荷 → 快照
+    无键，旧口径逐字节对拍不变）；槽守恒失败（改数量未重解，无 run 独立触发）→
+    200 {stored:false, reason:'conservation'} + last-good 字节不变；槽形态非法
+    （非对象/mode 非法/placed_items 空/条目缺 id）→ 400（state-save 同文案）；
+12. recover 响应 additive ``pending_strategy_result`` 回传（带槽快照恢复 → 逐
+    字段对拍 + 新会话照常重建；无槽 → None）。
 """
 from __future__ import annotations
 
@@ -108,6 +116,23 @@ def _run():
                                  'width_mm': 7523.0, 'elapsed': 121.4,
                                  'n_frames': 87, 'n_eroded': 0},
             'placed': _placed()}
+
+
+def _pending(mode='extreme'):
+    """pending_strategy_result 槽夹具（US-001 additive 省键式，statefile 同款；
+    mode 取 extreme 以覆盖第三枚举）。"""
+    return {
+        'mode': mode,
+        'best': {'seed': 3, 'frame_index': 11, 'elapsed': 600.0,
+                 'density': 0.855, 'density_sparrow': 0.837,
+                 'width_mm': 7401.2, 'placed_items': _placed()},
+        'summary': {'per_seed': [{'seed': 3, 'killed': False,
+                                  'kill_reason': None, 'best_density': 0.855,
+                                  'elapsed': 600.0, 'phase': 'extension'}],
+                    'mode': 'race',
+                    'race': {'gate_seconds': 90, 'kept_seeds': [3],
+                             'gated_seeds': []}},
+    }
 
 
 def _sid_session(sid, doc=None):
@@ -389,6 +414,76 @@ def test_checkpoint_conservation_without_run_passes(client):
     assert r.status_code == 200 and r.json() == {'stored': True}
 
 
+# --------------------------------------- US-001 pending_strategy_result 槽
+
+def test_checkpoint_pending_slot_round_trip(client):
+    """US-001：带槽载荷 → stored:true 且快照经 parse 对拍槽逐字段（mode=extreme
+    第三枚举 + best 数值键/placed_items/summary）；无槽载荷 → 快照无键（省键式，
+    旧口径对拍不变）。"""
+    sid = 'ckpt0050'
+    _sid_session(sid)
+    h = {'X-Session-Id': sid}
+    r = client.post('/api/state-checkpoint', headers=h, json={
+        'form': _form(), 'quantities': _quantities(), 'run': _run(),
+        'pending_strategy_result': _pending()})
+    assert r.status_code == 200 and r.json() == {'stored': True}
+    snap = parse_state_document(checkpoint_mod.store.get(sid))
+    assert snap['pending_strategy_result'] == _pending()
+    assert snap['run']['placed'] == _placed()          # run 块与槽并存互不影响
+
+    r2 = client.post('/api/state-checkpoint', headers=h, json={
+        'form': _form(), 'quantities': _quantities(), 'run': _run()})
+    assert r2.json() == {'stored': True}
+    assert 'pending_strategy_result' not in parse_state_document(
+        checkpoint_mod.store.get(sid))
+
+
+def test_checkpoint_pending_conservation_last_good(client):
+    """US-001：槽守恒失败（改数量未重解，无 run 独立触发）→ 200
+    {stored:false, reason:'conservation'} 且先前好快照（带槽）字节不变
+    （last-good）。"""
+    sid = 'ckpt0051'
+    _sid_session(sid)
+    h = {'X-Session-Id': sid}
+    r1 = client.post('/api/state-checkpoint', headers=h, json={
+        'form': _form(), 'quantities': _quantities(),
+        'pending_strategy_result': _pending()})
+    assert r1.status_code == 200 and r1.json() == {'stored': True}
+    good = checkpoint_mod.store.get(sid)
+
+    r2 = client.post('/api/state-checkpoint', headers=h, json={
+        'form': _form(),
+        'quantities': {'g01': {'30': 5}, 'g02': {'30': 1}},
+        'pending_strategy_result': _pending()})
+    assert r2.status_code == 200
+    assert r2.json() == {'stored': False, 'reason': 'conservation'}
+    assert checkpoint_mod.store.get(sid) == good       # 字节不变
+    assert parse_state_document(good)['pending_strategy_result'] == _pending()
+
+
+@pytest.mark.parametrize('payload_extra, want', [
+    ({'pending_strategy_result': 'garbage'}, '须为对象'),
+    ({'pending_strategy_result': {'mode': 'magic'}}, 'mode 非法'),
+    ({'pending_strategy_result': {'mode': 'se'}}, 'best 须为对象'),
+    ({'pending_strategy_result': {'mode': 'se',
+                                   'best': {'placed_items': []}}},
+     'placed_items 不能为空'),
+    ({'pending_strategy_result': {'mode': 'se',
+                                   'best': {'placed_items': [{'rotation': 0}]}}},
+     '形态非法'),
+])
+def test_checkpoint_pending_shape_400(client, payload_extra, want):
+    """US-001：槽形态非法 → 400（与 state-save 同文案同判据），全程无条目入库。"""
+    sid = 'ckpt0052'
+    _sid_session(sid)
+    r = client.post('/api/state-checkpoint',
+                    headers={'X-Session-Id': sid},
+                    json={'form': _form(), 'quantities': _quantities(),
+                          **payload_extra})
+    assert r.status_code == 400 and want in r.json()['error']
+    assert checkpoint_mod.store.get(sid) is None
+
+
 # ---------------------------------------------------------------- 载荷/会话闸门
 
 def test_checkpoint_invalid_sid_400(client):
@@ -528,8 +623,8 @@ def test_rebuild_session_from_document_shape():
     res = rebuild_session_from_document(
         parse_state_document(serialize_state(document)), sid)
     assert set(res) == {'doc_id', 'filename', 'parse', 'manifest', 'final',
-                        'placed', 'run', 'quantities_base', 'form',
-                        'quantities'}
+                        'placed', 'run', 'pending_strategy_result',
+                        'quantities_base', 'form', 'quantities'}
     assert res['doc_id'] != 'docabc01' and len(res['doc_id']) == 32   # uuid 铸新
     assert res['filename'] == '5336测试母版.dxf'
     assert res['run']['placed'] == _placed()
@@ -714,6 +809,27 @@ def test_recover_session_limit_429_checkpoint_kept(client):
     assert reg.peek('recov0131') is None                  # 未建会话
 
 
+def test_recover_response_pending_passthrough(client):
+    """US-001：带槽快照 → recover 200 响应 additive ``pending_strategy_result``
+    逐字段回传（mode=extreme 路由键原样）+ 新会话照常重建 + checkpoint 已删。"""
+    sid_old = 'recov0135'
+    _sid_session(sid_old)
+    rc = client.post('/api/state-checkpoint', headers={'X-Session-Id': sid_old},
+                     json={'form': _form(), 'quantities': _quantities(),
+                           'run': _run(),
+                           'pending_strategy_result': _pending()})
+    assert rc.json() == {'stored': True}
+    r = client.post('/api/state-recover', headers={'X-Session-Id': 'recov0136'},
+                    json={'from_sid': sid_old})
+    assert r.status_code == 200, r.text
+    res = r.json()
+    assert res['pending_strategy_result'] == _pending()
+    assert res['run']['placed'] == _placed()          # run 块与槽并存互不影响
+    assert sessions.registry.peek('recov0136').state['pieces'] \
+        == _doc()['pieces']                           # 新会话照常重建
+    assert checkpoint_mod.store.get(sid_old) is None   # single-use 已删
+
+
 def test_recover_bad_from_sid_400(client):
     """AC 错误路径：坏 from_sid（非法字符 / 缺失 / 非字符串 / 非 JSON body）→ 400。"""
     h = {'X-Session-Id': 'recov0140'}
@@ -796,10 +912,12 @@ def test_recover_default_session_and_response_shape(client):
         assert r.status_code == 200
         res = r.json()
         assert set(res) == {'doc_id', 'filename', 'parse', 'manifest', 'final',
-                            'placed', 'run', 'quantities_base', 'form',
-                            'quantities', 'recovered_from'}
+                            'placed', 'run', 'pending_strategy_result',
+                            'quantities_base', 'form', 'quantities',
+                            'recovered_from'}
         assert res['recovered_from'] == sid_old
         assert res['quantities_base'] == {'g01': 2}
+        assert res['pending_strategy_result'] is None    # 无槽快照 → None 回传
         assert sessions.registry.resolve(None).state is state
         assert state['doc']['doc_id'] == res['doc_id']
         assert checkpoint_mod.store.get(sid_old) is None

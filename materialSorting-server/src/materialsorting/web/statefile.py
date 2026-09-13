@@ -8,12 +8,19 @@
 保存端复用同一守恒校验函数 ``check_placed_conservation``。
 
 schema v1（设计 §四，.docs/business/状态文件保存恢复_落地方案.md）：
-  {schema_version, app, saved_at, doc, form, quantities, quantities_base?, run?}
+  {schema_version, app, saved_at, doc, form, quantities, quantities_base?, run?,
+   pending_strategy_result?}
   - run 仅 done 态入文件（body 无 run → 整块省略）；placed 同 pid 多副本 = 数组
     多条，绝不 pid 去重；mirror 按 omit-when-false（editStore 同口径）。
   - quantities_base = {label:整数} 整列设值基准（qtyStore baseValue，2026-09-12
     additive）：省键式 —— 只存 ≠1 的行，缺席 = 全 1 默认；不参与守恒/manifest
     （纯 UI 基准），无需 bump v1。
+  - pending_strategy_result = 待确认的策略/极限 done 结果槽（2026-09-13 additive，
+    省键式）：{mode:'se'|'race'|'extreme', best:{seed, frame_index, elapsed,
+    density, density_sparrow, width_mm, placed_items}, summary}—— 仅 done 态入槽
+    （运行中被 alive hook 钉住不过期、stopped 是人为操作，均不入案）；manifest/
+    run_dir 不入档（恢复端 rebuild 已确定性重算 manifest 随响应回传，单份几何；
+    run_dir 前端不展示）。守恒与 run 块同一函数/文案；无需 bump v1。
   - manifest 不入文件：恢复端用 build_pid_meta 确定性重算（无 RNG），文件只存
     单份几何。
 
@@ -115,7 +122,8 @@ def _form_gate_mm(form: dict, doc_gate: float) -> float:
 # ---------------------------------------------------------------- 纯逻辑（构建/序列化）
 
 def build_state_document(state: dict, form: dict, quantities, run,
-                         quantities_base=None) -> dict:
+                         quantities_base=None,
+                         pending_strategy_result=None) -> dict:
     """聚合保存载荷 → 状态文件顶层 dict（doc 块取 state['doc'] 原样含 5 层）。
 
     - ``form`` / ``quantities``：前端回传原样嵌入（quantities 可为 None = 求解
@@ -123,7 +131,9 @@ def build_state_document(state: dict, form: dict, quantities, run,
     - ``quantities_base``：整列设值基准 {label:整数}，None → 整块省略（省键式：
       前端只回传 ≠1 的行，缺席 = 全 1 默认 = 旧文件口径零迁移）；
     - ``run``：None/空 → 整块省略（纯配置档：端点容忍，UI 经 lastFrame 门槛
-      不可达 —— 契约注记见 agent-api-reference）。
+      不可达 —— 契约注记见 agent-api-reference）；
+    - ``pending_strategy_result``：待确认的策略/极限 done 结果槽，None/空 →
+      整块省略（省键式 additive：无 pending 的文件逐字节不变 = 旧口径零迁移）。
     """
     document = {
         'schema_version': STATE_SCHEMA_VERSION,
@@ -137,6 +147,8 @@ def build_state_document(state: dict, form: dict, quantities, run,
         document['quantities_base'] = quantities_base
     if run:
         document['run'] = run
+    if pending_strategy_result:
+        document['pending_strategy_result'] = pending_strategy_result
     return document
 
 
@@ -194,6 +206,15 @@ def check_placed_conservation(placed, pieces, *, sizes=None, per_type=None,
 # v1 内 run 块可省 provenance 键 = 缺省 'solve'（向后兼容手改文件）；config 形态
 # 宽松纯展示不承重（策略族 {minutes} / 极限族 {time_total_s}，仅来源小字回显）。
 _PROVENANCE_KINDS = frozenset({'solve', 'strategy_se', 'strategy_race', 'extreme'})
+# pending_strategy_result.mode 三值枚举（槽路由键：恢复端按 mode 分发到 strategy/
+# extreme 对应族 store，US-002）。槽内无 state 字段 —— 恒 done（运行中被 alive
+# hook 钉住不过期、stopped 是人为操作，两态均不入案，用户定案 2026-09-13）。
+_PENDING_MODES = frozenset({'se', 'race', 'extreme'})
+# pending.best 数值键（strategy result 端点 best_out 同键集；done 态恒有限数值，
+# NaN/±Inf 拒收防密度/料长展示污染）。placed_items 单独逐条校验（与 run.placed
+# 同一判据）。
+_PENDING_BEST_NUMERIC_KEYS = ('seed', 'frame_index', 'elapsed', 'density',
+                              'density_sparrow', 'width_mm')
 # doc.pieces[].label 形态 = label_for 产物 gNN（1-3 位数字）。既挡手改乱码，更保证
 # _DocPieceView 的 parse 载荷复用走 assign_codes 母版码模式必中（label 即 g 码），
 # parse 载荷 label 与 doc/manifest/quantities 键同源零漂移（4 位以上数字母版码正则
@@ -255,36 +276,61 @@ def _validate_doc_block(doc) -> None:
             raise StateFileError(f'状态文件损坏（pieces[{i}].area_mm2 须为有限数值）')
 
 
-def _validate_run_block(run: dict, pieces, *, form: dict, quantities) -> None:
-    """run 块校验：placed 逐条形态 → pid 全命中 doc → 守恒终检 → provenance 枚举。
+def _validate_placed_list(placed, pieces, *, path: str, form: dict,
+                          quantities) -> None:
+    """placed 逐条形态 + pid 全命中 doc + 守恒终检（run 块 / pending 槽**同一
+    判据**，US-001 抽取共享）。
 
-    pid 全命中与守恒 unknown_pid 文案不同（前者「母版外」、后者码选过滤/退化石
-    也算未排料），按故事口径分别给文案；守恒与保存端复用同一判定函数。
+    ``path`` = 报错文案前缀（``'run.placed'`` /
+    ``'pending_strategy_result.best.placed_items'``）。pid 全命中与守恒
+    unknown_pid 文案不同（前者「母版外」、后者码选过滤/退化石也算未排料），
+    按故事口径分别给文案；守恒与保存端复用同一判定函数。
     """
-    placed = run.get('placed')
     if not isinstance(placed, list) or not placed:
-        raise StateFileError('状态文件损坏（run.placed 不能为空）')
+        raise StateFileError(f'状态文件损坏（{path} 不能为空）')
     for i, item in enumerate(placed):
         if not isinstance(item, dict):
-            raise StateFileError(f'状态文件损坏（run.placed[{i}] 须为对象）')
+            raise StateFileError(f'状态文件损坏（{path}[{i}] 须为对象）')
         if not isinstance(item.get('id'), str) or not item['id']:
-            raise StateFileError(
-                f'状态文件损坏（run.placed[{i}].id 须为非空字符串）')
+            raise StateFileError(f'状态文件损坏（{path}[{i}].id 须为非空字符串）')
         if not _finite(item.get('rotation')):
-            raise StateFileError(f'状态文件损坏（run.placed[{i}].rotation 须为数值）')
+            raise StateFileError(f'状态文件损坏（{path}[{i}].rotation 须为数值）')
         tr = item.get('translation')
         if (not isinstance(tr, (list, tuple)) or len(tr) != 2
                 or not _finite(tr[0]) or not _finite(tr[1])):
             raise StateFileError(
-                f'状态文件损坏（run.placed[{i}].translation 须为 [x,y] 数值对）')
+                f'状态文件损坏（{path}[{i}].translation 须为 [x,y] 数值对）')
         if 'mirror' in item and not isinstance(item['mirror'], bool):
-            raise StateFileError(f'状态文件损坏（run.placed[{i}].mirror 须为布尔）')
+            raise StateFileError(f'状态文件损坏（{path}[{i}].mirror 须为布尔）')
     # pid 全命中 doc.pieces（镜像 edit-polish 语义：先查母版身份，再谈守恒）。
     pids = {p['pid'] for p in pieces}
     miss = [it['id'] for it in placed if it['id'] not in pids]
     if miss:
         raise StateFileError(
-            f'状态文件内部不一致：placed 引用母版外裁片（pid {miss[0]!r} 不在 doc.pieces）')
+            f'状态文件内部不一致：{path} 引用母版外裁片'
+            f'（pid {miss[0]!r} 不在 doc.pieces）')
+    # 副本守恒终检（manifest 重算后 demand 口径；保存端同一函数 —— 手改文件让
+    # placed ≠ demand 在此拦下，不让内部不一致布局进入恢复会话）。
+    try:
+        check_placed_conservation(placed, pieces, sizes=form.get('sizes'),
+                                  per_type=form.get('per_type'),
+                                  quantities=quantities)
+    except StateConservationError as e:
+        if e.kind == 'unknown_pid':
+            # pid 在 doc 但不在重算 demand（码选过滤 / erode 退化石）—— 同属
+            # 「引用未排料裁片」的内部不一致，文案沿用母版外口径 + detail。
+            raise StateFileError(
+                f'状态文件内部不一致：{path} 引用母版外裁片（{e.detail}）')
+        raise StateFileError(
+            f'状态文件内部不一致：{path} 副本数与数量矩阵不符（{e.detail}）')
+    except (ValueError, TypeError) as e:
+        raise StateFileError(f'状态文件损坏（form/quantities 形态非法：{e}）')
+
+
+def _validate_run_block(run: dict, pieces, *, form: dict, quantities) -> None:
+    """run 块校验：placed（与 pending 槽共用判据）→ final → provenance 枚举。"""
+    _validate_placed_list(run.get('placed'), pieces, path='run.placed',
+                          form=form, quantities=quantities)
     final = run.get('final')
     if final is not None and not isinstance(final, dict):
         raise StateFileError('状态文件损坏（run.final 须为对象）')
@@ -297,22 +343,74 @@ def _validate_run_block(run: dict, pieces, *, form: dict, quantities) -> None:
             raise StateFileError(
                 f'状态文件损坏（run.provenance.kind 非法：{kind!r}；'
                 f'须为 solve/strategy_se/strategy_race/extreme 之一）')
-    # 副本守恒终检（manifest 重算后 demand 口径；保存端同一函数 —— 手改文件让
-    # placed ≠ demand 在此拦下，不让内部不一致布局进入恢复会话）。
-    try:
-        check_placed_conservation(placed, pieces, sizes=form.get('sizes'),
-                                  per_type=form.get('per_type'),
-                                  quantities=quantities)
-    except StateConservationError as e:
-        if e.kind == 'unknown_pid':
-            # pid 在 doc 但不在重算 demand（码选过滤 / erode 退化石）—— 同属
-            # 「引用未排料裁片」的内部不一致，文案沿用母版外口径 + detail。
-            raise StateFileError(
-                f'状态文件内部不一致：placed 引用母版外裁片（{e.detail}）')
+
+
+def _validate_pending_block(pending: dict, pieces, *, form: dict,
+                            quantities) -> None:
+    """pending_strategy_result 槽校验（恢复端全量形态，在场时 fail-fast）。
+
+    - ``mode`` 枚举（恢复路由键，文案风格同 run.provenance.kind）；
+    - ``best`` 数值键有限数值（NaN/±Inf 拒收）+ ``placed_items`` 与 run.placed
+      **同一判据**（共用 ``_validate_placed_list``：逐条形态/pid 全命中/守恒
+      终检 + 同「内部不一致」文案）；
+    - ``summary`` 在场须为 dict（展示级宽松，provenance.config 同款不承重）。
+
+    manifest/run_dir 不入槽不校验：恢复端 rebuild 已用 build_pid_meta 确定性
+    重算 manifest 并随响应回传（单份几何）。
+    """
+    mode = pending.get('mode')
+    if mode not in _PENDING_MODES:
         raise StateFileError(
-            f'状态文件内部不一致：placed 副本数与数量矩阵不符（{e.detail}）')
-    except (ValueError, TypeError) as e:
-        raise StateFileError(f'状态文件损坏（form/quantities 形态非法：{e}）')
+            f'状态文件损坏（pending_strategy_result.mode 非法：{mode!r}；'
+            f'须为 se/race/extreme 之一）')
+    best = pending.get('best')
+    if not isinstance(best, dict):
+        raise StateFileError('状态文件损坏（pending_strategy_result.best 须为对象）')
+    for key in _PENDING_BEST_NUMERIC_KEYS:
+        if not _finite(best.get(key)):
+            raise StateFileError(
+                f'状态文件损坏（pending_strategy_result.best.{key} 须为有限数值）')
+    summary = pending.get('summary')
+    if summary is not None and not isinstance(summary, dict):
+        raise StateFileError(
+            '状态文件损坏（pending_strategy_result.summary 须为对象）')
+    _validate_placed_list(best.get('placed_items'), pieces,
+                          path='pending_strategy_result.best.placed_items',
+                          form=form, quantities=quantities)
+
+
+def _check_pending_save(pending, pieces, *, form: dict, quantities) -> None:
+    """保存/快照端 pending 槽校验（state_save 与 checkpoint._store_checkpoint
+    共用；US-001 镜像 run 块保存分叉深度）。
+
+    深度镜像 run 块：dict → mode 枚举 → best dict → placed_items 非空列表 →
+    逐条 id 非空 str → 守恒（``StateConservationError`` 由调用方转 400 指路
+    文案 / ``{stored:false, reason:'conservation'}``）。rotation/translation/
+    mirror/数值键等全量形态由恢复端 ``_validate_pending_block`` 把关（run 块
+    同款两端深度不对称）。
+    """
+    if not isinstance(pending, dict):
+        raise StateFileError('pending_strategy_result 须为对象')
+    mode = pending.get('mode')
+    if mode not in _PENDING_MODES:
+        raise StateFileError(
+            f'pending_strategy_result.mode 非法：{mode!r}'
+            f'（须为 se/race/extreme 之一）')
+    best = pending.get('best')
+    if not isinstance(best, dict):
+        raise StateFileError('pending_strategy_result.best 须为对象')
+    placed_items = best.get('placed_items')
+    if not isinstance(placed_items, list) or not placed_items:
+        raise StateFileError('pending_strategy_result.best.placed_items 不能为空')
+    for i, item in enumerate(placed_items):
+        if (not isinstance(item, dict)
+                or not isinstance(item.get('id'), str) or not item['id']):
+            raise StateFileError(
+                f'pending_strategy_result.best.placed_items[{i}] 形态非法'
+                f'（需 {{id,rotation,translation}}）')
+    check_placed_conservation(placed_items, pieces, sizes=form.get('sizes'),
+                              per_type=form.get('per_type'),
+                              quantities=quantities)
 
 
 def parse_state_document(raw: bytes) -> dict:
@@ -329,7 +427,9 @@ def parse_state_document(raw: bytes) -> dict:
     5. form/quantities/quantities_base 块形态（doc/run 前置：守恒校验消费
        form/quantities 这两块；quantities_base 纯 UI 基准缺席容忍）；
     6. doc 块逐片形态（``_validate_doc_block``）；
-    7. run 块（在场时：``_validate_run_block``）。
+    7. run 块（在场时：``_validate_run_block``）；
+    8. pending_strategy_result 槽（在场时：``_validate_pending_block`` ——
+       省键式缺席 = 旧文件零迁移）。
 
     返回 document 本体（doc_id 由 handler 铸新后原位改写；调用方接管所有权）。
     """
@@ -374,6 +474,11 @@ def parse_state_document(raw: bytes) -> dict:
             raise StateFileError('状态文件损坏（run 须为对象）')
         _validate_run_block(run, document['doc']['pieces'],
                             form=form, quantities=quantities)
+    if pending := document.get('pending_strategy_result'):
+        if not isinstance(pending, dict):
+            raise StateFileError('状态文件损坏（pending_strategy_result 须为对象）')
+        _validate_pending_block(pending, document['doc']['pieces'],
+                                form=form, quantities=quantities)
     return document
 
 
@@ -409,22 +514,26 @@ class _DocPieceView:
 async def state_save(request: Request):
     """POST /api/state-save：当前会话工作台状态 → gzip JSON 附件（.msn 下载）。
 
-    请求 ``{form, quantities, quantities_base?, run?, save_as?}``（前端
-    buildSavePayload，US-003）：form = FormState 全量原样入文件；quantities_base =
-    整列设值基准 {label:整数}（省键式，body 无 → 文件无键）；run 仅 done 态
-    （body 无 run → 文件无 run 键）；save_as（2026-09-12 弹窗）= 确认的名称主体
-    （无扩展名 —— /export 同口径用户定案），清洗 + 补 .msn 后覆盖，只影响响应
-    CD 不入档。响应 200 附件（Content-Disposition 中文/ASCII
+    请求 ``{form, quantities, quantities_base?, run?, save_as?,
+    pending_strategy_result?}``（前端 buildSavePayload，US-003）：form = FormState
+    全量原样入文件；quantities_base = 整列设值基准 {label:整数}（省键式，body
+    无 → 文件无键）；run 仅 done 态（body 无 run → 文件无 run 键）；
+    pending_strategy_result = 待确认的策略/极限 done 结果槽（省键式 additive，
+    2026-09-13；形态/守恒校验镜像 run 块分叉）；save_as（2026-09-12 弹窗）=
+    确认的名称主体（无扩展名 —— /export 同口径用户定案），清洗 + 补 .msn 后
+    覆盖，只影响响应 CD 不入档。响应 200 附件（Content-Disposition 中文/ASCII
     双写，/export 同法），文件名 ``<source 去 .dxf>_状态_<yyyymmdd-HHMMSS>.msn``。
 
     错误契约（全部结构化 JSON，非文件流）：
     - sid 过期/墓碑 → 401 ``{code:'session_expired'}``、非法 → 400（SessionError
       统一映射，_resolve_session_state 同 routes_views 读路由口径）；
     - 会话空（无 doc/pieces，未 commit）→ 422；
-    - body 非 JSON / form 缺失 / quantities·quantities_base·run 形态非法 /
-      run.placed 条目形态非法 → 400；
-    - 保存期守恒校验（run 在场：placed pid 全命中会话 pieces + Counter ==
-      demand(form.sizes × quantities)，改数量/码选未重解 → 400 指路文案）。
+    - body 非 JSON / form 缺失 / quantities·quantities_base·run·
+      pending_strategy_result 形态非法 / run.placed·pending.best.placed_items
+      条目形态非法 → 400；
+    - 保存期守恒校验（run/pending 在场：placed pid 全命中会话 pieces + Counter
+      == demand(form.sizes × quantities)，改数量/码选未重解 → 400 指路文案 ——
+      改数量未重解场景 run 块与 pending 槽同生共死，用户视角一个错）。
     """
     try:
         state = _resolve_session_state(request)
@@ -483,7 +592,29 @@ async def state_save(request: Request):
                 {'error': 'form.sizes/per_type/quantities 形态非法，无法核对数量守恒'},
                 status_code=400)
 
-    document = build_state_document(state, form, quantities, run, quantities_base)
+    # pending_strategy_result 槽（省键式 additive）：形态/守恒校验镜像 run 块
+    # 分叉（_check_pending_save 共享），守恒失败与 run 块同文案 —— 改数量未重解
+    # 场景两块同生共死，用户视角一个错。
+    pending = payload.get('pending_strategy_result')
+    if pending is not None and not isinstance(pending, dict):
+        return JSONResponse({'error': 'pending_strategy_result 须为对象'},
+                            status_code=400)
+    if pending:
+        try:
+            _check_pending_save(pending, pieces, form=form,
+                                quantities=quantities)
+        except StateConservationError:
+            return JSONResponse({'error': _CONSERVATION_SAVE_MESSAGE},
+                                status_code=400)
+        except (ValueError, TypeError):
+            return JSONResponse(
+                {'error': 'form.sizes/per_type/quantities 形态非法，无法核对数量守恒'},
+                status_code=400)
+        except StateFileError as e:
+            return JSONResponse({'error': e.message}, status_code=e.status)
+
+    document = build_state_document(state, form, quantities, run,
+                                    quantities_base, pending)
     data = serialize_state(document)
 
     # 文件名前缀取 doc.source（母版原上传名，commit 时入 intermediate），去 .dxf
@@ -533,7 +664,11 @@ def rebuild_session_from_document(document: dict, sid: str | None,
 
     响应 dict 与 ``/api/state-restore`` 成功响应同形（US-002 恢复端点 additive
     ``recovered_from`` 键由调用方补）：``{doc_id, filename, parse, manifest,
-    final, placed, run, quantities_base, form, quantities}``。
+    final, placed, run, pending_strategy_result, quantities_base, form,
+    quantities}``。``pending_strategy_result`` additive 回传（省键式文件缺席 →
+    None，前端 no-op；在场 → 校验链已过，US-002 恢复编排按 mode 路由写回对应
+    族 store 重开弹窗结果态）—— /api/state-restore 与 /api/state-recover 共享
+    本函数免费同形增益。
     """
     st = session_registry.peek(sid)
     doc = document['doc']
@@ -554,6 +689,9 @@ def rebuild_session_from_document(document: dict, sid: str | None,
     quantities = document.get('quantities')
     quantities_base = document.get('quantities_base')
     run = document.get('run') or None
+    # pending 槽原样回传（校验链已过；manifest/run_dir 不入档 —— 上方确定性重算
+    # 的 manifest 单份几何即恢复弹窗/再应用的数据源）。
+    pending = document.get('pending_strategy_result') or None
 
     # manifest 确定性重算（与保存会话同 form → 与原解 manifest 逐字段一致；纯函数
     # 无 RNG，策略 result 端点同一先例）。on_manifest 同形含 raw_polygon/d_mm。
@@ -591,6 +729,7 @@ def rebuild_session_from_document(document: dict, sid: str | None,
         'final': (run or {}).get('final'),
         'placed': (run or {}).get('placed'),
         'run': run,
+        'pending_strategy_result': pending,
         'quantities_base': quantities_base,
         'form': form,
         'quantities': quantities,
@@ -625,9 +764,12 @@ async def state_restore(request: Request, file: UploadFile = File(...)):
     响应 ``{doc_id, filename, parse, manifest, final, placed, run?, form,
     quantities, quantities_base}``：final/placed = run 块摘出（无 run → None 纯
     配置档）；``run`` 块 additive 整块透传（seed/provenance 供前端 US-004 恢复编排
-    写回来源，无 run 时为 None）；``quantities_base`` = 整列设值基准回传（省键式
-    文件缺席 → None → 前端 no-op 保持默认 1）。错误契约：校验链失败 → 400/413
-    ``{error}``（StateFileError 全结构化 JSON，不炸 500）。
+    写回来源，无 run 时为 None）；``pending_strategy_result`` = 待确认策略/极限
+    done 结果槽 additive 回传（省键式文件缺席 → None → 前端 no-op；在场时校验
+    链已过，恢复编排按 mode 路由写回对应族 store）；``quantities_base`` =
+    整列设值基准回传（省键式文件缺席 → None → 前端 no-op 保持默认 1）。错误
+    契约：校验链失败 → 400/413 ``{error}``（StateFileError 全结构化 JSON，不炸
+    500）。
     """
     fname = file.filename or ''
     if not (fname.lower().endswith(STATE_EXTENSION) or fname.lower().endswith('.json')):
@@ -709,6 +851,21 @@ def _smoke() -> int:
     run = {'seed': 0, 'final': {'density': 0.84, 'density_sparrow': 0.82,
                                 'width_mm': 7523.0, 'elapsed': 121.4,
                                 'n_frames': 87, 'n_eroded': 0}, 'placed': placed}
+    # pending_strategy_result 槽（US-001 additive）：done 态 result 端点同形最小面
+    # {mode, best(含 placed_items), summary}；manifest/run_dir 不入档。
+    pending = {
+        'mode': 'se',
+        'best': {'seed': 7, 'frame_index': 42, 'elapsed': 311.2,
+                 'density': 0.861, 'density_sparrow': 0.843,
+                 'width_mm': 7310.5,
+                 'placed_items': [dict(p) for p in placed]},
+        'summary': {'per_seed': [{'seed': 7, 'killed': False,
+                                  'kill_reason': None, 'best_density': 0.861,
+                                  'elapsed': 311.2, 'phase': 'extension'}],
+                    'mode': 'se',
+                    'se': {'k_screens': 3, 'screen_s': 90, 'ext_s': 600,
+                           'champion': 7}},
+    }
 
     results: list[tuple[str, bool]] = []
 
@@ -736,6 +893,15 @@ def _smoke() -> int:
               state, form, quantities, None, None)
           and 'quantities_base' not in build_state_document(
               state, form, quantities, None))
+    with_pending = build_state_document(state, form, quantities, run,
+                                        quantities_base, pending)
+    check('pending_strategy_result 槽入档（additive：键在场且原样嵌入）',
+          with_pending['pending_strategy_result'] == pending)
+    check('pending None/缺席 → 整块省略（省键式，旧文件口径零迁移）',
+          'pending_strategy_result' not in build_state_document(
+              state, form, quantities, run, quantities_base)
+          and 'pending_strategy_result' not in build_state_document(
+              state, form, quantities, run, quantities_base, None))
 
     data = serialize_state(with_run)
     check('serialize 为 gzip（魔数 1f 8b）', data[:2] == b'\x1f\x8b')
@@ -746,6 +912,11 @@ def _smoke() -> int:
           and parsed['quantities'] == quantities
           and parsed['quantities_base'] == quantities_base
           and parsed['run']['placed'] == placed)
+    pending_bytes = serialize_state(with_pending)
+    check('带槽序列化 gzip 往返：pending 逐字段一致（best.placed_items 原序含 '
+          'mirror/summary 原样）',
+          json.loads(gzip.decompress(pending_bytes))
+          ['pending_strategy_result'] == pending)
 
     try:
         check_placed_conservation(placed, pieces, sizes=form['sizes'],
@@ -784,6 +955,13 @@ def _smoke() -> int:
     check('parse_state_document：无 run 纯配置档同通过',
           'run' not in parse_state_document(
               serialize_state(build_state_document(state, form, quantities, None))))
+    restored_pending = parse_state_document(pending_bytes)
+    check('parse_state_document：带 pending 槽通过且与原件逐字段一致（守恒/形态'
+          '全过）',
+          restored_pending['pending_strategy_result'] == pending
+          and restored_pending['run']['placed'] == placed)
+    check('parse_state_document：无 pending 旧口径文件 → 键缺席（零迁移）',
+          'pending_strategy_result' not in parse_state_document(data))
     expect_error('恢复校验：坏 gzip → 400 状态文件损坏',
                  lambda: parse_state_document(b'\x1f\x8b' + b'garbage!'),
                  want='状态文件损坏')
@@ -821,6 +999,43 @@ def _smoke() -> int:
                  lambda: parse_state_document(_tamper(
                      lambda d: d.__setitem__('quantities_base', {'g01': 'x'}))),
                  want='quantities_base')
+
+    # ------------------------------------------------ US-001 pending 槽篡改链
+    def _tamper_pending(fn):
+        d = json.loads(gzip.decompress(pending_bytes))
+        fn(d)
+        return gzip.compress(json.dumps(d, ensure_ascii=False).encode('utf-8'))
+
+    expect_error('恢复校验：pending.mode 非法枚举 → 400',
+                 lambda: parse_state_document(_tamper_pending(
+                     lambda d: d['pending_strategy_result'].__setitem__(
+                         'mode', 'magic'))),
+                 want='pending_strategy_result.mode 非法')
+    expect_error('恢复校验：pending.placed_items 引用母版外 pid → 400 内部不一致',
+                 lambda: parse_state_document(_tamper_pending(
+                     lambda d: d['pending_strategy_result']['best']
+                     ['placed_items'][2].__setitem__('id', 'zz_99'))),
+                 want='pending_strategy_result.best.placed_items 引用母版外裁片')
+    expect_error('恢复校验：pending placed 副本数 ≠ demand → 400 内部不一致',
+                 lambda: parse_state_document(_tamper_pending(
+                     lambda d: d['pending_strategy_result']['best']
+                     ['placed_items'].pop())),
+                 want='副本数与数量矩阵不符')
+    expect_error('恢复校验：pending.best.density NaN → 400',
+                 lambda: parse_state_document(_tamper_pending(
+                     lambda d: d['pending_strategy_result']['best'].__setitem__(
+                         'density', float('nan')))),
+                 want='pending_strategy_result.best.density 须为有限数值')
+    expect_error('恢复校验：pending.placed_items 条目 rotation 非数值 → 400',
+                 lambda: parse_state_document(_tamper_pending(
+                     lambda d: d['pending_strategy_result']['best']
+                     ['placed_items'][0].__setitem__('rotation', 'flat'))),
+                 want='rotation 须为数值')
+    expect_error('恢复校验：pending.summary 非 dict → 400',
+                 lambda: parse_state_document(_tamper_pending(
+                     lambda d: d['pending_strategy_result'].__setitem__(
+                         'summary', 'ok'))),
+                 want='pending_strategy_result.summary 须为对象')
 
     parse_payload = _build_parse_payload(
         'newdoc0001', doc['source'], [_DocPieceView(p) for p in doc['pieces']])

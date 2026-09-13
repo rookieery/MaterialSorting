@@ -34,6 +34,16 @@ US-002（恢复端）覆盖：
 10. 端到端：恢复后该 sid 的 /api/ptypes、/export、/api/edit-polish 立即可用
     （placed 守恒）；链式传递 save→restore→save→restore 二次往返逐字段一致。
 
+US-001（pending_strategy_result 槽，prd strategy-pending-result-checkpoint）覆盖：
+11. 保存端：带槽往返逐字段对拍（省键式：body 无 → 文件无键 = 旧口径零迁移）；
+    槽守恒失败（改数量未重解 / placed_items 引用母版外 pid）→ 400 与 run 块同
+    指路文案；槽形态非法（非对象 / mode 非法枚举 / best 缺失 / placed_items
+    空 / 条目缺 id）→ 400 fail-fast；
+12. 恢复端：带槽文件 → 响应 additive ``pending_strategy_result`` 回传逐字段
+    对拍（无槽文件 → None）；mode 枚举必败；placed_items 守恒必败（unknown_pid
+    + count_mismatch 两款「内部不一致」文案）；best 数值键 NaN / placed_items
+    条目形态 / summary 非 dict → 400 状态文件损坏。
+
 会话快照直接注入（registry/`_PIECES_STATE` 原位套路同 test_read_routes_sessions），
 不走 commit 全管线（US-002 已覆盖落盘链路）。
 """
@@ -126,6 +136,24 @@ def _run(placed=None):
                                  'width_mm': 7523.0, 'elapsed': 121.4,
                                  'n_frames': 87, 'n_eroded': 0},
             'placed': _placed() if placed is None else placed}
+
+
+def _pending(mode='se'):
+    """pending_strategy_result 槽夹具（US-001 additive 省键式）：done 态
+    /api/strategy/result 响应同形最小面 {mode, best(含 placed_items), summary}，
+    placed_items 与 _quantities demand 守恒（manifest/run_dir 不入档）。"""
+    return {
+        'mode': mode,
+        'best': {'seed': 7, 'frame_index': 42, 'elapsed': 311.2,
+                 'density': 0.861, 'density_sparrow': 0.843,
+                 'width_mm': 7310.5, 'placed_items': _placed()},
+        'summary': {'per_seed': [{'seed': 7, 'killed': False,
+                                  'kill_reason': None, 'best_density': 0.861,
+                                  'elapsed': 311.2, 'phase': 'extension'}],
+                    'mode': 'se',
+                    'se': {'k_screens': 3, 'screen_s': 90, 'ext_s': 600,
+                           'champion': 7}},
+    }
 
 
 # ---------------------------------------------------------------- fixture
@@ -375,6 +403,67 @@ def test_save_conservation_multi_copy_exact_pass(client):
     assert len(json.loads(gzip.decompress(r.content))['run']['placed']) == 3
 
 
+# --------------------------------------- US-001 pending_strategy_result 保存端
+
+def test_save_pending_round_trip(client):
+    """US-001：带槽载荷 → 200 且槽原样入档逐字段对拍（best.placed_items 原序含
+    mirror、summary 原样）；body 无槽 → 文件无键（省键式，旧口径零迁移）。"""
+    pending = _pending()
+    r = client.post('/api/state-save', json={
+        'form': _form(), 'quantities': _quantities(), 'run': _run(),
+        'pending_strategy_result': pending})
+    assert r.status_code == 200, r.text
+    doc = json.loads(gzip.decompress(r.content))
+    assert doc['pending_strategy_result'] == pending
+    assert doc['pending_strategy_result']['best']['placed_items'] == _placed()
+    assert doc['run']['placed'] == _placed()      # run 块与槽并存互不影响
+
+    r2 = client.post('/api/state-save', json={
+        'form': _form(), 'quantities': _quantities(), 'run': _run()})
+    assert r2.status_code == 200
+    assert 'pending_strategy_result' not in json.loads(gzip.decompress(r2.content))
+
+
+def test_save_pending_conservation_400(client):
+    """US-001：槽守恒 fail-fast（run 块同文案）：改数量未重解（demand≠placed 副本
+    多重集）/ placed_items 引用母版外 pid → 400 指路文案。无 run 仅槽在场同拦
+    （槽独立守恒，两块同生共死一个错）。"""
+    # 改数量未重解（无 run：槽独立触发守恒）
+    r = client.post('/api/state-save', json={
+        'form': _form(),
+        'quantities': {'g01': {'30': 3}, 'g02': {'30': 1}},
+        'pending_strategy_result': _pending()})
+    assert r.status_code == 400
+    assert r.json()['error'] == CONSERVATION_MSG
+
+    # placed_items 引用会话外 pid（母版已变更场景）
+    bad = _pending()
+    bad['best']['placed_items'] = [dict(p) for p in _placed()]
+    bad['best']['placed_items'][1]['id'] = 'zz_99'
+    r2 = client.post('/api/state-save', json={
+        'form': _form(), 'quantities': _quantities(),
+        'pending_strategy_result': bad})
+    assert r2.status_code == 400
+    assert r2.json()['error'] == CONSERVATION_MSG
+
+
+@pytest.mark.parametrize('pending, want', [
+    ('garbage', 'pending_strategy_result 须为对象'),
+    ({'mode': 'magic', 'best': _pending()['best']}, 'mode 非法'),
+    ({'mode': None, 'best': _pending()['best']}, 'mode 非法'),
+    ({'mode': 'se'}, 'best 须为对象'),
+    ({'mode': 'se', 'best': {'placed_items': []}}, 'placed_items 不能为空'),
+    ({'mode': 'se', 'best': {'placed_items': [{'rotation': 0}]}}, '形态非法'),
+])
+def test_save_pending_shape_400(client, pending, want):
+    """US-001：槽形态非法 → 400 fail-fast（镜像 run 块保存分叉深度）。"""
+    r = client.post('/api/state-save', json={
+        'form': _form(), 'quantities': _quantities(),
+        'pending_strategy_result': pending})
+    assert r.status_code == 400
+    assert want in r.json()['error']
+
+
 # ---------------------------------------------------------------- AC4 载荷校验
 
 @pytest.mark.parametrize('payload, want', [
@@ -460,26 +549,36 @@ def test_conservation_kinds():
 
 def test_build_state_document_run_omitted_when_falsy():
     """run=None/{} → 文件无 run 键；quantities=None 原样入文件；quantities_base
-    None/缺席 → 省键、非 None → 入档（省键式与 run 同法）。"""
+    None/缺席 → 省键、非 None → 入档（省键式与 run 同法）；pending_strategy_result
+    None/缺席 → 整块省略、在场 → 原样嵌入（US-001 additive 同法）。"""
     doc = build_state_document(_state(), _form(), None, None)
     assert 'run' not in doc and doc['quantities'] is None
     assert 'quantities_base' not in doc
+    assert 'pending_strategy_result' not in doc        # 缺席（第 6 参不传）
     assert 'run' not in build_state_document(_state(), _form(), {}, {})
     assert 'quantities_base' not in build_state_document(_state(), _form(), {}, {})
     with_base = build_state_document(_state(), _form(), None, None, {'g02': 3})
     assert with_base['quantities_base'] == {'g02': 3}
+    assert 'pending_strategy_result' not in build_state_document(
+        _state(), _form(), None, None, None, None)     # 显式 None → 省键
+    with_pending = build_state_document(_state(), _form(), None, None, None,
+                                        _pending())
+    assert with_pending['pending_strategy_result'] == _pending()
     assert serialize_state(doc)[:2] == b'\x1f\x8b'
 
 
 # ================================================================ US-002 恢复端
 
-def _save_msn(client, headers=None, with_run=True, quantities_base=None):
+def _save_msn(client, headers=None, with_run=True, quantities_base=None,
+              pending=None):
     """default（或指定 sid）会话 → .msn 字节（守恒通过的合法文件）。"""
     body = {'form': _form(), 'quantities': _quantities()}
     if with_run:
         body['run'] = _run()
     if quantities_base is not None:
         body['quantities_base'] = quantities_base
+    if pending is not None:
+        body['pending_strategy_result'] = pending
     r = client.post('/api/state-save', headers=headers or {}, json=body)
     assert r.status_code == 200, r.text
     return r.content
@@ -794,6 +893,106 @@ def test_restore_run_block_garbage_400(client, fn, want):
     """run 块逐条形态（placed 条目/rotation/translation/mirror/final/provenance）
     → 400 状态文件损坏。"""
     msn = _save_msn(client)
+    r = _restore(client, _edit_msn(msn, fn))
+    assert r.status_code == 400
+    assert want in r.json()['error']
+
+
+# -------------------------------------- US-001 pending_strategy_result 恢复端
+
+def test_restore_pending_round_trip(client):
+    """US-001：带槽文件 → 200 且响应 additive ``pending_strategy_result`` 原样
+    回传（mode/best 数值键/placed_items/summary 逐字段对拍）；无槽旧口径文件 →
+    键在场值为 None（前端 no-op）。"""
+    pending = _pending(mode='race')
+    msn = _save_msn(client, pending=pending)
+    r = _restore(client, msn)
+    assert r.status_code == 200, r.text
+    res = r.json()
+    assert res['pending_strategy_result'] == pending
+    assert res['pending_strategy_result']['best']['placed_items'] == _placed()
+    assert res['run']['placed'] == _placed()      # run 块与槽并存互不影响
+
+    r2 = _restore(client, _save_msn(client))      # 无槽旧口径（对拍不变）
+    assert r2.status_code == 200
+    assert r2.json()['pending_strategy_result'] is None
+
+
+def test_restore_pending_mode_invalid_400(client):
+    """US-001：mode 非三值枚举 → 400 状态文件损坏（文案风格同 provenance.kind）；
+    三枚举全通过。"""
+    msn = _save_msn(client, pending=_pending())
+    bad = _edit_msn(msn, lambda d: d['pending_strategy_result'].__setitem__(
+        'mode', 'magic'))
+    r = _restore(client, bad)
+    assert r.status_code == 400
+    assert 'pending_strategy_result.mode 非法' in r.json()['error']
+    for mode in ('se', 'race', 'extreme'):
+        ok = _edit_msn(msn, lambda d, m=mode: d['pending_strategy_result']
+                       .__setitem__('mode', m))
+        rr = _restore(client, ok)
+        assert rr.status_code == 200, (mode, rr.text)
+        assert rr.json()['pending_strategy_result']['mode'] == mode
+
+
+def test_restore_pending_placed_pid_outside_400(client):
+    """US-001：pending.placed_items 引用母版外 pid → 400「内部不一致」（pid 命中
+    doc 判据 + 守恒 unknown_pid 判据两款）。"""
+    msn = _save_msn(client, pending=_pending())
+    # pid 不在 doc.pieces（母版外身份判据）
+    bad = _edit_msn(msn, lambda d: d['pending_strategy_result']['best']
+                    ['placed_items'][2].__setitem__('id', 'zz_99'))
+    r = _restore(client, bad)
+    assert r.status_code == 400
+    assert 'pending_strategy_result.best.placed_items 引用母版外裁片' \
+        in r.json()['error']
+    # pid 在 doc 但码选过滤出重算 demand（守恒 unknown_pid 判据）
+    bad2 = _edit_msn(msn, lambda d: d['form'].__setitem__('sizes', [32]))
+    r2 = _restore(client, bad2)
+    assert r2.status_code == 400
+    assert '引用母版外裁片' in r2.json()['error']
+
+
+def test_restore_pending_count_mismatch_400(client):
+    """US-001：pending placed 副本数 ≠ demand（手改槽 placed_items 漏排一条）→
+    400「内部不一致：副本数与数量矩阵不符」。"""
+    msn = _save_msn(client, pending=_pending())
+    bad = _edit_msn(msn, lambda d: d['pending_strategy_result']['best']
+                    ['placed_items'].pop())      # 漏排 g02_30（末条）
+    r = _restore(client, bad)
+    assert r.status_code == 400
+    err = r.json()['error']
+    assert '副本数与数量矩阵不符' in err and 'g02_30' in err
+
+
+@pytest.mark.parametrize('fn, want', [
+    (lambda d: d['pending_strategy_result'].__setitem__('best', 3),
+     'best 须为对象'),
+    (lambda d: d['pending_strategy_result']['best'].__setitem__('density',
+                                                                float('nan')),
+     'density 须为有限数值'),
+    (lambda d: d['pending_strategy_result']['best'].__setitem__('width_mm',
+                                                                None),
+     'width_mm 须为有限数值'),
+    (lambda d: d['pending_strategy_result']['best'].__setitem__('seed', True),
+     'seed 须为有限数值'),
+    (lambda d: d['pending_strategy_result']['best'].pop('placed_items'),
+     'placed_items 不能为空'),
+    (lambda d: d['pending_strategy_result']['best'].__setitem__(
+        'placed_items', [{'id': 'g01_30'}]),
+     'rotation 须为数值'),
+    (lambda d: d['pending_strategy_result']['best']['placed_items'][0]
+     .__setitem__('mirror', 'yes'), 'mirror 须为布尔'),
+    (lambda d: d['pending_strategy_result']['best']['placed_items'][0]
+     .__setitem__('translation', [1]), 'translation'),
+    (lambda d: d['pending_strategy_result'].__setitem__('summary', 'ok'),
+     'summary 须为对象'),
+])
+def test_restore_pending_shape_400(client, fn, want):
+    """US-001：槽全量形态校验（best 对象/数值键有限数值（NaN/None/bool 拒收）/
+    placed_items 条目 rotation·translation·mirror 同 run.placed 判据/summary
+    在场须为 dict）→ 400 状态文件损坏。"""
+    msn = _save_msn(client, pending=_pending())
     r = _restore(client, _edit_msn(msn, fn))
     assert r.status_code == 400
     assert want in r.json()['error']

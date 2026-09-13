@@ -14,11 +14,15 @@ tasks/prd-session-expiry-auto-recovery.md FR-3）。
 - ``POST /api/state-checkpoint``：经 ``registry.peek(sid)`` 读会话快照
   （**绝不 resolve —— 不刷 last_active、不建会话名额**，否则常开 Tab 永不过期，
   破坏 ``MS_SESSION_MAX`` 容量回收语义）。body = state-save 同形
-  ``{form, quantities, quantities_base?, run?, save_as?}``（save_as 容忍忽略）。
-  会话空（无 doc/pieces）→ ``200 {stored:false, reason:'empty'}``；run 守恒校验
-  失败（``check_placed_conservation`` 复用，改数量未重解的中间态）→
-  ``200 {stored:false, reason:'conservation'}`` 且**先前好快照字节不变**
-  （last-good，FR-2：自动后台任务不打扰用户）；成功 → ``200 {stored:true}``。
+  ``{form, quantities, quantities_base?, run?, save_as?,
+  pending_strategy_result?}``（save_as 容忍忽略）。
+  会话空（无 doc/pieces）→ ``200 {stored:false, reason:'empty'}``；run/
+  pending_strategy_result 守恒校验失败（``check_placed_conservation`` 复用，改
+  数量未重解的中间态）→ ``200 {stored:false, reason:'conservation'}`` 且**先前
+  好快照字节不变**（last-good，FR-2：自动后台任务不打扰用户）；成功 →
+  ``200 {stored:true}``。pending 槽（待确认策略/极限 done 结果，2026-09-13
+  additive 省键式）形态/守恒校验与 state-save 镜像（``_check_pending_save``
+  共享）。
 - ``DELETE /api/state-checkpoint``：幂等清除（条目不存在也 ``200 {ok:true}``；
   F5 干净重置防「稍后再过期恢复出 F5 前旧状态」幽灵回潮，US-004 消费）。
 - ``POST /api/state-recover``（US-002）：刷新后启动期恢复 —— 前端铸新 sid 放
@@ -69,6 +73,7 @@ from .sessions import (
 from .statefile import (
     StateConservationError,
     StateFileError,
+    _check_pending_save,
     _valid_base_map,
     build_state_document,
     check_placed_conservation,
@@ -170,11 +175,12 @@ def _store_checkpoint(sid: str | None, payload) -> tuple[dict, int]:
       —— 死会话无快照可打，且旧 sid 已入墓碑，写入无意义；
     - 会话空（无 doc/pieces，未 commit）→ 200 ``{stored:false, reason:'empty'}``
       （前端自动调度容忍、静默跳过，FR-2 同哲学）；
-    - 载荷形态非法（body 非 dict / form 缺失 / quantities·quantities_base·run
-      形态 / run.placed 条目形态）→ 400（与 state-save 同文案同判据）；
-    - run 在场守恒校验失败（``check_placed_conservation`` 复用：改数量未重解的
-      中间态）→ 200 ``{stored:false, reason:'conservation'}`` 且先前好快照字节
-      不变（last-good —— put 未发生，FR-2）；
+    - 载荷形态非法（body 非 dict / form 缺失 / quantities·quantities_base·run·
+      pending_strategy_result 形态 / run.placed·pending.best.placed_items 条目
+      形态）→ 400（与 state-save 同文案同判据）；
+    - run/pending 在场守恒校验失败（``check_placed_conservation`` 复用：改数量
+      未重解的中间态）→ 200 ``{stored:false, reason:'conservation'}`` 且先前好
+      快照字节不变（last-good —— put 未发生，FR-2）；
     - 成功 → ``build_state_document`` + ``serialize_state`` 入库 →
       200 ``{stored:true}``。
 
@@ -229,8 +235,26 @@ def _store_checkpoint(sid: str | None, payload) -> tuple[dict, int]:
             return {'error': 'form.sizes/per_type/quantities 形态非法，'
                              '无法核对数量守恒'}, 400
 
+    # pending_strategy_result 槽（省键式 additive）：形态/守恒校验镜像 run 块
+    # 分叉（statefile._check_pending_save 共享）；守恒失败同 run 块 →
+    # stored:false conservation last-good（改数量未重解两块同生共死）。
+    pending = payload.get('pending_strategy_result')
+    if pending is not None and not isinstance(pending, dict):
+        return {'error': 'pending_strategy_result 须为对象'}, 400
+    if pending:
+        try:
+            _check_pending_save(pending, pieces, form=form,
+                                quantities=quantities)
+        except StateConservationError:
+            return {'stored': False, 'reason': 'conservation'}, 200
+        except (ValueError, TypeError):
+            return {'error': 'form.sizes/per_type/quantities 形态非法，'
+                             '无法核对数量守恒'}, 400
+        except StateFileError as e:
+            return {'error': e.message}, e.status
+
     document = build_state_document(st.state, form, quantities, run,
-                                    quantities_base)
+                                    quantities_base, pending)
     store.put(sid or DEFAULT_SID, serialize_state(document))
     return {'stored': True}, 200
 
@@ -434,6 +458,22 @@ def _smoke() -> int:
         ]
         run = {'seed': 0, 'final': {'density': 0.84, 'width_mm': 7523.0},
                'placed': placed}
+        # pending_strategy_result 槽（US-001 additive 省键式）：done 态 result
+        # 端点同形最小面 {mode, best(含 placed_items), summary}。
+        pending = {
+            'mode': 'extreme',
+            'best': {'seed': 3, 'frame_index': 11, 'elapsed': 600.0,
+                     'density': 0.855, 'density_sparrow': 0.837,
+                     'width_mm': 7401.2,
+                     'placed_items': [dict(p) for p in placed]},
+            'summary': {'per_seed': [{'seed': 3, 'killed': False,
+                                      'kill_reason': None,
+                                      'best_density': 0.855, 'elapsed': 600.0,
+                                      'phase': 'extension'}],
+                        'mode': 'race',
+                        'race': {'gate_seconds': 90, 'kept_seeds': [3],
+                                 'gated_seeds': []}},
+        }
 
         sid = 'ckpts001'
         st = reg.resolve(sid, create=True)
@@ -462,6 +502,32 @@ def _smoke() -> int:
         check('内核：save_as 键容忍忽略（照常 stored:true）',
               status == 200 and body == {'stored': True}
               and store.get(sid) is not None)
+
+        # ------------------------------------- US-001 pending 槽（入档/last-good）
+        body, status = _store_checkpoint(
+            sid, {'form': form, 'quantities': quantities, 'run': run,
+                  'pending_strategy_result': pending})
+        check('内核：带 pending 槽 → stored:true 且快照含槽（逐字段对拍）',
+              status == 200 and body == {'stored': True}
+              and parse_state_document(store.get(sid))
+              ['pending_strategy_result'] == pending)
+        body, status = _store_checkpoint(
+            sid, {'form': form,
+                  'quantities': {'g01': {'30': 5}, 'g02': {'30': 1}},
+                  'pending_strategy_result': pending})   # 无 run：槽独立守恒
+        check('内核：pending 守恒失败（改数量未重解）→ 200 conservation',
+              status == 200 and body == {'stored': False,
+                                         'reason': 'conservation'})
+        body, status = _store_checkpoint(
+            sid, {'form': form, 'quantities': quantities,
+                  'pending_strategy_result': {
+                      'mode': 'magic', 'best': pending['best'],
+                      'summary': pending['summary']}})
+        check('内核：pending.mode 非法 → 400（镜像 state-save 判据）',
+              status == 400 and 'mode 非法' in body['error'])
+        check('内核：last-good —— 坏载荷后先前好快照（带槽）字节不变',
+              json.loads(gzip.decompress(store.get(sid)))
+              ['pending_strategy_result'] == pending)
 
         good_bytes = store.get(sid)
         body, status = _store_checkpoint(
@@ -502,7 +568,8 @@ def _smoke() -> int:
         st_old = reg.resolve(sid_old, create=True)
         st_old.state = state
         _store_checkpoint(sid_old, {'form': form, 'quantities': quantities,
-                                    'run': run})
+                                    'run': run,
+                                    'pending_strategy_result': pending})
         snap_bytes = store.get(sid_old)
         clk.advance(reg.ttl_sec + 1.0)       # 会话超 TTL（checkpoint 不受影响）
         check('recover 前置：过期扫描逐出旧 sid 为墓碑，checkpoint 字节不受会话'
@@ -517,9 +584,12 @@ def _smoke() -> int:
         check('recover：过期会话 → 新 sid 恢复 200', resp.status_code == 200)
         check('recover：响应 = state-restore 成功响应同形 + additive recovered_from',
               set(res) == {'doc_id', 'filename', 'parse', 'manifest', 'final',
-                           'placed', 'run', 'quantities_base', 'form',
-                           'quantities', 'recovered_from'}
+                           'placed', 'run', 'pending_strategy_result',
+                           'quantities_base', 'form', 'quantities',
+                           'recovered_from'}
               and res['recovered_from'] == sid_old)
+        check('recover：pending_strategy_result 槽 additive 回传（逐字段对拍）',
+              res['pending_strategy_result'] == pending)
         check('recover：新会话 pieces/pieces_by_id 与快照逐字段一致',
               reg.peek(sid_new).state['pieces'] == doc['pieces']
               and set(reg.peek(sid_new).state['pieces_by_id']) == {'g01_30', 'g02_30'})
