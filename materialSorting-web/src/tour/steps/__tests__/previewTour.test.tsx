@@ -121,11 +121,12 @@ describe('previewTour 步骤结构（矩阵化重构 US-005）', () => {
     expect(parsed.body).toContain('列头');
     expect(parsed.body).toContain('缩略图');
     expect(parsed.body).not.toContain('图形预览');
-    // set-qty：格内直接编辑 / 整列设值（2026-08-16 转置）/ 特例高亮 / US-003 Σ 数量口径
+    // set-qty：格内直接编辑 / 整列设值（2026-08-16 转置）/ 整行设值（2026-09-14 回归，
+    // 行头「≡」尺码方向批量）/ 特例高亮 / US-003 Σ 数量口径
     // （总片数 = 各码数量之和，不合成镜像；配对 ×2 概念已删，文案零残留）
     expect(setQty.body).toContain('格子');
     expect(setQty.body).toContain('整列设值');
-    expect(setQty.body).not.toContain('整行设值');
+    expect(setQty.body).toContain('整行设值');
     expect(setQty.body).toContain('高亮');
     expect(setQty.body).toContain('数量之和');
     expect(setQty.body).toContain('不合成镜像');

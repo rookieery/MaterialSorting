@@ -8,6 +8,8 @@
 //   - 格子 blur / Enter / Tab 提交走 clampQty 写 qtyStore；0 格子 .zero + title；缺片格 disabled「—」
 //   - 特例高亮 .override（≠baseValue 且整列非全同；整列同值不高亮）
 //   - 列级整列设值（icon → 居中弹层 → setRowAll 整列写；整表「重置为默认 1」按钮已拆）
+//   - 行级整行设值（2026-09-14：行头码按钮旁「≡」→ 同款弹层 → setSizeAll 整行写，
+//     不写 baseValue；弹层初值恒 1；恢复态行弹层仍 1 / 列弹层 = 恢复 base）
 //   - 小计：行尾每码小计列 + 底部每裁片合计行 + 工具条总片数 + 全 0 警示
 //     （US-003 起口径 = Σ perSize 数量；配对 ×2 概念已删，数量即一切不合成镜像）
 //   - 缩略图点击 openZoom(label, rep.size)（所见即所放大；label 不在 activeSize 时回退码）
@@ -717,5 +719,112 @@ describe('QtyMatrix (US-002 转置) 列级整列设值（工具条整表重置�
     expect(el.querySelectorAll('.qty-cell.override').length).toBe(1);
     expect(a28.closest('td')!.classList.contains('override')).toBe(true);
     expect(cellInput(el, 'g01', 30).closest('td')!.classList.contains('override')).toBe(false);
+  });
+});
+
+describe('QtyMatrix (2026-09-14) 行级整行设值（行头「≡」，不写 baseValue）', () => {
+  /** 打开某码行弹层（点行头「≡」icon）；弹层 portal 到 document.body，一律从 document 查询。 */
+  function openRowFillPopover(el: HTMLElement, size: number | null): HTMLInputElement {
+    const key = size === null ? 'null' : String(size);
+    act(() => {
+      clickEl(el.querySelector<HTMLButtonElement>('[data-testid="qty-rowfill-row-' + key + '"]')!);
+    });
+    return document.querySelector<HTMLInputElement>('[data-testid="qty-fill-input"]')!;
+  }
+
+  it('行头 = 码按钮 + 常驻「≡」icon（aria/title 口径；通用行同款；合计行头不带）', () => {
+    const doc = makeStdDoc();
+    useUploadStore.setState({ status: 'done', doc, activeSize: 28 });
+    hydrateDoc(doc);
+    const el = renderMatrix();
+    const btn = el.querySelector<HTMLButtonElement>('[data-testid="qty-rowfill-row-28"]');
+    expect(btn).not.toBeNull();
+    expect(btn!.textContent).toBe('≡');
+    expect(btn!.getAttribute('aria-label')).toBe('尺码 28 整行设值');
+    expect(btn!.getAttribute('title')).toBe('整行设值：批量设置该尺码全部裁片数量');
+    // 通用（null 码）行同款入口；tfoot 合计行头不带 ≡
+    expect(el.querySelector('[data-testid="qty-rowfill-row-null"]')).not.toBeNull();
+    expect(el.querySelector('tfoot [data-testid^="qty-rowfill-row-"]')).toBeNull();
+    // 码按钮仍是每行唯一切码入口（1 行 1 个）
+    expect(el.querySelectorAll('tbody .qty-size-btn').length).toBe(3);
+  });
+
+  it('点 icon 开弹层：标题/aria 为「整行设值」口径，初值恒 1（列基准≠1 也不受影响）', () => {
+    const doc = makeStdDoc();
+    useUploadStore.setState({ status: 'done', doc, activeSize: 28 });
+    hydrateDoc(doc);
+    useQtyStore.getState().setRowAll('g01', [28, 30], 2); // A 列基准 2（对照：不影响行初值）
+    const el = renderMatrix();
+    const input = openRowFillPopover(el, 28);
+    const popover = document.querySelector<HTMLElement>('.qty-fill-popover')!;
+    expect(popover.getAttribute('aria-label')).toBe('尺码 28 整行设值');
+    expect(popover.querySelector('.qty-fill-title')!.textContent).toBe('尺码 28 · 整行设值');
+    expect(popover.querySelector('.qty-fill-hint')!.textContent).toBe(
+      '写入该尺码全部裁片；个别裁片要不同值时，应用后单击对应格子修改',
+    );
+    expect(input.value).toBe('1');
+  });
+
+  it('应用：该码全部存在裁片写入 X（28 行 A/B；缺片格 C@28 不写），baseValue 全列不动', () => {
+    const doc = makeStdDoc();
+    useUploadStore.setState({ status: 'done', doc, activeSize: 28 });
+    hydrateDoc(doc);
+    useQtyStore.getState().setRowAll('g02', [28, 30], 2); // B 列基准 2（对照组）
+    const el = renderMatrix();
+    const input = openRowFillPopover(el, 28);
+    act(() => {
+      setInputValue(input, '3');
+      clickEl(document.querySelector<HTMLButtonElement>('.qty-fill-apply')!);
+    });
+    const q = useQtyStore.getState().quantities;
+    // 28 行只写实际存在的 A/B；C@28 缺片不写（仍 30/通用 各 1），30 行 A/B/C 原值保留
+    expect(q.g01.perSize).toEqual({ '28': 3, '30': 1 });
+    expect(q.g02.perSize).toEqual({ '28': 3, '30': 2 });
+    expect(q.g03.perSize).toEqual({ '30': 1, null: 1 });
+    // 行设值不写 baseValue：A 仍 1（默认）、B 仍 2（整列设值设过）
+    expect(q.g01.baseValue).toBe(1);
+    expect(q.g02.baseValue).toBe(2);
+    // 弹层关闭 + 行尾小计联动（28 行 = 3+3）
+    expect(document.querySelector('[data-testid="qty-fill-input"]')).toBeNull();
+    expect(el.querySelectorAll('.qty-rowtotal')[0].textContent).toBe('6');
+  });
+
+  it('特例高亮依旧以列为准：行设值 0 触碰格 ≠ 列基准 → .override（叠加 .zero）', () => {
+    const doc = makeStdDoc();
+    useUploadStore.setState({ status: 'done', doc, activeSize: 28 });
+    hydrateDoc(doc);
+    const el = renderMatrix();
+    const input = openRowFillPopover(el, 30); // 30 行 A/B/C 全存在
+    act(() => {
+      setInputValue(input, '0');
+      clickEl(document.querySelector<HTMLButtonElement>('.qty-fill-apply')!);
+    });
+    // 30 行三格全 0、各列基准 1 → 三格 override + zero；其它行不高亮
+    expect(el.querySelectorAll('.qty-cell.override').length).toBe(3);
+    const a30 = cellInput(el, 'g01', 30).closest('td')!;
+    expect(a30.classList.contains('override')).toBe(true);
+    expect(a30.classList.contains('zero')).toBe(true);
+    expect(cellInput(el, 'g01', 28).closest('td')!.classList.contains('override')).toBe(false);
+  });
+
+  it('msn 恢复（hydrateFlat 实值 + bases 基准）后：行弹层初值仍恒 1，列弹层初值 = 恢复 base', () => {
+    const doc = makeStdDoc();
+    useUploadStore.setState({ status: 'done', doc, activeSize: 28 });
+    hydrateDoc(doc);
+    // 模拟 .msn 恢复编排终态：A 列基准 2（quantities_base 命中）+ A@28 实值 2
+    useQtyStore.getState().hydrateFlat({ g01: { '28': 2 } }, { g01: 2 });
+    const el = renderMatrix();
+    // 行弹层初值恒 1（无行基准概念，恢复前后一致 —— 行格子实值经 quantities 已还原）
+    const rowInput = openRowFillPopover(el, 28);
+    expect(rowInput.value).toBe('1');
+    act(() => {
+      clickEl(document.querySelector<HTMLButtonElement>('.qty-fill-cancel')!);
+    });
+    // 对照：列弹层初值 = 恢复的 baseValue 2（S5 用户报障场景的组件层等价锚）
+    act(() => {
+      clickEl(el.querySelector<HTMLButtonElement>('[data-testid="qty-rowfill-g01"]')!);
+    });
+    const colInput = document.querySelector<HTMLInputElement>('[data-testid="qty-fill-input"]')!;
+    expect(colInput.value).toBe('2');
   });
 });

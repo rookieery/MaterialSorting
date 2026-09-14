@@ -1,8 +1,11 @@
-// QtyState —— 裁片数量状态 store（US-011；矩阵化重构 US-001 简化 + setRowAll）。
+// QtyState —— 裁片数量状态 store（US-011；矩阵化重构 US-001 简化 + setRowAll；
+// 2026-09-14 加 setSizeAll 整行设值 = 行（尺码）方向批量，与 setRowAll 互为转置）。
 //
 // 单一真相源：以片型 label（g01+ 裁片码）为 key，跨码匹配同一片型。每码独立持有数量
-// （perSize[sizeKey]）；baseValue 是该行的基准值，仅 UI 特例高亮/整列设值初值用 ——
-// 不参与 WS 线格式（serializeQuantities），状态文件经顶层 quantities_base 键持久化。
+// （perSize[sizeKey]）；baseValue 是该 label 的列基准值，仅 UI 特例高亮/整列设值初值
+// 用 —— 不参与 WS 线格式（serializeQuantities），状态文件经顶层 quantities_base 键
+// 持久化。**唯一写入点 = setRowAll / hydrateFlat bases**；setSizeAll（行设值）刻意
+// 不写（用户定案 2026-09-14：不引入行基准概念，单元格状态/弹层初值恒以列为准）。
 //
 // 与 uploadStore 完全解耦：本 store 仅管数量，不依赖 React（纯 Zustand），便于纯函数测试。
 // US-011 仅前端 UI，不进 commit / 排料；WS 线格式由 lib/params.serializeQuantities 扁平化。
@@ -60,6 +63,14 @@ export interface QtyState {
    * 已拆，整表回 1 = 逐行整行设值 1）。sizes 外的既有码保留原值。
    */
   setRowAll: (label: string, sizes: ReadonlyArray<number | null>, value: number) => void;
+  /**
+   * 整行设值（2026-09-14，行 = 尺码方向，QtyMatrix 行头「≡」弹层入口）：把 labels
+   * 列出的每个裁片在该码 perSize 写为 clampQty(value)。**不写 baseValue**（列基准
+   * 语义见文件头；行弹层初值恒 1、特例高亮依旧以列为准 —— 用户定案）。labels 由
+   * 组件按 cellExists 过滤（不写缺片格，防 phantom perSize 键，与 setRowAll 的
+   * labelSizes 同口径）；labels 外的既有码保留原值（非破坏合并）。
+   */
+  setSizeAll: (size: number | null, labels: ReadonlyArray<string>, value: number) => void;
   /** 清空为 {}（重传 / reset 路径接入）。 */
   resetQuantities: () => void;
   /**
@@ -112,6 +123,23 @@ export const useQtyStore = create<QtyState>((set) => ({
       }
       const next: PieceQuantity = { perSize, baseValue: clamped };
       return { quantities: { ...s.quantities, [label]: next } };
+    }),
+  setSizeAll: (size, labels, value) =>
+    set((s) => {
+      const clamped = clampQty(value);
+      const sk = sizeKey(size);
+      // 逐 label 非破坏合并写该码一格；baseValue 一律保持（列基准唯一写入点 =
+      // setRowAll / hydrateFlat bases，见文件头）。新建 label 走空对象兜底 +
+      // baseValue 默认 1（与 setPiecePerSize 同口径）。
+      const quantities: PieceQuantityMap = { ...s.quantities };
+      for (const label of labels) {
+        const prev = quantities[label];
+        quantities[label] = {
+          perSize: { ...(prev?.perSize ?? {}), [sk]: clamped },
+          baseValue: prev?.baseValue ?? 1,
+        };
+      }
+      return { quantities };
     }),
   resetQuantities: () => set({ quantities: {} }),
   hydrate: (entries) =>

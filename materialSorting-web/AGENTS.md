@@ -107,10 +107,11 @@ src/
 
 ## 矩阵化重构 US-002 关键约定（QtyMatrix 数量矩阵 调用方必读）
 
-> 裁片 × 尺码数量矩阵（一屏看全 + 格内直接编辑 + 整列设值 + 即时小计）。US-003 起已接入 PreviewPage（替代 SizeTabs；SizeTabs/PieceQtyDialog/Switch 已拆除）；图形预览区拆除后为右侧唯一主体；US-005 起承载 previewTour parsed/set-qty 两步锚点（根容器 data-tour="qty-matrix" + 行头 data-tour="qty-rowhead"）。
+> 裁片 × 尺码数量矩阵（一屏看全 + 格内直接编辑 + 整列/整行设值 + 即时小计）。US-003 起已接入 PreviewPage（替代 SizeTabs；SizeTabs/PieceQtyDialog/Switch 已拆除）；图形预览区拆除后为右侧唯一主体；US-005 起承载 previewTour parsed/set-qty 两步锚点（根容器 data-tour="qty-matrix" + 行头 data-tour="qty-rowhead"）。
 
-- **行列模型（2026-08-16 行列转置）**：**行 = `doc.sizes` 全码动态**（M1787 11 码 28-38，**勿按 8 码写死**；null 码殿后显示「通用」，无 null 码不渲染该行）[行头 = button `setSize(码)` 切 activeSize + 行尾小计列]；**列 = 全码 label（g 码）并集**（doc.sizes 升序遍历首次出现排序 = 最小码 pieces 顺序优先，后续码新增 label 追加尾部）[列头 = compact 80×80 缩略图（title 恒为 g 码）+ 序号徽章 +「≡」整列设值 icon]。每 render 从 doc 重算派生（piecesByLabel Map + labelOrder），doc 稳定引用 + ~10×12 规模不做 memo。
+- **行列模型（2026-08-16 行列转置）**：**行 = `doc.sizes` 全码动态**（M1787 11 码 28-38，**勿按 8 码写死**；null 码殿后显示「通用」，无 null 码不渲染该行）[行头 = button `setSize(码)` 切 activeSize +「≡」整行设值 icon（2026-09-14）+ 行尾小计列]；**列 = 全码 label（g 码）并集**（doc.sizes 升序遍历首次出现排序 = 最小码 pieces 顺序优先，后续码新增 label 追加尾部）[列头 = compact 80×80 缩略图（title 恒为 g 码）+ 序号徽章 +「≡」整列设值 icon]。每 render 从 doc 重算派生（piecesByLabel Map + labelOrder），doc 稳定引用 + ~10×12 规模不做 memo。
 - **整列设值只写该 label 实际存在的码**：`setRowAll(label, rowSizes(label), value)`，rowSizes = 该 label 有片的码集；给缺片码写值会造 phantom perSize 键，污染 getPieceDisplay editable 语义与 serializeQuantities 输出（红线，qtyStore 测试「no phantom key」同步守）。ColFillPopover createPortal 到 body + fixed 居中矩形容器可视区（不锚 sticky 列头，防被盖/被 overflow 裁剪）。
+- **整行设值（2026-09-14，与整列互为转置；行 = 尺码方向）**：行头码按钮旁「≡」→ 同款弹层（ColFillPopover 已泛化为 FillPopover，列版行为不变）→ `setSizeAll(size, rowLabels(size), value)`，rowLabels = 该码有片的 label 集（同款防 phantom 红线）。**不写 baseValue**（用户定案：不引入行基准概念）—— 特例高亮与列弹层初值恒以列基准为准，**行弹层初值恒 1**（无行状态，.msn 恢复前后一致；列弹层初值 = 恢复的 quantities_base，smoke_state_file S5/S6 双锚）；行设值触碰格 ≠ 列基准自然亮 .override（= 行操作可见反馈）。行设值只动 perSize 实值 → 走 quantities 既有持久化面，schema/base 零改动。
 - **格内编辑三提交路径**：blur / Enter / Tab，值一律过 clampQty 写 setPiecePerSize；草稿不实时 clamp（允许清空重输中间态），提交时统一规整。Enter 与 Tab 同语义：preventDefault 后手动 focusNextCell（`input.qty-cell-input:not([disabled])` 平铺顺序 + 末格回卷首格，跳过缺片格）。
 - **React 18 事件 flush 时序坑**：synthetic「set value + input event + blur」放同一 JS task 会丢提交（onChange flush 晚于 onBlur 读到旧草稿）——集成测试与 CDP/浏览器驱动必须把 type 和 blur 拆成两个独立 task 派发。
 - **草稿同步 focusedRef 守卫**：QtyMatrixCell 的 `useEffect([value])` 仅同步未聚焦格（行填充/重置等 store 侧外部变更进 DOM）；聚焦格保持用户草稿，blur 时草稿与 store 值一致则不重复写。

@@ -29,6 +29,10 @@
 //      重解守恒（placed 30→33）→ 再存 .msn 省键式断言（g02=2 入档 / 只逐格改的
 //      g01 不入）→ 全新 context 恢复后弹层初值 = 2（用户报障场景：修复前回 1）+
 //      对照 g01 弹层初值 = 1。
+//   S6 整行设值 round-trip（2026-09-14，行头「≡」= 尺码方向批量）：恢复态 31 码行
+//      设值 2（31 未勾 → 勾选码 demand 不动，placed 守恒不破、免重解直接保存）→
+//      .msn 行实值入档且 quantities_base 仍仅 g02（行设值不写列基准）→ 全新
+//      context 恢复：行格子实值还原 + 行弹层初值恒 1 + 列弹层 g02 初值 = 2。
 //
 // 报告落 out/smoke_state_file/report.json；退出码 0 = 全 PASS。
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
@@ -570,6 +574,77 @@ const fillV2 = await page3.locator('[data-testid="qty-fill-input"]').inputValue(
 check('S5e 对照：g01（从未整列设值，省键式缺席）恢复后弹层初值 = 1', fillV2 === '1', fillV2);
 await page3.click('.qty-fill-cancel');
 await page3.screenshot({ path: OUT + '/s5_restored_base.png' });
+
+// ---------- S6 整行设值 round-trip（2026-09-14）：行实值持久化 + 弹层初值跨机 ----------
+// 行 = 尺码方向批量（行头码按钮旁「≡」；setSizeAll 不写 baseValue，行弹层初值恒 1）。
+// 31 = 未勾码（勾选 32/33/34）：行设值不动勾选码 demand → 保存期 placed 守恒不破，
+// 免重解直接保存（守恒按 form.sizes 过滤，statefile.expected_demand_map 单一真相）。
+const ROW_SIZE = '31';
+// g02@31 已被 S5 整列设值抬到 2 → 行设 2 只抬其余 9 片型：122 + 9 = 131
+const ROW_TOTAL_S6 = EXPECT_TOTAL_S5 + 9;
+
+// S6a 恢复态（page3）：行弹层初值恒 1 → 应用 2 → 总片数联动 → 保存 .msn →
+//     行实值入档且 quantities_base 省键式不变（行设值不写列基准）
+await page3.click('[data-testid="qty-rowfill-row-' + ROW_SIZE + '"]');
+await page3.locator('[data-testid="qty-fill-input"]').waitFor({ timeout: 5000 });
+const rowFillV = await page3.locator('[data-testid="qty-fill-input"]').inputValue();
+await page3.locator('[data-testid="qty-fill-input"]').fill('2');
+await page3.click('.qty-fill-apply');
+await sleep(400);
+const qtS6 = (await page3.locator('[data-testid="qty-total"]').innerText()).trim();
+// 保存按钮在超排 Tab 上（预览 Tab 不可见）—— 切回后再存（S5c 同款流程）
+await page3.locator('button.tab:has-text("超排")').first().click();
+await sleep(600);
+const dlP6 = page3.waitForEvent('download', { timeout: 30000 }).then((d) => d).catch(() => null);
+await page3.click('[data-testid="save-state-btn"]');
+await page3.waitForSelector('[data-testid="save-name-overlay"]', { timeout: 5000 });
+await page3.click('[data-testid="save-name-confirm"]');
+const dl6 = await dlP6;
+const msnPathS6 = OUT + '/saved_s6.msn';
+if (dl6) await dl6.saveAs(msnPathS6);
+const docS6 = dl6 ? JSON.parse(gunzipSync(readFileSync(msnPathS6)).toString('utf-8')) : {};
+check('S6a 行设值 ' + ROW_SIZE + '=2：弹层初值 1 + 总片数 ' + ROW_TOTAL_S6
+    + ' + .msn 行实值入档（g01@31/g10@31=2）且 quantities_base 仍仅 ' + COL_LABEL + '（不写列基准）',
+  rowFillV === '1' && qtS6 === String(ROW_TOTAL_S6) && !!dl6
+    && docS6.quantities?.g01?.[ROW_SIZE] === 2 && docS6.quantities?.g10?.[ROW_SIZE] === 2
+    && docS6.quantities_base?.[COL_LABEL] === 2
+    && Object.keys(docS6.quantities_base || {}).join(',') === COL_LABEL,
+  JSON.stringify({ rowFillV, qtS6, base: docS6.quantities_base || null }));
+
+// S6b 全新 context 恢复：行格子实值还原 + 行弹层初值恒 1 + 列弹层 g02 初值 = 2
+const ctx4 = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
+await ctx4.addInitScript(() => {
+  localStorage.setItem('ms.tour.version', '8');
+  localStorage.setItem('ms.tour.seen.preview', '1');
+  localStorage.setItem('ms.tour.seen.nesting', '1');
+});
+const page4 = await ctx4.newPage();
+await page4.goto(BASE, { waitUntil: 'networkidle' });
+await page4.locator('input[type=file]').first().setInputFiles(msnPathS6);
+await page4.waitForSelector('.toast-msg', { timeout: 30000 });
+for (let i = 0; i < 5; i++) {
+  if ((await page4.locator('.toast-close').count()) === 0) break;
+  await page4.locator('.toast-close').first().click();
+  await sleep(150);
+}
+await page4.locator('button.tab:has-text("预览")').first().click();
+await page4.locator('[data-testid="qty-matrix"]').waitFor({ timeout: 10000 });
+const c31a = await page4.locator('input[aria-label="裁片 g01 码 ' + ROW_SIZE + ' 数量"]').inputValue();
+const c31b = await page4.locator('input[aria-label="裁片 g10 码 ' + ROW_SIZE + ' 数量"]').inputValue();
+await page4.click('[data-testid="qty-rowfill-row-' + ROW_SIZE + '"]');
+await page4.locator('[data-testid="qty-fill-input"]').waitFor({ timeout: 5000 });
+const rowFillV4 = await page4.locator('[data-testid="qty-fill-input"]').inputValue();
+await page4.click('.qty-fill-cancel');
+await sleep(200);
+await page4.click('[data-testid="qty-rowfill-' + COL_LABEL + '"]');
+await page4.locator('[data-testid="qty-fill-input"]').waitFor({ timeout: 5000 });
+const colFillV4 = await page4.locator('[data-testid="qty-fill-input"]').inputValue();
+await page4.click('.qty-fill-cancel');
+check('S6b 恢复后：行格子 g01@31/g10@31=2 还原 + 行弹层初值 1 + 列弹层 g02 初值 2（列基准跨行设值往返存活）',
+  c31a === '2' && c31b === '2' && rowFillV4 === '1' && colFillV4 === '2',
+  JSON.stringify({ c31a, c31b, rowFillV4, colFillV4 }));
+await page4.screenshot({ path: OUT + '/s6_rowfill_restored.png' });
+await ctx4.close();
 await ctx3.close();
 await ctx2.close();
 

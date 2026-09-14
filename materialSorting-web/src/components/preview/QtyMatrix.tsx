@@ -9,7 +9,7 @@
 //      下方常驻小按钮）。列头与高级配置弹窗 thead（缩略图 + g 码徽章）同构，观感一致。
 //   2. 行 = doc.sizes 全码（null 码殿后显示「通用」，无 null 码不渲染该行）+ 行尾小计列；
 //      行头是 button，点击 setSize(该码) 切换 activeSize（决定列头缩略图优先显示哪个码
-//      版本的裁片），当前 activeSize 行头高亮。
+//      版本的裁片），当前 activeSize 行头高亮；码按钮旁常驻「≡」整行设值 icon（见 7）。
 //   3. 格子 = 内联 number input：点击直接键入、Enter/Tab 提交并移到下一格、blur 提交；
 //      值一律过 clampQty（[0,99] 整数）写 setPiecePerSize。数量 0 格子显著暗色样式
 //      （语义 = 该码不排此片，title 说明）；某码缺该 label 的格子渲染 disabled「—」
@@ -25,6 +25,11 @@
 //      fixed 居中于矩阵容器可视区（开层时取 .qty-matrix rect 中心）：不锚 sticky 列头 ——
 //      列头 z-index:3 层叠上下文内的 absolute 弹层会被 sticky 行头盖住，且超出
 //      .qty-matrix-scroll（overflow:auto）会被裁剪/撑出滚动条（2026-08-16 修复）。
+//   7. 行级整行设值（2026-09-14，与 6 互为转置）：点行头码按钮旁「≡」icon → 同款弹层
+//      → setSizeAll 整行写该码全部实际存在的裁片（缺片格不写，防 phantom perSize 键）。
+//      **不写 baseValue**（用户定案）：单元格特例高亮（见 4）与列弹层初值恒以列基准为
+//      准 —— 行设值触碰的格子 ≠ 各列基准时自然亮 .override（= 行操作的可见反馈）；
+//      行弹层初值恒 1（无行基准概念，与列版「初值 = 列基准」在默认态一致）。
 //
 // 设计原则（CLAUDE.md / AGENTS.md 矩阵化重构关键约定）：
 //   - 单一真相源：doc/activeSize/setSize/openZoom 来自 uploadStore，quantities/
@@ -93,6 +98,11 @@ interface MatrixCol {
   label: string;
   sizes: (number | null)[];
 }
+
+/** 批量设值弹层目标（2026-09-14）：列 = 裁片整列 / 行 = 尺码整行，一次至多一个。 */
+type FillState =
+  | { kind: "col"; label: string; x: number; y: number }
+  | { kind: "row"; size: number | null; x: number; y: number };
 
 // ---------------------------------------------------------------------------
 // QtyMatrixCell —— 单个数量格子（内联编辑 + 草稿同步 + Enter/Tab 跳格）。
@@ -189,22 +199,30 @@ function QtyMatrixCell({
 }
 
 // ---------------------------------------------------------------------------
-// ColFillPopover —— 列头「≡ 整列设值」弹层（输入统一值 X → setRowAll 整列写）。
+// FillPopover —— 「≡」批量设值弹层（列头/行头共用：输入统一值 X → 批量写；
+// 2026-09-14 自 ColFillPopover 泛化，列版行为逐字节不变）。
 // ---------------------------------------------------------------------------
 
-interface ColFillPopoverProps {
-  label: string;
-  /** 初值 = 该列当前 baseValue（默认基准）。 */
+interface FillPopoverProps {
+  /** 弹层标识（input id 后缀）：列版 = g 码；行版 = "row-" + sizeKey。 */
+  target: string;
+  /** 展示标题（「·」分隔口径）：列版「裁片 g01 · 整列设值」/ 行版「尺码 32 · 整行设值」。 */
+  title: string;
+  /** 对话框 aria-label（无「·」，与列版转置前文案逐字节兼容）。 */
+  ariaLabel: string;
+  /** 底部特例兼容提示（两方向措辞不同）。 */
+  hint: string;
+  /** 初值：列版 = 该列当前 baseValue；行版 = 恒 1（无行基准概念，2026-09-14 定案）。 */
   base: number;
   /** 弹层中心点（视口坐标，px）：开层时算好的矩阵容器可视区中心。 */
   x: number;
   y: number;
-  onApply: (label: string, value: number) => void;
+  onApply: (value: number) => void;
   onClose: () => void;
 }
 
 /**
- * 列级整列设值弹层：草稿 + 应用模式（应用才写 store）。
+ * 批量设值弹层：草稿 + 应用模式（应用才写 store）。
  * 关闭三路径：取消 / 遮罩（透明 backdrop mousedown）/ ESC；Enter 快捷应用。
  *
  * 定位（2026-08-16 修复展示异常）：createPortal 到 body + position:fixed 居中于
@@ -213,7 +231,7 @@ interface ColFillPopoverProps {
  * .qty-matrix-scroll（overflow:auto）边界会被裁剪/撑出滚动条。
  * backdrop 是 fixed 全屏透明层（z 低于弹层），既承接点外关闭又不挡表格视觉。
  */
-function ColFillPopover({ label, base, x, y, onApply, onClose }: ColFillPopoverProps): JSX.Element {
+function FillPopover({ target, title, ariaLabel, hint, base, x, y, onApply, onClose }: FillPopoverProps): JSX.Element {
   const [draft, setDraft] = useState<string>(String(base));
 
   useEffect(() => {
@@ -228,7 +246,7 @@ function ColFillPopover({ label, base, x, y, onApply, onClose }: ColFillPopoverP
   }, [onClose]);
 
   function apply(): void {
-    onApply(label, clampQty(draft));
+    onApply(clampQty(draft));
   }
 
   return createPortal(
@@ -242,14 +260,14 @@ function ColFillPopover({ label, base, x, y, onApply, onClose }: ColFillPopoverP
       <div
         className="qty-fill-popover"
         role="dialog"
-        aria-label={"裁片 " + label + " 整列设值"}
+        aria-label={ariaLabel}
         style={{ left: x, top: y }}
       >
-        <div className="qty-fill-title">裁片 {label} · 整列设值</div>
+        <div className="qty-fill-title">{title}</div>
         <div className="qty-fill-row">
-          <label htmlFor={"qty-fill-" + label}>统一数量</label>
+          <label htmlFor={"qty-fill-" + target}>统一数量</label>
           <input
-            id={"qty-fill-" + label}
+            id={"qty-fill-" + target}
             className="qty-fill-input"
             type="number"
             min={0}
@@ -257,7 +275,7 @@ function ColFillPopover({ label, base, x, y, onApply, onClose }: ColFillPopoverP
             step={1}
             value={draft}
             autoFocus
-            aria-label="整列设值数量"
+            aria-label="批量设值数量"
             data-testid="qty-fill-input"
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
@@ -268,7 +286,7 @@ function ColFillPopover({ label, base, x, y, onApply, onClose }: ColFillPopoverP
             }}
           />
         </div>
-        <div className="qty-fill-hint">写入该裁片全部尺码；个别尺码要不同值时，应用后单击对应格子修改</div>
+        <div className="qty-fill-hint">{hint}</div>
         <div className="qty-fill-actions">
           <button type="button" className="qty-fill-cancel" onClick={onClose}>
             取消
@@ -305,9 +323,10 @@ export function QtyMatrix(): JSX.Element | null {
   const quantities = useQtyStore((s) => s.quantities);
   const setPiecePerSize = useQtyStore((s) => s.setPiecePerSize);
   const setRowAll = useQtyStore((s) => s.setRowAll);
+  const setSizeAll = useQtyStore((s) => s.setSizeAll);
 
-  // UI 态：整列设值弹层（目标列 + fixed 定位中心点，一次至多一个）。
-  const [fill, setFill] = useState<{ label: string; x: number; y: number } | null>(null);
+  // UI 态：批量设值弹层（列 = 裁片整列 / 行 = 尺码整行 + fixed 定位中心点，一次至多一个）。
+  const [fill, setFill] = useState<FillState | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
   const tableRef = useRef<HTMLTableElement>(null);
 
@@ -341,6 +360,12 @@ export function QtyMatrix(): JSX.Element | null {
   /** 该 label 存在的码列表（整列写 / 重置范围：不写缺片码，防 phantom perSize 键）。 */
   function labelSizes(label: string): (number | null)[] {
     return sizeRows.filter((c) => cellExists(label, c));
+  }
+
+  /** 该码实际存在的裁片列表（整行写范围：不写缺片格，防 phantom perSize 键，与
+      labelSizes 同口径互为转置）。 */
+  function rowLabels(size: number | null): string[] {
+    return labelOrder.filter((label) => cellExists(label, size));
   }
 
   /** 缩略图 rep 片：优先 activeSize 版本，回退首个含它的码；返回片 + 所属码
@@ -410,23 +435,42 @@ export function QtyMatrix(): JSX.Element | null {
     next.select();
   }
 
-  /** 打开整列设值弹层：定位中心 = 矩阵容器可视区中心（fixed 定位，见 ColFillPopover）。 */
-  function openFill(label: string): void {
-    if (fill?.label === label) {
+  /** 弹层定位中心 = 矩阵容器可视区中心（fixed 定位，见 FillPopover）。 */
+  function fillCenter(): { x: number; y: number } {
+    const rect = rootRef.current?.getBoundingClientRect();
+    return {
+      x: rect ? rect.left + rect.width / 2 : 0,
+      y: rect ? rect.top + rect.height / 2 : 0,
+    };
+  }
+
+  /** 打开整列设值弹层（同目标再点 = 关闭）。 */
+  function openColFill(label: string): void {
+    if (fill?.kind === "col" && fill.label === label) {
       setFill(null);
       return;
     }
-    const rect = rootRef.current?.getBoundingClientRect();
-    setFill({
-      label,
-      x: rect ? rect.left + rect.width / 2 : 0,
-      y: rect ? rect.top + rect.height / 2 : 0,
-    });
+    setFill({ kind: "col", label, ...fillCenter() });
+  }
+
+  /** 打开整行设值弹层（2026-09-14；同目标再点 = 关闭）。 */
+  function openRowFill(size: number | null): void {
+    if (fill?.kind === "row" && fill.size === size) {
+      setFill(null);
+      return;
+    }
+    setFill({ kind: "row", size, ...fillCenter() });
   }
 
   /** 整列设值应用：写该 label 实际存在的码（labelSizes）+ 关弹层。 */
-  function handleFillApply(label: string, value: number): void {
+  function handleColFillApply(label: string, value: number): void {
     setRowAll(label, labelSizes(label), value);
+    setFill(null);
+  }
+
+  /** 整行设值应用：写该码实际存在的裁片（rowLabels）+ 关弹层；不动 baseValue（列基准语义）。 */
+  function handleRowFillApply(size: number | null, value: number): void {
+    setSizeAll(size, rowLabels(size), value);
     setFill(null);
   }
 
@@ -482,19 +526,22 @@ export function QtyMatrix(): JSX.Element | null {
                           aria-label={"裁片 " + c.label + " 整列设值"}
                           title="整列设值：批量设置该裁片全部尺码数量"
                           data-testid={"qty-rowfill-" + c.label}
-                          onClick={() => openFill(c.label)}
+                          onClick={() => openColFill(c.label)}
                         >
                           ≡
                         </button>
                       </div>
                     </div>
-                    {fill?.label === c.label ? (
-                      <ColFillPopover
-                        label={c.label}
+                    {fill?.kind === "col" && fill.label === c.label ? (
+                      <FillPopover
+                        target={c.label}
+                        title={"裁片 " + c.label + " · 整列设值"}
+                        ariaLabel={"裁片 " + c.label + " 整列设值"}
+                        hint="写入该裁片全部尺码；个别尺码要不同值时，应用后单击对应格子修改"
                         base={colBase(c.label)}
                         x={fill.x}
                         y={fill.y}
-                        onApply={handleFillApply}
+                        onApply={(v) => handleColFillApply(c.label, v)}
                         onClose={() => setFill(null)}
                       />
                     ) : null}
@@ -516,14 +563,42 @@ export function QtyMatrix(): JSX.Element | null {
                     scope="row"
                     data-tour={si === 0 ? "qty-rowhead" : undefined}
                   >
-                    <button
-                      type="button"
-                      className={"qty-size-btn" + (isActive ? " active" : "")}
-                      aria-pressed={isActive}
-                      onClick={() => setSize(size)}
-                    >
-                      {sizeLabel(size)}
-                    </button>
+                    {/* th 保持 table-cell（同列头手法），内部横排交给 .qty-rowhead-inner */}
+                    <div className="qty-rowhead-inner">
+                      <button
+                        type="button"
+                        className={"qty-size-btn" + (isActive ? " active" : "")}
+                        aria-pressed={isActive}
+                        onClick={() => setSize(size)}
+                      >
+                        {sizeLabel(size)}
+                      </button>
+                      {/* 整行设值 icon（2026-09-14）：码按钮右侧常驻，与列头「≡」互为转置；
+                          行版不写 baseValue（单元格状态/列弹层初值恒以列基准为准） */}
+                      <button
+                        type="button"
+                        className="qty-rowfill-btn"
+                        aria-label={"尺码 " + sizeLabel(size) + " 整行设值"}
+                        title="整行设值：批量设置该尺码全部裁片数量"
+                        data-testid={"qty-rowfill-row-" + sizeKeyOf(size)}
+                        onClick={() => openRowFill(size)}
+                      >
+                        ≡
+                      </button>
+                    </div>
+                    {fill?.kind === "row" && fill.size === size ? (
+                      <FillPopover
+                        target={"row-" + sizeKeyOf(size)}
+                        title={"尺码 " + sizeLabel(size) + " · 整行设值"}
+                        ariaLabel={"尺码 " + sizeLabel(size) + " 整行设值"}
+                        hint="写入该尺码全部裁片；个别裁片要不同值时，应用后单击对应格子修改"
+                        base={1}
+                        x={fill.x}
+                        y={fill.y}
+                        onApply={(v) => handleRowFillApply(size, v)}
+                        onClose={() => setFill(null)}
+                      />
+                    ) : null}
                   </th>
                   {cols.map((c, li) => {
                     const cellKey = li + "-" + si;

@@ -173,6 +173,50 @@ describe('setRowAll (US-001 整行填充)', () => {
   });
 });
 
+// ============================================================
+// setSizeAll（2026-09-14 整行设值，行 = 尺码方向）：与 setRowAll 互为转置，
+// 关键差异 = 不写 baseValue（列基准唯一写入点仍是 setRowAll / hydrateFlat bases，
+// 用户定案：单元格特例高亮与列弹层初值恒以列为准，行弹层初值恒 1）。
+// ============================================================
+describe('setSizeAll (整行设值：不写 baseValue)', () => {
+  it('该码全裁片写入 clampQty 值，其它码保留原值（非破坏合并）', () => {
+    useQtyStore.getState().hydrate([
+      { label: 'g01', size: 28 },
+      { label: 'g01', size: 30 },
+      { label: 'g02', size: 28 },
+    ]);
+    useQtyStore.getState().setSizeAll(28, ['g01', 'g02'], 3);
+    const map = useQtyStore.getState().quantities;
+    expect(map.g01.perSize).toEqual({ '28': 3, '30': 1 });
+    expect(map.g02.perSize).toEqual({ '28': 3 });
+  });
+
+  it('不动 baseValue（各列基准保持；含 null 码 sizeKey）', () => {
+    useQtyStore.getState().setRowAll('g01', [28, null], 2); // g01 列基准 2
+    useQtyStore.getState().setSizeAll(28, ['g01'], 5);
+    const q = useQtyStore.getState().quantities.g01;
+    expect(q).toEqual({ perSize: { '28': 5, null: 2 }, baseValue: 2 });
+  });
+
+  it('value 经 clampQty（超 99 → 99 / 负数 → 0）', () => {
+    useQtyStore.getState().hydrate([{ label: 'g01', size: 28 }]);
+    useQtyStore.getState().setSizeAll(28, ['g01'], 150);
+    expect(useQtyStore.getState().quantities.g01.perSize['28']).toBe(99);
+    useQtyStore.getState().setSizeAll(28, ['g01'], -3);
+    expect(useQtyStore.getState().quantities.g01.perSize['28']).toBe(0);
+  });
+
+  it('hydrateFlat(bases) 恢复后行设值不污染列基准（保存端省键式口径稳定）', () => {
+    useQtyStore.getState().hydrate([{ label: 'g01', size: 28 }, { label: 'g02', size: 28 }]);
+    // 模拟 .msn 恢复编排：g01 基准 2 入 bases、g02 缺席保留 1（省键式）
+    useQtyStore.getState().hydrateFlat({ g01: { '28': 2 }, g02: { '28': 1 } }, { g01: 2 });
+    useQtyStore.getState().setSizeAll(28, ['g01', 'g02'], 4);
+    const map = useQtyStore.getState().quantities;
+    expect(map.g01).toEqual({ perSize: { '28': 4 }, baseValue: 2 });
+    expect(map.g02).toEqual({ perSize: { '28': 4 }, baseValue: 1 });
+  });
+});
+
 describe('resetQuantities (US-011)', () => {
   it('clears to {}', () => {
     useQtyStore.getState().setPiecePerSize('g01', 30, 5);
@@ -224,10 +268,10 @@ describe('hydrate (解析后默认数量 + baseValue=1)', () => {
 
 describe('store independence (US-011)', () => {
   it('qtyStore and uploadStore fields do not overlap', () => {
-    // qtyStore only holds quantities + 5 actions（US-001 合并 hydrate 双入口 + setRowAll；
-    // US-004 状态文件恢复 hydrateFlat 扁平实值覆盖）
+    // qtyStore only holds quantities + 6 actions（US-001 合并 hydrate 双入口 + setRowAll；
+    // US-004 状态文件恢复 hydrateFlat 扁平实值覆盖；2026-09-14 setSizeAll 整行设值）
     const qKeys = Object.keys(useQtyStore.getState()).filter((k) => k !== 'quantities');
-    expect(qKeys.sort()).toEqual(['hydrate', 'hydrateFlat', 'resetQuantities', 'setPiecePerSize', 'setRowAll']);
+    expect(qKeys.sort()).toEqual(['hydrate', 'hydrateFlat', 'resetQuantities', 'setPiecePerSize', 'setRowAll', 'setSizeAll']);
     // uploadStore does not hold quantities
     expect(useUploadStore.getState()).not.toHaveProperty('quantities');
   });
