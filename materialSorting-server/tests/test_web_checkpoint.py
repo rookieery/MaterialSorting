@@ -41,11 +41,14 @@ US-001（pending_strategy_result 槽，prd strategy-pending-result-checkpoint）
     （非对象/mode 非法/placed_items 空/条目缺 id）→ 400（state-save 同文案）；
 12. recover 响应 additive ``pending_strategy_result`` 回传（带槽快照恢复 → 逐
     字段对拍 + 新会话照常重建；无槽 → None）；
-13. 分块独立守恒（2026-09-14 修复，真实事故回归锁）：陈旧 run 块（.msn 恢复
-    的已求解 run 在用户改数量/切码后与现行 form 失配）+ 守恒通过 pending 槽 →
-    丢弃 run 块照常入库 ``{stored:true, dropped_run:true}`` 且丢块快照内部自洽
-    （run 键缺席，可过恢复端守恒终检）；run 丢块后 pending 亦守恒失败 → 回落
-    整载荷 last-good conservation（陈旧 run 不因首败豁免后续校验）。
+13. 分块独立守恒（2026-09-14，真实事故回归锁；同日二改 stale 保留）：陈旧
+    run 块（.msn 恢复的已求解 run 在用户改数量/切码后与现行 form 失配）+
+    守恒通过 pending 槽 → 陈旧 run 打 ``stale`` 标记照常入库 ``{stored:true,
+    stale_run:true}``（placed 原样随快照走，恢复端按标记跳过守恒终检 —— 旧
+    布局作弹窗背景，取消不再清空画布）；run 打标后 pending 亦守恒失败 → 回落
+    整载荷 last-good conservation（陈旧 run 不因首败豁免后续校验）；
+    recover 端：stale 快照 → 200 响应回传 run（stale=True + placed 原样）+
+    pending（背景保留端到端）。
 """
 from __future__ import annotations
 
@@ -505,26 +508,28 @@ def _pending_qty2(mode='race'):
     return p
 
 
-def test_checkpoint_stale_run_pending_dropped_run(client):
-    """修复主案（真实事故形态）：载荷 = form + 改后数量 + 陈旧 run（placed 仍
-    3 片，.msn 恢复旧解）+ 守恒一致的 pending 槽 → 丢弃 run 块照常入库
-    {stored:true, dropped_run:true}；丢块快照内部自洽（run 键缺席 + 新数量 +
-    槽在场 = parse_state_document 可过，恢复端守恒终检不拒）。"""
+def test_checkpoint_stale_run_pending_marked_stale(client):
+    """修复主案（真实事故形态，同日二改 stale 保留）：载荷 = form + 改后数量 +
+    陈旧 run（placed 仍 3 片，.msn 恢复旧解）+ 守恒一致的 pending 槽 → 陈旧
+    run 打 stale 标记照常入库 {stored:true, stale_run:true}；快照可过恢复端
+    校验链（run.stale=True + placed 原样 + 新数量 + 槽在场 —— 旧布局作弹窗
+    背景，取消不再清空画布）。"""
     sid = 'ckpt0060'
     _sid_session(sid)
     r = client.post('/api/state-checkpoint', headers={'X-Session-Id': sid},
                     json={'form': _form(), 'quantities': _QTY2, 'run': _run(),
                           'pending_strategy_result': _pending_qty2()})
     assert r.status_code == 200
-    assert r.json() == {'stored': True, 'dropped_run': True}
+    assert r.json() == {'stored': True, 'stale_run': True}
     snap = parse_state_document(checkpoint_mod.store.get(sid))
-    assert 'run' not in snap                    # 陈旧 run 已丢块（省键式）
+    assert snap['run']['stale'] is True         # 陈旧 run 保留 + 展示级降级标记
+    assert snap['run']['placed'] == _placed()   # 背景布局原样随快照走
     assert snap['quantities'] == _QTY2          # 改后数量随快照走（不再回旧值）
     assert snap['pending_strategy_result'] == _pending_qty2()
 
 
 def test_checkpoint_stale_run_pending_fail_last_good(client):
-    """修复边界：陈旧 run 触发丢块后 pending 槽亦守恒失败（两块都与现行载荷
+    """修复边界：陈旧 run 打标后 pending 槽亦守恒失败（两块都与现行载荷
     失配）→ 回落整载荷 last-good conservation，先前好快照字节不变 —— 陈旧
     run 不因首败豁免后续校验。"""
     sid = 'ckpt0061'
@@ -887,6 +892,29 @@ def test_recover_response_pending_passthrough(client):
     assert res['run']['placed'] == _placed()          # run 块与槽并存互不影响
     assert sessions.registry.peek('recov0136').state['pieces'] \
         == _doc()['pieces']                           # 新会话照常重建
+    assert checkpoint_mod.store.get(sid_old) is None   # single-use 已删
+
+
+def test_recover_stale_run_background_kept(client):
+    """2026-09-14 展示级降级端到端：stale 标记快照（陈旧 run + pending 槽）→
+    recover 200 回传 run（stale=True + placed 原样 = 背景旧布局）+ pending +
+    新数量 —— 恢复端守恒终检按标记宽容，弹窗背景不丢（取消后画布仍有旧布局）。"""
+    sid_old = 'recov0137'
+    _sid_session(sid_old)
+    rc = client.post('/api/state-checkpoint', headers={'X-Session-Id': sid_old},
+                     json={'form': _form(), 'quantities': _QTY2, 'run': _run(),
+                           'pending_strategy_result': _pending_qty2()})
+    assert rc.json() == {'stored': True, 'stale_run': True}
+    r = client.post('/api/state-recover', headers={'X-Session-Id': 'recov0138'},
+                    json={'from_sid': sid_old})
+    assert r.status_code == 200, r.text
+    res = r.json()
+    assert res['run']['stale'] is True
+    assert res['run']['placed'] == _placed()           # 背景 placed 原样回传
+    assert res['placed'] == _placed()
+    assert res['pending_strategy_result'] == _pending_qty2()
+    assert res['quantities'] == _QTY2                  # 数量矩阵为改后值
+    assert sessions.registry.peek('recov0138') is not None
     assert checkpoint_mod.store.get(sid_old) is None   # single-use 已删
 
 

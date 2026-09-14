@@ -87,8 +87,9 @@ async function sendCheckpoint(): Promise<void> {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(buildSavePayload()),
     });
-    // 200 stored:true/false（empty/conservation 后端语义；dropped_run:true =
-    // 后端丢弃陈旧 run 块照常入库的观测键，前端无感）与非 2xx 均容忍 —— 零处理。
+    // 200 stored:true/false（empty/conservation 后端语义；stale_run:true =
+    // 后端对陈旧 run 块打 stale 标记照常入库的观测键 —— 旧布局作恢复弹窗背景，
+    // 前端消费忽略）与非 2xx 均容忍 —— 零处理。
   } catch {
     // SessionBlockedError（阻断弹窗已由 apiFetch 触发）/ 网络错 —— 静默。
   }

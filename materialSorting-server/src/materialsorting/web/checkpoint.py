@@ -20,12 +20,15 @@ tasks/prd-session-expiry-auto-recovery.md FR-3）。
   失败（``check_placed_conservation`` 复用，改数量/改码未重解的中间态）→ ``200
   {stored:false, reason:'conservation'}`` 且**先前好快照字节不变**（last-good，
   FR-2：自动后台任务不打扰用户）；成功 → ``200 {stored:true}``。守恒失败**分块
-  独立裁决**（2026-09-14 修复：.msn 恢复的已求解 run 在用户切码/改数量后与现行
+  独立裁决**（2026-09-14：.msn 恢复的已求解 run 在用户切码/改数量后与现行
   form 天然失配，整载荷一票否决会把待确认 done 结果连坐拒之门外 → 过期恢复拿
-  不到弹窗、尺码回旧值）：仅 run 块失败而 pending 槽在场 → **丢弃 run 块照常
-  入库**（响应 additive ``dropped_run:true``；快照须内部自洽 —— 恢复端
-  parse_state_document 守恒终检会拒带病 run，带病入库只会在恢复时 400）；无
-  pending 时维持整载荷 last-good（改数量未重解 → 恢复改前完整快照，既有定案）。
+  不到弹窗、尺码回旧值）：仅 run 块失败而 pending 槽在场 → **陈旧 run 打
+  ``stale`` 标记照常入库**（响应 additive ``stale_run:true``；恢复端
+  parse_state_document 对 ``run.stale`` 展示级降级 —— 跳过守恒终检、形态与
+  pid 命中保留），恢复后旧布局作弹窗背景（确认被 pending 置换、取消保留 ——
+  与活界面同口径；初版「丢弃 run 块」会让恢复后背景空置、取消一无所有，同日
+  二改）；无 pending 时维持整载荷 last-good（改数量未重解 → 恢复改前完整快照，
+  既有定案）。
   pending 槽（待确认策略/极限 done 结果，2026-09-13 additive 省键式）形态/守恒
   校验与 state-save 镜像（``_check_pending_save`` 共享）。
 - ``DELETE /api/state-checkpoint``：幂等清除（条目不存在也 ``200 {ok:true}``；
@@ -184,11 +187,11 @@ def _store_checkpoint(sid: str | None, payload) -> tuple[dict, int]:
       pending_strategy_result 形态 / run.placed·pending.best.placed_items 条目
       形态）→ 400（与 state-save 同文案同判据）；
     - 守恒校验失败（``check_placed_conservation`` 复用：改数量/改码未重解的
-      中间态）**分块独立裁决**：仅 run 块失败而 pending 槽在场 → 丢弃 run 块
-      照常入库 ``{stored:true, dropped_run:true}``（陈旧 run 不连坐待确认结果，
-      且快照必须内部自洽供恢复端守恒终检）；其余失败组合 → 200 ``{stored:
-      false, reason:'conservation'}`` 且先前好快照字节不变（last-good —— put
-      未发生，FR-2）；
+      中间态）**分块独立裁决**：仅 run 块失败而 pending 槽在场 → 陈旧 run 打
+      ``stale`` 标记照常入库 ``{stored:true, stale_run:true}``（陈旧 run 不
+      连坐待确认结果，且作为弹窗背景随快照走 —— 恢复端按标记跳过守恒终检，
+      旧布局不丢）；其余失败组合 → 200 ``{stored: false, reason:'conservation'}``
+      且先前好快照字节不变（last-good —— put 未发生，FR-2）；
     - 成功 → ``build_state_document`` + ``serialize_state`` 入库 →
       200 ``{stored:true}``。
 
@@ -227,7 +230,7 @@ def _store_checkpoint(sid: str | None, payload) -> tuple[dict, int]:
     if pending is not None and not isinstance(pending, dict):
         return {'error': 'pending_strategy_result 须为对象'}, 400
 
-    dropped_run = False
+    stale_run = False
     if run:
         placed = run.get('placed')
         if not isinstance(placed, list) or not placed:
@@ -238,11 +241,11 @@ def _store_checkpoint(sid: str | None, payload) -> tuple[dict, int]:
                 return {'error': f'run.placed[{i}] 形态非法'
                                  f'（需 {{id,rotation,translation}}）'}, 400
         # 守恒 fail-fast（state-save 同一函数）；形态非法同 400。StateConservation
-        # 错分块独立裁决（2026-09-14 修复，见模块 docstring）：陈旧 run（.msn
-        # 恢复的已求解 run 在用户切码/改数量后与现行 form 失配）不连坐 pending
-        # 槽 —— 槽在场则丢弃 run 块继续（下方槽校验通过即入库；快照须内部自洽，
-        # 恢复端 parse_state_document 守恒终检会拒带病 run）；槽不在场维持既有
-        # last-good 定案（改数量未重解 → 恢复改前完整快照）。
+        # 错分块独立裁决（2026-09-14，见模块 docstring）：陈旧 run（.msn 恢复的
+        # 已求解 run 在用户切码/改数量后与现行 form 失配）不连坐 pending 槽 ——
+        # 槽在场则打 stale 标记保留入库（恢复端按标记跳过守恒终检，旧布局作弹窗
+        # 背景：确认被 pending 置换、取消保留，与活界面同口径）；槽不在场维持
+        # 既有 last-good 定案（改数量未重解 → 恢复改前完整快照）。
         try:
             check_placed_conservation(
                 placed, pieces, sizes=form.get('sizes'),
@@ -250,8 +253,8 @@ def _store_checkpoint(sid: str | None, payload) -> tuple[dict, int]:
         except StateConservationError:
             if not pending:
                 return {'stored': False, 'reason': 'conservation'}, 200
-            run = None
-            dropped_run = True
+            run = {**run, 'stale': True}
+            stale_run = True
         except (ValueError, TypeError):
             return {'error': 'form.sizes/per_type/quantities 形态非法，'
                              '无法核对数量守恒'}, 400
@@ -275,8 +278,8 @@ def _store_checkpoint(sid: str | None, payload) -> tuple[dict, int]:
                                     quantities_base, pending)
     store.put(sid or DEFAULT_SID, serialize_state(document))
     body = {'stored': True}
-    if dropped_run:
-        body['dropped_run'] = True   # 观测面（additive）：本枚快照丢弃了陈旧 run 块
+    if stale_run:
+        body['stale_run'] = True   # 观测面（additive）：本枚快照的 run 块为陈旧背景
     return body, 200
 
 
@@ -423,7 +426,7 @@ def _smoke() -> int:
     TTL 惰性清理 / FIFO 逐出 / 重复 put 刷新 / DELETE 幂等）；②
     ``_store_checkpoint`` 端点内核全路径（私有会话注入单例 registry：
     stored:true → gunzip + parse_state_document 对拍 / empty / conservation
-    last-good / 陈旧 run 丢块独立裁决（dropped_run）/ 非法 sid 400 / 死会话
+    last-good / 陈旧 run stale 标记保留（stale_run）/ 非法 sid 400 / 死会话
     401 / save_as 容忍 / peek 不刷 last_active / DELETE 生命周期）；③
     ``state_recover`` 全链（真实 handler 经 _FakeRequest：
     过期逐出 → 新 sid 恢复 200 同形响应 + recovered_from + 守恒 + single-use 删
@@ -563,11 +566,13 @@ def _smoke() -> int:
               and json.loads(gzip.decompress(good_bytes))['quantities']
               == quantities)
 
-        # ---------------- 2026-09-14 修复：陈旧 run 块 + pending 槽分块独立守恒
+        # ---------------- 2026-09-14：陈旧 run 块 + pending 槽分块独立守恒
         # （真实事故：.msn 恢复的已求解 run 在用户改数量/切码后与现行 form 失配，
         # 整载荷一票否决连坐毒化 done 结果落快照 → 过期恢复拿不到 pending 弹窗、
         # 数量矩阵回旧值）。夹具：用户把 g01@30 2→1（run 仍 3 片 = 陈旧），新策略
-        # run 按现行数量跑完（pending placed 2 片 = 守恒通过）。
+        # run 按现行数量跑完（pending placed 2 片 = 守恒通过）。同日二改：陈旧
+        # run 不再丢块，打 stale 标记保留 —— 恢复端按标记跳过守恒终检，旧布局
+        # 作弹窗背景（取消不再清空画布）。
         quantities2 = {'g01': {'30': 1}, 'g02': {'30': 1}}
         placed2 = [
             {'id': 'g01_30', 'rotation': 0.0, 'translation': [0.0, 0.0]},
@@ -578,13 +583,14 @@ def _smoke() -> int:
         body, status = _store_checkpoint(
             sid, {'form': form, 'quantities': quantities2, 'run': run,
                   'pending_strategy_result': pending2})
-        check('内核：陈旧 run 守恒失败 + pending 在场 → 丢弃 run 照常入库 '
-              '{stored:true, dropped_run:true}',
-              status == 200 and body == {'stored': True, 'dropped_run': True})
+        check('内核：陈旧 run 守恒失败 + pending 在场 → stale 标记保留入库 '
+              '{stored:true, stale_run:true}',
+              status == 200 and body == {'stored': True, 'stale_run': True})
         parsed2 = parse_state_document(store.get(sid))
-        check('内核：丢块快照内部自洽（run 键缺席 + pending 在场 + 数量为新值）'
-              '—— 可过恢复端守恒终检',
-              'run' not in parsed2
+        check('内核：stale 快照可过恢复端校验链（run.stale=True + placed 原样 + '
+              'pending 在场 + 数量为新值）',
+              parsed2['run'].get('stale') is True
+              and parsed2['run']['placed'] == run['placed']
               and parsed2['quantities'] == quantities2
               and parsed2['pending_strategy_result'] == pending2)
         pending_bad = dict(pending2, best=dict(
@@ -595,7 +601,7 @@ def _smoke() -> int:
         body, status = _store_checkpoint(
             sid, {'form': form, 'quantities': quantities2, 'run': run,
                   'pending_strategy_result': pending_bad})
-        check('内核：run 已丢块而 pending 亦守恒失败 → 回落 last-good conservation'
+        check('内核：run 已打标而 pending 亦守恒失败 → 回落 last-good conservation'
               '（陈旧 run 不因首败豁免后续校验）',
               status == 200 and body == {'stored': False,
                                          'reason': 'conservation'}

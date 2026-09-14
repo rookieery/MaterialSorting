@@ -11,7 +11,12 @@ schema v1（设计 §四，.docs/business/状态文件保存恢复_落地方案.
   {schema_version, app, saved_at, doc, form, quantities, quantities_base?, run?,
    pending_strategy_result?}
   - run 仅 done 态入文件（body 无 run → 整块省略）；placed 同 pid 多副本 = 数组
-    多条，绝不 pid 去重；mirror 按 omit-when-false（editStore 同口径）。
+    多条，绝不 pid 去重；mirror 按 omit-when-false（editStore 同口径）；
+    run.stale = 展示级降级标记（2026-09-14 additive 省键式，checkpoint 对守恒
+    失败的背景 run 打标）：true → 恢复端跳过 run 守恒终检（逐条形态 + pid 全
+    命中保留）—— pending 在场时 run 只是弹窗背景（确认即被 pending 置换、取消
+    保留旧布局），与活界面「背景无条件显示旧 run」同口径；.msn 保存端不产此键
+    （守恒失败仍 400 指路文案），无需 bump v1。
   - quantities_base = {label:整数} 整列设值基准（qtyStore baseValue，2026-09-12
     additive）：省键式 —— 只存 ≠1 的行，缺席 = 全 1 默认；不参与守恒/manifest
     （纯 UI 基准），无需 bump v1。
@@ -277,7 +282,7 @@ def _validate_doc_block(doc) -> None:
 
 
 def _validate_placed_list(placed, pieces, *, path: str, form: dict,
-                          quantities) -> None:
+                          quantities, skip_conservation: bool = False) -> None:
     """placed 逐条形态 + pid 全命中 doc + 守恒终检（run 块 / pending 槽**同一
     判据**，US-001 抽取共享）。
 
@@ -285,6 +290,11 @@ def _validate_placed_list(placed, pieces, *, path: str, form: dict,
     ``'pending_strategy_result.best.placed_items'``）。pid 全命中与守恒
     unknown_pid 文案不同（前者「母版外」、后者码选过滤/退化石也算未排料），
     按故事口径分别给文案；守恒与保存端复用同一判定函数。
+
+    ``skip_conservation``（2026-09-14 展示级降级）：``run.stale`` 标记的背景
+    run 跳过守恒比对 —— 形态校验与 pid 全命中保留（后者仍是硬门槛：母版外
+    引用无论 stale 与否都拒），``form/quantities`` 形态异常同 400（rebuild 的
+    manifest 重算消费这两块，不让坏形态漏成 500）。
     """
     if not isinstance(placed, list) or not placed:
         raise StateFileError(f'状态文件损坏（{path} 不能为空）')
@@ -316,6 +326,8 @@ def _validate_placed_list(placed, pieces, *, path: str, form: dict,
                                   per_type=form.get('per_type'),
                                   quantities=quantities)
     except StateConservationError as e:
+        if skip_conservation:
+            return   # 展示级降级：背景 run 与现行数量失配容忍（pending 槽仍全量校验）
         if e.kind == 'unknown_pid':
             # pid 在 doc 但不在重算 demand（码选过滤 / erode 退化石）—— 同属
             # 「引用未排料裁片」的内部不一致，文案沿用母版外口径 + detail。
@@ -328,9 +340,19 @@ def _validate_placed_list(placed, pieces, *, path: str, form: dict,
 
 
 def _validate_run_block(run: dict, pieces, *, form: dict, quantities) -> None:
-    """run 块校验：placed（与 pending 槽共用判据）→ final → provenance 枚举。"""
+    """run 块校验：placed（与 pending 槽共用判据）→ final → provenance 枚举。
+
+    ``run.stale`` 展示级降级（2026-09-14，checkpoint 侧打标省键式）：``True``
+    → placed 跳过守恒终检（逐条形态 + pid 全命中保留）—— pending 在场时 run
+    块只是弹窗背景，恢复后画布先显旧布局、确认才被 pending 置换（与活界面
+    「背景无条件显示旧 run」同口径）；非 bool → 400（形态门）。缺省（无键/
+    False）守恒终检照旧 —— .msn 保存端不产此键，旧文件/未打标快照零变化。
+    """
+    if 'stale' in run and not isinstance(run['stale'], bool):
+        raise StateFileError('状态文件损坏（run.stale 须为布尔）')
     _validate_placed_list(run.get('placed'), pieces, path='run.placed',
-                          form=form, quantities=quantities)
+                          form=form, quantities=quantities,
+                          skip_conservation=run.get('stale') is True)
     final = run.get('final')
     if final is not None and not isinstance(final, dict):
         raise StateFileError('状态文件损坏（run.final 须为对象）')
@@ -427,7 +449,8 @@ def parse_state_document(raw: bytes) -> dict:
     5. form/quantities/quantities_base 块形态（doc/run 前置：守恒校验消费
        form/quantities 这两块；quantities_base 纯 UI 基准缺席容忍）；
     6. doc 块逐片形态（``_validate_doc_block``）；
-    7. run 块（在场时：``_validate_run_block``）；
+    7. run 块（在场时：``_validate_run_block``；``run.stale=True`` → 守恒终检
+       展示级降级跳过，形态/pid 命中保留）；
     8. pending_strategy_result 槽（在场时：``_validate_pending_block`` ——
        省键式缺席 = 旧文件零迁移）。
 
@@ -999,6 +1022,28 @@ def _smoke() -> int:
                  lambda: parse_state_document(_tamper(
                      lambda d: d.__setitem__('quantities_base', {'g01': 'x'}))),
                  want='quantities_base')
+
+    # ---------------- 2026-09-14 run.stale 展示级降级（checkpoint 打标宽容）
+    def _with_stale(fn):
+        d = json.loads(gzip.decompress(data))
+        d['run']['stale'] = True
+        fn(d)
+        return gzip.compress(json.dumps(d, ensure_ascii=False).encode('utf-8'))
+
+    check('恢复校验：run.stale=True + 副本数失配 → 跳过守恒终检照常通过'
+          '（背景 run 保留）',
+          parse_state_document(_with_stale(
+              lambda d: d['quantities']['g01'].__setitem__('30', 5)))
+          ['run']['stale'] is True)
+    expect_error('恢复校验：run.stale 非布尔 → 400',
+                 lambda: parse_state_document(_tamper(
+                     lambda d: d['run'].__setitem__('stale', 'yes'))),
+                 want='run.stale 须为布尔')
+    expect_error('恢复校验：run.stale=True 但 placed 引用母版外 pid → 仍 400'
+                 '（pid 命中是硬门槛，不随降级豁免）',
+                 lambda: parse_state_document(_with_stale(
+                     lambda d: d['run']['placed'][2].__setitem__('id', 'zz_99'))),
+                 want='run.placed 引用母版外裁片')
 
     # ------------------------------------------------ US-001 pending 槽篡改链
     def _tamper_pending(fn):

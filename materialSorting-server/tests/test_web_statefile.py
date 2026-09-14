@@ -27,7 +27,9 @@ US-002（恢复端）覆盖：
 8. 校验链全 fail-fast 400/413：坏 gzip/坏 JSON/schema_version 缺失·非 int·过新
    （文案含双版本号）/解压后与裸上传双超限/doc 块逐片形态（polygon 顶点/NaN/
    gate/pid 重复/label 非法）/run.placed 条目形态（含 mirror 非布尔）/placed
-   pid 越界/副本数≠demand/provenance.kind 非法枚举；解析在 threadpool 执行；
+   pid 越界/副本数≠demand/provenance.kind 非法枚举；run.stale 展示级降级
+   （2026-09-14）：True 跳过守恒终检（pid 越界仍拒）、非布尔 400；解析在
+   threadpool 执行；
 9. 会话语义：恢复写入当前 sid（覆盖语义、不占 MS_SESSION_MAX 名额、过期 401、
    非法 400、sid 隔离）；default 恢复走 runtime 原子重绑且**不落盘**
    （INTERMEDIATE/uploads 字节不变断言）；
@@ -888,14 +890,51 @@ def test_restore_doc_block_garbage_400(client, fn, want):
     (lambda d: d['run']['placed'][0].__setitem__('mirror', 'yes'), 'mirror'),
     (lambda d: d['run'].__setitem__('final', 3), 'final 须为对象'),
     (lambda d: d['run'].__setitem__('provenance', 'extreme'), 'provenance 须为对象'),
+    (lambda d: d['run'].__setitem__('stale', 'yes'), 'run.stale 须为布尔'),
 ])
 def test_restore_run_block_garbage_400(client, fn, want):
-    """run 块逐条形态（placed 条目/rotation/translation/mirror/final/provenance）
-    → 400 状态文件损坏。"""
+    """run 块逐条形态（placed 条目/rotation/translation/mirror/final/provenance/
+    stale 布尔门）→ 400 状态文件损坏。"""
     msn = _save_msn(client)
     r = _restore(client, _edit_msn(msn, fn))
     assert r.status_code == 400
     assert want in r.json()['error']
+
+
+# ------------------------- 2026-09-14 run.stale 展示级降级（checkpoint 打标宽容）
+
+def test_restore_stale_run_skips_conservation_200(client):
+    """run.stale=True + 副本数失配（改数量未重解的背景旧布局）→ 跳过守恒终检
+    照常 200：run/placed 原样回传（弹窗背景保留）；未打标同文件仍 400（对照，
+    .msn 保存端不产此键 —— 旧契约零变化）。"""
+    msn = _save_msn(client)
+    stale = _edit_msn(msn, lambda d: (
+        d['run'].__setitem__('stale', True),
+        d['quantities']['g01'].__setitem__('30', 5)))   # placed g01×2 ≠ demand 5
+    r = _restore(client, stale)
+    assert r.status_code == 200, r.text
+    res = r.json()
+    assert res['run']['stale'] is True
+    assert res['run']['placed'] == _placed()
+    assert res['placed'] == _placed()
+    assert res['quantities']['g01']['30'] == 5
+    # 对照：同一失配无 stale 标记 → 400（既有契约不变）
+    plain = _edit_msn(msn, lambda d: d['quantities']['g01'].__setitem__('30', 5))
+    r2 = _restore(client, plain)
+    assert r2.status_code == 400
+    assert '副本数与数量矩阵不符' in r2.json()['error']
+
+
+def test_restore_stale_run_pid_outside_still_400(client):
+    """stale 降级不豁免 pid 命中硬门槛：placed 引用母版外 pid → 仍 400
+    「内部不一致」（背景 run 也必须是本母版的布局）。"""
+    msn = _save_msn(client)
+    bad = _edit_msn(msn, lambda d: (
+        d['run'].__setitem__('stale', True),
+        d['run']['placed'][2].__setitem__('id', 'zz_99')))
+    r = _restore(client, bad)
+    assert r.status_code == 400
+    assert 'run.placed 引用母版外裁片' in r.json()['error']
 
 
 # -------------------------------------- US-001 pending_strategy_result 恢复端

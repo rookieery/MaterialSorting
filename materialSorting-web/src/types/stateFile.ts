@@ -62,6 +62,13 @@ export interface StateSaveRun {
   seed: number;
   /** 缺省 = 'solve'（v1 内可省键，向后兼容手改文件）。 */
   provenance?: RunProvenance;
+  /**
+   * 展示级降级标记（2026-09-14，checkpoint 侧打标省键式）：true = 该 run 与现行
+   * 数量矩阵失配（陈旧背景旧布局），后端恢复端跳过守恒校验。前端消费忽略 ——
+   * applyRestorePayload 照常把 placed 合成进画布作弹窗背景（确认被 pending 置换、
+   * 取消保留，与活界面同口径）；buildRunBlock 不回写该键（再落快照由后端重判）。
+   */
+  stale?: true;
   final: StateRunFinal;
   placed: PlacedItem[];
 }

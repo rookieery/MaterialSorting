@@ -161,7 +161,9 @@ function buildPendingBlock(): StatePendingStrategyResult | undefined {
   return undefined;
 }
 
-/** bestRun → run 块（无 lastFrame / 未结束 → undefined = 整块缺席）。 */
+/** bestRun → run 块（无 lastFrame / 未结束 → undefined = 整块缺席；不写
+ * run.stale —— 该键仅 checkpoint 侧对守恒失败的陈旧背景打标，前端再落快照时
+ * 由后端按现行数量重判重打）。 */
 function buildRunBlock(run: RunRecord | null): StateSaveRun | undefined {
   if (!run || !run.lastFrame || !run.done) return undefined;
   const provenance = provenanceOf(run.origin);
@@ -226,7 +228,10 @@ function finalizeFromLayout(
  *     回显来源小字）→ applySyntheticRun 共享落笔（清场/registry/信号）；随后
  *     setNestingEnabled(true) 显式先行（useCommitToNesting D1 闭环同款，不依赖
  *     PreviewPage 订阅时序）+ setTab('nesting') 展示布局。无 run（纯配置档）→
- *     不切 Tab（留在预览页核对数量矩阵，求解入口由用户主动进）。
+ *     不切 Tab（留在预览页核对数量矩阵，求解入口由用户主动进）。run.stale=true
+ *     （2026-09-14 checkpoint 展示级降级标记）前端消费忽略 —— 照常合成：该 run
+ *     是与现行数量失配的陈旧背景（后端按标记跳过了守恒终检），与 pending 槽
+ *     并存时先作弹窗背景，确认被 pending 置换、取消保留（活界面同口径）。
  *  6. pending_strategy_result 槽在场（US-002）→ 按 mode 路由族 store（'extreme' →
  *     useExtremeStore；'se'/'race' → useStrategyStore）直写弹窗结果态（phase=
  *     'done'、status=null、result 按槽 + 恢复端重算 manifest 重组（run_dir=null

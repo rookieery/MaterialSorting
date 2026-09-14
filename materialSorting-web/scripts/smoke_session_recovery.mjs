@@ -1,6 +1,7 @@
 // 会话过期自动恢复端到端冒烟（playwright，手动脚本不入 vitest）——
 // US-005「过期 → 刷新 → 启动期恢复」五路径回归锁 + US-003（策略待确认结果
-// checkpoint，2026-09-13）pending_strategy_result 槽主路径/三续段扩展。
+// checkpoint，2026-09-13）pending_strategy_result 槽主路径/三续段扩展 + bg 段
+// （2026-09-14 展示级降级：陈旧 run 背景保留 —— 恢复弹窗之下画布不清空）。
 //
 // **自举起服**（无需手工 ms-web）：spawn .venv python 起 FastAPI 于 :8010（避开常驻
 // :8000 实例），env = MS_SESSION_TTL_SEC=60（极短 TTL；须 > 深度解析+commit 单程
@@ -13,7 +14,7 @@
 //
 // 前置：materialSorting-web/static/ 为 npm run build 产物（服务 GET / 直接 serve）。
 // 命令：node materialSorting-web/scripts/smoke_session_recovery.mjs [phases]
-//   phases = 逗号分隔子集 {pending, extreme, legacy}（调试分段复跑用），
+//   phases = 逗号分隔子集 {pending, bg, extreme, legacy}（调试分段复跑用），
 //   缺省全量。**验收口径 = 缺省全量一跑全绿**（分段仅为定位问题的切片，段间
 //   sid 链不连续属预期）。
 //
@@ -35,6 +36,18 @@
 //   M7 应用后再过期 → 刷新恢复：已应用 run 恢复（布局/数量/表单对拍）+ 任何族
 //      弹窗**不开** + recover 响应 pending=null —— 无 pending 老快照恢复行为与
 //      US-004/005 时代对拍不变。
+//   [bg 段 = 2026-09-14 展示级降级（陈旧 run 背景 + pending 弹窗，用户报告 bug 的
+//    端到端回归锁）]
+//   B1 5s 普通求解 → run 块（111 片背景旧布局）落 checkpoint。
+//   B2 改数量 g01@32 1→2（总 112）→ run 与现行数量失配 = 陈旧背景。
+//   B3 race 10min 完成不确认 → checkpoint {stored:true, stale_run:true}（陈旧 run
+//      打标保留非丢弃 + pending 槽按现行数量守恒入库）。
+//   B4 宽限窗外过期 → 刷新恢复：recover 200 回传 run.stale=true + placed 原样 +
+//      pending 并存 → 弹窗结果态之下**背景旧布局仍在**（可见 polygon = 旧 run placed
+//      数；demand 池隐藏副本不计 —— 现行数量比旧解多的那份是 display:none）。
+//   B5 取消 → 弹窗关闭后画布不清空（背景保留 + 来源小字「普通求解」）。
+//   B6 再过期 → 恢复弹窗重现 → 确认应用 → 背景被新解置换（polygon=112 + 来源
+//      「策略运行·race」）。
 //   [extreme 段 = US-003 续段① 极限运行同款]
 //   X1 极限运行弹窗自定义 16min（UI 下限 960s ≥ 后端 905s；early_termination
 //      固化 False → 全预算 ~905s+）→ 等 done → checkpoint 携 pending mode=extreme
@@ -88,7 +101,7 @@ const STRATEGY_RUN_TIMEOUT = 960_000;  // race 10min 档墙上限（600s 预算 
 const EXTREME_RUN_TIMEOUT = 1500_000;  // 极限 960s 预算（早停固化 False）+ 多 seed 墙钟
                                    // 膨胀余量（实测 2 seed 满载 ~1175s > 预算）
 // 分段复跑过滤器（缺省全量；验收口径 = 全量一跑）。
-const PHASES = (process.argv[2] || 'pending,extreme,legacy')
+const PHASES = (process.argv[2] || 'pending,bg,extreme,legacy')
   .split(',').map((s) => s.trim()).filter(Boolean);
 const hasPhase = (p) => PHASES.includes(p);
 
@@ -166,6 +179,14 @@ async function cpPosts(p) {
 }
 async function toasts(p) {
   return p.evaluate(() => Array.from(document.querySelectorAll('.toast-msg')).map((t) => t.textContent));
+}
+/** 可见毛版多边形数（bg 段断言口径）：NestSVG 按 demand 建 DOM 副本池，未 placed
+ * 的副本仅 display:none 隐藏不移除（陈旧 run placed < 现行 demand 时池里有隐藏
+ * 副本）—— polygon[data-label] DOM 计数会虚高，断言必须只数用户可见的。 */
+async function visiblePolygons(p) {
+  return p.evaluate(() => Array.from(document.querySelectorAll('.nest-card svg polygon[data-label]'))
+    .filter((el) => (el.checkVisibility ? el.checkVisibility() : el.getClientRects().length > 0))
+    .length);
 }
 async function closeToasts(p) {
   for (let i = 0; i < 8; i++) {
@@ -585,6 +606,159 @@ try {
         body: (() => { try { return JSON.parse(x.body || '{}'); } catch { return null; } })(),
       })), null, 2));
     log('pending 段完成');
+  }
+
+  // ==================== bg 段（2026-09-14 展示级降级：陈旧 run 背景 + pending 弹窗）====================
+  // 用户报告 bug 的端到端回归锁：先有普通求解布局 → 改数量 → 策略 run 完成不确认 →
+  // 过期恢复 —— 弹窗结果态之下背景必须仍是旧布局（checkpoint 对陈旧 run 打 stale
+  // 标记保留而非丢弃），取消后画布不清空、确认后才被新解置换（与活界面同口径）。
+  if (hasPhase('bg')) {
+    const sidA = await ensureSetup();
+    await setupForm();
+
+    // ---------- B1 5s 普通求解 → run 块（背景旧布局）落 checkpoint ----------
+    const cpCount0 = (await cpPosts(page)).length;
+    // #start（idle）在已有 run 后变体为 #restart（同 onStart 语义；restart 清旧 run）
+    await page.locator('#start, #restart').click();
+    let cpB1 = null;
+    {
+      const t0 = Date.now();
+      for (;;) {
+        const fresh = (await cpPosts(page)).slice(cpCount0);
+        const hit = fresh.find((x) => {
+          if (x.status !== 200 || x.resp?.stored !== true) return false;
+          try { return JSON.parse(x.body || '{}').run !== undefined; } catch { return false; }
+        });
+        if (hit) { cpB1 = hit; break; }
+        if (Date.now() - t0 > 120000) break;
+        await sleep(500);
+      }
+    }
+    const cpB1Body = cpB1 ? JSON.parse(cpB1.body) : {};
+    const bgN = cpB1Body.run?.placed?.length || 0;
+    check('B1a 普通求解完成 → checkpoint run 块（背景 placed=' + bgN + '）',
+      !!cpB1 && bgN > 0, cpB1 ? JSON.stringify(cpB1.resp) : 'no fresh post');
+    await page.screenshot({ path: OUT + '/b1_solved_background.png' });
+
+    // ---------- B2 改数量 g01@32 1→2（总 112）→ run 与现行数量失配（陈旧背景） ----------
+    await page.locator('button.tab:has-text("上传预览")').click();
+    await sleep(400);
+    const cellB2 = page.locator('input.qty-cell-input[aria-label="裁片 g01 码 32 数量"]');
+    await cellB2.waitFor({ timeout: 10000 });
+    await cellB2.fill('2');
+    await cellB2.press('Enter');
+    await sleep(300);
+    const totalB = (await page.locator('[data-testid="qty-total"]').innerText()).trim();
+    check('B2a 改数量生效（g01@32 1→2，总 111→112）', totalB === '112', totalB);
+
+    // ---------- B3 race 10min → done 不确认 → checkpoint 陈旧 run 打标入库 ----------
+    await page.locator('button.tab:not([disabled]):has-text("超排")').click();
+    await sleep(800);
+    await page.click('[data-testid="strategy-btn"]');
+    await page.waitForSelector('[data-testid="strategy-minutes"]', { timeout: 10000 });
+    await page.selectOption('#strategy-minutes', '10');
+    await page.click('[data-testid="strategy-exec-btn"]');
+    await page.waitForSelector('[data-testid="strategy-progress-title"]', { timeout: 30000 });
+    log('B3 等 race 10min run 完成（不确认）…（上限 ' + STRATEGY_RUN_TIMEOUT / 1000 + 's）');
+    const headB1 = await waitResultHead(page, STRATEGY_RUN_TIMEOUT);
+    const mB = /^完成 · 最优 (\d+\.\d{2})%$/.exec(headB1);
+    check('B3a race run 完成且未确认（结果头「' + headB1 + '」）', !!mB, headB1);
+    // 陈旧 run（placed=111 ≠ 现行 demand 112）+ 守恒一致 pending（112）→ 分块独立
+    // 裁决打标入库（初版「丢弃 run 块」会让恢复后背景空置，同日二改 stale 保留）。
+    const cpB3 = await waitCheckpoint(page, (x) => x.resp?.stored === true && x.resp?.stale_run === true, 15000);
+    const cpB3Body = cpB3 ? JSON.parse(cpB3.body) : {};
+    const slotB = cpB3Body.pending_strategy_result || {};
+    const pendN = slotB.best?.placed_items?.length || 0;
+    check('B3b 陈旧 run 打标入库：{stored:true, stale_run:true} + 载荷 run 与槽并存',
+      !!cpB3 && cpB3Body.run !== undefined && slotB.mode === 'race' && pendN === bgN + 1,
+      'run.placed=' + cpB3Body.run?.placed?.length + ' pending.placed=' + pendN
+      + ' resp=' + JSON.stringify(cpB3?.resp));
+    check('B3c 结果详情与槽一致（seed ' + slotB.best?.seed + '）',
+      (await page.locator('[data-testid="strategy-result-detail"]').first().innerText())
+        .includes('seed ' + slotB.best?.seed));
+
+    // ---------- B4 宽限窗外过期 → 刷新恢复：弹窗结果态 + 背景旧布局保留 ----------
+    log('B4 空闲 ' + TTL_IDLE_MS + 'ms 等宽限窗（3s）外 TTL 过期…');
+    await sleep(TTL_IDLE_MS);
+    await page.reload({ waitUntil: 'networkidle' });
+    await sleep(1500); // 恢复编排（applyRestorePayload 同步 + toast 渲染）
+    const sidB = await getSid(page);
+    check('B4a 过期刷新 → sid A→B 换新',
+      !!sidB && /^[0-9a-f]{32}$/.test(sidB) && sidB !== sidA, (sidB || '').slice(0, 8));
+    const netB = await netLog(page);
+    const recB = netB.find((x) => x.url.includes('/api/state-recover'));
+    const recBResp = recB?.resp || null;
+    check('B4b recover 200 + run.stale=true + 背景 placed 原样（' + bgN + '）+ pending（' + (bgN + 1) + '）并存',
+      !!recB && recB.status === 200
+      && recBResp?.run?.stale === true
+      && Array.isArray(recBResp?.run?.placed) && recBResp.run.placed.length === bgN
+      && recBResp?.pending_strategy_result?.mode === 'race'
+      && recBResp?.pending_strategy_result?.best?.placed_items?.length === bgN + 1,
+      recB ? 'run.stale=' + recBResp?.run?.stale + ' run=' + recBResp?.run?.placed?.length
+        + ' pending=' + recBResp?.pending_strategy_result?.best?.placed_items?.length : 'no call');
+    await page.waitForSelector('[data-testid="strategy-overlay"]', { timeout: 15000 });
+    const headB2 = (await page.locator('[data-testid="strategy-result-head"]').innerText()).trim();
+    check('B4c 弹窗自动打开且为结果态（密度与过期前对拍）', headB2 === headB1, headB2);
+    // 核心回归锁：弹窗之下背景 = 旧布局（stale run 保留渲染；修复前此景背景空置）。
+    // 可见口径：现行 demand 比 run 多 1（g01@32=2 而旧解只放 1）→ demand 池里的
+    // 第 2 副本是 display:none 隐藏副本，DOM 计数 31 而可见恒 = run placed 30。
+    await page.locator('.nest-card svg polygon[data-label]').first().waitFor({ timeout: 15000 });
+    const bgPoly1 = await visiblePolygons(page);
+    check('B4d 背景旧布局保留（可见 polygon=' + bgPoly1 + ' = run placed ' + bgN + '，非 pending ' + (bgN + 1) + '）',
+      bgPoly1 === bgN, 'visible=' + bgPoly1);
+    await page.screenshot({ path: OUT + '/b4_stale_background_modal.png' });
+    await closeToasts(page);
+
+    // ---------- B5 取消 → 背景保留（不再清空画布 = 用户报告的 bug 主诉） ----------
+    await page.click('[data-testid="strategy-close"]');
+    await sleep(600);
+    check('B5a 取消后弹窗关闭（overlay 0）',
+      (await page.locator('[data-testid="strategy-overlay"]').count()) === 0);
+    const bgPoly2 = await visiblePolygons(page);
+    check('B5b 取消后背景保留（可见 polygon=' + bgPoly2 + ' 不清空）',
+      bgPoly2 === bgN, 'visible=' + bgPoly2);
+    const provB = (await page.locator('.provenance-line, [data-testid="run-provenance"]').first()
+      .innerText().catch(() => '')).trim();
+    check('B5c 背景来源小字 = 普通求解（stale run 合成 origin = {kind:"solve"}）',
+      provB.includes('普通求解'), provB);
+    await page.screenshot({ path: OUT + '/b5_cancel_background_kept.png' });
+
+    // ---------- B6 再过期 → 恢复弹窗重现 → 确认应用 → 背景被新解置换 ----------
+    log('B6 空闲 ' + TTL_IDLE_MS + 'ms 再过期 → 刷新恢复 → 确认应用…');
+    await sleep(TTL_IDLE_MS);
+    await page.reload({ waitUntil: 'networkidle' });
+    await sleep(1500);
+    const sidC = await getSid(page);
+    check('B6a 再过期刷新 → sid B→C 换新', !!sidC && sidC !== sidB, (sidC || '').slice(0, 8));
+    const netB2 = await netLog(page);
+    const recB2 = netB2.find((x) => x.url.includes('/api/state-recover'));
+    check('B6b 恢复态重落快照可再恢复（recover 200 + run.stale + pending 仍在）',
+      !!recB2 && recB2.status === 200 && recB2?.resp?.run?.stale === true
+      && recB2?.resp?.pending_strategy_result?.mode === 'race',
+      recB2 ? 'status=' + recB2.status + ' run.stale=' + recB2?.resp?.run?.stale : 'no call');
+    await page.waitForSelector('[data-testid="strategy-overlay"]', { timeout: 15000 });
+    await page.click('[data-testid="strategy-apply-btn"]');
+    const cpB6 = await waitCheckpoint(page, (x) => {
+      try {
+        const b = JSON.parse(x.body || '{}');
+        return b.run !== undefined && b.pending_strategy_result === undefined;
+      } catch { return false; }
+    }, 15000);
+    check('B6c 应用落定 checkpoint：run 块在场 + pending 退场（应用后无双份数据）',
+      !!cpB6 && cpB6.resp?.stored === true, cpB6 ? JSON.stringify(cpB6.resp) : 'no post');
+    await page.click('[data-testid="strategy-close"]');
+    await page.locator('.nest-card svg polygon[data-label]').first().waitFor({ timeout: 15000 });
+    await sleep(500);
+    const bgPoly3 = await visiblePolygons(page);
+    check('B6d 确认后背景被新解置换（可见 polygon=' + bgPoly3 + ' = pending placed ' + (bgN + 1) + '）',
+      bgPoly3 === bgN + 1, 'visible=' + bgPoly3);
+    const provB2 = (await page.locator('.provenance-line, [data-testid="run-provenance"]').first()
+      .innerText().catch(() => '')).trim();
+    check('B6e 来源小字切换为策略运行·race（新解置换旧背景）',
+      provB2.includes('策略运行·race'), provB2);
+    await page.screenshot({ path: OUT + '/b6_applied_replaced.png' });
+    await closeToasts(page);
+    log('bg 段完成');
   }
 
   // ==================== extreme 段（US-003 续段① 极限运行同款）====================

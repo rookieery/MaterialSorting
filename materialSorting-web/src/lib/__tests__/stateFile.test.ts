@@ -595,6 +595,38 @@ describe('applyRestorePayload：pending_strategy_result 第 6 步（US-002）', 
     expect(useUiStore.getState().activeTab).toBe('nesting'); // 弹窗落在超排工作台上
   });
 
+  it('run 块在场 + 槽在场 → 背景旧布局合成与弹窗同开（并存互不影响：背景是 run 旧解、弹窗是 pending 新解）', () => {
+    applyRestorePayload(makeRestore({ pending_strategy_result: makePending('race') }));
+    // 第 5 步：run 块照常合成（placed = run 块的 g01_28/g01_30，非 pending 的
+    // g01_30/g03_30 —— 取消弹窗后画布保留背景旧布局，确认才被新解置换）
+    const runs = runRegistry.list();
+    expect(runs).toHaveLength(1);
+    expect(runs[0].done).toBe(true);
+    expect(runs[0].lastFrame!.placed_items.map((it) => it.id)).toEqual(['g01_28', 'g01_30']);
+    // 第 6 步：弹窗开在背景之上（策略族写回）
+    expect(useStrategyStore.getState().result!.best.placed_items.map((it) => it.id))
+      .toEqual(['g01_30', 'g03_30']);
+    expect(useControlPanelStore.getState().modal).toBe('strategy_run');
+    expect(useUiStore.getState().activeTab).toBe('nesting');
+  });
+
+  it('stale 标记 run 块 + 槽在场 → 照常合成背景（2026-09-14 checkpoint 展示级降级：与现行数量失配的陈旧 run 前端消费忽略）', () => {
+    const base = makeRestore();
+    applyRestorePayload(makeRestore({
+      run: { ...base.run!, stale: true },   // checkpoint 对守恒失败背景打标（后端已跳过守恒终检）
+      pending_strategy_result: makePending('extreme'),
+    }));
+    // 第 5 步：stale 键不改变合成行为 —— placed 原样进画布作弹窗背景
+    const runs = runRegistry.list();
+    expect(runs).toHaveLength(1);
+    expect(runs[0].done).toBe(true);
+    expect(runs[0].lastFrame!.placed_items.map((it) => it.id)).toEqual(['g01_28', 'g01_30']);
+    // 第 6 步：极限族弹窗照常开
+    expect(useExtremeStore.getState().phase).toBe('done');
+    expect(useControlPanelStore.getState().modal).toBe('extreme_run');
+    expect(useUiStore.getState().activeTab).toBe('nesting');
+  });
+
   it('槽缺席 → 两族 store 保持 idle、弹窗不开（旧文件零迁移）', () => {
     applyRestorePayload(makeRestore()); // pending_strategy_result: null
     expect(useStrategyStore.getState().phase).toBe('idle');
