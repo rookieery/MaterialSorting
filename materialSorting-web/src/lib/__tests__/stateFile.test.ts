@@ -584,6 +584,17 @@ describe('applyRestorePayload：pending_strategy_result 第 6 步（US-002）', 
     expect(useControlPanelStore.getState().modal).toBe('strategy_run');
   });
 
+  it('run 块缺席 + 槽在场 → 也切超排 Tab（2026-09-14：弹窗 Portal 到 body 不随 Tab 隐藏，不切页则悬浮在上传预览页上）', () => {
+    applyRestorePayload(makeRestore({
+      run: null, final: null, placed: null,
+      pending_strategy_result: makePending('race'),
+    }));
+    expect(runRegistry.list()).toHaveLength(0);              // 无 run 合成（画布空置）
+    expect(useControlPanelStore.getState().modal).toBe('strategy_run');
+    expect(useUiStore.getState().nestingEnabled).toBe(true); // 显式解锁（setTab 前置）
+    expect(useUiStore.getState().activeTab).toBe('nesting'); // 弹窗落在超排工作台上
+  });
+
   it('槽缺席 → 两族 store 保持 idle、弹窗不开（旧文件零迁移）', () => {
     applyRestorePayload(makeRestore()); // pending_strategy_result: null
     expect(useStrategyStore.getState().phase).toBe('idle');

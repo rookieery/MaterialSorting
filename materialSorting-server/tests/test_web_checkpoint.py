@@ -40,7 +40,12 @@ US-001（pending_strategy_result 槽，prd strategy-pending-result-checkpoint）
     200 {stored:false, reason:'conservation'} + last-good 字节不变；槽形态非法
     （非对象/mode 非法/placed_items 空/条目缺 id）→ 400（state-save 同文案）；
 12. recover 响应 additive ``pending_strategy_result`` 回传（带槽快照恢复 → 逐
-    字段对拍 + 新会话照常重建；无槽 → None）。
+    字段对拍 + 新会话照常重建；无槽 → None）；
+13. 分块独立守恒（2026-09-14 修复，真实事故回归锁）：陈旧 run 块（.msn 恢复
+    的已求解 run 在用户改数量/切码后与现行 form 失配）+ 守恒通过 pending 槽 →
+    丢弃 run 块照常入库 ``{stored:true, dropped_run:true}`` 且丢块快照内部自洽
+    （run 键缺席，可过恢复端守恒终检）；run 丢块后 pending 亦守恒失败 → 回落
+    整载荷 last-good conservation（陈旧 run 不因首败豁免后续校验）。
 """
 from __future__ import annotations
 
@@ -482,6 +487,61 @@ def test_checkpoint_pending_shape_400(client, payload_extra, want):
                           **payload_extra})
     assert r.status_code == 400 and want in r.json()['error']
     assert checkpoint_mod.store.get(sid) is None
+
+
+# ------------------ 2026-09-14 修复：陈旧 run 块与 pending 槽分块独立守恒
+
+_QTY2 = {'g01': {'30': 1}, 'g02': {'30': 1}}
+
+
+def _pending_qty2(mode='race'):
+    """pending 夹具变体：placed 与 _QTY2（g01@30 2→1）守恒一致 —— 新策略 run
+    按现行数量跑完的 done 结果。"""
+    p = _pending(mode)
+    p['best']['placed_items'] = [
+        {'id': 'g01_30', 'rotation': 0.0, 'translation': [0.0, 0.0]},
+        {'id': 'g02_30', 'rotation': 0.0, 'translation': [260.0, 0.0]},
+    ]
+    return p
+
+
+def test_checkpoint_stale_run_pending_dropped_run(client):
+    """修复主案（真实事故形态）：载荷 = form + 改后数量 + 陈旧 run（placed 仍
+    3 片，.msn 恢复旧解）+ 守恒一致的 pending 槽 → 丢弃 run 块照常入库
+    {stored:true, dropped_run:true}；丢块快照内部自洽（run 键缺席 + 新数量 +
+    槽在场 = parse_state_document 可过，恢复端守恒终检不拒）。"""
+    sid = 'ckpt0060'
+    _sid_session(sid)
+    r = client.post('/api/state-checkpoint', headers={'X-Session-Id': sid},
+                    json={'form': _form(), 'quantities': _QTY2, 'run': _run(),
+                          'pending_strategy_result': _pending_qty2()})
+    assert r.status_code == 200
+    assert r.json() == {'stored': True, 'dropped_run': True}
+    snap = parse_state_document(checkpoint_mod.store.get(sid))
+    assert 'run' not in snap                    # 陈旧 run 已丢块（省键式）
+    assert snap['quantities'] == _QTY2          # 改后数量随快照走（不再回旧值）
+    assert snap['pending_strategy_result'] == _pending_qty2()
+
+
+def test_checkpoint_stale_run_pending_fail_last_good(client):
+    """修复边界：陈旧 run 触发丢块后 pending 槽亦守恒失败（两块都与现行载荷
+    失配）→ 回落整载荷 last-good conservation，先前好快照字节不变 —— 陈旧
+    run 不因首败豁免后续校验。"""
+    sid = 'ckpt0061'
+    _sid_session(sid)
+    h = {'X-Session-Id': sid}
+    r1 = client.post('/api/state-checkpoint', headers=h, json={
+        'form': _form(), 'quantities': _QTY2,
+        'pending_strategy_result': _pending_qty2()})
+    assert r1.json() == {'stored': True}
+    good = checkpoint_mod.store.get(sid)
+
+    r2 = client.post('/api/state-checkpoint', headers=h, json={
+        'form': _form(), 'quantities': {'g01': {'30': 5}, 'g02': {'30': 1}},
+        'run': _run(), 'pending_strategy_result': _pending_qty2()})
+    assert r2.status_code == 200
+    assert r2.json() == {'stored': False, 'reason': 'conservation'}
+    assert checkpoint_mod.store.get(sid) == good   # last-good 字节不变
 
 
 # ---------------------------------------------------------------- 载荷/会话闸门

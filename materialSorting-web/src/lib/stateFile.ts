@@ -30,8 +30,9 @@
 // 水合 → formStore 水合（token=新 docId）→ ptypeStore 失效 → 有 run 块时切超排
 // Tab + applySyntheticRun 合成（manifest 重算 + 单帧 final + provenance 写回）；
 // US-002 起第 6 步：pending_strategy_result 槽在场 → 按 mode 路由写回对应族
-// strategyStore 弹窗结果态 + 自动打开对应弹窗（.msn 手动恢复与 sessionRecovery
-// 启动期恢复两条路径同享）。
+// strategyStore 弹窗结果态 + 切超排 Tab（2026-09-14：弹窗属于超排工作流，快照
+// 无 run 块时同样落超排页，避免 Portal 弹窗悬浮在上传预览页上）+ 自动打开对应
+// 弹窗（.msn 手动恢复与 sessionRecovery 启动期恢复两条路径同享）。
 // 顺序细节见函数头注释 —— 两处 store 联动（PreviewPage 订阅 / ControlPanel docId
 // effect）都在 setState 同步或 React 提交后触发，与本编排的写序收敛一致。
 
@@ -233,7 +234,9 @@ function finalizeFromLayout(
  *     false）+ openModal 对应弹窗自动打开 —— 用户看到「上次的运行结果还在等
  *     确认」，一键应用（走 applyStrategyResult 既有链路零改动）。store 直写不
  *     依赖组件挂载时序；新 sid 后端状态槽恒空，refresh idle 采纳守卫
- *     （strategyStore US-002）保证该写回态不被打回。
+ *     （strategyStore US-002）保证该写回态不被打回。2026-09-14 起本步同第 5
+ *     步显式解锁 + 切超排 Tab（弹窗 Portal 到 body 不随 Tab 隐藏，不切页则悬
+ *     浮在上传预览页上；快照无 run 块时画布空置，应用后布局就位）。
  */
 export function applyRestorePayload(res: StateRestoreResponse): void {
   // 1) uploadStore doc 就绪（status done —— UploadPanel done 态 / PreviewPage QtyMatrix 渲染）。
@@ -293,6 +296,11 @@ export function applyRestorePayload(res: StateRestoreResponse): void {
   // 6) pending_strategy_result 槽在场 → 恢复弹窗结果态 + 自动打开对应弹窗（US-002）。
   //    manifest = 恢复端重算值（上方 res.manifest —— build_pid_meta 单份几何，
   //    与 result 端点 start 快照口径同形）；run_dir 前端不展示 → null。
+  //    切超排 Tab（2026-09-14）：弹窗是 Portal 到 body 的声明式受控组件，不随
+  //    Tab 隐藏 —— 不切页时弹窗会悬浮在上传预览页上（弹窗属于超排工作流、
+  //    「应用」结果落在主画布）。与第 5 步同款显式解锁 + 切页（快照无 run 块时
+  //    画布空置，应用后布局就位；setTab 在 nestingEnabled=false 时静默不切，
+  //    故先解锁）。
   const pending = res.pending_strategy_result;
   if (pending) {
     const store = pending.mode === 'extreme' ? useExtremeStore : useStrategyStore;
@@ -311,6 +319,8 @@ export function applyRestorePayload(res: StateRestoreResponse): void {
       errorMessage: null,
       lastStart: null,
     });
+    useUiStore.getState().setNestingEnabled(true);
+    useUiStore.getState().setTab('nesting');
     useControlPanelStore
       .getState()
       .openModal(pending.mode === 'extreme' ? 'extreme_run' : 'strategy_run');

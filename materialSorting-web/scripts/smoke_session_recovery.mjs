@@ -429,11 +429,22 @@ try {
     await page.waitForSelector('[data-testid="strategy-overlay"]', { timeout: 15000 });
     const head2 = (await page.locator('[data-testid="strategy-result-head"]').innerText()).trim();
     check('M4f 对应族弹窗自动打开且为结果态（密度与过期前对拍）', head2 === head1, head2);
+    // 2026-09-14：恢复自动落超排 Tab（applyRestorePayload 第 6 步显式解锁+切页 ——
+    // 弹窗 Portal 到 body 不随 Tab 隐藏，快照无 run 块时不切页会悬浮在上传预览页）。
+    const onNestingM4 = await page.evaluate(() => {
+      const el = document.querySelector('.tab-content .page:not(.hidden)');
+      return el !== null && el.querySelector('#restart') !== null;
+    });
+    check('M4g 恢复落超排 Tab（弹窗悬浮在超排工作台上，非上传预览）', onNestingM4);
     await page.screenshot({ path: OUT + '/m4_recovered_modal.png' });
     await closeToasts(page);
 
     // ---------- M5 待确认结果期改数量未重解 → checkpoint last-good（续段③） ----------
     await page.click('[data-testid="strategy-close"]');
+    await sleep(400);
+    // 2026-09-14 起恢复自动落超排 Tab（pending 槽在场亦切页 —— 弹窗属于超排
+    // 工作流）；改数量矩阵前显式切回上传预览（display:none 下 fill 不可见元素超时）。
+    await page.locator('button.tab:has-text("上传预览")').click();
     await sleep(400);
     const cellG0132 = page.locator('input.qty-cell-input[aria-label="裁片 g01 码 32 数量"]');
     await cellG0132.waitFor({ timeout: 10000 });
