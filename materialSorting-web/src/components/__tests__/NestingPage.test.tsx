@@ -5,7 +5,7 @@
 //      manifest（build_pid_meta 快照口径 + demand 副本）/ frames=[合成帧]（FrameMsg 同形）/
 //      lastFrame/finalDensity 双口径/viewBoxMaxW/done/ws=null/stopped=false
 //   2. apply → phase==='done'：状态行「策略 run 已应用：seed N · X.XX%」+
-//      SolveControls 渲染 #restart（开始求解）
+//      SolveControls 渲染 #restart（普通运行）
 //   3. apply → ExportButtons 非 disabled + NestSVG 渲染多副本（demand=2 → 2 个可见 polygon）
 //   4. apply → 点导出（显式选 PLT 全量分流 ExportInfoModal）→ 确认 → POST /export 载荷 =
 //      合成帧（bestRun() 零改动选中；placed 含 demand 多副本 N 条 placement；pid
@@ -230,7 +230,7 @@ describe('NestingPage.applyStrategyResult (US-006)', () => {
     // 状态行文案（ControlPanel StatusLine；doc=null 时后缀「请先在上传预览页解析母版」与本断言无关）
     const status = container!.querySelector('#status')!;
     expect(status.textContent).toContain('策略 run 已应用：seed 3 · 88.38%');
-    // phase=done → SolveControls 渲染 #restart（开始求解），非 #stop
+    // phase=done → SolveControls 渲染 #restart（普通运行），非 #stop
     expect(container!.querySelector('#restart')).not.toBeNull();
     expect(container!.querySelector('#stop')).toBeNull();
   });
@@ -395,11 +395,11 @@ describe('NestingPage 编辑排料 invalidate 挂点 (US-004)', () => {
     return run;
   }
 
-  it('handleStart（点开始求解）→ 编辑态失效（run/baseline/working 清空）', () => {
+  it('handleStart（点普通运行）→ 编辑态失效（run/baseline/working 清空）', () => {
     const run = seedEditSession();
     expect(useEditStore.getState().run).not.toBeNull();
     renderPage();
-    // 选一个码号（doc=null → SizePicker fallback SIZES）+ 点开始求解
+    // 选一个码号（doc=null → SizePicker fallback SIZES）+ 点普通运行
     act(() => {
       (document.querySelector('#sz_28') as HTMLInputElement).click();
     });

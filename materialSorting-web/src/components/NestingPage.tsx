@@ -9,7 +9,7 @@
 // US-027：solving:boolean → phase:SolvePhase 五态状态机（idle/running/stopped/done/error）。
 //   onDone 按 rec.stopped/rec.error 区分 phase；handleStop 调 useSolveRun.stop()。
 // US-028：ControlPanel 收 phase（替代 solving）+ onStop 接线 SolveControls 按钮组；
-//   所有非 running 态的「开始求解」都走 handleStart（读当前 form —— 曾有 lastStartCfgRef
+//   所有非 running 态的「普通运行」都走 handleStart（读当前 form —— 曾有 lastStartCfgRef
 //   快照重放路径导致改参数不生效，已删除，见 SolveControls 注释）。
 //
 // US-006（策略 se/race）：applyStrategyResult(result) 把策略 run 终局最优一键应用到主画布 ——

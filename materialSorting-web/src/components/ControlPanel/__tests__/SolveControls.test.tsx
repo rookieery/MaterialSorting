@@ -60,12 +60,12 @@ function renderControls(props: {
 }
 
 describe("SolveControls (US-028)", () => {
-  it("idle → 渲染「开始求解」#start 按钮 + aria-label + 点击调 onStart（等价旧 StartButton）", () => {
+  it("idle → 渲染「普通运行」#start 按钮 + aria-label + 点击调 onStart（等价旧 StartButton）", () => {
     const { onStart } = renderControls({ phase: "idle" });
     const btn = container!.querySelector<HTMLButtonElement>("#start")!;
     expect(btn).not.toBeNull();
-    expect(btn.textContent).toBe("开始求解");
-    expect(btn.getAttribute("aria-label")).toBe("开始求解");
+    expect(btn.textContent).toBe("普通运行");
+    expect(btn.getAttribute("aria-label")).toBe("普通运行");
     expect(btn.className).toContain("start");
     // 无 #stop / #restart
     expect(container!.querySelector("#stop")).toBeNull();
@@ -91,12 +91,12 @@ describe("SolveControls (US-028)", () => {
     expect(onStart).not.toHaveBeenCalled();
   });
 
-  it("stopped → 渲染「开始求解」#restart 按钮 + aria-label + 点击调 onStart（读当前 form，非快照重放）", () => {
+  it("stopped → 渲染「普通运行」#restart 按钮 + aria-label + 点击调 onStart（读当前 form，非快照重放）", () => {
     const { onStart, onStop } = renderControls({ phase: "stopped" });
     const btn = container!.querySelector<HTMLButtonElement>("#restart")!;
     expect(btn).not.toBeNull();
-    expect(btn.textContent).toBe("开始求解");
-    expect(btn.getAttribute("aria-label")).toBe("开始求解");
+    expect(btn.textContent).toBe("普通运行");
+    expect(btn.getAttribute("aria-label")).toBe("普通运行");
     expect(btn.className).toContain("restart");
     // 无 #start / #stop
     expect(container!.querySelector("#start")).toBeNull();
@@ -108,24 +108,24 @@ describe("SolveControls (US-028)", () => {
     expect(onStop).not.toHaveBeenCalled();
   });
 
-  it("done → 渲染「开始求解」#restart 按钮（文案与 stopped 统一）+ 点击调 onStart", () => {
+  it("done → 渲染「普通运行」#restart 按钮（文案与 stopped 统一）+ 点击调 onStart", () => {
     const { onStart } = renderControls({ phase: "done" });
     const btn = container!.querySelector<HTMLButtonElement>("#restart")!;
     expect(btn).not.toBeNull();
-    // 文案统一「开始求解」：发起求解语义一致，靠 phase 区分当前阶段（不再用文案区分 done / stopped）
-    expect(btn.textContent).toBe("开始求解");
-    expect(btn.getAttribute("aria-label")).toBe("开始求解");
+    // 文案统一「普通运行」：发起求解语义一致，靠 phase 区分当前阶段（不再用文案区分 done / stopped）
+    expect(btn.textContent).toBe("普通运行");
+    expect(btn.getAttribute("aria-label")).toBe("普通运行");
     expect(btn.className).toContain("restart");
     act(() => btn.click());
     expect(onStart).toHaveBeenCalledTimes(1);
   });
 
-  it("error → 渲染「开始求解」#restart 按钮（与 stopped 同文案）+ 点击调 onStart", () => {
+  it("error → 渲染「普通运行」#restart 按钮（与 stopped 同文案）+ 点击调 onStart", () => {
     const { onStart } = renderControls({ phase: "error" });
     const btn = container!.querySelector<HTMLButtonElement>("#restart")!;
     expect(btn).not.toBeNull();
-    expect(btn.textContent).toBe("开始求解");
-    expect(btn.getAttribute("aria-label")).toBe("开始求解");
+    expect(btn.textContent).toBe("普通运行");
+    expect(btn.getAttribute("aria-label")).toBe("普通运行");
     act(() => btn.click());
     expect(onStart).toHaveBeenCalledTimes(1);
   });
@@ -152,7 +152,7 @@ describe("SolveControls (US-028)", () => {
     }
   });
 
-  it("startDisabled=true → 非 running 态「开始求解」disabled；running 态「停止」不受影响", () => {
+  it("startDisabled=true → 非 running 态「普通运行」disabled；running 态「停止」不受影响", () => {
     // idle + startDisabled → #start disabled
     renderControls({ phase: "idle", onStart: vi.fn(), startDisabled: true });
     const startBtn = container!.querySelector<HTMLButtonElement>("#start")!;

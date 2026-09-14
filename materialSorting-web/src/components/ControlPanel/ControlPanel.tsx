@@ -1,7 +1,7 @@
 // ControlPanel —— 左侧参数面板（与旧 index.html `<aside class="panel">` 等价）。
 //
 // 表单状态由本组件持有（DEFAULT_FORM 初值），各子组件受控。
-// 点击 SolveControls「开始求解」时（所有非 running 态；running 态按钮为「停止」不进此路径）：
+// 点击 SolveControls「普通运行」时（所有非 running 态；running 态按钮为「停止」不进此路径）：
 //   1. 校验 sizes 非空 —— 空 → onStatus('请至少选一个码号') + 不启动（AC#7）。
 //   2. collectParams → { params, per_type }；parseTime / parseSeed / parseSeedCount 解析。
 //   3. onStart({ sizes, time, seed, seed_count, params, per_type }) 透传到 NestingPage
@@ -18,7 +18,7 @@
 // （PerTypeOverrides 按钮 → PerTypeOverridesModal）；collectParams params 永远全 0。
 // US-028：StartButton 删除，SolveControls 按 phase 渲染按钮组（idle/running/stopped/done/error）；
 //   ExportButtons 收 phase==='running' 禁用 + partial flag（stopped/error 有帧时标注中间方案提示）。
-//   所有非 running 态「开始求解」统一走本组件 handleStart（读当前 form）—— 无参数快照重放路径
+//   所有非 running 态「普通运行」统一走本组件 handleStart（读当前 form）—— 无参数快照重放路径
 //   （曾有的 onRestart/lastStartCfgRef 双路径会冻结首次参数，已删除）。
 // 矩阵化重构 US-003：handleStart 增「全 0 拦截」—— 复用 SizePicker.computeTotalCutPieces 判
 //   所选码有效片数为 0（数量全 0）时不启动求解并 onStatus 提示（现状会把空 items 实例交给
@@ -31,16 +31,16 @@
 //   现取（数量矩阵编辑后即时生效）。
 // US-013（腰头成带布局设置接线）：
 //   - 启动闸门：band 开未选编号 / 选中 g 码数量全 0（bandMemberCount 三态，后端 demand
-//     口径对齐）→ 「开始求解」置灰 + StatusLine band 段具体文案 + handleStart 运行时兜底
+//     口径对齐）→ 「普通运行」置灰 + StatusLine band 段具体文案 + handleStart 运行时兜底
 //     （与 sizes 空校验同源双保险）；
 //   - 互斥（已解除）：2026-08-22 起 band 开启可进「高级运行」—— band 随
 //     /api/strategy/start 写进 9 键 config（后端 _parse_band 同一校验点，
 //     CLI solve_worker 进程内成带 + 展开，v2 确定性兼容多 seed 策略）；
 //   - PerTypeOverrides 透传 band/onBandChange（弹窗布局设置分区：开关 + g 码下拉）。
 // US-004（起始端成套前后幅接线）：
-//   - 启动闸门：prefix 开未选前/后幅 / front==back → 「开始求解」置灰 + StatusLine
+//   - 启动闸门：prefix 开未选前/后幅 / front==back → 「普通运行」置灰 + StatusLine
 //     prefix 段具体文案 + handleStart 运行时兜底（band 同款双保险；**无资格码不置灰** ——
-//     弹窗勾选区本地预检提示，开始求解交后端 _parse_prefix 权威校验拦截）；
+//     弹窗勾选区本地预检提示，普通运行交后端 _parse_prefix 权威校验拦截）；
 //   - prefix 与 band 可同开（双开带位只记录是 US-003 后端行为，前端无额外控件）；
 //   - 与「高级运行」策略入口的 v1 互斥已于 2026-08-25 解除（band 先例）：prefix
 //     随 /api/strategy/start 写进 9 键 config（后端 _parse_prefix 同一校验点 +
@@ -193,7 +193,7 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
   const quantities = useQtyStore((s) => s.quantities);
 
   // US-028：从 phase 派生 solving（running 态冻结参数编辑 + 禁用 ExportButtons）。
-  // stopped/done/error 态可编辑参数（用户改参数后点「开始求解」→ handleStart 即用新值）。
+  // stopped/done/error 态可编辑参数（用户改参数后点「普通运行」→ handleStart 即用新值）。
   const solving = phase === 'running';
 
   // US-007：useExport 挂在 ControlPanel 内（form.sizes 与 exportAs 同处）。
@@ -376,7 +376,7 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
   //   - error 可能在收到帧前发生（构造失败）→ 此时 ExportButtons 也 disabled，partial flag 仅作 UI 提示触发条件。
   const partial = phase === 'stopped' || phase === 'error';
 
-  // 码号未选时「开始求解」按钮置灰（与 handleStart 内 sizes 非空校验同源；前置 UI 反馈，AC#7）；
+  // 码号未选时「普通运行」按钮置灰（与 handleStart 内 sizes 非空校验同源；前置 UI 反馈，AC#7）；
   // US-013：band 闸门（未选编号 / 数量全 0）同置灰（SolveControls 应用到所有非 running 态按钮）；
   // US-004：prefix 闸门（未选前/后幅 / front==back）同置灰（无资格码不置灰 —— 后端权威拦截）。
   const startDisabled =
@@ -457,33 +457,38 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
           gateMm={parseGate(form)}
           disabled={solving}
         />
-        {/* US-005 高级运行入口（策略 run 10/20/30/60min + race/se 双模式）：disabled =
-            solving（互斥防 CPU 竞争）|| doc===null（未 commit 无排料数据）。
-            2026-08-22 起 band 开启不再互斥（band 随 start 载荷进 config）；
-            2026-08-25 起 prefix 开启同样不再互斥（prefix 同入 config）。
-            US-003 极限运行入口（.strategy-entry-row 并排同级）：60/120/240/480min
-            预设 + 自定义，参数全隐藏；band/prefix 开启由弹窗执行按钮置灰前置拦截
-            （后端 /api/extreme/start 按键判在场即 400「暂不支持」）；同会话与高级
-            运行单飞互斥由后端 409 兜底（文案区分对方）。两族轮询各自单实例
-            （/api/strategy/status 与 /api/extreme/status 互不重叠）。 */}
-        <div className="strategy-entry-row">
-          <StrategyRunButton
-            solving={solving}
-            buildStartContext={buildStartContext}
-            onApplyStrategy={onApplyStrategy}
-            disabled={solving || doc === null}
-          />
-          <ExtremeRunButton
-            solving={solving}
-            buildStartContext={buildStartContext}
-            onApplyExtreme={onApplyStrategy}
-            disabled={solving || doc === null}
-          />
-        </div>
+        {/* 2026-09-14 运行族三级入口排序改判（用户要求）：「普通运行」（SolveControls，
+            即原「普通运行」）挪到「高级运行 / 极限运行」上方 —— 三键自上而下按
+            投入强度排列（普通 → 高级 → 极限），配色同日统一为绿 / 紫 / 琥珀
+            （style.css .strategy-btn 注释），#2c5d8f 蓝 exclusive 归工具按钮。 */}
       </div>
       {/* US-031：data-tour="start-btn" 锚定 SolveControls 父容器（nestingTour step3 高亮目标）。 */}
       <div data-tour="start-btn">
         <SolveControls phase={phase} onStart={handleStart} onStop={onStop} startDisabled={startDisabled} />
+      </div>
+      {/* US-005 高级运行入口（策略 run 10/20/30/60min + race/se 双模式）：disabled =
+          solving（互斥防 CPU 竞争）|| doc===null（未 commit 无排料数据）。
+          2026-08-22 起 band 开启不再互斥（band 随 start 载荷进 config）；
+          2026-08-25 起 prefix 开启同样不再互斥（prefix 同入 config）。
+          US-003 极限运行入口（.strategy-entry-row 并排同级）：60/120/240/480min
+          预设 + 自定义，参数全隐藏；band/prefix 开启由弹窗执行按钮置灰前置拦截
+          （后端 /api/extreme/start 按键判在场即 400「暂不支持」）；同会话与高级
+          运行单飞互斥由后端 409 兜底（文案区分对方）。两族轮询各自单实例
+          （/api/strategy/status 与 /api/extreme/status 互不重叠）。
+          2026-09-14 起从 param-form 包裹层移出、排在「普通运行」之下（运行族排序）。 */}
+      <div className="strategy-entry-row">
+        <StrategyRunButton
+          solving={solving}
+          buildStartContext={buildStartContext}
+          onApplyStrategy={onApplyStrategy}
+          disabled={solving || doc === null}
+        />
+        <ExtremeRunButton
+          solving={solving}
+          buildStartContext={buildStartContext}
+          onApplyExtreme={onApplyStrategy}
+          disabled={solving || doc === null}
+        />
       </div>
       <StatusLine text={visibleStatus} />
       {/* 状态文件 US-004：结果来源小字（合成 run 的 provenance 常驻回显 —— 区别于

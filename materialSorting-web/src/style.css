@@ -106,23 +106,28 @@ body {
 .sizes-total { margin-top: 8px; font-size: 12px; color: #aab; }
 .sizes-total strong { color: #e6e6e6; font-weight: 600; }
 /* US-028 SolveControls 按钮组：#start / #stop / #restart 三态共用 .solve-btn 基样式，
-   仅背景色差异（绿=主操作 / 红=警示 / 绿=主操作）。沿用暗色系，不引入 CSS 框架。 */
+   仅背景色差异（绿=主操作 / 红=警示 / 绿=主操作）。沿用暗色系，不引入 CSS 框架。
+   2026-09-14 运行族统一改版（用户要求）：#start/#restart 文案改「普通运行」并挪到
+   「高级运行 / 极限运行」上方，三键统一几何（13px / 8px 10px / 圆角 4px，与
+   .strategy-btn 同尺寸成族）；配色 = 绿（普通）/ 紫（高级 .strategy-btn）/ 琥珀
+   （极限 .strategy-btn.extreme）三色阶区分投入强度 —— #2c5d8f 蓝 exclusive 归
+   工具按钮（编辑/保存/导出/上传/高级配置），运行族不再使用。 */
 button#start,
 button#restart {
-  width: 100%; padding: 9px;
-  font-size: 14px; font-weight: 600;
+  width: 100%; padding: 8px 10px;
+  font-size: 13px; font-weight: 600;
   background: #2ea06c; color: #fff;
-  border: 0; border-radius: 6px; cursor: pointer;
+  border: 0; border-radius: 4px; cursor: pointer;
 }
 button#start:hover,
 button#restart:hover { background: #36b47a; }
 button#start:disabled,
 button#restart:disabled { background: #555; cursor: default; }
 button#stop {
-  width: 100%; padding: 9px;
-  font-size: 14px; font-weight: 600;
+  width: 100%; padding: 8px 10px;
+  font-size: 13px; font-weight: 600;
   background: #b5462f; color: #fff;
-  border: 0; border-radius: 6px; cursor: pointer;
+  border: 0; border-radius: 4px; cursor: pointer;
 }
 button#stop:hover { background: #d05a40; }
 button#stop:disabled { background: #555; cursor: default; }
@@ -1502,17 +1507,20 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
 }
 
 /* ---- US-005 StrategyRunButton + StrategyRunModal（高级运行弹窗：暗底 #26282e + #2ea06c 同色系） ---- */
-/* 入口按钮：主面板一行（PerTypeOverrides 之下）；策略运行中挂「运行中」徽标。
-   2026-08-24 起底色对齐 .per-type-btn 高级配置蓝 #2c5d8f（原暗底 #23252b + 绿描边视觉突兀） */
+/* 入口按钮：运行族第二级（2026-09-14 起位于「普通运行」下方 .strategy-entry-row）；
+   策略运行中挂「运行中」徽标。底色沿革：2026-08-24 曾对齐 .per-type-btn 高级配置蓝
+   #2c5d8f；2026-09-14 运行族统一改版换紫 #5d2c8f —— #2c5d8f 蓝 exclusive 归工具
+   按钮（编辑/保存/导出/上传/高级配置），运行三键 = 绿（普通）/ 紫（高级）/ 琥珀
+   （极限）三色阶，几何与 #start 同尺寸成族（13px / 8px 10px / 圆角 4px）。 */
 .strategy-wrapper {
   margin: 8px 0;
 }
 .strategy-btn {
   width: 100%;
   padding: 8px 10px;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
-  background: #2c5d8f;
+  background: #5d2c8f;
   color: #fff;
   border: 0;
   border-radius: 4px;
@@ -1525,7 +1533,7 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
   transition: background 0.15s;
 }
 .strategy-btn:hover:not(:disabled) {
-  background: #3470ac;
+  background: #6e3aa8;
 }
 .strategy-btn:focus-visible {
   outline: 2px solid #2ea06c;
@@ -1991,7 +1999,8 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
 }
 
 /* ---- US-003 ExtremeRunButton + ExtremeRunModal（极限运行：沿用 .strategy-* 族） ---- */
-/* 双入口并排行：高级运行 / 极限运行各占一半（.strategy-wrapper 自身 margin 归零）。 */
+/* 双入口并排行：高级运行 / 极限运行各占一半（.strategy-wrapper 自身 margin 归零）；
+   2026-09-14 起整行位于「普通运行」（#start）下方 —— 运行族三级自上而下排列。 */
 .strategy-entry-row {
   display: flex;
   gap: 8px;
@@ -2002,7 +2011,8 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
   flex: 1;
   min-width: 0;
 }
-/* 极限运行入口底色 = 暖琥珀（与高级运行蓝 #2c5d8f 区分；同为实色按钮族）。 */
+/* 极限运行入口底色 = 暖琥珀（运行族第三色阶：绿=普通 / 紫=高级 / 琥珀=极限，
+   2026-09-14 起与 #start 同几何成族；原「与高级运行蓝 #2c5d8f 区分」之说的蓝已换紫）。 */
 .strategy-btn.extreme {
   background: #8f5d2c;
 }

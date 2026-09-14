@@ -1,6 +1,6 @@
 // nestingTour —— 超排 Tab 的 7 步操作指引（US-031；2026-09-12 扩为 7 步）。
 //
-// 流程：doc-banner（选码号 / 看当前文件）→ params（设置参数）→ solve（开始求解）→
+// 流程：doc-banner（选码号 / 看当前文件）→ params（设置参数）→ solve（普通运行，2026-09-14 前叫「开始求解」）→
 //      result（查看排料结果）→ edit（编辑排料）→ save（保存当前方案）→ export（导出最优方案）。
 //      edit/save 两步插在 result 与 export 之间，与 ControlPanel 区块物理顺序一致
 //      （编辑排料 L498 → 保存当前方案 L503 → 导出 L508），引导叙事「拿到解 → 微调 → 存档 → 导出」。
@@ -20,7 +20,7 @@
 //   runRegistry 是模块级 mutable 单例（store/runRegistry.ts），所有 useSolveRun 实例共享，
 //   start() 时 create(seed) push 进数组、WS 推 frame 时 push 到 rec.frames + 更新 lastFrame。
 //   故 `runRegistry.list().some(r => r.lastFrame !== null)` 等价「至少一个 seed 已产出帧」，
-//   即用户已真实点「开始求解」并收到至少一帧（求解已启动且产出方案）。
+//   即用户已真实点「普通运行」并收到至少一帧（求解已启动且产出方案）。
 //   - result    至少一个 run 有 lastFrame（有结果可看才放行到 edit）
 //   - edit      至少一个 run 有 lastFrame（编辑按钮的激活判式同源）
 //   - save      至少一个 run 有 lastFrame（保存按钮的激活判式同源）
@@ -51,7 +51,7 @@ function ensureNestingTab(): void {
   }
 }
 
-/** 至少一个 run 已产出帧（用户已点开始求解并收到至少一帧）。 */
+/** 至少一个 run 已产出帧（用户已点普通运行并收到至少一帧）。 */
 function hasProducedFrame(): boolean {
   return runRegistry.list().some((r) => r.lastFrame !== null);
 }
@@ -78,8 +78,8 @@ export const nestingTour: TourDef = {
     {
       id: 'solve',
       selector: '[data-tour="start-btn"]',
-      title: '开始求解',
-      body: '确认码号与参数后，点击「开始求解」启动排料引擎。求解过程中右侧排料区以 ~10fps 实时刷新中间方案，可在求解途中点「停止」保留当前最优中间方案。',
+      title: '普通运行',
+      body: '确认码号与参数后，点击「普通运行」启动排料引擎（2026-09-14 前叫「开始求解」；下方「高级运行 / 极限运行」是更长预算的策略长跑）。求解过程中右侧排料区以 ~10fps 实时刷新中间方案，可在求解途中点「停止」保留当前最优中间方案。',
       placement: 'bottom',
       before: ensureNestingTab,
     },
@@ -91,7 +91,7 @@ export const nestingTour: TourDef = {
       placement: 'right',
       before: ensureNestingTab,
       ready: hasProducedFrame,
-      readyHint: '请先点击「开始求解」启动引擎，右侧产出排料方案后自动进入下一步…',
+      readyHint: '请先点击「普通运行」启动引擎，右侧产出排料方案后自动进入下一步…',
     },
     {
       id: 'edit',

@@ -232,11 +232,11 @@ describe('US-027 NestingPage phase 转换', () => {
     const stopped: ServerMsg = { type: 'stopped', reason: 'user_requested' };
     act(() => ws.onmessage?.({ data: JSON.stringify(stopped) }));
 
-    // stopped 态 SolveControls 渲染 #restart「开始求解」（文案与 idle 统一）
+    // stopped 态 SolveControls 渲染 #restart「普通运行」（文案与 idle 统一）
     expect(container!.querySelector('#stop')).toBeNull();
     const restartBtn = container!.querySelector<HTMLButtonElement>('#restart')!;
     expect(restartBtn).not.toBeNull();
-    expect(restartBtn.textContent).toBe('开始求解');
+    expect(restartBtn.textContent).toBe('普通运行');
     expect(statusText()).toContain('已停止');
     expect(statusText()).toContain('中间方案');
   });
@@ -247,10 +247,10 @@ describe('US-027 NestingPage phase 转换', () => {
     act(() =>
       ws.onmessage?.({ data: JSON.stringify({ type: 'error', message: '构造失败' }) }),
     );
-    // error 态 SolveControls 渲染 #restart「开始求解」
+    // error 态 SolveControls 渲染 #restart「普通运行」
     const restartBtn = container!.querySelector<HTMLButtonElement>('#restart')!;
     expect(restartBtn).not.toBeNull();
-    expect(restartBtn.textContent).toBe('开始求解');
+    expect(restartBtn.textContent).toBe('普通运行');
     expect(statusText()).toContain('错误');
     expect(statusText()).toContain('构造失败');
   });
@@ -268,10 +268,10 @@ describe('US-027 NestingPage phase 转换', () => {
       n_eroded: 0,
     };
     act(() => ws.onmessage?.({ data: JSON.stringify(finalMsg) }));
-    // done 态 SolveControls 渲染 #restart「开始求解」（文案统一）
+    // done 态 SolveControls 渲染 #restart「普通运行」（文案统一）
     const restartBtn = container!.querySelector<HTMLButtonElement>('#restart')!;
     expect(restartBtn).not.toBeNull();
-    expect(restartBtn.textContent).toBe('开始求解');
+    expect(restartBtn.textContent).toBe('普通运行');
     expect(statusText()).toContain('完成');
     expect(statusText()).toContain('78.00%');
   });
@@ -295,7 +295,7 @@ describe('US-027 NestingPage phase 转换', () => {
     act(() => mockInstances[0].onmessage?.({ data: JSON.stringify(finalMsg) }));
     expect(container!.querySelector('#restart')).not.toBeNull();
 
-    // done 态编辑 #time（非 running 可编辑）→ 点「开始求解」（#restart）
+    // done 态编辑 #time（非 running 可编辑）→ 点「普通运行」（#restart）
     const timeInput = container!.querySelector<HTMLInputElement>('#time')!;
     expect(timeInput.disabled).toBe(false);
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;

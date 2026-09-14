@@ -2,21 +2,22 @@
 //
 // 两态渲染（phase 由 NestingPage 持有，本组件纯受控）：
 //   running              → 「停止」（调 onStop；#stop id，红色警示）
-//   idle/stopped/done/   → 「开始求解」（文案统一，不再区分「重新开始 / 再次求解」——
-//     error                 发起求解的语义一致，靠 phase 切换即可识别当前阶段）
+//   idle/stopped/done/   → 「普通运行」（2026-09-14 由「开始求解」改名，与「高级运行 /
+//     error                 极限运行」入口文案统一成三级运行族；不再区分「重新开始 /
+//                           再次求解」—— 发起求解的语义一致，靠 phase 切换即可识别当前阶段）
 //
 // 所有非 running 态统一调 onStart（读当前 form）。曾存在 idle→onStart、其余→onRestart
 // （重放 lastStartCfgRef 快照）的双路径：phase 一旦离开 idle 永不回归，导致首次求解后
 // 用户改任何参数（multi_seed / 码号 / 幅宽 / 数量等）都不生效 —— 已删除快照重放，收敛单一路径。
 // id 保留 #start / #restart 区分作 CSS / 测试钩子（视觉同色：均为绿色主操作）。
 //
-// startDisabled：码号未选时「开始求解」置灰（ControlPanel 据 form.sizes.length===0 计算）。
+// startDisabled：码号未选时「普通运行」置灰（ControlPanel 据 form.sizes.length===0 计算）。
 //   running 态「停止」按钮不受影响（停止总是可用）。
 //
 // 「导出」按钮不在本组件 —— 由 ExportButtons 独立渲染（受 phase==='running' 禁用）。
 // stopped/done/error 态「导出」可用（registry 保留帧时），中间方案提示由 ExportButtons 内 partial flag 渲染。
 //
-// a11y：每个按钮带 aria-label（含「求解」语义；原生 button 默认可聚焦，Enter/Space 触发 click）。
+// a11y：每个按钮带 aria-label（原生 button 默认可聚焦，Enter/Space 触发 click）。
 // 视觉沿用 style.css 暗色系（不引入 CSS 框架）：#start/#restart 绿、#stop 红。
 
 import type { SolvePhase } from '../../types/solvePhase';
@@ -24,11 +25,11 @@ import type { SolvePhase } from '../../types/solvePhase';
 export interface SolveControlsProps {
   /** 求解状态机五态（NestingPage 持有；本组件纯受控）。 */
   phase: SolvePhase;
-  /** 非 running 态点击「开始求解」（ControlPanel.handleStart 读当前 form，内含码号校验）。 */
+  /** 非 running 态点击「普通运行」（ControlPanel.handleStart 读当前 form，内含码号校验）。 */
   onStart: () => void;
   /** running 态点击「停止」（调 useSolveRun.stop → 后端 terminate → onDone 切 phase）。 */
   onStop: () => void;
-  /** 码号未选时「开始求解」置灰（ControlPanel 据 form.sizes 计算）；默认 false。 */
+  /** 码号未选时「普通运行」置灰（ControlPanel 据 form.sizes 计算）；默认 false。 */
   startDisabled?: boolean;
 }
 
@@ -47,7 +48,7 @@ export function SolveControls({ phase, onStart, onStop, startDisabled = false }:
     );
   }
 
-  // idle / stopped / done / error —— 统一「开始求解」文案，统一走 onStart（读当前 form）。
+  // idle / stopped / done / error —— 统一「普通运行」文案，统一走 onStart（读当前 form）。
   // id / className 保留区分（#start vs #restart）作 CSS 与测试钩子，视觉同色。
   const isIdle = phase === 'idle';
   return (
@@ -57,9 +58,9 @@ export function SolveControls({ phase, onStart, onStop, startDisabled = false }:
       className={`solve-btn ${isIdle ? 'start' : 'restart'}`}
       onClick={onStart}
       disabled={startDisabled}
-      aria-label="开始求解"
+      aria-label="普通运行"
     >
-      开始求解
+      普通运行
     </button>
   );
 }

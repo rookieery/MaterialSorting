@@ -213,10 +213,10 @@ describe("ControlPanel start flow (US-004)", () => {
     expect(cfg.per_type).toBeNull();
   });
 
-  it("AC#7 0 sizes (US-017 default) -> 「开始求解」按钮置灰（disabled）+ onStart NOT called", () => {
+  it("AC#7 0 sizes (US-017 default) -> 「普通运行」按钮置灰（disabled）+ onStart NOT called", () => {
     const onStart = vi.fn();
     renderPanel(onStart);
-    // US-017：默认 sizes=[] → 开始求解按钮置灰（前置 UI 反馈，替代旧的点击后 onStatus 报错）
+    // US-017：默认 sizes=[] → 普通运行按钮置灰（前置 UI 反馈，替代旧的点击后 onStatus 报错）
     const btn = container!.querySelector<HTMLButtonElement>("#start")!;
     expect(btn.disabled).toBe(true);
     act(() => btn.click());
@@ -303,12 +303,12 @@ describe("ControlPanel start flow (US-004)", () => {
     expect(container!.querySelector<HTMLButtonElement>(".per-type-btn")!.disabled).toBe(true);
   });
 
-  it("US-028 phase=stopped -> 「开始求解」按钮（#restart）+ 中间方案导出提示", () => {
+  it("US-028 phase=stopped -> 「普通运行」按钮（#restart）+ 中间方案导出提示", () => {
     renderPanel(() => {}, { phase: "stopped" });
     const restartBtn = container!.querySelector<HTMLButtonElement>("#restart")!;
     expect(restartBtn).not.toBeNull();
-    expect(restartBtn.textContent).toBe("开始求解");
-    expect(restartBtn.getAttribute("aria-label")).toBe("开始求解");
+    expect(restartBtn.textContent).toBe("普通运行");
+    expect(restartBtn.getAttribute("aria-label")).toBe("普通运行");
     // #start / #stop 不存在
     expect(container!.querySelector("#start")).toBeNull();
     expect(container!.querySelector("#stop")).toBeNull();
@@ -316,19 +316,19 @@ describe("ControlPanel start flow (US-004)", () => {
     expect(container!.querySelector<HTMLInputElement>("#time")!.disabled).toBe(false);
   });
 
-  it("US-028 phase=done -> 「开始求解」按钮（#restart，文案与 stopped 统一）", () => {
+  it("US-028 phase=done -> 「普通运行」按钮（#restart，文案与 stopped 统一）", () => {
     renderPanel(() => {}, { phase: "done" });
     const restartBtn = container!.querySelector<HTMLButtonElement>("#restart")!;
     expect(restartBtn).not.toBeNull();
-    expect(restartBtn.textContent).toBe("开始求解");
-    expect(restartBtn.getAttribute("aria-label")).toBe("开始求解");
+    expect(restartBtn.textContent).toBe("普通运行");
+    expect(restartBtn.getAttribute("aria-label")).toBe("普通运行");
   });
 
-  it("US-028 phase=error -> 「开始求解」按钮（与 stopped 同文案）", () => {
+  it("US-028 phase=error -> 「普通运行」按钮（与 stopped 同文案）", () => {
     renderPanel(() => {}, { phase: "error" });
     const restartBtn = container!.querySelector<HTMLButtonElement>("#restart")!;
     expect(restartBtn).not.toBeNull();
-    expect(restartBtn.textContent).toBe("开始求解");
+    expect(restartBtn.textContent).toBe("普通运行");
   });
 });
 
