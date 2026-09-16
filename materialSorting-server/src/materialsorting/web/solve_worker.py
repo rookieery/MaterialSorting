@@ -33,6 +33,15 @@ bbox（min_x/max_x/距布尾）写进 ``prefix_runs`` 工件与 final 统计段�
 余量照排主解 ⇒ placed 条数守恒 = 全量 Σdemand。stage/final/工件 additive 回显
 选定组合（extra_label/extra_size/residual_mm + extra/residual_mm/fallback）。
 
+2026-09-16（帧发射层可行性过滤）：sparrow 探索期「收缩条宽→分离碰撞」策略会把
+**带重叠的不可行中间解**也报告出来（``ReportType.ExplInfeas`` = 分离失败 /
+``ExplImproving`` = loss 新低但未归零，上游 explore_fork.rs / sp_separator.rs），
+且不可行帧因片叠压 + 条带收缩 density 天然虚高 —— 下游按密度 argmax 的入账方
+（pipeline ``best_frame_s*.json`` / portfolio incumbent / LNS 边车回填 / kill 标定）
+会系统性选中不可行帧（同日高级运行事故：race run seed 6 frame 2361 的
+g10_32×g09_31 相交 24908mm² 完全叠死交付到 UI）。修复 = ``_frame_allowed``
+白名单只放行可行帧（ExplFeas / CmprFeas / Final），见其 docstring。
+
 **picklable 约束（Windows spawn）**：``solve_worker`` 必须是**顶层函数**、无闭包、参数
 全部 JSON 可序列化（list/dict/float/int/str）。子进程 spawn 时会通过 pickle 重建本函数。
 """
@@ -46,6 +55,26 @@ import time
 from collections import Counter
 
 _log = logging.getLogger(__name__)
+
+
+def _frame_allowed(rtype) -> bool:
+    """帧发射层可行性过滤（2026-09-16）：仅放行 sparrow **可行**帧。
+
+    - ``ExplFeas``（探索期可行解）/ ``CmprFeas``（压缩期可行解）/ ``Final``（末态）
+      放行；``ExplInfeas``（分离失败）/ ``ExplImproving``（loss 新低但未归零，
+      "**not yet feasible**"）丢弃。
+    - 不可行帧的 ``placed_items`` 天然带重叠（jagua-rs 概率接受的工作状态，非
+      solver 异常），且片叠压 + 条带收缩使其 ``density`` 虚高 —— 任何按密度取
+      最优的下游（best_frame 入账 / portfolio incumbent / LNS 回填 / kill 标定）
+      都会被其系统性赢得 argmax（2026-09-16 高级运行完全重叠事故根因）。
+    - ``Final`` 帧必须放行：curve_s{seed}.json 末条 ``phase='final'`` 是既有契约
+      （calibration 读 ``curve[-1]`` 当 seed 末态）。
+    - ``phase_name()`` 把 ExplFeas/ExplInfeas/ExplImproving 全折叠成
+      ``"exploring"``，帧 dict 无法区分可行性 —— 过滤必须在发射层做（本函数）。
+    """
+    import spyrrow
+    return rtype in (spyrrow.ReportType.ExplFeas, spyrrow.ReportType.CmprFeas,
+                     spyrrow.ReportType.Final)
 
 
 def solve_worker(pieces_snapshot, gate_mm, solve_params, result_queue, band=None,
@@ -193,12 +222,18 @@ def solve_worker(pieces_snapshot, gate_mm, solve_params, result_queue, band=None
     th.start()
     while th.is_alive():
         for rtype, mid in progress.drain():
+            # 可行帧白名单（2026-09-16）：ExplInfeas / ExplImproving 带重叠且密度
+            # 虚高，发射层丢弃（见 _frame_allowed docstring）。
+            if not _frame_allowed(rtype):
+                continue
             result_queue.put({'kind': 'frame',
                               'report': _emit_frame(rtype, mid, t0, band_chunk,
                                                     prefix_chunk)})
         time.sleep(0.2)
     th.join()
     for rtype, mid in progress.drain():
+        if not _frame_allowed(rtype):
+            continue
         result_queue.put({'kind': 'frame',
                           'report': _emit_frame(rtype, mid, t0, band_chunk,
                                                 prefix_chunk)})

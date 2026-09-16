@@ -471,6 +471,12 @@ def solve_with_callback(instance, config, on_report, *, drain_interval: float = 
             holder['err'] = f'{type(e).__name__}: {e}'
 
     def _emit(rtype, sol):
+        # 可行帧白名单（2026-09-16，与 solve_worker._frame_allowed 同口径单一
+        # 真相源）：不可行帧（ExplInfeas / ExplImproving）带重叠且密度虚高，
+        # 发射层丢弃。本函数为零调用方的兼容保留版，但两发射路径语义须一致。
+        from .solve_worker import _frame_allowed
+        if not _frame_allowed(rtype):
+            return
         placed = []
         for pi in sol.placed_items:
             tx, ty = pi.translation

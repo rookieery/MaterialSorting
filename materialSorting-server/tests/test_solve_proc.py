@@ -279,6 +279,75 @@ def test_build_instance_strip_matches_input_gate(real_or_synthetic_pieces):
     assert inst_small.strip_height == pytest.approx(1500.0)          # 小门幅不放大
 
 
+# ------------------- 帧发射层可行性过滤（2026-09-16 完全重叠事故回归锁）
+
+
+def test_frame_allowed_whitelist():
+    """``_frame_allowed`` 白名单：可行帧（ExplFeas/CmprFeas/Final）放行，
+    不可行帧（ExplInfeas/ExplImproving）丢弃。
+
+    sparrow 探索期「收缩条宽→分离碰撞」会把带重叠的不可行中间解也报告出来
+    （ReportType 文档原文 "not yet feasible"），且其 density 因片叠压虚高 ——
+    下游按密度 argmax 的入账方（best_frame / portfolio incumbent）会被系统性
+    带偏。过滤必须在发射层做：phase_name() 把三种 Expl* 全折叠成 "exploring"，
+    帧 dict 本身无法区分可行性。
+    """
+    import spyrrow
+    from materialsorting.web.solve_worker import _frame_allowed
+
+    assert _frame_allowed(spyrrow.ReportType.ExplFeas) is True
+    assert _frame_allowed(spyrrow.ReportType.CmprFeas) is True
+    assert _frame_allowed(spyrrow.ReportType.Final) is True
+    assert _frame_allowed(spyrrow.ReportType.ExplInfeas) is False
+    assert _frame_allowed(spyrrow.ReportType.ExplImproving) is False
+
+
+def test_emitted_frames_all_feasible_zero_overlap(real_or_synthetic_pieces):
+    """端到端回归锁：真解发出的**每一帧** placed_items 两两无重叠。
+
+    2026-09-16 高级运行事故：race run seed 6 frame 2361 的 g10_32×g09_31 原始
+    轮廓相交 24908mm²（≈整片面积，完全叠死）经 portfolio incumbent 交付到 UI。
+    修复后发射层只放行可行帧 —— 本测试对每个收到帧做 shapely 逐对相交检测，
+    阈值 100mm²：事故级重叠（实测 5860~294430mm²）与可行帧贴触级残留（实测
+    ExplFeas 帧 0.0mm²）之间隔 1.5 个数量级，不会flaky。
+    """
+    from shapely.geometry import Polygon
+    from materialsorting.web.export_geometry import apply_transform
+
+    pieces, gate_mm = real_or_synthetic_pieces
+    by_id = {p["pid"]: p for p in pieces}
+    frames: list = []
+
+    def on_report(r):
+        frames.append(r)
+
+    proc, final, _elapsed, err = solve_with_callback_proc(
+        pieces, gate_mm,
+        {"time_budget": 3, "seed": 1},
+        on_manifest=lambda _m: None, on_report=on_report,
+    )
+    assert err is None, f"unexpected error: {err}"
+    assert final is not None
+    assert len(frames) >= 1, "should receive at least one (feasible) frame"
+
+    for idx, f in enumerate(frames):
+        worlds = [
+            (pi["id"], Polygon(apply_transform(
+                by_id[pi["id"]]["polygon"], float(pi.get("rotation", 0.0)),
+                pi.get("translation", [0, 0]))))
+            for pi in f["placed_items"]
+        ]
+        for i in range(len(worlds)):
+            for j in range(i + 1, len(worlds)):
+                a, b = worlds[i][1], worlds[j][1]
+                if a.is_empty or b.is_empty or a.disjoint(b):
+                    continue
+                overlap = a.intersection(b).area
+                assert overlap < 100.0, (
+                    f"frame index={idx} 不可行帧泄漏："
+                    f"{worlds[i][0]} × {worlds[j][0]} 相交 {overlap:.1f}mm²")
+
+
 if __name__ == "__main__":
     # Windows multiprocessing 守卫：直接 python tests/test_solve_proc.py 时
     # 走 pytest CLI（不在 __main__ 里直接 Process，避免无限 spawn）。
