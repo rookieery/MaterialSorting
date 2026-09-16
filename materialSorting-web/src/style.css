@@ -303,6 +303,38 @@ button.upload-btn:disabled { background: #444; color: #888; cursor: default; }
 .upload-filename { font-weight: 600; color: #e6e6e6; word-break: break-all; }
 .upload-summary { font-size: 11px; color: #aab; margin-top: 4px; }
 
+/* ---- SamplePicker「样例」区块（2026-09-16）：UploadPanel 底部、与 <h2> 同级标题；
+   select + 按钮横排（与 .export-btns 同款蓝按钮视觉），失败红字复用 .upload-status.error ---- */
+.sample-section {
+  margin-top: 2px;
+  padding-top: 12px;
+  border-top: 1px solid #34363d;
+}
+.sample-section h2 { margin: 0 0 10px; }
+.sample-row { display: flex; gap: 8px; }
+select.sample-select {
+  flex: 1; min-width: 0;
+  padding: 8px 6px;
+  font-size: 12px;
+  font-family: inherit;
+  background: #1c1d22; color: #e6e6e6;
+  border: 1px solid #3a3d45; border-radius: 6px;
+  cursor: pointer;
+}
+select.sample-select:focus { outline: none; border-color: #2ea06c; }
+select.sample-select:disabled { opacity: 0.5; cursor: not-allowed; }
+button.sample-apply-btn {
+  flex-shrink: 0;
+  padding: 8px 12px;
+  font-size: 13px; font-weight: 600;
+  background: #2c5d8f; color: #fff;
+  border: 0; border-radius: 6px;
+  cursor: pointer;
+  font-family: inherit;
+}
+button.sample-apply-btn:hover:not(:disabled) { background: #3470ac; }
+button.sample-apply-btn:disabled { background: #444; color: #888; cursor: default; }
+
 /* ---- US-007 PiecePreviewSVG（单片母版预览；class 由组件 imperative setAttribute 写入） ---- */
 /* 沿用 .nest-card svg 同口径：fill 父容器（QtyMatrix 行头缩略图 / PieceZoomModal），背景与排料图同色 */
 .piece-preview-svg {

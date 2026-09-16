@@ -11,6 +11,11 @@
 //
 // Mirrors ControlPanel.test.tsx pattern: render into container, dispatch DOM events.
 
+// SamplePicker（2026-09-16 面板底部样例区块）mock 掉：其 mount 即 fetch /api/samples，
+// 会打破本文件「无效输入零 fetch / 成功路径恰 N 次 fetch」的计数断言；样例交互自身
+// 契约在 SamplePicker.test.tsx 独立覆盖。
+vi.mock('../SamplePicker', () => ({ SamplePicker: () => null }));
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { StrictMode } from 'react';
 import { act } from 'react';

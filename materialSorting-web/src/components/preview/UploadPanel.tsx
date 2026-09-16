@@ -10,6 +10,9 @@
 //   4. US-021：从 uploadStore 读 commitStatus/commitError/commitSummary —— 解析成功后
 //      自动 commit（D1 副作用），commit 中显示「应用中…」、done 显示「已应用至超排：N 裁片，M 码」、
 //      error 显示红字。commit 状态独立于 parse status，两行互不干扰（parse done 行 + commit 行）。
+//   5. 底部挂 SamplePicker「样例」区块（2026-09-16）：同级 <h2> + data/ 下拉框 +
+//      「应用」按钮 —— 应用 = 服务端样例字节包 File 走同一 upload 链路（细节见
+//      SamplePicker.tsx；状态显示复用本面板 upload-status 行）。
 //
 // 设计原则（CLAUDE.md / AGENTS.md US-005 关键约定）：
 //   - 沿用 style.css，与 ControlPanel 视觉同色系（暗背景 #26282e + 绿色 #2ea06c 强调）；
@@ -33,6 +36,7 @@ import { useRef, useState } from 'react';
 import type { JSX } from 'react';
 import { useParseDxf } from '../../hooks/useParseDxf';
 import { useUploadStore } from '../../store/uploadStore';
+import { SamplePicker } from './SamplePicker';
 
 /** 单文件大小上限（与后端 server.py UPLOAD_MAX_BYTES 一致，20MB）。 */
 const MAX_UPLOAD_BYTES = 20 * 1024 * 1024;
@@ -234,6 +238,9 @@ export function UploadPanel(): JSX.Element {
       <div className="hint">
         上传母版 (.dxf) 或状态文件 (.msn)；单文件，最大 {MAX_UPLOAD_BYTES / 1024 / 1024}MB。
       </div>
+
+      {/* 样例区块（2026-09-16）：与 <h2>DXF 上传预览</h2> 同级标题，挂在面板底部 */}
+      <SamplePicker />
     </aside>
   );
 }

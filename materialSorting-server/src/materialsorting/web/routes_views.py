@@ -2,7 +2,9 @@
 
 GET ``/``（index.html）、GET ``/api/ptypes``（label 代表裁片）、POST ``/export``
 （PNG / R12-DXF / PLT marker 下载）、POST ``/api/plt-table-preview``（PLT 唛架
-信息表格 14 字段预览，2026-08-31）。导出几何/渲染走 ``web.export`` 门面（路径不变）。
+信息表格 14 字段预览，2026-08-31）、GET ``/api/samples`` + ``/api/samples/file``
+（样例母版清单/取文件，2026-09-16，无会话依赖）。导出几何/渲染走 ``web.export``
+门面（路径不变）。
 
 多会话 US-003：全部读数据端点经 ``_resolve_session_state`` 从 SessionRegistry 解析
 pieces state —— ``X-Session-Id`` Header → 该会话 commit（US-002）注册的 per-doc
@@ -13,6 +15,7 @@ pieces state —— ``X-Session-Id`` Header → 该会话 commit（US-002）注�
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 from fastapi import APIRouter, Request
 from fastapi.concurrency import run_in_threadpool
@@ -100,6 +103,63 @@ def get_ptypes(request: Request):
         rep = {k: p[k] for k in _LABEL_REPRESENTATIVE_FIELDS if k in p}
         representatives[label] = rep
     return {'representatives': representatives}
+
+
+# ------------------------------------------------- GET /api/samples 样例母版（2026-09-16）
+
+
+def _sample_dxf_names() -> list[str]:
+    """``data/`` 顶层 ``*.dxf`` 文件名列表（按文件名排序，非递归）。
+
+    样例双端点共用：列表端点直接消费；取文件端点把它当**白名单**（请求名必须
+    是实时列举结果的成员 —— data/ 里此刻实际存在的 .dxf 才可取，天然防目录
+    穿越 / 白名单外后缀 / 竞态残留）。``paths.DATA_DIR`` 在请求时取值（非模块级
+    快照），tests monkeypatch ``paths.DATA_DIR`` 直接生效。
+    """
+    data_dir = Path(paths.DATA_DIR)
+    if not data_dir.is_dir():
+        return []
+    return sorted(p.name for p in data_dir.iterdir()
+                  if p.is_file() and p.name.lower().endswith('.dxf'))
+
+
+@router.get('/api/samples')
+def list_samples():
+    """样例母版清单（上传预览页左侧「样例」下拉框数据源，2026-09-16）。
+
+    列 ``data/`` 顶层全部 ``.dxf``（非递归；``.plt`` / ``configs/`` 子目录不列），
+    响应 ``{samples: [{name, size_bytes}]}`` 按文件名排序 —— 前端默认选 ``[0]``。
+
+    无会话依赖（全局静态数据，与 ``GET /`` 同类）：样例列表与当前会话无关；
+    「应用」动作本身走既有 ``POST /api/parse-dxf``（前端取回字节包 File 上传，
+    parse + 自动 commit 全链路复用），后端不新增任何数据路径。
+    """
+    data_dir = Path(paths.DATA_DIR)
+    samples = []
+    for name in _sample_dxf_names():
+        try:
+            size_bytes = (data_dir / name).stat().st_size
+        except OSError:
+            continue   # 列举与 stat 之间被删（竞态）→ 跳过，不 500
+        samples.append({'name': name, 'size_bytes': size_bytes})
+    return {'samples': samples}
+
+
+@router.get('/api/samples/file')
+def sample_file(name: str):
+    """取样例母版字节（上传预览页「应用」按钮数据源，2026-09-16）。
+
+    ``?name=`` 必须命中 ``_sample_dxf_names()`` 实时白名单（``os.path.basename``
+    同值校验双保险，防分隔符注入）—— 未命中 → 404 中文 error。样例文件名含
+    中文与 ``#``/``（）`` 等 URI 保留字符，走 query 参数（前端 encodeURIComponent）
+    而非 path 参数，避开 path 编码歧义。
+
+    返回 ``application/dxf`` inline 文件流：前端 ``res.blob()`` 后包 ``File``
+    走 ``POST /api/parse-dxf``，与本地上传逐字节同路（大小上限等校验同源）。
+    """
+    if os.path.basename(name) != name or name not in _sample_dxf_names():
+        return JSONResponse({'error': f'样例文件不存在：{name}'}, status_code=404)
+    return FileResponse(Path(paths.DATA_DIR) / name, media_type='application/dxf')
 
 
 # ------------------------------------------------------- POST /api/band-preview 成带预览
