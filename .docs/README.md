@@ -7,6 +7,7 @@
 - [technical/agent-file-map.md](technical/agent-file-map.md) — 后端 Python 包逐文件索引（dxf_parser / nesting_bounds / nesting_engine / web / cli）
 - [technical/agent-component-map.md](technical/agent-component-map.md) — 前端（materialSorting-web/）组件/模块地图
 - [technical/agent-api-reference.md](technical/agent-api-reference.md) — HTTP 路由 + WS `/ws/solve` 协议 + 导出契约
+- [technical/项目优化点盘点_2026-09.md](technical/项目优化点盘点_2026-09.md) — 全库优化点盘点（业务/引擎/结构/前端/工程化/运维/安全/文档 八域 A1~H3，待逐条确认）
 - [technical/todo.md](technical/todo.md) — `/todo` skill 维护
 
 ## business/（业务文档）
