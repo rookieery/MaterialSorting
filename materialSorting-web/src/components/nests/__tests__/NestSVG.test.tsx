@@ -204,6 +204,57 @@ describe("NestSVG (US-003)", () => {
     expect(poly2.getAttribute("points")).toBeNull();
   });
 
+  it("2026-09-16 视觉优化 v2（无条件留白）：少片/中等宽度都扩 pad；深宽唛架逐字节不变", () => {
+    const run = runRegistry.create(0);
+    run.manifest = makeManifest();
+    const ref = mountNestSVG(run);
+    const svg = ref.current!;
+
+    // mock 容器 1560×900px（mount 后、首帧前 —— mount 期零尺寸走 pad=0 兜底）：
+    // 少片形态 W=600 → 宽比 2.6 > 高比 0.455 → px=200 · pad=200·1980/500=792
+    // → meet 后内容高恰 900−400=500px（上下各 200px 留白）。
+    (svg as unknown as { getBoundingClientRect: () => DOMRect }).getBoundingClientRect = () =>
+      ({ width: 1560, height: 900, x: 0, y: 0, top: 0, left: 0, right: 1560, bottom: 900 }) as DOMRect;
+
+    const frame = makeFrame(["p1"], 600);
+    run.frames.push(frame);
+    run.lastFrame = frame;
+    run.viewBoxMaxW = 600;
+
+    act(() => useAppStore.getState().bumpRenderTick());
+
+    expect(svg.getAttribute("viewBox")).toBe("0 -792 600 3564");
+    // bg/fab 世界锚定不动（留白区由 .nest-card svg CSS 背景 #eef0f3 同色铺满）。
+    const bg = svg.childNodes[0] as SVGRectElement;
+    const fab = svg.childNodes[1] as SVGRectElement;
+    expect(bg.getAttribute("width")).toBe("600");
+    expect(bg.getAttribute("height")).toBe("1980");
+    expect(fab.getAttribute("width")).toBe("600");
+    expect(fab.getAttribute("height")).toBe("1980");
+
+    // v2 无条件口径：中等宽度 W=5000（a=0.312 > target=500/1980=0.2525，上下余量
+    // 不足 200px）→ 同样钳留白：pad=200·1980/500=792，内容高恰 900−400=500px。
+    // （v1 此形态落「宽度受限不干预」分支 pad=0 —— 用户实测否决：致密也要留白。）
+    const frame2 = makeFrame(["p1"], 5000);
+    run.frames.push(frame2);
+    run.lastFrame = frame2;
+    run.viewBoxMaxW = 5000;
+
+    act(() => useAppStore.getState().bumpRenderTick());
+
+    expect(svg.getAttribute("viewBox")).toBe("0 -792 5000 3564");
+
+    // 深宽唛架 W=9000：a=0.173 ≤ target → 宽度受限且余量 ≥200px → pad=0 逐字节不变。
+    const frame3 = makeFrame(["p1"], 9000);
+    run.frames.push(frame3);
+    run.lastFrame = frame3;
+    run.viewBoxMaxW = 9000;
+
+    act(() => useAppStore.getState().bumpRenderTick());
+
+    expect(svg.getAttribute("viewBox")).toBe("0 0 9000 1980");
+  });
+
   it("pointsStr 写入的 points 字符串与 lib/geometry 直算一致（旋转 90°）", () => {
     const run = runRegistry.create(0);
     run.manifest = makeManifest();

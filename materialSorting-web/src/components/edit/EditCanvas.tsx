@@ -379,6 +379,8 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
     const stats = computeLayoutStats(working, manifest);
     const gate = manifest.gate_mm;
     if (!vbRef.current) {
+      // 2026-09-16 同日三轮（用户定案）：编辑弹窗自带滚轮缩放/平移，留白交给用户
+      // 自行控制 —— 初始视图恢复 v0 原样（0 0 W gate），canvasPad 留白仅超排卡用。
       const vb0: ViewBox = { x: 0, y: 0, w: Math.max(1, stats.widthMm), h: gate };
       vbRef.current = vb0;
       vb0Ref.current = vb0;

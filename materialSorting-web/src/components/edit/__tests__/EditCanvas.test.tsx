@@ -360,6 +360,9 @@ describe('EditCanvas 全量渲染 (US-002)', () => {
     expect(fab.getAttribute('height')).toBe('1000');
   });
 
+  // 2026-09-16 同日三轮（用户定案）：编辑弹窗自带缩放/平移，留白需求整体回退 ——
+  // 初始视图/全览恒 0 0 W gate（上方既有断言即回归锁），canvasPad 仅超排卡消费。
+
   it('5 层全量：每 working 下标一份节点，points / 配色与主视图 NestSVG 同构', () => {
     const svg = mountCanvas('full', seedRun(PLACED_AB));
     const { g } = skeleton(svg);

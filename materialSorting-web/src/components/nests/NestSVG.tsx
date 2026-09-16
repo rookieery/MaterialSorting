@@ -43,6 +43,7 @@ import type { RunRecord } from '../../store/runRegistry';
 import type { Notch, Polygon } from '../../types/piece';
 import type { FrameMsg, ManifestMsg } from '../../types/ws';
 import { physicalPolygon, pointsStr } from '../../lib/geometry';
+import { canvasVPadOf } from '../../lib/canvasPad';
 import { clearHovered, hideTooltip, setHovered, showTooltip } from '../Tooltip';
 import { NOTCH_LEN_MM } from '../../constants/colors';
 // 编辑排料 US-002：5 层节点构建（SVGNS / PieceEntry / createPieceEntry）机械提取到
@@ -75,6 +76,12 @@ export function NestSVG({ run }: NestSVGProps) {
    * （只显 1/N，视觉缺片但密度数正确，极隐蔽）。改以 manifest 身份变化为重建信号根除之。
    */
   const manifestRef = useRef<ManifestMsg | null>(null);
+  /**
+   * 最近一次写入的 viewBox 几何（W×gate，2026-09-16 留白计算用）：求解空闲期窗口
+   * 缩放时 ResizeObserver 需按当前容器高度重算 padY 重写 viewBox —— 此 ref 提供
+   * 稳定锚（W 只增不减，gate 恒定，重写幂等）。
+   */
+  const lastViewRef = useRef<{ W: number; gate: number } | null>(null);
 
   // 订阅 renderTick —— bump 触发 effect 重跑（imperative 更新 DOM）。
   const renderTick = useAppStore((s) => s.renderTick);
@@ -157,7 +164,14 @@ export function NestSVG({ run }: NestSVGProps) {
     // viewBox 用历史最大 width 作稳定锚（避免收缩抖动），与旧 vanilla 实现 一致。
     const W = Math.max(run.viewBoxMaxW, f.width_mm, 1);
 
-    svg.setAttribute('viewBox', `0 0 ${W} ${gate}`);
+    // 2026-09-16 视觉优化 v2（无条件留白）：viewBox 上下各扩 padY —— meet 后内容高
+    // ≤ 容器高−2·px，上下各 ≥200px 留白；仅深宽唛架（余量本已 ≥200px）pad=0 逐字节
+    // 不变（lib/canvasPad 单一真相源，v1「宽度受限不干预」判据已否决）。bg/fab 仍
+    // 世界锚定（0 0 W gate）不动 —— 留白区由 .nest-card svg 的 CSS 背景（#eef0f3
+    // 同色）铺满，观感无缝。
+    const padY = canvasVPadOf(svg, W, gate);
+    lastViewRef.current = { W, gate };
+    svg.setAttribute('viewBox', `0 ${-padY} ${W} ${gate + 2 * padY}`);
     svg.setAttribute('preserveAspectRatio', 'xMinYMid meet');
     bg.setAttribute('x', '0');
     bg.setAttribute('y', '0');
@@ -253,6 +267,26 @@ export function NestSVG({ run }: NestSVGProps) {
       }
     }
   }, [renderTick, run]);
+
+  /**
+   * 窗口/卡片尺寸变化时重算留白（2026-09-16）：padY 依赖容器像素高度，而求解空闲期
+   * 没有 renderTick bump —— ResizeObserver 主动按当前高度重写 viewBox（bg/fab 世界
+   * 锚定不动）。jsdom 无 ResizeObserver → 跳过（canvasVPadOf 零尺寸兜底 pad=0，
+   * 既有测试断言不受影响）。
+   */
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg || typeof ResizeObserver !== 'function') return;
+    const ro = new ResizeObserver(() => {
+      const last = lastViewRef.current;
+      const el = svgRef.current;
+      if (!last || !el) return;
+      const padY = canvasVPadOf(el, last.W, last.gate);
+      el.setAttribute('viewBox', `0 ${-padY} ${last.W} ${last.gate + 2 * padY}`);
+    });
+    ro.observe(svg);
+    return () => ro.disconnect();
+  }, []);
 
   return <svg ref={svgRef} xmlns={SVGNS} />;
 }
