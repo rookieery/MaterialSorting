@@ -83,12 +83,18 @@
 // 写入已由 resetItem 承担，不重复 setWorkingItem；refreshPieceView 与
 // commitDragPlacement 共用同一条「同帧刷新」路径）。
 //
-// edit-drag-snap US-003（2026-09-06）右键贴附会话：onPointerDown 按键门控 ——
-// button===0 左键既有会话零改动（拖片/平移/转柄，回归红线）；button===2 且命中
-// 毛版 polygon → MoveDrag 带 snap:true（贴附拖动，松手单次求解）；其余非主键
-// （中键等）不起任何会话（顺手修掉「非主键也能拖片/平移/转柄」隐性怪癖）。
-// svg contextmenu preventDefault（工具型画布无自定义右键菜单，右键已被贴附手势
-// 占用）。贴附会话 pointerup：clamp → lib/snap computeSnapCorrection（US-002 引擎）
+// edit-drag-snap US-003（2026-09-06 起，2026-09-17 触发手势换 Alt+左键）贴附会话：
+// onPointerDown 按键门控 —— button===0 左键既有会话零改动（拖片/平移/转柄，回归
+// 红线）；其中 altKey 且命中毛版 polygon → MoveDrag 带 snap:true（贴附拖动，松手
+// 单次求解）；其余按键（右/中/后退/前进）不起任何会话。**触发手势沿革**：US-003
+// 原为右键（button===2），实测与 Edge 内置「鼠标手势」（按住右键拖动 = 浏览器层
+// 画轨迹执行后退/关标签等动作）冲突 —— 官方确认网页无法用 JS 压制（preventDefault
+// / contextmenu 拦不住，chess.com 右键画箭头同款受害者），且右键向左拖会触发
+// 「后退」直接导航离开页面丢编辑态，故 2026-09-17 用户定案整体切换 Alt+左键（纯
+// 左键零回归红线不动，修饰键+左键同样不占左键自由拖动）。
+// svg contextmenu preventDefault 维持吞除（工具型画布无自定义右键菜单需求；右键
+// 已无功能但仍不弹系统菜单 —— 防误点「后退」类菜单项丢编辑态）。贴附会话
+// pointerup：clamp → lib/snap computeSnapCorrection（US-002 引擎）
 // → 结果经 commitDragPlacement 唯一落笔出口写入（只改 translation，rot/mirror
 // 原值透传）+ 伙伴片高亮闪烁（ensureUiLayers 第三子层，短时淡出）。lastSafeTr
 // 由 refreshMetrics 的既有 computeOverlap 结果顺带续写（会话首帧落起手基线；
@@ -170,9 +176,10 @@ interface MoveDrag {
   /** 起手镜像标志（edit-keyboard US-003）：setWorkingItem 不改 mirror ⇒ 会话内恒定。 */
   mirror0: boolean;
   /**
-   * 右键贴附会话（edit-drag-snap US-003）：pointerdown button===2 起 true ——
-   * pointerup 单次吸附求解（endDrag → applySnapOnRelease）；左键恒 false
-   * （既有自由拖动路径零改动，松手永不吸附）。
+   * 贴附会话（edit-drag-snap US-003；2026-09-17 起触发 = pointerdown 左键
+   * altKey —— 原右键与 Edge 内置鼠标手势冲突整体切换）：pointerup 单次吸附
+   * 求解（endDrag → applySnapOnRelease）；纯左键恒 false（既有自由拖动路径
+   * 零改动，松手永不吸附）。
    */
   snap: boolean;
 }
@@ -293,9 +300,9 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
   const rafRef = useRef<number | null>(null);
   const pendingMoveRef = useRef<Pt | null>(null);
   /**
-   * 贴附会话态（edit-drag-snap US-003）：右键 pointerdown 起会话、pointerup 求解后
-   * 清空（pointercancel / 骨架重建 / 卸载同步作废）。refreshMetrics 每帧顺带续写
-   * lastSafeTr（拖动帧零新增计算）；左键/键盘/旋转会话恒 null 不消费。
+   * 贴附会话态（edit-drag-snap US-003）：Alt+左键 pointerdown 起会话、pointerup
+   * 求解后清空（pointercancel / 骨架重建 / 卸载同步作废）。refreshMetrics 每帧
+   * 顺带续写 lastSafeTr（拖动帧零新增计算）；纯左键/键盘/旋转会话恒 null 不消费。
    */
   const snapSessRef = useRef<SnapSession | null>(null);
   /** 伙伴片高亮层（UI 覆盖层第三子层）+ 淡出双段计时器。 */
@@ -768,7 +775,7 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
     }
 
     /**
-     * 右键贴附会话松手单次求解（edit-drag-snap US-003）：endDrag 在 flushFrame 之后
+     * 贴附会话松手单次求解（edit-drag-snap US-003，Alt+左键会话）：endDrag 在 flushFrame 之后
      * 调用 —— working / 池 / DOM 已是末帧 clamp 落点位。流程：再 clamp（幂等防御）
      * → computeSnapCorrection（US-002 引擎，free/retreat/attract）→ kind ≠ free 且
      * translation 实变时经 commitDragPlacement **唯一落笔出口**写入（只改
@@ -909,14 +916,15 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
     // ---- 事件分发 ----
 
     const onPointerDown = (e: PointerEvent): void => {
-      // edit-drag-snap US-003 按键门控：0 = 左键（全部既有会话零改动）/ 2 = 右键
-      // （仅毛版 polygon 贴附会话）/ 其余非主键（中键 1、后退 3、前进 4）不起任何
-      // 会话 —— 右键贴附手势占用后顺手修掉「非主键也能拖片/平移/转柄」隐性怪癖。
-      if (e.button !== 0 && e.button !== 2) return;
+      // edit-drag-snap US-003 按键门控（2026-09-17 起仅左键进门）：0 = 左键（全部
+      // 既有会话零改动）/ 其余按键（中键 1、右键 2、后退 3、前进 4）不起任何会话
+      // —— 贴附触发在 polygon 分支内按 altKey 分流（原右键触发与 Edge 内置鼠标
+      // 手势冲突，见组件头注沿革；门控同时保留「非主键也能拖片/平移/转柄」修复）。
+      if (e.button !== 0) return;
       const target = e.target as Element | null;
-      // 1) 旋转手柄（选中片常显）→ 绕质心旋转拖柄（仅左键；右键贴附不转柄）。
+      // 1) 旋转手柄（选中片常显）→ 绕质心旋转拖柄（Alt 不分流 —— 修饰键仅对
+      //    polygon 贴附有意义，柄上 Alt+左键照常转柄）。
       if (target?.closest?.('[data-edit-role="rotate"]')) {
-        if (e.button !== 0) return;
         const index = selRef.current;
         const flip = flipRef.current;
         const entry = index != null ? entriesRef.current[index] : null;
@@ -945,13 +953,14 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
         return;
       }
       // 2) 毛版 polygon → 选中 + 提层 + 平移拖片（4 层工艺 / 交集高亮层均
-      //    pointer-events:none，不会成为 target）。左键 = 自由拖动（snap:false，
-      //    既有路径零改动）；右键 = 贴附会话（snap:true，松手单次求解）。
+      //    pointer-events:none，不会成为 target）。纯左键 = 自由拖动（snap:false，
+      //    既有路径零改动）；Alt+左键 = 贴附会话（snap:true，松手单次求解；右键
+      //    2026-09-17 起无任何会话 —— Edge 鼠标手势冲突，见组件头注沿革）。
       const poly = target?.closest?.('polygon');
       if (poly) {
         const index = entriesRef.current.findIndex((en) => en != null && en.el === poly);
         if (index < 0) return; // 非裁片毛版 polygon（防御）
-        const snap = e.button === 2;
+        const snap = e.altKey;
         if (snap) {
           // 贴附会话态起手：基线先置 Infinity（恒安全占位）—— 紧随的 selectPiece →
           // refreshMetrics 首帧把真实起手总面积落进基线并续写 lastSafeTr 起手位
@@ -982,8 +991,7 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
         return;
       }
       // 3) 空白（svg/bg/fab）→ 平移（位移 <3px 的 down-up = 点击取消选中）。
-      //    仅左键 —— 右键空白无会话（不平移、不取消选中；contextmenu 已被吞）。
-      if (e.button !== 0) return;
+      //    左键进门即平移（Alt 不分流 —— 修饰键仅对 polygon 贴附有意义）。
       const vb = vbRef.current;
       if (!vb) return;
       try {
@@ -1033,7 +1041,7 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
       flushFrame(); // 悬空 rAF 落帧（move 后立即 up 不丢尾帧）
       dragRef.current = null;
       svg.style.cursor = '';
-      // edit-drag-snap US-003：右键贴附会话松手单次求解（左键 / 旋转柄会话不进）。
+      // edit-drag-snap US-003：贴附会话松手单次求解（纯左键 / 旋转柄会话不进）。
       if (d.mode === 'move' && d.snap) applySnapOnRelease(d);
     };
 
@@ -1068,8 +1076,10 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
     };
 
     /**
-     * 右键菜单吞除（edit-drag-snap US-003）：工具型画布无自定义右键菜单 —— 右键
-     * 已被贴附手势占用（右键拖动中 / 右键空白处均不弹系统菜单）。
+     * 右键菜单吞除（edit-drag-snap US-003；2026-09-17 贴附手势迁 Alt+左键后维持）：
+     * 工具型画布无自定义右键菜单需求 —— 右键虽已无画布功能，仍不弹系统菜单（防
+     * 拖动/点击失误弹出含「后退/刷新」的菜单误操作丢编辑态；Edge 手势用户误右拖
+     * 时不叠加菜单干扰）。
      */
     const onContextMenu = (e: MouseEvent): void => {
       e.preventDefault();
@@ -1314,10 +1324,10 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
       <div className="edit-guide-row">
         <span className="edit-metrics-label">拖动裁片：</span>按住裁片拖动（自动选中置顶）
       </div>
-      {/* edit-drag-snap US-003：右键贴附手势一行（文案不含「形态」「保存」——
-          EditCanvas.test 反向锁同guide其余行）。 */}
+      {/* edit-drag-snap US-003：贴附手势一行（2026-09-17 起 Alt+左键；文案不含
+          「形态」「保存」—— EditCanvas.test 反向锁同guide其余行）。 */}
       <div className="edit-guide-row">
-        <span className="edit-metrics-label">贴附：</span>右键拖动松手贴附
+        <span className="edit-metrics-label">贴附：</span>Alt+左键拖动松手贴附
       </div>
       <div className="edit-guide-row">
         <span className="edit-metrics-label">旋转：</span>拖动选中片上方绿色圆点，绕中心自由旋转

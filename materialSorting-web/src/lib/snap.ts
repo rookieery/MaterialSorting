@@ -1,8 +1,9 @@
 // edit-drag-snap US-002 —— 松手吸附引擎纯函数（P0 retreat 回退 + P1 attract 吸拢）。
 //
 // 职责边界（PRD 定案）：本引擎只做「给定落点 → 纠正后的 translation」的单次求解，
-// 触发与否（右键 snap 会话 vs 左键自由拖动）是调用方（US-003 EditCanvas）职责，
-// 引擎不感知按键 / DOM / 事件。全程序确定（无 RNG、固定枚举序），任何内部异常
+// 触发与否（贴附 snap 会话 vs 自由拖动 —— 2026-09-17 起 Alt+左键 vs 纯左键）是
+// 调用方（US-003 EditCanvas）职责，引擎不感知按键 / DOM / 事件。全程序确定
+// （无 RNG、固定枚举序），任何内部异常
 // fail-open 返回 raw（调用方拿到的最坏结果 = 与不吸附一致，绝不卡死拖动出口）。
 //
 // 两级策略（沿拖动路径 lastSafeTr → rawTr 的线段参数化，t 单位 mm）：
@@ -56,7 +57,7 @@ const CLAMP_EPS_MM = 1e-6;
 /** 末帧位移视为零的阈值（mm）：小于 1nm 的位移按零位移帧退化质心连线。 */
 const ZERO_DISP_EPS_MM = 1e-9;
 
-/** 右键贴附会话态（US-003 由 EditCanvas 维护：pointerdown 起、refreshMetrics 顺带更新）。 */
+/** 贴附会话态（US-003 由 EditCanvas 维护：Alt+左键 pointerdown 起、refreshMetrics 顺带更新）。 */
 export interface SnapSession {
   /** 会话内最后一个「安全」位（谓词成立）；null = 尚无安全帧（retreat 无锚点 → fail-open raw）。 */
   lastSafeTr: Pt | null;

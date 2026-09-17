@@ -1,5 +1,6 @@
-// edit-drag-snap US-004 端到端冒烟（prd-edit-drag-snap，2026-09-06）—— 右键贴附双护栏收官
-// 回归锁死：吸附功能护栏 + 左键零回归红线护栏（同一求解布局内背靠背对拍）。
+// edit-drag-snap US-004 端到端冒烟（prd-edit-drag-snap，2026-09-06；2026-09-17 起触发
+// 手势 = Alt+左键 —— 原右键与 Edge 内置鼠标手势冲突整体迁出，本脚本同步改口径）——
+// 贴附双护栏收官：吸附功能护栏 + 纯左键零回归红线护栏（同一求解布局内背靠背对拍）。
 //
 // 模板对齐 scripts/smoke_edit_polish.mjs（Playwright 流程骨架/导出抓包套路）+
 // smoke-band-preview.mjs（addInitScript 预置 ms.tour.* 防 tour-overlay 拦截）；
@@ -20,15 +21,16 @@
 //      （placed 与 WS 末帧逐位全等 —— 后续全精度/回读对拍的基准端）。
 //   S2 编辑弹窗 → 真实引擎预模拟选片对（attract / trusted-click-free /
 //      far-free / retreat / final-attract 五路全预测通过才采用，全流程确定性）。
-//   B  右键（button:2）pointer 序列：留 5mm 小缝松手 attract（DOM points ==
-//      引擎 tr + 伙伴高亮轮廓 == partnerKey 世界轮廓 + 指标面板重叠 0.0）→
-//      高亮淡出 → trusted 右键无位移 click（contextmenu 被吞 + 无吸附位移 +
-//      选中保持）→ 右键继续拖离远端恢复自由（拖动中合成 contextmenu 被吞 +
-//      原样落点 + 指标 0.0）→ 右键深叠松手 retreat（DOM points == 引擎 tr +
-//      终态独立布尔交干净 + 指标 == 引擎终态）。
+//   B  Alt+左键（button:0 + altKey）pointer 序列：留 5mm 小缝松手 attract（DOM
+//      points == 引擎 tr + 伙伴高亮轮廓 == partnerKey 世界轮廓 + 指标面板重叠
+//      0.0）→ 高亮淡出 → trusted 右键无位移 click（右键全域失效回归 + contextmenu
+//      被吞 + 无位移 + 选中保持）→ trusted Alt+左键无位移 click（真实输入链
+//      altKey 生效，2026-09-17 新触发）→ Alt+左键拖离远端恢复自由（拖动中合成
+//      contextmenu 被吞 + 原样落点 + 指标 0.0）→ Alt+左键深叠松手 retreat（DOM
+//      points == 引擎 tr + 终态独立布尔交干净 + 指标 == 引擎终态）。
 //   R  左键红线两连（回归红线）：同深叠目标压线落点原样（重叠 > 1000mm²
 //      如实保留永不 retreat）+ 同小缝目标落点原样（attract 永不发生）。
-//   C  末次右键留 2mm 小缝松手 attract 回贴 → 保存 → 导出 PLT：POST placed 30 条 +
+//   C  末次 Alt+左键留 2mm 小缝松手 attract 回贴 → 保存 → 导出 PLT：POST placed 30 条 +
 //      被拖片 translation 与引擎吸附值全精度贯通（|Δ| ≤ 1e-6 + y 逐位恒等 +
 //      亚 0.01mm 精度未截断 + 终态接触几何首触 ≈ 1nm/全邻居布尔交 = 0）+
 //      rot/mirror 原样 + 其余 29 项与求解末帧逐位全等；PLT 正文回读：PU 笔与
@@ -228,32 +230,34 @@ const partnerPointsAttr = () => page.evaluate(() => {
   const el = document.querySelector('[data-testid=edit-snap-partner]');
   return el ? el.getAttribute('points') : null;
 });
-/** 右键（button:2）单跳拖动：pointerdown(片) → [可选中点帧 + 合成 contextmenu]
- *  → pointermove(落点) → pointerup。attract/retreat 断言路径恒单 move 帧（与
- *  预模拟的 lastSafeTr 会话模型逐帧一致 —— 加中点帧会改变 retreat 锚点）；中点帧
- *  仅用于 free 落点路径（远端安全 ⇒ 锚点恒 = 落点，中点帧无影响）。 */
-const dragPiece = (el, dxMm, button, midContext = false) => page.evaluate(({ el, dxPx, button, midContext }) => {
+/** 贴附单跳拖动（2026-09-17 起 Alt+左键；纯左键回归路径 button=0 alt=false）：
+ *  pointerdown(片) → [可选中点帧 + 合成 contextmenu] → pointermove(落点) →
+ *  pointerup。attract/retreat 断言路径恒单 move 帧（与预模拟的 lastSafeTr 会话
+ *  模型逐帧一致 —— 加中点帧会改变 retreat 锚点）；中点帧仅用于 free 落点路径
+ *  （远端安全 ⇒ 锚点恒 = 落点，中点帧无影响）。alt=true 三个事件均带 altKey
+ *  （真实输入 = 按住 Alt 拖动全程）。 */
+const dragPiece = (el, dxMm, button = 0, alt = false, midContext = false) => page.evaluate(({ el, dxPx, button, alt, midContext }) => {
   const svg = document.querySelector('svg.edit-layout-svg');
   const r = svg.getBoundingClientRect();
   const x0 = r.x + 80;
   const y0 = r.y + 80;
   const x1 = x0 + dxPx;
   let ctxPrevented = null;
-  el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 41, clientX: x0, clientY: y0, button }));
+  el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 41, clientX: x0, clientY: y0, button, altKey: alt }));
   if (midContext) {
-    svg.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, pointerId: 41, clientX: (x0 + x1) / 2, clientY: y0 }));
+    svg.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, pointerId: 41, clientX: (x0 + x1) / 2, clientY: y0, button, altKey: alt }));
     const ev = new MouseEvent('contextmenu', { bubbles: true, cancelable: true });
     svg.dispatchEvent(ev);
     ctxPrevented = ev.defaultPrevented;
   }
-  svg.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, pointerId: 41, clientX: x1, clientY: y0 }));
-  svg.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 41, clientX: x1, clientY: y0, button }));
+  svg.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, pointerId: 41, clientX: x1, clientY: y0, button, altKey: alt }));
+  svg.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 41, clientX: x1, clientY: y0, button, altKey: alt }));
   return {
     points: el.getAttribute('points'),
     partner: !!document.querySelector('[data-testid=edit-snap-partner]'),
     ctxPrevented,
   };
-}, { el, dxPx: dxMm * S, button, midContext });
+}, { el, dxPx: dxMm * S, button, alt, midContext });
 /** trusted 右键 click（真实鼠标事件链）：contextmenu 计数挂在 svg 上；点击点
  *  探测 elementFromPoint === 被拖片（悬浮卡均 pointer-events:none 不挡命中）。 */
 async function trustedRightClick(el) {
@@ -282,6 +286,31 @@ async function trustedRightClick(el) {
   return await page.evaluate((el) => ({
     probed: true,
     ctx: window.__ctx,
+    points: el.getAttribute('points'),
+    metrics: !!document.querySelector('[data-testid=edit-metrics]'),
+  }), el);
+}
+/** trusted Alt+左键无位移 click（真实输入链验证 2026-09-17 新触发：OS 级修饰键
+ *  状态注入 pointerdown.altKey，合成事件之外的端到端证明）。 */
+async function trustedAltClick(el) {
+  const pt = await page.evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    const cands = [
+      [r.x + r.width * 0.5, r.y + r.height * 0.5],
+      [r.x + r.width * 0.35, r.y + r.height * 0.35],
+      [r.x + r.width * 0.65, r.y + r.height * 0.6],
+    ];
+    for (const [cx, cy] of cands) {
+      if (document.elementFromPoint(cx, cy) === el) return [cx, cy];
+    }
+    return null;
+  }, el);
+  if (!pt) return { probed: false };
+  await page.keyboard.down('Alt');
+  await page.mouse.click(pt[0], pt[1]);
+  await page.keyboard.up('Alt');
+  return await page.evaluate((el) => ({
+    probed: true,
     points: el.getAttribute('points'),
     metrics: !!document.querySelector('[data-testid=edit-metrics]'),
   }), el);
@@ -394,10 +423,10 @@ check('S2a 引擎常量契约（ATTRACT_MAX_GAP_MM=10 / COLLIDE_AREA_EPS_MM2=1e-
 
 await page.click('[data-testid=edit-controls-edit]');
 await page.waitForSelector('[data-testid=edit-layout-overlay]', { timeout: 5000 });
-check('S2b 编辑弹窗打开 + 指南卡贴附行（右键拖动松手贴附）',
+check('S2b 编辑弹窗打开 + 指南卡贴附行（Alt+左键拖动松手贴附）',
   await page.evaluate(() => {
     const el = document.querySelector('[data-testid=edit-guide]');
-    return !!el && el.textContent.includes('右键拖动松手贴附');
+    return !!el && el.textContent.includes('Alt+左键拖动松手贴附');
   }));
 await page.screenshot({ path: OUT + '/s2_edit_open.png' });
 
@@ -444,25 +473,26 @@ for (let k = 0; k < worlds.length && !pick; k++) {
     // B0 左键基准位 = +30mm（须干净 —— 指标 0.0 断言的前提）
     const S0 = [t0[0] + 30, t0[1]];
     if (ovAt(S0) > 0.05) { rej.base++; continue; }
-    // B1 右键落点 = 距 m 5mm bbox 缝 → attract
+    // B1 Alt+左键落点 = 距 m 5mm bbox 缝 → attract
     const R1 = [S0[0] + (boxes[m].maxX + 5) - minXAt(S0), S0[1]];
     const res1 = predictSnap(S0, R1);
     if (res1.kind !== 'attract' || res1.partnerKey == null
       || Math.abs(R1[0] - res1.tr[0]) < 1 || ovAt(R1) > 0.05 || ovAt(res1.tr) > 0.05) { rej.attract++; continue; }
-    // （trusted 右键无位移 click 不设门槛：contact−1nm 位即使退化零位移 attract 也
-    //  不动 points（B5 只断言 contextmenu 被吞 + points 不动 + 选中保持），配对更鲁棒）
-    // B6 右键拖离远端（越过所有其它片 +60mm）必须 free
+    // （trusted 无位移 click（右键吞除 / Alt+左键真实链）不设门槛：contact−1nm 位
+    //  即使退化零位移 attract 也不动 points（B5 只断言 points 不动 + 选中保持），
+    //  配对更鲁棒）
+    // B6 Alt+左键拖离远端（越过所有其它片 +60mm）必须 free
     const maxXAll = Math.max(...boxes.filter((_, i) => i !== k).map((b) => b.maxX));
     const R4 = [res1.tr[0] + (maxXAll + 60) - minXAt(res1.tr), res1.tr[1]];
     if (R4[0] < 0 || predictSnap(res1.tr, R4).kind !== 'free' || ovAt(R4) > 0.05) { rej.free++; continue; }
-    // B7 右键深叠（越过 m 近缘 60mm）必须 retreat 且回退可见、落点重叠够大
+    // B7 Alt+左键深叠（越过 m 近缘 60mm）必须 retreat 且回退可见、落点重叠够大
     const R2 = [R4[0] + (boxes[m].maxX - 60) - minXAt(R4), R4[1]];
     const res2 = predictSnap(R4, R2);
     if (res2.kind !== 'retreat' || Math.abs(res2.tr[0] - R2[0]) < 20
       || ovAt(R2) < 1000 || ovAt(res2.tr) > 0.05) { rej.retreat++; continue; }
     // R1f/R1c：R1 同 x 在「吸附后链上 y」的重访位 —— attract 沿质心连线方向移动
     // （y 分量非 0），B1 之后整条链的 y = res1.tr[1]（后续水平拖动/retreat 均不改 y）。
-    // R1f 距 m 的缝 ≈ B1 吸拢量 attractDx（≥1mm 门槛保证）；末次右键推距在小步长
+    // R1f 距 m 的缝 ≈ B1 吸拢量 attractDx（≥1mm 门槛保证）；末次 Alt+左键推距在小步长
     // 梯度里搜索（推过头会违 attract 谓词退化 retreat —— 布局相关，不能写死）。
     const R1f = [R1[0], res1.tr[1]]; // 左键小缝红线落点（小缝、不吸附）
     let R1c = null;
@@ -524,14 +554,14 @@ const overlapWithAll = (pts) => {
   return sum;
 };
 
-// ---------- B 右键贴附行为段 ----------
-// B0 左键基准 +30mm（引擎外路径，原样落点）
+// ---------- B Alt+左键贴附行为段 ----------
+// B0 纯左键基准 +30mm（引擎外路径，原样落点）
 const r0 = await dragPiece(kh, pick.S0[0] - pick.t0[0], 0);
-check('B0 左键基准 +30mm 原样（引擎外路径）+ 无伙伴', r0.points === expPts(pick.S0) && !r0.partner);
+check('B0 纯左键基准 +30mm 原样（引擎外路径）+ 无伙伴', r0.points === expPts(pick.S0) && !r0.partner);
 
-// B1 右键留 5mm 小缝松手 → attract（DOM points == 引擎 tr，数学锚点串全等）
-const r1 = await dragPiece(kh, pick.R1[0] - pick.S0[0], 2);
-check('B1 右键 5mm 缝松手 attract：DOM points == 引擎 tr（数学锚点串全等，rot/mirror 原样）',
+// B1 Alt+左键留 5mm 小缝松手 → attract（DOM points == 引擎 tr，数学锚点串全等）
+const r1 = await dragPiece(kh, pick.R1[0] - pick.S0[0], 0, true);
+check('B1 Alt+左键 5mm 缝松手 attract：DOM points == 引擎 tr（数学锚点串全等，rot/mirror 原样）',
   r1.points === expPts(pick.res1.tr),
   '吸拢=' + (pick.R1[0] - pick.res1.tr[0]).toFixed(3) + 'mm partnerKey=' + pick.res1.partnerKey);
 const pk1 = pick.res1.partnerKey;
@@ -549,28 +579,35 @@ await sleep(1300);
 check('B4 伙伴高亮 ~1.2s 淡出移除',
   await page.evaluate(() => document.querySelector('[data-testid=edit-snap-partner]') === null));
 
-// B5 trusted 右键无位移 click：contextmenu 被吞 + 无吸附位移 + 选中保持
+// B5 trusted 右键无位移 click（2026-09-17 起右键全域失效的浏览器级回归）：
+// contextmenu 被吞 + 无位移 + 选中保持
 const tc = await trustedRightClick(kh);
 check('B5a trusted 右键 click contextmenu 被吞（svg listener fired≥1 prevented≥1）',
   tc.probed === true && tc.ctx.fired >= 1 && tc.ctx.prevented >= 1,
   JSON.stringify(tc.ctx || { probed: tc.probed }));
-check('B5b trusted 右键无位移：points 不动（contact−1nm 位零位移吸附不动 points）+ 选中保持（指标面板在案）',
+check('B5b trusted 右键无位移：points 不动（右键无任何画布会话）+ 选中保持（指标面板在案）',
   tc.probed === true && tc.points === r1.points && tc.metrics === true, 'metrics=' + tc.metrics);
+// B5c trusted Alt+左键无位移 click（真实输入链验证 2026-09-17 新触发 —— OS 级
+// 修饰键状态进 pointerdown.altKey，合成事件链之外的端到端证明）：points 不动
+const tcAlt = await trustedAltClick(kh);
+check('B5c trusted Alt+左键无位移：points 不动（contact−1nm 位零位移吸附不动 points）+ 选中保持',
+  tcAlt.probed === true && tcAlt.points === r1.points && tcAlt.metrics === true,
+  'probed=' + tcAlt.probed + ' metrics=' + tcAlt.metrics);
 // 退化零位移吸附若触发伙伴高亮（900+300ms），等淡出再进 B6 的「无伙伴」断言
 await sleep(1300);
 
-// B6 右键继续拖离远端恢复自由（中点帧 + 拖动中合成 contextmenu 一并验证被吞）
-const r4 = await dragPiece(kh, pick.R4[0] - pick.res1.tr[0], 2, true);
-check('B6a 右键拖动中合成 contextmenu 被吞（defaultPrevented，拖动照常完成）',
+// B6 Alt+左键继续拖离远端恢复自由（中点帧 + 拖动中合成 contextmenu 一并验证被吞）
+const r4 = await dragPiece(kh, pick.R4[0] - pick.res1.tr[0], 0, true, true);
+check('B6a Alt+左键拖动中合成 contextmenu 被吞（defaultPrevented，拖动照常完成）',
   r4.ctxPrevented === true, 'prevented=' + r4.ctxPrevented);
 const area4 = await metricsAreaNum();
-check('B6b 右键拖离远端恢复自由：原样落点 + 无伙伴 + 指标 0.0',
+check('B6b Alt+左键拖离远端恢复自由：原样落点 + 无伙伴 + 指标 0.0',
   r4.points === expPts(pick.R4) && !r4.partner && area4 != null && area4 < 0.05, 'area=' + area4);
 
-// B7 右键深叠松手 → retreat（DOM points == 引擎 tr）
-const rr2 = await dragPiece(kh, pick.R2[0] - pick.R4[0], 2);
+// B7 Alt+左键深叠松手 → retreat（DOM points == 引擎 tr）
+const rr2 = await dragPiece(kh, pick.R2[0] - pick.R4[0], 0, true);
 const partner2 = await page.evaluate(() => document.querySelector('[data-testid=edit-snap-partner]') !== null);
-check('B7 右键深叠松手 retreat：DOM points == 引擎 tr（回退到首个安全界）',
+check('B7 Alt+左键深叠松手 retreat：DOM points == 引擎 tr（回退到首个安全界）',
   rr2.points === expPts(pick.res2.tr),
   '回退=' + (pick.res2.tr[0] - pick.R2[0]).toFixed(3) + 'mm');
 const ov2 = overlapWithAll(rr2.points);
@@ -582,25 +619,25 @@ await page.screenshot({ path: OUT + '/b7_retreat.png' });
 await sleep(1300); // 伙伴高亮淡出，避免污染后续「无伙伴」红线断言
 
 // ---------- R 左键零回归红线段（永不吸附） ----------
-// R1 同深叠目标压线落点：原样保留、重叠 > 1000mm² 如实显示（左键永不 retreat）
+// R1 同深叠目标压线落点：原样保留、重叠 > 1000mm² 如实显示（纯左键永不 retreat）
 const rl = await dragPiece(kh, pick.R2[0] - pick.res2.tr[0], 0);
 const ovl = overlapWithAll(rl.points);
 const areal = await metricsAreaNum();
-check('R1 左键压线深叠红线：原样落点 + 重叠 > 1000mm² 如实保留 + 无伙伴（永不 retreat）',
+check('R1 纯左键压线深叠红线：原样落点 + 重叠 > 1000mm² 如实保留 + 无伙伴（永不 retreat）',
   rl.points === expPts(pick.R2) && ovl > 1000 && !rl.partner && areal != null && areal > 900,
   '重叠=' + ovl.toFixed(0) + 'mm² 指标=' + areal);
-// R2 同小缝目标落点：原样（左键永不 attract；y = 吸附链上 y，与 R1 同 x）
+// R2 同小缝目标落点：原样（纯左键永不 attract；y = 吸附链上 y，与 R1 同 x）
 const rf = await dragPiece(kh, pick.R1f[0] - pick.R2[0], 0);
 const areaf = await metricsAreaNum();
-check('R2 左键小缝红线：原样落点（attract 永不发生）+ 无伙伴 + 指标 ~0',
+check('R2 纯左键小缝红线：原样落点（attract 永不发生）+ 无伙伴 + 指标 ~0',
   rf.points === expPts(pick.R1f) && !rf.partner && areaf != null && areaf < 0.05, 'area=' + areaf);
 
 // ---------- C 末次吸附 → 保存 → 导出全精度贯通 ----------
-// C1 从 R1f（5mm 缝位）右键再推 3mm 留 2mm 缝松手 → attract 回贴（保存终态）
-const rc = await dragPiece(kh, pick.R1c[0] - pick.R1f[0], 2);
+// C1 从 R1f（5mm 缝位）Alt+左键再推 3mm 留 2mm 缝松手 → attract 回贴（保存终态）
+const rc = await dragPiece(kh, pick.R1c[0] - pick.R1f[0], 0, true);
 const partnerC = await page.evaluate(() => document.querySelector('[data-testid=edit-snap-partner]') !== null);
 const areaC = await metricsAreaNum();
-check('C1 末次右键 2mm 缝 attract 回贴：DOM points == 引擎 tr + 伙伴在案 + 指标 0.0',
+check('C1 末次 Alt+左键 2mm 缝 attract 回贴：DOM points == 引擎 tr + 伙伴在案 + 指标 0.0',
   rc.points === expPts(pick.resF.tr) && partnerC && areaC != null && areaC < 0.05,
   '吸拢=' + (pick.R1c[0] - pick.resF.tr[0]).toFixed(3) + 'mm');
 await page.screenshot({ path: OUT + '/c1_final_snap.png' });

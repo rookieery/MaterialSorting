@@ -167,7 +167,7 @@ export function penetrationDepth(a: readonly Pt[], b: readonly Pt[]): number {
 }
 
 // ============================================================
-// edit-drag-snap US-001 —— 吸附几何算子（右键拖动松手贴附的解析地基）
+// edit-drag-snap US-001 —— 吸附几何算子（贴附拖动松手贴合的解析地基；2026-09-17 起触发 = Alt+左键）
 //
 // 与后端 polish（nesting_engine/polish.py _slide_west_touch 的数值扫线）不同，这里
 // 全部**解析**求解（叉积线性方程，零迭代零 RNG）：松手吸附引擎（US-002 snap.ts 的
