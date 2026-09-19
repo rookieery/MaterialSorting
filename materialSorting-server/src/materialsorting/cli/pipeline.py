@@ -64,6 +64,12 @@ exclude_pids 扣减 / 帧前展开 / final 置换全在 solve_worker 进程内�
 按 seed 派生（crc32，跨进程可重放），同 seed 必同码。demand 守恒：exclude_pids
 移除资格码 2+2 份、PS_ 展开 4 成员条 → placed 条数 = 全量 Σdemand，完整性校验
 天然成立；双开（band+prefix）时 exclude_labels 与 exclude_pids 并存互不干扰。
+
+US-002（prd-warm-start-phase1）：``solve_pieces`` 加可选 ``initial_solution``
+（warm 载荷 = ``warmstart.build_initial_solution`` 产物纯 JSON dict）—— 纯透传
+``solve_with_callback_proc(initial_solution=...)``，本函数零校验零序列化（装载
+与校验的单一装载点在 US-003 portfolio 编排层；``json.dumps`` 与防御闸门在
+solve_worker 最终消费点）。缺省 None 时 solve 调用形与现行逐字节一致。
 """
 from __future__ import annotations
 
@@ -330,6 +336,7 @@ def solve_pieces(cfg, run_dir, *, seed: int, time_budget: int | None = None,
                  solver_opts: dict | None = None,
                  band: dict | None = None,
                  prefix: dict | None = None,
+                 initial_solution: dict | None = None,
                  artifact_suffix: str = '') -> dict:
     """配置驱动的单 seed 求解（PC-001 起进程化 + 帧轨迹落盘 + 可中止）。
 
@@ -390,6 +397,13 @@ def solve_pieces(cfg, run_dir, *, seed: int, time_budget: int | None = None,
         'front': ..., 'back': ...}``，此处转 worker 形态）；显式传
         ``{'front': ..., 'back': ...}`` 直接生效。None 且 cfg.prefix 亦空 = 现行
         行为（prefix off）。
+    initial_solution : dict | None
+        US-002（prd-warm-start-phase1）warm 载荷 ``{"strip_width": float,
+        "placed_items": [{id, rotation, translation}]}``（``warmstart.
+        build_initial_solution`` 产物，纯 JSON dict）。**纯透传** ``solve_with_callback_proc``
+        —— 本函数零校验零序列化（装载/校验的单一装载点在 US-003 portfolio
+        编排层，读冠军帧 ``best_frame_s{seed}.json`` 构造；``json.dumps`` 与防御
+        闸门在 solve_worker 最终消费点）。缺省 None = 现行行为。
     artifact_suffix : str
         轨迹产物文件名后缀（US-002 SE 延长轮传 ``'_ext'``）：curve/best_frame
         写 ``curve_s{seed}{suffix}.json`` / ``best_frame_s{seed}{suffix}.json``，
@@ -498,7 +512,7 @@ def solve_pieces(cfg, run_dir, *, seed: int, time_budget: int | None = None,
         _proc, final, elapsed, err = solve_with_callback_proc(
             pieces, gate_mm, solve_params,
             on_manifest=_on_manifest, on_report=_on_report, on_process=_on_process,
-            band=band, prefix=prefix)
+            band=band, prefix=prefix, initial_solution=initial_solution)
     finally:
         # 收口成合法 JSON 数组（KeyboardInterrupt / 求解异常 / killed 路径都走这里，
         # Ctrl-C 不留半截 curve；仅硬崩溃（进程被杀）才可能缺右括号）。

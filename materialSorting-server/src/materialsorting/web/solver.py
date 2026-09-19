@@ -26,6 +26,11 @@ additive 白名单）：``exploration_pct`` / ``quadtree_depth`` / ``num_workers
 非法值 clamp + 忽略、不传 = 现行行为原样（total_computation_time 模式自动 80/20
 分段）。solve_params 全 JSON 可序列化，Windows spawn 安全。
 
+US-002（prd-warm-start-phase1）：``solve_with_callback_proc`` 加 ``initial_solution``
+透传 —— warm 载荷（``warmstart.build_initial_solution`` 产物，纯 JSON dict）作为
+Process args 第 7 位原样进 worker（pickle 安全，不做序列化；``json.dumps`` 在
+``solve_worker`` 最终消费点做）。缺省 None 与现行逐字节一致（不碰现有分支）。
+
 US-004（策略 web 桥接）提取 ``build_pid_meta`` —— ``build_instance`` 内「demand
 判定 → per_type 覆盖 → erode/清洗 → pid_meta 构造 → total_area 累计」的裁片级
 流水线独立成纯函数（**不 import spyrrow**），web 策略 result 端点用它按 start 时
@@ -519,7 +524,7 @@ _JOIN_TIMEOUT_SEC = 5.0
 def solve_with_callback_proc(pieces_snapshot, gate_mm, solve_params, *,
                              on_manifest, on_report, on_process=None,
                              on_stage=None, drain_interval: float = 0.2,
-                             band=None, prefix=None):
+                             band=None, prefix=None, initial_solution=None):
     """多进程版求解：spawn 子进程跑 ``build_instance + solve``，主进程 drain queue 分发。
 
     与旧 ``solve_with_callback``（threading 版）的关键区别：
@@ -569,6 +574,12 @@ def solve_with_callback_proc(pieces_snapshot, gate_mm, solve_params, *,
         进程内 seeded 随机选取）。原样传给 ``solve_worker``，构造/展开/final
         置换守卫都在 worker 进程内做（``BandChunk``/pin stats 不跨进程，工件
         经 ``prefix_runs`` 落盘）。缺省 None = 关闭。
+    initial_solution : dict | None
+        **US-002（prd-warm-start-phase1）**：warm 载荷 ``{"strip_width": float,
+        "placed_items": [{id, rotation, translation}]}``（``warmstart.
+        build_initial_solution`` 产物，纯 JSON dict）。作为 Process args 第 7 位
+        **原样 dict** 传 ``solve_worker``（Windows spawn pickle 安全；``json.dumps``
+        与防御闸门都在 worker 内做，本函数零解释）。缺省 None = 现行行为。
 
     Returns
     -------
@@ -588,9 +599,11 @@ def solve_with_callback_proc(pieces_snapshot, gate_mm, solve_params, *,
     from .solve_worker import solve_worker   # 延迟 import：避免主进程 import solver 时强制拉 solve_worker
 
     result_queue: multiprocessing.Queue = multiprocessing.Queue()
+    # US-002：args 第 7 位 initial_solution（纯 JSON dict 原样；dumps 在 worker）。
     process = multiprocessing.Process(
         target=solve_worker,
-        args=(pieces_snapshot, gate_mm, solve_params, result_queue, band, prefix),
+        args=(pieces_snapshot, gate_mm, solve_params, result_queue, band, prefix,
+              initial_solution),
         name='solve_worker',
     )
     process.start()

@@ -2,16 +2,10 @@
   "branchName": "ralph/warm-start-phase1",
   "stories": [
     {
-      "id": "US-001",
-      "title": "warmstart 引擎模块（校验+序列化+能力探测）",
-      "description": "As a 排料引擎开发者，新建引擎层 warm 载荷构造模块（nesting_engine/warmstart.py），把全链路统一的 placed 列表安全转换为 spyrrow initial_solution JSON，脏数据在 Python 层 fail-fast 而非进 Rust panic。\n\n具体任务：\n1. materialsorting/nesting_engine/warmstart.py（新建）— build_initial_solution(placed, demand_map, strip_width_mm) -> dict：placed = 全链路统一格式 {id, rotation(度), translation:[x,y]}（solver 帧 / best_frame_s{seed}.json 边车 / 编辑器同构）；输出 {\"strip_width\": float, \"placed_items\": [{\"id\", \"rotation\", \"translation\"}]}（接口契约 = .docs/business/sparrow-ms侧需求规格_warm-start暴露_2026-09.md §3.2，字符串 pid，jagua 内部不外漏）。\n2. 校验矩阵全部 fail-fast ValueError（中文消息面向用户）：条目形态非法（缺键/类型错/translation 非 2 元数值）；pid 不在 demand_map；每 pid 条数 ≠ demand（完整解硬约束：sparrow restore() 不补放新片，剩余片永远不会被放上）；含 mirror: true 条目拒绝（提示「含镜像片，无法热启动」）。\n3. warm_start_supported() -> bool：importlib.metadata.version('spyrrow') 解析 +ms<N> local tag 且 N≥1 才 True（注意：纯重建 wheel 0.9.0+ms0 无 initial_solution 参数，不算支持——2026-09-19 联调前实勘发现 ms0 已装入 .venv，纯 '+ms' 子串判定会误报 True 致 worker 层硬 TypeError；此为对原 PRD AC 的修订点，待用户确认）；任何异常（包不存在等）→ False，绝不抛。\n4. demand 多副本：同 pid N 条（N == demand）合法通过；部分解（少于 demand）拒绝——与「demand>1 时 spyrrow 给同一 pid 发 N 条 placed_items」既有不变量对齐。\n5. 模块禁 import web/cli（AST 守卫随测试，对齐 tests/test_polish.py 先例）。\n\n验收标准：\n- tests/test_warmstart.py（新建）覆盖：畸形输入矩阵 / 多副本 / 部分解拒绝 / 未知 pid / mirror 拒绝 / 合法 round-trip / warm_start_supported 多态（monkeypatch version 字符串，含 +ms0 误报回归锁与 +ms1/+ms2 通过用例）。\n- python -m materialsorting.nesting_engine.warmstart 冒烟跑通（合成夹具自检 + 退出码 0，无 spyrrow 依赖）。\n- AST 分层守卫通过；pytest 全绿。",
-      "passes": true
-    },
-    {
       "id": "US-002",
       "title": "initial_solution 求解链透传（pipeline→solver→worker）",
       "description": "As a 排料引擎开发者，把 initial_solution 以 band/prefix 同款五步链模板穿透求解编排层（cli/pipeline.py → web/solver.py → web/solve_worker.py），warm 载荷能到达子进程内的 instance.solve()，缺省 None 时全链行为逐字节不变。\n\n具体任务：\n1. materialsorting/cli/pipeline.py — solve_pieces 新 kwarg initial_solution: dict | None = None。\n2. materialsorting/web/solver.py — solve_with_callback_proc 新同名 kwarg；Process args 元组追加第 7 位（Process 构造点同步）。\n3. materialsorting/web/solve_worker.py — 签名同步收第 7 位；消费：载荷在场时 json.dumps 后传 instance.solve(config, progress=..., initial_solution=...)（json.dumps 只在最终消费点做；全程纯 JSON dict，Windows spawn pickle 安全）。\n4. 防御闸门（双保险之二）：solve_worker 侧 warm_start_supported() 为 False 而载荷在场 → 丢弃载荷 + warn 降级为普通重放（不重跑、不炸轮，探测在 solve 之前）；band/prefix 与 initial_solution 同传 → 投 {kind:error}「band/prefix 与初始布局暂不支持同开」（防御性，正常编排层已拦）。\n5. 直接调 solve_worker 的既有测试桩全部同步 args 元组长度。\n\n验收标准：\n- 缺省 initial_solution=None 路径与现行完全一致（不碰现有分支）；pytest 既有求解链测试（test_solve_proc.py / test_cli_solve_pieces_proc.py 等）全绿零逻辑改动（桩长度同步除外）。\n- 新增桩测试（PyPI 0.9.0 态可跑，monkeypatch 假 spyrrow 模块）：载荷透传到位（worker 收到 json 字符串并传入 solve）/ 不支持时丢弃降级（solve 收到 initial_solution=None）/ band 同传防御 error / None 缺省零变化。\n- python -m 入口与分层依赖检查通过（web/cli 层不改 import 方向）。",
-      "passes": false
+      "passes": true
     },
     {
       "id": "US-003",

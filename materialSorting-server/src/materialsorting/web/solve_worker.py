@@ -42,6 +42,18 @@ bbox（min_x/max_x/距布尾）写进 ``prefix_runs`` 工件与 final 统计段�
 g10_32×g09_31 相交 24908mm² 完全叠死交付到 UI）。修复 = ``_frame_allowed``
 白名单只放行可行帧（ExplFeas / CmprFeas / Final），见其 docstring。
 
+US-002（prd-warm-start-phase1）：第 7 位参数 ``initial_solution`` —— warm 载荷
+（``nesting_engine.warmstart.build_initial_solution`` 产物，纯 JSON dict）经
+``cli.pipeline.solve_pieces → web.solver.solve_with_callback_proc → Process args``
+原样抵达本 worker，``json.dumps`` 只在最终消费点（``instance.solve(...,
+initial_solution=<JSON 字符串>)``）做；缺省 ``None`` 路径 solve 调用形与现行
+逐字节一致（不碰现有分支）。防御闸门（双保险之二，双保险之一 = US-003 portfolio
+编排层回退矩阵）：① band/prefix 与 initial_solution 同传 → 硬 ``{kind:error}``
+（防御性，正常编排层已拦）；② ``warm_start_supported()`` False（PyPI 0.9.0 /
+``+ms0`` 纯重建 wheel 无该参数）→ 丢弃载荷 + warn 降级为普通重放（不重跑、
+不炸轮，探测在 solve 之前）；③ 序列化失败（理论不可达 —— US-001 构造点已保证
+纯 JSON）同②降级，绝不带崩 worker。
+
 **picklable 约束（Windows spawn）**：``solve_worker`` 必须是**顶层函数**、无闭包、参数
 全部 JSON 可序列化（list/dict/float/int/str）。子进程 spawn 时会通过 pickle 重建本函数。
 """
@@ -78,8 +90,8 @@ def _frame_allowed(rtype) -> bool:
 
 
 def solve_worker(pieces_snapshot, gate_mm, solve_params, result_queue, band=None,
-                 prefix=None):
-    """子进程入口：[band] → [prefix] → build_instance → manifest → solve → frame* → final | error。
+                 prefix=None, initial_solution=None):
+    """子进程入口：[warm 闸门] → [band] → [prefix] → build_instance → manifest → solve → frame* → final | error。
 
     Parameters
     ----------
@@ -119,6 +131,16 @@ def solve_worker(pieces_snapshot, gate_mm, solve_params, result_queue, band=None
         搜索 + 兜底 seeded，见 ``_build_prefix``），构造/展开/final 置换守卫全在
         本进程（``BandChunk``/pin stats 不跨进程，回放工件经
         ``_write_prefix_artifact`` 落 ``paths.PREFIX_RUNS_DIR``）。
+    initial_solution : dict | None
+        US-002（prd-warm-start-phase1）warm 载荷 —— ``{"strip_width": float,
+        "placed_items": [{id, rotation, translation}]}`` 纯 JSON dict
+        （``warmstart.build_initial_solution`` 产物；pickle 安全，全程 dict 不做
+        序列化）。在场时经三道防御闸门（见模块 docstring「US-002」段）后
+        ``json.dumps`` 传 ``instance.solve(config, progress=...,
+        initial_solution=<JSON 字符串>)``；``warm_start_supported()`` False 或
+        序列化失败 → 丢弃 + warn 降级普通重放；与 band/prefix 同传 → 硬
+        ``{kind:error}``（不投 manifest）。缺省 None = 现行行为（solve 调用形
+        零变化）。
 
     density 双口径换算（关键不变量 #1）**不在子进程做**：子进程原样透传 sparrow 自报
     density；主进程在处理 frame 时按 ``total_area/(width*gate)`` 换算为原面积口径
@@ -129,6 +151,32 @@ def solve_worker(pieces_snapshot, gate_mm, solve_params, result_queue, band=None
     # 的开销与子进程 import 开销分离，也避免主进程 ``from .solve_worker import solve_worker``
     # 时强制 import sparrow_baseline（保持 ``__init__`` 零副作用）。
     from .solver import build_instance
+
+    # US-002（prd-warm-start-phase1）warm 载荷防御闸门（双保险之二，探测在 solve
+    # 之前；闸门序 = 组合非法硬 error 先于能力探测 —— band/prefix 同传是编排层
+    # 缺陷，静默降级会掩盖它）。``json.dumps`` 只在最终消费点做（FR-7），载荷
+    # 全程纯 JSON dict（Windows spawn pickle 安全）。
+    initial_json: str | None = None
+    if initial_solution is not None:
+        _band_on = isinstance(band, dict) and bool(band.get('label'))
+        _prefix_on = (isinstance(prefix, dict) and bool(prefix.get('front'))
+                      and bool(prefix.get('back')))
+        if _band_on or _prefix_on:
+            result_queue.put({'kind': 'error',
+                              'message': 'band/prefix 与初始布局暂不支持同开'})
+            return
+        from ..nesting_engine.warmstart import warm_start_supported
+        if not warm_start_supported():
+            _log.warning('当前 spyrrow 不支持 initial_solution（须 0.9.0+ms1+ '
+                         '私有 wheel），已丢弃热启动载荷，降级为普通重放')
+        else:
+            try:
+                initial_json = json.dumps(initial_solution)
+            except (TypeError, ValueError) as e:
+                # 理论不可达（US-001 构造点保证纯 JSON dict）—— 防御性兜底：
+                # 绝不带崩 worker，降级同上。
+                _log.warning('initial_solution 序列化失败，已丢弃热启动载荷，'
+                             '降级为普通重放: %s', e)
 
     band_chunk = None
     if isinstance(band, dict) and band.get('label'):
@@ -213,8 +261,15 @@ def solve_worker(pieces_snapshot, gate_mm, solve_params, result_queue, band=None
         # 保持空 ⇒ 对外误报「solver 返回 None」（2026-09-02 无 per_type prefix
         # 组合片贴线事故）。daemon 求解线程收不到 KeyboardInterrupt（信号只投
         # 主线程），此处捕 BaseException 不吞 Ctrl-C。
+        # US-002：warm 载荷在场才传 initial_solution 关键字（JSON 字符串，dumps
+        # 已在闸门完成）—— 缺省路径调用形与现行逐字节一致（PyPI 0.9.0 的 solve
+        # 不认该关键字，None 时绝不带它）。
         try:
-            holder['sol'] = instance.solve(config, progress=progress)
+            if initial_json is not None:
+                holder['sol'] = instance.solve(config, progress=progress,
+                                               initial_solution=initial_json)
+            else:
+                holder['sol'] = instance.solve(config, progress=progress)
         except BaseException as e:            # noqa: BLE001 见上注
             holder['err'] = f'{type(e).__name__}: {e}'
 
