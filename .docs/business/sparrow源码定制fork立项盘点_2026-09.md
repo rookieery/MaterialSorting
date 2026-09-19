@@ -70,6 +70,8 @@ spyrrow 0.9.0 (Python/pyo3 薄封装, PyPI wheel ← 我们当前用的, 2026-03
 
 ### A · warm-start 家族：真 se 顺延 / 录入初始布局 【P0 · 上游能力已存在】
 
+> **状态注记（2026-09-19，一期已落地）**：warm-start 一期全链闭环 —— spyrrow-ms 私有 fork `0.9.0+ms1` 暴露 `instance.solve(config, progress=None, initial_solution=<JSON>)`（校验 fail-fast ValueError，None 路径与上游 0.9.0 golden 对拍逐字节全等）；MS 侧 `nesting_engine/warmstart.py` 载荷构造（pid 字符串直传、demand 多副本 N 条、镜像拒绝）+ 求解链透传（pipeline→solver→worker 三闸门）+ se 延长轮真顺延（`--se-warm` 默认 on，五类回退全降级不炸轮）+ 双源切换助手 `scripts/spyrrow_wheel.py` 与 rev 钉板。端到端实测：延长轮 restore 起点宽度与灌入 strip_width 精确全等（delta=0.0000mm）、placed 守恒==Σdemand。A/B 判据与验收记录见 `.docs/business/warm-start一期AB验收报告_2026-09.md`。② 之「编辑器录入初始布局」入口未做（一期范围 = se 顺延单场景）。
+
 **本轮最重要的发现**：sparrow lib 的求解入口签名（`sparrow/src/main.rs:111-119`）：
 
 ```rust

@@ -121,3 +121,26 @@
 - se A/B 判据线 −0.1pt 是否合适？（US-005 实测后裁决；过松/过紧可在此调）
 - US-005 时序：spyrrow-ms 侧 wheel 何时交付由用户排期 —— US-001~004 不被阻塞，先行合入；US-005 作为独立验收迭代挂起等待。
 - warm 默认 on 若 A/B 不达标翻 off 后，是否保留「每 N 版复测」的复查机制？（暂不定，验收时看漂移幅度）
+
+---
+
+## 验证速查（US-005 集成验收执行记录，2026-09-19）
+
+> 装载态：MS `.venv` = spyrrow `0.9.0+ms1`（钉板 `materialSorting-server/spyrrow_build.json` 同步一致）。
+> 判据与数据归档：[`.docs/business/warm-start一期AB验收报告_2026-09.md`](../.docs/business/warm-start一期AB验收报告_2026-09.md)。
+
+| # | 验证项 | 命令 | 判据 / 结果 |
+|---|--------|------|------------|
+| 1 | 双源状态 + warm 能力 | `.venv/Scripts/python.exe scripts/spyrrow_wheel.py status` | 已装 0.9.0+ms1、私有源、`warm_start_supported() = True`、钉板一致 ✓ |
+| 2 | warmstart 合成夹具冒烟 | `.venv/Scripts/python.exe -m materialsorting.nesting_engine.warmstart` | 全项 ok + PASS exit 0 ✓ |
+| 3 | warm 端到端（最小预算 se） | `.venv/Scripts/ms-run-config.exe data/configs/5336_coded_really.json --strategy se --time 275 --se-warm on --name warm_e2e --quiet` | strategy.json/result `warm: true`、延长轮首帧宽度 delta=0.0000mm（判据 ±1mm）、末帧 placed 119==Σdemand、run_stats 行 additive warm ✓ |
+| 4 | se A/B 判据 | 同命令 `--time 600 --se-warm {on,off}` 各 ≥3 次（实测 on×5 / off×6，11 轮） | on 90.4784%（零方差×5） vs off 均值 90.4185% = **+0.0599pt ≥ −0.1pt → 保默认 on** ✓ |
+| 5 | 背靠背确定性 | 对拍两轮 `curve_s{冠军}_ext.json` 语义轨迹（phase/density/width） | 三对 on 轮 5 帧逐帧全等 ✓ |
+| 6 | spyrrow-ms 侧直调（参考） | spyrrow-ms `.venv/Scripts/python.exe -m pytest tests -q` | 16 passed（上游 13 + warmstart 3）✓ |
+| 7 | prefix_accept 复跑 | `.venv/Scripts/python.exe -m materialsorting.web.prefix_accept --seeds 0,1 --time 30 --intermediate <5336 run_dir>/pieces_intermediate.json` | accept（①−0.026pt ②2/2 ③确定性全等 ④无泄漏）✓ |
+| 8 | pytest 全量 | `cd materialSorting-server && ../.venv/Scripts/python.exe -m pytest -q` | **1056 passed**（修复 test_spyrrow_wheel 2 例钉板环境耦合：加 `_pin` 临时钉板 mock）✓ |
+| 9 | vitest 全量 | `cd materialSorting-web && npx vitest run` | **71 files / 1217 tests passed**（前端零改动）✓ |
+| 10 | 模块导入/入口 | `python -c "import materialsorting"`（包内 warmstart/pipeline/portfolio/solve_worker 均随 pytest 全量覆盖导入） | ✓ |
+
+- 0a 前置 gate（验收标准 1）：已归档 PASS 直接引用（`.docs/technical/0a行为全等对拍_spyrrow私有wheel_2026-09.md` + spyrrow-ms `0a-exit-gate_2026-09.md` §4/§5）；ms1 None 路径另有 golden 逐字节全等双保险（spyrrow-ms `tests/test_warmstart.py::test_none_path_matches_0a_baseline`）。
+- 运维注记：web 8000 在线后端跑系统 Python（PyPI 0.9.0），与 MS `.venv` 隔离；切回 PyPI 用 `scripts/spyrrow_wheel.py use-pypi`。

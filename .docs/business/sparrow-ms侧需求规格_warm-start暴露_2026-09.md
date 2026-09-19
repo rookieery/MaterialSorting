@@ -1,7 +1,7 @@
 # spyrrow-ms 侧需求规格：私有 wheel 流水线 + initial_solution 暴露（warm-start 一期）
 
 - **日期**：2026-09-07
-- **交付方式**：本文档为 **`D:\code\spyrrow-ms` 项目（待建）的需求规格**，实现工作在该项目进行；本文档在 MaterialSorting 仓库留档作为跨项目契约的单一真相源。MS 侧对接范围见 [tasks/prd-warm-start-phase1.md](../../tasks/prd-warm-start-phase1.md)。
+- **交付方式**：本文档是**跨项目契约的单一真相源**（MaterialSorting 仓留档）；`D:\code\spyrrow-ms` 仓 `.docs/business/` 同名文档为工作副本（随实施进度同步状态注记），两侧同步、契约变更以本仓版本为准。MS 侧对接范围见 [tasks/prd-warm-start-phase1.md](../../tasks/prd-warm-start-phase1.md)。
 - **背景**：[sparrow源码定制fork立项盘点_2026-09.md](sparrow源码定制fork立项盘点_2026-09.md) §2.A + §2.0。用户定案：基线 rev 锚 **881cdcbd**（与现行 PyPI wheel 算法全等，A 纯 additive；0.2.0 升级另立后续项）；工程布局 = 项目外兄弟仓（`D:\code\spyrrow-ms` fork + `D:\code\sparrow-ms` 镜像 clone），MaterialSorting 仓库只持双源切换助手与 rev 钉板。
 - **证据基础**：上游源码存档 `out/mirror_experiment/upstream/`（17 个 .rs + 2 个 Cargo.toml，MaterialSorting 仓库内）。本文引用的事实（F1–F4）全部有存档出处，非推测。
 
@@ -26,6 +26,8 @@
 
 ### 2.1 工具链（本机全缺，一次性安装）
 
+> **状态（2026-09-07，US-001）**：已全部装毕并验证（rustc 1.98.1 / VS Build Tools MSVC 14.44 / maturin 1.15.0 / sparrow-ms clone @881cdcbd）；重建步骤见 spyrrow-ms 仓 `technical/toolchain-setup_2026-09.md`。
+
 - **rustup**：经 rsproxy 镜像安装 stable 最新（`RUSTUP_DIST_SERVER=https://rsproxy.cn`、`RUSTUP_UPDATE_ROOT=https://rsproxy.cn/rustup`；sparrow 0.1.0 世代 edition 2024 需 ≥1.85）。
 - **VS Build Tools 2022**：C++ workload（link.exe；winget 或官网，数 GB 下载）。
 - **maturin**：`pip install maturin`（清华源）。
@@ -39,10 +41,14 @@
 
 ### 2.3 构建与版本
 
+> **状态（2026-09-07，US-002）**：path dep 改造 + `0.9.0+ms0` wheel 已产出并装入 spyrrow-ms 本仓 `.venv`（版本串验证通过，上游 13 测试零改动全绿）；0a 整段关账见 §2.4 状态注（US-003 已关账 PASS）。
+
 - `maturin build --release` → wheel 版本号 `0.9.0+ms0`（PEP 440 local tag，构建脚本注入；MS 侧 `warm_start_supported()` 以 `+ms` 子串判定，见 prd US-001 —— **local tag 命名是跨项目契约，勿改**）。
 - 安装到 MS 的 `.venv`：`pip install --force-reinstall <wheel>`（或经 MS 侧 `scripts/spyrrow_wheel.py use-local`）。
 
 ### 2.4 验收 gate（0a 出口）
+
+> **状态（2026-09-19，US-003 关账）**：**PASS** —— 行为全等对拍三跑 best 全等（PyPI 0.9.0 基线 / ms0 背靠背 ×2，5336 `--time 30 --seeds 0` real_density 0.880385 五字段全等、curve 152 帧语义轨迹逐帧全等），台账见 spyrrow-ms 仓 `technical/0a-exit-gate_2026-09.md`；MS 侧对拍记录归档 `.docs/technical/0a行为全等对拍_spyrrow私有wheel_2026-09.md`。止损点维持「立项成立」。MS .venv 对拍后恢复 ms0 态、2026-09-19 起 ms1（见 §3.2）。
 
 1. **行为全等对拍**：MS 侧同 seed 同短预算 CLI 求解（5336 `--time 30 --seeds 0`），best density 与 PyPI 0.9.0 一致（同 rev 同算法，期望 density 全等；帧级允许既有 num_workers=4 漂移口径）+ 新 wheel 背靠背两次自身逐帧一致。
 2. MS 侧全量回归：pytest + vitest 全绿（执行入口与判据归 MS 侧 US-005，本文档只要求 wheel 可用）。
@@ -52,9 +58,13 @@
 
 ### 3.1 A1.0 前置核实（首个任务，半天）
 
+> **状态（2026-09-07，US-004）**：核实完成，结论归档 spyrrow-ms 仓 `technical/jagua-import-fault-tolerance_2026-09.md` —— item_id 越界 = unwrap **panic**；demand 不符 / 重叠输入 = release **静默容忍**（无任何校验）⇒ 3.3 两层前置校验不可减负；占位字段（`container_id`/`density`/`run_time_sec`）不被 `import_solution` 消费，US-005 填 0 安全。
+
 抓 jagua-rs 0.7.0 源码包（rsproxy `cargo fetch` 后读 registry 缓存，或 crates.io 镜像直接下 .crate）读 `probs/spp/io/import.rs`（2866B），核实：item_id 越界 / demand 不符 / 重叠输入时 `import_solution` 是 panic 还是容忍。结论决定 3.3 校验放几层（pyo3 把 Rust panic 转 `PanicException`（BaseException 系），MS 侧已 `except BaseException` 兜 —— 但 **Python 层校验前置是主防线**，不让脏数据进 Rust）。
 
 ### 3.2 接口形态（跨项目契约，MS 侧按此对接）
+
+> **状态（2026-09-19，US-005/US-006 实装 + MS 侧已对接）**：A1 已落地并交付 —— `solve` 第三关键字参数 `initial_solution: Option<String>`（`#[pyo3(signature = (config, progress=None, initial_solution=None))]`）、`parse_initial_solution` 第二道校验闸（JSON 解析 / strip_width 正有限 / 未知 id / 每 id 条数≠demand → ValueError）、`ExtSPSolution` 组装（占位字段零填）→ `import_solution` → `optimize(..., Some(&sol))`；`.pyi` 同步；`Cargo.toml` 0.9.0+ms1。红线证据 = None 路径 golden 对拍逐字节全等（ms1 不传参 == ms0 基线）+ 上游 13 测试零改动全绿。**MS 侧已对接（2026-09-19 集成验收）**：ms1 wheel 经 `scripts/spyrrow_wheel.py use-local` 入 MS `.venv`（`warm_start_supported() = True`，钉板 `materialSorting-server/spyrrow_build.json` 同步），se 延长轮真顺延端到端通过（restore 起点宽度 == 灌入 strip_width 精确全等、placed 守恒==Σdemand），A/B 判据记录见 `.docs/business/warm-start一期AB验收报告_2026-09.md`。台账见 spyrrow-ms 仓 `technical/0a-exit-gate_2026-09.md` §7。
 
 `solve` 增第三个关键字参数（additive，默认 None）：
 
@@ -76,6 +86,8 @@ instance.solve(config, progress=None, initial_solution: Optional[str] = None)
 - `initial_solution=None` 路径与上游 0.9.0 完全一致（不碰现有分支，红线）。
 
 ### 3.4 验证
+
+> **状态（2026-09-19，US-006 + MS US-005）**：spyrrow-ms 直调测试 `tests/test_warmstart.py` 3 用例全绿 —— (a) progress queue 首报宽度 ≈ 灌入 strip_width（实测精确全等，±1e-3 容差）；(b) placed 条数守恒 == Σdemand；(c) None 路径 == 0a 基线 golden（hardcode 固化，逐字段全等）；错误路径 4 例全 ValueError。MS `.venv` 端到端（se 延长轮真顺延 + 全量回归）已在 MS 侧 US-005 同日执行通过。
 
 1. Python 直调最小验证（该仓内测试）：2 片小实例求解 → 解转 JSON 灌入再求解 → 断言 (a) 首帧宽度 ≈ 灌入 strip_width（续跑语义，F3）(b) placed 条数守恒 == Σdemand (c) 不传参数行为与 0a 基线一致。
 2. 冒烟：MS `.venv` 换新 wheel 后跑 0a.4 同款对拍（MS 侧 US-005 执行）。

@@ -1,11 +1,4 @@
 {
   "branchName": "ralph/warm-start-phase1",
-  "stories": [
-    {
-      "id": "US-005",
-      "title": "集成验收与文档收官（依赖 ms1 wheel 交付）",
-      "description": "As a 排料策略维护者，在 spyrrow-ms 私有 wheel（0.9.0+ms1，含 A1 initial_solution 暴露）装入 .venv 后做行为全等对拍 + se A/B 实测 + 全量回归 + 文档收官，warm 真顺延有实测数据背书、默认 on/off 有判据裁决、跨项目链路端到端闭环。本 Story 在 spyrrow-ms 侧 US-005/006（A1 pyo3 暴露 + ms1 wheel）交付前保持开放不阻塞合入——对齐 spyrrow-ms 侧 US-003 blocked-open 先例。\n\n验收标准：\n1. 前置 gate（0a 行为全等，MS 侧执行）：本地 wheel 不传 initial_solution 与 PyPI 0.9.0 同 seed 同短预算对拍（5336 --time 30 --seeds 0），best density 一致（基线与对拍须同窗口背靠背跑，跨会话漂移 ±0.2~5pt 口径不可用历史记录当基线；若 0a 联调已单独先行执行并归档则直接引用结论）+ 背靠背自身逐帧确定。\n2. warm 端到端：真 ms1 wheel 下 se 延长轮灌入成功（strategy.json warm: true），末帧 placed 条数守恒 == Σdemand，首帧宽度 ≈ 灌入 strip_width（续跑语义）±1mm。\n3. se A/B 判据：5336 同总预算 --strategy se --time 600 warm on vs off 各 ≥3 次取均值，warm ≥ replay − 0.1pt 才保默认 on，否则翻默认 off 保留旗标（结论入档）；背靠背确定性双跑（同 warm 输入 ⇒ restore 后轨迹确定，逐帧一致）。\n4. 既有验收复跑：python -m materialsorting.web.prefix_accept --seeds 0,1 --time 30 accept 不劣化；pytest 全量 + vitest 全量全绿（本轮 web 前端零改动，vitest 预期不动）。\n5. 文档收官：CLAUDE.md「关键技术决策」sparrow 条目改「spyrrow-ms 私有 fork 单一真相源（起步锚 881cdcbd，双源安装态切换，0.2.0 升级独立后续项）」+ solver/pipeline 段注记 initial_solution 通道；盘点文档 .docs/business/sparrow源码定制fork立项盘点_2026-09.md §2.A 增一期落地状态注记；.docs/technical/agent-file-map.md 增 warmstart.py 行 + portfolio/pipeline/solve_worker 行注记；sparrow-ms 侧规格文档补「MS 侧已对接」状态。\n6. 全部验证命令记入本 PRD 附带的验证速查（对齐既有 PRD 惯例）；模块导入/入口检查通过。",
-      "passes": false
-    }
-  ]
+  "stories": []
 }

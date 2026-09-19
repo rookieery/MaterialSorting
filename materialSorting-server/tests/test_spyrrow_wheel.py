@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import importlib.metadata
 import importlib.util
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -146,9 +147,23 @@ def test_use_local_wrong_distribution(sw, capsys, no_pip, tmp_path):
 
 # ------------------------------------------------- use-local / use-pypi 桩剧本
 
+def _pin(sw, monkeypatch, tmp_path, wheel_version):
+    """把钉板 mock 成临时文件（钉板是仓库真实状态 —— ms1 交付后与测试剧本
+    写死的 ms0 态脱钩，不 mock 会环境耦合误报；对齐 no_pip/_FakeRun 桩套路）。"""
+    pin = tmp_path / 'spyrrow_build.json'
+    pin.write_text(json.dumps({
+        'spyrrow_ms_commit': '0' * 40,
+        'sparrow_rev': '881cdcbd' + '0' * 32,
+        'wheel_version': wheel_version,
+        'built_at': '2026-09-19T00:00:00+08:00',
+    }), encoding='utf-8')
+    monkeypatch.setattr(sw, 'PIN_PATH', pin)
+
+
 def test_use_local_happy_path_and_pin_prompt(sw, capsys, monkeypatch, tmp_path):
     wheel = tmp_path / 'spyrrow-0.9.0+ms1-cp311-cp311-win_amd64.whl'
     wheel.write_bytes(b'')
+    _pin(sw, monkeypatch, tmp_path, '0.9.0+ms0')       # 钉板旧 → 装 ms1 漂移提示
     fake = _FakeRun(rc=0)
     monkeypatch.setattr(subprocess, 'run', fake)
     monkeypatch.setattr(importlib.metadata, 'version',
@@ -169,6 +184,7 @@ def test_use_local_happy_path_and_pin_prompt(sw, capsys, monkeypatch, tmp_path):
 def test_use_local_same_version_no_prompt(sw, capsys, monkeypatch, tmp_path):
     wheel = tmp_path / 'spyrrow-0.9.0+ms0-cp311-cp311-win_amd64.whl'
     wheel.write_bytes(b'')
+    _pin(sw, monkeypatch, tmp_path, '0.9.0+ms0')       # 钉板同版 → 一致无提示
     monkeypatch.setattr(subprocess, 'run', _FakeRun(rc=0))
     monkeypatch.setattr(importlib.metadata, 'version',
                         lambda name: '0.9.0+ms0' if name == 'spyrrow' else '?')
