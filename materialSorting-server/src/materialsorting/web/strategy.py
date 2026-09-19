@@ -322,12 +322,18 @@ def _kill_tree(pid) -> None:
 
 
 def _spawn_run_process(cmd: list[str], stderr_path: str):
-    """spawn CLI 子进程（stdout=DEVNULL、stderr=临时文件；测试 monkeypatch 点）。"""
+    """spawn CLI 子进程（stdout 并入 stderr 临时文件；测试 monkeypatch 点）。
+
+    stdout 一并进 err_f（2026-09-19 warm 回退排查补的观测面）：spawn 恒带
+    ``--quiet``，stdout 只剩 ``notify`` 无条件行（race 门杀 / se 延长轮 warm
+    回退 / θ 衰减），此前进 DEVNULL 全被吞 —— ``_stderr_tail`` 在 error 路径
+    能带出这几行，事后可诊断「为什么延长轮在重放」。
+    """
     kwargs: dict = {}
     if os.name != 'nt':
         kwargs['start_new_session'] = True   # 独立进程组 → stop 走 killpg 树杀
     with open(stderr_path, 'w', encoding='utf-8') as err_f:
-        return subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=err_f,
+        return subprocess.Popen(cmd, stdout=err_f, stderr=err_f,
                                 **kwargs)
 
 
@@ -491,7 +497,15 @@ def _discover_run_dir(st: dict) -> str | None:
 
 
 def _parse_plan(run_dir):
-    """strategy.json → plan 摘要（planned_seeds + race.gate_seconds | se 三键）。"""
+    """strategy.json → plan 摘要（planned_seeds + race.gate_seconds | se 三键）。
+
+    US-003 warm 计划态透传（2026-09-19 事故排查补的可观测面）：strategy.json
+    ``se.warm`` / ``se.warm_reason`` 从 run 启动即在盘上（三类前置回退
+    off/unsupported/band_prefix_on 开跑前已判定）—— 前端弹窗据此第一时间显示
+    「延长轮将回退重放 + 原因」，而不是等用户看延长 pill 从零爬坡猜链路（本次
+    事故：band+prefix 双开 → band_prefix_on 回退，UI 无任何提示）。旧 run /
+    race / legacy 无这两键 → 不加键（前端隐藏）。
+    """
     if not run_dir:
         return None
     sj = _read_json(Path(run_dir) / 'strategy.json')
@@ -504,6 +518,10 @@ def _parse_plan(run_dir):
         plan.update({'k_screens': sj['se'].get('k_screens'),
                      'screen_s': sj['se'].get('screen_s'),
                      'ext_s': sj['se'].get('ext_s')})
+        if sj['se'].get('warm') is not None:
+            plan['warm'] = bool(sj['se'].get('warm'))
+            if sj['se'].get('warm_reason'):
+                plan['warm_reason'] = sj['se'].get('warm_reason')
     return plan
 
 
@@ -1138,6 +1156,14 @@ async def _result_common(req: Request, label: str):
         summary['race'] = portfolio['race']
     if portfolio.get('se') is not None:
         summary['se'] = portfolio['se']
+    # US-003 warm 实际灌入态（result.json config.strategy 回显，延长轮跑过才有键）
+    # → 结果态汇总行（计划态/实际态可能不同：no_best_frame / invalid_best_frame
+    # 两类装载点回退只在延长轮开跑时才知道 —— 结果态以实际为准）。
+    strat_cfg = ((result_json or {}).get('config') or {}).get('strategy')
+    if isinstance(strat_cfg, dict) and strat_cfg.get('warm') is not None:
+        summary['warm'] = bool(strat_cfg.get('warm'))
+        if strat_cfg.get('warm_reason'):
+            summary['warm_reason'] = strat_cfg.get('warm_reason')
 
     payload = {'state': st.get('state'), 'mode': st.get('mode'),
                'run_dir': run_dir, 'manifest': manifest,

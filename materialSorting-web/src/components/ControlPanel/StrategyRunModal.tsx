@@ -220,6 +220,45 @@ export function fmtLastEvent(ev: StrategyEvent | undefined): string {
   return `seed ${ev.seed} ${ev.killed ? '被淘汰' : '完成'} · ${fmtDensity(ev.best_density)}`;
 }
 
+// ------------------------------------------------- SE 延长轮 warm 状态（2026-09-19）
+
+/** warm 回退原因（后端 SE_WARM_REASONS 枚举）→ 中文文案。 */
+export const WARM_REASON_TEXT: Record<string, string> = {
+  off: '已手动关闭（--se-warm off）',
+  unsupported: '当前 spyrrow wheel 不支持热启动（须 0.9.0+ms1 私有 wheel）',
+  band_prefix_on: '腰头成带 / 起始端成套开启，热启动暂不支持同开',
+  no_best_frame: '冠军解边车缺失',
+  invalid_best_frame: '冠军解校验失败',
+};
+
+/** 回退原因 → 中文（未知枚举原样透出，不吞诊断信息）。 */
+export function warmReasonText(reason: string | null | undefined): string {
+  if (!reason) return '未知原因';
+  return WARM_REASON_TEXT[reason] ?? reason;
+}
+
+/**
+ * 进度态 warm 状态行文案（mode=se 才有；null = 不显示）：
+ * 计划回退（plan.warm=false）→ ⚠ 常显警告（起跑即知，不等延长 pill 从零爬坡
+ * 才起疑）；计划真顺延 → 仅延长阶段（current.ext）显示正向标注，筛选期不占版面。
+ */
+export function warmProgressNote(
+  status: StrategyStatus | null,
+): { text: string; warning: boolean } | null {
+  if (!status || status.mode !== 'se') return null;
+  const warm = status.plan?.warm;
+  if (warm === false) {
+    return {
+      text: `⚠ 延长轮回退重放：${warmReasonText(status.plan?.warm_reason)}`,
+      warning: true,
+    };
+  }
+  if (warm === true && status.current?.ext) {
+    return { text: '延长轮 warm 真顺延（自冠军解热启动，密度起点 = 冠军水平）', warning: false };
+  }
+  return null;
+}
+
 // ------------------------------------------------------------- 组件
 
 export interface StrategyRunModalProps {
@@ -393,8 +432,13 @@ function ConfigState({
 }: ConfigStateProps): JSX.Element {
   const desc = MODE_OPTIONS.find((o) => o.value === mode)?.desc ?? '';
   // 未选码号（与 handleStart sizes 非空校验同源）—— 后端对空 sizes 400，前置禁用。
-  const sizesEmpty = buildStartContext().sizes.length === 0;
+  const ctx = buildStartContext();
+  const sizesEmpty = ctx.sizes.length === 0;
   const execDisabled = solving || sizesEmpty;
+  // SE + band/prefix 开 → 延长轮 warm 必回退（与后端 se_warm_plan 同判据的事前
+  // 预告，2026-09-19 排查事故补的预防提示：起跑前就知道延长段是重放）。
+  const seWarmBlocked =
+    mode === 'se' && ((ctx.band?.enabled ?? false) || (ctx.prefix?.enabled ?? false));
   return (
     <>
       <div className="strategy-field">
@@ -432,6 +476,11 @@ function ConfigState({
       <div className="strategy-mode-desc" data-testid="strategy-mode-desc">
         {desc}
       </div>
+      {seWarmBlocked && (
+        <div className="strategy-warning" data-testid="strategy-se-warm-blocked">
+          ⚠ 腰头成带 / 起始端成套开启时，SE 延长轮将回退重放（warm 热启动暂不支持同开）
+        </div>
+      )}
       <div className="strategy-hint" data-testid="strategy-min-hint">
         10 分钟档两模式与均分打平，20 分钟起有增益
       </div>
@@ -515,6 +564,18 @@ export function ProgressState({ status, onStop, modeLabel }: ProgressStateProps)
       <div className="strategy-stage-line" data-testid="strategy-stage">
         {stageText}
       </div>
+      {(() => {
+        // SE warm 状态行（2026-09-19）：计划回退 ⚠ 常显 / 真顺延仅延长阶段正向标注。
+        const note = warmProgressNote(status);
+        return note === null ? null : (
+          <div
+            className={note.warning ? 'strategy-warning' : 'strategy-hint'}
+            data-testid="strategy-warm-note"
+          >
+            {note.text}
+          </div>
+        );
+      })()}
       <div className="strategy-seed-chips" data-testid="strategy-seed-chips">
         {chips.length === 0 ? (
           <span className="strategy-chip pending">seed 队列待 plan…</span>
@@ -588,6 +649,13 @@ export function ResultState({
     modeSummary = `SE：${result.summary.se.k_screens} 轮筛选 + 冠军 seed ${
       result.summary.se.champion ?? '—'
     } 延长 ${Math.round(result.summary.se.ext_s)}s`;
+    // warm 实际灌入态（config.strategy 回显；延长轮跑过才有键）—— 回退时如实
+    // 说明原因，顺延时一句正向确认（2026-09-19 排查事故补的可观测面）。
+    if (result.summary.warm === false) {
+      modeSummary += ` · warm 回退（${warmReasonText(result.summary.warm_reason)}）`;
+    } else if (result.summary.warm === true) {
+      modeSummary += ' · warm 真顺延';
+    }
   } else {
     modeSummary = `共 ${perSeed.length} 轮`;
   }

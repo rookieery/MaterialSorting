@@ -146,9 +146,13 @@ def _write_run_dir(tmp_path: Path, name='web_race_abc123_20260820-120000') -> Pa
     (run_dir / 'strategy.json').write_text(json.dumps({
         'mode': 'se', 'total_budget': 600, 'planned_seeds': [0, 1, 2],
         'started_at': '2026-08-20T12:00:00',
-        'se': {'k_screens': 3, 'screen_s': 90, 'ext_s': 180},
+        'se': {'k_screens': 3, 'screen_s': 90, 'ext_s': 180,
+               'warm': False, 'warm_reason': 'band_prefix_on'},
     }), encoding='utf-8')
     (run_dir / 'result.json').write_text(json.dumps({
+        'config': {'strategy': {'mode': 'se', 'se_screen': 90.0,
+                                'se_extend': 180.0, 'warm': False,
+                                'warm_reason': 'band_prefix_on'}},
         'portfolio': {
             'mode': 'se',
             'incumbent': {'density': 0.88, 'width_mm': 7100.5, 'seed': 1,
@@ -525,6 +529,10 @@ def test_status_run_dir_discovery_and_plan(strat_env):
     assert payload['plan']['planned_seeds'] == [0, 1, 2]
     assert payload['plan']['k_screens'] == 3
     assert payload['plan']['screen_s'] == 90 and payload['plan']['ext_s'] == 180
+    # warm 计划态透传（2026-09-19 排查事故补的可观测面）：band_prefix_on 回退
+    # 从 run 启动即在 strategy.json 上，前端据此第一时间显示「延长轮将回退重放」。
+    assert payload['plan']['warm'] is False
+    assert payload['plan']['warm_reason'] == 'band_prefix_on'
     assert payload['mode'] == 'race' and payload['total_budget_sec'] == 600
     assert payload['elapsed_sec'] >= 0.0
 
@@ -716,6 +724,9 @@ def test_result_manifest_parity_with_build_pid_meta(strat_env, monkeypatch):
     # summary：per_seed + mode 段透传。
     assert payload['summary']['mode'] == 'se'
     assert [e['seed'] for e in payload['summary']['per_seed']] == [0, 1]
+    # warm 实际灌入态透传（result.json config.strategy 回显 → 前端结果态汇总行）。
+    assert payload['summary']['warm'] is False
+    assert payload['summary']['warm_reason'] == 'band_prefix_on'
 
 
 def test_result_doc_id_drift_warning(strat_env, monkeypatch):

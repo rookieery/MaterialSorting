@@ -95,7 +95,11 @@ export interface ExtremeStartPayload {
   prefix?: PrefixConfig | null;
 }
 
-/** strategy.json → plan 摘要（race 带 gate_seconds；se 带 k_screens/screen_s/ext_s）。 */
+/**
+ * strategy.json → plan 摘要（race 带 gate_seconds；se 带 k_screens/screen_s/ext_s
+ * + warm 计划态两键 —— run 启动即在盘，三类前置回退 off/unsupported/
+ * band_prefix_on 开跑前已判定，弹窗进度态第一时间提示「延长轮将回退重放」）。
+ */
 export interface StrategyPlan {
   planned_seeds?: number[] | null;
   /** race：门时刻（秒，= race_budget × gate_tau，默认 180×0.5=90）。 */
@@ -104,6 +108,10 @@ export interface StrategyPlan {
   k_screens?: number | null;
   screen_s?: number | null;
   ext_s?: number | null;
+  /** se：延长轮 warm 热启动计划态（strategy.json se.warm；旧 run / race 无键）。 */
+  warm?: boolean | null;
+  /** se：warm 计划回退原因（warm=false 时在場，SE_WARM_REASONS 枚举）。 */
+  warm_reason?: string | null;
 }
 
 /** result.json portfolio.incumbent 摘要（status 控载荷，无 placed_items）。 */
@@ -203,12 +211,19 @@ export interface StrategySeSummary {
   champion: number | null;
 }
 
-/** result.json portfolio 段摘要（per_seed + mode + 模式子段）。 */
+/** result.json portfolio 段摘要（per_seed + mode + 模式子段 + warm 实际态两键）。 */
 export interface StrategySummary {
   per_seed: StrategyPerSeedEntry[];
   mode: StrategyMode | null;
   race?: StrategyRaceSummary;
   se?: StrategySeSummary;
+  /**
+   * se 延长轮 warm 实际灌入态（result.json config.strategy 回显；延长轮跑过
+   * 才有键 —— 计划态/实际态可能不同：no_best_frame / invalid_best_frame
+   * 装载点回退只在延长轮开跑时才知道，结果态以实际为准）。
+   */
+  warm?: boolean | null;
+  warm_reason?: string | null;
 }
 
 /** result 端点 manifest（与 /ws/solve manifest 同构：start 时快照口径 build_pid_meta）。 */

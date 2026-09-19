@@ -464,4 +464,107 @@ describe('StrategyRunModal (US-005)', () => {
     });
     expect(stopCalls).toBe(1);
   });
+
+  // ------------------------------------------- SE 延长轮 warm 状态（2026-09-19）
+
+  it('配置态：SE + band/prefix 开 → warm 互斥预告在场；race 或双关 → 不在场', () => {
+    // SE + band 开 → 预告（与后端 se_warm_plan 同判据：band_prefix_on 必回退）。
+    openModal();
+    renderModal(false, { ...CTX, band: { enabled: true, label: 'g05' } });
+    act(() => {
+      setSelectValue(document.body.querySelector<HTMLSelectElement>('[data-testid="strategy-mode"]')!, 'se');
+    });
+    expect(document.body.querySelector('[data-testid="strategy-se-warm-blocked"]')!.textContent)
+      .toContain('SE 延长轮将回退重放');
+
+    // race + band 开 → 无预告（race 无 warm 概念）。
+    act(() => {
+      setSelectValue(document.body.querySelector<HTMLSelectElement>('[data-testid="strategy-mode"]')!, 'race');
+    });
+    expect(document.body.querySelector('[data-testid="strategy-se-warm-blocked"]')).toBeNull();
+
+    // SE + 双关 → 无预告（warm 可用；同组件 key 下 mode 本地态保持 se）。
+    act(() => {
+      setSelectValue(document.body.querySelector<HTMLSelectElement>('[data-testid="strategy-mode"]')!, 'se');
+    });
+    act(() => {
+      root!.render(<StrategyRunModal solving={false} buildStartContext={() => CTX} />);
+    });
+    expect(document.body.querySelector('[data-testid="strategy-se-warm-blocked"]')).toBeNull();
+  });
+
+  it('进度态：SE plan.warm=false → ⚠ 回退警告常显（带原因）；plan.warm=true 延长中 → 真顺延标注', () => {
+    openModal();
+    renderModal();
+    // 回退：band_prefix_on → ⚠ 行（warning 样式）。
+    setPhase({
+      phase: 'running',
+      status: { ...SE_EXT, plan: { ...SE_EXT.plan!, warm: false, warm_reason: 'band_prefix_on' } },
+    });
+    const note = document.body.querySelector('[data-testid="strategy-warm-note"]')!;
+    expect(note.textContent).toContain('延长轮回退重放');
+    expect(note.textContent).toContain('腰头成带 / 起始端成套开启');
+    expect(note.className).toContain('strategy-warning');
+
+    // 真顺延：延长阶段 → 正向标注（hint 样式，不警示）。
+    setPhase({
+      phase: 'running',
+      status: { ...SE_EXT, plan: { ...SE_EXT.plan!, warm: true } },
+    });
+    const ok = document.body.querySelector('[data-testid="strategy-warm-note"]')!;
+    expect(ok.textContent).toContain('真顺延');
+    expect(ok.className).toContain('strategy-hint');
+
+    // 真顺延但仍在筛选期 → 不占版面（无 warm 行）。
+    setPhase({
+      phase: 'running',
+      status: {
+        ...SE_EXT,
+        plan: { ...SE_EXT.plan!, warm: true },
+        current: { seed: 1, density: 0.85, density_sparrow: 0.87, ext: false },
+        events: [],
+      },
+    });
+    expect(document.body.querySelector('[data-testid="strategy-warm-note"]')).toBeNull();
+  });
+
+  it('结果态：SE summary.warm=false → 汇总行带回退原因；warm=true → 真顺延', () => {
+    openModal();
+    renderModal();
+    setPhase({ phase: 'done', status: { ...SE_EXT, state: 'done' } });
+    act(() => {
+      useStrategyStore.setState({
+        result: {
+          ...DONE_RESULT,
+          mode: 'se',
+          summary: {
+            per_seed: DONE_RESULT.summary.per_seed,
+            mode: 'se',
+            se: { k_screens: 4, screen_s: 90, ext_s: 180, champion: 1 },
+            warm: false,
+            warm_reason: 'band_prefix_on',
+          },
+        },
+      });
+    });
+    expect(document.body.querySelector('[data-testid="strategy-mode-summary"]')!.textContent)
+      .toContain('warm 回退（腰头成带 / 起始端成套开启，热启动暂不支持同开）');
+
+    act(() => {
+      useStrategyStore.setState({
+        result: {
+          ...DONE_RESULT,
+          mode: 'se',
+          summary: {
+            per_seed: DONE_RESULT.summary.per_seed,
+            mode: 'se',
+            se: { k_screens: 4, screen_s: 90, ext_s: 180, champion: 1 },
+            warm: true,
+          },
+        },
+      });
+    });
+    expect(document.body.querySelector('[data-testid="strategy-mode-summary"]')!.textContent)
+      .toContain('warm 真顺延');
+  });
 });
