@@ -1,6 +1,6 @@
 # sparrow 源码定制 fork · 立项盘点
 
-- **日期**：2026-09-06（同日增补 v2：版本基线锚定 + sparrow 0.2.0 增量核查）
+- **日期**：2026-09-06（同日增补 v2：版本基线锚定 + sparrow 0.2.0 增量核查）；2026-09-19 增补 **v3：落地状态回写** —— 0 流水线经 spyrrow-ms 兑现（同 rev 重建、未升 0.2.0）、A 一期+二期收官（se 延长轮真顺延默认 on，A/B +0.06pt PASS），待办面收敛至 B/D/E/F/G
 - **背景**：镜像姿态分析（`.docs/business/镜像姿态收益实验报告_2026-09.md`）确认"改源码加镜像"技术可行但收益为负。用户提出：既然考虑改源码，不如把项目里所有被 sparrow 源码制约的地方一并盘点，评估一次性 fork 的总账。
 - **证据基础**：实读上游三层源码（spyrrow→sparrow→jagua-rs），存档 `out/mirror_experiment/upstream/`（17 个 .rs + 2 个 Cargo.toml）与 `out/mirror_experiment/`（3 份文件树 JSON + 1 份 881cdcbd→main 全量 compare JSON + PyPI 元数据）。sparrow 层源码取自 PaulDL-RS fork main（0.1.0 世代，与我们运行的同代）；0.2.0 增量经 compare patch 逐文件核对。**非推测，全部有源码出处。**
 
@@ -44,11 +44,11 @@ spyrrow 0.9.0 (Python/pyo3 薄封装, PyPI wheel ← 我们当前用的, 2026-03
 
 | # | 需求 | 现状外挂机制 | 源码级方案 | 上游已有能力 | 量级 | 优先级 |
 |---|---|---|---|---|---|---|
-| **0** | **版本基线升级 0.1.0→0.2.0** | 现行 spyrrow 0.9.0 pin 死 881cdcbd | spyrrow rev pin 改 main + `maturin build` 私有 wheel（**一行依赖改动**） | 上游全部现成 | 极小（2–4 天含确定性重标） | **P0 前置** |
-| A | 真 se 顺延 + 录入初始布局 | se"延长"=同 seed 重放 180s；无布局录入 | pyo3 暴露 `initial_solution` + MS⇄jagua 格式转换器 | **`optimize(..., initial_solution)` lib 层已实现**（881cdcbd 与 0.2.0 双版本核查） | 小（1–2 周） | **P0** |
+| **0** | **版本基线升级 0.1.0→0.2.0** | ✅ **私有 wheel 流水线已落地（2026-09-19，路线调整：同 rev 881cdcbd 重建，未升 0.2.0）** | 实际路线 = spyrrow-ms（PyPI 0.9.0 sdist 原样 + path dep 自有 sparrow fork）；原「rev pin 改 main」未采用，**0.2.0 升级 = 独立后续项** | 上游全部现成 | 流水线 ✅；0.2.0 升级余 2–4 天（含确定性重标） | ✅ 已落地（0.2.0 另列） |
+| A | 真 se 顺延 + 录入初始布局 | ✅ **一期+二期已落地（2026-09-19）**：se 延长轮真顺延 `--se-warm` 默认 on（A/B +0.0599pt PASS）；二期 band/prefix 同开解禁；**剩 ② 编辑器录入初始布局未做** | `0.9.0+ms1` pyo3 暴露 + `warmstart.py` 转换器 + 求解链透传/装载点（已交付） | **`optimize(..., initial_solution)` lib 层已实现**（881cdcbd 与 0.2.0 双版本核查） | ✅ 已交付（一期+二期） | ✅ 主体落地；② 待立项 |
 | B | 固定裁片/裁片集位置 | prefix 钉位=外部置换 `permute_pin`；编辑后无"保固定重解其余" | 预放置（`place_item` 已有）+ frozen 候选过滤 | place_item/import_solution 已有；候选过滤需新写 | 中（2–3 周） | P1 |
 | C | 镜像姿态 | 无（编辑器空格四态人工兜底） | 组变体 + 共享需求池 | 无 | 大（3–6 周） | 缓 |
-| D | 智能微调原生化 | `polish.py` 后处理 + erode/物理双口径红字 | warm-start(A) + 未腐蚀 instance 二次只跑 compress | warm-start(A) 即前置；**几乎零 Rust 增量** | 小（1 周, 依赖 A） | P2 |
+| D | 智能微调原生化 | `polish.py` 后处理 + erode/物理双口径红字 | warm-start(A) + 未腐蚀 instance 二次只跑 compress | warm-start(A) 即前置；**几乎零 Rust 增量** | 小（1 周, A 已落地解锁） | P2 |
 | E | 跨 run 确定性重放 | num_workers=4 帧漂移，A/B 判据③受累 | iteration-budget terminator 替代墙钟 | Terminator 是 trait，加实现即可 | 小（1 周） | P1 |
 | F | panic 优雅化 | `except BaseException` 兜 + `PREFIX_GATE_MARGIN_MM=10` 外部余量 | runaway 检测返回 Result | 无 | 小（几天） | P3 |
 | G | band/prefix 刚性组原生化 | `PS_*`/`WB_*` 外部构造 + expand + exclude 双形态 + 置换钉位 | rigid cluster 概念 | 无 | 大 | 缓（纯重构无质量收益） |
@@ -57,7 +57,9 @@ spyrrow 0.9.0 (Python/pyo3 薄封装, PyPI wheel ← 我们当前用的, 2026-03
 
 ## 2. 逐项分析
 
-### 0 · 版本基线升级（fork 第 0 步）【P0 前置 · 一行改动，三重价值】
+### 0 · 版本基线升级（fork 第 0 步）【✅ 已落地 2026-09-19 · 路线调整：同 rev 流水线兑现，0.2.0 未升】
+
+> **状态注记（2026-09-19，已落地 · 路线调整）**：私有 wheel 流水线已经兄弟仓 spyrrow-ms（`D:\code\spyrrow-ms`）兑现，但未走「rev pin 改 main 升 0.2.0」，而是 **PyPI 0.9.0 sdist 原样 + path dep 自有 sparrow fork @ 同一 881cdcbd** —— 先出 `0.9.0+ms0` 行为全等重建（与 PyPI 0.9.0 背靠背 golden 对拍逐字节一致），再叠加 `ms1` 暴露 warm-start（即 A 项）。三重价值中：② 流水线验证前置、③ 决策减压已兑现；**① 白拿 #149 性能未拿 —— 0.2.0 升级（帧轨迹必然漂移 + 确定性基线重标）为独立后续项，时机自选**。运维配套就绪：双源切换 `scripts/spyrrow_wheel.py`（status/use-pypi/use-local）+ rev 钉板 `materialSorting-server/spyrrow_build.json`（现行 `0.9.0+ms1` / sparrow `881cdcbd`）+ 手册 `.docs/technical/spyrrow私有wheel构建与升级手册.md`。
 
 **方案**：fork spyrrow，Cargo.toml 里 `sparrow = { git = ..., rev = "881cdcbd..." }` 改指 main（0.2.0），`maturin build` 出私有 wheel 替换 PyPI 0.9.0。**这是"最小 fork"——不改任何算法代码。**
 
@@ -71,6 +73,8 @@ spyrrow 0.9.0 (Python/pyo3 薄封装, PyPI wheel ← 我们当前用的, 2026-03
 ### A · warm-start 家族：真 se 顺延 / 录入初始布局 【P0 · 上游能力已存在】
 
 > **状态注记（2026-09-19，一期已落地）**：warm-start 一期全链闭环 —— spyrrow-ms 私有 fork `0.9.0+ms1` 暴露 `instance.solve(config, progress=None, initial_solution=<JSON>)`（校验 fail-fast ValueError，None 路径与上游 0.9.0 golden 对拍逐字节全等）；MS 侧 `nesting_engine/warmstart.py` 载荷构造（pid 字符串直传、demand 多副本 N 条、镜像拒绝）+ 求解链透传（pipeline→solver→worker 三闸门）+ se 延长轮真顺延（`--se-warm` 默认 on，五类回退全降级不炸轮）+ 双源切换助手 `scripts/spyrrow_wheel.py` 与 rev 钉板。端到端实测：延长轮 restore 起点宽度与灌入 strip_width 精确全等（delta=0.0000mm）、placed 守恒==Σdemand。A/B 判据与验收记录见 `.docs/business/warm-start一期AB验收报告_2026-09.md`。② 之「编辑器录入初始布局」入口未做（一期范围 = se 顺延单场景）。
+
+> **增补（2026-09-19 晚，两项均已合入）**：① **二期 band/prefix 解禁**（commit `42a282b`）—— 一期硬互斥（band/prefix 开 → warm 前置回退 `band_prefix_on`）解除：worker `record_composite` 组合视角边车旁路，band/prefix 开时帧附展开前 solver 原始条目 + 组合 demand_map → 边车 `composite` 段 → 装载点构造含 `WB_*`/`PS_*` 载荷 + worker 宇宙复检，缺段回退 `no_composite_view`（WS 常规路径 record_composite 恒 False，`WB_`/`PS_` 不出进程哨兵不变）。② **可观测面**（commit `9807518`）—— strategy.json se 段记计划态，result.json `config.strategy` 与 run_stats 行 additive 记实际灌入态 `warm`/`warm_reason`（class_key 不变），前端策略弹窗三态提示，子进程 stdout 留痕。③ **A/B 终值**：warm on 90.4784%×5 零方差 vs off 均值 90.4185% = **+0.0599pt PASS 保默认 on**（机理：灌冠军解后延长轮 180s 全花增量搜索、稳定到 90.4784 不动点；重放臂从头跑有 90.436/90.4009 双吸引子）。
 
 **本轮最重要的发现**：sparrow lib 的求解入口签名（`sparrow/src/main.rs:111-119`）：
 
@@ -104,7 +108,7 @@ let solution = optimize(instance, rng, ..., initial_solution.as_ref());  // Opti
 
 详见专门报告与上一轮分析。组变体设计（原形/镜像形为两个 Item + 组级共享 demand 池，sparrow 选择层把候选片升级为"组"双评取优）是正确姿势——几何层/碰撞引擎零改动。在 fork 大盘里与 B 共享部分记账基建，边际成本略降，但 **5336 三口径实测（E2 贴靠零增益/g04 −28%、E3 端到端 −0.32pt）不支持为它付 3–6 周**。维持触发条件：新款式"非对称片占比高且 R180 互扣不佳"的证据出现再启动。
 
-### D · 智能微调原生化（原生 settle/压缩档）【P2 · 依赖 A，几乎零 Rust 增量】
+### D · 智能微调原生化（原生 settle/压缩档）【P2 · A 已落地解锁 · 几乎零 Rust 增量】
 
 **现状痛点**：`polish.py` 是求解器外的贪心后处理（离散化/去重/左滑压缩），只能修局部不能发现全局更优；编辑画布（erode 轮廓）与 polish 报告（物理毛版）双口径红字差异是文档级约定，长期是认知负担。
 
@@ -140,30 +144,32 @@ let solution = optimize(instance, rng, ..., initial_solution.as_ref());  // Opti
 ## 3. 共享基础设施与依赖关系
 
 ```
-0 (基线升级 0.2.0 + 私有 wheel 流水线)   ← 一切的前置：验证构建链 + 白拿性能
-   └── A (warm-start 暴露 + 转换器) ──┬── 真 se 顺延
-                                      ├── 录入初始布局（版师人机协同）
-                                      ├── D 原生微调（未腐蚀二次求解）
-                                      ├── B 的预放置通道（frozen 片灌入）
-                                      └── LNS 原生化（可选）
-E (确定性 terminator)          独立，但让 0/A/D/B 的验收都变容易
+0 (私有 wheel 流水线) ✅ 已落地（同 rev 重建；0.2.0 升级另列后续项）
+   └── A (warm-start 暴露 + 转换器) ✅ 一期+二期已落地 ──┬── 真 se 顺延 ✅（--se-warm 默认 on）
+                                                        ├── 录入初始布局（未做，版师人机协同）
+                                                        ├── D 原生微调（A 已解锁，待立项）
+                                                        ├── B 的预放置通道（frozen 片灌入，待立项）
+                                                        └── LNS 原生化（可选）
+E (确定性 terminator)          独立，但让 0/A/D/B 的验收都变容易 ← 当前最高性价比待办
 C (镜像组变体)                 与 B 共享组记账基建，独立可缓
 F (panic) / G (刚性组)         独立小项/重构项
 ```
 
-**0+A 是整个 fork 的杠杆链**：第 0 步验证流水线并升级基线，A 在其上用最小改动解锁最多能力。
+**0+A 是整个 fork 的杠杆链**：第 0 步验证流水线并升级基线，A 在其上用最小改动解锁最多能力。（v3 注：已兑现 —— 0 走同 rev 路线、A 一期+二期交付，杠杆链成立。）
 
 ## 4. 工程总账
 
 | 项 | 内容 |
 |---|---|
-| 开发量 | 0+A+E 最小闭环 ≈ **3–4 周**；0+A+B+D+E ≈ 6–9 周；全量含 C/G ≈ 3–4 月 |
-| 仓库 | fork spyrrow（rev pin 指向我们自己的 sparrow fork 或上游 main）；sparrow 本体仅在 A 之外的项（B/E/F/G）才需要 fork；maturin 构建 wheel |
+| 开发量 | **0（流水线）+ A（一期+二期，含 A/B 验收）已于 2026-09-19 落地**；剩余最小增量 = E ≈ **1 周**；B+D+E ≈ 4–5 周；全量含 C/G ≈ 2.5–3.5 月 |
+| 仓库 | ✅ spyrrow-ms 已建（`D:\code\spyrrow-ms`，PyPI 0.9.0 sdist 基线 + path dep 自有 sparrow fork @881cdcbd）；sparrow 本体 fork 仅 B/E/F/G 项需要；maturin 构建 |
 | 工具链 | Windows Rust **≥1.90**（0.2.0 要求；SIMD 需 nightly）+ maturin + pyo3 0.27；本机直连 GitHub 不通（既有记忆），需走代理/镜像拉取与推送 |
 | 维护 | 上游活跃度中等（2026-09 一周内 jagua-rs 0.8.0/0.8.1 + sparrow 0.2.0 + TUI 连发）；策略 = pin 死 rev 长期不动、按需主动升级（0.2.0 无我们必须跟的修复，升级时机自选）；**`不改 sparrow 源码`铁律正式废除，改为`私有 fork 单一真相源`** |
-| 验证 | 确定性基线全部重标（基线升级本身即重置帧轨迹口径，§0.1）；全量回归 = pytest 681+ / vitest 1022 / UI 冒烟 / prefix_accept & band A/B 复跑 |
+| 验证 | 一期收官实测全绿：pytest **1056** / vitest **1217** 全量 + prefix_accept accept（[warm-start一期AB验收报告_2026-09.md](warm-start一期AB验收报告_2026-09.md) §4）；同 rev 路线 golden 对拍逐字节全等 ⇒ **未升基线、帧轨迹未变，无需重标**（0.2.0 升级时才需：帧轨迹重标 + 全量回归复跑） |
 
 ## 5. 决策建议
+
+> **状态注记（2026-09-19）**：第 1、2 条已兑现 —— 第 0 步落地（路线调整为同 rev 重建，流水线验证与决策减压两价值到手）、A 一期+二期交付且 A/B PASS 保默认 on；第 5 条对 A 已无必要（私有 fork 已交付，不必再赌上游 PR）；第 6 条「不立项」选项随 fork 落地失效。**当前待决策面**：下一个增量建议 E 确定性 terminator（≈1 周，验收/回归工程健康度，性价比最高）；D 原生微调（≈1 周，A 已解锁）视 polish 双口径痛点排期；B 看「局部固定重解」真实需求强度；C/F/G 维持原判。以下 1–6 条为 2026-09-06 立项时点的原始推理，留档不改。
 
 1. **若立项，第 0 步先做基线升级**（一行 rev pin + maturin，2–4 天）：白拿 #149 与 jagua-rs 0.8.1、打通并验证整条私有 wheel 流水线、全量回归兜底——它把"要不要 fork"的风险决策变成可低成本回退的实验。
 2. **值得立项的最小闭环 = 0 + A + E**（约 3–4 周）：上游已实现的 warm-start 暴露 + 确定性 terminator。A/E 不赌任何未证实的算法收益——A 买确定的预算效率（se 重放浪费）+ 新工作流能力（录入布局/人机协同），E 买验收与回归的工程确定性。**即使 C/D/B 后来都不做，这三项也独立回本。**
