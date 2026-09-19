@@ -48,4 +48,4 @@
 - [business/用户需求.md](business/用户需求.md)
 
 ### 对外对比
-- [business/超排软件对比分析_2026-09.md](business/超排软件对比分析_2026-09.md) — MaterialSorting vs ET超排/富怡/格柏 AccuNest/力克 Diamino/Optitex 功能矩阵与优劣势、差距优先级（2026-09-16 检索快照）
+- [business/超排软件对比分析_2026-09.md](business/超排软件对比分析_2026-09.md) — MaterialSorting vs ET超排/富怡/格柏 AccuNest/力克 Diamino/Optitex 功能矩阵与优劣势、差距优先级 + 结果方差与下限保障专题（2026-09-16 检索快照，09-19 增补）
