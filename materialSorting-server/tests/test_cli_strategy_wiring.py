@@ -16,10 +16,12 @@ solve_pieces ``artifact_suffix``）+ US-003 se 延长轮 warm 真顺延接线。
   - **se 接线**：阶段 1 k 轮 screen 预算筛选 + 阶段 2 冠军（real_density argmax）
     同 seed 以 ext 预算延长（``_ext`` 产物防覆盖 + solve 条目 phase=extension），
     R0 提前停不进延长；US-003 warm：默认 on 透传 ``warm_best_frame=True`` 到
-    延长轮 solve 调用形 / 五类回退（off / unsupported / band_prefix_on /
-    no_best_frame / invalid_best_frame）各独立用例 + 回退 warn 行 + strategy.json
-    计划态与 result.json·run_stats 实际灌入态 additive 键 + solve_pieces 装载点
-    （真 build_instance + 桩 solve_with_callback_proc）载荷精确对拍；
+    延长轮 solve 调用形 / 回退矩阵（off / unsupported 前置，no_best_frame /
+    invalid_best_frame / no_composite_view 装载点）各独立用例 + 回退 warn 行 +
+    strategy.json 计划态与 result.json·run_stats 实际灌入态 additive 键 +
+    solve_pieces 装载点（真 build_instance + 桩 solve_with_callback_proc）载荷
+    精确对拍（二期 2026-09-19 band/prefix 解禁：band 开 + 边车 composite 段 →
+    组合视角载荷 / 缺段 → no_composite_view）；
   - **零回归**：无 --strategy 时 result.json 不加 strategy/mode 键 + ``--help``
     含新旗标 + 无旗标 legacy 运行 stdout 逐字节对拍哨兵（US-003）。
 """
@@ -584,8 +586,9 @@ def _read_stats(path: Path) -> list[dict]:
 
 
 def test_se_warm_plan_matrix(monkeypatch):
-    """se_warm_plan 纯函数矩阵：off 恒回退（不探测）/ unsupported / band·prefix
-    互斥 / 全过 → (True, None)；band 与 prefix 双形态各自独立命中。"""
+    """se_warm_plan 纯函数矩阵：off 恒回退（不探测）/ unsupported / 全过 →
+    (True, None)。二期（2026-09-19）起 band/prefix 不再前置回退（组合视角
+    边车旁路解禁）—— band/prefix 开 + 能力就绪 → (True, None) 照常接线。"""
     from types import SimpleNamespace
     cfg_plain = SimpleNamespace(band=None, prefix=None)
     cfg_band = SimpleNamespace(band={'enabled': True, 'label': 'g05'}, prefix=None)
@@ -595,12 +598,15 @@ def test_se_warm_plan_matrix(monkeypatch):
     monkeypatch.setattr(warmstart, 'warm_start_supported', lambda: True)
     assert se_warm_plan(cfg_plain, False) == (False, 'off')
     assert se_warm_plan(cfg_plain, True) == (True, None)
-    assert se_warm_plan(cfg_band, True) == (False, 'band_prefix_on')
-    assert se_warm_plan(cfg_prefix, True) == (False, 'band_prefix_on')
+    # 二期解禁回归锁：band/prefix 开不再是前置回退（一期此处为
+    # (False, 'band_prefix_on') —— 成员级 placed 与组合片实例 pid 宇宙错位，
+    # 已由边车 composite 段 + worker 宇宙复检桥接）。
+    assert se_warm_plan(cfg_band, True) == (True, None)
+    assert se_warm_plan(cfg_prefix, True) == (True, None)
     monkeypatch.setattr(warmstart, 'warm_start_supported', lambda: False)
     assert se_warm_plan(cfg_plain, True) == (False, 'unsupported')
-    # 判定序 off → unsupported → band/prefix：unsupported 更根本（band 关了也没用，
-    # 报 band_prefix_on 会误导用户去关 band），band 互斥只在能力就绪时才成因。
+    # 判定序 off → unsupported：off 不探测（先于一切）；unsupported 下 band
+    # 开关无关（更根本的能力成因优先）。
     assert se_warm_plan(cfg_band, True) == (False, 'unsupported')
     assert se_warm_plan(cfg_plain, False) == (False, 'off')   # off 先于探测
 
@@ -684,9 +690,10 @@ def test_se_warm_off_explicit_fallback(iso_env, capsys, monkeypatch):
     {'band': {'enabled': True, 'label': 'g01'}},
     {'prefix': {'enabled': True, 'front': 'g01', 'back': 'g02'}},
 ])
-def test_se_warm_band_prefix_on_fallback(iso_env, capsys, monkeypatch, cfg_extra):
-    """cfg.band / cfg.prefix 开 → 硬互斥回退（warm 输入是成员级 placed，与组合片
-    改写后的实例组成不匹配），warm_reason='band_prefix_on'（探测 True 也不接线）。"""
+def test_se_warm_band_prefix_on_engages(iso_env, capsys, monkeypatch, cfg_extra):
+    """二期解禁（2026-09-19）：cfg.band / cfg.prefix 开 + 能力就绪 → warm 照常
+    接线（一期 'band_prefix_on' 前置回退已删）—— 延长轮 solve 收
+    warm_best_frame=True、计划态/实际态 warm: true、无回退行。"""
     monkeypatch.setattr(warmstart, 'warm_start_supported', lambda: True)
     tmp, runs, _, _, master = iso_env
     cfg_path = _write_config(tmp / 'cfg.json', master, seeds=[0], **cfg_extra)
@@ -694,21 +701,23 @@ def test_se_warm_band_prefix_on_fallback(iso_env, capsys, monkeypatch, cfg_extra
     rc = main(_se_argv(cfg_path))
     out = capsys.readouterr().out
     assert rc == 0
-    assert fake.warm_flags == [False] * 6
-    assert ('se 延长轮 warm 回退 → 现状重放'
-            '（warm_reason=band_prefix_on）') in out
+    assert fake.warm_flags == [False] * 5 + [True]    # 筛选 5 轮不带、延长轮带
+    assert 'warm 回退' not in out
     rd = _only_run_dir(runs)
     plan = json.loads((rd / 'strategy.json').read_text(encoding='utf-8'))
-    assert plan['se']['warm'] is False
-    assert plan['se']['warm_reason'] == 'band_prefix_on'
+    assert plan['se']['warm'] is True and 'warm_reason' not in plan['se']
     result = json.loads((rd / 'result.json').read_text(encoding='utf-8'))
-    assert result['config']['strategy']['warm_reason'] == 'band_prefix_on'
+    st = result['config']['strategy']
+    assert st['warm'] is True and 'warm_reason' not in st
 
 
 def test_se_warm_reason_enum_is_closed():
-    """warm_reason 枚举闭包：五类回退原因与 portfolio 常量对拍（文档单一真相源）。"""
-    assert SE_WARM_REASONS == ('off', 'unsupported', 'band_prefix_on',
-                               'no_best_frame', 'invalid_best_frame')
+    """warm_reason 枚举闭包：八类回退原因与 portfolio 常量对拍（文档单一真相源；
+    二期删 'band_prefix_on'、增装载点 no_composite_view 与 worker 三类）。"""
+    assert SE_WARM_REASONS == ('off', 'unsupported', 'no_best_frame',
+                               'invalid_best_frame', 'no_composite_view',
+                               'worker_unsupported', 'worker_serialize_failed',
+                               'instance_mismatch')
 
 
 # --------------------------------------- US-003 solve_pieces warm 装载点（真 build_instance + 桩 proc）
@@ -716,7 +725,8 @@ def test_se_warm_reason_enum_is_closed():
 
 class _FakeProc:
     """桩 ``web.solver.solve_with_callback_proc``：记录 initial_solution / band /
-    prefix 调用形并直接回 final（placed = 全量 Σdemand，正常完成路径）。"""
+    prefix / record_composite 调用形并直接回 final（placed = 全量 Σdemand，
+    正常完成路径）。record_composite（二期）透传记录供旁路断言。"""
 
     def __init__(self, demand_pids: list[str]):
         self.demand_pids = demand_pids
@@ -724,9 +734,10 @@ class _FakeProc:
 
     def __call__(self, pieces, gate_mm, solve_params, *, on_manifest, on_report,
                  on_process=None, on_stage=None, drain_interval=0.2,
-                 band=None, prefix=None, initial_solution=None):
+                 band=None, prefix=None, initial_solution=None,
+                 record_composite=False):
         self.calls.append({'initial_solution': initial_solution, 'band': band,
-                           'prefix': prefix,
+                           'prefix': prefix, 'record_composite': record_composite,
                            'time_budget': solve_params['time_budget']})
         final = {
             'placed_items': [
@@ -758,15 +769,22 @@ def _warm_setup(tmp, master, monkeypatch, *, supported=True, cfg_extra=None):
 
 
 def _write_best_frame(run_dir: Path, pids: list[str], *, width_mm=4321.5,
-                      placed: list[dict] | None = None) -> None:
-    """写筛选轮 best_frame_s0.json 边车（placed 缺省 = 6 条恰好完整解）。"""
+                      placed: list[dict] | None = None,
+                      composite: dict | None = None) -> None:
+    """写筛选轮 best_frame_s0.json 边车（placed 缺省 = 6 条恰好完整解）。
+
+    ``composite``（二期）：band/prefix 筛选轮 worker 记录的组合视角段
+    ``{'placed_items': [...], 'demand_map': {...}}`` —— 非 None 时落进边车
+    （additive 键，与 ``pipeline._best_frame_record`` 产物同形）。"""
     if placed is None:
         placed = [{'id': pid, 'rotation': 0, 'translation': [i * 120, 30]}
                   for i, pid in enumerate(pids)]
+    rec = {'seed': 0, 'frame_index': 3, 'density': 0.8,
+           'width_mm': width_mm, 'placed_items': placed}
+    if composite is not None:
+        rec['composite'] = composite
     (run_dir / 'best_frame_s0.json').write_text(
-        json.dumps({'seed': 0, 'frame_index': 3, 'density': 0.8,
-                    'width_mm': width_mm, 'placed_items': placed},
-                   ensure_ascii=False), encoding='utf-8')
+        json.dumps(rec, ensure_ascii=False), encoding='utf-8')
 
 
 def test_solve_pieces_warm_best_frame_loads_payload(iso_env, monkeypatch):
@@ -791,13 +809,50 @@ def test_solve_pieces_warm_best_frame_loads_payload(iso_env, monkeypatch):
     # 该面已由 test_solve_pieces_artifact_suffix_real 真求解覆盖）
 
 
+def test_solve_pieces_warm_composite_loads_payload(iso_env, monkeypatch):
+    """二期（2026-09-19）band/prefix 解禁主路径：band 开 + 边车含 composite 段
+    → 装载点改读该段构造**组合视角**载荷（placed 含 WB_、demand_map 用边车
+    记录的组合宇宙而非主进程全量 pid_meta），band 照常下传、record_composite
+    =True 透传（CLI 落盘路径恒请求旁路），记录附 warm: True。"""
+    tmp, _, _, _, master = iso_env
+    cfg, run_dir, pids, fake = _warm_setup(
+        tmp, master, monkeypatch,
+        cfg_extra={'band': {'enabled': True, 'label': 'g01'}})
+    # 组合宇宙：label g01 两 pid 被 exclude_labels 整排除 + WB_g01 demand=1。
+    g01 = [p for p in pids if p.startswith('g01_')]
+    comp_demand = {p: 1 for p in pids if not p.startswith('g01_')}
+    comp_demand['WB_g01'] = 1
+    comp_placed = [{'id': pid, 'rotation': 0, 'translation': [i * 120, 30]}
+                   for i, pid in enumerate(sorted(comp_demand))]
+    _write_best_frame(run_dir, pids, composite={'placed_items': comp_placed,
+                                                'demand_map': comp_demand})
+    from materialsorting.cli.pipeline import solve_pieces
+    rec = solve_pieces(cfg, run_dir, seed=0, time_budget=2,
+                       warm_best_frame=True, artifact_suffix='_ext')
+    expect = {'strip_width': 4321.5,
+              'placed_items': [{'id': pid, 'rotation': 0.0,
+                                'translation': [float(i * 120), 30.0]}
+                               for i, pid in enumerate(sorted(comp_demand))]}
+    call = fake.calls[0]
+    assert call['initial_solution'] == expect   # 组合视角载荷（含 WB_g01）
+    assert call['band'] == {'label': 'g01'}      # band 照常下传（现状重放面不变）
+    assert call['record_composite'] is True      # CLI 落盘路径恒请求旁路
+    assert rec['warm'] is True and 'warm_reason' not in rec
+    # 组合宇宙对拍：g01 成员 pid 不在载荷（被组合片承载）、WB_g01 在。
+    ids = [it['id'] for it in call['initial_solution']['placed_items']]
+    assert 'WB_g01' in ids
+    assert not any(p in ids for p in g01)
+
+
 @pytest.mark.parametrize('scenario,supported,best_mode,cfg_extra,expect_reason', [
     ('边车缺失', True, None, None, 'no_best_frame'),
     ('边车损坏（非法 JSON）', True, 'corrupt', None, 'no_best_frame'),
     ('部分解（校验失败）', True, 'partial', None, 'invalid_best_frame'),
     ('能力不支持', False, 'full', None, 'unsupported'),
-    ('band 开（互斥）', True, 'full',
-     {'band': {'enabled': True, 'label': 'g01'}}, 'band_prefix_on'),
+    # 二期（2026-09-19）：band 开不再前置回退，改读边车 composite 段 —— 一期
+    # 产物/缺段 → 'no_composite_view'（装载点回退，band 本身照常下传）。
+    ('band 开 + 边车缺 composite 段', True, 'full',
+     {'band': {'enabled': True, 'label': 'g01'}}, 'no_composite_view'),
 ])
 def test_solve_pieces_warm_fallback_matrix(iso_env, monkeypatch, scenario,
                                            supported, best_mode, cfg_extra,

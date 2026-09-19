@@ -222,13 +222,18 @@ export function fmtLastEvent(ev: StrategyEvent | undefined): string {
 
 // ------------------------------------------------- SE 延长轮 warm 状态（2026-09-19）
 
-/** warm 回退原因（后端 SE_WARM_REASONS 枚举）→ 中文文案。 */
+/** warm 回退原因（后端 SE_WARM_REASONS 枚举）→ 中文文案。
+ * 二期（2026-09-19）band/prefix 解禁后 'band_prefix_on' 不再产生 —— 历史
+ * run 产物仍可能含此字符串，透传原样显示（warmReasonText 未知键不吞）。 */
 export const WARM_REASON_TEXT: Record<string, string> = {
   off: '已手动关闭（--se-warm off）',
   unsupported: '当前 spyrrow wheel 不支持热启动（须 0.9.0+ms1 私有 wheel）',
-  band_prefix_on: '腰头成带 / 起始端成套开启，热启动暂不支持同开',
   no_best_frame: '冠军解边车缺失',
   invalid_best_frame: '冠军解校验失败',
+  no_composite_view: '冠军解边车缺组合视角段（band/prefix 开启时须二期产物）',
+  worker_unsupported: 'worker 探测 spyrrow 不支持热启动（装载态竞争，已降级重放）',
+  worker_serialize_failed: 'worker 序列化热启动载荷失败（已降级重放）',
+  instance_mismatch: '热启动载荷与重建实例不匹配（组合片漂移防御，已降级重放）',
 };
 
 /** 回退原因 → 中文（未知枚举原样透出，不吞诊断信息）。 */
@@ -435,10 +440,9 @@ function ConfigState({
   const ctx = buildStartContext();
   const sizesEmpty = ctx.sizes.length === 0;
   const execDisabled = solving || sizesEmpty;
-  // SE + band/prefix 开 → 延长轮 warm 必回退（与后端 se_warm_plan 同判据的事前
-  // 预告，2026-09-19 排查事故补的预防提示：起跑前就知道延长段是重放）。
-  const seWarmBlocked =
-    mode === 'se' && ((ctx.band?.enabled ?? false) || (ctx.prefix?.enabled ?? false));
+  // 二期（2026-09-19）band/prefix warm 解禁后无「SE + band/prefix 开 → 必回退」
+  // 事前预告面（一期 strategy-se-warm-blocked 块已删 —— 组合视角边车旁路使
+  // band/prefix 与 warm 可同开；真正的回退态经 plan.warm / summary.warm 呈现）。
   return (
     <>
       <div className="strategy-field">
@@ -476,11 +480,6 @@ function ConfigState({
       <div className="strategy-mode-desc" data-testid="strategy-mode-desc">
         {desc}
       </div>
-      {seWarmBlocked && (
-        <div className="strategy-warning" data-testid="strategy-se-warm-blocked">
-          ⚠ 腰头成带 / 起始端成套开启时，SE 延长轮将回退重放（warm 热启动暂不支持同开）
-        </div>
-      )}
       <div className="strategy-hint" data-testid="strategy-min-hint">
         10 分钟档两模式与均分打平，20 分钟起有增益
       </div>

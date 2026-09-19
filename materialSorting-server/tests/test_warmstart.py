@@ -17,6 +17,7 @@ import pytest
 from materialsorting.nesting_engine import warmstart
 from materialsorting.nesting_engine.warmstart import (
     build_initial_solution,
+    payload_universe_error,
     warm_start_supported,
 )
 
@@ -241,6 +242,69 @@ def test_warm_start_supported_weird_exception(monkeypatch):
 def test_warm_start_supported_real_env_returns_bool():
     """真实装载态（本机 0.9.0+ms0）探测不抛且返回 bool。"""
     assert isinstance(warm_start_supported(), bool)
+
+
+# ------------------------- 二期（2026-09-19）payload_universe_error 宇宙复检
+
+
+def _payload(pids_demand, width=1500.0):
+    """按 {pid: n} 展开成恰好完整解的载荷（n 条/pid）。"""
+    placed = []
+    for pid, n in pids_demand.items():
+        for i in range(n):
+            placed.append(_pl(pid, rot=float(i), tr=[float(i * 10), 0.0]))
+    return {'strip_width': width, 'placed_items': placed}
+
+
+def test_universe_match_returns_none():
+    """宇宙一致（含组合片 pid + 多副本）→ None（复检通过）。"""
+    payload = _payload({'WB_g01': 1, 'g02_28': 2})
+    assert payload_universe_error(payload, {'WB_g01': 1, 'g02_28': 2}) is None
+
+
+def test_universe_mismatch_missing_and_overcount():
+    """缺片（demand 2 只 1 条）/ 超量（demand 1 给 2 条）→ 中文描述含 pid 与
+    两侧数值。"""
+    e = payload_universe_error(_payload({'g01_28': 1, 'g02_28': 1}),
+                               {'g01_28': 2, 'g02_28': 1})
+    assert e is not None and "g01_28" in e and '2' in e
+    e = payload_universe_error(_payload({'g01_28': 2}), {'g01_28': 1})
+    assert e is not None and 'g01_28' in e
+
+
+def test_universe_unknown_and_leftover_pids():
+    """载荷含实例外 pid（如成员级载荷喂组合片实例：band 成员被整排除）→
+    「实例外裁片」描述（判定序：缺片先报、实例外后报）；实例 pid 全部缺席
+    （如 WB_ 整缺）→ 缺片描述。"""
+    # 实例外（其余 pid 恰匹配 → 走 leftover 分支）：
+    e = payload_universe_error(_payload({'g01_28': 1, 'WB_g01': 1}),
+                               {'WB_g01': 1})
+    assert e is not None and 'g01_28' in e and '实例外' in e
+    # 缺片（WB_g01 实例需求 1、载荷 0 条）：
+    e = payload_universe_error(_payload({'g02_28': 1}), {'WB_g01': 1, 'g02_28': 1})
+    assert e is not None and 'WB_g01' in e and '≠' in e
+
+
+def test_universe_malformed_payload_returns_desc_not_raise():
+    """载荷形态非法（缺键 / strip_width 非正 / 条目非对象 / id 非串）→ 返回
+    描述绝不抛（worker 统一降级，复检不得成为新的炸轮面）。"""
+    assert payload_universe_error({}, {'g01_28': 1}) is not None
+    assert payload_universe_error({'strip_width': 0.0, 'placed_items': []},
+                                  {}) is not None
+    assert payload_universe_error({'strip_width': 1.0, 'placed_items': 'x'},
+                                  {}) is not None
+    assert payload_universe_error(
+        {'strip_width': 1.0, 'placed_items': [{'rotation': 0}]},
+        {'g01_28': 1}) is not None
+    assert payload_universe_error(
+        {'strip_width': 1.0, 'placed_items': [{'id': 3}]},
+        {'g01_28': 1}) is not None
+
+
+def test_universe_empty_both_sides_is_match():
+    """空载荷 + 空实例 → None（空解边界，与 build_initial_solution 同口径）。"""
+    assert payload_universe_error(
+        {'strip_width': 800.0, 'placed_items': []}, {}) is None
 
 
 # --------------------------------------------------------------- AC#5 分层

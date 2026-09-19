@@ -524,7 +524,8 @@ _JOIN_TIMEOUT_SEC = 5.0
 def solve_with_callback_proc(pieces_snapshot, gate_mm, solve_params, *,
                              on_manifest, on_report, on_process=None,
                              on_stage=None, drain_interval: float = 0.2,
-                             band=None, prefix=None, initial_solution=None):
+                             band=None, prefix=None, initial_solution=None,
+                             record_composite=False):
     """多进程版求解：spawn 子进程跑 ``build_instance + solve``，主进程 drain queue 分发。
 
     与旧 ``solve_with_callback``（threading 版）的关键区别：
@@ -580,6 +581,13 @@ def solve_with_callback_proc(pieces_snapshot, gate_mm, solve_params, *,
         build_initial_solution`` 产物，纯 JSON dict）。作为 Process args 第 7 位
         **原样 dict** 传 ``solve_worker``（Windows spawn pickle 安全；``json.dumps``
         与防御闸门都在 worker 内做，本函数零解释）。缺省 None = 现行行为。
+    record_composite : bool
+        **二期（2026-09-19 band/prefix warm 解禁）**：CLI 落盘路径请求组合视角
+        旁路 —— 作 Process args 第 8 位透传 ``solve_worker``：band/prefix 开启
+        时帧 report 附 ``composite`` 段（展开前 solver 原始 placed + 重建实例
+        demand_map），供 best_frame 边车 / se 延长轮 warm 装载。**WS 调用方
+        恒不传**（前端帧契约零新增键，WB_/PS_ 不出进程哨兵不变）。缺省 False
+        = 现行行为。
 
     Returns
     -------
@@ -600,10 +608,11 @@ def solve_with_callback_proc(pieces_snapshot, gate_mm, solve_params, *,
 
     result_queue: multiprocessing.Queue = multiprocessing.Queue()
     # US-002：args 第 7 位 initial_solution（纯 JSON dict 原样；dumps 在 worker）。
+    # 二期：第 8 位 record_composite（CLI 落盘路径组合视角旁路开关，WS 恒 False）。
     process = multiprocessing.Process(
         target=solve_worker,
         args=(pieces_snapshot, gate_mm, solve_params, result_queue, band, prefix,
-              initial_solution),
+              initial_solution, bool(record_composite)),
         name='solve_worker',
     )
     process.start()

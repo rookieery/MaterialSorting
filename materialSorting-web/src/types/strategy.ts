@@ -97,8 +97,9 @@ export interface ExtremeStartPayload {
 
 /**
  * strategy.json → plan 摘要（race 带 gate_seconds；se 带 k_screens/screen_s/ext_s
- * + warm 计划态两键 —— run 启动即在盘，三类前置回退 off/unsupported/
- * band_prefix_on 开跑前已判定，弹窗进度态第一时间提示「延长轮将回退重放」）。
+ * + warm 计划态两键 —— run 启动即在盘，前置回退 off/unsupported 开跑前已判定，
+ * 弹窗进度态第一时间提示「延长轮将回退重放」；二期 2026-09-19 起 band/prefix
+ * 不再前置回退，装载点/worker 回退在延长轮时刻经 result 汇总带回）。
  */
 export interface StrategyPlan {
   planned_seeds?: number[] | null;

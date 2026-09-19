@@ -139,19 +139,25 @@ US-003（prd-warm-start-phase1）se 延长轮 warm 真顺延（``--se-warm {on,o
 **默认 on**，须与 ``--strategy se`` 同给、单独给出退出 1、值域外退出 1 —— 均
 在 new_run_dir 前拦下，与 --extreme 显式同给互斥）：
 
-  - 延长段把**筛选轮冠军解**（``best_frame_s{冠军}.json`` 边车，成员级 placed）
-    灌入热启动 —— 180s 全部花在增量搜索而不是重放已知结果。装载与校验的单一
-    装载点在 ``pipeline.solve_pieces``（portfolio 前置判定后传
-    ``warm_best_frame=True`` 策略标志）。
+  - 延长段把**筛选轮冠军解**（``best_frame_s{冠军}.json`` 边车）灌入热启动
+    —— 180s 全部花在增量搜索而不是重放已知结果。装载与校验的单一装载点在
+    ``pipeline.solve_pieces``（portfolio 前置判定后传 ``warm_best_frame=True``
+    策略标志）。
   - **回退矩阵**（任一命中 → 回退现状重放 + warn 一行，不静默不炸轮；solve
     调用形与无 warm 逐字节一致）：``--se-warm off``（'off'）/
     ``warm_start_supported()`` False（'unsupported'，当前 0.9.0+ms0 装载态即此
-    → 默认 on 下自动回退）/ cfg.band 或 cfg.prefix 开（'band_prefix_on'，成员级
-    placed 与改写后的实例组成不匹配，硬互斥）三类 ``portfolio.se_warm_plan``
-    前置判定；边车缺失/损坏（'no_best_frame'）/ 校验失败（'invalid_best_frame'）
-    两类在装载点回退（经 solve 记录 ``warm``/``warm_reason`` 带回）。
+    → 默认 on 下自动回退）两类 ``portfolio.se_warm_plan`` 前置判定；边车缺失/
+    损坏（'no_best_frame'）/ 校验失败（'invalid_best_frame'）/ band·prefix 开启
+    时边车缺组合视角段（'no_composite_view'）在装载点回退；worker 闸门降级
+    （'instance_mismatch' 等）经 final ``warm_state`` 带回（均经 solve 记录
+    ``warm``/``warm_reason`` 归档）。
+  - **二期（2026-09-19）解除 band/prefix 硬互斥**：一期 'band_prefix_on' 前置
+    回退删除 —— band/prefix 场景经组合视角边车旁路（worker ``record_composite``
+    → 帧附 ``composite`` 段 → 边车 → 装载点构造含 WB_/PS_ 的组合视角载荷 +
+    worker 宇宙复检）正常 warm；WS 求解路径不受影响（``record_composite``
+    恒 False，前端帧契约零新增键）。
   - **可观测（additive）**：strategy.json ``se`` 段记计划态 ``warm`` +
-    ``warm_reason``（三类前置回退开跑即知）；result.json config ``strategy``
+    ``warm_reason``（前置回退开跑即知）；result.json config ``strategy``
     段与 run_stats 行 config 段记**实际灌入态**同键（延长轮跑过才加键，中断 /
     R0 未进延长不加）；class_key 组成不变（与历史 run 可比）。race/legacy 路径
     零新增键（无旗标运行 CLI/控制器/result.json 逐字节零回归）。
@@ -283,11 +289,11 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument('--se-extend', type=int, default=None, metavar='N',
                    help='se 阶段 2 冠军延长预算（秒，默认 180；须与 --strategy 同给）')
     p.add_argument('--se-warm', default=None, metavar='{on,off}',
-                   help='se 延长轮 warm 真顺延（US-003，默认 on）：延长段把筛选轮'
-                        '冠军解灌入热启动（延长预算全部花在增量搜索而非重放已知'
-                        '结果）；warm 不可用（wheel 不支持/band·prefix 开/边车缺失'
-                        '等）自动回退现状重放并 warn，绝不炸轮；须与 --strategy se '
-                        '同给')
+                   help='se 延长轮 warm 真顺延（US-003，默认 on；二期起 band/prefix '
+                        '同开亦支持 —— 组合视角边车旁路）：延长段把筛选轮冠军解'
+                        '灌入热启动（延长预算全部花在增量搜索而非重放已知结果）；'
+                        'warm 不可用（wheel 不支持/边车缺失或缺组合视角段等）自动'
+                        '回退现状重放并 warn，绝不炸轮；须与 --strategy se 同给')
     p.add_argument('--race-budget', type=int, default=None, metavar='N',
                    help='race 每 seed 求解预算（秒，默认 180；须与 --strategy 同给）')
     p.add_argument('--race-gate', type=float, default=None, metavar='TAU',
@@ -591,10 +597,12 @@ def main(argv: list[str] | None = None) -> int:
             print(f'配置错误: {e}', file=sys.stderr)
             return _EXIT_CONFIG_OR_COMMIT
         strategy_seeds = strategy_seed_stream(cfg.seeds, k_screens)
-    # US-003 se 延长轮 warm 真顺延计划态（--se-warm 缺省 on）：三类前置回退
-    # （off / unsupported / band_prefix_on）开跑前即可判定 —— strategy.json 计划段
-    # 与启动行同源；延长轮时刻 portfolio 重跑同一纯函数复核（环境不变则结论一致）。
-    # race/legacy 不判定（恒 (False, None)，不进任何 warm 面）。
+    # US-003 se 延长轮 warm 真顺延计划态（--se-warm 缺省 on）：两类前置回退
+    # （off / unsupported）开跑前即可判定 —— strategy.json 计划段与启动行同源；
+    # 延长轮时刻 portfolio 重跑同一纯函数复核（环境不变则结论一致）。二期起
+    # band/prefix 不再前置回退（组合视角旁路），装载点/worker 回退在延长轮
+    # 时刻经 solve 记录带回。race/legacy 不判定（恒 (False, None)，不进任何
+    # warm 面）。
     se_warm_on = strategy == 'se' and args.se_warm != 'off'
     warm_attempt, warm_reason = ((False, None) if strategy != 'se'
                                  else se_warm_plan(cfg, se_warm_on))

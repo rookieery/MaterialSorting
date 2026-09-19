@@ -45,6 +45,11 @@ warm 输入 ⇒ restore 后轨迹确定，A/B 背靠背判据的前提）。
 硬 ``TypeError``，此为对原 PRD AC 的修订）；PyPI ``0.9.0`` / 包缺失 /
 版本串异常 → False，**任何异常都不抛**。
 
+二期（2026-09-19，band/prefix warm 解禁）新增 ``payload_universe_error``：
+worker 在 ``build_instance`` 后把载荷 pid 宇宙与本进程重建实例复检（错位 →
+丢弃降级普通重放，防 release 无 validate 下 Rust 侧静默错乱）—— 见其
+docstring。
+
 分层约束：本模块属 ``nesting_engine``，仅 import 标准库（无
 spyrrow/shapely 运行时依赖，冒烟合成夹具即可跑）；**禁 import web/cli**
 （AST 守卫在 tests/test_warmstart.py，对齐 tests/test_polish.py 先例）。
@@ -179,6 +184,52 @@ def warm_start_supported() -> bool:
     return bool(m) and int(m.group(1)) >= 1
 
 
+def payload_universe_error(payload, demand_map) -> str | None:
+    """warm 载荷 pid 宇宙复检（二期 2026-09-19 band/prefix 解禁，worker 侧末道防线）。
+
+    ``solve_worker`` 在 ``build_instance`` 之后调用：载荷的 pid 宇宙须与**本进程
+    重建实例**的 ``{item.id: demand}`` 逐 pid 恰好一致（未知 pid / 缺片 / 超量
+    皆不匹配）。设计动机：sparrow lib 层 restore 只按 placed 扣减 demand、不
+    补放新片，而 ms1 release 构建无 validate（§3.1）—— 载荷与实例错位若不在
+    Python 层拦下，Rust 侧静默错乱。band/prefix 场景下主进程装载点用的是**边车
+    记录的组合视角 demand_map**（筛选轮实例），延长轮 worker 重建的组合片实例
+    理论上逐字节一致（构造无 RNG）；本复检兜住任何漂移（如确定性破坏 / 手改
+    边车），不匹配 → 调用方丢弃载荷降级普通重放。
+
+    与 ``build_initial_solution`` 的关系：校验口径同源（完整解硬约束 / 未知
+    pid / strip_width 正有限），但不重建载荷、不抛 —— 复检用，返回中文错误
+    描述（含定位信息）或 ``None``（一致）。载荷形态非法也返回描述（worker 统一
+    降级，绝不因复检炸轮）。
+    """
+    try:
+        width = float(payload['strip_width'])
+        placed = payload['placed_items']
+    except (KeyError, TypeError):
+        return '载荷形态非法（缺 strip_width / placed_items）'
+    if not math.isfinite(width) or width <= 0.0:
+        return f'载荷 strip_width 非正有限数: {width!r}'
+    if not isinstance(placed, list):
+        return f'载荷 placed_items 应为列表，实得 {type(placed).__name__} 类型'
+    counts: Counter[str] = Counter()
+    for i, entry in enumerate(placed):
+        try:
+            pid = entry['id']
+        except (KeyError, TypeError):
+            return f'载荷第 {i} 条缺 id 或非对象'
+        if not isinstance(pid, str):
+            return f'载荷第 {i} 条 id 应为字符串，实得 {type(pid).__name__} 类型'
+        counts[pid] += 1
+    for pid, demand in demand_map.items():
+        n = counts.pop(pid, 0)
+        if n != int(demand):
+            return (f'载荷与实例不匹配：{pid!r} 条数 {n} ≠ 实例 demand '
+                    f'{int(demand)}')
+    if counts:
+        pids = ', '.join(sorted(counts))
+        return f'载荷含实例外裁片 id：{pids}'
+    return None
+
+
 # --------------------------------------------------------------- 冒烟自检
 
 def _smoke_entry(pid, rot=0.0, tr=(0.0, 0.0), mirror=None):
@@ -306,6 +357,20 @@ def _smoke_fixtures() -> bool:
           f'{supported}')
     if not isinstance(supported, bool):
         ok = False
+
+    # 二期宇宙复检（worker 侧防御）：一致 → None；错位/畸形 → 中文描述不抛。
+    good = {'strip_width': 900.0,
+            'placed_items': [_smoke_entry('g01_28'), _smoke_entry('g02_30')]}
+    if expect_pass('宇宙一致 → None',
+                   lambda: payload_universe_error(good,
+                                                  {'g01_28': 1, 'g02_30': 1})
+                   ) is not None:
+        report(False, '宇宙一致应返回 None')
+    desc = payload_universe_error(good, {'WB_g05': 1, 'g02_30': 1})
+    report(desc is not None and 'WB_g05' in desc, '宇宙错位 → 描述含缺片 pid',
+           desc or '（未检出）')
+    desc2 = payload_universe_error({}, {'g01_28': 1})
+    report(desc2 is not None, '载荷形态非法 → 描述不抛', desc2 or '（未检出）')
     return ok
 
 
@@ -313,8 +378,8 @@ def main(argv=None) -> int:
     """冒烟入口：``python -m materialsorting.nesting_engine.warmstart``。
 
     合成夹具自检（合法 round-trip / 多副本 / 部分与超量解 / 未知 pid /
-    mirror 拒绝 / 畸形矩阵 / 能力探测不抛），全过打印 PASS、exit 0；
-    无 spyrrow/shapely/intermediate 依赖。
+    mirror 拒绝 / 畸形矩阵 / 能力探测不抛 / 二期宇宙复检三态），全过打印
+    PASS、exit 0；无 spyrrow/shapely/intermediate 依赖。
     """
     try:
         sys.stdout.reconfigure(encoding='utf-8')

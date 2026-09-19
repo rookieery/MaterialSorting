@@ -86,12 +86,16 @@ real_density）确定后，延长轮把**筛选轮冠军解**灌入热启动 —
 best_frame_s{冠军}.json`` 边车 → ``warmstart.build_initial_solution`` 构造载荷，
 它持有 run_dir 与 pid_meta/demand_map）。回退矩阵（任一命中 → 回退现状重放 +
 warn 一行，不静默不炸轮）：``--se-warm off``（'off'）/
-``warm_start_supported()`` False（'unsupported'）/ cfg.band 或 cfg.prefix 开
-（'band_prefix_on'，warm 输入是成员级 placed 与改写后的实例组成不匹配，硬
-互斥）三类在本层前置判定；边车缺失/损坏（'no_best_frame'）/ 校验失败
-（'invalid_best_frame'）两类在装载点回退。实际灌入状态归档
-``controller.se_warm_state``（run_config 消费 → result.json config 段 /
-run_stats 行 additive 记 ``warm`` + ``warm_reason``）。
+``warm_start_supported()`` False（'unsupported'）两类在本层前置判定；边车
+缺失/损坏（'no_best_frame'）/ 校验失败（'invalid_best_frame'）/ band·prefix
+开启时边车缺组合视角段（'no_composite_view'）在装载点回退；worker 闸门降级
+（宇宙复检 'instance_mismatch' / 序列化失败等）经 final ``warm_state`` 带回。
+实际灌入状态归档 ``controller.se_warm_state``（run_config 消费 → result.json
+config 段 / run_stats 行 additive 记 ``warm`` + ``warm_reason``）。
+**二期（2026-09-19）解除 band/prefix 硬互斥**：组合视角边车旁路（worker
+``record_composite`` → 边车 ``composite`` 段 → 装载点构造含 WB_/PS_ 的组合
+视角载荷 + worker ``payload_universe_error`` 复检），一期 'band_prefix_on'
+前置回退已删（历史 run 产物中的该 reason 字符串不再产生）。
 
 进度口径（``echo`` 给定时；``run_config`` 传 ``None if quiet else print``）：
 沿用「原面积口径新最优才打 + 30s 心跳」—— per-seed 新最优行与心跳行**逐字保留**
@@ -456,37 +460,40 @@ def race_plan(total_budget: float, race_budget: float = RACE_BUDGET_S,
     return n, gate
 
 
-# se 延长轮 warm 回退原因（warm_reason 枚举；'no_best_frame' / 'invalid_best_frame'
-# 在 pipeline 装载点产生，此处列全量供文档与测试对拍）。
-SE_WARM_REASONS = ('off', 'unsupported', 'band_prefix_on',
-                   'no_best_frame', 'invalid_best_frame')
+# se 延长轮 warm 回退原因（warm_reason 枚举，二期 2026-09-19 band/prefix 解禁后
+# 的全量产生面：'off'/'unsupported' 在本层前置判定；'no_best_frame'/
+# 'invalid_best_frame'/'no_composite_view' 在 pipeline 装载点；'worker_*'/
+# 'instance_mismatch' 在 solve_worker 闸门降级经 final warm_state 带回。一期
+# 'band_prefix_on' 已随解禁删除，此处列全量供文档与测试对拍）。
+SE_WARM_REASONS = ('off', 'unsupported', 'no_best_frame', 'invalid_best_frame',
+                   'no_composite_view', 'worker_unsupported',
+                   'worker_serialize_failed', 'instance_mismatch')
 
 
 def se_warm_plan(cfg, enabled: bool) -> tuple[bool, str | None]:
-    """se 延长轮 warm 前置判定（US-003）：``(attempt, reason)``。
+    """se 延长轮 warm 前置判定（US-003；二期 2026-09-19 起）：``(attempt, reason)``。
 
-    三类前置回退（可装桶判定，无需等冠军产生）：``--se-warm off``（enabled
+    两类前置回退（可装桶判定，无需等冠军产生）：``--se-warm off``（enabled
     False → 'off'）；``warm_start_supported()`` False（PyPI 0.9.0 / 0.9.0+ms0
-    纯重建 wheel 无 initial_solution 参数 → 'unsupported'）；cfg.band 或
-    cfg.prefix 开（warm 输入 best_frame 边车是成员级 placed，与 band/prefix 改写
-    后的组合片实例组成不匹配，硬互斥 → 'band_prefix_on'）。全部通过 →
+    纯重建 wheel 无 initial_solution 参数 → 'unsupported'）。全部通过 →
     ``(True, None)`` —— 延长轮把 ``warm_best_frame=True`` 传 solve，装载与校验
-    的单一装载点在 ``pipeline.solve_pieces``（边车缺失/损坏/校验失败在那层回退）。
+    的单一装载点在 ``pipeline.solve_pieces``（边车缺失/损坏/校验失败/缺组合
+    视角段在那层回退）。
+
+    二期（2026-09-19）：一期「cfg.band / cfg.prefix 开 → 'band_prefix_on'
+    硬互斥」已删除 —— band/prefix 场景经组合视角边车旁路（worker
+    ``record_composite`` → 边车 ``composite`` 段 → 装载点构造含 WB_/PS_ 的
+    载荷 + worker 宇宙复检）正常 warm。``cfg`` 参数保留（签名稳定，run_config
+    /测试直调；band/prefix 已不参与判定）。
 
     ``warm_start_supported`` 函数内延迟 import（分层合规 cli → nesting_engine；
-    调用时解析模块属性，测试可 monkeypatch）。cfg 的 band/prefix 经 getattr
-    容错读取（直接驱动 run_serial_portfolio 的合成 cfg 可无这两属性）。
+    调用时解析模块属性，测试可 monkeypatch）。
     """
     if not enabled:
         return False, 'off'
     from ..nesting_engine.warmstart import warm_start_supported
     if not warm_start_supported():
         return False, 'unsupported'
-    band = getattr(cfg, 'band', None)
-    prefix = getattr(cfg, 'prefix', None)
-    if (isinstance(band, dict) and band.get('label')) or \
-            (isinstance(prefix, dict) and prefix.get('front') and prefix.get('back')):
-        return False, 'band_prefix_on'
     return True, None
 
 
@@ -1037,8 +1044,10 @@ def run_serial_portfolio(cfg, run_dir, *, controller: PortfolioController,
     前置判定通过则该轮 solve 多收 ``warm_best_frame=True`` 策略标志（装载与
     校验的单一装载点在 ``pipeline.solve_pieces``：读筛选轮
     ``best_frame_s{冠军}.json`` 边车构造 ``warmstart.build_initial_solution``
-    载荷下传）；任一前置回退（off / unsupported / band_prefix_on）或装载点回退
-    （no_best_frame / invalid_best_frame，经 solve 记录 ``warm`` / ``warm_reason``
+    载荷下传；二期起 band/prefix 开启时经边车 ``composite`` 段构造组合视角
+    载荷）；任一前置回退（off / unsupported）或装载点/worker 回退
+    （no_best_frame / invalid_best_frame / no_composite_view /
+    instance_mismatch 等，经 solve 记录 ``warm`` / ``warm_reason``
     字段带回）→ 回退现状重放（solve 调用形与无 warm 时逐字节一致，不多传任何
     键）+ ``notify`` 打一行（--quiet 也打，不静默不炸轮），实际状态归档
     ``controller.se_warm_state``。
@@ -1118,8 +1127,9 @@ def run_serial_portfolio(cfg, run_dir, *, controller: PortfolioController,
     # 冠军 = solve 记录 real_density argmax（并列取先执行者）；同 seed 换预算的
     # 全新 run（确定性重放下延长 = 冠军全程潜力的零方差求值），产物带 _ext 后缀
     # 防覆盖筛选 curve/best_frame；champion 先行落账（中断也可审计冠军归属）。
-    # US-003：warm 前置判定（off / unsupported / band_prefix_on）在此刻做 —— 与
-    # run_config 写 strategy.json 时的计划态同一纯函数，环境不变则结论一致。
+    # US-003：warm 前置判定（off / unsupported；二期起 band/prefix 不再前置回退）
+    # 在此刻做 —— 与 run_config 写 strategy.json 时的计划态同一纯函数，环境不变
+    # 则结论一致。
     if (controller.mode == 'se' and not interrupted
             and not controller.queue_stopped and solves
             and controller.se_champion is None):

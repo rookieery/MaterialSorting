@@ -48,11 +48,26 @@ US-002（prd-warm-start-phase1）：第 7 位参数 ``initial_solution`` —— 
 原样抵达本 worker，``json.dumps`` 只在最终消费点（``instance.solve(...,
 initial_solution=<JSON 字符串>)``）做；缺省 ``None`` 路径 solve 调用形与现行
 逐字节一致（不碰现有分支）。防御闸门（双保险之二，双保险之一 = US-003 portfolio
-编排层回退矩阵）：① band/prefix 与 initial_solution 同传 → 硬 ``{kind:error}``
-（防御性，正常编排层已拦）；② ``warm_start_supported()`` False（PyPI 0.9.0 /
-``+ms0`` 纯重建 wheel 无该参数）→ 丢弃载荷 + warn 降级为普通重放（不重跑、
-不炸轮，探测在 solve 之前）；③ 序列化失败（理论不可达 —— US-001 构造点已保证
-纯 JSON）同②降级，绝不带崩 worker。
+编排层回退矩阵）：① ``warm_start_supported()`` False（PyPI 0.9.0 / ``+ms0``
+纯重建 wheel 无该参数）→ 丢弃载荷 + warn 降级为普通重放（不重跑、不炸轮，
+探测在 solve 之前）；② 序列化失败（理论不可达 —— US-001 构造点已保证纯 JSON）
+同①降级；③ ``build_instance`` 后 ``payload_universe_error`` 宇宙复检（**二期
+2026-09-19 band/prefix 解禁新增**：载荷 pid 宇宙与本进程重建实例逐 pid 比对，
+错位 → 丢弃 + warn 降级 —— release 构建无 validate，Python 层是末道防线）。
+一期「band/prefix 与 initial_solution 同传硬 error」已随解禁删除：组合片实例
+的 warm 载荷是**组合视角**（pid 含 WB_/PS_、成员 pid 按扣减后 demand），由
+筛选轮边车 ``composite`` 段（下述 record_composite）在装载点构造。
+
+二期（2026-09-19，se 延长轮 warm 解禁 band/prefix）：第 8 位参数
+``record_composite`` —— CLI 落盘路径专用：band/prefix 开启时帧 report 附
+``composite`` 段（展开前的 solver 原始 placed + 重建实例 ``demand_map``），
+经 ``pipeline._best_frame_record`` 落 ``best_frame_s{seed}.json`` 边车，供
+延长轮 ``_load_warm_payload`` 构造组合视角载荷。**WS 路径恒 False** —— 帧
+report 对前端契约零新增键，WB_/PS_ 不出进程哨兵不变（CLI run_dir 内部工件
+允许含组合 pid，同 prefix_runs 工件先例）。final 消息 additive 附
+``warm_state``（仅 initial_solution 在场）：``{'engaged': bool, 'reason':
+str|None}`` —— 装载点回显「装载成功」后 worker 仍可能降级（宇宙复检等），
+实际灌入态以本字段为准（pipeline 合并进记录的 ``warm``/``warm_reason``）。
 
 **picklable 约束（Windows spawn）**：``solve_worker`` 必须是**顶层函数**、无闭包、参数
 全部 JSON 可序列化（list/dict/float/int/str）。子进程 spawn 时会通过 pickle 重建本函数。
@@ -90,7 +105,7 @@ def _frame_allowed(rtype) -> bool:
 
 
 def solve_worker(pieces_snapshot, gate_mm, solve_params, result_queue, band=None,
-                 prefix=None, initial_solution=None):
+                 prefix=None, initial_solution=None, record_composite=False):
     """子进程入口：[warm 闸门] → [band] → [prefix] → build_instance → manifest → solve → frame* → final | error。
 
     Parameters
@@ -135,12 +150,21 @@ def solve_worker(pieces_snapshot, gate_mm, solve_params, result_queue, band=None
         US-002（prd-warm-start-phase1）warm 载荷 —— ``{"strip_width": float,
         "placed_items": [{id, rotation, translation}]}`` 纯 JSON dict
         （``warmstart.build_initial_solution`` 产物；pickle 安全，全程 dict 不做
-        序列化）。在场时经三道防御闸门（见模块 docstring「US-002」段）后
+        序列化）。在场时经三道防御闸门（能力探测 → 序列化 → build_instance 后
+        ``payload_universe_error`` 宇宙复检，见模块 docstring「US-002」段）后
         ``json.dumps`` 传 ``instance.solve(config, progress=...,
-        initial_solution=<JSON 字符串>)``；``warm_start_supported()`` False 或
-        序列化失败 → 丢弃 + warn 降级普通重放；与 band/prefix 同传 → 硬
-        ``{kind:error}``（不投 manifest）。缺省 None = 现行行为（solve 调用形
-        零变化）。
+        initial_solution=<JSON 字符串>)``；任一闸门降级 → 丢弃 + warn 普通重放
+        + final 附 ``warm_state``（engaged=False + 原因）。**band/prefix 开启时
+        载荷须为组合视角**（pid 含 WB_/PS_、成员 pid 按扣减后 demand —— 二期
+        2026-09-19 解禁，由装载点从边车 ``composite`` 段构造）。缺省 None =
+        现行行为（solve 调用形零变化）。
+    record_composite : bool
+        二期（2026-09-19）：CLI 落盘路径请求组合视角旁路 —— band/prefix 开启
+        时帧 report 附 ``composite`` 段（展开前 solver 原始 placed + 重建实例
+        ``demand_map``），供 ``best_frame`` 边车记录 / se 延长轮 warm 装载。
+        **WS 路径恒 False**（前端帧契约零新增键，WB_/PS_ 不出进程哨兵不变）；
+        band/prefix 关闭时即便 True 也不附（成员视角即 solver 视角，无需桥接）。
+        缺省 False = 现行行为。
 
     density 双口径换算（关键不变量 #1）**不在子进程做**：子进程原样透传 sparrow 自报
     density；主进程在处理 frame 时按 ``total_area/(width*gate)`` 换算为原面积口径
@@ -153,22 +177,18 @@ def solve_worker(pieces_snapshot, gate_mm, solve_params, result_queue, band=None
     from .solver import build_instance
 
     # US-002（prd-warm-start-phase1）warm 载荷防御闸门（双保险之二，探测在 solve
-    # 之前；闸门序 = 组合非法硬 error 先于能力探测 —— band/prefix 同传是编排层
-    # 缺陷，静默降级会掩盖它）。``json.dumps`` 只在最终消费点做（FR-7），载荷
-    # 全程纯 JSON dict（Windows spawn pickle 安全）。
+    # 之前；一期「band/prefix 同传硬 error」已随二期解禁删除 —— 组合片实例的
+    # 载荷是组合视角，合法性改由 build_instance 后的宇宙复检把关，见下文）。
+    # ``json.dumps`` 只在最终消费点做（FR-7），载荷全程纯 JSON dict（Windows
+    # spawn pickle 安全）。
     initial_json: str | None = None
+    warm_drop_reason: str | None = None
     if initial_solution is not None:
-        _band_on = isinstance(band, dict) and bool(band.get('label'))
-        _prefix_on = (isinstance(prefix, dict) and bool(prefix.get('front'))
-                      and bool(prefix.get('back')))
-        if _band_on or _prefix_on:
-            result_queue.put({'kind': 'error',
-                              'message': 'band/prefix 与初始布局暂不支持同开'})
-            return
         from ..nesting_engine.warmstart import warm_start_supported
         if not warm_start_supported():
             _log.warning('当前 spyrrow 不支持 initial_solution（须 0.9.0+ms1+ '
                          '私有 wheel），已丢弃热启动载荷，降级为普通重放')
+            warm_drop_reason = 'worker_unsupported'
         else:
             try:
                 initial_json = json.dumps(initial_solution)
@@ -177,6 +197,7 @@ def solve_worker(pieces_snapshot, gate_mm, solve_params, result_queue, band=None
                 # 绝不带崩 worker，降级同上。
                 _log.warning('initial_solution 序列化失败，已丢弃热启动载荷，'
                              '降级为普通重放: %s', e)
+                warm_drop_reason = 'worker_serialize_failed'
 
     band_chunk = None
     if isinstance(band, dict) and band.get('label'):
@@ -245,6 +266,25 @@ def solve_worker(pieces_snapshot, gate_mm, solve_params, result_queue, band=None
         'gate_mm': float(gate_mm),
     })
 
+    # 二期（2026-09-19 band/prefix warm 解禁）：重建实例的两个下游消费 ——
+    # ① warm 载荷宇宙复检（sparrow restore 只扣减不补放 + release 无 validate，
+    # 载荷 pid 宇宙与本实例错位必须在此拦下，错位 → 丢弃降级普通重放，不炸轮；
+    # band/prefix 场景的载荷来自边车 composite 段 = 筛选轮同构实例，确定性重建
+    # 下应逐字节一致，本复检兜住任何漂移）；② record_composite 旁路的组合视角
+    # demand_map（随帧附给 CLI 落盘路径 → best_frame 边车 composite 段）。
+    composite_demand = None
+    if record_composite and (band_chunk is not None or prefix_ctx is not None):
+        composite_demand = {it.id: int(it.demand) for it in instance.items}
+    if initial_json is not None:
+        from ..nesting_engine.warmstart import payload_universe_error
+        mismatch = payload_universe_error(
+            initial_solution, {it.id: int(it.demand) for it in instance.items})
+        if mismatch is not None:
+            _log.warning('warm 载荷与本实例不匹配（%s），已丢弃热启动载荷，'
+                         '降级为普通重放', mismatch)
+            initial_json = None
+            warm_drop_reason = 'instance_mismatch'
+
     # 2) solve + drain 投递 frame。sparrow 的 instance.solve 是阻塞调用，ProgressQueue
     #    thread-safe —— 复用旧 threading 骨架：子进程内再开一个 daemon 子线程跑 solve，
     #    主线程 drain；如此才能在 solve 阻塞期间持续投递 frame。terminate() 整个子进程
@@ -283,7 +323,8 @@ def solve_worker(pieces_snapshot, gate_mm, solve_params, result_queue, band=None
                 continue
             result_queue.put({'kind': 'frame',
                               'report': _emit_frame(rtype, mid, t0, band_chunk,
-                                                    prefix_chunk)})
+                                                    prefix_chunk,
+                                                    composite_demand)})
         time.sleep(0.2)
     th.join()
     for rtype, mid in progress.drain():
@@ -291,7 +332,8 @@ def solve_worker(pieces_snapshot, gate_mm, solve_params, result_queue, band=None
             continue
         result_queue.put({'kind': 'frame',
                           'report': _emit_frame(rtype, mid, t0, band_chunk,
-                                                prefix_chunk)})
+                                                prefix_chunk,
+                                                composite_demand)})
 
     err = holder.get('err')
     if err is not None:
@@ -339,6 +381,12 @@ def solve_worker(pieces_snapshot, gate_mm, solve_params, result_queue, band=None
             'elapsed': round(time.time() - t0, 3),
             'placed_items': _emit_placed(sol.placed_items, band_chunk, prefix_chunk),
         }
+    # 二期（2026-09-19）：warm 实际灌入态回报（仅 initial_solution 在场才附）——
+    # 装载点回显「装载成功」后 worker 仍可能在闸门降级（宇宙复检等），pipeline
+    # 据本字段修正记录的 warm/warm_reason（engaged=True 时无 reason 语义）。
+    if initial_solution is not None:
+        final['warm_state'] = {'engaged': initial_json is not None,
+                               'reason': warm_drop_reason}
     result_queue.put({'kind': 'final', 'final': final})
 
 
@@ -401,14 +449,20 @@ def _build_band(pieces_snapshot, gate_mm, solve_params, band, result_queue):
     return chunk
 
 
-def _emit_frame(rtype, sol, t0, band=None, prefix=None):
+def _emit_frame(rtype, sol, t0, band=None, prefix=None, composite_demand=None):
     """把 spyrrow 的 (ReportType, Solution) → JSON 可序列化 frame dict。
 
     顶层函数（非闭包）；density 为 sparrow 自报口径，主进程再换算为原面积口径。
     ``band`` / ``prefix``（BandChunk）非 None 时组合片条目在 ``_emit_placed``
     单点展开（US-011 / US-003）。帧不置换（FR-6：final 为权威布局）。
+
+    二期（2026-09-19）：``composite_demand`` 非 None（= CLI 落盘路径请求
+    record_composite 且 band/prefix 开启）时帧 report 附 ``composite`` 段 ——
+    **展开前**的 solver 原始 placed + 重建实例 demand_map，供 best_frame 边车
+    记录 / se 延长轮 warm 装载点构造组合视角载荷。仅 CLI 路径消费；WS 路径
+    恒不传（前端帧契约零新增键，WB_/PS_ 不出进程哨兵不变）。
     """
-    return {
+    report = {
         'type': 'frame',
         'elapsed': round(time.time() - t0, 3),
         'phase': rtype.phase_name(),
@@ -416,6 +470,26 @@ def _emit_frame(rtype, sol, t0, band=None, prefix=None):
         'width_mm': float(sol.width),
         'placed_items': _emit_placed(sol.placed_items, band, prefix),
     }
+    if composite_demand is not None:
+        report['composite'] = {
+            'placed_items': _raw_placed(sol.placed_items),
+            'demand_map': composite_demand,
+        }
+    return report
+
+
+def _raw_placed(placed_items):
+    """spyrrow PlacedItem 列表 → JSON list[{id, rotation, translation}]（不展开）。
+
+    二期 warm 边车组合视角专用：``_emit_placed`` 的无展开对照面 —— WB_/PS_
+    组合片条目原样保留、成员 pid 不做扣减对账。仅 record_composite 路径消费
+    （CLI run_dir 内部工件，同 prefix_runs 工件先例可含组合 pid），绝不进
+    WS 前端契约。
+    """
+    return [{'id': pi.id,
+             'rotation': float(pi.rotation),
+             'translation': [float(pi.translation[0]), float(pi.translation[1])]}
+            for pi in placed_items]
 
 
 def _emit_placed(placed_items, band=None, prefix=None):

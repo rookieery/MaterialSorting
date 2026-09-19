@@ -7,14 +7,18 @@ Process args(7 位) → web.solve_worker → instance.solve(initial_solution=<JS
 ReportType 桩 —— build_instance 与 _frame_allowed 均可无真 wheel 运行）+ 假
 ``warm_start_supported``，不依赖私有 wheel 装载态。
 
-覆盖（PRD AC 四向）：
+覆盖（PRD AC 四向 + 二期 2026-09-19 band/prefix 解禁）：
   - worker 直调（进程内）：None 缺省 solve 调用形零变化 / 载荷在场
     ``json.dumps`` 后进 solve 关键字 / 不支持丢弃降级（warn + 普通重放不炸轮）/
-    band·prefix 同传防御 ``{kind:error}``（solve 未被调、无 manifest）/
-    序列化失败防御降级；
-  - ``solve_with_callback_proc``：Process args 元组恰 7 位（默认 None / 载荷
-    dict 原样第 7 位、band/prefix 第 5/6 位不动）—— 假 Process+假 Queue 进程内
-    同步闭环（Windows spawn 不继承 monkeypatch，闭环必须在当前进程完成）；
+    序列化失败防御降级 / 二期组合视角：band + 组合宇宙载荷（含 WB_）→ 宇宙
+    复检通过照常灌入 + final ``warm_state`` engaged=True；band + 成员级载荷
+    （pid 宇宙错位）→ 复检丢弃降级（engaged=False + 'instance_mismatch'）；
+    ``record_composite`` 帧旁路（band 开 → 帧附 ``composite`` 段含 WB_ 与
+    组合 demand_map；缺省 False → 无该键 = WS 前端契约哨兵）；
+  - ``solve_with_callback_proc``：Process args 元组恰 8 位（默认 None / 载荷
+    dict 原样第 7 位、record_composite 第 8 位、band/prefix 第 5/6 位不动）——
+    假 Process+假 Queue 进程内同步闭环（Windows spawn 不继承 monkeypatch，
+    闭环必须在当前进程完成）；
   - ``solve_pieces``：kwarg 纯透传（dict 原样 / None 缺省）。
 
 真 spyrrow 回归（initial_solution=None 走新 7 位元组的真实 spawn 链路）由既有
@@ -228,23 +232,135 @@ def test_worker_drops_payload_when_unsupported(fake_spyrrow, monkeypatch, caplog
     assert any('降级为普通重放' in r.message for r in caplog.records)
 
 
-@pytest.mark.parametrize('combo', [
-    {'band': {'label': 'g01'}},
-    {'prefix': {'front': 'g01', 'back': 'g02'}},
-], ids=['band', 'prefix'])
-def test_worker_band_prefix_with_payload_errors(fake_spyrrow, monkeypatch, combo):
-    """band/prefix 同传防御 error：支持态也拦（组合非法与能力无关）—— 只投
-    ``{kind:error}``「band/prefix 与初始布局暂不支持同开」，无 manifest、solve
-    未被调。"""
+# ------------------------------------ 二期（2026-09-19）band/prefix warm 解禁
+#
+# worker 级组合视角用 band 桩全覆盖（prefix 与 band 在 warm 闸门/宇宙复检/帧旁路
+# 的生产代码路径完全同构 —— extra item + exclude + _emit_placed 展开，异构面只剩
+# _build_prefix/_finalize_prefix 编排，那两块由 test_prefix.py 与 portfolio 级
+# test_se_warm_band_prefix_on_engages / 装载点测试覆盖）。
+
+
+def _band_chunk():
+    """合成 BandChunk（矩形，members/offset 齐全 —— expand_placements 可真跑）。"""
+    from materialsorting.nesting_engine.waist_band import BandChunk
+    return BandChunk(
+        pid='WB_g01', label='g01',
+        polygon=[[0.0, 0.0], [500.0, 0.0], [500.0, 800.0], [0.0, 800.0]],
+        offset=(0.0, 0.0),
+        members=[{'pid': 'g01_28', 'rotation': 0.0, 'translation': [0.0, 0.0]}],
+        fill_pct=100.0, bbox={'width_mm': 500.0, 'height_mm': 800.0},
+        seed=0, d_g=0.0, tol_g=0.0)
+
+
+def _stub_band(monkeypatch, capture: list):
+    """band 构造桩：假 spyrrow（解含 WB_g01 条目）+ ``_build_band`` 直返合成
+    BandChunk（真 build_band_plan 需弧片几何，合成矩形夹具会 BandError）。"""
+    import materialsorting.web.solve_worker as sw
+    chunk = _band_chunk()
+    monkeypatch.setitem(sys.modules, 'spyrrow',
+                        _fake_spyrrow_module(capture, ['WB_g01', 'g02_28']))
+
+    def _band(pieces, gate, params, band_cfg, rq, _chunk=chunk):
+        rq.put({'kind': 'stage', 'stage': 'band'})
+        return _chunk
+
+    monkeypatch.setattr(sw, '_build_band', _band)
+    return chunk
+
+
+# 组合宇宙：band on（label g01 整排除 + WB_g01 demand=1）下的完整解载荷。
+_COMPOSITE_PAYLOAD = {
+    'strip_width': 1500.0,
+    'placed_items': [
+        {'id': 'WB_g01', 'rotation': 0.0, 'translation': [0.0, 0.0]},
+        {'id': 'g02_28', 'rotation': 180.0, 'translation': [600.0, 100.0]},
+    ],
+}
+
+
+def test_worker_band_composite_payload_engages(monkeypatch):
+    """二期主路径：band 开 + **组合视角**载荷（pid 宇宙 = {WB_g01, g02_28}）→
+    宇宙复检通过、solve 收 ``json.dumps(payload)``、final 附 ``warm_state``
+    engaged=True / reason=None；一期此处是硬 ``{kind:error}``（已删）。"""
     _set_warm(monkeypatch, True)
-    q = _FakeQueue()   # 同步队列：真 Queue 的 feeder 线程异步落管，get_nowait 有竞态
+    capture: list = []
+    _stub_band(monkeypatch, capture)
+    q = _FakeQueue()
     solve_worker(_pieces(), 1980.0, dict(_SOLVE_PARAMS), q,
-                 initial_solution=_PAYLOAD, **combo)
+                 band={'label': 'g01'}, initial_solution=_COMPOSITE_PAYLOAD)
     msgs = _drain(q)
-    assert len(msgs) == 1
-    assert msgs[0]['kind'] == 'error'
-    assert msgs[0]['message'] == 'band/prefix 与初始布局暂不支持同开'
-    assert fake_spyrrow == []
+    kinds = [m['kind'] for m in msgs]
+    assert 'error' not in kinds and kinds[-1] == 'final'
+    assert capture == [{'initial_solution': json.dumps(_COMPOSITE_PAYLOAD)}]
+    assert msgs[-1]['final']['warm_state'] == {'engaged': True, 'reason': None}
+
+
+def test_worker_band_member_view_payload_degrades(monkeypatch, caplog):
+    """二期防御：band 开 + **成员级**载荷（pid 宇宙错位 —— g01_28 已被整排除、
+    WB_g01 缺席）→ worker 宇宙复检丢弃 + warn 降级普通重放（manifest→frame*→
+    final 全链照常、solve 调用形与现行一致）+ final ``warm_state`` engaged=False
+    / 'instance_mismatch'。"""
+    _set_warm(monkeypatch, True)
+    capture: list = []
+    _stub_band(monkeypatch, capture)
+    q = _FakeQueue()
+    with caplog.at_level(logging.WARNING,
+                         logger='materialsorting.web.solve_worker'):
+        solve_worker(_pieces(), 1980.0, dict(_SOLVE_PARAMS), q,
+                     band={'label': 'g01'}, initial_solution=_PAYLOAD)
+    msgs = _drain(q)
+    kinds = [m['kind'] for m in msgs]
+    assert 'error' not in kinds and kinds[-1] == 'final'
+    assert capture == [{}]                       # 载荷被丢弃：普通重放
+    assert msgs[-1]['final']['warm_state'] == {'engaged': False,
+                                               'reason': 'instance_mismatch'}
+    assert any('载荷与本实例不匹配' in r.message for r in caplog.records)
+
+
+def test_worker_record_composite_frame_bypass(monkeypatch):
+    """record_composite 帧旁路：True + band 开 → 帧附 ``composite`` 段（展开前
+    solver 原始条目含 WB_g01 + 组合 demand_map == 重建实例 {pid: demand}）；
+    缺省 False（WS 路径形态）→ 帧**无该键** —— WB_/PS_ 不出进程哨兵。"""
+    _set_warm(monkeypatch, True)
+    capture: list = []
+    _stub_band(monkeypatch, capture)
+    q = _FakeQueue()
+    solve_worker(_pieces(), 1980.0, dict(_SOLVE_PARAMS), q,
+                 band={'label': 'g01'}, record_composite=True)
+    frames = [m['report'] for m in _drain(q) if m['kind'] == 'frame']
+    assert frames
+    for fr in frames:
+        # 对外契约面：placed_items 仍成员级（无 WB_ 泄漏）
+        assert all(e['id'] != 'WB_g01' for e in fr['placed_items'])
+        comp = fr['composite']
+        assert [e['id'] for e in comp['placed_items']] == ['WB_g01', 'g02_28']
+        assert comp['demand_map'] == {'WB_g01': 1, 'g02_28': 1}
+
+    # WS 形态（缺省）：帧无 composite 键（哨兵）
+    q2 = _FakeQueue()
+    solve_worker(_pieces(), 1980.0, dict(_SOLVE_PARAMS), q2,
+                 band={'label': 'g01'})
+    frames2 = [m['report'] for m in _drain(q2) if m['kind'] == 'frame']
+    assert frames2 and all('composite' not in fr for fr in frames2)
+
+
+def test_worker_plain_payload_warm_state_engaged(fake_spyrrow, monkeypatch):
+    """plain 路径（无 band/prefix）也回报 warm_state：装载点已校验过的载荷 →
+    宇宙复检天然通过（worker 重建实例与主进程确定性同构）→ engaged=True；
+    final 附键仅在 initial_solution 在场时（缺省 None 无键，零回归）。"""
+    _set_warm(monkeypatch, True)
+    q = _FakeQueue()
+    solve_worker(_pieces(), 1980.0, dict(_SOLVE_PARAMS), q,
+                 initial_solution=_PAYLOAD)
+    msgs = _drain(q)
+    assert msgs[-1]['kind'] == 'final'
+    assert msgs[-1]['final']['warm_state'] == {'engaged': True, 'reason': None}
+
+    q2 = _FakeQueue()
+    solve_worker(_pieces(), 1980.0, dict(_SOLVE_PARAMS), q2)
+    msgs2 = _drain(q2)
+    assert msgs2[-1]['kind'] == 'final'
+    assert 'warm_state' not in msgs2[-1]['final']
 
 
 def test_worker_serialization_failure_degrades(fake_spyrrow, monkeypatch, caplog):
@@ -324,29 +440,31 @@ def fake_proc_runtime(monkeypatch):
 
 def test_proc_args_tuple_carries_payload(fake_spyrrow, monkeypatch,
                                          fake_proc_runtime):
-    """Process args 元组恰 7 位：第 5/6 位 band/prefix 缺省 None、第 7 位载荷
-    **原样 dict**（dumps 在 worker 消费点）；载荷经 args 抵达 worker 并以 JSON
-    字符串进 solve。"""
+    """Process args 元组恰 8 位：第 5/6 位 band/prefix 缺省 None、第 7 位载荷
+    **原样 dict**（dumps 在 worker 消费点）、第 8 位 record_composite（二期，
+    缺省 False）；载荷经 args 抵达 worker 并以 JSON 字符串进 solve。"""
     _set_warm(monkeypatch, True)
     proc, final, _elapsed, err = web_solver.solve_with_callback_proc(
         _pieces(), 1980.0, dict(_SOLVE_PARAMS),
         on_manifest=lambda _m: None, on_report=lambda _r: None,
         initial_solution=_PAYLOAD)
     assert err is None and final is not None
-    assert len(proc.args) == 7
+    assert len(proc.args) == 8
     assert proc.args[4] is None and proc.args[5] is None
     assert proc.args[6] == _PAYLOAD                    # dict 原样，非字符串
+    assert proc.args[7] is False                       # record_composite 缺省
     assert fake_spyrrow == [{'initial_solution': json.dumps(_PAYLOAD)}]
 
 
 def test_proc_args_tuple_default_none(fake_spyrrow, fake_proc_runtime):
-    """缺省不传 → args 第 7 位 None、solve 调用形零变化（现行回归锚点）。"""
+    """缺省不传 → args 第 7 位 None、第 8 位 False、solve 调用形零变化
+    （现行回归锚点）。"""
     proc, final, _elapsed, err = web_solver.solve_with_callback_proc(
         _pieces(), 1980.0, dict(_SOLVE_PARAMS),
         on_manifest=lambda _m: None, on_report=lambda _r: None)
     assert err is None and final is not None
-    assert len(proc.args) == 7
-    assert proc.args[6] is None
+    assert len(proc.args) == 8
+    assert proc.args[6] is None and proc.args[7] is False
     assert fake_spyrrow == [{}]
 
 

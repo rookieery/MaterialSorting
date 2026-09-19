@@ -466,29 +466,26 @@ describe('StrategyRunModal (US-005)', () => {
   });
 
   // ------------------------------------------- SE 延长轮 warm 状态（2026-09-19）
+  // 二期（2026-09-19）band/prefix warm 解禁：配置态互斥预告块已删
+  // （strategy-se-warm-blocked 不再存在），此处锁「SE + band 开也无预告」。
 
-  it('配置态：SE + band/prefix 开 → warm 互斥预告在场；race 或双关 → 不在场', () => {
-    // SE + band 开 → 预告（与后端 se_warm_plan 同判据：band_prefix_on 必回退）。
+  it('配置态：SE + band/prefix 开 → 无互斥预告（二期解禁，warm 可同开）', () => {
+    // SE + band 开 → 无预告（一期为 band_prefix_on 必回退预告，已删）。
     openModal();
     renderModal(false, { ...CTX, band: { enabled: true, label: 'g05' } });
     act(() => {
       setSelectValue(document.body.querySelector<HTMLSelectElement>('[data-testid="strategy-mode"]')!, 'se');
     });
-    expect(document.body.querySelector('[data-testid="strategy-se-warm-blocked"]')!.textContent)
-      .toContain('SE 延长轮将回退重放');
-
-    // race + band 开 → 无预告（race 无 warm 概念）。
-    act(() => {
-      setSelectValue(document.body.querySelector<HTMLSelectElement>('[data-testid="strategy-mode"]')!, 'race');
-    });
     expect(document.body.querySelector('[data-testid="strategy-se-warm-blocked"]')).toBeNull();
 
-    // SE + 双关 → 无预告（warm 可用；同组件 key 下 mode 本地态保持 se）。
+    // SE + prefix 开 → 同无预告。
     act(() => {
-      setSelectValue(document.body.querySelector<HTMLSelectElement>('[data-testid="strategy-mode"]')!, 'se');
-    });
-    act(() => {
-      root!.render(<StrategyRunModal solving={false} buildStartContext={() => CTX} />);
+      root!.render(
+        <StrategyRunModal
+          solving={false}
+          buildStartContext={() => ({ ...CTX, prefix: { enabled: true, front: 'g02', back: 'g03' } })}
+        />,
+      );
     });
     expect(document.body.querySelector('[data-testid="strategy-se-warm-blocked"]')).toBeNull();
   });
@@ -496,14 +493,14 @@ describe('StrategyRunModal (US-005)', () => {
   it('进度态：SE plan.warm=false → ⚠ 回退警告常显（带原因）；plan.warm=true 延长中 → 真顺延标注', () => {
     openModal();
     renderModal();
-    // 回退：band_prefix_on → ⚠ 行（warning 样式）。
+    // 回退：no_composite_view（二期装载点原因）→ ⚠ 行（warning 样式）。
     setPhase({
       phase: 'running',
-      status: { ...SE_EXT, plan: { ...SE_EXT.plan!, warm: false, warm_reason: 'band_prefix_on' } },
+      status: { ...SE_EXT, plan: { ...SE_EXT.plan!, warm: false, warm_reason: 'no_composite_view' } },
     });
     const note = document.body.querySelector('[data-testid="strategy-warm-note"]')!;
     expect(note.textContent).toContain('延长轮回退重放');
-    expect(note.textContent).toContain('腰头成带 / 起始端成套开启');
+    expect(note.textContent).toContain('缺组合视角段');
     expect(note.className).toContain('strategy-warning');
 
     // 真顺延：延长阶段 → 正向标注（hint 样式，不警示）。
@@ -542,13 +539,13 @@ describe('StrategyRunModal (US-005)', () => {
             mode: 'se',
             se: { k_screens: 4, screen_s: 90, ext_s: 180, champion: 1 },
             warm: false,
-            warm_reason: 'band_prefix_on',
+            warm_reason: 'instance_mismatch',
           },
         },
       });
     });
     expect(document.body.querySelector('[data-testid="strategy-mode-summary"]')!.textContent)
-      .toContain('warm 回退（腰头成带 / 起始端成套开启，热启动暂不支持同开）');
+      .toContain('warm 回退（热启动载荷与重建实例不匹配');
 
     act(() => {
       useStrategyStore.setState({

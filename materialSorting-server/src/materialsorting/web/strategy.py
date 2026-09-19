@@ -500,11 +500,13 @@ def _parse_plan(run_dir):
     """strategy.json → plan 摘要（planned_seeds + race.gate_seconds | se 三键）。
 
     US-003 warm 计划态透传（2026-09-19 事故排查补的可观测面）：strategy.json
-    ``se.warm`` / ``se.warm_reason`` 从 run 启动即在盘上（三类前置回退
-    off/unsupported/band_prefix_on 开跑前已判定）—— 前端弹窗据此第一时间显示
-    「延长轮将回退重放 + 原因」，而不是等用户看延长 pill 从零爬坡猜链路（本次
-    事故：band+prefix 双开 → band_prefix_on 回退，UI 无任何提示）。旧 run /
-    race / legacy 无这两键 → 不加键（前端隐藏）。
+    ``se.warm`` / ``se.warm_reason`` 从 run 启动即在盘上（前置回退
+    off/unsupported 开跑前已判定；二期起 band/prefix 不再前置回退，装载点 /
+    worker 回退在延长轮时刻经 result 汇总带回）—— 前端弹窗据此第一时间显示
+    「延长轮将回退重放 + 原因」，而不是等用户看延长 pill 从零爬坡猜链路
+    （一期事故：band+prefix 双开 → band_prefix_on 回退，UI 无任何提示 ——
+    该 reason 二期起不再产生，历史 run 产物仍可能含此字符串，透传不拒）。
+    旧 run / race / legacy 无这两键 → 不加键（前端隐藏）。
     """
     if not run_dir:
         return None
