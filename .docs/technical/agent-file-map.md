@@ -17,6 +17,7 @@ cli  →  web  →  nesting_engine  →  nesting_bounds  →  dxf_parser
 ```
 materialSorting-server/
 ├── pyproject.toml                     包定义 + 8 个 ms-* console_scripts + [web] 可选依赖（fastapi/uvicorn/matplotlib/python-multipart）
+├── spyrrow_build.json                 spyrrow 私有 wheel rev 钉板（US-004 起随切换助手入册）：{spyrrow_ms_commit, sparrow_rev, wheel_version, built_at} 四字段，单一真相源在 spyrrow-ms 侧交付台账（每出 wheel 同步写），MS 侧 scripts/spyrrow_wheel.py 只读 + 漂移提示
 └── src/materialsorting/
     ├── paths.py                       集中路径常量（优先环境变量，禁止硬编码 ..；US-003 加 PREFIX_RUNS_DIR）
     ├── dxf_parser/                    底层 DXF 读写（仅 stdlib + ezdxf）
@@ -460,6 +461,7 @@ US-004 起 `web/server.py` 直接 import `dxf_parser.collect.collect_pieces_with
 | `pctgrid_analyze.py`（2026-08-29） | exploration_pct 网格实验分析器（极限利用率实验 Phase 1/2 判读**单一真相源**）：读 `out/config_runs/pctgrid_*` 的 result.json + curve_s{seed}.json → 可行 incumbent 轨迹（density > 该 seed 终值 best 的帧必为不可行帧 → 剔除；curve 的 phase 字段 ≠ 时间阶段，两段切换点取首帧 compressing 的 elapsed）→ stdout 汇总表 + `out/config_runs/pctgrid_summary.csv` 追加。报告 [.docs/business/极限利用率实验报告_5336_pct与早终止.md](../../.docs/business/极限利用率实验报告_5336_pct与早终止.md) 的数据源与判读口径出处 |
 | `depth_ab_analyze.py`（2026-08-29） | quadtree_depth A/B 分析器：d3/d5 臂 vs d4 对照（pctgrid 既有 run，同 seed 配对差）+ 门判别力 Spearman(门值@300s, 终值)（race 兼容性）；不可行帧过滤复用 `pctgrid_analyze`（import EPS 单一真相源）。结论 = depth 调优否决（方案 §2.6，`--extreme` 不写 quadtree_depth 用缺省 4） |
 | `extreme_ab_replay.py`（2026-08-30） | 极限运行三臂 A/B 离线回放器（US-004 验收前置）：25-seed 曲线池（pctgrid p0.70/et0 600s）**不放回** bootstrap 回放同总预算 4h 三臂 —— extreme（race@600 门 300s × p070/et0，即 `--extreme` 展开档）vs race 默认档（180s/门 90s）vs split24（均分 600s×24 无门杀）；race 回放语义逐字复用 `cli.portfolio.decide_race_kill` / `race_plan`（import 单一真相源）；副表 = 真实参数敏感性（p0.80/et1 5-seed 池）、锚点行 = 池内 seed 0-24 确定性回放；输出 stdout 三表 + 机器可读 `out/config_runs/_probes/extreme_ab_replay.json`，固定种子 20260829 可复现。数据入 [.docs/business/极限运行_AB验收报告.md](../../.docs/business/极限运行_AB验收报告.md) |
+| `spyrrow_wheel.py`（2026-09-19） | **spyrrow 双源切换助手（warm-start 一期 US-004，prd-warm-start-phase1）**：本机「PyPI spyrrow 0.9.0 ↔ spyrrow-ms 私有 wheel（`0.9.0+msN`）」一条命令切换 + 现场诊断。`status`（缺省命令，恒 exit 0）：解释器路径自证（pip = `sys.executable -m pip`，不假设 PATH）/ 已装版本 / 安装源判别（`+ms<N>` local tag → 私有 wheel，N≥0 即私有源）/ `warm_start_supported()` 探测（import 本仓 warmstart，**判定 N≥1** 与切换助手判源口径分工）/ rev 钉板 `materialSorting-server/spyrrow_build.json` 四字段 + 一致性判读（一致 / 钉板落后需按 spyrrow-ms 台账更新 / 回线上临时态属正常组合）。`use-pypi` = `pip install --force-reinstall spyrrow==0.9.0`；`use-local <wheel>` = `pip install --force-reinstall --no-deps <wheel>`（只换 spyrrow 一个发行版不动 shapely 等依赖）+ 装后 `importlib.invalidate_caches()` 读回验证 + 钉板漂移 `[提示更新钉板]`（四字段单一真相源在 spyrrow-ms 侧，MS 侧**不自动改写**——commit/rev/built_at 无从得知，半自动拼装造假钉板）；错误矩阵（路径不存在 / 非 .whl / 文件名非 `spyrrow-` 开头）全部 exit 1 + stderr 中文清晰报错**绝不触碰 pip**。仅标准库零新依赖；repo 根直跑（sys.path 自引导对齐 embed_piece_codes.py 惯例）；本仓不入库任何 Rust 构建产物。用法手册 = [.docs/technical/spyrrow私有wheel构建与升级手册.md](spyrrow私有wheel构建与升级手册.md)；护栏测试 = tests/test_spyrrow_wheel.py（纯桩 27 例） |
 
 ## 数据流主线
 

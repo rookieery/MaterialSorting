@@ -1086,7 +1086,19 @@
         "title": "initial_solution 求解链透传（pipeline→solver→worker）",
         "description": "As a 排料引擎开发者，把 initial_solution 以 band/prefix 同款五步链模板穿透求解编排层（cli/pipeline.py → web/solver.py → web/solve_worker.py），warm 载荷能到达子进程内的 instance.solve()，缺省 None 时全链行为逐字节不变。\n\n具体任务：\n1. materialsorting/cli/pipeline.py — solve_pieces 新 kwarg initial_solution: dict | None = None。\n2. materialsorting/web/solver.py — solve_with_callback_proc 新同名 kwarg；Process args 元组追加第 7 位（Process 构造点同步）。\n3. materialsorting/web/solve_worker.py — 签名同步收第 7 位；消费：载荷在场时 json.dumps 后传 instance.solve(config, progress=..., initial_solution=...)（json.dumps 只在最终消费点做；全程纯 JSON dict，Windows spawn pickle 安全）。\n4. 防御闸门（双保险之二）：solve_worker 侧 warm_start_supported() 为 False 而载荷在场 → 丢弃载荷 + warn 降级为普通重放（不重跑、不炸轮，探测在 solve 之前）；band/prefix 与 initial_solution 同传 → 投 {kind:error}「band/prefix 与初始布局暂不支持同开」（防御性，正常编排层已拦）。\n5. 直接调 solve_worker 的既有测试桩全部同步 args 元组长度。\n\n验收标准：\n- 缺省 initial_solution=None 路径与现行完全一致（不碰现有分支）；pytest 既有求解链测试（test_solve_proc.py / test_cli_solve_pieces_proc.py 等）全绿零逻辑改动（桩长度同步除外）。\n- 新增桩测试（PyPI 0.9.0 态可跑，monkeypatch 假 spyrrow 模块）：载荷透传到位（worker 收到 json 字符串并传入 solve）/ 不支持时丢弃降级（solve 收到 initial_solution=None）/ band 同传防御 error / None 缺省零变化。\n- python -m 入口与分层依赖检查通过（web/cli 层不改 import 方向）。",
         "passes": true
+      },
+      {
+        "id": "US-003",
+        "title": "se 延长轮真顺延接线（portfolio + CLI 旗标）",
+        "description": "As a 排料策略使用者，se 策略冠军延长段灌入筛选轮冠军解真顺延（--se-warm 默认 on），延长段 180s 全部花在增量搜索而不是重放已知结果；warm 不可用时自动回退现状重放，绝不炸轮。\n\n具体任务：\n1. materialsorting/cli/portfolio.py — 延长轮编排：se 冠军（argmax real_density）确定后读 run_dir/best_frame_s{champ}.json（含 placed_items + width_mm，band/prefix 已展开成员级）→ 在 pipeline.solve_pieces 语境内（有 run_dir 与 pid_meta/demand_map）经 warmstart.build_initial_solution(placed, demand_map, width_mm) 构造载荷下传（装载与校验放 solve_pieces 内、portfolio 传策略标志，单一装载点，具体分工实现时定）。\n2. 回退矩阵（任一命中 → 回退现状重放 + warn 一行，不静默不炸轮）：--se-warm off；warm_start_supported() False；best_frame 边车缺失/损坏/校验失败；cfg.band 或 cfg.prefix 开（warm 输入是成员级 placed，与 band/prefix 改写后的实例组成不匹配，硬互斥）。\n3. materialsorting/cli/run_config.py — --se-warm {on,off} CLI 旗标（默认 on，值域外退出 1，new_run_dir 前拦下）；无 --strategy se 时给出即从属旗标笔误退出 1；无旗标时 CLI/控制器/result.json 调用形逐字节零回归。\n4. 可观测：strategy.json se 段与 ext 轮 result.json config 段 additive 记 warm: true/false + 回退原因（warm_reason: 'unsupported'|'no_best_frame'|'band_prefix_on'|...）；run_stats 行 config 段 additive 同键（class_key 不变，与历史 run 可比）。\n\n验收标准：\n- tests/test_cli_strategy_wiring.py 扩展（桩 solve）：warm on 透传到 solve 调用形 / 四类回退各独立用例 / off 显式回退 / 零回归哨兵（无旗标输出逐字节对拍）。\n- python -m materialsorting.cli.run_config --help 展示新旗标；模块导入检查通过。",
+        "passes": true
       }
     ]
+  },
+  {
+    "id": "US-004",
+    "title": "spyrrow 双源切换助手 + rev 钉板 + 构建手册",
+    "description": "As a 本项目维护者，新建双源切换脚本（scripts/spyrrow_wheel.py）与 rev 钉板记录 + 构建手册，本机在「PyPI 0.9.0 ↔ spyrrow-ms 私有 wheel」之间一条命令切换、构建可复现可审计，spyrrow-ms 未交付 ms1 前日常开发生产零影响。\n\n具体任务：\n1. scripts/spyrrow_wheel.py（新建）— status：打印当前安装源（PyPI/本地 tag）、版本号、warm_start_supported() 探测结果；use-pypi：pip install --force-reinstall spyrrow==0.9.0 回线上版；use-local <wheel路径>：pip install --force-reinstall <wheel>；全部走 .venv 的 pip（sys.executable 定位，不假设 PATH）。\n2. materialSorting-server/spyrrow_build.json — {spyrrow_ms_commit, sparrow_rev, wheel_version, built_at} 钉板字段（该文件已由 spyrrow-ms 侧 2026-09-07 初始化为 ms0 态；use-local 成功后提示更新/自动更新；保持入库轻量、无构建产物）。\n3. 新写 .docs/technical/spyrrow私有wheel构建与升级手册.md — 双源切换用法、升 rev 流程（0.2.0 步骤预留）、troubleshooting；工具链/源码获取/构建命令本体在 spyrrow-ms 侧规格文档（本手册只写 MS 侧视角的消费与切换）。\n\n验收标准：\n- status 在当前态（0.9.0+ms0 已装）即正确工作，repo 根直跑退出码 0（sys.path 自引导对齐既有 scripts/ 惯例）。\n- use-local 对不存在的 wheel 路径给出清晰报错；不引入新依赖。\n- 手册落盘；MS 仓库不引入任何 Rust 构建产物。",
+    "passes": true
   }
 ]
