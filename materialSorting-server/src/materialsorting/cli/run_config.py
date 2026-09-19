@@ -8,7 +8,7 @@ r"""ms-run-config 入口 —— 一条命令跑完「commit → 求解」，无�
                   [--solver-opts '{"exploration_pct":0.7}' | --rotate-opts]
                   [--lns [--lns-time 30] [--lns-rounds 5]]
                   [--strategy [se|race] --time 总预算
-                    [--se-screen 90] [--se-extend 180]
+                    [--se-screen 90] [--se-extend 180] [--se-warm on|off]
                     [--race-budget 180] [--race-gate 0.5]]
                   [--extreme --time 总预算 [--extreme-budget 600|1200]]
     python -m materialsorting.cli.run_config <config.json> --time 5
@@ -135,6 +135,27 @@ US-002 策略双模式（``--strategy [se|race]``，给定总预算拿更高利�
   - 无 ``--strategy`` 时行为与 result.json 与现版**逐字节一致**（零回归红线，
     portfolio 段不加 mode 键、config 段不加 strategy 键）。
 
+US-003（prd-warm-start-phase1）se 延长轮 warm 真顺延（``--se-warm {on,off}``，
+**默认 on**，须与 ``--strategy se`` 同给、单独给出退出 1、值域外退出 1 —— 均
+在 new_run_dir 前拦下，与 --extreme 显式同给互斥）：
+
+  - 延长段把**筛选轮冠军解**（``best_frame_s{冠军}.json`` 边车，成员级 placed）
+    灌入热启动 —— 180s 全部花在增量搜索而不是重放已知结果。装载与校验的单一
+    装载点在 ``pipeline.solve_pieces``（portfolio 前置判定后传
+    ``warm_best_frame=True`` 策略标志）。
+  - **回退矩阵**（任一命中 → 回退现状重放 + warn 一行，不静默不炸轮；solve
+    调用形与无 warm 逐字节一致）：``--se-warm off``（'off'）/
+    ``warm_start_supported()`` False（'unsupported'，当前 0.9.0+ms0 装载态即此
+    → 默认 on 下自动回退）/ cfg.band 或 cfg.prefix 开（'band_prefix_on'，成员级
+    placed 与改写后的实例组成不匹配，硬互斥）三类 ``portfolio.se_warm_plan``
+    前置判定；边车缺失/损坏（'no_best_frame'）/ 校验失败（'invalid_best_frame'）
+    两类在装载点回退（经 solve 记录 ``warm``/``warm_reason`` 带回）。
+  - **可观测（additive）**：strategy.json ``se`` 段记计划态 ``warm`` +
+    ``warm_reason``（三类前置回退开跑即知）；result.json config ``strategy``
+    段与 run_stats 行 config 段记**实际灌入态**同键（延长轮跑过才加键，中断 /
+    R0 未进延长不加）；class_key 组成不变（与历史 run 可比）。race/legacy 路径
+    零新增键（无旗标运行 CLI/控制器/result.json 逐字节零回归）。
+
 US-001 极限运行糖衣旗标（``--extreme [--extreme-budget 600|1200]``，方案
 ``.docs/business/极限运行功能方案_race门杀.md`` v1.1）：一条命令跑「race 门杀 ×
 实验结论极限参数」长跑，目标从「期望最优」换为 best-of-k 右尾最优 ——
@@ -194,7 +215,7 @@ from .portfolio import (KILL_MODES, RACE_BUDGET_S, RACE_GATE_TAU, SE_EXT_S,
                         PortfolioController, calibrate_theta0,
                         load_controller_params, load_run_stats, race_plan,
                         run_serial_portfolio, run_stats_class_key, se_plan,
-                        strategy_seed_stream)
+                        se_warm_plan, strategy_seed_stream)
 
 __all__ = ['SOLVER_OPTS_POOL', 'rotation_opts_for', 'EXTREME_SOLVER_OPTS',
            'EXTREME_BUDGET_S', 'EXTREME_BUDGETS', 'main']
@@ -261,6 +282,12 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
                    help='se 阶段 1 每轮筛选预算（秒，默认 90；须与 --strategy 同给）')
     p.add_argument('--se-extend', type=int, default=None, metavar='N',
                    help='se 阶段 2 冠军延长预算（秒，默认 180；须与 --strategy 同给）')
+    p.add_argument('--se-warm', default=None, metavar='{on,off}',
+                   help='se 延长轮 warm 真顺延（US-003，默认 on）：延长段把筛选轮'
+                        '冠军解灌入热启动（延长预算全部花在增量搜索而非重放已知'
+                        '结果）；warm 不可用（wheel 不支持/band·prefix 开/边车缺失'
+                        '等）自动回退现状重放并 warn，绝不炸轮；须与 --strategy se '
+                        '同给')
     p.add_argument('--race-budget', type=int, default=None, metavar='N',
                    help='race 每 seed 求解预算（秒，默认 180；须与 --strategy 同给）')
     p.add_argument('--race-gate', type=float, default=None, metavar='TAU',
@@ -413,6 +440,7 @@ def main(argv: list[str] | None = None) -> int:
             ('--rotate-opts', args.rotate_opts),
             ('--se-screen', args.se_screen is not None),
             ('--se-extend', args.se_extend is not None),
+            ('--se-warm', args.se_warm is not None),
             ('--race-budget', args.race_budget is not None),
             ('--race-gate', args.race_gate is not None)) if on]
         if conflicts:
@@ -504,6 +532,18 @@ def main(argv: list[str] | None = None) -> int:
         print('配置错误: --se-screen / --se-extend / --race-budget / --race-gate '
               '须与 --strategy 同给（策略模式未启用）', file=sys.stderr)
         return _EXIT_CONFIG_OR_COMMIT
+    # US-003 --se-warm 裁决（配置错误在 new_run_dir 之前拦下，不留空目录）：
+    # ① 值域手工校验（不走 argparse choices —— choices 外退出码是 2，本入口
+    # 统一以退出 1 呈现配置错误）；② 从属旗标 —— 须与 --strategy se 同给
+    # （无策略 / race 模式给出即笔误退出 1）。
+    if args.se_warm is not None and args.se_warm not in ('on', 'off'):
+        print(f"配置错误: --se-warm 须为 on 或 off，当前为 {args.se_warm!r}",
+              file=sys.stderr)
+        return _EXIT_CONFIG_OR_COMMIT
+    if args.se_warm is not None and strategy != 'se':
+        print('配置错误: --se-warm 须与 --strategy se 同给'
+              '（se 延长轮 warm 真顺延未启用）', file=sys.stderr)
+        return _EXIT_CONFIG_OR_COMMIT
     if strategy is not None:
         if args.kill is not None:
             print('配置错误: --strategy 与 --kill 互斥（策略模式 kill 判据内建：'
@@ -551,6 +591,13 @@ def main(argv: list[str] | None = None) -> int:
             print(f'配置错误: {e}', file=sys.stderr)
             return _EXIT_CONFIG_OR_COMMIT
         strategy_seeds = strategy_seed_stream(cfg.seeds, k_screens)
+    # US-003 se 延长轮 warm 真顺延计划态（--se-warm 缺省 on）：三类前置回退
+    # （off / unsupported / band_prefix_on）开跑前即可判定 —— strategy.json 计划段
+    # 与启动行同源；延长轮时刻 portfolio 重跑同一纯函数复核（环境不变则结论一致）。
+    # race/legacy 不判定（恒 (False, None)，不进任何 warm 面）。
+    se_warm_on = strategy == 'se' and args.se_warm != 'off'
+    warm_attempt, warm_reason = ((False, None) if strategy != 'se'
+                                 else se_warm_plan(cfg, se_warm_on))
     params = None
     if args.params is not None:
         try:
@@ -600,9 +647,13 @@ def main(argv: list[str] | None = None) -> int:
                 print(f'[extreme] 极限运行：race 门杀 × 实验结论参数（预算档 '
                       f'{extreme_budget:g}s/seed，quadtree_depth 用缺省 4）')
         else:
+            # US-003：启动行附 warm 计划态（--quiet 也打 —— 改求解编排的开关不
+            # 静默，同策略模式口径；实际灌入结果以延长轮回退行为准）。
+            warm_note = ('，延长轮 warm 真顺延' if warm_attempt
+                         else f'，延长轮 warm 回退重放（{warm_reason}）')
             print(f'[portfolio] 策略模式 se（筛延）：总预算 {args.time}s = 阶段 1 '
                   f'{n_rounds} × {se_screen:g}s 筛选 + 阶段 2 冠军 {se_ext:g}s 延长'
-                  f'（种子流 {strategy_seeds}）')
+                  f'（种子流 {strategy_seeds}）{warm_note}')
     elif n_rounds > 1:
         # 多 seed 启动即给总时长预期（len(seeds) × time，不含解析/切片）——
         # 评估配置前先知道要等多久，避免把长跑误判挂死。
@@ -690,8 +741,14 @@ def main(argv: list[str] | None = None) -> int:
         if strategy == 'race':
             plan_payload['race'] = {'gate_seconds': round(float(gate_seconds), 3)}
         else:
+            # US-003 warm 计划段 additive（三类前置回退开跑前即可判定；边车装载
+            # 类回退 no_best_frame / invalid_best_frame 在延长轮才知道 → 以
+            # result.json config 段的实际灌入态为准，两者分工）。
             plan_payload['se'] = {'k_screens': int(k_screens),
-                                  'screen_s': se_screen, 'ext_s': se_ext}
+                                  'screen_s': se_screen, 'ext_s': se_ext,
+                                  'warm': bool(warm_attempt)}
+            if not warm_attempt:
+                plan_payload['se']['warm_reason'] = warm_reason
         with open(Path(run_dir) / 'strategy.json', 'w', encoding='utf-8') as f:
             json.dump(plan_payload, f, ensure_ascii=False, indent=2)
 
@@ -720,7 +777,9 @@ def main(argv: list[str] | None = None) -> int:
         mode='legacy' if strategy is None else strategy,
         total_budget=args.time if strategy is not None else None,
         race_budget=race_budget, race_gate_tau=race_gate_tau,
-        se_k=k_screens, se_screen=se_screen, se_ext=se_ext)
+        se_k=k_screens, se_screen=se_screen, se_ext=se_ext,
+        # ---- US-003 se 延长轮 warm 真顺延（旗标态；前置判定在延长轮做）----
+        se_warm=se_warm_on)
     current = {'seed': None}       # 求解异常报错定位用（on_seed_start 持续刷新）
     # US-002 策略参数回显（result.json config 段；legacy → None 不加键）。
     if strategy == 'race':
@@ -812,6 +871,14 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         if kill_log is not None:
             kill_log.close()
+
+    # US-003 warm 实际灌入态 additive 进 config.strategy 回显（延长轮跑过才有键；
+    # 中断 / R0 未进延长 → se_warm_state None 不加键 —— 未跑的轮无从claim）。
+    # strategy_echo 被 _flush_result 闭包按引用读，此处就地补键 → 末次落盘携带。
+    if strategy == 'se' and controller.se_warm_state is not None:
+        strategy_echo['warm'] = controller.se_warm_state['warm']
+        if not controller.se_warm_state['warm']:
+            strategy_echo['warm_reason'] = controller.se_warm_state['reason']
 
     if run.interrupted:
         i, seed = run.last_round
@@ -950,7 +1017,13 @@ def main(argv: list[str] | None = None) -> int:
                    **({'prefix': cfg.prefix} if cfg.prefix is not None else {}),
                    # US-001 极限运行档位回显（additive：class_key 组成不变，与历史
                    # run 可比；无 --extreme 的行结构不变）。
-                   **({'extreme': {'budget': extreme_budget}} if args.extreme else {})},
+                   **({'extreme': {'budget': extreme_budget}} if args.extreme else {}),
+                   # US-003 se 延长轮 warm 实际灌入态（additive 同键：class_key
+                   # 组成不变；延长轮未跑的 run 不加键）。
+                   **({'warm': controller.se_warm_state['warm'],
+                       **({'warm_reason': controller.se_warm_state['reason']}
+                          if not controller.se_warm_state['warm'] else {})}
+                      if controller.se_warm_state is not None else {})},
     })
     print(f"real_density（原面积口径）= {d:.2%} | "
           f"用布长度 = {w:.0f}mm | 片数 = {n_placed} | "

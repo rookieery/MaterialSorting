@@ -78,6 +78,21 @@ US-002 已由 ``PortfolioController`` 接线消费（``mode`` kwarg），US-003 
   - **种子流** ``strategy_seed_stream``：config seeds 优先、max+1 补齐、保证
     无重复（同预算重跑同 seed 是纯浪费 —— 确定性重放下零信息增益）。
 
+US-003（prd-warm-start-phase1）se 延长轮 warm 真顺延：冠军（argmax
+real_density）确定后，延长轮把**筛选轮冠军解**灌入热启动 —— 延长段 180s 全部
+花在增量搜索而不是重放已知结果。分工：本层（延长轮编排）只做**前置判定 +
+传策略标志**（``se_warm_plan`` → ``solve(warm_best_frame=True)``）；**装载与
+校验的单一装载点在 ``pipeline.solve_pieces``**（读 ``run_dir/
+best_frame_s{冠军}.json`` 边车 → ``warmstart.build_initial_solution`` 构造载荷，
+它持有 run_dir 与 pid_meta/demand_map）。回退矩阵（任一命中 → 回退现状重放 +
+warn 一行，不静默不炸轮）：``--se-warm off``（'off'）/
+``warm_start_supported()`` False（'unsupported'）/ cfg.band 或 cfg.prefix 开
+（'band_prefix_on'，warm 输入是成员级 placed 与改写后的实例组成不匹配，硬
+互斥）三类在本层前置判定；边车缺失/损坏（'no_best_frame'）/ 校验失败
+（'invalid_best_frame'）两类在装载点回退。实际灌入状态归档
+``controller.se_warm_state``（run_config 消费 → result.json config 段 /
+run_stats 行 additive 记 ``warm`` + ``warm_reason``）。
+
 进度口径（``echo`` 给定时；``run_config`` 传 ``None if quiet else print``）：
 沿用「原面积口径新最优才打 + 30s 心跳」—— per-seed 新最优行与心跳行**逐字保留**
 旧版格式（零回归），新增**跨 seed 反超**时的 incumbent 行（同 seed 自我刷新不打，
@@ -96,13 +111,14 @@ from .pipeline import solve_pieces
 __all__ = ['R0_REASON', 'R1_REASON', 'R2_REASON', 'R5_REASON', 'KILL_DEFAULTS',
            'KILL_MODES', 'STRATEGY_MODES', 'THETA0_MIN_RECORDS', 'THETA0_MARGIN',
            'RACE_BUDGET_S', 'RACE_GATE_TAU', 'SE_SCREEN_S', 'SE_EXT_S',
-           'SEED_UNIT_S', 'FULL_UNIT_S', 'STRATEGY_STARTUP_S',
+           'SEED_UNIT_S', 'FULL_UNIT_S', 'STRATEGY_STARTUP_S', 'SE_WARM_REASONS',
            'ControllerParamsError', 'StrategyBudgetError', 'PortfolioController',
            'PortfolioRun', 'calibrate_theta0', 'decide_race_kill',
            'load_controller_params', 'load_run_stats', 'make_envelope',
            'r1_below_envelope', 'race_gate_seconds', 'race_plan',
            'r2_below_threshold', 'resolve_kill_params', 'run_serial_portfolio',
-           'run_stats_class_key', 'se_plan', 'strategy_seed_stream']
+           'run_stats_class_key', 'se_plan', 'se_warm_plan',
+           'strategy_seed_stream']
 
 # R0 / R1 / R2 触发的 should_stop 返回值（solve_pieces 透传为 kill_reason）。
 R0_REASON = 'R0_target_reached'
@@ -440,6 +456,41 @@ def race_plan(total_budget: float, race_budget: float = RACE_BUDGET_S,
     return n, gate
 
 
+# se 延长轮 warm 回退原因（warm_reason 枚举；'no_best_frame' / 'invalid_best_frame'
+# 在 pipeline 装载点产生，此处列全量供文档与测试对拍）。
+SE_WARM_REASONS = ('off', 'unsupported', 'band_prefix_on',
+                   'no_best_frame', 'invalid_best_frame')
+
+
+def se_warm_plan(cfg, enabled: bool) -> tuple[bool, str | None]:
+    """se 延长轮 warm 前置判定（US-003）：``(attempt, reason)``。
+
+    三类前置回退（可装桶判定，无需等冠军产生）：``--se-warm off``（enabled
+    False → 'off'）；``warm_start_supported()`` False（PyPI 0.9.0 / 0.9.0+ms0
+    纯重建 wheel 无 initial_solution 参数 → 'unsupported'）；cfg.band 或
+    cfg.prefix 开（warm 输入 best_frame 边车是成员级 placed，与 band/prefix 改写
+    后的组合片实例组成不匹配，硬互斥 → 'band_prefix_on'）。全部通过 →
+    ``(True, None)`` —— 延长轮把 ``warm_best_frame=True`` 传 solve，装载与校验
+    的单一装载点在 ``pipeline.solve_pieces``（边车缺失/损坏/校验失败在那层回退）。
+
+    ``warm_start_supported`` 函数内延迟 import（分层合规 cli → nesting_engine；
+    调用时解析模块属性，测试可 monkeypatch）。cfg 的 band/prefix 经 getattr
+    容错读取（直接驱动 run_serial_portfolio 的合成 cfg 可无这两属性）。
+    """
+    if not enabled:
+        return False, 'off'
+    from ..nesting_engine.warmstart import warm_start_supported
+    if not warm_start_supported():
+        return False, 'unsupported'
+    band = getattr(cfg, 'band', None)
+    prefix = getattr(cfg, 'prefix', None)
+    if (isinstance(band, dict) and band.get('label')) or \
+            (isinstance(prefix, dict) and prefix.get('front') and prefix.get('back')):
+        return False, 'band_prefix_on'
+    return True, None
+
+
+
 class ControllerParamsError(ValueError):
     """controller 标定参数文件加载失败（不存在 / 非 JSON / 顶层非对象）。"""
 
@@ -509,7 +560,10 @@ class PortfolioController:
         （计划数只是乐观上界，运行期动态收口）。
       - **se**：阶段 1 ``se_k`` 轮 × ``se_screen`` 预算串行筛选，阶段 2 冠军
         （solve 记录 ``real_density`` argmax，``se_champion``）以 ``se_ext``
-        预算再跑一轮（``round_budget`` 按队列序切换预算）。
+        预算再跑一轮（``round_budget`` 按队列序切换预算）。US-003：``se_warm``
+        开（--se-warm on/缺省）且 ``se_warm_plan`` 前置判定通过时，延长轮经
+        ``warm_best_frame=True`` 传策略标志给 solve（装载点在
+        ``pipeline.solve_pieces``），实际状态归档 ``se_warm_state``。
       - 策略模式下 R1/R2 不评估、θ 不维护（``kill_mode`` 应传 'off'，R3 连杀
         衰减随之不触发）；被门杀 / 被筛 seed 的最优帧照常入 incumbent；
         ``--target`` 共存时 R0 恒先（达标即停优先于模式继续）。
@@ -519,7 +573,8 @@ class PortfolioController:
                  kill='shadow', time_budget=None, notify=None, on_decision=None,
                  theta0=None, mode='legacy', total_budget=None,
                  race_budget=RACE_BUDGET_S, race_gate_tau=RACE_GATE_TAU,
-                 se_k=1, se_screen=SE_SCREEN_S, se_ext=SE_EXT_S):
+                 se_k=1, se_screen=SE_SCREEN_S, se_ext=SE_EXT_S,
+                 se_warm=False):
         if mode not in STRATEGY_MODES:
             raise ValueError(f'mode 须为 {STRATEGY_MODES} 之一，当前为 {mode!r}')
         if mode == 'race' and total_budget is None:
@@ -567,6 +622,15 @@ class PortfolioController:
         self.se_ext = float(se_ext)
         self.se_champion: int | None = None
         self.current_phase: str | None = None   # 本轮阶段标记（per_seed.phase 数据源）
+        # ---- US-003 se 延长轮 warm 真顺延 ----
+        # se_warm = --se-warm 旗标态（on/缺省 True；off False —— 前置判定由
+        # se_warm_plan 在延长轮做，此处只存旗标意图）。缺省 False：直接构造控制器
+        # 的既有测试与 legacy/race 路径零回归（warm 只在 se 延长轮被消费）。
+        self.se_warm = bool(se_warm)
+        # 延长轮 warm 实际灌入状态归档：None = 延长轮未跑（R0 提前停 / 中断）；
+        # 否则 {'warm': bool, 'reason': str|None}（False 时 reason ∈ SE_WARM_REASONS）。
+        # run_config 消费 → result.json config 段 / run_stats 行 additive 同键。
+        self.se_warm_state: dict | None = None
 
     # -------------------------------------------------------------- 判定
 
@@ -969,6 +1033,16 @@ def run_serial_portfolio(cfg, run_dir, *, controller: PortfolioController,
     （solve 记录 ``real_density`` argmax）同 seed 以 ``se_ext`` 预算再跑一轮
     （``artifact_suffix='_ext'`` 防覆盖筛选产物，solve 条目附 ``phase='extension'``）。
 
+    US-003：延长轮 warm 真顺延 —— ``se_warm_plan(cfg, controller.se_warm)``
+    前置判定通过则该轮 solve 多收 ``warm_best_frame=True`` 策略标志（装载与
+    校验的单一装载点在 ``pipeline.solve_pieces``：读筛选轮
+    ``best_frame_s{冠军}.json`` 边车构造 ``warmstart.build_initial_solution``
+    载荷下传）；任一前置回退（off / unsupported / band_prefix_on）或装载点回退
+    （no_best_frame / invalid_best_frame，经 solve 记录 ``warm`` / ``warm_reason``
+    字段带回）→ 回退现状重放（solve 调用形与无 warm 时逐字节一致，不多传任何
+    键）+ ``notify`` 打一行（--quiet 也打，不静默不炸轮），实际状态归档
+    ``controller.se_warm_state``。
+
     Parameters
     ----------
     controller : PortfolioController
@@ -998,8 +1072,14 @@ def run_serial_portfolio(cfg, run_dir, *, controller: PortfolioController,
     interrupted = False
     last_round: tuple[int, int] | None = None
 
-    def _run_round(i: int, seed: int, *, suffix: str = '') -> dict:
-        """单轮求解（阶段共用）：预算 / should_stop / solver_opts 装配 + solve。"""
+    def _run_round(i: int, seed: int, *, suffix: str = '',
+                   warm: bool = False) -> dict:
+        """单轮求解（阶段共用）：预算 / should_stop / solver_opts 装配 + solve。
+
+        ``warm=True`` 仅 se 延长轮（US-003 se_warm_plan 前置判定通过）使用：
+        多传 ``warm_best_frame`` 策略标志（装载点在 solve_pieces）；回退路径
+        不传该键 —— solve 调用形与无 warm 的现行形态逐字节一致（零回归红线）。
+        """
         kwargs = {'seed': seed,
                   'time_budget': controller.round_budget(i, default=time_budget),
                   'on_progress': controller.make_progress(seed, index=i)}
@@ -1012,6 +1092,8 @@ def run_serial_portfolio(cfg, run_dir, *, controller: PortfolioController,
                 kwargs['solver_opts'] = dict(opts)
         if suffix:
             kwargs['artifact_suffix'] = suffix
+        if warm:
+            kwargs['warm_best_frame'] = True
         return solve(cfg, run_dir, **kwargs)
 
     for i, seed in enumerate(controller.seeds, start=1):
@@ -1036,6 +1118,8 @@ def run_serial_portfolio(cfg, run_dir, *, controller: PortfolioController,
     # 冠军 = solve 记录 real_density argmax（并列取先执行者）；同 seed 换预算的
     # 全新 run（确定性重放下延长 = 冠军全程潜力的零方差求值），产物带 _ext 后缀
     # 防覆盖筛选 curve/best_frame；champion 先行落账（中断也可审计冠军归属）。
+    # US-003：warm 前置判定（off / unsupported / band_prefix_on）在此刻做 —— 与
+    # run_config 写 strategy.json 时的计划态同一纯函数，环境不变则结论一致。
     if (controller.mode == 'se' and not interrupted
             and not controller.queue_stopped and solves
             and controller.se_champion is None):
@@ -1043,14 +1127,32 @@ def run_serial_portfolio(cfg, run_dir, *, controller: PortfolioController,
         controller.se_champion = champ
         i_ext = len(controller.seeds) + 1
         last_round = (i_ext, champ)
+        warm_attempt, warm_early_reason = se_warm_plan(cfg, controller.se_warm)
         if on_seed_start is not None:
             on_seed_start(i_ext, champ)
         try:
-            rec = _run_round(i_ext, champ, suffix='_ext')
+            rec = _run_round(i_ext, champ, suffix='_ext', warm=warm_attempt)
         except KeyboardInterrupt:
             interrupted = True
         else:
             rec['phase'] = 'extension'
+            # US-003 warm 实际状态归档：前置回退用早期 reason；装载点回退经 solve
+            # 记录的 warm / warm_reason 字段带回（solve_pieces 契约：收到
+            # warm_best_frame=True 的记录必带 warm 键）。任一回退 → notify 一行
+            # （--quiet 也打，不静默不炸轮），延长轮照常现状重放。
+            if warm_attempt:
+                engaged = bool(rec.get('warm'))
+                warm_state = {'warm': engaged,
+                              'reason': (None if engaged
+                                         else (rec.get('warm_reason')
+                                               or 'invalid_best_frame'))}
+            else:
+                warm_state = {'warm': False, 'reason': warm_early_reason}
+            controller.se_warm_state = warm_state
+            if not warm_state['warm']:
+                controller._notify_line(
+                    f"[portfolio] se 延长轮 warm 回退 → 现状重放"
+                    f"（warm_reason={warm_state['reason']}）")
             solves.append(rec)
             controller.finish_seed(rec)
             if on_seed_done is not None:

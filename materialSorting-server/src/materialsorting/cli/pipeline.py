@@ -67,9 +67,25 @@ exclude_pids 扣减 / 帧前展开 / final 置换全在 solve_worker 进程内�
 
 US-002（prd-warm-start-phase1）：``solve_pieces`` 加可选 ``initial_solution``
 （warm 载荷 = ``warmstart.build_initial_solution`` 产物纯 JSON dict）—— 纯透传
-``solve_with_callback_proc(initial_solution=...)``，本函数零校验零序列化（装载
-与校验的单一装载点在 US-003 portfolio 编排层；``json.dumps`` 与防御闸门在
-solve_worker 最终消费点）。缺省 None 时 solve 调用形与现行逐字节一致。
+``solve_with_callback_proc(initial_solution=...)``，本参数零校验零序列化
+（``json.dumps`` 与防御闸门在 solve_worker 最终消费点）。缺省 None 时 solve
+调用形与现行逐字节一致。
+
+US-003（prd-warm-start-phase1）：``solve_pieces`` 加可选 ``warm_best_frame``
+（se 延长轮策略标志，portfolio ``run_serial_portfolio`` 传入）—— 本函数是
+**warm 载荷装载与校验的单一装载点**：读 ``run_dir/best_frame_s{seed}.json``
+（**筛选轮边车、无 artifact_suffix** —— 延长轮自己的产物带 ``_ext`` 后缀防
+覆盖，warm 源是冠军筛选解）→ 取 ``placed_items``（成员级、band/prefix 已展开）
++ ``width_mm`` → ``warmstart.build_initial_solution(placed, demand_map, width)``
+（demand_map = build_instance 产物 pid_meta 的 demand 投影）→ 载荷经
+``initial_solution`` 透传给 ``solve_with_callback_proc``（json.dumps 在 worker
+最终消费点）。回退矩阵（任一命中 → 不带载荷现状重放，返回记录附
+``warm: False`` + ``warm_reason``，绝不抛）：band/prefix 开（'band_prefix_on'，
+编排层 se_warm_plan 已拦、此处防御复核 —— worker 层同组合是硬 error）；
+``warm_start_supported()`` False（'unsupported'，防御同前）；边车缺失/损坏
+（'no_best_frame'）；校验失败（'invalid_best_frame'，含部分解/未知 pid/mirror
+等 ``ValueError`` 全矩阵）。装载成功 → ``warm: True``。缺省 False 时返回记录
+与现行逐键一致（无 warm 键，零回归）。
 """
 from __future__ import annotations
 
@@ -331,12 +347,59 @@ def _best_frame_record(seed: int, frame_index: int, report: dict) -> dict:
     }
 
 
+def _load_warm_payload(run_dir, seed: int, pid_meta: dict,
+                       band: dict | None, prefix: dict | None
+                       ) -> tuple[dict | None, dict]:
+    """US-003 warm 载荷装载点：读筛选轮 best_frame 边车 → 构造 + 校验载荷。
+
+    ``solve_pieces(warm_best_frame=True)`` 的实现体（单一装载点：本函数与
+    ``warmstart.build_initial_solution`` 是 MS 侧唯一的边车 → 载荷转换处）。
+    回退矩阵全部**降级不抛**（延长轮绝不因 warm 炸轮）：任一命中 →
+    ``(None, {'warm': False, 'warm_reason': <reason>})``，调用方照常现状重放。
+
+    判定序（与 solve_worker 闸门序同理 —— 组合非法先于能力探测）：
+
+      1. band/prefix 开 → 'band_prefix_on'（warm 输入是成员级 placed，与
+         band/prefix 改写后的组合片实例组成不匹配；编排层 ``se_warm_plan``
+         已拦，此处防御复核 —— worker 层同组合是硬 error）；
+      2. ``warm_start_supported()`` False → 'unsupported'（PyPI 0.9.0 /
+         0.9.0+ms0 无 initial_solution 参数；编排层已拦，防御复核）；
+      3. 边车读失败（缺失 / 非法 JSON / 缺 placed_items·width_mm 键 /
+         pid_meta demand 投影失败）→ 'no_best_frame'；
+      4. ``build_initial_solution`` 校验矩阵命中（``ValueError``：部分解 /
+         超量解 / 未知 pid / mirror / 畸形条目等）→ 'invalid_best_frame'。
+    """
+    _band_on = isinstance(band, dict) and bool(band.get('label'))
+    _prefix_on = (isinstance(prefix, dict) and bool(prefix.get('front'))
+                  and bool(prefix.get('back')))
+    if _band_on or _prefix_on:
+        return None, {'warm': False, 'warm_reason': 'band_prefix_on'}
+    from ..nesting_engine.warmstart import (build_initial_solution,
+                                            warm_start_supported)
+    if not warm_start_supported():
+        return None, {'warm': False, 'warm_reason': 'unsupported'}
+    best_path = Path(run_dir) / f'best_frame_s{int(seed)}.json'
+    try:
+        best = json.loads(best_path.read_text(encoding='utf-8-sig'))
+        placed = best['placed_items']
+        width_mm = best['width_mm']
+        demand_map = {pid: int(m['demand']) for pid, m in pid_meta.items()}
+        payload = build_initial_solution(placed, demand_map, width_mm)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError,
+            KeyError, TypeError):
+        return None, {'warm': False, 'warm_reason': 'no_best_frame'}
+    except ValueError:
+        return None, {'warm': False, 'warm_reason': 'invalid_best_frame'}
+    return payload, {'warm': True}
+
+
 def solve_pieces(cfg, run_dir, *, seed: int, time_budget: int | None = None,
                  on_progress=None, should_stop=None,
                  solver_opts: dict | None = None,
                  band: dict | None = None,
                  prefix: dict | None = None,
                  initial_solution: dict | None = None,
+                 warm_best_frame: bool = False,
                  artifact_suffix: str = '') -> dict:
     """配置驱动的单 seed 求解（PC-001 起进程化 + 帧轨迹落盘 + 可中止）。
 
@@ -400,10 +463,17 @@ def solve_pieces(cfg, run_dir, *, seed: int, time_budget: int | None = None,
     initial_solution : dict | None
         US-002（prd-warm-start-phase1）warm 载荷 ``{"strip_width": float,
         "placed_items": [{id, rotation, translation}]}``（``warmstart.
-        build_initial_solution`` 产物，纯 JSON dict）。**纯透传** ``solve_with_callback_proc``
-        —— 本函数零校验零序列化（装载/校验的单一装载点在 US-003 portfolio
-        编排层，读冠军帧 ``best_frame_s{seed}.json`` 构造；``json.dumps`` 与防御
-        闸门在 solve_worker 最终消费点）。缺省 None = 现行行为。
+        build_initial_solution`` 产物，纯 JSON dict）。**纯透传**
+        ``solve_with_callback_proc`` —— 本参数零校验零序列化（``json.dumps``
+        与防御闸门在 solve_worker 最终消费点）。缺省 None = 现行行为。
+    warm_best_frame : bool
+        US-003（prd-warm-start-phase1）se 延长轮策略标志（portfolio
+        ``run_serial_portfolio`` 经 ``se_warm_plan`` 前置判定后传入）：True 时
+        本函数作**装载与校验的单一装载点**（``_load_warm_payload``：读筛选轮
+        ``best_frame_s{seed}.json`` 边车 → ``build_initial_solution`` 构造载荷，
+        回退矩阵见模块 docstring）。与显式 ``initial_solution`` 同给时以**显式
+        载荷为准**（本参数忽略）。返回记录 additive 附 ``warm``（+ 失败时
+        ``warm_reason``）；缺省 False = 现行行为（记录无 warm 键）。
     artifact_suffix : str
         轨迹产物文件名后缀（US-002 SE 延长轮传 ``'_ext'``）：curve/best_frame
         写 ``curve_s{seed}{suffix}.json`` / ``best_frame_s{seed}{suffix}.json``，
@@ -419,7 +489,9 @@ def solve_pieces(cfg, run_dir, *, seed: int, time_budget: int | None = None,
         （放置副本数）/ ``elapsed``（wall-clock 秒）。**被 should_stop 中止时**额外
         含 ``killed=True`` / ``kill_reason``，且 ``width_mm`` / ``real_density`` /
         ``density_sparrow`` / ``placed_items`` 取终止前 best-so-far 帧（不再做
-        ``placed == Σdemand`` 完整性校验 —— 中间帧允许未放满）。
+        ``placed == Σdemand`` 完整性校验 —— 中间帧允许未放满）。US-003：
+        ``warm_best_frame=True`` 时 additive 附 ``warm``（bool）+ 装载失败时
+        ``warm_reason``（portfolio 归档 ``se_warm_state`` 消费）。
 
     Raises
     ------
@@ -461,10 +533,20 @@ def solve_pieces(cfg, run_dir, *, seed: int, time_budget: int | None = None,
     }
     # 主进程先建一次实例只取 meta（demand_sum / total_area / n_items / n_eroded）——
     # 避免在 CLI 复制 demand 查询逻辑（单一真相源仍是 web.solver.build_instance）。
-    instance, _config, _pid_meta, total_area, n_eroded = build_instance(
+    # US-003：pid_meta 同时是 warm 载荷 demand_map 的数据源（demand 投影）。
+    instance, _config, pid_meta, total_area, n_eroded = build_instance(
         pieces, gate_mm, **solve_params)
     n_items = len(instance.items)
     demand_sum = int(sum(it.demand for it in instance.items))
+
+    # US-003 warm 装载点：显式 initial_solution（US-002 透传通道）优先；缺席且
+    # warm_best_frame=True 时读筛选轮边车装载（回退矩阵在 _load_warm_payload 内
+    # 全降级不抛）。warm_echo additive 附到返回记录（portfolio 归档 se_warm_state）。
+    warm_payload = initial_solution
+    warm_echo: dict = {}
+    if warm_payload is None and warm_best_frame:
+        warm_payload, warm_echo = _load_warm_payload(
+            run_dir, seed, pid_meta, band, prefix)
 
     curve_path = Path(run_dir) / f'curve_s{seed}{artifact_suffix}.json'
     best_path = Path(run_dir) / f'best_frame_s{seed}{artifact_suffix}.json'
@@ -512,7 +594,7 @@ def solve_pieces(cfg, run_dir, *, seed: int, time_budget: int | None = None,
         _proc, final, elapsed, err = solve_with_callback_proc(
             pieces, gate_mm, solve_params,
             on_manifest=_on_manifest, on_report=_on_report, on_process=_on_process,
-            band=band, prefix=prefix, initial_solution=initial_solution)
+            band=band, prefix=prefix, initial_solution=warm_payload)
     finally:
         # 收口成合法 JSON 数组（KeyboardInterrupt / 求解异常 / killed 路径都走这里，
         # Ctrl-C 不留半截 curve；仅硬崩溃（进程被杀）才可能缺右括号）。
@@ -542,6 +624,7 @@ def solve_pieces(cfg, run_dir, *, seed: int, time_budget: int | None = None,
             'killed': True,
             'kill_reason': state['reason'],
             **opts_echo,
+            **warm_echo,
         }
 
     if err is not None:
@@ -565,4 +648,5 @@ def solve_pieces(cfg, run_dir, *, seed: int, time_budget: int | None = None,
         'placed_items': n_placed,
         'elapsed': round(elapsed, 1),
         **opts_echo,
+        **warm_echo,
     }

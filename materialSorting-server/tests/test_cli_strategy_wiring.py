@@ -1,5 +1,5 @@
 """US-002 ``--strategy`` 双模式接线（run_config 旗标 + PortfolioController 消费 +
-solve_pieces ``artifact_suffix``）。
+solve_pieces ``artifact_suffix``）+ US-003 se 延长轮 warm 真顺延接线。
 
 覆盖三层：
 
@@ -7,15 +7,21 @@ solve_pieces ``artifact_suffix``）。
     argparse 的 2）/ 策略模式 --time 总预算必填 / 与 --kill 显式同给互斥 / 4 个
     参数旗标是从属旗标（单独给出退出 1）/ --race-gate (0,1) 开区间 / 预算不足
     （race_plan / se_plan 的 StrategyBudgetError → 退出 1，不留空 run_dir）；
+    US-003：--se-warm 值域 {on,off} 外退出 1 / 须与 --strategy se 同给（无策略
+    或 race 下给出 = 从属旗标笔误退出 1）/ 与 --extreme 互斥；
   - **race 接线**（fake solve 帧协议：on_progress 先于 should_stop、终止交付
     best-so-far）：首 seed 豁免跑满、门杀决策行落 kill_decisions.jsonl（S_tau=bar
     参照、theta=null 重载）、被杀 best 参与 incumbent banking、名义记账收口
     （计划 seed 未启动）、--quiet 门杀行仍打、--target 共存 R0 优先；
   - **se 接线**：阶段 1 k 轮 screen 预算筛选 + 阶段 2 冠军（real_density argmax）
     同 seed 以 ext 预算延长（``_ext`` 产物防覆盖 + solve 条目 phase=extension），
-    R0 提前停不进延长；
+    R0 提前停不进延长；US-003 warm：默认 on 透传 ``warm_best_frame=True`` 到
+    延长轮 solve 调用形 / 五类回退（off / unsupported / band_prefix_on /
+    no_best_frame / invalid_best_frame）各独立用例 + 回退 warn 行 + strategy.json
+    计划态与 result.json·run_stats 实际灌入态 additive 键 + solve_pieces 装载点
+    （真 build_instance + 桩 solve_with_callback_proc）载荷精确对拍；
   - **零回归**：无 --strategy 时 result.json 不加 strategy/mode 键 + ``--help``
-    含新旗标。
+    含新旗标 + 无旗标 legacy 运行 stdout 逐字节对拍哨兵（US-003）。
 """
 from __future__ import annotations
 
@@ -33,9 +39,10 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 from materialsorting import paths as paths_mod
-from materialsorting.cli.portfolio import (R5_REASON, STRATEGY_STARTUP_S,
-                                           race_plan)
+from materialsorting.cli.portfolio import (R5_REASON, SE_WARM_REASONS,
+                                           race_plan, se_warm_plan)
 from materialsorting.cli.run_config import main
+from materialsorting.nesting_engine import warmstart
 from materialsorting.web import server as server_mod
 
 # 与 test_cli_run_config 同构的合成母版（6 片有码号 28/29 + 1 片 size=None）。
@@ -73,18 +80,34 @@ def _write_config(path: Path, master: Path, **extra) -> Path:
 
 @pytest.fixture
 def iso_env(tmp_path, monkeypatch):
-    """隔离环境：CONFIG_RUNS_DIR / INTERMEDIATE / uploads 全指到 tmp_path。"""
+    """隔离环境：CONFIG_RUNS_DIR / INTERMEDIATE / RUN_STATS_JSONL / uploads 全指
+    到 tmp_path（US-003 起 run_stats 也隔离 —— 此前本文件测试会向真实
+    out/run_stats.jsonl 追加行）。"""
     runs = tmp_path / 'config_runs'
     runs.mkdir()
     inter = tmp_path / 'web_intermediate.json'
     inter.write_text('{"sentinel": true}', encoding='utf-8')
     uploads = tmp_path / 'uploads'
     uploads.mkdir()
+    stats = tmp_path / 'run_stats.jsonl'
     monkeypatch.setattr(paths_mod, 'CONFIG_RUNS_DIR', str(runs))
     monkeypatch.setattr(paths_mod, 'INTERMEDIATE', str(inter))
+    monkeypatch.setattr(paths_mod, 'RUN_STATS_JSONL', str(stats))
     monkeypatch.setattr(server_mod, 'UPLOADS_DIR', uploads)
     master = _make_master_dxf(tmp_path / 'synthetic_master.dxf')
     return tmp_path, runs, inter, uploads, master
+
+
+@pytest.fixture(autouse=True)
+def _warm_ms0(monkeypatch):
+    """全文件钉死 warm 能力探测 = False（0.9.0+ms0 纯重建 wheel 态）。
+
+    本文件测 CLI 接线而非 wheel 检测（那是 tests/test_warmstart.py 的多态矩阵）；
+    钉死避免环境漂移（未来 .venv 装入 0.9.0+ms1 私有 wheel 后默认路径翻转成
+    真 warm，断言全炸）。需要 True 的用例在自身内再 monkeypatch 覆盖（同一
+    monkeypatch 实例，后写胜出、逆序还原）。
+    """
+    monkeypatch.setattr(warmstart, 'warm_start_supported', lambda: False)
 
 
 class _FakeSolve:
@@ -95,16 +118,23 @@ class _FakeSolve:
     以 best-so-far 帧交付（``killed=True`` + ``kill_reason``），后续帧不投；
     产物按 ``curve_s{seed}{suffix}.json`` / ``best_frame_s{seed}{suffix}.json``
     落盘（契约同形，供 ``_ext`` 防覆盖断言）。轨迹键 = ``(seed, suffix)``。
+
+    US-003：``warm_flags`` 逐调用记录是否收到 ``warm_best_frame=True`` 策略标志
+    （portfolio 前置判定通过的延长轮才带）；收到的调用模拟 solve_pieces 契约在
+    返回记录附 ``warm: True``（装载点行为由独立的 solve_pieces 级测试覆盖）。
     """
 
     def __init__(self, traj: dict):
         self.traj = traj
         self.calls: list[tuple] = []
+        self.warm_flags: list[bool] = []
         self.strategy_json_at_first_solve: dict | None = None
 
     def __call__(self, cfg, run_dir, *, seed, time_budget=None, on_progress=None,
                  should_stop=None, solver_opts=None, artifact_suffix='', **kw):
+        warm = bool(kw.get('warm_best_frame'))
         self.calls.append((int(seed), time_budget, artifact_suffix))
+        self.warm_flags.append(warm)
         rd = Path(run_dir)
         if len(self.calls) == 1:
             p = rd / 'strategy.json'      # R1：首轮求解开始时 strategy.json 已在场
@@ -145,6 +175,8 @@ class _FakeSolve:
                         'kill_reason': reason})
         else:
             rec['real_density'] = frames[-1][1]
+        if warm:
+            rec['warm'] = True      # solve_pieces 契约：warm_best_frame=True 必带
         return rec
 
 
@@ -210,6 +242,44 @@ def test_strategy_subordinate_flags_require_strategy(iso_env, capsys):
     rc = main([str(cfg_path), '--se-screen', '30'])
     assert rc == 1
     assert '须与 --strategy 同给' in capsys.readouterr().err
+    assert list(runs.iterdir()) == []
+
+
+# ------------------------------------------------------- US-003 --se-warm 旗标裁决
+
+
+def test_se_warm_value_out_of_domain_exit_1(iso_env, capsys):
+    """--se-warm 值域手工校验（on/off 外退出 1 而非 argparse choices 的 2）。"""
+    tmp, runs, _, _, master = iso_env
+    cfg_path = _write_config(tmp / 'cfg.json', master)
+    rc = main(_se_argv(cfg_path, '--se-warm', 'bogus'))
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert '--se-warm 须为 on 或 off' in err and 'bogus' in err
+    assert list(runs.iterdir()) == []              # 配置错误在 new_run_dir 之前拦下
+
+
+@pytest.mark.parametrize('argv_extra', [
+    ['--se-warm', 'on'],                                  # 无 --strategy
+    ['--strategy', '--time', '600', '--se-warm', 'off'],  # race 模式（非 se）
+])
+def test_se_warm_subordinate_requires_strategy_se(iso_env, capsys, argv_extra):
+    """--se-warm 须与 --strategy se 同给：无策略 / race 模式下给出 = 笔误退出 1。"""
+    tmp, runs, _, _, master = iso_env
+    cfg_path = _write_config(tmp / 'cfg.json', master)
+    rc = main([str(cfg_path), *argv_extra])
+    assert rc == 1
+    assert '--se-warm 须与 --strategy se 同给' in capsys.readouterr().err
+    assert list(runs.iterdir()) == []
+
+
+def test_extreme_se_warm_conflict_exit_1(iso_env, capsys):
+    """--extreme 与 --se-warm 互斥（糖衣旗标独占策略与旋钮，同 4 个参数旗标口径）。"""
+    tmp, runs, _, _, master = iso_env
+    cfg_path = _write_config(tmp / 'cfg.json', master)
+    rc = main([str(cfg_path), '--extreme', '--time', '905', '--se-warm', 'on'])
+    assert rc == 1
+    assert '--extreme 与 --se-warm 互斥' in capsys.readouterr().err
     assert list(runs.iterdir()) == []
 
 
@@ -423,11 +493,13 @@ def test_se_two_phase_end_to_end(iso_env, capsys, monkeypatch):
     assert '第 5/5 轮（seed=4）' in out
     assert '延长轮（seed=3·筛选冠军）开始' in out
     rd = _only_run_dir(runs)
-    # strategy.json：se 块（k_screens/screen_s/ext_s）+ 计划种子流 = k 个筛选 seed
+    # strategy.json：se 块（k_screens/screen_s/ext_s + US-003 warm 计划态）+ 计划
+    # 种子流 = k 个筛选 seed（本文件 autouse 钉 warm 不支持 → 计划态回退）。
     plan = json.loads((rd / 'strategy.json').read_text(encoding='utf-8'))
     assert plan['mode'] == 'se' and plan['total_budget'] == 160
     assert plan['planned_seeds'] == [0, 1, 2, 3, 4]
-    assert plan['se'] == {'k_screens': 5, 'screen_s': 20, 'ext_s': 40}
+    assert plan['se'] == {'k_screens': 5, 'screen_s': 20, 'ext_s': 40,
+                          'warm': False, 'warm_reason': 'unsupported'}
     assert plan['started_at']
     # _ext 产物在场且不覆盖筛选产物（同 seed 双份曲线共存）
     assert (rd / 'curve_s3.json').exists() and (rd / 'best_frame_s3.json').exists()
@@ -453,8 +525,10 @@ def test_se_two_phase_end_to_end(iso_env, capsys, monkeypatch):
     assert pf['incumbent']['density'] == 0.86 and pf['incumbent']['seed'] == 3
     assert pf['incumbent']['density'] >= max(0.80, 0.82, 0.81, 0.83, 0.79)
     assert result['best'] == pf['incumbent']
+    # US-003：config.strategy additive 实际灌入态（unsupported 回退 → False+原因）
     assert result['config']['strategy'] == {'mode': 'se', 'se_screen': 20,
-                                            'se_extend': 40}
+                                            'se_extend': 40, 'warm': False,
+                                            'warm_reason': 'unsupported'}
     assert 'seed 3=86.00%（延长）' in out
     assert inter.read_text(encoding='utf-8') == '{"sentinel": true}'
     assert list(uploads.iterdir()) == []
@@ -499,6 +573,271 @@ def test_se_champion_is_argmax_real_density(iso_env, monkeypatch):
     result = json.loads((rd / 'result.json').read_text(encoding='utf-8'))
     assert result['portfolio']['se']['champion'] == 0
     assert result['portfolio']['se']['k_screens'] == 3
+
+
+# --------------------------------------------- US-003 se 延长轮 warm 真顺延接线
+
+
+def _read_stats(path: Path) -> list[dict]:
+    text = Path(path).read_text(encoding='utf-8')
+    return [json.loads(line) for line in text.splitlines() if line]
+
+
+def test_se_warm_plan_matrix(monkeypatch):
+    """se_warm_plan 纯函数矩阵：off 恒回退（不探测）/ unsupported / band·prefix
+    互斥 / 全过 → (True, None)；band 与 prefix 双形态各自独立命中。"""
+    from types import SimpleNamespace
+    cfg_plain = SimpleNamespace(band=None, prefix=None)
+    cfg_band = SimpleNamespace(band={'enabled': True, 'label': 'g05'}, prefix=None)
+    cfg_prefix = SimpleNamespace(band=None,
+                                 prefix={'enabled': True, 'front': 'g02',
+                                         'back': 'g03'})
+    monkeypatch.setattr(warmstart, 'warm_start_supported', lambda: True)
+    assert se_warm_plan(cfg_plain, False) == (False, 'off')
+    assert se_warm_plan(cfg_plain, True) == (True, None)
+    assert se_warm_plan(cfg_band, True) == (False, 'band_prefix_on')
+    assert se_warm_plan(cfg_prefix, True) == (False, 'band_prefix_on')
+    monkeypatch.setattr(warmstart, 'warm_start_supported', lambda: False)
+    assert se_warm_plan(cfg_plain, True) == (False, 'unsupported')
+    # 判定序 off → unsupported → band/prefix：unsupported 更根本（band 关了也没用，
+    # 报 band_prefix_on 会误导用户去关 band），band 互斥只在能力就绪时才成因。
+    assert se_warm_plan(cfg_band, True) == (False, 'unsupported')
+    assert se_warm_plan(cfg_plain, False) == (False, 'off')   # off 先于探测
+
+
+def test_se_warm_on_passes_flag_to_ext_solve(iso_env, capsys, monkeypatch):
+    """warm on（默认、无 --se-warm 旗标）+ 能力探测 True：延长轮 solve 调用形多收
+    warm_best_frame=True（筛选轮不带）+ strategy.json 计划态 / result.json·run_stats
+    实际灌入态 additive 记 warm: true（true 时无 warm_reason 键）。"""
+    monkeypatch.setattr(warmstart, 'warm_start_supported', lambda: True)
+    tmp, runs, _, _, master = iso_env
+    cfg_path = _write_config(tmp / 'cfg.json', master, seeds=[0])
+    fake = _patch_solve(monkeypatch, _SE_TRAJ)
+    rc = main(_se_argv(cfg_path))                  # 默认 on：不带 --se-warm 旗标
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert fake.warm_flags == [False] * 5 + [True]    # 5 轮筛选不带、延长轮带
+    assert '延长轮 warm 真顺延' in out
+    assert 'warm 回退' not in out
+    rd = _only_run_dir(runs)
+    plan = json.loads((rd / 'strategy.json').read_text(encoding='utf-8'))
+    assert plan['se']['warm'] is True and 'warm_reason' not in plan['se']
+    result = json.loads((rd / 'result.json').read_text(encoding='utf-8'))
+    st = result['config']['strategy']
+    assert st['warm'] is True and 'warm_reason' not in st
+    assert result['solve'][-1]['warm'] is True         # 延长轮 solve 记录附灌入态
+    assert all('warm' not in s for s in result['solve'][:-1])
+    entries = _read_stats(tmp / 'run_stats.jsonl')
+    assert len(entries) == 1
+    assert entries[0]['config']['warm'] is True
+    assert 'warm_reason' not in entries[0]['config']
+
+
+def test_se_warm_default_unsupported_fallback_replay(iso_env, capsys, monkeypatch):
+    """默认 on 但 wheel 不支持（当前 0.9.0+ms0 装载态）→ 回退现状重放：延长轮
+    solve 调用形与无 warm 逐字节一致（不带 warm_best_frame 键）+ warn 一行 +
+    计划态/实际态 additive 记 warm: false + warm_reason: unsupported。"""
+    monkeypatch.setattr(warmstart, 'warm_start_supported', lambda: False)
+    tmp, runs, _, _, master = iso_env
+    cfg_path = _write_config(tmp / 'cfg.json', master, seeds=[0])
+    fake = _patch_solve(monkeypatch, _SE_TRAJ)
+    rc = main(_se_argv(cfg_path))
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert fake.warm_flags == [False] * 6              # 全轮不带 warm 键（回退重放）
+    assert 'se 延长轮 warm 回退 → 现状重放（warm_reason=unsupported）' in out
+    rd = _only_run_dir(runs)
+    plan = json.loads((rd / 'strategy.json').read_text(encoding='utf-8'))
+    assert plan['se']['warm'] is False
+    assert plan['se']['warm_reason'] == 'unsupported'
+    result = json.loads((rd / 'result.json').read_text(encoding='utf-8'))
+    st = result['config']['strategy']
+    assert st['warm'] is False and st['warm_reason'] == 'unsupported'
+    assert all('warm' not in s for s in result['solve'])
+    entries = _read_stats(tmp / 'run_stats.jsonl')
+    assert entries[0]['config']['warm'] is False
+    assert entries[0]['config']['warm_reason'] == 'unsupported'
+
+
+def test_se_warm_off_explicit_fallback(iso_env, capsys, monkeypatch):
+    """--se-warm off 显式回退：即使能力探测 True 也不接线（solve 全轮不带 warm
+    键），warm_reason='off'（用户显式选择照常入档可审计）。"""
+    monkeypatch.setattr(warmstart, 'warm_start_supported', lambda: True)
+    tmp, runs, _, _, master = iso_env
+    cfg_path = _write_config(tmp / 'cfg.json', master, seeds=[0])
+    fake = _patch_solve(monkeypatch, _SE_TRAJ)
+    rc = main(_se_argv(cfg_path, '--se-warm', 'off'))
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert fake.warm_flags == [False] * 6
+    assert 'se 延长轮 warm 回退 → 现状重放（warm_reason=off）' in out
+    rd = _only_run_dir(runs)
+    plan = json.loads((rd / 'strategy.json').read_text(encoding='utf-8'))
+    assert plan['se'] == {'k_screens': 5, 'screen_s': 20, 'ext_s': 40,
+                          'warm': False, 'warm_reason': 'off'}
+    result = json.loads((rd / 'result.json').read_text(encoding='utf-8'))
+    st = result['config']['strategy']
+    assert st['warm'] is False and st['warm_reason'] == 'off'
+
+
+@pytest.mark.parametrize('cfg_extra', [
+    {'band': {'enabled': True, 'label': 'g01'}},
+    {'prefix': {'enabled': True, 'front': 'g01', 'back': 'g02'}},
+])
+def test_se_warm_band_prefix_on_fallback(iso_env, capsys, monkeypatch, cfg_extra):
+    """cfg.band / cfg.prefix 开 → 硬互斥回退（warm 输入是成员级 placed，与组合片
+    改写后的实例组成不匹配），warm_reason='band_prefix_on'（探测 True 也不接线）。"""
+    monkeypatch.setattr(warmstart, 'warm_start_supported', lambda: True)
+    tmp, runs, _, _, master = iso_env
+    cfg_path = _write_config(tmp / 'cfg.json', master, seeds=[0], **cfg_extra)
+    fake = _patch_solve(monkeypatch, _SE_TRAJ)
+    rc = main(_se_argv(cfg_path))
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert fake.warm_flags == [False] * 6
+    assert ('se 延长轮 warm 回退 → 现状重放'
+            '（warm_reason=band_prefix_on）') in out
+    rd = _only_run_dir(runs)
+    plan = json.loads((rd / 'strategy.json').read_text(encoding='utf-8'))
+    assert plan['se']['warm'] is False
+    assert plan['se']['warm_reason'] == 'band_prefix_on'
+    result = json.loads((rd / 'result.json').read_text(encoding='utf-8'))
+    assert result['config']['strategy']['warm_reason'] == 'band_prefix_on'
+
+
+def test_se_warm_reason_enum_is_closed():
+    """warm_reason 枚举闭包：五类回退原因与 portfolio 常量对拍（文档单一真相源）。"""
+    assert SE_WARM_REASONS == ('off', 'unsupported', 'band_prefix_on',
+                               'no_best_frame', 'invalid_best_frame')
+
+
+# --------------------------------------- US-003 solve_pieces warm 装载点（真 build_instance + 桩 proc）
+
+
+class _FakeProc:
+    """桩 ``web.solver.solve_with_callback_proc``：记录 initial_solution / band /
+    prefix 调用形并直接回 final（placed = 全量 Σdemand，正常完成路径）。"""
+
+    def __init__(self, demand_pids: list[str]):
+        self.demand_pids = demand_pids
+        self.calls: list[dict] = []
+
+    def __call__(self, pieces, gate_mm, solve_params, *, on_manifest, on_report,
+                 on_process=None, on_stage=None, drain_interval=0.2,
+                 band=None, prefix=None, initial_solution=None):
+        self.calls.append({'initial_solution': initial_solution, 'band': band,
+                           'prefix': prefix,
+                           'time_budget': solve_params['time_budget']})
+        final = {
+            'placed_items': [
+                {'id': pid, 'rotation': 0.0, 'translation': [float(i) * 100.0, 0.0]}
+                for i, pid in enumerate(self.demand_pids)],
+            'width_mm': 3000.0, 'density': 0.75, 'density_sparrow': 0.7,
+        }
+        return None, final, 2.0, None
+
+
+def _warm_setup(tmp, master, monkeypatch, *, supported=True, cfg_extra=None):
+    """真 commit（合成母版 → 6 片 demand=1）+ 桩 proc；返回 (cfg, run_dir, pids,
+    fake)。pids = intermediate 真实 pid 集（warm 边车 placed 的合法 id 域）。"""
+    monkeypatch.setattr(warmstart, 'warm_start_supported', lambda: supported)
+    from materialsorting.cli.config import load_config
+    from materialsorting.cli.pipeline import commit_from_config, new_run_dir
+    from materialsorting.web import solver as solver_mod
+    cfg = load_config(_write_config(tmp / 'cfg_warm.json', master,
+                                    **(cfg_extra or {})))
+    run_dir = new_run_dir('warm_load')
+    commit_from_config(cfg, run_dir)
+    doc = json.loads((run_dir / 'pieces_intermediate.json').read_text(
+        encoding='utf-8'))
+    pids = [p['pid'] for p in doc['pieces']]
+    assert len(pids) == 6                       # 合成母版 6 片全 demand=1 → Σdemand=6
+    fake = _FakeProc(pids)
+    monkeypatch.setattr(solver_mod, 'solve_with_callback_proc', fake)
+    return cfg, run_dir, pids, fake
+
+
+def _write_best_frame(run_dir: Path, pids: list[str], *, width_mm=4321.5,
+                      placed: list[dict] | None = None) -> None:
+    """写筛选轮 best_frame_s0.json 边车（placed 缺省 = 6 条恰好完整解）。"""
+    if placed is None:
+        placed = [{'id': pid, 'rotation': 0, 'translation': [i * 120, 30]}
+                  for i, pid in enumerate(pids)]
+    (run_dir / 'best_frame_s0.json').write_text(
+        json.dumps({'seed': 0, 'frame_index': 3, 'density': 0.8,
+                    'width_mm': width_mm, 'placed_items': placed},
+                   ensure_ascii=False), encoding='utf-8')
+
+
+def test_solve_pieces_warm_best_frame_loads_payload(iso_env, monkeypatch):
+    """装载点主路径：边车 placed + width_mm → build_initial_solution 载荷精确
+    对拍（int→float 归一、顺序保持）透传 solve_with_callback_proc(initial_solution=
+    <dict>)，返回记录附 warm: True。"""
+    tmp, _, _, _, master = iso_env
+    cfg, run_dir, pids, fake = _warm_setup(tmp, master, monkeypatch)
+    _write_best_frame(run_dir, pids)
+    from materialsorting.cli.pipeline import solve_pieces
+    rec = solve_pieces(cfg, run_dir, seed=0, time_budget=2,
+                       warm_best_frame=True, artifact_suffix='_ext')
+    expect = {'strip_width': 4321.5,
+              'placed_items': [{'id': pid, 'rotation': 0.0,
+                                'translation': [float(i * 120), 30.0]}
+                               for i, pid in enumerate(pids)]}
+    assert fake.calls[0]['initial_solution'] == expect   # 载荷在调用形上透传
+    assert rec['warm'] is True and 'warm_reason' not in rec
+    assert rec['real_density'] == 0.75                   # final 直通（求解照常）
+    assert (run_dir / 'curve_s0_ext.json').exists()      # 延长轮轨迹照常落盘
+    # 桩 proc 不投帧 → best_frame_s0_ext.json 不产生（逐帧落盘依赖 on_report，
+    # 该面已由 test_solve_pieces_artifact_suffix_real 真求解覆盖）
+
+
+@pytest.mark.parametrize('scenario,supported,best_mode,cfg_extra,expect_reason', [
+    ('边车缺失', True, None, None, 'no_best_frame'),
+    ('边车损坏（非法 JSON）', True, 'corrupt', None, 'no_best_frame'),
+    ('部分解（校验失败）', True, 'partial', None, 'invalid_best_frame'),
+    ('能力不支持', False, 'full', None, 'unsupported'),
+    ('band 开（互斥）', True, 'full',
+     {'band': {'enabled': True, 'label': 'g01'}}, 'band_prefix_on'),
+])
+def test_solve_pieces_warm_fallback_matrix(iso_env, monkeypatch, scenario,
+                                           supported, best_mode, cfg_extra,
+                                           expect_reason):
+    """装载点回退矩阵：任一命中 → 不带载荷现状重放（initial_solution=None）+
+    记录附 warm: False + warm_reason，绝不抛、不炸轮。"""
+    tmp, _, _, _, master = iso_env
+    cfg, run_dir, pids, fake = _warm_setup(tmp, master, monkeypatch,
+                                           supported=supported,
+                                           cfg_extra=cfg_extra)
+    if best_mode == 'full':
+        _write_best_frame(run_dir, pids)
+    elif best_mode == 'partial':
+        _write_best_frame(run_dir, pids[:-1])           # 5 条 ≠ Σdemand=6
+    elif best_mode == 'corrupt':
+        (run_dir / 'best_frame_s0.json').write_text('{"trunc', encoding='utf-8')
+    from materialsorting.cli.pipeline import solve_pieces
+    rec = solve_pieces(cfg, run_dir, seed=0, time_budget=2,
+                       warm_best_frame=True, artifact_suffix='_ext')
+    assert rec['warm'] is False and rec['warm_reason'] == expect_reason, scenario
+    assert fake.calls[0]['initial_solution'] is None    # 回退：不带载荷
+    assert rec['real_density'] == 0.75                  # 求解照常跑完（不炸轮）
+    if cfg_extra and 'band' in cfg_extra:
+        # band 回退只退 warm：band 本身照常下传（现状重放 = band on 的普通求解）
+        assert fake.calls[0]['band'] == {'label': 'g01'}
+
+
+def test_solve_pieces_warm_flag_absent_zero_regress(iso_env, monkeypatch):
+    """缺省不传 warm_best_frame：即使边车在场也不读、载荷 None、记录无 warm 键
+    （无旗标调用形与返回形零回归）。"""
+    tmp, _, _, _, master = iso_env
+    cfg, run_dir, pids, fake = _warm_setup(tmp, master, monkeypatch)
+    _write_best_frame(run_dir, pids)                    # 边车在场：证明不被读
+    from materialsorting.cli.pipeline import solve_pieces
+    rec = solve_pieces(cfg, run_dir, seed=0, time_budget=2)
+    assert fake.calls[0]['initial_solution'] is None
+    assert 'warm' not in rec and 'warm_reason' not in rec
+    assert set(rec) == {'seed', 'n_items', 'n_eroded', 'total_area_mm2',
+                        'width_mm', 'real_density', 'density_sparrow',
+                        'placed_items', 'elapsed'}
 
 
 # ------------------------------------------------------- 零回归 + 冒烟
@@ -549,14 +888,62 @@ def test_solve_pieces_artifact_suffix_real(iso_env):
     assert rec2['real_density'] > 0
 
 
+def test_legacy_no_flag_output_byte_for_byte(iso_env, capsys, monkeypatch):
+    """零回归哨兵（US-003）：无 --strategy/--se-warm 的 legacy 运行 stdout
+    逐字节对拍 —— 确定性 fake 轨迹下全部行内容可先验推演（时间戳目录与 commit
+    数值事后读回拼入），格式串与现行源逐字同构：任何输出增量（如误加 warm 行）
+    或格式漂移都会破坏本对拍。"""
+    tmp, runs, _, _, master = iso_env
+    cfg_path = _write_config(tmp / 'cfg.json', master, seeds=[0, 1])
+    traj = {(0, ''): [(1.0, 0.80), (2.0, 0.82)],
+            (1, ''): [(1.0, 0.81), (2.0, 0.83)]}
+    fake = _patch_solve(monkeypatch, traj)
+    assert main([str(cfg_path), '--time', '2']) == 0
+    out = capsys.readouterr().out
+    rd = _only_run_dir(runs)
+    result = json.loads((rd / 'result.json').read_text(encoding='utf-8'))
+    c = result['commit']
+
+    def seed_line(seed: int, elapsed: float, density: float) -> str:
+        return (f'[seed {seed}] {elapsed:7.1f}s {"exploring":<14} '
+                f'real_density={density:.2%}（原面积口径新最优） '
+                f'width={5000.0:.0f}mm')
+
+    expected = '\n'.join([
+        f'run_dir: {rd}',
+        f'配置: {Path(cfg_path).resolve()} | 求解时长: 2s | seeds: [0, 1]',
+        '多 seed 串行 2 轮 × 2s，预计总时长 ≈ 4s（不含解析/切片）',
+        f"commit: n_pieces={c['n_pieces']} "
+        f"total_area={c['total_area_mm2']:,.1f}mm² sizes={c['sizes']} "
+        f"skipped={c['n_skipped']}",
+        '── 第 1/2 轮（seed=0）开始 ──',
+        seed_line(0, 1.0, 0.80),
+        seed_line(0, 2.0, 0.82),
+        '── 第 2/2 轮（seed=1）开始 ──',
+        seed_line(1, 1.0, 0.81),
+        '[portfolio] seed 1 frame 1 反超 → incumbent（全局最优）'
+        'real_density=83.00%（原面积口径） width=5000mm',
+        '各 seed real_density（原面积口径）: seed 0=82.00% | seed 1=83.00%',
+        'best = seed 1 frame 1（incumbent，帧级全局最优）',
+        'real_density（原面积口径）= 83.00% | 用布长度 = 5000mm | 片数 = 1 | '
+        f'耗时 = 2.0s | run_dir = {rd.resolve()}',
+    ]) + '\n'
+    assert out == expected
+    # result.json / solve 调用形零增量：无任何 warm/strategy 面
+    assert 'strategy' not in result['config']
+    assert all('warm' not in s for s in result['solve'])
+    assert fake.warm_flags == [False, False]
+    assert 'warm' not in out                                 # 输出零 warm 字样
+
+
 def test_help_contains_strategy_flags():
-    """--help 含 5 个新旗标（python -m 子进程冒烟）。"""
+    """--help 含 6 个策略族旗标（python -m 子进程冒烟，US-003 增 --se-warm）。"""
     proc = subprocess.run(
         [sys.executable, '-m', 'materialsorting.cli.run_config', '--help'],
         capture_output=True, text=True, encoding='utf-8', cwd=str(_SRC.parents[1]))
     assert proc.returncode == 0
-    for flag in ('--strategy', '--se-screen', '--se-extend', '--race-budget',
-                 '--race-gate'):
+    for flag in ('--strategy', '--se-screen', '--se-extend', '--se-warm',
+                 '--race-budget', '--race-gate'):
         assert flag in proc.stdout
 
 
