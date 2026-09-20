@@ -9,6 +9,11 @@ US-002（2026-08-29）起同模块再挂**极限运行四路由** ``/api/extreme
 band/prefix 2026-08-30 起与策略族**同路径透传**（``_parse_band``/``_parse_prefix``
 校验 + config 写键，方案 §5 范围外条目解除），spawn 尾 ``--extreme --time <T>
 --quiet``；status/stop/result 三路由同槽同构（仅报错文案区分家族）。
+**极限 SE 顺延臂（2026-09-20）**：start 载荷可选 ``strategy`` ∈ {race, se}
+（缺省 race；se → spawn 追加 ``--extreme-strategy se`` = 300s 筛选 + 600s 冠军
+warm 顺延 × 极限参数）；status 载荷 additive ``strategy`` 键透传实际臂（状态槽 +
+marker 同存，orphan 路径可恢复；无键/None = race —— 存量极限 run 全为 race 臂），
+前端进度面据此切换 se chips / 延长阶段行 / warm 提示。
 
 四路由（``register_strategy_routes(app)`` 由 ``server.py`` 文件尾注册），US-004
 多会话化（2026-08-27）后**全部按 ``X-Session-Id`` 解析**（缺省/空串 → default 会话）：
@@ -689,8 +694,10 @@ async def _start_run(req: Request, family: str):
 
     # ---- family 分叉①：模式与总预算。策略 = mode 白名单 + minutes 白名单；极限
     # = time_total_s 整数秒 ∈ [905, 43200]（缺省/非整数/越界 → 400，值域口径见
-    # 模块级 EXTREME_*_TIME_S 注释）。
+    # 模块级 EXTREME_*_TIME_S 注释）+ 可选 strategy ∈ {race, se}（US-002 极限
+    # SE 顺延臂，缺省 race；se 臂 CLI 展开为 300s 筛选 + 600s warm 延长）。
     minutes = None
+    extreme_strategy = None
     if family == 'extreme':
         mode = EXTREME_MODE
         raw_t = payload.get('time_total_s')
@@ -708,13 +715,22 @@ async def _start_run(req: Request, family: str):
         if total_sec < EXTREME_MIN_TIME_S:
             return JSONResponse(
                 {'error': f'time_total_s 不得低于 {EXTREME_MIN_TIME_S} 秒'
-                          f'（race 门杀 600s 档最低总预算），当前 {total_sec}'},
+                          f'（600s 档最低总预算，race 门杀 / SE 顺延同界），'
+                          f'当前 {total_sec}'},
                 status_code=400)
         if total_sec > EXTREME_MAX_TIME_S:
             return JSONResponse(
                 {'error': f'time_total_s 不得高于 {EXTREME_MAX_TIME_S} 秒'
                           f'（12 小时防呆），当前 {total_sec}'},
                 status_code=400)
+        raw_strategy = payload.get('strategy')
+        if raw_strategy is None:
+            raw_strategy = 'race'
+        if raw_strategy not in ('race', 'se'):
+            return JSONResponse(
+                {'error': f'strategy 须为 race 或 se，当前为 {raw_strategy!r}'},
+                status_code=400)
+        extreme_strategy = raw_strategy
     else:
         mode = payload.get('mode')
         if mode not in STRATEGY_MODES:
@@ -855,8 +871,13 @@ async def _start_run(req: Request, family: str):
     stderr_file.close()
     cmd = [sys.executable, '-m', 'materialsorting.cli.run_config',
            str(cfg_path), '--name', run_name]
-    cmd += (['--extreme'] if family == 'extreme'
-            else ['--strategy', mode])
+    if family == 'extreme':
+        cmd.append('--extreme')
+        # US-002 极限 SE 顺延臂：se 才追加（race 臂 spawn cmd 逐字节不变）。
+        if extreme_strategy == 'se':
+            cmd += ['--extreme-strategy', 'se']
+    else:
+        cmd += ['--strategy', mode]
     cmd += ['--time', str(total_sec), '--quiet']
     # 快照先于 spawn：回退发现路径的 run_dir 基线 = spawn 决策前的目录集 —— CLI
     # 建 run_dir 再快也必然落在基线之后被发现（若快照晚于 spawn，CLI 抢先建目录
@@ -866,7 +887,12 @@ async def _start_run(req: Request, family: str):
 
     started_at = time.strftime('%Y-%m-%dT%H:%M:%S')
     _write_marker({'pid': proc.pid, 'run_dir': None, 'doc_id': doc_id,
-                   'mode': mode, 'started_at': started_at}, sid)
+                   'mode': mode, 'started_at': started_at,
+                   # US-002 极限 SE 臂标记（orphan 恢复路径同样可读；'race' 显式 =
+                   # race 臂；旧 marker 无键 → None = race）。策略族 marker 不带
+                   # 该键（存量 5 键结构零变化）。
+                   **({'strategy': extreme_strategy}
+                      if family == 'extreme' else {})}, sid)
 
     st.clear()
     st.update({
@@ -875,6 +901,8 @@ async def _start_run(req: Request, family: str):
         'proc': proc,
         'pid': proc.pid,
         'mode': mode,
+        # US-002 极限 SE 臂（status 载荷透传；策略族恒 None）。
+        'strategy': extreme_strategy,
         'minutes': int(minutes) if minutes is not None else None,
         'total_budget_sec': total_sec,
         'started_at': started_at,
@@ -897,7 +925,10 @@ async def _start_run(req: Request, family: str):
         'error': None,
     })
     body = {'started': True, 'pid': proc.pid, 'mode': mode,
-            'run_name': run_name}
+            'run_name': run_name,
+            # US-002 极限 SE 臂回显（race 显式返回，前端无需按缺省推断）。
+            **({'strategy': extreme_strategy}
+               if family == 'extreme' else {})}
     if minutes is not None:
         body['minutes'] = int(minutes)
     else:
@@ -972,6 +1003,8 @@ def _status_from_active(st: dict) -> dict:
     return {
         'state': state,
         'mode': st.get('mode'),
+        # US-002 极限 SE 臂透传（策略族 / race 臂恒 None → 前端按 race 渲染）。
+        'strategy': st.get('strategy'),
         'total_budget_sec': st.get('total_budget_sec'),
         'elapsed_sec': round(elapsed, 1),
         'run_dir': run_dir,
@@ -1007,6 +1040,8 @@ async def _status_common(req: Request):
             'alive': _pid_alive(marker.get('pid')),
             'pid': marker.get('pid'),
             'mode': marker.get('mode'),
+            # US-002 极限 SE 臂（旧 marker 无键 → None = race，存量全 race 臂）。
+            'strategy': marker.get('strategy'),
             'doc_id': marker.get('doc_id'),
             'run_dir': run_dir,
             'elapsed_sec': None if elapsed is None else round(max(elapsed, 0.0), 1),

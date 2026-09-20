@@ -2,10 +2,14 @@
 
 覆盖（spec AC）：
   - start 202 契约：time_total_s → cfg.time / spawn cmd 尾部 --extreme --time <T>
-    --quiet / run_name web_extreme_* / marker 5 键 mode='extreme' / 响应体
-    {started, pid, mode:'extreme', run_name, time_total_s} / 状态槽 mode +
-    total_budget_sec（载荷未带 band/prefix → config 无该键）；
+    --quiet / run_name web_extreme_* / marker 6 键 mode='extreme' / 响应体
+    {started, pid, mode:'extreme', run_name, time_total_s, strategy} / 状态槽
+    mode + total_budget_sec + strategy（载荷未带 band/prefix → config 无该键）；
   - time_total_s 四种 400：缺省 / 非整数（字符串·非整浮点·bool） / <905 / >43200；
+  - strategy 双臂（2026-09-20 US-002）：缺省 race（spawn 无 --extreme-strategy、
+    marker/状态槽/status 载荷 strategy=None/race）；'se' → spawn 追加
+    --extreme-strategy se + marker/状态槽/status strategy='se'；值域外 → 400
+    结构化早退不 spawn；
   - band/prefix 2026-08-30 起与策略族同路径透传（范本 test_web_strategy 同名三
     例）：合法开启 → config 写键 + spawn cmd 尾不变；null / enabled=false → 不写
     键；非法（坏 g 码 / 不存在于母版 / 数量全 0 / front==back / 无 2+2 资格码）→
@@ -230,6 +234,7 @@ def test_extreme_start_happy_path_202(strat_env, monkeypatch):
     body = r.json()
     assert body['started'] is True and body['pid'] == 777
     assert body['mode'] == 'extreme' and body['time_total_s'] == 14400
+    assert body['strategy'] == 'race'            # US-002：缺省臂显式回显
     run_name = body['run_name']
     assert run_name.startswith('web_extreme_')
 
@@ -253,19 +258,22 @@ def test_extreme_start_happy_path_202(strat_env, monkeypatch):
     assert cmd[3] == str(cfg_files[0])
     assert cmd[cmd.index('--name') + 1] == run_name
     assert '--strategy' not in cmd
+    assert '--extreme-strategy' not in cmd       # 缺省 race 臂：spawn 无该段
     assert cmd[cmd.index('--extreme') + 1] == '--time'
     assert cmd[cmd.index('--time') + 1] == '14400'
     assert cmd[-1] == '--quiet'
 
-    # marker 5 键（mode='extreme'）+ 状态槽快照。
+    # marker 6 键（mode='extreme'；strategy='race' 显式 = 缺省臂）+ 状态槽快照。
     marker = json.loads(
         strategy_mod._marker_path().read_text(encoding='utf-8'))
-    assert set(marker) == {'pid', 'run_dir', 'doc_id', 'mode', 'started_at'}
+    assert set(marker) == {'pid', 'run_dir', 'doc_id', 'mode', 'started_at',
+                           'strategy'}
     assert marker['mode'] == 'extreme' and marker['pid'] == 777
+    assert marker['strategy'] == 'race'
     st = strategy_mod._STRATEGY_STATE
     assert st['state'] == 'starting' and st['mode'] == 'extreme'
     assert st['total_budget_sec'] == 14400 and st['minutes'] is None
-    assert st['run_name'] == run_name
+    assert st['strategy'] == 'race' and st['run_name'] == run_name
 
 
 def test_extreme_time_total_s_four_400(strat_env, monkeypatch):
@@ -312,6 +320,87 @@ def test_extreme_time_bounds_exact_edges_202(strat_env, monkeypatch):
         assert c.post('/api/extreme/start',
                       json={'time_total_s': t}).status_code == 202
     assert [calls[0]['cmd'][-2], calls[1]['cmd'][-2]] == ['905', '43200']
+
+
+# --------------------------------------------------- strategy 双臂（2026-09-20）
+
+
+def test_extreme_strategy_se_spawn_and_state(strat_env, monkeypatch):
+    """US-002 se 臂：strategy='se' → spawn 追加 --extreme-strategy se + marker/
+    状态槽 strategy='se' + 响应体回显；race 臂（缺省）spawn cmd 无该段。"""
+    _default_start_env(monkeypatch)
+    calls = _spawn_capture(monkeypatch, pids=(777, 778))
+    c = _client()
+    # se 臂。
+    r = c.post('/api/extreme/start', json={'time_total_s': 14400,
+                                           'strategy': 'se'})
+    assert r.status_code == 202
+    body = r.json()
+    assert body['strategy'] == 'se' and body['mode'] == 'extreme'
+    cmd = calls[0]['cmd']
+    assert cmd[cmd.index('--extreme')] == '--extreme'
+    assert cmd[cmd.index('--extreme-strategy') + 1] == 'se'
+    assert cmd[cmd.index('--extreme-strategy') + 2] == '--time'
+    assert cmd[-1] == '--quiet'
+    marker = json.loads(
+        strategy_mod._marker_path().read_text(encoding='utf-8'))
+    assert marker['strategy'] == 'se'
+    st = strategy_mod._STRATEGY_STATE
+    assert st['strategy'] == 'se'
+    # status 载荷透传实际臂（starting 态即可见）。
+    p = c.get('/api/extreme/status').json()
+    assert p['mode'] == 'extreme' and p['strategy'] == 'se'
+    # 收口清槽 → race 臂对照：显式 'race' 与缺省等价（spawn 无 --extreme-strategy、
+    # marker/状态槽 strategy='race' —— 缺省臂由 happy path 例另证）。
+    st['state'] = 'done'
+    strategy_mod._clear_marker()
+    assert c.post('/api/extreme/start',
+                  json={'time_total_s': 905, 'strategy': 'race'}).status_code == 202
+    assert '--extreme-strategy' not in calls[1]['cmd']
+    marker2 = json.loads(
+        strategy_mod._marker_path().read_text(encoding='utf-8'))
+    assert marker2['strategy'] == 'race'
+    assert strategy_mod._STRATEGY_STATE['strategy'] == 'race'
+
+
+def test_extreme_strategy_out_of_domain_400(strat_env, monkeypatch):
+    """strategy 值域外（bad/SE/数字/bool）→ 400 结构化早退：不落 config / 不写
+    marker / 不 spawn。"""
+    _default_start_env(monkeypatch)
+    calls = _spawn_capture(monkeypatch, pids=(777,) * 4)
+    uploads = Path(paths_mod.OUT_DIR) / 'uploads'
+    c = _client()
+    for bad in ('bad', 'SE', 1, True, {'se': 1}):
+        r = c.post('/api/extreme/start',
+                   json={'time_total_s': 14400, 'strategy': bad})
+        assert r.status_code == 400, bad
+        assert 'strategy 须为 race 或 se' in r.json()['error']
+    assert not list(uploads.glob('strategy_cfg_*.json'))
+    assert strategy_mod._read_marker() is None
+    assert len(calls) == 0
+
+
+def test_extreme_status_strategy_null_for_legacy_states(strat_env):
+    """存量/策略族 status 兼容：状态槽无 strategy 键（旧内存态）→ 载荷
+    strategy=None（前端按 race 渲染）；orphan marker 带 strategy → 透传。"""
+    _extreme_state(strat_env, run_dir=None, rc=None)   # 无 strategy 键的旧状态槽
+    c = _client()
+    p = c.get('/api/extreme/status').json()
+    assert p['mode'] == 'extreme' and p['strategy'] is None
+    # orphan：marker 带 strategy='se' → 载荷透传（server 重启后仍可区分臂）。
+    strategy_mod._STRATEGY_STATE.clear()
+    strategy_mod._write_marker({'pid': 4321, 'run_dir': None, 'doc_id': 'x',
+                                'mode': 'extreme', 'strategy': 'se',
+                                'started_at': time.strftime('%Y-%m-%dT%H:%M:%S')})
+    p2 = c.get('/api/extreme/status').json()
+    assert p2['state'] == 'orphan' and p2['mode'] == 'extreme'
+    assert p2['strategy'] == 'se'
+    # 旧 marker（无 strategy 键）→ None。
+    strategy_mod._write_marker({'pid': 4321, 'run_dir': None, 'doc_id': 'x',
+                                'mode': 'extreme',
+                                'started_at': time.strftime('%Y-%m-%dT%H:%M:%S')})
+    p3 = c.get('/api/extreme/status').json()
+    assert p3['strategy'] is None
 
 
 # ------------------------------------------- band/prefix 透传（2026-08-30 解除拒收）

@@ -84,6 +84,11 @@ export interface StrategyStartPayload {
 export interface ExtremeStartPayload {
   /** 总预算秒（minutes × 60）。 */
   time_total_s: number;
+  /**
+   * 极限运行策略（2026-09-20 起）：race 门杀（默认）/ SE 顺延臂（CLI 展开 =
+   * 300s 筛选 + 600s 冠军 warm 顺延 × 极限参数）。缺省不传 = race。
+   */
+  strategy?: 'race' | 'se';
   seed: number;
   gate_mm: number;
   sizes?: number[];
@@ -168,6 +173,12 @@ export interface StrategyStatus {
   state: StrategyPhase;
   /** 极限运行（US-002 起）status.mode = 'extreme'（状态槽 mode 透传）。 */
   mode?: StrategyMode | 'extreme' | null;
+  /**
+   * 极限运行有效策略（2026-09-20 起，start 时状态槽/marker 透传）：'se' = SE
+   * 顺延臂（进度面按 se 形态渲染）；null / 'race' / 缺键 = race 门杀（存量极限
+   * run 全为 race 臂）。策略族 status 不带此键。
+   */
+  strategy?: 'race' | 'se' | null;
   total_budget_sec?: number | null;
   /** 墙钟口径（≈，含启动开销），秒。 */
   elapsed_sec?: number | null;

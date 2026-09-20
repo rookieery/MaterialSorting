@@ -2,10 +2,16 @@
 //   - modal=null 不渲染 / open 渲染 overlay+dialog（aria-label=极限运行）
 //   - 配置态：四档预设 + 默认 120 分钟选中 + 预计轮数随预设实时更新（公式对拍）
 //   - 自定义分钟：16~720 整数（15 / 721 / 非整数置灰 + 轮数行提示）
-//   - 极限参数完全隐藏：弹窗全文不出现四个参数名字样；无模式选择
+//   - 极限参数完全隐藏：弹窗全文不出现四个参数名字样；模式选择 = 本弹窗自己的
+//     extreme-mode 下拉（2026-09-20 起 race 默认 / SE 顺延），高级运行的
+//     strategy-mode 下拉不出现
 //   - band/prefix 透传（2026-08-30 解除拦截）：开启 → 执行可点 + 只读状态行回显
 //     + 载荷带键；关闭 → 载荷写 null（与高级运行弹窗同款）
-//   - 执行 → POST /api/extreme/start（time_total_s = 分钟×60；collectStartContext 同源）
+//   - 执行 → POST /api/extreme/start（time_total_s = 分钟×60 + strategy 模式；
+//     collectStartContext 同源）
+//   - SE 臂（2026-09-20）：模式下拉切换 → 说明行/轮数行（k 筛选 + 1 延长）/
+//     载荷 strategy:'se'；进度态按 status.strategy 渲染 se chips + 延长阶段行
+//     + warm 提示（effectiveStrategy 解析）
 //   - 进度态：标题「极限运行」+ 门杀 chips / 大数字 / 预算条
 //   - 结果态：应用按钮 + 「已固化实验参数」提示；再次运行回配置态
 //   - error 态 409 互斥文案透传 + 重试原载荷；orphan 态清理（stop 路由）
@@ -14,7 +20,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
 import { act } from 'react';
-import { ExtremeRunModal, estimateExtremeRounds, parseCustomMinutes } from '../ExtremeRunModal';
+import { ExtremeRunModal, estimateExtremeRounds, estimateExtremeSeScreens, parseCustomMinutes } from '../ExtremeRunModal';
 import { useControlPanelStore } from '../../../store/controlPanelStore';
 import { useExtremeStore } from '../../../store/strategyStore';
 import type { StartContext } from '../../../lib/params';
@@ -181,6 +187,15 @@ describe('ExtremeRunModal 纯函数 (US-003)', () => {
     expect(parseCustomMinutes('abc')).toBeNull();
     expect(parseCustomMinutes('')).toBeNull();
   });
+
+  it('estimateExtremeSeScreens 公式对拍（US-002 se 臂）：k = max(1, floor((T - 602.5) / 302.5))', () => {
+    expect(estimateExtremeSeScreens(905)).toBe(1);    // 最低档恰 1 筛 + 1 延
+    expect(estimateExtremeSeScreens(960)).toBe(1);    // 自定义下限 16min
+    expect(estimateExtremeSeScreens(3600)).toBe(9);   // 60min
+    expect(estimateExtremeSeScreens(7200)).toBe(21);  // 120min（默认档）→ 21 筛 + 1 延
+    expect(estimateExtremeSeScreens(14400)).toBe(45); // 240min
+    expect(estimateExtremeSeScreens(43200)).toBe(140); // 720min 上限
+  });
 });
 
 describe('ExtremeRunModal (US-003)', () => {
@@ -246,7 +261,7 @@ describe('ExtremeRunModal (US-003)', () => {
     expect(exec().disabled).toBe(true);
   });
 
-  it('极限参数完全隐藏：弹窗全文不出现四个参数名字样；无模式选择下拉', () => {
+  it('极限参数完全隐藏：弹窗全文不出现四个参数名字样；模式下拉 = 本弹窗 extreme-mode（高级运行的 strategy-mode 不出现）', () => {
     openModal();
     renderModal();
     const text = document.body.querySelector('.strategy-modal')!.textContent ?? '';
@@ -254,7 +269,37 @@ describe('ExtremeRunModal (US-003)', () => {
     expect(text).not.toContain('early_termination');
     expect(text).not.toContain('num_workers');
     expect(text).not.toContain('quadtree_depth');
+    // 2026-09-20 起本弹窗有自己的模式下拉（race 默认 / SE 顺延）；高级运行的
+    // 下拉 testid 不出现（防误复用组件）。
+    const own = document.body.querySelector('[data-testid="extreme-mode"]') as HTMLSelectElement;
+    expect(own).not.toBeNull();
+    expect(own.value).toBe('race');
     expect(document.body.querySelector('[data-testid="strategy-mode"]')).toBeNull();
+  });
+
+  it('模式下拉（US-002 se 臂）：切 SE 顺延 → 说明行 / 轮数行切换（k 筛选 + 1 延长）；切回 race 复原', () => {
+    openModal();
+    renderModal();
+    const desc = () => document.body.querySelector('[data-testid="extreme-mode-desc"]')!.textContent!;
+    const rounds = () => document.body.querySelector('[data-testid="extreme-rounds"]')!.textContent!;
+    const select = document.body.querySelector('[data-testid="extreme-mode"]') as HTMLSelectElement;
+    const setSelect = (v: string) => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!;
+      setter.call(select, v);
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    };
+    // 默认 race：门杀说明 + 期望轮数口径。
+    expect(desc()).toContain('300s 门处严格破纪录');
+    expect(rounds()).toContain('预计 19 轮');
+    expect(rounds()).not.toContain('筛选');
+    // 切 se：warm 顺延说明 + 名义轮数口径（120min → 21 筛选 + 1 延长）。
+    act(() => { setSelect('se'); });
+    expect(desc()).toContain('warm 顺延');
+    expect(rounds()).toContain('预计 21 轮筛选 + 1 轮延长（warm 顺延）');
+    expect(rounds()).not.toContain('实际轮数 ≥ 预测');
+    // 切回 race 复原。
+    act(() => { setSelect('race'); });
+    expect(rounds()).toContain('预计 19 轮');
   });
 
   it('band/prefix 开启（2026-08-30 透传）→ 执行可点 + 只读状态行回显；关闭后状态行消失', () => {
@@ -283,6 +328,33 @@ describe('ExtremeRunModal (US-003)', () => {
     expect(startBodies).toHaveLength(1);
     expect(startBodies[0]).toEqual({
       time_total_s: 14400,
+      strategy: 'race',
+      seed: 5,
+      gate_mm: 1980,
+      sizes: [30, 32],
+      per_type: null,
+      quantities: { g01: { '30': 2, '32': 1 } },
+      band: null,
+      prefix: null,
+    });
+  });
+
+  it('SE 顺延执行（US-002）→ 载荷 strategy: "se"（其余字段同源不变）', async () => {
+    openModal();
+    renderModal();
+    const select = document.body.querySelector('[data-testid="extreme-mode"]') as HTMLSelectElement;
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!;
+      setter.call(select, 'se');
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await act(async () => {
+      (document.body.querySelector('[data-testid="extreme-exec-btn"]') as HTMLButtonElement).click();
+    });
+    expect(startBodies).toHaveLength(1);
+    expect(startBodies[0]).toEqual({
+      time_total_s: 7200,
+      strategy: 'se',
       seed: 5,
       gate_mm: 1980,
       sizes: [30, 32],
@@ -302,6 +374,7 @@ describe('ExtremeRunModal (US-003)', () => {
     expect(startBodies).toHaveLength(1);
     expect(startBodies[0]).toEqual({
       time_total_s: 7200,
+      strategy: 'race',
       seed: 5,
       gate_mm: 1980,
       sizes: [30, 32],
@@ -332,6 +405,41 @@ describe('ExtremeRunModal (US-003)', () => {
     expect(chips.some((c) => c.className.includes('killed'))).toBe(true);
     expect(document.body.querySelector('[data-testid="strategy-event"]')!.textContent).toContain('门杀');
     expect(document.body.querySelector('[data-testid="strategy-stop-btn"]')).not.toBeNull();
+  });
+
+  it('进度态 SE 臂（US-002）：status.strategy="se" → se chips（筛选+分隔+延长条目）+ 延长阶段行 + warm 顺延提示；无 strategy 键的存量 extreme 态仍按 race 渲染', () => {
+    // se 形态 fixture：3 筛（seed 1 完成 / 2 完成 / 3 当前）+ 延长进行中（ext）。
+    const seStatus: StrategyStatus = {
+      ...EXTREME_RUNNING,
+      strategy: 'se',
+      plan: { planned_seeds: [1, 2, 3], k_screens: 3, screen_s: 300, ext_s: 600, warm: true },
+      per_seed: [
+        { seed: 1, killed: false, kill_reason: null, best_density: 0.85, elapsed: 300, phase: 'screen' },
+        { seed: 2, killed: false, kill_reason: null, best_density: 0.8632, elapsed: 300, phase: 'screen' },
+      ],
+      current: { seed: 2, density: 0.8701, density_sparrow: 0.88, ext: true },
+      events: [{ kind: 'extension', seed: 2 }],
+    };
+    openModal();
+    renderModal();
+    setPhase({ phase: 'running', status: seStatus });
+    // 阶段行 = 延长中（冠军 seed）。
+    expect(document.body.querySelector('[data-testid="strategy-stage"]')!.textContent)
+      .toContain('延长中 · 冠军 seed 2');
+    // warm 真顺延正向标注（仅延长阶段显示）。
+    expect(document.body.querySelector('[data-testid="strategy-warm-note"]')!.textContent)
+      .toContain('warm 真顺延');
+    // se chips：分隔条 + 延长条目（label 形态，非 killed chip）。
+    const chips = Array.from(document.body.querySelectorAll('[data-testid="strategy-seed-chips"] .strategy-chip'));
+    expect(chips.length).toBeGreaterThan(0);
+    expect(chips.some((c) => c.className.includes('killed'))).toBe(false);
+    expect(chips.some((c) => c.textContent?.includes('延 ●'))).toBe(true);
+
+    // 存量 race 态（无 strategy 键）不受影响：门杀 chips + 无 warm 行。
+    setPhase({ phase: 'running', status: EXTREME_RUNNING });
+    expect(document.body.querySelector('[data-testid="strategy-stage"]')!.textContent)
+      .toContain('轮 · seed');
+    expect(document.body.querySelector('[data-testid="strategy-warm-note"]')).toBeNull();
   });
 
   it('终止按钮 → POST /api/extreme/stop', async () => {

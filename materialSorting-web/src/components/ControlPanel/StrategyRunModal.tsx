@@ -243,14 +243,27 @@ export function warmReasonText(reason: string | null | undefined): string {
 }
 
 /**
- * 进度态 warm 状态行文案（mode=se 才有；null = 不显示）：
+ * 进度面有效策略（2026-09-20 极限 SE 臂起）：策略族按 mode 直读；极限族按
+ * status.strategy 区分（mode 恒 'extreme'）；无 strategy 键的存量极限 run 视为
+ * race（历史全为 race 臂）。chips 结构 / 延长阶段行 / warm 提示行三处共用。
+ */
+export function effectiveStrategy(
+  status: StrategyStatus | null | undefined,
+): 'se' | 'race' {
+  if (status?.mode === 'se') return 'se';
+  if (status?.mode === 'extreme' && status.strategy === 'se') return 'se';
+  return 'race';
+}
+
+/**
+ * 进度态 warm 状态行文案（有效策略 = se 才有；null = 不显示）：
  * 计划回退（plan.warm=false）→ ⚠ 常显警告（起跑即知，不等延长 pill 从零爬坡
  * 才起疑）；计划真顺延 → 仅延长阶段（current.ext）显示正向标注，筛选期不占版面。
  */
 export function warmProgressNote(
   status: StrategyStatus | null,
 ): { text: string; warning: boolean } | null {
-  if (!status || status.mode !== 'se') return null;
+  if (!status || effectiveStrategy(status) !== 'se') return null;
   const warm = status.plan?.warm;
   if (warm === false) {
     return {
@@ -526,11 +539,12 @@ export function ProgressState({ status, onStop, modeLabel }: ProgressStateProps)
     total !== null && total > 0 && elapsed !== null
       ? `${Math.min(100, Math.max(0, (elapsed / total) * 100)).toFixed(1)}%`
       : '0%';
-  // ④ 阶段行：SE 延长检测（best_frame_s{seed}_ext 出现 → current.ext）优先。
+  // ④ 阶段行：SE 延长检测（best_frame_s{seed}_ext 出现 → current.ext）优先
+  // （有效策略 = se —— 含极限 SE 臂）。
   const perSeed = status?.per_seed ?? [];
   const plannedLen = status?.plan?.planned_seeds?.length ?? 0;
   const stageText =
-    status?.mode === 'se' && status?.current?.ext && status.current.seed !== null
+    effectiveStrategy(status) === 'se' && status?.current?.ext && status.current.seed !== null
       ? `延长中 · 冠军 seed ${status.current.seed}`
       : plannedLen > 0
         ? `第 ${Math.min(perSeed.length + 1, plannedLen)}/${plannedLen} 轮 · seed ${
@@ -538,7 +552,7 @@ export function ProgressState({ status, onStop, modeLabel }: ProgressStateProps)
           } · 求解中`
         : '启动中 · 定位 run 目录…';
   // ⑤ seed chips（两模式不同结构）+ 最近 1 条事件行。
-  const chips = status?.mode === 'se' ? seChips(status) : raceChips(status);
+  const chips = effectiveStrategy(status) === 'se' ? seChips(status) : raceChips(status);
   const events = status?.events ?? [];
   return (
     <>

@@ -6,20 +6,23 @@
 // （/api/extreme/* 四路由，族过滤见 strategyStore）。
 //
 // 与高级运行弹窗的三处刻意差异：
-//   1) 配置态只有总时长（四档预设 60/120（默认）/240/480 分钟 + 自定义 16~720 分钟）
-//      —— 无 race/se 模式选择（极限运行内部固定展开 race 门杀）；极限参数
-//      完全隐藏（exploration_pct / early_termination / num_workers /
+//   1) 配置态 = 总时长（四档预设 60/120（默认）/240/480 分钟 + 自定义 16~720
+//      分钟）+ 模式下拉（2026-09-20 起，镜像高级运行结构：race 门杀（默认）/
+//      SE 顺延 —— se 臂 CLI 展开 = 300s×k 筛选 + 冠军 600s warm 顺延）；极限
+//      参数完全隐藏（exploration_pct / early_termination / num_workers /
 //      quadtree_depth 是实验结论不是可调项，弹窗 UI 与文案均不出现）。
-//      预计轮数 N = 1 + floor((T - 602.5) / 347.5)（首轮全程 + 后续每轮期望耗时）
-//      随时长实时更新，标注期望口径「实际轮数 >= 预测（省出预算自动多跑）」。
+//      预计轮数随时长实时更新：race = N = 1 + floor((T - 602.5) / 347.5)（首轮
+//      全程 + 后续每轮期望耗时，期望口径「实际轮数 >= 预测」）；se = k 轮筛选
+//      + 1 轮延长（名义口径 k = floor((T - 602.5) / 302.5) 下限 1）。
 //   2) band/prefix 随排料参数透传（2026-08-30 解除拦截，与高级运行同款）：高级
 //      配置开启时载荷直接带 ctx.band/ctx.prefix（后端 _parse_* 同一校验点），
 //      弹窗内以只读状态行回显当前生效项 —— 参数本体只在高级配置里配。
 //   3) 结果态追加只读提示「已固化实验参数」（不列参数值，2026-08-29 确认）。
 //
 // 进度态 / 结果态 / error / orphan 复用 StrategyRunModal 导出的同构组件
-// （泛化优先于复制）：进度标题行覆写「极限运行」；结果应用按钮走同一
-// onApply 回调（NestingPage.applyStrategyResult 合成 RunRecord，导出三格式复用）。
+// （泛化优先于复制）：进度标题行覆写「极限运行」，se 形态（chips/延长阶段行/
+// warm 提示）经 effectiveStrategy(status) 按 status.strategy 解析；结果应用按钮
+// 走同一 onApply 回调（NestingPage.applyStrategyResult 合成 RunRecord）。
 
 import { useEffect, useState } from 'react';
 import type { JSX } from 'react';
@@ -39,6 +42,26 @@ export const EXTREME_PRESET_MINUTES: readonly number[] = [60, 120, 240, 480];
 export const EXTREME_CUSTOM_MIN_MINUTES = 16;
 export const EXTREME_CUSTOM_MAX_MINUTES = 720;
 
+/** 极限运行双模式（2026-09-20 起，镜像高级运行的模式下拉结构）。 */
+export type ExtremeMode = 'race' | 'se';
+
+export const EXTREME_MODE_OPTIONS: {
+  value: ExtremeMode;
+  label: string;
+  desc: string;
+}[] = [
+  {
+    value: 'race',
+    label: 'race 门杀（默认）',
+    desc: '每 seed 600s 预算，300s 门处严格破纪录才续跑，弱 seed 提前淘汰省出预算',
+  },
+  {
+    value: 'se',
+    label: 'SE 顺延',
+    desc: '300s × k 轮筛选 + 冠军 seed 600s warm 顺延（自冠军解热启动，增量搜索）',
+  },
+];
+
 /** 轮数期望口径（方案 §2.5）：首轮全程 602.5s + 后续每轮期望 ~347.5s。 */
 export const EXTREME_FIRST_ROUND_S = 602.5;
 export const EXTREME_PER_ROUND_S = 347.5;
@@ -49,6 +72,24 @@ export const EXTREME_PER_ROUND_S = 347.5;
  */
 export function estimateExtremeRounds(totalSec: number): number {
   return Math.max(1, 1 + Math.floor((totalSec - EXTREME_FIRST_ROUND_S) / EXTREME_PER_ROUND_S));
+}
+
+/**
+ * se 臂名义记账口径（与 se_plan 同式）：冠军全程 602.5s（600s 延长 + 2.5s 启动）
+ * + 每轮筛选 302.5s（300s + 2.5s）—— 与 race 600 档最低总预算同界（905s）。
+ */
+export const EXTREME_SE_FULL_UNIT_S = 602.5;
+export const EXTREME_SE_SCREEN_UNIT_S = 302.5;
+
+/**
+ * se 臂预计筛选轮数 k = max(1, floor((T - 602.5) / 302.5))（名义口径，非期望）。
+ * 总轮数 = k 筛选 + 1 延长；轮数是计划值（与 race 的期望口径不同，se 恒跑满 k 轮）。
+ */
+export function estimateExtremeSeScreens(totalSec: number): number {
+  return Math.max(
+    1,
+    Math.floor((totalSec - EXTREME_SE_FULL_UNIT_S) / EXTREME_SE_SCREEN_UNIT_S),
+  );
 }
 
 /** 预设分钟 -> 按钮文案（整小时档用「N 小时」）。 */
@@ -97,9 +138,11 @@ function ExtremeRunModalInner({
   const stop = useExtremeStore((s) => s.stop);
   const reset = useExtremeStore((s) => s.reset);
 
-  // 配置态本地草稿（mount 时初始化；默认 120 分钟 = 方案 §4 推荐档）。
+  // 配置态本地草稿（mount 时初始化；默认 120 分钟 = 方案 §4 推荐档、race = 有
+  // 完整验收背书的默认臂；se 为 2026-09-20 新增可选项）。
   const [presetMin, setPresetMin] = useState<number | 'custom'>(120);
   const [customText, setCustomText] = useState<string>(String(EXTREME_CUSTOM_MIN_MINUTES));
+  const [mode, setMode] = useState<ExtremeMode>('race');
 
   // ESC 关闭（仅关弹窗，绝不 stop）。
   useEffect(() => {
@@ -113,11 +156,13 @@ function ExtremeRunModalInner({
   }, [closeModal]);
 
   /** collectStartContext 同源载荷公共段（seed/gate_mm/sizes/per_type/quantities
-   * + band/prefix 透传 —— 与 StrategyRunModal.handleExec 同款，2026-08-30）。 */
+   * + band/prefix 透传 —— 与 StrategyRunModal.handleExec 同款，2026-08-30；
+   * + strategy 模式透传 2026-09-20）。 */
   function startPayload(timeTotalS: number) {
     const ctx = buildStartContext();
     return {
       time_total_s: timeTotalS,
+      strategy: mode,
       seed: ctx.seed,
       gate_mm: ctx.gate_mm,
       sizes: ctx.sizes,
@@ -183,10 +228,12 @@ function ExtremeRunModalInner({
           <ExtremeConfigState
             presetMin={presetMin}
             customText={customText}
+            mode={mode}
             solving={solving}
             buildStartContext={buildStartContext}
             onPreset={setPresetMin}
             onCustomText={setCustomText}
+            onMode={setMode}
             onExec={handleExec}
           />
         )}
@@ -225,25 +272,38 @@ function ExtremeRunModalInner({
 interface ExtremeConfigStateProps {
   presetMin: number | 'custom';
   customText: string;
+  mode: ExtremeMode;
   solving: boolean;
   buildStartContext: () => StartContext;
   onPreset: (p: number | 'custom') => void;
   onCustomText: (t: string) => void;
+  onMode: (m: ExtremeMode) => void;
   onExec: () => void;
 }
 
 function ExtremeConfigState({
   presetMin,
   customText,
+  mode,
   solving,
   buildStartContext,
   onPreset,
   onCustomText,
+  onMode,
   onExec,
 }: ExtremeConfigStateProps): JSX.Element {
   const customMin = parseCustomMinutes(customText);
   const totalMin = presetMin === 'custom' ? customMin : presetMin;
-  const rounds = totalMin === null ? null : estimateExtremeRounds(totalMin * 60);
+  const modeDesc = EXTREME_MODE_OPTIONS.find((o) => o.value === mode)?.desc ?? '';
+  // 预计轮数：race = 期望口径（实际 ≥ 预测）；se = 名义口径（k 筛选 + 1 延长）。
+  const rounds =
+    mode === 'race'
+      ? totalMin === null
+        ? null
+        : estimateExtremeRounds(totalMin * 60)
+      : null;
+  const seScreens =
+    mode === 'se' ? (totalMin === null ? null : estimateExtremeSeScreens(totalMin * 60)) : null;
   // 未选码号（与 handleStart sizes 非空校验同源 —— 后端对空 sizes 400）。
   const ctx = buildStartContext();
   const sizesEmpty = ctx.sizes.length === 0;
@@ -302,11 +362,36 @@ function ExtremeConfigState({
           </div>
         )}
       </div>
+      <div className="strategy-field">
+        <label htmlFor="extreme-mode">模式</label>
+        <select
+          id="extreme-mode"
+          className="strategy-select"
+          data-testid="extreme-mode"
+          value={mode}
+          onChange={(e) => onMode(e.target.value as ExtremeMode)}
+        >
+          {EXTREME_MODE_OPTIONS.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className="strategy-mode-desc" data-testid="extreme-mode-desc">
+        {modeDesc}
+      </div>
       <div className="extreme-rounds" data-testid="extreme-rounds">
-        {rounds === null ? (
+        {mode === 'race' ? (
+          rounds === null ? (
+            <>请输入 {EXTREME_CUSTOM_MIN_MINUTES}~{EXTREME_CUSTOM_MAX_MINUTES} 之间的整数分钟</>
+          ) : (
+            <>预计 {rounds} 轮 seed（实际轮数 ≥ 预测，省出预算自动多跑）</>
+          )
+        ) : seScreens === null ? (
           <>请输入 {EXTREME_CUSTOM_MIN_MINUTES}~{EXTREME_CUSTOM_MAX_MINUTES} 之间的整数分钟</>
         ) : (
-          <>预计 {rounds} 轮 seed（实际轮数 ≥ 预测，省出预算自动多跑）</>
+          <>预计 {seScreens} 轮筛选 + 1 轮延长（warm 顺延）</>
         )}
       </div>
       {layoutParts.length > 0 && (

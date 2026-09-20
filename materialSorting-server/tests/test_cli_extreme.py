@@ -1,6 +1,7 @@
-"""US-001 ``--extreme`` 极限运行糖衣旗标（run_config 展开 + 互斥 + 统计回显）。
+"""US-001 ``--extreme`` 极限运行糖衣旗标（run_config 展开 + 互斥 + 统计回显）
++ US-002 ``--extreme-strategy se`` SE 顺延臂（2026-09-20）。
 
-覆盖（PRD stories US-001 验收标准）：
+覆盖（PRD stories US-001 验收标准 + US-002 se 臂）：
 
   - **展开等价性**：``--extreme --time T`` 与手敲三件套（``--strategy race
     --race-budget 600 --race-gate 0.5 --solver-opts 三键``）的 result.json（含
@@ -8,9 +9,20 @@
     strategy.json（started_at 除外）、kill_decisions.jsonl **逐字段一致**；
     opts 恰三键、**无 quadtree_depth 键**（缺省 4，方案 §2.6 A/B 已否决调优）；
     solve 调用收到的每轮 solver_opts 同为三键固定档；
+  - **se 臂展开（US-002）**：``--extreme --extreme-strategy se`` 与手敲
+    ``--strategy se --se-screen 300 --se-extend 600 --solver-opts 三键`` 产物
+    逐字段一致；600 档 = 1×300s 筛选 + 1×600s 冠军延长（``_ext`` 后缀）、
+    两轮 opts 同极限三键；warm 计划态/实际态照常归档（测试钉死
+    warm_start_supported=False → 'unsupported' 回退，环境无关）；se 无门杀 →
+    kill_decisions.jsonl 不创建；run_stats extreme 段 additive 加
+    ``"strategy": "se"``（race 臂不加键）；1200 档 = 600/1200；se 臂 T=904
+    预算不足沿用 se_plan 报错路径；
+  - **--extreme-strategy 裁决**：单独给出（无 --extreme）→ 退出 1（从属旗标）；
+    值域外（bad）→ 退出 1；
   - **互斥矩阵**：--extreme 与 --strategy / --kill / --solver-opts /
     --rotate-opts / --se-screen / --se-extend / --race-budget / --race-gate
-    任一同给 → 退出码 1 + 中文报错 + 不留空 run_dir（糖衣旗标独占策略与旋钮）；
+    任一同给 → 退出码 1 + 中文报错 + 不留空 run_dir（糖衣旗标独占策略与旋钮；
+    se 臂同守卫）；
   - **--extreme-budget**：单独给出（无 --extreme）→ 退出 1（从属旗标）；非
     600/1200（0/900/2400）→ 退出 1（2400s+ 门判别力失效硬边界）；1200 档展开
     race_budget=1200 / 门 600s；
@@ -19,7 +31,7 @@
     模式守卫退出 1；
   - **run_stats.jsonl**：extreme 行 config 段含 ``"extreme": {"budget": 600}``、
     class_key 与手敲臂一致（历史可比）；非 extreme 行无该键（零回归）；
-  - **--help** 含两个新旗标（python -m 子进程冒烟）。
+  - **--help** 含极限旗标族（python -m 子进程冒烟）。
 """
 from __future__ import annotations
 
@@ -41,6 +53,7 @@ from materialsorting import paths as paths_mod
 from materialsorting.cli.portfolio import R5_REASON
 from materialsorting.cli.run_config import (EXTREME_BUDGETS, EXTREME_BUDGET_S,
                                             EXTREME_SOLVER_OPTS, main)
+from materialsorting.nesting_engine import warmstart
 from materialsorting.web import server as server_mod
 
 # 与 test_cli_run_config 同构的合成母版（6 片有码号 28/29 + 1 片 size=None）。
@@ -160,6 +173,14 @@ def _patch_solve(monkeypatch, traj) -> _FakeSolve:
     return fake
 
 
+def _pin_warm_false(monkeypatch):
+    """钉死 warm 能力探测 = False（US-002 se 臂测试环境无关化，镜像
+    test_cli_strategy_wiring._warm_ms0 口径）：se_warm_plan → ('unsupported')
+    回退，strategy.json/result.json 回显确定；真 warm 路径由
+    test_cli_strategy_wiring / pipeline 级测试覆盖。"""
+    monkeypatch.setattr(warmstart, 'warm_start_supported', lambda: False)
+
+
 def _read_kill_decisions(rd: Path) -> list[dict]:
     text = (rd / 'kill_decisions.jsonl').read_text(encoding='utf-8')
     return [json.loads(line) for line in text.splitlines() if line]
@@ -178,6 +199,13 @@ def _read_stats(path: Path) -> list[dict]:
 _EXTREME_TRAJ = {
     (0, ''): [(50.0, 0.800), (300.0, 0.840), (600.0, 0.860)],
     (1, ''): [(50.0, 0.799), (301.0, 0.839)],
+}
+
+# se 臂矩阵（600 档 / T=905 最小配置）：se_plan(905, 300, 600) = (1, 600) ——
+# 1×300s 筛选（seed0）+ 1×600s 冠军延长（同 seed0，_ext 后缀防覆盖）。
+_EXTREME_SE_TRAJ = {
+    (0, ''): [(50.0, 0.800), (300.0, 0.840)],
+    (0, '_ext'): [(50.0, 0.840), (300.0, 0.850), (600.0, 0.860)],
 }
 
 
@@ -273,6 +301,158 @@ def test_extreme_non_extreme_run_stats_no_extreme_key(iso_env, capsys, monkeypat
     (line,) = _read_stats(stats)
     assert 'extreme' not in line['config']
     assert set(line['config']) == {'time', 'per_type', 'quantities'}
+
+
+# ----------------------------------------------------- US-002 se 臂（SE 顺延）
+
+
+def test_extreme_se_expansion_equivalent_to_manual(iso_env, capsys, monkeypatch):
+    """US-002 se 臂展开等价性：--extreme --extreme-strategy se 与手敲
+    ``--strategy se --se-screen 300 --se-extend 600 --solver-opts 三键`` 产物
+    逐字段一致（started_at 除外）；600 档 = 1×300 筛选 + 1×600 冠军延长。"""
+    tmp, runs, stats, master = iso_env
+    cfg_path = _write_config(tmp / 'cfg.json', master, seeds=[0])
+    _pin_warm_false(monkeypatch)
+    fake = _patch_solve(monkeypatch, _EXTREME_SE_TRAJ)
+    rc = main([str(cfg_path), '--extreme', '--extreme-strategy', 'se',
+               '--time', '905', '--name', 'eq_extreme_se'])
+    assert rc == 0
+    out = capsys.readouterr().out
+    # ---- 启动行：se 展开参数 + warm 计划态（钉死 False → unsupported 回退）+ 极限标注。
+    assert ('[portfolio] 策略模式 se（筛延）：总预算 905s = 阶段 1 1 × 300s 筛选'
+            ' + 阶段 2 冠军 600s 延长') in out
+    assert '，延长轮 warm 回退重放（unsupported）' in out
+    assert ('[extreme] 极限运行：SE 顺延 × 实验结论参数（预算档 600s：'
+            '筛选 300s + 冠军 600s warm 顺延，quadtree_depth 用缺省 4）') in out
+    assert 'solver_opts: {"exploration_pct": 0.7, "early_termination": false,' \
+           ' "num_workers": 4}' in out
+    # ---- solve 调用形：300s 筛选 + 600s 延长（_ext 后缀），两轮固定三键 opts。
+    assert fake.calls == [(0, 300, '', EXTREME_SOLVER_OPTS),
+                          (0, 600, '_ext', EXTREME_SOLVER_OPTS)]
+    # run_dir 定位用前缀 glob（时间戳拼接在 main() 跨秒界时会与断言路径错位）。
+    extreme_dirs = [d for d in runs.iterdir() if d.name.startswith('eq_extreme_se_')]
+    assert len(extreme_dirs) == 1
+    extreme_rd = extreme_dirs[0]
+    result_ext = json.loads((extreme_rd / 'result.json').read_text(encoding='utf-8'))
+    plan_ext = json.loads((extreme_rd / 'strategy.json').read_text(encoding='utf-8'))
+    # se 无门杀 → kill_decisions.jsonl 不创建（race 臂才开）。
+    assert not (extreme_rd / 'kill_decisions.jsonl').exists()
+    # ---- strategy.json：mode=se + se 段（k/screen/ext + warm 计划态两键）。
+    plan_ext.pop('started_at')
+    assert plan_ext == {'mode': 'se', 'total_budget': 905, 'planned_seeds': [0],
+                        'se': {'k_screens': 1, 'screen_s': 300, 'ext_s': 600,
+                               'warm': False, 'warm_reason': 'unsupported'}}
+    # ---- result.json：config.strategy = se 两参数 + warm 实际态；延长轮 phase。
+    assert result_ext['config']['strategy'] == {
+        'mode': 'se', 'se_screen': 300, 'se_extend': 600,
+        'warm': False, 'warm_reason': 'unsupported'}
+    assert [r['seed'] for r in result_ext['solve']] == [0, 0]
+    assert result_ext['solve'][1]['phase'] == 'extension'
+
+    # ---- 手敲对照臂（同 cfg 同 traj；--se-warm 缺省 on → 同 pinned unsupported）。
+    fake2 = _patch_solve(monkeypatch, _EXTREME_SE_TRAJ)
+    rc2 = main([str(cfg_path), '--strategy', 'se', '--time', '905',
+                '--name', 'eq_se_manual', '--se-screen', '300',
+                '--se-extend', '600', '--solver-opts', _MANUAL_OPTS_JSON])
+    assert rc2 == 0
+    capsys.readouterr()
+    assert fake2.calls == fake.calls
+    manual_dirs = [d for d in runs.iterdir() if d.name.startswith('eq_se_manual_')]
+    assert len(manual_dirs) == 1
+    result_man = json.loads((manual_dirs[0] / 'result.json').read_text(encoding='utf-8'))
+    plan_man = json.loads((manual_dirs[0] / 'strategy.json').read_text(encoding='utf-8'))
+    for r in (result_ext, result_man):
+        r['commit']['run_dir'] = '<RUN_DIR>'
+        r['commit']['pieces_dir'] = '<PIECES_DIR>'
+        r['commit']['intermediate'] = '<INTERMEDIATE>'
+        r['config']['path'] = '<CFG>'
+    assert result_ext == result_man
+    plan_man.pop('started_at')
+    assert plan_ext == plan_man
+
+    # ---- run_stats：se 臂 extreme 段 additive 加 strategy、class_key 与手敲臂一致。
+    lines = _read_stats(stats)
+    assert len(lines) == 2
+    ext_line, man_line = lines
+    assert ext_line['config']['extreme'] == {'budget': 600, 'strategy': 'se'}
+    assert 'extreme' not in man_line['config']
+    assert ext_line['class_key'] == man_line['class_key']
+    assert ext_line['best_density'] == man_line['best_density']
+
+
+def test_extreme_se_budget_1200_expands_screen_600_ext_1200(iso_env, capsys,
+                                                             monkeypatch):
+    """US-002 se 臂 1200 档：筛选 600s + 冠军延长 1200s；统计档位回显 1200。"""
+    tmp, runs, stats, master = iso_env
+    cfg_path = _write_config(tmp / 'cfg.json', master, seeds=[0])
+    _pin_warm_false(monkeypatch)
+    # se_plan(1810, 600, 1200) = (1, 1200)：1×600s 筛选 + 1×1200s 延长
+    #（名义 1202.5 + 602.5 = 1805 ≤ 1810）。
+    traj = {(0, ''): [(100.0, 0.800), (600.0, 0.840)],
+            (0, '_ext'): [(100.0, 0.840), (600.0, 0.850), (1200.0, 0.860)]}
+    fake = _patch_solve(monkeypatch, traj)
+    rc = main([str(cfg_path), '--extreme', '--extreme-strategy', 'se',
+               '--time', '1810', '--extreme-budget', '1200', '--name', 'ese1200'])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert '阶段 1 1 × 600s 筛选 + 阶段 2 冠军 1200s 延长' in out
+    assert fake.calls == [(0, 600, '', EXTREME_SOLVER_OPTS),
+                          (0, 1200, '_ext', EXTREME_SOLVER_OPTS)]
+    (line,) = _read_stats(stats)
+    assert line['config']['extreme'] == {'budget': 1200, 'strategy': 'se'}
+    dirs = [d for d in runs.iterdir() if d.name.startswith('ese1200_')]
+    assert len(dirs) == 1
+    plan = json.loads((dirs[0] / 'strategy.json').read_text(encoding='utf-8'))
+    assert plan['se']['screen_s'] == 600 and plan['se']['ext_s'] == 1200
+
+
+@pytest.mark.parametrize('total', ['904', '600'])
+def test_extreme_se_total_budget_below_min_reuses_se_plan_error(iso_env, capsys,
+                                                                total):
+    """US-002 se 臂 T < 905（300/600 档最低 = 602.5 + 302.5）→ 沿用 se_plan 的
+    StrategyBudgetError 报错路径退出 1（与 race 臂同界）。"""
+    tmp, runs, _, master = iso_env
+    cfg_path = _write_config(tmp / 'cfg.json', master)
+    rc = main([str(cfg_path), '--extreme', '--extreme-strategy', 'se',
+               '--time', total])
+    assert rc == 1
+    assert '预算不足' in capsys.readouterr().err
+    assert list(runs.iterdir()) == []
+
+
+def test_extreme_strategy_subordinate_flag_requires_extreme(iso_env, capsys):
+    """--extreme-strategy 单独给出（无 --extreme）= 从属旗标笔误，退出 1。"""
+    tmp, runs, _, master = iso_env
+    cfg_path = _write_config(tmp / 'cfg.json', master)
+    rc = main([str(cfg_path), '--extreme-strategy', 'se'])
+    assert rc == 1
+    assert '--extreme-strategy 须与 --extreme 同给' in capsys.readouterr().err
+    assert list(runs.iterdir()) == []
+
+
+@pytest.mark.parametrize('bad', ['bad', 'SE', ''])
+def test_extreme_strategy_domain_rejects_non_race_se(iso_env, capsys, bad):
+    """--extreme-strategy 值域外（非 race/se）→ 手工校验退出 1。"""
+    tmp, runs, _, master = iso_env
+    cfg_path = _write_config(tmp / 'cfg.json', master)
+    rc = main([str(cfg_path), '--extreme', '--time', '905',
+               '--extreme-strategy', bad])
+    assert rc == 1
+    assert '--extreme-strategy 须为 race 或 se' in capsys.readouterr().err
+    assert list(runs.iterdir()) == []
+
+
+def test_extreme_se_mutex_still_guards_strategy_flags(iso_env, capsys):
+    """se 臂同守卫糖衣互斥：--extreme --extreme-strategy se 与 --se-warm 同给 →
+    退出 1（极限参数是实验结论不是可调项；warm 恒默认 on）。"""
+    tmp, runs, _, master = iso_env
+    cfg_path = _write_config(tmp / 'cfg.json', master)
+    rc = main([str(cfg_path), '--extreme', '--extreme-strategy', 'se',
+               '--time', '905', '--se-warm', 'on'])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert '--extreme 与' in err and '--se-warm' in err and '互斥' in err
+    assert list(runs.iterdir()) == []
 
 
 # -------------------------------------------------------------- 互斥矩阵
@@ -389,12 +569,13 @@ def test_extreme_constants_contract():
 
 
 def test_help_contains_extreme_flags():
-    """--help 含两个新旗标（python -m 子进程冒烟，AC：跑通即分层无反向）。"""
+    """--help 含极限旗标族（python -m 子进程冒烟，AC：跑通即分层无反向）。"""
     proc = subprocess.run(
         [sys.executable, '-m', 'materialsorting.cli.run_config', '--help'],
         capture_output=True, text=True, encoding='utf-8', cwd=str(_SRC.parents[1]))
     assert proc.returncode == 0
     assert '--extreme' in proc.stdout and '--extreme-budget' in proc.stdout
+    assert '--extreme-strategy' in proc.stdout
 
 
 if __name__ == '__main__':

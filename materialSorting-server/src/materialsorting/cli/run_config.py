@@ -10,7 +10,8 @@ r"""ms-run-config 入口 —— 一条命令跑完「commit → 求解」，无�
                   [--strategy [se|race] --time 总预算
                     [--se-screen 90] [--se-extend 180] [--se-warm on|off]
                     [--race-budget 180] [--race-gate 0.5]]
-                  [--extreme --time 总预算 [--extreme-budget 600|1200]]
+                  [--extreme --time 总预算 [--extreme-budget 600|1200]
+                    [--extreme-strategy race|se]]
     python -m materialsorting.cli.run_config <config.json> --time 5
 
 流程：``load_config``（10 键 schema 校验）→ ``new_run_dir``（时间戳目录保留历史）
@@ -185,6 +186,17 @@ US-001 极限运行糖衣旗标（``--extreme [--extreme-budget 600|1200]``，�
     additive 加 ``"extreme": {"budget": B}``（class_key 组成不变，与历史 run
     可比）。
 
+US-002 极限运行 SE 顺延臂（``--extreme-strategy se``，2026-09-20；方案文档 v1.2
+增补）：糖衣展开第二种形态 —— ``--strategy se --se-screen <budget/2>
+--se-extend <budget>`` + 同一份 ``EXTREME_SOLVER_OPTS``（600 档 = 300s 筛选 +
+600s 冠军 warm 顺延；1200 档 = 600/1200）。参数依据：筛选预算 = 预算一半与 race
+门时刻同口径（门判别力 ρ=0.916 的 300s 截面直接复用为冠军选择器）；1:2 筛延比
+例与默认 se 90:180 同款；名义记账两臂同界（全程 602.5 + 单轮筛选 302.5 = 905s
+最低总预算，web 值域通用）。warm 默认 on（``--se-warm`` 不可显式给 —— 糖衣互斥
+照旧），回退矩阵照常兜底不炸轮。race 臂（缺省）全部产物逐字节不变；se 臂
+run_stats 行 config 的 ``extreme`` 段 additive 加 ``"strategy": "se"``（race 臂
+不加键，class_key 组成不变）。
+
 run_name 缺省 = 配置文件 stem，``--name`` 覆盖；Windows 非法文件名字符
 （``<>:"/\|?*`` 与控制字符）替换 ``_``，清洗后为空回退 ``run``。
 
@@ -301,7 +313,8 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
                         '--strategy 同给）')
     p.add_argument('--extreme', action='store_true',
                    help='极限运行糖衣旗标（US-001）：一条命令跑「race 门杀 × 实验'
-                        '结论极限参数」长跑 —— 内部展开为 --strategy race + 每 seed '
+                        '结论极限参数」长跑（US-002 起 --extreme-strategy se 切 '
+                        'SE 顺延臂）—— 内部展开为 --strategy race + 每 seed '
                         '预算 --extreme-budget（默认 600s，门时刻 0.5×预算）+ 固定 '
                         'solver_opts（exploration_pct 0.7 / early_termination false / '
                         'num_workers 4；quadtree_depth 不写 = 缺省 4）；与 --strategy/'
@@ -312,6 +325,11 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
                    help='极限运行每 seed 求解预算（秒，US-001）：仅收 600 或 1200 '
                         '两档（2400s+ 门判别力失效是硬边界）；默认 600；须与 '
                         '--extreme 同给')
+    p.add_argument('--extreme-strategy', default=None, metavar='{race,se}',
+                   help='极限运行策略（US-002，默认 race 门杀）：se = SE 顺延臂 —— '
+                        '筛选 budget/2 + 冠军 budget warm 顺延（600 档 = 300s 筛选 '
+                        '+ 600s 延长；warm 默认 on 不可关，不可用时自动回退重放）；'
+                        '须与 --extreme 同给')
     return p.parse_args(argv)
 
 
@@ -464,14 +482,35 @@ def main(argv: list[str] | None = None) -> int:
               f'（秒），当前 {extreme_budget}（2400s+ 门判别力失效是硬边界）',
               file=sys.stderr)
         return _EXIT_CONFIG_OR_COMMIT
+    # US-002 --extreme-strategy 裁决（从属旗标 + 值域手工校验，同 --extreme-budget
+    # 口径）：缺省 race（展开形态零变化）；se = SE 顺延臂（见模块 docstring US-002 节）。
+    extreme_strategy = args.extreme_strategy or 'race'
+    if args.extreme_strategy is not None:
+        if not args.extreme:
+            print('配置错误: --extreme-strategy 须与 --extreme 同给（极限运行未启用）',
+                  file=sys.stderr)
+            return _EXIT_CONFIG_OR_COMMIT
+        if args.extreme_strategy not in ('race', 'se'):
+            print(f'配置错误: --extreme-strategy 须为 race 或 se，'
+                  f'当前为 {args.extreme_strategy!r}', file=sys.stderr)
+            return _EXIT_CONFIG_OR_COMMIT
     if args.extreme:
-        # 展开 = 手敲三件套逐字段等价（strategy race + 预算档 + τ=0.5），下游
-        # strategy 守卫（--time 必填 / --kill 互斥天然满足）/ race_plan /
-        # decide_race_kill 零改动复用；race_plan 预算不足照常退出 1（600 档
-        # 最低 905s = 首轮全程 602.5 + 一轮门段 302.5）。
-        args.strategy = 'race'
-        args.race_budget = extreme_budget
-        args.race_gate = RACE_GATE_TAU
+        # 展开 = 手敲旗标逐字段等价，下游 strategy 守卫（--time 必填 / --kill 互斥
+        # 天然满足）/ race_plan / se_plan / decide_race_kill 零改动复用；预算不足
+        # 照常退出 1（600 档两臂同界 = 最低 905s：race 首轮全程 602.5 + 一轮门段
+        # 302.5 / se 冠军全程 602.5 + 一轮筛选 302.5）。
+        if extreme_strategy == 'race':
+            args.strategy = 'race'
+            args.race_budget = extreme_budget
+            args.race_gate = RACE_GATE_TAU
+        else:
+            # se 臂（US-002）：筛选 = budget/2（与 race 门时刻同口径 —— 300s 门值
+            # 对 600s 终值的判别力 ρ=0.916 直接复用为冠军选择器）、延长 = budget
+            # （1:2 筛延比例与默认 se 90:180 同款）；warm 默认 on（args.se_warm
+            # 恒 None —— 糖衣互斥已拦显式 --se-warm）。
+            args.strategy = 'se'
+            args.se_screen = extreme_budget // 2
+            args.se_extend = extreme_budget
     # PC-006 solver_opts 旗标裁决（配置错误须在 new_run_dir 之前拦下，不留空目录）：
     # --solver-opts（固定档全 seed 生效）与 --rotate-opts（内置池逐 seed 轮换）互斥；
     # JSON 坏串 / 非 JSON 对象同按配置错误退出 1。旋钮清洗（clamp/白名单）不在 CLI
@@ -662,6 +701,11 @@ def main(argv: list[str] | None = None) -> int:
             print(f'[portfolio] 策略模式 se（筛延）：总预算 {args.time}s = 阶段 1 '
                   f'{n_rounds} × {se_screen:g}s 筛选 + 阶段 2 冠军 {se_ext:g}s 延长'
                   f'（种子流 {strategy_seeds}）{warm_note}')
+            if args.extreme:
+                # US-002 极限运行 se 臂标注行（--quiet 也打，同 race 臂口径）。
+                print(f'[extreme] 极限运行：SE 顺延 × 实验结论参数（预算档 '
+                      f'{extreme_budget:g}s：筛选 {se_screen:g}s + 冠军 '
+                      f'{se_ext:g}s warm 顺延，quadtree_depth 用缺省 4）')
     elif n_rounds > 1:
         # 多 seed 启动即给总时长预期（len(seeds) × time，不含解析/切片）——
         # 评估配置前先知道要等多久，避免把长跑误判挂死。
@@ -797,6 +841,12 @@ def main(argv: list[str] | None = None) -> int:
         strategy_echo = {'mode': 'se', 'se_screen': se_screen, 'se_extend': se_ext}
     else:
         strategy_echo = None
+    # US-002 极限运行档位回显（result.json config 段与 run_stats 行共用）：race 臂
+    # 逐字节不变 —— strategy 键只在 se 臂添加（读侧「无键 = race」，历史 extreme
+    # run 全为 race 臂）。
+    extreme_echo = ({'budget': extreme_budget, 'strategy': 'se'}
+                    if args.extreme and extreme_strategy == 'se'
+                    else {'budget': extreme_budget} if args.extreme else None)
     # PC-008：LNS 严格更优时的 result.json lns 段（None = 不写该键 —— 无 --lns /
     # LNS 不优的 result.json 与基线逐字节一致，见 _flush_result）。
     lns_state = {'section': None}
@@ -1028,9 +1078,10 @@ def main(argv: list[str] | None = None) -> int:
                    # prefix 同款（labels 已纳入 class_key）。
                    **({'band': cfg.band} if cfg.band is not None else {}),
                    **({'prefix': cfg.prefix} if cfg.prefix is not None else {}),
-                   # US-001 极限运行档位回显（additive：class_key 组成不变，与历史
-                   # run 可比；无 --extreme 的行结构不变）。
-                   **({'extreme': {'budget': extreme_budget}} if args.extreme else {}),
+                   # US-001/002 极限运行档位回显（additive：class_key 组成不变，
+                   # 与历史 run 可比；无 --extreme 的行结构不变；race 臂不加
+                   # strategy 键 —— 读侧「无键 = race（历史全 race 臂）」）。
+                   **({'extreme': extreme_echo} if extreme_echo is not None else {}),
                    # US-003 se 延长轮 warm 实际灌入态（additive 同键：class_key
                    # 组成不变；延长轮未跑的 run 不加键）。
                    **({'warm': controller.se_warm_state['warm'],
