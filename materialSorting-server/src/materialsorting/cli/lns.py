@@ -63,6 +63,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 import time
 from pathlib import Path
@@ -100,6 +101,16 @@ def _solve_band(pieces_subset, gate_mm, solve_params):
 
 
 # ---------------------------------------------------------------- 核心循环
+
+
+def _physical_width(geoms) -> float:
+    """物理包络料长（2026-09-19 全端物理口径统一）：``ceil(maxX − 1e-9)``。
+
+    与 ``web.solver._physical_width_mm`` / 前端 ``computeLayoutStats`` 同公式
+    （ε 抵 float 噪声防贴边 +1mm）—— LNS 回写 result.json 的 incumbent
+    density / width_mm 与 solve 段 real_density（同公式）保持逐位一致。
+    ``geoms`` 为 ``_layout_geometry`` 产物 ``[(world_poly, xmin, xmax)]``。"""
+    return float(math.ceil(max(max(g[2] for g in geoms), 0.0) - 1e-9))
 
 
 def _shifted(items, positions, dx):
@@ -173,7 +184,7 @@ def run_lns(placed_items, pieces, gate_mm, *, per_type=None, sizes=None,
     pieces_by_id = {p['pid']: p for p in pieces}
     geoms0 = _layout_geometry(placed_items, pieces_by_id)   # 兼验 pid 在场
     total_area = sum(float(pieces_by_id[it['id']]['area_mm2']) for it in placed_items)
-    width_before = max(max(g[2] for g in geoms0), 0.0)
+    width_before = _physical_width(geoms0)
     # 密度分母 = 输入门幅（与 _apply_density_dual 同口径，回写 result.json 的
     # incumbent density 与 solve 段 real_density 保持一致）。
     density_before = total_area / (width_before * float(gate_mm))
@@ -322,7 +333,7 @@ def run_lns(placed_items, pieces, gate_mm, *, per_type=None, sizes=None,
         stop_reason = 'rounds_cap'
 
     geoms_f = _layout_geometry(current, pieces_by_id)
-    width_after = max(max(g[2] for g in geoms_f), 0.0)
+    width_after = _physical_width(geoms_f)
     density_after = total_area / (width_after * float(gate_mm))
     ok, issues, y_viol = recheck_layout(current, pieces_by_id, gate_mm)
     reverted = False

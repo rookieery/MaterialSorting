@@ -66,8 +66,10 @@
   "sizes": [28, 30, 32],          // 码号列表（文件名用，排序后 '-' 拼接；空 → "all"）
   "seed": 0,                      // 文件名标注用
   "gate_mm": 1750,                // run.manifest.gate_mm（多 run 共享）
-  "width_mm": 7058.0,             // run.lastFrame.width_mm（用布长度 mm）
-  "density": 0.8983,              // run.finalDensity（原面积口径，0..1）
+  "width_mm": 7058.0,             // run.lastFrame.width_mm（用布长度 mm；2026-09-19 起 = 物理毛版
+                                  //   包络 ceil 口径整数 —— 外框/PLT 表格料长与毛版片足迹一致，
+                                  //   旧 erode 分母口径下最右片可越框 ~d mm 的问题随之消除）
+  "density": 0.8983,              // run.finalDensity（原面积·物理包络口径，0..1；与 width_mm 同源）
   "placed": [                     // run.lastFrame.placed_items
     {"id": "...", "rotation": 0.0, "translation": [x, y]},
     ...                           // 可选 "mirror": true（edit-keyboard US-004，2026-09-05）：
@@ -171,8 +173,8 @@ ExportInfoModal v3「按最终表格列序展示全部 14 字段（8 自动只�
 ```jsonc
 {
   "gate_mm": 1750,     // 缺省 0 → 回退会话 state['gate_mm']（与 /export 同口径）
-  "width_mm": 5157.57, // <=0 → 400
-  "density": 0.8808,   // real_density（原面积·输入幅宽口径）
+  "width_mm": 5157.57, // <=0 → 400（2026-09-19 起 = 物理毛版包络 ceil 口径整数，与 /export 同源）
+  "density": 0.8808,   // real_density（原面积·输入幅宽·物理包络口径，与 width_mm 同源）
   "placed": [...]      // lastFrame.placed_items；空 → 400
 }
 ```
@@ -967,9 +969,10 @@ ws://127.0.0.1:8000/ws/solve?sid=<sid>     # 缺省/空串 → default 会话（
   "index": 0,                     // server 侧递增序号（counter['n']）
   "elapsed": 0.123,               // 秒，自 solve 开始
   "phase": "exploring",           // spyrrow rtype.phase_name()：exploring / compressing / final
-  "density": 0.8983,              // ★ 原面积·实际幅宽口径 real = total_area/(width*gate)（与 90% 生死线一致；2026-08-28 起单一幅宽口径）
+  "density": 0.8983,              // ★ 原面积·实际幅宽·物理包络口径 real = total_area/(width*gate)（与 90% 生死线一致；2026-08-28 起单一幅宽口径）
   "density_sparrow": 0.8809,      // spyrrow 自报（erode 后面积口径，偏低，仅参考）
-  "width_mm": 7058.0,             // 当前用布长度
+  "width_mm": 7058.0,             // 当前用布长度 = 物理毛版包络 ceil(maxX−1e-9)（整数；2026-09-19 全端物理口径统一）
+  "width_sparrow_mm": 7052.4,     // sparrow 自报 width 备查（erode 碰撞轮廓包络；回退路径缺席此键）
   "placed_items": [               // 完整布局（每帧全量）
     {"id": "<pid>", "rotation": 0.0, "translation": [x, y]},
     ...
@@ -977,7 +980,7 @@ ws://127.0.0.1:8000/ws/solve?sid=<sid>     # 缺省/空串 → default 会话（
 }
 ```
 
-> **density 双口径**（关键不变量）：sparrow 子线程吐出的 `density` 是 erode 后面积口径；server 侧 `on_report` 把原值存为 `density_sparrow`，再用 `total_area/(w*GATE_MM)` 重算 `density`。前端**任何决策/显示都优先 `density`**。
+> **density 双口径**（关键不变量）：sparrow 子线程吐出的 `density` 是 erode 后面积口径；server 侧 `on_report` 把原值存为 `density_sparrow`，`width_mm` 换算为**物理毛版包络 ceil 口径**（`_physical_width_mm`，与前端 `computeLayoutStats`/编辑弹窗同公式 —— 旧分母用 erode 轮廓包络，per_type d>0 时偏乐观 ≤~0.1pt；sparrow 自报原值备查 `width_sparrow_mm`），再用 `total_area/(width*gate)` 重算 `density`。前端**任何决策/显示都优先 `density`**。
 
 ### 4. server → final（**一次**，求解结束）
 

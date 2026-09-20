@@ -356,6 +356,10 @@ def _best_frame_record(seed: int, frame_index: int, report: dict) -> dict:
         'n_placed': len(placed),
         'placed_items': placed,
     }
+    # 2026-09-19 物理口径：sparrow 自报 width（erode 包络）备查键 —— 物理换算
+    # 路径在场才落（回退路径/旧合成帧缺席 = 键不出现，消费方 .get 兼容）。
+    if report.get('width_sparrow_mm') is not None:
+        record['width_sparrow_mm'] = round(float(report['width_sparrow_mm']), 2)
     composite = report.get('composite')
     if isinstance(composite, dict):
         record['composite'] = composite
@@ -583,7 +587,12 @@ def solve_pieces(cfg, run_dir, *, seed: int, time_budget: int | None = None,
 
     curve_path = Path(run_dir) / f'curve_s{seed}{artifact_suffix}.json'
     best_path = Path(run_dir) / f'best_frame_s{seed}{artifact_suffix}.json'
-    state: dict = {'best': None, 'reason': None, 'proc': None, 'n_frames': 0}
+    # best_raw = best 帧密度比较基准（原始未取整）：记录存 round(d, 6) 截尾，物理
+    # 口径宽度量化成整数后同 seed 内可现完全相等的密度并列，拿取整值当基准会把
+    # 并列后帧误判「严格更大」抢占 best 边车 —— 比较走原始值（与 portfolio
+    # incumbent 同款修正）。
+    state: dict = {'best': None, 'best_raw': None, 'reason': None, 'proc': None,
+                   'n_frames': 0}
 
     # curve 增量写：sparrow exploring 期 ~5ms 一帧（300s 预算可上万帧），整文件重写
     # 是 O(N²) 磁盘写（实测 5s 冒烟即 ~75MB）—— 改为打开一次、逐帧 append 条目，
@@ -607,7 +616,8 @@ def solve_pieces(cfg, run_dir, *, seed: int, time_budget: int | None = None,
         curve_file.write((',' if idx else '') +
                          json.dumps(_curve_entry(report), ensure_ascii=False) + '\n')
         best = state['best']
-        if best is None or report['density'] > best['density']:
+        if best is None or report['density'] > state['best_raw']:
+            state['best_raw'] = float(report['density'])
             state['best'] = _best_frame_record(seed, idx, report)
             _dump_json(best_path, state['best'])
         if on_progress is not None:

@@ -1014,6 +1014,11 @@ def main(argv: list[str] | None = None) -> int:
         'seeds': list(controller.seeds) if strategy is not None else list(cfg.seeds),
         'target': args.target,
         'best_density': round(d, 6),
+        # 2026-09-19 全端物理口径统一（additive）：best_density 分母 = 物理毛版
+        # 包络 ceil 口径（= 编辑弹窗那个利用率）。旧行无此键 = legacy erode 分母
+        # 口径（d=0 类两口径等价、d>0 类偏乐观 ≤~0.1pt）—— θ₀ 读取侧按此键
+        # 优先物理样本（portfolio.calibrate_theta0）。
+        'density_caliber': 'physical',
         'n_killed': sum(1 for e in controller.per_seed if e.get('killed')),
         'elapsed_total': round(time.monotonic() - t_start, 1),
         'config': {'time': time_budget, 'per_type': cfg.per_type,

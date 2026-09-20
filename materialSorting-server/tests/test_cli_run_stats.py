@@ -280,6 +280,25 @@ def test_calibrate_theta0_skips_bad_records():
     assert theta0 == pytest.approx(0.9) and info is None   # 有效样本仍 4 条 < 5
 
 
+def test_calibrate_theta0_prefers_physical_caliber():
+    """2026-09-19 口径过滤：物理样本 ≥5 条 → 只取物理（legacy 偏乐观行不抬 θ₀）；
+    物理不足 → 回退全部行（旧行为，自然过渡不要求清库）。"""
+    # 5 条 legacy（erode 分母，偏乐观 0.9022）+ 5 条 physical（0.9015）。
+    recs = ([{'class_key': 'k', 'best_density': d} for d in (0.9022,) * 5]
+            + [{'class_key': 'k', 'best_density': 0.9015,
+                'density_caliber': 'physical'}] * 5)
+    theta0, info = calibrate_theta0(recs, 'k', 0.95)
+    assert theta0 == pytest.approx(0.9015 + THETA0_MARGIN)
+    assert info == {'n_records': 5, 'max_density': pytest.approx(0.9015)}
+    # 物理样本不足（4 条）→ 回退全部 9 条，hist_max = legacy 0.9022。
+    recs_few = ([{'class_key': 'k', 'best_density': 0.9022}] * 5
+                + [{'class_key': 'k', 'best_density': 0.9015,
+                    'density_caliber': 'physical'}] * 4)
+    theta0, info = calibrate_theta0(recs_few, 'k', 0.95)
+    assert theta0 == pytest.approx(0.9022 + THETA0_MARGIN)
+    assert info['n_records'] == 9
+
+
 # ------------------------------------------------------- θ₀ 只影响 kill 门槛（回归）
 
 
@@ -343,8 +362,12 @@ def test_two_runs_append_two_complete_lines(iso_env, capsys, monkeypatch):
     entries = _read_stats(stats)
     assert len(entries) == 2                              # 恰 2 行（append-only）
     for e in entries:
+        # 2026-09-19 全端物理口径统一：additive density_caliber 键（θ₀ 读取侧
+        # 按此键优先物理样本；旧行无键 = legacy erode 分母口径）。
         assert set(e) == {'ts', 'source', 'sizes', 'class_key', 'seeds', 'target',
-                          'best_density', 'n_killed', 'elapsed_total', 'config'}
+                          'best_density', 'density_caliber', 'n_killed',
+                          'elapsed_total', 'config'}
+        assert e['density_caliber'] == 'physical'
         assert e['ts']                                    # ISO 时间戳非空
         assert e['source'] == str(master.resolve())       # load_config 解析后的绝对路径
         assert e['sizes'] is None and e['seeds'] == [0, 1]

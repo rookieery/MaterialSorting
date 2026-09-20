@@ -125,7 +125,7 @@ python -m materialsorting.cli.run_config <config.json> --name demo --quiet   # �
 | `gate_mm` | num | ✓ | 门幅（mm，>0）；intermediate 口径；密度分母 = gate_mm（2026-08-28 版师定案：输入幅宽即实际幅宽，单一口径，与求解约束带同口径） |
 | `sizes` | list | — | 码号过滤（JSON 整数列表，非空）；缺省 = 全部码号 |
 | `time` | int | — | 单轮求解时长（秒，正整数），缺省 300 |
-| `seeds` | list | — | **串行**种子列表（非负整数、不重复、非空），缺省 `[0]`；≥2 个时逐 seed 串行求解，`best` 取原面积口径 `real_density` 最大轮（消除单 seed 随机性；种子不要求连续）。取代旧 `seed`/`multi_seed`/`seed_count` 三键（旧键按未知键报错） |
+| `seeds` | list | — | **串行**种子列表（非负整数、不重复、非空），缺省 `[0]`；≥2 个时逐 seed 串行求解，`best` 取原面积口径 `real_density` 最大轮（消除单 seed 随机性；种子不要求连续）。取代旧 `seed`/`multi_seed`/`seed_count` 三键（旧键按未知键报错）。**2026-09-19 全端物理口径统一**：`real_density = total_area/(width×gate)` 分母 width = 物理毛版包络 `ceil(maxX)`（与编辑弹窗/导出同口径；旧 erode 轮廓包络分母在 per_type d>0 时偏乐观 ≤~0.1pt；d=0 默认路径两口径差 ≤0.01~0.03pt；历史 run_stats/curve/A/B 跨此事件不可直接混比） |
 | `per_type` | dict | — | `{g码: {d?, tol?}}` 逐 g 码公差覆盖（d=重合 mm、tol=旋转公差 °，≥0；超全局上限不报错但被钳制） |
 | `quantities` | dict | — | `{g码: {码号: 数量}}` per-size demand（码号键须数字字符串或 `"null"`，数量 JSON 数字 ≥0 整数） |
 | `band` | dict | — | 腰头成带 `{'enabled': bool, 'label': g码}`（enabled=true 时 label 必填、匹配 `^g\d+$`）；`solve_pieces` 经 `solve_with_callback_proc(band=...)` worker 进程内成带+展开；2026-08-22 起与 `--strategy` 兼容（web 策略入口写进 config）；on 时 `--lns` 自动 warn 跳过 |
@@ -201,7 +201,7 @@ ms-run-config data/configs/5336_coded_really.json --time 5 --target 0.5 --lns --
 ms-run-config data/configs/5336_coded_really.json --time 300 --lns --lns-time 60 --lns-rounds 8
 ```
 
-**run 统计库与 θ₀ 校准（PC-009）**：每次 run 结束（含 R0 提前停 / kill 路径）自动追加一行 JSONL 到 `out/run_stats.jsonl`：`{ts, source, sizes, class_key, seeds, target, best_density, n_killed, elapsed_total, config: {time, per_type, quantities}}`，`class_key` = sha1(source+sizes+quantities+per_type) 10 位短哈希（实例类指纹：同母版 + 码号集 + 订单配比 + 逐码公差视为同类；band/prefix 开启时各追加 label 组件成新 key，避免 ±2pt 级密度差混同 θ₀ 历史分布）。写盘失败只 stderr warn 不阻塞主流程（统计沉淀是旁路产物）。`--target` 模式启动时读该库做 **θ₀ 校准**：当前 class_key 命中且 ≥5 条历史 → kill 门槛初值 `θ₀ = min(target, 历史最大 best_density + 0.003)`（历史最高 89.6% 的组合不再从 90 起跑 —— 分布越测越准），否则 θ₀ = target；θ₀ **只影响 kill 门槛**（R2/R3 判据锚），R0 停止条件恒用 `--target` 真值，校准说明行 `--quiet` 也打（判据变更不静默）。Ctrl-C / 求解失败的 run 不沉淀（不完整数据会污染历史 max）。
+**run 统计库与 θ₀ 校准（PC-009）**：每次 run 结束（含 R0 提前停 / kill 路径）自动追加一行 JSONL 到 `out/run_stats.jsonl`：`{ts, source, sizes, class_key, seeds, target, best_density, density_caliber, n_killed, elapsed_total, config: {time, per_type, quantities}}`（`density_caliber:'physical'` = 2026-09-19 物理包络口径标记，旧行无此键 = legacy erode 分母口径），`class_key` = sha1(source+sizes+quantities+per_type) 10 位短哈希（实例类指纹：同母版 + 码号集 + 订单配比 + 逐码公差视为同类；band/prefix 开启时各追加 label 组件成新 key，避免 ±2pt 级密度差混同 θ₀ 历史分布）。写盘失败只 stderr warn 不阻塞主流程（统计沉淀是旁路产物）。`--target` 模式启动时读该库做 **θ₀ 校准**：当前 class_key 命中且 ≥5 条历史 → kill 门槛初值 `θ₀ = min(target, 历史最大 best_density + 0.003)`（历史最高 89.6% 的组合不再从 90 起跑 —— 分布越测越准；2026-09-19 起优先取物理口径行，物理样本不足 5 条回退全部历史行），否则 θ₀ = target；θ₀ **只影响 kill 门槛**（R2/R3 判据锚），R0 停止条件恒用 `--target` 真值，校准说明行 `--quiet` 也打（判据变更不静默）。Ctrl-C / 求解失败的 run 不沉淀（不完整数据会污染历史 max）。
 
 **标定管线（PC-004/005）**：`python -m materialsorting.cli.calibration` 四个子命令，为 kill 引擎产出数据依据（`--params` 消费的 `controller_params.json`）并防过拟合单一订单：
 - **batch**：`--config <10键配置> [--tag T] [--short-seeds 20] [--short-time 90] [--full-seeds 8] [--full-time N]`（full-time 缺省用 config 的 `time`）。标定基实例 = `data/configs/5336_coded_really.json`（真实 per_type 公差 + 真实订单配比）。`commit_from_config` 只跑一次，逐 seed 串行 `solve_pieces`；曲线/best 帧落 `out/portfolio_calibration/<tag>/base/{short,full}/`，逐 seed 写 manifest.json（Ctrl-C 安全，重跑跳过已完整 seed）。

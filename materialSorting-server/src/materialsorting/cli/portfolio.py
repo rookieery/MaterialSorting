@@ -227,9 +227,15 @@ def calibrate_theta0(records, class_key: str, target: float,
     θ₀ **只影响 kill 门槛**（控制器 ``self.theta`` 的初值，R2 判据锚 / R3 衰减
     起点）；R0 停止条件恒用 ``--target`` 真值（回归由 ``make_should_stop`` 保证）。
     记录里缺 ``best_density`` / 非数值 / bool 的行不计入样本（写侧坏行防御）。
+
+    口径过滤（2026-09-19 全端物理口径统一）：``density_caliber == 'physical'``
+    的行 ≥ ``min_records`` 条时**只取物理样本**（与当前 run 同口径可比）；物理
+    样本不足时回退全部历史行（旧行无该键 = legacy erode 分母口径，d=0 类两口径
+    等价、d>0 类偏乐观 ≤~0.1pt —— 样本攒够即自然切换，不做断代清库）。
     """
     target = float(target)
     densities: list[float] = []
+    physical: list[float] = []
     for rec in records if isinstance(records, list) else []:
         if not isinstance(rec, dict) or rec.get('class_key') != class_key:
             continue
@@ -237,6 +243,10 @@ def calibrate_theta0(records, class_key: str, target: float,
         if isinstance(v, bool) or not isinstance(v, (int, float)):
             continue
         densities.append(float(v))
+        if rec.get('density_caliber') == 'physical':
+            physical.append(float(v))
+    if len(physical) >= min_records:
+        densities = physical
     if len(densities) < min_records:
         return target, None
     hist_max = max(densities)
@@ -596,6 +606,11 @@ class PortfolioController:
         self.queue_stopped = False
         self._seed_best: dict[int, float] = {}
         self._frames_seen: dict[int, int] = {}
+        # incumbent 入账比较基准（原始未取整 density）：存储值 round(d, 6) 会截尾，
+        # 物理口径把宽度量化成整数后跨 seed 常现**完全相等**的密度并列（同
+        # total_area/gate/整数 W → 同 double），拿取整值当基准会把并列帧误判为
+        # 「严格更大」抢占 incumbent（违反 FR-2 并列保持先到）—— 比较走原始值。
+        self._incumbent_raw: float | None = None
         self._echo = echo
         self._last_output = time.time()
         # ---- PC-003 kill 引擎 ----
@@ -687,8 +702,9 @@ class PortfolioController:
             if seed_new:
                 self._seed_best[seed] = d
             prev = self.incumbent
-            inc_new = prev is None or d > prev['density']
+            inc_new = prev is None or d > self._incumbent_raw
             if inc_new:
+                self._incumbent_raw = d
                 self.incumbent = {
                     'density': round(d, 6),
                     'width_mm': round(float(report.get('width_mm', 0.0)), 2),

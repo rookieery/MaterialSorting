@@ -83,6 +83,47 @@ def test_normal_solve_manifest_frame_final_density_dual(real_or_synthetic_pieces
     assert proc.exitcode == 0
 
 
+def test_normal_solve_width_physical_caliber(real_or_synthetic_pieces):
+    """2026-09-19 全端物理口径统一（接线回归锁）：
+
+    manifest pid_meta（raw_polygon）→ 主进程 pid_raw 表 → 帧/final 的
+    width_mm = 物理毛版包络 ceil 口径（与前端 computeLayoutStats/编辑弹窗同
+    公式 = 编辑弹窗那个利用率），width_sparrow_mm 备查 erode 包络原值。
+    """
+    from materialsorting.web.solver import _physical_width_mm, _raw_polygon_map
+
+    pieces, gate_mm = real_or_synthetic_pieces
+    manifests: list = []
+    frames: list = []
+
+    def on_manifest(m):
+        manifests.append(m)
+
+    def on_report(r):
+        frames.append(r)
+
+    proc, final, _elapsed, err = solve_with_callback_proc(
+        pieces, gate_mm,
+        {"time_budget": 2, "seed": 1},
+        on_manifest=on_manifest, on_report=on_report,
+    )
+    assert err is None and final is not None
+    pid_raw = _raw_polygon_map(manifests[0]["pid_meta"])
+    assert pid_raw, "manifest pid_meta 应产出非空 raw polygon 表"
+
+    for f in frames + [final]:
+        # 物理路径在场标记：sparrow 自报 width 备查键存在且为正。
+        assert "width_sparrow_mm" in f and f["width_sparrow_mm"] > 0
+        # 宽度 = 同公式重算（ceil 物理包络）—— 与编辑弹窗 computeLayoutStats
+        # 跨语言同公式（Python/JS 各一份实现，公式改动须两侧同步）。
+        expect_w = _physical_width_mm(f["placed_items"], pid_raw)
+        assert expect_w is not None
+        assert f["width_mm"] == pytest.approx(float(expect_w)), (
+            f"frame width={f['width_mm']} expected physical={expect_w}")
+        # ceil 口径 → 整数值
+        assert float(f["width_mm"]).is_integer()
+
+
 # --------------------------------------------- AC#7-(2) terminate
 
 

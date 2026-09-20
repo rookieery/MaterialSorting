@@ -63,6 +63,7 @@ manifest 逐字段不动（禁 quantities=0 口径事故防线沿用）。
 from __future__ import annotations
 
 import json
+import logging
 import math
 import multiprocessing
 import os
@@ -81,6 +82,8 @@ from ..nesting_engine.constraints import (
 )
 
 DEFAULT_INTERMEDIATE = paths.INTERMEDIATE
+
+_log = logging.getLogger(__name__)
 
 
 def load_pieces(intermediate_path: str = DEFAULT_INTERMEDIATE):
@@ -628,6 +631,9 @@ def solve_with_callback_proc(pieces_snapshot, gate_mm, solve_params, *,
     err: str | None = None
     total_area = 0.0
     gate = float(gate_mm)
+    # pid → 物理毛版轮廓（manifest 到达时填充；density 物理口径换算的数据源，
+    # 见 _apply_density_dual —— 帧/final 恒在 manifest 之后，空 dict = 兼容回退）。
+    pid_raw: dict = {}
     t0 = time.time()
 
     try:
@@ -648,14 +654,18 @@ def solve_with_callback_proc(pieces_snapshot, gate_mm, solve_params, *,
                 total_area = float(msg.get('total_area', 0.0))
                 # gate_mm 以 manifest 为准（与子进程口径一致；缺省回退入参 gate_mm）。
                 gate = float(msg.get('gate_mm', gate))
+                # 物理口径换算数据源（2026-09-19 全端物理口径统一）：pid_meta 的
+                # raw_polygon（build_pid_meta 恒在场，raw 缺席回退 erode polygon
+                # —— 与前端 physicalPolygon 同降级）。
+                pid_raw = _raw_polygon_map(msg.get('pid_meta'))
                 on_manifest(msg)
             elif kind == 'frame':
                 report = msg['report']
-                _apply_density_dual(report, total_area, gate)
+                _apply_density_dual(report, total_area, gate, pid_raw)
                 on_report(report)
             elif kind == 'final':
                 final = msg['final']
-                _apply_density_dual(final, total_area, gate)
+                _apply_density_dual(final, total_area, gate, pid_raw)
                 final_data = final
                 # final 后子进程会自然退出；继续 drain 残余 frame（如有）直到「进程死 + queue 空」。
             elif kind == 'error':
@@ -714,16 +724,88 @@ def solve_with_callback_proc(pieces_snapshot, gate_mm, solve_params, *,
     return process, final_data, elapsed, err
 
 
-def _apply_density_dual(report, total_area, gate_mm):
+def _raw_polygon_map(pid_meta) -> dict:
+    """manifest ``pid_meta`` → ``{pid: 物理毛版轮廓点列表}``。
+
+    ``raw_polygon`` 缺席回退 erode ``polygon``（与前端 ``physicalPolygon`` 同
+    降级：老 intermediate d=0 时代两者等价）。空/非 dict 输入 → 空 dict（调用方
+    按兼容回退处理，不在此抛错）。
+    """
+    out: dict = {}
+    if not isinstance(pid_meta, dict):
+        return out
+    for pid, meta in pid_meta.items():
+        if not isinstance(meta, dict):
+            continue
+        poly = meta.get('raw_polygon') or meta.get('polygon')
+        if poly:
+            out[pid] = poly
+    return out
+
+
+def _physical_width_mm(placed_items, pid_raw):
+    """物理毛版包络料长（**单一权威公式**，2026-09-19 全端物理口径统一）。
+
+    ``width = ceil(maxX − 1e-9)``；maxX = 全部 placed 条目的 raw_polygon 世界
+    包络最大 x。变换与前端 ``computeLayoutStats``/``transformPolygon`` 及
+    ``export_geometry.apply_transform`` 逐点同式（``x' = x·c − y·s + tx``，
+    mirror 时 x 先取负）—— 前后端各一份实现，改公式须两侧同步。x=0 是布头，
+    左侧外凸由导出引导段吸收不计料长（编辑弹窗同口径）；ε=1e-9 抵 float
+    噪声防贴边整数 maxX 无辜 +1mm（90° 旋转的 ~3e-14 级正噪声）。
+
+    placed 空 / 任一 pid 不在 ``pid_raw`` → None（调用方回退 sparrow width 口径）。
+    """
+    if not placed_items:
+        return None
+    max_x = 0.0
+    for it in placed_items:
+        poly = pid_raw.get(it.get('id')) if isinstance(it, dict) else None
+        if not poly:
+            return None
+        r = math.radians(float(it.get('rotation', 0.0) or 0.0))
+        c, s = math.cos(r), math.sin(r)
+        tr = it.get('translation') or (0.0, 0.0)
+        tx = float(tr[0])
+        ty = float(tr[1])
+        mirror = it.get('mirror') is True
+        for pt in poly:
+            x = -pt[0] if mirror else pt[0]
+            wx = x * c - pt[1] * s + tx
+            if wx > max_x:
+                max_x = wx
+    return math.ceil(max_x - 1e-9)
+
+
+def _apply_density_dual(report, total_area, gate_mm, pid_raw=None):
     """density 双口径换算（关键不变量 #1，主进程做，不在子进程做）。
 
     输入 ``report`` 的 ``density`` 为 sparrow 自报（erode 后面积口径）；本函数：
       - ``density_sparrow`` ← 原 sparrow 自报值；
-      - ``density`` ← 原面积口径 ``total_area/(width*gate_mm)``（90% 生死线口径，
-        分母 = 输入门幅即实际幅宽，与求解约束带同口径；2026-08-28 起 1910 钳制
-        已移除，换算集中在函数内 = web/CLI 所有调用方自动一致）。
+      - ``width_sparrow_mm`` ← 原 ``width_mm``（sparrow 自报 = **erode 碰撞轮廓
+        包络**，additive 备查；仅物理换算成功时在场）；
+      - ``width_mm`` ← 物理毛版包络料长 ``ceil(maxX − 1e-9)``（2026-09-19 全端
+        物理口径统一：与前端 ``computeLayoutStats``/编辑弹窗同公式 —— per_type
+        d>0 时 erode 包络比毛版短最多 ~d，旧分母系统性偏乐观）；
+      - ``density`` ← 原面积口径 ``total_area/(width_mm*gate_mm)``（90% 生死线
+        口径，分母 = 输入门幅即实际幅宽；2026-08-28 起 1910 钳制已移除，换算
+        集中在函数内 = web/CLI 所有调用方自动一致）。
+
+    ``pid_raw`` 缺席（None/{}/manifest 未到）/ placed 空 / pid 缺席 → 回退旧
+    口径（分母 = sparrow 自报 width_mm）+ warn，兼容 legacy 合成帧与直接单测
+    调用（回退行不携带 width_sparrow_mm）。
     """
-    w = float(report.get('width_mm', 0.0))
+    w_sparrow = float(report.get('width_mm', 0.0))
     gate_den = float(gate_mm)
     report['density_sparrow'] = report['density']
+    w = w_sparrow
+    if pid_raw:
+        w_phys = _physical_width_mm(report.get('placed_items') or [], pid_raw)
+        if w_phys is not None:
+            report['width_sparrow_mm'] = w_sparrow
+            report['width_mm'] = float(w_phys)
+            w = float(w_phys)
+        else:
+            _log.warning('物理包络换算失败（placed=%d pid_raw=%d），width/density '
+                         '回退 sparrow 自报口径',
+                         len(report.get('placed_items') or []), len(pid_raw))
     report['density'] = (total_area / (w * gate_den)) if w > 0 else 0.0
