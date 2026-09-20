@@ -31,6 +31,7 @@ spawn 走 FakeProc 不真起 CLI 子进程。
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -749,6 +750,119 @@ def test_extreme_routes_present_in_app():
              if hasattr(route, 'path')}
     assert {'/api/extreme/start', '/api/extreme/status',
             '/api/extreme/stop', '/api/extreme/result'} <= paths
+
+
+# ------------------------- 事件流时间序归并 + 心跳键（2026-09-20 事故修复）
+
+
+def _se_long_run(run_dir: Path, n_screens: int, champion: int = 11) -> dict:
+    """合成 se 长 run 产物：n 轮筛选 per_seed + 冠军 ext 边车（ext 事件只认文件名）。"""
+    per_seed = [
+        {'seed': i, 'killed': False, 'kill_reason': None,
+         'best_density': 0.89 + i * 0.001, 'elapsed': 301.0, 'phase': 'screen'}
+        for i in range(n_screens)
+    ]
+    result = {'portfolio': {'per_seed': per_seed}}
+    (run_dir / 'result.json').write_text(json.dumps(result), encoding='utf-8')
+    (run_dir / f'best_frame_s{champion}_ext.json').write_text('{}', encoding='utf-8')
+    return result
+
+
+def test_events_extension_survives_tail_cut_se_long_run(strat_env, tmp_path):
+    """回归锁（2026-09-20 2h 极限 SE 档 k=21 事故）。
+
+    旧版「gate → extension → seed_done」结构性拼接 + 尾窗取尾：extension 发生
+    最晚却排最前，k_screens ≥ 20 必被裁 → 前端延长 chip 整轮「待定」。
+    """
+    run_dir = tmp_path / 'run'
+    run_dir.mkdir()
+    result = _se_long_run(run_dir, n_screens=21)
+    events = strategy_mod._parse_events(str(run_dir), result)
+    kinds = [e['kind'] for e in events]
+    assert kinds.count('extension') == 1
+    assert kinds[-1] == 'extension' and events[-1]['seed'] == 11
+    # 尾窗只裁时间序前段（s0/s1 的 seed_done 被裁，s2 起存活）。
+    assert kinds.count('seed_done') == strategy_mod._EVENTS_TAIL - 1
+    assert events[0]['kind'] == 'seed_done' and events[0]['seed'] == 2
+
+
+def test_events_gate_interleaves_chronologically(strat_env, tmp_path):
+    """race 门杀事件按 seed 归并到其 seed_done 之前；未入账 seed 的 gate 靠后。"""
+    run_dir = tmp_path / 'run'
+    run_dir.mkdir()
+    lines = [json.dumps({'rule': 'R5_race_gate', 'seed': i, 't': 90.0,
+                         'd': 0.88, 'S_tau': 0.90, 'would_kill': i == 0})
+             for i in (0, 1, 2)]
+    (run_dir / 'kill_decisions.jsonl').write_text('\n'.join(lines),
+                                                  encoding='utf-8')
+    result = {'portfolio': {'per_seed': [
+        {'seed': 0, 'killed': True, 'kill_reason': 'race_gate',
+         'best_density': 0.88, 'elapsed': 92.5, 'phase': 'gate'},
+        {'seed': 1, 'killed': False, 'kill_reason': None,
+         'best_density': 0.91, 'elapsed': 600.0, 'phase': 'full'},
+    ]}}
+    events = strategy_mod._parse_events(str(run_dir), result)
+    assert [(e['kind'], e.get('seed')) for e in events] == [
+        ('gate', 0), ('seed_done', 0), ('gate', 1), ('seed_done', 1),
+        ('gate', 2)]
+    assert events[0]['would_kill'] is True and events[0]['bar'] == 0.90
+
+
+def test_events_inflight_gate_survives_long_race_tail(strat_env, tmp_path):
+    """race 长跑（25 轮全入账 + 1 在跑轮 gate）：尾窗裁旧，在跑轮 gate 存活。"""
+    run_dir = tmp_path / 'run'
+    run_dir.mkdir()
+    lines = [json.dumps({'rule': 'R5_race_gate', 'seed': i, 't': 90.0,
+                         'd': 0.88, 'S_tau': 0.90, 'would_kill': False})
+             for i in range(26)]
+    (run_dir / 'kill_decisions.jsonl').write_text('\n'.join(lines),
+                                                  encoding='utf-8')
+    result = {'portfolio': {'per_seed': [
+        {'seed': i, 'killed': False, 'kill_reason': None,
+         'best_density': 0.9, 'elapsed': 600.0, 'phase': 'full'}
+        for i in range(25)]}}
+    events = strategy_mod._parse_events(str(run_dir), result)
+    assert len(events) == strategy_mod._EVENTS_TAIL
+    assert events[-1]['kind'] == 'gate' and events[-1]['seed'] == 25
+    assert events[-2]['kind'] == 'seed_done' and events[-2]['seed'] == 24
+
+
+def test_last_frame_age_sec_semantics(strat_env, tmp_path):
+    """无边车 → None；新鲜边车 → 小正值；取 best_frame/curve 两类最新 mtime。"""
+    assert strategy_mod._last_frame_age_sec(None) is None
+    empty = tmp_path / 'empty'
+    empty.mkdir()
+    assert strategy_mod._last_frame_age_sec(str(empty)) is None
+    run_dir = tmp_path / 'run'
+    run_dir.mkdir()
+    (run_dir / 'best_frame_s0.json').write_text('{}', encoding='utf-8')
+    stale = run_dir / 'curve_s0.json'
+    stale.write_text('[]', encoding='utf-8')
+    backdated = time.time() - 3600.0
+    os.utime(stale, (backdated, backdated))
+    age = strategy_mod._last_frame_age_sec(str(run_dir))
+    assert age is not None and 0.0 <= age < 10.0
+
+
+def test_status_heartbeat_keys_running_and_terminal(strat_env, tmp_path):
+    """worker_alive：running 真 / 终态假；last_frame_age_sec 随边车在场。"""
+    run_dir = tmp_path / 'run'
+    run_dir.mkdir()
+    (run_dir / 'best_frame_s0.json').write_text('{}', encoding='utf-8')
+    st = {'sid': 'default', 'proc': FakeProc(rc=None),
+          'started_ts': time.time(), 'mode': 'extreme', 'strategy': 'se',
+          'total_budget_sec': 7200, 'run_dir': str(run_dir)}
+    payload = strategy_mod._status_from_active(st)
+    assert payload['worker_alive'] is True
+    assert payload['last_frame_age_sec'] is not None
+    assert payload['last_frame_age_sec'] < 10.0
+    (run_dir / 'result.json').write_text('{}', encoding='utf-8')
+    st2 = {'sid': 'default', 'proc': FakeProc(rc=0),
+           'started_ts': time.time(), 'mode': 'extreme', 'strategy': 'se',
+           'run_dir': str(run_dir)}
+    payload2 = strategy_mod._status_from_active(st2)
+    assert payload2['state'] == 'done'
+    assert payload2['worker_alive'] is False
 
 
 if __name__ == '__main__':

@@ -368,6 +368,52 @@ describe('StrategyRunModal (US-005)', () => {
       .toContain('冠军 seed 1 进入延长');
   });
 
+  it('SE 延长中事件被尾窗裁掉（k≥20 事故）：current.ext 第三源兜底，延长条目仍 ● 不「待定」', () => {
+    // 2026-09-20 2h 极限 SE 档事故回归锁：extension 事件被后端尾窗裁掉
+    // （events 只剩 seed_done）+ per_seed 无 extension 入账 —— 冠军推导落到
+    // current.ext 第三源，延长 chip 照常「延 ●」。
+    openModal();
+    renderModal();
+    setPhase({
+      phase: 'running',
+      status: { ...SE_EXT, events: [{ kind: 'seed_done', seed: 0, phase: 'screen', best_density: 0.85, killed: false }] },
+    });
+    const chips = Array.from(document.body.querySelectorAll('[data-testid="strategy-seed-chips"] .strategy-chip'))
+      .map((c) => c.textContent!);
+    expect(chips[chips.length - 1]).toBe('1 延 ● 87.00%');
+    expect(document.body.querySelector('[data-testid="strategy-stage"]')!.textContent)
+      .toContain('延长中 · 冠军 seed 1');
+  });
+
+  it('SE 延长静默心跳：阶段行带静默时长 + ≥60s 显示「属正常/存活」说明行；未达阈值不显示', () => {
+    openModal();
+    renderModal();
+    setPhase({
+      phase: 'running',
+      status: { ...SE_EXT, last_frame_age_sec: 90, worker_alive: true },
+    });
+    expect(document.body.querySelector('[data-testid="strategy-stage"]')!.textContent)
+      .toBe('延长中 · 冠军 seed 1 · 静默 1 分 30 秒');
+    const hint = document.body.querySelector('[data-testid="strategy-ext-silence"]')!;
+    expect(hint.textContent).toContain('1 分 30 秒 无新帧属正常');
+    expect(hint.textContent).toContain('求解子进程存活 ✓');
+    // 阈值以下（30s）不显示说明行，阶段行仍带静默时长。
+    setPhase({
+      phase: 'running',
+      status: { ...SE_EXT, last_frame_age_sec: 30, worker_alive: true },
+    });
+    expect(document.body.querySelector('[data-testid="strategy-ext-silence"]')).toBeNull();
+    expect(document.body.querySelector('[data-testid="strategy-stage"]')!.textContent)
+      .toBe('延长中 · 冠军 seed 1 · 静默 30 秒');
+    // 子进程退出（worker_alive=false）→ 说明行转警示。
+    setPhase({
+      phase: 'running',
+      status: { ...SE_EXT, last_frame_age_sec: 120, worker_alive: false },
+    });
+    expect(document.body.querySelector('[data-testid="strategy-ext-silence"]')!.textContent)
+      .toContain('求解子进程已退出 ⚠');
+  });
+
   it('结果态 done：完成·最优 + seed/用布 + race 模式汇总 + 不展示 run_dir + 应用按钮 disabled（US-006 接线前）', async () => {
     resultPayload = DONE_RESULT;
     openModal();

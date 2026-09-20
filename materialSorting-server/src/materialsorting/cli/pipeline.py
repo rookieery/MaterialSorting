@@ -613,8 +613,13 @@ def solve_pieces(cfg, run_dir, *, seed: int, time_budget: int | None = None,
         # 密度双口径换算已由 solve_with_callback_proc 内 _apply_density_dual 完成。
         idx = state['n_frames']
         state['n_frames'] = idx + 1
+        # 逐帧 flush（2026-09-20）：文本缓冲下帧稀疏期（se 延长轮 470s 无新帧
+        # 实测）盘上 mtime 滞后到关文件 —— flush 让 curve mtime 成为真实求解
+        # 心跳（web status last_frame_age_sec 数据源之一）；帧率 ~4.3/s 量级，
+        # 每帧一次 syscall 可忽略。
         curve_file.write((',' if idx else '') +
                          json.dumps(_curve_entry(report), ensure_ascii=False) + '\n')
+        curve_file.flush()
         best = state['best']
         if best is None or report['density'] > state['best_raw']:
             state['best_raw'] = float(report['density'])

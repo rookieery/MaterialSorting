@@ -180,6 +180,16 @@ export function seChips(status: StrategyStatus | null): SeedChip[] {
     const extEvent = (status.events ?? []).find((e) => e.kind === 'extension');
     if (extEvent) champion = extEvent.seed;
   }
+  // 第三源兜底（2026-09-20 k≥20 尾窗裁剪事故）：current.ext 自延长首帧
+  // （warm 恢复帧）起稳定在盘上 —— 前两源一个要等轮末入账、一个曾被事件
+  // 尾窗裁掉时，直接采 current.seed，延长条目不再整轮「待定」。
+  if (
+    champion === null &&
+    status.current?.ext &&
+    typeof status.current.seed === 'number'
+  ) {
+    champion = status.current.seed;
+  }
   const extRunning =
     status.current !== null &&
     status.current !== undefined &&
@@ -524,6 +534,9 @@ export interface ProgressStateProps {
   modeLabel?: string;
 }
 
+/** 延长轮静默提示阈值（秒）：超过即显示「静默属正常 + 存活」说明行。 */
+export const EXT_SILENCE_HINT_SEC = 60;
+
 export function ProgressState({ status, onStop, modeLabel }: ProgressStateProps): JSX.Element {
   const modeLabelResolved =
     modeLabel ??
@@ -540,12 +553,24 @@ export function ProgressState({ status, onStop, modeLabel }: ProgressStateProps)
       ? `${Math.min(100, Math.max(0, (elapsed / total) * 100)).toFixed(1)}%`
       : '0%';
   // ④ 阶段行：SE 延长检测（best_frame_s{seed}_ext 出现 → current.ext）优先
-  // （有效策略 = se —— 含极限 SE 臂）。
+  // （有效策略 = se —— 含极限 SE 臂）；延长中附静默时长（2h 档实测探索期
+  // 470s 无新帧，不标会被当卡死 —— 心跳键可观测，见下方静默说明行）。
   const perSeed = status?.per_seed ?? [];
   const plannedLen = status?.plan?.planned_seeds?.length ?? 0;
+  const extSeed =
+    effectiveStrategy(status) === 'se' &&
+    status?.current?.ext === true &&
+    status.current.seed !== null &&
+    status.current.seed !== undefined
+      ? status.current.seed
+      : null;
+  const extActive = extSeed !== null;
+  const silentSec = status?.last_frame_age_sec ?? null;
   const stageText =
-    effectiveStrategy(status) === 'se' && status?.current?.ext && status.current.seed !== null
-      ? `延长中 · 冠军 seed ${status.current.seed}`
+    extSeed !== null
+      ? `延长中 · 冠军 seed ${extSeed}${
+          silentSec === null ? '' : ` · 静默 ${fmtElapsed(silentSec)}`
+        }`
       : plannedLen > 0
         ? `第 ${Math.min(perSeed.length + 1, plannedLen)}/${plannedLen} 轮 · seed ${
             status?.current?.seed ?? '—'
@@ -586,6 +611,20 @@ export function ProgressState({ status, onStop, modeLabel }: ProgressStateProps)
             data-testid="strategy-warm-note"
           >
             {note.text}
+          </div>
+        );
+      })()}
+      {(() => {
+        // 延长轮静默说明行（2026-09-20）：warm 起点即冠军密度，探索期长时间
+        // 无新帧属正常（2h 档实测 470s）—— 用 worker_alive/last_frame_age_sec
+        // 心跳键消除「卡死/没在延长」误判。
+        if (!extActive || silentSec === null || silentSec < EXT_SILENCE_HINT_SEC) {
+          return null;
+        }
+        return (
+          <div className="strategy-hint" data-testid="strategy-ext-silence">
+            延长轮 {fmtElapsed(silentSec)} 无新帧属正常（warm 起点即冠军水平，探索期常无产出）；
+            求解子进程{status?.worker_alive === false ? '已退出 ⚠' : '存活 ✓'}
           </div>
         );
       })()}

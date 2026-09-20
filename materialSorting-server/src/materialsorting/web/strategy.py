@@ -566,13 +566,40 @@ def _parse_current(run_dir):
             'ext': latest.stem.endswith('_ext')}
 
 
-def _parse_events(run_dir, result_json) -> list:
-    """事件流：kill_decisions R5 门杀 + extension（ext 边车）+ seed_done（per_seed）。
+def _last_frame_age_sec(run_dir):
+    """最新 best_frame/curve 边车 mtime 距今秒数（2026-09-20 延长轮静默心跳）。
 
-    只保留尾部窗口（``_EVENTS_TAIL`` 条）—— 前端展示「最近 1 条事件行」用，
-    长跑不撑爆 status 载荷。
+    两类边车 mtime 都跟随真实求解输出（curve 逐帧 append + flush；best_frame
+    仅改进帧重写）—— warm 顺延轮起点即冠军密度，探索期可数百秒无新帧（2h 档
+    实测 470s），该键让前端能区分「静默属正常」与「真死了」。无任何边车
+    （run 尚未产出帧）→ None。
     """
-    events: list = []
+    if not run_dir:
+        return None
+    files = list(Path(run_dir).glob('best_frame_s*.json'))
+    files += list(Path(run_dir).glob('curve_s*.json'))
+    if not files:
+        return None
+    try:
+        latest = max(p.stat().st_mtime for p in files)
+    except OSError:
+        return None
+    return round(max(0.0, time.time() - latest), 1)
+
+
+def _parse_events(run_dir, result_json) -> list:
+    """事件流（时间序归并）：kill_decisions R5 门杀 + seed_done（per_seed）+ extension。
+
+    2026-09-20 修复（2h 极限 SE 档 k=21 实勘）：旧版按「gate → extension →
+    seed_done」**结构性顺序**拼接后取尾 ``_EVENTS_TAIL`` 条 —— extension 事件
+    发生最晚却排最前，k_screens ≥ 20 时必被尾窗裁掉（前端延长 chip 整轮
+    「待定」：冠军推导双源皆断）；race 长跑的门杀事件同款被裁。改为时间序
+    归并：按 per_seed 完成序逐 seed 输出 ``gate(i) → seed_done(i)``，未入账
+    seed 的 gate 事件（串行下至多 1 条 = 在跑轮）靠后，extension 事件恒置尾
+    且**豁免尾窗裁剪** —— 尾窗只作用于时间序前段，最新相位事件永不丢失。
+    """
+    gates_by_seed: dict = {}
+    gate_order: list = []
     if run_dir:
         kd = Path(run_dir) / 'kill_decisions.jsonl'
         try:
@@ -584,26 +611,47 @@ def _parse_events(run_dir, result_json) -> list:
                     rec = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                if rec.get('rule') == 'R5_race_gate':
-                    events.append({'kind': 'gate', 'seed': rec.get('seed'),
-                                   't': rec.get('t'), 'd': rec.get('d'),
-                                   'bar': rec.get('S_tau'),
-                                   'would_kill': rec.get('would_kill')})
+                if rec.get('rule') != 'R5_race_gate':
+                    continue
+                seed = rec.get('seed')
+                if seed not in gates_by_seed:
+                    gates_by_seed[seed] = []
+                    gate_order.append(seed)
+                gates_by_seed[seed].append(
+                    {'kind': 'gate', 'seed': seed, 't': rec.get('t'),
+                     'd': rec.get('d'), 'bar': rec.get('S_tau'),
+                     'would_kill': rec.get('would_kill')})
         except OSError:
             pass
+
+    events: list = []
+    for entry in _parse_per_seed(result_json):
+        seed = entry.get('seed')
+        events.extend(gates_by_seed.pop(seed, ()))
+        events.append({'kind': 'seed_done', 'seed': seed,
+                       'phase': entry.get('phase'),
+                       'best_density': entry.get('best_density'),
+                       'killed': bool(entry.get('killed'))})
+    # 未入账 seed 的 gate 事件（在跑轮门帧）：晚于全部已完成轮，紧跟其后。
+    for seed in gate_order:
+        events.extend(gates_by_seed.get(seed, ()))
+
+    # extension 恒置尾（发生最晚：全部筛选轮之后）且豁免尾窗。
+    ext_events: list = []
+    if run_dir:
         for ext_file in sorted(Path(run_dir).glob('best_frame_s*_ext.json')):
             # 文件名 best_frame_s{seed}_ext → 提取 seed。
             seed_txt = ext_file.stem[len('best_frame_s'):-len('_ext')]
             try:
-                events.append({'kind': 'extension', 'seed': int(seed_txt)})
+                ext_events.append({'kind': 'extension', 'seed': int(seed_txt)})
             except ValueError:
                 continue
-    for entry in _parse_per_seed(result_json):
-        events.append({'kind': 'seed_done', 'seed': entry.get('seed'),
-                       'phase': entry.get('phase'),
-                       'best_density': entry.get('best_density'),
-                       'killed': bool(entry.get('killed'))})
-    return events[-_EVENTS_TAIL:]
+    keep = _EVENTS_TAIL - len(ext_events)
+    if keep <= 0:
+        events = []
+    elif len(events) > keep:
+        events = events[-keep:]
+    return events + ext_events
 
 
 def _elapsed_from_iso(started_at):
@@ -1007,6 +1055,11 @@ def _status_from_active(st: dict) -> dict:
         'strategy': st.get('strategy'),
         'total_budget_sec': st.get('total_budget_sec'),
         'elapsed_sec': round(elapsed, 1),
+        # 延长轮静默心跳（2026-09-20 additive）：子进程存活 + 距最近一帧秒数。
+        # active 态 worker_alive 恒 True（rc is None）；终态恒 False。
+        'worker_alive': bool(proc is not None and rc is None
+                             and not st.get('stopped')),
+        'last_frame_age_sec': _last_frame_age_sec(run_dir),
         'run_dir': run_dir,
         'plan': _parse_plan(run_dir),
         'incumbent': _parse_incumbent_summary(result_json),
@@ -1045,6 +1098,9 @@ async def _status_common(req: Request):
             'doc_id': marker.get('doc_id'),
             'run_dir': run_dir,
             'elapsed_sec': None if elapsed is None else round(max(elapsed, 0.0), 1),
+            # orphan 态心跳（同 active 键口径；存活探测 = marker pid，无 proc 句柄）。
+            'worker_alive': _pid_alive(marker.get('pid')),
+            'last_frame_age_sec': _last_frame_age_sec(run_dir),
             'plan': _parse_plan(run_dir),
             'incumbent': _parse_incumbent_summary(result_json),
             'current': _parse_current(run_dir),

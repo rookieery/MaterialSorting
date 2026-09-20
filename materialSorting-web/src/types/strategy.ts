@@ -190,6 +190,13 @@ export interface StrategyStatus {
   events?: StrategyEvent[];
   error?: string | null;
   exit_code?: number | null;
+  /**
+   * 求解子进程存活心跳（2026-09-20 additive）：active 态恒 true、终态恒
+   * false、orphan 态 = marker pid 探测。延长轮静默期的「还活着」证据。
+   */
+  worker_alive?: boolean | null;
+  /** 最新 best_frame/curve 边车距今秒数（无帧 null）—— 延长轮静默可观测。 */
+  last_frame_age_sec?: number | null;
   /** 以下三键仅 orphan 态。 */
   alive?: boolean | null;
   pid?: number | null;
