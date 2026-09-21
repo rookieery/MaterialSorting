@@ -1,11 +1,4 @@
 {
   "branchName": "ralph/machine-nesting-api",
-  "stories": [
-    {
-      "id": "US-005",
-      "title": "幂等清理 token 与契约文档",
-      "description": "As a 运维者, I want client_ref 去重、machine_* 产物 7 天清理、可选 token 与契约文档落册, so that 机器对接可长期运维。\n\n具体任务：\n1. materialSorting-server/src/materialsorting/web/machine.py — client_ref 幂等完善（同 ref 在飞 409 返回原 task_id；终态后同 ref 允许新任务）；DELETE /api/machine/solve/{task_id} 幂等清理 run_dir + _STRATEGY_STATES 条目（条目不在也 200；未知 task_id→404）；machine_* run_dir mtime>7 天机会式清理（下次 start 触发，非 machine 前缀不动）；X-Machine-Token 认证：env MS_MACHINE_TOKEN 设置时强制（secrets.compare_digest 常量时间比较，缺失/错误→401），未设置放行（loopback 同机假设）。\n2. .docs/technical/agent-api-reference.md — 新增「机器对接 /api/machine/*」专节：五端点请求/响应字段表、错误码、任务状态机、run_mode 三档映射表（180/1200/7200 + spawn 参数）、config 键表（per_type 全 0 与不发语义全等的注记）、密度物理口径警示（不可与历史 erode 口径混比）、坐标系约定（Y 向上，消费端 SVG 需 scale(1,-1)）。\n3. materialSorting-server/tests/test_web_machine.py — 幂等/清理/token 断言。\n\n验收标准：\n- 同 client_ref 二次 start 在飞→409 + 原 task_id；终态后同 ref→新任务。\n- DELETE 幂等（二次删除也 200）；伪造 mtime>7 天的 machine_* run_dir→下次 start 被清、非 machine 前缀不动。\n- MS_MACHINE_TOKEN 设置时无/错 token→401；未设置放行。\n- 契约文档专节完整（评审口径：YL 侧开发者可仅凭此文档对接）。\n- pytest tests/test_web_machine.py 全绿 + 全量后端测试通过。\n- python -c \"from materialsorting.web import machine\" 导入通过，分层依赖未反向。",
-      "passes": true
-    }
-  ]
+  "stories": []
 }

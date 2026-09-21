@@ -1133,6 +1133,12 @@
         "title": "export 端点会话无关导出",
         "description": "As a 机器客户端, I want 用 task_id 直接导出 PLT, so that 会话过期或延迟导出不失败且无需传任何格式参数。\n\n具体任务：\n1. materialSorting-server/src/materialsorting/web/machine.py — POST /api/machine/export：请求体 {task_id, fmt?, placed?, table?}，最小请求仅 {task_id}。fmt 缺省 'plt-clean'；表格缺省服务端全算（6 手输字段默认值 床次A料/经纱缩水0.0%/纬纱缩水0.0%/排料师空/样板号noname/备注空 + 8 项自动计算字段全算——utilization/幅宽/料长/套数等由既有表格管线计算）；table 显式传入时经 parse_table_payload 校验（非法→400 中文）。placed 缺省用状态槽 incumbent。\n2. pieces 来源 = run_dir 内 pieces_intermediate.json 直载重建 pieces_by_id（{pid: piece} dict），兜底回退会话快照——使导出独立于会话 TTL（会话被逐出后仍可导出）。复用 web/export.py 门面全部函数（write_marker_plt(info_table=…) 等，门面零改动）；Content-Disposition 中文/ASCII 双写同 /export 约定。\n3. materialSorting-server/tests/test_web_machine.py — 会话过期导出对拍 + 默认档金标。\n\n验收标准：\n- done 任务（显式使会话过期后）POST {task_id} → 200 PLT 字节流 = 默认 fmt='plt-clean'（含表格区、8 项自动计算字段非空、6 手输字段为默认值），与 run 存活期导出逐字节一致。\n- fmt='plt' 可选全量版；clean=False 路径与 /export 旧输出逐字节一致（既有红线）。\n- table 字段非法→400 中文；placed 显式传入全未命中→400（既有兜底）。\n- pytest tests/test_web_machine.py 全绿。\n- python -c \"from materialsorting.web import machine\" 导入通过，分层依赖未反向。",
         "passes": true
+      },
+      {
+        "id": "US-005",
+        "title": "幂等清理 token 与契约文档",
+        "description": "As a 运维者, I want client_ref 去重、machine_* 产物 7 天清理、可选 token 与契约文档落册, so that 机器对接可长期运维。\n\n具体任务：\n1. materialSorting-server/src/materialsorting/web/machine.py — client_ref 幂等完善（同 ref 在飞 409 返回原 task_id；终态后同 ref 允许新任务）；DELETE /api/machine/solve/{task_id} 幂等清理 run_dir + _STRATEGY_STATES 条目（条目不在也 200；未知 task_id→404）；machine_* run_dir mtime>7 天机会式清理（下次 start 触发，非 machine 前缀不动）；X-Machine-Token 认证：env MS_MACHINE_TOKEN 设置时强制（secrets.compare_digest 常量时间比较，缺失/错误→401），未设置放行（loopback 同机假设）。\n2. .docs/technical/agent-api-reference.md — 新增「机器对接 /api/machine/*」专节：五端点请求/响应字段表、错误码、任务状态机、run_mode 三档映射表（180/1200/7200 + spawn 参数）、config 键表（per_type 全 0 与不发语义全等的注记）、密度物理口径警示（不可与历史 erode 口径混比）、坐标系约定（Y 向上，消费端 SVG 需 scale(1,-1)）。\n3. materialSorting-server/tests/test_web_machine.py — 幂等/清理/token 断言。\n\n验收标准：\n- 同 client_ref 二次 start 在飞→409 + 原 task_id；终态后同 ref→新任务。\n- DELETE 幂等（二次删除也 200）；伪造 mtime>7 天的 machine_* run_dir→下次 start 被清、非 machine 前缀不动。\n- MS_MACHINE_TOKEN 设置时无/错 token→401；未设置放行。\n- 契约文档专节完整（评审口径：YL 侧开发者可仅凭此文档对接）。\n- pytest tests/test_web_machine.py 全绿 + 全量后端测试通过。\n- python -c \"from materialsorting.web import machine\" 导入通过，分层依赖未反向。",
+        "passes": true
       }
     ]
   }
