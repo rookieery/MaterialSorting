@@ -2,16 +2,10 @@
   "branchName": "ralph/machine-nesting-api",
   "stories": [
     {
-      "id": "US-003",
-      "title": "status/stop/result 三端点",
-      "description": "As a 机器客户端, I want 轮询任务状态、终态取最优解与 manifest、可中途停止, so that 展示实时利用率并拿到完整布局。\n\n具体任务：\n1. materialSorting-server/src/materialsorting/web/machine.py — 复用 strategy.py 的 _status_common/_stop_common/_result_common 家族参数化（label='machine'）实现三个端点：\n   GET /api/machine/solve/{task_id}/status → {state, mode:'machine', run_mode, total_budget_sec(按模式 180/1200/7200), elapsed_sec, incumbent:{density,width_mm,seed,frame_index}, current:{seed,density,ext}, per_seed[], error, exit_code}——无 placed_items（控载荷）；只读 result.json/best_frame_s*.json mtime，绝不读运行中的 curve_s*.json。\n   GET /api/machine/solve/{task_id}/result → {manifest, best, summary}；running→409；stopped→best_frame 边车 density 最大回落；best.placed_items 在 demand>1 时发 N 条绝不按 pid 去重（YL 前端须建 N 副本）；manifest = build_pid_meta(起始快照 pieces, sizes/per_type/quantities)，pieces 键集含 raw_polygon/d_mm/demand/color（与 /ws/solve manifest 同形）。\n   POST /api/machine/solve/{task_id}/stop → 树杀（taskkill /PID /T /F），run_dir 保留（stopped 态 result 仍可读）。\n2. 任务状态机：submitted→starting→running→done|stopped|error；内存态空 + 本 sid marker 在 → orphan（pid 存活可 stop；进程死 + 30s 宽限 → error + stderr 尾 2000 字符）。状态推进复用 _status_common（解析态写回内存态）。\n3. 密度口径：incumbent.density = 物理毛版包络口径（solver._apply_density_dual 单一权威），与 result.json 一致。\n4. materialSorting-server/tests/test_web_machine.py — 补三端点行为断言（含 race/extreme 档各至少一条状态金标）。\n\n验收标准：\n- running 期 status 含 incumbent.density 与 elapsed_sec；运行中 curve 文件为非法 JSON 在场时 status 仍 200（不读 curve 断言）；total_budget_sec 按模式正确、run_mode 透传。\n- result 的 best.placed_items 条数 = Σdemand（demand>1 的 g 码断言多副本不合并）；manifest.pieces 键集含 raw_polygon/d_mm/demand/color。\n- stop → 子进程树终止（孙进程无残留）；stopped 后 result 仍可读（best_frame 回落）。\n- 轮询刷活性：start 后不轮询超 MS_SESSION_TTL_SEC+宽限 → 会话逐出但 status 仍 200（_STRATEGY_STATES 内存态路径）；MS 进程重启后 orphan 态可 stop/清理。\n- pytest tests/test_web_machine.py 全绿。\n- python -c \"from materialsorting.web import machine\" 导入通过，分层依赖未反向。",
-      "passes": true
-    },
-    {
       "id": "US-004",
       "title": "export 端点会话无关导出",
       "description": "As a 机器客户端, I want 用 task_id 直接导出 PLT, so that 会话过期或延迟导出不失败且无需传任何格式参数。\n\n具体任务：\n1. materialSorting-server/src/materialsorting/web/machine.py — POST /api/machine/export：请求体 {task_id, fmt?, placed?, table?}，最小请求仅 {task_id}。fmt 缺省 'plt-clean'；表格缺省服务端全算（6 手输字段默认值 床次A料/经纱缩水0.0%/纬纱缩水0.0%/排料师空/样板号noname/备注空 + 8 项自动计算字段全算——utilization/幅宽/料长/套数等由既有表格管线计算）；table 显式传入时经 parse_table_payload 校验（非法→400 中文）。placed 缺省用状态槽 incumbent。\n2. pieces 来源 = run_dir 内 pieces_intermediate.json 直载重建 pieces_by_id（{pid: piece} dict），兜底回退会话快照——使导出独立于会话 TTL（会话被逐出后仍可导出）。复用 web/export.py 门面全部函数（write_marker_plt(info_table=…) 等，门面零改动）；Content-Disposition 中文/ASCII 双写同 /export 约定。\n3. materialSorting-server/tests/test_web_machine.py — 会话过期导出对拍 + 默认档金标。\n\n验收标准：\n- done 任务（显式使会话过期后）POST {task_id} → 200 PLT 字节流 = 默认 fmt='plt-clean'（含表格区、8 项自动计算字段非空、6 手输字段为默认值），与 run 存活期导出逐字节一致。\n- fmt='plt' 可选全量版；clean=False 路径与 /export 旧输出逐字节一致（既有红线）。\n- table 字段非法→400 中文；placed 显式传入全未命中→400（既有兜底）。\n- pytest tests/test_web_machine.py 全绿。\n- python -c \"from materialsorting.web import machine\" 导入通过，分层依赖未反向。",
-      "passes": false
+      "passes": true
     },
     {
       "id": "US-005",

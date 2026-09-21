@@ -38,7 +38,21 @@ US-003（本故事）覆盖 status/stop/result 三端点：
     d_mm/demand/color + demand>1 的 g 码 placed_items 发 N 条绝不按 pid 去重；
     终态后 stop→400。
 
-US-004 起补：export 会话无关导出、幂等/清理/token。
+US-004（本故事）覆盖 export 会话无关导出：
+  - 默认档金标：done 任务 POST {task_id} → 200 PLT = 门面直算（placed_to_world +
+    parse_table_payload({}) + build_info_table + write_marker_plt(clean=True)）
+    逐字节一致 —— 表格区在场、6 手输字段默认值（A料/0.0%/0.0%/空/noname/空）、
+    8 项自动计算字段全算非空；Content-Disposition 中文/ASCII 双写（_clean 后缀）；
+  - 会话过期对拍：registry.reset() 显式逐出后导出仍 200 且逐字节一致（pieces
+    直载 run_dir pieces_intermediate.json 路径）；
+  - fmt='plt' 全量版（clean=False + 表格在场）与显式 table（经 parse_table_payload
+    合法值对拍）/非法 table → 400 中文；placed 显式子集对拍 + 全未命中 → 400
+    既有兜底 + 非法形状 → 400；
+  - pieces 兜底链：run_dir 无 intermediate → 会话快照 → 状态槽 pieces_snapshot；
+    三源全空 → 409；task_id 闸矩阵（非格式 400 / 未知 404 / 外族 404）、fmt 值域
+    400、非 JSON body 400、无 run_dir 409、无布局帧 409。
+
+US-005 起补：幂等/清理/token。
 端口可配（MS_WEB_PORT）由 server.main() 冒烟与部署文档覆盖（uvicorn 层，
 TestClient 不经端口）。
 """
@@ -59,6 +73,7 @@ from ezdxf.lldxf.const import POLYLINE_CLOSED
 from fastapi import FastAPI
 from fastapi.routing import APIRouter
 from starlette.testclient import TestClient
+from urllib.parse import quote
 
 from materialsorting import paths as paths_mod
 from materialsorting.web import machine as machine_mod
@@ -169,12 +184,13 @@ def test_server_app_healthy_with_machine_router():
         assert r.status_code == 200
         assert r.headers.get('Cache-Control') == 'no-cache'
     # US-002 起真端点挂上本 router（solve 先行；US-003 status/stop/result；
-    # export/DELETE 自 US-004 起逐故事补充 —— 本断言随之扩集）。
+    # US-004 export；DELETE 自 US-005 起补充 —— 本断言随之扩集）。
     machine_paths = {getattr(route, 'path', '') for route in machine_mod.router.routes}
     assert '/api/machine/solve' in machine_paths
     assert '/api/machine/solve/{task_id}/status' in machine_paths
     assert '/api/machine/solve/{task_id}/stop' in machine_paths
     assert '/api/machine/solve/{task_id}/result' in machine_paths
+    assert '/api/machine/export' in machine_paths
 
 
 # ============================================================= US-002 solve
@@ -887,3 +903,226 @@ def test_result_rejects_running_and_terminal_stop_400(machine_env):
     assert c.get(f'/api/machine/solve/{sid}/result').status_code == 200
     r2 = c.post(f'/api/machine/solve/{sid}/stop')
     assert r2.status_code == 400 and '没有进行中的机器排料任务' in r2.json()['error']
+
+
+# ============================================================= US-004 export
+
+from datetime import datetime as _dtmod_datetime  # noqa: E402（US-004 段内就近）
+
+from materialsorting.web import plt_table as plt_table_mod  # noqa: E402
+from materialsorting.web.export import (  # noqa: E402
+    build_info_table,
+    parse_table_payload,
+    placed_to_world,
+    write_marker_plt,
+)
+
+
+class _FrozenDT:
+    """绘图时间冻结替身（build_info_table 的 ``datetime.now()`` 单一取用点 ——
+    逐字节金标跨分钟边界确定性）。"""
+
+    @staticmethod
+    def now(tz=None):
+        return _dtmod_datetime(2026, 9, 21, 12, 34)
+
+
+def _synth_doc() -> dict:
+    """run_dir pieces_intermediate.json 载荷（schema v2，synth 3 片全量）。"""
+    return {'source': 'nest.dxf', 'gate_mm': 1750.0, 'pieces': _synth_pieces()}
+
+
+def _pid_map() -> dict:
+    return {p['pid']: p for p in _synth_pieces()}
+
+
+def _expected_plt(placed, table_raw=None, *, clean=True, density=0.5788,
+                  width_mm=7000.0, gate_mm=1750.0):
+    """与端点同源的门面直算金标 → ``(bytes, world, info_table)``（对拍单一真相源）。"""
+    world = placed_to_world(placed, _pid_map())
+    table_in = parse_table_payload(table_raw if table_raw is not None else {})
+    info = build_info_table(world, width_mm=width_mm, gate_mm=gate_mm,
+                            density=density, table_in=table_in)
+    data = write_marker_plt(world, width_mm=width_mm, gate_mm=gate_mm,
+                            title='golden', info_table=info, clean=clean)
+    return data, world, info
+
+
+def _export_setup(machine_env, monkeypatch, *, with_intermediate=True,
+                  incumbent=None, quantities=None):
+    """US-004 导出测试基座：done 任务（plain 档边车回落形态）+ run_dir 三产物 +
+    会话注册 + 绘图时间冻结 → ``(client, sid, run_dir, st)``。"""
+    monkeypatch.setattr(plt_table_mod, 'datetime', _FrozenDT)
+    run_dir = (Path(paths_mod.CONFIG_RUNS_DIR)
+               / f'machine_m2026_exp1_{uuid.uuid4().hex[:8]}')
+    run_dir.mkdir(parents=True)
+    _write_plain_result(run_dir, incumbent=incumbent)
+    _write_best_frame(run_dir, 0, 0.5788, placed=_PLACED_3, frame_index=7)
+    if with_intermediate:
+        (run_dir / 'pieces_intermediate.json').write_text(
+            json.dumps(_synth_doc()), encoding='utf-8')
+    sid, st = _install_machine_state(machine_env, run_dir=str(run_dir), rc=0,
+                                     quantities=quantities)
+    sess = sessions_mod.registry.resolve(sid, create=True)
+    sess.state = runtime_mod._state_from_doc(_synth_doc())
+    return TestClient(server_mod.app), sid, run_dir, st
+
+
+def test_export_default_golden_and_session_evicted_identical(
+        machine_env, monkeypatch):
+    """默认档金标 + 会话过期对拍：done 任务 POST {task_id} → 200 PLT（plt-clean
+    毛版+表格）与门面直算逐字节一致；registry 显式逐出后仍 200 且逐字节一致
+    （pieces 直载 run_dir intermediate 路径，与 run 存活期导出对拍）。"""
+    c, sid, run_dir, st = _export_setup(machine_env, monkeypatch)
+
+    r1 = c.post('/api/machine/export', json={'task_id': sid})
+    assert r1.status_code == 200, r1.text
+    assert r1.headers['content-type'].startswith('application/plt')
+    cd = r1.headers['content-disposition']
+    # 中文/ASCII 双写（/export 约定）：run_name 前缀 + all（无 sizes）+ 毛版后缀。
+    assert f'filename="machine_{sid[:6]}_' in cd
+    assert '_all_57.88pct_seed0_clean.plt' in cd
+    assert "filename*=UTF-8''" in cd and quote('毛版') in cd
+
+    # 默认档金标：端点输出 == 门面直算（表格区在场 = info_table 非 None 路径）。
+    expected, _world, info = _expected_plt(_PLACED_3)
+    assert r1.content == expected
+    # 6 手输字段默认值 + 8 项自动计算字段全算非空（plt_table 既有管线的产物）。
+    assert (info.bed_no, info.warp_shrink, info.weft_shrink, info.planner,
+            info.style_no, info.remark) == ('A料', '0.0%', '0.0%', '', 'noname', '')
+    assert info.plan_name == '(28)=1套' and info.sets_count == 1.0
+    assert info.utilization_pct == pytest.approx(57.88)
+    assert info.gate_m == pytest.approx(1.75)
+    assert info.fabric_len_m == pytest.approx(7.0)
+    assert info.per_set_m == pytest.approx(7.0)
+    assert info.total_pieces == 3
+    assert info.draw_time_str == '2026-09-21 12:34'    # 冻结替身生效证明
+    # 表格区确在字节流里（info_table=None 的无表格版 != 默认档）。
+    bare = write_marker_plt(placed_to_world(_PLACED_3, _pid_map()),
+                            width_mm=7000.0, gate_mm=1750.0, title='golden',
+                            info_table=None, clean=True)
+    assert r1.content != bare
+
+    # 会话被逐出（模拟 TTL+宽限过窗）→ 仍 200 且逐字节一致。
+    sessions_mod.registry.reset()
+    assert sessions_mod.registry.peek(sid) is None
+    r2 = c.post('/api/machine/export', json={'task_id': sid})
+    assert r2.status_code == 200, r2.text
+    assert r2.content == r1.content
+
+
+def test_export_fmt_plt_full_and_explicit_table(machine_env, monkeypatch):
+    """fmt='plt' 全量版（clean=False + 表格在场）对拍；显式 table 合法值经
+    parse_table_payload 对拍；非法 table → 400 中文。"""
+    c, sid, run_dir, st = _export_setup(machine_env, monkeypatch)
+
+    r_full = c.post('/api/machine/export', json={'task_id': sid, 'fmt': 'plt'})
+    assert r_full.status_code == 200
+    expected_full, _, _ = _expected_plt(_PLACED_3, clean=False)
+    assert r_full.content == expected_full
+    assert '_clean' not in r_full.headers['content-disposition']
+    r_clean = c.post('/api/machine/export', json={'task_id': sid})
+    assert r_full.content != r_clean.content    # 毛版/全量两版式确不同
+
+    table = {'bed_no': 'B料', 'planner': '小王', 'warp_shrink': '1.5%'}
+    r_t = c.post('/api/machine/export',
+                 json={'task_id': sid, 'table': table})
+    assert r_t.status_code == 200
+    expected_t, _, info_t = _expected_plt(_PLACED_3, table_raw=table)
+    assert r_t.content == expected_t
+    assert info_t.bed_no == 'B料' and info_t.planner == '小王'
+    assert info_t.warp_shrink == '1.5%'
+
+    # 非法 table（非对象 / 字段类型错）→ 400 中文（parse_table_payload 透传）。
+    r_bad = c.post('/api/machine/export',
+                   json={'task_id': sid, 'table': 'x'})
+    assert r_bad.status_code == 400 and '信息表格' in r_bad.json()['error']
+    r_bad2 = c.post('/api/machine/export',
+                    json={'task_id': sid, 'table': {'bed_no': ['x']}})
+    assert r_bad2.status_code == 400 and 'bed_no' in r_bad2.json()['error']
+
+
+def test_export_placed_explicit_variants(machine_env, monkeypatch):
+    """placed 显式传入：合法子集对拍（片数随之变）；全未命中 → 400 既有兜底；
+    非法形状（非列表/元素非对象）→ 400。"""
+    c, sid, run_dir, st = _export_setup(machine_env, monkeypatch)
+
+    placed2 = _PLACED_3[:2]                      # g01_28 ×2（g02_28 不出）
+    r = c.post('/api/machine/export', json={'task_id': sid, 'placed': placed2})
+    assert r.status_code == 200, r.text
+    expected, _, info = _expected_plt(placed2)
+    assert r.content == expected
+    assert info.total_pieces == 2                # 表格片数字段随 placed 变
+
+    r_miss = c.post('/api/machine/export', json={'task_id': sid, 'placed': [
+        {'id': 'zz_99', 'rotation': 0, 'translation': [0.0, 0.0]}]})
+    assert r_miss.status_code == 400
+    assert '均未匹配' in r_miss.json()['error']
+    for bad in ('x', [1], 42):
+        r_shape = c.post('/api/machine/export',
+                         json={'task_id': sid, 'placed': bad})
+        assert r_shape.status_code == 400 and 'placed' in r_shape.json()['error'], bad
+
+
+def test_export_pieces_fallback_chain(machine_env, monkeypatch):
+    """pieces 兜底链：run_dir 无 intermediate → 会话快照 → 状态槽 pieces_snapshot；
+    三源全空 → 409（会话逐出 + 快照清空 + intermediate 缺失）。"""
+    c, sid, run_dir, st = _export_setup(machine_env, monkeypatch,
+                                        with_intermediate=False)
+    expected, _, _ = _expected_plt(_PLACED_3)
+
+    # 会话快照兜底（run_dir 无 intermediate）→ 200 且与直载路径逐字节一致。
+    r1 = c.post('/api/machine/export', json={'task_id': sid})
+    assert r1.status_code == 200, r1.text
+    assert r1.content == expected
+
+    # 会话逐出 → 状态槽 start 快照（pieces_snapshot）兜底，仍逐字节一致。
+    sessions_mod.registry.reset()
+    r2 = c.post('/api/machine/export', json={'task_id': sid})
+    assert r2.status_code == 200
+    assert r2.content == expected
+
+    # 三源全空 → 409。
+    st['pieces_snapshot'] = []
+    r3 = c.post('/api/machine/export', json={'task_id': sid})
+    assert r3.status_code == 409 and '裁片轮廓' in r3.json()['error']
+
+
+def test_export_gate_matrix(machine_env, monkeypatch):
+    """export 闸矩阵：task_id 非格式 400 / 未知 404 / 外族槽 404；fmt 值域外 400；
+    非 JSON body·数组 body·缺 task_id 400；无 run_dir（starting）409；run_dir 无
+    布局帧 409。"""
+    c, sid, run_dir, st = _export_setup(machine_env, monkeypatch)
+
+    r = c.post('/api/machine/export', json={'task_id': 'bad.id'})
+    assert r.status_code == 400 and 'task_id 非法' in r.json()['error']
+    r = c.post('/api/machine/export', json={'task_id': _machine_sid()})
+    assert r.status_code == 404 and '未知任务' in r.json()['error']
+    foreign = 'aaaa1111'
+    fst = strategy_mod._states(foreign, create=True)
+    fst.update({'sid': foreign, 'state': 'running', 'mode': 'race', 'pid': 1})
+    assert c.post('/api/machine/export',
+                  json={'task_id': foreign}).status_code == 404
+
+    r = c.post('/api/machine/export', json={'task_id': sid, 'fmt': 'png'})
+    assert r.status_code == 400 and 'fmt' in r.json()['error']
+    r = c.post('/api/machine/export', content='not-json',
+               headers={'Content-Type': 'application/json'})
+    assert r.status_code == 400
+    r = c.post('/api/machine/export', json=[1, 2])
+    assert r.status_code == 400
+    r = c.post('/api/machine/export', json={})
+    assert r.status_code == 400 and 'task_id' in r.json()['error']
+
+    # starting（进程存活 + run_dir 未发现）→ 409。
+    sid2, _st2 = _install_machine_state(machine_env, run_dir=None, rc=None)
+    r = c.post('/api/machine/export', json={'task_id': sid2})
+    assert r.status_code == 409 and 'run 目录' in r.json()['error']
+
+    # run_dir 在但无任何布局帧（无 result.json incumbent / best_frame）→ 409。
+    sid3, _st3 = _install_machine_state(machine_env, run_dir=None, rc=None)
+    empty_dir = Path(paths_mod.CONFIG_RUNS_DIR) / f'machine_{sid3[:6]}_empty'
+    empty_dir.mkdir(parents=True)
+    strategy_mod._STRATEGY_STATES[sid3]['run_dir'] = str(empty_dir)
+    r = c.post('/api/machine/export', json={'task_id': sid3})
+    assert r.status_code == 409 and '未产出任何布局' in r.json()['error']

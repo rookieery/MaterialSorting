@@ -1,4 +1,4 @@
-"""机器对接排料 API（YL 排料对接二期，prd-machine-nesting-api）—— US-003 status/stop/result 三端点。
+"""机器对接排料 API（YL 排料对接二期，prd-machine-nesting-api）—— US-004 export 会话无关导出。
 
 YLPatternMaking（YL 打版系统）后端经 HTTP 机器接口接入 MS 排料引擎：multipart
 提交带编号母版 DXF + config JSON → 按运行模式求解 → 2s 级轮询实时利用率 → 终态
@@ -8,7 +8,7 @@ YLPatternMaking（YL 打版系统）后端经 HTTP 机器接口接入 MS 排料�
 树杀 / 清理骨架 —— 与 se|race / extreme 同构，但**每任务一个 'm' 前缀独立 sid**
 （不消费 X-Session-Id，浏览器工作台 default ``_PIECES_STATE`` 零感知）。
 
-端点契约（US-002 solve + 本故事三端点已落地；export/DELETE 自 US-004 起挂载）：
+端点契约（US-002 solve + US-003 三端点 + 本故事 export 已落地；DELETE 自 US-005 起挂载）：
 
   - ``POST   /api/machine/solve`` —— multipart ``file``（母版 DXF 二进制
     ≤20MB，同 /api/parse-dxf 上限）+ ``config``（JSON 字符串）。config 键集：
@@ -48,9 +48,21 @@ YLPatternMaking（YL 打版系统）后端经 HTTP 机器接口接入 MS 排料�
     manifest = ``build_pid_meta``（start 时起始快照 pieces + sizes/per_type/
     quantities），pieces 键集含 raw_polygon/d_mm/demand/color（与 /ws/solve
     manifest 同形）。
-  - ``POST   /api/machine/export`` / ``DELETE /api/machine/solve/{task_id}``
-    —— 会话无关导出（pieces 直载 run_dir pieces_intermediate.json，独立于会话
-    TTL；fmt 缺省 'plt-clean' + 服务端全算表格）与幂等清理（US-004/005）。
+  - ``POST   /api/machine/export``（本故事）—— 会话无关导出 PLT：请求体 JSON
+    ``{task_id, fmt?, placed?, table?}``（最小请求仅 ``{task_id}``）。
+    ``fmt`` ∈ plt-clean（缺省，毛版+表格）| plt（全量版），其它 400；
+    ``placed`` 缺省用状态槽 incumbent（portfolio.incumbent 优先 → best_frame
+    边车 density 最大，与 result 端点同源同序），显式传入须为
+    ``[{id, rotation, translation}]`` 列表、全未命中 → 400（/export 既有兜底）；
+    ``table`` 缺省服务端全算（``parse_table_payload({})`` 6 手输默认值 + 8 项
+    自动计算字段由既有表格管线补全），显式传入经 ``parse_table_payload`` 校验
+    （非法 → 400 中文）。**pieces 来源 = run_dir 内 pieces_intermediate.json
+    直载重建 pieces_by_id**（会话被 TTL 逐出后仍可导出），兜底回退会话快照
+    （registry peek → 状态槽 start 快照）。复用 ``web/export.py`` 门面全部函数
+    （``placed_to_world`` / ``parse_table_payload`` / ``build_info_table`` /
+    ``write_marker_plt``，门面零改动）；Content-Disposition 中文/ASCII 双写同
+    ``/export`` 约定。无 run_dir / 无任何布局帧 → 409。
+  - ``DELETE /api/machine/solve/{task_id}`` —— 幂等清理（US-005）。
 
 任务状态机（同 strategy 口径，复用 ``_status_common`` 状态推进 —— 解析态写回
 内存态）：``starting →(run_dir 发现) running → done | stopped | error``。内存态
@@ -93,13 +105,26 @@ import time
 import uuid
 from pathlib import Path
 
+from urllib.parse import quote
+
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from starlette.datastructures import UploadFile as _StarletteUploadFile
 
 from . import strategy as strategy_mod
+# 导出门面（US-004）：export.py 不 import server/machine（无环），模块级 import
+# 与 routes_views /export 同源 —— 门面零改动，全部格式/表格逻辑单一真相源在
+# export_plt / plt_table。
+from .export import (
+    build_info_table,
+    parse_table_payload,
+    placed_to_world,
+    write_marker_plt,
+)
+from .plt_table import TablePayloadError
 from .sessions import SID_RE, SessionError
 from .sessions import registry as session_registry
+from .solver import load_pieces
 
 __all__ = ['register_machine_routes', 'router']
 
@@ -123,6 +148,10 @@ _FORBIDDEN_CONFIG_KEYS = ('time', 'seeds', 'band', 'prefix')
 _MAX_CLIENT_REF = 128
 # 三端点报错文案的运行名（与 strategy._MODE_LABELS[MACHINE_MODE] 同名）。
 _MACHINE_LABEL = '机器排料任务'
+# export 格式值域（US-004）：plt-clean = 毛版 + 唛架信息表格（缺省，YL 生产件
+# 口径）；plt = 全量版（净版线/内部线/布纹杆羽 + 表格）。机器契约只出 PLT
+# （png/dxf 是浏览器工作台 /export 的面，不在机器对接范围）。
+_EXPORT_FORMATS = ('plt-clean', 'plt')
 
 
 # ------------------------------------------------------------- config 校验
@@ -549,11 +578,177 @@ async def machine_solve_result(task_id: str, request: Request):
             'summary': resp['summary']}
 
 
+# ------------------------------------------------------------- US-004 export
+
+
+def _best_layout(run_dir):
+    """导出用最优布局完整记录（portfolio.incumbent 优先 → best_frame 边车
+    density 最大；与 ``_result_common`` 的 best 同源同序）。
+
+    导出需要 ``placed_items`` + ``width_mm``/``density``（标题/表格字段单一
+    来源），取完整记录而非 ``_incumbent_from_best_frames`` 的四键摘要；运行中
+    帧（result.json 未产出）同样可导 —— 无人轮询推进到 done 也不阻塞。
+    """
+    result_json = strategy_mod._read_json(Path(run_dir) / 'result.json')
+    if isinstance(result_json, dict):
+        inc = (result_json.get('portfolio') or {}).get('incumbent')
+        if isinstance(inc, dict) and inc.get('placed_items'):
+            return inc
+    frames = []
+    for fp in Path(run_dir).glob('best_frame_s*.json'):
+        rec = strategy_mod._read_json(fp)
+        if isinstance(rec, dict) and rec.get('density') is not None:
+            frames.append(rec)
+    if not frames:
+        return None
+    return max(frames, key=lambda r: float(r['density']))
+
+
+def _pieces_by_id_for_export(task_id: str, run_dir, st):
+    """导出用 pieces 索引 → ``(pieces_by_id, gate_mm)``（独立于会话 TTL）。
+
+    来源优先级：① run_dir 内 ``pieces_intermediate.json`` **直载**（solve 阶段
+    事实源，会话被逐出后仍在盘 —— 本函数存在的意义）→ ② 会话快照
+    （``registry.peek``，非抛式：已逐出 → None）→ ③ 状态槽 start 快照
+    （``pieces_snapshot``，与会话快照同内容、随任务槽长存）。各源均带 gate：
+    ① doc 的 ``gate_mm``（commit 写 cfg.gate_mm，与求解实际门幅同源），
+    ②③ 会话/槽的 ``gate_mm``。全空 → ``({}, None)``（调用方 409）。
+    """
+    try:
+        _doc, doc_gate, pieces = load_pieces(
+            str(Path(run_dir) / 'pieces_intermediate.json'))
+        if pieces:
+            return {p['pid']: p for p in pieces}, doc_gate
+    except Exception:   # 缺失/坏 JSON/旧 schema：降级走兜底链，不阻塞导出
+        pass
+    sess = session_registry.peek(task_id)
+    if sess is not None:
+        state = sess.state or {}
+        if state.get('pieces_by_id'):
+            return state['pieces_by_id'], state.get('gate_mm')
+    snapshot = (st or {}).get('pieces_snapshot') or []
+    if snapshot:
+        return ({p['pid']: p for p in snapshot}, (st or {}).get('gate_mm'))
+    return {}, None
+
+
+@router.post('/api/machine/export')
+async def machine_export(req: Request):
+    """会话无关导出 PLT：``{task_id, fmt?, placed?, table?}`` → PLT 字节流。
+
+    延迟导出场景（YL 排完料隔日取图）：会话早已被 TTL 逐出 —— pieces 从 run_dir
+    ``pieces_intermediate.json`` 直载（求解事实源在盘），状态推进走 ``_status_common``
+    内存态路径，全程不依赖会话。表格恒在场：缺省服务端全算（6 手输默认值 + 8 项
+    自动计算字段既有管线），显式传入经 ``parse_table_payload`` 校验。复用
+    ``/export`` 门面全部函数（几何/表格/PLT 单一真相源零漂移），Content-Disposition
+    中文/ASCII 双写同约定。
+    """
+    try:
+        payload = await req.json()
+    except Exception:
+        return _err('请求体须为 JSON 对象')
+    if not isinstance(payload, dict):
+        return _err('请求体须为 JSON 对象')
+
+    task_id = payload.get('task_id')
+    if not isinstance(task_id, str):
+        return _err(f'task_id 必填（字符串），当前为 {task_id!r}')
+    st, marker, err = _machine_task_ctx(task_id)
+    if err is not None:
+        return err
+    session_registry.touch(task_id)   # 同三端点：导出动作刷活性（no-op 容错）
+
+    fmt = payload.get('fmt')
+    if fmt is None:
+        fmt = 'plt-clean'
+    if fmt not in _EXPORT_FORMATS:
+        return _err(f"fmt 须为 {'/'.join(_EXPORT_FORMATS)} 之一，当前为 {fmt!r}")
+
+    placed_in = payload.get('placed')
+    if placed_in is not None and (
+            not isinstance(placed_in, list)
+            or not all(isinstance(it, dict) for it in placed_in)):
+        return _err('placed 须为 [{id, rotation, translation}] 对象列表')
+
+    # ---- 状态推进（同 status 口径：done 识别 + run_dir 发现写回内存态）。
+    # orphan（内存态空 + marker 在）直接用 marker 带回的 run_dir。
+    run_dir = None
+    if st is not None:
+        base = await strategy_mod._status_common(req, sid=task_id, gate=False)
+        if isinstance(base, JSONResponse):    # 防御（gate=False 不产生；保险透传）
+            return base
+        run_dir = base.get('run_dir')
+    else:
+        run_dir = (marker or {}).get('run_dir') or None
+    if not run_dir:
+        return JSONResponse({'error': '运行未产出 run 目录，无可导出布局'},
+                            status_code=409)
+
+    # ---- 最优布局（placed 缺省源 + width/density/seed 唯一来源）。
+    best = _best_layout(run_dir)
+    if best is None:
+        return JSONResponse({'error': '运行未产出任何布局（无 incumbent/best_frame）'},
+                            status_code=409)
+    placed = placed_in if placed_in is not None else (best.get('placed_items') or [])
+    width_mm = float(best.get('width_mm') or 0.0)
+    density = float(best.get('density') or 0.0)
+    seed = best.get('seed') or 0
+    if width_mm <= 0:
+        return JSONResponse({'error': '最优布局缺 width_mm，无法导出'}, status_code=409)
+
+    pieces_by_id, gate_src = _pieces_by_id_for_export(task_id, run_dir, st)
+    if not pieces_by_id:
+        return JSONResponse(
+            {'error': '导出失败：run 目录与会话快照均无裁片轮廓（intermediate '
+                      '缺失且会话已逐出？）'}, status_code=409)
+    gate_mm = float(gate_src
+                    or ((st or {}).get('gate_mm') if st is not None else 0) or 0.0)
+    if gate_mm <= 0:
+        return JSONResponse({'error': '无可用的门幅（gate_mm=0），无法导出'},
+                            status_code=409)
+
+    world = placed_to_world(placed, pieces_by_id)
+    if not world:
+        return JSONResponse({'error': '导出失败：placed 的 pid 均未匹配到原始轮廓'},
+                            status_code=400)
+
+    # ---- 表格：缺省服务端全算（{} → 6 手输默认值）；显式传入经校验（非法 400 中文）。
+    try:
+        table_in = parse_table_payload(payload.get('table') or {})
+    except TablePayloadError as e:
+        return _err(f'信息表格字段非法：{e}')
+    info_table = build_info_table(world, width_mm=width_mm, gate_mm=gate_mm,
+                                  density=density, table_in=table_in)
+
+    clean = fmt == 'plt-clean'
+    pct = density * 100.0
+    # title 与 /export PLT 分支同款 ASCII（PLT 不输出 LB 文字，仅签名保留）。
+    title = (f'M1787 util={pct:.2f}% L={width_mm / 10:.2f}cm '
+             f'gate={gate_mm / 10:.2f}cm seed={seed}')
+    data = write_marker_plt(world, width_mm=width_mm, gate_mm=gate_mm, title=title,
+                            info_table=info_table, clean=clean)
+
+    # 文件名合成同 /export 约定（前缀 = run_name，任务可追溯；sizes 取 start
+    # config 快照，缺省 'all'）；中文/ASCII 双写（RFC5987）。
+    prefix = ((st or {}).get('run_name') if st is not None else None) or 'machine'
+    sizes = (st or {}).get('sizes') if st is not None else None
+    sizes_str = ('-'.join(str(s) for s in sorted(int(s) for s in sizes))
+                 if sizes else 'all')
+    suffix_ascii = '_clean' if clean else ''
+    suffix_cn = '_毛版' if clean else ''
+    fname_ascii = f'{prefix}_{sizes_str}_{pct:.2f}pct_seed{seed}{suffix_ascii}.plt'
+    fname_cn = f'{prefix}_码{sizes_str}_{pct:.2f}pct_seed{seed}{suffix_cn}.plt'
+    cd = (f"attachment; filename=\"{fname_ascii}\"; "
+          f"filename*=UTF-8''{quote(fname_cn)}")
+    return Response(content=data, media_type='application/plt',
+                    headers={'Content-Disposition': cd})
+
+
 def register_machine_routes(app) -> None:
     """把 machine 路由挂到 FastAPI app（server.py 文件尾调用一次，位于 strategy 之后）。
 
-    US-002 solve + US-003 status/stop/result 四端点已挂到本模块 ``router``；后续
-    故事（export/DELETE）逐故事挂同一 router，注册点零改动。
+    US-002 solve + US-003 status/stop/result + US-004 export 五端点已挂到本模块
+    ``router``；后续故事（DELETE）逐故事挂同一 router，注册点零改动。
     """
     app.include_router(router)
 
