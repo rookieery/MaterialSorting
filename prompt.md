@@ -48,7 +48,7 @@ You MUST only complete ONE user story per session. After setting "passes": true 
 ### CRITICAL: Browser Automation & Server Lifecycle
 If you need to start a dev server (`ms-web` / FastAPI) and use browser tools (chrome-devtools-mcp) to test the UI, you MUST strictly follow this lifecycle to prevent breaking the automated loop:
 
-> 启动 `ms-web` 前置条件：必须先跑 `ms-pieces-export` 生成 `out/sparrow_baseline/pieces_intermediate.json`，且 `materialSorting-web/static/` 存在。**prod 模式**下 `static/` 是 React 构建产物，需先 `cd materialSorting-web && npm run build`；**dev 模式**下 `npm run dev`（:5173）经 Vite proxy 访问后端 :8000，无需 build。
+> 启动 `ms-web` 前置条件：必须先跑 `ms-pieces-export` 生成 `out/sparrow_baseline/pieces_intermediate.json`，且 `materialSorting-web/static/` 存在。**prod 模式**下 `static/` 是 React 构建产物，需先 `cd materialSorting-web && npm run build`；**dev 模式**下 `npm run dev`（:5173）经 Vite proxy 访问后端 :8010，无需 build。
 
 1. **Start the Server**: 后台启动 `ms-web`（FastAPI），显式记录其 PID 或 Job ID。
 2. **Isolate Browser**: 确保不与已有浏览器实例冲突。若出现 "browser is already running" 类错误，用 `taskkill /F /IM chrome.exe` 强杀已有 Chrome 进程后重试。

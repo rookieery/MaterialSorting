@@ -3,8 +3,8 @@
 // checkpoint，2026-09-13）pending_strategy_result 槽主路径/三续段扩展 + bg 段
 // （2026-09-14 展示级降级：陈旧 run 背景保留 —— 恢复弹窗之下画布不清空）。
 //
-// **自举起服**（无需手工 ms-web）：spawn .venv python 起 FastAPI 于 :8010（避开常驻
-// :8000 实例），env = MS_SESSION_TTL_SEC=60（极短 TTL；须 > 深度解析+commit 单程
+// **自举起服**（无需手工 ms-web）：spawn .venv python 起 FastAPI 于 :8030（避开常驻
+// ms-web :8010 与 us002_pending_verify :8020），env = MS_SESSION_TTL_SEC=60（极短 TTL；须 > 深度解析+commit 单程
 // ~40s，否则上传中途 401）/ MS_SESSION_MAX=1（P5 429 相位双客户端模拟）/
 // MS_EDIT_HOLD_SEC=5（解锁「恢复后再过期」—— /api/state-recover 共享
 // rebuild_session_from_document 会给新会话挂 MS_EDIT_HOLD_SEC 钉住，生产缺省 2h 会
@@ -83,7 +83,7 @@ const ROOT = resolve(HERE, '../..');
 const OUT = ROOT + '/out/smoke_session_recovery';
 mkdirSync(OUT, { recursive: true });
 
-const PORT = 8010;                 // 避开常驻 ms-web :8000
+const PORT = 8030;                 // 避开常驻 ms-web :8010 与 us002 :8020（2026-09-21 后端迁 8010 让位）
 const BASE = 'http://127.0.0.1:' + PORT;
 const PY = ROOT + '/.venv/Scripts/python.exe';
 const STATIC_INDEX = ROOT + '/materialSorting-web/static/index.html';

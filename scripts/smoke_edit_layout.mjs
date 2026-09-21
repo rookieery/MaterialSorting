@@ -4,7 +4,7 @@
 // out/us003_browser_verify（拖动/旋转/指标）与 out/us004_browser_verify（保存/重置/导出
 // 抓包）的 DOM 取证套路，全部断言走 DOM / 路由抓包，不依赖 vite store import）。
 //
-// 前置：ms-web 在 :8000 运行 + 新 static 构建（prod 模式）。
+// 前置：ms-web 在 :8010 运行 + 新 static 构建（prod 模式）。
 //
 //   node scripts/smoke_edit_layout.mjs
 //
@@ -33,7 +33,7 @@ const { chromium } = createRequire(
   new URL('../materialSorting-web/package.json', import.meta.url),
 )('playwright');
 
-const BASE = 'http://127.0.0.1:8000';
+const BASE = 'http://127.0.0.1:8010';
 const DXF = 'D:/code/MaterialSorting/data/5336#老六订单14%7%围加9.dxf';
 const OUT = 'D:/code/MaterialSorting/out/smoke_edit_layout';
 const SIZES = [32, 33, 34]; // 5336 码集 30..40；3 码 × 10 片 = 30 片（短求解）

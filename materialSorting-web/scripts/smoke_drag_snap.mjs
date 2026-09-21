@@ -12,7 +12,7 @@
 // 物理毛版口径（2026-09-06 统一）：画布 layer1/指标/吸附全切 raw_polygon —— 脚本
 // 侧锚点（physOf）与 DOM/引擎同源；d=0 布局两者天然一致，d>0 布局按 raw 对拍。
 //
-// 前置：ms-web 在 :8000 运行 + 新 static 构建（prod 模式）。
+// 前置：ms-web 在 :8010 运行 + 新 static 构建（prod 模式）。
 //
 //   node materialSorting-web/scripts/smoke_drag_snap.mjs
 //
@@ -51,7 +51,7 @@ const OUT = ROOT + '/out/smoke_drag_snap';
 const { chromium } = await import('playwright');
 const { build: esbuildBuild } = await import('esbuild');
 
-const BASE = 'http://127.0.0.1:8000';
+const BASE = 'http://127.0.0.1:8010';
 const DXF = ROOT + '/data/5336#老六订单14%7%围加9.dxf';
 const SIZES = [32, 33, 34]; // 5336 码集；3 码 × 10 片 = 30 片（Σdemand 默认 1/格）
 const SOLVE_TIME = '20';

@@ -4,7 +4,7 @@
 //（后后前前同型成对堆叠，prd-prefix-member-order US-001）+ 4a 加前端 DOM PS_ 探针。
 // 套路范本 scripts/smoke-band-preview.mjs（playwright 流程骨架）+ out/us004_extra_verify
 // /verify.mjs（CDP headless 实装，Node >=22 原生 WebSocket，零额外依赖）。
-// 前置：ms-web 在 :8000 运行（static/ 已 npm run build；intermediate 由本脚本上传
+// 前置：ms-web 在 :8010 运行（static/ 已 npm run build；intermediate 由本脚本上传
 // commit 自动生成）。产物：out/smoke_prefix_extra/{report.json, 0*.png, export_on.plt,
 // prefix_artifact.json}；退出码 0 = 全部检查 PASS。
 import { spawn } from 'node:child_process';
@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 // 路径锚定脚本位置（任意 CWD 可跑）：scripts/ -> materialSorting-web/ -> repo 根
 const HERE = fileURLToPath(new URL('.', import.meta.url));
 const ROOT = resolve(HERE, '../..');
-const APP = 'http://127.0.0.1:8000/';
+const APP = 'http://127.0.0.1:8010/';
 const DXF = resolve(ROOT, 'data/5336#老六订单14%7%围加9_coded.dxf');
 const OUT = resolve(ROOT, 'out/smoke_prefix_extra');
 mkdirSync(OUT, { recursive: true });

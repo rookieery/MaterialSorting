@@ -1,6 +1,6 @@
 """排料可视化工作台 · FastAPI 服务 + WebSocket。
 
-启动：python server.py  →  http://127.0.0.1:8000
+启动：python server.py  →  http://127.0.0.1:8010（MS_WEB_PORT 可覆盖）
 
 WS 协议（详见 README / 实现计划；US-002 起全 label 键，不再接收/透传 paired/internal）：
   client → {action:start, sizes:[...], time:N, seed:N, gate_mm?:N,
@@ -556,11 +556,15 @@ from .routes_ws import (  # noqa: E402,F401
 
 
 def main():
+    import os
+
     import uvicorn
     # US-006：进程启动清理一轮超龄 uploads（daemon 线程不阻塞启动）。只在真正
     # server 进程触发 —— TestClient 测试导入 app 不起线程，不碰真实 out/。
     diskclean.start_startup_cleaner()
-    uvicorn.run(app, host='127.0.0.1', port=8000)
+    # 2026-09-21 端口 8000→8010；MS_WEB_PORT 环境变量可覆盖（冒烟自举/本地多
+    # 实例）。vite dev proxy 与 .claude skills/hooks 同此口径。
+    uvicorn.run(app, host='127.0.0.1', port=int(os.environ.get('MS_WEB_PORT', '8010')))
 
 
 # US-004：web 策略桥接四路由（start/status/stop/result）+ US-002 极限运行四路由

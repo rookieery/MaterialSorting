@@ -1,7 +1,7 @@
 // 多会话 US-005（前端会话接入与阻断弹窗）浏览器验证 harness（Playwright + 本地
 // Chrome channel，无外部依赖；范本 scripts/us004_prefix_verify.mjs）。
 //
-// 前置：ms-web 在 :8000 运行，且会话注册表干净 —— 运行前重启 ms-web（P4 需要
+// 前置：ms-web 在 :8010 运行，且会话注册表干净 —— 运行前重启 ms-web（P4 需要
 // 恰好 4 个空席；任何残留 sid / curl 探测都会让第 3/4 窗口误吃 429）。
 //
 //   node scripts/us005_session_verify.mjs          # 主相位（默认 TTL=600 服务器）
@@ -21,7 +21,7 @@ const { chromium } = createRequire(
   new URL('../materialSorting-web/package.json', import.meta.url),
 )('playwright');
 
-const BASE = 'http://127.0.0.1:8000';
+const BASE = 'http://127.0.0.1:8010';
 const DXF_A = 'D:/code/MaterialSorting/data/5336#老六订单14%7%围加9.dxf';
 const DXF_B = 'D:/code/MaterialSorting/data/M1787#直筒14%7%大货围加9）双针30码脚口8英寸(1)(2).dxf';
 const SID_RE = /^[0-9a-f]{32}$/;

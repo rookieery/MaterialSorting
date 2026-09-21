@@ -4,11 +4,11 @@
 //      60min→9 / 120min→19 / 240min→40，与 ExtremeRunModal.estimateExtremeRounds 同式实现）
 //   3. 发起（60 分钟档）→ 轮询出现 starting/running（标题「极限运行」+ 入口徽标）
 //   4. 等首帧密度出现 → 终止 → stopped 终态（结果态/占位均可，产物树已由后端清理标记）
-// 环境前置：ms-web 已在 :8000（prod 模式需先 npm run build —— static/ 为构建产物）；
+// 环境前置：ms-web 已在 :8010（prod 模式需先 npm run build —— static/ 为构建产物）；
 //   BASE_URL 可覆写（dev 模式 npm run dev :5173 经 Vite proxy 亦可）。
 import { chromium } from 'playwright';
 
-const BASE = process.env.SMOKE_BASE_URL ?? 'http://127.0.0.1:8000/';
+const BASE = process.env.SMOKE_BASE_URL ?? 'http://127.0.0.1:8010/';
 const FIRST_ROUND_S = 602.5;
 const PER_ROUND_S = 347.5;
 const expectRounds = (sec) => Math.max(1, 1 + Math.floor((sec - FIRST_ROUND_S) / PER_ROUND_S));

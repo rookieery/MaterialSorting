@@ -2,7 +2,7 @@
 // 本地 Chrome channel；范本 scripts/us007_e2e_verify.mjs —— 上传/commit/求解/取证
 // 工具函数沿用）。
 //
-// 前置：ms-web 在 :8000 运行且已加载 /api/plt-table-preview 路由 + 新 static 构建。
+// 前置：ms-web 在 :8010 运行且已加载 /api/plt-table-preview 路由 + 新 static 构建。
 //
 //   node scripts/smoke_plt_table_preview.mjs
 //
@@ -23,7 +23,7 @@ const { chromium } = createRequire(
   new URL('../materialSorting-web/package.json', import.meta.url),
 )('playwright');
 
-const BASE = 'http://127.0.0.1:8000';
+const BASE = 'http://127.0.0.1:8010';
 const DXF = 'D:/code/MaterialSorting/data/882#弹力商务13%9%大货贴袋机-埋夹脚口20cm.dxf';
 const SHOT = 'D:/code/MaterialSorting/out/smoke_plt_table_preview_modal_v3.png';
 

@@ -1,5 +1,5 @@
 // US-006 浏览器验证 harness（CDP headless Chrome，无外部依赖；范本 us005_verify.mjs）。
-// 前置：ms-web 在 :8000 运行（须已能 commit 母版）。流程：
+// 前置：ms-web 在 :8010 运行（须已能 commit 母版）。流程：
 //   1) 真实 WS 求解 25s（sizes 30/32 · seed 7 · g01@30 demand=2 多副本）→ 捕获 manifest+终帧；
 //   2) 页面加载前 fetch stub /api/strategy/status|result → done 结果态（best = 捕获终帧 ——
 //      manifest/placed_items 与 /api/strategy/result 端点同构，几何与后端 pieces_by_id 同源）；
@@ -10,7 +10,7 @@
 import { spawn } from 'node:child_process';
 import { writeFileSync, mkdirSync } from 'node:fs';
 
-const APP = 'http://127.0.0.1:8000/';
+const APP = 'http://127.0.0.1:8010/';
 const DXF = 'D:/code/MaterialSorting/data/5336#老六订单14%7%围加9_coded.dxf';
 const OUT = 'D:/code/MaterialSorting/out/us006_verify';
 mkdirSync(OUT, { recursive: true });
@@ -25,7 +25,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // ---------- 1) 真实 WS 求解捕获（manifest + 终帧） ----------
 async function solveCapture() {
   return new Promise((resolve, reject) => {
-    const ws = new WebSocket('ws://127.0.0.1:8000/ws/solve');
+    const ws = new WebSocket('ws://127.0.0.1:8010/ws/solve');
     const manifest = {};
     let lastFrame = null;
     const t = setTimeout(() => { try { ws.close(); } catch {} reject(new Error('solve timeout')); }, 180000);

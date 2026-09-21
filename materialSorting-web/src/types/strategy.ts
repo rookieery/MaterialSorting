@@ -4,7 +4,7 @@
 // 独立 `ExtremeStartPayload`：time_total_s 秒 + band/prefix 2026-08-30 起与策略
 // 族同路径透传）。
 //
-// 四路由（前端只走相对路径，dev 经 Vite proxy 转 :8000）：
+// 四路由（前端只走相对路径，dev 经 Vite proxy 转 :8010）：
 //   POST /api/strategy/start   StrategyStartPayload → 202 {started,pid,mode,minutes,run_name}
 //                              | 400 参数错 | 409 已有进行中运行 | 422 排料数据未 commit
 //   GET  /api/strategy/status  StrategyStatus（无状态惰性轮询：每次现读 run_dir 产物）

@@ -505,7 +505,7 @@ out/sparrow_baseline/pieces_intermediate.json          ← 全局镜像（单文
 | `python -m materialsorting.dxf_parser.collect` | `dxf_parser.collect:main`（US-003） | 母版深度解析 CLI 冒烟（每码片数 + internal/notch/net 计数） |
 | `ms-sparrow-baseline` | `nesting_engine.sparrow_baseline:main` | sparrow 基线求解（`{0,180}`，无 erode） |
 | `ms-sparrow-exp` | `nesting_engine.sparrow_experiments:main` | 旋转/重合公差/组合实验 |
-| `ms-web` | `web.server:main` | 可视化工作台（uvicorn :8000） |
+| `ms-web` | `web.server:main` | 可视化工作台（uvicorn :8010） |
 | `ms-run-config` | `cli.run_config:main` | 配置驱动排料一条命令（commit → 求解 → result.json，US-003；`out/config_runs/<name>_<时间戳>/`；`--lns` 自动 LNS 后处理（PC-008，严格更优才回写）） |
 | `ms-lns` | `cli.lns:main` | LNS 波段重排后处理（PC-007；对 run_dir 最优布局 ruin-and-recreate，产 result_lns.json + 对比 SVG） |
 

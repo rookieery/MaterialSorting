@@ -1,7 +1,7 @@
 # Agent API 参考 — 排料可视化工作台后端
 
 > 后端 HTTP / WebSocket 契约文档。改 `web/server.py`（含 2026-08-20 拆出的 `runtime.py`/`parse_payload.py`/`routes_views.py`/`routes_ws.py`）/ `web/solver.py` / `web/export.py`（含拆出的 `export_geometry/png/dxf/plt`）任一处先看这里，并同步本文件。
-> 入口：`ms-web`（console_script）→ `materialsorting.web.server:main` → uvicorn `127.0.0.1:8000`。
+> 入口：`ms-web`（console_script）→ `materialsorting.web.server:main` → uvicorn `127.0.0.1:8010`（2026-09-21 由 8000 迁来；`MS_WEB_PORT` 环境变量可覆盖）。
 
 ## 状态
 
@@ -12,7 +12,7 @@
 1. `server.py` 顶层执行 `_reload_pieces_state()` —— import 时读 intermediate 填入 `_PIECES_STATE`（US-020；2026-08-20 拆分后该逻辑在 `runtime.py`，server.py 首个 import 即触发，顺序与拆分前一致）。intermediate 缺失**不再让 import 崩**：`_PIECES_STATE={}` 时 `/api/ptypes` 返 `{representatives:{}}`、`/ws/solve` 报「排料数据为空」、`/export` 报「placed 的 pid 均未匹配」。intermediate 由 Web commit（`/api/commit-to-nesting`）生成，首次启动空 state 正常，前端上传母版后自动 reload 填入。
 2. `app.mount('/static', ...)` 指向 `materialSorting-web/static/`（前端构建产物）。
    - **prod**：先 `cd materialSorting-web && npm run build` 生成 `static/`；
-   - **dev**：`npm run dev` 起 Vite :5173，经 proxy 打 :8000（仍建议先 build 一次让 `static/` 存在，避免 mount 空目录报错）。
+   - **dev**：`npm run dev` 起 Vite :5173，经 proxy 打 :8010（仍建议先 build 一次让 `static/` 存在，避免 mount 空目录报错）。
 3. US-004 上传依赖 `python-multipart`（已在 `[web]` extra），落盘目录 `paths.OUT_DIR/uploads/`（启动时按需 `mkdir`）。
 
 ## HTTP 路由
@@ -198,7 +198,7 @@ ExportInfoModal v3「按最终表格列序展示全部 14 字段（8 自动只�
 `multipart/form-data` 单字段 `file`（`UploadFile`），文件名扩展名必须 `.dxf`（不区分大小写）。`Content-Length` 不强制（服务端 `await file.read()` 后用 `UPLOAD_MAX_BYTES=20MB` 判定）。
 
 ```bash
-curl -X POST http://127.0.0.1:8000/api/parse-dxf \
+curl -X POST http://127.0.0.1:8010/api/parse-dxf \
   -F "file=@data/M1787#....dxf"
 ```
 
@@ -288,7 +288,7 @@ key = (group_key, -centroid_y, centroid_x, -area_mm2, block_name, piece_index)
 `doc_id` 仅允许 `[0-9A-Za-z]{1,128}`（regex `_DOC_ID_RE`），防路径逃逸；`uuid.uuid4().hex`（32 位 hex）自然命中。
 
 ```bash
-curl -X POST http://127.0.0.1:8000/api/commit-to-nesting \
+curl -X POST http://127.0.0.1:8010/api/commit-to-nesting \
   -H "Content-Type: application/json" \
   -d '{"doc_id":"02a4d4e4f40e423196f026d291a94ea2","filename":"M1787(1)(2).dxf"}'
 ```
@@ -348,7 +348,7 @@ ms-web 多端串台治理的第一块：后端按 sid 维护独立会话（容�
 无请求体。sid 走 **`X-Session-Id` HTTP Header**（浏览器 fetch 可自定义 Header；WS 因不可自定义 Header 走 `?sid=` query，见 US-003）。
 
 ```bash
-curl -X POST http://127.0.0.1:8000/api/session -H "X-Session-Id: 3f2a...hex"
+curl -X POST http://127.0.0.1:8010/api/session -H "X-Session-Id: 3f2a...hex"
 ```
 
 - sid 合法字符集 = `SID_RE`（`^[0-9A-Za-z]{1,128}$`，与 doc_id 同规则；单一真相源在 `sessions.py`，`server._DOC_ID_RE` re-export 同一编译对象）。
@@ -547,7 +547,7 @@ gzip JSON（`application/gzip`，gzip 恒开 + 魔数 `1f 8b`），顶层 `{sche
 - **`X-Session-Id` HTTP Header**：恢复写入**当前 sid**（`resolve(sid, create=True)`，commit 同语义覆盖 + 不占 `MS_SESSION_MAX` 新名额；过期 401 / 超限 429 / 非法 400 结构化 JSON）。缺省 → default 会话（走 `runtime` 锁内原子重绑，等价 `_reload_pieces_state` 但不读盘）。
 
 ```bash
-curl -X POST http://127.0.0.1:8000/api/state-restore -H "X-Session-Id: <sid>" -F "file=@排料_状态_20260911-100000.msn"
+curl -X POST http://127.0.0.1:8010/api/state-restore -H "X-Session-Id: <sid>" -F "file=@排料_状态_20260911-100000.msn"
 ```
 
 ### 响应（200）
@@ -617,11 +617,11 @@ curl -X POST http://127.0.0.1:8000/api/state-restore -H "X-Session-Id: <sid>" -F
 会话过期（10 分钟空闲）后刷新页面即恢复过期前工作状态的**服务端内存快照**基础：按 sid 维护工作台状态 gzip 快照（复用 `statefile` 的 `build_state_document` + `serialize_state` .msn 管线，同一 `parse_state_document` 校验链），恢复端点 `POST /api/state-recover`（US-002）消费该快照把过期前状态重建进当前（新）会话。恢复只由用户刷新触发，页面停留期间绝不自动恢复（用户定案 FR-3）。模块 `web/checkpoint.py`。
 
 ```bash
-curl -X POST http://127.0.0.1:8000/api/state-checkpoint -H "X-Session-Id: <sid>" \
+curl -X POST http://127.0.0.1:8010/api/state-checkpoint -H "X-Session-Id: <sid>" \
      -H "Content-Type: application/json" \
      -d '{"form": {...}, "quantities": {...}, "quantities_base": {"g01": 2}, "run": {...}}'
-curl -X DELETE http://127.0.0.1:8000/api/state-checkpoint -H "X-Session-Id: <sid>"
-curl -X POST http://127.0.0.1:8000/api/state-recover -H "X-Session-Id: <新sid>" \
+curl -X DELETE http://127.0.0.1:8010/api/state-checkpoint -H "X-Session-Id: <sid>"
+curl -X POST http://127.0.0.1:8010/api/state-recover -H "X-Session-Id: <新sid>" \
      -H "Content-Type: application/json" -d '{"from_sid": "<旧sid>"}'
 ```
 
@@ -683,7 +683,7 @@ body = `/api/state-save` 同形 `{form, quantities, quantities_base?, run?, save
 无入参，GET；可选 **`X-Session-Id` HTTP Header**（多会话 US-003）—— 带 sid → 该会话 commit（US-002）注册的 per-doc 快照的 `label_representatives`；缺省/空串 → default 会话（`runtime._PIECES_STATE` 同一 dict，无 sid 行为逐字节不变）。会话解析失败（过期 401 / 非法 400）返回结构化 JSON，不再返回 representatives。响应直接读内存快照，**不走文件 I/O**（μs 级响应）。
 
 ```bash
-curl http://127.0.0.1:8000/api/ptypes -H "X-Session-Id: <sid>"
+curl http://127.0.0.1:8010/api/ptypes -H "X-Session-Id: <sid>"
 ```
 
 ### 响应（200）
@@ -855,7 +855,7 @@ curl http://127.0.0.1:8000/api/ptypes -H "X-Session-Id: <sid>"
 **多会话 US-003：`?sid=` query 参数**（浏览器 WS 不能自定义 Header，故 sid 走 query 而非 `X-Session-Id`）：
 
 ```bash
-ws://127.0.0.1:8000/ws/solve?sid=<sid>     # 缺省/空串 → default 会话（旧行为不变）
+ws://127.0.0.1:8010/ws/solve?sid=<sid>     # 缺省/空串 → default 会话（旧行为不变）
 ```
 
 - **连接钉住**：accept 后立即 `ws_acquire(sid)`（resolve 语义 + `ws_open += 1`）—— 扫描线程对 `ws_open>0` 的会话跳过逐出（求解 10-60 分钟不被误杀）；任何退出路径（final/error/stop/断开）在 finally `ws_release` 减回（断开后归零）。
@@ -1103,6 +1103,6 @@ read loop (后台 task):                               # 持续读客户端消�
 
 | 命令 | 模块 | 作用 |
 |------|------|------|
-| `ms-web` | `materialsorting.web.server:main` | 启动排料工作台（uvicorn :8000） |
+| `ms-web` | `materialsorting.web.server:main` | 启动排料工作台（uvicorn :8010） |
 
 > 其它 `ms-*` 入口（解析/导出 intermediate/实验）见 [agent-file-map.md](agent-file-map.md)。

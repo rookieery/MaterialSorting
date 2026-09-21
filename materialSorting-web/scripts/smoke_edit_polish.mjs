@@ -7,7 +7,7 @@
 // + smoke_prefix_extra.mjs（per_type 写值/导出格式切换）；浏览器 = Edge 通道
 //（本机无 playwright 二进制，借系统通道 msedge，Chrome 兜底 —— 同目录其余冒烟同款）。
 //
-// 前置：ms-web 在 :8000 运行 + 新 static 构建（prod 模式）。
+// 前置：ms-web 在 :8010 运行 + 新 static 构建（prod 模式）。
 //
 //   node materialSorting-web/scripts/smoke_edit_polish.mjs
 //
@@ -46,7 +46,7 @@ const ROOT = resolve(HERE, '../..');
 
 const { chromium } = await import('playwright');
 
-const BASE = 'http://127.0.0.1:8000';
+const BASE = 'http://127.0.0.1:8010';
 const DXF = ROOT + '/data/5336#老六订单14%7%围加9.dxf';
 const OUT = ROOT + '/out/smoke_edit_polish';
 const SIZES = [32, 33, 34]; // 5336 码集；3 码 × 10 片 = 30 片（Σdemand 默认 1/格）

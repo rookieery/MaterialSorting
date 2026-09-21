@@ -1,6 +1,6 @@
 // 会话过期自动恢复 US-003 浏览器验证（playwright，手动脚本不入 vitest；2026-09-13）。
 //
-// 前置：ms-web 在 :8000（prod static），且短 TTL 起服：
+// 前置：ms-web 在 :8010（prod static），且短 TTL 起服：
 //   MS_SESSION_TTL_SEC=45 MS_SESSION_MAX=6 MS_EDIT_HOLD_SEC=5
 //   （EDIT_HOLD_SEC 必须 >0 短值：/api/state-recover 共享 rebuild 会给新会话挂
 //   2h 编辑钉住 —— 生产语义「恢复后会话 2h 不再过期」，测试须解锁「恢复后再过期」
@@ -30,7 +30,7 @@ mkdirSync(OUT, { recursive: true });
 
 const { chromium } = await import('playwright');
 
-const BASE = 'http://127.0.0.1:8000';
+const BASE = 'http://127.0.0.1:8010';
 const DXF = ROOT + '/data/5336#老六订单14%7%围加9_coded.dxf';
 const SIZES = [32, 33, 34];
 const SOLVE_TIME = '5';

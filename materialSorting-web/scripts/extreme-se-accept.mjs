@@ -9,10 +9,10 @@
 //   4. API 侧对拍：/api/extreme/status 载荷 mode='extreme' + strategy='se' +
 //      plan.se {k_screens:1, screen_s:300, ext_s:600, warm:true}
 //   5. 终止运行（冒烟不等待 960s 跑完）→ stopped 收口
-// 环境前置：ms-web 已在 :8000（新代码），static/ 已 build。
+// 环境前置：ms-web 已在 :8010（新代码），static/ 已 build。
 import { chromium } from 'playwright';
 
-const BASE = process.env.SMOKE_BASE_URL ?? 'http://127.0.0.1:8000/';
+const BASE = process.env.SMOKE_BASE_URL ?? 'http://127.0.0.1:8010/';
 
 let browser;
 try {

@@ -6,7 +6,7 @@
 
 ```bash
 npm install                # 首次装依赖
-npm run dev                # :5173（strictPort 锁死）；需后端 ms-web 在 :8000 同步跑
+npm run dev                # :5173（strictPort 锁死）；需后端 ms-web 在 :8010 同步跑
 npm run build              # tsc --noEmit && vite build → static/
 npm run typecheck          # 仅类型检查
 npm run test               # vitest run（US-002 起会有用例）
@@ -16,9 +16,9 @@ npm run test               # vitest run（US-002 起会有用例）
 
 | | dev | prod |
 | --- | --- | --- |
-| 入口 URL | http://localhost:5173/ | http://127.0.0.1:8000/ |
+| 入口 URL | http://localhost:5173/ | http://127.0.0.1:8010/ |
 | base | `/` | `/static/` |
-| 后端调用 | 相对路径 `/export`、`/api/*`、`ws://${location.host}/ws/solve` → Vite proxy → :8000 | 同源直连 :8000 |
+| 后端调用 | 相对路径 `/export`、`/api/*`、`ws://${location.host}/ws/solve` → Vite proxy → :8010 | 同源直连 :8010 |
 | 触发 WS 升级 | Vite proxy `ws: true`（**必填**） | 浏览器原生 |
 
 ## 关键约束（CLAUDE.md 引用）
@@ -178,7 +178,7 @@ src/
 - **activeSize 默认 = doc.sizes[0].size ?? null**：后端按数值升序、null 殿后，sizes[0] 是最小码。空 sizes 兜底 null，UI 自然显示空态。改默认需同步 useParseDxf.test.tsx 3 项 activeSize 用例。
 - **错误不抛、不 rethrow**：useParseDxf 内 try/catch 兜底，所有错误（网络错 / JSON 解析错 / 4xx/5xx）统一进 uploadStore.error，UI 自取。返回 Promise<void> 仅为调用方可选 await（如「上传完成后再切 Tab」）。
 - **doc / activeSize 在失败时不主动清**：uploading 时清 error 但保留 doc/activeSize（避免切 uploading 时 UI 闪烁）；error 时也只写 status/error，让用户能看到上一次成功的预览（可选 UX，由 UI 决定是否隐藏）。reset() 才彻底清零。
-- **fetch URL 是相对路径 `/api/parse-dxf`**：dev 由 Vite proxy 转 :8000，prod 同源；与 useExport fetch('/export') 同口径，前端代码 dev/prod 完全一致。
+- **fetch URL 是相对路径 `/api/parse-dxf`**：dev 由 Vite proxy 转 :8010，prod 同源；与 useExport fetch('/export') 同口径，前端代码 dev/prod 完全一致。
 
 ## 上传预览 US-006 关键约定（UploadPanel 调用方必读）
 
@@ -588,7 +588,7 @@ src/
 
 ## 编辑排料关键约定（US-005 端到端红线四条 调用方必读）
 
-全链路（上传→求解→编辑→保存→导出→重置）冒烟锁死于 `scripts/smoke_edit_layout.mjs`（2026-09-04，repo 根；范本 scripts/smoke_plt_table_preview.mjs，Playwright + chrome channel，prod :8000 真打后端，报告落 `out/smoke_edit_layout/report.json`、退出码 0 = 全 PASS）。四条红线任何一条被破坏，冒烟即红：
+全链路（上传→求解→编辑→保存→导出→重置）冒烟锁死于 `scripts/smoke_edit_layout.mjs`（2026-09-04，repo 根；范本 scripts/smoke_plt_table_preview.mjs，Playwright + chrome channel，prod :8010 真打后端，报告落 `out/smoke_edit_layout/report.json`、退出码 0 = 全 PASS）。四条红线任何一条被破坏，冒烟即红：
 
 - **① 禁 ESC/遮罩关闭**：编辑弹窗与其确认层的唯一关闭路径 = 右上 ✕（dirty 二次确认）与右下保存 —— 与全站弹窗「ESC/遮罩可关」惯例的**有意偏离**（半屏 overlay 下误触丢草稿不可逆）；ESC 与遮罩点击在 modal 与 confirm 层均不挂监听，改回惯例前先改冒烟与三态单测。
 - **② 多副本按 placed_items 数组寻址保序写回**：同一 pid 出现 k 次 = k 副本，身份是 **working/lastFrame.placed_items 的数组下标**（出现序），不是 pid —— save 原地保序写回、EditCanvas 每下标一份 5 层节点；提层置顶只重排 DOM 文档序（跨渲染寻址用毛版 points 字符串当片身份），任何「按 pid 找片」的实现都会写错副本。
@@ -638,7 +638,7 @@ src/
 ## edit-polish US-004 端到端冒烟（2026-09-05 收官）
 
 `materialSorting-web/scripts/smoke_edit_polish.mjs`（Playwright Edge 通道 Chrome 兜底，
-prod :8000 真打后端；模板 scripts/smoke_edit_layout.mjs 骨架 + smoke_prefix_extra
+prod :8010 真打后端；模板 scripts/smoke_edit_layout.mjs 骨架 + smoke_prefix_extra
 per_type 写值套路）—— **46 检查全 PASS（US-004 24 + US-005 S7 compact 档 5 +
 edit-keyboard US-007 S8 键盘/镜像段 17，2026-09-05 扩展）**，
 报告落 `out/smoke_edit_polish/report.json`：
@@ -884,7 +884,7 @@ R = 片级重置交互入口（已定案 2026-09-05：R 键非右键菜单；重
   非镜像反事实 ≥40unit/≥1mm）+ 微调 mirror 逐位透传 + R 重置 points 逐字节回
   基线；既有 29 项复跑全绿 = mirror=false 路径零回归门。改键盘/镜像/导出/
   微调链路后必复跑（`node materialSorting-web/scripts/smoke_edit_polish.mjs`，
-  前置 ms-web :8000 + 新构建 static/）。
+  前置 ms-web :8010 + 新构建 static/）。
 
 ## edit-drag-snap US-001 关键约定（吸附几何算子 contactT/firstContactDistance；2026-09-06）
 
@@ -956,7 +956,7 @@ R = 片级重置交互入口（已定案 2026-09-05：R 键非右键菜单；重
 
 ### 冒烟脚本（scripts/smoke_drag_snap.mjs，32 检查点）
 
-- **运行**：前置 ms-web :8000 + 新构建 `static/`（prod 模式），然后
+- **运行**：前置 ms-web :8010 + 新构建 `static/`（prod 模式），然后
   `node materialSorting-web/scripts/smoke_drag_snap.mjs`；报告落
   `out/smoke_drag_snap/report.json`（含选片对/引擎预测 vs 导出值/逐检查点），
   退出码 0 = 全 PASS。改 snap.ts / EditCanvas 贴附接线 / 保存与导出链路后必复跑。
@@ -1187,7 +1187,7 @@ api.ts 探测分支 / sid 生命周期 / 弹窗文案前先读本节。
 - **浏览器验证**：`scripts/us003_recovery_verify.mjs` 20 检查（A 启动期恢复全链 /
   B1 停留期弹窗新文案+sid 保留+零自动恢复 / B2 刷新 → checkpoint 已消费 → 404 兜底
   干净新会话）。**前置**：短 TTL 起服 `MS_SESSION_TTL_SEC=45 MS_SESSION_MAX=6
-  MS_EDIT_HOLD_SEC=5` + prod static（:8000）；A2 相位手工打 checkpoint = 捕获
+  MS_EDIT_HOLD_SEC=5` + prod static（:8010）；A2 相位手工打 checkpoint = 捕获
   /api/state-save 载荷同 body POST /api/state-checkpoint（US-004 自动调度未落地前的
   替代打点；打点前先 POST /api/session 续命防短 TTL 跨线竞态）。报告落
   `out/us003_recovery/report.txt`。改恢复链 / sid 生命周期后必复跑。
@@ -1243,7 +1243,7 @@ api.ts 探测分支 / sid 生命周期 / 弹窗文案前先读本节。
 
 - **端到端冒烟 `scripts/smoke_session_recovery.mjs`**（playwright，手动脚本不入
   vitest）：**自举起服** —— spawn `.venv/Scripts/python.exe` 起 FastAPI 于 :8010
-  （避开常驻 ms-web :8000），env = `MS_SESSION_TTL_SEC=60`（极短 TTL；**须 > 深度
+  （避开常驻 ms-web :8010），env = `MS_SESSION_TTL_SEC=60`（极短 TTL；**须 > 深度
   解析+commit 单程 ~40s**，否则上传中途 401 卡死 —— 实测 45s 会竞态翻车）/
   `MS_SESSION_MAX=1`（429 相位双客户端模拟）/ `MS_EDIT_HOLD_SEC=5`（**必带** ——
   /api/state-recover 共享 rebuild 给新会话挂 MS_EDIT_HOLD_SEC 钉住，生产 2h 会挡

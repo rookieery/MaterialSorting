@@ -300,7 +300,7 @@ describe('useSolveRun', () => {
     expect(getSessionBlock()).toBe('session_expired');
   });
 
-  it('WS URL 走相对 host（dev/prod 自适配，不被写死成 :8000/:5173）', () => {
+  it('WS URL 走相对 host（dev/prod 自适配，不被写死成 :8010/:5173）', () => {
     const startRef = mountHook({});
     act(() =>
       startRef.current({

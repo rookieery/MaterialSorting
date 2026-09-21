@@ -26,7 +26,7 @@ cli  →  web  →  nesting_engine  →  nesting_bounds  →  dxf_parser
 `ms-web` 的 `server.py` 在**模块顶层**调用 `load_pieces()` 读 `out/sparrow_baseline/pieces_intermediate.json`，并 `app.mount('/static', ...)` 指向 `materialSorting-web/static`（前端构建产物）。因此：
 1. intermediate 由 **Web 上传母版 → `/api/commit-to-nesting`** 生成；首次启动 `_PIECES_STATE` 为空属正常（不崩），前端上传母版 commit 后自动 reload；
 2. **prod 模式**：`materialSorting-web/static/` 必须先 `cd materialSorting-web && npm run build` 生成（产物已 gitignore，不入库；旧版 vanilla 三件套已删除）。
-3. **dev 模式**：`npm run dev` 启 Vite dev server (:5173)，经 Vite proxy 转发 `/export` 与 `/ws` 到后端 :8000；**不需要 build 产物**（但仍建议先跑一次 `npm run build` 让 `static/` 存在，避免 FastAPI mount 空目录报错）。
+3. **dev 模式**：`npm run dev` 启 Vite dev server (:5173)，经 Vite proxy 转发 `/export` 与 `/ws` 到后端 :8010（2026-09-21 由 :8000 迁来，`MS_WEB_PORT` 可覆盖）；**不需要 build 产物**（但仍建议先跑一次 `npm run build` 让 `static/` 存在，避免 FastAPI mount 空目录报错）。
 
 ## 关键技术决策
 

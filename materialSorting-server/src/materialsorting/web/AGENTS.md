@@ -7,21 +7,21 @@
 
 ```bash
 python -c "from materialsorting.web.server import app"                # 导入冒烟（含路由表打印）
-ms-web                                                                 # 启动 uvicorn :8000（console_script）
+ms-web                                                                 # 启动 uvicorn :8010（console_script）
 python -m materialsorting.web.server                                   # 等价（无 console_script 也能跑）
-curl -X POST http://127.0.0.1:8000/api/parse-dxf -F "file=@<dxf>"      # US-004 上传解析
-curl http://127.0.0.1:8000/api/ptypes                                  # US-020 裁片 g 码代表（US-001 v2 键 = label）
-curl -X POST http://127.0.0.1:8000/api/edit-polish -H "Content-Type: application/json" \
+curl -X POST http://127.0.0.1:8010/api/parse-dxf -F "file=@<dxf>"      # US-004 上传解析
+curl http://127.0.0.1:8010/api/ptypes                                  # US-020 裁片 g 码代表（US-001 v2 键 = label）
+curl -X POST http://127.0.0.1:8010/api/edit-polish -H "Content-Type: application/json" \
      -H "X-Session-Id: <sid>" -d '{"placed":[{"id":"g01_30","rotation":0,"translation":[0,0]}]}' \
                                                                       # prd-edit-polish US-002 编辑「智能微调」（placed 随 body；报告口径 = 物理毛版
                                                                       # 轮廓 ≠ 画布 erode 红字口径，差异注记见 agent-api-reference.md 专节 ⚠️；
                                                                       # US-005 可选 "compact":true → 引擎压缩回收档（缺省 false additive））
-curl -X POST http://127.0.0.1:8000/api/state-save -H "Content-Type: application/json" \
+curl -X POST http://127.0.0.1:8010/api/state-save -H "Content-Type: application/json" \
      -H "X-Session-Id: <sid>" -d '{"form":{...},"quantities":{...},"quantities_base":{...},"run":{...}}' -o work.msn \
                                                                       # 状态文件 US-001 工作台状态保存（gzip JSON .msn 附件；run 可选整块，
                                                                       # 在场做守恒校验；quantities_base 可选 = 整列设值基准
                                                                       # {label:整数} 省键式（2026-09-12）；详见 agent-api-reference.md 专节）
-curl -X POST http://127.0.0.1:8000/api/state-restore -H "X-Session-Id: <sid>" \
+curl -X POST http://127.0.0.1:8010/api/state-restore -H "X-Session-Id: <sid>" \
      -F "file=@work.msn"                                              # 状态文件 US-002 会话恢复（multipart .msn/.json；校验链 →
                                                                       # 纯内存重建当前 sid + manifest 确定性重算，不落盘；响应含
                                                                       # parse/manifest/final/placed/run/form/quantities/quantities_base）
@@ -104,7 +104,7 @@ python -m materialsorting.web.statefile                               # 状态�
 - **`_executor` 是全局共享池**：求解（`/ws/solve`）+ 上传解析（`/api/parse-dxf`）+ commit（`/api/commit-to-nesting`）共 6 worker。解析/commit 快（~1-2s）+ 求解长（120s+），实测不互相阻塞；如需隔离请改两池。
 - **UploadFile 读取**：`await file.read()` 一次性读全到内存（20MB 上限内可接受）。流式校验需自写 chunk loop，当前实现选简单。
 - **响应 filename 字段**：透传客户端 `file.filename`（中文文件名浏览器走 UTF-8 正常；curl 命令行可能用本地 codepage → 终端显示乱码，但 JSON 内部仍是原 bytes）。前端 US-006 显示文件名用此字段。
-- **frontend dev proxy `/api`**：`vite.config.ts` 已配 `server.proxy`（US-009），dev 模式经 Vite proxy 命中后端 :8000；`/export`、`/ws`、`/api` 同 proxy 配置。
+- **frontend dev proxy `/api`**：`vite.config.ts` 已配 `server.proxy`（US-009），dev 模式经 Vite proxy 命中后端 :8010；`/export`、`/ws`、`/api` 同 proxy 配置。
 
 ## US-025 关键约定（求解进程化 solve_worker + solve_with_callback_proc）
 

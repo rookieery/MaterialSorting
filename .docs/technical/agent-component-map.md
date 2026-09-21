@@ -66,17 +66,17 @@ materialSorting-web/
 
 | | dev | prod |
 | --- | --- | --- |
-| 入口 | `npm run dev` → `localhost:5173` | `npm run build` 后由 `ms-web` (:8000) serve |
+| 入口 | `npm run dev` → `localhost:5173` | `npm run build` 后由 `ms-web` (:8010) serve |
 | base | `/`（Vite 默认） | `/static/`（FastAPI mount 路径） |
-| 前端如何打后端 | 相对路径 `/export` `/api/*` `/ws/solve`，由 Vite proxy → `127.0.0.1:8000` | 同源 `127.0.0.1:8000/export` `/api/*` `/ws/solve`（无需 proxy） |
-| 验证命令 | `curl localhost:5173/`、Python websockets 连 `ws://localhost:5173/ws/solve` | `curl 127.0.0.1:8000/`、`curl -I 127.0.0.1:8000/static/assets/index-*.js` |
+| 前端如何打后端 | 相对路径 `/export` `/api/*` `/ws/solve`，由 Vite proxy → `127.0.0.1:8010` | 同源 `127.0.0.1:8010/export` `/api/*` `/ws/solve`（无需 proxy） |
+| 验证命令 | `curl localhost:5173/`、Python websockets 连 `ws://localhost:5173/ws/solve` | `curl 127.0.0.1:8010/`、`curl -I 127.0.0.1:8010/static/assets/index-*.js` |
 
 ## vite.config.ts 关键点
 
 - `base` 由 `command` 决定：`build` → `/static/`，否则 `/`。**勿改成静态值**，否则 dev 或 prod 之一会断。
 - `build.outDir = 'static'`、`emptyOutDir = true` —— 每次构建清空 `static/` 后重写。
 - `server.proxy['/ws'] = { target, ws: true, changeOrigin: true }` —— **`ws: true` 必填**，否则 WS 升级请求会被 Vite 当普通 HTTP 处理返回 404。
-- `server.proxy['/api'] = { target, changeOrigin: true }`（US-009）—— dev 下转发 `/api/parse-dxf` 等到后端 :8000；prod 同源无需 proxy。
+- `server.proxy['/api'] = { target, changeOrigin: true }`（US-009）—— dev 下转发 `/api/parse-dxf` 等到后端 :8010；prod 同源无需 proxy。
 - `server.strictPort = true` —— 锁死 :5173，便于后端 / 文档稳定引用。
 
 ## tsconfig 两文件分工
@@ -501,7 +501,7 @@ NestingPage 把单一 `solving: boolean` 扩展为五态 `phase: SolvePhase`（i
 | --- | --- |
 | `src/types/v03.ts` | `SolveParams`（d_ext/d_int/tol_ext/tol_int）+ `PerTypeOverride` / `PerTypeOverrides` |
 | `src/types/ws.ts` | `StartPayload`（US-022 扩 `quantities`）+ `StopPayload`（US-026 `{action:'stop'}`）+ `ClientMsg = StartPayload \| StopPayload` 判别联合 + `ServerMsg = ManifestMsg \| FrameMsg \| FinalMsg \| ErrorMsg \| StoppedMsg` 判别联合（density/density_sparrow 双口径都在 FrameMsg/FinalMsg；US-026 新增 StoppedMsg `{type:'stopped', reason:'user_requested'}`） |
-| `src/lib/ws.ts` | `solveWsUrl()` —— `${proto}://${location.host}/ws/solve`（dev/prod 自适配，**不要写死 :8000/:5173**） |
+| `src/lib/ws.ts` | `solveWsUrl()` —— `${proto}://${location.host}/ws/solve`（dev/prod 自适配，**不要写死 :8010/:5173**） |
 | `src/store/runRegistry.ts` | 模块级 mutable 数组持有 RunRecord（frames/lastFrame 不进 React state）；提供 `create / clear / list / bestRun` |
 | `src/hooks/useSolveRun.ts` | 单 run 生命周期：`start(cfg)` 显式 `new WebSocket` → onmessage 分发 manifest/frame/final/error → Registry 落盘 + 回调；onclose/onerror → onDone（done flag 防重复），**不重连** |
 | `src/__tests__/useSolveRun.test.tsx` | 8 项单测：StrictMode 双 mount 0 连接 / StartPayload 字段逐项（含 US-022 quantities=null）/ manifest+frame+final 分发 + Registry 落盘 / error 分支 / URL 相对 host / per_type 透传 / US-022 quantities 非空透传 / US-022 quantities 缺省→null |
@@ -1211,7 +1211,7 @@ US-001~006 全链路的验收 story：不改任何运行时代码，产出 = 验
 
 ### 关键运维知识（本次验收排障记档）
 
-1. **跑 harness 前先查 :8000 占用与看门狗**：残留的 shell watchdog（`while true; do python -m materialsorting.web.server; sleep 5; done`）会在每次杀服务器后 5s 复活一个 **TTL=300** 的实例 → TTL=6 验证相位的服务器全部 bind 10048 失败、探测打到错误服务器（症状 = 过期相位永远过不了）。清理 = 连 bash 包装进程一起杀（只杀 python 会被复活）。
+1. **跑 harness 前先查 :8010 占用与看门狗**：残留的 shell watchdog（`while true; do python -m materialsorting.web.server; sleep 5; done`）会在每次杀服务器后 5s 复活一个 **TTL=300** 的实例 → TTL=6 验证相位的服务器全部 bind 10048 失败、探测打到错误服务器（症状 = 过期相位永远过不了）。清理 = 连 bash 包装进程一起杀（只杀 python 会被复活）。
 2. **`--expire` 相位必须独立服务器**：`MS_SESSION_TTL_SEC=6` 环境变量只在服务器进程启动时读入；对已运行服务器无效。
 
 ### 文档同步落点（本 story 三处 + 收口）
@@ -1601,14 +1601,14 @@ US-001 计算地基之上的 UI 面：大弹窗全量展示排料布局 + 顶部
 
 - 前端门全过：vitest 全量 **885 passed**（859 → 885，+26）/ `npm run typecheck` 干净 /
   `npm run build` 过（bundle 258KB gzip 84KB）；NestSVG 41 项既有单测全绿（pieceDom 提取零回归）。
-- 浏览器验收（vite dev :5173 + ms-web :8000，882 母版 3 码 20s 求解 → final
+- 浏览器验收（vite dev :5173 + ms-web :8010，882 母版 3 码 20s 求解 → final
   density 83.60% / 90 片）：**22/22**（`out/us002_browser_verify/`，report 内嵌 verify.mjs
   + modal_full/modal_rough.png）—— overlay z1250 全屏、状态条初值 = computeLayoutStats
   口径且与主视图差 0.01pt（ceil 伪影界内）、Δ +0.00、翻转组同款、毛版 90/90 可见、
   4 层工艺 net 90/internal 170/notch 300/grain 90 全渲染、**points 集合与主视图逐串一致**
   （同构对拍）、毛板 650 工艺节点全隐可逆、真实滚轮 "0 0 6149 1750 → 614.9 175 4919.2
   1400" + 重置回初、真实拖动平移 + 重置、ESC/遮罩 mousedown 不关、✕ 关、保存关。
-  验收后浏览器关闭、ms-web/vite 进程已杀（复用前会话残留 :8000/:5173，一并清理）。
+  验收后浏览器关闭、ms-web/vite 进程已杀（复用前会话残留 :8010/:5173，一并清理）。
 
 ## 编辑排料 US-003 落地：拖动、旋转与重合指标（含实时利用率状态条）（2026-09-04）
 
@@ -1640,7 +1640,7 @@ US-001 计算地基之上的 UI 面：大弹窗全量展示排料布局 + 顶部
 - 前端门全过：vitest 全量 **904 passed**（885 → 904，+19）/ `npm run typecheck` 干净 /
   `npm run build` 过（bundle 294.27KB gzip 96.19KB —— polygon-clipping 随 EditCanvas
   进生产包）。
-- 浏览器验收（vite dev :5173 + ms-web :8000，882 母版 3 码 20s 求解 → final
+- 浏览器验收（vite dev :5173 + ms-web :8010，882 母版 3 码 20s 求解 → final
   density 83.60% / 90 片 / 料长 6149mm）：**17/17**（`out/us003_browser_verify/`
   verify.mjs + rotate.png/drag_overlap.png）—— 真实鼠标全链路：拖右端片右移
   1087.6mm translation 精确增量 ±2mm（Y 不动、其余 89 片不动）、**拖动中（未抬手）
@@ -1682,7 +1682,7 @@ ExportInfoModal 均读 bestRun().lastFrame，save 写回后 placed/density 自�
 
 - 前端门全过：vitest 全量 **936 passed**（904 → 936，+32）/ `npm run typecheck` 干净 /
   `npm run build` 过（bundle 296.59KB gzip 96.89KB）。
-- 浏览器验收（prod :8000 静态构建，DOM/路由抓包断言不依赖 store import）：**29/29**
+- 浏览器验收（prod :8010 静态构建，DOM/路由抓包断言不依赖 store import）：**29/29**
   （`out/us004_browser_verify/` verify.mjs + report.json + 4 截图）—— 882 母版 3 码 20s
   → final 83.60% / 90 片 / 6149mm：区块位置（.status 与 .export-group 之间）+ 求解前/
   running 置灰 → final 解禁；编辑按钮开弹窗；拖片右移 300mm 保存 → 主视图**恰一片
@@ -1700,7 +1700,7 @@ ExportInfoModal 均读 bestRun().lastFrame，save 写回后 placed/density 自�
 
 | 文件 | 职责 |
 | --- | --- |
-| `scripts/smoke_edit_layout.mjs`（新，repo 根） | 端到端冒烟 harness（范本 scripts/smoke_plt_table_preview.mjs，Playwright + chrome channel headless，prod :8000 真打后端，断言全走 DOM/路由抓包不依赖 store import）。27 检查：S1 上传 5336 → commit（g01..g10）→ 3 码（32/33/34）20s 短求解 30 片 final（84.60%/1868mm）+ 基线三锚（solver 终帧 placed / final.density / 主视图快照 NestLabel+points+viewBox）；S2 完整版 5 层（毛版/净版 #33cc33/内部线 #ff8c1a/刺口 #ffd700/布纹线 #e53e3e 按 stroke 色 + display 可见性断言）↔ 毛板纯轮廓（4 工艺层全 none、毛版恒显）可逆切换 + 状态条初值 = 主视图利用率（ceil 取整伪影上界 = density×≤1mm/料长 对拍）+ Δ +0.00pt；S3 拖右端片 +300mm 超界（料长 1869→2169 / 72.88%）+ 点选另一片拖柄旋转（points/布纹线端点变化）→ 指标面板三值（area/depth/rot=73.3°）+ 脚注算法碰撞口径；S4 保存 → 主视图**恰两片** points 重绘（被拖片 maxX 增 + 旋转片）+ NestLabel 同步 + viewBox/fab = 保存料长；S5 导出 PLT（默认 plt-clean 毛版）POST /export 200 抓包：placed 与基线 diff=2/30 非空 + density 72.88%<84.60% 非空；S6 ✕ 直关（非 dirty 无确认层）→ 重开右缘逐片左移腾空（US-003 同 ceil 桶教训循环拖）→ 74.77%/2114mm 保存收缩；S7 弹窗外重置（confirm 原文案）→ NestLabel/全片 points/viewBox 逐一回算法基线 → 再导出抓包 **placed diff 回零（0/30 逐片 ε 对拍）+ density == final.density（1e-9）**。报告落 `out/smoke_edit_layout/report.json`，退出码 0 = 全 PASS。 |
+| `scripts/smoke_edit_layout.mjs`（新，repo 根） | 端到端冒烟 harness（范本 scripts/smoke_plt_table_preview.mjs，Playwright + chrome channel headless，prod :8010 真打后端，断言全走 DOM/路由抓包不依赖 store import）。27 检查：S1 上传 5336 → commit（g01..g10）→ 3 码（32/33/34）20s 短求解 30 片 final（84.60%/1868mm）+ 基线三锚（solver 终帧 placed / final.density / 主视图快照 NestLabel+points+viewBox）；S2 完整版 5 层（毛版/净版 #33cc33/内部线 #ff8c1a/刺口 #ffd700/布纹线 #e53e3e 按 stroke 色 + display 可见性断言）↔ 毛板纯轮廓（4 工艺层全 none、毛版恒显）可逆切换 + 状态条初值 = 主视图利用率（ceil 取整伪影上界 = density×≤1mm/料长 对拍）+ Δ +0.00pt；S3 拖右端片 +300mm 超界（料长 1869→2169 / 72.88%）+ 点选另一片拖柄旋转（points/布纹线端点变化）→ 指标面板三值（area/depth/rot=73.3°）+ 脚注算法碰撞口径；S4 保存 → 主视图**恰两片** points 重绘（被拖片 maxX 增 + 旋转片）+ NestLabel 同步 + viewBox/fab = 保存料长；S5 导出 PLT（默认 plt-clean 毛版）POST /export 200 抓包：placed 与基线 diff=2/30 非空 + density 72.88%<84.60% 非空；S6 ✕ 直关（非 dirty 无确认层）→ 重开右缘逐片左移腾空（US-003 同 ceil 桶教训循环拖）→ 74.77%/2114mm 保存收缩；S7 弹窗外重置（confirm 原文案）→ NestLabel/全片 points/viewBox 逐一回算法基线 → 再导出抓包 **placed diff 回零（0/30 逐片 ε 对拍）+ density == final.density（1e-9）**。报告落 `out/smoke_edit_layout/report.json`，退出码 0 = 全 PASS。 |
 
 ### 关键不变量（US-005 立，后续故事不得破坏）
 
@@ -1788,7 +1788,7 @@ label 文案的 gap/color/font-size 死亡样式随删）；②操作指南删�
 
 - 前端门全过：vitest 全量 **962 passed**（940 → 962，+22；64 文件）/ `npm run build` 过
   （bundle 302.70KB gzip 98.86KB）。
-- 浏览器验收（prod :8000 静态构建 + Playwright chrome headless，5336 母版 3 码 +
+- 浏览器验收（prod :8010 静态构建 + Playwright chrome headless，5336 母版 3 码 +
   高级配置 d=3/tol=30 制造工艺余量 → 20s 短求解 30 片）：**12/12**（`out/us003_edit_polish_verify/`
   verify.mjs + report.json + 4 截图）—— 工具区按钮在案可点；微调请求 200 载荷
   placed=30/gate_mm/无 exclude 键 + 报告四段（overlap 48→44、rotΣ 200→170、width/density
@@ -1818,7 +1818,7 @@ exclude labels 组装）。
 
 | 文件 | 职责 |
 | --- | --- |
-| `materialSorting-web/scripts/smoke_edit_polish.mjs`（新） | 端到端冒烟 harness（模板 scripts/smoke_edit_layout.mjs 流程骨架/抓包套路 + smoke_prefix_extra per_type 写值；Edge 通道 Chrome 兜底，prod :8000 真打后端，断言全走 DOM/路由抓包）。24 检查：S1 上传 5336 → per_type 全 g 码 d=3/tol=30（工艺余量制造重合与旋转）→ 3 码 20s 短求解 30 片（Σdemand）；S2 编辑弹窗微调 —— 请求 200 载荷形态（placed 30/gate_mm/无 exclude 键）+ 报告四段 + 四守恒（overlap_pairs 42→38 严格下降 / rotΣ 210→190 下降 / width ≤ before / density ≥ before−1e-6）+ 对比卡渲染（六指标前→后 + 口径脚注 + 撤销按钮）；S3 撤销（points 逐片回微调前 + 卡清空）；S4 再微调**确定性双跑**（placed 深相等 + report 除 elapsed_sec 全等）；S5 保存 → 导出 PLT（plt-clean 走 ExportInfoModal 确认）+ DXF（直发无弹窗）—— payload placed 条数 = Σdemand 且与微调响应 placed **深相等**（守恒）+ DXF 正文 R12 POLYLINE 无 LWPOLYLINE；S6 band on 抽验 —— 开腰头成带 g05 重解（30 片含 g05×3）→ 微调请求带 `exclude.labels=['g05']` + **带形态区域（g05 全部毛版）points 前后不变** + report.excluded 恰 = g05 实例下标 [6,7,8]（引擎排除语义对拍）。响应正文捕获 = 页内 fetch 包装（`__exportCaps` res.clone().arrayBuffer —— Playwright 网络层对 fetch→blob 消费后的附件 body 常拿不到，smoke_prefix_extra 同套路）；重解按钮 done 相位是 `#restart` 非 `#start`（SolveControls 五态钩子）。报告落 `out/smoke_edit_polish/report.json` + 4 截图，退出码 0 = 全 PASS。 |
+| `materialSorting-web/scripts/smoke_edit_polish.mjs`（新） | 端到端冒烟 harness（模板 scripts/smoke_edit_layout.mjs 流程骨架/抓包套路 + smoke_prefix_extra per_type 写值；Edge 通道 Chrome 兜底，prod :8010 真打后端，断言全走 DOM/路由抓包）。24 检查：S1 上传 5336 → per_type 全 g 码 d=3/tol=30（工艺余量制造重合与旋转）→ 3 码 20s 短求解 30 片（Σdemand）；S2 编辑弹窗微调 —— 请求 200 载荷形态（placed 30/gate_mm/无 exclude 键）+ 报告四段 + 四守恒（overlap_pairs 42→38 严格下降 / rotΣ 210→190 下降 / width ≤ before / density ≥ before−1e-6）+ 对比卡渲染（六指标前→后 + 口径脚注 + 撤销按钮）；S3 撤销（points 逐片回微调前 + 卡清空）；S4 再微调**确定性双跑**（placed 深相等 + report 除 elapsed_sec 全等）；S5 保存 → 导出 PLT（plt-clean 走 ExportInfoModal 确认）+ DXF（直发无弹窗）—— payload placed 条数 = Σdemand 且与微调响应 placed **深相等**（守恒）+ DXF 正文 R12 POLYLINE 无 LWPOLYLINE；S6 band on 抽验 —— 开腰头成带 g05 重解（30 片含 g05×3）→ 微调请求带 `exclude.labels=['g05']` + **带形态区域（g05 全部毛版）points 前后不变** + report.excluded 恰 = g05 实例下标 [6,7,8]（引擎排除语义对拍）。响应正文捕获 = 页内 fetch 包装（`__exportCaps` res.clone().arrayBuffer —— Playwright 网络层对 fetch→blob 消费后的附件 body 常拿不到，smoke_prefix_extra 同套路）；重解按钮 done 相位是 `#restart` 非 `#start`（SolveControls 五态钩子）。报告落 `out/smoke_edit_polish/report.json` + 4 截图，退出码 0 = 全 PASS。 |
 
 ### 关键不变量（edit-polish US-004 立，后续故事不得破坏）
 
@@ -2267,11 +2267,11 @@ dragPiece 助手签名扩 `(el, dxMm, button=0, alt=false, midContext=false)`。
   `npm run build` 过（309.68KB / gzip 101.34KB，与 US-003 同哈希 = 零 src 改动佐证）、
   static/ 已重建；零后端改动。
 - 浏览器冒烟 **31/31 PASS × 3 轮**（Playwright + Edge headless 通道 Chrome 兜底，
-  prod :8000 真打后端，报告 out/smoke_drag_snap/report.json）：典型轮数值 ——
+  prod :8010 真打后端，报告 out/smoke_drag_snap/report.json）：典型轮数值 ——
   选片 k=3 m=29（pid g03_34，bbox 缝 21.5mm）、B1 attract 吸拢 1.930mm（partnerKey=4）、
   B7 retreat 回退 393.874mm、C1 末次吸拢 0.500mm、C4 dxErr/dyErr 双 0.0（全精度
   恒等）+ 接触 t=1e-9mm + maxOv=0、C8 位移 dx=4.071mm/dy=0.948mm 误差 1.00 unit、
-  密度 84.60%→84.39%（编辑微降如实）。验证后 ms-web 已杀（:8000 释放）。
+  密度 84.60%→84.39%（编辑微降如实）。验证后 ms-web 已杀（:8010 释放）。
 
 ## 编辑排料 物理毛版口径统一（2026-09-06 用户报 bug 修复：画布显 0 重合而导出 PLT 有重合）
 
@@ -2363,11 +2363,11 @@ US-004）。设计全文 `.docs/business/状态文件保存恢复_落地方案.m
   useParseDxf .msn 分流 7 / UploadPanel .msn 校验 2，另有 2 处既有断言随
   options/accept 扩容更新）+ `npm run build` 过（313.53KB / gzip 102.75KB）。
 - 浏览器冒烟 `scripts/smoke-state-file.mjs` **8/8 PASS**（Playwright Edge 通道，
-  dev :5173 → 真 ms-web :8000）：上传 5336_coded → 5s 短求解 → state 说明行切换 →
+  dev :5173 → 真 ms-web :8010）：上传 5336_coded → 5s 短求解 → state 说明行切换 →
   下载 `5336#老六订单14%7%围加9_coded_状态_20260911-233916.msn`（母版名+状态+时间
   戳）+ StatusLine「已导出 …」+ 无 ExportInfoModal → 回传该 .msn toast「状态文件
   校验通过，恢复编排将在下一 Story 落地」→ .dxf 重传 parse+commit 回归。验证后
-  ms-web 已杀（:8000 释放）。
+  ms-web 已杀（:8010 释放）。
 - 后端零改动；pytest 全量 818 passed 复跑确认无回归。
 
 ## 状态文件 US-004 落地（恢复编排 + run-provenance 来源小字 + 端到端冒烟；2026-09-11）
@@ -2427,7 +2427,7 @@ US-004）。设计全文 `.docs/business/状态文件保存恢复_落地方案.m
   doc.gate_mm —— 改幅宽求解后保存的文件恢复导出幅宽与布局一致。pytest 全量
   **821 passed**（+3：solver 字符串容错 / statefile 字符串 per_type 往返 / manifest
   gate 取 form）。
-- E2E 冒烟 `scripts/smoke_state_file.mjs` **33/33 SMOKE PASS**（prod :8000）：上传
+- E2E 冒烟 `scripts/smoke_state_file.mjs` **33/33 SMOKE PASS**（prod :8010）：上传
   5336 → 数量矩阵 g01@30=2（总 111）→ gate 180 + per_type d=1 + band g05 → 5s 求解
   final（placed 30 守恒）→ 编辑弹窗拖片 +40mm 保存 → 导出 .msn（gunzip 断言 schema/
   无 provenance/恰 1 条移动 +40mm/form/quantities/final 摘要）→ 全新 context 恢复

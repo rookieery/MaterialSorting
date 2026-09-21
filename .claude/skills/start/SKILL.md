@@ -1,6 +1,6 @@
 ---
 name: start
-description: 启动（或重启）MaterialSorting 项目：后端 ms-web (:8000) + 前端 Vite dev (:5173)。支持 dev/prod 模式、单端启动、重启。改后端 Python 后可自动触发重启。
+description: 启动（或重启）MaterialSorting 项目：后端 ms-web (:8010) + 前端 Vite dev (:5173)。支持 dev/prod 模式、单端启动、重启。改后端 Python 后可自动触发重启。
 allowed-tools: Bash
 ---
 
@@ -8,10 +8,10 @@ allowed-tools: Bash
 
 ## 上下文
 - 项目根：`d:/code/MaterialSorting`
-- 后端：`ms-web`（console script → `materialsorting.web.server:main` → uvicorn `127.0.0.1:8000`）。路由：`GET /` 出 `static/index.html`、`POST /export`、`WS /ws/solve`、`/static/*`。**cwd 无关**（`paths.py` 按包位置自定位，不要 cd）。**未开 `--reload`**，改 Python 代码后必须重启才生效。
-- 前端 dev：`cd materialSorting-web && npm run dev`（Vite `:5173` strictPort，proxy `/export` + `/ws` → :8000，自带 HMR）。
+- 后端：`ms-web`（console script → `materialsorting.web.server:main` → uvicorn `127.0.0.1:8010`）。路由：`GET /` 出 `static/index.html`、`POST /export`、`WS /ws/solve`、`/static/*`。**cwd 无关**（`paths.py` 按包位置自定位，不要 cd）。**未开 `--reload`**，改 Python 代码后必须重启才生效。
+- 前端 dev：`cd materialSorting-web && npm run dev`（Vite `:5173` strictPort，proxy `/export` + `/ws` → :8010，自带 HMR）。
 - 前端 prod：`cd materialSorting-web && npm run build` → `static/`，由后端 `/` 与 `/static` 同源 serve（无独立前端进程）。
-- 启动顺序：dev/prod 都需 `pieces_intermediate.json` 存在（server.py 模块顶层读）；dev 模式前端需后端 :8000 先起。
+- 启动顺序：dev/prod 都需 `pieces_intermediate.json` 存在（server.py 模块顶层读）；dev 模式前端需后端 :8010 先起。
 
 ## 端口 → PID 探测（Windows Git Bash）
 ```bash
@@ -36,16 +36,16 @@ netstat -ano | grep -E ":<PORT>[[:space:]]" | grep -i LISTENING | awk '{print $N
 
 ### 1. 探测现状，决定是否先停
 ```bash
-netstat -ano | grep -E ":8000[[:space:]]" | grep -qi LISTENING && echo BE_UP || echo BE_DOWN
+netstat -ano | grep -E ":8010[[:space:]]" | grep -qi LISTENING && echo BE_UP || echo BE_DOWN
 netstat -ano | grep -E ":5173[[:space:]]" | grep -qi LISTENING && echo FE_UP || echo FE_DOWN
 ```
 - 动作 = `restart`：把目标端中 UP 的全部杀掉（用下方 kill 命令），再进入步骤 2/3。
 - 动作 = `start`（默认）：**不杀**。目标端 UP 的跳过（仅报「已在运行」），只启动 DOWN 的端口。避免误杀用户外部起的服务。
 
-kill 单端口（按需，PORT ∈ {8000, 5173}）：
+kill 单端口（按需，PORT ∈ {8010, 5173}）：
 ```bash
 for pid in $(netstat -ano | grep -E ":PORT[[:space:]]" | grep -i LISTENING | awk '{print $NF}' | sort -u); do
-  MSYS_NO_PATHCONV=1 taskkill //PID $pid //F //T 2>/dev/null && echo "killed $pid"
+  MSYS_NO_PATHCONV=1 taskkill /PID $pid /F /T 2>/dev/null && echo "killed $pid"
 done
 ```
 
@@ -54,10 +54,10 @@ done
   ```bash
   ms-web
   ```
-  （若 `ms-web` 不在 PATH，退回 `python -m materialsorting.web.server`）
+  （若 `ms-web` 不在 PATH，退回 `d:/code/MaterialSorting/.venv/Scripts/python.exe -m materialsorting.web.server`；裸 `python` 撞 Store 别名勿用）
 - 轮询确认起来：
   ```bash
-  for i in $(seq 1 15); do netstat -ano | grep -E ":8000[[:space:]]" | grep -q LISTENING && { echo "backend up"; break; }; sleep 1; done
+  for i in $(seq 1 15); do netstat -ano | grep -E ":8010[[:space:]]" | grep -q LISTENING && { echo "backend up"; break; }; sleep 1; done
   ```
   15s 内没起来 → 读后台任务输出报错（多半是 intermediate 缺失 / 端口占用 / 依赖未装 `[web]`）。
 
@@ -66,16 +66,16 @@ done
   ```bash
   cd d:/code/MaterialSorting/materialSorting-web && npm run dev
   ```
-- 轮询 `:5173` LISTENING（同上，把 8000 换 5173）。prod 模式跳过此步。
+- 轮询 `:5173` LISTENING（同上，把 8010 换 5173）。prod 模式跳过此步。
 
 ### 4. 汇报
 ```
 ✅ 项目已启动（dev）
-  后端 ms-web      :8000   http://127.0.0.1:8000/   (PID ...)
+  后端 ms-web      :8010   http://127.0.0.1:8010/   (PID ...)
   前端 Vite dev    :5173   http://localhost:5173/    (PID ...)
   打开 → http://localhost:5173/
 ```
-prod 模式只报后端行，`打开 → http://127.0.0.1:8000/`。PID 用步骤 2/3 起来后复探 netstat 取。
+prod 模式只报后端行，`打开 → http://127.0.0.1:8010/`。PID 用步骤 2/3 起来后复探 netstat 取。
 
 ## 何时自动触发（Claude 自调用，无需用户输入）
 - 改了后端 Python 代码后（uvicorn 无 `--reload`）→ 自动 `/start restart backend` 让改动生效。

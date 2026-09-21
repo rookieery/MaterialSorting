@@ -3,7 +3,7 @@
 // seed 0 + **P0 口径 per_type**，布局设置弹窗逐码填 d/tol = 5336_coded_really.json）
 // —— 本跑 = prefix_accept on 臂 seed0 的 UI 交叉对拍（密度差 ≤0.05pt 即口径闭环）。
 // 截图落 .docs/business/（PRD US-005 形态判据「截图落 .docs/」）。前置：
-// ms-web 在 :8000 运行（prod build）。流程：
+// ms-web 在 :8010 运行（prod build）。流程：
 //   1) 上传 5336 母版 → 矩阵（默认数量全 1）；
 //   2) 矩阵写 P0 全表数量（g01~g05/g09/g10：31→1/36→3/其余→2；g06~g08 全 1）
 //      + 勾选 7 码 31~38；
@@ -18,7 +18,7 @@
 import { spawn } from 'node:child_process';
 import { writeFileSync, mkdirSync, readFileSync, existsSync } from 'node:fs';
 
-const APP = 'http://127.0.0.1:8000/';
+const APP = 'http://127.0.0.1:8010/';
 const DXF = 'D:/code/MaterialSorting/data/5336#老六订单14%7%围加9_coded.dxf';
 const OUT = 'D:/code/MaterialSorting/out/us005_prefix_verify';
 const DOCS = 'D:/code/MaterialSorting/.docs/business';

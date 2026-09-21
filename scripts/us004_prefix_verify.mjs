@@ -1,5 +1,5 @@
 // US-004 prefix（起始端成套前后幅）浏览器验证 harness（CDP headless Chrome，无外部依赖；
-// 范本 us006_verify.mjs）。前置：ms-web 在 :8000 运行。流程：
+// 范本 us006_verify.mjs）。前置：ms-web 在 :8010 运行。流程：
 //   1) 上传 5336 母版 → 矩阵（默认数量全 1）；
 //   2) 高级配置弹窗「布局设置」prefix 分区：未勾选下拉 disabled / 勾选默认预选 g02·g03
 //      （面积最大两片，决策⑤）/ 无资格码警示（默认数量 1 → 2+2 无资格）/
@@ -14,7 +14,7 @@
 import { spawn } from 'node:child_process';
 import { writeFileSync, mkdirSync } from 'node:fs';
 
-const APP = 'http://127.0.0.1:8000/';
+const APP = 'http://127.0.0.1:8010/';
 const DXF = 'D:/code/MaterialSorting/data/5336#老六订单14%7%围加9_coded.dxf';
 const OUT = 'D:/code/MaterialSorting/out/us004_prefix_verify';
 mkdirSync(OUT, { recursive: true });

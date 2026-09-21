@@ -1,7 +1,7 @@
 // useParseDxf —— 上传 DXF → POST /api/parse-dxf → 写入 uploadStore（US-005）。
 //
 // 设计要点（参考 useExport 的防连击 + 错误处理模式）：
-//   1. 请求走相对路径 '/api/parse-dxf'（dev 由 Vite proxy 转 :8000，prod 同源；与 useExport
+//   1. 请求走相对路径 '/api/parse-dxf'（dev 由 Vite proxy 转 :8010，prod 同源；与 useExport
 //      内 '/export' 同口径，dev/prod 前端代码完全一致；US-005 起统一经 lib/api.apiFetch
 //      注入 X-Session-Id）。
 //   2. multipart/form-data：FormData 仅一个 file 字段（单文件）。Content-Type 由 fetch
@@ -45,7 +45,7 @@ import { useCommitToNesting } from './useCommitToNesting';
 import type { ParsedDoc } from '../types/parsed';
 import type { StateRestoreResponse } from '../types/stateFile';
 
-/** 解析端点（dev 由 Vite proxy 转 :8000；prod 同源）。 */
+/** 解析端点（dev 由 Vite proxy 转 :8010；prod 同源）。 */
 const PARSE_DXF_URL = '/api/parse-dxf';
 
 /** 状态文件恢复端点（US-003 上传分流；multipart，与 parse-dxf 同走 apiFetch 注 sid）。 */

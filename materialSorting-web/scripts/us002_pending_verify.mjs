@@ -4,7 +4,7 @@
 // 重现（密度对拍）→ 应用 → 布局 polygon 数对拍 + 来源小字 → PLT 导出 placed 逐条对拍。
 //
 // 前置：materialSorting-web/static 为 npm run build 产物（脚本自行校验）。
-// 自举起服 :8020（避开常驻 :8000 与冒烟 :8010），MS_SESSION_TTL_SEC=60；退出树杀。
+// 自举起服 :8020（避开常驻 :8010 与冒烟 :8030），MS_SESSION_TTL_SEC=60；退出树杀。
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

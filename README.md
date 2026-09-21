@@ -48,10 +48,10 @@ pip install -e ".[web]"
 
 ### dev 模式（Vite dev server，热重载，调试用）
 ```bash
-# 终端 A：后端在 :8000
+# 终端 A：后端在 :8010
 ms-web
 
-# 终端 B：前端 Vite dev server 在 :5173（Vite proxy 转发 /export 与 /ws 到 :8000）
+# 终端 B：前端 Vite dev server 在 :5173（Vite proxy 转发 /export 与 /ws 到 :8010）
 cd materialSorting-web
 npm install        # 首次装依赖
 npm run dev        # → http://localhost:5173
@@ -66,7 +66,7 @@ npm run build      # tsc --noEmit && vite build → static/
 
 # 2. 后端 serve 构建产物（静态资源挂载在 /static，根路径 / 返回 static/index.html）
 cd ..
-ms-web             # → http://127.0.0.1:8000
+ms-web             # → http://127.0.0.1:8010
 ```
 
 ## 多会话机制（web 多端隔离，2026-08-27）
@@ -248,7 +248,7 @@ ms-run-config <config.json>（CLI 平行通道，不经过 web）
 | `ms-explore` | 母版 DXF 全裁片探索（SVG/JSON/CSV） |
 | `ms-sparrow-baseline` | sparrow 基线求解（{0,180}，无 erode） |
 | `ms-sparrow-exp` | 旋转公差 / 重合公差 / 组合实验 |
-| `ms-web` | 可视化工作台（http://127.0.0.1:8000） |
+| `ms-web` | 可视化工作台（http://127.0.0.1:8010） |
 | `ms-run-config` | 配置驱动排料一条命令（commit → 串行多 seed 求解 → `out/config_runs/` result.json；`--lns` 自动 LNS 后处理（PC-008）；run 结束沉淀统计 + θ₀ 按实例类校准（PC-009），见上文「配置驱动求解」） |
 | `ms-lns` | LNS 波段重排后处理（对 run 目录最优布局波段级 ruin-and-recreate，产 result_lns.json + 前后对比 SVG，PC-007） |
 | `python scripts/embed_piece_codes.py <母版.dxf>` | 把 g01+ 编号植入母版 DXF 生成 `_coded.dxf`（与 Web 解析同源编号，幂等 + 自校验，版师在 ET2008 可对上 g 码） |

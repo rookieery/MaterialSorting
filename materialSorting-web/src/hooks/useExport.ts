@@ -6,7 +6,7 @@
 //   2. ExportPayload = { fmt, sizes: selectedSizes(), seed: run.seed, gate_mm,
 //      width_mm: lastFrame.width_mm, density: run.finalDensity, placed: lastFrame.placed_items,
 //      filename: doc.filename }（AC#2 字段 + filename 透传作导出文件名前缀）。
-//   3. fetch /export（相对 URL；dev 由 Vite proxy 转 :8000，prod 同源），响应 blob（AC#3）。
+//   3. fetch /export（相对 URL；dev 由 Vite proxy 转 :8010，prod 同源），响应 blob（AC#3）。
 //   4. Content-Disposition filename*=UTF-8''xxx → decodeURIComponent；fallback filename=xxx
 //      / nesting.<fmt>（AC#4，由 lib/download.ts parseContentDisposition 处理）。
 //   5. <a download> 触发文件下载，中文文件名前缀取上传母版名（去 .dxf 扩展名），形如

@@ -25,8 +25,8 @@ function loadConfig() {
     return JSON.parse(readFileSync(configPath, 'utf-8'));
   } catch {
     return {
-      baseUrl: 'http://localhost:8000/api',
-      healthEndpoint: 'http://localhost:8000/api/health',
+      baseUrl: 'http://localhost:8010/api',
+      healthEndpoint: 'http://localhost:8010/api/health',
       healthTimeout: 3000,
       requestTimeout: 5000,
       filePatterns: {

@@ -1,6 +1,6 @@
 // WS URL 构造（dev / prod 自适配）。
-//   dev  —— Vite :5173 经 proxy 转发 → :8000
-//   prod —— FastAPI 同源 :8000 直接 serve WS
+//   dev  —— Vite :5173 经 proxy 转发 → :8010
+//   prod —— FastAPI 同源 :8010 直接 serve WS
 // 协议随页面：https → wss，否则 ws。host 用 location.host 保持同源（与旧 vanilla 实现 一致）。
 //
 // US-005（多会话）：拼 ``?sid=`` query（浏览器 WS 不能自定义 Header，后端

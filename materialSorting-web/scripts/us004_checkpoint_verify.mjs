@@ -1,6 +1,6 @@
 // 会话过期自动恢复 US-004 浏览器验证（playwright，手动脚本不入 vitest；2026-09-13）。
 //
-// 前置：ms-web 在 :8000（prod static，默认 TTL —— 本 AC 不涉及过期）。
+// 前置：ms-web 在 :8010（prod static，默认 TTL —— 本 AC 不涉及过期）。
 //
 // 相位（US-004 AC：上传母版 → 改数量 → 断言 POST /api/state-checkpoint 200
 // stored:true → F5 刷新 → 干净重置 + DELETE 已发 → 数量矩阵为默认值）：
@@ -25,7 +25,7 @@ mkdirSync(OUT, { recursive: true });
 
 const { chromium } = await import('playwright');
 
-const BASE = 'http://127.0.0.1:8000';
+const BASE = 'http://127.0.0.1:8010';
 const DXF = ROOT + '/data/5336#老六订单14%7%围加9_coded.dxf';
 const SIZES = [32, 33, 34];
 const SOLVE_TIME = '5';

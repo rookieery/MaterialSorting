@@ -5,10 +5,10 @@
 //      状态行「将随排料参数生效：腰头成带 g05」
 //   4. 自定义 16 分钟（960s ≥ 905 下限，预计 2 轮）→ 执行 → 202 → 进度态
 //   5. 打印 sid + run_name（后续 curl 轮询 status 用；轮询即活性，会话不逐出）
-// 环境前置：ms-web 已在 :8000（新代码），static/ 已 build。
+// 环境前置：ms-web 已在 :8010（新代码），static/ 已 build。
 import { chromium } from 'playwright';
 
-const BASE = process.env.SMOKE_BASE_URL ?? 'http://127.0.0.1:8000/';
+const BASE = process.env.SMOKE_BASE_URL ?? 'http://127.0.0.1:8010/';
 
 let browser;
 try {

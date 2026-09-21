@@ -35,7 +35,7 @@ import { create } from 'zustand';
 import { apiFetch } from '../lib/api';
 import type { PtypeRepresentative, PtypesResponse } from '../types/ptype';
 
-/** /api/ptypes 端点（dev 由 Vite proxy 转 :8000；prod 同源）。 */
+/** /api/ptypes 端点（dev 由 Vite proxy 转 :8010；prod 同源）。 */
 const PTYPES_URL = '/api/ptypes';
 
 export type PtypeCacheStatus = 'idle' | 'loading' | 'ready' | 'error';

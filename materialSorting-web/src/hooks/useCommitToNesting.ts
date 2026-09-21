@@ -34,7 +34,7 @@ import { usePtypeStore } from '../store/ptypeStore';
 import { useUploadStore, type CommitSummary } from '../store/uploadStore';
 import { useUiStore } from '../store/uiStore';
 
-/** commit 端点（dev 由 Vite proxy 转 :8000；prod 同源）。 */
+/** commit 端点（dev 由 Vite proxy 转 :8010；prod 同源）。 */
 const COMMIT_TO_NESTING_URL = '/api/commit-to-nesting';
 
 /** commit 成功返回结构（后端 _commit_to_nesting_sync 返回 dict 的子集）。 */

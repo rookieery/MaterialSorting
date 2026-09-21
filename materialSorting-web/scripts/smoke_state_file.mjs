@@ -3,7 +3,7 @@
 //
 // 模板对齐 scripts/smoke_drag_snap.mjs（流程骨架 / WS 帧捕获 / fetch 包装导出
 // 抓包 / addInitScript 预置 ms.tour.*）；浏览器 = Edge 通道（系统通道借跑，
-// Chrome 兜底，同目录其余冒烟同款）。前置：ms-web 在 :8000 运行（prod static）。
+// Chrome 兜底，同目录其余冒烟同款）。前置：ms-web 在 :8010 运行（prod static）。
 //
 //   node materialSorting-web/scripts/smoke_state_file.mjs
 //
@@ -48,7 +48,7 @@ mkdirSync(OUT, { recursive: true });
 
 const { chromium } = await import('playwright');
 
-const BASE = 'http://127.0.0.1:8000';
+const BASE = 'http://127.0.0.1:8010';
 const DXF = ROOT + '/data/5336#老六订单14%7%围加9_coded.dxf';
 const SIZES = [32, 33, 34]; // 5336 码集；3 码 × 10 片 = 30 片（默认每格 1）
 const SOLVE_TIME = '5';

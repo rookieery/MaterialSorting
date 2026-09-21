@@ -29,7 +29,7 @@ import { apiFetch } from '../../lib/api';
 import { useParseDxf } from '../../hooks/useParseDxf';
 import { useUploadStore } from '../../store/uploadStore';
 
-/** 样例清单端点（dev 由 Vite proxy 转 :8000；prod 同源）。 */
+/** 样例清单端点（dev 由 Vite proxy 转 :8010；prod 同源）。 */
 const SAMPLES_URL = '/api/samples';
 
 /** 样例取文件端点（?name= query，encodeURIComponent 编码）。 */

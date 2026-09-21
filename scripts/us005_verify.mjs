@@ -5,7 +5,7 @@
 import { spawn } from 'node:child_process';
 import { writeFileSync, mkdirSync } from 'node:fs';
 
-const APP = 'http://127.0.0.1:8000/';
+const APP = 'http://127.0.0.1:8010/';
 const DXF = 'D:/code/MaterialSorting/data/M1787#直筒14%7%大货围加9）双针30码脚口8英寸(1)(2).dxf';
 const OUT = 'D:/code/MaterialSorting/out/us005_verify';
 mkdirSync(OUT, { recursive: true });
