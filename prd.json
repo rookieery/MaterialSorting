@@ -2,16 +2,10 @@
   "branchName": "ralph/machine-nesting-api",
   "stories": [
     {
-      "id": "US-001",
-      "title": "服务端口可配与 machine 路由骨架",
-      "description": "As a 部署者, I want MS web 端口可经环境变量配置且新增机器路由模块骨架注册进 app, so that 与 YL 后端（默认 :8000）同机并存且后续机器端点有落点。\n\n背景：YLPatternMaking 打版系统经 HTTP 机器接口接入排料引擎（二期，配套 PRD tasks/prd-machine-nesting-api.md）。机器端点族 /api/machine/* 落在新模块 web/machine.py，后续作为 web/strategy.py 家族的第三成员（mode='machine'）复用其 spawn/marker/树杀骨架。\n\n具体任务：\n1. materialSorting-server/src/materialsorting/web/server.py — main() 端口改读环境变量 MS_WEB_PORT（缺省 8000 行为不变）；文件尾在 strategy 路由注册之后调用 register_machine_routes(app)。\n2. materialSorting-server/src/materialsorting/web/machine.py — 新建：模块 docstring（机器对接契约概述）+ 空 FastAPI APIRouter + register_machine_routes(app)；对 server 的依赖走函数内延迟 import（strategy.py 防环先例）；禁 import ..cli.*（分层红线：web→cli 是反向依赖）。\n3. materialSorting-server/tests/test_web_machine.py — 新建：AST 守卫断言 machine.py 源码无 import cli 语句（复刻 tests/test_web_strategy.py 守卫模式）+ 路由注册冒烟。\n\n验收标准：\n- MS_WEB_PORT=8010 启动后 GET /（响应头 Cache-Control: no-cache）经 8010 可达；不设环境变量时 8000 行为逐字节不变。\n- machine.py 无任何 import ..cli 语句（AST 断言）。\n- pytest tests/test_web_machine.py tests/test_web_strategy.py tests/test_web_server.py 全绿（零回归）。\n- Python 模块导入检查通过：python -c \"from materialsorting.web import machine\"，分层依赖未反向。",
-      "passes": true
-    },
-    {
       "id": "US-002",
       "title": "machine solve 提交端点",
       "description": "As a 机器客户端（YL 后端）, I want 提交 multipart 母版 DXF + config 换取 task_id, so that MS 立即按所选运行模式开始求解。\n\n具体任务：\n1. materialSorting-server/src/materialsorting/web/strategy.py — 把 _spawn_run_process/_kill_tree/_discover_run_dir/_cleanup_stale_web_artifacts 提升为模块内可复用（签名不变零行为变更）；_STRATEGY_STATES 值增加 mode='machine' 分支。\n2. materialSorting-server/src/materialsorting/web/machine.py — POST /api/machine/solve 主逻辑：multipart file（母版 DXF 二进制 ≤20MB，同 /api/parse-dxf 上限）+ config（JSON 字符串）。config 键集：gate_mm 必填 int>0；run_mode ∈ normal|advanced|extreme 缺省 normal；sizes int[]；per_type {g码:{d,tol}}；quantities {g码:{码号字符串:int≥0}}；client_ref str≤128 幂等键。流程：铸 sid（'m'+时间戳+rand，满足 sessions.SID_RE）→ 保存上传 out/uploads/<doc_id>.dxf → 复用 server.py parse+commit 管线（函数内延迟 import；带 sid 只挂本会话，不碰 default _PIECES_STATE）→ 写 cfg → spawn → 写 marker .web_strategy_active_<sid>.json（恰 5 键，mode='machine'）→ 202 {task_id, run_name, started_at}。run_name = machine_<task6>_<rand6>。\n3. 运行模式三档映射（时间烘焙常量，全默认参数零暴露）：normal 追加 ['--time','180']（plain，单 seed 0）；advanced 追加 ['--strategy','race','--time','1200']（race 默认档 race-budget 180/race-gate 0.5 由 CLI 缺省）；extreme 追加 ['--extreme','--time','7200']（默认 race 臂，不加 --extreme-strategy；extreme-budget 缺省 600）。config 不接受 time/seeds/band/prefix 键（在场 400）。\n4. materialSorting-server/tests/test_web_machine.py — 错误矩阵 + 三模式 spawn 命令金标 + default 会话不受扰对拍。\n\n验收标准：\n- 合法载荷（YL nest.dxf 风格夹具 + {gate_mm:1750, sizes:[…], run_mode:'normal', quantities:{…}}）→ 202；out/config_runs/machine_<task6>_<rand6>_<时间戳>/ 出现且含 cfg 落盘产物。\n- 三模式 spawn 命令逐参数与上述金标一致（断言 cmd 列表，含 sys.executable 与 -m materialsorting.cli.run_config）。\n- 错误矩阵：缺 file→400；>20MB→413；gate_mm 缺失/非正→400；坏 DXF→422 中文消息；同 client_ref 在飞→409 返回既有 task_id。\n- commit 只挂本会话：default _PIECES_STATE 的 doc_id 不变（对拍断言）。\n- pytest tests/test_web_machine.py 全绿 + 全量后端测试无回归。\n- python -c \"from materialsorting.web import machine\" 导入通过，分层依赖未反向。",
-      "passes": false
+      "passes": true
     },
     {
       "id": "US-003",

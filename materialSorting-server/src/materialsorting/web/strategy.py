@@ -15,6 +15,13 @@ warm 顺延 × 极限参数）；status 载荷 additive ``strategy`` 键透传�
 marker 同存，orphan 路径可恢复；无键/None = race —— 存量极限 run 全为 race 臂），
 前端进度面据此切换 se chips / 延长阶段行 / warm 提示。
 
+**机器对接家族（prd-machine-nesting-api US-002 起）**：``machine.py`` 经模块属性
+访问复用本模块骨架（``_spawn_run_process`` / ``_kill_tree`` / ``_discover_run_dir``
+/ ``_cleanup_stale_web_artifacts`` + ``_STRATEGY_STATES`` 槽 + marker + run 存活
+钉住 hook）实现 ``/api/machine/*`` —— 机器任务 ``mode='machine'``（``MACHINE_MODE``
+常量），每任务一个 'm' 前缀独立 sid，不与浏览器工作台会话（default / 用户 sid）
+相交；四函数对 machine 的复用**签名不变零行为变更**。
+
 四路由（``register_strategy_routes(app)`` 由 ``server.py`` 文件尾注册），US-004
 多会话化（2026-08-27）后**全部按 ``X-Session-Id`` 解析**（缺省/空串 → default 会话）：
 
@@ -94,6 +101,15 @@ ALLOWED_MINUTES = (10, 20, 30, 60)
 EXTREME_MODE = 'extreme'
 EXTREME_MIN_TIME_S = 905
 EXTREME_MAX_TIME_S = 43200
+# 机器对接家族第三成员（prd-machine-nesting-api US-002）：``machine.py`` 经**模块属性
+# 访问**复用本模块骨架（``_spawn_run_process`` / ``_kill_tree`` / ``_discover_run_dir``
+# / ``_cleanup_stale_web_artifacts`` —— 均已模块级可复用、签名不变零行为变更；测试
+# monkeypatch ``strategy_mod._spawn_run_process`` 对 machine 同一生效点）。每个机器
+# 任务一个 'm' 前缀独立 sid（满足 SID_RE），``_STRATEGY_STATES`` 值可能出现
+# ``mode='machine'`` —— 浏览器工作台会话（default / 用户 sid）不受扰。
+MACHINE_MODE = 'machine'
+# 409 单飞文案的 mode → 运行名映射（缺省「策略运行」兼容无 mode 的旧 marker）。
+_MODE_LABELS = {EXTREME_MODE: '极限运行', MACHINE_MODE: '机器排料任务'}
 # run_dir 发现宽限（秒）：spawn 后 CLI 先做 config 校验 + commit（秒级）才建
 # run_dir；超过该时长仍未发现且进程已死 → error + stderr 尾部。
 RUN_DIR_GRACE_SEC = 30.0
@@ -702,13 +718,15 @@ async def _start_run(req: Request, family: str):
     # 每会话单飞闸门（跨会话完全并发放开；US-002 起策略/极限共用本槽 → 同会话
     # 两入口 409 互斥零额外代码）：本会话内存态非终态（starting/running）或本会话
     # marker 在（含 orphan 遗留）→ 409。文案带在跑的 mode（前端区分对方是高级
-    # 运行还是极限运行；mode 缺失的旧 marker 沿用「策略运行」措辞）。
+    # 运行还是极限运行；mode 缺失的旧 marker 沿用「策略运行」措辞；机器任务
+    # mode='machine' 每任务独立 sid，正常不与本闸门相交 —— 分支仅为状态槽值域
+    # 完整性，见 MACHINE_MODE 注记）。
     st = _states(sid, create=True)
     marker = _read_marker(sid)
     in_flight = st.get('state') not in (None, *_TERMINAL_STATES)
     if in_flight or marker is not None:
         cur_mode = st.get('mode') if in_flight else (marker or {}).get('mode')
-        what = '极限运行' if cur_mode == EXTREME_MODE else '策略运行'
+        what = _MODE_LABELS.get(cur_mode, '策略运行')
         return JSONResponse(
             {'error': f'已有进行中的{what}（或检测到遗留 marker），请先停止/清理'},
             status_code=409)
