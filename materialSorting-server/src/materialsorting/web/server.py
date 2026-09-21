@@ -577,6 +577,16 @@ from .strategy import register_strategy_routes   # noqa: E402
 
 register_strategy_routes(app)
 
+# 机器对接排料 API（YL 排料对接二期 US-001）：/api/machine/* 五端点族的落点骨架
+# （mode='machine' = strategy 家族第三成员，复用其 spawn/marker/树杀骨架，端点自
+# US-002 起逐故事落地）。machine 模块禁 import ..cli.*（AST 守卫，见
+# tests/test_web_machine.py）；对本模块的依赖走函数内延迟 import（strategy.py
+# 防环先例）。**必须在 register_strategy_routes 之后**（后续故事复用其注册的
+# run 钉住 hook 时序同 strategy 家族约定）。
+from .machine import register_machine_routes   # noqa: E402
+
+register_machine_routes(app)
+
 # 状态文件 US-001：POST /api/state-save（工作台状态 → gzip JSON .msn 附件；恢复端
 # /api/state-restore 见 US-002）。statefile 只依赖 web 兄弟模块（solver/routes_views/
 # sessions），模块级无环；文件尾注册一行（strategy.py 同模式）。
