@@ -10,7 +10,7 @@ US-001 覆盖骨架三面：
     server.py 文件尾在 strategy 注册**之后**调用（AST 顺序断言）；server app
     装配后 GET / 仍 200 + Cache-Control: no-cache（机器端点对工作台零扰动）。
 
-US-002（本故事）覆盖 solve 提交端点：
+US-002 覆盖 solve 提交端点：
   - 三模式 spawn 命令金标（normal=plain --time 180 / advanced=--strategy race
     --time 1200 / extreme=--extreme --time 7200，逐参数断言含 sys.executable 与
     -m materialsorting.cli.run_config）+ cfg 落盘对拍（time/seeds 烘焙、
@@ -21,7 +21,24 @@ US-002（本故事）覆盖 solve 提交端点：
   - 同 client_ref 在飞→409 返回既有 task_id（不二次 spawn）；终态后同 ref 放行；
   - default 会话不受扰：runtime._PIECES_STATE 的 doc_id 在 solve 前后不变（对拍）。
 
-US-003 起补：status/stop/result 三端点行为、export 会话无关导出、幂等/清理/token。
+US-003（本故事）覆盖 status/stop/result 三端点：
+  - status 载荷金标：normal 档 running 期 incumbent 走 best_frame 边车回落
+    （plain run portfolio.incumbent 恒 null，US-002 实测）+ 运行中 curve 非法
+    JSON 在场仍 200（绝不读 curve）+ 恰 10 键无 placed_items；race（advanced）
+    / extreme 档各一状态金标（portfolio.incumbent 优先 + run_mode/total_budget
+    透传）；error 态 stderr 尾；未知/非法/外族 task_id 400·404；
+  - 轮询刷活性：solve 后会话被逐出（registry 清空模拟 TTL 过窗）status 仍 200
+    （_STRATEGY_STATES 内存态路径，machine 不走会话闸门）；solve 全流程
+    starting→running→done 状态推进；
+  - orphan：pid 存活 → orphan（alive/pid 附加键）可 stop；pid 死 + 30s 宽限 →
+    error；run_mode/total_budget 经 machine_cfg 反查恢复；
+  - stop：taskkill /PID /T /F 树杀 + run_dir 保留 + stopped 后 result 仍可读
+    （best_frame density 最大回落）；
+  - result：running→409；done plain 档 manifest.pieces 键集含 raw_polygon/
+    d_mm/demand/color + demand>1 的 g 码 placed_items 发 N 条绝不按 pid 去重；
+    终态后 stop→400。
+
+US-004 起补：export 会话无关导出、幂等/清理/token。
 端口可配（MS_WEB_PORT）由 server.main() 冒烟与部署文档覆盖（uvicorn 层，
 TestClient 不经端口）。
 """
@@ -33,6 +50,7 @@ import os
 import sys
 import tempfile
 import time
+import uuid
 from pathlib import Path
 
 import ezdxf
@@ -150,10 +168,13 @@ def test_server_app_healthy_with_machine_router():
         r = client.get('/')
         assert r.status_code == 200
         assert r.headers.get('Cache-Control') == 'no-cache'
-    # US-002 起真端点挂上本 router（solve 先行；status/stop/result/export/DELETE
-    # 自 US-003 起逐故事补充 —— 本断言随之扩集）。
+    # US-002 起真端点挂上本 router（solve 先行；US-003 status/stop/result；
+    # export/DELETE 自 US-004 起逐故事补充 —— 本断言随之扩集）。
     machine_paths = {getattr(route, 'path', '') for route in machine_mod.router.routes}
     assert '/api/machine/solve' in machine_paths
+    assert '/api/machine/solve/{task_id}/status' in machine_paths
+    assert '/api/machine/solve/{task_id}/stop' in machine_paths
+    assert '/api/machine/solve/{task_id}/result' in machine_paths
 
 
 # ============================================================= US-002 solve
@@ -474,3 +495,395 @@ def test_solve_client_ref_inflight_409_then_release(machine_env, monkeypatch):
     assert r3.status_code == 202
     assert r3.json()['task_id'] != task1
     assert len(calls) == 2
+
+
+# ============================================================= US-003 status/stop/result
+
+# status 契约恰 10 键（orphan 态 additive alive/pid 两诊断键在外）。
+_STATUS_KEYS = {'state', 'mode', 'run_mode', 'total_budget_sec', 'elapsed_sec',
+                'incumbent', 'current', 'per_seed', 'error', 'exit_code'}
+
+
+def _synth_pieces() -> list[dict]:
+    """合成 3 片（g01_28 / g02_28 / g01_30，schema v2）—— build_pid_meta /
+    result manifest 组装用（demand 判定按 label×sizeKey 查 quantities）。"""
+    return [
+        {'pid': 'g01_28', 'label': 'g01', 'size': 28,
+         'polygon': [[0.0, 0.0], [500.0, 0.0], [500.0, 800.0], [0.0, 800.0]],
+         'bbox': [0.0, 0.0, 500.0, 800.0], 'area_mm2': 400000.0, 'n_verts': 4,
+         'allowed_angles': [0, 180],
+         'net_polygon': [], 'internal_lines': [], 'notches': [],
+         'grain_line': None},
+        {'pid': 'g02_28', 'label': 'g02', 'size': 28,
+         'polygon': [[0.0, 0.0], [300.0, 0.0], [300.0, 400.0], [0.0, 400.0]],
+         'bbox': [0.0, 0.0, 300.0, 400.0], 'area_mm2': 120000.0, 'n_verts': 4,
+         'allowed_angles': [0, 180],
+         'net_polygon': [], 'internal_lines': [], 'notches': [],
+         'grain_line': None},
+        {'pid': 'g01_30', 'label': 'g01', 'size': 30,
+         'polygon': [[0.0, 0.0], [500.0, 0.0], [500.0, 800.0], [0.0, 800.0]],
+         'bbox': [0.0, 0.0, 500.0, 800.0], 'area_mm2': 400000.0, 'n_verts': 4,
+         'allowed_angles': [0, 180],
+         'net_polygon': [], 'internal_lines': [], 'notches': [],
+         'grain_line': None},
+    ]
+
+
+# Σdemand 基准载荷：g01@28 两份 + g02@28 一份（g01@30 demand=0 不入 manifest）。
+_QTY_G01_28_X2 = {'g01': {'28': 2}}
+_PLACED_3 = [
+    {'id': 'g01_28', 'rotation': 0.0, 'translation': [10.0, 20.0]},
+    {'id': 'g01_28', 'rotation': 180.0, 'translation': [600.0, 20.0]},
+    {'id': 'g02_28', 'rotation': 0.0, 'translation': [1200.0, 30.0]},
+]
+
+
+def _machine_sid() -> str:
+    """合法机器任务 sid（'m'+时间戳+rand8，满足 sessions.SID_RE）。"""
+    return 'm' + time.strftime('%Y%m%d%H%M%S') + uuid.uuid4().hex[:8]
+
+
+def _install_machine_state(tmp_path: Path, *, run_dir=None, rc=None,
+                           run_mode='normal', pid=8431,
+                           stderr_text='配置错误: master_dxf 不存在 boom\n',
+                           quantities=None) -> tuple[str, dict]:
+    """直装 machine 内存态（status/stop/result 解析用，不走 solve 全流程）。"""
+    sid = _machine_sid()
+    stderr_path = tmp_path / 'tmp' / f'machine_err_{sid[:6]}_t.log'
+    stderr_path.parent.mkdir(parents=True, exist_ok=True)
+    stderr_path.write_text(stderr_text, encoding='utf-8')
+    st = strategy_mod._states(sid, create=True)
+    st.clear()
+    st.update({
+        'sid': sid, 'state': 'starting', 'proc': FakeProc(pid=pid, rc=rc),
+        'pid': pid, 'mode': strategy_mod.MACHINE_MODE,
+        'run_mode': run_mode, 'client_ref': None,
+        'strategy': None, 'minutes': None,
+        'total_budget_sec': machine_mod.RUN_MODE_SPECS[run_mode]['time'],
+        'started_at': time.strftime('%Y-%m-%dT%H:%M:%S'),
+        'started_ts': time.time(), 'run_dir': run_dir, 'snapshot': set(),
+        'stderr_path': str(stderr_path), 'doc_id': 'deadbeef01',
+        'pieces_snapshot': _synth_pieces(), 'sizes': None, 'per_type': None,
+        'quantities': quantities, 'gate_mm': 1750.0, 'seed': 0,
+        'cfg_path': 'cfg.json', 'run_name': f'machine_{sid[:6]}_abc123',
+        'stopped': False, 'exit_code': None, 'error': None,
+    })
+    return sid, st
+
+
+def _write_best_frame(run_dir: Path, seed: int, density: float, *,
+                      ext=False, placed=None, frame_index=3) -> None:
+    name = f'best_frame_s{seed}{"_ext" if ext else ""}.json'
+    (run_dir / name).write_text(json.dumps({
+        'seed': seed, 'frame_index': frame_index, 'elapsed': 30.0,
+        'phase': 'compression', 'density': density,
+        'density_sparrow': density + 0.02, 'width_mm': 7000.0,
+        'n_placed': len(placed or []), 'placed_items': placed or [],
+    }), encoding='utf-8')
+
+
+def _write_plain_result(run_dir: Path, *, per_seed=None, incumbent=None,
+                        portfolio_mode=None) -> None:
+    """plain（normal 档）形态 result.json：portfolio 引擎未激活 → incumbent
+    null + per_seed 空（US-002 实测；race/extreme 档可传值覆盖）。"""
+    portfolio = {'target': None, 'incumbent': incumbent,
+                 'per_seed': per_seed if per_seed is not None else [],
+                 'theta_history': [], 'kill_mode': 'off'}
+    if portfolio_mode is not None:
+        portfolio['mode'] = portfolio_mode
+    (run_dir / 'result.json').write_text(json.dumps({
+        'config': {'gate_mm': 1750.0, 'time': 180, 'seeds': [0]},
+        'solve': [{'seed': 0, 'real_density': 0.5788, 'placed_items': 3}],
+        'best': {'seed': 0, 'real_density': 0.5788, 'placed_items': 3},
+        'portfolio': portfolio,
+    }), encoding='utf-8')
+
+
+# ------------------------------------------------------------- status
+
+
+def test_status_normal_running_golden(machine_env):
+    """normal 档 running 金标：恰 10 键无 placed_items；incumbent 走 best_frame
+    边车回落（plain run portfolio.incumbent 恒 null）+ 运行中 curve 非法 JSON
+    在场仍 200（status 绝不读 curve_s*.json）。"""
+    run_dir = Path(paths_mod.CONFIG_RUNS_DIR) / 'machine_m2026_abc123_20260921-000000'
+    run_dir.mkdir(parents=True)
+    _write_best_frame(run_dir, 0, 0.5788, placed=_PLACED_3, frame_index=7)
+    # 运行中的 curve 逐帧 append 非合法 JSON —— 在场即证明 status 不读它。
+    (run_dir / 'curve_s0.json').write_text(
+        '[{"elapsed": 1.0, "density": 0.1', encoding='utf-8')
+    sid, st = _install_machine_state(machine_env, run_dir=str(run_dir), rc=None)
+    strategy_mod._write_marker(
+        {'pid': st['pid'], 'run_dir': None, 'doc_id': 'deadbeef01',
+         'mode': strategy_mod.MACHINE_MODE,
+         'started_at': st['started_at']}, sid)
+
+    r = TestClient(server_mod.app).get(f'/api/machine/solve/{sid}/status')
+    assert r.status_code == 200, r.text
+    payload = r.json()
+    assert set(payload) == _STATUS_KEYS
+    assert payload['state'] == 'running'
+    assert payload['mode'] == 'machine'
+    assert payload['run_mode'] == 'normal'
+    assert payload['total_budget_sec'] == 180          # RUN_MODE_SPECS 烘焙
+    assert payload['elapsed_sec'] >= 0.0
+    # incumbent = best_frame 边车 density 最大帧四键（无 placed_items 控载荷）。
+    assert payload['incumbent'] == {'density': 0.5788, 'width_mm': 7000.0,
+                                    'seed': 0, 'frame_index': 7}
+    assert payload['current'] == {'seed': 0, 'density': 0.5788, 'ext': False}
+    assert payload['per_seed'] == []                    # plain run portfolio 空
+    assert payload['error'] is None and payload['exit_code'] is None
+    # running 非终态：marker 保留（orphan 恢复面）。
+    assert strategy_mod._read_marker(sid) is not None
+
+
+def test_status_race_mode_golden(machine_env):
+    """advanced（race）档状态金标：portfolio.incumbent 优先于 best_frame 边车
+    （0.88 > 边车 0.86 证来源）+ done 态推进 + run_mode/total_budget 透传。"""
+    run_dir = Path(paths_mod.CONFIG_RUNS_DIR) / 'machine_m2026_race1_20260921-010000'
+    run_dir.mkdir(parents=True)
+    _write_plain_result(
+        run_dir,
+        incumbent={'density': 0.88, 'width_mm': 7100.5, 'seed': 0,
+                   'frame_index': 5, 'elapsed': 118.0, 'placed_items': _PLACED_3},
+        per_seed=[{'seed': 0, 'best_density': 0.88, 'phase': 'race',
+                   'killed': False, 'elapsed': 118.0}],
+        portfolio_mode='race')
+    _write_best_frame(run_dir, 0, 0.86, placed=_PLACED_3, frame_index=4)
+    sid, st = _install_machine_state(machine_env, run_dir=str(run_dir), rc=0,
+                                     run_mode='advanced')
+    payload = TestClient(server_mod.app).get(f'/api/machine/solve/{sid}/status').json()
+    assert payload['state'] == 'done' and payload['exit_code'] == 0
+    assert payload['run_mode'] == 'advanced'
+    assert payload['total_budget_sec'] == 1200
+    # incumbent 取 portfolio.incumbent（非边车 0.86）→ 恰四键。
+    assert payload['incumbent'] == {'density': 0.88, 'width_mm': 7100.5,
+                                    'seed': 0, 'frame_index': 5}
+    assert payload['per_seed'] == [{'seed': 0, 'best_density': 0.88,
+                                    'phase': 'race', 'killed': False,
+                                    'elapsed': 118.0}]
+    # done 终态：状态写回内存 + 清 marker（同 strategy 口径）。
+    assert st['state'] == 'done'
+    assert strategy_mod._read_marker(sid) is None
+
+
+def test_status_extreme_mode_golden(machine_env):
+    """extreme 档状态金标：run_mode='extreme' + total_budget_sec 7200 + done。"""
+    run_dir = Path(paths_mod.CONFIG_RUNS_DIR) / 'machine_m2026_ext1_20260921-020000'
+    run_dir.mkdir(parents=True)
+    _write_plain_result(
+        run_dir,
+        incumbent={'density': 0.917, 'width_mm': 6900.0, 'seed': 0,
+                   'frame_index': 9, 'elapsed': 7000.0, 'placed_items': _PLACED_3},
+        per_seed=[{'seed': 0, 'best_density': 0.917, 'killed': False}],
+        portfolio_mode='race')       # extreme 默认 race 臂 → portfolio.mode='race'
+    sid, st = _install_machine_state(machine_env, run_dir=str(run_dir), rc=0,
+                                     run_mode='extreme')
+    payload = TestClient(server_mod.app).get(f'/api/machine/solve/{sid}/status').json()
+    assert payload['state'] == 'done'
+    assert payload['run_mode'] == 'extreme'
+    assert payload['total_budget_sec'] == 7200
+    assert payload['incumbent']['density'] == 0.917
+    assert payload['error'] is None
+
+
+def test_status_error_state_stderr_tail(machine_env):
+    """error 态（进程死 + run_dir 未发现超 30s 宽限）→ error + stderr 尾 +
+    exit_code；状态写回 + 清 marker。"""
+    sid, st = _install_machine_state(machine_env, run_dir=None, rc=1)
+    st['started_ts'] = time.time() - 40.0
+    strategy_mod._write_marker(
+        {'pid': st['pid'], 'run_dir': None, 'doc_id': 'deadbeef01',
+         'mode': strategy_mod.MACHINE_MODE, 'started_at': st['started_at']}, sid)
+    payload = TestClient(server_mod.app).get(f'/api/machine/solve/{sid}/status').json()
+    assert payload['state'] == 'error'
+    assert 'run 目录' in payload['error'] and 'boom' in payload['error']
+    assert payload['exit_code'] == 1
+    assert payload['incumbent'] is None and payload['current'] is None
+    assert st['state'] == 'error'
+    assert strategy_mod._read_marker(sid) is None
+
+
+def test_status_stop_result_task_id_gate(machine_env):
+    """task_id 三端点公共闸：格式非法（含 '.'，不满足 SID_RE）→ 400；未知任务 →
+    404；外族状态槽（浏览器会话的 strategy run）不冒认 → 404。"""
+    c = TestClient(server_mod.app)
+    for path, method in (('status', 'get'), ('stop', 'post'), ('result', 'get')):
+        r = getattr(c, method)(f'/api/machine/solve/bad.id/{path}')
+        assert r.status_code == 400 and 'task_id 非法' in r.json()['error'], path
+        r2 = getattr(c, method)(f'/api/machine/solve/{_machine_sid()}/{path}')
+        assert r2.status_code == 404 and '未知任务' in r2.json()['error'], path
+    # 外族槽：strategy 家族（mode='race'）sid 拿到机器端点也不可读。
+    foreign = 'aaaa1111'
+    st = strategy_mod._states(foreign, create=True)
+    st.update({'sid': foreign, 'state': 'running', 'mode': 'race', 'pid': 1})
+    assert c.get(f'/api/machine/solve/{foreign}/status').status_code == 404
+
+
+def test_solve_then_status_lifecycle_and_evicted_session(machine_env, monkeypatch):
+    """solve 全流程状态推进（starting→running→done）+ 轮询刷活性：会话被逐出
+    （registry 清空模拟 TTL+宽限过窗）后 status 仍 200（内存态路径不走会话闸门）。"""
+    _spawn_capture(monkeypatch, pids=(991,))
+    c = TestClient(server_mod.app)
+    r = _solve(c, _yl_master_bytes(), {'gate_mm': 1750})
+    assert r.status_code == 202
+    task_id = r.json()['task_id']
+    run_name = r.json()['run_name']
+    assert sessions_mod.registry.resolve(task_id).doc_id   # 会话已注册
+
+    # starting → CLI 建 run_dir → 前缀 glob 发现 → running + incumbent（边车回落）。
+    run_dir = Path(paths_mod.CONFIG_RUNS_DIR) / f'{run_name}_20260921-030000'
+    run_dir.mkdir(parents=True)
+    _write_best_frame(run_dir, 0, 0.4233, placed=_PLACED_3, frame_index=2)
+    payload = c.get(f'/api/machine/solve/{task_id}/status').json()
+    assert payload['state'] == 'running'
+    assert payload['incumbent']['density'] == 0.4233
+    assert strategy_mod._STRATEGY_STATES[task_id]['run_dir'] == str(run_dir)
+
+    # 会话被逐出（无人轮询超 TTL+宽限）→ status 仍 200（内存态路径）。
+    sessions_mod.registry.reset()
+    payload2 = c.get(f'/api/machine/solve/{task_id}/status')
+    assert payload2.status_code == 200
+    assert payload2.json()['state'] == 'running'
+    assert payload2.json()['run_mode'] == 'normal'
+
+    # 进程自然结束 + result.json → done（解析态写回内存态）。
+    strategy_mod._STRATEGY_STATES[task_id]['proc'] = FakeProc(pid=991, rc=0)
+    _write_plain_result(run_dir)
+    payload3 = c.get(f'/api/machine/solve/{task_id}/status').json()
+    assert payload3['state'] == 'done' and payload3['exit_code'] == 0
+
+
+def test_status_orphan_paths(machine_env, monkeypatch):
+    """orphan（内存态空 + marker 在，模拟 MS 重启）：pid 存活 → orphan 可 stop；
+    pid 死 + 超 30s 宽限 → error；run_mode/total_budget 经 machine_cfg 反查恢复。"""
+    sid = _machine_sid()
+    marker = {'pid': 777, 'run_dir': None, 'doc_id': 'x',
+              'mode': strategy_mod.MACHINE_MODE,
+              'started_at': time.strftime('%Y-%m-%dT%H:%M:%S')}
+    c = TestClient(server_mod.app)
+
+    # pid 存活 → orphan + 附加 alive/pid 诊断键；cfg 反查恢复 extreme 档。
+    monkeypatch.setattr(strategy_mod, '_pid_alive', lambda pid: True)
+    strategy_mod._write_marker(marker, sid)
+    (machine_env / 'uploads' / f'machine_cfg_{sid}_20260921-000000.json').write_text(
+        json.dumps({'gate_mm': 1750.0, 'time': 7200, 'seeds': [0],
+                    'master_dxf': 'x.dxf'}), encoding='utf-8')
+    payload = c.get(f'/api/machine/solve/{sid}/status').json()
+    assert payload['state'] == 'orphan'
+    assert payload['alive'] is True and payload['pid'] == 777
+    assert payload['run_mode'] == 'extreme'           # cfg time 反查 RUN_MODE_SPECS
+    assert payload['total_budget_sec'] == 7200
+    # orphan 可 stop（pid 存活 → 树杀路径 + 清 marker）。
+    r = c.post(f'/api/machine/solve/{sid}/stop')
+    assert r.status_code == 200 and r.json() == {'stopped': True, 'pid': 777,
+                                                 'orphan': True}
+    assert strategy_mod._read_marker(sid) is None
+
+    # pid 死 + 超 30s 宽限 → error（elapsed 由 marker.started_at 推出）。
+    sid2 = _machine_sid()
+    strategy_mod._write_marker({**marker, 'pid': 778,
+                                'started_at': '2020-01-01T00:00:00'}, sid2)
+    monkeypatch.setattr(strategy_mod, '_pid_alive', lambda pid: False)
+    payload2 = c.get(f'/api/machine/solve/{sid2}/status').json()
+    assert payload2['state'] == 'error'
+    assert '宽限' in payload2['error'] and '778' in payload2['error']
+    assert payload2['run_mode'] is None               # 无 cfg 可反查 → 降级 None
+
+
+# ------------------------------------------------------------- stop / result
+
+
+def test_stop_tree_kill_and_result_after_stop(machine_env, monkeypatch):
+    """stop：Windows taskkill /PID /T /F 树杀 + run_dir 保留；stopped 后
+    result 仍可读（best_frame 边车 density 最大回落）。"""
+    run_dir = Path(paths_mod.CONFIG_RUNS_DIR) / 'machine_m2026_stop1_20260921-040000'
+    run_dir.mkdir(parents=True)
+    _write_best_frame(run_dir, 0, 0.5, placed=_PLACED_3[:2])
+    _write_best_frame(run_dir, 1, 0.62, placed=_PLACED_3)   # 最大者
+    sid, st = _install_machine_state(machine_env, run_dir=str(run_dir), rc=None,
+                                     quantities=_QTY_G01_28_X2)
+    strategy_mod._write_marker(
+        {'pid': st['pid'], 'run_dir': str(run_dir), 'doc_id': 'deadbeef01',
+         'mode': strategy_mod.MACHINE_MODE, 'started_at': st['started_at']}, sid)
+    calls = []
+
+    def fake_run(cmd, **kw):
+        calls.append(list(cmd))
+
+    monkeypatch.setattr(strategy_mod.subprocess, 'run', fake_run)
+    c = TestClient(server_mod.app)
+    r = c.post(f'/api/machine/solve/{sid}/stop')
+    assert r.status_code == 200
+    assert r.json() == {'stopped': True, 'pid': st['pid']}
+    if sys.platform == 'win32':
+        assert calls == [['taskkill', '/PID', str(st['pid']), '/T', '/F']]
+    assert st['state'] == 'stopped'
+    assert strategy_mod._read_marker(sid) is None
+    assert run_dir.is_dir()                            # run_dir 保留
+
+    # stopped 后 status 稳定 + result 仍可读：无 result.json → best_frame 回落。
+    assert c.get(f'/api/machine/solve/{sid}/status').json()['state'] == 'stopped'
+    r2 = c.get(f'/api/machine/solve/{sid}/result')
+    assert r2.status_code == 200
+    best = r2.json()['best']
+    assert best['seed'] == 1 and best['density'] == 0.62
+    assert best['density_sparrow'] == 0.64             # 边车同帧补 erode 参考口径
+
+
+def test_result_done_manifest_and_multi_copy(machine_env):
+    """done（plain normal 档）result：{manifest, best, summary} 恰三键；manifest
+    .pieces 键集含 raw_polygon/d_mm/demand/color；demand>1 的 g 码 placed_items
+    发 N 条绝不按 pid 去重（Σdemand 守恒）。"""
+    run_dir = Path(paths_mod.CONFIG_RUNS_DIR) / 'machine_m2026_res1_20260921-050000'
+    run_dir.mkdir(parents=True)
+    _write_plain_result(run_dir)     # plain：portfolio.incumbent null → 边车回落
+    _write_best_frame(run_dir, 0, 0.5788, placed=_PLACED_3, frame_index=7)
+    sid, st = _install_machine_state(machine_env, run_dir=str(run_dir), rc=0,
+                                     quantities=_QTY_G01_28_X2)
+
+    c = TestClient(server_mod.app)
+    assert c.get(f'/api/machine/solve/{sid}/status').json()['state'] == 'done'
+    r = c.get(f'/api/machine/solve/{sid}/result')
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert set(body) == {'manifest', 'best', 'summary'}
+
+    manifest = body['manifest']
+    assert manifest['gate_mm'] == 1750.0
+    by_pid = {p['id']: p for p in manifest['pieces']}
+    assert set(by_pid) == {'g01_28', 'g02_28'}         # g01_30 demand=0 不入
+    for piece in manifest['pieces']:
+        assert {'id', 'size', 'color', 'area_mm2', 'polygon', 'raw_polygon',
+                'd_mm', 'label', 'demand'} <= set(piece)
+    assert by_pid['g01_28']['demand'] == 2 and by_pid['g02_28']['demand'] == 1
+    assert by_pid['g01_28']['color'] is not None       # 尺码配色单一真相源
+
+    # best：plain 档 portfolio.incumbent null → best_frame 边车 density 最大回落；
+    # placed_items 条数 = Σdemand（g01_28×2 + g02_28×1），绝不按 pid 去重。
+    best = body['best']
+    assert best['density'] == 0.5788 and best['seed'] == 0
+    assert [it['id'] for it in best['placed_items']] == [
+        'g01_28', 'g01_28', 'g02_28']
+    assert len(best['placed_items']) == 3              # = Σdemand
+    # summary：plain run portfolio 段空 → per_seed [] + mode None。
+    assert body['summary'] == {'per_seed': [], 'mode': None}
+
+
+def test_result_rejects_running_and_terminal_stop_400(machine_env):
+    """running → result 409（尚未结束）；终态任务 stop → 400（无在飞）。"""
+    run_dir = Path(paths_mod.CONFIG_RUNS_DIR) / 'machine_m2026_rej1_20260921-060000'
+    run_dir.mkdir(parents=True)
+    _write_best_frame(run_dir, 0, 0.5, placed=_PLACED_3)
+    sid, st = _install_machine_state(machine_env, run_dir=str(run_dir), rc=None)
+    c = TestClient(server_mod.app)
+    r = c.get(f'/api/machine/solve/{sid}/result')
+    assert r.status_code == 409 and '尚未结束' in r.json()['error']
+
+    # 推进到 done（进程死 + result.json 在场）→ result 可读；stop 无在飞 → 400。
+    strategy_mod._STRATEGY_STATES[sid]['proc'] = FakeProc(pid=st['pid'], rc=0)
+    _write_plain_result(run_dir)
+    assert c.get(f'/api/machine/solve/{sid}/status').json()['state'] == 'done'
+    assert c.get(f'/api/machine/solve/{sid}/result').status_code == 200
+    r2 = c.post(f'/api/machine/solve/{sid}/stop')
+    assert r2.status_code == 400 and '没有进行中的机器排料任务' in r2.json()['error']

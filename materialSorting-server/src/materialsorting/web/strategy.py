@@ -20,7 +20,12 @@ marker 同存，orphan 路径可恢复；无键/None = race —— 存量极限 
 / ``_cleanup_stale_web_artifacts`` + ``_STRATEGY_STATES`` 槽 + marker + run 存活
 钉住 hook）实现 ``/api/machine/*`` —— 机器任务 ``mode='machine'``（``MACHINE_MODE``
 常量），每任务一个 'm' 前缀独立 sid，不与浏览器工作台会话（default / 用户 sid）
-相交；四函数对 machine 的复用**签名不变零行为变更**。
+相交；四函数对 machine 的复用**签名不变零行为变更**。US-003 起
+``_status_common`` / ``_stop_common`` / ``_result_common`` 三公共实现参数化
+（keyword-only ``sid``（显式 sid 覆盖 X-Session-Id 头派生）+ ``gate``（False 跳过
+会话闸门 —— 机器会话可能已被 TTL 逐出，status/stop/result 仍可读内存态）+
+``_result_common`` 的 ``drift``（False 跳过母版漂移 warning））供 machine 三端点
+复用；策略/极限八路由调用形与行为零变化（缺省参数 = 旧语义）。
 
 四路由（``register_strategy_routes(app)`` 由 ``server.py`` 文件尾注册），US-004
 多会话化（2026-08-27）后**全部按 ``X-Session-Id`` 解析**（缺省/空串 → default 会话）：
@@ -1089,12 +1094,22 @@ def _status_from_active(st: dict) -> dict:
     }
 
 
-async def _status_common(req: Request):
-    """status 公共实现（策略/极限同槽同构；mode 字段区分在跑的是哪个入口）。"""
-    sid = _route_sid(req)
-    _, err = _session_gate(sid)
-    if err is not None:
-        return err
+async def _status_common(req: Request, *, sid: str | None = None,
+                         gate: bool = True):
+    """status 公共实现（策略/极限同槽同构；mode 字段区分在跑的是哪个入口）。
+
+    prd-machine-nesting-api US-003 参数化：``sid`` 显式传入（machine 家族
+    task_id 即 sid，路径参数而非 X-Session-Id 头）+ ``gate=False`` 跳过会话
+    闸门 —— 机器会话可能已被 TTL 逐出（无人轮询超窗）或 MS 进程重启后从未
+    注册，status 须仍可读 ``_STRATEGY_STATES`` 内存态 / 磁盘 marker。策略/
+    极限路由调用形不变（缺省 sid 取头 + 过闸门）。
+    """
+    if sid is None:
+        sid = _route_sid(req)
+    if gate:
+        _, err = _session_gate(sid)
+        if err is not None:
+            return err
     st = _states(sid)
     if not st:
         marker = _read_marker(sid)
@@ -1140,13 +1155,17 @@ async def extreme_status(req: Request):
     return await _status_common(req)
 
 
-async def _stop_common(req: Request, label: str):
+async def _stop_common(req: Request, label: str, *, sid: str | None = None,
+                       gate: bool = True):
     """stop 公共实现（label = 报错文案里的运行名；杀的是本会话槽内 in-flight run
-    —— 单飞闸门保证同会话同时只有一族 run，两入口 stop 等价）。"""
-    sid = _route_sid(req)
-    _, err = _session_gate(sid)
-    if err is not None:
-        return err
+    —— 单飞闸门保证同会话同时只有一族 run，两入口 stop 等价；US-003 起机器
+    家族经 ``sid``/``gate`` 参数化复用，语义见 ``_status_common`` 注记）。"""
+    if sid is None:
+        sid = _route_sid(req)
+    if gate:
+        _, err = _session_gate(sid)
+        if err is not None:
+            return err
     st = _states(sid)
     if st and st.get('state') in ('starting', 'running'):
         pid = st.get('pid')
@@ -1178,12 +1197,22 @@ async def extreme_stop(req: Request):
     return await _stop_common(req, '极限运行')
 
 
-async def _result_common(req: Request, label: str):
-    """result 公共实现（label = 报错文案里的运行名；读的是本会话槽内终态 run）。"""
-    sid = _route_sid(req)
-    sess_state, err = _session_gate(sid)
-    if err is not None:
-        return err
+async def _result_common(req: Request, label: str, *, sid: str | None = None,
+                         gate: bool = True, drift: bool = True):
+    """result 公共实现（label = 报错文案里的运行名；读的是本会话槽内终态 run）。
+
+    US-003 机器家族参数化：``sid``/``gate`` 语义同 ``_status_common``（机器
+    result 不受会话逐出影响 —— manifest 恒以 start 快照 ``pieces_snapshot``
+    组装）；``drift=False`` 跳过母版漂移 warning（机器任务无共享画布概念，
+    manifest 与 placed 恒同源）。策略/极限路由调用形不变。
+    """
+    if sid is None:
+        sid = _route_sid(req)
+    sess_state = None
+    if gate:
+        sess_state, err = _session_gate(sid)
+        if err is not None:
+            return err
     st = _states(sid)
     if not st or st.get('state') not in ('done', 'stopped'):
         if st and st.get('state') in ('starting', 'running'):
@@ -1282,10 +1311,12 @@ async def _result_common(req: Request, label: str):
     # 母版漂移检测：start 快照 doc_id ≠ 本会话当前画布 doc_id → 应用结果可能与
     # 当前画布不一致（前端结果态展示 warning；导出 pid 失配走既有 400 兜底）。
     # default → _pieces_state()（既有测试 monkeypatch 点）；sid → 会话快照。
-    cur_state = sess_state if sess_state is not None else _pieces_state()
-    cur_doc_id = (cur_state.get('doc') or {}).get('doc_id')
-    if st.get('doc_id') != cur_doc_id:
-        payload['warning'] = '母版已变更，应用结果可能与当前画布不一致'
+    # 机器家族（US-003）drift=False 跳过 —— 无共享画布，恒同源无漂移。
+    if drift:
+        cur_state = sess_state if sess_state is not None else _pieces_state()
+        cur_doc_id = (cur_state.get('doc') or {}).get('doc_id')
+        if st.get('doc_id') != cur_doc_id:
+            payload['warning'] = '母版已变更，应用结果可能与当前画布不一致'
     return payload
 
 
