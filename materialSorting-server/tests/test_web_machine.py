@@ -52,7 +52,19 @@ US-004（本故事）覆盖 export 会话无关导出：
     三源全空 → 409；task_id 闸矩阵（非格式 400 / 未知 404 / 外族 404）、fmt 值域
     400、非 JSON body 400、无 run_dir 409、无布局帧 409。
 
-US-005 起补：幂等/清理/token。
+US-005（本故事）覆盖幂等清理 / token / 陈年 run_dir 回收：
+  - DELETE：done 任务 → rmtree run_dir + 清 marker + 弹 `_STRATEGY_STATES` 条目
+    + 删 machine_cfg_<sid>_*.json → 200 {ok, task_id, run_dir, killed}；清理后
+    status 404（任务不存在）；**二次 DELETE 也 200**（内存墓碑 `_DELETED_TASKS`
+    区分「已清理」与「从未存在」→404）；在飞 → 先树杀（kills 金标）；orphan
+    marker（pid 存活）→ 树杀 + 清产物；格式非法 400 / 外族槽 404；
+  - machine_* run_dir 7 天机会式清理：伪造 mtime>7 天的 machine_* 目录在下次
+    solve start 被清，非 machine 前缀（web_* / 手工 run）与未超窗目录不动；
+    状态槽在册 run_dir（保护集，时钟回拨防御）不动（`_cleanup_stale_machine_run_dirs`
+    直调单测）；
+  - X-Machine-Token：env `MS_MACHINE_TOKEN` 设置时全五端点无/错 token → 401
+    （solve 401 不 spawn）、对 token 放行；未设置放行（既有全套测试即证明，
+    另有显式 delenv 用例）。
 端口可配（MS_WEB_PORT）由 server.main() 冒烟与部署文档覆盖（uvicorn 层，
 TestClient 不经端口）。
 """
@@ -184,13 +196,14 @@ def test_server_app_healthy_with_machine_router():
         assert r.status_code == 200
         assert r.headers.get('Cache-Control') == 'no-cache'
     # US-002 起真端点挂上本 router（solve 先行；US-003 status/stop/result；
-    # US-004 export；DELETE 自 US-005 起补充 —— 本断言随之扩集）。
+    # US-004 export；US-005 DELETE —— 五端点族路径全在场）。
     machine_paths = {getattr(route, 'path', '') for route in machine_mod.router.routes}
     assert '/api/machine/solve' in machine_paths
     assert '/api/machine/solve/{task_id}/status' in machine_paths
     assert '/api/machine/solve/{task_id}/stop' in machine_paths
     assert '/api/machine/solve/{task_id}/result' in machine_paths
     assert '/api/machine/export' in machine_paths
+    assert '/api/machine/solve/{task_id}' in machine_paths
 
 
 # ============================================================= US-002 solve
@@ -231,11 +244,13 @@ def machine_env(tmp_path, monkeypatch):
     monkeypatch.setattr(strategy_mod.tempfile, 'tempdir', str(tmp_dir))
     strategy_mod._STRATEGY_STATE.clear()
     strategy_mod._STRATEGY_STATES.clear()
+    machine_mod._DELETED_TASKS.clear()
     sessions_mod.registry.stop_scanner()
     sessions_mod.registry.reset()
     yield tmp_path
     strategy_mod._STRATEGY_STATE.clear()
     strategy_mod._STRATEGY_STATES.clear()
+    machine_mod._DELETED_TASKS.clear()
     sessions_mod.registry.reset()
 
 
@@ -1126,3 +1141,195 @@ def test_export_gate_matrix(machine_env, monkeypatch):
     strategy_mod._STRATEGY_STATES[sid3]['run_dir'] = str(empty_dir)
     r = c.post('/api/machine/export', json={'task_id': sid3})
     assert r.status_code == 409 and '未产出任何布局' in r.json()['error']
+
+
+# ============================================================= US-005 幂等清理/token
+
+
+def test_delete_done_task_idempotent_and_gate(machine_env):
+    """DELETE done 任务：rmtree run_dir + 清 marker + 弹状态槽 + 删 cfg →
+    200 {ok, task_id, run_dir, killed}；清理后 status 404；二次 DELETE 也 200
+    （内存墓碑）；未知 404 / 格式非法 400 / 外族槽 404。"""
+    run_dir = Path(paths_mod.CONFIG_RUNS_DIR) / 'machine_m2026_del1_20260921-070000'
+    run_dir.mkdir(parents=True)
+    _write_best_frame(run_dir, 0, 0.5, placed=_PLACED_3)
+    sid, st = _install_machine_state(machine_env, run_dir=str(run_dir), rc=0)
+    # 推进到 done（进程死 + result.json 在场）—— 终态任务 DELETE 不树杀。
+    _write_plain_result(run_dir)
+    cfg = machine_env / 'uploads' / f'machine_cfg_{sid}_20260921-070000.json'
+    cfg.write_text(json.dumps({'gate_mm': 1750.0, 'time': 180, 'seeds': [0]}),
+                   encoding='utf-8')
+
+    c = TestClient(server_mod.app)
+    assert c.get(f'/api/machine/solve/{sid}/status').json()['state'] == 'done'
+    r = c.delete(f'/api/machine/solve/{sid}')
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body == {'ok': True, 'task_id': sid, 'run_dir': str(run_dir),
+                    'killed': False}
+    assert not run_dir.exists()                       # run_dir 清
+    assert strategy_mod._read_marker(sid) is None     # marker 清
+    assert sid not in strategy_mod._STRATEGY_STATES   # 状态槽条目弹掉
+    assert not cfg.exists()                           # machine_cfg 一并回收
+    # 清理后任务不存在：status 404（五端点族公共闸语义）。
+    assert c.get(f'/api/machine/solve/{sid}/status').status_code == 404
+
+    # 幂等：二次 DELETE 也 200（墓碑 no-op，无产物可清）。
+    r2 = c.delete(f'/api/machine/solve/{sid}')
+    assert r2.status_code == 200
+    assert r2.json() == {'ok': True, 'task_id': sid, 'run_dir': None,
+                         'killed': False}
+
+    # 未知 task_id → 404（从未存在，与「已清理」经墓碑区分）。
+    assert c.delete(f'/api/machine/solve/{_machine_sid()}').status_code == 404
+    assert c.delete('/api/machine/solve/bad.id').status_code == 400
+    foreign = 'aaaa1111'
+    fst = strategy_mod._states(foreign, create=True)
+    fst.update({'sid': foreign, 'state': 'running', 'mode': 'race', 'pid': 1})
+    assert c.delete(f'/api/machine/solve/{foreign}').status_code == 404
+
+
+def test_delete_inflight_kills_tree_and_cleans(machine_env, monkeypatch):
+    """DELETE 在飞任务：先树杀（kills 金标，同 stop 树杀口径）再清产物。"""
+    run_dir = Path(paths_mod.CONFIG_RUNS_DIR) / 'machine_m2026_del2_20260921-073000'
+    run_dir.mkdir(parents=True)
+    _write_best_frame(run_dir, 0, 0.5, placed=_PLACED_3)
+    sid, st = _install_machine_state(machine_env, run_dir=str(run_dir), rc=None)
+    strategy_mod._write_marker(
+        {'pid': st['pid'], 'run_dir': str(run_dir), 'doc_id': 'deadbeef01',
+         'mode': strategy_mod.MACHINE_MODE, 'started_at': st['started_at']}, sid)
+    kills = []
+    monkeypatch.setattr(strategy_mod, '_kill_tree',
+                        lambda pid: kills.append(pid))
+
+    r = TestClient(server_mod.app).delete(f'/api/machine/solve/{sid}')
+    assert r.status_code == 200, r.text
+    assert r.json()['killed'] is True
+    assert kills == [st['pid']]                       # 树杀在飞 pid
+    assert not run_dir.exists()
+    assert strategy_mod._read_marker(sid) is None
+    assert sid not in strategy_mod._STRATEGY_STATES
+    # 已清理：二次 DELETE 幂等 200（墓碑）。
+    assert TestClient(server_mod.app).delete(
+        f'/api/machine/solve/{sid}').json()['ok'] is True
+
+
+def test_delete_orphan_marker(machine_env, monkeypatch):
+    """DELETE orphan marker（MS 重启后遗留，内存态空）：pid 存活 → 树杀 +
+    run_dir/marker 清；cfg 反查依赖面一并回收。"""
+    sid = _machine_sid()
+    run_dir = Path(paths_mod.CONFIG_RUNS_DIR) / 'machine_m2026_orp1_20260921-080000'
+    run_dir.mkdir(parents=True)
+    (run_dir / 'result.json').write_text('{}', encoding='utf-8')
+    strategy_mod._write_marker(
+        {'pid': 999, 'run_dir': str(run_dir), 'doc_id': 'x',
+         'mode': strategy_mod.MACHINE_MODE,
+         'started_at': time.strftime('%Y-%m-%dT%H:%M:%S')}, sid)
+    cfg = machine_env / 'uploads' / f'machine_cfg_{sid}_20260921-080000.json'
+    cfg.write_text(json.dumps({'gate_mm': 1750.0, 'time': 7200, 'seeds': [0]}),
+                   encoding='utf-8')
+    monkeypatch.setattr(strategy_mod, '_pid_alive', lambda pid: True)
+    kills = []
+    monkeypatch.setattr(strategy_mod, '_kill_tree',
+                        lambda pid: kills.append(pid))
+
+    r = TestClient(server_mod.app).delete(f'/api/machine/solve/{sid}')
+    assert r.status_code == 200, r.text
+    assert r.json() == {'ok': True, 'task_id': sid, 'run_dir': str(run_dir),
+                        'killed': True}
+    assert kills == [999]
+    assert not run_dir.exists()
+    assert strategy_mod._read_marker(sid) is None
+    assert not cfg.exists()
+
+
+def test_solve_start_cleans_stale_machine_run_dirs(machine_env, monkeypatch):
+    """machine_* run_dir mtime>7 天机会式清理（下次 start 触发）：machine_ 前缀
+    超窗被清；非 machine 前缀（手工 run / 浏览器 web_*）不动；未超窗不动。"""
+    runs = Path(paths_mod.CONFIG_RUNS_DIR)
+    stale_machine = runs / 'machine_m2021_old11_20210101-000000'
+    stale_machine.mkdir(parents=True)
+    (stale_machine / 'result.json').write_text('{}', encoding='utf-8')
+    stale_manual = runs / 'manual_run_20210101'      # 手工 ms-run-config
+    stale_manual.mkdir(parents=True)
+    stale_web = runs / 'web_ab12ab_race_990000_20210101-000000'
+    stale_web.mkdir(parents=True)                    # 浏览器会话 run
+    fresh_machine = runs / 'machine_m2026_new11_20260921-000000'
+    fresh_machine.mkdir(parents=True)
+    old = time.time() - 8 * 86400
+    for d in (stale_machine, stale_manual, stale_web):
+        os.utime(d, (old, old))
+
+    _spawn_capture(monkeypatch, pids=(771,))
+    r = _solve(TestClient(server_mod.app), _yl_master_bytes(), {'gate_mm': 1750})
+    assert r.status_code == 202, r.text
+    assert not stale_machine.exists()                # machine_ 前缀超窗被清
+    assert stale_manual.exists()                     # 非 machine 前缀不动
+    assert stale_web.exists()
+    assert fresh_machine.exists()                    # 未超窗不动
+
+
+def test_stale_cleanup_protects_claimed_run_dirs(machine_env):
+    """保护集直调单测：状态槽在册 run_dir（任何 mode）即使 mtime 超窗也不清
+    —— 时钟回拨/长暂停进程防御；未认领的超窗 machine_* 目录被清。"""
+    runs = Path(paths_mod.CONFIG_RUNS_DIR)
+    claimed = runs / 'machine_m2021_old22_20210101-000000'
+    claimed.mkdir(parents=True)
+    orphan_stale = runs / 'machine_m2021_old33_20210101-000000'
+    orphan_stale.mkdir(parents=True)
+    old = time.time() - 8 * 86400
+    os.utime(claimed, (old, old))
+    os.utime(orphan_stale, (old, old))
+    owner_sid = 'm2021old22abcd'                      # 满足 SID_RE 即可
+    st = strategy_mod._states(owner_sid, create=True)
+    st.update({'sid': owner_sid, 'mode': strategy_mod.MACHINE_MODE,
+               'state': 'running', 'run_dir': str(claimed)})
+
+    removed = machine_mod._cleanup_stale_machine_run_dirs()
+    assert removed == 1
+    assert claimed.exists()                           # 在册 run_dir 保护
+    assert not orphan_stale.exists()                  # 未认领超窗被清
+
+
+def test_machine_token_enforced_when_env_set(machine_env, monkeypatch):
+    """MS_MACHINE_TOKEN 设置时全五端点强制：无/错 token → 401（solve 401 不
+    spawn）；对 token 放行（compare_digest 常量时间比较由实现保证）。"""
+    monkeypatch.setenv('MS_MACHINE_TOKEN', 'sekret-token')
+    calls = _spawn_capture(monkeypatch, pids=(771,))
+    c = TestClient(server_mod.app)
+    sid, _st = _install_machine_state(machine_env, run_dir=None, rc=None)
+
+    # 无 token → 401（全端点；solve 不 spawn）。
+    assert c.get(f'/api/machine/solve/{sid}/status').status_code == 401
+    assert c.post(f'/api/machine/solve/{sid}/stop').status_code == 401
+    assert c.get(f'/api/machine/solve/{sid}/result').status_code == 401
+    assert c.delete(f'/api/machine/solve/{sid}').status_code == 401
+    assert c.post('/api/machine/export', json={'task_id': sid}).status_code == 401
+    r = _solve(c, _yl_master_bytes(), {'gate_mm': 1750})
+    assert r.status_code == 401 and 'X-Machine-Token' in r.json()['error']
+    assert len(calls) == 0
+
+    # 错 token → 401。
+    bad = {'x-machine-token': 'wrong-token'}
+    assert c.get(f'/api/machine/solve/{sid}/status',
+                 headers=bad).status_code == 401
+    assert _solve(c, _yl_master_bytes(), {'gate_mm': 1750}).status_code == 401
+
+    # 对 token → 放行（status 200 / solve 202）。
+    good = {'x-machine-token': 'sekret-token'}
+    r_ok = c.get(f'/api/machine/solve/{sid}/status', headers=good)
+    assert r_ok.status_code == 200 and r_ok.json()['state'] == 'starting'
+    r_solve = c.post('/api/machine/solve', headers=good,
+                     files={'file': ('nest.dxf', _yl_master_bytes(),
+                                     'application/octet-stream')},
+                     data={'config': json.dumps({'gate_mm': 1750})})
+    assert r_solve.status_code == 202, r_solve.text
+    assert len(calls) == 1
+
+
+def test_machine_token_unset_allows(machine_env, monkeypatch):
+    """MS_MACHINE_TOKEN 未设置放行（loopback 同机假设）—— 显式 delenv 用例。"""
+    monkeypatch.delenv('MS_MACHINE_TOKEN', raising=False)
+    sid, _st = _install_machine_state(machine_env, run_dir=None, rc=None)
+    r = TestClient(server_mod.app).get(f'/api/machine/solve/{sid}/status')
+    assert r.status_code == 200 and r.json()['state'] == 'starting'

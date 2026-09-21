@@ -1,4 +1,4 @@
-"""机器对接排料 API（YL 排料对接二期，prd-machine-nesting-api）—— US-004 export 会话无关导出。
+"""机器对接排料 API（YL 排料对接二期，prd-machine-nesting-api）—— US-005 幂等清理 token 契约。
 
 YLPatternMaking（YL 打版系统）后端经 HTTP 机器接口接入 MS 排料引擎：multipart
 提交带编号母版 DXF + config JSON → 按运行模式求解 → 2s 级轮询实时利用率 → 终态
@@ -8,7 +8,7 @@ YLPatternMaking（YL 打版系统）后端经 HTTP 机器接口接入 MS 排料�
 树杀 / 清理骨架 —— 与 se|race / extreme 同构，但**每任务一个 'm' 前缀独立 sid**
 （不消费 X-Session-Id，浏览器工作台 default ``_PIECES_STATE`` 零感知）。
 
-端点契约（US-002 solve + US-003 三端点 + 本故事 export 已落地；DELETE 自 US-005 起挂载）：
+端点契约（US-002 solve + US-003 三端点 + US-004 export + 本故事 DELETE 幂等清理，全五端点已落地）：
 
   - ``POST   /api/machine/solve`` —— multipart ``file``（母版 DXF 二进制
     ≤20MB，同 /api/parse-dxf 上限）+ ``config``（JSON 字符串）。config 键集：
@@ -62,7 +62,27 @@ YLPatternMaking（YL 打版系统）后端经 HTTP 机器接口接入 MS 排料�
     （``placed_to_world`` / ``parse_table_payload`` / ``build_info_table`` /
     ``write_marker_plt``，门面零改动）；Content-Disposition 中文/ASCII 双写同
     ``/export`` 约定。无 run_dir / 无任何布局帧 → 409。
-  - ``DELETE /api/machine/solve/{task_id}`` —— 幂等清理（US-005）。
+  - ``DELETE /api/machine/solve/{task_id}``（本故事）—— 幂等清理：在飞 → 先树杀
+    （同 stop，防 solve 孙进程白烧 CPU），然后 rmtree run_dir + 清 marker +
+    弹 ``_STRATEGY_STATES`` 条目 + 删 ``machine_cfg_<sid>_*.json``（orphan 反查
+    依赖的 cfg 一并回收）→ ``200 {ok:true, task_id, run_dir, killed}``。
+    **幂等**：二次 DELETE 也 200（内存墓碑 ``_DELETED_TASKS`` 记已清理 task_id
+    —— 首删后状态槽/marker 均不在，无墓碑则二次删与「从未存在」不可区分会
+    404）；未知 task_id → 404（同三端点公共闸）。MS 重启丢墓碑 → 已删任务的
+    二次 DELETE 回落 404（消费端把 404 视同「任务不存在/已清理」即可）。
+
+**机器 run_dir 7 天机会式清理（本故事）**：每次 solve start 触发
+``_cleanup_stale_machine_run_dirs`` —— ``config_runs/`` 下 ``machine_*`` 前缀
+目录 mtime > 7 天（``_MACHINE_RUN_TTL_SEC``）即 rmtree（无人消费的陈年产物；
+extreme 档最长 7200s，超 7 天必是死任务残留）。**非 machine 前缀不动**
+（浏览器 web_* / 手工 ms-run-config run）；状态槽在册 run_dir（任何 mode）
+跳过 —— 时钟回拨/长暂停进程防御。
+
+**X-Machine-Token 认证（本故事）**：env ``MS_MACHINE_TOKEN`` 设置时全五端点
+强制 —— 请求头 ``X-Machine-Token`` 缺失或不等（``secrets.compare_digest``
+常量时间比较，防时序侧信道）→ 401；未设置放行（loopback 同机部署假设，
+YL 后端与 MS 同机）。env 请求时读取（非 import 期绑定），部署期设置即刻
+生效、tests monkeypatch ``os.environ`` 即可注入。
 
 任务状态机（同 strategy 口径，复用 ``_status_common`` 状态推进 —— 解析态写回
 内存态）：``starting →(run_dir 发现) running → done | stopped | error``。内存态
@@ -72,10 +92,12 @@ best-effort —— marker 恰 5 键不含 stderr 路径，重启后无从定位�
 orphan 态 ``run_mode``/``total_budget_sec`` 经 ``machine_cfg_<sid>_*.json`` 的
 time 键反查 ``RUN_MODE_SPECS`` 恢复（时间三档烘焙 MS 侧单一真相源，反查无歧义）。
 
-三端点公共约定：task_id 格式非法（不满足 sessions.SID_RE）→ 400（marker 路径
-拼接安全闸）；未知任务（内存态空 + 无 marker / 状态槽非 machine 归属）→ 404；
-三端点均**不走会话闸门**（``_status_common``/``_stop_common``/``_result_common``
-的 ``gate=False`` 参数化，机器会话可能已被 TTL 逐出）。
+五端点公共约定：X-Machine-Token 认证先行（MS_MACHINE_TOKEN 设置时缺失/错误
+→ 401，早于一切业务校验）；task_id 格式非法（不满足 sessions.SID_RE）→ 400
+（marker 路径拼接安全闸）；未知任务（内存态空 + 无 marker / 状态槽非 machine
+归属）→ 404；status/stop/result/export 四端点均**不走会话闸门**
+（``_status_common``/``_stop_common``/``_result_common`` 的 ``gate=False``
+参数化，机器会话可能已被 TTL 逐出）。
 
 运行模式三档映射（时间烘焙 MS 侧单一真相源 ``RUN_MODE_SPECS``，全默认参数零暴露
 —— config 不接受 time/seeds/band/prefix 键，在场 400）：normal = plain
@@ -99,6 +121,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import secrets
+import shutil
 import sys
 import tempfile
 import time
@@ -152,6 +177,18 @@ _MACHINE_LABEL = '机器排料任务'
 # 口径）；plt = 全量版（净版线/内部线/布纹杆羽 + 表格）。机器契约只出 PLT
 # （png/dxf 是浏览器工作台 /export 的面，不在机器对接范围）。
 _EXPORT_FORMATS = ('plt-clean', 'plt')
+# X-Machine-Token 认证（US-005）：env 设置时全五端点强制（compare_digest 常量
+# 时间比较）；未设置放行（loopback 同机部署假设）。请求时读 env（非 import 期
+# 绑定）—— 部署期设置即刻生效，tests monkeypatch os.environ 即可注入。
+_MACHINE_TOKEN_ENV = 'MS_MACHINE_TOKEN'
+_MACHINE_TOKEN_HEADER = 'x-machine-token'
+# machine_* run_dir 机会式清理窗（US-005）：mtime 超窗即删（extreme 档最长
+# 7200s，超 7 天必是死任务残留）；每次 solve start 触发，best-effort。
+_MACHINE_RUN_TTL_SEC = 7 * 86400
+# 已 DELETE 清理过的 task_id 内存墓碑（US-005）：首删后状态槽/marker 均不在，
+# 无墓碑则「二次删除（应 200）」与「从未存在（应 404）」不可区分。MS 重启即
+# 丢（与 _STRATEGY_STATES 同生命周期，重启后二次删回落 404 = 任务不存在语义）。
+_DELETED_TASKS: set[str] = set()
 
 
 # ------------------------------------------------------------- config 校验
@@ -240,6 +277,64 @@ def _machine_ref_inflight(client_ref):
     return None
 
 
+# --------------------------------------------------- US-005 token / 陈年清理
+
+
+def _machine_token_error(request: Request):
+    """X-Machine-Token 认证闸 → 401 JSONResponse 或 None（放行）。
+
+    env ``MS_MACHINE_TOKEN`` 未设置 → 放行（loopback 同机部署假设，缺省口径）；
+    设置 → 请求头须带等值 ``X-Machine-Token``（``secrets.compare_digest`` 常量
+    时间比较防时序侧信道；encode 成 bytes 规避 str 版仅 ASCII 的限制）。env
+    请求时读取 —— 部署期设置即刻生效、不需要重启进程绑定的模块级常量。
+    """
+    expected = os.environ.get(_MACHINE_TOKEN_ENV)
+    if not expected:
+        return None
+    got = request.headers.get(_MACHINE_TOKEN_HEADER)
+    if got is None or not secrets.compare_digest(
+            str(got).encode('utf-8'), str(expected).encode('utf-8')):
+        return JSONResponse(
+            {'error': '缺少 X-Machine-Token 请求头或 token 不正确'
+                      f'（服务端已启用 {_MACHINE_TOKEN_ENV} 认证）'},
+            status_code=401)
+    return None
+
+
+def _cleanup_stale_machine_run_dirs(now=None) -> int:
+    """machine_* run_dir mtime 超 7 天机会式清理（US-005）→ 删除目录数。
+
+    每次 solve start 触发（机会式：无 daemon 线程、无锁，best-effort 吞异常）。
+    范围 = ``config_runs/`` 下 ``machine_`` 前缀**目录**（run_name 恒
+    ``machine_<task6>_<rand6>``，与浏览器 web_* / 手工 ms-run-config run 前缀
+    互斥 —— 非 machine 前缀结构性不动）；保护集 = ``_STRATEGY_STATES`` 在册
+    run_dir（任何 mode —— 时钟回拨/长暂停进程防御，正常 machine run 最长
+    7200s 不可能超窗）。测试可传 ``now``（FakeClock）或 monkeypatch
+    ``_MACHINE_RUN_TTL_SEC``。
+    """
+    base = strategy_mod._config_runs_dir()
+    try:
+        entries = [e for e in base.iterdir()
+                   if e.name.startswith('machine_') and e.is_dir()]
+    except OSError:
+        return 0
+    protected = {str(st.get('run_dir')) for st
+                 in strategy_mod._STRATEGY_STATES.values() if st.get('run_dir')}
+    if now is None:
+        now = time.time()
+    removed = 0
+    for entry in entries:
+        if str(entry) in protected:
+            continue
+        try:
+            if now - entry.stat().st_mtime > _MACHINE_RUN_TTL_SEC:
+                shutil.rmtree(entry, ignore_errors=True)
+                removed += 1
+        except OSError:
+            continue
+    return removed
+
+
 # ------------------------------------------------------------- solve 端点
 
 
@@ -249,7 +344,11 @@ async def machine_solve(req: Request):
 
     复用 server 的上传/commit 管线（延迟 import 防环 + ``server`` 模块属性调用时
     取值），会话只挂本任务独立 sid —— default ``_PIECES_STATE`` 不受扰（对拍验收）。
+    start 顺带触发 machine_* run_dir 7 天机会式清理（US-005）。
     """
+    token_err = _machine_token_error(req)
+    if token_err is not None:
+        return token_err
     from . import server as server_mod
 
     # ---- multipart 解析（file + config 两字段；坏 multipart → 400）。
@@ -292,6 +391,11 @@ async def machine_solve(req: Request):
                       f'{inflight.get("sid")}），请先轮询/停止该任务',
              'task_id': inflight.get('sid')},
             status_code=409)
+
+    # ---- machine_* run_dir 7 天机会式清理（US-005）：校验/幂等闸全过 = 本轮
+    # 必建新任务，顺手回收陈年产物（best-effort，异常不阻塞 start；本轮 run_dir
+    # 尚未创建且前缀互斥，无误删面）。
+    _cleanup_stale_machine_run_dirs()
 
     # ---- 铸任务 sid（= task_id，'m'+时间戳+rand）+ 落盘上传。
     sid = 'm' + time.strftime('%Y%m%d%H%M%S') + uuid.uuid4().hex[:8]
@@ -536,6 +640,9 @@ async def _machine_status(task_id: str, request: Request):
 @router.get('/api/machine/solve/{task_id}/status')
 async def machine_solve_status(task_id: str, request: Request):
     """机器任务状态轮询（2s 级；无 placed_items 控载荷，绝不读运行中 curve）。"""
+    token_err = _machine_token_error(request)
+    if token_err is not None:
+        return token_err
     return await _machine_status(task_id, request)
 
 
@@ -548,6 +655,9 @@ async def machine_solve_stop(task_id: str, request: Request):
     存活则树杀 + 清 marker；已终态 → 400（无在飞任务）。未知/非法 task_id 由
     ``_machine_task_ctx`` 前置拦下（400/404）。
     """
+    token_err = _machine_token_error(request)
+    if token_err is not None:
+        return token_err
     _, _, err = _machine_task_ctx(task_id)
     if err is not None:
         return err
@@ -566,6 +676,9 @@ async def machine_solve_result(task_id: str, request: Request):
     口径，pieces 键集与 /ws/solve manifest 同形）；drift warning 无共享画布概念
     跳过。载荷收窄恰三键（state/mode/run_dir 属 strategy 家族内部面）。
     """
+    token_err = _machine_token_error(request)
+    if token_err is not None:
+        return token_err
     _, _, err = _machine_task_ctx(task_id)
     if err is not None:
         return err
@@ -643,6 +756,9 @@ async def machine_export(req: Request):
     ``/export`` 门面全部函数（几何/表格/PLT 单一真相源零漂移），Content-Disposition
     中文/ASCII 双写同约定。
     """
+    token_err = _machine_token_error(req)
+    if token_err is not None:
+        return token_err
     try:
         payload = await req.json()
     except Exception:
@@ -744,11 +860,66 @@ async def machine_export(req: Request):
                     headers={'Content-Disposition': cd})
 
 
+# ------------------------------------------------------------- US-005 DELETE
+
+
+@router.delete('/api/machine/solve/{task_id}')
+async def machine_solve_delete(task_id: str, request: Request):
+    """机器任务幂等清理（US-005）：树杀在飞 → rmtree run_dir + 清 marker +
+    弹状态槽条目 + 删 machine_cfg → ``200 {ok, task_id, run_dir, killed}``。
+
+    与 stop 的分工：stop 保 run_dir（stopped 态 result/export 仍可读），DELETE
+    是任务生命周期的终点 —— 产物全清。在飞任务 DELETE = 先树杀再清（防 solve
+    孙进程白烧 CPU，同 stop 树杀口径）。**幂等**：二次 DELETE 也 200 —— 内存
+    墓碑 ``_DELETED_TASKS`` 区分「已清理」（200 no-op）与「从未存在」（404）；
+    条目不在内存态但 marker 在（orphan）同样可清。未知/非法 task_id 走
+    ``_machine_task_ctx`` 公共闸（400/404）。
+    """
+    from . import server as server_mod
+
+    token_err = _machine_token_error(request)
+    if token_err is not None:
+        return token_err
+    st, marker, err = _machine_task_ctx(task_id)
+    if err is not None:
+        # 幂等兜底：已清理过的任务（首删后状态槽/marker 均不在）二次 DELETE
+        # 走墓碑 200 no-op；真未知仍 404（400 格式错与墓碑不相交，原样透传）。
+        if err.status_code == 404 and task_id in _DELETED_TASKS:
+            return {'ok': True, 'task_id': task_id,
+                    'run_dir': None, 'killed': False}
+        return err
+    session_registry.touch(task_id)   # 同三端点：清理动作刷活性（no-op 容错）
+
+    # ---- 在飞/orphan 存活进程先树杀（best-effort；终态任务进程已死不杀）。
+    killed = False
+    pid = (st or {}).get('pid') if st is not None else (marker or {}).get('pid')
+    in_flight = (st is not None and st.get('state') in ('starting', 'running'))
+    if in_flight or (st is None and strategy_mod._pid_alive(pid)):
+        strategy_mod._kill_tree(pid)
+        killed = True
+
+    # ---- 产物清理：run_dir（内存态优先 → marker带回）→ marker → 状态槽 → cfg。
+    run_dir = ((st or {}).get('run_dir') if st is not None else None) \
+        or ((marker or {}).get('run_dir') or None)
+    if run_dir:
+        shutil.rmtree(run_dir, ignore_errors=True)
+    strategy_mod._clear_marker(task_id)
+    strategy_mod._STRATEGY_STATES.pop(task_id, None)
+    try:
+        for cp in server_mod.UPLOADS_DIR.glob(f'machine_cfg_{task_id}_*.json'):
+            cp.unlink(missing_ok=True)
+    except OSError:
+        pass   # best-effort：cfg 清理失败不阻塞 200（7 天机会式清理/磁盘 TTL 兜底）
+    _DELETED_TASKS.add(task_id)
+    return {'ok': True, 'task_id': task_id, 'run_dir': run_dir, 'killed': killed}
+
+
 def register_machine_routes(app) -> None:
     """把 machine 路由挂到 FastAPI app（server.py 文件尾调用一次，位于 strategy 之后）。
 
-    US-002 solve + US-003 status/stop/result + US-004 export 五端点已挂到本模块
-    ``router``；后续故事（DELETE）逐故事挂同一 router，注册点零改动。
+    US-002 solve + US-003 status/stop/result + US-004 export + US-005 DELETE
+    六路由已挂到本模块 ``router``（五端点族：DELETE 与 solve 共用
+    ``/api/machine/solve`` 路径段）。
     """
     app.include_router(router)
 

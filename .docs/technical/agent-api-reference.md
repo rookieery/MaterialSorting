@@ -5,7 +5,7 @@
 
 ## 状态
 
-单页工作台后端，23 个 API 端点（另含 `GET /` 与 `/static` mount）+ 1 条 WS。**US-026 起求解用 `solve_with_callback_proc`（多进程版）**：`ThreadPoolExecutor(max_workers=6)` 跑 `run_solve` → `solve_with_callback_proc` spawn 子进程执行 sparrow solve，主进程 drain `multiprocessing.Queue` 分发 manifest/frame/final（多 seed 最多 6 路并发，seed 间同等 CPU 竞争 → 排名仍公平）。WS 双向并发：write loop drain queue → `ws.send_json`；read loop 持续读客户端消息（`{action:'stop'}` → terminate 子进程 → 发 stopped → 关闭 WS）。**`server.py` 启动期 `_reload_pieces_state()` 读 intermediate 填入 `_PIECES_STATE`**（US-020：commit 后可 reload，allow-empty 不再让 import 崩）。US-004 起 `/api/parse-dxf` 上传解析也复用这个 6-worker 线程池跑 CPU 密集的 DXF 深度解析（`collect_pieces_with_details`）。strategy PRD US-004 起 `/api/strategy/*` 四路由（`web/strategy.py`）spawn `ms-run-config --strategy` 子进程跑双模式长跑（HTTP 轮询 run_dir 产物，无 WS），见下「策略桥接」；extreme PRD US-002 起 `/api/extreme/*` 四路由（同 `web/strategy.py` 内 mode='extreme' 分支）spawn `ms-run-config --extreme` 极限长跑，与策略路由**共用每会话状态槽**（同会话 409 单飞互斥、跨会话独立），见下「极限运行桥接」；状态文件 PRD US-001（2026-09-11）起 `POST /api/state-save`（`web/statefile.py`）把当前会话工作台状态聚合序列化为 gzip JSON `.msn` 附件，见下「状态文件保存」；US-002（同日）起 `POST /api/state-restore` 上传 `.msn` 校验重建当前会话 + manifest 确定性重算（重建段 2026-09-13 抽取共享函数 `rebuild_session_from_document`，行为零变更），见下「状态文件恢复」；会话过期自动恢复 PRD US-001（2026-09-13）起 `POST`/`DELETE /api/state-checkpoint`（`web/checkpoint.py`）服务端内存快照 peek 口径写入/幂等清除，US-002（同日）起 `POST /api/state-recover` 刷新后启动期把 checkpoint 恢复成当前（新）会话（single-use 消费 + additive `recovered_from`），见下「会话 checkpoint 内存快照」；机器对接 PRD（2026-09-21）US-001 起骨架、US-002 起 `POST /api/machine/solve` 提交端点、**US-003 起 status/stop/result 三端点 + US-004 起 export 会话无关导出已挂载**（multipart 母版+config → parse+commit → spawn → 202 task_id → 轮询状态/终态取布局/树杀停止/延迟导出 PLT；三档运行模式时间烘焙 `RUN_MODE_SPECS`，`mode='machine'` 复用 strategy 状态槽，每任务独立 'm' 前缀 sid 不碰 default `_PIECES_STATE`；export 已落地（US-004）、DELETE 自 US-005 起挂载，完整契约专节随 US-005 落册 —— 规划见 `tasks/prd-machine-nesting-api.md`）。
+单页工作台后端，23 个 API 端点（另含 `GET /` 与 `/static` mount）+ 1 条 WS。**US-026 起求解用 `solve_with_callback_proc`（多进程版）**：`ThreadPoolExecutor(max_workers=6)` 跑 `run_solve` → `solve_with_callback_proc` spawn 子进程执行 sparrow solve，主进程 drain `multiprocessing.Queue` 分发 manifest/frame/final（多 seed 最多 6 路并发，seed 间同等 CPU 竞争 → 排名仍公平）。WS 双向并发：write loop drain queue → `ws.send_json`；read loop 持续读客户端消息（`{action:'stop'}` → terminate 子进程 → 发 stopped → 关闭 WS）。**`server.py` 启动期 `_reload_pieces_state()` 读 intermediate 填入 `_PIECES_STATE`**（US-020：commit 后可 reload，allow-empty 不再让 import 崩）。US-004 起 `/api/parse-dxf` 上传解析也复用这个 6-worker 线程池跑 CPU 密集的 DXF 深度解析（`collect_pieces_with_details`）。strategy PRD US-004 起 `/api/strategy/*` 四路由（`web/strategy.py`）spawn `ms-run-config --strategy` 子进程跑双模式长跑（HTTP 轮询 run_dir 产物，无 WS），见下「策略桥接」；extreme PRD US-002 起 `/api/extreme/*` 四路由（同 `web/strategy.py` 内 mode='extreme' 分支）spawn `ms-run-config --extreme` 极限长跑，与策略路由**共用每会话状态槽**（同会话 409 单飞互斥、跨会话独立），见下「极限运行桥接」；状态文件 PRD US-001（2026-09-11）起 `POST /api/state-save`（`web/statefile.py`）把当前会话工作台状态聚合序列化为 gzip JSON `.msn` 附件，见下「状态文件保存」；US-002（同日）起 `POST /api/state-restore` 上传 `.msn` 校验重建当前会话 + manifest 确定性重算（重建段 2026-09-13 抽取共享函数 `rebuild_session_from_document`，行为零变更），见下「状态文件恢复」；会话过期自动恢复 PRD US-001（2026-09-13）起 `POST`/`DELETE /api/state-checkpoint`（`web/checkpoint.py`）服务端内存快照 peek 口径写入/幂等清除，US-002（同日）起 `POST /api/state-recover` 刷新后启动期把 checkpoint 恢复成当前（新）会话（single-use 消费 + additive `recovered_from`），见下「会话 checkpoint 内存快照」；机器对接 PRD（2026-09-21）US-001 起骨架、US-002 起 `POST /api/machine/solve` 提交端点、**US-003 起 status/stop/result 三端点 + US-004 起 export 会话无关导出 + US-005 起 DELETE 幂等清理与 X-Machine-Token 认证，五端点全落地**（multipart 母版+config → parse+commit → spawn → 202 task_id → 轮询状态/终态取布局/树杀停止/延迟导出 PLT/任务清理；三档运行模式时间烘焙 `RUN_MODE_SPECS`，`mode='machine'` 复用 strategy 状态槽，每任务独立 'm' 前缀 sid 不碰 default `_PIECES_STATE`；**完整契约专节见下「机器对接 /api/machine/*」—— YL 侧可仅凭该节对接**；规划见 `tasks/prd-machine-nesting-api.md`）。
 
 ## 启动约束（重要）
 
@@ -51,13 +51,14 @@
 | POST | `/api/machine/solve/{task_id}/stop` | **机器对接 US-003 停止**：复用 `_stop_common(sid=,gate=False,label='机器排料任务')` —— in-flight 树杀（Windows `taskkill /PID /T /F` / POSIX `os.killpg`，防 solve 孙进程白烧 CPU）+ 置 stopped + 清 marker，**run_dir 保留（stopped 态 result 仍可读）**；orphan marker 同样可 stop/清理；已终态 → 400 | `machine.machine_solve_stop` |
 | GET | `/api/machine/solve/{task_id}/result` | **机器对接 US-003 终态取布局**：→ `{manifest, best, summary}` 恰三键；running → 409「尚未结束」；`best.placed_items` = solver 原始布局（**demand>1 的 g 码 N 条绝不按 pid 去重 —— YL 前端须建 N 副本承接**），portfolio.incumbent 优先（race/se 档完整布局）→ stopped / plain 档回落各 best_frame 边车 density 最大；manifest = `build_pid_meta`（start 起始快照，pieces 键集含 raw_polygon/d_mm/demand/color 与 /ws/solve manifest 同形）；无共享画布 → 无 drift warning | `machine.machine_solve_result` |
 | POST | `/api/machine/export` | **机器对接 US-004（2026-09-21）会话无关导出 PLT**（`machine.machine_export`）：body JSON `{task_id, fmt?, placed?, table?}`（最小请求仅 `{task_id}`）→ `application/plt` 附件字节流（Content-Disposition 中文/ASCII 双写同 /export 约定，文件名前缀 = run_name）。`fmt` ∈ plt-clean（缺省，毛版+唛架信息表格）\| plt（全量版），其它 400；`placed` 缺省用状态槽 incumbent（`_best_layout`：portfolio.incumbent 优先 → best_frame 边车 density 最大，与 result 端点同源同序），显式传入须为 `[{id,rotation,translation}]` 列表、全未命中 → 400（/export 既有兜底）、形状非法 → 400；`table` 缺省服务端全算（`parse_table_payload({})` 6 手输默认值 A料/0.0%/0.0%/空/noname/空 + 8 项自动计算字段既有管线补全 —— 表格恒在场，与 /export 缺省无表格刻意不同），显式传入经 `parse_table_payload` 校验（非法 → 400 中文）。**pieces 来源 = run_dir 内 `pieces_intermediate.json` 直载重建 pieces_by_id**（solve 事实源在盘，会话被 TTL 逐出后仍可导出），兜底回退会话快照（registry.peek → 状态槽 start 快照）；状态推进内部走 `_status_common(sid=,gate=False)`（不要求客户端先轮询到 done）；复用 `web/export.py` 门面全部函数（几何/表格/PLT 单一真相源零漂移，`clean=False` 旧输出逐字节红线不动）；无 run_dir / 无任何布局帧 / 三源皆无 pieces / gate=0 → 409；task_id 闸同三端点（非格式 400 / 未知 404 / 外族 404） | `machine.machine_export` |
+| DELETE | `/api/machine/solve/{task_id}` | **机器对接 US-005（2026-09-21）幂等清理**（`machine.machine_solve_delete`）：在飞 → 先树杀（同 stop 口径）→ rmtree run_dir + 清 marker + 弹 `_STRATEGY_STATES` 条目 + 删 `machine_cfg_<sid>_*.json` → `200 {ok:true, task_id, run_dir, killed}`；**二次 DELETE 也 200**（内存墓碑 `_DELETED_TASKS` 区分「已清理」与「从未存在」→404；MS 重启丢墓碑 → 已删任务二次删回落 404 = 任务不存在语义）；orphan marker 同样可清；清理后 status/result/export → 404；见下机器对接专节 | `machine.machine_solve_delete` |
 | WS | `/ws/solve` | 排料求解流（manifest → frames → final）；**多会话 US-003**：`?sid=` query（浏览器 WS 不能自定义 Header；缺省 → default 会话），连接钉住 + 回调刷活性，见下专节 | `server.ws_solve` |
 
 > （已删 2026-08-22）`POST /api/band/preview`（US-013 成带预演回显）与 `routes_band.py` 整体移除 —— 预演 / ack 硬警告 / go-no-go 闸门等成带旁路功能退场，band 收敛为「WS StartPayload band = 勾选 + 选 g 码」极简主流程。
 
 > FastAPI 自动暴露 `/docs` `/openapi.json` 等 OpenAPI 路由；业务路由全在上表。
 
-> 机器对接 `/api/machine/*`（YL 排料对接二期，2026-09-21 立项）：US-001 骨架 + US-002 `POST /api/machine/solve` + **US-003 `GET/POST /api/machine/solve/{task_id}/status|stop|result` + US-004 `POST /api/machine/export` 已注册**（契约见上表行）；其余端点（`DELETE /api/machine/solve/{task_id}`）自 US-005 起挂载，契约专节随 US-005 落册。机器任务 = strategy 家族第三成员（`mode='machine'`，每任务独立 'm' 前缀 sid —— 复用 `_STRATEGY_STATES` 状态槽 / marker / run_dir 发现 / 树杀 / run 存活钉住骨架 + US-003 起 `_status_common`/`_stop_common`/`_result_common` 三公共实现参数化（keyword-only `sid`/`gate`/`drift`，缺省 = 策略/极限旧语义零变化），浏览器工作台会话不受扰）。四端点公共约定：task_id 格式非法（不满足 sessions.SID_RE）→ 400（marker 路径拼接安全闸）、未知任务 / 外族（非 machine）状态槽 → 404。
+> 机器对接 `/api/machine/*`（YL 排料对接二期，2026-09-21 立项）：US-001 骨架 + US-002 `POST /api/machine/solve` + US-003 `GET/POST /api/machine/solve/{task_id}/status|stop|result` + US-004 `POST /api/machine/export` + US-005 `DELETE /api/machine/solve/{task_id}` **五端点全部注册**（逐端点契约见上表行；**完整对接契约专节见下「机器对接 /api/machine/* — YL 后端对接契约」—— YL 侧开发者可仅凭该节完成对接**）。机器任务 = strategy 家族第三成员（`mode='machine'`，每任务独立 'm' 前缀 sid —— 复用 `_STRATEGY_STATES` 状态槽 / marker / run_dir 发现 / 树杀 / run 存活钉住骨架 + US-003 起 `_status_common`/`_stop_common`/`_result_common` 三公共实现参数化（keyword-only `sid`/`gate`/`drift`，缺省 = 策略/极限旧语义零变化），浏览器工作台会话不受扰）。五端点公共约定：X-Machine-Token 认证先行（`MS_MACHINE_TOKEN` 设置时缺失/错误 → 401）；task_id 格式非法（不满足 sessions.SID_RE）→ 400（marker 路径拼接安全闸）、未知任务 / 外族（非 machine）状态槽 → 404。US-005 另含 machine_* run_dir mtime>7 天机会式清理（每次 solve start 触发，非 machine 前缀不动）。
 
 ## POST /export — 导出
 
@@ -854,6 +855,165 @@ curl http://127.0.0.1:8010/api/ptypes -H "X-Session-Id: <sid>"
 2. 极限 run 的 run_dir 认领 / marker 回写 / 终态清理 / orphan 检测全部走策略既有路径（run_name 前缀 glob，rand6 唯一）。
 3. 前端 US-003 消费方：轮询与结果应用复用策略 PRD US-005 弹窗机制（mode 字段区分入口）。
 4. 验收（US-004）：同总预算 4h 三臂对拍报告 [.docs/business/极限运行_AB验收报告.md](../business/极限运行_AB验收报告.md)；单飞互斥的物理根据 = 三臂并行实测 solver 帧数 −8%、密度 −0.5pt（墙钟预算被 CPU 争用截断，长跑必须串行/单飞）。
+
+## 机器对接 /api/machine/* — YL 后端对接契约（机器对接 PRD US-001~005，2026-09-21 全五端点落地）
+
+**本节自洽**：YL 侧开发者可仅凭本节完成对接（实现细节/内部机制见上文各表行与 `web/machine.py` 模块 docstring，对接时不需读）。接口面向 YLPatternMaking 后端（服务端到服务端），**不消费 `X-Session-Id`**（浏览器多会话体系与此无关）。
+
+### 0. 基址与认证
+
+- 基址：`http://<MS 主机>:8010`（`MS_WEB_PORT` 可覆盖端口；缺省同机 loopback 部署）。
+- **认证（US-005）**：服务端环境变量 `MS_MACHINE_TOKEN` 设置时，全五端点强制请求头 `X-Machine-Token: <同值>` —— 缺失或不等 → `401 {"error":"缺少 X-Machine-Token 请求头或 token 不正确（服务端已启用 MS_MACHINE_TOKEN 认证）"}`；比较为 `secrets.compare_digest` 常量时间（防时序侧信道）。**未设置该 env → 放行**（loopback 同机部署假设）。token 在请求时读取 env，部署期设置即刻生效。
+- 认证闸**先于一切业务校验**（token 错时 task_id 非法也返回 401）。
+- 所有错误响应均为 `{"error": "<中文可读原因>"}` 结构化 JSON（个别端点带 additive 键，下文逐条注明）。
+
+### 1. 任务状态机
+
+```
+POST solve ──202──► starting ──(run_dir 发现)──► running ──► done | error
+                      │                            │
+                      └────── POST stop / DELETE ──┴──► stopped
+                                                     (stop 保 run_dir；DELETE 全清)
+
+MS 重启后（内存态丢、marker 留）──► orphan（附加 alive/pid 键：pid 存活可 stop/DELETE；
+                                    pid 死 + 30s 宽限 → error）
+DELETE 成功 ──► 任务终点（墓碑：二次 DELETE 200；status/result/export → 404）
+```
+
+- `task_id` = 首次 202 响应返回的字符串（`'m'+时间戳+rand`，全局唯一）；后续四端点全部以它寻址。
+- 状态经 `GET status` 惰性推进（服务端把解析态写回内存态）；终态 `done|stopped|error` 稳定不变，`error.error` 带 stderr 尾（≤2000 字符，best-effort）。
+- **会话无关性**：status/stop/result/export 不走会话闸门 —— 即使超过会话 TTL 无人轮询，任务内存态路径仍可读（求解最长 7200s，远超会话 TTL 600s）。
+
+### 2. POST /api/machine/solve — 任务提交
+
+`multipart/form-data` 两字段：
+
+| 字段 | 形态 | 说明 |
+|------|------|------|
+| `file` | 二进制 | 母版 DXF（带编号 R12；文件名须 `.dxf`）；≤20MB（超 → 413） |
+| `config` | JSON 字符串 | 下表键集；坏 JSON / 非对象 → 400 |
+
+**config 键表**（`_validate_config` 校验）：
+
+| 键 | 必填 | 类型/值域 | 语义 |
+|----|------|-----------|------|
+| `gate_mm` | ✅ | 正整数（mm） | 门幅/幅宽；密度分母、求解约束带、PLT 外框同源 |
+| `run_mode` | ❌（缺省 `normal`） | `normal` \| `advanced` \| `extreme` | 运行模式三档（见下映射表） |
+| `sizes` | ❌ | 非空整数列表 | 码号过滤（如 `[28,30]`）；**不需要过滤请删除该键**（空列表 → 400） |
+| `per_type` | ❌ | `{g码: {d?, tol?}}`，值 ≥0 数字 | 逐 g 码缝隙/旋转覆盖；**全 0 与不发该键语义全等**（d=0/tol=0 = baseline 无 erode 严格布纹）—— 显式全 0 只是冗余不是错误 |
+| `quantities` | ❌ | `{g码: {码号: ≥0 整数}}` | 数量矩阵；缺省 = 母版全片各 1 份；0 = 该 g 码该码不排 |
+| `client_ref` | ❌ | 1~128 字符字符串 | **幂等键**：同 ref 已有**在飞**任务 → `409 {"error":..., "task_id":<既有任务>}`（不重复 spawn）；终态后同 ref 允许新任务 |
+
+**禁键**（在场即 `400 {"error":"config 不接受 <key> 键（运行参数由 MS 侧按运行模式烘焙）"}`）：`time` / `seeds` / `band` / `prefix` —— 运行参数 MS 侧按档位烘焙，消费端零暴露。
+
+**run_mode 三档映射**（单一真相源 `machine.RUN_MODE_SPECS`）：
+
+| run_mode | 求解预算 | spawn 参数（`ms-run-config`） | 说明 |
+|----------|----------|-------------------------------|------|
+| `normal` | 180 s | （plain，无策略段）`--time 180` | 快速打样档；单 seed 0；result 的 portfolio 段恒空 |
+| `advanced` | 1200 s | `--strategy race --time 1200` | race 多臂门杀档；race-budget/race-gate 用 CLI 缺省 |
+| `extreme` | 7200 s | `--extreme --time 7200` | 极限档；默认 race 臂；预算吃满 |
+
+**响应**：
+
+- `202 {"task_id": "m20260921153042a1b2c3d4", "run_name": "machine_m20260_9f8e7d", "started_at": "2026-09-21T15:30:42"}` —— `task_id` 即后续寻址键；`run_name` 是 run_dir 前缀（产物追溯用）。
+- `400`：config 形状/值域任一不符（文案带具体键名）；`413`：文件超 20MB；`422`：`{"error":"母版解析失败：<原因>"}`（坏 DXF，中文）；`409`：同 `client_ref` 在飞（带 `task_id` additive 键）。
+
+```bash
+curl -X POST http://127.0.0.1:8010/api/machine/solve \
+  -H "X-Machine-Token: <token>" \
+  -F "file=@YL12345.nest.dxf" \
+  -F 'config={"gate_mm":1750,"run_mode":"normal","sizes":[28,30],"quantities":{"g01":{"28":2}},"client_ref":"order-8842"}'
+```
+
+### 3. GET /api/machine/solve/{task_id}/status — 状态轮询（建议 2s 间隔）
+
+**响应恰 10 键**（无 `placed_items`，控载荷；orphan 态 additive `alive`/`pid` 两诊断键）：
+
+| 键 | 类型 | 说明 |
+|----|------|------|
+| `state` | str | `starting` \| `running` \| `done` \| `stopped` \| `error` \| `orphan` |
+| `mode` | str | 恒 `'machine'` |
+| `run_mode` | str | `normal` \| `advanced` \| `extreme`（orphan 经 cfg 反查恢复） |
+| `total_budget_sec` | int | 180 / 1200 / 7200（按档位烘焙） |
+| `elapsed_sec` | float | 墙钟已用秒 |
+| `incumbent` | obj \| null | 实时最优 `{density, width_mm, seed, frame_index}` 恰四键 |
+| `current` | obj \| null | 最新 best_frame 边车 `{seed, density, ext}` |
+| `per_seed` | list | portfolio per_seed 透传（normal 档恒 `[]`） |
+| `error` | str \| null | error 态的 stderr 尾 |
+| `exit_code` | int \| null | 子进程退出码 |
+
+> ⚠️ **密度物理口径警示（不可与历史 erode 口径混比）**：`incumbent.density` / `best.density` / export 的 `pct` 全部是**物理毛版包络口径** —— `real_density = 原始毛版面积之和 / (width_mm × gate_mm)`，`width_mm` = 毛版片足迹包络 ceil 取整（单一权威 `solver._apply_density_dual`，与 result.json 一致）。该口径**不含** per_type d 腐蚀收缩效应，与 YL 侧或历史系统任何「腐蚀后面积/erode 包络」口径的利用率**数值上不可直接混比**（同布局下物理口径 ≤ erode 口径）；跨系统对账请以同一份布局的 `width_mm`（用布长度）为锚。
+
+- `400`：task_id 不满足 `^[0-9A-Za-z]{1,128}$`（路径拼接安全闸）；`404`：未知任务 / 状态槽非机器族归属；删除后再查也 404。
+
+### 4. POST /api/machine/solve/{task_id}/stop — 停止
+
+在飞（starting/running）→ 整树终止（Windows `taskkill /PID /T /F` / POSIX killpg，防 solve 孙进程白烧 CPU）+ 置 `stopped`。**run_dir 保留** —— stopped 态 result/export 仍可读。成功 `200 {"stopped": true, "pid": <pid>}`（orphan 路径多 `orphan: true` 键）；已终态 → `400 {"error":"没有进行中的机器排料任务"}`。**stop ≠ DELETE**：stop 只杀进程留产物，DELETE 是任务终点全清。
+
+### 5. GET /api/machine/solve/{task_id}/result — 终态取布局
+
+`200 {"manifest", "best", "summary"}` 恰三键（running → `409 "尚未结束"`）：
+
+- **`best`**：最优布局 `{density, density_sparrow, width_mm, seed, frame_index, elapsed, placed_items}` —— `placed_items = [{id, rotation, translation}]`（solver 原始布局）。**`demand>1` 的 g 码发 N 条、绝不按 pid 去重**（如 `g01_28` 两份 → 两条 `id:"g01_28"` 记录）—— YL 前端须按条数建 N 个副本承接，不可按 id 折叠成一份。advanced/extreme 档取 `portfolio.incumbent`；normal 档 / stopped 回落各 `best_frame_s*.json` 边车 density 最大帧。
+- **`manifest`**：`{gate_mm, total_area_mm2, n_eroded, pieces:[...]}` —— pieces 每条 `{id, size, color, area_mm2, polygon, raw_polygon, d_mm, label, demand, net_polygon, internal_lines, notches, grain_line}`（与浏览器 /ws/solve manifest 同形，`polygon` 为 erode 后碰撞轮廓、`raw_polygon` 为物理毛版原始轮廓 —— 前端渲染建议用 raw_polygon 口径）。
+- **`summary`**：`{per_seed, mode}`（normal 档 `{per_seed: [], mode: null}`）。
+- 机器任务独占 sid，**无母版漂移 warning**（浏览器 strategy result 的 drift 提示不适用）。
+
+### 6. POST /api/machine/export — 会话无关导出 PLT
+
+body JSON `{task_id, fmt?, placed?, table?}`（**最小请求仅 `{"task_id": "..."}`**）：
+
+| 键 | 缺省 | 说明 |
+|----|------|------|
+| `task_id` | 必填 | 终态或 running 皆可（内部自行推进状态） |
+| `fmt` | `plt-clean` | `plt-clean`（毛版+唛架表格）\| `plt`（全量版）；其它 → 400 |
+| `placed` | 状态槽 incumbent（与 result 端点同源同序） | 显式传入须 `[{id, rotation, translation}]`（= result.best.placed_items 的布局子集）；全未命中 → 400 |
+| `table` | 服务端全算（6 手输默认值 A料/0.0%/0.0%/空/noname/空 + 8 项自动计算字段） | 显式传入走 `/export` 的 `parse_table_payload` 同校验（键：bed_no/warp_shrink/weft_shrink/planner/style_no/remark，全字符串） |
+
+**响应**：`200 application/plt` 附件字节流（HPGL/HP-GL 纯文本），`Content-Disposition` 中文/ASCII 双写、文件名前缀 = `run_name`（任务可追溯）。pieces 来源 = run_dir 内 `pieces_intermediate.json` 直载（**会话被 TTL 逐出后仍可导出**），兜底会话快照；复用 `web/export.py` 门面（几何/表格/PLT 单一真相源，与浏览器 `/export` 零漂移）。`409`：无 run_dir / 无任何布局帧 / 无 pieces / gate=0；`400`：fmt 值域外 / placed 形状或全未命中 / table 非法 / body 非 JSON。
+
+### 7. DELETE /api/machine/solve/{task_id} — 幂等清理（任务终点）
+
+在飞 → 先树杀（同 stop 口径，`killed:true`）→ `rmtree run_dir` + 清 marker + 弹内存状态槽 + 删 `machine_cfg_<task_id>_*.json` → `200 {"ok": true, "task_id": ..., "run_dir": "<已清路径>", "killed": false}`。
+
+- **幂等**：**二次 DELETE 也 200**（内存墓碑区分「已清理」与「从未存在」→ 404）—— 二次响应 `{ok:true, task_id, run_dir:null, killed:false}`。MS 重启丢墓碑 → 已删任务的二次 DELETE 回落 404；**消费端把 404 一律视同「任务不存在/已清理」即可**，两种情形无需区分。
+- orphan marker（MS 重启遗留）同样可清（pid 存活先树杀）。清理后 status/result/export → 404。
+
+### 8. 错误码汇总（全五端点）
+
+| HTTP | 触发 | 消费端处理建议 |
+|------|------|----------------|
+| `401` | `MS_MACHINE_TOKEN` 已设置且头缺失/不等 | 检查部署配置与请求头，勿重试 |
+| `400` | config 键形状/值域 / 禁键 / task_id 格式非法 / 已终态 stop / fmt·placed·table·body 非法 | 修请求，勿盲目重试 |
+| `404` | 未知 task_id / 外族状态槽 / 已删除任务（重启后） | 视同任务不存在，走重提交流程 |
+| `409` | 同 client_ref 在飞（solve）/ running 取 result | 轮询既有 task_id 或等待终态 |
+| `413` | 母版 >20MB | 压缩或拆分母版 |
+| `422` | 母版 DXF 解析失败（中文原因） | 检查 DXF（R12 + POLYLINE 闭合轮廓） |
+
+### 9. 坐标系与渲染约定
+
+- **sparrow 世界坐标**：X = 用布长度（0..width_mm，布头 x=0），Y = 门幅（0..gate_mm），**Y 向上**。
+- `placed_items[].translation = [x, y]` 即该世界系下的平移；`rotation` 单位度（0/180 为主，per_type tol>0 时有更多离散角）。
+- **消费端 SVG 渲染需 `scale(1,-1)`**（SVG Y 向下）翻转后与 MS 侧 PNG/DXF/PLT 导出观感一致；`manifest.pieces[].raw_polygon`（及 polygon/各层）同为 Y 向上坐标，同一翻转规则。
+
+### 10. 对接推荐流程
+
+```
+1) POST solve（multipart + config 含 client_ref）──────► 202 task_id   （409 → 改轮询既有 task_id）
+2) GET  status 每 2s ────────────────────────────────► starting/running… incumbent.density 实时利用率
+3) 终态分支：
+   done    → GET result（取 placed_items/manifest）→ POST export {task_id} → DELETE task_id
+   需中止  → POST stop（保留产物可再取 result/export）→ （可选）DELETE
+   error   → 读 status.error（stderr 尾）修母版/配置后重新 solve（同 client_ref 已终态，放行新任务）
+4) 网络层重试幂等锚点：solve 用 client_ref；其余四端点天然幂等（status/result/export 只读，DELETE 幂等）
+```
+
+### 11. 运维注记（消费端无感，排障用）
+
+- **machine_* run_dir 7 天机会式清理**：每次 solve start 顺手 rmtree `config_runs/machine_*` 中 mtime>7 天的目录（extreme 档最长 7200s，超 7 天必是死任务残留）；**非 machine 前缀不动**（浏览器 web_* / 手工 run）；状态槽在册 run_dir 跳过（时钟回拨防御）。依赖 run_dir 长期留存的下游请自行在终态后及时 export。
+- MS 进程重启 → 内存态（status/stop/result/export 的即时可读性 + client_ref 去重 + DELETE 墓碑）丢失；marker 在盘 → 任务以 `orphan` 态可见（可 stop/DELETE 清理）。重启前已 done 未 export 的任务：marker 已清 → 404（不可恢复），**请在终态后及时取件**。
+- 服务端日志/产物定位：`out/config_runs/<run_name>_<stamp>/`（result.json / best_frame_s*.json / curve_s*.json / pieces_intermediate.json）、`out/uploads/machine_cfg_<task_id>_<stamp>.json`（config 落盘副本，DELETE 一并回收）。
 
 ## WebSocket /ws/solve — 求解流
 
