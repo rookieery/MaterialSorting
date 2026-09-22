@@ -1,11 +1,4 @@
 {
   "branchName": "ralph/machine-nesting-api",
-  "stories": [
-    {
-      "id": "US-002",
-      "title": "契约文档与 YL 透传指引",
-      "description": "机器契约文档补 state-file 端点（机器对接三期，MS 侧）。As a YL 对接开发者，I want 机器契约专节覆盖 state-file 端点与透传指引，so that 仅凭该节即可完成 YL 侧下载功能对接（克隆其 PLT 导出下载通道模式）。\n\n具体任务：\n1. .docs/technical/agent-api-reference.md — 机器对接专节新增「GET /api/machine/solve/{task_id}/state-file」小节：请求/响应契约（无请求体、200 application/gzip 附件、CD 双写与文件名规则）、错误码触发条件表（401 token / 400 task_id 非法 / 404 未知或已删除 / 409 数据不可得或守恒防御）、.msn 五块（doc/form/quantities/run/省键块）服务端来源说明（YL 无感，仅供排障）、纯配置档语义（无帧任务 200 无 run 键）、running 期下载 = best-so-far 快照（export 同语义）、密度物理口径警示沿用（final.density 不可与历史 erode 口径混比）。\n2. 同文档 — YL 透传指引专段：.msn 为不透明字节流（YL 不解析、MS schema 升级 YL 零感知）；透传 Content-Type 与 Content-Disposition（保文件名/扩展）；克隆既有 PLT 导出下载通道（按钮 + 代理 + token 服务端持有）；代理超时建议 ≥30s（MS 生成秒级留裕量）；用户后续路径一条链（YL 下载 → MS 工作台「状态恢复」上传 → 编辑布局/智能微调/改数量重解/导出 PNG·DXF·PLT）；配套 YL 侧规格见 tasks/prd-machine-state-file-yl.md。\n3. 同文档 — §8 错误码汇总表补 state-file 行（409 触发条件新增「裁片数据已不可得 / 守恒防御」）；§10 对接推荐流程加分支「需人工继续调整 → GET state-file（终态后及时取件，同 export 运维注记）」；文档内附 curl 冒烟序列（solve → status 轮询至终态 → state-file 存盘 → MS 工作台恢复验证）。\n4. README.md — 机器对接节补一句话（六端点族 + .msn 取件）+ 指向契约专节。\n\n验收标准：\n- 契约专节新小节含上述全部要素（评审口径：YL 侧开发者可仅凭该节完成对接，无需读 machine.py）。\n- 错误码汇总表与对接推荐流程已同步更新；curl 冒烟序列可直接复制执行。\n- README 机器节提及 state-file 端点。\n- 全量后端测试零回归（纯文档 Story，守恒验证）。\n- python -c \"from materialsorting.web import machine\" 导入通过，分层依赖未反向。",
-      "passes": true
-    }
-  ]
+  "stories": []
 }
