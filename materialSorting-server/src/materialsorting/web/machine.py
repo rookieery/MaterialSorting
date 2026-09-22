@@ -1,4 +1,5 @@
-"""机器对接排料 API（YL 排料对接二期，prd-machine-nesting-api）—— US-005 幂等清理 token 契约。
+"""机器对接排料 API（YL 排料对接，prd-machine-nesting-api 二期 + prd-machine-state-file 三期）
+—— 三期 US-001 .msn 状态文件下载端点。
 
 YLPatternMaking（YL 打版系统）后端经 HTTP 机器接口接入 MS 排料引擎：multipart
 提交带编号母版 DXF + config JSON → 按运行模式求解 → 2s 级轮询实时利用率 → 终态
@@ -8,7 +9,8 @@ YLPatternMaking（YL 打版系统）后端经 HTTP 机器接口接入 MS 排料�
 树杀 / 清理骨架 —— 与 se|race / extreme 同构，但**每任务一个 'm' 前缀独立 sid**
 （不消费 X-Session-Id，浏览器工作台 default ``_PIECES_STATE`` 零感知）。
 
-端点契约（US-002 solve + US-003 三端点 + US-004 export + 本故事 DELETE 幂等清理，全五端点已落地）：
+端点契约（US-002 solve + US-003 三端点 + US-004 export + US-005 DELETE + 三期
+US-001 state-file，全六端点已落地）：
 
   - ``POST   /api/machine/solve`` —— multipart ``file``（母版 DXF 二进制
     ≤20MB，同 /api/parse-dxf 上限）+ ``config``（JSON 字符串）。config 键集：
@@ -70,6 +72,49 @@ YLPatternMaking（YL 打版系统）后端经 HTTP 机器接口接入 MS 排料�
     —— 首删后状态槽/marker 均不在，无墓碑则二次删与「从未存在」不可区分会
     404）；未知 task_id → 404（同三端点公共闸）。MS 重启丢墓碑 → 已删任务的
     二次 DELETE 回落 404（消费端把 404 视同「任务不存在/已清理」即可）。
+  - ``GET    /api/machine/solve/{task_id}/state-file``（三期 US-001）—— 机器任务
+    ``.msn`` 状态文件下载（无请求体）：服务端权威装配与浏览器 ``POST
+    /api/state-save`` 产物**同构可恢复**的 gzip JSON 附件（schema v1 零变更、
+    ``web/statefile.py`` 零改动 —— ``build_state_document``/``serialize_state``/
+    ``check_placed_conservation`` 导出符号纯复用）。用户动线：YL 下载 → 交付
+    版师 → MS 工作台「状态恢复」上传 → 机器结果全量还原（预览/数量矩阵/最优
+    布局）继续人工调整（编辑/微调/改数量重解/导出 PNG·DXF·PLT）。
+    - **doc 三源链**（会话无关，与 export 兜底链同族）：① run_dir
+      ``pieces_intermediate.json`` 直载（``load_pieces`` 返回的 doc 即 .msn doc
+      块，含 5 层渲染字段）→ ② 会话快照 ``registry.peek(task_id).state['doc']``
+      → ③ per-doc intermediate（doc_id 经状态槽/marker 反查
+      ``uploads/<doc_id>_pieces/``）；三源同内容（commit 单点写入），全空 → 409
+      「裁片数据已不可得」。**source 归一**：① 的 doc.source 是机器上传落盘名
+      ``<doc_id>.dxf``（cfg.master_dxf 即重命名件）、②③ 是原上传名 —— doc 块
+      source 与下载文件名按状态槽 ``source``（solve 时快照原上传名）归一
+      （跨源逐字节一致的前提，state_save 产物同口径）。
+    - **form/quantities 合成**：源 = 状态槽 start 快照（sizes/per_type/
+      quantities/gate_mm）→ 槽缺失（orphan）回落 ``machine_cfg_<sid>_*.json``
+      （``_orphan_mode_budget`` 同款读法）；``form.gate = str(gate_mm/10)``（cm
+      字符串，恢复端 ``_form_gate_mm`` ×10 口径 —— 恢复 manifest 幅宽单一来源，
+      doc.gate_mm 是 commit 期默认值与任务实际门幅可能不同）；per_type 数值转
+      FormState 字符串形态（state_save 产物同构 + 前端 ``collectPerType`` 只吃
+      字符串；后端 ``_pf`` 双形态容错 → 恢复链 erode 数值等价）；其余键（time=
+      ``RUN_MODE_SPECS[run_mode]`` 烘焙秒数 / seed='0' / multi_seed=False /
+      seed_count='3' / band_* / prefix_* 关）满形态缺省（恢复后前端表单无
+      undefined）；quantities 原样入档（缺省 None = 全 1 旧语义）。
+    - **run 块**：``_best_layout(run_dir)`` 与 result/export 同源同序；placed =
+      best.placed_items 原样（demand>1 的 g 码 N 条绝不按 pid 去重）+ seed 透传
+      + final 按 best 可用键合成（density/density_sparrow/width_mm/elapsed，
+      缺键省略）+ provenance.kind 三档映射 normal→solve / advanced→
+      strategy_race / extreme→extreme（``config:{time_total_s}`` 纯展示）。
+      无任何布局帧（error 态/未产帧）→ **纯配置档**：200、文件无 run 键（用户
+      在工作台改参数自行重解，非降级）；running 期下载 = best-so-far 快照
+      （export 同语义）。
+    - **守恒闸**：run 在场时 ``check_placed_conservation(placed, doc.pieces,
+      sizes, per_type, quantities)``（求解与入档同源配置理论必过）；防御性失败
+      → 409「布局与数量矩阵不一致，无法生成状态文件」（state_save §五.5 同
+      定稿，不让坏文件流出）。生成侧防御：解压后超 ``STATE_MAX_BYTES`` → 409
+      （恢复端必拒的文件不生成）。
+    - 响应 ``application/gzip`` 附件 + Content-Disposition 中文/ASCII 双写
+      （state_save 同法），文件名 ``<doc.source 去 .dxf>_状态_<yyyymmdd-HHMMSS>
+      .msn``（ASCII fallback ``nesting_state_`` 前缀）。``quantities_base`` /
+      ``pending_strategy_result`` 不产（机器无此概念，省键式）。
 
 **机器 run_dir 7 天机会式清理（本故事）**：每次 solve start 触发
 ``_cleanup_stale_machine_run_dirs`` —— ``config_runs/`` 下 ``machine_*`` 前缀
@@ -78,7 +123,7 @@ extreme 档最长 7200s，超 7 天必是死任务残留）。**非 machine 前�
 （浏览器 web_* / 手工 ms-run-config run）；状态槽在册 run_dir（任何 mode）
 跳过 —— 时钟回拨/长暂停进程防御。
 
-**X-Machine-Token 认证（本故事）**：env ``MS_MACHINE_TOKEN`` 设置时全五端点
+**X-Machine-Token 认证（US-005）**：env ``MS_MACHINE_TOKEN`` 设置时全六端点
 强制 —— 请求头 ``X-Machine-Token`` 缺失或不等（``secrets.compare_digest``
 常量时间比较，防时序侧信道）→ 401；未设置放行（loopback 同机部署假设，
 YL 后端与 MS 同机）。env 请求时读取（非 import 期绑定），部署期设置即刻
@@ -92,10 +137,10 @@ best-effort —— marker 恰 5 键不含 stderr 路径，重启后无从定位�
 orphan 态 ``run_mode``/``total_budget_sec`` 经 ``machine_cfg_<sid>_*.json`` 的
 time 键反查 ``RUN_MODE_SPECS`` 恢复（时间三档烘焙 MS 侧单一真相源，反查无歧义）。
 
-五端点公共约定：X-Machine-Token 认证先行（MS_MACHINE_TOKEN 设置时缺失/错误
+六端点公共约定：X-Machine-Token 认证先行（MS_MACHINE_TOKEN 设置时缺失/错误
 → 401，早于一切业务校验）；task_id 格式非法（不满足 sessions.SID_RE）→ 400
 （marker 路径拼接安全闸）；未知任务（内存态空 + 无 marker / 状态槽非 machine
-归属）→ 404；status/stop/result/export 四端点均**不走会话闸门**
+归属）→ 404；status/stop/result/export/state-file 五端点均**不走会话闸门**
 （``_status_common``/``_stop_common``/``_result_common`` 的 ``gate=False``
 参数化，机器会话可能已被 TTL 逐出）。
 
@@ -128,6 +173,7 @@ import sys
 import tempfile
 import time
 import uuid
+from datetime import datetime
 from pathlib import Path
 
 from urllib.parse import quote
@@ -150,6 +196,17 @@ from .plt_table import TablePayloadError
 from .sessions import SID_RE, SessionError
 from .sessions import registry as session_registry
 from .solver import load_pieces
+# 状态文件导出符号（三期 US-001）：statefile.py 不 import server/machine（无环），
+# 模块级 import 与 export 门面同款先例 —— 序列化/守恒/schema 上限单一真相源
+# 全留 web/statefile.py（纯消费方，statefile.py 零改动）。
+from .statefile import (
+    STATE_EXTENSION,
+    STATE_MAX_BYTES,
+    StateConservationError,
+    build_state_document,
+    check_placed_conservation,
+    serialize_state,
+)
 
 __all__ = ['register_machine_routes', 'router']
 
@@ -177,6 +234,13 @@ _MACHINE_LABEL = '机器排料任务'
 # 口径）；plt = 全量版（净版线/内部线/布纹杆羽 + 表格）。机器契约只出 PLT
 # （png/dxf 是浏览器工作台 /export 的面，不在机器对接范围）。
 _EXPORT_FORMATS = ('plt-clean', 'plt')
+# run_mode → .msn run.provenance.kind 映射（三期定稿）：normal = plain 求解 →
+# 'solve'（恢复端来源小字「普通求解」）；advanced = race 默认档 →
+# 'strategy_race'；extreme → 'extreme'（枚举 = statefile._PROVENANCE_KINDS 子集）。
+# config.time_total_s 纯展示（前端来源小字括号段），与 NestingPage
+# originOfStrategyResult 的 extreme 族 config 键同形。
+_STATEFILE_PROVENANCE = {'normal': 'solve', 'advanced': 'strategy_race',
+                         'extreme': 'extreme'}
 # X-Machine-Token 认证（US-005）：env 设置时全五端点强制（compare_digest 常量
 # 时间比较）；未设置放行（loopback 同机部署假设）。请求时读 env（非 import 期
 # 绑定）—— 部署期设置即刻生效，tests monkeypatch os.environ 即可注入。
@@ -486,6 +550,10 @@ async def machine_solve(req: Request):
         'snapshot': snapshot,
         'stderr_path': stderr_file.name,
         'doc_id': doc_id,
+        # 原上传名（三期 state-file）：cfg.master_dxf 落盘为 <doc_id>.dxf 重命名件
+        # （run_dir 直载 doc.source 随之是 doc_id 名），.msn doc 块与下载文件名
+        # 按本键归一回原上传名（state_save 产物同口径）。
+        'source': fname,
         # start 时快照（result 组装 manifest 用同口径，不依赖客户端二次回传）。
         'pieces_snapshot': [dict(p) for p in pieces],
         'sizes': sizes or None,
@@ -914,12 +982,242 @@ async def machine_solve_delete(task_id: str, request: Request):
     return {'ok': True, 'task_id': task_id, 'run_dir': run_dir, 'killed': killed}
 
 
+# --------------------------------------------------- 三期 state-file（.msn）
+
+
+def _machine_cfg_payload(task_id: str) -> dict:
+    """orphan 回落源：``machine_cfg_<sid>_*.json`` 全量读 → 首个合法 dict；缺失/
+    坏 JSON → ``{}``（``_orphan_mode_budget`` 同款读法，值域含 gate_mm/sizes/
+    per_type/quantities —— solve 落盘 10 键 schema 子集）。
+    """
+    from . import server as server_mod
+
+    try:
+        cfg_files = sorted(server_mod.UPLOADS_DIR.glob(
+            f'machine_cfg_{task_id}_*.json'))
+    except OSError:
+        return {}
+    for cp in cfg_files:
+        cfg = strategy_mod._read_json(cp)
+        if isinstance(cfg, dict):
+            return cfg
+    return {}
+
+
+def _stringify_per_type(per_type) -> dict:
+    """per_type 数值（机器 config 口径 ``{g码:{d,tol}}``）→ FormState 字符串形态。
+
+    与 ``state_save`` 产物同构（form 块按 input.value 字符串入档）：前端
+    ``collectPerType`` 的 ``vals.d.trim()`` 只吃字符串（数值会 TypeError 崩求解
+    入口）；后端 ``solver._pf`` 双形态容错（US-004 状态文件字符串形态）→ 恢复
+    链守恒/manifest 重算 erode 数值等价。缺键补空串 = 继承默认（前端「空串 =
+    继承」同口径）；非 dict 条目防御性跳过。
+    """
+    if not per_type or not isinstance(per_type, dict):
+        return {}
+    out = {}
+    for label, over in per_type.items():
+        if not isinstance(over, dict):
+            continue
+        entry = {}
+        for key in ('d', 'tol'):
+            v = over.get(key)
+            if v is not None:
+                try:
+                    entry[key] = '%g' % float(v)
+                except (TypeError, ValueError):
+                    continue
+        out[label] = entry
+    return out
+
+
+def _statefile_doc(task_id: str, run_dir, st, marker):
+    """doc 块三源链 → doc dict（全空 → None，调用方 409）。
+
+    ① run_dir ``pieces_intermediate.json`` 直载（solve 事实源在盘，``load_pieces``
+    返回的 doc 即 .msn doc 块 —— 与 ``state_save`` 的 ``state['doc']`` 同构含 5
+    层渲染字段）→ ② 会话快照（``registry.peek`` 非抛式：已逐出 → None）→
+    ③ per-doc intermediate（doc_id 经状态槽/marker 反查 ``uploads/<doc_id>_pieces/``
+    —— MS 重启后内存态空仍可经盘上上传切片恢复）。三源同内容（commit 单点
+    写入），任一命中即用；缺失/坏 JSON/旧 schema 逐级降级不阻塞。
+    """
+    if run_dir:
+        try:
+            doc, _gate, pieces = load_pieces(
+                str(Path(run_dir) / 'pieces_intermediate.json'))
+            if pieces:
+                return doc
+        except Exception:
+            pass
+    sess = session_registry.peek(task_id)
+    if sess is not None:
+        doc = (sess.state or {}).get('doc')
+        if isinstance(doc, dict) and doc.get('pieces'):
+            return doc
+    doc_id = ((st or {}).get('doc_id') if st is not None else None) \
+        or (marker or {}).get('doc_id')
+    if doc_id:
+        from . import server as server_mod
+        try:
+            doc, _gate, pieces = load_pieces(
+                str(server_mod._per_doc_intermediate(doc_id)))
+            if pieces:
+                return doc
+        except Exception:
+            pass
+    return None
+
+
+@router.get('/api/machine/solve/{task_id}/state-file')
+async def machine_solve_state_file(task_id: str, request: Request):
+    """机器任务 .msn 状态文件下载（三期 US-001）：task_id → gzip JSON 附件。
+
+    与 ``POST /api/state-save`` 产物同构可恢复（schema v1 零变更、statefile.py
+    零改动），服务端权威装配（无 placed/table 覆写面，与 export 的可覆写面刻意
+    不同）。running 期下载 = best-so-far 快照（export 同语义）；无任何布局帧 →
+    纯配置档（200、文件无 run 键）。会话无关：doc 走三源链、form/quantities 走
+    状态槽快照 → orphan 回落 machine_cfg（MS 重启后 marker 在仍可下载）。
+    """
+    token_err = _machine_token_error(request)
+    if token_err is not None:
+        return token_err
+    st, marker, err = _machine_task_ctx(task_id)
+    if err is not None:
+        return err
+    session_registry.touch(task_id)   # 同五端点：下载动作刷活性（no-op 容错）
+
+    # ---- 状态推进（同 export 口径：done 识别 + run_dir 发现写回内存态，不要求
+    # 客户端先轮询；orphan 用 marker 带回的 run_dir）。
+    run_dir = None
+    if st is not None:
+        base = await strategy_mod._status_common(request, sid=task_id, gate=False)
+        if isinstance(base, JSONResponse):    # 防御（gate=False 不产生；保险透传）
+            return base
+        run_dir = base.get('run_dir')
+    else:
+        run_dir = (marker or {}).get('run_dir') or None
+
+    # ---- doc 块三源链（全空 → 409，不让无几何的空文件流出）。
+    doc = _statefile_doc(task_id, run_dir, st, marker)
+    if doc is None:
+        return JSONResponse(
+            {'error': '裁片数据已不可得（run_dir 与上传快照均缺失）'},
+            status_code=409)
+    # 原上传名归一（文件名 AC「<原上传名>_状态_<ts>.msn」+ 跨源逐字节一致的
+    # 前提）：① run_dir 直载 doc 的 source 是机器上传落盘名 ``<doc_id>.dxf``
+    # （cfg.master_dxf 即 doc_id 重命名件），②③（web commit）与 ``state_save``
+    # 同为原上传名 —— 按状态槽 ``source``（solve 时快照）归一 doc 块与文件名
+    # （浅拷贝改写，不动会话态/盘上原 doc）。
+    orig_source = (st or {}).get('source') if st is not None else None
+    if orig_source and doc.get('source') != orig_source:
+        doc = {**doc, 'source': orig_source}
+
+    # ---- form/quantities 源：状态槽 start 快照 → orphan 回落 machine_cfg。
+    if st is not None:
+        gate_mm = st.get('gate_mm')
+        sizes = st.get('sizes')
+        per_type = st.get('per_type')
+        quantities = st.get('quantities')
+        run_mode = st.get('run_mode')
+        total_sec = st.get('total_budget_sec')
+    else:
+        cfg = _machine_cfg_payload(task_id)
+        gate_mm = cfg.get('gate_mm')
+        sizes = cfg.get('sizes')
+        per_type = cfg.get('per_type')
+        quantities = cfg.get('quantities')
+        run_mode, total_sec = _orphan_mode_budget(task_id)
+    try:
+        gate_mm = float(gate_mm or 0.0)
+    except (TypeError, ValueError):
+        gate_mm = 0.0
+    if gate_mm <= 0:
+        # form.gate 是恢复 manifest 幅宽单一来源（_form_gate_mm ×10）—— 不可得
+        # 即无法装配出可正确恢复的文件。
+        return JSONResponse(
+            {'error': '任务门幅不可得（状态槽与 machine_cfg 均缺失），'
+                      '无法生成状态文件'}, status_code=409)
+    if run_mode not in RUN_MODE_SPECS:
+        run_mode = 'normal'   # 防御（内存态恒带 run_mode；无 cfg 时早被门幅闸拦下）
+    if not total_sec:
+        total_sec = RUN_MODE_SPECS[run_mode]['time']
+
+    # ---- form 满形态合成（与前端 DEFAULT_FORM 同形，恢复后表单无 undefined）。
+    # per_type 转 FormState 字符串形态（数值等价经 _pf 容错，前端 collectPerType
+    # 字符串口径），守恒闸同用该形态（与入档单一来源）。
+    per_type_form = _stringify_per_type(per_type)
+    form = {
+        'sizes': list(sizes) if sizes else [],
+        'gate': str(gate_mm / 10.0),
+        'time': str(total_sec),
+        'seed': '0',
+        'multi_seed': False,
+        'seed_count': '3',
+        'per_type': per_type_form,
+        'band_enabled': False,
+        'band_label': '',
+        'prefix_enabled': False,
+        'prefix_front': '',
+        'prefix_back': '',
+    }
+
+    # ---- run 块：_best_layout（result/export 同源同序）；无帧 → 纯配置档省键。
+    run = None
+    best = _best_layout(run_dir) if run_dir else None
+    placed = (best or {}).get('placed_items') or []
+    if best is not None and placed:
+        run = {
+            'seed': best.get('seed') or 0,
+            'final': {k: best[k] for k in
+                      ('density', 'density_sparrow', 'width_mm', 'elapsed')
+                      if best.get(k) is not None},
+            'placed': placed,
+            'provenance': {'kind': _STATEFILE_PROVENANCE[run_mode],
+                           'config': {'time_total_s': total_sec}},
+        }
+        # 守恒闸（state_save §五.5 同定稿）：求解与入档同源配置理论必过，防御性
+        # 失败 → 409 不让内部不一致文件流出（sizes/per_type/quantities 与求解
+        # cfg 同快照 —— form 侧字符串形态与 build_pid_meta 数值口径等价）。
+        try:
+            check_placed_conservation(placed, doc['pieces'], sizes=sizes,
+                                      per_type=per_type_form,
+                                      quantities=quantities)
+        except (StateConservationError, ValueError, TypeError):
+            return JSONResponse(
+                {'error': '布局与数量矩阵不一致，无法生成状态文件'},
+                status_code=409)
+
+    document = build_state_document({'doc': doc}, form, quantities, run)
+    # 生成侧防御：解压后超 STATE_MAX_BYTES 的文件恢复端必 413 拒收 —— 与
+    # serialize_state 同一 json.dumps 口径量尺寸，不让不可恢复的文件流出。
+    if len(json.dumps(document, ensure_ascii=False).encode('utf-8')) > STATE_MAX_BYTES:
+        return JSONResponse(
+            {'error': f'状态文件解压后超过上限 '
+                      f'{STATE_MAX_BYTES // (1024 * 1024)}MB，无法生成状态文件'},
+            status_code=409)
+    data = serialize_state(document)
+
+    # 文件名同 state_save 约定：<doc.source 去 .dxf>_状态_<yyyymmdd-HHMMSS>.msn
+    # （ASCII fallback nesting_state_ 前缀）；CD 中文/ASCII 双写（RFC5987）。
+    source = doc.get('source') or ''
+    stem = source[:-4] if source.lower().endswith('.dxf') else source
+    prefix_cn = stem or '排料'
+    prefix_ascii = stem if stem and stem.isascii() else 'nesting'
+    ts = datetime.now().strftime('%Y%m%d-%H%M%S')
+    fname_cn = f'{prefix_cn}_状态_{ts}{STATE_EXTENSION}'
+    fname_ascii = f'{prefix_ascii}_state_{ts}{STATE_EXTENSION}'
+    cd = (f"attachment; filename=\"{fname_ascii}\"; "
+          f"filename*=UTF-8''{quote(fname_cn)}")
+    return Response(content=data, media_type='application/gzip',
+                    headers={'Content-Disposition': cd})
+
+
 def register_machine_routes(app) -> None:
     """把 machine 路由挂到 FastAPI app（server.py 文件尾调用一次，位于 strategy 之后）。
 
-    US-002 solve + US-003 status/stop/result + US-004 export + US-005 DELETE
-    六路由已挂到本模块 ``router``（五端点族：DELETE 与 solve 共用
-    ``/api/machine/solve`` 路径段）。
+    US-002 solve + US-003 status/stop/result + US-004 export + US-005 DELETE +
+    三期 US-001 state-file 七路由已挂到本模块 ``router``（六端点族：DELETE/
+    state-file 与 solve 共用 ``/api/machine/solve`` 路径段）。
     """
     app.include_router(router)
 

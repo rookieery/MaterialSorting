@@ -65,6 +65,24 @@ US-005（本故事）覆盖幂等清理 / token / 陈年 run_dir 回收：
   - X-Machine-Token：env `MS_MACHINE_TOKEN` 设置时全五端点无/错 token → 401
     （solve 401 不 spawn）、对 token 放行；未设置放行（既有全套测试即证明，
     另有显式 delenv 用例）。
+
+三期（prd-machine-state-file）覆盖 state-file .msn 状态文件下载端点：
+  - 默认档金标：done 任务 GET → 200 application/gzip 附件（CD 中文/ASCII 双写 +
+    nest_state 文件名）+ `parse_state_document` 校验链全过（doc/form/quantities/
+    run 逐块一致、placed 绝不按 pid 去重、quantities_base/pending 省键）；
+  - 会话 TTL 逐出（registry.reset 模拟）后仍 200 且逐字节一致（.msn 时间三源
+    冻结：saved_at/文件名 ts/gzip mtime —— 三源 doc 兜底链生效）；
+  - doc 三源链逐级：run_dir 直载 → 会话快照 → per-doc intermediate（doc_id 反查
+    uploads/<doc_id>_pieces/）；三源全空 → 409；
+  - roundtrip：恢复链 `build_pid_meta` 重算 demand 与 result 端点 manifest 逐
+    pid 相等 + manifest gate_mm == 任务 gate_mm（1750/1800 双值抽验，form.gate
+    cm×10 口径胜出 doc commit 默认门幅）；
+  - 三档 run_mode provenance（normal→solve 经 best_frame 边车回落仍出完整 run
+    块 / advanced→strategy_race / extreme→extreme；final 缺键省略）；
+  - 纯配置档（error 态无帧 / starting 无 run_dir）→ 200 文件无 run 键；
+  - 防御路径：守恒失配 409 中文 + 解压后超 STATE_MAX_BYTES 409；
+  - 端点契约闸：token 401 先行（早于 task_id 400）/ task_id 非格式 400 / 未知
+    404 / DELETE 后 404。
 端口可配（MS_WEB_PORT）由 server.main() 冒烟与部署文档覆盖（uvicorn 层，
 TestClient 不经端口）。
 """
@@ -196,7 +214,7 @@ def test_server_app_healthy_with_machine_router():
         assert r.status_code == 200
         assert r.headers.get('Cache-Control') == 'no-cache'
     # US-002 起真端点挂上本 router（solve 先行；US-003 status/stop/result；
-    # US-004 export；US-005 DELETE —— 五端点族路径全在场）。
+    # US-004 export；US-005 DELETE；三期 US-001 state-file —— 六端点族路径全在场）。
     machine_paths = {getattr(route, 'path', '') for route in machine_mod.router.routes}
     assert '/api/machine/solve' in machine_paths
     assert '/api/machine/solve/{task_id}/status' in machine_paths
@@ -204,6 +222,7 @@ def test_server_app_healthy_with_machine_router():
     assert '/api/machine/solve/{task_id}/result' in machine_paths
     assert '/api/machine/export' in machine_paths
     assert '/api/machine/solve/{task_id}' in machine_paths
+    assert '/api/machine/solve/{task_id}/state-file' in machine_paths
 
 
 # ============================================================= US-002 solve
@@ -1333,3 +1352,273 @@ def test_machine_token_unset_allows(machine_env, monkeypatch):
     sid, _st = _install_machine_state(machine_env, run_dir=None, rc=None)
     r = TestClient(server_mod.app).get(f'/api/machine/solve/{sid}/status')
     assert r.status_code == 200 and r.json()['state'] == 'starting'
+
+
+# ============================================================= 三期 state-file（.msn）
+
+import gzip as gzip_mod  # noqa: E402（三期段内就近）
+import types as types_mod  # noqa: E402
+
+from materialsorting.web import statefile as statefile_mod  # noqa: E402
+from materialsorting.web.solver import build_pid_meta  # noqa: E402
+from materialsorting.web.statefile import parse_state_document  # noqa: E402
+
+
+class _FrozenMSNDT:
+    """下载时间冻结替身（statefile saved_at + machine 文件名 ts 两处 now()）。"""
+
+    @staticmethod
+    def now(tz=None):
+        return _dtmod_datetime(2026, 9, 22, 9, 30)
+
+
+def _freeze_msn_time(monkeypatch):
+    """冻结 .msn 时间三源：saved_at（``statefile.datetime``）+ 文件名 ts
+    （``machine.datetime``）+ gzip 头 mtime（``gzip.time`` shim）→ 跨秒两次
+    下载逐字节可比（逐字节一致 AC 的确定性前提）。"""
+    monkeypatch.setattr(statefile_mod, 'datetime', _FrozenMSNDT)
+    monkeypatch.setattr(machine_mod, 'datetime', _FrozenMSNDT)
+    monkeypatch.setattr(gzip_mod, 'time',
+                        types_mod.SimpleNamespace(time=lambda: 1750000000.0))
+
+
+def _statefile_setup(machine_env, monkeypatch, *, incumbent=None, quantities=None,
+                     with_intermediate=True, with_frames=True, rc=0,
+                     run_mode='normal', gate_mm=1750.0):
+    """三期 state-file 测试基座：机器任务（缺省 done 形态）+ run_dir 产物 +
+    会话注册 + .msn 时间三源冻结 → ``(client, sid, run_dir, st)``。
+
+    与 ``_export_setup`` 同构（plain 档边车回落形态），差异：intermediate 与
+    帧产物可拆（纯配置档路径）、gate_mm/run_mode 可调（form 合成与 provenance
+    抽验）。doc 三源内容恒 = ``_synth_doc()``（三源同内容对拍基准）。
+    """
+    _freeze_msn_time(monkeypatch)
+    run_dir = (Path(paths_mod.CONFIG_RUNS_DIR)
+               / f'machine_m2026_stf1_{uuid.uuid4().hex[:8]}')
+    run_dir.mkdir(parents=True)
+    if with_frames:
+        _write_plain_result(run_dir, incumbent=incumbent)
+        _write_best_frame(run_dir, 0, 0.5788, placed=_PLACED_3, frame_index=7)
+    if with_intermediate:
+        (run_dir / 'pieces_intermediate.json').write_text(
+            json.dumps(_synth_doc()), encoding='utf-8')
+    sid, st = _install_machine_state(machine_env, run_dir=str(run_dir), rc=rc,
+                                     quantities=quantities, run_mode=run_mode)
+    if gate_mm != 1750.0:
+        st['gate_mm'] = gate_mm
+    st['source'] = 'nest.dxf'     # solve 落槽的原上传名（source 归一口径）
+    sess = sessions_mod.registry.resolve(sid, create=True)
+    sess.state = runtime_mod._state_from_doc(_synth_doc())
+    return TestClient(server_mod.app), sid, run_dir, st
+
+
+def test_state_file_golden_and_session_evicted_identical(machine_env, monkeypatch):
+    """默认档金标 + 会话逐出对拍：done 任务 GET → 200 application/gzip 附件
+    （CD 中文/ASCII 双写 + nest_state 文件名）+ parse_state_document 校验链全过
+    （doc/form/quantities/run 逐块一致、placed 绝不按 pid 去重、
+    quantities_base/pending 省键）；registry 显式逐出后仍 200 且逐字节一致
+    （doc 三源链 ① run_dir 直载兜底生效）。"""
+    c, sid, run_dir, st = _statefile_setup(machine_env, monkeypatch,
+                                           quantities=_QTY_G01_28_X2)
+    r1 = c.get(f'/api/machine/solve/{sid}/state-file')
+    assert r1.status_code == 200, r1.text
+    assert r1.headers['content-type'].startswith('application/gzip')
+    assert r1.content[:2] == b'\x1f\x8b'                  # gzip 魔数
+    cd = r1.headers['content-disposition']
+    assert 'filename="nest_state_20260922-093000.msn"' in cd  # source nest.dxf ASCII
+    assert "filename*=UTF-8''" in cd
+    assert quote('nest_状态_20260922-093000.msn') in cd
+
+    document = parse_state_document(r1.content)   # gzip 解开 + 校验链全过（含守恒）
+    assert document['schema_version'] == 1
+    assert document['doc'] == _synth_doc()        # doc 块 = intermediate 原样（5 层）
+    form = document['form']
+    assert form['gate'] == '175.0' and form['time'] == '180'
+    assert form['seed'] == '0' and form['multi_seed'] is False
+    assert form['seed_count'] == '3'
+    assert form['sizes'] == [] and form['per_type'] == {}
+    assert form['band_enabled'] is False and form['band_label'] == ''
+    assert form['prefix_enabled'] is False and form['prefix_front'] == ''
+    assert form['prefix_back'] == ''
+    assert document['quantities'] == _QTY_G01_28_X2
+    run = document['run']
+    assert run['seed'] == 0
+    assert run['final'] == {'density': 0.5788, 'density_sparrow': 0.5988,
+                            'width_mm': 7000.0, 'elapsed': 30.0}
+    # placed = best.placed_items 原样：demand>1 的 g01_28 两条绝不按 pid 去重。
+    assert [it['id'] for it in run['placed']] == ['g01_28', 'g01_28', 'g02_28']
+    assert run['placed'] == _PLACED_3
+    assert run['provenance'] == {'kind': 'solve', 'config': {'time_total_s': 180}}
+    # 机器无此概念的两块省键式不产。
+    assert 'quantities_base' not in document
+    assert 'pending_strategy_result' not in document
+
+    # 会话 TTL 逐出（registry 清空模拟过窗）→ 仍 200 且逐字节一致。
+    sessions_mod.registry.reset()
+    assert sessions_mod.registry.peek(sid) is None
+    r2 = c.get(f'/api/machine/solve/{sid}/state-file')
+    assert r2.status_code == 200, r2.text
+    assert r2.content == r1.content
+
+
+def test_state_file_roundtrip_demand_and_gate(machine_env, monkeypatch):
+    """roundtrip：恢复链 build_pid_meta 重算 demand 与 result 端点 manifest 逐
+    pid 相等 + manifest gate_mm == 任务 gate_mm（1750/1800 双值抽验 —— form.gate
+    cm×10 口径，任务门幅 ≠ doc commit 默认门幅时 form 侧胜出）。"""
+    c, sid, run_dir, st = _statefile_setup(machine_env, monkeypatch,
+                                           quantities=_QTY_G01_28_X2)
+    d = parse_state_document(
+        c.get(f'/api/machine/solve/{sid}/state-file').content)
+    pid_meta, _total, _n_eroded = build_pid_meta(
+        d['doc']['pieces'], sizes=d['form'].get('sizes'),
+        per_type=d['form'].get('per_type'), quantities=d['quantities'])
+    demand = {pid: m['demand'] for pid, m in pid_meta.items()}
+    result = c.get(f'/api/machine/solve/{sid}/result').json()
+    assert demand == {p['id']: p['demand'] for p in result['manifest']['pieces']}
+    assert float(d['form']['gate']) * 10 == result['manifest']['gate_mm'] == 1750.0
+
+    # 1800 任务门幅（doc.gate_mm 仍 1750 commit 默认）→ 恢复 manifest 幅宽取
+    # form 侧（_form_gate_mm 口径），与 result 端点（st 快照门幅）逐值相等。
+    c2, sid2, _rd2, _st2 = _statefile_setup(machine_env, monkeypatch,
+                                            quantities=_QTY_G01_28_X2,
+                                            gate_mm=1800.0)
+    d2 = parse_state_document(
+        c2.get(f'/api/machine/solve/{sid2}/state-file').content)
+    result2 = c2.get(f'/api/machine/solve/{sid2}/result').json()
+    assert d2['doc']['gate_mm'] == 1750.0        # doc 块 commit 默认门幅不动
+    assert d2['form']['gate'] == '180.0'         # 任务实际门幅 cm 字符串
+    assert float(d2['form']['gate']) * 10 == result2['manifest']['gate_mm'] == 1800.0
+
+
+def test_state_file_three_mode_provenance(machine_env, monkeypatch):
+    """三档 run_mode provenance 断言：normal→solve（plain 档 portfolio.incumbent
+    恒 null → best_frame 边车回落仍出完整 run 块）/ advanced→strategy_race /
+    extreme→extreme（incumbent 优先于边车 0.88>0.5788 证来源；final 缺键省略）。"""
+    inc = {'density': 0.88, 'width_mm': 7100.5, 'seed': 0, 'frame_index': 5,
+           'elapsed': 118.0, 'placed_items': _PLACED_3}
+    cases = [
+        ('normal', None, 'solve', 180),
+        ('advanced', inc, 'strategy_race', 1200),
+        ('extreme', inc, 'extreme', 7200),
+    ]
+    for run_mode, incumbent, kind, total in cases:
+        c, sid, _, _ = _statefile_setup(
+            machine_env, monkeypatch, run_mode=run_mode, incumbent=incumbent,
+            quantities=_QTY_G01_28_X2)
+        d = parse_state_document(
+            c.get(f'/api/machine/solve/{sid}/state-file').content)
+        run = d['run']
+        assert run['provenance'] == {'kind': kind,
+                                     'config': {'time_total_s': total}}
+        assert d['form']['time'] == str(total)   # 档位烘焙秒数入 form
+        if incumbent is None:
+            assert run['final']['density'] == 0.5788
+            assert run['final']['density_sparrow'] == 0.5988
+        else:
+            # incumbent 帧胜出 + 无 density_sparrow 键 → final 缺键省略。
+            assert run['final'] == {'density': 0.88, 'width_mm': 7100.5,
+                                    'elapsed': 118.0}
+
+
+def test_state_file_doc_fallback_chain_and_409(machine_env, monkeypatch):
+    """doc 三源链逐级：run_dir 无 intermediate → 会话快照 → per-doc intermediate
+    （doc_id 经状态槽反查 uploads/<doc_id>_pieces/，会话逐出后兜底）；三源全空
+    → 409 裁片数据已不可得。"""
+    c, sid, run_dir, st = _statefile_setup(machine_env, monkeypatch,
+                                           quantities=_QTY_G01_28_X2,
+                                           with_intermediate=False)
+    r1 = c.get(f'/api/machine/solve/{sid}/state-file')   # ② 会话快照兜底
+    assert r1.status_code == 200, r1.text
+    per_doc = machine_env / 'uploads' / 'deadbeef01_pieces' / 'pieces_intermediate.json'
+    per_doc.parent.mkdir(parents=True)
+    per_doc.write_text(json.dumps(_synth_doc()), encoding='utf-8')
+    sessions_mod.registry.reset()
+    r2 = c.get(f'/api/machine/solve/{sid}/state-file')   # ③ per-doc intermediate
+    assert r2.status_code == 200, r2.text
+    assert r2.content == r1.content                     # 三源同内容（commit 单点写入）
+    per_doc.unlink()
+    r3 = c.get(f'/api/machine/solve/{sid}/state-file')   # 三源全空 → 409
+    assert r3.status_code == 409
+    assert '裁片数据已不可得' in r3.json()['error']
+
+
+def test_state_file_source_normalized_to_upload_name(machine_env, monkeypatch):
+    """doc.source 归一：① run_dir 直载的 source 是机器上传落盘名 <doc_id>.dxf
+    （cfg.master_dxf 重命名件），状态槽 source（solve 快照原上传名）归一 doc 块
+    与文件名 —— 与 ②③ 源及 state_save 产物同口径（跨源逐字节一致的前提）。"""
+    c, sid, run_dir, st = _statefile_setup(machine_env, monkeypatch,
+                                           quantities=_QTY_G01_28_X2)
+    doc_id_doc = {**_synth_doc(),
+                  'source': 'be28619a33f444848a36625498f49819.dxf'}
+    (run_dir / 'pieces_intermediate.json').write_text(
+        json.dumps(doc_id_doc), encoding='utf-8')
+    r = c.get(f'/api/machine/solve/{sid}/state-file')
+    assert r.status_code == 200, r.text
+    d = parse_state_document(r.content)
+    assert d['doc']['source'] == 'nest.dxf'      # 归一为原上传名
+    assert 'filename="nest_state_' in r.headers['content-disposition']
+    assert d['doc']['pieces'] == _synth_pieces()  # 归一不改 pieces 内容
+
+
+def test_state_file_pure_config_no_frames(machine_env, monkeypatch):
+    """纯配置档：error 态（进程死 + run_dir 有 intermediate 无任何布局帧）与
+    starting（run_dir 未发现，doc 走会话快照）均 200 且文件无 run 键（form 仍满
+    形态 —— 用户在工作台改参数自行重解）。"""
+    c, sid, run_dir, st = _statefile_setup(machine_env, monkeypatch, rc=1,
+                                           with_frames=False)
+    r = c.get(f'/api/machine/solve/{sid}/state-file')
+    assert r.status_code == 200, r.text
+    d = parse_state_document(r.content)
+    assert 'run' not in d and d['doc']['pieces']
+    assert d['form']['gate'] == '175.0'
+
+    sid2, _st2 = _install_machine_state(machine_env, run_dir=None, rc=None)
+    sess2 = sessions_mod.registry.resolve(sid2, create=True)
+    sess2.state = runtime_mod._state_from_doc(_synth_doc())
+    r2 = c.get(f'/api/machine/solve/{sid2}/state-file')
+    assert r2.status_code == 200, r2.text
+    assert 'run' not in parse_state_document(r2.content)
+
+
+def test_state_file_conservation_defense_409(machine_env, monkeypatch):
+    """守恒防御：placed（g01_28×2）与数量矩阵（g01@28×5）失配 → 409 中文不让
+    坏文件流出（求解与入档同源配置理论必过；此处直装失配槽模拟坏产物/漂移）。"""
+    c, sid, run_dir, st = _statefile_setup(
+        machine_env, monkeypatch, quantities={'g01': {'28': 5}})
+    r = c.get(f'/api/machine/solve/{sid}/state-file')
+    assert r.status_code == 409
+    assert r.json()['error'] == '布局与数量矩阵不一致，无法生成状态文件'
+
+
+def test_state_file_oversize_defense_409(machine_env, monkeypatch):
+    """生成侧防御：解压后 JSON 超 STATE_MAX_BYTES 阈 → 409（恢复端必 413 拒收
+    的文件不生成；monkeypatch 阈值 64B 模拟超限）。"""
+    c, sid, _, _ = _statefile_setup(machine_env, monkeypatch,
+                                    quantities=_QTY_G01_28_X2)
+    monkeypatch.setattr(machine_mod, 'STATE_MAX_BYTES', 64)
+    r = c.get(f'/api/machine/solve/{sid}/state-file')
+    assert r.status_code == 409
+    assert '超过上限' in r.json()['error']
+
+
+def test_state_file_contract_gates(machine_env, monkeypatch):
+    """端点契约闸：token 401 先行（无 token + task_id 非法 → 401 而非 400，证
+    认证早于业务校验）/ 错 token 401 / task_id 非格式 400 / 未知任务 404 /
+    DELETE 清产物后 404（六端点公共闸语义）。"""
+    c, sid, _, _ = _statefile_setup(machine_env, monkeypatch,
+                                    quantities=_QTY_G01_28_X2)
+    monkeypatch.setenv('MS_MACHINE_TOKEN', 'tok-stf')
+    assert c.get('/api/machine/solve/bad.id/state-file').status_code == 401
+    assert c.get(f'/api/machine/solve/{sid}/state-file',
+                 headers={'x-machine-token': 'wrong'}).status_code == 401
+    h = {'x-machine-token': 'tok-stf'}
+    assert c.get('/api/machine/solve/bad.id/state-file',
+                 headers=h).status_code == 400
+    assert c.get(f'/api/machine/solve/{_machine_sid()}/state-file',
+                 headers=h).status_code == 404
+    # 对 token 下载 200 → DELETE 清产物 → state-file 404。
+    assert c.get(f'/api/machine/solve/{sid}/state-file',
+                 headers=h).status_code == 200
+    assert c.delete(f'/api/machine/solve/{sid}', headers=h).status_code == 200
+    assert c.get(f'/api/machine/solve/{sid}/state-file',
+                 headers=h).status_code == 404
