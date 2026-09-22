@@ -861,7 +861,7 @@ curl http://127.0.0.1:8010/api/ptypes -H "X-Session-Id: <sid>"
 
 **本节自洽**：YL 侧开发者可仅凭本节完成对接（实现细节/内部机制见上文各表行与 `web/machine.py` 模块 docstring，对接时不需读）。接口面向 YLPatternMaking 后端（服务端到服务端），**不消费 `X-Session-Id`**（浏览器多会话体系与此无关）。
 
-> **三期 state-file 端点**：`GET /api/machine/solve/{task_id}/state-file`（.msn 状态文件下载，机器结果带回 MS 工作台继续人工调整）已于 2026-09-22 落地，请求/响应契约速览见上方端点表行；其**自洽契约小节 + YL 透传指引 + 错误码表补行 + curl 冒烟序列**由三期 US-002（契约文档故事）补齐。
+> **三期 state-file 端点**：`GET /api/machine/solve/{task_id}/state-file`（.msn 状态文件下载，机器结果带回 MS 工作台继续人工调整）已于 2026-09-22 落地 —— 自洽契约小节见 **§6.5**（含 YL 透传指引与 curl 冒烟序列），错误码汇总（§8）与对接推荐流程（§10）已同步。
 
 ### 0. 基址与认证
 
@@ -976,21 +976,93 @@ body JSON `{task_id, fmt?, placed?, table?}`（**最小请求仅 `{"task_id": ".
 
 **响应**：`200 application/plt` 附件字节流（HPGL/HP-GL 纯文本），`Content-Disposition` 中文/ASCII 双写、文件名前缀 = `run_name`（任务可追溯）。pieces 来源 = run_dir 内 `pieces_intermediate.json` 直载（**会话被 TTL 逐出后仍可导出**），兜底会话快照；复用 `web/export.py` 门面（几何/表格/PLT 单一真相源，与浏览器 `/export` 零漂移）。`409`：无 run_dir / 无任何布局帧 / 无 pieces / gate=0；`400`：fmt 值域外 / placed 形状或全未命中 / table 非法 / body 非 JSON。
 
+### 6.5. GET /api/machine/solve/{task_id}/state-file — .msn 状态文件下载（三期 US-001，2026-09-22）
+
+**用途**：把该任务的完整工作台态（裁片几何 + 任务配置 + 最优布局）服务端权威装配成与浏览器「保存状态文件」（`POST /api/state-save`）**同构可恢复**的 gzip JSON `.msn` 附件 —— 用户在 YL 下载后交付版师，在 MS 排料工作台「状态恢复」上传即可基于机器结果继续人工调整（编辑布局 / 智能微调 / 改数量重解 / 导出 PNG·DXF·PLT）。**无请求体**，`task_id` 走 path 参数；服务端内部自行推进状态（不要求客户端先轮询到终态）；**只读幂等**（重复下载不改任务状态、不消耗配额，两次下载内容一致 —— 仅 `saved_at` 与文件名时间戳随墙钟变化）。
+
+**响应（200 附件）**：
+
+- `Content-Type: application/gzip`（gzip JSON，魔数 `1f 8b`；典型几百 KB~几 MB，生成秒级）。
+- `Content-Disposition` 中文/ASCII 双写（RFC 5987，state_save 同法）：`filename="<ASCII 名>"; filename*=UTF-8''<percent-encoded 中文名>`。
+- **文件名规则**：`<原上传名去 .dxf>_状态_<yyyymmdd-HHMMSS>.msn`（中文侧，source 空回退「排料」前缀）；ASCII 侧同 stem 配 `_state_` 后缀，原上传名非 ASCII 时回退 `nesting_state_` 前缀 —— 保证浏览器落盘名/扩展与 MS 侧一致。原上传名经任务状态槽 `source` 归一（与文件内 `doc.source` 同值）。
+
+**任务态语义**（有无 `run` 块的判据 = 是否已有任何布局帧，与任务态正交；error 中途已产帧的任务仍带 best-so-far `run` 块）：
+
+| 任务态 | 行为 |
+|--------|------|
+| `done` / `stopped` | 完整档：doc + form + quantities + **run**（最优布局，与 result/export 同源同序） |
+| `running` | **best-so-far 快照**（export 同语义）：当前最优帧照常入 `run` 块，200 |
+| `starting` / `error` 等未产帧任务 | **纯配置档**：200、文件**无 `run` 键** —— 有价值产物而非降级（版师在 MS 工作台改参数自行重解，不必回 YL 重走提交流程） |
+
+**错误码触发条件**：
+
+| HTTP | 触发条件（本端点） |
+|------|--------------------|
+| `401` | `MS_MACHINE_TOKEN` 已设置且 `X-Machine-Token` 头缺失/不等（**先于一切业务校验**，同 §0） |
+| `400` | task_id 不满足 `^[0-9A-Za-z]{1,128}$`（路径拼接安全闸） |
+| `404` | 未知 task_id / 外族状态槽 / 已 DELETE 清理（含 MS 重启后墓碑丢失） |
+| `409` | ① 裁片数据已不可得（doc 三源全空）② 任务门幅不可得（状态槽与 machine_cfg 均缺失）③ 布局与数量矩阵不一致（守恒防御，不让内部不一致文件流出）④ 解压后超 `STATE_MAX_BYTES`（20MB，恢复端必 413 拒收的文件不生成） |
+
+**`.msn` 五块服务端来源**（YL 无感，仅供排障；gzip JSON 顶层 `{schema_version:1, app, saved_at, doc, form, quantities, run?}`）：
+
+| 块 | 服务端来源 |
+|----|-----------|
+| `doc` | 裁片几何全量（每片 5 层渲染字段，与浏览器 state_save 同构）。三源链：① run_dir `pieces_intermediate.json` 直载（solve 事实源在盘 → **会话被 TTL 逐出后仍可下载、与存活期逐字节一致**）→ ② 会话快照 → ③ per-doc intermediate（`uploads/<doc_id>_pieces/`，MS 重启后 marker 在仍可恢复）；三源同内容（commit 单点写入），`doc.source` 归一为原上传名 |
+| `form` | 任务配置快照（状态槽 start 快照 → orphan 回落 `machine_cfg_<task_id>_*.json`）：`gate` = **任务实际门幅** cm 字符串（恢复端 manifest 幅宽单一来源，≠ doc commit 期默认门幅）；`time` = 档位烘焙秒数；其余键（seed/multi_seed/seed_count/per_type/band_*/prefix_*）满形态缺省 —— 恢复后 MS 前端表单无 undefined |
+| `quantities` | 任务数量矩阵原样入档（缺省 `null` = 全 1 旧语义） |
+| `run` | 最优布局：`placed` = `best.placed_items` 原样（**demand>1 的 g 码 N 条、绝不按 pid 去重**）+ `seed` 透传 + `final`（density/density_sparrow/width_mm/elapsed，缺键省略）+ `provenance.kind` 按档位映射 normal→`solve` / advanced→`strategy_race` / extreme→`extreme`（`config:{time_total_s}` 纯展示）；无布局帧 → 整块省略（纯配置档） |
+| （省键块） | `quantities_base` / `pending_strategy_result` **不产**（机器任务无此概念；schema v1 省键式，恢复端无感） |
+
+> ⚠️ **密度口径警示沿用（§3 同款）**：`run.final.density` 是**物理毛版包络口径**（`real_density = 原始毛版面积之和 / (width_mm × gate_mm)`，不含 per_type d 腐蚀收缩效应），**不可**与 YL 侧或历史系统任何「腐蚀后面积/erode 包络」口径的利用率数值直接混比（同布局下物理口径 ≤ erode 口径）；跨系统对账以同一布局的 `width_mm`（用布长度）为锚。
+
+**YL 透传指引**（配套 YL 侧对接规格：YL 仓 `tasks/prd-machine-state-file-yl.md`，`D:\code\YLPatternMaking\tasks\`，先例 `prd-ms-nesting-integration.md`）：
+
+- **`.msn` 对 YL 是不透明字节流**：不解析、不校验、不感知内部结构 —— MS 侧 `.msn` schema 升级 YL 零感知（v1 内未知顶层键忽略本就是设计明文）。
+- **透传 `Content-Type`（application/gzip）与 `Content-Disposition`**（保 MS 侧文件名与 `.msn` 扩展，浏览器落盘名与 MS 侧一致）；响应体流式转发，不落盘、不整体读入内存。
+- **克隆既有 PLT 导出下载通道**（`POST /api/machine/export` 已建模式）：YL 任务结果页按钮 + YL 后端代理端点 + `X-Machine-Token` **服务端持有**（与 PLT 通道同一配置项，不下发前端）。
+- **代理超时建议 ≥30s**（MS 生成秒级，留裕量）。
+- **用户后续路径一条链**：YL 下载 .msn → 交付版师 → MS 工作台「状态恢复」上传（预览 / 数量矩阵 / 最优布局全量还原）→ 编辑布局 / 智能微调 / 改数量重解 / 导出 PNG·DXF·PLT。恢复后的会话是版师自己的浏览器会话，与机器任务 task_id 无任何纠缠。
+- MS 生命周期约束照常适用：任务被清理（DELETE / 7 天机会式清理 / MS 重启后已 done 未取件）→ 404，提示用户重新提交。
+
+**curl 冒烟序列**（可直接复制执行；`<task_id>` 换步骤 1 返回值，token 按部署配置）：
+
+```bash
+# 1) 提交任务（同 §2 示例）
+curl -X POST http://127.0.0.1:8010/api/machine/solve \
+  -H "X-Machine-Token: <token>" \
+  -F "file=@YL12345.nest.dxf" \
+  -F 'config={"gate_mm":1750,"run_mode":"normal","client_ref":"smoke-msn-1"}'
+# → 202 {"task_id":"m20260922...","run_name":"machine_...","started_at":"..."}
+
+# 2) 轮询至终态（state ∈ done|stopped|error 即停；建议 2s 间隔）
+curl -s -H "X-Machine-Token: <token>" \
+  http://127.0.0.1:8010/api/machine/solve/<task_id>/status
+
+# 3) 下载 .msn 存盘（-O -J = 按 Content-Disposition 文件名落盘）
+curl -O -J -H "X-Machine-Token: <token>" \
+  http://127.0.0.1:8010/api/machine/solve/<task_id>/state-file
+# → 200 application/gzip；`file <产物>` 应识别 "gzip compressed data"
+
+# 4) MS 工作台恢复验证（人工，非 curl）：浏览器打开 MS 工作台 →「状态恢复」上传
+#    该 .msn → 预览/数量矩阵/最优布局全量还原，密度与 status 终态 incumbent.density
+#    （物理口径）一致 → 编辑/微调/改数量重解/导出照常可用
+```
+
 ### 7. DELETE /api/machine/solve/{task_id} — 幂等清理（任务终点）
 
 在飞 → 先树杀（同 stop 口径，`killed:true`）→ `rmtree run_dir` + 清 marker + 弹内存状态槽 + 删 `machine_cfg_<task_id>_*.json` → `200 {"ok": true, "task_id": ..., "run_dir": "<已清路径>", "killed": false}`。
 
 - **幂等**：**二次 DELETE 也 200**（内存墓碑区分「已清理」与「从未存在」→ 404）—— 二次响应 `{ok:true, task_id, run_dir:null, killed:false}`。MS 重启丢墓碑 → 已删任务的二次 DELETE 回落 404；**消费端把 404 一律视同「任务不存在/已清理」即可**，两种情形无需区分。
-- orphan marker（MS 重启遗留）同样可清（pid 存活先树杀）。清理后 status/result/export → 404。
+- orphan marker（MS 重启遗留）同样可清（pid 存活先树杀）。清理后 status/result/export/state-file → 404。
 
-### 8. 错误码汇总（全六端点；state-file 行由三期 US-002 契约文档故事补齐）
+### 8. 错误码汇总（全六端点）
 
 | HTTP | 触发 | 消费端处理建议 |
 |------|------|----------------|
 | `401` | `MS_MACHINE_TOKEN` 已设置且头缺失/不等 | 检查部署配置与请求头，勿重试 |
 | `400` | config 键形状/值域 / 禁键 / task_id 格式非法 / 已终态 stop / fmt·placed·table·body 非法 | 修请求，勿盲目重试 |
 | `404` | 未知 task_id / 外族状态槽 / 已删除任务（重启后） | 视同任务不存在，走重提交流程 |
-| `409` | 同 client_ref 在飞（solve）/ running 取 result | 轮询既有 task_id 或等待终态 |
+| `409` | 同 client_ref 在飞（solve）/ running 取 result / state-file：**裁片数据已不可得 / 门幅不可得 / 守恒防御 / 解压超 20MB** | 轮询既有 task_id 或等待终态；state-file 409 → 任务产物不可恢复，走重新提交流程 |
 | `413` | 母版 >20MB | 压缩或拆分母版 |
 | `422` | 母版 DXF 解析失败（中文原因） | 检查 DXF（R12 + POLYLINE 闭合轮廓） |
 
@@ -1007,14 +1079,16 @@ body JSON `{task_id, fmt?, placed?, table?}`（**最小请求仅 `{"task_id": ".
 2) GET  status 每 2s ────────────────────────────────► starting/running… incumbent.density 实时利用率
 3) 终态分支：
    done    → GET result（取 placed_items/manifest）→ POST export {task_id} → DELETE task_id
+   需人工继续调整 → GET state-file（.msn 取件交版师，MS 工作台「状态恢复」续作；
+                    终态后及时取件，同 export 运维注记）→ DELETE task_id
    需中止  → POST stop（保留产物可再取 result/export）→ （可选）DELETE
    error   → 读 status.error（stderr 尾）修母版/配置后重新 solve（同 client_ref 已终态，放行新任务）
-4) 网络层重试幂等锚点：solve 用 client_ref；其余四端点天然幂等（status/result/export 只读，DELETE 幂等）
+4) 网络层重试幂等锚点：solve 用 client_ref；其余五端点天然幂等（status/result/export/state-file 只读，DELETE 幂等）
 ```
 
 ### 11. 运维注记（消费端无感，排障用）
 
-- **machine_* run_dir 7 天机会式清理**：每次 solve start 顺手 rmtree `config_runs/machine_*` 中 mtime>7 天的目录（extreme 档最长 7200s，超 7 天必是死任务残留）；**非 machine 前缀不动**（浏览器 web_* / 手工 run）；状态槽在册 run_dir 跳过（时钟回拨防御）。依赖 run_dir 长期留存的下游请自行在终态后及时 export。
+- **machine_* run_dir 7 天机会式清理**：每次 solve start 顺手 rmtree `config_runs/machine_*` 中 mtime>7 天的目录（extreme 档最长 7200s，超 7 天必是死任务残留）；**非 machine 前缀不动**（浏览器 web_* / 手工 run）；状态槽在册 run_dir 跳过（时钟回拨防御）。依赖 run_dir 长期留存的下游请自行在终态后及时 export / 下载 state-file。
 - MS 进程重启 → 内存态（status/stop/result/export 的即时可读性 + client_ref 去重 + DELETE 墓碑）丢失；marker 在盘 → 任务以 `orphan` 态可见（可 stop/DELETE 清理）。重启前已 done 未 export 的任务：marker 已清 → 404（不可恢复），**请在终态后及时取件**。
 - 服务端日志/产物定位：`out/config_runs/<run_name>_<stamp>/`（result.json / best_frame_s*.json / curve_s*.json / pieces_intermediate.json）、`out/uploads/machine_cfg_<task_id>_<stamp>.json`（config 落盘副本，DELETE 一并回收）。
 

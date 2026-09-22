@@ -92,6 +92,10 @@ ms-web             # → http://127.0.0.1:8010
 | `MS_CHECKPOINT_TTL_SEC` | `7200` | 过期恢复内存 checkpoint 惰性 TTL 秒数 = 恢复窗（过期后墓碑 1h + 会话 TTL 10min + 余量；超窗无消费方，2026-09-13） |
 | `MS_CHECKPOINT_MAX` | `16` | checkpoint FIFO 条数上限（逐出最旧；≈3MB 内存，纯内存不落盘，2026-09-13） |
 
+## 机器对接 API（/api/machine/*，YL 排料对接，2026-09-22）
+
+YLPatternMaking（YL 打版系统）后端经 `/api/machine/*` **六端点族**接入 MS 排料引擎：multipart 提交母版 DXF + config → 三档运行模式求解 → 轮询状态 → 终态取布局 / 会话无关导出 PLT / **`.msn` 状态文件取件**（带回 MS 工作台「状态恢复」继续人工调整）→ 幂等清理；可选 `MS_MACHINE_TOKEN` 认证。完整对接契约（YL 侧开发者可仅凭该节完成对接）见 [.docs/technical/agent-api-reference.md](.docs/technical/agent-api-reference.md) 的「机器对接 /api/machine/* — YL 后端对接契约」专节。
+
 ## 导出与 PLT 唛架信息表格（2026-08-30）
 
 工作台「导出」支持 PNG / R12-DXF / PLT 三格式（PLT 含全量与「毛版」两变体，见下）。**PLT 导出前弹「唛架信息表格」填写窗**（纯取消型：ESC/遮罩/取消只关窗，唯一提交路径 = 「导出 PLT」）。信息表格 14 字段、**key/value 两行网格 + 旋转 90° 版式**（对标前端「裁片设置」表格：第一行 key、第二行 value、行列分隔线 + 外框；文字基线沿门幅方向书写、14 列自唛架右下顶点**垂直向上 3cm（y=30mm）**起沿用布方向排开，生产排料视图（切割视图逆时针旋 90°）里呈现为正常水平可读的两行表：key 行在上、value 行在下、方案名称列最左），附在排料图**外围**（表格外框左缘与唛架右边框**共用一条线**（间隔 0mm，v5 定案）；表宽 36mm = 两条 18mm 行带）——**不占排料区、不计入用料**（仅在 PLT 图纸上展示排料信息，实际裁 cutting 时不处理这块内容；PS 纸长覆盖表格区 =(width+66)×40）。
