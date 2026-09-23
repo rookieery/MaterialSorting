@@ -1,11 +1,4 @@
 {
   "branchName": "ralph/se-ext-top3",
-  "stories": [
-    {
-      "id": "US-005",
-      "title": "端到端验收与文档收官",
-      "description": "SE 多候选端到端验收（依赖 US-001~004；权威 PRD：tasks/prd-se-ext-top3.md；已决议 2026-09-23：真跑触发 m≥2 口径可接受、冒烟复用 smoke-extreme-run.mjs 扩展断言不新建脚本）。As a 排料策略维护者，I want 真跑证明多候选触发与产物正确性、--se-ext-top 1 哨兵锁定旧行为、全量回归与文档收官，so that 合入有实测背书、0.5pt 阈值的实际触发率进入 se_ext 观测面供后续校准。\n\n具体任务：\n1. 多候选真跑：5336 同款配置 --strategy se --time 600（或 web_e791f2 同源 intermediate，近并列 0.237/0.251pt 可复现）真跑出 m≥2 一单——验证候选串行执行（延长轮头/strategy.json ext_seeds）、各候选 curve_s{seed}_ext.json / best_frame_s{seed}_ext.json 独立成对、best = 全部延长轮帧级最大（incumbent.seed ∈ 候选集）、run_stats 行 se_ext 段与 result 逐键一致；未触发则换 seeds/intermediate 直至触发至少一单。\n2. 哨兵对拍：同配置 --se-ext-top 1 与合入前代码（stash 对照）输出/产物结构一致（num_workers=4 帧漂移口径豁免；ext_top_n:1 additive 键允许差异）。\n3. 极限 SE 臂：--extreme --extreme-strategy se --time 960 最小档跑通（继承默认 top-3；warm 组合视角/band·prefix 场景任选其一覆盖）；materialSorting-web/scripts/smoke-extreme-run.mjs 复跑（断言涉 se 阶段行/文案则同步更新）。\n4. 全量回归：pytest 全量 + vitest 全量全绿；--strategy race / 无旗标 CLI 冒烟输出逐字节对拍。\n5. 文档收官：CLAUDE.md 运行方式 se 段 + README.md「配置驱动求解」补多候选语义与 --se-ext-top；.docs/technical/agent-file-map.md portfolio/run_config/strategy 行注记；.docs/technical/agent-api-reference.md strategy status 键表补 additive 新键；.docs/business/极限运行功能方案_race门杀.md v1.2 §6 增补多候选注记（2026-09-23 定案：0.5pt/top-3/超支设计）。\n\n验收标准：\n- 上述 1-4 全部通过并留档（触发单的 m、间隔、是否反超记入本 PRD 附带验证速查表，对齐 warm-start PRD 惯例）。\n- 模块导入/入口检查通过（python -c \"import materialsorting\" 等）。",
-      "passes": true
-    }
-  ]
+  "stories": []
 }
