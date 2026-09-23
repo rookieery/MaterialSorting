@@ -1178,6 +1178,12 @@
         "title": "web 状态面多候选透传",
         "description": "SE 多候选 web 状态面（依赖 US-002；权威 PRD：tasks/prd-se-ext-top3.md）。As a 前端进度面，I want /api/strategy/status 与 /api/extreme/status 透传多候选计划/实际态，so that 前端能展示实际候选数、额外时长与多条延长事件，旧 run（无新键）渲染零变化。\n\n具体任务：\n1. materialSorting-server/src/materialsorting/web/strategy.py _parse_plan — additive 透传 strategy.json se 段新键（ext_top_n/ext_band/ext_seeds/extra_rounds，在场才加键）；status 载荷随 plan 摘要透传（前端用 ext_s × extra_rounds 计算实际额外秒数）。\n2. _parse_events 多延长事件核验 — 多候选产物 best_frame_s{seed}_ext.json 按 seed 天然多文件，既有 glob + 尾窗豁免逻辑产出多条 extension 事件（顺序稳定）；补测试锁定 3 候选场景事件序列与豁免行为。\n3. 机器对接三端点（gate=False 家族）经同一 _status_common 参数化自动继承，零额外改动；status 响应结构 additive（新键在场才加），race/旧 se run/legacy 读路径零变化。\n\n验收标准：\n- tests/test_web_strategy.py 扩展：带 ext_seeds 的 strategy.json 解析 / 多 _ext 边车事件序列 / 无新键旧产物结构不变。\n- python -c \"from materialsorting.web import strategy\" 导入通过，分层依赖未反向（对 server 依赖保持函数内延迟 import 惯例）。",
         "passes": true
+      },
+      {
+        "id": "US-004",
+        "title": "前端提示与多候选进度展示",
+        "description": "SE 多候选前端（依赖 US-003；权威 PRD：tasks/prd-se-ext-top3.md）。As a 工作台用户，I want 高级运行/极限运行弹窗在开跑前告知多候选顺延的最坏额外时长、跑动中展示实际候选数与逐候选延长进度，so that 我对「会多出多少时间」有明确预期，并能看清每个近并列 seed 的延长表现。\n\n具体任务：\n1. materialSorting-web/src/types/strategy.ts — StrategyPlan additive：ext_top_n?/ext_band?/ext_seeds?/extra_rounds?（可空，旧 run 缺键隐藏相关 UI）。\n2. 提交前文案 — src/components/ControlPanel/StrategyRunModal.tsx（se 模式）与 ExtremeRunModal.tsx（SE 顺延臂）：描述行/参数区加「筛选密度与冠军相差 ≤0.5pt 的 seed 会一并顺延（至多 3 个），最多多花 2×延长时长」，具体分钟数按当前档位动态计算（默认 ~6 分钟 / 极限 600 档 ~20 分钟 / 1200 档 ~40 分钟），不写死文案。\n3. 进度面 — SE chips 从单条延长条目扩展为 m 条（「延长·冠军 seed X」「延长·候选 2」「延长·候选 3」，进行中 ●/完成 ✓/待定，候选 seed 来自 ext_seeds + extension 事件 + current.ext 既有三源）；阶段行延长期显示「延长中 · 候选 i/m（seed X）」；extra_rounds 在场时阶段区附「预计多花 ~N 分钟」实际值行。\n4. vitest — __tests__/StrategyRunModal.test.tsx / ExtremeRunModal.test.tsx 扩展：mock status 带 ext_seeds/多条 extension 事件的 chips 与阶段行断言、无新键旧载荷回归、提交前文案断言（含按档位动态分钟数）。\n\n验收标准：\n- vitest 全量全绿；npm run build 通过。\n- 浏览器验证（dev 模式真页面）：se 弹窗文案可见 + 短预算 se 真跑（后端起真求解）延长阶段渲染正常。",
+        "passes": true
       }
     ]
   }

@@ -123,3 +123,24 @@
 
 - `se_ext.candidates` **不带**「该候选延长终值/是否反超」冗余字段——由 per_seed `phase='extension'` + `incumbent.seed` join 得出，保持自包含到「筛选密度 + 间隔」深度为止。
 - UI 冒烟**不新增专项脚本**——复用 `smoke-extreme-run.mjs` 扩展断言（US-005 执行时视脚本结构落地）。
+
+---
+
+## 验证速查（US-005 端到端验收执行记录，2026-09-23）
+
+> 环境：`py -3`（Python 3.11）= spyrrow `0.9.0+ms1`（warm 支持开）；对拍旧代码 = `git worktree` @ `5328293`（合入前最后一版）+ `PYTHONPATH` 指向 worktree src；对拍配置 `data/configs/5336_qty1_gate1750.json`（5336 coded 母版、码 30-40 ×1、gate 1750、seeds [0]→种子流 [0,1,2,3]，复刻 web_2538fb 同款 = US-004 浏览器验证触发单）。
+> 归一化豁免口径：run_dir 绝对路径/时间戳、末行耗时小数、逐帧 elapsed 墙钟小数（密度与宽度逐帧不变）；se 启动行多候选附注（US-002 additive 呈现层）。
+
+| # | 验证项 | 命令 | 判据 / 结果 |
+|---|--------|------|------------|
+| 1 | 多候选真跑 m≥2 | `ms-run-config data/configs/5336_qty1_gate1750.json --strategy se --time 600 --name us005_se_top3_e2e` | **m=2 触发**：筛选 88.525(seed1 冠军)/88.421(seed2)/87.775/84.74 —— seed2 间隔 **0.104pt** ≤0.5pt 入带（seed0 0.75pt 出带）；延长轮头「筛选冠军」「候选 2/2」各一行、strategy.json `ext_seeds:[1,2]`/`extra_rounds:1`；`curve/best_frame_s{1,2}_ext.json` 独立成对；best = seed1 frame13 **88.7211%** = 两延长曲线帧级最大（seed2 ext 峰 88.7080%，**未反超**、差 0.013pt），`incumbent.seed=1 ∈ [1,2]`；warm 两轮真顺延（`ext_warm_rounds` 全 true、零回退行）；run_stats 行 `se_ext={top_n:3,band:0.005,candidates:[{1,0.88525,0.0},{2,0.884207,0.104}]}` 与 result 逐键一致；elapsed 606.8s（延长轮早停收敛，未超名义）✓ |
+| 2 | `--se-ext-top 1` 哨兵（新代码） | 同配置 `--se-ext-top 1 --name us005_sentinel_top1` | **m=1**：`ext_seeds:[1]`/`extra_rounds:0`（seed2 0.104pt 入带仍不延长）；best 88.7211% seed1 frame13 与多候选单**全等**（单调不降实证）✓ |
+| 3 | 哨兵背靠背（vs 合入前 5328293） | worktree 同配置 `--strategy se --time 600 --name us005_sentinel_old` | stdout 681 行归一化**逐字节全等**（本对零帧漂移 —— 密度/宽度逐帧相同，无需动用 num_workers 豁免）；strategy.json 旧键（mode/total_budget/planned_seeds/se 四键）全等 + 新键 4 additive（ext_top_n/ext_band/ext_seeds/extra_rounds）；result.solve 五轮（4 筛+1 延）seed/密度/片数/宽度全等、best 四元组全等、portfolio 顶层零新键、portfolio.se 旧键全等 + `ext_seeds:[1]` additive、config.strategy 旧键全等 + `ext_top_n`/`ext_warm_rounds` additive；旧代码 run_stats 行零 se_ext ✓ |
+| 4 | 极限 SE 臂（band 组合视角 warm 场景） | `ms-run-config data/configs/5336_band_g05_gate1750.json --extreme --extreme-strategy se --time 960 --name us005_extreme_se_band` | 糖衣展开 `--strategy se --se-screen 300 --se-extend 600` + EXTREME_SOLVER_OPTS（p0.7/et0/w4 回显）；strategy.json 计划态 `ext_top_n:3`/`ext_band:0.005`（**默认 top-3 继承**）→ 延长启动补写 `ext_seeds:[0]`/`extra_rounds:0`（k=1 恒单冠军）；band g05 开 → 延长轮 warm 走组合视角边车（`ext_warm_rounds:[{0,warm:true}]`、零回退行）；best 89.22%（seed0 frame159、110 片、6733mm）；run_stats 行 `extreme:{budget:600,strategy:'se'}` + `se_ext` 落键 + warm:true，elapsed 909.2s；exit 0 ✓ |
+| 5 | UI 冒烟复跑 | `materialSorting-web/scripts/smoke-extreme-run.mjs`（ms-web :8010 prod static） | 断言不涉 se 阶段行/文案（默认 race 臂）→ **零改动直接复跑**；1 commit ok（110 裁片）/2 预设轮数 19·9·40 全对拍/3 极限运行标题+徽标/4 首帧 80.39% → stopped 终态保留最优，SMOKE DONE ✓ |
+| 6 | pytest 全量 | `cd materialSorting-server && py -3 -m pytest -q` | **1156 passed**（首轮 1154+2 = test_cli_strategy replay 两例负载敏感 flake，progress §57 已备案同款 —— 隔离重跑 21/21 绿 + 全量二轮全绿 141s，代码零改动非本 Story 引入）✓ |
+| 7 | vitest 全量 | `cd materialSorting-web && npx vitest run` | **1236 passed**（71 files，10s）零回归 ✓ |
+| 8 | race / 无旗标 CLI 对拍 | 无旗标 `--time 5` + `--strategy --time 13 --race-budget 5`，新旧背靠背 | 无旗标：stdout 148 行归一化**逐字节全等**（全帧密度/宽度零差异）；race：末行汇总/best 86.29%/用布 7584mm/片数/kill 判定 2 条全等，seed1 门段 3 行帧漂移（num_workers 并行 merge 序豁免口径，终值不受扰）；run_stats 四行（无旗标+race × 新旧）键集与 config 键集**逐字节同构**（零 se_ext / 零新键）、best 0.862949 四行全等 ✓ |
+| 9 | 模块导入/入口 | `py -3 -c "import materialsorting"` / `python -m materialsorting.cli.run_config --help`（含 `--se-ext-top`） | ✓ |
+
+- 观测面首批数据：m=2 触发单的 se_ext 段已落 `out/run_stats.jsonl`（class_key `45581e6772`）；5336 族 90s 筛选 top-2 间隔实测 0.104pt（本单）/0.237·0.251pt（web_e791f2 族 1200 档），0.5pt 带内触发属常态预期。
