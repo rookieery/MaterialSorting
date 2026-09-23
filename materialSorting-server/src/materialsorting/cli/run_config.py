@@ -9,6 +9,7 @@ r"""ms-run-config 入口 —— 一条命令跑完「commit → 求解」，无�
                   [--lns [--lns-time 30] [--lns-rounds 5]]
                   [--strategy [se|race] --time 总预算
                     [--se-screen 90] [--se-extend 180] [--se-warm on|off]
+                    [--se-ext-top 3]
                     [--race-budget 180] [--race-gate 0.5]]
                   [--extreme --time 总预算 [--extreme-budget 600|1200]
                     [--extreme-strategy race|se]]
@@ -121,10 +122,12 @@ US-002 策略双模式（``--strategy [se|race]``，给定总预算拿更高利�
     best-so-far，门杀行 ``--quiet`` 也打。名义记账（预算 + ~2.5s 启动开销）：
     被杀记门段、跑满记全程，启动条件 ``spent + 门段 <= T``（被杀省出的预算由
     串行队列自然吸收）。
-  - **se**：阶段 1 ``k`` 轮 ``--se-screen`` 串行筛选 + 阶段 2 冠军（solve 记录
-    ``real_density`` argmax）同 seed 以 ``--se-extend`` 预算再跑一轮 —— 延长
-    轮产物写 ``curve_s{seed}_ext.json`` / ``best_frame_s{seed}_ext.json``（防
-    覆盖筛选产物），solve 条目附 ``phase: 'extension'``。
+  - **se**：阶段 1 ``k`` 轮 ``--se-screen`` 串行筛选 + 阶段 2 近并列多候选
+    （筛选密度与冠军相差 ≤0.5pt 的 seed，至多 ``--se-ext-top``(3) 个串行，
+    ``cli.portfolio.se_extension_candidates`` 单一真相源）逐个以 ``--se-extend``
+    预算再跑一轮 —— 延长轮产物写 ``curve_s{seed}_ext.json`` /
+    ``best_frame_s{seed}_ext.json``（按 seed 天然多文件防覆盖），solve 条目附
+    ``phase: 'extension'``。
   - 两模式被门杀 / 被筛 seed 的最优帧照常入 incumbent；策略模式下 R1/R2 不评
     估、θ 不维护；``--target`` 共存时 R0 达标即停优先于模式继续。race 决策
     逐条写 ``run_dir/kill_decisions.jsonl``（复用 schema：``S_tau`` = bar 参照
@@ -162,6 +165,30 @@ US-003（prd-warm-start-phase1）se 延长轮 warm 真顺延（``--se-warm {on,o
     段与 run_stats 行 config 段记**实际灌入态**同键（延长轮跑过才加键，中断 /
     R0 未进延长不加）；class_key 组成不变（与历史 run 可比）。race/legacy 路径
     零新增键（无旗标运行 CLI/控制器/result.json 逐字节零回归）。
+
+US-002（prd-se-ext-top3，2026-09-23 定案）se 延长段多候选的 CLI 呈现层与可观测：
+``--se-ext-top N``（int ≥1，默认 ``SE_EXT_TOP_N``(3)，须与 ``--strategy se``
+同给（单独 / race 下给出退出 1）、与 ``--extreme`` 糖衣互斥（极限 SE 臂继承默认
+3，展开处不写该旗标）；值域外退出 1 —— 均在 ``new_run_dir`` 前拦下）接线到控制器
+``se_ext_top``；``--se-ext-top 1`` = 单冠军旧行为（A/B 哨兵）。呈现层三面：
+
+  - **启动行**（--quiet 也打，同策略模式口径）：se 段附「筛选密度与冠军相差
+    ≤0.5pt 的 seed 一并顺延（至多 top N 个），最多多花 2×{se_ext}s」；延长轮头
+    按候选序打印「── 延长轮（seed=X·筛选冠军）── / ── 延长轮（seed=Y·候选
+    i/m）──」。
+  - **strategy.json** se 段 additive：开跑即写计划态 ``ext_top_n`` / ``ext_band``
+    (0.005)；**首个延长轮启动时**（``on_seed_start`` 检测 se 延长轮）单写者补写
+    实际态 ``ext_seeds``（候选全集）+ ``extra_rounds``(m−1) —— 不进延长
+    （R0 / 中断于筛选段）不补写，文件保持计划态；读侧 ``_parse_plan`` 每次轮询
+    重读，additive 键无兼容问题。
+  - **result.json** config ``strategy`` 段 additive ``ext_top_n`` +
+    ``ext_warm_rounds: [{seed, warm, reason}]``（逐延长轮实际灌入态）；既有
+    ``warm`` / ``warm_reason`` 键语义 = 冠军轮（第 1 延长轮），历史语义连续
+    （m=1 时两键即全量信息）；``portfolio.se.ext_seeds`` 由 US-001 引擎层归档。
+  - **run_stats** 行 config 段 additive ``se_ext`` = ``{top_n, band, candidates:
+    [{seed, screen_density, gap_pt}]}``（自包含校准数据面 —— 筛选密度 + 对冠军
+    间隔，不带延长终值 / 反超冗余字段（per_seed join 可得）；进过延长段才落键）；
+    class_key 组成不变，race / legacy 行零新增键。
 
 US-001 极限运行糖衣旗标（``--extreme [--extreme-budget 600|1200]``，方案
 ``.docs/business/极限运行功能方案_race门杀.md`` v1.1）：一条命令跑「race 门杀 ×
@@ -227,13 +254,14 @@ from .. import paths
 from .config import ConfigError, load_config
 from .lns import LnsError, postprocess_run_dir
 from .pipeline import commit_from_config, new_run_dir, solve_pieces
-from .portfolio import (KILL_MODES, RACE_BUDGET_S, RACE_GATE_TAU, SE_EXT_S,
-                        SE_SCREEN_S, STRATEGY_MODES, THETA0_MARGIN,
-                        StrategyBudgetError, ControllerParamsError,
-                        PortfolioController, calibrate_theta0,
-                        load_controller_params, load_run_stats, race_plan,
-                        run_serial_portfolio, run_stats_class_key, se_plan,
-                        se_warm_plan, strategy_seed_stream)
+from .portfolio import (KILL_MODES, RACE_BUDGET_S, RACE_GATE_TAU, SE_EXT_BAND,
+                        SE_EXT_S, SE_EXT_TOP_N, SE_SCREEN_S, STRATEGY_MODES,
+                        THETA0_MARGIN, StrategyBudgetError,
+                        ControllerParamsError, PortfolioController,
+                        calibrate_theta0, load_controller_params,
+                        load_run_stats, race_plan, run_serial_portfolio,
+                        run_stats_class_key, se_plan, se_warm_plan,
+                        strategy_seed_stream)
 
 __all__ = ['SOLVER_OPTS_POOL', 'rotation_opts_for', 'EXTREME_SOLVER_OPTS',
            'EXTREME_BUDGET_S', 'EXTREME_BUDGETS', 'main']
@@ -306,6 +334,11 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
                         '灌入热启动（延长预算全部花在增量搜索而非重放已知结果）；'
                         'warm 不可用（wheel 不支持/边车缺失或缺组合视角段等）自动'
                         '回退现状重放并 warn，绝不炸轮；须与 --strategy se 同给')
+    p.add_argument('--se-ext-top', type=int, default=None, metavar='N',
+                   help='se 延长段近并列多候选封顶数（prd-se-ext-top3，默认 3）：'
+                        '筛选密度与冠军相差 ≤0.5pt 的 seed 一并顺延串行延长'
+                        '（最多多花 2×延长预算）；1 = 单冠军旧行为（A/B 哨兵）；'
+                        '须与 --strategy se 同给、与 --extreme 互斥')
     p.add_argument('--race-budget', type=int, default=None, metavar='N',
                    help='race 每 seed 求解预算（秒，默认 180；须与 --strategy 同给）')
     p.add_argument('--race-gate', type=float, default=None, metavar='TAU',
@@ -411,6 +444,34 @@ def _best_summary(best: dict) -> tuple[float, float, int, float]:
     return float(density), float(best['width_mm']), int(n_placed), float(best['elapsed'])
 
 
+def _se_ext_stats_section(solves: list[dict], controller,
+                          se_ext_top: int) -> dict:
+    """US-002（prd-se-ext-top3）run_stats 行 config.``se_ext`` 段：自包含校准数据面。
+
+    ``{'top_n', 'band', 'candidates': [{'seed', 'screen_density', 'gap_pt'}]}`` ——
+    候选按延长执行序；``screen_density`` = 筛选轮 solve 记录 ``real_density``
+    （与 ``se_extension_candidates`` 同口径），``gap_pt`` = 冠军密度 − 该 seed
+    密度（密度百分点，冠军自身恒 0）。已决议（2026-09-23）**不带**延长终值 /
+    反超冗余字段 —— per_seed ``phase='extension'`` + incumbent.seed join 可得，
+    保持自包含到「筛选密度 + 间隔」深度（0.5pt 阈值下轮校准的唯一依据）。
+    调用方保证 ``controller.se_ext_seeds`` 非空（进过延长段 —— 筛选轮 solve
+    记录恰为 ``solves`` 前 ``len(controller.seeds)`` 条）。
+    """
+    n_screens = len(controller.seeds)
+    screen = {int(r['seed']): float(r['real_density'])
+              for r in solves[:n_screens]}
+    champ = screen[int(controller.se_champion)]
+    return {
+        'top_n': int(se_ext_top),
+        'band': SE_EXT_BAND,
+        'candidates': [
+            {'seed': int(s),
+             'screen_density': round(screen[int(s)], 6),
+             'gap_pt': round((champ - screen[int(s)]) * 100, 3)}
+            for s in controller.se_ext_seeds],
+    }
+
+
 def _append_run_stats(entry: dict, path=None) -> None:
     """PC-009 统计行追加（缺省 ``paths.RUN_STATS_JSONL``）；写盘失败只 warn 不阻塞。
 
@@ -465,6 +526,7 @@ def main(argv: list[str] | None = None) -> int:
             ('--se-screen', args.se_screen is not None),
             ('--se-extend', args.se_extend is not None),
             ('--se-warm', args.se_warm is not None),
+            ('--se-ext-top', args.se_ext_top is not None),
             ('--race-budget', args.race_budget is not None),
             ('--race-gate', args.race_gate is not None)) if on]
         if conflicts:
@@ -589,6 +651,18 @@ def main(argv: list[str] | None = None) -> int:
         print('配置错误: --se-warm 须与 --strategy se 同给'
               '（se 延长轮 warm 真顺延未启用）', file=sys.stderr)
         return _EXIT_CONFIG_OR_COMMIT
+    # US-002（prd-se-ext-top3）--se-ext-top 裁决（配置错误在 new_run_dir 之前拦下）：
+    # 值域 int ≥1（0/负数 = 笔误退出 1）；从属旗标 —— 须与 --strategy se 同给（无
+    # 策略 / race 模式给出即退出 1）；与 --extreme 显式同给已在糖衣互斥守卫拦下
+    #（极限 SE 臂继承默认 top-3，展开处不写该旗标）。
+    if args.se_ext_top is not None and args.se_ext_top < 1:
+        print(f'配置错误: --se-ext-top 须 >= 1（多候选封顶数），'
+              f'当前 {args.se_ext_top}', file=sys.stderr)
+        return _EXIT_CONFIG_OR_COMMIT
+    if args.se_ext_top is not None and strategy != 'se':
+        print('配置错误: --se-ext-top 须与 --strategy se 同给'
+              '（se 延长段多候选未启用）', file=sys.stderr)
+        return _EXIT_CONFIG_OR_COMMIT
     if strategy is not None:
         if args.kill is not None:
             print('配置错误: --strategy 与 --kill 互斥（策略模式 kill 判据内建：'
@@ -604,6 +678,9 @@ def main(argv: list[str] | None = None) -> int:
             return _EXIT_CONFIG_OR_COMMIT
     se_screen = SE_SCREEN_S if args.se_screen is None else args.se_screen
     se_ext = SE_EXT_S if args.se_extend is None else args.se_extend
+    # US-002（prd-se-ext-top3）：--se-ext-top 生效值（旗标未给 = 引擎默认 top-3；
+    # 旗标接线点在下方 PortfolioController(se_ext_top=...)）。
+    se_ext_top = SE_EXT_TOP_N if args.se_ext_top is None else args.se_ext_top
     race_budget = RACE_BUDGET_S if args.race_budget is None else args.race_budget
     race_gate_tau = RACE_GATE_TAU if args.race_gate is None else args.race_gate
     k_screens = 1                         # se 阶段 1 筛选轮数（策略模式外不消费）
@@ -698,9 +775,15 @@ def main(argv: list[str] | None = None) -> int:
             # 静默，同策略模式口径；实际灌入结果以延长轮回退行为准）。
             warm_note = ('，延长轮 warm 真顺延' if warm_attempt
                          else f'，延长轮 warm 回退重放（{warm_reason}）')
+            # US-002（prd-se-ext-top3）：多候选顺延预告（超支设计的最坏额外时长
+            # = 2×se_ext —— top-N 封顶恒定；band 数字随 SE_EXT_BAND 常量走，
+            # 重标定时文案自动跟随）。
+            ext_note = (f'；筛选密度与冠军相差 ≤{SE_EXT_BAND * 100:g}pt 的 seed '
+                        f'一并顺延（至多 top {se_ext_top} 个），'
+                        f'最多多花 2×{se_ext:g}s')
             print(f'[portfolio] 策略模式 se（筛延）：总预算 {args.time}s = 阶段 1 '
                   f'{n_rounds} × {se_screen:g}s 筛选 + 阶段 2 冠军 {se_ext:g}s 延长'
-                  f'（种子流 {strategy_seeds}）{warm_note}')
+                  f'（种子流 {strategy_seeds}）{warm_note}{ext_note}')
             if args.extreme:
                 # US-002 极限运行 se 臂标注行（--quiet 也打，同 race 臂口径）。
                 print(f'[extreme] 极限运行：SE 顺延 × 实验结论参数（预算档 '
@@ -796,13 +879,23 @@ def main(argv: list[str] | None = None) -> int:
             # US-003 warm 计划段 additive（三类前置回退开跑前即可判定；边车装载
             # 类回退 no_best_frame / invalid_best_frame 在延长轮才知道 → 以
             # result.json config 段的实际灌入态为准，两者分工）。
+            # US-002（prd-se-ext-top3）多候选计划态 additive：ext_top_n / ext_band
+            # 开跑即知（实际态 ext_seeds / extra_rounds 在首个延长轮启动时补写）。
             plan_payload['se'] = {'k_screens': int(k_screens),
                                   'screen_s': se_screen, 'ext_s': se_ext,
-                                  'warm': bool(warm_attempt)}
+                                  'warm': bool(warm_attempt),
+                                  'ext_top_n': int(se_ext_top),
+                                  'ext_band': SE_EXT_BAND}
             if not warm_attempt:
                 plan_payload['se']['warm_reason'] = warm_reason
-        with open(Path(run_dir) / 'strategy.json', 'w', encoding='utf-8') as f:
-            json.dump(plan_payload, f, ensure_ascii=False, indent=2)
+
+        def _dump_strategy_json() -> None:
+            """strategy.json 单写者落盘（计划态写入与延长轮补写共用同一口径）。"""
+            with open(Path(run_dir) / 'strategy.json', 'w',
+                      encoding='utf-8') as f:
+                json.dump(plan_payload, f, ensure_ascii=False, indent=2)
+
+        _dump_strategy_json()
 
     solves: list[dict] = []
     result_path = Path(run_dir) / 'result.json'
@@ -831,14 +924,17 @@ def main(argv: list[str] | None = None) -> int:
         race_budget=race_budget, race_gate_tau=race_gate_tau,
         se_k=k_screens, se_screen=se_screen, se_ext=se_ext,
         # ---- US-003 se 延长轮 warm 真顺延（旗标态；前置判定在延长轮做）----
-        se_warm=se_warm_on)
+        se_warm=se_warm_on,
+        # ---- US-002（prd-se-ext-top3）多候选封顶数（--se-ext-top 旗标接线点）----
+        se_ext_top=se_ext_top)
     current = {'seed': None}       # 求解异常报错定位用（on_seed_start 持续刷新）
     # US-002 策略参数回显（result.json config 段；legacy → None 不加键）。
     if strategy == 'race':
         strategy_echo = {'mode': 'race', 'race_budget': race_budget,
                          'race_gate': race_gate_tau}
     elif strategy == 'se':
-        strategy_echo = {'mode': 'se', 'se_screen': se_screen, 'se_extend': se_ext}
+        strategy_echo = {'mode': 'se', 'se_screen': se_screen, 'se_extend': se_ext,
+                         'ext_top_n': int(se_ext_top)}
     else:
         strategy_echo = None
     # US-002 极限运行档位回显（result.json config 段与 run_stats 行共用）：race 臂
@@ -903,12 +999,25 @@ def main(argv: list[str] | None = None) -> int:
 
     def _on_seed_start(i: int, seed: int) -> None:
         current['seed'] = seed
+        # US-002（prd-se-ext-top3）：首个延长轮启动时（i == n_rounds+1，队列序严格
+        # 递增保证只触发一次）单写者补写 strategy.json 实际态 —— ext_seeds（候选
+        # 全集，含冠军）+ extra_rounds(m−1)；--quiet 也写（文件面非呈现层，不随
+        # 静默丢失）。不进延长（R0 / 中断于筛选段）不补写，文件保持计划态。
+        if strategy == 'se' and i == n_rounds + 1 and controller.se_ext_seeds:
+            plan_payload['se']['ext_seeds'] = list(controller.se_ext_seeds)
+            plan_payload['se']['extra_rounds'] = len(controller.se_ext_seeds) - 1
+            _dump_strategy_json()
         if args.quiet:
             return
         # US-002 se 延长轮专用头（队列序 > 计划筛选数 n_rounds，i/n_rounds 分母
         # 不适用；按序号判定 —— on_seed_start 先于 make_progress 的 phase 刷新）。
+        # US-002（prd-se-ext-top3）：多候选下按候选序 —— 冠军轮（候选[0] = argmax
+        # 语义不变）/ 候选 i/m（m = se_ext_seeds 全集长）。
         if strategy == 'se' and i > n_rounds:
-            print(f'── 延长轮（seed={seed}·筛选冠军）开始 ──')
+            rank = i - n_rounds                       # 1 起候选名次
+            m = len(controller.se_ext_seeds) or 1
+            tag = '筛选冠军' if rank == 1 else f'候选 {rank}/{m}'
+            print(f'── 延长轮（seed={seed}·{tag}）开始 ──')
             return
         # 轮次头：多 seed、R0 模式或策略模式（单 seed 无旗标运行保持旧版零输出增量）。
         if n_rounds > 1 or args.target is not None or strategy is not None:
@@ -937,6 +1046,11 @@ def main(argv: list[str] | None = None) -> int:
         strategy_echo['warm'] = controller.se_warm_state['warm']
         if not controller.se_warm_state['warm']:
             strategy_echo['warm_reason'] = controller.se_warm_state['reason']
+    # US-002（prd-se-ext-top3）：逐延长轮 warm 实际灌入态 additive（延长轮跑过才
+    # 加键；与既有 warm/warm_reason 冠军轮语义并存 —— m=1 时后者即全量信息）。
+    if strategy == 'se' and controller.se_warm_states:
+        strategy_echo['ext_warm_rounds'] = [dict(e)
+                                            for e in controller.se_warm_states]
 
     if run.interrupted:
         i, seed = run.last_round
@@ -1087,7 +1201,12 @@ def main(argv: list[str] | None = None) -> int:
                    **({'warm': controller.se_warm_state['warm'],
                        **({'warm_reason': controller.se_warm_state['reason']}
                           if not controller.se_warm_state['warm'] else {})}
-                      if controller.se_warm_state is not None else {})},
+                      if controller.se_warm_state is not None else {}),
+                   # US-002（prd-se-ext-top3）se 多候选校准数据面（additive：进过
+                   # 延长段才落键；race/legacy 行零新增键，class_key 组成不变）。
+                   **({'se_ext': _se_ext_stats_section(solves, controller,
+                                                       se_ext_top)}
+                      if strategy == 'se' and controller.se_ext_seeds else {})},
     })
     print(f"real_density（原面积口径）= {d:.2%} | "
           f"用布长度 = {w:.0f}mm | 片数 = {n_placed} | "

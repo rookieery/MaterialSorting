@@ -139,6 +139,9 @@ class _FakeSolve:
         self.calls: list[tuple] = []
         self.warm_flags: list[bool] = []
         self.strategy_json_at_first_solve: dict | None = None
+        # prd-se-ext-top3 US-002：逐调用快照 strategy.json（补写时机断言 —— 首轮
+        # solve = 计划态、首个延长轮 solve 前实际态已补写；非策略 run 恒 None）。
+        self.strategy_json_by_call: list[dict | None] = []
         self.missing_best_frames = missing_best_frames or set()
         self.interrupt_on = interrupt_on or set()
 
@@ -150,11 +153,11 @@ class _FakeSolve:
         if (int(seed), artifact_suffix) in self.interrupt_on:
             raise KeyboardInterrupt            # 模拟该轮求解中被 Ctrl-C
         rd = Path(run_dir)
+        p = rd / 'strategy.json'           # R1：首轮求解开始时 strategy.json 已在场
+        self.strategy_json_by_call.append(
+            json.loads(p.read_text(encoding='utf-8')) if p.exists() else None)
         if len(self.calls) == 1:
-            p = rd / 'strategy.json'      # R1：首轮求解开始时 strategy.json 已在场
-            if p.exists():
-                self.strategy_json_at_first_solve = json.loads(
-                    p.read_text(encoding='utf-8'))
+            self.strategy_json_at_first_solve = self.strategy_json_by_call[-1]
         frames = self.traj[(int(seed), artifact_suffix)]
         best = None                       # (frame_index, elapsed, density)
         reason = None
@@ -416,6 +419,10 @@ def test_race_gate_kill_end_to_end(iso_env, capsys, monkeypatch):
     assert [s['seed'] for s in result['solve']] == [0, 1, 2]
     assert result['solve'][1]['killed'] is True
     assert '各 seed real_density' in out and '[kill] race 模式：3 条' in out
+    # US-002（prd-se-ext-top3）：race 行 run_stats 零新增 se_ext 键（class_key
+    # 组成不变，与历史 run 可比）。
+    entries = _read_stats(tmp / 'run_stats.jsonl')
+    assert len(entries) == 1 and 'se_ext' not in entries[0]['config']
     assert inter.read_text(encoding='utf-8') == '{"sentinel": true}'   # web 事实源零触碰
     assert list(uploads.iterdir()) == []
 
@@ -513,13 +520,17 @@ def test_se_two_phase_end_to_end(iso_env, capsys, monkeypatch):
     assert '第 5/5 轮（seed=4）' in out
     assert '延长轮（seed=3·筛选冠军）开始' in out
     rd = _only_run_dir(runs)
-    # strategy.json：se 块（k_screens/screen_s/ext_s + US-003 warm 计划态）+ 计划
-    # 种子流 = k 个筛选 seed（本文件 autouse 钉 warm 不支持 → 计划态回退）。
+    # strategy.json：se 块（k_screens/screen_s/ext_s + US-003 warm 计划态 +
+    # US-002 prd-se-ext-top3 计划态 ext_top_n/ext_band 与延长启动补写实际态
+    # ext_seeds/extra_rounds）+ 计划种子流 = k 个筛选 seed（本文件 autouse 钉
+    # warm 不支持 → 计划态回退）。
     plan = json.loads((rd / 'strategy.json').read_text(encoding='utf-8'))
     assert plan['mode'] == 'se' and plan['total_budget'] == 160
     assert plan['planned_seeds'] == [0, 1, 2, 3, 4]
     assert plan['se'] == {'k_screens': 5, 'screen_s': 20, 'ext_s': 40,
-                          'warm': False, 'warm_reason': 'unsupported'}
+                          'warm': False, 'warm_reason': 'unsupported',
+                          'ext_top_n': 3, 'ext_band': 0.005,
+                          'ext_seeds': [3], 'extra_rounds': 0}
     assert plan['started_at']
     # _ext 产物在场且不覆盖筛选产物（同 seed 双份曲线共存）
     assert (rd / 'curve_s3.json').exists() and (rd / 'best_frame_s3.json').exists()
@@ -546,10 +557,16 @@ def test_se_two_phase_end_to_end(iso_env, capsys, monkeypatch):
     assert pf['incumbent']['density'] == 0.86 and pf['incumbent']['seed'] == 3
     assert pf['incumbent']['density'] >= max(0.80, 0.82, 0.81, 0.83, 0.79)
     assert result['best'] == pf['incumbent']
-    # US-003：config.strategy additive 实际灌入态（unsupported 回退 → False+原因）
+    # US-003：config.strategy additive 实际灌入态（unsupported 回退 → False+原因）；
+    # US-002（prd-se-ext-top3）：ext_top_n + ext_warm_rounds（逐延长轮，单候选
+    # 一条 —— 既有 warm/warm_reason 保持冠军轮语义）。
     assert result['config']['strategy'] == {'mode': 'se', 'se_screen': 20,
                                             'se_extend': 40, 'warm': False,
-                                            'warm_reason': 'unsupported'}
+                                            'warm_reason': 'unsupported',
+                                            'ext_top_n': 3,
+                                            'ext_warm_rounds': [
+                                                {'seed': 3, 'warm': False,
+                                                 'reason': 'unsupported'}]}
     assert 'seed 3=86.00%（延长）' in out
     assert inter.read_text(encoding='utf-8') == '{"sentinel": true}'
     assert list(uploads.iterdir()) == []
@@ -708,7 +725,10 @@ def test_se_multi_candidate_serial_extension_e2e(iso_env, capsys, monkeypatch):
     assert result['best'] == pf['incumbent']
     # 逐轮 warm 回退 notify：unsupported 前置回退 → 三轮各打一行
     assert out.count('se 延长轮 warm 回退 → 现状重放（warm_reason=unsupported）') == 3
-    assert '延长轮（seed=3·筛选冠军）开始' in out    # 轮次头照常（US-002 才分候选序）
+    # US-002（prd-se-ext-top3）延长轮头按候选序：冠军 / 候选 2/3 / 候选 3/3。
+    assert '延长轮（seed=3·筛选冠军）开始' in out
+    assert '延长轮（seed=1·候选 2/3）开始' in out
+    assert '延长轮（seed=4·候选 3/3）开始' in out
 
 
 def test_se_warm_fallback_per_round_independent(iso_env, capsys, monkeypatch):
@@ -925,7 +945,9 @@ def test_se_warm_off_explicit_fallback(iso_env, capsys, monkeypatch):
     rd = _only_run_dir(runs)
     plan = json.loads((rd / 'strategy.json').read_text(encoding='utf-8'))
     assert plan['se'] == {'k_screens': 5, 'screen_s': 20, 'ext_s': 40,
-                          'warm': False, 'warm_reason': 'off'}
+                          'warm': False, 'warm_reason': 'off',
+                          'ext_top_n': 3, 'ext_band': 0.005,
+                          'ext_seeds': [3], 'extra_rounds': 0}
     result = json.loads((rd / 'result.json').read_text(encoding='utf-8'))
     st = result['config']['strategy']
     assert st['warm'] is False and st['warm_reason'] == 'off'
@@ -1140,6 +1162,214 @@ def test_solve_pieces_warm_flag_absent_zero_regress(iso_env, monkeypatch):
                         'placed_items', 'elapsed'}
 
 
+# --------------------------------------- US-002（prd-se-ext-top3）旗标与可观测
+
+
+def test_se_ext_top_value_domain_exit_1(iso_env, capsys):
+    """--se-ext-top 值域手工校验：int >= 1（0/负数 = 笔误退出 1），不留空 run_dir。"""
+    tmp, runs, _, _, master = iso_env
+    cfg_path = _write_config(tmp / 'cfg.json', master)
+    for bad in ('0', '-1', '-3'):
+        rc = main(_se_argv(cfg_path, '--se-ext-top', bad))
+        assert rc == 1
+        err = capsys.readouterr().err
+        assert '--se-ext-top 须 >= 1' in err and bad in err
+        assert list(runs.iterdir()) == []          # 配置错误在 new_run_dir 之前拦下
+
+
+@pytest.mark.parametrize('argv_extra', [
+    ['--se-ext-top', '3'],                                   # 无 --strategy
+    ['--strategy', '--time', '600', '--se-ext-top', '2'],    # race 模式（非 se）
+])
+def test_se_ext_top_subordinate_requires_strategy_se(iso_env, capsys, argv_extra):
+    """--se-ext-top 须与 --strategy se 同给：无策略 / race 模式下给出 = 笔误退出 1。"""
+    tmp, runs, _, _, master = iso_env
+    cfg_path = _write_config(tmp / 'cfg.json', master)
+    rc = main([str(cfg_path), *argv_extra])
+    assert rc == 1
+    assert '--se-ext-top 须与 --strategy se 同给' in capsys.readouterr().err
+    assert list(runs.iterdir()) == []
+
+
+def test_se_ext_top_wiring_and_observability(iso_env, capsys, monkeypatch):
+    """--se-ext-top 2 接线端到端：候选截断 top-2（带内 [3,1,4] 取前 2，seed4 不
+    延长）+ 三面可观测 —— strategy.json 计划态 ext_top_n/ext_band → 首个延长轮
+    solve 前补写 ext_seeds/extra_rounds；result config.strategy additive ext_top_n
+    + ext_warm_rounds（逐延长轮，既有 warm/warm_reason 保持冠军轮语义）；run_stats
+    config.se_ext 自包含校准数据面（top_n/band/candidates：筛选密度 + 对冠军间隔，
+    无延长终值/反超冗余字段）；启动行多候选附注 + 延长轮头按候选序。"""
+    tmp, runs, _, _, master = iso_env
+    cfg_path = _write_config(tmp / 'cfg.json', master, seeds=[0])
+    fake = _patch_solve(monkeypatch, _SE_TOP3_TRAJ)
+    rc = main(_se_argv(cfg_path, '--se-ext-top', '2'))
+    out = capsys.readouterr().out
+    assert rc == 0
+    # 候选截断 top-2：5 轮筛选 + 候选 [3, 1] 各一轮完整 ext；seed4 不延长。
+    assert fake.calls == [(0, 20, ''), (1, 20, ''), (2, 20, ''), (3, 20, ''),
+                          (4, 20, ''), (3, 40, '_ext'), (1, 40, '_ext')]
+    # 启动行多候选附注（band/top 数与最坏额外时长按当前档位取值）。
+    assert ('筛选密度与冠军相差 ≤0.5pt 的 seed 一并顺延（至多 top 2 个），'
+            '最多多花 2×40s') in out
+    # 延长轮头按候选序：冠军 / 候选 2/2（m = 实际候选全集长）。
+    assert '延长轮（seed=3·筛选冠军）开始' in out
+    assert '延长轮（seed=1·候选 2/2）开始' in out
+    assert '候选 3' not in out
+    # ---- strategy.json 补写时机：首轮 solve = 计划态（无实际态键）；
+    # 首个延长轮 solve 前（on_seed_start 补写）实际态已在场；终态一致。
+    first = fake.strategy_json_by_call[0]
+    assert first['se']['ext_top_n'] == 2 and first['se']['ext_band'] == 0.005
+    assert 'ext_seeds' not in first['se'] and 'extra_rounds' not in first['se']
+    at_ext = fake.strategy_json_by_call[5]
+    assert at_ext['se']['ext_seeds'] == [3, 1]
+    assert at_ext['se']['extra_rounds'] == 1
+    rd = _only_run_dir(runs)
+    plan = json.loads((rd / 'strategy.json').read_text(encoding='utf-8'))
+    assert plan['se']['ext_top_n'] == 2
+    assert plan['se']['ext_seeds'] == [3, 1] and plan['se']['extra_rounds'] == 1
+    # ---- result.json：portfolio.se.ext_seeds（US-001）+ config.strategy additive
+    # ext_top_n + ext_warm_rounds（两轮 unsupported 回退各一条）。
+    result = json.loads((rd / 'result.json').read_text(encoding='utf-8'))
+    assert result['portfolio']['se']['ext_seeds'] == [3, 1]
+    st = result['config']['strategy']
+    assert st['ext_top_n'] == 2
+    assert st['ext_warm_rounds'] == [
+        {'seed': 3, 'warm': False, 'reason': 'unsupported'},
+        {'seed': 1, 'warm': False, 'reason': 'unsupported'}]
+    assert st['warm'] is False and st['warm_reason'] == 'unsupported'
+    # ---- run_stats：config.se_ext 自包含校准面（冠军 gap 恒 0；间隔 pt 口径）。
+    entries = _read_stats(tmp / 'run_stats.jsonl')
+    assert len(entries) == 1
+    assert entries[0]['config']['se_ext'] == {
+        'top_n': 2, 'band': 0.005,
+        'candidates': [{'seed': 3, 'screen_density': 0.83, 'gap_pt': 0.0},
+                       {'seed': 1, 'screen_density': 0.828, 'gap_pt': 0.2}]}
+
+
+def test_se_multi_candidate_default_and_quiet(iso_env, capsys, monkeypatch):
+    """缺省 top-3 多候选 + --quiet 口径：启动行（含多候选附注）不随 quiet 静默
+    （改求解编排的开关不静默）；轮次头仍被抑制；strategy.json 补写不受 quiet
+    影响（文件面非呈现层）。"""
+    tmp, runs, _, _, master = iso_env
+    cfg_path = _write_config(tmp / 'cfg.json', master, seeds=[0])
+    fake = _patch_solve(monkeypatch, _SE_TOP3_TRAJ)
+    rc = main(_se_argv(cfg_path, '--quiet'))
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert fake.calls[-3:] == [(3, 40, '_ext'), (1, 40, '_ext'), (4, 40, '_ext')]
+    assert ('筛选密度与冠军相差 ≤0.5pt 的 seed 一并顺延（至多 top 3 个），'
+            '最多多花 2×40s') in out
+    assert '── 延长轮' not in out and '── 第 1/5 轮' not in out   # 轮次头被抑制
+    rd = _only_run_dir(runs)
+    plan = json.loads((rd / 'strategy.json').read_text(encoding='utf-8'))
+    assert plan['se']['ext_top_n'] == 3
+    assert plan['se']['ext_seeds'] == [3, 1, 4]
+    assert plan['se']['extra_rounds'] == 2
+
+
+def test_se_r0_keeps_strategy_json_plan_state(iso_env, capsys, monkeypatch):
+    """不进延长（R0 提前停）不补写实际态：strategy.json 保持计划态
+    （ext_top_n/ext_band 在场，ext_seeds/extra_rounds 缺席）；result config
+    strategy 无 ext_warm_rounds；run_stats 行无 se_ext 段（候选未定）。"""
+    tmp, runs, _, _, master = iso_env
+    cfg_path = _write_config(tmp / 'cfg.json', master, seeds=[0])
+    traj = {(0, ''): [(5.0, 0.80), (15.0, 0.86)]}
+    fake = _patch_solve(monkeypatch, traj)
+    rc = main(_se_argv(cfg_path, '--target', '0.85'))
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert 'R0 达标即停' in out
+    assert fake.calls == [(0, 20, '')]
+    rd = _only_run_dir(runs)
+    plan = json.loads((rd / 'strategy.json').read_text(encoding='utf-8'))
+    assert plan['se']['ext_top_n'] == 3 and plan['se']['ext_band'] == 0.005
+    assert 'ext_seeds' not in plan['se'] and 'extra_rounds' not in plan['se']
+    result = json.loads((rd / 'result.json').read_text(encoding='utf-8'))
+    assert result['portfolio']['se']['ext_seeds'] == []       # 未进延长段
+    assert 'ext_warm_rounds' not in result['config']['strategy']
+    entries = _read_stats(tmp / 'run_stats.jsonl')
+    assert 'se_ext' not in entries[0]['config']
+
+
+def test_se_ext_top_1_sentinel_single_champion(iso_env, capsys, monkeypatch):
+    """--se-ext-top 1 = 单冠军旧行为 A/B 哨兵：带内 3 候选的轨迹下只跑冠军延长轮
+    （候选 [3,1,4] 截断为 [3]），stdout 逐字节对拍（确定性 fake 下全部行先验
+    推演 —— 与旧单冠军行为的行集合同构，additive 差异仅启动行多候选附注文字）；
+    产物面：strategy.json ext_seeds=[3]/extra_rounds=0、config.strategy
+    ext_warm_rounds 单条（m=1 时既有 warm/warm_reason 即全量信息）、run_stats
+    se_ext 单候选（top_n=1）。"""
+    tmp, runs, _, _, master = iso_env
+    cfg_path = _write_config(tmp / 'cfg.json', master, seeds=[0])
+    fake = _patch_solve(monkeypatch, _SE_TOP3_TRAJ)
+    rc = main(_se_argv(cfg_path, '--se-ext-top', '1'))
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert fake.calls == [(0, 20, ''), (1, 20, ''), (2, 20, ''), (3, 20, ''),
+                          (4, 20, ''), (3, 40, '_ext')]         # 单冠军延长轮
+    rd = _only_run_dir(runs)
+    result = json.loads((rd / 'result.json').read_text(encoding='utf-8'))
+    c = result['commit']
+
+    def seed_line(seed: int, elapsed: float, density: float) -> str:
+        return (f'[seed {seed}] {elapsed:7.1f}s {"exploring":<14} '
+                f'real_density={density:.2%}（原面积口径新最优） '
+                f'width={5000.0:.0f}mm')
+
+    def takeover(seed: int, frame: int, density: float) -> str:
+        return (f'[portfolio] seed {seed} frame {frame} 反超 → '
+                f'incumbent（全局最优）real_density={density:.2%}'
+                f'（原面积口径） width={5000.0:.0f}mm')
+
+    expected = '\n'.join([
+        f'run_dir: {rd}',
+        f'配置: {Path(cfg_path).resolve()} | 求解时长: 160s | seeds: [0]',
+        '[portfolio] 策略模式 se（筛延）：总预算 160s = 阶段 1 5 × 20s 筛选 + '
+        '阶段 2 冠军 40s 延长（种子流 [0, 1, 2, 3, 4]），延长轮 warm 回退重放'
+        '（unsupported）；筛选密度与冠军相差 ≤0.5pt 的 seed 一并顺延'
+        '（至多 top 1 个），最多多花 2×40s',
+        f"commit: n_pieces={c['n_pieces']} "
+        f"total_area={c['total_area_mm2']:,.1f}mm² sizes={c['sizes']} "
+        f"skipped={c['n_skipped']}",
+        '── 第 1/5 轮（seed=0）开始 ──',
+        seed_line(0, 5.0, 0.78),
+        seed_line(0, 20.0, 0.80),
+        '── 第 2/5 轮（seed=1）开始 ──',
+        takeover(1, 0, 0.81),
+        seed_line(1, 20.0, 0.828),
+        '── 第 3/5 轮（seed=2）开始 ──',
+        seed_line(2, 5.0, 0.80),
+        seed_line(2, 20.0, 0.81),
+        '── 第 4/5 轮（seed=3）开始 ──',
+        seed_line(3, 5.0, 0.81),
+        takeover(3, 1, 0.83),
+        '── 第 5/5 轮（seed=4）开始 ──',
+        seed_line(4, 5.0, 0.81),
+        seed_line(4, 20.0, 0.8265),
+        '── 延长轮（seed=3·筛选冠军）开始 ──',
+        seed_line(3, 20.0, 0.84),
+        seed_line(3, 40.0, 0.855),
+        '[portfolio] se 延长轮 warm 回退 → 现状重放（warm_reason=unsupported）',
+        '各 seed real_density（原面积口径）: seed 0=80.00% | seed 1=82.80% | '
+        'seed 2=81.00% | seed 3=83.00% | seed 4=82.65% | seed 3=85.50%（延长）',
+        'best = seed 3 frame 2（incumbent，帧级全局最优）',
+        'real_density（原面积口径）= 85.50% | 用布长度 = 5000mm | 片数 = 1 | '
+        f'耗时 = 40.0s | run_dir = {rd.resolve()}',
+    ]) + '\n'
+    assert out == expected
+    # 产物面 additive：单候选形态（m=1）。
+    plan = json.loads((rd / 'strategy.json').read_text(encoding='utf-8'))
+    assert plan['se']['ext_top_n'] == 1
+    assert plan['se']['ext_seeds'] == [3] and plan['se']['extra_rounds'] == 0
+    assert result['portfolio']['se']['ext_seeds'] == [3]
+    st = result['config']['strategy']
+    assert st['ext_top_n'] == 1
+    assert st['ext_warm_rounds'] == [{'seed': 3, 'warm': False,
+                                      'reason': 'unsupported'}]
+    entries = _read_stats(tmp / 'run_stats.jsonl')
+    assert entries[0]['config']['se_ext'] == {
+        'top_n': 1, 'band': 0.005,
+        'candidates': [{'seed': 3, 'screen_density': 0.83, 'gap_pt': 0.0}]}
+
+
 # ------------------------------------------------------- 零回归 + 冒烟
 
 
@@ -1237,13 +1467,14 @@ def test_legacy_no_flag_output_byte_for_byte(iso_env, capsys, monkeypatch):
 
 
 def test_help_contains_strategy_flags():
-    """--help 含 6 个策略族旗标（python -m 子进程冒烟，US-003 增 --se-warm）。"""
+    """--help 含 7 个策略族旗标（python -m 子进程冒烟，US-003 增 --se-warm；
+    prd-se-ext-top3 US-002 增 --se-ext-top）。"""
     proc = subprocess.run(
         [sys.executable, '-m', 'materialsorting.cli.run_config', '--help'],
         capture_output=True, text=True, encoding='utf-8', cwd=str(_SRC.parents[1]))
     assert proc.returncode == 0
     for flag in ('--strategy', '--se-screen', '--se-extend', '--se-warm',
-                 '--race-budget', '--race-gate'):
+                 '--se-ext-top', '--race-budget', '--race-gate'):
         assert flag in proc.stdout
 
 

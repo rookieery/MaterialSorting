@@ -1157,5 +1157,16 @@
   {
     "branchName": "ralph/machine-nesting-api",
     "stories": []
+  },
+  {
+    "branchName": "ralph/se-ext-top3",
+    "stories": [
+      {
+        "id": "US-001",
+        "title": "引擎层候选选择与多轮串行延长编排",
+        "description": "SE 顺延多候选优化引擎层（权威 PRD：tasks/prd-se-ext-top3.md，定案 2026-09-23：阈值 0.5pt=0.005 绝对口径、top-3 封顶、串行、超支设计）。As a 排料策略开发者，I want se 延长段从单冠军升级为「近并列候选串行逐个延长」的引擎编排，so that 筛选近并列的 seed 都获得完整延长预算，交付自动取全局最优，race/legacy 与确定性语义零变化。\n\n具体任务：\n1. materialSorting-server/src/materialsorting/cli/portfolio.py — 新常量 SE_EXT_BAND=0.005 / SE_EXT_TOP_N=3；新纯函数 se_extension_candidates(solves, band, top_n)->list[int]：冠军 = solve 记录 real_density argmax（并列取先执行者），候选 = 冠军密度−seed 密度 ≤ band 按密度降序稳定排序（并列按筛选执行序）取前 top_n，≥4 个落带内取最靠近前 3，top_n=1 恒返回 [冠军]，无 I/O 无 RNG。\n2. 同文件 run_serial_portfolio 延长段 — 单冠军块改候选循环：按名次序串行逐个跑完整 se_ext 预算延长轮（队列序 len(seeds)+1 起递增，round_budget/make_progress 既有 i>se_k 判定自然覆盖多轮）；每轮 warm_best_frame=True 逐轮传递（装载点按 seed 参数化读各自 best_frame_s{seed}.json，装载/校验/回退矩阵零改动）；se_warm_plan 前置判定每 run 一次（cfg 级结论对全部候选一致）；回退 notify 逐轮各打一行。\n3. 同文件控制器归档 additive — se_champion（argmax 语义不变）+ 新 se_ext_seeds:list[int]（实际顺延候选全集含冠军）+ se_warm_states:list[dict]（逐延长轮 {seed, warm, reason}，被中断轮无条目）；portfolio_section() se 段 additive 加 ext_seeds（champion 键保留）；PortfolioRun 结构不变。\n4. 中断/R0 语义不变：R0（queue_stopped）不进延长段；延长轮 Ctrl-C → interrupted=True、后续候选不再启动、已完成轮已入账 incumbent。\n\n验收标准：\n- tests/test_cli_strategy_wiring.py 扩展（fake solve 注入）：候选判据矩阵（3 候选/恰 2/4+ 取前 3/全远超带单冠军/并列含等号边界 0.005/top_n=1 恒单冠军）；多轮串行序与预算；逐轮 warm 回退独立（一轮 no_best_frame 不影响他轮）；中断停在当前候选；race/legacy fake 路径与既有测试逐字节一致（零回归哨兵）。\n- python -c \"import materialsorting.cli.portfolio\" 导入通过，分层依赖未反向（不 import web）。",
+        "passes": true
+      }
+    ]
   }
 ]

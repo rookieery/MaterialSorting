@@ -337,15 +337,22 @@ def test_extreme_se_expansion_equivalent_to_manual(iso_env, capsys, monkeypatch)
     plan_ext = json.loads((extreme_rd / 'strategy.json').read_text(encoding='utf-8'))
     # se 无门杀 → kill_decisions.jsonl 不创建（race 臂才开）。
     assert not (extreme_rd / 'kill_decisions.jsonl').exists()
-    # ---- strategy.json：mode=se + se 段（k/screen/ext + warm 计划态两键）。
+    # ---- strategy.json：mode=se + se 段（k/screen/ext + warm 计划态两键 +
+    # prd-se-ext-top3 US-002 多候选计划态 ext_top_n/ext_band 与延长启动补写
+    # 实际态 ext_seeds/extra_rounds —— 极限 SE 臂继承默认 top-3）。
     plan_ext.pop('started_at')
     assert plan_ext == {'mode': 'se', 'total_budget': 905, 'planned_seeds': [0],
                         'se': {'k_screens': 1, 'screen_s': 300, 'ext_s': 600,
-                               'warm': False, 'warm_reason': 'unsupported'}}
-    # ---- result.json：config.strategy = se 两参数 + warm 实际态；延长轮 phase。
+                               'warm': False, 'warm_reason': 'unsupported',
+                               'ext_top_n': 3, 'ext_band': 0.005,
+                               'ext_seeds': [0], 'extra_rounds': 0}}
+    # ---- result.json：config.strategy = se 两参数 + warm 实际态 + 多候选
+    # ext_top_n/ext_warm_rounds（单候选一条）；延长轮 phase。
     assert result_ext['config']['strategy'] == {
         'mode': 'se', 'se_screen': 300, 'se_extend': 600,
-        'warm': False, 'warm_reason': 'unsupported'}
+        'warm': False, 'warm_reason': 'unsupported',
+        'ext_top_n': 3,
+        'ext_warm_rounds': [{'seed': 0, 'warm': False, 'reason': 'unsupported'}]}
     assert [r['seed'] for r in result_ext['solve']] == [0, 0]
     assert result_ext['solve'][1]['phase'] == 'extension'
 
@@ -467,11 +474,14 @@ def test_extreme_se_mutex_still_guards_strategy_flags(iso_env, capsys):
     ['--rotate-opts'],
     ['--se-screen', '90'],
     ['--se-extend', '180'],
+    ['--se-ext-top', '3'],
     ['--race-budget', '600'],
     ['--race-gate', '0.5'],
 ])
 def test_extreme_mutex_with_strategy_and_knob_flags_exit_1(iso_env, capsys, flag_argv):
-    """--extreme 与任一策略/旋钮旗标同给 → 退出 1 + 中文报错，不留空 run_dir。"""
+    """--extreme 与任一策略/旋钮旗标同给 → 退出 1 + 中文报错，不留空 run_dir
+    （prd-se-ext-top3 US-002 增 --se-ext-top：糖衣互斥 —— 极限 SE 臂继承默认
+    top-3，展开处不写该旗标）。"""
     tmp, runs, _, master = iso_env
     cfg_path = _write_config(tmp / 'cfg.json', master)
     rc = main([str(cfg_path), '--extreme', '--time', '905', *flag_argv])
