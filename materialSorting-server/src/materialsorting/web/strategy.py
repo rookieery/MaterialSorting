@@ -533,6 +533,15 @@ def _parse_plan(run_dir):
     （一期事故：band+prefix 双开 → band_prefix_on 回退，UI 无任何提示 ——
     该 reason 二期起不再产生，历史 run 产物仍可能含此字符串，透传不拒）。
     旧 run / race / legacy 无这两键 → 不加键（前端隐藏）。
+
+    US-003 多候选透传（prd-se-ext-top3，2026-09-23）：strategy.json se 段新键
+    additive —— 计划态 ``ext_top_n``/``ext_band`` 开跑即写、实际态
+    ``ext_seeds``/``extra_rounds`` 首个延长轮启动时补写（不进延长 = R0/中断
+    则保持计划态，两实际态键不在场）。**在场才加键**（``is not None``：m=1 的
+    ``extra_rounds=0`` 是合法值须透传），旧 run / race / legacy 零新键 → 前端
+    隐藏相关 UI、渲染零变化。前端用 ``ext_s`` × ``extra_rounds`` 计算实际
+    额外秒数（status 载荷经 plan 摘要透传，机器对接 gate=False 家族走同一
+    ``_status_common`` 自动继承）。
     """
     if not run_dir:
         return None
@@ -546,6 +555,10 @@ def _parse_plan(run_dir):
         plan.update({'k_screens': sj['se'].get('k_screens'),
                      'screen_s': sj['se'].get('screen_s'),
                      'ext_s': sj['se'].get('ext_s')})
+        # 多候选四键 additive 透传（在场才加键）。
+        for key in ('ext_top_n', 'ext_band', 'ext_seeds', 'extra_rounds'):
+            if sj['se'].get(key) is not None:
+                plan[key] = sj['se'][key]
         if sj['se'].get('warm') is not None:
             plan['warm'] = bool(sj['se'].get('warm'))
             if sj['se'].get('warm_reason'):
@@ -618,6 +631,13 @@ def _parse_events(run_dir, result_json) -> list:
     归并：按 per_seed 完成序逐 seed 输出 ``gate(i) → seed_done(i)``，未入账
     seed 的 gate 事件（串行下至多 1 条 = 在跑轮）靠后，extension 事件恒置尾
     且**豁免尾窗裁剪** —— 尾窗只作用于时间序前段，最新相位事件永不丢失。
+
+    多候选（prd-se-ext-top3 US-003，2026-09-23）：延长段 m 候选 → ``best_frame_
+    s{seed}_ext.json`` 按 seed 天然多文件，glob 逐文件解析产出 m 条 extension
+    事件（``sorted`` 文件名**字典序** = 确定稳定，两位数 seed 非数值序 —— 前端
+    候选推导以 plan.ext_seeds 为权威，事件只标记「该 seed 有延长产物」），尾窗
+    按 ``len(ext_events)`` 联动收缩前段（keep = TAIL − m，≤0 时空前段）→ 全部
+    延长事件恒存活。零结构变更，行为由 test_web_strategy 多候选用例锁定。
     """
     gates_by_seed: dict = {}
     gate_order: list = []

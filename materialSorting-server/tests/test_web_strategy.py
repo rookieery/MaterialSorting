@@ -11,6 +11,11 @@
   - result（incumbent → manifest 与 build_pid_meta 对拍 —— 提取回归护栏 +
     build_instance 输出一致性 + doc_id 漂移 warning + stopped 回落 best_frame）；
   - commit doc_id（_commit_to_nesting_sync 落 intermediate）；
+  - 多候选透传（prd-se-ext-top3 US-003，2026-09-23）：_parse_plan 四新键
+    additive（实际态全键 / 计划态无实际键 / m=1 extra_rounds=0 不被吞 / 旧
+    se·race 产物结构逐键零变化）+ status 载荷 e2e 透传（ext_s × extra_rounds
+    可算实际额外秒数）+ _parse_events 多候选 3 条 extension 事件序列（文件名
+    序稳定）与尾窗联动豁免（keep = TAIL − m 前段收缩、延长事件恒存活）；
   - AST 守卫：strategy.py 全模块禁 import ..cli.*（镜像 test_cli_portfolio 写法）；
   - ms-web 四路由在场（TestClient 探测）。
 
@@ -621,6 +626,137 @@ def test_status_done_retains_state_and_clears_marker(strat_env):
     assert strategy_mod._read_marker() is None
     assert strategy_mod._STRATEGY_STATE['state'] == 'done'
     # done 后再 start 不再 409（终态放行；marker 已清）。
+
+
+# ------------------ 多候选透传（prd-se-ext-top3 US-003，2026-09-23）
+
+
+def _write_strategy_json(run_dir: Path, se_extra: dict) -> None:
+    """strategy.json 重写辅助：基础 se 段（US-002 前旧形态，无 ext_* 键）+
+    ``se_extra`` additive 键（覆盖同名键）—— 多候选用例可控输入。"""
+    se = {'k_screens': 3, 'screen_s': 90, 'ext_s': 180,
+          'warm': False, 'warm_reason': 'band_prefix_on'}
+    se.update(se_extra)
+    (run_dir / 'strategy.json').write_text(json.dumps({
+        'mode': 'se', 'total_budget': 600, 'planned_seeds': [0, 1, 2],
+        'started_at': '2026-09-23T12:00:00', 'se': se}), encoding='utf-8')
+
+
+def test_parse_plan_multi_candidate_full_state(strat_env):
+    """多候选实际态四键 additive 透传：ext_top_n/ext_band/ext_seeds/extra_rounds
+    在场才加键、值原样；m=1 单冠军的 extra_rounds=0 合法值不被吞（is not None
+    判据 —— truthy 会误吞 0）。"""
+    run_dir = _write_run_dir(strat_env)
+    _write_strategy_json(run_dir, {'ext_top_n': 3, 'ext_band': 0.005,
+                                   'ext_seeds': [3, 1, 4], 'extra_rounds': 2})
+    plan = strategy_mod._parse_plan(str(run_dir))
+    assert plan['ext_top_n'] == 3 and plan['ext_band'] == 0.005
+    assert plan['ext_seeds'] == [3, 1, 4] and plan['extra_rounds'] == 2
+    # 既有键不受扰（additive 红线）。
+    assert plan['k_screens'] == 3 and plan['ext_s'] == 180
+    assert plan['warm'] is False and plan['warm_reason'] == 'band_prefix_on'
+
+    # m=1（带内仅冠军，--se-ext-top 1 或带外单冠军同款产物形态）。
+    _write_strategy_json(run_dir, {'ext_top_n': 1, 'ext_band': 0.005,
+                                   'ext_seeds': [3], 'extra_rounds': 0})
+    plan1 = strategy_mod._parse_plan(str(run_dir))
+    assert plan1['ext_top_n'] == 1 and plan1['ext_seeds'] == [3]
+    assert plan1['extra_rounds'] == 0
+
+
+def test_parse_plan_plan_state_only_without_actual_keys(strat_env):
+    """计划态（开跑即写 / R0 或筛选段中断未补写）：只有 ext_top_n/ext_band，
+    两实际态键不在 plan 上 → 前端隐藏「实际候选数/额外时长」相关 UI。"""
+    run_dir = _write_run_dir(strat_env)
+    _write_strategy_json(run_dir, {'ext_top_n': 3, 'ext_band': 0.005})
+    plan = strategy_mod._parse_plan(str(run_dir))
+    assert plan['ext_top_n'] == 3 and plan['ext_band'] == 0.005
+    assert 'ext_seeds' not in plan and 'extra_rounds' not in plan
+
+
+def test_parse_plan_old_run_no_new_keys_structure_unchanged(strat_env):
+    """无新键旧产物结构零变化（additive 红线）：se 旧形态 / race plan 键集与
+    旧结构逐键一致 —— 旧 run 渲染零变化。"""
+    run_dir = _write_run_dir(strat_env)      # se 段 = US-002 前旧形态（无 ext_*）
+    assert strategy_mod._parse_plan(str(run_dir)) == {
+        'planned_seeds': [0, 1, 2], 'k_screens': 3, 'screen_s': 90,
+        'ext_s': 180, 'warm': False, 'warm_reason': 'band_prefix_on'}
+    # race plan：只有 gate_seconds（无 se 段 → 四新键恒不出现）。
+    (run_dir / 'strategy.json').write_text(json.dumps({
+        'planned_seeds': [0], 'race': {'gate_seconds': 602.5}}),
+        encoding='utf-8')
+    assert strategy_mod._parse_plan(str(run_dir)) == {
+        'planned_seeds': [0], 'gate_seconds': 602.5}
+
+
+def test_status_payload_plan_transmits_multi_candidate(strat_env):
+    """status 载荷经 plan 摘要透传多候选实际态（active 态 e2e）：前端以
+    ext_s × extra_rounds 计算实际额外秒数（180 × 2 = 360s）。"""
+    run_dir = _write_run_dir(strat_env)
+    _write_strategy_json(run_dir, {'ext_top_n': 3, 'ext_band': 0.005,
+                                   'ext_seeds': [3, 1, 4], 'extra_rounds': 2})
+    _active_state(strat_env, run_dir=str(run_dir), rc=None)
+    payload = _client().get('/api/strategy/status').json()
+    plan = payload['plan']
+    assert plan['ext_top_n'] == 3 and plan['ext_band'] == 0.005
+    assert plan['ext_seeds'] == [3, 1, 4] and plan['extra_rounds'] == 2
+    assert plan['ext_s'] * plan['extra_rounds'] == 360
+
+
+def test_parse_events_multi_candidate_extension_sequence(strat_env, tmp_path):
+    """多候选 3 延长事件序列：best_frame_s{seed}_ext.json 按 seed 天然多文件 →
+    glob 逐文件产出 3 条 extension 事件，恒置尾且按文件名序（确定稳定，
+    与执行序 [3,1,4] 无关）。"""
+    run_dir = tmp_path / 'run'
+    run_dir.mkdir()
+    result = {'portfolio': {'per_seed': [
+        {'seed': 3, 'killed': False, 'kill_reason': None,
+         'best_density': 0.83, 'elapsed': 91.0, 'phase': 'screen'},
+        {'seed': 1, 'killed': False, 'kill_reason': None,
+         'best_density': 0.828, 'elapsed': 91.1, 'phase': 'screen'},
+        {'seed': 4, 'killed': False, 'kill_reason': None,
+         'best_density': 0.8265, 'elapsed': 91.2, 'phase': 'screen'},
+    ]}}
+    (run_dir / 'result.json').write_text(json.dumps(result), encoding='utf-8')
+    # 候选执行序 = [3, 1, 4]（冠军 3 在先）—— 文件按 seed 命名（US-001 装载点
+    # 参数化 → 产物天然多文件互不覆盖），事件序 = 文件名字典序 s1/s3/s4。
+    for seed in (3, 1, 4):
+        (run_dir / f'best_frame_s{seed}_ext.json').write_text(
+            json.dumps({'seed': seed, 'density': 0.85}), encoding='utf-8')
+    events = strategy_mod._parse_events(str(run_dir), result)
+    assert [e['kind'] for e in events] == ['seed_done'] * 3 + ['extension'] * 3
+    ext = [e for e in events if e['kind'] == 'extension']
+    assert [e['seed'] for e in ext] == [1, 3, 4]
+    assert all(e == {'kind': 'extension', 'seed': s}
+               for e, s in zip(ext, (1, 3, 4)))
+
+
+def test_parse_events_multi_candidate_tail_exemption_long_run(strat_env,
+                                                               tmp_path):
+    """3 候选 + 长跑（k=21 筛选）：尾窗按 len(ext_events) 联动收缩前段
+    （keep = 20 − 3 = 17 条 seed_done）→ 全部延长事件恒存活、顺序稳定。"""
+    run_dir = tmp_path / 'run'
+    run_dir.mkdir()
+    per_seed = [
+        {'seed': i, 'killed': False, 'kill_reason': None,
+         'best_density': 0.89 + i * 0.001, 'elapsed': 301.0, 'phase': 'screen'}
+        for i in range(21)
+    ]
+    result = {'portfolio': {'per_seed': per_seed}}
+    (run_dir / 'result.json').write_text(json.dumps(result), encoding='utf-8')
+    for seed in (11, 2, 7):                     # 冠军 11 + 两近并列候选
+        (run_dir / f'best_frame_s{seed}_ext.json').write_text('{}',
+                                                              encoding='utf-8')
+    events = strategy_mod._parse_events(str(run_dir), result)
+    kinds = [e['kind'] for e in events]
+    assert kinds.count('extension') == 3
+    # 文件名**字典序**（sorted(Path)）：'s11' < 's2' < 's7'（'1'<'2'）→ 两位数
+    # seed 非数值序 —— 确定稳定即可（前端候选推导以 ext_seeds 为权威，事件只
+    # 标记「该 seed 有延长产物」；PRD 定案零结构变更，此处锁定现行为）。
+    assert [e['seed'] for e in events[-3:]] == [11, 2, 7]
+    assert kinds.count('seed_done') == strategy_mod._EVENTS_TAIL - 3
+    assert len(events) == strategy_mod._EVENTS_TAIL
+    assert events[0]['kind'] == 'seed_done' and events[0]['seed'] == 4
 
 
 # ------------------------------------------------------------- stop / orphan

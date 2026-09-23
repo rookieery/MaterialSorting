@@ -772,7 +772,7 @@ curl http://127.0.0.1:8010/api/ptypes -H "X-Session-Id: <sid>"
 
 ## 策略桥接（strategy PRD US-004）— `/api/strategy/*` 四路由（`web/strategy.py`）
 
-桥接方式 = **spawn `python -m materialsorting.cli.run_config <cfg> --name web_[<sid6>_]<mode>_<rand6> --strategy <mode> --time <minutes*60> --quiet` 子进程 + HTTP 轮询 run_dir 产物**（分层零违规：进程边界而非 import 边界 —— `strategy.py` 全模块禁 import `..cli.*`，spawn 命令不传 `--se-warm`：se 模式缺省 on（prd-warm-start-phase1 US-003），wheel 不支持（当前 0.9.0+ms0）自动回退现状重放 + warn 行，桥接零改动零感知 —— strategy.json se 段新增 warm/warm_reason additive 键，`_parse_plan` 键白名单不透传），AST 守卫 `tests/test_web_strategy.py`；判据逻辑单一真相源留在 `cli.portfolio`）。子进程经 env 继承拿到与 ms-web 相同的 `paths`（`MS_OUT_DIR` 等环境变量父子同源）。前端消费方 = 策略 PRD US-005 弹窗（`strategyStore` + `useStrategyPoll`，详见 `agent-component-map.md` US-005 专节）：GET status 轮询双档 **弹窗开 2s / 关 15s**（关弹窗由入口徽标维持观测），terminal 态停表；start 载荷 = 面板排料参数 + `{mode, minutes}`；**关闭弹窗（ESC/遮罩/✕）不调 stop** —— 终止唯一入口 = 显式终止/清理按钮。
+桥接方式 = **spawn `python -m materialsorting.cli.run_config <cfg> --name web_[<sid6>_]<mode>_<rand6> --strategy <mode> --time <minutes*60> --quiet` 子进程 + HTTP 轮询 run_dir 产物**（分层零违规：进程边界而非 import 边界 —— `strategy.py` 全模块禁 import `..cli.*`，spawn 命令不传 `--se-warm`：se 模式缺省 on（prd-warm-start-phase1 US-003），wheel 不支持（当前 0.9.0+ms0）自动回退现状重放 + warn 行，桥接零改动零感知 —— strategy.json se 段 warm/warm_reason additive 键，2026-09-19 起 `_parse_plan` 计划态透传），AST 守卫 `tests/test_web_strategy.py`；判据逻辑单一真相源留在 `cli.portfolio`）。子进程经 env 继承拿到与 ms-web 相同的 `paths`（`MS_OUT_DIR` 等环境变量父子同源）。前端消费方 = 策略 PRD US-005 弹窗（`strategyStore` + `useStrategyPoll`，详见 `agent-component-map.md` US-005 专节）：GET status 轮询双档 **弹窗开 2s / 关 15s**（关弹窗由入口徽标维持观测），terminal 态停表；start 载荷 = 面板排料参数 + `{mode, minutes}`；**关闭弹窗（ESC/遮罩/✕）不调 stop** —— 终止唯一入口 = 显式终止/清理按钮。
 
 **多会话 US-004（2026-08-27）：四路由全部读 `X-Session-Id` Header（缺省/空串 → default 会话）**，策略状态/产物/停止按会话隔离：
 
@@ -800,11 +800,11 @@ curl http://127.0.0.1:8010/api/ptypes -H "X-Session-Id: <sid>"
 
 可选 `X-Session-Id`（多会话 US-004；sid 过期/未知 → 401、非法 → 400）。每次现读**本会话**产物组装（不缓存中间态）；resolve 顺手刷 `last_active`（轮询即活性）；进度源白名单 `strategy.json` / `result.json` / `best_frame_s*.json` / `kill_decisions.jsonl` —— **绝不读 `curve_s*.json`**（运行中缺右括号非法 JSON）。响应 `{state, mode, total_budget_sec, elapsed_sec(墙钟), run_dir, plan, incumbent, current, per_seed, events, error, exit_code}`：
 
-- `plan`：strategy.json → `{planned_seeds, gate_seconds}`（race）| `{planned_seeds, k_screens, screen_s, ext_s}`（se）
+- `plan`：strategy.json → `{planned_seeds, gate_seconds}`（race）| `{planned_seeds, k_screens, screen_s, ext_s}`（se）+ 可选 `warm`/`warm_reason`（2026-09-19 warm 计划态透传）+ **多候选四键 additive（prd-se-ext-top3 US-003，2026-09-23）**：计划态 `ext_top_n`/`ext_band`（开跑即写）、实际态 `ext_seeds`/`extra_rounds`（首个延长轮启动补写；m=1 时 `extra_rounds=0` 照常透传）—— **在场才加键**，旧 run / race / legacy 零新键；前端以 `ext_s × extra_rounds` 算实际额外秒数
 - `incumbent`：result.json portfolio.incumbent 摘要 `{density, width_mm, seed, frame_index, elapsed}`（**无 placed_items** 控载荷）
 - `current`：最新 mtime `best_frame_s*.json` → `{seed, density, density_sparrow, ext}`（`_ext` 后缀 → ext=true，SE 延长检测）
 - `per_seed`：result.json portfolio.per_seed 透传（含 `phase`: race/screen/extension、`killed`）
-- `events`：kill_decisions R5_race_gate 行（`S_tau` 重载为 bar 参照值）+ extension（`best_frame_s{seed}_ext.json` 在场）+ seed_done（per_seed），只保留尾部 20 条
+- `events`：kill_decisions R5_race_gate 行（`S_tau` 重载为 bar 参照值）+ extension（`best_frame_s{seed}_ext.json` 在场，**多候选天然多条** —— 按 seed 多文件 glob 逐条产出、文件名字典序确定稳定、恒置尾且豁免尾窗裁剪；尾窗按 extension 条数联动收缩前段 keep = 20 − m，prd-se-ext-top3 US-003 用例锁定）+ seed_done（per_seed），时间序前段只保留尾部 20 条窗口
 - 缺文件一律降级 null / `[]`；run_dir（前缀 glob）未发现 + 进程死 + >30s 宽限 → `error`（附 stderr 尾部 2000 字符）；终态顺手清**本会话** marker 并把 state 写回内存态
 
 ### POST /api/strategy/stop — 树杀
