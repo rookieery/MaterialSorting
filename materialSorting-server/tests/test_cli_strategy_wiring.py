@@ -41,8 +41,9 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 from materialsorting import paths as paths_mod
-from materialsorting.cli.portfolio import (R5_REASON, SE_WARM_REASONS,
-                                           race_plan, se_warm_plan)
+from materialsorting.cli.portfolio import (R5_REASON, SE_EXT_BAND, SE_EXT_TOP_N,
+                                           SE_WARM_REASONS, race_plan,
+                                           se_extension_candidates, se_warm_plan)
 from materialsorting.cli.run_config import main
 from materialsorting.nesting_engine import warmstart
 from materialsorting.web import server as server_mod
@@ -124,19 +125,30 @@ class _FakeSolve:
     US-003：``warm_flags`` 逐调用记录是否收到 ``warm_best_frame=True`` 策略标志
     （portfolio 前置判定通过的延长轮才带）；收到的调用模拟 solve_pieces 契约在
     返回记录附 ``warm: True``（装载点行为由独立的 solve_pieces 级测试覆盖）。
+
+    US-001（prd-se-ext-top3）多候选编排注入面：``missing_best_frames``（seed
+    集）模拟该 seed 筛选轮边车缺失 —— 收到 warm 标志的延长轮返回记录附
+    ``warm: False`` + ``warm_reason: 'no_best_frame'``（装载点回退契约的 fake
+    形态，逐轮独立性测试用）；``interrupt_on``（(seed, suffix) 集）在该调用处
+    直接 raise KeyboardInterrupt（中断停在当前候选测试用）。
     """
 
-    def __init__(self, traj: dict):
+    def __init__(self, traj: dict, *, missing_best_frames: set[int] | None = None,
+                 interrupt_on: set[tuple[int, str]] | None = None):
         self.traj = traj
         self.calls: list[tuple] = []
         self.warm_flags: list[bool] = []
         self.strategy_json_at_first_solve: dict | None = None
+        self.missing_best_frames = missing_best_frames or set()
+        self.interrupt_on = interrupt_on or set()
 
     def __call__(self, cfg, run_dir, *, seed, time_budget=None, on_progress=None,
                  should_stop=None, solver_opts=None, artifact_suffix='', **kw):
         warm = bool(kw.get('warm_best_frame'))
         self.calls.append((int(seed), time_budget, artifact_suffix))
         self.warm_flags.append(warm)
+        if (int(seed), artifact_suffix) in self.interrupt_on:
+            raise KeyboardInterrupt            # 模拟该轮求解中被 Ctrl-C
         rd = Path(run_dir)
         if len(self.calls) == 1:
             p = rd / 'strategy.json'      # R1：首轮求解开始时 strategy.json 已在场
@@ -178,13 +190,19 @@ class _FakeSolve:
         else:
             rec['real_density'] = frames[-1][1]
         if warm:
-            rec['warm'] = True      # solve_pieces 契约：warm_best_frame=True 必带
+            # solve_pieces 契约：warm_best_frame=True 必带 warm 键；US-001 注入面
+            # —— missing_best_frames 命中该 seed 时模拟装载点边车缺失回退。
+            if int(seed) in self.missing_best_frames:
+                rec['warm'] = False
+                rec['warm_reason'] = 'no_best_frame'
+            else:
+                rec['warm'] = True
         return rec
 
 
-def _patch_solve(monkeypatch, traj) -> _FakeSolve:
+def _patch_solve(monkeypatch, traj, **fake_kw) -> _FakeSolve:
     from materialsorting.cli import run_config as rc_mod
-    fake = _FakeSolve(traj)
+    fake = _FakeSolve(traj, **fake_kw)
     monkeypatch.setattr(rc_mod, 'solve_pieces', fake)
     return fake
 
@@ -521,7 +539,8 @@ def test_se_two_phase_end_to_end(iso_env, capsys, monkeypatch):
     assert all('phase' not in s for s in result['solve'][:-1])    # 筛选条目无 phase
     pf = result['portfolio']
     assert pf['mode'] == 'se'
-    assert pf['se'] == {'k_screens': 5, 'screen_s': 20, 'ext_s': 40, 'champion': 3}
+    assert pf['se'] == {'k_screens': 5, 'screen_s': 20, 'ext_s': 40, 'champion': 3,
+                        'ext_seeds': [3]}   # US-001 additive：0.82 与 0.83 差 1pt 超带 → 单冠军
     assert [e['phase'] for e in pf['per_seed']] == ['screen'] * 5 + ['extension']
     # incumbent = 延长帧 0.86 大于等于全部筛选终值（延长入 banking 池）
     assert pf['incumbent']['density'] == 0.86 and pf['incumbent']['seed'] == 3
@@ -555,7 +574,9 @@ def test_se_r0_stop_skips_extension(iso_env, capsys, monkeypatch):
 
 
 def test_se_champion_is_argmax_real_density(iso_env, monkeypatch):
-    """冠军 = solve 记录 real_density argmax（并列取先执行者）。"""
+    """冠军 = solve 记录 real_density argmax（并列取先执行者）。US-001 起
+    并列差 0 ≤ band → 并列 seed 也进候选集（密度降序稳定排序下冠军 = 候选[0]，
+    串行顺延次序 = 名次序）。"""
     tmp, runs, _, _, master = iso_env
     cfg_path = _write_config(tmp / 'cfg.json', master, seeds=[0])
     traj = {
@@ -563,18 +584,242 @@ def test_se_champion_is_argmax_real_density(iso_env, monkeypatch):
         (1, ''): [(5.0, 0.80), (20.0, 0.80)],          # 并列 0.80：冠军取先执行者 seed0
         (2, ''): [(5.0, 0.79), (20.0, 0.79)],
         (0, '_ext'): [(5.0, 0.81), (40.0, 0.81)],
+        (1, '_ext'): [(5.0, 0.805), (40.0, 0.815)],    # 并列候选 seed1 同获延长预算
     }
     fake = _patch_solve(monkeypatch, traj)
     rc = main([str(cfg_path), '--strategy', 'se', '--time', '130',
                '--se-screen', '20', '--se-extend', '40'])
     assert rc == 0
-    # se_plan(130, 20, 40) = (130-62.5)//22.5 = 3 → 筛选 3 轮 + 冠军 seed0 延长
-    assert [c[0] for c in fake.calls] == [0, 1, 2, 0]
+    # se_plan(130, 20, 40) = (130-62.5)//22.5 = 3 → 筛选 3 轮 + 冠军 seed0、
+    # 并列候选 seed1 串行延长（各得完整 ext 预算，队列序递增）。
+    assert [c[0] for c in fake.calls] == [0, 1, 2, 0, 1]
+    assert fake.calls[-2][2] == '_ext' and fake.calls[-2][1] == 40
     assert fake.calls[-1][2] == '_ext' and fake.calls[-1][1] == 40
     rd = _only_run_dir(runs)
     result = json.loads((rd / 'result.json').read_text(encoding='utf-8'))
     assert result['portfolio']['se']['champion'] == 0
     assert result['portfolio']['se']['k_screens'] == 3
+    assert result['portfolio']['se']['ext_seeds'] == [0, 1]   # 候选全集含冠军
+    # 并列候选延长反超 → incumbent = 帧级全局最大（多候选交付单调不降）
+    assert result['portfolio']['incumbent']['density'] == 0.815
+    assert result['portfolio']['incumbent']['seed'] == 1
+
+
+# --------------------------------------- US-001（prd-se-ext-top3）多候选纯函数 + 编排
+
+
+def _solves(*pairs: tuple[int, float]) -> list[dict]:
+    """按筛选执行序构造 solve 记录骨架（se_extension_candidates 只读 seed /
+    real_density 两键）。"""
+    return [{'seed': s, 'real_density': d} for s, d in pairs]
+
+
+def test_se_extension_candidates_matrix():
+    """候选判据纯函数矩阵（单一真相源，无 I/O 无 RNG）：典型 3 候选 / 恰 2 /
+    4+ 带内取前 3（成本封顶）/ 全远超带单冠军 / 密度并列 + 等号边界 0.005 /
+    top_n=1 恒单冠军 / 冠军恒为候选[0]。"""
+    # 典型 3 候选：0.83 冠军，0.828（差 0.2pt）/ 0.8265（差 0.35pt）在带内，
+    # 0.80（差 3pt）远超带 → 按密度降序 [冠军, 0.828, 0.8265]。
+    assert se_extension_candidates(
+        _solves((0, 0.8265), (1, 0.83), (2, 0.80), (3, 0.828))) == [1, 3, 0]
+    # 恰 2 候选：差 0.0049 ≤ 0.005 入带、差 0.0051 出带（带内外最近两档）。
+    assert se_extension_candidates(
+        _solves((5, 0.84), (6, 0.8351), (7, 0.8349))) == [5, 6]
+    # 4+ 带内 → 取最靠近冠军的前 3（0.005/0.003/0.001 入选，0.007 落选）。
+    assert se_extension_candidates(
+        _solves((1, 0.825), (2, 0.823), (3, 0.83), (4, 0.827), (5, 0.829))
+        ) == [3, 5, 4]
+    # 全远超带 → 单冠军（旧单冠军行为）。
+    assert se_extension_candidates(
+        _solves((0, 0.83), (1, 0.82), (2, 0.80))) == [0]
+    # 等号边界含入：0.83 − 0.825 = 0.005（十进制 double 下差 0.0050000000000000044，
+    # 闭边界容差救回）→ 入带；0.8249（差 0.51pt）出带。
+    assert se_extension_candidates(
+        _solves((0, 0.83), (1, 0.825), (2, 0.8249))) == [0, 1]
+    # 密度并列：冠军 = argmax 并列取先执行者（seed0 先跑）；并列 seed 同入带，
+    # 稳定排序保持筛选执行序（后执行者居次）—— 冠军恒为候选[0]。
+    assert se_extension_candidates(
+        _solves((2, 0.80), (7, 0.80), (9, 0.80))) == [2, 7, 9]
+    assert se_extension_candidates(
+        _solves((7, 0.80), (2, 0.80), (9, 0.7995))) == [7, 2, 9]
+    # top_n=1 恒单冠军（--se-ext-top 1 A/B 哨兵的引擎侧语义；带内再多也截断）。
+    assert se_extension_candidates(
+        _solves((0, 0.83), (1, 0.828), (2, 0.826)), top_n=1) == [0]
+    # 防御：空 solves → []；top_n < 1 抬回 1。
+    assert se_extension_candidates([]) == []
+    assert se_extension_candidates(_solves((0, 0.8), (1, 0.8)), top_n=0) == [0]
+    # 同 seed 重复记录按首条计（筛选轮无重复，纯函数防御）。
+    assert se_extension_candidates(
+        _solves((0, 0.83), (0, 0.83), (1, 0.82))) == [0]
+    # 常量口径锁定（0.5pt 绝对百分点 / top-3 封顶）。
+    assert (SE_EXT_BAND, SE_EXT_TOP_N) == (0.005, 3)
+
+
+# 多候选 e2e 冒烟矩阵（--time 160 --se-screen 20 --se-extend 40 → k=5 筛选轮）：
+#   筛选终值 seed0..4 = 0.80/0.828/0.81/0.83/0.8265 → 冠军 seed3(0.83)；
+#   带内 gap：seed1 0.002 / seed4 0.0035 / seed2 0.02（出带）/ seed0 0.03（出带）
+#   → 候选 [3, 1, 4]（密度降序）串行延长；seed4 延长反超 0.865 → incumbent。
+_SE_TOP3_TRAJ = {
+    (0, ''): [(5.0, 0.78), (20.0, 0.80)],
+    (1, ''): [(5.0, 0.81), (20.0, 0.828)],
+    (2, ''): [(5.0, 0.80), (20.0, 0.81)],
+    (3, ''): [(5.0, 0.81), (20.0, 0.83)],
+    (4, ''): [(5.0, 0.81), (20.0, 0.8265)],
+    (3, '_ext'): [(5.0, 0.82), (20.0, 0.84), (40.0, 0.855)],
+    (1, '_ext'): [(5.0, 0.815), (20.0, 0.835), (40.0, 0.85)],
+    (4, '_ext'): [(5.0, 0.818), (20.0, 0.845), (40.0, 0.865)],
+}
+
+
+def test_se_multi_candidate_serial_extension_e2e(iso_env, capsys, monkeypatch):
+    """多候选串行延长端到端：带内 top-3 按名次序逐个跑完整 ext 预算（队列序
+    递增 → 每轮 round_budget=ext / phase=extension）、_ext 产物按 seed 独立成对
+    互不覆盖、best = 全部延长轮帧级最大（反超入账）。"""
+    monkeypatch.setattr(warmstart, 'warm_start_supported', lambda: False)
+    tmp, runs, _, _, master = iso_env
+    cfg_path = _write_config(tmp / 'cfg.json', master, seeds=[0])
+    fake = _patch_solve(monkeypatch, _SE_TOP3_TRAJ)
+    rc = main(_se_argv(cfg_path))
+    out = capsys.readouterr().out
+    assert rc == 0
+    # 串行序：5 轮筛选（20s）+ 候选名次序 [3, 1, 4] 各一轮完整 ext（40s、_ext）。
+    assert fake.calls == [(0, 20, ''), (1, 20, ''), (2, 20, ''), (3, 20, ''),
+                          (4, 20, ''), (3, 40, '_ext'), (1, 40, '_ext'),
+                          (4, 40, '_ext')]
+    assert fake.warm_flags == [False] * 8      # unsupported → 全轮回退重放
+    rd = _only_run_dir(runs)
+    # 三个候选的 _ext 产物独立成对（curve + best_frame 按 seed 天然多文件），
+    # 筛选产物未被覆盖。
+    for s in (3, 1, 4):
+        assert (rd / f'curve_s{s}_ext.json').exists()
+        ext_best = json.loads((rd / f'best_frame_s{s}_ext.json').read_text(
+            encoding='utf-8'))
+        assert ext_best['seed'] == s
+    assert [e['density'] for e in json.loads(
+        (rd / 'curve_s3.json').read_text(encoding='utf-8'))] == [0.81, 0.83]
+    result = json.loads((rd / 'result.json').read_text(encoding='utf-8'))
+    assert [s['seed'] for s in result['solve']] == [0, 1, 2, 3, 4, 3, 1, 4]
+    assert all(s.get('phase') == 'extension' for s in result['solve'][5:])
+    pf = result['portfolio']
+    assert pf['se']['champion'] == 3 and pf['se']['ext_seeds'] == [3, 1, 4]
+    assert [e['phase'] for e in pf['per_seed']] == ['screen'] * 5 + ['extension'] * 3
+    # best = 全部延长轮帧级最大：seed4 延长反超 0.865 → incumbent.seed ∈ 候选集
+    assert pf['incumbent']['density'] == 0.865 and pf['incumbent']['seed'] == 4
+    assert result['best'] == pf['incumbent']
+    # 逐轮 warm 回退 notify：unsupported 前置回退 → 三轮各打一行
+    assert out.count('se 延长轮 warm 回退 → 现状重放（warm_reason=unsupported）') == 3
+    assert '延长轮（seed=3·筛选冠军）开始' in out    # 轮次头照常（US-002 才分候选序）
+
+
+def test_se_warm_fallback_per_round_independent(iso_env, capsys, monkeypatch):
+    """逐轮 warm 回退独立：候选 2 边车缺失（no_best_frame）只降级该轮 —— 冠军轮
+    照常真 warm（无回退行）、se_warm_state 保持冠军轮语义（历史键连续）、
+    se_warm_states 逐轮归档全集。"""
+    monkeypatch.setattr(warmstart, 'warm_start_supported', lambda: True)
+    tmp, runs, _, _, master = iso_env
+    cfg_path = _write_config(tmp / 'cfg.json', master, seeds=[0])
+    # 候选 2（seed1）筛选边车缺失 → 该轮装载点回退；冠军 seed3 / 候选 3 seed4
+    # 边车在堂（_FakeSolve 筛选轮照常落 best_frame 边车，missing 集只按 seed
+    # 模拟该轮缺失）。
+    fake = _patch_solve(monkeypatch, dict(_SE_TOP3_TRAJ),
+                        missing_best_frames={1})
+    rc = main(_se_argv(cfg_path))
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert fake.calls[-3:] == [(3, 40, '_ext'), (1, 40, '_ext'),
+                               (4, 40, '_ext')]
+    assert fake.warm_flags[-3:] == [True] * 3     # 三轮都带 warm 标志（前置判定通过）
+    rd = _only_run_dir(runs)
+    result = json.loads((rd / 'result.json').read_text(encoding='utf-8'))
+    # 冠军轮真 warm、候选 2 回退、候选 3 照常真 warm —— 一轮 no_best_frame
+    # 不影响他轮。
+    assert result['solve'][5]['warm'] is True and 'warm_reason' not in result['solve'][5]
+    assert result['solve'][6]['warm'] is False \
+        and result['solve'][6]['warm_reason'] == 'no_best_frame'
+    assert result['solve'][7]['warm'] is True and 'warm_reason' not in result['solve'][7]
+    # 既有 warm/warm_reason 键语义 = 冠军轮（第 1 延长轮）实际灌入态 → True 无 reason
+    assert result['config']['strategy']['warm'] is True
+    assert 'warm_reason' not in result['config']['strategy']
+    assert out.count('warm 回退 → 现状重放') == 1            # 仅候选 2 一行
+    assert 'warm_reason=no_best_frame' in out
+
+
+def test_se_extension_interrupt_stops_candidate_queue(iso_env, capsys,
+                                                      monkeypatch):
+    """延长轮 Ctrl-C：interrupted 交付已完成轮（冠军轮 incumbent 在账）、被中断
+    轮无记录、后续候选不再启动；se_ext_seeds 仍归档候选全集（中断可审计）、
+    se_warm_states 只含已完成轮（被中断轮无条目）。"""
+    monkeypatch.setattr(warmstart, 'warm_start_supported', lambda: True)
+    tmp, runs, _, _, master = iso_env
+    cfg_path = _write_config(tmp / 'cfg.json', master, seeds=[0])
+    traj = dict(_SE_TOP3_TRAJ)
+    del traj[(4, '_ext')]      # 候选 3 不会被启动
+    # 候选 2（seed1）延长轮被 Ctrl-C。
+    fake = _patch_solve(monkeypatch, traj, interrupt_on={(1, '_ext')})
+    rc = main(_se_argv(cfg_path))
+    assert rc == 130           # _EXIT_INTERRUPT
+    assert fake.calls == [(0, 20, ''), (1, 20, ''), (2, 20, ''), (3, 20, ''),
+                          (4, 20, ''), (3, 40, '_ext'), (1, 40, '_ext')]
+    err = capsys.readouterr().err
+    assert '[中断] Ctrl-C' in err and '（延长轮）' in err
+    rd = _only_run_dir(runs)
+    result = json.loads((rd / 'result.json').read_text(encoding='utf-8'))
+    # 冠军轮已完成入账；被中断的候选 2 无 solve 条目；候选 3 未启动。
+    assert [s['seed'] for s in result['solve']] == [0, 1, 2, 3, 4, 3]
+    pf = result['portfolio']
+    assert pf['se']['champion'] == 3
+    assert pf['se']['ext_seeds'] == [3, 1, 4]      # 计划候选全集（中断可审计）
+    assert [e['phase'] for e in pf['per_seed']] == ['screen'] * 5 + ['extension']
+    # 冠军轮 incumbent 已入账（中断交付不变量）；候选 2/3 无帧 → 不参与 best。
+    assert pf['incumbent']['density'] == 0.855 and pf['incumbent']['seed'] == 3
+    assert result['best'] == pf['incumbent']
+    # 冠军轮 incumbent 已入账（中断交付不变量）；候选 2/3 无帧 → 不参与 best。
+    assert pf['incumbent']['density'] == 0.855 and pf['incumbent']['seed'] == 3
+    assert result['best'] == pf['incumbent']
+
+
+def test_se_extension_controller_archives_direct(monkeypatch, tmp_path):
+    """引擎层直接驱动（不经 run_config 呈现层）：控制器归档面单元级锁定 ——
+    se_ext_seeds（进延长段即定，中断可审计）/ se_warm_states 逐延长轮
+    {seed, warm, reason}（被中断轮无条目）/ se_warm_state 保持冠军轮语义 /
+    portfolio_section se 段 additive ext_seeds。"""
+    from materialsorting.cli.portfolio import (PortfolioController,
+                                               run_serial_portfolio)
+
+    def _ctl() -> PortfolioController:
+        return PortfolioController(seeds=[0, 1, 2, 3, 4], mode='se', se_k=5,
+                                   se_screen=20, se_ext=40, se_warm=True)
+
+    monkeypatch.setattr(warmstart, 'warm_start_supported', lambda: True)
+    run_dir = tmp_path / 'rd'
+    run_dir.mkdir()
+    # ---- 跑满：三候选逐轮归档（warm 真灌入 → reason None）。
+    run = run_serial_portfolio(None, run_dir, controller=_ctl(),
+                               time_budget=20,
+                               solve=_FakeSolve(dict(_SE_TOP3_TRAJ)))
+    assert run.interrupted is False and run.last_round == (8, 4)
+    ctl = run.controller
+    assert ctl.se_champion == 3 and ctl.se_ext_seeds == [3, 1, 4]
+    assert ctl.se_warm_states == [
+        {'seed': 3, 'warm': True, 'reason': None},
+        {'seed': 1, 'warm': True, 'reason': None},
+        {'seed': 4, 'warm': True, 'reason': None}]
+    assert ctl.se_warm_state == {'warm': True, 'reason': None}   # 冠军轮语义
+    assert ctl.portfolio_section()['se'] == {
+        'k_screens': 5, 'screen_s': 20.0, 'ext_s': 40.0, 'champion': 3,
+        'ext_seeds': [3, 1, 4]}
+    # ---- 中断于候选 2：候选全集仍归档、被中断轮无 warm_state 条目、后续不启动。
+    rd2 = tmp_path / 'rd2'
+    rd2.mkdir()
+    run2 = run_serial_portfolio(None, rd2, controller=_ctl(), time_budget=20,
+                                solve=_FakeSolve(dict(_SE_TOP3_TRAJ),
+                                                 interrupt_on={(1, '_ext')}))
+    assert run2.interrupted is True and run2.last_round == (7, 1)  # 队列序递增
+    ctl2 = run2.controller
+    assert ctl2.se_ext_seeds == [3, 1, 4]           # 中断可审计候选全集
+    assert ctl2.se_warm_states == [{'seed': 3, 'warm': True, 'reason': None}]
+    assert [s['seed'] for s in run2.solves] == [0, 1, 2, 3, 4, 3]
+    assert ctl2.incumbent['density'] == 0.855       # 冠军轮已完成入账
 
 
 # --------------------------------------------- US-003 se 延长轮 warm 真顺延接线

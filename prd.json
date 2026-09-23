@@ -1,4 +1,35 @@
 {
-  "branchName": "ralph/machine-nesting-api",
-  "stories": []
+  "branchName": "ralph/se-ext-top3",
+  "stories": [
+    {
+      "id": "US-001",
+      "title": "引擎层候选选择与多轮串行延长编排",
+      "description": "SE 顺延多候选优化引擎层（权威 PRD：tasks/prd-se-ext-top3.md，定案 2026-09-23：阈值 0.5pt=0.005 绝对口径、top-3 封顶、串行、超支设计）。As a 排料策略开发者，I want se 延长段从单冠军升级为「近并列候选串行逐个延长」的引擎编排，so that 筛选近并列的 seed 都获得完整延长预算，交付自动取全局最优，race/legacy 与确定性语义零变化。\n\n具体任务：\n1. materialSorting-server/src/materialsorting/cli/portfolio.py — 新常量 SE_EXT_BAND=0.005 / SE_EXT_TOP_N=3；新纯函数 se_extension_candidates(solves, band, top_n)->list[int]：冠军 = solve 记录 real_density argmax（并列取先执行者），候选 = 冠军密度−seed 密度 ≤ band 按密度降序稳定排序（并列按筛选执行序）取前 top_n，≥4 个落带内取最靠近前 3，top_n=1 恒返回 [冠军]，无 I/O 无 RNG。\n2. 同文件 run_serial_portfolio 延长段 — 单冠军块改候选循环：按名次序串行逐个跑完整 se_ext 预算延长轮（队列序 len(seeds)+1 起递增，round_budget/make_progress 既有 i>se_k 判定自然覆盖多轮）；每轮 warm_best_frame=True 逐轮传递（装载点按 seed 参数化读各自 best_frame_s{seed}.json，装载/校验/回退矩阵零改动）；se_warm_plan 前置判定每 run 一次（cfg 级结论对全部候选一致）；回退 notify 逐轮各打一行。\n3. 同文件控制器归档 additive — se_champion（argmax 语义不变）+ 新 se_ext_seeds:list[int]（实际顺延候选全集含冠军）+ se_warm_states:list[dict]（逐延长轮 {seed, warm, reason}，被中断轮无条目）；portfolio_section() se 段 additive 加 ext_seeds（champion 键保留）；PortfolioRun 结构不变。\n4. 中断/R0 语义不变：R0（queue_stopped）不进延长段；延长轮 Ctrl-C → interrupted=True、后续候选不再启动、已完成轮已入账 incumbent。\n\n验收标准：\n- tests/test_cli_strategy_wiring.py 扩展（fake solve 注入）：候选判据矩阵（3 候选/恰 2/4+ 取前 3/全远超带单冠军/并列含等号边界 0.005/top_n=1 恒单冠军）；多轮串行序与预算；逐轮 warm 回退独立（一轮 no_best_frame 不影响他轮）；中断停在当前候选；race/legacy fake 路径与既有测试逐字节一致（零回归哨兵）。\n- python -c \"import materialsorting.cli.portfolio\" 导入通过，分层依赖未反向（不 import web）。",
+      "passes": true
+    },
+    {
+      "id": "US-002",
+      "title": "CLI 旗标与 strategy/result/run_stats 可观测",
+      "description": "SE 多候选 CLI 呈现层与可观测键（依赖 US-001；权威 PRD：tasks/prd-se-ext-top3.md）。As a CLI 策略使用者，I want --se-ext-top 旗标与开跑即知的计划/实际可观测键，so that 我能预知最坏额外时长、事后能审计候选集合与逐轮 warm 状态，且 --se-ext-top 1 可精确退回旧行为做 A/B 哨兵。\n\n具体任务：\n1. materialSorting-server/src/materialsorting/cli/run_config.py — --se-ext-top N（int ≥1 默认 3）：须与 --strategy se 同给（单独给出退出 1，值域外退出 1，new_run_dir 前拦下）；与 --extreme 显式同给退出 1（糖衣互斥，极限 SE 臂继承默认 3，展开处不写该旗标）。\n2. 启动行（--quiet 也打）：se 段附「筛选密度与冠军相差 ≤0.5pt 的 seed 一并顺延（至多 top N 个），最多多花 2×{se_ext}s」；延长轮头按候选序打印「── 延长轮（seed=X·筛选冠军）── / ── 延长轮（seed=Y·候选 2/3）──」。\n3. strategy.json se 段 additive：开跑即写计划态 ext_top_n/ext_band(0.005)；首个延长轮启动时（on_seed_start 检测 se 延长轮）单写者补写实际态 ext_seeds+extra_rounds(m−1)——不进延长（R0/中断）不补写。\n4. result.json — portfolio.se.ext_seeds（US-001）+ config strategy 段 additive ext_top_n 与 ext_warm_rounds:[{seed, warm, reason}]；既有 warm/warm_reason 键语义 = 冠军轮（第 1 延长轮）实际灌入态，历史语义连续。\n5. run_stats 行 config 段 additive se_ext = {'top_n', 'band', 'candidates': [{'seed', 'screen_density', 'gap_pt'}]}（自包含校准数据面；已决议 2026-09-23：不带延长终值/反超冗余字段）；class_key 组成不变；race/legacy 行零新增键。\n\n验收标准：\n- tests/test_cli_strategy.py / test_cli_run_config.py 扩展：旗标裁决矩阵（从属/值域/糖衣互斥）；--se-ext-top 1 与旧行为输出对拍哨兵；strategy.json 计划态/补写时机；result/run_stats additive 键形态；无旗标 se 与 race 行结构对拍零回归。\n- ms-run-config --help 展示新旗标；python -c \"import materialsorting.cli.run_config\" 导入通过。",
+      "passes": false
+    },
+    {
+      "id": "US-003",
+      "title": "web 状态面多候选透传",
+      "description": "SE 多候选 web 状态面（依赖 US-002；权威 PRD：tasks/prd-se-ext-top3.md）。As a 前端进度面，I want /api/strategy/status 与 /api/extreme/status 透传多候选计划/实际态，so that 前端能展示实际候选数、额外时长与多条延长事件，旧 run（无新键）渲染零变化。\n\n具体任务：\n1. materialSorting-server/src/materialsorting/web/strategy.py _parse_plan — additive 透传 strategy.json se 段新键（ext_top_n/ext_band/ext_seeds/extra_rounds，在场才加键）；status 载荷随 plan 摘要透传（前端用 ext_s × extra_rounds 计算实际额外秒数）。\n2. _parse_events 多延长事件核验 — 多候选产物 best_frame_s{seed}_ext.json 按 seed 天然多文件，既有 glob + 尾窗豁免逻辑产出多条 extension 事件（顺序稳定）；补测试锁定 3 候选场景事件序列与豁免行为。\n3. 机器对接三端点（gate=False 家族）经同一 _status_common 参数化自动继承，零额外改动；status 响应结构 additive（新键在场才加），race/旧 se run/legacy 读路径零变化。\n\n验收标准：\n- tests/test_web_strategy.py 扩展：带 ext_seeds 的 strategy.json 解析 / 多 _ext 边车事件序列 / 无新键旧产物结构不变。\n- python -c \"from materialsorting.web import strategy\" 导入通过，分层依赖未反向（对 server 依赖保持函数内延迟 import 惯例）。",
+      "passes": false
+    },
+    {
+      "id": "US-004",
+      "title": "前端提示与多候选进度展示",
+      "description": "SE 多候选前端（依赖 US-003；权威 PRD：tasks/prd-se-ext-top3.md）。As a 工作台用户，I want 高级运行/极限运行弹窗在开跑前告知多候选顺延的最坏额外时长、跑动中展示实际候选数与逐候选延长进度，so that 我对「会多出多少时间」有明确预期，并能看清每个近并列 seed 的延长表现。\n\n具体任务：\n1. materialSorting-web/src/types/strategy.ts — StrategyPlan additive：ext_top_n?/ext_band?/ext_seeds?/extra_rounds?（可空，旧 run 缺键隐藏相关 UI）。\n2. 提交前文案 — src/components/ControlPanel/StrategyRunModal.tsx（se 模式）与 ExtremeRunModal.tsx（SE 顺延臂）：描述行/参数区加「筛选密度与冠军相差 ≤0.5pt 的 seed 会一并顺延（至多 3 个），最多多花 2×延长时长」，具体分钟数按当前档位动态计算（默认 ~6 分钟 / 极限 600 档 ~20 分钟 / 1200 档 ~40 分钟），不写死文案。\n3. 进度面 — SE chips 从单条延长条目扩展为 m 条（「延长·冠军 seed X」「延长·候选 2」「延长·候选 3」，进行中 ●/完成 ✓/待定，候选 seed 来自 ext_seeds + extension 事件 + current.ext 既有三源）；阶段行延长期显示「延长中 · 候选 i/m（seed X）」；extra_rounds 在场时阶段区附「预计多花 ~N 分钟」实际值行。\n4. vitest — __tests__/StrategyRunModal.test.tsx / ExtremeRunModal.test.tsx 扩展：mock status 带 ext_seeds/多条 extension 事件的 chips 与阶段行断言、无新键旧载荷回归、提交前文案断言（含按档位动态分钟数）。\n\n验收标准：\n- vitest 全量全绿；npm run build 通过。\n- 浏览器验证（dev 模式真页面）：se 弹窗文案可见 + 短预算 se 真跑（后端起真求解）延长阶段渲染正常。",
+      "passes": false
+    },
+    {
+      "id": "US-005",
+      "title": "端到端验收与文档收官",
+      "description": "SE 多候选端到端验收（依赖 US-001~004；权威 PRD：tasks/prd-se-ext-top3.md；已决议 2026-09-23：真跑触发 m≥2 口径可接受、冒烟复用 smoke-extreme-run.mjs 扩展断言不新建脚本）。As a 排料策略维护者，I want 真跑证明多候选触发与产物正确性、--se-ext-top 1 哨兵锁定旧行为、全量回归与文档收官，so that 合入有实测背书、0.5pt 阈值的实际触发率进入 se_ext 观测面供后续校准。\n\n具体任务：\n1. 多候选真跑：5336 同款配置 --strategy se --time 600（或 web_e791f2 同源 intermediate，近并列 0.237/0.251pt 可复现）真跑出 m≥2 一单——验证候选串行执行（延长轮头/strategy.json ext_seeds）、各候选 curve_s{seed}_ext.json / best_frame_s{seed}_ext.json 独立成对、best = 全部延长轮帧级最大（incumbent.seed ∈ 候选集）、run_stats 行 se_ext 段与 result 逐键一致；未触发则换 seeds/intermediate 直至触发至少一单。\n2. 哨兵对拍：同配置 --se-ext-top 1 与合入前代码（stash 对照）输出/产物结构一致（num_workers=4 帧漂移口径豁免；ext_top_n:1 additive 键允许差异）。\n3. 极限 SE 臂：--extreme --extreme-strategy se --time 960 最小档跑通（继承默认 top-3；warm 组合视角/band·prefix 场景任选其一覆盖）；materialSorting-web/scripts/smoke-extreme-run.mjs 复跑（断言涉 se 阶段行/文案则同步更新）。\n4. 全量回归：pytest 全量 + vitest 全量全绿；--strategy race / 无旗标 CLI 冒烟输出逐字节对拍。\n5. 文档收官：CLAUDE.md 运行方式 se 段 + README.md「配置驱动求解」补多候选语义与 --se-ext-top；.docs/technical/agent-file-map.md portfolio/run_config/strategy 行注记；.docs/technical/agent-api-reference.md strategy status 键表补 additive 新键；.docs/business/极限运行功能方案_race门杀.md v1.2 §6 增补多候选注记（2026-09-23 定案：0.5pt/top-3/超支设计）。\n\n验收标准：\n- 上述 1-4 全部通过并留档（触发单的 m、间隔、是否反超记入本 PRD 附带验证速查表，对齐 warm-start PRD 惯例）。\n- 模块导入/入口检查通过（python -c \"import materialsorting\" 等）。",
+      "passes": false
+    }
+  ]
 }

@@ -97,6 +97,24 @@ config 段 / run_stats 行 additive 记 ``warm`` + ``warm_reason``）。
 视角载荷 + worker ``payload_universe_error`` 复检），一期 'band_prefix_on'
 前置回退已删（历史 run 产物中的该 reason 字符串不再产生）。
 
+US-001（prd-se-ext-top3，2026-09-23 定案）se 延长段从单冠军升级为**近并列
+多候选串行顺延**：``se_extension_candidates`` 纯函数（单一真相源）取「筛选
+密度与冠军相差 ≤ ``SE_EXT_BAND``(0.5pt)」的 seed 按密度降序稳定排序取前
+``SE_EXT_TOP_N``(3) —— 冠军恒为候选[0]（argmax 语义不变），候选轮集合 ⊇ 单
+候选 ⇒ best 单调不降。延长轮按名次序**串行**逐个跑完整 ``se_ext`` 预算（队列
+序 ``len(seeds)+1`` 起递增，``round_budget``/``make_progress`` 既有 ``i >
+se_k`` 判定自然覆盖多轮）；warm 前置判定 ``se_warm_plan`` 每 run 一次（cfg
+级结论对全部候选一致），``warm_best_frame=True`` 逐轮传递 —— 装载点按 seed
+参数化读各自 ``best_frame_s{seed}.json`` 边车，装载/校验/回退矩阵零改动、逐轮
+独立（一个候选边车损坏只降级该轮）。控制器归档 additive：``se_champion``
+（argmax 语义不变）+ ``se_ext_seeds``（实际顺延候选全集含冠军）+
+``se_warm_states``（逐延长轮 ``{seed, warm, reason}``，被中断轮无条目）；
+``portfolio_section()`` se 段 additive 加 ``ext_seeds``（``champion`` 键保留）。
+预算语义 = **超支设计**：``se_plan``/k 筛选轮数不变，额外延长轮使总墙钟超出
+``--time`` 名义值（上限 2×(se_ext+2.5)s）；R0 达标即停优先于延长段、延长轮
+Ctrl-C 后续候选不再启动（已完成轮已入账 incumbent）—— 两语义均与单冠军版
+零变化。
+
 进度口径（``echo`` 给定时；``run_config`` 传 ``None if quiet else print``）：
 沿用「原面积口径新最优才打 + 30s 心跳」—— per-seed 新最优行与心跳行**逐字保留**
 旧版格式（零回归），新增**跨 seed 反超**时的 incumbent 行（同 seed 自我刷新不打，
@@ -115,14 +133,15 @@ from .pipeline import solve_pieces
 __all__ = ['R0_REASON', 'R1_REASON', 'R2_REASON', 'R5_REASON', 'KILL_DEFAULTS',
            'KILL_MODES', 'STRATEGY_MODES', 'THETA0_MIN_RECORDS', 'THETA0_MARGIN',
            'RACE_BUDGET_S', 'RACE_GATE_TAU', 'SE_SCREEN_S', 'SE_EXT_S',
-           'SEED_UNIT_S', 'FULL_UNIT_S', 'STRATEGY_STARTUP_S', 'SE_WARM_REASONS',
+           'SE_EXT_BAND', 'SE_EXT_TOP_N', 'SEED_UNIT_S', 'FULL_UNIT_S',
+           'STRATEGY_STARTUP_S', 'SE_WARM_REASONS',
            'ControllerParamsError', 'StrategyBudgetError', 'PortfolioController',
            'PortfolioRun', 'calibrate_theta0', 'decide_race_kill',
            'load_controller_params', 'load_run_stats', 'make_envelope',
            'r1_below_envelope', 'race_gate_seconds', 'race_plan',
            'r2_below_threshold', 'resolve_kill_params', 'run_serial_portfolio',
-           'run_stats_class_key', 'se_plan', 'se_warm_plan',
-           'strategy_seed_stream']
+           'run_stats_class_key', 'se_extension_candidates', 'se_plan',
+           'se_warm_plan', 'strategy_seed_stream']
 
 # R0 / R1 / R2 触发的 should_stop 返回值（solve_pieces 透传为 kill_reason）。
 R0_REASON = 'R0_target_reached'
@@ -334,6 +353,17 @@ RACE_BUDGET_S = 180.0   # race：每 seed 求解预算（秒）
 RACE_GATE_TAU = 0.5     # race：门时刻占预算比（τ_gate，(0,1) 开区间）
 SE_SCREEN_S = 90.0      # se：阶段 1 每轮筛选预算（秒）
 SE_EXT_S = 180.0        # se：阶段 2 冠军延长预算（秒）
+# US-001（prd-se-ext-top3，2026-09-23 定案）se 延长段近并列多候选判据：
+# band = 0.5pt 绝对百分点（对冠军度量，≤ 含等号）、top_n 封顶 3（最坏额外成本
+# = +2 轮延长恒定，超支设计——se_plan/k 筛选轮数与 --time 规划锚全不变）。
+# 重标定走 se_ext 观测数据 + 改常量一行（不进 CLI/web 面 —— 非 Goal）。
+SE_EXT_BAND = 0.005     # se：候选带 = 冠军密度 − seed 密度 ≤ 0.005（0.5pt）
+SE_EXT_TOP_N = 3        # se：候选封顶数（top-3；top_n=1 = 单冠军旧行为）
+# 闭边界浮点容差：0.83 − 0.825 这类十进制对在 double 下算出
+# 0.0050000000000000044 > 0.005，「≤ 含等号」会被字面比较误拒 —— 1e-9（=
+# 1e-5pt，比 6 位小数截断步长小三个数量级）只救等号边界、不吞真实间隔
+#（带外最近档 0.0051 与带内 0.0049 的差 2e-4 ≫ 容差）。
+_EXT_BAND_EPS = 1e-9
 # 名义记账单位（秒）：求解预算 + ~2.5s 启动开销（build_instance 取 meta + 子进程
 # 冷启动），与离线对决 / ETT 仿真同口径；solver 收敛早退按名义记账（两臂对称）。
 STRATEGY_STARTUP_S = 2.5
@@ -444,6 +474,48 @@ def se_plan(total_budget: float, screen_s: float = SE_SCREEN_S,
             f'= {full_unit + seed_unit:g}s 名义预算，当前 --time={t:g}s')
     k = max(1, int((t - full_unit) // seed_unit))
     return k, float(ext_s)
+
+
+def se_extension_candidates(solves, band: float = SE_EXT_BAND,
+                            top_n: int = SE_EXT_TOP_N) -> list[int]:
+    """SE 延长段候选判据（US-001 单一真相源，纯函数无 I/O 无 RNG）→ 候选 seed 列表。
+
+    ``solves`` = 阶段 1 筛选轮的 solve 记录（按筛选执行序；记录 ``real_density``
+    物理口径）。冠军 = ``real_density`` argmax（**并列取先执行者** —— 与现行
+    ``se_champion`` 口径连续）；候选 = 满足「冠军密度 − 该 seed 密度 ≤ ``band``」
+    的 seed，按密度**降序稳定排序**（并列按筛选执行序）取前 ``top_n``：
+
+      - 冠军恒为候选[0]（argmax 首个最大值在稳定降序排序中必居同密度组首位）；
+      - ``top_n = 1`` 恒返回 ``[冠军]``（旧行为，--se-ext-top 1 A/B 哨兵的引擎
+        侧语义）；``top_n < 1`` 防御性抬回 1；
+      - ≥ ``top_n`` 个落在带内时取最靠近冠军的前 ``top_n``（成本承诺不被击穿）；
+      - 全部远超带 → ``[冠军]`` 单候选；
+      - 等号边界含入（``_EXT_BAND_EPS`` 浮点容差，见常量注记）。
+
+    同 seed 多条记录按首条计（筛选轮 seed 无重复 —— 策略种子流保证；防御性
+    去重保序）。返回列表即延长段执行序（名次序串行）。
+    """
+    band = float(band)
+    top_n = max(1, int(top_n))
+    # 按筛选执行序保序去重（每 seed 首条记录 = 密度样本）。
+    seen: set[int] = set()
+    ordered: list[tuple[int, float]] = []
+    for rec in solves:
+        seed = int(rec['seed'])
+        if seed in seen:
+            continue
+        seen.add(seed)
+        ordered.append((seed, float(rec['real_density'])))
+    if not ordered:
+        return []
+    champ_seed, champ_d = ordered[0]
+    for seed, d in ordered[1:]:
+        if d > champ_d:
+            champ_seed, champ_d = seed, d     # 严格大于才抢占 → 并列取先执行者
+    in_band = [sd for sd in ordered
+               if champ_d - sd[1] <= band + _EXT_BAND_EPS]
+    in_band.sort(key=lambda sd: -sd[1])       # 稳定：并列保持筛选执行序
+    return [seed for seed, _d in in_band[:top_n]]
 
 
 def race_plan(total_budget: float, race_budget: float = RACE_BUDGET_S,
@@ -580,7 +652,11 @@ class PortfolioController:
         预算再跑一轮（``round_budget`` 按队列序切换预算）。US-003：``se_warm``
         开（--se-warm on/缺省）且 ``se_warm_plan`` 前置判定通过时，延长轮经
         ``warm_best_frame=True`` 传策略标志给 solve（装载点在
-        ``pipeline.solve_pieces``），实际状态归档 ``se_warm_state``。
+        ``pipeline.solve_pieces``），实际状态归档 ``se_warm_state``。US-001
+        （prd-se-ext-top3）：阶段 2 从单冠军升级为近并列多候选 ——
+        ``se_extension_candidates`` 取带内 top ``se_ext_top``(默认 3) 候选按
+        名次序串行逐个跑完整 ``se_ext`` 预算延长轮（归档 ``se_ext_seeds`` /
+        逐轮 ``se_warm_states``；champion = 候选[0]，argmax 语义不变）。
       - 策略模式下 R1/R2 不评估、θ 不维护（``kill_mode`` 应传 'off'，R3 连杀
         衰减随之不触发）；被门杀 / 被筛 seed 的最优帧照常入 incumbent；
         ``--target`` 共存时 R0 恒先（达标即停优先于模式继续）。
@@ -591,7 +667,7 @@ class PortfolioController:
                  theta0=None, mode='legacy', total_budget=None,
                  race_budget=RACE_BUDGET_S, race_gate_tau=RACE_GATE_TAU,
                  se_k=1, se_screen=SE_SCREEN_S, se_ext=SE_EXT_S,
-                 se_warm=False):
+                 se_warm=False, se_ext_band=SE_EXT_BAND, se_ext_top=SE_EXT_TOP_N):
         if mode not in STRATEGY_MODES:
             raise ValueError(f'mode 须为 {STRATEGY_MODES} 之一，当前为 {mode!r}')
         if mode == 'race' and total_budget is None:
@@ -653,6 +729,16 @@ class PortfolioController:
         # 否则 {'warm': bool, 'reason': str|None}（False 时 reason ∈ SE_WARM_REASONS）。
         # run_config 消费 → result.json config 段 / run_stats 行 additive 同键。
         self.se_warm_state: dict | None = None
+        # ---- US-001（prd-se-ext-top3）se 延长段近并列多候选 ----
+        # 判据参数（se_extension_candidates 消费；CLI --se-ext-top 旗标在
+        # run_config 层接线到 se_ext_top，缺省即本层默认 top-3）。归档：
+        # se_ext_seeds = 实际顺延的候选全集含冠军（进延长段即定，中断可审计）；
+        # se_warm_states = 逐延长轮 {seed, warm, reason}（被中断轮无条目；
+        # se_warm_state 保持冠军轮 = 第 1 延长轮语义，历史键连续）。
+        self.se_ext_band = float(se_ext_band)
+        self.se_ext_top = int(se_ext_top)
+        self.se_ext_seeds: list[int] = []
+        self.se_warm_states: list[dict] = []
 
     # -------------------------------------------------------------- 判定
 
@@ -999,8 +1085,9 @@ class PortfolioController:
         ``kill_mode='off'``（引擎未激活），best 走旧语义 —— 无旗标冒烟对拍兼容。
 
         US-002 策略模式额外附 ``mode`` + 模式子段：race ``{gate_seconds,
-        kept_seeds, gated_seeds}`` / se ``{k_screens, screen_s, ext_s, champion}``
-        （策略模式 R1/R2 引擎不评估 → kill_mode 恒 'off'、theta_history 恒空；
+        kept_seeds, gated_seeds}`` / se ``{k_screens, screen_s, ext_s, champion,
+        ext_seeds}``（US-001 additive：实际顺延候选全集，未进延长为 []；策略
+        模式 R1/R2 引擎不评估 → kill_mode 恒 'off'、theta_history 恒空；
         legacy 不加 mode 键 —— 无 --strategy 时与现版逐字节一致）。
         """
         if not self.engaged:
@@ -1020,10 +1107,14 @@ class PortfolioController:
                                'gated_seeds': list(self.gated_seeds)}
         elif self.mode == 'se':
             section['mode'] = 'se'
+            # US-001 additive：ext_seeds = 实际顺延候选全集（含冠军；进延长段即
+            # 定 → 未进延长（R0/中断于筛选段）为 []，与 champion=None 同判读口径；
+            # champion 键保留 —— 单冠军历史语义不变）。
             section['se'] = {'k_screens': self.se_k,
                              'screen_s': self.se_screen,
                              'ext_s': self.se_ext,
-                             'champion': self.se_champion}
+                             'champion': self.se_champion,
+                             'ext_seeds': list(self.se_ext_seeds)}
         return section
 
     def best_record(self, solves: list[dict]) -> dict:
@@ -1052,9 +1143,11 @@ def run_serial_portfolio(cfg, run_dir, *, controller: PortfolioController,
     US-002：每轮预算经 ``controller.round_budget(i, default=time_budget)`` 解析
     （race = race_budget、se = screen/ext 两段切换、legacy = time_budget 原样）；
     race 队列启动前经 ``controller.can_start_next()`` 复核名义记账。se 模式在
-    阶段 1（k 轮筛选）跑完且未 R0 / 未中断后进入**阶段 2 延长轮**：冠军
-    （solve 记录 ``real_density`` argmax）同 seed 以 ``se_ext`` 预算再跑一轮
-    （``artifact_suffix='_ext'`` 防覆盖筛选产物，solve 条目附 ``phase='extension'``）。
+    阶段 1（k 轮筛选）跑完且未 R0 / 未中断后进入**阶段 2 延长轮**（US-001 起
+    近并列多候选）：``se_extension_candidates`` 带内 top-3（冠军 = 候选[0]，
+    argmax 语义不变）按名次序串行逐个以 ``se_ext`` 预算再跑一轮
+    （``artifact_suffix='_ext'`` 防覆盖筛选产物 —— 按 seed 天然多文件，solve
+    条目附 ``phase='extension'``；队列序 ``len(seeds)+1`` 起递增）。
 
     US-003：延长轮 warm 真顺延 —— ``se_warm_plan(cfg, controller.se_warm)``
     前置判定通过则该轮 solve 多收 ``warm_best_frame=True`` 策略标志（装载与
@@ -1140,32 +1233,47 @@ def run_serial_portfolio(cfg, run_dir, *, controller: PortfolioController,
             on_seed_done(rec)
 
     # ---- US-002 se 阶段 2：冠军延长轮（阶段 1 跑满、未 R0、未中断才进入）。
-    # 冠军 = solve 记录 real_density argmax（并列取先执行者）；同 seed 换预算的
-    # 全新 run（确定性重放下延长 = 冠军全程潜力的零方差求值），产物带 _ext 后缀
-    # 防覆盖筛选 curve/best_frame；champion 先行落账（中断也可审计冠军归属）。
-    # US-003：warm 前置判定（off / unsupported；二期起 band/prefix 不再前置回退）
-    # 在此刻做 —— 与 run_config 写 strategy.json 时的计划态同一纯函数，环境不变
-    # 则结论一致。
+    # US-001（prd-se-ext-top3）：单冠军块升级为**近并列多候选串行延长循环** ——
+    # se_extension_candidates（单一真相源）取「筛选密度与冠军相差 ≤ 0.5pt」的
+    # seed 按密度降序取前 se_ext_top(3)；冠军 = 候选[0]（solve 记录
+    # real_density argmax 并列取先执行者，argmax 语义不变），champion/ext_seeds
+    # 先行落账（中断也可审计候选全集）。候选按名次序串行逐个跑完整 se_ext
+    # 预算延长轮（队列序 len(seeds)+1 起递增，round_budget/make_progress 既有
+    # i > se_k 判定自然覆盖多轮）；产物 _ext 后缀按 seed 天然多文件互不覆盖
+    # （确定性重放下延长 = 该 seed 全程潜力的零方差求值）。
+    # US-003：warm 前置判定（off / unsupported；二期起 band/prefix 不再前置
+    # 回退）每 run 一次 —— cfg 级结论对全部候选一致，与 run_config 写
+    # strategy.json 时的计划态同一纯函数；warm_best_frame=True 逐轮传递，装载
+    # 点按 seed 参数化读各自 best_frame_s{seed}.json（装载/校验/回退矩阵零改动、
+    # 逐轮独立 —— 一个候选边车损坏只降级该轮）。
+    # 中断语义：R0（queue_stopped）不进延长段（外层 if）；延长轮 Ctrl-C →
+    # interrupted=True、break（后续候选不再启动），已完成轮已入账 incumbent。
     if (controller.mode == 'se' and not interrupted
             and not controller.queue_stopped and solves
             and controller.se_champion is None):
-        champ = int(max(solves, key=lambda r: r['real_density'])['seed'])
-        controller.se_champion = champ
-        i_ext = len(controller.seeds) + 1
-        last_round = (i_ext, champ)
+        cand_seeds = se_extension_candidates(solves, controller.se_ext_band,
+                                             controller.se_ext_top)
+        controller.se_champion = cand_seeds[0]
+        controller.se_ext_seeds = list(cand_seeds)
         warm_attempt, warm_early_reason = se_warm_plan(cfg, controller.se_warm)
-        if on_seed_start is not None:
-            on_seed_start(i_ext, champ)
-        try:
-            rec = _run_round(i_ext, champ, suffix='_ext', warm=warm_attempt)
-        except KeyboardInterrupt:
-            interrupted = True
-        else:
+        for rank, ext_seed in enumerate(cand_seeds):
+            i_ext = len(controller.seeds) + 1 + rank
+            last_round = (i_ext, ext_seed)
+            if on_seed_start is not None:
+                on_seed_start(i_ext, ext_seed)
+            try:
+                rec = _run_round(i_ext, ext_seed, suffix='_ext',
+                                 warm=warm_attempt)
+            except KeyboardInterrupt:
+                interrupted = True
+                break
             rec['phase'] = 'extension'
-            # US-003 warm 实际状态归档：前置回退用早期 reason；装载点回退经 solve
-            # 记录的 warm / warm_reason 字段带回（solve_pieces 契约：收到
-            # warm_best_frame=True 的记录必带 warm 键）。任一回退 → notify 一行
-            # （--quiet 也打，不静默不炸轮），延长轮照常现状重放。
+            # US-003 warm 实际状态归档（US-001 起逐轮）：前置回退用早期
+            # reason；装载点回退经 solve 记录的 warm / warm_reason 字段带回
+            # （solve_pieces 契约：收到 warm_best_frame=True 的记录必带 warm
+            # 键）。任一回退 → notify 一行（--quiet 也打，不静默不炸轮，逐轮
+            # 各打），延长轮照常现状重放。se_warm_state 保持冠军轮（第 1 延长
+            # 轮）语义 —— 历史键连续；se_warm_states 收全集（被中断轮无条目）。
             if warm_attempt:
                 engaged = bool(rec.get('warm'))
                 warm_state = {'warm': engaged,
@@ -1174,7 +1282,10 @@ def run_serial_portfolio(cfg, run_dir, *, controller: PortfolioController,
                                                or 'invalid_best_frame'))}
             else:
                 warm_state = {'warm': False, 'reason': warm_early_reason}
-            controller.se_warm_state = warm_state
+            controller.se_warm_states.append(
+                {'seed': int(ext_seed), **warm_state})
+            if controller.se_warm_state is None:
+                controller.se_warm_state = dict(warm_state)
             if not warm_state['warm']:
                 controller._notify_line(
                     f"[portfolio] se 延长轮 warm 回退 → 现状重放"
