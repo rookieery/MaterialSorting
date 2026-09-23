@@ -2640,3 +2640,45 @@ vitest **1194 全绿**（69 文件，+25）+ `tsc --noEmit` + `npm run build` �
 回归 pytest 920 + `python -m materialsorting.web.statefile` 31 + `checkpoint` 34
 全绿（US-001 契约零改动）。浏览器 `scripts/us002_pending_verify.mjs` **21/21**
 （报告 `out/us002_pending_verify/report.json` + 3 截图）。
+
+## prd-se-ext-top3 US-004 落地：SE 多候选前端提示与进度（2026-09-23）
+
+后端 US-001~003（引擎候选编排 / CLI 旗标可观测 / status plan 四键透传）的前端
+消费面。**旧 run 零渲染变化红线**：plan 无新键（含 race / 极限 race 臂 / 存量 se
+run / `--se-ext-top 1` 哨兵 m=1）时全部走既有单冠军路径，chips/阶段行/事件行文案
+逐字不变 —— 多候选分支只在 `plan.ext_seeds` 在场且 length ≥ 2 时激活。
+
+### 新增 / 改造文件
+
+| 文件 | 改动 |
+|------|------|
+| `src/types/strategy.ts` | `StrategyPlan` additive 四可空键 `ext_top_n/ext_band/ext_seeds/extra_rounds`（计划态开跑即写前两键、实际态首延长轮补写后两键；`extra_rounds=0` 合法，判据 `!= null`）；`StrategySeSummary` 加 `ext_seeds?`（result portfolio.se 镜像） |
+| `src/components/ControlPanel/StrategyRunModal.tsx` | ①导出 `SE_EXT_BAND_PT=0.5`/`SE_EXT_TOP_N=3`/`STRATEGY_SE_EXT_S=180`（后端 portfolio.py 常量镜像）+ `fmtMinutes(sec)`（秒→「N 分钟」，整小时档用小时）+ `seExtHint(extSec)` 提交前文案单一实现（分钟数 2×extSec 动态算不写死）；②ConfigState se 模式加 `strategy-ext-hint` 行；③`seChips` m≥2 多候选分支（`延·冠军`/`延·候选 i` + ✓/●/待定三态，完成取 per_seed extension 入账、进行中取 current.ext）；④ProgressState 阶段行 rank 标注（rank1「候选 1/m · 冠军 seed X」/ rank≥2「候选 i/m（seed X）」）+ `strategy-ext-extra-hint` 实际额外时长行（ext_s×extra_rounds，m=1 不显示）；⑤`fmtLastEvent(ev, extSeeds)` 第二参 additive（rank≥2 extension 事件标「候选 i/m」） |
+| `src/components/ControlPanel/ExtremeRunModal.tsx` | 导出 `EXTREME_SE_EXT_S=600`（web start 不带 --extreme-budget 恒默认档）；SE 臂配置态加 `extreme-ext-hint` 行（seExtHint(600) → 约 20 分钟）；进度面复用 ProgressState 零改动继承多候选渲染（effectiveStrategy 按 status.strategy 切 se 形态） |
+| `__tests__/StrategyRunModal.test.tsx` | 20→27 例：fmtMinutes/seExtHint 档位对拍（6/10/20/40 分钟 + 2 小时边界）/ 配置态 hint 随模式显隐 + 逐字断言 / m=3 chips+阶段行+额外行+事件行全链 / rank1 冠军轮（进行中 ●）/ m=1 哨兵（ext_seeds 单候选 + extra_rounds=0 → 旧文案逐字、无额外行）/ 旧载荷与 race 零新增行 |
+| `__tests__/ExtremeRunModal.test.tsx` | 22→25 例：se 臂 hint ~20 分钟动态 + 显隐 / m=2 se 臂渲染（chips「延·冠军 ✓」+「延·候选 2 ●」+ 阶段行候选 2/2 + 额外行 ~10 分钟（600×1）+ 事件行候选名次）/ 旧 SE 臂载荷（无新键）单冠军文案保持 |
+
+### 关键不变量（后续故事不得破坏）
+
+1. **m=1 / 无 ext_seeds 恒走旧单冠军路径** —— `seChips` 的三源冠军推导
+   （per_seed extension 入账 → extension 事件 → current.ext 兜底）与单条目文案
+   原样保留；多候选分支判据 `extSeeds !== null && extSeeds.length > 1`。
+2. **`extra_rounds` 判据必须 `!= null` 不能 truthy** —— m=1 时 0 是合法透传值
+   （后端 `is not None` 同口径）；0 不显示额外时长行（噪音）但类型层不得吞键。
+3. **提示分钟数禁止写死** —— 一律经 `seExtHint(extSec)`/`fmtMinutes` 从延长秒
+   动态算（与 CLI 启动行「2×{se_ext}s」同口径）；band/top-N 文案数字跟
+   `SE_EXT_BAND_PT`/`SE_EXT_TOP_N` 常量走，后端重标定须同步镜像常量。
+4. **极端 SE 臂延长秒 = extreme_budget**（CLI 展开 se_ext=budget；web 恒默认
+   600）—— 若未来 web 暴露 --extreme-budget，`EXTREME_SE_EXT_S` 须随档位参数化。
+
+### 测试与浏览器验证
+
+vitest 全量 **1236 全绿**（71 文件，+10）+ `tsc --noEmit` + `npm run build` 过。
+浏览器（dev 模式 :5173 → Vite proxy :8010，playwright 一次性脚本跑完即删）：
+5336 母版 → 高级运行 se 提示「约 6 分钟」/ 极限 SE 臂「约 20 分钟」均可见；se
+10min 真跑**实触发 m=2**（seed1 88.525% vs seed2 88.42%，差 0.10pt ≤ 0.5pt 带）
+——「延长中 · 候选 1/2 · 冠军 seed 1」+「1 延·冠军 ● 88.52%」「2 延·候选 2 ·
+待定」chips +「实际 2 个候选（额外 1 轮延长）· 预计多花 ~3 分钟」+ API status
+plan 四键（ext_top_n/ext_band/ext_seeds/extra_rounds）对拍全中；冠军延长轮入账
+0.887211（88.72% > 筛选 88.52%）后候选 2 延长进行中经 API 停止收口（截图
+`out/us004_ext_verify_*.png`）。

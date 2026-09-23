@@ -118,6 +118,22 @@ export interface StrategyPlan {
   warm?: boolean | null;
   /** se：warm 计划回退原因（warm=false 时在場，SE_WARM_REASONS 枚举）。 */
   warm_reason?: string | null;
+  /**
+   * se 多候选顺延（prd-se-ext-top3 US-003，2026-09-23）—— strategy.json se 段
+   * additive 四键：计划态 ext_top_n / ext_band 开跑即写（默认 3 / 0.005）；实际
+   * 态 ext_seeds / extra_rounds 在**首个延长轮启动时**补写（R0 / 中断于筛选段
+   * 保持计划态，两实际态键不在场）。旧 run / race / 极限 race 臂零新键 → 相关
+   * UI 自然隐藏（渲染零变化）。extra_rounds = m−1 是合法值（m=1 单冠军 → 0），
+   * 判据须用 `!= null` 而非 truthy。
+   */
+  /** 计划态：候选封顶数 top-N（后端 SE_EXT_TOP_N 镜像，默认 3）。 */
+  ext_top_n?: number | null;
+  /** 计划态：候选带（后端 SE_EXT_BAND 镜像 = 0.005 = 0.5pt，绝对百分点）。 */
+  ext_band?: number | null;
+  /** 实际态：顺延候选全集（含冠军，名次序 —— 候选推导的权威源）。 */
+  ext_seeds?: number[] | null;
+  /** 实际态：额外延长轮数 m−1（m=1 → 0；实际额外秒数 = ext_s × 此值）。 */
+  extra_rounds?: number | null;
 }
 
 /** result.json portfolio.incumbent 摘要（status 控载荷，无 placed_items）。 */
@@ -228,6 +244,11 @@ export interface StrategySeSummary {
   screen_s: number;
   ext_s: number;
   champion: number | null;
+  /**
+   * 实际顺延候选全集（含冠军，名次序；prd-se-ext-top3 US-001 additive —— 未进
+   * 延长为 []，与 champion=null 同判读口径）。
+   */
+  ext_seeds?: number[] | null;
 }
 
 /** result.json portfolio 段摘要（per_seed + mode + 模式子段 + warm 实际态两键）。 */

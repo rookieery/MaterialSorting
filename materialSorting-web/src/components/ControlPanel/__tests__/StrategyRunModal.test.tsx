@@ -13,7 +13,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
 import { act } from 'react';
-import { StrategyRunModal } from '../StrategyRunModal';
+import {
+  SE_EXT_TOP_N,
+  STRATEGY_SE_EXT_S,
+  StrategyRunModal,
+  fmtMinutes,
+  seExtHint,
+} from '../StrategyRunModal';
 import { useControlPanelStore } from '../../../store/controlPanelStore';
 import { useStrategyStore } from '../../../store/strategyStore';
 import type { StartContext } from '../../../lib/params';
@@ -609,5 +615,168 @@ describe('StrategyRunModal (US-005)', () => {
     });
     expect(document.body.querySelector('[data-testid="strategy-mode-summary"]')!.textContent)
       .toContain('warm 真顺延');
+  });
+});
+
+// ------------------------------------------- SE 多候选顺延（US-004 prd-se-ext-top3）
+
+/** SE 多候选延长中 fixture（US-004）：候选 [3,1,4]（名次序），冠军轮（seed 3）
+ * 已完成入账、候选 2（seed 1）延长进行中、候选 3（seed 4）待定。 */
+const SE_EXT_MULTI: StrategyStatus = {
+  state: 'running',
+  mode: 'se',
+  total_budget_sec: 600,
+  elapsed_sec: 480,
+  plan: {
+    planned_seeds: [0, 1, 3, 4],
+    k_screens: 4,
+    screen_s: 90,
+    ext_s: 180,
+    warm: true,
+    ext_top_n: 3,
+    ext_band: 0.005,
+    ext_seeds: [3, 1, 4],
+    extra_rounds: 2,
+  },
+  incumbent: { density: 0.865, width_mm: 7100, seed: 3, frame_index: 6, elapsed: 200 },
+  current: { seed: 1, density: 0.87, density_sparrow: 0.89, ext: true },
+  per_seed: [
+    { seed: 0, killed: false, kill_reason: null, best_density: 0.84, elapsed: 91, phase: 'screen' },
+    { seed: 1, killed: false, kill_reason: null, best_density: 0.862, elapsed: 91, phase: 'screen' },
+    { seed: 3, killed: false, kill_reason: null, best_density: 0.865, elapsed: 91, phase: 'screen' },
+    { seed: 4, killed: false, kill_reason: null, best_density: 0.8605, elapsed: 91, phase: 'screen' },
+    { seed: 3, killed: false, kill_reason: null, best_density: 0.865, elapsed: 200, phase: 'extension' },
+  ],
+  events: [{ kind: 'extension', seed: 1 }],
+  error: null,
+  exit_code: null,
+};
+
+describe('StrategyRunModal SE 多候选纯函数 (US-004)', () => {
+  it('fmtMinutes：秒 → 分钟文案（整小时档用小时；三档位对拍不写死）', () => {
+    expect(fmtMinutes(2 * 180)).toBe('6 分钟');    // 高级运行默认档
+    expect(fmtMinutes(2 * 600)).toBe('20 分钟');   // 极限 600 档
+    expect(fmtMinutes(2 * 1200)).toBe('40 分钟');  // 极限 1200 档（CLI-only）
+    expect(fmtMinutes(600 * 1)).toBe('10 分钟');   // 极限单额外轮
+    expect(fmtMinutes(7200)).toBe('2 小时');
+  });
+
+  it('seExtHint：提交前文案分钟数随延长秒动态计算（band/top-N 镜像常量）', () => {
+    expect(seExtHint(180)).toBe(
+      '筛选密度与冠军相差 ≤0.5pt 的 seed 会一并顺延（至多 3 个），最多多花 2×延长时长（约 6 分钟）',
+    );
+    expect(seExtHint(600)).toContain('约 20 分钟');
+    expect(seExtHint(1200)).toContain('约 40 分钟');
+    expect(STRATEGY_SE_EXT_S).toBe(180);
+    expect(SE_EXT_TOP_N).toBe(3);
+  });
+});
+
+describe('StrategyRunModal SE 多候选 (US-004)', () => {
+  it('配置态 se 模式：提交前多候选提示（≤0.5pt / 至多 3 个 / 约 6 分钟动态）；race 模式不显示', () => {
+    openModal();
+    renderModal();
+    // 默认 race → 无提示行。
+    expect(document.body.querySelector('[data-testid="strategy-ext-hint"]')).toBeNull();
+    act(() => {
+      setSelectValue(document.body.querySelector<HTMLSelectElement>('[data-testid="strategy-mode"]')!, 'se');
+    });
+    expect(document.body.querySelector('[data-testid="strategy-ext-hint"]')!.textContent)
+      .toBe(seExtHint(STRATEGY_SE_EXT_S));
+    // 切回 race → 提示行消失。
+    act(() => {
+      setSelectValue(document.body.querySelector<HTMLSelectElement>('[data-testid="strategy-mode"]')!, 'race');
+    });
+    expect(document.body.querySelector('[data-testid="strategy-ext-hint"]')).toBeNull();
+  });
+
+  it('进度态多候选：chips m 条（冠军 ✓ / 候选 2 ● / 候选 3 待定）+ 阶段行「候选 i/m（seed X）」+ 实际额外时长行 + 事件行候选名次', () => {
+    openModal();
+    renderModal();
+    setPhase({ phase: 'running', status: SE_EXT_MULTI });
+    // 阶段行：候选 2/3（seed 1 延长进行中）。
+    expect(document.body.querySelector('[data-testid="strategy-stage"]')!.textContent)
+      .toBe('延长中 · 候选 2/3（seed 1）');
+    // chips：4 筛（全 ✓）+ 分隔 + 3 延长条目（角色 + 状态 + 密度）。
+    const chips = Array.from(document.body.querySelectorAll('[data-testid="strategy-seed-chips"] .strategy-chip'))
+      .map((c) => ({ text: c.textContent!, cls: c.className }));
+    expect(chips.map((c) => c.text)).toEqual([
+      '0 ✓ 84.00%',
+      '1 ✓ 86.20%',
+      '3 ✓ 86.50%',
+      '4 ✓ 86.05%',
+      '→',
+      '3 延·冠军 ✓ 86.50%',
+      '1 延·候选 2 ● 87.00%',
+      '4 延·候选 3 · 待定',
+    ]);
+    expect(chips[5].cls).toContain('done');
+    expect(chips[6].cls).toContain('running');
+    expect(chips[7].cls).toContain('pending');
+    // 实际额外时长行：ext_s × extra_rounds = 180 × 2 = 360s ≈ 6 分钟。
+    expect(document.body.querySelector('[data-testid="strategy-ext-extra-hint"]')!.textContent)
+      .toContain('实际 3 个候选（额外 2 轮延长）');
+    expect(document.body.querySelector('[data-testid="strategy-ext-extra-hint"]')!.textContent)
+      .toContain('预计多花 ~6 分钟');
+    // 事件行：候选名次标注（rank 2 不再误称「冠军」）。
+    expect(document.body.querySelector('[data-testid="strategy-event"]')!.textContent)
+      .toBe('候选 2/3 · seed 1 进入延长');
+  });
+
+  it('多候选冠军轮（rank 1）延长中：阶段行「候选 1/m · 冠军 seed X」+ 事件行冠军口径', () => {
+    openModal();
+    renderModal();
+    setPhase({
+      phase: 'running',
+      status: {
+        ...SE_EXT_MULTI,
+        current: { seed: 3, density: 0.868, density_sparrow: 0.89, ext: true },
+        // 冠军轮进行中（尚无 extension 入账）—— 去掉 fixture 里 seed 3 的完成条目。
+        per_seed: SE_EXT_MULTI.per_seed!.filter((e) => e.phase !== 'extension'),
+        events: [{ kind: 'extension', seed: 3 }],
+      },
+    });
+    expect(document.body.querySelector('[data-testid="strategy-stage"]')!.textContent)
+      .toBe('延长中 · 候选 1/3 · 冠军 seed 3');
+    expect(document.body.querySelector('[data-testid="strategy-event"]')!.textContent)
+      .toBe('冠军 seed 3 进入延长');
+    // 冠军轮进行中：chips 里冠军条目 ●。
+    const chips = Array.from(document.body.querySelectorAll('[data-testid="strategy-seed-chips"] .strategy-chip'))
+      .map((c) => c.textContent!);
+    expect(chips[5]).toBe('3 延·冠军 ● 86.80%');
+  });
+
+  it('m=1 单候选（--se-ext-top 1 哨兵口径）：旧单冠军文案逐字保持 + extra_rounds=0 不显示额外行', () => {
+    openModal();
+    renderModal();
+    setPhase({
+      phase: 'running',
+      status: {
+        ...SE_EXT,
+        plan: { ...SE_EXT.plan!, ext_top_n: 1, ext_band: 0.005, ext_seeds: [1], extra_rounds: 0 },
+      },
+    });
+    expect(document.body.querySelector('[data-testid="strategy-stage"]')!.textContent)
+      .toBe('延长中 · 冠军 seed 1');
+    const chips = Array.from(document.body.querySelectorAll('[data-testid="strategy-seed-chips"] .strategy-chip'))
+      .map((c) => c.textContent!);
+    expect(chips).toEqual(['0 ✓ 85.00%', '1 ● 87.00%', '→', '1 延 ● 87.00%']);
+    // extra_rounds=0（m=1 合法值）→ 无额外时长行（0 分钟是噪音）。
+    expect(document.body.querySelector('[data-testid="strategy-ext-extra-hint"]')).toBeNull();
+    // 事件行：单候选 m=1 → 冠军口径（旧文案）。
+    expect(document.body.querySelector('[data-testid="strategy-event"]')!.textContent)
+      .toBe('冠军 seed 1 进入延长');
+  });
+
+  it('旧载荷（无新键）：无多候选提示/额外时长行（渲染零变化红线）', () => {
+    openModal();
+    renderModal();
+    setPhase({ phase: 'running', status: SE_EXT });
+    expect(document.body.querySelector('[data-testid="strategy-ext-extra-hint"]')).toBeNull();
+    expect(document.body.querySelector('[data-testid="strategy-stage"]')!.textContent)
+      .toBe('延长中 · 冠军 seed 1');
+    // race 模式恒无额外行。
+    setPhase({ phase: 'running', status: RACE_RUNNING });
+    expect(document.body.querySelector('[data-testid="strategy-ext-extra-hint"]')).toBeNull();
   });
 });

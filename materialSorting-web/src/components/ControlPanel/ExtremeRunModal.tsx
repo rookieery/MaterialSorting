@@ -10,7 +10,9 @@
 //      分钟）+ 模式下拉（2026-09-20 起，镜像高级运行结构：race 门杀（默认）/
 //      SE 顺延 —— se 臂 CLI 展开 = 300s×k 筛选 + 冠军 600s warm 顺延）；极限
 //      参数完全隐藏（exploration_pct / early_termination / num_workers /
-//      quadtree_depth 是实验结论不是可调项，弹窗 UI 与文案均不出现）。
+//      quadtree_depth 是实验结论不是可调项，弹窗 UI 与文案均不出现）。SE 顺延
+//      臂附多候选顺延最坏额外时长提示行（US-004，600s 延长 → 约 20 分钟动态
+//      计算）；进度面 se 形态多候选渲染同高级运行（共用 ProgressState）。
 //      预计轮数随时长实时更新：race = N = 1 + floor((T - 602.5) / 347.5)（首轮
 //      全程 + 后续每轮期望耗时，期望口径「实际轮数 >= 预测」）；se = k 轮筛选
 //      + 1 轮延长（名义口径 k = floor((T - 602.5) / 302.5) 下限 1）。
@@ -31,7 +33,13 @@ import type { StartContext } from '../../lib/params';
 import { useControlPanelStore } from '../../store/controlPanelStore';
 import { useExtremeStore } from '../../store/strategyStore';
 import type { StrategyResult } from '../../types/strategy';
-import { ErrorState, OrphanState, ProgressState, ResultState } from './StrategyRunModal';
+import {
+  ErrorState,
+  OrphanState,
+  ProgressState,
+  ResultState,
+  seExtHint,
+} from './StrategyRunModal';
 
 // ------------------------------------------------------------- 时长预设与轮数估算
 
@@ -91,6 +99,13 @@ export function estimateExtremeSeScreens(totalSec: number): number {
     Math.floor((totalSec - EXTREME_SE_FULL_UNIT_S) / EXTREME_SE_SCREEN_UNIT_S),
   );
 }
+
+/**
+ * se 臂延长秒（US-004 多候选提示用）：CLI 展开 se_ext = extreme_budget，web
+ * /api/extreme/start 不带 --extreme-budget → 恒默认 600（EXTREME_BUDGET_S 镜像；
+ * 1200 档仅 CLI 手敲可达 → 最坏额外 2×600 = 约 20 分钟，动态计算不写死）。
+ */
+export const EXTREME_SE_EXT_S = 600;
 
 /** 预设分钟 -> 按钮文案（整小时档用「N 小时」）。 */
 function presetLabel(minutes: number): string {
@@ -394,6 +409,13 @@ function ExtremeConfigState({
           <>预计 {seScreens} 轮筛选 + 1 轮延长（warm 顺延）</>
         )}
       </div>
+      {mode === 'se' && (
+        // SE 顺延臂多候选提交前提示（US-004）：最坏额外时长按延长秒动态计算
+        // （极限 se 臂 ext = 600s → 约 20 分钟；跑动中实际值见进度态 extra 行）。
+        <div className="strategy-hint" data-testid="extreme-ext-hint">
+          {seExtHint(EXTREME_SE_EXT_S)}
+        </div>
+      )}
       {layoutParts.length > 0 && (
         <div className="strategy-hint" data-testid="extreme-layout-hint">
           将随排料参数生效：{layoutParts.join(' · ')}

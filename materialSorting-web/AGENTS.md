@@ -1357,3 +1357,39 @@ api.ts 探测分支 / sid 生命周期 / 弹窗文案前先读本节。
   sessionCheckpoint / NestingPage.applyStrategyResult / checkpoint.py·statefile.py /
   strategy.py（RESULT_GRACE 语义）任一处；以及本脚本自身改动。复跑顺序建议
   `legacy`（~8min 快速锁基础设施）→ `pending` → `extreme` → 缺省全量定稿。
+
+## prd-se-ext-top3 US-004 关键约定（SE 多候选前端提示与进度 调用方必读；2026-09-23）
+
+高级运行 / 极限运行两弹窗对 SE 多候选顺延（后端 0.5pt 带 top-3，US-001~003 已落
+引擎/CLI/status 透传）的前端呈现。**旧 run（plan 无新键）渲染零变化是红线** ——
+`--se-ext-top 1` 哨兵与存量 se/race run 的 UI 逐字不变。
+
+- **类型 additive**（`types/strategy.ts`）：`StrategyPlan` 加 `ext_top_n?/ext_band?/
+  ext_seeds?/extra_rounds?` 四可空键（`extra_rounds=0` 是 m=1 合法值，判据必须
+  `!= null` 不能 truthy）；`StrategySeSummary` 加 `ext_seeds?`（result portfolio.se
+  镜像，US-001 additive）。
+- **提交前文案**（两弹窗 se 模式各一条 hint，`seExtHint(extSec)` 单一实现）：
+  「筛选密度与冠军相差 ≤0.5pt 的 seed 会一并顺延（至多 3 个），最多多花 2×延长时长
+  （约 N 分钟）」—— N 由 `fmtMinutes(extSec*2)` 动态算（**不写死文案**）：高级运行
+  `STRATEGY_SE_EXT_S=180` → 约 6 分钟；极限 `EXTREME_SE_EXT_S=600`（web 不带
+  --extreme-budget 恒 600）→ 约 20 分钟。band/top-N 常量 `SE_EXT_BAND_PT=0.5`/
+  `SE_EXT_TOP_N=3` 与后端 portfolio.py 镜像，重标定改后端须同步这里。
+- **进度面多候选**（`seChips`/`ProgressState`，`plan.ext_seeds` 为候选权威源）：
+  m≥2 时 chips = k 筛 + `→` + m 条「`{seed} 延·冠军/延·候选 i` + ✓/●/待定 + 密度」
+  （完成取 per_seed `phase='extension'` 该 seed 入账、进行中取 `current.ext` 命中）；
+  阶段行 rank 1 =「延长中 · 候选 1/m · 冠军 seed X」/ rank≥2 =「候选 i/m（seed X）」；
+  `extra_rounds>0` 时阶段区附实际值行「多候选顺延：实际 m 个候选（额外 m−1 轮延长）·
+  预计多花 ~ext_s×extra_rounds 分钟化」。**m=1 / 无 ext_seeds → 全部走旧单冠军路径
+  逐字不变**（三源兜底推导冠军的既有逻辑原样保留）。
+- **事件行**（`fmtLastEvent(ev, extSeeds)` 第二参 additive）：extension 事件在
+  m≥2 时 rank≥2 标「候选 i/m · seed X 进入延长」（旧口径 rank1/单候选仍「冠军
+  seed X 进入延长」）。
+- **测试**：StrategyRunModal 20→27 例（纯函数 fmtMinutes/seExtHint 档位对拍 + 配置
+  态 hint 显隐 + m=3 chips/阶段行/额外行/事件行 + rank1 冠军口径 + m=1 哨兵逐字 +
+  旧载荷零变化）/ ExtremeRunModal 22→25 例（600 档 ~20 分钟 + se 臂 m=2 渲染 +
+  旧 SE 臂零变化）；vitest 全量 1236 全绿 + `npm run build` 过。
+- **浏览器验证（2026-09-23 dev 模式）**：5336 母版 se 10min 真跑**实触发 m=2**
+  （seed1 88.525% vs seed2 88.42% 差 0.10pt ≤ 0.5pt 带）—— 阶段行「延长中 · 候选
+  1/2 · 冠军 seed 1」+ chips「1 延·冠军 ●」「2 延·候选 2 · 待定」+ 额外行「实际 2 个
+  候选 · 预计多花 ~3 分钟」（180×1）+ API plan 四键对拍全中（截图 out/
+  us004_ext_verify_*.png）。改 chips/阶段行/文案后必复跑这两个测试文件 + 真跑抽查。

@@ -9,7 +9,8 @@
 //
 // 三态渲染（phase 订阅 strategyStore）：
 //   配置态 idle     时长下拉（10/20/30/60min → --time 600/1200/1800/3600）+ 模式
-//                  下拉（race 门杀默认 / SE 顺延）+ 模式说明行随切换 + 执行按钮
+//                  下拉（race 门杀默认 / SE 顺延）+ 模式说明行随切换（se 附多候
+//                  选顺延最坏额外时长提示，US-004）+ 执行按钮
 //                  （disabled = 主画布 solving || 未选码号 —— 前端互斥防 CPU 竞争
 //                  扭曲门时刻判据）。不暴露 --se-screen 等 4 个策略参数（PRD 实测
 //                  默认值即最优）。排料参数（码号/高级配置/数量矩阵）经
@@ -22,8 +23,12 @@
 //                  ④ 阶段行：第 n/N 轮 · seed X · 求解中；race 门杀瞬间 chip 变
 //                     ✕门杀（kill_decisions R5 事件逐条 flush）；SE 检测
 //                     best_frame_s{seed}_ext（current.ext）即切「延长中 · 冠军 seed X」
+//                     （多候选 US-004：m ≥ 2 时按 plan.ext_seeds 名次标
+//                     「候选 i/m」，rank 1 保留「冠军」字样；extra_rounds > 0 时
+//                     阶段区附实际额外时长行）
 //                  ⑤ seed chips（race = done✓密度/killed✕/running●/未启动灰，长队
-//                     列逐轮淘汰；SE = k 筛 + 分隔 + 冠军延长条目，两段式结构）
+//                     列逐轮淘汰；SE = k 筛 + 分隔 + 延长条目，两段式结构 —— 多候选
+//                     m 条「延·冠军 / 延·候选 i」，m=1 / 旧 run 单冠军条目）
 //                     + 最近 1 条事件行 + 终止按钮
 //   结果态 done/stopped/error/orphan
 //                  done：完成 · 最优 X.XX%（seed N · 用布 X.XX cm）+ 模式汇总（race：
@@ -104,6 +109,33 @@ function fmtWidthCm(mm: number | null | undefined): string {
   return mm === null || mm === undefined ? '—' : `${(mm / 10).toFixed(2)} cm`;
 }
 
+// ------------------------------------------------- SE 多候选顺延（prd-se-ext-top3）
+
+/**
+ * SE 多候选顺延口径镜像（后端 portfolio.py 常量，改后端须同步此处文案）：
+ * band = 筛选密度与冠军相差 ≤0.5pt（绝对百分点）、top-N 封顶 3（最坏 +2 轮）。
+ * 高级运行 se 延长秒恒 180（web start 不带 --se-extend 覆盖，SE_EXT_S 镜像）。
+ */
+export const SE_EXT_BAND_PT = 0.5;
+export const SE_EXT_TOP_N = 3;
+export const STRATEGY_SE_EXT_S = 180;
+
+/** 秒 → 「N 分钟」（整小时档用「N 小时」；多候选额外时长 / 提交前最坏值共用）。 */
+export function fmtMinutes(sec: number): string {
+  const m = Math.round(sec / 60);
+  return m >= 60 && m % 60 === 0 ? `${m / 60} 小时` : `${m} 分钟`;
+}
+
+/**
+ * 提交前多候选顺延文案（US-004）：分钟数按传入延长秒动态计算（2×extSec，
+ * 与 CLI 启动行「最多多花 2×{se_ext}s」同口径），不写死文案 —— 高级运行
+ * extSec=180 → 约 6 分钟 / 极限 600 档 → 约 20 分钟（1200 档 CLI-only → 40）。
+ */
+export function seExtHint(extSec: number): string {
+  return `筛选密度与冠军相差 ≤${SE_EXT_BAND_PT}pt 的 seed 会一并顺延（至多 ${SE_EXT_TOP_N} 个），`
+    + `最多多花 2×延长时长（约 ${fmtMinutes(extSec * 2)}）`;
+}
+
 // ------------------------------------------------------------- seed chips 派生
 
 export type SeedChipState = 'done' | 'killed' | 'running' | 'pending';
@@ -159,9 +191,13 @@ export function raceChips(status: StrategyStatus | null): SeedChip[] {
 }
 
 /**
- * SE chips：k 筛 + 分隔 + 冠军延长条目（两段式结构）。
- * 冠军 seed 来源：extension 事件 / current.ext；延长条目状态：进行中 ● / 完成 ✓ /
- * 未定灰。
+ * SE chips：k 筛 + 分隔 + 延长条目（两段式结构）。
+ * 多候选（US-004，plan.ext_seeds 为权威源）：m ≥ 2 时逐候选一条 —— rank 1 =
+ * 「延·冠军 seed X」、rank i = 「延·候选 i」，状态三档（进行中 ● / 完成 ✓ /
+ * 待定灰；完成态取 per_seed phase='extension' 该 seed 入账，进行中取
+ * current.ext 命中）。m ≤ 1 / 旧 run 无键 → 单冠军条目（冠军 seed 三源推导：
+ * per_seed extension 入账 → extension 事件 → current.ext 兜底），与既有行为
+ * 逐字一致（--se-ext-top 1 哨兵 / 旧 run 渲染零变化红线）。
  */
 export function seChips(status: StrategyStatus | null): SeedChip[] {
   if (!status) return [];
@@ -171,9 +207,36 @@ export function seChips(status: StrategyStatus | null): SeedChip[] {
   const screens = planned.map((s) =>
     chipForSeed(s, status.per_seed ?? [], status.current, gateKilled),
   );
+  const perSeed = status.per_seed ?? [];
+  // 多候选分支（ext_seeds 在场且 m ≥ 2 —— m=1 走下方单冠军旧路径保持逐字一致）。
+  const extSeeds = status.plan?.ext_seeds ?? null;
+  if (extSeeds !== null && extSeeds.length > 1) {
+    const extChips: SeedChip[] = extSeeds.map((s, idx) => {
+      const role = idx === 0 ? '延·冠军' : `延·候选 ${idx + 1}`;
+      const entry = perSeed.find((e) => e.phase === 'extension' && e.seed === s);
+      if (entry) {
+        return {
+          seed: s,
+          label: `${role} ${entry.killed ? '✕' : '✓'} ${fmtDensity(entry.best_density)}`,
+          state: entry.killed ? 'killed' : 'done',
+        };
+      }
+      if (
+        status.current?.ext === true &&
+        status.current.seed === s
+      ) {
+        return {
+          seed: s,
+          label: `${role} ● ${fmtDensity(status.current.density)}`,
+          state: 'running',
+        };
+      }
+      return { seed: s, label: `${role} · 待定`, state: 'pending' };
+    });
+    return [...screens, { seed: null, label: '→', state: 'pending' }, ...extChips];
+  }
   // 冠军延长条目：per_seed 里 phase==='extension' 的入账（完成）优先，
   // 否则 extension 事件 / current.ext（进行中），都无 → 待定灰。
-  const perSeed = status.per_seed ?? [];
   const extEntry = perSeed.find((e) => e.phase === 'extension');
   let champion: number | null = extEntry ? extEntry.seed : null;
   if (champion === null) {
@@ -214,8 +277,14 @@ export function seChips(status: StrategyStatus | null): SeedChip[] {
   return [...screens, { seed: null, label: '→', state: 'pending' }, extChip];
 }
 
-/** 最近 1 条事件行文案。 */
-export function fmtLastEvent(ev: StrategyEvent | undefined): string {
+/**
+ * 最近 1 条事件行文案。extension 事件在多候选（US-004）下按 extSeeds 名次
+ * 标注（rank 1 = 冠军 / rank i = 候选 i/m；无 extSeeds / m=1 → 旧文案逐字不变）。
+ */
+export function fmtLastEvent(
+  ev: StrategyEvent | undefined,
+  extSeeds?: number[] | null,
+): string {
   if (!ev) return '暂无事件';
   if (ev.kind === 'gate') {
     if (ev.would_kill) {
@@ -226,7 +295,15 @@ export function fmtLastEvent(ev: StrategyEvent | undefined): string {
     }
     return `seed ${ev.seed} 过门（${fmtDensity(ev.d)} > 门值 ${fmtDensity(ev.bar)}）`;
   }
-  if (ev.kind === 'extension') return `冠军 seed ${ev.seed} 进入延长`;
+  if (ev.kind === 'extension') {
+    if (extSeeds !== null && extSeeds !== undefined && extSeeds.length > 1) {
+      const idx = extSeeds.indexOf(ev.seed);
+      if (idx > 0) {
+        return `候选 ${idx + 1}/${extSeeds.length} · seed ${ev.seed} 进入延长`;
+      }
+    }
+    return `冠军 seed ${ev.seed} 进入延长`;
+  }
   return `seed ${ev.seed} ${ev.killed ? '被淘汰' : '完成'} · ${fmtDensity(ev.best_density)}`;
 }
 
@@ -503,6 +580,13 @@ function ConfigState({
       <div className="strategy-mode-desc" data-testid="strategy-mode-desc">
         {desc}
       </div>
+      {mode === 'se' && (
+        // 多候选顺延提交前提示（US-004）：最坏额外时长按延长秒动态计算
+        // （高级运行恒 180s → 约 6 分钟），与后端 SE_EXT_S / 启动行口径一致。
+        <div className="strategy-hint" data-testid="strategy-ext-hint">
+          {seExtHint(STRATEGY_SE_EXT_S)}
+        </div>
+      )}
       <div className="strategy-hint" data-testid="strategy-min-hint">
         10 分钟档两模式与均分打平，20 分钟起有增益
       </div>
@@ -566,11 +650,23 @@ export function ProgressState({ status, onStop, modeLabel }: ProgressStateProps)
       : null;
   const extActive = extSeed !== null;
   const silentSec = status?.last_frame_age_sec ?? null;
+  // 多候选（US-004）：延长中按 plan.ext_seeds 名次标「候选 i/m」（rank 1 保留
+  // 「冠军」字样与旧文案连续）；无 ext_seeds / m=1 / seed 不在候选集 → 旧文案
+  // 逐字不变（旧 run 与 --se-ext-top 1 哨兵渲染零变化红线）。
+  const extSeeds = status?.plan?.ext_seeds ?? null;
+  const extRank =
+    extSeed !== null && extSeeds !== null && extSeeds.length > 1
+      ? extSeeds.indexOf(extSeed) + 1
+      : 0;
   const stageText =
     extSeed !== null
-      ? `延长中 · 冠军 seed ${extSeed}${
-          silentSec === null ? '' : ` · 静默 ${fmtElapsed(silentSec)}`
-        }`
+      ? `${
+          extRank === 1
+            ? `延长中 · 候选 1/${extSeeds!.length} · 冠军 seed ${extSeed}`
+            : extRank > 1
+              ? `延长中 · 候选 ${extRank}/${extSeeds!.length}（seed ${extSeed}）`
+              : `延长中 · 冠军 seed ${extSeed}`
+        }${silentSec === null ? '' : ` · 静默 ${fmtElapsed(silentSec)}`}`
       : plannedLen > 0
         ? `第 ${Math.min(perSeed.length + 1, plannedLen)}/${plannedLen} 轮 · seed ${
             status?.current?.seed ?? '—'
@@ -602,6 +698,24 @@ export function ProgressState({ status, onStop, modeLabel }: ProgressStateProps)
       <div className="strategy-stage-line" data-testid="strategy-stage">
         {stageText}
       </div>
+      {(() => {
+        // 多候选顺延实际值行（US-004）：extra_rounds 在场（首个延长轮启动时
+        // 后端补写）且 >0 → 按 ext_s × extra_rounds 算实际额外时长（开跑前
+        // 提示的是最坏 2×ext_s，此处是筛选后的实际值）；m=1（0）/ 旧 run 无键
+        // → 不显示。
+        if (effectiveStrategy(status) !== 'se') return null;
+        const extra = status?.plan?.extra_rounds;
+        const extS = status?.plan?.ext_s;
+        if (typeof extra !== 'number' || extra <= 0 || typeof extS !== 'number') {
+          return null;
+        }
+        return (
+          <div className="strategy-hint" data-testid="strategy-ext-extra-hint">
+            多候选顺延：实际 {extra + 1} 个候选（额外 {extra} 轮延长）· 预计多花 ~
+            {fmtMinutes(extS * extra)}
+          </div>
+        );
+      })()}
       {(() => {
         // SE warm 状态行（2026-09-19）：计划回退 ⚠ 常显 / 真顺延仅延长阶段正向标注。
         const note = warmProgressNote(status);
@@ -640,7 +754,7 @@ export function ProgressState({ status, onStop, modeLabel }: ProgressStateProps)
         )}
       </div>
       <div className="strategy-event-line" data-testid="strategy-event">
-        {fmtLastEvent(events[events.length - 1])}
+        {fmtLastEvent(events[events.length - 1], extSeeds)}
       </div>
       <div className="strategy-hint" data-testid="strategy-close-hint">
         关闭弹窗不会终止运行（后台继续跑，重新打开可看进度）

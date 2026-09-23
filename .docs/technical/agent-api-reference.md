@@ -817,7 +817,7 @@ curl http://127.0.0.1:8010/api/ptypes -H "X-Session-Id: <sid>"
 
 - `best`：result.json `portfolio.incumbent`（完整 `placed_items`；**无 `density_sparrow`** —— 从 `best_frame_s{seed}.json` 边车补，缺则 null）；stopped 无 result.json → 回落各 `best_frame_s*.json` 取 density 最大
 - `manifest`：`build_pid_meta(start 时快照 pieces, sizes/per_type/quantities 同口径)` → `{gate_mm, total_area_mm2, n_eroded, pieces:[{id,size,color,area_mm2,polygon(erode 后),raw_polygon,d_mm,label,demand,net_polygon,internal_lines,notches,grain_line}]}`（与 /ws/solve manifest.pieces 同形；erode 后几何与 placed_items 对齐、demand 已含 —— 前端 NestSVG 副本池按 demand 建 N 份承接多副本 placement；raw_polygon/d_mm 2026-09-06 起 additive 物理毛版口径；旧 `gate_nest_mm` 键 2026-08-28 起已删）
-- `summary`：`{per_seed, mode, race?|se?}`（result.json portfolio 模式段透传）
+- `summary`：`{per_seed, mode, race?|se?}`（result.json portfolio 模式段透传；`se` 段含 prd-se-ext-top3 US-001 additive `ext_seeds`（实际顺延候选全集，未进延长 `[]`）—— 前端 `StrategySeSummary` 已镜像（US-004），进度/结果面 UI 未消费该键（候选展示走 status plan 的 `ext_seeds`））
 - `warning`：start 快照 `doc_id` ≠ **本会话当前画布** `doc_id` → 「母版已变更，应用结果可能与当前画布不一致」（导出 pid 失配走既有 400 兜底；default → `_pieces_state()`，sid → 会话快照）
 
 ### 关键不变量

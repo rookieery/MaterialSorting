@@ -20,7 +20,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
 import { act } from 'react';
-import { ExtremeRunModal, estimateExtremeRounds, estimateExtremeSeScreens, parseCustomMinutes } from '../ExtremeRunModal';
+import {
+  EXTREME_SE_EXT_S,
+  ExtremeRunModal,
+  estimateExtremeRounds,
+  estimateExtremeSeScreens,
+  parseCustomMinutes,
+} from '../ExtremeRunModal';
+import { seExtHint } from '../StrategyRunModal';
 import { useControlPanelStore } from '../../../store/controlPanelStore';
 import { useExtremeStore } from '../../../store/strategyStore';
 import type { StartContext } from '../../../lib/params';
@@ -541,5 +548,113 @@ describe('ExtremeRunModal (US-003)', () => {
     });
     expect(useControlPanelStore.getState().modal).toBeNull();
     expect(stopCalls).toBe(0);
+  });
+});
+
+// ------------------------------------------- SE 臂多候选顺延（US-004 prd-se-ext-top3）
+
+/** 极限 SE 臂多候选延长中 fixture：候选 [2,5]，冠军轮（seed 2）已完成入账、
+ * 候选 2（seed 5）延长进行中（ext_s=600 → 额外 1 轮 ≈ 10 分钟）。 */
+const EXTREME_SE_MULTI: StrategyStatus = {
+  state: 'running',
+  mode: 'extreme',
+  strategy: 'se',
+  total_budget_sec: 7200,
+  elapsed_sec: 6300,
+  run_dir: 'out/config_runs/web_extreme_x_1',
+  plan: {
+    planned_seeds: [1, 2, 5],
+    k_screens: 3,
+    screen_s: 300,
+    ext_s: 600,
+    warm: true,
+    ext_top_n: 3,
+    ext_band: 0.005,
+    ext_seeds: [2, 5],
+    extra_rounds: 1,
+  },
+  incumbent: { density: 0.8632, width_mm: 7100, seed: 2, frame_index: 5, elapsed: 640 },
+  current: { seed: 5, density: 0.8701, density_sparrow: 0.88, ext: true },
+  per_seed: [
+    { seed: 1, killed: false, kill_reason: null, best_density: 0.85, elapsed: 300, phase: 'screen' },
+    { seed: 2, killed: false, kill_reason: null, best_density: 0.8632, elapsed: 300, phase: 'screen' },
+    { seed: 5, killed: false, kill_reason: null, best_density: 0.8605, elapsed: 300, phase: 'screen' },
+    { seed: 2, killed: false, kill_reason: null, best_density: 0.8632, elapsed: 640, phase: 'extension' },
+  ],
+  events: [{ kind: 'extension', seed: 5 }],
+  error: null,
+  exit_code: null,
+};
+
+describe('ExtremeRunModal SE 臂多候选 (US-004)', () => {
+  it('配置态 se 模式：提交前多候选提示分钟数按 600s 档动态计算（约 20 分钟）；race 模式不显示', () => {
+    openModal();
+    renderModal();
+    // 默认 race → 无提示行。
+    expect(document.body.querySelector('[data-testid="extreme-ext-hint"]')).toBeNull();
+    const select = document.body.querySelector('[data-testid="extreme-mode"]') as HTMLSelectElement;
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!;
+      setter.call(select, 'se');
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    const hint = document.body.querySelector('[data-testid="extreme-ext-hint"]')!;
+    expect(hint.textContent).toBe(seExtHint(EXTREME_SE_EXT_S));
+    expect(hint.textContent).toContain('至多 3 个');
+    expect(hint.textContent).toContain('约 20 分钟');
+    expect(EXTREME_SE_EXT_S).toBe(600);
+    // 切回 race → 提示行消失。
+    act(() => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value')!.set!;
+      setter.call(select, 'race');
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    expect(document.body.querySelector('[data-testid="extreme-ext-hint"]')).toBeNull();
+  });
+
+  it('进度态 SE 臂多候选：chips（延·冠军 ✓ + 延·候选 2 ●）+ 阶段行「候选 2/2（seed 5）」+ 实际额外时长 ~10 分钟 + 事件行候选名次', () => {
+    openModal();
+    renderModal();
+    setPhase({ phase: 'running', status: EXTREME_SE_MULTI });
+    expect(document.body.querySelector('[data-testid="strategy-stage"]')!.textContent)
+      .toBe('延长中 · 候选 2/2（seed 5）');
+    const chips = Array.from(document.body.querySelectorAll('[data-testid="strategy-seed-chips"] .strategy-chip'))
+      .map((c) => c.textContent!);
+    expect(chips).toEqual([
+      '1 ✓ 85.00%',
+      '2 ✓ 86.32%',
+      '5 ✓ 86.05%',
+      '→',
+      '2 延·冠军 ✓ 86.32%',
+      '5 延·候选 2 ● 87.01%',
+    ]);
+    // 实际额外时长：ext_s × extra_rounds = 600 × 1 = 600s ≈ 10 分钟。
+    const hint = document.body.querySelector('[data-testid="strategy-ext-extra-hint"]')!;
+    expect(hint.textContent).toContain('实际 2 个候选（额外 1 轮延长）');
+    expect(hint.textContent).toContain('预计多花 ~10 分钟');
+    expect(document.body.querySelector('[data-testid="strategy-event"]')!.textContent)
+      .toBe('候选 2/2 · seed 5 进入延长');
+  });
+
+  it('旧 SE 臂载荷（无新键）：单冠军文案保持 + 无额外时长行（渲染零变化红线）', () => {
+    openModal();
+    renderModal();
+    // 无 ext_seeds / extra_rounds 的存量 se 臂（2026-09-20 形态）。
+    setPhase({
+      phase: 'running',
+      status: {
+        ...EXTREME_RUNNING,
+        strategy: 'se',
+        plan: { planned_seeds: [1, 2, 3], k_screens: 3, screen_s: 300, ext_s: 600, warm: true },
+        current: { seed: 2, density: 0.8701, density_sparrow: 0.88, ext: true },
+        events: [{ kind: 'extension', seed: 2 }],
+      },
+    });
+    expect(document.body.querySelector('[data-testid="strategy-stage"]')!.textContent)
+      .toBe('延长中 · 冠军 seed 2');
+    expect(document.body.querySelector('[data-testid="strategy-ext-extra-hint"]')).toBeNull();
+    // race 臂恒无额外行。
+    setPhase({ phase: 'running', status: EXTREME_RUNNING });
+    expect(document.body.querySelector('[data-testid="strategy-ext-extra-hint"]')).toBeNull();
   });
 });

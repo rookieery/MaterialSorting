@@ -1172,6 +1172,12 @@
         "title": "CLI 旗标与 strategy/result/run_stats 可观测",
         "description": "SE 多候选 CLI 呈现层与可观测键（依赖 US-001；权威 PRD：tasks/prd-se-ext-top3.md）。As a CLI 策略使用者，I want --se-ext-top 旗标与开跑即知的计划/实际可观测键，so that 我能预知最坏额外时长、事后能审计候选集合与逐轮 warm 状态，且 --se-ext-top 1 可精确退回旧行为做 A/B 哨兵。\n\n具体任务：\n1. materialSorting-server/src/materialsorting/cli/run_config.py — --se-ext-top N（int ≥1 默认 3）：须与 --strategy se 同给（单独给出退出 1，值域外退出 1，new_run_dir 前拦下）；与 --extreme 显式同给退出 1（糖衣互斥，极限 SE 臂继承默认 3，展开处不写该旗标）。\n2. 启动行（--quiet 也打）：se 段附「筛选密度与冠军相差 ≤0.5pt 的 seed 一并顺延（至多 top N 个），最多多花 2×{se_ext}s」；延长轮头按候选序打印「── 延长轮（seed=X·筛选冠军）── / ── 延长轮（seed=Y·候选 2/3）──」。\n3. strategy.json se 段 additive：开跑即写计划态 ext_top_n/ext_band(0.005)；首个延长轮启动时（on_seed_start 检测 se 延长轮）单写者补写实际态 ext_seeds+extra_rounds(m−1)——不进延长（R0/中断）不补写。\n4. result.json — portfolio.se.ext_seeds（US-001）+ config strategy 段 additive ext_top_n 与 ext_warm_rounds:[{seed, warm, reason}]；既有 warm/warm_reason 键语义 = 冠军轮（第 1 延长轮）实际灌入态，历史语义连续。\n5. run_stats 行 config 段 additive se_ext = {'top_n', 'band', 'candidates': [{'seed', 'screen_density', 'gap_pt'}]}（自包含校准数据面；已决议 2026-09-23：不带延长终值/反超冗余字段）；class_key 组成不变；race/legacy 行零新增键。\n\n验收标准：\n- tests/test_cli_strategy.py / test_cli_run_config.py 扩展：旗标裁决矩阵（从属/值域/糖衣互斥）；--se-ext-top 1 与旧行为输出对拍哨兵；strategy.json 计划态/补写时机；result/run_stats additive 键形态；无旗标 se 与 race 行结构对拍零回归。\n- ms-run-config --help 展示新旗标；python -c \"import materialsorting.cli.run_config\" 导入通过。",
         "passes": true
+      },
+      {
+        "id": "US-003",
+        "title": "web 状态面多候选透传",
+        "description": "SE 多候选 web 状态面（依赖 US-002；权威 PRD：tasks/prd-se-ext-top3.md）。As a 前端进度面，I want /api/strategy/status 与 /api/extreme/status 透传多候选计划/实际态，so that 前端能展示实际候选数、额外时长与多条延长事件，旧 run（无新键）渲染零变化。\n\n具体任务：\n1. materialSorting-server/src/materialsorting/web/strategy.py _parse_plan — additive 透传 strategy.json se 段新键（ext_top_n/ext_band/ext_seeds/extra_rounds，在场才加键）；status 载荷随 plan 摘要透传（前端用 ext_s × extra_rounds 计算实际额外秒数）。\n2. _parse_events 多延长事件核验 — 多候选产物 best_frame_s{seed}_ext.json 按 seed 天然多文件，既有 glob + 尾窗豁免逻辑产出多条 extension 事件（顺序稳定）；补测试锁定 3 候选场景事件序列与豁免行为。\n3. 机器对接三端点（gate=False 家族）经同一 _status_common 参数化自动继承，零额外改动；status 响应结构 additive（新键在场才加），race/旧 se run/legacy 读路径零变化。\n\n验收标准：\n- tests/test_web_strategy.py 扩展：带 ext_seeds 的 strategy.json 解析 / 多 _ext 边车事件序列 / 无新键旧产物结构不变。\n- python -c \"from materialsorting.web import strategy\" 导入通过，分层依赖未反向（对 server 依赖保持函数内延迟 import 惯例）。",
+        "passes": true
       }
     ]
   }
