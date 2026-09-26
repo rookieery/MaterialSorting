@@ -24,3 +24,11 @@ archive/
 
 # 后端启动日志（本地重定向产物，勿入库）
 .backend.log
+
+# tsc -b 手跑误 emit 产物（官方 build = tsc --noEmit；vite.config.js 会被 Vite 优先解析，残留即配置漂移隐患）
+materialSorting-web/*.tsbuildinfo
+materialSorting-web/vite.config.js
+materialSorting-web/vite.config.d.ts
+
+# 冒烟脚本截图产物（scripts/shot-*.png，按需再生成）
+materialSorting-web/scripts/shot-*.png
