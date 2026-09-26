@@ -803,7 +803,7 @@ export function ResultState({
   }
   const best = result.best;
   // 模式汇总：race = M 轮中 K 轮门杀 · 全程 X 分 X 秒（墙钟 elapsed_sec）；
-  // se = k 轮筛选 + 冠军 seed 延长。
+  // se = k 轮筛选 + 冠军 seed 延长 · 全程 X 分 X 秒（与 race 同款墙钟口径）。
   const perSeed = result.summary.per_seed ?? [];
   let modeSummary: string;
   if (result.summary.race) {
@@ -814,7 +814,7 @@ export function ResultState({
   } else if (result.summary.se) {
     modeSummary = `SE：${result.summary.se.k_screens} 轮筛选 + 冠军 seed ${
       result.summary.se.champion ?? '—'
-    } 延长 ${Math.round(result.summary.se.ext_s)}s`;
+    } 延长 ${Math.round(result.summary.se.ext_s)}s · 全程 ${fmtElapsed(status?.elapsed_sec)}`;
     // warm 实际灌入态（config.strategy 回显；延长轮跑过才有键）—— 回退时如实
     // 说明原因，顺延时一句正向确认（2026-09-19 排查事故补的可观测面）。
     if (result.summary.warm === false) {

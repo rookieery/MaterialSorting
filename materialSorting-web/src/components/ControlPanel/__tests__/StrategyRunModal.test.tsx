@@ -616,6 +616,28 @@ describe('StrategyRunModal (US-005)', () => {
     expect(document.body.querySelector('[data-testid="strategy-mode-summary"]')!.textContent)
       .toContain('warm 真顺延');
   });
+
+  it('结果态：SE 汇总行带「全程 X 分 X 秒」（与 race 同款 status.elapsed_sec 墙钟口径）', () => {
+    openModal();
+    renderModal();
+    setPhase({ phase: 'done', status: { ...SE_EXT, state: 'done' } });
+    act(() => {
+      useStrategyStore.setState({
+        result: {
+          ...DONE_RESULT,
+          mode: 'se',
+          summary: {
+            per_seed: DONE_RESULT.summary.per_seed,
+            mode: 'se',
+            se: { k_screens: 2, screen_s: 90, ext_s: 180, champion: 1 },
+          },
+        },
+      });
+    });
+    // SE_EXT.elapsed_sec=300 → 全程 5 分 0 秒
+    expect(document.body.querySelector('[data-testid="strategy-mode-summary"]')!.textContent)
+      .toContain('SE：2 轮筛选 + 冠军 seed 1 延长 180s · 全程 5 分 0 秒');
+  });
 });
 
 // ------------------------------------------- SE 多候选顺延（US-004 prd-se-ext-top3）

@@ -56,6 +56,20 @@ export interface RunRecord {
   /** US-027：用户 stop 触发的结束（收到 {type:'stopped'} 置 true；用于 phase 状态机区分 stopped/done/error）。 */
   stopped: boolean;
   /**
+   * run 起跑时刻（create 时 performance.now()，单调时钟防系统改时跳变）—— NestLabel
+   * 运行中动态「用时」显示的数据源（口径 = 前端墙钟，含 WS 连接 + worker spawn，与
+   * final.elapsed 主进程墙钟口径天然衔接，done 切换无跳变）。
+   */
+  startedAt: number;
+  /** run 结束时刻（markRunDone 单一出口落 performance.now()）—— stopped/异常无 final 时「用时」定格值。 */
+  endedAt: number;
+  /**
+   * final.elapsed（服务器主进程墙钟秒）权威终值 —— applyFinal 落笔；策略/极限应用与
+   * 状态文件恢复的合成 run 由调用方显式传入（run 级总时长）。null = 无服务器终值
+   * （运行中 / stopped / 恢复兜底路径）→ NestLabel 回退前端墙钟差值。
+   */
+  finalElapsed: number | null;
+  /**
    * 结果来源（additive 可选，状态文件 US-003）：WS 普通求解不设（undefined =
    * 'solve'，保存端 buildSavePayload 不写 provenance 键 —— 老文件零惩罚）；
    * US-004 起 applyStrategyResult（StrategyResult.mode + summary 记入）与恢复端
@@ -89,6 +103,7 @@ export function subscribeRunDone(fn: RunDoneListener): () => void {
 export function markRunDone(rec: RunRecord): void {
   if (rec.done) return;
   rec.done = true;
+  rec.endedAt = performance.now();
   for (const fn of _doneListeners) {
     try {
       fn(rec);
@@ -116,6 +131,9 @@ export const runRegistry = {
       error: null,
       viewBoxMaxW: 0,
       stopped: false,
+      startedAt: performance.now(),
+      endedAt: 0,
+      finalElapsed: null,
     };
     _runs.push(rec);
     return rec;
@@ -157,10 +175,11 @@ export const runRegistry = {
   },
 };
 
-/** 在 final 到达后更新 record（density 双口径；prefix 统计段落 RunRecord.prefix）。 */
+/** 在 final 到达后更新 record（density 双口径；prefix 统计段落 RunRecord.prefix；elapsed 落用时终值）。 */
 export function applyFinal(rec: RunRecord, m: FinalMsg): void {
   rec.finalDensity = m.density;
   rec.finalDensitySparrow = m.density_sparrow;
   rec.prefix = m.prefix ?? null;
+  rec.finalElapsed = m.elapsed;
   if (rec.frames.length > 0) rec.lastFrame = rec.frames[rec.frames.length - 1];
 }

@@ -174,7 +174,10 @@ function buildRunBlock(run: RunRecord | null): StateSaveRun | undefined {
       density: run.finalDensity,
       density_sparrow: run.finalDensitySparrow,
       width_mm: run.lastFrame.width_mm,
-      elapsed: run.lastFrame.elapsed,
+      // 用时终值优先 finalElapsed（WS = final.elapsed；策略/极限合成 = 总时长）——
+      // 恢复端原值透传 applySyntheticRun，保证恢复前后 nest-label「用时」逐字一致；
+      // 旧 record 无终值（stopped 等）回退 lastFrame.elapsed。
+      elapsed: run.finalElapsed ?? run.lastFrame.elapsed,
       n_frames: run.frames.length,
       n_eroded: run.manifest?.n_eroded ?? 0,
     },
@@ -287,12 +290,16 @@ export function applyRestorePayload(res: StateRestoreResponse): void {
       placed_items: res.placed,
     };
     const origin: RunOrigin = runBlock.provenance ?? { kind: 'solve' };
+    // fin.elapsed（= 保存端 finalElapsed ?? lastFrame.elapsed）原值回传「用时」终值 ——
+    // 恢复合成卡 NestLabel 与保存端逐字一致；finalizeFromLayout 兜底 elapsed=0 →
+    // applySyntheticRun 内部跳过（不显示无意义的 00:00）。
     applySyntheticRun(
       manifest,
       frame,
       runBlock.seed,
       origin,
       `状态文件已恢复：seed ${runBlock.seed} · ${(fin.density * 100).toFixed(2)}%`,
+      fin.elapsed,
     );
     useUiStore.getState().setNestingEnabled(true);
     useUiStore.getState().setTab('nesting');

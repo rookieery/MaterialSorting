@@ -90,6 +90,10 @@ export function deepCopyPlaced(items: readonly PlacedItem[]): PlacedItem[] {
  * @param origin    结果来源（缺省不设 = 'solve' 口径，保存端不写 provenance 键）。
  * @param note      StatusLine 文案（空串 = 不改状态行 —— NestingPage 消费端空 note
  *                  跳过 setStatus，保留现场文案）。
+ * @param finalElapsedSec 「用时」终值（秒，additive 可选）：策略/极限应用 = 本族
+ *                  status.elapsed_sec（run 级墙钟总时长）；状态文件恢复 = run.final.elapsed
+ *                  （保存端 round-trip，恢复前后 nest-label 逐字一致）。缺省/≤0 不设 →
+ *                  NestLabel 不显示用时段（合成 run 的 startedAt/endedAt 差 ≈0 无意义）。
  * @returns 置换后的 RunRecord 引用（ws=null 无 WS 可关；导出链路 bestRun() 直接选中）。
  */
 export function applySyntheticRun(
@@ -98,6 +102,7 @@ export function applySyntheticRun(
   seed: number,
   origin?: RunOrigin,
   note = '',
+  finalElapsedSec?: number,
 ): RunRecord {
   // 1) 清场：关旧 WS + 清 registry + 编辑态失效（seekTime 回 live 随回放功能移除，
   //    NestSVG 本就恒渲染 lastFrame）。
@@ -122,6 +127,7 @@ export function applySyntheticRun(
   rec.error = null;
   rec.stopped = false;
   if (origin !== undefined) rec.origin = origin;
+  if (finalElapsedSec !== undefined && finalElapsedSec > 0) rec.finalElapsed = finalElapsedSec;
   markRunDone(rec);
 
   // 4) 信号 → NestingPage 消费（setSeeds/setPhase('done')/setStatus/ref 重置/provenance）。

@@ -112,6 +112,18 @@ describe('applySyntheticRun（合成落笔，US-004）', () => {
     expect(recB.origin).toEqual(origin);
   });
 
+  it('finalElapsedSec：在场 >0 → rec.finalElapsed（用时终值，NestLabel 定格显示）；缺省/≤0 → 不设', () => {
+    // 缺省（旧调用零变化）→ null（NestLabel 对合成 run 不显示用时段）
+    const recA = applySyntheticRun(makeManifest(), makeFrame(), 0);
+    expect(recA.finalElapsed).toBeNull();
+    // 策略/极限应用：status.elapsed_sec（run 级墙钟总时长）
+    const recB = applySyntheticRun(makeManifest(), makeFrame(), 1, undefined, '', 1870);
+    expect(recB.finalElapsed).toBe(1870);
+    // 状态文件恢复兜底路径 elapsed=0 → 跳过（无意义 00:00 不入档）
+    const recC = applySyntheticRun(makeManifest(), makeFrame(), 2, undefined, '', 0);
+    expect(recC.finalElapsed).toBeNull();
+  });
+
   it('信号：token 递增 + seed/note/origin 透传（NestingPage effect 消费数据源）', () => {
     expect(useSynthRunStore.getState().token).toBe(0);
     const origin: { kind: 'strategy_race'; config: { minutes: number } } = {

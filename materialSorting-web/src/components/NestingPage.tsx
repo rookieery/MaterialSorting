@@ -301,7 +301,9 @@ export function NestingPage(): React.JSX.Element {
 
     // 3) 委托共享落笔 + 信号（US-004 origin 记入；状态行区分来源 —— US-003 极限运行
     //    result.mode='extreme' 同一 applyStrategyResult 复用，summary.mode 仍是 'race'
-    //    不作判据）。
+    //    不作判据）。「用时」终值 = 本族 status.elapsed_sec（终态停轮前最后一次轮询的
+    //    run 级墙钟；族判据与下方 markResultApplied 同款，status null 极端时序 → 不传，
+    //    卡片不显示用时段）。
     applySyntheticRun(
       manifest,
       frame,
@@ -310,6 +312,8 @@ export function NestingPage(): React.JSX.Element {
       `${result.mode === 'extreme' ? '极限' : '策略'} run 已应用：seed ${seed} · ${(
         density * 100
       ).toFixed(2)}%`,
+      (result.mode === 'extreme' ? useExtremeStore : useStrategyStore).getState().status
+        ?.elapsed_sec ?? undefined,
     );
 
     // 4) 应用落定 → 归属族 resultApplied 置位（US-002）：pending_strategy_result 槽
