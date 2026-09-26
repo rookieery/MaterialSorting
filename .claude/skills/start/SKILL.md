@@ -1,6 +1,6 @@
 ---
 name: start
-description: 启动（或重启）MaterialSorting 项目：后端 ms-web (:8010) + 前端 Vite dev (:5173)。支持 dev/prod 模式、单端启动、重启。改后端 Python 后可自动触发重启。
+description: 启动（或重启）MaterialSorting 项目：后端 ms-web (:8010) + 前端 Vite dev (:5173)。支持 dev/prod 模式、单端启动、重启。改后端 Python 后可自动触发重启；dev 启动时自动检测并重建过期的 static/（用户常用 :8010 生产包入口）。
 allowed-tools: Bash
 ---
 
@@ -33,6 +33,14 @@ netstat -ano | grep -E ":<PORT>[[:space:]]" | grep -i LISTENING | awk '{print $N
   ```
   MISSING → 提示用户 intermediate 由 Web 上传母版 commit 生成（启动后在前端上传一次母版即可），**不阻塞后端启动**。
 - prod 模式且目标含 frontend：先 `cd d:/code/MaterialSorting/materialSorting-web && npm run build`。build 失败（tsc 报错）→ 报错给用户，**不启后端**。
+- **dev 模式也做 static/ 过期检测并按需 rebuild**（用户浏览器日常入口常是 :8010 生产包，Vite HMR 只覆盖 :5173；static/ 是 gitignored 构建产物，**永不自动刷新** —— 2026-09-26「用时显示」功能在 :5173 验证全绿但用户 :8010 看不到，即此坑）：
+  ```bash
+  cd d:/code/MaterialSorting/materialSorting-web
+  if [ ! -f static/index.html ] || [ -n "$(find src -newer static/index.html -print -quit 2>/dev/null)" ]; then
+    npm run build
+  fi
+  ```
+  static/ 缺失或 src/ 有更新文件 → rebuild（~几秒）；build 失败**不阻塞** dev 启动（:5173 入口不依赖 static/），但步骤 4 汇报必须注明「:8010 仍是旧包」。
 
 ### 1. 探测现状，决定是否先停
 ```bash
@@ -73,13 +81,18 @@ done
 ✅ 项目已启动（dev）
   后端 ms-web      :8010   http://127.0.0.1:8010/   (PID ...)
   前端 Vite dev    :5173   http://localhost:5173/    (PID ...)
-  打开 → http://localhost:5173/
+  static/          已重建，:8010 入口同步最新        ← 或「无需重建（src 无新改动）」/「重建失败，:8010 仍是旧包」
+  打开 → http://localhost:5173/   （:8010 入口亦可，两者均为最新代码）
 ```
-prod 模式只报后端行，`打开 → http://127.0.0.1:8010/`。PID 用步骤 2/3 起来后复探 netstat 取。
+prod 模式只报后端行与 static/ 行，`打开 → http://127.0.0.1:8010/`。PID 用步骤 2/3 起来后复探 netstat 取。
 
 ## 何时自动触发（Claude 自调用，无需用户输入）
 - 改了后端 Python 代码后（uvicorn 无 `--reload`）→ 自动 `/start restart backend` 让改动生效。
-- 改前端代码**不需要**重启（Vite HMR 自动热更）；仅当改 `vite.config.ts` / 装新依赖后才 `/start restart frontend`。
+- 改前端代码**不需要**重启 Vite（HMR 自动热更），但 **HMR 只覆盖 :5173 —— 用户浏览器常用入口是 :8010 的生产包（static/ 构建产物，gitignored，永不自动刷新）**。前端改动收尾时（或用户反馈「界面上没变化」时，第一 suspects 就是 static/ 旧包）：
+  1. `cd materialSorting-web && npm run build` 重建 static/；
+  2. `curl -s http://localhost:8010/ | grep -o 'index-[^"]*\.js'` 拿新 bundle 名后 `curl -s http://localhost:8010/static/assets/<bundle>.js | grep "<本次新增文案>"` 验证生产包已含新代码；
+  3. 提醒用户强刷（Ctrl+Shift+R）。
+- 仅当改 `vite.config.ts` / 装新依赖后才 `/start restart frontend`。
 
 ## 注意事项
 - 后台进程随当前 Claude 会话存活（Bash 后台任务）；关掉 Claude 即停。要脱离会话长驻请用户外起。
