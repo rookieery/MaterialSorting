@@ -1,11 +1,4 @@
 {
   "branchName": "ralph/local-deploy-freeze",
-  "stories": [
-    {
-      "id": "US-005",
-      "title": "Inno 安装包+绿色 zip 与发版手册",
-      "description": "Inno Setup 安装包与发版手册（权威 PRD：tasks/prd-local-deploy-freeze.md US-005；已定案 2026-09-27：绿色 zip 随首版交付、安装目录 per-user LOCALAPPDATA、签名不采购仅留 signtool 钩子、升级=手动覆盖安装）。As a 本地部署交付者, I want dist 打成中文安装包+绿色 zip 并沉淀发版手册, so that 客户拿到单个 setup.exe 装完桌面即见图标，我们自己发版有章可循。\n\n具体任务：\n1. 新建 scripts/installer/materialsorting.iss（Inno Setup）— 中文向导、DefaultDirName={localappdata}\\Programs\\MaterialSorting per-user 免 UAC、桌面图标任务、卸载不删 %LOCALAPPDATA%\\MaterialSorting（用户数据保留）、安装前检测运行中进程提示关闭（AppMutex 或等价）、版本号经 ISCC /D 参数注入（与 build_freeze 同源版本串）。\n2. scripts/build_freeze.py 增 --installer 步骤 — PATH 找 ISCC.exe → 编译 iss → dist/MaterialSorting-Setup-<版本>.exe；ISCC 不存在 → 打印安装指引（官网/中文语言包）跳过不失败（exit 0，其余产物完整）；signtool 钩子：env MS_SIGNING_PFX/MS_SIGNING_TS 在场才调用；同步产出 MaterialSorting-portable-<版本>.zip（dist 压缩，内附一行启动说明 txt）。\n3. 新建 .docs/technical/本地部署构建与发版手册.md — 构建机一次性准备（MSVC/MinGW、node、Inno）、日常发版三步（tag → build_freeze --installer → 归档）、验收 checklist 引用（US-004 自动 + 人工运营项）、升级动线（安装包=双击覆盖安装；zip=解压覆盖原目录——两形态用户数据均在 %LOCALAPPDATA% 不受触碰；版本识别=exe 属性页/--check 版本串）、杀软误报申诉指引（微软/360/火绒提交入口）。\n\n验收标准：\n- 装有 Inno 的机器 ISCC 编译成功且 setup.exe 安装/卸载/重装一轮人工验证过（手册记录实测日期）；无 Inno 机器 --installer 跳过路径验证。\n- 绿色 zip 副产品产出；文档五段齐全。",
-      "passes": true
-    }
-  ]
+  "stories": []
 }
