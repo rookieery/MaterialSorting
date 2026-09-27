@@ -6,6 +6,7 @@ r"""ms-run-config 入口 —— 一条命令跑完「commit → 求解」，无�
                   [--target P] [--params controller_params.json]
                   [--kill shadow|off|on]
                   [--solver-opts '{"exploration_pct":0.7}' | --rotate-opts]
+                  [--full-cores]
                   [--lns [--lns-time 30] [--lns-rounds 5]]
                   [--strategy [se|race] --time 总预算
                     [--se-screen 90] [--se-extend 180] [--se-warm on|off]
@@ -245,6 +246,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 import time
@@ -309,6 +311,14 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument('--rotate-opts', action='store_true',
                    help='逐 seed 按内置轮换池轮换 solver_opts（pool[队列序 %% 池长]，'
                         '池首空档=默认行为；样本去相关）；与 --solver-opts 互斥')
+    p.add_argument('--full-cores', action='store_true',
+                   help='满核运行（web 高级/极限运行弹窗「是否满核运行」开关透传）：'
+                        'num_workers 覆盖为 逻辑核数−1（降一档保留 1 核维持系统流畅，'
+                        '防整机满载卡死；os.cpu_count() 取不到回退 3）。覆盖最后施加，'
+                        '三层基座通吃：极限档仅覆盖 workers（exploration_pct / '
+                        'early_termination 固化值不动）、--solver-opts 显式 '
+                        'num_workers 亦被覆盖、--rotate-opts 逐 seed 档叠加 workers；'
+                        '生效值回显 result.json config.solver_opts')
     p.add_argument('--lns', action='store_true',
                    help='portfolio 结束后对最优布局（incumbent）跑 LNS 波段重排后'
                         '处理（PC-008）：严格更优才回写 result.json（incumbent 更新 + '
@@ -608,6 +618,28 @@ def main(argv: list[str] | None = None) -> int:
 
         def solver_opts_for(index, _seed):
             return rotation_opts_for(index)
+    # 满核运行（2026-09-27）：num_workers 覆盖为 逻辑核数−1 —— 降一档留 1 个完整
+    # 逻辑核给系统调度（UI/输入/中断），防整机满载卡死；求解重活在独立 worker 进程
+    # 且随时可树杀。覆盖**最后施加**，三层基座通吃：极限固化档（上方浅拷贝就地改键，
+    # EXTREME_SOLVER_OPTS 常量不动、exploration_pct/early_termination 保留）、
+    # --solver-opts 固定档（显式 num_workers 亦被本旗标覆盖）、--rotate-opts 轮换档
+    # （逐 seed 浅拷贝叠加 workers）；无任何旋钮时 = 仅 num_workers 单键固定档。
+    # 生效值经 fixed_solver_opts 回显 result.json config.solver_opts（轮换档无单档
+    # 可回显，与既有 rotate-only 不回显行为一致）。
+    if args.full_cores:
+        full_cores_workers = max(1, (os.cpu_count() or 4) - 1)
+        if fixed_solver_opts is not None:
+            fixed_solver_opts['num_workers'] = full_cores_workers
+        else:
+            fixed_solver_opts = {'num_workers': full_cores_workers}
+        _base_opts_for = solver_opts_for
+
+        def solver_opts_for(index, seed, _base=_base_opts_for,
+                            _w=full_cores_workers):
+            opts = _base(index, seed) if _base is not None else None
+            out = dict(opts) if opts else {}
+            out['num_workers'] = _w
+            return out
     # PC-008 LNS 后处理旗标裁决（配置错误须在 new_run_dir 之前拦下，不留空目录）：
     # --lns-time / --lns-rounds 是 --lns 的从属旗标（单独给出 = 笔误，退出 1）；
     # 值域与 ms-lns CLI 同口径（time >= 1s、rounds >= 1）。
@@ -795,6 +827,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f'多 seed 串行 {n_rounds} 轮 × {time_budget}s，'
               f'预计总时长 ≈ {n_rounds * time_budget}s（不含解析/切片）')
     # PC-006 旋钮生效方式一行说明（--quiet 也打：改求解行为的开关不静默）。
+    if args.full_cores:
+        print(f'满核运行: num_workers = {full_cores_workers}'
+              f'（逻辑核 {os.cpu_count()}，降一档保留 1 核防整机卡死）')
     if fixed_solver_opts is not None:
         print(f"solver_opts: {json.dumps(fixed_solver_opts, ensure_ascii=False)}"
               f'（全 seed 生效）')

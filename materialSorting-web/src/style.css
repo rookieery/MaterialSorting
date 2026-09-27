@@ -1723,6 +1723,68 @@ button.sample-apply-btn:disabled { background: #444; color: #888; cursor: defaul
   font-size: 11px;
   line-height: 1.5;
 }
+/* ---- 满核运行 Switch（2026-09-27，高级/极限运行弹窗：时长与模式之间） ----
+   无框滑块：透明 checkbox 铺满开关区接管点击与焦点，视觉层 .strategy-switch-track
+   （34×18 圆角轨道 + 14px 圆钮）经 :checked 兄弟选择器联动；主题绿 #2ea06c 与
+   .strategy-select 焦点 / band 勾选 accent 同源。 */
+.strategy-switch-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+.strategy-switch {
+  position: relative;
+  display: inline-block;
+  width: 34px;
+  height: 18px;
+  flex: none;
+}
+.strategy-switch input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.strategy-switch-track {
+  position: absolute;
+  inset: 0;
+  background: #3a3d45;
+  border: 1px solid #4a4d55;
+  border-radius: 9px;
+  transition: background 0.15s, border-color 0.15s;
+}
+.strategy-switch-track::after {
+  content: '';
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #9aa;
+  transition: transform 0.15s, background 0.15s;
+}
+.strategy-switch input:checked + .strategy-switch-track {
+  background: #2ea06c;
+  border-color: #2ea06c;
+}
+.strategy-switch input:checked + .strategy-switch-track::after {
+  transform: translateX(16px);
+  background: #fff;
+}
+.strategy-switch input:focus-visible + .strategy-switch-track {
+  outline: 1px solid #2ea06c;
+  outline-offset: 1px;
+}
+.strategy-switch-text {
+  font-size: 12px;
+  color: #cdd;
+}
 /* 导出信息表格弹窗 v3（2026-08-31）：8 自动字段只读行 —— 紧凑单行（label 左
    #9aa 同 .strategy-field label / 成品串右亮色右对齐 tabular-nums），与 6 手输
    输入块按最终表格列序交错；方案名称等长值 overflow-wrap 防撑爆弹窗 */

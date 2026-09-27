@@ -284,6 +284,53 @@ def test_start_invalid_mode_and_minutes_400(strat_env, monkeypatch):
                   json={'mode': 'race', 'minutes': '20'}).status_code == 400
 
 
+def test_start_full_cores_flag(strat_env, monkeypatch):
+    """满核运行（2026-09-27）：full_cores 严格 bool（1/0 int / 字符串 → 400）；
+    true → spawn cmd 含 --full-cores（--quiet 仍末位）；缺省不带；config JSON
+    不写键（CLI 旗标非 config 键，10 键 schema 不动）。极限族同款。"""
+    _patch_state(monkeypatch, _fake_state(doc_id='cafe1234'))
+    uploads = Path(paths_mod.OUT_DIR) / 'uploads'
+    uploads.mkdir(parents=True)
+    (uploads / 'cafe1234.dxf').write_bytes(b'DXF')
+    c = _client()
+
+    # 非 bool（含 1/0 int）→ 400（400 路径不 mutate 状态，可连发）
+    assert c.post('/api/strategy/start',
+                  json={'mode': 'race', 'minutes': 10,
+                        'full_cores': 1}).status_code == 400
+    assert c.post('/api/strategy/start',
+                  json={'mode': 'race', 'minutes': 10,
+                        'full_cores': 'on'}).status_code == 400
+
+    # 缺省 → 不带旗标；config 无 full_cores 键
+    calls = _spawn_capture(monkeypatch)
+    assert c.post('/api/strategy/start',
+                  json={'mode': 'race', 'minutes': 10}).status_code == 202
+    assert '--full-cores' not in calls['cmd']
+    assert 'full_cores' not in json.loads(
+        list(uploads.glob('strategy_cfg_*.json'))[0].read_text(encoding='utf-8'))
+
+    # true → cmd 含 --full-cores 且 --quiet 仍末位（先清状态与 marker 防单飞 409）
+    strategy_mod._STRATEGY_STATE.clear()
+    strategy_mod._clear_marker()
+    calls2 = _spawn_capture(monkeypatch)
+    assert c.post('/api/strategy/start',
+                  json={'mode': 'race', 'minutes': 10,
+                        'full_cores': True}).status_code == 202
+    assert '--full-cores' in calls2['cmd']
+    assert calls2['cmd'][-1] == '--quiet'
+
+    # 极限族同款（/api/extreme/start）
+    strategy_mod._STRATEGY_STATE.clear()
+    strategy_mod._clear_marker()
+    calls3 = _spawn_capture(monkeypatch)
+    assert c.post('/api/extreme/start',
+                  json={'time_total_s': 960,
+                        'full_cores': True}).status_code == 202
+    assert '--full-cores' in calls3['cmd']
+    assert calls3['cmd'][-1] == '--quiet'
+
+
 def test_start_happy_path_config_marker_spawn_202(strat_env, monkeypatch):
     """202：config 7 键对拍（master_dxf 绝对路径 / seeds=[seed] / gate 回退 state）
     + spawn cmd + marker 5 键 + 内存快照（sizes/per_type/quantities/seed/gate_mm）。"""

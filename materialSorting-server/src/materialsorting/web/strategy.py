@@ -843,6 +843,15 @@ async def _start_run(req: Request, family: str):
         return JSONResponse({'error': f'seed 须为整数，当前为 {seed!r}'},
                             status_code=400)
 
+    # 满核运行（2026-09-27，opt-in 默认关）：严格 bool（1/0 int 亦拒）；true →
+    # spawn cmd 追加 --full-cores，CLI 层把 solver_opts.num_workers 覆盖为 逻辑核数−1
+    # （降一档保留 1 核防整机卡死；极限档仅覆盖 workers，exploration_pct /
+    # early_termination 固化值不动）。缺省/False = 不追加（旧行为逐字节不变）。
+    full_cores = payload.get('full_cores', False)
+    if not isinstance(full_cores, bool):
+        return JSONResponse({'error': f'full_cores 须为布尔值，当前为 {full_cores!r}'},
+                            status_code=400)
+
     # gate_mm：请求值优先（>0 覆盖），非法/未传回退 state（与 /ws/solve 同口径）。
     gate_mm = gate_state
     req_gate = payload.get('gate_mm')
@@ -973,6 +982,10 @@ async def _start_run(req: Request, family: str):
             cmd += ['--extreme-strategy', 'se']
     else:
         cmd += ['--strategy', mode]
+    # 满核运行旗标（full_cores=true 时）：置于 --time/--quiet 之前，--quiet 保持
+    # cmd 末位（既有测试断言 cmd[-1] == '--quiet' 不破）。
+    if full_cores:
+        cmd.append('--full-cores')
     cmd += ['--time', str(total_sec), '--quiet']
     # 快照先于 spawn：回退发现路径的 run_dir 基线 = spawn 决策前的目录集 —— CLI
     # 建 run_dir 再快也必然落在基线之后被发现（若快照晚于 spawn，CLI 抢先建目录

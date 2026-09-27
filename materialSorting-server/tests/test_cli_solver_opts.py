@@ -354,6 +354,45 @@ def test_main_solver_opts_fixed_all_seeds(iso_env, capsys, monkeypatch):
     assert 'rotate_opts' not in result['config']
 
 
+def test_main_full_cores_overrides_workers(iso_env, capsys, monkeypatch):
+    """--full-cores（2026-09-27）：num_workers = max(1, 逻辑核数−1)。无其它旋钮
+    时 = 仅 num_workers 单键固定档全 seed 生效 + config 段回显 + stdout 满核行；
+    cpu_count 取不到回退 4（→3）；覆盖最后施加（--solver-opts 显式 workers 亦被
+    覆盖、其余旋钮保留）。"""
+    tmp, runs, master = iso_env
+    cfg_path = _write_config(tmp / 'cfg_fc.json', master, seeds=[0, 42])
+    captured = []
+    from materialsorting.cli import run_config as rc_mod
+    monkeypatch.setattr(rc_mod, 'solve_pieces', _recording_fake_solve(captured))
+    monkeypatch.setattr(rc_mod.os, 'cpu_count', lambda: 8)
+
+    # 逻辑核 8 → workers 7，单键档全 seed 同档
+    rc = main([str(cfg_path), '--time', '2', '--full-cores'])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert '满核运行' in out and 'num_workers = 7' in out
+    assert [o for _, o in captured] == [{'num_workers': 7}] * 2
+    (rd,) = list(runs.iterdir())
+    result = json.loads((rd / 'result.json').read_text(encoding='utf-8'))
+    assert result['config']['solver_opts'] == {'num_workers': 7}
+
+    # cpu_count 取不到（None）→ 回退 4 → workers 3
+    captured.clear()
+    monkeypatch.setattr(rc_mod.os, 'cpu_count', lambda: None)
+    rc = main([str(cfg_path), '--time', '2', '--full-cores', '--name', 'fc2'])
+    assert rc == 0
+    assert [o for _, o in captured] == [{'num_workers': 3}] * 2
+
+    # 覆盖最后施加：显式 num_workers=2 被覆盖为 15，quadtree_depth 原样保留
+    captured.clear()
+    monkeypatch.setattr(rc_mod.os, 'cpu_count', lambda: 16)
+    rc = main([str(cfg_path), '--time', '2', '--full-cores', '--name', 'fc3',
+               '--solver-opts', '{"num_workers": 2, "quadtree_depth": 5}'])
+    assert rc == 0
+    assert [o for _, o in captured] == [
+        {'num_workers': 15, 'quadtree_depth': 5}] * 2
+
+
 def test_main_rotate_opts_pool_sequence(iso_env, capsys, monkeypatch):
     """AC#3：--rotate-opts 逐 seed 取池档（k=5 池 4 档：空档/档1/档2/档3/空档），
     result.json config 段回显 rotate_opts: true。"""

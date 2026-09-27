@@ -194,8 +194,10 @@ describe('StrategyRunModal (US-005)', () => {
     // 常驻提示：排料参数取当前面板
     const hints = Array.from(document.body.querySelectorAll('.strategy-hint')).map((h) => h.textContent);
     expect(hints.some((t) => t!.includes('排料参数取当前面板'))).toBe(true);
-    // 不暴露 --se-screen 等 4 个策略参数（无额外输入框）
-    expect(document.body.querySelectorAll('.strategy-modal input').length).toBe(0);
+    // 不暴露 --se-screen 等 4 个策略参数：唯一 input = 满核运行开关（2026-09-27）
+    const inputs = document.body.querySelectorAll('.strategy-modal input');
+    expect(inputs.length).toBe(1);
+    expect((inputs[0] as HTMLInputElement).type).toBe('checkbox');
   });
 
   it('模式说明行随切换（race → SE）', () => {
@@ -252,6 +254,57 @@ describe('StrategyRunModal (US-005)', () => {
       band: null,
       prefix: null,
     });
+  });
+
+  it('满核运行开关（2026-09-27）：默认关不发键；开 → 载荷 full_cores: true', async () => {
+    openModal();
+    renderModal();
+    // 开关与小字在场，位置 = 时长之下、模式之上（DOM 序对拍）
+    expect(document.body.querySelector('[data-testid="strategy-full-cores"]')).not.toBeNull();
+    expect(document.body.querySelector('[data-testid="strategy-full-cores-hint"]')!.textContent)
+      .toContain('保留 1 核维持系统流畅');
+    const sw = document.body.querySelector('[data-testid="strategy-full-cores"]')!;
+    expect(
+      document.body.querySelector('#strategy-minutes')!.compareDocumentPosition(sw)
+        & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      sw.compareDocumentPosition(document.body.querySelector('#strategy-mode')!)
+        & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    // 默认关：执行载荷无 full_cores 键（与旧版逐字节同形）
+    expect(
+      (document.body.querySelector('[data-testid="strategy-full-cores"] input') as HTMLInputElement)
+        .checked,
+    ).toBe(false);
+    act(() => {
+      (document.body.querySelector('[data-testid="strategy-exec-btn"]') as HTMLButtonElement).click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(startBodies).toHaveLength(1);
+    expect('full_cores' in (startBodies[0] as Record<string, unknown>)).toBe(false);
+    // 回配置态（start 后 starting 卸载配置态）→ 开开关 → 执行 → 载荷带键
+    act(() => {
+      useStrategyStore.getState().reset();
+    });
+    const input = document.body.querySelector(
+      '[data-testid="strategy-full-cores"] input') as HTMLInputElement;
+    act(() => {
+      input.click();
+    });
+    expect(input.checked).toBe(true);
+    act(() => {
+      (document.body.querySelector('[data-testid="strategy-exec-btn"]') as HTMLButtonElement).click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(startBodies).toHaveLength(2);
+    expect(startBodies[1]).toMatchObject({ mode: 'race', minutes: 20, full_cores: true });
   });
 
   it('band 开启 → start 载荷带 band（ctx.band 同源透传，2026-08-22 解除互斥）', async () => {

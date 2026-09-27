@@ -578,6 +578,35 @@ def test_extreme_constants_contract():
     assert EXTREME_BUDGET_S == 600
 
 
+def test_extreme_full_cores_only_overrides_workers(iso_env, capsys, monkeypatch):
+    """--full-cores × --extreme（2026-09-27，web 满核开关）：仅覆盖 num_workers
+    （cpu_count monkeypatch=32 → 31），exploration_pct 0.7 / early_termination
+    False 固化值不动；EXTREME_SOLVER_OPTS 常量本体不改写（覆盖在每 run 浅拷贝）；
+    result.json config 段 / solve 记录回显覆盖后档；stdout 有满核生效行。"""
+    tmp, runs, stats, master = iso_env
+    cfg_path = _write_config(tmp / 'cfg_fc.json', master, seeds=[0])
+    from materialsorting.cli import run_config as rc_mod
+    monkeypatch.setattr(rc_mod.os, 'cpu_count', lambda: 32)
+    fake = _patch_solve(monkeypatch, _EXTREME_TRAJ)
+
+    rc = main([str(cfg_path), '--extreme', '--time', '905', '--full-cores',
+               '--name', 'fc_extreme'])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert '满核运行' in out and 'num_workers = 31' in out
+    expected = {'exploration_pct': 0.7, 'early_termination': False,
+                'num_workers': 31}
+    assert all(c[3] == expected for c in fake.calls)
+    # 常量本体未被改写（回归锁：覆盖发生在 run 内浅拷贝上）
+    assert EXTREME_SOLVER_OPTS['num_workers'] == 4
+    rd = runs / ('fc_extreme_' + time.strftime('%Y%m%d-%H%M%S'))
+    assert rd.is_dir()
+    result = json.loads((rd / 'result.json').read_text(encoding='utf-8'))
+    assert result['config']['solver_opts'] == expected
+    for rec in result['solve']:
+        assert rec['solver_opts'] == expected
+
+
 def test_help_contains_extreme_flags():
     """--help 含极限旗标族（python -m 子进程冒烟，AC：跑通即分层无反向）。"""
     proc = subprocess.run(

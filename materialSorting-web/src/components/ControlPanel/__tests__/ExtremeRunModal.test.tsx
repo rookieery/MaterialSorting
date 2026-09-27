@@ -392,6 +392,49 @@ describe('ExtremeRunModal (US-003)', () => {
     });
   });
 
+  it('满核运行开关（2026-09-27）：默认关不发键；开 → 载荷 full_cores: true（仅覆盖 num_workers）', async () => {
+    openModal();
+    renderModal();
+    // 开关与小字在场，位置 = 总时长之下、模式之上（DOM 序对拍）
+    expect(document.body.querySelector('[data-testid="extreme-full-cores"]')).not.toBeNull();
+    expect(document.body.querySelector('[data-testid="extreme-full-cores-hint"]')!.textContent)
+      .toContain('保留 1 核维持系统流畅');
+    const sw = document.body.querySelector('[data-testid="extreme-full-cores"]')!;
+    expect(
+      document.body.querySelector('[data-testid="extreme-presets"]')!.compareDocumentPosition(sw)
+        & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(
+      sw.compareDocumentPosition(document.body.querySelector('[data-testid="extreme-mode"]')!)
+        & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    // 默认关：执行载荷无 full_cores 键（与旧版逐字节同形）
+    expect(
+      (document.body.querySelector('[data-testid="extreme-full-cores"] input') as HTMLInputElement)
+        .checked,
+    ).toBe(false);
+    await act(async () => {
+      (document.body.querySelector('[data-testid="extreme-exec-btn"]') as HTMLButtonElement).click();
+    });
+    expect(startBodies).toHaveLength(1);
+    expect('full_cores' in (startBodies[0] as Record<string, unknown>)).toBe(false);
+    // 回配置态（start 后 starting 卸载配置态）→ 开开关 → 执行 → 载荷带键
+    act(() => {
+      useExtremeStore.getState().reset();
+    });
+    const input = document.body.querySelector(
+      '[data-testid="extreme-full-cores"] input') as HTMLInputElement;
+    act(() => {
+      input.click();
+    });
+    expect(input.checked).toBe(true);
+    await act(async () => {
+      (document.body.querySelector('[data-testid="extreme-exec-btn"]') as HTMLButtonElement).click();
+    });
+    expect(startBodies).toHaveLength(2);
+    expect(startBodies[1]).toMatchObject({ time_total_s: 7200, strategy: 'race', full_cores: true });
+  });
+
   it('执行 disabled：solving / sizes 空', () => {
     openModal();
     renderModal(true, CTX);
