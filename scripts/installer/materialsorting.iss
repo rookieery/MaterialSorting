@@ -31,8 +31,14 @@
 ;     tasklist 查镜像名等价实现（安装/卸载双向 + 安装前兜底复查）。
 ; ============================================================================
 
+; 名称口径（2026-09-27 更名定案「VB超排」）：
+;   - MyAppName = 内部键（安装目录 {app} / 开始菜单旧组 / %LOCALAPPDATA% 用户
+;     数据目录同源），保持 ASCII「MaterialSorting」不动 —— 覆盖安装识别既有
+;     目录、tasklist 运行检测镜像名免编码坑（见 [Code] 注释）；
+;   - MyAppDisplayName = 对外显示名「VB超排」：向导标题 / 卸载项 / 开始菜单与
+;     桌面快捷方式（AppId 未变 → 老版本覆盖升级为同名新项，不断链）。
 #define MyAppName "MaterialSorting"
-#define MyAppNameCN "牛仔裤排料"
+#define MyAppDisplayName "VB超排"
 #ifndef MyAppVersion
 #define MyAppVersion "0.0.0-dev"
 #endif
@@ -47,24 +53,26 @@
 [Setup]
 ; AppId 固定 GUID：升级识别同一应用（改动 = 升级断链 + 控制面板残留旧卸载项）
 AppId={{ACDD30BC-6A3F-463F-96E7-EEA95B7CB366}
-AppName={#MyAppName}
+AppName={#MyAppDisplayName}
 AppVersion={#MyAppVersion}
-AppVerName={#MyAppName} {#MyAppVersion}
+AppVerName={#MyAppDisplayName} {#MyAppVersion}
 AppPublisher=MaterialSorting
-UninstallDisplayName={#MyAppName}（{#MyAppNameCN}）
+UninstallDisplayName={#MyAppDisplayName}
 UninstallDisplayIcon={app}\{#MyAppExeName}
+; 安装器 setup.exe 自身图标（exe 图标 = Nuitka --windows-icon-from-ico 同源 ico）
+SetupIconFile=app.ico
 ; per-user 免 UAC（PRD 定案③）—— 工厂机器常见无 admin
 PrivilegesRequired=lowest
 DefaultDirName={localappdata}\Programs\{#MyAppName}
-DefaultGroupName={#MyAppName}
+DefaultGroupName={#MyAppDisplayName}
 ; 覆盖安装是标准升级动线（PRD 定案⑤），目录已存在不弹误报警告
 DirExistsWarning=no
 DisableProgramGroupPage=yes
 ; setup.exe 自身版本资源（数字四段限制 → 独立 define）
 VersionInfoVersion={#MyAppVersionNumber}
 VersionInfoCompany=MaterialSorting
-VersionInfoProductName={#MyAppName} Workbench
-VersionInfoDescription={#MyAppName} Setup
+VersionInfoProductName={#MyAppDisplayName} Workbench
+VersionInfoDescription={#MyAppDisplayName} Setup
 ; 产物落仓库根 dist/（相对本 iss：scripts/installer/ → ../../dist）
 OutputDir=..\..\dist
 OutputBaseFilename=MaterialSorting-Setup-{#MyAppVersionFS}
@@ -93,13 +101,13 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Source: "..\..\dist\MaterialSorting.dist\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\{#MyAppName}（{#MyAppNameCN}）"; Filename: "{app}\{#MyAppExeName}"
-Name: "{group}\卸载 {#MyAppName}"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\{#MyAppName}（{#MyAppNameCN}）"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+Name: "{group}\{#MyAppDisplayName}"; Filename: "{app}\{#MyAppExeName}"
+Name: "{group}\卸载 {#MyAppDisplayName}"; Filename: "{uninstallexe}"
+Name: "{autodesktop}\{#MyAppDisplayName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
-; 装完即用（中文「运行 MaterialSorting」；静默安装不自动拉起）
-Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent
+; 装完即用（中文「运行 VB超排」；静默安装不自动拉起）
+Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppDisplayName}}"; Flags: nowait postinstall skipifsilent
 
 ; 故意无 [UninstallDelete]：卸载只删 [Files] 装入的文件，
 ; %LOCALAPPDATA%\MaterialSorting（上传母版/config_runs/状态文件）天然保留。
@@ -138,12 +146,12 @@ begin
     // （退出码 1），避免无头/批量部署挂死在看不见的对话框上
     if WizardSilent() then
     begin
-      Log('检测到 MaterialSorting 正在运行：静默安装中止');
+      Log('检测到 VB超排 正在运行：静默安装中止');
       Result := False;
       Break;
     end;
     // 「重试」= 重新探测（用户关掉黑窗后点它）；「取消」= 放弃安装
-    if MsgBox('检测到 MaterialSorting 正在运行。' + #13#10 + #13#10 +
+    if MsgBox('检测到 VB超排 正在运行。' + #13#10 + #13#10 +
               '请先关闭其控制台窗口（或用任务管理器结束 MaterialSorting.exe 进程），' +
               '再点击「重试」继续安装。', mbConfirmation, MB_RETRYCANCEL) = IDCANCEL then
     begin
@@ -158,7 +166,7 @@ begin
   // 向导页停留期间的兜底复查：仍在运行 → 返回非空串 = 中止安装并展示该信息
   Result := '';
   if IsAppRunning() then
-    Result := 'MaterialSorting 仍在运行，请先关闭其控制台窗口后重试。';
+    Result := 'VB超排 仍在运行，请先关闭其控制台窗口后重试。';
 end;
 
 function InitializeUninstall(): Boolean;
@@ -168,11 +176,11 @@ begin
   begin
     if UninstallSilent() then
     begin
-      Log('检测到 MaterialSorting 正在运行：静默卸载中止');
+      Log('检测到 VB超排 正在运行：静默卸载中止');
       Result := False;
       Break;
     end;
-    if MsgBox('检测到 MaterialSorting 正在运行，无法卸载。' + #13#10 + #13#10 +
+    if MsgBox('检测到 VB超排 正在运行，无法卸载。' + #13#10 + #13#10 +
               '请先关闭其控制台窗口，再点击「重试」继续卸载。',
               mbConfirmation, MB_RETRYCANCEL) = IDCANCEL then
     begin

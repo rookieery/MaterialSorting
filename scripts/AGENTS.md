@@ -121,3 +121,18 @@ venv python 直跑——nuitka/spyrrow/materialsorting 都在 venv）→
   createRequire 锚 package.json）。
 - 人工运营 checklist（无 Python 虚拟机安装 / 360·火绒·Defender 观察 / CPU 基线
   话术 4 核 8G 起步 8 核 16G 推荐）= US-005 发版手册**运营步骤**，非本脚本自动判据。
+
+## make_app_icon.py（2026-09-27，VB超排 更名定稿）
+
+应用图标生成器（Pillow + Windows 系统字体纯本地渲染，1024 超采样出 512）。
+候选期共产出 12 稿（`out/icon_candidates/`，preview.html 浏览器挑选），用户定稿
+**02「嵌套裁片·冰蓝」**（浅蓝圆角方 + 白色唛架条带 + 三块丹宁蓝裁片）。定稿资产
+入库 `scripts/installer/app.ico`（多尺寸 16~256）+ `app.png`（512），重生成：
+
+    .venv/Scripts/python.exe scripts/make_app_icon.py --index 2 --ico scripts/installer/app.ico
+    .venv/Scripts/python.exe scripts/make_app_icon.py --index 2 --outdir scripts/installer
+    （重命名 02_c02.png → app.png）
+
+消费点：`build_freeze.py` Nuitka `--windows-icon-from-ico`（exe 图标）+
+`materialsorting.iss` `SetupIconFile`（安装器图标）+ 前端 `public/favicon.png`。
+改设计改对应候选函数重跑即可；`--index`/`--ico` 见模块 docstring。

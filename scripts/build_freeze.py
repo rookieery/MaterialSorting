@@ -82,6 +82,9 @@ EXE_PATH = DIST_APP_DIR / f'{APP_BASENAME}.exe'
 # ---------------------------------------------------------------- 安装包（US-005）
 ISS_FILE = ROOT / 'scripts' / 'installer' / 'materialsorting.iss'
 ISL_FILE = ROOT / 'scripts' / 'installer' / 'ChineseSimplified.isl'
+# 应用图标（2026-09-27 定稿：候选 02「嵌套裁片·冰蓝」，用户从 12 稿中选定；
+# 源头可重生成 = scripts/make_app_icon.py --index 2 --ico scripts/installer/app.ico）。
+APP_ICON = ROOT / 'scripts' / 'installer' / 'app.ico'
 # ISCC 兜底安装位（PATH 缺席时逐个探测）：%LOCALAPPDATA%\Programs（winget
 # --scope user 落点）+ Program Files 两个官方默认位。
 ISCC_FALLBACK_PATHS = (
@@ -90,9 +93,9 @@ ISCC_FALLBACK_PATHS = (
 )
 # 绿色 zip 内附一行启动说明（PRD AC4）。
 PORTABLE_README_NAME = '启动说明.txt'
-PORTABLE_README_LINE = ('解压后双击 MaterialSorting.exe 启动（自动打开默认浏览器）；'
-                        '用户数据在 %LOCALAPPDATA%\\MaterialSorting，与程序目录'
-                        '分离，升级覆盖不丢')
+PORTABLE_README_LINE = ('解压后双击 MaterialSorting.exe 启动 VB超排（自动打开默认'
+                        '浏览器）；用户数据在 %LOCALAPPDATA%\\MaterialSorting，'
+                        '与程序目录分离，升级覆盖不丢')
 
 # 六步流水基线；--installer 尾部追加第 7 步（main 里按需置 7，打印口径统一）。
 STEP_TOTAL = 6
@@ -100,10 +103,11 @@ STEP_TOTAL = 6
 # ---------------------------------------------------------------- 版本资源
 # 资源串一律 ASCII：中文进 build_definitions.h 后被 cl.exe 按系统代码页(936)
 # 误读，UTF-8 多字节错位产生「常量中有换行符 C2001」编译失败（2026-09-27 实
-# 测）；中文产品名走 US-005 Inno 安装包/快捷方式，exe 资源页保 ASCII。
+# 测）；中文产品名「VB超排」走 US-005 Inno 安装包/快捷方式/前端标题，exe 资源
+# 页保 ASCII 对应物（2026-09-27 更名定稿）。
 COMPANY_NAME = 'MaterialSorting'
-PRODUCT_NAME = 'MaterialSorting Workbench'
-FILE_DESCRIPTION = 'Jeans marker making workbench'
+PRODUCT_NAME = 'VB Super Nesting Workbench'
+FILE_DESCRIPTION = 'VB Super Nesting (jeans marker making)'
 
 # ---------------------------------------------------------------- 资源红线③常量
 JOBS_HARD_CAP = 8            # PRD AC8：--jobs 显式上限锚（本机 32 核上 ≠ 32）
@@ -380,6 +384,7 @@ def nuitka_command(jobs: int, file_version: str, version_display: str,
         f'--file-description={FILE_DESCRIPTION} {version_display}',  # 完整版本串（含 git describe 短串）挂描述
         # ---- Windows 形态
         '--windows-console-mode=force',        # 保留控制台窗口（PRD 定案②：现场排障第一现场就是黑窗日志）
+        f'--windows-icon-from-ico={APP_ICON}',  # exe/任务栏图标（02 冰蓝定稿，资源为二进制 .ico 无 936 代码页坑）
         # ---- 编译器强制 MinGW64（2026-09-27 定案）
         # MSVC cl 14.3 编 Nuitka 巨型 TU 偶发编译器本体崩溃，两轮不同模块实测：
         # ezdxf.render.mleader C1001 内部错误 / matplotlib.font_manager
