@@ -24,6 +24,7 @@ ms-explore = "materialsorting.dxf_parser.explore:main"
 ms-sparrow-baseline = "materialsorting.nesting_engine.sparrow_baseline:main"
 ms-sparrow-exp = "materialsorting.nesting_engine.sparrow_experiments:main"
 ms-web = "materialsorting.web.server:main"
+ms-desktop = "materialsorting.launcher:main"   # 桌面入口（prd-local-deploy-freeze US-001；冻结后 = MaterialSorting.exe，模块级仅标准库）
 ms-run-config = "materialsorting.cli.run_config:main"
 ms-lns = "materialsorting.cli.lns:main"
 

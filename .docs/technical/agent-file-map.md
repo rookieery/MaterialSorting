@@ -16,10 +16,11 @@ cli  →  web  →  nesting_engine  →  nesting_bounds  →  dxf_parser
 
 ```
 materialSorting-server/
-├── pyproject.toml                     包定义 + 8 个 ms-* console_scripts + [web] 可选依赖（fastapi/uvicorn/matplotlib/python-multipart）
+├── pyproject.toml                     包定义 + 7 个 ms-* console_scripts + [web] 可选依赖（fastapi/uvicorn/matplotlib/python-multipart）
 ├── spyrrow_build.json                 spyrrow 私有 wheel rev 钉板（US-004 起随切换助手入册）：{spyrrow_ms_commit, sparrow_rev, wheel_version, built_at} 四字段，单一真相源在 spyrrow-ms 侧交付台账（每出 wheel 同步写），MS 侧 scripts/spyrrow_wheel.py 只读 + 漂移提示
 └── src/materialsorting/
     ├── paths.py                       集中路径常量（优先环境变量，禁止硬编码 ..；US-003 加 PREFIX_RUNS_DIR）
+    ├── launcher.py                    桌面入口（prd-local-deploy-freeze US-001，2026-09-27 新增；ms-desktop / 冻结后 MaterialSorting.exe）：**模块级仅 import 标准库（AST 守卫 tests/test_launcher.py）**——paths.py import 期固化路径常量，launcher 必须「先设 env → 再函数内延迟 import 业务」（顺序红线：模块级混入业务 import 不报错只写错目录）。main() 首行 multiprocessing.freeze_support()（PyInstaller 必须/Nuitka 无害）+ stdout/stderr reconfigure UTF-8（run_config 同款防 GBK 乱码）；三角色分发：①无参数 = start_desktop 桌面编排（apply_frozen_env → 单实例判据 `_existing_instance_port`（读 `<OUT_DIR>/web_port.txt` + GET / 2s 健康探测，命中只 webbrowser.open exit 0 不重复起服务；竞态边界=健康探测兜底指向先起者，命名互斥体 v2）→ 端口探测 resolve_port（MS_WEB_PORT 显式直用/非法 SystemExit；否则 BASE_PORT=8010 起逐 +1 bind 探测，PORT_PROBE_MAX_OFFSET=9，全占 SystemExit）→ 实际端口写 env + web_port.txt → watcher daemon 线程（_http_ok 就绪后才 webbrowser.open，防首开白页，60s 放弃）+ 主线程 web.server.main()（uvicorn，端口经 MS_WEB_PORT 传递，不复制粘贴端口逻辑））；②`--cli <args...>` = _dispatch_cli → cli.run_config.main(rest)（`from .cli.run_config import main` 子模块形态 + 退出码透传；**CLI_FLAG='--cli' 常量 = US-002 web/_frozen_spawn frozen 前缀 [exe, '--cli'] 的分发对端契约锚点**）；③`--check` = run_check 自检（frozen 态/版本串 importlib.metadata/解析后 env/paths 各常量落点/探测端口/warm_start_supported() 结果，exit 0 无副作用——US-004 冻结验收与售后版本识别消费）。frozen 环境重定向 apply_frozen_env（仅 getattr(sys,'frozen',False) 为真；setdefault 不覆盖显式 env）：MS_STATIC_DIR=<exe 目录>/static、MS_OUT_DIR=%LOCALAPPDATA%/MaterialSorting/out（仅自设缺省值 mkdir parents；LOCALAPPDATA 缺失回退 ~/AppData/Local）；**未冻结（dev）零重定向——python -m materialsorting.launcher 行为 = 原 ms-web（8010 基准 + repo 路径）**。未知参数 exit 2 打印用法；-h/--help 子命令用法
     ├── dxf_parser/                    底层 DXF 读写（仅 stdlib + ezdxf）
     │   ├── collect.py                 US-003 母版深度解析（collect_pieces_with_details + LAYER_MAPPING）
     │   ├── reader.py                  ezdxf recover + GBK 块名 + R12 POLYLINE 读取
@@ -508,6 +509,7 @@ out/sparrow_baseline/pieces_intermediate.json          ← 全局镜像（单文
 | `ms-sparrow-baseline` | `nesting_engine.sparrow_baseline:main` | sparrow 基线求解（`{0,180}`，无 erode） |
 | `ms-sparrow-exp` | `nesting_engine.sparrow_experiments:main` | 旋转/重合公差/组合实验 |
 | `ms-web` | `web.server:main` | 可视化工作台（uvicorn :8010） |
+| `ms-desktop` | `launcher:main` | 桌面入口（prd-local-deploy-freeze US-001）：frozen 重定向 + 端口探测（8010 起 +9）+ 单实例（web_port.txt 健康探测）+ 就绪开浏览器；`--cli` 子进程分发（US-002 冻结 spawn 对端）；`--check` 自检；dev 态 = ms-web 同行为零重定向 |
 | `ms-run-config` | `cli.run_config:main` | 配置驱动排料一条命令（commit → 求解 → result.json，US-003；`out/config_runs/<name>_<时间戳>/`；`--lns` 自动 LNS 后处理（PC-008，严格更优才回写）） |
 | `ms-lns` | `cli.lns:main` | LNS 波段重排后处理（PC-007；对 run_dir 最优布局 ruin-and-recreate，产 result_lns.json + 对比 SVG） |
 
