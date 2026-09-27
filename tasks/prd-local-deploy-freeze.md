@@ -20,6 +20,7 @@
 - `paths.py` / `server.py` / `solver.py` 等既有模块**零改动**（env 覆盖机制现状已足够）；全部新代码进新文件（launcher、spawn helper、构建/验收脚本）。
 - 分层红线延续：launcher 顶层模块**模块级仅标准库**（env 先于任何业务 import 的顺序红线，AST 守卫）；spawn helper 禁 import cli（web 层既有惯例）。
 - 杀软误报治理：exe 带完整版本资源（company/product/version）；**不引入**任何加壳/混淆器（Nuitka 已是真编译）。
+- 构建资源安全（2026-09-27 事故定案）：裸跑全核 Nuitka 视为事故级违规——build_freeze 必须限 jobs + 低优先级 + 孤儿 fail-fast（详见 US-003 AC8）；运维面构建前停 ms-web/长跑 solver 等常驻负载。
 
 ## 目标 (Goals)
 
@@ -59,12 +60,14 @@
 - **Description**: As a 发版维护者, I want 一条命令从源码产出可分发 onedir 目录, so that 发版可重复、依赖闭包与数据文件全部显式声明，不依赖手工记忆。
 - **Acceptance Criteria**:
   1. 新增 `scripts/build_freeze.py`（venv python 直跑，仅标准库 + subprocess 调用外部工具）：步骤 = ①前端 static 存在性检查（缺则提示先 `npm run build`，`--skip-frontend-check` 跳过）；②环境自检（nuitka/zstandard 缺则给出 pip 命令；C 编译器缺失时提示 Nuitka 自动下载 MinGW64 或装 MSVC Build Tools，两者皆备优先 MSVC）；③spyrrow 版本检查——`spyrrow_build.json` 钉板与已装版本一致性 + `+ms<N>` tag 校验，不满足则**退出 1**（防打包锁错 wheel 静默失去 warm，A2 红线）；④Nuitka 编译；⑤dist 自检（见 AC4）。
-  2. Nuitka 命令组装（脚本内常量段，逐旗标注释）：`--standalone --onedir`；入口 = `materialsorting/launcher.py`；`--include-package=materialsorting`；matplotlib/numpy/shapely 按插件/数据需要显式启用（`--enable-plugin=...` / `--include-package-data=...`，以实际调通为准并注释原因）；**`--include-distribution-metadata=spyrrow` 红线旗标**（warmstart 探测依赖）+ `--include-distribution-metadata=materialsorting`（运行期版本串显示依赖，见 US-001 `--check`）；`--include-data-dir=<static>=static`（前端产物）；版本资源 `--company-name/--product-name/--file-version/--file-description`（版本号 = pyproject version + git describe 短串，取不到 git 则纯版本号）；`--windows-console-mode=force`（保留控制台）；`--output-dir=dist`。
+  2. Nuitka 命令组装（脚本内常量段，逐旗标注释）：`--standalone --onedir`；入口 = `materialsorting/launcher.py`；`--include-package=materialsorting`；matplotlib/numpy/shapely 按插件/数据需要显式启用（`--enable-plugin=...` / `--include-package-data=...`，以实际调通为准并注释原因）；**`--include-distribution-metadata=spyrrow` 红线旗标**（warmstart 探测依赖）+ `--include-distribution-metadata=materialsorting`（运行期版本串显示依赖，见 US-001 `--check`）；`--include-data-dir=<static>=static`（前端产物）；版本资源 `--company-name/--product-name/--file-version/--file-description`（版本号 = pyproject version + git describe 短串，取不到 git 则纯版本号）；`--windows-console-mode=force`（保留控制台）；`--output-dir=dist`；`--jobs=N`（**资源红线**，取值规则见 AC8，绝不落回 Nuitka 缺省=全核并发）。
   3. 构建幂等：dist 目录先清后建；任何步骤失败退出非 0 并打印失败步骤名。
   4. dist 自检（脚本内置，构建尾部自动跑）：dist 内 grep `.py`/`.pyc`/`.docs`/`tests`/`scripts` 零命中（源码泄漏红线）；`MaterialSorting.exe --check` 跑通且输出 `frozen: True`、`warm: True`（**spyrrow 元数据捆绑的判据**）、static/fonts 路径存在。
   5. 本机端到端冒烟（AC 判据，人工/脚本拉起 dist 实例）：上传母版 → parse → 短预算求解（WS 帧回来）→ 导出 PLT-clean / DXF / **PNG（matplotlib 路径）**；高级运行 `--strategy race` 短预算跑通（冻结 spawn `exe --cli` 链路 + run_dir 产物落 LOCALAPPDATA）；SE 延长轮 warm 生效签名（ext 首帧即冠军密度）。
   6. 脚本支持 `--launch` 直接拉起 dist 冒烟实例（打印 URL，Ctrl-C 退出）；文档化注释头写明构建机一次性准备（MSVC 或让 Nuitka 下 MinGW、node、Inno 可选）。
   7. Python 模块/脚本入口检查通过（`python scripts/build_freeze.py --help`）；脚本不改任何既有 src 文件。
+  8. **资源安全三重防护（2026-09-27 整机假死事故复盘，红线）**：①Nuitka 命令必含 `--jobs=N` 显式上限——默认 `min(8, max(2, os.cpu_count() // 4))`，再按可用物理内存钳制（ctypes `GlobalMemoryStatusEx` 仅标准库，每 job 预留 ≥3GB，不足降 jobs 下限 2 并打印推导；`--jobs` 参数 / `MS_FREEZE_JOBS` env 可覆盖），**绝不落回 Nuitka 缺省（= 逻辑核数全核并发）**——事故机理：本机 32 并发 cl.exe 编大 TU 单进程峰值 1~3GB，提交需求远超物理 31.7G（页面文件仅 ~2G 零余量）⇒ 缺页风暴 + 全核满载锁死 UI/系统进程，硬重启收场（Kernel-Power 41/6008 @2026-09-27 12:23、clcache 仅 44 obj/1224 .c）；②编译子进程树低优先级启动：`subprocess.Popen(creationflags=subprocess.BELOW_NORMAL_PRIORITY_CLASS)`（非 Windows 平台 `getattr` 缺省 0 优雅降级）——满载时 UI 仍可响应、保留抢回控制权能力；③孤儿 fail-fast：构建前扫描存活 nuitka/cl.exe/ccache/clcache/scons 编译进程（硬重启残留叠加 = 双倍风暴），发现即 exit 1 打印进程名+PID，`--force` 才放行。启动时打印核数/可用内存/jobs 数/预估时长（30~90min）。
+  9. `--dry-run`：打印完整 Nuitka 命令行 + 环境自检 + jobs 推导，不执行编译（快速验证与回归断言入口）；验收断言输出含 `--jobs=` 且本机 32 核上值 ≤8 ≠32（防回归到全核缺省）。
 - **Priority**: 3
 
 ### US-004: 冻结验收自动化（scripts/smoke_freeze.mjs + 验收清单）

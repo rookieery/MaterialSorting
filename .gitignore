@@ -32,3 +32,6 @@ materialSorting-web/vite.config.d.ts
 
 # 冒烟脚本截图产物（scripts/shot-*.png，按需再生成）
 materialSorting-web/scripts/shot-*.png
+
+# Nuitka 冻结构建产物（scripts/build_freeze.py 输出 dist/MaterialSorting.dist；US-003）
+dist/
