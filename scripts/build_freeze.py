@@ -5,6 +5,8 @@
     .venv/Scripts/python.exe scripts/build_freeze.py            # 全量构建 + dist 自检
     .venv/Scripts/python.exe scripts/build_freeze.py --dry-run  # 打印命令行/自检/jobs 推导，不编译
     .venv/Scripts/python.exe scripts/build_freeze.py --launch   # 直接拉起 dist 冒烟实例（Ctrl-C 退出）
+    .venv/Scripts/python.exe scripts/build_freeze.py --installer           # 全量构建 + 第 7 步：安装包/绿色 zip
+    .venv/Scripts/python.exe scripts/build_freeze.py --installer-only      # 不编译，对既有 dist 补打包（iss 迭代用）
 
 必须用仓库 venv 的 Python 直跑（nuitka / spyrrow / materialsorting 均装在
 venv）。产物 = ``dist/MaterialSorting.dist/MaterialSorting.exe``（standalone
@@ -19,7 +21,11 @@ onedir，后端源码真编译为机器码；坚决不用 onefile —— 解压�
     编 Nuitka 巨型 TU 偶发编译器本体崩溃（2026-09-27 两轮不同模块实测 C1001 /
     0xC0000005，详见 nuitka_command 常量段注释），故弃用。
   - node：前端 ``npm run build`` 产 ``materialSorting-web/static/`` 用（本机已有）。
-  - Inno Setup：可选，US-005 安装包线，不在本脚本范围。
+  - Inno Setup（可选，``--installer`` 安装包线，缺席自动跳过不失败）：
+    ``winget install --id JRSoftware.InnoSetup --scope user``（免管理员，落
+    ``%LOCALAPPDATA%\Programs\Inno Setup 6``）或官网安装器
+    https://jrsoftware.org/isdl.php；简体中文语言包已随仓 vendor
+    （scripts/installer/ChineseSimplified.isl），无需另装。
 
 运维注记（资源红线③，2026-09-27 整机假死事故复盘）：
   - **Nuitka 版本**：验证基线 4.3rc3（4.2.2 优化器对闭包内 try/except 大模块
@@ -57,6 +63,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import zipfile
 from pathlib import Path
 
 # ---------------------------------------------------------------- 路径常量
@@ -71,6 +78,24 @@ DIST_DIR = ROOT / 'dist'
 APP_BASENAME = 'MaterialSorting'
 DIST_APP_DIR = DIST_DIR / f'{APP_BASENAME}.dist'
 EXE_PATH = DIST_APP_DIR / f'{APP_BASENAME}.exe'
+
+# ---------------------------------------------------------------- 安装包（US-005）
+ISS_FILE = ROOT / 'scripts' / 'installer' / 'materialsorting.iss'
+ISL_FILE = ROOT / 'scripts' / 'installer' / 'ChineseSimplified.isl'
+# ISCC 兜底安装位（PATH 缺席时逐个探测）：%LOCALAPPDATA%\Programs（winget
+# --scope user 落点）+ Program Files 两个官方默认位。
+ISCC_FALLBACK_PATHS = (
+    r'C:\Program Files (x86)\Inno Setup 6\ISCC.exe',
+    r'C:\Program Files\Inno Setup 6\ISCC.exe',
+)
+# 绿色 zip 内附一行启动说明（PRD AC4）。
+PORTABLE_README_NAME = '启动说明.txt'
+PORTABLE_README_LINE = ('解压后双击 MaterialSorting.exe 启动（自动打开默认浏览器）；'
+                        '用户数据在 %LOCALAPPDATA%\\MaterialSorting，与程序目录'
+                        '分离，升级覆盖不丢')
+
+# 六步流水基线；--installer 尾部追加第 7 步（main 里按需置 7，打印口径统一）。
+STEP_TOTAL = 6
 
 # ---------------------------------------------------------------- 版本资源
 # 资源串一律 ASCII：中文进 build_definitions.h 后被 cl.exe 按系统代码页(936)
@@ -234,6 +259,92 @@ def query_git() -> tuple[str | None, int | None]:
     return describe, count
 
 
+# ================================================================ 安装包（US-005，纯函数）
+
+def fs_version(display: str) -> str:
+    """display 版本串 → 文件名安全串：空白折叠为 ``-``。
+
+    ``0.1.0 g590375b dirty`` → ``0.1.0-g590375b-dirty`` —— setup.exe 与
+    portable zip 的 ``<版本>`` 段共用本函数（单一真相源，两侧命名不漂移）。
+    """
+    return re.sub(r'\s+', '-', display.strip())
+
+
+def find_iscc() -> Path | None:
+    """ISCC.exe 定位：PATH → winget/官方标准安装位（PRD AC2）。
+
+    全缺席 → None（调用方打印安装指引并跳过安装包编译，不判失败）。
+    """
+    found = shutil.which('ISCC.exe') or shutil.which('ISCC')
+    if found:
+        return Path(found)
+    localappdata = os.environ.get('LOCALAPPDATA', '')
+    candidates = ([Path(localappdata) / 'Programs' / 'Inno Setup 6' / 'ISCC.exe']
+                  if localappdata else [])
+    candidates += [Path(p) for p in ISCC_FALLBACK_PATHS]
+    for c in candidates:
+        if c.is_file():
+            return c
+    return None
+
+
+def iscc_command(iscc: Path, display: str, file_version: str,
+                 iss: Path | None = None) -> list[str]:
+    """ISCC 命令行：版本经 ``/D`` 注入（与 Nuitka 冻结资源同源版本串，AC1）。
+
+    三 define 对齐 iss 头 ``#ifndef`` 缺省占位（手工裸编译 iss 不炸）：
+    ``MyAppVersion``（AppVersion 属性串，可含空格）/ ``MyAppVersionNumber``
+    （数字四段，VersionInfoVersion 限制）/ ``MyAppVersionFS``（文件名安全串，
+    OutputBaseFilename）。
+    """
+    return [str(iscc),
+            f'/DMyAppVersion={display}',
+            f'/DMyAppVersionNumber={file_version}',
+            f'/DMyAppVersionFS={fs_version(display)}',
+            str(iss if iss is not None else ISS_FILE)]
+
+
+def sign_command(target: Path, env: dict[str, str]) -> list[str] | None:
+    """signtool 钩子（PRD 定案⑦：签名证书不采购，仅留代码路径）。
+
+    env ``MS_SIGNING_PFX`` 与 ``MS_SIGNING_TS`` **同时在场**才启用（运营采购
+    证书后配置 env 即生效）；缺任一 → None（不签名）；env 在场但 signtool
+    不在 PATH → SystemExit（配了签名却没签 = 不该静默放过）。
+    """
+    pfx = env.get('MS_SIGNING_PFX', '').strip()
+    ts = env.get('MS_SIGNING_TS', '').strip()
+    if not (pfx and ts):
+        return None
+    tool = shutil.which('signtool.exe') or shutil.which('signtool')
+    if not tool:
+        raise SystemExit('MS_SIGNING_PFX/MS_SIGNING_TS 已配置但 signtool 不在 '
+                         'PATH —— 安装 Windows SDK（Signing Tools）后重试')
+    cmd = [tool, 'sign', '/fd', 'SHA256', '/tr', ts, '/td', 'SHA256', '/f', pfx]
+    pwd = env.get('MS_SIGNING_PWD', '')
+    if pwd:
+        cmd += ['/p', pwd]
+    return cmd + [str(target)]
+
+
+def make_portable_zip(dist_app_dir: Path, zip_path: Path,
+                      readme_name: str = PORTABLE_README_NAME,
+                      readme_line: str = PORTABLE_README_LINE) -> int:
+    """绿色 zip（PRD AC4）：dist 整树压缩 + 一行启动说明 txt。
+
+    zip 内统一顶层目录 ``MaterialSorting/``（解压不散一地；``.dist`` 后缀
+    不进包名）；启动说明挂顶层目录下。返回打包文件数（说明 txt 不计）。
+    """
+    count = 0
+    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for path in sorted(dist_app_dir.rglob('*')):
+            if path.is_file():
+                zf.write(path, f'{APP_BASENAME}/'
+                         f'{path.relative_to(dist_app_dir).as_posix()}')
+                count += 1
+        zf.writestr(f'{APP_BASENAME}/{readme_name}', readme_line + '\n')
+    return count
+
+
 # ================================================================ Nuitka 命令（常量段）
 
 def nuitka_command(jobs: int, file_version: str, version_display: str,
@@ -326,7 +437,7 @@ def parse_check_output(text: str) -> dict[str, str]:
 
 def step_static_check() -> None:
     if STATIC_DIR.is_dir() and (STATIC_DIR / 'index.html').is_file():
-        print(f'[1/6] 前端 static 检查：OK（{STATIC_DIR}）')
+        print(f'[1/{STEP_TOTAL}] 前端 static 检查：OK（{STATIC_DIR}）')
         return
     _fail('前端 static 检查',
           f'{STATIC_DIR} 缺失或无 index.html —— 先 cd materialSorting-web && '
@@ -335,7 +446,7 @@ def step_static_check() -> None:
 
 
 def step_env_selfcheck() -> None:
-    print('[2/6] 环境自检：')
+    print(f'[2/{STEP_TOTAL}] 环境自检：')
     r = _run([sys.executable, '-m', 'nuitka', '--version'], timeout=120)
     if r.returncode != 0:
         _fail('环境自检',
@@ -373,7 +484,7 @@ def step_env_selfcheck() -> None:
 
 
 def step_spyrrow_check() -> None:
-    print('[3/6] spyrrow 私有 wheel 钉板校验：')
+    print(f'[3/{STEP_TOTAL}] spyrrow 私有 wheel 钉板校验：')
     try:
         pin = json.loads(SPYRROW_PIN_FILE.read_text(encoding='utf-8'))
         pinned = pin['wheel_version']
@@ -437,7 +548,7 @@ def scan_orphan_processes() -> list[tuple[str, str]]:
 
 
 def step_orphan_scan(force: bool) -> None:
-    print('[4/6] 孤儿编译进程扫描：')
+    print(f'[4/{STEP_TOTAL}] 孤儿编译进程扫描：')
     hits = scan_orphan_processes()
     if hits:
         for name, pid in hits:
@@ -452,7 +563,7 @@ def step_orphan_scan(force: bool) -> None:
 
 
 def step_compile(cmd: list[str], jobs: int) -> None:
-    print(f'[5/6] Nuitka 编译启动（jobs={jobs}，BELOW_NORMAL 优先级，预估 '
+    print(f'[5/{STEP_TOTAL}] Nuitka 编译启动（jobs={jobs}，BELOW_NORMAL 优先级，预估 '
           f'{BUILD_TIME_HINT}）：')
     print('  ' + ' '.join(str(c) for c in cmd))
     t0 = time.monotonic()
@@ -485,7 +596,7 @@ def step_compile(cmd: list[str], jobs: int) -> None:
 
 
 def step_dist_check(expected_version: str) -> None:
-    print('[6/6] dist 自检：')
+    print(f'[6/{STEP_TOTAL}] dist 自检：')
     if not EXE_PATH.is_file():
         _fail('dist 自检', f'{EXE_PATH} 不存在（编译产物缺失）')
     # ① 源码泄漏红线②
@@ -535,6 +646,58 @@ def step_dist_check(expected_version: str) -> None:
         _fail('dist 自检', 'static/fonts 路径校验失败（前端产物或字体资源未捆绑）')
 
 
+def step_installer(display: str, file_version: str) -> None:
+    """第 7 步（``--installer`` / ``--installer-only``）：中文安装包 + 绿色 zip。
+
+    - ISCC 缺席 = 打印安装指引并跳过安装包编译，**不判失败**（PRD AC2）；
+    - 绿色 zip 恒产（AC4，与 ISCC 在场与否无关）；
+    - signtool 钩子仅 env ``MS_SIGNING_PFX``/``MS_SIGNING_TS`` 在场才调用。
+    """
+    print(f'[{STEP_TOTAL}/{STEP_TOTAL}] 安装包与绿色 zip：')
+    if not EXE_PATH.is_file():
+        _fail('安装包', f'{EXE_PATH} 缺失 —— 先完整构建（本步骤不打包子集）')
+    for asset, label in ((ISS_FILE, 'Inno 脚本'), (ISL_FILE, '中文语言包')):
+        if not asset.is_file():
+            _fail('安装包', f'{label}资产缺失：{asset}')
+    setup_exe = DIST_DIR / f'{APP_BASENAME}-Setup-{fs_version(display)}.exe'
+    iscc = find_iscc()
+    if iscc is None:
+        print('  ISCC.exe 未找到 —— 跳过安装包编译（不判失败，其余产物完整）。'
+              '安装指引：')
+        print('    winget install --id JRSoftware.InnoSetup --scope user'
+              '   # 推荐：免管理员，落 %LOCALAPPDATA%\\Programs\\Inno Setup 6')
+        print('    或官网安装器 https://jrsoftware.org/isdl.py'
+              '（默认装 C:\\Program Files (x86)\\Inno Setup 6）')
+        print('    简体中文语言包已随仓 vendor（scripts/installer/'
+              'ChineseSimplified.isl），无需另装')
+        print('    装好后补打包：build_freeze.py --installer-only'
+              '（复用既有 dist，不重编译）')
+    else:
+        cmd = iscc_command(iscc, display, file_version)
+        print(f'  ISCC：{iscc}')
+        print('  ' + ' '.join(cmd))
+        r = _run(cmd, timeout=1800)
+        if r.returncode != 0 or not setup_exe.is_file():
+            _fail('安装包', f'ISCC 退出码 {r.returncode}（或产物 {setup_exe} 未出现）'
+                  f'{(r.stdout or "")[-800:]} {(r.stderr or "")[-800:]}')
+        print(f'  安装包：{setup_exe.name}'
+              f'（{setup_exe.stat().st_size / 1024 ** 2:.0f} MiB）')
+        sign = sign_command(setup_exe, dict(os.environ))
+        if sign is None:
+            print('  签名：跳过（未配置 MS_SIGNING_PFX/MS_SIGNING_TS —— PRD 定案⑦'
+                  '证书不采购，误报治理走发版手册申诉指引）')
+        else:
+            rs = _run(sign, timeout=300)
+            if rs.returncode != 0:
+                _fail('安装包', f'signtool 退出码 {rs.returncode}：'
+                      f'{(rs.stdout or "")[-400:]} {(rs.stderr or "")[-400:]}')
+            print('  签名：OK（signtool 钩子）')
+    zip_path = DIST_DIR / f'{APP_BASENAME}-portable-{fs_version(display)}.zip'
+    n = make_portable_zip(DIST_APP_DIR, zip_path)
+    print(f'  绿色 zip：{zip_path.name}（{n} 文件 + 启动说明.txt，'
+          f'{zip_path.stat().st_size / 1024 ** 2:.0f} MiB，解压即用）')
+
+
 def launch_dist() -> int:
     """``--launch``：直接拉起 dist 冒烟实例（打印 URL，Ctrl-C 退出）。"""
     if not EXE_PATH.is_file():
@@ -573,10 +736,19 @@ def build_parser() -> argparse.ArgumentParser:
                         help='孤儿编译进程扫描命中时放行（自担风险）')
     parser.add_argument('--launch', action='store_true',
                         help='不构建，直接拉起既有 dist 冒烟实例（Ctrl-C 退出）')
+    parser.add_argument('--installer', action='store_true',
+                        help='构建尾部追加第 7 步：ISCC 中文安装包（ISCC 缺席'
+                             '打印安装指引跳过、不判失败）+ 绿色 portable zip'
+                             '（恒产）')
+    parser.add_argument('--installer-only', action='store_true',
+                        help='不重新编译：对既有 dist 直接跑 dist 自检 + 第 7 步'
+                             '打包（iss 迭代/补打包用；版本串取当前 git 态，'
+                             '与 --dry-run/--launch/--installer 互斥）')
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
+    global STEP_TOTAL   # --installer 形态下流水扩为 7 步（打印口径统一）
     try:   # Windows 管道/重定向默认 GBK，中文输出前强制 UTF-8（scripts/ 惯例）
         sys.stdout.reconfigure(encoding='utf-8')
         sys.stderr.reconfigure(encoding='utf-8')
@@ -587,6 +759,29 @@ def main(argv: list[str] | None = None) -> int:
         if args.dry_run:
             _fail('参数', '--launch 与 --dry-run 互斥')
         return launch_dist()
+    if args.installer_only:
+        if args.dry_run or args.launch:
+            _fail('参数', '--installer-only 与 --dry-run/--launch 互斥')
+        if args.installer:
+            _fail('参数', '--installer-only 已含第 7 步打包（不要再给 --installer）')
+        STEP_TOTAL = 7
+        py_ver = read_pyproject_version()
+        describe, commit_count = query_git()
+        file_version, display = compute_versions(py_ver, describe, commit_count)
+        print(f'MaterialSorting 安装包补打包（--installer-only，不重新编译）· '
+              f'版本 {display}')
+        print('  注意：版本串取当前 git 状态 —— dist 若构建于其他提交，'
+              '正式发版走全量 --installer（发版手册「日常发版三步」）\n')
+        step_dist_check(py_ver)
+        step_installer(display, file_version)
+        print(f'\n[DONE] 发版产物（{DIST_DIR}）：')
+        setup = DIST_DIR / f'{APP_BASENAME}-Setup-{fs_version(display)}.exe'
+        if setup.is_file():
+            print(f'  安装包：{setup.name}')
+        else:
+            print('  安装包：（未产出 —— ISCC 未安装，见上方指引；绿色 zip 已完整）')
+        print(f'  绿色 zip：{APP_BASENAME}-portable-{fs_version(display)}.zip')
+        return 0
 
     # ---- 版本串与资源画像（启动横幅，PRD AC8：打印核数/可用内存/jobs/预估时长）
     py_ver = read_pyproject_version()
@@ -609,9 +804,12 @@ def main(argv: list[str] | None = None) -> int:
     print(f'预估全量构建 {BUILD_TIME_HINT}（低优先级 + jobs={jobs}，期间系统应'
           '保持可交互；构建前请停 ms-web/长跑 solver 等常驻负载）\n')
 
+    if args.installer:
+        STEP_TOTAL = 7
+
     # ---- 前置检查（dry-run 同样跑，供回归断言）
     if args.skip_frontend_check:
-        print('[1/6] 前端 static 检查：SKIP（--skip-frontend-check）')
+        print(f'[1/{STEP_TOTAL}] 前端 static 检查：SKIP（--skip-frontend-check）')
     else:
         step_static_check()
     step_env_selfcheck()
@@ -625,6 +823,15 @@ def main(argv: list[str] | None = None) -> int:
     if args.dry_run:
         print('\n--dry-run：完整 Nuitka 命令行（不执行编译）：')
         print('  ' + ' '.join(str(c) for c in cmd))
+        if args.installer:
+            iscc = find_iscc()
+            print('\n--dry-run：第 7 步安装包命令行（--installer）：')
+            if iscc is not None:
+                print('  ' + ' '.join(iscc_command(iscc, display, file_version)))
+            else:
+                print('  （ISCC 未找到 → 实际运行将跳过安装包编译，仅产绿色 zip）')
+            print(f'  绿色 zip 目标：'
+                  f'{DIST_DIR / f"{APP_BASENAME}-portable-{fs_version(display)}.zip"}')
         print('\n--dry-run 结束（未清理 dist、未编译）。')
         return 0
 
@@ -641,7 +848,12 @@ def main(argv: list[str] | None = None) -> int:
     if build_dir.is_dir():
         shutil.rmtree(build_dir, ignore_errors=True)
         print('已清理中间构建目录（clcache 保留在 %LOCALAPPDATA%/Nuitka）')
+    if args.installer:
+        step_installer(display, file_version)
     print(f'\n[DONE] 冻结产物就绪：{EXE_PATH}')
+    if args.installer:
+        print(f'  安装包：{DIST_DIR / f"{APP_BASENAME}-Setup-{fs_version(display)}.exe"}')
+        print(f'  绿色 zip：{DIST_DIR / f"{APP_BASENAME}-portable-{fs_version(display)}.zip"}')
     print('冒烟：.venv/Scripts/python.exe scripts/build_freeze.py --launch')
     return 0
 

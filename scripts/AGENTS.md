@@ -58,9 +58,33 @@ venv python 直跑——nuitka/spyrrow/materialsorting 都在 venv）→
   下轮链接期 `CVTRES CVT1107 xx.obj 已损坏` → 删
   `%LOCALAPPDATA%/Nuitka/Nuitka/Cache/clcache` 全量重编。
 - 产物 `dist/` 已 gitignore（根 .gitignore）；护栏测试 =
-  `materialSorting-server/tests/test_build_freeze.py`（35 例纯函数级，真跑 Nuitka
+  `materialSorting-server/tests/test_build_freeze.py`（55 例纯函数级，真跑 Nuitka
   不进套件）。验收自动化（隔离用户目录/单实例/端口回退专项）= US-004
-  smoke_freeze.mjs（后续故事，不在本文件范围）。
+  smoke_freeze.mjs；发版全流程 = US-005 `.docs/technical/本地部署构建与发版手册.md`。
+
+## installer/materialsorting.iss + ChineseSimplified.isl（US-005，prd-local-deploy-freeze）
+
+**Inno Setup 中文安装包 + 绿色 zip**（第 7 步，`build_freeze.py --installer` /
+`--installer-only` 补打包调用）：
+
+- **iss 要点**：per-user 免 UAC（`PrivilegesRequired=lowest` +
+  `{localappdata}\Programs\MaterialSorting`）/ 固定 AppId 同 ID 覆盖安装 = 升级 /
+  单一中文语言（`ShowLanguageDialog=no`，语言包 vendor 进仓免二次下载）/ 桌面图标
+  task 默认勾选 / 卸载保留用户数据（无 `[UninstallDelete]`，数据在
+  `%LOCALAPPDATA%\MaterialSorting` 不受触碰）/ 版本 `/D` 三 define 注入
+  （`MyAppVersion`=display、`MyAppVersionNumber`=数字四段、`MyAppVersionFS`=文件名
+  安全串，iss 头 `#ifndef` 占位可手工裸编）。
+- **运行中检测（实勘坑，必守）**：app 未做命名互斥体 → `[Code]` tasklist 查镜像名
+  等价实现；**MB_RETRYCANCEL 不受 `/SUPPRESSMSGBOXES` 抑制** —— 静默安装/卸载必须
+  判 `WizardSilent()`/`UninstallSilent()` 直接中止（exit 1），否则无头部署挂死在
+  看不见的弹窗（2026-09-27 实测，测试已锁定）。
+- **build_freeze 侧**：ISCC 定位 PATH → `%LOCALAPPDATA%\Programs\Inno Setup 6`
+  （winget --scope user）→ Program Files 兜底；缺席打印指引**跳过不失败**；signtool
+  钩子 env `MS_SIGNING_PFX`+`MS_SIGNING_TS` 同在场才调用；绿色 zip 恒产（单一顶层
+  `MaterialSorting/` + 一行启动说明.txt）。`fs_version()`（空白折叠 `-`）是
+  setup.exe/zip 命名单一真相源。
+- 实测记录（2026-09-27：ISCC 编译/静默安装/运行检测中止/卸载数据幸存/重装全绿）
+  与日常发版三步、升级动线、杀软申诉 = `.docs/technical/本地部署构建与发版手册.md`。
 
 ## smoke_freeze.mjs（US-004，prd-local-deploy-freeze）
 

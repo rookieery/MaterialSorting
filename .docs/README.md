@@ -9,6 +9,7 @@
 - [technical/agent-api-reference.md](technical/agent-api-reference.md) — HTTP 路由 + WS `/ws/solve` 协议 + 导出契约
 - [technical/项目优化点盘点_2026-09.md](technical/项目优化点盘点_2026-09.md) — 全库优化点盘点（业务/引擎/结构/前端/工程化/运维/安全/文档 八域 A1~H3，待逐条确认）
 - [technical/todo.md](technical/todo.md) — `/todo` skill 维护
+- [technical/本地部署构建与发版手册.md](technical/本地部署构建与发版手册.md) — 冻结交付发版手册（构建机准备/发版三步/验收 checklist/升级动线/杀软申诉，US-005）
 
 ## business/（业务文档）
 > 排料规则、各阶段方案、版师反馈 —— 工艺与算法的权威原文。

@@ -2,16 +2,10 @@
   "branchName": "ralph/local-deploy-freeze",
   "stories": [
     {
-      "id": "US-004",
-      "title": "冻结验收自动化 smoke_freeze.mjs 与三专项断言",
-      "description": "冻结验收自动化（权威 PRD：tasks/prd-local-deploy-freeze.md US-004）。As a 发版维护者, I want 把冻结版验收固化成可重复脚本——隔离用户目录、全功能冒烟、单实例/端口回退/数据落点专项, so that 每次发版同口径过闸，不靠手工点验；真实虚拟机/杀软观察作为人工运营步骤在文档留 checklist。\n\n具体任务：\n1. 新建 scripts/smoke_freeze.mjs（Node，playwright Edge 通道，沿用既有 smoke 套路）— 编排：临时 MS_OUT_DIR（模拟 LOCALAPPDATA 隔离）→ 拉 dist exe（环境注入 OUT_DIR 覆盖）→ 等健康 → 核心动线：上传母版→parse 数量矩阵→短预算求解→导出三格式落盘校验→状态保存 .msn 下载；既有 smoke 族（materialSorting-web/scripts/ 下 smoke_prefix_extra/smoke_state_file/smoke_edit_polish）可经 base-url 参数指向冻结实例复跑（脚本若硬编码 8010 则做最小 additive 参数化，默认值不变）。\n2. 专项断言 — ①端口回退：预占 8010 再启动 → 实际用 8011 且 web_port.txt 内容一致；②单实例：二次启动 exit 0、进程数不增、浏览器 URL 指向既有端口；③数据落点：产物全部出现在临时 OUT_DIR，dist 安装目录 mtime/内容零变化（只读安全）；④高级运行产物 config_runs/web_* 落临时 OUT_DIR。\n3. 退出码语义 — 全部检查过=0；任一失败非 0 并逐条打印失败项；输出含通过项计数（对齐既有 smoke「N/N」惯例）。\n4. 人工运营 checklist 落 US-005 发版手册：无 Python 全新 Windows 虚拟机安装运行、360/火绒/Defender 默认配置观察、CPU 配置基线话术（4 核 8G 起步/8 核 16G 推荐、求解时长与单核性能线性相关）——标注为运营步骤非本故事自动判据。\n\n验收标准：\n- 本机跑通双形态：dev（未冻结/产物缺失时明确报错指路 build_freeze）+ 冻结产物各全绿一次。",
-      "passes": true
-    },
-    {
       "id": "US-005",
       "title": "Inno 安装包+绿色 zip 与发版手册",
       "description": "Inno Setup 安装包与发版手册（权威 PRD：tasks/prd-local-deploy-freeze.md US-005；已定案 2026-09-27：绿色 zip 随首版交付、安装目录 per-user LOCALAPPDATA、签名不采购仅留 signtool 钩子、升级=手动覆盖安装）。As a 本地部署交付者, I want dist 打成中文安装包+绿色 zip 并沉淀发版手册, so that 客户拿到单个 setup.exe 装完桌面即见图标，我们自己发版有章可循。\n\n具体任务：\n1. 新建 scripts/installer/materialsorting.iss（Inno Setup）— 中文向导、DefaultDirName={localappdata}\\Programs\\MaterialSorting per-user 免 UAC、桌面图标任务、卸载不删 %LOCALAPPDATA%\\MaterialSorting（用户数据保留）、安装前检测运行中进程提示关闭（AppMutex 或等价）、版本号经 ISCC /D 参数注入（与 build_freeze 同源版本串）。\n2. scripts/build_freeze.py 增 --installer 步骤 — PATH 找 ISCC.exe → 编译 iss → dist/MaterialSorting-Setup-<版本>.exe；ISCC 不存在 → 打印安装指引（官网/中文语言包）跳过不失败（exit 0，其余产物完整）；signtool 钩子：env MS_SIGNING_PFX/MS_SIGNING_TS 在场才调用；同步产出 MaterialSorting-portable-<版本>.zip（dist 压缩，内附一行启动说明 txt）。\n3. 新建 .docs/technical/本地部署构建与发版手册.md — 构建机一次性准备（MSVC/MinGW、node、Inno）、日常发版三步（tag → build_freeze --installer → 归档）、验收 checklist 引用（US-004 自动 + 人工运营项）、升级动线（安装包=双击覆盖安装；zip=解压覆盖原目录——两形态用户数据均在 %LOCALAPPDATA% 不受触碰；版本识别=exe 属性页/--check 版本串）、杀软误报申诉指引（微软/360/火绒提交入口）。\n\n验收标准：\n- 装有 Inno 的机器 ISCC 编译成功且 setup.exe 安装/卸载/重装一轮人工验证过（手册记录实测日期）；无 Inno 机器 --installer 跳过路径验证。\n- 绿色 zip 副产品产出；文档五段齐全。",
-      "passes": false
+      "passes": true
     }
   ]
 }

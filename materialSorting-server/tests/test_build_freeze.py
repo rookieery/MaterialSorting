@@ -261,3 +261,244 @@ def test_entry_bridges_sys_frozen_before_launcher_import(bf):
     assert guard_idx is not None, '缺 sys.frozen 桥接（守卫式赋值）'
     assert import_idx is not None, '缺 launcher import'
     assert guard_idx < import_idx, '桥接必须先于 launcher import'
+
+
+# ---------------------------------------------------------------- 安装包（US-005）
+
+def _iss_text(bf) -> str:
+    return bf.ISS_FILE.read_text(encoding='utf-8-sig')
+
+
+def test_iss_isl_assets_vendored(bf):
+    """安装包双资产随仓在场：iss 脚本 + 简体中文语言包（官方发行版不含中文，
+    vendor 进仓 = 构建可复现免二次下载）。"""
+    assert bf.ISS_FILE.is_file()
+    assert bf.ISL_FILE.is_file()
+    assert '简体中文' in bf.ISL_FILE.read_text(encoding='utf-8')
+    assert '创建桌面快捷方式' in bf.ISL_FILE.read_text(encoding='utf-8')
+
+
+def test_iss_per_user_no_uac(bf):
+    """per-user 免 UAC（PRD 定案③）：lowest + {localappdata}\Programs 安装目录。"""
+    text = _iss_text(bf)
+    assert 'PrivilegesRequired=lowest' in text
+    assert r'DefaultDirName={localappdata}\Programs\{#MyAppName}' in text
+
+
+def test_iss_version_defines_and_fallback(bf):
+    """版本 /D 注入三 define（AC1）+ iss 侧 #ifndef 缺省占位（手工裸编译不炸）。"""
+    text = _iss_text(bf)
+    for tok in ('#ifndef MyAppVersion',
+                '#define MyAppVersion "0.0.0-dev"',
+                '#ifndef MyAppVersionNumber',
+                '#define MyAppVersionNumber "0.0.0.0"',
+                '#ifndef MyAppVersionFS',
+                '#define MyAppVersionFS "0.0.0-dev"',
+                'AppVersion={#MyAppVersion}',
+                'VersionInfoVersion={#MyAppVersionNumber}',
+                'OutputBaseFilename=MaterialSorting-Setup-{#MyAppVersionFS}'):
+        assert tok in text, tok
+
+
+def test_iss_chinese_wizard_and_desktop_task(bf):
+    """中文向导（单一语言不弹选择）+ 桌面图标任务默认勾选（cm: 取自中文包）。"""
+    text = _iss_text(bf)
+    assert 'ShowLanguageDialog=no' in text
+    assert 'MessagesFile: "ChineseSimplified.isl"' in text
+    assert 'Name: "desktopicon"' in text
+    assert '{cm:CreateDesktopIcon}' in text
+    assert 'unchecked' not in text.split('[Tasks]')[1].split('[')[0]
+
+
+def test_iss_uninstall_preserves_user_data(bf):
+    """卸载保留用户数据（AC1）：无任何 [UninstallDelete] 破坏性条目 —— Inno
+    缺省只删 [Files] 装入的文件，%LOCALAPPDATA%\\MaterialSorting 天然幸存；
+    Uninstallable 显式 yes（缺省同值，AC 口径明示）。注释行不计（只看指令）。"""
+    text = _iss_text(bf)
+    directives = '\n'.join(ln for ln in text.splitlines()
+                           if not ln.lstrip().startswith(';'))
+    assert 'Uninstallable=yes' in directives
+    assert '[UninstallDelete]' not in directives
+    assert '用户数据' in text    # iss 内注释留档：卸载不触碰 LOCALAPPDATA 数据
+
+
+def test_iss_running_process_detection(bf):
+    """运行中检测（AC1「或等价」）：app 无命名互斥体 → [Code] tasklist 查镜像
+    名；安装（InitializeSetup + PrepareToInstall 兜底）与卸载（InitializeUninstall）
+    双向。"""
+    text = _iss_text(bf)
+    assert 'function IsAppRunning(): Boolean;' in text
+    assert 'InitializeSetup' in text and 'PrepareToInstall' in text
+    assert 'InitializeUninstall' in text
+    assert 'tasklist /FI "IMAGENAME eq {#MyAppExeName}"' in text
+    # 静默安装/卸载（/VERYSILENT）无界面接「重试/取消」→ 直接中止而非挂死
+    # （2026-09-27 实测：RETRYCANCEL 弹窗在无头场景永远等不到点击）
+    assert 'WizardSilent()' in text and 'UninstallSilent()' in text
+
+
+def test_iss_files_pack_dist_tree(bf):
+    """[Files] 打包冻结 onedir 整树（dist/MaterialSorting.dist/* → {app}）。"""
+    assert r'Source: "..\..\dist\MaterialSorting.dist\*"' in _iss_text(bf)
+
+
+# ---------------------------------------------------------------- 安装包纯函数
+
+def test_fs_version(bf):
+    """display → 文件名安全串：空白折叠 '-'（setup.exe / zip 命名单一真相源）。"""
+    assert bf.fs_version('0.1.0 g0f7a624 dirty') == '0.1.0-g0f7a624-dirty'
+    assert bf.fs_version('0.1.0') == '0.1.0'
+    assert bf.fs_version('  0.2.0  beta ') == '0.2.0-beta'
+
+
+def test_find_iscc_path_hit(bf, monkeypatch):
+    monkeypatch.setattr('shutil.which', lambda n: r'C:\x\ISCC.exe')
+    assert str(bf.find_iscc()) == r'C:\x\ISCC.exe'
+
+
+def test_find_iscc_localappdata_fallback(bf, tmp_path, monkeypatch):
+    """PATH 缺席 → %LOCALAPPDATA%\Programs\Inno Setup 6（winget --scope user 落点）。"""
+    monkeypatch.setattr('shutil.which', lambda n: None)
+    monkeypatch.setenv('LOCALAPPDATA', str(tmp_path))
+    iscc = tmp_path / 'Programs' / 'Inno Setup 6' / 'ISCC.exe'
+    iscc.parent.mkdir(parents=True)
+    iscc.write_bytes(b'x')
+    assert bf.find_iscc() == iscc
+
+
+def test_find_iscc_absent(bf, tmp_path, monkeypatch):
+    monkeypatch.setattr('shutil.which', lambda n: None)
+    monkeypatch.setenv('LOCALAPPDATA', str(tmp_path))   # 空目录
+    monkeypatch.setattr(bf, 'ISCC_FALLBACK_PATHS', (str(tmp_path / 'none.exe'),))
+    assert bf.find_iscc() is None
+
+
+def test_iscc_command(bf, tmp_path):
+    """三 define 同源注入（AC1）：display / 数字四段 / 文件名安全串。"""
+    cmd = bf.iscc_command(Path(r'C:\x\ISCC.exe'), '0.1.0 g0f7a624 dirty',
+                          '0.1.0.317', tmp_path / 'a.iss')
+    assert cmd[0] == r'C:\x\ISCC.exe'
+    assert '/DMyAppVersion=0.1.0 g0f7a624 dirty' in cmd
+    assert '/DMyAppVersionNumber=0.1.0.317' in cmd
+    assert '/DMyAppVersionFS=0.1.0-g0f7a624-dirty' in cmd
+    assert cmd[-1].endswith('a.iss')
+
+
+def test_sign_command_env_absent(bf, tmp_path):
+    """钩子门禁（AC2）：MS_SIGNING_PFX/MS_SIGNING_TS 缺任一 → None 不签名。"""
+    assert bf.sign_command(tmp_path / 's.exe', {}) is None
+    assert bf.sign_command(tmp_path / 's.exe', {'MS_SIGNING_PFX': 'c.pfx'}) is None
+    assert bf.sign_command(tmp_path / 's.exe', {'MS_SIGNING_TS': 'http://ts'}) is None
+
+
+def test_sign_command_env_present(bf, tmp_path, monkeypatch):
+    monkeypatch.setattr('shutil.which',
+                        lambda n: r'C:\sdk\signtool.exe')
+    cmd = bf.sign_command(tmp_path / 's.exe', {
+        'MS_SIGNING_PFX': 'c.pfx', 'MS_SIGNING_TS': 'http://ts',
+        'MS_SIGNING_PWD': 'pw'})
+    assert cmd[0] == r'C:\sdk\signtool.exe'
+    assert cmd[1] == 'sign'
+    for tok in ('/fd', 'SHA256', '/tr', 'http://ts', '/td', '/f', 'c.pfx',
+                '/p', 'pw'):
+        assert tok in cmd
+    assert cmd[-1] == str(tmp_path / 's.exe')
+
+
+def test_sign_command_tool_missing_fails(bf, tmp_path, monkeypatch):
+    """配了签名 env 但 signtool 缺 → SystemExit（不该静默出未签名包）。"""
+    monkeypatch.setattr('shutil.which', lambda n: None)
+    with pytest.raises(SystemExit):
+        bf.sign_command(tmp_path / 's.exe', {'MS_SIGNING_PFX': 'c.pfx',
+                                             'MS_SIGNING_TS': 'http://ts'})
+
+
+def test_make_portable_zip(bf, tmp_path):
+    """绿色 zip（AC4）：单一顶层 MaterialSorting/（.dist 后缀不进包名）+ 一行
+    启动说明 txt。"""
+    import zipfile
+    dist = tmp_path / 'MaterialSorting.dist'
+    (dist / 'static').mkdir(parents=True)
+    (dist / 'MaterialSorting.exe').write_bytes(b'MZ')
+    (dist / 'static' / 'index.html').write_text('<html>')
+    zf = tmp_path / 'p.zip'
+    n = bf.make_portable_zip(dist, zf)
+    assert n == 2
+    with zipfile.ZipFile(zf) as z:
+        names = z.namelist()
+        readme = z.read(f'MaterialSorting/{bf.PORTABLE_README_NAME}').decode('utf-8')
+    assert 'MaterialSorting/MaterialSorting.exe' in names
+    assert 'MaterialSorting/static/index.html' in names
+    assert f'MaterialSorting/{bf.PORTABLE_README_NAME}' in names
+    assert not any('.dist' in nm for nm in names)
+    assert 'MaterialSorting.exe' in readme and 'LOCALAPPDATA' in readme
+    assert readme.count('\n') == 1      # 一行启动说明
+
+
+# ---------------------------------------------------------------- 第 7 步行为
+
+def _fake_dist(bf, tmp_path, monkeypatch):
+    dist_app = tmp_path / 'MaterialSorting.dist'
+    dist_app.mkdir()
+    (dist_app / 'MaterialSorting.exe').write_bytes(b'MZ')
+    monkeypatch.setattr(bf, 'DIST_APP_DIR', dist_app)
+    monkeypatch.setattr(bf, 'EXE_PATH', dist_app / 'MaterialSorting.exe')
+    monkeypatch.setattr(bf, 'DIST_DIR', tmp_path)
+    return dist_app
+
+
+def test_step_installer_iscc_missing_skips_not_fails(bf, tmp_path, monkeypatch,
+                                                    capsys):
+    """ISCC 缺席 = 打印安装指引并跳过不失败（AC2 exit 0 语义），绿色 zip 恒产。"""
+    _fake_dist(bf, tmp_path, monkeypatch)
+    monkeypatch.setattr(bf, 'find_iscc', lambda: None)
+    bf.step_installer('0.1.0 g0f7a624 dirty', '0.1.0.317')
+    out = capsys.readouterr().out
+    assert '跳过安装包编译' in out and 'jrsoftware.org' in out
+    assert (tmp_path / 'MaterialSorting-portable-0.1.0-g0f7a624-dirty.zip'
+            ).is_file()
+
+
+def test_step_installer_compiles_then_signs_skip(bf, tmp_path, monkeypatch,
+                                                 capsys):
+    """ISCC 在场：编译 → 校验产物落位 → 签名 env 缺席打印跳过 → zip 恒产。"""
+    import subprocess as sp
+    _fake_dist(bf, tmp_path, monkeypatch)
+    fake_iscc = tmp_path / 'ISCC.exe'
+    fake_iscc.write_bytes(b'x')
+    monkeypatch.setattr(bf, 'find_iscc', lambda: fake_iscc)
+
+    def fake_run(cmd, timeout=None):
+        (tmp_path / 'MaterialSorting-Setup-0.1.0-g0f7a624-dirty.exe'
+         ).write_bytes(b'MZ')          # 模拟 ISCC 落产物
+        return sp.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(bf, '_run', fake_run)
+    monkeypatch.delenv('MS_SIGNING_PFX', raising=False)
+    monkeypatch.delenv('MS_SIGNING_TS', raising=False)
+    bf.step_installer('0.1.0 g0f7a624 dirty', '0.1.0.317')
+    out = capsys.readouterr().out
+    assert str(fake_iscc) in out and '/DMyAppVersionFS=0.1.0-g0f7a624-dirty' in out
+    assert '签名：跳过' in out
+    assert (tmp_path / 'MaterialSorting-Setup-0.1.0-g0f7a624-dirty.exe').is_file()
+    assert (tmp_path / 'MaterialSorting-portable-0.1.0-g0f7a624-dirty.zip').is_file()
+
+
+def test_step_installer_iscc_failure_fails(bf, tmp_path, monkeypatch):
+    """ISCC 编译失败（非 0 退出/产物未出现）→ exit 1（步骤名打印）。"""
+    import subprocess as sp
+    _fake_dist(bf, tmp_path, monkeypatch)
+    fake_iscc = tmp_path / 'ISCC.exe'
+    fake_iscc.write_bytes(b'x')
+    monkeypatch.setattr(bf, 'find_iscc', lambda: fake_iscc)
+    monkeypatch.setattr(bf, '_run',
+                        lambda cmd, timeout=None: sp.CompletedProcess(cmd, 1))
+    with pytest.raises(SystemExit):
+        bf.step_installer('0.1.0', '0.1.0.0')
+
+
+def test_parser_installer_flags(bf):
+    """--installer / --installer-only 参数面（纯 argparse，不起子进程）。"""
+    args = bf.build_parser().parse_args(['--installer'])
+    assert args.installer and not args.installer_only
+    args = bf.build_parser().parse_args(['--installer-only'])
+    assert args.installer_only and not args.installer
