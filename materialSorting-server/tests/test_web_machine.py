@@ -409,6 +409,29 @@ def test_solve_default_pieces_state_untouched(machine_env, monkeypatch):
     assert runtime_mod._PIECES_STATE['doc']['doc_id'] == 'defaultdoc0'
 
 
+def test_solve_frozen_prefix_switch(machine_env, monkeypatch):
+    """US-002 冻结适配：机器 solve spawn 前缀切 ``[exe, '--cli']``（launcher
+    分发对端），cfg/--name/策略段/--time/--quiet 逐参数不变（advanced 档 =
+    --strategy race --time 1200）。"""
+    calls = _spawn_capture(monkeypatch, pids=(774,))
+    fake_exe = r'C:\dist\MaterialSorting\MaterialSorting.exe'
+    monkeypatch.setattr(sys, 'frozen', True, raising=False)
+    monkeypatch.setattr(sys, 'executable', fake_exe)
+
+    c = TestClient(server_mod.app)
+    r = _solve(c, _yl_master_bytes(), {'gate_mm': 1750, 'run_mode': 'advanced'})
+    assert r.status_code == 202, r.text
+    body = r.json()
+
+    cfg_files = sorted((machine_env / 'uploads').glob('machine_cfg_*.json'))
+    assert len(cfg_files) == 1
+    # 前缀切换 + 余下参数 = 既有金标（advanced 档）逐参数不变。
+    assert calls[0]['cmd'] == [fake_exe, '--cli', str(cfg_files[0]),
+                               '--name', body['run_name'],
+                               '--strategy', 'race',
+                               '--time', '1200', '--quiet']
+
+
 # ------------------------------------------------------------- 错误矩阵
 
 

@@ -151,8 +151,10 @@ time 键反查 ``RUN_MODE_SPECS`` 恢复（时间三档烘焙 MS 侧单一真相
 --time 7200``（默认 race 臂，不加 --extreme-strategy；extreme-budget 缺省 600）。
 
 分层合规（与 strategy.py 同款红线，AST 守卫见 tests/test_web_machine.py）：
-  - **禁 import ``..cli.*``** —— spawn ``python -m materialsorting.cli.run_config``
-    子进程是**进程边界**而非 import 边界，判据逻辑单一真相源留在 cli；
+  - **禁 import ``..cli.*``** —— spawn CLI 子进程（前缀走 ``_frozen_spawn.
+    cli_spawn_prefix()``：dev = ``python -m materialsorting.cli.run_config``
+    逐字节不变，frozen = ``exe --cli``，US-002）是**进程边界**而非 import
+    边界，判据逻辑单一真相源留在 cli；
   - 对 ``server.py`` 的依赖走**函数内延迟 import**（server 文件尾 import 本模块
     再调用注册函数，模块级互相 import 成环；strategy.py 防环先例）—— 上传保存
     /parse+commit/会话快照构建/orphan cfg 反查均经 ``server`` 模块属性**调用时
@@ -169,7 +171,6 @@ import json
 import os
 import secrets
 import shutil
-import sys
 import tempfile
 import time
 import uuid
@@ -183,6 +184,7 @@ from fastapi.responses import JSONResponse, Response
 from starlette.datastructures import UploadFile as _StarletteUploadFile
 
 from . import strategy as strategy_mod
+from ._frozen_spawn import cli_spawn_prefix
 # 导出门面（US-004）：export.py 不 import server/machine（无环），模块级 import
 # 与 routes_views /export 同源 —— 门面零改动，全部格式/表格逻辑单一真相源在
 # export_plt / plt_table。
@@ -519,9 +521,10 @@ async def machine_solve(req: Request):
     stderr_file = tempfile.NamedTemporaryFile(
         prefix=f'machine_err_{sid[:6]}_', suffix='.log', delete=False)
     stderr_file.close()
-    cmd = [sys.executable, '-m', 'materialsorting.cli.run_config',
-           str(cfg_path), '--name', run_name, *spec['args'],
-           '--time', str(total_sec), '--quiet']
+    # US-002 冻结适配：前缀单一真相源 cli_spawn_prefix()（dev 逐字节不变，
+    # frozen = [exe, '--cli'] launcher 分发对端）；策略段/烘焙时间/树杀零改动。
+    cmd = cli_spawn_prefix() + [str(cfg_path), '--name', run_name, *spec['args'],
+                                '--time', str(total_sec), '--quiet']
     snapshot = strategy_mod._snapshot_config_runs()
     proc = strategy_mod._spawn_run_process(cmd, stderr_file.name)
 

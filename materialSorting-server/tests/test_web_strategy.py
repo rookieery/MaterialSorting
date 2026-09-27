@@ -346,6 +346,38 @@ def test_start_happy_path_config_marker_spawn_202(strat_env, monkeypatch):
     assert len(st['pieces_snapshot']) == 3
 
 
+def test_start_spawn_cmd_frozen_prefix_switch(strat_env, monkeypatch):
+    """US-002 冻结适配：sys.frozen 真 + 假 executable → spawn cmd 前缀切
+    ``[exe, '--cli']``（launcher 分发对端），余下参数（cfg/--name/--strategy/
+    --time/--quiet）与 dev 口径逐参数不变。"""
+    _patch_state(monkeypatch, _fake_state(doc_id='froze1234'))
+    uploads = Path(paths_mod.OUT_DIR) / 'uploads'
+    uploads.mkdir(parents=True)
+    (uploads / 'froze1234.dxf').write_bytes(b'DXF')
+    calls = _spawn_capture(monkeypatch, pid=779)
+    fake_exe = r'C:\dist\MaterialSorting\MaterialSorting.exe'
+    monkeypatch.setattr(sys, 'frozen', True, raising=False)
+    monkeypatch.setattr(sys, 'executable', fake_exe)
+
+    r = _client().post('/api/strategy/start',
+                       json={'mode': 'race', 'minutes': 10})
+    assert r.status_code == 202
+
+    cfg_files = list(uploads.glob('strategy_cfg_*.json'))
+    assert len(cfg_files) == 1
+    cmd = calls['cmd']
+    # 前缀切换（dev 金标 cmd[0:3] → frozen 两元前缀）+ 无 -m 模块形式残留。
+    assert cmd[:2] == [fake_exe, '--cli']
+    assert '-m' not in cmd
+    assert 'materialsorting.cli.run_config' not in cmd
+    # 余下参数逐参数不变（= 既有金标 cmd[3:] 的 dev 口径）。
+    assert cmd[2] == str(cfg_files[0])
+    assert cmd[cmd.index('--name') + 1].startswith('web_race_')
+    assert cmd[cmd.index('--strategy') + 1] == 'race'
+    assert cmd[cmd.index('--time') + 1] == '600'
+    assert cmd[-1] == '--quiet'
+
+
 # ---------------------------------------------------- band（2026-08-22 解除互斥）
 
 

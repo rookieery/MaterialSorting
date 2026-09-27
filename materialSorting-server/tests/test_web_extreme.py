@@ -277,6 +277,33 @@ def test_extreme_start_happy_path_202(strat_env, monkeypatch):
     assert st['strategy'] == 'race' and st['run_name'] == run_name
 
 
+def test_extreme_start_frozen_prefix_switch(strat_env, monkeypatch):
+    """US-002 冻结适配：极限族同一 ``_start_run`` —— sys.frozen 真 + 假
+    executable → 前缀切 ``[exe, '--cli']``，尾段 --extreme --time <T> --quiet
+    逐参数不变（race 缺省臂无 --extreme-strategy）。"""
+    _default_start_env(monkeypatch)
+    calls = _spawn_capture(monkeypatch, pids=(779,))
+    fake_exe = r'C:\dist\MaterialSorting\MaterialSorting.exe'
+    monkeypatch.setattr(sys, 'frozen', True, raising=False)
+    monkeypatch.setattr(sys, 'executable', fake_exe)
+
+    r = _client().post('/api/extreme/start', json={'time_total_s': 905})
+    assert r.status_code == 202
+
+    cfg_files = list((Path(paths_mod.OUT_DIR) / 'uploads')
+                     .glob('strategy_cfg_*.json'))
+    assert len(cfg_files) == 1
+    cmd = calls[0]['cmd']
+    assert cmd[:2] == [fake_exe, '--cli']
+    assert '-m' not in cmd
+    assert cmd[2] == str(cfg_files[0])
+    assert cmd[cmd.index('--name') + 1].startswith('web_extreme_')
+    assert '--extreme-strategy' not in cmd           # 缺省 race 臂
+    assert cmd[cmd.index('--extreme') + 1] == '--time'
+    assert cmd[cmd.index('--time') + 1] == '905'
+    assert cmd[-1] == '--quiet'
+
+
 def test_extreme_time_total_s_four_400(strat_env, monkeypatch):
     """time_total_s 四种 400：缺省 / 非整数（字符串·非整浮点·bool） / <905 /
     >43200；全部不落 config / 不写 marker / 不 spawn。"""

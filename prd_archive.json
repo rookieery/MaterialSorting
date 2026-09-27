@@ -1192,5 +1192,16 @@
         "passes": true
       }
     ]
+  },
+  {
+    "branchName": "ralph/local-deploy-freeze",
+    "stories": [
+      {
+        "id": "US-001",
+        "title": "launcher 桌面入口：env 重定向与端口/单实例",
+        "description": "launcher 桌面入口模块（权威 PRD：tasks/prd-local-deploy-freeze.md US-001；贯穿红线：模块级仅 import 标准库——env 必须先于任何业务模块 import，paths.py 是 import 期固化路径常量；dev 路径零变化）。As a 本地部署用户, I want 双击即起的入口——自动定位资源目录、探测空闲端口、启动服务并打开浏览器, so that 无需懂 Python/端口/环境变量装完即用，同时承接冻结形态下 CLI 子进程的子命令分发（--cli）。\n\n具体任务：\n1. 新建 materialSorting-server/src/materialsorting/launcher.py + pyproject.toml console_script「ms-desktop = materialsorting.launcher:main」— main() 第一行 multiprocessing.freeze_support()（PyInstaller 必须/Nuitka 无害）；子命令「--cli <args...>」→ materialsorting.cli.run_config.main(args)（延迟 import，退出码透传）；「--check」自检子命令：打印 frozen 态/版本串（importlib.metadata.version('materialsorting')，冻结态由 US-003 捆绑元数据使其可读）/解析后 env/paths 各常量落点/探测端口/warm_start_supported() 结果，exit 0 无副作用；--help 打印子命令用法。\n2. frozen 环境重定向（仅 getattr(sys,'frozen',False) 为真时，全部 setdefault 不覆盖显式 env）— MS_STATIC_DIR=<exe 所在目录>/static、MS_OUT_DIR=%LOCALAPPDATA%/MaterialSorting/out（不存在则 mkdir parents）；未冻结（dev）零重定向：python -m materialsorting.launcher 行为=原 ms-web（8010、repo 路径）。\n3. 端口探测 — MS_WEB_PORT 显式给出直接用；否则自 8010 起逐 +1 探测空闲（上限 +9），实际端口写 env 后再启动 server，并写 <OUT_DIR>/web_port.txt。\n4. 单实例 — 启动前读 web_port.txt 健康探测（GET / 2s 超时）命中 → 只开浏览器指向该端口、exit 0 不重复起服务；未命中/无文件 → 主线程跑 uvicorn（复用 web.server 启动语义不复制粘贴端口逻辑）+ watcher 线程健康就绪后 webbrowser.open（浏览器不早于服务就绪打开）。\n5. 新增 materialSorting-server/tests/test_launcher.py — AST 守卫（模块级 import 白名单=标准库）；env 重定向四象限矩阵（frozen 真/假 × 显式 env 给/不给，断言 paths.* 常量落点，子进程或 importlib reload 隔离测不污染全局）；端口探测（socket 预占 8010 → 选 8011）；单实例判据（假 web_port.txt+假健康探测 stub）；--cli 透传（argv 与退出码）；--check 输出含各键。\n\n验收标准：\n- AST 守卫通过；dev 模式零重定向（8010+repo 路径与 ms-web 一致）；python -m materialsorting.launcher --check 与 --help 跑通。\n- pytest 新增全绿；分层依赖未反向（业务 import 全函数内延迟）。",
+        "passes": true
+      }
+    ]
   }
 ]

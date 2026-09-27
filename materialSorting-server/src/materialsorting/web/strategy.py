@@ -37,8 +37,10 @@ marker 同存，orphan 路径可恢复；无键/None = race —— 存量极限 
     前缀的上一轮 web 产物**（``_cleanup_stale_web_artifacts(sid)``：sid 会话只清
     ``web_<sid6>_*``；default 沿用清全部 ``web_*`` 但跳过并行会话前缀）→ 写 10 键
     config JSON 到 ``out/uploads/strategy_cfg_[<sid6>_]<stamp>.json`` → spawn
-    ``python -m materialsorting.cli.run_config <cfg> --name web_[<sid6>_]<mode>_<rand6>
-    --strategy <mode> --time <minutes*60> --quiet``（stdout=DEVNULL、stderr=临时文件）
+    ``<cli_spawn_prefix()> <cfg> --name web_[<sid6>_]<mode>_<rand6>
+    --strategy <mode> --time <minutes*60> --quiet``（dev 前缀 = ``python -m
+    materialsorting.cli.run_config`` 逐字节不变；frozen = ``exe --cli``，US-002；
+    stdout=DEVNULL、stderr=临时文件）
     → 快照 ``out/config_runs/`` → 写 marker ``.web_strategy_active[_<sid>].json``
     → 202。跨会话完全并发放开（接受 CPU 争抢，不加全局闸门）。US-005 数据源二
     选一：恢复会话（``out/uploads/<doc_id>.dxf`` 缺盘但会话 doc 带 pieces）→ 会话
@@ -79,7 +81,6 @@ import os
 import shutil
 import signal
 import subprocess
-import sys
 import tempfile
 import time
 import uuid
@@ -90,6 +91,7 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 
 from .. import paths
+from ._frozen_spawn import cli_spawn_prefix
 from .sessions import DEFAULT_SID, SID_RE, SessionError, _env_float
 from .sessions import registry as session_registry
 from .solver import build_pid_meta
@@ -960,8 +962,10 @@ async def _start_run(req: Request, family: str):
     stderr_file = tempfile.NamedTemporaryFile(
         prefix=f'web_strategy_err_{s6}', suffix='.log', delete=False)
     stderr_file.close()
-    cmd = [sys.executable, '-m', 'materialsorting.cli.run_config',
-           str(cfg_path), '--name', run_name]
+    # US-002 冻结适配：前缀单一真相源 cli_spawn_prefix()（dev =
+    # [python, '-m', 'materialsorting.cli.run_config'] 逐字节不变；frozen =
+    # [exe, '--cli']，launcher 分发对端）；余下参数拼接与 spawn/树杀零改动。
+    cmd = cli_spawn_prefix() + [str(cfg_path), '--name', run_name]
     if family == 'extreme':
         cmd.append('--extreme')
         # US-002 极限 SE 顺延臂：se 才追加（race 臂 spawn cmd 逐字节不变）。
