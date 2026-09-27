@@ -21,6 +21,24 @@ npm run test               # vitest run（US-002 起会有用例）
 | 后端调用 | 相对路径 `/export`、`/api/*`、`ws://${location.host}/ws/solve` → Vite proxy → :8010 | 同源直连 :8010 |
 | 触发 WS 升级 | Vite proxy `ws: true`（**必填**） | 浏览器原生 |
 
+## smoke 脚本 base-url 参数化（US-004，prd-local-deploy-freeze，2026-09-27）
+
+`scripts/` 下三个端到端冒烟（`smoke_prefix_extra.mjs` / `smoke_state_file.mjs` /
+`smoke_edit_polish.mjs`）此前硬编码 `http://127.0.0.1:8010` —— 现支持 env 覆盖：
+`SMOKE_BASE_URL`（目标实例基址）+ `SMOKE_PREFIX_RUNS`（prefix_extra 的工件目录，
+冻结实例产物落其临时 OUT_DIR）。**缺省值与原硬编码逐字节一致**（dev :8010 零变化）；
+冻结验收编排 `scripts/smoke_freeze.mjs --rerun-family` 经此把三脚本指向冻结实例
+（:8011）复跑。改三脚本的服务地址/工件路径时保持 env-覆盖形态，勿回硬编码。
+
+复跑首轮两处实勘修复（2026-09-27）：① `smoke_prefix_extra.mjs` 5g 判据门幅常量
+1980→**1750**——580eb78 幅宽默认 198→175cm 前后端锁步时漏改此 smoke（该脚本不动
+`#gate` 走表单默认），对 dev :8010 同样会误红，冻结复跑先撞见；实证 = DOM 列高
+1739.7 与构造 H=1750−10.388=1739.61 全等（1980 口径算出 240.38 假残量），非冻结侧
+问题。② 冻结实例全族背靠背复跑（P2/P3 + 三 smoke 各自会话）在 TTL 600s 内累积
+>6 会话 → 第 7 个 `POST /api/session` **429 session_limit**（edit_polish 超排 Tab
+永不解锁即此因）；`smoke_freeze --rerun-family` 对 exe 注入 `MS_SESSION_MAX=16`
+放宽（会话上限行为由 `test_web_sessions` 锁定，非该脚本被测面）。
+
 ## 关键约束（CLAUDE.md 引用）
 
 1. **不引入 CSS 框架**：`style.css` 由 vanilla 前身迁入，沿用命令式 + 类名约定。

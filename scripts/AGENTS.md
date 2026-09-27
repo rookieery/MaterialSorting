@@ -61,3 +61,39 @@ venv python 直跑——nuitka/spyrrow/materialsorting 都在 venv）→
   `materialSorting-server/tests/test_build_freeze.py`（35 例纯函数级，真跑 Nuitka
   不进套件）。验收自动化（隔离用户目录/单实例/端口回退专项）= US-004
   smoke_freeze.mjs（后续故事，不在本文件范围）。
+
+## smoke_freeze.mjs（US-004，prd-local-deploy-freeze）
+
+**冻结验收自动化一条命令**：`node scripts/smoke_freeze.mjs [--exe <path>] [--keep]
+[--rerun-family]`。前置 = dist 已构建 + 8010/8011 空闲（有 dev ms-web 先停）；
+报告 `out/smoke_freeze/report.json`，退出码 0=全过 / 1=任一失败（逐条打印）/
+2=dist 缺失（dev 形态明确报错指路 build_freeze，AC5 判据）。
+
+- 六相位：P0 `exe --check`（frozen/warm/version/OUT_DIR env 注入）→ P1 端口回退
+  （临时 `MS_OUT_DIR` 模拟 LOCALAPPDATA 隔离 + Node net.Server 预占 8010 → 断言
+  实际用 8011 + web_port.txt 一致）→ P2 核心动线（playwright Edge 通道：上传 →
+  parse 数量矩阵 → 12s 求解 final → PLT-clean/DXF-R12/PNG 三格式落盘探针 →
+  .msn 下载 gunzip schema）→ P3 高级运行（strategy race → run_dir 落临时 OUT_DIR
+  `config_runs/web_*` + best_frame + 运行中 exe 进程数 ≥2 → stop 收敛）→
+  P4 `--rerun-family` 既有 smoke 族经 `SMOKE_BASE_URL` 指向 :8011 复跑 → P5 单实例
+  （二次启动 exit 0/URL 指向既有端口/进程数不增）→ P6 数据落点（产物全落临时
+  OUT_DIR + dist 安装目录 stat 快照 + exe sha256 前后零变化，只读安全）。
+- **实勘坑（首轮红）**：超排 Tab 解锁联动 parse done 而 commit 后台仍在跑 ——
+  `#start` 抢跑会被 WS 以「排料数据为空」error 帧拒（无 worker 无帧）；commit-done
+  判据 = ptypes 代表裁片**轮询**非空（smoke_edit_polish 同款；
+  smoke-extreme-run.mjs 注记的 `[data-testid=commit-status].done` 等价口径）。
+- **--rerun-family 首轮两红（2026-09-27，均已修）**：① prefix_extra 5g 门幅常量
+  1980 漏随 580eb78（幅宽默认 198→175cm）锁步 → 对冻结与 dev 同样误红，修 = 1750
+  （DOM 列高 1739.7 与构造 H=1750−10.388 全等证非冻结侧）；② 全族背靠背复跑在
+  TTL 600s 内累积 >6 会话 → 第 7 个 `POST /api/session` 429（edit_polish 超排 Tab
+  永不解锁即此因），修 = `--rerun-family` 时对 exe 注入 `MS_SESSION_MAX=16`
+  （上限行为由 test_web_sessions 锁定，非被测面）。
+- **浏览器 URL 取证**：spawn exe 注入 `BROWSER=cmd /c echo %s>><log>`（webbrowser
+  退 GenericBrowser 走 `'%s'` shlex.split 分支）→ webbrowser.open 实参追加进日志，
+  不起真浏览器；首启 watcher 与单实例二次启动的 URL 都可确定性断言（比 US-003
+  E2E 的 `BROWSER=findstr` 只抑制更进一步）。路径必须正斜杠（shlex 不吃反斜杠）。
+- 临时 OUT_DIR 失败保留诊断（`--keep` 恒保留；成功自动删）；playwright 借
+  `materialSorting-web` 的 node_modules 安装（repo 根无，smoke_edit_layout 同款
+  createRequire 锚 package.json）。
+- 人工运营 checklist（无 Python 虚拟机安装 / 360·火绒·Defender 观察 / CPU 基线
+  话术 4 核 8G 起步 8 核 16G 推荐）= US-005 发版手册**运营步骤**，非本脚本自动判据。

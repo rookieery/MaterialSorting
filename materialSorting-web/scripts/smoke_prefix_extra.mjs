@@ -15,12 +15,18 @@ import { fileURLToPath } from 'node:url';
 // 路径锚定脚本位置（任意 CWD 可跑）：scripts/ -> materialSorting-web/ -> repo 根
 const HERE = fileURLToPath(new URL('.', import.meta.url));
 const ROOT = resolve(HERE, '../..');
-const APP = 'http://127.0.0.1:8010/';
+// US-004（prd-local-deploy-freeze）additive 参数化：SMOKE_BASE_URL 指向冻结实例
+// 复跑（smoke_freeze.mjs --rerun-family 注入 :8011）；缺省与原硬编码逐字节一致。
+const APP = (process.env.SMOKE_BASE_URL || 'http://127.0.0.1:8010').replace(/\/+$/, '') + '/';
 const DXF = resolve(ROOT, 'data/5336#老六订单14%7%围加9_coded.dxf');
 const OUT = resolve(ROOT, 'out/smoke_prefix_extra');
 mkdirSync(OUT, { recursive: true });
-// prefix_runs 工件真实位置 = paths.OUT_DIR（materialSorting-server/out/，包位置上溯）
-const PREFIX_RUNS = resolve(ROOT, 'materialSorting-server/out/prefix_runs');
+// prefix_runs 工件真实位置 = paths.OUT_DIR（materialSorting-server/out/，包位置上溯）；
+// US-004 additive：指向冻结实例复跑时经 SMOKE_PREFIX_RUNS 覆盖（产物落其临时
+// OUT_DIR），缺省 dev 路径不变。
+const PREFIX_RUNS = process.env.SMOKE_PREFIX_RUNS
+  ? resolve(process.env.SMOKE_PREFIX_RUNS)
+  : resolve(ROOT, 'materialSorting-server/out/prefix_runs');
 const CHROME = 'C:/Program Files/Google/Chrome/Application/chrome.exe';
 // P0 口径（与 prefix_accept / 5336_coded_really 同源）：7 码 + 全量数量阵（Sdemand=105）
 // + per_type g02/g03 d=2 tol=1（d_g=2 -> 选码 @38 + 顶部 g02@32，residual ~1.5mm）。
@@ -363,7 +369,10 @@ try {
     gaps.every(g => g <= 1.0), 'gaps=' + JSON.stringify(gaps));
   // 近满幅：DOM 渲染 erode 后 manifest 几何（d_g=2 双侧内缩 ~2*d_g），列高 ~ gate - residual - 2*d_g
   const spanY = Math.max(...stack.map(b => b.y1)) - Math.min(...stack.map(b => b.y0));
-  const gate = 1980;
+  // 本脚本不动 #gate（走表单默认），门幅常量须随默认锁步：580eb78 幅宽默认 198→175cm
+  // （=GATE_MM 1750）漏改此处，冻结实例复跑实勘 5g 误报（DOM 列高 1739.7 与
+  // 构造 H=1750-10.388=1739.61 全等，1980 口径算出 240.38 假残量）。默认再改时同锁步。
+  const gate = 1750;
   const colResidual = +(gate - spanY).toFixed(2);
   check('5g 形态·组合片 H 近满幅（residual 打点：stage=' + stageMsg?.residual_mm + 'mm，DOM 列高残量 ' + colResidual + '，差 <=8mm 覆盖 erode）',
     Math.abs(colResidual - stageMsg?.residual_mm) <= 8, 'colResidual=' + colResidual);

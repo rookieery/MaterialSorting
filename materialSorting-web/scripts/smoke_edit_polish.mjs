@@ -46,7 +46,9 @@ const ROOT = resolve(HERE, '../..');
 
 const { chromium } = await import('playwright');
 
-const BASE = 'http://127.0.0.1:8010';
+// US-004（prd-local-deploy-freeze）additive：SMOKE_BASE_URL 指向冻结实例复跑
+//（smoke_freeze.mjs --rerun-family 注入 :8011）；缺省与原硬编码逐字节一致。
+const BASE = process.env.SMOKE_BASE_URL || 'http://127.0.0.1:8010';
 const DXF = ROOT + '/data/5336#老六订单14%7%围加9.dxf';
 const OUT = ROOT + '/out/smoke_edit_polish';
 const SIZES = [32, 33, 34]; // 5336 码集；3 码 × 10 片 = 30 片（Σdemand 默认 1/格）
