@@ -1,11 +1,4 @@
 {
   "branchName": "ralph/key-authorization-system",
-  "stories": [
-    {
-      "id": "US-010",
-      "title": "端到端冒烟与验收报告",
-      "description": "As a 发布负责人, I want smoke_key_gate.mjs 全链路冒烟 + 验收报告 so that 按仓库惯例交付证据。\n\n具体任务：\n1. materialSorting-web/scripts/smoke_key_gate.mjs — UI 冒烟（Edge 通道免装浏览器 + addInitScript 预置 ms.tour.* 防 tour-overlay 拦截，模板 smoke_sample_picker.mjs / smoke_prefix_extra.mjs）\n2. .docs/business/Key授权_验收报告.md — 验收报告（按 .docs/business/ 惯例）\n\n验收标准：\n- 冒烟全链路通过：起 keyserver + ms-web → 样例载入免闸跑通（三入口）→ 未绑 key 三入口均报中文错 → 假 key 保存报错（key 不存在）→ 真 key 绑定 + 批量合并 + 运行跑通 → keyserver 侧断言扣次（used_uses 恰 +1）与使用统计（daily_usage +1）\n- npm run build 后 :8010 生产 bundle 含新代码（**用户入口是生产构建，dev:5173 通过不算数**）\n- 验收报告落盘：含 15 项决策台账（FastAPI+SQLite 同仓/启动即扣预扣不退/绑定激活计时/fail-closed/合并标记保留/六态上屏/系统名=hostname/CLI 豁免/MS-XXXXX 格式/明文入库/frp 双 token 强制/超时 5s 禁重试/统计三指标平均÷开通以来天数/localStorage 镜像+后端权威/全链路无跨域）与四开放决策切换成本备案表\n- 全量 pytest 通过",
-      "passes": true
-    }
-  ]
+  "stories": []
 }
