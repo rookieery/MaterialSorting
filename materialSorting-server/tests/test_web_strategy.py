@@ -397,6 +397,11 @@ def test_start_spawn_cmd_frozen_prefix_switch(strat_env, monkeypatch):
     """US-002 冻结适配：sys.frozen 真 + 假 executable → spawn cmd 前缀切
     ``[exe, '--cli']``（launcher 分发对端），余下参数（cfg/--name/--strategy/
     --time/--quiet）与 dev 口径逐参数不变。"""
+    # US-005 key 闸门：frozen 态 MS_KEY_MODE=off 逃生口恒失效（生产语义），
+    # 本用例关注 spawn 前缀 → 闸门打桩放行（AC 认可机制）。
+    from materialsorting.web import keygate
+    monkeypatch.setattr(keygate, 'ensure_run_allowed',
+                        lambda src, deduct=True: (True, ''))
     _patch_state(monkeypatch, _fake_state(doc_id='froze1234'))
     uploads = Path(paths_mod.OUT_DIR) / 'uploads'
     uploads.mkdir(parents=True)

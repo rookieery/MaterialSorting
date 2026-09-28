@@ -602,6 +602,16 @@ from .checkpoint import register_checkpoint_routes   # noqa: E402
 
 register_checkpoint_routes(app)
 
+# key 授权管理端（prd-key-authorization-system US-005）：GET/POST /api/key/state|
+# save|merge|precheck 四端点（US-006 前端「当前系统 key 属性」弹窗数据源）。key
+# 状态是**机器级全局**（绑定 MachineGuid，本机全部会话/浏览器共享）—— 不加会话
+# 闸门，与 edit_hold（sid 级编辑钉住，须 X-Session-Id）的关键差异；后端
+# key_state.json 文件权威。routes_key 只依赖 keygate（禁 import 本模块，AST 守卫
+# 见 tests/test_web_key_routes.py）；文件尾注册（checkpoint.py 同模式）。
+from .routes_key import register_key_routes   # noqa: E402
+
+register_key_routes(app)
+
 # 编辑排料会话钉住（2026-09-04）：把 edit_hold 的编辑豁免与上面 strategy 注册的
 # run 钉住 hook 组合成单 slot 唯一 hook（任一豁免源给出未来时间戳即不逐出）。
 # **必须在 register_strategy_routes 之后**（strategy import 时覆写式注册自己的

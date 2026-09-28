@@ -28,6 +28,11 @@ WS 不能自定义 Header；缺省/空串 → default 会话）。连接建立�
 ``touch`` 刷活性（求解期间客户端不发消息也不误杀；单 float 写 GIL-safe）。
 会话过期/超限/非法 → ``{'type':'error','code':...,'message'}`` 错误帧（``code``
 键 additive，旧前端忽略）+ 显式 close，不发 manifest。
+
+key 授权闸门（prd-key-authorization-system US-005）：start 在 pieces 校验后、
+band/prefix 解析前过 ``keygate.ensure_run_allowed``（样例/机器豁免分支见 keygate；
+``asyncio.to_thread`` 包裹）。拒绝 → ``{'type':'error','code':'key_blocked',
+'message':中文}`` 帧 + 显式 close，不建求解子进程。
 """
 from __future__ import annotations
 
@@ -36,6 +41,7 @@ import re
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from . import keygate
 from .runtime import _executor
 from .sessions import SessionError, registry as session_registry
 from .solver import solve_with_callback_proc
@@ -195,6 +201,24 @@ async def ws_solve(ws: WebSocket):
         if not pieces or gate_mm <= 0:
             await ws.send_json({'type': 'error',
                                 'message': '排料数据为空（请先上传解析母版并 commit）'})
+            return
+
+        # US-005：key 授权闸门 —— pieces 校验后、band/prefix 解析前插
+        # ``keygate.ensure_run_allowed(doc.source)``（MS_KEY_MODE=off dev 逃生 /
+        # 样例母版白名单豁免 / 未绑定中文指路 / validate deduct=true 真扣次 ——
+        # 扣次唯一锚点 = MS 后端 start，前端被绕过时算法仍无法运行）。拒绝 →
+        # ``{'type':'error','code':'key_blocked'}`` 帧 + 显式 close（band 早退
+        # 同款），不建求解子进程。阻塞调用走 ``asyncio.to_thread``（keyserver 单
+        # 请求超时 5s，不卡事件循环）。
+        ok, key_msg = await asyncio.to_thread(
+            keygate.ensure_run_allowed, (state.get('doc') or {}).get('source'))
+        if not ok:
+            await ws.send_json({'type': 'error', 'code': 'key_blocked',
+                                'message': key_msg})
+            try:
+                await ws.close()
+            except Exception:
+                pass
             return
 
         sizes = msg.get('sizes') or []

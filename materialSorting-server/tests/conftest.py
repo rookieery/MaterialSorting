@@ -82,3 +82,15 @@ def _isolate_run_stats(tmp_path, monkeypatch):
     from materialsorting import paths
     monkeypatch.setattr(paths, 'RUN_STATS_JSONL',
                         str(tmp_path / 'run_stats_test.jsonl'))
+
+
+@pytest.fixture(autouse=True)
+def _key_gate_off(monkeypatch):
+    """US-005：既有用例零改动过 key 闸门 —— dev 逃生口 ``MS_KEY_MODE=off``。
+
+    三入口闸门（/ws/solve、/api/strategy|extreme/start）在未绑 key 时 fail-closed，
+    既有用例不感知 key 体系；测试环境统一走 keygate 的 dev 逃生口（冻结 exe 恒
+    不可绕，不影响生产行为）。key 闸门专项用例（test_web_key_routes.py）自行
+    ``delenv`` 恢复真实判定。
+    """
+    monkeypatch.setenv('MS_KEY_MODE', 'off')

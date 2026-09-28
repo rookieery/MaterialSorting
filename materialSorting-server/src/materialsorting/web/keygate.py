@@ -244,7 +244,7 @@ def save_key_state(key: str) -> dict:
 
 # ----------------------------------------------------------------- 运行闸门
 
-def ensure_run_allowed(doc_source) -> tuple[bool, str]:
+def ensure_run_allowed(doc_source, deduct: bool = True) -> tuple[bool, str]:
     """运行前授权闸门（三入口共用，US-005 接线）：返回 ``(ok, message)``。
 
     判定序（PRD US-004）：① ``MS_KEY_MODE=off`` 且**未冻结**（dev 逃生口；
@@ -253,6 +253,10 @@ def ensure_run_allowed(doc_source) -> tuple[bool, str]:
     跑通）→ ``(True, 'sample')``；③ 本地无 key → ``(False, MSG_NO_KEY)``；
     ④ ``validate deduct=true`` 真扣次（扣次唯一锚点 = MS 后端 start）—— 任何
     失败 fail-closed，文案直接上屏，**无自动重试**。
+
+    ``deduct=False``（US-005 ``/api/key/precheck`` 专用）：判定序完全一致、
+    唯一差异是 ④ 走 keyserver 预检口径（不动任何账，含 op_log）—— 前端运行
+    前拦截（US-007）与本函数共用单一真相源，两口径永不漂移。
     """
     if (os.environ.get('MS_KEY_MODE') == 'off'
             and not getattr(sys, 'frozen', False)):
@@ -267,7 +271,7 @@ def ensure_run_allowed(doc_source) -> tuple[bool, str]:
     try:
         _key_post('/api/key/validate',
                   {'key': key.strip(), 'machine_guid': machine_guid(),
-                   'deduct': True})
+                   'deduct': bool(deduct)})
     except KeyGateError as exc:
         return False, str(exc)
     return True, ''
