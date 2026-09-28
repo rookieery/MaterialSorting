@@ -11,8 +11,8 @@
 
 路由族（US-003 起逐故事落地）：
   - ``GET /api/key/health``   存活 + DB 可写探测（幂等建表）
-  - 管理端五接口 ``/api/admin/keys*``（X-Admin-Token，US-002 本故事）
-  - 消费端四接口 ``/api/key/{bind,merge,info,validate}``（X-Client-Token，US-003）
+  - 管理端五接口 ``/api/admin/keys*``（X-Admin-Token，US-002）
+  - 消费端四接口 ``/api/key/{bind,merge,info,validate}``（X-Client-Token，US-003 本故事）
   - ``/admin`` 可视化单页（US-008）
 
 业务错误统一 ``{"error": 中文}``（errors.ApiError → app 级 handler；消费端
@@ -27,6 +27,7 @@ from fastapi import FastAPI
 from . import db
 from .errors import ApiError, api_error_handler
 from .routes_admin import router as admin_router
+from .routes_consumer import router as consumer_router
 
 DEFAULT_PORT = 8110
 DEFAULT_HOST = '127.0.0.1'
@@ -34,6 +35,7 @@ DEFAULT_HOST = '127.0.0.1'
 app = FastAPI(title='VB超排 Key 授权服务', version='0.1.0')
 app.add_exception_handler(ApiError, api_error_handler)
 app.include_router(admin_router)
+app.include_router(consumer_router)
 
 
 @app.get('/api/key/health')

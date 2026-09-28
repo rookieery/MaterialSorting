@@ -4,8 +4,8 @@
 service.py；管理端续期规则在 US-002 routes_admin）。业务层一律经本模块读写，
 不得手写裸 SQL 散落路由。
 
-写操作自带 commit（请求级短连接，一操作一事务）；唯一例外是扣次原子 UPDATE
-（``atomic_deduct_once``，US-003）—— 单条 SQL 自身即原子，rowcount 即判据。
+写操作自带 commit（请求级短连接，一操作一事务）；扣次走单条原子 UPDATE
+（``atomic_deduct_once``，US-003）—— SQL 自身即原子，rowcount 即判据，并发零超扣。
 """
 from __future__ import annotations
 
@@ -117,6 +117,22 @@ def delete_key(conn: sqlite3.Connection, key_id: int) -> bool:
     conn.execute('DELETE FROM key_daily_usage WHERE key_id = ?', (key_id,))
     conn.execute('DELETE FROM key_op_log WHERE key_id = ?', (key_id,))
     cur = conn.execute('DELETE FROM keys WHERE id = ?', (key_id,))
+    conn.commit()
+    return cur.rowcount > 0
+
+
+def atomic_deduct_once(conn: sqlite3.Connection, key_id: int) -> bool:
+    """并发零超扣的原子扣次（US-003，FR-12）：count 型 used_uses+1 当且仅当仍有余额。
+
+    单条 UPDATE 自带条件（used_uses < total_uses），SQLite 写串行化下 20 线程并发
+    也恰有 total_uses 个线程 rowcount=1；返回 False = 败者（余额被抢扣完 / 非
+    count 型），由调用方按「次数已用完」语义拒绝。
+    """
+    cur = conn.execute(
+        "UPDATE keys SET used_uses = used_uses + 1, updated_at = ?"
+        " WHERE id = ? AND key_type = 'count' AND used_uses < total_uses",
+        (format_ts(now_fn()), key_id),
+    )
     conn.commit()
     return cur.rowcount > 0
 

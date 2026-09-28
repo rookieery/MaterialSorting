@@ -11,7 +11,7 @@
 # 安装（与 materialsorting 共用 repo 根 .venv 开发，但零 import 依赖）
 .venv/Scripts/python.exe -m pip install -e keyserver
 
-# 跑 keyserver 自有 pytest（99 例；勿在部署目录留真实 data/keys.db —— conftest
+# 跑 keyserver 自有 pytest（154 例；勿在部署目录留真实 data/keys.db —— conftest
 # 每用例把 MS_KEY_DB 指到 tmp_path）
 cd keyserver && ../.venv/Scripts/python.exe -m pytest
 
@@ -27,7 +27,7 @@ curl http://127.0.0.1:8110/api/key/health   # → {"ok":true,"service":"keyserve
 | `MS_KEY_DB` | `<keyserver/>/data/keys.db` | SQLite 账本路径（部署目录 = 包上溯两级；**非 editable 安装形态必须显式设**） |
 | `MS_KEY_HOST` | `127.0.0.1` | frp 同机部署形态 frpc 打 127.0.0.1，不裸露 LAN |
 | `MS_KEY_PORT` | `8110` | 监听端口 |
-| `MS_KEY_ADMIN_TOKEN` / `MS_KEY_CLIENT_TOKEN` / `MS_KEY_DEV` | 未设 | 双 token 鉴权 + 本地开发逃生（ADMIN 已生效 US-002；CLIENT US-003）。ADMIN 未设置且无 DEV=1 → 管理端族 403；已设置缺失/错 → 401。**无 loopback 放行**（frp 同机形态来源 IP 恒 127.0.0.1，兜底 = 公网裸奔） |
+| `MS_KEY_ADMIN_TOKEN` / `MS_KEY_CLIENT_TOKEN` / `MS_KEY_DEV` | 未设 | 双 token 鉴权 + 本地开发逃生（均已生效：ADMIN US-002 / CLIENT US-003）。任一未设置且无 DEV=1 → 对应端点族 403；已设置缺失/错 → 401；双 token 各管各族（admin token 打不开 consumer 四接口）。**无 loopback 放行**（frp 同机形态来源 IP 恒 127.0.0.1，兜底 = 公网裸奔） |
 
 ## 模块职责与约定（US-001 起）
 
@@ -38,7 +38,19 @@ curl http://127.0.0.1:8110/api/key/health   # → {"ok":true,"service":"keyserve
   落库格式 `TS_FORMAT = '%Y-%m-%d %H:%M:%S'`，自然日粒度 `ymd_of()`。
 - `repo.py` 只做三表读写（业务规则在路由/service 层）；`update_key` 列白名单
   `UPDATABLE_COLUMNS`，key_plaintext/key_type/created_at 不可改。
-- 写操作自带 commit；并发扣次要走单条原子 SQL（US-003），不做读-改-写。
+- 写操作自带 commit；**并发扣次只走 `repo.atomic_deduct_once`**（单条原子
+  UPDATE `used_uses=used_uses+1 WHERE key_type='count' AND used_uses<total_uses`，
+  rowcount 即判据），禁读-改-写（US-003 并发测试锁：20 线程 total=5 恰 5 成功）。
+- `service.py`（US-003）= 消费端业务规则单一真相源（bind/merge/info/validate）；
+  `routes_consumer.py` 只做入参形状校验 + `require_client_token`（镜像 admin
+  姿态）。**`MSG_*` 中文文案被 US-004 keygate 原样透传给排料用户，改字即破坏
+  消费端契约**（测试逐字锁定）。
+- bind 语义：绑定即 `bound_system_name` 快照 + 备注缺省=系统名 + **duration 型
+  立刻激活起算**；已绑本机幂等 200（不动库不重复审计）。merge 语义：前置
+  （全 duration + 全绑本机 + 全有效 + target 不在 sources）**全过才动账**，
+  source 去重保序防双计，秒级转移后置 merged_into_id 保留不物理删除。
+- `TS_FORMAT` 落库秒级截断（无亚秒）→ 涉及「转移/激活时刻」的测试断言要留
+  ≤1s 容差（test_service 秒级精确断言的区间写法）。
 - key 明文 `MS-XXXXX-XXXXX-XXXXX`（字母表 30 字符去 I/L/O/U/0/1，secrets 随机，
   库内明文存储 —— 哈希化二期备案）；`create_key` UNIQUE 冲突自动重试。
 - `key_daily_usage`（PRIMARY KEY (key_id, ymd)）是使用统计唯一数据源；
