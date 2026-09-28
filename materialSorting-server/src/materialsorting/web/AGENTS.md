@@ -283,3 +283,14 @@ python -m materialsorting.web.statefile                               # 状态�
 - **precheck = 闸门同判定序只读版**：`ensure_run_allowed(doc_source, deduct=False)` 不动账 —— 前端（US-007）与真跑闸门永不漂移（单一实现）。
 - **既有测试零改动机制**：conftest autouse `MS_KEY_MODE=off`（dev 逃生口）；frozen 用例（2 例）用 AC 认可的 monkeypatch `ensure_run_allowed` 放行。
 - **测试**：`tests/test_web_key_routes.py` 38 例（_StubServer 真 HTTP 桩 + AST 分层守卫 + 机器族豁免回归锁）。
+
+## key 授权闸门关键约定（keygate 模块契约 + 冻结部署口径；US-009 定稿 2026-09-28）
+
+- **keygate = 消费端唯一 HTTP 出口**：上层（routes_key / routes_ws / strategy 闸门）只调 `keygate.ensure_run_allowed` / `keygate._key_post` / `load_key_state` 等，不直接碰 urllib。**分层守卫**（AST 见 tests/test_web_keygate.py）：模块级仅标准库 + `..paths`；禁 import server/cli 子包；样例白名单走函数内延迟 import `.routes_views`（fastapi 不进冻结 import 面）。
+- **keyserver URL 解析链三档**（`resolve_key_server_url`，请求时读 env）：① `MS_KEY_SERVER_URL` env → ② **仅 frozen** exe 旁 `key_server_url.txt`（UTF-8 一行；dev 态不读——repo 内该文件是部署配置）→ ③ 皆无 `None` fail-closed。US-009 frozen 实测：sidecar 旁置生效（`--check` 回显来源标注）。**client token 链同构**（US-009 补齐：frp 双 token runbook 契约闭环——原版 keygate 不附 `X-Client-Token`，keyserver 设 token 即全 401）：`resolve_client_token` = env `MS_KEY_CLIENT_TOKEN` → frozen 旁 `key_client_token.txt` → 皆无不带 header；`_key_post` 已配置自动附头（值不回显进日志）。
+- **本地状态落点**：`<OUT_DIR>/license/key_state.json`（`paths.LICENSE_DIR`）后端文件权威、原子写（tmp+`os.replace`+fsync）；frozen 态 OUT_DIR=`%LOCALAPPDATA%\MaterialSorting\out` → **key_state.json 实测落 `%LOCALAPPDATA%\MaterialSorting\out\license\`**。清浏览器 localStorage 不丢 key（前端 keyStore 只是镜像）。
+- **机器身份双源**：注册表 `HKLM\SOFTWARE\Microsoft\Cryptography\MachineGuid` 优先；读失败铸 `license/machine_id.txt` uuid4 兜底（**首铸后恒读同值**——每次铸新会把本机变「他机」致绑定失效）。`describe_machine_guid()`（US-009）只读探测不铸文件（--check 无副作用口径）。
+- **HTTP 口径**：超时 5s；**无自动重试**（deduct=true 响应丢失服务端可能已扣次，重试双扣）；keyserver 业务 4xx 恒 `{"error":中文}` 原样透传；超时/URLError → `MSG_UNREACHABLE`（前端 US-007 的断网文案由后端映射，前端不自行判网）。
+- **MS_KEY_MODE=off 仅 dev 生效**：判定序第一分支要求 `not sys.frozen`——**frozen exe 恒不可绕**（US-009 frozen 实测：exe 进程设 off + 无 key，precheck 仍 `{ok:false, MSG_NO_KEY}`）。测试 conftest autouse off = 存量测试零改动机制。
+- **`--check` key 配置回显**（launcher `run_check`，US-009）：`env MS_KEY_MODE` / `key_server_url`（`describe_key_server_url`：URL+来源 env|sidecar|未配置）/ `key_client_token`（`describe_client_token`：配置态+来源，**值不回显**）/ `machine_guid`（`describe_machine_guid`）/ `key_state`（`key_state_path()`+绑定态）——售后自诊一条命令；launcher 对 keygate 走**函数内延迟 import**（模块级仅标准库红线，AST 守卫在 tests/test_launcher.py）。
+- **describe_\* 专用约定**：`describe_key_server_url` / `describe_client_token` / `describe_machine_guid` 仅供 --check 回显，**不得**被业务路径消费（业务用 resolve/machine_guid）。

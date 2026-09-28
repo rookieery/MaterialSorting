@@ -13,8 +13,8 @@
      ``materialsorting.cli.run_config.main``（延迟 import，退出码透传）；dev
      态 ``python -m materialsorting.launcher --cli`` 与直接跑 ms-run-config 等价；
   3. ``--check``：自检（frozen 态 / 版本串 / env / paths 落点 / 探测端口 /
-     warm 支持性），exit 0 无副作用 —— 冻结验收脚本（US-004）与售后识别用户
-     版本消费。
+     warm 支持性 / key 授权配置），exit 0 无副作用 —— 冻结验收脚本（US-004）
+     与售后识别用户版本消费。
 
 import 顺序红线（AST 守卫见 tests/test_launcher.py，全链最易踩的静默错误）：
   - **模块级仅 import 标准库**。``paths.py`` 在 import 期读 ``os.environ`` 固化
@@ -212,6 +212,12 @@ def run_check() -> int:
     US-003 冻结打包捆绑本包元数据使其在 frozen 态同样可读）/ 解析后 env /
     paths 各常量落点 / 探测端口 / ``warm_start_supported()`` 结果；exit 0，
     无副作用（不起服务不开浏览器；仅 apply_frozen_env 的缺省 OUT_DIR mkdir）。
+
+    key 授权配置回显（key 授权 PRD US-009）：``env MS_KEY_MODE`` / ``key_server_url``
+    （三档解析链结果 + 来源，经 ``keygate.describe_key_server_url``）/
+    ``key_client_token``（配置态 + 来源，**不回显值**，``describe_client_token``）/
+    ``machine_guid``（注册表只读探测，不铸兜底文件）/ ``key_state``（落点 +
+    绑定态）—— 售后定位现场 key 配置问题一条命令自诊。
     """
     apply_frozen_env()
     import importlib.metadata
@@ -224,10 +230,16 @@ def run_check() -> int:
 
     from . import paths
     from .nesting_engine.warmstart import warm_start_supported
+    from .web import keygate   # 延迟 import：模块级仅标准库红线（keygate 带 ..paths）
 
     def _env(name: str) -> str:
         return os.environ.get(name) or '(未设，走缺省)'
 
+    key_mode = os.environ.get('MS_KEY_MODE') or '(未设)'
+    state = keygate.load_key_state()
+    bound_key = state.get('key') if isinstance(state, dict) else None
+    bound = (f'已绑定 {bound_key}' if isinstance(bound_key, str) and bound_key.strip()
+             else '未绑定')
     print(f'frozen: {frozen}')
     print(f'version: {version}')
     print(f'python: {sys.version.split()[0]}')
@@ -237,6 +249,11 @@ def run_check() -> int:
     print(f'env MS_OUT_DIR: {_env("MS_OUT_DIR")}')
     print(f'env MS_STATIC_DIR: {_env("MS_STATIC_DIR")}')
     print(f'env MS_FONT_DIR: {_env("MS_FONT_DIR")}')
+    print(f'env MS_KEY_MODE: {key_mode}（off 仅 dev 生效，frozen 恒不可绕）')
+    print(f'key_server_url: {keygate.describe_key_server_url()}')
+    print(f'key_client_token: {keygate.describe_client_token()}')
+    print(f'machine_guid: {keygate.describe_machine_guid()}')
+    print(f'key_state: {keygate.key_state_path()}（{bound}）')
     print(f'paths.DATA_DIR: {paths.DATA_DIR}')
     print(f'paths.OUT_DIR: {paths.OUT_DIR}')
     print(f'paths.INTERMEDIATE: {paths.INTERMEDIATE}')
@@ -263,14 +280,22 @@ def _print_help() -> None:
         '                               （冻结形态 spawn 子进程入口，US-002 契约）\n'
         f'  ms-desktop {CHECK_FLAG}           自检：frozen 态/版本/env/paths 落点/'
         '探测端口/\n'
-        '                               warm 支持性（无副作用，不起服务不开浏览器）\n'
+        '                               warm 支持性/key 授权配置（URL 链/机 ID/'
+        '绑定态；\n'
+        '                               无副作用，不起服务不开浏览器）\n'
         '  ms-desktop -h | --help       本帮助\n'
         '\n'
         '环境变量（均可显式覆盖；frozen 态才设缺省重定向，dev 零重定向）：\n'
         '  MS_WEB_PORT     服务端口（缺省自 8010 探测空闲）\n'
         '  MS_OUT_DIR      产物目录（frozen 缺省 '
         f'%LOCALAPPDATA%\\{APP_DIR_NAME}\\out）\n'
-        '  MS_STATIC_DIR   前端静态目录（frozen 缺省 <exe 所在目录>\\static）')
+        '  MS_STATIC_DIR   前端静态目录（frozen 缺省 <exe 所在目录>\\static）\n'
+        '  MS_KEY_SERVER_URL  key 授权服务器基址（frozen 亦可 exe 旁 '
+        'key_server_url.txt）\n'
+        '  MS_KEY_CLIENT_TOKEN  keyserver 消费端共享 token（frozen 亦可 exe 旁 '
+        'key_client_token.txt；\n'
+        '                     未配置且 keyserver 已设 → 消费请求 401）\n'
+        '  MS_KEY_MODE     off = 关闭 key 闸门（仅 dev 生效，frozen exe 恒不可绕）')
 
 
 def main(argv: list[str] | None = None) -> int:

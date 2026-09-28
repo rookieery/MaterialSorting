@@ -81,7 +81,8 @@ class _StubServer:
             def do_POST(self):               # noqa: N802 - http.server 约定
                 body = json.loads(
                     self.rfile.read(int(self.headers['Content-Length'])))
-                outer.calls.append({'path': self.path, 'body': body})
+                outer.calls.append({'path': self.path, 'body': body,
+                                    'token': self.headers.get('X-Client-Token')})
                 if outer.delay_s:
                     time.sleep(outer.delay_s)
                 status, payload = outer.script[len(outer.calls) - 1
@@ -263,6 +264,93 @@ def test_url_chain_dev_ignores_sidecar(no_server_url, tmp_path, monkeypatch):
     (tmp_path / 'key_server_url.txt').write_text('http://x', encoding='utf-8')
     monkeypatch.setattr(sys, 'executable', str(tmp_path / 'python.exe'))
     assert keygate.resolve_key_server_url() is None
+
+
+# ------------------------------------------------- describe_*（--check 回显，US-009）
+
+def test_describe_url_three_tiers(no_server_url, tmp_path, monkeypatch):
+    """describe_key_server_url 三档描述与 resolve 同一真相源（US-009 --check 回显）。"""
+    # 档一 env：URL + 来源标注
+    monkeypatch.setenv('MS_KEY_SERVER_URL', 'http://ks.example.com:8110')
+    text = keygate.describe_key_server_url()
+    assert 'http://ks.example.com:8110' in text and 'MS_KEY_SERVER_URL env' in text
+    # 档二 frozen sidecar：strip 后 env 为空 → 来源标注 sidecar
+    monkeypatch.delenv('MS_KEY_SERVER_URL')
+    exe = tmp_path / 'app.exe'
+    monkeypatch.setattr(sys, 'frozen', True, raising=False)
+    monkeypatch.setattr(sys, 'executable', str(exe))
+    (tmp_path / 'key_server_url.txt').write_text(
+        'http://127.0.0.1:8110', encoding='utf-8')
+    text = keygate.describe_key_server_url()
+    assert 'http://127.0.0.1:8110' in text and 'key_server_url.txt' in text
+
+
+def test_describe_url_unconfigured(no_server_url):
+    """档三 皆无：fail-closed 描述（含两条配置路径指引）。"""
+    text = keygate.describe_key_server_url()
+    assert '未配置' in text and 'MS_KEY_SERVER_URL' in text \
+        and 'key_server_url.txt' in text
+
+
+def test_describe_machine_guid_registry_ok(monkeypatch):
+    monkeypatch.setattr(keygate, '_read_registry_guid', lambda: '55223278-1234-5678')
+    text = keygate.describe_machine_guid()
+    assert '注册表' in text and '55223278' in text
+
+
+def test_describe_machine_guid_no_mint(license_dir, monkeypatch):
+    """注册表不可读：仅描述兜底行为，**不铸 machine_id.txt**（--check 无副作用）。"""
+    monkeypatch.setattr(keygate, '_read_registry_guid', lambda: None)
+    text = keygate.describe_machine_guid()
+    assert 'machine_id.txt' in text
+    assert not license_dir.exists() or not license_dir.joinpath(
+        'machine_id.txt').exists()
+
+
+# ------------------------------------------------- client token 链（US-009）
+
+def test_client_token_env(no_server_url, monkeypatch):
+    """档一 env：strip 后非空即用。"""
+    monkeypatch.delenv('MS_KEY_CLIENT_TOKEN', raising=False)
+    monkeypatch.setenv('MS_KEY_CLIENT_TOKEN', '  tok-42  ')
+    assert keygate.resolve_client_token() == 'tok-42'
+
+
+def test_client_token_frozen_sidecar(no_server_url, tmp_path, monkeypatch):
+    """档二 frozen exe 旁 key_client_token.txt；空文件 = 未配置；dev 不读。"""
+    monkeypatch.delenv('MS_KEY_CLIENT_TOKEN', raising=False)
+    monkeypatch.setattr(sys, 'frozen', True, raising=False)
+    monkeypatch.setattr(sys, 'executable', str(tmp_path / 'app.exe'))
+    (tmp_path / 'key_client_token.txt').write_text('tok-side\n', encoding='utf-8')
+    assert keygate.resolve_client_token() == 'tok-side'
+    (tmp_path / 'key_client_token.txt').write_text('   \n', encoding='utf-8')
+    assert keygate.resolve_client_token() is None
+    monkeypatch.delattr(sys, 'frozen', raising=False)
+    (tmp_path / 'key_client_token.txt').write_text('tok-side', encoding='utf-8')
+    assert keygate.resolve_client_token() is None, 'dev 态不读 sidecar'
+
+
+def test_key_post_sends_client_token_header(set_server_url, monkeypatch):
+    """_key_post：已配置 token → 附 X-Client-Token；未配置 → 不带 header
+    （keyserver 未设 token 时不影响，401 由 keyserver 兜底透传）。"""
+    with _StubServer([(200, {'ok': True})]) as srv:
+        set_server_url(srv.url)
+        monkeypatch.delenv('MS_KEY_CLIENT_TOKEN', raising=False)
+        keygate._key_post('/api/key/info', {'key': 'K'})
+        assert srv.calls[-1]['token'] is None
+        monkeypatch.setenv('MS_KEY_CLIENT_TOKEN', 'tok-42')
+        keygate._key_post('/api/key/info', {'key': 'K'})
+        assert srv.calls[-1]['token'] == 'tok-42'
+
+
+def test_describe_client_token_no_value_leak(no_server_url, monkeypatch):
+    """describe：已配置报来源不回显值；未配置报 401 影响。"""
+    monkeypatch.delenv('MS_KEY_CLIENT_TOKEN', raising=False)
+    assert '401' in keygate.describe_client_token()
+    monkeypatch.setenv('MS_KEY_CLIENT_TOKEN', 'secret-tok-xyz')
+    text = keygate.describe_client_token()
+    assert '已配置' in text and 'MS_KEY_CLIENT_TOKEN env' in text
+    assert 'secret-tok-xyz' not in text, 'token 值不得进日志'
 
 
 # ------------------------------------------------------------- _key_post（真 HTTP）

@@ -91,10 +91,29 @@ ms-web             # → http://127.0.0.1:8010
 | `MS_UPLOAD_TTL_DAYS` | `14` | uploads 磁盘清理 TTL 天数（按 mtime，成对判龄） |
 | `MS_CHECKPOINT_TTL_SEC` | `7200` | 过期恢复内存 checkpoint 惰性 TTL 秒数 = 恢复窗（过期后墓碑 1h + 会话 TTL 10min + 余量；超窗无消费方，2026-09-13） |
 | `MS_CHECKPOINT_MAX` | `16` | checkpoint FIFO 条数上限（逐出最旧；≈3MB 内存，纯内存不落盘，2026-09-13） |
+| `MS_KEY_SERVER_URL` | 无 | key 授权服务器基址（消费端 keygate；frozen 态亦可 exe 旁 `key_server_url.txt`，皆无 fail-closed，2026-09-28） |
+| `MS_KEY_CLIENT_TOKEN` | 无 | keyserver 消费端共享 token（frp 双 token 部署必配；frozen 态亦可 exe 旁 `key_client_token.txt`，已配置自动附 `X-Client-Token`，US-009） |
+| `MS_KEY_MODE` | 无 | `off` = 关闭三入口 key 闸门（**仅 dev 生效**，frozen 生产 exe 恒不可绕；测试 conftest autouse 逃生口，2026-09-28） |
 
 ## 机器对接 API（/api/machine/*，YL 排料对接，2026-09-22）
 
 YLPatternMaking（YL 打版系统）后端经 `/api/machine/*` **六端点族**接入 MS 排料引擎：multipart 提交母版 DXF + config → 三档运行模式求解 → 轮询状态 → 终态取布局 / 会话无关导出 PLT / **`.msn` 状态文件取件**（带回 MS 工作台「状态恢复」继续人工调整）→ 幂等清理；可选 `MS_MACHINE_TOKEN` 认证。完整对接契约（YL 侧开发者可仅凭该节完成对接）见 [.docs/technical/agent-api-reference.md](.docs/technical/agent-api-reference.md) 的「机器对接 /api/machine/* — YL 后端对接契约」专节。
+
+## Key 授权体系（keyserver + 三入口闸门，2026-09-28）
+
+商业交付形态：**keyserver**（独立顶层系统 `keyserver/`，发卡/绑定/记账权威）+ **MS 消费端闸门**（`web/keygate.py` 唯一 HTTP 出口，冻结进 exe）。用户在「当前系统 key 属性」弹窗输入 key（`MS-XXXXX-XXXXX-XXXXX`）→ 绑定本机 MachineGuid（换机即失效，绑定他机 409）→ 三入口（普通 WS / 高级 / 极限）真跑前双闸校验：前端预检（`/api/key/precheck` 不扣次）+ 后端权威闸门（`/api/key/validate` deduct=true **扣次唯一锚点 = MS 后端 start**）；时长型 key 支持多卡合并剩余天数。
+
+```text
+keyserver（现场机，127.0.0.1:8110，经 frp 暴露公网）      MS 冻结 exe（客户机）
+  /api/admin/*  X-Admin-Token   ──发卡方管理后台 /admin      key_server_url.txt（exe 旁）
+  /api/key/*    X-Client-Token  ──bind/merge/info/validate── keygate（超时 5s · 无自动重试）
+```
+
+- **双豁免**：样例母版（`data/` 白名单）三入口全免跑通演示；`MS_KEY_MODE=off` **仅 dev 逃生口**（frozen 生产 exe 恒不可绕，US-009 冻结实测）。
+- **keyserver URL 配置链**：env `MS_KEY_SERVER_URL` → frozen exe 旁 `key_server_url.txt` → 皆无 fail-closed；client token 链同构（env `MS_KEY_CLIENT_TOKEN` → exe 旁 `key_client_token.txt`，已配置自动附 `X-Client-Token`，US-009）；`MaterialSorting.exe --check` 回显解析结果 + 来源（token 只报配置态不回显值）。
+- **本地状态**：`key_state.json` 后端文件权威（`<OUT_DIR>/license/`，frozen 态 = `%LOCALAPPDATA%\MaterialSorting\out\license\`）—— 清浏览器缓存不丢 key。
+- **部署**：keyserver frp runbook（frpc 样例 / **双 token 必设**（`MS_KEY_ADMIN_TOKEN` + `MS_KEY_CLIENT_TOKEN`，loopback 兜底在 frp 同机部署下失效）/ HTTP 明文残余风险备案（TLS 二期）/ SQLite 快照备份）见 [.docs/technical/本地部署构建与发版手册.md](.docs/technical/本地部署构建与发版手册.md) §7。
+- **契约**：四 MS 端点字段表 / 错误码矩阵 / 三入口双闸时序 / keyserver 消费四 + 管理五接口契约摘要，见 [.docs/technical/agent-api-reference.md](.docs/technical/agent-api-reference.md) 的「key 授权 /api/key/* 与三入口闸门」契约专节。
 
 ## 导出与 PLT 唛架信息表格（2026-08-30）
 

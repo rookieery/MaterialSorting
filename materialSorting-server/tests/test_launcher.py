@@ -426,18 +426,57 @@ def test_unknown_args_exit_2(capsys):
 
 def test_check_subprocess_output_keys():
     """python -m materialsorting.launcher --check 冒烟：各键在场 + dev 态
-    frozen: False + repo 落点（AC9 跑通判据）。"""
+    frozen: False + repo 落点（AC9 跑通判据；key 授权配置四行 = US-009）。"""
     proc = subprocess.run(
         [sys.executable, '-m', 'materialsorting.launcher', '--check'],
         capture_output=True, text=True, encoding='utf-8', cwd=str(_SRC.parent))
     assert proc.returncode == 0
     for key in ('frozen:', 'version:', 'env MS_WEB_PORT:', 'env MS_OUT_DIR:',
-                'env MS_STATIC_DIR:', 'paths.OUT_DIR:', 'paths.STATIC_DIR:',
-                'paths.FONT_DIR:', 'port:', 'warm_start_supported:'):
+                'env MS_STATIC_DIR:', 'env MS_KEY_MODE:', 'key_server_url:',
+                'key_client_token:', 'machine_guid:', 'key_state:',
+                'paths.OUT_DIR:', 'paths.STATIC_DIR:', 'paths.FONT_DIR:', 'port:',
+                'warm_start_supported:'):
         assert key in proc.stdout, key
     assert 'frozen: False' in proc.stdout
     assert str(_DEV_OUT_DIR) in proc.stdout
     assert str(_DEV_STATIC_DIR) in proc.stdout
+    # key 配置缺省态（子进程无 MS_KEY_* env）：未配置 fail-closed + 未绑定
+    assert '未配置' in proc.stdout
+    assert '未绑定' in proc.stdout
+
+
+def test_check_key_config_env_echo(monkeypatch):
+    """--check 回显 key 配置（US-009）：MS_KEY_SERVER_URL env → URL + 来源标注；
+    MS_KEY_MODE=off → 回显该值（回显本身不构成放行，判定序在 keygate）。"""
+    env = dict(os.environ)
+    env.pop('MS_KEY_SERVER_URL', None)
+    env['MS_KEY_SERVER_URL'] = 'http://127.0.0.1:8110'
+    env['MS_KEY_MODE'] = 'off'
+    proc = subprocess.run(
+        [sys.executable, '-m', 'materialsorting.launcher', '--check'],
+        capture_output=True, text=True, encoding='utf-8', cwd=str(_SRC.parent),
+        env=env)
+    assert proc.returncode == 0
+    assert 'key_server_url: http://127.0.0.1:8110' in proc.stdout
+    assert 'MS_KEY_SERVER_URL env' in proc.stdout
+    assert 'env MS_KEY_MODE: off' in proc.stdout
+    # key_state 落点 = OUT_DIR/license（与 paths.LICENSE_DIR 同口径）
+    assert 'license' in proc.stdout and 'key_state.json' in proc.stdout
+
+
+def test_check_client_token_configured_no_leak(monkeypatch):
+    """--check 回显 client token 配置态（US-009）：已配置报来源，**值不回显**
+    （共享秘密不进日志/截图）。"""
+    env = dict(os.environ)
+    env['MS_KEY_CLIENT_TOKEN'] = 'secret-tok-xyz'
+    proc = subprocess.run(
+        [sys.executable, '-m', 'materialsorting.launcher', '--check'],
+        capture_output=True, text=True, encoding='utf-8', cwd=str(_SRC.parent),
+        env=env)
+    assert proc.returncode == 0
+    assert 'key_client_token: 已配置' in proc.stdout
+    assert 'MS_KEY_CLIENT_TOKEN env' in proc.stdout
+    assert 'secret-tok-xyz' not in proc.stdout
 
 
 if __name__ == '__main__':

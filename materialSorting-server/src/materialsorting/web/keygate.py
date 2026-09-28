@@ -28,7 +28,10 @@
 keyserver URL 解析链（``resolve_key_server_url``，请求时读 env 非 import 期
 绑定 —— 部署后设 env 无需改代码）：``MS_KEY_SERVER_URL`` env → frozen exe 旁
 ``key_server_url.txt``（zip 解压部署免设 env）→ 皆无 → ``None``（fail-closed，
-调用方一律拒绝运行）。
+调用方一律拒绝运行）。client token 解析链同构（US-009，``resolve_client_token``）：
+``MS_KEY_CLIENT_TOKEN`` env → frozen exe 旁 ``key_client_token.txt`` → 皆无不带
+header（keyserver 已设 token 而本机未配 → 401 中文透传；frp 双 token 部署契约
+见发版手册 §7）。
 
 分层：模块级仅标准库 + ``..paths``（AST 守卫见 tests/test_web_keygate.py，
 镜像 edit_hold 先例）；**禁 import cli 子包与 server 模块**（本模块被 server
@@ -58,15 +61,17 @@ except ImportError:                     # pragma: no cover - 非 Windows 平台
 
 __all__ = [
     'KEY_HTTP_TIMEOUT_S', 'KeyGateError', 'MSG_NO_KEY', 'MSG_NO_SERVER',
-    'MSG_UNREACHABLE', 'ensure_run_allowed', 'key_state_path',
-    'load_key_state', 'machine_guid', 'resolve_key_server_url',
-    'save_key_state',
+    'MSG_UNREACHABLE', 'describe_client_token', 'describe_key_server_url',
+    'describe_machine_guid', 'ensure_run_allowed', 'key_state_path',
+    'load_key_state', 'machine_guid', 'resolve_client_token',
+    'resolve_key_server_url', 'save_key_state',
 ]
 
 KEY_HTTP_TIMEOUT_S = 5.0              # 单请求超时（PRD 定案：5s，禁自动重试）
 KEY_STATE_NAME = 'key_state.json'     # 当前绑定 key 的本地权威文件（LICENSE_DIR 下）
 MACHINE_ID_NAME = 'machine_id.txt'    # 注册表读取失败时的兜底机 ID（首铸后稳定）
 KEY_URL_FILE_NAME = 'key_server_url.txt'   # frozen exe 旁 URL sidecar（免 env 部署）
+KEY_TOKEN_FILE_NAME = 'key_client_token.txt'   # frozen exe 旁 client token sidecar（US-009）
 _MACHINE_GUID_KEY = r'SOFTWARE\Microsoft\Cryptography'   # 注册表键（HKLM 下）
 _MACHINE_GUID_VALUE = 'MachineGuid'                       # 键内值名（系统 GUID）
 
@@ -101,10 +106,65 @@ def resolve_key_server_url() -> str | None:
     return None
 
 
+def resolve_client_token() -> str | None:
+    """``X-Client-Token`` 解析链（US-009，与 URL 链同构）：env
+    ``MS_KEY_CLIENT_TOKEN`` → frozen exe 旁 ``key_client_token.txt``（strip 后
+    非空；dev 态不读）→ 皆无 ``None``（请求不带该 header —— keyserver 未设
+    token 时不影响；keyserver 已设而本机未配 → keyserver 401 中文透传上屏）。
+
+    背景：frp 部署 runbook 双 token 必设（US-009 契约定稿）—— 管理口令护发卡
+    财务面，共享 client token 防公网任意调用方打消费端（bind 他机抢绑/扣次烧
+    key）。token 值**不回显**（--check 只报已配置/未配置）。
+    """
+    env_tok = os.environ.get('MS_KEY_CLIENT_TOKEN')
+    if env_tok and env_tok.strip():
+        return env_tok.strip()
+    if getattr(sys, 'frozen', False):
+        sidecar = Path(sys.executable).resolve().parent / KEY_TOKEN_FILE_NAME
+        try:
+            text = sidecar.read_text(encoding='utf-8').strip()
+        except OSError:
+            return None
+        return text or None
+    return None
+
+
+def describe_client_token() -> str:
+    """client token 配置态描述（launcher ``--check`` 回显专用，US-009）。
+
+    **不回显 token 值**（共享秘密不进日志/截图）；来源标注同 URL 链口径。
+    """
+    token = resolve_client_token()
+    if token is None:
+        return ('未配置（keyserver 未设 MS_KEY_CLIENT_TOKEN 时不影响；'
+                '已设而未配 → 消费请求 401）')
+    env_tok = (os.environ.get('MS_KEY_CLIENT_TOKEN') or '').strip()
+    source = ('MS_KEY_CLIENT_TOKEN env' if env_tok == token
+              else 'key_client_token.txt（exe 旁）')
+    return f'已配置（来源：{source}，不回显值）'
+
+
+def describe_key_server_url() -> str:
+    """URL 解析结果的人类可读描述（launcher ``--check`` 回显专用，US-009）。
+
+    只读无副作用（不触发任何 HTTP）；来源判定与 :func:`resolve_key_server_url`
+    同一真相源 —— env strip 后等于解析结果即 env 档，否则为 frozen sidecar 档。
+    """
+    url = resolve_key_server_url()
+    if url is None:
+        return '未配置（fail-closed：设 MS_KEY_SERVER_URL 或在 exe 旁放置 key_server_url.txt）'
+    env = (os.environ.get('MS_KEY_SERVER_URL') or '').strip()
+    source = 'MS_KEY_SERVER_URL env' if env == url else 'key_server_url.txt（exe 旁）'
+    return f'{url}（来源：{source}）'
+
+
 # ----------------------------------------------------------------- HTTP 出口
 
 def _key_post(path: str, payload: dict, timeout: float = KEY_HTTP_TIMEOUT_S) -> dict:
     """POST JSON 到 keyserver（唯一 HTTP 出口），返回解析后的响应 dict。
+
+    已配置 client token（:func:`resolve_client_token`）时附 ``X-Client-Token``
+    请求头（US-009；未配置不带 —— keyserver 双 token 姿态下由其 401 兜底）。
 
     失败恒抛 :class:`KeyGateError`（文案可直接上屏）：
       - URL 未配置 → ``MSG_NO_SERVER``；
@@ -117,9 +177,13 @@ def _key_post(path: str, payload: dict, timeout: float = KEY_HTTP_TIMEOUT_S) -> 
     if not base:
         raise KeyGateError(MSG_NO_SERVER)
     url = base.rstrip('/') + path
+    headers = {'Content-Type': 'application/json; charset=utf-8'}
+    token = resolve_client_token()
+    if token:
+        headers['X-Client-Token'] = token
     request = urllib.request.Request(
         url, data=json.dumps(payload).encode('utf-8'), method='POST',
-        headers={'Content-Type': 'application/json; charset=utf-8'})
+        headers=headers)
     try:
         with urllib.request.urlopen(request, timeout=timeout) as resp:
             body = resp.read()
@@ -187,6 +251,18 @@ def _fallback_machine_id() -> str:
 def machine_guid() -> str:
     """本机稳定身份：注册表 MachineGuid 优先，失败落文件兜底（首铸 warn）。"""
     return _read_registry_guid() or _fallback_machine_id()
+
+
+def describe_machine_guid() -> str:
+    """机器身份来源只读探测（launcher ``--check`` 回显专用，US-009）。
+
+    与 :func:`machine_guid` 的差异：**不铸兜底文件**（--check 无副作用口径），
+    注册表不可读时仅描述「将走文件兜底」的运行时行为。
+    """
+    guid = _read_registry_guid()
+    if guid:
+        return f'注册表 MachineGuid 读取成功（{guid[:8]}…）'
+    return '注册表 MachineGuid 读取失败（运行时将铸 license/machine_id.txt 文件兜底）'
 
 
 # ----------------------------------------------------------------- 本地状态
@@ -295,7 +371,8 @@ def _smoke() -> int:
     class _Handler(http.server.BaseHTTPRequestHandler):
         def do_POST(self) -> None:               # noqa: N802 - http.server 约定
             body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
-            calls.append({'path': self.path, 'body': body})
+            calls.append({'path': self.path, 'body': body,
+                          'token': self.headers.get('X-Client-Token')})
             if body.get('key') == 'MS-BAD00-KEY00-0000X':
                 payload, status = {'error': 'key 不存在：请检查输入是否正确'}, 404
             else:
@@ -372,6 +449,14 @@ def _smoke() -> int:
                 os.environ['MS_KEY_SERVER_URL'] = f'http://127.0.0.1:{port}'
                 ok, msg = ensure_run_allowed('user.dxf')
                 check('闸门④ validate 放行', ok and calls[-1]['body']['deduct'] is True)
+                check('未配 client token 不附头', calls[-1]['token'] is None)
+                os.environ['MS_KEY_CLIENT_TOKEN'] = 'smoke-tok'
+                check('client token 档一 env 解析',
+                      resolve_client_token() == 'smoke-tok')
+                _key_post('/api/key/info', {'key': 'MS-SMOK-E0000-00000'})
+                check('已配 client token 自动附头',
+                      calls[-1]['token'] == 'smoke-tok')
+                del os.environ['MS_KEY_CLIENT_TOKEN']
                 save_key_state('MS-BAD00-KEY00-0000X')
                 n_before = len(calls)
                 ok, msg = ensure_run_allowed('user.dxf')
@@ -391,7 +476,8 @@ def _smoke() -> int:
             finally:
                 paths.LICENSE_DIR, paths.DATA_DIR = old_license, old_data
                 globals()['_read_registry_guid'] = old_reg_guid
-                for name in ('MS_KEY_MODE', 'MS_KEY_SERVER_URL'):
+                for name in ('MS_KEY_MODE', 'MS_KEY_SERVER_URL',
+                             'MS_KEY_CLIENT_TOKEN'):
                     os.environ.pop(name, None)
     finally:
         srv.shutdown()

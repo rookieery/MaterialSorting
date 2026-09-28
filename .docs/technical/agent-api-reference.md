@@ -56,7 +56,7 @@
 | GET | `/api/key/state` | **key 授权 US-005（2026-09-28）本机授权状态只读现查**（`routes_key.get_key_state`）：本地 key + keyserver `/api/key/info` 实时查询 → `{key, info, error}`；**keyserver 查询失败也 200**（文案进 `error`，弹窗仍能展示本地 key 引导重试）；未绑定 → `{key:null, info:null, error:null}`；**机器级全局无会话闸门**（key 绑 MachineGuid，随机 X-Session-Id 不拦） | `routes_key.get_key_state`（server.py 文件尾 checkpoint 之后 `register_key_routes`） |
 | POST | `/api/key/save` | **key 授权 US-005 绑定并保存**：body `{key}` → 先 keyserver `/api/key/bind`（`machine_guid` + `system_name=hostname` 快照）成功才 `save_key_state` 落 `key_state.json`（后端文件权威）→ `200 {saved:true, key, info}`；bind 业务失败（key 不存在/绑定他机等）→ 400 中文透传**不落盘不覆盖旧 key**；keyserver 不可达 → 400 fail-closed | `routes_key.post_key_save` |
 | POST | `/api/key/merge` | **key 授权 US-005 时长 key 合并**：body `{source_keys:[...]}`（非空字符串列表，strip 后上送，去重保序在 keyserver）；target = 本地当前 key（未绑定 → 400 指路文案）；keyserver 原子合并（任一 source 违反前置 → 整体失败无部分合并）→ 响应 `{target, sources:[{key,transferred_days}], total_transferred_days}` 原样透传 | `routes_key.post_key_merge` |
-| POST | `/api/key/precheck` | **key 授权 US-005 运行前预检（不动账）**：body 可选 `{doc_source}`（供样例豁免判定，**US-007 已落地**——前端 `lib/keyGate.ts` `ensureRunAllowed()` 三入口（普通 handleStart / strategy·extreme createRunStore.start）在真跑动作前消费，doc_source=`uploadStore.doc.filename` 与后端 basename 同口径）→ `keygate.ensure_run_allowed(doc_source, deduct=False)` —— 判定序与真跑闸门完全一致（off/样例豁免/无 key/validate deduct=false），唯一差异不扣次；`{ok:true[,reason]}` \| `{ok:false, message}`（断网文案后端映射 MSG_UNREACHABLE，前端不自行判断网络；前端对回包宽容——仅显式 `ok:false` 拦截，fail-open 由后端闸门兜底）；坏 body 容忍为无 doc_source | `routes_key.post_key_precheck` |on/gzip` 附件（Content-Disposition 中文/ASCII 双写同 state_save，文件名 `<原上传名>_状态_<yyyymmdd-HHMMSS>.msn`，ASCII fallback `<原上传名>_state_` / 非 ASCII 源回退 `nesting_state_` 前缀）—— 与浏览器 `POST /api/state-save` 产物**同构可恢复**（schema v1 零变更、`web/statefile.py` 零改动：`build_state_document`/`serialize_state`/`check_placed_conservation` 纯复用；用户动线 = YL 下载 → 交付版师 → MS 工作台「状态恢复」上传继续人工调整）。**doc 三源链**（会话无关）：① run_dir `pieces_intermediate.json` 直载（`load_pieces`）→ ② `registry.peek` 会话快照 → ③ per-doc intermediate（doc_id 反查 `uploads/<doc_id>_pieces/`）；全空 → 409「裁片数据已不可得」；doc.source 与文件名按状态槽 `source` 归一回**原上传名**（run_dir 直载侧是 `<doc_id>.dxf` 落盘名，跨源逐字节一致前提）。**form/quantities 合成**：源 = 状态槽 start 快照（sizes/per_type/quantities/gate_mm）→ orphan 回落 `machine_cfg_<sid>_*.json`；`form.gate = str(gate_mm/10)`（cm 字符串，恢复端 `_form_gate_mm` ×10 单一口径）；per_type 数值转 FormState 字符串形态；其余键（time=RUN_MODE_SPECS 烘焙秒数/seed='0'/multi_seed=False/seed_count='3'/band_*/prefix_* 关）满形态缺省；quantities 原样入档（缺省 None=全 1 旧语义）；`quantities_base`/`pending_strategy_result` 不产（机器无此概念省键式）。**run 块**：`_best_layout` 与 result/export 同源同序，placed 原样绝不按 pid 去重 + seed 透传 + final 按 best 可用键合成（缺键省略）+ provenance.kind 三档映射 normal→solve / advanced→strategy_race / extreme→extreme（config:{time_total_s}）；无任何布局帧 → **纯配置档 200 无 run 键**；running 期下载 = best-so-far 快照（export 同语义）。守恒闸 `check_placed_conservation` 防御性失败 → 409；解压后超 STATE_MAX_BYTES → 409；task_id/token 闸同六端点公共约定（DELETE 清理后 → 404） | `machine.machine_solve_state_file` |
+| POST | `/api/key/precheck` | **key 授权 US-005 运行前预检（不动账）**：body 可选 `{doc_source}`（供样例豁免判定，**US-007 已落地**——前端 `lib/keyGate.ts` `ensureRunAllowed()` 三入口（普通 handleStart / strategy·extreme createRunStore.start）在真跑动作前消费，doc_source=`uploadStore.doc.filename` 与后端 basename 同口径）→ `keygate.ensure_run_allowed(doc_source, deduct=False)` —— 判定序与真跑闸门完全一致（off/样例豁免/无 key/validate deduct=false），唯一差异不扣次；`{ok:true[,reason]}` \| `{ok:false, message}`（断网文案后端映射 MSG_UNREACHABLE，前端不自行判断网络；前端对回包宽容——仅显式 `ok:false` 拦截，fail-open 由后端闸门兜底）；坏 body 容忍为无 doc_source | `routes_key.post_key_precheck` |
 | WS | `/ws/solve` | 排料求解流（manifest → frames → final）；**多会话 US-003**：`?sid=` query（浏览器 WS 不能自定义 Header；缺省 → default 会话），连接钉住 + 回调刷活性，见下专节；**key 授权 US-005 闸门（2026-09-28）**：pieces/gate_mm 校验后、band/prefix 解析前 `keygate.ensure_run_allowed(state.doc.source)`（deduct=true）—— 拒绝 → `{'type':'error','code':'key_blocked','message':中文}` 帧 + 显式 close（band 早退同款）不起求解子进程；样例母版白名单与 `MS_KEY_MODE=off`（未冻结）豁免 | `routes_ws.ws_solve` |
 
 > （已删 2026-08-22）`POST /api/band/preview`（US-013 成带预演回显）与 `routes_band.py` 整体移除 —— 预演 / ack 硬警告 / go-no-go 闸门等成带旁路功能退场，band 收敛为「WS StartPayload band = 勾选 + 选 g 码」极简主流程。
@@ -861,17 +861,129 @@ curl http://127.0.0.1:8010/api/ptypes -H "X-Session-Id: <sid>"
 3. 前端 US-003 消费方：轮询与结果应用复用策略 PRD US-005 弹窗机制（mode 字段区分入口）。
 4. 验收（US-004）：同总预算 4h 三臂对拍报告 [.docs/business/极限运行_AB验收报告.md](../business/极限运行_AB验收报告.md)；单飞互斥的物理根据 = 三臂并行实测 solver 帧数 −8%、密度 −0.5pt（墙钟预算被 CPU 争用截断，长跑必须串行/单飞）。
 
-## key 授权 /api/key/* 与三入口闸门（key 授权 PRD US-005，2026-09-28）
+## key 授权 /api/key/* 与三入口闸门 — key 授权体系契约专节（key 授权 PRD US-001~008 落地；US-009 契约定稿 2026-09-28）
 
-**三入口闸门**（消费端与 keyserver 的全部通信收口在 `web/keygate.py`，判定序 = `MS_KEY_MODE=off` 且未冻结 → 样例母版白名单（`routes_views._sample_dxf_names` basename）→ 无本地 key → `/api/key/validate` deduct=true 真扣次；**扣次唯一锚点 = MS 后端 start**，无自动重试防双扣）：
+**本节自洽**：MS 前端/运维与 keyserver 部署方可仅凭本节完成对接与部署排障（实现细节见 `web/keygate.py` 消费端收口模块与独立顶层系统 `keyserver/` 源码及其测试，对接时不需读）。四 MS 端点速查见上「HTTP 路由」表 `/api/key/*` 行；本节给出字段表、错误码矩阵、双闸时序、豁免口径、配置链与 keyserver 九接口契约摘要。
 
-1. **WS `/ws/solve`**：pieces 校验后 band/prefix 解析前 `await asyncio.to_thread(keygate.ensure_run_allowed, doc.source)`；拒绝 → `{'type':'error','code':'key_blocked','message'}` 帧 + 显式 close，不起求解子进程。
-2. **`/api/strategy/start` 与 `/api/extreme/start`**（共用 `_start_run` 一处插入，载荷校验后产物清理/spawn 前）；拒绝 → `403 {'error':中文}`，不 cleanup / 不 spawn / 不写 cfg（上一轮 run 产物原样保留）。
-3. **机器族 `/api/machine/solve` 豁免**：独立实现不经 keygate（monkeypatch 回归锁锁定）；`/api/key/precheck` 是第四个只读预检入口（deduct=false 不动账）。
+### 0. 架构总览与配置链
 
-**双豁免**：样例母版（doc.source basename 命中 DATA_DIR 白名单）三入口全免；`MS_KEY_MODE=off` 仅未冻结 dev 生效（frozen exe 恒不可绕）。
+双系统：**keyserver**（发卡/绑定/记账权威，`ms-keyserver` / `python -m keyserver.app`，缺省 `http://127.0.0.1:8110`；管理后台 `GET /admin` 可视化单页）+ **MS 排料工作台**（消费端，keygate 唯一 HTTP 出口）。MS 侧不直连 SQLite、不感知 key 数据模型 —— 全部经 keyserver HTTP 契约。
 
-**四管理端点**（`web/routes_key.py`，`register_key_routes(app)` 在 server.py 文件尾 checkpoint 注册之后；**机器级全局无会话闸门** —— key 绑 MachineGuid 机器身份，本机全部会话/浏览器共享，随机 X-Session-Id 头不拦，与 `/api/edit-hold` sid 级闸门差异）：契约逐行见上「HTTP 路由」表；要点 —— `GET /api/key/state` keyserver 失败也 200（error 字段承载文案）；`POST /api/key/save` bind 成功才落盘（失败不覆盖旧 key）；`POST /api/key/merge` keyserver 原子合并原样透传；`POST /api/key/precheck` 判定序与真跑闸门完全一致唯一差异不扣次。阻塞 HTTP/IO 统一 `asyncio.to_thread`（keyserver 超时 5s 不卡事件循环）。前端弹窗（US-006：keyStore + KeyInfoModal 消费 state/save/merge）与三入口前端拦截（US-007 已落地：`lib/keyGate.ts` `ensureRunAllowed` 消费 precheck，普通/高级/极限真跑动作前预检，失败 Toast+StatusLine/弹窗 errorMessage 且 WS/start 请求零发出）消费本组端点；keyserver 侧（独立顶层系统 `keyserver/`）admin/consumer 契约见 `keyserver/` 源码与其测试。
+**keyserver URL 解析链**（`keygate.resolve_key_server_url`，请求时读 env 非 import 期绑定 —— 部署后设 env 无需改代码）：
+
+| 档 | 来源 | 生效条件 |
+|----|------|---------|
+| ① | env `MS_KEY_SERVER_URL` | 恒优先（strip 后非空即用；frozen/dev 均生效） |
+| ② | frozen exe 旁 `key_server_url.txt`（UTF-8 一行 URL） | 仅 `sys.frozen` 为真（zip 解压部署免设 env；**dev 态不读** —— repo 内该文件是部署配置不是开发配置） |
+| ③ | 无（`None`） | ①②皆无 → **fail-closed**：三入口运行一律拒绝（文案 `MSG_NO_SERVER`），管理端点 state 只报本地 key + error |
+
+**keyserver 侧 env**（部署手册 runbook 见 [本地部署构建与发版手册](本地部署构建与发版手册.md) §7 frp 部署）：`MS_KEY_PORT`（缺省 8110）/ `MS_KEY_HOST`（缺省 127.0.0.1，frp 同机形态不裸露 LAN）/ `MS_KEY_DB`（SQLite 路径，缺省 `<keyserver 部署目录>/data/keys.db`）/ `MS_KEY_ADMIN_TOKEN`（管理端鉴权）/ `MS_KEY_CLIENT_TOKEN`（消费端鉴权）/ `MS_KEY_DEV=1`（本地开发逃生：两 token 均未配置时放行）。
+
+**client token 解析链**（`keygate.resolve_client_token`，US-009，与 URL 链同构）：① env `MS_KEY_CLIENT_TOKEN` → ② **frozen** exe 旁 `key_client_token.txt`（UTF-8 一行，随 `key_server_url.txt` 一并交付客户；dev 态不读）→ ③ 皆无不带 `X-Client-Token` header（keyserver 未设 token 时不影响；**已设而本机未配 → keyserver 401「消费 token 缺失/错误」中文透传**，绑定/校验全被拒）。`_key_post` 已配置时自动附头 —— frp 双 token 生产部署下消费端零代码接线（env 或 sidecar 二选一）。
+
+**本地授权状态与机器身份**（消费端）：`key_state.json` 落 `<OUT_DIR>/license/key_state.json`（后端文件权威，原子写 tmp+replace；清浏览器缓存/换浏览器不丢 key；frozen 态 OUT_DIR = `%LOCALAPPDATA%\MaterialSorting\out`，**US-009 frozen 实测落位**）。机器身份 `machine_guid()` = 注册表 `HKLM\SOFTWARE\Microsoft\Cryptography\MachineGuid`（系统重装才变）→ 读失败（非 Windows/权限/键缺失）铸 `license/machine_id.txt` uuid4 兜底（首铸 stderr warn，此后恒读同值 = 稳定身份）。
+
+**HTTP 口径**（keygate `_key_post` 唯一出口）：单请求超时 **5s**（`KEY_HTTP_TIMEOUT_S`）；**无自动重试** —— `deduct=true` 响应丢失时服务端可能已扣次，重试会双扣；keyserver 业务 4xx 恒 `{"error": 中文}` 原样透传上屏；超时/连接失败统一 `MSG_UNREACHABLE`（fail-closed）；已配置 client token 自动附 `X-Client-Token`（见上链）。
+
+**launcher `--check` 回显**（US-009，售后自诊一条命令）：`env MS_KEY_MODE` / `key_server_url`（三档解析结果 + 来源标注，`keygate.describe_key_server_url`）/ `key_client_token`（配置态 + 来源，**值不回显**，`describe_client_token`）/ `machine_guid`（注册表只读探测不铸兜底文件）/ `key_state`（落点 + 绑定态）。
+
+### 1. MS_KEY_MODE 说明（唯一逃生口，仅 dev）
+
+`MS_KEY_MODE=off` = 三入口全放行（不看 key 不看样例，precheck 回 `reason:'off'`）。**仅未冻结（dev）生效**：`ensure_run_allowed` 判定序第一分支要求 `not getattr(sys, 'frozen', False)` —— **frozen 生产 exe 恒不可绕**（US-009 frozen 实测：exe 进程设 `MS_KEY_MODE=off`，未绑 key 运行仍被拒，文案 `MSG_NO_KEY`）。用途 = 开发/测试逃生口（测试 conftest autouse 设 off，存量测试零改动）。
+
+### 2. 三入口双闸时序（前端预检 + 后端权威）
+
+三入口 = 普通（WS `/ws/solve`）/ 高级（`/api/strategy/start`）/ 极限（`/api/extreme/start`）。**双闸**：前端预检（US-007，`lib/keyGate.ts ensureRunAllowed()` → `POST /api/key/precheck`，deduct=false 不动账）拦在前 = 用户零等待零误解（WS/start 请求根本不发）；后端闸门（US-005，`keygate.ensure_run_allowed` deduct=true 真扣次）= 权威兜底（绕过前端直打 API 仍被拦）。**扣次唯一锚点 = MS 后端 start**（前端预检/precheck 永不扣次；同一次运行只扣 1 次）。
+
+```text
+普通入口                          高级/极限入口
+─────────────────────────────    ─────────────────────────────
+用户点「开始排料」                  用户在弹窗点「运行」
+  │ 本地校验（码号/band/…)           │ 弹窗参数校验
+  ▼                                 ▼
+POST /api/key/precheck           POST /api/key/precheck
+  ├ {ok:false,message} → Toast     ├ {ok:false,message} → 弹窗 errorMessage
+  │   +StatusLine 拦截，零 WS 发出   │   拦截，零 /start 发出（gen 守卫丢弃在飞）
+  ▼ ok:true                         ▼ ok:true
+WS action:'start'                POST /api/strategy|extreme/start
+  ├ pieces 校验 → keygate 闸门       ├ 载荷校验 → keygate 闸门（_start_run
+  │  (deduct=true，真扣次)           │  一处插入：校验后、清理/spawn 前）
+  ├ 拒绝 → {'type':'error',         ├ 拒绝 → 403 {'error':中文}，不 cleanup
+  │  'code':'key_blocked','message'} │  不 spawn 不写 cfg（旧产物原样保留）
+  │  帧 + 显式 close，不起子进程      ▼
+  ▼                               202 spawn 子进程 → 求解
+manifest → frames → final
+```
+
+前端预检判定口径：读 `uploadStore.doc?.filename` 组 `{doc_source}`（与后端 `state['doc']['source']` basename 同口径 → 样例豁免穿透预检）；无 doc → `doc_source:null`。**宽容放行**：仅显式 `ok===false` 拦截（回包非 JSON/`{}`/缺 ok 键 → 放行），fail-open 由后端权威闸门兜底；`gateInFlightRef` 防连击；三入口失败文案逐字一致。
+
+### 3. 两类豁免口径 + 机器族独立豁免
+
+| 豁免 | 判定 | 范围 | precheck 回包 |
+|------|------|------|--------------|
+| 样例母版 | `doc_source` basename ∈ `routes_views._sample_dxf_names()`（= `paths.DATA_DIR` 顶层实时 `*.dxf` 白名单，与 `GET /api/samples` 同源） | 三入口全免（不扣次不看 key） | `{ok:true, reason:'sample'}` |
+| MS_KEY_MODE=off | env 为 `off` 且**未冻结** | 三入口全免（仅 dev；frozen 恒不可绕，见 §1） | `{ok:true, reason:'off'}` |
+| 机器族 | `/api/machine/*` 独立实现**不经 keygate**（机器对接已有 `MS_MACHINE_TOKEN` 认证；monkeypatch 回归锁锁定防误接） | 六端点全部免 key | —（不走 precheck） |
+
+判定序（`ensure_run_allowed` 单一真相源，precheck 与真跑闸门共用）：① off 且未冻结 → ② 样例白名单 → ③ 本地无 key（`MSG_NO_KEY` 指路「当前系统 key 属性」弹窗）→ ④ keyserver `/api/key/validate`（deduct 按 true/false 两口径，唯一差异不动账含 op_log）。
+
+### 4. MS 四端点字段表（`web/routes_key.py`；机器级全局，**无会话闸门** —— key 绑 MachineGuid 本机全部会话/浏览器共享，随机 X-Session-Id 头不拦，与 `/api/edit-hold` sid 级闸门差异）
+
+| 端点 | 请求字段 | 响应（200） | 失败口径 |
+|------|---------|------------|---------|
+| `GET /api/key/state` | — | `{key: str\|null, info: <info 契约>\|null, error: str\|null}`；未绑定 → 三 null；keyserver 查询失败也 200（文案进 `error`，弹窗仍能展示本地 key 引导重试） | 恒 200（读语义结果自描述） |
+| `POST /api/key/save` | `{key: str}`（strip 后非空） | `{saved:true, key, info}`；先 keyserver `/api/key/bind`（`machine_guid` + `system_name=hostname` 快照）成功才 `save_key_state` 落盘 | 400 `{'error':中文}`：key 为空/坏 body；bind 业务失败中文透传**不落盘不覆盖旧 key**；keyserver 不可达 fail-closed |
+| `POST /api/key/merge` | `{source_keys: [str,...]}`（非空字符串列表，strip 后上送；去重保序在 keyserver） | `{target, sources:[{key, transferred_days}], total_transferred_days}`（keyserver 契约原样透传）；target = 本地当前 key | 400：source_keys 形状非法；未绑定（`MSG_NO_KEY`）；keyserver merge 前置违反整体失败（无部分合并）中文透传 |
+| `POST /api/key/precheck` | `{doc_source?: str}`（坏 body 容忍为无 doc_source） | `{ok:true[, reason:'off'\|'sample']}` \| `{ok:false, message}`（判定序见 §3） | 恒 200（预检语义结果自描述） |
+
+info 契约（keyserver `/api/key/info|bind|validate` 成功共用，count 型示例）：`{type:'count', total_uses, used_uses, remaining_uses, status:六态中文, bound_system_name, remark}`；duration 型：`{type:'duration', activated_at, expires_at, remaining_days, status, bound_system_name, remark}`（未激活 → `activated_at/expires_at:null`、`remaining_days=duration_days`）。
+
+### 5. 错误码矩阵（用户可见文案，可直接上屏）
+
+| 场景 | 状态码 | 文案 | 出现端点 |
+|------|-------|------|---------|
+| 未绑定 key | —（precheck `{ok:false}` / 闸门拒绝） | `未绑定授权 key：请在「当前系统 key 属性」中输入并保存`（`MSG_NO_KEY`） | 三入口闸门/precheck/merge |
+| keyserver 未配置 | —（同上） | `授权服务器未配置：请设置 MS_KEY_SERVER_URL 或在程序目录放置 key_server_url.txt`（`MSG_NO_SERVER`） | 闸门/precheck/state/save/merge |
+| keyserver 不可达/超时 | —（同上） | `无法连接授权服务器，请检查网络后重试`（`MSG_UNREACHABLE`；**无自动重试**） | 同上 |
+| key 不存在 | keyserver 404 → MS 400 / 闸门拒绝 | `key 不存在：请检查输入是否正确` | save/merge/闸门 |
+| 已绑定他机 | keyserver 409 → MS 400 | `该 key 已绑定其他系统，无法绑定到本机` | save |
+| 已合并 | keyserver 409/403 | `该 key 已合并至其他 key，无法使用` | save/闸门 |
+| 次数用完 | keyserver 409/403 | `授权次数已用完（共 N 次）` | save/闸门 |
+| 已过期 | keyserver 409/403 | `授权已过期（截止 <expires_at>）` | save/闸门 |
+| 未绑定任何系统（validate） | keyserver 403 | `该 key 尚未绑定任何系统` | 闸门 |
+| 未绑定当前系统（info/validate） | keyserver 403 | `该 key 未绑定当前系统` | state/闸门 |
+| merge：target 自包含 | keyserver 400 | `目标 key 不可同时作为被合并 key` | merge |
+| merge：source 非时长型 | keyserver 400 | 仅时长型 key 可合并：\`<key>\` 为次数型 | merge |
+| merge：source 未绑本机 | keyserver 400 | \`<key>\` 未绑定当前系统，无法合并 | merge |
+| merge：source 已失效 | keyserver 400 | \`<key>\` 已失效（过期/已合并），无法合并 | merge |
+| MS 侧形状校验 | MS 400 | `请求体须为 JSON(对象)` / `key 不能为空` / `source_keys 必须为非空 key 列表`（等） | save/merge |
+
+keyserver 鉴权层（双 token）：管理/消费端点族 token **未配置且无 `MS_KEY_DEV=1`** → 403 `管理/消费 token 未配置，请设置 MS_KEY_ADMIN_TOKEN/MS_KEY_CLIENT_TOKEN`（**无 loopback 放行** —— frpc 与 keyserver 同机部署时公网流量来源 IP 恒 127.0.0.1，loopback 兜底等于公网裸奔，2026-09-28 决策）；缺失/错误 → 401（`secrets.compare_digest` 常量时间）。消费端 401 文案（`消费 token 缺失：请携带 X-Client-Token 请求头`/`消费 token 错误`）经 keygate 透传到工作台 —— 客户机漏配 `MS_KEY_CLIENT_TOKEN`/`key_client_token.txt` 的现象即此（MS 侧自动附头见 §0 client token 链）。
+
+### 6. keyserver 消费端四接口契约摘要（X-Client-Token；MS keygate 是唯一消费方）
+
+| 接口 | 请求字段 | 响应（200） | 业务错误 |
+|------|---------|------------|---------|
+| `POST /api/key/bind` | `{key, machine_guid, system_name}` | info 契约（见 §4）；未绑 → 绑定 + **duration 型绑定即激活起算**（`activated_at=now`、`expires_at=now+duration_days`）+ 备注缺省=系统名；已绑本机 → 幂等 200（快照不回写） | 400 字段空；404 不存在；409 已绑他机/已用完/已过期/已合并 |
+| `POST /api/key/merge` | `{target_key, source_keys:[...], machine_guid}` | `{target: info, sources:[{key, transferred_days}], total_transferred_days}`；source 剩余时长**秒级精确**转移（`target.expires_at += src.expires_at − now`），source 置 merged 保留不物理删除；前置全过才动账（无部分合并） | 400 前置违反（见 §5 merge 行）；404 不存在 |
+| `POST /api/key/info` | `{key, machine_guid}` | info 契约；未绑定 200（status=未绑定） | 404 不存在；403 绑定他机 |
+| `POST /api/key/validate` | `{key, machine_guid, deduct}`（deduct 缺省 false = 预检不动账） | info 契约；deduct=true 时 count 型走**单条原子 SQL**（并发零超扣）+ 当日记账 +1（duration 型仅记日） | 404 不存在；403 未绑任何系统/未绑本机/已合并/已用完/已过期 |
+
+`GET /api/key/health` 公开探活（无 token）：`{ok:true, service, db}` —— 部署冒烟自举用。
+
+### 7. keyserver 管理端五接口契约摘要（X-Admin-Token；管理后台 `GET /admin` 可视化单页消费，US-008）
+
+key 行契约（列表/单条/新建/续期/改备注共用 9 字段）：`{id, key_plaintext(明文), key_type:'count'|'duration', detail(次数 N/M · 时长 N天/起~止), status(六态中文), bound_system_name, remark, usage_stats:{total, max_daily, avg_daily, first_used}|null, created_at}`。六态（`models.derive_status` 单一真相源）：`正在使用/未绑定/未激活/已用完/已过期/已合并`。usage_stats 三指标 = 总次数 / 峰值日次 / **平均每日 = 总次数 ÷ 开通以来自然日数**（自首次使用起含首日，1 位小数；无使用记录 → null）。
+
+| 接口 | 请求 | 响应 | 业务错误 |
+|------|------|------|---------|
+| `GET /api/admin/keys` | — | `{keys:[9 字段行, ...]}`（新→旧） | 401/403 鉴权 |
+| `POST /api/admin/keys` | `{key_type:'count', total_uses:N}` 或 `{key_type:'duration', duration_days:N}`，可选 `remark` | 201 含**此刻生成的明文**（格式 `MS-XXXXX-XXXXX-XXXXX`，32 字符字母表去 I/L/O/U/0/1） | 400 key_type/正整数/remark 形状 |
+| `POST /api/admin/keys/{id}/renew` | count → `{add_uses:N}`；duration → `{add_days:N}`（未激活加 duration_days；已激活 `expires_at += add_days`） | 9 字段行 | 400 正整数；404 不存在 |
+| `PUT /api/admin/keys/{id}` | `{remark: str}`（空串 = 清除备注） | 9 字段行 | 400 形状；404 |
+| `DELETE /api/admin/keys/{id}` | query `?force=true`（active 态二次确认） | `{ok:true, id}`；非 active 直删 | 404；409 `该 key 正在使用，确认删除请再次确认`（无 force） |
+
+每操作写 `key_op_log`（create/renew/edit/delete/bind/merge_*/validate 扣次等审计流）。frp 部署 runbook（frpc 配置样例、双 token 必设、明文 HTTP 残余风险、SQLite 快照备份）见 [本地部署构建与发版手册](本地部署构建与发版手册.md) §7。
 
 ## 机器对接 /api/machine/* — YL 后端对接契约（机器对接 PRD US-001~005，2026-09-21 全五端点落地；三期 PRD US-001 2026-09-22 增 state-file 第六端点）
 
