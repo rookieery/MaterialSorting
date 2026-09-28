@@ -25,5 +25,9 @@ ms-keyserver = "keyserver.app:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+# US-008：/admin 单页随包打包（非 editable 安装形态也能 GET /admin）
+[tool.setuptools.package-data]
+keyserver = ["static/*.html"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -22,7 +22,9 @@ DEFAULT_DB_RELPATH = ('data', 'keys.db')   # 相对部署目录
 BUSY_TIMEOUT_MS = 5000
 
 # 部署目录 = src/keyserver/db.py 上溯两级 → keyserver/（源码根）
-_PKG = Path(__file__).resolve().parents[1]        # .../src/keyserver
+# parents 索引勿错位（US-008 实勘修正：原 parents[1] 起算使 DEPLOY_DIR 落到
+# repo 根 data/ —— 与 materialsorting 的 DATA_DIR 撞目录，见 test_db 锚定断言）
+_PKG = Path(__file__).resolve().parents[0]        # .../src/keyserver
 _SRC = _PKG.parent                                # .../src
 DEPLOY_DIR = _SRC.parent                          # .../keyserver（部署目录）
 

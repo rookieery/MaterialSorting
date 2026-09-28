@@ -1268,6 +1268,12 @@
         "title": "三入口前端拦截",
         "description": "As a 排料软件用户, I want 点击普通/高级/极限运行时先校验 key so that key 失效时得到即时中文反馈而非跑一半失败。\n\n具体任务：\n1. materialSorting-web/src/lib/keyGate.ts — 新建 ensureRunAllowed(): Promise<{ok:true} | {ok:false,message}> = POST /api/key/precheck；失败经 toastStore 弹中文错误\n2. materialSorting-web/src/components/ControlPanel/ControlPanel.tsx — handleStart（约 :256）async 化，顶部先 await ensureRunAllowed()，失败 onStatus(message) 后 return（不进入 WS 连接）\n3. materialSorting-web/src/store/strategyStore.ts — createRunStore 工厂（约 :109，strategy/extreme 双族共用）的 start() 内 apiFetch /start 之前插 precheck；失败 set({phase:'error', errorMessage: message})（StrategyRunModal/ExtremeRunModal 弹窗既有渲染位零改动即得报错展示）\n\n验收标准：\n- precheck 失败：普通运行不进入 WS 连接（无 onStart 调用）且 Toast/StatusLine 显示中文；高级/极限不发 /start 请求（fetch 计数断言）且弹窗 errorMessage 展示\n- precheck 通过：三入口交互与现状逐字节一致（既有测试零改动通过）\n- 断网文案「无法连接授权服务器，请检查网络后重试」三入口一致（由后端 precheck 映射，前端不自行判断网络）\n- vitest 通过 + npm run build 无错误 + 通过浏览器验证三入口拦截与放行",
         "passes": true
+      },
+      {
+        "id": "US-008",
+        "title": "keyserver 管理后台可视化单页",
+        "description": "As a key 管理员, I want /admin 单页表格（新建/编辑续期/删除确认/使用统计） so that 无命令行也能日常发卡续卡。\n\n具体任务：\n1. keyserver/src/keyserver/static/admin.html — 原生 HTML + fetch + 内联 CSS 单页（**不进 materialSorting-web Vite 构建链**）\n2. keyserver/src/keyserver/app.py — 挂载 /admin（同源无跨域）\n\n验收标准：\n- 表格八列按需求列序：名称（= key 明文）｜绑定系统名（只读）｜备注名｜类型（次数/时长）｜详细信息（次数 N/M 或时长 起~止）｜属性（六态：正在使用/已过期/已用完/未绑定/未激活/已合并）｜使用统计（一格三行：均 X.X/日 ｜ 峰 N ｜ 共 M，无记录 —）｜操作（编辑/删除）\n- 新建表单：时长型（生效时长，默认单位天）/ 次数型（单位次），创建后即时出现在表格\n- 编辑弹窗：修改备注名 + 续期（次数型加次数 / 时长型加天数），保存后表格即时生效（remaining/截止时间变化可见）\n- 删除：已过期/已用完直接删；正在使用出二段确认弹窗，确认（force）后才删\n- token 登录框存 sessionStorage 附 X-Admin-Token 请求头；未设 token 的部署显示配置指引文案\n- keyserver pytest 全绿 + 通过浏览器验证（本机或 frp URL 均同源）",
+        "passes": true
       }
     ]
   }

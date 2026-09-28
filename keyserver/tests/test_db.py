@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sqlite3
+from pathlib import Path
 
 import keyserver.db as db
 
@@ -60,6 +61,10 @@ def test_default_db_path_anchors_to_deploy_dir(monkeypatch, tmp_path):
     assert db.db_path() == expected
     # 未设 env 时绝不落临时目录（锚定源码根，与 materialsorting/paths.py 同口径）
     assert tmp_path not in db.db_path().parents
+    # 锚点显式钉死 = keyserver/ 源码根（US-008 修正 parents 错位后回归锁：
+    # 原实现 DEPLOY_DIR 落 repo 根，缺省库会写进 materialsorting 的 data/ 撞目录）
+    assert db.DEPLOY_DIR == Path(db.__file__).resolve().parents[2]
+    assert db.DEPLOY_DIR.name == 'keyserver'
 
 
 def test_connect_creates_parent_dirs(tmp_path):

@@ -1524,3 +1524,22 @@ useSolveRun.stop `startSolveViaPanel`）。US-007 已机械改造 3 个测试文
   keyserver 后断网文案三入口逐字一致；报告 + 5 截图 `out/us007_key_gate/`）。
 - 断言 Toast 用**计数增量**而非栈内文本（Toast 不自动消失是设计 —— 拦截相
   位的 Toast 会一直留在栈内，放行断言 = 数量不增）。
+
+## key 授权 US-008 关键约定（keyserver /admin 管理后台单页，2026-09-28）
+
+**改动全在 keyserver/**（`keyserver/src/keyserver/static/admin.html` + `app.py`
+GET /admin），**不进本目录 Vite 构建链**；此处只记验证脚本约定：
+
+- `scripts/us008_admin_verify.mjs`（模板 us007）：双 keyserver 实例 —— 主实例
+  `MS_KEY_ADMIN_TOKEN` + `MS_KEY_DEV=1`（消费端免 token 供脚本 node 侧
+  bind/validate 造态）+ 临时 `MS_KEY_DB`；裸实例无 token 无 DEV（「未配置
+  token → 配置指引」相位）。40/40：指引文案/错 token 401 不落
+  sessionStorage/八列列序/新建两型即时入表/编辑改备注+续期（remaining 0/10、
+  截止时间恰好 +10 天）/统计三行 均 2.0/日·峰·共 + keyserver 侧对拍/未绑定·
+  已用完直删无弹窗/正在使用二段确认 force 删/退出登录清 sessionStorage/
+  reload 免重输。报告 + 截图 `out/us008_admin/`。
+- 脚本幂等：开头 `resetKeys()` 经 admin API force 清空主实例既有 key（空态
+  断言可重跑）；`createKeyViaUI` 先清 `#global-msg` 文本再点新建（防
+  waitForFunction 匹配上一轮成功消息里的旧明文）。
+- playwright 坑：`locator('#x.hidden').waitFor()` 默认等 **visible** 永不满足
+  —— 等元素转为隐藏要用 `waitFor({ state: 'hidden' })`。

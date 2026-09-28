@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VB超排 Key 授权管理</title>
+<style>
+/* 原生单页（US-008）：不进 materialSorting-web Vite 构建链，配色沿用工作台暗色系 */
+* { box-sizing: border-box; }
+body {
+  margin: 0; font-family: system-ui, 'Microsoft YaHei', 'Segoe UI', sans-serif;
+  background: #1e1f24; color: #e6e6e6; font-size: 14px;
+}
+.topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 20px; background: #26282e; border-bottom: 1px solid #34363d;
+}
+.topbar h1 { font-size: 16px; margin: 0; }
+.topbar-right { display: flex; align-items: center; gap: 10px; }
+.conn { font-size: 12px; color: #2ea06c; }
+.conn.off { color: #888; }
+.wrap { max-width: 1180px; margin: 0 auto; padding: 20px; }
+.card {
+  background: #26282e; border: 1px solid #34363d; border-radius: 8px;
+  padding: 16px 18px; margin-bottom: 16px;
+}
+.card h2 { font-size: 14px; margin: 0 0 12px; }
+.card p { font-size: 13px; line-height: 1.7; margin: 6px 0; }
+.row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.row label { font-size: 13px; }
+input[type=text], input[type=password], input[type=number] {
+  background: #1e1f24; color: #e6e6e6; border: 1px solid #34363d; border-radius: 6px;
+  padding: 6px 10px; font-size: 13px; font-family: inherit;
+}
+input:focus { outline: none; border-color: #2ea06c; }
+#amount-input { width: 90px; }
+#token-input { flex: 1; min-width: 220px; }
+#remark-input { width: 200px; }
+button {
+  background: #34363d; color: #e6e6e6; border: 1px solid #4a4d56; border-radius: 6px;
+  padding: 6px 14px; font-size: 13px; cursor: pointer; font-family: inherit;
+}
+button:hover { background: #3f424b; }
+button.primary { background: #2ea06c; border-color: #2ea06c; color: #fff; }
+button.primary:hover { background: #35b47c; }
+button.danger { background: #c0453e; border-color: #c0453e; color: #fff; }
+button.danger:hover { background: #d0524b; }
+button.ghost-danger { background: transparent; border-color: #6a4038; color: #e08a85; }
+button.ghost-danger:hover { background: #3a2a28; }
+.dim { color: #888; font-size: 12px; }
+.mono { font-family: Consolas, 'Courier New', monospace; }
+.msg-error { color: #ff8888; font-size: 13px; }
+.msg-ok { color: #7fd8a8; font-size: 13px; }
+#global-msg { margin: 0 0 14px; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { padding: 8px 10px; border-bottom: 1px solid #34363d; text-align: left; vertical-align: top; }
+th { color: #9aa; font-weight: 600; font-size: 12px; white-space: nowrap; }
+tbody tr:hover td { background: #2b2d33; }
+.key-cell { cursor: copy; color: #9fd8bd; white-space: nowrap; }
+.stats span { display: block; line-height: 1.5; color: #cfcfcf; }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 12px; white-space: nowrap; }
+.badge.ok { background: rgba(46,160,108,.18); color: #7fd8a8; }
+.badge.bad { background: rgba(192,69,62,.18); color: #e08a85; }
+.badge.dim { background: rgba(136,136,136,.18); color: #9a9a9a; }
+.ops button { padding: 3px 10px; font-size: 12px; margin-right: 6px; }
+.overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,.55);
+  display: flex; align-items: center; justify-content: center; z-index: 100;
+}
+.modal {
+  width: 460px; max-width: calc(100vw - 40px);
+  background: #26282e; border: 1px solid #4a4d56; border-radius: 8px; padding: 18px 20px;
+}
+.modal-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+.modal-head h2 { font-size: 15px; margin: 0; }
+.modal-head .x { background: transparent; border: 0; color: #888; font-size: 15px; padding: 2px 6px; }
+.modal-head .x:hover { color: #e6e6e6; }
+.modal label { display: block; font-size: 13px; margin: 12px 0 4px; color: #cfcfcf; }
+.modal input { width: 100%; }
+.renew-line { display: flex; align-items: center; gap: 8px; }
+.renew-line input { flex: 1; }
+.renew-line .unit { color: #888; font-size: 13px; white-space: nowrap; }
+.modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
+pre {
+  background: #1e1f24; border: 1px solid #34363d; border-radius: 6px;
+  padding: 10px 12px; font-size: 12px; overflow: auto; margin: 8px 0;
+}
+code { color: #9fd8bd; }
+.hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <h1>VB超排 Key 授权管理</h1>
+  <div class="topbar-right">
+    <span id="conn-state" class="conn off">未登录</span>
+    <button id="btn-refresh" class="hidden">刷新</button>
+    <button id="btn-logout" class="hidden">退出登录</button>
+  </div>
+</header>
+
+<div class="wrap">
+
+  <!-- token 登录卡：token 只存本浏览器 sessionStorage，请求一律附 X-Admin-Token -->
+  <section id="token-card" class="card hidden">
+    <h2>管理登录</h2>
+    <p>输入部署时设置的管理 token（keyserver 环境变量 <code>MS_KEY_ADMIN_TOKEN</code>）：</p>
+    <div class="row">
+      <input id="token-input" type="password" placeholder="管理 token（X-Admin-Token）" autocomplete="off">
+      <button id="btn-login" class="primary">保存并加载</button>
+    </div>
+    <p id="token-error" class="msg-error hidden"></p>
+    <p class="dim">token 仅保存在本浏览器 sessionStorage（关闭标签页即清除），不会发往 /admin 页面以外的任何地方。</p>
+  </section>
+
+  <!-- 未配置 token 的部署：配置指引（GET /api/admin/keys → 403 未配置时展示） -->
+  <section id="unconfigured-card" class="card hidden">
+    <h2>该部署尚未配置管理 token</h2>
+    <p>当前 keyserver 未设置 <code>MS_KEY_ADMIN_TOKEN</code>，管理接口整体关闭（无 loopback 放行 —— frp 同机部署形态下来源 IP 恒为 127.0.0.1，放行等于公网裸奔）。</p>
+    <p>请在 keyserver 所在机器设置环境变量后重启服务，再访问本页：</p>
+<pre>MS_KEY_ADMIN_TOKEN=&lt;随机长 token&gt;    # 管理端（本页）token
+MS_KEY_CLIENT_TOKEN=&lt;随机长 token&gt;    # 消费端 token（frp 部署双 token 必设）</pre>
+    <p class="dim">本机开发调试可临时用 <code>MS_KEY_DEV=1</code> 逃生（仅 token 未配置时生效）。</p>
+  </section>
+
+  <main id="main" class="hidden">
+
+    <p id="global-msg" class="hidden"></p>
+
+    <!-- 新建：时长型（生效时长，默认单位天）/ 次数型（单位次） -->
+    <section class="card">
+      <h2>新建 key</h2>
+      <div class="row">
+        <label><input type="radio" name="key-type" value="count" checked> 次数型</label>
+        <label><input type="radio" name="key-type" value="duration"> 时长型</label>
+        <span id="amount-field">总次数</span>
+        <input id="amount-input" type="number" min="1" step="1" value="10">
+        <span id="amount-unit">次</span>
+        <input id="remark-input" type="text" placeholder="备注名（可选）">
+        <button id="btn-create" class="primary">新建</button>
+      </div>
+      <p class="dim">时长型「生效时长」默认单位 = 天（绑定机器后即刻激活起算）；次数型单位 = 次。创建后即时出现在下方表格。</p>
+    </section>
+
+    <!-- 表格八列（需求列序）：名称｜绑定系统名｜备注名｜类型｜详细信息｜属性｜使用统计｜操作 -->
+    <section class="card">
+      <h2>key 列表</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>名称</th>
+            <th>绑定系统名</th>
+            <th>备注名</th>
+            <th>类型</th>
+            <th>详细信息</th>
+            <th>属性</th>
+            <th>使用统计</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="keys-body"></tbody>
+      </table>
+      <p class="dim">名称 = key 明文（点击复制）；绑定系统名在绑定机器时快照，不可在此修改。</p>
+    </section>
+
+  </main>
+</div>
+
+<!-- 编辑弹窗：改备注名 + 续期（次数型加次数 / 时长型加天数） -->
+<div id="edit-overlay" class="overlay hidden">
+  <div class="modal">
+    <div class="modal-head">
+      <h2>编辑 key</h2>
+      <button class="x" id="edit-x" title="关闭">✕</button>
+    </div>
+    <p class="mono" id="edit-key-name"></p>
+    <label for="edit-remark">备注名</label>
+    <input id="edit-remark" type="text" placeholder="备注名（空 = 清除备注）">
+    <label for="edit-renew-amount" id="edit-renew-label">续期：加次数</label>
+    <div class="renew-line">
+      <input id="edit-renew-amount" type="number" min="1" step="1" placeholder="留空 = 不续期">
+      <span class="unit" id="edit-renew-unit">次</span>
+    </div>
+    <p id="edit-error" class="msg-error hidden"></p>
+    <div class="modal-actions">
+      <button id="edit-cancel">取消</button>
+      <button id="btn-edit-save" class="primary">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 删除二段确认弹窗（正在使用的 key：确认 force=true 才删） -->
+<div id="del-overlay" class="overlay hidden">
+  <div class="modal">
+    <div class="modal-head">
+      <h2>删除确认</h2>
+      <button class="x" id="del-x" title="关闭">✕</button>
+    </div>
+    <p id="del-text"></p>
+    <p class="msg-error" id="del-warning">该 key 正在使用，删除后绑定机器立即失去授权！确认要删除吗？</p>
+    <p id="del-error" class="msg-error hidden"></p>
+    <div class="modal-actions">
+      <button id="del-cancel">取消</button>
+      <button id="btn-del-confirm" class="danger">确认删除</button>
+    </div>
+  </div>
+</div>
+
+<script>
+'use strict';
+/* keyserver 管理后台（US-008）：同源原生 fetch 消费 /api/admin/* 五接口。
+   token 流：sessionStorage('ms_admin_token') → 全部请求附 X-Admin-Token；
+   403 且 error 含「未配置」→ 渲染配置指引卡；401 → 回登录框报错。 */
+var TOKEN_KEY = 'ms_admin_token';
+function $(id) { return document.getElementById(id); }
+
+var token = '';
+var keysCache = [];
+var editRow = null;
+var delTargetId = null;
+var msgTimer = null;
+
+function showEl(el, visible) { el.classList.toggle('hidden', !visible); }
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  });
+}
+function setConn(text, on) {
+  $('conn-state').textContent = text;
+  $('conn-state').classList.toggle('off', !on);
+}
+function setMsg(text, isError) {
+  var el = $('global-msg');
+  el.textContent = text;
+  el.className = isError ? 'msg-error' : 'msg-ok';
+  showEl(el, true);
+  if (msgTimer) clearTimeout(msgTimer);
+  if (!isError) msgTimer = setTimeout(function () { showEl(el, false); }, 6000);
+}
+function showLogin(message) {
+  token = '';
+  keysCache = [];
+  showEl($('token-card'), true);
+  showEl($('unconfigured-card'), false);
+  showEl($('main'), false);
+  showEl($('btn-refresh'), false);
+  showEl($('btn-logout'), false);
+  setConn('未登录', false);
+  var err = $('token-error');
+  if (message) { err.textContent = message; showEl(err, true); }
+  else showEl(err, false);
+  $('token-input').focus();
+}
+function showUnconfigured() {
+  token = '';
+  keysCache = [];
+  showEl($('token-card'), false);
+  showEl($('unconfigured-card'), true);
+  showEl($('main'), false);
+  showEl($('btn-refresh'), false);
+  showEl($('btn-logout'), false);
+  setConn('未配置 token', false);
+}
+function showMain() {
+  showEl($('token-card'), false);
+  showEl($('unconfigured-card'), false);
+  showEl($('main'), true);
+  showEl($('btn-refresh'), true);
+  showEl($('btn-logout'), true);
+  setConn('已连接', true);
+}
+
+/* 统一请求出口：附 X-Admin-Token；非 2xx → 抛 {status, message=中文 error} */
+function api(path, opts) {
+  opts = opts || {};
+  var headers = { 'Content-Type': 'application/json' };
+  if (token) headers['X-Admin-Token'] = token;
+  return fetch(path, {
+    method: opts.method || 'GET',
+    headers: headers,
+    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+  }).then(function (resp) {
+    return resp.json().catch(function () { return null; }).then(function (data) {
+      if (!resp.ok) {
+        var msg = (data && data.error) ? data.error : ('请求失败（HTTP ' + resp.status + '）');
+        var ex = new Error(msg);
+        ex.status = resp.status;
+        throw ex;
+      }
+      return data;
+    });
+  });
+}
+
+/* ---- 表格渲染（八列按需求列序） ---- */
+/* 六态 → 徽标配色（显式全列；status 文本 = 后端 STATUS_LABELS 单一真相源）：
+   正在使用 绿 / 已过期·已用完·已合并 红 / 未绑定·未激活 灰 */
+var BADGE_CLASSES = {
+  '正在使用': 'ok',
+  '已过期': 'bad',
+  '已用完': 'bad',
+  '已合并': 'bad',
+  '未绑定': 'dim',
+  '未激活': 'dim'
+};
+function badgeClass(status) { return BADGE_CLASSES[status] || 'dim'; }
+function statsHtml(stats) {
+  if (!stats) return '<span class="dim">—</span>';
+  /* 均值恒显 1 位小数（JSON 数字 2.0 会丢尾零，AC 口径 X.X/日） */
+  return '<span>均 ' + Number(stats.avg_daily).toFixed(1) + '/日</span>' +
+         '<span>峰 ' + esc(stats.max_daily) + '</span>' +
+         '<span>共 ' + esc(stats.total) + '</span>';
+}
+function renderTable(keys) {
+  var body = $('keys-body');
+  if (!keys.length) {
+    body.innerHTML = '<tr><td colspan="8" class="dim">暂无 key，先在上方新建。</td></tr>';
+    return;
+  }
+  body.innerHTML = keys.map(function (k) {
+    var typeLabel = k.key_type === 'count' ? '次数' : '时长';
+    return '<tr data-id="' + esc(k.id) + '">' +
+      '<td class="mono key-cell" title="点击复制">' + esc(k.key_plaintext) + '</td>' +
+      '<td>' + esc(k.bound_system_name || '—') + '</td>' +
+      '<td>' + esc(k.remark || '') + '</td>' +
+      '<td>' + typeLabel + '</td>' +
+      '<td class="mono">' + esc(k.detail) + '</td>' +
+      '<td><span class="badge ' + badgeClass(k.status) + '">' + esc(k.status) + '</span></td>' +
+      '<td class="stats">' + statsHtml(k.usage_stats) + '</td>' +
+      '<td class="ops">' +
+        '<button data-act="edit">编辑</button>' +
+        '<button data-act="del" class="ghost-danger">删除</button>' +
+      '</td></tr>';
+  }).join('');
+}
+
+function loadKeys() {
+  return api('/api/admin/keys').then(function (data) {
+    keysCache = data.keys || [];
+    renderTable(keysCache);
+    showMain();
+  }).catch(function (e) {
+    if (e.status === 403 && String(e.message).indexOf('未配置') !== -1) { showUnconfigured(); return; }
+    if (e.status === 401) {
+      sessionStorage.removeItem(TOKEN_KEY);
+      showLogin(e.message);
+      return;
+    }
+    showMain();
+    setMsg('加载失败：' + e.message, true);
+  });
+}
+
+function copyText(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    return navigator.clipboard.writeText(text).then(function () { return true; }).catch(function () { return false; });
+  }
+  var ta = document.createElement('textarea');
+  ta.value = text;
+  document.body.appendChild(ta);
+  ta.select();
+  var ok = false;
+  try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+  ta.remove();
+  return Promise.resolve(ok);
+}
+
+/* ---- 登录 / 退出 ---- */
+$('btn-login').addEventListener('click', function () {
+  var v = $('token-input').value.trim();
+  var err = $('token-error');
+  if (!v) { err.textContent = '请输入管理 token'; showEl(err, true); return; }
+  token = v;
+  sessionStorage.setItem(TOKEN_KEY, v);
+  loadKeys();
+});
+$('token-input').addEventListener('keydown', function (e) {
+  if (e.key === 'Enter') $('btn-login').click();
+});
+$('btn-logout').addEventListener('click', function () {
+  sessionStorage.removeItem(TOKEN_KEY);
+  $('token-input').value = '';
+  showLogin(null);
+});
+$('btn-refresh').addEventListener('click', function () { loadKeys(); });
+
+/* ---- 新建 ---- */
+document.querySelectorAll('input[name=key-type]').forEach(function (radio) {
+  radio.addEventListener('change', function () {
+    var isCount = document.querySelector('input[name=key-type]:checked').value === 'count';
+    $('amount-field').textContent = isCount ? '总次数' : '生效时长';
+    $('amount-unit').textContent = isCount ? '次' : '天';
+  });
+});
+$('btn-create').addEventListener('click', function () {
+  var keyType = document.querySelector('input[name=key-type]:checked').value;
+  var amount = Number($('amount-input').value);
+  if (!Number.isInteger(amount) || amount <= 0) { setMsg('数量必须为正整数', true); return; }
+  var body = keyType === 'count'
+    ? { key_type: 'count', total_uses: amount }
+    : { key_type: 'duration', duration_days: amount };
+  var remark = $('remark-input').value.trim();
+  if (remark) body.remark = remark;
+  api('/api/admin/keys', { method: 'POST', body: body }).then(function (created) {
+    $('remark-input').value = '';
+    copyText(created.key_plaintext).then(function (ok) {
+      setMsg('已创建 key：' + created.key_plaintext + (ok ? '（明文已复制，可直接发放）' : ''), false);
+    });
+    return loadKeys();
+  }).catch(function (e) { setMsg('创建失败：' + e.message, true); });
+});
+
+/* ---- 编辑弹窗：改备注名 + 续期（次数型加次数 / 时长型加天数） ---- */
+function closeEdit() {
+  editRow = null;
+  showEl($('edit-overlay'), false);
+  showEl($('edit-error'), false);
+}
+function openEdit(id) {
+  var row = null;
+  for (var i = 0; i < keysCache.length; i++) {
+    if (String(keysCache[i].id) === String(id)) { row = keysCache[i]; break; }
+  }
+  if (!row) return;
+  editRow = row;
+  var isCount = row.key_type === 'count';
+  $('edit-key-name').textContent = row.key_plaintext + '（' + (isCount ? '次数型' : '时长型') + '）';
+  $('edit-remark').value = row.remark || '';
+  $('edit-renew-label').textContent = isCount
+    ? '续期：加次数（当前 ' + row.detail + '）'
+    : '续期：加天数（当前 ' + row.detail + '）';
+  $('edit-renew-unit').textContent = isCount ? '次' : '天';
+  $('edit-renew-amount').value = '';
+  showEl($('edit-error'), false);
+  showEl($('edit-overlay'), true);
+  $('edit-remark').focus();
+}
+function showEditError(msg) {
+  var el = $('edit-error');
+  el.textContent = msg;
+  showEl(el, true);
+}
+$('btn-edit-save').addEventListener('click', function () {
+  if (!editRow) return;
+  var remark = $('edit-remark').value;
+  var renewRaw = $('edit-renew-amount').value.trim();
+  var isCount = editRow.key_type === 'count';
+  var add = null;
+  if (renewRaw !== '') {
+    add = Number(renewRaw);
+    if (!Number.isInteger(add) || add <= 0) {
+      showEditError((isCount ? '加次数' : '加天数') + '必须为正整数（留空 = 不续期）');
+      return;
+    }
+  }
+  api('/api/admin/keys/' + editRow.id, { method: 'PUT', body: { remark: remark } })
+    .then(function () {
+      if (add === null) return null;
+      var body = isCount ? { add_uses: add } : { add_days: add };
+      return api('/api/admin/keys/' + editRow.id + '/renew', { method: 'POST', body: body });
+    })
+    .then(function () {
+      closeEdit();
+      setMsg('已保存（备注名/续期即时生效）', false);
+      return loadKeys();
+    })
+    .catch(function (e) { showEditError('保存失败：' + e.message); });
+});
+$('edit-cancel').addEventListener('click', closeEdit);
+$('edit-x').addEventListener('click', closeEdit);
+
+/* ---- 删除：非「正在使用」直删；正在使用（或竞态 409）→ 二段确认弹窗 force=true ---- */
+function closeDel() {
+  delTargetId = null;
+  showEl($('del-overlay'), false);
+  showEl($('del-error'), false);
+}
+function openDelConfirm(row) {
+  delTargetId = row.id;
+  $('del-text').textContent = '将删除 key：' + row.key_plaintext + (row.remark ? '（备注：' + row.remark + '）' : '');
+  showEl($('del-error'), false);
+  showEl($('del-overlay'), true);
+}
+function doDelete(id, force) {
+  var url = '/api/admin/keys/' + id + (force ? '?force=true' : '');
+  return api(url, { method: 'DELETE' });
+}
+function requestDelete(id) {
+  var row = null;
+  for (var i = 0; i < keysCache.length; i++) {
+    if (String(keysCache[i].id) === String(id)) { row = keysCache[i]; break; }
+  }
+  if (row && row.status === '正在使用') { openDelConfirm(row); return; }
+  doDelete(id, false).then(function () {
+    setMsg('已删除', false);
+    return loadKeys();
+  }).catch(function (e) {
+    if (e.status === 409 && row) { openDelConfirm(row); return; }  /* 竞态：加载后变正在使用 */
+    setMsg('删除失败：' + e.message, true);
+  });
+}
+$('btn-del-confirm').addEventListener('click', function () {
+  if (delTargetId === null) return;
+  doDelete(delTargetId, true).then(function () {
+    closeDel();
+    setMsg('已删除', false);
+    return loadKeys();
+  }).catch(function (e) {
+    var el = $('del-error');
+    el.textContent = '删除失败：' + e.message;
+    showEl(el, true);
+  });
+});
+$('del-cancel').addEventListener('click', closeDel);
+$('del-x').addEventListener('click', closeDel);
+
+/* ---- 表格事件委托：编辑/删除按钮 + 名称点击复制 ---- */
+$('keys-body').addEventListener('click', function (e) {
+  var btn = e.target.closest('button[data-act]');
+  if (btn) {
+    var tr = btn.closest('tr');
+    var id = tr ? tr.getAttribute('data-id') : null;
+    if (id) {
+      if (btn.getAttribute('data-act') === 'edit') openEdit(id);
+      else requestDelete(id);
+    }
+    return;
+  }
+  var cell = e.target.closest('.key-cell');
+  if (cell) {
+    copyText(cell.textContent).then(function (ok) {
+      if (ok) setMsg('已复制：' + cell.textContent, false);
+    });
+  }
+});
+
+/* ---- ESC 关弹窗 ---- */
+document.addEventListener('keydown', function (e) {
+  if (e.key === 'Escape') { closeEdit(); closeDel(); }
+});
+
+/* ---- 启动：sessionStorage 有 token → 直接加载（免重输）；
+   无 token → 无凭探测一次：403「未配置」→ 配置指引；401 → 登录框；
+   200（DEV 逃生）→ 直接进主界面 ---- */
+function probeWithoutToken() {
+  return api('/api/admin/keys').then(function (data) {
+    keysCache = data.keys || [];
+    renderTable(keysCache);
+    showMain();
+  }).catch(function (e) {
+    if (e.status === 403 && String(e.message).indexOf('未配置') !== -1) { showUnconfigured(); return; }
+    showLogin(null);   /* 401（已设 token 未带）/网络异常 → 登录框 */
+  });
+}
+token = sessionStorage.getItem(TOKEN_KEY) || '';
+if (token) loadKeys();
+else probeWithoutToken();
+</script>
+</body>
+</html>

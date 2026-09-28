@@ -18,13 +18,14 @@ cd keyserver && ../.venv/Scripts/python.exe -m pytest
 # 起服务（等价：ms-keyserver / python -m keyserver.app）
 MS_KEY_PORT=8110 MS_KEY_DB=<路径> .venv/Scripts/ms-keyserver.exe
 curl http://127.0.0.1:8110/api/key/health   # → {"ok":true,"service":"keyserver","db":...}
+# 管理后台单页（US-008）：浏览器开 http://127.0.0.1:8110/admin（登录框输 MS_KEY_ADMIN_TOKEN）
 ```
 
 ## 环境变量
 
 | 变量 | 缺省 | 说明 |
 |------|------|------|
-| `MS_KEY_DB` | `<keyserver/>/data/keys.db` | SQLite 账本路径（部署目录 = 包上溯两级；**非 editable 安装形态必须显式设**） |
+| `MS_KEY_DB` | `<keyserver/>/data/keys.db` | SQLite 账本路径（部署目录 = 包上溯两级；US-008 修正 parents 错位 —— 原实现实际落 repo 根撞 materialsorting data/；**非 editable 安装形态必须显式设**） |
 | `MS_KEY_HOST` | `127.0.0.1` | frp 同机部署形态 frpc 打 127.0.0.1，不裸露 LAN |
 | `MS_KEY_PORT` | `8110` | 监听端口 |
 | `MS_KEY_ADMIN_TOKEN` / `MS_KEY_CLIENT_TOKEN` / `MS_KEY_DEV` | 未设 | 双 token 鉴权 + 本地开发逃生（均已生效：ADMIN US-002 / CLIENT US-003）。任一未设置且无 DEV=1 → 对应端点族 403；已设置缺失/错 → 401；双 token 各管各族（admin token 打不开 consumer 四接口）。**无 loopback 放行**（frp 同机形态来源 IP 恒 127.0.0.1，兜底 = 公网裸奔） |
@@ -64,6 +65,24 @@ curl http://127.0.0.1:8110/api/key/health   # → {"ok":true,"service":"keyserve
   既有日志，先写即被抹）；`?force=true` 只认字面 true（1/yes/True 仍 409）。
 - 管理台响应 `_summarize`：status=六态中文标签、detail=count `N/M` /
   duration 未激活 `N天` / 已激活 `起 ~ 止`；US-008 admin.html 直接渲染。
+
+## 管理后台单页（US-008）
+
+- `src/keyserver/static/admin.html` = **公开壳**（GET /admin 无鉴权直出；不含任何
+  敏感数据）：token 由登录框输入存 `sessionStorage['ms_admin_token']`，全部数据经
+  `/api/admin/*` 携 `X-Admin-Token` 获取 —— 同源零跨域，不进 materialSorting-web
+  Vite 构建链。**不进 Vite ≠ 不做 UI 验证**：浏览器验证脚本
+  `materialSorting-web/scripts/us008_admin_verify.mjs`（模板 us007；起 双实例 ——
+  主实例 token+DEV、裸实例无 token 无 DEV —— 40/40 相位见脚本头注）。
+- 无 token 启动先**无凭探测** `GET /api/admin/keys`：403 且 error 含「未配置」→
+  配置指引卡（双 token 必设文案）；401 → 登录框；200（DEV）→ 直进主界面。
+  登录后 401 同样**清 sessionStorage 回登录框**（错 token 不留存）。
+- `avg_daily` JSON 数字丢尾零（2.0 → 2）→ 页面 `Number(x).toFixed(1)` 恒显
+  1 位小数（AC 口径「均 X.X/日」）。
+- 删除流：行状态非「正在使用」**直删无弹窗**；正在使用 → 二段确认弹窗
+  （`?force=true`）；竞态（加载后变 active）由后端 409 兜底转弹窗。
+- pyproject `[tool.setuptools.package-data]` 含 `static/*.html`（非 editable
+  安装形态 GET /admin 也能出页）。
 
 ## 坑位留档
 
