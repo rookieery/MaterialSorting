@@ -2678,3 +2678,119 @@ button.edit-controls-btn--reset:disabled {
   line-height: 1.65;
   pointer-events: none;
 }
+
+/* ============================================================
+ * key 授权 US-006（2026-09-28）：「当前系统 key 属性」入口区块（.key-entry-*，
+ * .export-group 同款分隔形态，「导出最优方案」正下方）+ KeyInfoModal 三区块
+ * （.key-*，骨架复用 .strategy-overlay/.strategy-modal —— 本节只补专属样式：
+ * 区块标题 / 保存横排 / 绿主按钮 / 红字错误 / 属性行 / 状态徽标 / 合并明细）。
+ * ============================================================ */
+.key-entry-group { margin-top: 14px; padding-top: 12px; border-top: 1px solid #34363d; }
+.key-entry-btns { display: flex; gap: 8px; margin: 6px 0 4px; }
+/* 入口按钮：与 button.export 同款蓝（工具按钮语义 —— 排料运行/导出之外的自助管理） */
+button.key-entry-btn {
+  flex: 1; padding: 8px 6px; font-size: 13px; font-weight: 600;
+  background: #2c5d8f; color: #fff; border: 0; border-radius: 6px; cursor: pointer;
+  font-family: inherit;
+}
+button.key-entry-btn:hover { background: #3470ac; }
+
+/* 弹窗三区块：竖排分区（标题 + 内容），区距由 .strategy-modal gap 统一 */
+.key-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-bottom: 2px;
+  border-bottom: 1px solid #2c2e35;
+}
+.key-section:last-of-type { border-bottom: 0; }
+.key-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: #cdd;
+}
+/* ① 保存横排：输入框吃满剩余宽 + 保存按钮定宽（.strategy-btn-exec 同绿主按钮，
+   小一号 —— 区块内动作按钮，非弹窗级主 CTA） */
+.key-save-row { display: flex; gap: 8px; }
+.key-save-row .strategy-text-input { flex: 1; min-width: 0; }
+button.key-save-btn,
+button.key-merge-btn {
+  flex-shrink: 0;
+  padding: 7px 16px;
+  font-size: 12.5px;
+  font-weight: 600;
+  background: #2ea06c;
+  color: #fff;
+  border: 1px solid #2ea06c;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s, border-color 0.15s;
+}
+button.key-save-btn:hover:not(:disabled),
+button.key-merge-btn:hover:not(:disabled) { background: #27905f; border-color: #27905f; }
+button.key-save-btn:disabled,
+button.key-merge-btn:disabled {
+  background: #444; color: #888; border-color: transparent; cursor: default;
+}
+/* 失败红字（save/merge 透传文案 / 属性查询失败）：与 .qty-zero-warn /
+   .upload-status.error 同色系 #ff8888 */
+.key-error {
+  color: #ff8888;
+  font-size: 12px;
+  line-height: 1.5;
+}
+/* ③ 属性行：紧凑单行 label 左 / 值右（.export-ro-row 同款视觉体系） */
+.key-attr-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding: 3px 2px;
+  border-bottom: 1px solid #2c2e35;
+}
+.key-attr-value {
+  color: #d6dae2;
+  font-size: 12.5px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+/* 状态徽标（.strategy-badge 同形态）：正在使用=绿（主题）/ 失效三态（过期·
+   用完·合并）=红 / 未绑定·未激活=灰 */
+.key-status-badge {
+  display: inline-block;
+  background: #55585f;
+  color: #e6e6e6;
+  border-radius: 9px;
+  padding: 1px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+.key-status-badge.ok { background: #2ea06c; color: #fff; }
+.key-status-badge.bad { background: #a34848; color: #fff; }
+/* ② 合并区：按钮右对齐 + 结果明细暗底卡片（每 key 天数 + 共转移合计） */
+.key-merge-actions { display: flex; justify-content: flex-end; }
+.key-merge-result {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: #1c1d22;
+  border: 1px solid #2c2e35;
+  border-radius: 4px;
+  padding: 8px 10px;
+  font-size: 12px;
+}
+.key-merge-row {
+  color: #d6dae2;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.key-merge-total {
+  color: #2ea06c;
+  font-weight: 600;
+  margin-top: 2px;
+  border-top: 1px solid #2c2e35;
+  padding-top: 4px;
+}

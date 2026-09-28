@@ -3,8 +3,9 @@
 //
 // 两个独立显隐字段，对应两层模态：
 //   modal         'per_type' | 'strategy_run' | 'extreme_run' | 'export_info' |
-//                 null —— 高级配置 / 高级运行 / 极限运行（US-003）/ PLT 导出信息
-//                 表格（2026-08-30）弹窗（单例互斥：openModal 覆写）
+//                 'key_info' | null —— 高级配置 / 高级运行 / 极限运行（US-003）/
+//                 PLT 导出信息表格（2026-08-30）/ key 属性（US-006，2026-09-28）
+//                 弹窗（单例互斥：openModal 覆写）
 //   previewLabel  label(如 'g03') | null —— 裁片放大预览（点击弹窗表头缩略图触发）
 //
 // 两层模态可同时存在（previewLabel 叠在 modal 之上，z-index 更高）；
@@ -30,7 +31,9 @@ export type ControlPanelModalId =
   | 'strategy_run'
   | 'extreme_run'
   | 'export_info'
-  | 'edit_layout';
+  | 'edit_layout'
+  // key 授权 US-006（2026-09-28）：「当前系统 key 属性」弹窗（KeyInfoModal）。
+  | 'key_info';
 
 export interface ControlPanelState {
   /** 高级配置弹窗显隐；null = 关闭。 */

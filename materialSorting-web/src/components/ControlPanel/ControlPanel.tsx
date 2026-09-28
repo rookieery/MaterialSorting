@@ -82,6 +82,8 @@ import { FileNameModal } from './FileNameModal';
 // 编辑排料 US-002：编辑弹窗单例（订阅 controlPanelStore 自显隐；Portal 到 body）。
 // 打开入口 = US-004 主界面「编辑排料」区块（EditLayoutControls）。
 import { EditLayoutModal } from '../edit/EditLayoutModal';
+// key 授权 US-006：「当前系统 key 属性」弹窗单例（keyStore 数据源，/api/key/*）。
+import { KeyInfoModal } from './KeyInfoModal';
 // 编辑排料 US-004：主面板「编辑排料」区块（编辑入口 + 重置 confirm），插在
 // StatusLine 与 ExportButtons 之间（「导出最优方案」上方）—— 激活口径与导出一致。
 import { EditLayoutControls } from './EditLayoutControls';
@@ -511,6 +513,22 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
         onSave={handleSaveState}
       />
       <ExportButtons solving={solving} exporting={exporting} onExport={handleExport} partial={partial} />
+      {/* key 授权 US-006：「导出最优方案」区块正下方的入口 —— 打开 KeyInfoModal
+          （当前 key 输入/替换 + 被合并 key 批量添加 + 属性展示；keyStore 经
+          /api/key/state|save|merge 对账，以后端 key_state.json 为准）。 */}
+      <div className="key-entry-group" data-testid="key-entry-group">
+        <div className="field-label">当前系统 key 属性</div>
+        <div className="key-entry-btns">
+          <button
+            type="button"
+            className="key-entry-btn"
+            onClick={() => openModal('key_info')}
+            data-testid="key-entry-btn"
+          >
+            查看 / 管理
+          </button>
+        </div>
+      </div>
       {/* 2026-09-12 需求 1：保存 / DXF·PNG 文件名确认弹窗（pendingNameTarget 非空时
           挂载；默认名在此刻合成 —— 打开时 bestRun/表单快照即预填值所见）。 */}
       {pendingNameTarget !== null && (
@@ -548,6 +566,9 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
       />
       {/* 编辑排料弹窗单例（US-002；打开入口在 US-004 EditLayoutControls）。 */}
       <EditLayoutModal />
+      {/* key 授权弹窗单例（US-006；订阅 controlPanelStore 自显隐；Portal 到 body；
+          打开入口在上方「当前系统 key 属性」入口按钮）。 */}
+      <KeyInfoModal />
     </aside>
   );
 }

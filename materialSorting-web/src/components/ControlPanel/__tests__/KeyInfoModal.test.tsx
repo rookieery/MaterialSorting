@@ -1,0 +1,416 @@
+// key 授权 US-006 KeyInfoModal 组件测试：
+//   1. 未绑定态：空输入 + 引导文案（placeholder / 属性区空态提示）
+//   2. localStorage ms_key 即时预填（不等网络）→ GET /api/key/state 对账以后端
+//      为准（输入框随 store.key 更新，用户未编辑不被覆盖）
+//   3. 属性展示：次数型 总数/已用/剩余 + 徽标；时长型 生效/截止/剩余天数 +
+//      失效徽标（已过期红）；绑定系统/备注行
+//   4. ① 保存：POST /api/key/save 失败 400 {error} 中文红字透传；成功后属性更新
+//   5. ② 合并：textarea 每行一个（strip + 空行过滤）→ POST /api/key/merge →
+//      明细（每 key +N 天）+ 共转移；整体失败红字（无 key 指路文案）
+//   6. ESC / 遮罩 / ✕ 只关弹窗（ExportInfoModal 同款骨架）
+//   7. 单例互斥：openModal 覆写后本弹窗卸载（controlPanelStore 单字段）
+//
+// 套路同 ExportInfoModal 既有用例：createRoot + act + data-testid；
+// markSessionProbedForTest 跳过会话先行探测；keyStore 每测 __resetKeyStoreForTest
+// （store.key 重读 localStorage 镜像 —— 预填口径的隔离锚点）。
+
+import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
+import { act } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import { KeyInfoModal } from '../KeyInfoModal';
+import { markSessionProbedForTest, resetSessionForTest } from '../../../lib/api';
+import { useControlPanelStore } from '../../../store/controlPanelStore';
+import {
+  KEY_MIRROR_STORAGE,
+  __resetKeyStoreForTest,
+} from '../../../store/keyStore';
+
+(globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+let container: HTMLDivElement | null = null;
+let root: Root | null = null;
+let fetchSpy: MockInstance<(...args: unknown[]) => Promise<Response>> | null = null;
+
+let statePayload: unknown = { key: null, info: null, error: null };
+let saveStatus = 200;
+let savePayload: unknown = { saved: true, key: 'MS-SAVE', info: null };
+let saveErrorText = 'key 不存在：请检查输入是否正确';
+let mergeStatus = 200;
+let mergePayload: unknown = null;
+let mergeErrorText = '未绑定授权 key：请在「当前系统 key 属性」中输入并保存';
+let saveBodies: unknown[] = [];
+let mergeBodies: unknown[] = [];
+
+const COUNT_INFO = {
+  type: 'count',
+  status: '正在使用',
+  bound_system_name: 'PC-FACTORY',
+  remark: '车间一',
+  total_uses: 30,
+  used_uses: 12,
+  remaining_uses: 18,
+};
+
+const DURATION_INFO = {
+  type: 'duration',
+  status: '已过期',
+  bound_system_name: 'PC-FACTORY',
+  remark: null,
+  activated_at: '2026-08-28 10:00:00',
+  expires_at: '2026-09-27 10:00:00',
+  remaining_days: 0,
+};
+
+const MERGE_OK = {
+  target: {
+    type: 'duration', status: '正在使用', bound_system_name: 'PC-FACTORY',
+    remark: null, activated_at: '2026-09-28 10:00:00',
+    expires_at: '2026-11-02 10:00:00', remaining_days: 35,
+  },
+  sources: [
+    { key: 'MS-A', transferred_days: 10.5 },
+    { key: 'MS-B', transferred_days: 4.5 },
+  ],
+  total_transferred_days: 15,
+};
+
+function json(obj: unknown, status = 200): Response {
+  return new Response(JSON.stringify(obj), { status });
+}
+
+beforeEach(() => {
+  localStorage.clear();
+  __resetKeyStoreForTest();
+  markSessionProbedForTest();
+  useControlPanelStore.getState().closeModal();
+  statePayload = { key: null, info: null, error: null };
+  saveStatus = 200;
+  savePayload = { saved: true, key: 'MS-SAVE', info: null };
+  saveErrorText = 'key 不存在：请检查输入是否正确';
+  mergeStatus = 200;
+  mergePayload = null;
+  mergeErrorText = '未绑定授权 key：请在「当前系统 key 属性」中输入并保存';
+  saveBodies = [];
+  mergeBodies = [];
+  container = document.createElement('div');
+  document.body.appendChild(container);
+  root = createRoot(container);
+  fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(((input: unknown, init?: RequestInit) => {
+    const url = String(input);
+    if (url.includes('/api/key/state')) {
+      return Promise.resolve(json(statePayload));
+    }
+    if (url.includes('/api/key/save')) {
+      saveBodies.push(init?.body ? JSON.parse(String(init.body)) : null);
+      if (saveStatus !== 200) return Promise.resolve(json({ error: saveErrorText }, saveStatus));
+      return Promise.resolve(json(savePayload));
+    }
+    if (url.includes('/api/key/merge')) {
+      mergeBodies.push(init?.body ? JSON.parse(String(init.body)) : null);
+      if (mergeStatus !== 200) return Promise.resolve(json({ error: mergeErrorText }, mergeStatus));
+      return Promise.resolve(json(mergePayload ?? MERGE_OK));
+    }
+    return Promise.resolve(json({}));
+  }) as (...args: unknown[]) => Promise<Response>);
+});
+
+afterEach(() => {
+  if (root) {
+    const r = root;
+    act(() => {
+      r.unmount();
+    });
+    root = null;
+  }
+  container?.remove();
+  container = null;
+  fetchSpy?.mockRestore();
+  resetSessionForTest();
+  localStorage.clear();
+  useControlPanelStore.getState().closeModal();
+});
+
+function renderModal(): void {
+  act(() => {
+    root!.render(<KeyInfoModal />);
+  });
+}
+
+function openModal(): void {
+  act(() => {
+    useControlPanelStore.getState().openModal('key_info');
+  });
+}
+
+async function flush(times = 3): Promise<void> {
+  for (let i = 0; i < times; i++) {
+    await act(async () => {
+      await Promise.resolve();
+    });
+  }
+}
+
+/** 模拟用户输入（React 受控 input/textarea：原生 value setter + input 事件）。 */
+function setInputValue(el: HTMLInputElement | HTMLTextAreaElement, value: string): void {
+  const proto = el instanceof HTMLTextAreaElement
+    ? HTMLTextAreaElement.prototype
+    : HTMLInputElement.prototype;
+  const setter = Object.getOwnPropertyDescriptor(proto, 'value')!.set!;
+  act(() => {
+    setter.call(el, value);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+}
+
+function modal(): HTMLElement {
+  return document.querySelector('.strategy-modal')!;
+}
+
+function keyInput(): HTMLInputElement {
+  return modal().querySelector<HTMLInputElement>('[data-testid="key-info-key-input"]')!;
+}
+
+function attrText(testid: string): string {
+  return modal().querySelector(`[data-testid="${testid}"]`)!.textContent ?? '';
+}
+
+describe('KeyInfoModal 未绑定态（默认）', () => {
+  it('空输入 + 引导 placeholder + 属性区空态引导文案（三区块齐备）', async () => {
+    renderModal();
+    openModal();
+    await flush();
+    expect(keyInput().value).toBe('');
+    expect(keyInput().placeholder).toContain('输入授权 key');
+    expect(modal().querySelector('[data-testid="key-info-empty-hint"]')!.textContent)
+      .toContain('尚未绑定授权 key');
+    // 三区块齐备：当前 key / 合并 / 属性
+    expect(modal().querySelector('[data-testid="key-info-current"]')).not.toBeNull();
+    expect(modal().querySelector('[data-testid="key-info-merge"]')).not.toBeNull();
+    expect(modal().querySelector('[data-testid="key-info-attrs"]')).not.toBeNull();
+  });
+
+  it('保存按钮空 key 置灰；合并按钮空 textarea 置灰', async () => {
+    renderModal();
+    openModal();
+    await flush();
+    expect(modal().querySelector<HTMLButtonElement>('[data-testid="key-info-save"]')!.disabled)
+      .toBe(true);
+    expect(modal().querySelector<HTMLButtonElement>('[data-testid="key-info-merge-btn"]')!.disabled)
+      .toBe(true);
+  });
+});
+
+describe('KeyInfoModal localStorage 即时预填 + 后端对账', () => {
+  it('打开瞬间输入框即显镜像值（未 flush 网络未落定）', () => {
+    localStorage.setItem(KEY_MIRROR_STORAGE, 'MS-LOCAL');
+    __resetKeyStoreForTest(); // store.key 重读镜像
+    renderModal();
+    openModal();
+    // 不 flush —— fetchState 尚未落定，输入框已是本地值
+    expect(keyInput().value).toBe('MS-LOCAL');
+  });
+
+  it('对账以后端为准：state 返回另一 key → 输入框/镜像随之更新', async () => {
+    localStorage.setItem(KEY_MIRROR_STORAGE, 'MS-LOCAL');
+    __resetKeyStoreForTest();
+    statePayload = { key: 'MS-SERVER', info: COUNT_INFO, error: null };
+    renderModal();
+    openModal();
+    await flush();
+    expect(keyInput().value).toBe('MS-SERVER');
+    expect(localStorage.getItem(KEY_MIRROR_STORAGE)).toBe('MS-SERVER');
+  });
+
+  it('清缓存/换浏览器（无镜像）→ 后端 key_state.json 权威补回', async () => {
+    statePayload = { key: 'MS-SERVER', info: COUNT_INFO, error: null };
+    renderModal();
+    openModal();
+    expect(keyInput().value).toBe(''); // 打开瞬间无镜像 → 空
+    await flush();
+    expect(keyInput().value).toBe('MS-SERVER');
+    expect(localStorage.getItem(KEY_MIRROR_STORAGE)).toBe('MS-SERVER');
+  });
+
+  it('用户编辑中的草稿不被对账回写覆盖（dirty 标记）', async () => {
+    localStorage.setItem(KEY_MIRROR_STORAGE, 'MS-LOCAL');
+    __resetKeyStoreForTest();
+    statePayload = { key: 'MS-SERVER', info: null, error: null };
+    renderModal();
+    openModal();
+    setInputValue(keyInput(), 'MS-TYPING');
+    await flush();
+    expect(keyInput().value).toBe('MS-TYPING');
+  });
+});
+
+describe('KeyInfoModal ③ 属性展示 + 状态徽标', () => {
+  it('次数型：总数/已用/剩余 + 正在使用绿徽标 + 绑定系统/备注', async () => {
+    statePayload = { key: 'MS-K', info: COUNT_INFO, error: null };
+    renderModal();
+    openModal();
+    await flush();
+    expect(attrText('key-attr-total')).toContain('总次数');
+    expect(attrText('key-attr-total')).toContain('30');
+    expect(attrText('key-attr-used')).toContain('12');
+    expect(attrText('key-attr-remaining')).toContain('18');
+    expect(attrText('key-attr-system')).toContain('PC-FACTORY');
+    expect(attrText('key-attr-remark')).toContain('车间一');
+    const badge = modal().querySelector('[data-testid="key-attr-status"] .key-status-badge')!;
+    expect(badge.textContent).toBe('正在使用');
+    expect(badge.classList.contains('ok')).toBe(true);
+  });
+
+  it('时长型：生效/截止/剩余天数 + 已过期红徽标', async () => {
+    statePayload = { key: 'MS-K', info: DURATION_INFO, error: null };
+    renderModal();
+    openModal();
+    await flush();
+    expect(attrText('key-attr-activated')).toContain('2026-08-28 10:00:00');
+    expect(attrText('key-attr-expires')).toContain('2026-09-27 10:00:00');
+    expect(attrText('key-attr-days')).toContain('0');
+    const badge = modal().querySelector('[data-testid="key-attr-status"] .key-status-badge')!;
+    expect(badge.textContent).toBe('已过期');
+    expect(badge.classList.contains('bad')).toBe(true);
+  });
+
+  it('keyserver 查询失败（error 字段）→ 属性区红字展示，本地 key 仍展示', async () => {
+    statePayload = {
+      key: 'MS-LOCAL',
+      info: null,
+      error: '无法连接授权服务器，请检查网络后重试',
+    };
+    renderModal();
+    openModal();
+    await flush();
+    expect(modal().querySelector('[data-testid="key-info-attr-error"]')!.textContent)
+      .toContain('无法连接授权服务器');
+    expect(keyInput().value).toBe('MS-LOCAL');
+  });
+});
+
+describe('KeyInfoModal ① 保存（POST /api/key/save）', () => {
+  it('失败 400 {error} → 中文红字透传，草稿保留', async () => {
+    statePayload = { key: null, info: null, error: null };
+    saveStatus = 400;
+    renderModal();
+    openModal();
+    await flush();
+    setInputValue(keyInput(), 'MS-BAD');
+    await act(async () => {
+      modal().querySelector<HTMLButtonElement>('[data-testid="key-info-save"]')!.click();
+      await Promise.resolve();
+    });
+    await flush();
+    expect(modal().querySelector('[data-testid="key-info-save-error"]')!.textContent)
+      .toBe('key 不存在：请检查输入是否正确');
+    expect(keyInput().value).toBe('MS-BAD'); // 草稿保留可改
+    expect(localStorage.getItem(KEY_MIRROR_STORAGE)).toBeNull(); // 不落镜像
+  });
+
+  it('成功 → 属性区即刻展示新 info + localStorage 双写', async () => {
+    statePayload = { key: null, info: null, error: null };
+    savePayload = { saved: true, key: 'MS-NEW', info: COUNT_INFO };
+    renderModal();
+    openModal();
+    await flush();
+    setInputValue(keyInput(), '  MS-NEW  ');
+    await act(async () => {
+      modal().querySelector<HTMLButtonElement>('[data-testid="key-info-save"]')!.click();
+      await Promise.resolve();
+    });
+    await flush();
+    expect(saveBodies).toEqual([{ key: 'MS-NEW' }]); // trim 上送
+    expect(attrText('key-attr-remaining')).toContain('18');
+    expect(localStorage.getItem(KEY_MIRROR_STORAGE)).toBe('MS-NEW');
+  });
+});
+
+describe('KeyInfoModal ② 合并（POST /api/key/merge）', () => {
+  it('textarea 每行一个（strip + 空行过滤）→ 明细每 key +N 天 + 共转移', async () => {
+    statePayload = { key: 'MS-TARGET', info: DURATION_INFO, error: null };
+    renderModal();
+    openModal();
+    await flush();
+    setInputValue(
+      modal().querySelector<HTMLTextAreaElement>('[data-testid="key-info-merge-input"]')!,
+      ' MS-A \nMS-B\n\n',
+    );
+    await act(async () => {
+      modal().querySelector<HTMLButtonElement>('[data-testid="key-info-merge-btn"]')!.click();
+      await Promise.resolve();
+    });
+    await flush();
+    expect(mergeBodies).toEqual([{ source_keys: ['MS-A', 'MS-B'] }]);
+    const rows = modal().querySelectorAll('[data-testid="key-info-merge-row"]');
+    expect(rows).toHaveLength(2);
+    expect(rows[0].textContent).toBe('MS-A：+10.5 天');
+    expect(rows[1].textContent).toBe('MS-B：+4.5 天');
+    expect(modal().querySelector('[data-testid="key-info-merge-total"]')!.textContent)
+      .toBe('共转移 15 天');
+    // target 新 info 即刻上屏（新截止 2026-11-02）
+    expect(attrText('key-attr-expires')).toContain('2026-11-02 10:00:00');
+  });
+
+  it('整体失败（无 key 指路文案）→ 红字，无明细', async () => {
+    statePayload = { key: null, info: null, error: null };
+    mergeStatus = 400;
+    renderModal();
+    openModal();
+    await flush();
+    setInputValue(
+      modal().querySelector<HTMLTextAreaElement>('[data-testid="key-info-merge-input"]')!,
+      'MS-A',
+    );
+    await act(async () => {
+      modal().querySelector<HTMLButtonElement>('[data-testid="key-info-merge-btn"]')!.click();
+      await Promise.resolve();
+    });
+    await flush();
+    expect(modal().querySelector('[data-testid="key-info-merge-error"]')!.textContent)
+      .toBe('未绑定授权 key：请在「当前系统 key 属性」中输入并保存');
+    expect(modal().querySelector('[data-testid="key-info-merge-result"]')).toBeNull();
+  });
+});
+
+describe('KeyInfoModal 关闭行为（ExportInfoModal 同款）', () => {
+  it('ESC / 遮罩 / ✕ 只关弹窗', async () => {
+    statePayload = { key: 'MS-K', info: COUNT_INFO, error: null };
+    renderModal();
+    openModal();
+    await flush();
+    expect(document.querySelector('[data-testid="key-info-overlay"]')).not.toBeNull();
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    });
+    expect(document.querySelector('[data-testid="key-info-overlay"]')).toBeNull();
+    // 重开 → 遮罩点击关闭（mousedown 落在遮罩自身）
+    openModal();
+    await flush();
+    act(() => {
+      const overlay = document.querySelector<HTMLElement>('[data-testid="key-info-overlay"]')!;
+      overlay.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    });
+    expect(document.querySelector('[data-testid="key-info-overlay"]')).toBeNull();
+    // 重开 → ✕ 关闭
+    openModal();
+    await flush();
+    await act(async () => {
+      modal().querySelector<HTMLButtonElement>('[data-testid="key-info-close"]')!.click();
+      await Promise.resolve();
+    });
+    expect(document.querySelector('[data-testid="key-info-overlay"]')).toBeNull();
+  });
+
+  it('单例互斥：openModal 覆写其他弹窗 → 本弹窗卸载', async () => {
+    statePayload = { key: null, info: null, error: null };
+    renderModal();
+    openModal();
+    await flush();
+    expect(document.querySelector('[data-testid="key-info-overlay"]')).not.toBeNull();
+    act(() => {
+      useControlPanelStore.getState().openModal('per_type');
+    });
+    expect(document.querySelector('[data-testid="key-info-overlay"]')).toBeNull();
+    expect(useControlPanelStore.getState().modal).toBe('per_type');
+  });
+});

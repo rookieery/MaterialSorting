@@ -33,6 +33,8 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { ControlPanel, type ControlPanelStartPayload } from "../ControlPanel";
 import { SIZES } from "../../../constants/sizes";
+import { useControlPanelStore } from "../../../store/controlPanelStore";
+import { __resetKeyStoreForTest } from "../../../store/keyStore";
 import { runRegistry } from "../../../store/runRegistry";
 import { useQtyStore } from "../../../store/qtyStore";
 import { usePtypeStore } from "../../../store/ptypeStore";
@@ -1503,5 +1505,54 @@ describe("ControlPanel 编辑排料区块位置 (US-004)", () => {
     expect(status.compareDocumentPosition(editControls) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(editControls.compareDocumentPosition(exportGroup) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(editControls.querySelector(".field-label")!.textContent).toBe("编辑排料");
+  });
+});
+
+// ============================================================
+// key 授权 US-006：「当前系统 key 属性」入口区块（ExportButtons 正下方）——
+// 点击 openModal('key_info') 挂 KeyInfoModal（组件细节在 KeyInfoModal.test）。
+// ============================================================
+
+describe("ControlPanel key 属性入口 (US-006)", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    __resetKeyStoreForTest();
+    useControlPanelStore.getState().closeModal();
+  });
+  afterEach(() => {
+    // 弹窗若仍开着，store 复位会触发订阅更新 —— 包 act 防警告（root 卸载在
+    // 文件级 afterEach，晚于此处）。
+    act(() => {
+      useControlPanelStore.getState().closeModal();
+      __resetKeyStoreForTest();
+      localStorage.clear();
+    });
+  });
+
+  it(".key-entry-group 位于 .export-group 之后；field-label「当前系统 key 属性」", () => {
+    renderPanel();
+    const panel = container!.querySelector("aside.panel")!;
+    const exportGroup = panel.querySelector(".export-group")!;
+    const keyEntry = panel.querySelector(".key-entry-group")!;
+    expect(keyEntry).not.toBeNull();
+    expect(
+      exportGroup.compareDocumentPosition(keyEntry) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    expect(keyEntry.querySelector(".field-label")!.textContent).toBe("当前系统 key 属性");
+  });
+
+  it("点击入口按钮 → KeyInfoModal 打开（controlPanelStore.modal === 'key_info'）", async () => {
+    renderPanel();
+    const btn = container!.querySelector<HTMLButtonElement>('[data-testid="key-entry-btn"]')!;
+    expect(btn).not.toBeNull();
+    act(() => btn.click());
+    expect(useControlPanelStore.getState().modal).toBe("key_info");
+    // 弹窗 Portal 到 body（KeyInfoModal 渲染 + mount 即对账 /api/key/state；
+    // apiFetch 未预置探测 → 会话先行也在这几拍内落定）
+    await act(async () => {
+      for (let i = 0; i < 6; i++) await Promise.resolve();
+    });
+    expect(document.querySelector('[data-testid="key-info-overlay"]')).not.toBeNull();
+    expect(document.querySelector(".strategy-modal.key-modal")).not.toBeNull();
   });
 });
