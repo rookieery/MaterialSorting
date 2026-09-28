@@ -35,6 +35,7 @@
 - [business/极限利用率实验报告_5336_pct与早终止.md](business/极限利用率实验报告_5336_pct与早终止.md) — exploration_pct 网格 × early_termination A/B（5336，25-seed 600s 曲线池）：**p0.70 + et=false 是最优组合** → `--extreme` 参数来源；判读口径（不可行帧过滤/门判别力）单一真相源 `scripts/pctgrid_analyze.py`（2026-08-29）
 - [business/极限运行功能方案_race门杀.md](business/极限运行功能方案_race门杀.md) — 极限运行方案：`--extreme` 糖衣旗标 = race 门杀 × 实验结论参数（预算档 600/1200、门 τ=0.5、p0.70/et0/workers4；quadtree_depth 调优 A/B 否决），目标从「期望最优」换「右尾最优」（PRD tasks/prd-extreme-run.md，2026-08-29）
 - [business/极限运行_AB验收报告.md](business/极限运行_AB验收报告.md) — US-004 同总预算 4h 三臂对拍终验 **accept**：extreme 91.7107% ≥ race 默认档 91.3114%、split24 91.8177% 统计打平（归因 §1.1）；离线回放器 `scripts/extreme_ab_replay.py`（2026-08-30）
+- [business/Key授权_验收报告.md](business/Key授权_验收报告.md) — prd-key-authorization-system US-010 收官验收 **accept**：端到端冒烟 `smoke_key_gate.mjs` 48/48（双 token 生产姿态 + :8010 生产 bundle，免闸→拦截→假 key→绑定合并→运行→扣次恰 +1→统计）+ **15 项决策台账** + 四开放决策切换成本备案表 + 测试总表 1326/158/1289（2026-09-28）
 
 ### 阶段规划
 - [business/阶段0_利用率上界估算_规划.md](business/阶段0_利用率上界估算_规划.md)

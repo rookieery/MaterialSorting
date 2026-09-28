@@ -2792,3 +2792,28 @@ PASS**（真 keyserver（MS_KEY_DEV=1, :8117，admin API 建 count key）+ ms-we
 （普通进 WS 停止恢复、高级/极限 202 起 worker 停止）/ keyserver 停机后断网
 文案三入口逐字一致；报告 `out/us007_key_gate/report-{full,down}.txt` +
 blocked-normal/blocked-strategy/blocked-extreme/allowed/down-consistent 5 截图）。
+
+## key 授权 US-010 落地：端到端冒烟脚本（prd 收官验收，2026-09-28）
+
+**零前端源码改动**（本故事 = 验收故事）：新建
+`scripts/smoke_key_gate.mjs`（48/48 PASS）从**生产入口**（:8010 静态 bundle +
+keyserver :8130 双 token 生产姿态，无 MS_KEY_DEV）走完用户主链路八相位：
+T0 双 token 401 鉴权 / A bundle 锚点（含 `/api/key/precheck` + `key-info-*`、
+**不含** keyserver 端点 —— 全链路无跨域 FR-11）/ B 样例载入免闸×三入口
+（precheck 回包 `reason:'sample'` 对拍）/ C 真实母版（样例字节改名上传破豁免）
++ 未绑 key 三入口全拦（`/start` 零发出 fetch 计数断言）/ D 假 key 保存红字
+「key 不存在」/ E 真 key 绑定即激活 + 批量合并两 source（截止延长 +
+keyserver 侧「已合并」保留）/ F 换绑 count key（30/0/30 + localStorage
+`ms_key` 镜像双写）/ G 绑定后真实母版运行放行（全程唯一一次扣次锚点）/
+H keyserver 侧扣次恰 +1（used 1/30，op_log 唯一一笔 validate_deduct）+
+使用统计三指标（total=1 峰=1 均=1.0，时长 key 统计零记录）。
+
+脚本约定（详见 `materialSorting-web/AGENTS.md`「key 授权 US-010 冒烟脚本
+约定」节）：前置 `npm run build` + :8010/:8130 空闲自检；MS_OUT_DIR 临时目录
+（env 值正斜杠）+ keys.db 每次重铸（断言确定性）；**停止时机等首帧**
+（`strategy-big-density` 出现 % 再停 —— starting 期停无 run_dir → result 409 →
+结果态常驻占位无「再次运行」出口）；addInitScript fetch 包装记 URL 计数 +
+precheck 回包捕获。产物 `out/smoke_key_gate/`（report.txt/report.json + 7 截图
++ keys.db 账本 + ms_out/license/key_state.json）。验收报告 =
+`.docs/business/Key授权_验收报告.md`（15 项决策台账 + 四开放决策切换成本
+备案表 + 测试总表 1326/158/1289）。

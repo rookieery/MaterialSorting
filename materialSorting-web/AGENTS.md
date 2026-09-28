@@ -1543,3 +1543,37 @@ GET /admin），**不进本目录 Vite 构建链**；此处只记验证脚本约
   waitForFunction 匹配上一轮成功消息里的旧明文）。
 - playwright 坑：`locator('#x.hidden').waitFor()` 默认等 **visible** 永不满足
   —— 等元素转为隐藏要用 `waitFor({ state: 'hidden' })`。
+
+## key 授权 US-010 冒烟脚本约定（端到端全链路，2026-09-28 收官）
+
+**`scripts/smoke_key_gate.mjs`（48/48）**：prd-key-authorization-system 全十
+故事收官验收 —— 自举 keyserver :8130（**双 token 生产姿态**：
+MS_KEY_ADMIN_TOKEN + MS_KEY_CLIENT_TOKEN 均设、无 MS_KEY_DEV 逃生）+ ms-web
+:8010（**生产 bundle 姿态**：static/ 为 npm run build 产物，脚本自检缺则
+exit 2；dev:5173 通过不算数 = AC 口径），从用户主链路走完
+T0 鉴权 / A bundle 锚点 / B 样例免闸×3 / C 拦截×3 / D 假 key / E 绑定+合并 /
+F 换绑 / G 真跑放行 / H 扣次+统计 八相位。
+
+- **前置**：`npm run build` 已跑（static/index.html 在）；:8010 与 :8130 空闲
+  （脚本探测，被占 exit 2 防串台）；.venv 根目录（keyserver + materialsorting
+  均已安装）；`materialSorting-server/out/sparrow_baseline/pieces_intermediate.json`
+  在（拷入临时 MS_OUT_DIR 供高级/极限入口）。
+- **环境隔离**：MS_OUT_DIR 临时目录（env 值**一律正斜杠**，us007 实勘）+ 每
+  次运行重铸（rmSync ms_out + keys.db[-wal/-shm]）—— key_state/账本/上传产物
+  每跑从零，断言确定性。跑完不触碰真实 out/。
+- **停止时机等首帧**（首轮实勘教训）：高级/极限相位等
+  `strategy-big-density` 出现 %（首帧 best_frame_s*.json 落盘）再点停止 ——
+  starting 期停止无 run_dir → result 端点 409 → 前端结果态只剩常驻
+  「正在读取运行结果…」占位（无「再次运行」出口），后续相位弹窗无法回配置态。
+- **样例豁免反例**：样例字节**改名上传**（工单-US010-冒烟.dxf，basename 脱离
+  data/ 白名单即无豁免）；豁免穿透证据 = precheck 回包 `reason:'sample'`
+  对拍（addInitScript fetch 包装捕获，非仅行为放行）。
+- **fetch 计数断言**：`window.__fetchLog` 记 URL（拦截相位 /start 零新发 =
+  计数不变）+ precheck 回包克隆捕获；precheck 计数恰 +3 证三入口各发一次。
+- **taskkill**：Node spawn 传参不受 Git Bash 路径改写影响；Bash 工具直呼
+  `taskkill /F` 会被改写成 `F:/`，须 `cmd //c "taskkill /F /T /PID …"` 包裹。
+- **产物** `out/smoke_key_gate/`：report.txt / report.json（48 项逐条 + 元
+  数据）、01-07 相位截图、keys.db（账本对拍源：4 key + op_log 12 笔 +
+  key_daily_usage）、ms_out/（含 license/key_state.json 后端权威文件证据）。
+- 验收报告：`.docs/business/Key授权_验收报告.md`（15 项决策台账 + 四开放
+  决策切换成本备案表）。

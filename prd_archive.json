@@ -1274,6 +1274,18 @@
         "title": "keyserver 管理后台可视化单页",
         "description": "As a key 管理员, I want /admin 单页表格（新建/编辑续期/删除确认/使用统计） so that 无命令行也能日常发卡续卡。\n\n具体任务：\n1. keyserver/src/keyserver/static/admin.html — 原生 HTML + fetch + 内联 CSS 单页（**不进 materialSorting-web Vite 构建链**）\n2. keyserver/src/keyserver/app.py — 挂载 /admin（同源无跨域）\n\n验收标准：\n- 表格八列按需求列序：名称（= key 明文）｜绑定系统名（只读）｜备注名｜类型（次数/时长）｜详细信息（次数 N/M 或时长 起~止）｜属性（六态：正在使用/已过期/已用完/未绑定/未激活/已合并）｜使用统计（一格三行：均 X.X/日 ｜ 峰 N ｜ 共 M，无记录 —）｜操作（编辑/删除）\n- 新建表单：时长型（生效时长，默认单位天）/ 次数型（单位次），创建后即时出现在表格\n- 编辑弹窗：修改备注名 + 续期（次数型加次数 / 时长型加天数），保存后表格即时生效（remaining/截止时间变化可见）\n- 删除：已过期/已用完直接删；正在使用出二段确认弹窗，确认（force）后才删\n- token 登录框存 sessionStorage 附 X-Admin-Token 请求头；未设 token 的部署显示配置指引文案\n- keyserver pytest 全绿 + 通过浏览器验证（本机或 frp URL 均同源）",
         "passes": true
+      },
+      {
+        "id": "US-009",
+        "title": "契约文档与冻结部署验证",
+        "description": "As a 运维/对接方, I want agent-api-reference 专节 + frp 部署手册 + frozen exe 验证 so that 现场部署可直接照文档操作。\n\n具体任务：\n1. .docs/technical/agent-api-reference.md — 新增专节（参照机器对接专节写法）：四 MS 端点字段表/错误码矩阵/三入口双闸时序/两类豁免口径/keyserver URL 配置链/MS_KEY_MODE 说明/keyserver 四+五接口契约摘要\n2. materialSorting-server/src/materialsorting/web/AGENTS.md — 新节「key 授权闸门关键约定」\n3. README.md — key 授权体系更新\n4. .docs/technical/本地部署构建与发版手册.md — frp 部署 runbook：frpc 配置样例、**双 token 必设**（MS_KEY_ADMIN_TOKEN + MS_KEY_CLIENT_TOKEN；说明 loopback 兜底在 frp 同机部署下失效的原因）、HTTP 明文残余风险备案（嗅探可见 key 但绑定 MachineGuid 后他机不可用，TLS 二期）、SQLite 文件定期快照备份\n5. materialSorting-server/src/materialsorting/launcher.py — --check 回显 key 配置（URL 解析结果）\n\n验收标准：\n- frozen exe（Nuitka 构建产物）实测：key_server_url.txt exe 旁置生效、launcher --check 回显 key 配置、key_state.json 落 %LOCALAPPDATA%/MaterialSorting/out/license/、winreg 读取成功、MS_KEY_MODE=off 在 frozen 态无效（实测）\n- 文档专节完整可照做（字段表/错误码/时序/配置链齐备）\n- 全量 pytest 通过",
+        "passes": true
+      },
+      {
+        "id": "US-010",
+        "title": "端到端冒烟与验收报告",
+        "description": "As a 发布负责人, I want smoke_key_gate.mjs 全链路冒烟 + 验收报告 so that 按仓库惯例交付证据。\n\n具体任务：\n1. materialSorting-web/scripts/smoke_key_gate.mjs — UI 冒烟（Edge 通道免装浏览器 + addInitScript 预置 ms.tour.* 防 tour-overlay 拦截，模板 smoke_sample_picker.mjs / smoke_prefix_extra.mjs）\n2. .docs/business/Key授权_验收报告.md — 验收报告（按 .docs/business/ 惯例）\n\n验收标准：\n- 冒烟全链路通过：起 keyserver + ms-web → 样例载入免闸跑通（三入口）→ 未绑 key 三入口均报中文错 → 假 key 保存报错（key 不存在）→ 真 key 绑定 + 批量合并 + 运行跑通 → keyserver 侧断言扣次（used_uses 恰 +1）与使用统计（daily_usage +1）\n- npm run build 后 :8010 生产 bundle 含新代码（**用户入口是生产构建，dev:5173 通过不算数**）\n- 验收报告落盘：含 15 项决策台账（FastAPI+SQLite 同仓/启动即扣预扣不退/绑定激活计时/fail-closed/合并标记保留/六态上屏/系统名=hostname/CLI 豁免/MS-XXXXX 格式/明文入库/frp 双 token 强制/超时 5s 禁重试/统计三指标平均÷开通以来天数/localStorage 镜像+后端权威/全链路无跨域）与四开放决策切换成本备案表\n- 全量 pytest 通过",
+        "passes": true
       }
     ]
   }
