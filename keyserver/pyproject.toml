@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+# Key 授权后台管理系统（prd-key-authorization-system US-001）—— 独立系统，
+# 与 materialsorting 消费端**零 import 依赖**（依赖方向红线，tests AST 守卫锁定）：
+# 部署形态 = frp 内网穿透后的公网 keyserver（SQLite 单机账本，决策台账 2026-09-28）。
+name = "keyserver"
+version = "0.1.0"
+description = "VB超排 Key 授权后台管理系统（key 生命周期 + 校验扣次服务端权威账本）"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi",          # HTTP 服务（管理端五接口 + 消费端四接口 + /admin 单页）
+    "uvicorn[standard]",  # ASGI 服务器（单 worker，规模 = 客户机数，决策台账）
+    # sqlite3 用标准库 —— 零额外依赖
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4", "httpx>=0.27"]   # httpx: starlette TestClient 依赖
+
+[project.scripts]
+ms-keyserver = "keyserver.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

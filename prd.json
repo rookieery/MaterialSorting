@@ -5,7 +5,7 @@
       "id": "US-001",
       "title": "keyserver 骨架与数据层",
       "description": "As a 后端开发者, I want keyserver 项目骨架（FastAPI + SQLite）+ 三表数据模型 + 状态推导与 key 生成 so that 全部授权业务有单一数据地基。\n\n具体任务：\n1. keyserver/pyproject.toml — 新建独立包 keyserver（console_scripts ms-keyserver；deps 仅 fastapi + uvicorn[standard]，sqlite3 用标准库；**不依赖 materialsorting 包**，独立系统禁 import）\n2. keyserver/src/keyserver/app.py — FastAPI 装配 + main()（uvicorn，端口 env MS_KEY_PORT 缺省 8110）+ GET /api/key/health\n3. keyserver/src/keyserver/db.py — sqlite3 连接工厂（journal_mode=WAL、busy_timeout=5000、ensure_schema 自动建表；DB 路径 env MS_KEY_DB 可重定位，缺省 <部署目录>/data/keys.db）\n4. keyserver/src/keyserver/models.py — derive_status(row, now) 纯函数 = 状态推导单一真相源（六态：merged 已合并/exhausted 已用完/unbound 未绑定/unactivated 未激活/expired 已过期/active 正在使用）\n5. keyserver/src/keyserver/keygen.py — new_key_plaintext()：格式 MS-XXXXX-XXXXX-XXXXX，字母表 ABCDEFGHJKMNPQRSTVWXYZ23456789（去 I/L/O/U/0/1），secrets 生成\n6. keyserver/src/keyserver/repo.py — 三表读写：keys（id PK、key_plaintext TEXT UNIQUE、key_type ∈ count|duration、total_uses、used_uses 默认 0、duration_days、activated_at、expires_at、bound_machine_guid、bound_system_name、remark、merged_into_id、created_at/updated_at）+ key_daily_usage（PRIMARY KEY (key_id, ymd)，count）+ key_op_log（key_id、op、detail JSON、ts）\n7. keyserver/tests/ — 独立 pytest\n\n验收标准：\n- python -m keyserver.app（或 ms-keyserver）启动后 GET /api/key/health 返回 200；MS_KEY_DB 可重定位数据库文件\n- new_key_plaintext() 匹配 ^MS-[A-Z2-9]{5}-[A-Z2-9]{5}-[A-Z2-9]{5}$ 且 1000 次生成无重复\n- derive_status 六态矩阵（count/duration × 未绑定/未激活/active/expired/exhausted/merged 夹具）单测全过\n- keyserver 自有 pytest 全绿；模块入口可跑通且不 import materialsorting（依赖方向不反向）",
-      "passes": false
+      "passes": true
     },
     {
       "id": "US-002",

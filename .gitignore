@@ -35,3 +35,6 @@ materialSorting-web/scripts/shot-*.png
 
 # Nuitka 冻结构建产物（scripts/build_freeze.py 输出 dist/MaterialSorting.dist；US-003）
 dist/
+
+# keyserver 运行产物（缺省 <部署目录>/data/keys.db 本地授权账本，勿入库）
+keyserver/data/
