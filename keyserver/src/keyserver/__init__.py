@@ -11,5 +11,8 @@
                    建表；DB 路径 env MS_KEY_DB 可重定位，缺省 <部署目录>/data/keys.db）；
   - ``models.py``  derive_status(row, now) 纯函数 —— 六态状态机单一真相源；
   - ``keygen.py``  new_key_plaintext()（MS-XXXXX-XXXXX-XXXXX，去混淆字母表）；
-  - ``repo.py``    三表读写（keys / key_daily_usage / key_op_log）。
+  - ``repo.py``    三表读写（keys / key_daily_usage / key_op_log）；
+  - ``errors.py``  ApiError → {"error": 中文} 统一错误出口（业务 4xx 契约）；
+  - ``routes_admin.py`` 管理端五接口 /api/admin/keys*（X-Admin-Token 鉴权，
+                   US-002：列表/新建/续期/改备注/删除 force 二次确认）。
 """

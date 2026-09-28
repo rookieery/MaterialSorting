@@ -11,7 +11,7 @@
 # 安装（与 materialsorting 共用 repo 根 .venv 开发，但零 import 依赖）
 .venv/Scripts/python.exe -m pip install -e keyserver
 
-# 跑 keyserver 自有 pytest（46 例；勿在部署目录留真实 data/keys.db —— conftest
+# 跑 keyserver 自有 pytest（99 例；勿在部署目录留真实 data/keys.db —— conftest
 # 每用例把 MS_KEY_DB 指到 tmp_path）
 cd keyserver && ../.venv/Scripts/python.exe -m pytest
 
@@ -27,7 +27,7 @@ curl http://127.0.0.1:8110/api/key/health   # → {"ok":true,"service":"keyserve
 | `MS_KEY_DB` | `<keyserver/>/data/keys.db` | SQLite 账本路径（部署目录 = 包上溯两级；**非 editable 安装形态必须显式设**） |
 | `MS_KEY_HOST` | `127.0.0.1` | frp 同机部署形态 frpc 打 127.0.0.1，不裸露 LAN |
 | `MS_KEY_PORT` | `8110` | 监听端口 |
-| `MS_KEY_ADMIN_TOKEN` / `MS_KEY_CLIENT_TOKEN` / `MS_KEY_DEV` | 未设 | US-002/003 接线（双 token 鉴权 + 本地开发逃生） |
+| `MS_KEY_ADMIN_TOKEN` / `MS_KEY_CLIENT_TOKEN` / `MS_KEY_DEV` | 未设 | 双 token 鉴权 + 本地开发逃生（ADMIN 已生效 US-002；CLIENT US-003）。ADMIN 未设置且无 DEV=1 → 管理端族 403；已设置缺失/错 → 401。**无 loopback 放行**（frp 同机形态来源 IP 恒 127.0.0.1，兜底 = 公网裸奔） |
 
 ## 模块职责与约定（US-001 起）
 
@@ -43,6 +43,15 @@ curl http://127.0.0.1:8110/api/key/health   # → {"ok":true,"service":"keyserve
   库内明文存储 —— 哈希化二期备案）；`create_key` UNIQUE 冲突自动重试。
 - `key_daily_usage`（PRIMARY KEY (key_id, ymd)）是使用统计唯一数据源；
   `usage_stats` 平均口径 = 总次数 ÷ 开通以来自然日数（含首日，FR-14）。
+- **业务错误一律 `errors.ApiError` → `{"error": 中文"}`**（US-002 起）：禁用
+  FastAPI HTTPException（`{"detail":...}` 形状与 US-004 keygate 透传契约不符）；
+  入参校验用 `dict = Body(...)` 手工校验（pydantic 自动 422 是英文+detail 形状）。
+- 管理端五接口（`routes_admin.py`，US-002）：`require_admin_token` 请求时读 env
+  （`secrets.compare_digest` 常量时间）；`_positive_int` 显式排 bool（bool 是 int
+  子类会伪装 1）；delete 的 op_log 在物理删除**后**落账（repo.delete_key 先清
+  既有日志，先写即被抹）；`?force=true` 只认字面 true（1/yes/True 仍 409）。
+- 管理台响应 `_summarize`：status=六态中文标签、detail=count `N/M` /
+  duration 未激活 `N天` / 已激活 `起 ~ 止`；US-008 admin.html 直接渲染。
 
 ## 坑位留档
 
