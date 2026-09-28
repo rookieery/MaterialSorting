@@ -395,7 +395,7 @@ describe('NestingPage 编辑排料 invalidate 挂点 (US-004)', () => {
     return run;
   }
 
-  it('handleStart（点普通运行）→ 编辑态失效（run/baseline/working 清空）', () => {
+  it('handleStart（点普通运行）→ 编辑态失效（run/baseline/working 清空）', async () => {
     const run = seedEditSession();
     expect(useEditStore.getState().run).not.toBeNull();
     renderPage();
@@ -403,8 +403,10 @@ describe('NestingPage 编辑排料 invalidate 挂点 (US-004)', () => {
     act(() => {
       (document.querySelector('#sz_28') as HTMLInputElement).click();
     });
-    act(() => {
+    // key 授权 US-007：预检网络往返后 onStart 才发（宏任务边界排干在飞链）
+    await act(async () => {
       (document.querySelector('#start') as HTMLButtonElement).click();
+      await new Promise((r) => setTimeout(r, 0));
     });
     const st = useEditStore.getState();
     expect(st.run).toBeNull();

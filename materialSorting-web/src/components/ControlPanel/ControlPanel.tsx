@@ -20,6 +20,9 @@
 //   ExportButtons 收 phase==='running' 禁用 + partial flag（stopped/error 有帧时标注中间方案提示）。
 //   所有非 running 态「普通运行」统一走本组件 handleStart（读当前 form）—— 无参数快照重放路径
 //   （曾有的 onRestart/lastStartCfgRef 双路径会冻结首次参数，已删除）。
+// key 授权 US-007：handleStart async 化 —— 本地校验全过后、onStart 前先
+//   await ensureRunAllowed()（POST /api/key/precheck；失败 onStatus 中文文案 +
+//   keyGate 内 Toast，不进 WS 连接）。三入口闸门详见 lib/keyGate.ts 文件头。
 // 矩阵化重构 US-003：handleStart 增「全 0 拦截」—— 复用 SizePicker.computeTotalCutPieces 判
 //   所选码有效片数为 0（数量全 0）时不启动求解并 onStatus 提示（现状会把空 items 实例交给
 //   spyrrow，密度分母 0 风险）；doc=null（后端开发模式 fallback SIZES）时 computeTotalCutPieces
@@ -65,8 +68,11 @@
 //   状态（.msn）」+ 单「保存」按钮，按钮状态与导出按钮同公式同数据源严格一致；
 //   原下拉选中时的保存范围说明行随之删除）。
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useExport } from '../../hooks/useExport';
+// key 授权 US-007：普通运行前置 key 预检（POST /api/key/precheck，与后端 WS 闸门
+// 同判定序不扣次；三入口共用 lib/keyGate 单一实现）。
+import { ensureRunAllowed, type RunGateResult } from '../../lib/keyGate';
 import { defaultExportFilename, defaultStateFilename, type ExportFmt } from '../../lib/download';
 import type { ExportTableFields } from '../../lib/exportTable';
 import { useControlPanelStore } from '../../store/controlPanelStore';
@@ -224,6 +230,10 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
     useFormStore.getState().patch(p);
   }
 
+  // key 授权 US-007：普通运行 key 预检在飞旗（async 化引入的往返窗口内防连击 ——
+  // 本地校验同步早退无此窗口；finally 复位，拦截后可立刻重试）。
+  const gateInFlightRef = useRef(false);
+
   /**
    * US-005：handleStart 与 StrategyRunModal「执行」共用的 start 上下文构造器
    * （collectStartContext 单一实现 —— 码号过滤 / 幅宽 / seed / params / per_type /
@@ -255,7 +265,7 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
     !prefixMissingLabel &&
     form.prefix_front.trim() === form.prefix_back.trim();
 
-  function handleStart() {
+  async function handleStart() {
     if (solving) return;
     if (form.sizes.length === 0) {
       onStatus('请至少选一个码号');
@@ -290,6 +300,23 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
     );
     if (totalCut === 0) {
       onStatus('所选码号有效裁片数为 0，请先在上传预览页数量矩阵中设置数量');
+      return;
+    }
+    // key 授权 US-007：运行前 key 预检 —— 放本地校验之后、onStart 之前（与后端
+    // 闸门同序：/ws/solve 也是 pieces/gate_mm 校验后才 ensure_run_allowed；无效
+    // 输入路径零网络零时序变化，precheck 仅在即将真跑时发起）。失败：Toast（keyGate
+    // 内已弹）+ StatusLine（onStatus）中文文案，不进 WS 连接（无 onStart 调用）；
+    // 文案三入口一致（后端 precheck 映射，前端不自行判断网络）。
+    if (gateInFlightRef.current) return;
+    gateInFlightRef.current = true;
+    let gate: RunGateResult;
+    try {
+      gate = await ensureRunAllowed();
+    } finally {
+      gateInFlightRef.current = false;
+    }
+    if (!gate.ok) {
+      onStatus(gate.message);
       return;
     }
     // US-005：载荷构造与策略 run「执行」同源（collectStartContext）；seed_count 是

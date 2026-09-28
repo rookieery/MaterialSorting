@@ -9,6 +9,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { useStrategyStore } from '../strategyStore';
 import type { StrategyResult, StrategyStatus } from '../../types/strategy';
+// key 授权 US-007：预检失败 Toast 断言（lib/keyGate 内出口）。
+import { __resetToastsForTest, useToastStore } from '../toastStore';
 
 let fetchSpy: MockInstance<(...args: unknown[]) => Promise<Response>> | null = null;
 let statusPayload: unknown = { state: 'idle' };
@@ -259,5 +261,58 @@ describe('strategyStore：refresh idle 采纳守卫（US-002 恢复写回态）'
     statusPayload = { state: 'idle' };
     await useStrategyStore.getState().refresh();
     expect(useStrategyStore.getState().phase).toBe('idle');
+  });
+});
+
+// key 授权 US-007：/start 前置 key 预检 —— 拦截时不发 /start（fetch 计数断言）+
+// phase error + errorMessage（弹窗既有渲染位）+ Toast（lib/keyGate 内出口）；
+// 放行路径由上文全部既有用例零改动锁死（mock 兜底分支 {ok:undefined} 宽容放行）。
+describe('strategyStore key 预检（key 授权 US-007）', () => {
+  it('precheck 拦截 → 不发 /start + phase error + errorMessage + Toast', async () => {
+    __resetToastsForTest();
+    fetchSpy!.mockImplementation(((input: unknown) => {
+      const url = String(input);
+      if (url.includes('/api/key/precheck')) {
+        return Promise.resolve(json({ ok: false, message: '未检测到授权 key，请先在「当前系统 key 属性」中绑定' }));
+      }
+      return Promise.resolve(json({}));
+    }) as (...args: unknown[]) => Promise<Response>);
+    await useStrategyStore.getState().start({
+      mode: 'race', minutes: 20, seed: 0, gate_mm: 1980, sizes: [30], per_type: null, quantities: null,
+    });
+    const s = useStrategyStore.getState();
+    expect(s.phase).toBe('error');
+    expect(s.errorMessage).toBe('未检测到授权 key，请先在「当前系统 key 属性」中绑定');
+    expect(s.lastStart).not.toBeNull(); // key 恢复后弹窗「重试」可直接再发
+    // /start 请求根本没发（fetch 计数断言）
+    const startCalls = fetchSpy!.mock.calls.filter((c: unknown[]) => String(c[0]).includes('/api/strategy/start')).length;
+    expect(startCalls).toBe(0);
+    expect(
+      useToastStore.getState().toasts.some((t) => t.message.includes('未检测到授权 key')),
+    ).toBe(true);
+    __resetToastsForTest();
+  });
+
+  it('precheck 显式放行 {ok:true} → /start 照发（预检不吞正常流程）', async () => {
+    __resetToastsForTest();
+    fetchSpy!.mockImplementation(((input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/api/key/precheck')) {
+        return Promise.resolve(json({ ok: true }));
+      }
+      if (url.includes('/api/strategy/start')) {
+        startBodies.push(init?.body ? JSON.parse(String(init.body)) : null);
+        return Promise.resolve(json({ started: true, pid: 1, mode: 'race' }, 202));
+      }
+      if (url.includes('/api/strategy/status')) return Promise.resolve(json(statusPayload));
+      return Promise.resolve(json({}));
+    }) as (...args: unknown[]) => Promise<Response>);
+    statusPayload = { state: 'idle' } as StrategyStatus;
+    await useStrategyStore.getState().start({
+      mode: 'race', minutes: 20, seed: 0, gate_mm: 1980, sizes: [30], per_type: null, quantities: null,
+    });
+    expect(startBodies).toHaveLength(1);
+    expect(useToastStore.getState().toasts).toEqual([]);
+    __resetToastsForTest();
   });
 });

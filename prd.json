@@ -5,7 +5,7 @@
       "id": "US-007",
       "title": "三入口前端拦截",
       "description": "As a 排料软件用户, I want 点击普通/高级/极限运行时先校验 key so that key 失效时得到即时中文反馈而非跑一半失败。\n\n具体任务：\n1. materialSorting-web/src/lib/keyGate.ts — 新建 ensureRunAllowed(): Promise<{ok:true} | {ok:false,message}> = POST /api/key/precheck；失败经 toastStore 弹中文错误\n2. materialSorting-web/src/components/ControlPanel/ControlPanel.tsx — handleStart（约 :256）async 化，顶部先 await ensureRunAllowed()，失败 onStatus(message) 后 return（不进入 WS 连接）\n3. materialSorting-web/src/store/strategyStore.ts — createRunStore 工厂（约 :109，strategy/extreme 双族共用）的 start() 内 apiFetch /start 之前插 precheck；失败 set({phase:'error', errorMessage: message})（StrategyRunModal/ExtremeRunModal 弹窗既有渲染位零改动即得报错展示）\n\n验收标准：\n- precheck 失败：普通运行不进入 WS 连接（无 onStart 调用）且 Toast/StatusLine 显示中文；高级/极限不发 /start 请求（fetch 计数断言）且弹窗 errorMessage 展示\n- precheck 通过：三入口交互与现状逐字节一致（既有测试零改动通过）\n- 断网文案「无法连接授权服务器，请检查网络后重试」三入口一致（由后端 precheck 映射，前端不自行判断网络）\n- vitest 通过 + npm run build 无错误 + 通过浏览器验证三入口拦截与放行",
-      "passes": false
+      "passes": true
     },
     {
       "id": "US-008",

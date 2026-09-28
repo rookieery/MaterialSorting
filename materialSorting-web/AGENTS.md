@@ -1458,3 +1458,69 @@ api.ts 探测分支 / sid 生命周期 / 弹窗文案前先读本节。
   keyserver 起 `MS_KEY_DEV=1`（keygate `_key_post` 不带 X-Client-Token，无
   DEV 逃生口则消费端点族 403）；merge 的 source key 须先 bind 到同一
   machine_guid 且 duration 型（keyserver service `_assert_mergeable` 前置）。
+
+## key 授权 US-007 关键约定（三入口前端拦截 调用方必读；2026-09-28）
+
+普通 / 高级 / 极限三个运行入口在真跑动作（WS 连接 / `/api/*/start`）前先
+`ensureRunAllowed()`（`lib/keyGate.ts`，POST `/api/key/precheck`），key 失效
+即时中文反馈且运行请求零发出。**前端只做体验层前置拦截 —— fail-open 宽容
+放行，权威 fail-closed 兜底在后端 US-005 keygate 三闸门**（改判定逻辑前先
+想：既有测试 mock `{}` 回包必须仍通过）。
+
+### 判定与口径（lib/keyGate.ts）
+
+- **仅显式 `ok===false` 拦截**：`{ok:true[,reason]}` / body 非 JSON / `{}` /
+  缺 ok 键 → 放行；`{ok:false,message}` → Toast（keyGate 内 `gateFail` 统一
+  出口，三入口 toast 免接线）+ 返回 `{ok:false,message}`；message 缺失 →
+  兜底「授权校验未通过，请检查 key 状态」。非 2xx → 透传后端 `{error}` 中文
+  （无则 `运行前校验失败（HTTP N）` 兜底）。
+- **`doc_source` = `useUploadStore.getState().doc?.filename ?? null`** —— 与
+  后端 commit 落的 `state['doc']['source']` basename 同一口径（样例豁免靠它
+  穿透预检；改名上传的真实母版字节不命中白名单）。
+- **前端不自行判断网络**：keyserver 断网文案「无法连接授权服务器，请检查
+  网络后重试」由**后端 precheck 映射**（MS_KEY_SERVER_URL 代理仍在）；前端
+  唯一兜底「无法连接服务器，请检查网络后重试」仅在 MS 后端本身 fetch reject。
+  两句文案一字之差，别混。
+
+### 挂点与并发守卫
+
+- **ControlPanel.handleStart（普通运行）**：async 化；预检在**本地校验（码号/
+  band/prefix/全 0 拦截）全过后、onStart 之前**（底部 —— 与后端闸门同序，
+  无效输入路径保持同步早退零网络）。失败 `onStatus(message)` + return
+  （onStart 零调用 = 不进 WS）；`gateInFlightRef` 防连击（在飞窗口重复点击
+  早退，`finally` 复位 → 拦截后可立即重试，参数不 reset）。
+- **strategyStore `createRunStore.start`（高级/极限双族单一挂点）**：`apiFetch
+  /start` 之前插 `await ensureRunAllowed()`；失败 `set({phase:'error',
+  errorMessage})` —— StrategyRunModal/ExtremeRunModal 既有 error 渲染位零改动；
+  lastStart 已记 → key 恢复后「重试」可直接再发；`/start` 请求根本不发。
+  **`gen` 代际号守卫**：`await` 后 `g !== gen` 即丢弃（预检在飞期间 reset/
+  新 start 已接管）。
+- **放行路径逐字节一致**：`{ok:true}` 分支不碰 payload、不落 Toast —— 三入口
+  放行后的载荷/请求与 US-007 之前完全相同（回归红线）。
+
+### 测试时序注意（新增点击 Start 的测试必读）
+
+预检引入微任务链：**同步 `act(() => btn.click())` 后立即断言 onStart 会假
+失败**（fetch-promise 的 continuation 不被同步 act 排干）。必须
+`await act(async () => { btn.click(); await new Promise((r) => setTimeout(r, 0)); })`
+（宏任务边界排干 —— 模板：ControlPanel `clickStartFlush` /
+useSolveRun.stop `startSolveViaPanel`）。US-007 已机械改造 3 个测试文件
+（ControlPanel ~16 处 / useSolveRun.stop 10 处 / NestingPage 1 处），
+**断言零改动**。
+
+### 测试与验证
+
+- vitest **1289 全绿**（74 文件，+14：keyGate 7 / ControlPanel +4 /
+  strategyStore +2 / extremeStore +1）+ `tsc --noEmit` + `npm run build` 过。
+- 浏览器 `scripts/us007_key_gate_verify.mjs` **full 17/17 + down 7/7 = 24/24**
+  （keyserver :8117（MS_KEY_DEV=1，admin API 建 count key，明文经
+  `US007_COUNT_KEY` env 传脚本）+ ms-web :8012（MS_KEY_SERVER_URL +
+  MS_OUT_DIR 临时目录——**注意 bash 环境传盘符路径用正斜杠**）+ `out/<dir>/
+  sparrow_baseline/pieces_intermediate.json` 从 `materialSorting-server/out/
+  sparrow_baseline/` 拷入）：真实母版改名上传（破样例豁免）三入口拦截 +
+  `/api/strategy|extreme/start` 零发出（addInitScript 包 fetch 落
+  `window.__fetchLog` 计数断言）→ KeyInfoModal 绑 count key → 三入口放行
+  （普通进 WS 停止恢复 / 高级·极限 202 起 worker 停止）→ `MODE=down` 杀
+  keyserver 后断网文案三入口逐字一致；报告 + 5 截图 `out/us007_key_gate/`）。
+- 断言 Toast 用**计数增量**而非栈内文本（Toast 不自动消失是设计 —— 拦截相
+  位的 Toast 会一直留在栈内，放行断言 = 数量不增）。

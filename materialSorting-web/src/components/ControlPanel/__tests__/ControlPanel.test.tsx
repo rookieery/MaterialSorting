@@ -35,6 +35,8 @@ import { ControlPanel, type ControlPanelStartPayload } from "../ControlPanel";
 import { SIZES } from "../../../constants/sizes";
 import { useControlPanelStore } from "../../../store/controlPanelStore";
 import { __resetKeyStoreForTest } from "../../../store/keyStore";
+// key 授权 US-007：预检失败经 toastStore 弹中文（lib/keyGate 内出口）——断言其落队。
+import { __resetToastsForTest, useToastStore } from "../../../store/toastStore";
 import { runRegistry } from "../../../store/runRegistry";
 import { useQtyStore } from "../../../store/qtyStore";
 import { usePtypeStore } from "../../../store/ptypeStore";
@@ -97,6 +99,16 @@ afterEach(() => {
     fetchSpy = null;
   }
 });
+
+/** key 授权 US-007：普通运行前置 key 预检（POST /api/key/precheck 网络往返）——
+ * 点击后 onStart 在微任务链末尾才发出；同步断言前须经宏任务边界（setTimeout 0）
+ * 排干在飞链（机械替换原「act(() => btn.click()) 后同步断言」的时序面，断言零改动）。 */
+async function clickStartFlush(btn: HTMLButtonElement): Promise<void> {
+  await act(async () => {
+    btn.click();
+    await new Promise((r) => setTimeout(r, 0));
+  });
+}
 
 function renderPanel(
   onStart: (cfg: ControlPanelStartPayload) => void = () => {},
@@ -195,7 +207,7 @@ describe("ControlPanel per_type (US-018 button trigger)", () => {
 });
 
 describe("ControlPanel start flow (US-004)", () => {
-  it("AC#6 select-all-sizes + default form click Start -> onStart fires; payload matches collectParams", () => {
+  it("AC#6 select-all-sizes + default form click Start -> onStart fires; payload matches collectParams", async () => {
     const onStart = vi.fn();
     renderPanel(onStart);
     // US-017：DEFAULT_FORM.sizes = [] → 先全选 fallback SIZES chips
@@ -204,7 +216,7 @@ describe("ControlPanel start flow (US-004)", () => {
       for (const c of checkboxes) c.click();
     });
     const btn = container!.querySelector<HTMLButtonElement>("#start")!;
-    act(() => btn.click());
+    await clickStartFlush(btn);
     expect(onStart).toHaveBeenCalledTimes(1);
     const cfg = onStart.mock.calls[0][0] as ControlPanelStartPayload;
     expect(cfg.sizes).toEqual([...SIZES]);
@@ -234,7 +246,7 @@ describe("ControlPanel start flow (US-004)", () => {
     expect(btn.disabled).toBe(false);
   });
 
-  it("AC#6 select 30+31 then Start -> sizes matches checked order (US-017: no re-sort)", () => {
+  it("AC#6 select 30+31 then Start -> sizes matches checked order (US-017: no re-sort)", async () => {
     const onStart = vi.fn();
     renderPanel(onStart);
     const checkboxes = container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]");
@@ -246,7 +258,7 @@ describe("ControlPanel start flow (US-004)", () => {
       }
     });
     const btn = container!.querySelector<HTMLButtonElement>("#start")!;
-    act(() => btn.click());
+    await clickStartFlush(btn);
     const cfg = onStart.mock.calls[0][0] as ControlPanelStartPayload;
     expect(cfg.sizes).toEqual([30, 31]);
   });
@@ -286,7 +298,7 @@ describe("ControlPanel start flow (US-004)", () => {
     expect(document.body.querySelector(".per-type-overlay")).toBeNull();
     // Start -> per_type 含该 g 码的 {d:1, tol:1}
     const btn = container!.querySelector<HTMLButtonElement>("#start")!;
-    act(() => btn.click());
+    await clickStartFlush(btn);
     const cfg = onStart.mock.calls[0][0] as ControlPanelStartPayload;
     expect(cfg.per_type).not.toBeNull();
     expect(cfg.per_type!["g01"]).toEqual({ d: 1, tol: 1 });
@@ -342,14 +354,14 @@ describe("ControlPanel seed UI 隐藏（2026-08-22 单 seed 模式）", () => {
     expect(container!.querySelector("#seed_count")).toBeNull();
   });
 
-  it("Start 载荷恒单 seed：seed=0 / seed_count=1（form 字段恒默认，parseSeedCount 恒 1）", () => {
+  it("Start 载荷恒单 seed：seed=0 / seed_count=1（form 字段恒默认，parseSeedCount 恒 1）", async () => {
     const onStart = vi.fn();
     renderPanel(onStart);
     // US-017：先勾选一个码号让 Start 校验通过
     const checkboxes = container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]");
     act(() => checkboxes[0].click());
     const btn = container!.querySelector<HTMLButtonElement>("#start")!;
-    act(() => btn.click());
+    await clickStartFlush(btn);
     const cfg = onStart.mock.calls[0][0] as ControlPanelStartPayload;
     expect(cfg.seed).toBe(0);
     expect(cfg.seed_count).toBe(1);
@@ -733,7 +745,7 @@ describe("ControlPanel start guard (US-003 全 0 拦截)", () => {
     expect(onStatus.mock.calls[0][0]).toContain("有效裁片数为 0");
   });
 
-  it("仅勾选数量全 0 的码 → 同样拦截（所选码口径，非全表）", () => {
+  it("仅勾选数量全 0 的码 → 同样拦截（所选码口径，非全表）", async () => {
     const onStart = vi.fn();
     const onStatus = vi.fn();
     setupDocWithPieces();
@@ -748,22 +760,22 @@ describe("ControlPanel start guard (US-003 全 0 拦截)", () => {
     expect(onStatus).toHaveBeenCalledTimes(1);
     // 再勾 30（A@30=1 有效）→ 通过拦截正常启动
     act(() => checkboxes[1].click()); // 30
-    act(() => btn.click());
+    await clickStartFlush(btn);
     expect(onStart).toHaveBeenCalledTimes(1);
   });
 
-  it("数量有效（默认 hydrate 1）→ onStart 正常发（回归：不误拦）", () => {
+  it("数量有效（默认 hydrate 1）→ onStart 正常发（回归：不误拦）", async () => {
     const onStart = vi.fn();
     setupDocWithPieces();
     renderPanel(onStart);
     const checkboxes = container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]");
     act(() => checkboxes[0].click());
     const btn = container!.querySelector<HTMLButtonElement>("#start")!;
-    act(() => btn.click());
+    await clickStartFlush(btn);
     expect(onStart).toHaveBeenCalledTimes(1);
   });
 
-  it("doc=null（fallback SIZES 开发模式）→ computeTotalCutPieces=null 不拦截", () => {
+  it("doc=null（fallback SIZES 开发模式）→ computeTotalCutPieces=null 不拦截", async () => {
     const onStart = vi.fn();
     renderPanel(onStart); // doc=null，未 hydrate
     const checkboxes = container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]");
@@ -771,11 +783,11 @@ describe("ControlPanel start guard (US-003 全 0 拦截)", () => {
       for (const c of checkboxes) c.click();
     });
     const btn = container!.querySelector<HTMLButtonElement>("#start")!;
-    act(() => btn.click());
+    await clickStartFlush(btn);
     expect(onStart).toHaveBeenCalledTimes(1);
   });
 
-  it("线格式回归：矩阵改 A@28=2 → start payload quantities.g01['28']===2", () => {
+  it("线格式回归：矩阵改 A@28=2 → start payload quantities.g01['28']===2", async () => {
     const onStart = vi.fn();
     setupDocWithPieces();
     // 模拟矩阵格内编辑：A@28=2（特例），其余保持 hydrate 默认 1
@@ -786,7 +798,7 @@ describe("ControlPanel start guard (US-003 全 0 拦截)", () => {
       for (const c of checkboxes) c.click(); // 28 + 30
     });
     const btn = container!.querySelector<HTMLButtonElement>("#start")!;
-    act(() => btn.click());
+    await clickStartFlush(btn);
     expect(onStart).toHaveBeenCalledTimes(1);
     const cfg = onStart.mock.calls[0][0] as ControlPanelStartPayload;
     expect(cfg.quantities).not.toBeNull();
@@ -907,7 +919,7 @@ describe("ControlPanel band 接线 (US-013)", () => {
     await enableBandViaModal("g01");
     const btn = container!.querySelector<HTMLButtonElement>("#start")!;
     expect(btn.disabled).toBe(false);
-    act(() => btn.click());
+    await clickStartFlush(btn);
     expect(onStart).toHaveBeenCalledTimes(1);
     const cfg = onStart.mock.calls[0][0] as ControlPanelStartPayload;
     expect(cfg.band).toEqual({ enabled: true, label: "g01" });
@@ -1037,7 +1049,7 @@ describe("ControlPanel prefix 接线 (US-004)", () => {
     await enablePrefixViaModal("g01", "g02");
     const btn = container!.querySelector<HTMLButtonElement>("#start")!;
     expect(btn.disabled).toBe(false);
-    act(() => btn.click());
+    await clickStartFlush(btn);
     expect(onStart).toHaveBeenCalledTimes(1);
     const cfg = onStart.mock.calls[0][0] as ControlPanelStartPayload;
     expect(cfg.prefix).toEqual({ enabled: true, front: "g01", back: "g02" });
@@ -1096,20 +1108,20 @@ describe("ControlPanel prefix 接线 (US-004)", () => {
     act(() => confirm.click());
     const btn = container!.querySelector<HTMLButtonElement>("#start")!;
     expect(btn.disabled).toBe(false);
-    act(() => btn.click());
+    await clickStartFlush(btn);
     expect(onStart).toHaveBeenCalledTimes(1);
     const cfg = onStart.mock.calls[0][0] as ControlPanelStartPayload;
     expect(cfg.band).toEqual({ enabled: true, label: "g01" });
     expect(cfg.prefix).toEqual({ enabled: true, front: "g01", back: "g02" });
   });
 
-  it("prefix 关闭（默认）→ start payload prefix = null + strategy-btn 无互斥 title", () => {
+  it("prefix 关闭（默认）→ start payload prefix = null + strategy-btn 无互斥 title", async () => {
     const onStart = vi.fn();
     setupPrefixDoc();
     renderPanel(onStart);
     selectAllSizes();
     const btn = container!.querySelector<HTMLButtonElement>("#start")!;
-    act(() => btn.click());
+    await clickStartFlush(btn);
     const cfg = onStart.mock.calls[0][0] as ControlPanelStartPayload;
     expect(cfg.prefix).toBeNull();
     const strategyBtn = container!.querySelector<HTMLButtonElement>('[data-testid="strategy-btn"]')!;
@@ -1232,7 +1244,7 @@ describe("ControlPanel 重传联动：doc_id 变化重置 form (2026-08-27)", ()
       for (const c of checkboxesAfter) c.click();
     });
     const btn = container!.querySelector<HTMLButtonElement>("#start")!;
-    act(() => btn.click());
+    await clickStartFlush(btn);
     expect(onStart).toHaveBeenCalledTimes(1);
     const cfg = onStart.mock.calls[0][0] as ControlPanelStartPayload;
     expect(cfg.band).toBeNull();
@@ -1554,5 +1566,133 @@ describe("ControlPanel key 属性入口 (US-006)", () => {
     });
     expect(document.querySelector('[data-testid="key-info-overlay"]')).not.toBeNull();
     expect(document.querySelector(".strategy-modal.key-modal")).not.toBeNull();
+  });
+});
+
+// key 授权 US-007：普通运行前置 key 预检（POST /api/key/precheck）—— 拦截 / 放行 /
+// 本地校验早退零网络 / 在飞窗口防连击。
+describe("ControlPanel key 预检（key 授权 US-007）", () => {
+  /** 最小母版（28 码 1 片）—— 全 0 拦截零网络用例的数据源。 */
+  function setupOnePieceDoc(): void {
+    const doc: ParsedDoc = {
+      doc_id: "us007-guard",
+      filename: "M1787.dxf",
+      sizes: [
+        {
+          size: 28,
+          pieces: [
+            { label: "g01", polygon: [], internal_lines: [], notches: [], net_polygon: [], grain_line: null },
+          ],
+        },
+      ],
+    };
+    act(() => {
+      useUploadStore.setState({ doc, status: "done" });
+    });
+    // hydrate 数量默认 1（PreviewPage 同口径），全 0 用例自行清零
+  }
+
+  /** precheck 回包覆写 mock（其余 URL 走 mockReps 兜底）。 */
+  function mockPrecheck(payload: unknown): void {
+    fetchSpy!.mockImplementation(((input: unknown) => {
+      const url = String(input);
+      if (url.includes("/api/key/precheck")) {
+        return Promise.resolve(
+          new Response(JSON.stringify(payload), { status: 200, headers: { "Content-Type": "application/json" } }),
+        );
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify(mockReps), { status: 200, headers: { "Content-Type": "application/json" } }),
+      );
+    }) as unknown as (...args: unknown[]) => Promise<Response>);
+  }
+
+  function precheckFetchCount(): number {
+    return fetchSpy!.mock.calls.filter((c: unknown[]) => String(c[0]).includes("/api/key/precheck")).length;
+  }
+
+  beforeEach(() => {
+    __resetToastsForTest();
+  });
+
+  afterEach(() => {
+    __resetToastsForTest();
+  });
+
+  it("precheck 拦截 → 不进 WS 连接（onStart 零调用）+ StatusLine 中文 + Toast", async () => {
+    const onStart = vi.fn();
+    const onStatus = vi.fn();
+    mockPrecheck({ ok: false, message: "授权次数已用完，请续期或更换 key" });
+    renderPanel(onStart, { onStatus });
+    const checkboxes = container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]");
+    act(() => checkboxes[0].click());
+    const btn = container!.querySelector<HTMLButtonElement>("#start")!;
+    await clickStartFlush(btn);
+    expect(precheckFetchCount()).toBe(1);
+    expect(onStart).not.toHaveBeenCalled();
+    expect(onStatus).toHaveBeenCalledWith("授权次数已用完，请续期或更换 key");
+    expect(useToastStore.getState().toasts.map((t) => t.message)).toContain("授权次数已用完，请续期或更换 key");
+  });
+
+  it("precheck 放行（{ok:true}）→ onStart 正常发（载荷同源不变）", async () => {
+    const onStart = vi.fn();
+    mockPrecheck({ ok: true });
+    renderPanel(onStart);
+    const checkboxes = container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]");
+    act(() => checkboxes[0].click());
+    const btn = container!.querySelector<HTMLButtonElement>("#start")!;
+    await clickStartFlush(btn);
+    expect(onStart).toHaveBeenCalledTimes(1);
+    const cfg = onStart.mock.calls[0][0] as ControlPanelStartPayload;
+    expect(cfg.sizes).toEqual([checkboxes[0].value].map((v) => parseInt(v, 10)));
+    expect(cfg.time).toBe(120);
+    expect(useToastStore.getState().toasts).toEqual([]);
+  });
+
+  it("本地校验早退（全 0 拦截）→ 零 precheck fetch（无效输入路径零网络）", () => {
+    const onStart = vi.fn();
+    const onStatus = vi.fn();
+    setupOnePieceDoc();
+    act(() => {
+      useQtyStore.getState().setRowAll("g01", [28], 0);
+    });
+    renderPanel(onStart, { onStatus });
+    const checkboxes = container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]");
+    act(() => checkboxes[0].click()); // 28
+    const btn = container!.querySelector<HTMLButtonElement>("#start")!;
+    act(() => btn.click());
+    // 同步拦截即得反馈（不经 precheck 网络往返）
+    expect(onStart).not.toHaveBeenCalled();
+    expect(onStatus).toHaveBeenCalledTimes(1);
+    expect(onStatus.mock.calls[0][0]).toContain("有效裁片数为 0");
+    expect(precheckFetchCount()).toBe(0);
+  });
+
+  it("预检在飞窗口内双击 → 恰一次 onStart（gateInFlightRef 防连击）", async () => {
+    const onStart = vi.fn();
+    let release!: (v: Response) => void;
+    fetchSpy!.mockImplementation(((input: unknown) => {
+      const url = String(input);
+      if (url.includes("/api/key/precheck")) {
+        return new Promise<Response>((res) => {
+          release = res;
+        });
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify(mockReps), { status: 200, headers: { "Content-Type": "application/json" } }),
+      );
+    }) as unknown as (...args: unknown[]) => Promise<Response>);
+    renderPanel(onStart);
+    const checkboxes = container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]");
+    act(() => checkboxes[0].click());
+    const btn = container!.querySelector<HTMLButtonElement>("#start")!;
+    act(() => btn.click()); // 进入预检（pending）
+    act(() => btn.click()); // 在飞 → 早退
+    await act(async () => {
+      release(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(precheckFetchCount()).toBe(1);
+    expect(onStart).toHaveBeenCalledTimes(1);
   });
 });

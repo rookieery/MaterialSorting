@@ -22,6 +22,8 @@
 //     唯一入口是显式 stop()（active 态树杀 / orphan 态清 marker + 杀 pid）。
 //   - error 双来源：后端 status.error（子进程异常退出）与 start 被拒（409/422/400，
 //     本地写 errorMessage）。start 被拒时无新 run —— phase 停留 error 展示 + 重试。
+//     key 授权 US-007 起三来源：/start 前置 key 预检被拒（lib/keyGate，中文文案
+//     同 Toast；/start 请求根本不发）。
 //   - result 常驻（done/stopped 后不清）：关弹窗再开仍可应用（US-006）；
 //     下一次 start / reset 才清。
 //   - resultApplied（US-002 pending 槽门控）：done 结果被应用到主画布后置位
@@ -37,6 +39,9 @@
 
 import { create } from 'zustand';
 import { apiFetch } from '../lib/api';
+// key 授权 US-007：/start 前置 key 预检（三入口共用 lib/keyGate；strategy/extreme
+// 双族经 createRunStore 单一挂点各得一份）。
+import { ensureRunAllowed } from '../lib/keyGate';
 import type {
   StrategyPhase,
   StrategyResult,
@@ -125,6 +130,16 @@ function createRunStore<P>(spec: RunFamilySpec) {
     const g = gen;
     // 新 run：清上一 run 的 result / 错误（result 常驻仅到下一次 start）。
     set({ result: null, resultApplied: false, errorMessage: null, lastStart: payload });
+    // key 授权 US-007：运行前 key 预检（apiFetch /start 之前 —— 与后端 _start_run
+    // 闸门同判定序，key 失效时 /start 请求根本不发）。失败：phase error + 中文
+    // errorMessage（StrategyRunModal/ExtremeRunModal 既有渲染位零改动即得报错
+    // 展示）+ keyGate 内 Toast；lastStart 已记 → key 恢复后弹窗「重试」可直接再发。
+    const gate = await ensureRunAllowed();
+    if (g !== gen) return; // 预检在飞期间 reset/新 start 已接管 → 丢弃
+    if (!gate.ok) {
+      set({ phase: 'error', errorMessage: gate.message });
+      return;
+    }
     try {
       const r = await apiFetch(`${spec.base}/start`, {
         method: 'POST',

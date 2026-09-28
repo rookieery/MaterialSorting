@@ -12,6 +12,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { useExtremeStore, useStrategyStore } from '../strategyStore';
 import type { StrategyResult, StrategyStatus } from '../../types/strategy';
+// key 授权 US-007：预检失败 Toast 断言（lib/keyGate 内出口）。
+import { __resetToastsForTest, useToastStore } from '../toastStore';
 
 let fetchSpy: MockInstance<(...args: unknown[]) => Promise<Response>> | null = null;
 let statusPayload: unknown = { state: 'idle' };
@@ -228,5 +230,30 @@ describe('extremeStore：refresh idle 采纳守卫（US-002 恢复写回态）',
     statusPayload = { state: 'idle' };
     await useExtremeStore.getState().refresh();
     expect(useExtremeStore.getState().phase).toBe('idle');
+  });
+});
+
+// key 授权 US-007：/start 前置 key 预检（族参数化工厂单一挂点，extreme 族同构）——
+// 拦截时不发 /start（fetch 计数断言）+ phase error + errorMessage（弹窗既有渲染位）。
+describe('extremeStore key 预检（key 授权 US-007）', () => {
+  it('precheck 拦截 → 不发 /start + phase error + errorMessage + Toast', async () => {
+    __resetToastsForTest();
+    fetchSpy!.mockImplementation(((input: unknown) => {
+      const url = String(input);
+      if (url.includes('/api/key/precheck')) {
+        return Promise.resolve(json({ ok: false, message: '无法连接授权服务器，请检查网络后重试' }));
+      }
+      return Promise.resolve(json({}));
+    }) as (...args: unknown[]) => Promise<Response>);
+    await useExtremeStore.getState().start({ time_total_s: 3600, seed: 5, gate_mm: 1980, sizes: [30] });
+    const s = useExtremeStore.getState();
+    expect(s.phase).toBe('error');
+    expect(s.errorMessage).toBe('无法连接授权服务器，请检查网络后重试');
+    const startCalls = fetchSpy!.mock.calls.filter((c: unknown[]) => String(c[0]).includes('/api/extreme/start')).length;
+    expect(startCalls).toBe(0);
+    expect(
+      useToastStore.getState().toasts.some((t) => t.message === '无法连接授权服务器，请检查网络后重试'),
+    ).toBe(true);
+    __resetToastsForTest();
   });
 });

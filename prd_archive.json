@@ -1262,6 +1262,12 @@
         "title": "Key 属性弹窗与入口按钮",
         "description": "As a 排料软件用户, I want「导出最优方案」区最下的「当前系统 key 属性」按钮与弹窗（当前 key 输入替换 / 被合并 key 批量添加 / 属性展示） so that 我能自助管理本机授权。\n\n具体任务：\n1. materialSorting-web/src/store/controlPanelStore.ts — ControlPanelModalId 联合类型加 'key_info'（additive，既有五值不变）\n2. materialSorting-web/src/store/keyStore.ts — 新建 zustand store {key, keyInfo, error, saving, fetchState(), saveKey(), mergeKeys()}\n3. materialSorting-web/src/components/ControlPanel/KeyInfoModal.tsx — 新建三区块弹窗：① 当前 key 输入/替换 + 保存（POST /api/key/save，失败中文红字透传）② 被合并 key textarea 批量添加（每行一个）+ 合并（POST /api/key/merge，结果明细 = 每个 key 成功天数或失败原因）③ 属性展示（次数型 总数/剩余；时长型 生效/截止）+ 状态徽标；骨架镜像 ExportInfoModal（Portal + ESC/遮罩关闭 + apiFetch）\n4. materialSorting-web/src/components/ControlPanel/ControlPanel.tsx — ExportButtons 区块（约 :513）正下方挂入口按钮（field-label「当前系统 key 属性」）\n5. materialSorting-web/src/style.css — .key-* 前缀样式（沿用旧版样式体系，**不引入 CSS 框架**）\n\n验收标准：\n- 默认未绑定态显示空输入 + 引导文案；全部请求走 apiFetch（X-Session-Id 体系照常）\n- localStorage ms_key 镜像：弹窗打开**先用 localStorage 即时预填**（不等网络往返）→ GET /api/key/state 对账**以后端为准**（绑定/合并都发生在后端）；保存成功双写（后端 key_state.json + localStorage）；清缓存/换浏览器不丢 key（后端文件权威）\n- 单例互斥不与既有 modal 冲突；ESC/遮罩关闭行为与 ExportInfoModal 一致\n- vitest 组件测试通过 + npm run build 无错误 + 通过浏览器验证弹窗渲染与三区块交互",
         "passes": true
+      },
+      {
+        "id": "US-007",
+        "title": "三入口前端拦截",
+        "description": "As a 排料软件用户, I want 点击普通/高级/极限运行时先校验 key so that key 失效时得到即时中文反馈而非跑一半失败。\n\n具体任务：\n1. materialSorting-web/src/lib/keyGate.ts — 新建 ensureRunAllowed(): Promise<{ok:true} | {ok:false,message}> = POST /api/key/precheck；失败经 toastStore 弹中文错误\n2. materialSorting-web/src/components/ControlPanel/ControlPanel.tsx — handleStart（约 :256）async 化，顶部先 await ensureRunAllowed()，失败 onStatus(message) 后 return（不进入 WS 连接）\n3. materialSorting-web/src/store/strategyStore.ts — createRunStore 工厂（约 :109，strategy/extreme 双族共用）的 start() 内 apiFetch /start 之前插 precheck；失败 set({phase:'error', errorMessage: message})（StrategyRunModal/ExtremeRunModal 弹窗既有渲染位零改动即得报错展示）\n\n验收标准：\n- precheck 失败：普通运行不进入 WS 连接（无 onStart 调用）且 Toast/StatusLine 显示中文；高级/极限不发 /start 请求（fetch 计数断言）且弹窗 errorMessage 展示\n- precheck 通过：三入口交互与现状逐字节一致（既有测试零改动通过）\n- 断网文案「无法连接授权服务器，请检查网络后重试」三入口一致（由后端 precheck 映射，前端不自行判断网络）\n- vitest 通过 + npm run build 无错误 + 通过浏览器验证三入口拦截与放行",
+        "passes": true
       }
     ]
   }

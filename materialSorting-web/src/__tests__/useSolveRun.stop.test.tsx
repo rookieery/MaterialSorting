@@ -202,11 +202,17 @@ function mountNestingPage(): void {
   });
 }
 
-function startSolveViaPanel(): void {
+// key 授权 US-007：普通运行前置 key 预检（POST /api/key/precheck 网络往返）——
+// onStart 在微任务链末尾才发出；宏任务边界（setTimeout 0）排干在飞链后 WS 才建
+// （原同步 act 点击，机械 async 化，断言零改动）。
+async function startSolveViaPanel(): Promise<void> {
   const checkbox = container!.querySelector<HTMLInputElement>('.sizes input[type=checkbox]')!;
   act(() => checkbox.click());
   const btn = container!.querySelector<HTMLButtonElement>('#start')!;
-  act(() => btn.click());
+  await act(async () => {
+    btn.click();
+    await new Promise((r) => setTimeout(r, 0));
+  });
 }
 
 function statusText(): string {
@@ -219,8 +225,8 @@ describe('US-027 NestingPage phase 转换', () => {
     mountNestingPage();
   });
 
-  it('3a) running->(stopped)->stopped：状态行含「已停止」+ #stop 切 #restart（US-028 SolveControls）', () => {
-    startSolveViaPanel();
+  it('3a) running->(stopped)->stopped：状态行含「已停止」+ #stop 切 #restart（US-028 SolveControls）', async () => {
+    await startSolveViaPanel();
     expect(mockInstances).toHaveLength(1);
     // US-028：running 态 SolveControls 渲染 #stop（不渲染 #start）
     expect(container!.querySelector('#start')).toBeNull();
@@ -241,8 +247,8 @@ describe('US-027 NestingPage phase 转换', () => {
     expect(statusText()).toContain('中间方案');
   });
 
-  it('3b) running->(error)->error：状态行含「错误」+ #restart 切「重新开始」', () => {
-    startSolveViaPanel();
+  it('3b) running->(error)->error：状态行含「错误」+ #restart 切「重新开始」', async () => {
+    await startSolveViaPanel();
     const ws = mockInstances[0];
     act(() =>
       ws.onmessage?.({ data: JSON.stringify({ type: 'error', message: '构造失败' }) }),
@@ -255,8 +261,8 @@ describe('US-027 NestingPage phase 转换', () => {
     expect(statusText()).toContain('构造失败');
   });
 
-  it('3c) running->(final)->done：状态行含「完成」+ density + #restart 切「再次求解」', () => {
-    startSolveViaPanel();
+  it('3c) running->(final)->done：状态行含「完成」+ density + #restart 切「再次求解」', async () => {
+    await startSolveViaPanel();
     const ws = mockInstances[0];
     const finalMsg: ServerMsg = {
       type: 'final',
@@ -276,9 +282,9 @@ describe('US-027 NestingPage phase 转换', () => {
     expect(statusText()).toContain('78.00%');
   });
 
-  it('3e) done 后改参数再求解 → 读当前 form（回归：曾走 lastStartCfgRef 快照重放，改参数不生效）', () => {
+  it('3e) done 后改参数再求解 → 读当前 form（回归：曾走 lastStartCfgRef 快照重放，改参数不生效）', async () => {
     // 首次：单 seed（2026-08-22 起 seed UI 隐藏，恒单 WS；回归点改用 #time 编辑验证）→ 1 个 WS
-    startSolveViaPanel();
+    await startSolveViaPanel();
     expect(mockInstances).toHaveLength(1);
     act(() => mockInstances[0].onopen?.());
     expect(JSON.parse(mockInstances[0].sent[0]).time).toBe(120); // 默认时长
@@ -304,7 +310,11 @@ describe('US-027 NestingPage phase 转换', () => {
       timeInput.dispatchEvent(new Event('input', { bubbles: true }));
     });
     const restartBtn = container!.querySelector<HTMLButtonElement>('#restart')!;
-    act(() => restartBtn.click());
+    // key 授权 US-007：#restart 同走 handleStart（预检往返；宏任务边界排干）
+    await act(async () => {
+      restartBtn.click();
+      await new Promise((r) => setTimeout(r, 0));
+    });
 
     // 修复后：新启动 WS 的 StartPayload 反映当前 form（time=300）；
     // 修复前：走快照重放发旧 time=120（本用例失败 = 回归捕获）
@@ -316,7 +326,7 @@ describe('US-027 NestingPage phase 转换', () => {
     expect(payload.seed).toBe(0); // seed UI 隐藏后恒 0（单 seed 模式）
   });
 
-  it('3d) running 态冻结参数编辑（SizePicker/ParamForm/PerType 均 disabled；seed 控件 2026-08-22 已隐藏）', () => {
+  it('3d) running 态冻结参数编辑（SizePicker/ParamForm/PerType 均 disabled；seed 控件 2026-08-22 已隐藏）', async () => {
     expect(container!.querySelector<HTMLInputElement>('#time')!.disabled).toBe(false);
     expect(container!.querySelector<HTMLInputElement>('#seed')).toBeNull(); // UI 已隐藏
     expect(container!.querySelector<HTMLInputElement>('#multi_seed')).toBeNull();
@@ -325,7 +335,7 @@ describe('US-027 NestingPage phase 转换', () => {
     const sizeInput = container!.querySelectorAll<HTMLInputElement>('.sizes input[type=checkbox]')[0]!;
     expect(sizeInput.disabled).toBe(false);
 
-    startSolveViaPanel();
+    await startSolveViaPanel();
 
     expect(container!.querySelector<HTMLInputElement>('#time')!.disabled).toBe(true);
     expect(container!.querySelector<HTMLButtonElement>('.per-type-btn')!.disabled).toBe(true);
@@ -340,8 +350,8 @@ describe('起始端成套 US-004 prefix stage → 状态行双形态（2026-09-0
     mountNestingPage();
   });
 
-  it('有补片（extra_label/extra_size 在案）→ 状态行「尺码 38＋g02@32」+ run 不 finish + rec.stage 持新键', () => {
-    startSolveViaPanel();
+  it('有补片（extra_label/extra_size 在案）→ 状态行「尺码 38＋g02@32」+ run 不 finish + rec.stage 持新键', async () => {
+    await startSolveViaPanel();
     const ws = mockInstances[0];
 
     const stage: ServerMsg = {
@@ -371,8 +381,8 @@ describe('起始端成套 US-004 prefix stage → 状态行双形态（2026-09-0
     });
   });
 
-  it('兜底 4 片（extra_label=null / fallback=true）→ 状态行回落现行形态「尺码 28」', () => {
-    startSolveViaPanel();
+  it('兜底 4 片（extra_label=null / fallback=true）→ 状态行回落现行形态「尺码 28」', async () => {
+    await startSolveViaPanel();
     const ws = mockInstances[0];
 
     const stage: ServerMsg = {
@@ -391,8 +401,8 @@ describe('起始端成套 US-004 prefix stage → 状态行双形态（2026-09-0
     expect(runRegistry.list()[0].done).toBe(false);
   });
 
-  it('旧后端（无 extra_* 新键）→ 前端不炸、状态行现行形态（协议向后兼容）', () => {
-    startSolveViaPanel();
+  it('旧后端（无 extra_* 新键）→ 前端不炸、状态行现行形态（协议向后兼容）', async () => {
+    await startSolveViaPanel();
     const ws = mockInstances[0];
 
     // 旧后端消息形状：无 extra_label/extra_size/residual_mm（undefined 与 null 同判）
@@ -416,8 +426,8 @@ describe('US-012 NestingPage band stage → 状态行（秒级提示，不进 ph
     mountNestingPage();
   });
 
-  it('收到 stage → 状态行「腰头成带中」+ phase 仍 running（#stop 在场）+ run 不 finish', () => {
-    startSolveViaPanel();
+  it('收到 stage → 状态行「腰头成带中」+ phase 仍 running（#stop 在场）+ run 不 finish', async () => {
+    await startSolveViaPanel();
     const ws = mockInstances[0];
 
     const stage: ServerMsg = {
@@ -453,8 +463,8 @@ describe('US-012 NestingPage band stage → 状态行（秒级提示，不进 ph
     expect(statusText()).not.toContain('腰头成带中');
   });
 
-  it('旧后端（不发 stage，直推 final）→ 状态行无「腰头成带中」，行为与 HEAD 一致', () => {
-    startSolveViaPanel();
+  it('旧后端（不发 stage，直推 final）→ 状态行无「腰头成带中」，行为与 HEAD 一致', async () => {
+    await startSolveViaPanel();
     const ws = mockInstances[0];
     const finalMsg: ServerMsg = {
       type: 'final',
