@@ -21,6 +21,9 @@
     run_stats.jsonl   PC-009 run 统计库（OUT_DIR 直下单文件，append-only）：
                        ms-run-config 每次 run 结束追加一行（class_key 按实例类聚合），
                        portfolio θ₀ 校准读取 —— 历史密度分布越测越准。
+    license/          key 授权本地状态（keygate US-004：key_state.json 当前绑定的
+                       key + machine_id.txt 注册表读取失败时的兜底机 ID；frozen 态
+                       随 MS_OUT_DIR 落 %LOCALAPPDATA%/MaterialSorting/out/license/）
 """
 import os
 
@@ -36,6 +39,7 @@ CONFIG_RUNS_DIR = os.path.join(OUT_DIR, 'config_runs')     # CLI（ms-run-config
 PREFIX_RUNS_DIR = os.path.join(OUT_DIR, 'prefix_runs')     # US-003 prefix 运行工件（web solve_worker 独占写：资格码/构造/pin/带位回放对拍）
 CALIBRATION_DIR = os.path.join(OUT_DIR, 'portfolio_calibration')   # PC-004 标定管线产物根（batch/variants/analyze，gitignore 区）
 RUN_STATS_JSONL = os.path.join(OUT_DIR, 'run_stats.jsonl')   # PC-009 run 统计库（ms-run-config 追加 / portfolio θ₀ 校准读取）
+LICENSE_DIR = os.path.join(OUT_DIR, 'license')   # keygate 本地授权状态（key_state.json / machine_id.txt，US-004）
 MASTER_DXF_GLOB = os.path.join(DATA_DIR, 'M1787*(2).dxf')         # 母版 DXF glob（命中的是 2.9MB 的 (1)(2)）
 STATIC_DIR = os.environ.get('MS_STATIC_DIR',
                             os.path.join(REPO_DIR, 'materialSorting-web', 'static'))
