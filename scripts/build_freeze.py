@@ -71,6 +71,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 ENTRY_FILE = ROOT / 'scripts' / 'freeze_entry.py'          # Nuitka 入口适配层
 STATIC_DIR = ROOT / 'materialSorting-web' / 'static'       # 前端 React 构建产物
+DATA_DIR = ROOT / 'data'                                   # 样例母版目录（顶层 .dxf 随包）
 SERVER_DIR = ROOT / 'materialSorting-server'
 PYPROJECT = SERVER_DIR / 'pyproject.toml'
 SPYRROW_PIN_FILE = SERVER_DIR / 'spyrrow_build.json'       # 私有 wheel 钉板（四字段）
@@ -349,16 +350,53 @@ def make_portable_zip(dist_app_dir: Path, zip_path: Path,
     return count
 
 
+# ================================================================ 样例母版（纯函数）
+
+def sample_dxf_files(data_dir: Path) -> list[Path]:
+    """``data/`` 顶层 ``*.dxf`` 样例文件列表（按文件名排序，非递归）。
+
+    口径与 ``web/routes_views._sample_dxf_names`` 逐条对齐（``/api/samples``
+    列表端点的列举白名单）：仅顶层文件、后缀 lower 判 ``.dxf``（大写 ``.DXF``
+    也收）、``.plt`` / ``configs/`` 子目录不收 —— 捆绑面 = 样例功能可见面，
+    内部实验资产（PLT 参考件 / CLI 配置示例）不进客户包。
+
+    样例文件名含中文与 ``#``/``%``/``（）`` 等 URI/命令行保留字符（如
+    ``3069#（2025抓毛靓商11%5%直纹7cm腰埋夹围加8.5）146.dxf``）——
+    ``--include-data-file=src=dst`` 以 ``=`` 分隔，**文件名含 ``=`` 即参数解析
+    错位**，此处 fail-fast 防将来踩坑（现役样例名均不含 ``=``）。
+
+    目录缺失 → 空列表（调用方 step_static_check 对空列表 fail —— 样例是 UI
+    交付功能，静默缺失 = 2026-09-29「exe 无可用样例」事故同型复发）。
+    """
+    if not data_dir.is_dir():
+        return []
+    files = [p for p in data_dir.iterdir()
+             if p.is_file() and p.name.lower().endswith('.dxf')]
+    for p in files:
+        if '=' in p.name:
+            raise SystemExit(
+                f'样例文件名含 = 会破坏 Nuitka --include-data-file 参数解析：'
+                f'{p.name}（改名后重试）')
+    return sorted(files, key=lambda p: p.name)
+
+
 # ================================================================ Nuitka 命令（常量段）
 
 def nuitka_command(jobs: int, file_version: str, version_display: str,
                    entry: Path, static_dir: Path, resources_dir: Path,
-                   dist_dir: Path) -> list[str]:
+                   dist_dir: Path, data_dir: Path | None = None) -> list[str]:
     """Nuitka 命令行组装（PRD AC2 常量段，逐旗标注释）。
 
     注：delvewheel ``.libs`` DLL 目录（numpy.libs=OpenBLAS / shapely.libs=GEOS）
     不走 ``--include-data-dir`` —— Nuitka 对纯 DLL 目录报「No data files」，
     扩展模块的 DLL 依赖由其依赖扫描自动收（dist 自检 + 冒烟兜底验证）。
+
+    ``data_dir``（2026-09-29 无样例 bug 修复）：样例母版目录 —— 顶层 ``.dxf``
+    逐文件 ``--include-data-file`` 捆绑到 exe 同级 ``data/``（frozen 态
+    ``MS_DATA_DIR`` 缺省指向，见 launcher.apply_frozen_env）；``None`` 兼容
+    旧调用形（不捆绑，仅测试消费）。**必须逐文件**而非整目录
+    ``--include-data-dir``：``data/`` 里的 ``.plt`` 参考件与 ``configs/``
+    实验配置是内部开发资产，不进客户安装包。
     """
     cmd: list[str] = [
         sys.executable, '-m', 'nuitka',
@@ -400,6 +438,10 @@ def nuitka_command(jobs: int, file_version: str, version_display: str,
         # ---- 资源红线③①：显式并发上限，绝不落回 Nuitka 缺省（= 逻辑核数全核并发）
         f'--jobs={jobs}',
     ]
+    # 样例母版逐文件捆绑（=data/<name>，frozen MS_DATA_DIR 缺省落点）
+    if data_dir is not None:
+        cmd += [f'--include-data-file={p}=data/{p.name}'
+                for p in sample_dxf_files(data_dir)]
     return cmd
 
 
@@ -441,13 +483,21 @@ def parse_check_output(text: str) -> dict[str, str]:
 # ================================================================ 步骤实现
 
 def step_static_check() -> None:
-    if STATIC_DIR.is_dir() and (STATIC_DIR / 'index.html').is_file():
-        print(f'[1/{STEP_TOTAL}] 前端 static 检查：OK（{STATIC_DIR}）')
-        return
-    _fail('前端 static 检查',
-          f'{STATIC_DIR} 缺失或无 index.html —— 先 cd materialSorting-web && '
-          'npm run build（--skip-frontend-check 可跳过本检查，但缺 static 的'
-          '产物属无效包）')
+    if not (STATIC_DIR.is_dir() and (STATIC_DIR / 'index.html').is_file()):
+        _fail('前端 static 检查',
+              f'{STATIC_DIR} 缺失或无 index.html —— 先 cd materialSorting-web && '
+              'npm run build（--skip-frontend-check 可跳过本检查，但缺 static 的'
+              '产物属无效包）')
+    # 样例母版预检（2026-09-29 无样例 bug 修复）：data/ 顶层 .dxf 是「样例」
+    # 下拉框的交付内容 —— 空目录静默打出「（无可用样例）」包即本次事故同型，
+    # 构建期 fail 早暴露（dist 自检对落点二次硬校验兜底）。
+    samples = sample_dxf_files(DATA_DIR)
+    if not samples:
+        _fail('前端 static 检查',
+              f'{DATA_DIR} 无顶层 .dxf 样例 —— 上传预览「样例」下拉框将恒空'
+              '（2026-09-29 exe 无样例事故同型）。补样例文件或确认 DATA_DIR 落点')
+    print(f'[1/{STEP_TOTAL}] 前端 static 检查：OK（{STATIC_DIR}）')
+    print(f'  样例母版：{len(samples)} 个 .dxf（{DATA_DIR}）')
 
 
 def step_env_selfcheck() -> None:
@@ -643,12 +693,20 @@ def step_dist_check(expected_version: str) -> None:
               'materialsorting 失效）')
     static = Path(info.get('paths.STATIC_DIR', ''))
     fonts = Path(info.get('paths.FONT_DIR', ''))
+    data = Path(info.get('paths.DATA_DIR', ''))
     ok_static = static.is_dir() and (static / 'index.html').is_file()
     ok_fonts = fonts.is_dir() and (fonts / 'NotoSansSC-Regular.otf').is_file()
+    ok_data = data.is_dir() and any(data.glob('*.dxf'))
     print(f'  static 落点：{static}（{"OK" if ok_static else "缺失"}）')
     print(f'  fonts 落点：{fonts}（{"OK" if ok_fonts else "缺失"}）')
+    print(f'  data 落点：{data}（{"OK" if ok_data else "缺失"}，'
+          f'{len(sample_dxf_files(data))} 个样例）')
     if not (ok_static and ok_fonts):
         _fail('dist 自检', 'static/fonts 路径校验失败（前端产物或字体资源未捆绑）')
+    if not ok_data:
+        _fail('dist 自检', 'data 路径校验失败（样例母版未捆绑 —— 上传预览'
+              '「样例」下拉框恒空 + key 闸门样例豁免 sha256 对拍悬空；'
+              '2026-09-29 无样例 bug 修复项）')
 
 
 def step_installer(display: str, file_version: str) -> None:
@@ -823,7 +881,7 @@ def main(argv: list[str] | None = None) -> int:
 
     cmd = nuitka_command(jobs, file_version, display, ENTRY_FILE, STATIC_DIR,
                          SERVER_DIR / 'src' / 'materialsorting' / 'resources',
-                         DIST_DIR)
+                         DIST_DIR, DATA_DIR)
 
     if args.dry_run:
         print('\n--dry-run：完整 Nuitka 命令行（不执行编译）：')

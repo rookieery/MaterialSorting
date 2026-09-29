@@ -47,7 +47,15 @@ venv python 直跑——nuitka/spyrrow/materialsorting 都在 venv）→
   不同模块本体崩溃 C1001/0xC0000005；双元数据红线
   `--include-distribution-metadata=spyrrow` + `=materialsorting`；ASCII 版本资源
   ——中文进 .rc 被 cl 按代码页 936 误读 C2001）⑥dist 自检（.py/.pyc/.docs/
-  tests/scripts 泄漏零命中 + exe --check frozen/warm/version/static/fonts）。
+  tests/scripts 泄漏零命中 + exe --check frozen/warm/version/static/fonts/**data**）。
+- **样例母版捆绑（2026-09-29「exe 无可用样例」bug 修复）**：repo `data/` 顶层
+  `.dxf` 逐文件 `--include-data-file=<abs>=data/<name>` 捆到 exe 同级 `data/`
+  （**必须逐文件**——`.plt` 参考件与 `configs/` 实验配置是内部资产不进客户包；
+  文件名含 `=` fail-fast 防参数解析错位）；frozen 态 `MS_DATA_DIR` 由
+  `launcher.apply_frozen_env` setdefault 指向该目录（`/api/samples` 列表与 key
+  闸门样例豁免 sha256 对拍共用，此前两处都悬空 → 下拉恒空）；双重自检 = 构建期
+  `step_static_check` 样例预检（data/ 空 fail）+ `step_dist_check` data 落点
+  硬校验。
 - **资源红线（2026-09-27 整机假死事故复盘）**：`--jobs` 推导
   `min(8, max(2, 核数//4))` 再按可用物理内存钳制（每 job ≥3GB、下限 2，
   `--jobs`/`MS_FREEZE_JOBS` 覆盖仍打警示）/ Nuitka 子进程

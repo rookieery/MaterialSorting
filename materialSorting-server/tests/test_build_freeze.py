@@ -176,7 +176,8 @@ def test_parse_check_output(bf):
 def _cmd(bf, jobs=7):
     return bf.nuitka_command(
         jobs, '0.1.0.317', '0.1.0 g0f7a624 dirty', bf.ENTRY_FILE, bf.STATIC_DIR,
-        bf.SERVER_DIR / 'src' / 'materialsorting' / 'resources', bf.DIST_DIR)
+        bf.SERVER_DIR / 'src' / 'materialsorting' / 'resources', bf.DIST_DIR,
+        bf.DATA_DIR)
 
 
 def test_nuitka_cmd_redline_metadata(bf):
@@ -202,12 +203,48 @@ def test_nuitka_cmd_mingw64(bf):
 
 
 def test_nuitka_cmd_data_dirs(bf):
-    """前端 static / 字体资源两类数据捆绑齐备（.libs DLL 走依赖扫描，见
-    nuitka_command docstring）。"""
+    """前端 static / 字体资源 / 样例母版三类数据捆绑齐备（.libs DLL 走依赖
+    扫描，见 nuitka_command docstring）。"""
     cmd = _cmd(bf)
     assert any(c.endswith('=static') and 'materialSorting-web' in c for c in cmd)
     assert any(c.endswith('=materialsorting/resources') for c in cmd)
     assert not any('.libs=' in c for c in cmd)
+    # 样例母版逐文件捆绑（2026-09-29 无样例 bug 修复）：repo data/ 顶层每个
+    # .dxf 恰一条 --include-data-file=<abs>=data/<name>；.plt 与 configs/ 子
+    # 目录不进客户包。
+    samples = bf.sample_dxf_files(bf.DATA_DIR)
+    assert samples, 'repo data/ 应有 git 追踪的样例 .dxf'
+    expected = {f'--include-data-file={p}=data/{p.name}' for p in samples}
+    assert {c for c in cmd if c.startswith('--include-data-file=')} == expected
+    assert not any(c.endswith('.plt') for c in cmd)
+    assert not any('configs' in c for c in cmd)
+
+
+def test_nuitka_cmd_data_dir_none_legacy(bf):
+    """data_dir=None 兼容旧调用形：不产 --include-data-file（迁移期参数可选）。"""
+    cmd = bf.nuitka_command(
+        7, '0.1.0.317', '0.1.0 g0f7a624 dirty', bf.ENTRY_FILE, bf.STATIC_DIR,
+        bf.SERVER_DIR / 'src' / 'materialsorting' / 'resources', bf.DIST_DIR)
+    assert not any(c.startswith('--include-data-file=') for c in cmd)
+
+
+def test_sample_dxf_files(bf, tmp_path):
+    """样例列举口径与 web/routes_views._sample_dxf_names 对齐：仅顶层 .dxf
+    （大写 .DXF 也收）、.plt/子目录/非 dxf 不收、缺目录空列表；文件名含 =
+    fail-fast（Nuitka --include-data-file 以 = 分隔，错位 = 静默打错文件）。"""
+    (tmp_path / 'a.dxf').write_bytes(b'a')
+    (tmp_path / 'B.DXF').write_bytes(b'b')            # 大写后缀也收（lower 判定）
+    (tmp_path / 'note.txt').write_text('x')
+    (tmp_path / 'ref.plt').write_text('x')            # plt 不收
+    sub = tmp_path / 'configs'                        # 子目录不收（非递归）
+    sub.mkdir()
+    (sub / 'inner.dxf').write_bytes(b'i')
+    files = bf.sample_dxf_files(tmp_path)
+    assert [p.name for p in files] == ['B.DXF', 'a.dxf']   # sorted 朴素序
+    assert bf.sample_dxf_files(tmp_path / 'no_such_dir') == []
+    (tmp_path / 'x=y.dxf').write_bytes(b'x')
+    with pytest.raises(SystemExit):
+        bf.sample_dxf_files(tmp_path)
 
 
 def test_nuitka_cmd_version_resources(bf):

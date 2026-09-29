@@ -39,6 +39,7 @@ _LAUNCHER_SRC = _SRC / 'materialsorting' / 'launcher.py'
 # dev 缺省落点（paths.py 同款上溯口径独立复算，防测试进程 paths 被其它用例污染）
 _DEV_OUT_DIR = _SRC.parent / 'out'
 _DEV_STATIC_DIR = _SRC.parents[1] / 'materialSorting-web' / 'static'
+_DEV_DATA_DIR = _SRC.parents[1] / 'data'
 # 模块级 import 白名单 = 标准库（AST 守卫；新增顶层 import 须同步维护此表）
 _STDLIB_WHITELIST = frozenset({
     '__future__', 'multiprocessing', 'os', 'socket', 'sys', 'time',
@@ -104,11 +105,12 @@ def test_ast_guard_module_level_stdlib_only():
 
 def test_apply_frozen_env_dev_noop(monkeypatch):
     """dev 态零重定向：sys.frozen 未设 → apply_frozen_env 全程不动 env。"""
-    for key in ('MS_OUT_DIR', 'MS_STATIC_DIR'):
+    for key in ('MS_OUT_DIR', 'MS_STATIC_DIR', 'MS_DATA_DIR'):
         monkeypatch.delenv(key, raising=False)
     launcher_mod.apply_frozen_env()
     assert 'MS_OUT_DIR' not in os.environ
     assert 'MS_STATIC_DIR' not in os.environ
+    assert 'MS_DATA_DIR' not in os.environ
 
 
 # ------------------------------------------------- env 重定向四象限（AC3/AC8）
@@ -124,8 +126,10 @@ from materialsorting import paths
 print(json.dumps({
     "env_out": os.environ.get("MS_OUT_DIR"),
     "env_static": os.environ.get("MS_STATIC_DIR"),
+    "env_data": os.environ.get("MS_DATA_DIR"),
     "paths_out": paths.OUT_DIR,
     "paths_static": paths.STATIC_DIR,
+    "paths_data": paths.DATA_DIR,
     "paths_font": paths.FONT_DIR,
 }))
 """
@@ -146,7 +150,9 @@ def _probe_paths(frozen: bool, tmp_path, explicit: dict | None = None) -> dict:
 
 def test_env_matrix_frozen_default_redirect(tmp_path):
     """象限①frozen×无显式 env：OUT_DIR 落 %LOCALAPPDATA% 且 mkdir parents；
-    STATIC_DIR 落 <exe 目录>\\static；字体走包内缺省不重定向。"""
+    STATIC_DIR 落 <exe 目录>\\static；DATA_DIR 落 <exe 目录>\\data（2026-09-29
+    无样例 bug 修复：样例母版捆绑目录，/api/samples 与 key 豁免对拍共用）；
+    字体走包内缺省不重定向。"""
     r = _probe_paths(True, tmp_path)
     exe_dir = Path(sys.executable).resolve().parent
     expected_out = str(tmp_path / 'la' / 'MaterialSorting' / 'out')
@@ -156,6 +162,9 @@ def test_env_matrix_frozen_default_redirect(tmp_path):
     expected_static = str(exe_dir / 'static')
     assert r['env_static'] == expected_static
     assert r['paths_static'] == expected_static
+    expected_data = str(exe_dir / 'data')
+    assert r['env_data'] == expected_data
+    assert r['paths_data'] == expected_data
     assert 'resources' in Path(r['paths_font']).as_posix()
 
 
@@ -164,19 +173,25 @@ def test_env_matrix_frozen_explicit_env_wins(tmp_path):
     值 mkdir LOCALAPPDATA 目录。"""
     out = str(tmp_path / 'custom_out')
     static = str(tmp_path / 'custom_static')
-    r = _probe_paths(True, tmp_path, {'MS_OUT_DIR': out, 'MS_STATIC_DIR': static})
+    data = str(tmp_path / 'custom_data')
+    r = _probe_paths(True, tmp_path, {'MS_OUT_DIR': out, 'MS_STATIC_DIR': static,
+                                      'MS_DATA_DIR': data})
     assert r['env_out'] == out and r['paths_out'] == out
     assert r['env_static'] == static and r['paths_static'] == static
+    assert r['env_data'] == data and r['paths_data'] == data
     assert not (tmp_path / 'la' / 'MaterialSorting').exists()
 
 
 def test_env_matrix_dev_no_redirect(tmp_path):
-    """象限③dev×无显式 env：零重定向 —— env 无 MS_OUT_DIR/MS_STATIC_DIR，
-    paths 落点与原 ms-web 逐字节一致（repo 路径红线），LOCALAPPDATA 零副作用。"""
+    """象限③dev×无显式 env：零重定向 —— env 无 MS_OUT_DIR/MS_STATIC_DIR/
+    MS_DATA_DIR，paths 落点与原 ms-web 逐字节一致（repo 路径红线），
+    LOCALAPPDATA 零副作用。"""
     r = _probe_paths(False, tmp_path)
     assert r['env_out'] is None and r['env_static'] is None
+    assert r['env_data'] is None
     assert r['paths_out'] == str(_DEV_OUT_DIR)
     assert r['paths_static'] == str(_DEV_STATIC_DIR)
+    assert r['paths_data'] == str(_DEV_DATA_DIR)
     assert not (tmp_path / 'la').exists()
 
 
@@ -439,14 +454,16 @@ def test_check_subprocess_output_keys(tmp_path):
         env=env)
     assert proc.returncode == 0
     for key in ('frozen:', 'version:', 'env MS_WEB_PORT:', 'env MS_OUT_DIR:',
-                'env MS_STATIC_DIR:', 'env MS_KEY_MODE:', 'key_server_url:',
-                'key_client_token:', 'machine_guid:', 'key_state:',
-                'paths.OUT_DIR:', 'paths.STATIC_DIR:', 'paths.FONT_DIR:', 'port:',
+                'env MS_STATIC_DIR:', 'env MS_DATA_DIR:', 'env MS_KEY_MODE:',
+                'key_server_url:', 'key_client_token:', 'machine_guid:',
+                'key_state:', 'paths.OUT_DIR:', 'paths.STATIC_DIR:',
+                'paths.DATA_DIR:', 'paths.FONT_DIR:', 'port:',
                 'warm_start_supported:'):
         assert key in proc.stdout, key
     assert 'frozen: False' in proc.stdout
     assert str(tmp_path / 'out') in proc.stdout     # OUT_DIR 落点 = env 重定向值
     assert str(_DEV_STATIC_DIR) in proc.stdout
+    assert str(_DEV_DATA_DIR) in proc.stdout
     # key 配置缺省态（tmp 空 license：无 env 无 sidecar）：未配置 + 未绑定
     assert '未配置' in proc.stdout
     assert '未绑定' in proc.stdout

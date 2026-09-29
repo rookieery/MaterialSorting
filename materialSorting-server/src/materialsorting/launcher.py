@@ -61,6 +61,10 @@ def apply_frozen_env() -> None:
 
     - ``MS_STATIC_DIR = <exe 所在目录>/static``（安装目录内前端构建产物，
       build_freeze ``--include-data-dir`` 捆绑）；
+    - ``MS_DATA_DIR = <exe 所在目录>/data``（安装目录内样例母版目录，
+      build_freeze 逐文件捆绑顶层 ``.dxf`` —— ``/api/samples`` 列表与 key 闸门
+      样例豁免 sha256 对拍共用此目录；2026-09-29 无样例 bug 修复：此前缺省
+      paths 上溯推导在客户机指向不存在路径，「样例」下拉恒空）；
     - ``MS_OUT_DIR = %LOCALAPPDATA%/MaterialSorting/out``（仅对**我们设置**的
       缺省值 mkdir parents —— 显式 env 覆盖时不碰他方目录）；
     - ``MS_FONT_DIR`` 走缺省包内路径（Nuitka 数据捆绑保持包结构，不重定向）。
@@ -69,6 +73,7 @@ def apply_frozen_env() -> None:
         return
     exe_dir = Path(sys.executable).resolve().parent
     os.environ.setdefault('MS_STATIC_DIR', str(exe_dir / 'static'))
+    os.environ.setdefault('MS_DATA_DIR', str(exe_dir / 'data'))
     if 'MS_OUT_DIR' not in os.environ:
         local_root = os.environ.get('LOCALAPPDATA') or str(
             Path.home() / 'AppData' / 'Local')
@@ -290,6 +295,10 @@ def _print_help() -> None:
         '  MS_OUT_DIR      产物目录（frozen 缺省 '
         f'%LOCALAPPDATA%\\{APP_DIR_NAME}\\out）\n'
         '  MS_STATIC_DIR   前端静态目录（frozen 缺省 <exe 所在目录>\\static）\n'
+        '  MS_DATA_DIR     样例母版目录（frozen 缺省 <exe 所在目录>\\data，'
+        'build_freeze 捆绑\n'
+        '                  顶层 .dxf；/api/samples 列表 + key 闸门样例豁免\n'
+        '                  sha256 对拍共用）\n'
         '  MS_KEY_SERVER_URL  key 授权服务器基址（frozen 亦可 sidecar '
         'key_server_url.txt：\n'
         '                     exe 旁优先，缺则回落 license/ 目录，2026-09-29）\n'
