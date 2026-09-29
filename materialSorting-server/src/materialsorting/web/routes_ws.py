@@ -204,14 +204,16 @@ async def ws_solve(ws: WebSocket):
             return
 
         # US-005：key 授权闸门 —— pieces 校验后、band/prefix 解析前插
-        # ``keygate.ensure_run_allowed(doc.source)``（MS_KEY_MODE=off dev 逃生 /
-        # 样例母版白名单豁免 / 未绑定中文指路 / validate deduct=true 真扣次 ——
-        # 扣次唯一锚点 = MS 后端 start，前端被绕过时算法仍无法运行）。拒绝 →
-        # ``{'type':'error','code':'key_blocked'}`` 帧 + 显式 close（band 早退
-        # 同款），不建求解子进程。阻塞调用走 ``asyncio.to_thread``（keyserver 单
-        # 请求超时 5s，不卡事件循环）。
+        # ``keygate.ensure_run_allowed``（MS_KEY_MODE=off dev 逃生 / 样例标记豁免
+        # （2026-09-29 收紧：doc.sample 标记，不再按文件名）/ 未绑定中文指路 /
+        # validate deduct=true 真扣次 —— 扣次唯一锚点 = MS 后端 start，前端被绕过
+        # 时算法仍无法运行）。拒绝 → ``{'type':'error','code':'key_blocked'}`` 帧
+        # + 显式 close（band 早退同款），不建求解子进程。阻塞调用走
+        # ``asyncio.to_thread``（keyserver 单请求超时 5s，不卡事件循环）。
+        gate_doc = state.get('doc') or {}
         ok, key_msg = await asyncio.to_thread(
-            keygate.ensure_run_allowed, (state.get('doc') or {}).get('source'))
+            keygate.ensure_run_allowed, gate_doc.get('source'), True,
+            bool(gate_doc.get('sample')))
         if not ok:
             await ws.send_json({'type': 'error', 'code': 'key_blocked',
                                 'message': key_msg})

@@ -213,3 +213,53 @@ def test_solver_load_pieces_accepts_v2(tmp_path):
     p.write_text(json.dumps(v2, ensure_ascii=False), encoding='utf-8')
     doc, gate, pieces = solver_load_pieces(str(p))
     assert gate == 1980.0 and len(pieces) == 1 and pieces[0]['pid'] == 'g01_28'
+
+
+# --------------------------------------------- 样例声明验证（key 闸门豁免标记，2026-09-29）
+
+def test_verify_sample_claim_matrix(commit_env, monkeypatch):
+    """``_verify_sample_claim`` 判定矩阵：同字节样例名通过（strip 容错）；穿越
+    形态 / 白名单外 / 字节不符 / 非字符串声明 → None（豁免标记不可伪造）。"""
+    tmp_path, uploads, master = commit_env
+    data_dir = tmp_path / 'data'
+    data_dir.mkdir()
+    (data_dir / '样例M1787.dxf').write_bytes(master.read_bytes())   # 与上传全等
+    (data_dir / '另一样例.dxf').write_bytes(b'different-bytes')     # 名在白名单字节不符
+    monkeypatch.setattr(paths_mod, 'DATA_DIR', str(data_dir))
+    verify = server_mod._verify_sample_claim
+    assert verify(str(master), '样例M1787.dxf') == '样例M1787.dxf'
+    assert verify(str(master), '  样例M1787.dxf \n') == '样例M1787.dxf'   # strip
+    assert verify(str(master), '../样例M1787.dxf') is None                 # 穿越
+    assert verify(str(master), 'sub/样例M1787.dxf') is None                # 含分隔符
+    assert verify(str(master), '不存在.dxf') is None                       # 白名单外
+    assert verify(str(master), '另一样例.dxf') is None                     # 字节不符
+    assert verify(str(master), None) is None                               # 未声明
+    assert verify(str(master), 123) is None                                # 非字符串
+
+
+def test_commit_sample_mark_cast_and_persist(commit_env, monkeypatch):
+    """commit 全管线：声明通过 → doc['sample'] 铸进 intermediate（含镜像）+ 响应
+    回显；无声明 → 恒 None（本地上传即使同名也无标记）。"""
+    tmp_path, uploads, master = commit_env
+    data_dir = tmp_path / 'data'
+    data_dir.mkdir()
+    (data_dir / '样例M1787.dxf').write_bytes(master.read_bytes())
+    monkeypatch.setattr(paths_mod, 'DATA_DIR', str(data_dir))
+
+    # 声明通过：标记铸进 per-doc intermediate 与镜像，响应回显
+    result = _commit_to_nesting_sync('sample01', str(master), master.name,
+                                     '样例M1787.dxf')
+    assert result['sample'] == '样例M1787.dxf'
+    per_doc = json.loads((uploads / 'sample01_pieces' / 'pieces_intermediate.json')
+                         .read_text(encoding='utf-8'))
+    assert per_doc['sample'] == '样例M1787.dxf'
+    mirror = json.loads(Path(paths_mod.INTERMEDIATE).read_text(encoding='utf-8'))
+    assert mirror['sample'] == '样例M1787.dxf'
+
+    # 无声明（本地上传，即使 filename 撞样例名）：无标记
+    result = _commit_to_nesting_sync('plain02', str(master), '样例M1787.dxf')
+    assert result['sample'] is None
+    per_doc2 = json.loads((uploads / 'plain02_pieces' / 'pieces_intermediate.json')
+                          .read_text(encoding='utf-8'))
+    assert per_doc2['sample'] is None
+    assert per_doc2['source'] == '样例M1787.dxf'

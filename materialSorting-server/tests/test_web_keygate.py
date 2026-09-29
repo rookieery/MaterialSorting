@@ -11,8 +11,9 @@
 5. URL 链三档：env → frozen exe 旁 sidecar（dev 不读）→ 皆无 fail-closed；
 6. ``_key_post``（真 http.server 对拍）：200 解析 / 4xx 中文 error 透传 /
    5xx 通用文案 / 非 JSON / 超时 / 连接拒绝 / **无自动重试**（计数恰 1）；
-7. ``ensure_run_allowed`` 四分支：off 仅 dev / 样例豁免（含全路径形态）/
-   无 key 指路文案 / validate deduct=true 放行与失败透传；
+7. ``ensure_run_allowed`` 四分支：off 仅 dev / 样例标记豁免（2026-09-29 收紧：
+   ``sample=True`` 标记才免 key，文件名不再豁免）/ 无 key 指路文案 / validate
+   deduct=true 放行与失败透传；
 8. ``python -m materialsorting.web.keygate`` 子进程冒烟 exit 0。
 """
 from __future__ import annotations
@@ -149,14 +150,14 @@ def test_keygate_module_layering_purity():
             else:
                 continue
             assert names <= allowed, sorted(names - allowed)
-    # 相对 import 白名单（任意位置）：顶层 ``..paths`` + 函数内 ``.routes_views``
-    # （样例白名单单一真相源延迟 import，见 ensure_run_allowed）
+    # 相对 import 白名单（任意位置）：仅顶层 ``..paths``（2026-09-29 样例豁免
+    # 标记化后 keygate 不再延迟 import .routes_views —— 样例标记由 commit 期
+    # server._verify_sample_claim 铸成，闸门只读参数）
     for sub in ast.walk(tree):
         if isinstance(sub, ast.ImportFrom) and sub.level:
             # ``from .. import paths``（module=None）与 ``from ..paths import X`` 两形态
-            ok = ((sub.level == 2 and sub.module in (None, 'paths'))
-                  or (sub.level == 1 and sub.module == 'routes_views'))
-            assert ok, f'相对 import 仅 ..paths / .routes_views 允许：{sub.module}'
+            ok = sub.level == 2 and sub.module in (None, 'paths')
+            assert ok, f'相对 import 仅 ..paths 允许：{sub.module}'
     # 源级哨兵：任何 server / cli 引用（含函数内延迟 import）都不允许
     assert 'materialsorting.web.server' not in src
     assert 'materialsorting.cli' not in src
@@ -430,14 +431,11 @@ def test_key_post_default_timeout_constant():
 
 @pytest.fixture
 def gate_env(license_dir, tmp_path, monkeypatch, no_server_url):
-    """闸门测试基态：样例目录一枚 dxf + 本地 key 可控 + 机器身份可控。"""
-    data_dir = tmp_path / 'data'
-    data_dir.mkdir()
-    (data_dir / '样例M1787.dxf').write_bytes(b'x')
-    monkeypatch.setattr(paths_mod, 'DATA_DIR', str(data_dir))
+    """闸门测试基态：本地 key 可控 + 机器身份可控（样例豁免走 sample 标记参数，
+    不再依赖 data/ 目录 —— 2026-09-29 收紧后闸门不读文件名）。"""
     monkeypatch.setattr(keygate, '_read_registry_guid', lambda: 'reg-guid-42')
     monkeypatch.delenv('MS_KEY_MODE', raising=False)
-    return data_dir
+    return tmp_path
 
 
 def test_gate_ms_key_mode_off_dev_only(gate_env, monkeypatch):
@@ -455,11 +453,19 @@ def test_gate_ms_key_mode_off_ignored_when_frozen(gate_env, monkeypatch):
     assert keygate.ensure_run_allowed('用户上传.dxf') == (False, keygate.MSG_NO_KEY)
 
 
-def test_gate_sample_exemption(gate_env):
-    """样例母版豁免：doc.source（裸名或全路径）命中 data/ 实时白名单 → 免 key。"""
-    assert keygate.ensure_run_allowed('样例M1787.dxf') == (True, 'sample')
-    full = str(gate_env / '样例M1787.dxf')
-    assert keygate.ensure_run_allowed(full) == (True, 'sample')
+def test_gate_sample_flag_exemption(gate_env):
+    """样例标记豁免（2026-09-29 收紧）：``sample=True``（commit 期哈希对拍铸成
+    的 doc 标记透传）→ 免 key 放行，与 doc_source 文件名无关。"""
+    assert keygate.ensure_run_allowed('样例M1787.dxf', sample=True) == (True, 'sample')
+    assert keygate.ensure_run_allowed('任意上传.dxf', sample=True) == (True, 'sample')
+
+
+def test_gate_sample_filename_no_longer_exempts(gate_env):
+    """旧口径回归锁：doc.source 命中 data/ 白名单样式的文件名**不再豁免**（data/
+    放的是真实生产母版，按名豁免 = 客户直传工厂原名母版永久免 key）。"""
+    assert keygate.ensure_run_allowed('样例M1787.dxf') == (False, keygate.MSG_NO_KEY)
+    assert keygate.ensure_run_allowed('M1787#直筒14%7%大货围加9.dxf') == \
+        (False, keygate.MSG_NO_KEY)
 
 
 def test_gate_non_sample_no_key(gate_env):

@@ -14,17 +14,20 @@
     （未绑定 → 400 指路文案）；keyserver 原子合并（任一 source 违反前置 →
     整体失败无部分合并），成功原样透传 ``{target, sources, total_transferred_
     days}``（sources = 每个 key 的转移天数明细）。
-  - ``POST /api/key/precheck``：``keygate.ensure_run_allowed(doc_source,
-    deduct=False)`` —— 判定序与真跑闸门完全一致（off / 样例豁免 / 无 key /
-    validate 预检），唯一差异是不扣次不动账；body 可选 ``{doc_source}`` 供样例
-    豁免判定（US-007 三入口前端拦截数据源）。响应 ``{ok:true[, reason]}`` |
-    ``{ok:false, message}``（断网文案 = keygate ``MSG_UNREACHABLE``，前端不自
-    行判断网络）。
+  - ``POST /api/key/precheck``：``keygate.ensure_run_allowed(..., deduct=False)``
+    —— 判定序与真跑闸门完全一致（off / 样例标记豁免 / 无 key / validate 预检），
+    唯一差异是不扣次不动账。数据源优先**会话 doc**（``X-Session-Id`` peek —— 与
+    WS / 策略闸门读同一份 state，``sample`` 标记天然同源；2026-09-29 豁免收紧后
+    precheck 不再按文件名自判）；会话失败/无 doc → 回落 body ``{doc_source}``
+    （sample 恒 False）。响应 ``{ok:true[, reason]}`` | ``{ok:false, message}``
+    （断网文案 = keygate ``MSG_UNREACHABLE``，前端不自行判断网络）。
 
 关键约定：
   - **机器级全局，不加会话闸门**（与 ``/api/edit-hold`` 的差异：edit_hold 是
     sid 级编辑钉住，须 X-Session-Id 且过期 401；key 绑定的是 MachineGuid 机器
     身份 —— 本机全部会话/浏览器共享同一 key，随机 X-Session-Id 头也不拦）。
+    precheck 读会话 doc 属**数据源偏好**而非闸门：解析失败静默回落 body，绝不
+    401/429（``sessions`` 是纯标准库兄弟模块，无 fastapi 依赖面）。
   - 全部 keyserver 通信走 ``keygate._key_post`` 唯一 HTTP 出口（超时 5s、无自动
     重试、4xx 中文 ``{"error"}`` 透传），阻塞调用统一 ``asyncio.to_thread``
     （validate 最长 5s，不卡事件循环 —— machine_guid 注册表读/兜底首铸文件写
@@ -47,6 +50,7 @@ from fastapi import Request
 from fastapi.responses import JSONResponse
 
 from . import keygate
+from .sessions import SessionError, registry as session_registry
 
 __all__ = ['register_key_routes']
 
@@ -141,11 +145,29 @@ async def post_key_merge(request: Request):
 
 
 async def post_key_precheck(request: Request) -> dict:
-    """运行前预检（validate deduct=false）：与真跑闸门同判定序、不动账。"""
+    """运行前预检（validate deduct=false）：与真跑闸门同判定序、不动账。
+
+    数据源优先会话 doc（``X-Session-Id`` peek —— WS / 策略闸门读同一份 state，
+    ``sample`` 标记同源不漂移）；会话不存在/过期/非法 sid → 静默回落 body
+    ``doc_source``（sample 恒 False）。会话解析失败不拦请求（机器级全局无会话
+    闸门，仅数据源偏好，见文件头）。
+    """
     payload, _ = await _json_body(request)   # 空/坏 body 容忍为无 doc_source
     doc_source = payload.get('doc_source') if isinstance(payload, dict) else None
+    sample = False
+    try:
+        # resolve(sid)（缺省 = default 会话，state 即 runtime._PIECES_STATE 同一
+        # dict —— 与 WS 闸门口径一致）；SessionError（未知/过期/非法）→ 回落。
+        state = session_registry.resolve(
+            (request.headers.get('x-session-id') or '').strip() or None).state
+        doc = state.get('doc') or {}
+        if doc:
+            doc_source = doc.get('source')
+            sample = bool(doc.get('sample'))
+    except SessionError:
+        pass
     ok, message = await asyncio.to_thread(
-        keygate.ensure_run_allowed, doc_source, False)
+        keygate.ensure_run_allowed, doc_source, False, sample)
     if not ok:
         return {'ok': False, 'message': message}
     out = {'ok': True}

@@ -18,12 +18,15 @@
     冻结面零新增依赖（keyserver 契约：业务 4xx 恒 ``{"error": 中文}`` 原样
     透传；超时/``URLError`` → 「无法连接授权服务器…」fail-closed；
     **无自动重试** —— ``deduct=true`` 响应丢失时服务端可能已扣次，重试会双扣）。
-  - **运行闸门** ``ensure_run_allowed(doc_source) -> (ok, message)``：
-    ① ``MS_KEY_MODE=off`` 仅未冻结（dev）生效 —— 冻结生产 exe 不可绕
-    （``getattr(sys,'frozen',False)`` 为真时该开关无效）；② 样例母版豁免
-    （``doc.source`` 命中 ``routes_views._sample_dxf_names()`` 实时白名单 →
-    免 key 跑通，延迟 import 保持本模块冻结面纯标准库）；③ 本地无 key →
-    中文指路文案；④ ``/api/key/validate`` ``deduct=true`` 真扣次校验。
+  - **运行闸门** ``ensure_run_allowed(doc_source, deduct=True, sample=False)
+    -> (ok, message)``：① ``MS_KEY_MODE=off`` 仅未冻结（dev）生效 —— 冻结
+    生产 exe 不可绕（``getattr(sys,'frozen',False)`` 为真时该开关无效）；
+    ② 样例母版豁免 —— **2026-09-29 收紧为标记判据**：``sample=True``（会话
+    doc 的 ``sample`` 标记，由 commit 期 ``sample_name`` 声明 + 与 ``data/``
+    同名文件 sha256 对拍铸成，见 server._verify_sample_claim）才免 key；
+    旧「``doc.source`` 文件名命中 ``data/`` 白名单」口径已废 —— ``data/`` 放的
+    是真实生产母版，按名豁免 = 客户直传工厂原名母版永久免 key；③ 本地无
+    key → 中文指路文案；④ ``/api/key/validate`` ``deduct=true`` 真扣次校验。
 
 keyserver URL 解析链（``resolve_key_server_url``，请求时读 env 非 import 期
 绑定 —— 部署后设 env 无需改代码）：``MS_KEY_SERVER_URL`` env → frozen exe 旁
@@ -35,8 +38,8 @@ header（keyserver 已设 token 而本机未配 → 401 中文透传；frp 双 t
 
 分层：模块级仅标准库 + ``..paths``（AST 守卫见 tests/test_web_keygate.py，
 镜像 edit_hold 先例）；**禁 import cli 子包与 server 模块**（本模块被 server
-间接经路由层使用，顶层 import 即成环）。样例白名单走函数内延迟 import
-routes_views（同包兄弟，其携带 fastapi —— 不进本模块冻结 import 面）。
+间接经路由层使用，顶层 import 即成环）。（旧版曾延迟 import routes_views 取
+样例白名单 —— 2026-09-29 标记判据化后不再依赖，冻结 import 面更纯。）
 
 冒烟：``python -m materialsorting.web.keygate`` —— 合成夹具自检（临时目录，
 不触碰真实 out/ 与注册表；含真 HTTP 服务对拍），全过 exit 0。
@@ -320,26 +323,27 @@ def save_key_state(key: str) -> dict:
 
 # ----------------------------------------------------------------- 运行闸门
 
-def ensure_run_allowed(doc_source, deduct: bool = True) -> tuple[bool, str]:
+def ensure_run_allowed(doc_source, deduct: bool = True,
+                       sample: bool = False) -> tuple[bool, str]:
     """运行前授权闸门（三入口共用，US-005 接线）：返回 ``(ok, message)``。
 
-    判定序（PRD US-004）：① ``MS_KEY_MODE=off`` 且**未冻结**（dev 逃生口；
-    冻结生产 exe 恒不可绕）→ ``(True, 'off')``；② 样例母版豁免
-    （``doc.source`` basename 命中 ``data/`` 实时 ``*.dxf`` 白名单 → 免 key
-    跑通）→ ``(True, 'sample')``；③ 本地无 key → ``(False, MSG_NO_KEY)``；
+    判定序（PRD US-004；② 2026-09-29 收紧）：① ``MS_KEY_MODE=off`` 且**未
+    冻结**（dev 逃生口；冻结生产 exe 恒不可绕）→ ``(True, 'off')``；② 样例
+    豁免 = ``sample=True`` 标记（会话 doc 经「样例」入口加载的凭据 —— commit
+    期 sha256 对拍铸成；**不再看 ``doc_source`` 文件名**，直传同名/同内容生产
+    母版不豁免）→ ``(True, 'sample')``；③ 本地无 key → ``(False, MSG_NO_KEY)``；
     ④ ``validate deduct=true`` 真扣次（扣次唯一锚点 = MS 后端 start）—— 任何
     失败 fail-closed，文案直接上屏，**无自动重试**。
 
-    ``deduct=False``（US-005 ``/api/key/precheck`` 专用）：判定序完全一致、
-    唯一差异是 ④ 走 keyserver 预检口径（不动任何账，含 op_log）—— 前端运行
-    前拦截（US-007）与本函数共用单一真相源，两口径永不漂移。
+    ``doc_source`` 现仅作观测口径保留（不参与豁免判定）。``deduct=False``
+    （US-005 ``/api/key/precheck`` 专用）：判定序完全一致、唯一差异是 ④ 走
+    keyserver 预检口径（不动任何账，含 op_log）—— 前端运行前拦截（US-007）
+    与本函数共用单一真相源，两口径永不漂移。
     """
     if (os.environ.get('MS_KEY_MODE') == 'off'
             and not getattr(sys, 'frozen', False)):
         return True, 'off'
-    from .routes_views import _sample_dxf_names     # 延迟 import：routes_views 带 fastapi，不进本模块冻结 import 面
-    source_name = os.path.basename(str(doc_source or ''))
-    if source_name and source_name in _sample_dxf_names():
+    if sample:
         return True, 'sample'
     key = load_key_state().get('key')
     if not isinstance(key, str) or not key.strip():
@@ -397,12 +401,9 @@ def _smoke() -> int:
         import tempfile as _tempfile
         with _tempfile.TemporaryDirectory(prefix='ms_keygate_smoke_') as td:
             root = Path(td)
-            old_license, old_data = paths.LICENSE_DIR, paths.DATA_DIR
+            old_license = paths.LICENSE_DIR
             old_reg_guid = _read_registry_guid
             paths.LICENSE_DIR = str(root / 'license')
-            paths.DATA_DIR = str(root / 'data')
-            (root / 'data').mkdir()
-            (root / 'data' / 'M1787样例.dxf').write_bytes(b'x')
             globals()['_read_registry_guid'] = lambda: None
             try:
                 # ① 本地状态：原子写 / 重启可读 / 损坏容忍
@@ -440,9 +441,11 @@ def _smoke() -> int:
                 os.environ['MS_KEY_MODE'] = 'off'
                 check('闸门① off 放行', ensure_run_allowed('任意.dxf') == (True, 'off'))
                 del os.environ['MS_KEY_MODE']
-                check('闸门② 样例豁免',
-                      ensure_run_allowed(str(root / 'data' / 'M1787样例.dxf'))
+                check('闸门② 样例标记豁免',
+                      ensure_run_allowed('M1787样例.dxf', sample=True)
                       == (True, 'sample'))
+                check('闸门② 文件名不再豁免（2026-09-29 收紧）',
+                      ensure_run_allowed('M1787样例.dxf') == (False, MSG_NO_KEY))
                 check('闸门③ 无 key 指路文案',
                       ensure_run_allowed('user.dxf') == (False, MSG_NO_KEY))
                 save_key_state('MS-SMOK-E0000-00000')
@@ -474,7 +477,7 @@ def _smoke() -> int:
                       (ok, msg) == (False, MSG_UNREACHABLE))
                 del os.environ['MS_KEY_SERVER_URL']
             finally:
-                paths.LICENSE_DIR, paths.DATA_DIR = old_license, old_data
+                paths.LICENSE_DIR = old_license
                 globals()['_read_registry_guid'] = old_reg_guid
                 for name in ('MS_KEY_MODE', 'MS_KEY_SERVER_URL',
                              'MS_KEY_CLIENT_TOKEN'):

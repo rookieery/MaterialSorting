@@ -915,13 +915,15 @@ async def _start_run(req: Request, family: str):
     # US-005：key 授权闸门（strategy/extreme 双族一处插入生效）—— **全部载荷
     # 校验后、任何落盘副作用（``_cleanup_stale_web_artifacts`` / cfg 写盘 /
     # spawn）之前**：拒绝 → 403 中文（strategyStore 非 202 分支读 ``data.error``
-    # 现成展示），上一轮 run 产物原样保留。样例/机器豁免与 validate deduct=true
-    # 真扣次（扣次唯一锚点 = MS 后端 start，多 seed/多轮单次）见
+    # 现成展示），上一轮 run 产物原样保留。样例标记豁免（2026-09-29 收紧：
+    # doc.sample，不再按文件名）/ 机器豁免与 validate deduct=true 真扣次（扣次
+    # 唯一锚点 = MS 后端 start，多 seed/多轮单次）见
     # ``keygate.ensure_run_allowed``；阻塞调用走 ``asyncio.to_thread``（keyserver
     # 单请求超时 5s 不卡事件循环）。机器族（machine.py machine_solve）不经本
     # 骨架 —— /api/machine/* 零改动天然豁免（对接 API 不消费 key 体系）。
     ok, key_msg = await asyncio.to_thread(
-        keygate.ensure_run_allowed, doc.get('source'))
+        keygate.ensure_run_allowed, doc.get('source'), True,
+        bool(doc.get('sample')))
     if not ok:
         return JSONResponse({'error': key_msg}, status_code=403)
 

@@ -285,7 +285,7 @@ def test_extreme_start_frozen_prefix_switch(strat_env, monkeypatch):
     # 本用例关注 spawn 前缀 → 闸门打桩放行（AC 认可机制）。
     from materialsorting.web import keygate
     monkeypatch.setattr(keygate, 'ensure_run_allowed',
-                        lambda src, deduct=True: (True, ''))
+                        lambda *a, **k: (True, ''))
     _default_start_env(monkeypatch)
     calls = _spawn_capture(monkeypatch, pids=(779,))
     fake_exe = r'C:\dist\MaterialSorting\MaterialSorting.exe'

@@ -17,10 +17,11 @@
 //   - 失败经 toastStore 弹中文错误（非阻断轻提示；调用方各自另有展示位：
 //     ControlPanel onStatus → StatusLine，strategyStore errorMessage → 弹窗
 //     既有渲染位）。
-//   - ``doc_source`` = uploadStore 当前 doc 的 filename —— 与后端闸门口径对齐：
-//     WS 闸门取 state['doc']['source'] 的 basename 判样例豁免，而 commit 时
-//     source = 前端上传的原文件名（样例应用 = File 名即样例名），basename 同值
-//     → 样例母版在 precheck 同样豁免，不误拦（US-010 三入口样例免闸 E2E 依赖）。
+//   - ``doc_source`` = uploadStore 当前 doc 的 filename —— 2026-09-29 豁免收紧后
+//     仅作**回落数据源**：precheck 服务端优先读会话 doc（X-Session-Id peek，与
+//     WS / 策略闸门同一份 state），样例豁免看 doc.sample 标记（「样例」区块应用
+//     时 commit 期 sha256 对拍铸成）而非文件名 —— 前端无需也不传标记，直传
+//     同名生产母版不豁免（US-010 三入口样例免闸 E2E 语义不变：走样例下拉框）。
 //
 // 分层：lib 层引用 store 有先例（sessionRecovery/sessionCheckpoint 均引 store）；
 // 本模块只读 uploadStore.doc（现取快照）+ toastStore.pushToast。

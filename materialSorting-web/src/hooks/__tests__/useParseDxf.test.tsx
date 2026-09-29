@@ -124,6 +124,30 @@ describe("useParseDxf (US-005)", () => {
     expect(init.method).toBe("POST");
   });
 
+  it("样例声明（2026-09-29）：opts.sampleName 随链路进 commit body", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(makeResponse());
+    renderProbe();
+    await act(async () => {
+      await captured!.upload(makeFile(), { sampleName: "样例M1787.dxf" });
+    });
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    const commitInit = fetchSpy.mock.calls[1][1] as RequestInit;
+    const commitBody = JSON.parse(commitInit.body as string) as { sample_name?: string };
+    expect(commitBody.sample_name).toBe("样例M1787.dxf");
+  });
+
+  it("样例声明缺省（本地上传）：commit body 无 sample_name 键", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(makeResponse());
+    renderProbe();
+    await act(async () => {
+      await captured!.upload(makeFile());
+    });
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    const commitInit = fetchSpy.mock.calls[1][1] as RequestInit;
+    const commitBody = JSON.parse(commitInit.body as string) as { sample_name?: string };
+    expect("sample_name" in commitBody).toBe(false);
+  });
+
   it("AC#1 body is FormData with file field (no manual Content-Type)", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(makeResponse());
     renderProbe();

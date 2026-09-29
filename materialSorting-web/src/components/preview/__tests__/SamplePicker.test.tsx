@@ -150,6 +150,9 @@ describe('SamplePicker', () => {
     const file = uploadMock.mock.calls[0][0] as File;
     expect(file.name).toBe('b#中文（1）.dxf');
     expect(file.size).toBe(5);
+    // 样例声明（2026-09-29 收紧）：opts.sampleName = 所选样例名（key 闸门样例
+    // 豁免标记的声明链 —— commit 期后端 sha256 对拍铸 doc.sample）。
+    expect(uploadMock.mock.calls[0][1]).toEqual({ sampleName: 'b#中文（1）.dxf' });
     expect(container!.querySelector('[data-testid="sample-error"]')).toBeNull();
   });
 

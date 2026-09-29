@@ -140,10 +140,12 @@ def key_on(monkeypatch, license_dir):
 
 @pytest.fixture
 def sample_data(tmp_path, monkeypatch):
-    """样例白名单夹具：DATA_DIR 指到 tmp 且含一个 .dxf（实时列举即白名单）。"""
+    """样例声明验证夹具（2026-09-29 改造）：DATA_DIR 指到 tmp 且含一枚真实字节
+    的样例 .dxf —— 供 commit ``sample_name`` 声明 sha256 对拍用（闸门侧不再按
+    文件名豁免，此夹具只喂哈希对拍路径）。"""
     data_dir = tmp_path / 'data'
     data_dir.mkdir()
-    (data_dir / _SAMPLE_DXF).write_bytes(b'x')
+    (data_dir / _SAMPLE_DXF).write_bytes(b'sample-master-bytes')
     monkeypatch.setattr(paths_mod, 'DATA_DIR', str(data_dir))
     return data_dir
 
@@ -158,7 +160,9 @@ def _bind_key(license_dir, key='MS-TEST-KEY00-00001') -> str:
 
 def test_routes_key_layering_guard():
     """routes_key 禁 import server / strategy / routes_ws / cli（被 server 文件尾
-    注册 —— import server 即成环；strategy/routes_ws 是闸门消费者不该被反向引用）。"""
+    注册 —— import server 即成环；strategy/routes_ws 是闸门消费者不该被反向引用）。
+    ``.sessions`` 放行（2026-09-29 precheck 会话 doc peek：纯标准库兄弟模块，
+    precheck 数据源偏好，非会话闸门）。"""
     from materialsorting.web import routes_key
     src = Path(routes_key.__file__).read_text(encoding='utf-8')
     tree = ast.parse(src)
@@ -170,8 +174,8 @@ def test_routes_key_layering_guard():
             assert not mod.startswith('materialsorting.web.routes_ws')
             assert not mod.startswith('materialsorting.cli')
             if node.level:
-                assert mod in ('', 'keygate'), \
-                    f'相对 import 仅 .keygate 允许：{mod}'
+                assert mod in ('', 'keygate', 'sessions'), \
+                    f'相对 import 仅 .keygate / .sessions 允许：{mod}'
     assert 'from .server' not in src
     assert 'import server' not in src
 
@@ -435,17 +439,37 @@ def test_precheck_unreachable_message(key_on):
     assert r.json() == {'ok': False, 'message': keygate.MSG_UNREACHABLE}
 
 
-def test_precheck_sample_exemption(key_on, sample_data):
-    """doc.source 命中样例白名单 → 免 key 放行（reason=sample，keyserver 不被打）。"""
+def test_precheck_sample_exemption(key_on):
+    """会话 doc 带样例标记（commit 期哈希对拍铸成）→ 免 key 放行（reason=sample，
+    keyserver 不被打）。precheck 经 X-Session-Id/default 会话读 doc —— 与 WS 闸门
+    同数据源（2026-09-29 收紧：不再按 body 文件名判豁免）。"""
+    state, saved = _inject_ws_state(source=_SAMPLE_DXF, sample=_SAMPLE_DXF)
+    stub = _StubServer([(200, _INFO_OK)]).start()
+    try:
+        _set_url(stub.url)
+        r = _client().post('/api/key/precheck', json={})
+    finally:
+        os.environ.pop('MS_KEY_SERVER_URL', None)
+        stub.stop()
+        _restore_ws_state(state, saved)
+    assert r.status_code == 200
+    assert r.json() == {'ok': True, 'reason': 'sample'}
+    assert stub.calls == []
+
+
+def test_precheck_filename_alone_not_exempt(key_on):
+    """收紧回归锁：body doc_source 撞 data/ 白名单样式文件名（无会话标记）→
+    不豁免、未绑 key 即拦（直传工厂原名生产母版不得免 key）。"""
     stub = _StubServer([(200, _INFO_OK)]).start()
     try:
         _set_url(stub.url)
         r = _client().post('/api/key/precheck',
-                           json={'doc_source': str(sample_data / _SAMPLE_DXF)})
+                           json={'doc_source': _SAMPLE_DXF},
+                           headers={'X-Session-Id': 'nosuchsid123'})
     finally:
         os.environ.pop('MS_KEY_SERVER_URL', None)
         stub.stop()
-    assert r.json() == {'ok': True, 'reason': 'sample'}
+    assert r.json() == {'ok': False, 'message': keygate.MSG_NO_KEY}
     assert stub.calls == []
 
 
@@ -476,13 +500,14 @@ def _ws_pieces():
     ]
 
 
-def _inject_ws_state(source='user.dxf'):
-    """注入合成 pieces state（_PIECES_STATE 原位 clear+update，返回恢复句柄）。"""
+def _inject_ws_state(source='user.dxf', sample=None):
+    """注入合成 pieces state（_PIECES_STATE 原位 clear+update，返回恢复句柄）。
+    ``sample`` = doc['sample'] 样例豁免标记（None = 无标记，str = 样例名）。"""
     pieces = _ws_pieces()
     state = server_mod._PIECES_STATE
     saved = dict(state)
     state.clear()
-    state.update({'doc': {'source': source}, 'gate_mm': 1980.0,
+    state.update({'doc': {'source': source, 'sample': sample}, 'gate_mm': 1980.0,
                   'pieces': pieces,
                   'pieces_by_id': {p['pid']: p for p in pieces}})
     return state, saved
@@ -585,9 +610,10 @@ def test_ws_gate_valid_key_passes_and_deducts(key_on, monkeypatch):
     assert stub.calls[0]['body']['deduct'] is True
 
 
-def test_ws_gate_sample_exempt(key_on, sample_data, monkeypatch):
-    """样例母版（doc.source 命中白名单）→ 免 key 免 keyserver 放行。"""
-    state, saved = _inject_ws_state(source=_SAMPLE_DXF)
+def test_ws_gate_sample_exempt(key_on, monkeypatch):
+    """样例标记母版（doc.sample 在案 = 经「样例」入口加载）→ 免 key 免 keyserver
+    放行（2026-09-29 收紧：无标记的同名 source 不豁免，见 keygate 单测回归锁）。"""
+    state, saved = _inject_ws_state(source=_SAMPLE_DXF, sample=_SAMPLE_DXF)
     solve_calls = []
     monkeypatch.setattr(routes_ws_mod, 'solve_with_callback_proc',
                         _fake_solve_factory(solve_calls))
@@ -620,9 +646,10 @@ def strat_key_env(tmp_path, monkeypatch, key_on):
     strategy_mod._STRATEGY_STATES.clear()
 
 
-def _fake_state(source='user.dxf'):
+def _fake_state(source='user.dxf', sample=None):
     pieces = _ws_pieces()
-    return {'doc': {'doc_id': 'deadbeef01', 'source': source, 'gate_mm': 1980.0},
+    return {'doc': {'doc_id': 'deadbeef01', 'source': source, 'gate_mm': 1980.0,
+                    'sample': sample},
             'gate_mm': 1980.0, 'pieces': pieces,
             'pieces_by_id': {p['pid']: p for p in pieces}}
 
@@ -685,10 +712,11 @@ def test_strategy_gate_payload_validation_first(strat_key_env, monkeypatch):
     assert 'mode' in r.json()['error']
 
 
-def test_strategy_gate_sample_exempt_202(strat_key_env, monkeypatch, sample_data):
-    """样例母版 → 免 key 放行 202（spawn 照常；不打 keyserver）。"""
+def test_strategy_gate_sample_exempt_202(strat_key_env, monkeypatch):
+    """样例标记母版（doc.sample 在案）→ 免 key 放行 202（spawn 照常；不打
+    keyserver）。"""
     monkeypatch.setattr(strategy_mod, '_pieces_state',
-                        lambda: _fake_state(source=_SAMPLE_DXF))
+                        lambda: _fake_state(source=_SAMPLE_DXF, sample=_SAMPLE_DXF))
     spawn_calls = _spawn_capture(monkeypatch)
     uploads = Path(paths_mod.OUT_DIR) / 'uploads'
     uploads.mkdir(parents=True, exist_ok=True)

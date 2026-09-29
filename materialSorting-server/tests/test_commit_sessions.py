@@ -281,3 +281,52 @@ def test_mirror_write_failure_warn_only(client, commit_env, monkeypatch, capsys)
     assert st.doc_id == _DOC_A['doc_id']
     assert set(st.state['pieces_by_id']) == _A_PIDS
 
+
+
+# --------------------------------------------- 样例声明端点级（key 闸门豁免标记，2026-09-29）
+
+def _sample_dir_with(env, monkeypatch, name: str, content: bytes) -> None:
+    """DATA_DIR 指到 tmp 且放一枚样例文件（哈希对拍靶）。"""
+    tmp_path, _, _ = env
+    data_dir = tmp_path / 'data'
+    data_dir.mkdir(exist_ok=True)
+    (data_dir / name).write_bytes(content)
+    monkeypatch.setattr(paths_mod, 'DATA_DIR', str(data_dir))
+
+
+def test_commit_endpoint_sample_name_claim_marks_doc(client, commit_env, monkeypatch):
+    """端点级：payload ``sample_name`` 声明 + 上传字节与 data/ 样例 sha256 全等 →
+    响应 ``sample`` 回显 + per-doc doc['sample'] 铸标记（key 闸门豁免唯一凭据，
+    会话快照经 _build_pieces_state 读同一 per-doc 文件）。"""
+    doc = dict(_DOC_A)
+    _upload_master(commit_env, doc)
+    _, uploads, _ = commit_env
+    _sample_dir_with(commit_env, monkeypatch, '样例M1787.dxf',
+                     (uploads / 'docaaaa1.dxf').read_bytes())
+    r = client.post('/api/commit-to-nesting',
+                    json={'doc_id': 'docaaaa1', 'sample_name': '样例M1787.dxf'})
+    assert r.status_code == 200, r.text
+    assert r.json()['sample'] == '样例M1787.dxf'
+    per_doc = json.loads(_per_doc(commit_env, 'docaaaa1').read_text(encoding='utf-8'))
+    assert per_doc['sample'] == '样例M1787.dxf'
+
+
+def test_commit_endpoint_claim_mismatch_and_absent_no_mark(client, commit_env, monkeypatch):
+    """端点级收紧回归锁：声明样例名但字节不符（改名直传/伪造声明）与完全不声明
+    （本地上传）→ ``sample`` 恒 None —— 文件名撞样例名不再豁免。"""
+    doc = dict(_DOC_A)
+    _upload_master(commit_env, doc)
+    _sample_dir_with(commit_env, monkeypatch, '样例M1787.dxf', b'other-bytes')
+    # 字节不符
+    r1 = client.post('/api/commit-to-nesting',
+                     json={'doc_id': 'docaaaa1', 'sample_name': '样例M1787.dxf'})
+    assert r1.status_code == 200
+    assert r1.json()['sample'] is None
+    # 无声明 + filename 撞样例名（旧口径此名即豁免）
+    r2 = client.post('/api/commit-to-nesting',
+                     json={'doc_id': 'docaaaa1', 'filename': '样例M1787.dxf'})
+    assert r2.status_code == 200
+    assert r2.json()['sample'] is None
+    per_doc = json.loads(_per_doc(commit_env, 'docaaaa1').read_text(encoding='utf-8'))
+    assert per_doc['sample'] is None
+    assert per_doc['source'] == '样例M1787.dxf'

@@ -7,7 +7,9 @@
 //      样例名含中文/#/（）等 URI 保留字符，走 query 参数）取回字节包成
 //      File → 复用 useParseDxf.upload —— 与本地上传逐字节同路：
 //      parse → 预览 → 自动 commit 至超排（上传状态行 / 数量矩阵 / Tab 解锁
-//      全部既有链路，本组件零新数据路径）。
+//      全部既有链路，本组件零新数据路径）；唯一样例声明 sampleName 随行 →
+//      commit 期后端 sha256 对拍铸 doc.sample 标记（key 闸门样例豁免唯一
+//      凭据，2026-09-29 收紧 —— 本地上传同名文件不再豁免）。
 //   3. 失败态红字（复用 .upload-status.error）：列表加载失败 / 取文件失败 /
 //      应用失败共用一行，消息带场景前缀；成功路径无本组件级提示（面板上方
 //      的 upload-status 已展示「已解析/已应用至超排」）。
@@ -102,8 +104,11 @@ export function SamplePicker(): JSX.Element | null {
         throw new Error(msg);
       }
       const blob = await res.blob();
-      // 与本地上传同路：File 名 = 样例文件名（parse 响应 filename / 导出前缀同源）
-      await upload(new File([blob], selected, { type: 'application/dxf' }));
+      // 与本地上传同路：File 名 = 样例文件名（parse 响应 filename / 导出前缀同源）。
+      // sampleName 声明（2026-09-29 收紧）：后端与 data/ 同名文件 sha256 对拍通过
+      // 才铸 doc.sample 标记 —— key 闸门样例豁免唯一凭据（直传同名文件不再豁免）。
+      await upload(new File([blob], selected, { type: 'application/dxf' }),
+        { sampleName: selected });
     } catch (e) {
       setError(`应用失败：${e instanceof Error ? e.message : String(e)}`);
     } finally {

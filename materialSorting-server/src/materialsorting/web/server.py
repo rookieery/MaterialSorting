@@ -27,6 +27,7 @@ WS 协议（详见 README / 实现计划；US-002 起全 label 键，不再接�
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import shutil
 import sys
@@ -152,7 +153,44 @@ async def parse_dxf(file: UploadFile = File(...)):
 
 # ---------------------------------------------------------------- US-010 commit-to-nesting
 
-def _commit_to_nesting_sync(doc_id: str, src_dxf: str, source_name: str) -> dict:
+def _sha256_file(path: Path) -> str:
+    """流式读文件算 SHA-256（样例声明对拍用；母版 ~3MB 量级毫秒级）。"""
+    h = hashlib.sha256()
+    with open(path, 'rb') as f:
+        for chunk in iter(lambda: f.read(1 << 20), b''):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _verify_sample_claim(src_dxf: str, sample_name) -> str | None:
+    """样例声明验证（key 闸门样例豁免的**唯一铸标记点**，2026-09-29 收紧）。
+
+    ``sample_name`` = commit 载荷的可选声明（前端「样例」区块应用时携带 = 所选
+    样例文件名）。验证 = 声明是裸文件名（防穿越）且 ``data/<name>`` 现存 .dxf
+    且**上传字节与样例文件 sha256 全等** → 返回样例名（铸进 doc['sample']）；
+    任何不过（未声明 / 名不存在 / 字节不符 —— 直传改名样例或伪造声明）→ None
+    （无标记，key 闸门不豁免）。哈希对拍使标记不可凭请求伪造：只有真正取自
+    ``/api/samples/file`` 的字节才能通过（本地上传同字节文件不声明即无标记）。
+    """
+    if not isinstance(sample_name, str) or not sample_name.strip():
+        return None
+    name = sample_name.strip()
+    import os as _os                           # 局部别名：本函数只做 basename 判定
+    if _os.path.basename(name) != name:        # 含路径分隔 = 穿越形态，直接拒
+        return None
+    sample_path = Path(paths.DATA_DIR) / name
+    if sample_path.suffix.lower() != '.dxf' or not sample_path.is_file():
+        return None
+    try:
+        if _sha256_file(Path(src_dxf)) != _sha256_file(sample_path):
+            return None
+    except OSError:
+        return None
+    return name
+
+
+def _commit_to_nesting_sync(doc_id: str, src_dxf: str, source_name: str,
+                            sample_name=None) -> dict:
     """US-010 Path A 全管线（同步，跑在 executor 里）—— v2：label 先行、名称清零、零合成。
 
     1. ``collect.collect_pieces_with_details`` 取母版全部 5 层（layer1/14/8/4/7，US-024）；
@@ -210,13 +248,21 @@ def _commit_to_nesting_sync(doc_id: str, src_dxf: str, source_name: str) -> dict
     # 每 g 码 RAW 代表裁片（原始坐标，供 /api/ptypes 缩略图与上传预览同朝向）。
     label_representatives = _build_label_representatives(pieces)
 
+    # 样例声明验证（2026-09-29 收紧）：通过 = doc['sample'] 铸样例名（key 闸门
+    # 唯一豁免凭据）；不过 = None（本地上传/伪造声明一律无标记）。
+    verified_sample = _verify_sample_claim(src_dxf, sample_name)
+
     # intermediate schema v2：每母版轮廓恰一条（WYSIWYG），无 ptype/side/paired。
     # US-004（策略 web 桥接）：doc_id 记入 doc —— 策略 start 定位母版原件
     # ``out/uploads/<doc_id>.dxf``（spawn CLI 子进程的 master_dxf）；旧 intermediate
     # 无此键 → 策略 start 422 提示重新上传 commit。
+    # ``sample``（2026-09-29）：None | 样例文件名 —— key 闸门样例豁免标记（经
+    # 「样例」入口加载 + sha256 对拍铸成；随 doc 持久化进 per-doc intermediate /
+    # 镜像 / .msn 状态文件，恢复会话豁免口径不漂移）。
     doc = {
         'doc_id': doc_id,
         'source': source_name,
+        'sample': verified_sample,
         'gate_mm': GATE_MM,
         'n_pieces': len(nest_pieces),
         'total_area_mm2': round(sum(p.area_mm2 for p in nest_pieces), 1),
@@ -278,6 +324,7 @@ def _commit_to_nesting_sync(doc_id: str, src_dxf: str, source_name: str) -> dict
     result = {
         'doc_id': doc_id,
         'source': source_name,
+        'sample': verified_sample,
         'sizes': sorted({m['size'] for m in manifest}),
         'n_pieces': len(nest_pieces),
         'total_area_mm2': doc['total_area_mm2'],
@@ -295,9 +342,12 @@ def _commit_to_nesting_sync(doc_id: str, src_dxf: str, source_name: str) -> dict
 async def commit_to_nesting(req: Request):
     """US-010 Path A：上传母版 → 单裁片切分 → NestPiece 全码 → 覆盖 intermediate。
 
-    payload: ``{doc_id, filename?}``
+    payload: ``{doc_id, filename?, sample_name?}``
       - ``doc_id``：US-004 落盘的 uuid（无扩展名），定位 ``uploads/<doc_id>.dxf``；
-      - ``filename``：可选，覆盖 intermediate ``source`` 字段；缺省用 ``<doc_id>.dxf``。
+      - ``filename``：可选，覆盖 intermediate ``source`` 字段；缺省用 ``<doc_id>.dxf``；
+      - ``sample_name``：可选样例声明（2026-09-29）—— 前端「样例」区块应用时携带，
+        经 ``_verify_sample_claim`` 哈希对拍通过才铸 ``doc['sample']`` 标记（key 闸门
+        样例豁免唯一凭据）；本地上传不带 → 无标记，不报错不阻塞。
 
     CPU 密集管线跑在 ``_executor`` 里防阻塞 WS。写回前备份原 intermediate 为
     ``paths.INTERMEDIATE.with_suffix('.bak')``；返回新 intermediate 摘要。
@@ -342,10 +392,16 @@ async def commit_to_nesting(req: Request):
         return JSONResponse({'error': f'未找到上传文件: {doc_id}'}, status_code=404)
 
     source_name = payload.get('filename') or src.name
+    # 样例声明（2026-09-29 收紧）：可选字符串；形状校验 + sha256 对拍全在
+    # _verify_sample_claim（未声明/不存在/字节不符 → 无标记，不报错不阻塞 commit）。
+    sample_name = payload.get('sample_name')
+    if not isinstance(sample_name, str):
+        sample_name = None
     loop = asyncio.get_running_loop()
     try:
         result = await loop.run_in_executor(
-            _executor, _commit_to_nesting_sync, doc_id, str(src), source_name
+            _executor, _commit_to_nesting_sync, doc_id, str(src), source_name,
+            sample_name
         )
     except Exception as e:
         return JSONResponse({'error': f'commit 失败：{e}'}, status_code=422)

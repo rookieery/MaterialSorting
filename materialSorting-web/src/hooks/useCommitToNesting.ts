@@ -55,8 +55,10 @@ export interface CommitResult {
 }
 
 export interface UseCommitToNestingResult {
-  /** 触发 commit（防连击：committing 中重复触发静默忽略）。 */
-  commit: (doc_id: string, filename?: string) => Promise<CommitResult>;
+  /** 触发 commit（防连击：committing 中重复触发静默忽略）。sampleName = 「样例」
+   * 区块应用的样例声明（后端 sha256 对拍铸 doc.sample 标记 = key 闸门样例豁免
+   * 唯一凭据，2026-09-29；本地上传不传 = 无标记不豁免）。 */
+  commit: (doc_id: string, filename?: string, sampleName?: string) => Promise<CommitResult>;
 }
 
 export function useCommitToNesting(): UseCommitToNestingResult {
@@ -64,7 +66,8 @@ export function useCommitToNesting(): UseCommitToNestingResult {
   const committingRef = useRef(false);
 
   const commit = useCallback(
-    async (doc_id: string, filename?: string): Promise<CommitResult> => {
+    async (doc_id: string, filename?: string,
+            sampleName?: string): Promise<CommitResult> => {
       // 双重防护：ref + store commitStatus（任一为 committing 即忽略，防止意外覆盖正在进行的请求）
       if (committingRef.current) {
         return { ok: false, error: 'commit already in progress' };
@@ -82,10 +85,16 @@ export function useCommitToNesting(): UseCommitToNestingResult {
       });
 
       try {
+        // 样例声明 additive：仅在调用方显式给 sampleName 时携带（本地上传/旧
+        // 调用方 body 形态逐字节不变）；后端哈希对拍不过即静默无标记。
+        const body: Record<string, unknown> = { doc_id, filename };
+        if (typeof sampleName === 'string' && sampleName.trim() !== '') {
+          body.sample_name = sampleName.trim();
+        }
         const res = await apiFetch(COMMIT_TO_NESTING_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ doc_id, filename }),
+          body: JSON.stringify(body),
         });
 
         if (!res.ok) {

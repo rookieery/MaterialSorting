@@ -54,9 +54,16 @@ const STATE_RESTORE_URL = '/api/state-restore';
 /** 状态文件扩展名（与后端 STATE_EXTENSION 同源；accept/分流判定用，小写比较）。 */
 const STATE_FILE_EXT = '.msn';
 
+/** upload 可选参数：sampleName = 「样例」区块应用的样例文件名（commit 期
+ * sample_name 声明 → 后端 sha256 对拍铸 doc.sample 标记 = key 闸门样例豁免
+ * 唯一凭据；本地上传不传 → 无标记不豁免，2026-09-29 收紧）。 */
+export interface UploadOpts {
+  sampleName?: string;
+}
+
 export interface UseParseDxfResult {
   /** 触发上传（防连击：uploading 中重复触发静默忽略）。客户端预校验应由调用方完成。 */
-  upload: (file: File) => Promise<void>;
+  upload: (file: File, opts?: UploadOpts) => Promise<void>;
 }
 
 export function useParseDxf(): UseParseDxfResult {
@@ -66,7 +73,7 @@ export function useParseDxf(): UseParseDxfResult {
   // committingRef + commitStatus 双重防连击，此处仅持引用供 upload 回调内调用。
   const { commit } = useCommitToNesting();
 
-  const upload = useCallback(async (file: File): Promise<void> => {
+  const upload = useCallback(async (file: File, opts?: UploadOpts): Promise<void> => {
     // 双重防护：ref + store status（任一为 uploading 即忽略，防止意外覆盖正在进行的请求）
     if (uploadingRef.current) return;
     if (useUploadStore.getState().status === 'uploading') return;
@@ -79,7 +86,7 @@ export function useParseDxf(): UseParseDxfResult {
         await restoreStateFile(file);
         return;
       }
-      await uploadDxf(file, commit);
+      await uploadDxf(file, commit, opts?.sampleName);
     } finally {
       uploadingRef.current = false;
     }
@@ -141,10 +148,12 @@ async function restoreStateFile(file: File): Promise<void> {
   }
 }
 
-/** .dxf 母版解析路径（US-005 原实现，US-003 分流后独立成函数 —— 行为零变化）。 */
+/** .dxf 母版解析路径（US-005 原实现，US-003 分流后独立成函数 —— 行为零变化；
+ * 2026-09-29 起 sampleName 透传 commit 样例声明，缺省不声明 = 旧行为）。 */
 async function uploadDxf(
   file: File,
-  commit: (docId: string, filename?: string) => Promise<unknown>,
+  commit: (docId: string, filename?: string, sampleName?: string) => Promise<unknown>,
+  sampleName?: string,
 ): Promise<void> {
   // 进入 uploading 时清掉旧的 error（避免 UI 残留上次失败的红字），doc/activeSize 保留。
   // 同步清 commit 字段（US-021）：重传时旧 commit 摘要 / 错误不再适用，避免 UI 误导。
@@ -204,7 +213,7 @@ async function uploadDxf(
       //   - commit 用 void 不 await：parse 预览先上屏，commit 后台跑更新 commitStatus；
       //   - commit done 时 useCommitToNesting 内部 setNestingEnabled(true)（不自动切 Tab，由用户主动点击进入）；
       //   - commit fail 时 commitStatus='error' 显示，不切 Tab（D5：Tab 仍解锁，可重试或用旧数据）。
-      void commit(doc.doc_id, doc.filename);
+      void commit(doc.doc_id, doc.filename, sampleName);
     } catch (e) {
       // 网络错 / JSON 解析错 —— 统一进 error 状态（不抛、不 rethrow）
       const msg = e instanceof Error ? e.message : String(e);

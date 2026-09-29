@@ -153,6 +153,25 @@ describe("useCommitToNesting (US-021)", () => {
     expect(body.filename).toBeUndefined();
   });
 
+  it("样例声明（2026-09-29）：sampleName 在场 → body.sample_name（strip）；缺席 → 键不出现（本地上传 body 形态不变）", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(makeCommitResponse());
+    renderProbe();
+    await act(async () => {
+      await captured!.commit("deadbeef", "M1787.dxf", "  样例M1787.dxf  ");
+    });
+    let body = JSON.parse((fetchSpy.mock.calls[0][1] as RequestInit).body as string) as {
+      sample_name?: string;
+    };
+    expect(body.sample_name).toBe("样例M1787.dxf");
+    await act(async () => {
+      await captured!.commit("deadbeef02");
+    });
+    body = JSON.parse((fetchSpy.mock.calls[1][1] as RequestInit).body as string) as {
+      sample_name?: string;
+    };
+    expect("sample_name" in body).toBe(false);
+  });
+
   it("AC#7 422 -> commitStatus=error + commitError=backend msg", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(
       makeCommitResponse({

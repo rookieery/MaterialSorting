@@ -114,3 +114,22 @@ cd ../materialSorting-web && npx vitest run                                  # 1
 | 01-sample-run.png … 07-run-allowed.png | 各相位浏览器截图（样例免闸运行 / 三入口拦截 ×2 / 假 key 红字 / 合并结果 / 次数属性 / 放行运行） |
 | keys.db | keyserver 冒烟账本（§1.2 对拍数据源：4 key + op_log 12 笔 + key_daily_usage 1 行） |
 | ms_out/ | ms-web 临时 OUT_DIR（license/key_state.json 后端权威文件在案；跑完即证据，不触碰真实 out/） |
+
+---
+
+## 附：样例豁免判据收紧（2026-09-29 修复备案）
+
+**现象**：key 未绑定时，上传与样例同名的生产母版（如 `5336#老六订单14%7%围加9_coded.dxf`）普通/高级/极限运行均不拦截 —— 根因 = 闸门②样例豁免按 **doc.source 文件名**命中 `data/` 白名单，而 `data/` 放的 6 个全是真实生产母版，客户直传工厂原名文件即永久免 key。
+
+**修复（标记判据）**：豁免凭据从文件名改为会话 doc 的 **`sample` 标记**，仅「样例」入口加载可铸：
+
+| 环节 | 改动 |
+|---|---|
+| commit 声明 | `/api/commit-to-nesting` 载荷可选 `sample_name`（前端 `SamplePicker` 应用时随 `useParseDxf.upload → useCommitToNesting.commit` 携带）；`server._verify_sample_claim` 验证 = 裸名（防穿越）+ `data/<name>` 现存 .dxf + **上传字节 sha256 全等** → 通过才铸 `doc['sample']`（随 doc 持久化进 per-doc intermediate / 镜像 / .msn），不过/缺席 → `sample:null` 不报错不阻塞；伪造声明（字节不符）拿不到标记 |
+| 闸门 | `keygate.ensure_run_allowed(source, deduct, sample)` ② 改查标记参数（keygate 不再依赖 routes_views 白名单，冻结 import 面更纯）；WS / 策略闸门透传 `bool(doc.sample)` |
+| precheck | 服务端优先读**会话 doc**（`X-Session-Id` peek，与真跑闸门同一份 state，标记同源不漂移）；会话失败/无 doc 回落 body `{doc_source}`（sample 恒 False）；前端零改动（`doc_source` 变回落数据源） |
+| 机器族 | 不经闸门零变化（machine 三参调用向后兼容，`_commit_to_nesting_sync` 新参缺省 None） |
+
+**行为矩阵**：样例下拉「应用」→ 三入口免 key（不变）；本地上传同名/同内容/改名文件 + 未绑 key → 三入口全拦（新行为）；旧 `.msn` 恢复的会话 doc 无 `sample` 键 → 按无标记处理（重走样例入口即恢复豁免）。
+
+**验证**：后端 pytest（keygate/key_routes/commit_pipeline/commit_sessions/strategy/extreme/machine 等 450+ 例）+ 前端 vitest 1292 例全绿；`python -m materialsorting.web.keygate` 冒烟 19/19；`smoke_key_gate.mjs` 端到端 48/48 PASS（B 样例入口免闸 / C 真实母版三入口拦截 / H 记账全对）；生产 :8010 实机对拍 —— 样例入口链 commit 回 `sample:<名>` + precheck `{ok:true,reason:'sample'}`，同字节直传链 `sample:null` + precheck 拦截「未绑定授权 key…」。
