@@ -880,18 +880,18 @@ curl http://127.0.0.1:8010/api/ptypes -H "X-Session-Id: <sid>"
 | 档 | 来源 | 生效条件 |
 |----|------|---------|
 | ① | env `MS_KEY_SERVER_URL` | 恒优先（strip 后非空即用；frozen/dev 均生效） |
-| ② | sidecar `key_server_url.txt`（UTF-8 一行 URL） | **frozen = exe 旁**（zip 解压部署免设 env）；**dev/源码部署 = `<OUT_DIR>/license/`（out/license/，gitignored 机器本地）** —— 2026-09-29 dev 加档：源码部署下后端被裸起/换启动方式重启会丢 env 级接线（当日实发两轮），落文件后任何启动方式自动带上 |
+| ② | sidecar `key_server_url.txt`（UTF-8 一行 URL） | **frozen = exe 旁优先 → LICENSE_DIR（`%LOCALAPPDATA%\MaterialSorting\out\license\`）回落**（回落档 2026-09-29：license/ 是 key 授权机器本地权威目录（key_state.json 本就落此），新构建 dist 不带 sidecar / 安装目录只读场景接线不丢 —— 当日实发：新冻 dist 未放 sidecar，exe 弹窗 `MSG_NO_SERVER` 而同机源码部署正常）；**dev/源码部署 = `<OUT_DIR>/license/`（out/license/，gitignored 机器本地）** —— 2026-09-29 dev 加档：源码部署下后端被裸起/换启动方式重启会丢 env 级接线（当日实发两轮），落文件后任何启动方式自动带上 |
 | ③ | 无（`None`） | ①②皆无 → **fail-closed**：三入口运行一律拒绝（文案 `MSG_NO_SERVER`），管理端点 state 只报本地 key + error |
 
 **keyserver 侧 env**（部署手册 runbook 见 [本地部署构建与发版手册](本地部署构建与发版手册.md) §7 frp 部署）：`MS_KEY_PORT`（缺省 8110）/ `MS_KEY_HOST`（缺省 127.0.0.1，frp 同机形态不裸露 LAN）/ `MS_KEY_DB`（SQLite 路径，缺省 `<keyserver 部署目录>/data/keys.db`）/ `MS_KEY_ADMIN_TOKEN`（管理端鉴权）/ `MS_KEY_CLIENT_TOKEN`（消费端鉴权）/ `MS_KEY_DEV=1`（本地开发逃生：两 token 均未配置时放行）。
 
-**client token 解析链**（`keygate.resolve_client_token`，US-009，与 URL 链同构）：① env `MS_KEY_CLIENT_TOKEN` → ② **frozen** exe 旁 `key_client_token.txt`（UTF-8 一行，随 `key_server_url.txt` 一并交付客户；dev 态不读）→ ③ 皆无不带 `X-Client-Token` header（keyserver 未设 token 时不影响；**已设而本机未配 → keyserver 401「消费 token 缺失/错误」中文透传**，绑定/校验全被拒）。`_key_post` 已配置时自动附头 —— frp 双 token 生产部署下消费端零代码接线（env 或 sidecar 二选一）。
+**client token 解析链**（`keygate.resolve_client_token`，US-009，与 URL 链同构）：① env `MS_KEY_CLIENT_TOKEN` → ② **frozen** exe 旁 `key_client_token.txt` 优先 → LICENSE_DIR 回落（UTF-8 一行，随 `key_server_url.txt` 一并交付客户，双位置同序；dev 态只读 LICENSE_DIR）→ ③ 皆无不带 `X-Client-Token` header（keyserver 未设 token 时不影响；**已设而本机未配 → keyserver 401「消费 token 缺失/错误」中文透传**，绑定/校验全被拒）。`_key_post` 已配置时自动附头 —— frp 双 token 生产部署下消费端零代码接线（env 或 sidecar 二选一）。
 
 **本地授权状态与机器身份**（消费端）：`key_state.json` 落 `<OUT_DIR>/license/key_state.json`（后端文件权威，原子写 tmp+replace；清浏览器缓存/换浏览器不丢 key；frozen 态 OUT_DIR = `%LOCALAPPDATA%\MaterialSorting\out`，**US-009 frozen 实测落位**）。机器身份 `machine_guid()` = 注册表 `HKLM\SOFTWARE\Microsoft\Cryptography\MachineGuid`（系统重装才变）→ 读失败（非 Windows/权限/键缺失）铸 `license/machine_id.txt` uuid4 兜底（首铸 stderr warn，此后恒读同值 = 稳定身份）。
 
 **HTTP 口径**（keygate `_key_post` 唯一出口）：单请求超时 **5s**（`KEY_HTTP_TIMEOUT_S`）；**无自动重试** —— `deduct=true` 响应丢失时服务端可能已扣次，重试会双扣；keyserver 业务 4xx 恒 `{"error": 中文}` 原样透传上屏；超时/连接失败统一 `MSG_UNREACHABLE`（fail-closed）；已配置 client token 自动附 `X-Client-Token`（见上链）。
 
-**launcher `--check` 回显**（US-009，售后自诊一条命令）：`env MS_KEY_MODE` / `key_server_url`（三档解析结果 + 来源标注，`keygate.describe_key_server_url`）/ `key_client_token`（配置态 + 来源，**值不回显**，`describe_client_token`）/ `machine_guid`（注册表只读探测不铸兜底文件）/ `key_state`（落点 + 绑定态）。
+**launcher `--check` 回显**（US-009，售后自诊一条命令）：`env MS_KEY_MODE` / `key_server_url`（三档解析结果 + 来源标注 —— 2026-09-29 起来源区分 exe 旁 / license/ 回落档 / out/license/，`keygate.describe_key_server_url`）/ `key_client_token`（配置态 + 来源，**值不回显**，`describe_client_token`）/ `machine_guid`（注册表只读探测不铸兜底文件）/ `key_state`（落点 + 绑定态）。
 
 ### 1. MS_KEY_MODE 说明（唯一逃生口，仅 dev）
 
@@ -950,7 +950,7 @@ info 契约（keyserver `/api/key/info|bind|validate` 成功共用，count 型�
 | 场景 | 状态码 | 文案 | 出现端点 |
 |------|-------|------|---------|
 | 未绑定 key | —（precheck `{ok:false}` / 闸门拒绝） | `未绑定授权 key：请在「系统key」中输入并保存`（`MSG_NO_KEY`，2026-09-29 ceb3945 随弹窗更名改字） | 三入口闸门/precheck/merge |
-| keyserver 未配置 | —（同上） | `授权服务器未配置：请设置 MS_KEY_SERVER_URL 或在程序目录放置 key_server_url.txt`（`MSG_NO_SERVER`） | 闸门/precheck/state/save/merge |
+| keyserver 未配置 | —（同上） | `授权服务器未配置：请设置 MS_KEY_SERVER_URL，或放置 key_server_url.txt（exe 旁 / license 目录）`（`MSG_NO_SERVER`，2026-09-29 随 frozen 回落档改字） | 闸门/precheck/state/save/merge |
 | keyserver 不可达/超时 | —（同上） | `无法连接授权服务器，请检查网络后重试`（`MSG_UNREACHABLE`；**无自动重试**） | 同上 |
 | key 不存在 | keyserver 404 → MS 400 / 闸门拒绝 | `key 不存在：请检查输入是否正确` | save/merge/闸门 |
 | 已绑定他机 | keyserver 409 → MS 400 | `该 key 已绑定其他系统，无法绑定到本机` | save |

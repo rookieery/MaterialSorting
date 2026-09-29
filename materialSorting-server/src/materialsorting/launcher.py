@@ -290,11 +290,12 @@ def _print_help() -> None:
         '  MS_OUT_DIR      产物目录（frozen 缺省 '
         f'%LOCALAPPDATA%\\{APP_DIR_NAME}\\out）\n'
         '  MS_STATIC_DIR   前端静态目录（frozen 缺省 <exe 所在目录>\\static）\n'
-        '  MS_KEY_SERVER_URL  key 授权服务器基址（frozen 亦可 exe 旁 '
-        'key_server_url.txt）\n'
-        '  MS_KEY_CLIENT_TOKEN  keyserver 消费端共享 token（frozen 亦可 exe 旁 '
-        'key_client_token.txt；\n'
-        '                     未配置且 keyserver 已设 → 消费请求 401）\n'
+        '  MS_KEY_SERVER_URL  key 授权服务器基址（frozen 亦可 sidecar '
+        'key_server_url.txt：\n'
+        '                     exe 旁优先，缺则回落 license/ 目录，2026-09-29）\n'
+        '  MS_KEY_CLIENT_TOKEN  keyserver 消费端共享 token（frozen 亦可 sidecar '
+        'key_client_token.txt，\n'
+        '                     位置同上两档；未配置且 keyserver 已设 → 消费请求 401）\n'
         '  MS_KEY_MODE     off = 关闭 key 闸门（仅 dev 生效，frozen exe 恒不可绕）')
 
 

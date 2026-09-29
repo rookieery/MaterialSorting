@@ -274,6 +274,33 @@ def test_url_chain_dev_sidecar_license_dir(no_server_url, license_dir, monkeypat
     assert keygate.resolve_key_server_url() == 'http://dev-side:8110'
 
 
+def test_url_chain_frozen_license_fallback(no_server_url, tmp_path, monkeypatch):
+    """frozen 回落档（2026-09-29）：exe 旁无文件 → 读 LICENSE_DIR（frozen 态即
+    %LOCALAPPDATA%\\MaterialSorting\\out\\license\\，key_state.json 本就落此）——
+    新构建 dist 不带 sidecar / 安装目录只读场景接线不丢（当日实发根因：新冻
+    dist 未放 sidecar，exe 弹窗 MSG_NO_SERVER 而同机源码部署正常）。"""
+    lic = tmp_path / 'license'
+    lic.mkdir(parents=True)
+    monkeypatch.setattr(paths_mod, 'LICENSE_DIR', str(lic))
+    monkeypatch.setattr(sys, 'frozen', True, raising=False)
+    monkeypatch.setattr(sys, 'executable', str(tmp_path / 'app.exe'))
+    (lic / 'key_server_url.txt').write_text('http://fb:8110\n', encoding='utf-8')
+    assert keygate.resolve_key_server_url() == 'http://fb:8110'
+
+
+def test_url_chain_frozen_exe_side_wins_over_license(no_server_url, tmp_path,
+                                                     monkeypatch):
+    """frozen 双位置并存：exe 旁优先（发卡交付契约不变），license/ 仅回落。"""
+    lic = tmp_path / 'license'
+    lic.mkdir(parents=True)
+    monkeypatch.setattr(paths_mod, 'LICENSE_DIR', str(lic))
+    monkeypatch.setattr(sys, 'frozen', True, raising=False)
+    monkeypatch.setattr(sys, 'executable', str(tmp_path / 'app.exe'))
+    (tmp_path / 'key_server_url.txt').write_text('http://exe:8110', encoding='utf-8')
+    (lic / 'key_server_url.txt').write_text('http://lic:8110', encoding='utf-8')
+    assert keygate.resolve_key_server_url() == 'http://exe:8110'
+
+
 # ------------------------------------------------- describe_*（--check 回显，US-009）
 
 def test_describe_url_three_tiers(no_server_url, tmp_path, monkeypatch):
@@ -306,6 +333,22 @@ def test_describe_url_unconfigured(no_server_url):
     text = keygate.describe_key_server_url()
     assert '未配置' in text and 'MS_KEY_SERVER_URL' in text \
         and 'key_server_url.txt' in text
+
+
+def test_describe_url_frozen_fallback_source(no_server_url, tmp_path, monkeypatch):
+    """describe 来源标注跟随实际命中文件（--check 售后定位，2026-09-29 回落档）：
+    license/ 回落档与 exe 旁两标签可区分。"""
+    lic = tmp_path / 'license'
+    lic.mkdir(parents=True)
+    monkeypatch.setattr(paths_mod, 'LICENSE_DIR', str(lic))
+    monkeypatch.setattr(sys, 'frozen', True, raising=False)
+    monkeypatch.setattr(sys, 'executable', str(tmp_path / 'app.exe'))
+    (lic / 'key_server_url.txt').write_text('http://fb:8110', encoding='utf-8')
+    text = keygate.describe_key_server_url()
+    assert 'http://fb:8110' in text and '回落' in text
+    (tmp_path / 'key_server_url.txt').write_text('http://exe:8110', encoding='utf-8')
+    text = keygate.describe_key_server_url()
+    assert 'http://exe:8110' in text and 'exe 旁' in text
 
 
 def test_describe_machine_guid_registry_ok(monkeypatch):
@@ -352,6 +395,18 @@ def test_client_token_dev_sidecar_license_dir(no_server_url, license_dir, monkey
     license_dir.mkdir(parents=True, exist_ok=True)
     (license_dir / 'key_client_token.txt').write_text('tok-dev\n', encoding='utf-8')
     assert keygate.resolve_client_token() == 'tok-dev'
+
+
+def test_client_token_frozen_license_fallback(no_server_url, tmp_path, monkeypatch):
+    """client token 链同构回落（2026-09-29）：frozen exe 旁缺 → LICENSE_DIR。"""
+    monkeypatch.delenv('MS_KEY_CLIENT_TOKEN', raising=False)
+    lic = tmp_path / 'license'
+    lic.mkdir(parents=True)
+    monkeypatch.setattr(paths_mod, 'LICENSE_DIR', str(lic))
+    monkeypatch.setattr(sys, 'frozen', True, raising=False)
+    monkeypatch.setattr(sys, 'executable', str(tmp_path / 'app.exe'))
+    (lic / 'key_client_token.txt').write_text('tok-fb\n', encoding='utf-8')
+    assert keygate.resolve_client_token() == 'tok-fb'
 
 
 def test_key_post_sends_client_token_header(set_server_url, monkeypatch):

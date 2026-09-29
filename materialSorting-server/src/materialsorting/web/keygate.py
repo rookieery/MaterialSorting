@@ -30,14 +30,21 @@
 
 keyserver URL 解析链（``resolve_key_server_url``，请求时读 env 非 import 期
 绑定 —— 部署后设 env 无需改代码）：``MS_KEY_SERVER_URL`` env → sidecar
-``key_server_url.txt``（**frozen = exe 旁**，zip 解压部署免设 env；**dev =
-LICENSE_DIR（out/license/，gitignored 机器本地）** —— 2026-09-29 加档：接线
-此前是进程 env 级，后端被裸起/换方式重启即静默丢接线 fail-closed（当日实发
-两轮），落文件后任何启动方式自动带上）→ 皆无 → ``None``（fail-closed，调用方
-一律拒绝运行）。client token 解析链同构（US-009，``resolve_client_token``）：
-``MS_KEY_CLIENT_TOKEN`` env → sidecar ``key_client_token.txt``（位置同上按形态）
-→ 皆无不带 header（keyserver 已设 token 而本机未配 → 401 中文透传；frp 双
-token 部署契约见发版手册 §7）。
+``key_server_url.txt``（**frozen = exe 旁优先 → LICENSE_DIR 回落**；**dev =
+LICENSE_DIR（out/license/，gitignored 机器本地）**）→ 皆无 → ``None``
+（fail-closed，调用方一律拒绝运行）。sidecar 位置两档均 2026-09-29 定稿：
+dev 加档前接线是进程 env 级，后端被裸起/换方式重启即静默丢接线（当日实发
+两轮），落文件后任何启动方式自动带上；frozen 回落档动机 = 同日实发严重 bug
+—— 新冻结 dist 未带 sidecar，exe 弹窗 ``MSG_NO_SERVER`` 而同机源码部署一切
+正常（两形态 sidecar 目录互不相通：dev 读 out/license/、frozen 只读 exe 旁
+）—— license/ 本就是 key 授权机器本地权威目录（key_state.json 落此，
+``%LOCALAPPDATA%\\MaterialSorting\\out\\license\\``），exe 旁查不到时回落至此
+：新构建 dist 不带 sidecar / 安装目录只读 / 覆盖重装场景接线均不丢（exe 旁
+仍优先，发卡交付契约不变）。client token 解析链同构（US-009，
+``resolve_client_token``）：``MS_KEY_CLIENT_TOKEN`` env → sidecar
+``key_client_token.txt``（位置同上按形态，frozen 双位置同序）→ 皆无不带
+header（keyserver 已设 token 而本机未配 → 401 中文透传；frp 双 token 部署
+契约见发版手册 §7）。
 
 分层：模块级仅标准库 + ``..paths``（AST 守卫见 tests/test_web_keygate.py，
 镜像 edit_hold 先例）；**禁 import cli 子包与 server 模块**（本模块被 server
@@ -83,7 +90,7 @@ _MACHINE_GUID_VALUE = 'MachineGuid'                       # 键内值名（系�
 
 MSG_NO_KEY = '未绑定授权 key：请在「系统key」中输入并保存'
 MSG_NO_SERVER = ('授权服务器未配置：请设置 MS_KEY_SERVER_URL，或放置 '
-                 'key_server_url.txt（exe 旁 / 源码部署在 out/license/）')
+                 'key_server_url.txt（exe 旁 / license 目录）')
 MSG_UNREACHABLE = '无法连接授权服务器，请检查网络后重试'
 
 
@@ -102,30 +109,58 @@ class KeyGateError(Exception):
 
 # ------------------------------------------------------------- keyserver URL 解析链
 
-def _sidecar_path(name: str) -> Path:
-    """sidecar 文件位置单一真相源（2026-09-29 dev 加档）：frozen = exe 旁
-    （交付契约不变）；dev = ``LICENSE_DIR``（out/license/，gitignored 机器本地）
-    —— 后端被裸起/换启动方式重启也能自动带上 keyserver 接线。"""
+def _sidecar_candidates(name: str) -> list[tuple[str, Path]]:
+    """sidecar 候选位置单一真相源（查找序即优先序，2026-09-29 两档定稿）：
+
+    - **frozen**：``[exe 旁（交付契约，发卡交付物随包放置）, LICENSE_DIR 回落]``
+      —— 回落档动机：license/（frozen 态 = ``%LOCALAPPDATA%\\MaterialSorting\\
+      out\\license\\``，key_state.json 本就落此）是 key 授权机器本地权威位，
+      新构建 dist 不带 sidecar / 安装目录只读 / 覆盖重装场景接线不丢（当日
+      实发：新冻 dist 未放 sidecar → exe 弹窗 ``MSG_NO_SERVER`` 而同机 dev
+      正常）；
+    - **dev**：仅 ``LICENSE_DIR``（out/license/，gitignored 机器本地；exe 旁
+      = frozen 专属交付契约 dev 不读）。
+    """
     if getattr(sys, 'frozen', False):
-        return Path(sys.executable).resolve().parent / name
-    return _license_dir() / name
+        return [(f'{name}（exe 旁）',
+                 Path(sys.executable).resolve().parent / name),
+                (f'{name}（license/ 回落档）', _license_dir() / name)]
+    return [(f'{name}（out/license/）', _license_dir() / name)]
 
 
 def _read_sidecar(name: str) -> str | None:
-    """读 sidecar 单行文本（strip 后非空即用；缺失/不可读 → ``None``）。"""
-    try:
-        text = _sidecar_path(name).read_text(encoding='utf-8').strip()
-    except OSError:
-        return None
-    return text or None
+    """读 sidecar 单行文本：按候选序取首个 strip 后非空者；皆缺失/皆空 →
+    ``None``（某位置文件存在但为空 = 该位未配置，继续向后回落查找）。"""
+    for _, path in _sidecar_candidates(name):
+        try:
+            text = path.read_text(encoding='utf-8').strip()
+        except OSError:
+            continue
+        if text:
+            return text
+    return None
+
+
+def _sidecar_origin(name: str, value: str) -> str:
+    """定位 ``value`` 实际来自哪个 sidecar 候选（``describe_*`` 来源标注专用；
+    与 :func:`_read_sidecar` 同一候选序，无匹配 → 「来源未知」兜底）。"""
+    for label, path in _sidecar_candidates(name):
+        try:
+            text = path.read_text(encoding='utf-8').strip()
+        except OSError:
+            continue
+        if text == value:
+            return label
+    return f'{name}（来源未知）'
 
 
 def resolve_key_server_url() -> str | None:
     """keyserver 基址解析（三档）：``MS_KEY_SERVER_URL`` env → sidecar
-    ``key_server_url.txt``（frozen = exe 旁 / dev = LICENSE_DIR，strip 后非空）
-    → ``None``（未配置，fail-closed）。
+    ``key_server_url.txt``（frozen = exe 旁优先 → LICENSE_DIR 回落 /
+    dev = LICENSE_DIR，strip 后非空）→ ``None``（未配置，fail-closed）。
 
-    env 请求时读取（非 import 期绑定）；sidecar 位置按形态见 :func:`_sidecar_path`。
+    env 请求时读取（非 import 期绑定）；sidecar 候选序见
+    :func:`_sidecar_candidates`。
     """
     env_url = os.environ.get('MS_KEY_SERVER_URL')
     if env_url and env_url.strip():
@@ -135,10 +170,10 @@ def resolve_key_server_url() -> str | None:
 
 def resolve_client_token() -> str | None:
     """``X-Client-Token`` 解析链（US-009，与 URL 链同构）：env
-    ``MS_KEY_CLIENT_TOKEN`` → sidecar ``key_client_token.txt``（frozen = exe 旁 /
-    dev = LICENSE_DIR，strip 后非空）→ 皆无 ``None``（请求不带该 header ——
-    keyserver 未设 token 时不影响；keyserver 已设而本机未配 → keyserver 401
-    中文透传上屏）。
+    ``MS_KEY_CLIENT_TOKEN`` → sidecar ``key_client_token.txt``（frozen =
+    exe 旁优先 → LICENSE_DIR 回落 / dev = LICENSE_DIR，strip 后非空）→
+    皆无 ``None``（请求不带该 header —— keyserver 未设 token 时不影响；
+    keyserver 已设而本机未配 → keyserver 401 中文透传上屏）。
 
     背景：frp 部署 runbook 双 token 必设（US-009 契约定稿）—— 管理口令护发卡
     财务面，共享 client token 防公网任意调用方打消费端（bind 他机抢绑/扣次烧
@@ -153,7 +188,8 @@ def resolve_client_token() -> str | None:
 def describe_client_token() -> str:
     """client token 配置态描述（launcher ``--check`` 回显专用，US-009）。
 
-    **不回显 token 值**（共享秘密不进日志/截图）；来源标注同 URL 链口径。
+    **不回显 token 值**（共享秘密不进日志/截图）；来源标注同 URL 链口径
+    （env 档 → 按候选序定位实际命中文件）。
     """
     token = resolve_client_token()
     if token is None:
@@ -162,10 +198,8 @@ def describe_client_token() -> str:
     env_tok = (os.environ.get('MS_KEY_CLIENT_TOKEN') or '').strip()
     if env_tok == token:
         source = 'MS_KEY_CLIENT_TOKEN env'
-    elif getattr(sys, 'frozen', False):
-        source = 'key_client_token.txt（exe 旁）'
     else:
-        source = 'key_client_token.txt（out/license/）'
+        source = _sidecar_origin(KEY_TOKEN_FILE_NAME, token)
     return f'已配置（来源：{source}，不回显值）'
 
 
@@ -173,19 +207,20 @@ def describe_key_server_url() -> str:
     """URL 解析结果的人类可读描述（launcher ``--check`` 回显专用，US-009）。
 
     只读无副作用（不触发任何 HTTP）；来源判定与 :func:`resolve_key_server_url`
-    同一真相源 —— env strip 后等于解析结果即 env 档，否则为 frozen sidecar 档。
+    同一真相源 —— env strip 后等于解析结果即 env 档，否则按 sidecar 候选序
+    定位实际命中文件（exe 旁 / license/ 回落档 / out/license/）。
     """
     url = resolve_key_server_url()
     if url is None:
         return ('未配置（fail-closed：设 MS_KEY_SERVER_URL，或放置 '
-                'key_server_url.txt —— frozen 在 exe 旁 / 源码部署在 out/license/）')
+                'key_server_url.txt —— frozen：exe 旁或 license/ 目录'
+                '（%LOCALAPPDATA%\\MaterialSorting\\out\\license\\）；'
+                '源码部署：out/license/）')
     env = (os.environ.get('MS_KEY_SERVER_URL') or '').strip()
     if env == url:
         source = 'MS_KEY_SERVER_URL env'
-    elif getattr(sys, 'frozen', False):
-        source = 'key_server_url.txt（exe 旁）'
     else:
-        source = 'key_server_url.txt（out/license/）'
+        source = _sidecar_origin(KEY_URL_FILE_NAME, url)
     return f'{url}（来源：{source}）'
 
 
@@ -460,7 +495,7 @@ def _smoke() -> int:
                 first = machine_guid()
                 second = machine_guid()
                 check('机 ID 兜底稳定', first == second and first)
-                # ③ URL 链三档
+                # ③ URL 链（frozen 双位置：exe 旁优先 → license/ 回落，2026-09-29）
                 os.environ['MS_KEY_SERVER_URL'] = f'http://127.0.0.1:{port}'
                 check('URL 档一 env',
                       resolve_key_server_url() == f'http://127.0.0.1:{port}')
@@ -471,9 +506,19 @@ def _smoke() -> int:
                 sys.executable = str(root / 'app.exe')
                 (root / 'key_server_url.txt').write_text(
                     f'http://127.0.0.1:{port}', encoding='utf-8')
-                check('URL 档二 frozen sidecar',
+                check('URL 档二 frozen exe 旁 sidecar',
                       resolve_key_server_url() == f'http://127.0.0.1:{port}')
                 (root / 'key_server_url.txt').unlink()
+                (root / 'license' / 'key_server_url.txt').write_text(
+                    f'http://127.0.0.1:{port}', encoding='utf-8')
+                check('URL 档二′ frozen license/ 回落（exe 旁缺失）',
+                      resolve_key_server_url() == f'http://127.0.0.1:{port}')
+                (root / 'key_server_url.txt').write_text(
+                    f'http://127.0.0.1:{port}/exe', encoding='utf-8')
+                check('frozen 双位置并存 exe 旁优先',
+                      resolve_key_server_url() == f'http://127.0.0.1:{port}/exe')
+                (root / 'key_server_url.txt').unlink()
+                (root / 'license' / 'key_server_url.txt').unlink()
                 check('URL 档三 皆无 fail-closed',
                       resolve_key_server_url() is None)
                 sys.frozen = old_frozen                  # type: ignore[attr-defined]
