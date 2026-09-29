@@ -3,7 +3,7 @@
 //   2. localStorage ms_key 即时预填（不等网络）→ GET /api/key/state 对账以后端
 //      为准（输入框随 store.key 更新，用户未编辑不被覆盖）
 //   3. 属性展示：次数型 总数/已用/剩余 + 徽标；时长型 生效/截止/剩余天数 +
-//      失效徽标（已过期红）；绑定系统/备注行
+//      失效徽标（已过期红）；绑定系统/备注不渲染（后台管理端内容，响应仍下发）
 //   4. ① 保存：POST /api/key/save 失败 400 {error} 中文红字透传；成功后属性更新
 //   5. ② 合并：textarea 每行一个（strip + 空行过滤）→ POST /api/key/merge →
 //      明细（每 key +N 天）+ 共转移；整体失败红字（无 key 指路文案）
@@ -244,7 +244,7 @@ describe('KeyInfoModal localStorage 即时预填 + 后端对账', () => {
 });
 
 describe('KeyInfoModal ③ 属性展示 + 状态徽标', () => {
-  it('次数型：总数/已用/剩余 + 正在使用绿徽标 + 绑定系统/备注', async () => {
+  it('次数型：总数/已用/剩余 + 正在使用绿徽标 + 绑定系统/备注不渲染', async () => {
     statePayload = { key: 'MS-K', info: COUNT_INFO, error: null };
     renderModal();
     openModal();
@@ -253,8 +253,9 @@ describe('KeyInfoModal ③ 属性展示 + 状态徽标', () => {
     expect(attrText('key-attr-total')).toContain('30');
     expect(attrText('key-attr-used')).toContain('12');
     expect(attrText('key-attr-remaining')).toContain('18');
-    expect(attrText('key-attr-system')).toContain('PC-FACTORY');
-    expect(attrText('key-attr-remark')).toContain('车间一');
+    // 绑定系统/备注 = 后台管理端内容，弹窗不展示（夹具仍带这两字段验证不渲染）
+    expect(modal().querySelector('[data-testid="key-attr-system"]')).toBeNull();
+    expect(modal().querySelector('[data-testid="key-attr-remark"]')).toBeNull();
     const badge = modal().querySelector('[data-testid="key-attr-status"] .key-status-badge')!;
     expect(badge.textContent).toBe('正在使用');
     expect(badge.classList.contains('ok')).toBe(true);

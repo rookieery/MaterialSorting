@@ -52,7 +52,8 @@ function badgeClass(status: string): string {
   return 'key-status-badge idle';
 }
 
-/** ③ 属性展示区块（keyInfo 非空时）：徽标 + 型别专属行 + 绑定系统/备注。 */
+/** ③ 属性展示区块（keyInfo 非空时）：徽标 + 型别专属行。绑定系统/备注是
+ * 后台管理端才能看到的内容，不在此弹窗展示（info 里仍会随契约下发）。 */
 function AttrSection({ info }: { info: KeyInfo }): JSX.Element {
   const rows: JSX.Element[] = [];
   if (info.type === 'count') {
@@ -63,12 +64,6 @@ function AttrSection({ info }: { info: KeyInfo }): JSX.Element {
     rows.push(attrRow('生效时间', info.activated_at ?? '未激活', 'key-attr-activated'));
     rows.push(attrRow('截止时间', info.expires_at ?? '—', 'key-attr-expires'));
     rows.push(attrRow('剩余天数', String(info.remaining_days ?? '—'), 'key-attr-days'));
-  }
-  if (info.bound_system_name) {
-    rows.push(attrRow('绑定系统', info.bound_system_name, 'key-attr-system'));
-  }
-  if (info.remark) {
-    rows.push(attrRow('备注', info.remark, 'key-attr-remark'));
   }
   return (
     <>
