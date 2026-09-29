@@ -64,10 +64,10 @@ except ImportError:                     # pragma: no cover - 非 Windows 平台
 
 __all__ = [
     'KEY_HTTP_TIMEOUT_S', 'KeyGateError', 'MSG_NO_KEY', 'MSG_NO_SERVER',
-    'MSG_UNREACHABLE', 'describe_client_token', 'describe_key_server_url',
-    'describe_machine_guid', 'ensure_run_allowed', 'key_state_path',
-    'load_key_state', 'machine_guid', 'resolve_client_token',
-    'resolve_key_server_url', 'save_key_state',
+    'MSG_UNREACHABLE', 'clear_key_state', 'describe_client_token',
+    'describe_key_server_url', 'describe_machine_guid', 'ensure_run_allowed',
+    'key_state_path', 'load_key_state', 'machine_guid',
+    'resolve_client_token', 'resolve_key_server_url', 'save_key_state',
 ]
 
 KEY_HTTP_TIMEOUT_S = 5.0              # 单请求超时（PRD 定案：5s，禁自动重试）
@@ -84,7 +84,16 @@ MSG_UNREACHABLE = '无法连接授权服务器，请检查网络后重试'
 
 
 class KeyGateError(Exception):
-    """keygate 业务失败 —— ``str(exc)`` 即可直接上屏的中文文案（调用方不再包装）。"""
+    """keygate 业务失败 —— ``str(exc)`` 即可直接上屏的中文文案（调用方不再包装）。
+
+    ``code`` = keyserver HTTP 状态码（仅 4xx/5xx 响应带；网络失败/未配置为
+    ``None``）。调用方据此区分「key 不存在（404，本地绑定已失去意义可解绑）」
+    与瞬态失败（网络/5xx —— 绝不能触发解绑）。
+    """
+
+    def __init__(self, message: str, code: int | None = None):
+        super().__init__(message)
+        self.code = code
 
 
 # ------------------------------------------------------------- keyserver URL 解析链
@@ -199,8 +208,8 @@ def _key_post(path: str, payload: dict, timeout: float = KEY_HTTP_TIMEOUT_S) -> 
         except Exception:                            # noqa: BLE001 - 坏响应体走通用文案
             message = None
         if message:
-            raise KeyGateError(message) from None
-        raise KeyGateError(f'授权服务器响应异常（HTTP {exc.code}）') from None
+            raise KeyGateError(message, code=exc.code) from None
+        raise KeyGateError(f'授权服务器响应异常（HTTP {exc.code}）', code=exc.code) from None
     except Exception:                                # noqa: BLE001 - URLError/timeout/OSError 统一口径
         raise KeyGateError(MSG_UNREACHABLE) from None
     try:
@@ -319,6 +328,19 @@ def save_key_state(key: str) -> dict:
     _atomic_write_text(
         key_state_path(), json.dumps(state, ensure_ascii=False, indent=2))
     return state
+
+
+def clear_key_state() -> None:
+    """解除本地绑定（删 ``key_state.json``；缺失容忍幂等）。
+
+    唯一调用方 = ``/api/key/state`` 对账发现 key 已在 keyserver 侧删除（404）
+    时自动解绑 —— 本地绑定失去意义，留着会让弹窗/闸门持续展示无用的死 key。
+    瞬态失败（网络/5xx）**不走本函数**（见 :class:`KeyGateError`.code 注释）。
+    """
+    try:
+        key_state_path().unlink()
+    except FileNotFoundError:
+        pass
 
 
 # ----------------------------------------------------------------- 运行闸门

@@ -6,7 +6,9 @@
 
   - ``GET  /api/key/state``：本地 key + keyserver ``/api/key/info`` 只读现查。
     **keyserver 查询失败也 200**，失败文案进 ``error`` 字段（弹窗仍能展示本地
-    key + 引导重试）；未绑定 → ``{key:null, info:null, error:null}``。
+    key + 引导重试）；未绑定 → ``{key:null, info:null, error:null}``。key 已在
+    keyserver 侧删除（404）→ 自动解绑（清 ``key_state.json``）+ 未绑定态响应
+    带 ``error`` 解释（详见 :func:`get_key_state`）。
   - ``POST /api/key/save`` ``{key}``：先 keyserver ``/api/key/bind``（绑定
     MachineGuid + system_name=hostname 快照；业务失败中文透传 400，**不落盘**）
     → 成功才 ``save_key_state`` 落 ``key_state.json``（后端文件权威）。
@@ -86,7 +88,13 @@ async def _json_body(request: Request):
 
 
 async def get_key_state() -> dict:
-    """本地 key + keyserver info 只读现查（keyserver 失败也 200 带 error）。"""
+    """本地 key + keyserver info 只读现查（keyserver 失败也 200 带 error）。
+
+    key 已在 keyserver 侧删除（404）→ **自动解绑**：本地绑定失去意义，清
+    ``key_state.json`` 后按未绑定态响应（``error`` 带一句解释上屏，用户知道
+    发生了什么而不是疑惑 key 去哪了）。瞬态失败（网络/5xx/401）不清 —— 本地
+    key 可能仍有效，保留等重试。
+    """
     key = _local_key()
     if key is None:
         return {'key': None, 'info': None, 'error': None}
@@ -94,6 +102,13 @@ async def get_key_state() -> dict:
         info = await asyncio.to_thread(_post_keyserver, '/api/key/info',
                                        {'key': key})
     except keygate.KeyGateError as exc:
+        if getattr(exc, 'code', None) == 404:
+            await asyncio.to_thread(keygate.clear_key_state)
+            return {
+                'key': None, 'info': None,
+                'error': '本地 key 已失效（key 不存在，可能已被删除），已自动'
+                         '解除绑定；请输入新 key 并保存',
+            }
         return {'key': key, 'info': None, 'error': str(exc)}
     return {'key': key, 'info': info, 'error': None}
 

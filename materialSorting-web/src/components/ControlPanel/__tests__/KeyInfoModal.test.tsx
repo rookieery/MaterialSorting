@@ -3,8 +3,10 @@
 //   2. localStorage ms_key 即时预填（不等网络）→ GET /api/key/state 对账以后端
 //      为准（输入框随 store.key 更新，用户未编辑不被覆盖）
 //   3. 属性展示：次数型 总数/已用/剩余 + 徽标；时长型 生效/截止/剩余天数 +
-//      失效徽标（已过期红）；绑定系统/备注不渲染（后台管理端内容，响应仍下发）
-//   4. ① 保存：POST /api/key/save 失败 400 {error} 中文红字透传；成功后属性更新
+//      失效徽标（已过期红）；绑定系统/备注不渲染（后台管理端内容，响应仍下发）；
+//      key 已删除自动解绑（key:null + error）→ 未绑定态 + 解释红字
+//   4. ① 保存：POST /api/key/save 失败 400 {error} 中文红字透传 + 输入框回退
+//      实际绑定 key（与属性区恒同 key）；成功后属性更新
 //   5. ② 合并：textarea 每行一个（strip + 空行过滤）→ POST /api/key/merge →
 //      明细（每 key +N 天）+ 共转移；整体失败红字（无 key 指路文案）
 //   6. ESC / 遮罩 / ✕ 只关弹窗（ExportInfoModal 同款骨架）
@@ -287,11 +289,27 @@ describe('KeyInfoModal ③ 属性展示 + 状态徽标', () => {
       .toContain('无法连接授权服务器');
     expect(keyInput().value).toBe('MS-LOCAL');
   });
+
+  it('key 已删除自动解绑（key:null + error）→ 未绑定态 + 解释红字 + 输入框空', async () => {
+    statePayload = {
+      key: null,
+      info: null,
+      error: '本地 key 已失效（key 不存在，可能已被删除），已自动解除绑定；请输入新 key 并保存',
+    };
+    renderModal();
+    openModal();
+    await flush();
+    expect(modal().querySelector('[data-testid="key-info-unbound-reason"]')!.textContent)
+      .toContain('已自动解除绑定');
+    expect(modal().querySelector('[data-testid="key-info-empty-hint"]')).toBeNull();
+    expect(keyInput().value).toBe('');            // 无用 key 不再上屏
+    expect(localStorage.getItem(KEY_MIRROR_STORAGE)).toBeNull(); // 镜像同步清
+  });
 });
 
 describe('KeyInfoModal ① 保存（POST /api/key/save）', () => {
-  it('失败 400 {error} → 中文红字透传，草稿保留', async () => {
-    statePayload = { key: null, info: null, error: null };
+  it('失败 400 {error} → 中文红字透传，输入框回退实际绑定 key（与属性区同 key）', async () => {
+    statePayload = { key: 'MS-OLD', info: DURATION_INFO, error: null };
     saveStatus = 400;
     renderModal();
     openModal();
@@ -304,8 +322,9 @@ describe('KeyInfoModal ① 保存（POST /api/key/save）', () => {
     await flush();
     expect(modal().querySelector('[data-testid="key-info-save-error"]')!.textContent)
       .toBe('key 不存在：请检查输入是否正确');
-    expect(keyInput().value).toBe('MS-BAD'); // 草稿保留可改
-    expect(localStorage.getItem(KEY_MIRROR_STORAGE)).toBeNull(); // 不落镜像
+    expect(keyInput().value).toBe('MS-OLD'); // 回退实际生效 key，不残留失败草稿
+    expect(attrText('key-attr-days')).toContain('0'); // 属性区照旧 = 实际绑定 key
+    expect(localStorage.getItem(KEY_MIRROR_STORAGE)).toBe('MS-OLD'); // 失败不改镜像
   });
 
   it('成功 → 属性区即刻展示新 info + localStorage 双写', async () => {

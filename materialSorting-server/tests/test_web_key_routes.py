@@ -2,7 +2,8 @@
 
 覆盖（prd-key-authorization-system US-005 验收标准）：
 1. 四端点契约（TestClient + keyserver 桩 _StubServer 真实 HTTP 往返）：state
-   （未绑定三 null / info 透传 / keyserver 失败也 200 带 error / 无会话闸门
+   （未绑定三 null / info 透传 / keyserver 失败也 200 带 error / **key 已删
+   404 → 自动解绑清盘 + 解释文案 / 5xx 瞬态不解绑** / 无会话闸门
    —— 随机 X-Session-Id 不拦）、save（形状 400 / bind 成功才落盘 / bind 失败
    不覆盖旧 key / 载荷 system_name+machine_guid）、merge（无本地 key 400 /
    source_keys 形状 400 / target=本地 key / keyserver 原样透传）、precheck
@@ -237,6 +238,41 @@ def test_key_state_keyserver_4xx_transparent(key_on):
         stub.stop()
     assert r.status_code == 200
     assert r.json()['error'] == '该 key 已绑定其他系统，无法绑定到本机'
+
+
+def test_key_state_key_deleted_autounbind(key_on):
+    """key 已在 keyserver 侧删除（404）→ 自动解绑：key_state.json 清掉 +
+    未绑定态响应（error 带解释上屏）。"""
+    _bind_key(key_on)
+    stub = _StubServer([(404, {'error': 'key 不存在：请检查输入是否正确'})]).start()
+    try:
+        _set_url(stub.url)
+        r = _client().get('/api/key/state')
+    finally:
+        os.environ.pop('MS_KEY_SERVER_URL', None)
+        stub.stop()
+    assert r.status_code == 200
+    body = r.json()
+    assert body['key'] is None and body['info'] is None
+    assert '自动解除绑定' in body['error']
+    assert keygate.load_key_state() == {}          # 本地绑定已清
+
+
+def test_key_state_5xx_transient_no_autounbind(key_on):
+    """keyserver 5xx（瞬态）→ 不解绑：本地 key 保留等重试（误清是灾难）。"""
+    _bind_key(key_on)
+    stub = _StubServer([(500, {'error': '服务器内部错误'})]).start()
+    try:
+        _set_url(stub.url)
+        r = _client().get('/api/key/state')
+    finally:
+        os.environ.pop('MS_KEY_SERVER_URL', None)
+        stub.stop()
+    assert r.status_code == 200
+    body = r.json()
+    assert body['key'] is not None                # key 仍回显
+    assert body['error'] == '服务器内部错误'
+    assert keygate.load_key_state().get('key') == body['key']   # 未清盘
 
 
 def test_key_state_no_session_gate(key_on):

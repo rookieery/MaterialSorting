@@ -2,7 +2,8 @@
 //
 // 三区块（数据源 = keyStore → 后端 /api/key/state|save|merge，见 routes_key.py）：
 //   ① 当前 key 输入/替换 + 保存 —— POST /api/key/save（bind 成功才落盘），
-//     失败中文红字透传（如「key 不存在：请检查输入是否正确」）；
+//     失败中文红字透传（如「key 不存在：请检查输入是否正确」）；保存落定后
+//     输入框对齐实际生效 key（失败回退旧 key）—— 输入框与属性区恒同 key；
 //   ② 被合并 key 批量添加 —— textarea 每行一个 key + 合并按钮
 //     （POST /api/key/merge，时长型 source 剩余时长秒级转移到当前 key）；
 //     成功明细 = 每个 key 转移天数 + 共转移；整体失败红字（无 key 指路等）；
@@ -116,9 +117,16 @@ function KeyInfoModalInner(): JSX.Element {
     return () => window.removeEventListener('keydown', onKey);
   }, [closeModal]);
 
+  // 保存落定（成败都）后输入框对齐实际生效 key：成功 → 新 key（dirty 复位，
+  // 后续对账可跟随）；失败 → 回退旧 key（「当前 key」框与属性区恒显示同一把
+  // 实际绑定的 key，不残留未保存成功的草稿造成「输入框 A / 属性 B」的不一致，
+  // 失败原因见红字）。
   function handleSave(): void {
     if (saving || draft.trim() === '') return; // 按钮已置灰，兜底
-    void useKeyStore.getState().saveKey(draft);
+    void useKeyStore.getState().saveKey(draft).then(() => {
+      dirtyRef.current = false;
+      setDraft(useKeyStore.getState().key ?? '');
+    });
   }
 
   function handleMerge(): void {
@@ -240,7 +248,8 @@ function KeyInfoModalInner(): JSX.Element {
           )}
         </div>
 
-        {/* ③ 属性展示 + 状态徽标（未绑定 → 引导文案；有 key 无 info → 对账中/失败） */}
+        {/* ③ 属性展示 + 状态徽标（未绑定 → 引导文案 / 未绑定 + error = 服务端
+            自动解绑解释；有 key 无 info → 对账中/失败） */}
         <div className="key-section" data-testid="key-info-attrs">
           <span className="key-section-title">属性</span>
           {keyInfo !== null ? (
@@ -255,6 +264,12 @@ function KeyInfoModalInner(): JSX.Element {
                 正在查询 key 属性…
               </div>
             )
+          ) : error !== null ? (
+            // 未绑定 + error：/api/key/state 发现本地 key 已在 keyserver 侧删除
+            // 自动解绑后的解释（key=null → 引导输入在 placeholder，此处告知原因）
+            <div className="key-error" data-testid="key-info-unbound-reason">
+              {error}
+            </div>
           ) : (
             <div className="strategy-hint" data-testid="key-info-empty-hint">
               尚未绑定授权 key：在上方输入 key 并保存后即可运行排料。
