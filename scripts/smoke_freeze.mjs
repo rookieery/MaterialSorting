@@ -11,7 +11,8 @@
 //      web_port.txt 内容一致；首启 watcher 自动开浏览器 URL（BROWSER=cmd echo 捕获
 //      日志，webbrowser.open 实参取证，不起真浏览器）；
 //   P2 核心动线（AC1，playwright Edge 通道，沿用 smoke_edit_polish.mjs 套路）：
-//      上传 5336 母版 → parse 数量矩阵 → 3 码短预算求解 → final → 导出 PLT-clean /
+//      样例双端点断言（列表非空 + 取文件字节在案 = 2026-09-29 无样例事故回归锁）
+//      → 上传 5336 母版 → parse 数量矩阵 → 3 码短预算求解 → final → 导出 PLT-clean /
 //      DXF(R12 POLYLINE) / PNG 三格式落盘探针 → 状态保存 .msn 下载 + gunzip 断言；
 //   P3 高级运行专项（AC2-4，冻结 spawn exe --cli 链路）：/api/strategy/start race →
 //      running + run_dir 落临时 OUT_DIR config_runs/web_* + best_frame 出帧 +
@@ -315,6 +316,26 @@ try {
   check('P2a 页面载入（tabbar）+ 会话 sid', !!(await page.evaluate(() => !!document.querySelector('.tabbar')))
     && /^[0-9a-f]{32}$/.test(sid || ''), 'sid=' + (sid || '').slice(0, 8));
   await dismissTour(page);
+
+  // 样例端到端（2026-09-29「exe 无可用样例」事故回归锁）：frozen dist 捆绑
+  // data/ 顶层 .dxf + launcher MS_DATA_DIR 重定向 exe 旁 data/ —— 任一缺失即
+  // 此处红（此前 46 项无一覆盖样例动线，事故静默漏网）。列表非空 + 取回首样例
+  // 字节在案；名字含 #/（）/中文走 encodeURIComponent query（与 SamplePicker 同口径）。
+  const samplesRes = await rawFetch(page, '/api/samples', { cache: 'no-store' });
+  const sampleNames = (samplesRes.body?.samples || []).map((s) => s.name);
+  check('P2a-s1 样例列表非空（data/ 捆绑 + MS_DATA_DIR 重定向）',
+    samplesRes.status === 200 && sampleNames.length >= 1,
+    `status=${samplesRes.status} n=${sampleNames.length}`);
+  if (sampleNames.length >= 1) {
+    const sf = await page.evaluate(async (n) => {
+      const r = await fetch(`/api/samples/file?name=${encodeURIComponent(n)}`);
+      const b = await r.arrayBuffer();
+      return { status: r.status, bytes: b.byteLength };
+    }, sampleNames[0]);
+    check(`P2a-s2 样例取文件 200 且字节在案（${sampleNames[0].slice(0, 16)}…）`,
+      sf.status === 200 && sf.bytes > 1000,
+      `status=${sf.status} bytes=${sf.bytes}`);
+  }
 
   await page.locator('input[type=file]').first().setInputFiles(DXF);
   await page.waitForSelector('.qty-matrix', { timeout: 300_000 });
