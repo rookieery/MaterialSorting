@@ -375,6 +375,61 @@ class TestInfo:
 
 
 # ---------------------------------------------------------------------------
+# list_for_machine（US-011）
+# ---------------------------------------------------------------------------
+
+class TestListForMachine:
+    def test_active_keys_with_plaintext_and_order(self, conn):
+        """有效行入表：行 = info 契约 + key 明文；新→旧。"""
+        old_ct = _mk_count(conn, total=8)
+        old_du = _mk_duration(conn, days=30)
+        _bound_here(conn, old_ct)
+        _bound_here(conn, old_du)
+        repo.update_key(conn, old_ct['id'], used_uses=3)
+        out = service.list_for_machine(conn, machine_guid=GUID)
+        assert [k['key'] for k in out['keys']] == [
+            old_du['key_plaintext'], old_ct['key_plaintext']]   # 新→旧
+        du, ct = out['keys']
+        assert du['type'] == 'duration' and du['status'] == '正在使用'
+        assert du['remaining_days'] == 29                    # 昨日激活 30 天
+        assert ct['type'] == 'count' and ct['remaining_uses'] == 5
+
+    def test_six_state_filter_matrix(self, conn):
+        """仅 active 入表：过期/用完/已合并/未激活滤出；未绑与绑定他机天然不在查询集。"""
+        expired = _mk_duration(conn, days=10)
+        _bound_here(conn, expired)                # 昨日激活 → 今日再改造成已过期
+        start = models.now() - timedelta(days=20)
+        repo.update_key(
+            conn, expired['id'],
+            activated_at=models.format_ts(start),
+            expires_at=models.format_ts(start + timedelta(days=10)))
+        exhausted = _mk_count(conn, total=3)
+        _bound_here(conn, exhausted)
+        repo.update_key(conn, exhausted['id'], used_uses=3)
+        merged = _mk_duration(conn, days=5)
+        _bound_here(conn, merged)
+        repo.update_key(conn, merged['id'], merged_into_id=99999)
+        unactivated = _mk_duration(conn, days=7)  # 绑定未激活（HTTP 不可达，防御）
+        repo.update_key(conn, unactivated['id'], bound_machine_guid=GUID)
+        other = _mk_count(conn, total=5, bound_machine_guid=OTHER,
+                          bound_system_name='OTHER-PC')
+        unbound = _mk_count(conn, total=5)
+        out = service.list_for_machine(conn, machine_guid=GUID)
+        listed = {k['key'] for k in out['keys']}
+        assert listed == set()                    # 上述全部非 active / 非本机
+        assert other['key_plaintext'] not in listed
+        assert unbound['key_plaintext'] not in listed
+
+    def test_readonly_no_accounting(self, conn):
+        row = _mk_count(conn, total=5)
+        _bound_here(conn, row)
+        service.list_for_machine(conn, machine_guid=GUID)
+        assert repo.get_key(conn, row['id'])['used_uses'] == 0
+        assert repo.list_daily_usage(conn, row['id']) == []
+        assert repo.list_ops(conn, row['id']) == []   # 只读不动任何账
+
+
+# ---------------------------------------------------------------------------
 # validate
 # ---------------------------------------------------------------------------
 

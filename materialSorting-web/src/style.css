@@ -2713,8 +2713,7 @@ button.key-entry-btn:hover { background: #3470ac; }
    小一号 —— 区块内动作按钮，非弹窗级主 CTA） */
 .key-save-row { display: flex; gap: 8px; }
 .key-save-row .strategy-text-input { flex: 1; min-width: 0; }
-button.key-save-btn,
-button.key-merge-btn {
+button.key-save-btn {
   flex-shrink: 0;
   padding: 7px 16px;
   font-size: 12.5px;
@@ -2727,10 +2726,8 @@ button.key-merge-btn {
   font-family: inherit;
   transition: background 0.15s, border-color 0.15s;
 }
-button.key-save-btn:hover:not(:disabled),
-button.key-merge-btn:hover:not(:disabled) { background: #27905f; border-color: #27905f; }
-button.key-save-btn:disabled,
-button.key-merge-btn:disabled {
+button.key-save-btn:hover:not(:disabled) { background: #27905f; border-color: #27905f; }
+button.key-save-btn:disabled {
   background: #444; color: #888; border-color: transparent; cursor: default;
 }
 /* 失败红字（save/merge 透传文案 / 属性查询失败）：与 .qty-zero-warn /
@@ -2770,8 +2767,7 @@ button.key-merge-btn:disabled {
 }
 .key-status-badge.ok { background: #2ea06c; color: #fff; }
 .key-status-badge.bad { background: #a34848; color: #fff; }
-/* ② 合并区：按钮右对齐 + 结果明细暗底卡片（每 key 天数 + 共转移合计） */
-.key-merge-actions { display: flex; justify-content: flex-end; }
+/* ② 合并区：结果明细暗底卡片（每 key 天数一行，US-011 表格化后替代旧批量区） */
 .key-merge-result {
   display: flex;
   flex-direction: column;
@@ -2787,10 +2783,72 @@ button.key-merge-btn:disabled {
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
 }
-.key-merge-total {
-  color: #2ea06c;
+/* ② 系统可使用的key 表格（US-011）：四列（名称=明文/类型/剩余/操作），正在
+   启用行高亮（主题绿左边条 + 微底色）+ 图标按钮；名称列窄字体不换行截断 */
+.key-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.key-table th {
+  text-align: left;
+  color: #9aa0ab;
   font-weight: 600;
-  margin-top: 2px;
-  border-top: 1px solid #2c2e35;
-  padding-top: 4px;
+  padding: 4px 8px 5px 4px;
+  border-bottom: 1px solid #34363d;
+  white-space: nowrap;
+}
+.key-table td {
+  padding: 5px 8px 5px 4px;
+  border-bottom: 1px solid #26282e;
+  color: #d6dae2;
+  font-variant-numeric: tabular-nums;
+  vertical-align: middle;
+}
+.key-table-row.active td {
+  background: rgba(46, 160, 108, 0.10);
+  border-bottom-color: #2ea06c;
+}
+.key-table-row.active td:first-child {
+  box-shadow: inset 2px 0 0 #2ea06c;
+}
+.key-table-name {
+  font-family: Consolas, 'Courier New', monospace;
+  letter-spacing: 0.2px;
+  white-space: nowrap;
+}
+.key-table-actions {
+  text-align: right;
+  white-space: nowrap;
+  width: 1%;
+}
+.key-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 24px;
+  margin-left: 4px;
+  background: transparent;
+  border: 1px solid #3a3d45;
+  border-radius: 4px;
+  color: #c7ccd6;
+  cursor: pointer;
+}
+.key-icon-btn:hover:not(:disabled) {
+  background: #3470ac;
+  border-color: #3470ac;
+  color: #fff;
+}
+.key-icon-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+.key-icon {
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  display: block;
 }

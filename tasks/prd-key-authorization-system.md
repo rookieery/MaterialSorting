@@ -122,6 +122,16 @@
   4. 全量 pytest 通过
 - **Priority**: 10
 
+### US-011: 系统可使用的key 表格（启用/合并表格化改版，2026-09-29）
+- **Description**: As a 排料用户, I want 弹窗②区块从批量粘贴 textarea 改为「系统可使用的key」表格（只列本机绑定且有效「正在使用」态的 key；四列 = 名称明文/类型/剩余天数或次数/操作）so that 启用与合并从「手输明文」升级为「行内一键操作」。主要文件：`keyserver/src/keyserver/{repo,service,routes_consumer}.py`（新增消费端第五接口 `POST /api/key/list`）、`materialSorting-server/src/materialsorting/web/routes_key.py`（`GET /api/key/list` 透传）、`materialSorting-web/src/store/keyStore.ts`（`fetchKeyList` + save/merge 成功链式刷新）、`components/ControlPanel/KeyInfoModal.tsx`（②表格化）、`style.css`（`.key-table` 系列）。
+- **Acceptance Criteria**:
+  1. keyserver `POST /api/key/list {machine_guid}` → `{keys:[...]}`：行 = `_info_payload` 契约 + `key` 明文（名称列）；仅 `derive_status == active` 出表（六态过滤单一真相源：过期/用完/已合并/未激活滤出，绑定他机与未绑定不在查询集）；新→旧排序；只读不动账
+  2. MS `GET /api/key/list`：机器级无会话闸门（与 state/save/merge 同族）；keyserver 失败也 200 `{keys:[], error}` 红字降级
+  3. 表格交互：正在启用行**置顶**高亮（绿左边条 + 微底色）+ 启用按钮置灰不可点；启用 = `saveKey(行key)`（已绑本机 → bind 幂等即切换，与手输保存同链路：输入框/属性/表格高亮三处随动）；save/merge 成功 store 内链式 `fetchKeyList`
+  4. 合并按钮仅**时长型非启用行**显示（本机无正在使用 key → 无 target 全行隐藏）；点击 = `mergeKeys([行key])` 单 source，成功一行明细「key 已合并：+N 天」+ 被合并行出表（表格随动刷新），整体失败红字中文透传；旧 textarea 批量合并区块整段拆除（功能面覆盖：旧路径本就要求 source 已绑本机）
+  5. 测试与验证：keyserver pytest（repo `list_keys_by_machine` / service 六态过滤 / routes HTTP）+ MS routes_key 单测 + 前端 vitest（keyStore `fetchKeyList` 契约/畸形行滤出/链式刷新 + 弹窗可见性矩阵/启用/合并/降级）+ `smoke_key_gate.mjs`/`us006_key_modal_verify.mjs` 表格选择器全过；`npm run build` 后 :8010 生产 bundle 含新代码
+- **Priority**: 11
+
 ## 功能需求 (Functional Requirements)
 
 - **FR-1 key 类型**：次数型（`total_uses` 总次数 / `used_uses` 已用）与时长型（`duration_days` 购买天数 / `activated_at` / `expires_at`）。时长型**首次绑定系统时激活**起算（`activated_at=绑定时刻, expires_at=now+N 天`），后台创建不计时。
@@ -130,7 +140,7 @@
 - **FR-4 合并规则**：仅**时长型**、仅**绑定同一系统**的不同 key 可合并；被合并 key 的剩余时长**秒级精确**（`expires_at − now`）转移到当前 key；被合并 key 置 `merged_into_id` 标记「已合并」**保留在表格**（审计可追），不物理删除。
 - **FR-5 校验与扣次**：**扣次唯一锚点 = MS 后端 start 时刻**（前端预检恒 `deduct:false` 只读）；普通/高级/极限每次启动各扣 1 次，高级运行内多 seed/多轮/race 门杀/LNS 不重复扣；预扣不退；原子 SQL 防并发超扣；每次校验通过记 `key_daily_usage` 当日 +1；到期判定用 keyserver 服务器时钟。
 - **FR-6 状态机六态**：正在使用（active）/已过期（expired）/已用完（exhausted）/未绑定（unbound）/未激活（unactivated，绑定即激活默认下不出现，留作计时起点切换桩）/已合并（merged）——表格「属性」列与校验共用 `derive_status` 单一真相源。
-- **FR-7 消费端 Key 属性弹窗**：三区块（当前 key 输入/替换保存、被合并 key 批量添加合并、属性展示）；key **双层持久化** —— 后端 `out/license/key_state.json` 权威（机器级、重启不丢、后端闸门自用）+ 前端 localStorage `ms_key` 镜像（打开即时预填，以后端对账为准）。
+- **FR-7 消费端 Key 属性弹窗**：三区块（当前 key 输入/替换保存、属性展示、系统可使用的key 表格 —— US-011 表格化改版：本机有效 key 行内启用/单行合并，替代旧批量粘贴 textarea）；key **双层持久化** —— 后端 `out/license/key_state.json` 权威（机器级、重启不丢、后端闸门自用）+ 前端 localStorage `ms_key` 镜像（打开即时预填，以后端对账为准）。
 - **FR-8 三入口双闸**：前端点击普通/高级/极限运行先 `POST /api/key/precheck`（不扣），失败弹窗/Toast 中文报错不发起运行；后端在算法真正运行前再向 keyserver `validate deduct=true`（WS start 处 + strategy/extreme `_start_run` 处），失败拒绝运行。
 - **FR-9 双豁免**：样例执行（会话 `doc.source` 命中 `routes_views._sample_dxf_names()` 实时白名单，服务端推导前端零改动；已知边界：用户自传同名文件同被豁免，接受并记录文档）；`/api/machine/*` 六端点族不插闸门（豁免 = 不做，回归测试锁定）。
 - **FR-10 断网 fail-closed**：keyserver 不可达/超时（5s）→ 拒绝运行，报「无法连接授权服务器，请检查网络后重试」；**禁止自动重试**（防 deduct 双扣）；URL 未配置 → 「授权服务器未配置」。

@@ -72,6 +72,18 @@ def test_list_keys_newest_first(conn):
     assert [r['id'] for r in repo.list_keys(conn)] == list(reversed(ids))
 
 
+def test_list_keys_by_machine_filters_and_orders(conn):
+    """US-011：只按 bound_machine_guid 过滤（无状态判定）+ 新→旧；他机/未绑排除。"""
+    mine = [repo.create_key(conn, 'count', total_uses=1)['id'] for _ in range(3)]
+    repo.update_key(conn, mine[1], bound_machine_guid='guid-1', bound_system_name='PC')
+    repo.update_key(conn, mine[2], bound_machine_guid='guid-1', bound_system_name='PC')
+    other = repo.create_key(conn, 'count', total_uses=1)['id']
+    repo.update_key(conn, other, bound_machine_guid='guid-2', bound_system_name='PC')
+    repo.create_key(conn, 'count', total_uses=1)          # 未绑定
+    assert [r['id'] for r in repo.list_keys_by_machine(conn, 'guid-1')] == [mine[2], mine[1]]
+    assert repo.list_keys_by_machine(conn, 'guid-none') == []
+
+
 def test_update_key_whitelist_and_updated_at_refresh(conn):
     row = repo.create_key(conn, 'count', total_uses=10)
     past = datetime(2020, 1, 1)

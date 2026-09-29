@@ -1,10 +1,11 @@
-"""消费端四接口（US-003）：X-Client-Token 鉴权 + service 业务规则装配。
+"""消费端五接口（US-003 四接口 + US-011 list）：X-Client-Token 鉴权 + service 装配。
 
-四接口（业务错误一律 ``{"error": 中文}``，US-004 keygate 透传该字段）：
+五接口（业务错误一律 ``{"error": 中文}``，US-004 keygate 透传该字段）：
   - ``POST /api/key/bind``     ``{key, machine_guid, system_name}``
   - ``POST /api/key/merge``    ``{target_key, source_keys: [...], machine_guid}``
   - ``POST /api/key/info``     ``{key, machine_guid}``
   - ``POST /api/key/validate`` ``{key, machine_guid, deduct}``
+  - ``POST /api/key/list``     ``{machine_guid}`` → ``{keys: [...]}``（US-011）
 
 鉴权姿态镜像管理端（routes_admin，frp 修正版）：``MS_KEY_CLIENT_TOKEN`` 未设置
 且无 ``MS_KEY_DEV=1`` → 消费端点族整体 403（**无 loopback 放行**——frpc 与
@@ -119,6 +120,21 @@ def validate_key(payload: dict = Body(...), _: None = Depends(require_client_tok
     conn = db.ensure_schema(db.connect())
     try:
         return service.validate(conn, key=key, machine_guid=machine_guid, deduct=deduct)
+    finally:
+        conn.close()
+
+
+@router.post('/list')
+def list_keys_for_machine(payload: dict = Body(...), _: None = Depends(require_client_token)) -> dict:
+    """本机可用 key 列表（US-011）：``{machine_guid}`` → ``{keys: [...]}``。
+
+    行 = info 契约 + ``key`` 明文；仅「正在使用」态（六态过滤在
+    service.list_for_machine 经 derive_status 单一真相源）；只读不动账。
+    """
+    machine_guid = _require_str(payload, 'machine_guid')
+    conn = db.ensure_schema(db.connect())
+    try:
+        return service.list_for_machine(conn, machine_guid=machine_guid)
     finally:
         conn.close()
 

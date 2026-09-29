@@ -86,6 +86,20 @@ def list_keys(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     return [dict(r) for r in cur.fetchall()]
 
 
+def list_keys_by_machine(
+    conn: sqlite3.Connection, machine_guid: str,
+) -> list[dict[str, Any]]:
+    """按绑定机器取 key 行（新→旧；US-011 消费端「系统可使用的key」表格数据源）。
+
+    只按 ``bound_machine_guid`` 过滤，**不含状态判定**（六态过滤在
+    ``service.list_for_machine`` 经 ``derive_status`` 单一真相源做）。
+    """
+    cur = conn.execute(
+        'SELECT * FROM keys WHERE bound_machine_guid = ? ORDER BY id DESC',
+        (machine_guid,))
+    return [dict(r) for r in cur.fetchall()]
+
+
 def update_key(
     conn: sqlite3.Connection, key_id: int, now_dt: datetime | None = None, **fields: Any
 ) -> dict[str, Any] | None:

@@ -1,10 +1,12 @@
 """US-005 三入口后端闸门与双豁免 + /api/key/* 四端点测试。
 
 覆盖（prd-key-authorization-system US-005 验收标准）：
-1. 四端点契约（TestClient + keyserver 桩 _StubServer 真实 HTTP 往返）：state
+1. 五端点契约（TestClient + keyserver 桩 _StubServer 真实 HTTP 往返）：state
    （未绑定三 null / info 透传 / keyserver 失败也 200 带 error / **key 已删
    404 → 自动解绑清盘 + 解释文案 / 5xx 瞬态不解绑** / 无会话闸门
-   —— 随机 X-Session-Id 不拦）、save（形状 400 / bind 成功才落盘 / bind 失败
+   —— 随机 X-Session-Id 不拦）、list（US-011：透传 + machine_guid 载荷 /
+   keyserver 不可达也 200 keys 置空 + error / 未绑定本地 key 不影响列表）、
+   save（形状 400 / bind 成功才落盘 / bind 失败
    不覆盖旧 key / 载荷 system_name+machine_guid）、merge（无本地 key 400 /
    source_keys 形状 400 / target=本地 key / keyserver 原样透传）、precheck
    （ok/message 契约 / validate deduct=False / 样例与 off 豁免）；
@@ -280,6 +282,60 @@ def test_key_state_no_session_gate(key_on):
     r = _client().get('/api/key/state', headers={'X-Session-Id': 'nosuchsid123'})
     assert r.status_code == 200
     assert r.json()['key'] is None
+
+
+# ------------------------------------------------------------- GET /api/key/list
+
+_LIST_OK = {'keys': [
+    {'key': 'MS-DU00-KEY00-0000X', 'type': 'duration', 'status': '正在使用',
+     'remaining_days': 29, 'activated_at': '2026-09-28 10:00:00',
+     'expires_at': '2026-10-28 10:00:00', 'bound_system_name': '测试机',
+     'remark': None},
+    {'key': 'MS-CT00-KEY00-0000X', 'type': 'count', 'status': '正在使用',
+     'total_uses': 10, 'used_uses': 2, 'remaining_uses': 8,
+     'bound_system_name': '测试机', 'remark': None},
+]}
+
+
+def test_key_list_passthrough(key_on):
+    """keyserver list 原样透传；载荷 {machine_guid} 打到 /api/key/list。"""
+    stub = _StubServer([(200, _LIST_OK)]).start()
+    try:
+        _set_url(stub.url)
+        r = _client().get('/api/key/list')
+    finally:
+        os.environ.pop('MS_KEY_SERVER_URL', None)
+        stub.stop()
+    assert r.status_code == 200
+    assert r.json() == {'keys': _LIST_OK['keys'], 'error': None}
+    assert stub.calls[0]['path'] == '/api/key/list'
+    posted = stub.calls[0]['body']
+    assert isinstance(posted['machine_guid'], str) and posted['machine_guid']
+
+
+def test_key_list_keyserver_down_still_200_with_error(key_on):
+    """keyserver 不可达 → 200 + keys 置空 + error 文案（表格红字降级，① 不受影响）。"""
+    _set_url('http://127.0.0.1:1')
+    try:
+        r = _client().get('/api/key/list')
+    finally:
+        os.environ.pop('MS_KEY_SERVER_URL', None)
+    assert r.status_code == 200
+    assert r.json() == {'keys': [], 'error': keygate.MSG_UNREACHABLE}
+
+
+def test_key_list_no_local_key_still_lists(key_on):
+    """列表与本地 key_state 无关（机器视角）：未绑定也照常返回本机绑定行。"""
+    stub = _StubServer([(200, _LIST_OK)]).start()
+    try:
+        _set_url(stub.url)
+        r = _client().get('/api/key/list')
+    finally:
+        os.environ.pop('MS_KEY_SERVER_URL', None)
+        stub.stop()
+    assert r.status_code == 200
+    assert len(r.json()['keys']) == 2
+    assert keygate.load_key_state() == {}            # 本地未绑定不影响列表
 
 
 # ------------------------------------------------------------- POST /api/key/save

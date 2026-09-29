@@ -1,4 +1,4 @@
-"""消费端业务规则（US-003）：bind / merge / info / validate。
+"""消费端业务规则（US-003）：bind / merge / info / validate + list（US-011）。
 
 路由层（routes_consumer）只做入参形状校验与连接生命周期；本模块持有全部业务
 规则 —— 六态判定一律经 ``models.derive_status`` 单一真相源，到期/记账时间一律
@@ -35,6 +35,7 @@ from .errors import ApiError
 from .models import (
     KEY_TYPE_COUNT,
     KEY_TYPE_DURATION,
+    STATUS_ACTIVE,
     STATUS_EXHAUSTED,
     STATUS_EXPIRED,
     STATUS_MERGED,
@@ -232,6 +233,29 @@ def info(conn, *, key: str, machine_guid: str) -> dict[str, Any]:
     if row['bound_machine_guid'] is not None and row['bound_machine_guid'] != machine_guid:
         raise ApiError(403, MSG_NOT_BOUND_THIS)
     return _info_payload(row, now())
+
+
+# ---------------------------------------------------------------------------
+# list（按机器）
+# ---------------------------------------------------------------------------
+
+def list_for_machine(conn, *, machine_guid: str) -> dict[str, Any]:
+    """本机绑定的可用 key 列表（US-011）：仅供消费端「系统可使用的key」表格。
+
+    行 = ``_info_payload`` 契约 + ``key``（明文，表格名称列）；**只保留
+    ``derive_status == active``（正在使用）**——已过期/已用完/已合并/绑定他机
+    的行不出（口径定案 2026-09-29：表格只展示有效 key）。只读不动账（无
+    daily_usage / op_log 写入）；排序新→旧（repo.list_keys_by_machine）。
+    """
+    dt = now()
+    keys = []
+    for row in repo.list_keys_by_machine(conn, machine_guid):
+        if derive_status(row, dt) != STATUS_ACTIVE:
+            continue
+        payload = _info_payload(row, dt)
+        payload['key'] = row['key_plaintext']
+        keys.append(payload)
+    return {'keys': keys}
 
 
 # ---------------------------------------------------------------------------

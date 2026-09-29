@@ -198,8 +198,8 @@ try {
   check('A 首页引用生产 bundle', Boolean(m), m ? m[1] : html.slice(0, 120));
   const bundle = m ? await (await fetch(MS + m[1])).text() : '';
   check('A bundle 含三入口预检（/api/key/precheck）', bundle.includes('/api/key/precheck'));
-  check('A bundle 含 key 属性弹窗（key-info-*）',
-    bundle.includes('key-info-overlay') && bundle.includes('key-info-merge-input'));
+  check('A bundle 含 key 属性弹窗（key-info-* + US-011 表格）',
+    bundle.includes('key-info-overlay') && bundle.includes('key-info-table'));
   check('A bundle 不含 keyserver 端点/URL（全链路无跨域，FR-11）',
     !bundle.includes('MS_KEY_SERVER_URL') && !bundle.includes('/api/key/bind') && !bundle.includes('/api/key/validate'));
 
@@ -420,16 +420,38 @@ try {
   const dBadge = await page.locator('[data-testid="key-attr-status"] .key-status-badge').innerText();
   check('E 时长 key 正在使用徽标', dBadge === '正在使用', dBadge);
   const expiresBefore = await page.locator('[data-testid="key-attr-expires"]').innerText();
-  // 批量合并两 source（含空行/尾随空白 → strip 韧性）
-  await page.locator('[data-testid="key-info-merge-input"]')
-    .fill(SRC_A + '\n' + SRC_B + '\n\n  ');
-  await page.locator('[data-testid="key-info-merge-btn"]').click();
-  await page.locator('[data-testid="key-info-merge-total"]').waitFor({ timeout: 8000 });
-  const rows = await page.locator('[data-testid="key-info-merge-row"]').allInnerTexts();
-  check('E 批量合并明细两行（每 key 转移天数）', rows.length === 2, JSON.stringify(rows));
-  check('E 明细含 source key', rows[0].includes(SRC_A) && rows[1].includes(SRC_B), rows.join(' ; '));
-  const eTotal = await page.locator('[data-testid="key-info-merge-total"]').innerText();
-  check('E 共转移 ~3+4 天（秒级转移四舍五入）', /共转移\s*[67]/.test(eTotal), eTotal);
+  // 系统可使用的key 表格（US-011，替代旧批量粘贴）：DUR 置顶高亮 + 两 source 行合并
+  await page.locator('[data-testid="key-info-table"]').waitFor({ timeout: 8000 });
+  const rowOf = (k) => page.locator(`[data-testid="key-info-row"][data-key="${k}"]`);
+  await rowOf(DUR_KEY).waitFor({ timeout: 8000 });
+  await rowOf(SRC_A).waitFor({ timeout: 8000 });
+  await rowOf(SRC_B).waitFor({ timeout: 8000 });
+  check('E 表格三行（target + 两 source）',
+    (await page.locator('[data-testid="key-info-row"]').count()) === 3);
+  const topRow = page.locator('[data-testid="key-info-row"]').first();
+  check('E 正在启用行置顶高亮',
+    (await topRow.getAttribute('data-key')) === DUR_KEY
+      && (await topRow.getAttribute('data-active')) === 'true'
+      && ((await topRow.getAttribute('class')) ?? '').includes('active'),
+    await topRow.getAttribute('data-key'));
+  check('E 启用行按钮置灰', await topRow.locator('[data-testid="key-info-enable"]').isDisabled());
+  check('E 两 source 行各一枚合并按钮（时长型非启用行）',
+    (await page.locator('[data-testid="key-info-merge-one"]').count()) === 2);
+  // 表格合并（US-011：单 source 并入正在使用的key，逐行点）
+  await rowOf(SRC_A).locator('[data-testid="key-info-merge-one"]').click();
+  const detailA = page.locator('[data-testid="key-info-merge-row"]').first();
+  await detailA.waitFor({ timeout: 8000 });
+  const aText = await detailA.innerText();
+  check('E 合并明细一行（key + 转移天数）', aText.includes(SRC_A) && /已合并：\+\d/.test(aText), aText);
+  await rowOf(SRC_A).waitFor({ state: 'detached', timeout: 8000 });
+  check('E 被合并行出表（表格随动刷新）',
+    (await page.locator('[data-testid="key-info-row"]').count()) === 2);
+  await rowOf(SRC_B).locator('[data-testid="key-info-merge-one"]').click();
+  const detailB = page.locator('[data-testid="key-info-merge-row"]').first();
+  await detailB.waitFor({ timeout: 8000 });
+  const bText = await detailB.innerText();
+  check('E 第二 source 明细覆写（仍单行）', bText.includes(SRC_B) && /已合并：\+\d/.test(bText), bText);
+  await rowOf(SRC_B).waitFor({ state: 'detached', timeout: 8000 });
   const expiresAfter = await page.locator('[data-testid="key-attr-expires"]').innerText();
   check('E 截止时间随合并延长', expiresAfter !== expiresBefore, expiresBefore + ' → ' + expiresAfter);
   await page.screenshot({ path: OUT + '/05-merge-result.png' });
@@ -456,6 +478,21 @@ try {
   const mirror = await page.evaluate(() => localStorage.getItem('ms_key'));
   check('F localStorage ms_key 镜像双写', mirror === COUNT_KEY, String(mirror));
   await page.screenshot({ path: OUT + '/06-count-attrs.png' });
+  // 表格「启用」切换（US-011：点行内启用 = 换绑当前 key，与手输保存同链路）
+  const durRow = page.locator(`[data-testid="key-info-row"][data-key="${DUR_KEY}"]`);
+  await durRow.waitFor({ timeout: 8000 });   // 时长 key 已绑本机（E 相位）→ 在表
+  await durRow.locator('[data-testid="key-info-enable"]').click();
+  // 行高亮来自链式 fetchKeyList —— 属性过滤定位器等待刷新落定
+  await page.locator(`[data-testid="key-info-row"][data-key="${DUR_KEY}"][data-active="true"]`)
+    .waitFor({ timeout: 8000 });
+  await page.locator('[data-testid="key-attr-days"]').waitFor({ timeout: 8000 });
+  const f2Input = await page.locator('[data-testid="key-info-key-input"]').inputValue();
+  check('F 表格启用切换到时长 key（输入框对齐 + 行高亮随动）', f2Input === DUR_KEY, f2Input);
+  const cntRow = page.locator(`[data-testid="key-info-row"][data-key="${COUNT_KEY}"]`);
+  await cntRow.locator('[data-testid="key-info-enable"]').click();   // 切回次数 key（G 运行用）
+  await page.locator('[data-testid="key-attr-total"]').waitFor({ timeout: 8000 });
+  const f3Input = await page.locator('[data-testid="key-info-key-input"]').inputValue();
+  check('F 切回次数 key（运行闸门用）', f3Input === COUNT_KEY, f3Input);
   await page.keyboard.press('Escape');
   await page.locator('[data-testid="key-info-overlay"]').waitFor({ state: 'detached', timeout: 8000 });
 

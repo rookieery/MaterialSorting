@@ -1,9 +1,12 @@
-"""Key 授权管理端四端点（prd-key-authorization-system US-005）。
+"""Key 授权管理端五端点（prd-key-authorization-system US-005 + US-011 list）。
 
 消费端（本系统）对 keygate 的 HTTP 化封装 —— 三入口闸门（/ws/solve 与
 /api/strategy|extreme/start 直接调 ``keygate.ensure_run_allowed``）之外，
-用户自助管理本机授权的四个端点（US-006 前端「系统key」弹窗数据源）：
+用户自助管理本机授权的五个端点（US-006 前端「系统key」弹窗数据源）：
 
+  - ``GET  /api/key/list``：本机可用 key 列表（US-011 弹窗表格数据源）。
+    keyserver ``/api/key/list`` 只读透传（仅「正在使用」态 + 明文/类型/剩余）；
+    keyserver 失败也 200（``keys`` 置空 + ``error`` 文案，镜像 state 容错）。
   - ``GET  /api/key/state``：本地 key + keyserver ``/api/key/info`` 只读现查。
     **keyserver 查询失败也 200**，失败文案进 ``error`` 字段（弹窗仍能展示本地
     key + 引导重试）；未绑定 → ``{key:null, info:null, error:null}``。key 已在
@@ -113,6 +116,20 @@ async def get_key_state() -> dict:
     return {'key': key, 'info': info, 'error': None}
 
 
+async def get_key_list() -> dict:
+    """本机可用 key 列表（US-011 弹窗「系统可使用的key」表格数据源）。
+
+    keyserver ``/api/key/list``（仅「正在使用」态 + 明文/类型/剩余）原样透传；
+    **keyserver 失败也 200**（镜像 :func:`get_key_state` 容错模式）：``keys``
+    置空 + 失败文案进 ``error``（表格区红字，① 输入/保存不受影响）。
+    """
+    try:
+        keys = await asyncio.to_thread(_post_keyserver, '/api/key/list', {})
+    except keygate.KeyGateError as exc:
+        return {'keys': [], 'error': str(exc)}
+    return {'keys': keys.get('keys', []), 'error': None}
+
+
 async def post_key_save(request: Request):
     """``{key}`` → bind 成功才落 key_state.json（bind 失败不覆盖旧 key）。"""
     payload, err = await _json_body(request)
@@ -192,8 +209,9 @@ async def post_key_precheck(request: Request) -> dict:
 
 
 def register_key_routes(app) -> None:
-    """四端点挂到 FastAPI app（server.py 文件尾 checkpoint 注册之后调用一次）。"""
+    """五端点挂到 FastAPI app（server.py 文件尾 checkpoint 注册之后调用一次）。"""
     app.get('/api/key/state')(get_key_state)
+    app.get('/api/key/list')(get_key_list)
     app.post('/api/key/save')(post_key_save)
     app.post('/api/key/merge')(post_key_merge)
     app.post('/api/key/precheck')(post_key_precheck)

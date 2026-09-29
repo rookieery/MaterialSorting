@@ -59,6 +59,7 @@ def test_403_when_token_not_configured_family_wide(client, monkeypatch):
         ('/api/key/info', {'key': 'MS-AAAAA-BBBBB-CCCCC', 'machine_guid': GUID}),
         ('/api/key/validate', {'key': 'MS-AAAAA-BBBBB-CCCCC', 'machine_guid': GUID,
                                'deduct': True}),
+        ('/api/key/list', {'machine_guid': GUID}),
     ]
     for url, body in cases:
         resp = client.post(url, headers=CLIENT, json=body)
@@ -249,6 +250,47 @@ def test_consumer_error_bodies_use_error_key(client, conn):
     ):
         assert 'detail' not in resp.json()
         assert resp.json()['error']
+
+
+# ---------------------------------------------------------------------------
+# list（US-011：本机可用 key 列表）
+# ---------------------------------------------------------------------------
+
+def test_list_over_http_active_only_with_plaintext(client, conn):
+    """绑定本机的有效 key 入表（含明文/类型/剩余）；失效行滤出。"""
+    ct = _mk_count(conn, total=6)
+    _bind_here(conn, ct['id'])
+    du = repo.create_key(conn, 'duration', duration_days=30)
+    start = models.now() - timedelta(days=1)
+    repo.update_key(
+        conn, du['id'], bound_machine_guid=GUID, bound_system_name='SYS-A',
+        activated_at=models.format_ts(start),
+        expires_at=models.format_ts(start + timedelta(days=30)))
+    expired = repo.create_key(conn, 'duration', duration_days=10)
+    repo.update_key(
+        conn, expired['id'], bound_machine_guid=GUID, bound_system_name='SYS-A',
+        activated_at=models.format_ts(models.now() - timedelta(days=20)),
+        expires_at=models.format_ts(models.now() - timedelta(days=10)))
+    resp = client.post('/api/key/list', headers=CLIENT, json={'machine_guid': GUID})
+    assert resp.status_code == 200
+    keys = resp.json()['keys']
+    assert [k['key'] for k in keys] == [du['key_plaintext'], ct['key_plaintext']]
+    assert keys[0]['type'] == 'duration' and keys[0]['remaining_days'] == 29
+    assert keys[1]['type'] == 'count' and keys[1]['remaining_uses'] == 6
+    assert all(k['status'] == '正在使用' for k in keys)
+
+
+def test_list_over_http_empty_for_unknown_machine(client, conn):
+    resp = client.post('/api/key/list', headers=CLIENT,
+                       json={'machine_guid': 'guid-nobody'})
+    assert resp.status_code == 200
+    assert resp.json() == {'keys': []}
+
+
+def test_list_missing_machine_guid_400(client):
+    resp = client.post('/api/key/list', headers=CLIENT, json={})
+    assert resp.status_code == 400
+    assert resp.json()['error'] == 'machine_guid 不能为空'
 
 
 # ---------------------------------------------------------------------------

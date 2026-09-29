@@ -1,5 +1,5 @@
-// key 授权 US-006 KeyInfoModal 组件测试：
-//   1. 未绑定态：空输入 + 引导文案（placeholder / 属性区空态提示）
+// key 授权 US-006 KeyInfoModal 组件测试（US-011 ② 区块表格化改版）：
+//   1. 未绑定态：空输入 + 引导文案（placeholder / 属性区空态提示 / 表格空态）
 //   2. localStorage ms_key 即时预填（不等网络）→ GET /api/key/state 对账以后端
 //      为准（输入框随 store.key 更新，用户未编辑不被覆盖）
 //   3. 属性展示：次数型 总数/已用/剩余 + 徽标；时长型 生效/截止/剩余天数 +
@@ -7,8 +7,11 @@
 //      key 已删除自动解绑（key:null + error）→ 未绑定态 + 解释红字
 //   4. ① 保存：POST /api/key/save 失败 400 {error} 中文红字透传 + 输入框回退
 //      实际绑定 key（与属性区恒同 key）；成功后属性更新
-//   5. ② 合并：textarea 每行一个（strip + 空行过滤）→ POST /api/key/merge →
-//      明细（每 key +N 天）+ 共转移；整体失败红字（无 key 指路文案）
+//   5. ② 系统可使用的key 表格（US-011）：GET /api/key/list 渲染四列（名称=明文/
+//      类型/剩余天|次/操作图标）；正在启用行置顶高亮 + 启用置灰；合并按钮可见
+//      性矩阵（仅时长型非启用行 / 无正在使用 key 全隐藏）；点启用 = save(行key)
+//      + 输入框对齐；点合并 = merge 单 source + 一行明细；失败红字；list error
+//      红字降级
 //   6. ESC / 遮罩 / ✕ 只关弹窗（ExportInfoModal 同款骨架）
 //   7. 单例互斥：openModal 覆写后本弹窗卸载（controlPanelStore 单字段）
 //
@@ -34,6 +37,7 @@ let root: Root | null = null;
 let fetchSpy: MockInstance<(...args: unknown[]) => Promise<Response>> | null = null;
 
 let statePayload: unknown = { key: null, info: null, error: null };
+let listPayload: unknown = { keys: [], error: null };
 let saveStatus = 200;
 let savePayload: unknown = { saved: true, key: 'MS-SAVE', info: null };
 let saveErrorText = 'key 不存在：请检查输入是否正确';
@@ -71,9 +75,23 @@ const MERGE_OK = {
   },
   sources: [
     { key: 'MS-A', transferred_days: 10.5 },
-    { key: 'MS-B', transferred_days: 4.5 },
   ],
-  total_transferred_days: 15,
+  total_transferred_days: 10.5,
+};
+
+/** ② 表格夹具（backend 新→旧序）：正在启用的 MS-TARGET 在末位 → 渲染时应置顶。 */
+const LIST_ROWS = {
+  keys: [
+    { key: 'MS-COUNT-2', type: 'count', status: '正在使用', bound_system_name: 'PC',
+      remark: null, total_uses: 30, used_uses: 12, remaining_uses: 18 },
+    { key: 'MS-DUR-NEW', type: 'duration', status: '正在使用', bound_system_name: 'PC',
+      remark: null, activated_at: '2026-09-28 10:00:00',
+      expires_at: '2026-10-28 10:00:00', remaining_days: 29 },
+    { key: 'MS-TARGET', type: 'duration', status: '正在使用', bound_system_name: 'PC',
+      remark: null, activated_at: '2026-09-01 10:00:00',
+      expires_at: '2026-10-01 10:00:00', remaining_days: 2 },
+  ],
+  error: null,
 };
 
 function json(obj: unknown, status = 200): Response {
@@ -86,6 +104,7 @@ beforeEach(() => {
   markSessionProbedForTest();
   useControlPanelStore.getState().closeModal();
   statePayload = { key: null, info: null, error: null };
+  listPayload = { keys: [], error: null };
   saveStatus = 200;
   savePayload = { saved: true, key: 'MS-SAVE', info: null };
   saveErrorText = 'key 不存在：请检查输入是否正确';
@@ -101,6 +120,9 @@ beforeEach(() => {
     const url = String(input);
     if (url.includes('/api/key/state')) {
       return Promise.resolve(json(statePayload));
+    }
+    if (url.includes('/api/key/list')) {
+      return Promise.resolve(json(listPayload));
     }
     if (url.includes('/api/key/save')) {
       saveBodies.push(init?.body ? JSON.parse(String(init.body)) : null);
@@ -185,20 +207,20 @@ describe('KeyInfoModal 未绑定态（默认）', () => {
     expect(keyInput().placeholder).toContain('输入授权 key');
     expect(modal().querySelector('[data-testid="key-info-empty-hint"]')!.textContent)
       .toContain('尚未绑定授权 key');
-    // 三区块齐备：正在使用的key / 合并 / 属性
+    // 三区块齐备：正在使用的key / 系统可使用的key 表格 / 属性
     expect(modal().querySelector('[data-testid="key-info-current"]')).not.toBeNull();
-    expect(modal().querySelector('[data-testid="key-info-merge"]')).not.toBeNull();
+    expect(modal().querySelector('[data-testid="key-info-list"]')).not.toBeNull();
     expect(modal().querySelector('[data-testid="key-info-attrs"]')).not.toBeNull();
   });
 
-  it('保存按钮空 key 置灰；合并按钮空 textarea 置灰', async () => {
+  it('保存按钮空 key 置灰；表格空态引导（本机无可用 key）', async () => {
     renderModal();
     openModal();
     await flush();
     expect(modal().querySelector<HTMLButtonElement>('[data-testid="key-info-save"]')!.disabled)
       .toBe(true);
-    expect(modal().querySelector<HTMLButtonElement>('[data-testid="key-info-merge-btn"]')!.disabled)
-      .toBe(true);
+    expect(modal().querySelector('[data-testid="key-info-list-empty"]')!.textContent)
+      .toContain('暂无绑定到本机的可用 key');
   });
 });
 
@@ -345,50 +367,110 @@ describe('KeyInfoModal ① 保存（POST /api/key/save）', () => {
   });
 });
 
-describe('KeyInfoModal ② 合并（POST /api/key/merge）', () => {
-  it('textarea 每行一个（strip + 空行过滤）→ 明细每 key +N 天 + 共转移', async () => {
+describe('KeyInfoModal ② 系统可使用的key 表格（US-011）', () => {
+  it('四列渲染 + 正在启用行置顶高亮置灰 + 合并按钮可见性矩阵', async () => {
     statePayload = { key: 'MS-TARGET', info: DURATION_INFO, error: null };
+    listPayload = LIST_ROWS;
     renderModal();
     openModal();
     await flush();
-    setInputValue(
-      modal().querySelector<HTMLTextAreaElement>('[data-testid="key-info-merge-input"]')!,
-      ' MS-A \nMS-B\n\n',
-    );
+    const rows = modal().querySelectorAll('[data-testid="key-info-row"]');
+    expect(rows).toHaveLength(3);
+    // 正在启用行置顶（fixture 末位 → 渲染首位）+ 高亮 + 启用置灰 + 无合并按钮
+    expect(rows[0].getAttribute('data-key')).toBe('MS-TARGET');
+    expect(rows[0].getAttribute('data-active')).toBe('true');
+    expect(rows[0].className).toContain('active');
+    expect(rows[0].querySelector<HTMLButtonElement>('[data-testid="key-info-enable"]')!.disabled)
+      .toBe(true);
+    expect(rows[0].querySelector('[data-testid="key-info-merge-one"]')).toBeNull();
+    // 次数型非启用行：名称/类型/剩余 + 启用可点 + 无合并按钮（仅时长型）
+    const countCells = rows[1].querySelectorAll('td');
+    expect(rows[1].getAttribute('data-key')).toBe('MS-COUNT-2');
+    expect(countCells[0].textContent).toBe('MS-COUNT-2');
+    expect(countCells[1].textContent).toBe('次数型');
+    expect(countCells[2].textContent).toBe('18 次');
+    expect(rows[1].querySelector<HTMLButtonElement>('[data-testid="key-info-enable"]')!.disabled)
+      .toBe(false);
+    expect(rows[1].querySelector('[data-testid="key-info-merge-one"]')).toBeNull();
+    // 时长型非启用行：剩余天数 + 合并按钮在
+    expect(rows[2].getAttribute('data-key')).toBe('MS-DUR-NEW');
+    expect(rows[2].querySelectorAll('td')[2].textContent).toBe('29 天');
+    expect(rows[2].querySelector('[data-testid="key-info-merge-one"]')).not.toBeNull();
+  });
+
+  it('点启用 → save(行key)（bind 幂等切换）+ 输入框对齐新 key', async () => {
+    statePayload = { key: 'MS-TARGET', info: DURATION_INFO, error: null };
+    listPayload = LIST_ROWS;
+    savePayload = { saved: true, key: 'MS-DUR-NEW', info: null };
+    renderModal();
+    openModal();
+    await flush();
     await act(async () => {
-      modal().querySelector<HTMLButtonElement>('[data-testid="key-info-merge-btn"]')!.click();
+      modal().querySelectorAll<HTMLButtonElement>('[data-testid="key-info-enable"]')[2].click();
       await Promise.resolve();
     });
     await flush();
-    expect(mergeBodies).toEqual([{ source_keys: ['MS-A', 'MS-B'] }]);
-    const rows = modal().querySelectorAll('[data-testid="key-info-merge-row"]');
-    expect(rows).toHaveLength(2);
-    expect(rows[0].textContent).toBe('MS-A：+10.5 天');
-    expect(rows[1].textContent).toBe('MS-B：+4.5 天');
-    expect(modal().querySelector('[data-testid="key-info-merge-total"]')!.textContent)
-      .toBe('共转移 15 天');
+    expect(saveBodies).toEqual([{ key: 'MS-DUR-NEW' }]);
+    expect(keyInput().value).toBe('MS-DUR-NEW'); // 与 ① 手输保存同一落定口径
+  });
+
+  it('点合并 → merge 单 source → 一行明细（无合计行）；target 新 info 上屏', async () => {
+    statePayload = { key: 'MS-TARGET', info: DURATION_INFO, error: null };
+    listPayload = LIST_ROWS;
+    renderModal();
+    openModal();
+    await flush();
+    await act(async () => {
+      modal().querySelector<HTMLButtonElement>('[data-testid="key-info-merge-one"]')!.click();
+      await Promise.resolve();
+    });
+    await flush();
+    expect(mergeBodies).toEqual([{ source_keys: ['MS-DUR-NEW'] }]);
+    const detailRows = modal().querySelectorAll('[data-testid="key-info-merge-row"]');
+    expect(detailRows).toHaveLength(1);
+    expect(detailRows[0].textContent).toBe('MS-A 已合并：+10.5 天');
+    expect(modal().querySelector('[data-testid="key-info-merge-total"]')).toBeNull();
     // target 新 info 即刻上屏（新截止 2026-11-02）
     expect(attrText('key-attr-expires')).toContain('2026-11-02 10:00:00');
   });
 
-  it('整体失败（无 key 指路文案）→ 红字，无明细', async () => {
-    statePayload = { key: null, info: null, error: null };
+  it('合并整体失败（无 key 指路文案）→ 红字，无明细', async () => {
+    statePayload = { key: 'MS-TARGET', info: DURATION_INFO, error: null };
+    listPayload = LIST_ROWS;
     mergeStatus = 400;
     renderModal();
     openModal();
     await flush();
-    setInputValue(
-      modal().querySelector<HTMLTextAreaElement>('[data-testid="key-info-merge-input"]')!,
-      'MS-A',
-    );
     await act(async () => {
-      modal().querySelector<HTMLButtonElement>('[data-testid="key-info-merge-btn"]')!.click();
+      modal().querySelector<HTMLButtonElement>('[data-testid="key-info-merge-one"]')!.click();
       await Promise.resolve();
     });
     await flush();
     expect(modal().querySelector('[data-testid="key-info-merge-error"]')!.textContent)
       .toBe('未绑定授权 key：请在「系统key」中输入并保存');
     expect(modal().querySelector('[data-testid="key-info-merge-result"]')).toBeNull();
+  });
+
+  it('本机无正在使用 key（本地未绑定）→ 全行无合并按钮（无 target），启用可用', async () => {
+    statePayload = { key: null, info: null, error: null };
+    listPayload = LIST_ROWS;
+    renderModal();
+    openModal();
+    await flush();
+    expect(modal().querySelectorAll('[data-testid="key-info-row"]')).toHaveLength(3);
+    expect(modal().querySelectorAll('[data-testid="key-info-merge-one"]')).toHaveLength(0);
+    expect(modal().querySelectorAll<HTMLButtonElement>('[data-testid="key-info-enable"]')[0].disabled)
+      .toBe(false);
+  });
+
+  it('list 查询失败（keyserver 断网）→ 表格区红字降级', async () => {
+    listPayload = { keys: [], error: '无法连接授权服务器，请检查网络后重试' };
+    renderModal();
+    openModal();
+    await flush();
+    expect(modal().querySelector('[data-testid="key-info-list-error"]')!.textContent)
+      .toContain('无法连接授权服务器');
+    expect(modal().querySelector('[data-testid="key-info-table"]')).toBeNull();
   });
 });
 

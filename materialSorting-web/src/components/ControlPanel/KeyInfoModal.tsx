@@ -1,12 +1,18 @@
-// KeyInfoModal ——「系统key」弹窗（prd-key-authorization-system US-006）。
+// KeyInfoModal ——「系统key」弹窗（prd-key-authorization-system US-006 + US-011）。
 //
-// 三区块（数据源 = keyStore → 后端 /api/key/state|save|merge，见 routes_key.py）：
+// 三区块（数据源 = keyStore → 后端 /api/key/state|list|save|merge，见 routes_key.py）：
 //   ① 正在使用的key 输入/替换 + 保存 —— POST /api/key/save（bind 成功才落盘），
 //     失败中文红字透传（如「key 不存在：请检查输入是否正确」）；保存落定后
 //     输入框对齐实际生效 key（失败回退旧 key）—— 输入框与属性区恒同 key；
-//   ② 被合并 key 批量添加 —— textarea 每行一个 key + 合并按钮
-//     （POST /api/key/merge，时长型 source 剩余时长秒级转移到正在使用的key）；
-//     成功明细 = 每个 key 转移天数 + 共转移；整体失败红字（无 key 指路等）；
+//   ② 系统可使用的key 表格（US-011，替代旧 textarea 批量粘贴）—— GET
+//     /api/key/list 本机绑定且「正在使用」态的 key：名称=明文 / 类型 / 剩余
+//     （天数或次数）/ 操作列两枚图标按钮：
+//       · 启用（电源图标）= saveKey(行key)（已绑本机 → bind 幂等即切换）；
+//         正在启用的行高亮 + 按钮置灰不可点；
+//       · 合并（并入箭头图标，仅时长型且非正在启用的行显示）= mergeKeys([行key])
+//         并入正在使用的key（本机无正在使用 key 时不显示 —— 无 target）；
+//     合并成功 = 表格随动刷新（store 链式 fetchKeyList）+ 一行明细；整体失败
+//     红字（无 key 指路等）；
 //   ③ 属性展示 —— 状态徽标（六态中文标签）+ 次数型 总数/已用/剩余 或
 //     时长型 生效/截止/剩余天数（keyserver _info_payload 契约，前端零公式）。
 //
@@ -53,6 +59,27 @@ function badgeClass(status: string): string {
   return 'key-status-badge idle';
 }
 
+/** 启用图标（电源符号，操作列用）—— 内联 SVG，项目无图标库依赖。 */
+function IconPower(): JSX.Element {
+  return (
+    <svg className="key-icon" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+      <path d="M8 1.8v5.4" />
+      <path d="M4.4 4.1a5.4 5.4 0 1 0 7.2 0" />
+    </svg>
+  );
+}
+
+/** 合并图标（箭头并入竖条 = 并入正在使用的key，操作列用）。 */
+function IconMerge(): JSX.Element {
+  return (
+    <svg className="key-icon" viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+      <path d="M1.5 8h7" />
+      <path d="M5.5 4.5 9 8l-3.5 3.5" />
+      <path d="M12.5 3v10" />
+    </svg>
+  );
+}
+
 /** ③ 属性展示区块（keyInfo 非空时）：徽标 + 型别专属行。绑定系统/备注是
  * 后台管理端才能看到的内容，不在此弹窗展示（info 里仍会随契约下发）。 */
 function AttrSection({ info }: { info: KeyInfo }): JSX.Element {
@@ -88,6 +115,8 @@ function KeyInfoModalInner(): JSX.Element {
   const merging = useKeyStore((s) => s.merging);
   const mergeError = useKeyStore((s) => s.mergeError);
   const mergeResult = useKeyStore((s) => s.mergeResult);
+  const keyList = useKeyStore((s) => s.keyList);
+  const listError = useKeyStore((s) => s.listError);
 
   // ① key 草稿：mount 即 store.key（= localStorage 镜像即时预填，不等网络）。
   // 对账回写（fetchState 落定）仅在用户未编辑时同步 —— 脏草稿不被后端覆盖。
@@ -97,13 +126,11 @@ function KeyInfoModalInner(): JSX.Element {
     if (!dirtyRef.current) setDraft(useKeyStore.getState().key ?? '');
   }, [key]);
 
-  // ② 合并草稿：textarea 原文（拆行/trim 在提交时做），初始空。
-  const [mergeText, setMergeText] = useState('');
-  const mergeLines = mergeText.split('\n').map((l) => l.trim()).filter((l) => l !== '');
-
-  // mount 一次性对账：GET /api/key/state 以后端为准（每次打开重新 mount）。
+  // mount 一次性对账：state 以后端为准 + 拉取「系统可使用的key」表格（每次
+  // 打开重新 mount）。保存/合并成功后的随动刷新在 store 内链式完成。
   useEffect(() => {
     void useKeyStore.getState().fetchState();
+    void useKeyStore.getState().fetchKeyList();
   }, []);
 
   // ESC 关闭（仅关弹窗，镜像 ExportInfoModal）。
@@ -117,21 +144,24 @@ function KeyInfoModalInner(): JSX.Element {
     return () => window.removeEventListener('keydown', onKey);
   }, [closeModal]);
 
-  // 保存落定（成败都）后输入框对齐实际生效 key：成功 → 新 key（dirty 复位，
-  // 后续对账可跟随）；失败 → 回退旧 key（「正在使用的key」框与属性区恒显示同一把
-  // 实际绑定的 key，不残留未保存成功的草稿造成「输入框 A / 属性 B」的不一致，
-  // 失败原因见红字）。
-  function handleSave(): void {
-    if (saving || draft.trim() === '') return; // 按钮已置灰，兜底
-    void useKeyStore.getState().saveKey(draft).then(() => {
+  // 保存/启用共用落定路径（成败都）后输入框对齐实际生效 key：成功 → 新 key
+  // （dirty 复位，后续对账可跟随）；失败 → 回退旧 key（「正在使用的key」框与
+  // 属性区恒显示同一把实际绑定的 key，不残留未保存成功的草稿造成「输入框 A /
+  // 属性 B」的不一致，失败原因见红字）。表格行「启用」= 同一 save 链路（已绑
+  // 本机 → bind 幂等即切换正在使用的key，US-011）。
+  function applySave(rawKey: string): void {
+    if (saving || rawKey.trim() === '') return; // 按钮已置灰，兜底
+    void useKeyStore.getState().saveKey(rawKey).then(() => {
       dirtyRef.current = false;
       setDraft(useKeyStore.getState().key ?? '');
     });
   }
 
-  function handleMerge(): void {
-    if (merging || mergeLines.length === 0) return; // 按钮已置灰，兜底
-    void useKeyStore.getState().mergeKeys(mergeLines);
+  // 表格行「合并」：行 key 并入正在使用的 key（单 source，与旧 textarea 批量
+  // 合并同链路 POST /api/key/merge）。
+  function handleMergeRow(rowKey: string): void {
+    if (merging) return; // 按钮已置灰，兜底
+    void useKeyStore.getState().mergeKeys([rowKey]);
   }
 
   function handleOverlayMouseDown(e: React.MouseEvent): void {
@@ -189,7 +219,7 @@ function KeyInfoModalInner(): JSX.Element {
               type="button"
               className="key-save-btn"
               disabled={saving || draft.trim() === ''}
-              onClick={handleSave}
+              onClick={() => applySave(draft)}
               data-testid="key-info-save"
             >
               {saving ? '保存中…' : '保存'}
@@ -206,29 +236,89 @@ function KeyInfoModalInner(): JSX.Element {
           </div>
         </div>
 
-        {/* ② 被合并 key 批量添加（每行一个）+ 合并 */}
-        <div className="key-section" data-testid="key-info-merge">
-          <span className="key-section-title">合并其他 key（时长型）</span>
-          <textarea
-            id="key-merge-sources"
-            className="strategy-textarea"
-            data-testid="key-info-merge-input"
-            rows={3}
-            value={mergeText}
-            placeholder={'每行一个被合并 key：\n其剩余时长将合并到正在使用的key，合并后原 key 失效'}
-            onChange={(e) => setMergeText(e.target.value)}
-          />
-          <div className="key-merge-actions">
-            <button
-              type="button"
-              className="key-merge-btn"
-              disabled={merging || mergeLines.length === 0}
-              onClick={handleMerge}
-              data-testid="key-info-merge-btn"
-            >
-              {merging ? '合并中…' : '合并'}
-            </button>
-          </div>
+        {/* ② 系统可使用的key 表格（US-011，替代旧 textarea 批量粘贴）：本机绑定
+            且有效的 key；启用 = 切换正在使用的key（当前行高亮 + 按钮置灰）；
+            合并（仅时长型非启用行）= 并入正在使用的key。 */}
+        <div className="key-section" data-testid="key-info-list">
+          <span className="key-section-title">系统可使用的key</span>
+          {listError !== null ? (
+            <div className="key-error" data-testid="key-info-list-error">
+              {listError}
+            </div>
+          ) : keyList === null ? (
+            <div className="strategy-hint" data-testid="key-info-list-loading">
+              正在查询本机可用 key…
+            </div>
+          ) : keyList.length === 0 ? (
+            <div className="strategy-hint" data-testid="key-info-list-empty">
+              暂无绑定到本机的可用 key：在上方输入 key 并保存后即可在此管理。
+            </div>
+          ) : (
+            <table className="key-table" data-testid="key-info-table">
+              <thead>
+                <tr>
+                  <th>名称</th>
+                  <th>类型</th>
+                  <th>剩余</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[...keyList]
+                  .sort((a, b) => Number(b.key === key) - Number(a.key === key))
+                  .map((row) => {
+                    const active = row.key === key;
+                    const canMerge =
+                      row.type === 'duration' && !active && key !== null;
+                    return (
+                      <tr
+                        key={row.key}
+                        className={active ? 'key-table-row active' : 'key-table-row'}
+                        data-testid="key-info-row"
+                        data-key={row.key}
+                        data-active={active ? 'true' : 'false'}
+                      >
+                        <td className="key-table-name" data-testid="key-info-row-key">
+                          {row.key}
+                        </td>
+                        <td>{row.type === 'count' ? '次数型' : '时长型'}</td>
+                        <td>
+                          {row.type === 'count'
+                            ? `${row.remaining_uses ?? '—'} 次`
+                            : `${row.remaining_days ?? '—'} 天`}
+                        </td>
+                        <td className="key-table-actions">
+                          <button
+                            type="button"
+                            className="key-icon-btn"
+                            disabled={active || saving}
+                            onClick={() => applySave(row.key)}
+                            title={active ? '正在使用' : '启用此key'}
+                            aria-label={active ? '正在使用' : '启用此key'}
+                            data-testid="key-info-enable"
+                          >
+                            <IconPower />
+                          </button>
+                          {canMerge && (
+                            <button
+                              type="button"
+                              className="key-icon-btn"
+                              disabled={merging}
+                              onClick={() => handleMergeRow(row.key)}
+                              title="合并到正在使用的key"
+                              aria-label="合并到正在使用的key"
+                              data-testid="key-info-merge-one"
+                            >
+                              <IconMerge />
+                            </button>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+              </tbody>
+            </table>
+          )}
           {mergeError !== null && (
             <div className="key-error" data-testid="key-info-merge-error">
               {mergeError}
@@ -238,12 +328,9 @@ function KeyInfoModalInner(): JSX.Element {
             <div className="key-merge-result" data-testid="key-info-merge-result">
               {mergeResult.sources.map((s) => (
                 <div className="key-merge-row" data-testid="key-info-merge-row" key={s.key}>
-                  {s.key}：+{s.transferred_days} 天
+                  {s.key} 已合并：+{s.transferred_days} 天
                 </div>
               ))}
-              <div className="key-merge-total" data-testid="key-info-merge-total">
-                共转移 {mergeResult.total_transferred_days} 天
-              </div>
             </div>
           )}
         </div>

@@ -1,7 +1,9 @@
-// key 授权 US-006 keyStore 单测：三端点 fetch 契约 + localStorage ms_key 镜像口径。
+// key 授权 US-006 keyStore 单测：四端点 fetch 契约 + localStorage ms_key 镜像口径。
 //   - 初值：模块求值即读镜像（localStorage 预填 → store.key，不等网络）
 //   - fetchState：对账以后端为准（后端 key 覆写本地 / null → removeItem 镜像）；
 //     error 字段进 state（keyserver 失败也 200）
+//   - fetchKeyList（US-011）：GET /api/key/list → keyList 落定（明文行 + 畸形行
+//     滤出）；error 字段 → listError 红字降级；save/merge 成功链式刷新表格
 //   - saveKey：POST /api/key/save {key}；成功双写（state + localStorage）+
 //     keyInfo 落定；400 {error} 中文透传进 saveError 且不动旧 key / 镜像
 //   - mergeKeys：POST /api/key/merge {source_keys}（strip + 过滤空行在 store 内
@@ -20,6 +22,7 @@ let fetchSpy: MockInstance<(...args: unknown[]) => Promise<Response>> | null = n
 /** 各端点当前回包 / 状态（每测可覆写）。 */
 let statePayload: unknown = { key: null, info: null, error: null };
 let stateStatus = 200;
+let listPayload: unknown = { keys: [], error: null };
 let saveStatus = 200;
 let savePayload: unknown = { saved: true, key: 'MS-SAVE', info: null };
 let saveErrorText = 'key 不存在：请检查输入是否正确';
@@ -28,6 +31,7 @@ let mergePayload: unknown = null;
 let mergeErrorText = '未绑定授权 key：请在「系统key」中输入并保存';
 let saveBodies: unknown[] = [];
 let mergeBodies: unknown[] = [];
+let listCalls = 0;
 
 const COUNT_INFO = {
   type: 'count',
@@ -37,6 +41,21 @@ const COUNT_INFO = {
   total_uses: 30,
   used_uses: 12,
   remaining_uses: 18,
+};
+
+const LIST_OK = {
+  keys: [
+    { key: 'MS-DUR-NEW', type: 'duration', status: '正在使用',
+      bound_system_name: 'PC-FACTORY', remark: null,
+      activated_at: '2026-09-28 10:00:00', expires_at: '2026-10-28 10:00:00',
+      remaining_days: 29 },
+    { key: 'MS-COUNT-2', type: 'count', status: '正在使用',
+      bound_system_name: 'PC-FACTORY', remark: null,
+      total_uses: 30, used_uses: 12, remaining_uses: 18 },
+    { key: '', type: 'count' },        // 畸形行：空明文 → 滤出
+    { nope: true },                    // 畸形行：无 type/key → 滤出
+  ],
+  error: null,
 };
 
 const MERGE_OK = {
@@ -62,6 +81,7 @@ beforeEach(() => {
   markSessionProbedForTest();
   statePayload = { key: null, info: null, error: null };
   stateStatus = 200;
+  listPayload = { keys: [], error: null };
   saveStatus = 200;
   savePayload = { saved: true, key: 'MS-SAVE', info: null };
   saveErrorText = 'key 不存在：请检查输入是否正确';
@@ -70,10 +90,15 @@ beforeEach(() => {
   mergeErrorText = '未绑定授权 key：请在「系统key」中输入并保存';
   saveBodies = [];
   mergeBodies = [];
+  listCalls = 0;
   fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(((input: unknown, init?: RequestInit) => {
     const url = String(input);
     if (url.includes('/api/key/state')) {
       return Promise.resolve(json(statePayload, stateStatus));
+    }
+    if (url.includes('/api/key/list')) {
+      listCalls += 1;
+      return Promise.resolve(json(listPayload));
     }
     if (url.includes('/api/key/save')) {
       saveBodies.push(init?.body ? JSON.parse(String(init.body)) : null);
@@ -98,6 +123,13 @@ afterEach(() => {
 
 async function flush(times = 3): Promise<void> {
   for (let i = 0; i < times; i++) await Promise.resolve();
+}
+
+/** 链式（未 await 的）fetchKeyList 落定等待：Response.json() 的 body stream 读取
+ *  跨 macrotask，microtask flush 推不动 —— 先真定时器转一圈事件循环再 flush。 */
+async function flushMacro(): Promise<void> {
+  await new Promise<void>((r) => setTimeout(r, 0));
+  await flush();
 }
 
 describe('keyStore 初值：localStorage 镜像即时预填', () => {
@@ -166,6 +198,72 @@ describe('keyStore.fetchState 对账（以后端为准）', () => {
     const s = useKeyStore.getState();
     expect(s.key).toBe('MS-LOCAL');
     expect(s.error).toBe('无法连接服务器，请检查网络后重试');
+  });
+});
+
+describe('keyStore.fetchKeyList（US-011 表格数据源）', () => {
+  it('成功 → keyList 落定（畸形行滤出），listError null', async () => {
+    listPayload = LIST_OK;
+    await useKeyStore.getState().fetchKeyList();
+    await flush();
+    const s = useKeyStore.getState();
+    expect(s.keyList).toHaveLength(2);
+    expect(s.keyList![0].key).toBe('MS-DUR-NEW');
+    expect(s.keyList![0].remaining_days).toBe(29);
+    expect(s.keyList![1].type).toBe('count');
+    expect(s.listError).toBeNull();
+  });
+
+  it('keyserver 失败（error 字段，HTTP 仍 200）→ keys 置空 + listError 红字', async () => {
+    listPayload = { keys: [], error: '无法连接授权服务器，请检查网络后重试' };
+    await useKeyStore.getState().fetchKeyList();
+    await flush();
+    const s = useKeyStore.getState();
+    expect(s.keyList).toEqual([]);
+    expect(s.listError).toBe('无法连接授权服务器，请检查网络后重试');
+  });
+
+  it('非 2xx（旧后端等）→ listError HTTP 兜底文案', async () => {
+    fetchSpy!.mockImplementation(((input: unknown) => {
+      const url = String(input);
+      if (url.includes('/api/key/list')) return Promise.resolve(json({}, 502));
+      return Promise.resolve(json({}));
+    }) as (...args: unknown[]) => Promise<Response>);
+    await useKeyStore.getState().fetchKeyList();
+    await flush();
+    expect(useKeyStore.getState().listError).toBe('获取可用 key 列表失败（HTTP 502）');
+  });
+
+  it('网络错 → listError 兜底文案', async () => {
+    fetchSpy!.mockImplementation(() => Promise.reject(new Error('boom')));
+    await useKeyStore.getState().fetchKeyList();
+    await flush();
+    expect(useKeyStore.getState().listError).toBe('无法连接服务器，请检查网络后重试');
+  });
+
+  it('saveKey 成功 → 链式刷新表格（启用/保存换了 key，高亮行随动）', async () => {
+    savePayload = { saved: true, key: 'MS-NEW', info: COUNT_INFO };
+    listPayload = LIST_OK;
+    await useKeyStore.getState().saveKey('MS-NEW');
+    await flushMacro(); // save 落定后链式 fetchKeyList 落定
+    expect(listCalls).toBe(1); // save 成功尾部自动 fetchKeyList
+    expect(useKeyStore.getState().keyList).toHaveLength(2);
+  });
+
+  it('mergeKeys 成功 → 链式刷新表格（被合并行已失效出表）', async () => {
+    useKeyStore.setState({ key: 'MS-TARGET', keyInfo: null });
+    listPayload = LIST_OK;
+    await useKeyStore.getState().mergeKeys(['MS-A']);
+    await flushMacro(); // merge 落定后链式 fetchKeyList 落定
+    expect(listCalls).toBe(1);
+    expect(useKeyStore.getState().keyList).toHaveLength(2);
+  });
+
+  it('saveKey 失败 → 不触发列表刷新', async () => {
+    saveStatus = 400;
+    await useKeyStore.getState().saveKey('MS-BAD');
+    await flush();
+    expect(listCalls).toBe(0);
   });
 });
 

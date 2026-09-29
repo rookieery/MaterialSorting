@@ -1,8 +1,11 @@
 // KeyStore —— key 授权自助管理（prd-key-authorization-system US-006）状态中心。
 //
-// 数据源 = 后端三端点（materialsorting/web/routes_key.py）：
+// 数据源 = 后端四端点（materialsorting/web/routes_key.py）：
 //   - GET  /api/key/state {key, info, error}   本地 key + keyserver info 只读现查
 //     （keyserver 查询失败也 200，失败文案进 error —— 本地 key 仍可展示）；
+//   - GET  /api/key/list {keys, error}         本机可用 key 列表（US-011「系统
+//     可使用的key」表格：仅「正在使用」态 + 明文/类型/剩余；keyserver 失败也
+//     200，keys 置空 + error 文案红字降级）；
 //   - POST /api/key/save {key}                 bind 成功才落 key_state.json（后端
 //     文件权威），失败 400 中文 {error} 透传（不覆盖旧 key）；
 //   - POST /api/key/merge {source_keys}        target = 本地当前 key，keyserver
@@ -59,11 +62,25 @@ export interface MergeResult {
   total_transferred_days: number;
 }
 
+/** 「系统可使用的key」表格行（US-011）：info 契约 + key 明文（名称列）。 */
+export type KeyTableRow = { key: string } & KeyInfo;
+
 /** info 形状守卫（半截/畸形响应 → null，弹窗按「属性不可用」降级）。 */
 function isKeyInfo(v: unknown): v is KeyInfo {
   if (typeof v !== 'object' || v === null) return false;
   const t = (v as Record<string, unknown>).type;
   return t === 'count' || t === 'duration';
+}
+
+/** 表格行形状守卫（畸形行静默滤出，不炸整表）。 */
+function isKeyTableRow(v: unknown): v is KeyTableRow {
+  return (
+    typeof v === 'object' &&
+    v !== null &&
+    typeof (v as Record<string, unknown>).key === 'string' &&
+    (v as Record<string, unknown>).key !== '' &&
+    isKeyInfo(v)
+  );
 }
 
 /** 读 localStorage 镜像（损坏/不可用 → null 静默）。 */
@@ -118,8 +135,14 @@ export interface KeyState {
   mergeError: string | null;
   /** merge 成功明细（每 key 天数 + 总转移；下一次 merge 覆写）。 */
   mergeResult: MergeResult | null;
+  /** 「系统可使用的key」表格行（US-011；null = 未查询过/加载中）。 */
+  keyList: KeyTableRow[] | null;
+  /** GET /api/key/list 失败文案（keyserver 断网等；表格区红字降级）。 */
+  listError: string | null;
   /** GET /api/key/state 对账（弹窗打开时调用；成功同步镜像）。 */
   fetchState: () => Promise<void>;
+  /** GET /api/key/list（弹窗打开时与 save/merge 成功后调用；启停/合并表格随动）。 */
+  fetchKeyList: () => Promise<void>;
   /** POST /api/key/save：成功 true（双写镜像 + keyInfo 更新）；失败 false（saveError）。 */
   saveKey: (rawKey: string) => Promise<boolean>;
   /** POST /api/key/merge（每行一个 key 由弹窗拆行后传入）：成功 true（明细 +
@@ -140,6 +163,8 @@ export const useKeyStore = create<KeyState>((set, get) => ({
   merging: false,
   mergeError: null,
   mergeResult: null,
+  keyList: null,
+  listError: null,
 
   fetchState: async () => {
     const g = gen;
@@ -162,6 +187,27 @@ export const useKeyStore = create<KeyState>((set, get) => ({
       writeKeyMirror(key);
     } catch {
       if (g === gen) set({ error: MSG_NET, keyInfo: null });
+    }
+  },
+
+  fetchKeyList: async () => {
+    const g = gen;
+    try {
+      const r = await apiFetch('/api/key/list');
+      if (g !== gen) return; // 在飞期间保存/合并已接管 → 丢弃过期快照
+      if (!r.ok) {
+        // 契约上 list 恒 200；非 2xx（旧后端等）→ 表格红字降级
+        set({ listError: `获取可用 key 列表失败（HTTP ${r.status}）` });
+        return;
+      }
+      const data = (await r.json()) as { keys?: unknown; error?: unknown };
+      if (g !== gen) return;
+      const rawList = Array.isArray(data.keys) ? data.keys : [];
+      const error =
+        typeof data.error === 'string' && data.error !== '' ? data.error : null;
+      set({ keyList: rawList.filter(isKeyTableRow), listError: error });
+    } catch {
+      if (g === gen) set({ listError: MSG_NET });
     }
   },
 
@@ -195,6 +241,7 @@ export const useKeyStore = create<KeyState>((set, get) => ({
         saveError: null,
         mergeResult: null, // key 已换，上一 key 的合并明细不再相关
       });
+      void get().fetchKeyList(); // 启用/保存换了 key → 表格高亮行随动刷新
       return true;
     } catch {
       set({ saving: false, saveError: MSG_NET });
@@ -231,6 +278,7 @@ export const useKeyStore = create<KeyState>((set, get) => ({
         mergeResult: result,
         keyInfo: result.target, // target = 合并后新 info（新截止时刻即刻上屏）
       });
+      void get().fetchKeyList(); // 被合并行已失效 → 表格刷新（US-011）
       return true;
     } catch {
       set({ merging: false, mergeError: MSG_NET });
@@ -251,5 +299,7 @@ export function __resetKeyStoreForTest(): void {
     merging: false,
     mergeError: null,
     mergeResult: null,
+    keyList: null,
+    listError: null,
   });
 }
