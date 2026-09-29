@@ -78,7 +78,7 @@ KEY_TOKEN_FILE_NAME = 'key_client_token.txt'   # frozen exe 旁 client token sid
 _MACHINE_GUID_KEY = r'SOFTWARE\Microsoft\Cryptography'   # 注册表键（HKLM 下）
 _MACHINE_GUID_VALUE = 'MachineGuid'                       # 键内值名（系统 GUID）
 
-MSG_NO_KEY = '未绑定授权 key：请在「当前系统 key 属性」中输入并保存'
+MSG_NO_KEY = '未绑定授权 key：请在「系统key」中输入并保存'
 MSG_NO_SERVER = '授权服务器未配置：请设置 MS_KEY_SERVER_URL 或在程序目录放置 key_server_url.txt'
 MSG_UNREACHABLE = '无法连接授权服务器，请检查网络后重试'
 

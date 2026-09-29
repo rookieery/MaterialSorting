@@ -32,7 +32,7 @@ export type ControlPanelModalId =
   | 'extreme_run'
   | 'export_info'
   | 'edit_layout'
-  // key 授权 US-006（2026-09-28）：「当前系统 key 属性」弹窗（KeyInfoModal）。
+  // key 授权 US-006（2026-09-28）：「系统key」弹窗（KeyInfoModal）。
   | 'key_info';
 
 export interface ControlPanelState {

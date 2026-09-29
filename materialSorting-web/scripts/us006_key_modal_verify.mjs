@@ -89,7 +89,7 @@ try {
   });
   check('A 入口区块在「导出最优方案」正下方', Boolean(labelPos));
   const labelText = await page.locator('.key-entry-group .field-label').innerText();
-  check('A field-label 文案', labelText === '当前系统 key 属性', labelText);
+  check('A field-label 文案', labelText === '系统key', labelText);
 
   // B 未绑定态（三区块 + 引导）
   await openModal();

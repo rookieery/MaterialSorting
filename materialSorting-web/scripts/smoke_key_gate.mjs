@@ -51,7 +51,7 @@ const KEY = 'http://127.0.0.1:' + KEY_PORT;
 const ADMIN_TOKEN = 'smoke-admin-token';   // 双 token 生产姿态（无 MS_KEY_DEV）
 const CLIENT_TOKEN = 'smoke-client-token';
 
-const MSG_NO_KEY = '未绑定授权 key：请在「当前系统 key 属性」中输入并保存';
+const MSG_NO_KEY = '未绑定授权 key：请在「系统key」中输入并保存';
 const FAKE_KEY = 'MS-FAKE-NOPE';
 const PARSE_TIMEOUT = 150_000;   // 样例/母版深度解析 + commit 单程（3069 实测 <90s）
 

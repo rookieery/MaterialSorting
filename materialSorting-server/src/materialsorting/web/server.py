@@ -659,7 +659,7 @@ from .checkpoint import register_checkpoint_routes   # noqa: E402
 register_checkpoint_routes(app)
 
 # key 授权管理端（prd-key-authorization-system US-005）：GET/POST /api/key/state|
-# save|merge|precheck 四端点（US-006 前端「当前系统 key 属性」弹窗数据源）。key
+# save|merge|precheck 四端点（US-006 前端「系统key」弹窗数据源）。key
 # 状态是**机器级全局**（绑定 MachineGuid，本机全部会话/浏览器共享）—— 不加会话
 # 闸门，与 edit_hold（sid 级编辑钉住，须 X-Session-Id）的关键差异；后端
 # key_state.json 文件权威。routes_key 只依赖 keygate（禁 import 本模块，AST 守卫

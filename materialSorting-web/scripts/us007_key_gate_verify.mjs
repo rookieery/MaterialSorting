@@ -29,7 +29,7 @@ const KEYSERVER_URL = process.env.KEYSERVER_URL ?? 'http://127.0.0.1:8117';
 const COUNT_KEY = process.env.US007_COUNT_KEY ?? '';
 const MODE = process.env.MODE ?? 'full'; // full | down
 
-const MSG_NO_KEY = '未绑定授权 key：请在「当前系统 key 属性」中输入并保存';
+const MSG_NO_KEY = '未绑定授权 key：请在「系统key」中输入并保存';
 const MSG_DOWN = '无法连接授权服务器，请检查网络后重试';
 
 const results = [];

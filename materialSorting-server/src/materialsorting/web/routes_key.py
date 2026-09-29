@@ -2,7 +2,7 @@
 
 消费端（本系统）对 keygate 的 HTTP 化封装 —— 三入口闸门（/ws/solve 与
 /api/strategy|extreme/start 直接调 ``keygate.ensure_run_allowed``）之外，
-用户自助管理本机授权的四个端点（US-006 前端「当前系统 key 属性」弹窗数据源）：
+用户自助管理本机授权的四个端点（US-006 前端「系统key」弹窗数据源）：
 
   - ``GET  /api/key/state``：本地 key + keyserver ``/api/key/info`` 只读现查。
     **keyserver 查询失败也 200**，失败文案进 ``error`` 字段（弹窗仍能展示本地

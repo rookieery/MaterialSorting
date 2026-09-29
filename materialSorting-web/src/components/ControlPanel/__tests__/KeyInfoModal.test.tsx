@@ -39,7 +39,7 @@ let savePayload: unknown = { saved: true, key: 'MS-SAVE', info: null };
 let saveErrorText = 'key 不存在：请检查输入是否正确';
 let mergeStatus = 200;
 let mergePayload: unknown = null;
-let mergeErrorText = '未绑定授权 key：请在「当前系统 key 属性」中输入并保存';
+let mergeErrorText = '未绑定授权 key：请在「系统key」中输入并保存';
 let saveBodies: unknown[] = [];
 let mergeBodies: unknown[] = [];
 
@@ -91,7 +91,7 @@ beforeEach(() => {
   saveErrorText = 'key 不存在：请检查输入是否正确';
   mergeStatus = 200;
   mergePayload = null;
-  mergeErrorText = '未绑定授权 key：请在「当前系统 key 属性」中输入并保存';
+  mergeErrorText = '未绑定授权 key：请在「系统key」中输入并保存';
   saveBodies = [];
   mergeBodies = [];
   container = document.createElement('div');
@@ -185,7 +185,7 @@ describe('KeyInfoModal 未绑定态（默认）', () => {
     expect(keyInput().placeholder).toContain('输入授权 key');
     expect(modal().querySelector('[data-testid="key-info-empty-hint"]')!.textContent)
       .toContain('尚未绑定授权 key');
-    // 三区块齐备：当前 key / 合并 / 属性
+    // 三区块齐备：正在使用的key / 合并 / 属性
     expect(modal().querySelector('[data-testid="key-info-current"]')).not.toBeNull();
     expect(modal().querySelector('[data-testid="key-info-merge"]')).not.toBeNull();
     expect(modal().querySelector('[data-testid="key-info-attrs"]')).not.toBeNull();
@@ -387,7 +387,7 @@ describe('KeyInfoModal ② 合并（POST /api/key/merge）', () => {
     });
     await flush();
     expect(modal().querySelector('[data-testid="key-info-merge-error"]')!.textContent)
-      .toBe('未绑定授权 key：请在「当前系统 key 属性」中输入并保存');
+      .toBe('未绑定授权 key：请在「系统key」中输入并保存');
     expect(modal().querySelector('[data-testid="key-info-merge-result"]')).toBeNull();
   });
 });

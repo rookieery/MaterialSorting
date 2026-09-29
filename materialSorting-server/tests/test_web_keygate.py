@@ -471,7 +471,7 @@ def test_gate_sample_filename_no_longer_exempts(gate_env):
 def test_gate_non_sample_no_key(gate_env):
     """非样例 + 本地无 key → 中文指路文案（原文锁定）。"""
     assert keygate.ensure_run_allowed('用户上传.dxf') == (False, keygate.MSG_NO_KEY)
-    assert keygate.MSG_NO_KEY == '未绑定授权 key：请在「当前系统 key 属性」中输入并保存'
+    assert keygate.MSG_NO_KEY == '未绑定授权 key：请在「系统key」中输入并保存'
 
 
 def test_gate_validate_ok_deducts(gate_env, set_server_url):

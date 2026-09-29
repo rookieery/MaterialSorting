@@ -1521,7 +1521,7 @@ describe("ControlPanel 编辑排料区块位置 (US-004)", () => {
 });
 
 // ============================================================
-// key 授权 US-006：「当前系统 key 属性」入口区块（ExportButtons 正下方）——
+// key 授权 US-006：「系统key」入口区块（ExportButtons 正下方）——
 // 点击 openModal('key_info') 挂 KeyInfoModal（组件细节在 KeyInfoModal.test）。
 // ============================================================
 
@@ -1541,7 +1541,7 @@ describe("ControlPanel key 属性入口 (US-006)", () => {
     });
   });
 
-  it(".key-entry-group 位于 .export-group 之后；field-label「当前系统 key 属性」", () => {
+  it(".key-entry-group 位于 .export-group 之后；field-label「系统key」", () => {
     renderPanel();
     const panel = container!.querySelector("aside.panel")!;
     const exportGroup = panel.querySelector(".export-group")!;
@@ -1550,7 +1550,7 @@ describe("ControlPanel key 属性入口 (US-006)", () => {
     expect(
       exportGroup.compareDocumentPosition(keyEntry) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
-    expect(keyEntry.querySelector(".field-label")!.textContent).toBe("当前系统 key 属性");
+    expect(keyEntry.querySelector(".field-label")!.textContent).toBe("系统key");
   });
 
   it("点击入口按钮 → KeyInfoModal 打开（controlPanelStore.modal === 'key_info'）", async () => {

@@ -273,7 +273,7 @@ describe('strategyStore key 预检（key 授权 US-007）', () => {
     fetchSpy!.mockImplementation(((input: unknown) => {
       const url = String(input);
       if (url.includes('/api/key/precheck')) {
-        return Promise.resolve(json({ ok: false, message: '未检测到授权 key，请先在「当前系统 key 属性」中绑定' }));
+        return Promise.resolve(json({ ok: false, message: '未检测到授权 key，请先在「系统key」中绑定' }));
       }
       return Promise.resolve(json({}));
     }) as (...args: unknown[]) => Promise<Response>);
@@ -282,7 +282,7 @@ describe('strategyStore key 预检（key 授权 US-007）', () => {
     });
     const s = useStrategyStore.getState();
     expect(s.phase).toBe('error');
-    expect(s.errorMessage).toBe('未检测到授权 key，请先在「当前系统 key 属性」中绑定');
+    expect(s.errorMessage).toBe('未检测到授权 key，请先在「系统key」中绑定');
     expect(s.lastStart).not.toBeNull(); // key 恢复后弹窗「重试」可直接再发
     // /start 请求根本没发（fetch 计数断言）
     const startCalls = fetchSpy!.mock.calls.filter((c: unknown[]) => String(c[0]).includes('/api/strategy/start')).length;

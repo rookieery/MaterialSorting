@@ -25,7 +25,7 @@ let savePayload: unknown = { saved: true, key: 'MS-SAVE', info: null };
 let saveErrorText = 'key 不存在：请检查输入是否正确';
 let mergeStatus = 200;
 let mergePayload: unknown = null;
-let mergeErrorText = '未绑定授权 key：请在「当前系统 key 属性」中输入并保存';
+let mergeErrorText = '未绑定授权 key：请在「系统key」中输入并保存';
 let saveBodies: unknown[] = [];
 let mergeBodies: unknown[] = [];
 
@@ -67,7 +67,7 @@ beforeEach(() => {
   saveErrorText = 'key 不存在：请检查输入是否正确';
   mergeStatus = 200;
   mergePayload = null;
-  mergeErrorText = '未绑定授权 key：请在「当前系统 key 属性」中输入并保存';
+  mergeErrorText = '未绑定授权 key：请在「系统key」中输入并保存';
   saveBodies = [];
   mergeBodies = [];
   fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(((input: unknown, init?: RequestInit) => {
@@ -258,7 +258,7 @@ describe('keyStore.mergeKeys', () => {
     await flush();
     expect(ok).toBe(false);
     expect(useKeyStore.getState().mergeError)
-      .toBe('未绑定授权 key：请在「当前系统 key 属性」中输入并保存');
+      .toBe('未绑定授权 key：请在「系统key」中输入并保存');
     expect(useKeyStore.getState().mergeResult).toBeNull();
   });
 

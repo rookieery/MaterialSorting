@@ -1,11 +1,11 @@
-// KeyInfoModal ——「当前系统 key 属性」弹窗（prd-key-authorization-system US-006）。
+// KeyInfoModal ——「系统key」弹窗（prd-key-authorization-system US-006）。
 //
 // 三区块（数据源 = keyStore → 后端 /api/key/state|save|merge，见 routes_key.py）：
-//   ① 当前 key 输入/替换 + 保存 —— POST /api/key/save（bind 成功才落盘），
+//   ① 正在使用的key 输入/替换 + 保存 —— POST /api/key/save（bind 成功才落盘），
 //     失败中文红字透传（如「key 不存在：请检查输入是否正确」）；保存落定后
 //     输入框对齐实际生效 key（失败回退旧 key）—— 输入框与属性区恒同 key；
 //   ② 被合并 key 批量添加 —— textarea 每行一个 key + 合并按钮
-//     （POST /api/key/merge，时长型 source 剩余时长秒级转移到当前 key）；
+//     （POST /api/key/merge，时长型 source 剩余时长秒级转移到正在使用的key）；
 //     成功明细 = 每个 key 转移天数 + 共转移；整体失败红字（无 key 指路等）；
 //   ③ 属性展示 —— 状态徽标（六态中文标签）+ 次数型 总数/已用/剩余 或
 //     时长型 生效/截止/剩余天数（keyserver _info_payload 契约，前端零公式）。
@@ -19,7 +19,7 @@
 // 骨架镜像 ExportInfoModal：声明式受控 Portal（订阅 controlPanelStore.modal ===
 // 'key_info' 自显隐，单例互斥由 store 单字段保证）+ ESC / 遮罩 / ✕ 只关不提交；
 // 每次打开重新 mount（条件渲染）→ 对账/草稿状态不跨开残留。打开入口 =
-// ControlPanel「导出最优方案」区块正下方的「当前系统 key 属性」按钮。
+// ControlPanel「导出最优方案」区块正下方的「系统key」按钮。
 
 import { useEffect, useRef, useState } from 'react';
 import type { JSX } from 'react';
@@ -118,7 +118,7 @@ function KeyInfoModalInner(): JSX.Element {
   }, [closeModal]);
 
   // 保存落定（成败都）后输入框对齐实际生效 key：成功 → 新 key（dirty 复位，
-  // 后续对账可跟随）；失败 → 回退旧 key（「当前 key」框与属性区恒显示同一把
+  // 后续对账可跟随）；失败 → 回退旧 key（「正在使用的key」框与属性区恒显示同一把
   // 实际绑定的 key，不残留未保存成功的草稿造成「输入框 A / 属性 B」的不一致，
   // 失败原因见红字）。
   function handleSave(): void {
@@ -152,11 +152,11 @@ function KeyInfoModalInner(): JSX.Element {
         className="strategy-modal key-modal"
         role="dialog"
         aria-modal="true"
-        aria-label="当前系统 key 属性"
+        aria-label="系统key"
         onMouseDown={handleModalMouseDown}
       >
         <div className="strategy-head">
-          <span className="strategy-title">当前系统 key 属性</span>
+          <span className="strategy-title">系统key</span>
           <button
             type="button"
             className="strategy-close"
@@ -168,9 +168,9 @@ function KeyInfoModalInner(): JSX.Element {
           </button>
         </div>
 
-        {/* ① 当前 key 输入/替换 + 保存 */}
+        {/* ① 正在使用的key 输入/替换 + 保存 */}
         <div className="key-section" data-testid="key-info-current">
-          <span className="key-section-title">当前 key</span>
+          <span className="key-section-title">正在使用的key</span>
           <div className="key-save-row">
             <input
               id="key-current"
@@ -178,7 +178,7 @@ function KeyInfoModalInner(): JSX.Element {
               className="strategy-text-input"
               data-testid="key-info-key-input"
               value={draft}
-              placeholder={key === null ? '输入授权 key（例如 MS-XXXXX）' : '替换当前 key'}
+              placeholder={key === null ? '输入授权 key（例如 MS-XXXXX）' : '替换正在使用的key'}
               spellCheck={false}
               onChange={(e) => {
                 dirtyRef.current = true;
@@ -215,7 +215,7 @@ function KeyInfoModalInner(): JSX.Element {
             data-testid="key-info-merge-input"
             rows={3}
             value={mergeText}
-            placeholder={'每行一个被合并 key：\n其剩余时长将合并到当前 key，合并后原 key 失效'}
+            placeholder={'每行一个被合并 key：\n其剩余时长将合并到正在使用的key，合并后原 key 失效'}
             onChange={(e) => setMergeText(e.target.value)}
           />
           <div className="key-merge-actions">

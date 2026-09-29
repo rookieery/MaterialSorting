@@ -2680,7 +2680,7 @@ button.edit-controls-btn--reset:disabled {
 }
 
 /* ============================================================
- * key 授权 US-006（2026-09-28）：「当前系统 key 属性」入口区块（.key-entry-*，
+ * key 授权 US-006（2026-09-28）：「系统key」入口区块（.key-entry-*，
  * .export-group 同款分隔形态，「导出最优方案」正下方）+ KeyInfoModal 三区块
  * （.key-*，骨架复用 .strategy-overlay/.strategy-modal —— 本节只补专属样式：
  * 区块标题 / 保存横排 / 绿主按钮 / 红字错误 / 属性行 / 状态徽标 / 合并明细）。
