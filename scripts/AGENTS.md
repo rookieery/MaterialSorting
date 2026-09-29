@@ -38,7 +38,8 @@ venv python 直跑——nuitka/spyrrow/materialsorting 都在 venv）→
   不设 sys.frozen 而官方口径是模块级 `__compiled__`，不桥接则 launcher env 重定向
   与 web/_frozen_spawn 的 exe --cli 前缀永远走 dev 分支；dev 直跑本文件零变化）。
   桥接顺序由 tests/test_build_freeze.py AST 断言锁死。
-- build_freeze 六步：①前端 static 检查（--skip-frontend-check 跳）②环境自检
+- build_freeze 六步：①前端 static 检查（--skip-frontend-check 跳）+ 样例预检 +
+  key sidecar 预检②环境自检
   （nuitka 版本/zstandard/ordered-set；**验证基线 Nuitka 4.3rc3**，4.2.2 优化器
   对本闭包偶发 mergeBranches 内部 TypeError、缺 ordered-set 退回纯 Python
   fallback 同样偶发崩）③spyrrow 钉板校验（wheel_version 一致 + `+ms<N>` N≥1 +
@@ -46,7 +47,8 @@ venv python 直跑——nuitka/spyrrow/materialsorting 都在 venv）→
   （--force 放行）⑤Nuitka 编译（**--mingw64 强制**：MSVC cl 14.3 编巨型 TU 两轮
   不同模块本体崩溃 C1001/0xC0000005；双元数据红线
   `--include-distribution-metadata=spyrrow` + `=materialsorting`；ASCII 版本资源
-  ——中文进 .rc 被 cl 按代码页 936 误读 C2001）⑥dist 自检（.py/.pyc/.docs/
+  ——中文进 .rc 被 cl 按代码页 936 误读 C2001）⑥dist 自检（key sidecar 维护位
+  →exe 旁同步+硬校验 + .py/.pyc/.docs/
   tests/scripts 泄漏零命中 + exe --check frozen/warm/version/static/fonts/**data**）。
 - **样例母版捆绑（2026-09-29「exe 无可用样例」bug 修复）**：repo `data/` 顶层
   `.dxf` 逐文件 `--include-data-file=<abs>=data/<name>` 捆到 exe 同级 `data/`
@@ -56,6 +58,17 @@ venv python 直跑——nuitka/spyrrow/materialsorting 都在 venv）→
   闸门样例豁免 sha256 对拍共用，此前两处都悬空 → 下拉恒空）；双重自检 = 构建期
   `step_static_check` 样例预检（data/ 空 fail）+ `step_dist_check` data 落点
   硬校验。
+- **key 接线 sidecar 双闸（2026-09-29「交付包缺 sidecar → 客户机授权服务器
+  未配置」事故修复，红线④）**：`key_server_url.txt`+`key_client_token.txt`
+  **构建机单一维护位** = `materialSorting-server/out/license/`（= dev 态
+  `paths.LICENSE_DIR` 同一推导，env `MS_OUT_DIR` 可重定向；dev 部署 keygate 与
+  打包共用一处）；**拷贝收口在 `step_dist_check` 入口**（非 Nuitka
+  `--include-data-file`——`--installer-only` 补打包路径不重编译，sidecar 修复
+  必须经此覆盖）先从维护位同步再硬校验 exe 旁在场，闸一 = `check_key_sidecar_source`
+  维护位预检（编译前 fail）；文件名常量 `KEY_SIDECAR_NAMES` 与
+  `web/keygate.py` 逐条对齐（锚点测试锁死）；逃生口 `--skip-key-sidecar`
+  （内部测试构建）；token 永不回显（打印只文件名）。冒烟回归锁 = smoke_freeze
+  P0f~P0h。
 - **资源红线（2026-09-27 整机假死事故复盘）**：`--jobs` 推导
   `min(8, max(2, 核数//4))` 再按可用物理内存钳制（每 job ≥3GB、下限 2，
   `--jobs`/`MS_FREEZE_JOBS` 覆盖仍打警示）/ Nuitka 子进程
@@ -66,7 +79,7 @@ venv python 直跑——nuitka/spyrrow/materialsorting 都在 venv）→
   下轮链接期 `CVTRES CVT1107 xx.obj 已损坏` → 删
   `%LOCALAPPDATA%/Nuitka/Nuitka/Cache/clcache` 全量重编。
 - 产物 `dist/` 已 gitignore（根 .gitignore）；护栏测试 =
-  `materialSorting-server/tests/test_build_freeze.py`（55 例纯函数级，真跑 Nuitka
+  `materialSorting-server/tests/test_build_freeze.py`（64 例纯函数级，真跑 Nuitka
   不进套件）。验收自动化（隔离用户目录/单实例/端口回退专项）= US-004
   smoke_freeze.mjs；发版全流程 = US-005 `.docs/technical/本地部署构建与发版手册.md`。
 
@@ -101,7 +114,9 @@ venv python 直跑——nuitka/spyrrow/materialsorting 都在 venv）→
 报告 `out/smoke_freeze/report.json`，退出码 0=全过 / 1=任一失败（逐条打印）/
 2=dist 缺失（dev 形态明确报错指路 build_freeze，AC5 判据）。
 
-- 六相位：P0 `exe --check`（frozen/warm/version/OUT_DIR env 注入）→ P1 端口回退
+- 六相位：P0 `exe --check`（frozen/warm/version/OUT_DIR env 注入 + key sidecar
+  回归锁 P0f~P0h：两文件在 dist exe 旁 + 净化 env/空 license 回落下 URL/token
+  解析自「exe 旁」= 2026-09-29 交付包缺 sidecar 事故回归锁）→ P1 端口回退
   （临时 `MS_OUT_DIR` 模拟 LOCALAPPDATA 隔离 + Node net.Server 预占 8010 → 断言
   实际用 8011 + web_port.txt 一致）→ P2 核心动线（playwright Edge 通道：上传 →
   parse 数量矩阵 → 12s 求解 final → PLT-clean/DXF-R12/PNG 三格式落盘探针 →

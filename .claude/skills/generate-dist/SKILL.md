@@ -1,6 +1,6 @@
 ---
 name: generate-dist
-description: 构建生产 exe 发版包：scripts/build_freeze.py Nuitka 冻结七步流水 → dist/MaterialSorting.dist/（onedir 本体）+ Setup 中文安装包 + 绿色 zip。含前置停服/前端 build/spyrrow 钉板检查、后台长跑监控、构建后验收。支持 --dry-run / --installer-only / --launch 变体。
+description: 构建生产 exe 发版包：scripts/build_freeze.py Nuitka 冻结七步流水 → dist/MaterialSorting.dist/（onedir 本体）+ Setup 中文安装包 + 绿色 zip。含前置停服/前端 build/spyrrow 钉板/key sidecar 预检、后台长跑监控、构建后验收。支持 --dry-run / --installer-only / --launch 变体。
 allowed-tools: Bash
 ---
 
@@ -13,8 +13,8 @@ allowed-tools: Bash
   | 产物 | 说明 |
   |------|------|
   | `dist/MaterialSorting.dist/MaterialSorting.exe` | Nuitka standalone **onedir** 本体（~230 MiB，源码真编译机器码；不用 onefile） |
-  | `dist/MaterialSorting-Setup-<版本>.exe` | Inno 中文安装包（~57 MiB，需 ISCC 在场；缺席打印指引跳过不失败） |
-  | `dist/MaterialSorting-portable-<版本>.zip` | 绿色 zip（~87 MiB，恒产） |
+  | `dist/MaterialSorting-Setup-<版本>.exe` | Inno 中文安装包（~59 MiB，需 ISCC 在场；缺席打印指引跳过不失败） |
+  | `dist/MaterialSorting-portable-<版本>.zip` | 绿色 zip（~90 MiB，恒产） |
 - `<版本>` = `pyproject 版本 + git describe 短哈希[ dirty]`（如 `0.1.0-g590375b-dirty`），与 exe 属性页同源。
 
 ## 解析意图（从用户消息 / args）
@@ -39,7 +39,14 @@ allowed-tools: Bash
    cd d:/code/MaterialSorting/materialSorting-web && npm run build
    ```
    失败（tsc 报错）→ 报错给用户，**不启动构建**。
-3. （可选快速验证）`--dry-run` 先过一遍前置自检（nuitka/ordered-set/spyrrow 钉板/孤儿进程扫描），失败口径与手册 §2 一致：
+3. **key 接线 sidecar 维护位检查**（红线④闸一，2026-09-29「交付包缺 sidecar → 客户机授权服务器未配置」事故防复发；缺 = 客户机装完必报错）：
+   ```bash
+   ls d:/code/MaterialSorting/materialSorting-server/out/license/   # 须含两文件且非空
+   ```
+   - `key_server_url.txt` = keyserver 公网基址一行（如 `http://<frps>:8083`）；`key_client_token.txt` = 与 keyserver 侧 `MS_KEY_CLIENT_TOKEN` 同值一行。
+   - 该目录是**单一维护位**（dev 部署的 keygate 与打包共用）；构建期自动同步进包，**勿再手工往 dist 铺文件**（会被纠正为维护位现值）。
+   - 缺失 → 指引用户补文件，**不启动构建**；确属内部测试构建才 `--skip-key-sidecar`。
+4. （可选快速验证）`--dry-run` 先过一遍前置自检（nuitka/ordered-set/spyrrow 钉板/key sidecar 预检/孤儿进程扫描），失败口径与手册 §2 一致：
    ```bash
    cd d:/code/MaterialSorting && .venv/Scripts/python.exe scripts/build_freeze.py --dry-run
    ```
@@ -56,14 +63,15 @@ cd d:/code/MaterialSorting && .venv/Scripts/python.exe scripts/build_freeze.py -
 - 后台任务退出时读尾部输出，判定口径：
   - `[DONE] 冻结产物就绪：...MaterialSorting.exe` + `[DONE] 发版产物` 三件套 = 成功；
   - `[FAIL] 步骤「<名>」：...` = 失败，把步骤名与原因原样报给用户。
-- 七步流水（任一步失败 exit 1）：① 前端 static 检查 ② 环境自检（nuitka 4.3rc3 / ordered-set）③ spyrrow 私有 wheel 钉板（须 `0.9.0+msN` N≥1 且 warm 探测 True）④ 孤儿编译进程扫描 ⑤ Nuitka 编译（MinGW64）⑥ dist 自检（源码泄漏 grep 零命中 + `exe --check`）⑦ 安装包 + 绿色 zip。
+- 七步流水（任一步失败 exit 1）：① 前端 static 检查 + 样例母版预检 + key sidecar 预检（维护位两文件非空）② 环境自检（nuitka 4.3rc3 / ordered-set）③ spyrrow 私有 wheel 钉板（须 `0.9.0+msN` N≥1 且 warm 探测 True）④ 孤儿编译进程扫描 ⑤ Nuitka 编译（MinGW64）⑥ dist 自检（key sidecar 维护位→exe 旁同步 + 硬校验 + 源码泄漏 grep 零命中 + `exe --check`）⑦ 安装包 + 绿色 zip。
 - 中途用户问进度：读后台任务输出尾部回显当前步骤，不要重复启动构建。
 
 ### 3. 构建后验收
 ```bash
 # 冒烟拉起（Ctrl-C / kill 退出；浏览器自动开属正常）
 cd d:/code/MaterialSorting && .venv/Scripts/python.exe scripts/build_freeze.py --launch
-# 深度验收（可选，六相位 46 项基线）
+# 深度验收（可选，六相位；含 key sidecar 回归锁 P0f~P0h，47 项基线；
+# --rerun-family 的 family 复跑段暂红 —— 豁免收紧后三冒烟直传不豁免待改样例入口）
 node scripts/smoke_freeze.mjs
 ```
 - 无副作用检查也可用：`dist/MaterialSorting.dist/MaterialSorting.exe --check`（回显 frozen/warm/version/key 接线，不起服务不开浏览器）。
@@ -78,10 +86,12 @@ node scripts/smoke_freeze.mjs
 | 链接期 `CVTRES CVT1107 .obj 已损坏` | 硬重启留零填充 clcache → 删 `%LOCALAPPDATA%/Nuitka/Nuitka/Cache/clcache` 全量重编 |
 | nuitka/ordered-set 缺失 | `.venv/Scripts/python.exe -m pip install nuitka==4.3rc3 ordered-set`（4.2.2 优化器对本闭包偶发崩，勿降级） |
 | ISCC 未找到 | 不算失败（zip 照常产）；指引 `winget install --id JRSoftware.InnoSetup --scope user` 后 `--installer-only` 补打包 |
+| 步骤①/⑥ key sidecar 缺失 | 维护位 `materialSorting-server/out/license/` 补 `key_server_url.txt`（keyserver 公网基址一行）+ `key_client_token.txt`（client token 一行）后重跑；内部测试构建可 `--skip-key-sidecar`（交付包禁用） |
 | 前端 static 缺失 | 本 skill 步骤 0.2 已预防；跳过检查产出的属无效包 |
 
 ## 注意事项
 - **绝不裸跑全核**：`--jobs` 勿超 8（override 高于 8 脚本会打警告，2026-09-27 全核并发假死事故）。
 - dist 幂等：先清后建无增量，重跑 = 全量重编（正常）。
 - 用户数据物理分离：安装/运行期用户数据在 `%LOCALAPPDATA%\MaterialSorting\out`，与构建无关，勿动。
+- key 接线 sidecar 单一维护位 = `materialSorting-server/out/license/`（dev 部署与打包共用），构建/补打包自动同步进包 —— 勿手工往 dist 铺 sidecar（会被纠正为维护位现值）；全量重编会清空 dist 重建，sidecar 由流水自动补回不依赖残留。
 - `--installer-only` 版本串取**当前** git 态 —— dist 若构建于其他提交，正式发版仍以全量 `--installer` 为准。

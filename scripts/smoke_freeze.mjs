@@ -5,14 +5,16 @@
 //
 // 编排（对齐 PRD AC1~AC5）：
 //   P0 预检：dist exe 存在（缺失 → 明确报错指路 build_freeze，exit 2 = dev 形态
-//      验收入口）+ `--check` frozen/warm/version/OUT_DIR env 注入四断言；
+//      验收入口）+ `--check` frozen/warm/version/OUT_DIR env 注入四断言 + key
+//      sidecar 回归锁（两文件捆绑在 dist exe 旁 + 净化 env 下 URL/token 解析自
+//      「exe 旁」= 2026-09-29 交付包缺 sidecar 事故回归锁，全新客户机语义）；
 //   P1 端口回退专项（AC2-1）：临时 MS_OUT_DIR（模拟 LOCALAPPDATA 隔离）→ 预占
 //      8010 → 拉 dist exe（环境注入 OUT_DIR 覆盖）→ 等健康 → 断言实际用 8011 且
 //      web_port.txt 内容一致；首启 watcher 自动开浏览器 URL（BROWSER=cmd echo 捕获
 //      日志，webbrowser.open 实参取证，不起真浏览器）；
 //   P2 核心动线（AC1，playwright Edge 通道，沿用 smoke_edit_polish.mjs 套路）：
 //      样例双端点断言（列表非空 + 取文件字节在案 = 2026-09-29 无样例事故回归锁）
-//      → 上传 5336 母版 → parse 数量矩阵 → 3 码短预算求解 → final → 导出 PLT-clean /
+//      → 样例应用 5336（豁免收紧后免 key 路径）→ parse 数量矩阵 → 3 码短预算求解 → final → 导出 PLT-clean /
 //      DXF(R12 POLYLINE) / PNG 三格式落盘探针 → 状态保存 .msn 下载 + gunzip 断言；
 //   P3 高级运行专项（AC2-4，冻结 spawn exe --cli 链路）：/api/strategy/start race →
 //      running + run_dir 落临时 OUT_DIR config_runs/web_* + best_frame 出帧 +
@@ -69,7 +71,8 @@ const SERVER_LOG = resolve(OUT, 'server_stdout.log');
 const PORT_OCCUPIED = 8010;   // 预占端口（触发回退）
 const EXPECT_PORT = 8011;     // 期望回退落点
 const BASE = `http://127.0.0.1:${EXPECT_PORT}`;
-const DXF = resolve(ROOT, 'data/5336#老六订单14%7%围加9.dxf');
+const SAMPLE_NAME = '5336#老六订单14%7%围加9.dxf';   // P2 样例应用目标（data/ 同名；豁免收紧后的免 key 路径，见 P2b 注释）
+const DXF = resolve(ROOT, 'data', SAMPLE_NAME);
 const SIZES = [32, 33, 34];   // 5336 码集；3 码 × 10 片型 × 默认 1 = Σdemand 30
 const EXPECT_PLACED = 30;
 const SOLVE_TIME = '12';
@@ -225,6 +228,30 @@ try {
   check('P0e --check paths.OUT_DIR = 临时 MS_OUT_DIR（env 注入覆盖生效）',
     new RegExp(`^paths\\.OUT_DIR: ${MS_OUT_DIR.replace(/\\/g, '\\\\')}$`, 'm').test(chkOut),
     (chkOut.match(/^paths\.OUT_DIR: .*$/m) || [''])[0]);
+  // key sidecar 回归锁（红线④，2026-09-29「交付包缺 sidecar」事故 —— 打包先于
+  // 手工铺文件，客户机全报「授权服务器未配置」）：① 两文件捆绑在 dist exe 旁；
+  // ② 净化 env（删 MS_KEY_SERVER_URL/MS_KEY_CLIENT_TOKEN，防跑冒烟的机器设了
+  // env 盖掉 sidecar 来源标注）+ MS_OUT_DIR 指向本脚本刚清空的临时目录
+  // （license/ 回落档为空）再跑 --check → 全新客户机语义：URL/token 只可能解析
+  // 自 exe 旁 sidecar。
+  const keySidecarNames = ['key_server_url.txt', 'key_client_token.txt'];
+  const sidecarBytes = keySidecarNames.map((n) => {
+    try { return statSync(resolve(DIST_APP_DIR, n)).size; } catch { return -1; }
+  });
+  check('P0f key sidecar 两文件在 dist exe 旁（key 接线随包捆绑，红线④）',
+    sidecarBytes.every((b) => b > 0),
+    keySidecarNames.map((n, i) => `${n}:${sidecarBytes[i] >= 0 ? sidecarBytes[i] + 'B' : '缺失'}`).join(' '));
+  const keyEnv = { ...childEnv() };
+  delete keyEnv.MS_KEY_SERVER_URL;
+  delete keyEnv.MS_KEY_CLIENT_TOKEN;
+  const kchk = spawnSync(EXE, ['--check'], { cwd: DIST_APP_DIR, env: keyEnv, encoding: 'utf8', timeout: 180_000 });
+  const kOut = (kchk.stdout || '') + (kchk.stderr || '');
+  check('P0g --check key_server_url 解析自 exe 旁 sidecar（净化 env + 空 license 回落 = 全新客户机语义）',
+    /^key_server_url: \S+（来源：key_server_url\.txt（exe 旁））$/m.test(kOut),
+    (kOut.match(/^key_server_url: .*$/m) || [''])[0]);
+  check('P0h --check key_client_token 已配置且来源 exe 旁（值不回显）',
+    /^key_client_token: 已配置（来源：key_client_token\.txt（exe 旁），不回显值）$/m.test(kOut),
+    (kOut.match(/^key_client_token: .*$/m) || [''])[0]);
   report.check = { status: chk.status, out: chkOut };
 
   // dist 只读安全基线快照（P6 对拍）
@@ -268,7 +295,7 @@ try {
   report.port = { occupied: PORT_OCCUPIED, actual: EXPECT_PORT, web_port_txt: portTxt, first_browser_url: firstUrl };
 
   // ---- P2 核心动线（playwright Edge 通道，沿用 smoke_edit_polish 套路）-------
-  log('P2 核心动线：上传 → parse 数量矩阵 → 短预算求解 → 三格式导出 → .msn 保存');
+  log('P2 核心动线：样例应用 → parse 数量矩阵 → 短预算求解 → 三格式导出 → .msn 保存');
   try { browser = await chromium.launch({ channel: 'msedge', headless: true }); }
   catch { browser = await chromium.launch({ channel: 'chrome', headless: true }); }
   const context = await browser.newContext({ viewport: { width: 1600, height: 1000 } });
@@ -337,9 +364,24 @@ try {
       `status=${sf.status} bytes=${sf.bytes}`);
   }
 
-  await page.locator('input[type=file]').first().setInputFiles(DXF);
+  // P2b 入口 = 「样例」应用同一 5336（2026-09-29 豁免收紧后的设计免 key 路径）：
+  // 直传上传同名文件不再豁免（9abb927），key 闸门在 precheck 拦下求解（本脚本
+  // 临时 MS_OUT_DIR 无绑定 key，frozen 态 MS_KEY_MODE=off 亦不可绕 —— 收紧前
+  // 三轮实拍：commit → precheck → 无 WS 连接即 P2d 超时）；样例应用经
+  // SamplePicker 声明 sampleName → commit 期 sha256 对拍铸 doc.sample 标记 →
+  // 闸门②样例豁免放行（P2 求解与 P3 策略 run 同读会话 doc 标记）。同一文件 →
+  // 下游常量（SIZES/EXPECT_PLACED/ptypes g01..g10）全不变；直传上传路径由
+  // --rerun-family 三冒烟的 dev 形态覆盖（dev 环境 out/license 已绑 key 过闸）。
+  await page.waitForSelector('[data-testid=sample-select] option',
+    { timeout: 60_000, state: 'attached' });   // option 在收起 select 内恒非 visible，attached 判在场
+  await page.selectOption('[data-testid=sample-select]', SAMPLE_NAME);
+  const parseDone = page.waitForResponse(
+    (r) => r.url().includes('/api/parse-dxf') && r.status() === 200,
+    { timeout: 300_000 });
+  await page.click('[data-testid=sample-apply]');
+  await parseDone;
   await page.waitForSelector('.qty-matrix', { timeout: 300_000 });
-  check('P2b 上传母版 → parse 出数量矩阵', true);
+  check('P2b 样例应用 5336 → parse 出数量矩阵', true);
   await page.waitForSelector('button.tab:not([disabled]):has-text("超排")', { timeout: 300_000 });
   // commit-done 判据 = ptypes 代表裁片非空（超排 tab 解锁于 parse 完成而 commit 仍在
   // 后台跑 —— 单发会拿到空会话态，#start 抢跑会被 WS 以「排料数据为空」拒；edit_polish

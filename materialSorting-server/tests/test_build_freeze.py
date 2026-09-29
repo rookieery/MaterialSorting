@@ -539,3 +539,91 @@ def test_parser_installer_flags(bf):
     assert args.installer and not args.installer_only
     args = bf.build_parser().parse_args(['--installer-only'])
     assert args.installer_only and not args.installer
+
+
+# ---------------------------------------------------------------- key 接线 sidecar（红线④）
+
+def test_key_sidecar_names_align_keygate(bf):
+    """文件名与 web/keygate.py 常量逐条对齐（scripts 复制常量 + 锚点测试锁死，
+    防单侧改名漂移 —— sample_dxf_files ↔ _sample_dxf_names 同款约定）。"""
+    from materialsorting.web import keygate
+    assert set(bf.KEY_SIDECAR_NAMES) == {keygate.KEY_URL_FILE_NAME,
+                                         keygate.KEY_TOKEN_FILE_NAME}
+
+
+def test_key_sidecar_dir_env_and_default(bf, monkeypatch):
+    """维护位推导 = dev 态 paths.LICENSE_DIR 同一推导：env MS_OUT_DIR 优先，
+    空串视同未设（比 paths.py 缺省形多一层防御）。"""
+    monkeypatch.delenv('MS_OUT_DIR', raising=False)
+    assert bf.key_sidecar_dir() == bf.SERVER_DIR / 'out' / 'license'
+    monkeypatch.setenv('MS_OUT_DIR', 'D:/somewhere/out')
+    assert bf.key_sidecar_dir() == Path('D:/somewhere/out') / 'license'
+    monkeypatch.setenv('MS_OUT_DIR', '')
+    assert bf.key_sidecar_dir() == bf.SERVER_DIR / 'out' / 'license'
+
+
+def test_key_sidecar_missing_matrix(bf, tmp_path):
+    """缺失清单：全缺/缺一/空文件/纯空白皆计入（keygate _read_sidecar strip
+    口径 —— 空文件视同未配置），全在场非空 = 空列表。"""
+    assert bf.key_sidecar_missing(tmp_path) == list(bf.KEY_SIDECAR_NAMES)
+    for name in bf.KEY_SIDECAR_NAMES:
+        (tmp_path / name).write_text('http://x\n', encoding='utf-8')
+    assert bf.key_sidecar_missing(tmp_path) == []
+    (tmp_path / 'key_client_token.txt').write_text('   \n', encoding='utf-8')
+    assert bf.key_sidecar_missing(tmp_path) == ['key_client_token.txt']
+
+
+def test_copy_key_sidecars_copies_overwrites_skips(bf, tmp_path):
+    """拷贝行为：源非空在场才拷；dist 同名文件覆盖为维护位现值（唯一真相源）；
+    源缺失跳过不炸（闸二兜底）；dist 侧其余文件不动。"""
+    src = tmp_path / 'license'
+    src.mkdir()
+    (src / 'key_server_url.txt').write_text(
+        'http://106.54.241.140:8083\n', encoding='utf-8')
+    dist_app = tmp_path / 'dist'
+    dist_app.mkdir()
+    (dist_app / 'key_server_url.txt').write_text('http://stale\n',
+                                                 encoding='utf-8')
+    (dist_app / 'key_client_token.txt').write_text('stale-token\n',
+                                                   encoding='utf-8')
+    copied = bf.copy_key_sidecars(dist_app, source_dir=src)
+    assert copied == ['key_server_url.txt']          # token 源缺失 → 跳过
+    assert (dist_app / 'key_server_url.txt').read_text(
+        encoding='utf-8').strip() == 'http://106.54.241.140:8083'
+    assert (dist_app / 'key_client_token.txt').read_text(
+        encoding='utf-8') == 'stale-token\n'         # dist 既有文件不被清掉
+
+
+def test_check_key_sidecar_source_gate(bf, tmp_path, monkeypatch, capsys):
+    """闸一：维护位缺文件 → fail-closed（SystemExit + 中文指路文案含逃生口）；
+    两文件在场 → OK 行不抛。"""
+    monkeypatch.setattr(bf, 'key_sidecar_dir', lambda: tmp_path / 'empty')
+    with pytest.raises(SystemExit):
+        bf.check_key_sidecar_source()
+    err = capsys.readouterr().err
+    assert 'key sidecar 预检' in err and '--skip-key-sidecar' in err
+    src = tmp_path / 'license'
+    src.mkdir()
+    for name in bf.KEY_SIDECAR_NAMES:
+        (src / name).write_text('http://x\n', encoding='utf-8')
+    monkeypatch.setattr(bf, 'key_sidecar_dir', lambda: src)
+    bf.check_key_sidecar_source()
+    assert 'key 接线 sidecar：OK' in capsys.readouterr().out
+
+
+def test_step_dist_check_sidecar_missing_fails(bf, tmp_path, monkeypatch,
+                                               capsys):
+    """闸二：维护位与 dist 双缺 → dist 自检 fail-closed（2026-09-29 交付事故
+    回归锁：打包先于手工铺文件打出无 sidecar 包，客户机「授权服务器未配置」）。"""
+    _fake_dist(bf, tmp_path, monkeypatch)
+    monkeypatch.setattr(bf, 'key_sidecar_dir', lambda: tmp_path / 'empty')
+    with pytest.raises(SystemExit):
+        bf.step_dist_check('0.1.0')     # 闸二先于泄漏扫描/--check 触发
+    err = capsys.readouterr().err
+    assert '授权服务器未配置' in err and '红线④' in err
+
+
+def test_parser_skip_key_sidecar_flag(bf):
+    """--skip-key-sidecar 参数面：缺省 False（闸门默认开，交付包底线）。"""
+    assert not bf.build_parser().parse_args([]).skip_key_sidecar
+    assert bf.build_parser().parse_args(['--skip-key-sidecar']).skip_key_sidecar

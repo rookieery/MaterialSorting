@@ -50,6 +50,12 @@ onedir，后端源码真编译为机器码；坚决不用 onefile —— 解压�
     静默降级 unsupported；``=materialsorting`` = ``--check`` 版本串（售后识别）。
   ② dist 源码泄漏 grep 零命中（.py/.pyc/.docs/tests/scripts）。
   ③ 资源安全三重防护（见上）。
+  ④ key 接线 sidecar 双闸 —— ``key_server_url.txt``/``key_client_token.txt``
+    必须随包落 exe 旁（漏 = 客户机「授权服务器未配置」/401，2026-09-29 交付
+    事故：打包在先、手工铺文件在后，同型于样例 b1f66e3）：闸一预检 = 构建机
+    维护位（dev ``paths.LICENSE_DIR`` 同位）两文件非空 fail-closed；闸二 =
+    dist 自检入口先从维护位同步再硬校验（``--installer-only`` 补打包路径同样
+    覆盖）。逃生口 ``--skip-key-sidecar``（内部测试构建专用）。
 """
 from __future__ import annotations
 
@@ -72,6 +78,10 @@ ROOT = Path(__file__).resolve().parents[1]
 ENTRY_FILE = ROOT / 'scripts' / 'freeze_entry.py'          # Nuitka 入口适配层
 STATIC_DIR = ROOT / 'materialSorting-web' / 'static'       # 前端 React 构建产物
 DATA_DIR = ROOT / 'data'                                   # 样例母版目录（顶层 .dxf 随包）
+# key 接线 sidecar 文件名（与 web/keygate.py KEY_URL_FILE_NAME/KEY_TOKEN_FILE_NAME
+# 逐条对齐 —— scripts 不 import 业务包（全标准库先例），复制常量 + 对齐锚点测试
+# 锁死，sample_dxf_files ↔ routes_views._sample_dxf_names 同款约定）
+KEY_SIDECAR_NAMES = ('key_server_url.txt', 'key_client_token.txt')
 SERVER_DIR = ROOT / 'materialSorting-server'
 PYPROJECT = SERVER_DIR / 'pyproject.toml'
 SPYRROW_PIN_FILE = SERVER_DIR / 'spyrrow_build.json'       # 私有 wheel 钉板（四字段）
@@ -380,6 +390,81 @@ def sample_dxf_files(data_dir: Path) -> list[Path]:
     return sorted(files, key=lambda p: p.name)
 
 
+# ================================================================ key 接线 sidecar（纯函数）
+
+def key_sidecar_dir() -> Path:
+    """构建机 sidecar 维护位 = dev 态 ``paths.LICENSE_DIR`` 同一推导（env
+    ``MS_OUT_DIR`` → 缺省 ``materialSorting-server/out``，再接 ``/license``）。
+
+    dev 部署的 keygate 与本脚本打包共用这一处文件 —— 单一维护点：发卡交付物
+    （keyserver 基址 / client token）更新时只改这里，dev 重启即生效、下次打包
+    自动带上（2026-09-29 交付事故前 sidecar 靠手工分头铺四处，打包时序错位即
+    打出坏包）。``MS_OUT_DIR`` 取非空值才生效（空串视同未设，比 paths.py 的
+    ``os.environ.get`` 缺省形多一层防御）。
+    """
+    out_dir = os.environ.get('MS_OUT_DIR') or str(SERVER_DIR / 'out')
+    return Path(out_dir) / 'license'
+
+
+def key_sidecar_missing(sidecar_dir: Path) -> list[str]:
+    """sidecar 缺失清单：返回 ``KEY_SIDECAR_NAMES`` 中不在 ``sidecar_dir`` 或
+    strip 后为空的文件名（全在场非空 = 空列表）。
+
+    空文件视同缺失 —— keygate ``_read_sidecar`` 同口径（strip 后非空才算配置，
+    空文件继续向后回落查找）。闸一（维护位预检）与闸二（dist exe 旁校验）
+    共用本函数。
+    """
+    missing: list[str] = []
+    for name in KEY_SIDECAR_NAMES:
+        try:
+            ok = bool((sidecar_dir / name).read_text(encoding='utf-8').strip())
+        except OSError:
+            ok = False
+        if not ok:
+            missing.append(name)
+    return missing
+
+
+def copy_key_sidecars(dist_app_dir: Path,
+                      source_dir: Path | None = None) -> list[str]:
+    """维护位两文件 → dist exe 旁（源非空在场才拷）；返回实际拷入文件名。
+
+    dist 侧既有同名文件一律覆盖（维护位 = 唯一真相源 —— 覆盖安装/手工铺放的
+    旧文件被纠正为维护位现值；彻底缺失由调用方 ``step_dist_check`` 闸二兜底
+    报错）。``shutil.copy2`` 保留源 mtime（Inno/zip 同款语义）。**token 是共享
+    秘密：本函数与全部调用方打印永不回显内容**（镜像 keygate
+    ``describe_client_token`` 口径）。
+    """
+    src = source_dir if source_dir is not None else key_sidecar_dir()
+    copied: list[str] = []
+    for name in KEY_SIDECAR_NAMES:
+        source = src / name
+        try:
+            if not source.read_text(encoding='utf-8').strip():
+                continue
+        except OSError:
+            continue
+        shutil.copy2(source, dist_app_dir / name)
+        copied.append(name)
+    return copied
+
+
+def check_key_sidecar_source() -> None:
+    """key 接线 sidecar 预检（红线④闸一）：维护位两文件必须非空在场，缺失
+    fail-closed —— 在 30~90 分钟编译**之前**暴露，勿等 dist 自检。
+    """
+    missing = key_sidecar_missing(key_sidecar_dir())
+    if missing:
+        _fail('key sidecar 预检',
+              f'{key_sidecar_dir()} 缺 {"、".join(missing)} —— 安装包将不带 key '
+              '接线，客户机必报「授权服务器未配置」（缺 URL）或 401「消费 token '
+              '缺失」（缺 token，生产双 token 姿态）。把两文件放到该目录（内容 = '
+              'keyserver 公网基址一行 / client token 一行，与 dev 态 keygate 同位'
+              '共用），或内部测试构建加 --skip-key-sidecar')
+    print(f'  key 接线 sidecar：OK（{len(KEY_SIDECAR_NAMES)} 个文件 ← '
+          f'{key_sidecar_dir()}）')
+
+
 # ================================================================ Nuitka 命令（常量段）
 
 def nuitka_command(jobs: int, file_version: str, version_display: str,
@@ -650,10 +735,29 @@ def step_compile(cmd: list[str], jobs: int) -> None:
     print(f'  编译完成，elapsed {elapsed / 60:.1f} 分钟')
 
 
-def step_dist_check(expected_version: str) -> None:
+def step_dist_check(expected_version: str,
+                    skip_key_sidecar: bool = False) -> None:
     print(f'[6/{STEP_TOTAL}] dist 自检：')
     if not EXE_PATH.is_file():
         _fail('dist 自检', f'{EXE_PATH} 不存在（编译产物缺失）')
+    # ⓪ key 接线 sidecar（红线④闸二）：入口先从构建机维护位同步再硬校验 ——
+    # 收口在此（而非 Nuitka --include-data-file）使 --installer-only 补打包路径
+    # 同样覆盖（2026-09-29 交付事故形态 = 打包时序错位，修复必须不经重编译）
+    if skip_key_sidecar:
+        print('  key 接线 sidecar：SKIP（--skip-key-sidecar，内部测试构建专用）')
+    else:
+        copied = copy_key_sidecars(DIST_APP_DIR)
+        if copied:
+            print(f'  key 接线 sidecar：已从维护位同步 {len(copied)} 个文件到 exe 旁')
+        missing = key_sidecar_missing(DIST_APP_DIR)
+        if missing:
+            _fail('dist 自检',
+                  f'key 接线 sidecar 缺失（exe 旁无 {"、".join(missing)}）—— 客户机'
+                  '必报「授权服务器未配置」（缺 URL）或 401「消费 token 缺失」'
+                  '（2026-09-29 交付事故同型，红线④）。维护位 '
+                  f'{key_sidecar_dir()} 补文件后重跑，或内部测试构建加 '
+                  '--skip-key-sidecar')
+        print(f'  key 接线 sidecar：OK（exe 旁 {"、".join(KEY_SIDECAR_NAMES)}）')
     # ① 源码泄漏红线②
     leaks = scan_dist_leaks(DIST_APP_DIR)
     files = [f for f in DIST_APP_DIR.rglob('*') if f.is_file()]
@@ -795,6 +899,10 @@ def build_parser() -> argparse.ArgumentParser:
                              '//4)) 再按可用内存钳制；env MS_FREEZE_JOBS 次之）')
     parser.add_argument('--skip-frontend-check', action='store_true',
                         help='跳过前端 static 存在性检查')
+    parser.add_argument('--skip-key-sidecar', action='store_true',
+                        help='跳过 key 接线 sidecar 预检与 dist 同步/校验（内部'
+                             '测试构建专用；交付客户的包必须带 key_server_url.txt '
+                             '+ key_client_token.txt 两文件，红线④）')
     parser.add_argument('--force', action='store_true',
                         help='孤儿编译进程扫描命中时放行（自担风险）')
     parser.add_argument('--launch', action='store_true',
@@ -835,7 +943,7 @@ def main(argv: list[str] | None = None) -> int:
               f'版本 {display}')
         print('  注意：版本串取当前 git 状态 —— dist 若构建于其他提交，'
               '正式发版走全量 --installer（发版手册「日常发版三步」）\n')
-        step_dist_check(py_ver)
+        step_dist_check(py_ver, skip_key_sidecar=args.skip_key_sidecar)
         step_installer(display, file_version)
         print(f'\n[DONE] 发版产物（{DIST_DIR}）：')
         setup = DIST_DIR / f'{APP_BASENAME}-Setup-{fs_version(display)}.exe'
@@ -875,6 +983,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f'[1/{STEP_TOTAL}] 前端 static 检查：SKIP（--skip-frontend-check）')
     else:
         step_static_check()
+    # key sidecar 预检（红线④闸一）独立于 --skip-frontend-check（前端产物与 key
+    # 接线是两个交付关注点，不连坐；内部测试构建用 --skip-key-sidecar 显式跳过）
+    if args.skip_key_sidecar:
+        print('  key 接线 sidecar：SKIP 预检（--skip-key-sidecar，内部测试构建专用）')
+    else:
+        check_key_sidecar_source()
     step_env_selfcheck()
     step_spyrrow_check()
     step_orphan_scan(args.force)
@@ -904,7 +1018,7 @@ def main(argv: list[str] | None = None) -> int:
         shutil.rmtree(DIST_DIR)
     DIST_DIR.mkdir(parents=True)
     step_compile(cmd, jobs)
-    step_dist_check(py_ver)
+    step_dist_check(py_ver, skip_key_sidecar=args.skip_key_sidecar)
 
     # 构建目录清理（.build 仅中间产物；clcache 在 %LOCALAPPDATA%\Nuitka 跨重试生效）
     build_dir = DIST_DIR / f'{APP_BASENAME}.build'
