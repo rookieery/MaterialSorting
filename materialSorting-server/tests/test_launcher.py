@@ -424,12 +424,19 @@ def test_unknown_args_exit_2(capsys):
     assert '--cli' in captured.out                    # 错误时也打印用法指路
 
 
-def test_check_subprocess_output_keys():
+def test_check_subprocess_output_keys(tmp_path):
     """python -m materialsorting.launcher --check 冒烟：各键在场 + dev 态
-    frozen: False + repo 落点（AC9 跑通判据；key 授权配置四行 = US-009）。"""
+    frozen: False（AC9 跑通判据；key 授权配置四行 = US-009）。
+
+    2026-09-29 dev sidecar 档起 hermetic：子进程 ``MS_OUT_DIR`` 指 tmp（隔离
+    真实 out/license/ 下的部署 sidecar 与本机已绑定 key_state.json —— 缺省态
+    断言「未配置/未绑定」不再依赖开发机状态）。"""
+    env = dict(os.environ)
+    env['MS_OUT_DIR'] = str(tmp_path / 'out')
     proc = subprocess.run(
         [sys.executable, '-m', 'materialsorting.launcher', '--check'],
-        capture_output=True, text=True, encoding='utf-8', cwd=str(_SRC.parent))
+        capture_output=True, text=True, encoding='utf-8', cwd=str(_SRC.parent),
+        env=env)
     assert proc.returncode == 0
     for key in ('frozen:', 'version:', 'env MS_WEB_PORT:', 'env MS_OUT_DIR:',
                 'env MS_STATIC_DIR:', 'env MS_KEY_MODE:', 'key_server_url:',
@@ -438,9 +445,9 @@ def test_check_subprocess_output_keys():
                 'warm_start_supported:'):
         assert key in proc.stdout, key
     assert 'frozen: False' in proc.stdout
-    assert str(_DEV_OUT_DIR) in proc.stdout
+    assert str(tmp_path / 'out') in proc.stdout     # OUT_DIR 落点 = env 重定向值
     assert str(_DEV_STATIC_DIR) in proc.stdout
-    # key 配置缺省态（子进程无 MS_KEY_* env）：未配置 fail-closed + 未绑定
+    # key 配置缺省态（tmp 空 license：无 env 无 sidecar）：未配置 + 未绑定
     assert '未配置' in proc.stdout
     assert '未绑定' in proc.stdout
 

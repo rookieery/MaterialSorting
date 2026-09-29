@@ -29,12 +29,15 @@
     key → 中文指路文案；④ ``/api/key/validate`` ``deduct=true`` 真扣次校验。
 
 keyserver URL 解析链（``resolve_key_server_url``，请求时读 env 非 import 期
-绑定 —— 部署后设 env 无需改代码）：``MS_KEY_SERVER_URL`` env → frozen exe 旁
-``key_server_url.txt``（zip 解压部署免设 env）→ 皆无 → ``None``（fail-closed，
-调用方一律拒绝运行）。client token 解析链同构（US-009，``resolve_client_token``）：
-``MS_KEY_CLIENT_TOKEN`` env → frozen exe 旁 ``key_client_token.txt`` → 皆无不带
-header（keyserver 已设 token 而本机未配 → 401 中文透传；frp 双 token 部署契约
-见发版手册 §7）。
+绑定 —— 部署后设 env 无需改代码）：``MS_KEY_SERVER_URL`` env → sidecar
+``key_server_url.txt``（**frozen = exe 旁**，zip 解压部署免设 env；**dev =
+LICENSE_DIR（out/license/，gitignored 机器本地）** —— 2026-09-29 加档：接线
+此前是进程 env 级，后端被裸起/换方式重启即静默丢接线 fail-closed（当日实发
+两轮），落文件后任何启动方式自动带上）→ 皆无 → ``None``（fail-closed，调用方
+一律拒绝运行）。client token 解析链同构（US-009，``resolve_client_token``）：
+``MS_KEY_CLIENT_TOKEN`` env → sidecar ``key_client_token.txt``（位置同上按形态）
+→ 皆无不带 header（keyserver 已设 token 而本机未配 → 401 中文透传；frp 双
+token 部署契约见发版手册 §7）。
 
 分层：模块级仅标准库 + ``..paths``（AST 守卫见 tests/test_web_keygate.py，
 镜像 edit_hold 先例）；**禁 import cli 子包与 server 模块**（本模块被 server
@@ -79,7 +82,8 @@ _MACHINE_GUID_KEY = r'SOFTWARE\Microsoft\Cryptography'   # 注册表键（HKLM �
 _MACHINE_GUID_VALUE = 'MachineGuid'                       # 键内值名（系统 GUID）
 
 MSG_NO_KEY = '未绑定授权 key：请在「系统key」中输入并保存'
-MSG_NO_SERVER = '授权服务器未配置：请设置 MS_KEY_SERVER_URL 或在程序目录放置 key_server_url.txt'
+MSG_NO_SERVER = ('授权服务器未配置：请设置 MS_KEY_SERVER_URL，或放置 '
+                 'key_server_url.txt（exe 旁 / 源码部署在 out/license/）')
 MSG_UNREACHABLE = '无法连接授权服务器，请检查网络后重试'
 
 
@@ -98,31 +102,43 @@ class KeyGateError(Exception):
 
 # ------------------------------------------------------------- keyserver URL 解析链
 
-def resolve_key_server_url() -> str | None:
-    """keyserver 基址解析（三档）：``MS_KEY_SERVER_URL`` env → frozen exe 旁
-    ``key_server_url.txt``（strip 后非空）→ ``None``（未配置，fail-closed）。
+def _sidecar_path(name: str) -> Path:
+    """sidecar 文件位置单一真相源（2026-09-29 dev 加档）：frozen = exe 旁
+    （交付契约不变）；dev = ``LICENSE_DIR``（out/license/，gitignored 机器本地）
+    —— 后端被裸起/换启动方式重启也能自动带上 keyserver 接线。"""
+    if getattr(sys, 'frozen', False):
+        return Path(sys.executable).resolve().parent / name
+    return _license_dir() / name
 
-    env 请求时读取（非 import 期绑定）；sidecar 仅 frozen 态生效（dev 态 repo 内
-    ``key_server_url.txt`` 是部署配置不是开发配置）。
+
+def _read_sidecar(name: str) -> str | None:
+    """读 sidecar 单行文本（strip 后非空即用；缺失/不可读 → ``None``）。"""
+    try:
+        text = _sidecar_path(name).read_text(encoding='utf-8').strip()
+    except OSError:
+        return None
+    return text or None
+
+
+def resolve_key_server_url() -> str | None:
+    """keyserver 基址解析（三档）：``MS_KEY_SERVER_URL`` env → sidecar
+    ``key_server_url.txt``（frozen = exe 旁 / dev = LICENSE_DIR，strip 后非空）
+    → ``None``（未配置，fail-closed）。
+
+    env 请求时读取（非 import 期绑定）；sidecar 位置按形态见 :func:`_sidecar_path`。
     """
     env_url = os.environ.get('MS_KEY_SERVER_URL')
     if env_url and env_url.strip():
         return env_url.strip()
-    if getattr(sys, 'frozen', False):
-        sidecar = Path(sys.executable).resolve().parent / KEY_URL_FILE_NAME
-        try:
-            text = sidecar.read_text(encoding='utf-8').strip()
-        except OSError:
-            return None
-        return text or None
-    return None
+    return _read_sidecar(KEY_URL_FILE_NAME)
 
 
 def resolve_client_token() -> str | None:
     """``X-Client-Token`` 解析链（US-009，与 URL 链同构）：env
-    ``MS_KEY_CLIENT_TOKEN`` → frozen exe 旁 ``key_client_token.txt``（strip 后
-    非空；dev 态不读）→ 皆无 ``None``（请求不带该 header —— keyserver 未设
-    token 时不影响；keyserver 已设而本机未配 → keyserver 401 中文透传上屏）。
+    ``MS_KEY_CLIENT_TOKEN`` → sidecar ``key_client_token.txt``（frozen = exe 旁 /
+    dev = LICENSE_DIR，strip 后非空）→ 皆无 ``None``（请求不带该 header ——
+    keyserver 未设 token 时不影响；keyserver 已设而本机未配 → keyserver 401
+    中文透传上屏）。
 
     背景：frp 部署 runbook 双 token 必设（US-009 契约定稿）—— 管理口令护发卡
     财务面，共享 client token 防公网任意调用方打消费端（bind 他机抢绑/扣次烧
@@ -131,14 +147,7 @@ def resolve_client_token() -> str | None:
     env_tok = os.environ.get('MS_KEY_CLIENT_TOKEN')
     if env_tok and env_tok.strip():
         return env_tok.strip()
-    if getattr(sys, 'frozen', False):
-        sidecar = Path(sys.executable).resolve().parent / KEY_TOKEN_FILE_NAME
-        try:
-            text = sidecar.read_text(encoding='utf-8').strip()
-        except OSError:
-            return None
-        return text or None
-    return None
+    return _read_sidecar(KEY_TOKEN_FILE_NAME)
 
 
 def describe_client_token() -> str:
@@ -151,8 +160,12 @@ def describe_client_token() -> str:
         return ('未配置（keyserver 未设 MS_KEY_CLIENT_TOKEN 时不影响；'
                 '已设而未配 → 消费请求 401）')
     env_tok = (os.environ.get('MS_KEY_CLIENT_TOKEN') or '').strip()
-    source = ('MS_KEY_CLIENT_TOKEN env' if env_tok == token
-              else 'key_client_token.txt（exe 旁）')
+    if env_tok == token:
+        source = 'MS_KEY_CLIENT_TOKEN env'
+    elif getattr(sys, 'frozen', False):
+        source = 'key_client_token.txt（exe 旁）'
+    else:
+        source = 'key_client_token.txt（out/license/）'
     return f'已配置（来源：{source}，不回显值）'
 
 
@@ -164,9 +177,15 @@ def describe_key_server_url() -> str:
     """
     url = resolve_key_server_url()
     if url is None:
-        return '未配置（fail-closed：设 MS_KEY_SERVER_URL 或在 exe 旁放置 key_server_url.txt）'
+        return ('未配置（fail-closed：设 MS_KEY_SERVER_URL，或放置 '
+                'key_server_url.txt —— frozen 在 exe 旁 / 源码部署在 out/license/）')
     env = (os.environ.get('MS_KEY_SERVER_URL') or '').strip()
-    source = 'MS_KEY_SERVER_URL env' if env == url else 'key_server_url.txt（exe 旁）'
+    if env == url:
+        source = 'MS_KEY_SERVER_URL env'
+    elif getattr(sys, 'frozen', False):
+        source = 'key_server_url.txt（exe 旁）'
+    else:
+        source = 'key_server_url.txt（out/license/）'
     return f'{url}（来源：{source}）'
 
 

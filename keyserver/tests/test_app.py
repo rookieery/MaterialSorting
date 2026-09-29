@@ -35,6 +35,15 @@ def test_health_returns_ok_and_reports_db(client, db_env):
     assert body['db'] == str(db_env)
 
 
+def test_root_returns_200_for_health_probes(client):
+    """根路由 200（frp healthCheck 探 `/` 过检，2026-09-29 公网部署修复锁）。"""
+    resp = client.get('/')
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body['ok'] is True
+    assert body['service'] == 'keyserver'
+
+
 def test_health_creates_schema_on_first_probe(db_env):
     assert not db_env.exists()
     pytest.importorskip('fastapi.testclient')

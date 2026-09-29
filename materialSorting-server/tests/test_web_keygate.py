@@ -8,7 +8,8 @@
    落 %LOCALAPPDATA%）；
 3. key_state.json：原子写（tmp+rename 无残屑）/ 重启可读 / 损坏与非对象容忍；
 4. ``machine_guid``：注册表优先（真机 winreg 实测）/ 兜底文件首铸 + 稳定；
-5. URL 链三档：env → frozen exe 旁 sidecar（dev 不读）→ 皆无 fail-closed；
+5. URL/token 链三档：env → sidecar（frozen = exe 旁 / dev = LICENSE_DIR，
+   2026-09-29 dev 加档）→ 皆无 fail-closed；
 6. ``_key_post``（真 http.server 对拍）：200 解析 / 4xx 中文 error 透传 /
    5xx 通用文案 / 非 JSON / 超时 / 连接拒绝 / **无自动重试**（计数恰 1）；
 7. ``ensure_run_allowed`` 四分支：off 仅 dev / 样例标记豁免（2026-09-29 收紧：
@@ -51,15 +52,18 @@ def license_dir(tmp_path, monkeypatch):
 
 
 @pytest.fixture
-def no_server_url(monkeypatch):
-    """URL 链归零：无 env、未冻结（三档 fail-closed 起点）。"""
+def no_server_url(tmp_path, monkeypatch):
+    """URL/token 链归零：无 env、未冻结、LICENSE_DIR 指空 tmp（2026-09-29 dev
+    sidecar 档落地后，防真实 out/license/ 漏读串档）。"""
     monkeypatch.delenv('MS_KEY_SERVER_URL', raising=False)
     monkeypatch.delattr(sys, 'frozen', raising=False)
+    monkeypatch.setattr(paths_mod, 'LICENSE_DIR', str(tmp_path / 'license'))
 
 
 @pytest.fixture
-def set_server_url(monkeypatch):
-    """设 MS_KEY_SERVER_URL（monkeypatch 域内，测后自动清 —— 不泄漏到其他用例）。"""
+def set_server_url(no_server_url, monkeypatch):
+    """设 MS_KEY_SERVER_URL（先经 ``no_server_url`` 归零 env/sidecar —— 2026-09-29
+    dev sidecar 档落地后防真实 out/license/ 漏读串档；monkeypatch 域内测后自动清）。"""
     def _set(url: str) -> None:
         monkeypatch.setenv('MS_KEY_SERVER_URL', url)
     return _set
@@ -259,12 +263,15 @@ def test_url_chain_frozen_sidecar_missing(no_server_url, tmp_path, monkeypatch):
     assert keygate.resolve_key_server_url() is None
 
 
-def test_url_chain_dev_ignores_sidecar(no_server_url, tmp_path, monkeypatch):
-    """dev（未冻结）不读 sidecar —— repo 内该文件是部署配置不是开发配置。"""
+def test_url_chain_dev_sidecar_license_dir(no_server_url, license_dir, monkeypatch):
+    """dev（未冻结）读 LICENSE_DIR 下 key_server_url.txt（2026-09-29 加档：后端
+    被裸起/换启动方式重启也自动接线）；exe 旁文件仍不读（exe 旁 = frozen 交付契约）。"""
     assert not hasattr(sys, 'frozen') or not sys.frozen
-    (tmp_path / 'key_server_url.txt').write_text('http://x', encoding='utf-8')
-    monkeypatch.setattr(sys, 'executable', str(tmp_path / 'python.exe'))
-    assert keygate.resolve_key_server_url() is None
+    license_dir.mkdir(parents=True, exist_ok=True)
+    (license_dir / 'key_server_url.txt').write_text(
+        'http://dev-side:8110\n', encoding='utf-8')
+    monkeypatch.setattr(sys, 'executable', 'C:/nowhere/python.exe')
+    assert keygate.resolve_key_server_url() == 'http://dev-side:8110'
 
 
 # ------------------------------------------------- describe_*（--check 回显，US-009）
@@ -284,6 +291,14 @@ def test_describe_url_three_tiers(no_server_url, tmp_path, monkeypatch):
         'http://127.0.0.1:8110', encoding='utf-8')
     text = keygate.describe_key_server_url()
     assert 'http://127.0.0.1:8110' in text and 'key_server_url.txt' in text
+    # 档二' dev sidecar：LICENSE_DIR 下 sidecar（裸起免 env 接线，2026-09-29 加档）
+    monkeypatch.delattr(sys, 'frozen', raising=False)
+    lic = tmp_path / 'lic'
+    lic.mkdir()
+    monkeypatch.setattr(paths_mod, 'LICENSE_DIR', str(lic))
+    (lic / 'key_server_url.txt').write_text('http://dev:8110', encoding='utf-8')
+    text = keygate.describe_key_server_url()
+    assert 'http://dev:8110' in text and 'out/license/' in text
 
 
 def test_describe_url_unconfigured(no_server_url):
@@ -328,7 +343,15 @@ def test_client_token_frozen_sidecar(no_server_url, tmp_path, monkeypatch):
     assert keygate.resolve_client_token() is None
     monkeypatch.delattr(sys, 'frozen', raising=False)
     (tmp_path / 'key_client_token.txt').write_text('tok-side', encoding='utf-8')
-    assert keygate.resolve_client_token() is None, 'dev 态不读 sidecar'
+    assert keygate.resolve_client_token() is None, 'dev 态不读 exe 旁 sidecar（dev 档在 LICENSE_DIR）'
+
+
+def test_client_token_dev_sidecar_license_dir(no_server_url, license_dir, monkeypatch):
+    """dev 态读 LICENSE_DIR 下 key_client_token.txt（2026-09-29 加档，与 URL 链同构）。"""
+    monkeypatch.delenv('MS_KEY_CLIENT_TOKEN', raising=False)
+    license_dir.mkdir(parents=True, exist_ok=True)
+    (license_dir / 'key_client_token.txt').write_text('tok-dev\n', encoding='utf-8')
+    assert keygate.resolve_client_token() == 'tok-dev'
 
 
 def test_key_post_sends_client_token_header(set_server_url, monkeypatch):

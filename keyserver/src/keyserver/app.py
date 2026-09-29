@@ -43,6 +43,15 @@ app.include_router(admin_router)
 app.include_router(consumer_router)
 
 
+@app.get('/', include_in_schema=False)
+def root() -> dict:
+    """根路径 200（2026-09-29 frp 公网部署补）：frpc healthCheck 等探针缺省探 ``/``，
+    本服务此前无根路由 404 → frp 判后端不健康不启动 proxy，公网 8083 拒连。
+    返回 200 JSON 而非重定向（部分探针只认 2xx 不跟 30x）。"""
+    return {'ok': True, 'service': 'keyserver', 'admin': '/admin',
+            'health': '/api/key/health'}
+
+
 @app.get('/admin', include_in_schema=False)
 def admin_page() -> FileResponse:
     """管理后台可视化单页（US-008）：原生 HTML + fetch，同源直出零跨域。

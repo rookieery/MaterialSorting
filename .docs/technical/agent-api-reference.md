@@ -880,7 +880,7 @@ curl http://127.0.0.1:8010/api/ptypes -H "X-Session-Id: <sid>"
 | 档 | 来源 | 生效条件 |
 |----|------|---------|
 | ① | env `MS_KEY_SERVER_URL` | 恒优先（strip 后非空即用；frozen/dev 均生效） |
-| ② | frozen exe 旁 `key_server_url.txt`（UTF-8 一行 URL） | 仅 `sys.frozen` 为真（zip 解压部署免设 env；**dev 态不读** —— repo 内该文件是部署配置不是开发配置） |
+| ② | sidecar `key_server_url.txt`（UTF-8 一行 URL） | **frozen = exe 旁**（zip 解压部署免设 env）；**dev/源码部署 = `<OUT_DIR>/license/`（out/license/，gitignored 机器本地）** —— 2026-09-29 dev 加档：源码部署下后端被裸起/换启动方式重启会丢 env 级接线（当日实发两轮），落文件后任何启动方式自动带上 |
 | ③ | 无（`None`） | ①②皆无 → **fail-closed**：三入口运行一律拒绝（文案 `MSG_NO_SERVER`），管理端点 state 只报本地 key + error |
 
 **keyserver 侧 env**（部署手册 runbook 见 [本地部署构建与发版手册](本地部署构建与发版手册.md) §7 frp 部署）：`MS_KEY_PORT`（缺省 8110）/ `MS_KEY_HOST`（缺省 127.0.0.1，frp 同机形态不裸露 LAN）/ `MS_KEY_DB`（SQLite 路径，缺省 `<keyserver 部署目录>/data/keys.db`）/ `MS_KEY_ADMIN_TOKEN`（管理端鉴权）/ `MS_KEY_CLIENT_TOKEN`（消费端鉴权）/ `MS_KEY_DEV=1`（本地开发逃生：两 token 均未配置时放行）。
