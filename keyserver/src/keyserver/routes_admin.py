@@ -9,14 +9,18 @@
     防时序侧信道逐字节猜 token）。
   - ``MS_KEY_DEV=1`` = 本地开发逃生（跳过管理 token 校验，仅限本机调试）。
 
-五接口（响应体业务错误一律 ``{"error": 中文}``，见 errors.py）：
+五接口 + 系统级两接口（响应体业务错误一律 ``{"error": 中文}``，见 errors.py）：
   - ``GET    /api/admin/keys``            全量列表（新→旧）
   - ``POST   /api/admin/keys``            新建（count/duration）→ 201 返回明文
   - ``POST   /api/admin/keys/{id}/renew`` 续期（count 加次数 / duration 加天数）
-  - ``PUT    /api/admin/keys/{id}``       改备注名（保存即生效）
-  - ``DELETE /api/admin/keys/{id}``       删除（active 态需 ``?force=true`` 二次确认）
+  - ``PUT    /api/admin/keys/{id}``       改备注名（保存即生效；UI 已不再调用，兼容保留）
+  - ``DELETE /api/admin/keys/{id}``       删除（active 态需 ``?force=true`` 二次确认；
+                                          删后级联清理无 key 系统的 bound_systems 行）
+  - ``GET    /api/admin/systems``         绑定系统名列表（keys 分组派生 + 系统级备注
+                                          + 合并日序列使用统计，绑定系统名列表表格）
+  - ``PUT    /api/admin/systems/{name}``  改系统级备注（系统名下无 key → 404）
 
-每操作写 ``key_op_log``（create/renew/edit/delete，FR-16）。
+每操作写 ``key_op_log``（create/renew/edit/delete/edit_system_remark，FR-16）。
 """
 from __future__ import annotations
 
@@ -225,7 +229,63 @@ def delete_key(
             raise ApiError(409, '该 key 正在使用，确认删除请再次确认')
         repo.delete_key(conn, key_id)
         repo.log_op(conn, key_id, 'delete', {'force': forced, 'status': status})
+        # 级联：该系统名下 key 已全删 → bound_systems 行（含系统级备注）连带清理
+        repo.delete_system_if_orphaned(conn, row['bound_system_name'])
         return {'ok': True, 'id': key_id}
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# 绑定系统名列表（系统级两接口）
+# ---------------------------------------------------------------------------
+
+@router.get('/systems')
+def list_systems(_: None = Depends(require_admin_token)) -> dict:
+    """绑定系统名列表（keys 按 bound_system_name 分组派生，新→旧）。
+
+    行成员口径 = 未删除的全部 key（含已合并/已过期/已用完）；未绑定 key 无系统
+    名不参与；不同机器同名系统合并为一行。``usage_stats`` = 该系统全部 key 的
+    逐日使用**合并日序列**（同日相加）后按 FR-14 公式计算的三指标。
+    """
+    conn = db.ensure_schema(db.connect())
+    try:
+        systems = []
+        for row in repo.list_bound_systems(conn):
+            systems.append({
+                'system_name': row['system_name'],
+                'remark': row['remark'],
+                'key_count': int(row['key_count']),
+                'usage_stats': repo.system_usage_stats(conn, row['system_name']),
+            })
+        return {'systems': systems}
+    finally:
+        conn.close()
+
+
+@router.put('/systems/{system_name}')
+def edit_system_remark(
+    system_name: str,
+    payload: dict = Body(...),
+    _: None = Depends(require_admin_token),
+) -> dict:
+    """改系统级备注 ``{remark}``（保存即生效；空串 = 清除备注）。
+
+    系统名在 keys 表已无任何 key → 404（行存在性由 keys 派生，不允许给
+    已消失的系统留备注；删除 key 的级联清理亦同口径）。
+    """
+    conn = db.ensure_schema(db.connect())
+    try:
+        if not repo.system_has_keys(conn, system_name):
+            raise ApiError(404, '该系统名下已无 key，无法编辑备注')
+        remark = payload.get('remark')
+        if not isinstance(remark, str):
+            raise ApiError(400, 'remark 必须为字符串')
+        repo.upsert_system_remark(conn, system_name, remark)
+        repo.log_op(conn, None, 'edit_system_remark',
+                    {'system_name': system_name, 'remark': remark})
+        return {'ok': True, 'system_name': system_name,
+                'remark': remark if remark else None}
     finally:
         conn.close()
 

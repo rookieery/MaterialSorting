@@ -85,6 +85,14 @@ CREATE TABLE IF NOT EXISTS key_op_log (
     ts      TEXT    NOT NULL
 );
 
+-- 系统级备注名（绑定系统名列表表格）：行存在性由 keys 按 bound_system_name
+-- 分组派生，本表只挂靠备注 —— 该系统名下 key 全删时行连带清理（级联口径）
+CREATE TABLE IF NOT EXISTS bound_systems (
+    system_name TEXT PRIMARY KEY,             -- = keys.bound_system_name 快照文本（逻辑关联无外键）
+    remark      TEXT,                         -- 系统级备注（空 = 未填）
+    updated_at  TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_keys_bound_machine ON keys(bound_machine_guid);
 CREATE INDEX IF NOT EXISTS idx_op_log_key ON key_op_log(key_id);
 '''

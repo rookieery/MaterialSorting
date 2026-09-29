@@ -1,4 +1,4 @@
-"""db.py 单测（US-001 AC1/AC5）：schema 三表 + WAL + busy_timeout + MS_KEY_DB 重定位。"""
+"""db.py 单测（US-001 AC1/AC5）：schema 四表 + WAL + busy_timeout + MS_KEY_DB 重定位。"""
 from __future__ import annotations
 
 import sqlite3
@@ -13,11 +13,11 @@ def _tables(conn):
     return [r['name'] for r in cur.fetchall()]
 
 
-def test_ensure_schema_creates_three_tables(db_env):
+def test_ensure_schema_creates_four_tables(db_env):
     assert not db_env.exists()
     conn = db.ensure_schema(db.connect())
     tables = _tables(conn)
-    for t in ('keys', 'key_daily_usage', 'key_op_log'):
+    for t in ('keys', 'key_daily_usage', 'key_op_log', 'bound_systems'):
         assert t in tables
     conn.close()
 

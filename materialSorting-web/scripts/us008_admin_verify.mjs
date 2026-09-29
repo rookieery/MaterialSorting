@@ -7,19 +7,22 @@
 //   - BARE_URL：裸实例 —— 无 token 无 DEV + 独立临时库（「未配置 token」指引相位）
 //   - env：US008_ADMIN_TOKEN（主实例管理 token）
 //
-// 相位（US-008 AC）：
+// 相位（US-008 AC + 绑定系统名列表改版）：
 //   A  裸实例 /admin → 配置指引文案（双 token 必设）
 //   B  登录框：错 token → 401 红字（sessionStorage 不留）
-//   C  正确 token → 表格八列 + 空态
-//   D  新建次数型（单位次）→ 即时入表 0/5 未绑定 统计 —
+//   C  正确 token → key 表六列 + 绑定系统名列表五列 + 双空态
+//   D  新建次数型（无备注名输入框）→ 即时入表 0/5 未绑定；未绑定不派生系统行
 //   E  新建时长型（生效时长，默认单位天）→ 30天
-//   F  编辑弹窗：改备注 + 次数型加次数 → 0/10 可见
-//   G  consumer bind（node 侧）→ 刷新 → 正在使用 + 绑定系统名 + 起~止
+//   F  续期弹窗（无备注名字段）：次数型加次数 → 0/10 可见
+//   G  consumer bind（node 侧）→ 刷新 → 正在使用 + 绑定系统名 + 起~止；
+//      绑定系统名列表出现该系统行（key 数 1）
 //   H  时长型加天数 → 截止时间恰好 +10 天
-//   I  使用统计一格三行（均/峰/共）+ keyserver 侧对拍 usage_stats.total
-//   J  未绑定直删（无弹窗）
-//   K  已用完直删（无弹窗）
-//   L  正在使用 → 二段确认弹窗 → 确认（force）才删
+//   I  系统表使用统计 = 名下全部 key 合并日序列（均/峰/共）+ keyserver 侧对拍
+//   I2 系统备注编辑弹窗：保存上屏 + 空串清除
+//   J  未绑定直删（无弹窗；系统行不受影响）
+//   K  已用完直删（无弹窗；其统计随之消失，系统表回落）
+//   L  正在使用 → 二段确认弹窗 → 确认（force）才删（系统行还有 key 不消失）
+//   L2 级联：删掉系统名下最后一把 key → 系统行（含备注）随之删除
 //   M  退出登录清 sessionStorage；再登录后 reload 自动免输
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -34,13 +37,13 @@ const KEYSERVER_URL = process.env.KEYSERVER_URL ?? 'http://127.0.0.1:8120';
 const BARE_URL = process.env.BARE_URL ?? 'http://127.0.0.1:8121';
 const ADMIN_TOKEN = process.env.US008_ADMIN_TOKEN ?? 'us008-admin-token';
 const GUID = 'us008-verify-guid';
+const SYS = 'US008-VERIFY';
 
 const results = [];
 function check(name, ok, extra) {
   results.push({ name, ok });
   console.log(ok ? 'PASS' : 'FAIL', name, extra ? '  [' + String(extra).slice(0, 160) + ']' : '');
 }
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /* node 侧 consumer/admin API 便捷封装（造态与对拍） */
 async function consumer(path, body) {
@@ -56,6 +59,12 @@ async function adminList() {
     headers: { 'X-Admin-Token': ADMIN_TOKEN },
   });
   return (await resp.json()).keys;
+}
+async function systemsList() {
+  const resp = await fetch(KEYSERVER_URL + '/api/admin/systems', {
+    headers: { 'X-Admin-Token': ADMIN_TOKEN },
+  });
+  return (await resp.json()).systems;
 }
 /* 幂等复位：清空主实例既有 key（上轮残留），让「空态」断言可重跑 */
 async function resetKeys() {
@@ -94,10 +103,17 @@ async function cellText(keyPlaintext, colIndex) {
 async function rowCount() {
   return page.locator('#keys-body tr[data-id]').count();
 }
-async function createKeyViaUI(type, amount, remark) {
+function sysRowOf(systemName) {
+  return page.locator('#systems-body tr[data-name]', { hasText: systemName });
+}
+async function sysCellText(systemName, colIndex) {
+  const row = sysRowOf(systemName);
+  await row.waitFor({ timeout: 8000 });
+  return (await row.locator('td').nth(colIndex).innerText()).trim();
+}
+async function createKeyViaUI(type, amount) {
   await page.locator('input[name=key-type][value=' + type + ']').check();
   await page.locator('#amount-input').fill(String(amount));
-  await page.locator('#remark-input').fill(remark);
   // 清上一轮成功消息，防 waitForFunction 误匹配旧明文
   await page.evaluate(() => { document.getElementById('global-msg').textContent = ''; });
   await page.locator('#btn-create').click();
@@ -114,11 +130,10 @@ async function createKeyViaUI(type, amount, remark) {
   const msg = await page.locator('#global-msg').innerText();
   return msg.match(/MS-[A-Z2-9]{5}-[A-Z2-9]{5}-[A-Z2-9]{5}/)[0];
 }
-async function editViaUI(keyPlaintext, { remark, renew }) {
-  await rowOf(keyPlaintext).locator('button[data-act=edit]').click();
+async function renewViaUI(keyPlaintext, amount) {
+  await rowOf(keyPlaintext).locator('button[data-act=renew]').click();
   await page.locator('#edit-overlay:not(.hidden)').waitFor({ timeout: 8000 });
-  if (remark !== undefined) await page.locator('#edit-remark').fill(remark);
-  if (renew !== undefined) await page.locator('#edit-renew-amount').fill(String(renew));
+  await page.locator('#edit-renew-amount').fill(String(amount));
   await page.locator('#btn-edit-save').click();
   await page.locator('#edit-overlay').waitFor({ state: 'hidden', timeout: 8000 });
 }
@@ -153,108 +168,151 @@ try {
   check('B 错 token 不落 sessionStorage', keptWrong === null, String(keptWrong));
   await page.screenshot({ path: OUT + '/login-error.png' });
 
-  // ---- C 正确 token → 八列表格 ----
+  // ---- C 正确 token → key 表六列 + 系统表五列 ----
   await login(ADMIN_TOKEN);
   check('C token 存 sessionStorage', (await page.evaluate(() => sessionStorage.getItem('ms_admin_token'))) === ADMIN_TOKEN);
   const heads = await page.locator('table thead th').allInnerTexts();
-  check('C 表格八列列序', heads.join('|') === '名称|绑定系统名|备注名|类型|详细信息|属性|使用统计|操作', heads.join('|'));
+  check('C 列序：key 表六列 + 系统表五列',
+    heads.join('|') === '名称|绑定系统名|类型|详细信息|属性|操作|绑定系统名|备注名|key 数|使用统计|操作',
+    heads.join('|'));
   const emptyHint = await page.locator('#keys-body').innerText();
-  check('C 空态提示', emptyHint.includes('暂无 key'), emptyHint);
+  check('C key 表空态提示', emptyHint.includes('暂无 key'), emptyHint);
+  const sysEmpty = await page.locator('#systems-body').innerText();
+  check('C 系统表空态提示', sysEmpty.includes('暂无绑定系统'), sysEmpty);
 
-  // ---- D 新建次数型 ----
-  const countKey = await createKeyViaUI('count', 5, '验证-次数');
-  check('D 次数型 类型列', (await cellText(countKey, 3)) === '次数');
-  check('D 次数型 详细信息 0/5', (await cellText(countKey, 4)) === '0/5');
-  check('D 次数型 属性 未绑定', (await cellText(countKey, 5)) === '未绑定');
-  check('D 无使用记录 —', (await cellText(countKey, 6)) === '—');
-  check('D 备注名上屏', (await cellText(countKey, 2)) === '验证-次数');
+  // ---- D 新建次数型（新建表单已无备注名输入框） ----
+  check('D 新建表单无备注名输入框', (await page.locator('#remark-input').count()) === 0);
+  const countKey = await createKeyViaUI('count', 5);
+  check('D 次数型 类型列', (await cellText(countKey, 2)) === '次数');
+  check('D 次数型 详细信息 0/5', (await cellText(countKey, 3)) === '0/5');
+  check('D 次数型 属性 未绑定', (await cellText(countKey, 4)) === '未绑定');
+  check('D 未绑定不派生系统行', (await page.locator('#systems-body tr[data-name]').count()) === 0);
 
   // ---- E 新建时长型（默认单位天） ----
   await page.locator('input[name=key-type][value=duration]').check();
   check('E 时长型字段切换 生效时长/天',
     (await page.locator('#amount-field').innerText()) === '生效时长'
     && (await page.locator('#amount-unit').innerText()) === '天');
-  const durationKey = await createKeyViaUI('duration', 30, '验证-时长');
-  check('E 时长型 类型列', (await cellText(durationKey, 3)) === '时长');
-  check('E 时长型 详细信息 30天（未激活不显起止）', (await cellText(durationKey, 4)) === '30天');
+  const durationKey = await createKeyViaUI('duration', 30);
+  check('E 时长型 类型列', (await cellText(durationKey, 2)) === '时长');
+  check('E 时长型 详细信息 30天（未激活不显起止）', (await cellText(durationKey, 3)) === '30天');
 
-  // ---- F 编辑弹窗：改备注 + 次数型加次数 → 表格即时生效 ----
-  await rowOf(countKey).locator('button[data-act=edit]').click();
+  // ---- F 续期弹窗（备注名已迁移为系统级，弹窗无备注字段） ----
+  await rowOf(countKey).locator('button[data-act=renew]').click();
   await page.locator('#edit-overlay:not(.hidden)').waitFor({ timeout: 8000 });
-  const editTitle = await page.locator('#edit-key-name').innerText();
-  check('F 编辑弹窗明文+型别', editTitle.includes(countKey) && editTitle.includes('次数型'), editTitle);
+  const renewTitle = await page.locator('#edit-key-name').innerText();
+  check('F 续期弹窗明文+型别', renewTitle.includes(countKey) && renewTitle.includes('次数型'), renewTitle);
+  check('F 弹窗无备注名字段', (await page.locator('#edit-remark').count()) === 0);
   check('F 次数型续期单位 次', (await page.locator('#edit-renew-unit').innerText()) === '次');
-  await page.screenshot({ path: OUT + '/edit-modal.png' });
-  await page.locator('#edit-remark').fill('验证-次数-改');
+  await page.screenshot({ path: OUT + '/renew-modal.png' });
   await page.locator('#edit-renew-amount').fill('5');
   await page.locator('#btn-edit-save').click();
   await page.locator('#edit-overlay').waitFor({ state: 'hidden', timeout: 8000 });
-  await rowOf(countKey).locator('td').nth(4).filter({ hasText: '0/10' }).waitFor({ timeout: 8000 });
-  check('F 加 5 次后 remaining 0/10 可见', (await cellText(countKey, 4)) === '0/10');
-  check('F 备注名修改即时生效', (await cellText(countKey, 2)) === '验证-次数-改');
+  await rowOf(countKey).locator('td').nth(3).filter({ hasText: '0/10' }).waitFor({ timeout: 8000 });
+  check('F 加 5 次后 remaining 0/10 可见', (await cellText(countKey, 3)) === '0/10');
 
-  // ---- G consumer bind 时长型（node 造态）→ 刷新 → 正在使用 ----
+  // ---- G consumer bind 时长型（node 造态）→ 刷新 → 正在使用 + 系统表派生行 ----
   const bindResp = await consumer('/api/key/bind', {
-    key: durationKey, machine_guid: GUID, system_name: 'US008-VERIFY',
+    key: durationKey, machine_guid: GUID, system_name: SYS,
   });
   check('G node 侧 bind 200', bindResp.status === 200, JSON.stringify(bindResp.data).slice(0, 120));
   await page.locator('#btn-refresh').click();
   await rowOf(durationKey).locator('.badge.ok').waitFor({ timeout: 8000 });
-  check('G 绑定后属性 正在使用（绿徽标）', (await cellText(durationKey, 5)) === '正在使用');
-  check('G 绑定系统名只读展示', (await cellText(durationKey, 1)) === 'US008-VERIFY');
-  const detailBefore = await cellText(durationKey, 4);
+  check('G 绑定后属性 正在使用（绿徽标）', (await cellText(durationKey, 4)) === '正在使用');
+  check('G 绑定系统名只读展示', (await cellText(durationKey, 1)) === SYS);
+  const detailBefore = await cellText(durationKey, 3);
   check('G 激活后详细信息 起 ~ 止', detailBefore.includes('~'), detailBefore);
+  check('G 系统表派生行（key 数 1）', (await sysCellText(SYS, 2)) === '1');
+  check('G 系统行首列 = 绑定系统名', (await sysCellText(SYS, 0)) === SYS);
+  await page.screenshot({ path: OUT + '/systems.png' });
 
   // ---- H 时长型加天数 → 截止时间恰好 +10 天 ----
-  await editViaUI(durationKey, { renew: 10 });
-  await rowOf(durationKey).locator('td').nth(4).filter({ hasText: '~' }).waitFor({ timeout: 8000 });
-  const detailAfter = await cellText(durationKey, 4);
+  await renewViaUI(durationKey, 10);
+  await rowOf(durationKey).locator('td').nth(3).filter({ hasText: '~' }).waitFor({ timeout: 8000 });
+  const detailAfter = await cellText(durationKey, 3);
   const before = parseDetailRange(detailBefore);
   const after = parseDetailRange(detailAfter);
   const diffDays = (new Date(after.end.replace(' ', 'T')) - new Date(before.end.replace(' ', 'T'))) / 86400000;
   check('H 截止时间 +10 天（起不变）', diffDays === 10 && after.start === before.start,
     detailBefore + ' -> ' + detailAfter);
 
-  // ---- I 使用统计一格三行 + keyserver 侧对拍 ----
-  const statsKey = await createKeyViaUI('count', 50, '验证-统计');
-  await consumer('/api/key/bind', { key: statsKey, machine_guid: GUID, system_name: 'US008-VERIFY' });
+  // ---- I 系统表使用统计 = 名下全部 key 合并日序列 + keyserver 侧对拍 ----
+  const statsKey = await createKeyViaUI('count', 50);
+  await consumer('/api/key/bind', { key: statsKey, machine_guid: GUID, system_name: SYS });
   await consumer('/api/key/validate', { key: statsKey, machine_guid: GUID, deduct: true });
   await consumer('/api/key/validate', { key: statsKey, machine_guid: GUID, deduct: true });
   await page.locator('#btn-refresh').click();
-  await rowOf(statsKey).locator('.stats').filter({ hasText: '共 2' }).waitFor({ timeout: 8000 });
-  const statsLines = (await rowOf(statsKey).locator('.stats span').allInnerTexts()).map((s) => s.trim());
-  check('I 统计三行 均/峰/共', statsLines.length === 3
+  await sysRowOf(SYS).locator('.stats').filter({ hasText: '共 2' }).waitFor({ timeout: 8000 });
+  const statsLines = (await sysRowOf(SYS).locator('.stats span').allInnerTexts()).map((s) => s.trim());
+  check('I 系统统计三行 均/峰/共', statsLines.length === 3
     && statsLines[0] === '均 2.0/日' && statsLines[1] === '峰 2' && statsLines[2] === '共 2',
     statsLines.join(' | '));
-  const serverSide = (await adminList()).find((k) => k.key_plaintext === statsKey);
-  check('I keyserver 侧对拍 used/统计一致', serverSide && serverSide.usage_stats
-    && serverSide.usage_stats.total === 2 && serverSide.usage_stats.max_daily === 2,
-    JSON.stringify(serverSide && serverSide.usage_stats));
-  await page.screenshot({ path: OUT + '/table.png' });
+  check('I 系统行 key 数 2', (await sysCellText(SYS, 2)) === '2');
+  const serverSys = (await systemsList()).find((s) => s.system_name === SYS);
+  check('I keyserver 侧对拍 系统统计一致', serverSys && serverSys.usage_stats
+    && serverSys.usage_stats.total === 2 && serverSys.key_count === 2,
+    JSON.stringify(serverSys));
 
-  // ---- J 未绑定 key 直删（无弹窗） ----
+  // ---- I2 系统备注编辑弹窗：保存上屏 + 空串清除 ----
+  await sysRowOf(SYS).locator('button[data-act=sys-edit]').click();
+  await page.locator('#sys-overlay:not(.hidden)').waitFor({ timeout: 8000 });
+  check('I2 弹窗系统名只读回显', (await page.locator('#sys-name').innerText()) === SYS);
+  await page.screenshot({ path: OUT + '/sys-modal.png' });
+  await page.locator('#sys-remark').fill('验证-工厂');
+  await page.locator('#btn-sys-save').click();
+  await page.locator('#sys-overlay').waitFor({ state: 'hidden', timeout: 8000 });
+  await sysRowOf(SYS).locator('td').nth(1).filter({ hasText: '验证-工厂' }).waitFor({ timeout: 8000 });
+  check('I2 备注保存上屏', (await sysCellText(SYS, 1)) === '验证-工厂');
+  const serverRemarked = (await systemsList()).find((s) => s.system_name === SYS);
+  check('I2 keyserver 侧备注持久化', serverRemarked && serverRemarked.remark === '验证-工厂');
+  await sysRowOf(SYS).locator('button[data-act=sys-edit]').click();
+  await page.locator('#sys-overlay:not(.hidden)').waitFor({ timeout: 8000 });
+  check('I2 重开弹窗回显既有备注', (await page.locator('#sys-remark').inputValue()) === '验证-工厂');
+  await page.locator('#sys-remark').fill('');
+  await page.locator('#btn-sys-save').click();
+  await page.locator('#sys-overlay').waitFor({ state: 'hidden', timeout: 8000 });
+  // 空串无法用 hasText 过滤等待 → waitForFunction 等重渲染后备注格真为空
+  await page.waitForFunction(
+    (name) => {
+      const tr = document.querySelector('#systems-body tr[data-name="' + name + '"]');
+      return tr && tr.querySelectorAll('td')[1].textContent.trim() === '';
+    },
+    SYS,
+    { timeout: 8000 },
+  );
+  check('I2 空串清除备注', (await sysCellText(SYS, 1)) === '');
+
+  // ---- J 未绑定 key 直删（无弹窗；系统行不受影响） ----
   const rowsBefore = await rowCount();
   await rowOf(countKey).locator('button[data-act=del]').click();
   await rowOf(countKey).waitFor({ state: 'detached', timeout: 8000 });
   check('J 未绑定直删行消失', (await rowCount()) === rowsBefore - 1);
   check('J 直删无确认弹窗', await page.locator('#del-overlay').isHidden());
+  check('J 未绑定删除不碰系统行', (await sysRowOf(SYS).count()) === 1);
 
-  // ---- K 已用完直删 ----
-  const exhaustedKey = await createKeyViaUI('count', 1, '验证-用完');
-  await consumer('/api/key/bind', { key: exhaustedKey, machine_guid: GUID, system_name: 'US008-VERIFY' });
+  // ---- K 已用完直删（其使用统计随之消失，系统表回落） ----
+  const exhaustedKey = await createKeyViaUI('count', 1);
+  await consumer('/api/key/bind', { key: exhaustedKey, machine_guid: GUID, system_name: SYS });
   const deductResp = await consumer('/api/key/validate', { key: exhaustedKey, machine_guid: GUID, deduct: true });
   check('K node 侧扣至用完 200', deductResp.status === 200, JSON.stringify(deductResp.data).slice(0, 120));
   await page.locator('#btn-refresh').click();
   await rowOf(exhaustedKey).locator('.badge.bad').waitFor({ timeout: 8000 });
-  check('K 属性 已用完（红徽标）', (await cellText(exhaustedKey, 5)) === '已用完');
+  check('K 属性 已用完（红徽标）', (await cellText(exhaustedKey, 4)) === '已用完');
+  await sysRowOf(SYS).locator('td').nth(2).filter({ hasText: '3' }).waitFor({ timeout: 8000 });
+  check('K 用完 key 入系统行（key 数 3，统计共 3）',
+    (await sysCellText(SYS, 2)) === '3' && (await sysRowOf(SYS).locator('.stats').innerText()).includes('共 3'));
   await rowOf(exhaustedKey).locator('button[data-act=del]').click();
   await rowOf(exhaustedKey).waitFor({ state: 'detached', timeout: 8000 });
   check('K 已用完直删（无弹窗）', await page.locator('#del-overlay').isHidden());
+  await sysRowOf(SYS).locator('td').nth(2).filter({ hasText: '2' }).waitFor({ timeout: 8000 });
+  check('K 删除后统计回落 共 2', (await sysRowOf(SYS).locator('.stats').innerText()).includes('共 2'));
 
-  // ---- L 正在使用 → 二段确认弹窗 → force 才删 ----
+  // ---- L 正在使用 → 二段确认弹窗 → force 才删（系统行仍有 key 不消失） ----
   await rowOf(statsKey).locator('button[data-act=del]').click();
   await page.locator('#del-overlay:not(.hidden)').waitFor({ timeout: 8000 });
-  check('L 正在使用弹二段确认（含明文）', (await page.locator('#del-text').innerText()).includes(statsKey));
+  check('L 正在使用弹二段确认（含明文+绑定系统）',
+    (await page.locator('#del-text').innerText()).includes(statsKey)
+    && (await page.locator('#del-text').innerText()).includes(SYS));
   check('L 警示文案在场', (await page.locator('#del-warning').innerText()).includes('正在使用'));
   await page.screenshot({ path: OUT + '/delete-confirm.png' });
   await page.locator('#btn-del-confirm').click();
@@ -262,6 +320,18 @@ try {
   check('L 确认后 force 删除成功', (await rowOf(statsKey).count()) === 0);
   const serverGone = (await adminList()).find((k) => k.key_plaintext === statsKey);
   check('L keyserver 侧确已删', serverGone === undefined);
+  check('L 系统行仍有 key 不消失', (await sysCellText(SYS, 2)) === '1');
+
+  // ---- L2 级联：删掉系统名下最后一把 key → 系统行（含备注）随之删除 ----
+  await consumer('/api/key/validate', { key: durationKey, machine_guid: GUID, deduct: true });
+  await rowOf(durationKey).locator('button[data-act=del]').click();
+  await page.locator('#del-overlay:not(.hidden)').waitFor({ timeout: 8000 });
+  await page.locator('#btn-del-confirm').click();
+  await rowOf(durationKey).waitFor({ state: 'detached', timeout: 8000 });
+  await page.locator('#systems-body tr[data-name]').waitFor({ state: 'detached', timeout: 8000 });
+  check('L2 最后一把 key 删除后系统行消失', (await page.locator('#systems-body tr[data-name]').count()) === 0);
+  check('L2 系统表回落空态提示', (await page.locator('#systems-body').innerText()).includes('暂无绑定系统'));
+  check('L2 keyserver 侧系统表为空', (await systemsList()).length === 0);
 
   // ---- M 退出登录 / sessionStorage 持久自动登录 ----
   await page.locator('#btn-logout').click();

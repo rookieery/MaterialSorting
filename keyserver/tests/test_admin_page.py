@@ -39,19 +39,23 @@ def test_admin_page_public_shell_without_token(client):
     assert client.get('/api/admin/keys').status_code == 403   # 壳公开、数据关闸
 
 
-def test_admin_page_table_eight_columns(client):
-    """八列按需求列序：名称｜绑定系统名｜备注名｜类型｜详细信息｜属性｜使用统计｜操作。"""
+def test_admin_page_table_columns(client):
+    """key 表六列 + 绑定系统名列表五列（需求列序；备注名/使用统计已迁移为系统级）。"""
     html = client.get('/admin').text
     cols = re.findall(r'<th>([^<]*)</th>', html)
-    assert cols == ['名称', '绑定系统名', '备注名', '类型', '详细信息', '属性', '使用统计', '操作']
+    assert cols == [
+        '名称', '绑定系统名', '类型', '详细信息', '属性', '操作',          # key 列表
+        '绑定系统名', '备注名', 'key 数', '使用统计', '操作',             # 绑定系统名列表
+    ]
 
 
 def test_admin_page_api_surface_markers(client):
-    """页面骨架锚点：token 存储/请求头、五接口路径、未配置指引文案。"""
+    """页面骨架锚点：token 存储/请求头、接口路径、未配置指引文案。"""
     html = client.get('/admin').text
     assert 'ms_admin_token' in html            # sessionStorage 键
     assert 'X-Admin-Token' in html             # 请求头
-    assert '/api/admin/keys' in html           # 列表/新建/编辑/续期/删除同前缀
+    assert '/api/admin/keys' in html           # 列表/新建/续期/删除同前缀
+    assert '/api/admin/systems' in html        # 绑定系统名列表两接口
     assert '?force=true' in html               # 正在使用 → 二段确认 force
     assert 'MS_KEY_ADMIN_TOKEN' in html        # 未配置部署的配置指引
     assert 'MS_KEY_CLIENT_TOKEN' in html       # frp 双 token 指引

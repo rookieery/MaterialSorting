@@ -1,4 +1,5 @@
-"""routes_admin 单测（US-002）：token 姿态矩阵 + 五接口 CRUD/force/续期矩阵。
+"""routes_admin 单测（US-002 + 系统级两接口）：token 姿态矩阵 + 七接口 CRUD/force/
+续期/绑定系统名列表/删除级联矩阵。
 
 frp 修正版要点：TestClient 请求来源 host 即本机等价（``testclient``），若实现里
 存在任何 loopback 放行兜底，本组 token 用例会全数假绿 —— 用例因此**同时**断言
@@ -76,8 +77,8 @@ def test_403_when_token_not_configured(client, monkeypatch):
     assert resp.json() == {'error': '管理 token 未配置，请设置 MS_KEY_ADMIN_TOKEN'}
 
 
-def test_403_family_wide_all_five_endpoints(client, monkeypatch):
-    """未配置 token → 管理端点族整体 403（含写接口；本机来源也拒 = 无 loopback 兜底）。"""
+def test_403_family_wide_all_endpoints(client, monkeypatch):
+    """未配置 token → 管理端点族整体 403（含系统级两接口；本机来源也拒 = 无 loopback 兜底）。"""
     monkeypatch.delenv('MS_KEY_ADMIN_TOKEN', raising=False)
     cases = [
         ('get', '/api/admin/keys', None),
@@ -85,6 +86,8 @@ def test_403_family_wide_all_five_endpoints(client, monkeypatch):
         ('post', '/api/admin/keys/1/renew', {'add_uses': 1}),
         ('put', '/api/admin/keys/1', {'remark': 'x'}),
         ('delete', '/api/admin/keys/1', None),
+        ('get', '/api/admin/systems', None),
+        ('put', '/api/admin/systems/SYS', {'remark': 'x'}),
     ]
     for method, url, body in cases:
         resp = client.request(method, url, json=body)
@@ -430,7 +433,153 @@ def test_all_error_bodies_use_error_key(client, monkeypatch):
         client.post('/api/admin/keys/999/renew', headers=ADMIN, json={'add_uses': 1}),
         client.delete('/api/admin/keys/999', headers=ADMIN),
         client.get('/api/admin/keys'),
+        client.put('/api/admin/systems/无此系统', headers=ADMIN, json={'remark': 'x'}),
     ):
         assert 'detail' not in resp.json()
         assert resp.json()['error']
+
+
+# ---------------------------------------------------------------------------
+# GET /api/admin/systems 绑定系统名列表
+# ---------------------------------------------------------------------------
+
+def _mk_bound_key(conn, system_name, **fields) -> dict:
+    row = repo.create_key(conn, 'count', total_uses=100)
+    extra = {'bound_machine_guid': f'guid-{row["id"]}',
+             'bound_system_name': system_name}
+    extra.update(fields)
+    repo.update_key(conn, row['id'], **extra)
+    return repo.get_key(conn, row['id'])
+
+
+def test_systems_list_contract_and_derived_rows_only(client, conn):
+    """契约四键；行由 keys 派生（未绑定不参与；已过期/已用完/已合并算成员）。"""
+    repo.create_key(conn, 'count', total_uses=5)               # 未绑定 → 不参与
+    _mk_bound_key(conn, 'SYS-A')
+    _mk_bound_key(conn, 'SYS-B', used_uses=100)                # 已用完仍算成员
+    resp = client.get('/api/admin/systems', headers=ADMIN)
+    assert resp.status_code == 200
+    systems = resp.json()['systems']
+    assert [s['system_name'] for s in systems] == ['SYS-B', 'SYS-A']   # 新→旧
+    assert set(systems[0].keys()) == {'system_name', 'remark', 'key_count', 'usage_stats'}
+    assert systems[0]['key_count'] == 1
+    assert systems[0]['remark'] is None
+    assert systems[0]['usage_stats'] is None                   # 无使用记录 → null
+
+
+def test_systems_list_usage_stats_merged_daily_series(client, conn):
+    k1 = _mk_bound_key(conn, 'SYS-A')
+    k2 = _mk_bound_key(conn, 'SYS-A')
+    _mk_bound_key(conn, 'SYS-B')
+    today = models.ymd_of(models.now())
+    yesterday = models.ymd_of(models.now() - timedelta(days=1))
+    repo.bump_daily_usage(conn, k1['id'], today, delta=2)
+    repo.bump_daily_usage(conn, k2['id'], today, delta=3)      # 同日相加
+    repo.bump_daily_usage(conn, k2['id'], yesterday, delta=1)
+    systems = client.get('/api/admin/systems', headers=ADMIN).json()['systems']
+    by_name = {s['system_name']: s for s in systems}
+    stats = by_name['SYS-A']['usage_stats']
+    assert stats['total'] == 6
+    assert stats['max_daily'] == 5
+    assert stats['first_used'] == yesterday
+    assert by_name['SYS-B']['usage_stats'] is None
+
+
+def test_systems_list_remark_after_edit(client, conn):
+    _mk_bound_key(conn, 'SYS-A')
+    client.put('/api/admin/systems/SYS-A', headers=ADMIN, json={'remark': '一号工厂'})
+    systems = client.get('/api/admin/systems', headers=ADMIN).json()['systems']
+    assert systems[0]['remark'] == '一号工厂'
+
+
+# ---------------------------------------------------------------------------
+# PUT /api/admin/systems/{name} 系统级备注
+# ---------------------------------------------------------------------------
+
+def test_edit_system_remark_persists_and_logs(client, conn):
+    _mk_bound_key(conn, 'SYS-A')
+    resp = client.put('/api/admin/systems/SYS-A', headers=ADMIN,
+                      json={'remark': '一号工厂'})
+    assert resp.status_code == 200
+    assert resp.json() == {'ok': True, 'system_name': 'SYS-A', 'remark': '一号工厂'}
+    assert repo.list_bound_systems(conn)[0]['remark'] == '一号工厂'
+    ops = repo.list_ops(conn, None)
+    assert ops[0]['op'] == 'edit_system_remark'
+    assert ops[0]['key_id'] is None                            # 系统级操作悬空 key_id
+
+
+def test_edit_system_remark_empty_clears(client, conn):
+    _mk_bound_key(conn, 'SYS-A')
+    client.put('/api/admin/systems/SYS-A', headers=ADMIN, json={'remark': '旧'})
+    resp = client.put('/api/admin/systems/SYS-A', headers=ADMIN, json={'remark': ''})
+    assert resp.status_code == 200
+    assert resp.json()['remark'] is None
+    assert repo.list_bound_systems(conn)[0]['remark'] is None
+
+
+def test_edit_system_remark_update_overwrites(client, conn):
+    _mk_bound_key(conn, 'SYS-A')
+    client.put('/api/admin/systems/SYS-A', headers=ADMIN, json={'remark': '一版'})
+    client.put('/api/admin/systems/SYS-A', headers=ADMIN, json={'remark': '二版'})
+    assert repo.list_bound_systems(conn)[0]['remark'] == '二版'
+
+
+@pytest.mark.parametrize('bad', [None, 7, ['x']])
+def test_edit_system_remark_rejects_non_string(client, conn, bad):
+    _mk_bound_key(conn, 'SYS-A')
+    resp = client.put('/api/admin/systems/SYS-A', headers=ADMIN, json={'remark': bad})
+    assert resp.status_code == 400
+    assert resp.json()['error'] == 'remark 必须为字符串'
+
+
+def test_edit_system_remark_unknown_or_emptied_system_404(client, conn):
+    resp = client.put('/api/admin/systems/无此系统', headers=ADMIN, json={'remark': 'x'})
+    assert resp.status_code == 404
+    assert resp.json()['error'] == '该系统名下已无 key，无法编辑备注'
+
+
+def test_edit_system_remark_401_without_token(client, monkeypatch):
+    monkeypatch.setenv('MS_KEY_ADMIN_TOKEN', 'secret-admin-token')
+    resp = client.put('/api/admin/systems/SYS-A', json={'remark': 'x'})
+    assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# DELETE 级联：该系统名下 key 全删 → 系统行（含备注）连带清理
+# ---------------------------------------------------------------------------
+
+def test_delete_last_key_cascades_system_row(client, conn):
+    a1 = _mk_bound_key(conn, 'SYS-A', used_uses=100)           # 已用完 → 非 active 直删
+    client.put('/api/admin/systems/SYS-A', headers=ADMIN, json={'remark': '一号工厂'})
+    resp = client.delete(f"/api/admin/keys/{a1['id']}", headers=ADMIN)
+    assert resp.status_code == 200
+    systems = client.get('/api/admin/systems', headers=ADMIN).json()['systems']
+    assert systems == []                                       # 行（含备注）随之删除
+
+
+def test_delete_one_of_two_keys_keeps_system_row(client, conn):
+    a1 = _mk_bound_key(conn, 'SYS-A', used_uses=100)           # 已用完 → 非 active 直删
+    a2 = _mk_bound_key(conn, 'SYS-A', used_uses=100)
+    client.put('/api/admin/systems/SYS-A', headers=ADMIN, json={'remark': '一号工厂'})
+    client.delete(f"/api/admin/keys/{a1['id']}", headers=ADMIN)
+    systems = client.get('/api/admin/systems', headers=ADMIN).json()['systems']
+    assert len(systems) == 1 and systems[0]['remark'] == '一号工厂'
+    client.delete(f"/api/admin/keys/{a2['id']}", headers=ADMIN)
+    assert client.get('/api/admin/systems', headers=ADMIN).json()['systems'] == []
+
+
+def test_delete_active_with_force_cascades_system_row(client, conn):
+    """force 路径同样级联（正在使用的 key 删除后系统行不留）。"""
+    row = _mk_bound_key(conn, 'SYS-A')                         # count 未用完 + 已绑定 = active
+    client.put('/api/admin/systems/SYS-A', headers=ADMIN, json={'remark': '备注'})
+    resp = client.delete(f"/api/admin/keys/{row['id']}?force=true", headers=ADMIN)
+    assert resp.status_code == 200
+    assert client.get('/api/admin/systems', headers=ADMIN).json()['systems'] == []
+
+
+def test_delete_unbound_key_no_system_effect(client, conn):
+    row = _mk_count(conn, total=5)                             # 未绑定 → 无级联对象
+    resp = client.delete(f"/api/admin/keys/{row['id']}", headers=ADMIN)
+    assert resp.status_code == 200
+    assert client.get('/api/admin/systems', headers=ADMIN).json()['systems'] == []
 

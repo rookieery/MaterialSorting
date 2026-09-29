@@ -181,6 +181,97 @@ def test_usage_stats_gap_days_counted(conn):
 
 
 # ---------------------------------------------------------------------------
+# bound_systems（绑定系统名列表：行由 keys 派生，本表只挂靠系统级备注）
+# ---------------------------------------------------------------------------
+
+def _mk_bound(conn, system_name, **fields) -> dict:
+    row = repo.create_key(conn, 'count', total_uses=100)
+    extra = {'bound_machine_guid': f'guid-{row["id"]}',   # 每把不同机器：同名跨机器合并为一行
+             'bound_system_name': system_name}
+    extra.update(fields)
+    repo.update_key(conn, row['id'], **extra)
+    return repo.get_key(conn, row['id'])
+
+
+def test_list_bound_systems_groups_counts_and_joins_remark(conn):
+    """派生行按系统名分组（不同机器同名合并）；未绑定 key 不参与；备注 LEFT JOIN。"""
+    repo.create_key(conn, 'count', total_uses=5)             # 未绑定 → 不参与
+    _mk_bound(conn, 'SYS-A')
+    _mk_bound(conn, 'SYS-A')
+    _mk_bound(conn, 'SYS-B')
+    repo.upsert_system_remark(conn, 'SYS-A', '一号工厂')
+    rows = repo.list_bound_systems(conn)
+    assert [(r['system_name'], r['key_count'], r['remark']) for r in rows] == [
+        ('SYS-B', 1, None),        # 新→旧 = 最新 key id 倒序
+        ('SYS-A', 2, '一号工厂'),
+    ]
+
+
+def test_list_bound_systems_counts_unmerged_expired_members(conn):
+    """行成员口径 = 未删除的全部 key（已过期/已用完/已合并均算）。"""
+    dur = repo.create_key(conn, 'duration', duration_days=1)
+    repo.update_key(conn, dur['id'], bound_machine_guid='g', bound_system_name='SYS-C',
+                    activated_at='2026-01-01 00:00:00',
+                    expires_at='2026-01-02 00:00:00')         # 已过期
+    _mk_bound(conn, 'SYS-C', used_uses=100)                   # 已用完
+    target = repo.create_key(conn, 'duration', duration_days=5)
+    _mk_bound(conn, 'SYS-C', merged_into_id=target['id'])     # 已合并
+    rows = repo.list_bound_systems(conn)
+    assert rows[0]['system_name'] == 'SYS-C'
+    assert rows[0]['key_count'] == 3
+
+
+def test_system_usage_stats_merges_daily_series(conn):
+    """日序列合并：同日多 key 使用相加后按 FR-14 公式算三指标（峰不重复计）。"""
+    k1 = _mk_bound(conn, 'SYS-A')
+    k2 = _mk_bound(conn, 'SYS-A')
+    other = _mk_bound(conn, 'SYS-B')
+    _seed_usage(conn, k1['id'], {'2026-09-26': 2, '2026-09-27': 5})
+    _seed_usage(conn, k2['id'], {'2026-09-27': 3, '2026-09-28': 1})
+    _seed_usage(conn, other['id'], {'2026-09-27': 99})        # 他系统不计入
+    stats = repo.system_usage_stats(conn, 'SYS-A', today_ymd='2026-09-28')
+    # 合并日序列：09-26=2, 09-27=5+3=8, 09-28=1 → 共11 峰8 均 11/3=3.7
+    assert stats == {'total': 11, 'max_daily': 8, 'avg_daily': 3.7,
+                     'first_used': '2026-09-26'}
+
+
+def test_system_usage_stats_none_without_any_records(conn):
+    _mk_bound(conn, 'SYS-A')
+    assert repo.system_usage_stats(conn, 'SYS-A') is None
+
+
+def test_upsert_system_remark_insert_update_and_clear(conn):
+    _mk_bound(conn, 'SYS-A')
+    repo.upsert_system_remark(conn, 'SYS-A', '初值')
+    repo.upsert_system_remark(conn, 'SYS-A', '改后')          # 冲突走 UPDATE
+    rows = repo.list_bound_systems(conn)
+    assert rows[0]['remark'] == '改后'
+    repo.upsert_system_remark(conn, 'SYS-A', '')              # 空串 = 清除 → 存 NULL
+    assert repo.list_bound_systems(conn)[0]['remark'] is None
+
+
+def test_system_has_keys_truth_table(conn):
+    assert repo.system_has_keys(conn, 'SYS-A') is False
+    _mk_bound(conn, 'SYS-A')
+    assert repo.system_has_keys(conn, 'SYS-A') is True
+
+
+def test_delete_system_if_orphaned_only_when_no_keys_left(conn):
+    a1 = _mk_bound(conn, 'SYS-A')
+    a2 = _mk_bound(conn, 'SYS-A')
+    repo.upsert_system_remark(conn, 'SYS-A', '备注')
+    assert repo.delete_system_if_orphaned(conn, 'SYS-A') is False   # 仍有 key
+    assert repo.list_bound_systems(conn)[0]['remark'] == '备注'
+    repo.delete_key(conn, a2['id'])
+    assert repo.delete_system_if_orphaned(conn, 'SYS-A') is False   # 还剩 1 把
+    repo.delete_key(conn, a1['id'])
+    assert repo.delete_system_if_orphaned(conn, 'SYS-A') is True    # 全删 → 行消失
+    assert repo.list_bound_systems(conn) == []
+    assert repo.delete_system_if_orphaned(conn, 'SYS-A') is False   # 幂等可重入
+    assert repo.delete_system_if_orphaned(conn, None) is False      # 未绑定哨兵
+
+
+# ---------------------------------------------------------------------------
 # key_op_log
 # ---------------------------------------------------------------------------
 

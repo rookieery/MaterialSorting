@@ -1,4 +1,4 @@
-"""三表读写数据层（keys / key_daily_usage / key_op_log）。
+"""四表读写数据层（keys / key_daily_usage / key_op_log / bound_systems）。
 
 只做表访问与行级原子操作，**不含业务规则**（绑定/合并/扣次规则在 US-003
 service.py；管理端续期规则在 US-002 routes_admin）。业务层一律经本模块读写，
@@ -181,15 +181,12 @@ def list_daily_usage(conn: sqlite3.Connection, key_id: int) -> list[dict[str, An
     return [dict(r) for r in cur.fetchall()]
 
 
-def usage_stats(
-    conn: sqlite3.Connection, key_id: int, today_ymd: str | None = None
-) -> dict[str, Any] | None:
-    """使用统计三指标（FR-14）：{total, max_daily, avg_daily, first_used}。
+def _stats_from_daily(rows: list[dict[str, Any]], today_ymd: str | None) -> dict[str, Any] | None:
+    """逐日使用记录 → 统计三指标（FR-14 公式单一真相源，单 key / 系统聚合共用）。
 
     平均每日 = 总次数 ÷ 开通以来自然日数（自首次使用起至今天数，含首日；
     新 key 当天分母 = 1；保留 1 位小数）。无任何使用记录 → None（管理台显示 —）。
     """
-    rows = list_daily_usage(conn, key_id)
     if not rows:
         return None
     total = sum(int(r['count']) for r in rows)
@@ -204,6 +201,13 @@ def usage_stats(
         'avg_daily': avg_daily,
         'first_used': first_used,
     }
+
+
+def usage_stats(
+    conn: sqlite3.Connection, key_id: int, today_ymd: str | None = None
+) -> dict[str, Any] | None:
+    """单 key 使用统计三指标（FR-14）：{total, max_daily, avg_daily, first_used}。"""
+    return _stats_from_daily(list_daily_usage(conn, key_id), today_ymd)
 
 
 # ---------------------------------------------------------------------------
@@ -236,3 +240,76 @@ def list_ops(conn: sqlite3.Connection, key_id: int | None = None) -> list[dict[s
         cur = conn.execute(
             'SELECT * FROM key_op_log WHERE key_id = ? ORDER BY id DESC', (key_id,))
     return [dict(r) for r in cur.fetchall()]
+
+
+# ---------------------------------------------------------------------------
+# bound_systems（绑定系统名列表：行由 keys 派生，本表只挂靠系统级备注）
+# ---------------------------------------------------------------------------
+
+def system_has_keys(conn: sqlite3.Connection, system_name: str) -> bool:
+    """系统名是否仍有在册 key（行存在性判据 / PUT 备注 404 兜底共用）。"""
+    cur = conn.execute(
+        'SELECT 1 FROM keys WHERE bound_system_name = ? LIMIT 1', (system_name,))
+    return cur.fetchone() is not None
+
+
+def list_bound_systems(conn: sqlite3.Connection) -> list[dict[str, Any]]:
+    """派生系统行（该系统最新 key id 倒序）+ LEFT JOIN 系统级备注。
+
+    行完全由 keys 按 ``bound_system_name`` 分组派生（已合并/已过期/已用完但
+    未删除的 key 均算成员；未绑定 key 无系统名不参与）；bound_systems 只贡献
+    remark（缺行 = 未填备注）。不同机器同名系统合并为一行（按名分组）。
+    """
+    cur = conn.execute(
+        'SELECT k.bound_system_name AS system_name, COUNT(*) AS key_count,'
+        '       MAX(k.id) AS latest_key_id, s.remark AS remark'
+        ' FROM keys k LEFT JOIN bound_systems s ON s.system_name = k.bound_system_name'
+        ' WHERE k.bound_system_name IS NOT NULL'
+        ' GROUP BY k.bound_system_name ORDER BY latest_key_id DESC')
+    return [dict(r) for r in cur.fetchall()]
+
+
+def list_system_daily_usage(
+    conn: sqlite3.Connection, system_name: str,
+) -> list[dict[str, Any]]:
+    """系统名下全部 key 的逐日使用**合并日序列**（ymd 升序，同日相加）。"""
+    cur = conn.execute(
+        'SELECT u.ymd AS ymd, SUM(u.count) AS count'
+        ' FROM key_daily_usage u JOIN keys k ON k.id = u.key_id'
+        ' WHERE k.bound_system_name = ?'
+        ' GROUP BY u.ymd ORDER BY u.ymd',
+        (system_name,))
+    return [dict(r) for r in cur.fetchall()]
+
+
+def system_usage_stats(
+    conn: sqlite3.Connection, system_name: str, today_ymd: str | None = None
+) -> dict[str, Any] | None:
+    """系统级使用统计三指标：合并日序列 → FR-14 公式（与单 key 同一真相源）。"""
+    return _stats_from_daily(list_system_daily_usage(conn, system_name), today_ymd)
+
+
+def upsert_system_remark(
+    conn: sqlite3.Connection, system_name: str, remark: str,
+    now_dt: datetime | None = None,
+) -> None:
+    """写入/更新系统级备注（空串 = 清除 → 存 NULL）。"""
+    conn.execute(
+        'INSERT INTO bound_systems (system_name, remark, updated_at) VALUES (?, ?, ?)'
+        ' ON CONFLICT(system_name) DO UPDATE SET'
+        '   remark = excluded.remark, updated_at = excluded.updated_at',
+        (system_name, remark if remark else None, format_ts(now_dt or now_fn())),
+    )
+    conn.commit()
+
+
+def delete_system_if_orphaned(conn: sqlite3.Connection, system_name: str | None) -> bool:
+    """该系统名下已无任何 key → 连带清理 bound_systems 行（含备注，级联口径）。
+
+    返回是否实际删除（无挂靠行 / 系统仍有 key → False）。幂等可重入。
+    """
+    if system_name is None or system_has_keys(conn, system_name):
+        return False
+    cur = conn.execute('DELETE FROM bound_systems WHERE system_name = ?', (system_name,))
+    conn.commit()
+    return cur.rowcount > 0

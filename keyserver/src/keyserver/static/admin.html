@@ -35,7 +35,7 @@ input[type=text], input[type=password], input[type=number] {
 input:focus { outline: none; border-color: #2ea06c; }
 #amount-input { width: 90px; }
 #token-input { flex: 1; min-width: 220px; }
-#remark-input { width: 200px; }
+#sys-name { margin: 4px 0 0; }
 button {
   background: #34363d; color: #e6e6e6; border: 1px solid #4a4d56; border-radius: 6px;
   padding: 6px 14px; font-size: 13px; cursor: pointer; font-family: inherit;
@@ -128,7 +128,7 @@ MS_KEY_CLIENT_TOKEN=&lt;随机长 token&gt;    # 消费端 token（frp 部署双
 
     <p id="global-msg" class="hidden"></p>
 
-    <!-- 新建：时长型（生效时长，默认单位天）/ 次数型（单位次） -->
+    <!-- 新建：时长型（生效时长，默认单位天）/ 次数型（单位次）；备注名已上移为系统级（见下方绑定系统名列表） -->
     <section class="card">
       <h2>新建 key</h2>
       <div class="row">
@@ -137,13 +137,12 @@ MS_KEY_CLIENT_TOKEN=&lt;随机长 token&gt;    # 消费端 token（frp 部署双
         <span id="amount-field">总次数</span>
         <input id="amount-input" type="number" min="1" step="1" value="10">
         <span id="amount-unit">次</span>
-        <input id="remark-input" type="text" placeholder="备注名（可选）">
         <button id="btn-create" class="primary">新建</button>
       </div>
       <p class="dim">时长型「生效时长」默认单位 = 天（绑定机器后即刻激活起算）；次数型单位 = 次。创建后即时出现在下方表格。</p>
     </section>
 
-    <!-- 表格八列（需求列序）：名称｜绑定系统名｜备注名｜类型｜详细信息｜属性｜使用统计｜操作 -->
+    <!-- key 表格六列（需求列序）：名称｜绑定系统名｜类型｜详细信息｜属性｜操作（备注名/使用统计已迁移至绑定系统名列表） -->
     <section class="card">
       <h2>key 列表</h2>
       <table>
@@ -151,41 +150,74 @@ MS_KEY_CLIENT_TOKEN=&lt;随机长 token&gt;    # 消费端 token（frp 部署双
           <tr>
             <th>名称</th>
             <th>绑定系统名</th>
-            <th>备注名</th>
             <th>类型</th>
             <th>详细信息</th>
             <th>属性</th>
-            <th>使用统计</th>
             <th>操作</th>
           </tr>
         </thead>
         <tbody id="keys-body"></tbody>
       </table>
-      <p class="dim">名称 = key 明文（点击复制）；绑定系统名在绑定机器时快照，不可在此修改。</p>
+      <p class="dim">名称 = key 明文（点击复制）；绑定系统名在绑定机器时快照，不可在此修改；备注名与使用统计按绑定系统名汇总在下方表格。</p>
+    </section>
+
+    <!-- 绑定系统名列表：行由 keys 按绑定系统名分组派生，该系统名下 key 全删后行（含备注）自动消失 -->
+    <section class="card">
+      <h2>绑定系统名列表</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>绑定系统名</th>
+            <th>备注名</th>
+            <th>key 数</th>
+            <th>使用统计</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="systems-body"></tbody>
+      </table>
+      <p class="dim">使用统计 = 该系统名下全部 key 的逐日使用累计（同日相加后算 共/均/峰）；备注名为系统级，在该表编辑；某系统名的 key 全部删除后，该行信息随之删除。</p>
     </section>
 
   </main>
 </div>
 
-<!-- 编辑弹窗：改备注名 + 续期（次数型加次数 / 时长型加天数） -->
+<!-- 续期弹窗（次数型加次数 / 时长型加天数；备注名已迁移为系统级） -->
 <div id="edit-overlay" class="overlay hidden">
   <div class="modal">
     <div class="modal-head">
-      <h2>编辑 key</h2>
+      <h2>续期 key</h2>
       <button class="x" id="edit-x" title="关闭">✕</button>
     </div>
     <p class="mono" id="edit-key-name"></p>
-    <label for="edit-remark">备注名</label>
-    <input id="edit-remark" type="text" placeholder="备注名（空 = 清除备注）">
     <label for="edit-renew-amount" id="edit-renew-label">续期：加次数</label>
     <div class="renew-line">
-      <input id="edit-renew-amount" type="number" min="1" step="1" placeholder="留空 = 不续期">
+      <input id="edit-renew-amount" type="number" min="1" step="1" placeholder="正整数">
       <span class="unit" id="edit-renew-unit">次</span>
     </div>
     <p id="edit-error" class="msg-error hidden"></p>
     <div class="modal-actions">
       <button id="edit-cancel">取消</button>
       <button id="btn-edit-save" class="primary">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 系统备注编辑弹窗（绑定系统名列表行内「编辑」触发；系统名只读） -->
+<div id="sys-overlay" class="overlay hidden">
+  <div class="modal">
+    <div class="modal-head">
+      <h2>编辑系统备注</h2>
+      <button class="x" id="sys-x" title="关闭">✕</button>
+    </div>
+    <label>绑定系统名</label>
+    <p class="mono" id="sys-name"></p>
+    <label for="sys-remark">备注名</label>
+    <input id="sys-remark" type="text" placeholder="备注名（空 = 清除备注）">
+    <p id="sys-error" class="msg-error hidden"></p>
+    <div class="modal-actions">
+      <button id="sys-cancel">取消</button>
+      <button id="btn-sys-save" class="primary">保存</button>
     </div>
   </div>
 </div>
@@ -209,7 +241,8 @@ MS_KEY_CLIENT_TOKEN=&lt;随机长 token&gt;    # 消费端 token（frp 部署双
 
 <script>
 'use strict';
-/* keyserver 管理后台（US-008）：同源原生 fetch 消费 /api/admin/* 五接口。
+/* keyserver 管理后台（US-008）：同源原生 fetch 消费 /api/admin/* 七接口
+   （key 五接口 + 绑定系统名列表两接口）。
    token 流：sessionStorage('ms_admin_token') → 全部请求附 X-Admin-Token；
    403 且 error 含「未配置」→ 渲染配置指引卡；401 → 回登录框报错。 */
 var TOKEN_KEY = 'ms_admin_token';
@@ -217,8 +250,10 @@ function $(id) { return document.getElementById(id); }
 
 var token = '';
 var keysCache = [];
+var systemsCache = [];
 var editRow = null;
 var delTargetId = null;
+var sysEditName = null;
 var msgTimer = null;
 
 function showEl(el, visible) { el.classList.toggle('hidden', !visible); }
@@ -294,7 +329,7 @@ function api(path, opts) {
   });
 }
 
-/* ---- 表格渲染（八列按需求列序） ---- */
+/* ---- 表格渲染（key 表六列 + 系统表五列） ---- */
 /* 六态 → 徽标配色（显式全列；status 文本 = 后端 STATUS_LABELS 单一真相源）：
    正在使用 绿 / 已过期·已用完·已合并 红 / 未绑定·未激活 灰 */
 var BADGE_CLASSES = {
@@ -316,7 +351,7 @@ function statsHtml(stats) {
 function renderTable(keys) {
   var body = $('keys-body');
   if (!keys.length) {
-    body.innerHTML = '<tr><td colspan="8" class="dim">暂无 key，先在上方新建。</td></tr>';
+    body.innerHTML = '<tr><td colspan="6" class="dim">暂无 key，先在上方新建。</td></tr>';
     return;
   }
   body.innerHTML = keys.map(function (k) {
@@ -324,33 +359,55 @@ function renderTable(keys) {
     return '<tr data-id="' + esc(k.id) + '">' +
       '<td class="mono key-cell" title="点击复制">' + esc(k.key_plaintext) + '</td>' +
       '<td>' + esc(k.bound_system_name || '—') + '</td>' +
-      '<td>' + esc(k.remark || '') + '</td>' +
       '<td>' + typeLabel + '</td>' +
       '<td class="mono">' + esc(k.detail) + '</td>' +
       '<td><span class="badge ' + badgeClass(k.status) + '">' + esc(k.status) + '</span></td>' +
-      '<td class="stats">' + statsHtml(k.usage_stats) + '</td>' +
       '<td class="ops">' +
-        '<button data-act="edit">编辑</button>' +
+        '<button data-act="renew">续期</button>' +
         '<button data-act="del" class="ghost-danger">删除</button>' +
       '</td></tr>';
   }).join('');
 }
+function renderSystems(systems) {
+  var body = $('systems-body');
+  if (!systems.length) {
+    body.innerHTML = '<tr><td colspan="5" class="dim">暂无绑定系统（key 绑定机器后，其系统名会出现在此）。</td></tr>';
+    return;
+  }
+  body.innerHTML = systems.map(function (s) {
+    return '<tr data-name="' + esc(s.system_name) + '">' +
+      '<td>' + esc(s.system_name) + '</td>' +
+      '<td>' + esc(s.remark || '') + '</td>' +
+      '<td>' + esc(s.key_count) + '</td>' +
+      '<td class="stats">' + statsHtml(s.usage_stats) + '</td>' +
+      '<td class="ops"><button data-act="sys-edit">编辑</button></td>' +
+    '</tr>';
+  }).join('');
+}
 
-function loadKeys() {
-  return api('/api/admin/keys').then(function (data) {
-    keysCache = data.keys || [];
-    renderTable(keysCache);
-    showMain();
-  }).catch(function (e) {
-    if (e.status === 403 && String(e.message).indexOf('未配置') !== -1) { showUnconfigured(); return; }
-    if (e.status === 401) {
-      sessionStorage.removeItem(TOKEN_KEY);
-      showLogin(e.message);
-      return;
-    }
-    showMain();
-    setMsg('加载失败：' + e.message, true);
-  });
+/* ---- 数据加载：keys + systems 并行（任一操作成功后两表同刷） ---- */
+function fetchAll() {
+  return Promise.all([api('/api/admin/keys'), api('/api/admin/systems')]);
+}
+function renderAll(keysData, systemsData) {
+  keysCache = keysData.keys || [];
+  systemsCache = systemsData.systems || [];
+  renderTable(keysCache);
+  renderSystems(systemsCache);
+  showMain();
+}
+function handleLoadError(e) {
+  if (e.status === 403 && String(e.message).indexOf('未配置') !== -1) { showUnconfigured(); return; }
+  if (e.status === 401) {
+    sessionStorage.removeItem(TOKEN_KEY);
+    showLogin(e.message);
+    return;
+  }
+  showMain();
+  setMsg('加载失败：' + e.message, true);
+}
+function loadData() {
+  return fetchAll().then(function (r) { renderAll(r[0], r[1]); }).catch(handleLoadError);
 }
 
 function copyText(text) {
@@ -374,7 +431,7 @@ $('btn-login').addEventListener('click', function () {
   if (!v) { err.textContent = '请输入管理 token'; showEl(err, true); return; }
   token = v;
   sessionStorage.setItem(TOKEN_KEY, v);
-  loadKeys();
+  loadData();
 });
 $('token-input').addEventListener('keydown', function (e) {
   if (e.key === 'Enter') $('btn-login').click();
@@ -384,9 +441,9 @@ $('btn-logout').addEventListener('click', function () {
   $('token-input').value = '';
   showLogin(null);
 });
-$('btn-refresh').addEventListener('click', function () { loadKeys(); });
+$('btn-refresh').addEventListener('click', function () { loadData(); });
 
-/* ---- 新建 ---- */
+/* ---- 新建（备注名为系统级，改在绑定系统名列表编辑；创建只给类型+数量） ---- */
 document.querySelectorAll('input[name=key-type]').forEach(function (radio) {
   radio.addEventListener('change', function () {
     var isCount = document.querySelector('input[name=key-type]:checked').value === 'count';
@@ -401,18 +458,15 @@ $('btn-create').addEventListener('click', function () {
   var body = keyType === 'count'
     ? { key_type: 'count', total_uses: amount }
     : { key_type: 'duration', duration_days: amount };
-  var remark = $('remark-input').value.trim();
-  if (remark) body.remark = remark;
   api('/api/admin/keys', { method: 'POST', body: body }).then(function (created) {
-    $('remark-input').value = '';
     copyText(created.key_plaintext).then(function (ok) {
       setMsg('已创建 key：' + created.key_plaintext + (ok ? '（明文已复制，可直接发放）' : ''), false);
     });
-    return loadKeys();
+    return loadData();
   }).catch(function (e) { setMsg('创建失败：' + e.message, true); });
 });
 
-/* ---- 编辑弹窗：改备注名 + 续期（次数型加次数 / 时长型加天数） ---- */
+/* ---- 续期弹窗（次数型加次数 / 时长型加天数；备注名已迁移为系统级） ---- */
 function closeEdit() {
   editRow = null;
   showEl($('edit-overlay'), false);
@@ -427,7 +481,6 @@ function openEdit(id) {
   editRow = row;
   var isCount = row.key_type === 'count';
   $('edit-key-name').textContent = row.key_plaintext + '（' + (isCount ? '次数型' : '时长型') + '）';
-  $('edit-remark').value = row.remark || '';
   $('edit-renew-label').textContent = isCount
     ? '续期：加次数（当前 ' + row.detail + '）'
     : '续期：加天数（当前 ' + row.detail + '）';
@@ -435,7 +488,7 @@ function openEdit(id) {
   $('edit-renew-amount').value = '';
   showEl($('edit-error'), false);
   showEl($('edit-overlay'), true);
-  $('edit-remark').focus();
+  $('edit-renew-amount').focus();
 }
 function showEditError(msg) {
   var el = $('edit-error');
@@ -444,32 +497,65 @@ function showEditError(msg) {
 }
 $('btn-edit-save').addEventListener('click', function () {
   if (!editRow) return;
-  var remark = $('edit-remark').value;
   var renewRaw = $('edit-renew-amount').value.trim();
   var isCount = editRow.key_type === 'count';
-  var add = null;
-  if (renewRaw !== '') {
-    add = Number(renewRaw);
-    if (!Number.isInteger(add) || add <= 0) {
-      showEditError((isCount ? '加次数' : '加天数') + '必须为正整数（留空 = 不续期）');
-      return;
-    }
+  if (renewRaw === '') {
+    showEditError('请输入续期数量（正整数）');
+    return;
   }
-  api('/api/admin/keys/' + editRow.id, { method: 'PUT', body: { remark: remark } })
-    .then(function () {
-      if (add === null) return null;
-      var body = isCount ? { add_uses: add } : { add_days: add };
-      return api('/api/admin/keys/' + editRow.id + '/renew', { method: 'POST', body: body });
-    })
+  var add = Number(renewRaw);
+  if (!Number.isInteger(add) || add <= 0) {
+    showEditError((isCount ? '加次数' : '加天数') + '必须为正整数');
+    return;
+  }
+  var body = isCount ? { add_uses: add } : { add_days: add };
+  api('/api/admin/keys/' + editRow.id + '/renew', { method: 'POST', body: body })
     .then(function () {
       closeEdit();
-      setMsg('已保存（备注名/续期即时生效）', false);
-      return loadKeys();
+      setMsg('已续期（即时生效）', false);
+      return loadData();
     })
-    .catch(function (e) { showEditError('保存失败：' + e.message); });
+    .catch(function (e) { showEditError('续期失败：' + e.message); });
 });
 $('edit-cancel').addEventListener('click', closeEdit);
 $('edit-x').addEventListener('click', closeEdit);
+
+/* ---- 系统备注编辑弹窗（绑定系统名列表行内「编辑」触发；系统名只读） ---- */
+function closeSysEdit() {
+  sysEditName = null;
+  showEl($('sys-overlay'), false);
+  showEl($('sys-error'), false);
+}
+function openSysEdit(name) {
+  var row = null;
+  for (var i = 0; i < systemsCache.length; i++) {
+    if (systemsCache[i].system_name === name) { row = systemsCache[i]; break; }
+  }
+  if (!row) return;
+  sysEditName = name;
+  $('sys-name').textContent = row.system_name;
+  $('sys-remark').value = row.remark || '';
+  showEl($('sys-error'), false);
+  showEl($('sys-overlay'), true);
+  $('sys-remark').focus();
+}
+$('btn-sys-save').addEventListener('click', function () {
+  if (!sysEditName) return;
+  api('/api/admin/systems/' + encodeURIComponent(sysEditName), {
+    method: 'PUT',
+    body: { remark: $('sys-remark').value },
+  }).then(function () {
+    closeSysEdit();
+    setMsg('已保存（系统备注即时生效）', false);
+    return loadData();
+  }).catch(function (e) {
+    var el = $('sys-error');
+    el.textContent = '保存失败：' + e.message;
+    showEl(el, true);
+  });
+});
+$('sys-cancel').addEventListener('click', closeSysEdit);
+$('sys-x').addEventListener('click', closeSysEdit);
 
 /* ---- 删除：非「正在使用」直删；正在使用（或竞态 409）→ 二段确认弹窗 force=true ---- */
 function closeDel() {
@@ -479,7 +565,8 @@ function closeDel() {
 }
 function openDelConfirm(row) {
   delTargetId = row.id;
-  $('del-text').textContent = '将删除 key：' + row.key_plaintext + (row.remark ? '（备注：' + row.remark + '）' : '');
+  $('del-text').textContent = '将删除 key：' + row.key_plaintext
+    + (row.bound_system_name ? '（绑定系统：' + row.bound_system_name + '）' : '');
   showEl($('del-error'), false);
   showEl($('del-overlay'), true);
 }
@@ -495,7 +582,7 @@ function requestDelete(id) {
   if (row && row.status === '正在使用') { openDelConfirm(row); return; }
   doDelete(id, false).then(function () {
     setMsg('已删除', false);
-    return loadKeys();
+    return loadData();
   }).catch(function (e) {
     if (e.status === 409 && row) { openDelConfirm(row); return; }  /* 竞态：加载后变正在使用 */
     setMsg('删除失败：' + e.message, true);
@@ -506,7 +593,7 @@ $('btn-del-confirm').addEventListener('click', function () {
   doDelete(delTargetId, true).then(function () {
     closeDel();
     setMsg('已删除', false);
-    return loadKeys();
+    return loadData();
   }).catch(function (e) {
     var el = $('del-error');
     el.textContent = '删除失败：' + e.message;
@@ -516,14 +603,14 @@ $('btn-del-confirm').addEventListener('click', function () {
 $('del-cancel').addEventListener('click', closeDel);
 $('del-x').addEventListener('click', closeDel);
 
-/* ---- 表格事件委托：编辑/删除按钮 + 名称点击复制 ---- */
+/* ---- 表格事件委托：key 表续期/删除 + 名称点击复制；系统表编辑备注 ---- */
 $('keys-body').addEventListener('click', function (e) {
   var btn = e.target.closest('button[data-act]');
   if (btn) {
     var tr = btn.closest('tr');
     var id = tr ? tr.getAttribute('data-id') : null;
     if (id) {
-      if (btn.getAttribute('data-act') === 'edit') openEdit(id);
+      if (btn.getAttribute('data-act') === 'renew') openEdit(id);
       else requestDelete(id);
     }
     return;
@@ -535,27 +622,32 @@ $('keys-body').addEventListener('click', function (e) {
     });
   }
 });
+$('systems-body').addEventListener('click', function (e) {
+  var btn = e.target.closest('button[data-act="sys-edit"]');
+  if (!btn) return;
+  var tr = btn.closest('tr');
+  var name = tr ? tr.getAttribute('data-name') : null;
+  if (name) openSysEdit(name);
+});
 
 /* ---- ESC 关弹窗 ---- */
 document.addEventListener('keydown', function (e) {
-  if (e.key === 'Escape') { closeEdit(); closeDel(); }
+  if (e.key === 'Escape') { closeEdit(); closeDel(); closeSysEdit(); }
 });
 
 /* ---- 启动：sessionStorage 有 token → 直接加载（免重输）；
    无 token → 无凭探测一次：403「未配置」→ 配置指引；401 → 登录框；
    200（DEV 逃生）→ 直接进主界面 ---- */
 function probeWithoutToken() {
-  return api('/api/admin/keys').then(function (data) {
-    keysCache = data.keys || [];
-    renderTable(keysCache);
-    showMain();
-  }).catch(function (e) {
-    if (e.status === 403 && String(e.message).indexOf('未配置') !== -1) { showUnconfigured(); return; }
-    showLogin(null);   /* 401（已设 token 未带）/网络异常 → 登录框 */
-  });
+  return fetchAll()
+    .then(function (r) { renderAll(r[0], r[1]); })
+    .catch(function (e) {
+      if (e.status === 403 && String(e.message).indexOf('未配置') !== -1) { showUnconfigured(); return; }
+      showLogin(null);   /* 401（已设 token 未带）/网络异常 → 登录框 */
+    });
 }
 token = sessionStorage.getItem(TOKEN_KEY) || '';
-if (token) loadKeys();
+if (token) loadData();
 else probeWithoutToken();
 </script>
 </body>
