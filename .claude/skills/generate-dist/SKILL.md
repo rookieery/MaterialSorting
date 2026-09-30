@@ -27,13 +27,13 @@ allowed-tools: Bash
 ### 0. 前置检查（构建红线，缺一不可）
 1. **停常驻 CPU 负载**（叠加 = 双倍风暴，2026-09-27 整机假死事故）：
    ```bash
-   for port in 8010 5173 8110; do
+   for port in 8010 5173; do
      for pid in $(netstat -ano | grep -E ":${port}[[:space:]]" | grep -i LISTENING | awk '{print $NF}' | sort -u); do
        MSYS_NO_PATHCONV=1 taskkill /PID $pid /F /T 2>/dev/null && echo "killed :${port} pid=$pid"
      done
    done
    ```
-   （:8010 ms-web / :5173 Vite / :8110 keyserver；另有长跑 solver 子进程一并确认停。）
+   （:8010 ms-web / :5173 Vite；另有长跑 solver 子进程一并确认停。**绝不动 :8110 keyserver** —— 生产授权校验服务（frp 8083 公网入口在用、跨会话共用）：轻量 FastAPI 对编译资源风暴贡献≈0，杀它 = 外部客户机 key 校验断供 + 跨会话互杀（2026-09-30 单日 5 次误杀实录）；防风暴靠脚本自身 jobs 钳制 + BELOW_NORMAL 优先级已足。2026-09-30 定案：清扫面收窄为 8010/5173。）
 2. **前端 build**（发版前必跑，勿信既有 static/）：
    ```bash
    cd d:/code/MaterialSorting/materialSorting-web && npm run build
@@ -91,6 +91,7 @@ node scripts/smoke_freeze.mjs
 
 ## 注意事项
 - **绝不裸跑全核**：`--jobs` 勿超 8（override 高于 8 脚本会打警告，2026-09-27 全核并发假死事故）。
+- **:8110 keyserver 永不在清扫面**：生产授权校验（frp 8083 公网入口）跨会话共用，轻量 FastAPI 与编译资源风暴无关 —— 杀它只断供外部 key 校验并引发跨会话互杀。
 - dist 幂等：先清后建无增量，重跑 = 全量重编（正常）。
 - 用户数据物理分离：安装/运行期用户数据在 `%LOCALAPPDATA%\MaterialSorting\out`，与构建无关，勿动。
 - key 接线 sidecar 单一维护位 = `materialSorting-server/out/license/`（dev 部署与打包共用），构建/补打包自动同步进包 —— 勿手工往 dist 铺 sidecar（会被纠正为维护位现值）；全量重编会清空 dist 重建，sidecar 由流水自动补回不依赖残留。

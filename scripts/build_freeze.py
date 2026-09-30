@@ -65,6 +65,7 @@ import json
 import os
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -885,6 +886,22 @@ def launch_dist() -> int:
 
 # ================================================================ main
 
+def _rmtree_force(path: Path) -> None:
+    """``shutil.rmtree`` Windows 只读容错版（2026-09-30 实勘）。
+
+    样例母版源文件可带只读位（U 盘/压缩包来源，实测 ``data/`` 两个母版
+    ``3069#…146.dxf`` / ``M1787#…(2).dxf`` 只读），Nuitka
+    ``--include-data-file`` 拷贝保留属性 → 既有 dist 里躺只读文件，下次
+    重建 ``rmtree`` 走 ``os.unlink`` 删只读文件 WinError 5 拒绝访问、构建
+    在编译前即炸。onerror 清只读位重试一次，仍失败才抛（真句柄锁/ACL
+    问题不该被吞）。
+    """
+    def _clear_readonly(func, target, exc_info):
+        os.chmod(target, stat.S_IWRITE)
+        func(target)
+    shutil.rmtree(path, onerror=_clear_readonly)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog='build_freeze.py',
@@ -1015,7 +1032,7 @@ def main(argv: list[str] | None = None) -> int:
     # ---- 构建（幂等：dist 先清后建，PRD AC3）
     if DIST_DIR.exists():
         print(f'清理既有 {DIST_DIR} ...')
-        shutil.rmtree(DIST_DIR)
+        _rmtree_force(DIST_DIR)
     DIST_DIR.mkdir(parents=True)
     step_compile(cmd, jobs)
     step_dist_check(py_ver, skip_key_sidecar=args.skip_key_sidecar)
@@ -1023,8 +1040,12 @@ def main(argv: list[str] | None = None) -> int:
     # 构建目录清理（.build 仅中间产物；clcache 在 %LOCALAPPDATA%\Nuitka 跨重试生效）
     build_dir = DIST_DIR / f'{APP_BASENAME}.build'
     if build_dir.is_dir():
-        shutil.rmtree(build_dir, ignore_errors=True)
-        print('已清理中间构建目录（clcache 保留在 %LOCALAPPDATA%/Nuitka）')
+        try:
+            _rmtree_force(build_dir)
+        except OSError as exc:
+            print(f'warn: 中间构建目录清理失败（不影响产物）：{exc}')
+        else:
+            print('已清理中间构建目录（clcache 保留在 %LOCALAPPDATA%/Nuitka）')
     if args.installer:
         step_installer(display, file_version)
     print(f'\n[DONE] 冻结产物就绪：{EXE_PATH}')
