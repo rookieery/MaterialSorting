@@ -943,7 +943,7 @@ manifest → frames → final
 | `POST /api/key/merge` | `{source_keys: [str,...]}`（非空字符串列表，strip 后上送；去重保序在 keyserver） | `{target, sources:[{key, transferred_days}], total_transferred_days}`（keyserver 契约原样透传）；target = 本地当前 key | 400：source_keys 形状非法；未绑定（`MSG_NO_KEY`）；keyserver merge 前置违反整体失败（无部分合并）中文透传 |
 | `POST /api/key/precheck` | `{doc_source?: str}`（坏 body 容忍为无 doc_source） | `{ok:true[, reason:'off'\|'sample']}` \| `{ok:false, message}`（判定序见 §3） | 恒 200（预检语义结果自描述） |
 
-info 契约（keyserver `/api/key/info|bind|validate` 成功共用，count 型示例）：`{type:'count', total_uses, used_uses, remaining_uses, status:六态中文, bound_system_name, remark}`；duration 型：`{type:'duration', activated_at, expires_at, remaining_days, status, bound_system_name, remark}`（未激活 → `activated_at/expires_at:null`、`remaining_days=duration_days`）。
+info 契约（keyserver `/api/key/info|bind|validate` 成功共用，count 型示例）：`{type:'count', total_uses, used_uses, remaining_uses, status:六态中文, bound_system_name, remark}`；duration 型：`{type:'duration', activated_at, expires_at, remaining_days, status, bound_system_name, remark}`（激活后 `remaining_days` = 四舍五入 **1 位小数**如 9.6，2026-09-30 起口径 —— 此前 ceil 整天会夸大造成使用错觉；未激活 → `activated_at/expires_at:null`、`remaining_days=duration_days` 整数；merge 明细 `transferred_days`/`total_transferred_days` 同为 1 位小数，底层转移秒级精确）。
 
 ### 5. 错误码矩阵（用户可见文案，可直接上屏）
 

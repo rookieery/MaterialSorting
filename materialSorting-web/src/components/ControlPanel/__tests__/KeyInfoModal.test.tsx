@@ -298,6 +298,19 @@ describe('KeyInfoModal ③ 属性展示 + 状态徽标', () => {
     expect(badge.classList.contains('bad')).toBe(true);
   });
 
+  it('时长型：剩余天数 1 位小数直显（9.6，2026-09-30 keyserver 口径，前端零公式）', async () => {
+    statePayload = {
+      key: 'MS-K',
+      info: { ...DURATION_INFO, status: '正在使用', remaining_days: 9.6,
+              activated_at: '2026-09-28 10:00:00', expires_at: '2026-10-08 10:00:00' },
+      error: null,
+    };
+    renderModal();
+    openModal();
+    await flush();
+    expect(attrText('key-attr-days')).toContain('9.6');
+  });
+
   it('keyserver 查询失败（error 字段）→ 属性区红字展示，本地 key 仍展示', async () => {
     statePayload = {
       key: 'MS-LOCAL',
@@ -396,6 +409,24 @@ describe('KeyInfoModal ② 系统可使用的key 表格（US-011）', () => {
     expect(rows[2].getAttribute('data-key')).toBe('MS-DUR-NEW');
     expect(rows[2].querySelectorAll('td')[2].textContent).toBe('29 天');
     expect(rows[2].querySelector('[data-testid="key-info-merge-one"]')).not.toBeNull();
+  });
+
+  it('时长行剩余 1 位小数直显（9.6 天，旧 ceil 整天口径会造成使用错觉）', async () => {
+    statePayload = { key: 'MS-K', info: null, error: null };
+    listPayload = {
+      keys: [
+        { key: 'MS-DUR-FRAC', type: 'duration', status: '正在使用',
+          bound_system_name: 'PC', remark: null,
+          activated_at: '2026-09-28 10:00:00',
+          expires_at: '2026-10-08 10:00:00', remaining_days: 9.6 },
+      ],
+      error: null,
+    };
+    renderModal();
+    openModal();
+    await flush();
+    const rows = modal().querySelectorAll('[data-testid="key-info-row"]');
+    expect(rows[0].querySelectorAll('td')[2].textContent).toBe('9.6 天');
   });
 
   it('点启用 → save(行key)（bind 幂等切换）+ 输入框对齐新 key', async () => {

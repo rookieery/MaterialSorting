@@ -6,7 +6,7 @@ test_routes_consumer.py。时间敏感断言用固定 now_dt 注入或宽 tolera
 from __future__ import annotations
 
 import json
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -189,6 +189,27 @@ class TestMerge:
                            for s in sources)
         assert expected_min - 1 <= got <= expected_max
 
+    def test_merge_display_caliber_additive(self, conn):
+        """合并展示口径可对账（2026-09-30 剩余天数 1 位小数口径）：target 剩
+        9.2 天 + source 剩 0.6 天 → 明细 +0.6 天、合并后 target = 9.8 天 ——
+        底层秒级转移（上一用例已锁），本用例锁 1 位小数展示层数字加得回来。"""
+        target = _mk_duration(conn, days=30)
+        src = _mk_duration(conn, days=30)
+        t0 = models.now()
+        repo.update_key(
+            conn, target['id'], bound_machine_guid=GUID, bound_system_name='SYS-A',
+            activated_at=models.format_ts(t0 - timedelta(days=1)),
+            expires_at=models.format_ts(t0 + timedelta(days=9, hours=4, minutes=48)))
+        repo.update_key(
+            conn, src['id'], bound_machine_guid=GUID, bound_system_name='SYS-A',
+            activated_at=models.format_ts(t0 - timedelta(days=1)),
+            expires_at=models.format_ts(t0 + timedelta(hours=14, minutes=24)))
+        result = service.merge(conn, target_key=target['key_plaintext'],
+                               source_keys=[src['key_plaintext']], machine_guid=GUID)
+        assert result['sources'][0]['transferred_days'] == 0.6
+        assert result['total_transferred_days'] == 0.6
+        assert result['target']['remaining_days'] == 9.8
+
     def test_merge_marks_sources_merged_keeps_rows(self, conn):
         target, sources = self._setup_target_and_sources(conn)
         result = service.merge(conn, target_key=target['key_plaintext'],
@@ -337,8 +358,26 @@ class TestInfo:
         assert set(payload) == {'type', 'activated_at', 'expires_at',
                                 'remaining_days', 'status',
                                 'bound_system_name', 'remark'}
-        assert payload['remaining_days'] == 29     # 30 天昨日激活 → 恰剩 29 整天
+        assert payload['remaining_days'] == 29     # 30 天昨日激活 → 剩 ≈29.0 天（1 位小数口径）
         assert payload['status'] == '正在使用'
+
+    def test_info_duration_remaining_days_one_decimal(self, conn):
+        """剩余天数四舍五入 1 位小数（2026-09-30 定案，固定 now_dt 注入）：
+        9 天 2h24m = 9.1 天 —— 旧 math.ceil 口径会夸成「10 天」（用户使用错觉
+        根因），锁死不回归；9 天 14h24m = 9.6 天为进位样例；略过界 → 夹 0 不为负。"""
+        row = _mk_duration(conn, days=40)
+        now_dt = datetime(2026, 9, 30, 12, 0, 0)
+        for delta, expected in (
+            (timedelta(days=9, hours=2, minutes=24), 9.1),    # 旧 ceil → 10
+            (timedelta(days=9, hours=14, minutes=24), 9.6),
+            (timedelta(seconds=-30), 0.0),                    # 过界夹 0
+        ):
+            repo.update_key(
+                conn, row['id'], bound_machine_guid=GUID, bound_system_name='SYS-A',
+                activated_at=models.format_ts(now_dt - timedelta(days=30)),
+                expires_at=models.format_ts(now_dt + delta))
+            payload = service._info_payload(repo.get_key(conn, row['id']), now_dt)
+            assert payload['remaining_days'] == expected
 
     def test_info_duration_unactivated(self, conn):
         row = _mk_duration(conn, days=15)
@@ -391,7 +430,7 @@ class TestListForMachine:
             old_du['key_plaintext'], old_ct['key_plaintext']]   # 新→旧
         du, ct = out['keys']
         assert du['type'] == 'duration' and du['status'] == '正在使用'
-        assert du['remaining_days'] == 29                    # 昨日激活 30 天
+        assert du['remaining_days'] == 29                    # 昨日激活 30 天 → ≈29.0 天
         assert ct['type'] == 'count' and ct['remaining_uses'] == 5
 
     def test_six_state_filter_matrix(self, conn):
@@ -471,7 +510,7 @@ class TestValidate:
                                    machine_guid=GUID, deduct=True)
         assert repo.list_daily_usage(conn, row['id'])[0]['count'] == 1
         assert repo.get_key(conn, row['id'])['used_uses'] == 0   # duration 不扣次
-        assert payload['remaining_days'] == 9    # 10 天昨日激活 → 剩 9 整天
+        assert payload['remaining_days'] == 9    # 10 天昨日激活 → 剩 ≈9.0 天（1 位小数口径）
         assert repo.list_ops(conn, row['id'])[0]['op'] == 'validate_deduct'
 
     def test_validate_exhausted_403_with_total(self, conn):

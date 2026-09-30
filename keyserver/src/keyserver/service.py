@@ -9,7 +9,8 @@
   - count 型:    ``{type, total_uses, used_uses, remaining_uses, status,
                    bound_system_name, remark}``
   - duration 型: ``{type, activated_at, expires_at, remaining_days, status,
-                   bound_system_name, remark}``
+                   bound_system_name, remark}``（remaining_days 激活后 = 四舍五入
+    1 位小数，如 9.6；未激活 = 整数 duration_days）
 
 规则要点（错误文案被消费端 keygate 原样透传给排料用户，勿随意改字）：
   - bind：未绑 → 绑定（system_name 快照 + 备注缺省=系统名）且 duration 型**绑定
@@ -26,7 +27,6 @@
 """
 from __future__ import annotations
 
-import math
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -109,8 +109,11 @@ def _info_payload(row: dict[str, Any], now_dt: datetime) -> dict[str, Any]:
             payload['expires_at'] = None
             payload['remaining_days'] = int(row['duration_days'])
         else:
-            remaining_days = math.ceil(
-                (parse_ts(row['expires_at']) - now_dt).total_seconds() / 86400.0)
+            # 剩余天数四舍五入 1 位小数（2026-09-30 定案：旧 math.ceil 向上取整
+            # 会把 9.1 天显示成「10 天」造成使用错觉；与 merge 明细
+            # transferred_days 同精度口径，合并前后数字可直接对账）
+            remaining_days = round(
+                (parse_ts(row['expires_at']) - now_dt).total_seconds() / 86400.0, 1)
             payload['activated_at'] = row['activated_at']
             payload['expires_at'] = row['expires_at']
             payload['remaining_days'] = max(remaining_days, 0)

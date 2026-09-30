@@ -43,7 +43,8 @@ export interface KeyInfo {
   used_uses?: number;
   remaining_uses?: number;
   /** duration 型专属：生效/截止时刻（未激活两者 null，此时 remaining_days =
-   * 完整 duration_days）/ 剩余整天数。 */
+   * 完整 duration_days 整数）/ 剩余天数（keyserver 四舍五入 1 位小数如 9.6，
+   * 2026-09-30 起口径，此前 ceil 整天会夸大造成使用错觉）。 */
   activated_at?: string | null;
   expires_at?: string | null;
   remaining_days?: number;
