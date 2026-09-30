@@ -447,7 +447,7 @@ async def create_session(request: Request):
     """US-001：会话注册 / 幂等刷活性。读 ``X-Session-Id`` Header（缺省 → default 会话）。
 
     - 合法 sid 且容量未满 → 建会话或刷活性，``200 {ok:true, sid}``；
-    - 活跃会话数达 ``MS_SESSION_MAX``（缺省 4，default 不占额）→ ``429
+    - 活跃会话数达 ``MS_SESSION_MAX``（缺省 16，default 不占额）→ ``429
       {code:'session_limit'}``；
     - sid 命中墓碑 / 惰性检查发现已超时 → ``401 {code:'session_expired'}``（不静默
       重建，前端阻断弹窗要求刷新）；
@@ -469,7 +469,8 @@ async def post_edit_hold(request: Request):
     """编辑排料会话钉住心跳（2026-09-04）：前端编辑弹窗打开期间滚动调用。
 
     编辑排料纯前端（拖动/旋转/保存不发任何请求），长编辑（> ``MS_SESSION_TTL_SEC``
-    缺省 10min）会被空闲过期逐出 → 保存后导出 401 全局阻断 → 刷新丢全部编辑成果。
+    缺省 7 天，2026-09-30 起本地部署姿态；原 600s 时代）会被空闲过期逐出 →
+    保存后导出 401 全局阻断 → 刷新丢全部编辑成果。
     本端点把会话钉住到 ``now + MS_EDIT_HOLD_SEC``（缺省 600s，镜像策略 run 终态宽限
     语义 —— 弹窗打开期间 4min 心跳持续续命、编辑中睡眠 ≤10min 唤醒恢复、关窗后
     自然留同款宽限；宽限内仍占 ``MS_SESSION_MAX`` 名额，与策略宽限口径一致。

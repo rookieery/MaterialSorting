@@ -2,7 +2,7 @@
 //   AC1 未阻断 → 渲染 null（零 DOM 开销）。
 //   AC2 session_expired → 「会话已过期，刷新页面后将恢复工作状态」（US-003 改版
 //      文案：停留期不清 sid，刷新 = 启动期恢复入口；不显示上次活动时间）。
-//   AC3 session_limit → 「当前使用用户过多（最多 6 人同时在线），请稍后尝试」（原文案不变）。
+//   AC3 session_limit → 「当前使用用户过多（最多 16 人同时在线），请稍后尝试」（随 2026-09-30 MAX 6→16 同步）。
 //   AC4 点击「刷新页面」→ location.reload()；无 ✕ / ESC / 遮罩关闭路径。
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -84,7 +84,7 @@ describe('SessionExpiredModal（US-005）', () => {
       triggerSessionBlock('session_limit');
     });
     expect(el.querySelector('.session-block-text')!.textContent).toBe(
-      '当前使用用户过多（最多 6 人同时在线），请稍后尝试',
+      '当前使用用户过多（最多 16 人同时在线），请稍后尝试',
     );
   });
 

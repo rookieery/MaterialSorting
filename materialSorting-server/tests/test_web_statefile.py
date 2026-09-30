@@ -340,7 +340,7 @@ def test_save_expired_sid_401_json_not_file(client, monkeypatch):
                     json={'form': _form(), 'quantities': _quantities()})
     assert r.status_code == 401
     assert r.headers['content-type'].startswith('application/json')
-    assert r.json() == {'code': 'session_expired', 'error': '会话已过期（10 分钟无操作），请刷新页面'}
+    assert r.json() == {'code': 'session_expired', 'error': '会话已过期，请刷新页面'}
 
 
 def test_save_invalid_sid_400(client):

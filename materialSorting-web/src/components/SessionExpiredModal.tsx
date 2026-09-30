@@ -18,8 +18,8 @@
 //      sid（旧 sid 留作刷新后启动期恢复的 from_sid），刷新 = 恢复而不是丢数据；
 //      按钮仍 location.reload()（刷新动作即恢复入口，用户定案：停留期绝不自动
 //      恢复 —— 变相保活会话、浪费资源）。
-//   session_limit   → 「当前使用用户过多（最多 6 人同时在线），请稍后尝试」
-//      （PRD US-005 原文案不变；保 sid 语义不变）。
+//   session_limit   → 「当前使用用户过多（最多 16 人同时在线），请稍后尝试」
+//      （人数随 2026-09-30 MS_SESSION_MAX 缺省 6→16 同步；保 sid 语义不变）。
 //
 // 订阅方式：React 18 useSyncExternalStore（lib/api 的模块级 pub/sub；不引 zustand
 // —— lib 不依赖 store 层，组件侧零额外状态）。code === null 时渲染 null（零开销）。
@@ -36,7 +36,7 @@ const COPY: Record<SessionBlockCode, { title: string; text: string }> = {
   },
   session_limit: {
     title: '当前使用用户过多',
-    text: '当前使用用户过多（最多 6 人同时在线），请稍后尝试',
+    text: '当前使用用户过多（最多 16 人同时在线），请稍后尝试',
   },
 };
 

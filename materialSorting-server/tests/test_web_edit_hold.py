@@ -1,7 +1,8 @@
 """编辑排料会话钉住（web/edit_hold + POST /api/edit-hold）测试（2026-09-04）。
 
-背景：编辑排料纯前端无请求，``MS_SESSION_TTL_SEC``（缺省 600s）空闲过期会在长编辑
-中途逐出会话 → 保存后导出 401 全丢。edit_hold 提供滚动钉住（缺省
+背景：编辑排料纯前端无请求，``MS_SESSION_TTL_SEC`` 空闲过期会在长编辑
+中途逐出会话 → 保存后导出 401 全丢（600s 时代问题；2026-09-30 起会话 TTL 缺省
+放宽 7 天，本机制保留为 env 收紧 TTL 时的防御）。edit_hold 提供滚动钉住（缺省
 ``MS_EDIT_HOLD_SEC`` 600s，2026-09-13 由 2h 收敛对齐 TTL —— checkpoint 保存兜底
 落地；镜像策略 run 终态宽限）+ alive hook 组合注册。
 

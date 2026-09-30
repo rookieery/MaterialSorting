@@ -2,9 +2,11 @@
 
 **问题**：编辑排料（编辑弹窗拖动/旋转/保存）是纯前端操作 —— 编辑期间不发任何
 HTTP/WS；求解已结束（无 WS 钉住）、无策略轮询（无 touch），后端视角该会话完全
-空闲。``MS_SESSION_TTL_SEC``（缺省 600s）空闲过期会在长编辑（版师精修大图 30min+
-很常态）中途把会话逐出为墓碑 → 用户保存后导出 / 再求解 → 401 ``session_expired``
+空闲。``MS_SESSION_TTL_SEC`` 空闲过期会在长编辑（版师精修大图 30min+ 很常态）
+中途把会话逐出为墓碑 → 用户保存后导出 / 再求解 → 401 ``session_expired``
 → 全局阻断弹窗刷新 → 前端内存编辑成果全部丢失（编辑态不持久化、不落盘）。
+（2026-09-30 起会话 TTL 缺省放宽 7 天，长编辑默认不再触发本问题；模块保留为
+env 收紧 TTL 时的防御，心跳链路照常工作。）
 
 **方案**（镜像 strategy.py 的 run 存活钉住 + 终态宽限语义）：前端编辑弹窗打开期间
 滚动 ``POST /api/edit-hold`` 续期本表（``sid → hold_until = clock()+EDIT_HOLD_SEC``，
@@ -35,10 +37,10 @@ from typing import Callable
 
 from .sessions import DEFAULT_SID, _env_float
 
-# 编辑钉住滚动窗（秒）：缺省与 ``MS_SESSION_TTL_SEC`` / ``MS_RESULT_GRACE_SEC``
-# 对齐 = 600s（2026-09-13 用户定案：checkpoint 保存兜底落地，2h 钉住统一收敛
-# 10min）。前端心跳间隔 4min ≪ 600s 窗 —— 弹窗打开期间一次成功心跳即续命
-# （容忍网络抖动 / 短睡眠）；关窗后同款窗自然宽限。
+# 编辑钉住滚动窗（秒）：缺省 600s（2026-09-13 用户定案：checkpoint 保存兜底落地，
+# 2h 钉住统一收敛 10min，历史与旧会话 TTL 600s 对齐；2026-09-30 会话 TTL 放宽
+# 7 天后不再对齐，本值独立保留）。前端心跳间隔 4min ≪ 600s 窗 —— 弹窗打开期间
+# 一次成功心跳即续命（容忍网络抖动 / 短睡眠）；关窗后同款窗自然宽限。
 EDIT_HOLD_SEC: float = _env_float('MS_EDIT_HOLD_SEC', 600.0)
 
 # sid → hold_until（``registry.clock()`` 时间戳，与 TTL 比较同一时钟源可注入推进）。
