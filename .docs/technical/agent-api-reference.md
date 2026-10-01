@@ -1000,7 +1000,7 @@ key 行契约（列表/单条/新建/续期/改备注共用 10 字段）：`{id,
 
 每操作写 `key_op_log`（create/renew/edit/delete/bind/merge_*/validate 扣次等审计流）。frp 部署 runbook（frpc 配置样例、双 token 必设、明文 HTTP 残余风险、SQLite 快照备份）见 [本地部署构建与发版手册](本地部署构建与发版手册.md) §7。
 
-## 机器对接 /api/machine/* — YL 后端对接契约（机器对接 PRD US-001~005，2026-09-21 全五端点落地；三期 PRD US-001 2026-09-22 增 state-file 第六端点）
+## 机器对接 /api/machine/* — YL 后端对接契约（机器对接 PRD US-001~005，2026-09-21 全五端点落地；三期 PRD US-001 2026-09-22 增 state-file 第六端点；浏览器直连 PRD US-001~005 2026-10-01 收口：ping 第七端点 + CORS/PNA 白名单 + **§0.5 浏览器直连部署形态** + 真机对拍实证）
 
 
 **本节自洽**：YL 侧开发者可仅凭本节完成对接（实现细节/内部机制见上文各表行与 `web/machine.py` 模块 docstring，对接时不需读）。接口面向 YLPatternMaking 后端（服务端到服务端），**不消费 `X-Session-Id`**（浏览器多会话体系与此无关）。
@@ -1014,6 +1014,17 @@ key 行契约（列表/单条/新建/续期/改备注共用 10 字段）：`{id,
 - 认证闸**先于一切业务校验**（token 错时 task_id 非法也返回 401）。
 - 所有错误响应均为 `{"error": "<中文可读原因>"}` 结构化 JSON（个别端点带 additive 键，下文逐条注明）。
 - **浏览器直连 CORS+PNA（prd machine browser direct US-002，2026-10-01）**：`/api/machine/*` 前缀挂 Origin 白名单中间件（`web/machine_cors.py` 的 `register_machine_cors(app)`，server.py 文件尾注册）。**白名单未配置（env `MS_MACHINE_ALLOWED_ORIGINS` 与 sidecar `machine_allowed_origins.txt` 三档皆无）→ 中间件原样放行**：不发任何 CORS 头、不校验 Origin、OPTIONS 落路由 405，服务端到服务端调用逐字节现状零回归。**已配置**（Origin 精确匹配，协议+域名+端口逐字符）：① 白名单内 Origin 的 OPTIONS 预检自答 200 五头 —— `Access-Control-Allow-Origin` 回显具体值（禁 `*`）/ `Access-Control-Allow-Methods: GET, POST, DELETE` / `Access-Control-Allow-Headers: x-machine-token, content-type` / `Access-Control-Allow-Private-Network: true`（Chrome/Edge HTTPS 页面 → 本机 loopback 的 PNA 准入）/ `Access-Control-Max-Age: 86400`；② 白名单内 Origin 实际请求（含 401/400/404 错误响应）附 ACAO 回显头（浏览器可读错误体）；③ **白名单外 Origin（任意方法，含预检 OPTIONS）→ 403** 服务端主动拒（防恶意网页 CSRF 型 simple request 触发任务），不带任何 CORS 头；④ 无 Origin 头（服务端/工具直调）不受影响。白名单请求时读取（US-001 三档链），部署期设置即时生效。
+
+### 0.5. 浏览器直连部署形态（prd machine browser direct US-005 定稿，2026-10-01）
+
+除「YL 后端服务端中转」（本节缺省形态）外，另支持 **YL 前端 HTTPS 页面在用户机器浏览器里跨源直连用户本机 MS**（不经 YL 后端代理）。YL 侧按下述口径对接（真机实证记录：`.docs/business/prd-machine-browser-direct_浏览器直连真机对拍报告_2026-10.md`）：
+
+- **直连地址口径**：`http://127.0.0.1:8010` 起的 **8010-8019 端口扫描族**（本机多实例/端口被占时 `MS_WEB_PORT` 递增部署；YL 前端用 `GET /api/machine/ping` 逐端口探测发现实际监听口，ping 契约见 §2 端点表行）。
+- **必须 `127.0.0.1` 字面量（红线）**：前端 fetch URL 一律写 `127.0.0.1`，**不用 `localhost`** —— ① `localhost` 可能解析到 `::1`（IPv6）而 MS 只绑 IPv4 loopback，探测假阴性；② MS 只信任 loopback 直连（server 绑 127.0.0.1），字面量杜绝内网他机误连；③ 混合内容豁免（HTTPS 页面 → http 端点）以 loopback 字面量口径最稳。
+- **白名单前提（sidecar/env 单一真相源）**：页面 Origin（协议+域名+端口，逐字符）必须配置进 MS 侧白名单 —— env `MS_MACHINE_ALLOWED_ORIGINS`（逗号/分号分隔多值）或 sidecar `machine_allowed_origins.txt`（frozen = exe 旁 → `license/` 回落；源码 = `out/license/`；**交付链与文件格式（只写 Origin 行，无注释）见发版手册 §9**）。未配置 = 浏览器直连不可读（零回归现状档，服务端中转不受影响）；白名单内 → 预检五头 + 实调 ACAO 回显；白名单外 → 403 拦在路由前。
+- **token 可选语义**：`X-Machine-Token` 语义与 §0 完全一致（部署期可选；设置则任务族六端点必带，且已在预检 `Access-Control-Allow-Headers` 白名单内，浏览器 fetch 自定义头直发即可；**ping 探测端点恒免 token**）。浏览器直连形态下 token 由 YL 前端页面携带 —— 该 token 是 MS↔YL 部署期共享探测秘密，非用户凭据；介意页面暴露 token 的部署可回退服务端中转形态或仅开放 ping 探测。
+- **PNA 前提（安全上下文）**：页面必须 HTTPS（否则混合内容直接拦，PNA 无从谈起）。Chrome/Edge 对「HTTPS 页面 → http://127.0.0.1」在 PNA 预检强制时代要求预检应答含 `Access-Control-Allow-Private-Network: true`（MS 预检五头恒附此头）；**2026-10 真机实测（Chrome 153 / Edge 154）已不携带 PNA 请求头（LNA 权限模型时代），MS 应答头「未请求而多应答」无害** —— 新旧引擎两态兼容，YL 侧无需按引擎版本分支。残余注记：YL 生产页面若为公网源，浏览器可能弹「访问本地网络设备」类用户授权提示（浏览器产品行为非 MS 可控；内网源实测无提示直连全绿）。
+- **浏览器侧注意事项**：预检结果被浏览器缓存（`Access-Control-Max-Age: 86400`）—— MS 侧改白名单后，已访问过的用户页面可能继续用旧预检结论至缓存过期（强刷/次日生效），联调期可让浏览器 DevTools 勾选 Disable cache。`fetch` 勿带 `credentials: 'include'`（ACAO 回显具体值不支持通配凭据形态，MS 端点无 cookie 语义）。
 
 ### 1. 任务状态机
 
@@ -1168,6 +1179,11 @@ body JSON `{task_id, fmt?, placed?, table?}`（**最小请求仅 `{"task_id": ".
 - **代理超时建议 ≥30s**（MS 生成秒级，留裕量）。
 - **用户后续路径一条链**：YL 下载 .msn → 交付版师 → MS 工作台「状态恢复」上传（预览 / 数量矩阵 / 最优布局全量还原）→ 编辑布局 / 智能微调 / 改数量重解 / 导出 PNG·DXF·PLT。恢复后的会话是版师自己的浏览器会话，与机器任务 task_id 无任何纠缠。
 - MS 生命周期约束照常适用：任务被清理（DELETE / 7 天机会式清理 / MS 重启后已 done 未取件）→ 404，提示用户重新提交。
+- **浏览器直连注意事项（prd machine browser direct US-005，2026-10-01；部署形态全量契约见 §0.5）**：
+  - 中转与直连**可并存**：本节透传指引（YL 后端代理 + `X-Machine-Token` 服务端持有）为缺省形态；若 YL 前端页面改直连用户本机 MS（`http://127.0.0.1:8010-8019` 逐口 ping 探测），同端点同契约零改造 —— 仅多三条浏览器侧约束：
+  - ① MS 侧白名单须含 **YL 页面 Origin**（协议+域名+端口逐字符；env `MS_MACHINE_ALLOWED_ORIGINS` / sidecar `machine_allowed_origins.txt`，见 §0.5）—— 未配置或不含则浏览器拦（零回归现状）/ 白名单外 Origin 服务端 403；
+  - ② 直连形态 `.msn`/PLT 下载改为**浏览器端取流**：`fetch` 后 `blob` + `<a download>`（或直开 URL）—— `Content-Disposition` 文件名规则不变，浏览器落盘名与中转形态一致；勿加 `credentials: 'include'`；
+  - ③ token 与预检：任务族请求带 `X-Machine-Token`（已在预检 Allow-Headers 白名单）；预检缓存 86400s，改白名单后旧页面可能沿用旧预检结论（见 §0.5 浏览器侧注意事项）。真机实证（Chrome 153 + Edge 154 双绿 + 零回归反证）：`.docs/business/prd-machine-browser-direct_浏览器直连真机对拍报告_2026-10.md`。
 
 **curl 冒烟序列**（可直接复制执行；`<task_id>` 换步骤 1 返回值，token 按部署配置）：
 

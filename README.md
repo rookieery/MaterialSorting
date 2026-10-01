@@ -69,6 +69,8 @@ cd ..
 ms-web             # → http://127.0.0.1:8010
 ```
 
+> **机器对接浏览器直连（YL 前端 HTTPS 页面直连本机 MS，2026-10-01）**：`/api/machine/*` 支持 Origin 白名单 CORS+PNA（env `MS_MACHINE_ALLOWED_ORIGINS` 或 `out/license/machine_allowed_origins.txt` sidecar，未配置零回归）；YL 前端按 `127.0.0.1:8010-8019` 口径用 `GET /api/machine/ping` 探测，部署形态契约见 [.docs/technical/agent-api-reference.md](.docs/technical/agent-api-reference.md) §0.5，真机对拍实证（Chrome/Edge 双绿 + 零回归反证）见 [.docs/business/prd-machine-browser-direct_浏览器直连真机对拍报告_2026-10.md](.docs/business/prd-machine-browser-direct_浏览器直连真机对拍报告_2026-10.md)。
+
 ## 多会话机制（web 多端隔离，2026-08-27）
 
 `ms-web` 按 **会话（sid）** 隔离多端数据，解决此前「任一端 commit 即覆盖所有人当前文档」的串台问题：

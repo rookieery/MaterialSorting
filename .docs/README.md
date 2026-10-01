@@ -36,6 +36,7 @@
 - [business/极限运行功能方案_race门杀.md](business/极限运行功能方案_race门杀.md) — 极限运行方案：`--extreme` 糖衣旗标 = race 门杀 × 实验结论参数（预算档 600/1200、门 τ=0.5、p0.70/et0/workers4；quadtree_depth 调优 A/B 否决），目标从「期望最优」换「右尾最优」（PRD tasks/prd-extreme-run.md，2026-08-29）
 - [business/极限运行_AB验收报告.md](business/极限运行_AB验收报告.md) — US-004 同总预算 4h 三臂对拍终验 **accept**：extreme 91.7107% ≥ race 默认档 91.3114%、split24 91.8177% 统计打平（归因 §1.1）；离线回放器 `scripts/extreme_ab_replay.py`（2026-08-30）
 - [business/Key授权_验收报告.md](business/Key授权_验收报告.md) — prd-key-authorization-system US-010 收官验收 **accept**：端到端冒烟 `smoke_key_gate.mjs` 48/48（双 token 生产姿态 + :8010 生产 bundle，免闸→拦截→假 key→绑定合并→运行→扣次恰 +1→统计）+ **15 项决策台账** + 四开放决策切换成本备案表 + 测试总表 1326/158/1289（2026-09-28）
+- [business/prd-machine-browser-direct_浏览器直连真机对拍报告_2026-10.md](business/prd-machine-browser-direct_浏览器直连真机对拍报告_2026-10.md) — 浏览器直连 PRD US-005 真机对拍 **accept**：内网自签 HTTPS 页面 × Chrome 153/Edge 154 × loopback/内网双页面源四组合预检全绿拿到 ping JSON；未配置白名单对照被浏览器拦（服务端日志预检 405 后零实调 = 零回归反证）；捕获桩 16 条预检 PNA 请求头 0 在场（LNA 时代）→ 预检五头应答两态兼容，浏览器策略时效风险实证框定（2026-10-01）
 
 ### 阶段规划
 - [business/阶段0_利用率上界估算_规划.md](business/阶段0_利用率上界估算_规划.md)
