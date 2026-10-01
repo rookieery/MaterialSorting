@@ -83,6 +83,13 @@ US-005（本故事）覆盖幂等清理 / token / 陈年 run_dir 回收：
   - 防御路径：守恒失配 409 中文 + 解压后超 STATE_MAX_BYTES 409；
   - 端点契约闸：token 401 先行（早于 task_id 400）/ task_id 非格式 400 / 未知
     404 / DELETE 后 404。
+
+浏览器直连（prd-machine-browser-direct）覆盖 ping 轻量探测端点（US-003）：
+  - 无 Origin 直打 → 200 恰两键 ``{ok: true, service: 'machine'}``（零敏感
+    信息）不附 CORS 头；MS_MACHINE_TOKEN 设置时仍 200（探测端点不设 token
+    闸 —— token 401 与「MS 未启动」在端口扫描视角不可区分）；
+  - 白名单内 Origin → ACAO 回显 + Vary: Origin（machine_cors 前缀
+    ``/api/machine/`` 天然覆盖）；白名单外 Origin → 403 拦在路由前。
 端口可配（MS_WEB_PORT）由 server.main() 冒烟与部署文档覆盖（uvicorn 层，
 TestClient 不经端口）。
 """
@@ -107,6 +114,7 @@ from urllib.parse import quote
 
 from materialsorting import paths as paths_mod
 from materialsorting.web import machine as machine_mod
+from materialsorting.web import machine_cors as machine_cors_mod
 from materialsorting.web import runtime as runtime_mod
 from materialsorting.web import server as server_mod
 from materialsorting.web import sessions as sessions_mod
@@ -1375,6 +1383,49 @@ def test_machine_token_unset_allows(machine_env, monkeypatch):
     sid, _st = _install_machine_state(machine_env, run_dir=None, rc=None)
     r = TestClient(server_mod.app).get(f'/api/machine/solve/{sid}/status')
     assert r.status_code == 200 and r.json()['state'] == 'starting'
+
+
+# ========================================= 浏览器直连 ping（browser-direct US-003）
+
+_PING_YL_ORIGIN = 'https://yl-ping.example.com'
+_PING_EVIL_ORIGIN = 'https://evil-ping.example.com'
+
+
+def test_ping_no_origin_exact_two_keys():
+    """无 Origin 直打（curl / YL 服务端中转 / 端口扫描器）→ 200 恰两键
+    ``{ok: true, service: 'machine'}``（零敏感信息）+ 不附任何 CORS 头
+    （无 Origin 头 = 非浏览器调用方，白名单配置与否都不加头）。"""
+    r = TestClient(server_mod.app).get('/api/machine/ping')
+    assert r.status_code == 200
+    assert r.json() == {'ok': True, 'service': 'machine'}
+    assert 'access-control-allow-origin' not in r.headers
+
+
+def test_ping_ignores_machine_token_gate(monkeypatch):
+    """ping 不消费 X-Machine-Token 闸：MS_MACHINE_TOKEN 设置（且请求不带
+    token）仍 200 —— token 401 与「MS 未启动」在端口扫描视角不可区分，
+    探测语义要求无条件 200（响应零敏感信息故无泄露面）。"""
+    monkeypatch.setenv('MS_MACHINE_TOKEN', 'sekret-token')
+    r = TestClient(server_mod.app).get('/api/machine/ping')
+    assert r.status_code == 200
+    assert r.json() == {'ok': True, 'service': 'machine'}
+
+
+def test_ping_whitelisted_origin_carries_acao(monkeypatch):
+    """白名单内 Origin → ping 200 带 ACAO 回显 + Vary: Origin（machine_cors
+    中间件对 ``/api/machine/`` 前缀天然覆盖，浏览器 fetch 可读探测结果 ——
+    env 档优先于 sidecar 故 setenv 即确定性配置）；白名单外 Origin → 403
+    拦在路由前且不带任何 CORS 头（恶意网页连 MS 是否在跑都探测不到）。"""
+    monkeypatch.setenv(machine_cors_mod.MACHINE_ORIGINS_ENV, _PING_YL_ORIGIN)
+    c = TestClient(server_mod.app)
+    r = c.get('/api/machine/ping', headers={'Origin': _PING_YL_ORIGIN})
+    assert r.status_code == 200
+    assert r.json() == {'ok': True, 'service': 'machine'}
+    assert r.headers['access-control-allow-origin'] == _PING_YL_ORIGIN
+    assert r.headers['vary'] == 'Origin'
+    r2 = c.get('/api/machine/ping', headers={'Origin': _PING_EVIL_ORIGIN})
+    assert r2.status_code == 403
+    assert 'access-control-allow-origin' not in r2.headers
 
 
 # ============================================================= 三期 state-file（.msn）

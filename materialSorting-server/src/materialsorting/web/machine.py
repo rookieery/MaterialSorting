@@ -10,7 +10,7 @@ YLPatternMaking（YL 打版系统）后端经 HTTP 机器接口接入 MS 排料�
 （不消费 X-Session-Id，浏览器工作台 default ``_PIECES_STATE`` 零感知）。
 
 端点契约（US-002 solve + US-003 三端点 + US-004 export + US-005 DELETE + 三期
-US-001 state-file，全六端点已落地）：
+US-001 state-file + 浏览器直连 US-003 ping，全七端点已落地）：
 
   - ``POST   /api/machine/solve`` —— multipart ``file``（母版 DXF 二进制
     ≤20MB，同 /api/parse-dxf 上限）+ ``config``（JSON 字符串）。config 键集：
@@ -115,6 +115,14 @@ US-001 state-file，全六端点已落地）：
       （state_save 同法），文件名 ``<doc.source 去 .dxf>_状态_<yyyymmdd-HHMMSS>
       .msn``（ASCII fallback ``nesting_state_`` 前缀）。``quantities_base`` /
       ``pending_strategy_result`` 不产（机器无此概念，省键式）。
+  - ``GET    /api/machine/ping``（浏览器直连 US-003）—— 轻量探测端点：无
+    task_id、无 token 闸 → ``200 {ok: true, service: 'machine'}`` 恰两键
+    （零敏感信息，只暴露「MS 在跑」）。用途 = YL 前端探测本地 MS 是否启动
+    并发现实际端口（8010-8019 扫描族逐个 ping）；token 不设闸是探测语义
+    要求 —— token 401 与「MS 未启动」在端口扫描视角不可区分，且 401 体
+    本身就是「MS 在跑」的信息泄露。CORS 中间件（machine_cors）天然覆盖
+    本前缀：白名单未配置零回归不加头、白名单内 Origin 响应带 ACAO 回显
+    （浏览器 fetch 可读）、白名单外 403 —— ping 自身零特殊处理。
 
 **机器 run_dir 7 天机会式清理（本故事）**：每次 solve start 触发
 ``_cleanup_stale_machine_run_dirs`` —— ``config_runs/`` 下 ``machine_*`` 前缀
@@ -123,11 +131,11 @@ extreme 档最长 7200s，超 7 天必是死任务残留）。**非 machine 前�
 （浏览器 web_* / 手工 ms-run-config run）；状态槽在册 run_dir（任何 mode）
 跳过 —— 时钟回拨/长暂停进程防御。
 
-**X-Machine-Token 认证（US-005）**：env ``MS_MACHINE_TOKEN`` 设置时全六端点
-强制 —— 请求头 ``X-Machine-Token`` 缺失或不等（``secrets.compare_digest``
-常量时间比较，防时序侧信道）→ 401；未设置放行（loopback 同机部署假设，
-YL 后端与 MS 同机）。env 请求时读取（非 import 期绑定），部署期设置即刻
-生效、tests monkeypatch ``os.environ`` 即可注入。
+**X-Machine-Token 认证（US-005）**：env ``MS_MACHINE_TOKEN`` 设置时任务族六
+端点强制（ping 探测端点除外，见上）—— 请求头 ``X-Machine-Token`` 缺失或不
+等（``secrets.compare_digest`` 常量时间比较，防时序侧信道）→ 401；未设置放行
+（loopback 同机部署假设，YL 后端与 MS 同机）。env 请求时读取（非 import 期
+绑定），部署期设置即刻生效、tests monkeypatch ``os.environ`` 即可注入。
 
 任务状态机（同 strategy 口径，复用 ``_status_common`` 状态推进 —— 解析态写回
 内存态）：``starting →(run_dir 发现) running → done | stopped | error``。内存态
@@ -137,7 +145,8 @@ best-effort —— marker 恰 5 键不含 stderr 路径，重启后无从定位�
 orphan 态 ``run_mode``/``total_budget_sec`` 经 ``machine_cfg_<sid>_*.json`` 的
 time 键反查 ``RUN_MODE_SPECS`` 恢复（时间三档烘焙 MS 侧单一真相源，反查无歧义）。
 
-六端点公共约定：X-Machine-Token 认证先行（MS_MACHINE_TOKEN 设置时缺失/错误
+任务族六端点公共约定（ping 例外 —— 探测端点无 task_id 无 token 无条件 200）：
+X-Machine-Token 认证先行（MS_MACHINE_TOKEN 设置时缺失/错误
 → 401，早于一切业务校验）；task_id 格式非法（不满足 sessions.SID_RE）→ 400
 （marker 路径拼接安全闸）；未知任务（内存态空 + 无 marker / 状态槽非 machine
 归属）→ 404；status/stop/result/export/state-file 五端点均**不走会话闸门**
@@ -1215,12 +1224,30 @@ async def machine_solve_state_file(task_id: str, request: Request):
                     headers={'Content-Disposition': cd})
 
 
+# ------------------------------------------ 浏览器直连 ping（browser-direct US-003）
+
+
+@router.get('/api/machine/ping')
+async def machine_ping():
+    """轻量探测端点：无 task_id / 无 token → ``200 {ok: true, service: 'machine'}``。
+
+    YL 前端探测本地 MS 是否启动 + 发现实际端口（8010-8019 扫描族）：响应零
+    敏感信息（只暴露「MS 在跑」），故**不消费 X-Machine-Token 闸**（token 401
+    与「MS 未启动」在端口扫描视角不可区分，探测语义要求无条件 200）也不走
+    任何 task_id/会话闸。CORS 中间件（machine_cors）天然覆盖 ``/api/machine/``
+    前缀 —— 白名单未配置零回归不加头、白名单内 Origin 响应带 ACAO 回显、
+    白名单外 403，本端点无需任何特殊处理。
+    """
+    return {'ok': True, 'service': 'machine'}
+
+
 def register_machine_routes(app) -> None:
     """把 machine 路由挂到 FastAPI app（server.py 文件尾调用一次，位于 strategy 之后）。
 
     US-002 solve + US-003 status/stop/result + US-004 export + US-005 DELETE +
-    三期 US-001 state-file 七路由已挂到本模块 ``router``（六端点族：DELETE/
-    state-file 与 solve 共用 ``/api/machine/solve`` 路径段）。
+    三期 US-001 state-file + 浏览器直连 US-003 ping 八路由已挂到本模块
+    ``router``（七端点族：DELETE/state-file 与 solve 共用 ``/api/machine/solve``
+    路径段；ping 独立探测端点）。
     """
     app.include_router(router)
 

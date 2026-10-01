@@ -2,16 +2,10 @@
   "branchName": "ralph/machine-browser-direct",
   "stories": [
     {
-      "id": "US-002",
-      "title": "CORS+PNA 中间件与 server 注册",
-      "description": "As a YL 前端, I want MS 对 /api/machine/* 正确响应 CORS 预检并附带 PNA 头 so that HTTPS 页面可以跨源调用本地 MS 并读到错误响应体。依赖 US-001(resolve_machine_allowed_origins)。\n\n具体任务:\n1. machine_cors.py 导出 register_machine_cors(app) — 中间件只作用于 request.url.path.startswith('/api/machine/'),其余路径原样放行\n2. materialSorting-server/src/materialsorting/web/server.py — 文件尾 register_machine_routes(app)(约 643-645 行)之后调用 register_machine_cors(app),与 strategy/machine/statefile/checkpoint/routes_key 五先例同款;镜像补一条注册顺序 AST 断言(不破坏既有 test_server_registers_machine_after_strategy)\n3. OPTIONS 预检自答(Starlette 中间件先于路由,不自答则 405):白名单内 Origin → Access-Control-Allow-Origin 为 echo 具体值(禁止 *)、-Allow-Methods: GET, POST, DELETE、-Allow-Headers: x-machine-token, content-type、Access-Control-Allow-Private-Network: true、-Max-Age: 86400;白名单外 → 不带任何 CORS 头\n4. 白名单已配置时,所有 /api/machine/* 实际响应(含 401/400/404)带 ACAO 回显头(浏览器可读错误体)\n5. 白名单外 Origin 的实际请求 → 403(服务端主动校验,防恶意网页 CSRF 型 simple request 触发任务)\n6. 未配置白名单(US-001 返回 None)→ 不发 CORS 头、不校验 Origin、OPTIONS 落现状 405,逐字节现状零回归\n7. tests/test_web_machine_cors.py 补中间件测试组(照 tests/test_web_machine.py:1336-1377 token 测试骨架 + machine_env fixture):预检全绿/PNA 头精确值/401 带 ACAO/白名单外 403/未配置零变化\n\n验收标准:\n- 预检响应五头精确匹配(ACAO echo/Methods/Headers/PNA true/Max-Age)\n- 错误响应(401)带 ACAO 头;白名单外实际请求 403\n- 未配置白名单时 GET / 200、OPTIONS /api/machine/solve 落 405、无任何 CORS 头(现状零回归)\n- 既有 test_server_app_healthy_with_machine_router 通过 + 挂入零扰动断言\n- pytest 全量(materialSorting-server/tests/)绿\n- python -m materialsorting.web.server 启动冒烟通过",
-      "passes": true
-    },
-    {
       "id": "US-003",
       "title": "GET /api/machine/ping 轻量探测端点",
       "description": "As a YL 前端, I want 一个无 task_id 无 token 的 ping 端点 so that 可以探测本地 MS 是否启动并发现实际端口(8010-8019)。与 US-001/002 无强依赖(中间件覆盖 ping 自动生效)。\n\n具体任务:\n1. materialSorting-server/src/materialsorting/web/machine.py — 第七端点 GET /api/machine/ping:落在既有 router(APIRouter 同风格,路径自带全路径);无 task_id 闸、无 token 闸(响应零敏感信息,只暴露「MS 在跑」);响应恰 {ok: true, service: 'machine'}\n2. CORS 中间件天然覆盖该前缀(白名单外网页读不到),无需特殊处理\n3. tests/test_web_machine.py 补测试:无 Origin 直打 200 恰两键;带白名单内 Origin 响应带 ACAO\n\n验收标准:\n- curl http://127.0.0.1:8010/api/machine/ping 返回 200 {ok:true, service:'machine'}\n- 端点不消费 task_id/token 闸,机器族其余六端点行为零变化\n- pytest materialSorting-server/tests/test_web_machine.py 全绿(含新增)\n- 契约文档端点表更新可在 US-005 统一收口",
-      "passes": false
+      "passes": true
     },
     {
       "id": "US-004",
