@@ -644,6 +644,20 @@ from .machine import register_machine_routes   # noqa: E402
 
 register_machine_routes(app)
 
+# 机器对接浏览器直连 CORS+PNA（prd machine browser direct US-002）：/api/machine/*
+# 的跨域准入中间件 —— OPTIONS 预检自答（ACAO 回显具体值 + Allow-Methods/Headers/
+# Private-Network/Max-Age 五头）+ 白名单内实际响应附 ACAO（401/400/404 错误体
+# 浏览器可读）+ 白名单外 Origin 403 服务端主动拒（防恶意网页 CSRF 型 simple
+# request 触发任务）。白名单未配置（US-001 三档皆无）→ 中间件原样放行：不发
+# CORS 头、不校验 Origin、OPTIONS 落 405，逐字节现状零回归。machine_cors 只
+# 依赖 ..paths（禁 import 本模块，AST 守卫见 tests/test_web_machine_cors.py）。
+# **必须在 register_machine_routes 之后**（装配序约定：路由先挂、中间件后挂
+# —— 用户中间件栈请求期构建且整体包住路由，先后无运行时差，AST 断言锁序纯为
+# 装配区可读性）；文件尾注册（machine.py 同模式）。
+from .machine_cors import register_machine_cors   # noqa: E402
+
+register_machine_cors(app)
+
 # 状态文件 US-001：POST /api/state-save（工作台状态 → gzip JSON .msn 附件；恢复端
 # /api/state-restore 见 US-002）。statefile 只依赖 web 兄弟模块（solver/routes_views/
 # sessions），模块级无环；文件尾注册一行（strategy.py 同模式）。

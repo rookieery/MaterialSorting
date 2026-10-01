@@ -25,13 +25,32 @@ gitignored 机器本地；exe 旁 = frozen 专属交付契约 dev 不读）。**
 交付链**（维护位单源 → generate-dist 同步 + 预检硬校验 + launcher
 ``--check`` 回显）见 US-004。
 
+US-002 中间件（``register_machine_cors(app)``，server.py 文件尾在
+``register_machine_routes`` 之后调用一次）：``BaseHTTPMiddleware`` dispatch
+(:func:`_machine_cors_dispatch`) 仅作用于 ``/api/machine/*`` 前缀（其余
+路径 —— 工作台 /api/*、/ws、/export —— 原样放行零扰动），四分支：
+  1. 白名单未配置（``None``）→ 直通零回归：不发 CORS 头、不校验 Origin、
+     OPTIONS 落路由 405（逐字节现状档）；
+  2. OPTIONS + 白名单内 Origin → **预检自答** 200 五头（ACAO 回显具体值
+     禁 ``*`` / Allow-Methods ``GET, POST, DELETE`` / Allow-Headers
+     ``x-machine-token, content-type`` / Allow-Private-Network ``true``
+     （PNA：Chrome/Edge HTTPS 页面 → 本机 loopback 直连准入，缺头预检即
+     败）/ Max-Age ``86400``）—— 中间件先于路由执行，不自答则 405；
+  3. 白名单外 Origin（任意方法，含预检 OPTIONS）→ 403 服务端主动拒（防
+     恶意网页 CSRF 型 simple request 触发任务），不带任何 CORS 头；
+  4. 白名单内 Origin 实际请求（GET/POST/DELETE）→ 路由照常 + 响应附 ACAO
+     回显（401/400/404 错误体浏览器可读）+ ``Vary: Origin``。无 Origin 头
+     （YL 服务端中转 / curl / loopback 同机）→ 直通不加头。
+
 分层：模块级仅标准库 + ``..paths``（AST 守卫见
 tests/test_web_machine_cors.py，镜像 keygate 先例）；**禁 import cli
 子包与 server 模块**（本模块被 server 经中间件注册使用，顶层 import 即
-成环）。
+成环）；starlette import 全部**函数内延迟**（``register_machine_cors`` 的
+``BaseHTTPMiddleware`` / 响应构造的 ``Response``/``JSONResponse``）。
 
 冒烟：``python -m materialsorting.web.machine_cors`` —— 合成夹具自检
-（临时目录，不触碰真实 out/）+ 当前进程实际白名单解析结果打印（三档
+（临时目录，不触碰真实 out/）+ US-002 中间件装配冒烟（fresh app + 探针
+端点 + ``register_machine_cors``）+ 当前进程实际白名单解析结果打印（三档
 来源标注），全过 exit 0。
 """
 from __future__ import annotations
@@ -43,7 +62,7 @@ from pathlib import Path
 from .. import paths
 
 __all__ = [
-    'MACHINE_ORIGINS_ENV', 'MACHINE_ORIGINS_FILE_NAME',
+    'MACHINE_ORIGINS_ENV', 'MACHINE_ORIGINS_FILE_NAME', 'register_machine_cors',
     'describe_machine_allowed_origins', 'resolve_machine_allowed_origins',
 ]
 
@@ -145,13 +164,183 @@ def describe_machine_allowed_origins() -> str:
             + f'（来源：{source}，共 {len(origins)} 条）')
 
 
+# --------------------------------------------------- US-002 CORS+PNA 中间件
+
+# 中间件作用面前缀（request.url.path.startswith 判定）：仅机器对接族，其余
+# 路径（工作台 /api/*、/ws、/export、静态资源）原样放行不受白名单影响。
+MACHINE_API_PREFIX = '/api/machine/'
+# 预检应答五头的值域契约（US-002 验收金标）：Methods = 机器族六端点全部方法
+# 面（solve POST / status·result·state-file GET / stop POST / DELETE DELETE）；
+# Headers = token 闸头 + JSON/f multipart 两类体类型；Max-Age = 预检结果缓存
+# 一天（省 YL 页面高频探测的 OPTIONS 往返）。
+MACHINE_ALLOW_METHODS = 'GET, POST, DELETE'
+MACHINE_ALLOW_HEADERS = 'x-machine-token, content-type'
+MACHINE_MAX_AGE = '86400'
+
+
+def _preflight_response(origin: str):
+    """CORS 预检自答（200 空体 + 五头，白名单内 Origin 专用）。
+
+    ACAO 回显请求 Origin **具体值**（禁 ``*`` —— 白名单是精确匹配清单，
+    通配会放行白名单外页面）；PNA 头无条件附 ``true``（Chrome/Edge 对
+    HTTPS 页面 → loopback 直连强制要求，浏览器未发 PNA 请求头时多带此头
+    无害）。另附 ``Vary: Origin``（ACAO 随 Origin 变化，缓存键须含之 ——
+    Starlette CORSMiddleware 同款）。
+    """
+    from starlette.responses import Response
+    return Response(status_code=200, headers={
+        'Access-Control-Allow-Origin': origin,
+        'Access-Control-Allow-Methods': MACHINE_ALLOW_METHODS,
+        'Access-Control-Allow-Headers': MACHINE_ALLOW_HEADERS,
+        'Access-Control-Allow-Private-Network': 'true',
+        'Access-Control-Max-Age': MACHINE_MAX_AGE,
+        'Vary': 'Origin',
+    })
+
+
+def _rejected_response(origin: str):
+    """白名单外 Origin 拒绝（403，不带任何 CORS 头）。
+
+    服务端主动校验（浏览器侧无 ACAO 头本就判失败，403 是纵深防御）：拦在
+    路由前 —— 恶意网页 CSRF 型 **simple request**（表单/img 等不触发预检的
+    请求）打不到任务端点，spawn/export/DELETE 全部不可达。中文错误体供
+    YL 联调与日志定位（Origin 值非秘密可直接回显）。
+    """
+    from starlette.responses import JSONResponse
+    return JSONResponse(
+        {'error': f'Origin {origin} 不在机器对接白名单内，已拒绝该跨源请求'
+                  f'（配置 = env {MACHINE_ORIGINS_ENV} 或 sidecar '
+                  f'{MACHINE_ORIGINS_FILE_NAME}）'},
+        status_code=403)
+
+
+async def _machine_cors_dispatch(request, call_next):
+    """``/api/machine/*`` 跨域准入 dispatch（``register_machine_cors`` 装配）。
+
+    四分支见模块 docstring（前缀外直通 → 未配置直通零回归 → OPTIONS 预检
+    自答 → 外域 403），白名单内实际请求经 ``call_next`` 后附 ACAO 回显 +
+    ``Vary: Origin``（401/400/404 错误响应同样带 —— 浏览器可读错误体）。
+    白名单**请求时读取**（:func:`resolve_machine_allowed_origins`，部署期
+    设 env / 落 sidecar 即时生效，无需重启）。无 Origin 头（服务端/工具
+    直调）→ 路由照常、不加头（loopback 同机调用现状零变化）。
+    """
+    if not request.url.path.startswith(MACHINE_API_PREFIX):
+        return await call_next(request)
+    allowed = resolve_machine_allowed_origins()
+    if allowed is None:
+        return await call_next(request)          # 未配置 = 零回归现状档
+    origin = request.headers.get('origin')
+    if request.method == 'OPTIONS' and origin in allowed:
+        return _preflight_response(origin)
+    if origin is not None and origin not in allowed:
+        return _rejected_response(origin)
+    response = await call_next(request)
+    if origin is not None:                       # 此处 origin ∈ allowed
+        response.headers['access-control-allow-origin'] = origin
+        response.headers.append('vary', 'Origin')
+    return response
+
+
+def register_machine_cors(app) -> None:
+    """把机器对接 CORS 中间件挂到 FastAPI app（server.py 文件尾调用一次，
+    位于 ``register_machine_routes`` 之后）。
+
+    ``BaseHTTPMiddleware`` + dispatch=:func:`_machine_cors_dispatch`：用户
+    中间件位于 ExceptionMiddleware 之外 —— 路由抛的 ``HTTPException``/
+    ``JSONResponse`` 错误（401/400/404）先被内层转成响应、再回到本中间件
+    附 ACAO（浏览器可读错误体的机制前提）。starlette import 函数内延迟
+    （模块级仅标准库红线不动，machine/server 防环先例同款）。
+    """
+    from starlette.middleware.base import BaseHTTPMiddleware
+    app.add_middleware(BaseHTTPMiddleware, dispatch=_machine_cors_dispatch)
+
+
 # ----------------------------------------------------------------- 冒烟自检
+
+def _smoke_middleware(check) -> None:
+    """US-002 中间件装配冒烟（六查）：fresh FastAPI app + 机器族探针端点 +
+    ``register_machine_cors`` → 预检五头 / 外域 403 / 白名单响应 ACAO 回显 /
+    无 Origin 直通 / 前缀外零扰动 / 未配置 OPTIONS 落 405。env 与
+    ``paths.LICENSE_DIR`` 均套 try-finally（不触碰真实白名单状态，开发者
+    本机 sidecar 不串档）。"""
+    import tempfile
+
+    from fastapi import FastAPI
+    from starlette.testclient import TestClient
+
+    app = FastAPI()
+
+    @app.get('/api/machine/__probe__')
+    def _probe():
+        return {'ok': True}
+
+    @app.get('/')
+    def _index():
+        return {'ok': True}
+
+    register_machine_cors(app)
+    old_env = os.environ.get(MACHINE_ORIGINS_ENV)
+    old_license = paths.LICENSE_DIR
+    with tempfile.TemporaryDirectory(prefix='ms_machine_cors_mw_') as td:
+        paths.LICENSE_DIR = td          # 未配置查档防本机 sidecar 串入
+        try:
+            os.environ[MACHINE_ORIGINS_ENV] = 'https://yl-smoke.example.com'
+            client = TestClient(app)
+            r = client.options('/api/machine/__probe__', headers={
+                'Origin': 'https://yl-smoke.example.com',
+                'Access-Control-Request-Method': 'GET',
+                'Access-Control-Request-Private-Network': 'true'})
+            check('中间件预检自答 200 五头精确值',
+                  r.status_code == 200
+                  and r.headers.get('access-control-allow-origin')
+                  == 'https://yl-smoke.example.com'
+                  and r.headers.get('access-control-allow-methods')
+                  == MACHINE_ALLOW_METHODS
+                  and r.headers.get('access-control-allow-headers')
+                  == MACHINE_ALLOW_HEADERS
+                  and r.headers.get('access-control-allow-private-network')
+                  == 'true'
+                  and r.headers.get('access-control-max-age') == MACHINE_MAX_AGE)
+            r = client.get('/api/machine/__probe__',
+                           headers={'Origin': 'https://evil.example'})
+            check('中间件白名单外 403 且无 CORS 头',
+                  r.status_code == 403
+                  and 'access-control-allow-origin' not in r.headers)
+            r = client.get('/api/machine/__probe__',
+                           headers={'Origin': 'https://yl-smoke.example.com'})
+            check('中间件白名单内实际响应 ACAO 回显',
+                  r.status_code == 200
+                  and r.headers.get('access-control-allow-origin')
+                  == 'https://yl-smoke.example.com')
+            r = client.get('/api/machine/__probe__')
+            check('中间件无 Origin 直通不加头（loopback 服务端同现状）',
+                  r.status_code == 200
+                  and 'access-control-allow-origin' not in r.headers)
+            r = client.get('/', headers={'Origin': 'https://evil.example'})
+            check('中间件前缀外路径零扰动（外域 Origin 不 403 不加头）',
+                  r.status_code == 200
+                  and 'access-control-allow-origin' not in r.headers)
+            os.environ.pop(MACHINE_ORIGINS_ENV, None)
+            r = client.options('/api/machine/__probe__', headers={
+                'Origin': 'https://yl-smoke.example.com',
+                'Access-Control-Request-Method': 'GET'})
+            check('中间件未配置零回归（OPTIONS 落 405 无 CORS 头）',
+                  r.status_code == 405
+                  and 'access-control-allow-origin' not in r.headers)
+        finally:
+            paths.LICENSE_DIR = old_license
+            if old_env is None:
+                os.environ.pop(MACHINE_ORIGINS_ENV, None)
+            else:
+                os.environ[MACHINE_ORIGINS_ENV] = old_env
+
 
 def _smoke() -> int:
     """``python -m materialsorting.web.machine_cors``：合成夹具自检（临时
     目录，不触碰真实 out/；frozen 双位置对拍走 keygate 冒烟同款
-    ``sys.frozen`` + 临时 exe 路径写法）+ 当前进程实际解析结果打印（三档
-    来源标注），全过 exit 0。"""
+    ``sys.frozen`` + 临时 exe 路径写法）+ US-002 中间件装配冒烟（fresh app
+    + 探针端点 + ``register_machine_cors``）+ 当前进程实际解析结果打印
+    （三档来源标注），全过 exit 0。"""
     import tempfile
 
     results: list[tuple[str, bool]] = []
@@ -162,6 +351,7 @@ def _smoke() -> int:
     def check(name: str, cond: bool) -> None:
         results.append((name, bool(cond)))
 
+    _smoke_middleware(check)
     with tempfile.TemporaryDirectory(prefix='ms_machine_cors_smoke_') as td:
         root = Path(td)
         old_license = paths.LICENSE_DIR

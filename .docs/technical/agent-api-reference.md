@@ -1012,6 +1012,7 @@ key 行契约（列表/单条/新建/续期/改备注共用 10 字段）：`{id,
 - **认证（US-005）**：服务端环境变量 `MS_MACHINE_TOKEN` 设置时，全六端点强制请求头 `X-Machine-Token: <同值>` —— 缺失或不等 → `401 {"error":"缺少 X-Machine-Token 请求头或 token 不正确（服务端已启用 MS_MACHINE_TOKEN 认证）"}`；比较为 `secrets.compare_digest` 常量时间（防时序侧信道）。**未设置该 env → 放行**（loopback 同机部署假设）。token 在请求时读取 env，部署期设置即刻生效。
 - 认证闸**先于一切业务校验**（token 错时 task_id 非法也返回 401）。
 - 所有错误响应均为 `{"error": "<中文可读原因>"}` 结构化 JSON（个别端点带 additive 键，下文逐条注明）。
+- **浏览器直连 CORS+PNA（prd machine browser direct US-002，2026-10-01）**：`/api/machine/*` 前缀挂 Origin 白名单中间件（`web/machine_cors.py` 的 `register_machine_cors(app)`，server.py 文件尾注册）。**白名单未配置（env `MS_MACHINE_ALLOWED_ORIGINS` 与 sidecar `machine_allowed_origins.txt` 三档皆无）→ 中间件原样放行**：不发任何 CORS 头、不校验 Origin、OPTIONS 落路由 405，服务端到服务端调用逐字节现状零回归。**已配置**（Origin 精确匹配，协议+域名+端口逐字符）：① 白名单内 Origin 的 OPTIONS 预检自答 200 五头 —— `Access-Control-Allow-Origin` 回显具体值（禁 `*`）/ `Access-Control-Allow-Methods: GET, POST, DELETE` / `Access-Control-Allow-Headers: x-machine-token, content-type` / `Access-Control-Allow-Private-Network: true`（Chrome/Edge HTTPS 页面 → 本机 loopback 的 PNA 准入）/ `Access-Control-Max-Age: 86400`；② 白名单内 Origin 实际请求（含 401/400/404 错误响应）附 ACAO 回显头（浏览器可读错误体）；③ **白名单外 Origin（任意方法，含预检 OPTIONS）→ 403** 服务端主动拒（防恶意网页 CSRF 型 simple request 触发任务），不带任何 CORS 头；④ 无 Origin 头（服务端/工具直调）不受影响。白名单请求时读取（US-001 三档链），部署期设置即时生效。
 
 ### 1. 任务状态机
 
