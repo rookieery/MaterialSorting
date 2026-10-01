@@ -93,6 +93,7 @@ def _summarize(conn, row: dict[str, Any]) -> dict[str, Any]:
         'key_type': row['key_type'],
         'detail': _detail_of(row),
         'status': STATUS_LABELS[derive_status(row, now())],
+        'last_used_at': repo.last_used_at(conn, row['id']),  # 最近一次 validate_deduct；从未使用 → None → null
         'bound_system_name': row['bound_system_name'],
         'remark': row['remark'],
         'usage_stats': repo.usage_stats(conn, row['id']),   # 无使用记录 → None → null

@@ -242,6 +242,19 @@ def list_ops(conn: sqlite3.Connection, key_id: int | None = None) -> list[dict[s
     return [dict(r) for r in cur.fetchall()]
 
 
+def last_used_at(conn: sqlite3.Connection, key_id: int) -> str | None:
+    """key 最近一次使用时刻（管理台「最新使用时间」列）。
+
+    口径 = 该 key 最近一条 ``validate_deduct`` 日志的 ts（count/duration 型
+    真实使用即扣次/记账时都写该 op，service.validate 是唯一写入口）；ts 为
+    TS_FORMAT 文本，字典序即时序，MAX 即最近。从未使用 → None（管理台显 —）。
+    """
+    cur = conn.execute(
+        "SELECT MAX(ts) FROM key_op_log WHERE key_id = ? AND op = 'validate_deduct'",
+        (key_id,))
+    return cur.fetchone()[0]
+
+
 # ---------------------------------------------------------------------------
 # bound_systems（绑定系统名列表：行由 keys 派生，本表只挂靠系统级备注）
 # ---------------------------------------------------------------------------

@@ -147,6 +147,7 @@ def test_create_count_key(client, conn):
     assert body['detail'] == '0/5'
     assert body['status'] == '未绑定'
     assert body['remark'] == '测试卡'
+    assert body['last_used_at'] is None
     assert body['usage_stats'] is None
     assert body['bound_system_name'] is None
     assert body['created_at']
@@ -208,8 +209,28 @@ def test_list_contract_fields_and_order(client, conn):
     keys = resp.json()['keys']
     assert [k['id'] for k in keys[:2]] == [newer['id'], older['id']]   # 新→旧
     assert set(keys[0].keys()) == {
-        'id', 'key_plaintext', 'key_type', 'detail', 'status',
+        'id', 'key_plaintext', 'key_type', 'detail', 'status', 'last_used_at',
         'bound_system_name', 'remark', 'usage_stats', 'created_at'}
+
+
+def test_list_last_used_at_reflects_validate_deduct(client, conn):
+    """「最新使用时间」列口径：最近一次 validate_deduct 时刻；从未使用 → null。
+
+    走 service.validate 真链路（消费端唯一使用入口）种数据，再经管理台列表回读。
+    """
+    from keyserver import service
+
+    row = _mk_count(conn, total=5)
+    _bind(conn, row['id'])
+    keys = client.get('/api/admin/keys', headers=ADMIN).json()['keys']
+    assert keys[0]['last_used_at'] is None                   # 建卡未用 → null
+
+    service.validate(conn, key=row['key_plaintext'],
+                     machine_guid='guid-local', deduct=True)
+    keys = client.get('/api/admin/keys', headers=ADMIN).json()['keys']
+    ts = keys[0]['last_used_at']
+    assert ts == repo.last_used_at(conn, row['id'])          # 与 op_log 单一真相源一致
+    assert models.parse_ts(ts) <= models.now()               # 服务器时钟口径、秒级粒度
 
 
 def test_list_usage_stats_with_records(client, conn):

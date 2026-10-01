@@ -981,7 +981,7 @@ keyserver 鉴权层（双 token）：管理/消费端点族 token **未配置且
 
 ### 7. keyserver 管理端接口契约摘要（X-Admin-Token；管理后台 `GET /admin` 可视化单页消费，US-008 + 绑定系统名列表改版）
 
-key 行契约（列表/单条/新建/续期/改备注共用 9 字段）：`{id, key_plaintext(明文), key_type:'count'|'duration', detail(次数 N/M · 时长 N天/起~止), status(六态中文), bound_system_name, remark, usage_stats:{total, max_daily, avg_daily, first_used}|null, created_at}`。六态（`models.derive_status` 单一真相源）：`正在使用/未绑定/未激活/已用完/已过期/已合并`。usage_stats 三指标 = 总次数 / 峰值日次 / **平均每日 = 总次数 ÷ 开通以来自然日数**（自首次使用起含首日，1 位小数；无使用记录 → null）。
+key 行契约（列表/单条/新建/续期/改备注共用 10 字段）：`{id, key_plaintext(明文), key_type:'count'|'duration', detail(次数 N/M · 时长 N天/起~止), status(六态中文), last_used_at(YYYY-MM-DD HH:MM:SS|从未使用 null), bound_system_name, remark, usage_stats:{total, max_daily, avg_daily, first_used}|null, created_at}`。六态（`models.derive_status` 单一真相源）：`正在使用/未绑定/未激活/已用完/已过期/已合并`。last_used_at（2026-10-01 管理台「最新使用时间」列）= 该 key 最近一条 `validate_deduct` op_log 的 ts（`repo.last_used_at`，count/duration 型真实使用即写该 op；服务器时钟秒级；零 schema 迁移、历史库直接可读）。usage_stats 三指标 = 总次数 / 峰值日次 / **平均每日 = 总次数 ÷ 开通以来自然日数**（自首次使用起含首日，1 位小数；无使用记录 → null）。
 
 **绑定系统名列表（2026-09-29 改版）**：备注名从 key 级迁移为**系统级**（新表 `bound_systems` 只挂靠备注，行存在性由 keys 按 `bound_system_name` 分组派生——该系统名下 key 全删时行含备注级联清理，delete key 后自动触发）；管理台新建表单不再收备注名、key 表六列（备注名/使用统计两列迁至系统表）、key 弹窗只留续期；`POST /api/admin/keys` 可选 `remark` 与 `PUT /api/admin/keys/{id}` 改备注**接口保留**（兼容，UI 不再调用）；消费端五接口与 bind 备注缺省=系统名逻辑**零改动**。存量 keys.remark 不迁移（系统备注从空白开始）。
 
@@ -989,10 +989,10 @@ key 行契约（列表/单条/新建/续期/改备注共用 9 字段）：`{id, 
 
 | 接口 | 请求 | 响应 | 业务错误 |
 |------|------|------|---------|
-| `GET /api/admin/keys` | — | `{keys:[9 字段行, ...]}`（新→旧） | 401/403 鉴权 |
+| `GET /api/admin/keys` | — | `{keys:[10 字段行, ...]}`（新→旧） | 401/403 鉴权 |
 | `POST /api/admin/keys` | `{key_type:'count', total_uses:N}` 或 `{key_type:'duration', duration_days:N}`，可选 `remark` | 201 含**此刻生成的明文**（格式 `MS-XXXXX-XXXXX-XXXXX`，32 字符字母表去 I/L/O/U/0/1） | 400 key_type/正整数/remark 形状 |
-| `POST /api/admin/keys/{id}/renew` | count → `{add_uses:N}`；duration → `{add_days:N}`（未激活加 duration_days；已激活 `expires_at += add_days`） | 9 字段行 | 400 正整数；404 不存在 |
-| `PUT /api/admin/keys/{id}` | `{remark: str}`（空串 = 清除备注；兼容保留，UI 已不调用） | 9 字段行 | 400 形状；404 |
+| `POST /api/admin/keys/{id}/renew` | count → `{add_uses:N}`；duration → `{add_days:N}`（未激活加 duration_days；已激活 `expires_at += add_days`） | 10 字段行 | 400 正整数；404 不存在 |
+| `PUT /api/admin/keys/{id}` | `{remark: str}`（空串 = 清除备注；兼容保留，UI 已不调用） | 10 字段行 | 400 形状；404 |
 | `DELETE /api/admin/keys/{id}` | query `?force=true`（active 态二次确认） | `{ok:true, id}`；非 active 直删；删后级联清理无 key 系统的 `bound_systems` 行 | 404；409 `该 key 正在使用，确认删除请再次确认`（无 force） |
 | `GET /api/admin/systems` | — | `{systems:[系统行契约, ...]}`（派生行，新→旧） | 401/403 鉴权 |
 | `PUT /api/admin/systems/{system_name}` | `{remark: str}`（空串 = 清除 → 存 null） | `{ok:true, system_name, remark}`；写 `key_op_log` op=`edit_system_remark`（key_id 悬空） | 400 形状；404 `该系统名下已无 key，无法编辑备注` |

@@ -77,7 +77,9 @@ curl http://127.0.0.1:8110/api/key/health   # → {"ok":true,"service":"keyserve
   表单不收备注名、key 表六列、key 弹窗只留续期；`POST keys` 可选 `remark` 与
   `PUT keys/{id}` 改备注接口**兼容保留**（UI 已不调用）；存量 keys.remark 不迁移。
 - 管理台响应 `_summarize`：status=六态中文标签、detail=count `N/M` /
-  duration 未激活 `N天` / 已激活 `起 ~ 止`；US-008 admin.html 直接渲染。
+  duration 未激活 `N天` / 已激活 `起 ~ 止`、last_used_at=最近一条
+  `validate_deduct` op_log 的 ts（2026-10-01「最新使用时间」列，`repo.last_used_at`
+  零 schema 迁移读 op_log，从未使用 → null）；US-008 admin.html 直接渲染。
 
 ## 管理后台单页（US-008 + 绑定系统名列表改版）
 
@@ -89,8 +91,10 @@ curl http://127.0.0.1:8110/api/key/health   # → {"ok":true,"service":"keyserve
   主实例 ADMIN token+DEV（**勿设 MS_KEY_CLIENT_TOKEN**，DEV 免消费 token 供脚本
   bind/validate 造态仅在其未设时生效）、裸实例无 token 无 DEV —— 56/56 相位见
   脚本头注）。
-- 页面结构（2026-09-29 改版）：新建表单 = 类型+数量（无备注名）；key 表**六列**
-  （名称/绑定系统名/类型/详细信息/属性/操作，行操作=续期+删除）；**绑定系统名列表
+- 页面结构（2026-09-29 改版；2026-10-01 key 表加「最新使用时间」列）：新建表单 =
+  类型+数量（无备注名）；key 表**七列**
+  （名称/绑定系统名/类型/详细信息/属性/最新使用时间/操作，行操作=续期+删除；
+  最新使用时间 = 属性下一列，mono 渲染 last_used_at、从未使用显 —）；**绑定系统名列表
   表五列**（绑定系统名/备注名/key 数/使用统计/编辑）在 key 表下方；key 弹窗只留
   续期；系统备注独立小弹窗（系统名只读）。数据加载 `loadData()` 并行拉
   `/api/admin/keys` + `/api/admin/systems` 双表同刷（**改任一数据流都要走

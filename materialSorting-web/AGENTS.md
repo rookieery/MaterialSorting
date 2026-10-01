@@ -1534,8 +1534,10 @@ GET /admin），**不进本目录 Vite 构建链**；此处只记验证脚本约
   `MS_KEY_ADMIN_TOKEN` + `MS_KEY_DEV=1`（消费端免 token 供脚本 node 侧
   bind/validate 造态；**勿设 `MS_KEY_CLIENT_TOKEN`**，DEV 免消费 token 仅在其
   未设时生效）+ 临时 `MS_KEY_DB`；裸实例无 token 无 DEV（「未配置
-  token → 配置指引」相位）。56/56（2026-09-29 绑定系统名列表改版后）：指引
-  文案/错 token 401 不落 sessionStorage/key 表六列+系统表五列/新建表单无备注名
+  token → 配置指引」相位）。58/58（2026-10-01 key 表加「最新使用时间」列后；
+  2026-09-29 绑定系统名列表改版时 56/56）：指引
+  文案/错 token 401 不落 sessionStorage/key 表七列（属性下一列 = 最新使用时间，
+  未使用 — / 用过秒级时刻）+系统表五列/新建表单无备注名
   输入框（未绑定不派生系统行）/续期弹窗无备注字段（remaining 0/10、截止时间
   恰好 +10 天）/bind 后系统表派生行 key 数递增/系统统计三行 均 2.0/日·峰·共
   + keyserver 侧对拍/系统备注弹窗保存·回显·空串清除/未绑定·已用完直删（统计

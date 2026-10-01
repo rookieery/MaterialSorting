@@ -142,7 +142,7 @@ MS_KEY_CLIENT_TOKEN=&lt;随机长 token&gt;    # 消费端 token（frp 部署双
       <p class="dim">时长型「生效时长」默认单位 = 天（绑定机器后即刻激活起算）；次数型单位 = 次。创建后即时出现在下方表格。</p>
     </section>
 
-    <!-- key 表格六列（需求列序）：名称｜绑定系统名｜类型｜详细信息｜属性｜操作（备注名/使用统计已迁移至绑定系统名列表） -->
+    <!-- key 表格七列（需求列序）：名称｜绑定系统名｜类型｜详细信息｜属性｜最新使用时间｜操作（备注名/使用统计已迁移至绑定系统名列表） -->
     <section class="card">
       <h2>key 列表</h2>
       <table>
@@ -153,12 +153,13 @@ MS_KEY_CLIENT_TOKEN=&lt;随机长 token&gt;    # 消费端 token（frp 部署双
             <th>类型</th>
             <th>详细信息</th>
             <th>属性</th>
+            <th>最新使用时间</th>
             <th>操作</th>
           </tr>
         </thead>
         <tbody id="keys-body"></tbody>
       </table>
-      <p class="dim">名称 = key 明文（点击复制）；绑定系统名在绑定机器时快照，不可在此修改；备注名与使用统计按绑定系统名汇总在下方表格。</p>
+      <p class="dim">名称 = key 明文（点击复制）；绑定系统名在绑定机器时快照，不可在此修改；最新使用时间 = 最近一次验证使用（扣次/记账）的时刻，从未使用显 —；备注名与使用统计按绑定系统名汇总在下方表格。</p>
     </section>
 
     <!-- 绑定系统名列表：行由 keys 按绑定系统名分组派生，该系统名下 key 全删后行（含备注）自动消失 -->
@@ -329,7 +330,7 @@ function api(path, opts) {
   });
 }
 
-/* ---- 表格渲染（key 表六列 + 系统表五列） ---- */
+/* ---- 表格渲染（key 表七列 + 系统表五列） ---- */
 /* 六态 → 徽标配色（显式全列；status 文本 = 后端 STATUS_LABELS 单一真相源）：
    正在使用 绿 / 已过期·已用完·已合并 红 / 未绑定·未激活 灰 */
 var BADGE_CLASSES = {
@@ -351,7 +352,7 @@ function statsHtml(stats) {
 function renderTable(keys) {
   var body = $('keys-body');
   if (!keys.length) {
-    body.innerHTML = '<tr><td colspan="6" class="dim">暂无 key，先在上方新建。</td></tr>';
+    body.innerHTML = '<tr><td colspan="7" class="dim">暂无 key，先在上方新建。</td></tr>';
     return;
   }
   body.innerHTML = keys.map(function (k) {
@@ -362,6 +363,7 @@ function renderTable(keys) {
       '<td>' + typeLabel + '</td>' +
       '<td class="mono">' + esc(k.detail) + '</td>' +
       '<td><span class="badge ' + badgeClass(k.status) + '">' + esc(k.status) + '</span></td>' +
+      '<td class="mono">' + esc(k.last_used_at || '—') + '</td>' +
       '<td class="ops">' +
         '<button data-act="renew">续期</button>' +
         '<button data-act="del" class="ghost-danger">删除</button>' +

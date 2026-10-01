@@ -40,11 +40,11 @@ def test_admin_page_public_shell_without_token(client):
 
 
 def test_admin_page_table_columns(client):
-    """key 表六列 + 绑定系统名列表五列（需求列序；备注名/使用统计已迁移为系统级）。"""
+    """key 表七列 + 绑定系统名列表五列（需求列序；最新使用时间在属性下一列）。"""
     html = client.get('/admin').text
     cols = re.findall(r'<th>([^<]*)</th>', html)
     assert cols == [
-        '名称', '绑定系统名', '类型', '详细信息', '属性', '操作',          # key 列表
+        '名称', '绑定系统名', '类型', '详细信息', '属性', '最新使用时间', '操作',   # key 列表
         '绑定系统名', '备注名', 'key 数', '使用统计', '操作',             # 绑定系统名列表
     ]
 

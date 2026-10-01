@@ -295,6 +295,32 @@ def test_log_op_allows_null_key_id(conn):
     assert repo.list_ops(conn)[0]['key_id'] is None
 
 
+def test_last_used_at_none_without_validate_deduct(conn):
+    """从未使用（只有 create/bind 等非使用 op）→ None；其他 op 不计入口径。"""
+    row = repo.create_key(conn, 'count', total_uses=5)
+    repo.log_op(conn, row['id'], 'bind', {'machine_guid': 'g'})
+    assert repo.last_used_at(conn, row['id']) is None
+
+
+def test_last_used_at_returns_latest_validate_deduct_ts(conn):
+    """口径 = 最近一条 validate_deduct 的 ts（文本字典序即时序，MAX 即最近）。"""
+    row = repo.create_key(conn, 'count', total_uses=5)
+    dt = datetime(2026, 9, 28, 8, 30, 0)
+    repo.log_op(conn, row['id'], 'validate_deduct', None, now_dt=dt)
+    repo.log_op(conn, row['id'], 'renew', None, now_dt=dt + timedelta(days=1))
+    repo.log_op(conn, row['id'], 'validate_deduct', None,
+                now_dt=dt + timedelta(days=1, seconds=3))
+    assert repo.last_used_at(conn, row['id']) == '2026-09-29 08:30:03'
+
+
+def test_last_used_at_missing_key_and_delete_cleanup(conn):
+    assert repo.last_used_at(conn, 999) is None
+    row = repo.create_key(conn, 'count', total_uses=5)
+    repo.log_op(conn, row['id'], 'validate_deduct', None)
+    repo.delete_key(conn, row['id'])   # 连带清 op_log → 复查回 None
+    assert repo.last_used_at(conn, row['id']) is None
+
+
 # ---------------------------------------------------------------------------
 # 与 models 联动：库内行直接喂 derive_status（单一真相源贯穿数据层）
 # ---------------------------------------------------------------------------

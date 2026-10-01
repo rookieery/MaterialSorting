@@ -10,7 +10,7 @@
 // 相位（US-008 AC + 绑定系统名列表改版）：
 //   A  裸实例 /admin → 配置指引文案（双 token 必设）
 //   B  登录框：错 token → 401 红字（sessionStorage 不留）
-//   C  正确 token → key 表六列 + 绑定系统名列表五列 + 双空态
+//   C  正确 token → key 表七列 + 绑定系统名列表五列 + 双空态
 //   D  新建次数型（无备注名输入框）→ 即时入表 0/5 未绑定；未绑定不派生系统行
 //   E  新建时长型（生效时长，默认单位天）→ 30天
 //   F  续期弹窗（无备注名字段）：次数型加次数 → 0/10 可见
@@ -168,12 +168,12 @@ try {
   check('B 错 token 不落 sessionStorage', keptWrong === null, String(keptWrong));
   await page.screenshot({ path: OUT + '/login-error.png' });
 
-  // ---- C 正确 token → key 表六列 + 系统表五列 ----
+  // ---- C 正确 token → key 表七列 + 系统表五列 ----
   await login(ADMIN_TOKEN);
   check('C token 存 sessionStorage', (await page.evaluate(() => sessionStorage.getItem('ms_admin_token'))) === ADMIN_TOKEN);
   const heads = await page.locator('table thead th').allInnerTexts();
-  check('C 列序：key 表六列 + 系统表五列',
-    heads.join('|') === '名称|绑定系统名|类型|详细信息|属性|操作|绑定系统名|备注名|key 数|使用统计|操作',
+  check('C 列序：key 表七列 + 系统表五列',
+    heads.join('|') === '名称|绑定系统名|类型|详细信息|属性|最新使用时间|操作|绑定系统名|备注名|key 数|使用统计|操作',
     heads.join('|'));
   const emptyHint = await page.locator('#keys-body').innerText();
   check('C key 表空态提示', emptyHint.includes('暂无 key'), emptyHint);
@@ -186,6 +186,7 @@ try {
   check('D 次数型 类型列', (await cellText(countKey, 2)) === '次数');
   check('D 次数型 详细信息 0/5', (await cellText(countKey, 3)) === '0/5');
   check('D 次数型 属性 未绑定', (await cellText(countKey, 4)) === '未绑定');
+  check('D 未使用 最新使用时间 —', (await cellText(countKey, 5)) === '—');
   check('D 未绑定不派生系统行', (await page.locator('#systems-body tr[data-name]').count()) === 0);
 
   // ---- E 新建时长型（默认单位天） ----
@@ -298,6 +299,9 @@ try {
   await page.locator('#btn-refresh').click();
   await rowOf(exhaustedKey).locator('.badge.bad').waitFor({ timeout: 8000 });
   check('K 属性 已用完（红徽标）', (await cellText(exhaustedKey, 4)) === '已用完');
+  check('K 用过 最新使用时间 = 秒级时刻（validate_deduct 口径）',
+    /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(await cellText(exhaustedKey, 5)),
+    await cellText(exhaustedKey, 5));
   await sysRowOf(SYS).locator('td').nth(2).filter({ hasText: '3' }).waitFor({ timeout: 8000 });
   check('K 用完 key 入系统行（key 数 3，统计共 3）',
     (await sysCellText(SYS, 2)) === '3' && (await sysRowOf(SYS).locator('.stats').innerText()).includes('共 3'));
