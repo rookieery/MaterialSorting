@@ -1,11 +1,4 @@
 {
   "branchName": "ralph/machine-browser-direct",
-  "stories": [
-    {
-      "id": "US-005",
-      "title": "契约文档更新+真机 PNA 对拍验收",
-      "description": "As a YL 对接开发者, I want 契约文档补浏览器直连部署形态并完成 HTTPS 真机对拍 so that YL 侧可仅凭文档对接且浏览器策略时效风险被实证排除。依赖 US-001~004 全部落地。\n\n具体任务:\n1. .docs/technical/agent-api-reference.md — §0 补「浏览器直连部署形态」小节(直连地址口径 127.0.0.1:8010-8019、白名单 sidecar、token 可选语义、PNA 前提、必须 127.0.0.1 字面量);§2 端点表加 ping 行 + curl;YL 透传指引补浏览器直连注意事项\n2. materialSorting-server/src/materialsorting/web/AGENTS.md — machine.py 行(49 行)补 machine_cors 中间件 + ping 条目\n3. README.md — 运行方式节附一句浏览器直连支持说明\n4. 真机对拍:构造 HTTPS 静态测试页(内网自签)fetch http://127.0.0.1:8010/api/machine/ping,Edge + Chrome 预检全绿拿到 JSON;未配置白名单的对照 MS 实例同请求被浏览器拦(零回归反证);对拍记录归档 .docs/business/(新建 prd-machine-browser-direct 专项文档)\n\n验收标准:\n- 契约文档三处(agent-api-reference §0/§2/透传指引)更新完整,YL 侧可仅凭文档理解直连形态\n- web/AGENTS.md 与 README 更新在案\n- Edge + Chrome 真机对拍预检全绿(对拍记录落盘含截图/结论)\n- 未配置白名单反证通过(浏览器拦,零回归)\n- pytest 全量绿",
-      "passes": true
-    }
-  ]
+  "stories": []
 }
