@@ -13,8 +13,8 @@
      ``materialsorting.cli.run_config.main``（延迟 import，退出码透传）；dev
      态 ``python -m materialsorting.launcher --cli`` 与直接跑 ms-run-config 等价；
   3. ``--check``：自检（frozen 态 / 版本串 / env / paths 落点 / 探测端口 /
-     warm 支持性 / key 授权配置），exit 0 无副作用 —— 冻结验收脚本（US-004）
-     与售后识别用户版本消费。
+     warm 支持性 / key 授权配置 / 机器直连 Origin 白名单），exit 0 无副作用
+     —— 冻结验收脚本（US-004）与售后识别用户版本消费。
 
 import 顺序红线（AST 守卫见 tests/test_launcher.py，全链最易踩的静默错误）：
   - **模块级仅 import 标准库**。``paths.py`` 在 import 期读 ``os.environ`` 固化
@@ -223,6 +223,12 @@ def run_check() -> int:
     ``key_client_token``（配置态 + 来源，**不回显值**，``describe_client_token``）/
     ``machine_guid``（注册表只读探测，不铸兜底文件）/ ``key_state``（落点 +
     绑定态）—— 售后定位现场 key 配置问题一条命令自诊。
+
+    机器直连 Origin 白名单回显（浏览器直连 PRD US-004）：
+    ``machine_allowed_origins`` = 三档来源（env / sidecar 位置）+ 条数，经
+    ``machine_cors.describe_machine_allowed_origins``（describe 仅供诊断，
+    业务路径不消费；Origin 值非秘密可回显）—— 随包交付的
+    ``machine_allowed_origins.txt``（US-004 交付链）命中即「exe 旁」档。
     """
     apply_frozen_env()
     import importlib.metadata
@@ -236,6 +242,7 @@ def run_check() -> int:
     from . import paths
     from .nesting_engine.warmstart import warm_start_supported
     from .web import keygate   # 延迟 import：模块级仅标准库红线（keygate 带 ..paths）
+    from .web import machine_cors   # 同红线（浏览器直连白名单 describe，US-004）
 
     def _env(name: str) -> str:
         return os.environ.get(name) or '(未设，走缺省)'
@@ -259,6 +266,8 @@ def run_check() -> int:
     print(f'key_client_token: {keygate.describe_client_token()}')
     print(f'machine_guid: {keygate.describe_machine_guid()}')
     print(f'key_state: {keygate.key_state_path()}（{bound}）')
+    print(f'machine_allowed_origins: '
+          f'{machine_cors.describe_machine_allowed_origins()}')
     print(f'paths.DATA_DIR: {paths.DATA_DIR}')
     print(f'paths.OUT_DIR: {paths.OUT_DIR}')
     print(f'paths.INTERMEDIATE: {paths.INTERMEDIATE}')
@@ -286,8 +295,9 @@ def _print_help() -> None:
         f'  ms-desktop {CHECK_FLAG}           自检：frozen 态/版本/env/paths 落点/'
         '探测端口/\n'
         '                               warm 支持性/key 授权配置（URL 链/机 ID/'
-        '绑定态；\n'
-        '                               无副作用，不起服务不开浏览器）\n'
+        '绑定态）/机器\n'
+        '                               直连 Origin 白名单（来源+条数）；'
+        '无副作用，不起服务不开浏览器\n'
         '  ms-desktop -h | --help       本帮助\n'
         '\n'
         '环境变量（均可显式覆盖；frozen 态才设缺省重定向，dev 零重定向）：\n'
@@ -305,6 +315,11 @@ def _print_help() -> None:
         '  MS_KEY_CLIENT_TOKEN  keyserver 消费端共享 token（frozen 亦可 sidecar '
         'key_client_token.txt，\n'
         '                     位置同上两档；未配置且 keyserver 已设 → 消费请求 401）\n'
+        '  MS_MACHINE_ALLOWED_ORIGINS  机器对接（/api/machine/*）浏览器跨源直连\n'
+        '                     Origin 白名单，逗号/分号分隔多值（亦可 sidecar\n'
+        '                     machine_allowed_origins.txt 每行一个：frozen exe 旁\n'
+        '                     优先、回落 license/ 目录；未配置 = 不发 CORS 头不校验\n'
+        '                     Origin，零回归现状）\n'
         '  MS_KEY_MODE     off = 关闭 key 闸门（仅 dev 生效，frozen exe 恒不可绕）')
 
 

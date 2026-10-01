@@ -39,7 +39,7 @@ venv python 直跑——nuitka/spyrrow/materialsorting 都在 venv）→
   与 web/_frozen_spawn 的 exe --cli 前缀永远走 dev 分支；dev 直跑本文件零变化）。
   桥接顺序由 tests/test_build_freeze.py AST 断言锁死。
 - build_freeze 六步：①前端 static 检查（--skip-frontend-check 跳）+ 样例预检 +
-  key sidecar 预检②环境自检
+  key sidecar 预检 + 机器直连白名单 sidecar 预检（US-004）②环境自检
   （nuitka 版本/zstandard/ordered-set；**验证基线 Nuitka 4.3rc3**，4.2.2 优化器
   对本闭包偶发 mergeBranches 内部 TypeError、缺 ordered-set 退回纯 Python
   fallback 同样偶发崩）③spyrrow 钉板校验（wheel_version 一致 + `+ms<N>` N≥1 +
@@ -48,7 +48,8 @@ venv python 直跑——nuitka/spyrrow/materialsorting 都在 venv）→
   不同模块本体崩溃 C1001/0xC0000005；双元数据红线
   `--include-distribution-metadata=spyrrow` + `=materialsorting`；ASCII 版本资源
   ——中文进 .rc 被 cl 按代码页 936 误读 C2001）⑥dist 自检（key sidecar 维护位
-  →exe 旁同步+硬校验 + .py/.pyc/.docs/
+  →exe 旁同步+硬校验 + 机器直连白名单 sidecar 同款同步+硬校验（US-004）+
+  .py/.pyc/.docs/
   tests/scripts 泄漏零命中 + exe --check frozen/warm/version/static/fonts/**data**）。
 - **样例母版捆绑（2026-09-29「exe 无可用样例」bug 修复）**：repo `data/` 顶层
   `.dxf` 逐文件 `--include-data-file=<abs>=data/<name>` 捆到 exe 同级 `data/`
@@ -69,6 +70,21 @@ venv python 直跑——nuitka/spyrrow/materialsorting 都在 venv）→
   `web/keygate.py` 逐条对齐（锚点测试锁死）；逃生口 `--skip-key-sidecar`
   （内部测试构建）；token 永不回显（打印只文件名）。冒烟回归锁 = smoke_freeze
   P0f~P0h。
+- **机器直连 Origin 白名单 sidecar 双闸（浏览器直连 US-004，2026-10-01）**：
+  `machine_allowed_origins.txt`（YL 前端 HTTPS 页面跨源直连 `/api/machine/*`
+  的 CORS 准入白名单）**构建机单一维护位** = `materialSorting-server/out/license/`
+  （与 key sidecar 同目录，`key_sidecar_dir()` 单一推导共用；dev 态
+  machine_cors 同位读）；维护位**预填 YL 生产域名占位值**（交付前由运维替换
+  实值；可多行多 Origin；**只写 Origin 行不放说明文字**——每一非空行都是
+  白名单条目，machine_cors `_parse_sidecar_origins` 空行剔除口径，构建闸
+  `machine_sidecar_origins` 同口径防「预检过了、运行时白名单被污染」）。
+  拷贝收口同样在 `step_dist_check` 入口（`copy_machine_sidecar` 先从维护位同步
+  再硬校验，`--installer-only` 补打包路径同样覆盖）；闸一 =
+  `check_machine_sidecar_source` 维护位预检（缺文件/全空行 → 编译前 exit 1
+  中文报错）；文件名常量 `MACHINE_SIDECAR_NAME` 与 `web/machine_cors.py`
+  `MACHINE_ORIGINS_FILE_NAME` 逐字对齐（锚点测试锁死）；逃生口
+  `--skip-machine-sidecar`（内部测试构建）。launcher `--check`
+  `machine_allowed_origins:` 行回显三档来源 + 条数（诊断专用）。
 - **资源红线（2026-09-27 整机假死事故复盘）**：`--jobs` 推导
   `min(8, max(2, 核数//4))` 再按可用物理内存钳制（每 job ≥3GB、下限 2，
   `--jobs`/`MS_FREEZE_JOBS` 覆盖仍打警示）/ Nuitka 子进程
@@ -79,8 +95,8 @@ venv python 直跑——nuitka/spyrrow/materialsorting 都在 venv）→
   下轮链接期 `CVTRES CVT1107 xx.obj 已损坏` → 删
   `%LOCALAPPDATA%/Nuitka/Nuitka/Cache/clcache` 全量重编。
 - 产物 `dist/` 已 gitignore（根 .gitignore）；护栏测试 =
-  `materialSorting-server/tests/test_build_freeze.py`（64 例纯函数级，真跑 Nuitka
-  不进套件）。验收自动化（隔离用户目录/单实例/端口回退专项）= US-004
+  `materialSorting-server/tests/test_build_freeze.py`（70 例纯函数级，真跑 Nuitka
+  不进套件；含 US-004 机器直连白名单 sidecar 组 7 例）。验收自动化（隔离用户目录/单实例/端口回退专项）= US-004
   smoke_freeze.mjs；发版全流程 = US-005 `.docs/technical/本地部署构建与发版手册.md`。
 
 ## installer/materialsorting.iss + ChineseSimplified.isl（US-005，prd-local-deploy-freeze）

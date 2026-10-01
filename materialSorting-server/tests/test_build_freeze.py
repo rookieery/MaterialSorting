@@ -627,3 +627,100 @@ def test_parser_skip_key_sidecar_flag(bf):
     """--skip-key-sidecar 参数面：缺省 False（闸门默认开，交付包底线）。"""
     assert not bf.build_parser().parse_args([]).skip_key_sidecar
     assert bf.build_parser().parse_args(['--skip-key-sidecar']).skip_key_sidecar
+
+
+# ------------------------------------------- 机器直连 Origin 白名单 sidecar（US-004）
+
+def test_machine_sidecar_name_aligns_machine_cors(bf):
+    """文件名与 web/machine_cors.py 常量逐字对齐（scripts 复制常量 + 锚点测试
+    锁死，同 KEY_SIDECAR_NAMES ↔ keygate 约定）。"""
+    from materialsorting.web import machine_cors
+    assert bf.MACHINE_SIDECAR_NAME == machine_cors.MACHINE_ORIGINS_FILE_NAME
+
+
+def test_machine_sidecar_origins_and_missing_matrix(bf, tmp_path):
+    """非空行解析 + 缺失矩阵：全缺/不可读/全空行（machine_cors 空行剔除口径
+    = 该位未配置）皆视同缺失；多行多 Origin（strip 空行、保序）为在场。"""
+    assert bf.machine_sidecar_origins(tmp_path) == []
+    assert bf.machine_sidecar_missing(tmp_path) == [bf.MACHINE_SIDECAR_NAME]
+    (tmp_path / bf.MACHINE_SIDECAR_NAME).write_text('  \n \n',
+                                                    encoding='utf-8')
+    assert bf.machine_sidecar_origins(tmp_path) == []          # 全空行 = 未配置
+    assert bf.machine_sidecar_missing(tmp_path) == [bf.MACHINE_SIDECAR_NAME]
+    (tmp_path / bf.MACHINE_SIDECAR_NAME).write_text(
+        'https://yl.example.com\n\n  https://yl2.example.com  \n',
+        encoding='utf-8')
+    assert bf.machine_sidecar_origins(tmp_path) == [
+        'https://yl.example.com', 'https://yl2.example.com']
+    assert bf.machine_sidecar_missing(tmp_path) == []
+
+
+def test_copy_machine_sidecar_sync_chain(bf, tmp_path):
+    """维护位 → dist 同步链（US-004 交付链验收）：源非空行在场才拷、dist 同名
+    文件覆盖为维护位现值（唯一真相源）、多行内容逐字节保真、同步后闸二口径
+    （machine_sidecar_missing(dist)）转 OK；源全空行不拷不炸（闸二兜底）。"""
+    src = tmp_path / 'license'
+    src.mkdir()
+    (src / bf.MACHINE_SIDECAR_NAME).write_text(
+        'https://yl.example.com\nhttps://yl2.example.com\n', encoding='utf-8')
+    dist_app = tmp_path / 'dist'
+    dist_app.mkdir()
+    (dist_app / bf.MACHINE_SIDECAR_NAME).write_text(
+        'https://stale.example.com\n', encoding='utf-8')
+    (dist_app / 'unrelated.txt').write_text('keep', encoding='utf-8')
+    copied = bf.copy_machine_sidecar(dist_app, source_dir=src)
+    assert copied == [bf.MACHINE_SIDECAR_NAME]
+    assert (dist_app / bf.MACHINE_SIDECAR_NAME).read_text(
+        encoding='utf-8') == 'https://yl.example.com\nhttps://yl2.example.com\n'
+    assert bf.machine_sidecar_missing(dist_app) == []          # 闸二口径转 OK
+    assert (dist_app / 'unrelated.txt').is_file()              # 其余文件不动
+    (src / bf.MACHINE_SIDECAR_NAME).write_text(' \n', encoding='utf-8')
+    dist2 = tmp_path / 'dist2'
+    dist2.mkdir()
+    assert bf.copy_machine_sidecar(dist2, source_dir=src) == []
+    assert not (dist2 / bf.MACHINE_SIDECAR_NAME).exists()
+
+
+def test_check_machine_sidecar_source_gate(bf, tmp_path, monkeypatch, capsys):
+    """闸一：维护位缺文件/全空行 → fail-closed（SystemExit + 中文指路文案含
+    逃生口与「只写 Origin 行」警告）；多行白名单在场 → OK 行带条数。"""
+    monkeypatch.setattr(bf, 'key_sidecar_dir', lambda: tmp_path / 'empty')
+    with pytest.raises(SystemExit):
+        bf.check_machine_sidecar_source()
+    err = capsys.readouterr().err
+    assert ('机器直连 sidecar 预检' in err
+            and '--skip-machine-sidecar' in err
+            and bf.MACHINE_SIDECAR_NAME in err)
+    src = tmp_path / 'license'
+    src.mkdir()
+    (src / bf.MACHINE_SIDECAR_NAME).write_text(
+        'https://yl.example.com\nhttps://yl2.example.com\n', encoding='utf-8')
+    monkeypatch.setattr(bf, 'key_sidecar_dir', lambda: src)
+    bf.check_machine_sidecar_source()
+    out = capsys.readouterr().out
+    assert '机器直连 Origin 白名单 sidecar：OK' in out and '2 条' in out
+
+
+def test_step_dist_check_machine_sidecar_missing_fails(bf, tmp_path,
+                                                       monkeypatch, capsys):
+    """闸二：key sidecar 在场放行、机器白名单维护位与 dist 双缺 → dist 自检
+    fail-closed（中文报错指路维护位 + 逃生口；Yl 浏览器直连交付链回归锁）。"""
+    _fake_dist(bf, tmp_path, monkeypatch)
+    src = tmp_path / 'license'
+    src.mkdir()
+    for name in bf.KEY_SIDECAR_NAMES:
+        (src / name).write_text('http://x\n', encoding='utf-8')
+    monkeypatch.setattr(bf, 'key_sidecar_dir', lambda: src)   # key 闸放行
+    with pytest.raises(SystemExit):
+        bf.step_dist_check('0.1.0')
+    err = capsys.readouterr().err
+    assert ('机器直连 sidecar 缺失' in err
+            and '--skip-machine-sidecar' in err
+            and bf.MACHINE_SIDECAR_NAME in err)
+
+
+def test_parser_skip_machine_sidecar_flag(bf):
+    """--skip-machine-sidecar 参数面：缺省 False（闸门默认开，交付包底线）。"""
+    assert not bf.build_parser().parse_args([]).skip_machine_sidecar
+    assert bf.build_parser().parse_args(
+        ['--skip-machine-sidecar']).skip_machine_sidecar

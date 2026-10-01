@@ -56,6 +56,11 @@ onedir，后端源码真编译为机器码；坚决不用 onefile —— 解压�
     维护位（dev ``paths.LICENSE_DIR`` 同位）两文件非空 fail-closed；闸二 =
     dist 自检入口先从维护位同步再硬校验（``--installer-only`` 补打包路径同样
     覆盖）。逃生口 ``--skip-key-sidecar``（内部测试构建专用）。
+  ⑤ 机器直连 Origin 白名单 sidecar（US-004，浏览器直连交付链）——
+    ``machine_allowed_origins.txt`` 同款双闸：维护位 ``out/license/`` 单源
+    （预填 YL 生产域名占位，交付前运维替换实值；可多行多 Origin）→ 闸一
+    预检 + 闸二 dist 同步硬校验（``--installer-only`` 同覆盖）。逃生口
+    ``--skip-machine-sidecar``。
 """
 from __future__ import annotations
 
@@ -83,6 +88,10 @@ DATA_DIR = ROOT / 'data'                                   # 样例母版目录�
 # 逐条对齐 —— scripts 不 import 业务包（全标准库先例），复制常量 + 对齐锚点测试
 # 锁死，sample_dxf_files ↔ routes_views._sample_dxf_names 同款约定）
 KEY_SIDECAR_NAMES = ('key_server_url.txt', 'key_client_token.txt')
+# 机器直连 Origin 白名单 sidecar 文件名（与 web/machine_cors.py
+# MACHINE_ORIGINS_FILE_NAME 逐字对齐 —— scripts 不 import 业务包（全标准库
+# 先例），复制常量 + 锚点测试锁死，同 KEY_SIDECAR_NAMES ↔ keygate 约定）
+MACHINE_SIDECAR_NAME = 'machine_allowed_origins.txt'
 SERVER_DIR = ROOT / 'materialSorting-server'
 PYPROJECT = SERVER_DIR / 'pyproject.toml'
 SPYRROW_PIN_FILE = SERVER_DIR / 'spyrrow_build.json'       # 私有 wheel 钉板（四字段）
@@ -466,6 +475,72 @@ def check_key_sidecar_source() -> None:
           f'{key_sidecar_dir()}）')
 
 
+# ================================================== 机器直连 Origin 白名单 sidecar（US-004，纯函数）
+
+def machine_sidecar_origins(directory: Path) -> list[str]:
+    """sidecar 非空行读取（machine_cors ``_parse_sidecar_origins`` 同口径：
+    逐行 strip、空行剔除、天然保序）；文件缺失/不可读 → 空列表。
+
+    **不支持注释行** —— 每一非空行都是一条 Origin，占位文件里写说明文字会被
+    当白名单条目（构建闸与运行时解析同口径，防「预检过了、运行时白名单被
+    污染」的静默漂移）。
+    """
+    try:
+        lines = (directory / MACHINE_SIDECAR_NAME).read_text(
+            encoding='utf-8').splitlines()
+    except OSError:
+        return []
+    return [ln.strip() for ln in lines if ln.strip()]
+
+
+def machine_sidecar_missing(directory: Path) -> list[str]:
+    """机器直连 sidecar 缺失检查：文件不在/不可读/全空行（= 该位未配置，
+    machine_cors 空行剔除口径）皆视同缺失，返回 ``[MACHINE_SIDECAR_NAME]``；
+    ≥1 非空行 → ``[]``。单元素列表形与 :func:`key_sidecar_missing` 一致
+    （闸一/闸二报错文案 ``"、".join`` 复用）。
+    """
+    return [] if machine_sidecar_origins(directory) else [MACHINE_SIDECAR_NAME]
+
+
+def copy_machine_sidecar(dist_app_dir: Path,
+                         source_dir: Path | None = None) -> list[str]:
+    """维护位 sidecar → dist exe 旁（源非空行在场才拷）；返回实际拷入文件名。
+
+    dist 侧既有同名文件一律覆盖（维护位 = 唯一真相源 —— 手工铺进 dist 的旧
+    白名单被纠正为维护位现值，:func:`copy_key_sidecars` 同语义）；彻底缺失由
+    调用方 ``step_dist_check`` 闸二兜底报错。``shutil.copy2`` 保留 mtime。
+    打印只报文件名与条数，Origin 值不逐条回显（虽非秘密，日志口径与 key
+    sidecar 统一）。"""
+    src = source_dir if source_dir is not None else key_sidecar_dir()
+    if machine_sidecar_missing(src):
+        return []
+    shutil.copy2(src / MACHINE_SIDECAR_NAME, dist_app_dir / MACHINE_SIDECAR_NAME)
+    return [MACHINE_SIDECAR_NAME]
+
+
+def check_machine_sidecar_source() -> None:
+    """机器直连 Origin 白名单 sidecar 预检（US-004 闸一）：维护位文件须 ≥1
+    非空行，缺失/全空 fail-closed —— 在 30~90 分钟编译**之前**暴露。
+
+    维护位 = key sidecar 维护位同一目录（``out/license/``，dev 态
+    machine_cors 与打包同位共用单一维护点）；缺文件 = 安装包不带白名单，
+    YL 前端（HTTPS 页面）跨源直连本地 MS 的 CORS 预检全被拒（浏览器直连
+    交付断链，同 key 接线缺失的事故等级）。"""
+    if machine_sidecar_missing(key_sidecar_dir()):
+        _fail('机器直连 sidecar 预检',
+              f'{key_sidecar_dir() / MACHINE_SIDECAR_NAME} 缺失或无非空行 —— '
+              '安装包将不带 Origin 白名单，YL 前端（HTTPS 页面）跨源直连本地 '
+              'MS 会被 CORS 拒（浏览器直连交付断链）。把该文件放到维护位'
+              '（每行一个 Origin = 协议+域名+端口，与浏览器 Origin 头精确一致、'
+              '不带尾斜杠，可多行多 Origin；**只写 Origin 行不放说明文字** —— '
+              '每一非空行都是白名单条目；文件预填 YL 生产域名占位值，交付前由'
+              '运维替换为实值），或内部测试构建加 --skip-machine-sidecar')
+    print(f'  机器直连 Origin 白名单 sidecar：OK'
+          f'（{len(machine_sidecar_origins(key_sidecar_dir()))} 条 ← '
+          f'{key_sidecar_dir() / MACHINE_SIDECAR_NAME}；交付前运维把占位值替换'
+          '为 YL 生产域名实值）')
+
+
 # ================================================================ Nuitka 命令（常量段）
 
 def nuitka_command(jobs: int, file_version: str, version_display: str,
@@ -737,7 +812,8 @@ def step_compile(cmd: list[str], jobs: int) -> None:
 
 
 def step_dist_check(expected_version: str,
-                    skip_key_sidecar: bool = False) -> None:
+                    skip_key_sidecar: bool = False,
+                    skip_machine_sidecar: bool = False) -> None:
     print(f'[6/{STEP_TOTAL}] dist 自检：')
     if not EXE_PATH.is_file():
         _fail('dist 自检', f'{EXE_PATH} 不存在（编译产物缺失）')
@@ -759,6 +835,23 @@ def step_dist_check(expected_version: str,
                   f'{key_sidecar_dir()} 补文件后重跑，或内部测试构建加 '
                   '--skip-key-sidecar')
         print(f'  key 接线 sidecar：OK（exe 旁 {"、".join(KEY_SIDECAR_NAMES)}）')
+    # ⓪′ 机器直连 Origin 白名单 sidecar（US-004，镜像 key 双闸先例）：同样先从
+    # 维护位同步再硬校验，收口在 dist 自检入口 = --installer-only 补打包路径
+    # 同样覆盖（交付包缺 sidecar 即构建失败，不经重编译可修复）
+    if skip_machine_sidecar:
+        print('  机器直连 sidecar：SKIP（--skip-machine-sidecar，内部测试构建专用）')
+    else:
+        copied = copy_machine_sidecar(DIST_APP_DIR)
+        if copied:
+            print(f'  机器直连 sidecar：已从维护位同步 {MACHINE_SIDECAR_NAME} 到 exe 旁')
+        missing = machine_sidecar_missing(DIST_APP_DIR)
+        if missing:
+            _fail('dist 自检',
+                  f'机器直连 sidecar 缺失（exe 旁无 {"、".join(missing)}）—— YL 前端'
+                  '跨源直连本地 MS 会被 CORS 拒（US-004 交付链）。维护位 '
+                  f'{key_sidecar_dir() / MACHINE_SIDECAR_NAME} 补文件后重跑，或内部'
+                  '测试构建加 --skip-machine-sidecar')
+        print(f'  机器直连 sidecar：OK（exe 旁 {MACHINE_SIDECAR_NAME}）')
     # ① 源码泄漏红线②
     leaks = scan_dist_leaks(DIST_APP_DIR)
     files = [f for f in DIST_APP_DIR.rglob('*') if f.is_file()]
@@ -920,6 +1013,11 @@ def build_parser() -> argparse.ArgumentParser:
                         help='跳过 key 接线 sidecar 预检与 dist 同步/校验（内部'
                              '测试构建专用；交付客户的包必须带 key_server_url.txt '
                              '+ key_client_token.txt 两文件，红线④）')
+    parser.add_argument('--skip-machine-sidecar', action='store_true',
+                        help='跳过机器直连 Origin 白名单 sidecar 预检与 dist 同步/'
+                             '校验（内部测试构建专用；交付客户的包必须带 '
+                             'machine_allowed_origins.txt，US-004 浏览器直连'
+                             '交付链）')
     parser.add_argument('--force', action='store_true',
                         help='孤儿编译进程扫描命中时放行（自担风险）')
     parser.add_argument('--launch', action='store_true',
@@ -960,7 +1058,8 @@ def main(argv: list[str] | None = None) -> int:
               f'版本 {display}')
         print('  注意：版本串取当前 git 状态 —— dist 若构建于其他提交，'
               '正式发版走全量 --installer（发版手册「日常发版三步」）\n')
-        step_dist_check(py_ver, skip_key_sidecar=args.skip_key_sidecar)
+        step_dist_check(py_ver, skip_key_sidecar=args.skip_key_sidecar,
+                        skip_machine_sidecar=args.skip_machine_sidecar)
         step_installer(display, file_version)
         print(f'\n[DONE] 发版产物（{DIST_DIR}）：')
         setup = DIST_DIR / f'{APP_BASENAME}-Setup-{fs_version(display)}.exe'
@@ -1006,6 +1105,12 @@ def main(argv: list[str] | None = None) -> int:
         print('  key 接线 sidecar：SKIP 预检（--skip-key-sidecar，内部测试构建专用）')
     else:
         check_key_sidecar_source()
+    # 机器直连 sidecar 预检（US-004 闸一）同 key 口径独立于 --skip-frontend-check
+    # （三个交付关注点不连坐；内部测试构建用 --skip-machine-sidecar 显式跳）
+    if args.skip_machine_sidecar:
+        print('  机器直连 sidecar：SKIP 预检（--skip-machine-sidecar，内部测试构建专用）')
+    else:
+        check_machine_sidecar_source()
     step_env_selfcheck()
     step_spyrrow_check()
     step_orphan_scan(args.force)
@@ -1035,7 +1140,8 @@ def main(argv: list[str] | None = None) -> int:
         _rmtree_force(DIST_DIR)
     DIST_DIR.mkdir(parents=True)
     step_compile(cmd, jobs)
-    step_dist_check(py_ver, skip_key_sidecar=args.skip_key_sidecar)
+    step_dist_check(py_ver, skip_key_sidecar=args.skip_key_sidecar,
+                    skip_machine_sidecar=args.skip_machine_sidecar)
 
     # 构建目录清理（.build 仅中间产物；clcache 在 %LOCALAPPDATA%\Nuitka 跨重试生效）
     build_dir = DIST_DIR / f'{APP_BASENAME}.build'

@@ -2,16 +2,10 @@
   "branchName": "ralph/machine-browser-direct",
   "stories": [
     {
-      "id": "US-003",
-      "title": "GET /api/machine/ping 轻量探测端点",
-      "description": "As a YL 前端, I want 一个无 task_id 无 token 的 ping 端点 so that 可以探测本地 MS 是否启动并发现实际端口(8010-8019)。与 US-001/002 无强依赖(中间件覆盖 ping 自动生效)。\n\n具体任务:\n1. materialSorting-server/src/materialsorting/web/machine.py — 第七端点 GET /api/machine/ping:落在既有 router(APIRouter 同风格,路径自带全路径);无 task_id 闸、无 token 闸(响应零敏感信息,只暴露「MS 在跑」);响应恰 {ok: true, service: 'machine'}\n2. CORS 中间件天然覆盖该前缀(白名单外网页读不到),无需特殊处理\n3. tests/test_web_machine.py 补测试:无 Origin 直打 200 恰两键;带白名单内 Origin 响应带 ACAO\n\n验收标准:\n- curl http://127.0.0.1:8010/api/machine/ping 返回 200 {ok:true, service:'machine'}\n- 端点不消费 task_id/token 闸,机器族其余六端点行为零变化\n- pytest materialSorting-server/tests/test_web_machine.py 全绿(含新增)\n- 契约文档端点表更新可在 US-005 统一收口",
-      "passes": true
-    },
-    {
       "id": "US-004",
       "title": "sidecar 交付链(generate-dist 同步+预检硬校验)",
       "description": "As a 交付运维, I want Origin 白名单 sidecar 随安装包流水线自动同步 so that exe 交付自带 YL 生产域名、终端用户零配置,且缺文件有闸门报警。依赖 US-001(sidecar 文件名/解析口径)。\n\n具体任务:\n1. 维护位 out/license/machine_allowed_origins.txt 建立单源(预填 YL 生产域名占位,交付前由运维替换实值;可多行多 Origin)\n2. scripts/build_freeze.py — step_dist_check 入口自动同步 sidecar 到 exe 旁(镜像 key sidecar 双闸先例:覆盖 --installer-only 变体 + 预检硬校验,交付包缺 sidecar 即构建失败)\n3. materialSorting-server/src/materialsorting/launcher.py — --check 回显白名单三档来源与条数(镜像 keygate describe_* 先例 launcher.py:243-261;machine_cors 补 describe 辅助,仅供诊断,业务路径不消费)\n4. 纯桩测试覆盖同步逻辑(照 tests/test_spyrrow_wheel.py 桩模式或 build_freeze 既有测试挂点)\n\n验收标准:\n- 构建产物 exe 旁含 machine_allowed_origins.txt(维护位 → 产物同步链路验证)\n- 维护位文件缺失时构建失败并给中文报错(预检硬校验)\n- python -m materialsorting.launcher --check 冒烟输出含 machine_allowed_origins 行与来源档位\n- 纯桩测试全绿;pytest 全量回归绿",
-      "passes": false
+      "passes": true
     },
     {
       "id": "US-005",

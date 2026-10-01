@@ -447,6 +447,7 @@ def test_check_subprocess_output_keys(tmp_path):
     真实 out/license/ 下的部署 sidecar 与本机已绑定 key_state.json —— 缺省态
     断言「未配置/未绑定」不再依赖开发机状态）。"""
     env = dict(os.environ)
+    env.pop('MS_MACHINE_ALLOWED_ORIGINS', None)   # US-004 白名单 env 档隔离
     env['MS_OUT_DIR'] = str(tmp_path / 'out')
     proc = subprocess.run(
         [sys.executable, '-m', 'materialsorting.launcher', '--check'],
@@ -456,9 +457,9 @@ def test_check_subprocess_output_keys(tmp_path):
     for key in ('frozen:', 'version:', 'env MS_WEB_PORT:', 'env MS_OUT_DIR:',
                 'env MS_STATIC_DIR:', 'env MS_DATA_DIR:', 'env MS_KEY_MODE:',
                 'key_server_url:', 'key_client_token:', 'machine_guid:',
-                'key_state:', 'paths.OUT_DIR:', 'paths.STATIC_DIR:',
-                'paths.DATA_DIR:', 'paths.FONT_DIR:', 'port:',
-                'warm_start_supported:'):
+                'key_state:', 'machine_allowed_origins:', 'paths.OUT_DIR:',
+                'paths.STATIC_DIR:', 'paths.DATA_DIR:', 'paths.FONT_DIR:',
+                'port:', 'warm_start_supported:'):
         assert key in proc.stdout, key
     assert 'frozen: False' in proc.stdout
     assert str(tmp_path / 'out') in proc.stdout     # OUT_DIR 落点 = env 重定向值
@@ -501,6 +502,48 @@ def test_check_client_token_configured_no_leak(monkeypatch):
     assert 'key_client_token: 已配置' in proc.stdout
     assert 'MS_KEY_CLIENT_TOKEN env' in proc.stdout
     assert 'secret-tok-xyz' not in proc.stdout
+
+
+def test_check_machine_origins_env_echo(tmp_path):
+    """--check 回显机器直连 Origin 白名单（US-004）：env 档 → 条目 + 来源档位
+    + 条数（describe_machine_allowed_origins；Origin 非秘密可回显）。镜像
+    test_check_key_config_env_echo 写法（env 档优先于 sidecar = 确定性）。"""
+    env = dict(os.environ)
+    env.pop('MS_MACHINE_ALLOWED_ORIGINS', None)
+    env['MS_MACHINE_ALLOWED_ORIGINS'] = (
+        'https://yl.example.com, https://yl2.example.com')
+    env['MS_OUT_DIR'] = str(tmp_path / 'out')   # sidecar 档隔离（env 档优先）
+    proc = subprocess.run(
+        [sys.executable, '-m', 'materialsorting.launcher', '--check'],
+        capture_output=True, text=True, encoding='utf-8', cwd=str(_SRC.parent),
+        env=env)
+    assert proc.returncode == 0
+    assert ('machine_allowed_origins: https://yl.example.com、'
+            'https://yl2.example.com'
+            '（来源：MS_MACHINE_ALLOWED_ORIGINS env，共 2 条）') in proc.stdout
+
+
+def test_check_machine_origins_sidecar_echo(tmp_path):
+    """--check 回显白名单 sidecar 档来源（US-004）：dev 态 out/license/
+    sidecar 多行命中 → 来源档位标注 out/license/ + 条数 —— 随包交付链
+    （build_freeze 维护位同步）的运行时回显对端。"""
+    env = dict(os.environ)
+    env.pop('MS_MACHINE_ALLOWED_ORIGINS', None)
+    env['MS_OUT_DIR'] = str(tmp_path / 'out')
+    license_dir = tmp_path / 'out' / 'license'
+    license_dir.mkdir(parents=True)
+    (license_dir / 'machine_allowed_origins.txt').write_text(
+        'https://yl.example.com\n\n  https://yl2.example.com  \n',
+        encoding='utf-8')
+    proc = subprocess.run(
+        [sys.executable, '-m', 'materialsorting.launcher', '--check'],
+        capture_output=True, text=True, encoding='utf-8', cwd=str(_SRC.parent),
+        env=env)
+    assert proc.returncode == 0
+    assert ('machine_allowed_origins: https://yl.example.com、'
+            'https://yl2.example.com'
+            '（来源：machine_allowed_origins.txt（out/license/），'
+            '共 2 条）') in proc.stdout
 
 
 if __name__ == '__main__':
