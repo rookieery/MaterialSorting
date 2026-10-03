@@ -76,4 +76,13 @@ describe('controlPanelStore US-018', () => {
     useControlPanelStore.getState().closeModal();
     expect(useControlPanelStore.getState().modal).toBeNull();
   });
+
+  // 初始布局 US-004（prd-initial-layout）：'initial_layout' 入联合类型 —— 入口按钮
+  // openModal('initial_layout') 接线（弹窗本体 US-006 落地，store 层语义同其他 id）。
+  it('openModal(initial_layout) / closeModal 切换 modal（初始布局弹窗，US-004）', () => {
+    useControlPanelStore.getState().openModal('initial_layout');
+    expect(useControlPanelStore.getState().modal).toBe('initial_layout');
+    useControlPanelStore.getState().closeModal();
+    expect(useControlPanelStore.getState().modal).toBeNull();
+  });
 });

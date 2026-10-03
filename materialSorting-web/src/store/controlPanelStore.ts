@@ -3,8 +3,9 @@
 //
 // 两个独立显隐字段，对应两层模态：
 //   modal         'per_type' | 'strategy_run' | 'extreme_run' | 'export_info' |
-//                 'key_info' | null —— 高级配置 / 高级运行 / 极限运行（US-003）/
-//                 PLT 导出信息表格（2026-08-30）/ key 属性（US-006，2026-09-28）
+//                 'key_info' | 'initial_layout' | null —— 高级配置 / 高级运行 /
+//                 极限运行（US-003）/ PLT 导出信息表格（2026-08-30）/ key 属性
+//                 （US-006，2026-09-28）/ 初始布局（US-004，2026-10-03）
 //                 弹窗（单例互斥：openModal 覆写）
 //   previewLabel  label(如 'g03') | null —— 裁片放大预览（点击弹窗表头缩略图触发）
 //
@@ -33,7 +34,12 @@ export type ControlPanelModalId =
   | 'export_info'
   | 'edit_layout'
   // key 授权 US-006（2026-09-28）：「系统key」弹窗（KeyInfoModal）。
-  | 'key_info';
+  | 'key_info'
+  // 初始布局 US-004（2026-10-03，prd-initial-layout）：「高级配置：设置初始布局」
+  // 弹窗（InitialLayoutModal，US-006 落地本体；US-004 仅入联合 + 入口按钮接线，
+  // 无组件订阅时 openModal 无视觉效果）。编辑弹窗同款语义：编辑草稿不可被误触
+  // 丢弃，关闭路径由弹窗自管（dirty 确认层）。
+  | 'initial_layout';
 
 export interface ControlPanelState {
   /** 高级配置弹窗显隐；null = 关闭。 */

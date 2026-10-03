@@ -47,6 +47,7 @@ import './lib/sessionRecovery';
 // import 保证订阅/监听在渲染/副作用之前完成；sessionRecovery 同款先例）。
 import './lib/sessionCheckpoint';
 import { clearCheckpointAfterProbe } from './lib/sessionCheckpoint';
+import { useInitialLayoutStore } from './store/initialLayoutStore';
 import { useUiStore } from './store/uiStore';
 
 export function App(): React.JSX.Element {
@@ -63,6 +64,15 @@ export function App(): React.JSX.Element {
     void probeSession().then(() => {
       void clearCheckpointAfterProbe();
     });
+  }, []);
+
+  // 初始布局 US-004（prd-initial-layout）：App 启动拉一次热启动能力探测
+  // （GET /api/warm-capability，无会话依赖）。probeCapability 幂等短路（已落定
+  // 不再发；StrictMode 双 mount 的并发双探 = 幂等 GET，无害）；失败静默保持
+  // supported=null（未知 = 入口按钮不置灰 —— 探测失败不放大利害）。入口按钮
+  // 置灰/提示由 ControlPanel 订阅消费（US-006 弹窗、US-007 运行接线后续消费）。
+  useEffect(() => {
+    void useInitialLayoutStore.getState().probeCapability();
   }, []);
 
   return (

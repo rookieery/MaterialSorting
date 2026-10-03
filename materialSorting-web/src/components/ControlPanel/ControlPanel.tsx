@@ -77,6 +77,8 @@ import { defaultExportFilename, defaultStateFilename, type ExportFmt } from '../
 import type { ExportTableFields } from '../../lib/exportTable';
 import { useControlPanelStore } from '../../store/controlPanelStore';
 import { useFormStore } from '../../store/formStore';
+// 初始布局 US-004：热启动能力订阅（入口按钮置灰判定；App 启动探测，此处仅读）。
+import { useInitialLayoutStore } from '../../store/initialLayoutStore';
 import { runRegistry } from '../../store/runRegistry';
 import { useUploadStore } from '../../store/uploadStore';
 import { useQtyStore } from '../../store/qtyStore';
@@ -178,6 +180,9 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
   const form = useFormStore((s) => s.form);
   // US-017：订阅 uploadStore.doc 判断是否已解析母版（doc=null → StatusLine 增提示）。
   const doc = useUploadStore((s) => s.doc);
+  // 初始布局 US-004：热启动能力（App 启动 probeCapability 拉一次；此处订阅
+  // supported === false → 入口按钮置灰 + title 中文提示；null = 未探知不置灰）。
+  const warmSupported = useInitialLayoutStore((s) => s.supported);
 
   // 重传联动（2026-08-27，与 PreviewPage quantities hydrate 同口径）：doc_id 变化
   // （首次上传 / 重传 / reset）→ form 整体回 DEFAULT_FORM（「新母版 = 全新表单」，
@@ -415,6 +420,17 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
     prefixMissingLabel ||
     prefixSameLabel;
 
+  // 初始布局 US-004：入口按钮置灰 = 无母版 || 能力探测不支持（supported === false；
+  // null = 未探知不置灰 —— 探测失败不放大利害，弹窗内生成另有后端权威降级）。
+  // title 悬停中文提示（无母版优先 —— 上传是任何流程的第一步）。
+  const initialLayoutDisabled = doc === null || warmSupported === false;
+  const initialLayoutTitle =
+    doc === null
+      ? '请先上传母版'
+      : warmSupported === false
+        ? '当前 spyrrow 版本不支持热启动'
+        : '';
+
   // US-013（FR-6 v1 互斥已于 2026-08-22 解除）：band 开启可进「高级运行」——
   // band 随 /api/strategy/start 写进 9 键 config（cli 9 键 schema + solve_pieces
   // 透传 solve_worker 进程内成带，v2 构造性链构造确定性兼容多 seed 策略）。
@@ -486,6 +502,25 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
           gateMm={parseGate(form)}
           disabled={solving}
         />
+        {/* 初始布局 US-004：「高级配置：设置初始布局」入口（「设置算法参数」按钮
+            正下方，per-type-wrapper 同款间距语义）。点击 openModal('initial_layout')
+            —— 弹窗本体 US-006 落地（InitialLayoutModal 单例挂载在 ControlPanel），
+            未挂载前点击无视觉效果（store action 已可用）。置灰两条路径见
+            initialLayoutDisabled 派生（无母版 / supported === false），title 悬停
+            中文提示；热启动是「普通运行」专属增益（US-007 接线），故不随 solving
+            置灰（PRD 口径：disabled = 无母版 || 不支持）。 */}
+        <div className="per-type-wrapper">
+          <button
+            type="button"
+            className="per-type-btn"
+            disabled={initialLayoutDisabled}
+            onClick={() => openModal('initial_layout')}
+            title={initialLayoutTitle}
+            data-testid="initial-layout-btn"
+          >
+            高级配置：设置初始布局
+          </button>
+        </div>
         {/* 2026-09-14 运行族三级入口排序改判（用户要求）：「普通运行」（SolveControls，
             即原「普通运行」）挪到「高级运行 / 极限运行」上方 —— 三键自上而下按
             投入强度排列（普通 → 高级 → 极限），配色同日统一为绿 / 紫 / 琥珀

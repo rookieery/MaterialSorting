@@ -34,6 +34,8 @@ import { createRoot, type Root } from "react-dom/client";
 import { ControlPanel, type ControlPanelStartPayload } from "../ControlPanel";
 import { SIZES } from "../../../constants/sizes";
 import { useControlPanelStore } from "../../../store/controlPanelStore";
+// 初始布局 US-004：入口按钮置灰判定订阅 supported（无母版 / 不支持两路径）。
+import { __resetInitialLayoutStoreForTest, useInitialLayoutStore } from "../../../store/initialLayoutStore";
 import { __resetKeyStoreForTest } from "../../../store/keyStore";
 // key 授权 US-007：预检失败经 toastStore 弹中文（lib/keyGate 内出口）——断言其落队。
 import { __resetToastsForTest, useToastStore } from "../../../store/toastStore";
@@ -1694,5 +1696,83 @@ describe("ControlPanel key 预检（key 授权 US-007）", () => {
     });
     expect(precheckFetchCount()).toBe(1);
     expect(onStart).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 初始布局 US-004（prd-initial-layout）：「高级配置：设置初始布局」入口按钮。
+// 置灰两条路径（PRD 验收：无母版态 + supported=false mock 态；浏览器同判据复验）
+// + 点击 openModal('initial_layout') 接线（弹窗本体 US-006 落地）。
+
+describe("ControlPanel initial layout entry (US-004)", () => {
+  beforeEach(() => {
+    __resetInitialLayoutStoreForTest();
+  });
+  afterEach(() => {
+    __resetInitialLayoutStoreForTest();
+    useControlPanelStore.getState().closeModal();
+  });
+
+  function initialBtn(): HTMLButtonElement {
+    return container!.querySelector<HTMLButtonElement>('[data-testid="initial-layout-btn"]')!;
+  }
+
+  it("渲染在「设置算法参数」按钮下方；文案 + per-type-btn 同款样式", () => {
+    renderPanel();
+    const btns = container!.querySelectorAll<HTMLButtonElement>(".per-type-btn");
+    expect(btns.length).toBeGreaterThanOrEqual(2);
+    expect(btns[0].textContent).toContain("设置算法参数");
+    expect(btns[btns.length - 1].textContent).toBe("高级配置：设置初始布局");
+    expect(initialBtn()).toBe(btns[btns.length - 1]);
+  });
+
+  it("无母版态（doc=null）：置灰 + title「请先上传母版」；supported=null 不额外置灰", () => {
+    renderPanel();
+    const btn = initialBtn();
+    expect(btn.disabled).toBe(true);
+    expect(btn.title).toBe("请先上传母版");
+  });
+
+  it("无母版 + supported=false：无母版优先（title 仍指上传）", () => {
+    useInitialLayoutStore.setState({ supported: false });
+    renderPanel();
+    const btn = initialBtn();
+    expect(btn.disabled).toBe(true);
+    expect(btn.title).toBe("请先上传母版");
+  });
+
+  it("有母版 + supported=false（mock 态）：置灰 + title「当前 spyrrow 版本不支持热启动」", () => {
+    useUploadStore.setState({
+      status: "done",
+      doc: { doc_id: "il-test", filename: "M5336.dxf", sizes: [{ size: 28, pieces: [] }] },
+    });
+    useInitialLayoutStore.setState({ supported: false });
+    renderPanel();
+    const btn = initialBtn();
+    expect(btn.disabled).toBe(true);
+    expect(btn.title).toBe("当前 spyrrow 版本不支持热启动");
+  });
+
+  it("有母版 + supported=true：可点击 → openModal('initial_layout')", () => {
+    useUploadStore.setState({
+      status: "done",
+      doc: { doc_id: "il-test", filename: "M5336.dxf", sizes: [{ size: 28, pieces: [] }] },
+    });
+    useInitialLayoutStore.setState({ supported: true });
+    renderPanel();
+    const btn = initialBtn();
+    expect(btn.disabled).toBe(false);
+    expect(btn.title).toBe("");
+    act(() => btn.click());
+    expect(useControlPanelStore.getState().modal).toBe("initial_layout");
+  });
+
+  it("有母版 + supported=null（探测失败/未探知）：不置灰（未知不放大利害）", () => {
+    useUploadStore.setState({
+      status: "done",
+      doc: { doc_id: "il-test", filename: "M5336.dxf", sizes: [{ size: 28, pieces: [] }] },
+    });
+    renderPanel();
+    expect(initialBtn().disabled).toBe(false);
   });
 });
