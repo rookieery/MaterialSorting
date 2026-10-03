@@ -3,8 +3,9 @@
 GET ``/``（index.html）、GET ``/api/ptypes``（label 代表裁片）、POST ``/export``
 （PNG / R12-DXF / PLT marker 下载）、POST ``/api/plt-table-preview``（PLT 唛架
 信息表格 14 字段预览，2026-08-31）、GET ``/api/samples`` + ``/api/samples/file``
-（样例母版清单/取文件，2026-09-16，无会话依赖）。导出几何/渲染走 ``web.export``
-门面（路径不变）。
+（样例母版清单/取文件，2026-09-16，无会话依赖）、GET ``/api/warm-capability``
+（热启动能力探测，初始布局 US-001 2026-10-03，无会话依赖）。导出几何/渲染走
+``web.export`` 门面（路径不变）。
 
 多会话 US-003：全部读数据端点经 ``_resolve_session_state`` 从 SessionRegistry 解析
 pieces state —— ``X-Session-Id`` Header → 该会话 commit（US-002）注册的 per-doc
@@ -24,6 +25,7 @@ from urllib.parse import quote
 
 from .. import paths
 from .download_name import sanitize_download_name
+from .initial_layout import warm_capability
 from .export import (
     placed_to_world,
     parse_table_payload,
@@ -579,3 +581,22 @@ async def plt_table_preview(req: Request):
     info = build_info_table(world, width_mm=width_mm, gate_mm=gate_mm,
                             density=density, table_in=parse_table_payload({}))
     return {'rows': preview_rows(info)}
+
+
+# ----------------------------- GET /api/warm-capability 热启动能力探测（初始布局 US-001）
+
+
+@router.get('/api/warm-capability')
+def get_warm_capability():
+    """热启动能力探测（初始布局弹窗入口按钮置灰判定数据源，2026-10-03）。
+
+    恒 200 返回 ``{'supported': bool, 'version': str}``（``initial_layout.
+    warm_capability`` 单一数据源：``supported`` = 当前 spyrrow 是否支持
+    ``initial_solution``（``+ms>=1`` 私有 wheel），``version`` = 实装版本串
+    （包缺失 → ``'(未安装)'``）。探测恒不抛。
+
+    **无会话闸门**（不解析 ``X-Session-Id``）：热启动能力是 spyrrow 装载态的
+    **进程级属性**，与任何会话/母版无关 —— 与 ``/api/samples`` 同类（全局静态
+    数据）；前端在进入排料页/启动时拉一次缓存（US-004）。
+    """
+    return warm_capability()
