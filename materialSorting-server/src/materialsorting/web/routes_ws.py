@@ -37,21 +37,38 @@ band/prefix 解析前过 ``keygate.ensure_run_allowed``（样例/机器豁免分
 初始布局 US-002（prd-initial-layout 2026-10-03）：``_build_manifest_msg``（前端
 manifest 契约单一真相源）自 ``on_manifest`` 闭包提取为模块级纯函数 ——
 ``POST /api/initial-layout/generate``（routes_views）与本端点共享，行为零变化。
+
+初始布局 US-003（prd-initial-layout 2026-10-03）：StartPayload 新增可缺省
+``initial`` 键（``{placed: [{id, rotation, translation}, ...], demand_map?:
+{pid: N}}``，界面保存的初始布局），prefix 解析之后经 ``initial_layout.
+build_warm_payload``（US-001 web 侧镜像装载点）组 spyrrow ``initial_solution``
+载荷透传 ``solve_with_callback_proc``（band/prefix 开时用载荷自带 demand_map
+组合宇宙 —— pid 含 WB_/PS_ 主进程不可推导；plain 时经 pid_meta 同口径投影）。
+装载失败（unsupported / initial 形态非法 / warmstart 校验矩阵）**全降级不炸轮**
+（se 一期回退矩阵语义）：``initial_solution=None`` + 记 reason 照常起普通求解，
+不发 error 帧；final 消息 additive 附 ``warm_state`` —— worker ``{engaged,
+reason}`` 透传（装载点回显成功后 worker 闸门仍可能降级，实际灌入态以此为准）/
+routes_ws 侧预丢弃时合成 ``{'engaged': False, 'reason': 中文}``。**无 ``initial``
+键 = 恒 None**：solve 调用形与 final 键集逐字节不变（缺省零回归硬约束）。
 """
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from . import keygate
+from .initial_layout import build_warm_payload
 from .runtime import _executor
 from .sessions import SessionError, registry as session_registry
 from .solver import solve_with_callback_proc
 
 router = APIRouter()
 _SENTINEL = object()
+
+_log = logging.getLogger(__name__)
 
 # US-011 band / US-003 prefix 服务端校验共用常量。
 _BAND_LABEL_RE = re.compile(r'^g\d+$')
@@ -321,6 +338,41 @@ async def ws_solve(ws: WebSocket):
                 pass
             return
 
+        # 初始布局 US-003：可缺省 initial 键热启动（prefix 解析之后）。载荷
+        # {placed, demand_map?} 经 initial_layout.build_warm_payload（US-001 装载
+        # 点，全降级不抛）组 spyrrow initial_solution；band/prefix 开时用载荷
+        # 自带 demand_map（组合宇宙 pid 含 WB_/PS_，主进程不可推导），plain 时
+        # demand_map=None 经 pid_meta 同口径投影（与 worker 实例宇宙一致）。
+        # 装载失败 → initial_solution=None + 记 reason 照常起普通求解（不发
+        # error 帧，se 一期回退矩阵语义）；无 initial 键 = 恒 None 逐字节旧行为。
+        # build_pid_meta 几何秒级以下，仍走 to_thread 不阻塞事件循环（keygate
+        # 先例）。
+        warm_payload = None
+        warm_drop_reason: str | None = None
+        initial_raw = msg.get('initial')
+        if initial_raw is not None:
+            if not isinstance(initial_raw, dict):
+                warm_drop_reason = (f'initial 载荷形态非法（应为对象，收到 '
+                                    f'{type(initial_raw).__name__}）')
+            else:
+                dm = initial_raw.get('demand_map')
+                # band/prefix 开才采用载荷 demand_map；非 dict（缺席/脏形态）→
+                # None = plain 投影，组合 pid 会在装载点前置复检降级（人话 reason）。
+                composite_on = band_cfg is not None or prefix_cfg is not None
+                demand_map = dm if composite_on and isinstance(dm, dict) else None
+                try:
+                    warm_payload, warm_drop_reason = await asyncio.to_thread(
+                        build_warm_payload, pieces, initial_raw.get('placed'),
+                        gate_mm=gate_mm, sizes=sizes, per_type=per_type,
+                        quantities=quantities, params=params,
+                        demand_map=demand_map)
+                except Exception as e:      # noqa: BLE001 防御：装载点契约不抛，兜底同样降级不炸轮
+                    warm_payload = None
+                    warm_drop_reason = f'初始布局装载失败：{e}'
+            if warm_payload is None:
+                _log.warning('WS initial 布局装载失败，已降级普通求解：%s',
+                             warm_drop_reason)
+
         # US-026：pieces_snapshot = 纯 dict 列表（deep copy 防连接内 mutate），连同 solve_params
         # 传给 solve_with_callback_proc → solve_worker 子进程内 build_instance（spyrrow 对象
         # 不可 pickle，主进程不构造 instance）。
@@ -380,11 +432,19 @@ async def ws_solve(ws: WebSocket):
             state_box['process'] = proc
 
         def run_solve():
-            """executor 线程：阻塞跑 solve_with_callback_proc → 投 final/error/SENTINEL。"""
+            """executor 线程：阻塞跑 solve_with_callback_proc → 投 final/error/SENTINEL。
+
+            initial_solution 仅在场才传（solve_worker._solve 同款调用形约定）：
+            无 initial 键的普通运行调用形与现行逐字节一致 —— 旧测试桩/旧调用方
+            不接受该 kwarg 也照常工作（run_solve 在 executor 线程抛 TypeError 会
+            吞掉 SENTINEL 投递 → write loop 永久挂起，故调用形兼容是硬约束）。
+            """
+            warm_kw = ({'initial_solution': warm_payload}
+                       if warm_payload is not None else {})
             _, final_data, elapsed, err = solve_with_callback_proc(
                 pieces_snapshot, gate_mm, solve_params,
                 on_manifest=on_manifest, on_report=on_report, on_process=on_process,
-                on_stage=on_stage, band=band_cfg, prefix=prefix_cfg,
+                on_stage=on_stage, band=band_cfg, prefix=prefix_cfg, **warm_kw,
             )
             # stopped 标志由 read_loop 在 stop/断开时置 True → 不再投 final/error（避免
             # 与 stopped 消息冲突；客户端只收 stopped 或 final/error，不会同时收）。
@@ -406,6 +466,16 @@ async def ws_solve(ws: WebSocket):
                     # 旧消息逐字段不变）。
                     if 'prefix' in final_data:
                         final_msg['prefix'] = final_data['prefix']
+                    # 初始布局 US-003：warm 实际灌入态 additive 透传。worker final
+                    # 附 {engaged, reason}（initial_solution 在场才附 —— 装载点回显
+                    # 成功后 worker 闸门仍可能降级，实际灌入态以此为准）原样转发；
+                    # routes_ws 侧预丢弃（装载失败）时合成 engaged=False + 中文
+                    # reason。无 initial 键两分支都不命中 = final 键集逐字节不变。
+                    if isinstance(final_data.get('warm_state'), dict):
+                        final_msg['warm_state'] = final_data['warm_state']
+                    elif warm_drop_reason is not None:
+                        final_msg['warm_state'] = {'engaged': False,
+                                                   'reason': warm_drop_reason}
                     loop.call_soon_threadsafe(queue.put_nowait, final_msg)
             loop.call_soon_threadsafe(queue.put_nowait, _SENTINEL)
 

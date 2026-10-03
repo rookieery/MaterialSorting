@@ -1293,7 +1293,13 @@ ws://127.0.0.1:8010/ws/solve?sid=<sid>     # 缺省/空串 → default 会话（
   "per_type": {"g03": {"d": 1.5}},  // 可选，逐片高级覆盖（US-002 起 label 键；2026-08-18 回退 US-004 矩阵化后单级，命中即对该 g 码全部码号生效；旧 ptype / 旧两级 (label,sizeKey) 键不命中为 no-op）
   "quantities": {"g01": {"28": 2, "30": 0}, "g02": {"28": 1}},  // US-022 可选，label→sizeKey→demand；0=该 piece 该码不排；缺省=null→全片 demand=1
   "band": {"enabled": true, "label": "g05"},  // US-011 可选腰头成带（2026-08-22 简化后仅 enabled+label 两键）；缺省/null/{}/非 dict/enabled falsy = 关闭（旧行为逐字段不变）
-  "prefix": {"enabled": true, "front": "g02", "back": "g03"}  // US-003 可选起始端成套前后幅（无 size —— 资格码中 seeded 随机选码）；缺省/null/{}/非 dict/enabled falsy = 关闭（旧行为逐字段不变）；与 band 可同时开（双开）
+  "prefix": {"enabled": true, "front": "g02", "back": "g03"},  // US-003 可选起始端成套前后幅（无 size —— 资格码中 seeded 随机选码）；缺省/null/{}/非 dict/enabled falsy = 关闭（旧行为逐字段不变）；与 band 可同时开（双开）
+  "initial": {                    // 初始布局 US-003（2026-10-03）可选热启动（保存的初始布局）；缺省/null = 恒 None（旧行为逐字节不变）
+    "placed": [                   // 界面保存的放置列表（与 frame placed_items 同形态）
+      {"id": "g01_28", "rotation": 0.0, "translation": [0.0, 0.0]}, ...
+    ],
+    "demand_map": {"WB_g01": 1, "g02_28": 1}  // 可选 {pid: N}；band/prefix 开（组合宇宙）时必供 —— WB_/PS_ pid 主进程不可推导
+  }
 }
 ```
 
@@ -1316,6 +1322,13 @@ ws://127.0.0.1:8010/ws/solve?sid=<sid>     # 缺省/空串 → default 会话（
 - `front`/`back` 各须匹配 `^g\d+$` 且存在于当前母版，且 **front ≠ back**（须为不同 g 码，前/后幅各一）；
 - `eligible_sizes(quantities, front, back, sizes=sizes)` 须 ≥1 资格码（front 与 back 同码 demand==2 恰好 2+2）；无资格码 → error「当前数量无 2+2 资格码（front/back 各码 demand 须恰为 2）—— 请在数量矩阵把所选码前后幅配成 2+2」；
 - 返回 `{'front': str, 'back': str}` 传 `solve_worker`（载荷多余键如 `size` 静默忽略）。
+
+**初始布局 US-003 `initial` 热启动装载**（prefix 解析之后，`initial_layout.build_warm_payload` US-001 web 侧镜像装载点，`asyncio.to_thread` 不阻塞事件循环；**装载失败全降级不炸轮** —— se 一期回退语义：不发 error 帧，`initial_solution=None` + 记 reason 照常起普通求解，final 合成 `warm_state.engaged=false`）：
+
+- 载荷非对象（字符串/列表/数）→ 降级「initial 载荷形态非法」；`placed` 空/非列表/条目形态非法、pid 需求映射外（「母版或数量/参数已变更？」）、warmstart 校验矩阵（完整解硬约束/mirror/畸形）同降级（中文 reason 直接透传）；
+- **demand_map 双口径**：band/prefix 开（组合宇宙）→ 用载荷自带 `demand_map`（WB_/PS_ pid 只存活在 worker 实例内，主进程不可推导；缺席/非 dict → 落 plain 投影，组合 pid 在前置复检降级不硬造数据）；plain → **忽略**载荷 `demand_map`，经 `build_pid_meta` 同口径投影（与 worker 实例宇宙一致防 instance_mismatch）；
+- 能力探测 `warmstart.warm_start_supported()` False（PyPI 0.9.0 / ms0 实况）判定序首位同样降级「当前 spyrrow 版本不支持热启动」；
+- **`initial_solution` kwarg 仅在场才传**（`solve_worker._solve` 同款调用形约定）：无 initial 键的普通运行 solve 调用形与 final 键集**逐字节不变**（缺省零回归硬约束，键级锁 tests/test_web_ws_initial.py）。
 
 > **US-004 前端侧（2026-08-25）**：`lib/params.ts collectPrefix` 三态解析（关 / 开未选或 front==back 或非 `^g\d+$` → null；开且有效 → `{enabled:true,front,back}`）；弹窗勾选区有 `prefixEligibleSizes` 本地预检提示（同口径 missing→0、'null' 跳过、sizes 过滤），**只是提示不拦截** —— 上表服务端校验是唯一权威。
 
@@ -1414,11 +1427,17 @@ ws://127.0.0.1:8010/ws/solve?sid=<sid>     # 缺省/空串 → default 会话（
     },
     "residual_mm": 1189.4,        // 2026-09-02：gate − 组合片高（与 stage 同值）
     "fallback": false             // 2026-09-02：True = 全无可行组合退回 4 片 seeded 兜底
+  },
+  "warm_state": {                 // 初始布局 US-003（2026-10-03）：StartPayload 带 initial 键时 additive 出现
+    "engaged": true,              // 实际灌入态：true = spyrrow 已接受初始解热启动
+    "reason": null                // engaged=false 时的中文原因（unsupported / 校验未通过 / 数量参数不一致…）
   }
 }
 ```
 
 prefix 关闭时 final **无 `prefix` 键**（逐字段零回归）；`width_mm` 口径：pin skipped/回退 = solver 原值，置换成功 = 原始轮廓世界几何重算。2026-09-02 起 `extra`/`residual_mm`/`fallback` 三键 additive（旧前端忽略不炸；`prefix_runs` 工件同三键回显，US-005 回放对拍数据源）。
+
+`warm_state`（初始布局 US-003，2026-10-03 additive）：**实际灌入态以此键为准** —— 两数据源择一：worker final `{engaged, reason}` 原样转发（装载点回显成功后 worker 三闸门仍可能降级，token reason 如 `instance_mismatch`）或 routes_ws 侧预丢弃（装载失败）时合成 `{'engaged': false, 'reason': <中文>}`。**无 `initial` 键（含 null）时 final 无 `warm_state` 键**（键集逐字节不变）。
 
 ### 5. server → error（异常时）
 
