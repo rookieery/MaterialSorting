@@ -31,8 +31,20 @@ placed 列表（展开视图或 band/prefix 组合宇宙条目）安全转换为
 （routes_views）恒 200 暴露给前端按钮置灰判定 —— 能力是**进程级属性**，无会话
 闸门。
 
+US-002 生成编排 ``generate_initial_layout()``：初始布局弹窗「打开/刷新」的数据源
+—— ``web.prefix_accept.run_arm`` 同款同步收集形态（回调塞 list 收 manifest/frames/
+final）经 ``solve_with_callback_proc(..., record_composite=True)`` 跑短求解
+（``time_budget`` 由端点传 ``INITIAL_LAYOUT_GEN_TIME_S``），取**密度最大可行帧**
+（可行过滤 ``solve_worker._frame_allowed`` 白名单在发射层已保证）组响应：
+``{ok, manifest(WS 前端契约同形), placed(展开视图，永无 WB_/PS_), width_mm,
+density, composite?{placed_items, demand_map}, prefix?}`` —— ``composite`` 段仅在
+band/prefix 开时随帧在场（worker 展开**前** solver 原始条目 + 组合宇宙 demand_map，
+US-006 前端保存 warm 载荷的组合视角数据源）；失败抛 ``InitialLayoutGenError``
+（中文 message，端点映射 502）。
+
 分层约束：本模块属 ``web``，仅 import 同包兄弟 ``solver``（build_pid_meta /
-_raw_polygon_map / _physical_width_mm）+ ``nesting_engine.warmstart``；
+_raw_polygon_map / _physical_width_mm / solve_with_callback_proc）/ ``routes_ws``
+（``_build_manifest_msg``，函数内延迟）+ ``nesting_engine.warmstart``；
 **禁 import server/cli**（AST 守卫在 tests/test_web_initial_layout.py，镜像
 tests/test_web_edit_hold.py 套路）。``__main__`` 合成夹具冒烟自检
 （``python -m materialsorting.web.initial_layout``）无真实母版 / spyrrow solve
@@ -148,6 +160,104 @@ def build_warm_payload(pieces, placed, *, gate_mm=None, sizes=None,
     except Exception as e:                 # noqa: BLE001 防御：装载点绝不抛（理论不可达）
         return None, f'初始布局装载失败：{e}'
     return payload, None
+
+
+# ------------------------------------------------ US-002 生成编排（短求解）
+
+# 短求解预算（秒）：弹窗打开/刷新一次的生成时长（求解 + 子进程启停开销 ≈ 预算+数
+# 秒，US-007 冒烟按 ~15s 等待口径）。PRD 既定 10，端点（routes_views）经本常量
+# 组 solve_params（测试断言 time_budget 数据源）。
+INITIAL_LAYOUT_GEN_TIME_S = 10
+
+
+class InitialLayoutGenError(Exception):
+    """初始布局生成失败（求解错误 / 无 manifest / 无可行帧）。
+
+    ``str(e)`` = 中文错误文案，端点（routes_views）捕获后映射 ``502 {error}``。
+    与装载点 ``build_warm_payload`` 的 ``(None, reason)`` 降级风格刻意不同：生成本
+    身就是用户显式动作（弹窗打开/刷新），失败即结构化报错可重试，无静默降级场景。
+    """
+
+
+def generate_initial_layout(pieces_snapshot, gate_mm, solve_params, *,
+                            band=None, prefix=None) -> dict:
+    """短求解同步收集 → 完整初始布局响应段（US-002，初始布局弹窗数据源）。
+
+    ``web.prefix_accept.run_arm`` 同款同步收集形态（回调塞 list 收 manifest/frames/
+    final）：``solve_with_callback_proc`` 与 ``/ws/solve`` **同一求解管线**（同一
+    ``solve_worker`` 子进程内 build_instance + solve + 帧前展开 WB_/PS_），仅预算短
+    （端点传 ``time_budget=INITIAL_LAYOUT_GEN_TIME_S``）且 ``record_composite=True``
+    （band/prefix 开时帧附展开前组合视角 ``composite`` 段；关闭时 worker 不附，
+    响应同样无该键）。**须在工作线程内调用**（端点经 ``run_in_threadpool``，防阻塞
+    事件循环）；阻塞秒级 = ``solve_params['time_budget']`` + 子进程启停开销。
+
+    Parameters
+    ----------
+    pieces_snapshot, gate_mm, solve_params, band, prefix
+        与 ``solve_with_callback_proc`` 同名参数同形（pieces_snapshot = 会话 pieces
+        纯 dict 拷贝；band/prefix = ``routes_ws._parse_band``/``_parse_prefix`` 校验
+        产物 worker 形态）。
+
+    Returns
+    -------
+    dict
+        ``{ok: True, manifest, placed, width_mm, density, composite?, prefix?}``：
+        - ``manifest`` = WS 前端契约同形（``routes_ws._build_manifest_msg`` 单一真相
+          源，前端 US-006 合成伪 RunRecord 直用）；
+        - ``placed``/``width_mm``/``density`` = **密度最大可行帧**（density 已由 proc
+          层 ``_apply_density_dual`` 换算原面积口径；可行过滤在 worker 发射层，
+          本函数不做二次过滤）；placed 恒为展开视图三键条目（永无 WB_/PS_）；
+        - ``composite`` 仅在 band/prefix 开时在场（展开前 solver 原始条目 + 组合
+          宇宙 demand_map，US-006 保存 warm 组合载荷的数据源）；
+        - ``prefix`` = worker final 统计段（prefix 开时在场）。
+
+    Raises
+    ------
+    InitialLayoutGenError
+        求解错误（含 worker error / 意外退出）/ manifest 缺席 / 无任何可行帧。
+    """
+    # 调用时 import（monkeypatch materialsorting.web.solver.solve_with_callback_proc
+    # 生效 = 测试注入点；pipeline 先例）+ routes_ws 兄弟延迟（模块级无环）。
+    from .routes_ws import _build_manifest_msg
+    from .solver import solve_with_callback_proc
+
+    manifest = None
+    frames: list = []
+    final = None
+
+    def on_manifest(m):
+        nonlocal manifest
+        manifest = m
+
+    def on_report(r):
+        frames.append(r)
+
+    _proc, final, _elapsed, err = solve_with_callback_proc(
+        [dict(p) for p in pieces_snapshot], float(gate_mm), dict(solve_params),
+        on_manifest=on_manifest, on_report=on_report,
+        band=band, prefix=prefix, record_composite=True)
+
+    if err is not None:
+        raise InitialLayoutGenError(f'求解失败: {err}')
+    if manifest is None:
+        raise InitialLayoutGenError('求解失败: 未收到裁片清单（manifest）')
+    if not frames:
+        raise InitialLayoutGenError('求解失败: 未产生任何可行帧')
+
+    # 密度最大可行帧（帧序无关 argmax；等值取先到帧 = max 语义）。
+    best = max(frames, key=lambda f: float(f.get('density') or 0.0))
+    resp = {
+        'ok': True,
+        'manifest': _build_manifest_msg(manifest, float(gate_mm)),
+        'placed': best.get('placed_items') or [],
+        'width_mm': best.get('width_mm'),
+        'density': best.get('density'),
+    }
+    if isinstance(best.get('composite'), dict):
+        resp['composite'] = best['composite']
+    if final is not None and isinstance(final.get('prefix'), dict):
+        resp['prefix'] = final['prefix']
+    return resp
 
 
 # --------------------------------------------------------------- 冒烟自检

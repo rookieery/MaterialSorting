@@ -1329,5 +1329,16 @@
         "passes": true
       }
     ]
+  },
+  {
+    "branchName": "ralph/initial-layout-warm-start",
+    "stories": [
+      {
+        "id": "US-001",
+        "title": "web 侧 warm 载荷装载点 + 能力探测端点",
+        "description": "后端：为「界面录入初始布局 → WS 热启动」提供 web 侧 warm 载荷装载单一真相源（镜像 cli/pipeline._load_warm_payload 语义；warm-start 一期结论 = web 侧无此装载点）。\n\n具体任务：\n1. 新模块 materialSorting-server/src/materialsorting/web/initial_layout.py —— build_warm_payload(pieces, placed, *, gate_mm, sizes, per_type, quantities, params, demand_map=None) -> tuple[dict|None, str|None]：demand_map=None 时经 web.solver.build_pid_meta 同口径投影 {pid: demand}（与 worker 实例宇宙一致，防 instance_mismatch）；demand_map 给定时（band/prefix 组合宇宙）直接采用；strip_width 用 solver._physical_width_mm 同款物理包络公式（ceil(maxX−1e-9)）计算；内部调 nesting_engine.warmstart.build_initial_solution，其 ValueError / warm_start_supported() False / 形态非法 → 返回 (None, 中文 reason)，全降级绝不抛。\n2. 同模块 warm_capability() -> {'supported': bool, 'version': str} 包装 warmstart.warm_start_supported()（版本串经 importlib.metadata 容错读取）。\n3. web/routes_views.py 挂 GET /api/warm-capability（恒 200 返回 warm_capability() dict；无会话闸门——能力是进程级属性）。\n4. 分层红线：模块仅 import web 兄弟模块（solver）+ nesting_engine.warmstart，禁 import server/cli（AST 守卫写进 tests/test_web_initial_layout.py，镜像 tests/test_web_edit_hold.py 套路）。\n5. 模块带 __main__ 合成夹具冒烟（python -m materialsorting.web.initial_layout 自检 exit 0，无真实母版/spyrrow solve 依赖）。\n\n验收标准：\n- pytest 新增：装载点单测（合法 round-trip / mirror 拒绝 reason / 每 pid 条数≠demand reason / 组合 demand_map 直用 / strip_width 与 _physical_width_mm 对拍 / unsupported 降级不抛）+ TestClient 端点测试 + AST 守卫\n- python -m materialsorting.web.initial_layout 冒烟 exit 0、分层依赖未反向\n- 既有 pytest 全量零回归",
+        "passes": true
+      }
+    ]
   }
 ]

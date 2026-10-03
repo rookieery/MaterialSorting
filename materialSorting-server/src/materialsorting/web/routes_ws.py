@@ -33,6 +33,10 @@ key 授权闸门（prd-key-authorization-system US-005）：start 在 pieces 校
 band/prefix 解析前过 ``keygate.ensure_run_allowed``（样例/机器豁免分支见 keygate；
 ``asyncio.to_thread`` 包裹）。拒绝 → ``{'type':'error','code':'key_blocked',
 'message':中文}`` 帧 + 显式 close，不建求解子进程。
+
+初始布局 US-002（prd-initial-layout 2026-10-03）：``_build_manifest_msg``（前端
+manifest 契约单一真相源）自 ``on_manifest`` 闭包提取为模块级纯函数 ——
+``POST /api/initial-layout/generate``（routes_views）与本端点共享，行为零变化。
 """
 from __future__ import annotations
 
@@ -51,6 +55,53 @@ _SENTINEL = object()
 
 # US-011 band / US-003 prefix 服务端校验共用常量。
 _BAND_LABEL_RE = re.compile(r'^g\d+$')
+
+
+def _build_manifest_msg(m: dict, gate_mm: float) -> dict:
+    """worker manifest dict → 前端 manifest 契约消息（单一真相源）。
+
+    初始布局 US-002（prd-initial-layout 2026-10-03）自 ``ws_solve`` 的 ``on_manifest``
+    闭包提取为模块级纯函数（行为零变化）—— ``POST /api/initial-layout/generate``
+    与 WS 同一前端 manifest 契约（``ManifestMsg``：``{type, gate_mm, total_area_mm2,
+    n_eroded, pieces}``，pieces = pid_meta 条目白名单投影 + ``id`` 键），两路共享防
+    契约漂移。``gate_mm`` 由调用方传**已裁定值**（payload 覆盖或 state 回退，与
+    WS 连接内闭包值同口径），不读 ``m['gate_mm']``。
+    """
+    total_area = m.get('total_area', 0.0)
+    return {
+        'type': 'manifest',
+        'gate_mm': gate_mm,
+        # 2026-08-28 起 gate_nest_mm 字段已删（输入幅宽=实际幅宽单一口径，
+        # 历史红虚线数据源随之移除）。
+        'total_area_mm2': total_area,
+        'n_eroded': m.get('n_eroded', 0),
+        'pieces': [
+            # US-002：manifest 全 label 键（无 ptype）；颜色 = size_color(尺码)，
+            # 2026-08-20 起同码同色跨片型一致（此前按 g 码）。
+            {'id': pid, 'size': meta['size'],
+             'color': meta['color'],
+             'area_mm2': meta['area_mm2'], 'polygon': meta['polygon'],
+             # 2026-09-06 口径统一 additive：原始毛版轮廓（与 /export 同源）
+             # + 实际腐蚀距离 d —— 前端画布填充/重合指标/吸附按 raw_polygon
+             # 物理口径渲染（所见即 PLT 所得），polygon（erode）作碰撞参考线。
+             # 缺键回退 polygon（老 worker / 测试桩兼容）。
+             'raw_polygon': meta.get('raw_polygon') or meta['polygon'],
+             'd_mm': meta.get('d_mm', 0.0),
+             # g 码裁片标识（intermediate label 经 build_instance 透传；旧
+             # intermediate 无 → None，前端 NestSVG tooltip 按缺席降级不显示）。
+             'label': meta.get('label'),
+             # demand：该 pid 的副本数（build_instance 透传；缺省 1 = 单副本/旧兼容）。
+             # 前端 NestSVG 按 demand 建 N 个 polygon 副本，避免 demand>1 时同 id 多 placement 互相覆盖。
+             'demand': meta.get('demand', 1),
+             # US-024：5 层透传字段（None-safe；缺字段时各层视为空/None，前端 layer-aware 渲染）。
+             'net_polygon': meta.get('net_polygon', []),
+             'internal_lines': meta.get('internal_lines', []),
+             'notches': meta.get('notches', []),
+             'grain_line': meta.get('grain_line'),
+             }
+            for pid, meta in m['pid_meta'].items()
+        ],
+    }
 
 
 def _band_demand(p, quantities) -> int:
@@ -295,42 +346,9 @@ async def ws_solve(ws: WebSocket):
             """子进程 manifest → 组装前端契约消息 → 投 asyncio queue。"""
             session_registry.touch(sid)   # US-003：求解回调刷活性（客户端求解中不发消息）
             state_box['n_eroded'] = m.get('n_eroded', 0)
-            total_area = m.get('total_area', 0.0)
-            manifest_msg = {
-                'type': 'manifest',
-                'gate_mm': gate_mm,
-                # 2026-08-28 起 gate_nest_mm 字段已删（输入幅宽=实际幅宽单一口径，
-                # 历史红虚线数据源随之移除）。
-                'total_area_mm2': total_area,
-                'n_eroded': m.get('n_eroded', 0),
-                'pieces': [
-                    # US-002：manifest 全 label 键（无 ptype）；颜色 = size_color(尺码)，
-                    # 2026-08-20 起同码同色跨片型一致（此前按 g 码）。
-                    {'id': pid, 'size': meta['size'],
-                     'color': meta['color'],
-                     'area_mm2': meta['area_mm2'], 'polygon': meta['polygon'],
-                     # 2026-09-06 口径统一 additive：原始毛版轮廓（与 /export 同源）
-                     # + 实际腐蚀距离 d —— 前端画布填充/重合指标/吸附按 raw_polygon
-                     # 物理口径渲染（所见即 PLT 所得），polygon（erode）作碰撞参考线。
-                     # 缺键回退 polygon（老 worker / 测试桩兼容）。
-                     'raw_polygon': meta.get('raw_polygon') or meta['polygon'],
-                     'd_mm': meta.get('d_mm', 0.0),
-                     # g 码裁片标识（intermediate label 经 build_instance 透传；旧
-                     # intermediate 无 → None，前端 NestSVG tooltip 按缺席降级不显示）。
-                     'label': meta.get('label'),
-                     # demand：该 pid 的副本数（build_instance 透传；缺省 1 = 单副本/旧兼容）。
-                     # 前端 NestSVG 按 demand 建 N 个 polygon 副本，避免 demand>1 时同 id 多 placement 互相覆盖。
-                     'demand': meta.get('demand', 1),
-                     # US-024：5 层透传字段（None-safe；缺字段时各层视为空/None，前端 layer-aware 渲染）。
-                     'net_polygon': meta.get('net_polygon', []),
-                     'internal_lines': meta.get('internal_lines', []),
-                     'notches': meta.get('notches', []),
-                     'grain_line': meta.get('grain_line'),
-                     }
-                    for pid, meta in m['pid_meta'].items()
-                ],
-            }
-            loop.call_soon_threadsafe(queue.put_nowait, manifest_msg)
+            # 消息构造委托 _build_manifest_msg（US-002 提取，HTTP 生成端点共享契约）。
+            loop.call_soon_threadsafe(queue.put_nowait,
+                                      _build_manifest_msg(m, gate_mm))
 
         def on_report(r):
             """子进程 frame（density 双口径已由 solve_with_callback_proc 换算）→ 加 index 投队列。"""

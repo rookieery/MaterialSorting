@@ -4,8 +4,9 @@ GET ``/``（index.html）、GET ``/api/ptypes``（label 代表裁片）、POST `
 （PNG / R12-DXF / PLT marker 下载）、POST ``/api/plt-table-preview``（PLT 唛架
 信息表格 14 字段预览，2026-08-31）、GET ``/api/samples`` + ``/api/samples/file``
 （样例母版清单/取文件，2026-09-16，无会话依赖）、GET ``/api/warm-capability``
-（热启动能力探测，初始布局 US-001 2026-10-03，无会话依赖）。导出几何/渲染走
-``web.export`` 门面（路径不变）。
+（热启动能力探测，初始布局 US-001 2026-10-03，无会话依赖）、POST
+``/api/initial-layout/generate``（初始布局短求解生成，初始布局 US-002 2026-10-03，
+会话族端点）。导出几何/渲染走 ``web.export`` 门面（路径不变）。
 
 多会话 US-003：全部读数据端点经 ``_resolve_session_state`` 从 SessionRegistry 解析
 pieces state —— ``X-Session-Id`` Header → 该会话 commit（US-002）注册的 per-doc
@@ -16,6 +17,7 @@ pieces state —— ``X-Session-Id`` Header → 该会话 commit（US-002）注�
 from __future__ import annotations
 
 import os
+import threading
 from pathlib import Path
 
 from fastapi import APIRouter, Request
@@ -600,3 +602,140 @@ def get_warm_capability():
     数据）；前端在进入排料页/启动时拉一次缓存（US-004）。
     """
     return warm_capability()
+
+
+# ------------------- POST /api/initial-layout/generate 初始布局生成（初始布局 US-002）
+
+# per-session 单飞锁（模块级 dict+lock）：sid → True 表示该会话生成中；sid 缺省
+# （default 会话）用 ``''`` 键。跨会话并发放开（与 strategy 状态槽单飞同哲学），
+# 锁条目在请求 finally 弹出（成功/失败/异常路径都释放）。短求解预算
+# ``INITIAL_LAYOUT_GEN_TIME_S`` 定义在 ``initial_layout``（特征模块单一真相源）。
+_INITIAL_LAYOUT_BUSY: dict[str, bool] = {}
+_INITIAL_LAYOUT_BUSY_LOCK = threading.Lock()
+
+
+@router.post('/api/initial-layout/generate')
+async def initial_layout_generate(req: Request):
+    """生成完整初始布局（初始布局弹窗打开/刷新的数据源，US-002 2026-10-03）。
+
+    样板 = ``/api/edit-polish``（会话闸门 + ``run_in_threadpool``）+ ``web.
+    prefix_accept.run_arm`` 的同步求解收集形态（求解编排在 ``initial_layout.
+    generate_initial_layout``，回调塞 list 收 manifest/frames/final，取密度最大
+    可行帧组响应）。
+
+    body = WS StartPayload 同形子集 ``{sizes?, per_type?, quantities?, params?,
+    gate_mm?, band?, prefix?, seed?}``（缺省全沿用会话/求解缺省值；``gate_mm``
+    正值覆盖 intermediate 门幅，与 WS routes_ws 同法 —— 前端 cm×10 后送 mm）。
+    band/prefix 校验复用 ``routes_ws._parse_band``/``_parse_prefix`` 单一校验点
+    （函数内延迟 import 防环，band-preview 先例）。**不设 key 闸门**（与
+    band/prefix-preview 预览族同口径 —— 本端点是短求解预生成，不是正式运行）。
+
+    响应（200）::
+
+        {ok: true,
+         manifest,                    # WS 前端契约同形（_build_manifest_msg 单一真相源）
+         placed,                      # 密度最大可行帧展开视图三键条目（永无 WB_/PS_）
+         width_mm, density,           # 该帧物理包络料长 / 原面积口径密度（proc 层换算）
+         composite?,                  # 仅 band/prefix 开时在场：{placed_items(展开前
+                                      #   组合视角，含 WB_/PS_), demand_map}（US-006 保存
+                                      #   warm 组合载荷的数据源；plain 帧无此键）
+         prefix?}                     # prefix 开时 worker final 统计段
+
+    错误矩阵：sid 过期/非法 → 401/400（SessionError 结构化，edit-polish 同款）；
+    body 非 JSON / 非 JSON 对象 / seed 非法 → 400；会话空/无母版 → 400
+    「请先上传母版」；band/prefix 非法 → 400（routes_ws 校验文案）；同会话生成中
+    再请求 → 409（per-session 单飞锁）；求解失败（含 worker error / 无可行帧）→
+    502 ``{error: 中文}``
+    """
+    from . import edit_hold
+    from .initial_layout import (
+        INITIAL_LAYOUT_GEN_TIME_S,
+        InitialLayoutGenError,
+        generate_initial_layout,
+    )
+    from .routes_ws import _parse_band, _parse_prefix
+
+    # 会话闸门（edit-polish 同款：需 sid 做单飞键 + edit_hold，不走
+    # _resolve_session_state 的 state-only 视图）。
+    sid = (req.headers.get('x-session-id') or '').strip() or None
+    try:
+        st = session_registry.resolve(sid)   # create=False：不给未知 sid 建会话
+    except SessionError as e:
+        return JSONResponse(e.payload(), status_code=e.status)
+
+    try:
+        payload = await req.json()
+    except Exception:
+        return JSONResponse({'error': '请求体必须是 JSON'}, status_code=400)
+    if not isinstance(payload, dict):
+        return JSONResponse({'error': '请求体必须是 JSON 对象'}, status_code=400)
+
+    state = st.state
+    pieces = state.get('pieces') or []
+    gate_mm = state.get('gate_mm') or 0.0
+    if not pieces or gate_mm <= 0:
+        return JSONResponse({'error': '排料数据为空（请先上传母版）'}, status_code=400)
+
+    # 求解上下文（WS start 同形子集；quantities 非 dict 归 None = 全片 demand=1）。
+    sizes = payload.get('sizes') or []
+    req_gate = payload.get('gate_mm')
+    if req_gate:
+        try:
+            g = float(req_gate)
+            if g > 0:
+                gate_mm = g
+        except (TypeError, ValueError):
+            pass
+    try:
+        seed = int(payload.get('seed') or 0)
+    except (TypeError, ValueError):
+        return JSONResponse({'error': 'seed 非法（须为整数）'}, status_code=400)
+    params = payload.get('params') or None
+    per_type = payload.get('per_type') or None
+    quantities = payload.get('quantities')
+    if not isinstance(quantities, dict):
+        quantities = None
+
+    # band/prefix 校验：与 WS start 同一检查点（单一校验点，非法 → 400 中文）。
+    try:
+        band_cfg = _parse_band(payload.get('band'), pieces, quantities)
+    except ValueError as e:
+        return JSONResponse({'error': str(e)}, status_code=400)
+    try:
+        prefix_cfg = _parse_prefix(payload.get('prefix'), pieces, quantities, sizes)
+    except ValueError as e:
+        return JSONResponse({'error': str(e)}, status_code=400)
+
+    # per-session 单飞：同会话生成中 → 409（跨会话放开；finally 释放）。
+    key = sid or ''
+    with _INITIAL_LAYOUT_BUSY_LOCK:
+        if _INITIAL_LAYOUT_BUSY.get(key):
+            return JSONResponse(
+                {'error': '该会话初始布局正在生成中，请稍候再试'}, status_code=409)
+        _INITIAL_LAYOUT_BUSY[key] = True
+
+    try:
+        solve_params = {
+            'time_budget': INITIAL_LAYOUT_GEN_TIME_S,
+            'seed': seed,
+            'sizes': sizes,
+            'params': params,
+            'per_type': per_type,
+            'quantities': quantities,
+        }
+        pieces_snapshot = [dict(p) for p in pieces]
+        resp = await run_in_threadpool(
+            generate_initial_layout, pieces_snapshot, gate_mm, solve_params,
+            band=band_cfg, prefix=prefix_cfg)
+    except InitialLayoutGenError as e:
+        return JSONResponse({'error': str(e)}, status_code=502)
+    except Exception as e:                  # noqa: BLE001 防御：求解编排异常不 500
+        return JSONResponse({'error': f'初始布局生成失败: {e}'}, status_code=502)
+    finally:
+        with _INITIAL_LAYOUT_BUSY_LOCK:
+            _INITIAL_LAYOUT_BUSY.pop(key, None)
+
+    # 成功顺手编辑钉住（edit-polish 同口径：default 豁免不进钉住表）。
+    if sid:
+        edit_hold.refresh(sid, session_registry.clock())
+    return resp

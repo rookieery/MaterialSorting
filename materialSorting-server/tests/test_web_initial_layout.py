@@ -1,40 +1,65 @@
-"""初始布局 web 侧 warm 载荷装载点 + 热启动能力探测端点测试（US-001，prd-initial-layout）。
+"""初始布局 web 侧 warm 载荷装载点 + 能力探测 + 生成端点测试（prd-initial-layout）。
 
 夹具全合成（2 片矩形，与 conftest/test_warmstart_chain 同构），能力探测经
 monkeypatch ``warmstart.warm_start_supported`` 打桩（initial_layout 按调用时模块
-属性取函数 → 桩生效），PyPI 0.9.0 / ms0 装载态同样全绿。
+属性取函数 → 桩生效），PyPI 0.9.0 / ms0 装载态同样全绿；US-002 生成端点经
+monkeypatch ``web.solver.solve_with_callback_proc``（generate_initial_layout 函数内
+延迟 import = 调用时取属性 → 桩生效）注入合成 manifest/帧，无真实 solve 依赖。
 
 覆盖：
-1. ``build_warm_payload`` 装载点：plain round-trip 精确结构（多副本/int→float/
-   顺序保持/JSON 可序列化/gate_mm 在场不入载荷 = 契约两键哨兵）；strip_width 与
-   ``build_pid_meta → _raw_polygon_map → _physical_width_mm`` 权威链对拍；demand
-   投影与 worker 实例宇宙同口径（sizes 过滤 / quantities demand=0 出局）；降级
-   矩阵（mirror / 条数≠demand / pid 需求映射外前置复检 / placed 空·非列表 /
-   无母版 / 脏 pieces 不抛 / demand_map 非 dict / unsupported 判定序首位脏输入
-   不抛）；组合宇宙 demand_map 直用（pid_meta 投影未被采用 + WB_ 原样进载荷）+
-   组合条目不计包络（measurable-only 政策锁）；
-2. ``warm_capability``：形态 ``{supported: bool, version: str}`` / 版本串
-   monkeypatch 多态 / 包缺失哨兵 ``'(未安装)'`` 恒不抛；
-3. ``GET /api/warm-capability``（TestClient）：恒 200 / 无会话闸门（bogus sid
-   同样 200 —— 能力是进程级属性）/ 能力态透传（monkeypatch 生效）；
-4. 分层纯度（AST 守卫，镜像 test_web_edit_hold 套路）：仅 stdlib + web 兄弟
-   solver + nesting_engine.warmstart，禁 import server/cli（含函数内延迟）；
-5. 冒烟 ``main`` exit 0（``python -m`` 同一代码路径）。
+1. ``build_warm_payload`` 装载点（US-001）：plain round-trip 精确结构（多副本/
+   int→float/顺序保持/JSON 可序列化/gate_mm 在场不入载荷 = 契约两键哨兵）；
+   strip_width 与 ``build_pid_meta → _raw_polygon_map → _physical_width_mm``
+   权威链对拍；demand 投影与 worker 实例宇宙同口径（sizes 过滤 / quantities
+   demand=0 出局）；降级矩阵（mirror / 条数≠demand / pid 需求映射外前置复检 /
+   placed 空·非列表 / 无母版 / 脏 pieces 不抛 / demand_map 非 dict /
+   unsupported 判定序首位脏输入不抛）；组合宇宙 demand_map 直用（pid_meta 投影
+   未被采用 + WB_ 原样进载荷）+ 组合条目不计包络（measurable-only 政策锁）；
+2. ``warm_capability``（US-001）：形态 ``{supported: bool, version: str}`` /
+   版本串 monkeypatch 多态 / 包缺失哨兵 ``'(未安装)'`` 恒不抛；
+3. ``GET /api/warm-capability``（US-001，TestClient）：恒 200 / 无会话闸门
+   （bogus sid 同样 200 —— 能力是进程级属性）/ 能力态透传（monkeypatch 生效）；
+4. ``POST /api/initial-layout/generate``（US-002，TestClient + fake proc）：
+   happy path 响应形态（manifest = WS 前端契约同形 / placed = 密度最大可行帧
+   展开视图永无 WB_/PS_ / width_mm·density 同帧）+ proc 调用形态（time_budget
+   = ``INITIAL_LAYOUT_GEN_TIME_S``=10 / sizes·params·per_type·quantities·seed
+   透传 / band·prefix worker 形态 / **record_composite=True 透传断言**）+ gate_mm
+   覆盖；band/prefix 同开 composite+prefix 段在场与 plain 缺席；错误矩阵（会话
+   401/400 / body·seed 400 / 无母版 400 / band·prefix 非法 400 / 求解错误与无
+   manifest·无可行帧 502）+ per-session 单飞 409（阻塞 fake 双线程并发，跨会话
+   放开）+ 成功顺手 ``edit_hold.refresh``（default 豁免 / 失败不续期）；
+5. 分层纯度（AST 守卫，镜像 test_web_edit_hold 套路）：仅 stdlib + web 兄弟
+   solver/routes_ws + nesting_engine.warmstart，禁 import server/cli（含函数内
+   延迟）；
+6. 冒烟 ``main`` exit 0（``python -m`` 同一代码路径）。
 """
 from __future__ import annotations
 
 import ast
 import importlib.metadata
 import json
+import threading
 from pathlib import Path
 
 import pytest
 from starlette.testclient import TestClient
 
+import materialsorting.web.solver as web_solver
 from materialsorting.nesting_engine import warmstart
-from materialsorting.web import initial_layout
-from materialsorting.web.initial_layout import build_warm_payload, warm_capability
+from materialsorting.web import (
+    edit_hold,
+    initial_layout,
+    routes_views as routes_views_mod,
+    server as server_mod,
+    sessions,
+)
+from materialsorting.web.initial_layout import (
+    INITIAL_LAYOUT_GEN_TIME_S,
+    build_warm_payload,
+    warm_capability,
+)
 from materialsorting.web.server import app
+from materialsorting.web.sessions import _FakeClock
 from materialsorting.web.solver import (
     _physical_width_mm,
     _raw_polygon_map,
@@ -365,3 +390,405 @@ def test_smoke_main_pass(capsys):
     out = capsys.readouterr().out
     assert 'PASS' in out
     assert 'FAIL' not in out
+
+
+# ================================ US-002 POST /api/initial-layout/generate 生成端点
+
+_GEN_URL = '/api/initial-layout/generate'
+
+_G01_POLY = [[0.0, 0.0], [500.0, 0.0], [500.0, 800.0], [0.0, 800.0]]
+_G02_POLY = [[0.0, 0.0], [300.0, 0.0], [300.0, 400.0], [0.0, 400.0]]
+
+
+def _pid_meta() -> dict:
+    """合成 worker manifest pid_meta（build_pid_meta 产物同形子集，demand g01=2）。"""
+    return {
+        'g01_28': {'size': 28, 'color': '#c62828', 'polygon': _G01_POLY,
+                   'raw_polygon': _G01_POLY, 'd_mm': 0.0, 'label': 'g01',
+                   'demand': 2, 'area_mm2': 400000.0, 'net_polygon': [],
+                   'internal_lines': [], 'notches': [], 'grain_line': None},
+        'g02_28': {'size': 28, 'color': '#c62828', 'polygon': _G02_POLY,
+                   'raw_polygon': _G02_POLY, 'd_mm': 0.0, 'label': 'g02',
+                   'demand': 1, 'area_mm2': 120000.0, 'net_polygon': [],
+                   'internal_lines': [], 'notches': [], 'grain_line': None},
+    }
+
+
+def _worker_manifest() -> dict:
+    return {'pid_meta': _pid_meta(), 'total_area': 520000.0, 'n_eroded': 0,
+            'gate_mm': 1980.0}
+
+
+def _expected_manifest(gate_mm=1980.0) -> dict:
+    """WS 前端契约同形 manifest（_build_manifest_msg 白名单投影手排期望）。"""
+    pieces = []
+    for pid, meta in _pid_meta().items():
+        pieces.append({
+            'id': pid, 'size': meta['size'], 'color': meta['color'],
+            'area_mm2': meta['area_mm2'], 'polygon': meta['polygon'],
+            'raw_polygon': meta['raw_polygon'], 'd_mm': meta['d_mm'],
+            'label': meta['label'], 'demand': meta['demand'],
+            'net_polygon': meta['net_polygon'],
+            'internal_lines': meta['internal_lines'],
+            'notches': meta['notches'], 'grain_line': meta['grain_line'],
+        })
+    return {'type': 'manifest', 'gate_mm': gate_mm, 'total_area_mm2': 520000.0,
+            'n_eroded': 0, 'pieces': pieces}
+
+
+def _frames(composite_on_best: bool = False) -> list[dict]:
+    """两帧（0.55 / 0.62）—— best=帧 2；composite_on_best 时帧 2 附组合段。"""
+    best = {
+        'type': 'frame', 'elapsed': 2.0, 'phase': 'exploring',
+        'density': 0.62, 'density_sparrow': 0.64, 'width_mm': 1100.0,
+        'placed_items': [
+            _pl('g01_28', 0.0, [0.0, 0.0]),
+            _pl('g01_28', 0.0, [500.0, 800.0]),
+            _pl('g02_28', 90.0, [700.0, 900.0]),
+        ],
+    }
+    if composite_on_best:
+        best['composite'] = {
+            'placed_items': [
+                _pl('WB_g01', 0.0, [0.0, 0.0]),
+                _pl('g02_28', 90.0, [700.0, 900.0]),
+            ],
+            'demand_map': {'WB_g01': 1, 'g01_28': 0, 'g02_28': 1},
+        }
+    return [
+        {'type': 'frame', 'elapsed': 1.0, 'phase': 'exploring',
+         'density': 0.55, 'density_sparrow': 0.57, 'width_mm': 1200.0,
+         'placed_items': [
+             _pl('g01_28', 0.0, [0.0, 0.0]),
+             _pl('g01_28', 180.0, [700.0, 0.0]),
+             _pl('g02_28', 0.0, [400.0, 1000.0]),
+         ]},
+        best,
+    ]
+
+
+def _final(with_prefix: bool = False) -> dict:
+    out = {'type': 'final', 'density': 0.62, 'density_sparrow': 0.64,
+           'width_mm': 1100.0, 'elapsed': 2.2,
+           'placed_items': _frames()[-1]['placed_items']}
+    if with_prefix:
+        out['prefix'] = {'size': 28, 'pid': 'PS_g01+g02@28', 'pin': {},
+                         'band_pos': {}, 'extra': None, 'residual_mm': 3.2,
+                         'fallback': False}
+    return out
+
+
+def _install_fake_proc(monkeypatch, *, frames, final=None, err=None,
+                       manifest=None, capture=None, started=None,
+                       gate_evt=None):
+    """伪 ``solve_with_callback_proc``（monkeypatch web_solver 属性 = 调用时生效）。
+
+    同步 on_manifest + 逐帧 on_report 后返回 ``(proc, final, elapsed, err)``
+    （run_arm 假形态）；``capture`` dict 收调用形态；``started``/``gate_evt``
+    单飞并发测试用 —— **仅第 1 次调用**在投完帧后阻塞等 gate（第 2+ 次直接
+    返回，供「跨会话放开」对照请求跑通）。
+    """
+    man = _worker_manifest() if manifest is None else manifest
+    calls = {'n': 0}
+
+    def _impl(pieces, gate_mm, solve_params, *, on_manifest, on_report,
+              on_process=None, on_stage=None, band=None, prefix=None,
+              initial_solution=None, record_composite=False):
+        calls['n'] += 1
+        if capture is not None:
+            capture.update(pieces=list(pieces), gate_mm=gate_mm,
+                           solve_params=dict(solve_params), band=band,
+                           prefix=prefix, record_composite=record_composite,
+                           n_calls=calls['n'])
+        on_manifest(man)
+        for fr in frames:
+            on_report(fr)
+        if calls['n'] == 1 and started is not None and gate_evt is not None:
+            started.set()
+            gate_evt.wait(timeout=10)
+        return object(), final, 0.5, err
+
+    monkeypatch.setattr(web_solver, 'solve_with_callback_proc', _impl)
+    return _impl
+
+
+def _gen_state(gate_mm=1980.0) -> dict:
+    pieces = _pieces()
+    return {'doc': {'source': 'synthetic_gen.dxf'}, 'gate_mm': gate_mm,
+            'pieces': pieces, 'pieces_by_id': {p['pid']: p for p in pieces}}
+
+
+@pytest.fixture
+def gen_client():
+    """default 会话注入合成 state + registry/编辑钉住/单飞锁隔离（polish 套路）。"""
+    reg = sessions.registry
+    reg.stop_scanner()
+    reg.reset()
+    edit_hold._HOLDS.clear()
+    routes_views_mod._INITIAL_LAYOUT_BUSY.clear()
+    state = server_mod._PIECES_STATE
+    saved = dict(state)
+    state.clear()
+    state.update(_gen_state())
+    with TestClient(app) as client:
+        yield client
+    state.clear()
+    state.update(saved)
+    routes_views_mod._INITIAL_LAYOUT_BUSY.clear()
+    edit_hold._HOLDS.clear()
+    reg.reset()
+
+
+# ------------------------------------------------------------- happy path
+
+def test_generate_happy_path_plain(gen_client, monkeypatch):
+    """AC：plain 200 —— 键恰 {ok,manifest,placed,width_mm,density}（无 composite/
+    prefix）；manifest = WS 前端契约同形；placed = 密度最大可行帧展开视图逐条透传
+    （永无 WB_/PS_）；proc 调用形态 time_budget=10 + 全缺省透传 + record_composite
+    =True；成功后单飞锁清空。"""
+    assert INITIAL_LAYOUT_GEN_TIME_S == 10
+    cap: dict = {}
+    _install_fake_proc(monkeypatch, frames=_frames(), final=_final(),
+                       capture=cap)
+    r = gen_client.post(_GEN_URL, json={})
+    assert r.status_code == 200
+    body = r.json()
+    assert set(body) == {'ok', 'manifest', 'placed', 'width_mm', 'density'}
+    assert body['ok'] is True
+    assert body['manifest'] == _expected_manifest(1980.0)
+    best = _frames()[-1]
+    assert body['placed'] == best['placed_items']
+    assert all(it['id'].startswith('g') for it in body['placed'])
+    assert not any(it['id'].startswith(('WB_', 'PS_')) for it in body['placed'])
+    assert body['width_mm'] == best['width_mm'] == 1100.0
+    assert body['density'] == best['density'] == 0.62
+    # proc 调用形态（record_composite 透传断言 + WS start 同形缺省）
+    assert cap['record_composite'] is True
+    assert cap['solve_params'] == {'time_budget': 10, 'seed': 0, 'sizes': [],
+                                   'params': None, 'per_type': None,
+                                   'quantities': None}
+    assert cap['band'] is None and cap['prefix'] is None
+    assert cap['gate_mm'] == 1980.0
+    assert cap['pieces'] == _pieces()
+    assert routes_views_mod._INITIAL_LAYOUT_BUSY == {}
+
+
+def test_generate_body_context_passthrough_and_gate_override(
+        gen_client, monkeypatch):
+    """body 与 WS start 同形子集逐键透传（sizes/params/per_type/quantities/seed）+
+    gate_mm 正值覆盖（manifest 与 proc 实参同步换 1500）。"""
+    cap: dict = {}
+    _install_fake_proc(monkeypatch, frames=_frames(), final=_final(),
+                       capture=cap)
+    body = {'sizes': [28], 'seed': 7, 'gate_mm': 1500,
+            'params': {'d_ext': 1.0, 'd_int': 0.0, 'tol_ext': 0.0,
+                       'tol_int': 0.0},
+            'per_type': {'g01': {'d': 2.0, 'tol': 0.0}},
+            'quantities': {'g01': {'28': 2}, 'g02': {'28': 1}}}
+    r = gen_client.post(_GEN_URL, json=body)
+    assert r.status_code == 200
+    assert cap['solve_params'] == {
+        'time_budget': 10, 'seed': 7, 'sizes': [28],
+        'params': body['params'], 'per_type': body['per_type'],
+        'quantities': body['quantities']}
+    assert cap['gate_mm'] == 1500.0
+    assert r.json()['manifest']['gate_mm'] == 1500.0
+
+
+def test_generate_band_prefix_composite_section(gen_client, monkeypatch):
+    """band/prefix 同开：composite 段（展开前组合视角 + demand_map）与 prefix 统计段
+    在场，顶层 placed 仍展开视图；band/prefix 以 worker 形态（_parse_* 产物）透传。"""
+    cap: dict = {}
+    _install_fake_proc(monkeypatch, frames=_frames(composite_on_best=True),
+                       final=_final(with_prefix=True), capture=cap)
+    body = {'quantities': {'g01': {'28': 2}, 'g02': {'28': 2}},
+            'band': {'enabled': True, 'label': 'g01'},
+            'prefix': {'enabled': True, 'front': 'g01', 'back': 'g02'}}
+    r = gen_client.post(_GEN_URL, json=body)
+    assert r.status_code == 200
+    resp = r.json()
+    assert set(resp) == {'ok', 'manifest', 'placed', 'width_mm', 'density',
+                         'composite', 'prefix'}
+    best = _frames(composite_on_best=True)[-1]
+    assert resp['composite'] == best['composite']
+    assert any(it['id'].startswith('WB_')
+               for it in resp['composite']['placed_items'])
+    assert resp['prefix'] == _final(with_prefix=True)['prefix']
+    assert not any(it['id'].startswith(('WB_', 'PS_'))
+                   for it in resp['placed'])
+    assert cap['band'] == {'label': 'g01'}
+    assert cap['prefix'] == {'front': 'g01', 'back': 'g02'}
+    assert cap['record_composite'] is True
+
+
+# ------------------------------------------------------------ 会话/载荷错误矩阵
+
+def test_generate_no_master_400(monkeypatch):
+    """会话空/无母版（pieces 空 / gate_mm=0）→ 400「请先上传母版」，不起求解。"""
+    state = server_mod._PIECES_STATE
+    saved = dict(state)
+    state.clear()
+    state.update({'doc': None, 'gate_mm': 0.0, 'pieces': [],
+                  'pieces_by_id': {}})
+    cap: dict = {}
+    _install_fake_proc(monkeypatch, frames=_frames(), final=_final(),
+                       capture=cap)
+    try:
+        with TestClient(app) as client:
+            r = client.post(_GEN_URL, json={})
+            assert r.status_code == 400
+            assert '请先上传母版' in r.json()['error']
+    finally:
+        state.clear()
+        state.update(saved)
+    assert cap == {}
+
+
+def test_generate_sid_gate_401_400(gen_client, monkeypatch):
+    """sid 过期（FakeClock 惰性逐出）→ 401 {code}；非法 sid → 400（edit-polish 同款）。"""
+    clk = _FakeClock()
+    monkeypatch.setattr(sessions.registry, 'clock', clk)
+    sid = 'abcd0001'
+    gen_client.post('/api/session', headers={'X-Session-Id': sid})
+    clk.advance(sessions.registry.ttl_sec + 1)
+    r = gen_client.post(_GEN_URL, headers={'X-Session-Id': sid}, json={})
+    assert r.status_code == 401
+    assert r.json()['code'] == 'session_expired'
+    r = gen_client.post(_GEN_URL, headers={'X-Session-Id': 'bad-sid!'}, json={})
+    assert r.status_code == 400
+    assert r.json() == {'error': 'sid 非法'}
+
+
+def test_generate_band_prefix_invalid_400(gen_client, monkeypatch):
+    """band/prefix 非法 → 400（routes_ws 单一校验点文案原样），不起求解。"""
+    cap: dict = {}
+    _install_fake_proc(monkeypatch, frames=_frames(), final=_final(),
+                       capture=cap)
+    for body, needle in (
+            ({'band': {'enabled': True, 'label': 'g99'}}, '不存在于当前母版'),
+            ({'band': {'enabled': True, 'label': 'bad!'}}, 'band.label'),
+            ({'prefix': {'enabled': True, 'front': 'g01', 'back': 'g02'}},
+             '资格码'),
+            ({'prefix': {'enabled': True, 'front': 'g01', 'back': 'g01'}},
+             '不同 g 码')):
+        r = gen_client.post(_GEN_URL, json=body)
+        assert r.status_code == 400, body
+        assert needle in r.json()['error'], (body, r.json()['error'])
+    assert cap == {}
+
+
+def test_generate_body_errors_400(gen_client, monkeypatch):
+    """body 非 JSON / 非 JSON 对象 / seed 非法 → 400（不起求解）。"""
+    cap: dict = {}
+    _install_fake_proc(monkeypatch, frames=_frames(), final=_final(),
+                       capture=cap)
+    r = gen_client.post(_GEN_URL, content=b'not-json',
+                        headers={'Content-Type': 'application/json'})
+    assert r.status_code == 400
+    assert 'JSON' in r.json()['error']
+    r = gen_client.post(_GEN_URL, json=[1, 2])
+    assert r.status_code == 400
+    assert 'JSON 对象' in r.json()['error']
+    r = gen_client.post(_GEN_URL, json={'seed': 'abc'})
+    assert r.status_code == 400
+    assert 'seed' in r.json()['error']
+    assert cap == {}
+
+
+# ---------------------------------------------------------------- 求解失败 502
+
+def test_generate_solve_failure_502(gen_client, monkeypatch):
+    """求解失败（worker error / 意外退出）→ 502 {error: 中文}，单飞锁照常释放。"""
+    _install_fake_proc(monkeypatch, frames=_frames(), final=None,
+                       err='worker process exited unexpectedly (code=1)')
+    r = gen_client.post(_GEN_URL, json={})
+    assert r.status_code == 502
+    assert '求解失败' in r.json()['error']
+    assert 'code=1' in r.json()['error']
+    assert routes_views_mod._INITIAL_LAYOUT_BUSY == {}
+
+
+def test_generate_no_frames_or_manifest_502(gen_client, monkeypatch):
+    """无任何可行帧 / manifest 缺席（理论退化形态）→ 502 中文，不 500。"""
+    _install_fake_proc(monkeypatch, frames=[], final=_final())
+    r = gen_client.post(_GEN_URL, json={})
+    assert r.status_code == 502
+    assert '未产生任何可行帧' in r.json()['error']
+
+    def _no_manifest(pieces, gate_mm, solve_params, *, on_manifest,
+                     on_report, **kw):
+        on_report(_frames()[-1])
+        return object(), _final(), 0.5, None
+    monkeypatch.setattr(web_solver, 'solve_with_callback_proc', _no_manifest)
+    r = gen_client.post(_GEN_URL, json={})
+    assert r.status_code == 502
+    assert 'manifest' in r.json()['error']
+
+
+# --------------------------------------------------------------- 单飞 409
+
+def test_generate_single_flight_409_cross_session_open(gen_client, monkeypatch):
+    """同会话生成中再请求 → 409；跨会话并发放开（per-session 单飞）；完成后锁清空。"""
+    sid1, sid2 = 'abcd0001', 'abcd0002'
+    gen_client.post('/api/session', headers={'X-Session-Id': sid1})
+    gen_client.post('/api/session', headers={'X-Session-Id': sid2})
+    # 新注册 sid 会话 state 为空（commit 才有母版快照）→ 原位注入合成 state
+    # （edit-polish sid 隔离测试同法 peek(sid).state.update）。
+    sessions.registry.peek(sid1).state.update(_gen_state())
+    sessions.registry.peek(sid2).state.update(_gen_state())
+    started, gate_evt = threading.Event(), threading.Event()
+    _install_fake_proc(monkeypatch, frames=_frames(), final=_final(),
+                       started=started, gate_evt=gate_evt)
+    results: dict = {}
+
+    def _first():
+        with TestClient(app) as c:
+            results['first'] = c.post(_GEN_URL,
+                                      headers={'X-Session-Id': sid1}, json={})
+
+    th = threading.Thread(target=_first)
+    th.start()
+    try:
+        assert started.wait(timeout=10)               # 第 1 请求已进求解（阻塞）
+        r = gen_client.post(_GEN_URL, headers={'X-Session-Id': sid1}, json={})
+        assert r.status_code == 409
+        assert '生成中' in r.json()['error']
+        assert routes_views_mod._INITIAL_LAYOUT_BUSY.get(sid1) is True
+        # 跨会话：sid2 不受 sid1 单飞锁影响（fake 第 2 次调用不阻塞 → 直接 200）
+        r2 = gen_client.post(_GEN_URL, headers={'X-Session-Id': sid2}, json={})
+        assert r2.status_code == 200
+        assert r2.json()['ok'] is True
+        assert routes_views_mod._INITIAL_LAYOUT_BUSY.get(sid2) is None
+    finally:
+        gate_evt.set()
+        th.join(timeout=10)
+    assert results['first'].status_code == 200
+    assert routes_views_mod._INITIAL_LAYOUT_BUSY == {}
+
+
+# --------------------------------------------------------- edit_hold 顺手续期
+
+def test_generate_edit_hold_refresh_on_success(gen_client, monkeypatch):
+    """成功顺手 edit_hold.refresh(sid)（带 sid 续期 / default 豁免 / 502 失败不续期）。"""
+    _install_fake_proc(monkeypatch, frames=_frames(), final=_final())
+    sid = 'abcd0001'
+    gen_client.post('/api/session', headers={'X-Session-Id': sid})
+    sessions.registry.peek(sid).state.update(_gen_state())
+    assert edit_hold.hold_until(sid) is None
+    r = gen_client.post(_GEN_URL, headers={'X-Session-Id': sid}, json={})
+    assert r.status_code == 200
+    assert edit_hold.hold_until(sid) is not None
+
+    # default（无 sid）不进钉住表
+    r = gen_client.post(_GEN_URL, json={})
+    assert r.status_code == 200
+    assert edit_hold.hold_until('default') is None
+
+    # 求解失败（502）不续期
+    sid2 = 'abcd0002'
+    gen_client.post('/api/session', headers={'X-Session-Id': sid2})
+    sessions.registry.peek(sid2).state.update(_gen_state())
+    _install_fake_proc(monkeypatch, frames=_frames(), final=None, err='boom')
+    r = gen_client.post(_GEN_URL, headers={'X-Session-Id': sid2}, json={})
+    assert r.status_code == 502
+    assert edit_hold.hold_until(sid2) is None
