@@ -2414,6 +2414,53 @@ button.sample-apply-btn:disabled { background: #444; color: #888; cursor: defaul
   outline: 2px solid #7fd4a8;
   outline-offset: 1px;
 }
+/* 保存闸禁用态（prd-initial-layout US-006：红色重叠计数 >0 / busy 生成中 ——
+   禁用 + 灰化，hint 文案说明原因） */
+.edit-layout-save:disabled {
+  background: #2b2d33;
+  border-color: #2b2d33;
+  color: #6a6d75;
+  cursor: not-allowed;
+}
+/* 初始布局弹窗 footer 左侧提示区（US-006）：margin-right:auto 把右侧动作按钮推到
+   行尾（编辑弹窗单按钮 flex-end 形态的多子元素扩展）；min-height 防有无提示时
+   footer 高度跳变 */
+.edit-layout-foot-note {
+  margin-right: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 20px;
+  font-size: 13px;
+  overflow: hidden;
+}
+/* 保存闸数量提示（琥珀 —— 与指标面板压线口径同色系，非阻断性引导） */
+.edit-layout-save-hint {
+  color: #d9a05b;
+}
+/* 生成失败文案（红字直显；「布局刷新」即重试入口） */
+.edit-layout-error {
+  color: #e06666;
+}
+/* 生成中浮层（US-006 busy 态）：盖住画布（指标面板 z 之上），半透明底衬 +
+   居中进度文案 —— 生成在飞画布禁交互且无可编辑内容 */
+.edit-layout-busy {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(20, 21, 25, 0.72);
+  color: #d5d8de;
+  font-size: 15px;
+  letter-spacing: 0.5px;
+}
+/* 「布局刷新」按钮（US-006 footer 次级动作）：edit-layout-tool 基础形态 +
+   横向加宽与保存主按钮同高对齐 */
+.edit-layout-refresh {
+  padding: 0 14px;
+}
 
 /* ============================================================
  * 编辑排料 US-003：重合指标面板（画布右上固定）+ 旋转手柄。

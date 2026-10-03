@@ -6,6 +6,10 @@
 //      响应解析（manifest/placed/width_mm/density/composite?/prefix? 段原样
 //      透传，composite 畸形段滤为缺席）+ 502/409 error 中文透传 / ok!==true
 //      形态异常 / fetch 抛错上抛（调用方 catch 落弹窗红字）。
+//   3) US-006 保存组装纯函数：assembleWarmPlaced（band/prefix 组位移双组独立
+//      记账 + 非组组合条目跳过由 working 非成员承接 + 前缀尾下划线不误吞
+//      g051 + 未编辑零位移 + mirror 剥离 + 守恒 |out| = Σ demand）/
+//      plainWarmPlaced（working 全量三键形态 + mirror 剥离）。
 
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
 import { fetchWarmCapability, generateInitialLayout } from '../initialLayout';
@@ -192,5 +196,157 @@ describe('generateInitialLayout (初始布局 US-004)', () => {
   it('fetch 抛错（后端未起）→ 上抛 Error（调用方 catch 落弹窗红字）', async () => {
     fetchSpy!.mockImplementation(() => Promise.reject(new TypeError('Failed to fetch')));
     await expect(generateInitialLayout({})).rejects.toThrow();
+  });
+});
+
+// ================= US-006：保存组装纯函数（assembleWarmPlaced / plainWarmPlaced） =================
+//
+// 宇宙（band=g05 + prefix={g02,g03} 双开，展开视图 6 条 + 组合宇宙 5 条）：
+//   working/baseline 下标对齐（editStore.open 快照语义）：
+//     0 g051_28 非成员（g051 ≠ g05 —— 尾下划线防前缀误吞，放最前验证组扫描跳过）
+//     1 g05_28  band 成员（编辑 +[30,10] → band delta）
+//     2 g02_28  prefix 成员（编辑 +[5,7] → prefix delta）
+//     3 g03_28  prefix 成员（同组刚性同移）
+//     4 g01_28  非成员（编辑 [50,60]→[70,60] + mirror:true → 验证最新值承接 + 剥离）
+//     5 g01_28  非成员第 2 副本（未动）
+//   composite（组合宇宙）：WB_g05 / PS_g02+g03@28 / g01_28×2（非组组合条目，
+//   组装时跳过由 working 承接）；demand_map {WB_g05:1, PS:1, g01_28:2} → Σ=4。
+import {
+  assembleWarmPlaced,
+  plainWarmPlaced,
+  type CompositePlacedItem,
+} from '../initialLayout';
+import type { PlacedItem, Pt } from '../../types/piece';
+
+function p(id: string, x: number, y: number, rotation = 0, mirror?: boolean): PlacedItem {
+  return {
+    id,
+    rotation,
+    translation: [x, y] as Pt,
+    ...(mirror === true ? { mirror: true } : {}),
+  };
+}
+function c(id: string, x: number, y: number, rotation = 0): CompositePlacedItem {
+  return { id, rotation, translation: [x, y] as Pt };
+}
+
+/** 双开宇宙基线（未编辑 = working 同值）。 */
+function groupedFixture(): {
+  baseline: PlacedItem[];
+  working: PlacedItem[];
+  composite: CompositePlacedItem[];
+  demandMap: Record<string, number>;
+} {
+  const baseline: PlacedItem[] = [
+    p('g051_28', 0, 0),
+    p('g05_28', 0, 0),
+    p('g02_28', 0, 0),
+    p('g03_28', 0, 0),
+    p('g01_28', 50, 60),
+    p('g01_28', 150, 60),
+  ];
+  const working: PlacedItem[] = [
+    p('g051_28', 0, 0),
+    p('g05_28', 30, 10), // band 组整体 +[30,10]
+    p('g02_28', 5, 7), // prefix 组整体 +[5,7]
+    p('g03_28', 5, 7),
+    p('g01_28', 70, 60, 0, true), // 非成员编辑（+ mirror 防御性剥离）
+    p('g01_28', 150, 60),
+  ];
+  const composite: CompositePlacedItem[] = [
+    c('WB_g05', 0, 100),
+    c('PS_g02+g03@28', 10, 20),
+    c('g051_28', 0, 0), // 非组组合条目（组装时跳过 —— working 承接最新值）
+    c('g01_28', 50, 60, 90), // 同上
+    c('g01_28', 150, 60),
+  ];
+  const demandMap: Record<string, number> = {
+    WB_g05: 1,
+    'PS_g02+g03@28': 1,
+    g051_28: 1,
+    g01_28: 2,
+  };
+  return { baseline, working, composite, demandMap };
+}
+
+const GROUPS = { bandLabel: 'g05', prefixPids: ['g02_28', 'g03_28'] as readonly string[] };
+
+describe('assembleWarmPlaced (US-006 保存组装)', () => {
+  it('双组独立记账：WB_ += band delta、PS_ += prefix delta；非组组合条目跳过由 working 非成员最新值承接；mirror 剥离；g051 不被 g05 前缀误吞', () => {
+    const { baseline, working, composite, demandMap } = groupedFixture();
+    const out = assembleWarmPlaced(working, baseline, composite, GROUPS);
+    // 组条目：delta 记账（组位移差叠加在组合基线位置上）
+    // 条数 = 2 组条目 + 3 非成员（g051_28 不被 g05_ 前缀误吞 → 单片承接 + g01×2）
+    expect(out.map((it) => it.id)).toEqual([
+      'WB_g05', 'PS_g02+g03@28', 'g051_28', 'g01_28', 'g01_28',
+    ]);
+    expect(out[0]).toEqual(c('WB_g05', 30, 110)); // [0,100]+[30,10]
+    expect(out[1]).toEqual(c('PS_g02+g03@28', 15, 27)); // [10,20]+[5,7]
+    // 非成员：当前 working 值（编辑生效 + rotation 沿 working + mirror 键消失）
+    expect(out[2]).toEqual(c('g051_28', 0, 0));
+    expect(out[3]).toEqual(c('g01_28', 70, 60));
+    expect(out[4]).toEqual(c('g01_28', 150, 60));
+    expect('mirror' in (out[3] as object)).toBe(false);
+    // 非组组合条目（composite[2] rotation 90）绝不出现 —— 被 working 值取代
+    expect(out.some((it) => it.rotation === 90)).toBe(false);
+    // 守恒：|out| = Σ demand_map
+    const total = Object.values(demandMap).reduce((a, b) => a + b, 0);
+    expect(out.length).toBe(total);
+  });
+
+  it('未编辑（working ≡ baseline）→ 双组零位移，组条目原位', () => {
+    const { baseline, composite } = groupedFixture();
+    const out = assembleWarmPlaced(baseline, baseline, composite, GROUPS);
+    expect(out[0]).toEqual(c('WB_g05', 0, 100));
+    expect(out[1]).toEqual(c('PS_g02+g03@28', 10, 20));
+    expect(out).toHaveLength(5); // 2 组条目 + 3 非成员（g051_28 + g01×2）
+  });
+
+  it('仅 band 开（prefixPids 空）→ PS_ 条目零位移 + working prefix 片按非成员逐条承接', () => {
+    const { baseline, working, composite } = groupedFixture();
+    const out = assembleWarmPlaced(working, baseline, composite, {
+      bandLabel: 'g05',
+      prefixPids: [],
+    });
+    expect(out[0]).toEqual(c('WB_g05', 30, 110));
+    expect(out[1]).toEqual(c('PS_g02+g03@28', 10, 20)); // prefix 关 → 零位移
+    // g02/g03 现为非成员 → working 值逐条进入
+    const ids = out.map((it) => it.id);
+    expect(ids).toEqual([
+      'WB_g05', 'PS_g02+g03@28', 'g051_28', 'g02_28', 'g03_28', 'g01_28', 'g01_28',
+    ]);
+    expect(out[3]).toEqual(c('g02_28', 5, 7));
+  });
+
+  it('成员 id 错位（基线与 working 下标不对齐）→ 组 delta 回退零（守恒优先，宁可保基线位置）', () => {
+    const { working, composite } = groupedFixture();
+    // 基线首条 id 错位（理论不可达 —— open 快照保序；防御路径验证）
+    const badBaseline: PlacedItem[] = [...groupedFixture().baseline];
+    badBaseline[1] = p('gXX_28', 0, 0);
+    const out = assembleWarmPlaced(working, badBaseline, composite, GROUPS);
+    expect(out[0]).toEqual(c('WB_g05', 0, 100)); // band delta null → ZERO
+    expect(out[1]).toEqual(c('PS_g02+g03@28', 15, 27)); // prefix 未错位照常记账
+  });
+});
+
+describe('plainWarmPlaced (US-006 plain 组装)', () => {
+  it('working 全量三键形态逐条映射 + mirror 剥离 + 条目数守恒', () => {
+    const working: PlacedItem[] = [
+      p('g01_28', 10, 20),
+      p('g03_34', 30, 40, 180, true),
+      p('g01_28', 50, 60, 180),
+    ];
+    const out = plainWarmPlaced(working);
+    expect(out).toEqual([
+      c('g01_28', 10, 20),
+      c('g03_34', 30, 40, 180),
+      c('g01_28', 50, 60, 180),
+    ]);
+    expect(out).toHaveLength(3);
+    for (const it of out) expect(Object.keys(it).sort()).toEqual(['id', 'rotation', 'translation']);
+  });
+
+  it('空 working → 空数组', () => {
+    expect(plainWarmPlaced([])).toEqual([]);
   });
 });

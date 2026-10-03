@@ -31,14 +31,15 @@ import { create } from 'zustand';
 import { fetchWarmCapability, type CompositePlacedItem } from '../lib/initialLayout';
 import type { PlacedItem } from '../types/piece';
 import type { PerTypeOverrides, SolveParams } from '../types/v03';
-import type { BandConfig, PrefixConfig } from '../types/ws';
+import type { BandConfig, ManifestMsg, PrefixConfig } from '../types/ws';
 
 /** 已保存的初始布局（US-006「保存当前布局」产物）。 */
 export interface SavedInitialLayout {
   /** 展开视图全条目（永无 WB_/PS_；编辑弹窗 working 最终态，续编载入用）。 */
   displayPlaced: PlacedItem[];
   /** 组合宇宙条目（band/prefix 开 = 生成响应 composite.placed_items + 组位移
-   * 记账；plain = working 全条目三键形态）—— WS initial.placed 数据源。 */
+   * 记账；plain = working 全条目三键形态）—— WS initial.placed 数据源；续编
+   * 会话的组位移记账基线（组条目 delta 已烘焙在值内）。 */
   warmPlaced: CompositePlacedItem[];
   /** 组合宇宙需求映射（band/prefix 开 = composite.demand_map；plain = null
    * —— 后端 pid_meta 投影才是宇宙，载荷 demand_map 被忽略）。 */
@@ -51,6 +52,12 @@ export interface SavedInitialLayout {
   bandUsed: boolean;
   /** 保存时 prefix 是否开启。 */
   prefixUsed: boolean;
+  /** 生成响应 manifest（US-006 续编必需 —— EditCanvas 渲染 + computeLayoutStats
+   * 的几何真相源；saved 记录不带后端可再生成，故随存）。 */
+  manifest: ManifestMsg;
+  /** prefix 组成员 pid 集（parsePrefixMemberPids 产物，含异码补片；prefix 关
+   * = []。续编会话 pieceGroup 映射 + 组位移记账的成员判定）。 */
+  prefixMemberPids: string[];
 }
 
 /** 指纹输入（collectStartContext 同源 —— StartContext 结构子集；seed/time

@@ -39,7 +39,8 @@ import { clearHovered, hideTooltip } from './Tooltip';
 import { useRafThrottle } from '../hooks/useRafThrottle';
 import { useSolveRun } from '../hooks/useSolveRun';
 import { useEditStore } from '../store/editStore';
-import { runRegistry } from '../store/runRegistry';
+import { useInitialLayoutStore } from '../store/initialLayoutStore';
+import { INITIAL_LAYOUT_SEED, runRegistry } from '../store/runRegistry';
 import {
   applySyntheticRun,
   provenanceText,
@@ -121,8 +122,9 @@ export function NestingPage(): React.JSX.Element {
     onDone: () => {
       doneCountRef.current += 1;
       if (doneCountRef.current < totalSeedsRef.current) return;
-      // 全部 run 的 onDone 到齐 → 统一切 phase + 汇总状态行
-      const runs = runRegistry.list();
+      // 全部 run 的 onDone 到齐 → 统一切 phase + 汇总状态行（初始布局伪卡片
+      // US-006 哨兵不进汇总 —— 求解期间保存的初始布局不算求解结果）。
+      const runs = runRegistry.list().filter((r) => r.seed !== INITIAL_LAYOUT_SEED);
       if (runs.length === 0) {
         setPhase('done');
         return;
@@ -199,6 +201,19 @@ export function NestingPage(): React.JSX.Element {
     if (note !== '') setStatus(note);
     setProvenance(origin !== undefined ? { origin, seed } : null);
   }, [synthToken]);
+
+  // 初始布局伪卡片挂种（US-006）：保存信号（initialLayoutStore.saved 引用变化）
+  // → seeds 追加哨兵 seed（不清既有求解卡片 —— 伪卡片与求解结果并排回显；重复
+  // 保存去重在 registry 侧 removeInitialLayoutCard，seeds 幂等不重复追加）。
+  // 下次 handleStart 的 runRegistry.clear() + setSeeds(newSeeds) 自然收走伪卡片
+  // （saved 仍在 store，US-007 普通运行照常附带 initial）。
+  const savedInitial = useInitialLayoutStore((s) => s.saved);
+  useEffect(() => {
+    if (!savedInitial) return;
+    setSeeds((prev) =>
+      prev.includes(INITIAL_LAYOUT_SEED) ? prev : [...prev, INITIAL_LAYOUT_SEED],
+    );
+  }, [savedInitial]);
 
   function handleStart(cfg: ControlPanelStartPayload) {
     if (phase === 'running') return;

@@ -82,6 +82,15 @@ export interface RunRecord {
 /** 模块级 mutable 数组 —— 跨 hook 实例共享。 */
 const _runs: RunRecord[] = [];
 
+/**
+ * 初始布局伪卡片保留 seed 哨兵（prd-initial-layout US-006，2026-10-03）：负数
+ * 永不与普通求解 seed 冲突（parseSeed 负值/NaN 回 0，base+i 恒 ≥0）。挂卡 =
+ * 「初始布局（未求解）」回显（NestsGrid/NestLabel 特判渲染）；bestRun() **跳过**
+ * 该哨兵 + finalDensity 恒 0 —— 导出 / 编辑排料 / 状态文件 / checkpoint 的
+ * bestRun 选源不受未求解布局污染（伪卡片 lastFrame 仅回显用）。
+ */
+export const INITIAL_LAYOUT_SEED = -1;
+
 // ---------------------------------------------------------------- done 观察者（US-004）
 
 /** run 达 done 的订阅者（收到已置 done 的 RunRecord；markRunDone 同步通知）。 */
@@ -164,14 +173,24 @@ export const runRegistry = {
     return _runs;
   },
 
-  /** 按 final.density 选最优 run（无 lastFrame 的不参与）。 */
+  /** 按 final.density 选最优 run（无 lastFrame 的不参与；初始布局伪卡片哨兵
+   * seed 跳过 —— 未求解布局不进导出/编辑排料选源，US-006）。 */
   bestRun(): RunRecord | null {
     let best: RunRecord | null = null;
     for (const r of _runs) {
+      if (r.seed === INITIAL_LAYOUT_SEED) continue;
       if (!r.lastFrame) continue;
       if (best === null || r.finalDensity > best.finalDensity) best = r;
     }
     return best;
+  },
+
+  /** 移除初始布局伪卡片（US-006 重复保存/换代重挂去重 —— 单卡片恒至多一张；
+   * 无卡片 no-op。不动普通求解 run）。 */
+  removeInitialLayoutCard(): void {
+    for (let i = _runs.length - 1; i >= 0; i--) {
+      if (_runs[i].seed === INITIAL_LAYOUT_SEED) _runs.splice(i, 1);
+    }
   },
 };
 

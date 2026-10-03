@@ -90,6 +90,7 @@ import { FileNameModal } from './FileNameModal';
 // 编辑排料 US-002：编辑弹窗单例（订阅 controlPanelStore 自显隐；Portal 到 body）。
 // 打开入口 = US-004 主界面「编辑排料」区块（EditLayoutControls）。
 import { EditLayoutModal } from '../edit/EditLayoutModal';
+import { InitialLayoutModal } from '../edit/InitialLayoutModal';
 // key 授权 US-006：「系统key」弹窗单例（keyStore 数据源，/api/key/*）。
 import { KeyInfoModal } from './KeyInfoModal';
 // 编辑排料 US-004：主面板「编辑排料」区块（编辑入口 + 重置 confirm），插在
@@ -628,6 +629,10 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
       />
       {/* 编辑排料弹窗单例（US-002；打开入口在 US-004 EditLayoutControls）。 */}
       <EditLayoutModal />
+      {/* 初始布局弹窗单例（prd-initial-layout US-006；订阅 controlPanelStore
+          modal==='initial_layout' 自显隐；打开入口在「高级配置」区块
+          initial-layout-btn）。 */}
+      <InitialLayoutModal />
       {/* key 授权弹窗单例（US-006；订阅 controlPanelStore 自显隐；Portal 到 body；
           打开入口在上方「系统key」入口按钮）。 */}
       <KeyInfoModal />

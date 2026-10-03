@@ -2,16 +2,10 @@
   "branchName": "ralph/initial-layout-warm-start",
   "stories": [
     {
-      "id": "US-005",
-      "title": "EditCanvas 手势收窄 + 整组拖动 props",
-      "description": "前端：EditCanvas 支持「初始布局模式」手势收窄与 band/prefix 成员整组拖动，保证编辑产物恒为热启动合法载荷（sparrow proper-rigid 拒镜像、非法角会原样保留——手势禁用是质量前置手段）。\n\n具体任务：\n1. materialSorting-web/src/components/edit/EditCanvas.tsx 新增可缺省 props（默认值 = 现行编辑弹窗行为逐字节不变）：\n   - allowMirror?: boolean = true（false 时空格四态循环收窄为 {0°,180°} 两态、O 水平镜像 / I 垂直镜像键禁用）\n   - allowFineRotate?: boolean = true（false 时 L/K ±1° 键禁用）\n   - pieceGroup?: (pid: string) => string | null（按 pid 返回组 id：band 组 = 该 band label 全部副本；prefix 组 = lib/editPolish.ts parsePrefixMemberPids 解析的成员 pid 含异码补片；非成员返回 null）\n   - onIllegalOverlapCountChange?: (n: number) => void（refreshMetrics 已算红色/琥珀重叠计数，additive 回调暴露红色数）\n2. 整组拖动：指针命中组成员（pieceGroup(pid) 非 null）时整组刚性平移——组内单片不可单独拖/旋/翻，Alt 松手吸附对组拖不启用；钳制按组整体 bbox（y∈[0,gate]、minX≥0，clampPlacement 组包络版）；组位移 delta 同步应用于该组全部展示副本（editStore working 多条 setWorkingItem）。\n3. 组视觉标记：组成员描边/角标 + 画布图例一行「组合成员片（整组拖动）」。\n4. 键盘手势矩阵在 onKeyDown（L1095-1162 一带）按 props 分支；单片区分逻辑不得影响默认 props 路径。\n5. vitest：默认 props 回归锁（既有编辑用例全绿）+ allowMirror=false 空格两态 + allowFineRotate=false L/K 无效 + 组拖联动断言。\n\n验收标准：\n- 浏览器验证编辑手势矩阵：空格仅两态、O/I/L/K 无效、组拖全组联动且不可单片编辑、非成员片拖动/翻转/吸附照常、红色重叠计数回调触发\n- vitest 全绿（既有用例零回归 = 默认 props 行为不变锁）\n- npm run build 通过",
-      "passes": true
-    },
-    {
       "id": "US-006",
       "title": "InitialLayoutModal 弹窗（生成/编辑/刷新/保存闸）",
       "description": "前端：初始布局弹窗——界面与排料结果编辑弹窗一致，去掉微调相关功能，新增生成/刷新/保存闸。\n\n具体任务：\n1. 新 materialSorting-web/src/components/edit/InitialLayoutModal.tsx —— 外层仿 components/edit/EditLayoutModal.tsx（订阅 controlPanelStore modal === 'initial_layout'，Inner 带 key 重挂载）；单例挂载在 components/ControlPanel/ControlPanel.tsx（EditLayoutModal 单例旁）。\n2. 打开编排：initialLayoutStore.saved 在场 → 载入续编（displayPlaced 为 working）；否则自动生成——generateInitialLayout(collectStartContext 同源上下文 + band/prefix + genSeed) → 合成伪 RunRecord（synthRun 先例：manifest + placed 为 lastFrame）→ editStore.open(伪run)；generating busy 态画布禁交互 + 进度提示；edit_hold 心跳复用（lib/editHold refreshEditHold，编辑弹窗同款 4min 节奏）。\n3. EditCanvas props：allowMirror={false}、allowFineRotate={false}、pieceGroup（band/prefix 开时按 saved/生成响应组映射）、onIllegalOverlapCountChange、polish 不传（微调卡与「利用率增减」对比卡不渲染）；状态条只留料长 + 当前利用率（无 Δ 行）。\n4. 「布局刷新」：working 相对基线有编辑 → 确认层文案「将丢弃当前编辑」；确认后 genSeed+1 重新生成替换 working（delta 基线同步重置）。\n5. 「保存当前布局」：红色（非法）重叠计数 >0 → 按钮 disabled + 提示数量（琥珀压线不限）；保存组装——displayPlaced = 当前 working；warmPlaced = band/prefix 开时生成响应 composite.placed_items（WB_* 全条目属 band 组、PS_* 条目属 prefix 组，各组条目 translation += 组位移 delta；组 delta = 组内任一成员当前位移相对生成基线）+ 非成员 working 条目过滤拼接，plain 时 = working 全条目；widthMm = computeLayoutStats 当前宽 → initialLayoutStore.setSaved → runRegistry 挂「初始布局（未求解）」伪卡片（seed 键用保留键如 'initial'，finalDensity 留空 → bestRun() 不选中、导出/编辑排料选源不受污染）→ 关闭弹窗。\n6. 关闭 ✕：有未保存编辑 → dirty 确认层（EditLayoutModal 同款）。\n7. vitest：保存组装逻辑（组 delta 记账 / 非成员过滤 / plain 全量 / 守恒条数 = Σdemand）+ 刷新确认分支。\n\n验收标准：\n- 浏览器验证：生成 → 编辑 → 保存闸（构造红色重叠时禁用+提示）→ 刷新确认 → 伪卡片出现在 NestsGrid 且不进 bestRun\n- vitest 全绿 + npm run build 通过\n- 保存后初始LayoutStore.saved 字段形态与 fingerprint 正确",
-      "passes": false
+      "passes": true
     },
     {
       "id": "US-007",

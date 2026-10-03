@@ -19,8 +19,59 @@ import {
 } from '../initialLayoutStore';
 import { markSessionProbedForTest, resetSessionForTest } from '../../lib/api';
 import type { PerTypeOverrides, SolveParams } from '../../types/v03';
+import type { ManifestMsg } from '../../types/ws';
 
 const PARAMS: SolveParams = { d_ext: 0, d_int: 0, tol_ext: 0, tol_int: 0 };
+
+/** 最小合法 manifest（US-006 起 SavedInitialLayout 必带 —— 续编弹窗渲染/统计
+ * 真相源；本文件只验存取，几何字段用最简方块）。 */
+const SAVED_MANIFEST: ManifestMsg = {
+  type: 'manifest',
+  gate_mm: 1000,
+  total_area_mm2: 3 * 100 * 100,
+  n_eroded: 0,
+  pieces: [
+    {
+      id: 'g01_28',
+      label: 'g01',
+      size: 28,
+      color: '#9fc6ff',
+      area_mm2: 100 * 100,
+      polygon: [
+        [0, 0],
+        [100, 0],
+        [100, 100],
+        [0, 100],
+      ],
+    },
+    {
+      id: 'g01_34',
+      label: 'g01',
+      size: 34,
+      color: '#9fc6ff',
+      area_mm2: 100 * 100,
+      polygon: [
+        [0, 0],
+        [100, 0],
+        [100, 100],
+        [0, 100],
+      ],
+    },
+    {
+      id: 'g03_28',
+      label: 'g03',
+      size: 28,
+      color: '#ffd39f',
+      area_mm2: 100 * 100,
+      polygon: [
+        [0, 0],
+        [100, 0],
+        [100, 100],
+        [0, 100],
+      ],
+    },
+  ],
+};
 
 /** 基线指纹输入（collectStartContext 同构；各用例在此之上单字段漂移）。 */
 function baseInput(): InitialLayoutFingerprintInput {
@@ -141,6 +192,8 @@ describe('isStale (初始布局 US-004)', () => {
       widthMm: 600,
       bandUsed: false,
       prefixUsed: false,
+      manifest: SAVED_MANIFEST,
+      prefixMemberPids: [],
     });
     return fp;
   }
@@ -189,6 +242,8 @@ describe('setSaved / clear / 轻量写入器', () => {
       widthMm: 700,
       bandUsed: true,
       prefixUsed: false,
+      manifest: SAVED_MANIFEST,
+      prefixMemberPids: [],
     });
     const s1 = useInitialLayoutStore.getState();
     expect(s1.saved).not.toBeNull();

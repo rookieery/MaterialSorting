@@ -28,7 +28,7 @@
 
 import { useState } from 'react';
 import { useAppStore } from '../../store/appStore';
-import { runRegistry } from '../../store/runRegistry';
+import { INITIAL_LAYOUT_SEED, runRegistry } from '../../store/runRegistry';
 import { EXPORT_FORMATS, DEFAULT_EXPORT_FMT, type ExportFmt } from '../../lib/download';
 
 export interface ExportButtonsProps {
@@ -55,7 +55,12 @@ export function ExportButtons({ solving, exporting, onExport, partial = false }:
   // hasLastFrame = registry 至少有一个 run 推过 frame（与旧 vanilla 实现 updateExportButtons
   // `runs.some(r => r.lastFrame)` 一致）。bestRun() 也按 lastFrame 过滤，但这里用 some() 显式
   // 表达「只要存在 lastFrame 即可点」（与旧版同语义；bestRun 留给 useExport 内做最终选择）。
-  const hasLastFrame = runRegistry.list().some((r) => r.lastFrame !== null);
+  // prd-initial-layout US-006：初始布局伪卡片（INITIAL_LAYOUT_SEED 哨兵）虽带 lastFrame
+  // （回显用），但未经求解且 bestRun() 哨兵跳过 —— 这里同款排除，防「可点但导出
+  // 无结果」的空转（仅伪卡片在场 → 导出保持 disabled，语义 = 未求解不可导出）。
+  const hasLastFrame = runRegistry
+    .list()
+    .some((r) => r.lastFrame !== null && r.seed !== INITIAL_LAYOUT_SEED);
   const disabled = solving || exporting || !hasLastFrame;
 
   return (

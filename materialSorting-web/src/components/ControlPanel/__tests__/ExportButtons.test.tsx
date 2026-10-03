@@ -14,7 +14,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { ExportButtons } from "../ExportButtons";
 import { useAppStore } from "../../../store/appStore";
-import { runRegistry, type RunRecord } from "../../../store/runRegistry";
+import { runRegistry, INITIAL_LAYOUT_SEED, type RunRecord } from "../../../store/runRegistry";
 import type { FrameMsg, ManifestMsg } from "../../../types/ws";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -234,5 +234,19 @@ describe("ExportButtons (US-007 下拉框 + 单按钮)", () => {
     rec.done = false; // 求解中，frames 空
     renderBtns();
     expect(exportButton().disabled).toBe(true);
+  });
+
+  it("初始布局伪卡片（INITIAL_LAYOUT_SEED）不启用导出（US-006：未求解不可导出；" +
+    "与普通 run 并存时普通帧照常启用）", () => {
+    // 仅伪卡片在场（保存初始布局后未跑任何求解）：带 lastFrame 回显但导出保持
+    // disabled —— bestRun() 哨兵跳过，可点即「导出无结果」空转。
+    const pseudo = makeRunWithFrame(INITIAL_LAYOUT_SEED);
+    pseudo.finalDensity = 0; // 挂卡口径（finalDensity 恒 0）
+    renderBtns();
+    expect(exportButton().disabled).toBe(true);
+    // 并存：普通求解 run 带 lastFrame → 照常启用（伪卡片不拖累正常导出）
+    makeRunWithFrame(0);
+    act(() => useAppStore.getState().bumpRenderTick());
+    expect(exportButton().disabled).toBe(false);
   });
 });

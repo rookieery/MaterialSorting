@@ -1,7 +1,7 @@
 // initialLayout.ts —— 初始布局（warm 热启动，prd-initial-layout）前端 API 封装
-// （US-004，2026-10-03）。
+// （US-004，2026-10-03；US-006 补保存组装纯函数 assembleWarmPlaced/plainWarmPlaced）。
 //
-// 职责（纯请求出口 + 响应形状守卫，生成/保存编排留在 US-006 弹窗）：
+// 职责（请求出口 + 响应形状守卫 + 保存组装纯函数；生成/保存**编排**留在 US-006 弹窗）：
 //   1. fetchWarmCapability：GET /api/warm-capability（US-001 成品，无会话依赖
 //      —— 热启动能力是 spyrrow 装载态的进程级属性）。恒 200 {supported, version}；
 //      探测失败抛 Error（message 中文）—— 调用方（initialLayoutStore.
@@ -29,6 +29,17 @@ import type {
   PrefixConfig,
 } from '../types/ws';
 import type { PerTypeOverrides, SolveParams } from '../types/v03';
+
+// ------------------------------------------------ US-006 保存组装（纯函数）
+//
+// 「保存当前布局」的 warmPlaced 组装：编辑画布操作的是**展开视图**（working，
+// 永无 WB_/PS_），而 band/prefix 开启时 WS initial 载荷需要**组合宇宙**条目
+// （WB_/PS_ 组合片只存活在生成响应 composite / worker 实例内，展开后几何不可
+// 重建 —— 后端 build_warm_payload 对组合 pid 无原始轮廓）。桥接口径 = 组位移
+// 记账：组合片随整组刚性平移（EditCanvas US-005 组拖语义，组内单片不可编辑），
+// 故组合条目 translation += 组 delta（= 组内任一成员当前位移相对生成基线；
+// 基线 = editStore.open 伪 run 时快照 —— 生成 placed 或续编 saved.displayPlaced）；
+// 非成员条目展开视图与组合视图同 pid 同几何，直接取当前 working 最新编辑值。
 
 /** GET /api/warm-capability 响应（恒 200：supported = spyrrow 是否支持
  *  initial_solution 热启动；version = 实装版本串，包缺失 → '(未安装)'）。 */
@@ -165,4 +176,113 @@ export async function generateInitialLayout(
     ...(isCompositeLayout(d.composite) ? { composite: d.composite } : {}),
     ...(isPrefixStats(d.prefix) ? { prefix: d.prefix } : {}),
   };
+}
+
+/** US-006 组成员判定上下文：band 开 = 腰头 g 码 label；prefix 开 = 组合片成员
+ * pid 集（parsePrefixMemberPids 产物，含异码补片）。两者均空 = plain（无组）。 */
+export interface WarmGroupContext {
+  bandLabel: string | null;
+  prefixPids: readonly string[];
+}
+
+/** pid 是否 band 组成员（`{label}_` 前缀 —— 尾下划线防 g05/g051 前缀误吞；
+ * band 组 = 该 g 码**全部副本**，与 EditCanvas 组拖「含同 pid 全部副本」同口径）。 */
+function isBandMemberPid(pid: string, label: string): boolean {
+  return pid.startsWith(`${label}_`);
+}
+
+/**
+ * 组位移 delta（US-006 记账基元）：组内**首个** working 成员相对基线同下标成员
+ * 的平移差。整组只可刚性平移（EditCanvas US-005：组内单片不可编辑）⇒ 任一成员
+ * 同值；无成员（理论不达 —— 展开视图必含组成员）/ 下标 id 错位 → null（调用方
+ * 按零位移处理，宁可保基线位置也不丢条目 —— 守恒优先）。
+ */
+function groupDelta(
+  working: readonly PlacedItem[],
+  baseline: readonly PlacedItem[],
+  isMember: (pid: string) => boolean,
+): Pt | null {
+  for (let i = 0; i < working.length && i < baseline.length; i++) {
+    if (!isMember(working[i].id)) continue;
+    if (baseline[i].id !== working[i].id) return null;
+    return [
+      working[i].translation[0] - baseline[i].translation[0],
+      working[i].translation[1] - baseline[i].translation[1],
+    ];
+  }
+  return null;
+}
+
+/**
+ * band/prefix 开启时的 warmPlaced 组装（US-006 保存闸单一实现）：
+ *   - 组合基线（生成响应 composite.placed_items / 续编 saved.warmPlaced）中
+ *     `WB_` 条目 += band delta、`PS_` 条目 += prefix delta（双开两组独立记账），
+ *     非组组合条目**跳过**（由当前 working 非成员条目承接最新编辑值）；
+ *   - 当前 working 的非成员条目按三键形态（mirror 剥离 —— 生成产物无镜像，
+ *     allowMirror=false 编辑不可能引入，防御性丢弃）拼接在末尾。
+ * 守恒口径：|out| = |组合基线| = |working| = Σ demand（组展开副本数与组合条目
+ * 数互补，见 PRD US-006 vitest 条目）。
+ */
+export function assembleWarmPlaced(
+  working: readonly PlacedItem[],
+  baseline: readonly PlacedItem[],
+  composite: readonly CompositePlacedItem[],
+  groups: WarmGroupContext,
+): CompositePlacedItem[] {
+  const ZERO: Pt = [0, 0];
+  const bandD =
+    groups.bandLabel != null
+      ? (groupDelta(working, baseline, (pid) =>
+          isBandMemberPid(pid, groups.bandLabel!),
+        ) ?? ZERO)
+      : ZERO;
+  const prefixD =
+    groups.prefixPids.length > 0
+      ? (groupDelta(working, baseline, (pid) =>
+          groups.prefixPids.includes(pid),
+        ) ?? ZERO)
+      : ZERO;
+  const out: CompositePlacedItem[] = [];
+  for (const it of composite) {
+    if (it.id.startsWith('WB_')) {
+      out.push({
+        id: it.id,
+        rotation: it.rotation,
+        translation: [it.translation[0] + bandD[0], it.translation[1] + bandD[1]],
+      });
+      continue;
+    }
+    if (it.id.startsWith('PS_')) {
+      out.push({
+        id: it.id,
+        rotation: it.rotation,
+        translation: [it.translation[0] + prefixD[0], it.translation[1] + prefixD[1]],
+      });
+    }
+    // 非组组合条目：跳过 —— 下方由当前 working 非成员条目拼接（最新编辑值）。
+  }
+  for (const it of working) {
+    const member =
+      (groups.bandLabel != null && isBandMemberPid(it.id, groups.bandLabel)) ||
+      groups.prefixPids.includes(it.id);
+    if (member) continue;
+    out.push({
+      id: it.id,
+      rotation: it.rotation,
+      translation: [it.translation[0], it.translation[1]],
+    });
+  }
+  return out;
+}
+
+/**
+ * plain（band/prefix 关）warmPlaced 组装：working 全条目三键形态（后端
+ * build_pid_meta 投影宇宙，pid 逐位一致）。mirror 剥离同 assembleWarmPlaced。
+ */
+export function plainWarmPlaced(working: readonly PlacedItem[]): CompositePlacedItem[] {
+  return working.map((it) => ({
+    id: it.id,
+    rotation: it.rotation,
+    translation: [it.translation[0], it.translation[1]],
+  }));
 }

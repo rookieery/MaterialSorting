@@ -7,7 +7,7 @@
 
 import { useMemo } from 'react';
 import { useAppStore } from '../../store/appStore';
-import type { RunRecord } from '../../store/runRegistry';
+import { INITIAL_LAYOUT_SEED, type RunRecord } from '../../store/runRegistry';
 
 export interface NestLabelProps {
   run: RunRecord;
@@ -47,6 +47,13 @@ export function NestLabel({ run }: NestLabelProps) {
   const renderTick = useAppStore((s) => s.renderTick);
   const text = useMemo(() => {
     void renderTick; // 显式声明依赖（与 dep array 配合，便于 lint / 阅读）
+    // 初始布局伪卡片（US-006）：标题「初始布局（未求解）」+ 密度/长度回显；
+    // 无用时段（伪卡片不经求解，startedAt-endedAt 差无意义）、无 seed 段。
+    if (run.seed === INITIAL_LAYOUT_SEED && run.lastFrame) {
+      const pct = (run.lastFrame.density * 100).toFixed(2);
+      const cm = (run.lastFrame.width_mm / 10).toFixed(2);
+      return `初始布局（未求解） · ${pct}% · 长度 ${cm} cm`;
+    }
     if (run.error) return `seed ${run.seed} 错误：${run.error}`;
     if (run.lastFrame) {
       const pct = (run.lastFrame.density * 100).toFixed(2);

@@ -1660,3 +1660,58 @@ F 换绑 / G 真跑放行 / H 扣次+统计 八相位。
   **坑位**：esbuild 入口必须落 `materialSorting-web/out/` 内（node_modules 从入口
   位置上溯解析，落 repo 根 `out/` 解析不到 react/react-dom —— `out/` 目录名
   全层级 gitignored 不污染仓库）；报告 `out/us005_gesture/report.json`。
+
+## 初始布局 US-006 关键约定（InitialLayoutModal 弹窗：生成/编辑/刷新/保存闸；2026-10-03，prd-initial-layout）
+
+- **文件**：`src/components/edit/InitialLayoutModal.tsx`（新：弹窗本体，外层订阅
+  `modal === 'initial_layout'`、Inner key 重挂载；单例挂 ControlPanel.tsx
+  EditLayoutModal 旁）；`src/lib/initialLayout.ts`（+assembleWarmPlaced/
+  plainWarmPlaced 保存组装纯函数 + WarmGroupContext）；`initialLayoutStore.ts`
+  （SavedInitialLayout 扩必填 manifest/prefixMemberPids）；`runRegistry.ts`
+  （INITIAL_LAYOUT_SEED=-1 哨兵 + bestRun 跳过 + removeInitialLayoutCard）；
+  `NestLabel.tsx`（伪卡片标题特判）/ `NestingPage.tsx`（onDone 过滤哨兵 + saved
+  订阅挂种）/ `ExportButtons.tsx`（hasLastFrame 排除哨兵）；`style.css`
+  （.edit-layout-busy/-foot-note/-save-hint/-error/-refresh/:disabled）。
+- **打开编排（mount 一次性 + bootRef 防 StrictMode 双请求）**：
+  `collectStartContext` 同源上下文 → 指纹新鲜（saved 在场且匹配）→ **续编**
+  （saved.manifest + saved.displayPlaced 合成伪 run → editStore.open；组合基线
+  = saved.warmPlaced —— 上次组 delta 已烘焙在值内）；否则（无 saved / stale ——
+  pid 宇宙漂移，续编只会产出必然降级热载荷）→ **自动生成**（seed=genSeed）。
+  busy（generating 在飞）= 浮层 + ✕/刷新/保存全禁（**无关闭路径** —— async 续作
+  不落已卸载弹窗）。edit_hold 心跳复用（4min 滚动）。
+- **EditCanvas 接线**：`allowMirror={false}` / `allowFineRotate={false}` **硬编码**
+  （sparrow proper-rigid 拒镜像/非法角，放开须重审热启动合法性）；pieceGroup =
+  band/prefix 开时按 label 前缀 / prefixMemberPids 映射（plain 不传）；polish
+  不传（微调 UI 不渲染）；状态条只留料长 + 利用率（**无 Δ 行**）。
+- **布局刷新**：working 相对 editStore.baseline 有编辑 → EditConfirmLayer
+  「将丢弃当前编辑」→ 确认 bumpGenSeed() 换 seed 重生成（open 新伪 run = working
+  替换 + delta 记账基线同步重置）；无编辑直刷。失败红字（footer）+「布局刷新」
+  即重试入口。
+- **保存闸与组装**：illegalCount > 0（红色重叠，琥珀压线不限）→ 保存 disabled +
+  数量提示。组装：displayPlaced = working；warmPlaced = band/prefix 开且有组合
+  基线 → `assembleWarmPlaced`（WB_ += band delta、PS_ += prefix delta —— 组
+  delta = 组内首个 working 成员相对 baseline 同下标成员平移差，错位回退零位移；
+  非成员取 working 最新值三键形态，mirror 剥离；守恒 |out| = Σ demand_map），
+  plain → `plainWarmPlaced` 全量三键；widthMm = computeLayoutStats 同公式。
+- **伪 run / 伪卡片红线**：编辑载体 buildPseudoRun **不进 registry**（editStore
+  .save 的 registry 校验天然拒绝 —— 保存走自家组装不走 save）；保存动作
+  mountInitialLayoutCard 去重挂卡（恒至多一张）+ done 直置**不经 markRunDone**
+  （不触发 checkpoint —— 未求解非价值时刻）。哨兵三面排除：bestRun() 跳过 +
+  ExportButtons hasLastFrame 跳过 + NestingPage onDone 汇总跳过（漏任一面 =
+  未求解布局污染导出/编辑排料/状态文件选源）。NestLabel 伪卡片标题
+  「初始布局（未求解） · pct% · 长度 cm」（无用时段、无 seed 段）。
+- **关闭 ✕**：dirty（working ≠ 伪 run lastFrame，itemsEqual 同编辑弹窗 ε）→
+  确认层「放弃未保存的修改？」；不挂 ESC/遮罩（编辑草稿不可误触丢弃）。
+- **测试基线**：`InitialLayoutModal.test.tsx`（新 15 例：受控 2 + 编排 5 + 闸与
+  组装 5 + 刷新✕确认 4；lib/api 整体 mock 路由表 importOriginal 同 hold.test；
+  **重叠夹具用错位交叠** —— 完全同位是顶点采样边对齐退化口径 pen=0 不红）；
+  `lib/__tests__/initialLayout.test.ts` +6；`ExportButtons.test.tsx` +1；全量
+  78 files / 1379 tests 绿（+22）。
+- **浏览器验证**：`scripts/us006_il_modal_verify.mjs` **27/27**（ms-web :8010 真后端
+  + 生产 bundle：A 自动生成 seed=0 busy→画布→统计条 / B ✕ dirty 取消保持 /
+  C 刷新确认→重生成 seed=1 / D 保存闸 8 片红→刷新 seed=2 闸解除 / E 保存→伪卡片
+  「初始布局（未求解） · 86.55% · 长度 577.70 cm」+ 导出保持 disabled / F 续编
+  零请求即刻回显）。**坑位（waitRegen）**：旧画布在生成在飞期间保持渲染（run 不
+  置空），单等「画布在场」会瞬时返回旧帧 → 拖片被随后落场的新 working 清掉 ——
+  重生成后必须等 busy 浮层**先起后落**完整周期再驱动交互；报告
+  `out/us006_il_modal/report.json`。
