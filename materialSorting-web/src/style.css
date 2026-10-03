@@ -2300,6 +2300,12 @@ button.sample-apply-btn:disabled { background: #444; color: #888; cursor: defaul
 .edit-layout-svg:active {
   cursor: grabbing;
 }
+/* prd-initial-layout US-005：组合成员片标记（初始布局模式 band/prefix 组成员毛版
+   polygon）—— 描边加粗区分单片（尺码配色保留，stroke 色不覆盖），与指南卡
+   「组合成员片（整组拖动）」图例行配套；默认编辑弹窗无此类，零渲染差异。 */
+.edit-piece-grouped {
+  stroke-width: 2.6;
+}
 /* 视图工具（左上横排：全览按钮 + 形态 select + 智能微调 —— 2026-09-05 ± 按钮删除、
    select 自 footer 移入、同日二轮迭代竖改横）；四角分布 = 右上 US-003 指标面板 /
    左下微调对比卡 / 右下操作指南卡，均悬浮不挡画布交互 */

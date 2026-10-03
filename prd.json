@@ -2,16 +2,10 @@
   "branchName": "ralph/initial-layout-warm-start",
   "stories": [
     {
-      "id": "US-004",
-      "title": "前端 initialLayoutStore + API 封装 + 入口按钮",
-      "description": "前端：初始布局状态仓、API 封装与「高级配置：设置初始布局」入口按钮。\n\n具体任务：\n1. 新 materialSorting-web/src/lib/initialLayout.ts —— fetchWarmCapability()（GET /api/warm-capability）与 generateInitialLayout(body)（POST /api/initial-layout/generate，apiFetch POST JSON，样板 = src/lib/editPolish.ts postEditPolish；响应类型含 composite?{placed_items, demand_map} 段）。\n2. 新 materialSorting-web/src/store/initialLayoutStore.ts —— state {supported: boolean|null, saved: SavedInitialLayout|null, generating: boolean, genSeed: number, error: string|null}；SavedInitialLayout = {displayPlaced(展开视图全条目), warmPlaced(组合宇宙条目), demandMap: Record<string,number>|null, fingerprint: string, widthMm: number, bandUsed: boolean, prefixUsed: boolean}；fingerprint = 稳定序列化 {sizes, per_type, quantities, params, gate_mm, band, prefix}（组件口径先例 = run_stats class_key 组件法：None 与空同判、键序无关）；提供 isStale(currentFingerprint) / clear() / setSaved()；能力探测在 app 启动或进入超排页时拉一次。\n3. materialSorting-web/src/store/controlPanelStore.ts ControlPanelModalId 增 'initial_layout'。\n4. materialSorting-web/src/components/ControlPanel/ControlPanel.tsx：在「高级配置：设置算法参数」按钮（components/ControlPanel/PerTypeOverrides.tsx L70-78）下方新增「高级配置：设置初始布局」按钮（openModal('initial_layout')）；disabled = 无母版 || supported === false，title 中文提示（无母版→「请先上传母版」；不支持→「当前 spyrrow 版本不支持热启动」）。\n5. vitest：fingerprint 稳定性 / isStale 任一组件变更判 true / clear / store 类型形态。\n\n验收标准：\n- vitest 新增用例全绿 + 既有全量零回归\n- 按钮置灰逻辑两条路径可在浏览器验证（无母版态 + supported=false mock 态）\n- npm run build 通过",
-      "passes": true
-    },
-    {
       "id": "US-005",
       "title": "EditCanvas 手势收窄 + 整组拖动 props",
       "description": "前端：EditCanvas 支持「初始布局模式」手势收窄与 band/prefix 成员整组拖动，保证编辑产物恒为热启动合法载荷（sparrow proper-rigid 拒镜像、非法角会原样保留——手势禁用是质量前置手段）。\n\n具体任务：\n1. materialSorting-web/src/components/edit/EditCanvas.tsx 新增可缺省 props（默认值 = 现行编辑弹窗行为逐字节不变）：\n   - allowMirror?: boolean = true（false 时空格四态循环收窄为 {0°,180°} 两态、O 水平镜像 / I 垂直镜像键禁用）\n   - allowFineRotate?: boolean = true（false 时 L/K ±1° 键禁用）\n   - pieceGroup?: (pid: string) => string | null（按 pid 返回组 id：band 组 = 该 band label 全部副本；prefix 组 = lib/editPolish.ts parsePrefixMemberPids 解析的成员 pid 含异码补片；非成员返回 null）\n   - onIllegalOverlapCountChange?: (n: number) => void（refreshMetrics 已算红色/琥珀重叠计数，additive 回调暴露红色数）\n2. 整组拖动：指针命中组成员（pieceGroup(pid) 非 null）时整组刚性平移——组内单片不可单独拖/旋/翻，Alt 松手吸附对组拖不启用；钳制按组整体 bbox（y∈[0,gate]、minX≥0，clampPlacement 组包络版）；组位移 delta 同步应用于该组全部展示副本（editStore working 多条 setWorkingItem）。\n3. 组视觉标记：组成员描边/角标 + 画布图例一行「组合成员片（整组拖动）」。\n4. 键盘手势矩阵在 onKeyDown（L1095-1162 一带）按 props 分支；单片区分逻辑不得影响默认 props 路径。\n5. vitest：默认 props 回归锁（既有编辑用例全绿）+ allowMirror=false 空格两态 + allowFineRotate=false L/K 无效 + 组拖联动断言。\n\n验收标准：\n- 浏览器验证编辑手势矩阵：空格仅两态、O/I/L/K 无效、组拖全组联动且不可单片编辑、非成员片拖动/翻转/吸附照常、红色重叠计数回调触发\n- vitest 全绿（既有用例零回归 = 默认 props 行为不变锁）\n- npm run build 通过",
-      "passes": false
+      "passes": true
     },
     {
       "id": "US-006",

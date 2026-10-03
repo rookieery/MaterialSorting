@@ -111,6 +111,26 @@
 // 与吸附引擎（snap.ts 复用同池自动跟随）。红字着色改压线额度制：穿透 ≤
 // allowanceMm（相交邻居 max(d_i+d_j)，per_type 腐蚀距离之和）= 琥珀（设计允许
 // 压线），超出 = 红 —— solver 按 erode 轮廓排料的合法压线不再误红/误零。
+//
+// prd-initial-layout US-005（2026-10-03）「初始布局模式」可缺省 props（缺省值 =
+// 现行编辑弹窗行为逐字节不变 —— 全部新分支以 props 在场为门，默认路径零触碰）：
+//   - allowMirror=false：空格四态循环收窄为 {0°,180°} 两态掉头（只翻 half 位，
+//     mirror 位不动）、O / I 镜像键禁用。动因：sparrow proper-rigid 拒镜像，编辑
+//     产物须恒为热启动合法载荷（非法角/镜像会被原样保留 —— 手势禁用是质量前置）。
+//   - allowFineRotate=false：L/K ±1°（含 Shift ±10°）微转键禁用（保持 0°/180°
+//     合法角）。
+//   - pieceGroup(pid) → 组 id | null（US-006 弹窗按 band label 全部副本 / prefix
+//     parsePrefixMemberPids 成员含异码补片组装）：命中组成员的 pointerdown 起
+//     **整组刚性平移**会话 —— 组位移 delta 先按起手组整体 bbox 钳制（y∈[0,gate]、
+//     minX≥0，clampPlacement 组包络版：钳 delta 而非逐片 ⇒ 全组恒同位移），再经
+//     editStore working 多条 setWorkingItem 同步全组展示副本；组内单片不可单独
+//     拖/旋/翻/重置（旋转手柄对成员隐藏 + 键盘守卫④ + Alt 松手吸附对组拖不启用）。
+//     组成员视觉标记 = 毛版描边加粗类 .edit-piece-grouped + data-edit-group=组id，
+//     指南卡条件渲染「组合成员片（整组拖动）」图例行。
+//   - onIllegalOverlapCountChange(n)：非法（红色）重叠片数 additive 回调 —— 主渲染
+//     effect 在 working 每次变化（含拖动帧/键盘/重置/换 run 全路径，比挂在
+//     refreshMetrics 覆盖更广：不依赖选中态）时按 refreshMetrics 同口径（穿透 >
+//     压线额度 = 红；琥珀不计）重算并值变才触达。US-006 保存闸消费（>0 禁保存）。
 
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -119,6 +139,7 @@ import {
   bboxOf,
   penetrationDepth,
   transformPolygon,
+  type BBox,
 } from '../../lib/editGeometry';
 import {
   applyEditPlacement,
@@ -179,9 +200,25 @@ interface MoveDrag {
    * 贴附会话（edit-drag-snap US-003；2026-09-17 起触发 = pointerdown 左键
    * altKey —— 原右键与 Edge 内置鼠标手势冲突整体切换）：pointerup 单次吸附
    * 求解（endDrag → applySnapOnRelease）；纯左键恒 false（既有自由拖动路径
-   * 零改动，松手永不吸附）。
+   * 零改动，松手永不吸附）。US-005：组成员命中时恒 false（组拖不吸附）。
    */
   snap: boolean;
+  /**
+   * 整组刚性平移会话快照（US-005，pieceGroup 命中组成员时在场）：同组全部
+   * working 成员下标 + 起手放置 + 物理毛版口径组整体 bbox（钳制锚）。会话内
+   * 组成员 rot/mirror 恒定（组内禁单片编辑），帧位移 = 钳制后 delta 同施全组。
+   */
+  group?: GroupDragMembers;
+}
+
+/** 整组拖动会话快照（US-005）：成员下标 / 起手放置 / 组整体 bbox（与 indices 对齐）。 */
+interface GroupDragMembers {
+  /** 组成员 working 下标（含被拖片自身与同 pid 全部副本，升序）。 */
+  indices: number[];
+  /** 各成员起手 (rot, tr, mirror) 快照。 */
+  starts: { rot: number; tr: Pt; mirror: boolean }[];
+  /** 起手组整体 bbox（物理毛版口径并集 —— clampPlacement 组包络版的钳制锚）。 */
+  bbox0: BBox;
 }
 interface RotateDrag {
   mode: 'rotate';
@@ -234,6 +271,31 @@ export interface EditCanvasProps {
    * EditLayoutModal；直挂 EditCanvas 的单测不传 → 按钮/卡不渲染（零改动兼容）。
    */
   polish?: EditPolishUi;
+  /**
+   * 镜像手势开关（prd-initial-layout US-005，缺省 true 零回归）：false = 空格
+   * 四态循环收窄为 {0°,180°} 两态掉头、O 水平镜像 / I 垂直镜像键禁用 —— sparrow
+   * proper-rigid 拒镜像，初始布局模式编辑产物须恒为热启动合法载荷。
+   */
+  allowMirror?: boolean;
+  /**
+   * 微转手势开关（US-005，缺省 true 零回归）：false = L/K ±1°（含 Shift ±10°）
+   * 键禁用 —— 保持 0°/180° 合法角。
+   */
+  allowFineRotate?: boolean;
+  /**
+   * 组成员映射（US-005，缺省 undefined = 无组、全部单片语义）：按 pid 返回组 id
+   * （US-006 弹窗组装：band 组 = 该 band label 全部副本；prefix 组 =
+   * parsePrefixMemberPids 解析成员含异码补片），非成员返回 null。命中组成员的
+   * 拖动 = 整组刚性平移（组包络钳制 + working 多条 setWorkingItem），组内单片
+   * 不可单独拖/旋/翻/重置，Alt 松手吸附对组拖不启用；组成员带描边加粗视觉标记。
+   */
+  pieceGroup?: (pid: string) => string | null;
+  /**
+   * 非法（红色）重叠片数回调（US-005，additive；缺省不计算零成本）：working 每次
+   * 变化（拖动帧 / 键盘 / 重置 / 换 run）按指标面板同口径（穿透 > 压线额度 = 红，
+   * 琥珀不计）重算全布局计数，值变才触达。US-006 保存闸消费。
+   */
+  onIllegalOverlapCountChange?: (n: number) => void;
 }
 
 /** 智能微调受控接口（EditLayoutModal → EditCanvas；字段语义见 EditLayoutModal 注释）。 */
@@ -254,7 +316,16 @@ export interface EditPolishUi {
   onCompactChange: (v: boolean) => void;
 }
 
-export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: EditCanvasProps) {
+export function EditCanvas({
+  mode,
+  interactionEnabled,
+  onModeChange,
+  polish,
+  allowMirror,
+  allowFineRotate,
+  pieceGroup,
+  onIllegalOverlapCountChange,
+}: EditCanvasProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const flipRef = useRef<SVGGElement | null>(null);
   const bgRef = useRef<SVGRectElement | null>(null);
@@ -283,6 +354,18 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
    *  ref 读现值 —— 确认层开关即时生效无需重挂监听。 */
   const interactionRef = useRef(true);
   interactionRef.current = interactionEnabled !== false;
+  /** prd-initial-layout US-005 手势收窄 / 组映射 / 计数回调 props 的 ref 镜像
+   *  （keydown 与 pointer 监听只挂一次，prop 经 ref 读现值）。 */
+  const allowMirrorRef = useRef(true);
+  allowMirrorRef.current = allowMirror !== false;
+  const allowFineRotateRef = useRef(true);
+  allowFineRotateRef.current = allowFineRotate !== false;
+  const pieceGroupRef = useRef<((pid: string) => string | null) | undefined>(undefined);
+  pieceGroupRef.current = pieceGroup;
+  const illegalCountCbRef = useRef<((n: number) => void) | undefined>(undefined);
+  illegalCountCbRef.current = onIllegalOverlapCountChange;
+  /** 上次触达的非法重叠计数（值变才回调 —— 拖动帧稳定计数不刷屏）。 */
+  const lastIllegalCountRef = useRef<number | null>(null);
   const selRef = useRef<number | null>(null);
   const [sel, setSel] = useState<number | null>(null);
   const [metrics, setMetrics] = useState<EditMetrics | null>(null);
@@ -312,15 +395,32 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
   const run = useEditStore((s) => s.run);
   const working = useEditStore((s) => s.working);
 
+  /** 组图例在场性（US-005）：pieceGroup 在场且任一 working 片命中组才渲染图例行。 */
+  const hasGroupMembers = pieceGroup != null && working.some((it) => pieceGroup(it.id) != null);
+
+  /** 非法重叠计数触达（US-005）：回调在场 + 值变才发（缺省 props 零成本 no-op）。 */
+  function emitIllegalCount(n: number): void {
+    const cb = illegalCountCbRef.current;
+    if (!cb) return;
+    if (lastIllegalCountRef.current === n) return;
+    lastIllegalCountRef.current = n;
+    cb(n);
+  }
+
   /**
    * 主渲染 effect：manifest/pid 序列变化 → 重建骨架（bg + fab + 翻转组 + N×5 层 +
    * 清选中/池/UI 层）；working / mode 变化 → 签名跳过式 setAttribute（拖动帧外只有
    * 被改片签名变化 → 只碰该片 5 层；mode 前缀使形态切换全量重应用显隐）。
+   * 末段 US-005：working 每次变化（拖动帧 / 键盘 / 重置 / 换 run 全路径 —— 不依赖
+   * 选中态，比 refreshMetrics 挂点覆盖更广）重算非法重叠片数并经回调触达。
    */
   useEffect(() => {
     const svg = svgRef.current;
     const manifest = run?.manifest ?? null;
-    if (!svg || !manifest || working.length === 0) return;
+    if (!svg || !manifest || working.length === 0) {
+      emitIllegalCount(0); // US-005：空画布口径（回调在场才触达）
+      return;
+    }
 
     const pidSeq = working.map((it) => it.id).join(' ');
     if (manifest !== manifestRef.current || pidSeq !== pidSeqRef.current) {
@@ -406,7 +506,32 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
       lastSigRef.current[i] = sig;
       applyPlacement(entry, it.rotation, it.translation, mode, mirror);
     });
+
+    // US-005：非法（红色）重叠片数 additive 回调（口径见 countIllegalOverlaps）。
+    emitIllegalCount(countIllegalOverlaps(manifest, working));
   }, [run, working, mode]);
+
+  /**
+   * 组成员视觉标记（US-005）：pieceGroup 在场时按当前 working 逐片打
+   * data-edit-group=组id + .edit-piece-grouped 描边加粗类（非成员清除标记）。
+   * 骨架重建（manifest/pidSeq 变化）后 entriesRef 全新 —— 本 effect 声明在主渲染
+   * effect 之后（同帧后跑），重建即回填。
+   */
+  useEffect(() => {
+    if (!pieceGroup) return;
+    working.forEach((it, i) => {
+      const entry = entriesRef.current[i];
+      if (!entry || entry.piece.id !== it.id) return;
+      const gid = pieceGroup(it.id);
+      if (gid != null) {
+        entry.el.setAttribute('data-edit-group', gid);
+        entry.el.classList.add('edit-piece-grouped');
+      } else {
+        entry.el.removeAttribute('data-edit-group');
+        entry.el.classList.remove('edit-piece-grouped');
+      }
+    });
+  }, [run, working, pieceGroup]);
 
   /**
    * 滚轮缩放（native listener + passive:false —— React 合成 wheel 挂根节点为
@@ -538,12 +663,22 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
       return [x / n, y / n];
     }
 
+    /** pid 是否属组合成员（US-005；pieceGroup 缺席恒 false = 默认单片语义）。 */
+    function isGroupPid(pid: string): boolean {
+      const fn = pieceGroupRef.current;
+      return fn != null && fn(pid) != null;
+    }
+
     /** 旋转手柄位置/尺寸刷新（世界坐标；尺寸随视图宽比例，钳制到 mm 级可抓）。 */
     function updateHandle(index: number): void {
       const ep = poolRef.current?.find((p) => p.key === index);
       const line = handleLineRef.current;
       const circle = handleCircleRef.current;
       if (!ep || !line || !circle) return;
+      // US-005：组合成员无旋转手柄（组内单片不可旋 —— 整组仅平移）；非成员确保
+      // 显示（selectPiece → ensureUiLayers 复位 '' 后此处按成员资格定夺）。
+      const hg = handleGRef.current;
+      if (hg) hg.style.display = isGroupPid(ep.pid) ? 'none' : '';
       const c = centroidOf(ep.worldPolygon);
       const vb = vbRef.current;
       const r = vb ? Math.min(HANDLE_R_MAX, Math.max(HANDLE_R_MIN, vb.w * 0.015)) : 12;
@@ -836,6 +971,66 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
       commitDragPlacement(index, entry, rot, tr, mirror, mirror);
     }
 
+    /**
+     * 组会话快照（US-005）：同组全部 working 成员（pieceGroup(pid) === gid，含被
+     * 拖片自身与同 pid 全部副本）+ 各成员起手 (rot,tr,mirror) + 物理毛版口径组
+     * 整体 bbox（钳制锚）。manifest 缺片成员跳过（下标口径与 entriesRef 一致）；
+     * 空组 → null（理论不达 —— 命中片的 pid 必属组）。
+     */
+    function collectGroup(gid: string): GroupDragMembers | null {
+      const manifest = manifestRef.current;
+      const fn = pieceGroupRef.current;
+      if (!manifest || !fn) return null;
+      const working = useEditStore.getState().working;
+      const indices: number[] = [];
+      const starts: { rot: number; tr: Pt; mirror: boolean }[] = [];
+      let bb: BBox | null = null;
+      working.forEach((it, i) => {
+        if (fn(it.id) !== gid) return;
+        const entry = entriesRef.current[i];
+        if (!entry || entry.piece.id !== it.id) return;
+        const mirror = it.mirror === true;
+        indices.push(i);
+        starts.push({ rot: it.rotation, tr: [it.translation[0], it.translation[1]], mirror });
+        const wb = bboxOf(
+          transformPolygon(physicalPolygon(entry.piece), it.rotation, it.translation, mirror),
+        );
+        bb = bb ? unionBBox(bb, wb) : wb;
+      });
+      if (!bb || indices.length === 0) return null;
+      return { indices, starts, bbox0: bb };
+    }
+
+    /**
+     * 整组刚性平移帧（US-005）：世界位移 (dx,dy) 先按起手组包络钳制（y∈[0,gate]、
+     * minX≥0 —— clampPlacement 组包络版：钳 delta 而非逐片 ⇒ 全组恒同位移，右界
+     * 不钳与单片同口径），再同 delta 落笔全组成员（store setWorkingItem 多条 +
+     * DOM 5 层 + 池增量）；指标/手柄只对抓取片刷新一次。组成员 rot/mirror 会话内
+     * 恒定（组内禁单片编辑）。
+     */
+    function applyGroupMoveFrame(st: MoveDrag, dx: number, dy: number, gate: number): void {
+      const grp = st.group;
+      if (!grp) return;
+      const b = grp.bbox0;
+      let cdx = dx;
+      let cdy = dy;
+      if (b.minX + cdx < 0) cdx = -b.minX;
+      if (b.maxY + cdy > gate) cdy = gate - b.maxY;
+      if (b.minY + cdy < 0) cdy = -b.minY;
+      grp.indices.forEach((idx, k) => {
+        const start = grp.starts[k];
+        const entry = entriesRef.current[idx];
+        if (!entry) return;
+        const tr: Pt = [start.tr[0] + cdx, start.tr[1] + cdy];
+        useEditStore.getState().setWorkingItem(idx, { rotation: start.rot, translation: tr });
+        applyEntryPlacement(idx, entry, start.rot, tr, start.mirror);
+        const ep = poolRef.current?.find((p) => p.key === idx);
+        if (ep) applyEditPlacement(ep, start.rot, tr, start.mirror);
+      });
+      refreshMetrics(st.index);
+      updateHandle(st.index);
+    }
+
     /** 平移拖片帧（viewScale 差分 → 起始 tr + 位移 → 钳制 → 落笔）。 */
     function applyMoveFrame(st: MoveDrag, clientX: number, clientY: number): void {
       const manifest = manifestRef.current;
@@ -848,6 +1043,10 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
       // letterbox 偏移在差分中抵消，与空白平移同款口径）。
       const dx = (clientX - st.startClient[0]) / s;
       const dy = -(clientY - st.startClient[1]) / s;
+      if (st.group) {
+        applyGroupMoveFrame(st, dx, dy, manifest.gate_mm);
+        return;
+      }
       const tr = clampPlacement(
         physicalPolygon(entry.piece),
         st.rot0,
@@ -929,6 +1128,10 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
         const flip = flipRef.current;
         const entry = index != null ? entriesRef.current[index] : null;
         if (index == null || !flip || !entry) return;
+        // US-005：组合成员单片不可旋（手柄对成员本就隐藏 —— updateHandle；此处
+        // 防御双保险，组成员点柄位不起任何会话）。
+        const selIt = useEditStore.getState().working[index];
+        if (selIt && isGroupPid(selIt.id)) return;
         const ep = poolRef.current?.find((p) => p.key === index);
         const w = ep ? clientToWorld(svg, flip, e.clientX, e.clientY) : null;
         if (!ep || !w) return; // CTM 不可得 → 不起旋转（世界方位角无从计算）
@@ -956,11 +1159,15 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
       //    pointer-events:none，不会成为 target）。纯左键 = 自由拖动（snap:false，
       //    既有路径零改动）；Alt+左键 = 贴附会话（snap:true，松手单次求解；右键
       //    2026-09-17 起无任何会话 —— Edge 鼠标手势冲突，见组件头注沿革）。
+      //    US-005：命中组成员（pieceGroup(pid) 非 null）→ 整组刚性平移会话
+      //    （Alt 吸附对组拖不启用 —— snap 恒 false）。
       const poly = target?.closest?.('polygon');
       if (poly) {
         const index = entriesRef.current.findIndex((en) => en != null && en.el === poly);
         if (index < 0) return; // 非裁片毛版 polygon（防御）
-        const snap = e.altKey;
+        const it = useEditStore.getState().working[index];
+        const gid = pieceGroupRef.current ? pieceGroupRef.current(it.id) : null;
+        const snap = e.altKey && gid == null;
         if (snap) {
           // 贴附会话态起手：基线先置 Infinity（恒安全占位）—— 紧随的 selectPiece →
           // refreshMetrics 首帧把真实起手总面积落进基线并续写 lastSafeTr 起手位
@@ -971,7 +1178,8 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
           snapSessRef.current = null; // 左键会话不消费跟踪（防御清残值）
         }
         selectPiece(index);
-        const it = useEditStore.getState().working[index];
+        const group = gid != null ? collectGroup(gid) : undefined;
+        if (gid != null && !group) return; // 组快照组装失败（理论不达）→ 不起单片会话
         dragRef.current = {
           mode: 'move',
           pointerId: e.pointerId,
@@ -981,6 +1189,7 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
           tr0: [it.translation[0], it.translation[1]],
           mirror0: it.mirror === true,
           snap,
+          group: group ?? undefined,
         };
         try {
           (poly as SVGPolygonElement).setPointerCapture?.(e.pointerId);
@@ -1109,7 +1318,15 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
       // 单字符键统一小写（Shift+L 的 e.key='L'，CapsLock 布局同样命中）。
       const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
       const curMirror = it.mirror === true;
+      // 守卫④（US-005）：选中片为组合成员 → 单片编辑键全禁（整组只可平移，不可
+      // 单独旋/翻/重置）；空格仍吞默认滚动。pieceGroup 缺席（默认 props）不进。
+      if (isGroupPid(it.id)) {
+        if (k === ' ') e.preventDefault();
+        return;
+      }
       if (k === 'l' || k === 'k') {
+        // US-005：allowFineRotate=false → L/K 微转键禁用（保持 {0°,180°} 合法角）。
+        if (!allowFineRotateRef.current) return;
         // L/K 放行 e.repeat（浏览器 auto-repeat = 按住连转）；Shift 步长 ±10°。
         const step = (e.shiftKey ? 10 : 1) * (k === 'l' ? 1 : -1);
         applyKeyTransform(index, it.rotation + step, curMirror);
@@ -1132,6 +1349,17 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
       }
       if (k === ' ') {
         e.preventDefault(); // 防 body 滚动（聚焦按钮激活已被守卫②排除）
+        if (!allowMirrorRef.current) {
+          // US-005 两态收窄：{0°,180°} 掉头 —— 只翻 half 位（rot ±180，L/K 微调
+          // 残余角同款保留语义），mirror 位不动（sparrow proper-rigid 拒镜像）。
+          const half0 = (((it.rotation % 360) + 360) % 360) >= 180;
+          applyKeyTransform(
+            index,
+            half0 ? it.rotation - 180 : it.rotation + 180,
+            curMirror,
+          );
+          return;
+        }
         // 四态翻转循环（2026-09-05 用户定案，取代旧 rot+180 两态掉头）：
         // 原始 → 垂直镜像 → 180° → 水平镜像 → 原始。态 = mirror 位 + half 位
         // （rotation 相对 0° 的 180° 偏移：((rot%360)+360)%360 ≥ 180）：
@@ -1151,11 +1379,15 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
         return;
       }
       if (k === 'o') {
+        // US-005：allowMirror=false → 镜像键禁用。
+        if (!allowMirrorRef.current) return;
         // 水平镜像 = toggle mirror（rot 不变）。
         applyKeyTransform(index, it.rotation, !curMirror);
         return;
       }
       if (k === 'i') {
+        // US-005：allowMirror=false → 镜像键禁用。
+        if (!allowMirrorRef.current) return;
         // 垂直镜像 = toggle mirror + rot+180（diag(1,−1)=R(180°)·diag(−1,1)，共用单标志）。
         applyKeyTransform(index, it.rotation + 180, !curMirror);
       }
@@ -1348,6 +1580,13 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
       <div className="edit-guide-row">
         <span className="edit-metrics-label">键盘：</span>L/K 微转 · 空格 四态翻转 · O 水平镜像 · I 垂直镜像 · R 重置此片
       </div>
+      {/* prd-initial-layout US-005：组成员图例行（初始布局模式有组成员才在场 ——
+          默认编辑弹窗不渲染，既有指南文案反向锁「形态/保存」不受扰）。 */}
+      {hasGroupMembers && (
+        <div className="edit-guide-row" data-testid="edit-guide-group-row">
+          <span className="edit-metrics-label">组合：</span>组合成员片（整组拖动）
+        </div>
+      )}
       <div className="edit-guide-foot">拖动自动限制在门幅内（上下不出布边）</div>
       </div>
       {/* 选中片重合指标面板（画布右上固定；未选中不渲染）。 */}
@@ -1414,6 +1653,54 @@ export function EditCanvas({ mode, interactionEnabled, onModeChange, polish }: E
  */
 function placementSig(mode: EditViewMode, rot: number, tr: Pt, mirror: boolean): string {
   return `${mode}|${rot}|${tr[0]}|${tr[1]}|${mirror ? 1 : 0}`;
+}
+
+/** 两 bbox 并集（US-005 整组拖动会话的组包络钳制锚）。 */
+function unionBBox(a: BBox, b: BBox): BBox {
+  return {
+    minX: Math.min(a.minX, b.minX),
+    minY: Math.min(a.minY, b.minY),
+    maxX: Math.max(a.maxX, b.maxX),
+    maxY: Math.max(a.maxY, b.maxY),
+  };
+}
+
+/**
+ * 非法（红色）重叠片数（US-005 onIllegalOverlapCountChange 数据源）：全 working
+ * 展开池逐片按指标面板同口径判红 —— penetrationMm > allowanceMm + 1e-9（压线额度
+ * 内琥珀不计）；布尔交异常降级 bbox 近似（penetrationDepth 纯函数 + bbox 相交邻居
+ * d_i+d_j 最大值，与 refreshMetrics 降级路径同式）。计数口径 = 红色重叠**片**数
+ * （一对非法重合两侧各计 1 —— 消费方闸门只看 >0 与提示量，US-006 保存闸）。
+ */
+function countIllegalOverlaps(manifest: ManifestMsg, items: readonly PlacedItem[]): number {
+  const pool = precomputeEditPiecesFromItems(manifest, items);
+  let red = 0;
+  for (const ep of pool) {
+    // bbox 预筛：无任何相交邻居直接非红（省布尔交调用）。
+    let touches = false;
+    for (const o of pool) {
+      if (o.key !== ep.key && bboxIntersect(ep.bbox, o.bbox)) {
+        touches = true;
+        break;
+      }
+    }
+    if (!touches) continue;
+    try {
+      const res = computeOverlap(ep, pool);
+      if (res.penetrationMm > res.allowanceMm + 1e-9) red += 1;
+    } catch {
+      let pen = 0;
+      let allowance = 0;
+      for (const o of pool) {
+        if (o.key === ep.key) continue;
+        if (!bboxIntersect(ep.bbox, o.bbox)) continue;
+        pen = Math.max(pen, penetrationDepth(ep.worldPolygon, o.worldPolygon));
+        allowance = Math.max(allowance, ep.dMm + o.dMm);
+      }
+      if (pen > allowance + 1e-9) red += 1;
+    }
+  }
+  return red;
 }
 
 /** 数值定长显示（对比卡前后值；NaN/缺键防御显示 '—'）。 */
