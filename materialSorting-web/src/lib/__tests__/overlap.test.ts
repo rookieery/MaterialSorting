@@ -448,3 +448,83 @@ describe('物理毛版口径 (2026-09-06)', () => {
     expect(r.allowanceMm).toBe(0);
   });
 });
+
+// ============================================================
+// 碰撞轮廓判红口径（2026-10-04 修订）：红/琥珀 = collideAreaMm2（erode 后
+// manifest polygon 相交）而非「物理穿透 > d_i+d_j」。动因（实测 d=2/4/8 短求解）：
+// sparrow 贴触排料解 erode 碰撞轮廓零重叠，但物理穿透 ≈ d_i+d_j + 正向噪声
+// （shapely 腐蚀圆弧弦内接 + sparrow f32 位置量化 + 顶点抽稀，实测超额度
+// 0.01~2.4mm 随 d 增大）→ 旧判据 + 1e-9 容差必假阳性 → 初始布局生成即锁死
+// 保存闸（用户 2026-10-04 报障）。
+// ============================================================
+
+describe('碰撞轮廓判红口径（2026-10-04）', () => {
+  /** 内缩 inset 的 100² 方（erode 声明口径 d=5 —— inset 故意取 5.5 > d，模拟
+   * shapely 弦内接腐蚀「实际缩进略大于声明 d」的真实形态）。 */
+  function mkInsetManifest(inset: number): ManifestMsg {
+    const sq: Polygon = [
+      [inset, inset],
+      [100 - inset, inset],
+      [100 - inset, 100 - inset],
+      [inset, 100 - inset],
+    ];
+    return {
+      type: 'manifest',
+      gate_mm: 1000,
+      total_area_mm2: 20000,
+      n_eroded: 2,
+      pieces: [
+        { id: 'a_28', size: 28, color: '#111111', area_mm2: 10000, polygon: sq, raw_polygon: UNIT_SQUARE, d_mm: 5 },
+        { id: 'b_28', size: 28, color: '#222222', area_mm2: 10000, polygon: sq, raw_polygon: UNIT_SQUARE, d_mm: 5 },
+      ],
+    };
+  }
+
+  it('collidePolygon/collideBBox = manifest polygon 同变换；老后端（无 raw）碰撞轮廓回退 base 自身', () => {
+    const [a] = precomputeEditPiecesFromItems(mkInsetManifest(5), [item('a_28', 90, 500, 200)]);
+    // polygon（erode 90²）旋转 90°（(x,y)→(−y,x)）+ 平移 (500,200)：与
+    // worldPolygon（raw 变换）分开的几何。
+    expect(a.collidePolygon).toEqual([
+      [495, 205],
+      [495, 295],
+      [405, 295],
+      [405, 205],
+    ]);
+    expect(a.collideBBox).toEqual({ minX: 405, minY: 205, maxX: 495, maxY: 295 });
+    expect(a.collideBasePolygon).not.toBe(a.basePolygon); // erode ≠ raw（d>0）
+    // 老后端：无 raw_polygon → base = polygon，碰撞轮廓回退 base 同一引用。
+    const [legacy] = precomputeEditPiecesFromItems(mkManifest(), [item('a_28', 0, 0, 0)]);
+    expect(legacy.collideBasePolygon).toBe(legacy.basePolygon);
+    expect(legacy.collidePolygon).toEqual(legacy.worldPolygon);
+  });
+
+  it('碰撞轮廓相交：collideAreaMm2 = erode 交面积精确值（inset 5 夹具 5×80=400）', () => {
+    // a@(0,0) erode [5,95]² / b@(85,10) erode x[90,180]y[15,105] → erode 交
+    // [90,95]×[15,95] = 400；raw 交 [85,100]×[10,100] = 1350、pen 15 > 额度 10
+    // —— 两口径同红，collide 数值是判红依据。
+    const [dragged, other] = precomputeEditPiecesFromItems(mkInsetManifest(5), [
+      item('a_28', 0, 0, 0),
+      item('b_28', 0, 85, 10),
+    ]);
+    const r = computeOverlap(dragged, [other]);
+    expect(r.areaMm2).toBeCloseTo(1350, 10);
+    expect(r.collideAreaMm2).toBeCloseTo(400, 10);
+  });
+
+  it('solver 贴触假阳性形态回归锁：穿透 10.4 > 额度 10 但碰撞轮廓不相交 → collideAreaMm2 = 0（琥珀）', () => {
+    // 双片 erode 实际内缩 5.5（声明 d=5）：a@(0,0)/b@(89.6,40) —— raw 交
+    // [89.6,100]×[40,100] = 624、pen 10.4（b 顶点 (89.6,40) 距 a 接触边 x=100
+    // 10.4，y 错位 40 保证底边不更近）> 额度 10（旧口径判红 = 初始布局生成即
+    // 锁保存闸的形态）；erode a x[5.5,94.5] / b x[95.1,...] → 0.6mm 缝隙不相交
+    // → collideAreaMm2 = 0（新口径琥珀，可保存）。
+    const [dragged, other] = precomputeEditPiecesFromItems(mkInsetManifest(5.5), [
+      item('a_28', 0, 0, 0),
+      item('b_28', 0, 89.6, 40),
+    ]);
+    const r = computeOverlap(dragged, [other]);
+    expect(r.penetrationMm).toBeCloseTo(10.4, 6);
+    expect(r.penetrationMm).toBeGreaterThan(r.allowanceMm); // 旧口径判红形态自证
+    expect(r.allowanceMm).toBe(10);
+    expect(r.collideAreaMm2).toBe(0);
+  });
+});

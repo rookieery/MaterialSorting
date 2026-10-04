@@ -3049,3 +3049,50 @@ ALL PASS**（P/S/B 三相位全链路：生成→编辑→保存→chip→运行
 降级无 initial 键帧流照常；band 组拖+WB_ 载荷+engaged）；报告
 `out/smoke_initial_layout/report.json`，退出码 0；服务器进程已按生命周期规则
 终止。
+
+## 判红口径修订：碰撞轮廓相交制（2026-10-04，修「设重合 d 后初始布局生成即无法保存」）
+
+用户报障：高级配置设置重合 d 后，初始布局弹窗生成的布局未做任何编辑即
+「存在 N 片非法（红色）重叠」保存闸锁死。**根因（受控实验实锤，非用户配置
+错误）**：sparrow 贴触排料解在碰撞轮廓（erode 后 polygon）意义上零重叠
+（真实母版 110 片 d=2/4/8 短求解全部 0 对碰撞重叠），但物理毛版穿透 ≈
+dᵢ+dⵢ + **正向噪声**（shapely `buffer(-d)` 腐蚀圆弧弦内接 ~0.02d/侧 + sparrow
+位置 f32 量化（translation 有 f32 网格痕迹）+ 顶点抽稀），实测超额度
+0.01~2.4mm 随 d 增大；旧判据「穿透 > dᵢ+dⵢ + 1e-9」对系统性正偏差零容忍 →
+同母版 23~41 对假阳性红（d=0 时穿透 ≈ 0 恰不触发，故只在设重合后暴露）。
+
+**修复**：红/琥珀判定与保存闸切换为碰撞轮廓交集面积制 —— `collideAreaMm2 >
+COLLIDE_NOISE_AREA_MM2(=0.05mm²)` = 红（违反排料碰撞约束 = sparrow restore
+后的碰撞态），物理相交而碰撞交噪声级 = 琥珀（设计允许的压线，含腐蚀近似
+微超额度）。碰撞轮廓 = manifest `polygon` 字段（erode 后，sparrow 排料用的
+同一几何 —— 判红与 solver 约束、warm restore 语义三层对齐）；**显示数值不变**
+（面积/穿透/额度仍物理毛版口径 = 导出真相，不回退 2026-09-06 口径统一）；
+d=0 默认路径行为不变（erode ≈ raw）；布尔交异常降级帧保守回退旧穿透口径兜底；
+snap 吸附引擎（相对基线谓词）与 polish（物理分离更严）不受影响。
+
+### 新增 / 改造文件（纯前端，后端零改动）
+
+| 文件 | 说明 |
+| --- | --- |
+| `src/lib/overlap.ts` | `EditPiece` +`collideBasePolygon`/`collidePolygon`/`collideBBox`（manifest polygon 同 rot+tr+mirror 变换；老后端/缺字段回退 base 自身 = d=0 两口径合一）；`computeOverlap` 产出 +`collideAreaMm2`（只在物理相交邻居上累加 —— erode ⊆ raw，物理交为零时碰撞交必为零，平均省一半布尔交）；导出 `COLLIDE_NOISE_AREA_MM2=0.05`；`applyEditPlacement` 同步重放 collide 三字段。 |
+| `src/components/edit/EditCanvas.tsx` | `countIllegalOverlaps` 判红切 `collideAreaMm2 > 阈值`（降级 catch 回退旧穿透口径保守兜底）；`EditMetrics` +`collideAreaMm2`（degraded 帧 = -1 哨兵）；指标面板「最大穿透」着色 `depthToneClass`（正常帧碰撞口径 / degraded 旧口径）+ `depthTitle` 新文案（碰撞轮廓相交 = 红；仅毛版相交 = 琥珀，额度 dᵢ+dⵢ 显示参考值）；foot 文案同步。 |
+| `src/lib/snap.ts` | `pieceAt` 重放变换同步覆写 collide 三字段（本引擎只消费物理 areaMm2，重放防未来消费方读到陈旧碰撞几何）。 |
+| `src/types/piece.ts` | `PieceInfo.polygon` 注释补判红口径用途。 |
+
+### 回归锁（三层）
+
+1. `src/lib/__tests__/overlap.test.ts` +describe「碰撞轮廓判红口径」3 例：
+   collide 字段展开（变换对拍 + 老后端回退 toBe 引用）/ collideAreaMm2 精确值
+   （erode 交 400）/ **solver 贴触假阳性形态**（穿透 10.4 > 额度 10 但碰撞轮廓
+   0.6mm 缝隙不相交 → collideAreaMm2 = 0 琥珀 —— 夹具模拟「erode 实际内缩 >
+   声明 d」的弦内接形态）。
+2. `EditCanvas.initial.test.tsx` +1 例：同形态布局 onIllegalOverlapCountChange
+   = 0（保存闸放行），拖深（碰撞轮廓相交 1975mm²）→ 2 照常红。
+3. `InitialLayoutModal.test.tsx` +1 例：生成响应带同形态 manifest → 保存按钮
+   enabled + 无数量提示（用户报障的端到端形态）。
+
+### 验证
+
+vitest 全量 **1413 全绿** + `npm run build` 过；:8010 生产包浏览器端到端
+（真实 5336 样例 + 全片型 d=4 → 生成 → 保存可点/无提示/保存成功/伪卡片）
+7/7 PASS（一次性脚本已删，截图 `out/smoke_initial_layout/verify_overlap_gate_after_save.png`）。

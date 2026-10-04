@@ -990,13 +990,14 @@ describe('EditCanvas 重合指标 (US-003)', () => {
     expect(metricsText('edit-metrics-depth')).toBe('5.0 mm');
     expect(metricsClass('edit-metrics-depth')).toContain('warn');
     expect(metricsClass('edit-metrics-depth')).not.toContain('danger');
-    // 额度提示（title 悬浮）：额度 10.0 = 5+5
+    // 额度提示（title 悬浮，2026-10-04 判红口径修订后文案）：碰撞轮廓不相交 = 琥珀，
+    // 额度 d_i+d_j ≈ 10.0 = 5+5 仍作显示参考。
     const depthEl = document.querySelector('[data-testid="edit-metrics-depth"]')!;
-    expect(depthEl.getAttribute('title')).toContain('压线额度 10.0');
+    expect(depthEl.getAttribute('title')).toContain('额度 d_i+d_j ≈ 10.0');
     expect(svg.querySelectorAll('polygon[fill="rgba(255, 64, 64, 0.42)"]').length).toBeGreaterThan(0);
   });
 
-  it('穿透超压线额度红：caliber 夹具 b@[450,50] 穿透 50 > 额度 10（额度内琥珀 / 超额度红的边界锁）', () => {
+  it('穿透超压线额度红：caliber 夹具 b@[450,50] 穿透 50 > 额度 10（碰撞轮廓亦深交 [455,495]×[55,495] —— 两口径同红的边界锁；「微超额度但碰撞不相交」的 solver 贴触形态见 EditCanvas.initial 2026-10-04 判红口径回归锁）', () => {
     const placed: PlacedItem[] = [
       { id: 'a_28', rotation: 0, translation: [0, 0] },
       { id: 'b_30', rotation: 0, translation: [450, 50] },

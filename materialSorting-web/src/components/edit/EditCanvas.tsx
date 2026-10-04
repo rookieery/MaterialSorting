@@ -112,6 +112,18 @@
 // allowanceMm（相交邻居 max(d_i+d_j)，per_type 腐蚀距离之和）= 琥珀（设计允许
 // 压线），超出 = 红 —— solver 按 erode 轮廓排料的合法压线不再误红/误零。
 //
+// 判红口径修订（2026-10-04，修初始布局保存闸假阳性锁死）：「穿透 ≤ d_i+d_j」的
+// 额度判定对 solver 贴触解系统性假阳性 —— d>0 时 sparrow 贴触排料（碰撞轮廓零
+// 重叠，实测 d=2/4/8 全零）物理穿透 ≈ d_i+d_j + 正向噪声（shapely 腐蚀圆弧弦内
+// 接 ~0.02d/侧 + sparrow f32 位置量化 + 顶点抽稀，超出额度 0.01~2.4mm 随 d 增大），
+// 1e-9 容差必假阳性 → 初始布局生成即全片红锁死保存闸（用户报障）。红/琥珀判定
+// 切碰撞轮廓口径（overlap.ts computeOverlap.collideAreaMm2，erode polygon = manifest
+// polygon 与 sparrow 排料同源）：碰撞交 > COLLIDE_NOISE_AREA_MM2 = 红（违反排料
+// 约束）；物理相交而碰撞交为噪声级 = 琥珀（含腐蚀近似微超额度 —— 版师设 d 的
+// 本意即允许）。**显示数值不变**（面积/穿透/额度仍物理毛版口径 = 导出真相）；
+// countIllegalOverlaps（保存闸）与指标面板着色同一切换；degraded（布尔交异常
+// 降级帧）保守维持旧穿透口径兜底。
+//
 // prd-initial-layout US-005（2026-10-03）「初始布局模式」可缺省 props（缺省值 =
 // 现行编辑弹窗行为逐字节不变 —— 全部新分支以 props 在场为门，默认路径零触碰）：
 //   - allowMirror=false：空格四态循环收窄为 {0°,180°} 两态掉头（只翻 half 位，
@@ -143,6 +155,7 @@ import {
 } from '../../lib/editGeometry';
 import {
   applyEditPlacement,
+  COLLIDE_NOISE_AREA_MM2,
   computeOverlap,
   precomputeEditPiecesFromItems,
   type EditPiece,
@@ -239,14 +252,20 @@ type DragState = MoveDrag | RotateDrag;
 interface EditMetrics {
   /** 交并总面积 mm²（degraded 时为 bbox 交面积估算）。 */
   areaMm2: number;
-  /** 最大穿透深度 mm（顶点采样口径，与 overlap.ts 同源）。 */
+  /** 最大穿透深度 mm（顶点采样口径，与 overlap.ts 同源；显示值，不作判红依据）。 */
   penetrationMm: number;
   /**
-   * 压线额度 mm（相交邻居 max(d_i+d_j)；2026-09-06 口径统一起红字按物理毛版口径，
-   * pen ≤ 额度 = 设计允许的压线重合 → 琥珀，超出 → 红）。degraded 时按 bbox 相交
-   * 邻居的 d_i+d_j 最大值近似。
+   * 压线额度 mm（相交邻居 max(d_i+d_j)，显示参考值；2026-10-04 判红口径修订起
+   * 红/琥珀不再按它 —— 见 collideAreaMm2）。degraded 时按 bbox 相交邻居的
+   * d_i+d_j 最大值近似。
    */
   allowanceMm: number;
+  /**
+   * 碰撞轮廓（erode 后 manifest polygon）交集面积 mm²（2026-10-04 判红口径）：
+   * > COLLIDE_NOISE_AREA_MM2 = 红（违反排料碰撞约束），物理相交而碰撞交噪声级 =
+   * 琥珀（设计允许压线）。degraded 帧 = -1 哨兵（布尔交不可用，着色回退穿透口径）。
+   */
+  collideAreaMm2: number;
   /** 旋转偏离角 °（相对 {0°,180°} 最小偏差）。 */
   rotDevDeg: number;
   /** 布尔交异常降级（bbox 估算口径）。 */
@@ -292,8 +311,9 @@ export interface EditCanvasProps {
   pieceGroup?: (pid: string) => string | null;
   /**
    * 非法（红色）重叠片数回调（US-005，additive；缺省不计算零成本）：working 每次
-   * 变化（拖动帧 / 键盘 / 重置 / 换 run）按指标面板同口径（穿透 > 压线额度 = 红，
-   * 琥珀不计）重算全布局计数，值变才触达。US-006 保存闸消费。
+   * 变化（拖动帧 / 键盘 / 重置 / 换 run）按指标面板同口径（2026-10-04 修订：碰撞
+   * 轮廓交 > 阈值 = 红，物理相交而碰撞交噪声级 = 琥珀不计 —— solver 贴触解的
+   * 额度微超不再假阳性）重算全布局计数，值变才触达。US-006 保存闸消费。
    */
   onIllegalOverlapCountChange?: (n: number) => void;
 }
@@ -775,6 +795,7 @@ export function EditCanvas({
           areaMm2: res.areaMm2,
           penetrationMm: res.penetrationMm,
           allowanceMm: res.allowanceMm,
+          collideAreaMm2: res.collideAreaMm2,
           rotDevDeg: rotationDeviationDeg(dragged.rot),
           degraded: false,
         };
@@ -823,6 +844,8 @@ export function EditCanvas({
           areaMm2: area,
           penetrationMm: pen,
           allowanceMm: allowance,
+          // degraded 帧 = -1 哨兵（碰撞布尔交不可用，着色回退穿透口径兜底）。
+          collideAreaMm2: -1,
           rotDevDeg: rotationDeviationDeg(dragged.rot),
           degraded: true,
         };
@@ -1608,19 +1631,10 @@ export function EditCanvas({
           <div className="edit-metrics-row">
             <span className="edit-metrics-label">最大穿透</span>
             <span
-              className={
-                metrics.penetrationMm > metrics.allowanceMm + 1e-9
-                  ? 'edit-metrics-val edit-metrics-val--danger'
-                  : metrics.penetrationMm > 0
-                    ? 'edit-metrics-val edit-metrics-val--warn'
-                    : 'edit-metrics-val'
-              }
+              className={depthToneClass(metrics)}
               data-testid="edit-metrics-depth"
-              title={
-                metrics.allowanceMm > 0
-                  ? `压线额度 ${metrics.allowanceMm.toFixed(1)} mm（相邻片腐蚀距离 d_i+d_j）：穿透 ≤ 额度 = 设计允许的压线重合（琥珀），超出 = 红`
-                  : '相邻片无压线额度（d=0）：任何穿透都按超限（红）'
-              }
+              data-collide-area={String(metrics.collideAreaMm2)}
+              title={depthTitle(metrics)}
             >
               {metrics.penetrationMm.toFixed(1)} mm
             </span>
@@ -1639,7 +1653,7 @@ export function EditCanvas({
             </span>
           </div>
           <div className="edit-metrics-foot">
-            按毛版轮廓口径（与导出一致）· 穿透≤压线额度为琥珀
+            按毛版轮廓口径（与导出一致）· 碰撞轮廓相交为红、仅压线为琥珀
           </div>
         </div>
       )}
@@ -1668,9 +1682,12 @@ function unionBBox(a: BBox, b: BBox): BBox {
 
 /**
  * 非法（红色）重叠片数（US-005 onIllegalOverlapCountChange 数据源）：全 working
- * 展开池逐片按指标面板同口径判红 —— penetrationMm > allowanceMm + 1e-9（压线额度
- * 内琥珀不计）；布尔交异常降级 bbox 近似（penetrationDepth 纯函数 + bbox 相交邻居
- * d_i+d_j 最大值，与 refreshMetrics 降级路径同式）。计数口径 = 红色重叠**片**数
+ * 展开池逐片按指标面板同口径判红 —— collideAreaMm2 > COLLIDE_NOISE_AREA_MM2
+ * （2026-10-04 判红口径修订：碰撞轮廓 = erode 后 manifest polygon 相交 = 违反
+ * 排料约束；物理相交而碰撞交噪声级 = 琥珀压线不计 —— d>0 时 solver 贴触解物理
+ * 穿透 ≈ d_i+d_j+腐蚀/量化正噪声，旧「穿透 > 额度 + 1e-9」判据必假阳性锁死保存闸，
+ * 见模块头注）；布尔交异常降级 bbox 近似回退旧穿透口径（penetrationDepth 纯函数
+ * + bbox 相交邻居 d_i+d_j 最大值，保守兜底）。计数口径 = 红色重叠**片**数
  * （一对非法重合两侧各计 1 —— 消费方闸门只看 >0 与提示量，US-006 保存闸）。
  *
  * pieceGroup（US-007 2026-10-04 修复）：同组（band/prefix 刚性组）成员互不计 ——
@@ -1701,7 +1718,7 @@ function countIllegalOverlaps(
     if (!touches) continue;
     try {
       const res = computeOverlap(ep, pool.filter((o) => !sameGroup(ep.key, o.key)));
-      if (res.penetrationMm > res.allowanceMm + 1e-9) red += 1;
+      if (res.collideAreaMm2 > COLLIDE_NOISE_AREA_MM2) red += 1;
     } catch {
       let pen = 0;
       let allowance = 0;
@@ -1721,6 +1738,30 @@ function countIllegalOverlaps(
 /** 数值定长显示（对比卡前后值；NaN/缺键防御显示 '—'）。 */
 function fmt(v: number | undefined, digits: number): string {
   return typeof v === 'number' && Number.isFinite(v) ? v.toFixed(digits) : '—';
+}
+
+/**
+ * 指标面板「最大穿透」着色（2026-10-04 判红口径修订）：正常帧按碰撞轮廓交
+ * （> COLLIDE_NOISE_AREA_MM2 = 红；物理穿透 > 0 = 琥珀压线）；degraded 帧
+ * （collideAreaMm2 = -1 哨兵，布尔交不可用）保守回退旧穿透口径兜底。
+ */
+function depthToneClass(m: EditMetrics): string {
+  const red = m.degraded
+    ? m.penetrationMm > m.allowanceMm + 1e-9
+    : m.collideAreaMm2 > COLLIDE_NOISE_AREA_MM2;
+  if (red) return 'edit-metrics-val edit-metrics-val--danger';
+  if (m.penetrationMm > 0) return 'edit-metrics-val edit-metrics-val--warn';
+  return 'edit-metrics-val';
+}
+
+/** 同上着色的 title 解释文案（口径沿革注记见 depthToneClass）。 */
+function depthTitle(m: EditMetrics): string {
+  if (m.degraded) {
+    return m.allowanceMm > 0
+      ? `降级估算帧 · 压线额度 ${m.allowanceMm.toFixed(1)} mm（d_i+d_j）：穿透 ≤ 额度 = 琥珀，超出 = 红`
+      : '降级估算帧 · 相邻片无压线额度（d=0）：任何穿透都按超限（红）';
+  }
+  return `碰撞轮廓（d 腐蚀后）相交 = 红（违反排料约束）；仅毛版轮廓相交 = 设计允许的压线（琥珀，额度 d_i+d_j ≈ ${m.allowanceMm.toFixed(1)} mm）`;
 }
 
 /**

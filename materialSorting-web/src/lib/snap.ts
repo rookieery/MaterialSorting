@@ -86,7 +86,17 @@ export interface SnapResult {
 /** 被拖片放到指定位（纯函数：新对象，不修改入参 dragged）。 */
 function pieceAt(dragged: EditPiece, tr: Pt): EditPiece {
   const world = transformPolygon(dragged.basePolygon, dragged.rot, tr, dragged.mirror);
-  return { ...dragged, tr: [tr[0], tr[1]], worldPolygon: world, bbox: bboxOf(world) };
+  // collide 字段同步重放（2026-10-04 判红口径起 EditPiece 携带碰撞轮廓 —— 本引擎
+  // 只消费物理 areaMm2，重放是为保持池一致、防未来消费方读到陈旧碰撞几何）。
+  const collide = transformPolygon(dragged.collideBasePolygon, dragged.rot, tr, dragged.mirror);
+  return {
+    ...dragged,
+    tr: [tr[0], tr[1]],
+    worldPolygon: world,
+    bbox: bboxOf(world),
+    collidePolygon: collide,
+    collideBBox: bboxOf(collide),
+  };
 }
 
 /** 被拖片在指定位是否满足 clamp 不变量（y∈[0,gate]、minX≥0；x 右界不钳 —— US-003 同口径）。 */

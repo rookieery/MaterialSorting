@@ -11,8 +11,9 @@
 //      隐藏 + 点柄位防御零变换）；非成员片拖动 / 空格 / 吸附照常；组成员视觉
 //      标记（.edit-piece-grouped + data-edit-group）+ 指南图例行。
 //   5) onIllegalOverlapCountChange：红色（非法）重叠片数回调 —— 重叠双方各计
-//      1（pen>额度口径与指标面板同源）、琥珀（额度内压线）不计、拖动分离归零、
-//      值变才触达、非选中路径（setWorkingItem 直写）同样触达。
+//      1（2026-10-04 判红口径修订：碰撞轮廓交 > 阈值 = 红、与指标面板同源；物理
+//      相交而碰撞交噪声级 = 琥珀压线不计，solver 贴触解假阳性回归锁在案）、拖动
+//      分离归零、值变才触达、非选中路径（setWorkingItem 直写）同样触达。
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react';
@@ -121,6 +122,55 @@ function makeManifestCaliber2(): ManifestMsg {
         color: '#00ff00',
         area_mm2: 250000,
         polygon: eroded,
+        raw_polygon: raw,
+        d_mm: 5,
+      },
+    ],
+  };
+}
+
+/**
+ * 判红口径夹具（2026-10-04）：raw 500² / erode 实际内缩 27.5、声明 d=5（额度
+ * d_i+d_j=10）—— 模拟 shapely 弦内接腐蚀「实际缩进 > 声明 d」的 solver 贴触
+ * 解形态：物理穿透可微超额度而碰撞轮廓（erode）不相交（= sparrow 眼里的合法
+ * 排料），判红按碰撞轮廓交、不按额度。
+ */
+function makeManifestCaliberInset(): ManifestMsg {
+  const raw: Polygon = [
+    [0, 0],
+    [500, 0],
+    [500, 500],
+    [0, 500],
+  ];
+  const inset: Polygon = [
+    [27.5, 27.5],
+    [472.5, 27.5],
+    [472.5, 472.5],
+    [27.5, 472.5],
+  ];
+  return {
+    type: 'manifest',
+    gate_mm: GATE,
+    total_area_mm2: 500000,
+    n_eroded: 2,
+    pieces: [
+      {
+        id: 'a_28',
+        label: 'g01',
+        size: 28,
+        color: '#ff0000',
+        area_mm2: 250000,
+        polygon: inset,
+        raw_polygon: raw,
+        d_mm: 5,
+      },
+      {
+        id: 'b_30',
+        label: 'g02',
+        size: 30,
+        color: '#00ff00',
+        area_mm2: 250000,
+        polygon: inset,
         raw_polygon: raw,
         d_mm: 5,
       },
@@ -572,6 +622,29 @@ describe('EditCanvas onIllegalOverlapCountChange (US-005)', () => {
     // 直写 working（非选中路径）：b → [450,50] pen 50 > 额度 10 → 红双方
     act(() => {
       useEditStore.getState().setWorkingItem(1, { translation: [450, 50] });
+    });
+    expect(spy).toHaveBeenLastCalledWith(2);
+  });
+
+  it('solver 贴触假阳性形态（穿透微超额度、碰撞轮廓不相交）不计红 —— 2026-10-04 判红口径回归锁', () => {
+    // 双片 erode 实际内缩 27.5（声明 d=5 → 额度 10，模拟 shapely 弦内接腐蚀实际
+    // 缩进 > 声明 d）：a@[0,0]/b@[489.6,50] raw 交 10.4×450、pen 10.4 > 额度 10
+    // —— 旧「穿透 > 额度 + 1e-9」判据必红（实测 d=2/4/8 solver 贴触解 23~41 对
+    // 假阳性锁死初始布局保存闸）；erode a x[27.5,472.5] / b x[517.1,...] 不相交
+    // → 碰撞口径琥珀不计（本修复）。
+    const spy = vi.fn();
+    const run = seedRun(
+      [
+        { id: 'a_28', rotation: 0, translation: [0, 0] },
+        { id: 'b_30', rotation: 0, translation: [489.6, 50] },
+      ],
+      makeManifestCaliberInset(),
+    );
+    mountInitial({ onIllegalOverlapCountChange: spy }, run);
+    expect(spy).toHaveBeenLastCalledWith(0);
+    // 深重叠（碰撞轮廓相交 [467.5,472.5]×[77.5,472.5] = 1975mm²）→ 照常红双方
+    act(() => {
+      useEditStore.getState().setWorkingItem(1, { translation: [440, 50] });
     });
     expect(spy).toHaveBeenLastCalledWith(2);
   });

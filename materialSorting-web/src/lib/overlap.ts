@@ -15,6 +15,16 @@
 // 不再进任何数值口径；老后端无 raw_polygon 时 physicalPolygon 回退 polygon
 // （d=0 时代两者等价）。相邻两片「压线额度」= d_i + d_j（两片 per_type 腐蚀距离
 // 之和），穿透 ≤ 额度 = 设计允许的压线重合。
+//
+// 判红口径（2026-10-04 修订）：红/琥珀判定改按**碰撞轮廓**（manifest polygon =
+// erode 后轮廓，sparrow 排料用的同一几何）相交 —— collideAreaMm2 > 阈值 = 红，
+// 物理相交但碰撞不相交 = 琥珀（设计允许的压线）。动因：d>0 时 sparrow 贴触排料
+// 的合法解（erode 轮廓零重叠，实测 d=2/4/8 全零）物理穿透 ≈ d_i+d_j + 正向噪声
+// （shapely 腐蚀圆弧弦内接 ~0.02d/侧 + sparrow 位置 f32 量化 + 顶点抽稀，实测
+// 超出额度 0.01~2.4mm 随 d 增大），旧判据「物理穿透 > d_i+d_j + 1e-9」对系统性
+// 正偏差零容忍 → 初始布局生成即全片假阳性锁死保存闸（用户 2026-10-04 报障）。
+// 物理口径的显示数值（面积/穿透/额度）不变 —— 红字数值仍是导出真相，只有
+// 着色与闸门判定切换到排料约束口径。
 
 import * as polygonClipping from 'polygon-clipping';
 import { polygonArea as shoelaceArea } from './params';
@@ -34,6 +44,15 @@ import type { FrameMsg, ManifestMsg } from '../types/ws';
 const intersection: typeof polygonClipping.intersection = (
   (polygonClipping as unknown as { default?: typeof polygonClipping }).default ?? polygonClipping
 ).intersection;
+
+/**
+ * 碰撞轮廓（manifest polygon = erode 后轮廓）交集面积的判红阈值（mm²，2026-10-04
+ * 判红口径切换）：低于此值视为数值噪声不算红。覆盖三层正噪声 —— d=0 时 _clean_polygon
+ * 顶点抽稀与 raw 的偏差、d>0 时 shapely 腐蚀圆弧弦内接残差（~0.02d/侧）、sparrow
+ * f32 位置量化；实测 solver 贴触解碰撞交恒 <1e-6mm²（远低于阈值），手拖深重叠
+ * （mm 级）远高于阈值 —— 两端都有量级裕度。
+ */
+export const COLLIDE_NOISE_AREA_MM2 = 0.05;
 
 /** 展开后的可编辑裁片（世界坐标快照 + 预筛盒）。 */
 export interface EditPiece {
@@ -57,6 +76,16 @@ export interface EditPiece {
   worldPolygon: Polygon;
   /** worldPolygon 的包围盒（bbox 预筛）。 */
   bbox: BBox;
+  /**
+   * 局部坐标碰撞轮廓（manifest polygon = erode 后轮廓原样，共享引用不拷贝 —— 只读；
+   * 老后端/缺字段回退 basePolygon 自身）。红/琥珀判定数据源（2026-10-04 判红口径，
+   * 见模块头注）—— sparrow 排料用的同一几何，显示数值仍走 worldPolygon 物理口径。
+   */
+  collideBasePolygon: Polygon;
+  /** 碰撞轮廓世界坐标（collideBasePolygon 经同一 rot+tr+mirror 变换）。 */
+  collidePolygon: Polygon;
+  /** collidePolygon 的包围盒（碰撞交预筛）。 */
+  collideBBox: BBox;
 }
 
 /**
@@ -89,6 +118,10 @@ export function precomputeEditPiecesFromItems(
     // 物理口径：raw_polygon（与 /export 同源）；老后端回退 erode polygon。
     const base = physicalPolygon(info);
     const world = transformPolygon(base, it.rotation, it.translation, mirror);
+    // 碰撞口径：manifest polygon（erode 后，sparrow 排料同源）；缺字段/老后端回退
+    // base 自身（d=0 时代 polygon ≈ raw，两口径合一）。
+    const collideBase = info.polygon ?? base;
+    const collide = transformPolygon(collideBase, it.rotation, it.translation, mirror);
     out.push({
       key: idx,
       pid: it.id,
@@ -99,6 +132,9 @@ export function precomputeEditPiecesFromItems(
       dMm: info.d_mm ?? 0,
       worldPolygon: world,
       bbox: bboxOf(world),
+      collideBasePolygon: collideBase,
+      collidePolygon: collide,
+      collideBBox: bboxOf(collide),
     });
   });
   return out;
@@ -120,6 +156,8 @@ export function applyEditPlacement(ep: EditPiece, rot: number, tr: Pt, mirror = 
   ep.mirror = mirror;
   ep.worldPolygon = transformPolygon(ep.basePolygon, rot, tr, mirror);
   ep.bbox = bboxOf(ep.worldPolygon);
+  ep.collidePolygon = transformPolygon(ep.collideBasePolygon, rot, tr, mirror);
+  ep.collideBBox = bboxOf(ep.collidePolygon);
 }
 
 /** computeOverlap 结果（渲染 + 三指标数据源）。 */
@@ -134,10 +172,17 @@ export interface OverlapResult {
   penetrationMm: number;
   /**
    * 压线额度 mm = 实际相交邻居中 max(d_i + d_j)（两片 per_type 腐蚀距离之和）。
-   * penetrationMm ≤ allowanceMm → 设计允许的压线重合（琥珀提示）；超出 → 红。
-   * 无相交邻居 / 老后端无 d_mm → 0（任何穿透都按超限红）。
+   * 显示参考值（2026-10-04 起红/琥珀判定不再按它 —— 见 collideAreaMm2）。
+   * 无相交邻居 / 老后端无 d_mm → 0。
    */
   allowanceMm: number;
+  /**
+   * 碰撞轮廓（erode 后 manifest polygon）交集总面积 mm²（2026-10-04 判红口径）：
+   * > COLLIDE_NOISE_AREA_MM2 = 红（违反排料碰撞约束 = sparrow restore 后的碰撞态）；
+   * 物理相交而碰撞交为噪声级 = 琥珀（设计允许的压线，含腐蚀近似的微超额度）。
+   * 只在物理相交邻居上累加（碰撞轮廓 ⊆ 物理轮廓，物理交为零时碰撞交必为零）。
+   */
+  collideAreaMm2: number;
 }
 
 /** polygon-clipping 输出 ring（首点重复闭合）→ 项目 Polygon 口径（无重复起点）。 */
@@ -173,6 +218,7 @@ export function computeOverlap(dragged: EditPiece, others: readonly EditPiece[])
     areaMm2: 0,
     penetrationMm: 0,
     allowanceMm: 0,
+    collideAreaMm2: 0,
   };
   for (const o of others) {
     if (o.key === dragged.key) continue;
@@ -192,6 +238,15 @@ export function computeOverlap(dragged: EditPiece, others: readonly EditPiece[])
     // 实际相交的邻居才计入压线额度（d_i + d_j；bbox 相交但轮廓不相交者不算）。
     if (areaNeighbor > 1e-9) {
       result.allowanceMm = Math.max(result.allowanceMm, dragged.dMm + o.dMm);
+      // 碰撞轮廓交（2026-10-04 判红口径）：erode ⊆ 物理，物理交为零时碰撞交必为零
+      // —— 只在物理相交邻居上计算，平均省一半布尔交调用。
+      if (bboxIntersect(dragged.collideBBox, o.collideBBox)) {
+        const cpm = intersection([dragged.collidePolygon], [o.collidePolygon]);
+        for (const poly of cpm) {
+          if (poly.length === 0) continue;
+          result.collideAreaMm2 += polyArea(openRing(poly[0]), poly.slice(1).map(openRing));
+        }
+      }
     }
     result.penetrationMm = Math.max(
       result.penetrationMm,

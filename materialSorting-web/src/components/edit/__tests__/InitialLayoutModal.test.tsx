@@ -35,7 +35,7 @@ import {
 import { useFormStore } from '../../../store/formStore';
 import { useQtyStore } from '../../../store/qtyStore';
 import { collectStartContext } from '../../../lib/params';
-import type { PlacedItem, Pt } from '../../../types/piece';
+import type { PlacedItem, Polygon, Pt } from '../../../types/piece';
 import type { ManifestMsg } from '../../../types/ws';
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -141,10 +141,12 @@ const PLACED_OK: PlacedItem[] = [
 const DENSITY_OK = 500000 / (1100 * 1000);
 
 /** 生成响应（plain / 带 composite 可选）。 */
-function genBody(opts?: { placed?: PlacedItem[]; composite?: unknown }): unknown {
+function genBody(
+  opts?: { placed?: PlacedItem[]; composite?: unknown; manifest?: ManifestMsg },
+): unknown {
   return {
     ok: true,
-    manifest: makeManifest(),
+    manifest: opts?.manifest ?? makeManifest(),
     placed: opts?.placed ?? PLACED_OK,
     width_mm: 1100,
     density: DENSITY_OK,
@@ -339,6 +341,66 @@ describe('保存闸 + 保存组装 (US-006)', () => {
     const save = q('initial-layout-save') as HTMLButtonElement;
     expect(save.disabled).toBe(true);
     expect(q('initial-layout-save-hint')!.textContent).toMatch(/存在 \d+ 片非法（红色）重叠/);
+  });
+
+  it('solver 贴解压线形态（穿透微超额度、碰撞轮廓不相交）不锁保存闸 —— 2026-10-04 判红口径回归锁', async () => {
+    // 双片 raw 500² / erode 实际内缩 27.5、声明 d=5（额度 10）：a@[0,0]/
+    // b@[489.6,50] raw 交 10.4×450、pen 10.4 > 额度 —— 旧「穿透 > 额度」判据下
+    // 生成即锁保存闸（用户报障形态：高级配置设重合 d 后初始布局无法保存）；
+    // 碰撞轮廓 erode a x[27.5,472.5] / b x[517.1,...] 不相交 → 琥珀，保存可点。
+    const inset: Polygon = [
+      [27.5, 27.5],
+      [472.5, 27.5],
+      [472.5, 472.5],
+      [27.5, 472.5],
+    ];
+    const raw: Polygon = [
+      [0, 0],
+      [500, 0],
+      [500, 500],
+      [0, 500],
+    ];
+    const manifest: ManifestMsg = {
+      ...makeManifest(),
+      pieces: [
+        {
+          id: 'a_28',
+          label: 'g01',
+          size: 28,
+          color: '#ff0000',
+          area_mm2: 250000,
+          polygon: inset,
+          raw_polygon: raw,
+          d_mm: 5,
+        },
+        {
+          id: 'b_30',
+          label: 'g02',
+          size: 30,
+          color: '#00ff00',
+          area_mm2: 250000,
+          polygon: inset,
+          raw_polygon: raw,
+          d_mm: 5,
+        },
+      ],
+    };
+    apiRoutes['/api/initial-layout/generate'] = () =>
+      genBody({
+        manifest,
+        placed: [
+          { id: 'a_28', rotation: 0, translation: [0, 0] as Pt },
+          { id: 'b_30', rotation: 0, translation: [489.6, 50] as Pt },
+        ],
+      });
+    renderModal();
+    act(() => {
+      useControlPanelStore.getState().openModal('initial_layout');
+    });
+    await act(async () => {});
+    const save = q('initial-layout-save') as HTMLButtonElement;
+    expect(save.disabled).toBe(false);
+    expect(q('initial-layout-save-hint')).toBeNull();
   });
 
   it('plain 保存：saved 全字段形态 + registry 伪卡片 + bestRun 跳过 + 关窗', async () => {

@@ -38,7 +38,8 @@ function rect(x0: number, y0: number, x1: number, y1: number): Polygon {
 }
 
 /** EditPiece 直造夹具（worldPolygon/bbox 由 transformPolygon/bboxOf 正规计算）。
- *  dMm 缺省 0（本套夹具全 d=0 —— 吸附引擎不消费压线额度，物理口径=夹具多边形本身）。 */
+ *  dMm 缺省 0（本套夹具全 d=0 —— 吸附引擎不消费压线额度，物理口径=夹具多边形本身；
+ *  碰撞轮廓 = base 自身，与 d=0 时代 polygon ≈ raw 的两口径合一一致）。 */
 function mkEp(
   key: number,
   pid: string,
@@ -58,6 +59,9 @@ function mkEp(
     dMm: 0,
     worldPolygon: world,
     bbox: bboxOf(world),
+    collideBasePolygon: poly,
+    collidePolygon: world,
+    collideBBox: bboxOf(world),
   };
 }
 
@@ -68,7 +72,15 @@ function sess(lastSafeTr: Pt | null, startOverlapMm2: number): SnapSession {
 /** 被拖片放到 result.tr 后 vs 全邻居的布尔交总面积（验收口径复用 computeOverlap）。 */
 function areaAt(dragged: EditPiece, tr: Pt, others: readonly EditPiece[]): number {
   const world = transformPolygon(dragged.basePolygon, dragged.rot, tr, dragged.mirror);
-  const ep: EditPiece = { ...dragged, tr: [tr[0], tr[1]], worldPolygon: world, bbox: bboxOf(world) };
+  const collide = transformPolygon(dragged.collideBasePolygon, dragged.rot, tr, dragged.mirror);
+  const ep: EditPiece = {
+    ...dragged,
+    tr: [tr[0], tr[1]],
+    worldPolygon: world,
+    bbox: bboxOf(world),
+    collidePolygon: collide,
+    collideBBox: bboxOf(collide),
+  };
   return computeOverlap(ep, others).areaMm2;
 }
 

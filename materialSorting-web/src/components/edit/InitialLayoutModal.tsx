@@ -26,7 +26,9 @@
 //   pieceGroup = band/prefix 开时按 label 前缀 / prefixMemberPids（parsePrefixMemberPids
 //   产物，含异码补片）映射组成员（整组刚性平移 + 组内单片不可编辑）；plain 不传
 //   （单片语义）。onIllegalOverlapCountChange = 保存闸数据源（红色重叠片数，琥珀
-//   压线不计 —— 与画布指标面板同口径）。
+//   压线不计 —— 与画布指标面板同口径；2026-10-04 判红口径修订：红 = 碰撞轮廓
+//   （erode）相交，solver 贴触解「穿透微超额度」不再假阳性锁闸 —— 高级配置设
+//   重合 d 后生成即无法保存的报障形态，见 EditCanvas 头注/overlap.ts 头注）。
 //
 // ---- 布局刷新 ----
 //   working 相对基线（editStore.baseline = open 快照）有编辑 → EditConfirmLayer
