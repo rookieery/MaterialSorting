@@ -165,9 +165,10 @@ def build_warm_payload(pieces, placed, *, gate_mm=None, sizes=None,
 # ------------------------------------------------ US-002 生成编排（短求解）
 
 # 短求解预算（秒）：弹窗打开/刷新一次的生成时长（求解 + 子进程启停开销 ≈ 预算+数
-# 秒）。PRD 既定 10，2026-10-04 用户定案收敛 5（弹窗等待感更短）；端点
+# 秒）。PRD 既定 10，2026-10-04 用户定案收敛 1（早期帧更松、便于手工编辑初始
+# 布局，2s 实测 85.4% 仍偏紧；Final 帧恒在场故短预算无 502 风险）；端点
 # （routes_views）经本常量组 solve_params（测试断言 time_budget 数据源）。
-INITIAL_LAYOUT_GEN_TIME_S = 5
+INITIAL_LAYOUT_GEN_TIME_S = 1
 
 
 class InitialLayoutGenError(Exception):

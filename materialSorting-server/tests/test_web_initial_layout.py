@@ -22,7 +22,7 @@ monkeypatch ``web.solver.solve_with_callback_proc``（generate_initial_layout �
 4. ``POST /api/initial-layout/generate``（US-002，TestClient + fake proc）：
    happy path 响应形态（manifest = WS 前端契约同形 / placed = 密度最大可行帧
    展开视图永无 WB_/PS_ / width_mm·density 同帧）+ proc 调用形态（time_budget
-   = ``INITIAL_LAYOUT_GEN_TIME_S``=5 / sizes·params·per_type·quantities·seed
+   = ``INITIAL_LAYOUT_GEN_TIME_S``=1 / sizes·params·per_type·quantities·seed
    透传 / band·prefix worker 形态 / **record_composite=True 透传断言**）+ gate_mm
    覆盖；band/prefix 同开 composite+prefix 段在场与 plain 缺席；错误矩阵（会话
    401/400 / body·seed 400 / 无母版 400 / band·prefix 非法 400 / 求解错误与无
@@ -544,9 +544,9 @@ def gen_client():
 def test_generate_happy_path_plain(gen_client, monkeypatch):
     """AC：plain 200 —— 键恰 {ok,manifest,placed,width_mm,density}（无 composite/
     prefix）；manifest = WS 前端契约同形；placed = 密度最大可行帧展开视图逐条透传
-    （永无 WB_/PS_）；proc 调用形态 time_budget=5 + 全缺省透传 + record_composite
+    （永无 WB_/PS_）；proc 调用形态 time_budget=1 + 全缺省透传 + record_composite
     =True；成功后单飞锁清空。"""
-    assert INITIAL_LAYOUT_GEN_TIME_S == 5
+    assert INITIAL_LAYOUT_GEN_TIME_S == 1
     cap: dict = {}
     _install_fake_proc(monkeypatch, frames=_frames(), final=_final(),
                        capture=cap)
@@ -564,7 +564,7 @@ def test_generate_happy_path_plain(gen_client, monkeypatch):
     assert body['density'] == best['density'] == 0.62
     # proc 调用形态（record_composite 透传断言 + WS start 同形缺省）
     assert cap['record_composite'] is True
-    assert cap['solve_params'] == {'time_budget': 5, 'seed': 0, 'sizes': [],
+    assert cap['solve_params'] == {'time_budget': 1, 'seed': 0, 'sizes': [],
                                    'params': None, 'per_type': None,
                                    'quantities': None}
     assert cap['band'] is None and cap['prefix'] is None
@@ -588,7 +588,7 @@ def test_generate_body_context_passthrough_and_gate_override(
     r = gen_client.post(_GEN_URL, json=body)
     assert r.status_code == 200
     assert cap['solve_params'] == {
-        'time_budget': 5, 'seed': 7, 'sizes': [28],
+        'time_budget': 1, 'seed': 7, 'sizes': [28],
         'params': body['params'], 'per_type': body['per_type'],
         'quantities': body['quantities']}
     assert cap['gate_mm'] == 1500.0
