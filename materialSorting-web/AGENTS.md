@@ -1817,3 +1817,57 @@ F 换绑 / G 真跑放行 / H 扣次+统计 八相位。
   用户「点画布后焦点自然离按钮」；③ 选中「被拖片」不能用 DOM 序（P2 拖动提层
   re-append 已改序，US-007 坑位②同源）—— 在重叠发生点取顶层命中。报告
   `out/smoke_overlap_chips/report.json`。
+
+## 初始布局弹窗批量框选移动（2026-10-04，用户需求）
+
+初始布局是 1s 短求解粗产物，用户典型操作 = 大块挪动裁片；现状只能单片/单刚性组拖
+动 → EditCanvas 加 `marqueeSelect` 可缺省 prop（缺省 false = 完整编辑器行为零变化），
+仅 InitialLayoutModal 透传开启。交互语义两条均用户定案：**取消 = 仅清除选中、位置
+保留不回滚**；**范围 = 仅初始布局弹窗**（完整编辑器后续一行接线即可开）。
+
+- **模式开关**：左上工具区形态 select 旁「区域选择」按钮（`edit-marquee-toggle`，
+  `.edit-layout-marquee.is-active` 绿描边）切入框选模式 —— 文案换「取消框选」、
+  crosshair 光标、清单片选中（sel=null → 手柄/指标面板/单片键盘全不可用）；再点
+  按钮 / **Esc** 退出（onKeyDown 守卫①后、守卫②前 —— 按钮聚焦时 Esc 也可退出）。
+- **橡皮筋绘制**：模式内**任意落点**（空白或片上 —— 密排布局空白稀少，框选起点必须
+  允许落在裁片上；按未选中片 = 起框选而非单片拖动）pointerdown 起绘制会话
+  （marqueeDrawRef：startWorld = clientToWorld CTM 通路，CTM 不可得不起来话同旋转
+  起手口径）；move 过 CLICK_SLOP_PX 显形，矩形 = 翻转组内世界坐标 `<rect>`
+  （`edit-marquee-rect`，pointer-events:none + non-scaling-stroke 屏幕定宽描边，
+  ensureMarqueeRect 懒建、父组重建 parentNode 判离重建）。**pan 手势被占用**（模式
+  内空白拖 = 画框；滚轮缩放/「全览」复位不受影响）。
+- **完全覆盖判定**（pointerup finalize）：物理毛版世界 bbox 整体在矩形内
+  （±`MARQUEE_CONTAIN_EPS_MM`=1e-6 容差）才入选；零命中/单击（<3px）/退化为线 =
+  清选中（模式保持）。**刚性组原子扩展**（applyMarqueeSelection）：pieceGroup 组
+  任一成员被覆盖 → 全组入选 —— 组被框选拆散会使保存时 assembleWarmPlaced 组
+  delta 记账失真（displayPlaced 与 warmPlaced 布局背离）。
+- **选中集表达**：选中片 layer1 `.edit-marquee-selected` 蓝描边（2.6 世界宽，
+  .edit-piece-grouped 同款）+ 选中块并集 bbox 虚线矩形（矩形 = 选中块包络，非橡皮筋
+  几何）。marqueeSelRef = {indices, bbox}（纯 canvas 态不进 React）。
+- **框选块拖动**：按住**已选中**片 → MoveDrag 复用 US-005 整组刚性平移机器
+  （collectMembers 抽取通用体：collectGroup 按 pieceGroup 匹配 / 框选按 indices 集
+  匹配；组包络钳制 delta、多条 setWorkingItem）；`st.marquee` 会话标志三差异 ——
+  ①选中框矩形随组平移（**绝对定位**自会话快照 bbox0：`sel.bbox = bbox0 + cdx`
+  同帧重画；首版误用 `sel.bbox += cdx` **增量累加**，rAF 多帧下矩形越走越远 =
+  冒烟 12 步 move 实测 6.4× 过冲，多帧回归锁在案）②updateHandle 跳过（sel=null
+  时手柄显形会成分发拒绝的死手柄）③snap 恒 false（松手不吸附）。refreshMetrics
+  照跑（拖动起手 ensurePool → 抓取片红圈高亮照常，指标面板不显）。
+- **生命周期**：切入模式 = 清单片选中 + 清框选选中（deselect/clearMarqueeSelection
+  已上移组件作用域供按钮/ESC/指针 effect 三方共用）；骨架重建（换 run/重生成）清
+  框选态（选中集下标随布局作废、矩形随翻转组拆除），**模式开关保留**（重建后可
+  继续框选新布局）；pointercancel 中止绘制 → 既有选中恢复其包络矩形。
+- **测试基线**：全量 79 files / **1434 tests** 绿（+13：`EditCanvas.marquee.test`
+  12 —— 默认 props 缺席反向锁/开关与 Esc/完全覆盖+半覆盖不选/刚性组原子扩展/整体
+  拖动等位移+钳制+矩形随动/**多帧不累加**/单击清选中位置保留/pan 占用/按未选中片
+  起框选；InitialLayoutModal +1 接线在场）；tsc + build 过。
+- **浏览器验证**：`scripts/smoke_marquee_select.mjs` **18/18**（:8010 真后端 + 生产
+  bundle；5336 三码 30 片）—— 按钮在场（select 同排）→ 切入（文案/光标）→ 框选中
+  部片（**选中数 == 屏幕复算期望**独立对拍 + 矩形=选中块包络）→ 拖块（选中片等位移
+  120px±2 / 未选中纹丝不动 / 矩形随动 / 拖后选中保持）→ 拖出布头钳制（块左缘 ==
+  fab 左缘）→ 单击空白清选中位置保留 → Esc 退出 → 模式内按未选中片零单片拖动。
+  **坑位记档**：① `:scope > g > polygon` 会把净版 netEl 混作片（60 polygon = 30 片
+  ×2 层）—— 片断言选择器必须 `polygon[data-label]`（layer1 独有）；② 数组
+  `filter().map()` 的 i 是过滤后下标，与快照按原下标配对必串位（645px 假读数）——
+  单遍 forEach 配对；③ 框选起止点须在 svg **元素盒**内（排料自 x=0 铺满、最左片贴
+  布边，「最左片外扩」起点落 svg 外事件不达监听 = 什么都不选）—— 取中部片四边余量
+  ≥12px 候选。报告 `out/smoke_marquee_select/report.json`。

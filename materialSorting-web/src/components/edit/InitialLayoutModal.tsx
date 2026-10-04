@@ -23,6 +23,11 @@
 // ---- EditCanvas props（US-005 成品消费）----
 //   allowMirror={false}（空格两态掉头、O/I 禁）/ allowFineRotate={false}（L/K 禁）
 //   —— sparrow proper-rigid 拒镜像与非法角，编辑产物恒为热启动合法载荷；
+//   marqueeSelect（2026-10-04 批量框选移动）：画布工具区「区域选择」按钮切入框选
+//   模式 —— 橡皮筋矩形完全覆盖的裁片整块选中（pieceGroup 刚性组原子扩展）可整体
+//   拖动；初始布局是 1s 短求解粗产物，用户典型操作就是大块挪动裁片（单片拖效率
+//   低）。选中/取消不回滚位置；保存闸与组 delta 记账不受影响（批量移动只改
+//   translation，走 setWorkingItem 同真相源）。
 //   pieceGroup = band/prefix 开时按 label 前缀 / prefixMemberPids（parsePrefixMemberPids
 //   产物，含异码补片）映射组成员（整组刚性平移 + 组内单片不可编辑）；plain 不传
 //   （单片语义）。onIllegalOverlapCountChange = 保存闸数据源（红色重叠片数，琥珀
@@ -394,6 +399,7 @@ function InitialLayoutModalInner(): JSX.Element {
               pieceGroup={pieceGroup}
               onIllegalOverlapCountChange={setIllegalCount}
               focusHighlightIndex={focusIdx}
+              marqueeSelect
             />
           ) : !generating ? (
             <div

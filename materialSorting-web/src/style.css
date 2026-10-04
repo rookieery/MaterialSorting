@@ -2329,6 +2329,21 @@ button.sample-apply-btn:disabled { background: #444; color: #888; cursor: defaul
 .edit-piece-grouped {
   stroke-width: 2.6;
 }
+/* 批量框选移动（marqueeSelect，2026-10-04）：选中片描边高亮（同 .edit-piece-grouped
+   世界宽 2.6 —— CSS 覆盖 layer1 尺码色 stroke 展示属性），蓝色系与框选矩形
+   （#1971c2）同源、与组标记/绿色辅助色区分；工具按钮 is-active = 模式中。 */
+.edit-marquee-selected {
+  stroke: #1971c2;
+  stroke-width: 2.6;
+}
+.edit-layout-marquee {
+  font-size: 12px;
+  font-weight: 600;
+}
+.edit-layout-marquee.is-active {
+  border-color: #2ea06c;
+  color: #2ea06c;
+}
 /* 视图工具（左上横排：全览按钮 + 形态 select + 智能微调 —— 2026-09-05 ± 按钮删除、
    select 自 footer 移入、同日二轮迭代竖改横）；四角分布 = 右上 US-003 指标面板 /
    左下微调对比卡 / 右下操作指南卡，均悬浮不挡画布交互 */

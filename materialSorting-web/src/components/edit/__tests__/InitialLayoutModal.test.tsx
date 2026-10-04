@@ -17,6 +17,8 @@
 //  10) 重叠序号定位（2026-10-04）：chips 渲染在提示上方 + 点击高亮/再点取消 +
 //      编号 mousedown 冻结（键盘路径不刷、画布 pointerdown 刷）+ 实时计数归零
 //      chips 行与高亮同帧撤销。
+//  11) 批量框选接线（2026-10-04 用户需求）：EditCanvas marqueeSelect 透传 → 画布
+//      工具区「区域选择」按钮在场（交互细节单测在 EditCanvas.marquee.test）。
 //
 // 套路同 EditLayoutModal 既有用例：createRoot + act + data-testid；不包 StrictMode
 //（StrictMode 双 mount 由组件内 bootRef 防双请求，见组件头注）。lib/api 整体 mock
@@ -272,6 +274,14 @@ describe('InitialLayoutModal 声明式受控 + 打开编排 (US-006)', () => {
     expect((q('initial-layout-close') as HTMLButtonElement).disabled).toBe(true);
     expect((q('initial-layout-refresh') as HTMLButtonElement).disabled).toBe(true);
     expect((q('initial-layout-save') as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('画布工具区含「区域选择」批量框选按钮（marqueeSelect 接线，2026-10-04）', async () => {
+    await openModalFresh();
+    const btn = q('edit-marquee-toggle');
+    expect(btn).not.toBeNull();
+    expect(btn!.textContent).toContain('区域选择');
+    expect(btn!.closest('.edit-layout-canvas-tools')).not.toBeNull(); // 形态 select 同排
   });
 
   it('saved 指纹新鲜 → 载入续编（零请求，working = displayPlaced，状态条回显）', async () => {

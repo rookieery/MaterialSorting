@@ -152,6 +152,23 @@
 //     Y 翻转口径）。US-006 弹窗「重叠序号」chips 点击消费；判红清单真源 =
 //     overlap.ts findIllegalOverlapPieces（计数回调取 .length 同源，原组件内
 //     countIllegalOverlaps 已迁入）。
+//
+// 批量框选移动（2026-10-04 用户需求，marqueeSelect prop —— 初始布局弹窗消费；
+// 缺省 false = 编辑弹窗行为零变化）：左上工具区（形态 select 旁）「区域选择」按钮
+// 切入框选模式（再点「取消框选」/Esc 退出）。模式内交互状态机：
+//   - 任意落点（空白或片上 —— 密排布局空白稀少，框选起点必须允许落在裁片上）按下
+//     拖动 = 画橡皮筋矩形（翻转组内世界坐标 + vector-effect 屏幕定宽描边；pan 手势
+//     被占用，滚轮缩放/「全览」复位不受影响）；松手判定「完全覆盖」—— 物理毛版
+//     世界 bbox 整体在矩形内（±MARQUEE_CONTAIN_EPS_MM 容差）才入选；零命中/单击
+//     （位移 <3px）= 清除当前选中（裁片位置保留 —— 用户定案不回滚）。
+//   - 刚性组原子性：pieceGroup 组任一成员被覆盖 → 全组入选（组被框选拆散 = 保存时
+//     assembleWarmPlaced 组 delta 记账失真，组内成员必须恒同位移）。
+//   - 选中集表达 = 选中片 .edit-marquee-selected 描边高亮（.edit-piece-grouped 同款
+//     世界宽 2.6）+ 选中块并集 bbox 虚线矩形（随拖动平移）；按住选中片拖动 = 复用
+//     US-005 整组刚性平移机器（GroupDragMembers 快照 + 组包络钳制 delta，marquee
+//     会话标志区分 pieceGroup 组会话），松手不吸附（snap 恒 false）、旋转手柄与
+//     单片键盘变换不启用（框选模式无单片选中态 —— 切入即清 sel）。
+//   - 骨架重建（换 run/重生成）清框选态（选中集下标随布局作废，矩形随翻转组拆除）。
 
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -191,6 +208,8 @@ const MAX_VB_SCALE = 40;
 
 /** 空白 down→up 判定为「点击」（取消选中）的屏幕位移阈值（px）。 */
 const CLICK_SLOP_PX = 3;
+/** 框选「完全覆盖」判定容差（mm）：吸收 clientToWorld CTM 浮点噪声（~1e-13 级）。 */
+const MARQUEE_CONTAIN_EPS_MM = 1e-6;
 /** 旋转手柄世界半径（mm，随视图宽比例 + 钳制；柄心 = 质心上方 r×3）。 */
 const HANDLE_R_MIN = 4;
 const HANDLE_R_MAX = 30;
@@ -232,6 +251,13 @@ interface MoveDrag {
    * 组成员 rot/mirror 恒定（组内禁单片编辑），帧位移 = 钳制后 delta 同施全组。
    */
   group?: GroupDragMembers;
+  /**
+   * 框选块拖动会话（marqueeSelect，2026-10-04）：group = 框选成员快照（非
+   * pieceGroup 组，collectMembers 同机器两种来源）。帧位移同组包络钳制语义；
+   * 选中框矩形随组平移；updateHandle 跳过（框选模式无单片选中态 → 手柄恒藏）、
+   * 松手不吸附（snap 恒 false）。
+   */
+  marquee?: boolean;
 }
 
 /** 整组拖动会话快照（US-005）：成员下标 / 起手放置 / 组整体 bbox（与 indices 对齐）。 */
@@ -336,6 +362,14 @@ export interface EditCanvasProps {
    * 编号快照在弹窗层维护（mousedown 冻结），本 prop 只负责渲染定位标记。
    */
   focusHighlightIndex?: number | null;
+  /**
+   * 批量框选移动开关（2026-10-04 用户需求，缺省 false 零回归）：true = 左上
+   * 工具区（形态 select 旁）渲染「区域选择」按钮，切入框选模式 —— 画橡皮筋
+   * 矩形选中**完全被覆盖**的裁片（pieceGroup 刚性组原子扩展），按住选中块
+   * 整体刚性拖动（组包络钳制，位置保留不回滚）；「取消框选」/Esc 退出。
+   * 初始布局弹窗（InitialLayoutModal）消费 —— 初始状态编辑需大块挪动裁片。
+   */
+  marqueeSelect?: boolean;
 }
 
 /** 智能微调受控接口（EditLayoutModal → EditCanvas；字段语义见 EditLayoutModal 注释）。 */
@@ -366,6 +400,7 @@ export function EditCanvas({
   pieceGroup,
   onIllegalOverlapCountChange,
   focusHighlightIndex,
+  marqueeSelect,
 }: EditCanvasProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const flipRef = useRef<SVGGElement | null>(null);
@@ -437,6 +472,23 @@ export function EditCanvas({
   /** 上一次应用的定位下标（仅下标**切换**瞬间做视口带入 —— working 帧不重复平移）。 */
   const prevFocusIdxRef = useRef<number | null>(null);
 
+  // ---- 批量框选移动（marqueeSelect，2026-10-04）：模式开关（state 驱动按钮
+  // 文案，ref 供只挂一次的指针/键盘监听读现值）+ 选中集（marqueeSelRef，纯
+  // canvas 态不进 React）+ 橡皮筋绘制会话 + 矩形节点。----
+  const [marqueeOn, setMarqueeOn] = useState(false);
+  const marqueeOnRef = useRef(false);
+  /** 框选选中集：working 下标 + 选中块并集 bbox（物理毛版世界口径 —— 矩形锚）。 */
+  const marqueeSelRef = useRef<{ indices: number[]; bbox: BBox } | null>(null);
+  /** 橡皮筋绘制会话（pointerdown 起至 pointerup/cancel）。 */
+  const marqueeDrawRef = useRef<{
+    pointerId: number;
+    startWorld: Pt;
+    startClient: Pt;
+    moved: boolean;
+  } | null>(null);
+  /** 框选矩形节点（翻转组内世界坐标，pointer-events:none；父组重建自动失效重挂）。 */
+  const marqueeRectRef = useRef<SVGRectElement | null>(null);
+
   const run = useEditStore((s) => s.run);
   const working = useEditStore((s) => s.working);
 
@@ -450,6 +502,170 @@ export function EditCanvas({
     if (lastIllegalCountRef.current === n) return;
     lastIllegalCountRef.current = n;
     cb(n);
+  }
+
+  /** 交集高亮层清空。 */
+  function clearHighlight(): void {
+    const g = overlapGRef.current;
+    if (!g) return;
+    while (g.firstChild) g.removeChild(g.firstChild);
+  }
+
+  /** 伙伴片高亮清除（淡出完成 / 取消选中 / 骨架重建 —— 幂等）。 */
+  function clearPartner(): void {
+    const g = partnerGRef.current;
+    if (!g) return;
+    while (g.firstChild) g.removeChild(g.firstChild);
+  }
+
+  /** 取消进行中的伙伴高亮计时并清层（deselect / 骨架重建 / 卸载清理）。 */
+  function cancelPartnerFlash(): void {
+    if (partnerTimerRef.current != null) {
+      window.clearTimeout(partnerTimerRef.current);
+      partnerTimerRef.current = null;
+    }
+    clearPartner();
+  }
+
+  /** 取消选中（空白点击 / 切入框选模式）：清池/高亮/手柄；指标面板随 sel=null 卸下。 */
+  function deselect(): void {
+    selRef.current = null;
+    setSel(null);
+    setMetrics(null);
+    poolRef.current = null;
+    clearHighlight();
+    cancelPartnerFlash();
+    if (handleGRef.current) handleGRef.current.style.display = 'none';
+  }
+
+  // ---- 批量框选移动（marqueeSelect）组件作用域助手（指针 effect 闭包 / 按钮
+  // onClick / ESC 键三方共用；只碰 refs + store —— 首渲染闭包安全）----
+
+  /** 框选矩形节点懒建（翻转组末尾置顶；骨架重建后旧节点 parentNode 判离重建）。 */
+  function ensureMarqueeRect(): SVGRectElement | null {
+    const g = flipRef.current;
+    if (!g) return null;
+    let rect = marqueeRectRef.current;
+    if (!rect || rect.parentNode !== g) {
+      rect = document.createElementNS(SVGNS, 'rect');
+      rect.setAttribute('fill', 'rgba(25, 113, 194, 0.10)');
+      rect.setAttribute('stroke', '#1971c2');
+      rect.setAttribute('stroke-width', '1.5');
+      rect.setAttribute('stroke-dasharray', '8 5');
+      rect.setAttribute('vector-effect', 'non-scaling-stroke');
+      rect.style.pointerEvents = 'none';
+      rect.setAttribute('data-testid', 'edit-marquee-rect');
+      g.appendChild(rect);
+      marqueeRectRef.current = rect;
+    }
+    return rect;
+  }
+
+  /** 框选矩形按世界坐标对角写属性（min/max 已归一；r6 截断同 viewBox 口径）。 */
+  function writeMarqueeRect(minX: number, minY: number, maxX: number, maxY: number): void {
+    const rect = ensureMarqueeRect();
+    if (!rect) return;
+    rect.setAttribute('x', String(r6(minX)));
+    rect.setAttribute('y', String(r6(minY)));
+    rect.setAttribute('width', String(r6(Math.max(0, maxX - minX))));
+    rect.setAttribute('height', String(r6(Math.max(0, maxY - minY))));
+    rect.style.display = '';
+  }
+
+  /** 框选矩形移除（清选中 / 退出模式）。 */
+  function hideMarqueeRect(): void {
+    marqueeRectRef.current?.remove();
+    marqueeRectRef.current = null;
+  }
+
+  /** 清除框选选中集（类标记 + 矩形；幂等）。 */
+  function clearMarqueeSelection(): void {
+    const sel = marqueeSelRef.current;
+    marqueeSelRef.current = null;
+    if (sel) {
+      for (const i of sel.indices) {
+        entriesRef.current[i]?.el.classList.remove('edit-marquee-selected');
+      }
+    }
+    hideMarqueeRect();
+  }
+
+  /**
+   * 落定框选选中集：pieceGroup 刚性组原子扩展（任一成员被覆盖 → 全组入选 ——
+   * 组被框选拆散会使保存时 assembleWarmPlaced 组 delta 记账失真）→ 逐片打
+   * .edit-marquee-selected + 并集 bbox（矩形重画为选中块包络，替代橡皮筋）。
+   * 空 picked = 仅清选中（模式保持，再画新框）。
+   */
+  function applyMarqueeSelection(picked: number[]): void {
+    clearMarqueeSelection();
+    const manifest = manifestRef.current;
+    if (!manifest || picked.length === 0) return;
+    const working = useEditStore.getState().working;
+    const fn = pieceGroupRef.current;
+    const set = new Set(picked);
+    if (fn) {
+      const gids = new Set<string>();
+      for (const i of picked) {
+        const it = working[i];
+        if (!it) continue;
+        const gid = fn(it.id);
+        if (gid != null) gids.add(gid);
+      }
+      if (gids.size > 0) {
+        working.forEach((it, i) => {
+          const gid = fn(it.id);
+          if (gid != null && gids.has(gid)) set.add(i);
+        });
+      }
+    }
+    const indices: number[] = [];
+    let bb: BBox | null = null;
+    for (const i of set) {
+      const entry = entriesRef.current[i];
+      const it = working[i];
+      if (!entry || !it || entry.piece.id !== it.id) continue; // 防御：池与 working 错位
+      indices.push(i);
+      entry.el.classList.add('edit-marquee-selected');
+      const wb = bboxOf(
+        transformPolygon(physicalPolygon(entry.piece), it.rotation, it.translation, it.mirror === true),
+      );
+      bb = bb ? unionBBox(bb, wb) : wb;
+    }
+    if (!bb || indices.length === 0) return;
+    marqueeSelRef.current = { indices, bbox: bb };
+    writeMarqueeRect(bb.minX, bb.minY, bb.maxX, bb.maxY);
+  }
+
+  /** 会话结束后的光标复位（框选模式回 crosshair，普通模式回默认）。 */
+  function resetCanvasCursor(): void {
+    const svg = svgRef.current;
+    if (svg) svg.style.cursor = marqueeOnRef.current ? 'crosshair' : '';
+  }
+
+  /** 切入框选模式：清单片选中（手柄/指标随 sel=null 卸下 —— 模式内无单片编辑）+ 光标。 */
+  function enterMarqueeMode(): void {
+    marqueeOnRef.current = true;
+    setMarqueeOn(true);
+    marqueeDrawRef.current = null;
+    clearMarqueeSelection();
+    deselect();
+    const svg = svgRef.current;
+    if (svg) svg.style.cursor = 'crosshair';
+  }
+
+  /** 退出框选模式（按钮「取消框选」/Esc）：清选中（位置保留）+ 光标复位。 */
+  function exitMarqueeMode(): void {
+    marqueeOnRef.current = false;
+    setMarqueeOn(false);
+    marqueeDrawRef.current = null;
+    clearMarqueeSelection();
+    resetCanvasCursor();
+  }
+
+  /** 工具区「区域选择 / 取消框选」按钮。 */
+  function handleMarqueeToggle(): void {
+    if (marqueeOnRef.current) exitMarqueeMode();
+    else enterMarqueeMode();
   }
 
   /**
@@ -494,6 +710,11 @@ export function EditCanvas({
         partnerTimerRef.current = null;
       }
       lastSigRef.current = [];
+      // 批量框选（2026-10-04）：选中集下标随布局作废、矩形随翻转组拆除（类标记
+      // 随片节点同拆）；模式开关 marqueeOn 保留（重建后可继续框选新布局）。
+      marqueeSelRef.current = null;
+      marqueeDrawRef.current = null;
+      marqueeRectRef.current = null;
 
       const bg = document.createElementNS(SVGNS, 'rect');
       bg.setAttribute('fill', '#eef0f3');
@@ -828,13 +1049,6 @@ export function EditCanvas({
       circle.setAttribute('r', String(r6(r)));
     }
 
-    /** 交集高亮层清空。 */
-    function clearHighlight(): void {
-      const g = overlapGRef.current;
-      if (!g) return;
-      while (g.firstChild) g.removeChild(g.firstChild);
-    }
-
     /** 高亮层加一个红色半透明多边形（世界坐标 ring）。 */
     function appendHighlight(ring: Polygon): void {
       const g = overlapGRef.current;
@@ -845,13 +1059,6 @@ export function EditCanvas({
       poly.setAttribute('stroke-width', '1');
       poly.setAttribute('points', pointsStr(ring, 0, [0, 0]));
       g.appendChild(poly);
-    }
-
-    /** 伙伴片高亮清除（淡出完成 / 取消选中 / 骨架重建 —— 幂等）。 */
-    function clearPartner(): void {
-      const g = partnerGRef.current;
-      if (!g) return;
-      while (g.firstChild) g.removeChild(g.firstChild);
     }
 
     /**
@@ -884,15 +1091,6 @@ export function EditCanvas({
           clearPartner();
         }, PARTNER_FADE_MS);
       }, PARTNER_FLASH_MS);
-    }
-
-    /** 取消进行中的伙伴高亮计时并清层（deselect / 骨架重建 / 卸载清理）。 */
-    function cancelPartnerFlash(): void {
-      if (partnerTimerRef.current != null) {
-        window.clearTimeout(partnerTimerRef.current);
-        partnerTimerRef.current = null;
-      }
-      clearPartner();
     }
 
     /** 重合指标计算 + 高亮渲染 + 面板数据（选中与拖动帧的唯一产出口）。 */
@@ -979,17 +1177,6 @@ export function EditCanvas({
       ensurePool();
       refreshMetrics(index);
       updateHandle(index);
-    }
-
-    /** 取消选中（空白点击）：清池/高亮/手柄；指标面板随 sel=null 卸下。 */
-    function deselect(): void {
-      selRef.current = null;
-      setSel(null);
-      setMetrics(null);
-      poolRef.current = null;
-      clearHighlight();
-      cancelPartnerFlash();
-      if (handleGRef.current) handleGRef.current.style.display = 'none';
     }
 
     /** 帧内落笔单片放置：5 层 setAttribute + 签名登记（主渲染 effect 同帧跳过该片）。 */
@@ -1117,15 +1304,28 @@ export function EditCanvas({
      * 空组 → null（理论不达 —— 命中片的 pid 必属组）。
      */
     function collectGroup(gid: string): GroupDragMembers | null {
-      const manifest = manifestRef.current;
       const fn = pieceGroupRef.current;
-      if (!manifest || !fn) return null;
+      if (!fn) return null;
+      return collectMembers((it) => fn(it.id) === gid);
+    }
+
+    /**
+     * 成员集会话快照通用体（collectGroup / 框选块共用，2026-10-04 抽取）：命中
+     * 成员（match 按 working 项 + 下标判定）+ 起手放置 + 并集 bbox。框选块来源 =
+     * marqueeSelRef.indices（applyMarqueeSelection 已做刚性组原子扩展，此处直接
+     * 快照不再扩）。
+     */
+    function collectMembers(
+      match: (it: PlacedItem, i: number) => boolean,
+    ): GroupDragMembers | null {
+      const manifest = manifestRef.current;
+      if (!manifest) return null;
       const working = useEditStore.getState().working;
       const indices: number[] = [];
       const starts: { rot: number; tr: Pt; mirror: boolean }[] = [];
       let bb: BBox | null = null;
       working.forEach((it, i) => {
-        if (fn(it.id) !== gid) return;
+        if (!match(it, i)) return;
         const entry = entriesRef.current[i];
         if (!entry || entry.piece.id !== it.id) return;
         const mirror = it.mirror === true;
@@ -1166,8 +1366,25 @@ export function EditCanvas({
         const ep = poolRef.current?.find((p) => p.key === idx);
         if (ep) applyEditPlacement(ep, start.rot, tr, start.mirror);
       });
+      // 框选块会话（2026-10-04）：选中框矩形随组平移 —— **绝对定位**自会话快照
+      // bbox0（与成员落笔 start.tr + cdx 同口径；首版误用 sel.bbox += cdx 增量累加，
+      // rAF 多帧下矩形越走越远 = 冒烟 12 步 move 实测 6.4× 过冲即此因）。
+      // updateHandle 跳过（框选模式无单片选中态，手柄显形会被 sel=null 的柄分发
+      // 拒绝成死手柄）。
+      if (st.marquee) {
+        const sel = marqueeSelRef.current;
+        if (sel) {
+          sel.bbox = {
+            minX: b.minX + cdx,
+            minY: b.minY + cdy,
+            maxX: b.maxX + cdx,
+            maxY: b.maxY + cdy,
+          };
+          writeMarqueeRect(sel.bbox.minX, sel.bbox.minY, sel.bbox.maxX, sel.bbox.maxY);
+        }
+      }
       refreshMetrics(st.index);
-      updateHandle(st.index);
+      if (!st.marquee) updateHandle(st.index);
     }
 
     /** 平移拖片帧（viewScale 差分 → 起始 tr + 位移 → 钳制 → 落笔）。 */
@@ -1294,6 +1511,61 @@ export function EditCanvas({
         svg.style.cursor = 'grabbing';
         return;
       }
+      // 1.5) 框选模式（marqueeSelect on，2026-10-04）：命中**已选中**片 → 框选块
+      //      整组刚性拖动（GroupDragMembers = 框选成员快照，同 US-005 机器）；
+      //      其余任意落点（空白 / 未选中片 —— 密排布局空白稀少，框选起点必须允许
+      //      落在裁片上）→ 起橡皮筋绘制会话（pan 手势被占用；滚轮缩放/全览不受
+      //      影响）。单片拖动 / Alt 贴附 / 旋转在模式内不可用（退出恢复）。
+      if (marqueeOnRef.current) {
+        const poly = target?.closest?.('polygon');
+        const index = poly
+          ? entriesRef.current.findIndex((en) => en != null && en.el === poly)
+          : -1;
+        const sel = marqueeSelRef.current;
+        if (index >= 0 && sel && sel.indices.includes(index)) {
+          const it = useEditStore.getState().working[index];
+          if (!it) return; // 防御：选中下标与 working 错位
+          const grp = collectMembers((_, i) => sel.indices.includes(i));
+          if (!grp) return; // 快照组装失败（理论不达）→ 不起会话
+          ensurePool(); // refreshMetrics 红圈高亮数据源（指标面板不显 —— sel=null）
+          dragRef.current = {
+            mode: 'move',
+            pointerId: e.pointerId,
+            index,
+            startClient: [e.clientX, e.clientY],
+            rot0: it.rotation,
+            tr0: [it.translation[0], it.translation[1]],
+            mirror0: it.mirror === true,
+            snap: false, // 框选块松手不吸附（同 US-005 组拖口径）
+            group: grp,
+            marquee: true,
+          };
+          try {
+            (poly as SVGPolygonElement).setPointerCapture?.(e.pointerId);
+          } catch {
+            /* 捕获失败不影响拖动 —— move/up 监听挂 svg 自身 */
+          }
+          svg.style.cursor = 'move';
+          return;
+        }
+        // 起橡皮筋绘制（CTM 不可得 → 不起会话 = 模式内无操作，同旋转起手口径）。
+        const flip = flipRef.current;
+        const w = flip ? clientToWorld(svg, flip, e.clientX, e.clientY) : null;
+        if (!w) return;
+        marqueeDrawRef.current = {
+          pointerId: e.pointerId,
+          startWorld: w,
+          startClient: [e.clientX, e.clientY],
+          moved: false,
+        };
+        try {
+          svg.setPointerCapture?.(e.pointerId); // jsdom 未实现/未知指针 id 抛错 → 忽略
+        } catch {
+          /* 捕获失败不影响绘制 —— move/up 监听本就挂 svg 自身 */
+        }
+        svg.style.cursor = 'crosshair';
+        return;
+      }
       // 2) 毛版 polygon → 选中 + 提层 + 平移拖片（4 层工艺 / 交集高亮层均
       //    pointer-events:none，不会成为 target）。纯左键 = 自由拖动（snap:false，
       //    既有路径零改动）；Alt+左键 = 贴附会话（snap:true，松手单次求解；右键
@@ -1364,6 +1636,30 @@ export function EditCanvas({
         scheduleFrame();
         return;
       }
+      // 框选橡皮筋帧（2026-10-04）：位移过 CLICK_SLOP_PX 才显形（与 pan 点击判定
+      // 同阈值）；矩形世界坐标 = clientToWorld 实时取（viewBox 静止 → CTM 稳定）。
+      const md = marqueeDrawRef.current;
+      if (md && e.pointerId === md.pointerId) {
+        if (
+          !md.moved &&
+          Math.hypot(e.clientX - md.startClient[0], e.clientY - md.startClient[1]) > CLICK_SLOP_PX
+        ) {
+          md.moved = true;
+        }
+        if (md.moved) {
+          const flip = flipRef.current;
+          const cur = flip ? clientToWorld(svg, flip, e.clientX, e.clientY) : null;
+          if (cur) {
+            writeMarqueeRect(
+              Math.min(md.startWorld[0], cur[0]),
+              Math.min(md.startWorld[1], cur[1]),
+              Math.max(md.startWorld[0], cur[0]),
+              Math.max(md.startWorld[1], cur[1]),
+            );
+          }
+        }
+        return;
+      }
       const p = panRef.current;
       if (!p || e.pointerId !== p.pointerId) return;
       if (!p.moved && Math.hypot(e.clientX - p.startX, e.clientY - p.startY) > CLICK_SLOP_PX) {
@@ -1388,7 +1684,7 @@ export function EditCanvas({
       if (!d || e.pointerId !== d.pointerId) return;
       flushFrame(); // 悬空 rAF 落帧（move 后立即 up 不丢尾帧）
       dragRef.current = null;
-      svg.style.cursor = '';
+      resetCanvasCursor();
       // edit-drag-snap US-003：贴附会话松手单次求解（纯左键 / 旋转柄会话不进）。
       if (d.mode === 'move' && d.snap) applySnapOnRelease(d);
     };
@@ -1397,12 +1693,62 @@ export function EditCanvas({
       const p = panRef.current;
       if (!p || e.pointerId !== p.pointerId) return;
       panRef.current = null;
-      svg.style.cursor = '';
+      resetCanvasCursor();
       if (!p.moved && selRef.current != null) deselect(); // 空白点击 = 取消选中
+    };
+
+    /**
+     * 橡皮筋收尾（2026-10-04）：未过点击阈 = 单击 → 清除当前选中（裁片位置保留
+     * —— 用户定案不回滚，模式保持可继续画新框）；过阈 → 「完全覆盖」判定落定
+     * 选中集（物理毛版世界 bbox 整体在矩形内 ± 容差；pieceGroup 刚性组原子扩展
+     * 在 applyMarqueeSelection）。零命中 = 清选中（同单击）。
+     */
+    const endMarqueeDraw = (e: PointerEvent): void => {
+      const md = marqueeDrawRef.current;
+      if (!md || e.pointerId !== md.pointerId) return;
+      marqueeDrawRef.current = null;
+      resetCanvasCursor();
+      if (!md.moved) {
+        clearMarqueeSelection();
+        return;
+      }
+      const flip = flipRef.current;
+      const cur = flip ? clientToWorld(svg, flip, e.clientX, e.clientY) : null;
+      if (!cur) {
+        clearMarqueeSelection();
+        return;
+      }
+      const minX = Math.min(md.startWorld[0], cur[0]);
+      const minY = Math.min(md.startWorld[1], cur[1]);
+      const maxX = Math.max(md.startWorld[0], cur[0]);
+      const maxY = Math.max(md.startWorld[1], cur[1]);
+      if (maxX - minX <= MARQUEE_CONTAIN_EPS_MM || maxY - minY <= MARQUEE_CONTAIN_EPS_MM) {
+        clearMarqueeSelection(); // 退化为线/点 → 视同单击
+        return;
+      }
+      const working = useEditStore.getState().working;
+      const picked: number[] = [];
+      working.forEach((it, i) => {
+        const entry = entriesRef.current[i];
+        if (!entry || entry.piece.id !== it.id) return;
+        const b = bboxOf(
+          transformPolygon(physicalPolygon(entry.piece), it.rotation, it.translation, it.mirror === true),
+        );
+        if (
+          b.minX >= minX - MARQUEE_CONTAIN_EPS_MM &&
+          b.maxX <= maxX + MARQUEE_CONTAIN_EPS_MM &&
+          b.minY >= minY - MARQUEE_CONTAIN_EPS_MM &&
+          b.maxY <= maxY + MARQUEE_CONTAIN_EPS_MM
+        ) {
+          picked.push(i);
+        }
+      });
+      applyMarqueeSelection(picked);
     };
 
     const onPointerUp = (e: PointerEvent): void => {
       endDrag(e);
+      endMarqueeDraw(e);
       endPan(e);
     };
 
@@ -1417,7 +1763,18 @@ export function EditCanvas({
         pendingMoveRef.current = null;
         dragRef.current = null;
         snapSessRef.current = null; // edit-drag-snap US-003：贴附会话随手势中止作废（不求解）
-        svg.style.cursor = '';
+        resetCanvasCursor();
+        return;
+      }
+      // 橡皮筋中止（2026-10-04）：丢弃本次绘制 —— 既有选中恢复其包络矩形（绘制
+      // 期间矩形被临时改写为橡皮筋），无选中则移除。
+      const md = marqueeDrawRef.current;
+      if (md && e.pointerId === md.pointerId) {
+        marqueeDrawRef.current = null;
+        resetCanvasCursor();
+        const sel = marqueeSelRef.current;
+        if (sel) writeMarqueeRect(sel.bbox.minX, sel.bbox.minY, sel.bbox.maxX, sel.bbox.maxY);
+        else hideMarqueeRect();
         return;
       }
       endPan(e);
@@ -1442,6 +1799,12 @@ export function EditCanvas({
      */
     const onKeyDown = (e: KeyboardEvent): void => {
       if (!interactionRef.current) return; // 守卫①：确认层打开 → 全键禁用
+      // 框选模式 Esc = 退出（同按钮「取消框选」：清选中 + 光标复位，位置保留）。
+      // 置于守卫②之前 —— 表单控件聚焦时 Esc 无语义、按钮自身聚焦也可退出。
+      if (e.key === 'Escape' && marqueeOnRef.current) {
+        exitMarqueeMode();
+        return;
+      }
       const t = e.target as Element | null; // 守卫②：表单控件聚焦
       if (t) {
         const tag = typeof t.tagName === 'string' ? t.tagName.toUpperCase() : '';
@@ -1550,6 +1913,7 @@ export function EditCanvas({
       pendingMoveRef.current = null;
       dragRef.current = null;
       panRef.current = null;
+      marqueeDrawRef.current = null; // 框选橡皮筋会话随卸载作废（DOM 随之拆除）
       snapSessRef.current = null; // edit-drag-snap US-003：卸载时会话/高亮计时一并清理
       cancelPartnerFlash();
     };
@@ -1591,6 +1955,23 @@ export function EditCanvas({
             <option value="rough">毛板</option>
           </select>
         </label>
+        {/* 批量框选移动（marqueeSelect，2026-10-04）：形态 select 旁切入框选模式
+            （用户指定锚位）；is-active = 模式中（绿描边 + 文案换「取消框选」）。 */}
+        {marqueeSelect && (
+          <button
+            type="button"
+            className={`edit-layout-tool edit-layout-marquee${marqueeOn ? ' is-active' : ''}`}
+            onClick={handleMarqueeToggle}
+            title={
+              marqueeOn
+                ? '退出框选模式（Esc）——已移动的裁片保留当前位置'
+                : '框选一片区域：完全被覆盖的裁片整块选中，可按住拖动批量移动'
+            }
+            data-testid="edit-marquee-toggle"
+          >
+            {marqueeOn ? '取消框选' : '区域选择'}
+          </button>
+        )}
         {polish && (
           <button
             type="button"
@@ -1724,6 +2105,13 @@ export function EditCanvas({
       {hasGroupMembers && (
         <div className="edit-guide-row" data-testid="edit-guide-group-row">
           <span className="edit-metrics-label">组合：</span>组合成员片（整组拖动）
+        </div>
+      )}
+      {/* 批量框选（2026-10-04）：marqueeSelect 在场才渲染（默认编辑弹窗不加行 ——
+          既有指南反向锁「形态/保存」口径不受扰）。 */}
+      {marqueeSelect && (
+        <div className="edit-guide-row" data-testid="edit-guide-marquee-row">
+          <span className="edit-metrics-label">批量：</span>区域选择模式框选裁片，按住选中块整体拖动
         </div>
       )}
       <div className="edit-guide-foot">拖动自动限制在门幅内（上下不出布边）</div>
