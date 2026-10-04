@@ -1766,3 +1766,54 @@ F 换绑 / G 真跑放行 / H 扣次+统计 八相位。
   翻转组），bbox 中心可落 L 形片凹口空白 —— elementFromPoint 逐候选扫描；
   ④ 伪卡片检索扫全部 .nest-label（多相位后网格已有普通 run 卡，querySelector
   首命中可能是 run 卡）。报告 `out/smoke_initial_layout/report.json`。
+## 初始布局弹窗重叠序号定位（2026-10-04，用户规格：编号只在 mousedown 更新）
+
+保存闸提示只报数量不报位置（红色交集高亮仅选中片可见，缩放/平移后找红片只能
+逐片试拖）→ footer 提示行**上方**加序号 chips 1..N + 点击定位高亮。
+
+- **判红清单真源迁移**：`lib/overlap.ts findIllegalOverlapPieces(manifest, items,
+  pieceGroup?)`（原 EditCanvas 私有 countIllegalOverlaps 迁入并升级为返回红色片
+  working **下标**升序列表；计数回调取 .length 同函数同口径，行为逐字节不变）。
+  下标是全编辑链路稳定寻址（多副本保序写回口径）→ 快照冻结后跨编辑依然有效。
+- **编号 mousedown 冻结（用户规格）**：快照只在两时刻刷新 —— ①布局载入（run
+  换代 effect，聚焦高亮随旧布局作废一并清）②画布 mousedown（InitialLayoutModal
+  body onPointerDown → refreshOverlapSnapshot；pointerdown 早于拖动几何变更，快照
+  即交互前态）。拖动帧重叠集合逐帧变化，编号冻结不闪切/点击目标不漂移；键盘
+  变换产生的新重叠到下次 mousedown 才上编号（已知口径，非缺陷）。实时计数
+  （保存闸数据源）不受快照影响。
+- **chips 渲染门**：`illegalCount > 0 && overlapSnapshot.length > 0` —— 实时计数
+  归零（重叠全解除，含拖动/键盘路径）chips 行与提示同帧隐藏 + 定位高亮撤销（不为
+  已合法的片残留定位标记）。`.edit-layout-foot-note` 改纵向两行（上 chips 下提示，
+  无 chips 时视觉与单行形态一致）。
+- **EditCanvas focusHighlightIndex（additive 可缺省 prop，缺省 null 零成本；同日
+  二版红圈标记 —— 一版橙色虚线描边 3mm **世界宽**，全览视图下不足 1px 用户报
+  「不明显」，教训：画布标记的可见尺寸必须屏幕定宽）**：三件套覆盖层 —— ①目标片
+  淡红填充（rgba(224,49,49,.22)，毛版物理口径 points）②该片 vs 全布局**实际交集
+  区**实红半透明（computeOverlap 一次，布尔交异常降级跳过 —— 直接标出「重叠在
+  哪」，与拖动红高亮同语义）③**红圈**（circle 绕片 bbox 外接圆 ×1.18 与视图宽
+  下限 vb.w×0.006 取大，`vector-effect="non-scaling-stroke"` + stroke-width 2.5
+  **屏幕像素定宽** —— 任何缩放级别恒醒目；CSS `edit-focus-pulse` 呼吸脉冲），
+  随 working 变化跟随拖动 + 下标**切换**瞬间 `focusEnsureInView` 视口最小平移带入
+  （目标已完全在视口内 → 不动；锚 = 片 bbox 不含红圈半径 —— 全览零扰动；世界→
+  用户空间 **Y 翻转** y = gate − worldY，漏翻会上下镜像带入）。每次应用 re-append
+  翻转组末尾恒置顶（选中提层/确保 UI 层都往组尾插节点）；层内节点全量重画
+  （淡填充+0..n 交集+红圈，节点少无复用必要）。
+- **焦点生命周期**：chips 点击切换（同号再点取消）；快照刷新后焦点片仍在列表内
+  则保持（编号可重排、下标稳定）；run 换代 / 计数归零 / 焦点片离开新快照 → 撤销。
+- **测试基线**：全量 78 files / **1420 tests** 绿（+7：EditCanvas.initial +3 ——
+  红圈几何/屏幕定宽断言/跟随/越界防御/交集区渲染/视口带入；InitialLayoutModal +4
+  —— chips 渲染在提示上方/点击红圈+交集/再点取消/mousedown 冻结与刷新/计数归零
+  同帧撤销）；tsc + build 过。
+- **浏览器验证**：`scripts/smoke_overlap_chips.mjs` **12/12**（:8010 真后端 +
+  生产 bundle：合法布局无 chips → 拖片制造重叠提示出现而 **chips 冻结缺席** →
+  空白 mousedown chips 出现（数量=提示片数、提示上方、1..N）→ 点击序号**红圈
+  标记**（DOM circle/stroke/#e03131/non-scaling-stroke/交集数断言 + **全览视图
+  像素检查 422 强红描电影素** —— 一版橙描边同口径仅 ~16，可见性 ~25×）+ 视觉
+  模型确认「红环清晰可辨、呼吸脉冲态」/再点取消 → R 键片级重置解除重叠 →
+  提示 chips 同帧消失 + 保存放行）。**坑位记档**：① 拖放「解除重叠」
+  落点须半宽裕量（中心落空白点大片半宽回压邻片，首两版 6/13 片红误报）—— 冒烟
+  用 R 键重置回生成基线（必然合法）做解除路径；② R 键前焦点若停在 footer 按钮
+  （P4 点过 chip），画布键盘守卫②「表单控件聚焦」会吞键 —— 显式 blur 对齐真实
+  用户「点画布后焦点自然离按钮」；③ 选中「被拖片」不能用 DOM 序（P2 拖动提层
+  re-append 已改序，US-007 坑位②同源）—— 在重叠发生点取顶层命中。报告
+  `out/smoke_overlap_chips/report.json`。

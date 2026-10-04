@@ -30,6 +30,18 @@
 //   （erode）相交，solver 贴触解「穿透微超额度」不再假阳性锁闸 —— 高级配置设
 //   重合 d 后生成即无法保存的报障形态，见 EditCanvas 头注/overlap.ts 头注）。
 //
+// ---- 重叠序号定位（2026-10-04 定位优化）----
+//   保存闸提示只报数量不报位置（红色交集高亮仅选中片时可见，缩放/平移后找红片
+//   只能逐片试拖）→ footer 提示行上方加序号 chips 1..N（编号 = 红色片快照序，
+//   与「N 片」计数同口径按片编号）。快照冻结：仅「布局载入（run 换代）」与
+//   「画布 mousedown」两时刻刷新（refreshOverlapSnapshot ← findIllegalOverlapPieces
+//   与计数回调同函数）—— 拖动帧重叠集合逐帧变化，编号冻结不闪切/点击目标不漂移
+//   （用户规格）；键盘变换产生的新重叠到下次 mousedown 才上编号。点击序号 →
+//   focusIdx（working 下标稳定寻址）→ EditCanvas focusHighlightIndex 红圈定位
+//   标记（淡红填充 + 交集区实红 + 屏幕定宽红圈，2026-10-04 二版 —— 一版橙色
+//   世界宽描边全览下亚像素不可见）+ 视口最小平移带入，再点同号取消；实时计数
+//   归零 / run 换代 / 焦点片离开新快照 → 高亮撤销。
+//
 // ---- 布局刷新 ----
 //   working 相对基线（editStore.baseline = open 快照）有编辑 → EditConfirmLayer
 //   「将丢弃当前编辑」确认；确认后 bumpGenSeed() 换 seed 重新生成替换 working
@@ -69,6 +81,7 @@ import { deepCopyPlaced } from '../../store/synthRunStore';
 import { EDIT_HOLD_INTERVAL_MS, refreshEditHold } from '../../lib/editHold';
 import { parsePrefixMemberPids } from '../../lib/editPolish';
 import { collectStartContext, type StartContext } from '../../lib/params';
+import { findIllegalOverlapPieces } from '../../lib/overlap';
 import {
   assembleWarmPlaced,
   generateInitialLayout,
@@ -116,8 +129,16 @@ function InitialLayoutModalInner(): JSX.Element {
   /** 红色（非法）重叠片数（EditCanvas onIllegalOverlapCountChange 数据源，US-005
    * 同指标面板口径 —— 琥珀压线不计）。保存闸消费。 */
   const [illegalCount, setIllegalCount] = useState(0);
+  /** 重叠序号快照（2026-10-04 定位优化）：红色片 working 下标列表，仅两个时刻刷新
+   *  —— 布局载入（run 换代）与画布 mousedown（用户规格：拖动期间编号冻结不闪切，
+   *  pointerdown 早于任何几何变更）。chips 渲染 + focus 寻址数据源。 */
+  const [overlapSnapshot, setOverlapSnapshot] = useState<number[]>([]);
+  /** 定位高亮目标片 working 下标（chips 点击切换；null = 无高亮）。 */
+  const [focusIdx, setFocusIdx] = useState<number | null>(null);
   /** 打开编排一次性守卫（StrictMode 双 mount 防双生成请求）。 */
   const bootRef = useRef(false);
+  /** 上次见过的 run 引用（换代判定 → 定位高亮随旧布局作废）。 */
+  const prevRunRef = useRef<RunRecord | null>(null);
 
   // ---- 打开编排（见组件头注：续编 or 自动生成）----
   useEffect(() => {
@@ -223,6 +244,41 @@ function InitialLayoutModalInner(): JSX.Element {
   const manifest = run?.manifest ?? null;
   const stats = manifest && working.length > 0 ? computeLayoutStats(working, manifest) : null;
 
+  /** 重叠序号快照刷新（刷新时机见 state 注释：布局载入 effect + 画布 mousedown；
+   *  判红清单真源 = overlap.ts findIllegalOverlapPieces，与 EditCanvas 计数回调
+   *  同函数同口径 —— 快照长度恒等于同刻的实时计数）。焦点片仍在快照内则保持
+   *  高亮（编号可重排，下标是稳定寻址）；否则撤销。 */
+  function refreshOverlapSnapshot(): void {
+    const st = useEditStore.getState();
+    const m = st.run?.manifest ?? null;
+    if (!m || st.working.length === 0) {
+      setOverlapSnapshot((prev) => (prev.length === 0 ? prev : []));
+      setFocusIdx(null);
+      return;
+    }
+    const next = findIllegalOverlapPieces(m, st.working, pieceGroup);
+    setOverlapSnapshot((prev) =>
+      prev.length === next.length && prev.every((v, i) => v === next[i]) ? prev : next,
+    );
+    setFocusIdx((f) => (f != null && next.includes(f) ? f : null));
+  }
+
+  // 布局载入（run 换代 / 生成完毕）→ 快照刷新 + 定位高亮随旧布局作废（陈旧下标
+  // 指向新布局的无关片）。generating/pieceGroup 进 deps 覆盖刷新/生成收尾路径。
+  useEffect(() => {
+    const runChanged = prevRunRef.current !== run;
+    prevRunRef.current = run;
+    if (runChanged) setFocusIdx(null);
+    refreshOverlapSnapshot();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 快照刷新时机受控（载入/mousedown），非每次渲染
+  }, [run, generating, pieceGroup]);
+
+  // 实时计数归零（重叠全部解除，含拖动/键盘路径）→ 定位高亮随之撤销（chips 行
+  // 同帧隐藏，避免为已合法的片残留定位标记）。
+  useEffect(() => {
+    if (illegalCount === 0) setFocusIdx((f) => (f == null ? f : null));
+  }, [illegalCount]);
+
   // ✕ dirty 口径同编辑弹窗：working ≠ 伪 run lastFrame（open 快照深拷贝 ⇒ 未编辑
   // 恒非 dirty；编辑后未保存 → 确认层）。
   const savedItems = run?.lastFrame?.placed_items ?? null;
@@ -289,6 +345,14 @@ function InitialLayoutModalInner(): JSX.Element {
 
   const saveBlocked = generating || illegalCount > 0 || working.length === 0;
 
+  /** 画布区 mousedown → 重叠序号快照刷新（用户规格：编号只在鼠标落下时更新 ——
+   *  拖动期间编号冻结不闪切、点击目标不漂移；pointerdown 早于拖动几何变更，快照
+   *  即交互前态。busy 生成期画布无可编辑内容，跳过）。 */
+  function handleBodyPointerDown(): void {
+    if (generating) return;
+    refreshOverlapSnapshot();
+  }
+
   return createPortal(
     <div className="edit-layout-overlay" data-testid="initial-layout-overlay">
       <div
@@ -319,7 +383,7 @@ function InitialLayoutModalInner(): JSX.Element {
           </button>
         </div>
 
-        <div className="edit-layout-body">
+        <div className="edit-layout-body" onPointerDown={handleBodyPointerDown}>
           {run && manifest ? (
             <EditCanvas
               mode={mode}
@@ -329,6 +393,7 @@ function InitialLayoutModalInner(): JSX.Element {
               allowFineRotate={false}
               pieceGroup={pieceGroup}
               onIllegalOverlapCountChange={setIllegalCount}
+              focusHighlightIndex={focusIdx}
             />
           ) : !generating ? (
             <div
@@ -345,15 +410,36 @@ function InitialLayoutModalInner(): JSX.Element {
           )}
         </div>
 
-        {/* footer：左侧提示区（生成失败红字 / 保存闸数量提示）+ 右侧「布局刷新」
-            与「保存当前布局」两按钮（保存 = 编辑弹窗主色按钮；刷新 = 画布工具区
-            次级按钮同款）。 */}
+        {/* footer：左侧提示区（重叠序号 chips 行 + 生成失败红字 / 保存闸数量提示）
+            + 右侧「布局刷新」与「保存当前布局」两按钮（保存 = 编辑弹窗主色按钮；
+            刷新 = 画布工具区次级按钮同款）。 */}
         <div className="edit-layout-foot">
           <div className="edit-layout-foot-note">
             {!generating && genError != null && (
               <span className="edit-layout-error" data-testid="initial-layout-error">
                 {genError}
               </span>
+            )}
+            {/* 重叠序号 chips（2026-10-04 定位优化）：编号 = 快照序（mousedown 冻结），
+                点击 → EditCanvas 定位高亮（focusHighlightIndex，红圈标记 + 交集区
+                + 视口带入），再点同号取消。实时计数归零时与提示行同帧隐藏。 */}
+            {illegalCount > 0 && overlapSnapshot.length > 0 && (
+              <div className="edit-overlap-chips" data-testid="initial-layout-overlap-chips">
+                <span className="edit-overlap-chips-label">定位重叠</span>
+                {overlapSnapshot.map((idx, k) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    className={`edit-overlap-chip${focusIdx === idx ? ' is-active' : ''}`}
+                    data-testid="initial-layout-overlap-chip"
+                    data-piece-index={String(idx)}
+                    title={`高亮第 ${k + 1} 处非法重叠裁片（再点取消）`}
+                    onClick={() => setFocusIdx((f) => (f === idx ? null : idx))}
+                  >
+                    {k + 1}
+                  </button>
+                ))}
+              </div>
             )}
             {illegalCount > 0 && (
               <span className="edit-layout-save-hint" data-testid="initial-layout-save-hint">

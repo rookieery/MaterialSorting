@@ -143,6 +143,15 @@
 //     effect 在 working 每次变化（含拖动帧/键盘/重置/换 run 全路径，比挂在
 //     refreshMetrics 覆盖更广：不依赖选中态）时按 refreshMetrics 同口径（穿透 >
 //     压线额度 = 红；琥珀不计）重算并值变才触达。US-006 保存闸消费（>0 禁保存）。
+//   - focusHighlightIndex（2026-10-04 重叠序号定位，additive 缺省 null 零成本；
+//     同日二版红圈标记 —— 一版橙色虚线描边 3mm 世界宽全览下亚像素不可见）：
+//     定位高亮目标片 working 下标 —— 淡红填充 + 交集区实红 + **红圈**（绕片
+//     外接圆 vector-effect:non-scaling-stroke 屏幕定宽描边，任何缩放恒醒目，
+//     CSS 脉冲）三件套覆盖层（毛版物理口径、随拖动帧跟随、恒置顶 re-append）
+//     + 下标**切换**瞬间视口最小平移带入（focusEnsureInView，世界→用户空间
+//     Y 翻转口径）。US-006 弹窗「重叠序号」chips 点击消费；判红清单真源 =
+//     overlap.ts findIllegalOverlapPieces（计数回调取 .length 同源，原组件内
+//     countIllegalOverlaps 已迁入）。
 
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -157,6 +166,7 @@ import {
   applyEditPlacement,
   COLLIDE_NOISE_AREA_MM2,
   computeOverlap,
+  findIllegalOverlapPieces,
   precomputeEditPiecesFromItems,
   type EditPiece,
 } from '../../lib/overlap';
@@ -316,6 +326,16 @@ export interface EditCanvasProps {
    * 额度微超不再假阳性）重算全布局计数，值变才触达。US-006 保存闸消费。
    */
   onIllegalOverlapCountChange?: (n: number) => void;
+  /**
+   * 定位高亮目标片 working 下标（2026-10-04 重叠序号定位；同日二版红圈标记，
+   * additive；缺省 null = 无高亮层零成本）：在场时画布为该片画三件套覆盖层 —
+   * 淡红填充 + 与邻片实际交集区实红 + 红圈（绕片外接圆，vector-effect:
+   * non-scaling-stroke 屏幕定宽描边 —— 任何缩放级别恒醒目，CSS 呼吸脉冲）；
+   * 随 working 变化跟随拖动，置顶于全部裁片之上；下标切换瞬间若目标片不在
+   * 当前视口内做最小平移带入视野。US-006 弹窗「重叠序号」chips 点击消费 ——
+   * 编号快照在弹窗层维护（mousedown 冻结），本 prop 只负责渲染定位标记。
+   */
+  focusHighlightIndex?: number | null;
 }
 
 /** 智能微调受控接口（EditLayoutModal → EditCanvas；字段语义见 EditLayoutModal 注释）。 */
@@ -345,6 +365,7 @@ export function EditCanvas({
   allowFineRotate,
   pieceGroup,
   onIllegalOverlapCountChange,
+  focusHighlightIndex,
 }: EditCanvasProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const flipRef = useRef<SVGGElement | null>(null);
@@ -411,6 +432,10 @@ export function EditCanvas({
   /** 伙伴片高亮层（UI 覆盖层第三子层）+ 淡出双段计时器。 */
   const partnerGRef = useRef<SVGGElement | null>(null);
   const partnerTimerRef = useRef<number | null>(null);
+  /** 定位高亮层（2026-10-04 重叠序号定位）：focusHighlightIndex 目标片轮廓覆盖。 */
+  const focusGRef = useRef<SVGGElement | null>(null);
+  /** 上一次应用的定位下标（仅下标**切换**瞬间做视口带入 —— working 帧不重复平移）。 */
+  const prevFocusIdxRef = useRef<number | null>(null);
 
   const run = useEditStore((s) => s.run);
   const working = useEditStore((s) => s.working);
@@ -527,9 +552,9 @@ export function EditCanvas({
       applyPlacement(entry, it.rotation, it.translation, mode, mirror);
     });
 
-    // US-005：非法（红色）重叠片数 additive 回调（口径见 countIllegalOverlaps；
+    // US-005：非法（红色）重叠片数 additive 回调（口径见 findIllegalOverlapPieces；
     // US-007 起带 pieceGroup —— 同组刚性成员互不计，见其 docstring）。
-    emitIllegalCount(countIllegalOverlaps(manifest, working, pieceGroup));
+    emitIllegalCount(findIllegalOverlapPieces(manifest, working, pieceGroup).length);
   }, [run, working, mode, pieceGroup]);
 
   /**
@@ -553,6 +578,96 @@ export function EditCanvas({
       }
     });
   }, [run, working, pieceGroup]);
+
+  /**
+   * 定位高亮层（2026-10-04 重叠序号定位；同日二版换红圈标记 —— 一版橙色虚线
+   * 描边 3mm 世界宽，全览视图下不足 1px 用户报「不明显」）：focusHighlightIndex
+   * 在场且目标片有效 → 三件套全量重画（节点少）：
+   *   ① 目标片淡红填充；② 该片 vs 邻片实际交集区实红半透明（与拖动红高亮同
+   *   语义 —— 直接标出「重叠在哪」）；③ 红圈（绕片外接圆，`vector-effect:
+   *   non-scaling-stroke` 屏幕定宽 2.5px —— **不随缩放变细**，任何视图级恒
+   *   醒目；半径 = bbox 外接圆 ×1.18 与视图宽下限取大）+ CSS 呼吸脉冲。
+   * 随 working 变化跟随拖动；null / 越界 / 骨架重建 → 移除。每次应用 re-append
+   * 到翻转组末尾保持置顶（选中提层 / UI 覆盖层创建都往组尾插节点）。视口带入
+   * 只在下标**切换**瞬间做一次（prevFocusIdxRef 判变，锚 = 片 bbox 不含红圈
+   * 半径 —— 全览零扰动口径）—— 拖动帧不重复平移。
+   */
+  useEffect(() => {
+    const svg = svgRef.current;
+    const g = flipRef.current;
+    const manifest = run?.manifest ?? null;
+    const idx = focusHighlightIndex ?? null;
+    // 骨架重建后旧层随翻转组拆除（parentElement 判离）→ ref 置空待重建。
+    if (focusGRef.current && focusGRef.current.parentElement !== g) focusGRef.current = null;
+    const it = idx != null ? working[idx] : undefined;
+    const piece = manifest && it ? (manifest.pieces.find((p) => p.id === it.id) ?? null) : null;
+    if (!svg || !g || !manifest || idx == null || !it || !piece) {
+      focusGRef.current?.remove();
+      focusGRef.current = null;
+      prevFocusIdxRef.current = idx;
+      return;
+    }
+    let fg = focusGRef.current;
+    if (!fg) {
+      fg = document.createElementNS(SVGNS, 'g');
+      fg.style.pointerEvents = 'none';
+      focusGRef.current = fg;
+    }
+    while (fg.firstChild) fg.removeChild(fg.firstChild); // 全量重画（淡填充+交集+红圈）
+    const mirror = it.mirror === true;
+    // ① 目标片淡红填充（毛版物理口径）
+    const fillEl = document.createElementNS(SVGNS, 'polygon');
+    fillEl.setAttribute('points', pointsStr(physicalPolygon(piece), it.rotation, it.translation, mirror));
+    fillEl.setAttribute('fill', 'rgba(224, 49, 49, 0.22)');
+    fg.appendChild(fillEl);
+    // ② 实际交集区（该片 vs 全布局，布尔交异常降级跳过 —— 红圈/填充仍在）
+    try {
+      const pool = precomputeEditPiecesFromItems(manifest, working);
+      const ep = pool.find((p) => p.key === idx);
+      if (ep) {
+        const res = computeOverlap(ep, pool);
+        for (const ringPoly of res.intersections) {
+          const p = document.createElementNS(SVGNS, 'polygon');
+          p.setAttribute('points', pointsStr(ringPoly, 0, [0, 0]));
+          p.setAttribute('fill', 'rgba(255, 64, 64, 0.42)');
+          p.setAttribute('stroke', '#ff4040');
+          p.setAttribute('stroke-width', '1.5');
+          p.setAttribute('vector-effect', 'non-scaling-stroke');
+          p.setAttribute('data-testid', 'edit-focus-intersection');
+          fg.appendChild(p);
+        }
+      }
+    } catch {
+      /* 布尔交降级：交集区缺席，红圈定位不受影响 */
+    }
+    // ③ 红圈（屏幕定宽描边 —— 一版世界宽描边全览下亚像素不可见即此因）
+    const b = bboxOf(
+      transformPolygon(physicalPolygon(piece), it.rotation, it.translation, mirror),
+    );
+    const vb = vbRef.current;
+    const cx = (b.minX + b.maxX) / 2;
+    const cy = (b.minY + b.maxY) / 2;
+    const ringR = Math.max(
+      (Math.hypot(b.maxX - b.minX, b.maxY - b.minY) / 2) * 1.18,
+      vb ? vb.w * 0.006 : 0,
+    );
+    const ring = document.createElementNS(SVGNS, 'circle');
+    ring.setAttribute('cx', String(r6(cx)));
+    ring.setAttribute('cy', String(r6(cy)));
+    ring.setAttribute('r', String(r6(ringR)));
+    ring.setAttribute('fill', 'none');
+    ring.setAttribute('stroke', '#e03131');
+    ring.setAttribute('stroke-width', '2.5');
+    ring.setAttribute('vector-effect', 'non-scaling-stroke');
+    ring.setAttribute('data-testid', 'edit-focus-piece');
+    ring.classList.add('edit-focus-piece');
+    fg.appendChild(ring);
+    g.appendChild(fg); // 置顶（幂等 re-append）
+    if (prevFocusIdxRef.current !== idx) {
+      focusEnsureInView(svg, vbRef, b, manifest.gate_mm);
+      prevFocusIdxRef.current = idx;
+    }
+  }, [run, working, focusHighlightIndex]);
 
   /**
    * 滚轮缩放（native listener + passive:false —— React 合成 wheel 挂根节点为
@@ -1680,61 +1795,6 @@ function unionBBox(a: BBox, b: BBox): BBox {
   };
 }
 
-/**
- * 非法（红色）重叠片数（US-005 onIllegalOverlapCountChange 数据源）：全 working
- * 展开池逐片按指标面板同口径判红 —— collideAreaMm2 > COLLIDE_NOISE_AREA_MM2
- * （2026-10-04 判红口径修订：碰撞轮廓 = erode 后 manifest polygon 相交 = 违反
- * 排料约束；物理相交而碰撞交噪声级 = 琥珀压线不计 —— d>0 时 solver 贴触解物理
- * 穿透 ≈ d_i+d_j+腐蚀/量化正噪声，旧「穿透 > 额度 + 1e-9」判据必假阳性锁死保存闸，
- * 见模块头注）；布尔交异常降级 bbox 近似回退旧穿透口径（penetrationDepth 纯函数
- * + bbox 相交邻居 d_i+d_j 最大值，保守兜底）。计数口径 = 红色重叠**片**数
- * （一对非法重合两侧各计 1 —— 消费方闸门只看 >0 与提示量，US-006 保存闸）。
- *
- * pieceGroup（US-007 2026-10-04 修复）：同组（band/prefix 刚性组）成员互不计 ——
- * 组内几何是带构造的既成事实（链间滑移贴触 + 展开归一化的亚微米浮点缝隙），求解
- * 口径只对组合片 union 负责；且组内单片不可编辑（US-005），计入即不可解除的死锁
- * （实测 band 生成布局 3 片 g05 成员 pen≈8e-5mm 微缝恒锁保存闸）。组对组外片照常
- * 计。缺省（编辑弹窗不传）→ 组判定恒 false，行为逐字节不变。
- */
-function countIllegalOverlaps(
-  manifest: ManifestMsg,
-  items: readonly PlacedItem[],
-  pieceGroup?: (pid: string) => string | null,
-): number {
-  const pool = precomputeEditPiecesFromItems(manifest, items);
-  // 组 id 按 pool 下标对齐（key = placed_items 下标 = pool 序；pieceGroup 缺席恒 null）。
-  const gids = pool.map((ep) => (pieceGroup ? pieceGroup(ep.pid) : null));
-  const sameGroup = (i: number, j: number): boolean => gids[i] != null && gids[i] === gids[j];
-  let red = 0;
-  for (const ep of pool) {
-    // bbox 预筛：无任何相交邻居（同组邻居不算）直接非红（省布尔交调用）。
-    let touches = false;
-    for (const o of pool) {
-      if (o.key !== ep.key && !sameGroup(ep.key, o.key) && bboxIntersect(ep.bbox, o.bbox)) {
-        touches = true;
-        break;
-      }
-    }
-    if (!touches) continue;
-    try {
-      const res = computeOverlap(ep, pool.filter((o) => !sameGroup(ep.key, o.key)));
-      if (res.collideAreaMm2 > COLLIDE_NOISE_AREA_MM2) red += 1;
-    } catch {
-      let pen = 0;
-      let allowance = 0;
-      for (const o of pool) {
-        if (o.key === ep.key) continue;
-        if (sameGroup(ep.key, o.key)) continue;
-        if (!bboxIntersect(ep.bbox, o.bbox)) continue;
-        pen = Math.max(pen, penetrationDepth(ep.worldPolygon, o.worldPolygon));
-        allowance = Math.max(allowance, ep.dMm + o.dMm);
-      }
-      if (pen > allowance + 1e-9) red += 1;
-    }
-  }
-  return red;
-}
-
 /** 数值定长显示（对比卡前后值；NaN/缺键防御显示 '—'）。 */
 function fmt(v: number | undefined, digits: number): string {
   return typeof v === 'number' && Number.isFinite(v) ? v.toFixed(digits) : '—';
@@ -1837,6 +1897,46 @@ function zoomBy(
   };
   vbRef.current = nvb;
   writeViewBox(svg, nvb);
+}
+
+/**
+ * 视口最小平移带入（2026-10-04 重叠序号定位）：目标世界 bbox（含 margin）已完全
+ * 在当前 viewBox 内 → 不动；否则最小位移平移使其进入视野（不缩放 —— 保持用户
+ * 当前缩放语境；全览视图下目标片必在视野内 → 恒 no-op）。世界 Y 向上，用户空间
+ * （viewBox 坐标系，翻转组变换之前）y = gate − worldY —— 漏翻会把带入方向上下
+ * 镜像（与滚轮缩放锚点同款坐标系陷阱）。
+ */
+function focusEnsureInView(
+  svg: SVGSVGElement,
+  vbRef: { current: ViewBox | null },
+  world: BBox,
+  gate: number,
+): void {
+  const vb = vbRef.current;
+  if (!vb) return;
+  // 世界 Y 向上，用户空间（viewBox 坐标系，翻转组变换之前）y = gate − worldY。
+  const uy0 = gate - world.maxY;
+  const uy1 = gate - world.minY;
+  // 目标已完全在视口内 → 不动（全览视图下所有片都命中 —— 聚焦零扰动，只对
+  // 缩放/平移后目标出视野的情形做带入）。
+  if (
+    world.minX >= vb.x &&
+    world.maxX <= vb.x + vb.w &&
+    uy0 >= vb.y &&
+    uy1 <= vb.y + vb.h
+  ) {
+    return;
+  }
+  const m = Math.max(vb.w * 0.05, 10);
+  let nx = vb.x;
+  let ny = vb.y;
+  if (world.minX - m < vb.x) nx = world.minX - m;
+  else if (world.maxX + m > vb.x + vb.w) nx = world.maxX + m - vb.w;
+  if (uy0 - m < vb.y) ny = uy0 - m;
+  else if (uy1 + m > vb.y + vb.h) ny = uy1 + m - vb.h;
+  if (nx === vb.x && ny === vb.y) return;
+  vbRef.current = { ...vb, x: nx, y: ny };
+  writeViewBox(svg, vbRef.current);
 }
 
 /**

@@ -659,6 +659,96 @@ describe('EditCanvas onIllegalOverlapCountChange (US-005)', () => {
 });
 
 // ============================================================
+// focusHighlightIndex 定位高亮（2026-10-04 重叠序号定位 —— InitialLayoutModal
+// chips 点击消费；同日二版红圈标记：一版橙色世界宽描边全览下亚像素不可见）：
+// 红圈（vector-effect 屏幕定宽）+ 淡红填充 + 交集区实红 + 视口最小平移带入 +
+// 缺省 props 零成本。
+// ============================================================
+describe('EditCanvas focusHighlightIndex 定位高亮 (2026-10-04)', () => {
+  it('缺省无层；在场 → 红圈标记（屏幕定宽描边 + 外接圆几何）随 working 跟随；越界/null → 移除', () => {
+    mountInitial({}); // 缺省（编辑弹窗路径）→ 无层
+    expect(document.querySelector('[data-testid="edit-focus-piece"]')).toBeNull();
+    act(() => {
+      root!.render(<EditCanvas mode="full" focusHighlightIndex={0} />);
+    });
+    let ring = document.querySelector(
+      '[data-testid="edit-focus-piece"]',
+    ) as unknown as SVGCircleElement;
+    expect(ring).not.toBeNull();
+    expect(ring.tagName.toLowerCase()).toBe('circle');
+    // a@[0,0] 500²：圈心 = bbox 中心、半径 = 外接圆 ×1.18（视图宽下限 2100×0.006
+    // = 12.6 远小不参与）
+    expect(parseFloat(ring.getAttribute('cx')!)).toBeCloseTo(250, 6);
+    expect(parseFloat(ring.getAttribute('cy')!)).toBeCloseTo(250, 6);
+    expect(parseFloat(ring.getAttribute('r')!)).toBeCloseTo((Math.hypot(500, 500) / 2) * 1.18, 6);
+    expect(ring.getAttribute('stroke')).toBe('#e03131');
+    expect(ring.getAttribute('vector-effect')).toBe('non-scaling-stroke');
+    // 直写 working（拖动帧路径）→ 红圈跟随
+    act(() => {
+      useEditStore.getState().setWorkingItem(0, { translation: [120, 40] });
+    });
+    ring = document.querySelector('[data-testid="edit-focus-piece"]') as unknown as SVGCircleElement;
+    expect(parseFloat(ring.getAttribute('cx')!)).toBeCloseTo(370, 6);
+    expect(parseFloat(ring.getAttribute('cy')!)).toBeCloseTo(290, 6);
+    // 越界下标防御 → 移除
+    act(() => {
+      root!.render(<EditCanvas mode="full" focusHighlightIndex={99} />);
+    });
+    expect(document.querySelector('[data-testid="edit-focus-piece"]')).toBeNull();
+    // null → 移除
+    act(() => {
+      root!.render(<EditCanvas mode="full" focusHighlightIndex={null} />);
+    });
+    expect(document.querySelector('[data-testid="edit-focus-piece"]')).toBeNull();
+  });
+
+  it('交集区渲染：目标片与邻片相交 → 淡红填充 + 交集 polygon 在场（直接标出重叠位置）', () => {
+    // a@[0,0] b@[400,50] 交 100×450（同计数用例红对）
+    const run = seedRun([
+      { id: 'a_28', rotation: 0, translation: [0, 0] },
+      { id: 'b_30', rotation: 0, translation: [400, 50] },
+    ]);
+    mountInitial({ focusHighlightIndex: 0 }, run);
+    const ring = document.querySelector('[data-testid="edit-focus-piece"]')!;
+    expect(ring).not.toBeNull();
+    const layer = ring.closest('g')!;
+    // 淡红填充（目标片）+ ≥1 交集区（a∩b）
+    expect(layer.querySelectorAll('polygon').length).toBeGreaterThanOrEqual(2);
+    expect(
+      document.querySelectorAll('[data-testid="edit-focus-intersection"]').length,
+    ).toBeGreaterThanOrEqual(1);
+  });
+
+  it('视口带入：目标已在视口内（全览）→ viewBox 不动；放大后聚焦视口外目标 → 最小平移带入（只平移不缩放）', () => {
+    // GROUP_PLACED：初始 vb = 0 0 2100 1000（全览，a/b/c 全在内）
+    const svg = mountInitial({ focusHighlightIndex: 2 });
+    expect(svg.getAttribute('viewBox')).toBe('0 0 2100 1000'); // c@[1600,0] 在视野 → 无平移
+    mockRect(svg, 1050, 500);
+    // jsdom 无 CTM → 滚轮缩放退化为视图中心锚（stub 显式置 null 防环境差异）
+    const flip = svg.querySelector('g') as SVGGElement;
+    (flip as unknown as { getScreenCTM: () => null }).getScreenCTM = () => null;
+    act(() => {
+      svg.dispatchEvent(
+        new WheelEvent('wheel', { deltaY: -1, bubbles: true, cancelable: true }),
+      );
+      svg.dispatchEvent(
+        new WheelEvent('wheel', { deltaY: -1, bubbles: true, cancelable: true }),
+      );
+    });
+    const vbZoom = svg.getAttribute('viewBox')!;
+    expect(vbZoom).not.toBe('0 0 2100 1000'); // 放大两档生效（w 2100→1344）
+    // 聚焦 a@[0,0]（已远在左侧视口外）→ 平移带入：x 左移、宽不变（只平移不缩放）
+    act(() => {
+      root!.render(<EditCanvas mode="full" focusHighlightIndex={0} />);
+    });
+    const [zx, , zw] = vbZoom.split(' ').map(Number);
+    const [fx, , fw] = svg.getAttribute('viewBox')!.split(' ').map(Number);
+    expect(fx).toBeLessThan(zx);
+    expect(fw).toBeCloseTo(zw, 6);
+  });
+});
+
+// ============================================================
 // US-007（2026-10-04 修复）同组刚性成员互不计 —— band 生成布局的组成员是链间
 // 滑移贴触 + 展开归一化的亚微米浮点缝隙（实测 pen≈8e-5mm），求解口径只对组合片
 // union 负责、组内单片不可编辑（US-005），计入保存闸 = 不可解除死锁（band 布局

@@ -141,6 +141,62 @@ export function precomputeEditPiecesFromItems(
 }
 
 /**
+ * 非法（红色）重叠片清单（onIllegalOverlapCountChange / 初始布局重叠序号快照共
+ * 用数据源，2026-10-04 自 EditCanvas countIllegalOverlaps 迁入并升级为返回下标
+ * 列表 —— 计数口径不变：调用方取 .length）：全 working 展开池逐片按指标面板同
+ * 口径判红 —— collideAreaMm2 > COLLIDE_NOISE_AREA_MM2（碰撞轮廓 = erode 后
+ * manifest polygon 相交 = 违反排料约束；物理相交而碰撞交噪声级 = 琥珀压线不计
+ * —— d>0 时 solver 贴触解物理穿透 ≈ d_i+d_j+腐蚀/量化正噪声，旧「穿透 > 额度
+ * + 1e-9」判据必假阳性锁死保存闸，见模块头注）；布尔交异常降级 bbox 近似回退旧
+ * 穿透口径（penetrationDepth 纯函数 + bbox 相交邻居 d_i+d_j 最大值，保守兜底）。
+ * 返回 = 红色片的 placed_items 数组下标升序列表（一对非法重合两侧各计一项 ——
+ * 编辑链路下标寻址稳定，快照冻结后跨编辑依然有效）。
+ *
+ * pieceGroup（US-007 2026-10-04）：同组（band/prefix 刚性组）成员互不计 —— 组内
+ * 几何是带构造的既成事实（链间滑移贴触 + 展开归一化的亚微米浮点缝隙），求解口径
+ * 只对组合片 union 负责；且组内单片不可编辑（US-005），计入即不可解除的死锁。
+ * 组对组外片照常计。缺省（编辑弹窗不传）→ 组判定恒 false，行为逐字节不变。
+ */
+export function findIllegalOverlapPieces(
+  manifest: ManifestMsg,
+  items: readonly PlacedItem[],
+  pieceGroup?: (pid: string) => string | null,
+): number[] {
+  const pool = precomputeEditPiecesFromItems(manifest, items);
+  // 组 id 按 pool 下标对齐（key = placed_items 下标 = pool 序；pieceGroup 缺席恒 null）。
+  const gids = pool.map((ep) => (pieceGroup ? pieceGroup(ep.pid) : null));
+  const sameGroup = (i: number, j: number): boolean => gids[i] != null && gids[i] === gids[j];
+  const red: number[] = [];
+  for (const ep of pool) {
+    // bbox 预筛：无任何相交邻居（同组邻居不算）直接非红（省布尔交调用）。
+    let touches = false;
+    for (const o of pool) {
+      if (o.key !== ep.key && !sameGroup(ep.key, o.key) && bboxIntersect(ep.bbox, o.bbox)) {
+        touches = true;
+        break;
+      }
+    }
+    if (!touches) continue;
+    try {
+      const res = computeOverlap(ep, pool.filter((o) => !sameGroup(ep.key, o.key)));
+      if (res.collideAreaMm2 > COLLIDE_NOISE_AREA_MM2) red.push(ep.key);
+    } catch {
+      let pen = 0;
+      let allowance = 0;
+      for (const o of pool) {
+        if (o.key === ep.key) continue;
+        if (sameGroup(ep.key, o.key)) continue;
+        if (!bboxIntersect(ep.bbox, o.bbox)) continue;
+        pen = Math.max(pen, penetrationDepth(ep.worldPolygon, o.worldPolygon));
+        allowance = Math.max(allowance, ep.dMm + o.dMm);
+      }
+      if (pen > allowance + 1e-9) red.push(ep.key);
+    }
+  }
+  return red;
+}
+
+/**
  * 池内单片**原地**增量更新（US-003 拖动/旋转帧专用 —— 其余片零成本保持）。
  *
  * 拖动帧只重算被拖片一项：worldPolygon / bbox / rot / tr / mirror 覆写为最新值后即可直接

@@ -13,7 +13,10 @@
 //   7) 布局刷新：无编辑直刷（bumpGenSeed 换 seed）；有编辑 → 确认层「将丢弃当前
 //      编辑」→ 取消保持 / 确认重生成（working 换新基线）；
 //   8) ✕ dirty 确认层（放弃未保存的修改？→ 取消保持 / 确认关窗）；
-//   9) edit_hold 心跳：mount 即 POST /api/edit-hold。
+//   9) edit_hold 心跳：mount 即 POST /api/edit-hold；
+//  10) 重叠序号定位（2026-10-04）：chips 渲染在提示上方 + 点击高亮/再点取消 +
+//      编号 mousedown 冻结（键盘路径不刷、画布 pointerdown 刷）+ 实时计数归零
+//      chips 行与高亮同帧撤销。
 //
 // 套路同 EditLayoutModal 既有用例：createRoot + act + data-testid；不包 StrictMode
 //（StrictMode 双 mount 由组件内 bootRef 防双请求，见组件头注）。lib/api 整体 mock
@@ -580,5 +583,132 @@ describe('布局刷新 + ✕ dirty 确认 (US-006)', () => {
     await act(async () => {});
     expect(q('edit-confirm-overlay')).toBeNull();
     expect(overlay()).toBeNull();
+  });
+});
+
+// ============================================================
+// 重叠序号定位（2026-10-04）：保存闸提示只报数量 → footer 提示上方序号 chips
+// （编号 = 红色片快照序，mousedown 冻结）→ 点击定位高亮（EditCanvas
+// focusHighlightIndex）。三片夹具让「快照冻结 vs 刷新」可观测：a/b 红对 →
+// 键盘把 b 挪到 c 旁 → 红对换位 b/c，编号须等画布 pointerdown 才刷新。
+// ============================================================
+describe('重叠序号定位 (2026-10-04)', () => {
+  /** 三片夹具：a/b/c 三 500² 方（a∩b 红对起手，c 远端）。 */
+  function makeManifest3(): ManifestMsg {
+    const m = makeManifest();
+    return {
+      ...m,
+      total_area_mm2: 750000,
+      pieces: [
+        ...m.pieces,
+        {
+          id: 'c_32',
+          label: 'g03',
+          size: 32,
+          color: '#0000ff',
+          area_mm2: 250000,
+          polygon: [
+            [0, 0], [500, 0], [500, 500], [0, 500],
+          ] as Polygon,
+        },
+      ],
+    };
+  }
+
+  const PLACED3: PlacedItem[] = [
+    { id: 'a_28', rotation: 0, translation: [0, 0] as Pt },
+    { id: 'b_30', rotation: 0, translation: [400, 50] as Pt }, // a∩b 交 100×450 → 红对
+    { id: 'c_32', rotation: 0, translation: [2000, 0] as Pt }, // 远端
+  ];
+
+  async function openWith3(): Promise<void> {
+    apiRoutes['/api/initial-layout/generate'] = () =>
+      genBody({ manifest: makeManifest3(), placed: PLACED3 });
+    renderModal();
+    act(() => {
+      useControlPanelStore.getState().openModal('initial_layout');
+    });
+    await act(async () => {});
+  }
+
+  function chips(): HTMLElement[] {
+    return [
+      ...document.querySelectorAll('[data-testid="initial-layout-overlap-chip"]'),
+    ] as HTMLElement[];
+  }
+
+  it('非法重叠在场 → 序号 chips 渲染在提示上方（按片编号）；点击 → 画布定位高亮、再点取消', async () => {
+    await openWith3();
+    const hint = q('initial-layout-save-hint')!;
+    expect(hint.textContent).toContain('2 片');
+    const cs = chips();
+    expect(cs).toHaveLength(2);
+    expect(cs[0].textContent).toBe('1');
+    expect(cs[0].dataset.pieceIndex).toBe('0');
+    // chips 行在提示文案上方（DOM 顺序在前）
+    expect(
+      cs[0].compareDocumentPosition(hint) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    // 点击序号 1 → 红圈定位标记（a@[0,0] 500² bbox 中心 250,250）+ 交集区
+    click(cs[0]);
+    const ring = document.querySelector(
+      '[data-testid="edit-focus-piece"]',
+    ) as unknown as SVGCircleElement;
+    expect(ring).not.toBeNull();
+    expect(ring.getAttribute('stroke')).toBe('#e03131');
+    expect(parseFloat(ring.getAttribute('cx')!)).toBeCloseTo(250, 6);
+    expect(parseFloat(ring.getAttribute('cy')!)).toBeCloseTo(250, 6);
+    expect(
+      document.querySelectorAll('[data-testid="edit-focus-intersection"]').length,
+    ).toBeGreaterThanOrEqual(1);
+    expect(cs[0].classList.contains('is-active')).toBe(true);
+    // 再点同号 → 取消高亮
+    click(chips()[0]);
+    expect(document.querySelector('[data-testid="edit-focus-piece"]')).toBeNull();
+  });
+
+  it('编号 mousedown 冻结：键盘路径换红对 → 编号不动；画布 pointerdown → 快照刷新', async () => {
+    await openWith3();
+    // 键盘直写 working（无 pointerdown）：b → [1800,50] 与 c 交 300×450 → 红对 b/c
+    act(() => {
+      useEditStore.getState().setWorkingItem(1, { translation: [1800, 50] });
+    });
+    expect(q('initial-layout-save-hint')!.textContent).toContain('2 片'); // 实时计数照常
+    // 编号冻结：仍指旧快照 a,b（0,1）
+    expect(chips().map((c) => c.dataset.pieceIndex)).toEqual(['0', '1']);
+    // 画布 mousedown → 快照刷新为新红对 b,c（1,2）
+    const svg = q('initial-layout-overlay')!.querySelector('svg')!;
+    act(() => {
+      svg.dispatchEvent(
+        new PointerEvent('pointerdown', {
+          bubbles: true,
+          cancelable: true,
+          pointerId: 1,
+          clientX: 10,
+          clientY: 10,
+          button: 0,
+        }),
+      );
+    });
+    expect(chips().map((c) => c.dataset.pieceIndex)).toEqual(['1', '2']);
+  });
+
+  it('实时计数归零（重叠全解除）→ chips 行与提示同帧隐藏、定位高亮撤销', async () => {
+    await openWith3();
+    click(chips()[0]);
+    expect(document.querySelector('[data-testid="edit-focus-piece"]')).not.toBeNull();
+    // b → [600,50]：与 a、c 均分离 → 全图无红
+    act(() => {
+      useEditStore.getState().setWorkingItem(1, { translation: [600, 50] });
+    });
+    expect(q('initial-layout-save-hint')).toBeNull();
+    expect(chips()).toHaveLength(0);
+    expect(document.querySelector('[data-testid="edit-focus-piece"]')).toBeNull();
+  });
+
+  it('合法布局（无红）→ 无 chips 行（缺省形态不受扰）', async () => {
+    await openModalFresh(); // PLACED_OK 分离布局
+    expect(q('initial-layout-overlap-chips')).toBeNull();
+    expect(chips()).toHaveLength(0);
   });
 });

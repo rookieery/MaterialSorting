@@ -2447,12 +2447,14 @@ button.sample-apply-btn:disabled { background: #444; color: #888; cursor: defaul
 }
 /* 初始布局弹窗 footer 左侧提示区（US-006）：margin-right:auto 把右侧动作按钮推到
    行尾（编辑弹窗单按钮 flex-end 形态的多子元素扩展）；min-height 防有无提示时
-   footer 高度跳变 */
+   footer 高度跳变。2026-10-04 重叠序号定位起改纵向两行：上 = 序号 chips 行、
+   下 = 提示文案（「在其上方」），无 chips 时视觉与单行形态一致 */
 .edit-layout-foot-note {
   margin-right: auto;
   display: flex;
-  align-items: center;
-  gap: 10px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
   min-height: 20px;
   font-size: 13px;
   overflow: hidden;
@@ -2464,6 +2466,60 @@ button.sample-apply-btn:disabled { background: #444; color: #888; cursor: defaul
 /* 生成失败文案（红字直显；「布局刷新」即重试入口） */
 .edit-layout-error {
   color: #e06666;
+}
+/* ---- 重叠序号定位（2026-10-04）：footer 提示行上方的序号 chips 行 ---- */
+.edit-overlap-chips {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.edit-overlap-chips-label {
+  color: #8a8d95;
+  font-size: 12px;
+}
+.edit-overlap-chip {
+  min-width: 22px;
+  height: 22px;
+  padding: 0 5px;
+  border-radius: 11px;
+  background: #2b2d33;
+  border: 1px solid #d9a05b;
+  color: #d9a05b;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, color 0.15s;
+}
+.edit-overlap-chip:hover {
+  background: #d9a05b;
+  color: #fff;
+}
+.edit-overlap-chip.is-active {
+  background: #d9a05b;
+  color: #1c1d22;
+}
+.edit-overlap-chip:focus-visible {
+  outline: 2px solid #7fd4a8;
+  outline-offset: 1px;
+}
+/* 定位高亮红圈（EditCanvas focusHighlightIndex 标记层；2026-10-04 二版 —— 一版
+   橙色世界宽描边全览下亚像素不可见换红圈 + vector-effect 屏幕定宽）—— 呼吸
+   脉冲引导视线落到目标片，pointer-events:none（层上已设）不挡画布交互 */
+.edit-focus-piece {
+  animation: edit-focus-pulse 1s ease-in-out infinite;
+}
+@keyframes edit-focus-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
 }
 /* 生成中浮层（US-006 busy 态）：盖住画布（指标面板 z 之上），半透明底衬 +
    居中进度文案 —— 生成在飞画布禁交互且无可编辑内容 */
