@@ -338,7 +338,7 @@ function InitialLayoutModalInner(): JSX.Element {
           ) : null}
           {generating && (
             <div className="edit-layout-busy" data-testid="initial-layout-generating">
-              初始布局生成中（约 10 秒）…
+              初始布局生成中（约 5 秒）…
             </div>
           )}
         </div>
