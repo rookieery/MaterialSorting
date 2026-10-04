@@ -20,11 +20,14 @@ import type {
   ServerMsg,
   StageMsg,
   StartPayload,
+  WarmInitialPayload,
 } from '../types/ws';
 import type { PerTypeOverrides, SolveParams } from '../types/v03';
 import { solveWsUrl } from '../lib/ws';
 import { triggerSessionBlock } from '../lib/api';
+import { warmStateReasonText } from '../lib/initialLayout';
 import { applyFinal, markRunDone, runRegistry, type RunRecord } from '../store/runRegistry';
+import { useToastStore } from '../store/toastStore';
 
 /** start(cfg) 入参（外部传纯数据；hook 内部补 action/per_type 默认）。 */
 export interface StartConfig {
@@ -52,6 +55,13 @@ export interface StartConfig {
    * **无 size 键** —— 资格码后端选码（近满幅几何搜索，seed 仅兜底路径），决策②）。
    */
   prefix?: PrefixConfig | null;
+  /**
+   * 初始布局热启动（prd-initial-layout US-007）：保存且未失效（stale）的初始布局
+   * 由 ControlPanel.handleStart 附带（saved.warmPlaced + 组合宇宙 demandMap）；
+   * 缺省 / null / stale → **不写键**（payload 线格式与旧前端逐字节一致，后端
+   * `initial` 键缺席 = 恒 None 旧行为）。
+   */
+  initial?: WarmInitialPayload | null;
 }
 
 /** 各类消息的可选回调（订阅层按需注册；不抛错，无返回）。 */
@@ -112,6 +122,9 @@ export function useSolveRun(cb: UseSolveRunCallbacks = {}): {
       band: cfg.band ?? null,
       // US-004：prefix 缺省 → null（后端 _parse_prefix 见 null = 关闭，旧行为不变）。
       prefix: cfg.prefix ?? null,
+      // 初始布局 US-007：initial 缺省 / null → **不写键**（条件展开 —— JSON 序列化
+      // 后与旧前端线格式逐字节一致；后端 msg.get('initial') None = 旧行为）。
+      ...(cfg.initial != null ? { initial: cfg.initial } : {}),
     };
     ws.onopen = () => {
       ws.send(JSON.stringify(payload));
@@ -146,6 +159,13 @@ export function useSolveRun(cb: UseSolveRunCallbacks = {}): {
           break;
         case 'final':
           applyFinal(rec, msg);
+          // 初始布局 US-007：warm 降级（装载点/worker 闸门任一拦截）→ toast 中文
+          // reason（warmStateReasonText 语义族映射）。求解照常完成（后端全降级不炸轮
+          // 语义的前端对偶 —— 不进 error 流），engaged=true 的状态行轻提示由
+          // NestingPage onDone 读 rec.warmState 渲染（本 hook 不持状态行）。
+          if (msg.warm_state && msg.warm_state.engaged === false) {
+            useToastStore.getState().pushToast(warmStateReasonText(msg.warm_state.reason ?? ''));
+          }
           cbRef.current.onFinal?.(msg, rec);
           finish();
           break;

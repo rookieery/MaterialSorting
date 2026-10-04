@@ -68,7 +68,7 @@
 //   状态（.msn）」+ 单「保存」按钮，按钮状态与导出按钮同公式同数据源严格一致；
 //   原下拉选中时的保存范围说明行随之删除）。
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useExport } from '../../hooks/useExport';
 // key 授权 US-007：普通运行前置 key 预检（POST /api/key/precheck，与后端 WS 闸门
 // 同判定序不扣次；三入口共用 lib/keyGate 单一实现）。
@@ -78,7 +78,8 @@ import type { ExportTableFields } from '../../lib/exportTable';
 import { useControlPanelStore } from '../../store/controlPanelStore';
 import { useFormStore } from '../../store/formStore';
 // 初始布局 US-004：热启动能力订阅（入口按钮置灰判定；App 启动探测，此处仅读）。
-import { useInitialLayoutStore } from '../../store/initialLayoutStore';
+// US-007：saved + isStale 订阅（普通运行附带 initial + SolveControls chip 三态）。
+import { initialLayoutFingerprint, useInitialLayoutStore } from '../../store/initialLayoutStore';
 import { runRegistry } from '../../store/runRegistry';
 import { useUploadStore } from '../../store/uploadStore';
 import { useQtyStore } from '../../store/qtyStore';
@@ -117,7 +118,7 @@ import {
 import type { PerTypeOverrides as PerTypeOverridesValue, SolveParams } from '../../types/v03';
 import type { StrategyResult } from '../../types/strategy';
 import type { SolvePhase } from '../../types/solvePhase';
-import type { BandConfig, PrefixConfig } from '../../types/ws';
+import type { BandConfig, PrefixConfig, WarmInitialPayload } from '../../types/ws';
 
 /** onStart 透传给 App 的载荷（直接喂给 useSolveRun.start 的 StartConfig 子集）。 */
 export interface ControlPanelStartPayload {
@@ -148,6 +149,12 @@ export interface ControlPanelStartPayload {
    * useSolveRun.start → WS StartPayload.prefix（无 size 键，资格码后端选取）。
    */
   prefix: PrefixConfig | null;
+  /**
+   * 初始布局热启动（US-007）：saved 且指纹未失效 → {placed: saved.warmPlaced,
+   * demand_map?}（saved.demandMap 非空才带键 —— plain 时后端忽略投影）；stale /
+   * 无 / 已清除 → null（useSolveRun 对 null 不写 initial 键，运行照常不拦截）。
+   */
+  initial: WarmInitialPayload | null;
 }
 
 export interface ControlPanelProps {
@@ -184,6 +191,10 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
   // 初始布局 US-004：热启动能力（App 启动 probeCapability 拉一次；此处订阅
   // supported === false → 入口按钮置灰 + title 中文提示；null = 未探知不置灰）。
   const warmSupported = useInitialLayoutStore((s) => s.supported);
+  // US-007：已保存初始布局 + 清除动作（chip「×清除」消费 —— 只清 saved，
+  // genSeed 保留单调递增，下次弹窗刷新换代续接）。
+  const savedInitial = useInitialLayoutStore((s) => s.saved);
+  const clearInitial = useInitialLayoutStore((s) => s.clear);
 
   // 重传联动（2026-08-27，与 PreviewPage quantities hydrate 同口径）：doc_id 变化
   // （首次上传 / 重传 / reset）→ form 整体回 DEFAULT_FORM（「新母版 = 全新表单」，
@@ -271,6 +282,33 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
     !prefixMissingLabel &&
     form.prefix_front.trim() === form.prefix_back.trim();
 
+  // 初始布局 US-007：chip 三态（SolveControls 消费）—— 'fresh' = saved 在场且
+  // 指纹新鲜（普通运行将附带 initial），'stale' = saved 在场但七组件上下文已漂移
+  // （数量/参数/门幅/band/prefix 任一变更），'none' = 无 saved。与 handleStart 附带
+  // 判定同一真相源（initialLayoutFingerprint + isStale），数量矩阵编辑响应式更新
+  // （quantities 已订阅）。useMemo 挡无关渲染的指纹重算（JSON 序列化数量矩阵）。
+  const initialChipState = useMemo<'fresh' | 'stale' | 'none'>(() => {
+    if (savedInitial === null) return 'none';
+    const fp = initialLayoutFingerprint(collectStartContext(form, quantities));
+    return useInitialLayoutStore.getState().isStale(fp) ? 'stale' : 'fresh';
+  }, [savedInitial, form, quantities]);
+
+  /**
+   * US-007：saved 且未失效 → 组装 initial 载荷（warmPlaced 组合宇宙条目 +
+   * demandMap 非空才带 demand_map 键 —— plain 时后端忽略投影）；否则 null。
+   * stale 布局对当前 pid 宇宙必然降级（instance_mismatch），前端先判不带 ——
+   * 与弹窗打开编排（stale 不续编）同口径。
+   */
+  function buildInitialPayload(): WarmInitialPayload | null {
+    const il = useInitialLayoutStore.getState();
+    if (il.saved === null) return null;
+    if (il.isStale(initialLayoutFingerprint(buildStartContext()))) return null;
+    return {
+      placed: il.saved.warmPlaced,
+      ...(il.saved.demandMap != null ? { demand_map: il.saved.demandMap } : {}),
+    };
+  }
+
   async function handleStart() {
     if (solving) return;
     if (form.sizes.length === 0) {
@@ -326,9 +364,10 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
       return;
     }
     // US-005：载荷构造与策略 run「执行」同源（collectStartContext）；seed_count 是
-    // 主画布 multi_seed 专属，仅本路径附加。
+    // 主画布 multi_seed 专属，仅本路径附加。US-007：saved 且指纹未失效 → 附带
+    // initial（普通运行热启动）；stale / 无 → null（不附带、不拦截运行）。
     const ctx = buildStartContext();
-    onStart({ ...ctx, seed_count: parseSeedCount(form) });
+    onStart({ ...ctx, seed_count: parseSeedCount(form), initial: buildInitialPayload() });
   }
 
   /** form.sizes 过滤 null（通用码）—— handleExport / handlePltConfirm 同源复用。 */
@@ -529,7 +568,14 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
       </div>
       {/* US-031：data-tour="start-btn" 锚定 SolveControls 父容器（nestingTour step3 高亮目标）。 */}
       <div data-tour="start-btn">
-        <SolveControls phase={phase} onStart={handleStart} onStop={onStop} startDisabled={startDisabled} />
+        <SolveControls
+          phase={phase}
+          onStart={handleStart}
+          onStop={onStop}
+          startDisabled={startDisabled}
+          initialChip={initialChipState}
+          onClearInitial={clearInitial}
+        />
       </div>
       {/* US-005 高级运行入口（策略 run 10/20/30/60min + race/se 双模式）：disabled =
           solving（互斥防 CPU 竞争）|| doc===null（未 commit 无排料数据）。

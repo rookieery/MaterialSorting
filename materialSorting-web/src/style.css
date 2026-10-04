@@ -131,6 +131,29 @@ button#stop {
 }
 button#stop:hover { background: #d05a40; }
 button#stop:disabled { background: #555; cursor: default; }
+/* 初始布局 chip 三态（prd-initial-layout US-007，仅非 running 态渲染于「普通运行」
+   按钮下方）：fresh = 绿系（与 #start 主操作呼应，热启动增益提示）+ 内联「×清除」
+   小按钮；stale = 琥珀系（与 .strategy-btn.extreme 同色阶语义 = 注意）；附注行
+   恒随 chip 在场（11px dim）。紧凑两行不占面板纵向空间，无 chip 时零渲染。 */
+.solve-initial-chip {
+  display: flex; align-items: center; justify-content: space-between; gap: 6px;
+  margin-top: 6px; padding: 4px 8px;
+  font-size: 12px; color: #8fd8ac;
+  background: rgba(46, 160, 108, 0.12);
+  border: 1px solid rgba(46, 160, 108, 0.45); border-radius: 4px;
+}
+.solve-initial-chip.stale {
+  color: #d8a35a;
+  background: rgba(181, 138, 47, 0.10);
+  border-color: rgba(181, 138, 47, 0.45);
+}
+.solve-initial-chip-clear {
+  padding: 1px 6px; font-size: 11px;
+  color: #9ab89f; background: transparent;
+  border: 1px solid #3a3d44; border-radius: 3px; cursor: pointer;
+}
+.solve-initial-chip-clear:hover { color: #d0d0d0; border-color: #555; }
+.solve-initial-chip-note { margin-top: 3px; font-size: 11px; color: #777; }
 .status { margin-top: 12px; font-size: 12px; color: #9fd1b8; min-height: 1.4em; }
 .stats {
   margin-top: 6px; font-size: 12px; color: #cfcfcf;

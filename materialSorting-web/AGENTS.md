@@ -1715,3 +1715,54 @@ F 换绑 / G 真跑放行 / H 扣次+统计 八相位。
   置空），单等「画布在场」会瞬时返回旧帧 → 拖片被随后落场的新 working 清掉 ——
   重生成后必须等 busy 浮层**先起后落**完整周期再驱动交互；报告
   `out/us006_il_modal/report.json`。
+
+## 初始布局 US-007 关键约定（prd-initial-layout，2026-10-04）
+
+普通运行接线收官（保存的初始布局随 start 附带 + warm_state 回报消费），
+外加一项产品修复（保存闸同组互不计）。详细文件表/不变量见
+`.docs/technical/agent-component-map.md` 文末「初始布局 US-007 落地」节。
+
+- **附带口径（buildInitialPayload 单一产出口）**：saved 在场且七组件指纹新鲜
+  （initialLayoutFingerprint(collectStartContext(form, quantities)) —— 与弹窗
+  打开编排同源构造，绝不复制序列化逻辑）才组装 initial：placed =
+  saved.warmPlaced（组合宇宙条目）+ demandMap 非空才带 demand_map 键
+  （plain 形态后端 pid_meta 投影忽略、前端也不发）；stale / 无 / 已清除 →
+  null（**运行照常发起不拦截** —— stale 对当前 pid 宇宙必然降级，与后端
+  instance_mismatch 闸门、弹窗「stale 不续编」三层同判）。
+- **线格式红线（键缺席 = 旧行为）**：useSolveRun start 载荷对 initial null/缺省
+  **条件展开不写键** —— 无 saved 的普通运行 WS 帧 JSON 与旧前端逐字节一致
+  （后端 msg.get → None 不调 build_warm_payload，final 亦无 warm_state 键）；
+  useSolveRun.test 线格式回归锁。
+- **chip 三态（SolveControls 纯受控）**：fresh「将基于初始布局运行」+ ×清除
+  （独立次要动作不触发 onStart；= initialLayoutStore.clear，genSeed 保留单调）
+  + 附注「仅普通运行生效」；stale「初始布局已失效（参数已变更）」无清除键
+  （重开弹窗自动重生成）；running 不渲染（按钮总数恒 1 不变量）；chip 不碰
+  主操作语义（fresh 在场 start 照常可点 —— 热启动是增益不是前置）。
+- **warm_state 消费双通道不重复**：engaged=false → useSolveRun final 分支直发
+  toast（warmStateReasonText 语义族映射：unsupported 族 / instance_mismatch
+  族 / 其余 invalid 兜底 —— reason 双形态 token 或装载点中文，按语义族归并
+  而非逐串穷举；不进 error 流）；engaged=true → NestingPage onDone 读
+  RunRecord.warmState 状态行尾缀「 · 已从初始布局热启动」（hook 不持状态行）。
+  final 无 warm_state 键（旧后端）→ ?? null 零消费零炸。
+- **保存闸同组互不计（countIllegalOverlaps 第三参 pieceGroup，US-007 修复）**：
+  band 展开成员带亚微米互相重叠（expand_placements 归一化浮点缝隙
+  pen≈8e-5mm，per_type d=0 → allowance=0）→ 原口径恒红 → 保存闸死锁（组内
+  单片不可编辑 = 用户不可能解除）。修复语义 = US-005 刚性组对偶：组内几何是
+  带构造既成事实（solver 只见 composite union），**组对组外片照常判红**；
+  缺省不传 pieceGroup 组判定恒 false（编辑弹窗行为逐字节不变）。
+- **测试基线**：全量 78 files / **1408 tests** 绿（+29：ControlPanel +7 /
+  SolveControls +5 / useSolveRun +5 / NestingPage +3 / initialLayout +4 /
+  EditCanvas.initial +3）；tsc + build 过。
+- **浏览器验证**：`scripts/smoke_initial_layout.mjs` **33/33**（P/S/B 三相位
+  端到端：plain 生成→拖片→保存→chip→运行→**首帧 warm 恢复签名**（width
+  delta=0.000mm / density delta=0.0000 对保存读数）→final engaged→状态行；
+  stale 改数量 → 再运行 start 无 initial 键 + 帧流照常；band 组拖 + WB_ 载荷 +
+  engaged）。**坑位记档**：① playwright waitForFunction(fn, arg, options) 三参
+  元 —— options 传第二参会静默回退默认 30s 超时（P1a 假超时根因）；② 组拖
+  断言必须用**世界 mm**（polygon points 属性解析）+ **稳定键**（data-label_
+  data-size）对齐 —— 屏幕 rect 被 viewBox 随包络伸缩的重排污染，且
+  selectPiece 提层 re-append 改 DOM 序，按下标对齐会把同移组误判各移各异；
+  ③ 组成员命中点：data-edit-group 直接落在毛版 polygon 上（pieceDom 各层直挂
+  翻转组），bbox 中心可落 L 形片凹口空白 —— elementFromPoint 逐候选扫描；
+  ④ 伪卡片检索扫全部 .nest-label（多相位后网格已有普通 run 卡，querySelector
+  首命中可能是 run 卡）。报告 `out/smoke_initial_layout/report.json`。

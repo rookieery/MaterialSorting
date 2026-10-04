@@ -18,6 +18,8 @@ import { act } from 'react';
 import { NestingPage } from '../NestingPage';
 import { runRegistry, type RunRecord } from '../../store/runRegistry';
 import { useEditStore } from '../../store/editStore';
+import { __resetInitialLayoutStoreForTest } from '../../store/initialLayoutStore';
+import { __resetToastsForTest, useToastStore } from '../../store/toastStore';
 import { useAppStore } from '../../store/appStore';
 import { useControlPanelStore } from '../../store/controlPanelStore';
 import { useStrategyStore, useExtremeStore } from '../../store/strategyStore';
@@ -500,5 +502,151 @@ describe('NestingPage run-provenance (US-004)', () => {
     expect(container!.querySelector('[data-testid="run-provenance"]')!.textContent).toBe(
       '来源：策略运行·race · seed 3',
     );
+  });
+});
+
+// ============================================================
+// prd-initial-layout US-007：final.warm_state → 汇总状态行轻提示。
+//   engaged=true → 单 run 状态行尾缀「 · 已从初始布局热启动」（done 路径）；
+//   engaged=false → 无尾缀（中文降级 toast 由 useSolveRun final 分支直发，
+//   本页不重复 —— 互补不重复的口径复验）。
+// ============================================================
+
+describe('NestingPage warm_state 状态行轻提示 (US-007)', () => {
+  interface MockWS {
+    url: string;
+    onopen: ((ev?: unknown) => void) | null;
+    onmessage: ((ev: { data: string }) => void) | null;
+    onclose: ((ev?: unknown) => void) | null;
+    onerror: ((ev?: unknown) => void) | null;
+    sent: string[];
+    send: (data: string) => void;
+    close: () => void;
+  }
+  const mockInstances: MockWS[] = [];
+  function makeMockWS(url: string): MockWS {
+    const inst: MockWS = {
+      url,
+      onopen: null,
+      onmessage: null,
+      onclose: null,
+      onerror: null,
+      sent: [],
+      send(data: string) {
+        inst.sent.push(data);
+      },
+      close() {
+        inst.onclose?.();
+      },
+    };
+    mockInstances.push(inst);
+    return inst;
+  }
+  class MockWebSocketCtor {
+    constructor(url: string) {
+      return makeMockWS(url) as unknown as WebSocket;
+    }
+  }
+  let realWS: typeof WebSocket | undefined;
+
+  beforeEach(() => {
+    mockInstances.length = 0;
+    realWS = globalThis.WebSocket;
+    (globalThis as unknown as { WebSocket: typeof WebSocket }).WebSocket =
+      MockWebSocketCtor as unknown as typeof WebSocket;
+    __resetInitialLayoutStoreForTest();
+    __resetToastsForTest();
+  });
+
+  afterEach(() => {
+    if (realWS !== undefined) {
+      (globalThis as unknown as { WebSocket: typeof WebSocket }).WebSocket = realWS;
+    }
+    __resetInitialLayoutStoreForTest();
+    __resetToastsForTest();
+  });
+
+  /** 点普通运行（选 28 码 + key 预检宏任务排干）→ 返回首个 mock WS。 */
+  async function startRun(): Promise<MockWS> {
+    renderPage();
+    act(() => {
+      (document.querySelector('#sz_28') as HTMLInputElement).click();
+    });
+    await act(async () => {
+      (document.querySelector('#start') as HTMLButtonElement).click();
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(mockInstances).toHaveLength(1);
+    const ws = mockInstances[0];
+    act(() => ws.onopen?.());
+    return ws;
+  }
+
+  it('final warm_state.engaged=true → 状态行「完成：seed 0 · …% · 已从初始布局热启动」（无 toast）', async () => {
+    const ws = await startRun();
+    act(() =>
+      ws.onmessage?.({
+        data: JSON.stringify({
+          type: 'final',
+          density: 0.86,
+          density_sparrow: 0.88,
+          width_mm: 9000,
+          elapsed: 30,
+          n_frames: 3,
+          n_eroded: 0,
+          warm_state: { engaged: true, reason: null },
+        }),
+      }),
+    );
+    const status = document.querySelector('.status')?.textContent ?? '';
+    expect(status).toContain('完成：seed 0');
+    expect(status).toContain('86.00%');
+    expect(status).toContain('已从初始布局热启动');
+    expect(useToastStore.getState().toasts).toHaveLength(0);
+  });
+
+  it('final warm_state.engaged=false → 状态行无热启动尾缀 + toast 中文降级（互补不重复）', async () => {
+    const ws = await startRun();
+    act(() =>
+      ws.onmessage?.({
+        data: JSON.stringify({
+          type: 'final',
+          density: 0.86,
+          density_sparrow: 0.88,
+          width_mm: 9000,
+          elapsed: 30,
+          n_frames: 3,
+          n_eroded: 0,
+          warm_state: { engaged: false, reason: 'instance_mismatch' },
+        }),
+      }),
+    );
+    const status = document.querySelector('.status')?.textContent ?? '';
+    expect(status).toContain('完成：seed 0');
+    expect(status).not.toContain('已从初始布局热启动');
+    const toasts = useToastStore.getState().toasts;
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0].message).toBe('数量或参数与初始布局不一致，已按普通方式运行');
+  });
+
+  it('final 无 warm_state（旧后端）→ 状态行常规形态 + 无 toast', async () => {
+    const ws = await startRun();
+    act(() =>
+      ws.onmessage?.({
+        data: JSON.stringify({
+          type: 'final',
+          density: 0.86,
+          density_sparrow: 0.88,
+          width_mm: 9000,
+          elapsed: 30,
+          n_frames: 3,
+          n_eroded: 0,
+        }),
+      }),
+    );
+    const status = document.querySelector('.status')?.textContent ?? '';
+    expect(status).toContain('完成：seed 0');
+    expect(status).not.toContain('已从初始布局热启动');
+    expect(useToastStore.getState().toasts).toHaveLength(0);
   });
 });

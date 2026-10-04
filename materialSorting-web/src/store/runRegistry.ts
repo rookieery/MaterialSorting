@@ -12,7 +12,7 @@
 // 除置 done 外同步通知订阅者 —— lib/sessionCheckpoint 据此在求解完成时刻立即
 // checkpoint（价值最高时刻，不等去抖）。观察者异常被吞（不破坏调用方状态机）。
 
-import type { BandConfig, FinalMsg, FinalPrefixStats, FrameMsg, ManifestMsg, StageMsg } from '../types/ws';
+import type { BandConfig, FinalMsg, FinalPrefixStats, FinalWarmState, FrameMsg, ManifestMsg, StageMsg } from '../types/ws';
 import type { RunOrigin } from '../types/stateFile';
 
 /** 单个 run 的全部上下文（高频字段 frames/lastFrame 直接 mutate）。 */
@@ -39,6 +39,12 @@ export interface RunRecord {
    * 解析成员 pid 集合（成套起始端微调永不动）。仅信息记录。
    */
   prefix: FinalPrefixStats | null;
+  /**
+   * final.warm_state 热启动灌入态（applyFinal 落笔；StartPayload 无 initial 键 /
+   * 策略合成 / 伪 run → 恒 null）。US-007 NestingPage onDone 消费：engaged=true →
+   * 状态行轻提示「已从初始布局热启动」。仅信息记录，渲染/导出零消费。
+   */
+  warmState: FinalWarmState | null;
   /** 所有中间解帧（mutable 数组，hook 直接 push）。 */
   frames: FrameMsg[];
   /** 最新一帧（= frames[frames.length-1]，缓存便于渲染层 O(1) 取）。 */
@@ -132,6 +138,7 @@ export const runRegistry = {
       stage: null,
       band: null,
       prefix: null,
+      warmState: null,
       frames: [],
       lastFrame: null,
       finalDensity: 0,
@@ -194,11 +201,12 @@ export const runRegistry = {
   },
 };
 
-/** 在 final 到达后更新 record（density 双口径；prefix 统计段落 RunRecord.prefix；elapsed 落用时终值）。 */
+/** 在 final 到达后更新 record（density 双口径；prefix 统计段落 RunRecord.prefix；warm_state 落 RunRecord.warmState；elapsed 落用时终值）。 */
 export function applyFinal(rec: RunRecord, m: FinalMsg): void {
   rec.finalDensity = m.density;
   rec.finalDensitySparrow = m.density_sparrow;
   rec.prefix = m.prefix ?? null;
+  rec.warmState = m.warm_state ?? null;
   rec.finalElapsed = m.elapsed;
   if (rec.frames.length > 0) rec.lastFrame = rec.frames[rec.frames.length - 1];
 }

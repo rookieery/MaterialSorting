@@ -148,14 +148,19 @@ export function NestingPage(): React.JSX.Element {
       const summary = runs
         .map((r) => `s${r.seed} ${(r.finalDensity * 100).toFixed(2)}%`)
         .join(' / ');
+      // 初始布局 US-007：engaged=true → 状态行轻提示尾缀（final.warm_state 落
+      // RunRecord.warmState；降级路径的中文 toast 在 useSolveRun final 分支直发，
+      // 与本汇总互补不重复 —— engaged=false 时无尾缀）。
+      const warmSuffix = (r: (typeof runs)[number]) =>
+        r.warmState?.engaged === true ? ' · 已从初始布局热启动' : '';
       if (runs.length === 1) {
         const rec = runs[0];
         if (rec.error) {
           setStatus(`seed ${rec.seed} 错误：${rec.error}`);
         } else if (rec.stopped) {
-          setStatus(`已停止：seed ${rec.seed}（保留中间方案，可导出）`);
+          setStatus(`已停止：seed ${rec.seed}（保留中间方案，可导出）${warmSuffix(rec)}`);
         } else if (rec.finalDensity > 0) {
-          setStatus(`完成：seed ${rec.seed} · ${(rec.finalDensity * 100).toFixed(2)}%`);
+          setStatus(`完成：seed ${rec.seed} · ${(rec.finalDensity * 100).toFixed(2)}%${warmSuffix(rec)}`);
         } else {
           setStatus(`seed ${rec.seed} 已结束`);
         }
@@ -258,6 +263,10 @@ export function NestingPage(): React.JSX.Element {
         // 资格码后端近满幅几何搜索确定性选定（全 run 同选，2026-09-02 起取代
         // seeded 随机），可行时顶部补 1 片异码近满幅，seed 仅兜底路径消费）。
         prefix: cfg.prefix,
+        // 初始布局 US-007：保存且未失效的初始布局热启动载荷透传（useSolveRun 对
+        // null 不写 initial 键 —— 线格式与旧前端一致；仅普通运行路径，策略/极限
+        // 走 HTTP config 天然不带）。
+        initial: cfg.initial,
       });
     }
   }

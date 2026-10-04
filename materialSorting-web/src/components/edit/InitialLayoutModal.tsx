@@ -443,6 +443,7 @@ function buildPseudoRun(manifest: ManifestMsg, placed: readonly PlacedItem[]): R
     stage: null,
     band: null,
     prefix: null,
+    warmState: null,
     frames: [frame],
     lastFrame: frame,
     finalDensity: 0,

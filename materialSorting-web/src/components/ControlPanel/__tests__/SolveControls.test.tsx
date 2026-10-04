@@ -41,9 +41,12 @@ function renderControls(props: {
   onStart?: () => void;
   onStop?: () => void;
   startDisabled?: boolean;
+  initialChip?: 'fresh' | 'stale' | 'none';
+  onClearInitial?: () => void;
 }) {
   const onStart = props.onStart ?? vi.fn();
   const onStop = props.onStop ?? vi.fn();
+  const onClearInitial = props.onClearInitial ?? vi.fn();
   act(() => {
     root!.render(
       <StrictMode>
@@ -52,11 +55,13 @@ function renderControls(props: {
           onStart={onStart}
           onStop={onStop}
           startDisabled={props.startDisabled}
+          initialChip={props.initialChip}
+          onClearInitial={onClearInitial}
         />
       </StrictMode>,
     );
   });
-  return { onStart, onStop };
+  return { onStart, onStop, onClearInitial };
 }
 
 describe("SolveControls (US-028)", () => {
@@ -145,6 +150,9 @@ describe("SolveControls (US-028)", () => {
   });
 
   it("渲染按钮总数恒为 1（每 phase 单一主操作；导出按钮在 ExportButtons 不在此）", () => {
+    // 默认 initialChip='none'（无 chip）—— 主操作按钮每 phase 恰 1 个。
+    // US-007 chip 的「×清除」是 fresh 态专属次要按钮（见下方 chip 三态用例），
+    // 不破坏「单一主操作」不变量。
     for (const phase of ["idle", "running", "stopped", "done", "error"] as SolvePhase[]) {
       renderControls({ phase });
       const buttons = container!.querySelectorAll("button");
@@ -174,5 +182,71 @@ describe("SolveControls (US-028)", () => {
     renderControls({ phase: "idle", onStart: vi.fn(), startDisabled: false });
     const enabledStart = container!.querySelector<HTMLButtonElement>("#start")!;
     expect(enabledStart.disabled).toBe(false);
+  });
+});
+
+// ============================================================
+// prd-initial-layout US-007：初始布局 chip 三态（ControlPanel 据
+// saved + isStale(指纹) 派生传入，本组件纯受控渲染）。
+//   fresh  =「将基于初始布局运行」+「×清除」次要按钮 + 附注「仅普通运行生效」
+//   stale  =「初始布局已失效（参数已变更）」+ 附注（无清除键 —— 重开弹窗自动重生成）
+//   none   = 无任何 chip 节点（默认，既有 DOM 零变化）
+//   running = 无 chip（热启动增益提示只在可发起普通运行时在场）
+// ============================================================
+describe("SolveControls 初始布局 chip 三态 (US-007)", () => {
+  it("fresh → chip 文案 + ×清除按钮（点击调 onClearInitial）+ 附注「仅普通运行生效」", () => {
+    const { onClearInitial } = renderControls({ phase: "idle", initialChip: "fresh" });
+    const chip = container!.querySelector<HTMLElement>('[data-testid="initial-chip"]')!;
+    expect(chip).not.toBeNull();
+    expect(chip.textContent).toContain("将基于初始布局运行");
+    const note = container!.querySelector<HTMLElement>('[data-testid="initial-chip-note"]')!;
+    expect(note).not.toBeNull();
+    expect(note.textContent).toBe("仅普通运行生效");
+    // ×清除是次要小按钮（aria-label 可达）
+    const clear = container!.querySelector<HTMLButtonElement>('[data-testid="initial-chip-clear"]')!;
+    expect(clear).not.toBeNull();
+    expect(clear.getAttribute("aria-label")).toBe("清除初始布局");
+    act(() => clear.click());
+    expect(onClearInitial).toHaveBeenCalledTimes(1);
+    // 清除是独立次要动作 —— 不触发 onStart
+    expect(container!.querySelector("#start")).not.toBeNull();
+  });
+
+  it("stale → 「初始布局已失效（参数已变更）」+ 附注；无清除按钮（重开弹窗自动重生成）", () => {
+    const { onClearInitial } = renderControls({ phase: "idle", initialChip: "stale" });
+    const chip = container!.querySelector<HTMLElement>('[data-testid="initial-chip-stale"]')!;
+    expect(chip).not.toBeNull();
+    expect(chip.textContent).toContain("初始布局已失效（参数已变更）");
+    expect(chip.className).toContain("stale");
+    expect(container!.querySelector('[data-testid="initial-chip-clear"]')).toBeNull();
+    expect(container!.querySelector('[data-testid="initial-chip"]')).toBeNull();
+    // 附注仍恒随 chip 在场
+    expect(container!.querySelector('[data-testid="initial-chip-note"]')).not.toBeNull();
+    expect(onClearInitial).not.toHaveBeenCalled();
+  });
+
+  it("none（默认）→ 无任何 chip 节点（既有 DOM 逐字节不变）", () => {
+    renderControls({ phase: "idle" });
+    expect(container!.querySelector('[data-testid="initial-chip"]')).toBeNull();
+    expect(container!.querySelector('[data-testid="initial-chip-stale"]')).toBeNull();
+    expect(container!.querySelector('[data-testid="initial-chip-note"]')).toBeNull();
+    expect(container!.querySelector('[data-testid="initial-chip-clear"]')).toBeNull();
+  });
+
+  it("running → 不渲染 chip（即使传了 fresh；求解中无增益提示）", () => {
+    renderControls({ phase: "running", initialChip: "fresh" });
+    expect(container!.querySelector('[data-testid="initial-chip"]')).toBeNull();
+    expect(container!.querySelector('[data-testid="initial-chip-note"]')).toBeNull();
+    expect(container!.querySelectorAll("button").length).toBe(1); // 仅 #stop
+  });
+
+  it("fresh 态主操作按钮仍可点（chip 不拦截 onStart）+ stopped/done/error 态 chip 同渲染", () => {
+    const { onStart } = renderControls({ phase: "idle", initialChip: "fresh", onStart: vi.fn() });
+    act(() => container!.querySelector<HTMLButtonElement>("#start")!.click());
+    expect(onStart).toHaveBeenCalledTimes(1);
+    for (const phase of ["stopped", "done", "error"] as SolvePhase[]) {
+      renderControls({ phase, initialChip: "fresh" });
+      expect(container!.querySelector('[data-testid="initial-chip"]')).not.toBeNull();
+    }
   });
 });

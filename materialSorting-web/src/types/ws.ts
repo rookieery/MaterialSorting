@@ -45,6 +45,24 @@ export interface PrefixConfig {
 }
 
 /**
+ * 初始布局热启动载荷（prd-initial-layout US-007，2026-10-04）：「设置初始布局」
+ * 弹窗保存的布局随普通运行附带（**仅普通运行** —— 高级/极限运行走 HTTP config
+ * 不带此键）。后端 `routes_ws` prefix 解析后经 `initial_layout.build_warm_payload`
+ * 装载（全降级不炸轮），final 以 `warm_state` 回显实际灌入态。
+ *
+ * `placed`：**组合宇宙口径**条目 —— band/prefix 开 = WB_/PS_ 组合 pid 在场的
+ * 生成响应 composite 段 + 组位移记账（`saved.warmPlaced`）；plain = 展开视图全
+ * 条目三键形态（后端 pid_meta 投影宇宙，pid 逐位一致）。`demand_map`：band/prefix
+ * 开时必供（组合 pid 主进程不可推导）；plain 时后端忽略（前端也不发）。
+ */
+export interface WarmInitialPayload {
+  /** 保存布局条目（三键形态；永无 mirror —— allowMirror=false 编辑不可能引入）。 */
+  placed: PlacedItem[];
+  /** 组合宇宙需求映射 {pid: N}（仅 band/prefix 开时随载荷在场）。 */
+  demand_map?: Record<string, number>;
+}
+
+/**
  * client → server：启动求解（首条消息，必须 action:'start'）。
  * per_type 空时序列化为 null（同旧 vanilla 实现 collectParams）；键 = 裁片 g 码
  * （裁片编号化重构 US-003 起；后端按 label 命中对该 g 码**全部码号**覆盖，2026-08-18
@@ -79,6 +97,12 @@ export interface StartPayload {
    * 与 band 可同开 —— 双开时带位只记录不置换，后端 US-003 行为）。**无 size 键**。
    */
   prefix?: PrefixConfig | null;
+  /**
+   * 初始布局热启动（prd-initial-layout US-007）：保存的初始布局随普通运行附带。
+   * **键缺席 = 旧行为**（useSolveRun 对缺省/ null 不写键 —— JSON 序列化后线格式
+   * 与旧前端逐字节一致）；stale / 未保存 / 已清除 → 不附带不拦截（普通求解照常）。
+   */
+  initial?: WarmInitialPayload | null;
 }
 
 /**
@@ -138,6 +162,24 @@ export interface FinalMsg {
    * 微调永不动）。applyFinal 落 RunRecord.prefix。
    */
   prefix?: FinalPrefixStats;
+  /**
+   * 初始布局热启动实际灌入态（prd-initial-layout US-003 起 additive；**StartPayload
+   * 带 initial 键时才出现**）。US-007 前端消费：engaged=false → toast 中文 reason
+   * 映射（lib/initialLayout.warmStateReasonText）；engaged=true → 状态行轻提示
+   * 「已从初始布局热启动」。applyFinal 落 RunRecord.warmState。
+   */
+  warm_state?: FinalWarmState;
+}
+
+/**
+ * final 附带的热启动灌入态（后端两数据源择一：worker final `{engaged, reason}`
+ * 原样转发，或 routes_ws 侧预丢弃时合成 engaged=false + 中文 reason）。
+ * reason：token（'worker_unsupported' / 'worker_serialize_failed' /
+ * 'instance_mismatch'）或装载点中文文案（不支持热启动 / 校验矩阵 / 需求映射外）。
+ */
+export interface FinalWarmState {
+  engaged: boolean;
+  reason?: string | null;
 }
 
 /**

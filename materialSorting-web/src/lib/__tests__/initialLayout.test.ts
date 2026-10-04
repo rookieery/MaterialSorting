@@ -12,7 +12,7 @@
 //      plainWarmPlaced（working 全量三键形态 + mirror 剥离）。
 
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest';
-import { fetchWarmCapability, generateInitialLayout } from '../initialLayout';
+import { fetchWarmCapability, generateInitialLayout, warmStateReasonText } from '../initialLayout';
 import { markSessionProbedForTest, resetSessionForTest } from '../api';
 
 let fetchSpy: MockInstance<(...args: unknown[]) => Promise<Response>> | null = null;
@@ -348,5 +348,56 @@ describe('plainWarmPlaced (US-006 plain 组装)', () => {
 
   it('空 working → 空数组', () => {
     expect(plainWarmPlaced([])).toEqual([]);
+  });
+});
+
+// ============================================================
+// US-007 warmStateReasonText —— final.warm_state.reason 语义族
+// 映射（后端双形态：token 码 + build_warm_payload 中文串 → 三族固定
+// toast 文案；未识别 reason 兜底 invalid 族，保证每条降级必有一条中文提示）。
+// ============================================================
+describe('warmStateReasonText (US-007 final warm_state toast 映射)', () => {
+  it('unsupported 族：token unsupported / worker_unsupported → 不支持热启动文案', () => {
+    expect(warmStateReasonText('unsupported')).toBe(
+      '当前 spyrrow 版本不支持热启动，已按普通方式运行',
+    );
+    expect(warmStateReasonText('worker_unsupported')).toBe(
+      '当前 spyrrow 版本不支持热启动，已按普通方式运行',
+    );
+  });
+
+  it('unsupported 族：后端中文串（需 0.9.0+ms1 及以上私有 wheel）→ 同文案（子串匹配）', () => {
+    expect(
+      warmStateReasonText('当前 spyrrow 版本不支持热启动（需 0.9.0+ms1 及以上私有 wheel）'),
+    ).toBe('当前 spyrrow 版本不支持热启动，已按普通方式运行');
+  });
+
+  it('mismatch 族：token instance_mismatch → 数量或参数不一致文案', () => {
+    expect(warmStateReasonText('instance_mismatch')).toBe(
+      '数量或参数与初始布局不一致，已按普通方式运行',
+    );
+  });
+
+  it('mismatch 族：后端中文串（需求映射外的裁片 id…母版或数量/参数已变更）→ 同文案', () => {
+    expect(
+      warmStateReasonText('初始布局第 3 条含当前需求映射外的裁片 id g07_34（母版或数量/参数已变更？）'),
+    ).toBe('数量或参数与初始布局不一致，已按普通方式运行');
+  });
+
+  it('invalid 族：token invalid_* / warmstart ValueError 中文串 / 空串 → 校验未通过文案', () => {
+    expect(warmStateReasonText('invalid_geometry')).toBe(
+      '初始布局校验未通过，已按普通方式运行',
+    );
+    expect(warmStateReasonText('warmstart: invalid rotation')).toBe(
+      '初始布局校验未通过，已按普通方式运行',
+    );
+    // reason 缺席（后端 engaged=false 必带 reason，防御口径）→ 兜底 invalid 族
+    expect(warmStateReasonText('')).toBe('初始布局校验未通过，已按普通方式运行');
+  });
+
+  it('worker_serialize_failed → invalid 族（装载点解析成功但 worker 序列化失败，非版本问题）', () => {
+    expect(warmStateReasonText('worker_serialize_failed')).toBe(
+      '初始布局校验未通过，已按普通方式运行',
+    );
   });
 });

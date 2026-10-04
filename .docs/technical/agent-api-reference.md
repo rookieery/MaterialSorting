@@ -28,7 +28,7 @@
 | GET | `/api/ptypes` | US-020 D10（US-001 v2：键 = g 码 label）：返回每个 g 码的代表裁片（最小码内 parse 同序首个，含 `label` 编号），供前端高级配置弹窗缩略图/放大预览（D11 layer-aware）；**多会话 US-003**：`X-Session-Id` → 该会话快照（缺省 → default `_PIECES_STATE`） | `server.get_ptypes` |
 | GET | `/api/samples` | **2026-09-16 上传预览页「样例」下拉框数据源**：列 `paths.DATA_DIR`（`data/`）顶层全部 `*.dxf`（非递归、含大写 `.DXF`，按文件名排序）→ `{samples:[{name,size_bytes}]}`；无会话依赖（全局静态数据，与 `GET /` 同类）；「应用」动作走既有 `/api/parse-dxf`（前端 `res.blob()` 包 `File` 上传，后端零新数据路径） | `routes_views.list_samples` → `_sample_dxf_names()` |
 | GET | `/api/samples/file` | **2026-09-16 样例取文件**：`?name=` 必须命中 `_sample_dxf_names()` 实时白名单（`os.path.basename` 同值双保险 —— 防目录穿越/白名单外后缀/子目录相对路径，未命中 404 中文 error）→ `application/dxf` inline 文件流；样例名含中文/`#`/`（）` 走 query 参数（前端 `encodeURIComponent`） | `routes_views.sample_file` |
-| GET | `/api/warm-capability` | **初始布局 US-001（2026-10-03）热启动能力探测**：恒 200 `{'supported': bool, 'version': str}`（`web/initial_layout.warm_capability` 单一数据源：`supported` = `warmstart.warm_start_supported()`（`+ms>=1` 私有 wheel），`version` = 实装版本串，包缺失 → `'(未安装)'`，探测恒不抛）；**无会话闸门**（不解析 `X-Session-Id` —— 能力是 spyrrow 装载态的进程级属性，与 `GET /api/samples` 同类）；前端「高级配置：设置初始布局」入口按钮置灰判定数据源（初始布局 PRD 后续故事扩展字段表/错误码专节） | `routes_views.get_warm_capability` → `initial_layout.warm_capability` |
+| GET | `/api/warm-capability` | **初始布局 US-001（2026-10-03）热启动能力探测**：恒 200 `{'supported': bool, 'version': str}`（`web/initial_layout.warm_capability` 单一数据源：`supported` = `warmstart.warm_start_supported()`（`+ms>=1` 私有 wheel），`version` = 实装版本串，包缺失 → `'(未安装)'`，探测恒不抛）；**无会话闸门**（不解析 `X-Session-Id` —— 能力是 spyrrow 装载态的进程级属性，与 `GET /api/samples` 同类）；前端「高级配置：设置初始布局」入口按钮置灰判定数据源（字段表/错误码专节见下方「初始布局（热启动）契约专节」） | `routes_views.get_warm_capability` → `initial_layout.warm_capability` |
 | POST | `/api/initial-layout/generate` | **初始布局 US-002（2026-10-03）初始布局短求解生成**（弹窗打开/刷新数据源）：body = WS start 同形子集 `{sizes?, per_type?, quantities?, params?, gate_mm?, band?, prefix?, seed?}`（`gate_mm` 正值覆盖会话门幅，WS 同法）；`solve_with_callback_proc` 短求解（`time_budget` = `INITIAL_LAYOUT_GEN_TIME_S`=10s，`record_composite=True`）经 `run_in_threadpool`，band/prefix 校验复用 `routes_ws._parse_band`/`_parse_prefix` 单一校验点（**无 key 闸门**，预览族同口径）；响应 `{ok, manifest(WS 前端契约同形 = routes_ws._build_manifest_msg 单一真相源), placed(密度最大可行帧展开视图，永无 WB_/PS_), width_mm, density, composite?{placed_items, demand_map}, prefix?}`（composite 仅 band/prefix 开时在场 = US-006 前端保存 warm 组合载荷数据源）；错误矩阵：sid 过期/非法 401/400 · body 非 JSON/seed 非法 400 · 无母版 400「请先上传母版」 · band/prefix 非法 400 · 同会话生成中 409（per-session 单飞锁 `_INITIAL_LAYOUT_BUSY` 模块级 dict+lock，跨会话放开）· 求解失败 502 `{error:中文}`；成功顺手 `edit_hold.refresh(sid)`（default 豁免） | `routes_views.initial_layout_generate` → `initial_layout.generate_initial_layout` → `solver.solve_with_callback_proc` |
 | POST | `/api/band-preview` | 2026-08-24 成带形态预览（高级配置弹窗「布局设置」band 行缩略图数据源）：主进程同步 `build_band_plan`，响应无 `WB_`，见下专节；**多会话 US-003**：`X-Session-Id` → 该会话快照 | `routes_views.band_preview` |
 | POST | `/api/prefix-preview` | 2026-08-25 前缀组合形态预览（「布局设置」prefix 行缩略图数据源）：**2026-09-02 US-003 起选码换 `select_prefix_plan` 真相源**（与 solve_worker `_build_prefix` 同函数，4 片兜底或 5 片顶部异码补片；构造段 `run_in_threadpool` 线程池化），成员带 `tag`=g 码，响应 additive `extra`/`residual_mm`/`gate_mm`/`fallback`，无 `PS_`，见下专节；**多会话 US-003**：`X-Session-Id` → 该会话快照 | `routes_views.prefix_preview` |
@@ -1001,6 +1001,51 @@ key 行契约（列表/单条/新建/续期/改备注共用 10 字段）：`{id,
 | `PUT /api/admin/systems/{system_name}` | `{remark: str}`（空串 = 清除 → 存 null） | `{ok:true, system_name, remark}`；写 `key_op_log` op=`edit_system_remark`（key_id 悬空） | 400 形状；404 `该系统名下已无 key，无法编辑备注` |
 
 每操作写 `key_op_log`（create/renew/edit/delete/bind/merge_*/validate 扣次等审计流）。frp 部署 runbook（frpc 配置样例、双 token 必设、明文 HTTP 残余风险、SQLite 快照备份）见 [本地部署构建与发版手册](本地部署构建与发版手册.md) §7。
+
+## 初始布局（热启动）契约专节 — /api/warm-capability + /api/initial-layout/generate + WS initial/warm_state（初始布局 PRD US-001~007；US-007 2026-10-04 全链路收口）
+
+前端主线（US-007 普通运行接线定稿）：弹窗保存初始布局（US-006）→ ControlPanel 据指纹新鲜度在 start 载荷附 `initial`（saved 且 `isStale(fingerprint)`=false 才带；stale/无/已清除 → 键缺席，运行照常不拦截）→ 后端 `build_warm_payload` 装载 → worker 热启动（sparrow warmstart）→ final `warm_state` 回报实际灌入态 → 前端 toast/状态行反馈。
+
+### GET /api/warm-capability（US-001）
+
+进程级能力探测，无会话闸门，恒 200：`{supported: bool, version: str}`（version 缺省 '(未安装)'）。前端「高级配置：设置初始布局」入口置灰判定数据源（supported=false + 有母版 → 置灰 + title「当前 spyrrow 版本不支持热启动」）。
+
+### POST /api/initial-layout/generate（US-002，US-006/US-007 弹窗数据源）
+
+请求字段（WS start 同形子集，全可缺省 —— 前端 `collectStartContext(form, quantities)` 单一真相源同构）：
+
+| 字段 | 类型 | 缺省语义 |
+|---|---|---|
+| `sizes` | number[] | 会话全部码 |
+| `per_type` | {label: {d?, tol?}} | null（无逐片覆盖） |
+| `quantities` | {label: {sizeKey: n}} | null → 全片 demand=1 |
+| `params` | {d_ext,d_int,tol_ext,tol_int} | 全 0 |
+| `gate_mm` | number | 正值覆盖会话门幅（WS 同法） |
+| `band` | {enabled, label} | null = 关 |
+| `prefix` | {enabled, front, back} | null = 关 |
+| `seed` | int | 0（前端弹窗刷新 seed+1 换代） |
+
+响应：`{ok, manifest, placed, width_mm, density, composite?, prefix?}` —— manifest 与 WS 前端契约同形（`routes_ws._build_manifest_msg` 单一真相源）；`placed` = 密度最大可行帧**展开视图**（永无 WB_/PS_）；`composite{placed_items, demand_map}` 仅 band/prefix 开时在场（保存 warm 组合载荷数据源，US-006）。
+
+错误码：401 sid 过期 · 400 body 非 JSON / seed 非法 / 无母版 / band·prefix 非法 · 409 同会话生成中（per-session 单飞锁）· 502 求解失败 `{error: 中文}`。
+
+### WS start `initial` 键（US-003）与 final `warm_state`（US-007 回报）
+
+`initial = {placed: CompositePlacedItem[], demand_map?}`（band/prefix 布局才带 demand_map；plain 仅 placed）。**缺省/null = 键完全缺席**（无 initial 的普通运行线格式与 final 键集逐字节不变 —— 键级锁 tests/test_web_ws_initial.py）。
+
+final `warm_state = {engaged: bool, reason: string|null}`（带 initial 键时 additive 出现；engaged=true 时 reason=null）。降级 reason 三族 → 前端 `warmStateReasonText` 固定中文文案：
+
+| reason 族 | 例（token / 后端中文串） | toast 文案 |
+|---|---|---|
+| unsupported | `unsupported` / `worker_unsupported` / 「当前 spyrrow 版本不支持热启动（需 0.9.0+ms1 及以上私有 wheel）」 | 当前 spyrrow 版本不支持热启动，已按普通方式运行 |
+| mismatch | `instance_mismatch` / 「初始布局第 N 条含当前需求映射外的裁片 id …」 | 数量或参数与初始布局不一致，已按普通方式运行 |
+| invalid（兜底） | `invalid_*` / warmstart ValueError / `worker_serialize_failed` / 空 | 初始布局校验未通过，已按普通方式运行 |
+
+前端消费（US-007）：engaged=false → 全局 toast（上表文案）；engaged=true → 状态行后缀「已从初始布局热启动」（NestingPage `完成：seed N · NN.NN% · 已从初始布局热启动`）。
+
+### 保存闸「红色重叠」组内互不计（US-007 修复 2026-10-04）
+
+`EditCanvas.countIllegalOverlaps` 起 US-007 接受 `pieceGroup`：同组（band/prefix 刚性组）成员对**互不计红**。动因：band 生成布局的组成员是链间滑移贴触 + 展开归一化的亚微米浮点缝隙（实测 pen≈8e-5mm，d=0 → 恒红 3 片 g05），求解口径只对组合片 union 负责、组内单片不可编辑（US-005），计入保存闸 = 不可解除死锁（band 布局恒不可存）。组对组外片照常计红；缺省（编辑弹窗不传 pieceGroup）行为逐字节不变。
 
 ## 机器对接 /api/machine/* — YL 后端对接契约（机器对接 PRD US-001~005，2026-09-21 全五端点落地；三期 PRD US-001 2026-09-22 增 state-file 第六端点；浏览器直连 PRD US-001~005 2026-10-01 收口：ping 第七端点 + CORS/PNA 白名单 + **§0.5 浏览器直连部署形态** + 真机对拍实证）
 

@@ -261,6 +261,16 @@ python -m materialsorting.cli.calibration simulate --tag 5336_coded_really --tar
    ↓ ms-sparrow-baseline / ms-sparrow-exp（sparrow 求解）
    ↓ ms-web（工作台读取 + 可视化 + 导出 PNG/R12-DXF/PLT）
 
+初始布局热启动支线（prd-initial-layout，2026-10-04 全链路）：
+
+```
+超排页「高级配置：设置初始布局」→ POST /api/initial-layout/generate（10s 短求解，band/prefix 组合宇宙）
+   → InitialLayoutModal 编辑（拖片/组拖，保存闸挡非法重叠）→ 保存 → initialLayoutStore.saved + 伪卡片
+   → 普通运行 start 载荷附 initial（指纹新鲜才带；stale → 键缺席照常运行）
+   → build_warm_payload 装载 → sparrow warmstart 热启动 → final warm_state.engaged 回报
+   → engaged=true 状态行「已从初始布局热启动」/ false toast 中文降级（版本·不一致·校验三族）
+```
+
 ms-run-config <config.json>（CLI 平行通道，不经过 web）
    └─ load_config 校验 → 独立时间戳 run_dir 内同口径 commit（切片 + intermediate 落 out/config_runs/）
        → 逐 seeds 串行求解 → result.json（best = 原面积口径最优轮）

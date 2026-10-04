@@ -507,9 +507,10 @@ export function EditCanvas({
       applyPlacement(entry, it.rotation, it.translation, mode, mirror);
     });
 
-    // US-005：非法（红色）重叠片数 additive 回调（口径见 countIllegalOverlaps）。
-    emitIllegalCount(countIllegalOverlaps(manifest, working));
-  }, [run, working, mode]);
+    // US-005：非法（红色）重叠片数 additive 回调（口径见 countIllegalOverlaps；
+    // US-007 起带 pieceGroup —— 同组刚性成员互不计，见其 docstring）。
+    emitIllegalCount(countIllegalOverlaps(manifest, working, pieceGroup));
+  }, [run, working, mode, pieceGroup]);
 
   /**
    * 组成员视觉标记（US-005）：pieceGroup 在场时按当前 working 逐片打
@@ -1671,28 +1672,42 @@ function unionBBox(a: BBox, b: BBox): BBox {
  * 内琥珀不计）；布尔交异常降级 bbox 近似（penetrationDepth 纯函数 + bbox 相交邻居
  * d_i+d_j 最大值，与 refreshMetrics 降级路径同式）。计数口径 = 红色重叠**片**数
  * （一对非法重合两侧各计 1 —— 消费方闸门只看 >0 与提示量，US-006 保存闸）。
+ *
+ * pieceGroup（US-007 2026-10-04 修复）：同组（band/prefix 刚性组）成员互不计 ——
+ * 组内几何是带构造的既成事实（链间滑移贴触 + 展开归一化的亚微米浮点缝隙），求解
+ * 口径只对组合片 union 负责；且组内单片不可编辑（US-005），计入即不可解除的死锁
+ * （实测 band 生成布局 3 片 g05 成员 pen≈8e-5mm 微缝恒锁保存闸）。组对组外片照常
+ * 计。缺省（编辑弹窗不传）→ 组判定恒 false，行为逐字节不变。
  */
-function countIllegalOverlaps(manifest: ManifestMsg, items: readonly PlacedItem[]): number {
+function countIllegalOverlaps(
+  manifest: ManifestMsg,
+  items: readonly PlacedItem[],
+  pieceGroup?: (pid: string) => string | null,
+): number {
   const pool = precomputeEditPiecesFromItems(manifest, items);
+  // 组 id 按 pool 下标对齐（key = placed_items 下标 = pool 序；pieceGroup 缺席恒 null）。
+  const gids = pool.map((ep) => (pieceGroup ? pieceGroup(ep.pid) : null));
+  const sameGroup = (i: number, j: number): boolean => gids[i] != null && gids[i] === gids[j];
   let red = 0;
   for (const ep of pool) {
-    // bbox 预筛：无任何相交邻居直接非红（省布尔交调用）。
+    // bbox 预筛：无任何相交邻居（同组邻居不算）直接非红（省布尔交调用）。
     let touches = false;
     for (const o of pool) {
-      if (o.key !== ep.key && bboxIntersect(ep.bbox, o.bbox)) {
+      if (o.key !== ep.key && !sameGroup(ep.key, o.key) && bboxIntersect(ep.bbox, o.bbox)) {
         touches = true;
         break;
       }
     }
     if (!touches) continue;
     try {
-      const res = computeOverlap(ep, pool);
+      const res = computeOverlap(ep, pool.filter((o) => !sameGroup(ep.key, o.key)));
       if (res.penetrationMm > res.allowanceMm + 1e-9) red += 1;
     } catch {
       let pen = 0;
       let allowance = 0;
       for (const o of pool) {
         if (o.key === ep.key) continue;
+        if (sameGroup(ep.key, o.key)) continue;
         if (!bboxIntersect(ep.bbox, o.bbox)) continue;
         pen = Math.max(pen, penetrationDepth(ep.worldPolygon, o.worldPolygon));
         allowance = Math.max(allowance, ep.dMm + o.dMm);

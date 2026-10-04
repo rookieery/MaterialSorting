@@ -14,6 +14,13 @@
 // startDisabled：码号未选时「普通运行」置灰（ControlPanel 据 form.sizes.length===0 计算）。
 //   running 态「停止」按钮不受影响（停止总是可用）。
 //
+// 初始布局 chip 三态（prd-initial-layout US-007，仅非 running 态渲染在按钮下方）：
+//   'fresh' =「将基于初始布局运行 ×清除」（×清除 = initialLayoutStore.clear 只清
+//             saved，弹窗再保存即恢复）/ 'stale' =「初始布局已失效（参数已变更）」
+//             （amber，无清除键 —— 重开弹窗自动重生成覆盖）/ 'none' = 无 chip。
+//   附注「仅普通运行生效」恒随 chip 在场（高级/极限运行忽略初始布局 —— HTTP config
+//   不带 initial 键，本组件 chip 只是普通运行的增益提示）。
+//
 // 「导出」按钮不在本组件 —— 由 ExportButtons 独立渲染（受 phase==='running' 禁用）。
 // stopped/done/error 态「导出」可用（registry 保留帧时），中间方案提示由 ExportButtons 内 partial flag 渲染。
 //
@@ -21,6 +28,9 @@
 // 视觉沿用 style.css 暗色系（不引入 CSS 框架）：#start/#restart 绿、#stop 红。
 
 import type { SolvePhase } from '../../types/solvePhase';
+
+/** 初始布局 chip 三态（ControlPanel 据 saved + isStale(指纹) 派生，本组件纯受控）。 */
+export type InitialChipState = 'fresh' | 'stale' | 'none';
 
 export interface SolveControlsProps {
   /** 求解状态机五态（NestingPage 持有；本组件纯受控）。 */
@@ -31,9 +41,20 @@ export interface SolveControlsProps {
   onStop: () => void;
   /** 码号未选时「普通运行」置灰（ControlPanel 据 form.sizes 计算）；默认 false。 */
   startDisabled?: boolean;
+  /** 初始布局 chip 三态（US-007）；默认 'none'（无 chip，既有渲染逐字节不变）。 */
+  initialChip?: InitialChipState;
+  /** chip「×清除」回调（fresh 态渲染清除键；ControlPanel 接 initialLayoutStore.clear）。 */
+  onClearInitial?: () => void;
 }
 
-export function SolveControls({ phase, onStart, onStop, startDisabled = false }: SolveControlsProps) {
+export function SolveControls({
+  phase,
+  onStart,
+  onStop,
+  startDisabled = false,
+  initialChip = 'none',
+  onClearInitial,
+}: SolveControlsProps) {
   if (phase === 'running') {
     return (
       <button
@@ -52,15 +73,47 @@ export function SolveControls({ phase, onStart, onStop, startDisabled = false }:
   // id / className 保留区分（#start vs #restart）作 CSS 与测试钩子，视觉同色。
   const isIdle = phase === 'idle';
   return (
-    <button
-      id={isIdle ? 'start' : 'restart'}
-      type="button"
-      className={`solve-btn ${isIdle ? 'start' : 'restart'}`}
-      onClick={onStart}
-      disabled={startDisabled}
-      aria-label="普通运行"
-    >
-      普通运行
-    </button>
+    <>
+      <button
+        id={isIdle ? 'start' : 'restart'}
+        type="button"
+        className={`solve-btn ${isIdle ? 'start' : 'restart'}`}
+        onClick={onStart}
+        disabled={startDisabled}
+        aria-label="普通运行"
+      >
+        普通运行
+      </button>
+      {/* 初始布局 chip（US-007 三态；'none' 不渲染任何节点 —— 既有 DOM 零变化）。 */}
+      {initialChip === 'fresh' && (
+        <div className="solve-initial-chip" data-testid="initial-chip">
+          <span className="solve-initial-chip-text">将基于初始布局运行</span>
+          <button
+            type="button"
+            className="solve-initial-chip-clear"
+            aria-label="清除初始布局"
+            title="清除已保存的初始布局（普通运行不再附带）"
+            onClick={onClearInitial}
+            data-testid="initial-chip-clear"
+          >
+            ×清除
+          </button>
+        </div>
+      )}
+      {initialChip === 'stale' && (
+        <div
+          className="solve-initial-chip stale"
+          data-testid="initial-chip-stale"
+          title="参数已变更，重新打开「设置初始布局」会自动重新生成"
+        >
+          初始布局已失效（参数已变更）
+        </div>
+      )}
+      {initialChip !== 'none' && (
+        <div className="solve-initial-chip-note" data-testid="initial-chip-note">
+          仅普通运行生效
+        </div>
+      )}
+    </>
   );
 }

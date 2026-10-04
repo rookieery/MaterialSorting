@@ -584,3 +584,58 @@ describe('EditCanvas onIllegalOverlapCountChange (US-005)', () => {
     expect(() => mountInitial({}, run)).not.toThrow();
   });
 });
+
+// ============================================================
+// US-007（2026-10-04 修复）同组刚性成员互不计 —— band 生成布局的组成员是链间
+// 滑移贴触 + 展开归一化的亚微米浮点缝隙（实测 pen≈8e-5mm），求解口径只对组合片
+// union 负责、组内单片不可编辑（US-005），计入保存闸 = 不可解除死锁（band 布局
+// 恒不可存）。组对组外片照常计红；缺省 pieceGroup 行为逐字节不变（前序用例已锁）。
+// ============================================================
+describe('EditCanvas onIllegalOverlapCountChange 同组互不计 (US-007)', () => {
+  it('同组两片互相重叠（band 组）→ 0；不传 pieceGroup 同布局 → 2（缺省不变锁）', () => {
+    // a@[0,0] b@[400,50]：交 100×450、pen 50 —— 上一 describe 同款红对。
+    const run = seedRun([
+      { id: 'a_28', rotation: 0, translation: [0, 0] },
+      { id: 'b_30', rotation: 0, translation: [400, 50] },
+    ]);
+    const spyGroup = vi.fn();
+    mountInitial({ onIllegalOverlapCountChange: spyGroup, pieceGroup: bandGroup }, run);
+    expect(spyGroup).toHaveBeenLastCalledWith(0);
+    // 缺省（编辑弹窗路径）：同布局同对仍红（双方各计 1）。
+    const spyPlain = vi.fn();
+    mountInitial({ onIllegalOverlapCountChange: spyPlain }, run);
+    expect(spyPlain).toHaveBeenLastCalledWith(2);
+  });
+
+  it('组内互不计 ≠ 组豁免：组对组外片的红照常计（band 成员 vs 非成员）', () => {
+    // a@[0,0]（组）b@[400,50]（组，与 a 重叠 —— 互不计）+ c@[700,100]（非成员，
+    // 与 b 交 200×450、pen 50 —— y 错位保证顶点严格落入，边对齐退化是指标面板
+    // 同款已知近似口径）→ 红 = b、c 双方（a 无组外红邻居）。
+    const spy = vi.fn();
+    const run = seedRun([
+      { id: 'a_28', rotation: 0, translation: [0, 0] },
+      { id: 'b_30', rotation: 0, translation: [400, 50] },
+      { id: 'c_32', rotation: 0, translation: [700, 100] },
+    ]);
+    mountInitial({ onIllegalOverlapCountChange: spy, pieceGroup: bandGroup }, run);
+    expect(spy).toHaveBeenLastCalledWith(2);
+    // 组整体拖离 c（b→[200,50]：与 c 无交；与 a 交 300×450 仍互不计）→ 0。
+    act(() => {
+      useEditStore.getState().setWorkingItem(1, { translation: [200, 50] });
+    });
+    expect(spy).toHaveBeenLastCalledWith(0);
+  });
+
+  it('prefix 组同口径：同组互不计（bandLabel 组映射复用 bandGroup 即可证同代码路径）', () => {
+    const spy = vi.fn();
+    const run = seedRun([
+      { id: 'a_28', rotation: 0, translation: [0, 0] },
+      { id: 'b_30', rotation: 0, translation: [400, 50] },
+    ]);
+    mountInitial(
+      { onIllegalOverlapCountChange: spy, pieceGroup: () => 'prefix:ps' },
+      run,
+    );
+    expect(spy).toHaveBeenLastCalledWith(0);
+  });
+});

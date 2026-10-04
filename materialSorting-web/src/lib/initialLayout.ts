@@ -1,5 +1,6 @@
 // initialLayout.ts —— 初始布局（warm 热启动，prd-initial-layout）前端 API 封装
-// （US-004，2026-10-03；US-006 补保存组装纯函数 assembleWarmPlaced/plainWarmPlaced）。
+// （US-004，2026-10-03；US-006 补保存组装纯函数 assembleWarmPlaced/plainWarmPlaced；
+// US-007 补 final warm_state.reason → toast 文案映射 warmStateReasonText）。
 //
 // 职责（请求出口 + 响应形状守卫 + 保存组装纯函数；生成/保存**编排**留在 US-006 弹窗）：
 //   1. fetchWarmCapability：GET /api/warm-capability（US-001 成品，无会话依赖
@@ -285,4 +286,34 @@ export function plainWarmPlaced(working: readonly PlacedItem[]): CompositePlaced
     rotation: it.rotation,
     translation: [it.translation[0], it.translation[1]],
   }));
+}
+
+// ------------------------------------------------ US-007 warm_state toast 文案映射
+
+/** engaged=false toast 文案（三类降级族；与 PRD 验收口径一字不差）。 */
+const WARM_TOAST_UNSUPPORTED = '当前 spyrrow 版本不支持热启动，已按普通方式运行';
+const WARM_TOAST_INVALID = '初始布局校验未通过，已按普通方式运行';
+const WARM_TOAST_MISMATCH = '数量或参数与初始布局不一致，已按普通方式运行';
+
+/**
+ * final `warm_state.reason` → toast 中文文案（US-007 单一映射真相源）。
+ *
+ * reason 双形态（后端两数据源）：token（worker 三闸门）或装载点中文文案
+ * （`build_warm_payload` 降级矩阵），映射按**语义族**归并而非逐串穷举：
+ *   - unsupported 族：token `unsupported`/`worker_unsupported` + 中文「不支持热启动」
+ *     （`_REASON_UNSUPPORTED` 全文含该子串）；
+ *   - instance_mismatch 族：token `instance_mismatch` + 中文「需求映射外的裁片」
+ *     （pid 宇宙漂移 = 母版/数量/参数已变更 —— 与后端该文案的人话尾注同判）；
+ *   - 其余（invalid_*：warmstart 校验矩阵 / 畸形 / 序列化失败 / 防御兜底）→
+ *     校验未通过。engaged=true 无 reason 语义，不进本函数。
+ */
+export function warmStateReasonText(reason: string): string {
+  if (reason === 'unsupported' || reason === 'worker_unsupported'
+      || reason.includes('不支持热启动')) {
+    return WARM_TOAST_UNSUPPORTED;
+  }
+  if (reason === 'instance_mismatch' || reason.includes('需求映射外的裁片')) {
+    return WARM_TOAST_MISMATCH;
+  }
+  return WARM_TOAST_INVALID;
 }

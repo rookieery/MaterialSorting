@@ -11,6 +11,7 @@ import { useSolveRun, type StartConfig } from '../hooks/useSolveRun';
 import { getSessionBlock, resetSessionForTest } from '../lib/api';
 import { getSessionId } from '../lib/session';
 import { runRegistry } from '../store/runRegistry';
+import { __resetToastsForTest, useToastStore } from '../store/toastStore';
 import type { ServerMsg, StartPayload } from '../types/ws';
 
 // 告知 React 此环境支持 act()（jsdom 默认不会自动设置）。
@@ -63,6 +64,8 @@ beforeEach(() => {
   mockInstances.length = 0;
   // US-005：会话阻断状态隔离（error 帧 code 用例会触发全局弹窗状态）。
   resetSessionForTest();
+  // 初始布局 US-007：toast 队列隔离（warm_state 降级用例直发全局 toast）。
+  __resetToastsForTest();
   realWS = globalThis.WebSocket;
   (globalThis as unknown as { WebSocket: typeof WebSocket }).WebSocket =
     MockWebSocketCtor as unknown as typeof WebSocket;
@@ -707,5 +710,218 @@ describe('useSolveRun', () => {
     expect(runRegistry.list()[0].done).toBe(false);
     // 非 JSON —— 既有行为：解析失败静默 return
     expect(() => act(() => ws.onmessage?.({ data: 'not-json' }))).not.toThrow();
+  });
+
+  // ============================================================
+  // prd-initial-layout US-007：StartPayload.initial 透传（缺省/null 不写键 ——
+  // 线格式与旧前端逐字节一致）+ final.warm_state 落盘 / 降级 toast / engaged 无 toast。
+  // ============================================================
+  it('US-007 initial 在场 → StartPayload.initial 透传（placed + demand_map）', () => {
+    const startRef = mountHook({});
+    act(() =>
+      startRef.current({
+        sizes: [30],
+        time: 1,
+        seed: 0,
+        gate_mm: 1980,
+        params: { d_ext: 0, d_int: 0, tol_ext: 0, tol_int: 0 },
+        initial: {
+          placed: [
+            { id: 'WB_g05_34', rotation: 0, translation: [10, 20] },
+            { id: 'g01_30', rotation: 180, translation: [30, 40] },
+          ],
+          demand_map: { WB_g05_34: 1, g01_30: 1 },
+        },
+      }),
+    );
+    const ws = mockInstances[0];
+    act(() => ws.onopen?.());
+    const parsed: StartPayload = JSON.parse(ws.sent[0]);
+    expect(parsed.initial).toEqual({
+      placed: [
+        { id: 'WB_g05_34', rotation: 0, translation: [10, 20] },
+        { id: 'g01_30', rotation: 180, translation: [30, 40] },
+      ],
+      demand_map: { WB_g05_34: 1, g01_30: 1 },
+    });
+  });
+
+  it('US-007 initial 缺省 / 显式 null / 空对象外的 plain（无 demand_map）→ 键缺席或不带 map', () => {
+    // 1) 缺省 → initial 键完全缺席（后端 msg.get('initial') = None 旧行为）。
+    const startRef = mountHook({});
+    act(() =>
+      startRef.current({
+        sizes: [30],
+        time: 1,
+        seed: 0,
+        gate_mm: 1980,
+        params: { d_ext: 0, d_int: 0, tol_ext: 0, tol_int: 0 },
+      }),
+    );
+    const ws1 = mockInstances[0];
+    act(() => ws1.onopen?.());
+    expect('initial' in JSON.parse(ws1.sent[0])).toBe(false);
+
+    // 2) 显式 null（stale / 无保存）→ 同样键缺席。
+    act(() =>
+      startRef.current({
+        sizes: [30],
+        time: 1,
+        seed: 1,
+        gate_mm: 1980,
+        params: { d_ext: 0, d_int: 0, tol_ext: 0, tol_int: 0 },
+        initial: null,
+      }),
+    );
+    const ws2 = mockInstances[1];
+    act(() => ws2.onopen?.());
+    expect('initial' in JSON.parse(ws2.sent[0])).toBe(false);
+
+    // 3) plain 形态（仅 placed 无 demand_map）→ initial.placed 在场、无 demand_map 键。
+    act(() =>
+      startRef.current({
+        sizes: [30],
+        time: 1,
+        seed: 2,
+        gate_mm: 1980,
+        params: { d_ext: 0, d_int: 0, tol_ext: 0, tol_int: 0 },
+        initial: { placed: [{ id: 'g01_30', rotation: 0, translation: [0, 0] }] },
+      }),
+    );
+    const ws3 = mockInstances[2];
+    act(() => ws3.onopen?.());
+    const parsed3: StartPayload = JSON.parse(ws3.sent[0]);
+    expect(parsed3.initial).toEqual({ placed: [{ id: 'g01_30', rotation: 0, translation: [0, 0] }] });
+  });
+
+  it('US-007 final 带 warm_state.engaged=false → toast 中文降级提示 + run 照常 finish', () => {
+    const onFinal = vi.fn();
+    const onDone = vi.fn();
+    const startRef = mountHook({ onFinal, onDone });
+    act(() =>
+      startRef.current({
+        sizes: [30],
+        time: 1,
+        seed: 0,
+        gate_mm: 1980,
+        params: { d_ext: 0, d_int: 0, tol_ext: 0, tol_int: 0 },
+      }),
+    );
+    const ws = mockInstances[0];
+    act(() =>
+      ws.onmessage?.({
+        data: JSON.stringify({
+          type: 'final',
+          density: 0.8,
+          density_sparrow: 0.82,
+          width_mm: 9000,
+          elapsed: 1.0,
+          n_frames: 2,
+          n_eroded: 0,
+          warm_state: { engaged: false, reason: 'instance_mismatch' },
+        }),
+      }),
+    );
+    // run 照常完成（降级不是 error）
+    expect(onFinal).toHaveBeenCalledTimes(1);
+    expect(onDone).toHaveBeenCalledTimes(1);
+    expect(runRegistry.list()[0].done).toBe(true);
+    // toast 落全局队列（warmStateReasonText 族映射文案）
+    const toasts = useToastStore.getState().toasts;
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0].message).toBe('数量或参数与初始布局不一致，已按普通方式运行');
+  });
+
+  it('US-007 final warm_state.engaged=false reason=中文 unsupported 串 → toast 不支持热启动文案', () => {
+    const startRef = mountHook({});
+    act(() =>
+      startRef.current({
+        sizes: [30],
+        time: 1,
+        seed: 0,
+        gate_mm: 1980,
+        params: { d_ext: 0, d_int: 0, tol_ext: 0, tol_int: 0 },
+      }),
+    );
+    const ws = mockInstances[0];
+    act(() =>
+      ws.onmessage?.({
+        data: JSON.stringify({
+          type: 'final',
+          density: 0.8,
+          density_sparrow: 0.82,
+          width_mm: 9000,
+          elapsed: 1.0,
+          n_frames: 2,
+          n_eroded: 0,
+          warm_state: {
+            engaged: false,
+            reason: '当前 spyrrow 版本不支持热启动（需 0.9.0+ms1 及以上私有 wheel）',
+          },
+        }),
+      }),
+    );
+    const toasts = useToastStore.getState().toasts;
+    expect(toasts).toHaveLength(1);
+    expect(toasts[0].message).toBe('当前 spyrrow 版本不支持热启动，已按普通方式运行');
+  });
+
+  it('US-007 final warm_state.engaged=true → 无 toast + rec.warmState 落盘（状态行轻提示数据源）', () => {
+    const startRef = mountHook({});
+    act(() =>
+      startRef.current({
+        sizes: [30],
+        time: 1,
+        seed: 0,
+        gate_mm: 1980,
+        params: { d_ext: 0, d_int: 0, tol_ext: 0, tol_int: 0 },
+      }),
+    );
+    const ws = mockInstances[0];
+    act(() =>
+      ws.onmessage?.({
+        data: JSON.stringify({
+          type: 'final',
+          density: 0.8,
+          density_sparrow: 0.82,
+          width_mm: 9000,
+          elapsed: 1.0,
+          n_frames: 2,
+          n_eroded: 0,
+          warm_state: { engaged: true, reason: null },
+        }),
+      }),
+    );
+    expect(useToastStore.getState().toasts).toHaveLength(0);
+    expect(runRegistry.list()[0].warmState).toEqual({ engaged: true, reason: null });
+  });
+
+  it('US-007 final 无 warm_state 键（旧后端）→ rec.warmState = null + 无 toast', () => {
+    const startRef = mountHook({});
+    act(() =>
+      startRef.current({
+        sizes: [30],
+        time: 1,
+        seed: 0,
+        gate_mm: 1980,
+        params: { d_ext: 0, d_int: 0, tol_ext: 0, tol_int: 0 },
+      }),
+    );
+    const ws = mockInstances[0];
+    act(() =>
+      ws.onmessage?.({
+        data: JSON.stringify({
+          type: 'final',
+          density: 0.8,
+          density_sparrow: 0.82,
+          width_mm: 9000,
+          elapsed: 1.0,
+          n_frames: 2,
+          n_eroded: 0,
+        }),
+      }),
+    );
+    expect(useToastStore.getState().toasts).toHaveLength(0);
+    expect(runRegistry.list()[0].warmState).toBeNull();
   });
 });

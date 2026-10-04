@@ -35,7 +35,9 @@ import { ControlPanel, type ControlPanelStartPayload } from "../ControlPanel";
 import { SIZES } from "../../../constants/sizes";
 import { useControlPanelStore } from "../../../store/controlPanelStore";
 // 初始布局 US-004：入口按钮置灰判定订阅 supported（无母版 / 不支持两路径）。
-import { __resetInitialLayoutStoreForTest, useInitialLayoutStore } from "../../../store/initialLayoutStore";
+import { __resetInitialLayoutStoreForTest, initialLayoutFingerprint, useInitialLayoutStore } from "../../../store/initialLayoutStore";
+import { useFormStore } from "../../../store/formStore";
+import { collectStartContext } from "../../../lib/params";
 import { __resetKeyStoreForTest } from "../../../store/keyStore";
 // key 授权 US-007：预检失败经 toastStore 弹中文（lib/keyGate 内出口）——断言其落队。
 import { __resetToastsForTest, useToastStore } from "../../../store/toastStore";
@@ -44,6 +46,8 @@ import { useQtyStore } from "../../../store/qtyStore";
 import { usePtypeStore } from "../../../store/ptypeStore";
 import { useUploadStore } from "../../../store/uploadStore";
 import type { ParsedDoc } from "../../../types/parsed";
+import type { ManifestMsg } from "../../../types/ws";
+import type { CompositePlacedItem } from "../../../lib/initialLayout";
 import type { SolvePhase } from "../../../types/solvePhase";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -1774,5 +1778,209 @@ describe("ControlPanel initial layout entry (US-004)", () => {
     });
     renderPanel();
     expect(initialBtn().disabled).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// prd-initial-layout US-007：普通运行接线 —— saved 且指纹新鲜 → onStart 载荷
+// 附 initial（saved.warmPlaced + demandMap 非空才带 demand_map）；stale / 无 /
+// 已清除 → null（运行照常发起不拦截）。chip 三态派生 + ×清除接线同覆。
+// 指纹用 initialLayoutFingerprint(collectStartContext(form, quantities)) 与
+// 生产同源构造（保存侧 US-006 同口径），不复制序列化逻辑。
+
+describe("ControlPanel initial payload wiring (US-007)", () => {
+  const MINIFEST: ManifestMsg = {
+    type: "manifest",
+    gate_mm: 1750,
+    total_area_mm2: 1000,
+    n_eroded: 0,
+    pieces: [],
+  };
+
+  /** 单片母版（28 码 g01）+ 勾选 28 → form.sizes=[28]；返回现算指纹。 */
+  function setupCheckedDoc(): string {
+    const doc: ParsedDoc = {
+      doc_id: "us007-warm",
+      filename: "M5336.dxf",
+      sizes: [
+        {
+          size: 28,
+          pieces: [
+            { label: "g01", polygon: [], internal_lines: [], notches: [], net_polygon: [], grain_line: null },
+          ],
+        },
+      ],
+    };
+    act(() => {
+      useUploadStore.setState({ doc, status: "done" });
+    });
+    renderPanel();
+    const checkboxes = container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]");
+    act(() => checkboxes[0].click()); // 28
+    // 现算指纹（与 ControlPanel.initialChipState / buildInitialPayload 同源）
+    return initialLayoutFingerprint(
+      collectStartContext(useFormStore.getState().form, useQtyStore.getState().quantities),
+    );
+  }
+
+  /** precheck 放行 mock（其余 URL 走 mockReps 兜底；handleStart 经 key 预检后 onStart）。 */
+  function mockPrecheckOk(): void {
+    fetchSpy!.mockImplementation(((input: unknown) => {
+      const url = String(input);
+      if (url.includes("/api/key/precheck")) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "Content-Type": "application/json" } }),
+        );
+      }
+      return Promise.resolve(
+        new Response(JSON.stringify(mockReps), { status: 200, headers: { "Content-Type": "application/json" } }),
+      );
+    }) as unknown as (...args: unknown[]) => Promise<Response>);
+  }
+
+  beforeEach(() => {
+    __resetInitialLayoutStoreForTest();
+    __resetToastsForTest();
+    mockPrecheckOk();
+  });
+  afterEach(() => {
+    __resetInitialLayoutStoreForTest();
+    __resetToastsForTest();
+  });
+
+  it("saved 新鲜（指纹匹配）→ onStart 载荷 initial = {placed: warmPlaced, demand_map}", async () => {
+    const fp = setupCheckedDoc();
+    const warmPlaced: CompositePlacedItem[] = [
+      { id: "WB_g05_34", rotation: 0, translation: [10, 20] },
+      { id: "g01_28", rotation: 180, translation: [30, 40] },
+    ];
+    act(() => {
+      useInitialLayoutStore.getState().setSaved({
+      displayPlaced: [],
+      warmPlaced,
+      demandMap: { WB_g05_34: 1, g01_28: 1 },
+      fingerprint: fp,
+      widthMm: 1200,
+      bandUsed: true,
+      prefixUsed: false,
+      manifest: MINIFEST,
+        prefixMemberPids: [],
+      });
+    });
+    // chip 三态派生：fresh
+    expect(container!.querySelector('[data-testid="initial-chip"]')).not.toBeNull();
+    const onStart = vi.fn();
+    renderPanel(onStart);
+    const btn = container!.querySelector<HTMLButtonElement>("#start")!;
+    await clickStartFlush(btn);
+    expect(onStart).toHaveBeenCalledTimes(1);
+    const cfg = onStart.mock.calls[0][0] as ControlPanelStartPayload;
+    expect(cfg.initial).toEqual({ placed: warmPlaced, demand_map: { WB_g05_34: 1, g01_28: 1 } });
+  });
+
+  it("saved 新鲜但 demandMap=null（plain 形态）→ initial 仅 placed 无 demand_map 键", async () => {
+    const fp = setupCheckedDoc();
+    const warmPlaced: CompositePlacedItem[] = [{ id: "g01_28", rotation: 0, translation: [5, 5] }];
+    act(() => {
+      useInitialLayoutStore.getState().setSaved({
+      displayPlaced: [],
+      warmPlaced,
+      demandMap: null,
+      fingerprint: fp,
+      widthMm: 900,
+      bandUsed: false,
+      prefixUsed: false,
+      manifest: MINIFEST,
+        prefixMemberPids: [],
+      });
+    });
+    const onStart = vi.fn();
+    renderPanel(onStart);
+    const btn = container!.querySelector<HTMLButtonElement>("#start")!;
+    await clickStartFlush(btn);
+    const cfg = onStart.mock.calls[0][0] as ControlPanelStartPayload;
+    expect(cfg.initial).toEqual({ placed: warmPlaced });
+    expect("demand_map" in (cfg.initial ?? {})).toBe(false);
+  });
+
+  it("saved 已失效（数量漂移 → 指纹不匹配）→ initial=null + 运行照常发起（不拦截）+ chip stale", async () => {
+    const fp = setupCheckedDoc();
+    act(() => {
+      useInitialLayoutStore.getState().setSaved({
+      displayPlaced: [],
+      warmPlaced: [],
+      demandMap: null,
+      fingerprint: fp,
+      widthMm: 0,
+      bandUsed: false,
+      prefixUsed: false,
+      manifest: MINIFEST,
+        prefixMemberPids: [],
+      });
+    });
+    // 数量漂移（指纹组件 quantities 变化 → isStale）
+    act(() => {
+      useQtyStore.getState().setRowAll("g01", [28], 3);
+    });
+    expect(container!.querySelector('[data-testid="initial-chip-stale"]')).not.toBeNull();
+    const onStart = vi.fn();
+    renderPanel(onStart);
+    const btn = container!.querySelector<HTMLButtonElement>("#start")!;
+    await clickStartFlush(btn);
+    expect(onStart).toHaveBeenCalledTimes(1);
+    expect((onStart.mock.calls[0][0] as ControlPanelStartPayload).initial).toBeNull();
+  });
+
+  it("无 saved → initial=null + 无 chip（默认零变化）", async () => {
+    setupCheckedDoc();
+    expect(container!.querySelector('[data-testid="initial-chip"]')).toBeNull();
+    expect(container!.querySelector('[data-testid="initial-chip-stale"]')).toBeNull();
+    expect(container!.querySelector('[data-testid="initial-chip-note"]')).toBeNull();
+    const onStart = vi.fn();
+    renderPanel(onStart);
+    const btn = container!.querySelector<HTMLButtonElement>("#start")!;
+    await clickStartFlush(btn);
+    expect((onStart.mock.calls[0][0] as ControlPanelStartPayload).initial).toBeNull();
+  });
+
+  it("fresh chip ×清除 → initialLayoutStore.saved 清空 + chip 退场", () => {
+    const fp = setupCheckedDoc();
+    act(() => {
+      useInitialLayoutStore.getState().setSaved({
+      displayPlaced: [],
+      warmPlaced: [],
+      demandMap: null,
+      fingerprint: fp,
+      widthMm: 0,
+      bandUsed: false,
+      prefixUsed: false,
+      manifest: MINIFEST,
+        prefixMemberPids: [],
+      });
+    });
+    expect(container!.querySelector('[data-testid="initial-chip"]')).not.toBeNull();
+    act(() => container!.querySelector<HTMLButtonElement>('[data-testid="initial-chip-clear"]')!.click());
+    expect(useInitialLayoutStore.getState().saved).toBeNull();
+    expect(container!.querySelector('[data-testid="initial-chip"]')).toBeNull();
+  });
+
+  it("running 态无 chip（fresh saved 在场也不渲染增益提示）", () => {
+    const fp = setupCheckedDoc();
+    act(() => {
+      useInitialLayoutStore.getState().setSaved({
+      displayPlaced: [],
+      warmPlaced: [],
+      demandMap: null,
+      fingerprint: fp,
+      widthMm: 0,
+      bandUsed: false,
+      prefixUsed: false,
+      manifest: MINIFEST,
+        prefixMemberPids: [],
+      });
+    });
+    renderPanel(() => {}, { phase: "running" });
+    expect(container!.querySelector('[data-testid="initial-chip"]')).toBeNull();
+    expect(container!.querySelector("#stop")).not.toBeNull();
   });
 });
