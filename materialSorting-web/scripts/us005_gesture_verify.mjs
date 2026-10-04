@@ -14,8 +14,9 @@
 //   B 初始布局 props（allowMirror=false + allowFineRotate=false + pieceGroup +
 //     onIllegalOverlapCountChange）：
 //     B1 组成员标记（.edit-piece-grouped + data-edit-group）+ 非成员无标记 +
-//        图例行「组合成员片（整组拖动）」在场；
-//     B2 组成员键盘全禁（L/K/空格/O/I/R 零变换）+ 旋转手柄隐藏；
+//        图例行「组合成员片：整组拖动 · 空格 整组掉头 · …」在场；
+//     B2 组成员单片编辑键仍禁（L/K/O/I 零变换）+ 手柄照常显示（本期整组旋转
+//        入口）+ 空格 = 整组 180° 掉头（幂等两态）+ R = 整组重置基线；
 //     B3 组拖全组同 delta 联动（a+b 平移、非成员 c 不动）；
 //     B4 组包络钳制（minX<0 截住 → 全组回包络左缘）；
 //     B5 Alt+左键组拖不吸附（6mm 缝落点原样、无伙伴高亮）；
@@ -166,6 +167,46 @@ async function clickPiece(stroke) {
   await sleep(80);
 }
 
+/** 整组旋转拖柄拖拽（真实 CTM）：绕 pivot 世界角 dDeg（起手 = 柄心方向）松手。
+ *  pivot/柄心 = 手柄连线 line 的 (x1,y1)/(x2,y2)（updateHandle 写入的精确值）。 */
+async function dragGroupHandle(dDeg) {
+  const pts = await page.evaluate(() => {
+    const svg = document.querySelector('svg.edit-layout-svg');
+    const line = svg.querySelector('line[stroke="#2ea06c"]');
+    const h = document.querySelector('[data-testid="edit-rotate-handle"]');
+    return {
+      pivot: [Number(line.getAttribute('x1')), Number(line.getAttribute('y1'))],
+      handleWorld: [Number(h.getAttribute('cx')), Number(h.getAttribute('cy'))],
+    };
+  });
+  const toScreen = async (x, y) =>
+    page.evaluate(([wx, wy]) => {
+      const svg = document.querySelector('svg.edit-layout-svg');
+      const g = svg.querySelector('g');
+      const p = svg.createSVGPoint();
+      p.x = wx;
+      p.y = wy;
+      const s = p.matrixTransform(g.getScreenCTM());
+      return [s.x, s.y];
+    }, [x, y]);
+  const handle = await toScreen(pts.handleWorld[0], pts.handleWorld[1]);
+  // 目标 = 柄心向量绕 pivot 旋 dDeg 的世界点（起手角 = 柄心方向 → 相对角恰 dDeg）。
+  const ang = (dDeg * Math.PI) / 180;
+  const rx = pts.handleWorld[0] - pts.pivot[0];
+  const ry = pts.handleWorld[1] - pts.pivot[1];
+  const target = [
+    pts.pivot[0] + rx * Math.cos(ang) - ry * Math.sin(ang),
+    pts.pivot[1] + rx * Math.sin(ang) + ry * Math.cos(ang),
+  ];
+  const targetScreen = await toScreen(target[0], target[1]);
+  await page.mouse.move(handle[0], handle[1]);
+  await page.mouse.down();
+  await page.mouse.move(targetScreen[0], targetScreen[1], { steps: 8 });
+  await sleep(60);
+  await page.mouse.up();
+  await sleep(100);
+}
+
 async function dump() {
   return page.evaluate(() => window.__us005.dump());
 }
@@ -236,32 +277,89 @@ check(
       !c.classList.contains('edit-piece-grouped') &&
       c.getAttribute('data-edit-group') == null &&
       row != null &&
-      (row.textContent || '').includes('组合成员片（整组拖动）')
+      (row.textContent || '').includes('整组拖动') &&
+      (row.textContent || '').includes('空格 整组掉头')
     );
   }),
 );
 
-// B2 组成员键盘全禁 + 手柄隐藏
+// B2 组成员：单片编辑键仍禁（L/K/O/I）；手柄照常显示；空格/R = 整组语义（本期）
 await clickPiece('#ff0000');
 const beforeKeys = JSON.stringify(await dump());
-for (const k of ['l', 'k', 'o', 'i', 'r', 'Space']) {
+for (const k of ['l', 'k', 'o', 'i', 'L', 'K', 'O', 'I']) {
   await page.keyboard.press(k);
-  await sleep(50);
+  await sleep(40);
 }
 const afterKeys = await dump();
 check(
-  'B2 组成员键盘全禁（L/K/O/I/R/空格 零变换）',
+  'B2 组成员单片编辑键仍禁（L/K/O/I 零变换）',
   JSON.stringify(afterKeys) === beforeKeys,
   JSON.stringify(trans(afterKeys, 0)),
 );
 check(
-  'B2b 组成员旋转手柄隐藏（display:none）',
+  'B2b 组成员旋转手柄照常显示（柄位 = 组包络中心 550）',
   await page.evaluate(() => {
     const h = document.querySelector('[data-testid="edit-rotate-handle"]');
     if (!h) return false;
     const g = h.closest('g');
-    return g != null && g.style.display === 'none';
+    return (
+      g != null && g.style.display !== 'none' && Math.abs(Number(h.getAttribute('cx')) - 550) < 1
+    );
   }),
+);
+// B2c 空格 = 整组 180° 掉头（P=(550,250) 点反射：a→(1100,500)、b→(500,500)、c 不动）
+await page.keyboard.press('Space');
+await sleep(60);
+w = await dump();
+check(
+  'B2c 空格整组 180° 掉头（a/b half+180 + t=2P−t、c 不动）',
+  w[0].rotation === 180 &&
+    closeTo(trans(w, 0)[0], 1100, 3) &&
+    closeTo(trans(w, 0)[1], 500, 3) &&
+    w[1].rotation === 180 &&
+    closeTo(trans(w, 1)[0], 500, 3) &&
+    closeTo(trans(w, 1)[1], 500, 3) &&
+    closeTo(trans(w, 2)[0], 1600, 0.001),
+  JSON.stringify([trans(w, 0), trans(w, 1), trans(w, 2)]),
+);
+await page.keyboard.press('Space');
+await sleep(60);
+w = await dump();
+check(
+  "B2c' 再按空格回原（幂等两态）",
+  w[0].rotation === 0 && closeTo(trans(w, 0)[0], 0, 3) && closeTo(trans(w, 1)[0], 600, 3),
+  JSON.stringify([trans(w, 0), trans(w, 1)]),
+);
+// B2d R = 整组重置基线（掉头后按 R → 全组回 [0,0]/[600,0]@0）
+await page.keyboard.press('Space');
+await sleep(60);
+await page.keyboard.press('r');
+await sleep(60);
+w = await dump();
+check(
+  'B2d R 整组重置基线（掉头后回原始位）',
+  w[0].rotation === 0 && closeTo(trans(w, 0)[0], 0, 3) && closeTo(trans(w, 1)[0], 600, 3),
+  JSON.stringify([trans(w, 0), trans(w, 1)]),
+);
+// B2e 整组旋转拖柄（真实 CTM 拖拽，选中态承接）：拖 +170° 松手 → 吸附 180° 翻转
+await dragGroupHandle(170);
+w = await dump();
+check(
+  'B2e 拖柄 170° 松手吸附 180° 翻转（与空格同终态）',
+  w[0].rotation === 180 &&
+    closeTo(trans(w, 0)[0], 1100, 3) &&
+    closeTo(trans(w, 0)[1], 500, 3) &&
+    w[1].rotation === 180 &&
+    closeTo(trans(w, 1)[0], 500, 3),
+  JSON.stringify([trans(w, 0), trans(w, 1)]),
+);
+// B2e' 从翻转态拖 50°（<90°）松手 → 吸附 0° = 复原起手态（仍翻转）
+await dragGroupHandle(50);
+w = await dump();
+check(
+  "B2e' 拖 50° 松手吸附 0°（复原起手翻转态）",
+  w[0].rotation === 180 && closeTo(trans(w, 0)[0], 1100, 3) && closeTo(trans(w, 1)[0], 500, 3),
+  JSON.stringify([trans(w, 0), trans(w, 1)]),
 );
 await deselect();
 await page.evaluate(() => window.__us005.reseed());

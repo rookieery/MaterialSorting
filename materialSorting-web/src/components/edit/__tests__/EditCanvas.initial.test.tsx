@@ -7,9 +7,14 @@
 //   3) allowFineRotate=false：L/K（含 Shift ±10°）零变换。
 //   4) pieceGroup 整组拖动：全组同 delta 联动（store 多条 setWorkingItem + DOM
 //      5 层同帧）、组包络钳制（minX≥0 / minY≥0 / maxY≤gate，钳 delta 非逐片）、
-//      非成员不动；Alt+左键组拖不吸附；组内单片不可编辑（键盘全键 + 旋转手柄
-//      隐藏 + 点柄位防御零变换）；非成员片拖动 / 空格 / 吸附照常；组成员视觉
-//      标记（.edit-piece-grouped + data-edit-group）+ 指南图例行。
+//      非成员不动；Alt+左键组拖不吸附；组内单片编辑键仍禁（L/K/O/I 零变换）；
+//      非成员片拖动 / 空格 / 吸附照常；组成员视觉标记（.edit-piece-grouped +
+//      data-edit-group）+ 指南图例行。
+//   4b) 整组旋转/翻转（本期，组合片合法朝向恒 {0°,180°}，版师认可带整带头尾
+//      调换）：空格 = 整组 180° 掉头（绕组当前包络中心点反射 —— 包络同位免钳
+//      制、幂等两态、残余角保留）、R = 整组重置基线、旋转手柄对成员照常显示
+//      （柄位 = 组包络中心）→ 整组旋转拖动（帧自由角 + 松手吸附最近 180° 倍数：
+//      ≥90° = 翻转 / <90° = 复原）。
 //   5) onIllegalOverlapCountChange：红色（非法）重叠片数回调 —— 重叠双方各计
 //      1（2026-10-04 判红口径修订：碰撞轮廓交 > 阈值 = 红、与指标面板同源；物理
 //      相交而碰撞交噪声级 = 琥珀压线不计，solver 贴触解假阳性回归锁在案）、拖动
@@ -471,34 +476,32 @@ describe('EditCanvas 整组拖动 (US-005)', () => {
     expect(w[1].translation).toEqual([600, 500]);
   });
 
-  it('组内单片不可编辑：键盘 L/K/空格/O/I/R 全零变换 + 旋转手柄隐藏（点柄位防御零变换）', () => {
+  it('组内单片编辑键仍禁（L/K 微转 / O/I 镜像零变换 —— 合法角 {0°,180°} 外不可去）', () => {
     const svg = mountInitial({ pieceGroup: bandGroup });
     selectPiece(svg, '#ff0000');
     const before = snapshotWorking();
     act(() => {
       fireKey(window, 'l');
       fireKey(window, 'k');
-      fireKey(window, ' ');
+      fireKey(window, 'L', { shiftKey: true });
+      fireKey(window, 'K', { shiftKey: true });
       fireKey(window, 'o');
       fireKey(window, 'i');
-      fireKey(window, 'r');
+      fireKey(window, 'O');
+      fireKey(window, 'I');
     });
     expect(useEditStore.getState().working).toEqual(before);
-    // 旋转手柄对组成员隐藏（display:none —— 无旋转 affordance）
+    // 防御：CTM 不可得（getScreenCTM null）时点柄不起任何会话零变换
+    const flip = svg.querySelector('g') as SVGGElement;
+    (flip as unknown as { getScreenCTM: () => null }).getScreenCTM = () => null;
     const handle = document.querySelector('[data-testid="edit-rotate-handle"]');
     expect(handle).not.toBeNull();
-    expect((handle!.closest('g') as SVGGElement).style.display).toBe('none');
-    // 防御双保险：直接派发 pointerdown 到隐藏手柄 → 不起会话零变换
     act(() => {
       firePointer(handle!, 'pointerdown', 10, 10);
       firePointer(handle!, 'pointermove', 80, 10);
       firePointer(handle!, 'pointerup', 80, 10);
     });
     expect(useEditStore.getState().working).toEqual(before);
-    // 选中非成员后手柄恢复显示（成员资格判定不粘滞）
-    selectPiece(svg, '#0000ff');
-    const handle2 = document.querySelector('[data-testid="edit-rotate-handle"]');
-    expect((handle2!.closest('g') as SVGGElement).style.display).toBe('');
   });
 
   it('Alt+左键组拖不吸附：留 6mm 缝松手落点原样（无伙伴高亮）', () => {
@@ -571,11 +574,202 @@ describe('EditCanvas 整组拖动 (US-005)', () => {
     expect(c.classList.contains('edit-piece-grouped')).toBe(false);
     expect(c.hasAttribute('data-edit-group')).toBe(false);
     const row = document.querySelector('[data-testid="edit-guide-group-row"]');
-    expect(row?.textContent).toContain('组合成员片（整组拖动）');
+    expect(row?.textContent).toContain('整组拖动');
+    expect(row?.textContent).toContain('空格 整组掉头');
     // 图例文案不回潮「形态/保存」（既有指南反向锁同款口径）
     const guideText = document.querySelector('[data-testid="edit-guide"]')?.textContent ?? '';
     expect(guideText).not.toContain('形态');
     expect(guideText).not.toContain('保存');
+  });
+});
+
+// ============================================================
+// 整组旋转/翻转（本期）：组合片合法朝向恒 {0°,180°}（WB_/PS_ orientations
+// 同源）—— 空格两态掉头 / R 整组重置 / 旋转柄自由角拖 + 松手吸附。
+// 数学锚点：GROUP_PLACED 组（a@[0,0]+b@[600,0]）包络 [0,1100]×[0,500]，
+// 中心 P=(550,250)；点反射 t'=2P−t：a→(1100,500)、b→(500,500)（a/b 互换位），
+// 包络同位同尺寸（免钳制 + 幂等）。
+// ============================================================
+
+/** 2x3 仿射矩阵 mock（同 EditCanvas.test 的 mockMat 套路）。 */
+interface MockMat {
+  a: number;
+  b: number;
+  c: number;
+  d: number;
+  e: number;
+  f: number;
+  inverse: () => MockMat;
+}
+
+function mockMat(a: number, b: number, c: number, d: number, e: number, f: number): MockMat {
+  const inverse = (): MockMat => {
+    const det = a * d - b * c;
+    const ia = d / det;
+    const ib = -b / det;
+    const ic = -c / det;
+    const id = a / det;
+    return mockMat(ia, ib, ic, id, -(ia * e + ic * f), -(ib * e + id * f));
+  };
+  return { a, b, c, d, e, f, inverse };
+}
+
+/** mock flipGroup CTM + svg.createSVGPoint：world = (2.5·cx, 1000 − 2.5·cy)。 */
+function mockCTM(svg: SVGSVGElement, g: SVGGElement, ctm: MockMat): void {
+  (g as unknown as { getScreenCTM: () => MockMat }).getScreenCTM = () => ctm;
+  (svg as unknown as { createSVGPoint: () => unknown }).createSVGPoint = () => {
+    const pt = {
+      x: 0,
+      y: 0,
+      matrixTransform(m: MockMat) {
+        return { x: m.a * pt.x + m.c * pt.y + m.e, y: m.b * pt.x + m.d * pt.y + m.f };
+      },
+    };
+    return pt;
+  };
+}
+
+describe('EditCanvas 整组掉头/重置/旋转柄（本期）', () => {
+  it('空格 = 整组 180° 掉头：全组成员 half 翻转 + t′=2P−t 点反射、包络同位（minX/maxY 不动）、非成员不动、两按回原始（幂等）', () => {
+    const svg = mountInitial({ pieceGroup: bandGroup });
+    selectPiece(svg, '#ff0000');
+    act(() => {
+      fireKey(window, ' ');
+    });
+    let w = useEditStore.getState().working;
+    // P=(550,250)：a(0,0)→(1100,500)、b(600,0)→(500,500)，rot 0→180（half +180）
+    expect(w[0].rotation).toBe(180);
+    expect(w[0].translation).toEqual([1100, 500]);
+    expect(w[1].rotation).toBe(180);
+    expect(w[1].translation).toEqual([500, 500]);
+    expect(w[2].rotation).toBe(0); // 非成员 c 不动
+    expect(w[2].translation).toEqual([1600, 0]);
+    // 包络同位：a 翻转后占 [600,1100]×[0,500]（= b 原位）、b 占 [0,500]²（= a 原位）
+    // —— 断言过两片世界多边形包络极值即可（transformPolygon 直算，与画布同源）。
+    act(() => {
+      fireKey(window, ' ');
+    });
+    w = useEditStore.getState().working;
+    // 幂等回原（P 现算经 180° 变换浮点噪声 ~1e-14 —— closeTo 口径，同单片两态用例）
+    expect(w[0].rotation).toBe(0);
+    expect(w[0].translation[0]).toBeCloseTo(0, 9);
+    expect(w[0].translation[1]).toBeCloseTo(0, 9);
+    expect(w[1].rotation).toBe(0);
+    expect(w[1].translation[0]).toBeCloseTo(600, 9);
+    expect(w[1].translation[1]).toBeCloseTo(0, 9);
+  });
+
+  it('组拖走后空格照常原地掉头（P 每次现算 = 当前包络中心）；掉头后再拖/再掉头组合态正确', () => {
+    const svg = mountInitial({ pieceGroup: bandGroup });
+    mockRect(svg, 1050, 500);
+    const roughA = roughPolyOf(svg, '#ff0000');
+    act(() => {
+      firePointer(roughA, 'pointerdown', 100, 100);
+      firePointer(roughA, 'pointermove', 200, 100); // +200mm → a@[200,0] b@[800,0]
+      firePointer(roughA, 'pointerup', 200, 100);
+    });
+    selectPiece(svg, '#ff0000');
+    act(() => {
+      fireKey(window, ' ');
+    });
+    const w = useEditStore.getState().working;
+    // 新包络 [200,1300]×[0,500] 中心 P=(750,250)：a(200,0)→(1300,500)、b(800,0)→(700,500)
+    expect(w[0].translation).toEqual([1300, 500]);
+    expect(w[1].translation).toEqual([700, 500]);
+    expect(w[0].rotation).toBe(180);
+    expect(w[1].rotation).toBe(180);
+  });
+
+  it('R = 整组重置基线：翻转+拖动后按 R → 全组成员逐项回基线（含 rot/tr），非成员不动', () => {
+    const svg = mountInitial({ pieceGroup: bandGroup });
+    mockRect(svg, 1050, 500);
+    selectPiece(svg, '#ff0000');
+    act(() => {
+      fireKey(window, ' '); // 掉头
+    });
+    const roughA = roughPolyOf(svg, '#ff0000');
+    act(() => {
+      firePointer(roughA, 'pointerdown', 100, 100);
+      firePointer(roughA, 'pointermove', 200, 100); // 组拖 +200mm
+      firePointer(roughA, 'pointerup', 200, 100);
+    });
+    act(() => {
+      fireKey(window, 'r'); // 整组重置
+    });
+    const w = useEditStore.getState().working;
+    expect(w[0]).toEqual({ id: 'a_28', rotation: 0, translation: [0, 0] });
+    expect(w[1]).toEqual({ id: 'b_30', rotation: 0, translation: [600, 0] });
+    expect(w[2]).toEqual({ id: 'c_32', rotation: 0, translation: [1600, 0] });
+  });
+
+  it('旋转手柄对组成员照常显示（柄位 = 组包络中心，非成员质心）', () => {
+    const svg = mountInitial({ pieceGroup: bandGroup });
+    selectPiece(svg, '#ff0000');
+    const handle = document.querySelector(
+      '[data-testid="edit-rotate-handle"]',
+    ) as SVGCircleElement;
+    expect(handle).not.toBeNull();
+    expect((handle.closest('g') as SVGGElement).style.display).toBe('');
+    // 组包络 [0,1100]×[0,500] 中心 (550,250) —— 非成员选中时柄在自身质心
+    expect(Number(handle.getAttribute('cx'))).toBeCloseTo(550, 6);
+    // 组拖动后手柄随组包络中心跟随
+    mockRect(svg, 1050, 500);
+    const roughA = roughPolyOf(svg, '#ff0000');
+    act(() => {
+      firePointer(roughA, 'pointerdown', 100, 100);
+      firePointer(roughA, 'pointermove', 200, 100);
+      firePointer(roughA, 'pointerup', 200, 100);
+    });
+    expect(Number(handle.getAttribute('cx'))).toBeCloseTo(750, 6); // +200mm 组位移
+  });
+
+  it('整组旋转拖柄：拖 ≥90°（170°）→ 帧自由角 + 松手吸附 180° 翻转（与空格同终态）；<90°（50°）→ 吸附复原', () => {
+    const svg = mountInitial({ pieceGroup: bandGroup });
+    mockRect(svg, 1050, 500);
+    const flip = svg.querySelector('g') as SVGGElement;
+    mockCTM(svg, flip, mockMat(0.4, 0, 0, -0.4, 0, 400)); // world = (2.5cx, 1000−2.5cy)
+    selectPiece(svg, '#ff0000');
+    const handle = document.querySelector(
+      '[data-testid="edit-rotate-handle"]',
+    ) as SVGCircleElement;
+    // pivot=(550,250)。起手 world (1150,250)（ang0=0°）→ client (460,300)。
+    // +170°：world (550+600cos170°, 250+600sin170°) ≈ (−40.88, 354.19) → client (−16.35, 258.32)。
+    // （move 帧走 rAF 合帧，jsdom 下由 pointerup 的 flushFrame 兜底落帧 —— 终态断言。）
+    act(() => {
+      firePointer(handle, 'pointerdown', 460, 300);
+      firePointer(handle, 'pointermove', -16.35, 258.32);
+      firePointer(handle, 'pointerup', -16.35, 258.32);
+    });
+    let w = useEditStore.getState().working;
+    // 吸附 180°：从快照重建 = 空格掉头同终态（a→(1100,500)@180、b→(500,500)@180）
+    expect(w[0].rotation).toBe(180);
+    expect(w[0].translation[0]).toBeCloseTo(1100, 6);
+    expect(w[0].translation[1]).toBeCloseTo(500, 6);
+    expect(w[1].rotation).toBe(180);
+    expect(w[1].translation).toEqual([500, 500]);
+    expect(w[2].translation).toEqual([1600, 0]);
+
+    // <90°：从**翻转态**起手再拖 50°（world (935.72,709.63) → client (374.29,116.15)）
+    // → k=round(50/180)=0 = 复原起手态（仍翻转 —— 吸附语义相对会话快照）。
+    act(() => {
+      firePointer(handle, 'pointerdown', 460, 300);
+      firePointer(handle, 'pointermove', 374.29, 116.15);
+      firePointer(handle, 'pointerup', 374.29, 116.15);
+    });
+    w = useEditStore.getState().working;
+    expect(w[0]).toEqual({ id: 'a_28', rotation: 180, translation: [1100, 500] });
+    expect(w[1]).toEqual({ id: 'b_30', rotation: 180, translation: [500, 500] });
+  });
+
+  it('e.repeat 空格/R 连发帧零变换（幂等键防连发，同单片口径）', () => {
+    const svg = mountInitial({ pieceGroup: bandGroup });
+    selectPiece(svg, '#ff0000');
+    const before = snapshotWorking();
+    act(() => {
+      fireKey(window, ' ', { repeat: true });
+      fireKey(window, 'r', { repeat: true });
+    });
+    expect(useEditStore.getState().working).toEqual(before);
   });
 });
 

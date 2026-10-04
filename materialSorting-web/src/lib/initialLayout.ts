@@ -193,36 +193,106 @@ function isBandMemberPid(pid: string, label: string): boolean {
 }
 
 /**
- * 组位移 delta（US-006 记账基元）：组内**首个** working 成员相对基线同下标成员
- * 的平移差。整组只可刚性平移（EditCanvas US-005：组内单片不可编辑）⇒ 任一成员
- * 同值；无成员（理论不达 —— 展开视图必含组成员）/ 下标 id 错位 → null（调用方
- * 按零位移处理，宁可保基线位置也不丢条目 —— 守恒优先）。
+ * 组位移/旋转净变换（US-006 记账基元 + 本期整组旋转扩展）：组对世界的刚体净
+ * 变换只有两形态 —— 平移（旋转增量 ≈ 0，US-005 组拖语义）或 180° 点反射
+ * （x→2P−x；空格整组掉头/旋转柄吸附 ±180，平移与点反射的任意复合仍可归并
+ * 为其中之一）。从组内**首个**成员 (baseline→working) 反解：
+ *   - dθ = wrap180(Δrot) ≈ 0 → {dRot: 0, delta}（平移增量，原 groupDelta 语义）；
+ *   - dθ ≈ ±180° → {dRot: dθ, pivot: (t+t')/2}（点反射中心 = 成员位移中点）；
+ *   - 其余角度 → 抛错（组编辑手势只产出 0/±180，外值 = 状态被外部污染，宁拒
+ *     不静默 —— warm 载荷若照走会把用户翻转静默丢掉）。
+ * 点反射形态下**全组成员一致性校验**（逐成员预测值 vs working 实值，1e-6 容差；
+ * 编辑器组恒刚性 ⇒ 理论必过）：失配 → 同抛错。无成员（理论不达 —— 展开视图必
+ * 含组成员）/ 下标 id 错位 → null（调用方按零位移处理，宁可保基线位置也不丢
+ * 条目 —— 守恒优先，US-006 原语义）。
  */
-function groupDelta(
+interface GroupRigidMap {
+  /** 旋转增量（度）：0 = 纯平移；±180 = 点反射。 */
+  dRot: number;
+  /** 平移形态：位移增量（点反射形态不消费）。 */
+  delta: Pt;
+  /** 点反射形态：反射中心（平移形态 null）。 */
+  pivot: Pt | null;
+}
+
+const GROUP_MAP_EPS = 1e-6;
+
+function wrapDeg180(d: number): number {
+  return ((d + 180) % 360 + 360) % 360 - 180;
+}
+
+function groupRigidMap(
   working: readonly PlacedItem[],
   baseline: readonly PlacedItem[],
   isMember: (pid: string) => boolean,
-): Pt | null {
+): GroupRigidMap | null {
+  // 首成员（反解源）+ 全成员下标收集（点反射一致性校验用）。
+  let first = -1;
+  const memberIdx: number[] = [];
   for (let i = 0; i < working.length && i < baseline.length; i++) {
     if (!isMember(working[i].id)) continue;
     if (baseline[i].id !== working[i].id) return null;
-    return [
-      working[i].translation[0] - baseline[i].translation[0],
-      working[i].translation[1] - baseline[i].translation[1],
-    ];
+    if (first < 0) first = i;
+    memberIdx.push(i);
   }
-  return null;
+  if (first < 0) return null;
+  const b = baseline[first];
+  const w = working[first];
+  const dRot = wrapDeg180(w.rotation - b.rotation);
+  if (Math.abs(dRot) <= GROUP_MAP_EPS) {
+    return {
+      dRot: 0,
+      delta: [w.translation[0] - b.translation[0], w.translation[1] - b.translation[1]],
+      pivot: null,
+    };
+  }
+  if (Math.abs(Math.abs(dRot) - 180) > GROUP_MAP_EPS) {
+    throw new Error(
+      `组合片旋转角非法（${dRot.toFixed(2)}°，仅支持 0°/180°），无法保存初始布局`,
+    );
+  }
+  // ±180 同一旋转（wrapDeg180(180) = −180）：归一 +180 —— 组合条目 rotation 记账
+  // 值确定（0+180=180，与 solver 帧 180.0 形态一致，非 −180.0）。
+  // 点反射中心 = 首成员位移中点（t' = 2P − t ⇒ P = (t+t')/2）。
+  const P: Pt = [
+    (b.translation[0] + w.translation[0]) / 2,
+    (b.translation[1] + w.translation[1]) / 2,
+  ];
+  // 全成员一致性（组恒刚性 ⇒ 理论必过；失配 = 状态污染，拒存）。
+  for (const i of memberIdx) {
+    const bi = baseline[i];
+    const wi = working[i];
+    const di = wrapDeg180(wi.rotation - bi.rotation);
+    if (Math.abs(Math.abs(di) - 180) > GROUP_MAP_EPS) {
+      throw new Error('组合片成员旋转不一致（整组变换被破坏），无法保存初始布局');
+    }
+    const px = 2 * P[0] - bi.translation[0];
+    const py = 2 * P[1] - bi.translation[1];
+    if (
+      Math.abs(wi.translation[0] - px) > GROUP_MAP_EPS ||
+      Math.abs(wi.translation[1] - py) > GROUP_MAP_EPS
+    ) {
+      throw new Error('组合片成员位置与整组变换不一致，无法保存初始布局');
+    }
+  }
+  return { dRot: 180, delta: [0, 0], pivot: P };
 }
 
 /**
- * band/prefix 开启时的 warmPlaced 组装（US-006 保存闸单一实现）：
+ * band/prefix 开启时的 warmPlaced 组装（US-006 保存闸单一实现 + 本期整组旋转
+ * 记账扩展）：
  *   - 组合基线（生成响应 composite.placed_items / 续编 saved.warmPlaced）中
- *     `WB_` 条目 += band delta、`PS_` 条目 += prefix delta（双开两组独立记账），
- *     非组组合条目**跳过**（由当前 working 非成员条目承接最新编辑值）；
+ *     `WB_`/`PS_` 条目施加各组刚体净变换（双开两组独立记账）：平移形态 =
+ *     translation += delta（US-006 原语义）；点反射形态（本期空格整组掉头 /
+ *     旋转柄吸附 ±180）= rotation += dRot + translation = 2P − t（组内任一
+ *     成员反解同一 P —— 组恒刚性，见 groupRigidMap 一致性校验）；
+ *   - 非组组合条目**跳过**（由当前 working 非成员条目承接最新编辑值）；
  *   - 当前 working 的非成员条目按三键形态（mirror 剥离 —— 生成产物无镜像，
  *     allowMirror=false 编辑不可能引入，防御性丢弃）拼接在末尾。
  * 守恒口径：|out| = |组合基线| = |working| = Σ demand（组展开副本数与组合条目
  * 数互补，见 PRD US-006 vitest 条目）。
+ * 组变换含非法旋转角 / 成员不一致（理论不达，防御）→ 抛 Error（调用方保存闸
+ * 红字拒存 —— 不静默丢编辑，见 InitialLayoutModal.handleSave）。
  */
 export function assembleWarmPlaced(
   working: readonly PlacedItem[],
@@ -230,35 +300,42 @@ export function assembleWarmPlaced(
   composite: readonly CompositePlacedItem[],
   groups: WarmGroupContext,
 ): CompositePlacedItem[] {
-  const ZERO: Pt = [0, 0];
-  const bandD =
+  const IDENTITY: GroupRigidMap = { dRot: 0, delta: [0, 0], pivot: null };
+  const bandMap =
     groups.bandLabel != null
-      ? (groupDelta(working, baseline, (pid) =>
+      ? (groupRigidMap(working, baseline, (pid) =>
           isBandMemberPid(pid, groups.bandLabel!),
-        ) ?? ZERO)
-      : ZERO;
-  const prefixD =
+        ) ?? IDENTITY)
+      : IDENTITY;
+  const prefixMap =
     groups.prefixPids.length > 0
-      ? (groupDelta(working, baseline, (pid) =>
-          groups.prefixPids.includes(pid),
-        ) ?? ZERO)
-      : ZERO;
+      ? (groupRigidMap(working, baseline, (pid) => groups.prefixPids.includes(pid)) ??
+        IDENTITY)
+      : IDENTITY;
+  /** 组合条目施加刚体净变换（平移 / 点反射两形态；同一组的所有 WB_/PS_ 过同一 map）。 */
+  const applyMap = (it: CompositePlacedItem, m: GroupRigidMap): CompositePlacedItem =>
+    m.pivot != null
+      ? {
+          id: it.id,
+          rotation: it.rotation + m.dRot,
+          translation: [
+            2 * m.pivot[0] - it.translation[0],
+            2 * m.pivot[1] - it.translation[1],
+          ],
+        }
+      : {
+          id: it.id,
+          rotation: it.rotation,
+          translation: [it.translation[0] + m.delta[0], it.translation[1] + m.delta[1]],
+        };
   const out: CompositePlacedItem[] = [];
   for (const it of composite) {
     if (it.id.startsWith('WB_')) {
-      out.push({
-        id: it.id,
-        rotation: it.rotation,
-        translation: [it.translation[0] + bandD[0], it.translation[1] + bandD[1]],
-      });
+      out.push(applyMap(it, bandMap));
       continue;
     }
     if (it.id.startsWith('PS_')) {
-      out.push({
-        id: it.id,
-        rotation: it.rotation,
-        translation: [it.translation[0] + prefixD[0], it.translation[1] + prefixD[1]],
-      });
+      out.push(applyMap(it, prefixMap));
     }
     // 非组组合条目：跳过 —— 下方由当前 working 非成员条目拼接（最新编辑值）。
   }

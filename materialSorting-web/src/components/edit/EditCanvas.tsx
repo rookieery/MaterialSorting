@@ -136,9 +136,16 @@
 //     **整组刚性平移**会话 —— 组位移 delta 先按起手组整体 bbox 钳制（y∈[0,gate]、
 //     minX≥0，clampPlacement 组包络版：钳 delta 而非逐片 ⇒ 全组恒同位移），再经
 //     editStore working 多条 setWorkingItem 同步全组展示副本；组内单片不可单独
-//     拖/旋/翻/重置（旋转手柄对成员隐藏 + 键盘守卫④ + Alt 松手吸附对组拖不启用）。
+//     拖/旋/翻/重置（键盘守卫④ + Alt 松手吸附对组拖不启用）。
 //     组成员视觉标记 = 毛版描边加粗类 .edit-piece-grouped + data-edit-group=组id，
-//     指南卡条件渲染「组合成员片（整组拖动）」图例行。
+//     指南卡条件渲染「组合成员片」图例行。
+//   - **整组旋转/翻转（本期，用户确认版师可接受带整带头尾调换）**：组成员的
+//     空格 = 整组 180° 掉头（绕组当前包络 bbox 中心点反射 —— 包络同位同尺寸免
+//     钳制、幂等两态）、R = 整组重置基线（逐成员 resetItem）、旋转手柄对成员
+//     照常显示（柄位 = 组包络中心）→ 整组旋转拖动（帧自由角 + 组包络回界钳制，
+//     松手吸附最近 180° 倍数 = {复原, 点反射} 两态，从会话快照重建）。组合片
+//     （WB_/PS_）求解器合法朝向恒 {0°,180°}（COMPOSITE_/PREFIX_ORIENTATIONS
+//     同源），L/K 微转与 O/I 镜像保持禁用（镜像 proper-rigid 硬拒同单片）。
 //   - onIllegalOverlapCountChange(n)：非法（红色）重叠片数 additive 回调 —— 主渲染
 //     effect 在 working 每次变化（含拖动帧/键盘/重置/换 run 全路径，比挂在
 //     refreshMetrics 覆盖更广：不依赖选中态）时按 refreshMetrics 同口径（穿透 >
@@ -273,7 +280,8 @@ interface RotateDrag {
   mode: 'rotate';
   pointerId: number;
   index: number;
-  /** 旋转 pivot = 起手时被选片世界多边形质心（顶点均值；绕质心转片不漂移）。 */
+  /** 旋转 pivot = 起手时被选片世界多边形质心（顶点均值；绕质心转片不漂移）；
+   *  整组旋转会话 = 组当前包络 bbox 中心（本期，见 group 注记）。 */
   pivot: Pt;
   /** pointerdown 时指针绕 pivot 的方位角（°）。 */
   ang0: number;
@@ -281,6 +289,16 @@ interface RotateDrag {
   tr0: Pt;
   /** 起手镜像标志（edit-keyboard US-003）：会话内恒定（同 MoveDrag 注记）。 */
   mirror0: boolean;
+  /**
+   * 整组旋转会话（本期，组合成员选中片）：组快照 + pivot = 组包络 bbox0 中心。
+   * 拖动帧自由角（视觉反馈 + 组包络回界平移钳制），pointerup 吸附最近 180°
+   * 倍数 —— 组合片（WB_/PS_）求解器合法朝向恒 {0°,180°}（COMPOSITE_/
+   * PREFIX_ORIENTATIONS 同源），吸附终态从快照重建：0 = 原位复原、±180 =
+   * 绕 bbox0 中心点反射（包络同位同尺寸 ⇒ 天然在界内，免钳制）。
+   */
+  group?: GroupDragMembers;
+  /** pointerup 吸附 180° 倍数标志（组会话恒 true；单片会话恒缺省 false）。 */
+  snap180?: boolean;
 }
 type DragState = MoveDrag | RotateDrag;
 
@@ -1032,11 +1050,23 @@ export function EditCanvas({
       const line = handleLineRef.current;
       const circle = handleCircleRef.current;
       if (!ep || !line || !circle) return;
-      // US-005：组合成员无旋转手柄（组内单片不可旋 —— 整组仅平移）；非成员确保
-      // 显示（selectPiece → ensureUiLayers 复位 '' 后此处按成员资格定夺）。
+      // 本期（整组旋转）：组合成员手柄照常显示 —— pivot/柄位 = 组当前包络中心
+      // （与整组旋转会话同一 pivot 真相源；点柄 = 整组旋转，松手吸附 {0°,180°}）。
+      // selectPiece → ensureUiLayers 复位 '' 后此处定夺显隐。
       const hg = handleGRef.current;
-      if (hg) hg.style.display = isGroupPid(ep.pid) ? 'none' : '';
-      const c = centroidOf(ep.worldPolygon);
+      if (hg) hg.style.display = '';
+      let c = centroidOf(ep.worldPolygon);
+      const fnG = pieceGroupRef.current;
+      const gid = fnG ? fnG(ep.pid) : null;
+      if (gid != null) {
+        const grp = collectGroup(gid);
+        if (grp) {
+          c = [
+            (grp.bbox0.minX + grp.bbox0.maxX) / 2,
+            (grp.bbox0.minY + grp.bbox0.maxY) / 2,
+          ];
+        }
+      }
       const vb = vbRef.current;
       const r = vb ? Math.min(HANDLE_R_MAX, Math.max(HANDLE_R_MIN, vb.w * 0.015)) : 12;
       const off = r * 3; // 质心上方（世界 +Y = 翻转组内屏幕上方）
@@ -1387,6 +1417,160 @@ export function EditCanvas({
       if (!st.marquee) updateHandle(st.index);
     }
 
+    /**
+     * 组快照逐成员落笔（本期整组变换共用出口）：map(起手放置) → 目标放置，
+     * store setWorkingItem 多条 + DOM 5 层 + 池增量；指标/手柄只按锚片刷新一次
+     * （applyGroupMoveFrame 同口径）。mirror 组内恒 false（初始布局 allowMirror=
+     * false 且生成产物无镜像）—— 快照值原样透传。
+     */
+    function commitGroupTransform(
+      grp: GroupDragMembers,
+      anchor: number,
+      map: (s: { rot: number; tr: Pt; mirror: boolean }) => { rot: number; tr: Pt },
+    ): void {
+      grp.indices.forEach((idx, k) => {
+        const s = grp.starts[k];
+        const entry = entriesRef.current[idx];
+        if (!entry) return;
+        const t = map(s);
+        useEditStore.getState().setWorkingItem(idx, { rotation: t.rot, translation: t.tr });
+        applyEntryPlacement(idx, entry, t.rot, t.tr, s.mirror);
+        const ep = poolRef.current?.find((p) => p.key === idx);
+        if (ep) applyEditPlacement(ep, t.rot, t.tr, s.mirror);
+      });
+      refreshMetrics(anchor);
+      updateHandle(anchor);
+    }
+
+    /**
+     * 整组 180° 掉头（本期，空格消费）：绕组**当前**包络 bbox 中心点反射 ——
+     * 每成员 half 位翻转（rot ±180，单片两态掉头同语义，残余角保留）+
+     * t' = 2P − t。P 取包络中心 ⇒ 反射后组包络与原包络同位同尺寸（点反射把
+     * bbox 映到同心 bbox）⇒ y∈[0,gate]/minX≥0 自动保持零钳制；P 在反射下
+     * 不动 ⇒ 同操作幂等（两次 = 复原），组拖走后再掉头照常原地掉头。
+     */
+    function applyGroupFlip(index: number, pid: string): void {
+      const fn = pieceGroupRef.current;
+      if (!fn) return;
+      const gid = fn(pid);
+      if (gid == null) return;
+      const grp = collectGroup(gid);
+      if (!grp) return;
+      const P: Pt = [
+        (grp.bbox0.minX + grp.bbox0.maxX) / 2,
+        (grp.bbox0.minY + grp.bbox0.maxY) / 2,
+      ];
+      commitGroupTransform(grp, index, (s) => {
+        const half = (((s.rot % 360) + 360) % 360) >= 180;
+        return {
+          rot: half ? s.rot - 180 : s.rot + 180,
+          tr: [2 * P[0] - s.tr[0], 2 * P[1] - s.tr[1]],
+        };
+      });
+    }
+
+    /**
+     * 整组重置（本期，R 键消费）：逐成员 resetItem 恢复基线（同 pid 多副本按
+     * 下标寻址，store 层三守卫语义与单片 R 完全一致）+ 视图侧 refreshPieceView
+     * 逐片同帧刷新。
+     */
+    function applyGroupReset(pid: string): void {
+      const fn = pieceGroupRef.current;
+      if (!fn) return;
+      const gid = fn(pid);
+      if (gid == null) return;
+      const grp = collectGroup(gid);
+      if (!grp) return;
+      grp.indices.forEach((idx) => {
+        if (!useEditStore.getState().resetItem(idx)) return;
+        const rst = useEditStore.getState().working[idx];
+        const entry = entriesRef.current[idx];
+        if (rst && entry) {
+          refreshPieceView(idx, entry, rst.rotation, rst.translation, rst.mirror === true);
+        }
+      });
+    }
+
+    /**
+     * 整组旋转拖动帧（本期，自由角视觉反馈）：全组绕 pivot（组包络 bbox0 中心）
+     * 刚体旋转 —— rot' = rot + dAng、t' = P + R(dAng)·(t − P)（expand_placements
+     * 同族公式）；旋转后组包络可越界 → 整体平移回界（minX≥0 / y∈[0,gate]，
+     * 右界不钳同组拖口径）。帧态仅视觉/物理暂态，终态由 pointerup 吸附从快照
+     * 重建（见 applyGroupRotateSnap）。
+     */
+    function applyGroupRotateFrame(st: RotateDrag, dAng: number, gate: number): void {
+      const grp = st.group;
+      if (!grp) return;
+      const P = st.pivot;
+      const r = (dAng * Math.PI) / 180;
+      const cos = Math.cos(r);
+      const sin = Math.sin(r);
+      const targets: { rot: number; tr: Pt }[] = grp.starts.map((s) => {
+        const dx = s.tr[0] - P[0];
+        const dy = s.tr[1] - P[1];
+        return {
+          rot: s.rot + dAng,
+          tr: [P[0] + dx * cos - dy * sin, P[1] + dx * sin + dy * cos],
+        };
+      });
+      // 组包络回界平移量（旋转后并集 bbox，钳 delta 而非逐片 —— 全组恒同位移）。
+      // for 循环直赋（非闭包）—— TS CFA 对闭包内赋值的窄化不可靠。
+      let bb: BBox | null = null;
+      for (let k = 0; k < grp.indices.length; k++) {
+        const entry = entriesRef.current[grp.indices[k]];
+        if (!entry) continue;
+        const wb = bboxOf(
+          transformPolygon(
+            physicalPolygon(entry.piece), targets[k].rot, targets[k].tr, grp.starts[k].mirror,
+          ),
+        );
+        bb = bb ? unionBBox(bb, wb) : wb;
+      }
+      let sx = 0;
+      let sy = 0;
+      if (bb) {
+        if (bb.minX < 0) sx = -bb.minX;
+        if (bb.maxY > gate) sy = gate - bb.maxY;
+        if (bb.minY + sy < 0) sy = -bb.minY;
+      }
+      grp.indices.forEach((idx, k) => {
+        const entry = entriesRef.current[idx];
+        if (!entry) return;
+        const tr: Pt = [targets[k].tr[0] + sx, targets[k].tr[1] + sy];
+        useEditStore.getState().setWorkingItem(idx, {
+          rotation: targets[k].rot,
+          translation: tr,
+        });
+        applyEntryPlacement(idx, entry, targets[k].rot, tr, grp.starts[k].mirror);
+        const ep = poolRef.current?.find((p) => p.key === idx);
+        if (ep) applyEditPlacement(ep, targets[k].rot, tr, grp.starts[k].mirror);
+      });
+      refreshMetrics(st.index);
+      updateHandle(st.index);
+    }
+
+    /**
+     * 整组旋转松手吸附（本期）：累计角吸附最近 180° 倍数 k·180°（组合片合法
+     * 朝向恒 {0°,180°}）—— 终态**从会话快照重建**（不继承拖动帧的钳制平移）：
+     * k 偶 = 起手放置原样复原；k 奇 = 绕 bbox0 中心点反射（rot ±180 half 位 +
+     * t' = 2P − t）。两态都包络同位 ⇒ 恒在界内；|wrapDeg180| ≤ 180 ⇒ k ∈
+     * {−1,0,1}，Math.round 半值（±90°）向 +∞ 取整 = 翻转。
+     */
+    function applyGroupRotateSnap(st: RotateDrag, dAng: number): void {
+      const grp = st.group;
+      if (!grp) return;
+      const k = Math.round(dAng / 180);
+      const P = st.pivot;
+      commitGroupTransform(grp, st.index, (s) =>
+        k === 0
+          ? { rot: s.rot, tr: [s.tr[0], s.tr[1]] }
+          : {
+              rot: s.rot + k * 180,
+              tr: [2 * P[0] - s.tr[0], 2 * P[1] - s.tr[1]],
+            },
+      );
+    }
+
     /** 平移拖片帧（viewScale 差分 → 起始 tr + 位移 → 钳制 → 落笔）。 */
     function applyMoveFrame(st: MoveDrag, clientX: number, clientY: number): void {
       const manifest = manifestRef.current;
@@ -1423,6 +1607,11 @@ export function EditCanvas({
       if (!w) return; // CTM 不可得 → 旋转无意义（起手即校验，此为防御）
       const ang = (Math.atan2(w[1] - st.pivot[1], w[0] - st.pivot[0]) * 180) / Math.PI;
       const dAng = wrapDeg180(ang - st.ang0);
+      // 本期：整组旋转会话 → 组帧（自由角视觉 + 包络回界钳制；终态松手吸附）。
+      if (st.group) {
+        applyGroupRotateFrame(st, dAng, manifest.gate_mm);
+        return;
+      }
       const rot = st.rot0 + dAng; // 自由角度，无 0°/180° 吸附（2026-09-04 定案）
       const tr = clampPlacement(
         physicalPolygon(entry.piece),
@@ -1478,30 +1667,47 @@ export function EditCanvas({
       if (e.button !== 0) return;
       const target = e.target as Element | null;
       // 1) 旋转手柄（选中片常显）→ 绕质心旋转拖柄（Alt 不分流 —— 修饰键仅对
-      //    polygon 贴附有意义，柄上 Alt+左键照常转柄）。
+      //    polygon 贴附有意义，柄上 Alt+左键照常转柄）。本期：组合成员选中片
+      //    点柄 = 整组旋转会话（pivot = 组包络中心，松手吸附 {0°,180°}）。
       if (target?.closest?.('[data-edit-role="rotate"]')) {
         const index = selRef.current;
         const flip = flipRef.current;
         const entry = index != null ? entriesRef.current[index] : null;
         if (index == null || !flip || !entry) return;
-        // US-005：组合成员单片不可旋（手柄对成员本就隐藏 —— updateHandle；此处
-        // 防御双保险，组成员点柄位不起任何会话）。
         const selIt = useEditStore.getState().working[index];
-        if (selIt && isGroupPid(selIt.id)) return;
-        const ep = poolRef.current?.find((p) => p.key === index);
-        const w = ep ? clientToWorld(svg, flip, e.clientX, e.clientY) : null;
-        if (!ep || !w) return; // CTM 不可得 → 不起旋转（世界方位角无从计算）
-        const pivot = centroidOf(ep.worldPolygon);
+        if (!selIt) return;
+        const w0 = clientToWorld(svg, flip, e.clientX, e.clientY);
+        if (!w0) return; // CTM 不可得 → 不起旋转（世界方位角无从计算）
+        // 组成员 → 组会话（pivot = 组包络 bbox0 中心）；非成员 → 单片会话
+        // （pivot = 选中片质心，池项在场为前置 —— 原行为）。
+        const gid = pieceGroupRef.current ? pieceGroupRef.current(selIt.id) : null;
+        let group: GroupDragMembers | undefined;
+        let pivot: Pt;
+        if (gid != null) {
+          const grp = collectGroup(gid);
+          if (!grp) return; // 组快照组装失败（理论不达）→ 不起会话
+          group = grp;
+          pivot = [
+            (grp.bbox0.minX + grp.bbox0.maxX) / 2,
+            (grp.bbox0.minY + grp.bbox0.maxY) / 2,
+          ];
+        } else {
+          const ep = poolRef.current?.find((p) => p.key === index);
+          if (!ep) return;
+          pivot = centroidOf(ep.worldPolygon);
+        }
         const it = useEditStore.getState().working[index];
         dragRef.current = {
           mode: 'rotate',
           pointerId: e.pointerId,
           index,
           pivot,
-          ang0: (Math.atan2(w[1] - pivot[1], w[0] - pivot[0]) * 180) / Math.PI,
+          ang0: (Math.atan2(w0[1] - pivot[1], w0[0] - pivot[0]) * 180) / Math.PI,
           rot0: it.rotation,
           tr0: [it.translation[0], it.translation[1]],
           mirror0: it.mirror === true,
+          group,
+          snap180: group !== undefined,
         };
         try {
           handleCircleRef.current?.setPointerCapture?.(e.pointerId);
@@ -1687,6 +1893,18 @@ export function EditCanvas({
       resetCanvasCursor();
       // edit-drag-snap US-003：贴附会话松手单次求解（纯左键 / 旋转柄会话不进）。
       if (d.mode === 'move' && d.snap) applySnapOnRelease(d);
+      // 本期：整组旋转松手吸附最近 180° 倍数（从快照重建终态，覆盖拖动帧暂态）。
+      // CTM 不可得（防御）→ 按 0° 吸附 = 复原起手态（绝不残留非法自由角）。
+      if (d.mode === 'rotate' && d.snap180 && d.group) {
+        const flip = flipRef.current;
+        const w = flip ? clientToWorld(svg, flip, e.clientX, e.clientY) : null;
+        const dAng = w
+          ? wrapDeg180(
+              ((Math.atan2(w[1] - d.pivot[1], w[0] - d.pivot[0]) * 180) / Math.PI) - d.ang0,
+            )
+          : 0;
+        applyGroupRotateSnap(d, dAng);
+      }
     };
 
     const endPan = (e: PointerEvent): void => {
@@ -1820,10 +2038,17 @@ export function EditCanvas({
       // 单字符键统一小写（Shift+L 的 e.key='L'，CapsLock 布局同样命中）。
       const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
       const curMirror = it.mirror === true;
-      // 守卫④（US-005）：选中片为组合成员 → 单片编辑键全禁（整组只可平移，不可
-      // 单独旋/翻/重置）；空格仍吞默认滚动。pieceGroup 缺席（默认 props）不进。
+      // 守卫④（US-005 + 本期扩展）：选中片为组合成员 → 单片编辑键仍全禁，
+      // 但空格/R 升级为**整组**语义（与单片同款两态/重置，作用对象 = 全组）：
+      //   空格 = 整组 180° 掉头（绕组包络中心点反射，包络不动免钳制）；
+      //   R = 整组重置基线（逐成员 resetItem）。
+      // L/K（微转必产非法角）与 O/I（镜像 proper-rigid 硬拒）保持禁用 —— 组合片
+      // 求解器合法朝向恒 {0°,180°}。pieceGroup 缺席（默认 props）不进本分支。
       if (isGroupPid(it.id)) {
-        if (k === ' ') e.preventDefault();
+        if (k === ' ') e.preventDefault(); // 空格吞默认滚动（连发帧也吞）
+        if (e.repeat) return; // 幂等键防连发（同单片口径）
+        if (k === ' ') applyGroupFlip(index, it.id);
+        else if (k === 'r') applyGroupReset(it.id);
         return;
       }
       if (k === 'l' || k === 'k') {
@@ -2100,11 +2325,13 @@ export function EditCanvas({
       <div className="edit-guide-row">
         <span className="edit-metrics-label">键盘：</span>L/K 微转 · 空格 四态翻转 · O 水平镜像 · I 垂直镜像 · R 重置此片
       </div>
-      {/* prd-initial-layout US-005：组成员图例行（初始布局模式有组成员才在场 ——
-          默认编辑弹窗不渲染，既有指南文案反向锁「形态/保存」不受扰）。 */}
+      {/* prd-initial-layout US-005 + 本期整组旋转：组成员图例行（初始布局模式有
+          组成员才在场 —— 默认编辑弹窗不渲染，既有指南文案反向锁「形态/保存」
+          不受扰）。 */}
       {hasGroupMembers && (
         <div className="edit-guide-row" data-testid="edit-guide-group-row">
-          <span className="edit-metrics-label">组合：</span>组合成员片（整组拖动）
+          <span className="edit-metrics-label">组合：</span>组合成员片：整组拖动 · 空格
+          整组掉头 · 拖圆点整组旋转（松手对齐 0°/180°）· R 整组重置
         </div>
       )}
       {/* 批量框选（2026-10-04）：marqueeSelect 在场才渲染（默认编辑弹窗不加行 ——

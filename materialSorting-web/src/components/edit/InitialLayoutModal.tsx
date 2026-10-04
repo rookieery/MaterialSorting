@@ -316,7 +316,9 @@ function InitialLayoutModalInner(): JSX.Element {
     );
   }
 
-  /** 保存闸 + 组装 + 挂伪卡片 + 关窗（编排见组件头注「保存当前布局」段）。 */
+  /** 保存闸 + 组装 + 挂伪卡片 + 关窗（编排见组件头注「保存当前布局」段）。
+   *  本期：assembleWarmPlaced 组刚体记账含防御抛错（非法旋转角 / 成员不一致，
+   *  理论不达）→ catch 落 store.error 红字拒存（不静默丢用户的整组翻转）。 */
   function handleSave(): void {
     if (generating || illegalCount > 0) return;
     const { run: curRun, working: curWorking, baseline: curBaseline } = useEditStore.getState();
@@ -324,13 +326,24 @@ function InitialLayoutModalInner(): JSX.Element {
     if (!curRun || !curManifest || curWorking.length === 0 || !session) return;
     const curStats = computeLayoutStats(curWorking, curManifest);
     const grouped = session.ctx.band != null || session.ctx.prefix != null;
-    const warmPlaced =
-      grouped && session.composite
-        ? assembleWarmPlaced(curWorking, curBaseline?.placedItems ?? curWorking, session.composite, {
-            bandLabel: session.ctx.band != null ? session.ctx.band.label : null,
-            prefixPids: session.prefixMemberPids,
-          })
-        : plainWarmPlaced(curWorking);
+    let warmPlaced: CompositePlacedItem[];
+    try {
+      warmPlaced =
+        grouped && session.composite
+          ? assembleWarmPlaced(
+              curWorking,
+              curBaseline?.placedItems ?? curWorking,
+              session.composite,
+              {
+                bandLabel: session.ctx.band != null ? session.ctx.band.label : null,
+                prefixPids: session.prefixMemberPids,
+              },
+            )
+          : plainWarmPlaced(curWorking);
+    } catch (e) {
+      useInitialLayoutStore.getState().setError(e instanceof Error ? e.message : String(e));
+      return;
+    }
     const saved: SavedInitialLayout = {
       displayPlaced: deepCopyPlaced(curWorking),
       warmPlaced,

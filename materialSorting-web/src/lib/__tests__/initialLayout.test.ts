@@ -329,6 +329,130 @@ describe('assembleWarmPlaced (US-006 保存组装)', () => {
   });
 });
 
+// ============================================================
+// 整组旋转记账（本期）：组刚体净变换两形态 —— 平移（US-006 原语义）/ 180° 点
+// 反射（空格整组掉头、旋转柄吸附 ±180）。数学锚点：组 a@[0,0] + b@[600,0]
+// 绕包络中心 P=(550,250) 点反射 → a→(1100,500)、b→(500,500)。
+// ============================================================
+describe('assembleWarmPlaced 整组旋转记账（本期）', () => {
+  /** band 双成员 + 非成员 g01；组合宇宙 WB_g05 + 非组条目。 */
+  function flipFixture(): {
+    baseline: PlacedItem[];
+    composite: CompositePlacedItem[];
+  } {
+    return {
+      baseline: [
+        p('g05_28', 0, 0),
+        p('g05_30', 600, 0),
+        p('g01_28', 1500, 100),
+      ],
+      composite: [
+        c('WB_g05', 0, 100), // 组合基线（翻转后应 → rot180 @(1100,400)）
+        c('g01_28', 1500, 100),
+      ],
+    };
+  }
+  const FLIP_GROUPS = { bandLabel: 'g05', prefixPids: [] as readonly string[] };
+
+  it('整组 180° 掉头：WB_ 条目 rotation +180、translation = 2P − t（P = 首成员位移中点反解）；非成员照常承接', () => {
+    const { baseline, composite } = flipFixture();
+    const working: PlacedItem[] = [
+      p('g05_28', 1100, 500, 180), // 2P−(0,0)、half +180
+      p('g05_30', 500, 500, 180), // 2P−(600,0)
+      p('g01_28', 1600, 100), // 非成员拖动照常
+    ];
+    const out = assembleWarmPlaced(working, baseline, composite, FLIP_GROUPS);
+    expect(out[0]).toEqual(c('WB_g05', 1100, 400, 180)); // (0,100) → 2P−(0,100)
+    expect(out[1]).toEqual(c('g01_28', 1600, 100));
+    expect(out).toHaveLength(2);
+  });
+
+  it('成员混合 half 位（0°→180° 与 180°→0°）：dRot 按 mod 360 判定同为点反射，组合条目记账正确', () => {
+    const { composite } = flipFixture();
+    const baseline: PlacedItem[] = [
+      p('g05_28', 0, 0, 0),
+      p('g05_30', 600, 0, 180), // 该成员翻转走 −180（half 位为真）
+      p('g01_28', 1500, 100),
+    ];
+    const working: PlacedItem[] = [
+      p('g05_28', 1100, 500, 180),
+      p('g05_30', 500, 500, 0), // 180 − 180 = 0
+      p('g01_28', 1500, 100),
+    ];
+    const out = assembleWarmPlaced(working, baseline, composite, FLIP_GROUPS);
+    expect(out[0].rotation).toBe(180); // WB_ 0 + dRot(+180)
+    expect(out[0].translation).toEqual([1100, 400]);
+  });
+
+  it('掉头 + 组拖复合：净变换仍是点反射（P′ = 有效中心），组合条目同式记账', () => {
+    const { baseline, composite } = flipFixture();
+    // 掉头后再整体 +[300,0]：a (0,0)→(1400,500)@180、b (600,0)→(800,500)@180
+    const working: PlacedItem[] = [
+      p('g05_28', 1400, 500, 180),
+      p('g05_30', 800, 500, 180),
+      p('g01_28', 1500, 100),
+    ];
+    const out = assembleWarmPlaced(working, baseline, composite, FLIP_GROUPS);
+    // P′ = midpoint(a) = (700,250) → WB_(0,100) → (1400,400)@180
+    expect(out[0]).toEqual(c('WB_g05', 1400, 400, 180));
+  });
+
+  it('两次掉头（净恒等）→ 平移形态零 delta，组合条目逐字段原位', () => {
+    const { baseline, composite } = flipFixture();
+    const out = assembleWarmPlaced(baseline, baseline, composite, FLIP_GROUPS);
+    expect(out[0]).toEqual(c('WB_g05', 0, 100, 0));
+  });
+
+  it('band 掉头 × prefix 仅平移：双组独立形态互不干扰', () => {
+    const baseline: PlacedItem[] = [
+      p('g05_28', 0, 0),
+      p('g05_30', 600, 0),
+      p('g02_28', 2000, 0),
+      p('g03_28', 2000, 500),
+    ];
+    const working: PlacedItem[] = [
+      p('g05_28', 1100, 500, 180), // band 掉头
+      p('g05_30', 500, 500, 180),
+      p('g02_28', 2005, 7), // prefix +[5,7]
+      p('g03_28', 2005, 507),
+    ];
+    const composite: CompositePlacedItem[] = [
+      c('WB_g05', 0, 100),
+      c('PS_g02+g03@28', 10, 20),
+    ];
+    const out = assembleWarmPlaced(working, baseline, composite, {
+      bandLabel: 'g05',
+      prefixPids: ['g02_28', 'g03_28'],
+    });
+    expect(out[0]).toEqual(c('WB_g05', 1100, 400, 180)); // 点反射
+    expect(out[1]).toEqual(c('PS_g02+g03@28', 15, 27)); // 平移记账（US-006 原语义）
+  });
+
+  it('非法旋转角（成员 90°，理论不达）→ 抛 Error 拒存（不静默丢翻转）', () => {
+    const { baseline, composite } = flipFixture();
+    const working: PlacedItem[] = [
+      p('g05_28', 100, 100, 90),
+      p('g05_30', 600, 0),
+      p('g01_28', 1500, 100),
+    ];
+    expect(() => assembleWarmPlaced(working, baseline, composite, FLIP_GROUPS)).toThrow(
+      /旋转角非法/,
+    );
+  });
+
+  it('成员间变换不一致（一片翻转一片未动，理论不达）→ 抛 Error 拒存', () => {
+    const { baseline, composite } = flipFixture();
+    const working: PlacedItem[] = [
+      p('g05_28', 1100, 500, 180),
+      p('g05_30', 600, 0), // 未随组翻转 → 与点反射预测 (500,500) 失配
+      p('g01_28', 1500, 100),
+    ];
+    expect(() => assembleWarmPlaced(working, baseline, composite, FLIP_GROUPS)).toThrow(
+      /不一致/,
+    );
+  });
+});
+
 describe('plainWarmPlaced (US-006 plain 组装)', () => {
   it('working 全量三键形态逐条映射 + mirror 剥离 + 条目数守恒', () => {
     const working: PlacedItem[] = [
