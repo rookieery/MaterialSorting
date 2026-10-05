@@ -2555,6 +2555,11 @@ button.sample-apply-btn:disabled { background: #444; color: #888; cursor: defaul
 .edit-layout-refresh {
   padding: 0 14px;
 }
+/* 「还原布局」按钮（2026-10-05 footer 次级动作，刷新左侧）：同款横向加宽
+   （无编辑时禁用灰态走 edit-layout-tool:disabled） */
+.edit-layout-restore {
+  padding: 0 14px;
+}
 
 /* ============================================================
  * 编辑排料 US-003：重合指标面板（画布右上固定）+ 旋转手柄。

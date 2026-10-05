@@ -52,6 +52,15 @@
 //   「将丢弃当前编辑」确认；确认后 bumpGenSeed() 换 seed 重新生成替换 working
 //   （editStore.open 新伪 run → delta 记账基线同步重置为新生成布局）。无编辑直刷。
 //
+// ---- 还原布局（2026-10-05 用户需求：编辑改坏后无法回退）----
+//   「布局刷新」换 seed 给的是**新**布局、✕ 丢弃后重开又是新局面 —— 都回不到
+//   「编辑前那张」。「还原」= replaceWorking(baseline.placedItems) 整体回退
+//   working 到本次打开弹窗时的布局（首次生成 = 生成原版；续编 = 上次保存版 ——
+//   保存闸保证基线恒合法干净态，改坏只存在于草稿）：零网络请求、seed 不变、
+//   精确回位（polish 撤销同款 replaceWorking 路径）；非法重叠计数经 EditCanvas
+//   working 变化重算自动归零 → 保存闸解锁、chips/定位高亮同帧收起。有编辑
+//   （dirty）才可点 → 确认层「将丢弃当前编辑」→ 确认还原；无编辑禁用。
+//
 // ---- 保存当前布局（保存闸）----
 //   红色重叠计数 > 0 → 保存按钮 disabled + 数量提示（琥珀压线不限）。通过后组装：
 //     displayPlaced = 当前 working；warmPlaced = band/prefix 开且有组合基线时
@@ -128,9 +137,10 @@ function InitialLayoutModalInner(): JSX.Element {
   const genError = useInitialLayoutStore((s) => s.error);
   const [mode, setMode] = useState<EditViewMode>('full');
   const [session, setSession] = useState<InitialLayoutSession | null>(null);
-  /** ✕ dirty 确认层 / 刷新丢弃确认层显隐（互斥单确认层）。 */
+  /** ✕ dirty 确认层 / 刷新丢弃确认层 / 还原丢弃确认层显隐（互斥单确认层）。 */
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const [confirmRefresh, setConfirmRefresh] = useState(false);
+  const [confirmRestore, setConfirmRestore] = useState(false);
   /** 红色（非法）重叠片数（EditCanvas onIllegalOverlapCountChange 数据源，US-005
    * 同指标面板口径 —— 琥珀压线不计）。保存闸消费。 */
   const [illegalCount, setIllegalCount] = useState(0);
@@ -316,6 +326,14 @@ function InitialLayoutModalInner(): JSX.Element {
     );
   }
 
+  /** 还原布局（2026-10-05）：有编辑（dirty）→ 确认层 → replaceWorking(baseline)
+   *  整体回退到本次打开弹窗时的布局 —— 与「布局刷新」互补（刷新换 seed 给新
+   *  布局，还原零请求精确回位）。无编辑无可还原，按钮即禁用态兜底。 */
+  function handleRestore(): void {
+    if (generating || !baseline || !dirty) return;
+    setConfirmRestore(true);
+  }
+
   /** 保存闸 + 组装 + 挂伪卡片 + 关窗（编排见组件头注「保存当前布局」段）。
    *  本期：assembleWarmPlaced 组刚体记账含防御抛错（非法旋转角 / 成员不一致，
    *  理论不达）→ catch 落 store.error 红字拒存（不静默丢用户的整组翻转）。 */
@@ -405,7 +423,7 @@ function InitialLayoutModalInner(): JSX.Element {
           {run && manifest ? (
             <EditCanvas
               mode={mode}
-              interactionEnabled={!generating && !confirmDiscard && !confirmRefresh}
+              interactionEnabled={!generating && !confirmDiscard && !confirmRefresh && !confirmRestore}
               onModeChange={setMode}
               allowMirror={false}
               allowFineRotate={false}
@@ -430,8 +448,8 @@ function InitialLayoutModalInner(): JSX.Element {
         </div>
 
         {/* footer：左侧提示区（重叠序号 chips 行 + 生成失败红字 / 保存闸数量提示）
-            + 右侧「布局刷新」与「保存当前布局」两按钮（保存 = 编辑弹窗主色按钮；
-            刷新 = 画布工具区次级按钮同款）。 */}
+            + 右侧「还原布局」「布局刷新」「保存当前布局」三按钮（保存 = 编辑弹窗
+            主色按钮；还原/刷新 = 画布工具区次级按钮同款；无编辑时还原禁用）。 */}
         <div className="edit-layout-foot">
           <div className="edit-layout-foot-note">
             {!generating && genError != null && (
@@ -468,6 +486,16 @@ function InitialLayoutModalInner(): JSX.Element {
           </div>
           <button
             type="button"
+            className="edit-layout-tool edit-layout-restore"
+            onClick={handleRestore}
+            disabled={generating || !dirty}
+            title="还原到打开弹窗时的布局（丢弃本次全部编辑）"
+            data-testid="initial-layout-restore"
+          >
+            还原布局
+          </button>
+          <button
+            type="button"
             className="edit-layout-tool edit-layout-refresh"
             onClick={handleRefresh}
             disabled={generating || !session}
@@ -501,6 +529,22 @@ function InitialLayoutModalInner(): JSX.Element {
             closeModal();
           }}
           onCancel={() => setConfirmDiscard(false)}
+        />
+      )}
+      {/* 还原布局确认层（文案区分刷新确认：还原 = 精确回退编辑前布局，不重新
+          生成）。确认 → replaceWorking(baseline) + 重叠快照/定位高亮随干净基线
+          即刻重算（实时计数归零路径由 EditCanvas working 变化回传兜底）。 */}
+      {confirmRestore && (
+        <EditConfirmLayer
+          message="还原布局将丢弃当前编辑，确认还原？"
+          confirmText="还原"
+          onConfirm={() => {
+            setConfirmRestore(false);
+            const st = useEditStore.getState();
+            if (st.baseline) st.replaceWorking(st.baseline.placedItems);
+            refreshOverlapSnapshot();
+          }}
+          onCancel={() => setConfirmRestore(false)}
         />
       )}
       {/* 布局刷新丢弃确认层（文案区分 ✕ 确认层）。 */}

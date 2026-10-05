@@ -12,6 +12,8 @@
 //     重落（编辑被丢弃、delta 基线重置）；
 //   D 保存闸：拖片 B 压到片 A 上（红色非法重叠）→ 保存 disabled + 数量提示；
 //     再刷新（seed=2）恢复合法 → 保存 enabled；
+//   D2 还原布局（2026-10-05）：拖片改坏 → 还原确认层 → 片 0 精确回位（还原前
+//     屏幕坐标）+ 零生成请求（刷新换 seed 给新布局，还原零请求回原版）；
 //   E 保存：伪卡片「初始布局（未求解）」挂进 NestsGrid + 导出按钮保持 disabled
 //     （仅伪卡片 = 未求解不可导出，bestRun 不受污染）；
 //   F 续编：重开弹窗 → 零生成请求（saved 新鲜）+ 画布即刻回显。
@@ -197,6 +199,55 @@ try {
   check('D 生成请求 3 次 + seed=2', genReqs.length === 3 && genReqs[2].seed === 2, JSON.stringify(genReqs.map((g) => g.seed)));
   check('D 刷新后保存闸解除', !(await page.locator('[data-testid="initial-layout-save"]').isDisabled()));
   check('D 刷新后无非法提示', (await page.locator('[data-testid="initial-layout-save-hint"]').count()) === 0);
+
+  // ---- D2 还原布局（2026-10-05）：拖片改坏 → 确认还原 → 精确回位 + 零生成请求
+  // 按节点身份断言（data-probe 标记 + points 世界坐标首两顶点 + 屏幕坐标），不用
+  // polys 下标 —— 拖动提层置顶会重排 DOM、交集高亮多边形追加（下标漂移，探针实证）。
+  const t0 = await page.evaluate(() => {
+    const poly = document
+      .querySelector('[data-testid="initial-layout-overlay"] svg')
+      .querySelectorAll(':scope g > polygon')[0];
+    poly.setAttribute('data-probe', 'd2');
+    const pr = poly.getBoundingClientRect();
+    return {
+      pts: (poly.getAttribute('points') ?? '').trim().split(/\s+/).slice(0, 2).join(' '),
+      cx: pr.x + pr.width / 2,
+      cy: pr.y + pr.height / 2,
+    };
+  });
+  check('D2 无编辑时还原禁用', await page.locator('[data-testid="initial-layout-restore"]').isDisabled());
+  await dragTo(0, t0.cx + 80, t0.cy); // 右移 80px 改坏（拖出非法重叠与否皆可还原）
+  check('D2 有编辑后还原可用', !(await page.locator('[data-testid="initial-layout-restore"]').isDisabled()));
+  await page.locator('[data-testid="initial-layout-restore"]').click();
+  const restoreMsg = ((await page.locator('[data-testid="edit-confirm-message"]').textContent()) ?? '').trim();
+  check('D2 还原确认层（还原布局将丢弃当前编辑）', restoreMsg.includes('还原布局将丢弃当前编辑'), restoreMsg);
+  await page.screenshot({ path: OUT + '/04b_restore_confirm.png' });
+  await page.locator('[data-testid="edit-confirm-ok"]').click();
+  await sleep(300); // replaceWorking + EditCanvas 签名跳过式重绘
+  const t1 = await page.evaluate(() => {
+    const el = document.querySelector('[data-testid="initial-layout-overlay"] [data-probe="d2"]');
+    if (!el) return null;
+    const pr = el.getBoundingClientRect();
+    return {
+      pts: (el.getAttribute('points') ?? '').trim().split(/\s+/).slice(0, 2).join(' '),
+      cx: pr.x + pr.width / 2,
+      cy: pr.y + pr.height / 2,
+    };
+  });
+  check(
+    'D2 被拖片精确回位（同节点世界坐标 + 屏幕坐标）',
+    t1 != null && t1.pts === t0.pts && Math.abs(t1.cx - t0.cx) < 0.5 && Math.abs(t1.cy - t0.cy) < 0.5,
+    t1
+      ? `(${t0.cx.toFixed(1)},${t0.cy.toFixed(1)}) → (${t1.cx.toFixed(1)},${t1.cy.toFixed(1)}) pts=${t1.pts}`
+      : '标记节点丢失',
+  );
+  check('D2 零生成请求（区别于刷新换 seed）', genReqs.length === 3, JSON.stringify(genReqs.map((g) => g.seed)));
+  check(
+    'D2 还原后保存闸解除（非法计数归零）',
+    (await page.locator('[data-testid="initial-layout-save-hint"]').count()) === 0 &&
+      !(await page.locator('[data-testid="initial-layout-save"]').isDisabled()),
+  );
+  check('D2 还原后按钮回禁用（dirty 归零）', await page.locator('[data-testid="initial-layout-restore"]').isDisabled());
 
   // ---- E 保存 → 伪卡片 + 导出不启
   await page.locator('[data-testid="initial-layout-save"]').click();

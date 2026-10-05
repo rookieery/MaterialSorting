@@ -19,6 +19,10 @@
 //      chips 行与高亮同帧撤销。
 //  11) 批量框选接线（2026-10-04 用户需求）：EditCanvas marqueeSelect 透传 → 画布
 //      工具区「区域选择」按钮在场（交互细节单测在 EditCanvas.marquee.test）。
+//  12) 还原布局（2026-10-05 用户需求：改坏无法回退编辑前布局）：无编辑禁用；
+//      有编辑 → 确认层「还原」→ 取消保持 / 确认 replaceWorking 整体回退 baseline
+//      （零生成请求、seed 不变 —— 区别于布局刷新换 seed）+ 改坏锁保存闸 →
+//      还原后计数归零解锁。
 //
 // 套路同 EditLayoutModal 既有用例：createRoot + act + data-testid；不包 StrictMode
 //（StrictMode 双 mount 由组件内 bootRef 防双请求，见组件头注）。lib/api 整体 mock
@@ -272,6 +276,7 @@ describe('InitialLayoutModal 声明式受控 + 打开编排 (US-006)', () => {
     await act(async () => {});
     expect(q('initial-layout-generating')).not.toBeNull();
     expect((q('initial-layout-close') as HTMLButtonElement).disabled).toBe(true);
+    expect((q('initial-layout-restore') as HTMLButtonElement).disabled).toBe(true);
     expect((q('initial-layout-refresh') as HTMLButtonElement).disabled).toBe(true);
     expect((q('initial-layout-save') as HTMLButtonElement).disabled).toBe(true);
   });
@@ -593,6 +598,75 @@ describe('布局刷新 + ✕ dirty 确认 (US-006)', () => {
     await act(async () => {});
     expect(q('edit-confirm-overlay')).toBeNull();
     expect(overlay()).toBeNull();
+  });
+});
+
+// ============================================================
+// 还原布局（2026-10-05 用户需求）：编辑改坏后「布局刷新」换 seed 给新布局、
+// ✕ 丢弃重开又是新局面 —— 均非「精确回退编辑前那张」。「还原」= replaceWorking
+// (baseline.placedItems) 整体回退 working 到本次打开弹窗时的布局（首次生成 =
+// 生成原版；续编 = 上次保存版）；零网络请求、seed 不变；非法计数经 EditCanvas
+// working 变化重算归零 → 保存闸自动解锁。
+// ============================================================
+describe('还原布局 (2026-10-05)', () => {
+  it('无编辑（dirty=false）→ 按钮禁用（无可还原）', async () => {
+    await openModalFresh();
+    expect((q('initial-layout-restore') as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('有编辑 → 确认层「还原布局将丢弃当前编辑」；取消保持编辑', async () => {
+    await openModalFresh();
+    act(() => {
+      useEditStore.getState().setWorkingItem(0, { translation: [10, 10] });
+    });
+    expect((q('initial-layout-restore') as HTMLButtonElement).disabled).toBe(false);
+    click(q('initial-layout-restore'));
+    await act(async () => {});
+    const msg = q('edit-confirm-message')!;
+    expect(msg.textContent).toContain('还原布局将丢弃当前编辑');
+    expect(q('edit-confirm-ok')!.textContent).toBe('还原');
+    click(q('edit-confirm-cancel'));
+    await act(async () => {});
+    expect(q('edit-confirm-overlay')).toBeNull();
+    expect(useEditStore.getState().working[0].translation).toEqual([10, 10]);
+  });
+
+  it('确认 → working 整体回退 baseline（零生成请求、seed 不变、按钮回禁用）', async () => {
+    await openModalFresh();
+    act(() => {
+      useEditStore.getState().setWorkingItem(0, { translation: [10, 10] });
+      useEditStore.getState().setWorkingItem(1, { translation: [700, 0] });
+    });
+    click(q('initial-layout-restore'));
+    await act(async () => {});
+    click(q('edit-confirm-ok'));
+    await act(async () => {});
+    // 全片回基线（编辑被丢弃）
+    expect(useEditStore.getState().working).toEqual(PLACED_OK);
+    // 不发生成请求、seed 不换代（区别于「布局刷新」换 seed 重生成）
+    expect(genCalls()).toHaveLength(1);
+    expect(useInitialLayoutStore.getState().genSeed).toBe(0);
+    // dirty 归零 → 还原按钮回禁用
+    expect((q('initial-layout-restore') as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('改坏场景（用户报障形态）：拖成交叠锁保存闸 → 还原 → 计数归零解锁', async () => {
+    await openModalFresh();
+    // b 挪到 a 上（交 500×450 → 红对）：保存闸锁死 —— 报障截图形态
+    act(() => {
+      useEditStore.getState().setWorkingItem(1, { translation: [100, 50] });
+    });
+    await act(async () => {});
+    expect(q('initial-layout-save-hint')!.textContent).toContain('2 片');
+    expect((q('initial-layout-save') as HTMLButtonElement).disabled).toBe(true);
+    // 还原 → 基线合法 → EditCanvas 重算计数归零 → 闸解锁、提示消失
+    click(q('initial-layout-restore'));
+    await act(async () => {});
+    click(q('edit-confirm-ok'));
+    await act(async () => {});
+    expect(q('initial-layout-save-hint')).toBeNull();
+    expect((q('initial-layout-save') as HTMLButtonElement).disabled).toBe(false);
+    expect(useEditStore.getState().working).toEqual(PLACED_OK);
   });
 });
 
