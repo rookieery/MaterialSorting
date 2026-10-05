@@ -264,16 +264,14 @@ describe("ControlPanel 普通运行弹窗 + 满核开关（2026-10-05）", () =>
     expect(cfg.time).toBe(60);
   });
 
-  it("取消 / ESC / ✕ 只关不跑：form.time 不变、onStart 不发", () => {
+  it("ESC / ✕ 只关不跑：form.time 不变、onStart 不发（2026-10-05 三批已删取消按钮）", () => {
     const onStart = vi.fn();
     renderPanel(onStart);
     checkFirstSize();
-    // 取消按钮
+    // 取消按钮已删（与高级运行弹窗同构单执行键）—— actions 区只剩确认键
     act(() => container!.querySelector<HTMLButtonElement>("#start")!.click());
-    act(() => document.body.querySelector<HTMLButtonElement>('[data-testid="normal-run-cancel"]')!.click());
-    expect(document.body.querySelector('[data-testid="normal-run-overlay"]')).toBeNull();
+    expect(document.body.querySelector('[data-testid="normal-run-cancel"]')).toBeNull();
     // ESC
-    act(() => container!.querySelector<HTMLButtonElement>("#start")!.click());
     act(() => window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })));
     expect(document.body.querySelector('[data-testid="normal-run-overlay"]')).toBeNull();
     // ✕

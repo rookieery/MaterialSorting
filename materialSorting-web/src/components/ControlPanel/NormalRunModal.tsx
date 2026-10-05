@@ -10,9 +10,13 @@
 // + 失焦/确认 normalizeTime 钳制（normalizeGate [50,400] 同款先例，越界钳边界、
 // 空/非法回退 120，不做报错拦截）。
 //
-// 骨板对齐 FileNameModal 的纯取消型惯例：ESC / 遮罩 / ✕ / 取消 = 只关不跑；
-// Enter = 确认（单输入框弹窗的键盘期望）。确认置灰 = solving（求解中）||
+// 骨板对齐 FileNameModal 的纯取消型惯例：ESC / 遮罩 / ✕ = 只关不跑；Enter =
+// 确认（单输入框弹窗的键盘期望）。确认置灰 = solving（求解中）||
 // startDisabled（面板闸门：码号空 / band·prefix 无效 —— 与 #start 同源，双保险）。
+//
+// 2026-10-05 三批交互优化：删除「取消」按钮、确认文案「开始运行」→「执行」——
+// actions 区与高级运行弹窗 ConfigState 同构（单个 strategy-btn-exec，关窗走
+// ✕ / ESC / 遮罩三通道即可，不再占双键位）。
 
 import { useEffect, useState } from 'react';
 import type { JSX } from 'react';
@@ -126,20 +130,12 @@ export function NormalRunModal({
         <div className="strategy-actions">
           <button
             type="button"
-            className="strategy-btn-again"
-            onClick={onCancel}
-            data-testid="normal-run-cancel"
-          >
-            取消
-          </button>
-          <button
-            type="button"
             className="strategy-btn-exec"
             disabled={confirmDisabled}
             onClick={handleConfirm}
             data-testid="normal-run-confirm"
           >
-            开始运行
+            执行
           </button>
         </div>
       </div>
