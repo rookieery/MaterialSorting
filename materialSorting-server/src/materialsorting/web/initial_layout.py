@@ -34,8 +34,12 @@ placed 列表（展开视图或 band/prefix 组合宇宙条目）安全转换为
 US-002 生成编排 ``generate_initial_layout()``：初始布局弹窗「打开/刷新」的数据源
 —— ``web.prefix_accept.run_arm`` 同款同步收集形态（回调塞 list 收 manifest/frames/
 final）经 ``solve_with_callback_proc(..., record_composite=True)`` 跑短求解
-（``time_budget`` 由端点传 ``INITIAL_LAYOUT_GEN_TIME_S``），取**密度最大可行帧**
-（可行过滤 ``solve_worker._frame_allowed`` 白名单在发射层已保证）组响应：
+（``time_budget`` 由端点传 ``INITIAL_LAYOUT_GEN_TIME_S``），取**帧 0（首帧 =
+LBF 构造性初始解**，explore 循环前必报的 ExplFeas，可行过滤
+``solve_worker._frame_allowed`` 白名单在发射层已保证；2026-10-05 用户定案由
+「密度最大可行帧」切换 —— 首帧最松、余量大最好手工编辑，与 2026-10-04 生成预算
+收敛 1s 的「早期帧更松便于编辑」同一方向；取帧口径不影响 warm 保存性：任何起点
+的手工编辑都会被优化器重排，2026-10-04 实验定案）组响应：
 ``{ok, manifest(WS 前端契约同形), placed(展开视图，永无 WB_/PS_), width_mm,
 density, composite?{placed_items, demand_map}, prefix?}`` —— ``composite`` 段仅在
 band/prefix 开时随帧在场（worker 展开**前** solver 原始条目 + 组合宇宙 demand_map，
@@ -205,9 +209,11 @@ def generate_initial_layout(pieces_snapshot, gate_mm, solve_params, *,
         ``{ok: True, manifest, placed, width_mm, density, composite?, prefix?}``：
         - ``manifest`` = WS 前端契约同形（``routes_ws._build_manifest_msg`` 单一真相
           源，前端 US-006 合成伪 RunRecord 直用）；
-        - ``placed``/``width_mm``/``density`` = **密度最大可行帧**（density 已由 proc
-          层 ``_apply_density_dual`` 换算原面积口径；可行过滤在 worker 发射层，
-          本函数不做二次过滤）；placed 恒为展开视图三键条目（永无 WB_/PS_）；
+        - ``placed``/``width_mm``/``density`` = **帧 0（首帧 = LBF 构造性初始解；
+          2026-10-05 用户定案，后续更高密度帧刻意弃用 —— 更松更好编辑，见模块
+          docstring US-002 段）**（density 已由 proc 层 ``_apply_density_dual`` 换算
+          原面积口径；可行过滤在 worker 发射层，本函数不做二次过滤）；placed 恒为
+          展开视图三键条目（永无 WB_/PS_）；
         - ``composite`` 仅在 band/prefix 开时在场（展开前 solver 原始条目 + 组合
           宇宙 demand_map，US-006 保存 warm 组合载荷的数据源）；
         - ``prefix`` = worker final 统计段（prefix 开时在场）。
@@ -245,17 +251,21 @@ def generate_initial_layout(pieces_snapshot, gate_mm, solve_params, *,
     if not frames:
         raise InitialLayoutGenError('求解失败: 未产生任何可行帧')
 
-    # 密度最大可行帧（帧序无关 argmax；等值取先到帧 = max 语义）。
-    best = max(frames, key=lambda f: float(f.get('density') or 0.0))
+    # 帧 0（首帧 = LBF 构造性初始解）。2026-10-05 用户定案由「密度最大可行帧」
+    # （argmax）切换：首帧最松、余量大，最好手工编辑（与 2026-10-04 生成预算收敛
+    # 1s 的「早期帧更松便于编辑」同一方向），后续更高密度帧刻意弃用；取帧口径不
+    # 影响 warm 保存性 —— 任何起点的手工编辑都会被优化器重排（2026-10-04 实验
+    # 定案：band 整组右移后 0.2s 内即被分离器挪回布头）。
+    first = frames[0]
     resp = {
         'ok': True,
         'manifest': _build_manifest_msg(manifest, float(gate_mm)),
-        'placed': best.get('placed_items') or [],
-        'width_mm': best.get('width_mm'),
-        'density': best.get('density'),
+        'placed': first.get('placed_items') or [],
+        'width_mm': first.get('width_mm'),
+        'density': first.get('density'),
     }
-    if isinstance(best.get('composite'), dict):
-        resp['composite'] = best['composite']
+    if isinstance(first.get('composite'), dict):
+        resp['composite'] = first['composite']
     if final is not None and isinstance(final.get('prefix'), dict):
         resp['prefix'] = final['prefix']
     return resp

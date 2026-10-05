@@ -20,7 +20,8 @@ monkeypatch ``web.solver.solve_with_callback_proc``（generate_initial_layout �
 3. ``GET /api/warm-capability``（US-001，TestClient）：恒 200 / 无会话闸门
    （bogus sid 同样 200 —— 能力是进程级属性）/ 能力态透传（monkeypatch 生效）；
 4. ``POST /api/initial-layout/generate``（US-002，TestClient + fake proc）：
-   happy path 响应形态（manifest = WS 前端契约同形 / placed = 密度最大可行帧
+   happy path 响应形态（manifest = WS 前端契约同形 / placed = 帧 0（首帧，
+   2026-10-05 用户定案：后续更高密度帧刻意弃用，夹具两帧 0.55→0.62 即回归锁）
    展开视图永无 WB_/PS_ / width_mm·density 同帧）+ proc 调用形态（time_budget
    = ``INITIAL_LAYOUT_GEN_TIME_S``=1 / sizes·params·per_type·quantities·seed
    透传 / band·prefix worker 形态 / **record_composite=True 透传断言**）+ gate_mm
@@ -436,19 +437,20 @@ def _expected_manifest(gate_mm=1980.0) -> dict:
             'n_eroded': 0, 'pieces': pieces}
 
 
-def _frames(composite_on_best: bool = False) -> list[dict]:
-    """两帧（0.55 / 0.62）—— best=帧 2；composite_on_best 时帧 2 附组合段。"""
-    best = {
-        'type': 'frame', 'elapsed': 2.0, 'phase': 'exploring',
-        'density': 0.62, 'density_sparrow': 0.64, 'width_mm': 1100.0,
+def _frames(composite_on_first: bool = False) -> list[dict]:
+    """两帧（帧 0 = 0.55 被选中；帧 1 = 0.62 密度更高但**刻意弃用** —— 取帧口径
+    = 首 帧回归锁，2026-10-05 用户定案）；composite_on_first 时帧 0 附组合段。"""
+    first = {
+        'type': 'frame', 'elapsed': 1.0, 'phase': 'exploring',
+        'density': 0.55, 'density_sparrow': 0.57, 'width_mm': 1200.0,
         'placed_items': [
             _pl('g01_28', 0.0, [0.0, 0.0]),
-            _pl('g01_28', 0.0, [500.0, 800.0]),
-            _pl('g02_28', 90.0, [700.0, 900.0]),
+            _pl('g01_28', 180.0, [700.0, 0.0]),
+            _pl('g02_28', 0.0, [400.0, 1000.0]),
         ],
     }
-    if composite_on_best:
-        best['composite'] = {
+    if composite_on_first:
+        first['composite'] = {
             'placed_items': [
                 _pl('WB_g01', 0.0, [0.0, 0.0]),
                 _pl('g02_28', 90.0, [700.0, 900.0]),
@@ -456,14 +458,14 @@ def _frames(composite_on_best: bool = False) -> list[dict]:
             'demand_map': {'WB_g01': 1, 'g01_28': 0, 'g02_28': 1},
         }
     return [
-        {'type': 'frame', 'elapsed': 1.0, 'phase': 'exploring',
-         'density': 0.55, 'density_sparrow': 0.57, 'width_mm': 1200.0,
+        first,
+        {'type': 'frame', 'elapsed': 2.0, 'phase': 'exploring',
+         'density': 0.62, 'density_sparrow': 0.64, 'width_mm': 1100.0,
          'placed_items': [
              _pl('g01_28', 0.0, [0.0, 0.0]),
-             _pl('g01_28', 180.0, [700.0, 0.0]),
-             _pl('g02_28', 0.0, [400.0, 1000.0]),
+             _pl('g01_28', 0.0, [500.0, 800.0]),
+             _pl('g02_28', 90.0, [700.0, 900.0]),
          ]},
-        best,
     ]
 
 
@@ -543,9 +545,10 @@ def gen_client():
 
 def test_generate_happy_path_plain(gen_client, monkeypatch):
     """AC：plain 200 —— 键恰 {ok,manifest,placed,width_mm,density}（无 composite/
-    prefix）；manifest = WS 前端契约同形；placed = 密度最大可行帧展开视图逐条透传
-    （永无 WB_/PS_）；proc 调用形态 time_budget=1 + 全缺省透传 + record_composite
-    =True；成功后单飞锁清空。"""
+    prefix）；manifest = WS 前端契约同形；placed = 帧 0（首帧，2026-10-05 用户
+    定案取帧口径）展开视图逐条透传（永无 WB_/PS_），后续更高密度帧（0.62）刻意
+    弃用；proc 调用形态 time_budget=1 + 全缺省透传 + record_composite=True；
+    成功后单飞锁清空。"""
     assert INITIAL_LAYOUT_GEN_TIME_S == 1
     cap: dict = {}
     _install_fake_proc(monkeypatch, frames=_frames(), final=_final(),
@@ -556,12 +559,12 @@ def test_generate_happy_path_plain(gen_client, monkeypatch):
     assert set(body) == {'ok', 'manifest', 'placed', 'width_mm', 'density'}
     assert body['ok'] is True
     assert body['manifest'] == _expected_manifest(1980.0)
-    best = _frames()[-1]
-    assert body['placed'] == best['placed_items']
+    first = _frames()[0]
+    assert body['placed'] == first['placed_items']
     assert all(it['id'].startswith('g') for it in body['placed'])
     assert not any(it['id'].startswith(('WB_', 'PS_')) for it in body['placed'])
-    assert body['width_mm'] == best['width_mm'] == 1100.0
-    assert body['density'] == best['density'] == 0.62
+    assert body['width_mm'] == first['width_mm'] == 1200.0
+    assert body['density'] == first['density'] == 0.55
     # proc 调用形态（record_composite 透传断言 + WS start 同形缺省）
     assert cap['record_composite'] is True
     assert cap['solve_params'] == {'time_budget': 1, 'seed': 0, 'sizes': [],
@@ -599,7 +602,7 @@ def test_generate_band_prefix_composite_section(gen_client, monkeypatch):
     """band/prefix 同开：composite 段（展开前组合视角 + demand_map）与 prefix 统计段
     在场，顶层 placed 仍展开视图；band/prefix 以 worker 形态（_parse_* 产物）透传。"""
     cap: dict = {}
-    _install_fake_proc(monkeypatch, frames=_frames(composite_on_best=True),
+    _install_fake_proc(monkeypatch, frames=_frames(composite_on_first=True),
                        final=_final(with_prefix=True), capture=cap)
     body = {'quantities': {'g01': {'28': 2}, 'g02': {'28': 2}},
             'band': {'enabled': True, 'label': 'g01'},
@@ -609,8 +612,8 @@ def test_generate_band_prefix_composite_section(gen_client, monkeypatch):
     resp = r.json()
     assert set(resp) == {'ok', 'manifest', 'placed', 'width_mm', 'density',
                          'composite', 'prefix'}
-    best = _frames(composite_on_best=True)[-1]
-    assert resp['composite'] == best['composite']
+    first = _frames(composite_on_first=True)[0]
+    assert resp['composite'] == first['composite']
     assert any(it['id'].startswith('WB_')
                for it in resp['composite']['placed_items'])
     assert resp['prefix'] == _final(with_prefix=True)['prefix']
