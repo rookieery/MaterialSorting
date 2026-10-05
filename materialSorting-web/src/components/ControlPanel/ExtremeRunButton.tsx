@@ -56,7 +56,10 @@ export function ExtremeRunButton({
         onClick={() => openModal('extreme_run')}
         data-testid="extreme-btn"
       >
-        极限运行：极限利用率长跑
+        {/* 2026-10-05 文案精简（用户要求）：只显示「极限运行」（同 StrategyRunButton，
+            三键同行列宽容不下长文案；同日三键统一绿色，区别度由文案与弹窗参数档
+            承担 —— .extreme 类保留作测试/DOM 钩子，不再套色）。 */}
+        极限运行
         {running && (
           <span className="strategy-badge" data-testid="extreme-badge">
             运行中

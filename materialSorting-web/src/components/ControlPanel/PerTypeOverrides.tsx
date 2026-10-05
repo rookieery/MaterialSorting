@@ -74,7 +74,10 @@ export function PerTypeOverrides({
         onClick={() => openModal('per_type')}
         data-testid="per-type-btn"
       >
-        高级配置：设置算法参数
+        {/* 2026-10-05 文案精简（用户要求）：去「高级配置：」前缀 —— 分组标题
+            （ControlPanel .entry-group-label「高级配置」）已承担语义，且与
+            「设置初始布局」同行列宽容不下长文案。弹窗标题不变。 */}
+        设置算法参数
       </button>
       {/* 模态单例：订阅 controlPanelStore 自显隐；Portal 到 document.body */}
       <PerTypeOverridesModal

@@ -178,11 +178,14 @@ describe("ControlPanel (US-004)", () => {
 });
 
 describe("ControlPanel per_type (US-018 button trigger)", () => {
-  it("AC#4 renders 高级配置 button (replaces old <details>); no .per_type .pt-row rows", () => {
+  it("AC#4 renders 设置算法参数 button (replaces old <details>); no .per_type .pt-row rows", () => {
     renderPanel();
     const btn = container!.querySelector<HTMLButtonElement>(".per-type-btn");
     expect(btn).not.toBeNull();
-    expect(btn!.textContent).toContain("高级配置");
+    // 2026-10-05 文案精简：按钮只显「设置算法参数」，分组语义由 .entry-group-label
+    // 「高级配置」标题承担（与「设置初始布局」同行 .adv-entry-row）。
+    expect(btn!.textContent).toBe("设置算法参数");
+    expect(container!.querySelector(".entry-group-label")!.textContent).toBe("高级配置");
     // US-018：不再渲染旧 details 折叠 + 10 行 pt-row
     expect(container!.querySelectorAll(".per_type .pt-row")).toHaveLength(0);
     expect(container!.querySelector("details.advanced")).toBeNull();
@@ -1721,12 +1724,12 @@ describe("ControlPanel initial layout entry (US-004)", () => {
     return container!.querySelector<HTMLButtonElement>('[data-testid="initial-layout-btn"]')!;
   }
 
-  it("渲染在「设置算法参数」按钮下方；文案 + per-type-btn 同款样式", () => {
+  it("渲染在「设置算法参数」按钮同行右侧（2026-10-05 起两键一行）；文案 + per-type-btn 同款样式", () => {
     renderPanel();
     const btns = container!.querySelectorAll<HTMLButtonElement>(".per-type-btn");
     expect(btns.length).toBeGreaterThanOrEqual(2);
     expect(btns[0].textContent).toContain("设置算法参数");
-    expect(btns[btns.length - 1].textContent).toBe("高级配置：设置初始布局");
+    expect(btns[btns.length - 1].textContent).toBe("设置初始布局");
     expect(initialBtn()).toBe(btns[btns.length - 1]);
   });
 

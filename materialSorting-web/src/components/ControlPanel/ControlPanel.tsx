@@ -511,72 +511,67 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
             seed_count 循环自然退化为单 run。底层多 run 能力（useSolveRun / runRegistry /
             NestsGrid / WS 多连接）不动，恢复 UI 即回多 seed。多 seed 探索需求由
             「高级运行」（race/SE 后端策略编排）承接。 */}
-        <PerTypeOverrides
-          values={form.per_type}
-          onChange={(per_type) => patch({ per_type })}
-          band={{
-            enabled: form.band_enabled,
-            label: form.band_label,
-          }}
-          onBandChange={(band) =>
-            patch({
-              band_enabled: band.enabled,
-              band_label: band.label,
-            })
-          }
-          prefix={{
-            enabled: form.prefix_enabled,
-            front: form.prefix_front,
-            back: form.prefix_back,
-          }}
-          onPrefixChange={(prefix) =>
-            patch({
-              prefix_enabled: prefix.enabled,
-              prefix_front: prefix.front,
-              prefix_back: prefix.back,
-            })
-          }
-          sizes={form.sizes.filter(
-            (s: number | null): s is number => s !== null,
-          )}
-          gateMm={parseGate(form)}
-          disabled={solving}
-        />
-        {/* 初始布局 US-004：「高级配置：设置初始布局」入口（「设置算法参数」按钮
-            正下方，per-type-wrapper 同款间距语义）。点击 openModal('initial_layout')
-            —— 弹窗本体 US-006 落地（InitialLayoutModal 单例挂载在 ControlPanel），
-            未挂载前点击无视觉效果（store action 已可用）。置灰两条路径见
-            initialLayoutDisabled 派生（无母版 / supported === false），title 悬停
-            中文提示；热启动是「普通运行」专属增益（US-007 接线），故不随 solving
-            置灰（PRD 口径：disabled = 无母版 || 不支持）。 */}
-        <div className="per-type-wrapper">
-          <button
-            type="button"
-            className="per-type-btn"
-            disabled={initialLayoutDisabled}
-            onClick={() => openModal('initial_layout')}
-            title={initialLayoutTitle}
-            data-testid="initial-layout-btn"
-          >
-            高级配置：设置初始布局
-          </button>
+        {/* 高级配置分组（2026-10-05 用户改版）：分组标题 + 两入口同行各占一半
+            （.adv-entry-row）——「设置算法参数」（PerTypeOverrides 触发器）与
+            「设置初始布局」；文案去「高级配置：」前缀（标题已承担分组语义）。 */}
+        <div className="entry-group-label">高级配置</div>
+        <div className="adv-entry-row">
+          <PerTypeOverrides
+            values={form.per_type}
+            onChange={(per_type) => patch({ per_type })}
+            band={{
+              enabled: form.band_enabled,
+              label: form.band_label,
+            }}
+            onBandChange={(band) =>
+              patch({
+                band_enabled: band.enabled,
+                band_label: band.label,
+              })
+            }
+            prefix={{
+              enabled: form.prefix_enabled,
+              front: form.prefix_front,
+              back: form.prefix_back,
+            }}
+            onPrefixChange={(prefix) =>
+              patch({
+                prefix_enabled: prefix.enabled,
+                prefix_front: prefix.front,
+                prefix_back: prefix.back,
+              })
+            }
+            sizes={form.sizes.filter(
+              (s: number | null): s is number => s !== null,
+            )}
+            gateMm={parseGate(form)}
+            disabled={solving}
+          />
+          {/* 初始布局 US-004：「设置初始布局」入口（2026-10-05 起与「设置算法参数」
+              同行右侧）。点击 openModal('initial_layout') —— 弹窗本体 US-006 落地
+              （InitialLayoutModal 单例挂载在 ControlPanel），未挂载前点击无视觉
+              效果（store action 已可用）。置灰两条路径见 initialLayoutDisabled
+              派生（无母版 / supported === false），title 悬停中文提示；热启动是
+              「普通运行」专属增益（US-007 接线），故不随 solving 置灰
+              （PRD 口径：disabled = 无母版 || 不支持）。 */}
+          <div className="per-type-wrapper">
+            <button
+              type="button"
+              className="per-type-btn"
+              disabled={initialLayoutDisabled}
+              onClick={() => openModal('initial_layout')}
+              title={initialLayoutTitle}
+              data-testid="initial-layout-btn"
+            >
+              设置初始布局
+            </button>
+          </div>
         </div>
-        {/* 2026-09-14 运行族三级入口排序改判（用户要求）：「普通运行」（SolveControls，
-            即原「普通运行」）挪到「高级运行 / 极限运行」上方 —— 三键自上而下按
-            投入强度排列（普通 → 高级 → 极限），配色同日统一为绿 / 紫 / 琥珀
-            （style.css .strategy-btn 注释），#2c5d8f 蓝 exclusive 归工具按钮
-            （本文件两个高级配置按钮 = 树莓紫红 .per-type-btn，2026-10-05）。 */}
-      </div>
-      {/* US-031：data-tour="start-btn" 锚定 SolveControls 父容器（nestingTour step3 高亮目标）。 */}
-      <div data-tour="start-btn">
-        <SolveControls
-          phase={phase}
-          onStart={handleStart}
-          onStop={onStop}
-          startDisabled={startDisabled}
-          initialChip={initialChipState}
-          onClearInitial={clearInitial}
-        />
+        {/* 2026-09-14 运行族三级入口排序改判（用户要求）；2026-10-05 起三键并排
+            一行且统一绿色（用户要求，.entry-group-label「运行模式」分组标题）：
+            普通 → 高级 → 极限按投入强度排列（.strategy-entry-row 各占 1/3），
+            #2c5d8f 蓝 exclusive 归工具按钮（本文件两个高级配置按钮 = 树莓紫红
+            .per-type-btn，2026-10-05）。 */}
       </div>
       {/* US-005 高级运行入口（策略 run 10/20/30/60min + race/se 双模式）：disabled =
           solving（互斥防 CPU 竞争）|| doc===null（未 commit 无排料数据）。
@@ -587,8 +582,24 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
           （后端 /api/extreme/start 按键判在场即 400「暂不支持」）；同会话与高级
           运行单飞互斥由后端 409 兜底（文案区分对方）。两族轮询各自单实例
           （/api/strategy/status 与 /api/extreme/status 互不重叠）。
-          2026-09-14 起从 param-form 包裹层移出、排在「普通运行」之下（运行族排序）。 */}
+          2026-09-14 起从 param-form 包裹层移出、排在「普通运行」之下；
+          2026-10-05 起三键同行并排（用户要求）——「普通运行」以 .solve-entry
+          首列入行（初始布局 chip 随 SolveControls 留在本列按钮下方）；
+          同日起三键统一绿色 + 「运行模式」分组标题（用户要求，区别度由
+          文案与弹窗参数档承担）。 */}
+      <div className="entry-group-label">运行模式</div>
       <div className="strategy-entry-row">
+        {/* US-031：data-tour="start-btn" 锚定 SolveControls 父容器（nestingTour step3 高亮目标）。 */}
+        <div className="solve-entry" data-tour="start-btn">
+          <SolveControls
+            phase={phase}
+            onStart={handleStart}
+            onStop={onStop}
+            startDisabled={startDisabled}
+            initialChip={initialChipState}
+            onClearInitial={clearInitial}
+          />
+        </div>
         <StrategyRunButton
           solving={solving}
           buildStartContext={buildStartContext}

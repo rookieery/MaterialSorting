@@ -1,5 +1,6 @@
-// 初始布局 US-004（prd-initial-layout）「高级配置：设置初始布局」入口按钮浏览器
-// 验证（playwright，手动脚本不入 vitest；模板 = us006_key_modal_verify.mjs）。
+// 初始布局 US-004（prd-initial-layout）「设置初始布局」入口按钮浏览器
+// 验证（playwright，手动脚本不入 vitest；模板 = us006_key_modal_verify.mjs；
+// 2026-10-05 起文案去前缀、与「设置算法参数」同行 .adv-entry-row）。
 //
 // 前置：ms-web 在 $MS_WEB_URL（缺省 http://127.0.0.1:8010，prod 模式需先
 // npm run build —— static/ 为 React 构建产物）；样例母版在 data/（sample-apply
@@ -7,7 +8,7 @@
 //
 // 相位（PRD 验收：按钮置灰两条路径 —— 无母版态 + supported=false mock 态）：
 //   A  无母版态（真实后端，supported=true）：按钮置灰 + title「请先上传母版」
-//      + 位于「设置算法参数」按钮正下方 + 能力探测确实请求了 /api/warm-capability；
+//      + 位于「设置算法参数」按钮之后（2026-10-05 起同行右侧）+ 能力探测确实请求了 /api/warm-capability；
 //   B  样例载入（母版在场 + 真实 supported=true）：按钮可点 + title 空；
 //   C  mock 态（page.route 拦 /api/warm-capability → supported:false + reload）：
 //      C1 无母版 + false → 无母版优先（title 仍「请先上传母版」）；
@@ -87,7 +88,7 @@ try {
   await sleep(800); // 等 App mount probeCapability 落定
   await waitBtnAttached();
   let st = await btnState();
-  check('A 按钮文案', st.text === '高级配置：设置初始布局', st.text);
+  check('A 按钮文案', st.text === '设置初始布局', st.text);
   check('A 无母版 → 置灰', st.disabled === true);
   check('A title=请先上传母版', st.title === '请先上传母版', st.title);
   check('A 能力探测已请求 /api/warm-capability（App 启动拉一次）', realCapCalls >= 1, String(realCapCalls));
@@ -98,7 +99,7 @@ try {
     if (!algo || !il) return null;
     return algo.compareDocumentPosition(il) & Node.DOCUMENT_POSITION_FOLLOWING;
   });
-  check('A 位于「设置算法参数」按钮正下方（DOM 序）', Boolean(pos));
+  check('A 位于「设置算法参数」按钮之后（DOM 序；2026-10-05 起同行右侧）', Boolean(pos));
 
   // ---- B 样例载入（母版在场 + 真实 supported=true）→ 可点
   await gotoNesting();
