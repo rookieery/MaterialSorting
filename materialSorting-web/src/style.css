@@ -111,7 +111,8 @@ body {
    「高级运行 / 极限运行」上方，三键统一几何（13px / 8px 10px / 圆角 4px，与
    .strategy-btn 同尺寸成族）；配色 = 绿（普通）/ 紫（高级 .strategy-btn）/ 琥珀
    （极限 .strategy-btn.extreme）三色阶区分投入强度 —— #2c5d8f 蓝 exclusive 归
-   工具按钮（编辑/保存/导出/上传/高级配置），运行族不再使用。 */
+   工具按钮（编辑/保存/导出/上传），运行族不再使用；「高级配置」两键
+   2026-10-05 起退出蓝族换树莓紫红 #8f2c5d（见 .per-type-btn 注释）。 */
 button#start,
 button#restart {
   width: 100%; padding: 8px 10px;
@@ -494,7 +495,12 @@ button.sample-apply-btn:disabled { background: #444; color: #888; cursor: defaul
 }
 
 /* ---- US-018 PerTypeOverridesModal + PtypePreviewModal（暗底 + #2ea06c 同色系） ---- */
-/* PerTypeOverrides 触发按钮：替换旧 <details> 折叠面板；主面板一行按钮 */
+/* PerTypeOverrides 触发按钮：替换旧 <details> 折叠面板；主面板一行按钮。
+   底色 2026-10-05 换树莓紫红 #8f2c5d（hover #a8346e）：「高级配置」两键
+   （设置算法参数 / 设置初始布局，共用本类）原工具蓝 #2c5d8f 与编辑/保存/
+   导出/上传同色难区分（用户反馈）；新色 hsl(330,53%,37%) 与现有色阶
+   （蓝 210/绿 152/紫 270/琥珀 30/红 8）同饱和度同明度、色相落最大空档，
+   与全部现有按钮色相距 ≥45°。 */
 .per-type-wrapper {
   margin: 8px 0;
 }
@@ -503,7 +509,7 @@ button.sample-apply-btn:disabled { background: #444; color: #888; cursor: defaul
   padding: 8px 10px;
   font-size: 12px;
   font-weight: 600;
-  background: #2c5d8f;
+  background: #8f2c5d;
   color: #fff;
   border: 0;
   border-radius: 4px;
@@ -512,7 +518,7 @@ button.sample-apply-btn:disabled { background: #444; color: #888; cursor: defaul
   transition: background 0.15s;
 }
 .per-type-btn:hover {
-  background: #3470ac;
+  background: #a8346e;
 }
 .per-type-btn:focus-visible {
   outline: 2px solid #2ea06c;
@@ -1580,7 +1586,8 @@ button.sample-apply-btn:disabled { background: #444; color: #888; cursor: defaul
 /* 入口按钮：运行族第二级（2026-09-14 起位于「普通运行」下方 .strategy-entry-row）；
    策略运行中挂「运行中」徽标。底色沿革：2026-08-24 曾对齐 .per-type-btn 高级配置蓝
    #2c5d8f；2026-09-14 运行族统一改版换紫 #5d2c8f —— #2c5d8f 蓝 exclusive 归工具
-   按钮（编辑/保存/导出/上传/高级配置），运行三键 = 绿（普通）/ 紫（高级）/ 琥珀
+   按钮（编辑/保存/导出/上传；高级配置两键 2026-10-05 起换树莓紫红 #8f2c5d），
+   运行三键 = 绿（普通）/ 紫（高级）/ 琥珀
    （极限）三色阶，几何与 #start 同尺寸成族（13px / 8px 10px / 圆角 4px）。 */
 .strategy-wrapper {
   margin: 8px 0;

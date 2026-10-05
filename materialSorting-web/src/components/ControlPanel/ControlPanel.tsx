@@ -564,7 +564,8 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
         {/* 2026-09-14 运行族三级入口排序改判（用户要求）：「普通运行」（SolveControls，
             即原「普通运行」）挪到「高级运行 / 极限运行」上方 —— 三键自上而下按
             投入强度排列（普通 → 高级 → 极限），配色同日统一为绿 / 紫 / 琥珀
-            （style.css .strategy-btn 注释），#2c5d8f 蓝 exclusive 归工具按钮。 */}
+            （style.css .strategy-btn 注释），#2c5d8f 蓝 exclusive 归工具按钮
+            （本文件两个高级配置按钮 = 树莓紫红 .per-type-btn，2026-10-05）。 */}
       </div>
       {/* US-031：data-tour="start-btn" 锚定 SolveControls 父容器（nestingTour step3 高亮目标）。 */}
       <div data-tour="start-btn">
