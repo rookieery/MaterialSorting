@@ -94,6 +94,14 @@ function check(name, ok, detail = '') {
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const log = (msg) => console.log('==== ' + msg);
+/** 2026-10-05：普通运行先开 NormalRunModal（#time 已移入弹窗，id 保留）——
+ *  点 #start/#restart → 弹窗内填时长（省略 = 预填值）→ 确认启动。 */
+async function runNormal(p, timeSec) {
+  await p.locator('#start, #restart').first().click();
+  await p.locator('#time').waitFor({ timeout: 8000 });
+  if (timeSec !== undefined) await p.locator('#time').fill(String(timeSec));
+  await p.locator('[data-testid="normal-run-confirm"]').click();
+}
 
 async function httpOk(port, timeoutMs = 3000) {
   const ctrl = new AbortController();
@@ -399,8 +407,7 @@ try {
   await sleep(800);
   await dismissTour(page);
   for (const sz of SIZES) await page.check('#sz_' + sz);
-  await page.fill('#time', SOLVE_TIME);
-  await page.click('#start');
+  await runNormal(page, SOLVE_TIME);
   const finalMsg = await waitMsg('final', 240_000);
   const lastFrame = cap.msgs.filter((x) => x && x.type === 'frame').at(-1);
   const placed = lastFrame?.placed_items || [];

@@ -88,6 +88,9 @@ import { ExportInfoModal } from './ExportInfoModal';
 // 2026-09-12 文件名需求 1：保存 / DXF·PNG 导出的「文件名」确认弹窗（本地条件渲染，
 // 不进 controlPanelStore —— 打开时刻面板被遮罩挡住，不可能与其他 store 弹窗共存）。
 import { FileNameModal } from './FileNameModal';
+// 2026-10-05 超排交互优化需求 2：「普通运行」确认弹窗（时长输入自 ParamForm 移入；
+// 条件渲染本地态，同 FileNameModal 惯例不进 controlPanelStore）。
+import { NormalRunModal } from './NormalRunModal';
 // 编辑排料 US-002：编辑弹窗单例（订阅 controlPanelStore 自显隐；Portal 到 body）。
 // 打开入口 = US-004 主界面「编辑排料」区块（EditLayoutControls）。
 import { EditLayoutModal } from '../edit/EditLayoutModal';
@@ -126,6 +129,12 @@ export interface ControlPanelStartPayload {
   time: number;
   /** 幅宽（mm）= parseGate(form)（cm×10）；透传 useSolveRun.start → WS StartPayload.gate_mm。 */
   gate_mm: number;
+  /**
+   * 满核运行（2026-10-05 移入通用配置）：collectStartContext 防御归一。随 ctx
+   * spread 自动透传，NestingPage → useSolveRun.start → WS StartPayload.full_cores
+   * （仅 true 附键，线格式零回归）。
+   */
+  full_cores: boolean;
   /** base seed（seed = base+i, i=0..N-1）。 */
   seed: number;
   /** 实际并行启动的 seed 数量（multi_seed=false → 1；true → clamp(seed_count,2,6)）。 */
@@ -242,6 +251,11 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
     { kind: 'export'; fmt: 'dxf' | 'png' } | { kind: 'state' } | null
   >(null);
 
+  // 2026-10-05 普通运行弹窗（需求 2）：#start 点击先开弹窗确认时长，确认 =
+  // patch({time}) 回写 + handleStart（取消不改 form.time）。条件渲染本地态
+  // （FileNameModal 惯例；打开时刻面板被遮罩挡住，不可能与其他弹窗共存）。
+  const [normalRunOpen, setNormalRunOpen] = useState(false);
+
   /** 通用 patch 更新（部分字段）—— formStore.patch（浅合并建新对象，同旧 setForm 语义）。 */
   function patch(p: Partial<FormState>) {
     useFormStore.getState().patch(p);
@@ -255,10 +269,19 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
    * US-005：handleStart 与 StrategyRunModal「执行」共用的 start 上下文构造器
    * （collectStartContext 单一实现 —— 码号过滤 / 幅宽 / seed / params / per_type /
    * quantities 逐字段同源，不复制逻辑）。getState() 取调用时刻数量快照（不订阅）。
+   *
+   * 2026-10-05 普通运行弹窗：form 也改 getState() 现取（空 deps 永不陈旧）—— 弹窗
+   * 确认路径 patch({time}) 后**立即**调 handleStart，闭包捕获的 form 仍是渲染时
+   * 快照会读到旧 time（zustand setState 同步生效于 getState，此时已可读到新值）；
+   * StrategyRunModal 路径同受益（弹窗打开期间面板被遮罩挡住，值不会漂移，行为等价）。
    */
   const buildStartContext = useCallback(
-    () => collectStartContext(form, useQtyStore.getState().quantities),
-    [form],
+    () =>
+      collectStartContext(
+        useFormStore.getState().form,
+        useQtyStore.getState().quantities,
+      ),
+    [],
   );
 
   // US-013 band 启动闸门（AC#3）：勾选未选编号 / 选中 g 码数量全 0（bandMemberCount
@@ -423,6 +446,16 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
     void exportAs(pendingPltFmt, filterSizes(), doc?.filename, fields, saveAs);
   }
 
+  /** 普通运行弹窗确认（2026-10-05 需求 2 唯一提交路径）：回写时长到 formStore 后
+   *  立即启动 —— buildStartContext 已改 getState() 现取（见其注释），此处 patch
+   *  与 handleStart 间的闭包陈旧问题就此消除；time 原样字符串，解析交 parseTime
+   *  （与面板时代同口径：空/非法回退 120）。 */
+  function handleNormalRunConfirm(time: string): void {
+    setNormalRunOpen(false);
+    patch({ time });
+    void handleStart();
+  }
+
   // US-017：doc=null 时 StatusLine 增提示「请先在上传预览页解析母版」（AC#3）；
   // US-013：band 闸门态追加 band 段具体文案（与 startDisabled 同源派生）；
   // US-004：prefix 闸门态同追加（band 段之后）。
@@ -500,9 +533,9 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
       <div data-tour="param-form">
         <ParamForm
           gate={form.gate}
-          time={form.time}
+          fullCores={form.full_cores}
           onGate={(gate) => patch({ gate })}
-          onTime={(time) => patch({ time })}
+          onFullCores={(full_cores) => patch({ full_cores })}
           disabled={solving}
         />
         {/* 2026-08-22 seed UI 隐藏（单 seed 模式）：MultiSeedControls（多 seed 对比 + 数量）
@@ -593,7 +626,9 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
         <div className="solve-entry" data-tour="start-btn">
           <SolveControls
             phase={phase}
-            onStart={handleStart}
+            /* 2026-10-05：#start 先开普通运行弹窗确认时长（需求 2），确认才进
+               handleStart —— 所有非 running 态按钮共用此路径，无直启旁路。 */
+            onStart={() => setNormalRunOpen(true)}
             onStop={onStop}
             startDisabled={startDisabled}
             initialChip={initialChipState}
@@ -668,6 +703,18 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
           exporting={exporting}
           onConfirm={handleSaveNameConfirm}
           onCancel={() => setPendingNameTarget(null)}
+        />
+      )}
+      {/* 2026-10-05 普通运行弹窗（需求 2）：normalRunOpen 条件渲染；预填
+          formStore.form.time（打开时刻值，弹窗 mount 固化 —— 父级重渲染不覆盖
+          草稿）；确认置灰 = solving || startDisabled（与 #start 同源双保险）。 */}
+      {normalRunOpen && (
+        <NormalRunModal
+          defaultTime={form.time}
+          solving={solving}
+          startDisabled={startDisabled}
+          onConfirm={handleNormalRunConfirm}
+          onCancel={() => setNormalRunOpen(false)}
         />
       )}
       {/* PLT 导出信息表格弹窗单例（订阅 controlPanelStore 自显隐；Portal 到 body；

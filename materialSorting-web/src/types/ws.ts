@@ -103,6 +103,13 @@ export interface StartPayload {
    * 与旧前端逐字节一致）；stale / 未保存 / 已清除 → 不附带不拦截（普通求解照常）。
    */
   initial?: WarmInitialPayload | null;
+  /**
+   * 满核运行（2026-10-05 由高级/极限运行弹窗移入通用配置，三族运行同享）：
+   * **键缺席 / false = 旧行为**（useSolveRun 仅 === true 附键 —— JSON 序列化后
+   * 线格式与旧前端逐字节一致）；后端 routes_ws 严格 bool 校验，true → 附
+   * solver_opts.num_workers = max(1, 逻辑核数−1)（CLI --full-cores 同式）。
+   */
+  full_cores?: true;
 }
 
 /**

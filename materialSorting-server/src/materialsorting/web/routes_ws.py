@@ -50,11 +50,18 @@ build_warm_payload``（US-001 web 侧镜像装载点）组 spyrrow ``initial_sol
 reason}`` 透传（装载点回显成功后 worker 闸门仍可能降级，实际灌入态以此为准）/
 routes_ws 侧预丢弃时合成 ``{'engaged': False, 'reason': 中文}``。**无 ``initial``
 键 = 恒 None**：solve 调用形与 final 键集逐字节不变（缺省零回归硬约束）。
+
+满核运行（2026-10-05）：StartPayload 新增可缺省 ``full_cores`` 键（严格 bool，
+非 bool = 结构化 error 早退）—— true 时 ``solve_params`` 附
+``solver_opts.num_workers = max(1, 逻辑核数−1)``（CLI ``--full-cores`` 同式；
+此前仅高级/极限运行弹窗可开，现移入通用配置三族运行同享）。缺省/false =
+不附键，solve_params 与旧版逐字段一致。
 """
 from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -338,6 +345,24 @@ async def ws_solve(ws: WebSocket):
                 pass
             return
 
+        # 满核运行（2026-10-05 由高级/极限运行弹窗移入通用配置，普通运行同享）：
+        # 可缺省 ``full_cores`` 键（**严格 bool**，与 /api/strategy/start 同口径；
+        # 非 bool = 结构化 error 早退 + 显式 close，不发 manifest）。true →
+        # solve_params 附 ``solver_opts.num_workers = max(1, 逻辑核数−1)``（CLI
+        # ``--full-cores`` 同式，run_config.py 单一公式镜像）；solve_params 在
+        # solve_worker 整体摊给 build_instance，solver_opts 本就是其白名单旋钮
+        # （num_workers ≥1 清洗），worker/引擎零改动。缺省/false = 不附键，
+        # solve_params 与旧版逐字段一致（旧前端线格式零回归）。
+        full_cores = msg.get('full_cores', False)
+        if not isinstance(full_cores, bool):
+            await ws.send_json({'type': 'error',
+                                'message': f'full_cores 须为布尔值，当前为 {full_cores!r}'})
+            try:
+                await ws.close()
+            except Exception:
+                pass
+            return
+
         # 初始布局 US-003：可缺省 initial 键热启动（prefix 解析之后）。载荷
         # {placed, demand_map?} 经 initial_layout.build_warm_payload（US-001 装载
         # 点，全降级不抛）组 spyrrow initial_solution；band/prefix 开时用载荷
@@ -385,6 +410,11 @@ async def ws_solve(ws: WebSocket):
             'per_type': per_type,
             'quantities': quantities,
         }
+        # 满核运行（2026-10-05）：true 时附 num_workers 覆盖档（见上方解析注记）。
+        if full_cores:
+            solve_params['solver_opts'] = {
+                'num_workers': max(1, (os.cpu_count() or 4) - 1),
+            }
 
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue = asyncio.Queue()

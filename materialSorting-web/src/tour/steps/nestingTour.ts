@@ -71,7 +71,7 @@ export const nestingTour: TourDef = {
       id: 'params',
       selector: '[data-tour="param-form"]',
       title: '设置参数',
-      body: '在「幅宽 / 时长」调整求解参数；点「高级配置」可设置布局与算法参数（腰头成带 / 按裁片 g 码覆盖重合 / 旋转公差）。上方码号（多选）勾选要参与排料的尺码。',
+      body: '在「幅宽 / 满核运行」调整求解参数（时长在点「普通运行」后的弹窗里设置，2026-10-05 起）；点「高级配置」可设置布局与算法参数（腰头成带 / 按裁片 g 码覆盖重合 / 旋转公差）。上方码号（多选）勾选要参与排料的尺码。',
       placement: 'bottom',
       before: ensureNestingTab,
     },

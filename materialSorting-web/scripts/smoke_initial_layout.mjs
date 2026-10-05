@@ -39,6 +39,14 @@ function check(name, ok, extra = '') {
   return ok;
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+/** 2026-10-05：普通运行先开 NormalRunModal（#time 已移入弹窗，id 保留）——
+ *  点 #start/#restart → 弹窗内填时长（省略 = 预填值）→ 确认启动。 */
+async function runNormal(p, timeSec) {
+  await p.locator('#start, #restart').first().click();
+  await p.locator('#time').waitFor({ timeout: 8000 });
+  if (timeSec !== undefined) await p.locator('#time').fill(String(timeSec));
+  await p.locator('[data-testid="normal-run-confirm"]').click();
+}
 
 const { chromium } = await import('playwright');
 let browser;
@@ -289,8 +297,8 @@ try {
   await gotoNesting();
   check('P1a 5336 样例载入 + 超排 Tab 解锁', true);
   for (const sz of SIZES) await page.check('#sz_' + sz);
-  await page.fill('#time', SOLVE_TIME);
-  check('P1b 勾选 3 码（32/33/34）+ time=30', true);
+  // 2026-10-05：#time 已移入普通运行弹窗 —— time=30 改在各 runNormal 调用点设
+  check('P1b 勾选 3 码（32/33/34）（time=30 在运行弹窗内设）', true);
 
   // ---- P2 弹窗自动生成（无 saved → seed=0）
   const genCountBefore = genReqs.length;
@@ -323,7 +331,7 @@ try {
 
   // ---- P4 普通运行（time=30）→ start 载荷带 initial + 首帧 warm 签名 + engaged
   const connIdx0 = conns.length;
-  await page.click('#start');
+  await runNormal(page, SOLVE_TIME);
   const conn0 = await waitConn(connIdx0);
   const startPayload = await waitStartPayload(conn0);
   check('P4a start 载荷在案且带 initial 键',
@@ -362,7 +370,7 @@ try {
     staleText.includes('初始布局已失效'), staleText);
   check('S2 stale 态无 fresh chip', (await page.locator('[data-testid="initial-chip"]').count()) === 0);
   const connIdx1 = conns.length;
-  await page.click('#restart, #start');
+  await runNormal(page, SOLVE_TIME);
   const conn1 = await waitConn(connIdx1);
   const stalePayload = await waitStartPayload(conn1);
   check('S3 再运行 start 载荷无 initial 键（stale 不附带、不拦截）',
@@ -462,7 +470,7 @@ try {
   check('B9 chip fresh 回场', chipB.includes('将基于初始布局运行'), chipB);
 
   const connIdxB = conns.length;
-  await page.click('#restart, #start');
+  await runNormal(page, SOLVE_TIME);
   const connB = await waitConn(connIdxB);
   const startB = await waitStartPayload(connB);
   check('B10 band 运行 start 载荷带 initial（placed 含 WB_ + demand_map）',

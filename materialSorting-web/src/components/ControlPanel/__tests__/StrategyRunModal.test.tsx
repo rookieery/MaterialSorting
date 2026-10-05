@@ -44,6 +44,7 @@ const CTX: StartContext = {
   gate_mm: 1980,
   seed: 5,
   time: 120,
+  full_cores: false,
   params: { d_ext: 0, d_int: 0, tol_ext: 0, tol_int: 0 },
   per_type: null,
   quantities: { g01: { '30': 2, '32': 1 } },
@@ -194,10 +195,10 @@ describe('StrategyRunModal (US-005)', () => {
     // 常驻提示：排料参数取当前面板
     const hints = Array.from(document.body.querySelectorAll('.strategy-hint')).map((h) => h.textContent);
     expect(hints.some((t) => t!.includes('排料参数取当前面板'))).toBe(true);
-    // 不暴露 --se-screen 等 4 个策略参数：唯一 input = 满核运行开关（2026-09-27）
+    // 不暴露 --se-screen 等 4 个策略参数：配置态零 input（时长/模式均为 select；
+    // 满核开关 2026-10-05 起移面板通用配置，本弹窗不再渲染）
     const inputs = document.body.querySelectorAll('.strategy-modal input');
-    expect(inputs.length).toBe(1);
-    expect((inputs[0] as HTMLInputElement).type).toBe('checkbox');
+    expect(inputs.length).toBe(0);
   });
 
   it('模式说明行随切换（race → SE）', () => {
@@ -256,27 +257,13 @@ describe('StrategyRunModal (US-005)', () => {
     });
   });
 
-  it('满核运行开关（2026-09-27）：默认关不发键；开 → 载荷 full_cores: true', async () => {
+  it('满核运行（2026-09-27 落地 / 2026-10-05 开关移面板通用配置）：ctx.full_cores=false → 载荷无键；true → full_cores: true', async () => {
     openModal();
     renderModal();
-    // 开关与小字在场，位置 = 时长之下、模式之上（DOM 序对拍）
-    expect(document.body.querySelector('[data-testid="strategy-full-cores"]')).not.toBeNull();
-    expect(document.body.querySelector('[data-testid="strategy-full-cores-hint"]')!.textContent)
-      .toContain('保留 1 核维持系统流畅');
-    const sw = document.body.querySelector('[data-testid="strategy-full-cores"]')!;
-    expect(
-      document.body.querySelector('#strategy-minutes')!.compareDocumentPosition(sw)
-        & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    expect(
-      sw.compareDocumentPosition(document.body.querySelector('#strategy-mode')!)
-        & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    // 默认关：执行载荷无 full_cores 键（与旧版逐字节同形）
-    expect(
-      (document.body.querySelector('[data-testid="strategy-full-cores"] input') as HTMLInputElement)
-        .checked,
-    ).toBe(false);
+    // 开关已移面板（幅宽下方 .panel-switch-field，见 ControlPanel.test）—— 弹窗内
+    // 不再渲染（2026-09-27 的 strategy-full-cores testid 已随 UI 删除）。
+    expect(document.body.querySelector('[data-testid="strategy-full-cores"]')).toBeNull();
+    // 默认关（CTX.full_cores=false）：执行载荷无 full_cores 键（与旧版逐字节同形）
     act(() => {
       (document.body.querySelector('[data-testid="strategy-exec-btn"]') as HTMLButtonElement).click();
     });
@@ -286,16 +273,12 @@ describe('StrategyRunModal (US-005)', () => {
     });
     expect(startBodies).toHaveLength(1);
     expect('full_cores' in (startBodies[0] as Record<string, unknown>)).toBe(false);
-    // 回配置态（start 后 starting 卸载配置态）→ 开开关 → 执行 → 载荷带键
+    // 面板开满核（ctx.full_cores=true，buildStartContext 现取同源）→ 回配置态
+    //（start 后 starting 卸载配置态，先 reset）→ 执行 → 载荷带键
     act(() => {
       useStrategyStore.getState().reset();
     });
-    const input = document.body.querySelector(
-      '[data-testid="strategy-full-cores"] input') as HTMLInputElement;
-    act(() => {
-      input.click();
-    });
-    expect(input.checked).toBe(true);
+    renderModal(false, { ...CTX, full_cores: true });
     act(() => {
       (document.body.querySelector('[data-testid="strategy-exec-btn"]') as HTMLButtonElement).click();
     });

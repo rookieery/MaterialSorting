@@ -145,10 +145,12 @@ if (!EXPIRE) {
   const sizeBoxes = pageA.locator('input[type=checkbox]');
   const n = await sizeBoxes.count();
   for (let i = 0; i < Math.min(3, n); i++) await sizeBoxes.nth(i).check();
-  await pageA.fill('#time', '3').catch(() => {});
+  // 2026-10-05：#time 已移入普通运行弹窗 —— 点 #start 开弹窗内设 3s 再确认
   await pageA.click('#start').catch(async (e) => {
     check('P3 求解启动', false, String(e).slice(0, 120));
   });
+  await pageA.locator('#time').fill('3').catch(() => {});
+  await pageA.locator('[data-testid="normal-run-confirm"]').click();
   await pageA.waitForTimeout(6000);
   check('P3a 求解 WS URL 带 ?sid=sidA', !!wsUrl && wsUrl.includes('sid=' + sidA), wsUrl || 'no ws');
 

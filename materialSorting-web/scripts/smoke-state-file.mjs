@@ -28,6 +28,15 @@ const log = (s) => console.log(s);
 const fails = [];
 const check = (ok, msg) => { log(`${ok ? 'PASS' : 'FAIL'} ${msg}`); if (!ok) fails.push(msg); };
 
+/** 2026-10-05：普通运行先开 NormalRunModal（#time 已移入弹窗，id 保留）——
+ *  点 #start/#restart → 弹窗内填时长（省略 = 预填值）→ 确认启动。 */
+async function runNormal(p, timeSec) {
+  await p.locator('#start, #restart').first().click();
+  await p.locator('#time').waitFor({ timeout: 8000 });
+  if (timeSec !== undefined) await p.locator('#time').fill(String(timeSec));
+  await p.locator('[data-testid="normal-run-confirm"]').click();
+}
+
 await page.goto('http://localhost:5173/', { waitUntil: 'networkidle' });
 
 // ① 上传母版 → 自动 commit → 切超排
@@ -39,12 +48,11 @@ await nestingTab.waitFor({ timeout: 60000 });
 await nestingTab.click();
 await page.getByTestId('strategy-btn').waitFor({ timeout: 5000 });
 
-// ② 5s 短求解：勾前两个码 + time=5 → #start → 等 done（#restart 出现 + 导出按钮解灰）
+// ② 5s 短求解：勾前两个码 → #start 开弹窗填 time=5 确认 → 等 done（#restart 出现 + 导出按钮解灰）
 const sizeIds = await page.locator('.sizes .chip input').evaluateAll((els) => els.map((e) => e.id));
 check(sizeIds.length > 0, `size chips present (${sizeIds.length})`);
 for (const id of sizeIds.slice(0, 2)) await page.locator(`#${id}`).check({ force: true });
-await page.locator('#time').fill('5');
-await page.locator('#start').click();
+await runNormal(page, 5);
 await page.locator('#restart').waitFor({ timeout: 60000 });
 await page.locator('.export-btns button.export:not([disabled])').waitFor({ timeout: 10000 });
 log('2 solve done, export enabled');

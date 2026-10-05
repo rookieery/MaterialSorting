@@ -7,13 +7,12 @@
 //
 // 与高级运行弹窗的三处刻意差异：
 //   1) 配置态 = 总时长（四档预设 60/120（默认）/240/480 分钟 + 自定义 16~720
-//      分钟）+ 满核运行开关（2026-09-27，时长与模式之间，opt-in 默认关 → 载荷
-//      full_cores，后端仅覆盖 num_workers = 逻辑核数−1）+ 模式下拉（2026-09-20
-//      起，镜像高级运行结构：race 门杀（默认）/
+//      分钟）+ 模式下拉（2026-09-20 起，镜像高级运行结构：race 门杀（默认）/
 //      SE 顺延 —— se 臂 CLI 展开 = 300s×k 筛选 + 冠军 600s warm 顺延）；极限
 //      参数仍完全隐藏（exploration_pct / early_termination /
 //      quadtree_depth 是实验结论不是可调项；num_workers 除满核开关整体覆盖外
-//      不单独暴露）。SE 顺延
+//      不单独暴露）。满核运行开关 2026-10-05 起移入通用配置（面板幅宽下方，
+//      三族运行同享），本弹窗不再渲染 —— 载荷值改读 ctx.full_cores。SE 顺延
 //      臂附多候选顺延最坏额外时长提示行（US-004，600s 延长 → 约 20 分钟动态
 //      计算）；进度面 se 形态多候选渲染同高级运行（共用 ProgressState）。
 //      预计轮数随时长实时更新：race = N = 1 + floor((T - 602.5) / 347.5)（首轮
@@ -161,9 +160,6 @@ function ExtremeRunModalInner({
   const [presetMin, setPresetMin] = useState<number | 'custom'>(120);
   const [customText, setCustomText] = useState<string>(String(EXTREME_CUSTOM_MIN_MINUTES));
   const [mode, setMode] = useState<ExtremeMode>('race');
-  // 满核运行开关（2026-09-27，opt-in 默认关、不持久化）：true → 载荷
-  // full_cores: true（后端 --full-cores 仅覆盖 num_workers，固化参数不动）。
-  const [fullCores, setFullCores] = useState(false);
 
   // ESC 关闭（仅关弹窗，绝不 stop）。
   useEffect(() => {
@@ -191,8 +187,9 @@ function ExtremeRunModalInner({
       quantities: ctx.quantities,
       band: ctx.band,
       prefix: ctx.prefix,
-      // 满核运行 opt-in（2026-09-27）：关 = 不发键（载荷与旧版逐字节同形）。
-      ...(fullCores ? { full_cores: true } : {}),
+      // 满核运行（2026-10-05 开关移入通用配置）：ctx.full_cores（collectStartContext
+      // 防御归一）；关 = 不发键（载荷与旧版逐字节同形）。
+      ...(ctx.full_cores ? { full_cores: true } : {}),
     };
   }
 
@@ -252,13 +249,11 @@ function ExtremeRunModalInner({
             presetMin={presetMin}
             customText={customText}
             mode={mode}
-            fullCores={fullCores}
             solving={solving}
             buildStartContext={buildStartContext}
             onPreset={setPresetMin}
             onCustomText={setCustomText}
             onMode={setMode}
-            onFullCores={setFullCores}
             onExec={handleExec}
           />
         )}
@@ -298,14 +293,11 @@ interface ExtremeConfigStateProps {
   presetMin: number | 'custom';
   customText: string;
   mode: ExtremeMode;
-  /** 满核运行开关（2026-09-27，opt-in 默认关；仅覆盖 num_workers）。 */
-  fullCores: boolean;
   solving: boolean;
   buildStartContext: () => StartContext;
   onPreset: (p: number | 'custom') => void;
   onCustomText: (t: string) => void;
   onMode: (m: ExtremeMode) => void;
-  onFullCores: (v: boolean) => void;
   onExec: () => void;
 }
 
@@ -313,13 +305,11 @@ function ExtremeConfigState({
   presetMin,
   customText,
   mode,
-  fullCores,
   solving,
   buildStartContext,
   onPreset,
   onCustomText,
   onMode,
-  onFullCores,
   onExec,
 }: ExtremeConfigStateProps): JSX.Element {
   const customMin = parseCustomMinutes(customText);
@@ -392,25 +382,8 @@ function ExtremeConfigState({
           </div>
         )}
       </div>
-      {/* 满核运行开关（2026-09-27）：总时长与模式之间；opt-in 默认关，关 = 载荷
-          不发键。开启后端 --full-cores：仅覆盖 num_workers = 逻辑核数−1（保留
-          1 核），极限固化参数 exploration_pct/early_termination 不动。 */}
-      <div className="strategy-field">
-        <label className="strategy-switch-row" data-testid="extreme-full-cores">
-          <span className="strategy-switch">
-            <input
-              type="checkbox"
-              checked={fullCores}
-              onChange={(e) => onFullCores(e.target.checked)}
-            />
-            <span className="strategy-switch-track" aria-hidden="true" />
-          </span>
-          <span className="strategy-switch-text">是否满核运行</span>
-        </label>
-        <div className="strategy-hint" data-testid="extreme-full-cores-hint">
-          开启后将使用当前 CPU 全部核心（保留 1 核维持系统流畅）满载运行，长时间高负载，请确保散热与供电环境后再启用
-        </div>
-      </div>
+      {/* 满核运行开关已移通用配置（2026-10-05，ParamForm 幅宽下方）—— 本弹窗不再
+          渲染；ctx.full_cores 随 startPayload 透传（三族运行同享）。 */}
       <div className="strategy-field">
         <label htmlFor="extreme-mode">模式</label>
         <select

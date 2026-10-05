@@ -38,6 +38,15 @@ function check(name, ok, extra) {
   console.log(ok ? 'PASS' : 'FAIL', name, extra ? '  [' + String(extra).slice(0, 160) + ']' : '');
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+/** 2026-10-05：普通运行先开 NormalRunModal（#time 已移入弹窗，id 保留）——
+ *  点 #start/#restart → 弹窗内填时长（省略 = 预填值）→ 确认启动。key 闸门在
+ *  确认后的 precheck 处拦截（拦截/放行断言语义不变）。 */
+async function runNormal(p, timeSec) {
+  await p.locator('#start, #restart').first().click();
+  await p.locator('#time').waitFor({ timeout: 8000 });
+  if (timeSec !== undefined) await p.locator('#time').fill(String(timeSec));
+  await p.locator('[data-testid="normal-run-confirm"]').click();
+}
 
 const { chromium } = await import('playwright');
 let browser;
@@ -104,7 +113,8 @@ try {
 
   if (MODE === 'full') {
     // ---- B 普通运行拦截（无 WS 连接：phase 停留 idle → #start 仍在场）----
-    await page.locator('#start').click();
+    // 2026-10-05：穿运行弹窗确认才触 precheck —— 保持闸门测试意图
+    await runNormal(page);
     await page.waitForFunction(
       () => document.querySelector('#status')?.textContent?.includes('未绑定授权 key'),
       { timeout: 8000 },
@@ -155,7 +165,7 @@ try {
     // Toast 不自动消失（唯一出口 ✕）—— B 相位拦截 Toast 仍在栈内属设计内；
     // 放行断言 = 计数不增（无新失败 Toast），非栈内无残留。
     const preToastCount = (await toastTexts()).length;
-    await page.locator('#start').click();
+    await runNormal(page);
     await page.locator('#stop').waitFor({ timeout: 15000 });
     check('E1 普通运行放行（进 WS，phase running）', true);
     check('E1 放行无新失败 Toast', (await toastTexts()).length === preToastCount,
@@ -190,7 +200,7 @@ try {
     await page.screenshot({ path: OUT + '/allowed.png' });
   } else {
     // ---- MODE=down：keyserver 已停，key 已绑 → 断网文案三入口一致 ----
-    await page.locator('#start').click();
+    await runNormal(page);
     await page.waitForFunction(
       () => document.querySelector('#status')?.textContent?.includes('无法连接授权服务器'),
       { timeout: 15000 },

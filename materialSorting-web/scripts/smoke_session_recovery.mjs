@@ -118,6 +118,23 @@ function checkSkip(name, reason) {
   console.log('SKIP', name, '  [' + String(reason).slice(0, 160) + ']');
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+/** 2026-10-05：普通运行先开 NormalRunModal（#time 已移入弹窗，id 保留）——
+ *  点 #start/#restart → 弹窗内填时长（省略 = 预填值）→ 确认启动。 */
+async function runNormal(p, timeSec) {
+  await p.locator('#start, #restart').first().click();
+  await p.locator('#time').waitFor({ timeout: 8000 });
+  if (timeSec !== undefined) await p.locator('#time').fill(String(timeSec));
+  await p.locator('[data-testid="normal-run-confirm"]').click();
+}
+/** 读 form.time（#time 仅弹窗内存在 —— 开弹窗读预填后 ESC 关闭，不启动）。 */
+async function readFormTime(p) {
+  await p.locator('#start, #restart').first().click();
+  await p.locator('#time').waitFor({ timeout: 8000 });
+  const v = await p.locator('#time').inputValue();
+  await p.keyboard.press('Escape');
+  await p.locator('[data-testid="normal-run-overlay"]').waitFor({ state: 'detached', timeout: 8000 });
+  return v;
+}
 const log = (s) => console.log('---', s);
 const jsonNorm = (v) => JSON.parse(JSON.stringify(v));
 
@@ -247,7 +264,8 @@ async function captureState(p) {
   }
   const form = {
     gate: await p.locator('#gate').inputValue(),
-    time: await p.locator('#time').inputValue(),
+    // 2026-10-05：#time 已移入普通运行弹窗 —— 经弹窗预填读 formStore 值（不启动）
+    time: await readFormTime(p),
     sizes: [],
   };
   for (const sz of SIZES) {
@@ -370,13 +388,12 @@ try {
     return sid;
   }
 
-  /** 勾码号 + 门幅/时长表单（幂等；策略与超排求解同源 collectStartContext）。 */
+  /** 勾码号 + 门幅表单（幂等；时长已入普通运行弹窗 —— 普通求解走 runNormal(…, SOLVE_TIME)。 */
   async function setupForm() {
     await page.locator('button.tab:not([disabled]):has-text("超排")').click();
     await sleep(800);
     for (const sz of SIZES) await page.check('#sz_' + sz);
     await page.fill('#gate', GATE);
-    await page.fill('#time', SOLVE_TIME);
   }
 
   // ==================== pending 段（US-003 主路径 + 续段②③）====================
@@ -618,8 +635,9 @@ try {
 
     // ---------- B1 5s 普通求解 → run 块（背景旧布局）落 checkpoint ----------
     const cpCount0 = (await cpPosts(page)).length;
-    // #start（idle）在已有 run 后变体为 #restart（同 onStart 语义；restart 清旧 run）
-    await page.locator('#start, #restart').click();
+    // #start（idle）在已有 run 后变体为 #restart（同 onStart 语义；restart 清旧 run）；
+    // 2026-10-05：先开运行弹窗，弹窗内设时长 5s 再确认
+    await runNormal(page, SOLVE_TIME);
     let cpB1 = null;
     {
       const t0 = Date.now();
@@ -865,7 +883,8 @@ try {
     const cpCount0 = (await cpPosts(page)).length;
     // #start（idle）在已有 run 后变体为 #restart（SolveControls：同一 onStart 语义）
     // —— 全量跑时 pending/extreme 已应用过 run，此按钮恒为 #restart。
-    await page.locator('#start, #restart').click();
+    // 2026-10-05：先开运行弹窗，弹窗内设时长 5s 再确认。
+    await runNormal(page, SOLVE_TIME);
     let cpS1 = null;
     {
       const t0 = Date.now();

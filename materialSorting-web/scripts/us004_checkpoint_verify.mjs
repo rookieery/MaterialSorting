@@ -39,6 +39,14 @@ function check(name, ok, extra) {
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const log = (s) => console.log('---', s);
+/** 2026-10-05：普通运行先开 NormalRunModal（#time 已移入弹窗，id 保留）——
+ *  点 #start/#restart → 弹窗内填时长 → 确认启动。 */
+async function runNormal(p, timeSec) {
+  await p.locator('#start, #restart').first().click();
+  await p.locator('#time').waitFor({ timeout: 8000 });
+  await p.locator('#time').fill(String(timeSec));
+  await p.locator('[data-testid="normal-run-confirm"]').click();
+}
 
 /** 全导航 fetch 侦听（addInitScript）：/api/* 调查日志；checkpoint 响应体克隆捕获。 */
 const NET_SPY = () => {
@@ -135,8 +143,7 @@ try {
   await sleep(800);
   for (const sz of SIZES) await page.check('#sz_' + sz);
   await page.fill('#gate', GATE);
-  await page.fill('#time', SOLVE_TIME);
-  await page.click('#start');
+  await runNormal(page, SOLVE_TIME);
   const t0 = Date.now();
   for (;;) {
     const done = await page.evaluate(

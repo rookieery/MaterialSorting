@@ -267,6 +267,9 @@ export function NestingPage(): React.JSX.Element {
         // null 不写 initial 键 —— 线格式与旧前端一致；仅普通运行路径，策略/极限
         // 走 HTTP config 天然不带）。
         initial: cfg.initial,
+        // 满核运行（2026-10-05 移入通用配置）：useSolveRun 仅 true 附键（关 =
+        // 缺席，线格式与旧前端一致）；后端 routes_ws 附 solver_opts.num_workers。
+        full_cores: cfg.full_cores,
       });
     }
   }

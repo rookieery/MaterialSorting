@@ -16,6 +16,7 @@ const CTX: StartContext = {
   gate_mm: 1980,
   seed: 0,
   time: 120,
+  full_cores: false,
   params: { d_ext: 0, d_int: 0, tol_ext: 0, tol_int: 0 },
   per_type: null,
   quantities: null,

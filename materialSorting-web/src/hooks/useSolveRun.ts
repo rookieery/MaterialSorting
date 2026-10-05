@@ -62,6 +62,12 @@ export interface StartConfig {
    * `initial` 键缺席 = 恒 None 旧行为）。
    */
   initial?: WarmInitialPayload | null;
+  /**
+   * 满核运行（2026-10-05 移入通用配置，普通/高级/极限三族同享）：仅 === true 时
+   * 附 WS full_cores:true（关 = **不写键**，线格式与旧前端逐字节一致）；后端
+   * routes_ws 校验严格 bool 后附 solver_opts.num_workers = max(1, 逻辑核数−1)。
+   */
+  full_cores?: boolean | null;
 }
 
 /** 各类消息的可选回调（订阅层按需注册；不抛错，无返回）。 */
@@ -125,6 +131,9 @@ export function useSolveRun(cb: UseSolveRunCallbacks = {}): {
       // 初始布局 US-007：initial 缺省 / null → **不写键**（条件展开 —— JSON 序列化
       // 后与旧前端线格式逐字节一致；后端 msg.get('initial') None = 旧行为）。
       ...(cfg.initial != null ? { initial: cfg.initial } : {}),
+      // 满核运行（2026-10-05）：仅 true 附键（条件展开同 initial 惯例，关 = 缺席
+      // = 后端 solve_params 与旧版逐字段一致）。
+      ...(cfg.full_cores === true ? { full_cores: true } : {}),
     };
     ws.onopen = () => {
       ws.send(JSON.stringify(payload));

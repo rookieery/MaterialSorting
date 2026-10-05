@@ -53,6 +53,7 @@ const CTX: StartContext = {
   gate_mm: 1980,
   seed: 5,
   time: 120,
+  full_cores: false,
   params: { d_ext: 0, d_int: 0, tol_ext: 0, tol_int: 0 },
   per_type: null,
   quantities: { g01: { '30': 2, '32': 1 } },
@@ -392,42 +393,24 @@ describe('ExtremeRunModal (US-003)', () => {
     });
   });
 
-  it('满核运行开关（2026-09-27）：默认关不发键；开 → 载荷 full_cores: true（仅覆盖 num_workers）', async () => {
+  it('满核运行（2026-09-27 落地 / 2026-10-05 开关移面板通用配置）：ctx.full_cores=false → 载荷无键；true → full_cores: true', async () => {
     openModal();
     renderModal();
-    // 开关与小字在场，位置 = 总时长之下、模式之上（DOM 序对拍）
-    expect(document.body.querySelector('[data-testid="extreme-full-cores"]')).not.toBeNull();
-    expect(document.body.querySelector('[data-testid="extreme-full-cores-hint"]')!.textContent)
-      .toContain('保留 1 核维持系统流畅');
-    const sw = document.body.querySelector('[data-testid="extreme-full-cores"]')!;
-    expect(
-      document.body.querySelector('[data-testid="extreme-presets"]')!.compareDocumentPosition(sw)
-        & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    expect(
-      sw.compareDocumentPosition(document.body.querySelector('[data-testid="extreme-mode"]')!)
-        & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
-    // 默认关：执行载荷无 full_cores 键（与旧版逐字节同形）
-    expect(
-      (document.body.querySelector('[data-testid="extreme-full-cores"] input') as HTMLInputElement)
-        .checked,
-    ).toBe(false);
+    // 开关已移面板（幅宽下方 .panel-switch-field，见 ControlPanel.test）—— 弹窗内
+    // 不再渲染（2026-09-27 的 extreme-full-cores testid 已随 UI 删除）。
+    expect(document.body.querySelector('[data-testid="extreme-full-cores"]')).toBeNull();
+    // 默认关（CTX.full_cores=false）：执行载荷无 full_cores 键（与旧版逐字节同形）
     await act(async () => {
       (document.body.querySelector('[data-testid="extreme-exec-btn"]') as HTMLButtonElement).click();
     });
     expect(startBodies).toHaveLength(1);
     expect('full_cores' in (startBodies[0] as Record<string, unknown>)).toBe(false);
-    // 回配置态（start 后 starting 卸载配置态）→ 开开关 → 执行 → 载荷带键
+    // 面板开满核（ctx.full_cores=true，buildStartContext 现取同源）→ 回配置态
+    //（start 后 starting 卸载配置态，先 reset）→ 执行 → 载荷带键
     act(() => {
       useExtremeStore.getState().reset();
     });
-    const input = document.body.querySelector(
-      '[data-testid="extreme-full-cores"] input') as HTMLInputElement;
-    act(() => {
-      input.click();
-    });
-    expect(input.checked).toBe(true);
+    renderModal(false, { ...CTX, full_cores: true });
     await act(async () => {
       (document.body.querySelector('[data-testid="extreme-exec-btn"]') as HTMLButtonElement).click();
     });

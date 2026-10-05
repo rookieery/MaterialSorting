@@ -71,9 +71,11 @@ export interface StrategyStartPayload {
    */
   prefix?: PrefixConfig | null;
   /**
-   * 满核运行（2026-09-27 起，opt-in 默认关）：true 时后端 spawn 追加 --full-cores，
-   * solver_opts.num_workers 覆盖为 max(1, 逻辑核数−1)（保留 1 核维持系统流畅）。
-   * 缺省/不传 = 关（num_workers 维持 4，旧行为）。
+   * 满核运行（2026-09-27 起，opt-in 默认关；**2026-10-05 起开关移入通用配置
+   * （面板幅宽下方），本弹窗不再渲染控件，值改读 ctx.full_cores = collectStartContext
+   * 防御归一**）：true 时后端 spawn 追加 --full-cores，solver_opts.num_workers
+   * 覆盖为 max(1, 逻辑核数−1)（保留 1 核维持系统流畅）。缺省/不传 = 关
+   * （num_workers 维持 4，旧行为）。
    */
   full_cores?: boolean;
 }
@@ -105,10 +107,11 @@ export interface ExtremeStartPayload {
   /** 起始端成套前后幅（2026-08-30 起透传，语义同 StrategyStartPayload.prefix）。 */
   prefix?: PrefixConfig | null;
   /**
-   * 满核运行（2026-09-27 起，opt-in 默认关）：true 时后端 spawn 追加 --full-cores，
-   * 仅覆盖 num_workers = max(1, 逻辑核数−1)（保留 1 核维持系统流畅）；
-   * 极限档固化参数 exploration_pct 0.7 / early_termination false 不动。
-   * 缺省/不传 = 关（num_workers 维持 4，旧行为）。
+   * 满核运行（2026-09-27 起，opt-in 默认关；**2026-10-05 起开关移入通用配置
+   * （面板幅宽下方），本弹窗不再渲染控件，值改读 ctx.full_cores**）：true 时后端
+   * spawn 追加 --full-cores，仅覆盖 num_workers = max(1, 逻辑核数−1)（保留 1 核
+   * 维持系统流畅）；极限档固化参数 exploration_pct 0.7 / early_termination false
+   * 不动。缺省/不传 = 关（num_workers 维持 4，旧行为）。
    */
   full_cores?: boolean;
 }

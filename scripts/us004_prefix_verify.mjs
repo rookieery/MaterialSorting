@@ -250,11 +250,14 @@ try {
   check('策略入口互斥（disabled + title 说明）', cp.strategyDisabled === true && /互斥/.test(cp.strategyTitle), cp.strategyTitle);
 
   // ---- 求解 60s（P0 常态负载：组合片自然锚定布头，pin skip）----
+  // 2026-10-05：#time 已移入普通运行弹窗（id 保留）—— 点 #start 开弹窗内设值再确认
+  await evalJs(`document.querySelector('#start').click()`);
+  await poll(`document.querySelector('#time') !== null`, 8000, 'normal-run modal');
   await evalJs(`window.__setVal('#time', 60)`, true);
   const timeVal = await evalJs(`document.querySelector('#time').value`);
   check('时长设 60s', timeVal === '60', timeVal);
   await evalJs(`window.__wsMsgs.length = 0`);
-  await evalJs(`document.querySelector('#start').click()`);
+  await evalJs(`document.querySelector('[data-testid="normal-run-confirm"]').click()`);
   console.log('SOLVE started, waiting stage...');
   const stageText = await poll(`(() => { const s = document.querySelector('#status')?.textContent || ''; return s.includes('起始端成套构造中') ? s : null; })()`, 30000, 'stage status line');
   check('状态行 stage 提示（含尺码回显）', /起始端成套构造中（尺码 \d+）/.test(stageText), stageText);

@@ -70,6 +70,23 @@ function check(name, ok, extra) {
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const log = (s) => console.log('---', s);
+/** 2026-10-05：普通运行先开 NormalRunModal（#time 已移入弹窗，id 保留）——
+ *  点 #start/#restart → 弹窗内填时长（省略 = 预填值）→ 确认启动。 */
+async function runNormal(p, timeSec) {
+  await p.locator('#start, #restart').first().click();
+  await p.locator('#time').waitFor({ timeout: 8000 });
+  if (timeSec !== undefined) await p.locator('#time').fill(String(timeSec));
+  await p.locator('[data-testid="normal-run-confirm"]').click();
+}
+/** 读 form.time（#time 仅弹窗内存在 —— 开弹窗读预填后 ESC 关闭，不启动）。 */
+async function readFormTime(p) {
+  await p.locator('#start, #restart').first().click();
+  await p.locator('#time').waitFor({ timeout: 8000 });
+  const v = await p.locator('#time').inputValue();
+  await p.keyboard.press('Escape');
+  await p.locator('[data-testid="normal-run-overlay"]').waitFor({ state: 'detached', timeout: 8000 });
+  return v;
+}
 const normItems = (arr) =>
   arr
     .map((it) =>
@@ -205,13 +222,12 @@ await sleep(300);
 const qtyTotal = await page.locator('[data-testid="qty-total"]').innerText();
 check('S1b 数量矩阵 g01@30=2 → 总片数 111', qtyTotal.trim() === String(EXPECT_TOTAL), qtyTotal.trim());
 
-// 切超排：勾 3 码 + 幅宽 180.00 + 时长 5
+// 切超排：勾 3 码 + 幅宽 180.00（时长在运行弹窗内设，见 runNormal）
 await page.locator('button.tab:not([disabled]):has-text("超排")').click();
 await sleep(800);
 await dismissTour(page);
 for (const sz of SIZES) await page.check('#sz_' + sz);
 await page.fill('#gate', GATE);
-await page.fill('#time', SOLVE_TIME);
 
 // 高级配置：g01 重合 d=1 + 腰头成带选 g05（表单快照覆盖 per_type/band）
 await page.click('[data-testid="per-type-btn"]');
@@ -236,7 +252,7 @@ await sleep(300);
 log('S1c form 定制完成（gate/per_type/band）');
 
 // 5s 求解 → final（placed = Σdemand 调整 band 置换后的条数，守恒断言见 S3/S4）
-await page.click('#start');
+await runNormal(page, SOLVE_TIME);
 const final1 = await cap1.waitMsg('final', 120000);
 const manifest1 = cap1.msgs.find((x) => x && x.type === 'manifest') || null;
 const solverPlaced = cap1.msgs.filter((x) => x && x.type === 'frame').slice(-1)[0]?.placed_items || [];
@@ -427,7 +443,8 @@ check('S4i 缩略图 5 层渲染抽查（净版虚线层 ≥1）', netCount >= 1
 await page2.locator('button.tab:has-text("超排")').first().click();
 await sleep(600);
 const gateV = await page2.locator('#gate').inputValue();
-const timeV = await page2.locator('#time').inputValue();
+// 2026-10-05：#time 已移入普通运行弹窗 —— 开弹窗读预填值（= 恢复的 form.time）后关闭
+const timeV = await readFormTime(page2);
 const sizesChecked = [];
 for (const sz of SIZES) {
   if (await page2.locator('#sz_' + sz).isChecked()) sizesChecked.push(sz);
@@ -473,8 +490,8 @@ check('S4p 导出 gate/width/density 与 .msn final 一致',
     && Math.abs((expR.reqBody?.density ?? -1) - msnDensity) < 1e-9,
   JSON.stringify({ gate: expR.reqBody?.gate_mm, width: expR.reqBody?.width_mm, density: expR.reqBody?.density }));
 
-// 重解一次（WS 链路零回归）：新 final + 来源小字退场
-await page2.click('#restart');
+// 重解一次（WS 链路零回归）：新 final + 来源小字退场（2026-10-05：#restart 先开运行弹窗）
+await runNormal(page2);
 const final2 = await cap2.waitMsg('final', 120000);
 check('S4q 恢复后重解出新 final（WS 求解零回归）',
   !!final2 && typeof final2.density === 'number' && final2.density > 0,
@@ -512,7 +529,7 @@ check('S5a2 g02 整列设值 2 → 总片数 ' + EXPECT_TOTAL_S5, qtS5 === Strin
 await page2.locator('button.tab:has-text("超排")').first().click();
 await sleep(600);
 const finalsBefore = cap2.msgs.filter((x) => x && x.type === 'final').length;
-await page2.click('#restart');
+await runNormal(page2);
 let final3 = null;
 for (let i = 0; i < 240; i++) {
   const finals = cap2.msgs.filter((x) => x && x.type === 'final');

@@ -254,10 +254,14 @@ try {
   await sleep(400);
 
   // ---- 求解 60s → 状态行 → final ----------------------------------------
-  await evalJs(`window.__setVal('#time', ${SOLVE_TIME})`, true);
+  // 2026-10-05：#time 已移入普通运行弹窗（id 保留）—— 点 #start 开弹窗 → 弹窗内
+  // 设时长 → 确认启动（evalJs 两步各自 poll 轮次，弹窗挂载在点击后落定）。
   await evalJs(`window.__wsMsgs.length = 0`);
   const solveT0 = Date.now();
-  await evalJs(`document.querySelector('#start').click()`);
+  await evalJs(`document.querySelector('#start, #restart').click()`);
+  await poll(`document.querySelector('#time') !== null`, 8000, 'normal-run modal #time');
+  await evalJs(`window.__setVal('#time', ${SOLVE_TIME})`, true);
+  await evalJs(`document.querySelector('[data-testid="normal-run-confirm"]').click()`);
   console.log('SOLVE started, waiting prefix stage...');
   const stageText = await poll(`(() => { const s = document.querySelector('#status')?.textContent || ''; return s.includes('起始端成套构造中') ? s : null; })()`, 45000, 'stage status line');
   const sm = stageText.match(/起始端成套构造中（尺码 (\d+)＋(g\d+)@(\d+)）…/);

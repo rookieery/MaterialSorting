@@ -15,12 +15,13 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { DEFAULT_FORM, type FormState } from '../../lib/params';
 import { useFormStore } from '../formStore';
 
-/** 编辑过的表单夹具（与 DEFAULT_FORM 逐字段可区分）。 */
+/** 编辑过的表单夹具（与 DEFAULT_FORM 逐字段可区分；full_cores 开 = 与默认关可区分）。 */
 function editedForm(): FormState {
   return {
     sizes: [30, 34],
     gate: '180.50',
     time: '60',
+    full_cores: true,
     seed: '7',
     multi_seed: true,
     seed_count: '4',

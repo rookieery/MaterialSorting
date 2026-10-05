@@ -72,12 +72,19 @@ async function openNesting(page) {
   await page.waitForTimeout(800);
   await dismissTour(page);
 }
-/** 勾前 n 个码号 + 设求解时长（秒）。 */
-async function prepareSolve(page, nSizes, seconds) {
+/** 勾前 n 个码号（2026-10-05：时长不再在面板 —— 由 startNormal 在运行弹窗内设）。 */
+async function prepareSolve(page, nSizes) {
   const boxes = page.locator('input[type=checkbox]');
   const n = await boxes.count();
   for (let i = 0; i < Math.min(nSizes, n); i++) await boxes.nth(i).check();
-  await page.fill('#time', String(seconds));
+}
+/** 2026-10-05：普通运行先开 NormalRunModal（#time 已移入弹窗，id 保留）——
+ *  点 #start → 弹窗内填时长 → 确认启动。 */
+async function startNormal(page, seconds) {
+  await page.click('#start');
+  await page.locator('#time').waitFor({ timeout: 8000 });
+  await page.locator('#time').fill(String(seconds));
+  await page.locator('[data-testid="normal-run-confirm"]').click();
 }
 /** 捕获该 page 的全部 WS 帧与服务端消息（json 解析失败跳过）。
  * framereceived 载荷形状随 Playwright 版本而异（旧版 string / 新版 {payload} 对象
@@ -174,8 +181,8 @@ if (!EXPIRE) {
   // P3：B 求解中 A commit 第三母版 —— B 不中断、结果仍属 B 母版
   await openNesting(pageB);
   const wsB = captureWs(pageB);
-  await prepareSolve(pageB, 3, 150);
-  await pageB.click('#start');
+  await prepareSolve(pageB, 3);
+  await startNormal(pageB, 150);
   const manifestB = await waitMsg(wsB, 'manifest');
   check('P3a B 求解启动收到 manifest（WS ?sid=sidB）', !!manifestB && !!wsB.url && wsB.url.includes('sid=' + sidB), wsB.url || 'no ws');
   const pidsB = (manifestB?.pieces || []).map((p) => p.id);
@@ -205,8 +212,8 @@ if (!EXPIRE) {
   // P4：A 求解 → 停止（stopped 帧）
   await openNesting(pageA);
   const wsA = captureWs(pageA);
-  await prepareSolve(pageA, 3, 60);
-  await pageA.click('#start');
+  await prepareSolve(pageA, 3);
+  await startNormal(pageA, 60);
   const frameA = await waitMsg(wsA, 'frame', 90000);
   check('P4a A 求解出帧', !!frameA && !!wsA.url && wsA.url.includes('sid=' + sidA));
   await pageA.click('#stop');
@@ -324,8 +331,8 @@ if (!EXPIRE) {
   // E1：求解中不误杀 —— TTL=6 下跑 20s 求解（期间客户端不发消息，靠 ws 钉住 + 回调
   // touch），照常 final；求解后立刻操作不弹过期（会话活着穿过整个求解窗口）。
   const ws = captureWs(page);
-  await prepareSolve(page, 3, 20);
-  await page.click('#start');
+  await prepareSolve(page, 3);
+  await startNormal(page, 20);
   const final = await waitMsg(ws, 'final', 90000);
   check('E1a TTL=6 求解 20s 照常 final（ws 钉住不误杀）', !!final && final.density > 0,
     final ? 'density=' + final.density.toFixed(4) : 'no final');

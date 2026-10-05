@@ -106,13 +106,33 @@ afterEach(() => {
   }
 });
 
-/** key 授权 US-007：普通运行前置 key 预检（POST /api/key/precheck 网络往返）——
- * 点击后 onStart 在微任务链末尾才发出；同步断言前须经宏任务边界（setTimeout 0）
- * 排干在飞链（机械替换原「act(() => btn.click()) 后同步断言」的时序面，断言零改动）。 */
+/** key 授权 US-007 + 2026-10-05 普通运行弹窗：#start 点击只开 NormalRunModal
+ * （需求 2），Portal 到 document.body 的确认键才进 handleStart → key 预检
+ * （POST /api/key/precheck 网络往返）→ onStart 在微任务链末尾发出。两段各自独立
+ * act（弹窗挂载在首个 act 退出时才 flush，同一 act 内确认键查无）+ 各补一次宏任务
+ * 边界（setTimeout 0）排干在飞链（断言零改动；#start 置灰时弹窗不开 → confirm
+ * 查无 → ?.click() 静默 no-op，不启动语义保持）。 */
 async function clickStartFlush(btn: HTMLButtonElement): Promise<void> {
   await act(async () => {
     btn.click();
     await new Promise((r) => setTimeout(r, 0));
+  });
+  await act(async () => {
+    const confirm = document.body.querySelector<HTMLButtonElement>(
+      '[data-testid="normal-run-confirm"]',
+    );
+    confirm?.click();
+    await new Promise((r) => setTimeout(r, 0));
+  });
+}
+
+/** 2026-10-05 同步拦截类用例（全 0 拦截 / 预检在飞防连击）：开弹窗 + 点确认两段
+ * act —— 同一 act 内 setState 未 flush、确认键尚未挂载，须分段；handleStart 的
+ * 同步早退路径在第二段 act 内即完成（异步排干版 = clickStartFlush）。 */
+function startViaModalSync(btn: HTMLButtonElement): void {
+  act(() => btn.click());
+  act(() => {
+    document.body.querySelector<HTMLButtonElement>('[data-testid="normal-run-confirm"]')!.click();
   });
 }
 
@@ -147,15 +167,27 @@ describe("ControlPanel (US-004)", () => {
     for (const c of checkboxes) expect(c.checked).toBe(false);
   });
 
-  it("AC#2 defaults match legacy index.html (time=120)；2026-08-22 seed UI 隐藏（#seed/#multi_seed/#seed_count 不渲染）", () => {
+  it("AC#2 defaults match legacy index.html (time=120)；2026-08-22 seed UI 隐藏 + 2026-10-05 时长入弹窗/满核开关入面板", () => {
     renderPanel();
-    const get = (id: string) => container!.querySelector<HTMLInputElement>("#" + id)!;
     // US-019：d_ext/d_int/tol_ext/tol_int 主面板输入已删除，不应在 DOM 中
     expect(container!.querySelector("#d_ext")).toBeNull();
     expect(container!.querySelector("#d_int")).toBeNull();
     expect(container!.querySelector("#tol_ext")).toBeNull();
     expect(container!.querySelector("#tol_int")).toBeNull();
-    expect(get("time").value).toBe("120");
+    // 2026-10-05 需求 2：#time 移入普通运行弹窗（Portal 到 body），面板容器内
+    // 不再渲染；默认值口径不变（formStore.form.time='120'，弹窗预填同源）。
+    expect(container!.querySelector("#time")).toBeNull();
+    expect(useFormStore.getState().form.time).toBe("120");
+    // 2026-10-05 需求 1：满核开关移入面板通用配置（幅宽下方 .panel-switch-field），
+    // 文案「满核运行」（去「是否」前缀），默认关。
+    const switchField = container!.querySelector(".panel-switch-field")!;
+    expect(switchField).not.toBeNull();
+    expect(switchField.textContent).toContain("满核运行");
+    expect(switchField.textContent).not.toContain("是否");
+    expect(
+      container!.querySelector<HTMLInputElement>(".panel-switch-field input[type=checkbox]")!
+        .checked,
+    ).toBe(false);
     // 2026-08-22 seed UI 隐藏：seed 输入框 / 多 seed 对比开关 / 数量输入框均不渲染
     // （form.seed/multi_seed/seed_count 恒默认 → onStart 载荷 seed=0 / seed_count=1 不变）
     expect(container!.querySelector("#seed")).toBeNull();
@@ -174,6 +206,114 @@ describe("ControlPanel (US-004)", () => {
     expect(container!.textContent).not.toContain("内/外两档");
     // PerTypeOverrides 按钮仍在（高级配置入口）
     expect(container!.querySelector(".per-type-btn")).not.toBeNull();
+  });
+});
+
+// ============================================================
+// 2026-10-05 超排交互优化：#start 先经 NormalRunModal 确认时长（需求 2 —— 输入框
+// #time 自 ParamForm 移入弹窗、id 保留冒烟脚本零改动）+ 满核开关入面板通用配置
+// 幅宽下方（需求 1 —— 三族运行同源，高级/极限弹窗内开关已删）。
+// ============================================================
+describe("ControlPanel 普通运行弹窗 + 满核开关（2026-10-05）", () => {
+  function checkFirstSize(): void {
+    const checkbox = container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]")[0]!;
+    act(() => checkbox.click());
+  }
+
+  it("#start 点击只开弹窗不启动：Portal 到 body、#time 预填 form.time、确认前 onStart 不发", () => {
+    const onStart = vi.fn();
+    renderPanel(onStart);
+    checkFirstSize();
+    act(() => {
+      container!.querySelector<HTMLButtonElement>("#start")!.click();
+    });
+    // 弹窗经 Portal 挂 document.body（面板容器内查无）
+    expect(container!.querySelector('[data-testid="normal-run-overlay"]')).toBeNull();
+    const overlay = document.body.querySelector('[data-testid="normal-run-overlay"]')!;
+    expect(overlay).not.toBeNull();
+    expect((document.body.querySelector("#time") as HTMLInputElement).value).toBe("120");
+    expect(document.body.querySelector('[data-testid="normal-run-confirm"]')).not.toBeNull();
+    expect(overlay.textContent).toContain("排料参数取当前面板");
+    expect(onStart).not.toHaveBeenCalled();
+  });
+
+  it("弹窗改时长 60 → 确认 → 弹窗关 + formStore 回写 + onStart 载荷 time=60（预检链排干）", async () => {
+    const onStart = vi.fn();
+    renderPanel(onStart);
+    checkFirstSize();
+    act(() => {
+      container!.querySelector<HTMLButtonElement>("#start")!.click();
+    });
+    const input = document.body.querySelector<HTMLInputElement>("#time")!;
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    act(() => {
+      setter.call(input, "60");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => {
+      document.body.querySelector<HTMLButtonElement>('[data-testid="normal-run-confirm"]')!.click();
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(document.body.querySelector('[data-testid="normal-run-overlay"]')).toBeNull();
+    expect(useFormStore.getState().form.time).toBe("60");
+    expect(onStart).toHaveBeenCalledTimes(1);
+    const cfg = onStart.mock.calls[0][0] as ControlPanelStartPayload;
+    expect(cfg.time).toBe(60);
+  });
+
+  it("取消 / ESC / ✕ 只关不跑：form.time 不变、onStart 不发", () => {
+    const onStart = vi.fn();
+    renderPanel(onStart);
+    checkFirstSize();
+    // 取消按钮
+    act(() => container!.querySelector<HTMLButtonElement>("#start")!.click());
+    act(() => document.body.querySelector<HTMLButtonElement>('[data-testid="normal-run-cancel"]')!.click());
+    expect(document.body.querySelector('[data-testid="normal-run-overlay"]')).toBeNull();
+    // ESC
+    act(() => container!.querySelector<HTMLButtonElement>("#start")!.click());
+    act(() => window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })));
+    expect(document.body.querySelector('[data-testid="normal-run-overlay"]')).toBeNull();
+    // ✕
+    act(() => container!.querySelector<HTMLButtonElement>("#start")!.click());
+    act(() => document.body.querySelector<HTMLButtonElement>('[data-testid="normal-run-close"]')!.click());
+    expect(document.body.querySelector('[data-testid="normal-run-overlay"]')).toBeNull();
+    expect(onStart).not.toHaveBeenCalled();
+    expect(useFormStore.getState().form.time).toBe("120");
+  });
+
+  it("码号空 → #start 置灰不开弹窗；弹窗开着时码号清空 → 确认键同源置灰（双保险）", async () => {
+    const onStart = vi.fn();
+    renderPanel(onStart);
+    // 码号空：#start disabled → click 无效 → 弹窗不开（clickStartFlush 的 ?. 守卫路径）
+    expect(container!.querySelector<HTMLButtonElement>("#start")!.disabled).toBe(true);
+    await clickStartFlush(container!.querySelector<HTMLButtonElement>("#start")!);
+    expect(document.body.querySelector('[data-testid="normal-run-overlay"]')).toBeNull();
+    expect(onStart).not.toHaveBeenCalled();
+    // 勾码号开弹窗 → 弹窗开着时清码号（面板在遮罩下仍在 DOM）→ 确认键置灰
+    checkFirstSize();
+    act(() => container!.querySelector<HTMLButtonElement>("#start")!.click());
+    act(() => container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]")[0]!.click());
+    expect(
+      document.body.querySelector<HTMLButtonElement>('[data-testid="normal-run-confirm"]')!.disabled,
+    ).toBe(true);
+  });
+
+  it("满核开关（需求 1）：默认关 → 载荷 full_cores=false；开 → true（WS 附键在 useSolveRun 层）", async () => {
+    const onStart = vi.fn();
+    renderPanel(onStart);
+    checkFirstSize();
+    const switchInput = container!.querySelector<HTMLInputElement>(
+      ".panel-switch-field input[type=checkbox]",
+    )!;
+    await clickStartFlush(container!.querySelector<HTMLButtonElement>("#start")!);
+    let cfg = onStart.mock.calls[0][0] as ControlPanelStartPayload;
+    expect(cfg.full_cores).toBe(false);
+    // 开满核 → 再跑 → 载荷 true
+    act(() => switchInput.click());
+    expect(switchInput.checked).toBe(true);
+    await clickStartFlush(container!.querySelector<HTMLButtonElement>("#start")!);
+    cfg = onStart.mock.calls[1][0] as ControlPanelStartPayload;
+    expect(cfg.full_cores).toBe(true);
   });
 });
 
@@ -321,8 +461,13 @@ describe("ControlPanel start flow (US-004)", () => {
     expect(stopBtn).not.toBeNull();
     expect(stopBtn.disabled).toBe(false);
     expect(stopBtn.getAttribute("aria-label")).toBe("停止求解");
-    // 参数编辑控件全部 disabled（与原 StartButton disabled 同套机制；seed 控件 2026-08-22 已隐藏）
-    expect(container!.querySelector<HTMLInputElement>("#time")!.disabled).toBe(true);
+    // 参数编辑控件全部 disabled（与原 StartButton disabled 同套机制；seed 控件 2026-08-22 已隐藏；
+    // 2026-10-05 起 #time 已入弹窗 → 幅宽 #gate + 满核开关承载冻结断言）
+    expect(container!.querySelector<HTMLInputElement>("#gate")!.disabled).toBe(true);
+    expect(
+      container!.querySelector<HTMLInputElement>(".panel-switch-field input[type=checkbox]")!
+        .disabled,
+    ).toBe(true);
     expect(container!.querySelector<HTMLButtonElement>(".per-type-btn")!.disabled).toBe(true);
   });
 
@@ -335,8 +480,13 @@ describe("ControlPanel start flow (US-004)", () => {
     // #start / #stop 不存在
     expect(container!.querySelector("#start")).toBeNull();
     expect(container!.querySelector("#stop")).toBeNull();
-    // 参数编辑控件解冻（stopped 态可改参数后重新开始）
-    expect(container!.querySelector<HTMLInputElement>("#time")!.disabled).toBe(false);
+    // 参数编辑控件解冻（stopped 态可改参数后重新开始；2026-10-05 #time 已入弹窗
+    // → 幅宽 #gate + 满核开关承载解冻断言）
+    expect(container!.querySelector<HTMLInputElement>("#gate")!.disabled).toBe(false);
+    expect(
+      container!.querySelector<HTMLInputElement>(".panel-switch-field input[type=checkbox]")!
+        .disabled,
+    ).toBe(false);
   });
 
   it("US-028 phase=done -> 「普通运行」按钮（#restart，文案与 stopped 统一）", () => {
@@ -747,7 +897,8 @@ describe("ControlPanel start guard (US-003 全 0 拦截)", () => {
       for (const c of checkboxes) c.click();
     });
     const btn = container!.querySelector<HTMLButtonElement>("#start")!;
-    act(() => btn.click());
+    // 2026-10-05：#start 先开弹窗，拦截断言须穿弹窗确认（同步早退路径）
+    startViaModalSync(btn);
     // 全 0 拦截：不发 WS start（onStart 零调用），状态行提示
     expect(onStart).not.toHaveBeenCalled();
     expect(onStatus).toHaveBeenCalledTimes(1);
@@ -764,7 +915,7 @@ describe("ControlPanel start guard (US-003 全 0 拦截)", () => {
     const checkboxes = container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]");
     act(() => checkboxes[0].click()); // 28
     const btn = container!.querySelector<HTMLButtonElement>("#start")!;
-    act(() => btn.click());
+    startViaModalSync(btn);
     expect(onStart).not.toHaveBeenCalled();
     expect(onStatus).toHaveBeenCalledTimes(1);
     // 再勾 30（A@30=1 有效）→ 通过拦截正常启动
@@ -1206,19 +1357,20 @@ describe("ControlPanel 重传联动：doc_id 变化重置 form (2026-08-27)", ()
       for (const c of checkboxes) c.click();
     });
     const gateInput = container!.querySelector<HTMLInputElement>("#gate")!;
-    const timeInput = container!.querySelector<HTMLInputElement>("#time")!;
     const numSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
     act(() => {
       numSetter.call(gateInput, "180");
       gateInput.dispatchEvent(new Event("input", { bubbles: true }));
     });
+    // 2026-10-05：#time 已移入普通运行弹窗（弹窗路径专测见下方 describe）——此处
+    // 直写 formStore 模拟改时长；顺带开满核（重置面覆盖新键 full_cores）。
     act(() => {
-      numSetter.call(timeInput, "60");
-      timeInput.dispatchEvent(new Event("input", { bubbles: true }));
+      useFormStore.getState().patch({ time: "60", full_cores: true });
     });
     await enableBandViaModal("g01");
     expect(container!.querySelector<HTMLInputElement>("#gate")!.value).toBe("180");
-    expect(container!.querySelector<HTMLInputElement>("#time")!.value).toBe("60");
+    expect(useFormStore.getState().form.time).toBe("60");
+    expect(useFormStore.getState().form.full_cores).toBe(true);
     // —— 重传新母版（doc_id 变化；hydrate 由 PreviewPage 负责，此处直写 store 模拟
     //     useParseDxf 成功后的 uploadStore 状态）——
     act(() => {
@@ -1228,9 +1380,15 @@ describe("ControlPanel 重传联动：doc_id 变化重置 form (2026-08-27)", ()
     const checkboxesAfter = container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]");
     for (const c of checkboxesAfter) expect(c.checked).toBe(false);
     expect(container!.querySelector<HTMLButtonElement>("#start")!.disabled).toBe(true);
-    // 幅宽/时长回默认（用户决策：全部重置，含机器参数；幅宽 2026-08-28 起两位小数口径）
+    // 幅宽/时长/满核回默认（用户决策：全部重置，含机器参数；幅宽 2026-08-28 起两位
+    // 小数口径；满核 2026-10-05 起随母版重置 —— FormState 归 DEFAULT_FORM）
     expect(container!.querySelector<HTMLInputElement>("#gate")!.value).toBe("175.00");
-    expect(container!.querySelector<HTMLInputElement>("#time")!.value).toBe("120");
+    expect(useFormStore.getState().form.time).toBe("120");
+    expect(useFormStore.getState().form.full_cores).toBe(false);
+    expect(
+      container!.querySelector<HTMLInputElement>(".panel-switch-field input[type=checkbox]")!
+        .checked,
+    ).toBe(false);
     // StatusLine 无 band 闸门文案（band_enabled 已回 false）
     expect(container!.querySelector("#status")!.textContent).not.toContain("腰头成带");
   });
@@ -1267,18 +1425,16 @@ describe("ControlPanel 重传联动：doc_id 变化重置 form (2026-08-27)", ()
     renderPanel();
     const checkbox = container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]")[0]!;
     act(() => checkbox.click());
-    const timeInput = container!.querySelector<HTMLInputElement>("#time")!;
-    const numSetter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    // 2026-10-05：#time 已入弹窗 —— 直写 formStore 模拟改时长（弹窗确认路径同patch）
     act(() => {
-      numSetter.call(timeInput, "60");
-      timeInput.dispatchEvent(new Event("input", { bubbles: true }));
+      useFormStore.getState().patch({ time: "60" });
     });
     // 切 activeSize（doc 对象引用不变、doc_id 不变）→ form 编辑保留
     act(() => {
       useUploadStore.setState({ activeSize: 30 });
     });
     expect(container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]")[0]!.checked).toBe(true);
-    expect(container!.querySelector<HTMLInputElement>("#time")!.value).toBe("60");
+    expect(useFormStore.getState().form.time).toBe("60");
   });
 
   it("首次上传（doc_id: undefined → id）→ form 同样回默认（挂点统一无特殊分支）", () => {
@@ -1669,7 +1825,7 @@ describe("ControlPanel key 预检（key 授权 US-007）", () => {
     const checkboxes = container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]");
     act(() => checkboxes[0].click()); // 28
     const btn = container!.querySelector<HTMLButtonElement>("#start")!;
-    act(() => btn.click());
+    startViaModalSync(btn);
     // 同步拦截即得反馈（不经 precheck 网络往返）
     expect(onStart).not.toHaveBeenCalled();
     expect(onStatus).toHaveBeenCalledTimes(1);
@@ -1695,8 +1851,10 @@ describe("ControlPanel key 预检（key 授权 US-007）", () => {
     const checkboxes = container!.querySelectorAll<HTMLInputElement>(".sizes input[type=checkbox]");
     act(() => checkboxes[0].click());
     const btn = container!.querySelector<HTMLButtonElement>("#start")!;
-    act(() => btn.click()); // 进入预检（pending）
-    act(() => btn.click()); // 在飞 → 早退
+    // 2026-10-05：防连击路径穿弹窗 —— 确认 1 进预检（pending，gateInFlight=true），
+    // 重开弹窗确认 2 → 在飞早退（gateInFlightRef 在 handleStart 内同步置位）。
+    startViaModalSync(btn); // 确认 1 → 进入预检（pending）
+    startViaModalSync(btn); // 确认 2 → 在飞 → 早退
     await act(async () => {
       release(new Response(JSON.stringify({ ok: true }), { status: 200 }));
       await new Promise((r) => setTimeout(r, 0));

@@ -146,7 +146,10 @@ try {
   await sleep(300);
   const startEnabled = await evalJs(`!document.querySelector('#start')?.disabled`);
   check('勾选 28+30 后 #start 解灰', startEnabled);
+  // 2026-10-05：#start 先开普通运行弹窗（#time 已移入弹窗）→ 确认才启动
   await evalJs(`document.querySelector('#start').click()`);
+  await poll(`document.querySelector('#time') !== null`, 8000, 'normal-run modal');
+  await evalJs(`document.querySelector('[data-testid="normal-run-confirm"]').click()`);
   console.log('SOLVE started, waiting first frame...');
   const polys = await poll(`(() => { const p = document.querySelectorAll('svg polygon[data-label]'); return p.length > 0 ? p.length : 0; })()`, 120000, 'nest polygons');
   await sleep(2500);

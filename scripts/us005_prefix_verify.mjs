@@ -198,9 +198,12 @@ try {
   check('#start 解灰（prefix 闸门通过）', await evalJs(`document.querySelector('#start')?.disabled`) === false);
 
   // ---- 求解 60s（与验收器 on 臂同预算）----
+  // 2026-10-05：#time 已移入普通运行弹窗（id 保留）—— 点 #start 开弹窗内设值再确认
+  await evalJs(`document.querySelector('#start').click()`);
+  await poll(`document.querySelector('#time') !== null`, 8000, 'normal-run modal');
   await evalJs(`window.__setVal('#time', 60)`, true);
   await evalJs(`window.__wsMsgs.length = 0`);
-  await evalJs(`document.querySelector('#start').click()`);
+  await evalJs(`document.querySelector('[data-testid="normal-run-confirm"]').click()`);
   console.log('SOLVE started, waiting stage...');
   const stageText = await poll(`(() => { const s = document.querySelector('#status')?.textContent || ''; return s.includes('起始端成套构造中') ? s : null; })()`, 30000, 'stage status line');
   check('状态行 stage 提示（含尺码回显）', /起始端成套构造中（尺码 \d+）/.test(stageText), stageText);

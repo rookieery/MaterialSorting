@@ -8,11 +8,11 @@
 // running 态常驻文案「关闭弹窗不会终止运行」明示这一点。
 //
 // 三态渲染（phase 订阅 strategyStore）：
-//   配置态 idle     时长下拉（10/20/30/60min → --time 600/1200/1800/3600）+ 满核
-//                  运行开关（2026-09-27，时长与模式之间，opt-in 默认关 → 载荷
-//                  full_cores，后端 --full-cores 覆盖 num_workers = 逻辑核数−1）
+//   配置态 idle     时长下拉（10/20/30/60min → --time 600/1200/1800/3600）
 //                  + 模式下拉（race 门杀默认 / SE 顺延）+ 模式说明行随切换（se 附
-//                  多候选顺延最坏额外时长提示，US-004）+ 执行按钮
+//                  多候选顺延最坏额外时长提示，US-004）+ 执行按钮（满核运行开关
+//                  2026-10-05 起移入通用配置面板（幅宽下方，ParamForm），本弹窗
+//                  不再渲染 —— 载荷值改读 ctx.full_cores，三族运行同享）
 //                  （disabled = 主画布 solving || 未选码号 —— 前端互斥防 CPU 竞争
 //                  扭曲门时刻判据）。不暴露 --se-screen 等 4 个策略参数（PRD 实测
 //                  默认值即最优）。排料参数（码号/高级配置/数量矩阵）经
@@ -401,9 +401,6 @@ function StrategyRunModalInner({
   // 配置态本地草稿（mount 时初始化；race 默认 = 方案 B，20 分钟 = 增益起点）。
   const [minutes, setMinutes] = useState<StrategyMinutes>(20);
   const [mode, setMode] = useState<StrategyMode>('race');
-  // 满核运行开关（2026-09-27，opt-in 默认关、不持久化）：true → 载荷
-  // full_cores: true（后端 spawn 追加 --full-cores，num_workers = 逻辑核数−1）。
-  const [fullCores, setFullCores] = useState(false);
 
   // ESC 关闭（仅关弹窗，绝不 stop）。
   useEffect(() => {
@@ -433,8 +430,9 @@ function StrategyRunModalInner({
       quantities: ctx.quantities,
       band: ctx.band,
       prefix: ctx.prefix,
-      // 满核运行 opt-in：关 = 不发键（载荷与旧版逐字节同形）。
-      ...(fullCores ? { full_cores: true } : {}),
+      // 满核运行（2026-10-05 开关移入通用配置）：ctx.full_cores（collectStartContext
+      // 防御归一）；关 = 不发键（载荷与旧版逐字节同形）。
+      ...(ctx.full_cores ? { full_cores: true } : {}),
     });
   }
 
@@ -483,12 +481,10 @@ function StrategyRunModalInner({
           <ConfigState
             minutes={minutes}
             mode={mode}
-            fullCores={fullCores}
             solving={solving}
             buildStartContext={buildStartContext}
             onMinutes={setMinutes}
             onMode={setMode}
-            onFullCores={setFullCores}
             onExec={handleExec}
           />
         )}
@@ -528,25 +524,20 @@ function StrategyRunModalInner({
 interface ConfigStateProps {
   minutes: StrategyMinutes;
   mode: StrategyMode;
-  /** 满核运行开关（2026-09-27，opt-in 默认关）。 */
-  fullCores: boolean;
   solving: boolean;
   buildStartContext: () => StartContext;
   onMinutes: (m: StrategyMinutes) => void;
   onMode: (m: StrategyMode) => void;
-  onFullCores: (v: boolean) => void;
   onExec: () => void;
 }
 
 function ConfigState({
   minutes,
   mode,
-  fullCores,
   solving,
   buildStartContext,
   onMinutes,
   onMode,
-  onFullCores,
   onExec,
 }: ConfigStateProps): JSX.Element {
   const desc = MODE_OPTIONS.find((o) => o.value === mode)?.desc ?? '';
@@ -575,24 +566,8 @@ function ConfigState({
           ))}
         </select>
       </div>
-      {/* 满核运行开关（2026-09-27）：时长与模式之间；opt-in 默认关，关 = 载荷
-          不发键。开启后端 --full-cores：num_workers = 逻辑核数−1（保留 1 核）。 */}
-      <div className="strategy-field">
-        <label className="strategy-switch-row" data-testid="strategy-full-cores">
-          <span className="strategy-switch">
-            <input
-              type="checkbox"
-              checked={fullCores}
-              onChange={(e) => onFullCores(e.target.checked)}
-            />
-            <span className="strategy-switch-track" aria-hidden="true" />
-          </span>
-          <span className="strategy-switch-text">是否满核运行</span>
-        </label>
-        <div className="strategy-hint" data-testid="strategy-full-cores-hint">
-          开启后将使用当前 CPU 全部核心（保留 1 核维持系统流畅）满载运行，长时间高负载，请确保散热与供电环境后再启用
-        </div>
-      </div>
+      {/* 满核运行开关已移通用配置（2026-10-05，ParamForm 幅宽下方）—— 本弹窗不再
+          渲染；ctx.full_cores 随 handleExec 载荷透传（三族运行同享）。 */}
       <div className="strategy-field">
         <label htmlFor="strategy-mode">模式</label>
         <select

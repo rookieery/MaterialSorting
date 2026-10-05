@@ -35,8 +35,19 @@ export interface FormState {
    * 与 time 同样按字符串持有（对应 input.value），交由 parseGate 解析。
    */
   gate: string;
-  /** 时长（秒）字符串。 */
+  /**
+   * 时长（秒）字符串。2026-10-05 起输入框移入「普通运行」弹窗（面板 ParamForm 不
+   * 再渲染）；字段保留 formStore 持有，弹窗确认时 patch 回写、collectStartContext
+   * 照常解析（弹窗取消不改值）。
+   */
   time: string;
+  /**
+   * 满核运行开关（2026-10-05 由高级/极限运行弹窗移入通用配置，三族运行同享；
+   * opt-in 默认关、随母版重置 —— 与幅宽/时长同款既有决策）。true → 普通运行 WS
+   * StartPayload 附 full_cores:true（后端 solve_params 附 solver_opts.num_workers =
+   * max(1, 逻辑核数−1)）/ 高级/极限运行 config 同键（后端 spawn 追加 --full-cores）。
+   */
+  full_cores: boolean;
   /**
    * base seed 字符串。**2026-08-22 seed UI 隐藏后恒 '0'**（ParamForm 删 seed 输入行，
    * 无写入方；parseSeed 恒 0，WS StartPayload.seed=0 契约不变）。
@@ -93,6 +104,7 @@ export const DEFAULT_FORM: FormState = {
   sizes: [],
   gate: '175.00',
   time: '120',
+  full_cores: false,
   seed: '0',
   multi_seed: false,
   seed_count: '3',
@@ -432,6 +444,13 @@ export interface StartContext {
   seed: number;
   /** 时长秒（parseTime；策略模式不使用 —— 总预算由弹窗时长档决定）。 */
   time: number;
+  /**
+   * 满核运行（2026-10-05 移入通用配置）：FormState.full_cores 防御归一（=== true，
+   * 旧 .msn 恢复缺键 undefined → false）。三族运行同享 —— 普通运行 WS 附
+   * full_cores:true / 高级·极限运行 start 载荷同键。初始布局指纹白名单七组件
+   * 不含此键（InitialLayoutFingerprintInput），对其 stale 判定零影响。
+   */
+  full_cores: boolean;
   /** collectParams：US-019 起恒全 0（per_type 是唯一 d/tol 覆盖入口）。 */
   params: SolveParams;
   /** collectParams：空 → null。 */
@@ -467,6 +486,7 @@ export function collectStartContext(
     sizes,
     gate_mm: parseGate(form),
     time: parseTime(form),
+    full_cores: form.full_cores === true,
     seed: parseSeed(form),
     params,
     per_type,

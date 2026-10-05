@@ -23,6 +23,14 @@ const check = (name, ok, detail = '') => {
   log(`${ok ? 'PASS' : 'FAIL'} ${name}${detail ? ' | ' + detail : ''}`);
   if (!ok) fail += 1;
 };
+/** 2026-10-05：普通运行先开 NormalRunModal（#time 已移入弹窗，id 保留）——
+ *  点 #start/#restart → 弹窗内填时长 → 确认启动。 */
+async function runNormal(p, timeSec) {
+  await p.locator('#start, #restart').first().click();
+  await p.locator('#time').waitFor({ timeout: 8000 });
+  await p.locator('#time').fill(String(timeSec));
+  await p.locator('[data-testid="normal-run-confirm"]').click();
+}
 
 await page.goto('http://localhost:5173/', { waitUntil: 'networkidle' });
 await page.locator('input[type="file"]').setInputFiles('../data/5336#老六订单14%7%围加9_coded.dxf');
@@ -37,13 +45,12 @@ for (const text of ['提交排料', '确认提交', 'commit']) {
 await page.waitForSelector('[data-testid="commit-status"].done', { timeout: 240000 });
 await page.locator('button.tab:not([disabled]):has-text("超排")').click();
 await page.waitForTimeout(800);
-// 勾 3 码（启动按钮置灰 = 码号未选）+ 时长 20s（快速冒烟）
+// 勾 3 码（启动按钮置灰 = 码号未选）；时长 20s 在运行弹窗内设（快速冒烟）
 for (const sz of [32, 33, 34]) await page.check('#sz_' + sz);
-await page.fill('#time', '20');
 log('1 uploaded + committed + nesting tab');
 
-// 启动普通运行
-await page.click('#start');
+// 启动普通运行（2026-10-05：#start 开弹窗 → 弹窗内 time=20 → 确认）
+await runNormal(page, 20);
 await page.locator('.nest-label').first().waitFor({ timeout: 20000 });
 log('2 solve started, nest-label present');
 

@@ -88,6 +88,14 @@ body {
   background: #1c1d22; color: #e6e6e6;
   border: 1px solid #3a3d45; border-radius: 4px;
 }
+/* 面板满核运行开关行（2026-10-05 由高级/极限运行弹窗移入通用配置，幅宽下方）：
+   不复用 .field.row —— 其 `label { width: 56px }` 会压坏 .strategy-switch-row
+   的 inline 排版；自有 margin-bottom 与 .field 同距，内部滑块结构见 .strategy-switch。 */
+.panel-switch-field {
+  display: flex;
+  align-items: center;
+  margin-bottom: 14px;
+}
 .sizes { display: flex; flex-wrap: wrap; gap: 6px; }
 /* 码号（多选）标题行全选框（2026-08-31）：标题与「全选」两端分布；
    全选 = tri-state（全勾 ✓ / 部分勾半选 / 全空 □），点击全选⇄全清。 */
@@ -1779,8 +1787,9 @@ button.sample-apply-btn:disabled { background: #444; color: #888; cursor: defaul
   font-size: 11px;
   line-height: 1.5;
 }
-/* ---- 满核运行 Switch（2026-09-27，高级/极限运行弹窗：时长与模式之间） ----
-   无框滑块：透明 checkbox 铺满开关区接管点击与焦点，视觉层 .strategy-switch-track
+/* ---- 满核运行 Switch（2026-09-27 引入；2026-10-05 起弹窗内控件移除，唯二
+   渲染点 = ParamForm 通用配置行（.panel-switch-field 包裹）—— 文案「满核运行」；
+   结构无框滑块：透明 checkbox 铺满开关区接管点击与焦点，视觉层 .strategy-switch-track
    （34×18 圆角轨道 + 14px 圆钮）经 :checked 兄弟选择器联动；主题绿 #2ea06c 与
    .strategy-select 焦点 / band 勾选 accent 同源。 */
 .strategy-switch-row {

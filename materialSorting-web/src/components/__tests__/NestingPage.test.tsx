@@ -405,9 +405,17 @@ describe('NestingPage 编辑排料 invalidate 挂点 (US-004)', () => {
     act(() => {
       (document.querySelector('#sz_28') as HTMLInputElement).click();
     });
-    // key 授权 US-007：预检网络往返后 onStart 才发（宏任务边界排干在飞链）
+    // key 授权 US-007 + 2026-10-05 普通运行弹窗：#start 先开弹窗（Portal 到 body），
+    // 确认才进 handleStart → precheck 网络往返 → onStart。两段独立 act（弹窗挂载在
+    // 首个 act 退出时 flush）+ 各排干宏任务边界。
     await act(async () => {
       (document.querySelector('#start') as HTMLButtonElement).click();
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    await act(async () => {
+      (
+        document.body.querySelector('[data-testid="normal-run-confirm"]') as HTMLButtonElement
+      ).click();
       await new Promise((r) => setTimeout(r, 0));
     });
     const st = useEditStore.getState();
@@ -419,13 +427,21 @@ describe('NestingPage 编辑排料 invalidate 挂点 (US-004)', () => {
     expect(runRegistry.list().includes(run)).toBe(false);
   });
 
-  it('handleStart 无编辑会话 → invalidate 幂等（不炸、状态保持空）', () => {
+  it('handleStart 无编辑会话 → invalidate 幂等（不炸、状态保持空）', async () => {
     renderPage();
     act(() => {
       (document.querySelector('#sz_28') as HTMLInputElement).click();
     });
-    act(() => {
+    // 2026-10-05 普通运行弹窗：穿弹窗确认进 handleStart（两段独立 act 异步排干）。
+    await act(async () => {
       (document.querySelector('#start') as HTMLButtonElement).click();
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    await act(async () => {
+      (
+        document.body.querySelector('[data-testid="normal-run-confirm"]') as HTMLButtonElement
+      ).click();
+      await new Promise((r) => setTimeout(r, 0));
     });
     const st = useEditStore.getState();
     expect(st.run).toBeNull();
@@ -566,7 +582,7 @@ describe('NestingPage warm_state 状态行轻提示 (US-007)', () => {
     __resetToastsForTest();
   });
 
-  /** 点普通运行（选 28 码 + key 预检宏任务排干）→ 返回首个 mock WS。 */
+  /** 点普通运行（选 28 码 + 穿 2026-10-05 弹窗确认 + key 预检宏任务排干）→ 返回首个 mock WS。 */
   async function startRun(): Promise<MockWS> {
     renderPage();
     act(() => {
@@ -574,6 +590,12 @@ describe('NestingPage warm_state 状态行轻提示 (US-007)', () => {
     });
     await act(async () => {
       (document.querySelector('#start') as HTMLButtonElement).click();
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    await act(async () => {
+      (
+        document.body.querySelector('[data-testid="normal-run-confirm"]') as HTMLButtonElement
+      ).click();
       await new Promise((r) => setTimeout(r, 0));
     });
     expect(mockInstances).toHaveLength(1);

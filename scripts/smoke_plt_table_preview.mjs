@@ -34,6 +34,14 @@ function check(name, ok, extra = '') {
   results.push({ name, ok });
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${extra ? '  [' + extra + ']' : ''}`);
 }
+/** 2026-10-05：普通运行先开 NormalRunModal（#time 已移入弹窗，id 保留）——
+ *  点 #start/#restart → 弹窗内填时长 → 确认启动。 */
+async function runNormal(p, timeSec) {
+  await p.locator('#start, #restart').first().click();
+  await p.locator('#time').waitFor({ timeout: 8000 });
+  await p.locator('#time').fill(String(timeSec));
+  await p.locator('[data-testid="normal-run-confirm"]').click();
+}
 async function dismissTour(p, rounds = 6) {
   for (let i = 0; i < rounds; i++) {
     const gone = await p.evaluate(() => document.querySelector('[data-testid=tour-overlay]') === null);
@@ -100,9 +108,9 @@ await dismissTour(page);
 const boxes = page.locator('input[type=checkbox]');
 const nBoxes = await boxes.count();
 for (let i = 0; i < Math.min(3, nBoxes); i++) await boxes.nth(i).check();
-await page.fill('#time', '20');
 const ws = captureWs(page);
-await page.click('#start');
+// 2026-10-05：#start 开弹窗 → 弹窗内 time=20 → 确认（WS 捕获须先装）
+await runNormal(page, 20);
 const final = await waitMsg(ws, 'final', 90000);
 check('S1b 求解 20s 出 final', !!final && final.density > 0,
   final ? 'density=' + final.density.toFixed(4) : 'no final');

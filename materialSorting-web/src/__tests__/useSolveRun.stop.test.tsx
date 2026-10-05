@@ -202,15 +202,23 @@ function mountNestingPage(): void {
   });
 }
 
-// key 授权 US-007：普通运行前置 key 预检（POST /api/key/precheck 网络往返）——
-// onStart 在微任务链末尾才发出；宏任务边界（setTimeout 0）排干在飞链后 WS 才建
-// （原同步 act 点击，机械 async 化，断言零改动）。
+// key 授权 US-007 + 2026-10-05 普通运行弹窗：#start 先开 NormalRunModal（Portal 到
+// body），确认才进 handleStart → key 预检（POST /api/key/precheck 网络往返）→
+// onStart 在微任务链末尾才发出；两段各经宏任务边界（setTimeout 0）排干在飞链后
+// WS 才建（原同步 act 点击，机械扩展，断言零改动）。
 async function startSolveViaPanel(): Promise<void> {
   const checkbox = container!.querySelector<HTMLInputElement>('.sizes input[type=checkbox]')!;
   act(() => checkbox.click());
   const btn = container!.querySelector<HTMLButtonElement>('#start')!;
+  // 两段独立 act：弹窗挂载在首个 act 退出时 flush（同一 act 内确认键查无）。
   await act(async () => {
     btn.click();
+    await new Promise((r) => setTimeout(r, 0));
+  });
+  await act(async () => {
+    document.body
+      .querySelector<HTMLButtonElement>('[data-testid="normal-run-confirm"]')
+      ?.click();
     await new Promise((r) => setTimeout(r, 0));
   });
 }
@@ -301,18 +309,27 @@ describe('US-027 NestingPage phase 转换', () => {
     act(() => mockInstances[0].onmessage?.({ data: JSON.stringify(finalMsg) }));
     expect(container!.querySelector('#restart')).not.toBeNull();
 
-    // done 态编辑 #time（非 running 可编辑）→ 点「普通运行」（#restart）
-    const timeInput = container!.querySelector<HTMLInputElement>('#time')!;
+    // done 态改时长再求解（2026-10-05 起 #time 在普通运行弹窗内，#restart 同开弹窗）：
+    // 弹窗预填上次值 120 → 改 300 → 确认 = patch 回写 + handleStart 立即读新值
+    //（buildStartContext getState() 现取 —— 弹窗确认路径的 stale closure 回归点）
+    const restartBtn = container!.querySelector<HTMLButtonElement>('#restart')!;
+    // key 授权 US-007：#restart 开弹窗（宏任务边界排干挂载）
+    await act(async () => {
+      restartBtn.click();
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    const timeInput = document.body.querySelector<HTMLInputElement>('#time')!;
     expect(timeInput.disabled).toBe(false);
+    expect(timeInput.value).toBe('120'); // 预填 formStore 当前值
     const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!;
     act(() => {
       setter.call(timeInput, '300');
       timeInput.dispatchEvent(new Event('input', { bubbles: true }));
     });
-    const restartBtn = container!.querySelector<HTMLButtonElement>('#restart')!;
-    // key 授权 US-007：#restart 同走 handleStart（预检往返；宏任务边界排干）
     await act(async () => {
-      restartBtn.click();
+      document.body
+        .querySelector<HTMLButtonElement>('[data-testid="normal-run-confirm"]')!
+        .click();
       await new Promise((r) => setTimeout(r, 0));
     });
 
@@ -326,8 +343,8 @@ describe('US-027 NestingPage phase 转换', () => {
     expect(payload.seed).toBe(0); // seed UI 隐藏后恒 0（单 seed 模式）
   });
 
-  it('3d) running 态冻结参数编辑（SizePicker/ParamForm/PerType 均 disabled；seed 控件 2026-08-22 已隐藏）', async () => {
-    expect(container!.querySelector<HTMLInputElement>('#time')!.disabled).toBe(false);
+  it('3d) running 态冻结参数编辑（SizePicker/ParamForm/PerType 均 disabled；seed 控件 2026-08-22 已隐藏；#time 2026-10-05 入弹窗 → #gate 承载断言）', async () => {
+    expect(container!.querySelector<HTMLInputElement>('#gate')!.disabled).toBe(false);
     expect(container!.querySelector<HTMLInputElement>('#seed')).toBeNull(); // UI 已隐藏
     expect(container!.querySelector<HTMLInputElement>('#multi_seed')).toBeNull();
     expect(container!.querySelector<HTMLInputElement>('#seed_count')).toBeNull();
@@ -337,7 +354,7 @@ describe('US-027 NestingPage phase 转换', () => {
 
     await startSolveViaPanel();
 
-    expect(container!.querySelector<HTMLInputElement>('#time')!.disabled).toBe(true);
+    expect(container!.querySelector<HTMLInputElement>('#gate')!.disabled).toBe(true);
     expect(container!.querySelector<HTMLButtonElement>('.per-type-btn')!.disabled).toBe(true);
     const sizeInputRunning = container!.querySelectorAll<HTMLInputElement>('.sizes input[type=checkbox]')[0]!;
     expect(sizeInputRunning.disabled).toBe(true);

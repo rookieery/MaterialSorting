@@ -62,6 +62,15 @@ function check(name, ok, extra) {
 }
 function log(msg) { console.log('-- ' + msg); }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+/** 2026-10-05：普通运行先开 NormalRunModal（#time 已移入弹窗，id 保留）——
+ *  点 #start/#restart → 弹窗内填时长（省略 = 预填值）→ 确认启动。key 闸门在
+ *  确认后的 precheck 处拦截（拦截/放行断言语义不变）。 */
+async function runNormal(p, timeSec) {
+  await p.locator('#start, #restart').first().click();
+  await p.locator('#time').waitFor({ timeout: 8000 });
+  if (timeSec !== undefined) await p.locator('#time').fill(String(timeSec));
+  await p.locator('[data-testid="normal-run-confirm"]').click();
+}
 
 // ---------------------------------------------------------------- 前置自检
 if (!existsSync(STATIC_INDEX)) {
@@ -272,8 +281,8 @@ try {
   await gotoNestingTab();
   await checkFirstSize();
 
-  // B1 普通：#start → running（#stop 在场）→ 停止
-  await page.locator('#start').click();
+  // B1 普通：#start（先开运行弹窗，确认后进 precheck）→ running（#stop 在场）→ 停止
+  await runNormal(page);
   await page.locator('#stop').waitFor({ timeout: 20_000 });
   check('B1 样例免闸·普通运行放行（进 WS running）', true);
   await page.screenshot({ path: OUT + '/01-sample-run.png' });
@@ -343,8 +352,8 @@ try {
   await gotoNestingTab();
   await checkFirstSize();
 
-  // C1 普通：StatusLine + Toast + 不进 WS
-  await page.locator('#start, #restart').first().click();
+  // C1 普通：StatusLine + Toast + 不进 WS（穿运行弹窗确认才触 precheck —— 保持闸门测试意图）
+  await runNormal(page);
   await page.waitForFunction(
     () => document.querySelector('#status')?.textContent?.includes('未绑定授权 key'),
     { timeout: 8000 },
@@ -497,7 +506,7 @@ try {
   await page.locator('[data-testid="key-info-overlay"]').waitFor({ state: 'detached', timeout: 8000 });
 
   // ==== G 绑定有效 key 后运行跑通（真实母版，全程唯一一次扣次）====
-  await page.locator('#start, #restart').first().click();
+  await runNormal(page);
   await page.locator('#stop').waitFor({ timeout: 20_000 });
   check('G 绑定 count key 后普通运行放行（进 WS running）', true);
   await page.screenshot({ path: OUT + '/07-run-allowed.png' });
