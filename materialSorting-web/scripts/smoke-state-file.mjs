@@ -48,11 +48,11 @@ await nestingTab.waitFor({ timeout: 60000 });
 await nestingTab.click();
 await page.getByTestId('strategy-btn').waitFor({ timeout: 5000 });
 
-// ② 5s 短求解：勾前两个码 → #start 开弹窗填 time=5 确认 → 等 done（#restart 出现 + 导出按钮解灰）
+// ② 10s 短求解：勾前两个码 → #start 开弹窗填 time=10 确认 → 等 done（#restart 出现 + 导出按钮解灰；2026-10-05 弹窗范围 10–1200s，原 5s 会被钳到 10）
 const sizeIds = await page.locator('.sizes .chip input').evaluateAll((els) => els.map((e) => e.id));
 check(sizeIds.length > 0, `size chips present (${sizeIds.length})`);
 for (const id of sizeIds.slice(0, 2)) await page.locator(`#${id}`).check({ force: true });
-await runNormal(page, 5);
+await runNormal(page, 10);
 await page.locator('#restart').waitFor({ timeout: 60000 });
 await page.locator('.export-btns button.export:not([disabled])').waitFor({ timeout: 10000 });
 log('2 solve done, export enabled');

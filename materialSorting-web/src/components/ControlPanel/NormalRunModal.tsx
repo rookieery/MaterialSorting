@@ -6,6 +6,10 @@
 // （码号/幅宽/满核/数量/band/prefix/per_type）不在此复述 —— hint 一行「排料参数
 // 取当前面板」（用户定案：最小弹窗，不加参数摘要回显）。
 //
+// 2026-10-05 交互优化（同日二批）：时长范围限制 10–1200s —— 输入框 min/max 同界
+// + 失焦/确认 normalizeTime 钳制（normalizeGate [50,400] 同款先例，越界钳边界、
+// 空/非法回退 120，不做报错拦截）。
+//
 // 骨板对齐 FileNameModal 的纯取消型惯例：ESC / 遮罩 / ✕ / 取消 = 只关不跑；
 // Enter = 确认（单输入框弹窗的键盘期望）。确认置灰 = solving（求解中）||
 // startDisabled（面板闸门：码号空 / band·prefix 无效 —— 与 #start 同源，双保险）。
@@ -14,6 +18,8 @@ import { useEffect, useState } from 'react';
 import type { JSX } from 'react';
 import { createPortal } from 'react-dom';
 
+import { normalizeTime } from '../../lib/params';
+
 export interface NormalRunModalProps {
   /** 预填时长（秒）字符串（formStore.form.time，打开时刻快照）。 */
   defaultTime: string;
@@ -21,7 +27,8 @@ export interface NormalRunModalProps {
   solving: boolean;
   /** 面板启动闸门（码号空 / band·prefix 无效 → 置灰；与 #start disabled 同源）。 */
   startDisabled: boolean;
-  /** 确认（time = input.value 原样字符串，解析交 parseTime —— 与面板时代同口径）。 */
+  /** 确认（time = normalizeTime 归一后字符串：钳制 [10,1200]、空/非法回退 120；
+   *  解析交 parseTime —— Enter 直提不经 blur，提交点统一归一兜底）。 */
   onConfirm: (time: string) => void;
   /** 取消（含 ESC / 遮罩 / ✕ —— 只关弹窗，form.time 不变）。 */
   onCancel: () => void;
@@ -51,10 +58,12 @@ export function NormalRunModal({
     return () => window.removeEventListener('keydown', onKey);
   }, [onCancel]);
 
-  /** 唯一提交路径（按钮点击 / 输入框 Enter 共用；置灰态静默不触发）。 */
+  /** 唯一提交路径（按钮点击 / 输入框 Enter 共用；置灰态静默不触发）。time 经
+   *  normalizeTime 钳制 [10,1200]（2026-10-05 范围限制 —— Enter 直提不经 blur，
+   *  提交点统一归一；onBlur 同款归一给视觉反馈）。 */
   function handleConfirm(): void {
     if (confirmDisabled) return;
-    onConfirm(time);
+    onConfirm(normalizeTime(time));
   }
 
   function handleOverlayMouseDown(e: React.MouseEvent): void {
@@ -99,10 +108,11 @@ export function NormalRunModal({
             className="strategy-text-input"
             data-testid="normal-run-time"
             value={time}
-            min={5}
-            max={3600}
+            min={10}
+            max={1200}
             autoFocus
             onChange={(e) => setTime(e.target.value)}
+            onBlur={(e) => setTime(normalizeTime(e.target.value))}
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
                 e.preventDefault();
@@ -111,7 +121,7 @@ export function NormalRunModal({
             }}
           />
         </div>
-        <div className="strategy-hint">排料参数取当前面板。</div>
+        <div className="strategy-hint">排料参数取当前面板。时长范围 10–1200 秒，越界自动钳制。</div>
 
         <div className="strategy-actions">
           <button

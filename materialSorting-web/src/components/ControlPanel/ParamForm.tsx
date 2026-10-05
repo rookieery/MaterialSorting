@@ -50,9 +50,12 @@ export function ParamForm({ gate, fullCores, onGate, onFullCores, disabled = fal
         />
       </div>
       {/* 满核运行开关（.strategy-switch 无框滑块结构同款；文案按用户要求去「是否」
-          前缀）。checked 回调透传 boolean，禁用态冻结在求解中。 */}
+          前缀）。2026-10-05 交互优化：文案与滑块互换位置 —— 文案在左、滑块在右
+          （与幅宽行 label 左 / 控件右同构）。checked 回调透传 boolean，禁用态冻结
+          在求解中。 */}
       <div className="panel-switch-field">
         <label className="strategy-switch-row">
+          <span className="strategy-switch-text">满核运行</span>
           <span className="strategy-switch">
             <input
               type="checkbox"
@@ -62,7 +65,6 @@ export function ParamForm({ gate, fullCores, onGate, onFullCores, disabled = fal
             />
             <span className="strategy-switch-track" />
           </span>
-          <span className="strategy-switch-text">满核运行</span>
         </label>
       </div>
     </>

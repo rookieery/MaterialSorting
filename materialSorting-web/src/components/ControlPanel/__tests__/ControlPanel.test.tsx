@@ -179,11 +179,14 @@ describe("ControlPanel (US-004)", () => {
     expect(container!.querySelector("#time")).toBeNull();
     expect(useFormStore.getState().form.time).toBe("120");
     // 2026-10-05 需求 1：满核开关移入面板通用配置（幅宽下方 .panel-switch-field），
-    // 文案「满核运行」（去「是否」前缀），默认关。
+    // 文案「满核运行」（去「是否」前缀），默认关。同日二批交互优化：文案与滑块
+    // 互换位置 —— 文案在左、滑块在右（与幅宽行 label 左 / 控件右同构）。
     const switchField = container!.querySelector(".panel-switch-field")!;
     expect(switchField).not.toBeNull();
     expect(switchField.textContent).toContain("满核运行");
     expect(switchField.textContent).not.toContain("是否");
+    const switchText = switchField.querySelector(".strategy-switch-text")!;
+    expect(switchText.nextElementSibling?.classList.contains("strategy-switch")).toBe(true);
     expect(
       container!.querySelector<HTMLInputElement>(".panel-switch-field input[type=checkbox]")!
         .checked,
@@ -314,6 +317,42 @@ describe("ControlPanel 普通运行弹窗 + 满核开关（2026-10-05）", () =>
     await clickStartFlush(container!.querySelector<HTMLButtonElement>("#start")!);
     cfg = onStart.mock.calls[1][0] as ControlPanelStartPayload;
     expect(cfg.full_cores).toBe(true);
+  });
+
+  it("时长范围限制 10–1200s（同日二批）：越界输入确认 → 钳到边界回写 + 载荷同值；空串回退 120", async () => {
+    const onStart = vi.fn();
+    renderPanel(onStart);
+    checkFirstSize();
+    // 输入框 min/max 属性同界
+    async function fillAndConfirm(v: string): Promise<void> {
+      act(() => {
+        container!.querySelector<HTMLButtonElement>("#start")!.click();
+      });
+      const input = document.body.querySelector<HTMLInputElement>("#time")!;
+      expect(input.min).toBe("10");
+      expect(input.max).toBe("1200");
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      act(() => {
+        setter.call(input, v);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      await act(async () => {
+        document.body.querySelector<HTMLButtonElement>('[data-testid="normal-run-confirm"]')!.click();
+        await new Promise((r) => setTimeout(r, 0));
+      });
+    }
+    // 5 → 钳 10
+    await fillAndConfirm("5");
+    expect(useFormStore.getState().form.time).toBe("10");
+    expect((onStart.mock.calls[0][0] as ControlPanelStartPayload).time).toBe(10);
+    // 3600（旧上限）→ 钳 1200
+    await fillAndConfirm("3600");
+    expect(useFormStore.getState().form.time).toBe("1200");
+    expect((onStart.mock.calls[1][0] as ControlPanelStartPayload).time).toBe(1200);
+    // 空串 → 回退 120（parseTime 同款；预填上次值 1200 → 清空确认）
+    await fillAndConfirm("");
+    expect(useFormStore.getState().form.time).toBe("120");
+    expect((onStart.mock.calls[2][0] as ControlPanelStartPayload).time).toBe(120);
   });
 });
 

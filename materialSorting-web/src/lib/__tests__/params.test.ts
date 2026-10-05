@@ -17,6 +17,7 @@ import {
   DEFAULT_FORM,
   defaultPrefixLabels,
   normalizeGate,
+  normalizeTime,
   parseGate,
   parseSeed,
   parseSeedCount,
@@ -273,6 +274,28 @@ describe('normalizeGate（2026-08-28 失焦归一化：两位小数 + [50,400] �
     expect(normalizeGate('abc')).toBe('175.00');
     expect(normalizeGate('0')).toBe('175.00');
     expect(normalizeGate('-5')).toBe('175.00');
+  });
+});
+
+describe('normalizeTime（2026-10-05 普通运行弹窗范围限制：[10,1200] 钳制）', () => {
+  it('界内原样（parseInt 同口径截断小数）', () => {
+    expect(normalizeTime('120')).toBe('120');
+    expect(normalizeTime('10')).toBe('10');
+    expect(normalizeTime('1200')).toBe('1200');
+    expect(normalizeTime('90.9')).toBe('90');
+  });
+
+  it('越界 → 钳制到 [10, 1200]（与弹窗输入框 min/max 同界）', () => {
+    expect(normalizeTime('5')).toBe('10');
+    expect(normalizeTime('9')).toBe('10');
+    expect(normalizeTime('-30')).toBe('10');
+    expect(normalizeTime('3600')).toBe('1200');
+    expect(normalizeTime('99999')).toBe('1200');
+  });
+
+  it('空串 / 非法 → 回退默认 120（parseTime 同款）', () => {
+    expect(normalizeTime('')).toBe('120');
+    expect(normalizeTime('abc')).toBe('120');
   });
 });
 

@@ -203,6 +203,18 @@ export function normalizeGate(v: string): string {
 }
 
 /**
+ * 时长输入归一化（秒字符串，2026-10-05 普通运行弹窗范围限制 10–1200s）：
+ * 空/非法 → '120'（parseTime 同款回退）；合法 → 钳制 [10, 1200]（与弹窗输入框
+ * min/max 同界，parseInt 同口径截断小数）。parseTime 不钳制（求解语义不变），
+ * 钳制只作为输入 UX 在弹窗失焦/确认时兜底（Enter 直提不经 blur，两处都归一）。
+ */
+export function normalizeTime(v: string): string {
+  const n = parseInt(v, 10);
+  if (Number.isNaN(n)) return '120';
+  return String(Math.min(1200, Math.max(10, n)));
+}
+
+/**
  * 解析需要并行启动的 seed 数量（旧 vanilla 实现 startSolve 内：
  *   `multi ? Math.min(Math.max(parseInt($('seed_count').value, 10) || 3, 2), 6) : 1`）。
  *
