@@ -20,7 +20,8 @@
 //   - 双页面常驻 DOM，display:none 切换 —— 本组件本身不挂 .hidden（由父 App 控制 .page.hidden）；
 //     本组件渲染时已默认在 .page 容器内，故用 <div class="preview-page"> 作为根 flex 容器。
 //   - 沿用 style.css，不引入 CSS 框架；视觉与 ControlPanel 同色系（暗背景 #26282e）。
-//   - 左 UploadPanel 固定宽（.panel width: 248px），右侧自适应（与 NestingPage ControlPanel+main 同结构）。
+//   - 左 UploadPanel 宽度可调（uiStore.panelWidth 200~300 默认 248，与 NestingPage
+//     ControlPanel 共享同值；PanelSplitter 随面板兄弟渲染），右侧自适应。
 //   - 切回 Tab 后状态保留：uploadStore 不被销毁，doc / activeSize 全部保真（AC#5 通过 store 保证）。
 //
 // 数量联动（US-014 关键约定，演进：清零 → 默认 1）：

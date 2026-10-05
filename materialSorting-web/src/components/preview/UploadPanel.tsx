@@ -16,7 +16,8 @@
 //
 // 设计原则（CLAUDE.md / AGENTS.md US-005 关键约定）：
 //   - 沿用 style.css，与 ControlPanel 视觉同色系（暗背景 #26282e + 绿色 #2ea06c 强调）；
-//     不引入 CSS 框架。左侧固定宽度（沿用 `.panel` width: 248px）。
+//     不引入 CSS 框架。左侧面板宽度可调（uiStore.panelWidth，200~300 默认 248，与
+//     ControlPanel 共享同值；根 aside inline width 渲染，兄弟 PanelSplitter 拖拽）。
 //   - **整个 aside 是拖拽落区**（dragenter/dragover/dragleave/drop 挂在根元素），点击触发限定在
 //     drop-zone / button 上（避免点状态文本误触文件选择）。
 //   - dragCounter 防子元素 dragleave 抖动：浏览器在子元素间移动会反复触发 dragenter/dragleave，
@@ -35,7 +36,9 @@
 import { useRef, useState } from 'react';
 import type { JSX } from 'react';
 import { useParseDxf } from '../../hooks/useParseDxf';
+import { useUiStore } from '../../store/uiStore';
 import { useUploadStore } from '../../store/uploadStore';
+import { PanelSplitter } from '../PanelSplitter';
 import { SamplePicker } from './SamplePicker';
 
 /** 单文件大小上限（与后端 server.py UPLOAD_MAX_BYTES 一致，20MB）。 */
@@ -79,6 +82,8 @@ export function UploadPanel(): JSX.Element {
   const commitStatus = useUploadStore((s) => s.commitStatus);
   const commitError = useUploadStore((s) => s.commitError);
   const commitSummary = useUploadStore((s) => s.commitSummary);
+  // 面板宽度（两页共享单一真相源；拖动 PanelSplitter 时此处驱动 aside 重渲染）。
+  const panelWidth = useUiStore((s) => s.panelWidth);
 
   const { upload } = useParseDxf();
 
@@ -149,13 +154,15 @@ export function UploadPanel(): JSX.Element {
   const totalPieces = doc ? countTotalPieces(doc) : 0;
 
   return (
-    <aside
-      className="panel upload-panel"
-      onDragEnter={handleDragEnter}
-      onDragOver={handleDragOver}
-      onDragLeave={handleDragLeave}
-      onDrop={handleDrop}
-    >
+    <>
+      <aside
+        className="panel upload-panel"
+        style={{ width: panelWidth }}
+        onDragEnter={handleDragEnter}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+      >
       <h2>DXF 上传预览</h2>
 
       {/* 状态反馈区：uploading / done / error 三态互斥（idle 不渲染） */}
@@ -241,6 +248,10 @@ export function UploadPanel(): JSX.Element {
 
       {/* 样例区块（2026-09-16）：与 <h2>DXF 上传预览</h2> 同级标题，挂在面板底部 */}
       <SamplePicker />
-    </aside>
+      </aside>
+
+      {/* 面板伸缩分隔条（aside 兄弟节点，负 margin 贴右边框，净占宽 0） */}
+      <PanelSplitter />
+    </>
   );
 }

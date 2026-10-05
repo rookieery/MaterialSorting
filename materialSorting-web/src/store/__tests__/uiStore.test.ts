@@ -8,13 +8,21 @@
 //   - 订阅者收到 nestingEnabled 变化
 //   - setTab('nesting') 在 nestingEnabled===false 时静默不切（关键不变量）
 
-import { beforeEach, describe, expect, it } from 'vitest';
-import { useUiStore } from '../uiStore';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  PANEL_W_DEFAULT,
+  PANEL_W_MAX,
+  PANEL_W_MIN,
+  clampPanelWidth,
+  useUiStore,
+} from '../uiStore';
 
 beforeEach(() => {
-  // 重置到默认 preview + 锁定超排 Tab，避免前一个测试残留
+  // 重置到默认 preview + 锁定超排 Tab + 面板宽回默认，避免前一个测试残留
   useUiStore.getState().setTab('preview');
   useUiStore.getState().setNestingEnabled(false);
+  useUiStore.setState({ panelWidth: PANEL_W_DEFAULT });
+  localStorage.removeItem('ms_panel_w');
 });
 
 describe('uiStore', () => {
@@ -99,5 +107,64 @@ describe('uiStore US-003 sessionRecovering（启动期恢复轻加载态）', ()
     expect(useUiStore.getState().sessionRecovering).toBe(true);
     useUiStore.getState().setSessionRecovering(false);
     expect(useUiStore.getState().sessionRecovering).toBe(false);
+  });
+});
+
+describe('uiStore panelWidth（2026-10-05 面板伸缩分隔条）', () => {
+  it('clampPanelWidth：范围内取整、越界钳到 200/300、非有限数回默认', () => {
+    expect(clampPanelWidth(248)).toBe(248);
+    expect(clampPanelWidth(210.4)).toBe(210); // 拖拽 delta 小数取整
+    expect(clampPanelWidth(100)).toBe(PANEL_W_MIN);
+    expect(clampPanelWidth(9999)).toBe(PANEL_W_MAX);
+    expect(clampPanelWidth(Number.NaN)).toBe(PANEL_W_DEFAULT);
+    expect(clampPanelWidth(Number.POSITIVE_INFINITY)).toBe(PANEL_W_DEFAULT);
+  });
+
+  it('默认 panelWidth = 248（无 localStorage 记忆时）', () => {
+    expect(useUiStore.getState().panelWidth).toBe(PANEL_W_DEFAULT);
+  });
+
+  it('setPanelWidth 钳制在 [200, 300]', () => {
+    useUiStore.getState().setPanelWidth(260);
+    expect(useUiStore.getState().panelWidth).toBe(260);
+    useUiStore.getState().setPanelWidth(150);
+    expect(useUiStore.getState().panelWidth).toBe(PANEL_W_MIN);
+    useUiStore.getState().setPanelWidth(400);
+    expect(useUiStore.getState().panelWidth).toBe(PANEL_W_MAX);
+  });
+
+  it('setPanelWidth 高频路径不写 localStorage，persistPanelWidth 才落盘', () => {
+    useUiStore.getState().setPanelWidth(280);
+    expect(localStorage.getItem('ms_panel_w')).toBeNull(); // 拖拽中不碰 IO
+    useUiStore.getState().persistPanelWidth();
+    expect(localStorage.getItem('ms_panel_w')).toBe('280');
+  });
+
+  it('resetPanelWidth 回默认 248 并落盘（双击分隔条）', () => {
+    useUiStore.getState().setPanelWidth(300);
+    useUiStore.getState().resetPanelWidth();
+    expect(useUiStore.getState().panelWidth).toBe(PANEL_W_DEFAULT);
+    expect(localStorage.getItem('ms_panel_w')).toBe('248');
+  });
+
+  it('启动期 loadPanelWidth：读 localStorage（越界脏值被钳制、垃圾值回默认）', () => {
+    // store 单例已初始化，loadPanelWidth 的行为经「重置模块 + 预置 localStorage」
+    // 复验：vi.resetModules 后重新 import，模块初始化会重新读 localStorage。
+    localStorage.setItem('ms_panel_w', '272');
+    vi.resetModules();
+    return import('../uiStore').then((m) => {
+      expect(m.useUiStore.getState().panelWidth).toBe(272);
+      // 越界脏值 → 钳到边界；垃圾字符串 → Number(...) NaN → 回默认
+      localStorage.setItem('ms_panel_w', '5000');
+      vi.resetModules();
+      return import('../uiStore').then((m2) => {
+        expect(m2.useUiStore.getState().panelWidth).toBe(PANEL_W_MAX);
+        localStorage.setItem('ms_panel_w', 'garbage');
+        vi.resetModules();
+        return import('../uiStore').then((m3) => {
+          expect(m3.useUiStore.getState().panelWidth).toBe(PANEL_W_DEFAULT);
+        });
+      });
+    });
   });
 });

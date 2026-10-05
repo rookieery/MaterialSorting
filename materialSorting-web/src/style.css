@@ -59,13 +59,50 @@ body {
 .preview-empty-card p.dim { color: #888; font-size: 12px; }
 
 /* ---- 左：控制面板 ---- */
+/* 宽度不再写死在此：由 uiStore.panelWidth（默认 248、范围 200~300，两页共享）
+   经面板组件 inline width 驱动，兄弟 .panel-splitter 拖拽调节（2026-10-05）。 */
 .panel {
-  width: 248px;
   flex-shrink: 0;
   padding: 16px;
   background: #26282e;
   border-right: 1px solid #34363d;
   overflow: auto;
+}
+/* ---- 面板伸缩分隔条（2026-10-05，VS Code sash 风格）----
+   8px 透明热区，负 margin 左右各 4px 使中心线与 .panel 右边框重合 → 净占宽 0
+   （主区不损失像素）；hover / :active（拖拽中，pointer capture 保持 active）显示
+   2px 蓝竖线 #0078d4 + col-resize 光标。拖拽逻辑在 PanelSplitter.tsx。 */
+.panel-splitter {
+  position: relative;
+  z-index: 20;             /* 压在面板内容之上，保证热区不被 aside 滚动内容遮挡 */
+  flex-shrink: 0;
+  width: 8px;
+  margin-left: -4px;
+  margin-right: -4px;
+  cursor: col-resize;
+  touch-action: none;      /* pointer 拖拽不被触摸滚动手势打断 */
+}
+.panel-splitter::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 2px;
+  transform: translateX(-50%);
+  border-radius: 1px;
+  background: transparent;
+  transition: background 0.12s;
+}
+.panel-splitter:hover::after,
+.panel-splitter:active::after {
+  background: #0078d4;     /* VS Code sash hover 蓝 */
+}
+/* 拖拽期间全局统一光标 + 禁文本选择（拖到 SVG 画布/数量矩阵上光标不变样、不误选） */
+body.panel-resizing,
+body.panel-resizing * {
+  cursor: col-resize !important;
+  user-select: none !important;
 }
 .panel h2 { font-size: 15px; margin: 0 0 14px; }
 /* 当前排料文件名上下文条（求解控制标题上方）：显示 uploadStore.doc.filename，让用户
@@ -873,14 +910,18 @@ button.sample-apply-btn:disabled { background: #444; color: #888; cursor: defaul
   display: block;
 }
 /* 成带形态预览缩略（2026-08-24 替换原始裁片缩略）：带是宽幅长条 → 宽缩略 200×80
-   （preserveAspectRatio meet 自动按带长宽比 letterbox，不拉伸） */
+   （preserveAspectRatio meet 自动按带长宽比 letterbox，不拉伸）。2026-10-05 面板
+   可拖窄到 200px（内容区 168px）→ 200px 死宽会横滚，改 max-width:100% 响应式
+   （默认 248 时内容区 216px ≥ 200，观感不变）。 */
 .per-type-band-thumb--band svg {
-  width: 200px;
+  width: 100%;
+  max-width: 200px;
   height: 80px;
 }
-/* 预览 loading 占位（与缩略同尺寸骨架，避免布局跳动） */
+/* 预览 loading 占位（与缩略同尺寸骨架，避免布局跳动；同款响应式防溢出） */
 .per-type-band-thumb-empty {
-  width: 200px;
+  width: 100%;
+  max-width: 200px;
   height: 96px;
   display: flex;
   align-items: center;

@@ -77,6 +77,7 @@ import { defaultExportFilename, defaultStateFilename, type ExportFmt } from '../
 import type { ExportTableFields } from '../../lib/exportTable';
 import { useControlPanelStore } from '../../store/controlPanelStore';
 import { useFormStore } from '../../store/formStore';
+import { useUiStore } from '../../store/uiStore';
 // 初始布局 US-004：热启动能力订阅（入口按钮置灰判定；App 启动探测，此处仅读）。
 // US-007：saved + isStale 订阅（普通运行附带 initial + SolveControls chip 三态）。
 import { initialLayoutFingerprint, useInitialLayoutStore } from '../../store/initialLayoutStore';
@@ -95,6 +96,8 @@ import { NormalRunModal } from './NormalRunModal';
 // 打开入口 = US-004 主界面「编辑排料」区块（EditLayoutControls）。
 import { EditLayoutModal } from '../edit/EditLayoutModal';
 import { InitialLayoutModal } from '../edit/InitialLayoutModal';
+// 2026-10-05 面板伸缩分隔条（aside 兄弟节点渲染；宽度真相源 uiStore.panelWidth）。
+import { PanelSplitter } from '../PanelSplitter';
 // key 授权 US-006：「系统key」弹窗单例（keyStore 数据源，/api/key/*）。
 import { KeyInfoModal } from './KeyInfoModal';
 // 编辑排料 US-004：主面板「编辑排料」区块（编辑入口 + 重置 confirm），插在
@@ -200,6 +203,8 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
   // 初始布局 US-004：热启动能力（App 启动 probeCapability 拉一次；此处订阅
   // supported === false → 入口按钮置灰 + title 中文提示；null = 未探知不置灰）。
   const warmSupported = useInitialLayoutStore((s) => s.supported);
+  // 面板宽度（2026-10-05 伸缩分隔条；两页共享单一真相源，与 UploadPanel 同值）。
+  const panelWidth = useUiStore((s) => s.panelWidth);
   // US-007：已保存初始布局 + 清除动作（chip「×清除」消费 —— 只清 saved，
   // genSeed 保留单调递增，下次弹窗刷新换代续接）。
   const savedInitial = useInitialLayoutStore((s) => s.saved);
@@ -512,7 +517,8 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
   // 既有 solving / 未 commit 置灰语义不变。
 
   return (
-    <aside className="panel">
+    <>
+      <aside className="panel" style={{ width: panelWidth }}>
       {/* 当前排料文件名上下文条：doc?.filename 直接来自上传解析响应（与 SizePicker 同源订阅 uploadStore.doc）。
           doc=null（未解析母版）时灰字占位「尚未解析母版」，与下方 StatusLine 的「请先解析母版」提示同源（US-017）。
           文件名长时 ellipsis 截断，title 兜底悬停看全名；分隔线把文件名条与「求解控制」功能标题分层。 */}
@@ -741,6 +747,10 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
       {/* key 授权弹窗单例（US-006；订阅 controlPanelStore 自显隐；Portal 到 body；
           打开入口在上方「系统key」入口按钮）。 */}
       <KeyInfoModal />
-    </aside>
+      </aside>
+
+      {/* 面板伸缩分隔条（aside 兄弟节点，负 margin 贴右边框，净占宽 0） */}
+      <PanelSplitter />
+    </>
   );
 }
