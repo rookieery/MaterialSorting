@@ -60,8 +60,8 @@ export function StrategyRunButton({
         data-testid="strategy-btn"
       >
         {/* 2026-10-05 文案精简（用户要求）：只显示「高级运行」—— 三键同行后列宽
-            ~66px 放不下长文案；同日三键统一绿色（用户要求），区别度由文案与
-            弹窗参数档承担。 */}
+            ~66px 放不下长文案；同日三键先统一绿色（用户要求）再换青碧
+            （「青碧系」方案 C），区别度由文案与弹窗参数档承担。 */}
         高级运行
         {running && (
           <span className="strategy-badge" data-testid="strategy-badge">

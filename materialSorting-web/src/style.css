@@ -119,18 +119,21 @@ body {
    「高级运行 / 极限运行」上方，三键统一几何（13px / 8px 10px / 圆角 4px，与
    .strategy-btn 同尺寸成族）；配色曾为绿/紫/琥珀三色阶区分投入强度，
    #2c5d8f 蓝 exclusive 归工具按钮（编辑/保存/导出/上传），运行族不再使用；
-   「高级配置」两键 2026-10-05 起退出蓝族换树莓紫红 #8f2c5d（见 .per-type-btn 注释）。
+   「高级配置」两键 2026-10-05 起退出蓝族换树莓紫红 #8f2c5d，同日二次改版换
+   深青 #23606e（见 .per-type-btn 注释）。
    2026-10-05 起三键改同行并排（.strategy-entry-row，横衬收窄见彼处注释），
-   且同日统一绿色（三键同 #2ea06c，见 .strategy-btn 注释）。 */
+   同日先统一绿色（三键同 #2ea06c）再换青碧 #2c9080（「青碧系」方案 C：绿 153°
+   ×紫红 330° ≈互补色对相邻叠放观感打架，全组归冷 —— 青碧 170° 卡在强调绿
+   与工具蓝之间，与高级配置深青靠明度分层，见 .strategy-btn 注释）。 */
 button#start,
 button#restart {
   width: 100%; padding: 8px 10px;
   font-size: 13px; font-weight: 600;
-  background: #2ea06c; color: #fff;
+  background: #2c9080; color: #fff;
   border: 0; border-radius: 4px; cursor: pointer;
 }
 button#start:hover,
-button#restart:hover { background: #36b47a; }
+button#restart:hover { background: #34a894; }
 button#start:disabled,
 button#restart:disabled { background: #555; cursor: default; }
 button#stop {
@@ -505,11 +508,12 @@ button.sample-apply-btn:disabled { background: #444; color: #888; cursor: defaul
 
 /* ---- US-018 PerTypeOverridesModal + PtypePreviewModal（暗底 + #2ea06c 同色系） ---- */
 /* PerTypeOverrides 触发按钮：替换旧 <details> 折叠面板；主面板一行按钮。
-   底色 2026-10-05 换树莓紫红 #8f2c5d（hover #a8346e）：「高级配置」两键
-   （设置算法参数 / 设置初始布局，共用本类）原工具蓝 #2c5d8f 与编辑/保存/
-   导出/上传同色难区分（用户反馈）；新色 hsl(330,53%,37%) 与现有色阶
-   （蓝 210/绿 152/紫 270/琥珀 30/红 8）同饱和度同明度、色相落最大空档，
-   与全部现有按钮色相距 ≥45°。
+   底色沿革（均 2026-10-05）：先由工具蓝 #2c5d8f 换树莓紫红 #8f2c5d（原色与
+   编辑/保存/导出/上传同色难区分，用户反馈）；当日再改「青碧系」方案 C 深青
+   #23606e（hover #2b7788，hsl(191,52%,28%)）—— 紫红 330° 系全界面唯一
+   暖色相、且与三键绿 153° ≈互补色对相邻叠放观感打架（用户反馈与系统蓝
+   不搭），随运行族一起归冷；比运行键青碧 170° 深一档靠明度分层（hover
+   #2b7788 明度 35% 仍低于运行键底色 40%）。
    同日改版（用户要求）：两键文案去「高级配置：」前缀改同行 .adv-entry-row
    （各占一半），分组语义上移 .entry-group-label「高级配置」标题。 */
 .per-type-wrapper {
@@ -520,7 +524,7 @@ button.sample-apply-btn:disabled { background: #444; color: #888; cursor: defaul
   padding: 8px 10px;
   font-size: 12px;
   font-weight: 600;
-  background: #8f2c5d;
+  background: #23606e;
   color: #fff;
   border: 0;
   border-radius: 4px;
@@ -529,7 +533,7 @@ button.sample-apply-btn:disabled { background: #444; color: #888; cursor: defaul
   transition: background 0.15s;
 }
 .per-type-btn:hover {
-  background: #a8346e;
+  background: #2b7788;
 }
 .per-type-btn:focus-visible {
   outline: 2px solid #2ea06c;
@@ -1619,8 +1623,9 @@ button.sample-apply-btn:disabled { background: #444; color: #888; cursor: defaul
    底色沿革：2026-08-24 曾对齐 .per-type-btn 高级配置蓝
    #2c5d8f；2026-09-14 运行族统一改版换紫 #5d2c8f（绿/紫/琥珀三色阶）；
    2026-10-05 用户要求三键统一绿色（与 #start 同 #2ea06c / hover #36b47a，
-   区别度由文案与弹窗参数档承担），几何与 #start 同尺寸成族
-   （13px / 8px 10px / 圆角 4px）。 */
+   区别度由文案与弹窗参数档承担），同日二次改版换青碧 #2c9080 / hover
+   #34a894（「青碧系」方案 C，与强调绿 153°/工具蓝 210° 两边均为邻近冷色），
+   几何与 #start 同尺寸成族（13px / 8px 10px / 圆角 4px）。 */
 .strategy-wrapper {
   margin: 8px 0;
 }
@@ -1629,7 +1634,7 @@ button.sample-apply-btn:disabled { background: #444; color: #888; cursor: defaul
   padding: 8px 10px;
   font-size: 13px;
   font-weight: 600;
-  background: #2ea06c;
+  background: #2c9080;
   color: #fff;
   border: 0;
   border-radius: 4px;
@@ -1642,7 +1647,7 @@ button.sample-apply-btn:disabled { background: #444; color: #888; cursor: defaul
   transition: background 0.15s;
 }
 .strategy-btn:hover:not(:disabled) {
-  background: #36b47a;
+  background: #34a894;
 }
 .strategy-btn:focus-visible {
   outline: 2px solid #fff;
@@ -1652,11 +1657,12 @@ button.sample-apply-btn:disabled { background: #444; color: #888; cursor: defaul
   opacity: 0.45;
   cursor: default;
 }
-/* 「运行中」徽标：2026-10-05 起白底绿字（三键统一绿后原绿底徽标融进按钮底色，
-   白底在绿按钮与暗面板上均有对比度）。 */
+/* 「运行中」徽标：2026-10-05 起白底彩字（当日三键统一绿后原绿底徽标融进按钮
+   底色改白底；同日二次改版字色随运行键换青碧 #2c9080，白底在彩底按钮与
+   暗面板上均有对比度）。 */
 .strategy-badge {
   background: #fff;
-  color: #2ea06c;
+  color: #2c9080;
   border-radius: 9px;
   padding: 1px 8px;
   font-size: 11px;

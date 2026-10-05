@@ -57,8 +57,9 @@ export function ExtremeRunButton({
         data-testid="extreme-btn"
       >
         {/* 2026-10-05 文案精简（用户要求）：只显示「极限运行」（同 StrategyRunButton，
-            三键同行列宽容不下长文案；同日三键统一绿色，区别度由文案与弹窗参数档
-            承担 —— .extreme 类保留作测试/DOM 钩子，不再套色）。 */}
+            三键同行列宽容不下长文案；同日三键先统一绿色再换青碧（「青碧系」
+            方案 C），区别度由文案与弹窗参数档承担 —— .extreme 类保留作测试/
+            DOM 钩子，不再套色）。 */}
         极限运行
         {running && (
           <span className="strategy-badge" data-testid="extreme-badge">

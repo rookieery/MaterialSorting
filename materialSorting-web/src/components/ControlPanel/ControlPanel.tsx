@@ -601,10 +601,10 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
           </div>
         </div>
         {/* 2026-09-14 运行族三级入口排序改判（用户要求）；2026-10-05 起三键并排
-            一行且统一绿色（用户要求，.entry-group-label「运行模式」分组标题）：
-            普通 → 高级 → 极限按投入强度排列（.strategy-entry-row 各占 1/3），
-            #2c5d8f 蓝 exclusive 归工具按钮（本文件两个高级配置按钮 = 树莓紫红
-            .per-type-btn，2026-10-05）。 */}
+            一行（用户要求，.entry-group-label「运行模式」分组标题）：
+            普通 → 高级 → 极限按投入强度排列（.strategy-entry-row 各占 1/3）；
+            #2c5d8f 蓝 exclusive 归工具按钮，本文件两个高级配置按钮 = 深青
+            .per-type-btn、三键 = 青碧（「青碧系」方案 C，2026-10-05 二次改版）。 */}
       </div>
       {/* US-005 高级运行入口（策略 run 10/20/30/60min + race/se 双模式）：disabled =
           solving（互斥防 CPU 竞争）|| doc===null（未 commit 无排料数据）。
@@ -618,8 +618,8 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
           2026-09-14 起从 param-form 包裹层移出、排在「普通运行」之下；
           2026-10-05 起三键同行并排（用户要求）——「普通运行」以 .solve-entry
           首列入行（初始布局 chip 随 SolveControls 留在本列按钮下方）；
-          同日起三键统一绿色 + 「运行模式」分组标题（用户要求，区别度由
-          文案与弹窗参数档承担）。 */}
+          同日起三键统一绿色 + 「运行模式」分组标题（用户要求），同日二次
+          改版换青碧 #2c9080（「青碧系」方案 C，区别度由文案与弹窗参数档承担）。 */}
       <div className="entry-group-label">运行模式</div>
       <div className="strategy-entry-row">
         {/* US-031：data-tour="start-btn" 锚定 SolveControls 父容器（nestingTour step3 高亮目标）。 */}
