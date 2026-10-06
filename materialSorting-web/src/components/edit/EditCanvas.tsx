@@ -2271,6 +2271,14 @@ export function EditCanvas({
                   {polish.report.attach_moves ?? 0} 片次
                 </span>
               </div>
+              {/* 逃逸兜底（2026-10-06）：受压楔死片扫描到全净位的逃逸片次
+                  （常规候选全败后才触发，首净点≈贴触位）。 */}
+              <div className="edit-polish-row">
+                <span className="edit-metrics-label">逃逸移动</span>
+                <span className="edit-polish-val" data-testid="edit-polish-escape">
+                  {polish.report.escape_moves ?? 0} 片次
+                </span>
+              </div>
               {/* US-005 压缩回收档：默认不勾，勾选后随下次微调请求发出
                   （compact:true → 引擎 pass ④ 自布头滑贴收空隙）。 */}
               <label

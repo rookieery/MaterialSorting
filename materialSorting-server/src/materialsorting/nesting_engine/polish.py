@@ -25,13 +25,18 @@ d 腐蚀位图放行的工艺余量）与旋转（离散角度集 ±45°）只�
   ≤ 100mm 防跨唛架远跳）+ 族 A 质心锚定/邻域棱对齐（位移升序）；**严格档**
   （干净贴附片，``_snug``）候选位必须自身也贴附（``_attached`` ≤ 0.05mm，
   「更小角度同样贴附才动、动则必贴」，贴附不降级）；宽松档（压线/悬浮片）
-  合法位即受、贴附 pass 随后收拢；找不到合格位保持原角留 residual。永不
+  合法位即受、贴附 pass 随后收拢；找不到合格位保持原角留 residual。
+  **C 族逃逸兜底**（2026-10-06 derotate-escape：受压片在常规候选全败后，质心/
+  原位双锚四向 ``_scan_to_clean`` 扫描到全净位 —— 窄逃逸窗可 ~10mm 且常只在
+  原位锚射线上，质心锚与原位锚差 ~2mm 即错过）。永不
   增大旋转（只向基线回退）；
 - ③ **去重叠**：重叠对按穿透深度降序（平手按 (i,j) 下标），最小分离平移
   （镜像 ``waist_band._slide_touch`` 的二分滑移机器：从当前重叠位向 +y/−y/−x
   二分到贴触 + 1nm 防贴死微抬），方向优先 ±y、−x 不增料长；一片失败换动
   另一片；都失败记 residual —— **只在「免费」时做**（不增料长、零新重合），
   版师 per_type d 工艺余量语义不受影响（不强行动归零 d 预算内的必要贴触）；
+  双 mover 全败后**逃逸兜底**（2026-10-06 separate-escape：``_scan_to_clean``
+  四向扫描到全净位 —— 楔形双侧受压下单伙伴最小分离必落第三者）；
 - ③½ **贴附**（attach，默认启用，2026-10-05 裁床裁板需求）：重力压实 ——
   west 趟（minX 升序级联，compact 同骨架）+ south 趟（minY 升序镜像）交替
   逐片滑到与障碍或墙（布头 x=0 / 下门幅 y=0）首次贴触 + 1nm 回退，至多
@@ -48,7 +53,8 @@ d 腐蚀位图放行的工艺余量）与旋转（离散角度集 ±45°）只�
   无剩可收，语义保留作兜底）；
 - ⑤ **报告**：before/after 七指标（重叠对数/最大穿透/总重合面积/旋转偏差片数/
   Σ偏差/料长/密度）+ moves 逐条明细 + residual（终态重合对 + 旋转残留如实
-  上报，不硬凑零）+ excluded + attach_moves（贴附 move 计数）+ elapsed_sec；
+  上报，不硬凑零）+ excluded + attach_moves（贴附 move 计数）+
+  escape_moves（逃逸 move 计数，2026-10-06）+ elapsed_sec；
   density = real 口径 ``Σ(area×multiplicity)/(width×gate)``（原面积，非 erode）。
 
 **逐 move 五道守卫**（任一不过弃该 move，最坏全 no-op）：y∈[0,gate] / 全图
@@ -181,6 +187,17 @@ DEROT_OFFSET_OBSTACLES = 8
 # （pass ③ 终位分离仍用满精度 BISECT_ITERS）—— cProfile 实测 sep 锚生
 # 成占大头（5810 次 × 40 轮），降到 14 轮省 ~2/3。
 DEROT_SEP_ITERS = 10
+# 逃逸扫描（derotate-escape / separate-escape，2026-10-06）：形状级采样步长（mm）。
+# 干净窗可窄于 _slide_axis_touch 的 20mm 粗扫（3069 g09_29 实勘逃逸窗 ~10mm 宽，
+# 20mm 粗扫与 bbox 事件扫描均漏检 —— 首触语义假设自由区单调，逃逸语义的干净窗
+# 由障碍形状决定、可任意窄）—— 10mm 形状采样 + 二分收敛左边界；窄于此步长的窗
+# 仍会漏（残差上限，如实上报 residual 不硬凑）。
+ESCAPE_SCAN_STEP_MM = 10.0
+# 逃逸扫描平移上限（mm）：与 DEROT_SLIDE_CAP_MM 同语义（就近微调、防跨唛架远跳）。
+ESCAPE_SCAN_CAP_MM = 100.0
+# 逃逸扫描全局预算（次，两巡合计）：确定性封顶防大文件最坏情形（3069 实测
+# 137 片 / 1551 次扫描 / 命中 1，耗时 +24%），耗尽后不再扫、留 residual。
+ESCAPE_SCAN_BUDGET = 4000
 
 
 class PolishError(Exception):
@@ -496,6 +513,58 @@ def _slide_west_touch(g_moving, obstacles, t_wall):
     return _slide_axis_touch(g_moving, obstacles, t_wall, 'x', -1.0)
 
 
+def _scan_to_clean(g, idx, geoms, bounds, gate, axis, sign, cap):
+    """自受压位沿 ``axis('x'/'y')·sign(±1)`` 扫描首个「对全图零正面积重合」平移位。
+
+    逃逸原语（2026-10-06，derotate-escape / separate-escape 兜底）：与
+    ``_slide_axis_touch`` 的「首触」语义互为对偶 —— 那里起点必净、粗扫 20mm 安全
+    （自由区单调）；本原语**起点可以是受压态**，且干净窗可窄于粗扫步长（3069
+    g09_29 实勘：5° 受压条片在 4° 台阶的 −x 逃逸窗仅 ~10mm 宽，20mm 粗扫与
+    bbox 事件扫描均漏检），必须形状级 ``ESCAPE_SCAN_STEP_MM`` 采样。返回首个
+    干净平移量 t（+ ``SEP_NUDGE_MM``；首净点天然 ≈ 贴触位，「动则必贴」语义
+    不破），无干净窗 / 出门幅返回 None，起点已净返回 0。确定性：固定步长
+    采样 + ``SLIDE_BISECT_ITERS`` 轮二分，无 RNG。
+    """
+    n = len(geoms)
+
+    def _dirty(t):
+        moved = translate(g, xoff=sign * t if axis == 'x' else 0.0,
+                          yoff=sign * t if axis == 'y' else 0.0)
+        b = moved.bounds
+        if b[1] < -GATE_EPS_MM or b[3] > gate + GATE_EPS_MM:
+            return True
+        for k in range(n):
+            if k == idx:
+                continue
+            if _bbox_overlaps(b, bounds[k]) and _hits(moved, geoms[k]) \
+                    and moved.intersection(geoms[k]).area > OVERLAP_AREA_EPS_MM2:
+                return True
+        return False
+
+    if not _dirty(0.0):
+        return 0.0
+    if axis == 'y':                       # 门幅限幅（出门幅即脏）
+        cap = min(cap, (gate - g.bounds[3]) / sign if sign > 0
+                  else g.bounds[1] / -sign)
+    t_free = None
+    t = ESCAPE_SCAN_STEP_MM
+    while t <= cap:
+        if not _dirty(t):
+            t_free = t
+            break
+        t += ESCAPE_SCAN_STEP_MM
+    if t_free is None:
+        return None
+    lo, hi = t_free - ESCAPE_SCAN_STEP_MM, t_free   # lo 脏（含 0）/ hi 净
+    for _ in range(SLIDE_BISECT_ITERS):
+        mid = (lo + hi) / 2.0
+        if _dirty(mid):
+            lo = mid
+        else:
+            hi = mid
+    return hi + SEP_NUDGE_MM
+
+
 # --------------------------------------------------------------- 主入口
 
 def polish_layout(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False):
@@ -527,7 +596,8 @@ def polish_layout(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False)
         placed_new : 无任何 move 时**返回输入 list 原对象**（逐字节不变量）；
             有 move 时为新列表（全量新 dict，未动片字段值不变）。
         report : ``{before, after, moves, residual, excluded, attach_moves,
-            elapsed_sec}``（``attach_moves`` = 贴附 pass move 计数，2026-10-05）。
+            escape_moves, elapsed_sec}``（``attach_moves`` = 贴附 pass move 计数，
+            2026-10-05；``escape_moves`` = 逃逸兜底 move 计数，2026-10-06）。
     """
     t0 = time.perf_counter()
     gate = float(gate_mm)
@@ -571,6 +641,12 @@ def polish_layout(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False)
     bounds = [g.bounds for g in geoms]
     moves = []
     touched = set()          # 被动过的片（②′ 脏区门控：只重试环境变过的片）
+    # 逃逸兜底（2026-10-06）：重合在案片集合（初始诊断一次性计算 —— move 守卫③
+    # 保证重合只减不增，静态集是保守超集；用于 C 族触发门）+ 全局扫描预算/命中
+    # 计数（derotate-escape 与 separate-escape 共享）。
+    pressed = {_ix for _p in pairs for _ix in (_p['i'], _p['j'])}
+    escape_scan_budget = ESCAPE_SCAN_BUDGET
+    escape_moves = 0
     # 全图几何预制备（shapely prepared predicate，2026-10-06 性能）：后续对
     # geoms[k] 的 overlaps/intersects 布尔判定走空间索引快路径（贴附保持
     # 归位引入海量谓词调用后，intersection().area 28µs/次成热点）。幂等
@@ -686,6 +762,40 @@ def polish_layout(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False)
             if _bbox_overlaps(be, bounds[k]) \
                     and g.distance(geoms[k]) <= ATTACH_KEEP_EPS_MM:
                 return True
+        return False
+
+    def _escape_ok(idx, g_from, tr_from, rot_new, detail, require_attached=False):
+        """逃逸兜底（2026-10-06，derotate-escape / separate-escape 共享闭包）：
+        自 ``g_from`` 四向（±y 优先、−x 次之，+x 由包络守卫自然把关）扫描到
+        全净位，过守卫即落位返回 True。方向序与 pass ③ 分离优先级同款；确定性
+        （固定步长采样 + 二分）；全局 ``escape_scan_budget`` 封顶。仅作为常规
+        候选全败后的兜底调用 —— 既有成功路径的 move 序列不受扰动。"""
+        nonlocal escape_moves, escape_scan_budget
+        for axis, sign in (('y', 1.0), ('y', -1.0), ('x', -1.0), ('x', 1.0)):
+            if escape_scan_budget <= 0:
+                break
+            escape_scan_budget -= 1
+            t = _scan_to_clean(g_from, idx, geoms, bounds, gate, axis, sign,
+                               ESCAPE_SCAN_CAP_MM)
+            if t is None or t <= ATTACH_GAIN_EPS_MM:
+                continue
+            g = translate(g_from, xoff=sign * t if axis == 'x' else 0.0,
+                          yoff=sign * t if axis == 'y' else 0.0)
+            if not _move_ok(idx, g) \
+                    or (require_attached and not _attached(g, idx)):
+                continue
+            tr = (tr_from[0] + (sign * t if axis == 'x' else 0.0),
+                  tr_from[1] + (sign * t if axis == 'y' else 0.0))
+            d = '−x' if (axis, sign) == ('x', -1.0) else (
+                '−y' if (axis, sign) == ('y', -1.0) else (
+                    '+x' if axis == 'x' else '+y'))
+            _apply(idx, rot_new, tr, g,
+                   'derotate-escape'
+                   if abs(rot_new - items[idx]['rotation']) > 1e-9
+                   else 'separate-escape',
+                   f'{detail}，{d}逃逸 {t:.2f}mm')
+            escape_moves += 1
+            return True
         return False
 
     def _try_apply(i, target_rot, tr, g, how, rot_cur):
@@ -881,6 +991,27 @@ def polish_layout(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False)
                             break
                     if placed_move:
                         break
+                # 兜底 C 族（2026-10-06 逃逸扫描）：常规候选（严格档 B→A / 宽松档
+                # A→B）全败且该片诊断在案（受压）时，双锚（质心 + 原位）四向扫描
+                # 到全净位 —— 窄逃逸窗常只在原位锚射线上（3069 g09_29 实勘：质心
+                # 锚与原位锚差 ~2mm 恰错过 ~10mm 窗）。首净点 ≈ 贴触位，贴附不
+                # 降级；接受仍走同款五守卫。必须挂阶梯内而非管线末尾 —— 终局时
+                # attach 已重排环境，逃逸窗可能已关。
+                if i in pressed:
+                    _tx, _ty = items[i]['translation']
+                    if _escape_ok(i, g0, (t0x, t0y), target_rot,
+                                  f'rot {rot_cur:.2f}→{target_rot:.2f}，质心锚',
+                                  require_attached=strict):
+                        placed_move = True
+                    else:
+                        _g_id = _valid_geometry(_transform_polygon(
+                            local, target_rot, (_tx, _ty)))
+                        if _escape_ok(i, _g_id, (_tx, _ty), target_rot,
+                                      f'rot {rot_cur:.2f}→{target_rot:.2f}，原位锚',
+                                      require_attached=strict):
+                            placed_move = True
+                if placed_move:
+                    break
 
     derot = [i for i in range(n)
              if i not in excluded
@@ -894,6 +1025,7 @@ def polish_layout(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False)
         i, j = pair['i'], pair['j']
         if _pair_stats(geoms[i], geoms[j]) is None:   # 早前 move 已顺带解离
             continue
+        done = False
         for mover, other in ((i, j), (j, i)):          # 一片失败换动另一片
             if mover in excluded:
                 continue
@@ -904,7 +1036,6 @@ def polish_layout(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False)
                 if sep is not None:
                     dx, dy, t = sep
                     cands.append((t, prio, dx, dy))
-            done = False
             for t, prio, dx, dy in sorted(cands):      # 最小分离平移优先
                 old_tr = items[mover]['translation']
                 tr = (old_tr[0] + dx, old_tr[1] + dy)
@@ -918,6 +1049,17 @@ def polish_layout(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False)
                     break
             if done:
                 break
+        # 逃逸兜底（2026-10-06）：双 mover 最小分离全败（楔形双侧受压下单伙伴
+        # 最小分离必落在另一侧墙上）时，自当前位当前角四向扫描到全净位 —— 纯
+        # 平移形态的楔口逃逸；exclude 片跳过不扫。
+        if not done:
+            for mover, other in ((i, j), (j, i)):
+                if mover in excluded:
+                    continue
+                if _escape_ok(mover, geoms[mover], items[mover]['translation'],
+                              items[mover]['rotation'],
+                              f'与 placed[{other}]（{items[other]["id"]}）分离'):
+                    break
 
     # ---- pass ③½ 贴附（attach，默认启用）：重力压实 west+south 交替滑贴 ----
     # 2026-10-05 裁床裁板需求：裁片片片贴合方便走刀。west 趟复用 compact 的
@@ -1051,6 +1193,7 @@ def polish_layout(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False)
     report = {'before': before, 'after': after, 'moves': moves,
               'residual': residual, 'excluded': sorted(excluded),
               'attach_moves': attach_moves,
+              'escape_moves': escape_moves,
               'elapsed_sec': round(time.perf_counter() - t0, 3)}
 
     if not moves:                       # 无改进：输入 list 原对象逐字节不变
@@ -1347,6 +1490,55 @@ def _smoke_fixtures() -> bool:
            and out[0]['translation'][1] <= 1e-3
            and rep['attach_moves'] == 2,
            f'tr={out[0]["translation"]} attach={rep["attach_moves"]}')
+
+    # ⑯ 逃逸·平移兜底（2026-10-06 separate-escape）：双侧受压条片在常规分离
+    #     全败后 +x 扫描到全净位（详见 tests/test_polish.py 同构夹具）
+    pieces = {'g01_30': _rect_piece('g01_30', 200, 150),
+              'g02_30': _rect_piece('g02_30', 160, 150, label='g02'),
+              'g03_30': _rect_piece('g03_30', 60, 110, label='g03'),
+              'g04_30': _rect_piece('g04_30', 100, 400, label='g04'),
+              'g05_30': _rect_piece('g05_30', 300, 100, label='g05')}
+    placed = [_pl('g01_30', 0, 0, 0), _pl('g02_30', 0, 100, 245),
+              _pl('g03_30', 0, 170, 145), _pl('g04_30', 0, 600, 0),
+              _pl('g05_30', 0, 0, 500)]
+    out, rep = polish_layout(placed, pieces, 1000.0,
+                             exclude={'labels': ['g01', 'g02']})
+    esc = [m for m in rep['moves'] if m['kind'] == 'separate-escape']
+    _check('逃逸平移兜底（separate-escape）',
+           rep['before']['overlap_pairs'] == 2
+           and rep['after']['overlap_pairs'] == 0
+           and len(esc) == 1 and '+x逃逸' in esc[0]['detail']
+           and rep['escape_moves'] == 1,
+           f'escape={rep["escape_moves"]} {esc[0]["detail"] if esc else ""}')
+
+    # ⑰ 逃逸·换角兜底（2026-10-06 derotate-escape）：5° 受压条片 0° 台阶 −x
+    #     逃逸入天花板凹兜（凹兜对 bbox 棱对齐不可见 —— 窄窗只有细采样够得到）
+    import math as _m
+    _floor = [[-600.0, 0.0], [600.0, 0.0], [600.0, 30.0], [-600.0, 30.0]]
+    _ceil = [[-600.0, 66.0], [225.0, 66.0], [225.0, 80.0], [445.0, 80.0],
+             [445.0, 66.0], [600.0, 66.0], [600.0, 1000.0], [-600.0, 1000.0]]
+
+    def _pp(pid, label, poly):
+        return {'pid': pid, 'label': label, 'size': 28, 'polygon': poly,
+                'area_mm2': Polygon(poly).area, 'net_polygon': [],
+                'internal_lines': [], 'notches': [], 'grain_line': None}
+
+    _r = _m.radians(5.0)
+    _ctr = (_m.cos(_r) * 100 - _m.sin(_r) * 20, _m.sin(_r) * 100 + _m.cos(_r) * 20)
+    pieces = {'g06_30': _pp('g06_30', 'g06', _floor),
+              'g07_30': _pp('g07_30', 'g07', _ceil),
+              'g08_30': _rect_piece('g08_30', 200, 40, label='g08')}
+    placed = [_pl('g06_30', 0, 0, 0), _pl('g07_30', 0, 0, 0),
+              _pl('g08_30', 5, 382.0 - _ctr[0], 50.0 - _ctr[1])]
+    out, rep = polish_layout(placed, pieces, 1000.0,
+                             exclude={'labels': ['g06', 'g07']})
+    esc = [m for m in rep['moves'] if m['kind'] == 'derotate-escape']
+    _check('逃逸换角兜底（derotate-escape）',
+           rep['before']['overlap_pairs'] == 2
+           and rep['after']['overlap_pairs'] == 0
+           and _rotation_dev(out[2]['rotation']) == 0.0
+           and len(esc) == 1 and '−x逃逸' in esc[0]['detail'],
+           f'escape={rep["escape_moves"]} {esc[0]["detail"] if esc else ""}')
     return ok
 
 
@@ -1424,10 +1616,10 @@ def _demo(intermediate_path, n_pieces) -> bool:
 def main(argv=None) -> int:
     """冒烟入口：``python -m materialsorting.nesting_engine.polish``。
 
-    默认合成夹具自检（AC 十五项口径：斜片回正/重合分离/紧密 no-op/守卫×2/
+    默认合成夹具自检（AC 十七项口径：斜片回正/重合分离/紧密 no-op/守卫×2/
     多副本 index 寻址/排除集障碍/确定性双跑/compact 回收/compact 无空隙
     逐元素相同/镜像斜片 derotate+透传/镜像片 no-op 原对象/贴附 south 闭合
-    空白带/贴附斜片归位且保贴附/贴附贴墙），全过打印
+    空白带/贴附斜片归位且保贴附/贴附贴墙/逃逸平移兜底/逃逸换角兜底），全过打印
     PASS、exit 0。
     ``--demo`` 追加真实母版几何演示（intermediate 前 N 片确定性带病布局 →
     polish 前后对比，形态对齐 prefix ``--pin-demo`` 先例；无 spyrrow 依赖）。

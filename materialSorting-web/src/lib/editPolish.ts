@@ -46,6 +46,8 @@ export interface PolishReport {
   excluded: number[];
   /** 贴附 pass move 计数（2026-10-05 attach 默认启用，additive）。 */
   attach_moves: number;
+  /** 逃逸兜底 move 计数（2026-10-06 derotate/separate-escape，additive）。 */
+  escape_moves: number;
   elapsed_sec: number;
 }
 

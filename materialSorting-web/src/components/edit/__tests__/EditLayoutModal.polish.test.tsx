@@ -119,6 +119,7 @@ function polishResponse(bx: number): Response {
       residual: [],
       excluded: [],
       attach_moves: 0,
+      escape_moves: 0,
       elapsed_sec: 0.01,
     },
   };

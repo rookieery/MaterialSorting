@@ -469,7 +469,8 @@ WS 侧同语义走 **error 帧**：`{"type":"error","code":"session_expired","me
 ```
 
 - `placed`：条数与 pid 多重集与输入相等（引擎出口 Counter 终检 + 路由入口 pid 全匹配双保险）；无任何 move 时引擎返回输入 list 原对象（逐字节不变量）。
-- `report`：`{before, after, moves, residual, excluded, attach_moves, elapsed_sec}`（`attach_moves` = 贴附 move 计数，2026-10-05 additive）—— before/after 各七指标（`overlap_pairs` / `max_penetration_mm` / `total_overlap_area_mm2` / `rotated_pieces` / `rotation_dev_sum_deg` / `width_mm` / `density`，density = real 口径 `Σ(原面积×副本数)/(width×gate)` 百分数）+ `moves` 逐条明细（index/pid/kind `derotate|separate|attach|compact`/from/to/detail）+ `residual`（终态重合对 + 旋转残留如实上报，不硬凑零）。前端对比卡增「贴附移动 N 片次」行（`edit-polish-attach`）。
+- `report`：`{before, after, moves, residual, excluded, attach_moves, escape_moves, elapsed_sec}`（`attach_moves` = 贴附 move 计数，2026-10-05 additive；`escape_moves` = 逃逸兜底 move 计数，2026-10-06 additive）—— before/after 各七指标（`overlap_pairs` / `max_penetration_mm` / `total_overlap_area_mm2` / `rotated_pieces` / `rotation_dev_sum_deg` / `width_mm` / `density`，density = real 口径 `Σ(原面积×副本数)/(width×gate)` 百分数）+ `moves` 逐条明细（index/pid/kind `derotate|separate|attach|compact|derotate-escape|separate-escape`/from/to/detail）+ `residual`（终态重合对 + 旋转残留如实上报，不硬凑零）。前端对比卡增「贴附移动 N 片次」行（`edit-polish-attach`）与「逃逸移动 N 片次」行（`edit-polish-escape`）。
+- **逃逸兜底**（2026-10-06，`polish._scan_to_clean`）：受压楔死片（常规去旋/分离候选全败——楔形双侧受压下单伙伴最小分离必落第三者、族 B 锚点预检对受压起点全灭）由四向「扫描到全净位」原语救回——质心/原位双锚 × ±y/−x/+x，10mm 形状级采样（干净窗可窄于 20mm 粗扫步，3069 g09_29 实勘逃逸窗 ~10mm）+ 二分收敛左边界；首净点 ≈ 贴触位（动则必贴不破），接受仍走同款五守卫；`ESCAPE_SCAN_CAP_MM=100` 就近上限 + `ESCAPE_SCAN_BUDGET=4000` 全局封顶（耗尽留 residual）。仅常规候选全败后触发，既有成功路径零扰动；实测 3069（137 片）+24% 耗时、命中 1 处（g09_29 5°→4° −x 逃逸 26mm）。
 
 ### 错误响应（结构化 JSON）
 

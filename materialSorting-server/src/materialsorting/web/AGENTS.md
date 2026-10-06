@@ -20,7 +20,9 @@ curl -X POST http://127.0.0.1:8010/api/edit-polish -H "Content-Type: application
      -H "X-Session-Id: <sid>" -d '{"placed":[{"id":"g01_30","rotation":0,"translation":[0,0]}]}' \
                                                                       # prd-edit-polish US-002 编辑「智能微调」（placed 随 body；报告口径 = 物理毛版
                                                                       # 轮廓 ≠ 画布 erode 红字口径，差异注记见 agent-api-reference.md 专节 ⚠️；
-                                                                      # US-005 可选 "compact":true → 引擎压缩回收档（缺省 false additive））
+                                                                      # US-005 可选 "compact":true → 引擎压缩回收档（缺省 false additive）；
+                                                                      # 2026-10-06 逃逸兜底默认启用 —— report 增 escape_moves 键 + move kind
+                                                                      # derotate-escape/separate-escape，见 agent-api-reference.md 专节）
 curl -X POST http://127.0.0.1:8010/api/state-save -H "Content-Type: application/json" \
      -H "X-Session-Id: <sid>" -d '{"form":{...},"quantities":{...},"quantities_base":{...},"run":{...}}' -o work.msn \
                                                                       # 状态文件 US-001 工作台状态保存（gzip JSON .msn 附件；run 可选整块，

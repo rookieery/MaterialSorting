@@ -11,6 +11,7 @@ from collections import Counter
 from pathlib import Path
 
 import pytest
+from shapely.affinity import translate
 from shapely.geometry import Polygon
 
 from materialsorting.nesting_engine import polish
@@ -265,13 +266,15 @@ def test_determinism_double_run():
 
 def test_report_shape():
     """report 结构：before/after 七指标 + moves/residual/excluded/attach_moves/
-    elapsed_sec（attach_moves 2026-10-05 additive）。"""
+    escape_moves/elapsed_sec（attach_moves 2026-10-05、escape_moves 2026-10-06
+    additive）。"""
     pieces = {'g01_30': _piece('g01_30', 200, 150)}
     placed = [_pl('g01_30', 0, 0, 0)]
     out, rep = polish_layout(placed, pieces, 1000.0)
     assert set(rep) == {'before', 'after', 'moves', 'residual', 'excluded',
-                        'attach_moves', 'elapsed_sec'}
+                        'attach_moves', 'escape_moves', 'elapsed_sec'}
     assert rep['attach_moves'] == 0 and isinstance(rep['attach_moves'], int)
+    assert rep['escape_moves'] == 0 and isinstance(rep['escape_moves'], int)
     fields = {'overlap_pairs', 'max_penetration_mm', 'total_overlap_area_mm2',
               'rotated_pieces', 'rotation_dev_sum_deg', 'width_mm', 'density'}
     assert set(rep['before']) == fields and set(rep['after']) == fields
@@ -714,6 +717,122 @@ def test_slide_west_touch_variants():
     assert t == pytest.approx(50.0, abs=1e-3)
     moved = [(x - t, y) for x, y in mover.exterior.coords]
     assert Polygon(moved).intersection(left).area == 0.0
+
+
+# ------------------------------------------------- 逃逸兜底（2026-10-06）
+
+def test_scan_to_clean_primitive():
+    """_scan_to_clean 原语：U 形槽窄窗（~10mm）命中 + 落位干净 + 无窗 None +
+    起点已净返回 0 —— 锁死「必须 10mm 形状级细采样」（20mm 粗扫步必漏窄窗，
+    3069 g09_29 实勘依据）。"""
+    mover = Polygon([[100.0, 25.0], [150.0, 25.0], [150.0, 50.0], [100.0, 50.0]])
+    u_slot = Polygon([[0.0, 0.0], [140.0, 0.0], [140.0, 50.0], [90.0, 50.0],
+                      [90.0, 20.0], [30.0, 20.0], [30.0, 50.0], [0.0, 50.0]])
+    geoms = [mover, u_slot]
+    bounds = [g.bounds for g in geoms]
+    # −x 逃逸窗：mover 完全入槽需 x∈[30,90] → t∈[60,70]，窗宽 10mm < 20mm 粗扫步
+    t = polish._scan_to_clean(mover, 0, geoms, bounds, 1000.0, 'x', -1.0, 100.0)
+    assert t is not None and 59.9 < t <= 70.0
+    moved = translate(mover, xoff=-t)
+    assert moved.intersection(u_slot).area <= 0.1     # 落位零正面积重合
+    # 无窗（实体墙，无槽）→ None
+    wall = Polygon([[0.0, 0.0], [140.0, 0.0], [140.0, 50.0], [0.0, 50.0]])
+    geoms2 = [mover, wall]
+    assert polish._scan_to_clean(mover, 0, geoms2, [g.bounds for g in geoms2],
+                                 1000.0, 'x', -1.0, 100.0) is None
+    # 起点已净 → 0（远处片无涉）
+    far = Polygon([[500.0, 0.0], [600.0, 0.0], [600.0, 50.0], [500.0, 50.0]])
+    geoms3 = [mover, far]
+    assert polish._scan_to_clean(mover, 0, geoms3, [g.bounds for g in geoms3],
+                                 1000.0, 'x', -1.0, 100.0) == 0.0
+
+
+def test_separate_escape_rects():
+    """separate-escape（2026-10-06）：双侧受压条片在双 mover 最小分离全败后
+    +x 扫描到全净位逃逸。夹具：地板左/天花板中均 exclude（禁其最小分离让路）、
+    远右包络锚（封 −x 大位移的守卫②口径）、+y 落位阻挡（封天花板上方）——
+    所有常规分离路径被守卫拒，唯一出路是 +x 楔口逃逸。"""
+    pieces = {'g01_30': _piece('g01_30', 200, 150),
+              'g02_30': _piece('g02_30', 160, 150, label='g02'),
+              'g03_30': _piece('g03_30', 60, 110, label='g03'),
+              'g04_30': _piece('g04_30', 100, 400, label='g04'),
+              'g05_30': _piece('g05_30', 300, 100, label='g05')}
+    placed = [_pl('g01_30', 0, 0, 0), _pl('g02_30', 0, 100, 245),
+              _pl('g03_30', 0, 170, 145), _pl('g04_30', 0, 600, 0),
+              _pl('g05_30', 0, 0, 500)]
+    out, rep = polish_layout(placed, pieces, 1000.0,
+                             exclude={'labels': ['g01', 'g02']})
+    assert rep['before']['overlap_pairs'] == 2
+    assert rep['after']['overlap_pairs'] == 0
+    esc = [m for m in rep['moves'] if m['kind'] == 'separate-escape']
+    assert len(esc) == 1 and esc[0]['pid'] == 'g03_30'
+    assert '+x逃逸' in esc[0]['detail']
+    dx = esc[0]['to']['translation'][0] - esc[0]['from']['translation'][0]
+    assert 89.0 <= dx <= 91.0
+    # exclude 片（地板/天花板）零移动；终态三方两两零正面积重合
+    assert all(m['pid'] not in ('g01_30', 'g02_30') for m in rep['moves'])
+    g = [_world(p['id'], pieces, p['rotation'], p['translation']) for p in out[:3]]
+    assert g[0].intersection(g[1]).area <= 0.1
+    assert g[0].intersection(g[2]).area <= 0.1
+    assert g[1].intersection(g[2]).area <= 0.1
+
+
+def _dent_pocket_layout():
+    """夹具 B（2026-10-06）：平底地板 + 底边带凹兜的天花板（兜 x[225,445]、深
+    14mm —— 凹兜是凹特征，对族 A 的 bbox 棱对齐候选完全不可见），5° 条片双侧
+    受压且族 A/B 全败；唯一出路 = 0° 台阶 −x 逃逸入兜（逃逸窗 t∈[37,57]，
+    窄于 20mm 粗扫步 —— 3069 g09_29 同构机制）。"""
+    floor = [[-600.0, 0.0], [600.0, 0.0], [600.0, 30.0], [-600.0, 30.0]]
+    ceil = [[-600.0, 66.0], [225.0, 66.0], [225.0, 80.0], [445.0, 80.0],
+            [445.0, 66.0], [600.0, 66.0], [600.0, 1000.0], [-600.0, 1000.0]]
+
+    def _pp(pid, label, poly):
+        return {'pid': pid, 'label': label, 'size': 28, 'polygon': poly,
+                'area_mm2': Polygon(poly).area, 'net_polygon': [],
+                'internal_lines': [], 'notches': [], 'grain_line': None}
+
+    pieces = {'g06_30': _pp('g06_30', 'g06', floor),
+              'g07_30': _pp('g07_30', 'g07', ceil),
+              'g08_30': _piece('g08_30', 200, 40, label='g08')}
+    # 5° 条片世界 bbox 中心放 (382, 50)：0° 质心锚带恰为 y[30,70]（贴地板顶）
+    import math as _m
+    _r = _m.radians(5.0)
+    ctr = (_m.cos(_r) * 100 - _m.sin(_r) * 20, _m.sin(_r) * 100 + _m.cos(_r) * 20)
+    placed = [_pl('g06_30', 0, 0, 0), _pl('g07_30', 0, 0, 0),
+              _pl('g08_30', 5, 382.0 - ctr[0], 50.0 - ctr[1])]
+    return pieces, placed, 1000.0
+
+
+def test_derotate_escape_dent_pocket():
+    """derotate-escape（2026-10-06）：受压斜片 0° 台阶 −x 逃逸入凹兜 ——
+    重合归零 + dev 5→0 + exclude 片零移动 + 确定性双跑全等。"""
+    pieces, placed, gate = _dent_pocket_layout()
+    out, rep = polish_layout(placed, pieces, gate, exclude={'labels': ['g06', 'g07']})
+    assert rep['before']['overlap_pairs'] == 2
+    assert rep['after']['overlap_pairs'] == 0
+    assert _rotation_dev(out[2]['rotation']) == 0.0
+    esc = [m for m in rep['moves'] if m['kind'] == 'derotate-escape']
+    assert len(esc) == 1 and esc[0]['pid'] == 'g08_30'
+    assert '−x逃逸' in esc[0]['detail']
+    assert rep['escape_moves'] == 1
+    assert all(m['pid'] not in ('g06_30', 'g07_30') for m in rep['moves'])
+    out2, rep2 = polish_layout(placed, pieces, gate, exclude={'labels': ['g06', 'g07']})
+    r1 = dict(rep); r1.pop('elapsed_sec')
+    r2 = dict(rep2); r2.pop('elapsed_sec')
+    assert out == out2 and r1 == r2
+
+
+def test_escape_budget_off_restores_legacy_behavior(monkeypatch):
+    """扫描预算置 0 = 逃逸兜底关闭 → 回到旧代码路径（夹具 B 保持受压 residual、
+    无 escape move）—— 锁死「兜底只在预算内介入，关闭即旧行为」。"""
+    monkeypatch.setattr(polish, 'ESCAPE_SCAN_BUDGET', 0)
+    pieces, placed, gate = _dent_pocket_layout()
+    out, rep = polish_layout(placed, pieces, gate, exclude={'labels': ['g06', 'g07']})
+    assert rep['escape_moves'] == 0
+    assert not any(m['kind'] in ('derotate-escape', 'separate-escape')
+                   for m in rep['moves'])
+    assert rep['after']['overlap_pairs'] == 2      # 受压保持（旧行为）
+    assert out[2]['rotation'] == placed[2]['rotation']
 
 
 # --------------------------------------------------------------- 分层纯度
