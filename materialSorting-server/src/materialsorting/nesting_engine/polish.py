@@ -201,6 +201,9 @@ ESCAPE_SCAN_CAP_MM = 100.0
 # 逃逸扫描全局预算（次，两巡合计）：确定性封顶防大文件最坏情形（3069 实测
 # 137 片 / 1551 次扫描 / 命中 1，耗时 +24%），耗尽后不再扫、留 residual。
 ESCAPE_SCAN_BUDGET = 4000
+# 分离二巡（③′，2026-10-06 B4）重合对数上限：脏区重扫的确定性成本封顶（穿透
+# 降序取前 N）—— 零 move 时不产生任何开销，超限对留 residual 如实上报。
+SEP2_PAIR_CAP = 400
 
 
 class PolishError(Exception):
@@ -1130,48 +1133,53 @@ def polish_layout(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False,
     _derotate_sweep()
 
     # ---- pass ③ 去重叠（穿透深度降序、平手 (i,j)；最小分离 ±y 优先、−x 次之）----
-    pairs.sort(key=lambda p: (-p['penetration_mm'], p['i'], p['j']))
-    for pair in pairs:
-        i, j = pair['i'], pair['j']
-        if _pair_stats(geoms[i], geoms[j]) is None:   # 早前 move 已顺带解离
-            continue
-        done = False
-        for mover, other in ((i, j), (j, i)):          # 一片失败换动另一片
-            if mover in excluded:
+    def _separate_sweep(pair_list):
+        """pass ③ 主体（2026-10-06 B4 闭包化：一巡全量 ``pairs`` / 二巡 ③′ 脏区
+        重合对共用同一机器）。"""
+        for pair in pair_list:
+            i, j = pair['i'], pair['j']
+            if _pair_stats(geoms[i], geoms[j]) is None:   # 早前 move 已顺带解离
                 continue
-            cands = []
-            for prio, (axis, sign) in enumerate(
-                    (('y', 1.0), ('y', -1.0), ('x', -1.0))):
-                sep = _sep_translate(geoms[mover], geoms[other], axis, sign)
-                if sep is not None:
-                    dx, dy, t = sep
-                    cands.append((t, prio, dx, dy))
-            for t, prio, dx, dy in sorted(cands):      # 最小分离平移优先
-                old_tr = items[mover]['translation']
-                tr = (old_tr[0] + dx, old_tr[1] + dy)
-                g = translate(geoms[mover], xoff=dx, yoff=dy)
-                cg = translate(cgeoms[mover], xoff=dx, yoff=dy)
-                if _move_ok(mover, g, cg):
-                    direction = '+y' if prio == 0 else ('−y' if prio == 1 else '−x')
-                    _apply(mover, items[mover]['rotation'], tr, g, 'separate',
-                           f'与 placed[{other}]（{items[other]["id"]}）分离：'
-                           f'{direction} 最小平移 {t:.2f}mm', cgeom_new=cg)
-                    done = True
-                    break
-            if done:
-                break
-        # 逃逸兜底（2026-10-06）：双 mover 最小分离全败（楔形双侧受压下单伙伴
-        # 最小分离必落在另一侧墙上）时，自当前位当前角四向扫描到全净位 —— 纯
-        # 平移形态的楔口逃逸；exclude 片跳过不扫。
-        if not done:
-            for mover, other in ((i, j), (j, i)):
+            done = False
+            for mover, other in ((i, j), (j, i)):      # 一片失败换动另一片
                 if mover in excluded:
                     continue
-                if _escape_ok(mover, geoms[mover], items[mover]['translation'],
-                              items[mover]['rotation'],
-                              f'与 placed[{other}]（{items[other]["id"]}）分离',
-                              cg_from=cgeoms[mover]):
+                cands = []
+                for prio, (axis, sign) in enumerate(
+                        (('y', 1.0), ('y', -1.0), ('x', -1.0))):
+                    sep = _sep_translate(geoms[mover], geoms[other], axis, sign)
+                    if sep is not None:
+                        dx, dy, t = sep
+                        cands.append((t, prio, dx, dy))
+                for t, prio, dx, dy in sorted(cands):  # 最小分离平移优先
+                    old_tr = items[mover]['translation']
+                    tr = (old_tr[0] + dx, old_tr[1] + dy)
+                    g = translate(geoms[mover], xoff=dx, yoff=dy)
+                    cg = translate(cgeoms[mover], xoff=dx, yoff=dy)
+                    if _move_ok(mover, g, cg):
+                        direction = '+y' if prio == 0 else ('−y' if prio == 1 else '−x')
+                        _apply(mover, items[mover]['rotation'], tr, g, 'separate',
+                               f'与 placed[{other}]（{items[other]["id"]}）分离：'
+                               f'{direction} 最小平移 {t:.2f}mm', cgeom_new=cg)
+                        done = True
+                        break
+                if done:
                     break
+            # 逃逸兜底（2026-10-06）：双 mover 最小分离全败（楔形双侧受压下单伙伴
+            # 最小分离必落在另一侧墙上）时，自当前位当前角四向扫描到全净位 —— 纯
+            # 平移形态的楔口逃逸；exclude 片跳过不扫。
+            if not done:
+                for mover, other in ((i, j), (j, i)):
+                    if mover in excluded:
+                        continue
+                    if _escape_ok(mover, geoms[mover], items[mover]['translation'],
+                                  items[mover]['rotation'],
+                                  f'与 placed[{other}]（{items[other]["id"]}）分离',
+                                  cg_from=cgeoms[mover]):
+                        break
+
+    pairs.sort(key=lambda p: (-p['penetration_mm'], p['i'], p['j']))
+    _separate_sweep(pairs)
 
     # ---- pass ③½ 贴附（attach，默认启用）：重力压实 west+south 交替滑贴 ----
     # 2026-10-05 裁床裁板需求：裁片片片贴合方便走刀。west 趟复用 compact 的
@@ -1240,6 +1248,36 @@ def polish_layout(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False,
             if not moved:
                 break                      # 不动点：整轮零 move 早退
 
+    _attach_sweep()
+
+    # ---- pass ③′ 分离二巡（2026-10-06 B4 压线收敛）+ 补一轮贴附 ----
+    # attach 重排（数百 move 级环境剧变）后，一巡失败的分离可行位才可能出现
+    # （882 实勘：[9]g01_33 的 −y 候选在 attach 后已可通过、但 pass ③ 只在
+    # attach 前跑一次 —— 修复机会被顺序吞掉）。脏区门控镜像 ②′：只重扫「自身
+    # 或邻域（NEIGHBOR_MARGIN）被动过」的片的现存重合对（环境未变者可行性
+    # 不变）；重合对数 SEP2_PAIR_CAP 确定性封顶（穿透降序取前 N，大文件防拖爆
+    # 预算）；逃逸触发门 pressed 随重扫增补（保守超集）。零重扫对 → 整段 no-op。
+    only3 = set(touched)
+    for k in list(touched):
+        bk = (bounds[k][0] - NEIGHBOR_MARGIN_MM, bounds[k][1] - NEIGHBOR_MARGIN_MM,
+              bounds[k][2] + NEIGHBOR_MARGIN_MM, bounds[k][3] + NEIGHBOR_MARGIN_MM)
+        for i in range(n):
+            if _bbox_overlaps(bk, bounds[i]):
+                only3.add(i)
+    re_pairs = []
+    for i in range(n):
+        for j in range(i + 1, n):
+            if i not in only3 and j not in only3:
+                continue
+            st = _pair_stats(geoms[i], geoms[j])
+            if st is not None:
+                re_pairs.append({'i': i, 'j': j,
+                                 'area_mm2': st[0], 'penetration_mm': st[1]})
+    re_pairs.sort(key=lambda p: (-p['penetration_mm'], p['i'], p['j']))
+    if len(re_pairs) > SEP2_PAIR_CAP:
+        re_pairs = re_pairs[:SEP2_PAIR_CAP]
+    pressed |= {_ix for _p in re_pairs for _ix in (_p['i'], _p['j'])}
+    _separate_sweep(re_pairs)
     _attach_sweep()
 
     # ---- pass ②′ 贴附保持归位 · 二巡 + 补一轮贴附（2026-10-06）----
@@ -1699,6 +1737,7 @@ def _smoke_fixtures() -> bool:
               _pl('g07_30', 0, 350, 130)]
     out, rep = polish_layout(
         placed, pieces, 1000.0,
+        exclude={'labels': ['g04', 'g05', 'g06', 'g07']},
         collide_polygons={'g03_30': [[25.0, 25.0], [95.0, 25.0],
                                      [95.0, 55.0], [25.0, 55.0]]})
     sep = [m for m in rep['moves'] if m['kind'] == 'separate']
@@ -1710,6 +1749,27 @@ def _smoke_fixtures() -> bool:
            and g_out[0].intersection(g_out[2]).area == 0.0,
            f'seps={[(m["index"], m["detail"]) for m in sep]} '
            f'after_pairs={rep["after"]["overlap_pairs"]}（C×左墙新预算压线如实入报告）')
+
+    # ㉑ 分离二巡 ③′（2026-10-06 B4 压线收敛）：M×P 叠 5mm，唯一分离向 +y 5mm
+    #     的落位被悬浮薄片 X 楔住（pass③ 全灭、四向逃逸全被 D4/包络/门幅封死）；
+    #     attach west 把 X 拖到布头（150mm）后落位净空 —— ③′ 脏区重扫补上这刀
+    #     （顺序证明：X 的 attach move 在 separate move 之前）。
+    pieces = {'g01_30': _rect_piece('g01_30', 100, 50),           # M @ (100,45)
+              'g02_30': _rect_piece('g02_30', 100, 50, 'g02'),    # P @ (100,0)
+              'g03_30': _rect_piece('g03_30', 100, 50, 'g03'),    # D4 左墙 @ (0,45)
+              'g04_30': _rect_piece('g04_30', 60, 4, 'g04')}      # X 悬浮片 @ (150,96)
+    placed = [_pl('g01_30', 0, 100, 45), _pl('g02_30', 0, 100, 0),
+              _pl('g03_30', 0, 0, 45), _pl('g04_30', 0, 150, 96)]
+    out, rep = polish_layout(placed, pieces, 145.0)
+    moves = rep['moves']
+    i_att = next((k for k, m in enumerate(moves)
+                  if m['kind'] == 'attach' and m['pid'] == 'g04_30'), None)
+    i_sep = next((k for k, m in enumerate(moves) if m['kind'] == 'separate'), None)
+    _check('分离二巡（attach 后重扫）',
+           rep['before']['overlap_pairs'] == 1
+           and rep['after']['overlap_pairs'] == 0
+           and i_att is not None and i_sep is not None and i_att < i_sep,
+           f'moves={[(m["pid"], m["kind"]) for m in moves]}')
     return ok
 
 

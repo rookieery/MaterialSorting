@@ -944,12 +944,16 @@ def _b2_kept_overlap_layout():
 def test_collide_caliber_kept_budget_overlap_no_longer_blocks():
     """B2（2026-10-06）：守卫③碰撞口径 —— d 预算内保留压线不再误杀候选。
     判别性双模式：毛版口径（collide_polygons 缺省 = 旧行为）双对 residual；
-    碰撞口径下 A×B/A×C 双双分离（A −y 10 即 882 腰头弧片同构路径）。"""
+    碰撞口径下 A×B/A×C 双双分离（A −y 10 即 882 腰头弧片同构路径）。四面墙
+    exclude 钉死（attach/③′ 不许拖墙 —— B4 落地后悬浮墙会被聚拢、破坏
+    「旧行为 residual」判别性基线，钉死后环境稳定两模式可比）。"""
     pieces, placed, col = _b2_kept_overlap_layout()
-    out0, rep0 = polish_layout(placed, pieces, 1000.0)
+    walls = {'labels': ['g04', 'g05', 'g06', 'g07']}
+    out0, rep0 = polish_layout(placed, pieces, 1000.0, exclude=walls)
     assert rep0['after']['overlap_pairs'] == 2        # 旧行为：全灭（判别性基线）
     assert not any(m['kind'] == 'separate' for m in rep0['moves'])
-    out1, rep1 = polish_layout(placed, pieces, 1000.0, collide_polygons=col)
+    out1, rep1 = polish_layout(placed, pieces, 1000.0, exclude=walls,
+                               collide_polygons=col)
     seps = [(m['index'], m['detail']) for m in rep1['moves']
             if m['kind'] == 'separate']
     assert any(i == 0 and '−y' in d for i, d in seps)
@@ -958,7 +962,8 @@ def test_collide_caliber_kept_budget_overlap_no_longer_blocks():
     assert g[0].intersection(g[2]).area == 0.0
     # 守卫②④ 不变量照旧；确定性双跑全等
     assert rep1['after']['width_mm'] <= rep1['before']['width_mm'] + 0.5
-    out2, rep2 = polish_layout(placed, pieces, 1000.0, collide_polygons=col)
+    out2, rep2 = polish_layout(placed, pieces, 1000.0, exclude=walls,
+                               collide_polygons=col)
     r1 = dict(rep1); r1.pop('elapsed_sec')
     r2 = dict(rep2); r2.pop('elapsed_sec')
     assert out1 == out2 and r1 == r2
@@ -967,8 +972,10 @@ def test_collide_caliber_kept_budget_overlap_no_longer_blocks():
 def test_collide_caliber_missing_pid_falls_back_to_raw():
     """B2 回退口径：collide_polygons 在场但 pid 未命中 → 该片守卫走毛版（最严
     方向），与完全缺省同判 —— 夹具同上但 collide map 空字典 → 双对 residual、
-    零 separate move（attach 聚拢照常，不锁终态位置）。"""
+    零 separate move（墙 exclude 钉死同上，环境稳定）。"""
     pieces, placed, _col = _b2_kept_overlap_layout()
-    out, rep = polish_layout(placed, pieces, 1000.0, collide_polygons={})
+    out, rep = polish_layout(placed, pieces, 1000.0,
+                             exclude={'labels': ['g04', 'g05', 'g06', 'g07']},
+                             collide_polygons={})
     assert rep['after']['overlap_pairs'] == 2
     assert not any(m['kind'] == 'separate' for m in rep['moves'])
