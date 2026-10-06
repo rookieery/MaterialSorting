@@ -204,6 +204,16 @@ ESCAPE_SCAN_BUDGET = 4000
 # 分离二巡（③′，2026-10-06 B4）重合对数上限：脏区重扫的确定性成本封顶（穿透
 # 降序取前 N）—— 零 move 时不产生任何开销，超限对留 residual 如实上报。
 SEP2_PAIR_CAP = 400
+# 分离伴行微避让（2026-10-06 B3）：主分离候选仅因第三方**擦边级**楔形被守卫③
+# 否决时，沿正交轴固定偏移阶梯伴行重试伙伴二分 —— 版师手眼「平移让位」的 2D
+# 自由度（单轴最小分离够不着、四向逃逸又无净窗的窄口；882 实勘 g01_31×g02_30
+# 被 g06_36 6.1mm² 楔形顶死形态）。确定性固定序；大面积实堵（>面积上限）不硬凑
+# 留 residual；主分离量与偏移量双重封顶保就近语义；全局二分次数预算封顶。
+SEP_DODGE_OFFSETS = (1.0, -1.0, 2.0, -2.0, 4.0, -4.0,
+                     8.0, -8.0, 16.0, -16.0, 30.0, -30.0)
+SEP_DODGE_T_MAX_MM = 60.0        # 参与伴行的主分离量上限（mm，就近语义）
+SEP_DODGE_MAX_BLOCK_MM2 = 500.0  # 「擦边级」阻挡面积上限（mm²，超过 = 实堵）
+SEP_DODGE_BUDGET = 600           # 伴行二分次数全局预算（确定性封顶）
 
 
 class PolishError(Exception):
@@ -1133,9 +1143,25 @@ def polish_layout(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False,
     _derotate_sweep()
 
     # ---- pass ③ 去重叠（穿透深度降序、平手 (i,j)；最小分离 ±y 优先、−x 次之）----
+    sep_dodge_budget = SEP_DODGE_BUDGET
+
+    def _block_area(idx, geom):
+        """候选位对全图的最大毛版交集面积（B3 伴行触发门：擦边级 vs 实堵）。"""
+        b = geom.bounds
+        worst = 0.0
+        for k in range(n):
+            if k == idx:
+                continue
+            if _bbox_overlaps(b, bounds[k]) and _hits(geom, geoms[k]):
+                a = geom.intersection(geoms[k]).area
+                if a > worst:
+                    worst = a
+        return worst
+
     def _separate_sweep(pair_list):
         """pass ③ 主体（2026-10-06 B4 闭包化：一巡全量 ``pairs`` / 二巡 ③′ 脏区
-        重合对共用同一机器）。"""
+        重合对共用同一机器；B3 伴行微避让作常规分离的擦边级兜底）。"""
+        nonlocal sep_dodge_budget
         for pair in pair_list:
             i, j = pair['i'], pair['j']
             if _pair_stats(geoms[i], geoms[j]) is None:   # 早前 move 已顺带解离
@@ -1163,6 +1189,54 @@ def polish_layout(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False,
                                f'{direction} 最小平移 {t:.2f}mm', cgeom_new=cg)
                         done = True
                         break
+                if done:
+                    break
+                # B3 伴行微避让（2026-10-06）：常规分离全败且失败候选只是「擦边级」
+                # 阻挡（≤ SEP_DODGE_MAX_BLOCK_MM2）时，沿正交轴固定偏移阶梯重试
+                # 伙伴二分 —— 单轴够不着的窄口让位。大面积实堵不触发（residual
+                # 如实）；全局预算封顶；确定性（固定阶梯序）。
+                if cands and sep_dodge_budget > 0:
+                    axis_of = {0: ('y', 1.0), 1: ('y', -1.0), 2: ('x', -1.0)}
+                    for t, prio, dx, dy in sorted(cands):
+                        if t > SEP_DODGE_T_MAX_MM or sep_dodge_budget <= 0:
+                            continue
+                        g_plain = translate(geoms[mover], xoff=dx, yoff=dy)
+                        if _block_area(mover, g_plain) > SEP_DODGE_MAX_BLOCK_MM2:
+                            continue                  # 实堵不硬凑
+                        axis, sign = axis_of[prio]
+                        lat_axis = 'x' if axis == 'y' else 'y'
+                        for off in SEP_DODGE_OFFSETS:
+                            if sep_dodge_budget <= 0:
+                                break
+                            sep_dodge_budget -= 1
+                            lx = off if lat_axis == 'x' else 0.0
+                            ly = off if lat_axis == 'y' else 0.0
+                            g_lat = translate(geoms[mover], xoff=lx, yoff=ly)
+                            sep2 = _sep_translate(g_lat, geoms[other], axis, sign)
+                            if sep2 is None:
+                                continue
+                            dx2, dy2, t2 = sep2
+                            if t2 > SEP_DODGE_T_MAX_MM:
+                                continue
+                            old_tr = items[mover]['translation']
+                            tr2 = (old_tr[0] + lx + dx2, old_tr[1] + ly + dy2)
+                            g2 = translate(g_lat, xoff=dx2, yoff=dy2)
+                            cg2 = translate(translate(cgeoms[mover], xoff=lx, yoff=ly),
+                                            xoff=dx2, yoff=dy2)
+                            if _move_ok(mover, g2, cg2):
+                                direction = ('+y' if prio == 0
+                                             else ('−y' if prio == 1 else '−x'))
+                                _apply(mover, items[mover]['rotation'], tr2, g2,
+                                       'separate',
+                                       f'与 placed[{other}]（{items[other]["id"]}）'
+                                       f'分离：{direction} 最小平移 {t2:.2f}mm'
+                                       f'（{lat_axis}{"−" if off < 0 else "+"}'
+                                       f'{abs(off):.0f} 伴行避让）',
+                                       cgeom_new=cg2)
+                                done = True
+                                break
+                        if done:
+                            break
                 if done:
                     break
             # 逃逸兜底（2026-10-06）：双 mover 最小分离全败（楔形双侧受压下单伙伴
@@ -1647,8 +1721,11 @@ def _smoke_fixtures() -> bool:
            f'tr={out[0]["translation"]} attach={rep["attach_moves"]}')
 
     # ⑯ 逃逸·平移兜底（2026-10-06 separate-escape）：双侧受压条片在常规分离
-    #     全败后 +x 扫描到全净位（详见 tests/test_polish.py 同构夹具）
-    pieces = {'g01_30': _rect_piece('g01_30', 200, 150),
+    #     全败后 +x 扫描到全净位（详见 tests/test_polish.py 同构夹具）。地板宽
+    #     230（2026-10-06 B3 后定稿）：−y 落位对地板的阻挡面积 900mm² >
+    #     SEP_DODGE_MAX_BLOCK_MM2 —— 伴行避让不触发（实堵不硬凑），逃逸仍是
+    #     唯一出路（宽 200 时 450mm² 恰在避让阈值内、会被 −y+x30 伴行抢先）。
+    pieces = {'g01_30': _rect_piece('g01_30', 230, 150),
               'g02_30': _rect_piece('g02_30', 160, 150, label='g02'),
               'g03_30': _rect_piece('g03_30', 60, 110, label='g03'),
               'g04_30': _rect_piece('g04_30', 100, 400, label='g04'),
@@ -1770,6 +1847,25 @@ def _smoke_fixtures() -> bool:
            and rep['after']['overlap_pairs'] == 0
            and i_att is not None and i_sep is not None and i_att < i_sep,
            f'moves={[(m["pid"], m["kind"]) for m in moves]}')
+
+    # ⑳ 分离伴行微避让（2026-10-06 B3）：M×P 叠 5mm，−y 5mm 落位被 X 的 60mm²
+    #     楔形擦边顶死（+y/−x 被门幅/包络封死、四向逃逸全灭）；唯一解 = −y 分离
+    #     带 −30 横向让位（X 在落位右缘，阶梯最后一档才清开）—— 单轴最小分离
+    #     与逃逸都够不着的窄口，伴行兜底补上（882 g01_31×g02_30 同构形态）。
+    pieces = {'g01_30': _rect_piece('g01_30', 100, 40),           # M @ (30,25)
+              'g02_30': _rect_piece('g02_30', 100, 40, 'g02'),    # P @ (0,60) 顶墙
+              'g03_30': _rect_piece('g03_30', 40, 10, 'g03')}     # X @ (100,12)
+    placed = [_pl('g01_30', 0, 30, 25), _pl('g02_30', 0, 0, 60),
+              _pl('g03_30', 0, 100, 12)]
+    out, rep = polish_layout(placed, pieces, 100.0)
+    sep = [m for m in rep['moves']
+           if m['kind'] == 'separate' and '伴行避让' in m['detail']]
+    _check('分离伴行微避让（楔形让位）',
+           len(sep) == 1 and sep[0]['index'] == 0
+           and '−y' in sep[0]['detail'] and 'x−30' in sep[0]['detail']
+           and rep['after']['overlap_pairs'] == 0,
+           f'moves={[(m["pid"], m["kind"]) for m in rep["moves"]]} '
+           f'sep={sep[0]["detail"] if sep else "无"}')
     return ok
 
 
@@ -1847,11 +1943,11 @@ def _demo(intermediate_path, n_pieces) -> bool:
 def main(argv=None) -> int:
     """冒烟入口：``python -m materialsorting.nesting_engine.polish``。
 
-    默认合成夹具自检（AC 十七项口径：斜片回正/重合分离/紧密 no-op/守卫×2/
+    默认合成夹具自检（AC 二十一项口径：斜片回正/重合分离/紧密 no-op/守卫×2/
     多副本 index 寻址/排除集障碍/确定性双跑/compact 回收/compact 无空隙
     逐元素相同/镜像斜片 derotate+透传/镜像片 no-op 原对象/贴附 south 闭合
-    空白带/贴附斜片归位且保贴附/贴附贴墙/逃逸平移兜底/逃逸换角兜底），全过打印
-    PASS、exit 0。
+    空白带/贴附斜片归位且保贴附/贴附贴墙/逃逸平移兜底/逃逸换角兜底/守卫①出界
+    余量/守卫③碰撞口径/分离二巡/分离伴行微避让），全过打印 PASS、exit 0。
     ``--demo`` 追加真实母版几何演示（intermediate 前 N 片确定性带病布局 →
     polish 前后对比，形态对齐 prefix ``--pin-demo`` 先例；无 spyrrow 依赖）。
     intermediate 缺失时 ``--demo`` 提示先 commit（默认合成夹具不受影响照常自检）。
