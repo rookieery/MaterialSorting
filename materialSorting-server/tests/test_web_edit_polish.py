@@ -136,6 +136,10 @@ def test_edit_polish_200_full_chain(polish_client):
     assert rep['before']['overlap_pairs'] == 1
     assert rep['after']['overlap_pairs'] == 0
     assert rep['before']['max_penetration_mm'] == 5.0
+    # 2026-10-06 迭代至不动点：服务端缺省 max_rounds=POLISH_ROUNDS_MAX，报告
+    # additive 带 rounds（末轮零 move 确认收敛；本夹具 2 轮 = 修复轮 + 确认轮，
+    # 断言只锁形态不锁具体轮数）
+    assert rep['rounds'] >= 1 and isinstance(rep['rounds'], int)
     # 分离 move 在前（moves[0]）；贴附 pass（2026-10-05 默认启用）随后聚拢
     assert rep['moves'][0]['kind'] == 'separate'
     assert all(m['kind'] == 'attach' for m in rep['moves'][1:])
@@ -328,12 +332,48 @@ def test_edit_polish_exclude_not_dict_400(polish_client):
 
 # --------------------------------------------- gate 回退 / exclude·compact 透传
 
+def test_edit_polish_rounds_passthrough_and_default(polish_client, monkeypatch):
+    """2026-10-06 迭代至不动点：``rounds`` 键透传引擎 max_rounds；缺省 =
+    引擎 POLISH_ROUNDS_MAX（一次点击内部迭代至收敛，前端零载荷改动）；
+    显式 1 = 旧单趟行为。"""
+    calls = []
+
+    def fake_polish(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False,
+                    max_rounds=1):
+        calls.append(max_rounds)
+        return placed, dict(_REPORT_STUB)
+
+    monkeypatch.setattr(polish_mod, 'polish_layout', fake_polish)
+    r = polish_client.post('/api/edit-polish', json={'placed': _overlap_placed()})
+    assert r.status_code == 200
+    assert calls[-1] == polish_mod.POLISH_ROUNDS_MAX   # 缺省 = 迭代至上限
+    r = polish_client.post('/api/edit-polish',
+                           json={'placed': _overlap_placed(), 'rounds': 1})
+    assert r.status_code == 200
+    assert calls[-1] == 1                              # 显式 1 = 旧单趟
+    r = polish_client.post('/api/edit-polish',
+                           json={'placed': _overlap_placed(), 'rounds': 3})
+    assert r.status_code == 200
+    assert calls[-1] == 3                              # 区间内原样透传
+
+
+def test_edit_polish_rounds_invalid_400(polish_client):
+    """rounds 非法矩阵：非整数（str/float/bool）与越界（0/负/超上限）→
+    400 fail-fast（gate_mm 同款风格；bool 是 int 子类显式拦）。"""
+    for bad in ('3', 2.5, True, 0, -1, polish_mod.POLISH_ROUNDS_MAX + 1):
+        r = polish_client.post('/api/edit-polish',
+                               json={'placed': _overlap_placed(), 'rounds': bad})
+        assert r.status_code == 400, bad
+        assert 'rounds' in r.json()['error']
+
+
 def test_edit_polish_gate_fallback_and_payload_priority(polish_client, monkeypatch):
     """AC#4：gate_mm 缺省回退会话 state['gate_mm']；payload 给值则优先（spy 捕获
     引擎实参 —— /export、/api/plt-table-preview 同法口径）。"""
     calls = []
 
-    def fake_polish(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False):
+    def fake_polish(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False,
+                    max_rounds=1):
         calls.append(gate_mm)
         return placed, dict(_REPORT_STUB)
 
@@ -352,7 +392,8 @@ def test_edit_polish_exclude_compact_passthrough(polish_client, monkeypatch):
     compact 缺省 false。"""
     calls = []
 
-    def fake_polish(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False):
+    def fake_polish(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False,
+                    max_rounds=1):
         calls.append((exclude, compact))
         return placed, dict(_REPORT_STUB)
 
@@ -385,7 +426,8 @@ def test_edit_polish_runs_in_threadpool(polish_client, monkeypatch):
         threads['loop'] = threading.current_thread()
         return await real_run(func, *args, **kwargs)
 
-    def fake_polish(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False):
+    def fake_polish(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False,
+                    max_rounds=1):
         threads['polish'] = threading.current_thread()
         return placed, dict(_REPORT_STUB)
 

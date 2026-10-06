@@ -502,8 +502,9 @@ async def post_edit_polish(request: Request):
     隔离（编辑 A 的 placed 匹配 A 的母版轮廓）。
 
     请求 ``{placed:[{id,rotation,translation,mirror?},...], gate_mm?, exclude?:{labels?,
-    pids?}, compact?}``；响应 ``{ok:true, placed, report}``（placed 条数与 pid
-    多重集与输入相等 —— polish 出口 Counter 终检 + 本路由入口 pid 全匹配双保险）。
+    pids?}, compact?, rounds?}``；响应 ``{ok:true, placed, report}``（placed 条数与 pid
+    多重集与输入相等 —— polish 出口 Counter 终检 + 本路由入口 pid 全匹配双保险；
+    report additive 含 ``rounds`` = 实际迭代轮数）。
 
     - ``mirror``（edit-keyboard US-004，omit-when-false 可选布尔键）：镜像片
       标志（局部 x 翻转 ``world = R(rot)·diag(−1,1)·p + t``，与前端
@@ -521,11 +522,17 @@ async def post_edit_polish(request: Request):
       /api/plt-table-preview 同法）；
     - ``exclude`` 透传引擎（labels/pids 双键，缺省 None）；``compact`` 透传
       引擎压缩回收档（US-005：缺省 false = 与无该键行为逐字节相同，additive）；
+    - ``rounds``（2026-10-06 迭代至不动点）：外层循环轮数上限，缺省 =
+      引擎 ``POLISH_ROUNDS_MAX``（8）—— 单趟管线的预算/门控决定单趟未必
+      收敛，服务端内部迭代至不动点后一次返回终态（每轮预算回充、守卫②
+      宽度锚冻结在起跑宽度 → 全循环包络增长 ≤ +0.5mm；耗时 ≈ 轮数 × 单趟）；
+      显式 ``1`` = 旧单趟行为；非整数 / 越界 → 400 fail-fast；
     - polish 构造段经 ``run_in_threadpool`` 执行（prefix-preview 先例，防阻塞
       事件循环）；顺手 ``edit_hold.refresh(sid)``（编辑钉住与心跳同语义，default
       不进钉住表 —— /api/edit-hold 同口径）。
     """
-    from ..nesting_engine.polish import PolishError, polish_layout
+    from ..nesting_engine.polish import (
+        POLISH_ROUNDS_MAX, PolishError, polish_layout)
 
     sid = (request.headers.get('x-session-id') or '').strip() or None
     try:
@@ -577,9 +584,26 @@ async def post_edit_polish(request: Request):
             {'error': 'exclude 必须是 {labels?, pids?} 对象'}, status_code=400)
     compact = bool(payload.get('compact') or False)
 
+    # rounds（2026-10-06 迭代至不动点）：外层循环轮数上限。缺省 = 引擎
+    # POLISH_ROUNDS_MAX —— 一次点击内部迭代至收敛，前端零载荷改动；显式 1
+    # = 旧单趟行为（A/B 与测试用）；非整数 / 越出 [1, cap] → 400 fail-fast
+    # （gate_mm 同款风格；bool 是 int 子类须显式拦）。
+    rounds_raw = payload.get('rounds')
+    if rounds_raw is None:
+        rounds = POLISH_ROUNDS_MAX
+    elif isinstance(rounds_raw, bool) or not isinstance(rounds_raw, int):
+        return JSONResponse({'error': 'rounds 必须是整数'}, status_code=400)
+    elif not 1 <= rounds_raw <= POLISH_ROUNDS_MAX:
+        return JSONResponse(
+            {'error': f'rounds 超出范围 [1, {POLISH_ROUNDS_MAX}]'},
+            status_code=400)
+    else:
+        rounds = rounds_raw
+
     def _polish():
         return polish_layout(placed, pieces_by_id, gate_mm,
-                             exclude=exclude, compact=compact)
+                             exclude=exclude, compact=compact,
+                             max_rounds=rounds)
 
     try:
         placed_new, report = await run_in_threadpool(_polish)

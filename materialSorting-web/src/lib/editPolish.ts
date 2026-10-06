@@ -48,6 +48,8 @@ export interface PolishReport {
   attach_moves: number;
   /** 逃逸兜底 move 计数（2026-10-06 derotate/separate-escape，additive）。 */
   escape_moves: number;
+  /** 外层迭代轮数（2026-10-06 迭代至不动点，additive；旧响应缺省视同 1）。 */
+  rounds?: number;
   elapsed_sec: number;
 }
 

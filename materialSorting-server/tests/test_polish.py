@@ -18,6 +18,7 @@ from materialsorting.nesting_engine import polish
 from materialsorting.nesting_engine.polish import (
     PolishError,
     _derotate_ladder,
+    _polish_once,
     _rotation_dev,
     _sep_translate,
     _slide_west_touch,
@@ -266,15 +267,16 @@ def test_determinism_double_run():
 
 def test_report_shape():
     """report 结构：before/after 七指标 + moves/residual/excluded/attach_moves/
-    escape_moves/elapsed_sec（attach_moves 2026-10-05、escape_moves 2026-10-06
-    additive）。"""
+    escape_moves/elapsed_sec/rounds（attach_moves 2026-10-05、escape_moves
+    2026-10-06、rounds 2026-10-06 迭代至不动点 additive）。"""
     pieces = {'g01_30': _piece('g01_30', 200, 150)}
     placed = [_pl('g01_30', 0, 0, 0)]
     out, rep = polish_layout(placed, pieces, 1000.0)
     assert set(rep) == {'before', 'after', 'moves', 'residual', 'excluded',
-                        'attach_moves', 'escape_moves', 'elapsed_sec'}
+                        'attach_moves', 'escape_moves', 'elapsed_sec', 'rounds'}
     assert rep['attach_moves'] == 0 and isinstance(rep['attach_moves'], int)
     assert rep['escape_moves'] == 0 and isinstance(rep['escape_moves'], int)
+    assert rep['rounds'] == 1 and isinstance(rep['rounds'], int)
     fields = {'overlap_pairs', 'max_penetration_mm', 'total_overlap_area_mm2',
               'rotated_pieces', 'rotation_dev_sum_deg', 'width_mm', 'density'}
     assert set(rep['before']) == fields and set(rep['after']) == fields
@@ -833,6 +835,151 @@ def test_escape_budget_off_restores_legacy_behavior(monkeypatch):
                    for m in rep['moves'])
     assert rep['after']['overlap_pairs'] == 2      # 受压保持（旧行为）
     assert out[2]['rotation'] == placed[2]['rotation']
+
+
+# ------------------------------------------- 外层迭代至不动点（2026-10-06）
+
+def _grid(rows, cols):
+    """rows×cols 网格富夹具（性能测试同构缩小版）：相邻列 2mm 横叠 + 每 5 片
+    10° 斜置 —— 单趟预算/门控（attach 3 轮帽、角度预算、②′ 脏区门）下跑不完
+    的典型形态，多轮迭代显著收敛（8×8 实测：重合 21→2、Σ偏差 30°→0）。"""
+    pieces, placed, gate = {}, [], 2000.0
+    idx = 0
+    for row in range(rows):
+        y = row * 165.0
+        for col in range(cols):
+            pid = f'g{idx // 10 + 1:02d}_{28 + idx % 10}'
+            pieces[pid] = _piece(pid, 100, 140, label=f'g{idx // 10 + 1:02d}')
+            placed.append(_pl(pid, 10.0 if idx % 5 == 0 else 0.0,
+                              col * 98.0, y))
+            idx += 1
+    return pieces, placed, gate
+
+
+def test_multiround_converges_beyond_single_pass():
+    """外层迭代严格优于单趟 + 四大不变量：moves 前缀 = 单趟全等（首轮等价
+    独立单次调用）、宽度锚不蠕变（全循环累计 ≤ +0.5mm）、收敛态复跑零 move
+    （真不动点）、attach/escape 计数与拼接 moves 自洽（UI 冒烟 S2h 同口径）。"""
+    pieces, placed, gate = _grid(8, 8)
+    _, r1 = polish_layout(placed, pieces, gate)
+    outN, rN = polish_layout(placed, pieces, gate,
+                             max_rounds=polish.POLISH_ROUNDS_MAX)
+    assert r1['rounds'] == 1
+    assert rN['rounds'] >= 2
+    assert rN['moves'][:len(r1['moves'])] == r1['moves']
+    assert rN['after']['overlap_pairs'] < r1['after']['overlap_pairs']
+    assert rN['after']['rotation_dev_sum_deg'] < r1['after']['rotation_dev_sum_deg']
+    assert (rN['after']['width_mm']
+            <= rN['before']['width_mm'] + polish.WIDTH_TOL_MM + 1e-9)
+    _, rR = polish_layout(outN, pieces, gate,
+                          max_rounds=polish.POLISH_ROUNDS_MAX)
+    assert rR['moves'] == []
+    assert rN['attach_moves'] == sum(1 for m in rN['moves']
+                                     if m['kind'] == 'attach')
+    assert rN['escape_moves'] == sum(1 for m in rN['moves']
+                                     if m['kind'].endswith('-escape'))
+
+
+def test_multiround_determinism_double_run():
+    """多轮同输入双跑全等（rounds 键入册；elapsed_sec 除外）。"""
+    pieces, placed, gate = _grid(6, 6)
+    o1, r1 = polish_layout(placed, pieces, gate,
+                           max_rounds=polish.POLISH_ROUNDS_MAX)
+    o2, r2 = polish_layout(placed, pieces, gate,
+                           max_rounds=polish.POLISH_ROUNDS_MAX)
+    r1.pop('elapsed_sec')
+    r2.pop('elapsed_sec')
+    assert o1 == o2 and r1 == r2
+
+
+def test_polish_once_width_anchor_semantics():
+    """守卫② 锚语义直测：width_anchor=None 自测本趟包络（历史行为，south 贴附
+    move 放行）；锚收紧 2mm 后宽度中性 move 全拒（new_width > anchor+0.5）→
+    零 move 返回输入原对象 —— 外层多轮冻结锚的防蠕变机制即建于此。"""
+    pieces = {'g01_30': _piece('g01_30', 100, 160),
+              'g02_30': _piece('g02_30', 100, 160, label='g02')}
+    placed = [_pl('g01_30', 0, 0, 0), _pl('g02_30', 0, 0, 300)]
+    o0, r0, wb = _polish_once(placed, pieces, 1000.0)
+    assert r0['moves'] and wb == 100.0
+    o1, r1, _ = _polish_once(placed, pieces, 1000.0, width_anchor=98.0)
+    assert r1['moves'] == [] and o1 is placed
+
+
+def _stub_report(width_before, width_after, moves):
+    metrics = lambda w: {'overlap_pairs': 1, 'max_penetration_mm': 0.0,
+                         'total_overlap_area_mm2': 1.0, 'rotated_pieces': 0,
+                         'rotation_dev_sum_deg': 0.0, 'width_mm': w,
+                         'density': 50.0}
+    return {'before': metrics(width_before), 'after': metrics(width_after),
+            'moves': moves, 'residual': [], 'excluded': [],
+            'attach_moves': len(moves), 'escape_moves': 0}
+
+
+def _make_stub(calls):
+    """桩工厂：每次调用消费 calls 一项 (moves, wb, wa)，耗尽后重复末项；
+    记录每次收到的 width_anchor 供锚穿线断言。"""
+    state = {'i': 0, 'anchors': []}
+
+    def _stub(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False,
+              width_anchor=None):
+        moves, wb, wa = calls[min(state['i'], len(calls) - 1)]
+        state['i'] += 1
+        state['anchors'].append(width_anchor)
+        out = [dict(p) for p in placed] if moves else placed
+        return out, _stub_report(wb, wa, moves), wb
+
+    return _stub, state
+
+
+def test_wrapper_loop_contract(monkeypatch):
+    """外层循环契约（桩测轮间机制）：cap 钳制 / churn 停机不回滚 / 零 move
+    停机 / 首轮零 move 原对象 / 锚首轮自测次轮冻结 / 报告组合 / 非法
+    max_rounds fail-fast。"""
+    mv = [{'index': 0, 'pid': 'g01_30', 'kind': 'attach', 'from': {},
+           'to': {}, 'detail': 'stub'}]
+    pieces = {'g01_30': _piece('g01_30', 100, 160)}
+    placed = [_pl('g01_30', 0, 0, 0)]
+
+    # (b) cap：每轮 1 move + width 严格改进 → 跑满 cap（50 钳到 POLISH_ROUNDS_MAX）
+    stub, state = _make_stub([(mv, 1000.0, 999.0)])
+    monkeypatch.setattr(polish, '_polish_once', stub)
+    _, rep = polish_layout(placed, pieces, 1000.0, max_rounds=50)
+    assert rep['rounds'] == polish.POLISH_ROUNDS_MAX
+    assert len(rep['moves']) == polish.POLISH_ROUNDS_MAX
+    assert state['anchors'][0] is None                    # 首轮自测
+    assert all(a == 1000.0 for a in state['anchors'][1:])  # 次轮起冻结
+
+    # (c) churn：有 move 但四项核心指标无一项严格改进 → 停在 rounds=1（move
+    # 保留不回滚 —— 逐 move 守卫已保证不劣化）
+    stub, _ = _make_stub([(mv, 1000.0, 1000.0)])
+    monkeypatch.setattr(polish, '_polish_once', stub)
+    _, rep = polish_layout(placed, pieces, 1000.0, max_rounds=8)
+    assert rep['rounds'] == 1 and len(rep['moves']) == 1
+
+    # (a) 第 2 轮零 move：rounds=2、moves 只含首轮、计数累计
+    stub, _ = _make_stub([(mv, 1000.0, 999.0), ([], 999.0, 999.0)])
+    monkeypatch.setattr(polish, '_polish_once', stub)
+    _, rep = polish_layout(placed, pieces, 1000.0, max_rounds=8)
+    assert rep['rounds'] == 2 and len(rep['moves']) == 1
+    assert rep['attach_moves'] == 1 and rep['escape_moves'] == 0
+
+    # 首轮零 move：输入 list 原对象（逐字节不变量）
+    stub, _ = _make_stub([([], 1000.0, 1000.0)])
+    monkeypatch.setattr(polish, '_polish_once', stub)
+    out, rep = polish_layout(placed, pieces, 1000.0, max_rounds=8)
+    assert out is placed and rep['moves'] == [] and rep['rounds'] == 1
+
+    # 报告组合：before = 首轮起跑态、after = 末轮终态
+    stub, _ = _make_stub([(mv, 1000.0, 999.0), ([], 999.0, 998.5)])
+    monkeypatch.setattr(polish, '_polish_once', stub)
+    _, rep = polish_layout(placed, pieces, 1000.0, max_rounds=8)
+    assert rep['before']['width_mm'] == 1000.0
+    assert rep['after']['width_mm'] == 998.5
+
+    # 非法 max_rounds：fail-fast（web 层 400 前置，引擎兜底）
+    for bad in (0, -1, 2.5, '3', True, None):
+        with pytest.raises(PolishError, match='max_rounds'):
+            polish_layout(placed, pieces, 1000.0, max_rounds=bad)
 
 
 # --------------------------------------------------------------- 分层纯度

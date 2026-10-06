@@ -9,6 +9,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildExclude, buildPolishPayload, parsePrefixMemberPids } from '../editPolish';
+import type { PolishReport } from '../editPolish';
 import { runRegistry } from '../../store/runRegistry';
 import type { ManifestMsg } from '../../types/ws';
 import type { PlacedItem } from '../../types/piece';
@@ -120,6 +121,8 @@ describe('buildPolishPayload', () => {
       { id: 'b_30', rotation: 25, translation: [600, 10] },
     ]);
     expect('exclude' in p).toBe(false);
+    // 2026-10-06 迭代至不动点：服务端缺省即迭代至收敛，前端不发 rounds 键
+    expect(Object.keys(p).sort()).toEqual(['gate_mm', 'placed']);
     // translation 拷断引用（载荷与 working 解耦）
     expect(p.placed[1].translation).not.toBe(working[1].translation);
   });
@@ -178,5 +181,30 @@ describe('buildPolishPayload', () => {
     const p = buildPolishPayload(wk, run)!;
     expect(p.placed).toEqual([{ id: 'a_28', rotation: 0, translation: [0, 0] }]);
     expect('mirror' in p.placed[0]).toBe(false);
+  });
+});
+
+// ---- 2026-10-06 迭代至不动点：PolishReport.rounds 可选键（additive 编译期锁）----
+
+describe('PolishReport.rounds（additive 可选键）', () => {
+  const base: PolishReport = {
+    before: {
+      overlap_pairs: 1, max_penetration_mm: 1, total_overlap_area_mm2: 1,
+      rotated_pieces: 1, rotation_dev_sum_deg: 1, width_mm: 1, density: 1,
+    },
+    after: {
+      overlap_pairs: 0, max_penetration_mm: 0, total_overlap_area_mm2: 0,
+      rotated_pieces: 0, rotation_dev_sum_deg: 0, width_mm: 1, density: 1,
+    },
+    moves: [], residual: [], excluded: [],
+    attach_moves: 0, escape_moves: 0, elapsed_sec: 0.01,
+  };
+
+  it('新响应带 rounds → 类型与取值直读；旧响应无键 → undefined 视同 1', () => {
+    const rep: PolishReport = { ...base, rounds: 3 };
+    expect(rep.rounds).toBe(3);
+    const legacy: PolishReport = { ...base };
+    expect(legacy.rounds).toBeUndefined();
+    expect(legacy.rounds ?? 1).toBe(1);   // UI 缺省口径同式
   });
 });

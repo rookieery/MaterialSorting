@@ -441,7 +441,7 @@ WS 侧同语义走 **error 帧**：`{"type":"error","code":"session_expired","me
 > （相邻片 d_i+d_j）= 琥珀（设计允许的压线重合）、超出才红；erode 轮廓降级为画布灰虚线
 > 参考线。sparrow 求解照旧吃 erode 轮廓，压线排料行为零改动。
 
-编辑弹窗「智能微调」按钮的数据源：前端把**当前编辑 placements 随 body 带上**（后端不存布局态，唯一存储在前端 runRegistry —— `/export` routes_views.py 同模式），后端跑引擎层确定性后处理 `nesting_engine/polish_layout`（US-001）返回微调后 placements + 前后对比报告。几何真相源留在 Python：**物理毛版轮廓口径**（会话 `pieces_by_id` 原始 polygon，与 `/export placed_to_world` 同源、非 eroded —— 2026-09-06 起画布红字同口径，两套数值分裂已消除）。端到端回归冒烟 `materialSorting-web/scripts/smoke_edit_polish.mjs`（US-004 24 检查 + US-005 S7 compact 档 5 检查 + edit-keyboard US-007 S8 键盘/镜像段 17 检查 + 2026-10-05 贴附 S2h 1 检查 = 47：微调四守恒/撤销/确定性双跑/PLT+DXF 导出 placed 守恒/band exclude 抽验/compact:true 载荷+width ≤ 非 compact 档+守恒不等式/O 镜像→导出 placed mirror:true + 正文几何镜像坐标对拍/mirror 逐位透传/R 键重置回基线/attach_moves 键自洽）。
+编辑弹窗「智能微调」按钮的数据源：前端把**当前编辑 placements 随 body 带上**（后端不存布局态，唯一存储在前端 runRegistry —— `/export` routes_views.py 同模式），后端跑引擎层确定性后处理 `nesting_engine/polish_layout`（US-001）返回微调后 placements + 前后对比报告。几何真相源留在 Python：**物理毛版轮廓口径**（会话 `pieces_by_id` 原始 polygon，与 `/export placed_to_world` 同源、非 eroded —— 2026-09-06 起画布红字同口径，两套数值分裂已消除）。端到端回归冒烟 `materialSorting-web/scripts/smoke_edit_polish.mjs`（US-004 24 检查 + US-005 S7 compact 档 5 检查 + edit-keyboard US-007 S8 键盘/镜像段 17 检查 + 2026-10-05 贴附 S2h 1 检查 + 2026-10-06 迭代至不动点 S2i/S4b 2 检查 = 49：微调四守恒/撤销/确定性双跑/PLT+DXF 导出 placed 守恒/band exclude 抽验/compact:true 载荷+width ≤ 非 compact 档+守恒不等式/O 镜像→导出 placed mirror:true + 正文几何镜像坐标对拍/mirror 逐位透传/R 键重置回基线/attach_moves 键自洽/rounds 数值域+卡内迭代轮数行/收敛态复跑 no-op+宽度锚不蠕变）。
 
 ### 请求（`application/json`）
 
@@ -450,7 +450,8 @@ WS 侧同语义走 **error 帧**：`{"type":"error","code":"session_expired","me
   "placed":  [{"id": "g01_30", "rotation": 25.0, "translation": [50.0, 50.0], "mirror": true}, ...],
   "gate_mm": 1750.0,
   "exclude": {"labels": ["g01"], "pids": ["PS_xxx"]},
-  "compact": false
+  "compact": false,
+  "rounds": 8
 }
 ```
 
@@ -459,6 +460,7 @@ WS 侧同语义走 **error 帧**：`{"type":"error","code":"session_expired","me
 - `gate_mm`（可选）：优先求解口径（前端 `run.manifest.gate_mm`）；缺省/非法回退会话 `state['gate_mm']`（与 `/export`、`/api/plt-table-preview` 同法）；两处皆无 → 400 fail-fast（守卫 y∈[0,gate] 无从谈起）。
 - `exclude`（可选，缺省 None 透传引擎）：`{labels?: [g码], pids?: [pid]}` 双键 —— 命中实例永不被移动仍作障碍（v1 over-conservative 同 pid 全副本，FR-8；band 成员 g 码 / prefix 成员 pid 由前端 best-effort 组装）。非 dict → 400。
 - `compact`（可选，缺省 false）：US-005 压缩回收档（2026-09-05 落地）—— true 时引擎追加 pass ④：自布头方向逐片 −x 滑贴收空隙进料长（20mm 粗扫+二分贴触、级联左片先贴），每 move 走同款五道守卫（kind=compact）+ pass 级「全图 maxX 严格变小否则整体回滚」；无空隙可收时输出与 compact=false 逐元素相同（additive）。前端入口 = 对比卡内「回收空隙缩短料长」checkbox（默认不勾，随下次微调请求发出）。
+- `rounds`（可选，缺省 = 引擎 `POLISH_ROUNDS_MAX` = 8，**2026-10-06 迭代至不动点**）：外层循环轮数上限 —— 单趟管线的预算/门控（attach 3 轮帽、角度/逃逸预算每调用一次性、②′ 脏区门 50mm 会漏、一巡一 move）决定单趟未必收敛，服务端**内部迭代多轮直至收敛后一次返回终态**（每轮 = 一次完整单趟，预算回充、全量重扫，等价用户反复点击）；三停机 = 零 move 轮（不动点）/ 轮数上限 / churn 守卫（有 move 但重叠·重合面积·旋转偏差·料长四项核心指标无一项严格改进 → 停，防无意义空转）。**宽度锚冻结**：守卫② 的 `width_before` 锚定原始起跑宽度不随轮重测 —— 全循环累计包络增长 ≤ +0.5mm，**严格安全于重复外部调用**（每次点击各自重锚 → 每次再 +0.5mm 蠕变）。耗时 ≈ 轮数 × 单趟（110~137 片单趟 <1s，通常 2-3 轮收敛）。显式 `1` = 旧单趟行为（A/B 与测试哨兵）；前端默认不发该键（服务端缺省即迭代至收敛，UI 零载荷改动）。非整数 / 越出 `[1, 8]` → 400 fail-fast。
 
 **贴附 pass（attach，2026-10-05 默认启用，无请求键）+ 贴附保持的减少旋转（2026-10-06 重写去旋转）**：裁床裁板需求 —— 裁片片片贴合方便走刀。pass ③ 去重叠之后默认追加**重力压实**：west 趟（minX 升序级联 −x 滑贴，compact 同骨架）+ south 趟（minY 升序镜像 −y 滑贴）交替逐片滑到与障碍或墙（布头 x=0 / 下门幅 y=0）首次贴触 +1nm 回退，至多 3 轮、整轮零 move 早退。纯平移（永不增大旋转）、首触即停（永不新重合）、south 不动 x（包络守卫天然过）；exclude 片恒作障碍（band/prefix 刚性组不破）。**去旋转 = 贴附保持的减少旋转**（2026-10-06；前史 2026-10-05「已贴附片跳过归位」→同日方案 A「压线不算贴附」→ 两版一刀切冻结均在 5156 race 腰头成带实勘暴露误伤后废除）：所有带角片一律进阶梯（**干净贴附不再冻结** —— 更小角度同样贴附时必须动，版师手眼可行、引擎不能视而不见）；阶梯 dev≤10° 用 **1° 步进**（阈值带容差防浮点噪声）；候选位 = 四向滑贴首触（Alt+左键 attract 语义四向版；锚点 = 质心 + 碰撞邻居最小分离 + ±5 小步进；滑移 ≤100mm 防跨唛架远跳）与邻域棱对齐；**严格档**（干净贴附片）候选位必须自身也贴附（距邻片/墙 ≤0.05mm ——「更小角度同样贴附才动、动则必贴」，贴附不降级）、宽松档（压线/悬浮）合法位即受（贴附 pass 随后收拢）；找不到合格位保持原角、偏差留 residual 如实上报；ladder 只减不增，永不增大旋转。**②′ 二巡**：分离+贴附重排口袋后再扫一轮（脏区门控：只重试自身或邻域被动过的片）—— 一巡时几何上无解的片，贴附后可行位才出现。紧凑布局零 move 时仍返回输入 list 原对象（逐字节不变量不变）。
 
@@ -469,7 +471,7 @@ WS 侧同语义走 **error 帧**：`{"type":"error","code":"session_expired","me
 ```
 
 - `placed`：条数与 pid 多重集与输入相等（引擎出口 Counter 终检 + 路由入口 pid 全匹配双保险）；无任何 move 时引擎返回输入 list 原对象（逐字节不变量）。
-- `report`：`{before, after, moves, residual, excluded, attach_moves, escape_moves, elapsed_sec}`（`attach_moves` = 贴附 move 计数，2026-10-05 additive；`escape_moves` = 逃逸兜底 move 计数，2026-10-06 additive）—— before/after 各七指标（`overlap_pairs` / `max_penetration_mm` / `total_overlap_area_mm2` / `rotated_pieces` / `rotation_dev_sum_deg` / `width_mm` / `density`，density = real 口径 `Σ(原面积×副本数)/(width×gate)` 百分数）+ `moves` 逐条明细（index/pid/kind `derotate|separate|attach|compact|derotate-escape|separate-escape`/from/to/detail）+ `residual`（终态重合对 + 旋转残留如实上报，不硬凑零）。前端对比卡增「贴附移动 N 片次」行（`edit-polish-attach`）与「逃逸移动 N 片次」行（`edit-polish-escape`）。
+- `report`：`{before, after, moves, residual, excluded, attach_moves, escape_moves, elapsed_sec, rounds}`（`attach_moves` = 贴附 move 计数，2026-10-05 additive；`escape_moves` = 逃逸兜底 move 计数，2026-10-06 additive；`rounds` = 实际迭代轮数，int，2026-10-06 迭代至不动点 additive —— 多轮组合语义：`before` = 首轮起跑态、`after`/`residual` = 末轮终态、`moves` = 各轮顺序拼接（列表永不重排，index 跨轮稳定寻址同一片）、`attach_moves`/`escape_moves` 累计、`elapsed_sec` 总计）—— before/after 各七指标（`overlap_pairs` / `max_penetration_mm` / `total_overlap_area_mm2` / `rotated_pieces` / `rotation_dev_sum_deg` / `width_mm` / `density`，density = real 口径 `Σ(原面积×副本数)/(width×gate)` 百分数）+ `moves` 逐条明细（index/pid/kind `derotate|separate|attach|compact|derotate-escape|separate-escape`/from/to/detail）+ `residual`（终态重合对 + 旋转残留如实上报，不硬凑零）。前端对比卡增「贴附移动 N 片次」行（`edit-polish-attach`）、「逃逸移动 N 片次」行（`edit-polish-escape`）与「迭代轮数 N 轮」行（`edit-polish-rounds`）；`moves` 为空（已收敛）时六指标前→后行不渲染、改显「已无可进一步优化（迭代 N 轮后收敛，0 处移动）」（`edit-polish-converged`）。
 - **逃逸兜底**（2026-10-06，`polish._scan_to_clean`）：受压楔死片（常规去旋/分离候选全败——楔形双侧受压下单伙伴最小分离必落第三者、族 B 锚点预检对受压起点全灭）由四向「扫描到全净位」原语救回——质心/原位双锚 × ±y/−x/+x，10mm 形状级采样（干净窗可窄于 20mm 粗扫步，3069 g09_29 实勘逃逸窗 ~10mm）+ 二分收敛左边界；首净点 ≈ 贴触位（动则必贴不破），接受仍走同款五守卫；`ESCAPE_SCAN_CAP_MM=100` 就近上限 + `ESCAPE_SCAN_BUDGET=4000` 全局封顶（耗尽留 residual）。仅常规候选全败后触发，既有成功路径零扰动；实测 3069（137 片）+24% 耗时、命中 1 处（g09_29 5°→4° −x 逃逸 26mm）。
 
 ### 错误响应（结构化 JSON）
@@ -482,6 +484,7 @@ WS 侧同语义走 **error 帧**：`{"type":"error","code":"session_expired","me
 | 任一 pid 未匹配会话 `pieces_by_id` | 400 | `pid 全匹配才跑`（不做部分降级），文案含「母版已变更？请重新求解/上传」 |
 | `gate_mm` 非法 / 两处皆无 | 400 | fail-fast |
 | `exclude` 非 dict | 400 | fail-fast |
+| `rounds` 非整数 / 越出 [1, 8] | 400 | fail-fast（`{"error": "rounds 必须是整数"}` / `{"error": "rounds 超出范围 [1, 8]"}`；bool 是 int 子类显式拦，2026-10-06） |
 | 引擎 `PolishError` / 数值字段非法 | 400 | `{"error": "微调失败：..."}`（不炸 500） |
 
 ### 关键不变量
@@ -489,7 +492,7 @@ WS 侧同语义走 **error 帧**：`{"type":"error","code":"session_expired","me
 1. polish 构造段经 `run_in_threadpool` 执行（prefix-preview 先例，防阻塞事件循环；测试 = 线程级断言：引擎执行线程 ≠ 事件循环线程）。
 2. 成功请求顺手 `edit_hold.refresh(sid)`（编辑钉住与 `/api/edit-hold` 心跳同语义；default 不进钉住表；失败请求不续期）。
 3. 布局态零落盘：请求/响应全走 body，无新会话状态、无新磁盘产物。
-4. 测试：`tests/test_web_edit_polish.py`（20 例：200 全链路守恒/会话隔离/sid 闸门/载荷校验/gate 回退/exclude·compact 透传/线程池执行/钉住续期/US-005 compact=True 全链路回收 + US-004 mirror no-op 逐位透传/镜像几何判别夹具/export 侧 `apply_transform`·`_transform_normal`·`placed_to_world` mirror 对拍 4 例）。
+4. 测试：`tests/test_web_edit_polish.py`（22 例：200 全链路守恒/会话隔离/sid 闸门/载荷校验/gate 回退/exclude·compact 透传/rounds 透传·缺省=POLISH_ROUNDS_MAX·非法矩阵 400（2026-10-06）/线程池执行/钉住续期/US-005 compact=True 全链路回收 + US-004 mirror no-op 逐位透传/镜像几何判别夹具/export 侧 `apply_transform`·`_transform_normal`·`placed_to_world` mirror 对拍 4 例）；引擎侧多轮不变量（前缀等价/宽度锚不蠕变/收敛复跑 no-op/桩测轮间契约）在 `tests/test_polish.py` 外层迭代段。
 
 ## POST /api/state-save — 状态文件保存（状态文件 PRD US-001，2026-09-11）
 

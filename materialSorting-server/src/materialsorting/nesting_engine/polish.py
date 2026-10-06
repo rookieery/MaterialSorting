@@ -54,7 +54,8 @@ d 腐蚀位图放行的工艺余量）与旋转（离散角度集 ±45°）只�
 - ⑤ **报告**：before/after 七指标（重叠对数/最大穿透/总重合面积/旋转偏差片数/
   Σ偏差/料长/密度）+ moves 逐条明细 + residual（终态重合对 + 旋转残留如实
   上报，不硬凑零）+ excluded + attach_moves（贴附 move 计数）+
-  escape_moves（逃逸 move 计数，2026-10-06）+ elapsed_sec；
+  escape_moves（逃逸 move 计数，2026-10-06）+ elapsed_sec + rounds（外层
+  迭代轮数，2026-10-06 迭代至不动点，additive）；
   density = real 口径 ``Σ(area×multiplicity)/(width×gate)``（原面积，非 erode）。
 
 **逐 move 五道守卫**（任一不过弃该 move，最坏全 no-op）：y∈[0,gate] / 全图
@@ -66,6 +67,15 @@ exclude 集片永不被移动（仍作为障碍参与他人检查）。
 
 **无改进时返回输入 list 原对象**（逐字节不变量，LNS 同款哲学：无严格改进
 不回写）。确定性：无 RNG、排序平手一律按下标裁决、同输入同输出。
+
+**外层迭代至不动点（2026-10-06）**：``polish_layout(max_rounds=N>1)`` 把单趟
+管线（``_polish_once``）循环执行 —— 单趟的预算/门控（角度/逃逸预算每调用
+一次性、②′ 脏区门 50mm 会漏、一巡一 move）决定单趟未必收敛，外层每轮预算
+回充、全量重扫（等价用户再点一次微调）；三停机 = 零 move 轮（不动点）/
+轮数上限（``POLISH_ROUNDS_MAX``）/ churn 守卫（有 move 但核心指标无一项
+严格改进）；守卫② 宽度锚冻结在原始起跑宽度 —— 全循环累计包络增长
+≤ +0.5mm（重复外部调用每次重锚各爬 0.5mm，内部循环严格更安全）。缺省
+``max_rounds=1`` 与历史单趟行为逐字节一致（additive 零回归）。
 
 **mirror 镜像片（edit-keyboard US-004，omit-when-false 可选键）**：
 ``placed`` 条目可带 ``mirror: true``（局部 x 翻转 ``world = R(rot)·diag(−1,1)·p + t``，
@@ -146,6 +156,19 @@ COMPACT_GAIN_EPS_MM = 1e-6
 # 贴附（attach，2026-10-05）轮数上限：west+south 各一趟为一轮；整轮零 move
 # 早退 + 势函数 Σ(minX+minY) 严格递减双保险终止（上限兜底最坏耗时）。
 ATTACH_ROUNDS_MAX = 3
+# 「智能微调」外层迭代轮数上限（2026-10-06 迭代至不动点）：单趟管线的预算/
+# 门控（角度/逃逸预算每调用一次性、②′ 脏区门 50mm 会漏、一巡一 move）决定
+# 了单趟未必收敛 —— 外层每轮预算回充、全量重扫（等价用户再点一次微调），
+# 零 move 轮或核心指标无改进轮（churn 守卫）即停。8 轮 = 「哪怕时间成本成倍
+# 增长」的实用上限（每轮成本 ≈ 一次单趟微调，实测 137 片单趟 <1s）。
+POLISH_ROUNDS_MAX = 8
+# churn 守卫停机判据：一轮有 move 但这四项核心指标（越低越好）无一项严格
+# 改进 → 停。逐 move 守卫已保证不劣化，停机保留该轮结果、无损无需回滚。
+CHURN_METRICS = ('overlap_pairs', 'total_overlap_area_mm2',
+                 'rotation_dev_sum_deg', 'width_mm')
+# churn 判据 epsilon：吸收 _diagnose 报告 3 位小数舍入噪声（真改进 <0.001
+# 视同未改进 —— 微观抹平对四项指标均不可见，继续迭代属空转）。
+CHURN_EPS = 1e-3
 # 「已贴附」判据（mm）：片到任一其他片距离 ≤ 此值（相交=距离 0，d>0 琥珀
 # 工艺贴触也算）或贴住布头/上下门幅边 → 去旋转跳过（贴附优先于旋转）。
 # waist_band.CHAIN_GAP_EPS_MM=1.0 同值先例。
@@ -565,10 +588,14 @@ def _scan_to_clean(g, idx, geoms, bounds, gate, axis, sign, cap):
     return hi + SEP_NUDGE_MM
 
 
-# --------------------------------------------------------------- 主入口
+# --------------------------------------------------------------- 单趟管线
 
-def polish_layout(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False):
-    """确定性后处理主入口（纯函数：不修改入参 ``placed``）。
+def _polish_once(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False,
+                 width_anchor=None):
+    """单趟管线（原 ``polish_layout`` 主体，2026-10-06「迭代至不动点」改造
+    拆出，主体逐字节保留）：② 去旋转 → ③ 去重叠 → ③½ 贴附 → ②′ 脏区二巡
+    + 补贴附 → ④ compact（可选）→ ⑤ 报告。模块私有 —— 外层 ``polish_layout``
+    负责轮间预算回充与守卫② 宽度锚冻结（本函数自身无跨轮状态，可独立重入）。
 
     Parameters
     ----------
@@ -589,15 +616,22 @@ def polish_layout(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False)
         US-005 压缩回收档（缺省 false）：pass ④ 自布头逐片 −x 滑贴收空隙，
         接受条件 = 全图物理包络 maxX 严格变小（不过则整段回滚 —— additive，
         false 时本段跳过、行为与 US-001 逐字节不变）。
+    width_anchor : float | None
+        守卫② 的 ``width_before`` 锚。None = 自测本趟输入的全图包络（历史
+        行为，独立调用即此路径）；外层多轮时传**原始起跑宽度** —— 全循环
+        累计包络增长 ≤ +WIDTH_TOL_MM，严格安全于重复外部调用（每次各自
+        重锚 → 每次再 +0.5mm 蠕变）。
 
     Returns
     -------
-    tuple ``(placed_new, report)``
+    tuple ``(placed_new, report, width_before)``
         placed_new : 无任何 move 时**返回输入 list 原对象**（逐字节不变量）；
             有 move 时为新列表（全量新 dict，未动片字段值不变）。
         report : ``{before, after, moves, residual, excluded, attach_moves,
             escape_moves, elapsed_sec}``（``attach_moves`` = 贴附 pass move 计数，
             2026-10-05；``escape_moves`` = 逃逸兜底 move 计数，2026-10-06）。
+        width_before : 本趟实际使用的锚（未舍入原值 —— report 的 width_mm
+            经 round(·,3) 有 ±5e-4 漂移不可作锚，供外层首轮后冻结）。
     """
     t0 = time.perf_counter()
     gate = float(gate_mm)
@@ -637,7 +671,8 @@ def polish_layout(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False)
         total_area += float(area) * cnt
 
     before, pairs = _diagnose(geoms, items, total_area, gate)
-    width_before = _layout_width(geoms)
+    # 守卫② 锚：外层多轮时冻结在原始起跑宽度（width_anchor），不随轮重测。
+    width_before = _layout_width(geoms) if width_anchor is None else width_anchor
     bounds = [g.bounds for g in geoms]
     moves = []
     touched = set()          # 被动过的片（②′ 脏区门控：只重试环境变过的片）
@@ -1197,10 +1232,91 @@ def polish_layout(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False)
               'elapsed_sec': round(time.perf_counter() - t0, 3)}
 
     if not moves:                       # 无改进：输入 list 原对象逐字节不变
-        return placed, report
+        return placed, report, width_before
     if Counter(p['id'] for p in items) != multiplicity:   # 守卫④ 终检
         raise PolishError('pid 多重集守恒失败（内部不变量被破坏）')
     out = [_rebuild_item(it) for it in items]
+    return out, report, width_before
+
+
+# --------------------------------------------------------------- 主入口
+
+def polish_layout(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False,
+                  max_rounds=1):
+    """确定性后处理主入口（纯函数：不修改入参 ``placed``）—— 2026-10-06 起
+    支持外层迭代至不动点（一次调用内部多轮直至无可优化）。
+
+    Parameters
+    ----------
+    placed / pieces_by_id / gate_mm / exclude / compact
+        语义与 ``_polish_once`` 完全一致（见其 docstring）。
+    max_rounds : int
+        外层循环轮数上限（缺省 1 = 单趟，行为与历史逐字节一致 —— 仅 report
+        additive 多 ``rounds: 1`` 键）。>1 时每轮等价于用户再点一次微调
+        （预算回充、全量重扫），三停机条件：
+        (a) 某轮零 move（不动点）；
+        (b) 轮数上限（内部钳到 ``POLISH_ROUNDS_MAX``）；
+        (c) churn 守卫 —— 某轮有 move 但 ``CHURN_METRICS`` 四项无一项严格
+            改进（epsilon 容差）→ 停（逐 move 守卫已保证不劣化，保留该轮
+            结果不回滚）。
+        守卫② 的 ``width_before`` 锚定**原始起跑宽度**（首轮自测后冻结全
+        循环，不随轮重测）—— 全循环累计包络增长 ≤ +WIDTH_TOL_MM，严格安全
+        于重复外部调用（每次重锚各 +0.5mm 蠕变）。非 int / <1 抛
+        ``PolishError``（web 层已 400 前置，此处兜底）。
+
+    Returns
+    -------
+    tuple ``(placed_new, report)``
+        placed_new : 整体无任何 move 时**返回输入 list 原对象**（逐字节
+            不变量）；有 move 时为新列表。
+        report : ``{before, after, moves, residual, excluded, attach_moves,
+            escape_moves, elapsed_sec, rounds}`` —— ``rounds``（int，实际
+            执行轮数，additive）；``before`` = 首轮起跑态、``after`` /
+            ``residual`` = 末轮终态；``moves`` = 各轮 move 顺序拼接（列表
+            永不重排，index 跨轮稳定寻址同一片）；``attach_moves`` /
+            ``escape_moves`` / ``elapsed_sec`` 为累计/总计。
+    """
+    if (not isinstance(max_rounds, int) or isinstance(max_rounds, bool)
+            or max_rounds < 1):
+        raise PolishError(f'max_rounds 须为 ≥1 整数，收到 {max_rounds!r}')
+    rounds_cap = min(max_rounds, POLISH_ROUNDS_MAX)
+
+    t0 = time.perf_counter()
+    cur = placed                     # 上一轮输出 = 下一轮输入
+    width_anchor = None              # 首轮 None = 自测；测得后冻结全循环
+    rounds_done = 0
+    first_before = None
+    rep = None
+    out = placed
+    all_moves = []
+    attach_total = 0
+    escape_total = 0
+    while rounds_done < rounds_cap:
+        out, rep, width_measured = _polish_once(
+            cur, pieces_by_id, gate_mm,
+            exclude=exclude, compact=compact, width_anchor=width_anchor)
+        rounds_done += 1
+        if width_anchor is None:
+            width_anchor = width_measured   # 冻结锚：守卫② 全循环同一条线
+        if first_before is None:
+            first_before = rep['before']    # 报告 before = 首轮起跑态
+        all_moves.extend(rep['moves'])
+        attach_total += rep['attach_moves']
+        escape_total += rep['escape_moves']
+        if not rep['moves']:
+            break                            # (a) 不动点：本轮零 move
+        b, a = rep['before'], rep['after']
+        if not any(a[m] < b[m] - CHURN_EPS for m in CHURN_METRICS):
+            break                            # (c) churn：无一项严格改进
+        cur = out                            # (b) 未到 cap → 下一轮
+    report = {'before': first_before, 'after': rep['after'],
+              'moves': all_moves, 'residual': rep['residual'],
+              'excluded': rep['excluded'], 'attach_moves': attach_total,
+              'escape_moves': escape_total,
+              'elapsed_sec': round(time.perf_counter() - t0, 3),
+              'rounds': rounds_done}
+    if not all_moves:               # 无改进：输入 list 原对象逐字节不变
+        return placed, report
     return out, report
 
 
@@ -1539,6 +1655,30 @@ def _smoke_fixtures() -> bool:
            and _rotation_dev(out[2]['rotation']) == 0.0
            and len(esc) == 1 and '−x逃逸' in esc[0]['detail'],
            f'escape={rep["escape_moves"]} {esc[0]["detail"] if esc else ""}')
+
+    # ⑱ 外层迭代至不动点（2026-10-06）：多轮 = 首轮等价单趟（moves 前缀全等）
+    #     + 宽度锚冻结（全循环累计 ≤ +0.5mm）+ 收敛态复跑 no-op（原对象回显）
+    pieces = {'g01_30': _rect_piece('g01_30', 200, 150),
+              'g02_30': _rect_piece('g02_30', 160, 150, label='g02'),
+              'g03_30': _rect_piece('g03_30', 60, 110, label='g03'),
+              'g04_30': _rect_piece('g04_30', 100, 400, label='g04'),
+              'g05_30': _rect_piece('g05_30', 300, 100, label='g05')}
+    placed = [_pl('g01_30', 0, 0, 0), _pl('g02_30', 0, 100, 245),
+              _pl('g03_30', 0, 170, 145), _pl('g04_30', 0, 600, 0),
+              _pl('g05_30', 0, 0, 500)]
+    _exc = {'labels': ['g01', 'g02']}
+    _, rep1 = polish_layout(placed, pieces, 1000.0, exclude=_exc)
+    outN, repN = polish_layout(placed, pieces, 1000.0, exclude=_exc,
+                               max_rounds=POLISH_ROUNDS_MAX)
+    outR, repR = polish_layout(outN, pieces, 1000.0, exclude=_exc,
+                               max_rounds=POLISH_ROUNDS_MAX)
+    _check('外层迭代至不动点（前缀等价/宽度锚/收敛 no-op）',
+           repN['rounds'] >= 1
+           and repN['moves'][:len(rep1['moves'])] == rep1['moves']
+           and repN['after']['width_mm']
+           <= repN['before']['width_mm'] + WIDTH_TOL_MM
+           and repR['moves'] == [] and outR == outN,
+           f'rounds={repN["rounds"]} moves={len(repN["moves"])}')
     return ok
 
 
@@ -1616,10 +1756,11 @@ def _demo(intermediate_path, n_pieces) -> bool:
 def main(argv=None) -> int:
     """冒烟入口：``python -m materialsorting.nesting_engine.polish``。
 
-    默认合成夹具自检（AC 十七项口径：斜片回正/重合分离/紧密 no-op/守卫×2/
+    默认合成夹具自检（AC 十八项口径：斜片回正/重合分离/紧密 no-op/守卫×2/
     多副本 index 寻址/排除集障碍/确定性双跑/compact 回收/compact 无空隙
     逐元素相同/镜像斜片 derotate+透传/镜像片 no-op 原对象/贴附 south 闭合
-    空白带/贴附斜片归位且保贴附/贴附贴墙/逃逸平移兜底/逃逸换角兜底），全过打印
+    空白带/贴附斜片归位且保贴附/贴附贴墙/逃逸平移兜底/逃逸换角兜底/外层
+    迭代至不动点），全过打印
     PASS、exit 0。
     ``--demo`` 追加真实母版几何演示（intermediate 前 N 片确定性带病布局 →
     polish 前后对比，形态对齐 prefix ``--pin-demo`` 先例；无 spyrrow 依赖）。

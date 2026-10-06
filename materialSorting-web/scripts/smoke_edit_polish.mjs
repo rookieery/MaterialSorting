@@ -14,13 +14,17 @@
 // 相位：
 //   S1 上传 5336 母版 → commit → per_type 全 g 码 d=3/tol=30（工艺余量制造重合与
 //      旋转，polish 有实事可做）→ 超排 3 码（32/33/34，30 片）20s 求解 → final。
-//   S2 编辑弹窗 → 智能微调：请求 200 + 载荷形态（placed 30/gate_mm/无 exclude 键）
-//      + 报告四段 + 四守恒（overlap_pairs 严格下降、rotΣ 不增（2026-10-05 贴附
-//      优先于旋转：紧排解全 snug 保角留 residual）、width ≤ before、
-//      density ≥ before−1e-6）+ 对比卡渲染（含贴附移动行，2026-10-05）+
-//      贴附报告键自洽（attach_moves = moves 中 attach 计数，均为纯平移）。
+//   S2 编辑弹窗 → 智能微调：请求 200 + 载荷形态（placed 30/gate_mm/无 exclude·
+//      rounds 键）+ 报告四段 + 四守恒（overlap_pairs 严格下降、rotΣ 不增
+//      （2026-10-05 贴附优先于旋转：紧排解全 snug 保角留 residual）、
+//      width ≤ before、density ≥ before−1e-6）+ 对比卡渲染（含贴附移动行，
+//      2026-10-05）+ 贴附报告键自洽（attach_moves = moves 中 attach 计数，均为
+//      纯平移）+ 迭代至不动点键（2026-10-06：report.rounds 数值域 + 卡内
+//      「迭代轮数 N 轮」行 —— 服务端一次点击内部迭代至收敛，前端零载荷改动）。
 //   S3 撤销微调：画布 points 逐片回微调前 + 卡清空。
-//   S4 再微调：确定性双跑 —— placed 与 report（elapsed_sec 除外）与首次全等。
+//   S4 再微调：确定性双跑 —— placed 与 report（elapsed_sec 除外）与首次全等；
+//      收敛态复跑（S4b，2026-10-06）—— 已收敛布局再点一次零 move 原样回显 +
+//      宽度锚不蠕变（全循环 ≤ +0.5mm）+ 卡内已收敛友好提示。
 //   S5 保存 → 导出 PLT（默认 plt-clean）+ DXF：payload placed 条数 = Σdemand = 30
 //      且与微调响应 placed 深相等（守恒）；DXF 正文 R12 POLYLINE 无 LWPOLYLINE。
 //   S6 band on 场景抽验：per_type 开腰头成带 g05 → 重解 → 编辑弹窗微调 →
@@ -412,9 +416,10 @@ const pointsBefore = await roughPoints();
 const p1 = await polishOnce();
 const rep1 = p1.respBody?.report || {};
 const ok1 = p1.respBody?.ok === true;
-check('S2b 微调请求 200 + 载荷形态（placed 30 / gate_mm / 无 exclude 键）+ 报告四段',
+check('S2b 微调请求 200 + 载荷形态（placed 30 / gate_mm / 无 exclude·rounds 键）+ 报告四段',
   ok1 && p1.reqBody?.placed?.length === EXPECT_TOTAL && p1.reqBody?.gate_mm > 0
-    && !('exclude' in p1.reqBody) && !!rep1.before && !!rep1.after
+    && !('exclude' in p1.reqBody) && !('rounds' in p1.reqBody)
+    && !!rep1.before && !!rep1.after
     && Array.isArray(rep1.moves) && Array.isArray(rep1.residual),
   'placed=' + p1.reqBody?.placed?.length + ' gate=' + p1.reqBody?.gate_mm
     + ' overlap ' + rep1.before?.overlap_pairs + '->' + rep1.after?.overlap_pairs
@@ -466,6 +471,15 @@ check('S2h 贴附报告键（attach_moves = moves 中 attach 计数，且均为�
     && rep1.moves.filter((m) => m.kind === 'attach')
       .every((m) => m.from.rotation === m.to.rotation),
   'attach_moves=' + rep1.attach_moves + ' moves=' + rep1.moves?.length);
+// 2026-10-06 迭代至不动点：报告 additive rounds 键（服务端缺省迭代至收敛，
+// 前端不发 rounds 键 —— S2b 已锁）；UI 卡内「迭代轮数 N 轮」行在案。
+check('S2i 迭代至不动点（report.rounds 数值域 + 卡内迭代轮数行）',
+  typeof rep1.rounds === 'number' && rep1.rounds >= 1 && rep1.rounds <= 8
+    && await page.evaluate(() => {
+      const row = document.querySelector('[data-testid=edit-polish-rounds]');
+      return !!row && /轮/.test(row.textContent || '');
+    }),
+  'rounds=' + rep1.rounds);
 await page.screenshot({ path: OUT + '/s2_polish_report.png' });
 
 // ---------- S3 撤销微调（画布 points 回微调前 + 卡清空） ----------
@@ -495,24 +509,40 @@ check('S4a 确定性双跑全等（placed 深相等 + report 除 elapsed_sec 全
   'placed=' + placedEqual + ' report=' + reportEqual
     + ' moves1=' + rep1.moves?.length + ' moves2=' + rep2.moves?.length);
 
+// ---------- S4b 收敛态复跑（2026-10-06 迭代至不动点）：服务端已迭代至收敛，
+// 已收敛布局再点一次 → 零 move 原样回显 + 宽度锚不蠕变（全循环 ≤ +0.5mm，
+// 严格安全于旧「每次点击重锚各 +0.5mm」）+ 卡内切换已收敛友好提示 ----------
+const p4b = await polishOnce();
+const rep4b = p4b.respBody?.report || {};
+check('S4b 收敛态复跑 no-op（moves=[] + placed 回显 + 宽度 ≤ 首次 before+0.5 + 已收敛提示）',
+  p4b.respBody?.ok === true
+    && (rep4b.moves?.length ?? -1) === 0
+    && JSON.stringify(p4b.respBody?.placed) === JSON.stringify(p2.respBody?.placed)
+    && rep2.after?.width_mm <= rep1.before?.width_mm + 0.5 + 1e-9
+    && await page.evaluate(() =>
+      document.querySelector('[data-testid=edit-polish-converged]') !== null),
+  'rounds=' + rep1.rounds + '→' + rep4b.rounds
+    + ' width ' + rep1.before?.width_mm + '→' + rep2.after?.width_mm);
+const lastPlaced = p4b.respBody?.placed ?? p2.respBody?.placed;
+
 // ---------- S5 保存 → 导出 PLT + DXF（placed 守恒 = Σdemand） ----------
 await page.click('[data-testid=edit-layout-save]');
 await page.waitForSelector('[data-testid=edit-layout-overlay]', { state: 'detached', timeout: 5000 });
 check('S5a 微调结果保存（弹窗关闭）', true);
 const expPlt = await exportOnce('plt-clean', 'S5b');
 const placedConserved = expPlt.reqBody?.placed?.length === EXPECT_TOTAL
-  && JSON.stringify(expPlt.reqBody?.placed) === JSON.stringify(p2.respBody?.placed);
-check('S5c PLT 导出 placed 守恒（条数 = Σdemand = 30 且与微调响应 placed 深相等）',
+  && JSON.stringify(expPlt.reqBody?.placed) === JSON.stringify(lastPlaced);
+check('S5c PLT 导出 placed 守恒（条数 = Σdemand = 30 且与微调终态 placed 深相等）',
   placedConserved,
   'len=' + expPlt.reqBody?.placed?.length
-    + ' deepEqual=' + (JSON.stringify(expPlt.reqBody?.placed) === JSON.stringify(p2.respBody?.placed)));
+    + ' deepEqual=' + (JSON.stringify(expPlt.reqBody?.placed) === JSON.stringify(lastPlaced)));
 check('S5d PLT 正文在案（PU 笔 ≥100）',
   ((expPlt.respBody || '').match(/^PU/gm) || []).length >= 100,
   'bytes=' + (expPlt.respBody || '').length);
 const expDxf = await exportOnce('dxf', 'S5e');
 const placedConservedDxf = expDxf.reqBody?.placed?.length === EXPECT_TOTAL
-  && JSON.stringify(expDxf.reqBody?.placed) === JSON.stringify(p2.respBody?.placed);
-check('S5f DXF 导出 placed 守恒（条数 = 30 且与微调响应 placed 深相等）',
+  && JSON.stringify(expDxf.reqBody?.placed) === JSON.stringify(lastPlaced);
+check('S5f DXF 导出 placed 守恒（条数 = 30 且与微调终态 placed 深相等）',
   placedConservedDxf, 'len=' + expDxf.reqBody?.placed?.length);
 check('S5g DXF 正文 R12 POLYLINE（无 LWPOLYLINE —— ET2008 兼容口径）',
   (expDxf.respBody || '').includes('POLYLINE') && !(expDxf.respBody || '').includes('LWPOLYLINE'),

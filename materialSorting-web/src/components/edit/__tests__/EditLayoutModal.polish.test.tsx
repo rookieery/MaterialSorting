@@ -120,7 +120,47 @@ function polishResponse(bx: number): Response {
       excluded: [],
       attach_moves: 0,
       escape_moves: 0,
+      rounds: 3,
       elapsed_sec: 0.01,
+    },
+  };
+  return { ok: true, status: 200, json: async () => body } as unknown as Response;
+}
+
+/** 已收敛响应（moves 空、placed 原样回显 —— 服务端迭代至不动点后的复跑形态）。 */
+function polishConvergedResponse(): Response {
+  const body = {
+    ok: true,
+    placed: [
+      { id: 'a_28', rotation: 0, translation: [0, 0] },
+      { id: 'b_30', rotation: 0, translation: [600, 0] },
+    ],
+    report: {
+      before: {
+        overlap_pairs: 0,
+        max_penetration_mm: 0,
+        total_overlap_area_mm2: 0,
+        rotated_pieces: 0,
+        rotation_dev_sum_deg: 0,
+        width_mm: 1100,
+        density: 45.455,
+      },
+      after: {
+        overlap_pairs: 0,
+        max_penetration_mm: 0,
+        total_overlap_area_mm2: 0,
+        rotated_pieces: 0,
+        rotation_dev_sum_deg: 0,
+        width_mm: 1100,
+        density: 45.455,
+      },
+      moves: [],
+      residual: [],
+      excluded: [],
+      attach_moves: 0,
+      escape_moves: 0,
+      rounds: 2,
+      elapsed_sec: 0.005,
     },
   };
   return { ok: true, status: 200, json: async () => body } as unknown as Response;
@@ -211,6 +251,8 @@ describe('EditLayoutModal 智能微调 (edit-polish US-003)', () => {
       { id: 'b_30', rotation: 0, translation: [600, 0] },
     ]);
     expect('exclude' in body).toBe(false);
+    // 2026-10-06 迭代至不动点：服务端缺省即迭代至收敛，前端不发 rounds 键
+    expect('rounds' in body).toBe(false);
   });
 
   it('run 带 band 配置 → 载荷 exclude.labels 命中', async () => {
@@ -290,6 +332,38 @@ describe('EditLayoutModal 智能微调 (edit-polish US-003)', () => {
     expect(
       document.querySelector('[data-testid="edit-layout-width"]')!.textContent,
     ).toContain('1160');
+  });
+
+  it('2026-10-06 迭代至不动点：报告 rounds 渲染「迭代轮数 N 轮」行', async () => {
+    apiFetchMock.mockImplementation(async (url) =>
+      url === '/api/edit-polish' ? polishResponse(660) : (undefined as unknown as Response),
+    );
+    await openEditLayout();
+    await clickPolish();
+    const row = document.querySelector('[data-testid="edit-polish-rounds"]');
+    expect(row).not.toBeNull();
+    expect(row!.textContent).toContain('3 轮');
+    expect(row!.closest('.edit-polish-card')).not.toBeNull();
+  });
+
+  it('2026-10-06 已收敛响应（moves 空）→ 卡内友好提示、六指标行不渲染、撤销/compact 保留', async () => {
+    apiFetchMock.mockImplementation(async (url) =>
+      url === '/api/edit-polish' ? polishConvergedResponse() : (undefined as unknown as Response),
+    );
+    await openEditLayout();
+    await clickPolish();
+    // 收敛提示在卡内、带轮数；前→后全等的六指标行无信息量不渲染
+    const conv = document.querySelector('[data-testid="edit-polish-converged"]');
+    expect(conv).not.toBeNull();
+    expect(conv!.textContent).toContain('已无可进一步优化');
+    expect(conv!.textContent).toContain('2 轮');
+    expect(document.querySelector('[data-testid="edit-polish-overlap"]')).toBeNull();
+    expect(document.querySelector('[data-testid="edit-polish-rounds"]')).toBeNull();
+    // compact checkbox 与撤销按钮照常在卡内（撤销微调恢复快照仍可用）
+    expect(document.querySelector('[data-testid="edit-polish-compact"]')).not.toBeNull();
+    expect(document.querySelector('[data-testid="edit-polish-undo"]')).not.toBeNull();
+    // placed 原样回显：working 不变（b@600）
+    expect(useEditStore.getState().working[1].translation).toEqual([600, 0]);
   });
 
   it('loading 态期间按钮禁用、重复点击零新增请求', async () => {

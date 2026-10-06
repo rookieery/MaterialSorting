@@ -2203,7 +2203,7 @@ export function EditCanvas({
             className="edit-layout-tool edit-polish-btn"
             onClick={polish.onPolish}
             disabled={polish.busy}
-            title="去旋转 + 去重合 + 贴附（片片贴合方便走刀；已贴附的斜片保持原角）（画布红字与微调报告同为毛版轮廓口径、与导出一致；料长不增、密度不降；应用后不自动保存，可撤销）"
+            title="去旋转 + 去重合 + 贴附（片片贴合方便走刀；已贴附的斜片保持原角）（画布红字与微调报告同为毛版轮廓口径、与导出一致；料长不增、密度不降；一次点击内部迭代多轮直至收敛；应用后不自动保存，可撤销）"
             data-testid="edit-polish-btn"
           >
             {polish.busy ? '微调中…' : '智能微调'}
@@ -2224,61 +2224,79 @@ export function EditCanvas({
           )}
           {polish.report && (
             <>
-              <div className="edit-polish-row">
-                <span className="edit-metrics-label">重叠对数</span>
-                <span className="edit-polish-val" data-testid="edit-polish-overlap">
-                  {polish.report.before.overlap_pairs} → {polish.report.after.overlap_pairs}
-                </span>
-              </div>
-              <div className="edit-polish-row">
-                <span className="edit-metrics-label">最大穿透</span>
-                <span className="edit-polish-val" data-testid="edit-polish-depth">
-                  {fmt(polish.report.before.max_penetration_mm, 2)} →{' '}
-                  {fmt(polish.report.after.max_penetration_mm, 2)} mm
-                </span>
-              </div>
-              <div className="edit-polish-row">
-                <span className="edit-metrics-label">旋转偏差片</span>
-                <span className="edit-polish-val" data-testid="edit-polish-rot">
-                  {polish.report.before.rotated_pieces} → {polish.report.after.rotated_pieces}
-                </span>
-              </div>
-              <div className="edit-polish-row">
-                <span className="edit-metrics-label">Σ旋转偏差</span>
-                <span className="edit-polish-val" data-testid="edit-polish-rotsum">
-                  {fmt(polish.report.before.rotation_dev_sum_deg, 1)} →{' '}
-                  {fmt(polish.report.after.rotation_dev_sum_deg, 1)}°
-                </span>
-              </div>
-              <div className="edit-polish-row">
-                <span className="edit-metrics-label">料长</span>
-                <span className="edit-polish-val" data-testid="edit-polish-width">
-                  {fmt(polish.report.before.width_mm, 1)} → {fmt(polish.report.after.width_mm, 1)}{' '}
-                  mm
-                </span>
-              </div>
-              <div className="edit-polish-row">
-                <span className="edit-metrics-label">密度</span>
-                <span className="edit-polish-val" data-testid="edit-polish-density">
-                  {fmt(polish.report.before.density, 2)} → {fmt(polish.report.after.density, 2)} %
-                </span>
-              </div>
-              {/* 贴附 pass（2026-10-05 默认启用）：本次微调贴附滑移片次
-                  （west/south 重力压实到首触，裁片片片贴合方便走刀）。 */}
-              <div className="edit-polish-row">
-                <span className="edit-metrics-label">贴附移动</span>
-                <span className="edit-polish-val" data-testid="edit-polish-attach">
-                  {polish.report.attach_moves ?? 0} 片次
-                </span>
-              </div>
-              {/* 逃逸兜底（2026-10-06）：受压楔死片扫描到全净位的逃逸片次
-                  （常规候选全败后才触发，首净点≈贴触位）。 */}
-              <div className="edit-polish-row">
-                <span className="edit-metrics-label">逃逸移动</span>
-                <span className="edit-polish-val" data-testid="edit-polish-escape">
-                  {polish.report.escape_moves ?? 0} 片次
-                </span>
-              </div>
+              {/* 2026-10-06 迭代至不动点：服务端一次点击内部多轮迭代至收敛后返回；
+                  moves 为空 = 打开时已收敛（前→后全等的六行无信息量，改友好提示）。 */}
+              {(polish.report.moves?.length ?? 0) === 0 ? (
+                <div className="edit-polish-row" data-testid="edit-polish-converged">
+                  已无可进一步优化（迭代 {polish.report.rounds ?? 1} 轮后收敛，0 处移动）
+                </div>
+              ) : (
+                <>
+                  <div className="edit-polish-row">
+                    <span className="edit-metrics-label">重叠对数</span>
+                    <span className="edit-polish-val" data-testid="edit-polish-overlap">
+                      {polish.report.before.overlap_pairs} → {polish.report.after.overlap_pairs}
+                    </span>
+                  </div>
+                  <div className="edit-polish-row">
+                    <span className="edit-metrics-label">最大穿透</span>
+                    <span className="edit-polish-val" data-testid="edit-polish-depth">
+                      {fmt(polish.report.before.max_penetration_mm, 2)} →{' '}
+                      {fmt(polish.report.after.max_penetration_mm, 2)} mm
+                    </span>
+                  </div>
+                  <div className="edit-polish-row">
+                    <span className="edit-metrics-label">旋转偏差片</span>
+                    <span className="edit-polish-val" data-testid="edit-polish-rot">
+                      {polish.report.before.rotated_pieces} → {polish.report.after.rotated_pieces}
+                    </span>
+                  </div>
+                  <div className="edit-polish-row">
+                    <span className="edit-metrics-label">Σ旋转偏差</span>
+                    <span className="edit-polish-val" data-testid="edit-polish-rotsum">
+                      {fmt(polish.report.before.rotation_dev_sum_deg, 1)} →{' '}
+                      {fmt(polish.report.after.rotation_dev_sum_deg, 1)}°
+                    </span>
+                  </div>
+                  <div className="edit-polish-row">
+                    <span className="edit-metrics-label">料长</span>
+                    <span className="edit-polish-val" data-testid="edit-polish-width">
+                      {fmt(polish.report.before.width_mm, 1)} → {fmt(polish.report.after.width_mm, 1)}{' '}
+                      mm
+                    </span>
+                  </div>
+                  <div className="edit-polish-row">
+                    <span className="edit-metrics-label">密度</span>
+                    <span className="edit-polish-val" data-testid="edit-polish-density">
+                      {fmt(polish.report.before.density, 2)} → {fmt(polish.report.after.density, 2)} %
+                    </span>
+                  </div>
+                  {/* 贴附 pass（2026-10-05 默认启用）：本次微调贴附滑移片次
+                      （west/south 重力压实到首触，裁片片片贴合方便走刀）。 */}
+                  <div className="edit-polish-row">
+                    <span className="edit-metrics-label">贴附移动</span>
+                    <span className="edit-polish-val" data-testid="edit-polish-attach">
+                      {polish.report.attach_moves ?? 0} 片次
+                    </span>
+                  </div>
+                  {/* 逃逸兜底（2026-10-06）：受压楔死片扫描到全净位的逃逸片次
+                      （常规候选全败后才触发，首净点≈贴触位）。 */}
+                  <div className="edit-polish-row">
+                    <span className="edit-metrics-label">逃逸移动</span>
+                    <span className="edit-polish-val" data-testid="edit-polish-escape">
+                      {polish.report.escape_moves ?? 0} 片次
+                    </span>
+                  </div>
+                  {/* 2026-10-06 迭代至不动点：本次点击服务端内部迭代的轮数
+                      （单趟即收敛 = 1 轮）。 */}
+                  <div className="edit-polish-row">
+                    <span className="edit-metrics-label">迭代轮数</span>
+                    <span className="edit-polish-val" data-testid="edit-polish-rounds">
+                      {polish.report.rounds ?? 1} 轮
+                    </span>
+                  </div>
+                </>
+              )}
               {/* US-005 压缩回收档：默认不勾，勾选后随下次微调请求发出
                   （compact:true → 引擎 pass ④ 自布头滑贴收空隙）。 */}
               <label
