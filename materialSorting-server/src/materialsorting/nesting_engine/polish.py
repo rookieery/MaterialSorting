@@ -513,7 +513,8 @@ def _slide_west_touch(g_moving, obstacles, t_wall):
     return _slide_axis_touch(g_moving, obstacles, t_wall, 'x', -1.0)
 
 
-def _scan_to_clean(g, idx, geoms, bounds, gate, axis, sign, cap):
+def _scan_to_clean(g, idx, geoms, bounds, gate, axis, sign, cap,
+                   y_hi_slack=0.0, y_lo_slack=0.0):
     """自受压位沿 ``axis('x'/'y')·sign(±1)`` 扫描首个「对全图零正面积重合」平移位。
 
     逃逸原语（2026-10-06，derotate-escape / separate-escape 兜底）：与
@@ -524,6 +525,9 @@ def _scan_to_clean(g, idx, geoms, bounds, gate, axis, sign, cap):
     干净平移量 t（+ ``SEP_NUDGE_MM``；首净点天然 ≈ 贴触位，「动则必贴」语义
     不破），无干净窗 / 出门幅返回 None，起点已净返回 0。确定性：固定步长
     采样 + ``SLIDE_BISECT_ITERS`` 轮二分，无 RNG。
+
+    ``y_hi_slack``/``y_lo_slack``（2026-10-06 B1）：该片毛版初始出界余量 ——
+    门幅脏判据与限幅同款「不得比现状更出界」规则（d=0 片恒 0 = 旧行为）。
     """
     n = len(geoms)
 
@@ -531,7 +535,8 @@ def _scan_to_clean(g, idx, geoms, bounds, gate, axis, sign, cap):
         moved = translate(g, xoff=sign * t if axis == 'x' else 0.0,
                           yoff=sign * t if axis == 'y' else 0.0)
         b = moved.bounds
-        if b[1] < -GATE_EPS_MM or b[3] > gate + GATE_EPS_MM:
+        if b[1] < -y_lo_slack - GATE_EPS_MM \
+                or b[3] > gate + y_hi_slack + GATE_EPS_MM:
             return True
         for k in range(n):
             if k == idx:
@@ -543,9 +548,9 @@ def _scan_to_clean(g, idx, geoms, bounds, gate, axis, sign, cap):
 
     if not _dirty(0.0):
         return 0.0
-    if axis == 'y':                       # 门幅限幅（出门幅即脏）
-        cap = min(cap, (gate - g.bounds[3]) / sign if sign > 0
-                  else g.bounds[1] / -sign)
+    if axis == 'y':                       # 门幅限幅（出门幅即脏；B1 余量同口径）
+        cap = min(cap, (gate + y_hi_slack - g.bounds[3]) / sign if sign > 0
+                  else (g.bounds[1] + y_lo_slack) / -sign)
     t_free = None
     t = ESCAPE_SCAN_STEP_MM
     while t <= cap:
@@ -639,6 +644,14 @@ def polish_layout(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False)
     before, pairs = _diagnose(geoms, items, total_area, gate)
     width_before = _layout_width(geoms)
     bounds = [g.bounds for g in geoms]
+    # 守卫① 门幅出界余量（2026-10-06 B1「压线收敛」）：sparrow 只约束 erode 轮廓，
+    # d>0 贴边片的毛版可合法出界 ~d 毫米（882 实勘 g02_29 y∈[1725,1755]）——旧
+    # y∈[0,gate] 硬卡使这类片**任何**候选（含纯水平移动）都被判死、全程冻结。
+    # 按初始位冻结「已出界量」，候选不得比现状更出界（单调不劣化：门内片仍然
+    # 一步出不去；出界片可在同等出界量内活动，往里挪自然放行）。d=0 布局
+    # slack≡0，与旧判定逐字节相同。
+    gate_hi_slack = [max(0.0, b[3] - gate) for b in bounds]
+    gate_lo_slack = [max(0.0, -b[1]) for b in bounds]
     moves = []
     touched = set()          # 被动过的片（②′ 脏区门控：只重试环境变过的片）
     # 逃逸兜底（2026-10-06）：重合在案片集合（初始诊断一次性计算 —— move 守卫③
@@ -686,7 +699,8 @@ def polish_layout(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False)
         if idx in excluded:                                   # 守卫⑤ exclude
             return False
         b = geom.bounds
-        if b[1] < -GATE_EPS_MM or b[3] > gate + GATE_EPS_MM:  # 守卫① y∈[0,gate]
+        if b[1] < -gate_lo_slack[idx] - GATE_EPS_MM \
+                or b[3] > gate + gate_hi_slack[idx] + GATE_EPS_MM:  # 守卫①（B1 出界余量）
             return False
         new_width = max(_others_max_x(idx), b[2]) \
             - min(min(_others_min_x(idx), b[0]), 0.0)
@@ -776,7 +790,9 @@ def polish_layout(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False)
                 break
             escape_scan_budget -= 1
             t = _scan_to_clean(g_from, idx, geoms, bounds, gate, axis, sign,
-                               ESCAPE_SCAN_CAP_MM)
+                               ESCAPE_SCAN_CAP_MM,
+                               y_hi_slack=gate_hi_slack[idx],
+                               y_lo_slack=gate_lo_slack[idx])
             if t is None or t <= ATTACH_GAIN_EPS_MM:
                 continue
             g = translate(g_from, xoff=sign * t if axis == 'x' else 0.0,
@@ -1539,6 +1555,27 @@ def _smoke_fixtures() -> bool:
            and _rotation_dev(out[2]['rotation']) == 0.0
            and len(esc) == 1 and '−x逃逸' in esc[0]['detail'],
            f'escape={rep["escape_moves"]} {esc[0]["detail"] if esc else ""}')
+
+    # ⑱ 守卫①出界余量（2026-10-06 B1 压线收敛）：贴边片毛版出界 3mm（sparrow 只
+    #     约束 erode 轮廓的既成事实）—— +y 更出界、−y 被 C 堵、−x 是唯一分离向且
+    #     y 不变。旧 y∈[0,gate] 硬卡把 −x 也判死（纯水平移动 y bounds 原样出界）
+    #     → 全灭 residual；新规则「不劣于初始出界量」放行 −x（贴附 pass 随后自由
+    #     聚拢，断言锚定 separate move 本身）。
+    pieces = {'g01_30': _rect_piece('g01_30', 100, 30),
+              'g02_30': _rect_piece('g02_30', 100, 30, label='g02'),
+              'g03_30': _rect_piece('g03_30', 100, 30, label='g03')}
+    placed = [_pl('g01_30', 0, 500, 95),    # A：y∈[95,125]，gate=122 → 出界 3
+              _pl('g02_30', 0, 420, 95),    # B：与 A 叠 20mm（分离对象）
+              _pl('g03_30', 0, 500, 60)]    # C：堵 A 的 −y 落位带
+    out, rep = polish_layout(placed, pieces, 122.0)
+    sep = [m for m in rep['moves'] if m['kind'] == 'separate' and '−x' in m['detail']]
+    _check('守卫①出界余量解冻贴边片',
+           len(sep) == 1 and sep[0]['index'] == 0
+           and rep['after']['overlap_pairs'] == 0
+           and abs(sep[0]['to']['translation'][1]
+                   - sep[0]['from']['translation'][1]) < 1e-6,
+           f'moves={[(m["index"], m["kind"]) for m in rep["moves"]]} '
+           f'residual={len(rep["residual"])}')
     return ok
 
 
