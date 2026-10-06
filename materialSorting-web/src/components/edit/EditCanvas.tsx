@@ -2203,7 +2203,7 @@ export function EditCanvas({
             className="edit-layout-tool edit-polish-btn"
             onClick={polish.onPolish}
             disabled={polish.busy}
-            title="自动清理可解的重合与可回正的旋转（画布红字与微调报告同为毛版轮廓口径、与导出一致；料长不增、密度不降；应用后不自动保存，可撤销）"
+            title="去旋转 + 去重合 + 贴附（片片贴合方便走刀；已贴附的斜片保持原角）（画布红字与微调报告同为毛版轮廓口径、与导出一致；料长不增、密度不降；应用后不自动保存，可撤销）"
             data-testid="edit-polish-btn"
           >
             {polish.busy ? '微调中…' : '智能微调'}
@@ -2261,6 +2261,14 @@ export function EditCanvas({
                 <span className="edit-metrics-label">密度</span>
                 <span className="edit-polish-val" data-testid="edit-polish-density">
                   {fmt(polish.report.before.density, 2)} → {fmt(polish.report.after.density, 2)} %
+                </span>
+              </div>
+              {/* 贴附 pass（2026-10-05 默认启用）：本次微调贴附滑移片次
+                  （west/south 重力压实到首触，裁片片片贴合方便走刀）。 */}
+              <div className="edit-polish-row">
+                <span className="edit-metrics-label">贴附移动</span>
+                <span className="edit-polish-val" data-testid="edit-polish-attach">
+                  {polish.report.attach_moves ?? 0} 片次
                 </span>
               </div>
               {/* US-005 压缩回收档：默认不勾，勾选后随下次微调请求发出

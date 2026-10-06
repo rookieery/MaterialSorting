@@ -15,8 +15,10 @@
 //   S1 上传 5336 母版 → commit → per_type 全 g 码 d=3/tol=30（工艺余量制造重合与
 //      旋转，polish 有实事可做）→ 超排 3 码（32/33/34，30 片）20s 求解 → final。
 //   S2 编辑弹窗 → 智能微调：请求 200 + 载荷形态（placed 30/gate_mm/无 exclude 键）
-//      + 报告四段 + 四守恒（overlap_pairs 严格下降、rotΣ 下降、width ≤ before、
-//      density ≥ before−1e-6）+ 对比卡渲染。
+//      + 报告四段 + 四守恒（overlap_pairs 严格下降、rotΣ 不增（2026-10-05 贴附
+//      优先于旋转：紧排解全 snug 保角留 residual）、width ≤ before、
+//      density ≥ before−1e-6）+ 对比卡渲染（含贴附移动行，2026-10-05）+
+//      贴附报告键自洽（attach_moves = moves 中 attach 计数，均为纯平移）。
 //   S3 撤销微调：画布 points 逐片回微调前 + 卡清空。
 //   S4 再微调：确定性双跑 —— placed 与 report（elapsed_sec 除外）与首次全等。
 //   S5 保存 → 导出 PLT（默认 plt-clean）+ DXF：payload placed 条数 = Σdemand = 30
@@ -424,34 +426,46 @@ check('S2c 重合对下降（after < before，或可解时 =0）',
   rep1.after?.overlap_pairs < rep1.before?.overlap_pairs
     || rep1.after?.overlap_pairs === 0,
   rep1.before?.overlap_pairs + ' -> ' + rep1.after?.overlap_pairs);
-check('S2d 旋转偏差 Σ 下降（after < before）',
-  rep1.after?.rotation_dev_sum_deg < rep1.before?.rotation_dev_sum_deg,
-  rep1.before?.rotation_dev_sum_deg + ' -> ' + rep1.after?.rotation_dev_sum_deg + '°');
+check('S2d 旋转偏差 Σ 不增（贴附优先于旋转：已贴附斜片保角、未贴附归位后贴附）',
+  rep1.after?.rotation_dev_sum_deg <= rep1.before?.rotation_dev_sum_deg + 1e-9,
+  rep1.before?.rotation_dev_sum_deg + ' -> ' + rep1.after?.rotation_dev_sum_deg + '°'
+    + '（紧排解全 snug 保角，偏差留 residual 如实上报）');
 check('S2e 料长不增（after.width ≤ before.width）',
   rep1.after?.width_mm <= rep1.before?.width_mm + 1e-9,
   rep1.before?.width_mm + ' -> ' + rep1.after?.width_mm + 'mm');
 check('S2f 密度不降（after ≥ before − 1e-6）',
   rep1.after?.density >= rep1.before?.density - 1e-6,
   rep1.before?.density + ' -> ' + rep1.after?.density + '%');
-check('S2g 对比卡渲染（六指标前→后 + 撤销按钮 + 按钮title口径注记）',
+check('S2g 对比卡渲染（六指标前→后 + 贴附移动行 + 撤销按钮 + 按钮title口径注记）',
   await page.evaluate(() => {
     const card = document.querySelector('[data-testid=edit-polish-card]');
     if (!card) return false;
     const ids = ['edit-polish-overlap', 'edit-polish-depth', 'edit-polish-rot',
       'edit-polish-rotsum', 'edit-polish-width', 'edit-polish-density'];
     // 口径注记 2026-09-05 三轮迭代起在按钮 title 悬浮（卡内可见脚注已移除不占空间）；
-    // 2026-09-06 口径统一起文案 = 画布红字与报告同为毛版轮廓口径（与导出一致）
+    // 2026-09-06 口径统一起文案 = 画布红字与报告同为毛版轮廓口径（与导出一致）；
+    // 2026-10-05 贴附行（edit-polish-attach）= 本次微调贴附滑移片次（非前→后对）
     const btnTitle = document.querySelector('[data-testid=edit-polish-btn]')
       ?.getAttribute('title') || '';
+    const attach = card.querySelector('[data-testid=edit-polish-attach]');
     return ids.every((id) => {
         const el = card.querySelector('[data-testid=' + id + ']');
         return el && el.textContent.includes('→');
       })
+      && !!attach && attach.textContent.includes('片次')
       && !card.textContent.includes('毛版轮廓口径')
       && btnTitle.includes('毛版轮廓口径')
       && btnTitle.includes('与导出一致')
       && !!card.querySelector('[data-testid=edit-polish-undo]');
   }));
+// 贴附 pass（2026-10-05 默认启用）：attach_moves 键在案且与 moves 明细自洽
+//（attach kind 计数 = 引擎记账）；attach move 均为纯平移（rotation 不变）。
+check('S2h 贴附报告键（attach_moves = moves 中 attach 计数，且均为纯平移）',
+  typeof rep1.attach_moves === 'number'
+    && rep1.attach_moves === rep1.moves.filter((m) => m.kind === 'attach').length
+    && rep1.moves.filter((m) => m.kind === 'attach')
+      .every((m) => m.from.rotation === m.to.rotation),
+  'attach_moves=' + rep1.attach_moves + ' moves=' + rep1.moves?.length);
 await page.screenshot({ path: OUT + '/s2_polish_report.png' });
 
 // ---------- S3 撤销微调（画布 points 回微调前 + 卡清空） ----------

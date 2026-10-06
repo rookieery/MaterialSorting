@@ -44,6 +44,8 @@ export interface PolishReport {
   moves: unknown[];
   residual: unknown[];
   excluded: number[];
+  /** 贴附 pass move 计数（2026-10-05 attach 默认启用，additive）。 */
+  attach_moves: number;
   elapsed_sec: number;
 }
 

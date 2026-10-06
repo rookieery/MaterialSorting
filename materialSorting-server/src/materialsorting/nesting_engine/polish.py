@@ -15,21 +15,41 @@ d 腐蚀位图放行的工艺余量）与旋转（离散角度集 ±45°）只�
   ``t' = c_world − R(rot')·c_local``（与 ``sparrow_baseline._transform_polygon``
   / 前端 pointsStr 同式）+ 邻域可行位搜索取**位移最小**可行位（shapely 邻域
   候选：质心锚定原位 + 障碍/门幅棱边对齐，逐候选按位移升序试守卫）；
+  **贴附保持的减少旋转**（2026-10-06 重写；前史：2026-10-05「已贴附片跳过
+  归位」+ 同日方案 A「压线相交不算贴附」，两版一刀切冻结均在 5156 race 腰头
+  成带实勘中暴露误伤）：所有 dev>0 片一律进阶梯（**干净贴附不再冻结** ——
+  更小角度同样贴附时必须动，版师手眼可行、引擎不能视而不见）；阶梯 =
+  ``_derotate_ladder_fine``（dev ≤ 10° 用 **1° 步进**，5° 步进够不到 −9°/−7°
+  这类手眼可行位；降幅 ≥ 0.05° 防浮点噪声孪生角）；候选 = 族 B **四向滑贴
+  首触**（质心锚定 + 环形补锚 ±20/±40mm，Alt+左键 attract 语义四向版，滑移
+  ≤ 100mm 防跨唛架远跳）+ 族 A 质心锚定/邻域棱对齐（位移升序）；**严格档**
+  （干净贴附片，``_snug``）候选位必须自身也贴附（``_attached`` ≤ 0.05mm，
+  「更小角度同样贴附才动、动则必贴」，贴附不降级）；宽松档（压线/悬浮片）
+  合法位即受、贴附 pass 随后收拢；找不到合格位保持原角留 residual。永不
+  增大旋转（只向基线回退）；
 - ③ **去重叠**：重叠对按穿透深度降序（平手按 (i,j) 下标），最小分离平移
   （镜像 ``waist_band._slide_touch`` 的二分滑移机器：从当前重叠位向 +y/−y/−x
   二分到贴触 + 1nm 防贴死微抬），方向优先 ±y、−x 不增料长；一片失败换动
   另一片；都失败记 residual —— **只在「免费」时做**（不增料长、零新重合），
   版师 per_type d 工艺余量语义不受影响（不强行动归零 d 预算内的必要贴触）；
+- ③½ **贴附**（attach，默认启用，2026-10-05 裁床裁板需求）：重力压实 ——
+  west 趟（minX 升序级联，compact 同骨架）+ south 趟（minY 升序镜像）交替
+  逐片滑到与障碍或墙（布头 x=0 / 下门幅 y=0）首次贴触 + 1nm 回退，至多
+  ``ATTACH_ROUNDS_MAX`` 轮、整轮零 move 早退（势函数 Σ(minX+minY) 严格递减
+  保证终止）。纯平移：永不增大旋转、永不新重合（首触即停）；south 不动 x
+  ⇒ 包络守卫天然过；贴附即消除该对重合（重合/贴附不互斥）；exclude 片恒作
+  障碍（band/prefix 刚性组不破）；
 - ④ **压缩回收**（``compact=True`` 才启用，US-005）：自布头方向（minX 升序、
   平手下标）逐片 ``−x`` 滑贴（``_slide_west_touch`` 粗扫+二分到与全图障碍或
   x=0 布头墙首次贴触 + 1nm 回退，镜像 ``waist_band._slide_touch`` 机器）——
   左片先贴、右片随后贴新位，级联把去旋/分离释放的空隙收进料长；**接受条件 =
   全图物理包络 maxX 严格变小**（终检不过整段回滚 —— 无改进逐字节不变，
-  compact=true 输出与非 compact 档全等）；
+  compact=true 输出与非 compact 档全等；贴附 west 趟同算法先行后本档通常
+  无剩可收，语义保留作兜底）；
 - ⑤ **报告**：before/after 七指标（重叠对数/最大穿透/总重合面积/旋转偏差片数/
   Σ偏差/料长/密度）+ moves 逐条明细 + residual（终态重合对 + 旋转残留如实
-  上报，不硬凑零）+ excluded + elapsed_sec；density = real 口径
-  ``Σ(area×multiplicity)/(width×gate)``（原面积，非 erode）。
+  上报，不硬凑零）+ excluded + attach_moves（贴附 move 计数）+ elapsed_sec；
+  density = real 口径 ``Σ(area×multiplicity)/(width×gate)``（原面积，非 erode）。
 
 **逐 move 五道守卫**（任一不过弃该 move，最坏全 no-op）：y∈[0,gate] / 全图
 物理包络不增（width ≤ width_before + 0.5mm 容差，minX<0 布头外凸同计 —— 包络
@@ -54,8 +74,10 @@ False：所有既有路径键集与行为逐字节不变（additive 零回归）
 分层约束：本模块属 ``nesting_engine``，仅 import 标准库 + shapely + 本包兄弟
 模块（``constraints`` / ``sparrow_baseline`` / ``waist_band``）+ 父包 ``paths``；
 **禁 import web/cli**（AST 守卫在 tests/test_polish.py）。``compact`` 旗标为
-US-005 压缩回收档（additive：缺省 false = pass ④ 整段跳过，US-001~003 行为
-逐字节不变）。
+US-005 压缩回收档（缺省 false = pass ④ 整段跳过）。**贴附 pass（2026-10-05）
+默认启用**：默认微调 = 去旋转（snug 跳过）+ 去重叠 + 贴附 —— 相比 US-001~003
+时代，松散布局的默认输出多了贴附聚拢（紧凑布局零 move 时仍返回输入 list
+原对象，逐字节不变量不变）。
 """
 from __future__ import annotations
 
@@ -69,6 +91,18 @@ from collections import Counter
 
 from shapely.affinity import translate
 from shapely.geometry import Point, Polygon
+from shapely import prepare as _shapely_prepare
+
+
+def _hits(ga, gb) -> bool:
+    """两几何是否**正面积相交**（prepared 快谓词，2026-10-06）。
+
+    ``intersects 且非 touches``：边/角贴触（面积 0）不算相交，部分重叠与
+    **包含**都算 —— ``overlaps()`` 对包含形态返回 False（A∩B=B 违反
+    "≠A 且 ≠B"），曾放行整片 containment 叠压（5156 实测 165mm 穿透红对
+    31 个）。语义 = 旧 ``intersection().area ≥ COLLIDE_AREA_EPS_MM2`` 的
+    布尔化（面积阈值只滤退化窄条，两者在工艺尺度等价）。"""
+    return ga.intersects(gb) and not ga.touches(gb)
 
 from .. import paths
 from .constraints import discretize_orientations
@@ -91,6 +125,9 @@ GATE_EPS_MM = 1e-6
 DEV_EPS_DEG = 1e-9
 # 分离二分次数（40 次 ⇒ 收敛精度 ~2^-40×扫描区间，_slide_touch 同款）。
 BISECT_ITERS = 40
+# 滑贴二分次数（2026-10-06 性能分层）：滑贴的粗扫括段 ≤1 步（20mm），
+# 24 轮 = 0.3nm 精度已足（分离 pass ③ 终位仍用满精度 40 轮）。
+SLIDE_BISECT_ITERS = 24
 # 去旋转邻域候选的障碍筛选扩张（mm）：候选只对 bbox 距离在此范围内的片生成
 # （远片的对齐位必然远超位移最小候选，剪枝省守卫开销）。
 NEIGHBOR_MARGIN_MM = 50.0
@@ -100,6 +137,50 @@ COMPACT_SCAN_STEP_MM = 20.0
 # 压缩回收「包络 maxX 严格变小」判定阈值（mm）：小于此视为数值噪声 → 整段
 # 回滚（无改进逐字节不变）。
 COMPACT_GAIN_EPS_MM = 1e-6
+# 贴附（attach，2026-10-05）轮数上限：west+south 各一趟为一轮；整轮零 move
+# 早退 + 势函数 Σ(minX+minY) 严格递减双保险终止（上限兜底最坏耗时）。
+ATTACH_ROUNDS_MAX = 3
+# 「已贴附」判据（mm）：片到任一其他片距离 ≤ 此值（相交=距离 0，d>0 琥珀
+# 工艺贴触也算）或贴住布头/上下门幅边 → 去旋转跳过（贴附优先于旋转）。
+# waist_band.CHAIN_GAP_EPS_MM=1.0 同值先例。
+ATTACH_SNUG_EPS_MM = 1.0
+# 贴附滑移量有效阈值（mm）：小于此视为已贴触/数值噪声，不产生 move
+# （COMPACT_GAIN_EPS_MM 同口径独立命名，语义各自锚定）。
+ATTACH_GAIN_EPS_MM = 1e-6
+# 贴附保持归位（2026-10-06「贴附保持的减少旋转」）：细阶梯角度上限（°）——
+# dev ≤ 此值用 1° 步进（5° 步进会漏掉 −9°/−7° 这类手眼可行位，5156 g05_30
+# 实勘网格证明），更大偏差维持 5° 步进控成本。
+DEROT_FINE_MAX_DEG = 10.0
+# 阶梯候选最小有效降幅（°）：小于此视为浮点噪声孪生角（如 dev=10.000014
+# 的当前角本身被 discretize 生成为候选），不当归位候选。
+DEROT_MIN_GAIN_DEG = 0.05
+# 贴附保持接受判据（mm）：严格贴附片的归位候选位距任一邻片/墙 ≤ 此值才算
+# 「动则必贴」（四向滑贴首触位天然满足；B 族的唯一接受口径）。
+ATTACH_KEEP_EPS_MM = 0.05
+# 族 B 四向滑贴的滑移上限（mm）：防跨唛架远跳（贴附语义是就近微调，
+# 5156 g08_33 实测 183mm 级换邻居已属边缘，100mm 封顶）。
+DEROT_SLIDE_CAP_MM = 100.0
+# 严格档分离锚的碰撞邻居上限（个）：质心锚在新角度与邻片微相交时，用
+# pass ③ 同款最小分离（四向）生成补锚 —— 手眼可行的中间位几乎都是某条
+# 最小分离向量（5156 实勘：g05_30 需 (0,+5)、g05_36 需 (+5,−30) 级锚）。
+DEROT_SEP_COLLIDERS = 3
+# 族 B 小步进锚（mm）：质心锚无碰撞时口袋里仍可能有 (±5/±10) 级中间位
+# （分离锚无从生成 —— 无碰撞可分离），补轴对小步进覆盖。
+DEROT_NUDGE_ANCHORS = ((5.0, 0.0), (-5.0, 0.0), (0.0, 5.0), (0.0, -5.0))
+# 分离补锚的分量上限（mm）：最小分离向量可能巨大（远处碰撞邻居的 bbox 分离
+# 界），超出贴附语义的就地微调范围一律丢弃（5156 实勘有效锚 ≤ ~70mm 级）。
+DEROT_SEP_MAX_MM = 150.0
+# 归位角度预算（片×角试验数，两巡合计）：确定性全局封顶，防大文件最坏情
+# 形（几十个顽固片 × 19 角 × 多锚）拖爆 5s 预算；耗尽后该片保持原角留
+# residual（如实上报）。
+DEROT_ANGLE_BUDGET = 4000
+# 族 A 棱对齐候选的障碍数上限（个）：按 bbox 距离取最近若干，远片对齐位
+# 位移必大、按位移升序永轮不到 —— 纯守卫开销削减。
+DEROT_OFFSET_OBSTACLES = 8
+# 分离补锚的二分轮数：锚点只是滑贴起点（非终位），~0.01mm 级进度足够
+# （pass ③ 终位分离仍用满精度 BISECT_ITERS）—— cProfile 实测 sep 锚生
+# 成占大头（5810 次 × 40 轮），降到 14 轮省 ~2/3。
+DEROT_SEP_ITERS = 10
 
 
 class PolishError(Exception):
@@ -146,6 +227,35 @@ def _derotate_ladder(rot: float) -> list:
             cands.append((d, a))
     cands.sort()
     return [a for _d, a in cands]
+
+
+def _derotate_ladder_fine(rot: float) -> list:
+    """贴附保持归位的候选角阶梯（2026-10-06「贴附保持的减少旋转」）。
+
+    与 ``_derotate_ladder`` 同约束（只取最近基线一侧、dev 严格下降、
+    (新dev, 角度) 升序先试基线），差异：dev ≤ ``DEROT_FINE_MAX_DEG`` 用
+    1° 步进（原 5° 步进会漏掉 −9°/−7° 这类手眼可行位 —— 5156 g05_30
+    实勘：网格搜索证明减 1°+微移+滑贴可贴附，5° 阶梯永远够不到）；
+    且要求降幅 ≥ ``DEROT_MIN_GAIN_DEG``，防浮点噪声孪生角（dev=10.000014
+    的当前角被 discretize 生成）混进候选导致「零降幅归位」假成功。dev≤0
+    返回空。
+    """
+    r = float(rot) % 360.0
+    dev = _rotation_dev(r)
+    if dev <= DEV_EPS_DEG:
+        return []
+    base = _nearest_baseline(r)
+    # 阈值带容差：dev=10.000014 级浮点噪声不得把片踢回 5° 粗步进
+    # （5156 g05_30 实勘：恰好卡在门外、−9° 可行位永远够不到）。
+    step = 1.0 if dev <= DEROT_FINE_MAX_DEG + DEROT_MIN_GAIN_DEG else 5.0
+    cands = {(0.0, round(base % 360.0, 2))}
+    k = 1
+    while k * step < dev - 1e-9:
+        for a in (round((base - k * step) % 360.0, 2),
+                  round((base + k * step) % 360.0, 2)):
+            cands.add((_rotation_dev(a), a))
+        k += 1
+    return [a for d, a in sorted(cands) if d < dev - DEROT_MIN_GAIN_DEG]
 
 
 def _world_geom(placement, pieces_by_id):
@@ -273,13 +383,14 @@ def _diagnose(geoms, items, total_area, gate_mm):
     return summary, pairs
 
 
-def _sep_translate(g_moving, g_other, axis, sign):
+def _sep_translate(g_moving, g_other, axis, sign, iters=None):
     """最小分离平移：沿 axis('x'/'y')·sign(±1) 二分到贴触 + 1nm 防贴死微抬。
 
     镜像 ``waist_band._slide_touch`` 的二分机器（lo 恒碰撞 / hi 恒自由 ——
     hi 取 bbox 分离保证界，必自由）：返回 ``(dx, dy, t)``（t = 平移量 mm，
     非负）或 None（该方向 bbox 分离界 ≤ 0，非重合形态）。终点贴触侧 + 1nm，
-    shapely 交集严格为空（面积精确 0）。
+    shapely 交集严格为空（面积精确 0）。``iters`` 可降精度（锚点生成只要
+    ~0.01mm 级、pass ③ 终位要满精度，2026-10-06 性能分层）。
     """
     mb, ob = g_moving.bounds, g_other.bounds
     if axis == 'y':
@@ -292,10 +403,10 @@ def _sep_translate(g_moving, g_other, axis, sign):
     def collides(t):
         moved = translate(g_moving, xoff=sign * t if axis == 'x' else 0.0,
                           yoff=sign * t if axis == 'y' else 0.0)
-        return moved.intersection(g_other).area >= COLLIDE_AREA_EPS_MM2
+        return _hits(moved, g_other)
 
     lo, hi = 0.0, free          # lo 碰撞（当前重合），hi 自由（bbox 分离）
-    for _ in range(BISECT_ITERS):
+    for _ in range(BISECT_ITERS if iters is None else iters):
         mid = (lo + hi) / 2.0
         if collides(mid):
             lo = mid
@@ -307,32 +418,56 @@ def _sep_translate(g_moving, g_other, axis, sign):
     return dx, dy, t
 
 
-def _slide_west_touch(g_moving, obstacles, t_wall):
-    """自当前位沿 ``−x`` 滑到与 ``obstacles`` 首次贴触或 x=0 布头墙（US-005）。
+def _slide_axis_touch(g_moving, obstacles, t_wall, axis, sign):
+    """自当前位沿 ``axis('x'/'y')·sign`` 滑到与 ``obstacles`` 首次贴触或墙。
 
-    ``waist_band._slide_touch`` 同款「粗扫定界 + 二分收敛」机器的 −x 向变体
-    （可行域非凸，须从当前位起步找**首个**碰撞界）。``obstacles`` 为调用方
-    预筛后的滑移路径相关障碍（y 带重叠 + x 可达）；``t_wall`` = 布头墙限
-    （滑移量上限，到 x=0 为止）。返回滑移量 t ∈ [0, t_wall]：
+    ``waist_band._slide_touch`` 同款「粗扫定界 + 二分收敛」机器的方向参数化
+    变体（``_slide_west_touch`` 的通用化，west = ('x', −1)、south = ('y', −1)；
+    可行域非凸，须从当前位起步找**首个**碰撞界）。``obstacles`` 为调用方预筛
+    后的滑移路径相关障碍（正交轴带重叠 + 滑移轴可达）；``t_wall`` = 墙限
+    （滑移量上限，west 到 x=0 布头墙 / south 到 y=0 下门幅）。返回滑移量
+    t ∈ [0, t_wall]：
 
     - 当前位已碰撞（残留重合纠缠，pass ③ 未解的必要贴触）→ 0（不可滑，
       交给 residual 口径，不强行撕开）；
-    - 全程自由 → ``t_wall``（贴 x=0 布头墙，回收布头空隙）；
+    - 全程自由 → ``t_wall``（贴墙，回收墙侧空隙）；
     - 否则二分到首个贴触点后回退 1nm（``SEP_NUDGE_MM``，终态与障碍交集
       面积精确 0 —— 与 ``_sep_translate`` 防贴死同口径）。
     """
     def _collides(t):
-        moved = translate(g_moving, xoff=-t)
+        moved = translate(g_moving,
+                          xoff=sign * t if axis == 'x' else 0.0,
+                          yoff=sign * t if axis == 'y' else 0.0)
         mb = moved.bounds
         for g2 in obstacles:
-            if _bbox_overlaps(mb, g2.bounds) and \
-                    moved.intersection(g2).area >= COLLIDE_AREA_EPS_MM2:
+            if _bbox_overlaps(mb, g2.bounds) and _hits(moved, g2):
                 return True
         return False
 
     if _collides(0.0):
         return 0.0
-    t_free, t_hit, t = 0.0, None, 0.0
+    # 跳过必自由区（2026-10-06 性能）：多边形接触必以 bbox 重叠为前提 ——
+    # 直达首个障碍的 bbox 平面（或墙），免 20mm 盲扫长滑（自由滑 6000mm 到
+    # 布头原需 300 步 collides）。任一障碍已 bbox 重叠（gap≤0，互锁非凸常
+    # 态）则退回 0 起全扫。
+    b_start = g_moving.bounds
+    jump = t_wall
+    for g2 in obstacles:
+        bm = g2.bounds
+        if axis == 'x':
+            if bm[3] < b_start[1] or b_start[3] < bm[1]:
+                continue
+            gap = (b_start[0] - bm[2]) if sign < 0 else (bm[0] - b_start[2])
+        else:
+            if bm[2] < b_start[0] or b_start[2] < bm[0]:
+                continue
+            gap = (b_start[1] - bm[3]) if sign < 0 else (bm[1] - b_start[3])
+        if gap <= 0.0:
+            jump = 0.0
+            break
+        if gap < jump:
+            jump = gap
+    t_free, t_hit, t = max(jump - 1e-9, 0.0), None, min(jump, t_wall)
     while t < t_wall:
         tn = min(t + COMPACT_SCAN_STEP_MM, t_wall)
         if _collides(tn):
@@ -341,15 +476,24 @@ def _slide_west_touch(g_moving, obstacles, t_wall):
         t_free = tn
         t = tn
     if t_hit is None:
-        return t_wall                      # 全程自由 → 贴 x=0 布头墙
+        return t_wall                      # 全程自由 → 贴墙
     a, b = t_free, t_hit                   # a 自由 / b 碰撞（首个碰撞界）
-    for _ in range(BISECT_ITERS):
+    for _ in range(SLIDE_BISECT_ITERS):
         mid = (a + b) / 2.0
         if _collides(mid):
             b = mid
         else:
             a = mid
     return max(a - SEP_NUDGE_MM, 0.0)      # 贴触位回退 1nm（自由侧）
+
+
+def _slide_west_touch(g_moving, obstacles, t_wall):
+    """自当前位沿 ``−x`` 滑到首次贴触或 x=0 布头墙（US-005；通用机器的 −x 特化）。
+
+    薄兼容入口：``_slide_axis_touch`` 通用化前的历史签名（compact 站点与
+    既有测试引用），行为逐字节不变。
+    """
+    return _slide_axis_touch(g_moving, obstacles, t_wall, 'x', -1.0)
 
 
 # --------------------------------------------------------------- 主入口
@@ -382,7 +526,8 @@ def polish_layout(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False)
     tuple ``(placed_new, report)``
         placed_new : 无任何 move 时**返回输入 list 原对象**（逐字节不变量）；
             有 move 时为新列表（全量新 dict，未动片字段值不变）。
-        report : ``{before, after, moves, residual, excluded, elapsed_sec}``。
+        report : ``{before, after, moves, residual, excluded, attach_moves,
+            elapsed_sec}``（``attach_moves`` = 贴附 pass move 计数，2026-10-05）。
     """
     t0 = time.perf_counter()
     gate = float(gate_mm)
@@ -425,6 +570,40 @@ def polish_layout(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False)
     width_before = _layout_width(geoms)
     bounds = [g.bounds for g in geoms]
     moves = []
+    touched = set()          # 被动过的片（②′ 脏区门控：只重试环境变过的片）
+    # 全图几何预制备（shapely prepared predicate，2026-10-06 性能）：后续对
+    # geoms[k] 的 overlaps/intersects 布尔判定走空间索引快路径（贴附保持
+    # 归位引入海量谓词调用后，intersection().area 28µs/次成热点）。幂等
+    # in-place，不改几何值；_apply 落位的新几何同样补制备。
+    for _g in geoms:
+        _shapely_prepare(_g)
+
+    # 守卫② 包络的 O(1) 加速缓存（2026-10-06 贴附保持归位引入海量 _move_ok
+    # 调用后，逐次 O(n) 扫 maxX/minX 成为热点）：全图 bounds maxX 前两大 /
+    # minX 前两小，「他人极值」= 跳过自己的第一项。_apply 落位后 O(n) 重建
+    # （move 数量级 ~数百，重建可忽略）。
+    _env_max2 = []
+    _env_min2 = []
+
+    def _rebuild_env():
+        nonlocal _env_max2, _env_min2
+        _env_max2 = sorted(((bounds[k][2], k) for k in range(n)),
+                           reverse=True)[:2]
+        _env_min2 = sorted((bounds[k][0], k) for k in range(n))[:2]
+
+    _rebuild_env()
+
+    def _others_max_x(idx):
+        for v, k in _env_max2:
+            if k != idx:
+                return v
+        return 0.0
+
+    def _others_min_x(idx):
+        for v, k in _env_min2:
+            if k != idx:
+                return v
+        return 0.0
 
     def _move_ok(idx, geom):
         """逐 move 守卫 ①②③⑤（守卫 ④ pid 守恒结构性成立，出口处终检）。"""
@@ -433,21 +612,15 @@ def polish_layout(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False)
         b = geom.bounds
         if b[1] < -GATE_EPS_MM or b[3] > gate + GATE_EPS_MM:  # 守卫① y∈[0,gate]
             return False
-        others_max = 0.0
-        others_min = 0.0
-        for k in range(n):
-            if k == idx:
-                continue
-            others_max = max(others_max, bounds[k][2])
-            others_min = min(others_min, bounds[k][0])
-        new_width = max(others_max, b[2]) - min(min(others_min, b[0]), 0.0)
+        new_width = max(_others_max_x(idx), b[2]) \
+            - min(min(_others_min_x(idx), b[0]), 0.0)
         if new_width > width_before + WIDTH_TOL_MM:           # 守卫② 包络不增
             return False
         for k in range(n):                                    # 守卫③ 零新重合
             if k == idx:
                 continue
-            if _bbox_overlaps(b, bounds[k]) and \
-                    geom.intersection(geoms[k]).area > OVERLAP_AREA_EPS_MM2:
+            if _bbox_overlaps(b, bounds[k]) and _hits(geom, geoms[k]) \
+                    and geom.intersection(geoms[k]).area > OVERLAP_AREA_EPS_MM2:
                 return False
         return True
 
@@ -463,66 +636,257 @@ def polish_layout(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False)
         old['translation'] = [tr_new[0], tr_new[1]]
         geoms[idx] = geom_new
         bounds[idx] = geom_new.bounds
+        touched.add(idx)
+        _shapely_prepare(geom_new)
+        _rebuild_env()
 
-    # ---- pass ② 去旋转（dev 降序、平手下标；先试基线逐步回退）----
+    def _snug(i):
+        """片 i 是否**严格贴附**（干净贴附分类器，2026-10-05 引入、2026-10-06
+        转职）：与任一其他片**干净贴触**（距离 ≤ ``ATTACH_SNUG_EPS_MM`` 且交
+        面积 ≤ ``OVERLAP_AREA_EPS_MM2``）或贴住布头/上下门幅边 → True。
+
+        2026-10-05 曾用作「已贴附跳过归位」的一刀切冻结；同日方案 A 收紧
+        （压线相交不算贴附）；**2026-10-06 起不再冻结任何片** —— 命中者改作
+        **严格档**：归位候选位必须自身也贴附（``_attached``，贴附不降级），
+        落实「更小角度同样贴附才动、动则必贴」；压线/悬浮片走宽松档（合法位
+        即可，贴附 pass 随后收拢）。"""
+        b = bounds[i]
+        gi = geoms[i]
+        touching = (b[0] <= ATTACH_SNUG_EPS_MM          # 贴布头（含外凸）
+                    or b[1] <= ATTACH_SNUG_EPS_MM       # 贴下门幅
+                    or b[3] >= gate - ATTACH_SNUG_EPS_MM)  # 贴上门幅
+        for k in range(n):
+            if k == i:
+                continue
+            if not _bbox_overlaps(
+                    (b[0] - ATTACH_SNUG_EPS_MM, b[1] - ATTACH_SNUG_EPS_MM,
+                     b[2] + ATTACH_SNUG_EPS_MM, b[3] + ATTACH_SNUG_EPS_MM),
+                    bounds[k]):
+                continue
+            gk = geoms[k]
+            if _hits(gi, gk) and \
+                    gi.intersection(gk).area > OVERLAP_AREA_EPS_MM2:
+                return False         # 压线相交 ≠ 干净贴附 → 宽松档
+            if not touching and gi.distance(gk) <= ATTACH_SNUG_EPS_MM:
+                touching = True
+        return touching
+
+    def _attached(g, i):
+        """候选位 g 是否**已贴附**（贴附保持接受判据，2026-10-06）：距任一
+        其他片 ≤ ``ATTACH_KEEP_EPS_MM``，或贴住布头/下/上门幅（同阈值）。"""
+        b = g.bounds
+        if b[0] <= ATTACH_KEEP_EPS_MM or b[1] <= ATTACH_KEEP_EPS_MM \
+                or b[3] >= gate - ATTACH_KEEP_EPS_MM:
+            return True
+        be = (b[0] - ATTACH_KEEP_EPS_MM, b[1] - ATTACH_KEEP_EPS_MM,
+              b[2] + ATTACH_KEEP_EPS_MM, b[3] + ATTACH_KEEP_EPS_MM)
+        for k in range(n):
+            if k == i:
+                continue
+            if _bbox_overlaps(be, bounds[k]) \
+                    and g.distance(geoms[k]) <= ATTACH_KEEP_EPS_MM:
+                return True
+        return False
+
+    def _try_apply(i, target_rot, tr, g, how, rot_cur):
+        """接受一个归位候选（守卫外的高层包装：记账 detail + _apply）。"""
+        old_tr = items[i]['translation']
+        _apply(i, target_rot, tr, g, 'derotate',
+               f'rot {rot_cur:.2f}→{target_rot:.2f}（dev '
+               f'{_rotation_dev(rot_cur):.2f}→{_rotation_dev(target_rot):.2f}°），'
+               f'{how}位移 {math.hypot(tr[0] - old_tr[0], tr[1] - old_tr[1]):.2f}mm')
+
+    def _slide_anchor_ok(i, ga, ta):
+        """族 B：自锚点 ga 四向（−x/−y/+x/+y）滑贴到首触取候选 —— Alt+左键
+        attract 语义的四向版（贴附方向可能在东/北侧，west/south 重力模型够不
+        着）。到位即天然贴附；滑移上限 ``DEROT_SLIDE_CAP_MM``（防跨唛架远
+        跳）。返回首个「守卫全过 + 贴附」位，无则 None。"""
+        # 锚点级碰撞预检（2026-10-06 性能）：锚位与任一邻片正面积相交时四个
+        # 方向的 collides(0) 必全真（t=0 早退），一次判定省 4 次滑贴全程。
+        ba0 = ga.bounds
+        for m in range(n):
+            if m == i:
+                continue
+            if _bbox_overlaps(ba0, bounds[m]) and _hits(ga, geoms[m]):
+                return None
+        ba = ga.bounds
+        for axis, sign in (('x', -1.0), ('y', -1.0), ('x', 1.0), ('y', 1.0)):
+            if axis == 'x':
+                wall = ba[0] if sign < 0 else DEROT_SLIDE_CAP_MM
+            else:
+                wall = min(gate - ba[3], DEROT_SLIDE_CAP_MM) if sign > 0 \
+                    else ba[1]
+            wall = min(wall, DEROT_SLIDE_CAP_MM)
+            if wall <= ATTACH_GAIN_EPS_MM:
+                continue
+            reach = DEROT_SLIDE_CAP_MM
+            obst = []
+            for m in range(n):
+                if m == i:
+                    continue
+                bm = bounds[m]
+                if axis == 'x':
+                    if bm[3] < ba[1] or ba[3] < bm[1]:
+                        continue
+                    if bm[2] < ba[0] - reach or bm[0] > ba[2] + reach:
+                        continue
+                else:
+                    if bm[2] < ba[0] or ba[2] < bm[0]:
+                        continue
+                    if bm[3] < ba[1] - reach or bm[1] > ba[3] + reach:
+                        continue
+                obst.append(geoms[m])
+            t = _slide_axis_touch(ga, obst, wall, axis, sign)
+            if t <= ATTACH_GAIN_EPS_MM:
+                continue
+            g = translate(ga, xoff=sign * t if axis == 'x' else 0.0,
+                          yoff=sign * t if axis == 'y' else 0.0)
+            if _move_ok(i, g) and _attached(g, i):
+                tr = (ta[0] + (sign * t if axis == 'x' else 0.0),
+                      ta[1] + (sign * t if axis == 'y' else 0.0))
+                d = '−x' if (axis, sign) == ('x', -1.0) else \
+                    ('−y' if (axis, sign) == ('y', -1.0) else
+                     ('+x' if axis == 'x' else '+y'))
+                return tr, g, f'{d}滑贴'
+        return None
+
+    # ---- pass ②/②′ 去旋转（2026-10-06「贴附保持的减少旋转」重写）----
+    # dev 降序（平手下标）。所有 dev>0 片一律进阶梯（干净贴附不再一刀切冻
+    # 结）；严格贴附片（_snug）候选必须自身贴附（贴附不降级）；压线/悬浮片
+    # 宽松档（合法位即可，贴附 pass 随后收拢）。阶梯 = _derotate_ladder_fine
+    # （dev≤10° 用 1° 步进）。候选族：B 四向滑贴首触（质心锚 + 碰撞邻居最小
+    # 分离补锚 + 小步进锚）与 A 质心锚定/邻域棱对齐（严格档均须新位贴附）。
+    # 找不到合格位则保持原角（residual 如实上报）。
+    # 二巡（②′）：分离+贴附重排口袋后，原角片的可行位才可能出现（5156
+    # g05_30 实勘：原始态全阶梯无可行位，贴附后 −9°+微移即贴），故 ③½ 后
+    # 再扫一轮 + 补一轮贴附收拢微缝。
+    derot_angle_budget = DEROT_ANGLE_BUDGET
+
+    def _derotate_sweep(only=None):
+        """only = 脏区集合（②′ 只重试自身或邻域被动过的片，None = 全量）。"""
+        nonlocal derot_angle_budget
+        sw = [i for i in range(n)
+              if i not in excluded
+              and _rotation_dev(items[i]['rotation']) > DEV_EPS_DEG
+              and (only is None or i in only)]
+        sw.sort(key=lambda i: (-_rotation_dev(items[i]['rotation']), i))
+        for i in sw:
+            rot_cur = items[i]['rotation']
+            if _rotation_dev(rot_cur) <= DEV_EPS_DEG:
+                continue
+            strict = _snug(i)
+            local = pieces_by_id[items[i]['id']]['polygon']
+            # US-004：镜像片 derotate 同一预处理 —— local x 先取负（c_local 用
+            # 镜像后多边形质心），t' 补偿公式不变。
+            if items[i].get('mirror') is True:
+                local = [(-x, y) for x, y in local]
+            c_local = Polygon(local).centroid
+            # 质心锚定：c_world = R(rot)·c_local + t（仿射保质心 ⇒ 世界质心即锚）
+            c_world = geoms[i].centroid
+            obstacles = [k for k in range(n)
+                         if k != i and _bbox_overlaps(
+                             (bounds[k][0] - NEIGHBOR_MARGIN_MM,
+                              bounds[k][1] - NEIGHBOR_MARGIN_MM,
+                              bounds[k][2] + NEIGHBOR_MARGIN_MM,
+                              bounds[k][3] + NEIGHBOR_MARGIN_MM), bounds[i])]
+            placed_move = False
+            for target_rot in _derotate_ladder_fine(rot_cur):
+                if derot_angle_budget <= 0:
+                    break                 # 全局角度预算耗尽：保持原角（residual）
+                derot_angle_budget -= 1
+                r = math.radians(target_rot)
+                c, s = math.cos(r), math.sin(r)
+                t0x = c_world.x - (c_local.x * c - c_local.y * s)
+                t0y = c_world.y - (c_local.x * s + c_local.y * c)
+                g0 = _valid_geometry(_transform_polygon(
+                    local, target_rot, (t0x, t0y)))
+                # 族 B 锚点集：质心锚 + 碰撞邻居最小分离补锚（+严格档小步进
+                # 锚）。碰撞判据与 _slide_axis_touch 的 collides 同阈值
+                # （≥1e-9mm²）—— 0.001~0.1mm² 的微相交会让滑贴四向全灭
+                # （t=0 早退）却不构成诊断级重合，最小分离正是手眼可行的
+                # 中间位（5156 g05_30 需 (0,+5) 级锚）；无碰撞的干净口袋靠
+                # 小步进锚覆盖 (±5/±10) 级中间位（仅严格档，控成本）。
+                anchors_fb = [(0.0, 0.0)]
+                b0 = g0.bounds
+                colliders = [k for k in range(n)
+                             if k != i and _bbox_overlaps(b0, bounds[k])
+                             and _hits(g0, geoms[k])][:DEROT_SEP_COLLIDERS]
+                for k in colliders:
+                    for axis, sign in (('y', 1.0), ('y', -1.0),
+                                       ('x', -1.0), ('x', 1.0)):
+                        sep = _sep_translate(g0, geoms[k], axis, sign,
+                                             iters=DEROT_SEP_ITERS)
+                        if sep is not None \
+                                and abs(sep[0]) <= DEROT_SEP_MAX_MM \
+                                and abs(sep[1]) <= DEROT_SEP_MAX_MM \
+                                and (sep[0], sep[1]) not in anchors_fb:
+                            anchors_fb.append((sep[0], sep[1]))
+                anchors_fb.sort(key=lambda a: math.hypot(a[0], a[1]))
+                anchors = list(anchors_fb) + \
+                    [a for a in DEROT_NUDGE_ANCHORS] if strict else anchors_fb
+                if strict:
+                    # 严格档先行：族 B 四向滑贴首触（新位天然贴附 = 贴附不降级）
+                    for adx, ady in anchors:
+                        ga = translate(g0, xoff=adx, yoff=ady) if (adx or ady) else g0
+                        hit = _slide_anchor_ok(i, ga, (t0x + adx, t0y + ady))
+                        if hit is not None:
+                            tr, g, how = hit
+                            _try_apply(i, target_rot, tr, g, how, rot_cur)
+                            placed_move = True
+                            break
+                    if placed_move:
+                        break
+                # 族 A：质心锚定原位 + 障碍/门幅棱边对齐（逐轴独立），按
+                # (位移, dx, dy) 升序取首个过守卫位；宽松档首个合法位即受
+                # （旧行为），严格档还须新位贴附。障碍取 bbox 距离最近 ≤8 个
+                # （远片对齐位位移必大、永轮不到，纯省守卫开销）。
+                offs = {(0.0, 0.0)}
+                bi = bounds[i]
+                near = sorted(
+                    obstacles,
+                    key=lambda k: (
+                        max(bi[0] - bounds[k][2], bounds[k][0] - bi[2], 0.0)
+                        + max(bi[1] - bounds[k][3], bounds[k][1] - bi[3], 0.0),
+                        k))[:DEROT_OFFSET_OBSTACLES]
+                for k in near:
+                    bk = bounds[k]
+                    for x in (bk[0], bk[2]):
+                        offs.add((x - b0[0], 0.0))
+                        offs.add((x - b0[2], 0.0))
+                    for y in (bk[1], bk[3]):
+                        offs.add((0.0, y - b0[1]))
+                        offs.add((0.0, y - b0[3]))
+                offs.add((-b0[0], 0.0))                        # 贴布头 x=0
+                offs.add((0.0, -b0[1]))                        # 贴门幅底 y=0
+                offs.add((0.0, gate - b0[3]))                  # 贴门幅顶 y=gate
+                for dx, dy in sorted(offs, key=lambda o: (math.hypot(o[0], o[1]), o)):
+                    tr = (t0x + dx, t0y + dy)
+                    g = translate(g0, xoff=dx, yoff=dy) if (dx or dy) else g0
+                    if _move_ok(i, g) and (not strict or _attached(g, i)):
+                        _try_apply(i, target_rot, tr, g, '邻域', rot_cur)
+                        placed_move = True
+                        break
+                if placed_move:
+                    break
+                if not strict:
+                    # 宽松档兜底：族 B（质心 + 分离补锚，无小步进锚控成本）
+                    # 四向滑贴首触 —— A 全败时贴附位仍是改进。
+                    for adx, ady in anchors_fb:
+                        ga = translate(g0, xoff=adx, yoff=ady) if (adx or ady) else g0
+                        hit = _slide_anchor_ok(i, ga, (t0x + adx, t0y + ady))
+                        if hit is not None:
+                            tr, g, how = hit
+                            _try_apply(i, target_rot, tr, g, how, rot_cur)
+                            placed_move = True
+                            break
+                    if placed_move:
+                        break
+
     derot = [i for i in range(n)
              if i not in excluded
              and _rotation_dev(items[i]['rotation']) > DEV_EPS_DEG]
     derot.sort(key=lambda i: (-_rotation_dev(items[i]['rotation']), i))
-    for i in derot:
-        rot_cur = items[i]['rotation']
-        if _rotation_dev(rot_cur) <= DEV_EPS_DEG:
-            continue
-        local = pieces_by_id[items[i]['id']]['polygon']
-        # US-004：镜像片 derotate 同一预处理 —— local x 先取负（c_local 用镜像后
-        # 多边形质心），t' 补偿公式不变（mirror 不改 rot'，只改局部几何形状）。
-        if items[i].get('mirror') is True:
-            local = [(-x, y) for x, y in local]
-        c_local = Polygon(local).centroid
-        # 质心锚定：c_world = R(rot)·c_local + t（仿射保质心 ⇒ 世界几何质心即锚）
-        c_world = geoms[i].centroid
-        obstacles = [k for k in range(n)
-                     if k != i and _bbox_overlaps(
-                         (bounds[k][0] - NEIGHBOR_MARGIN_MM,
-                          bounds[k][1] - NEIGHBOR_MARGIN_MM,
-                          bounds[k][2] + NEIGHBOR_MARGIN_MM,
-                          bounds[k][3] + NEIGHBOR_MARGIN_MM), bounds[i])]
-        placed_move = False
-        for target_rot in _derotate_ladder(rot_cur):
-            r = math.radians(target_rot)
-            c, s = math.cos(r), math.sin(r)
-            t0x = c_world.x - (c_local.x * c - c_local.y * s)
-            t0y = c_world.y - (c_local.x * s + c_local.y * c)
-            g0 = _valid_geometry(_transform_polygon(
-                local, target_rot, (t0x, t0y)))
-            b0 = g0.bounds
-            # 邻域候选：质心锚定原位 + 障碍/门幅棱边对齐（逐轴独立），按
-            # (位移, dx, dy) 升序取首个过守卫位（shapely 邻域候选实现自由度）。
-            offs = {(0.0, 0.0)}
-            for k in obstacles:
-                bk = bounds[k]
-                for x in (bk[0], bk[2]):
-                    offs.add((x - b0[0], 0.0))
-                    offs.add((x - b0[2], 0.0))
-                for y in (bk[1], bk[3]):
-                    offs.add((0.0, y - b0[1]))
-                    offs.add((0.0, y - b0[3]))
-            offs.add((-b0[0], 0.0))                        # 贴布头 x=0
-            offs.add((0.0, -b0[1]))                        # 贴门幅底 y=0
-            offs.add((0.0, gate - b0[3]))                  # 贴门幅顶 y=gate
-            for dx, dy in sorted(offs, key=lambda o: (math.hypot(o[0], o[1]), o)):
-                tr = (t0x + dx, t0y + dy)
-                g = translate(g0, xoff=dx, yoff=dy) if (dx or dy) else g0
-                if _move_ok(i, g):
-                    _apply(i, target_rot, tr, g, 'derotate',
-                           f'rot {rot_cur:.2f}→{target_rot:.2f}（dev '
-                           f'{_rotation_dev(rot_cur):.2f}→'
-                           f'{_rotation_dev(target_rot):.2f}°），'
-                           f'质心位移 {math.hypot(dx, dy):.2f}mm')
-                    placed_move = True
-                    break
-            if placed_move:
-                break
+    _derotate_sweep()
 
     # ---- pass ③ 去重叠（穿透深度降序、平手 (i,j)；最小分离 ±y 优先、−x 次之）----
     pairs.sort(key=lambda p: (-p['penetration_mm'], p['i'], p['j']))
@@ -554,6 +918,88 @@ def polish_layout(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False)
                     break
             if done:
                 break
+
+    # ---- pass ③½ 贴附（attach，默认启用）：重力压实 west+south 交替滑贴 ----
+    # 2026-10-05 裁床裁板需求：裁片片片贴合方便走刀。west 趟复用 compact 的
+    # 级联骨架（minX 升序、左片先贴新位），south 趟镜像（minY 升序、下片先
+    # 贴）；贴墙（布头 x=0 / 下门幅 y=0）与贴障碍同权。纯平移 + 首触即停 +
+    # 1nm 回退 ⇒ 永不增大旋转、永不新重合；south 不动 x ⇒ 包络守卫天然过。
+    # 整轮零 move 早退 + 势函数 Σ(minX+minY) 严格递减双保险终止；轮数上限
+    # 兜底最坏耗时。贴附 move 无 pass 级回滚（每 move 个体守卫，move 本身
+    # 即贴附改进）；exclude 片永不作 mover、恒作障碍（band/prefix 刚性组不破）。
+    # 2026-10-06 闭包化：②′ 归位二巡后再补一轮收拢微缝（零 move 即早退）。
+    attach_moves = 0
+
+    def _attach_sweep():
+        nonlocal attach_moves
+        for _round in range(ATTACH_ROUNDS_MAX):
+            moved = 0
+            # west 趟：自布头方向级联 −x 滑贴（障碍剪枝同 compact：x 可达 +
+            # 布头墙左侧不可达剔除 + y 带重叠）。
+            for k in sorted((k for k in range(n) if k not in excluded),
+                            key=lambda k: (bounds[k][0], k)):
+                if bounds[k][0] <= ATTACH_GAIN_EPS_MM:
+                    continue             # 已贴布头（或 minX≤0 外凸）：不可再滑
+                b_k = bounds[k]
+                obstacles = [geoms[m] for m in range(n)
+                             if m != k
+                             and bounds[m][0] < b_k[2]        # 滑移路径 x 可达
+                             and bounds[m][2] > 0.0           # 布头墙左侧不可达
+                             and not (bounds[m][3] < b_k[1]
+                                      or b_k[3] < bounds[m][1])]
+                t = _slide_axis_touch(geoms[k], obstacles, b_k[0], 'x', -1.0)
+                if t <= ATTACH_GAIN_EPS_MM:
+                    continue
+                tr = (items[k]['translation'][0] - t,
+                      items[k]['translation'][1])
+                g = translate(geoms[k], xoff=-t)
+                if _move_ok(k, g):
+                    _apply(k, items[k]['rotation'], tr, g, 'attach',
+                           f'−x 滑贴贴附 {t:.2f}mm')
+                    moved += 1
+            # south 趟：门幅下边方向级联 −y 滑贴（镜像剪枝：y 可达 + 下门幅墙
+            # 下侧不可达剔除 + x 带重叠）。
+            for k in sorted((k for k in range(n) if k not in excluded),
+                            key=lambda k: (bounds[k][1], k)):
+                if bounds[k][1] <= ATTACH_GAIN_EPS_MM:
+                    continue             # 已贴下门幅：不可再滑
+                b_k = bounds[k]
+                obstacles = [geoms[m] for m in range(n)
+                             if m != k
+                             and bounds[m][1] < b_k[3]        # 滑移路径 y 可达
+                             and bounds[m][3] > 0.0           # 下门幅墙下侧不可达
+                             and not (bounds[m][2] < b_k[0]
+                                      or b_k[2] < bounds[m][0])]
+                t = _slide_axis_touch(geoms[k], obstacles, b_k[1], 'y', -1.0)
+                if t <= ATTACH_GAIN_EPS_MM:
+                    continue
+                tr = (items[k]['translation'][0],
+                      items[k]['translation'][1] - t)
+                g = translate(geoms[k], yoff=-t)
+                if _move_ok(k, g):
+                    _apply(k, items[k]['rotation'], tr, g, 'attach',
+                           f'−y 滑贴贴附 {t:.2f}mm')
+                    moved += 1
+            attach_moves += moved
+            if not moved:
+                break                      # 不动点：整轮零 move 早退
+
+    _attach_sweep()
+
+    # ---- pass ②′ 贴附保持归位 · 二巡 + 补一轮贴附（2026-10-06）----
+    # 分离+贴附重排口袋后，一巡失败的斜片可行位才可能出现（5156 g05_30：
+    # 原始态全阶梯无可行位、贴附态 −9°+微移即贴）。脏区门控：只重试「自身
+    # 或邻域（NEIGHBOR_MARGIN）被动过」的片 —— 环境未变者可行性不变，大
+    # 文件下砍掉二巡大头开销。二巡后补一轮贴附收拢宽松档归位留下的微缝。
+    only2 = set(touched)
+    for k in list(touched):
+        bk = (bounds[k][0] - NEIGHBOR_MARGIN_MM, bounds[k][1] - NEIGHBOR_MARGIN_MM,
+              bounds[k][2] + NEIGHBOR_MARGIN_MM, bounds[k][3] + NEIGHBOR_MARGIN_MM)
+        for i in range(n):
+            if i not in excluded and _bbox_overlaps(bk, bounds[i]):
+                only2.add(i)
+    _derotate_sweep(only=only2)
+    _attach_sweep()
 
     # ---- pass ④ 压缩回收（compact=True；自布头方向逐片 −x 滑贴收空隙）----
     if compact:
@@ -604,6 +1050,7 @@ def polish_layout(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False)
                  if _rotation_dev(items[i]['rotation']) > DEV_EPS_DEG]
     report = {'before': before, 'after': after, 'moves': moves,
               'residual': residual, 'excluded': sorted(excluded),
+              'attach_moves': attach_moves,
               'elapsed_sec': round(time.perf_counter() - t0, 3)}
 
     if not moves:                       # 无改进：输入 list 原对象逐字节不变
@@ -662,20 +1109,23 @@ def _smoke_fixtures() -> bool:
               f'{(" " + detail) if detail else ""}')
         ok = ok and bool(cond)
 
-    # ① 空白旁斜片：单片 25° 居空场 → 回正 dev=0、质心零位移
+    # ① 空白旁斜片：单片 25° 居空场 → 回正 dev=0、质心零位移（贴附 pass 随后
+    #    会把片聚拢到墙角，质心断言锚定 derotate move 本身）
     pieces = {'g01_30': _rect_piece('g01_30', 300, 100)}
     placed = [_pl('g01_30', 25, 500, 500)]
     out, rep = polish_layout(placed, pieces, 2000.0)
+    m0 = rep['moves'][0]
     g0 = _world_polygon('g01_30', pieces, placed[0]['rotation'],
                         placed[0]['translation'])
-    g1 = _world_polygon('g01_30', pieces, out[0]['rotation'],
-                        out[0]['translation'])
+    g1 = _world_polygon('g01_30', pieces, m0['to']['rotation'],
+                        m0['to']['translation'])
     _check('空白旁斜片', _rotation_dev(out[0]['rotation']) == 0.0
+           and m0['kind'] == 'derotate'
            and rep['after']['overlap_pairs'] == 0
            and g0.centroid.distance(g1.centroid) < 1e-6,
            f'rot={out[0]["rotation"]:.1f} moves={len(rep["moves"])}')
 
-    # ② 可分离重合对：叠 5mm → 交集面积精确 0
+    # ② 可分离重合对：叠 5mm → 交集面积精确 0（分离后贴附 pass 继续聚拢到布头）
     pieces = {'g01_30': _rect_piece('g01_30', 200, 150),
               'g02_30': _rect_piece('g02_30', 200, 150, label='g02')}
     placed = [_pl('g01_30', 0, 100, 100), _pl('g02_30', 0, 100, 245)]
@@ -685,9 +1135,11 @@ def _smoke_fixtures() -> bool:
         _world_polygon('g02_30', pieces, out[1]['rotation'],
                        out[1]['translation']))
     _check('可分离重合对', inter.area == 0.0
-           and len(rep['moves']) == 1 and rep['moves'][0]['kind'] == 'separate',
+           and any(m['kind'] == 'separate' for m in rep['moves'])
+           and rep['attach_moves'] >= 1,
            f'交集面积={inter.area:.3g} 重合对 '
-           f'{rep["before"]["overlap_pairs"]}→{rep["after"]["overlap_pairs"]}')
+           f'{rep["before"]["overlap_pairs"]}→{rep["after"]["overlap_pairs"]} '
+           f'attach={rep["attach_moves"]}')
 
     # ③ 紧密布局：满门幅贴触链叠 2mm（d 余量形态）→ 逐字节不变 + residual 如实
     pieces = {'g01_30': _rect_piece('g01_30', 100, 160),
@@ -701,7 +1153,9 @@ def _smoke_fixtures() -> bool:
            f'residual={len(rep["residual"])} '
            f'overlap_pairs={rep["after"]["overlap_pairs"]}')
 
-    # ④ 守卫·越门幅：唯一分离方向 +y 越门幅（上下左右全堵）
+    # ④ 守卫·越门幅：唯一分离方向 +y 越门幅（上下左右全堵）—— 守卫意图 =
+    #    U/L 重合对保持未分离且两者原地不动；其余未贴附片（B/W）被贴附 pass
+    #    合法聚拢属新默认行为（2026-10-05），不与守卫冲突。
     pieces = {'g01_30': _rect_piece('g01_30', 200, 120),
               'g02_30': _rect_piece('g02_30', 200, 80, label='g02'),
               'g03_30': _rect_piece('g03_30', 200, 175, label='g03'),
@@ -711,29 +1165,49 @@ def _smoke_fixtures() -> bool:
               _pl('g03_30', 0, 650, 700),   # B：堵 −y
               _pl('g04_30', 0, 0, 800)]     # W：堵 −x（左墙）
     out, rep = polish_layout(placed, pieces, 1000.0)
-    _check('守卫·越门幅拒绝', out is placed and rep['moves'] == [],
+    _check('守卫·越门幅拒绝',
+           out[0]['translation'] == placed[0]['translation']
+           and out[1]['translation'] == placed[1]['translation']
+           and all(m['kind'] == 'attach' for m in rep['moves'])
+           and any(r['kind'] == 'overlap' for r in rep['residual']),
+           f'moves={[(m["index"], m["kind"]) for m in rep["moves"]]} '
            f'residual={len(rep["residual"])}')
 
-    # ⑤ 守卫·包络增长：唯一空位在 +x 尾部外（rot0 bbox 更宽，全景堵死）
+    # ⑤ 守卫·包络（2026-10-06 行为演进）：旧「唯一空位在 +x 尾部外」场景被
+    #    四向滑贴解锁 —— 斜片 −x 滑贴贴 g02 东缘归位 0°、包络反而收缩；守卫
+    #    仍逐 move 生效（所有 move 包络不增；越门幅拒绝由 ④ 独立覆盖）。
     pieces = {'g01_30': _rect_piece('g01_30', 400, 40),
               'g02_30': _rect_piece('g02_30', 300, 600, label='g02')}
     placed = [_pl('g02_30', 0, 0, 200), _pl('g01_30', 25, 379, 200)]
     out, rep = polish_layout(placed, pieces, 1000.0)
-    _check('守卫·包络增长拒绝', out is placed and rep['moves'] == []
-           and any(r['kind'] == 'rotation' for r in rep['residual']),
-           f'residual_kinds={[r["kind"] for r in rep["residual"]]}')
+    g1 = _world_polygon('g01_30', pieces, out[1]['rotation'],
+                        out[1]['translation'])
+    g2 = _world_polygon('g02_30', pieces, out[0]['rotation'],
+                        out[0]['translation'])
+    _check('守卫·包络（滑贴解锁归位）',
+           _rotation_dev(out[1]['rotation']) == 0.0
+           and rep['moves'][0]['kind'] == 'derotate'
+           and rep['after']['width_mm'] <= rep['before']['width_mm'] + 0.5
+           and rep['after']['overlap_pairs'] == 0
+           and g1.intersection(g2).area == 0.0
+           and g1.distance(g2) <= 1e-3,
+           f'width {rep["before"]["width_mm"]}→{rep["after"]["width_mm"]} '
+           f'moves={[m["kind"] for m in rep["moves"]]}')
 
-    # ⑥ 多副本：同 pid 3 副本仅第 2 条需微调（按 index 寻址）
+    # ⑥ 多副本：同 pid 3 副本仅第 2 条斜置（derotate 按 index 寻址；贴附
+    #    pass 随后聚拢未贴附副本属新默认行为，第 1 条贴布头副本恒不动）
     pieces = {'g01_30': _rect_piece('g01_30', 300, 100)}
     placed = [_pl('g01_30', 0, 0, 0), _pl('g01_30', 25, 600, 600),
               _pl('g01_30', 0, 1200, 0)]
     out, rep = polish_layout(placed, pieces, 2000.0)
     _check('多副本按 index 寻址',
-           len(rep['moves']) == 1 and rep['moves'][0]['index'] == 1
+           rep['moves'][0]['kind'] == 'derotate'
+           and rep['moves'][0]['index'] == 1
            and out[0]['translation'] == placed[0]['translation']
-           and out[2]['translation'] == placed[2]['translation']
-           and out[2]['rotation'] == placed[2]['rotation'],
-           f'moves={[m["index"] for m in rep["moves"]]}')
+           and out[0]['rotation'] == placed[0]['rotation']
+           and all(m['index'] != 0 for m in rep['moves'])
+           and _rotation_dev(out[1]['rotation']) == 0.0,
+           f'moves={[(m["index"], m["kind"]) for m in rep["moves"]]}')
 
     # ⑦ 排除集：命中实例零移动、仍作障碍（B 朝 A 方向的 +y 分离被 A 挡下）
     pieces = {'g01_30': _rect_piece('g01_30', 200, 150),
@@ -771,6 +1245,7 @@ def _smoke_fixtures() -> bool:
     _check('确定性双跑全等', o1 == o2 and r1 == r2)
 
     # ⑨ compact 回收（US-005）：横排留 ≥30mm 空隙 → 包络减少 ≥29mm、零新重合
+    #    （贴附 pass 先行收空隙，compact 档通常无剩可收 → moves 全为 attach）
     pieces = {'g01_30': _rect_piece('g01_30', 100, 160),
               'g02_30': _rect_piece('g02_30', 100, 160, label='g02'),
               'g03_30': _rect_piece('g03_30', 100, 160, label='g03')}
@@ -785,9 +1260,10 @@ def _smoke_fixtures() -> bool:
            rep['after']['width_mm'] <= rep['before']['width_mm'] - 29.0
            and rep['after']['overlap_pairs'] == 0 and zero_overlap
            and [m['index'] for m in rep['moves']] == [1, 2]
-           and all(m['kind'] == 'compact' for m in rep['moves']),
+           and all(m['kind'] == 'attach' for m in rep['moves'])
+           and rep['attach_moves'] == 2,
            f'width {rep["before"]["width_mm"]}→{rep["after"]["width_mm"]} '
-           f'moves={[m["index"] for m in rep["moves"]]}')
+           f'moves={[(m["index"], m["kind"]) for m in rep["moves"]]}')
 
     # ⑩ compact 无空隙可收（US-005）：紧凑链（同 ③）→ 与非 compact 档逐元素相同
     pieces = {'g01_30': _rect_piece('g01_30', 100, 160),
@@ -802,15 +1278,18 @@ def _smoke_fixtures() -> bool:
     _check('compact 无空隙逐元素相同', o0 == o1 and r0 == r1)
 
     # ⑪ 镜像斜片（US-004）：L 形非对称镜像片 25° 居空场 → 回正 + mirror 透传
-    #    + 质心锚定（c_local 用镜像后多边形质心，t' 补偿公式不变）
+    #    + 质心锚定（c_local 用镜像后多边形质心，t' 补偿公式不变；贴附 pass
+    #    随后会把片聚拢到墙角，质心断言锚定 derotate move 本身）
     pieces = {'g09_30': _l_piece('g09_30')}
     placed = [_pl('g09_30', 25, 600, 600, mirror=True)]
     out, rep = polish_layout(placed, pieces, 2000.0)
+    m0 = rep['moves'][0]
     g0 = _world_polygon('g09_30', pieces, placed[0]['rotation'],
                         placed[0]['translation'], mirror=True)
-    g1 = _world_polygon('g09_30', pieces, out[0]['rotation'],
-                        out[0]['translation'], mirror=True)
+    g1 = _world_polygon('g09_30', pieces, m0['to']['rotation'],
+                        m0['to']['translation'], mirror=True)
     _check('镜像斜片 derotate', out[0].get('mirror') is True
+           and m0['kind'] == 'derotate'
            and _rotation_dev(out[0]['rotation']) == 0.0
            and g0.centroid.distance(g1.centroid) < 1e-6,
            f'rot={out[0]["rotation"]:.1f} moves={len(rep["moves"])}')
@@ -824,6 +1303,50 @@ def _smoke_fixtures() -> bool:
     _check('镜像片 no-op 原对象', out is placed and rep['moves'] == []
            and placed[1].get('mirror') is True,
            f'moves={len(rep["moves"])} residual={len(rep["residual"])}')
+
+    # ⑬ 贴附·south 闭合空白带（2026-10-05）：竖向留 140mm 空隙 → −y 滑贴到
+    #     下方片顶边 +1nm、零重合（截图空白带场景的合成最小复现）
+    pieces = {'g01_30': _rect_piece('g01_30', 100, 160),
+              'g02_30': _rect_piece('g02_30', 100, 160, label='g02')}
+    placed = [_pl('g01_30', 0, 0, 0), _pl('g02_30', 0, 0, 300)]
+    out, rep = polish_layout(placed, pieces, 1000.0)
+    _check('贴附 south 闭合空白带',
+           rep['attach_moves'] == 1
+           and abs(out[1]['translation'][1] - 160.0) < 0.01
+           and rep['moves'][0]['detail'].startswith('−y')
+           and rep['after']['overlap_pairs'] == 0,
+           f'ty={out[1]["translation"][1]:.3f} '
+           f'attach={rep["attach_moves"]}')
+
+    # ⑭ 贴附保持的减少旋转（2026-10-06 新语义）：3° 斜片距邻片 0.65mm（干净
+    #     贴附、严格档）→ 照旧进阶梯归位到 0° 且新位贴附（「更小角度同样贴附
+    #     才动、动则必贴」；旧 snug 一刀切冻结已废除 —— 5156 实勘误伤）
+    pieces = {'g01_30': _rect_piece('g01_30', 200, 150),
+              'g02_30': _rect_piece('g02_30', 200, 150, label='g02')}
+    placed = [_pl('g01_30', 0, 0, 0), _pl('g02_30', 3, 208.5, 0)]
+    out, rep = polish_layout(placed, pieces, 1000.0)
+    g1 = _world_polygon('g01_30', pieces, out[0]['rotation'],
+                        out[0]['translation'])
+    g2 = _world_polygon('g02_30', pieces, out[1]['rotation'],
+                        out[1]['translation'])
+    _check('贴附斜片归位且保贴附',
+           _rotation_dev(out[1]['rotation']) == 0.0
+           and rep['moves'][0]['kind'] == 'derotate'
+           and g1.intersection(g2).area == 0.0
+           and g1.distance(g2) <= 1e-3
+           and not any(r['kind'] == 'rotation' for r in rep['residual']),
+           f'rot={out[1]["rotation"]:.1f} '
+           f'moves={[m["kind"] for m in rep["moves"]]}')
+
+    # ⑮ 贴附·贴墙（2026-10-05）：孤立片重力压实滑到布头 x=0 与下门幅 y=0 墙
+    pieces = {'g01_30': _rect_piece('g01_30', 100, 160)}
+    placed = [_pl('g01_30', 0, 300, 400)]
+    out, rep = polish_layout(placed, pieces, 1000.0)
+    _check('贴附贴墙（布头+下门幅）',
+           out[0]['translation'][0] <= 1e-3
+           and out[0]['translation'][1] <= 1e-3
+           and rep['attach_moves'] == 2,
+           f'tr={out[0]["translation"]} attach={rep["attach_moves"]}')
     return ok
 
 
@@ -881,7 +1404,8 @@ def _demo(intermediate_path, n_pieces) -> bool:
     kinds = Counter(m['kind'] for m in rep['moves'])
     print(f'  [demo] moves={len(rep["moves"])}'
           f'（derotate={kinds.get("derotate", 0)} '
-          f'separate={kinds.get("separate", 0)}）'
+          f'separate={kinds.get("separate", 0)} '
+          f'attach={kinds.get("attach", 0)}）'
           f' residual={len(rep["residual"])} elapsed={rep["elapsed_sec"]}s')
     for m in rep['moves'][:6]:
         print(f'    - [{m["index"]}] {m["pid"]} {m["kind"]}: {m["detail"]}')
@@ -900,9 +1424,10 @@ def _demo(intermediate_path, n_pieces) -> bool:
 def main(argv=None) -> int:
     """冒烟入口：``python -m materialsorting.nesting_engine.polish``。
 
-    默认合成夹具自检（AC 十二项口径：斜片回正/重合分离/紧密 no-op/守卫×2/
+    默认合成夹具自检（AC 十五项口径：斜片回正/重合分离/紧密 no-op/守卫×2/
     多副本 index 寻址/排除集障碍/确定性双跑/compact 回收/compact 无空隙
-    逐元素相同/镜像斜片 derotate+透传/镜像片 no-op 原对象），全过打印
+    逐元素相同/镜像斜片 derotate+透传/镜像片 no-op 原对象/贴附 south 闭合
+    空白带/贴附斜片归位且保贴附/贴附贴墙），全过打印
     PASS、exit 0。
     ``--demo`` 追加真实母版几何演示（intermediate 前 N 片确定性带病布局 →
     polish 前后对比，形态对齐 prefix ``--pin-demo`` 先例；无 spyrrow 依赖）。

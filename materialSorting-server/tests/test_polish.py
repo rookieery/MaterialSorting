@@ -63,7 +63,11 @@ def _snapshot(placed):
 # ------------------------------------------------------------- AC#1 斜片回正
 
 def test_empty_field_tilted_piece_derotates():
-    """单片 rot=25 居空场 → 回正 ∈ {0,180}、dev=0、零重合、质心位移最小（=0）。"""
+    """单片 rot=25 居空场 → 回正 ∈ {0,180}、dev=0、零重合、质心位移最小（=0）。
+
+    贴附 pass（2026-10-05 默认启用）随后会把回正后的片聚拢到墙角 —— 质心/
+    单 move 断言锚定 derotate move 本身（moves[0]），attach move 只验 kind。
+    """
     pieces = {'g01_30': _piece('g01_30', 300, 100)}
     placed = [_pl('g01_30', 25, 500, 500)]
     snap = _snapshot(placed)
@@ -72,13 +76,13 @@ def test_empty_field_tilted_piece_derotates():
     assert _rotation_dev(out[0]['rotation']) == 0.0
     assert out[0]['rotation'] in (0.0, 180.0)
     assert rep['after']['overlap_pairs'] == 0
-    assert len(rep['moves']) == 1
     mv = rep['moves'][0]
     assert mv['kind'] == 'derotate' and mv['index'] == 0 and mv['pid'] == 'g01_30'
     assert mv['from']['rotation'] == 25.0 and mv['to']['rotation'] in (0.0, 180.0)
-    # 质心锚定：旋转前后世界质心不动（位移最小 = 0，空场无障碍）
+    assert all(m['kind'] == 'attach' for m in rep['moves'][1:])
+    # 质心锚定：derotate move 前后世界质心不动（位移最小 = 0，空场无障碍）
     g0 = _world('g01_30', pieces, placed[0]['rotation'], placed[0]['translation'])
-    g1 = _world('g01_30', pieces, out[0]['rotation'], out[0]['translation'])
+    g1 = _world('g01_30', pieces, mv['to']['rotation'], mv['to']['translation'])
     assert g0.centroid.distance(g1.centroid) < 1e-6
     # 诊断指标：斜片 1→0、Σ偏差 25→0
     assert rep['before']['rotated_pieces'] == 1
@@ -105,9 +109,11 @@ def test_separable_overlap_pair_cleared():
     assert rep['before']['overlap_pairs'] == 1
     assert rep['after']['overlap_pairs'] == 0
     assert rep['before']['max_penetration_mm'] == 5.0
-    assert [m['kind'] for m in rep['moves']] == ['separate']
+    # 分离 move 在前（moves[0]）；贴附 pass 随后把两片聚拢到布头（新默认）
+    assert rep['moves'][0]['kind'] == 'separate'
+    assert all(m['kind'] == 'attach' for m in rep['moves'][1:])
     assert rep['residual'] == []
-    # 最小分离：动片沿分离轴只移 ~5mm（bbox 全高量级 145/295mm 是非最小路径）
+    # 最小分离：分离 move 沿分离轴只移 ~5mm（bbox 全高量级 145/295mm 是非最小路径）
     mv = rep['moves'][0]
     dy = mv['to']['translation'][1] - mv['from']['translation'][1]
     dx = mv['to']['translation'][0] - mv['from']['translation'][0]
@@ -137,7 +143,11 @@ def test_tight_layout_noop_byte_identical():
 # --------------------------------------------------------- AC#4 守卫拒绝路径
 
 def test_guard_gate_rejected():
-    """唯一分离方向越门幅（+y 越顶、−y/−x 被邻片堵）→ move 被拒。"""
+    """唯一分离方向越门幅（+y 越顶、−y/−x 被邻片堵）→ 分离 move 被拒。
+
+    守卫意图 = U/L 重合对保持未分离且两者原地不动；其余未贴附片（B/W）被
+    贴附 pass 合法聚拢属 2026-10-05 起新默认行为，不与守卫冲突。
+    """
     pieces = {'g01_30': _piece('g01_30', 200, 120),      # U 顶部贴门幅
               'g02_30': _piece('g02_30', 200, 80, label='g02'),   # L 与 U 叠 5mm
               'g03_30': _piece('g03_30', 200, 175, label='g03'),  # B 堵 −y
@@ -146,42 +156,53 @@ def test_guard_gate_rejected():
               _pl('g03_30', 0, 650, 700), _pl('g04_30', 0, 0, 800)]
     out, rep = polish_layout(placed, pieces, 1000.0)
 
-    assert out is placed
-    assert rep['moves'] == []
+    assert out[0]['translation'] == placed[0]['translation']
+    assert out[1]['translation'] == placed[1]['translation']
+    assert all(m['kind'] == 'attach' for m in rep['moves'])
+    assert all(m['index'] in (2, 3) for m in rep['moves'])
     assert rep['before']['overlap_pairs'] == 1
     assert [r for r in rep['residual'] if r['kind'] == 'overlap']
 
 
 def test_guard_envelope_growth_rejected():
-    """唯一空位在 +x 尾部外：rot0 bbox 更宽的斜片任何候选位都增包络 → 被拒。"""
+    """包络守卫在新搜索下的行为演进（2026-10-06）：旧「唯一空位在 +x 尾部外」
+    场景被四向滑贴解锁 —— 斜片 −x 滑贴 114mm 贴 g02 东缘归位 0°、包络反而
+    收缩（741.5→700）。守卫仍逐 move 生效（本例所有 move 包络不增；越门幅
+    拒绝路径由 ④ 独立覆盖）。"""
     pieces = {'g01_30': _piece('g01_30', 400, 40),
               'g02_30': _piece('g02_30', 300, 600, label='g02')}
     placed = [_pl('g02_30', 0, 0, 200), _pl('g01_30', 25, 379, 200)]
     out, rep = polish_layout(placed, pieces, 1000.0)
 
-    assert out is placed
-    assert rep['moves'] == []
-    rot_res = [r for r in rep['residual'] if r['kind'] == 'rotation']
-    assert len(rot_res) == 1 and rot_res[0]['index'] == 1
-    assert rot_res[0]['dev_deg'] == 25.0
+    assert rep['after']['width_mm'] <= rep['before']['width_mm'] + 0.5
+    assert rep['after']['overlap_pairs'] == 0
+    g1 = _world('g01_30', pieces, out[1]['rotation'], out[1]['translation'])
+    g2 = _world('g02_30', pieces, out[0]['rotation'], out[0]['translation'])
+    assert g1.intersection(g2).area == 0.0
+    assert g1.distance(g2) <= 1e-3          # 归位后贴附（贴附不降级）
+    # 斜片已归位（四向滑贴解锁了旧 bbox 对齐够不到的位）
+    mv = [m for m in rep['moves'] if m['kind'] == 'derotate']
+    assert mv and mv[0]['index'] == 1
+    assert _rotation_dev(out[1]['rotation']) == 0.0
 
 
 # ------------------------------------------------------- AC#5 多副本 index 寻址
 
 def test_multicopy_index_addressing():
-    """同 pid 3 副本仅第 2 条需微调 → 其余两条逐字段不变（按 index 寻址）。"""
+    """同 pid 3 副本仅第 2 条斜置 → derotate 按 index 寻址；贴附 pass 随后
+    聚拢未贴附副本（新默认），第 1 条贴布头副本恒不动。"""
     pieces = {'g01_30': _piece('g01_30', 300, 100)}
     placed = [_pl('g01_30', 0, 0, 0), _pl('g01_30', 25, 600, 600),
               _pl('g01_30', 0, 1200, 0)]
     out, rep = polish_layout(placed, pieces, 2000.0)
 
-    assert len(rep['moves']) == 1 and rep['moves'][0]['index'] == 1
+    assert rep['moves'][0]['kind'] == 'derotate'
+    assert rep['moves'][0]['index'] == 1
     assert rep['moves'][0]['from']['rotation'] == 25.0
     assert out[0]['id'] == out[1]['id'] == out[2]['id'] == 'g01_30'
     assert (out[0]['rotation'], out[0]['translation']) == \
         (placed[0]['rotation'], placed[0]['translation'])
-    assert (out[2]['rotation'], out[2]['translation']) == \
-        (placed[2]['rotation'], placed[2]['translation'])
+    assert all(m['index'] != 0 for m in rep['moves'])
     assert _rotation_dev(out[1]['rotation']) == 0.0
     # pid 多重集守恒（守卫④：绝不 pid 去重）
     assert Counter(p['id'] for p in out) == {'g01_30': 3}
@@ -243,12 +264,14 @@ def test_determinism_double_run():
 # ----------------------------------------------------------- 结构与边界
 
 def test_report_shape():
-    """report 结构：before/after 七指标 + moves/residual/excluded/elapsed_sec。"""
+    """report 结构：before/after 七指标 + moves/residual/excluded/attach_moves/
+    elapsed_sec（attach_moves 2026-10-05 additive）。"""
     pieces = {'g01_30': _piece('g01_30', 200, 150)}
     placed = [_pl('g01_30', 0, 0, 0)]
     out, rep = polish_layout(placed, pieces, 1000.0)
     assert set(rep) == {'before', 'after', 'moves', 'residual', 'excluded',
-                        'elapsed_sec'}
+                        'attach_moves', 'elapsed_sec'}
+    assert rep['attach_moves'] == 0 and isinstance(rep['attach_moves'], int)
     fields = {'overlap_pairs', 'max_penetration_mm', 'total_overlap_area_mm2',
               'rotated_pieces', 'rotation_dev_sum_deg', 'width_mm', 'density'}
     assert set(rep['before']) == fields and set(rep['after']) == fields
@@ -313,10 +336,11 @@ def test_compact_kwarg_accepted_additive():
 # --------------------------------------------------- US-005 压缩回收档
 
 def test_compact_reclaims_gap_envelope_shrinks():
-    """AC#1：横排留 ≥30mm 空隙 → compact 包络减少 ≥29mm、零新重合（几何级）。
+    """AC#1：横排留 ≥30mm 空隙 → 包络减少 ≥29mm、零新重合（几何级）。
 
     三片横排各留 30mm 空隙：g01 已贴布头不动；g02 滑 30mm 贴 g01；g03 级联
-    滑 60mm 贴 g02 新位 → 包络 360→300（−60 ≥ 29）。
+    滑 60mm 贴 g02 新位 → 包络 360→300（−60 ≥ 29）。贴附 pass（2026-10-05
+    默认先行）收空隙，compact 档无剩可收（同结果零回滚留痕）。
     """
     pieces = {'g01_30': _piece('g01_30', 100, 160),
               'g02_30': _piece('g02_30', 100, 160, label='g02'),
@@ -328,7 +352,8 @@ def test_compact_reclaims_gap_envelope_shrinks():
     assert rep['after']['overlap_pairs'] == 0
     assert rep['after']['density'] >= rep['before']['density'] - 1e-6
     assert [m['index'] for m in rep['moves']] == [1, 2]
-    assert all(m['kind'] == 'compact' for m in rep['moves'])
+    assert all(m['kind'] == 'attach' for m in rep['moves'])
+    assert rep['attach_moves'] == 2
     # 落位精确：g02 贴 g01 右缘（x=100）、g03 级联贴 g02 新右缘（x=200）
     assert out[1]['translation'][0] == pytest.approx(100.0, abs=1e-3)
     assert out[2]['translation'][0] == pytest.approx(200.0, abs=1e-3)
@@ -346,7 +371,7 @@ def test_compact_reclaims_gap_envelope_shrinks():
 
 
 def test_compact_excluded_immovable_but_obstacle():
-    """exclude 命中片零压缩移动，但仍作障碍：右侧片 −x 滑贴它停下（不撞布头墙）。"""
+    """exclude 命中片零贴附移动，但仍作障碍：右侧片 −x 滑贴它停下（不撞布头墙）。"""
     pieces = {'g01_30': _piece('g01_30', 100, 160),
               'g02_30': _piece('g02_30', 100, 160, label='g02')}
     placed = [_pl('g01_30', 0, 50, 0), _pl('g02_30', 0, 200, 0)]
@@ -358,12 +383,12 @@ def test_compact_excluded_immovable_but_obstacle():
     # g02 滑贴 g01 右缘 x=150（障碍语义：无它本应滑到布头 x=0）
     assert out[1]['translation'][0] == pytest.approx(150.0, abs=1e-3)
     assert rep['after']['width_mm'] == pytest.approx(250.0, abs=1e-3)
-    assert any(m['kind'] == 'compact' for m in rep['moves'])
+    assert any(m['kind'] == 'attach' for m in rep['moves'])
 
 
 def test_compact_rollback_when_no_envelope_gain():
-    """中段片可滑但 maxX 不减（右缘片 excluded 不可动）→ 整段回滚：
-    输出与 moves与非 compact 档逐元素相同（无改进逐字节不变）。"""
+    """compact=true ≡ false 逐元素相同（贴附 pass 先行收空隙后 compact 档零
+    move 回滚不留痕）；g02 的滑贴以 attach move 出现在两档（落位一致）。"""
     pieces = {'g01_30': _piece('g01_30', 100, 160),
               'g02_30': _piece('g02_30', 100, 160, label='g02'),
               'g03_30': _piece('g03_30', 100, 160, label='g03')}
@@ -374,8 +399,9 @@ def test_compact_rollback_when_no_envelope_gain():
     o1, r1 = polish_layout(placed, pieces, 160.0, compact=True, **kw)
     r0.pop('elapsed_sec')
     r1.pop('elapsed_sec')
-    assert o0 == o1 and r0 == r1
-    assert o1[1]['translation'] == placed[1]['translation']   # g02 滑移被回滚
+    assert o0 == o1 and r0 == r1                 # 两档逐元素相同（回滚无留痕）
+    assert all(m['kind'] == 'attach' for m in r1['moves'])   # compact 零 move
+    assert o1[1]['translation'][0] == pytest.approx(100.0, abs=1e-3)  # 贴 g01 右缘
 
 
 def test_compact_entangled_piece_skipped():
@@ -388,6 +414,136 @@ def test_compact_entangled_piece_skipped():
     out, rep = polish_layout(placed, pieces, 160.0, compact=True)
     assert out is placed and rep['moves'] == []
     assert len(rep['residual']) == 1
+
+
+# ------------------------------------------- 贴附 pass（attach，2026-10-05）
+
+def test_attach_south_closes_vertical_gap():
+    """竖向留 140mm 空隙 → south 趟滑贴到下方片顶边 +1nm、零重合、料长不变
+    （编辑画布大空白带场景的合成最小复现）。"""
+    pieces = {'g01_30': _piece('g01_30', 100, 160),
+              'g02_30': _piece('g02_30', 100, 160, label='g02')}
+    placed = [_pl('g01_30', 0, 0, 0), _pl('g02_30', 0, 0, 300)]
+    out, rep = polish_layout(placed, pieces, 1000.0)
+
+    assert rep['attach_moves'] == 1
+    mv = rep['moves'][0]
+    assert mv['kind'] == 'attach' and mv['index'] == 1
+    assert mv['detail'].startswith('−y')
+    assert out[1]['translation'][1] == pytest.approx(160.0, abs=1e-2)
+    g1 = _world('g01_30', pieces, out[0]['rotation'], out[0]['translation'])
+    g2 = _world('g02_30', pieces, out[1]['rotation'], out[1]['translation'])
+    assert g1.intersection(g2).area == 0.0
+    assert g1.distance(g2) <= 1e-3                 # 贴附到位（触距 ~1nm）
+    assert rep['after']['overlap_pairs'] == 0
+    assert rep['after']['width_mm'] == rep['before']['width_mm']  # south 不动料长
+
+
+def test_attach_snug_skip_keeps_snug_angle():
+    """贴附保持的减少旋转（2026-10-06 新语义，取代 2026-10-05 snug 一刀切
+    冻结 + 方案 A）：3° 斜片距邻片 0.65mm（干净贴附、严格档）→ **照旧进阶梯**，
+    归位到更小角度且新位贴附（「更小角度同样贴附才动、动则必贴」）；同款
+    斜片在空场（宽松档）也归位。旧断言「保角 + residual」是冻结时代行为，
+    5156 实勘证其误伤（手眼可行位引擎视而不见）后废除。"""
+    pieces = {'g01_30': _piece('g01_30', 200, 150),
+              'g02_30': _piece('g02_30', 200, 150, label='g02')}
+    placed = [_pl('g01_30', 0, 0, 0), _pl('g02_30', 3, 208.5, 0)]
+    out, rep = polish_layout(placed, pieces, 1000.0)
+
+    # 严格档：归位（0° 首选）+ 新位贴附 + 无重合
+    mv = rep['moves'][0]
+    assert mv['kind'] == 'derotate' and mv['index'] == 1
+    assert mv['from']['rotation'] == pytest.approx(3.0)
+    assert _rotation_dev(out[1]['rotation']) == 0.0
+    assert not any(r['kind'] == 'rotation' and r['index'] == 1
+                   for r in rep['residual'])
+    g1 = _world('g01_30', pieces, out[0]['rotation'], out[0]['translation'])
+    g2 = _world('g02_30', pieces, out[1]['rotation'], out[1]['translation'])
+    assert g1.intersection(g2).area == 0.0
+    assert g1.distance(g2) <= 1e-3          # 动则必贴
+    # 对照：未贴附斜片（宽松档）同样归位
+    placed2 = [_pl('g01_30', 0, 0, 0), _pl('g02_30', 3, 600, 600)]
+    out2, rep2 = polish_layout(placed2, pieces, 1000.0)
+    assert _rotation_dev(out2[1]['rotation']) == 0.0
+    assert rep2['moves'][0]['kind'] == 'derotate'
+
+
+def test_attach_press_overlap_not_snug_derotates():
+    """方案 A（2026-10-05 同日收紧）：压线相交（交面积 >0.1mm²）不算已贴附
+    —— 3° 斜片角部咬进邻片（5156 race 腰头成带实勘复现）→ 进归位阶梯
+    转平（0° 首选位即合法、压线随之消失），贴附 pass 随后吸贴。"""
+    pieces = {'g01_30': _piece('g01_30', 200, 150),
+              'g02_30': _piece('g02_30', 200, 150, label='g02')}
+    placed = [_pl('g01_30', 0, 0, 0), _pl('g02_30', 3, 207.0, 0)]
+    out, rep = polish_layout(placed, pieces, 1000.0)
+
+    # 入态确有压线重合（角部咬入 ~7.7mm²）
+    assert rep['before']['overlap_pairs'] == 1
+    # 归位先行：斜片转平（不再被「相交=已贴附」误判 snug 冻结）
+    mv = rep['moves'][0]
+    assert mv['kind'] == 'derotate' and mv['index'] == 1
+    assert mv['from']['rotation'] == 3.0 and mv['to']['rotation'] == 0.0
+    assert _rotation_dev(out[1]['rotation']) == 0.0
+    assert all(m['kind'] in ('attach',) for m in rep['moves'][1:])
+    assert not any(r['kind'] == 'rotation' and r['index'] == 1
+                   for r in rep['residual'])
+    # 终态：压线消失 + 与邻片贴附（贴触零重合）
+    g1 = _world('g01_30', pieces, out[0]['rotation'], out[0]['translation'])
+    g2 = _world('g02_30', pieces, out[1]['rotation'], out[1]['translation'])
+    assert g1.intersection(g2).area == 0.0
+    assert g1.distance(g2) <= 1e-3
+
+
+def test_attach_slides_to_walls():
+    """孤立片重力压实 → 滑到布头 x=0 与下门幅 y=0 墙（两 move、钳制在界内）。"""
+    pieces = {'g01_30': _piece('g01_30', 100, 160)}
+    placed = [_pl('g01_30', 0, 300, 400)]
+    out, rep = polish_layout(placed, pieces, 1000.0)
+
+    assert rep['attach_moves'] == 2
+    assert [m['detail'][:2] for m in rep['moves']] == ['−x', '−y']
+    assert out[0]['translation'] == pytest.approx([0.0, 0.0], abs=1e-3)
+    g = _world('g01_30', pieces, out[0]['rotation'], out[0]['translation'])
+    assert g.bounds[0] >= -1e-6 and g.bounds[1] >= -1e-6   # 钳制在 [0,gate] 内
+
+
+def test_attach_cascade_west_then_south():
+    """错位空隙级联：片先 west 贴墙、再 south 贴到下方片顶 —— 两趟交替一轮
+    收敛到 (0,160)。"""
+    pieces = {'g01_30': _piece('g01_30', 100, 160),
+              'g02_30': _piece('g02_30', 100, 160, label='g02')}
+    placed = [_pl('g01_30', 0, 0, 0), _pl('g02_30', 0, 150, 300)]
+    out, rep = polish_layout(placed, pieces, 1000.0)
+
+    assert out[1]['translation'] == pytest.approx([0.0, 160.0], abs=1e-2)
+    assert rep['attach_moves'] == 2
+    g1 = _world('g01_30', pieces, out[0]['rotation'], out[0]['translation'])
+    g2 = _world('g02_30', pieces, out[1]['rotation'], out[1]['translation'])
+    assert g1.intersection(g2).area == 0.0
+    assert g1.distance(g2) <= 1e-3
+
+
+def test_attach_invariants_on_loose_layout():
+    """不变量总检：松散多片布局（含斜片/多副本）贴附后 —— 全图两两交集面积
+    精确 0、y∈[0,gate]、包络不增、pid 多重集守恒、确定性双跑全等。"""
+    pieces = {'g01_30': _piece('g01_30', 300, 100),
+              'g02_30': _piece('g02_30', 200, 150, label='g02')}
+    placed = [_pl('g01_30', 25, 100, 100), _pl('g02_30', 15, 480, 180),
+              _pl('g01_30', 155, 900, 900)]
+    out, rep = polish_layout(placed, pieces, 1500.0)
+
+    assert rep['attach_moves'] >= 1
+    geoms = [_world(p['id'], pieces, p['rotation'], p['translation']) for p in out]
+    for i in range(3):
+        for j in range(i + 1, 3):
+            assert geoms[i].intersection(geoms[j]).area == 0.0
+        assert geoms[i].bounds[1] >= -1e-6 and geoms[i].bounds[3] <= 1500.0 + 1e-6
+    assert rep['after']['width_mm'] <= rep['before']['width_mm'] + 0.5
+    assert Counter(p['id'] for p in out) == {'g01_30': 2, 'g02_30': 1}
+    o2, r2 = polish_layout(placed, pieces, 1500.0)
+    r2.pop('elapsed_sec')
+    rep_d = {k: v for k, v in rep.items() if k != 'elapsed_sec'}
+    assert out == o2 and rep_d == r2
 
 
 # --------------------------------------------------- US-004 镜像片（edit-keyboard）
@@ -421,11 +577,13 @@ def test_mirror_tilted_derotate_passthrough_centroid_anchored():
     assert _rotation_dev(out[0]['rotation']) == 0.0
     assert out[0]['rotation'] in (0.0, 180.0)
     assert out[0].get('mirror') is True                 # omit-when-false 透传
-    assert len(rep['moves']) == 1 and rep['moves'][0]['kind'] == 'derotate'
+    mv = rep['moves'][0]
+    assert mv['kind'] == 'derotate'
+    assert all(m['kind'] == 'attach' for m in rep['moves'][1:])  # 贴附聚拢随后
     g0 = _world('gL_30', pieces, placed[0]['rotation'],
                 placed[0]['translation'], mirror=True)
-    g1 = _world('gL_30', pieces, out[0]['rotation'],
-                out[0]['translation'], mirror=True)
+    g1 = _world('gL_30', pieces, mv['to']['rotation'],
+                mv['to']['translation'], mirror=True)
     assert g0.centroid.distance(g1.centroid) < 1e-6     # 质心锚定不漂移
     assert rep['after']['overlap_pairs'] == 0
     assert _snapshot(placed) == snap                    # 纯函数不改入参
@@ -445,7 +603,8 @@ def test_mirror_diagnosis_and_separation_on_mirrored_geometry():
     assert rep['before']['overlap_pairs'] == 1
     assert rep['before']['total_overlap_area_mm2'] == pytest.approx(1600.0)
     assert rep['after']['overlap_pairs'] == 0
-    assert [m['kind'] for m in rep['moves']] == ['separate']
+    assert rep['moves'][0]['kind'] == 'separate'
+    assert all(m['kind'] == 'attach' for m in rep['moves'][1:])
     # 镜像片被动分离后 mirror 仍在、未镜像片无键（omit-when-false 双向）
     assert out[0].get('mirror') is True
     assert 'mirror' not in out[1]
@@ -470,15 +629,15 @@ def test_mirror_noop_returns_input_object():
 
 
 def test_mirror_compact_preserves_mirror():
-    """US-004：compact −x 滑贴按镜像世界几何（镜像片贴真实右缘）+ 落位手算，
-    move 后 mirror 透传。"""
+    """US-004：−x 滑贴按镜像世界几何（镜像片贴真实右缘）+ 落位手算，move 后
+    mirror 透传（贴附 pass 先行，compact 档同结果零回滚留痕）。"""
     pieces = {'g01_30': _piece('g01_30', 100, 160),
               'g02_30': _piece('g02_30', 100, 160, label='g02')}
     # 镜像 g02 @ tx=230 → x∈[130,230]，与 g01 右缘 x=100 留 30mm 空隙
     placed = [_pl('g01_30', 0, 0, 0), _pl('g02_30', 0, 230, 0, mirror=True)]
     out, rep = polish_layout(placed, pieces, 160.0, compact=True)
 
-    assert [m['kind'] for m in rep['moves']] == ['compact']
+    assert [m['kind'] for m in rep['moves']] == ['attach']
     assert rep['moves'][0]['index'] == 1
     assert out[1].get('mirror') is True
     assert out[1]['translation'][0] == pytest.approx(200.0, abs=1e-3)
@@ -490,7 +649,8 @@ def test_mirror_compact_preserves_mirror():
 
 def test_mirror_compact_rollback_preserves_mirror():
     """US-004：compact 回滚路径（maxX 不减）经 items 快照重建 —— mirror 若不在
-    快照里会被静默蒸发；锁「回滚后 mirror 仍在 + 与非 compact 档逐元素相同」。"""
+    快照里会被静默蒸发；锁「回滚后 mirror 仍在 + 与非 compact 档逐元素相同」
+    （贴附 pass 先行滑贴，compact 档零 move 回滚，两档仍逐元素相同）。"""
     pieces = {'g01_30': _piece('g01_30', 100, 160),
               'g02_30': _piece('g02_30', 100, 160, label='g02'),
               'g03_30': _piece('g03_30', 100, 160, label='g03')}
@@ -502,8 +662,9 @@ def test_mirror_compact_rollback_preserves_mirror():
     r0.pop('elapsed_sec')
     r1.pop('elapsed_sec')
     assert o0 == o1 and r0 == r1                 # 回滚 = 非 compact 档逐元素相同
+    assert all(m['kind'] == 'attach' for m in r1['moves'])   # compact 零 move
     assert o1[1].get('mirror') is True           # 回滚不蒸发镜像标志
-    assert o1[1]['translation'] == placed[1]['translation']   # 滑移被回滚
+    assert o1[1]['translation'][0] == pytest.approx(200.0, abs=1e-3)  # 贴附落位
 
 
 # --------------------------------------------------------------- 单元算子

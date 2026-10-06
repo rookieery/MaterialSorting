@@ -441,7 +441,7 @@ WS 侧同语义走 **error 帧**：`{"type":"error","code":"session_expired","me
 > （相邻片 d_i+d_j）= 琥珀（设计允许的压线重合）、超出才红；erode 轮廓降级为画布灰虚线
 > 参考线。sparrow 求解照旧吃 erode 轮廓，压线排料行为零改动。
 
-编辑弹窗「智能微调」按钮的数据源：前端把**当前编辑 placements 随 body 带上**（后端不存布局态，唯一存储在前端 runRegistry —— `/export` routes_views.py 同模式），后端跑引擎层确定性后处理 `nesting_engine/polish_layout`（US-001）返回微调后 placements + 前后对比报告。几何真相源留在 Python：**物理毛版轮廓口径**（会话 `pieces_by_id` 原始 polygon，与 `/export placed_to_world` 同源、非 eroded —— 2026-09-06 起画布红字同口径，两套数值分裂已消除）。端到端回归冒烟 `materialSorting-web/scripts/smoke_edit_polish.mjs`（US-004 24 检查 + US-005 S7 compact 档 5 检查 + edit-keyboard US-007 S8 键盘/镜像段 17 检查 = 46：微调四守恒/撤销/确定性双跑/PLT+DXF 导出 placed 守恒/band exclude 抽验/compact:true 载荷+width ≤ 非 compact 档+守恒不等式/O 镜像→导出 placed mirror:true + 正文几何镜像坐标对拍/mirror 逐位透传/R 键重置回基线）。
+编辑弹窗「智能微调」按钮的数据源：前端把**当前编辑 placements 随 body 带上**（后端不存布局态，唯一存储在前端 runRegistry —— `/export` routes_views.py 同模式），后端跑引擎层确定性后处理 `nesting_engine/polish_layout`（US-001）返回微调后 placements + 前后对比报告。几何真相源留在 Python：**物理毛版轮廓口径**（会话 `pieces_by_id` 原始 polygon，与 `/export placed_to_world` 同源、非 eroded —— 2026-09-06 起画布红字同口径，两套数值分裂已消除）。端到端回归冒烟 `materialSorting-web/scripts/smoke_edit_polish.mjs`（US-004 24 检查 + US-005 S7 compact 档 5 检查 + edit-keyboard US-007 S8 键盘/镜像段 17 检查 + 2026-10-05 贴附 S2h 1 检查 = 47：微调四守恒/撤销/确定性双跑/PLT+DXF 导出 placed 守恒/band exclude 抽验/compact:true 载荷+width ≤ 非 compact 档+守恒不等式/O 镜像→导出 placed mirror:true + 正文几何镜像坐标对拍/mirror 逐位透传/R 键重置回基线/attach_moves 键自洽）。
 
 ### 请求（`application/json`）
 
@@ -460,6 +460,8 @@ WS 侧同语义走 **error 帧**：`{"type":"error","code":"session_expired","me
 - `exclude`（可选，缺省 None 透传引擎）：`{labels?: [g码], pids?: [pid]}` 双键 —— 命中实例永不被移动仍作障碍（v1 over-conservative 同 pid 全副本，FR-8；band 成员 g 码 / prefix 成员 pid 由前端 best-effort 组装）。非 dict → 400。
 - `compact`（可选，缺省 false）：US-005 压缩回收档（2026-09-05 落地）—— true 时引擎追加 pass ④：自布头方向逐片 −x 滑贴收空隙进料长（20mm 粗扫+二分贴触、级联左片先贴），每 move 走同款五道守卫（kind=compact）+ pass 级「全图 maxX 严格变小否则整体回滚」；无空隙可收时输出与 compact=false 逐元素相同（additive）。前端入口 = 对比卡内「回收空隙缩短料长」checkbox（默认不勾，随下次微调请求发出）。
 
+**贴附 pass（attach，2026-10-05 默认启用，无请求键）+ 贴附保持的减少旋转（2026-10-06 重写去旋转）**：裁床裁板需求 —— 裁片片片贴合方便走刀。pass ③ 去重叠之后默认追加**重力压实**：west 趟（minX 升序级联 −x 滑贴，compact 同骨架）+ south 趟（minY 升序镜像 −y 滑贴）交替逐片滑到与障碍或墙（布头 x=0 / 下门幅 y=0）首次贴触 +1nm 回退，至多 3 轮、整轮零 move 早退。纯平移（永不增大旋转）、首触即停（永不新重合）、south 不动 x（包络守卫天然过）；exclude 片恒作障碍（band/prefix 刚性组不破）。**去旋转 = 贴附保持的减少旋转**（2026-10-06；前史 2026-10-05「已贴附片跳过归位」→同日方案 A「压线不算贴附」→ 两版一刀切冻结均在 5156 race 腰头成带实勘暴露误伤后废除）：所有带角片一律进阶梯（**干净贴附不再冻结** —— 更小角度同样贴附时必须动，版师手眼可行、引擎不能视而不见）；阶梯 dev≤10° 用 **1° 步进**（阈值带容差防浮点噪声）；候选位 = 四向滑贴首触（Alt+左键 attract 语义四向版；锚点 = 质心 + 碰撞邻居最小分离 + ±5 小步进；滑移 ≤100mm 防跨唛架远跳）与邻域棱对齐；**严格档**（干净贴附片）候选位必须自身也贴附（距邻片/墙 ≤0.05mm ——「更小角度同样贴附才动、动则必贴」，贴附不降级）、宽松档（压线/悬浮）合法位即受（贴附 pass 随后收拢）；找不到合格位保持原角、偏差留 residual 如实上报；ladder 只减不增，永不增大旋转。**②′ 二巡**：分离+贴附重排口袋后再扫一轮（脏区门控：只重试自身或邻域被动过的片）—— 一巡时几何上无解的片，贴附后可行位才出现。紧凑布局零 move 时仍返回输入 list 原对象（逐字节不变量不变）。
+
 ### 响应（200）
 
 ```json
@@ -467,7 +469,7 @@ WS 侧同语义走 **error 帧**：`{"type":"error","code":"session_expired","me
 ```
 
 - `placed`：条数与 pid 多重集与输入相等（引擎出口 Counter 终检 + 路由入口 pid 全匹配双保险）；无任何 move 时引擎返回输入 list 原对象（逐字节不变量）。
-- `report`：`{before, after, moves, residual, excluded, elapsed_sec}` —— before/after 各七指标（`overlap_pairs` / `max_penetration_mm` / `total_overlap_area_mm2` / `rotated_pieces` / `rotation_dev_sum_deg` / `width_mm` / `density`，density = real 口径 `Σ(原面积×副本数)/(width×gate)` 百分数）+ `moves` 逐条明细（index/pid/kind `derotate|separate|compact`/from/to/detail）+ `residual`（终态重合对 + 旋转残留如实上报，不硬凑零）。
+- `report`：`{before, after, moves, residual, excluded, attach_moves, elapsed_sec}`（`attach_moves` = 贴附 move 计数，2026-10-05 additive）—— before/after 各七指标（`overlap_pairs` / `max_penetration_mm` / `total_overlap_area_mm2` / `rotated_pieces` / `rotation_dev_sum_deg` / `width_mm` / `density`，density = real 口径 `Σ(原面积×副本数)/(width×gate)` 百分数）+ `moves` 逐条明细（index/pid/kind `derotate|separate|attach|compact`/from/to/detail）+ `residual`（终态重合对 + 旋转残留如实上报，不硬凑零）。前端对比卡增「贴附移动 N 片次」行（`edit-polish-attach`）。
 
 ### 错误响应（结构化 JSON）
 

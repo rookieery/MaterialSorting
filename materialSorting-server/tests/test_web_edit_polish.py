@@ -136,15 +136,17 @@ def test_edit_polish_200_full_chain(polish_client):
     assert rep['before']['overlap_pairs'] == 1
     assert rep['after']['overlap_pairs'] == 0
     assert rep['before']['max_penetration_mm'] == 5.0
-    assert [m['kind'] for m in rep['moves']] == ['separate']
+    # 分离 move 在前（moves[0]）；贴附 pass（2026-10-05 默认启用）随后聚拢
+    assert rep['moves'][0]['kind'] == 'separate'
+    assert all(m['kind'] == 'attach' for m in rep['moves'][1:])
     assert rep['residual'] == []
 
-    # 位移语义：恰一片被最小分离（沿 y ~5mm；mover 先试 (i,j) 下标序 → g01 −y），
-    # 另一片原位逐字段不变
-    dy0 = out[0]['translation'][1] - placed_in[0]['translation'][1]
-    dy1 = out[1]['translation'][1] - placed_in[1]['translation'][1]
-    moved = [d for d in (dy0, dy1) if abs(d) > 1e-6]
-    assert len(moved) == 1 and abs(abs(moved[0]) - 5.0) < 0.01
+    # 分离 move 语义：恰一片被最小分离（沿 y ~5mm；mover 先试 (i,j) 下标序
+    # → g01 −y）；两片随后被贴附 pass 合法聚拢（不再断言另一片原位）
+    mv = rep['moves'][0]
+    assert mv['kind'] == 'separate' and mv['index'] == 0
+    dy = mv['to']['translation'][1] - mv['from']['translation'][1]
+    assert abs(abs(dy) - 5.0) < 0.01
     assert out[0]['rotation'] == 0.0 and out[1]['rotation'] == 0.0
 
 
@@ -175,7 +177,8 @@ def test_edit_polish_compact_true_reclaims_gap(polish_client):
         rep = body['report']
         assert rep['after']['width_mm'] <= rep['before']['width_mm'] - 29.0
         assert rep['after']['overlap_pairs'] == 0
-        assert rep['moves'] and all(m['kind'] == 'compact' for m in rep['moves'])
+        # 贴附 pass（2026-10-05 默认先行）收空隙；compact 档无剩可收零留痕
+        assert rep['moves'] and all(m['kind'] == 'attach' for m in rep['moves'])
         assert [p['id'] for p in body['placed']] == [p['id'] for p in placed_in]
     finally:
         state.clear()
@@ -396,13 +399,15 @@ def test_edit_polish_runs_in_threadpool(polish_client, monkeypatch):
 # ------------------------------------------- US-004 镜像片（edit-keyboard）
 
 def test_edit_polish_mirror_noop_passthrough_bit_for_bit(polish_client):
-    """US-004：mirror 载荷无改进路径（无重合无偏差 → 引擎返回输入 list 原对象）
-    → 响应 placed 逐位透传：镜像片 mirror:true 原样回显、未镜像片无键
-    （omit-when-false —— 恒发 mirror:false 会红掉前端精确锁键集用例）。"""
+    """US-004：mirror 载荷无改进路径（无重合无偏差、贴布头贴下门幅已贴附 →
+    引擎返回输入 list 原对象）→ 响应 placed 逐位透传：镜像片 mirror:true 原样
+    回显、未镜像片无键（omit-when-false —— 恒发 mirror:false 会红掉前端精确
+    键集用例）。g02 贴镜像 g01 右缘（x=0）放置 —— 贴附 pass 对已贴附片零
+    move（2026-10-05 口径）。"""
     placed_in = [
         {'id': 'g01_30', 'rotation': 0.0, 'translation': [0.0, 0.0],
          'mirror': True},
-        {'id': 'g02_30', 'rotation': 0.0, 'translation': [500.0, 0.0]},
+        {'id': 'g02_30', 'rotation': 0.0, 'translation': [0.0, 0.0]},
     ]
     r = polish_client.post('/api/edit-polish', json={'placed': placed_in})
     assert r.status_code == 200
@@ -411,7 +416,7 @@ def test_edit_polish_mirror_noop_passthrough_bit_for_bit(polish_client):
     assert out[0] == {'id': 'g01_30', 'rotation': 0.0,
                       'translation': [0.0, 0.0], 'mirror': True}
     assert out[1] == {'id': 'g02_30', 'rotation': 0.0,
-                      'translation': [500.0, 0.0]}
+                      'translation': [0.0, 0.0]}
     assert r.json()['report']['moves'] == []
 
 
@@ -440,12 +445,13 @@ def test_edit_polish_mirror_moves_on_mirrored_geometry(polish_client):
         assert rep['before']['overlap_pairs'] == 1       # 镜像几何参与诊断
         assert rep['before']['total_overlap_area_mm2'] == pytest.approx(1600.0)
         assert rep['after']['overlap_pairs'] == 0
-        assert [m['kind'] for m in rep['moves']] == ['separate']
+        # 分离 move 在前；贴附 pass（2026-10-05）随后聚拢（两片均可再动）
+        assert rep['moves'][0]['kind'] == 'separate'
+        assert all(m['kind'] == 'attach' for m in rep['moves'][1:])
         out = body['placed']
         assert out[0]['id'] == 'gL_30' and out[0].get('mirror') is True
         assert out[0]['translation'] != placed_in[0]['translation']  # 镜像片被动分离
         assert 'mirror' not in out[1]
-        assert out[1]['translation'] == placed_in[1]['translation']
     finally:
         state.clear()
         state.update(saved)

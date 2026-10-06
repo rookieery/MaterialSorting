@@ -118,6 +118,7 @@ function polishResponse(bx: number): Response {
       moves: [{ index: 1, pid: 'b_30', kind: 'separate', from: [600, 0], to: [bx, 0] }],
       residual: [],
       excluded: [],
+      attach_moves: 0,
       elapsed_sec: 0.01,
     },
   };
