@@ -57,13 +57,10 @@ d 腐蚀位图放行的工艺余量）与旋转（离散角度集 ±45°）只�
   escape_moves（逃逸 move 计数，2026-10-06）+ elapsed_sec；
   density = real 口径 ``Σ(area×multiplicity)/(width×gate)``（原面积，非 erode）。
 
-**逐 move 五道守卫**（任一不过弃该 move，最坏全 no-op）：y∈[0,gate]（2026-10-06
-B1：d>0 贴边片毛版出界量按初始位冻结豁免 —— 候选不劣于现状即过，门内片零变化）/
-全图物理包络不增（width ≤ width_before + 0.5mm 容差，minX<0 布头外凸同计 —— 包络
-是双向的）/ 位移片 vs 全图轮廓零正面积重合（2026-10-06 B2：``collide_polygons``
-在场按**碰撞轮廓**（= manifest erode polygon = 前端判红同源）裁决 —— d 预算内
-保留压线不误杀；缺省按毛版绝对零重合 = 旧行为；对 d=0 片两口径同严）/
-pid 多重集守恒（demand>1 同 pid N 条按**数组下标**逐实例寻址，
+**逐 move 五道守卫**（任一不过弃该 move，最坏全 no-op）：y∈[0,gate] / 全图
+物理包络不增（width ≤ width_before + 0.5mm 容差，minX<0 布头外凸同计 —— 包络
+是双向的）/ 位移片 vs 全图物理轮廓零新重合（shapely 精确复核，交集面积
+≤ 0.1mm²）/ pid 多重集守恒（demand>1 同 pid N 条按**数组下标**逐实例寻址，
 绝不 pid 去重 —— 与前端 editStore「同 pid 第 k 次出现 = 第 k 副本」同口径）/
 exclude 集片永不被移动（仍作为障碍参与他人检查）。
 
@@ -201,19 +198,6 @@ ESCAPE_SCAN_CAP_MM = 100.0
 # 逃逸扫描全局预算（次，两巡合计）：确定性封顶防大文件最坏情形（3069 实测
 # 137 片 / 1551 次扫描 / 命中 1，耗时 +24%），耗尽后不再扫、留 residual。
 ESCAPE_SCAN_BUDGET = 4000
-# 分离二巡（③′，2026-10-06 B4）重合对数上限：脏区重扫的确定性成本封顶（穿透
-# 降序取前 N）—— 零 move 时不产生任何开销，超限对留 residual 如实上报。
-SEP2_PAIR_CAP = 400
-# 分离伴行微避让（2026-10-06 B3）：主分离候选仅因第三方**擦边级**楔形被守卫③
-# 否决时，沿正交轴固定偏移阶梯伴行重试伙伴二分 —— 版师手眼「平移让位」的 2D
-# 自由度（单轴最小分离够不着、四向逃逸又无净窗的窄口；882 实勘 g01_31×g02_30
-# 被 g06_36 6.1mm² 楔形顶死形态）。确定性固定序；大面积实堵（>面积上限）不硬凑
-# 留 residual；主分离量与偏移量双重封顶保就近语义；全局二分次数预算封顶。
-SEP_DODGE_OFFSETS = (1.0, -1.0, 2.0, -2.0, 4.0, -4.0,
-                     8.0, -8.0, 16.0, -16.0, 30.0, -30.0)
-SEP_DODGE_T_MAX_MM = 60.0        # 参与伴行的主分离量上限（mm，就近语义）
-SEP_DODGE_MAX_BLOCK_MM2 = 500.0  # 「擦边级」阻挡面积上限（mm²，超过 = 实堵）
-SEP_DODGE_BUDGET = 600           # 伴行二分次数全局预算（确定性封顶）
 
 
 class PolishError(Exception):
@@ -289,29 +273,6 @@ def _derotate_ladder_fine(rot: float) -> list:
             cands.add((_rotation_dev(a), a))
         k += 1
     return [a for d, a in sorted(cands) if d < dev - DEROT_MIN_GAIN_DEG]
-
-
-def _world_collide(placement, pieces_by_id, collide_polygons):
-    """placement → 碰撞口径世界几何（``collide_polygons`` 命中 pid 用腐蚀轮廓，
-    未命中返回 None = 回退毛版 —— 守卫最严方向）。
-
-    ``collide_polygons``（2026-10-06 B2「压线收敛」）= web 层经 ``build_pid_meta``
-    同一管线产出的 per-pid 局部腐蚀轮廓（= manifest ``polygon`` = 前端判红单一
-    真相源；d=0 片 web 侧直接传毛版，避免 clean 抽稀噪声）。变换与
-    ``_world_geom`` 完全同款（平移/旋转/镜像与腐蚀可交换，镜像同 ``x→−x``
-    预处理）。缺省（``collide_polygons=None``）调用方不触本函数 —— 守卫③与
-    逃逸脏判据走毛版绝对零重合（旧行为，零回归）。
-    """
-    if not collide_polygons:
-        return None
-    lc = collide_polygons.get(placement['id'])
-    if lc is None:
-        return None
-    if placement.get('mirror') is True:
-        lc = [(-x, y) for x, y in lc]
-    return _valid_geometry(_transform_polygon(
-        lc, float(placement.get('rotation', 0.0)),
-        placement.get('translation', (0.0, 0.0))))
 
 
 def _world_geom(placement, pieces_by_id):
@@ -552,8 +513,7 @@ def _slide_west_touch(g_moving, obstacles, t_wall):
     return _slide_axis_touch(g_moving, obstacles, t_wall, 'x', -1.0)
 
 
-def _scan_to_clean(g, idx, geoms, bounds, gate, axis, sign, cap,
-                   y_hi_slack=0.0, y_lo_slack=0.0, cg=None, cgeoms_arr=None):
+def _scan_to_clean(g, idx, geoms, bounds, gate, axis, sign, cap):
     """自受压位沿 ``axis('x'/'y')·sign(±1)`` 扫描首个「对全图零正面积重合」平移位。
 
     逃逸原语（2026-10-06，derotate-escape / separate-escape 兜底）：与
@@ -564,38 +524,28 @@ def _scan_to_clean(g, idx, geoms, bounds, gate, axis, sign, cap,
     干净平移量 t（+ ``SEP_NUDGE_MM``；首净点天然 ≈ 贴触位，「动则必贴」语义
     不破），无干净窗 / 出门幅返回 None，起点已净返回 0。确定性：固定步长
     采样 + ``SLIDE_BISECT_ITERS`` 轮二分，无 RNG。
-
-    ``y_hi_slack``/``y_lo_slack``（2026-10-06 B1）：该片毛版初始出界余量 ——
-    门幅脏判据与限幅同款「不得比现状更出界」规则（d=0 片恒 0 = 旧行为）。
-    ``cg``/``cgeoms_arr``（2026-10-06 B2）：碰撞口径几何（缺省 None = 用毛版
-    ``g``/``geoms``，旧行为）——「全净位」按碰撞轮廓裁决，d 预算内压线不算脏。
     """
     n = len(geoms)
-    cg_eff = g if cg is None else cg
-    cgs = geoms if cgeoms_arr is None else cgeoms_arr
 
     def _dirty(t):
         moved = translate(g, xoff=sign * t if axis == 'x' else 0.0,
                           yoff=sign * t if axis == 'y' else 0.0)
-        cmoved = translate(cg_eff, xoff=sign * t if axis == 'x' else 0.0,
-                           yoff=sign * t if axis == 'y' else 0.0)
         b = moved.bounds
-        if b[1] < -y_lo_slack - GATE_EPS_MM \
-                or b[3] > gate + y_hi_slack + GATE_EPS_MM:
+        if b[1] < -GATE_EPS_MM or b[3] > gate + GATE_EPS_MM:
             return True
         for k in range(n):
             if k == idx:
                 continue
-            if _bbox_overlaps(b, bounds[k]) and _hits(cmoved, cgs[k]) \
-                    and cmoved.intersection(cgs[k]).area > OVERLAP_AREA_EPS_MM2:
+            if _bbox_overlaps(b, bounds[k]) and _hits(moved, geoms[k]) \
+                    and moved.intersection(geoms[k]).area > OVERLAP_AREA_EPS_MM2:
                 return True
         return False
 
     if not _dirty(0.0):
         return 0.0
-    if axis == 'y':                       # 门幅限幅（出门幅即脏；B1 余量同口径）
-        cap = min(cap, (gate + y_hi_slack - g.bounds[3]) / sign if sign > 0
-                  else (g.bounds[1] + y_lo_slack) / -sign)
+    if axis == 'y':                       # 门幅限幅（出门幅即脏）
+        cap = min(cap, (gate - g.bounds[3]) / sign if sign > 0
+                  else g.bounds[1] / -sign)
     t_free = None
     t = ESCAPE_SCAN_STEP_MM
     while t <= cap:
@@ -617,8 +567,7 @@ def _scan_to_clean(g, idx, geoms, bounds, gate, axis, sign, cap,
 
 # --------------------------------------------------------------- 主入口
 
-def polish_layout(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False,
-                  collide_polygons=None):
+def polish_layout(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False):
     """确定性后处理主入口（纯函数：不修改入参 ``placed``）。
 
     Parameters
@@ -640,14 +589,6 @@ def polish_layout(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False,
         US-005 压缩回收档（缺省 false）：pass ④ 自布头逐片 −x 滑贴收空隙，
         接受条件 = 全图物理包络 maxX 严格变小（不过则整段回滚 —— additive，
         false 时本段跳过、行为与 US-001 逐字节不变）。
-    collide_polygons : dict | None
-        ``{pid: 局部腐蚀轮廓}``（2026-10-06 B2「压线收敛」，缺省 None = 旧行为
-        逐字节不变）：web 层经 ``build_pid_meta`` 同一管线产出（= manifest
-        ``polygon`` = 前端判红单一真相源；d=0 片传毛版本身）。命中 pid 的守卫③
-        与逃逸脏判据按**碰撞轮廓零重合**裁决 —— d 预算内的保留压线不再误杀
-        候选（与 sparrow 自身合法性同口径），对 d=0 片（碰撞轮廓 = 毛版）拒得
-        与旧版同严；pid 未命中回退毛版（最严方向）。诊断/pass③ 配对与报告
-        七指标仍是毛版口径（压线/穿透数值语义不变）。
 
     Returns
     -------
@@ -698,41 +639,20 @@ def polish_layout(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False,
     before, pairs = _diagnose(geoms, items, total_area, gate)
     width_before = _layout_width(geoms)
     bounds = [g.bounds for g in geoms]
-    # 守卫① 门幅出界余量（2026-10-06 B1「压线收敛」）：sparrow 只约束 erode 轮廓，
-    # d>0 贴边片的毛版可合法出界 ~d 毫米（882 实勘 g02_29 y∈[1725,1755]）——旧
-    # y∈[0,gate] 硬卡使这类片**任何**候选（含纯水平移动）都被判死、全程冻结。
-    # 按初始位冻结「已出界量」，候选不得比现状更出界（单调不劣化：门内片仍然
-    # 一步出不去；出界片可在同等出界量内活动，往里挪自然放行）。d=0 布局
-    # slack≡0，与旧判定逐字节相同。
-    gate_hi_slack = [max(0.0, b[3] - gate) for b in bounds]
-    gate_lo_slack = [max(0.0, -b[1]) for b in bounds]
     moves = []
     touched = set()          # 被动过的片（②′ 脏区门控：只重试环境变过的片）
-    # 逃逸兜底（2026-10-06）：重合在案片集合（初始诊断一次性计算 —— 守卫③碰撞
-    # 口径保证碰撞重合只减不增（毛版压线可在 d 预算内新增），静态集是保守超集；
-    # 用于 C 族触发门）+ 全局扫描预算/命中计数（derotate-escape 与
-    # separate-escape 共享）。
+    # 逃逸兜底（2026-10-06）：重合在案片集合（初始诊断一次性计算 —— move 守卫③
+    # 保证重合只减不增，静态集是保守超集；用于 C 族触发门）+ 全局扫描预算/命中
+    # 计数（derotate-escape 与 separate-escape 共享）。
     pressed = {_ix for _p in pairs for _ix in (_p['i'], _p['j'])}
     escape_scan_budget = ESCAPE_SCAN_BUDGET
     escape_moves = 0
-    # 碰撞口径几何（2026-10-06 B2）：collide_polygons 缺省 → cgeoms 与 geoms
-    # 同引用，守卫③/逃逸自动退回毛版绝对零重合（旧行为）；命中 pid 用腐蚀
-    # 轮廓（web 层 build_pid_meta 同一管线），未命中 pid 回退毛版（最严方向）。
-    cgeoms = geoms
-    if collide_polygons:
-        cgeoms = []
-        for _k, _p in enumerate(placed):
-            _cg = _world_collide(_p, pieces_by_id, collide_polygons)
-            cgeoms.append(geoms[_k] if _cg is None else _cg)
     # 全图几何预制备（shapely prepared predicate，2026-10-06 性能）：后续对
     # geoms[k] 的 overlaps/intersects 布尔判定走空间索引快路径（贴附保持
     # 归位引入海量谓词调用后，intersection().area 28µs/次成热点）。幂等
     # in-place，不改几何值；_apply 落位的新几何同样补制备。
     for _g in geoms:
         _shapely_prepare(_g)
-    if cgeoms is not geoms:
-        for _g in cgeoms:
-            _shapely_prepare(_g)
 
     # 守卫② 包络的 O(1) 加速缓存（2026-10-06 贴附保持归位引入海量 _move_ok
     # 调用后，逐次 O(n) 扫 maxX/minX 成为热点）：全图 bounds maxX 前两大 /
@@ -761,34 +681,26 @@ def polish_layout(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False,
                 return v
         return 0.0
 
-    def _move_ok(idx, geom, cgeom=None):
-        """逐 move 守卫 ①②③⑤（守卫 ④ pid 守恒结构性成立，出口处终检）。
-
-        守卫③（2026-10-06 B2）：候选位对全图**碰撞轮廓**零正面积重合 ——
-        ``cgeom``/``cgeoms`` 为碰撞口径几何（``collide_polygons`` 缺省时与毛版
-        同引用 = 旧行为；pid 未命中亦回退毛版）。d 预算内保留压线不再误杀
-        候选（与 sparrow 自身合法性同口径），对 d=0 片（碰撞轮廓 = 毛版）拒得
-        与旧版同严。bbox 预筛仍用毛版 bounds（超集，安全）。"""
+    def _move_ok(idx, geom):
+        """逐 move 守卫 ①②③⑤（守卫 ④ pid 守恒结构性成立，出口处终检）。"""
         if idx in excluded:                                   # 守卫⑤ exclude
             return False
         b = geom.bounds
-        if b[1] < -gate_lo_slack[idx] - GATE_EPS_MM \
-                or b[3] > gate + gate_hi_slack[idx] + GATE_EPS_MM:  # 守卫①（B1 出界余量）
+        if b[1] < -GATE_EPS_MM or b[3] > gate + GATE_EPS_MM:  # 守卫① y∈[0,gate]
             return False
         new_width = max(_others_max_x(idx), b[2]) \
             - min(min(_others_min_x(idx), b[0]), 0.0)
         if new_width > width_before + WIDTH_TOL_MM:           # 守卫② 包络不增
             return False
-        cg = geom if cgeom is None else cgeom
-        for k in range(n):                                    # 守卫③（B2 碰撞口径）
+        for k in range(n):                                    # 守卫③ 零新重合
             if k == idx:
                 continue
-            if _bbox_overlaps(b, bounds[k]) and _hits(cg, cgeoms[k]) \
-                    and cg.intersection(cgeoms[k]).area > OVERLAP_AREA_EPS_MM2:
+            if _bbox_overlaps(b, bounds[k]) and _hits(geom, geoms[k]) \
+                    and geom.intersection(geoms[k]).area > OVERLAP_AREA_EPS_MM2:
                 return False
         return True
 
-    def _apply(idx, rot_new, tr_new, geom_new, kind, detail, cgeom_new=None):
+    def _apply(idx, rot_new, tr_new, geom_new, kind, detail):
         old = items[idx]
         moves.append({
             'index': idx, 'pid': old['id'], 'kind': kind,
@@ -799,12 +711,9 @@ def polish_layout(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False,
         old['rotation'] = rot_new
         old['translation'] = [tr_new[0], tr_new[1]]
         geoms[idx] = geom_new
-        cgeoms[idx] = geom_new if cgeom_new is None else cgeom_new
         bounds[idx] = geom_new.bounds
         touched.add(idx)
         _shapely_prepare(geom_new)
-        if cgeoms[idx] is not geom_new:
-            _shapely_prepare(cgeoms[idx])
         _rebuild_env()
 
     def _snug(i):
@@ -855,8 +764,7 @@ def polish_layout(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False,
                 return True
         return False
 
-    def _escape_ok(idx, g_from, tr_from, rot_new, detail, require_attached=False,
-                   cg_from=None):
+    def _escape_ok(idx, g_from, tr_from, rot_new, detail, require_attached=False):
         """逃逸兜底（2026-10-06，derotate-escape / separate-escape 共享闭包）：
         自 ``g_from`` 四向（±y 优先、−x 次之，+x 由包络守卫自然把关）扫描到
         全净位，过守卫即落位返回 True。方向序与 pass ③ 分离优先级同款；确定性
@@ -868,18 +776,12 @@ def polish_layout(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False,
                 break
             escape_scan_budget -= 1
             t = _scan_to_clean(g_from, idx, geoms, bounds, gate, axis, sign,
-                               ESCAPE_SCAN_CAP_MM,
-                               y_hi_slack=gate_hi_slack[idx],
-                               y_lo_slack=gate_lo_slack[idx],
-                               cg=cg_from, cgeoms_arr=cgeoms)
+                               ESCAPE_SCAN_CAP_MM)
             if t is None or t <= ATTACH_GAIN_EPS_MM:
                 continue
             g = translate(g_from, xoff=sign * t if axis == 'x' else 0.0,
                           yoff=sign * t if axis == 'y' else 0.0)
-            cg = g if cg_from is None else translate(
-                cg_from, xoff=sign * t if axis == 'x' else 0.0,
-                yoff=sign * t if axis == 'y' else 0.0)
-            if not _move_ok(idx, g, cg) \
+            if not _move_ok(idx, g) \
                     or (require_attached and not _attached(g, idx)):
                 continue
             tr = (tr_from[0] + (sign * t if axis == 'x' else 0.0),
@@ -891,21 +793,20 @@ def polish_layout(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False,
                    'derotate-escape'
                    if abs(rot_new - items[idx]['rotation']) > 1e-9
                    else 'separate-escape',
-                   f'{detail}，{d}逃逸 {t:.2f}mm', cgeom_new=cg)
+                   f'{detail}，{d}逃逸 {t:.2f}mm')
             escape_moves += 1
             return True
         return False
 
-    def _try_apply(i, target_rot, tr, g, how, rot_cur, cg=None):
+    def _try_apply(i, target_rot, tr, g, how, rot_cur):
         """接受一个归位候选（守卫外的高层包装：记账 detail + _apply）。"""
         old_tr = items[i]['translation']
         _apply(i, target_rot, tr, g, 'derotate',
                f'rot {rot_cur:.2f}→{target_rot:.2f}（dev '
                f'{_rotation_dev(rot_cur):.2f}→{_rotation_dev(target_rot):.2f}°），'
-               f'{how}位移 {math.hypot(tr[0] - old_tr[0], tr[1] - old_tr[1]):.2f}mm',
-               cgeom_new=cg)
+               f'{how}位移 {math.hypot(tr[0] - old_tr[0], tr[1] - old_tr[1]):.2f}mm')
 
-    def _slide_anchor_ok(i, ga, ta, cga=None):
+    def _slide_anchor_ok(i, ga, ta):
         """族 B：自锚点 ga 四向（−x/−y/+x/+y）滑贴到首触取候选 —— Alt+左键
         attract 语义的四向版（贴附方向可能在东/北侧，west/south 重力模型够不
         着）。到位即天然贴附；滑移上限 ``DEROT_SLIDE_CAP_MM``（防跨唛架远
@@ -950,16 +851,13 @@ def polish_layout(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False,
                 continue
             g = translate(ga, xoff=sign * t if axis == 'x' else 0.0,
                           yoff=sign * t if axis == 'y' else 0.0)
-            cg = g if cga is None else translate(
-                cga, xoff=sign * t if axis == 'x' else 0.0,
-                yoff=sign * t if axis == 'y' else 0.0)
-            if _move_ok(i, g, cg) and _attached(g, i):
+            if _move_ok(i, g) and _attached(g, i):
                 tr = (ta[0] + (sign * t if axis == 'x' else 0.0),
                       ta[1] + (sign * t if axis == 'y' else 0.0))
                 d = '−x' if (axis, sign) == ('x', -1.0) else \
                     ('−y' if (axis, sign) == ('y', -1.0) else
                      ('+x' if axis == 'x' else '+y'))
-                return tr, g, cg, f'{d}滑贴'
+                return tr, g, f'{d}滑贴'
         return None
 
     # ---- pass ②/②′ 去旋转（2026-10-06「贴附保持的减少旋转」重写）----
@@ -992,14 +890,6 @@ def polish_layout(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False,
             # 镜像后多边形质心），t' 补偿公式不变。
             if items[i].get('mirror') is True:
                 local = [(-x, y) for x, y in local]
-            # B2：碰撞口径局部轮廓（未命中 pid → None = 候选 cg 回退毛版），
-            # mirror 同款取负 —— 平移/旋转/镜像与腐蚀可交换。
-            local_col = None
-            if collide_polygons:
-                lc = collide_polygons.get(items[i]['id'])
-                if lc is not None:
-                    local_col = [(-x, y) for x, y in lc] \
-                        if items[i].get('mirror') is True else lc
             c_local = Polygon(local).centroid
             # 质心锚定：c_world = R(rot)·c_local + t（仿射保质心 ⇒ 世界质心即锚）
             c_world = geoms[i].centroid
@@ -1020,8 +910,6 @@ def polish_layout(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False,
                 t0y = c_world.y - (c_local.x * s + c_local.y * c)
                 g0 = _valid_geometry(_transform_polygon(
                     local, target_rot, (t0x, t0y)))
-                cg0 = None if local_col is None else _valid_geometry(
-                    _transform_polygon(local_col, target_rot, (t0x, t0y)))
                 # 族 B 锚点集：质心锚 + 碰撞邻居最小分离补锚（+严格档小步进
                 # 锚）。碰撞判据与 _slide_axis_touch 的 collides 同阈值
                 # （≥1e-9mm²）—— 0.001~0.1mm² 的微相交会让滑贴四向全灭
@@ -1050,13 +938,10 @@ def polish_layout(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False,
                     # 严格档先行：族 B 四向滑贴首触（新位天然贴附 = 贴附不降级）
                     for adx, ady in anchors:
                         ga = translate(g0, xoff=adx, yoff=ady) if (adx or ady) else g0
-                        cga = None if cg0 is None else (
-                            translate(cg0, xoff=adx, yoff=ady)
-                            if (adx or ady) else cg0)
-                        hit = _slide_anchor_ok(i, ga, (t0x + adx, t0y + ady), cga)
+                        hit = _slide_anchor_ok(i, ga, (t0x + adx, t0y + ady))
                         if hit is not None:
-                            tr, g, cg, how = hit
-                            _try_apply(i, target_rot, tr, g, how, rot_cur, cg)
+                            tr, g, how = hit
+                            _try_apply(i, target_rot, tr, g, how, rot_cur)
                             placed_move = True
                             break
                     if placed_move:
@@ -1087,10 +972,8 @@ def polish_layout(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False,
                 for dx, dy in sorted(offs, key=lambda o: (math.hypot(o[0], o[1]), o)):
                     tr = (t0x + dx, t0y + dy)
                     g = translate(g0, xoff=dx, yoff=dy) if (dx or dy) else g0
-                    cg = None if cg0 is None else (
-                        translate(cg0, xoff=dx, yoff=dy) if (dx or dy) else cg0)
-                    if _move_ok(i, g, cg) and (not strict or _attached(g, i)):
-                        _try_apply(i, target_rot, tr, g, '邻域', rot_cur, cg)
+                    if _move_ok(i, g) and (not strict or _attached(g, i)):
+                        _try_apply(i, target_rot, tr, g, '邻域', rot_cur)
                         placed_move = True
                         break
                 if placed_move:
@@ -1100,13 +983,10 @@ def polish_layout(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False,
                     # 四向滑贴首触 —— A 全败时贴附位仍是改进。
                     for adx, ady in anchors_fb:
                         ga = translate(g0, xoff=adx, yoff=ady) if (adx or ady) else g0
-                        cga = None if cg0 is None else (
-                            translate(cg0, xoff=adx, yoff=ady)
-                            if (adx or ady) else cg0)
-                        hit = _slide_anchor_ok(i, ga, (t0x + adx, t0y + ady), cga)
+                        hit = _slide_anchor_ok(i, ga, (t0x + adx, t0y + ady))
                         if hit is not None:
-                            tr, g, cg, how = hit
-                            _try_apply(i, target_rot, tr, g, how, rot_cur, cg)
+                            tr, g, how = hit
+                            _try_apply(i, target_rot, tr, g, how, rot_cur)
                             placed_move = True
                             break
                     if placed_move:
@@ -1121,17 +1001,14 @@ def polish_layout(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False,
                     _tx, _ty = items[i]['translation']
                     if _escape_ok(i, g0, (t0x, t0y), target_rot,
                                   f'rot {rot_cur:.2f}→{target_rot:.2f}，质心锚',
-                                  require_attached=strict, cg_from=cg0):
+                                  require_attached=strict):
                         placed_move = True
                     else:
                         _g_id = _valid_geometry(_transform_polygon(
                             local, target_rot, (_tx, _ty)))
-                        _cg_id = None if local_col is None else \
-                            _valid_geometry(_transform_polygon(
-                                local_col, target_rot, (_tx, _ty)))
                         if _escape_ok(i, _g_id, (_tx, _ty), target_rot,
                                       f'rot {rot_cur:.2f}→{target_rot:.2f}，原位锚',
-                                      require_attached=strict, cg_from=_cg_id):
+                                      require_attached=strict):
                             placed_move = True
                 if placed_move:
                     break
@@ -1143,117 +1020,46 @@ def polish_layout(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False,
     _derotate_sweep()
 
     # ---- pass ③ 去重叠（穿透深度降序、平手 (i,j)；最小分离 ±y 优先、−x 次之）----
-    sep_dodge_budget = SEP_DODGE_BUDGET
-
-    def _block_area(idx, geom):
-        """候选位对全图的最大毛版交集面积（B3 伴行触发门：擦边级 vs 实堵）。"""
-        b = geom.bounds
-        worst = 0.0
-        for k in range(n):
-            if k == idx:
+    pairs.sort(key=lambda p: (-p['penetration_mm'], p['i'], p['j']))
+    for pair in pairs:
+        i, j = pair['i'], pair['j']
+        if _pair_stats(geoms[i], geoms[j]) is None:   # 早前 move 已顺带解离
+            continue
+        done = False
+        for mover, other in ((i, j), (j, i)):          # 一片失败换动另一片
+            if mover in excluded:
                 continue
-            if _bbox_overlaps(b, bounds[k]) and _hits(geom, geoms[k]):
-                a = geom.intersection(geoms[k]).area
-                if a > worst:
-                    worst = a
-        return worst
-
-    def _separate_sweep(pair_list):
-        """pass ③ 主体（2026-10-06 B4 闭包化：一巡全量 ``pairs`` / 二巡 ③′ 脏区
-        重合对共用同一机器；B3 伴行微避让作常规分离的擦边级兜底）。"""
-        nonlocal sep_dodge_budget
-        for pair in pair_list:
-            i, j = pair['i'], pair['j']
-            if _pair_stats(geoms[i], geoms[j]) is None:   # 早前 move 已顺带解离
-                continue
-            done = False
-            for mover, other in ((i, j), (j, i)):      # 一片失败换动另一片
+            cands = []
+            for prio, (axis, sign) in enumerate(
+                    (('y', 1.0), ('y', -1.0), ('x', -1.0))):
+                sep = _sep_translate(geoms[mover], geoms[other], axis, sign)
+                if sep is not None:
+                    dx, dy, t = sep
+                    cands.append((t, prio, dx, dy))
+            for t, prio, dx, dy in sorted(cands):      # 最小分离平移优先
+                old_tr = items[mover]['translation']
+                tr = (old_tr[0] + dx, old_tr[1] + dy)
+                g = translate(geoms[mover], xoff=dx, yoff=dy)
+                if _move_ok(mover, g):
+                    direction = '+y' if prio == 0 else ('−y' if prio == 1 else '−x')
+                    _apply(mover, items[mover]['rotation'], tr, g, 'separate',
+                           f'与 placed[{other}]（{items[other]["id"]}）分离：'
+                           f'{direction} 最小平移 {t:.2f}mm')
+                    done = True
+                    break
+            if done:
+                break
+        # 逃逸兜底（2026-10-06）：双 mover 最小分离全败（楔形双侧受压下单伙伴
+        # 最小分离必落在另一侧墙上）时，自当前位当前角四向扫描到全净位 —— 纯
+        # 平移形态的楔口逃逸；exclude 片跳过不扫。
+        if not done:
+            for mover, other in ((i, j), (j, i)):
                 if mover in excluded:
                     continue
-                cands = []
-                for prio, (axis, sign) in enumerate(
-                        (('y', 1.0), ('y', -1.0), ('x', -1.0))):
-                    sep = _sep_translate(geoms[mover], geoms[other], axis, sign)
-                    if sep is not None:
-                        dx, dy, t = sep
-                        cands.append((t, prio, dx, dy))
-                for t, prio, dx, dy in sorted(cands):  # 最小分离平移优先
-                    old_tr = items[mover]['translation']
-                    tr = (old_tr[0] + dx, old_tr[1] + dy)
-                    g = translate(geoms[mover], xoff=dx, yoff=dy)
-                    cg = translate(cgeoms[mover], xoff=dx, yoff=dy)
-                    if _move_ok(mover, g, cg):
-                        direction = '+y' if prio == 0 else ('−y' if prio == 1 else '−x')
-                        _apply(mover, items[mover]['rotation'], tr, g, 'separate',
-                               f'与 placed[{other}]（{items[other]["id"]}）分离：'
-                               f'{direction} 最小平移 {t:.2f}mm', cgeom_new=cg)
-                        done = True
-                        break
-                if done:
+                if _escape_ok(mover, geoms[mover], items[mover]['translation'],
+                              items[mover]['rotation'],
+                              f'与 placed[{other}]（{items[other]["id"]}）分离'):
                     break
-                # B3 伴行微避让（2026-10-06）：常规分离全败且失败候选只是「擦边级」
-                # 阻挡（≤ SEP_DODGE_MAX_BLOCK_MM2）时，沿正交轴固定偏移阶梯重试
-                # 伙伴二分 —— 单轴够不着的窄口让位。大面积实堵不触发（residual
-                # 如实）；全局预算封顶；确定性（固定阶梯序）。
-                if cands and sep_dodge_budget > 0:
-                    axis_of = {0: ('y', 1.0), 1: ('y', -1.0), 2: ('x', -1.0)}
-                    for t, prio, dx, dy in sorted(cands):
-                        if t > SEP_DODGE_T_MAX_MM or sep_dodge_budget <= 0:
-                            continue
-                        g_plain = translate(geoms[mover], xoff=dx, yoff=dy)
-                        if _block_area(mover, g_plain) > SEP_DODGE_MAX_BLOCK_MM2:
-                            continue                  # 实堵不硬凑
-                        axis, sign = axis_of[prio]
-                        lat_axis = 'x' if axis == 'y' else 'y'
-                        for off in SEP_DODGE_OFFSETS:
-                            if sep_dodge_budget <= 0:
-                                break
-                            sep_dodge_budget -= 1
-                            lx = off if lat_axis == 'x' else 0.0
-                            ly = off if lat_axis == 'y' else 0.0
-                            g_lat = translate(geoms[mover], xoff=lx, yoff=ly)
-                            sep2 = _sep_translate(g_lat, geoms[other], axis, sign)
-                            if sep2 is None:
-                                continue
-                            dx2, dy2, t2 = sep2
-                            if t2 > SEP_DODGE_T_MAX_MM:
-                                continue
-                            old_tr = items[mover]['translation']
-                            tr2 = (old_tr[0] + lx + dx2, old_tr[1] + ly + dy2)
-                            g2 = translate(g_lat, xoff=dx2, yoff=dy2)
-                            cg2 = translate(translate(cgeoms[mover], xoff=lx, yoff=ly),
-                                            xoff=dx2, yoff=dy2)
-                            if _move_ok(mover, g2, cg2):
-                                direction = ('+y' if prio == 0
-                                             else ('−y' if prio == 1 else '−x'))
-                                _apply(mover, items[mover]['rotation'], tr2, g2,
-                                       'separate',
-                                       f'与 placed[{other}]（{items[other]["id"]}）'
-                                       f'分离：{direction} 最小平移 {t2:.2f}mm'
-                                       f'（{lat_axis}{"−" if off < 0 else "+"}'
-                                       f'{abs(off):.0f} 伴行避让）',
-                                       cgeom_new=cg2)
-                                done = True
-                                break
-                        if done:
-                            break
-                if done:
-                    break
-            # 逃逸兜底（2026-10-06）：双 mover 最小分离全败（楔形双侧受压下单伙伴
-            # 最小分离必落在另一侧墙上）时，自当前位当前角四向扫描到全净位 —— 纯
-            # 平移形态的楔口逃逸；exclude 片跳过不扫。
-            if not done:
-                for mover, other in ((i, j), (j, i)):
-                    if mover in excluded:
-                        continue
-                    if _escape_ok(mover, geoms[mover], items[mover]['translation'],
-                                  items[mover]['rotation'],
-                                  f'与 placed[{other}]（{items[other]["id"]}）分离',
-                                  cg_from=cgeoms[mover]):
-                        break
-
-    pairs.sort(key=lambda p: (-p['penetration_mm'], p['i'], p['j']))
-    _separate_sweep(pairs)
 
     # ---- pass ③½ 贴附（attach，默认启用）：重力压实 west+south 交替滑贴 ----
     # 2026-10-05 裁床裁板需求：裁片片片贴合方便走刀。west 趟复用 compact 的
@@ -1289,10 +1095,9 @@ def polish_layout(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False,
                 tr = (items[k]['translation'][0] - t,
                       items[k]['translation'][1])
                 g = translate(geoms[k], xoff=-t)
-                cg = translate(cgeoms[k], xoff=-t)
-                if _move_ok(k, g, cg):
+                if _move_ok(k, g):
                     _apply(k, items[k]['rotation'], tr, g, 'attach',
-                           f'−x 滑贴贴附 {t:.2f}mm', cgeom_new=cg)
+                           f'−x 滑贴贴附 {t:.2f}mm')
                     moved += 1
             # south 趟：门幅下边方向级联 −y 滑贴（镜像剪枝：y 可达 + 下门幅墙
             # 下侧不可达剔除 + x 带重叠）。
@@ -1313,45 +1118,14 @@ def polish_layout(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False,
                 tr = (items[k]['translation'][0],
                       items[k]['translation'][1] - t)
                 g = translate(geoms[k], yoff=-t)
-                cg = translate(cgeoms[k], yoff=-t)
-                if _move_ok(k, g, cg):
+                if _move_ok(k, g):
                     _apply(k, items[k]['rotation'], tr, g, 'attach',
-                           f'−y 滑贴贴附 {t:.2f}mm', cgeom_new=cg)
+                           f'−y 滑贴贴附 {t:.2f}mm')
                     moved += 1
             attach_moves += moved
             if not moved:
                 break                      # 不动点：整轮零 move 早退
 
-    _attach_sweep()
-
-    # ---- pass ③′ 分离二巡（2026-10-06 B4 压线收敛）+ 补一轮贴附 ----
-    # attach 重排（数百 move 级环境剧变）后，一巡失败的分离可行位才可能出现
-    # （882 实勘：[9]g01_33 的 −y 候选在 attach 后已可通过、但 pass ③ 只在
-    # attach 前跑一次 —— 修复机会被顺序吞掉）。脏区门控镜像 ②′：只重扫「自身
-    # 或邻域（NEIGHBOR_MARGIN）被动过」的片的现存重合对（环境未变者可行性
-    # 不变）；重合对数 SEP2_PAIR_CAP 确定性封顶（穿透降序取前 N，大文件防拖爆
-    # 预算）；逃逸触发门 pressed 随重扫增补（保守超集）。零重扫对 → 整段 no-op。
-    only3 = set(touched)
-    for k in list(touched):
-        bk = (bounds[k][0] - NEIGHBOR_MARGIN_MM, bounds[k][1] - NEIGHBOR_MARGIN_MM,
-              bounds[k][2] + NEIGHBOR_MARGIN_MM, bounds[k][3] + NEIGHBOR_MARGIN_MM)
-        for i in range(n):
-            if _bbox_overlaps(bk, bounds[i]):
-                only3.add(i)
-    re_pairs = []
-    for i in range(n):
-        for j in range(i + 1, n):
-            if i not in only3 and j not in only3:
-                continue
-            st = _pair_stats(geoms[i], geoms[j])
-            if st is not None:
-                re_pairs.append({'i': i, 'j': j,
-                                 'area_mm2': st[0], 'penetration_mm': st[1]})
-    re_pairs.sort(key=lambda p: (-p['penetration_mm'], p['i'], p['j']))
-    if len(re_pairs) > SEP2_PAIR_CAP:
-        re_pairs = re_pairs[:SEP2_PAIR_CAP]
-    pressed |= {_ix for _p in re_pairs for _ix in (_p['i'], _p['j'])}
-    _separate_sweep(re_pairs)
     _attach_sweep()
 
     # ---- pass ②′ 贴附保持归位 · 二巡 + 补一轮贴附（2026-10-06）----
@@ -1373,7 +1147,6 @@ def polish_layout(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False,
     if compact:
         snap_items = [_rebuild_item(it) for it in items]
         snap_geoms = list(geoms)
-        snap_cgeoms = list(cgeoms)
         snap_bounds = list(bounds)
         snap_nmoves = len(moves)
         max_x_head = max((b[2] for b in bounds), default=0.0)
@@ -1395,17 +1168,15 @@ def polish_layout(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False,
                 continue
             tr = (items[k]['translation'][0] - t, items[k]['translation'][1])
             g = translate(geoms[k], xoff=-t)
-            cg = translate(cgeoms[k], xoff=-t)
-            if _move_ok(k, g, cg):
+            if _move_ok(k, g):
                 _apply(k, items[k]['rotation'], tr, g, 'compact',
-                       f'−x 滑贴回收空隙 {t:.2f}mm', cgeom_new=cg)
+                       f'−x 滑贴回收空隙 {t:.2f}mm')
         max_x_tail = max((b[2] for b in bounds), default=0.0)
         if not max_x_tail < max_x_head - COMPACT_GAIN_EPS_MM:
             # 包络 maxX 未严格变小：整段回滚（无改进逐字节不变 —— 输出与非
-            # compact 档全等、moves/residual 不留孤儿记录）。
+            # compact 档全等，moves/residual 不留孤儿记录）。
             items = snap_items
             geoms = snap_geoms
-            cgeoms = snap_cgeoms
             bounds = snap_bounds
             del moves[snap_nmoves:]
 
@@ -1721,11 +1492,8 @@ def _smoke_fixtures() -> bool:
            f'tr={out[0]["translation"]} attach={rep["attach_moves"]}')
 
     # ⑯ 逃逸·平移兜底（2026-10-06 separate-escape）：双侧受压条片在常规分离
-    #     全败后 +x 扫描到全净位（详见 tests/test_polish.py 同构夹具）。地板宽
-    #     230（2026-10-06 B3 后定稿）：−y 落位对地板的阻挡面积 900mm² >
-    #     SEP_DODGE_MAX_BLOCK_MM2 —— 伴行避让不触发（实堵不硬凑），逃逸仍是
-    #     唯一出路（宽 200 时 450mm² 恰在避让阈值内、会被 −y+x30 伴行抢先）。
-    pieces = {'g01_30': _rect_piece('g01_30', 230, 150),
+    #     全败后 +x 扫描到全净位（详见 tests/test_polish.py 同构夹具）
+    pieces = {'g01_30': _rect_piece('g01_30', 200, 150),
               'g02_30': _rect_piece('g02_30', 160, 150, label='g02'),
               'g03_30': _rect_piece('g03_30', 60, 110, label='g03'),
               'g04_30': _rect_piece('g04_30', 100, 400, label='g04'),
@@ -1771,101 +1539,6 @@ def _smoke_fixtures() -> bool:
            and _rotation_dev(out[2]['rotation']) == 0.0
            and len(esc) == 1 and '−x逃逸' in esc[0]['detail'],
            f'escape={rep["escape_moves"]} {esc[0]["detail"] if esc else ""}')
-
-    # ⑱ 守卫①出界余量（2026-10-06 B1 压线收敛）：贴边片毛版出界 3mm（sparrow 只
-    #     约束 erode 轮廓的既成事实）—— +y 更出界、−y 被 C/D2 全高堵死（逃逸也
-    #     死）、−x 是唯一分离向且 y 不变。旧 y∈[0,gate] 硬卡把 −x 也判死（纯水平
-    #     移动 y bounds 原样出界）→ 全灭 residual；新规则「不劣于初始出界量」放行
-    #     −x（贴附 pass 随后自由聚拢，断言锚定 separate move 本身）。
-    pieces = {'g01_30': _rect_piece('g01_30', 100, 30),
-              'g02_30': _rect_piece('g02_30', 100, 30, label='g02'),
-              'g03_30': _rect_piece('g03_30', 100, 130, label='g03'),
-              'g04_30': _rect_piece('g04_30', 100, 70, label='g04')}
-    placed = [_pl('g01_30', 0, 500, 95),    # A：y∈[95,125]，gate=122 → 出界 3
-              _pl('g02_30', 0, 420, 95),    # B：与 A 叠 20mm（分离对象）
-              _pl('g03_30', 0, 560, 0),     # C：全高右柱，堵 A/B 的 −y 与逃逸
-              _pl('g04_30', 0, 420, 20)]    # D2：堵 B 的 −y 落位
-    out, rep = polish_layout(placed, pieces, 122.0)
-    sep = [m for m in rep['moves'] if m['kind'] == 'separate' and '−x' in m['detail']]
-    _check('守卫①出界余量解冻贴边片',
-           len(sep) == 1 and sep[0]['index'] == 0
-           and rep['after']['overlap_pairs'] == 0
-           and abs(sep[0]['to']['translation'][1]
-                   - sep[0]['from']['translation'][1]) < 1e-6,
-           f'moves={[(m["index"], m["kind"]) for m in rep["moves"]]} '
-           f'residual={len(rep["residual"])}')
-
-    # ⑲ 守卫③碰撞口径（2026-10-06 B2 压线收敛）：A 与 B 叠 10mm（目标对）、与
-    #     C 叠 20mm（d 预算设计压线 —— collide 轮廓局部内缩 25mm 与 A 干净）；
-    #     四面墙堵住 ±y/−x/+x 的毛版净窗（旧行为全灭双对 residual，判别性在
-    #     tests/test_polish.py 双模式断言）。碰撞口径下 A −y 10 落点对 C 的 erode
-    #     轮廓零重合 → 放行（保留压线不再误杀候选）。
-    pieces = {
-        'g01_30': _rect_piece('g01_30', 100, 40),           # A @ (200,100)
-        'g02_30': _rect_piece('g02_30', 100, 40, 'g02'),    # B @ (240,130)
-        'g03_30': _rect_piece('g03_30', 120, 80, 'g03'),    # C @ (100,90)
-        'g04_30': _rect_piece('g04_30', 100, 70, 'g04'),    # 下墙 @ (200,20)
-        'g05_30': _rect_piece('g05_30', 100, 70, 'g05'),    # 上墙 @ (200,170)
-        'g06_30': _rect_piece('g06_30', 100, 40, 'g06'),    # 左墙 @ (0,100)
-        'g07_30': _rect_piece('g07_30', 100, 40, 'g07')}    # 右塞 @ (350,130)
-    placed = [_pl('g01_30', 0, 200, 100), _pl('g02_30', 0, 240, 130),
-              _pl('g03_30', 0, 100, 90), _pl('g04_30', 0, 200, 20),
-              _pl('g05_30', 0, 200, 170), _pl('g06_30', 0, 0, 100),
-              _pl('g07_30', 0, 350, 130)]
-    out, rep = polish_layout(
-        placed, pieces, 1000.0,
-        exclude={'labels': ['g04', 'g05', 'g06', 'g07']},
-        collide_polygons={'g03_30': [[25.0, 25.0], [95.0, 25.0],
-                                     [95.0, 55.0], [25.0, 55.0]]})
-    sep = [m for m in rep['moves'] if m['kind'] == 'separate']
-    g_out = [_world_polygon(p['id'], pieces, p['rotation'], p['translation'])
-             for p in out]
-    _check('守卫③碰撞口径放行预算内压线',
-           any(m['index'] == 0 and '−y' in m['detail'] for m in sep)
-           and g_out[0].intersection(g_out[1]).area == 0.0
-           and g_out[0].intersection(g_out[2]).area == 0.0,
-           f'seps={[(m["index"], m["detail"]) for m in sep]} '
-           f'after_pairs={rep["after"]["overlap_pairs"]}（C×左墙新预算压线如实入报告）')
-
-    # ㉑ 分离二巡 ③′（2026-10-06 B4 压线收敛）：M×P 叠 5mm，唯一分离向 +y 5mm
-    #     的落位被悬浮薄片 X 楔住（pass③ 全灭、四向逃逸全被 D4/包络/门幅封死）；
-    #     attach west 把 X 拖到布头（150mm）后落位净空 —— ③′ 脏区重扫补上这刀
-    #     （顺序证明：X 的 attach move 在 separate move 之前）。
-    pieces = {'g01_30': _rect_piece('g01_30', 100, 50),           # M @ (100,45)
-              'g02_30': _rect_piece('g02_30', 100, 50, 'g02'),    # P @ (100,0)
-              'g03_30': _rect_piece('g03_30', 100, 50, 'g03'),    # D4 左墙 @ (0,45)
-              'g04_30': _rect_piece('g04_30', 60, 4, 'g04')}      # X 悬浮片 @ (150,96)
-    placed = [_pl('g01_30', 0, 100, 45), _pl('g02_30', 0, 100, 0),
-              _pl('g03_30', 0, 0, 45), _pl('g04_30', 0, 150, 96)]
-    out, rep = polish_layout(placed, pieces, 145.0)
-    moves = rep['moves']
-    i_att = next((k for k, m in enumerate(moves)
-                  if m['kind'] == 'attach' and m['pid'] == 'g04_30'), None)
-    i_sep = next((k for k, m in enumerate(moves) if m['kind'] == 'separate'), None)
-    _check('分离二巡（attach 后重扫）',
-           rep['before']['overlap_pairs'] == 1
-           and rep['after']['overlap_pairs'] == 0
-           and i_att is not None and i_sep is not None and i_att < i_sep,
-           f'moves={[(m["pid"], m["kind"]) for m in moves]}')
-
-    # ⑳ 分离伴行微避让（2026-10-06 B3）：M×P 叠 5mm，−y 5mm 落位被 X 的 60mm²
-    #     楔形擦边顶死（+y/−x 被门幅/包络封死、四向逃逸全灭）；唯一解 = −y 分离
-    #     带 −30 横向让位（X 在落位右缘，阶梯最后一档才清开）—— 单轴最小分离
-    #     与逃逸都够不着的窄口，伴行兜底补上（882 g01_31×g02_30 同构形态）。
-    pieces = {'g01_30': _rect_piece('g01_30', 100, 40),           # M @ (30,25)
-              'g02_30': _rect_piece('g02_30', 100, 40, 'g02'),    # P @ (0,60) 顶墙
-              'g03_30': _rect_piece('g03_30', 40, 10, 'g03')}     # X @ (100,12)
-    placed = [_pl('g01_30', 0, 30, 25), _pl('g02_30', 0, 0, 60),
-              _pl('g03_30', 0, 100, 12)]
-    out, rep = polish_layout(placed, pieces, 100.0)
-    sep = [m for m in rep['moves']
-           if m['kind'] == 'separate' and '伴行避让' in m['detail']]
-    _check('分离伴行微避让（楔形让位）',
-           len(sep) == 1 and sep[0]['index'] == 0
-           and '−y' in sep[0]['detail'] and 'x−30' in sep[0]['detail']
-           and rep['after']['overlap_pairs'] == 0,
-           f'moves={[(m["pid"], m["kind"]) for m in rep["moves"]]} '
-           f'sep={sep[0]["detail"] if sep else "无"}')
     return ok
 
 
@@ -1943,11 +1616,11 @@ def _demo(intermediate_path, n_pieces) -> bool:
 def main(argv=None) -> int:
     """冒烟入口：``python -m materialsorting.nesting_engine.polish``。
 
-    默认合成夹具自检（AC 二十一项口径：斜片回正/重合分离/紧密 no-op/守卫×2/
+    默认合成夹具自检（AC 十七项口径：斜片回正/重合分离/紧密 no-op/守卫×2/
     多副本 index 寻址/排除集障碍/确定性双跑/compact 回收/compact 无空隙
     逐元素相同/镜像斜片 derotate+透传/镜像片 no-op 原对象/贴附 south 闭合
-    空白带/贴附斜片归位且保贴附/贴附贴墙/逃逸平移兜底/逃逸换角兜底/守卫①出界
-    余量/守卫③碰撞口径/分离二巡/分离伴行微避让），全过打印 PASS、exit 0。
+    空白带/贴附斜片归位且保贴附/贴附贴墙/逃逸平移兜底/逃逸换角兜底），全过打印
+    PASS、exit 0。
     ``--demo`` 追加真实母版几何演示（intermediate 前 N 片确定性带病布局 →
     polish 前后对比，形态对齐 prefix ``--pin-demo`` 先例；无 spyrrow 依赖）。
     intermediate 缺失时 ``--demo`` 提示先 commit（默认合成夹具不受影响照常自检）。

@@ -1,26 +1,17 @@
 // editPolish.ts —— 编辑排料「智能微调」前端接线库（prd-edit-polish US-003，2026-09-05；
-// US-005 补 compact 压缩回收档载荷键；edit-keyboard US-003 补 placed 项 mirror 键；
-// 2026-10-06 压线收敛批次：exclude 恢复态回退 form（C）+ per_type 载荷键（B2））。
+// US-005 补 compact 压缩回收档载荷键；edit-keyboard US-003 补 placed 项 mirror 键）。
 //
 // 职责（纯数据组装 + 单一请求出口，几何真相源留在 Python）：
 //   1. buildPolishPayload：当前 working placements + run.manifest.gate_mm + exclude
 //      best-effort 组装（布局态后端不存、随 body 带上 = /export 同模式）：
 //        - run 带 band 配置（enabled 且 label 在案）→ exclude.labels = [label]
 //          （带形态区域 = 腰头 g 码全部成员，微调永不动，引擎按 label 命中）；
-//        - 2026-10-06 C：run.band 缺席（恢复态/策略合成 run —— RunRecord.band 恒
-//          null）回退 formStore.form（恢复会话已水合 band_enabled/band_label）；
-//          prefix 同理回退 form 的 front/back 整 label 排除（成员级精确排除仅活
-//          run 的 final.prefix 可解析，恢复态无从得知 → over-conservative，与
-//          既有备案口径一致）。882 恢复态实勘：无此回退时微调拆开带链对齐。
 //        - final 带 prefix 统计段（RunRecord.prefix）→ exclude.pids = 组合片 pid
 //          解析出的成员 pid 集合（成套起始端 4+1 片，微调永不动）；
-//        - 两者皆无 → 载荷省略 exclude 键；
+//        - 两者皆无（含策略合成 run —— 无 WS final.prefix 记录）→ 载荷省略 exclude
+//          键（best-effort，over-conservative 可接受：同 pid 其他副本一并跳过）；
 //        - compact（US-005 压缩回收档）：勾选时 compact:true 随下次微调请求发出，
-//          未勾选省略键（服务端缺省 false，additive）；
-//        - per_type（2026-10-06 B2）：collectPerType(form.per_type) 非空时随载荷
-//          发出（omit-when-empty：空配置省略键 = 服务端走旧毛版口径，线格式
-//          零回归）—— 后端经 build_pid_meta 同一管线转碰撞轮廓，守卫③按
-//          「d 预算内保留压线不误杀」的碰撞口径裁决。
+//          未勾选省略键（服务端缺省 false，additive）。
 //   2. postEditPolish：apiFetch POST /api/edit-polish（会话族端点 US-002 成品），
 //      失败抛 Error（message 中文可直显进对比卡：网络错 / 4xx error 文案透传）；
 //      401 session code 由 apiFetch 拦截触发全局阻断弹窗（fail-fast 正确行为），
@@ -31,10 +22,6 @@
 // erode 后轮廓口径 —— 数值可能偏小，差异属预期非 bug。
 
 import { apiFetch } from './api';
-import { collectPerType } from './params';
-import { useFormStore } from '../store/formStore';
-import type { FormState } from './params';
-import type { PerTypeOverrides } from '../types/v03';
 import type { PlacedItem } from '../types/piece';
 import type { RunRecord } from '../store/runRegistry';
 
@@ -75,12 +62,6 @@ export interface PolishPayload {
   exclude?: { labels?: string[]; pids?: string[] };
   /** US-005 压缩回收档（false 省略键 = 服务端缺省同值，additive）。 */
   compact?: boolean;
-  /**
-   * per_type 高级配置（2026-10-06 B2 压线收敛，omit-when-empty）：collectPerType
-   * 清洗后的 {g码: {d, tol}} —— 后端转 per-pid 碰撞轮廓，微调守卫按碰撞口径
-   * （d 预算内保留压线不误杀候选）裁决；空配置省略键 = 旧毛版口径零回归。
-   */
-  per_type?: PerTypeOverrides;
 }
 
 /** POST /api/edit-polish 成功响应（ok 键已校验剥离）。 */
@@ -126,29 +107,17 @@ export function parsePrefixMemberPids(
 
 /**
  * exclude best-effort 组装（详见文件头）：band → labels 键；final.prefix → pids 键；
- * 2026-10-06 C：run 记录缺席（恢复态/策略合成 run，RunRecord.band 恒 null）回退
- * form（band_enabled/band_label 已随恢复水合；prefix 回退 front/back 整 label
- * 排除 —— 成员级精确解析仅活 run 的 final.prefix 可得，over-conservative 与
- * 既有备案口径一致）；两者皆无 → undefined（载荷省略 exclude 键）。
+ * 两者皆无 → undefined（载荷省略 exclude 键）。
  */
 export function buildExclude(
   run: RunRecord | null,
-  form?: FormState,
 ): { labels?: string[]; pids?: string[] } | undefined {
   const labels: string[] = [];
   const pids: string[] = [];
-  const f = form ?? null;
-  const runBand = run?.band?.enabled && run.band.label ? run.band.label : null;
-  const formBand = f && f.band_enabled && f.band_label.trim() ? f.band_label.trim() : null;
-  const bandLabel = runBand ?? formBand;
-  if (bandLabel) labels.push(bandLabel);
+  if (run?.band && run.band.enabled && run.band.label) labels.push(run.band.label);
   const pf = run?.prefix ?? null;
   if (pf && typeof pf.pid === 'string' && pf.pid) {
     pids.push(...parsePrefixMemberPids(pf.pid, pf.size ?? null, pf.extra ?? null));
-  } else if (f && f.prefix_enabled && f.prefix_front.trim() && f.prefix_back.trim()) {
-    for (const lab of [f.prefix_front.trim(), f.prefix_back.trim()]) {
-      if (!labels.includes(lab)) labels.push(lab);
-    }
   }
   if (!labels.length && !pids.length) return undefined;
   const out: { labels?: string[]; pids?: string[] } = {};
@@ -158,8 +127,7 @@ export function buildExclude(
 }
 
 /**
- * 组装微调载荷（working placements + manifest.gate_mm + exclude + compact +
- * per_type）。
+ * 组装微调载荷（working placements + manifest.gate_mm + exclude + compact）。
  * @param compact US-005 压缩回收档（缺省 false = 省略键，服务端缺省同值 additive）。
  * @returns null = run 无 manifest / working 空（不可微调，调用方不应发请求）。
  */
@@ -181,11 +149,9 @@ export function buildPolishPayload(
     })),
     gate_mm: manifest.gate_mm,
   };
-  const exclude = buildExclude(run, useFormStore.getState().form);
+  const exclude = buildExclude(run);
   if (exclude) payload.exclude = exclude;
   if (compact) payload.compact = true;
-  const perType = collectPerType(useFormStore.getState().form.per_type);
-  if (perType) payload.per_type = perType;
   return payload;
 }
 

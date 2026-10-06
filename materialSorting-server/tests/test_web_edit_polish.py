@@ -333,8 +333,7 @@ def test_edit_polish_gate_fallback_and_payload_priority(polish_client, monkeypat
     引擎实参 —— /export、/api/plt-table-preview 同法口径）。"""
     calls = []
 
-    def fake_polish(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False,
-                   collide_polygons=None):
+    def fake_polish(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False):
         calls.append(gate_mm)
         return placed, dict(_REPORT_STUB)
 
@@ -353,8 +352,7 @@ def test_edit_polish_exclude_compact_passthrough(polish_client, monkeypatch):
     compact 缺省 false。"""
     calls = []
 
-    def fake_polish(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False,
-                   collide_polygons=None):
+    def fake_polish(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False):
         calls.append((exclude, compact))
         return placed, dict(_REPORT_STUB)
 
@@ -373,49 +371,6 @@ def test_edit_polish_exclude_compact_passthrough(polish_client, monkeypatch):
     assert calls[-1] == (None, False)
 
 
-def _sq(poly):
-    """shoelace 面积（测试侧轻量算子，避免 import shapely）。"""
-    s = 0.0
-    for (x0, y0), (x1, y1) in zip(poly, poly[1:] + poly[:1]):
-        s += x0 * y1 - x1 * y0
-    return abs(s) / 2.0
-
-
-def test_edit_polish_per_type_collide_passthrough(polish_client, monkeypatch):
-    """2026-10-06 B2：per_type 载荷 → build_pid_meta 同一管线 → per-pid 碰撞轮廓
-    传入引擎 —— d>0 片用 erode 轮廓（内缩 ≠ 毛版）、未设 d 片回退毛版（d=0
-    布局逐字节等价）；缺省不传 → collide_polygons=None（旧行为零回归）；形态
-    非法 → 400 中文 fail-fast。"""
-    calls = {}
-
-    def fake_polish(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False,
-                    collide_polygons=None):
-        calls['col'] = collide_polygons
-        return placed, dict(_REPORT_STUB)
-
-    monkeypatch.setattr(polish_mod, 'polish_layout', fake_polish)
-    # 缺省：不传 per_type → None（旧行为）
-    r = polish_client.post('/api/edit-polish', json={'placed': _overlap_placed()})
-    assert r.status_code == 200 and calls['col'] is None
-    # d>0：g01 erode 轮廓（面积严格小于毛版）；g02 未设 d → 毛版原样引用
-    state = server_mod._PIECES_STATE
-    raw_g01 = state['pieces_by_id']['g01_30']['polygon']
-    raw_g02 = state['pieces_by_id']['g02_30']['polygon']
-    r = polish_client.post('/api/edit-polish', json={
-        'placed': _overlap_placed(),
-        'per_type': {'g01': {'d': 2, 'tol': 45}}})
-    assert r.status_code == 200
-    col = calls['col']
-    assert set(col) == {'g01_30', 'g02_30'}
-    assert col['g02_30'] is raw_g02                                # 未设 d 回退毛版
-    assert _sq(col['g01_30']) < _sq(raw_g01)                       # erode 内缩
-    # 形态非法：per_type 非 dict → 400（值形态容错 = _pf 求解链同口径，值级
-    # 非法由管线吞为继承全局档，路由不做更严判定）
-    r = polish_client.post('/api/edit-polish',
-                           json={'placed': _overlap_placed(), 'per_type': ['g01']})
-    assert r.status_code == 400 and 'per_type' in r.json()['error']
-
-
 # ---------------------------------------------------------------- 线程池执行
 
 def test_edit_polish_runs_in_threadpool(polish_client, monkeypatch):
@@ -430,8 +385,7 @@ def test_edit_polish_runs_in_threadpool(polish_client, monkeypatch):
         threads['loop'] = threading.current_thread()
         return await real_run(func, *args, **kwargs)
 
-    def fake_polish(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False,
-                   collide_polygons=None):
+    def fake_polish(placed, pieces_by_id, gate_mm, *, exclude=None, compact=False):
         threads['polish'] = threading.current_thread()
         return placed, dict(_REPORT_STUB)
 

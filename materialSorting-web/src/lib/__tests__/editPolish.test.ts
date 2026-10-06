@@ -9,23 +9,16 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildExclude, buildPolishPayload, parsePrefixMemberPids } from '../editPolish';
-import { DEFAULT_FORM } from '../params';
 import { runRegistry } from '../../store/runRegistry';
-import { useFormStore } from '../../store/formStore';
 import type { ManifestMsg } from '../../types/ws';
 import type { PlacedItem } from '../../types/piece';
 
-/** C 回退用例的 form 基线（DEFAULT_FORM 全默认关）。 */
-const BASE_FORM = { ...DEFAULT_FORM };
-
 beforeEach(() => {
   runRegistry.clear();
-  useFormStore.setState({ form: { ...DEFAULT_FORM }, hydratedToken: null });
 });
 
 afterEach(() => {
   runRegistry.clear();
-  useFormStore.setState({ form: { ...DEFAULT_FORM }, hydratedToken: null });
 });
 
 function makeManifest(): ManifestMsg {
@@ -109,47 +102,6 @@ describe('buildExclude（exclude best-effort 组装）', () => {
     expect(buildExclude(runRegistry.create(0))).toBeUndefined();
     expect(buildExclude(null)).toBeUndefined();
   });
-
-  // ---- 2026-10-06 C：恢复态回退 form（RunRecord.band=null 的策略合成/恢复 run）----
-
-  it('run.band 缺席 + form band_enabled → 回退 form.band_label（恢复态带保护）', () => {
-    const form = {
-      ...BASE_FORM,
-      band_enabled: true,
-      band_label: 'g01',
-    };
-    // 策略合成/恢复 run（band 恒 null）+ 恢复水合的 form → 带成员受保护
-    expect(buildExclude(runRegistry.create(0), form)).toEqual({ labels: ['g01'] });
-    expect(buildExclude(null, form)).toEqual({ labels: ['g01'] });
-    // form band 关/label 空 → 无回退
-    expect(buildExclude(runRegistry.create(0),
-      { ...BASE_FORM, band_enabled: false, band_label: 'g01' })).toBeUndefined();
-    expect(buildExclude(runRegistry.create(0),
-      { ...BASE_FORM, band_enabled: true, band_label: '' })).toBeUndefined();
-    // run 记录优先于 form（活 run 的 band 配置胜出）
-    const run = runRegistry.create(0);
-    run.band = { enabled: true, label: 'g05' };
-    expect(buildExclude(run, { ...BASE_FORM, band_enabled: true, band_label: 'g01' }))
-      .toEqual({ labels: ['g05'] });
-  });
-
-  it('run.prefix 缺席 + form prefix_enabled → front/back 整 label 排除（over-conservative）', () => {
-    const form = {
-      ...BASE_FORM,
-      prefix_enabled: true,
-      prefix_front: 'g02',
-      prefix_back: 'g03',
-    };
-    expect(buildExclude(runRegistry.create(0), form)).toEqual({ labels: ['g02', 'g03'] });
-    // 与 band 回退并存 → labels 并集去重
-    expect(buildExclude(runRegistry.create(0),
-      { ...form, band_enabled: true, band_label: 'g02' }))
-      .toEqual({ labels: ['g02', 'g03'] });
-    // form prefix 缺 front/back → 无回退
-    expect(buildExclude(runRegistry.create(0),
-      { ...BASE_FORM, prefix_enabled: true, prefix_front: '', prefix_back: 'g03' }))
-      .toBeUndefined();
-  });
 });
 
 describe('buildPolishPayload', () => {
@@ -226,35 +178,5 @@ describe('buildPolishPayload', () => {
     const p = buildPolishPayload(wk, run)!;
     expect(p.placed).toEqual([{ id: 'a_28', rotation: 0, translation: [0, 0] }]);
     expect('mirror' in p.placed[0]).toBe(false);
-  });
-
-  // ---- 2026-10-06 B2/C：per_type 载荷（omit-when-empty）+ form 回退 exclude ----
-
-  it('form per_type 有 d 值 → collectPerType 清洗后随载荷发出（B2 碰撞口径）', () => {
-    const run = runRegistry.create(0);
-    run.manifest = makeManifest();
-    useFormStore.setState({
-      form: { ...BASE_FORM, per_type: { g02: { d: '5', tol: '45' }, g03: { d: '', tol: '' } } },
-    });
-    const p = buildPolishPayload(working, run)!;
-    // collectPerType 同清洗：空串条目继承不写键、数值字符串转数字
-    expect(p.per_type).toEqual({ g02: { d: 5, tol: 45 } });
-  });
-
-  it('form per_type 空 → 载荷省略键（线格式零回归）', () => {
-    const run = runRegistry.create(0);
-    run.manifest = makeManifest();
-    const p = buildPolishPayload(working, run)!;
-    expect('per_type' in p).toBe(false);
-  });
-
-  it('恢复态（run.band=null）+ form band on → 载荷带 exclude.labels（C 保护带）', () => {
-    const run = runRegistry.create(0);           // 策略合成/恢复 run：band 恒 null
-    run.manifest = makeManifest();
-    useFormStore.setState({
-      form: { ...BASE_FORM, band_enabled: true, band_label: 'g01' },
-    });
-    const p = buildPolishPayload(working, run)!;
-    expect(p.exclude).toEqual({ labels: ['g01'] });
   });
 });

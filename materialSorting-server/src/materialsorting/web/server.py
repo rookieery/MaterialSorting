@@ -521,10 +521,6 @@ async def post_edit_polish(request: Request):
       /api/plt-table-preview 同法）；
     - ``exclude`` 透传引擎（labels/pids 双键，缺省 None）；``compact`` 透传
       引擎压缩回收档（US-005：缺省 false = 与无该键行为逐字节相同，additive）；
-    - ``per_type``（2026-10-06 B2 压线收敛，additive 可选键）：{g码: {d, tol}}，
-      前端 form 直出；经 build_pid_meta 同一管线转 per-pid 碰撞轮廓传入引擎 ——
-      守卫③/逃逸按碰撞口径裁决（d 预算内保留压线不再误杀候选，与 sparrow 自身
-      合法性/前端判红同口径）。缺省 → 引擎旧行为（毛版绝对零重合，零回归）；
     - polish 构造段经 ``run_in_threadpool`` 执行（prefix-preview 先例，防阻塞
       事件循环）；顺手 ``edit_hold.refresh(sid)``（编辑钉住与心跳同语义，default
       不进钉住表 —— /api/edit-hold 同口径）。
@@ -581,37 +577,9 @@ async def post_edit_polish(request: Request):
             {'error': 'exclude 必须是 {labels?, pids?} 对象'}, status_code=400)
     compact = bool(payload.get('compact') or False)
 
-    # per_type → collide_polygons（2026-10-06 B2「压线收敛」，additive 可选键）：
-    # 前端 form 直出（与 gate_mm 同为求解参数源、恢复会话已水合），经
-    # ``build_pid_meta`` 同一管线（per_type 覆盖 + 全局钳制 + erode + clean）产出
-    # per-pid 碰撞轮廓 = manifest ``polygon`` = 前端判红单一真相源；d=0 片直接用
-    # 会话毛版（隔离 clean 顶点抽稀噪声 → d=0 布局逐字节等价旧口径）。缺省/空
-    # → None = 引擎旧行为（零回归部署）；形态非法 → 400 中文 fail-fast。
-    per_type_raw = payload.get('per_type')
-    collide_polygons = None
-    if per_type_raw is not None:
-        if not isinstance(per_type_raw, dict):
-            return JSONResponse(
-                {'error': 'per_type 必须是 {g码: {d, tol}} 对象'}, status_code=400)
-        try:
-            from .solver import build_pid_meta
-            pid_meta, _, _ = build_pid_meta(list(pieces_by_id.values()),
-                                            per_type=per_type_raw)
-        except (ValueError, TypeError) as e:
-            return JSONResponse({'error': f'per_type 形态非法：{e}'}, status_code=400)
-        collide_polygons = {}
-        for pid, meta in pid_meta.items():
-            try:
-                d_mm = float(meta.get('d_mm') or 0.0)
-            except (TypeError, ValueError):
-                d_mm = 0.0
-            collide_polygons[pid] = (pieces_by_id[pid]['polygon'] if d_mm <= 0.0
-                                     else meta['polygon'])
-
     def _polish():
         return polish_layout(placed, pieces_by_id, gate_mm,
-                             exclude=exclude, compact=compact,
-                             collide_polygons=collide_polygons)
+                             exclude=exclude, compact=compact)
 
     try:
         placed_new, report = await run_in_threadpool(_polish)

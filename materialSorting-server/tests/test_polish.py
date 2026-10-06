@@ -752,7 +752,7 @@ def test_separate_escape_rects():
     +x 扫描到全净位逃逸。夹具：地板左/天花板中均 exclude（禁其最小分离让路）、
     远右包络锚（封 −x 大位移的守卫②口径）、+y 落位阻挡（封天花板上方）——
     所有常规分离路径被守卫拒，唯一出路是 +x 楔口逃逸。"""
-    pieces = {'g01_30': _piece('g01_30', 230, 150),
+    pieces = {'g01_30': _piece('g01_30', 200, 150),
               'g02_30': _piece('g02_30', 160, 150, label='g02'),
               'g03_30': _piece('g03_30', 60, 110, label='g03'),
               'g04_30': _piece('g04_30', 100, 400, label='g04'),
@@ -895,110 +895,3 @@ def test_performance_120_pieces_under_5s():
     assert elapsed < 5.0
     assert rep['after']['overlap_pairs'] <= rep['before']['overlap_pairs']
     assert rep['after']['width_mm'] <= rep['before']['width_mm'] + 0.5
-
-
-# --------------------------------------------- 2026-10-06 压线收敛（B1/B2）
-
-def test_gate_slack_edge_piece_horizontal_separation():
-    """B1（2026-10-06）：守卫①出界余量 —— 贴边片毛版出界 3mm（sparrow 只约束
-    erode 轮廓的既成事实），±y 被 C/D2 全高堵死、−x 是唯一分离向且 y 不变；
-    旧 y∈[0,gate] 硬卡连纯水平移动都判死（y bounds 原样出界），新规则「不劣于
-    初始出界量」放行。断言锚定 separate move 本身（贴附 pass 随后自由聚拢）。"""
-    pieces = {'g01_30': _piece('g01_30', 100, 30),
-              'g02_30': _piece('g02_30', 100, 30, label='g02'),
-              'g03_30': _piece('g03_30', 100, 130, label='g03'),
-              'g04_30': _piece('g04_30', 100, 70, label='g04')}
-    placed = [_pl('g01_30', 0, 500, 95),    # A：y∈[95,125]，gate=122 → 出界 3
-              _pl('g02_30', 0, 420, 95),    # B：与 A 叠 20mm（分离对象）
-              _pl('g03_30', 0, 560, 0),     # C：全高右柱，堵 A/B 的 −y 与逃逸
-              _pl('g04_30', 0, 420, 20)]    # D2：堵 B 的 −y 落位
-    out, rep = polish_layout(placed, pieces, 122.0)
-    sep = [m for m in rep['moves']
-           if m['kind'] == 'separate' and '−x' in m['detail']]
-    assert len(sep) == 1 and sep[0]['index'] == 0
-    assert rep['after']['overlap_pairs'] == 0
-    assert abs(sep[0]['to']['translation'][1]
-               - sep[0]['from']['translation'][1]) < 1e-6
-
-
-def _b2_kept_overlap_layout():
-    """B2 夹具（2026-10-06）：A×B 目标对（叠 10mm）+ A×C 设计压线（叠 20mm，
-    C 碰撞轮廓局部内缩 25mm 与 A 干净）+ 四面墙（D2 下 / D3 上 / D4 左 / D5 右
-    塞）封死全部毛版净窗 —— 毛版口径下双对不可修（判别性基线），碰撞口径下
-    A −y 10 落点对 C 的 erode 轮廓零重合 → 放行。"""
-    pieces = {'g01_30': _piece('g01_30', 100, 40),
-              'g02_30': _piece('g02_30', 100, 40, label='g02'),
-              'g03_30': _piece('g03_30', 120, 80, label='g03'),
-              'g04_30': _piece('g04_30', 100, 70, label='g04'),
-              'g05_30': _piece('g05_30', 100, 70, label='g05'),
-              'g06_30': _piece('g06_30', 100, 40, label='g06'),
-              'g07_30': _piece('g07_30', 100, 40, label='g07')}
-    placed = [_pl('g01_30', 0, 200, 100), _pl('g02_30', 0, 240, 130),
-              _pl('g03_30', 0, 100, 90), _pl('g04_30', 0, 200, 20),
-              _pl('g05_30', 0, 200, 170), _pl('g06_30', 0, 0, 100),
-              _pl('g07_30', 0, 350, 130)]
-    col = {'g03_30': [[25.0, 25.0], [95.0, 25.0], [95.0, 55.0], [25.0, 55.0]]}
-    return pieces, placed, col
-
-
-def test_collide_caliber_kept_budget_overlap_no_longer_blocks():
-    """B2（2026-10-06）：守卫③碰撞口径 —— d 预算内保留压线不再误杀候选。
-    判别性双模式：毛版口径（collide_polygons 缺省 = 旧行为）双对 residual；
-    碰撞口径下 A×B/A×C 双双分离（A −y 10 即 882 腰头弧片同构路径）。四面墙
-    exclude 钉死（attach/③′ 不许拖墙 —— B4 落地后悬浮墙会被聚拢、破坏
-    「旧行为 residual」判别性基线，钉死后环境稳定两模式可比）。"""
-    pieces, placed, col = _b2_kept_overlap_layout()
-    walls = {'labels': ['g04', 'g05', 'g06', 'g07']}
-    out0, rep0 = polish_layout(placed, pieces, 1000.0, exclude=walls)
-    assert rep0['after']['overlap_pairs'] == 2        # 旧行为：全灭（判别性基线）
-    assert not any(m['kind'] == 'separate' for m in rep0['moves'])
-    out1, rep1 = polish_layout(placed, pieces, 1000.0, exclude=walls,
-                               collide_polygons=col)
-    seps = [(m['index'], m['detail']) for m in rep1['moves']
-            if m['kind'] == 'separate']
-    assert any(i == 0 and '−y' in d for i, d in seps)
-    g = [_world(p['id'], pieces, p['rotation'], p['translation']) for p in out1]
-    assert g[0].intersection(g[1]).area == 0.0
-    assert g[0].intersection(g[2]).area == 0.0
-    # 守卫②④ 不变量照旧；确定性双跑全等
-    assert rep1['after']['width_mm'] <= rep1['before']['width_mm'] + 0.5
-    out2, rep2 = polish_layout(placed, pieces, 1000.0, exclude=walls,
-                               collide_polygons=col)
-    r1 = dict(rep1); r1.pop('elapsed_sec')
-    r2 = dict(rep2); r2.pop('elapsed_sec')
-    assert out1 == out2 and r1 == r2
-
-
-def test_collide_caliber_missing_pid_falls_back_to_raw():
-    """B2 回退口径：collide_polygons 在场但 pid 未命中 → 该片守卫走毛版（最严
-    方向），与完全缺省同判 —— 夹具同上但 collide map 空字典 → 双对 residual、
-    零 separate move（墙 exclude 钉死同上，环境稳定）。"""
-    pieces, placed, _col = _b2_kept_overlap_layout()
-    out, rep = polish_layout(placed, pieces, 1000.0,
-                             exclude={'labels': ['g04', 'g05', 'g06', 'g07']},
-                             collide_polygons={})
-    assert rep['after']['overlap_pairs'] == 2
-    assert not any(m['kind'] == 'separate' for m in rep['moves'])
-
-
-def test_sep_dodge_lateral_wedge():
-    """B3（2026-10-06）：分离伴行微避让 —— M×P 叠 5mm，−y 5mm 落位被 X 的
-    60mm² 楔形擦边顶死（+y/−x 被门幅/包络封死、四向逃逸全灭、单轴最小分离
-    够不着）；唯一解 = −y 分离带 −30 横向让位（X 在落位右缘，阶梯最后一档才
-    清开）。882 g01_31×g02_30 被 g06_36 楔形顶死同构形态。"""
-    pieces = {'g01_30': _piece('g01_30', 100, 40),
-              'g02_30': _piece('g02_30', 100, 40, label='g02'),
-              'g03_30': _piece('g03_30', 40, 10, label='g03')}
-    placed = [_pl('g01_30', 0, 30, 25),    # M：y∈[25,65] 与 P 叠 5mm
-              _pl('g02_30', 0, 0, 60),     # P：y∈[60,100] 贴顶墙
-              _pl('g03_30', 0, 100, 12)]   # X：−y 落位右缘的楔形阻挡
-    out, rep = polish_layout(placed, pieces, 100.0)
-    sep = [m for m in rep['moves']
-           if m['kind'] == 'separate' and '伴行避让' in m['detail']]
-    assert len(sep) == 1 and sep[0]['index'] == 0
-    assert '−y' in sep[0]['detail'] and 'x−30' in sep[0]['detail']
-    assert rep['before']['overlap_pairs'] == 1
-    assert rep['after']['overlap_pairs'] == 0
-    g = [_world(p['id'], pieces, p['rotation'], p['translation']) for p in out]
-    assert g[0].intersection(g[1]).area == 0.0
-    assert g[0].intersection(g[2]).area == 0.0
