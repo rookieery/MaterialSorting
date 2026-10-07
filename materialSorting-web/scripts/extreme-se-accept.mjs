@@ -1,11 +1,11 @@
-// 极限运行 SE 顺延臂端到端冒烟（2026-09-20 US-002；模板 extreme-band-accept.mjs）：
+// 极限运行筛选延长（SE 顺延）臂端到端冒烟（2026-09-20 US-002；模板 extreme-band-accept.mjs）：
 //   1. 上传 5336 母版 → commit → 超排 Tab → 全选码号（默认数量 1/片/码）
-//   2. 极限弹窗【新行为】：模式下拉在场且默认 race → 切 SE 顺延 → 说明行含
-//      「warm 顺延」+ 轮数行切换「k 轮筛选 + 1 轮延长」（120min 默认档 = 21+1；
+//   2. 极限弹窗【新行为】：模式下拉在场且默认 race → 切筛选延长 → 说明行含
+//      「热启动再延长 600 秒」+ 轮数行切换「k 轮筛选 + 1 轮延长」（120min 默认档 = 21+1；
 //      自定义 16 分钟 = 1+1）→ 切回 race 复原（19 轮期望口径）
 //   3. SE 执行 → 202（请求体 strategy:'se'）→ 进度态：标题「极限运行」+
 //      se 形态阶段行「第 1/1 轮 · seed 0 · 求解中」（k=1）+ se chips
-//      （1 筛选 chip + → 分隔 + 延长待定条目，无门杀 ✕）
+//      （1 筛选 chip + → 分隔 + 延长待定条目，无淘汰 ✕）
 //   4. API 侧对拍：/api/extreme/status 载荷 mode='extreme' + strategy='se' +
 //      plan.se {k_screens:1, screen_s:300, ext_s:600, warm:true}
 //   5. 终止运行（冒烟不等待 960s 跑完）→ stopped 收口
@@ -52,7 +52,7 @@ try {
   }
   log(`1b sizes checked: ${await page.locator('.sizes .chip input:checked').count()} of ${sizeIds.length}`);
 
-  // 2. 极限弹窗：模式下拉默认 race → 切 SE 顺延（说明行 / 轮数行 / 回切复原）。
+  // 2. 极限弹窗：模式下拉默认 race → 切筛选延长（说明行 / 轮数行 / 回切复原）。
   await page.getByTestId('extreme-btn').click();
   await page.waitForSelector('.strategy-modal', { timeout: 5000 });
   const modeSel = page.getByTestId('extreme-mode');
@@ -66,9 +66,9 @@ try {
   }
   await modeSel.selectOption('se');
   const desc = await page.getByTestId('extreme-mode-desc').innerText();
-  if (!desc.includes('warm 顺延')) throw new Error(`se 说明行缺 warm 顺延: ${desc}`);
+  if (!desc.includes('热启动再延长 600 秒')) throw new Error(`se 说明行缺热启动延长: ${desc}`);
   const seRounds = await page.getByTestId('extreme-rounds').innerText();
-  if (!seRounds.includes('预计 21 轮筛选 + 1 轮延长（warm 顺延）')) {
+  if (!seRounds.includes('预计 21 轮筛选 + 1 轮延长（自冠军解热启动）')) {
     throw new Error(`se 臂轮数行异常（120min 默认档应 21+1）: ${seRounds}`);
   }
   log(`2 mode ok: race「${raceRounds}」→ se「${seRounds}」`);
@@ -106,7 +106,7 @@ try {
   await page.waitForSelector('[data-testid="strategy-progress-title"]', { timeout: 30000 });
   const title = await page.getByTestId('strategy-progress-title').innerText();
   if (!title.includes('极限运行')) throw new Error(`进度标题异常: ${title}`);
-  // se 形态阶段行（k=1：第 1/1 轮筛选期）+ chips（→ 分隔 + 延长条目，无 ✕门杀）。
+  // se 形态阶段行（k=1：第 1/1 轮筛选期）+ chips（→ 分隔 + 延长条目，无 ✕淘汰）。
   // run_dir 发现 + strategy.json 落盘需数秒（commit 110 片）—— 轮询阶段行直到
   // 呈现「第 1/1 轮」（此前「启动中 · 定位 run 目录…」是正常时序）。
   await page.waitForFunction(
@@ -120,7 +120,7 @@ try {
     .allInnerTexts();
   if (!chips.some((c) => c.includes('延长'))) throw new Error(`se chips 缺延长条目: ${chips}`);
   if (!chips.some((c) => c.includes('→'))) throw new Error(`se chips 缺分隔条: ${chips}`);
-  if (chips.some((c) => c.includes('门杀'))) throw new Error(`se chips 出现门杀条目: ${chips}`);
+  if (chips.some((c) => c.includes('✕淘汰'))) throw new Error(`se chips 出现淘汰条目: ${chips}`);
   log(`4 progress ok: ${title} | ${stage} | chips=${JSON.stringify(chips)}`);
   await page.screenshot({ path: 'scripts/shot-extreme-se-running.png' });
 

@@ -5,7 +5,7 @@
 //   - 执行 click → POST /api/strategy/start 载荷与 buildStartContext 同源
 //   - ESC / 遮罩 / ✕ 关闭均不触发 stop（关弹窗不终止运行）+ running 态文案
 //   - 进度态五件套（标题/大数字/预算条/阶段行/seed chips+事件行）
-//   - race 门杀瞬间 chip ✕门杀 / SE 延长中阶段行 + 两段式 chips
+//   - race 淘汰瞬间 chip ✕淘汰 / SE 延长中阶段行 + 两段式 chips
 //   - 结果态 done/stopped（最优+seed+用布+模式汇总+应用按钮 disabled；2026-08-22
 //     起不再展示服务器 run_dir 路径）
 //   - error 态错误 + 重试（原载荷重发）/ orphan 态清理（stop 路由）
@@ -122,7 +122,7 @@ function setPhase(partial: { phase: StrategyStatus['state']; status?: StrategySt
   });
 }
 
-/** race 运行中 fixture：seed0 完成、seed1 门杀瞬间、seed2 当前求解。 */
+/** race 运行中 fixture：seed0 完成、seed1 淘汰瞬间、seed2 当前求解。 */
 const RACE_RUNNING: StrategyStatus = {
   state: 'running',
   mode: 'race',
@@ -206,12 +206,12 @@ describe('StrategyRunModal (US-005)', () => {
     openModal();
     renderModal();
     const desc = document.body.querySelector('[data-testid="strategy-mode-desc"]')!;
-    expect(desc.textContent).toContain('90s 门处严格破纪录才续跑');
+    expect(desc.textContent).toContain('第 90 秒考核未刷新当前最佳即提前终止');
     act(() => {
       setSelectValue(document.body.querySelector<HTMLSelectElement>('[data-testid="strategy-mode"]')!, 'se');
     });
     expect(document.body.querySelector('[data-testid="strategy-mode-desc"]')!.textContent)
-      .toContain('多轮短筛选后冠军 seed 加时长再战');
+      .toContain('冠军自已有解热启动再延长 180 秒深挖');
   });
 
   it('执行 disabled 条件：solving=true 或 sizes 空 → disabled；正常 → enabled', () => {
@@ -400,7 +400,7 @@ describe('StrategyRunModal (US-005)', () => {
     renderModal();
     setPhase({ phase: 'running', status: RACE_RUNNING });
     expect(document.body.querySelector('[data-testid="strategy-progress-title"]')!.textContent)
-      .toContain('race 门杀 · 总预算 10 分 · 已跑 2 分 5 秒');
+      .toContain('轮间淘汰 · 总预算 10 分 · 已跑 2 分 5 秒');
     expect(document.body.querySelector('[data-testid="strategy-big-density"]')!.textContent).toBe('86.32%');
     const fill = document.body.querySelector('.strategy-budget-fill') as HTMLDivElement;
     expect(fill.style.width).toBe('20.9%');
@@ -409,13 +409,13 @@ describe('StrategyRunModal (US-005)', () => {
       .toContain('第 2/5 轮 · seed 2 · 求解中');
     const chips = Array.from(document.body.querySelectorAll('[data-testid="strategy-seed-chips"] .strategy-chip'))
       .map((c) => ({ text: c.textContent!, cls: c.className }));
-    // seed0 完成 ✓密度 / seed1 门杀瞬间 ✕门杀 / seed2 running ● / seed3-4 未启动灰
+    // seed0 完成 ✓密度 / seed1 淘汰瞬间 ✕淘汰 / seed2 running ● / seed3-4 未启动灰
     expect(chips[0]).toMatchObject({ text: '0 ✓ 86.32%', cls: 'strategy-chip done' });
-    expect(chips[1]).toMatchObject({ text: '1 ✕门杀', cls: 'strategy-chip killed' });
+    expect(chips[1]).toMatchObject({ text: '1 ✕淘汰', cls: 'strategy-chip killed' });
     expect(chips[2]).toMatchObject({ text: '2 ● 85.10%', cls: 'strategy-chip running' });
     expect(chips[3].cls).toContain('pending');
     expect(document.body.querySelector('[data-testid="strategy-event"]')!.textContent)
-      .toContain('✕ seed 1 门杀（85.10% ≤ 门值 86.32%）');
+      .toContain('✕ seed 1 淘汰（85.10% ≤ 考核值 86.32%）');
 
     act(() => {
       (document.body.querySelector('[data-testid="strategy-stop-btn"]') as HTMLButtonElement).click();
@@ -502,7 +502,7 @@ describe('StrategyRunModal (US-005)', () => {
     expect(document.body.querySelector('[data-testid="strategy-result-detail"]')!.textContent)
       .toContain('seed 3 · 用布 710.05 cm');
     expect(document.body.querySelector('[data-testid="strategy-mode-summary"]')!.textContent)
-      .toContain('race：4 轮中 2 轮门杀 · 全程 10 分 5 秒');
+      .toContain('轮间淘汰：4 轮中 2 轮提前终止 · 全程 10 分 5 秒');
     // 2026-08-22：服务器 run_dir 路径不再上屏（含复制按钮）。
     expect(document.body.querySelector('[data-testid="strategy-run-dir"]')).toBeNull();
     expect(document.body.querySelector('[data-testid="strategy-copy-btn"]')).toBeNull();
@@ -608,7 +608,7 @@ describe('StrategyRunModal (US-005)', () => {
     expect(document.body.querySelector('[data-testid="strategy-se-warm-blocked"]')).toBeNull();
   });
 
-  it('进度态：SE plan.warm=false → ⚠ 回退警告常显（带原因）；plan.warm=true 延长中 → 真顺延标注', () => {
+  it('进度态：SE plan.warm=false → ⚠ 回退警告常显（带原因）；plan.warm=true 延长中 → 热启动生效标注', () => {
     openModal();
     renderModal();
     // 回退：no_composite_view（二期装载点原因）→ ⚠ 行（warning 样式）。
@@ -617,20 +617,20 @@ describe('StrategyRunModal (US-005)', () => {
       status: { ...SE_EXT, plan: { ...SE_EXT.plan!, warm: false, warm_reason: 'no_composite_view' } },
     });
     const note = document.body.querySelector('[data-testid="strategy-warm-note"]')!;
-    expect(note.textContent).toContain('延长轮回退重放');
+    expect(note.textContent).toContain('延长轮热启动回退');
     expect(note.textContent).toContain('缺组合视角段');
     expect(note.className).toContain('strategy-warning');
 
-    // 真顺延：延长阶段 → 正向标注（hint 样式，不警示）。
+    // 热启动生效：延长阶段 → 正向标注（hint 样式，不警示）。
     setPhase({
       phase: 'running',
       status: { ...SE_EXT, plan: { ...SE_EXT.plan!, warm: true } },
     });
     const ok = document.body.querySelector('[data-testid="strategy-warm-note"]')!;
-    expect(ok.textContent).toContain('真顺延');
+    expect(ok.textContent).toContain('热启动生效');
     expect(ok.className).toContain('strategy-hint');
 
-    // 真顺延但仍在筛选期 → 不占版面（无 warm 行）。
+    // 热启动生效但仍在筛选期 → 不占版面（无 warm 行）。
     setPhase({
       phase: 'running',
       status: {
@@ -643,7 +643,7 @@ describe('StrategyRunModal (US-005)', () => {
     expect(document.body.querySelector('[data-testid="strategy-warm-note"]')).toBeNull();
   });
 
-  it('结果态：SE summary.warm=false → 汇总行带回退原因；warm=true → 真顺延', () => {
+  it('结果态：SE summary.warm=false → 汇总行带回退原因；warm=true → 热启动生效', () => {
     openModal();
     renderModal();
     setPhase({ phase: 'done', status: { ...SE_EXT, state: 'done' } });
@@ -663,7 +663,7 @@ describe('StrategyRunModal (US-005)', () => {
       });
     });
     expect(document.body.querySelector('[data-testid="strategy-mode-summary"]')!.textContent)
-      .toContain('warm 回退（热启动载荷与重建实例不匹配');
+      .toContain('热启动回退（载荷与重建实例不匹配');
 
     act(() => {
       useStrategyStore.setState({
@@ -680,7 +680,7 @@ describe('StrategyRunModal (US-005)', () => {
       });
     });
     expect(document.body.querySelector('[data-testid="strategy-mode-summary"]')!.textContent)
-      .toContain('warm 真顺延');
+      .toContain('热启动生效');
   });
 
   it('结果态：SE 汇总行带「全程 X 分 X 秒」（与 race 同款 status.elapsed_sec 墙钟口径）', () => {
@@ -702,11 +702,11 @@ describe('StrategyRunModal (US-005)', () => {
     });
     // SE_EXT.elapsed_sec=300 → 全程 5 分 0 秒
     expect(document.body.querySelector('[data-testid="strategy-mode-summary"]')!.textContent)
-      .toContain('SE：2 轮筛选 + 冠军 seed 1 延长 180s · 全程 5 分 0 秒');
+      .toContain('筛选延长：2 轮筛选 + 冠军 seed 1 延长 180s · 全程 5 分 0 秒');
   });
 });
 
-// ------------------------------------------- SE 多候选顺延（US-004 prd-se-ext-top3）
+// ------------------------------------------- SE 多候选延长（US-004 prd-se-ext-top3）
 
 /** SE 多候选延长中 fixture（US-004）：候选 [3,1,4]（名次序），冠军轮（seed 3）
  * 已完成入账、候选 2（seed 1）延长进行中、候选 3（seed 4）待定。 */
@@ -751,7 +751,7 @@ describe('StrategyRunModal SE 多候选纯函数 (US-004)', () => {
 
   it('seExtHint：提交前文案分钟数随延长秒动态计算（band/top-N 镜像常量）', () => {
     expect(seExtHint(180)).toBe(
-      '筛选密度与冠军相差 ≤0.5pt 的 seed 会一并顺延（至多 3 个），最多多花 2×延长时长（约 6 分钟）',
+      '筛选密度与冠军相差 ≤0.5pt 的 seed 会一并进入延长（至多 3 个），最多多花 2×延长时长（约 6 分钟）',
     );
     expect(seExtHint(600)).toContain('约 20 分钟');
     expect(seExtHint(1200)).toContain('约 40 分钟');

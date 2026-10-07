@@ -9,8 +9,9 @@
 //
 // 三态渲染（phase 订阅 strategyStore）：
 //   配置态 idle     时长下拉（10/20/30/60min → --time 600/1200/1800/3600）
-//                  + 模式下拉（race 门杀默认 / SE 顺延）+ 模式说明行随切换（se 附
-//                  多候选顺延最坏额外时长提示，US-004）+ 执行按钮（满核运行开关
+//                  + 模式下拉（轮间淘汰默认 / 筛选延长；2026-10-07 前文案「race
+//                  门杀 / SE 顺延」，CLI --strategy 值仍是 race/se）+ 模式说明行
+//                  随切换（se 附多候选延长最坏额外时长提示，US-004）+ 执行按钮（满核运行开关
 //                  2026-10-05 起移入通用配置面板（幅宽下方，ParamForm），本弹窗
 //                  不再渲染 —— 载荷值改读 ctx.full_cores，三族运行同享）
 //                  （disabled = 主画布 solving || 未选码号 —— 前端互斥防 CPU 竞争
@@ -22,8 +23,8 @@
 //                  ② 当前全局最优利用率大数字 = max(incumbent.density, 当前 seed
 //                     best_frame density)（原面积口径，版师唯一最关心的数）
 //                  ③ 预算进度条 elapsed/total（墙钟口径标「≈」）
-//                  ④ 阶段行：第 n/N 轮 · seed X · 求解中；race 门杀瞬间 chip 变
-//                     ✕门杀（kill_decisions R5 事件逐条 flush）；SE 检测
+//                  ④ 阶段行：第 n/N 轮 · seed X · 求解中；race 淘汰瞬间 chip 变
+//                     ✕淘汰（kill_decisions R5 事件逐条 flush）；SE 检测
 //                     best_frame_s{seed}_ext（current.ext）即切「延长中 · 冠军 seed X」
 //                     （多候选 US-004：m ≥ 2 时按 plan.ext_seeds 名次标
 //                     「候选 i/m」，rank 1 保留「冠军」字样；extra_rounds > 0 时
@@ -33,8 +34,9 @@
 //                     m 条「延·冠军 / 延·候选 i」，m=1 / 旧 run 单冠军条目）
 //                     + 最近 1 条事件行 + 终止按钮
 //   结果态 done/stopped/error/orphan
-//                  done：完成 · 最优 X.XX%（seed N · 用布 X.XX cm）+ 模式汇总（race：
-//                  M 轮中 K 轮门杀 · 全程 X 分 X 秒 / SE：k 筛 + 冠军延长）+
+//                  done：完成 · 最优 X.XX%（seed N · 用布 X.XX cm）+ 模式汇总
+//                  （轮间淘汰：M 轮中 K 轮提前终止 · 全程 X 分 X 秒 /
+//                  筛选延长：k 筛 + 冠军延长）+
 //                  [应用到主画布]（US-006 已接线 —— NestingPage
 //                  applyStrategyResult 经 ControlPanel 透传；未传回调时 disabled）。
 //                  2026-08-22 起不展示服务器 run_dir 路径（浏览器端无法使用、泄露
@@ -73,13 +75,13 @@ const MINUTES_OPTIONS: { value: StrategyMinutes; label: string }[] = [
 const MODE_OPTIONS: { value: StrategyMode; label: string; desc: string }[] = [
   {
     value: 'race',
-    label: 'race 门杀（默认）',
-    desc: '每 3 分钟一轮，90s 门处严格破纪录才续跑，弱 seed 提前淘汰省出预算',
+    label: '轮间淘汰',
+    desc: '每轮 3 分钟，第 90 秒考核未刷新当前最佳即提前终止该轮，省出的预算自动多跑后续轮',
   },
   {
     value: 'se',
-    label: 'SE 顺延',
-    desc: '多轮短筛选后冠军 seed 加时长再战',
+    label: '筛选延长',
+    desc: '每轮 90 秒筛选选出冠军，冠军自已有解热启动再延长 180 秒深挖',
   },
 ];
 
@@ -111,10 +113,10 @@ function fmtWidthCm(mm: number | null | undefined): string {
   return mm === null || mm === undefined ? '—' : `${(mm / 10).toFixed(2)} cm`;
 }
 
-// ------------------------------------------------- SE 多候选顺延（prd-se-ext-top3）
+// ------------------------------------------------- SE 多候选延长（prd-se-ext-top3）
 
 /**
- * SE 多候选顺延口径镜像（后端 portfolio.py 常量，改后端须同步此处文案）：
+ * SE 多候选延长口径镜像（后端 portfolio.py 常量，改后端须同步此处文案）：
  * band = 筛选密度与冠军相差 ≤0.5pt（绝对百分点）、top-N 封顶 3（最坏 +2 轮）。
  * 高级运行 se 延长秒恒 180（web start 不带 --se-extend 覆盖，SE_EXT_S 镜像）。
  */
@@ -129,12 +131,12 @@ export function fmtMinutes(sec: number): string {
 }
 
 /**
- * 提交前多候选顺延文案（US-004）：分钟数按传入延长秒动态计算（2×extSec，
+ * 提交前多候选延长文案（US-004）：分钟数按传入延长秒动态计算（2×extSec，
  * 与 CLI 启动行「最多多花 2×{se_ext}s」同口径），不写死文案 —— 高级运行
  * extSec=180 → 约 6 分钟 / 极限 600 档 → 约 20 分钟（1200 档 CLI-only → 40）。
  */
 export function seExtHint(extSec: number): string {
-  return `筛选密度与冠军相差 ≤${SE_EXT_BAND_PT}pt 的 seed 会一并顺延（至多 ${SE_EXT_TOP_N} 个），`
+  return `筛选密度与冠军相差 ≤${SE_EXT_BAND_PT}pt 的 seed 会一并进入延长（至多 ${SE_EXT_TOP_N} 个），`
     + `最多多花 2×延长时长（约 ${fmtMinutes(extSec * 2)}）`;
 }
 
@@ -149,7 +151,7 @@ export interface SeedChip {
   state: SeedChipState;
 }
 
-/** 该 seed 是否已有 R5 门杀决策（would_kill 且尚未入 per_seed —— 「瞬间 ✕门杀」）。 */
+/** 该 seed 是否已有 R5 淘汰决策（would_kill 且尚未入 per_seed —— 「瞬间 ✕淘汰」）。 */
 function gateKilledSeeds(events: StrategyEvent[]): Set<number> {
   const out = new Set<number>();
   for (const e of events) {
@@ -173,7 +175,7 @@ function chipForSeed(
       : { seed, label: `✓ ${fmtDensity(entry.best_density)}`, state: 'done' };
   }
   if (gateKilled.has(seed)) {
-    return { seed, label: '✕门杀', state: 'killed' };
+    return { seed, label: '✕淘汰', state: 'killed' };
   }
   if (current && current.seed === seed) {
     return { seed, label: `● ${fmtDensity(current.density)}`, state: 'running' };
@@ -290,12 +292,12 @@ export function fmtLastEvent(
   if (!ev) return '暂无事件';
   if (ev.kind === 'gate') {
     if (ev.would_kill) {
-      return `✕ seed ${ev.seed} 门杀（${fmtDensity(ev.d)} ≤ 门值 ${fmtDensity(ev.bar)}）`;
+      return `✕ seed ${ev.seed} 淘汰（${fmtDensity(ev.d)} ≤ 考核值 ${fmtDensity(ev.bar)}）`;
     }
     if (ev.bar === null || ev.bar === undefined) {
       return `seed ${ev.seed} 首轮豁免（${fmtDensity(ev.d)}）`;
     }
-    return `seed ${ev.seed} 过门（${fmtDensity(ev.d)} > 门值 ${fmtDensity(ev.bar)}）`;
+    return `seed ${ev.seed} 达标续跑（${fmtDensity(ev.d)} > 考核值 ${fmtDensity(ev.bar)}）`;
   }
   if (ev.kind === 'extension') {
     if (extSeeds !== null && extSeeds !== undefined && extSeeds.length > 1) {
@@ -322,7 +324,7 @@ export const WARM_REASON_TEXT: Record<string, string> = {
   no_composite_view: '冠军解边车缺组合视角段（band/prefix 开启时须二期产物）',
   worker_unsupported: 'worker 探测 spyrrow 不支持热启动（装载态竞争，已降级重放）',
   worker_serialize_failed: 'worker 序列化热启动载荷失败（已降级重放）',
-  instance_mismatch: '热启动载荷与重建实例不匹配（组合片漂移防御，已降级重放）',
+  instance_mismatch: '载荷与重建实例不匹配（组合片漂移防御，已降级重放）',
 };
 
 /** 回退原因 → 中文（未知枚举原样透出，不吞诊断信息）。 */
@@ -347,7 +349,7 @@ export function effectiveStrategy(
 /**
  * 进度态 warm 状态行文案（有效策略 = se 才有；null = 不显示）：
  * 计划回退（plan.warm=false）→ ⚠ 常显警告（起跑即知，不等延长 pill 从零爬坡
- * 才起疑）；计划真顺延 → 仅延长阶段（current.ext）显示正向标注，筛选期不占版面。
+ * 才起疑）；计划热启动 → 仅延长阶段（current.ext）显示正向标注，筛选期不占版面。
  */
 export function warmProgressNote(
   status: StrategyStatus | null,
@@ -356,12 +358,12 @@ export function warmProgressNote(
   const warm = status.plan?.warm;
   if (warm === false) {
     return {
-      text: `⚠ 延长轮回退重放：${warmReasonText(status.plan?.warm_reason)}`,
+      text: `⚠ 延长轮热启动回退（从头重跑）：${warmReasonText(status.plan?.warm_reason)}`,
       warning: true,
     };
   }
   if (warm === true && status.current?.ext) {
-    return { text: '延长轮 warm 真顺延（自冠军解热启动，密度起点 = 冠军水平）', warning: false };
+    return { text: '延长轮热启动生效（自冠军解继续搜索，密度起点 = 冠军水平）', warning: false };
   }
   return null;
 }
@@ -591,7 +593,7 @@ function ConfigState({
         {desc}
       </div>
       {mode === 'se' && (
-        // 多候选顺延提交前提示（US-004）：最坏额外时长按延长秒动态计算
+        // 多候选延长提交前提示（US-004）：最坏额外时长按延长秒动态计算
         // （高级运行恒 180s → 约 6 分钟），与后端 SE_EXT_S / 启动行口径一致。
         <div className="strategy-hint" data-testid="strategy-ext-hint">
           {seExtHint(STRATEGY_SE_EXT_S)}
@@ -624,7 +626,7 @@ function ConfigState({
 export interface ProgressStateProps {
   status: StrategyStatus | null;
   onStop: () => void;
-  /** 标题行模式名覆写（缺省按 status.mode 推导：SE 顺延 / race 门杀 / 策略运行）。 */
+  /** 标题行模式名覆写（缺省按 status.mode 推导：筛选延长 / 轮间淘汰 / 策略运行）。 */
   modeLabel?: string;
 }
 
@@ -634,7 +636,7 @@ export const EXT_SILENCE_HINT_SEC = 60;
 export function ProgressState({ status, onStop, modeLabel }: ProgressStateProps): JSX.Element {
   const modeLabelResolved =
     modeLabel ??
-    (status?.mode === 'se' ? 'SE 顺延' : status?.mode === 'race' ? 'race 门杀' : '策略运行');
+    (status?.mode === 'se' ? '筛选延长' : status?.mode === 'race' ? '轮间淘汰' : '策略运行');
   const total = status?.total_budget_sec ?? null;
   const elapsed = status?.elapsed_sec ?? null;
   // ② 大数字 = max(incumbent.density, 当前 seed best_frame density)（全局最优）。
@@ -709,7 +711,7 @@ export function ProgressState({ status, onStop, modeLabel }: ProgressStateProps)
         {stageText}
       </div>
       {(() => {
-        // 多候选顺延实际值行（US-004）：extra_rounds 在场（首个延长轮启动时
+        // 多候选延长实际值行（US-004）：extra_rounds 在场（首个延长轮启动时
         // 后端补写）且 >0 → 按 ext_s × extra_rounds 算实际额外时长（开跑前
         // 提示的是最坏 2×ext_s，此处是筛选后的实际值）；m=1（0）/ 旧 run 无键
         // → 不显示。
@@ -721,13 +723,13 @@ export function ProgressState({ status, onStop, modeLabel }: ProgressStateProps)
         }
         return (
           <div className="strategy-hint" data-testid="strategy-ext-extra-hint">
-            多候选顺延：实际 {extra + 1} 个候选（额外 {extra} 轮延长）· 预计多花 ~
+            多候选延长：实际 {extra + 1} 个候选（额外 {extra} 轮延长）· 预计多花 ~
             {fmtMinutes(extS * extra)}
           </div>
         );
       })()}
       {(() => {
-        // SE warm 状态行（2026-09-19）：计划回退 ⚠ 常显 / 真顺延仅延长阶段正向标注。
+        // SE warm 状态行（2026-09-19）：计划回退 ⚠ 常显 / 热启动生效仅延长阶段正向标注。
         const note = warmProgressNote(status);
         return note === null ? null : (
           <div
@@ -747,7 +749,7 @@ export function ProgressState({ status, onStop, modeLabel }: ProgressStateProps)
         }
         return (
           <div className="strategy-hint" data-testid="strategy-ext-silence">
-            延长轮 {fmtElapsed(silentSec)} 无新帧属正常（warm 起点即冠军水平，探索期常无产出）；
+            延长轮 {fmtElapsed(silentSec)} 无新帧属正常（热启动起点即冠军水平，探索期常无产出）；
             求解子进程{status?.worker_alive === false ? '已退出 ⚠' : '存活 ✓'}
           </div>
         );
@@ -812,25 +814,25 @@ export function ResultState({
     );
   }
   const best = result.best;
-  // 模式汇总：race = M 轮中 K 轮门杀 · 全程 X 分 X 秒（墙钟 elapsed_sec）；
+  // 模式汇总：race = M 轮中 K 轮提前终止 · 全程 X 分 X 秒（墙钟 elapsed_sec）；
   // se = k 轮筛选 + 冠军 seed 延长 · 全程 X 分 X 秒（与 race 同款墙钟口径）。
   const perSeed = result.summary.per_seed ?? [];
   let modeSummary: string;
   if (result.summary.race) {
     const kills = result.summary.race.gated_seeds.length;
-    modeSummary = `race：${perSeed.length} 轮中 ${kills} 轮门杀 · 全程 ${fmtElapsed(
+    modeSummary = `轮间淘汰：${perSeed.length} 轮中 ${kills} 轮提前终止 · 全程 ${fmtElapsed(
       status?.elapsed_sec,
     )}`;
   } else if (result.summary.se) {
-    modeSummary = `SE：${result.summary.se.k_screens} 轮筛选 + 冠军 seed ${
+    modeSummary = `筛选延长：${result.summary.se.k_screens} 轮筛选 + 冠军 seed ${
       result.summary.se.champion ?? '—'
     } 延长 ${Math.round(result.summary.se.ext_s)}s · 全程 ${fmtElapsed(status?.elapsed_sec)}`;
     // warm 实际灌入态（config.strategy 回显；延长轮跑过才有键）—— 回退时如实
-    // 说明原因，顺延时一句正向确认（2026-09-19 排查事故补的可观测面）。
+    // 说明原因，生效时一句正向确认（2026-09-19 排查事故补的可观测面）。
     if (result.summary.warm === false) {
-      modeSummary += ` · warm 回退（${warmReasonText(result.summary.warm_reason)}）`;
+      modeSummary += ` · 热启动回退（${warmReasonText(result.summary.warm_reason)}）`;
     } else if (result.summary.warm === true) {
-      modeSummary += ' · warm 真顺延';
+      modeSummary += ' · 热启动生效';
     }
   } else {
     modeSummary = `共 ${perSeed.length} 轮`;

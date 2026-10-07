@@ -20,7 +20,8 @@ import type { PerTypeOverrides } from './v03';
 import type { PieceInfo, PlacedItem } from './piece';
 import type { BandConfig, PrefixConfig } from './ws';
 
-/** 策略模式（与 CLI `--strategy` 一致；race = 方案 B 门杀（默认），se = 方案 A 筛延）。 */
+/** 策略模式（与 CLI `--strategy` 一致；race = 轮间淘汰（方案 B「门杀」，默认），
+ * se = 筛选延长（方案 A「筛延」）—— UI 文案 2026-10-07 起用中文叫法）。 */
 export type StrategyMode = 'se' | 'race';
 
 /**
@@ -100,8 +101,8 @@ export interface ExtremeStartPayload {
   /** 总预算秒（minutes × 60）。 */
   time_total_s: number;
   /**
-   * 极限运行策略（2026-09-20 起）：race 门杀（默认）/ SE 顺延臂（CLI 展开 =
-   * 300s 筛选 + 600s 冠军 warm 顺延 × 极限参数）。缺省不传 = race。
+   * 极限运行策略（2026-09-20 起）：轮间淘汰（race 门杀，默认）/ 筛选延长（SE
+   * 顺延）臂（CLI 展开 = 300s 筛选 + 600s 冠军 warm 顺延 × 极限参数）。缺省不传 = race。
    */
   strategy?: 'race' | 'se';
   seed: number;
@@ -148,7 +149,7 @@ export interface StrategyPlan {
   /** se：warm 计划回退原因（warm=false 时在場，SE_WARM_REASONS 枚举）。 */
   warm_reason?: string | null;
   /**
-   * se 多候选顺延（prd-se-ext-top3 US-003，2026-09-23）—— strategy.json se 段
+   * se 多候选延长（原「顺延」，prd-se-ext-top3 US-003，2026-09-23）—— strategy.json se 段
    * additive 四键：计划态 ext_top_n / ext_band 开跑即写（默认 3 / 0.005）；实际
    * 态 ext_seeds / extra_rounds 在**首个延长轮启动时**补写（R0 / 中断于筛选段
    * 保持计划态，两实际态键不在场）。旧 run / race / 极限 race 臂零新键 → 相关
@@ -159,7 +160,7 @@ export interface StrategyPlan {
   ext_top_n?: number | null;
   /** 计划态：候选带（后端 SE_EXT_BAND 镜像 = 0.005 = 0.5pt，绝对百分点）。 */
   ext_band?: number | null;
-  /** 实际态：顺延候选全集（含冠军，名次序 —— 候选推导的权威源）。 */
+  /** 实际态：延长候选全集（含冠军，名次序 —— 候选推导的权威源）。 */
   ext_seeds?: number[] | null;
   /** 实际态：额外延长轮数 m−1（m=1 → 0；实际额外秒数 = ext_s × 此值）。 */
   extra_rounds?: number | null;
@@ -193,14 +194,14 @@ export interface StrategyPerSeedEntry {
   phase?: string | null;
 }
 
-/** 事件流（status 只保留尾部窗口；门杀/延长/seed 收尾三类）。 */
+/** 事件流（status 只保留尾部窗口；淘汰/延长/seed 收尾三类）。 */
 export type StrategyEvent =
   | {
       kind: 'gate';
       seed: number | null;
       t: number | null;
       d: number | null;
-      /** S_tau 重载 = race 门值 bar 参照（首 seed 豁免时 null）。 */
+      /** S_tau 重载 = race 考核值 bar 参照（首 seed 豁免时 null）。 */
       bar: number | null;
       would_kill: boolean | null;
     }
@@ -219,8 +220,8 @@ export interface StrategyStatus {
   /** 极限运行（US-002 起）status.mode = 'extreme'（状态槽 mode 透传）。 */
   mode?: StrategyMode | 'extreme' | null;
   /**
-   * 极限运行有效策略（2026-09-20 起，start 时状态槽/marker 透传）：'se' = SE
-   * 顺延臂（进度面按 se 形态渲染）；null / 'race' / 缺键 = race 门杀（存量极限
+   * 极限运行有效策略（2026-09-20 起，start 时状态槽/marker 透传）：'se' = 筛选
+   * 延长臂（进度面按 se 形态渲染）；null / 'race' / 缺键 = 轮间淘汰（存量极限
    * run 全为 race 臂）。策略族 status 不带此键。
    */
   strategy?: 'race' | 'se' | null;
@@ -274,7 +275,7 @@ export interface StrategySeSummary {
   ext_s: number;
   champion: number | null;
   /**
-   * 实际顺延候选全集（含冠军，名次序；prd-se-ext-top3 US-001 additive —— 未进
+   * 实际延长候选全集（含冠军，名次序；prd-se-ext-top3 US-001 additive —— 未进
    * 延长为 []，与 champion=null 同判读口径）。
    */
   ext_seeds?: number[] | null;

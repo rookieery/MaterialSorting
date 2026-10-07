@@ -225,8 +225,8 @@ try {
     detailText.includes('seed 7') && detailText.includes((msnMeta.width_mm / 10).toFixed(2) + ' cm'),
     detailText);
   const modeText = (await page.locator('[data-testid="strategy-mode-summary"]').innerText()).trim();
-  check('P3c race 门杀文案渲染（race 模式子段回显）',
-    modeText.startsWith('race：') && modeText.includes('门杀'), modeText);
+  check('P3c 轮间淘汰文案渲染（race 模式子段回显）',
+    modeText.startsWith('轮间淘汰：') && modeText.includes('提前终止'), modeText);
   check('P3d .msn 恢复 toast', (await toasts(page)).some((t) => t.startsWith('状态文件已恢复：')),
     JSON.stringify(await toasts(page)));
   await page.screenshot({ path: OUT + '/p3_restored_modal.png' });

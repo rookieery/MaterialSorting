@@ -7,13 +7,13 @@
 //
 // 与高级运行弹窗的三处刻意差异：
 //   1) 配置态 = 总时长（四档预设 60/120（默认）/240/480 分钟 + 自定义 16~720
-//      分钟）+ 模式下拉（2026-09-20 起，镜像高级运行结构：race 门杀（默认）/
-//      SE 顺延 —— se 臂 CLI 展开 = 300s×k 筛选 + 冠军 600s warm 顺延）；极限
+//      分钟）+ 模式下拉（2026-09-20 起，镜像高级运行结构：轮间淘汰（默认）/
+//      筛选延长 —— se 臂 CLI 展开 = 300s×k 筛选 + 冠军 600s 热启动延长）；极限
 //      参数仍完全隐藏（exploration_pct / early_termination /
 //      quadtree_depth 是实验结论不是可调项；num_workers 除满核开关整体覆盖外
 //      不单独暴露）。满核运行开关 2026-10-05 起移入通用配置（面板幅宽下方，
-//      三族运行同享），本弹窗不再渲染 —— 载荷值改读 ctx.full_cores。SE 顺延
-//      臂附多候选顺延最坏额外时长提示行（US-004，600s 延长 → 约 20 分钟动态
+//      三族运行同享），本弹窗不再渲染 —— 载荷值改读 ctx.full_cores。筛选延长
+//      臂附多候选延长最坏额外时长提示行（US-004，600s 延长 → 约 20 分钟动态
 //      计算）；进度面 se 形态多候选渲染同高级运行（共用 ProgressState）。
 //      预计轮数随时长实时更新：race = N = 1 + floor((T - 602.5) / 347.5)（首轮
 //      全程 + 后续每轮期望耗时，期望口径「实际轮数 >= 预测」）；se = k 轮筛选
@@ -62,13 +62,13 @@ export const EXTREME_MODE_OPTIONS: {
 }[] = [
   {
     value: 'race',
-    label: 'race 门杀（默认）',
-    desc: '每 seed 600s 预算，300s 门处严格破纪录才续跑，弱 seed 提前淘汰省出预算',
+    label: '轮间淘汰',
+    desc: '每轮 600 秒，第 300 秒考核未刷新当前最佳即提前终止该轮，省出的预算自动多跑后续轮',
   },
   {
     value: 'se',
-    label: 'SE 顺延',
-    desc: '300s × k 轮筛选 + 冠军 seed 600s warm 顺延（自冠军解热启动，增量搜索）',
+    label: '筛选延长',
+    desc: '每轮 300 秒筛选选出冠军，冠军自已有解热启动再延长 600 秒深挖',
   },
 ];
 
@@ -78,7 +78,7 @@ export const EXTREME_PER_ROUND_S = 347.5;
 
 /**
  * 预计轮数 N = 1 + floor((T - 602.5) / 347.5)（T = 总预算秒；下限钳 1）。
- * 期望口径：门杀省出的预算会自动多跑后续轮，故实际轮数 >= 预测。
+ * 期望口径：淘汰省出的预算会自动多跑后续轮，故实际轮数 >= 预测。
  */
 export function estimateExtremeRounds(totalSec: number): number {
   return Math.max(1, 1 + Math.floor((totalSec - EXTREME_FIRST_ROUND_S) / EXTREME_PER_ROUND_S));
@@ -416,11 +416,11 @@ function ExtremeConfigState({
         ) : seScreens === null ? (
           <>请输入 {EXTREME_CUSTOM_MIN_MINUTES}~{EXTREME_CUSTOM_MAX_MINUTES} 之间的整数分钟</>
         ) : (
-          <>预计 {seScreens} 轮筛选 + 1 轮延长（warm 顺延）</>
+          <>预计 {seScreens} 轮筛选 + 1 轮延长（自冠军解热启动）</>
         )}
       </div>
       {mode === 'se' && (
-        // SE 顺延臂多候选提交前提示（US-004）：最坏额外时长按延长秒动态计算
+        // 筛选延长臂多候选提交前提示（US-004）：最坏额外时长按延长秒动态计算
         // （极限 se 臂 ext = 600s → 约 20 分钟；跑动中实际值见进度态 extra 行）。
         <div className="strategy-hint" data-testid="extreme-ext-hint">
           {seExtHint(EXTREME_SE_EXT_S)}
