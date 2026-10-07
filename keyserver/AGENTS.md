@@ -89,7 +89,7 @@ curl http://127.0.0.1:8110/api/key/health   # → {"ok":true,"service":"keyserve
   Vite 构建链。**不进 Vite ≠ 不做 UI 验证**：浏览器验证脚本
   `materialSorting-web/scripts/us008_admin_verify.mjs`（模板 us007；起 双实例 ——
   主实例 ADMIN token+DEV（**勿设 MS_KEY_CLIENT_TOKEN**，DEV 免消费 token 供脚本
-  bind/validate 造态仅在其未设时生效）、裸实例无 token 无 DEV —— 56/56 相位见
+  bind/validate 造态仅在其未设时生效）、裸实例无 token 无 DEV —— 76/76 相位见
   脚本头注）。
 - 页面结构（2026-09-29 改版；2026-10-01 key 表加「最新使用时间」列）：新建表单 =
   类型+数量（无备注名）；key 表**七列**
@@ -104,6 +104,16 @@ curl http://127.0.0.1:8110/api/key/health   # → {"ok":true,"service":"keyserve
   sessionStorage 回登录框**（错 token 不留存）。
 - `avg_daily` JSON 数字丢尾零（2.0 → 2）→ 页面 `Number(x).toFixed(1)` 恒显
   1 位小数（AC 口径「均 X.X/日」）。
+- **key 表滚动 + 列过滤（US-009 2026-10-07，纯前端零后端改动）**：key 表包
+  `.table-scroll` 限高 374px（≈表头+10 行，行高≈34px）超出滚动，表头 sticky
+  **限域容器内**（`.table-scroll thead th`，勿全局 th sticky —— 系统名表无滚动
+  容器，页面滚动时其表头会悬浮）；绑定系统名/属性两个表头带漏斗按钮（无文本
+  svg，不破列序断言）→ 勾选弹窗客户端过滤 `keysCache`（两列低基数分类列）：
+  类别带计数（属性六态固定序 / 系统名字母序、未绑定归一类「（未绑定）」殿后）、
+  两列同时开 = 交集、全选应用 = 清该列过滤、全不选 = 0 命中空态、取消/✕/ESC
+  丢弃；每次 `loadData` 刷新跑 `pruneFilters` 剪掉消失类别（防「勾住的类别删光
+  后整表空转」与「新类别 key 永远不可见」两个死角）；过滤生效时表头漏斗绿高亮
+  + 表下「当前显示 M / N 条」计数行。
 - 删除流：行状态非「正在使用」**直删无弹窗**；正在使用 → 二段确认弹窗
   （`?force=true`）；竞态（加载后变 active）由后端 409 兜底转弹窗。删除成功后
   服务端级联清理无 key 系统行，UI 双表刷新自动消失。

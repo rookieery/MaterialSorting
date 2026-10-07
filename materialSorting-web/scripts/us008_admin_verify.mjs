@@ -24,6 +24,8 @@
 //   L  正在使用 → 二段确认弹窗 → 确认（force）才删（系统行还有 key 不消失）
 //   L2 级联：删掉系统名下最后一把 key → 系统行（含备注）随之删除
 //   M  退出登录清 sessionStorage；再登录后 reload 自动免输
+//   N  key 表滚动容器（约表头+10 行限高、sticky 表头）+ 绑定系统名/属性表头
+//      类别过滤弹窗（计数勾选/交集/全选=清过滤/全不选空态/ESC 丢弃/刷新剪枝）
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
@@ -346,6 +348,109 @@ try {
   await page.reload({ waitUntil: 'networkidle' });
   await page.locator('#main:not(.hidden)').waitFor({ timeout: 8000 });
   check('M reload 免重输（sessionStorage 自动登录）', await page.locator('#main').isVisible());
+
+  // ---- N key 表滚动容器 + 绑定系统名/属性 列过滤（US-009） ----
+  // N1 造态：12 把未绑定次数 key + 1 把绑定中的时长 key（13 行 > 10 行触发滚动）
+  for (let i = 0; i < 12; i++) {
+    await fetch(KEYSERVER_URL + '/api/admin/keys', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Token': ADMIN_TOKEN },
+      body: JSON.stringify({ key_type: 'count', total_uses: 5 }),
+    });
+  }
+  const filterKeyResp = await fetch(KEYSERVER_URL + '/api/admin/keys', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Admin-Token': ADMIN_TOKEN },
+    body: JSON.stringify({ key_type: 'duration', duration_days: 30 }),
+  });
+  const filterKeyCreated = await filterKeyResp.json();
+  const filterBoundKey = filterKeyCreated.key_plaintext;
+  const filterBoundKeyId = filterKeyCreated.id;
+  await consumer('/api/key/bind', { key: filterBoundKey, machine_guid: GUID, system_name: SYS });
+  await page.locator('#btn-refresh').click();
+  await rowOf(filterBoundKey).locator('.badge.ok').waitFor({ timeout: 8000 });
+  check('N 造态 13 行（12 未绑定 + 1 正在使用）', (await rowCount()) === 13, String(await rowCount()));
+
+  // N2 滚动容器：限高生效（≤374px）且 13 行超出可视区；表头 sticky 常驻
+  const scrollBox = await page.locator('.table-scroll').evaluate((el) => ({
+    max: getComputedStyle(el).maxHeight, client: el.clientHeight, scroll: el.scrollHeight,
+  }));
+  check('N 滚动容器限高生效', scrollBox.max !== 'none' && scrollBox.client <= 374, JSON.stringify(scrollBox));
+  check('N 13 行超出可视区（scrollHeight > clientHeight）', scrollBox.scroll > scrollBox.client, JSON.stringify(scrollBox));
+  check('N 表头 sticky（滚动时列名常驻）',
+    (await page.locator('.table-scroll thead th').first().evaluate((el) => getComputedStyle(el).position)) === 'sticky');
+  await page.screenshot({ path: OUT + '/table-scroll.png' });
+
+  // N3 属性过滤：类别带计数；只勾「正在使用」→ 1 行 + 计数行 + 漏斗高亮
+  await page.locator('.th-filter[data-col=status]').click();
+  await page.locator('#filter-overlay:not(.hidden)').waitFor({ timeout: 8000 });
+  check('N 属性弹窗标题', (await page.locator('#filter-title').innerText()) === '过滤：属性');
+  const statusCats = (await page.locator('#filter-list .filter-item').allInnerTexts()).map((t) => t.trim());
+  check('N 属性类别带计数（正在使用（1）/未绑定（12））',
+    statusCats.includes('正在使用（1）') && statusCats.includes('未绑定（12）'), statusCats.join(' | '));
+  await page.screenshot({ path: OUT + '/filter-modal.png' });
+  await page.locator('#filter-list input[data-val="未绑定"]').uncheck();
+  await page.locator('#btn-filter-apply').click();
+  await page.locator('#filter-overlay').waitFor({ state: 'hidden', timeout: 8000 });
+  await page.waitForFunction(() => document.querySelectorAll('#keys-body tr[data-id]').length === 1, { timeout: 8000 });
+  check('N 只剩正在使用 1 行', (await cellText(filterBoundKey, 4)) === '正在使用');
+  check('N 计数行 当前显示 1 / 13', (await page.locator('#filter-count').innerText()).includes('1 / 13'));
+  check('N 属性漏斗高亮 active',
+    await page.locator('.th-filter[data-col=status]').evaluate((el) => el.classList.contains('active')));
+
+  // N4 绑定系统名过滤：类别清单（（未绑定）殿后）+ 两列交集 + 重开回显 + 全选=清过滤
+  await page.locator('.th-filter[data-col=sys]').click();
+  await page.locator('#filter-overlay:not(.hidden)').waitFor({ timeout: 8000 });
+  const sysCats = (await page.locator('#filter-list .filter-item').allInnerTexts()).map((t) => t.trim());
+  check('N 系统名类别（US008-VERIFY（1）+（未绑定）（12）殿后）',
+    sysCats.length === 2 && sysCats[0] === SYS + '（1）' && sysCats[1] === '（未绑定）（12）', sysCats.join(' | '));
+  await page.locator('#filter-list input[data-val=""]').uncheck();
+  await page.locator('#btn-filter-apply').click();
+  await page.locator('#filter-overlay').waitFor({ state: 'hidden', timeout: 8000 });
+  await page.waitForFunction(() => document.querySelectorAll('#keys-body tr[data-id]').length === 1, { timeout: 8000 });
+  check('N 两列交集仍 1 行（绑定 key 同时满足两过滤）', (await cellText(filterBoundKey, 1)) === SYS);
+  await page.locator('.th-filter[data-col=sys]').click();
+  await page.locator('#filter-overlay:not(.hidden)').waitFor({ timeout: 8000 });
+  check('N 重开回显勾选态（（未绑定）仍不勾）', !(await page.locator('#filter-list input[data-val=""]').isChecked()));
+  await page.locator('#filter-all').click();
+  await page.locator('#btn-filter-apply').click();
+  await page.locator('#filter-overlay').waitFor({ state: 'hidden', timeout: 8000 });
+  await page.waitForFunction(() => document.querySelectorAll('#keys-body tr[data-id]').length === 1, { timeout: 8000 });
+  check('N 全选应用 = 清除该列过滤（属性过滤仍生效 1 行）', (await rowCount()) === 1);
+  check('N 系统名漏斗回落非 active', !(await page.locator('.th-filter[data-col=sys]').evaluate((el) => el.classList.contains('active'))));
+
+  // N5 全不选 → 0 命中空态；ESC 丢弃未应用勾选
+  await page.locator('.th-filter[data-col=status]').click();
+  await page.locator('#filter-overlay:not(.hidden)').waitFor({ timeout: 8000 });
+  await page.locator('#filter-none').click();
+  await page.locator('#btn-filter-apply').click();
+  await page.locator('#filter-overlay').waitFor({ state: 'hidden', timeout: 8000 });
+  await page.waitForFunction(() => (document.getElementById('keys-body')?.textContent || '').includes('没有匹配'), { timeout: 8000 });
+  check('N 全不选 → 0 命中空态提示', (await page.locator('#keys-body').innerText()).includes('没有匹配'));
+  await page.locator('.th-filter[data-col=sys]').click();
+  await page.locator('#filter-overlay:not(.hidden)').waitFor({ timeout: 8000 });
+  await page.locator('#filter-list input[data-val=""]').uncheck();
+  await page.keyboard.press('Escape');
+  await page.locator('#filter-overlay').waitFor({ state: 'hidden', timeout: 8000 });
+  check('N ESC 丢弃未应用勾选（行数不变仍 0）', (await rowCount()) === 0);
+
+  // N6 刷新剪枝：属性只勾「正在使用」→ 删光该类别 → 过滤自动回落全量
+  await page.locator('.th-filter[data-col=status]').click();
+  await page.locator('#filter-overlay:not(.hidden)').waitFor({ timeout: 8000 });
+  await page.locator('#filter-all').click();
+  await page.locator('#filter-list input[data-val="未绑定"]').uncheck();
+  await page.locator('#btn-filter-apply').click();
+  await page.locator('#filter-overlay').waitFor({ state: 'hidden', timeout: 8000 });
+  await page.waitForFunction(() => document.querySelectorAll('#keys-body tr[data-id]').length === 1, { timeout: 8000 });
+  await fetch(KEYSERVER_URL + '/api/admin/keys/' + filterBoundKeyId + '?force=true', {
+    method: 'DELETE', headers: { 'X-Admin-Token': ADMIN_TOKEN },
+  });
+  await page.locator('#btn-refresh').click();
+  await page.waitForFunction(() => document.querySelectorAll('#keys-body tr[data-id]').length === 12, { timeout: 8000 });
+  check('N 类别删光后过滤剪枝回落全量 12 行', (await rowCount()) === 12);
+  check('N 属性漏斗剪枝后回落非 active',
+    !(await page.locator('.th-filter[data-col=status]').evaluate((el) => el.classList.contains('active'))));
+  await page.screenshot({ path: OUT + '/filter-pruned.png' });
 } catch (err) {
   check('脚本异常中断', false, String(err));
   await page.screenshot({ path: OUT + '/error.png' }).catch(() => {});

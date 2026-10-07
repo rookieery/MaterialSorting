@@ -86,6 +86,34 @@ pre {
   padding: 10px 12px; font-size: 12px; overflow: auto; margin: 8px 0;
 }
 code { color: #9fd8bd; }
+/* US-009：key 表滚动容器 —— 限高约表头+10 行（行高≈34px），超出滚动；
+   sticky 表头限域容器内（勿全局 th sticky：系统名表无滚动容器，页面滚动时表头会悬浮） */
+.table-scroll {
+  max-height: 374px; overflow-y: auto;
+  scrollbar-width: thin; scrollbar-color: #4a4d56 transparent;
+}
+.table-scroll::-webkit-scrollbar { width: 8px; }
+.table-scroll::-webkit-scrollbar-thumb { background: #4a4d56; border-radius: 4px; }
+.table-scroll::-webkit-scrollbar-track { background: transparent; }
+.table-scroll thead th { position: sticky; top: 0; background: #26282e; z-index: 2; }
+/* 表头过滤按钮（漏斗 svg 无文本，不影响列序断言；过滤生效时绿色高亮） */
+.th-filter {
+  background: transparent; border: 0; padding: 0 0 0 5px; margin: 0;
+  color: #9aa; cursor: pointer; vertical-align: middle; line-height: 1;
+}
+.th-filter:hover { color: #e6e6e6; }
+.th-filter.active { color: #2ea06c; }
+/* 过滤弹窗：全选/全不选快捷链接 + 类别勾选列表（长列表内部滚动） */
+.filter-quick { display: flex; gap: 14px; margin-top: 10px; }
+.filter-quick a { color: #7fd8a8; font-size: 12px; cursor: pointer; }
+.filter-quick a:hover { text-decoration: underline; }
+.filter-list {
+  max-height: 264px; overflow-y: auto; border: 1px solid #34363d; border-radius: 6px;
+  padding: 6px 10px; margin-top: 8px;
+  scrollbar-width: thin; scrollbar-color: #4a4d56 transparent;
+}
+.modal .filter-item { display: flex; align-items: center; gap: 8px; margin: 2px 0; }
+.modal .filter-item input { width: auto; margin: 0; }
 .hidden { display: none !important; }
 </style>
 </head>
@@ -142,23 +170,28 @@ MS_KEY_CLIENT_TOKEN=&lt;随机长 token&gt;    # 消费端 token（frp 部署双
       <p class="dim">时长型「生效时长」默认单位 = 天（绑定机器后即刻激活起算）；次数型单位 = 次。创建后即时出现在下方表格。</p>
     </section>
 
-    <!-- key 表格七列（需求列序）：名称｜绑定系统名｜类型｜详细信息｜属性｜最新使用时间｜操作（备注名/使用统计已迁移至绑定系统名列表） -->
+    <!-- key 表格七列（需求列序）：名称｜绑定系统名｜类型｜详细信息｜属性｜最新使用时间｜操作（备注名/使用统计已迁移至绑定系统名列表）。
+         US-009：滚动容器限高（约表头+10 行，表头 sticky 常驻）+ 绑定系统名/属性表头
+         类别过滤（漏斗按钮 → 勾选弹窗；这两列是低基数分类列，客户端过滤即可） -->
     <section class="card">
       <h2>key 列表</h2>
-      <table>
-        <thead>
-          <tr>
-            <th>名称</th>
-            <th>绑定系统名</th>
-            <th>类型</th>
-            <th>详细信息</th>
-            <th>属性</th>
-            <th>最新使用时间</th>
-            <th>操作</th>
-          </tr>
-        </thead>
-        <tbody id="keys-body"></tbody>
-      </table>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>名称</th>
+              <th>绑定系统名<button type="button" class="th-filter" data-col="sys" title="按绑定系统名过滤"><svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M1.2 2.2h13.6l-5.3 6.2v5.4l-3-1.6V8.4z"/></svg></button></th>
+              <th>类型</th>
+              <th>详细信息</th>
+              <th>属性<button type="button" class="th-filter" data-col="status" title="按属性过滤"><svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M1.2 2.2h13.6l-5.3 6.2v5.4l-3-1.6V8.4z"/></svg></button></th>
+              <th>最新使用时间</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="keys-body"></tbody>
+        </table>
+      </div>
+      <p id="filter-count" class="dim hidden"></p>
       <p class="dim">名称 = key 明文（点击复制）；绑定系统名在绑定机器时快照，不可在此修改；最新使用时间 = 最近一次验证使用（扣次/记账）的时刻，从未使用显 —；备注名与使用统计按绑定系统名汇总在下方表格。</p>
     </section>
 
@@ -240,6 +273,26 @@ MS_KEY_CLIENT_TOKEN=&lt;随机长 token&gt;    # 消费端 token（frp 部署双
   </div>
 </div>
 
+<!-- 列过滤弹窗（US-009：绑定系统名/属性 表头漏斗触发；勾选类别 → 应用后过滤 key 表。
+     全选应用 = 清除该列过滤；全不选 = 0 命中空态；取消/✕/ESC 丢弃未应用勾选） -->
+<div id="filter-overlay" class="overlay hidden">
+  <div class="modal">
+    <div class="modal-head">
+      <h2 id="filter-title">过滤</h2>
+      <button class="x" id="filter-x" title="关闭">✕</button>
+    </div>
+    <div class="filter-quick">
+      <a id="filter-all">全选</a>
+      <a id="filter-none">全不选</a>
+    </div>
+    <div class="filter-list" id="filter-list"></div>
+    <div class="modal-actions">
+      <button id="filter-cancel">取消</button>
+      <button id="btn-filter-apply" class="primary">应用</button>
+    </div>
+  </div>
+</div>
+
 <script>
 'use strict';
 /* keyserver 管理后台（US-008）：同源原生 fetch 消费 /api/admin/* 七接口
@@ -256,6 +309,9 @@ var editRow = null;
 var delTargetId = null;
 var sysEditName = null;
 var msgTimer = null;
+/* 列过滤（US-009）：null = 该列不过滤；数组 = 勾选类别白名单（两列同时开 = 交集） */
+var filters = { sys: null, status: null };
+var filterCol = null;   /* 过滤弹窗当前列（'sys' | 'status'） */
 
 function showEl(el, visible) { el.classList.toggle('hidden', !visible); }
 function esc(s) {
@@ -349,13 +405,68 @@ function statsHtml(stats) {
          '<span>峰 ' + esc(stats.max_daily) + '</span>' +
          '<span>共 ' + esc(stats.total) + '</span>';
 }
-function renderTable(keys) {
-  var body = $('keys-body');
-  if (!keys.length) {
-    body.innerHTML = '<tr><td colspan="7" class="dim">暂无 key，先在上方新建。</td></tr>';
-    return;
+/* ---- 列过滤（US-009）：绑定系统名/属性 两低基数分类列，客户端勾选类别过滤 ---- */
+function sysValue(k) { return k.bound_system_name || ''; }
+/* 类别清单（带计数）：属性按六态固定序；系统名按字母序、未绑定归一类「（未绑定）」殿后 */
+function filterCategories(col) {
+  var counts = {};
+  keysCache.forEach(function (k) {
+    var v = col === 'sys' ? sysValue(k) : k.status;
+    counts[v] = (counts[v] || 0) + 1;
+  });
+  var vals = Object.keys(counts);
+  if (col === 'status') {
+    var order = ['正在使用', '已过期', '已用完', '已合并', '未绑定', '未激活'];
+    vals.sort(function (a, b) { return order.indexOf(a) - order.indexOf(b); });
+  } else {
+    vals.sort(function (a, b) {
+      if (a === '' || b === '') return a === '' ? 1 : -1;
+      return a.localeCompare(b, 'zh-Hans-CN');
+    });
   }
-  body.innerHTML = keys.map(function (k) {
+  return vals.map(function (v) {
+    return { value: v, label: (col === 'sys' && v === '') ? '（未绑定）' : v, count: counts[v] };
+  });
+}
+function passesFilters(k) {
+  if (filters.sys && filters.sys.indexOf(sysValue(k)) === -1) return false;
+  if (filters.status && filters.status.indexOf(k.status) === -1) return false;
+  return true;
+}
+/* 漏斗高亮 + 「当前显示 M / N 条」计数行（仅过滤生效时显示） */
+function updateFilterUi() {
+  ['sys', 'status'].forEach(function (col) {
+    var btn = document.querySelector('.th-filter[data-col="' + col + '"]');
+    if (btn) btn.classList.toggle('active', filters[col] !== null);
+  });
+  var el = $('filter-count');
+  if ((filters.sys || filters.status) && keysCache.length) {
+    el.textContent = '当前显示 ' + keysCache.filter(passesFilters).length + ' / ' + keysCache.length
+      + ' 条（过滤生效中，点表头漏斗调整）';
+    showEl(el, true);
+  } else {
+    showEl(el, false);
+  }
+}
+/* 数据刷新后类别剪枝：消失的类别自动剔除；剩全量/全失 → 回落该列不过滤
+   （防「过滤勾住的类别被删光后整表空转」与「新类别 key 永远不可见」两个死角） */
+function pruneFilters() {
+  ['sys', 'status'].forEach(function (col) {
+    if (!filters[col]) return;
+    var present = filterCategories(col).map(function (c) { return c.value; });
+    var kept = filters[col].filter(function (v) { return present.indexOf(v) !== -1; });
+    filters[col] = (kept.length === 0 || kept.length === present.length) ? null : kept;
+  });
+}
+function renderTable() {
+  var body = $('keys-body');
+  var shown = keysCache.filter(passesFilters);
+  if (!keysCache.length) {
+    body.innerHTML = '<tr><td colspan="7" class="dim">暂无 key，先在上方新建。</td></tr>';
+  } else if (!shown.length) {
+    body.innerHTML = '<tr><td colspan="7" class="dim">没有匹配当前过滤条件的 key。</td></tr>';
+  } else {
+    body.innerHTML = shown.map(function (k) {
     var typeLabel = k.key_type === 'count' ? '次数' : '时长';
     return '<tr data-id="' + esc(k.id) + '">' +
       '<td class="mono key-cell" title="点击复制">' + esc(k.key_plaintext) + '</td>' +
@@ -368,7 +479,9 @@ function renderTable(keys) {
         '<button data-act="renew">续期</button>' +
         '<button data-act="del" class="ghost-danger">删除</button>' +
       '</td></tr>';
-  }).join('');
+    }).join('');
+  }
+  updateFilterUi();
 }
 function renderSystems(systems) {
   var body = $('systems-body');
@@ -394,7 +507,8 @@ function fetchAll() {
 function renderAll(keysData, systemsData) {
   keysCache = keysData.keys || [];
   systemsCache = systemsData.systems || [];
-  renderTable(keysCache);
+  pruneFilters();   /* 新建/删除/续期后数据刷新，过滤类别随之剪枝 */
+  renderTable();
   renderSystems(systemsCache);
   showMain();
 }
@@ -605,6 +719,42 @@ $('btn-del-confirm').addEventListener('click', function () {
 $('del-cancel').addEventListener('click', closeDel);
 $('del-x').addEventListener('click', closeDel);
 
+/* ---- 列过滤弹窗（US-009：表头漏斗触发；取消/✕/ESC 丢弃，应用才生效） ---- */
+function closeFilter() {
+  filterCol = null;
+  showEl($('filter-overlay'), false);
+}
+function openFilter(col) {
+  filterCol = col;
+  $('filter-title').textContent = col === 'sys' ? '过滤：绑定系统名' : '过滤：属性';
+  var selected = filters[col];   /* null = 全选态 */
+  $('filter-list').innerHTML = filterCategories(col).map(function (c) {
+    var checked = selected ? selected.indexOf(c.value) !== -1 : true;
+    return '<label class="filter-item"><input type="checkbox" data-val="' + esc(c.value) + '"'
+      + (checked ? ' checked' : '') + '><span>' + esc(c.label) + '（' + c.count + '）</span></label>';
+  }).join('');
+  showEl($('filter-overlay'), true);
+}
+function setFilterBoxes(on) {
+  $('filter-list').querySelectorAll('input[type=checkbox]').forEach(function (b) { b.checked = on; });
+}
+document.querySelectorAll('.th-filter').forEach(function (btn) {
+  btn.addEventListener('click', function () { openFilter(btn.getAttribute('data-col')); });
+});
+$('filter-all').addEventListener('click', function () { setFilterBoxes(true); });
+$('filter-none').addEventListener('click', function () { setFilterBoxes(false); });
+$('filter-cancel').addEventListener('click', closeFilter);
+$('filter-x').addEventListener('click', closeFilter);
+$('btn-filter-apply').addEventListener('click', function () {
+  if (!filterCol) return;
+  var boxes = $('filter-list').querySelectorAll('input[type=checkbox]');
+  var vals = [];
+  boxes.forEach(function (b) { if (b.checked) vals.push(b.getAttribute('data-val')); });
+  filters[filterCol] = vals.length === boxes.length ? null : vals;   /* 全选 = 不过滤 */
+  closeFilter();
+  renderTable();
+});
+
 /* ---- 表格事件委托：key 表续期/删除 + 名称点击复制；系统表编辑备注 ---- */
 $('keys-body').addEventListener('click', function (e) {
   var btn = e.target.closest('button[data-act]');
@@ -634,7 +784,7 @@ $('systems-body').addEventListener('click', function (e) {
 
 /* ---- ESC 关弹窗 ---- */
 document.addEventListener('keydown', function (e) {
-  if (e.key === 'Escape') { closeEdit(); closeDel(); closeSysEdit(); }
+  if (e.key === 'Escape') { closeEdit(); closeDel(); closeSysEdit(); closeFilter(); }
 });
 
 /* ---- 启动：sessionStorage 有 token → 直接加载（免重输）；

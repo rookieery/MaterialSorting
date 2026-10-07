@@ -40,13 +40,28 @@ def test_admin_page_public_shell_without_token(client):
 
 
 def test_admin_page_table_columns(client):
-    """key 表七列 + 绑定系统名列表五列（需求列序；最新使用时间在属性下一列）。"""
+    """key 表七列 + 绑定系统名列表五列（需求列序；最新使用时间在属性下一列）。
+
+    US-009 起绑定系统名/属性两个 th 内嵌过滤按钮（无文本 svg），列序断言取
+    每个 th 的首段文本（``<button>`` 前的文字）。
+    """
     html = client.get('/admin').text
-    cols = re.findall(r'<th>([^<]*)</th>', html)
+    cols = re.findall(r'<th(?:\s[^>]*)?>([^<]*)', html)   # 误匹配 <thead> 防线：属性前须有空白
     assert cols == [
         '名称', '绑定系统名', '类型', '详细信息', '属性', '最新使用时间', '操作',   # key 列表
         '绑定系统名', '备注名', 'key 数', '使用统计', '操作',             # 绑定系统名列表
     ]
+
+
+def test_admin_page_key_list_scroll_and_filter_markers(client):
+    """US-009：key 表滚动容器限高 + 绑定系统名/属性表头过滤按钮 + 过滤弹窗骨架。"""
+    html = client.get('/admin').text
+    assert 'table-scroll' in html                       # 滚动容器（约表头+10 行）
+    assert 'th-filter' in html                          # 表头过滤按钮
+    assert 'data-col="sys"' in html and 'data-col="status"' in html
+    assert 'filter-overlay' in html and 'btn-filter-apply' in html   # 过滤弹窗
+    assert '（未绑定）' in html                         # 未绑定系统名归一类（表内显示 —）
+    assert 'pruneFilters' in html                       # 数据刷新后过滤类别剪枝
 
 
 def test_admin_page_api_surface_markers(client):
