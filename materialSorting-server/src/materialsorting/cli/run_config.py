@@ -7,7 +7,7 @@ r"""ms-run-config 入口 —— 一条命令跑完「commit → 求解」，无�
                   [--kill shadow|off|on]
                   [--solver-opts '{"exploration_pct":0.7}' | --rotate-opts]
                   [--full-cores]
-                  [--lns [--lns-time 30] [--lns-rounds 5]]
+                  [--lns [--lns-time 30] [--lns-rounds 5]] [--polish]
                   [--strategy [se|race] --time 总预算
                     [--se-screen 90] [--se-extend 180] [--se-warm on|off]
                     [--se-ext-top 3]
@@ -323,6 +323,13 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
                    help='portfolio 结束后对最优布局（incumbent）跑 LNS 波段重排后'
                         '处理（PC-008）：严格更优才回写 result.json（incumbent 更新 + '
                         'lns 段），不优则 result.json 不变（明细仍写 result_lns.json）')
+    p.add_argument('--polish', action='store_true',
+                   help='自动智能微调（2026-10-07，web 通用配置「智能微调」开关透传）：'
+                        'portfolio 结束后对最优布局（incumbent）自动过一遍编辑弹窗'
+                        '同款智能微调（迭代至不动点；band/prefix 成员按 label 保守'
+                        '排除冻结为障碍）；严格更优才回写 result.json（incumbent 更新'
+                        ' + polish 段），不优则布局逐字节不变（明细恒写 '
+                        'result_polish.json）；失败降级 warn 跳过（不否定求解交付物）')
     p.add_argument('--lns-time', type=int, default=None, metavar='N',
                    help='LNS 总预算（秒，默认 30；须与 --lns 同给）')
     p.add_argument('--lns-rounds', type=int, default=None, metavar='N',
@@ -851,6 +858,12 @@ def main(argv: list[str] | None = None) -> int:
             print(f'  ⚠ 起始端成套前后幅已开启（prefix {cfg.prefix.get("front")}'
                   f'/{cfg.prefix.get("back")}）：波段重排会拆布头钉位，'
                   'LNS 环节将跳过', file=sys.stderr)
+    # 自动智能微调开关说明（2026-10-07；改交付物的开关不静默，--quiet 也打）。
+    # band/prefix 开启不跳过（与 LNS 不同）：exclude label 级保守排除冻结带/组合
+    # 片成员为障碍，贴附级微调不破刚性组（编辑弹窗同款语义）。
+    if args.polish:
+        print('智能微调: 运行结束后对最优布局自动过一遍编辑弹窗同款微调'
+              '（严格更优才回写 result.json，明细写 result_polish.json）')
     # PC-009 θ₀ 校准（读 run 统计库，--target 模式才有 kill 门槛可校准）：当前
     # 实例类（class_key）命中且 ≥5 条历史 → θ 初值 = min(target, 历史最大
     # best_density + 0.003)（贴可达性起跑），否则 θ = target。θ₀ 只影响 kill
@@ -981,6 +994,10 @@ def main(argv: list[str] | None = None) -> int:
     # PC-008：LNS 严格更优时的 result.json lns 段（None = 不写该键 —— 无 --lns /
     # LNS 不优的 result.json 与基线逐字节一致，见 _flush_result）。
     lns_state = {'section': None}
+    # 自动智能微调（2026-10-07）：--polish 且跑过微调环节的 result.json polish 段
+    # （None = 不写该键 —— 无 --polish 的 result.json 与基线逐字节一致；不优时
+    # 仍落 improved:false 段，与 lns 段「未改进也记」口径对齐）。
+    polish_state = {'section': None}
 
     def _flush_result() -> dict:
         """逐轮重写 result.json（solve 数组 + best + portfolio 段）—— Ctrl-C/崩溃
@@ -989,7 +1006,8 @@ def main(argv: list[str] | None = None) -> int:
         结构与终态完全一致（config 回显 + commit 摘要 + solve 数组 + best +
         portfolio 段），中途落盘只是「solve 数组尚未跑满 len(seeds)」这一维度不同。
         PC-008：LNS 严格更优时额外附 ``lns`` 段（前后对比 + 轮次明细；未改进 /
-        未启用时无该键 —— 与无 --lns 运行逐字节一致）。
+        未启用时无该键 —— 与无 --lns 运行逐字节一致）。2026-10-07 polish 段同款
+        （--polish 跑过微调环节才附，改进与否都记）。
         """
         best = controller.best_record(solves)
         result = {
@@ -1028,6 +1046,8 @@ def main(argv: list[str] | None = None) -> int:
         }
         if lns_state['section'] is not None:
             result['lns'] = lns_state['section']
+        if polish_state['section'] is not None:
+            result['polish'] = polish_state['section']
         with open(result_path, 'w', encoding='utf-8') as f:
             json.dump(result, f, ensure_ascii=False, indent=2)
         return result
@@ -1197,6 +1217,53 @@ def main(argv: list[str] | None = None) -> int:
                 print('\n[中断] Ctrl-C：LNS 已完成轮次已写 result_lns.json，'
                       '主 result.json 保持完整', file=sys.stderr)
                 return _EXIT_INTERRUPT
+    # ---- 自动智能微调后处理（--polish，2026-10-07）：对最优布局（LNS 之后 = 已含
+    # LNS 改进的当前 result.json best）跑编辑弹窗同款 polish（迭代至不动点）。
+    # **严格更优（物理口径 real_density）才回写**（LNS 同款门槛 + incumbent 三字段
+    # in-place 更新模式）；不优布局逐字节不变（polish 段仍记 improved:false）。
+    # band/prefix 开启**不跳过**（区别于 LNS 波段重排拆形态整段跳过）：polish_post
+    # 按 config 回显做 label 级保守排除，带/组合片成员冻结为障碍。后处理输入错误
+    # 降级 warn 跳过（不否定求解交付物，退出码 0，LNS 同模式）；Ctrl-C → 130。
+    if args.polish:
+        # 惰性导入（2026-10-07）：polish 引擎链（shapely 等）只在旗标开启时才
+        # 加载 —— 无 --polish 的运行路径零导入成本零行为变化（模块级 import 的
+        # 加载耗时曾把 test_cli_extreme 时间戳目录断言的秒边界竞态推高）。
+        from ..nesting_engine.polish import PolishError
+        from .polish_post import polish_run_result
+        try:
+            p_out = polish_run_result(run_dir,
+                                      echo=None if args.quiet else print)
+        except KeyboardInterrupt:
+            print('\n[中断] Ctrl-C：智能微调环节未完成，主 result.json 保持完整',
+                  file=sys.stderr)
+            return _EXIT_INTERRUPT
+        except (PolishError, ValueError, KeyError, TypeError, OSError,
+                json.JSONDecodeError) as e:
+            print(f'智能微调后处理失败（已有求解产物不受影响）: {e}', file=sys.stderr)
+            p_out = None
+        if p_out is not None:
+            pb, pa = p_out['before'], p_out['after']
+            dpt = (p_out.get('delta') or {}).get('density_pt')
+            # 前后两行汇总（终局汇总口径，--quiet 也打，LNS 同款）。
+            print(f'[polish] 前（portfolio 最优）: width={(pb["width_mm"] or 0):.0f}mm '
+                  f'density={(pb["density"] or 0.0):.2%}（原面积口径）')
+            print(f'[polish] 后: width={(pa["width_mm"] or 0):.0f}mm '
+                  f'density={(pa["density"] or 0.0):.2%}（原面积口径）'
+                  + (f' | Δdensity={dpt:+.2f}pt' if dpt is not None else '')
+                  + f' | rounds={p_out["rounds"]} moves={p_out["moves"]}'
+                  f' | improved={p_out["improved"]}')
+            # polish 段恒落（含 improved:false —— 旗标开启即如实记尝试态；
+            # placed_items 不入段控体积，改进布局在 incumbent 与 result_polish.json）。
+            polish_state['section'] = {k: v for k, v in p_out.items()
+                                       if k != 'placed_items'}
+            if p_out['improved']:
+                if controller.incumbent is not None:
+                    controller.incumbent['density'] = pa['density']
+                    controller.incumbent['width_mm'] = pa['width_mm']
+                    controller.incumbent['placed_items'] = p_out['placed_items']
+                best = _flush_result()['best']
+            else:
+                _flush_result()   # 落 polish 段（布局不变）
     d, w, n_placed, elapsed = _best_summary(best)
     # PC-009 run 统计库：完成路径（含 R0 提前停 / kill 路径，均 exit 0 收口）追加
     # 一行 —— θ₀ 校准的数据源（分布越测越准）；best_density 取末行汇总同款口径
@@ -1241,7 +1308,11 @@ def main(argv: list[str] | None = None) -> int:
                    # 延长段才落键；race/legacy 行零新增键，class_key 组成不变）。
                    **({'se_ext': _se_ext_stats_section(solves, controller,
                                                        se_ext_top)}
-                      if strategy == 'se' and controller.se_ext_seeds else {})},
+                      if strategy == 'se' and controller.se_ext_seeds else {}),
+                   # 自动智能微调（2026-10-07，additive：--polish 开启即记；class_key
+                   # 组成不变。严格更优门槛 + 引擎零回退不变量 ⇒ best_density 只升
+                   # 不降，θ₀ 校准池吸收微调后可达性，读侧无需分档）。
+                   **({'polish': True} if args.polish else {})},
     })
     print(f"real_density（原面积口径）= {d:.2%} | "
           f"用布长度 = {w:.0f}mm | 片数 = {n_placed} | "

@@ -20,6 +20,7 @@ const CTX: StartContext = {
   seed: 0,
   time: 120,
   full_cores: false,
+  polish: false,
   params: { d_ext: 0, d_int: 0, tol_ext: 0, tol_int: 0 },
   per_type: null,
   quantities: null,

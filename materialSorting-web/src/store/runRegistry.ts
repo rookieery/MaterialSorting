@@ -201,7 +201,14 @@ export const runRegistry = {
   },
 };
 
-/** 在 final 到达后更新 record（density 双口径；prefix 统计段落 RunRecord.prefix；warm_state 落 RunRecord.warmState；elapsed 落用时终值）。 */
+/**
+ * 在 final 到达后更新 record（density 双口径；prefix 统计段落 RunRecord.prefix；
+ * warm_state 落 RunRecord.warmState；elapsed 落用时终值）。
+ *
+ * 智能微调（2026-10-07）：final 携带 placed_items（polish:true 且微调有改进时后端
+ * 补发）→ 覆写末帧（placed / density / width_mm 与 final 同源同步）—— 渲染/导出/
+ * 编辑排料的权威布局 lastFrame 即为微调后终态；键缺席 = 末帧原样（旧行为）。
+ */
 export function applyFinal(rec: RunRecord, m: FinalMsg): void {
   rec.finalDensity = m.density;
   rec.finalDensitySparrow = m.density_sparrow;
@@ -209,4 +216,14 @@ export function applyFinal(rec: RunRecord, m: FinalMsg): void {
   rec.warmState = m.warm_state ?? null;
   rec.finalElapsed = m.elapsed;
   if (rec.frames.length > 0) rec.lastFrame = rec.frames[rec.frames.length - 1];
+  if (m.placed_items && rec.lastFrame) {
+    const polished: FrameMsg = {
+      ...rec.lastFrame,
+      density: m.density,
+      width_mm: m.width_mm,
+      placed_items: m.placed_items,
+    };
+    rec.frames[rec.frames.length - 1] = polished;
+    rec.lastFrame = polished;
+  }
 }

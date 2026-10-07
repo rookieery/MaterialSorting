@@ -49,6 +49,14 @@ export interface FormState {
    */
   full_cores: boolean;
   /**
+   * 智能微调开关（2026-10-07，满核运行下方通用配置，三族运行同享）：opt-in 默认
+   * 关、随母版重置（同 full_cores 既有决策）。true → 正常完成的运行在交付前自动
+   * 过一遍编辑弹窗同款 polish（普通运行 WS final 投递前 / 高级·极限运行 CLI
+   * portfolio 收口后对 incumbent）；停止/中断的运行不微调（保持已交付 best 帧，
+   * 可进编辑弹窗手动微调）。false = 不附键，线格式零回归。
+   */
+  polish: boolean;
+  /**
    * base seed 字符串。**2026-08-22 seed UI 隐藏后恒 '0'**（ParamForm 删 seed 输入行，
    * 无写入方；parseSeed 恒 0，WS StartPayload.seed=0 契约不变）。
    */
@@ -105,6 +113,7 @@ export const DEFAULT_FORM: FormState = {
   gate: '175.00',
   time: '120',
   full_cores: false,
+  polish: false,
   seed: '0',
   multi_seed: false,
   seed_count: '3',
@@ -463,6 +472,13 @@ export interface StartContext {
    * 不含此键（InitialLayoutFingerprintInput），对其 stale 判定零影响。
    */
   full_cores: boolean;
+  /**
+   * 智能微调（2026-10-07，满核运行下方通用配置）：FormState.polish 防御归一
+   * （=== true，旧 .msn 恢复缺键 undefined → false）。三族运行同享 —— 普通运行
+   * WS 附 polish:true（后端 final 投递前微调）/ 高级·极限运行 start 载荷同键
+   * （后端 spawn 追加 --polish，CLI 收口后对 incumbent 微调）。
+   */
+  polish: boolean;
   /** collectParams：US-019 起恒全 0（per_type 是唯一 d/tol 覆盖入口）。 */
   params: SolveParams;
   /** collectParams：空 → null。 */
@@ -499,6 +515,7 @@ export function collectStartContext(
     gate_mm: parseGate(form),
     time: parseTime(form),
     full_cores: form.full_cores === true,
+    polish: form.polish === true,
     seed: parseSeed(form),
     params,
     per_type,

@@ -270,6 +270,9 @@ export function NestingPage(): React.JSX.Element {
         // 满核运行（2026-10-05 移入通用配置）：useSolveRun 仅 true 附键（关 =
         // 缺席，线格式与旧前端一致）；后端 routes_ws 附 solver_opts.num_workers。
         full_cores: cfg.full_cores,
+        // 智能微调（2026-10-07）：useSolveRun 仅 true 附键（关 = 缺席，线格式
+        // 零回归）；后端 final 投递前对结果布局自动微调（编辑弹窗同款效果）。
+        polish: cfg.polish,
       });
     }
   }

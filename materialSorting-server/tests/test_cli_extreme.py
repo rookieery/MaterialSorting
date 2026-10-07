@@ -209,6 +209,14 @@ _EXTREME_SE_TRAJ = {
 }
 
 
+def _latest_run_dir(runs: Path, prefix: str) -> Path:
+    """按前缀 glob 定位刚创建的 run_dir（修秒边界竞态：dir 创建于 run 起始、
+    断言时刻的 strftime 可能已跨入下一秒 —— 2026-10-07 实勘偶发 False）。"""
+    cands = sorted(p for p in runs.glob(prefix + '*') if p.is_dir())
+    assert cands, f'config_runs 下未找到 {prefix}* 的 run_dir'
+    return cands[-1]
+
+
 def test_extreme_expansion_equivalent_to_manual_three_flags(iso_env, capsys,
                                                             monkeypatch):
     """展开等价性：--extreme 与手敲三件套的产物逐字段一致（started_at 除外）。
@@ -232,8 +240,7 @@ def test_extreme_expansion_equivalent_to_manual_three_flags(iso_env, capsys,
     assert set(EXTREME_SOLVER_OPTS) == {'exploration_pct', 'early_termination',
                                         'num_workers'}
     assert 'quadtree_depth' not in EXTREME_SOLVER_OPTS
-    extreme_rd = runs / ('eq_extreme_' + time.strftime('%Y%m%d-%H%M%S'))
-    assert extreme_rd.is_dir()
+    extreme_rd = _latest_run_dir(runs, 'eq_extreme_')
     result_ext = json.loads((extreme_rd / 'result.json').read_text(encoding='utf-8'))
     plan_ext = json.loads((extreme_rd / 'strategy.json').read_text(encoding='utf-8'))
     rows_ext = _read_kill_decisions(extreme_rd)
@@ -246,8 +253,7 @@ def test_extreme_expansion_equivalent_to_manual_three_flags(iso_env, capsys,
     assert rc2 == 0
     capsys.readouterr()
     assert [c[:2] for c in fake2.calls] == [(0, 600), (1, 600)]
-    manual_rd = runs / ('eq_manual_' + time.strftime('%Y%m%d-%H%M%S'))
-    assert manual_rd.is_dir()
+    manual_rd = _latest_run_dir(runs, 'eq_manual_')
     result_man = json.loads((manual_rd / 'result.json').read_text(encoding='utf-8'))
     plan_man = json.loads((manual_rd / 'strategy.json').read_text(encoding='utf-8'))
     rows_man = _read_kill_decisions(manual_rd)

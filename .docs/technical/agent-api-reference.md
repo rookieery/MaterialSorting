@@ -40,11 +40,11 @@
 | POST | `/api/state-checkpoint` | **会话过期自动恢复 US-001（2026-09-13）内存快照写入（peek 口径）**：body = state-save 同形（save_as 容忍忽略；`pending_strategy_result` 槽随载荷自然携带，守恒失败同 last-good）→ 复用 .msn 管线 gzip 入内存 checkpoint 存储（**不刷会话活性、不建名额**）；会话空 → `200 {stored:false,reason:'empty'}`、守恒失败 → `200 {stored:false,reason:'conservation'}`（last-good；唯一例外 2026-09-14：仅陈旧 run 失配而 pending 在场且守恒通过 → run 块打 `stale:true` 展示级降级标记保留入库 `{stored:true,stale_run:true}`，恢复端按标记跳过守恒终检），见下专节；**多会话**：`registry.peek(sid)`（绝不 resolve，FR-1） | `checkpoint.state_checkpoint`（server.py 文件尾 `register_checkpoint_routes`） |
 | DELETE | `/api/state-checkpoint` | **会话过期自动恢复 US-001（2026-09-13）内存快照幂等清除**：条目不在也 `200 {ok:true}`（F5 干净重置防幽灵回潮，前端 US-004 启动清理消费）；不触碰会话注册表 | `checkpoint.checkpoint_delete`（同上注册） |
 | POST | `/api/state-recover` | **会话过期自动恢复 US-002（2026-09-13）启动期恢复**：`X-Session-Id` = 新 sid + body `{from_sid: 旧sid}` → checkpoint 恢复成当前会话（响应 = state-restore 成功响应同形 + `recovered_from`；single-use 成功即删），见下专节 | `checkpoint.state_recover`（同上注册） |
-| POST | `/api/strategy/start` | strategy US-004：spawn `ms-run-config --strategy` 子进程启动双模式长跑（202）；**2026-08-22 起载荷可带 band**（经 `_parse_band` 同一校验点写进 config，成带与策略模式兼容）；**2026-08-25 起载荷可带 prefix**（经 `_parse_prefix` 同一校验点含 2+2 资格码，非法 → 400 早退，写进 9 键 config）；**多会话 US-004（2026-08-27）：读 `X-Session-Id`**（缺省 default）—— 每会话 409 单飞、跨会话并发放开、数据源 = 会话快照；**状态文件 US-005（2026-09-12）恢复会话数据源**：母版失盘 + doc 带 pieces（状态文件恢复会话）→ config 写 `intermediate` 键（doc 落 `config_runs/web_[<sid6>_]int_<stamp>_<rand6>.json`）替代 `master_dxf`，不写 uploads；**满核运行 `full_cores`（2026-09-27 首落，2026-10-05 开关由弹窗移面板通用配置、三族运行共享；严格 bool 缺省 false）**：true → cmd 追加 `--full-cores`（CLI 层 solver_opts.num_workers 覆盖为 max(1, 逻辑核数−1)，保留 1 核防整机满载卡死；非 bool → 400）；**key 授权 US-005 闸门（2026-09-28）**：全部载荷校验之后、产物清理/spawn 之前 `keygate.ensure_run_allowed(doc.source, deduct=true, sample=bool(doc.sample))`（样例标记豁免 2026-09-29 收紧）—— 未绑 key/次数用完/keyserver 不可达 → 403 中文且不 cleanup 不 spawn 不写 cfg（上一轮产物原样保留）；样例标记（经「样例」入口加载）与 `MS_KEY_MODE=off`（未冻结）豁免 | `strategy.strategy_start` |
+| POST | `/api/strategy/start` | strategy US-004：spawn `ms-run-config --strategy` 子进程启动双模式长跑（202）；**2026-08-22 起载荷可带 band**（经 `_parse_band` 同一校验点写进 config，成带与策略模式兼容）；**2026-08-25 起载荷可带 prefix**（经 `_parse_prefix` 同一校验点含 2+2 资格码，非法 → 400 早退，写进 9 键 config）；**多会话 US-004（2026-08-27）：读 `X-Session-Id`**（缺省 default）—— 每会话 409 单飞、跨会话并发放开、数据源 = 会话快照；**状态文件 US-005（2026-09-12）恢复会话数据源**：母版失盘 + doc 带 pieces（状态文件恢复会话）→ config 写 `intermediate` 键（doc 落 `config_runs/web_[<sid6>_]int_<stamp>_<rand6>.json`）替代 `master_dxf`，不写 uploads；**满核运行 `full_cores`（2026-09-27 首落，2026-10-05 开关由弹窗移面板通用配置、三族运行共享；严格 bool 缺省 false）**：true → cmd 追加 `--full-cores`（CLI 层 solver_opts.num_workers 覆盖为 max(1, 逻辑核数−1)，保留 1 核防整机满载卡死；非 bool → 400）；**智能微调 `polish`（2026-10-07，满核运行下方通用配置，三族运行共享；严格 bool 缺省 false）**：true → cmd 追加 `--polish`（CLI portfolio 收口后对最终胜出 seed 的最优布局自动过一遍编辑弹窗同款微调，严格更优才回写 result.json —— `/api/strategy/result` 读 result.json 自动流到前端；非 bool → 400）；**key 授权 US-005 闸门（2026-09-28）**：全部载荷校验之后、产物清理/spawn 之前 `keygate.ensure_run_allowed(doc.source, deduct=true, sample=bool(doc.sample))`（样例标记豁免 2026-09-29 收紧）—— 未绑 key/次数用完/keyserver 不可达 → 403 中文且不 cleanup 不 spawn 不写 cfg（上一轮产物原样保留）；样例标记（经「样例」入口加载）与 `MS_KEY_MODE=off`（未冻结）豁免 | `strategy.strategy_start` |
 | GET | `/api/strategy/status` | strategy US-004：无状态惰性轮询 run_dir 产物组装进度；**多会话 US-004：读 `X-Session-Id`**（status 轮询即活性，长跑会话不被扫描误杀） | `strategy.strategy_status` |
 | POST | `/api/strategy/stop` | strategy US-004：树杀子进程（taskkill /T /F / killpg）+ 清本会话 marker；**多会话 US-004：读 `X-Session-Id`**（只树杀本会话 pid） | `strategy.strategy_stop` |
 | GET | `/api/strategy/result` | strategy US-004：done/stopped run → best + manifest（应用到主画布数据源）；**多会话 US-004：读 `X-Session-Id`**（只读本会话 run_dir） | `strategy.strategy_result` |
-| POST | `/api/extreme/start` | extreme US-002：spawn `ms-run-config --extreme` 子进程启动极限长跑（202）；载荷 `{time_total_s, seed?, gate_mm?, sizes?, per_type?, quantities?}`（**无 band/prefix** —— 在场即 400）；**满核运行 `full_cores`（2026-09-27 首落，2026-10-05 开关由弹窗移面板通用配置、三族运行共享；严格 bool 缺省 false）**：true → cmd 追加 `--full-cores`（仅覆盖 solver_opts.num_workers = 逻辑核数−1，exploration_pct 0.7 / early_termination False 固化值不动）；**与 /api/strategy/start 同会话状态槽单飞互斥（409 双向）、跨会话独立**；恢复会话 intermediate 数据源分支同策略（状态文件 US-005，2026-09-12）；**key 授权 US-005 闸门（2026-09-28）**：与策略族共用 `_start_run` 同一插入点（载荷校验后、清理/spawn 前）→ 403 中文不动旧产物，双豁免同款 | `strategy.extreme_start` |
+| POST | `/api/extreme/start` | extreme US-002：spawn `ms-run-config --extreme` 子进程启动极限长跑（202）；载荷 `{time_total_s, seed?, gate_mm?, sizes?, per_type?, quantities?}`（**无 band/prefix** —— 在场即 400）；**满核运行 `full_cores`（2026-09-27 首落，2026-10-05 开关由弹窗移面板通用配置、三族运行共享；严格 bool 缺省 false）**：true → cmd 追加 `--full-cores`（仅覆盖 solver_opts.num_workers = 逻辑核数−1，exploration_pct 0.7 / early_termination False 固化值不动）；**智能微调 `polish`（2026-10-07，同策略族 —— `_start_run` 共用校验与 cmd 追加）**：true → cmd 追加 `--polish`；**与 /api/strategy/start 同会话状态槽单飞互斥（409 双向）、跨会话独立**；恢复会话 intermediate 数据源分支同策略（状态文件 US-005，2026-09-12）；**key 授权 US-005 闸门（2026-09-28）**：与策略族共用 `_start_run` 同一插入点（载荷校验后、清理/spawn 前）→ 403 中文不动旧产物，双豁免同款 | `strategy.extreme_start` |
 | GET | `/api/extreme/status` | extreme US-002：与 /api/strategy/status 同构（同槽轮询，mode 透传 'extreme'；进度源白名单不含 curve_s*.json） | `strategy.extreme_status` |
 | POST | `/api/extreme/stop` | extreme US-002：与 /api/strategy/stop 同构（树杀本会话槽内 in-flight run + 清本会话 marker） | `strategy.extreme_stop` |
 | GET | `/api/extreme/result` | extreme US-002：与 /api/strategy/result 同构（best + manifest + 母版漂移 warning；mode 透传 'extreme'） | `strategy.extreme_result` |
@@ -1346,6 +1346,7 @@ ws://127.0.0.1:8010/ws/solve?sid=<sid>     # 缺省/空串 → default 会话（
   "band": {"enabled": true, "label": "g05"},  // US-011 可选腰头成带（2026-08-22 简化后仅 enabled+label 两键）；缺省/null/{}/非 dict/enabled falsy = 关闭（旧行为逐字段不变）
   "prefix": {"enabled": true, "front": "g02", "back": "g03"},  // US-003 可选起始端成套前后幅（无 size —— 资格码中 seeded 随机选码）；缺省/null/{}/非 dict/enabled falsy = 关闭（旧行为逐字段不变）；与 band 可同时开（双开）
   "full_cores": true,             // 满核运行（2026-10-05 前端三族共享，2026-09-27 首落 WS）可选**严格 bool**（非 bool → error 帧早退 + close，与 /api/strategy/start 同口径）；缺省/false = 不附键逐字段旧行为；true → solve_params.solver_opts.num_workers = max(1, 逻辑核数−1)（CLI --full-cores 同式，保留 1 核防整机满载卡死）
+  "polish": true,                 // 智能微调（2026-10-07，满核运行下方通用配置，三族运行同享）可选**严格 bool**（非 bool → error 帧早退 + close）；缺省/false = 不附键、final 键集与旧版逐字节一致；true → final 投递前对结果布局自动过一遍编辑弹窗同款 polish（迭代至不动点，band/prefix 成员 exclude 冻结为障碍、placed 守恒、失败降级投递未微调 final 不炸轮）；**有改进时 final 消息 additive 补发 placed_items + polish 摘要段**（final 本不带布局 —— 渲染权威 = 末帧，微调发生在末帧投递后；前端 applyFinal 见 placed_items 键即覆写 lastFrame）。停止/断开无 final → 不微调
   "initial": {                    // 初始布局 US-003（2026-10-03）可选热启动（保存的初始布局）；缺省/null = 恒 None（旧行为逐字节不变）
     "placed": [                   // 界面保存的放置列表（与 frame placed_items 同形态）
       {"id": "g01_28", "rotation": 0.0, "translation": [0.0, 0.0]}, ...
@@ -1483,11 +1484,24 @@ ws://127.0.0.1:8010/ws/solve?sid=<sid>     # 缺省/空串 → default 会话（
   "warm_state": {                 // 初始布局 US-003（2026-10-03）：StartPayload 带 initial 键时 additive 出现
     "engaged": true,              // 实际灌入态：true = spyrrow 已接受初始解热启动
     "reason": null                // engaged=false 时的中文原因（unsupported / 校验未通过 / 数量参数不一致…）
+  },
+  "placed_items": [               // 智能微调（2026-10-07）：StartPayload polish:true 且微调**有改进**时 additive 补发
+    {"id": "g01_28", "rotation": 0.0, "translation": [0.0, 0.0]}, ...
+  ],
+  "polish": {                     // 智能微调摘要段（polish:true 时 additive；前端静默不读，纯可观测性）
+    "improved": true,             // 有 move 且物理口径密度严格更优（引擎返回输入原对象时 false）
+    "before": {"density": 88.12, "width_mm": 10234.5},   // 首轮起跑态（density 百分数口径，引擎 report）
+    "after": {"density": 88.15, "width_mm": 10230.0},    // 末轮终态
+    "rounds": 2, "moves": 6, "attach_moves": 4,          // 轮数 / move 计数 / 贴附 move 计数
+    "excluded_pieces": 0,         // exclude 冻结实例数（band/prefix 成员）
+    "elapsed_sec": 1.8
   }
 }
 ```
 
 prefix 关闭时 final **无 `prefix` 键**（逐字段零回归）；`width_mm` 口径：pin skipped/回退 = solver 原值，置换成功 = 原始轮廓世界几何重算。2026-09-02 起 `extra`/`residual_mm`/`fallback` 三键 additive（旧前端忽略不炸；`prefix_runs` 工件同三键回显，US-005 回放对拍数据源）。
+
+**智能微调两键（2026-10-07）**：final 消息本不携带布局（渲染权威 = 末帧），微调发生在 worker final 之后、末帧已投递 —— **有改进时经 `placed_items` 补发**（`density`/`width_mm` 顶层键同步为微调后物理口径值；`density_sparrow`/`width_sparrow_mm` 保持 worker 原值），前端 `applyFinal` 见该键即覆写 `lastFrame`（渲染/导出/编辑排料的权威布局即微调终态）。`polish` 摘要段恒随 `polish:true` 出现（improved 如实记 false）。**停止/断开无 final → 不微调**；微调异常 → warn 一行 + 投递未微调 final（两键均缺席 = 键集与旧版逐字节一致，降级不炸轮）；`polish:false`/缺省 → 两键恒缺席（线格式零回归）。
 
 `warm_state`（初始布局 US-003，2026-10-03 additive）：**实际灌入态以此键为准** —— 两数据源择一：worker final `{engaged, reason}` 原样转发（装载点回显成功后 worker 三闸门仍可能降级，token reason 如 `instance_mismatch`）或 routes_ws 侧预丢弃（装载失败）时合成 `{'engaged': false, 'reason': <中文>}`。**无 `initial` 键（含 null）时 final 无 `warm_state` 键**（键集逐字节不变）。
 

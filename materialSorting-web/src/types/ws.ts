@@ -110,6 +110,14 @@ export interface StartPayload {
    * solver_opts.num_workers = max(1, 逻辑核数−1)（CLI --full-cores 同式）。
    */
   full_cores?: true;
+  /**
+   * 智能微调（2026-10-07，满核运行下方通用配置，三族运行同享）：**键缺席 /
+   * false = 旧行为**（useSolveRun 仅 === true 附键 —— JSON 序列化后线格式与旧
+   * 前端逐字节一致）；后端 routes_ws 严格 bool 校验，true → final 投递前对结果
+   * 布局自动过一遍编辑弹窗同款微调（band/prefix 组合片区域冻结、placed 守恒、
+   * 失败降级原 final 不炸轮；停止/中断无 final 不微调）。
+   */
+  polish?: true;
 }
 
 /**
@@ -176,6 +184,13 @@ export interface FinalMsg {
    * 「已从初始布局热启动」。applyFinal 落 RunRecord.warmState。
    */
   warm_state?: FinalWarmState;
+  /**
+   * 智能微调改进布局（2026-10-07；**StartPayload polish:true 且微调有改进时才
+   * 出现**）。final 消息本不携带布局（渲染权威 = 末帧），但微调发生在末帧投递
+   * 之后 —— 改进布局经本键补发，applyFinal 见该键即覆写 lastFrame（placed /
+   * density / width_mm 与 final 同源同步）。键缺席 = 旧行为逐字节不变。
+   */
+  placed_items?: PlacedItem[];
 }
 
 /**

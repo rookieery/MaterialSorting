@@ -68,6 +68,12 @@ export interface StartConfig {
    * routes_ws 校验严格 bool 后附 solver_opts.num_workers = max(1, 逻辑核数−1)。
    */
   full_cores?: boolean | null;
+  /**
+   * 智能微调（2026-10-07 满核运行下方通用配置）：仅 === true 时附 WS
+   * polish:true（关 = **不写键**，线格式与旧前端逐字节一致）；后端 final 投递前
+   * 对结果布局自动过一遍编辑弹窗同款微调（停止/中断无 final 不微调）。
+   */
+  polish?: boolean | null;
 }
 
 /** 各类消息的可选回调（订阅层按需注册；不抛错，无返回）。 */
@@ -134,6 +140,9 @@ export function useSolveRun(cb: UseSolveRunCallbacks = {}): {
       // 满核运行（2026-10-05）：仅 true 附键（条件展开同 initial 惯例，关 = 缺席
       // = 后端 solve_params 与旧版逐字段一致）。
       ...(cfg.full_cores === true ? { full_cores: true } : {}),
+      // 智能微调（2026-10-07）：仅 true 附键（同款条件展开，关 = 缺席 = 后端
+      // final 与旧版逐字段一致）。
+      ...(cfg.polish === true ? { polish: true } : {}),
     };
     ws.onopen = () => {
       ws.send(JSON.stringify(payload));

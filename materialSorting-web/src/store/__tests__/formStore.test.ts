@@ -22,6 +22,7 @@ function editedForm(): FormState {
     gate: '180.50',
     time: '60',
     full_cores: true,
+    polish: false,
     seed: '7',
     multi_seed: true,
     seed_count: '4',

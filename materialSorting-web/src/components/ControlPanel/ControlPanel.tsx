@@ -138,6 +138,12 @@ export interface ControlPanelStartPayload {
    * （仅 true 附键，线格式零回归）。
    */
   full_cores: boolean;
+  /**
+   * 智能微调（2026-10-07 满核运行下方通用配置）：collectStartContext 防御归一。
+   * 随 ctx spread 自动透传，NestingPage → useSolveRun.start → WS StartPayload.polish
+   * （仅 true 附键，线格式零回归）。
+   */
+  polish: boolean;
   /** base seed（seed = base+i, i=0..N-1）。 */
   seed: number;
   /** 实际并行启动的 seed 数量（multi_seed=false → 1；true → clamp(seed_count,2,6)）。 */
@@ -540,8 +546,10 @@ export function ControlPanel({ onStart, phase, status, onStatus, onStop, onApply
         <ParamForm
           gate={form.gate}
           fullCores={form.full_cores}
+          polish={form.polish}
           onGate={(gate) => patch({ gate })}
           onFullCores={(full_cores) => patch({ full_cores })}
+          onPolish={(polish) => patch({ polish })}
           disabled={solving}
         />
         {/* 2026-08-22 seed UI 隐藏（单 seed 模式）：MultiSeedControls（多 seed 对比 + 数量）

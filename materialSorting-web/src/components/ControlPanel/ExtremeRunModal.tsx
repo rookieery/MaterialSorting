@@ -190,6 +190,9 @@ function ExtremeRunModalInner({
       // 满核运行（2026-10-05 开关移入通用配置）：ctx.full_cores（collectStartContext
       // 防御归一）；关 = 不发键（载荷与旧版逐字节同形）。
       ...(ctx.full_cores ? { full_cores: true } : {}),
+      // 智能微调（2026-10-07）：ctx.polish；关 = 不发键（载荷与旧版逐字节同形）。
+      // 后端 spawn 追加 --polish，CLI 收口后只对最终胜出 seed 的最优布局微调。
+      ...(ctx.polish ? { polish: true } : {}),
     };
   }
 

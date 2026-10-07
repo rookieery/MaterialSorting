@@ -24,15 +24,19 @@ export interface ParamFormProps {
   gate: string;
   /** 满核运行开关（2026-10-05 由高级/极限运行弹窗移入通用配置）。 */
   fullCores: boolean;
+  /** 智能微调开关（2026-10-07，满核运行下方，三族运行同享）。 */
+  polish: boolean;
   /** 幅宽输入变化时回调（传入 input.value 字符串）。 */
   onGate: (v: string) => void;
   /** 满核开关切换回调。 */
   onFullCores: (v: boolean) => void;
+  /** 智能微调开关切换回调。 */
+  onPolish: (v: boolean) => void;
   /** US-027 求解中冻结幅宽编辑 / 满核开关（与 StartButton disabled 同套机制）。 */
   disabled?: boolean;
 }
 
-export function ParamForm({ gate, fullCores, onGate, onFullCores, disabled = false }: ParamFormProps) {
+export function ParamForm({ gate, fullCores, polish, onGate, onFullCores, onPolish, disabled = false }: ParamFormProps) {
   return (
     <>
       <div className="field row">
@@ -62,6 +66,23 @@ export function ParamForm({ gate, fullCores, onGate, onFullCores, disabled = fal
               checked={fullCores}
               disabled={disabled}
               onChange={(e) => onFullCores(e.target.checked)}
+            />
+            <span className="strategy-switch-track" />
+          </span>
+        </label>
+      </div>
+      {/* 智能微调开关（2026-10-07，满核运行下方）：开启后正常完成的运行在交付前
+          自动过一遍编辑弹窗同款智能微调（普通运行 final / 高级·极限运行最终胜出
+          seed 的最优布局）；停止/中断的运行不微调。结构与满核运行行同款。 */}
+      <div className="panel-switch-field">
+        <label className="strategy-switch-row">
+          <span className="strategy-switch-text">智能微调</span>
+          <span className="strategy-switch">
+            <input
+              type="checkbox"
+              checked={polish}
+              disabled={disabled}
+              onChange={(e) => onPolish(e.target.checked)}
             />
             <span className="strategy-switch-track" />
           </span>

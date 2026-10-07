@@ -45,6 +45,7 @@ const CTX: StartContext = {
   seed: 5,
   time: 120,
   full_cores: false,
+  polish: false,
   params: { d_ext: 0, d_int: 0, tol_ext: 0, tol_int: 0 },
   per_type: null,
   quantities: { g01: { '30': 2, '32': 1 } },
@@ -288,6 +289,35 @@ describe('StrategyRunModal (US-005)', () => {
     });
     expect(startBodies).toHaveLength(2);
     expect(startBodies[1]).toMatchObject({ mode: 'race', minutes: 20, full_cores: true });
+  });
+
+  it('智能微调（2026-10-07 满核运行下方通用配置）：ctx.polish=false → 载荷无键；true → polish: true（后端 spawn 追加 --polish，CLI 收口后对最终胜出 seed 微调）', async () => {
+    openModal();
+    renderModal();
+    // 默认关（CTX.polish=false）：执行载荷无 polish 键（与旧版逐字节同形）
+    act(() => {
+      (document.body.querySelector('[data-testid="strategy-exec-btn"]') as HTMLButtonElement).click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(startBodies).toHaveLength(1);
+    expect('polish' in (startBodies[0] as Record<string, unknown>)).toBe(false);
+    // 面板开微调（ctx.polish=true）→ 执行 → 载荷带键
+    act(() => {
+      useStrategyStore.getState().reset();
+    });
+    renderModal(false, { ...CTX, polish: true });
+    act(() => {
+      (document.body.querySelector('[data-testid="strategy-exec-btn"]') as HTMLButtonElement).click();
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(startBodies).toHaveLength(2);
+    expect(startBodies[1]).toMatchObject({ mode: 'race', minutes: 20, polish: true });
   });
 
   it('band 开启 → start 载荷带 band（ctx.band 同源透传，2026-08-22 解除互斥）', async () => {

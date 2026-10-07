@@ -317,6 +317,30 @@ describe("ControlPanel 普通运行弹窗 + 满核开关（2026-10-05）", () =>
     expect(cfg.full_cores).toBe(true);
   });
 
+  it("智能微调开关（2026-10-07）：满核运行下方第二行、默认关 → 载荷 polish=false；开 → true（WS/策略附键在 useSolveRun/弹窗层）", async () => {
+    const onStart = vi.fn();
+    renderPanel(onStart);
+    checkFirstSize();
+    // 两行 .panel-switch-field：[0]=满核运行（既有），[1]=智能微调（新）。
+    const rows = container!.querySelectorAll(".panel-switch-field");
+    expect(rows.length).toBe(2);
+    expect(rows[0].textContent).toContain("满核运行");
+    expect(rows[1].textContent).toContain("智能微调");
+    const polishInput = rows[1].querySelector<HTMLInputElement>(
+      "input[type=checkbox]",
+    )!;
+    expect(polishInput.checked).toBe(false);
+    await clickStartFlush(container!.querySelector<HTMLButtonElement>("#start")!);
+    let cfg = onStart.mock.calls[0][0] as ControlPanelStartPayload;
+    expect(cfg.polish).toBe(false);
+    // 开微调 → 再跑 → 载荷 true
+    act(() => polishInput.click());
+    expect(polishInput.checked).toBe(true);
+    await clickStartFlush(container!.querySelector<HTMLButtonElement>("#start")!);
+    cfg = onStart.mock.calls[1][0] as ControlPanelStartPayload;
+    expect(cfg.polish).toBe(true);
+  });
+
   it("时长范围限制 10–1200s（同日二批）：越界输入确认 → 钳到边界回写 + 载荷同值；空串回退 120", async () => {
     const onStart = vi.fn();
     renderPanel(onStart);

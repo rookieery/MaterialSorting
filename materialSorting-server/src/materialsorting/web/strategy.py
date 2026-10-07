@@ -854,6 +854,16 @@ async def _start_run(req: Request, family: str):
         return JSONResponse({'error': f'full_cores 须为布尔值，当前为 {full_cores!r}'},
                             status_code=400)
 
+    # 智能微调（2026-10-07，满核运行下方通用配置，策略/极限两族共用本入口）：
+    # 严格 bool（同 full_cores 口径）；true → spawn cmd 追加 --polish，CLI 收口后
+    # 对最终胜出 seed 的最优布局（incumbent）自动过一遍编辑弹窗同款微调（严格
+    # 更优才回写 result.json —— /api/strategy/result 读 result.json 自动流到前端，
+    # 本模块零结果面改动）。缺省/False = 不追加（旧行为逐字节不变）。
+    auto_polish = payload.get('polish', False)
+    if not isinstance(auto_polish, bool):
+        return JSONResponse({'error': f'polish 须为布尔值，当前为 {auto_polish!r}'},
+                            status_code=400)
+
     # gate_mm：请求值优先（>0 覆盖），非法/未传回退 state（与 /ws/solve 同口径）。
     gate_mm = gate_state
     req_gate = payload.get('gate_mm')
@@ -1003,6 +1013,10 @@ async def _start_run(req: Request, family: str):
     # cmd 末位（既有测试断言 cmd[-1] == '--quiet' 不破）。
     if full_cores:
         cmd.append('--full-cores')
+    # 智能微调旗标（polish=true 时，2026-10-07）：同位置惯例（--time 之前、
+    # --quiet 恒末位）。
+    if auto_polish:
+        cmd.append('--polish')
     cmd += ['--time', str(total_sec), '--quiet']
     # 快照先于 spawn：回退发现路径的 run_dir 基线 = spawn 决策前的目录集 —— CLI
     # 建 run_dir 再快也必然落在基线之后被发现（若快照晚于 spawn，CLI 抢先建目录

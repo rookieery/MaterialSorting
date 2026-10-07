@@ -56,6 +56,19 @@ routes_ws 侧预丢弃时合成 ``{'engaged': False, 'reason': 中文}``。**无
 ``solver_opts.num_workers = max(1, 逻辑核数−1)``（CLI ``--full-cores`` 同式；
 此前仅高级/极限运行弹窗可开，现移入通用配置三族运行同享）。缺省/false =
 不附键，solve_params 与旧版逐字段一致。
+
+智能微调（2026-10-07，满核运行下方通用配置，三族运行同享）：StartPayload
+新增可缺省 ``polish`` 键（严格 bool，非 bool = 结构化 error 早退）—— true 时
+final 投递前在 executor 线程对结果布局自动过一遍编辑弹窗同款
+``polish_layout``（``max_rounds=POLISH_ROUNDS_MAX`` 迭代至不动点，band/prefix
+组合片区域按 ``exclude`` 冻结为障碍），placed 守恒由引擎出口 Counter 终检
+保证；density/width_mm 按物理毛版包络口径重算（``_physical_width_mm`` 单一
+权威公式）。任何异常 → warn 一行 + 投递未微调 final（降级不炸轮，warm 回退
+同语义）。**改进时 final 消息 additive 补发 ``placed_items``**（final 本不
+携带布局 —— 前端渲染权威 = 末帧，而末帧在微调前已投递；前端 applyFinal 见
+该键即覆写 lastFrame）+ ``polish`` 摘要段（前端静默不读）。停止/断开无
+final → 不微调（已交付 best 帧保持原样，可进编辑弹窗手动微调）。缺省/false
+= 行为与旧版逐字节一致（final 键集不变）。
 """
 from __future__ import annotations
 
@@ -126,6 +139,132 @@ def _build_manifest_msg(m: dict, gate_mm: float) -> dict:
             for pid, meta in m['pid_meta'].items()
         ],
     }
+
+
+def _polish_exclude(band_cfg, prefix_cfg, prefix_stats):
+    """自动微调 exclude 组装（编辑弹窗 ``editPolish.buildExclude`` 服务端镜像）。
+
+    band 开 → ``labels=[label]``（带成员 = 该 g 码全部副本，label 级即精确）；
+    prefix 开 → 成员 pid = ``{front}_{size}`` / ``{back}_{size}`` + 补片 pid ——
+    **front/back 取 ``_parse_prefix`` 产物 prefix_cfg**（final ``prefix`` 统计段
+    只回 ``{size, pid, pin, band_pos, extra, residual_mm, fallback}`` 子集，无
+    front/back 键），size / extra.pid 取统计段（extra 在场追加）。双开合并；
+    两者皆无（含 prefix 关闭 / 统计段缺席 → 无从定 size）→ None（载荷省略
+    exclude 键）。over-conservative 同编辑口径：exclude 片永不被移动、恒作
+    障碍（band/prefix 刚性组不破）。
+    """
+    labels: list[str] = []
+    pids: list[str] = []
+    if isinstance(band_cfg, dict) and band_cfg.get('label'):
+        labels.append(str(band_cfg['label']))
+    if isinstance(prefix_cfg, dict) and isinstance(prefix_stats, dict):
+        size = prefix_stats.get('size')
+        front, back = prefix_cfg.get('front'), prefix_cfg.get('back')
+        if size is not None and front and back:
+            pids.extend((f'{front}_{size}', f'{back}_{size}'))
+            extra = prefix_stats.get('extra')
+            if isinstance(extra, dict) and extra.get('pid'):
+                pids.append(str(extra['pid']))
+    if not labels and not pids:
+        return None
+    out: dict[str, list[str]] = {}
+    if labels:
+        out['labels'] = labels
+    if pids:
+        out['pids'] = pids
+    return out
+
+
+def _apply_auto_polish(final_data, pieces, gate_mm, band_cfg, prefix_cfg,
+                       total_area):
+    """final 投递前自动智能微调（2026-10-07）—— 编辑弹窗同款引擎调用，**原地
+    改写** ``final_data``（placed_items / width_mm / density）。
+
+    Parameters
+    ----------
+    final_data : dict
+        worker final（placed_items 已是展开成员形态；``prefix`` 统计段在场则
+        用于 exclude 成员解析）。
+    pieces : list[dict]
+        会话 intermediate pieces 快照（``pid`` + 物理毛版 ``polygon`` —— 与
+        /api/edit-polish 的 ``pieces_by_id`` 同一真相源）。
+    gate_mm : float
+        求解门幅（y ∈ [0, gate]）。
+    band_cfg : dict | None
+        ``_parse_band`` 产物（带成员 label 级排除）。
+    prefix_cfg : dict | None
+        ``_parse_prefix`` 产物（``{'front','back'}`` —— final ``prefix`` 统计段
+        无 front/back 键，成员 pid 的 label 从这取；统计段只供 size / extra）。
+    total_area : float
+        manifest total_area（与 final 原 density 同分子 —— 微调前后密度可比
+        的口径锚）；缺 0 回退 Σ(area×副本数) 自算。
+
+    Returns
+    -------
+    dict | None
+        additive 摘要段（``final_msg['polish']``，前端静默不读）；任何异常 →
+        warn 一行 + 返回 None（final 原样投递，降级不炸轮 —— warm 回退同语义，
+        placed 已被引擎守恒终检保证未半改）。placed 无 move 时 ``improved``
+        False、final_data 不动（引擎返回输入 list 原对象的逐字节不变量）。
+    """
+    from ..nesting_engine.polish import POLISH_ROUNDS_MAX, polish_layout
+    from .solver import _physical_width_mm
+
+    try:
+        pieces_by_id = {p['pid']: p for p in pieces}
+        exclude = _polish_exclude(band_cfg, prefix_cfg, final_data.get('prefix'))
+        placed_in = final_data.get('placed_items') or []
+        placed_new, report = polish_layout(
+            placed_in, pieces_by_id, float(gate_mm),
+            exclude=exclude, max_rounds=POLISH_ROUNDS_MAX)
+        improved = placed_new is not placed_in and bool(report.get('moves'))
+        width_new = None
+        density_new = None
+        if improved:
+            # 物理毛版包络口径重算（_apply_density_dual 不可重入 —— final 的
+            # width_mm/density 已被首轮换算成物理口径，重跑会把物理值当 sparrow
+            # 自报存进 width_sparrow_mm；这里直接用单一权威公式手算同式换算，
+            # density_sparrow / width_sparrow_mm 保持 worker 原值不动）。
+            pid_raw = {p['pid']: p.get('polygon') for p in pieces
+                       if p.get('polygon')}
+            w = _physical_width_mm(placed_new, pid_raw)
+            if w is not None and w > 0:
+                if total_area:
+                    area = float(total_area)
+                else:
+                    from collections import Counter as _Counter
+                    from shapely.geometry import Polygon as _Polygon
+                    area = 0.0
+                    for pid, cnt in _Counter(p['id'] for p in placed_new).items():
+                        piece = pieces_by_id[pid]
+                        a = piece.get('area_mm2') or _Polygon(piece['polygon']).area
+                        area += float(a) * cnt
+                width_new = float(w)
+                density_new = area / (float(w) * float(gate_mm))
+        # 全部计算成功后才落笔（all-or-nothing：重算段任何异常 → 外层 except
+        # 整体降级，final 保持未微调原样，不出现「placed 已换而口径未换」的
+        # 中间态）。
+        if improved:
+            final_data['placed_items'] = placed_new
+            if width_new is not None:
+                final_data['width_mm'] = width_new
+                final_data['density'] = density_new
+        before, after = report['before'], report['after']
+        return {
+            'improved': bool(improved),
+            'before': {'density': before['density'],
+                       'width_mm': before['width_mm']},
+            'after': {'density': after['density'],
+                      'width_mm': after['width_mm']},
+            'rounds': report.get('rounds', 1),
+            'moves': len(report.get('moves') or []),
+            'attach_moves': report.get('attach_moves', 0),
+            'excluded_pieces': len(report.get('excluded') or []),
+            'elapsed_sec': report.get('elapsed_sec'),
+        }
+    except Exception as e:      # noqa: BLE001 降级语义：微调失败绝不否定求解交付物
+        _log.warning('自动智能微调失败，已投递未微调 final: %s', e)
+        return None
 
 
 def _band_demand(p, quantities) -> int:
@@ -363,6 +502,21 @@ async def ws_solve(ws: WebSocket):
                 pass
             return
 
+        # 智能微调（2026-10-07，满核运行下方通用配置）：可缺省 ``polish`` 键
+        # （**严格 bool**，与 full_cores 同口径；非 bool = 结构化 error 早退 +
+        # 显式 close，不发 manifest）。true → final 投递前自动过一遍编辑弹窗
+        # 同款 polish（见 _apply_auto_polish）。缺省/false = final 键集与旧版
+        # 逐字节一致（旧前端线格式零回归）。
+        polish_on = msg.get('polish', False)
+        if not isinstance(polish_on, bool):
+            await ws.send_json({'type': 'error',
+                                'message': f'polish 须为布尔值，当前为 {polish_on!r}'})
+            try:
+                await ws.close()
+            except Exception:
+                pass
+            return
+
         # 初始布局 US-003：可缺省 initial 键热启动（prefix 解析之后）。载荷
         # {placed, demand_map?} 经 initial_layout.build_warm_payload（US-001 装载
         # 点，全降级不抛）组 spyrrow initial_solution；band/prefix 开时用载荷
@@ -419,15 +573,19 @@ async def ws_solve(ws: WebSocket):
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue = asyncio.Queue()
         # 跨线程共享状态盒：process 句柄（on_process 填）、stopped 标志（read_loop 填）、
-        # 帧计数与 n_eroded（on_report/on_manifest 填，run_solve 读 → final 消息用）。
+        # 帧计数与 n_eroded（on_report/on_manifest 填，run_solve 读 → final 消息用；
+        # total_area 同由 on_manifest 填 —— 自动微调 final 口径重算的分子锚，
+        # 2026-10-07）。
         # 所有字段仅在 executor 单线程内 mutate（on_manifest/on_report/run_solve 同线程），
         # stopped 标志由事件循环线程写 —— 两者用 bool 简单写读，GIL 下无撕裂风险。
-        state_box: dict = {'process': None, 'stopped': False, 'n_frames': 0, 'n_eroded': 0}
+        state_box: dict = {'process': None, 'stopped': False, 'n_frames': 0,
+                           'n_eroded': 0, 'total_area': 0.0}
 
         def on_manifest(m):
             """子进程 manifest → 组装前端契约消息 → 投 asyncio queue。"""
             session_registry.touch(sid)   # US-003：求解回调刷活性（客户端求解中不发消息）
             state_box['n_eroded'] = m.get('n_eroded', 0)
+            state_box['total_area'] = float(m.get('total_area', 0.0) or 0.0)
             # 消息构造委托 _build_manifest_msg（US-002 提取，HTTP 生成端点共享契约）。
             loop.call_soon_threadsafe(queue.put_nowait,
                                       _build_manifest_msg(m, gate_mm))
@@ -483,6 +641,15 @@ async def ws_solve(ws: WebSocket):
                     loop.call_soon_threadsafe(queue.put_nowait,
                         {'type': 'error', 'message': f'求解失败: {err}'})
                 elif final_data is not None:
+                    # 智能微调（2026-10-07）：final 投递前对结果布局自动过一遍
+                    # 编辑弹窗同款 polish（executor 线程内同步跑，秒级）；失败
+                    # 降级投递未微调 final（helper 内 warn，不炸轮）。停止/断开
+                    # 不进本分支（无 final）。
+                    polish_section = None
+                    if polish_on:
+                        polish_section = _apply_auto_polish(
+                            final_data, pieces, gate_mm, band_cfg, prefix_cfg,
+                            state_box.get('total_area') or 0.0)
                     final_msg = {
                         'type': 'final',
                         'density': final_data['density'],
@@ -496,6 +663,13 @@ async def ws_solve(ws: WebSocket):
                     # 旧消息逐字段不变）。
                     if 'prefix' in final_data:
                         final_msg['prefix'] = final_data['prefix']
+                    # 智能微调改进时补发 placed_items（2026-10-07）：final 消息本不
+                    # 携带布局（前端渲染权威 = 末帧），微调发生在 worker final 之后、
+                    # 末帧已投递 —— 改进布局经本键补发，前端 applyFinal 覆写
+                    # lastFrame（placed/密度/宽度同帧同源）。improved=False / 未开启
+                    # / 降级 → 键缺席 = 旧行为逐字节不变。
+                    if polish_section is not None and polish_section['improved']:
+                        final_msg['placed_items'] = final_data['placed_items']
                     # 初始布局 US-003：warm 实际灌入态 additive 透传。worker final
                     # 附 {engaged, reason}（initial_solution 在场才附 —— 装载点回显
                     # 成功后 worker 闸门仍可能降级，实际灌入态以此为准）原样转发；
@@ -506,6 +680,10 @@ async def ws_solve(ws: WebSocket):
                     elif warm_drop_reason is not None:
                         final_msg['warm_state'] = {'engaged': False,
                                                    'reason': warm_drop_reason}
+                    # 智能微调摘要段 additive（polish 键在场才附；失败/未开启 →
+                    # 键缺席 = final 键集与旧版逐字节一致）。
+                    if polish_section is not None:
+                        final_msg['polish'] = polish_section
                     loop.call_soon_threadsafe(queue.put_nowait, final_msg)
             loop.call_soon_threadsafe(queue.put_nowait, _SENTINEL)
 

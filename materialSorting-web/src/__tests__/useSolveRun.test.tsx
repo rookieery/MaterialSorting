@@ -155,6 +155,88 @@ describe('useSolveRun', () => {
     });
   });
 
+  it('智能微调（2026-10-07）：cfg.polish=true → StartPayload 附 polish:true；缺省/false → 无键（线格式零回归）', () => {
+    const startRef = mountHook({});
+    const base: StartConfig = {
+      sizes: [30], time: 60, seed: 0, gate_mm: 1980,
+      params: { d_ext: 0, d_int: 0, tol_ext: 0, tol_int: 0 },
+    };
+    // 缺省 / false → 无键
+    for (const polish of [undefined, false, null] as const) {
+      act(() => startRef.current({ ...base, polish }));
+      const ws = mockInstances[mockInstances.length - 1];
+      act(() => ws.onopen?.());
+      expect('polish' in (JSON.parse(ws.sent[0]) as Record<string, unknown>)).toBe(false);
+    }
+    // true → 附键
+    act(() => startRef.current({ ...base, polish: true }));
+    const ws = mockInstances[mockInstances.length - 1];
+    act(() => ws.onopen?.());
+    expect((JSON.parse(ws.sent[0]) as Record<string, unknown>).polish).toBe(true);
+  });
+
+  it('final.placed_items（智能微调补发）→ applyFinal 覆写 lastFrame（placed/density/width 同步）；无键 → 末帧原样', () => {
+    const startRef = mountHook({});
+    act(() =>
+      startRef.current({
+        sizes: [30], time: 1, seed: 3, gate_mm: 1980,
+        params: { d_ext: 0, d_int: 0, tol_ext: 0, tol_int: 0 },
+      }),
+    );
+    const ws = mockInstances[0];
+    const manifest: ServerMsg = {
+      type: 'manifest', gate_mm: 1980, total_area_mm2: 100000, n_eroded: 0, pieces: [],
+    };
+    const frame: ServerMsg = {
+      type: 'frame', index: 0, elapsed: 0.5, phase: 'final', density: 0.5,
+      density_sparrow: 0.55, width_mm: 1000,
+      placed_items: [{ id: 'p1', rotation: 0, translation: [10, 20] }],
+    };
+    const finalPolished: ServerMsg = {
+      type: 'final', density: 0.63, density_sparrow: 0.65, width_mm: 950,
+      elapsed: 1.5, n_frames: 1, n_eroded: 0,
+      // 微调改进布局补发（后端 polish 改进时才在场）。
+      placed_items: [
+        { id: 'p1', rotation: 0, translation: [0, 20] },
+        { id: 'p2', rotation: 180, translation: [500, 20] },
+      ],
+    };
+    act(() => {
+      ws.onmessage?.({ data: JSON.stringify(manifest) });
+      ws.onmessage?.({ data: JSON.stringify(frame) });
+      ws.onmessage?.({ data: JSON.stringify(finalPolished) });
+    });
+    const rec = runRegistry.list()[0];
+    // lastFrame 被覆写为微调终态（渲染/导出/编辑的权威布局即微调后）——
+    // 原帧对象不再被引用（单帧场景 frames[0] 与末条同引用，一并换新）。
+    expect(rec.lastFrame).not.toBe(frame);
+    expect(rec.lastFrame?.density).toBe(0.63);
+    expect(rec.lastFrame?.width_mm).toBe(950);
+    expect(rec.lastFrame?.placed_items).toHaveLength(2);
+    expect(rec.lastFrame?.placed_items[0].translation).toEqual([0, 20]);
+    // frames 末条同步覆写（lastFrame === frames 末条不变量保持）。
+    expect(rec.frames[rec.frames.length - 1]).toBe(rec.lastFrame);
+    // viewBoxMaxW 随帧记录（旧帧 1000 不回缩 —— 初始 view 口径，非本次断言面）。
+    expect(rec.finalDensity).toBe(0.63);
+    // 无 placed_items 键的 final（旧后端 / 未开启 / 无改进）→ lastFrame 保持末帧对象。
+    act(() => startRef.current({
+      sizes: [30], time: 1, seed: 4, gate_mm: 1980,
+      params: { d_ext: 0, d_int: 0, tol_ext: 0, tol_int: 0 },
+    }));
+    const ws2 = mockInstances[mockInstances.length - 1];
+    const frame2 = { ...frame, placed_items: [{ id: 'q1', rotation: 0, translation: [1, 2] }] };
+    act(() => {
+      ws2.onmessage?.({ data: JSON.stringify(manifest) });
+      ws2.onmessage?.({ data: JSON.stringify(frame2) });
+      ws2.onmessage?.({ data: JSON.stringify({
+        type: 'final', density: 0.6, density_sparrow: 0.6, width_mm: 900,
+        elapsed: 1.0, n_frames: 1, n_eroded: 0 }) });
+    });
+    const rec2 = runRegistry.list().find((r) => r.seed === 4)!;
+    expect(rec2.lastFrame).toBe(rec2.frames[rec2.frames.length - 1]);
+    expect(rec2.lastFrame?.placed_items).toEqual([{ id: 'q1', rotation: 0, translation: [1, 2] }]);
+  });
+
   it('manifest + frame + final 正确分发 + Registry 落盘（density 双口径）', () => {
     const onManifest = vi.fn();
     const onFrame = vi.fn();

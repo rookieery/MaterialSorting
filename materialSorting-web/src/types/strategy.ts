@@ -78,6 +78,13 @@ export interface StrategyStartPayload {
    * （num_workers 维持 4，旧行为）。
    */
   full_cores?: boolean;
+  /**
+   * 智能微调（2026-10-07 满核运行下方通用配置，三族运行同享）：true 时后端
+   * spawn 追加 --polish —— CLI portfolio 收口后对最终胜出 seed 的最优布局
+   * （incumbent）自动过一遍编辑弹窗同款微调，严格更优才回写 result.json。
+   * 缺省/不传 = 关（旧行为）。
+   */
+  polish?: boolean;
 }
 
 /**
@@ -114,6 +121,12 @@ export interface ExtremeStartPayload {
    * 不动。缺省/不传 = 关（num_workers 维持 4，旧行为）。
    */
   full_cores?: boolean;
+  /**
+   * 智能微调（2026-10-07 满核运行下方通用配置，三族运行同享）：语义同
+   * StrategyStartPayload.polish（后端 spawn 追加 --polish，CLI 收口后对最终
+   * 胜出 seed 的最优布局微调）。缺省/不传 = 关（旧行为）。
+   */
+  polish?: boolean;
 }
 
 /**
